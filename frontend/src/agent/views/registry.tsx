@@ -9,6 +9,7 @@ import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import {
   type MetricPoint,
   attachmentUrl,
+  chatAttachmentThumbUrl,
   chatAttachmentUrl,
   generatedImageSourceUrl,
   generatedImageUrl,
@@ -703,28 +704,34 @@ function Transcript({ data }: ViewProps): ReactNode {
   );
 }
 
-/** Map the tool-view frame shape ({t_ms, caption, thumb_id}) to the card's props.
- * `thumb_id` is dropped: a thumbnail has no safe id to serve by for an inline chat
- * analysis (see VideoAnalysis.tsx), so the card renders timestamps, not stills. */
-function videoFrames(value: unknown): VideoFrame[] {
+/** Map the tool-view frame shape ({t_ms, caption, thumb_id}) to the card's props,
+ * building each frame's thumbnail src from its blob id via `thumbUrl` (the backend
+ * validates the id against the attachment's stored frames under the firewall). A
+ * frame whose thumbnail can't be addressed (no builder) renders without a still. */
+function videoFrames(value: unknown, thumbUrl: ((thumbId: string) => string) | null): VideoFrame[] {
   if (!Array.isArray(value)) return [];
   return value.flatMap((f): VideoFrame[] => {
     if (typeof f !== "object" || f === null) return [];
     const o = f as Record<string, unknown>;
     if (typeof o.caption !== "string") return [];
-    return [{ tMs: typeof o.t_ms === "number" ? o.t_ms : 0, caption: o.caption }];
+    const thumb = thumbUrl && typeof o.thumb_id === "string" ? thumbUrl(o.thumb_id) : undefined;
+    return [{ tMs: typeof o.t_ms === "number" ? o.t_ms : 0, caption: o.caption, thumbUrl: thumb }];
   });
 }
 
-/** `{attachment_id, source, filename, summary, duration_ms, frames:[{t_ms, caption}],
- * transcript:{text, words}|null}` — the analyze_video card. The component builds the
- * media src from the id + source (a chat attachment for jerv's tool, a note
- * attachment otherwise); no URL rides the payload (invariant #9). */
+/** `{attachment_id, source, filename, summary, duration_ms, frames:[{t_ms, caption,
+ * thumb_id}], transcript:{text, words}|null}` — the analyze_video card. The component
+ * builds the media + thumbnail srcs from the id + source (a chat attachment for jerv's
+ * tool, a note attachment otherwise); no URL rides the payload (invariant #9). */
 function VideoAnalysisView({ data }: ViewProps): ReactNode {
   const attachmentId = String(data.attachment_id ?? "");
   const source = data.source === "note" ? "note" : "chat";
   const videoUrl =
     source === "note" ? attachmentUrl(attachmentId) : chatAttachmentUrl(attachmentId);
+  // Thumbnails are served only for chat attachments (a note-attachment thumbnail route
+  // arrives with the note card); a note source renders frame markers without stills.
+  const thumbUrl =
+    source === "chat" ? (id: string) => chatAttachmentThumbUrl(attachmentId, id) : null;
   const transcript =
     data.transcript && typeof data.transcript === "object"
       ? (data.transcript as Record<string, unknown>)
@@ -734,8 +741,7 @@ function VideoAnalysisView({ data }: ViewProps): ReactNode {
       videoUrl={videoUrl}
       filename={typeof data.filename === "string" ? data.filename : "video"}
       summary={typeof data.summary === "string" ? data.summary : ""}
-      durationMs={typeof data.duration_ms === "number" ? data.duration_ms : null}
-      frames={videoFrames(data.frames)}
+      frames={videoFrames(data.frames, thumbUrl)}
       words={transcriptWords(transcript?.words)}
       transcriptText={typeof transcript?.text === "string" ? transcript.text : undefined}
     />

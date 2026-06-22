@@ -159,6 +159,68 @@ async def test_list_for_session_only_returns_in_scope_rows(
     assert await repo.list_for_session(general, session_id) == []
 
 
+async def test_analysis_cache_and_thumb_respect_the_firewall(
+    repo: TurnAttachmentRepo, sessions: AgentSessionRepo, maker: async_sessionmaker
+) -> None:
+    """The cached analyze_video result + its frame thumbnails are firewalled: a health
+    clip's analysis (and a thumb-by-id check) is invisible to a general/unscoped read,
+    and a sha that isn't one of the attachment's frames is never returned."""
+    pid = await _owner_principal(maker)
+    owner = SessionContext(principal_id=pid, principal_kind="owner")
+    health = read_context(pid, ("health",))
+    general = read_context(pid, ("general",))
+    session_id = await _session(sessions, owner, ("health",))
+    att = await repo.add(
+        health,
+        session_id,
+        sha256="a1" * 32,
+        filename="clip.mp4",
+        media_type="video/mp4",
+        size_bytes=9,
+        domain_code="health",
+    )
+    analysis = {
+        "summary": "a clinic walkthrough",
+        "frames": [{"t_ms": 0, "caption": "a sign", "thumb_id": "thumb-sha-1"}],
+        "transcript": None,
+    }
+    await repo.set_analysis(health, att.id, analysis)
+
+    # Readable in scope; invisible to general-only and to an unscoped read.
+    got = await repo.analysis(health, att.id)
+    assert got is not None and got["summary"] == "a clinic walkthrough"
+    assert await repo.analysis(general, att.id) is None
+    assert await repo.analysis(UNSCOPED, att.id) is None
+
+    # The thumbnail is served only for a member sha, only in scope.
+    assert await repo.frame_thumb(health, att.id, "thumb-sha-1") == "thumb-sha-1"
+    assert await repo.frame_thumb(health, att.id, "not-a-frame") is None  # never a foreign blob
+    assert await repo.frame_thumb(general, att.id, "thumb-sha-1") is None  # firewall
+
+
+async def test_set_analysis_cannot_write_across_the_firewall(
+    repo: TurnAttachmentRepo, sessions: AgentSessionRepo, maker: async_sessionmaker
+) -> None:
+    # A general-only session can't see the health row, so set_analysis matches nothing —
+    # it can neither plant nor overwrite an out-of-scope attachment's analysis.
+    pid = await _owner_principal(maker)
+    owner = SessionContext(principal_id=pid, principal_kind="owner")
+    health = read_context(pid, ("health",))
+    general = read_context(pid, ("general",))
+    session_id = await _session(sessions, owner, ("health",))
+    att = await repo.add(
+        health,
+        session_id,
+        sha256="b2" * 32,
+        filename="clip.mp4",
+        media_type="video/mp4",
+        size_bytes=4,
+        domain_code="health",
+    )
+    await repo.set_analysis(general, att.id, {"summary": "sneak", "frames": []})
+    assert await repo.analysis(health, att.id) is None  # the out-of-scope write was a no-op
+
+
 async def test_bind_to_turn_and_transcript_replay(
     repo: TurnAttachmentRepo, sessions: AgentSessionRepo, maker: async_sessionmaker
 ) -> None:

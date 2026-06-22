@@ -228,6 +228,9 @@ describe("ToolView registry", () => {
     const video = container.querySelector("video") as HTMLVideoElement;
     // Data-only: the component BUILDS the src from attachment_id + source (no URL).
     expect(video.getAttribute("src")).toBe("/api/chat-attachments/att_123");
+    // …and each frame's thumbnail src from its blob id under the attachment.
+    const thumb = container.querySelector<HTMLImageElement>(".tv-vid-frame-img");
+    expect(thumb?.getAttribute("src")).toBe("/api/chat-attachments/att_123/thumb/sha-deadbeef");
     expect(container.querySelector(".tv-vid")).not.toBeNull();
     expect(screen.getByText("meeting.mp4")).toBeInTheDocument();
     expect(screen.getByText("A short standup.")).toBeInTheDocument();

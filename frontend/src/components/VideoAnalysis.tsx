@@ -17,13 +17,15 @@ import { VideoIcon } from "./icons";
 export interface VideoFrame {
   tMs: number;
   caption: string;
+  /** The frame thumbnail src, built from its blob id by the caller; absent when the
+   * source can't address a thumbnail (then the frame renders as a marker). */
+  thumbUrl?: string | undefined;
 }
 
 interface VideoAnalysisProps {
   videoUrl: string;
   filename: string;
   summary: string;
-  durationMs?: number | null | undefined;
   frames: VideoFrame[];
   words: TranscriptWord[];
   /** Plain transcript fallback when there is no per-word data. */
@@ -35,6 +37,7 @@ type Tab = "summary" | "moments" | "transcript";
 interface Moment {
   tMs: number;
   caption: string;
+  thumbUrl?: string | undefined;
   /** The words spoken in this frame's window, joined — the moment's "said" line. */
   said: string;
 }
@@ -54,7 +57,7 @@ export function buildMoments(frames: VideoFrame[], words: TranscriptWord[]): Mom
       .filter((w) => w.startMs >= f.tMs && w.startMs < end)
       .map((w) => w.text)
       .join(" ");
-    return { tMs: f.tMs, caption: f.caption, said };
+    return { tMs: f.tMs, caption: f.caption, thumbUrl: f.thumbUrl, said };
   });
 }
 
@@ -72,16 +75,15 @@ export function VideoAnalysis({
   videoUrl,
   filename,
   summary,
-  durationMs,
   frames,
   words,
   transcriptText,
 }: VideoAnalysisProps): ReactNode {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const feedRef = useRef<HTMLDivElement>(null);
+  const stripRef = useRef<HTMLDivElement>(null);
   const [currentMs, setCurrentMs] = useState(0);
   const [playing, setPlaying] = useState(false);
-  const [durMs, setDurMs] = useState(durationMs ?? 0);
 
   const hasTranscript = words.length > 0 || Boolean(transcriptText);
   const hasMoments = frames.length > 0;
@@ -113,6 +115,17 @@ export function VideoAnalysis({
     return () => cancelAnimationFrame(raf);
   }, [playing]);
 
+  // Keep the active frame centered in the (horizontal) filmstrip as playback advances.
+  useEffect(() => {
+    const strip = stripRef.current;
+    if (activeFrame < 0 || !strip) return;
+    const el = strip.querySelector<HTMLElement>(`[data-i="${activeFrame}"]`);
+    if (!el) return;
+    const target = Math.max(0, el.offsetLeft - strip.clientWidth / 2 + el.offsetWidth / 2);
+    if (typeof strip.scrollTo === "function") strip.scrollTo({ left: target, behavior: "smooth" });
+    else strip.scrollLeft = target;
+  }, [activeFrame]);
+
   // Keep the active moment centered in the (scrolling) feed as playback advances.
   useEffect(() => {
     if (active !== "moments") return;
@@ -134,10 +147,6 @@ export function VideoAnalysis({
   }, []);
 
   const onTimeUpdate = () => videoRef.current && setCurrentMs(videoRef.current.currentTime * 1000);
-  const onLoadedMetadata = () => {
-    const d = videoRef.current?.duration;
-    if (d && Number.isFinite(d)) setDurMs(d * 1000);
-  };
 
   const nowCaption = activeFrame >= 0 ? frames[activeFrame]?.caption : undefined;
 
@@ -162,28 +171,32 @@ export function VideoAnalysis({
         controls
         preload="metadata"
         onTimeUpdate={onTimeUpdate}
-        onLoadedMetadata={onLoadedMetadata}
         onPlay={() => setPlaying(true)}
         onPause={() => setPlaying(false)}
         onEnded={() => setPlaying(false)}
       />
-      {hasMoments && durMs > 0 && (
-        <div className="tv-vid-rail">
-          <div
-            className="tv-vid-rail-fill"
-            style={{ width: `${Math.min(100, (currentMs / durMs) * 100)}%` }}
-          />
+      {hasMoments && (
+        // The filmstrip is the scrubber: sampled frames are the timeline. Tap a frame
+        // to seek; the active frame lifts and the strip scrolls to keep it centered.
+        <div className="tv-vid-strip" ref={stripRef}>
           {frames.map((f, i) => (
             <button
               type="button"
               // biome-ignore lint/suspicious/noArrayIndexKey: frames are static for this card.
               key={i}
-              className={`tv-vid-tick${i === activeFrame ? " on" : ""}`}
-              style={{ left: `${Math.min(100, (f.tMs / durMs) * 100)}%` }}
+              data-i={i}
+              className={`tv-vid-frame${i === activeFrame ? " on" : ""}`}
               onClick={() => seekTo(f.tMs)}
               aria-label={`Jump to ${fmtTime(f.tMs)}`}
               title={`${fmtTime(f.tMs)} · ${f.caption}`}
-            />
+            >
+              {f.thumbUrl ? (
+                <img className="tv-vid-frame-img" src={f.thumbUrl} alt="" loading="lazy" />
+              ) : (
+                <span className="tv-vid-frame-ph" aria-hidden="true" />
+              )}
+              <span className="tv-vid-frame-t">{fmtTime(f.tMs)}</span>
+            </button>
           ))}
         </div>
       )}
@@ -226,7 +239,11 @@ export function VideoAnalysis({
                 className={`tv-vid-moment${i === activeFrame ? " on" : ""}`}
                 onClick={() => seekTo(m.tMs)}
               >
-                <span className="tv-vid-moment-t">{fmtTime(m.tMs)}</span>
+                {m.thumbUrl ? (
+                  <img className="tv-vid-moment-thumb" src={m.thumbUrl} alt="" loading="lazy" />
+                ) : (
+                  <span className="tv-vid-moment-t">{fmtTime(m.tMs)}</span>
+                )}
                 <span className="tv-vid-moment-body">
                   <span className="tv-vid-moment-cap">{m.caption}</span>
                   {m.said && <span className="tv-vid-moment-said">“{m.said}”</span>}

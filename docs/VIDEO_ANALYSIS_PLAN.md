@@ -84,10 +84,13 @@ structure.
 - **Wave 4 — done** (the `video_analysis` card: `frontend/.../VideoAnalysis.tsx` +
   registry wiring + `.tv-vid-*` styles; the `AudioTranscript` reader extracted into a
   shared `TranscriptBody` the Transcript tab reuses; component + registry tests). One
-  `<video>`, one clock, marker rail + Summary/Moments/Transcript tabs. **Deviation:**
-  the rail shows timestamp markers, not frame thumbnails — an inline chat analysis
-  isn't persisted and the frame blobs have no per-blob firewall, so there's no safe id
-  to serve a thumbnail by (see docs/DESIGN.md `video_analysis`). `thumb_id` is kept in
-  the payload for a future note-attachment card.
+  `<video>`, one clock, a **thumbnail filmstrip scrubber** + Summary/Moments/Transcript
+  tabs.
+- **Wave 4b — done** (secure frame thumbnails). The tool caches its result on the
+  chat-attachment row (`turn_attachments.analysis`, migration 0084 — re-asks are now
+  free), and `GET /api/chat-attachments/{id}/thumb/{thumb_id}` serves a frame blob only
+  after validating `thumb_id` against that row's stored frames under the attachment's
+  domain scope (`TurnAttachmentRepo.frame_thumb`) — never a raw blob-by-sha read across
+  the firewall (invariant #3). Repo RLS tests + a route test cover the boundary.
 
-All four waves are shipped on `claude/whisper-agent-tool-750zbj` (Wave 1 merged as #477).
+All waves are shipped on `claude/whisper-agent-tool-750zbj` (Wave 1 merged as #477).

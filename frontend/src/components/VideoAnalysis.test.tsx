@@ -4,8 +4,8 @@ import { confidenceColor } from "./AudioTranscript";
 import { VideoAnalysis, activeFrameIndex, buildMoments } from "./VideoAnalysis";
 
 const FRAMES = [
-  { tMs: 0, caption: "A title card." },
-  { tMs: 4000, caption: "A pipeline diagram." },
+  { tMs: 0, caption: "A title card.", thumbUrl: "/api/chat-attachments/att/thumb/sha0" },
+  { tMs: 4000, caption: "A pipeline diagram.", thumbUrl: "/api/chat-attachments/att/thumb/sha1" },
 ];
 const WORDS = [
   { text: "Hello", startMs: 0, endMs: 500, confidence: 0.95 },
@@ -18,7 +18,6 @@ function renderCard(over: Partial<Parameters<typeof VideoAnalysis>[0]> = {}) {
       videoUrl="/clip.mp4"
       filename="walkthrough.mp4"
       summary="A walkthrough of the build pipeline."
-      durationMs={8000}
       frames={FRAMES}
       words={WORDS}
       {...over}
@@ -27,10 +26,10 @@ function renderCard(over: Partial<Parameters<typeof VideoAnalysis>[0]> = {}) {
 }
 
 describe("buildMoments", () => {
-  it("pairs each frame with the words spoken in its window", () => {
+  it("pairs each frame with its thumbnail and the words spoken in its window", () => {
     expect(buildMoments(FRAMES, WORDS)).toEqual([
-      { tMs: 0, caption: "A title card.", said: "Hello" },
-      { tMs: 4000, caption: "A pipeline diagram.", said: "world" },
+      { tMs: 0, caption: "A title card.", thumbUrl: FRAMES[0]?.thumbUrl, said: "Hello" },
+      { tMs: 4000, caption: "A pipeline diagram.", thumbUrl: FRAMES[1]?.thumbUrl, said: "world" },
     ]);
   });
 });
@@ -57,13 +56,26 @@ describe("VideoAnalysis", () => {
   it("shows the summary on the default tab and the now-line for the first frame", () => {
     renderCard();
     expect(screen.getByText("A walkthrough of the build pipeline.")).toBeInTheDocument();
-    // The now-line shows the frame active at t=0.
-    expect(screen.getByText("A title card.")).toBeInTheDocument();
+    expect(screen.getByText("A title card.")).toBeInTheDocument(); // the now-line
   });
 
-  it("renders a marker rail tick per frame (driven by the duration)", () => {
+  it("renders the filmstrip with a thumbnail per frame and seeks on tap", () => {
     const { container } = renderCard();
-    expect(container.querySelectorAll(".tv-vid-tick")).toHaveLength(2);
+    const frameButtons = container.querySelectorAll(".tv-vid-frame");
+    expect(frameButtons).toHaveLength(2);
+    const imgs = container.querySelectorAll<HTMLImageElement>(".tv-vid-frame-img");
+    expect(imgs[1]?.getAttribute("src")).toBe("/api/chat-attachments/att/thumb/sha1");
+    const video = container.querySelector("video") as HTMLVideoElement;
+    fireEvent.click(frameButtons[1] as Element);
+    expect(video.currentTime).toBeCloseTo(4); // 4000ms
+  });
+
+  it("falls back to a placeholder for a frame without a thumbnail", () => {
+    const { container } = renderCard({
+      frames: [{ tMs: 0, caption: "No still." }],
+    });
+    expect(container.querySelector(".tv-vid-frame-ph")).not.toBeNull();
+    expect(container.querySelector(".tv-vid-frame-img")).toBeNull();
   });
 
   it("switching to Moments shows the caption + said feed and seeks on tap", () => {
@@ -71,9 +83,10 @@ describe("VideoAnalysis", () => {
     fireEvent.click(screen.getByRole("tab", { name: "Moments" }));
     expect(screen.getByText("A pipeline diagram.")).toBeInTheDocument();
     expect(screen.getByText("“world”")).toBeInTheDocument();
+    expect(container.querySelectorAll(".tv-vid-moment-thumb")).toHaveLength(2);
     const video = container.querySelector("video") as HTMLVideoElement;
     fireEvent.click(screen.getByText("A pipeline diagram."));
-    expect(video.currentTime).toBeCloseTo(4); // 4000ms
+    expect(video.currentTime).toBeCloseTo(4);
   });
 
   it("switching to Transcript reuses the karaoke reader (confidence colors + seek)", () => {

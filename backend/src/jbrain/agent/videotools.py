@@ -21,7 +21,7 @@ from typing import Any
 
 import structlog
 
-from jbrain.agent.attachments import TurnAttachmentRepo, is_video_media_type
+from jbrain.agent.attachments import AttachmentInfo, TurnAttachmentRepo, is_video_media_type
 from jbrain.agent.contracts import ViewPayload
 from jbrain.agent.loop import ToolContext, ToolHandler, ToolOutput
 from jbrain.ingest.video import VideoSampler, run_video_analysis
@@ -78,6 +78,16 @@ def build_video_handlers(
             return _NO_VIDEO
         if not is_video_media_type(info.media_type):
             return _NOT_VIDEO
+
+        # A re-ask reads the cached analysis (persisted on the attachment) — free, and
+        # it's also what lets the card's thumbnails be served (the thumbnail endpoint
+        # validates a thumb_id against this stored frame list under the firewall).
+        cached = await attachments.analysis(att_ctx, attachment_id)
+        if cached is not None:
+            return ToolOutput(
+                _summary_line(info.filename, cached), view=_video_view(attachment_id, info, cached)
+            )
+
         if info.size_bytes > max_bytes:
             return "That video is too large to analyze."
         try:
@@ -101,20 +111,26 @@ def build_video_handlers(
             return "I couldn't analyze that video right now — the local models didn't respond."
         if result is None:
             return f'I couldn\'t read any frames or speech from "{info.filename}".'
+        stored = {"summary": result.summary, **result.analysis}
+        await attachments.set_analysis(att_ctx, attachment_id, stored)
         # The model reads the summary; the owner sees the rich scrubbing card. The view
         # carries the attachment id + structured analysis, never a URL — the component
         # builds the media/thumbnail srcs (invariant #9).
         return ToolOutput(
-            f'Analysis of "{info.filename}":\n{result.summary}',
-            view=_video_view(attachment_id, info.filename, result.summary, result.analysis),
+            _summary_line(info.filename, stored), view=_video_view(attachment_id, info, stored)
         )
 
     return {"analyze_video": analyze_video_tool}
 
 
-def _video_view(
-    attachment_id: str, filename: str, summary: str, analysis: dict[str, Any]
-) -> ViewPayload:
+def _summary_line(filename: str, analysis: dict[str, Any]) -> str:
+    summary = str(analysis.get("summary") or "").strip()
+    if not summary:
+        return f'"{filename}" has no speech or clearly described content.'
+    return f'Analysis of "{filename}":\n{summary}'
+
+
+def _video_view(attachment_id: str, info: AttachmentInfo, analysis: dict[str, Any]) -> ViewPayload:
     """The `video_analysis` card payload (docs/mocks/analyze-video-approved.html): the
     summary, the per-frame timeline {t_ms, caption, thumb_id}, and the transcript for
     the karaoke tab. Ids only, no URLs — the component builds the media/thumb srcs."""
@@ -125,8 +141,8 @@ def _video_view(
             "attachment_id": attachment_id,
             "source": "chat",
             "media": "video",
-            "filename": filename,
-            "summary": summary,
+            "filename": info.filename,
+            "summary": analysis.get("summary", ""),
             "duration_ms": analysis.get("duration_ms"),
             "frames": analysis.get("frames", []),
             "transcript": analysis.get("transcript"),

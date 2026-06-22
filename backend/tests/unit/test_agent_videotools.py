@@ -43,6 +43,7 @@ class FakeAttachments:
 
     def __init__(self) -> None:
         self.rows: dict[str, AttachmentInfo] = {}
+        self.cache: dict[str, dict] = {}  # the persisted analyze_video result, by id
 
     def add(
         self, attachment_id: str, *, media_type: str, sha: str, filename: str, size_bytes: int = 10
@@ -63,6 +64,12 @@ class FakeAttachments:
 
     async def get(self, ctx: SessionContext, attachment_id: str) -> AttachmentInfo | None:
         return self.rows.get(attachment_id)
+
+    async def analysis(self, ctx: SessionContext, attachment_id: str) -> dict | None:
+        return self.cache.get(attachment_id)
+
+    async def set_analysis(self, ctx: SessionContext, attachment_id: str, analysis: dict) -> None:
+        self.cache[attachment_id] = analysis
 
 
 class FakeTranscribe:
@@ -146,6 +153,29 @@ async def test_round_trip_returns_summary_and_video_view() -> None:
     assert all(f["thumb_id"] in blobs.data for f in data["frames"])  # thumbs were stored
     assert data["transcript"]["text"].startswith("First we ingest")
     assert data["duration_ms"] == 8000
+    # The result was cached on the attachment so a re-ask is free + thumbs are servable.
+    assert attachments.cache[ATT]["summary"].startswith("A walkthrough")
+
+
+async def test_reanalysis_reads_the_cache_without_re_billing() -> None:
+    blobs, attachments = _setup()
+    frames = [SampledFrame(0, b"\xff\xd8f0"), SampledFrame(4000, b"\xff\xd8f1")]
+    first = FakeLlmClient(["frame a", "frame b", "a summary"])
+    handlers = build_video_handlers(blobs, attachments, _router(first), sampler=_sampler(frames))
+    await handlers["analyze_video"]({"source_attachment_id": ATT}, CTX)
+    assert len(first.calls) == 3
+
+    # A second ask finds the cached analysis and bills nothing — same card.
+    second = FakeLlmClient(["should-not-run"])
+    second_whisper = FakeTranscribe(_transcript())
+    cached_handlers = build_video_handlers(
+        blobs, attachments, _router(second), transcribe=second_whisper, sampler=_sampler(frames)
+    )
+    out = await cached_handlers["analyze_video"]({"source_attachment_id": ATT}, CTX)
+    assert second.calls == []
+    assert second_whisper.calls == []
+    assert isinstance(out, ToolOutput) and out.view is not None
+    assert [f["t_ms"] for f in out.view.data["frames"]] == [0, 4000]
 
 
 async def test_frames_only_when_no_whisper() -> None:

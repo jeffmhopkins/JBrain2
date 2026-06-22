@@ -178,6 +178,11 @@ class TurnAttachment(Base):
     # OCR/caption pipeline lands for chat files.
     has_extracts: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     has_description: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    # Cached analyze_video result (migration 0084): {summary, duration_ms,
+    # frames:[{t_ms, caption, thumb_id}], transcript:{text, words}|null}. NULL until
+    # jerv analyses the clip; the thumbnail endpoint validates a thumb_id against the
+    # frame list here before serving the blob (the firewall, invariant #3).
+    analysis: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
 
 
 class AgentMemory(Base):
