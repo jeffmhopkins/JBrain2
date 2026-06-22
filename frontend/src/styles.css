@@ -13405,6 +13405,215 @@ input.ld-title {
   margin-left: auto;
   color: var(--text-3);
 }
+
+/* ===== analyze_video card (VideoAnalysis.tsx; spec: docs/mocks/analyze-video-approved.html) =====
+   One <video> drives one clock across a marker rail + Summary/Moments/Transcript tabs;
+   the Transcript tab reuses the .atx-* transcript body. No frame thumbnails (see the
+   component header): the rail shows timestamps, the <video> is the visual. */
+.tv-vid {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-card);
+  overflow: hidden;
+}
+.tv-vid-hd {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border);
+}
+.tv-vid-fi {
+  width: 34px;
+  height: 34px;
+  flex: 0 0 auto;
+  border-radius: 10px;
+  background: var(--steel-tint);
+  color: var(--steel);
+  display: grid;
+  place-items: center;
+}
+.tv-vid-fn {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--fs-secondary);
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tv-vid-meta {
+  flex: 0 0 auto;
+  margin-left: auto;
+  white-space: nowrap;
+  font-size: var(--fs-micro);
+  color: var(--text-2);
+}
+.tv-vid-video {
+  display: block;
+  width: 100%;
+  max-height: 320px;
+  background: #000;
+  object-fit: contain;
+}
+/* Filmstrip scrubber: the sampled frames ARE the timeline. Tap a frame to seek; the
+   active frame lifts and the strip scrolls to keep it centered. */
+.tv-vid-strip {
+  display: flex;
+  gap: 6px;
+  padding: 9px 12px;
+  overflow-x: auto;
+  scrollbar-width: thin;
+  border-bottom: 1px solid var(--border);
+}
+.tv-vid-frame {
+  position: relative;
+  flex: 0 0 auto;
+  width: 64px;
+  padding: 0;
+  border: 2px solid transparent;
+  border-radius: 7px;
+  overflow: hidden;
+  background: var(--surface-2);
+  cursor: pointer;
+  opacity: 0.66;
+  transition: opacity 120ms ease-out, transform 120ms ease-out;
+}
+.tv-vid-frame.on {
+  border-color: var(--steel);
+  opacity: 1;
+  transform: translateY(-2px);
+}
+.tv-vid-frame-img,
+.tv-vid-frame-ph {
+  display: block;
+  width: 100%;
+  height: 40px;
+  object-fit: cover;
+}
+.tv-vid-frame-ph {
+  background: linear-gradient(135deg, var(--surface-2), var(--border));
+}
+.tv-vid-frame-t {
+  position: absolute;
+  left: 3px;
+  bottom: 2px;
+  font-family: var(--mono, ui-monospace, monospace);
+  font-size: 9px;
+  color: #fff;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.65);
+}
+.tv-vid-now {
+  display: flex;
+  gap: 9px;
+  padding: 9px 14px;
+  border-bottom: 1px solid var(--border);
+}
+.tv-vid-now-t {
+  flex: 0 0 auto;
+  padding-top: 1px;
+  font-family: var(--mono, ui-monospace, monospace);
+  font-size: var(--fs-micro);
+  color: var(--steel);
+}
+.tv-vid-now-cap {
+  font-size: var(--fs-secondary);
+  line-height: 1.45;
+  color: var(--text);
+}
+/* Tabs: a steel underline marks the active panel (self-contained, no --mode dep). */
+.tv-vid-tabs {
+  display: flex;
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--border);
+}
+.tv-vid-tab {
+  flex: 1;
+  padding: 0.7em 4px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--text-2);
+  font: inherit;
+  font-size: var(--fs-secondary);
+  font-weight: 500;
+  cursor: pointer;
+}
+.tv-vid-tab.on {
+  color: var(--text);
+  border-bottom-color: var(--steel);
+}
+.tv-vid-panel {
+  padding: 13px 14px;
+}
+/* The transcript tab reuses .atx-body/.atx-legend, which bring their own padding. */
+.tv-vid-panel-flush {
+  padding: 0;
+}
+.tv-vid-summary {
+  margin: 0;
+  font-size: var(--fs-body);
+  line-height: 1.6;
+  color: var(--text);
+  white-space: pre-wrap;
+}
+.tv-vid-feed {
+  max-height: 236px;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.tv-vid-moment {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  width: 100%;
+  padding: 8px 6px;
+  border: 0;
+  border-left: 3px solid transparent;
+  border-radius: 0 8px 8px 0;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+.tv-vid-moment.on {
+  background: var(--steel-tint);
+  border-left-color: var(--steel);
+}
+.tv-vid-moment-t {
+  flex: 0 0 auto;
+  padding-top: 2px;
+  font-family: var(--mono, ui-monospace, monospace);
+  font-size: var(--fs-micro);
+  color: var(--text-2);
+}
+.tv-vid-moment-thumb {
+  flex: 0 0 auto;
+  width: 70px;
+  height: 44px;
+  border-radius: 8px;
+  object-fit: cover;
+}
+.tv-vid-moment-body {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+.tv-vid-moment-cap {
+  font-size: var(--fs-secondary);
+  line-height: 1.4;
+  color: var(--text);
+}
+.tv-vid-moment-said {
+  font-size: var(--fs-micro);
+  line-height: 1.4;
+  color: var(--text-3);
+}
+.tv-vid-moment.on .tv-vid-moment-said {
+  color: var(--text-2);
+}
 /* --- trail metric legend (top-left, under the names) -------------------- */
 .lm-legend {
   position: absolute;

@@ -36,6 +36,7 @@ from jbrain.ingest import ocr
 from jbrain.ingest.ocr import OcrPipeline
 from jbrain.ingest.pipeline import IngestPipeline
 from jbrain.ingest.transcribe_job import TRANSCRIBE_ATTACHMENT_SPEC, TranscribePipeline
+from jbrain.ingest.video import VIDEO_ANALYSIS_SPEC, VideoPipeline
 from jbrain.llm import build_router
 from jbrain.llm.local_gateway import LocalGatewayClient
 from jbrain.schema import get_registry
@@ -333,6 +334,25 @@ async def run() -> None:
             settings.whisper_model,
             gateway=LocalGatewayClient(settings.whisper_url) if transcribe_enabled else None,
         ).transcribe_attachment,
+        # The video sibling (docs/VIDEO_ANALYSIS_PLAN.md): sample + caption frames via
+        # the vision route, transcribe the audio via the same whisper path (degrades
+        # to frames-only when whisper is off), fuse on a timeline, and summarize.
+        # On-demand only (the analyze_video tool kicks it, Wave 3), so it stays dormant
+        # until asked; the handler is always wired so the action registry pairs.
+        "analyze_video_attachment": VideoPipeline(
+            maker,
+            blobs,
+            router,
+            transcribe=(
+                WhisperCppClient(
+                    settings.whisper_url, settings.whisper_model, timeout=settings.whisper_timeout
+                )
+                if transcribe_enabled
+                else None
+            ),
+            transcribe_model=settings.whisper_model,
+            gateway=LocalGatewayClient(settings.whisper_url) if transcribe_enabled else None,
+        ).analyze_video_attachment,
         # Retroactive predicate normalization; trigger is the Phase-5 engine.
         "consolidate_predicates": Consolidator(maker).run,
         # Keep the canonical_predicates index in step with the schema registry.
@@ -421,6 +441,7 @@ async def run() -> None:
             scheduler.RECONCILE_UNEMBEDDED_NOTES_ACTION,
             scheduler.GEOFENCE_SWEEP_ACTION,
             TRANSCRIBE_ATTACHMENT_SPEC,
+            VIDEO_ANALYSIS_SPEC,
             EVAL_RUN_SPEC,
             SKILL_DISTILL_SPEC,
             SKILL_SWEEP_SPEC,

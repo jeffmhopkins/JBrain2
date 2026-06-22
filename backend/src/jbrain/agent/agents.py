@@ -38,15 +38,16 @@ WEB_TOOLS = frozenset({"web_search", "web_fetch"})
 
 # jerv's full allowlist: the internet tools, the dataless clock read, the
 # owner-approved coarse location read, the local image-generation tools, the
-# local audio transcription, and the host-metrics read. `current_time` is
-# allowlisted explicitly (a default-knowledge tool jerv's closed allowlist could
-# not otherwise reach); `current_location`, `generate_image`/`edit_image`/
-# `analyze_image`, and `transcribe` are `web`-gated jerv-only tools (on-box, no
-# egress, opt-in — the image tools drive the localhost ComfyUI,
-# docs/IMAGE_GEN_PLAN.md; `transcribe` drives the on-box whisper gateway,
-# docs/WHISPER_TRANSCRIPTION_PLAN.md). The image + transcribe tools are absent
-# from the registry when their backend is unconfigured, so allowlisting them here
-# is harmless on a box without that backend. `query_server_metrics` is host
+# local audio transcription, the local video analysis, and the host-metrics read.
+# `current_time` is allowlisted explicitly (a default-knowledge tool jerv's closed
+# allowlist could not otherwise reach); `current_location`, `generate_image`/
+# `edit_image`/`analyze_image`, `transcribe`, and `analyze_video` are `web`-gated
+# jerv-only tools (on-box, no egress, opt-in — the image tools drive the localhost
+# ComfyUI, docs/IMAGE_GEN_PLAN.md; `transcribe` drives the on-box whisper gateway,
+# docs/WHISPER_TRANSCRIPTION_PLAN.md; `analyze_video` reads a video via frame
+# sampling + whisper, docs/VIDEO_ANALYSIS_PLAN.md). The image/transcribe/video tools
+# are absent from the registry when their backend is unconfigured, so allowlisting
+# them here is harmless on a box without it. `query_server_metrics` is host
 # hardware telemetry (CPU/mem/disk/GPU/fans), not owner knowledge — owner-opted
 # in here so jerv can answer "how's the box doing?"; the metrics tables' owner-only
 # RLS is still the boundary, and jerv reads no note/entity/list/appointment.
@@ -58,6 +59,7 @@ JERV_TOOLS = WEB_TOOLS | frozenset(
         "edit_image",
         "analyze_image",
         "transcribe",
+        "analyze_video",
         "query_server_metrics",
     }
 )

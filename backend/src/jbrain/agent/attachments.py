@@ -9,6 +9,7 @@ referenced by id: a row is linked to the SESSION at upload and bound to the user
 import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass
+from typing import Any
 
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -187,6 +188,44 @@ class TurnAttachmentRepo:
                 )
             ).scalar_one_or_none()
             return None if row is None else _info(row)
+
+    async def analysis(self, ctx: SessionContext, attachment_id: str) -> dict[str, Any] | None:
+        """The cached analyze_video result for this attachment, or None on a miss (no
+        analysis yet, or the id is out of scope — RLS hides it as a clean miss)."""
+        async with scoped_session(self._maker, ctx) as session:
+            return (
+                await session.execute(
+                    select(TurnAttachment.analysis).where(TurnAttachment.id == attachment_id)
+                )
+            ).scalar_one_or_none()
+
+    async def set_analysis(
+        self, ctx: SessionContext, attachment_id: str, analysis: dict[str, Any]
+    ) -> None:
+        """Cache the analyze_video result on the attachment row. RLS-scoped: a session
+        that cannot see the row updates nothing (the WHERE matches nothing)."""
+        async with scoped_session(self._maker, ctx) as session:
+            await session.execute(
+                update(TurnAttachment)
+                .where(TurnAttachment.id == attachment_id)
+                .values(analysis=analysis, has_extracts=True)
+            )
+
+    async def frame_thumb(
+        self, ctx: SessionContext, attachment_id: str, thumb_id: str
+    ) -> str | None:
+        """The blob sha for a frame thumbnail, only if `thumb_id` is one of THIS
+        attachment's analysed frames (validated under the domain firewall). Returns the
+        sha to serve, or None when the attachment/analysis is out of scope/absent or the
+        thumb_id isn't a member — so a raw blob is never served by sha (invariant #3)."""
+        cached = await self.analysis(ctx, attachment_id)
+        if cached is None:
+            return None
+        frames = cached.get("frames")
+        if not isinstance(frames, list):
+            return None
+        members = {f.get("thumb_id") for f in frames if isinstance(f, dict)}
+        return thumb_id if thumb_id in members else None
 
     async def remove(self, ctx: SessionContext, attachment_id: str) -> str | None:
         async with scoped_session(self._maker, ctx) as session:

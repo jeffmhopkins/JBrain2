@@ -48,10 +48,15 @@ transcript in the JSONB column, confidence capped (~0.6, Guards) — plus the fr
 thumbnails as blobs. Re-enqueue `ingest_note`. Real-Postgres + RLS isolation test.
 
 ### Wave 3 — The tool
-`analyze_video.tool` sidecar + handler: read the cache; on a miss, enqueue the job
-and return "analyzing… check back". Returns the summary text + a `video_analysis`
-ViewPayload (attachment id + structured analysis; no URLs — invariant #9). Optional-
-tool/graceful-degrade wiring + digest pin.
+`analyze_video.tool` sidecar + handler. **Owner revision:** jerv chat attachments
+live in `app.turn_attachments` (no `note_id`, no extract cache), so the tool can't
+read the note-attachment cache the Wave 2 job writes. Per the owner it instead runs
+the map→fuse→reduce **inline** (the `analyze_image`/`transcribe` pattern) over a
+shared `run_video_analysis`: resolve the chat attachment under the session scope,
+sample + caption frames, transcribe the audio, fuse, summarize. Returns the summary
+text + a `video_analysis` ViewPayload (attachment id + structured analysis; no URLs —
+invariant #9). Optional-tool/graceful-degrade wiring (gated on ffmpeg) + digest pin +
+jerv allowlist. The Wave 2 job remains the note-pipeline path (ingest/on-demand).
 
 ### Wave 4 — The scrubbing/timeline card (after the mock gate)
 `<video controls>` + a summary panel + a timeline rail of frame-thumbnail markers;
@@ -65,5 +70,27 @@ structure.
 - Long/static content can later drop to a lower rate; scene-detection is a v2 option.
 
 ## Status
-- **Wave 1 — in progress** (this PR: `jbrain.media` + ffmpeg wiring + tests).
-- Waves 2–4 — not started.
+- **Wave 1 — done** (`jbrain.media` + ffmpeg wiring + tests; PR #477).
+- **Wave 2 — done** (`jbrain.ingest.video`: `analyze_video_attachment` map→fuse→reduce,
+  `AttachmentExtract(kind="video_analysis")` + the `analysis` jsonb column + frame-thumb
+  blobs, the `video.summarize` task, migration 0083, worker wiring, and real-Postgres +
+  RLS isolation tests). Frame captions route by `agent.vision`; the reduce summarizes the
+  fused `[mm:ss]` timeline. Degrades to frames-only (whisper off) or transcript-only
+  (ffmpeg can't decode); an empty clip caches nothing so the tool re-tries.
+- **Wave 3 — done** (`analyze_video.tool` + `jbrain.agent.videotools`: inline analysis
+  over the shared `run_video_analysis`, ffmpeg-gated registry wiring, jerv allowlist,
+  digest pin, unit tests). Owner chose inline (chat attachments have no cache) over the
+  originally-planned deferred-job; the Wave 2 job stays the note-pipeline path.
+- **Wave 4 — done** (the `video_analysis` card: `frontend/.../VideoAnalysis.tsx` +
+  registry wiring + `.tv-vid-*` styles; the `AudioTranscript` reader extracted into a
+  shared `TranscriptBody` the Transcript tab reuses; component + registry tests). One
+  `<video>`, one clock, a **thumbnail filmstrip scrubber** + Summary/Moments/Transcript
+  tabs.
+- **Wave 4b — done** (secure frame thumbnails). The tool caches its result on the
+  chat-attachment row (`turn_attachments.analysis`, migration 0084 — re-asks are now
+  free), and `GET /api/chat-attachments/{id}/thumb/{thumb_id}` serves a frame blob only
+  after validating `thumb_id` against that row's stored frames under the attachment's
+  domain scope (`TurnAttachmentRepo.frame_thumb`) — never a raw blob-by-sha read across
+  the firewall (invariant #3). Repo RLS tests + a route test cover the boundary.
+
+All waves are shipped on `claude/whisper-agent-tool-750zbj` (Wave 1 merged as #477).

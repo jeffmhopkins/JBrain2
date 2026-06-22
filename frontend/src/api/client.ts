@@ -1126,6 +1126,12 @@ export function chatAttachmentUrl(id: string): string {
   return `/api/chat-attachments/${encodeURIComponent(id)}`;
 }
 
+/** A frame thumbnail from a chat attachment's analyze_video result. The backend
+ * validates `thumbId` against the attachment's stored frames under the firewall. */
+export function chatAttachmentThumbUrl(id: string, thumbId: string): string {
+  return `/api/chat-attachments/${encodeURIComponent(id)}/thumb/${encodeURIComponent(thumbId)}`;
+}
+
 export function exportFileUrl(name: string): string {
   return `/api/ops/export/file/${encodeURIComponent(name)}`;
 }

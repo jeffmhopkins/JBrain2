@@ -779,6 +779,11 @@ def test_sidecars_pinned_to_their_versions() -> None:
             2,
             "f7d5a16c2e858d890595e9fd452c3f3d25154679574e4d45181678866c288017",
         ),
+        "analyze_video.tool": (
+            "analyze_video",
+            1,
+            "d160a8e87df2b6ea2577c6ae485d37d9e43641981aa0b49716a6f6dad786e78f",
+        ),
         "query_server_metrics.tool": (
             "query_server_metrics",
             1,

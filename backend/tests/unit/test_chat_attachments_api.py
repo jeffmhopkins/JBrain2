@@ -52,6 +52,8 @@ class FakeTurnAttachments:
     # Each add records the (session_id, domain_code, ctx scopes) so tests can assert
     # the firewall scope chosen and that the write ran under the narrowed context.
     added: list[tuple[str, str, tuple[str, ...]]] = field(default_factory=list)
+    # The cached analyze_video result by attachment id (real repo: the analysis column).
+    cache: dict[str, dict] = field(default_factory=dict)
 
     async def session_read_context(
         self, owner_ctx: SessionContext, session_id: str
@@ -92,6 +94,15 @@ class FakeTurnAttachments:
 
     async def remove(self, ctx: SessionContext, attachment_id: str) -> str | None:
         return attachment_id if self.rows.pop(attachment_id, None) is not None else None
+
+    async def frame_thumb(
+        self, ctx: SessionContext, attachment_id: str, thumb_id: str
+    ) -> str | None:
+        cached = self.cache.get(attachment_id)
+        if cached is None:
+            return None
+        members = {f.get("thumb_id") for f in cached.get("frames", []) if isinstance(f, dict)}
+        return thumb_id if thumb_id in members else None
 
 
 @pytest.fixture
@@ -144,6 +155,39 @@ def test_upload_download_delete_roundtrip(
     assert c.delete(f"/api/chat-attachments/{att['id']}").status_code == 204
     assert c.get(f"/api/chat-attachments/{att['id']}").status_code == 404
     assert c.delete(f"/api/chat-attachments/{att['id']}").status_code == 404
+
+
+def test_frame_thumbnail_served_only_for_a_member_id(
+    client: tuple[TestClient, FakeAgentSessions, FakeTurnAttachments, FakeSettingsStore],
+) -> None:
+    """A frame thumbnail is served only when the requested blob sha is one of the
+    attachment's analysed frames; a foreign sha is never served by the endpoint."""
+    c, sessions, repo, _ = client
+    blobs = c.app.state.blob_store  # type: ignore[attr-defined]
+    sid = sessions.add(("general",))
+    up = c.post(
+        f"/api/sessions/{sid}/attachments",
+        files={"file": ("clip.mp4", b"\x00\x00\x00\x18ftypmp42", "video/mp4")},
+    )
+    att = up.json()
+    thumb_sha = asyncio.run(blobs.put(b"\xff\xd8thumbnail-bytes"))
+    repo.cache[att["id"]] = {
+        "summary": "a clip",
+        "frames": [{"t_ms": 0, "caption": "title", "thumb_id": thumb_sha}],
+        "transcript": None,
+    }
+
+    # A member thumb is served as a JPEG.
+    ok = c.get(f"/api/chat-attachments/{att['id']}/thumb/{thumb_sha}")
+    assert ok.status_code == 200
+    assert ok.content == b"\xff\xd8thumbnail-bytes"
+    assert ok.headers["content-type"].startswith("image/jpeg")
+
+    # A sha that isn't one of THIS attachment's frames is never served (the firewall —
+    # the endpoint would otherwise be a blob-by-sha read across the domain boundary).
+    assert c.get(f"/api/chat-attachments/{att['id']}/thumb/{'aa' * 32}").status_code == 404
+    # An unknown attachment (no cached analysis) misses too.
+    assert c.get(f"/api/chat-attachments/{uuid.uuid4()}/thumb/{thumb_sha}").status_code == 404
 
 
 def test_upload_to_missing_session_404(

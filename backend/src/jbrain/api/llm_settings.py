@@ -47,6 +47,7 @@ TASK_LABELS: dict[str, str] = {
     "correction_note.extract": "Correction extract",
     "vision.ocr": "Vision OCR",
     "vision.caption": "Vision caption",
+    "video.summarize": "Video summary",
     "session.title": "Session title",
 }
 
