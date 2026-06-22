@@ -76,7 +76,10 @@ describe("api.chat run id", () => {
     const events: ChatEvent[] = [];
     for await (const event of api.chatResume("run-9", 3)) events.push(event);
 
-    expect(fetchMock).toHaveBeenCalledWith("/api/chat/runs/run-9/stream?after=3", expect.anything());
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/chat/runs/run-9/stream?after=3",
+      expect.anything(),
+    );
     // No synthetic run event — the caller already holds the id; just the parsed frames.
     expect(events).toEqual([
       { type: "text_delta", text: "more" },

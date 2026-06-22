@@ -169,9 +169,7 @@ describe("useFullBrain — a turn stays attached to its own chat", () => {
       await result.current.send("go");
     });
     // The resumed tail continues the same bubble, and the turn settles live.
-    await waitFor(() =>
-      expect(result.current.messages.at(-1)?.text).toBe("partial and the rest"),
-    );
+    await waitFor(() => expect(result.current.messages.at(-1)?.text).toBe("partial and the rest"));
     expect(result.current.messages.at(-1)?.streaming).toBe(false);
     // It reconnected from the count of server frames already folded — the synthetic `run`
     // event isn't a server frame, so only the one text_delta counts (after=1).

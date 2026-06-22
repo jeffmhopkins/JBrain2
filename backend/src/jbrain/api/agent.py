@@ -127,7 +127,6 @@ class _LiveTurn:
             self._subs.discard(q)
 
 
-
 class ChatMessageIn(BaseModel):
     """A prior conversation turn the client replays for context. Only the text is
     carried — tool calls live inside a single turn-loop, not across them."""
