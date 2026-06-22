@@ -775,7 +775,7 @@ def test_sidecars_pinned_to_their_versions() -> None:
         "identify_fish.tool": (
             "identify_fish",
             1,
-            "64982d040ed14a5f19bb54087860fb54df202b4bfcfc054d4e3ff8ebbcf188ec",
+            "bd1419f75f6c9d06e977157cf6da22541d14e782db80971feaf42a27055d600f",
         ),
     }
     # Every shipped sidecar must appear above — a new `.tool` cannot slip in

@@ -3,7 +3,6 @@ name: identify_fish
 version: 1
 permission: web
 cost_class: expensive
-side_effecting: true
 params:
   type: object
   properties:

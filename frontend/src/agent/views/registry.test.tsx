@@ -399,4 +399,64 @@ describe("ToolView registry", () => {
       "512 / 512",
     );
   });
+
+  it("renders a fish_identification hero verdict from an attachment photo", () => {
+    const { container, getByText } = render(
+      <ToolView
+        payload={payload({
+          view: "fish_identification",
+          data: {
+            thumb_id: "att_a91f",
+            thumb_kind: "attachment",
+            top: { species: "Zebrasoma flavescens", common: "Yellow tang", score: 0.92 },
+            others: [{ species: "Acanthurus coeruleus", common: "Blue tang", score: 0.05 }],
+            arch: "DINOv2+ViT",
+            species_count: 866,
+          },
+        })}
+      />,
+    );
+    const photo = container.querySelector("img") as HTMLImageElement;
+    // Data-only: the component BUILDS the src from thumb_id (no model-authored URL).
+    expect(photo.getAttribute("src")).toBe("/api/chat-attachments/att_a91f");
+    expect(getByText("Zebrasoma flavescens")).toBeInTheDocument();
+    expect(getByText("Yellow tang")).toBeInTheDocument();
+    // A confident match reads "good"; the % is shown.
+    expect(getByText("92% confident")).toHaveClass("flag-good");
+    // The runner-up appears in the muted "also considered" line.
+    expect(getByText("Acanthurus coeruleus")).toBeInTheDocument();
+    expect(container.querySelector(".tv-fish-cap")?.textContent).toBe(
+      "fishial · DINOv2+ViT · 866 species",
+    );
+  });
+
+  it("a generated-image source resolves by the generated-image route, and low confidence reads warn", () => {
+    const { container, getByText } = render(
+      <ToolView
+        payload={payload({
+          view: "fish_identification",
+          data: {
+            thumb_id: "img_1",
+            thumb_kind: "image",
+            top: { species: "Sciaenops ocellatus", common: "", score: 0.41 },
+            others: [],
+          },
+        })}
+      />,
+    );
+    expect((container.querySelector("img") as HTMLImageElement).getAttribute("src")).toBe(
+      "/api/images/generated/img_1",
+    );
+    // A weak top match signals uncertainty via the tone enum, not a confident green.
+    expect(getByText("41% confident")).toHaveClass("flag-warn");
+    // No common name → none rendered; no others → no "also considered" line.
+    expect(container.querySelector(".tv-fish-common")).toBeNull();
+    expect(container.querySelector(".tv-fish-others")).toBeNull();
+  });
+
+  it("renders nothing for a fish_identification with no verdict", () => {
+    const { container } = render(<ToolView payload={payload({ view: "fish_identification" })} />);
+    // The card needs a top match; without one the tool sends prose instead.
+    expect(container.querySelector(".tv-fish")).toBeNull();
+  });
 });

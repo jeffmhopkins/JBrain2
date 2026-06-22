@@ -6,7 +6,7 @@
 // component is a deliberate change here, like adding a tool.
 
 import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
-import { generatedImageSourceUrl, generatedImageUrl } from "../../api/client";
+import { chatAttachmentUrl, generatedImageSourceUrl, generatedImageUrl } from "../../api/client";
 import type { CitationRef, ViewPayload } from "../types";
 import { Lightbox } from "./Lightbox";
 import {
@@ -771,6 +771,96 @@ function EditView({
   );
 }
 
+// fish_identification (#9) — the identify_fish tool's in-chat card (hero verdict,
+// docs/mocks/fish-id-a-hero-verdict.html, GUI gate #1). Data-only slots: {thumb_id,
+// thumb_kind ('attachment'|'image'), top:{species, common, score}, others:[…], arch,
+// species_count}. The component BUILDS the photo src from thumb_id (invariant #9: never
+// a model-authored URL); confidence is a 0..1 float mapped HERE to a tone enum, so the
+// model conveys the number and the component owns the palette (DESIGN.md).
+
+interface FishCand {
+  species: string;
+  common: string;
+  score: number;
+}
+
+function asCand(value: unknown): FishCand | null {
+  if (typeof value !== "object" || value === null) return null;
+  const o = value as Record<string, unknown>;
+  const species = typeof o.species === "string" ? o.species : "";
+  if (!species) return null;
+  const score = Number(o.score);
+  return {
+    species,
+    common: typeof o.common === "string" ? o.common : "",
+    score: Number.isFinite(score) ? score : 0,
+  };
+}
+
+function fishThumbSrc(id: string, kind: string): string {
+  // A generated image resolves by the generated-image route; an attachment by the chat
+  // attachment route — both built from the id, never authored by the model.
+  return kind === "image" ? generatedImageUrl(id) : chatAttachmentUrl(id);
+}
+
+function fishPct(score: number): number {
+  return Math.round(score * 100);
+}
+
+// Confidence tone enum (never a raw color): a confident top match reads "good", a
+// weaker one "warn", so the card itself signals uncertainty alongside the number.
+function confidenceTone(score: number): Tone {
+  return score >= 0.7 ? "good" : "warn";
+}
+
+function FishIdentification({ data }: ViewProps): ReactNode {
+  const top = asCand(data.top);
+  const [zoom, setZoom] = useState(false);
+  // A card with no verdict renders nothing — the tool sends prose instead.
+  if (!top) return null;
+  const others = (Array.isArray(data.others) ? data.others : [])
+    .map(asCand)
+    .filter((c): c is FishCand => c !== null);
+  const thumbKind = data.thumb_kind === "image" ? "image" : "attachment";
+  const src = fishThumbSrc(String(data.thumb_id ?? ""), thumbKind);
+  const arch = typeof data.arch === "string" ? data.arch : "";
+  const count = typeof data.species_count === "number" ? data.species_count : 0;
+  const alt = top.common || top.species;
+  const caption = ["fishial", arch, count ? `${count} species` : ""].filter(Boolean).join(" · ");
+  return (
+    <div className="tv-fish">
+      <button
+        type="button"
+        className="tv-fish-hero"
+        onClick={() => setZoom(true)}
+        aria-label="Expand photo to full screen"
+      >
+        <img className="tv-fish-img" src={src} alt={alt} />
+        <span className={`tv-fish-pill flag-${confidenceTone(top.score)}`}>
+          {fishPct(top.score)}% confident
+        </span>
+        <span className="tv-fish-scrim">
+          <span className="tv-fish-sp">{top.species}</span>
+          {top.common && <span className="tv-fish-common">{top.common}</span>}
+        </span>
+      </button>
+      {others.length > 0 && (
+        <div className="tv-fish-others">
+          also considered:{" "}
+          {others.map((o, i) => (
+            <span key={o.species}>
+              {i > 0 ? " · " : ""}
+              <b>{o.species}</b> {fishPct(o.score)}%
+            </span>
+          ))}
+        </div>
+      )}
+      <div className="tv-fish-cap">{caption}</div>
+      {zoom && <Lightbox src={src} alt={alt} onClose={() => setZoom(false)} />}
+    </div>
+  );
+}
+
 const REGISTRY: Record<string, (props: ViewProps) => ReactNode> = {
   stat_block: StatBlock,
   data_table: DataTable,
@@ -780,6 +870,7 @@ const REGISTRY: Record<string, (props: ViewProps) => ReactNode> = {
   location_map: LocationMap,
   place_card: PlaceCard,
   generated_image: GeneratedImage,
+  fish_identification: FishIdentification,
 };
 
 export function isKnownView(name: string): boolean {

@@ -858,6 +858,28 @@ the record in `docs/mocks/genimage-README.md` (B/C both subsume A's generate-onl
 layout, so this choice still fixes the generate rendering). Owner-only (the table
 mirrors `wiki_*` RLS); never a note, never RAG-indexed — a chat artifact.
 
+### `fish_identification` tool-view (settled in a three-way GUI review — reference mock: `docs/mocks/fish-id-a-hero-verdict.html`)
+
+The in-chat card jerv shows after an `identify_fish` call (`docs/FISH_ID_PLAN.md`,
+Wave F3, GUI gate #1). A registered, data-only view like every other: the model
+fills `{thumb_id, thumb_kind ('attachment'|'image'), top:{species, common, score},
+others:[{species, common, score}], arch, species_count}` and **authors no markup
+and no URL** — the component builds the photo source from `thumb_id`
+(`/api/chat-attachments/${id}` for an attachment, `/api/images/generated/${id}` for
+a generated image). Confidence is a 0..1 **float** the component maps to a **tone
+enum** (`flag-good` ≥ 0.7, else `flag-warn`) — the model conveys the number, the
+component owns the palette. Tokens-only `.tv-fish-*` classes; the card frame matches
+the live `.tool-view`.
+
+Chosen **A — hero verdict** (`docs/mocks/fish-id-a-hero-verdict.html`) over B
+(ranked list) and C (verdict + expand): the owner's photo fills a tap-to-zoom hero
+frame, the top species reads over a bottom scrim with a confidence pill, and the
+runners-up are one muted "also considered" line (so a close call isn't hidden
+entirely). A won as the calmest, most photo-feed-like card — the picture is the
+message and the top guess is usually what's wanted. B and C are retained as the
+record in `docs/mocks/fish-id-README.md`. Owner-only (jerv chat); never a note,
+never RAG-indexed — a chat artifact, like a generated image.
+
 ## Wiki Talk board (settled in a three-way GUI review — reference mock: `docs/mocks/wiki-talk-b-topics.html`)
 
 The article's editorial board (Phase 6) — the wiki's second surface after the reader. Chosen

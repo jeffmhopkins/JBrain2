@@ -39,11 +39,14 @@ _RESULT = FishResult(
 
 def test_sidecar_is_a_jerv_only_web_tool() -> None:
     """The sidecar ships and declares the jerv-only `web` class (the gate keeping it off
-    the curator), expensive cost, side-effecting, and no required arg (either source)."""
+    the curator) and expensive cost. Like analyze_image it is NOT side-effecting — an
+    identification persists nothing (a chat artifact, never a note: non-negotiable #7),
+    so it must not flip the turn's mutation signal. Either source is optional (exactly
+    one is enforced at runtime)."""
     tf = load_tool(TOOLS_DIR / "identify_fish.tool")
     assert tf.spec.permission == "web"
     assert tf.spec.cost_class == "expensive"
-    assert tf.spec.side_effecting is True
+    assert tf.spec.side_effecting is False
     assert tf.spec.params["required"] == []
 
 
