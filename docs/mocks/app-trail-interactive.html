@@ -53,11 +53,27 @@
 
   /* legend — top-left, under the names */
   .legend{position:absolute;top:92px;left:12px;z-index:8;border-radius:13px;padding:9px 11px;width:150px}
-  .legend .lt{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px}
+  .legend .lt{display:flex;justify-content:space-between;align-items:center;gap:6px;margin-bottom:6px;
+    width:100%;background:transparent;border:0;color:inherit;cursor:pointer;padding:0;text-align:left}
+  .legend .lt-l{display:flex;align-items:center;gap:6px}
+  .legend .lt-ic{width:14px;height:14px;color:var(--text-2);flex:0 0 auto}
+  .legend .caret{width:12px;height:12px;color:var(--text-3);flex:0 0 auto;transition:transform .15s}
+  .legend .lt.open .caret{transform:rotate(180deg)}
   .legend h4{margin:0;font-size:10.5px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:var(--text-2)}
   .legend .unit{font-size:10.5px;color:var(--text-3)}
   .legend .ramp{height:9px;border-radius:5px;margin-bottom:4px}
   .legend .ticks{display:flex;justify-content:space-between;font-size:10px;color:var(--text-3);font-variant-numeric:tabular-nums}
+  /* metric dropdown, opened from the legend icon */
+  .menu{position:absolute;top:100%;left:0;margin-top:6px;width:168px;border-radius:12px;padding:5px;z-index:12;
+    display:flex;flex-direction:column;gap:2px}
+  .menu[hidden]{display:none}
+  .menu button{display:flex;align-items:center;gap:9px;border:0;background:transparent;color:var(--text);
+    font-size:13px;font-weight:600;padding:8px 9px;border-radius:8px;cursor:pointer;text-align:left}
+  .menu button:hover,.menu button.on{background:var(--surface-2)}
+  .menu .sw{width:26px;height:10px;border-radius:4px;flex:0 0 auto}
+  .menu .mlbl{flex:1}
+  .menu .chk{width:14px;height:14px;color:var(--location);opacity:0;flex:0 0 auto}
+  .menu button.on .chk{opacity:1}
 
   /* click marker callout */
   .marker{position:absolute;z-index:7;transform:translate(-50%,-100%);pointer-events:none;transition:left .08s,top .08s}
@@ -70,12 +86,6 @@
 
   /* bottom dock */
   .dock{position:absolute;left:10px;right:10px;bottom:12px;z-index:8;border-radius:20px;padding:12px 13px 14px}
-  .seg{display:flex;gap:4px;background:var(--surface);border:1px solid var(--border);border-radius:11px;padding:3px;margin-bottom:11px}
-  .seg button{flex:1;border:0;background:transparent;color:var(--text-2);font-size:12.5px;font-weight:650;
-    padding:7px 4px;border-radius:8px;cursor:pointer}
-  .seg button.on{background:var(--location);color:#04100f}
-  .seg.metric button.on{background:var(--mc,var(--location))}
-
   .row-h{display:flex;justify-content:space-between;align-items:center;margin:2px 2px 7px}
   .row-h .lbl{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--text-3);font-weight:700}
   .row-h .val{font-size:12px;color:var(--text-2);font-variant-numeric:tabular-nums}
@@ -145,19 +155,24 @@
       </div>
 
       <div class="legend float" id="legend">
-        <div class="lt"><h4 id="legTitle">Speed</h4><span class="unit" id="legUnit">mph</span></div>
+        <button class="lt" id="legBtn" aria-haspopup="true">
+          <span class="lt-l">
+            <svg class="lt-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 2 9l10 6 10-6-10-6Z"/><path d="M2 15l10 6 10-6"/></svg>
+            <h4 id="legTitle">Speed</h4>
+          </span>
+          <span class="unit" id="legUnit">mph</span>
+          <svg class="caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>
+        </button>
         <div class="ramp" id="legRamp"></div>
         <div class="ticks"><span id="legLo">0</span><span id="legHi">60+</span></div>
+        <div class="menu float" id="metricMenu" hidden>
+          <button data-metric="speed" class="on"><span class="sw" data-sw="speed"></span><span class="mlbl">Speed</span><svg class="chk" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5 9-11"/></svg></button>
+          <button data-metric="accel"><span class="sw" data-sw="accel"></span><span class="mlbl">Accel</span><svg class="chk" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5 9-11"/></svg></button>
+          <button data-metric="battery"><span class="sw" data-sw="battery"></span><span class="mlbl">Battery</span><svg class="chk" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5 9-11"/></svg></button>
+        </div>
       </div>
 
       <div class="dock float">
-        <!-- color metric -->
-        <div class="seg metric" id="metricSeg">
-          <button data-metric="speed" class="on">Speed</button>
-          <button data-metric="accel">Accel</button>
-          <button data-metric="battery">Battery</button>
-        </div>
-
         <!-- span sets the slider's total range -->
         <div class="row-h"><span class="lbl">Window</span><span class="val" id="spanVal">last 1h</span></div>
         <div class="spanrow" id="spanRow">
@@ -198,7 +213,7 @@
     <div class="caption">
       <h3>What this mock shows</h3>
       <ul>
-        <li><b>Color metric toggle</b> — recolor the whole trail by <b>Speed</b> (default), <b>Accel</b>, or <b>Battery</b>. The legend (top-left, under the names) updates to that metric's scale.</li>
+        <li><b>Legend is the metric picker</b> — tap the icon in the legend (top-left, under the names) to drop down <b>Speed</b> (default) / <b>Accel</b> / <b>Battery</b>; the trail recolors and the legend's scale follows.</li>
         <li><b>Tap a point on the trail</b> — a map callout (“J: 35 mph”, in the active metric) pins to that point, and the card below fills in everything: time, speed, heading vector, accel, battery, etc.</li>
         <li><b>Span buttons set the slider range</b> — 1h / 8h / 1d / 7d choose the total span; the <b>dual start/stop slider</b> scrubs a sub-window within it.</li>
         <li><b>Drag an end of the slider</b> — if the data point at that end was moving, the card shows that point's readout live as you scrub (and the callout follows it).</li>
@@ -367,10 +382,17 @@ function endpointPoint(which){
 }
 
 // ---- wire up -------------------------------------------------------------
-document.getElementById("metricSeg").addEventListener("click",e=>{
+// metric dropdown, opened from the legend icon
+const legBtn=document.getElementById("legBtn"), metricMenu=document.getElementById("metricMenu");
+["speed","accel","battery"].forEach(m=>{const el=metricMenu.querySelector(`[data-sw="${m}"]`);if(el)el.style.background=cssGradient(RAMPS[m].stops);});
+function setMenuOpen(open){metricMenu.hidden=!open;legBtn.classList.toggle("open",open);}
+legBtn.addEventListener("click",e=>{e.stopPropagation();setMenuOpen(metricMenu.hidden);});
+document.addEventListener("click",()=>setMenuOpen(false));
+metricMenu.addEventListener("click",e=>{
   const b=e.target.closest("button");if(!b)return;
   metric=b.dataset.metric;
-  [...e.currentTarget.children].forEach(c=>c.classList.toggle("on",c===b));
+  [...metricMenu.children].forEach(c=>c.classList.toggle("on",c===b));
+  setMenuOpen(false);
   drawLegend();drawTrail();if(selected)showPoint(selected,true);
 });
 document.getElementById("spanRow").addEventListener("click",e=>{
