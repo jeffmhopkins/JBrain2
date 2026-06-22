@@ -104,12 +104,12 @@
   .det-h .av{width:30px;height:30px}
   .det-nm{font-weight:650}
   .det-sub{font-size:11.5px;color:var(--text-2)}
-  .det-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px}
-  .cell{background:var(--surface);border:1px solid var(--border);border-radius:9px;padding:7px 9px}
-  .cell .k{font-size:10px;text-transform:uppercase;letter-spacing:.04em;color:var(--text-3);font-weight:700}
-  .cell .v{font-size:15px;font-weight:650;font-variant-numeric:tabular-nums;margin-top:1px}
-  .vec{display:inline-flex;align-items:center;gap:5px}
-  .vec .arr{width:15px;height:15px;display:inline-block;transition:transform .1s}
+  /* compact two-column key/value table (denser than cards) */
+  .det-table{display:grid;grid-template-columns:1fr 1fr;column-gap:16px}
+  .tr{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:4px 0;border-bottom:1px solid var(--border)}
+  .tk{font-size:11px;color:var(--text-3)}
+  .tv{font-size:12.5px;font-weight:650;font-variant-numeric:tabular-nums;display:inline-flex;align-items:center;gap:5px}
+  .arr{width:13px;height:13px;display:inline-block;transition:transform .1s}
   .hint{font-size:11px;color:var(--text-3);text-align:center;margin-top:9px}
 
   .caption{max-width:360px;color:var(--text-2);font-size:13px;line-height:1.65}
@@ -182,13 +182,13 @@
             <span class="av" style="--pc:var(--p3)">J</span>
             <span><span class="det-nm">Jeff</span><br><span class="det-sub" id="detWhen">2 min ago · 9:39 AM</span></span>
           </div>
-          <div class="det-grid">
-            <div class="cell"><div class="k">Speed</div><div class="v" id="detSpeed">35 mph</div></div>
-            <div class="cell"><div class="k">Heading</div><div class="v"><span class="vec"><svg class="arr" id="detArr" viewBox="0 0 24 24"><path d="M12 3 L12 21 M12 3 L7 9 M12 3 L17 9" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg><span id="detVec">NE 47°</span></span></div></div>
-            <div class="cell"><div class="k">Accel</div><div class="v" id="detAccel">1.8 m/s²</div></div>
-            <div class="cell"><div class="k">Battery</div><div class="v" id="detBatt">78%</div></div>
-            <div class="cell"><div class="k">Altitude</div><div class="v" id="detAlt">41 m</div></div>
-            <div class="cell"><div class="k">Accuracy</div><div class="v" id="detAcc">±6 m</div></div>
+          <div class="det-table">
+            <div class="tr"><span class="tk">Speed</span><span class="tv" id="detSpeed">35 mph</span></div>
+            <div class="tr"><span class="tk">Heading</span><span class="tv"><svg class="arr" id="detArr" viewBox="0 0 24 24"><path d="M12 3 L12 21 M12 3 L7 9 M12 3 L17 9" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg><span id="detVec">NE 47°</span></span></div>
+            <div class="tr"><span class="tk">Accel</span><span class="tv" id="detAccel">1.8 m/s²</span></div>
+            <div class="tr"><span class="tk">Battery</span><span class="tv" id="detBatt">78%</span></div>
+            <div class="tr"><span class="tk">Altitude</span><span class="tv" id="detAlt">41 m</span></div>
+            <div class="tr"><span class="tk">Accuracy</span><span class="tv" id="detAcc">±6 m</span></div>
           </div>
         </div>
         <div class="hint" id="hint">Tap the trail to inspect a point · drag the slider ends to scrub</div>
