@@ -31,6 +31,7 @@ import {
   writeTileScheme,
 } from "./leafletMap";
 import { type LiveFix, connectLive } from "./liveSocket";
+import { travelingSpeedMph } from "./speed";
 
 export interface MemberDeps {
   /** Resolve the session cookie's principal; rejects (401) when unauthenticated. */
@@ -88,24 +89,24 @@ export function MemberDashboard({ deps }: MemberDashboardProps) {
 type Selection = "all" | string;
 // Which bottom sheet is pulled up (null = collapsed, map-first).
 type Sheet = null | "details" | "history";
-// The time window as two slider positions 0..100 (0 = MAX_DAYS ago, 100 = now).
-type Win = { from: number; to: number };
+// The trail/activity time window: a fixed "last N" preset (replaces the old
+// drag-both-ends slider). 1h/8h/1d/7d spans "right now" through "this week" in a tap.
+type WindowPreset = "1h" | "8h" | "1d" | "7d";
+const WINDOW_PRESETS: WindowPreset[] = ["1h", "8h", "1d", "7d"];
+const PRESET_MS: Record<WindowPreset, number> = {
+  "1h": 3_600_000,
+  "8h": 8 * 3_600_000,
+  "1d": 86_400_000,
+  "7d": 7 * 86_400_000,
+};
+const DEFAULT_PRESET: WindowPreset = "1d";
 
 const PIN_PALETTE = 6; // loc-pin-c0..c5
 const STALE_MS = 10 * 60_000; // a fix older than this reads as "stale", not "live"
 const HEAT_RADIUS = 22; // px per-point heat spot — a sensible fixed value for the app
-// The selectable total span of the time window (the dual slider covers this whole
-// range). Picking one resets both thumbs to the full extent.
-type RangeDays = 1 | 3 | 7;
-const RANGE_DAYS: RangeDays[] = [1, 3, 7];
-// Decorative, evenly-spaced tick labels under the slider, per total span.
-const RANGE_TICKS: Record<RangeDays, string[]> = {
-  1: ["24h", "18h", "12h", "6h", "now"],
-  3: ["3d", "2d", "1d", "12h", "now"],
-  7: ["7d", "5d", "3d", "1d", "now"],
-};
-const DEFAULT_RANGE: RangeDays = 7;
-const DEFAULT_WIN: Win = { from: 57, to: 100 }; // ≈ last 3 days of the 7-day span
+// Live fixes for OTHER people coalesce to this cadence so the map of others doesn't
+// churn; the viewer's own device updates on every fix (snappy self-tracking).
+const OTHERS_FLUSH_MS = 10_000;
 
 function paletteClass(index: number): string {
   return `loc-pin-c${index % PIN_PALETTE}`;
@@ -115,27 +116,10 @@ function isLive(iso: string | null): boolean {
   return iso !== null && Date.now() - new Date(iso).getTime() < STALE_MS;
 }
 
-/** A window position (0..100) to an absolute epoch-ms over a `maxDays` span,
- * anchored at the call's "now". */
-function posToMs(p: number, now: number, maxDays: number): number {
-  return now - ((100 - p) / 100) * maxDays * 86_400_000;
-}
-
-function winToMs(win: Win, maxDays: number): { sinceMs: number; untilMs: number } {
+/** The [since, until) epoch-ms window for a "last N" preset, anchored at now. */
+function presetToMs(preset: WindowPreset): { sinceMs: number; untilMs: number } {
   const now = Date.now();
-  return {
-    sinceMs: posToMs(Math.min(win.from, win.to), now, maxDays),
-    untilMs: posToMs(Math.max(win.from, win.to), now, maxDays),
-  };
-}
-
-/** A window position as a relative label ("now" / "3h ago" / "5d ago") over the span. */
-function fmtPos(p: number, maxDays: number): string {
-  const d = ((100 - p) / 100) * maxDays;
-  if (d < 0.04) return "now";
-  if (d < 1) return `${Math.round(d * 24)}h ago`;
-  const days = d < 3 && !Number.isInteger(d) ? d.toFixed(1) : String(Math.round(d));
-  return `${days}d ago`;
+  return { sinceMs: now - PRESET_MS[preset], untilMs: now };
 }
 
 function LiveMap({ deps }: { deps: MemberDeps | undefined }) {
@@ -151,8 +135,7 @@ function LiveMap({ deps }: { deps: MemberDeps | undefined }) {
   const [failed, setFailed] = useState(false);
   const [sel, setSel] = useState<Selection>("all");
   const [mode, setMode] = useState<Exclude<MapMode, "live">>("trail");
-  const [win, setWin] = useState<Win>(DEFAULT_WIN);
-  const [rangeDays, setRangeDays] = useState<RangeDays>(DEFAULT_RANGE);
+  const [windowPreset, setWindowPreset] = useState<WindowPreset>(DEFAULT_PRESET);
   // Heat-view tuning (the expanded History pane): per-point spot radius (px) and
   // per-point weight (how much one fix contributes to the density ramp).
   const [heatRadius, setHeatRadius] = useState(HEAT_RADIUS);
@@ -168,6 +151,11 @@ function LiveMap({ deps }: { deps: MemberDeps | undefined }) {
   selRef.current = sel;
   const rosterRef = useRef<MemberSubject[] | null>(roster);
   rosterRef.current = roster;
+  // The viewer's own subject id — its live fixes bypass the others' coalescing.
+  const selfIdRef = useRef<string | null>(null);
+  selfIdRef.current = (roster ?? []).find((s) => s.is_self)?.subject_id ?? null;
+  // Buffered latest live fix per OTHER subject, flushed on an interval (see below).
+  const pendingRef = useRef<Map<string, LiveFix>>(new Map());
 
   // Create the Leaflet map once; a pin tap follows through to the switcher.
   useEffect(() => {
@@ -200,9 +188,11 @@ function LiveMap({ deps }: { deps: MemberDeps | undefined }) {
   }, [listRoster, listPlaces, listTimeline]);
 
   // Live fixes move each visible person's pin (so the map is live) and extend the
-  // focused person's trail. The server already scopes the stream to self + group.
+  // focused person's trail. The server already scopes the stream to self + group. The
+  // viewer's OWN device applies on every fix (snappy self-tracking); everyone else is
+  // coalesced (latest-wins) to a 10 s flush so the map of others doesn't churn.
   useEffect(() => {
-    const live = connectLive((fix: LiveFix) => {
+    const applyFix = (fix: LiveFix) => {
       setRoster(
         (prev) =>
           prev?.map((s) =>
@@ -213,6 +203,7 @@ function LiveMap({ deps }: { deps: MemberDeps | undefined }) {
                   longitude: fix.lon,
                   last_seen: fix.captured_at,
                   battery_pct: fix.battery_pct ?? s.battery_pct,
+                  velocity_mps: fix.velocity_mps,
                 }
               : s,
           ) ?? prev,
@@ -226,11 +217,25 @@ function LiveMap({ deps }: { deps: MemberDeps | undefined }) {
             longitude: fix.lon,
             accuracy_m: fix.accuracy_m,
             battery_pct: fix.battery_pct,
+            velocity_mps: fix.velocity_mps,
           },
         ]);
       }
+    };
+    const live = connectLive((fix: LiveFix) => {
+      if (fix.subject_id === selfIdRef.current) applyFix(fix);
+      else pendingRef.current.set(fix.subject_id, fix); // latest wins until the flush
     });
-    return () => live.close();
+    const flush = window.setInterval(() => {
+      if (pendingRef.current.size === 0) return;
+      const fixes = [...pendingRef.current.values()];
+      pendingRef.current.clear();
+      for (const f of fixes) applyFix(f);
+    }, OTHERS_FLUSH_MS);
+    return () => {
+      live.close();
+      window.clearInterval(flush);
+    };
   }, []);
 
   // The focused person's trail over the time window (Everyone → no trail).
@@ -240,7 +245,7 @@ function LiveMap({ deps }: { deps: MemberDeps | undefined }) {
       return;
     }
     let stale = false;
-    const { sinceMs, untilMs } = winToMs(win, rangeDays);
+    const { sinceMs, untilMs } = presetToMs(windowPreset);
     listPositions(sel, new Date(sinceMs).toISOString(), new Date(untilMs).toISOString())
       .then((fixes) => {
         if (!stale) setTrail(fixes);
@@ -251,7 +256,7 @@ function LiveMap({ deps }: { deps: MemberDeps | undefined }) {
     return () => {
       stale = true;
     };
-  }, [sel, win, rangeDays, listPositions]);
+  }, [sel, windowPreset, listPositions]);
 
   // Selecting a person recenters the map on them (their current pin at select time).
   useEffect(() => {
@@ -313,13 +318,6 @@ function LiveMap({ deps }: { deps: MemberDeps | undefined }) {
     writeTileScheme(s);
   };
 
-  // Picking a total span resets both thumbs to the full extent so the dual slider
-  // covers the whole chosen range.
-  const pickRange = (d: RangeDays) => {
-    setRangeDays(d);
-    setWin({ from: 0, to: 100 });
-  };
-
   return (
     <div className="livemap">
       <div className="livemap-canvas" ref={canvas} data-testid="map-canvas" />
@@ -331,21 +329,18 @@ function LiveMap({ deps }: { deps: MemberDeps | undefined }) {
         sel={sel}
         colorOf={colorOf}
         timeline={timeline}
-        win={win}
-        rangeDays={rangeDays}
+        windowPreset={windowPreset}
         onPick={setSel}
         onClose={() => setSheet(null)}
       />
       <HistorySheet
         open={sheet === "history"}
         mode={mode}
-        win={win}
-        rangeDays={rangeDays}
+        windowPreset={windowPreset}
         heatRadius={heatRadius}
         heatWeight={heatWeight}
         onMode={setMode}
-        onWin={setWin}
-        onRange={pickRange}
+        onPreset={setWindowPreset}
         onRadius={setHeatRadius}
         onWeight={setHeatWeight}
         onClose={() => setSheet(null)}
@@ -497,6 +492,18 @@ function DockBar({
               <span className="lm-bar-nm">{m.label}</span>
               <span className="lm-bar-sub">
                 <PresenceDot live={isLive(m.last_seen)} /> {presence(m)}
+                {m.battery_pct !== null && (
+                  <>
+                    {" · "}
+                    <Battery pct={m.battery_pct} />
+                  </>
+                )}
+                {travelingSpeedMph(m.velocity_mps) && (
+                  <>
+                    {" · "}
+                    <span className="lm-spd">{travelingSpeedMph(m.velocity_mps)}</span>
+                  </>
+                )}
               </span>
             </span>
           </>
@@ -578,8 +585,7 @@ function DetailsSheet({
   sel,
   colorOf,
   timeline,
-  win,
-  rangeDays,
+  windowPreset,
   onPick,
   onClose,
 }: {
@@ -588,8 +594,7 @@ function DetailsSheet({
   sel: Selection;
   colorOf: Map<string, string>;
   timeline: TimelineEntry[];
-  win: Win;
-  rangeDays: RangeDays;
+  windowPreset: WindowPreset;
   onPick: (s: Selection) => void;
   onClose: () => void;
 }) {
@@ -609,13 +614,7 @@ function DetailsSheet({
       {sel === "all" ? (
         <RosterList roster={roster} colorOf={colorOf} onPick={onPick} />
       ) : (
-        <PersonActivity
-          roster={roster}
-          sel={sel}
-          timeline={timeline}
-          win={win}
-          rangeDays={rangeDays}
-        />
+        <PersonActivity roster={roster} sel={sel} timeline={timeline} windowPreset={windowPreset} />
       )}
       <PrivacyLine />
     </div>
@@ -663,18 +662,16 @@ function PersonActivity({
   roster,
   sel,
   timeline,
-  win,
-  rangeDays,
+  windowPreset,
 }: {
   roster: MemberSubject[];
   sel: Selection;
   timeline: TimelineEntry[];
-  win: Win;
-  rangeDays: RangeDays;
+  windowPreset: WindowPreset;
 }) {
   const m = roster.find((s) => s.subject_id === sel);
   if (!m) return null;
-  const actions = recentActions(timeline, m.subject_id, win, rangeDays);
+  const actions = recentActions(timeline, m.subject_id, windowPreset);
   return (
     <>
       <div className="lm-sec-h">{m.label} · recent activity</div>
@@ -708,26 +705,22 @@ function PersonActivity({
 function HistorySheet({
   open,
   mode,
-  win,
-  rangeDays,
+  windowPreset,
   heatRadius,
   heatWeight,
   onMode,
-  onWin,
-  onRange,
+  onPreset,
   onRadius,
   onWeight,
   onClose,
 }: {
   open: boolean;
   mode: Exclude<MapMode, "live">;
-  win: Win;
-  rangeDays: RangeDays;
+  windowPreset: WindowPreset;
   heatRadius: number;
   heatWeight: number;
   onMode: (m: Exclude<MapMode, "live">) => void;
-  onWin: (w: Win) => void;
-  onRange: (d: RangeDays) => void;
+  onPreset: (p: WindowPreset) => void;
   onRadius: (r: number) => void;
   onWeight: (w: number) => void;
   onClose: () => void;
@@ -772,7 +765,7 @@ function HistorySheet({
         />
       )}
       <div className="lm-sec-h">Time window</div>
-      <TimeWindow win={win} rangeDays={rangeDays} onWin={onWin} onRange={onRange} />
+      <WindowPresets preset={windowPreset} onPreset={onPreset} />
       <div className="lm-priv">Family-only · names + times only, never a coordinate.</div>
     </div>
   );
@@ -821,67 +814,27 @@ function HeatTuning({
   );
 }
 
-function TimeWindow({
-  win,
-  rangeDays,
-  onWin,
-  onRange,
+/** The trail/activity time window as four "last N" presets (1h/8h/1d/7d). */
+function WindowPresets({
+  preset,
+  onPreset,
 }: {
-  win: Win;
-  rangeDays: RangeDays;
-  onWin: (w: Win) => void;
-  onRange: (d: RangeDays) => void;
+  preset: WindowPreset;
+  onPreset: (p: WindowPreset) => void;
 }) {
-  const lo = Math.min(win.from, win.to);
-  const hi = Math.max(win.from, win.to);
   return (
-    <div className="lm-win">
-      <div className="lm-seg lm-rangepick">
-        {RANGE_DAYS.map((d) => (
-          <button
-            key={d}
-            type="button"
-            className={rangeDays === d ? "on" : ""}
-            aria-pressed={rangeDays === d}
-            onClick={() => onRange(d)}
-          >
-            {d}d
-          </button>
-        ))}
-      </div>
-      <div className="lm-winlbl">
-        <span>
-          From <b>{fmtPos(lo, rangeDays)}</b>
-        </span>
-        <span>
-          to <b>{fmtPos(hi, rangeDays)}</b>
-        </span>
-      </div>
-      <div className="lm-range">
-        <div className="lm-range-track" />
-        <div className="lm-range-fill" style={{ left: `${lo}%`, width: `${hi - lo}%` }} />
-        <input
-          type="range"
-          min={0}
-          max={100}
-          value={win.from}
-          aria-label="Window start"
-          onChange={(e) => onWin({ ...win, from: Number(e.target.value) })}
-        />
-        <input
-          type="range"
-          min={0}
-          max={100}
-          value={win.to}
-          aria-label="Window end"
-          onChange={(e) => onWin({ ...win, to: Number(e.target.value) })}
-        />
-      </div>
-      <div className="lm-ticks">
-        {RANGE_TICKS[rangeDays].map((t) => (
-          <span key={t}>{t}</span>
-        ))}
-      </div>
+    <div className="lm-seg lm-winpick">
+      {WINDOW_PRESETS.map((p) => (
+        <button
+          key={p}
+          type="button"
+          className={preset === p ? "on" : ""}
+          aria-pressed={preset === p}
+          onClick={() => onPreset(p)}
+        >
+          {p}
+        </button>
+      ))}
     </div>
   );
 }
@@ -908,10 +861,9 @@ function PullChevron() {
 function recentActions(
   timeline: TimelineEntry[],
   subjectId: string,
-  win: Win,
-  maxDays: number,
+  windowPreset: WindowPreset,
 ): TimelineEntry[] {
-  const { sinceMs, untilMs } = winToMs(win, maxDays);
+  const { sinceMs, untilMs } = presetToMs(windowPreset);
   return timeline
     .filter((e) => {
       if (e.subject_id !== subjectId) return false;

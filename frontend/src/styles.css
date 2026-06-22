@@ -12061,6 +12061,14 @@ input.ld-title {
   stroke: var(--steel);
   stroke-width: 3;
 }
+/* Speed-tinted trail: the stroke colour is set inline per segment (the speed ramp),
+   so this carries only the width/round-caps — never a `stroke` colour, or it would
+   override the inline value. */
+.loc-lf-trail-seg {
+  stroke-width: 4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
 .loc-lf-start {
   fill: var(--green);
   fill-opacity: 1;
@@ -12796,6 +12804,11 @@ input.ld-title {
   align-items: center;
   gap: 5px;
 }
+/* Current speed in the dock sub-line — the new info, so it reads brighter. */
+.lm-spd {
+  color: var(--text);
+  font-weight: 600;
+}
 .lm-pull {
   flex: 0 0 auto;
   width: 72px;
@@ -13022,8 +13035,8 @@ input.ld-title {
   background: var(--location);
   color: #04100f;
 }
-/* The 1d/3d/7d total-range picker sits at the top of the time window. */
-.lm-rangepick {
+/* The 1h/8h/1d/7d time-window presets. */
+.lm-winpick {
   margin: 0 0 12px;
 }
 /* Heat-view tuning sliders (Spot radius / Fix weight) — only shown in Heat mode. */

@@ -11,6 +11,7 @@ export interface LiveFix {
   lon: number;
   accuracy_m: number | null;
   battery_pct: number | null;
+  velocity_mps: number | null;
   captured_at: string;
 }
 

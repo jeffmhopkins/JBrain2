@@ -1,0 +1,231 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>JBrain360 — trail colored by speed (gradient)</title>
+<style>
+  :root{
+    --bg:#0e0f11;--surface:#17181b;--surface-2:#1e2024;--border:#26282c;
+    --text:#e6e7e9;--text-2:#9a9da3;--text-3:#5c5f66;--scrim:rgba(14,15,17,.55);
+    --green:#8fbc9a;--amber:#c9a36a;--location:#6fb6b1;
+    --grid:#191b1f;--road:#23262c;--park:#15211a;--water:#13232a;
+    --float:rgba(22,24,28,.74);
+    --p3:#6fb6b1;
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  body{margin:0;background:#05070a;color:var(--text);
+    font:15px/1.5 system-ui,-apple-system,sans-serif;display:grid;place-items:center;min-height:100vh;
+    gap:18px;padding:24px}
+  .frame{display:flex;gap:28px;flex-wrap:wrap;justify-content:center;align-items:flex-start}
+  .phone{width:390px;height:800px;background:var(--bg);border-radius:32px;overflow:hidden;
+    position:relative;box-shadow:0 24px 70px rgba(0,0,0,.5)}
+
+  /* dark schematic basemap (stands in for CARTO Dark Matter) */
+  .mapwrap{position:absolute;inset:0;overflow:hidden}
+  .map{position:absolute;inset:0;
+    background:
+      repeating-linear-gradient(0deg,transparent 0 31px,var(--grid) 31px 32px),
+      repeating-linear-gradient(90deg,transparent 0 31px,var(--grid) 31px 32px),
+      var(--bg)}
+  .road{position:absolute;background:var(--road);border-radius:3px}
+  .park{position:absolute;background:var(--park);border-radius:45% 55% 50% 45%}
+  .water{position:absolute;background:var(--water)}
+
+  .float{background:var(--float);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);
+    border:1px solid var(--border);box-shadow:0 6px 22px var(--scrim)}
+
+  .status{position:absolute;top:0;left:0;right:0;height:30px;display:flex;align-items:center;
+    justify-content:space-between;padding:0 20px;font-size:13px;font-weight:600;z-index:9;pointer-events:none}
+
+  /* trail svg */
+  svg.trail{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:3}
+  svg.trail path{fill:none;stroke-linecap:round;stroke-linejoin:round}
+
+  /* moving head pin */
+  .head{position:absolute;z-index:4;transform:translate(-50%,-50%)}
+  .head .dot{width:18px;height:18px;border-radius:50%;background:#fff;border:3px solid var(--bg);
+    box-shadow:0 0 0 4px rgba(255,255,255,.18),0 3px 8px rgba(0,0,0,.6)}
+  .head .spd{position:absolute;left:50%;top:-8px;transform:translate(-50%,-100%);white-space:nowrap;
+    font-size:12px;font-weight:700;padding:3px 9px;border-radius:9px}
+  .head .spd::after{content:"";position:absolute;left:50%;top:100%;transform:translateX(-50%);
+    border:5px solid transparent;border-top-color:var(--float)}
+
+  /* bottom dock — selected person + battery + speed (mirrors the real lm-bar) */
+  .bar{position:absolute;left:10px;right:10px;bottom:14px;z-index:8;border-radius:18px;
+    padding:11px 14px;display:flex;align-items:center;gap:11px}
+  .av{width:38px;height:38px;border-radius:50%;display:grid;place-items:center;background:var(--p3);
+    color:#0c1012;font-weight:700;font-size:15px;flex:0 0 auto}
+  .bar-txt{display:flex;flex-direction:column;min-width:0;flex:1}
+  .bar-nm{font-weight:650}
+  .bar-sub{font-size:12.5px;color:var(--text-2);display:flex;align-items:center;gap:7px}
+  .dotlive{width:8px;height:8px;border-radius:50%;background:var(--green);flex:0 0 auto;
+    box-shadow:0 0 0 3px color-mix(in srgb,var(--green) 26%,transparent)}
+  .sep{color:var(--text-3)}
+  .batt{display:inline-flex;align-items:center;gap:5px;color:var(--text-2);font-weight:600}
+  .batt .cell{width:22px;height:11px;border:1.5px solid var(--text-3);border-radius:2.5px;position:relative;padding:1px}
+  .batt .cell::after{content:"";position:absolute;left:100%;top:50%;transform:translateY(-50%);
+    width:2px;height:5px;background:var(--text-3);border-radius:0 1px 1px 0}
+  .batt .fill{display:block;height:100%;background:var(--green);border-radius:1px}
+  .spdchip{font-weight:700;color:var(--text)}
+  .pull{flex:0 0 auto;display:flex;align-items:center;gap:6px;color:var(--text-2);font-size:13px;font-weight:600}
+
+  /* speed legend */
+  .legend{position:absolute;right:12px;top:78px;z-index:8;border-radius:14px;padding:10px 11px;width:132px}
+  .legend h4{margin:0 0 7px;font-size:11px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--text-2)}
+  .legend .ramp{height:10px;border-radius:6px;margin-bottom:5px}
+  .legend .ticks{display:flex;justify-content:space-between;font-size:10.5px;color:var(--text-3);font-variant-numeric:tabular-nums}
+
+  .caption{max-width:820px;color:var(--text-2);font-size:13.5px;text-align:center;line-height:1.6}
+  .caption b{color:var(--text)}
+  .variants{display:flex;flex-direction:column;gap:10px;width:300px}
+  .variants h3{margin:2px 0 2px;font-size:13px;color:var(--text-2);font-weight:650}
+  .swatch{border-radius:12px;padding:10px 12px;border:1px solid var(--border);background:var(--surface)}
+  .swatch .nm{font-size:12.5px;color:var(--text);font-weight:600;margin-bottom:7px;display:flex;justify-content:space-between}
+  .swatch .nm small{color:var(--text-3);font-weight:500}
+  .swatch .ramp{height:12px;border-radius:7px}
+</style>
+</head>
+<body>
+  <div class="frame">
+    <div class="phone">
+      <div class="mapwrap">
+        <div class="map" id="map">
+          <!-- schematic streets/landmarks for context -->
+          <div class="water" style="left:-20px;top:430px;width:200px;height:240px;transform:rotate(-12deg);border-radius:40% 60% 55% 45%"></div>
+          <div class="park" style="right:24px;top:90px;width:120px;height:96px"></div>
+          <div class="road" style="left:60px;top:0;width:14px;height:800px;transform:rotate(6deg)"></div>
+          <div class="road" style="left:0;top:300px;width:390px;height:13px;transform:rotate(-3deg)"></div>
+          <div class="road" style="left:120px;top:0;width:11px;height:800px;transform:rotate(-9deg)"></div>
+          <div class="road" style="left:0;top:560px;width:390px;height:12px;transform:rotate(4deg)"></div>
+        </div>
+
+        <svg class="trail" id="trailSvg" viewBox="0 0 390 800" preserveAspectRatio="none"></svg>
+        <div class="head" id="head">
+          <div class="spd float" id="headSpd">31 mph</div>
+          <div class="dot" id="headDot"></div>
+        </div>
+      </div>
+
+      <div class="status"><span>9:41</span><span>JBrain360</span></div>
+
+      <div class="legend float">
+        <h4>Speed</h4>
+        <div class="ramp" id="legendRamp"></div>
+        <div class="ticks"><span>0</span><span>mph</span><span id="legMax">60+</span></div>
+      </div>
+
+      <div class="bar float">
+        <span class="av">C</span>
+        <span class="bar-txt">
+          <span class="bar-nm">Celine</span>
+          <span class="bar-sub">
+            <span class="dotlive"></span> Live · 4m ago
+            <span class="sep">·</span>
+            <span class="batt"><span class="cell"><span class="fill" style="width:72%"></span></span>72%</span>
+            <span class="sep">·</span>
+            <span class="spdchip">31 mph</span>
+          </span>
+        </span>
+        <span class="pull">History ⌃</span>
+      </div>
+    </div>
+
+    <div class="variants">
+      <div class="caption" style="text-align:left">
+        <b>Trail colored by speed.</b> Each segment of the path is tinted by how fast the phone was
+        moving there — so a glance shows where they were crawling vs. cruising. The head pin and the
+        bottom dock both surface the <b>current</b> speed (hidden when stopped). Ramp options:
+      </div>
+      <h3>Color ramp candidates</h3>
+      <div class="swatch">
+        <div class="nm">A · Turbo (blue→red) <small>chosen</small></div>
+        <div class="ramp" id="swA"></div>
+      </div>
+      <div class="swatch">
+        <div class="nm">B · Viridis <small>colorblind-safe</small></div>
+        <div class="ramp" id="swB"></div>
+      </div>
+      <div class="swatch">
+        <div class="nm">C · Cool→Warm <small>muted, on-theme</small></div>
+        <div class="ramp" id="swC"></div>
+      </div>
+    </div>
+  </div>
+
+<script>
+// --- speed → color ramps -------------------------------------------------
+// Each ramp is a list of [stop 0..1, [r,g,b]]; we lerp between stops.
+const RAMPS = {
+  // A: "turbo"-ish blue → cyan → green → yellow → red (high legibility)
+  turbo: [[0,[58,110,200]],[0.3,[60,180,170]],[0.55,[120,200,90]],[0.78,[230,190,70]],[1,[224,86,79]]],
+  // B: viridis (colorblind-safe), dark-blue → teal → green → yellow
+  viridis: [[0,[68,1,84]],[0.35,[59,82,139]],[0.6,[33,145,140]],[0.8,[94,201,98]],[1,[253,231,37]]],
+  // C: cool→warm, muted to sit on the dark CARTO basemap
+  coolwarm: [[0,[111,182,177]],[0.5,[201,163,106]],[1,[207,138,143]]],
+};
+const ACTIVE = "turbo";
+const SPEED_MAX = 60; // mph — top of the ramp
+
+function lerp(a,b,t){return a+(b-a)*t;}
+function rampColor(ramp, t){
+  t=Math.max(0,Math.min(1,t));
+  for(let i=0;i<ramp.length-1;i++){
+    const [s0,c0]=ramp[i], [s1,c1]=ramp[i+1];
+    if(t>=s0 && t<=s1){
+      const k=(t-s0)/(s1-s0||1);
+      return `rgb(${Math.round(lerp(c0[0],c1[0],k))},${Math.round(lerp(c0[1],c1[1],k))},${Math.round(lerp(c0[2],c1[2],k))})`;
+    }
+  }
+  return `rgb(${ramp[ramp.length-1][1].join(",")})`;
+}
+function cssGradient(ramp){
+  return "linear-gradient(90deg," + ramp.map(([s,c])=>`rgb(${c.join(",")}) ${Math.round(s*100)}%`).join(",") + ")";
+}
+
+// --- a synthetic trip: points along a path, each with a speed (mph) -------
+// Speed profile tells the story: leave home slow, accelerate onto a road,
+// cruise, slow for a turn, speed up, then ease to a stop at the head.
+const PATH = [
+  [78,690, 3],[96,648, 9],[112,604,19],[126,556,28],[138,505,34],
+  [150,452,41],[165,402,47],[183,356,52],[150,316,30],[120,286,14],
+  [128,242,22],[150,196,38],[176,150,49],[205,112,44],[232,86, 31],
+];
+
+function buildTrail(){
+  const svg=document.getElementById("trailSvg");
+  const ramp=RAMPS[ACTIVE];
+  svg.innerHTML="";
+  // Soft dark casing under the trail so it reads on any basemap tile.
+  for(let i=0;i<PATH.length-1;i++){
+    const [x0,y0]=PATH[i], [x1,y1]=PATH[i+1];
+    const mid=(PATH[i][2]+PATH[i+1][2])/2;
+    const casing=document.createElementNS("http://www.w3.org/2000/svg","path");
+    casing.setAttribute("d",`M${x0} ${y0} L${x1} ${y1}`);
+    casing.setAttribute("stroke","rgba(5,7,10,.55)");
+    casing.setAttribute("stroke-width","11");
+    svg.appendChild(casing);
+    const seg=document.createElementNS("http://www.w3.org/2000/svg","path");
+    seg.setAttribute("d",`M${x0} ${y0} L${x1} ${y1}`);
+    seg.setAttribute("stroke",rampColor(ramp,mid/SPEED_MAX));
+    seg.setAttribute("stroke-width","6");
+    svg.appendChild(seg);
+  }
+  // Head pin at the most recent point.
+  const head=PATH[PATH.length-1];
+  const h=document.getElementById("head");
+  h.style.left=head[0]+"px"; h.style.top=head[1]+"px";
+  document.getElementById("headSpd").textContent=head[2]+" mph";
+  document.getElementById("headSpd").style.background=rampColor(ramp,head[2]/SPEED_MAX);
+  document.getElementById("headSpd").style.color="#0c1012";
+}
+
+document.getElementById("legendRamp").style.background=cssGradient(RAMPS[ACTIVE]);
+document.getElementById("legMax").textContent=SPEED_MAX+"+";
+document.getElementById("swA").style.background=cssGradient(RAMPS.turbo);
+document.getElementById("swB").style.background=cssGradient(RAMPS.viridis);
+document.getElementById("swC").style.background=cssGradient(RAMPS.coolwarm);
+buildTrail();
+</script>
+</body>
+</html>

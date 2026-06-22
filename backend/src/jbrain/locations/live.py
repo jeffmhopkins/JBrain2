@@ -36,6 +36,7 @@ class LiveFix:
     longitude: float
     accuracy_m: float | None
     battery_pct: int | None
+    velocity_mps: float | None
     captured_at: datetime
 
 
@@ -56,6 +57,7 @@ def live_fix_from_owntracks(subject_id: str, body: object) -> LiveFix | None:
         longitude=loc.lon,
         accuracy_m=loc.acc,
         battery_pct=loc.batt,
+        velocity_mps=loc.vel / 3.6 if loc.vel is not None else None,  # km/h -> m/s
         captured_at=datetime.fromtimestamp(loc.tst, UTC),
     )
 

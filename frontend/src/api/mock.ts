@@ -2328,6 +2328,7 @@ function mockTrail(): {
   longitude: number;
   accuracy_m: number | null;
   battery_pct: number | null;
+  velocity_mps: number | null;
 }[] {
   const out = [];
   for (let i = 0; i < 40; i++) {
@@ -2340,6 +2341,9 @@ function mockTrail(): {
       longitude: -74.004 + 0.003 * t + (Math.random() - 0.5) * 0.0002,
       accuracy_m: 8,
       battery_pct: 80 - Math.floor(i / 4),
+      // A speed hump (0 → fast → 0) on the way, then near-still at the dwell, so the
+      // trail shows the full speed-colour ramp in the mock.
+      velocity_mps: i < 25 ? Math.round(13 * Math.sin((i / 25) * Math.PI) * 10) / 10 : 0.2,
     });
   }
   return out;
@@ -3072,6 +3076,8 @@ export const mockFetch: typeof fetch = async (input, init) => {
         connection: "wifi",
         latitude: 40.014,
         longitude: -74.205,
+        velocity_mps: null,
+        is_self: true,
       },
       {
         subject_id: "subj-sam",
@@ -3081,6 +3087,8 @@ export const mockFetch: typeof fetch = async (input, init) => {
         connection: "cell",
         latitude: 40.02,
         longitude: -74.19,
+        velocity_mps: 13.4, // ≈ 30 mph — traveling
+        is_self: false,
       },
       {
         subject_id: "subj-ro",
@@ -3090,6 +3098,8 @@ export const mockFetch: typeof fetch = async (input, init) => {
         connection: null,
         latitude: 40.008,
         longitude: -74.225,
+        velocity_mps: null,
+        is_self: false,
       },
     ]);
   }

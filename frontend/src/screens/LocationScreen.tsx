@@ -24,6 +24,7 @@ import { PencilIcon, RefreshIcon, TrashIcon, XIcon } from "../components/icons";
 import { type Drag, RAIL_WIDTH, beginDrag, endDrag, moveDrag } from "../notes/swipe";
 import { LocationDigestPanel } from "./LocationDigestPanel";
 import { LocationMapTab, type PlaceNoteInput } from "./LocationMapTab";
+import { travelingSpeedMph } from "./speed";
 
 type Tab = "devices" | "timeline" | "map";
 
@@ -644,23 +645,11 @@ function deviceStatus(d: DeviceSummary): string {
   }
   const parts = [`last seen ${relativeTime(d.last_seen)}`];
   if (d.battery_pct !== null) parts.push(`${d.battery_pct}% battery`);
-  const speed = travelingSpeed(d.velocity_mps);
+  const speed = travelingSpeedMph(d.velocity_mps);
   if (speed !== null) parts.push(speed);
   if (d.connection) parts.push(d.connection);
   parts.push(`${d.fix_count.toLocaleString()} ${d.fix_count === 1 ? "fix" : "fixes"}`);
   return parts.join(" · ");
-}
-
-// Below this speed a fix is "not traveling" — GPS jitter reads a crawl while the
-// phone sits still, so the status hides it rather than show a meaningless 1 mph.
-const TRAVELING_MIN_MPS = 5 / 3.6; // 5 km/h
-const MPS_TO_MPH = 2.2369363;
-
-/** A speed in mph for the status line, or null when the device isn't traveling
- * (no speed reported, or below the stationary cutoff). */
-function travelingSpeed(velocityMps: number | null): string | null {
-  if (velocityMps === null || velocityMps < TRAVELING_MIN_MPS) return null;
-  return `${Math.round(velocityMps * MPS_TO_MPH)} mph`;
 }
 
 const MINUTE = 60_000;

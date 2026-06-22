@@ -51,6 +51,15 @@ async function defaultFilePlaceNote(p: PlaceNoteInput): Promise<void> {
 
 const DEFAULT_DAYS = 7;
 
+// Quick "last N" windows (mirror the app's presets); they set the From/To inputs,
+// which stay for precise historical ranges.
+const WINDOW_PRESETS: [label: string, ms: number][] = [
+  ["1h", 3_600_000],
+  ["8h", 8 * 3_600_000],
+  ["1d", 86_400_000],
+  ["7d", 7 * 86_400_000],
+];
+
 type Meta =
   | { phase: "loading" }
   | { phase: "error" }
@@ -58,13 +67,17 @@ type Meta =
 
 type Fixes = { phase: "loading" } | { phase: "error" } | { phase: "done"; fixes: LocationFix[] };
 
-// A local "YYYY-MM-DDTHH:mm" for a <input type="datetime-local">, `offsetDays`
-// from now (keeps the current time of day, so the window is a rolling span).
+// A local "YYYY-MM-DDTHH:mm" for a <input type="datetime-local">, for a given Date.
+function localFromDate(d: Date): string {
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+// `offsetDays` from now (keeps the current time of day, so the window is a rolling span).
 function localDateTime(offsetDays: number): string {
   const d = new Date();
   d.setDate(d.getDate() + offsetDays);
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  return localFromDate(d);
 }
 
 // The picker's local date-time strings become the [since, until) instant window.
@@ -219,6 +232,22 @@ export function LocationMapTab({ deps }: { deps: LocationDeps | undefined }) {
                 }}
               >
                 {SCHEME_LABEL[s]}
+              </button>
+            ))}
+          </div>
+          <div className="seg-row">
+            {WINDOW_PRESETS.map(([label, ms]) => (
+              <button
+                key={label}
+                type="button"
+                className="seg"
+                onClick={() => {
+                  const now = new Date();
+                  setUntil(localFromDate(now));
+                  setSince(localFromDate(new Date(now.getTime() - ms)));
+                }}
+              >
+                {label}
               </button>
             ))}
           </div>

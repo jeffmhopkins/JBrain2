@@ -89,6 +89,7 @@ class FixPoint:
     longitude: float
     accuracy_m: float | None
     battery_pct: int | None
+    velocity_mps: float | None = None
 
 
 @dataclass(frozen=True)
@@ -193,6 +194,11 @@ class MemberSubject:
     connection: str | None
     latitude: float | None
     longitude: float | None
+    # The latest fix's speed (m/s), for the "current speed (if moving)" readout; null
+    # until the first fix. `is_self` marks the viewer's own device so the live map can
+    # update it on every fix while others coalesce.
+    velocity_mps: float | None = None
+    is_self: bool = False
 
 
 class SqlLocationRepo:
@@ -305,12 +311,12 @@ class SqlLocationRepo:
                         "  SELECT subject_id, display_name FROM app.visible_subjects(:viewer)"
                         "), latest AS ("
                         "  SELECT DISTINCT ON (subject_id) subject_id, captured_at,"
-                        "    battery_pct, connection, latitude, longitude"
+                        "    battery_pct, connection, latitude, longitude, velocity_mps"
                         "  FROM app.location_fixes ORDER BY subject_id, captured_at DESC"
                         ")"
                         " SELECT v.subject_id::text AS sid, v.display_name AS label,"
                         "   l.captured_at AS last_seen, l.battery_pct, l.connection,"
-                        "   l.latitude, l.longitude"
+                        "   l.latitude, l.longitude, l.velocity_mps"
                         " FROM vis v LEFT JOIN latest l ON l.subject_id = v.subject_id"
                         " ORDER BY v.display_name"
                     ),
@@ -326,6 +332,8 @@ class SqlLocationRepo:
                 connection=r.connection,
                 latitude=r.latitude,
                 longitude=r.longitude,
+                velocity_mps=r.velocity_mps,
+                is_self=r.sid == viewer_subject_id,
             )
             for r in rows
         ]
@@ -347,7 +355,8 @@ class SqlLocationRepo:
             rows = (
                 await session.execute(
                     text(
-                        "SELECT captured_at, latitude, longitude, accuracy_m, battery_pct"
+                        "SELECT captured_at, latitude, longitude, accuracy_m, battery_pct,"
+                        "   velocity_mps"
                         " FROM app.location_fixes"
                         " WHERE subject_id = cast(:sid AS uuid)"
                         "   AND captured_at >= :since AND captured_at < :until"
@@ -363,6 +372,7 @@ class SqlLocationRepo:
                 longitude=r.longitude,
                 accuracy_m=r.accuracy_m,
                 battery_pct=r.battery_pct,
+                velocity_mps=r.velocity_mps,
             )
             for r in rows
         ]
@@ -408,7 +418,8 @@ class SqlLocationRepo:
             rows = (
                 await session.execute(
                     text(
-                        "SELECT captured_at, latitude, longitude, accuracy_m, battery_pct"
+                        "SELECT captured_at, latitude, longitude, accuracy_m, battery_pct,"
+                        "   velocity_mps"
                         " FROM app.location_fixes"
                         " WHERE subject_id = cast(:sid AS uuid)"
                         "   AND captured_at >= :since AND captured_at < :until"
@@ -425,6 +436,7 @@ class SqlLocationRepo:
                 longitude=r.longitude,
                 accuracy_m=r.accuracy_m,
                 battery_pct=r.battery_pct,
+                velocity_mps=r.velocity_mps,
             )
             for r in rows
         ]
