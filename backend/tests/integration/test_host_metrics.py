@@ -58,7 +58,7 @@ async def test_host_metrics_owner_only(maker: async_sessionmaker) -> None:
 
     for table in ("host_metrics", "host_metrics_hourly"):
         async with scoped_session(maker, OWNER) as s:
-            owner_rows = (await s.execute(text(f"SELECT count(*) FROM app.{table}"))).scalar()
+            owner_rows = (await s.execute(text(f"SELECT count(*) FROM app.{table}"))).scalar_one()
         assert owner_rows >= 1, table
         async with scoped_session(maker, NON_OWNER) as s:
             other_rows = (await s.execute(text(f"SELECT count(*) FROM app.{table}"))).scalar()
@@ -126,5 +126,5 @@ async def test_prune_drops_old_rows(maker: async_sessionmaker) -> None:
     assert raw_deleted == 1  # the 40-day-old raw sample, not the fresh one
     assert hourly_deleted == 1  # the 400-day-old bucket
     async with scoped_session(maker, OWNER) as s:
-        remaining = (await s.execute(text("SELECT count(*) FROM app.host_metrics"))).scalar()
+        remaining = (await s.execute(text("SELECT count(*) FROM app.host_metrics"))).scalar_one()
     assert remaining >= 1  # the fresh sample survives

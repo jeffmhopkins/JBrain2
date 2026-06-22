@@ -7,6 +7,7 @@ from typing import Any
 import pytest
 
 from jbrain.agent import metricstools
+from jbrain.agent.loop import ToolOutput
 from jbrain.db.session import SessionContext
 
 
@@ -48,6 +49,7 @@ async def test_summarizes_each_metric(monkeypatch: pytest.MonkeyPatch) -> None:
     assert "Memory used: now 50%" in out
     assert "Fan (hottest): now 3000 rpm, peak 3000 rpm" in out
     # It also emits a server_metrics view carrying the raw points for the chart.
+    assert isinstance(out, ToolOutput)
     assert out.view is not None
     assert out.view.view == "server_metrics"
     assert out.view.surface == "inline"
@@ -64,6 +66,7 @@ async def test_empty_history_is_stated(monkeypatch: pytest.MonkeyPatch) -> None:
 
     out = await handler({"range": "7d"}, _Ctx())  # type: ignore[arg-type]
     assert "No host-metrics samples" in out
+    assert isinstance(out, ToolOutput)
     assert out.view is None  # nothing to plot
 
 
