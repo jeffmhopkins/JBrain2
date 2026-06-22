@@ -41,6 +41,7 @@ const METRICS: OpsMetrics = {
   load_15m: 0.62,
   uptime_seconds: 5 * 3600 + 40 * 60,
   gpu_busy_percent: 41,
+  apu_power_w: 28.5,
   fan_rpm: { "CPU fan": 2100, "System fan": 1850 },
   containers: [{ service: "api", mem_bytes: 87 * 2 ** 20 }],
   db: {
@@ -72,6 +73,7 @@ const HISTORY: MetricsHistory = {
       disk_total_bytes: 2000 * 2 ** 30,
       gpu_busy_percent: 40,
       fan_rpm_max: 2100,
+      power_w: 14.0,
     },
     {
       t: "2026-06-22T01:00:00Z",
@@ -85,6 +87,7 @@ const HISTORY: MetricsHistory = {
       disk_total_bytes: 2000 * 2 ** 30,
       gpu_busy_percent: 70,
       fan_rpm_max: 2600,
+      power_w: 31.0,
     },
   ],
 };
@@ -169,6 +172,9 @@ describe("OpsScreen", () => {
     // Fan telemetry renders one labelled row, RPM per fan.
     expect(screen.getByText("Fans")).toBeInTheDocument();
     expect(screen.getByText("CPU fan 2100rpm · System fan 1850rpm")).toBeInTheDocument();
+    // APU package power renders its own row.
+    expect(screen.getByText("Power")).toBeInTheDocument();
+    expect(screen.getByText("28.5 W", { exact: false })).toBeInTheDocument();
     // Server update is folded into the Load row, not a separate footer card.
     expect(screen.getByRole("button", { name: "Update server" })).toBeInTheDocument();
   });

@@ -389,6 +389,7 @@ describe("ToolView registry", () => {
       disk_total_bytes: 2000 * 2 ** 30,
       gpu_busy_percent: 40,
       fan_rpm_max: 2100,
+      power_w: 14.0,
       ...over,
     });
     const { getByText } = render(
@@ -398,7 +399,10 @@ describe("ToolView registry", () => {
           data: {
             range: "24h",
             resolution: "raw",
-            points: [point({ load_1m: 0.5 }), point({ load_1m: 1.5, fan_rpm_max: 2600 })],
+            points: [
+              point({ load_1m: 0.5 }),
+              point({ load_1m: 1.5, fan_rpm_max: 2600, power_w: 31.0 }),
+            ],
           },
         })}
       />,
@@ -406,9 +410,11 @@ describe("ToolView registry", () => {
     expect(getByText("Server health · 24h")).toBeInTheDocument();
     expect(getByText("2 30s buckets")).toBeInTheDocument();
     expect(getByText("CPU load")).toBeInTheDocument();
-    // Peak readout reflects the higher bucket (load 1.5, fan 2600).
+    expect(getByText("APU power")).toBeInTheDocument();
+    // Peak readout reflects the higher bucket (load 1.5, fan 2600, power 31W).
     expect(getByText("1.50 peak")).toBeInTheDocument();
     expect(getByText("2600 rpm peak")).toBeInTheDocument();
+    expect(getByText("31.0 W peak")).toBeInTheDocument();
   });
 
   it("server_metrics with no points states it, no crash", () => {

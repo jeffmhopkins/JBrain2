@@ -27,6 +27,7 @@ def _point(**over: Any) -> dict[str, Any]:
         "disk_total_bytes": 2000 << 30,
         "gpu_busy_percent": 40.0,
         "fan_rpm_max": 2000,
+        "power_w": 14.0,
         "swap_used_bytes": 0,
     }
     base.update(over)
@@ -34,7 +35,10 @@ def _point(**over: Any) -> dict[str, Any]:
 
 
 async def test_summarizes_each_metric(monkeypatch: pytest.MonkeyPatch) -> None:
-    points = [_point(load_1m=0.5, fan_rpm_max=2000), _point(load_1m=2.0, fan_rpm_max=3000)]
+    points = [
+        _point(load_1m=0.5, fan_rpm_max=2000, power_w=12.0),
+        _point(load_1m=2.0, fan_rpm_max=3000, power_w=28.0),
+    ]
 
     async def fake_history(maker, ctx, *, since, until=None, max_points=300):  # noqa: ANN001, ANN202
         return {"resolution": "raw", "points": points}
@@ -48,6 +52,7 @@ async def test_summarizes_each_metric(monkeypatch: pytest.MonkeyPatch) -> None:
     assert "CPU load (1m): now 2.00, peak 2.00" in out  # latest is the 2.0 point
     assert "Memory used: now 50%" in out
     assert "Fan (hottest): now 3000 rpm, peak 3000 rpm" in out
+    assert "APU power: now 28.0 W, peak 28.0 W" in out
     # It also emits a server_metrics view carrying the raw points for the chart.
     assert isinstance(out, ToolOutput)
     assert out.view is not None

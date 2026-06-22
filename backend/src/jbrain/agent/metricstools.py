@@ -82,6 +82,13 @@ def _format(range_label: str, data: dict[str, Any]) -> str:
     if gpu:
         lines.append(f"- GPU busy: now {gpu[0]:.0f}%, peak {gpu[1]:.0f}%, avg {gpu[2]:.0f}%")
 
+    power = _stats(_series(points, "power_w"))
+    if power:
+        # APU/SoC package power, not wall power.
+        lines.append(
+            f"- APU power: now {power[0]:.1f} W, peak {power[1]:.1f} W, avg {power[2]:.1f} W"
+        )
+
     fan = _stats(_series(points, "fan_rpm_max"))
     if fan:
         lines.append(f"- Fan (hottest): now {fan[0]:.0f} rpm, peak {fan[1]:.0f} rpm")

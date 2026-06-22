@@ -55,6 +55,8 @@ class HostMetric(Base):
     load_15m: Mapped[float] = mapped_column()
     uptime_seconds: Mapped[int] = mapped_column(BigInteger)
     gpu_busy_percent: Mapped[float | None] = mapped_column(nullable=True)
+    # APU/SoC package watts (amdgpu power1_average); migration 0083, nullable.
+    power_w: Mapped[float | None] = mapped_column(nullable=True)
     fan_rpm_max: Mapped[int | None] = mapped_column(Integer, nullable=True)
     fan_rpm: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     containers: Mapped[list | None] = mapped_column(JSONB, nullable=True)
@@ -86,3 +88,5 @@ class HostMetricHourly(Base):
     gpu_busy_max: Mapped[float | None] = mapped_column(nullable=True)
     fan_rpm_avg: Mapped[float | None] = mapped_column(nullable=True)
     fan_rpm_max: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    power_w_avg: Mapped[float | None] = mapped_column(nullable=True)
+    power_w_max: Mapped[float | None] = mapped_column(nullable=True)
