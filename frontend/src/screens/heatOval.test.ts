@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { type HeatFix, type LatLon, fixHeadingRad, heatOvalPoints } from "./heatOval";
+import { type HeatFix, type LatLon, fixHeadingRad, fixSpeedMps, heatOvalPoints } from "./heatOval";
 
 const at = (lat: number, lon: number): LatLon => ({ lat, lon });
 const moving = (v: number | null, course: number | null): HeatFix => ({
@@ -7,8 +7,10 @@ const moving = (v: number | null, course: number | null): HeatFix => ({
   course_deg: course,
 });
 
-// A representative on-screen spot radius in meters (≈ heatRadius px at a city zoom).
+// A representative on-screen spot radius in metres (≈ heatRadius px at a city zoom).
 const R = 20;
+const reachLatOf = (pts: [number, number, number][], lat0: number) =>
+  Math.max(...pts.slice(1).map((p) => Math.abs(p[0] - lat0)));
 
 describe("heatOvalPoints", () => {
   it("leaves a near-stationary fix as a single round blob", () => {
@@ -32,20 +34,41 @@ describe("heatOvalPoints", () => {
     expect((lons[0] as number) + (lons[lons.length - 1] as number)).toBeCloseTo(2 * -74, 6);
   });
 
-  it("elongates even at low speed (sized against the spot radius)", () => {
-    // Just over the moving threshold: still a clearly elongated oval, not a dot.
-    const pts = heatOvalPoints([moving(1.5, 0)], [at(40, -74)], 0.4, R);
-    const reachLat = Math.max(...pts.slice(1).map((p) => Math.abs(p[0] - 40)));
-    // At least ~1.5 radii of stretch (minReach floor), well above a single radius.
-    expect(reachLat).toBeGreaterThan((R * 1.5) / 111_320 - 1e-9);
+  it("scales the oval length with speed, in multiples of the spot radius", () => {
+    const slow = reachLatOf(heatOvalPoints([moving(3, 0)], [at(40, -74)], 0.4, R), 40);
+    const fast = reachLatOf(heatOvalPoints([moving(28, 0)], [at(40, -74)], 0.4, R), 40);
+    // Highway is dramatically longer than a crawl — an unmistakable oval, not ~1.5:1.
+    expect(fast).toBeGreaterThan(slow * 2);
+    // Full-speed half-length ≈ 7.5 radii (1.5 + 6); the outermost point lands within one
+    // step of that, so check the band rather than the exact value.
+    expect(fast).toBeGreaterThan((R * 7) / 111_320);
+    expect(fast).toBeLessThanOrEqual((R * 7.5) / 111_320 + 1e-9);
   });
 
-  it("caps the stretch so highway speed doesn't streak across the map", () => {
-    const fast = heatOvalPoints([moving(200, 0)], [at(40, -74)], 0.4, R); // 200 m/s, due north
-    const reachLat = Math.max(...fast.slice(1).map((p) => Math.abs(p[0] - 40)));
-    // Capped at 220 m; never the un-capped 200*6 s of travel.
-    expect(reachLat).toBeLessThanOrEqual(220 / 111_320 + 1e-9);
-    expect(reachLat).toBeGreaterThan(150 / 111_320); // but still a long oval
+  it("saturates the length at highway speed (no streak across the map)", () => {
+    const fast = reachLatOf(heatOvalPoints([moving(28, 0)], [at(40, -74)], 0.4, R), 40);
+    const faster = reachLatOf(heatOvalPoints([moving(80, 0)], [at(40, -74)], 0.4, R), 40);
+    expect(faster).toBeCloseTo(fast, 6); // clamped at full-speed length
+  });
+});
+
+describe("fixSpeedMps", () => {
+  it("prefers the reported velocity", () => {
+    expect(fixSpeedMps([moving(12, null)], [at(40, -74)], 0)).toBe(12);
+  });
+
+  it("estimates speed from neighbour spacing when velocity is missing", () => {
+    // ~111.32 m due north between samples / 5 s ≈ 22.3 m/s.
+    const v = fixSpeedMps(
+      [moving(null, null), moving(null, null)],
+      [at(40, -74), at(40.001, -74)],
+      1,
+    );
+    expect(v).toBeCloseTo(111.32 / 5, 1);
+  });
+
+  it("is null with no velocity and no neighbour", () => {
+    expect(fixSpeedMps([moving(null, null)], [at(40, -74)], 0)).toBeNull();
   });
 });
 
