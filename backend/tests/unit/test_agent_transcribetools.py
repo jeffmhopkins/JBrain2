@@ -37,12 +37,14 @@ class FakeAttachments:
     def __init__(self) -> None:
         self.rows: dict[str, AttachmentInfo] = {}
 
-    def add(self, attachment_id: str, *, media_type: str, sha: str, filename: str) -> None:
+    def add(
+        self, attachment_id: str, *, media_type: str, sha: str, filename: str, size_bytes: int = 1
+    ) -> None:
         self.rows[attachment_id] = AttachmentInfo(
             id=attachment_id,
             filename=filename,
             media_type=media_type,
-            size_bytes=1,
+            size_bytes=size_bytes,
             sha256=sha,
             domain_code="general",
         )
@@ -85,10 +87,22 @@ class FakeGateway:
 AUDIO_ID = "22222222-2222-2222-2222-222222222222"
 
 
-def _tool(client: FakeClient, blobs: FakeBlobs, repo: FakeAttachments, gateway: FakeGateway):
-    return build_transcribe_handlers(client, blobs, repo, "whisper-x", gateway=gateway)[  # type: ignore[arg-type]
-        "transcribe"
-    ]
+def _tool(
+    client: FakeClient,
+    blobs: FakeBlobs,
+    repo: FakeAttachments,
+    gateway: FakeGateway,
+    *,
+    max_bytes: int = 100 * 1024 * 1024,
+):
+    return build_transcribe_handlers(
+        client,  # type: ignore[arg-type]
+        blobs,  # type: ignore[arg-type]
+        repo,  # type: ignore[arg-type]
+        "whisper-x",
+        gateway=gateway,
+        max_bytes=max_bytes,
+    )["transcribe"]
 
 
 async def test_transcribes_audio_and_unloads_after() -> None:
@@ -150,6 +164,18 @@ async def test_no_chat_session_is_a_clean_miss() -> None:
     no_session = ToolContext(session=SessionContext(principal_kind="owner"), scopes=())
     assert "No attached audio" in await tool({"source_attachment_id": AUDIO_ID}, no_session)
     assert client.calls == []
+
+
+async def test_oversized_audio_is_refused_before_the_model() -> None:
+    blobs, repo = FakeBlobs(), FakeAttachments()
+    blobs.data["sha-a"] = b"RIFF"
+    repo.add(AUDIO_ID, media_type="audio/wav", sha="sha-a", filename="huge.wav", size_bytes=2_000)
+    client, gateway = FakeClient(Transcript(text="x")), FakeGateway()
+    out = await _tool(client, blobs, repo, gateway, max_bytes=1_000)(
+        {"source_attachment_id": AUDIO_ID}, CTX
+    )
+    assert "too large" in out
+    assert client.calls == [] and gateway.unloaded == []  # never reached the model
 
 
 @pytest.mark.parametrize("media_type", ["audio/mpeg", "audio/mp4", "audio/ogg", "audio/flac"])

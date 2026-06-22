@@ -386,6 +386,9 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
         get_blob_store(request),
         attachment_ctx,
         body.attachment_ids,
+        # The transcribe sidecar is registered only when the whisper backend is
+        # configured, so its presence is the audio hint's actionable/not signal.
+        transcribe_enabled="transcribe" in get_agent_registry(request),
     )
     # A text-only agent model (e.g. local gpt-oss, no vision projector) would error
     # at the gateway on raw image bytes — so drop them when the resolved agent.turn

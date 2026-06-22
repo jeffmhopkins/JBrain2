@@ -116,6 +116,24 @@ async def test_audio_becomes_a_transcribe_hint_not_inline_bytes() -> None:
     assert "binary-audio" not in text  # the bytes are not decoded inline
 
 
+async def test_audio_hint_says_not_configured_when_transcription_is_off() -> None:
+    """No dead-end: with the whisper backend off, the hint doesn't point at a tool
+    that was dropped from the registry."""
+    repo, blobs = FakeRepo(), FakeBlobs()
+    blobs.put("sha-aud", b"RIFF audio")
+    aid = repo.add("audio/wav", "sha-aud", filename="memo.wav")
+    images, text = await build_attachment_content(
+        repo,  # type: ignore[arg-type]
+        blobs,  # type: ignore[arg-type]
+        CTX,
+        [aid],
+        transcribe_enabled=False,
+    )
+    assert images == []
+    assert "memo.wav" in text and "not configured" in text
+    assert "source_attachment_id" not in text  # never points at the missing tool
+
+
 async def test_image_becomes_one_llm_image() -> None:
     repo, blobs = FakeRepo(), FakeBlobs()
     blobs.put("sha-img", b"\x89PNG-bytes")

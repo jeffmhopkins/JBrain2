@@ -74,13 +74,21 @@ def _text_block(info: AttachmentInfo, data: bytes) -> _Converted:
     return _Converted(images=[], text_blocks=[f"[{info.filename}]:\n{body}"])
 
 
-def _audio_block(info: AttachmentInfo) -> _Converted:
-    # The model can't hear the bytes, so only its id rides the turn (no inline data):
-    # pass the id as source_attachment_id to the transcribe tool to read its words.
-    note = (
-        f'[attached audio "{info.filename}" — its id is {info.id}: pass it as '
-        "source_attachment_id to the transcribe tool to read what it says]"
-    )
+def _audio_block(info: AttachmentInfo, *, transcribe_enabled: bool) -> _Converted:
+    # The model can't hear the bytes, so only its id rides the turn (no inline data).
+    # When the whisper backend is configured the id is actionable via the transcribe
+    # tool; when it isn't, say so plainly rather than pointing at a tool that was
+    # dropped from the registry (no dead-end).
+    if transcribe_enabled:
+        note = (
+            f'[attached audio "{info.filename}" — its id is {info.id}: pass it as '
+            "source_attachment_id to the transcribe tool to read what it says]"
+        )
+    else:
+        note = (
+            f'[attached audio "{info.filename}" — audio transcription is not configured '
+            "on this box, so its words can't be read]"
+        )
     return _Converted(images=[], text_blocks=[note])
 
 
@@ -123,7 +131,9 @@ def _b64(data: bytes) -> str:
     return base64.b64encode(data).decode("ascii")
 
 
-def _convert_one(info: AttachmentInfo, data: bytes, image_budget: int) -> _Converted:
+def _convert_one(
+    info: AttachmentInfo, data: bytes, image_budget: int, *, transcribe_enabled: bool
+) -> _Converted:
     """Route one attachment to its conversion by media type. CPU-bound for PDFs, so
     the caller invokes this off the event loop (asyncio.to_thread)."""
     if info.media_type.startswith("image/"):
@@ -132,8 +142,8 @@ def _convert_one(info: AttachmentInfo, data: bytes, image_budget: int) -> _Conve
         return _pdf_block(info, data, image_budget)
     if info.media_type.startswith("audio/"):
         # Binary audio has no inline reading — decoding it as text would be garbage;
-        # surface its id for the transcribe tool instead.
-        return _audio_block(info)
+        # surface its id (and whether it's actionable) instead.
+        return _audio_block(info, transcribe_enabled=transcribe_enabled)
     # Everything else reaching here is a known-text type (the upload allowlist gates
     # the set); decode it inline.
     return _text_block(info, data)
@@ -144,6 +154,8 @@ async def build_attachment_content(
     blobs: BlobStore,
     ctx: SessionContext,
     attachment_ids: list[str],
+    *,
+    transcribe_enabled: bool = True,
 ) -> tuple[list[LlmImage], str]:
     """`(images, extra_text)` for the turn's attachments, in request order.
 
@@ -152,6 +164,10 @@ async def build_attachment_content(
     never crash the turn — the model just doesn't see that file). Bytes come from the
     blob store (CLAUDE.md rule 2). Images and PDF pages share one image budget
     (MAX_IMAGES_PER_TURN); text blocks are joined into one appended section.
+
+    `transcribe_enabled` (the `transcribe` tool is in the turn's registry) shapes the
+    audio hint: an actionable tool pointer when on, a plain "not configured" note when
+    off, so an audio upload on a whisper-less box is never a dead-end.
     """
     images: list[LlmImage] = []
     text_blocks: list[str] = []
@@ -165,7 +181,9 @@ async def build_attachment_content(
             continue  # the row outlived its blob (rare) — skip rather than break the turn
         budget = MAX_IMAGES_PER_TURN - len(images)
         try:
-            converted = await asyncio.to_thread(_convert_one, info, data, budget)
+            converted = await asyncio.to_thread(
+                _convert_one, info, data, budget, transcribe_enabled=transcribe_enabled
+            )
         except Exception:
             # A corrupt/encrypted/otherwise-unreadable file must not abort the turn or
             # the other attachments (the docstring's "skipped rather than crashing").

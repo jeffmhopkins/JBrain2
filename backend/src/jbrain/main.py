@@ -332,6 +332,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 app.state.turn_attachments,
                 settings.whisper_model,
                 gateway=LocalGatewayClient(settings.whisper_url),
+                max_bytes=settings.whisper_max_bytes,
             )
         app.state.agent_registry = build_registry(
             app.state.search_service,

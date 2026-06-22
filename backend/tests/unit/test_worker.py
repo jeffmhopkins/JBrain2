@@ -250,6 +250,20 @@ async def test_permanent_ocr_failure_also_triggers_fallback(
     assert calls == ["att-2"]
 
 
+async def test_exhausted_transcribe_job_triggers_analysis_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The audio twin of the OCR fallback: a permanently-failed transcription must
+    # not strand its note unanalyzed (worker._after_exhaustion spans both kinds).
+    fake = FakeQueue([job(kind="transcribe_attachment", payload={"attachment_id": "att-a"})])
+    fake.fail_exhausts = True
+    install(monkeypatch, fake)
+    calls = install_fallback_spy(monkeypatch)
+
+    assert await worker.process_one(None, {"transcribe_attachment": boom_handler}) is True  # type: ignore[arg-type]
+    assert calls == ["att-a"]
+
+
 async def test_non_exhausted_ocr_failure_does_not_fall_back(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
