@@ -134,6 +134,19 @@ async def test_audio_hint_says_not_configured_when_transcription_is_off() -> Non
     assert "source_attachment_id" not in text  # never points at the missing tool
 
 
+async def test_video_becomes_a_transcribe_hint_not_inline_bytes() -> None:
+    repo, blobs = FakeRepo(), FakeBlobs()
+    # A video is unreadable inline like audio, but transcribable (the gateway pulls
+    # its audio track) — it surfaces its id pointing at the transcribe tool.
+    blobs.put("sha-vid", b"\x00\x00\x00\x18ftypmp42binary-video")
+    aid = repo.add("video/mp4", "sha-vid", filename="clip.mp4")
+    images, text = await _build(repo, blobs, [aid])
+    assert images == []
+    assert aid in text
+    assert "video" in text and "source_attachment_id" in text and "transcribe" in text
+    assert "binary-video" not in text  # the bytes are not decoded inline
+
+
 async def test_image_becomes_one_llm_image() -> None:
     repo, blobs = FakeRepo(), FakeBlobs()
     blobs.put("sha-img", b"\x89PNG-bytes")

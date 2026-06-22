@@ -676,10 +676,11 @@ function GeneratedImage({ data }: ViewProps): ReactNode {
   return <GenerateImage src={generatedImageUrl(imageId)} alt={alt} meta={meta} data={data} />;
 }
 
-/** `{attachment_id, source, filename, model?, duration_ms?, words: [...]}` — the
- * audio-transcript card. The component builds the `<audio>` src from the id +
- * source (a chat attachment for jerv's tool, a note attachment otherwise); no URL
- * rides the payload (invariant #9). */
+/** `{attachment_id, source, media?, filename, model?, duration_ms?, words: [...]}` —
+ * the media-transcript card. The component builds the media src from the id +
+ * source (a chat attachment for jerv's tool, a note attachment otherwise) and
+ * renders a <video> when `media` is "video", else an <audio> player; no URL rides
+ * the payload (invariant #9). */
 function Transcript({ data }: ViewProps): ReactNode {
   const attachmentId = String(data.attachment_id ?? "");
   const source = data.source === "note" ? "note" : "chat";
@@ -688,6 +689,7 @@ function Transcript({ data }: ViewProps): ReactNode {
   return (
     <AudioTranscript
       audioUrl={audioUrl}
+      media={data.media === "video" ? "video" : "audio"}
       filename={typeof data.filename === "string" ? data.filename : "audio"}
       model={typeof data.model === "string" ? data.model : undefined}
       durationMs={typeof data.duration_ms === "number" ? data.duration_ms : null}

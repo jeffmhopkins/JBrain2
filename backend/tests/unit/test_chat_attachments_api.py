@@ -266,6 +266,20 @@ def test_upload_accepts_an_allowlisted_type(
     assert resp.status_code == 201
 
 
+def test_upload_accepts_a_video_type(
+    client: tuple[TestClient, FakeAgentSessions, FakeTurnAttachments, FakeSettingsStore],
+) -> None:
+    # Video joins the allowlist so jerv can transcribe it (the gateway extracts the
+    # audio track); the player card plays the clip itself.
+    c, sessions, _repo, _ = client
+    sid = sessions.add(("health",))
+    resp = c.post(
+        f"/api/sessions/{sid}/attachments",
+        files={"file": ("clip.mp4", b"\x00\x00\x00\x18ftypmp42", "video/mp4")},
+    )
+    assert resp.status_code == 201
+
+
 def test_domain_for_session_helper() -> None:
     assert domain_for_session(("health",)) == "health"
     assert domain_for_session(()) == "general"

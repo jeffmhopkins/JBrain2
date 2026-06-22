@@ -774,8 +774,8 @@ def test_sidecars_pinned_to_their_versions() -> None:
         ),
         "transcribe.tool": (
             "transcribe",
-            1,
-            "d8e2f0eb399d008ac364f30d94d4dac5adf2e3c889a353c75c1cfd96d7b9d39c",
+            2,
+            "f7d5a16c2e858d890595e9fd452c3f3d25154679574e4d45181678866c288017",
         ),
     }
     # Every shipped sidecar must appear above — a new `.tool` cannot slip in

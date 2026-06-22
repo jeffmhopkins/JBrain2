@@ -79,4 +79,23 @@ describe("AudioTranscript", () => {
     expect(screen.getByText("plain body")).toBeTruthy();
     expect(screen.queryByRole("button", { name: "plain" })).toBeNull();
   });
+
+  it("renders a native-controls <video> for video media, with the same karaoke words", () => {
+    const { container } = render(
+      <AudioTranscript
+        audioUrl="/clip.mp4"
+        filename="clip.mp4"
+        media="video"
+        words={WORDS}
+        durationMs={1100}
+      />,
+    );
+    const video = container.querySelector("video") as HTMLVideoElement;
+    expect(video).toBeTruthy();
+    expect(video.getAttribute("controls")).not.toBeNull();
+    expect(container.querySelector("audio")).toBeNull(); // no hidden <audio> for video
+    // The transcript words still render and the same media element drives seeking.
+    fireEvent.click(screen.getByRole("button", { name: "world" }));
+    expect(video.currentTime).toBeCloseTo(0.5);
+  });
 });

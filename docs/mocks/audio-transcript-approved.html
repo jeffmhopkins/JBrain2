@@ -11,12 +11,18 @@
 
   Component contract (frontend registry view "transcript" + the note Attachments
   card) consumes data:
-    { filename, durationMs, model,
+    { filename, durationMs, model, media ("audio" | "video"),
       words: [ { text, startMs, endMs, confidence (0..1) } ... ] }
   Behavior: play drives a karaoke highlight (current word = steel pill); every
   word is tinted on a rose->amber->green gradient by confidence; tap a word or the
   scrubber to seek; reused inline in a note's audio attachment and in jerv's
   transcribe tool result. Tokens only; dark + light.
+
+  VIDEO EXTENSION (owner-approved follow-up): when `media` is "video" the same card
+  renders a native-controls <video> in place of the custom audio player (owner
+  chose native controls for scrub/fullscreen/volume); the header, the gradient
+  karaoke transcript, and tap-to-seek are unchanged. The transcript body caps at
+  ~5 lines and scrolls to keep the active line centered for long transcripts.
 -->
 <style>
   :root{
