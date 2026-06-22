@@ -40,4 +40,28 @@ source-over cached glow sprites (no `lighter`/blur, Safari-safe).
 | 04 | **GFP Fluorescence** | Multi-channel on black — green body, DAPI-blue nucleus, red food. |
 | 05 | **DIC / Nomarski Relief** | Embossed pseudo-3D relief on neutral gray — sculptural. |
 
+## Round 4 — `06-darkfield-advanced.html` (the chosen look, deepened)
+
+The Dark-Field aesthetic was picked. This build upgrades the simulation from
+two more research passes (`docs/AMOEBA_BRAIN_BRIEF.md` + an amoeba-locomotion
+brief):
+
+- **Real amoeboid locomotion** — 4 candidate pseudopod lobes that score on the
+  food gradient and **compete via a softmax**; one **wins and extends**, the
+  others **retract**. Body **flows into** the winning lobe instead of sliding.
+- **Fountain-flow streaming** — live granules stream toward the leading tip and
+  recycle at the rear; the nucleus is carried and lags.
+- **Area conservation + neighbour tension** — extending a finger **deflates**
+  the rear; shape changes propagate (Laplacian), so it morphs like a cell.
+- **Cup phagocytosis** — flanking lobes wrap prey into a food vacuole;
+  **contractile vacuole** fills and expels as an idle life-sign.
+- **17-node controller brain** (8 inputs → 4 hidden → 5 outputs) in a calm
+  **full-width bottom dock**: 4 directional chemoreceptors + hunger/energy/
+  vacuole/edge → dirX/dirY/arousal/visceral → driveX/driveY/commit/engulf/expel.
+  ~14 hand-picked **curved** edges (not a 52-edge hairball), cool→warm bands,
+  a single faint tendril linking body↔brain. The net genuinely drives the
+  amoeba, and **tapping a neuron** fires it back into the sim.
+
+Verified headless (600 frames, no NaNs; competition + feeding confirmed).
+
 Earlier rounds (boid flock, wireframe) live in the sibling folders.
