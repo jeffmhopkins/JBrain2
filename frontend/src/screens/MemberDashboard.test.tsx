@@ -45,6 +45,7 @@ const fix = (over: Partial<LocationFix> = {}): LocationFix => ({
   longitude: -73.0,
   accuracy_m: 10,
   battery_pct: 80,
+  velocity_mps: null,
   ...over,
 });
 
@@ -66,6 +67,8 @@ function subject(over: Partial<MemberSubject> = {}): MemberSubject {
     connection: "wifi",
     latitude: 40.0,
     longitude: -74.0,
+    velocity_mps: null,
+    is_self: false,
     ...over,
   };
 }
@@ -76,7 +79,7 @@ function deps(over: Partial<MemberDeps> = {}): MemberDeps {
       async (): Promise<Principal> => ({ principal_id: "d1", kind: "device_key", label: "Me" }),
     ),
     listRoster: vi.fn(async () => [
-      subject(),
+      subject({ is_self: true }),
       subject({ subject_id: "s-bob", label: "Bob", latitude: 41.0, longitude: -73.0 }),
     ]),
     listPlaces: vi.fn(async (): Promise<PlaceGeofence[]> => []),
@@ -157,38 +160,37 @@ describe("MemberDashboard", () => {
     await waitFor(() => expect(lastState?.mode).toBe("heat"));
   });
 
-  it("refetches the trail when the time window changes", async () => {
+  it("refetches the trail when the window preset changes", async () => {
     const d = deps();
     render(<MemberDashboard deps={d} />);
     await selectBob();
     await waitFor(() => expect(d.listPositions).toHaveBeenCalledTimes(1));
     fireEvent.click(screen.getByRole("button", { name: /History/ }));
-    fireEvent.change(screen.getByLabelText("Window start"), { target: { value: "0" } });
+    fireEvent.click(screen.getByRole("button", { name: "1h" }));
     await waitFor(() => expect(d.listPositions).toHaveBeenCalledTimes(2));
-    // The second call asks for a wider (earlier) since.
     const sinceOf = (i: number) =>
       new Date(
         (d.listPositions as ReturnType<typeof vi.fn>).mock.calls[i]?.[1] as string,
       ).getTime();
-    expect(sinceOf(1)).toBeLessThan(sinceOf(0));
+    // 1h is narrower than the 1d default → a more-recent `since`.
+    expect(sinceOf(1)).toBeGreaterThan(sinceOf(0));
   });
 
-  it("resizes the window to the picked total range (1/3/7 days)", async () => {
+  it("sets the trail window to the picked preset (1h/8h/1d/7d)", async () => {
     const d = deps();
     render(<MemberDashboard deps={d} />);
     await selectBob();
     await waitFor(() => expect(d.listPositions).toHaveBeenCalledTimes(1));
     fireEvent.click(screen.getByRole("button", { name: /History/ }));
-    fireEvent.click(screen.getByRole("button", { name: "1d" }));
+    fireEvent.click(screen.getByRole("button", { name: "7d" }));
     await waitFor(() => expect(d.listPositions).toHaveBeenCalledTimes(2));
     const sinceOf = (i: number) =>
       new Date(
         (d.listPositions as ReturnType<typeof vi.fn>).mock.calls[i]?.[1] as string,
       ).getTime();
-    // Picking 1d spans the full one-day range: since ≈ now − 1 day, more recent than
-    // the 3-day default, and the dual slider now covers the whole chosen range.
-    expect(sinceOf(1)).toBeGreaterThan(sinceOf(0));
-    expect(Math.abs(sinceOf(1) - (Date.now() - 86_400_000))).toBeLessThan(120_000);
+    // 7d spans the full week: since ≈ now − 7 days, earlier than the 1d default.
+    expect(sinceOf(1)).toBeLessThan(sinceOf(0));
+    expect(Math.abs(sinceOf(1) - (Date.now() - 7 * 86_400_000))).toBeLessThan(120_000);
   });
 
   it("tunes the heat radius and weight from the expanded pane", async () => {
@@ -201,6 +203,27 @@ describe("MemberDashboard", () => {
     await waitFor(() => expect(lastState?.heatRadius).toBe(40));
     fireEvent.change(screen.getByLabelText("Heat fix weight"), { target: { value: "0.8" } });
     await waitFor(() => expect(lastState?.heatWeight).toBe(0.8));
+  });
+
+  it("shows battery and current speed in the dock for a moving person", async () => {
+    const d = deps({
+      listRoster: vi.fn(async () => [
+        subject({ is_self: true }),
+        subject({
+          subject_id: "s-bob",
+          label: "Bob",
+          latitude: 41.0,
+          longitude: -73.0,
+          battery_pct: 64,
+          velocity_mps: 13.4, // ≈ 30 mph
+        }),
+      ]),
+    });
+    render(<MemberDashboard deps={d} />);
+    await selectBob();
+    const dock = screen.getByRole("button", { name: /Bob/ });
+    expect(dock.textContent).toMatch(/64%/);
+    expect(dock.textContent).toMatch(/30 mph/);
   });
 
   it("pulls up Details by tapping the person area of the dock bar", async () => {
@@ -226,24 +249,63 @@ describe("MemberDashboard", () => {
     });
   });
 
-  it("moves a pin live and extends the focused trail", async () => {
+  it("moves the viewer's own pin and extends its trail on every fix", async () => {
     render(<MemberDashboard deps={deps()} />);
-    await selectBob();
+    await screen.findByRole("tab", { name: /Bob/ }); // roster loaded + map wired
+    act(() => onSelect?.("s-me")); // focus self
     await waitFor(() => expect(lastState?.fixes?.length).toBe(2));
     act(() =>
       liveOnFix?.({
-        subject_id: "s-bob",
-        lat: 41.5,
-        lon: -73.5,
+        subject_id: "s-me",
+        lat: 40.5,
+        lon: -74.5,
         accuracy_m: 5,
         battery_pct: 70,
+        velocity_mps: 13,
         captured_at: new Date().toISOString(),
       }),
     );
+    // Self fixes apply immediately — no waiting on the coalescing flush.
     await waitFor(() => {
       expect(lastState?.fixes?.length).toBe(3);
-      expect(lastState?.pins?.find((p) => p.subjectId === "s-bob")?.lat).toBe(41.5);
+      expect(lastState?.pins?.find((p) => p.subjectId === "s-me")?.lat).toBe(40.5);
     });
+  });
+
+  it("coalesces other people's live fixes to the periodic flush", async () => {
+    vi.useFakeTimers();
+    try {
+      render(<MemberDashboard deps={deps()} />);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0); // resolve mount fetches
+      });
+      act(() => onSelect?.("s-bob"));
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0); // resolve the trail fetch
+      });
+      expect(lastState?.fixes?.length).toBe(2);
+      act(() =>
+        liveOnFix?.({
+          subject_id: "s-bob",
+          lat: 41.5,
+          lon: -73.5,
+          accuracy_m: 5,
+          battery_pct: 70,
+          velocity_mps: null,
+          captured_at: new Date().toISOString(),
+        }),
+      );
+      // Not applied on the spot — an "other" is buffered until the 10 s flush.
+      expect(lastState?.fixes?.length).toBe(2);
+      expect(lastState?.pins?.find((p) => p.subjectId === "s-bob")?.lat).toBe(41.0);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(10_000);
+      });
+      expect(lastState?.fixes?.length).toBe(3);
+      expect(lastState?.pins?.find((p) => p.subjectId === "s-bob")?.lat).toBe(41.5);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("clears the trail when its fetch fails", async () => {

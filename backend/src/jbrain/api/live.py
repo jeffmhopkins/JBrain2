@@ -103,6 +103,7 @@ def live_out(fix: LiveFix) -> dict[str, Any]:
         "lon": fix.longitude,
         "accuracy_m": fix.accuracy_m,
         "battery_pct": fix.battery_pct,
+        "velocity_mps": fix.velocity_mps,
         "captured_at": fix.captured_at.isoformat(),
     }
 

@@ -35,6 +35,7 @@ def _fix(subject_id: str = "sub-1") -> LiveFix:
         longitude=-74.0,
         accuracy_m=12.5,
         battery_pct=88,
+        velocity_mps=10.0,
         captured_at=NOW,
     )
 
@@ -76,12 +77,21 @@ def test_broadcaster_drops_oldest_on_overflow() -> None:
 
 
 def test_live_fix_from_owntracks_parses_location() -> None:
-    body = {"_type": "location", "lat": 40.0, "lon": -74.0, "tst": TST, "acc": 9.0, "batt": 77}
+    body = {
+        "_type": "location",
+        "lat": 40.0,
+        "lon": -74.0,
+        "tst": TST,
+        "acc": 9.0,
+        "batt": 77,
+        "vel": 36.0,
+    }
     fix = live_fix_from_owntracks("sub-9", body)
     assert fix is not None
     assert fix.subject_id == "sub-9"
     assert (fix.latitude, fix.longitude) == (40.0, -74.0)
     assert fix.accuracy_m == 9.0 and fix.battery_pct == 77
+    assert fix.velocity_mps == pytest.approx(10.0)  # 36 km/h -> 10 m/s
     assert fix.captured_at == NOW
 
 
@@ -109,6 +119,7 @@ def test_live_out_shape() -> None:
         "lon": -74.0,
         "accuracy_m": 12.5,
         "battery_pct": 88,
+        "velocity_mps": 10.0,
         "captured_at": NOW.isoformat(),
     }
 

@@ -9,6 +9,7 @@ function fix(over: Partial<LocationFix>): LocationFix {
     longitude: -74,
     accuracy_m: 10,
     battery_pct: 80,
+    velocity_mps: null,
     ...over,
   };
 }

@@ -10,6 +10,22 @@ import "leaflet/dist/leaflet.css";
 import "leaflet.heat";
 import type { LocationFix, PlaceGeofence } from "../api/client";
 import { withinAccuracy } from "./locationFilter";
+import { MPS_TO_MPH, SPEED_MAX_MPH, speedColor } from "./speed";
+
+// The trail tints by speed. Quantizing into a handful of buckets lets contiguous
+// same-speed stretches draw as ONE polyline, so a long window stays a few coloured
+// runs instead of one line segment per fix (which would be heavy).
+const SPEED_BUCKETS = 12;
+
+function speedBucket(velocityMps: number | null): number {
+  const t = Math.max(0, Math.min(1, ((velocityMps ?? 0) * MPS_TO_MPH) / SPEED_MAX_MPH));
+  return Math.round(t * SPEED_BUCKETS);
+}
+
+/** The representative colour for a speed bucket (its centre speed on the ramp). */
+function bucketColor(bucket: number): string {
+  return speedColor(((bucket / SPEED_BUCKETS) * SPEED_MAX_MPH) / MPS_TO_MPH);
+}
 
 export type MapMode = "live" | "trail" | "heat";
 
@@ -67,6 +83,43 @@ function escapeHtml(s: string): string {
   );
 }
 
+/** Draw the trail as speed-tinted polylines: each segment's bucket is the average of
+ * its endpoints' speeds, and contiguous same-bucket segments merge into one polyline
+ * so a long window stays a few coloured runs. The colour is set inline (per-segment
+ * data, not a static token) over the `loc-lf-trail-seg` class, which carries only the
+ * width/opacity. */
+function drawSpeedTrail(overlay: L.LayerGroup, kept: LocationFix[], track: L.LatLng[]): void {
+  let run: L.LatLng[] = [];
+  let runBucket = -1;
+  const flush = () => {
+    if (run.length > 1 && runBucket >= 0) {
+      L.polyline(run, { className: "loc-lf-trail-seg", color: bucketColor(runBucket) }).addTo(
+        overlay,
+      );
+    }
+  };
+  for (let i = 0; i < track.length - 1; i++) {
+    const a = track[i];
+    const b = track[i + 1];
+    const fa = kept[i];
+    const fb = kept[i + 1];
+    if (!a || !b || !fa || !fb) continue;
+    // Segment speed = mean of its endpoints (either may be null → treated as 0).
+    const va = fa.velocity_mps;
+    const vb = fb.velocity_mps;
+    const mean = ((va ?? vb ?? 0) + (vb ?? va ?? 0)) / 2;
+    const bucket = speedBucket(mean);
+    if (bucket === runBucket) {
+      run.push(b);
+    } else {
+      flush();
+      run = [a, b]; // start the new run at the shared vertex so there is no gap
+      runBucket = bucket;
+    }
+  }
+  flush();
+}
+
 /** `onSelect` fires when a person pin is tapped, so the switcher can follow a tap on
  * the map. */
 export function createLocationMap(
@@ -100,8 +153,10 @@ export function createLocationMap(
     overlay.remove();
     overlay = L.layerGroup().addTo(map);
     // Drop low-accuracy fixes so jittery indoor GPS doesn't smear the trail into a
-    // star-burst (matches the backend geofence accuracy gate).
-    const track = withinAccuracy(state.fixes).map((f) => L.latLng(f.latitude, f.longitude));
+    // star-burst (matches the backend geofence accuracy gate). Keep the fixes (not just
+    // the coordinates) so the trail can tint each segment by its speed.
+    const kept = withinAccuracy(state.fixes);
+    const track = kept.map((f) => L.latLng(f.latitude, f.longitude));
     const bounds: L.LatLng[] = [...track];
 
     for (const place of state.places) {
@@ -143,7 +198,7 @@ export function createLocationMap(
     const first = track[0];
     const last = track[track.length - 1];
     if (state.mode === "trail" && first && last) {
-      if (track.length > 1) L.polyline(track, { className: "loc-lf-trail" }).addTo(overlay);
+      if (track.length > 1) drawSpeedTrail(overlay, kept, track);
       L.circleMarker(first, { radius: 5, className: "loc-lf-start" }).addTo(overlay);
       L.circleMarker(last, { radius: 5, className: "loc-lf-end" }).addTo(overlay);
     } else if (state.mode === "heat" && track.length > 0) {

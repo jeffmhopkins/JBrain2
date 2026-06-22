@@ -71,6 +71,9 @@ export interface LocationFix {
   longitude: number;
   accuracy_m: number | null;
   battery_pct: number | null;
+  /** Speed (m/s) at this fix; null when the device didn't report one. Drives the
+   * speed-colored trail. */
+  velocity_mps: number | null;
 }
 
 export interface LatLon {
@@ -101,6 +104,11 @@ export interface MemberSubject {
   connection: string | null;
   latitude: number | null;
   longitude: number | null;
+  /** Latest speed (m/s), for the "current speed (if moving)" dock readout. */
+  velocity_mps: number | null;
+  /** True for the viewer's own device — the live map updates it on every fix while
+   * others coalesce to a slower cadence. */
+  is_self: boolean;
 }
 
 /** One bar on a day's place-track in the digest (L7a): a place name (null = a

@@ -121,6 +121,7 @@ class FixPointOut(BaseModel):
     longitude: float
     accuracy_m: float | None
     battery_pct: int | None
+    velocity_mps: float | None
 
     @classmethod
     def of(cls, f: FixPoint) -> "FixPointOut":
@@ -130,6 +131,7 @@ class FixPointOut(BaseModel):
             longitude=f.longitude,
             accuracy_m=f.accuracy_m,
             battery_pct=f.battery_pct,
+            velocity_mps=f.velocity_mps,
         )
 
 

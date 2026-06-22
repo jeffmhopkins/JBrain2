@@ -33,6 +33,8 @@ class FakeLocationRepo:
                 connection="wifi",
                 latitude=40.7128,
                 longitude=-74.006,
+                velocity_mps=None,
+                is_self=True,
             ),
             MemberSubject(
                 subject_id="subject-sib",
@@ -51,6 +53,8 @@ class FakeLocationRepo:
                 connection="cell",
                 latitude=41.0,
                 longitude=-73.0,
+                velocity_mps=12.0,
+                is_self=False,
             ),
         ]
         self.fix_calls: list[dict] = []
@@ -177,10 +181,15 @@ def test_roster_lists_visible_subjects(client: TestClient, locs: FakeLocationRep
     assert me["label"] == "Me" and me["last_seen"] == NOW.isoformat()
     # The latest coordinate rides along so the map can pin everyone.
     assert me["latitude"] == 40.7128 and me["longitude"] == -74.006
+    # The viewer's own row is flagged so the live map can update it on every fix.
+    assert me["is_self"] is True
     sib = data[1]
     assert sib["last_seen"] is None and sib["battery_pct"] is None
     # No fix yet → no coordinate (still listed).
     assert sib["latitude"] is None and sib["longitude"] is None
+    pal = data[2]
+    # Latest speed rides along for the "current speed (if moving)" readout; not self.
+    assert pal["velocity_mps"] == 12.0 and pal["is_self"] is False
 
 
 def test_roster_audits_each_surfaced_family_coordinate(

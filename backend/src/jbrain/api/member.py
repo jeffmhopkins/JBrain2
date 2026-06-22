@@ -62,6 +62,10 @@ class MemberSubjectOut(BaseModel):
     # to self + family group by the location_fixes RLS, exactly like last_seen.
     latitude: float | None
     longitude: float | None
+    # Latest speed (m/s) for the "current speed (if moving)" dock readout; `is_self`
+    # marks the viewer's own device so the live map updates it on every fix.
+    velocity_mps: float | None
+    is_self: bool
 
     @classmethod
     def of(cls, m: MemberSubject) -> "MemberSubjectOut":
@@ -73,6 +77,8 @@ class MemberSubjectOut(BaseModel):
             connection=m.connection,
             latitude=m.latitude,
             longitude=m.longitude,
+            velocity_mps=m.velocity_mps,
+            is_self=m.is_self,
         )
 
 
@@ -82,6 +88,7 @@ class FixPointOut(BaseModel):
     longitude: float
     accuracy_m: float | None
     battery_pct: int | None
+    velocity_mps: float | None
 
     @classmethod
     def of(cls, f: FixPoint) -> "FixPointOut":
@@ -91,6 +98,7 @@ class FixPointOut(BaseModel):
             longitude=f.longitude,
             accuracy_m=f.accuracy_m,
             battery_pct=f.battery_pct,
+            velocity_mps=f.velocity_mps,
         )
 
 
