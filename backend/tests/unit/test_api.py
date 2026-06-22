@@ -2,6 +2,7 @@
 
 import json
 from collections.abc import Iterator
+from datetime import UTC, datetime
 
 import httpx
 import pytest
@@ -127,6 +128,34 @@ def test_me_requires_session(client: TestClient) -> None:
 
 def test_ops_requires_owner(client: TestClient) -> None:
     assert client.get("/api/ops/status").status_code == 401
+    # The history graph is owner-only too (the router dependency).
+    assert client.get("/api/ops/metrics/history").status_code == 401
+
+
+def test_ops_metrics_history_returns_series(
+    client: TestClient, repo: FakeAuthRepo, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from jbrain.api import ops
+
+    captured: dict[str, object] = {}
+
+    async def fake_history(maker, ctx, *, since, until=None, max_points=300):  # noqa: ANN001, ANN202
+        captured["since"] = since
+        return {"resolution": "raw", "points": [{"t": "2026-06-22T00:00:00+00:00"}]}
+
+    monkeypatch.setattr(ops.ops_metrics, "history", fake_history)
+    login(client, repo)
+
+    body = client.get("/api/ops/metrics/history?range=7d").json()
+    assert body["resolution"] == "raw"
+    assert body["points"]
+    # 7d maps to a ~7-day-old `since`.
+    assert (datetime.now(UTC) - captured["since"]).days == 7  # type: ignore[operator]
+
+
+def test_ops_metrics_history_rejects_bad_range(client: TestClient, repo: FakeAuthRepo) -> None:
+    login(client, repo)
+    assert client.get("/api/ops/metrics/history?range=nonsense").status_code == 400
 
 
 def test_ops_status_proxies_supervisor(client: TestClient, repo: FakeAuthRepo) -> None:

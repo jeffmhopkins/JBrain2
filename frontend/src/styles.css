@@ -2477,6 +2477,76 @@ button.small {
   flex: none;
 }
 
+/* History card: range selector + per-metric sparklines. */
+.ops-range {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+}
+
+.ops-range-btn {
+  padding: 4px 10px;
+  font-size: var(--fs-micro);
+  color: var(--text-2);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.ops-range-btn.active {
+  color: var(--steel);
+  background: var(--steel-tint);
+  border-color: color-mix(in srgb, var(--steel) 30%, transparent);
+}
+
+.ops-charts {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.ops-chart-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: 4px;
+}
+
+.ops-chart-label {
+  font-size: var(--fs-sm);
+  color: var(--text-2);
+}
+
+.ops-chart-now {
+  font-size: var(--fs-sm);
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+.ops-chart-svg {
+  display: block;
+  width: 100%;
+  height: 40px;
+}
+
+.ops-chart-axis {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 2px;
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.ops-chart-note {
+  margin-top: 12px;
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+  text-align: right;
+}
+
 .ops-card-head.open .ops-card-caret {
   transform: rotate(90deg);
 }

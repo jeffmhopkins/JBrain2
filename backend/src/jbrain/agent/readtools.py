@@ -11,6 +11,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
 
 if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
     from jbrain.citygeocode import CityGeocoder
     from jbrain.geocode import NominatimReverseClient
     from jbrain.llm.router import LlmRouter
@@ -30,6 +32,7 @@ from jbrain.agent.loop import ToolContext, ToolHandler, ToolOutput
 from jbrain.agent.memory import MemoryService
 from jbrain.agent.memorytools import build_memory_handlers
 from jbrain.agent.mergetools import build_merge_handlers
+from jbrain.agent.metricstools import build_metrics_handlers
 from jbrain.agent.presencetools import build_presence_handlers
 from jbrain.agent.proposals import ProposalRepo
 from jbrain.agent.proposaltools import build_proposal_handlers
@@ -402,6 +405,7 @@ def build_registry(
     devices: SqlDeviceRepo,
     web_handlers: dict[str, ToolHandler],
     city_geocoder: "CityGeocoder",
+    maker: "async_sessionmaker[AsyncSession]",
     external_reverse: "NominatimReverseClient | None" = None,
     router: "LlmRouter | None" = None,
     settings: "SqlSettingsStore | None" = None,
@@ -442,6 +446,9 @@ def build_registry(
             # escalating to the external geocoder only for a requested street address.
             **build_presence_handlers(city_geocoder, external_reverse),
             **build_wiki_handlers(wiki),
+            # The owner-only host-telemetry read (query_server_metrics): RLS-gated
+            # by the metrics tables' owner policy, so a non-owner session sees nothing.
+            **build_metrics_handlers(maker),
             **build_selfedit_handlers(proposals, router, settings),
             **wiki_write,
             # The jerv chatbot's internet tools (`web` permission), opt-in per agent.

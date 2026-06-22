@@ -210,6 +210,34 @@ export interface OpsMetrics {
   blobs: { file_count: number; total_bytes: number } | null;
 }
 
+/** The history-graph windows the Ops screen offers (mirror of the backend's set). */
+export type MetricRange = "6h" | "24h" | "2d" | "7d" | "30d" | "90d" | "1y";
+
+/** One downsampled bucket. mem/swap/disk are *used* bytes alongside their totals;
+ * any field is null when the host didn't report it (e.g. no GPU/fans). */
+export interface MetricPoint {
+  t: string;
+  load_1m: number | null;
+  load_5m: number | null;
+  load_15m: number | null;
+  mem_used_bytes: number | null;
+  mem_total_bytes: number | null;
+  swap_used_bytes: number | null;
+  disk_used_bytes: number | null;
+  disk_total_bytes: number | null;
+  gpu_busy_percent: number | null;
+  fan_rpm_max: number | null;
+}
+
+export interface MetricsHistory {
+  /** "raw" 30s samples for short spans, the "hourly" rollup for long ones. */
+  resolution: "raw" | "hourly";
+  step_seconds: number;
+  since: string;
+  until: string;
+  points: MetricPoint[];
+}
+
 export interface UpdateStatus {
   state: "none" | "running" | "exited";
   exit_code: number | null;
@@ -1597,6 +1625,11 @@ export const api = {
   async opsMetrics(): Promise<OpsMetrics> {
     const response = await request("/api/ops/metrics");
     return (await response.json()) as OpsMetrics;
+  },
+
+  async opsMetricsHistory(range: MetricRange): Promise<MetricsHistory> {
+    const response = await request(`/api/ops/metrics/history?range=${range}`);
+    return (await response.json()) as MetricsHistory;
   },
 
   async opsUpdateStart(): Promise<{ updater: string }> {

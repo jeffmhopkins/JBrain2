@@ -471,6 +471,7 @@ def test_build_registry_binds_the_shipped_sidecars() -> None:
         object(),  # type: ignore[arg-type]  # device repo
         build_web_handlers(SearxngClient(""), WebFetcher()),
         object(),  # type: ignore[arg-type]  # city geocoder
+        object(),  # type: ignore[arg-type]  # sessionmaker (query_server_metrics)
         object(),  # type: ignore[arg-type]  # external reverse geocoder
     )
     # The `web` (opt-in / jerv-only) permission class — never offered to the default
@@ -488,6 +489,7 @@ def test_build_registry_binds_the_shipped_sidecars() -> None:
         "read_entity",
         "find_entity",
         "relate",
+        "query_server_metrics",
         "read_lists",
         "read_list",
         "create_list",
@@ -776,6 +778,11 @@ def test_sidecars_pinned_to_their_versions() -> None:
             "transcribe",
             1,
             "d8e2f0eb399d008ac364f30d94d4dac5adf2e3c889a353c75c1cfd96d7b9d39c",
+        ),
+        "query_server_metrics.tool": (
+            "query_server_metrics",
+            1,
+            "c913e40d4769f173fe57a03f30f1a9ef5380970fb423729001f4e3dffa353647",
         ),
     }
     # Every shipped sidecar must appear above — a new `.tool` cannot slip in

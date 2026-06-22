@@ -13,10 +13,11 @@ import time
 from collections.abc import Awaitable, Callable
 from typing import Any, cast
 
+import httpx
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from jbrain import queue
+from jbrain import ops_metrics, queue
 from jbrain.agent.correctionmine import CORRECTION_MINE_SPEC, correction_mine_handler
 from jbrain.agent.predicatereview import PREDICATE_REVIEW_SPEC, predicate_review_handler
 from jbrain.agent.promptselfedit import PROMPT_SELF_EDIT_SPEC, prompt_self_edit_handler
@@ -54,6 +55,10 @@ log = structlog.get_logger()
 
 POLL_SECONDS = 2.0
 HEARTBEAT_SECONDS = 60
+# Host-metrics sampling cadence (the owner's 30s choice) and the slower rollup +
+# retention pass. Both ride the existing loop, like the scheduler tick.
+METRICS_SAMPLE_SECONDS = 30
+METRICS_MAINTENANCE_SECONDS = 300
 
 # A handler runs one job. The six shipped kinds take only the payload (they manage
 # their own SYSTEM_CTX internally — system pipelines that legitimately cross every
@@ -155,16 +160,47 @@ async def _after_exhaustion(
         await ocr.enqueue_analysis_fallback(maker, str(attachment_id))
 
 
+async def _sample_metrics_safely(
+    maker: async_sessionmaker[AsyncSession], client: httpx.AsyncClient, token: str
+) -> None:
+    """Store one host-metrics sample, swallowing any error so a supervisor blip
+    (or a transient DB error) never disturbs the job loop — like the scheduler tick."""
+    try:
+        await ops_metrics.sample_once(maker, queue.SYSTEM_CTX, client, token)
+    except Exception as exc:  # noqa: BLE001 - a missed sample must not kill the worker
+        log.warning("worker.metrics_sample_error", error=repr(exc))
+
+
+async def _maintain_metrics_safely(
+    maker: async_sessionmaker[AsyncSession], *, boot: bool
+) -> None:
+    """Refresh the hourly rollup and prune past-retention rows. The boot pass
+    rolls up the full raw-retention window in case the worker was down for a
+    while; steady-state passes only refresh the trailing few hours."""
+    try:
+        window = ops_metrics.RAW_RETENTION if boot else ops_metrics.ROLLUP_WINDOW
+        await ops_metrics.rollup(maker, queue.SYSTEM_CTX, window=window)
+        await ops_metrics.prune(maker, queue.SYSTEM_CTX)
+    except Exception as exc:  # noqa: BLE001 - rollup/prune is best-effort maintenance
+        log.warning("worker.metrics_maintain_error", error=repr(exc))
+
+
 async def run_loop(
     maker: async_sessionmaker[AsyncSession],
     handlers: dict[str, Handler],
     registry: ActionRegistry | None = None,
     settings: SqlSettingsStore | None = None,
+    *,
+    supervisor_client: httpx.AsyncClient | None = None,
+    supervisor_token: str = "",
 ) -> None:
     backfilled = False
     last_heartbeat = 0.0
     last_tick = 0.0
     last_dispatch = 0.0
+    last_sample = 0.0
+    last_maintenance = 0.0
+    metrics_booted = False
     # The run-log writer the dispatcher uses when LIVE: one pipeline run per
     # dispatched event (§8). Built once off the same maker (owner-scoped writes).
     run_log = PipelineRunLog(maker)
@@ -194,6 +230,19 @@ async def run_loop(
         ):
             await dispatcher.run_tick_safely(maker, registry, settings=settings, run_log=run_log)
             last_dispatch = now
+        # Host-metrics telemetry rides the same loop (the worker is the singleton
+        # background process, the right home for a periodic sampler). Gated on a
+        # configured supervisor; both ticks are fault-swallowed like the others.
+        if supervisor_client is not None and now - last_sample >= METRICS_SAMPLE_SECONDS:
+            await _sample_metrics_safely(maker, supervisor_client, supervisor_token)
+            last_sample = now
+        if (
+            supervisor_client is not None
+            and now - last_maintenance >= METRICS_MAINTENANCE_SECONDS
+        ):
+            await _maintain_metrics_safely(maker, boot=not metrics_booted)
+            metrics_booted = True
+            last_maintenance = now
         try:
             if not backfilled:
                 ingests = await queue.backfill_pending_notes(maker, queue.SYSTEM_CTX)
@@ -390,12 +439,30 @@ async def run() -> None:
         )
     )
     handlers = registry.dispatch_table(impls)
+    # The host-metrics sampler reads the supervisor (the only container with the
+    # host's /proc + /sys mounted) over the internal network. Gated on a token so
+    # an unconfigured dev worker doesn't spin on 401s; the worker shares the api's
+    # JBRAIN_SUPERVISOR_* env.
+    supervisor_client = (
+        httpx.AsyncClient(base_url=settings.supervisor_url, timeout=30.0)
+        if settings.supervisor_token
+        else None
+    )
     try:
         # The shadow dispatcher reads its `workflow_dispatch` gate through the same
         # live settings store the LLM router uses, so the operator can silence it
         # without a redeploy.
-        await run_loop(maker, handlers, registry, settings=worker_settings_store)
+        await run_loop(
+            maker,
+            handlers,
+            registry,
+            settings=worker_settings_store,
+            supervisor_client=supervisor_client,
+            supervisor_token=settings.supervisor_token,
+        )
     finally:
+        if supervisor_client is not None:
+            await supervisor_client.aclose()
         await engine.dispose()
 
 

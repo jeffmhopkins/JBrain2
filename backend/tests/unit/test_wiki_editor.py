@@ -135,6 +135,7 @@ async def test_run_editor_turn_chip_only_when_lever_fires_with_empty_prose() -> 
         stub,  # device repo
         build_web_handlers(SearxngClient(""), WebFetcher()),
         stub,  # city geocoder
+        stub,  # sessionmaker (query_server_metrics binds it but never calls it here)
     )
     router = LlmRouter(
         {
