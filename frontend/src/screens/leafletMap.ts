@@ -220,6 +220,9 @@ export function createLocationMap(
           color: "#000",
           opacity: 0,
           weight: 22,
+          // A path bubbles its click to the map by default; that would also fire the
+          // basemap's "deselect" handler and cancel the pick. Keep it on the line.
+          bubblingMouseEvents: false,
         });
         hit.on("click", (e) => {
           const ll = (e as L.LeafletMouseEvent).latlng;

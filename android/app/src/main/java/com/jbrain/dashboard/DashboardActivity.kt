@@ -17,11 +17,16 @@ import androidx.core.content.ContextCompat
  * natively (the key never reaches page JavaScript), injects it into the WebView
  * jar, and loads /dash. A missing/revoked key opens the pairing screen and
  * re-launches once paired; a transient failure shows a retry. No JavaScript
- * bridge is registered, so page script can never reach native APIs.
+ * interface is registered, so page script can never reach native APIs; the only
+ * native->page channel is a one-way `evaluateJavascript` loopback that injects this
+ * phone's own fixes for an instant self-pin (see registerLoopback).
  */
 class DashboardActivity : Activity() {
     private lateinit var web: WebView
     private lateinit var launcher: SessionLauncher
+
+    // True once /dash is loaded, so a loopback fix is only injected into a live page.
+    private var dashboardReady = false
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -63,6 +68,8 @@ class DashboardActivity : Activity() {
                     setCookie(decision.url, decision.setCookie)
                 }
                 web.loadUrl(decision.url)
+                dashboardReady = true
+                registerLoopback()
                 // Paired + authenticated: begin sharing this phone's location.
                 ensureLocationSharing()
             }
@@ -71,6 +78,36 @@ class DashboardActivity : Activity() {
             is LaunchDecision.Retry ->
                 web.loadDataMessage("Couldn't reach the server — reopen to retry.")
         }
+    }
+
+    /** Forward this phone's own fixes from the location service into the page so the
+     * self-pin moves instantly. Native -> page only (evaluateJavascript), so it adds
+     * no JS -> native surface; the `&&` guard makes a fix before React mounts a no-op. */
+    private fun registerLoopback() {
+        if (!dashboardReady) return
+        LocalFixBus.setListener { fix ->
+            runOnUiThread {
+                web.evaluateJavascript(
+                    "window.__jbrainLocalFix && window.__jbrainLocalFix(${fix.toJson()})",
+                    null,
+                )
+            }
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        registerLoopback() // re-arm after a background trip (cleared in onPause)
+    }
+
+    override fun onPause() {
+        super.onPause()
+        LocalFixBus.setListener(null) // don't push into a backgrounded page
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        LocalFixBus.setListener(null)
     }
 
     @Deprecated("startActivityForResult is fine for this single flow on a plain Activity")
