@@ -352,6 +352,10 @@ async def test_run_loop_samples_and_maintains_metrics_when_supervisor_set(
     monkeypatch.setattr(worker.ops_metrics, "sample_once", fake_sample)
     monkeypatch.setattr(worker.ops_metrics, "rollup", fake_rollup)
     monkeypatch.setattr(worker.ops_metrics, "prune", fake_prune)
+    # Pin the clock past both intervals so the first iteration fires deterministically:
+    # last_sample/last_maintenance start at 0, and a freshly-booted runner's real
+    # monotonic() can be < the 300s maintenance interval (the CI-vs-local difference).
+    monkeypatch.setattr(worker.time, "monotonic", lambda: 1_000_000.0)
 
     async def fake_sleep(seconds: float) -> None:
         raise asyncio.CancelledError
