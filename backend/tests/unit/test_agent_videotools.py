@@ -91,6 +91,12 @@ def _router(fake: FakeLlmClient) -> LlmRouter:
     )
 
 
+def _handlers(blobs, attachments, router, **kw):
+    """build_video_handlers with the fakes as structural stand-ins for BlobStore /
+    TurnAttachmentRepo (the repo pattern, cf. test_agent_transcribetools)."""
+    return build_video_handlers(blobs, attachments, router, **kw)  # type: ignore[arg-type]
+
+
 def _sampler(frames: list[SampledFrame]):
     def _sample(video: bytes) -> list[SampledFrame]:
         return list(frames)
@@ -133,7 +139,7 @@ async def test_round_trip_returns_summary_and_video_view() -> None:
         ["A title card.", "A pipeline diagram.", "A walkthrough of a build pipeline."]
     )
     whisper = FakeTranscribe(_transcript())
-    handlers = build_video_handlers(
+    handlers = _handlers(
         blobs, attachments, _router(fake), transcribe=whisper, sampler=_sampler(frames)
     )
 
@@ -161,14 +167,14 @@ async def test_reanalysis_reads_the_cache_without_re_billing() -> None:
     blobs, attachments = _setup()
     frames = [SampledFrame(0, b"\xff\xd8f0"), SampledFrame(4000, b"\xff\xd8f1")]
     first = FakeLlmClient(["frame a", "frame b", "a summary"])
-    handlers = build_video_handlers(blobs, attachments, _router(first), sampler=_sampler(frames))
+    handlers = _handlers(blobs, attachments, _router(first), sampler=_sampler(frames))
     await handlers["analyze_video"]({"source_attachment_id": ATT}, CTX)
     assert len(first.calls) == 3
 
     # A second ask finds the cached analysis and bills nothing — same card.
     second = FakeLlmClient(["should-not-run"])
     second_whisper = FakeTranscribe(_transcript())
-    cached_handlers = build_video_handlers(
+    cached_handlers = _handlers(
         blobs, attachments, _router(second), transcribe=second_whisper, sampler=_sampler(frames)
     )
     out = await cached_handlers["analyze_video"]({"source_attachment_id": ATT}, CTX)
@@ -181,7 +187,7 @@ async def test_reanalysis_reads_the_cache_without_re_billing() -> None:
 async def test_frames_only_when_no_whisper() -> None:
     blobs, attachments = _setup()
     fake = FakeLlmClient(["A single frame.", "A frames-only summary."])
-    handlers = build_video_handlers(
+    handlers = _handlers(
         blobs, attachments, _router(fake), sampler=_sampler([SampledFrame(0, b"\xff\xd8f")])
     )
 
@@ -194,7 +200,7 @@ async def test_frames_only_when_no_whisper() -> None:
 async def test_rejects_non_video_attachment() -> None:
     blobs, attachments = _setup(media_type="image/png")
     fake = FakeLlmClient(["unused"])
-    handlers = build_video_handlers(blobs, attachments, _router(fake), sampler=_sampler([]))
+    handlers = _handlers(blobs, attachments, _router(fake), sampler=_sampler([]))
     out = await handlers["analyze_video"]({"source_attachment_id": ATT}, CTX)
     assert "isn't a video" in out
     assert fake.calls == []  # rejected before any spend
@@ -203,7 +209,7 @@ async def test_rejects_non_video_attachment() -> None:
 async def test_unknown_and_foreign_ids_read_as_a_clean_miss() -> None:
     blobs, attachments = _setup()
     fake = FakeLlmClient(["unused"])
-    handlers = build_video_handlers(blobs, attachments, _router(fake), sampler=_sampler([]))
+    handlers = _handlers(blobs, attachments, _router(fake), sampler=_sampler([]))
     # Unknown id in this session.
     assert "No attached video" in await handlers["analyze_video"](
         {"source_attachment_id": "22222222-2222-2222-2222-222222222222"}, CTX
@@ -223,7 +229,7 @@ async def test_unknown_and_foreign_ids_read_as_a_clean_miss() -> None:
 async def test_oversize_video_is_refused_before_any_spend() -> None:
     blobs, attachments = _setup(size_bytes=10)
     fake = FakeLlmClient(["unused"])
-    handlers = build_video_handlers(
+    handlers = _handlers(
         blobs, attachments, _router(fake), sampler=_sampler([SampledFrame(0, b"x")]), max_bytes=5
     )
     out = await handlers["analyze_video"]({"source_attachment_id": ATT}, CTX)
@@ -235,7 +241,7 @@ async def test_empty_clip_reports_nothing_found() -> None:
     blobs, attachments = _setup()
     fake = FakeLlmClient(["unused"])
     whisper = FakeTranscribe(Transcript(text="   "))
-    handlers = build_video_handlers(
+    handlers = _handlers(
         blobs, attachments, _router(fake), transcribe=whisper, sampler=_sampler([])
     )
     out = await handlers["analyze_video"]({"source_attachment_id": ATT}, CTX)
@@ -247,7 +253,7 @@ async def test_model_failure_is_a_recoverable_observation() -> None:
     blobs, attachments = _setup()
     fake = FakeLlmClient(["a frame"])
     whisper = FakeTranscribe(RuntimeError("gateway down"))
-    handlers = build_video_handlers(
+    handlers = _handlers(
         blobs,
         attachments,
         _router(fake),

@@ -275,14 +275,16 @@ async def test_video_round_trip_blob_to_searchable_summary(
     assert row.text.startswith("A whiteboard walkthrough")
     assert row.confidence == pytest.approx(VIDEO_ANALYSIS_CONFIDENCE)  # the Guards cap
     # The structured analysis: per-frame timeline (thumb ids) + the fused transcript.
-    assert row.analysis["duration_ms"] == 8000
-    assert [f["t_ms"] for f in row.analysis["frames"]] == [0, 4000]
-    assert [f["caption"] for f in row.analysis["frames"]][0].startswith("A title card")
-    assert row.analysis["transcript"]["text"].startswith("First we ingest")
-    assert len(row.analysis["transcript"]["words"]) == 10
+    analysis = row.analysis
+    assert analysis is not None
+    assert analysis["duration_ms"] == 8000
+    assert [f["t_ms"] for f in analysis["frames"]] == [0, 4000]
+    assert [f["caption"] for f in analysis["frames"]][0].startswith("A title card")
+    assert analysis["transcript"]["text"].startswith("First we ingest")
+    assert len(analysis["transcript"]["words"]) == 10
 
     # Each kept frame's JPEG is a content-addressed blob the timeline points at by id.
-    for frame, thumb in zip(frames, row.analysis["frames"], strict=True):
+    for frame, thumb in zip(frames, analysis["frames"], strict=True):
         assert await blobs.get(thumb["thumb_id"]) == frame.jpeg
 
     # The handler re-enqueued ingest; running it makes the summary a searchable chunk.
@@ -358,8 +360,10 @@ async def test_video_frames_only_when_whisper_unconfigured(
     assert [c["system"] for c in fake.calls] == [FRAME_SYSTEM, SUMMARY_SYSTEM]
     row = await video_extract(maker, attachment_id)
     assert row is not None
-    assert row.analysis["transcript"] is None
-    assert len(row.analysis["frames"]) == 1
+    analysis = row.analysis
+    assert analysis is not None
+    assert analysis["transcript"] is None
+    assert len(analysis["frames"]) == 1
 
 
 async def test_video_handler_noops_when_attachment_or_note_is_gone(
