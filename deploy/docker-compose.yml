@@ -80,6 +80,11 @@ services:
       JBRAIN_COMFYUI_URL: ${COMFYUI_URL:-}
       JBRAIN_COMFYUI_ENABLED: ${COMFYUI_ENABLED:-false}
       JBRAIN_COMFYUI_MODELS: ${COMFYUI_MODELS:-[]}
+      # On-box fish identification — OFF unless the operator opted in at install. When
+      # enabled, points at the `fish-id` service (below). Empty URL = feature off.
+      JBRAIN_FISH_ID_URL: ${FISH_ID_URL:-}
+      JBRAIN_FISH_ID_ENABLED: ${FISH_ID_ENABLED:-false}
+      JBRAIN_FISH_ID_MODELS: ${FISH_ID_MODELS:-[]}
       # Shared secret for the MQTT ingest service identity (JBrain360 M1): the API
       # validates it in /internal/mqtt-auth and the consumer connects with it. Empty
       # disables the identity (fail-closed). Only meaningful with the `mqtt` profile.
@@ -101,6 +106,8 @@ services:
       # Read-only view of the provisioned image weights so the settings drawer can
       # report each image model's real on-disk footprint (the shared RAM meter).
       - ./comfyui-models:/data/comfyui-models:ro
+      # Read-only view of the provisioned fish weights, same rationale.
+      - ./fish-id-models:/data/fish-id-models:ro
     networks: [edge, internal]
     depends_on:
       db:
@@ -267,6 +274,36 @@ services:
       - "${RENDER_GID:-render}"
     volumes:
       - ./comfyui-models:/opt/ComfyUI/models:ro
+    networks: [internal]
+
+  # OPT-IN on-box fish identification: a ROCm service running the MIT-licensed fishial
+  # models (DINOv2+ViT classifier over ~866 species, segment→detect→embed→nearest),
+  # the sibling of the comfyui profile. Guarded by the `fish-id` compose profile so it
+  # NEVER starts on a stock deploy — scripts/fish-id-setup.sh provisions the weights and
+  # flips the profile on. The service image (a thin HTTP wrapper over the fishial model
+  # pipeline, so the api never imports torch) is built/validated by the F0 on-box spike
+  # (docs/FISH_ID_PLAN.md); FISH_ID_IMAGE points at it. It exposes POST /identify and
+  # POST /free; the model is loaded per request and freed after (load→use→unload), so it
+  # holds no steady-state memory. The api reaches it at http://fish-id:8200 (internal
+  # only, no host port). Weights bind-mount read-only from the host.
+  fish-id:
+    profiles: [fish-id]
+    image: ${FISH_ID_IMAGE:-ghcr.io/jeffmhopkins/jbrain2-fish-id:latest}
+    restart: unless-stopped
+    devices:
+      - /dev/kfd:/dev/kfd
+      - /dev/dri:/dev/dri
+    security_opt:
+      - seccomp=unconfined
+    environment:
+      HSA_OVERRIDE_GFX_VERSION: "11.5.1"
+    # Join the HOST's video/render GIDs to open /dev/dri/renderD128 — the setup script
+    # writes the numeric host GIDs (shared with the local-llm + comfyui services).
+    group_add:
+      - "${VIDEO_GID:-video}"
+      - "${RENDER_GID:-render}"
+    volumes:
+      - ./fish-id-models:/data/fish-id-models:ro
     networks: [internal]
 
   embed:
