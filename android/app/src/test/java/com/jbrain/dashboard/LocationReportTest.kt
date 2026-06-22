@@ -24,16 +24,26 @@ class LocationReportTest {
     @Test
     fun includesOptionalFieldsWhenKnown() {
         val json = JSONObject(
-            LocationReport(1.0, 2.0, 100, accuracyM = 12, batteryPct = 88, trackerId = "ph").toJson(),
+            LocationReport(
+                1.0, 2.0, 100,
+                accuracyM = 12, velocityKmh = 48, courseDeg = 270, accelMps2 = 1.5,
+                batteryPct = 88, trackerId = "ph",
+            ).toJson(),
         )
         assertEquals(12, json.getInt("acc"))
+        assertEquals(48, json.getInt("vel"))
+        assertEquals(270, json.getInt("cog"))
+        assertEquals(1.5, json.getDouble("accel"), 0.0)
         assertEquals(88, json.getInt("batt"))
         assertEquals("ph", json.getString("tid"))
     }
 
     @Test
     fun fromJsonRoundTripsThroughTheQueueEncoding() {
-        val report = LocationReport(40.5, -74.1, 1_700_000_000, accuracyM = 12)
+        val report = LocationReport(
+            40.5, -74.1, 1_700_000_000,
+            accuracyM = 12, velocityKmh = 48, courseDeg = 270, accelMps2 = 1.5, batteryPct = 88,
+        )
         assertEquals(report, LocationReport.fromJson(report.toJson()))
     }
 

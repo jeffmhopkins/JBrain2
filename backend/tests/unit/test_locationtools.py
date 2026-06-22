@@ -302,8 +302,8 @@ async def test_where_is_multiple_devices_answers_for_the_latest() -> None:
     devices = FakeDevices(device_subjects_by_entity={"jeff": ["s-old", "s-new"]})
     entities = FakeEntities({"Jeff": [_entity("jeff", "Jeff", kind="Person")]})
     activity = {
-        "s-old": DeviceActivity("s-old", _NOW - timedelta(hours=5), 50, "wifi", 1),
-        "s-new": DeviceActivity("s-new", _NOW - timedelta(minutes=1), 50, "wifi", 1),
+        "s-old": DeviceActivity("s-old", _NOW - timedelta(hours=5), 50, "wifi", None, 1),
+        "s-new": DeviceActivity("s-new", _NOW - timedelta(minutes=1), 50, "wifi", None, 1),
     }
     locations = FakeLocations(
         latest=LatestPlace("p1", "Office", _NOW - timedelta(minutes=2)),
@@ -354,8 +354,8 @@ async def test_where_was_i_uses_the_owners_own_device() -> None:
 async def test_where_was_i_multiple_owned_devices_picks_latest() -> None:
     devices = FakeDevices(owner_subjects=["s-old", "s-new"])
     activity = {
-        "s-old": DeviceActivity("s-old", _NOW - timedelta(hours=2), 50, "wifi", 1),
-        "s-new": DeviceActivity("s-new", _NOW - timedelta(minutes=1), 50, "wifi", 1),
+        "s-old": DeviceActivity("s-old", _NOW - timedelta(hours=2), 50, "wifi", None, 1),
+        "s-new": DeviceActivity("s-new", _NOW - timedelta(minutes=1), 50, "wifi", None, 1),
     }
     locations = FakeLocations(
         latest=LatestPlace("p1", "Home", _NOW - timedelta(minutes=1)),
@@ -379,8 +379,9 @@ async def test_where_was_i_unlinked_owner_device() -> None:
 async def test_device_status_labels_and_tones() -> None:
     devices = FakeDevices(linked={"s1": "Jeff", "s2": "Celine"})
     activity = {
-        "s1": DeviceActivity("s1", _NOW - timedelta(minutes=5), 12, "wifi", 100),  # fresh, low batt
-        "s2": DeviceActivity("s2", _NOW - timedelta(hours=3), 80, "mobile", 5),  # stale, ok batt
+        # s1: fresh fix, low battery; s2: stale fix, ok battery.
+        "s1": DeviceActivity("s1", _NOW - timedelta(minutes=5), 12, "wifi", None, 100),
+        "s2": DeviceActivity("s2", _NOW - timedelta(hours=3), 80, "mobile", None, 5),
     }
     locations = FakeLocations(activity=activity)
     handlers = _handlers(locations=locations, devices=devices)
@@ -391,7 +392,7 @@ async def test_device_status_labels_and_tones() -> None:
 
 
 async def test_device_status_unlinked_device_label() -> None:
-    activity = {"s9": DeviceActivity("s9", _NOW, 50, "wifi", 1)}
+    activity = {"s9": DeviceActivity("s9", _NOW, 50, "wifi", None, 1)}
     handlers = _handlers(locations=FakeLocations(activity=activity), devices=FakeDevices())
     out = await handlers["device_status"]({}, FULL_OWNER)
     assert "unlinked device" in out

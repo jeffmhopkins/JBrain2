@@ -97,6 +97,7 @@ class DeviceSummaryOut(BaseModel):
     last_seen: str | None
     battery_pct: int | None
     connection: str | None
+    velocity_mps: float | None
     fix_count: int
 
     @classmethod
@@ -109,6 +110,7 @@ class DeviceSummaryOut(BaseModel):
             last_seen=a.last_seen.isoformat() if a and a.last_seen else None,
             battery_pct=a.battery_pct if a else None,
             connection=a.connection if a else None,
+            velocity_mps=a.velocity_mps if a else None,
             fix_count=a.fix_count if a else 0,
         )
 

@@ -39,6 +39,9 @@ class OwnTracksLocation(BaseModel):
     batt: int | None = None
     conn: str | None = None
     tid: str | None = None
+    # JBrain360 extension (not OwnTracks): absolute linear-acceleration magnitude in
+    # m/s² (gravity removed, low-pass filtered to a 0.2 s time constant on-device).
+    accel: float | None = Field(default=None, ge=0)
 
 
 class LocationSink(Protocol):
@@ -60,6 +63,7 @@ def to_fix(p: OwnTracksLocation) -> LocationFix:
         altitude_m=p.alt,
         velocity_mps=p.vel / 3.6 if p.vel is not None else None,  # km/h -> m/s
         course_deg=p.cog,
+        acceleration_mps2=p.accel,
         battery_pct=p.batt,
         connection=p.conn,
         tracker_id=p.tid,
