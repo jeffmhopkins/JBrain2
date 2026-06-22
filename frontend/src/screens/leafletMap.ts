@@ -10,22 +10,12 @@ import "leaflet/dist/leaflet.css";
 import "leaflet.heat";
 import type { LocationFix, PlaceGeofence } from "../api/client";
 import { withinAccuracy } from "./locationFilter";
-import { MPS_TO_MPH, SPEED_MAX_MPH, speedColor } from "./speed";
+import { type TrailMetric, bucketColor, computeDwell, metricBucket } from "./trailMetric";
 
-// The trail tints by speed. Quantizing into a handful of buckets lets contiguous
-// same-speed stretches draw as ONE polyline, so a long window stays a few coloured
-// runs instead of one line segment per fix (which would be heavy).
-const SPEED_BUCKETS = 12;
-
-function speedBucket(velocityMps: number | null): number {
-  const t = Math.max(0, Math.min(1, ((velocityMps ?? 0) * MPS_TO_MPH) / SPEED_MAX_MPH));
-  return Math.round(t * SPEED_BUCKETS);
-}
-
-/** The representative colour for a speed bucket (its centre speed on the ramp). */
-function bucketColor(bucket: number): string {
-  return speedColor(((bucket / SPEED_BUCKETS) * SPEED_MAX_MPH) / MPS_TO_MPH);
-}
+// Quantizing the colour metric into a handful of buckets lets contiguous same-colour
+// stretches draw as ONE polyline, so a long window stays a few runs instead of one
+// segment per fix — which keeps the redraws the slider triggers cheap.
+const TRAIL_BUCKETS = 12;
 
 export type MapMode = "live" | "trail" | "heat";
 
@@ -59,6 +49,10 @@ export interface MapState {
   heatWeight?: number;
   // Current-location pins (member map). Absent on the owner map — additive.
   pins?: MapPin[];
+  // Which metric tints the trail (speed default).
+  metric?: TrailMetric;
+  // A tapped trail point to highlight + label (null = none).
+  selected?: { lat: number; lon: number; label: string; color: string } | null;
   // Auto-fit the view to the data. Default true (the owner map). The member map
   // sets it false when focused on one person, so a redraw (live fix, mode/window
   // change) doesn't fight the centerOn / the user's pan.
@@ -83,19 +77,27 @@ function escapeHtml(s: string): string {
   );
 }
 
-/** Draw the trail as speed-tinted polylines: each segment's bucket is the average of
- * its endpoints' speeds, and contiguous same-bucket segments merge into one polyline
- * so a long window stays a few coloured runs. The colour is set inline (per-segment
- * data, not a static token) over the `loc-lf-trail-seg` class, which carries only the
- * width/opacity. */
-function drawSpeedTrail(overlay: L.LayerGroup, kept: LocationFix[], track: L.LatLng[]): void {
+/** Draw the trail as metric-tinted polylines: each segment's bucket is the average of
+ * its endpoints' metric buckets, and contiguous same-bucket segments merge into one
+ * polyline so a long window stays a few coloured runs. The colour is set inline
+ * (per-segment data, not a static token) over the `loc-lf-trail-seg` class, which
+ * carries only the width/caps. `dwell` (per-fix minutes) is used only by "timeplace". */
+function drawMetricTrail(
+  overlay: L.LayerGroup,
+  kept: LocationFix[],
+  track: L.LatLng[],
+  metric: TrailMetric,
+  dwell: number[],
+  dwellMax: number,
+): void {
   let run: L.LatLng[] = [];
   let runBucket = -1;
   const flush = () => {
     if (run.length > 1 && runBucket >= 0) {
-      L.polyline(run, { className: "loc-lf-trail-seg", color: bucketColor(runBucket) }).addTo(
-        overlay,
-      );
+      L.polyline(run, {
+        className: "loc-lf-trail-seg",
+        color: bucketColor(metric, runBucket, TRAIL_BUCKETS),
+      }).addTo(overlay);
     }
   };
   for (let i = 0; i < track.length - 1; i++) {
@@ -104,11 +106,9 @@ function drawSpeedTrail(overlay: L.LayerGroup, kept: LocationFix[], track: L.Lat
     const fa = kept[i];
     const fb = kept[i + 1];
     if (!a || !b || !fa || !fb) continue;
-    // Segment speed = mean of its endpoints (either may be null → treated as 0).
-    const va = fa.velocity_mps;
-    const vb = fb.velocity_mps;
-    const mean = ((va ?? vb ?? 0) + (vb ?? va ?? 0)) / 2;
-    const bucket = speedBucket(mean);
+    const ba = metricBucket(metric, fa, dwell[i] ?? 0, dwellMax, TRAIL_BUCKETS);
+    const bb = metricBucket(metric, fb, dwell[i + 1] ?? 0, dwellMax, TRAIL_BUCKETS);
+    const bucket = Math.round((ba + bb) / 2);
     if (bucket === runBucket) {
       run.push(b);
     } else {
@@ -125,6 +125,7 @@ function drawSpeedTrail(overlay: L.LayerGroup, kept: LocationFix[], track: L.Lat
 export function createLocationMap(
   container: HTMLElement,
   onSelect?: (subjectId: string) => void,
+  onPointSelect?: (fix: LocationFix) => void,
   scheme: TileScheme = readTileScheme(),
 ): LocationMapHandle {
   // Zoom moves to the bottom-right so the floating control bar owns the top edge.
@@ -198,9 +199,39 @@ export function createLocationMap(
     const first = track[0];
     const last = track[track.length - 1];
     if (state.mode === "trail" && first && last) {
-      if (track.length > 1) drawSpeedTrail(overlay, kept, track);
+      const metric = state.metric ?? "speed";
+      // "Time at place" needs each fix's dwell minutes; the other metrics ignore it.
+      const { dwell, max } = metric === "timeplace" ? computeDwell(kept) : { dwell: [], max: 0 };
+      if (track.length > 1) drawMetricTrail(overlay, kept, track, metric, dwell, max);
       L.circleMarker(first, { radius: 5, className: "loc-lf-start" }).addTo(overlay);
       L.circleMarker(last, { radius: 5, className: "loc-lf-end" }).addTo(overlay);
+      // An invisible fat hit-line so a tap anywhere on the path selects the nearest
+      // fix (the colour ramp's narrow segments are hard to hit directly).
+      if (onPointSelect && track.length > 1) {
+        const hit = L.polyline(track, {
+          className: "loc-lf-hit",
+          color: "#000",
+          opacity: 0,
+          weight: 22,
+        });
+        hit.on("click", (e) => {
+          const ll = (e as L.LeafletMouseEvent).latlng;
+          let best: LocationFix | undefined;
+          let bd = Number.POSITIVE_INFINITY;
+          for (let i = 0; i < kept.length; i++) {
+            const t = track[i];
+            const f = kept[i];
+            if (!t || !f) continue;
+            const d = map.distance(ll, t);
+            if (d < bd) {
+              bd = d;
+              best = f;
+            }
+          }
+          if (best) onPointSelect(best);
+        });
+        hit.addTo(overlay);
+      }
     } else if (state.mode === "heat" && track.length > 0) {
       // A real gradient heat layer: dwell density reads as the blue→red ramp; the
       // per-point radius and weight are owner-tunable from the Heat control. A modest
@@ -218,6 +249,26 @@ export function createLocationMap(
       // latest fix is intentionally not shown as "latest" (trustworthy fixes only).
       L.circleMarker(last, { radius: 7, className: "loc-lf-live" })
         .bindTooltip("latest")
+        .addTo(overlay);
+    }
+
+    // The tapped/scrubbed trail point: a ringed dot + a permanent callout ("J: 35 mph"),
+    // tinted by the active metric. Not added to `bounds` — selecting must not re-frame.
+    if (state.selected) {
+      L.circleMarker(L.latLng(state.selected.lat, state.selected.lon), {
+        radius: 7,
+        color: state.selected.color,
+        weight: 3,
+        fillColor: "#0e0f11",
+        fillOpacity: 1,
+        className: "loc-lf-pick",
+      })
+        .bindTooltip(state.selected.label, {
+          permanent: true,
+          direction: "top",
+          offset: [0, -7],
+          className: "loc-lf-pick-tip",
+        })
         .addTo(overlay);
     }
 

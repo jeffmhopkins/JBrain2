@@ -90,6 +90,9 @@ class FixPoint:
     accuracy_m: float | None
     battery_pct: int | None
     velocity_mps: float | None = None
+    course_deg: float | None = None
+    acceleration_mps2: float | None = None
+    altitude_m: float | None = None
 
 
 @dataclass(frozen=True)
@@ -356,7 +359,7 @@ class SqlLocationRepo:
                 await session.execute(
                     text(
                         "SELECT captured_at, latitude, longitude, accuracy_m, battery_pct,"
-                        "   velocity_mps"
+                        "   velocity_mps, course_deg, acceleration_mps2, altitude_m"
                         " FROM app.location_fixes"
                         " WHERE subject_id = cast(:sid AS uuid)"
                         "   AND captured_at >= :since AND captured_at < :until"
@@ -373,6 +376,9 @@ class SqlLocationRepo:
                 accuracy_m=r.accuracy_m,
                 battery_pct=r.battery_pct,
                 velocity_mps=r.velocity_mps,
+                course_deg=r.course_deg,
+                acceleration_mps2=r.acceleration_mps2,
+                altitude_m=r.altitude_m,
             )
             for r in rows
         ]
@@ -419,7 +425,7 @@ class SqlLocationRepo:
                 await session.execute(
                     text(
                         "SELECT captured_at, latitude, longitude, accuracy_m, battery_pct,"
-                        "   velocity_mps"
+                        "   velocity_mps, course_deg, acceleration_mps2, altitude_m"
                         " FROM app.location_fixes"
                         " WHERE subject_id = cast(:sid AS uuid)"
                         "   AND captured_at >= :since AND captured_at < :until"
@@ -437,6 +443,9 @@ class SqlLocationRepo:
                 accuracy_m=r.accuracy_m,
                 battery_pct=r.battery_pct,
                 velocity_mps=r.velocity_mps,
+                course_deg=r.course_deg,
+                acceleration_mps2=r.acceleration_mps2,
+                altitude_m=r.altitude_m,
             )
             for r in rows
         ]

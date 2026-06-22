@@ -55,6 +55,9 @@ function fix(over: Partial<LocationFix> = {}): LocationFix {
     accuracy_m: 8,
     battery_pct: 80,
     velocity_mps: null,
+    course_deg: null,
+    acceleration_mps2: null,
+    altitude_m: null,
     ...over,
   };
 }
