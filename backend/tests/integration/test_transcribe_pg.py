@@ -22,6 +22,7 @@ from sqlalchemy.pool import NullPool
 from jbrain.db.session import SessionContext, scoped_session
 from jbrain.ingest.pipeline import IngestPipeline
 from jbrain.ingest.transcribe_job import TRANSCRIPT_CONFIDENCE, TranscribePipeline
+from jbrain.llm import FakeLlmClient, LlmRouter
 from jbrain.notes.repo import SqlNotesRepo
 from jbrain.storage import FsBlobStore
 from jbrain.transcribe import Transcript, Word
@@ -311,3 +312,84 @@ async def test_empty_transcript_caches_a_zero_confidence_marker(
     # Re-ingest sees the cache and enqueues no new job.
     await ingest(maker, blobs).ingest_note({"note_id": note_id})
     assert await transcribe_jobs_for(maker, attachment_id) == 0
+
+
+async def test_low_confidence_audio_reads_below_the_ceiling(
+    maker: async_sessionmaker[AsyncSession], blobs: FsBlobStore
+) -> None:
+    """Noisy audio (low per-word confidence) lowers the extract row's confidence
+    below the Guards ceiling — the analysis weight then holds its facts."""
+    note_id, attachment_id = await make_note_with_audio(maker, blobs)
+    fake = FakeTranscribeClient(
+        [
+            Transcript(
+                text="muffled words",
+                words=(Word("muffled", 0, 500, 0.3), Word("words", 500, 900, 0.5)),
+                duration_ms=900,
+            )
+        ]
+    )
+    await TranscribePipeline(maker, blobs, fake, "w").transcribe_attachment(
+        {"attachment_id": attachment_id}
+    )
+    async with scoped_session(maker, OWNER) as s:
+        conf = (
+            await s.execute(
+                text(
+                    "SELECT confidence FROM app.attachment_extracts"
+                    " WHERE attachment_id = :aid AND kind = 'transcript'"
+                ),
+                {"aid": attachment_id},
+            )
+        ).scalar_one()
+    assert conf == pytest.approx(0.4)  # mean(0.3, 0.5) < the 0.8 ceiling
+
+
+async def test_low_confidence_transcript_marker_reaches_extraction_prompt(
+    maker: async_sessionmaker[AsyncSession], blobs: FsBlobStore
+) -> None:
+    """The extraction call must SEE that a transcript was noisy: a low-confidence
+    transcript chunk reaches note.extract behind the "[low-confidence transcript …]"
+    marker so the model discounts facts built on it (the analysis half of the
+    per-word confidence)."""
+    from jbrain.analysis.pipeline import AnalysisPipeline
+
+    note_id, attachment_id = await make_note_with_audio(maker, blobs, body="left a voice memo")
+    await ingest(maker, blobs).ingest_note({"note_id": note_id})
+    fake = FakeTranscribeClient(
+        [
+            Transcript(
+                text="ship by August",
+                words=(
+                    Word("ship", 0, 400, 0.3),
+                    Word("by", 400, 600, 0.4),
+                    Word("August", 600, 1200, 0.35),
+                ),
+                duration_ms=1200,
+            )
+        ]
+    )
+    await TranscribePipeline(maker, blobs, fake, "w").transcribe_attachment(
+        {"attachment_id": attachment_id}
+    )
+    await ingest(maker, blobs).ingest_note({"note_id": note_id})
+
+    extract_fake = FakeLlmClient(
+        [
+            '{"title": "t", "tags": ["a", "b", "c"], "mentions": [], "facts": [],'
+            ' "temporal_tokens": []}',
+            '{"resolutions": [], "facts": []}',
+        ]
+    )
+    analyzer = AnalysisPipeline(
+        maker,
+        LlmRouter(
+            {"xai": extract_fake},
+            {"note.extract": ("xai", "grok-4.3"), "integrate.note": ("xai", "grok-4.3")},
+        ),
+    )
+    await analyzer.integrate_note({"note_id": note_id})
+
+    user_text = extract_fake.calls[0]["user_text"]
+    assert "[low-confidence transcript from memo.wav]\nship by August" in user_text
+    assert "left a voice memo" in user_text  # body chunk stays unmarked

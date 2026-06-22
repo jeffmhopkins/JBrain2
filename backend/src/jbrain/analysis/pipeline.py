@@ -21,7 +21,7 @@ from datetime import UTC, datetime, timedelta, timezone
 from typing import Any
 
 import structlog
-from sqlalchemy import bindparam, delete, func, select, text, update
+from sqlalchemy import and_, bindparam, delete, func, select, text, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -119,7 +119,7 @@ from jbrain.models.analysis import (
     ReviewItem,
     TemporalToken,
 )
-from jbrain.models.notes import Attachment, Chunk, Note
+from jbrain.models.notes import Attachment, AttachmentExtract, Chunk, Note
 from jbrain.queue import SYSTEM_CTX, PermanentJobError
 from jbrain.schema import SchemaError, get_registry
 from jbrain.settings_store import SqlSettingsStore
@@ -294,17 +294,37 @@ class AnalysisPipeline:
             # An owner correction note (Phase 6 §4) extracts at full weight and
             # force-supersedes + pins the current head, so it out-argues the graph.
             correction = note.provenance == "owner_correction"
+            # The LEFT JOIN pulls the source extract's confidence for a machine-read
+            # chunk (matched on attachment + kind, one row per pair). It feeds the
+            # transcript marker's "low-confidence" qualifier; NULL for note text.
             chunk_rows = (
                 await session.execute(
-                    select(Chunk.id, Chunk.text, Chunk.source_kind, Attachment.filename)
+                    select(
+                        Chunk.id,
+                        Chunk.text,
+                        Chunk.source_kind,
+                        Attachment.filename,
+                        AttachmentExtract.confidence,
+                    )
                     .join(Attachment, Chunk.attachment_id == Attachment.id, isouter=True)
+                    .join(
+                        AttachmentExtract,
+                        and_(
+                            AttachmentExtract.attachment_id == Chunk.attachment_id,
+                            AttachmentExtract.kind == Chunk.source_kind,
+                        ),
+                        isouter=True,
+                    )
                     .where(Chunk.note_id == note_id, Chunk.granularity == PARAGRAPH)
                     .order_by(Chunk.seq)
                 )
             ).all()
         chunks = [_ChunkRef(id=r.id, text=r.text) for r in chunk_rows]
         texts = [
-            prompt_block(r.text, source_kind=r.source_kind, filename=r.filename) for r in chunk_rows
+            prompt_block(
+                r.text, source_kind=r.source_kind, filename=r.filename, confidence=r.confidence
+            )
+            for r in chunk_rows
         ] or [body]
 
         prompt_anchor = local_anchor(captured_at, tz_offset)

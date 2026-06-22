@@ -58,10 +58,23 @@ TRANSCRIBE_ATTACHMENT_SPEC = ActionSpec(
     description="Transcribe an audio attachment with the local whisper model.",
 )
 
-# A transcription is a model's hearing, not the author's words: capped below note
-# text (1.0), above OCR (0.7) — audio has no layout to misread, but it is still
-# machine-produced and a low-confidence value must never auto-supersede a fact.
+# A transcription is a model's hearing, not the author's words: the row's
+# confidence is the CEILING (capped below note text 1.0, above OCR 0.7 — audio has
+# no layout to misread, but it is still machine-produced and must never auto-
+# supersede). The actual value is min(ceiling, the words' mean confidence), so
+# noisy audio reads low and the analysis weight machinery holds its facts for
+# review (docs/ANALYSIS.md "Guards"). No words → the flat ceiling.
 TRANSCRIPT_CONFIDENCE = 0.8
+
+
+def transcript_confidence(words: list[dict[str, Any]]) -> float:
+    """The extract row's confidence from its per-word data: the words' mean,
+    capped at the TRANSCRIPT_CONFIDENCE ceiling. Empty → the ceiling."""
+    if not words:
+        return TRANSCRIPT_CONFIDENCE
+    mean = sum(float(w["confidence"]) for w in words) / len(words)
+    return round(min(TRANSCRIPT_CONFIDENCE, mean), 4)
+
 
 KIND_TRANSCRIPT = "transcript"
 
@@ -158,7 +171,7 @@ class TranscribePipeline:
             kind=KIND_TRANSCRIPT,
             tool=f"whisper:{self._model}",
             text=clean,
-            confidence=TRANSCRIPT_CONFIDENCE if clean else 0.0,
+            confidence=transcript_confidence(words or []) if clean else 0.0,
             words=words,
             source_anchor=filename,
             domain_code=domain,

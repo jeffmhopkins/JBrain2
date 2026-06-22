@@ -1,6 +1,6 @@
 ---
 name: note.extract
-version: note-extract-v20
+version: note-extract-v21
 description: Extract facts, entities, and temporal references from one personal note.
 strength: high
 config:
@@ -207,7 +207,7 @@ Produce, as JSON:
 - "temporal": resolve every relative time phrase ("last Tuesday", "this morning", "in 3 months") against the capture anchor given with the note, to absolute ISO 8601 with UTC offset, preserving the anchor's local date. Backward phrases count from the anchor's LOCAL day: from a morning capture, "last night" is the PRIOR calendar day. Set "precision" honestly: instant | day | month | year | era | unknown. Never invent a date: if a phrase cannot be resolved, keep the phrase and leave resolved_start null. Use null temporal when the fact has no time dimension. A state or relationship the note marks as OVER but does not date ("used to work for X", "former employer", "no longer lives there", "I left Acme") is a CLOSED PAST interval: set resolved_end to the capture anchor at precision "era" (leave resolved_start null) so it records as past, not as a current value — and a NEGATED disposal ("I no longer own the Civic") stays assertion "negated" with the same closed end. An EXPLICIT DATED range on a state or relationship ("from 2008 to 2016", "2008-2016", "worked there 2010 through 2014") is likewise a CLOSED interval: set BOTH resolved_start AND resolved_end to the stated bounds (precision year/month/day as stated), so a past job with a named end records as bounded history beside any current one — never drop the end and leave only the start, which would read as a still-current value.
 - AGE is relative-to-NOW and goes stale every year, so NEVER store it as a value or coin an `age` predicate: an age statement ("he's about 8 years old", "she's in her 30s", "born 40 years ago") resolves to an approximate birthDate attribute — predicate "birthDate", kind "attribute", the birth year (capture year minus the age) in value_json {"value": "<YYYY>"}, with temporal precision "year" for an exact age or "era" for an approximate ("about", "in her 30s") one. This is the same rule as "last Tuesday" -> a date: store the absolute, stable fact, not the relative phrase.
 - "domain": general | health | finance | location — judged PER FACT, regardless of the note's capture domain. A family member's medication is health even inside a general journal. When unsure between general and a sensitive domain, choose the sensitive one.
-- "confidence": 0 to 1, honest; lower it for garbled, OCR-derived, or uncertain content.
+- "confidence": 0 to 1, honest; lower it for garbled, OCR-derived, audio-transcribed, or uncertain content — more so for a block marked "[low-confidence transcript ...]".
 
 5. "temporal_tokens": every date or time expression in the note, resolved the same way. "kind" is point | range | recurrence; for a recurrence also emit an iCalendar RRULE string.
 
