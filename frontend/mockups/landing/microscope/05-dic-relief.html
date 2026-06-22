@@ -1,0 +1,465 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no">
+<meta name="theme-color" content="#b9bcc0">
+<title>JBrain — Microscope / DIC Relief</title>
+<style>
+  html,body{ margin:0; padding:0; height:100%; overflow:hidden; background:#b9bcc0;
+    touch-action:manipulation; -webkit-user-select:none; user-select:none; }
+  #c{ display:block; position:fixed; inset:0; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script>
+"use strict";
+/* ================= JBrain — microscope amoeba ==================
+   A single amoeba hunts and engulfs cells, seen through a microscope.
+   A tiny 5-node brain (its own neural net) is driven by the amoeba and,
+   when you tap a neuron, fires back into it. Tap the slide to drop food.
+   Vanilla canvas 2D, no libraries. Calm + mobile-first by design.
+   Variant: DIC / Nomarski Relief — pseudo-3D embossed look. */
+
+// ---------- style knobs (DIC relief modality) ----------
+const S = {
+  bg:'#b9bcc0',
+  mode:'dic',
+  // Interior cytoplasm: flat mid-gray, nearly featureless (DIC shows relief at edges)
+  gelInner:'rgba(175,179,184,0.60)',
+  gelOuter:'rgba(160,163,168,0.10)',
+  granule:'rgba(130,133,138,0.7)',   // faint embossed specks
+  // Membrane not used as single stroke — relief pair applied directly in drawAmoeba
+  membrane:'#c8cace',
+  reliefLight:'rgba(240,242,244,0.92)',  // upper-left highlight offset stroke
+  reliefDark:'rgba(80,83,88,0.72)',      // lower-right shadow offset stroke
+  reliefOffset:1.8,                      // pixel offset for double-stroke emboss
+  glowOn:false,                          // no fluorescent bloom in DIC
+  nucleus:'#a8abb0',
+  nucleusLight:'rgba(230,232,235,0.80)',  // nucleus relief highlight
+  nucleusDark:'rgba(60,63,68,0.55)',      // nucleus relief shadow
+  vacuole:'rgba(155,158,163,0.5)',
+  food:'#b0b3b8', foodGlow:'#909398',
+  foodStain:false,
+  vignette:0.22,
+  // Neural net: embossed gray look
+  netInk:'#707378', netHot:'#e8eaec', netDim:'rgba(100,103,108,0.22)',
+  netPanel:'rgba(30,32,35,0.38)',
+  netRelLight:'rgba(230,232,235,0.85)',
+  netRelDark:'rgba(40,43,48,0.70)',
+  halo:false, relief:true,
+};
+
+const cnv=document.getElementById('c'), ctx=cnv.getContext('2d');
+let W=0,H=0,DPR=1;
+
+// ---------- offscreen caches (built on resize) ----------
+let furniture=null, interior=null, glowAmoeba=null, glowFood=null, foodSpr=null,
+    glowInk=null, glowHot=null;
+
+function mkCanvas(w,h){ const c=document.createElement('canvas'); c.width=Math.max(1,Math.ceil(w)); c.height=Math.max(1,Math.ceil(h)); return c; }
+
+// Soft glow sprite — kept for neural net node halos (muted gray tints)
+function mkGlow(color,size){
+  const c=mkCanvas(size,size), g=c.getContext('2d'), r=size/2;
+  const grd2=g.createRadialGradient(r,r,0,r,r,r);
+  grd2.addColorStop(0,hexA(color,0.7)); grd2.addColorStop(0.5,hexA(color,0.25)); grd2.addColorStop(1,hexA(color,0));
+  g.fillStyle=grd2; g.beginPath(); g.arc(r,r,r,0,7); g.fill();
+  return c;
+}
+function hexA(hex,a){
+  if(hex[0]!=='#') return hex;
+  const n=parseInt(hex.slice(1),16); return `rgba(${(n>>16)&255},${(n>>8)&255},${n&255},${a})`;
+}
+
+const AMO={ x:0,y:0, r:64, vx:0,vy:0, hunger:0.5, pseudo:[], phase:[], drift:0, dir:0 };
+const NP=12;                              // membrane control points
+for(let i=0;i<NP;i++){ AMO.pseudo[i]=0; AMO.phase[i]=Math.random()*1000; }
+const MAXR=110;
+let vacuoles=[];                          // {ax,ay (relative), r, color, life}
+
+function buildSprites(){
+  // --- furniture: vignette + static dust (no animation, cached) ---
+  furniture=mkCanvas(W,H); const f=furniture.getContext('2d');
+  // DIC vignette: neutral gray darkening at edges, subtle
+  const vg=f.createRadialGradient(W/2,H*0.46,Math.min(W,H)*0.16, W/2,H*0.46,Math.max(W,H)*0.62);
+  vg.addColorStop(0,'rgba(0,0,0,0)');
+  vg.addColorStop(0.65,'rgba(0,0,0,0)');
+  vg.addColorStop(1,`rgba(0,0,0,${S.vignette})`);
+  f.fillStyle=vg; f.fillRect(0,0,W,H);
+  // Static dust specks — gray-on-gray, very faint
+  for(let i=0;i<6;i++){
+    const x=Math.random()*W, y=Math.random()*H, r=6+Math.random()*16;
+    const dg=f.createRadialGradient(x,y,0,x,y,r);
+    dg.addColorStop(0,'rgba(90,90,95,0.06)'); dg.addColorStop(1,'rgba(0,0,0,0)');
+    f.fillStyle=dg; f.beginPath(); f.arc(x,y,r,0,7); f.fill();
+  }
+
+  // --- amoeba interior sprite (flat gray cytoplasm + faint embossed granules) ---
+  const isz=MAXR*2.4; interior=mkCanvas(isz,isz);
+  const g=interior.getContext('2d'); const c0=isz/2;
+  // Flat uniform fill — DIC interior is nearly featureless, relief only at boundaries
+  const gg=g.createRadialGradient(c0,c0*0.9,2, c0,c0,MAXR*1.15);
+  gg.addColorStop(0,S.gelInner); gg.addColorStop(1,S.gelOuter);
+  g.fillStyle=gg; g.beginPath(); g.arc(c0,c0,MAXR*1.15,0,7); g.fill();
+  // Granules: faint embossed specks — each drawn twice with tiny offset
+  for(let i=0;i<220;i++){
+    const a=Math.random()*7, rr=Math.sqrt(Math.random())*MAXR*0.80;
+    const x=c0+Math.cos(a)*rr, y=c0+Math.sin(a)*rr, s=0.5+Math.random()*1.4;
+    const alpha=0.08+Math.random()*0.18;
+    // shadow offset (+0.8,+0.8)
+    g.fillStyle=hexA(S.reliefDark, alpha*0.6);
+    g.beginPath(); g.arc(x+0.8,y+0.8,s,0,7); g.fill();
+    // light offset (-0.6,-0.6)
+    g.fillStyle=hexA(S.reliefLight, alpha*0.55);
+    g.beginPath(); g.arc(x-0.6,y-0.6,s,0,7); g.fill();
+    // base center dot
+    g.fillStyle=hexA(S.granule, alpha*0.4);
+    g.beginPath(); g.arc(x,y,s*0.7,0,7); g.fill();
+  }
+
+  // Glow sprites: muted warm-gray for net (DIC has no fluorescent bloom)
+  glowAmoeba=mkGlow('#a0a3a8', MAXR*3.0);
+  glowFood=mkGlow('#888b90', 64);
+  glowInk=mkGlow(S.netInk, 56);
+  glowHot=mkGlow(S.netHot, 56);
+
+  // Food sprite: embossed gray disc (light upper-left, shadow lower-right)
+  foodSpr=mkCanvas(44,44); const fs=foodSpr.getContext('2d');
+  const fr=22;
+  // Base fill — uniform mid-gray disc
+  fs.fillStyle='rgba(168,171,176,0.82)';
+  fs.beginPath(); fs.arc(fr,fr,fr*0.88,0,7); fs.fill();
+  // Shadow stroke (lower-right offset)
+  const off=1.4;
+  fs.strokeStyle='rgba(65,68,73,0.65)'; fs.lineWidth=1.8;
+  fs.beginPath(); fs.arc(fr+off,fr+off,fr*0.88,0,7); fs.stroke();
+  // Light stroke (upper-left offset)
+  fs.strokeStyle='rgba(235,237,240,0.85)'; fs.lineWidth=1.6;
+  fs.beginPath(); fs.arc(fr-off,fr-off,fr*0.88,0,7); fs.stroke();
+  // Inner nucleus-like inclusion: small embossed disc
+  const nr=fr*0.30;
+  // shadow
+  fs.strokeStyle='rgba(60,63,68,0.50)'; fs.lineWidth=1.2;
+  fs.beginPath(); fs.arc(fr+2+off*0.6,fr+1+off*0.6,nr,0,7); fs.stroke();
+  // light
+  fs.strokeStyle='rgba(230,232,235,0.70)'; fs.lineWidth=1.0;
+  fs.beginPath(); fs.arc(fr+2-off*0.6,fr+1-off*0.6,nr,0,7); fs.stroke();
+  // center fill
+  fs.fillStyle='rgba(155,158,163,0.55)';
+  fs.beginPath(); fs.arc(fr+2,fr+1,nr*0.7,0,7); fs.fill();
+}
+
+// ---------- food cells ----------
+let food=[];
+const SENSE=240;
+function spawnFood(x,y){
+  if(food.length>=4) food.shift();
+  const m=18+Math.random()*22;
+  if(x===undefined){
+    const a=Math.random()*7, rad=Math.min(W,H)*0.36;
+    x=W/2+Math.cos(a)*rad; y=H*0.46+Math.sin(a)*rad;
+  }
+  food.push({x,y,vx:0,vy:0,r:m*0.5,scale:m/30,jx:Math.random()*9,jy:Math.random()*9,eat:0});
+}
+let respawn=0;
+
+// ---------- amoeba membrane geometry ----------
+function membranePts(t){
+  const pts=[];
+  for(let i=0;i<NP;i++){
+    const a=(i/NP)*Math.PI*2;
+    const n=0.6*Math.sin(a*2+t*0.20+AMO.phase[i])
+           +0.3*Math.sin(a*3-t*0.13+AMO.phase[i]*1.7)
+           +0.1*Math.sin(a*5+t*0.31);
+    const r=AMO.r*(1+0.09*n)+AMO.pseudo[i];
+    pts.push({x:AMO.x+Math.cos(a)*r, y:AMO.y+Math.sin(a)*r});
+  }
+  return pts;
+}
+function pathClosed(c,p){
+  const n=p.length; c.beginPath(); c.moveTo(p[0].x,p[0].y);
+  for(let i=0;i<n;i++){
+    const p0=p[(i-1+n)%n],p1=p[i],p2=p[(i+1)%n],p3=p[(i+2)%n];
+    c.bezierCurveTo(p1.x+(p2.x-p0.x)/6,p1.y+(p2.y-p0.y)/6, p2.x-(p3.x-p1.x)/6,p2.y-(p3.y-p1.y)/6, p2.x,p2.y);
+  }
+  c.closePath();
+}
+// Helper: build offset point array for relief strokes
+function offsetPts(pts, dx, dy){
+  return pts.map(p=>({x:p.x+dx, y:p.y+dy}));
+}
+
+// ---------- 5-node brain ----------
+const NET={
+  nodes:[ {id:'foodProx',k:'in'},{id:'hunger',k:'in'},{id:'h',k:'hid'},{id:'reach',k:'out'},{id:'engulf',k:'out'} ],
+  edges:[ [0,2,0.9],[1,2,0.7],[2,3,1.0],[2,4,0.8],[0,4,0.7] ],
+};
+NET.nodes.forEach(n=>{ n.a=0; n.hold=0; n.pulse=0; });
+NET.edges.forEach(e=>{ e.p=[]; });
+let netBox={x:0,y:0,w:0,h:0};
+function layoutNet(){
+  const w=Math.min(168, W*0.46), h=118, pad=12;
+  netBox={x:W-w-12, y:H-h-14, w, h};
+  const colX=[netBox.x+26, netBox.x+w/2, netBox.x+w-26];
+  const inY=[netBox.y+34, netBox.y+h-30];
+  const outY=[netBox.y+34, netBox.y+h-30];
+  NET.nodes[0].x=colX[0]; NET.nodes[0].y=inY[0];
+  NET.nodes[1].x=colX[0]; NET.nodes[1].y=inY[1];
+  NET.nodes[2].x=colX[1]; NET.nodes[2].y=netBox.y+h/2;
+  NET.nodes[3].x=colX[2]; NET.nodes[3].y=outY[0];
+  NET.nodes[4].x=colX[2]; NET.nodes[4].y=outY[1];
+}
+function sig(x){return 1/(1+Math.exp(-x));}
+function netStep(dt, foodProx){
+  const N=NET.nodes;
+  setIn(0,foodProx); setIn(1,AMO.hunger);
+  const h=sig((N[0].a*0.9+N[1].a*0.7-0.5)*2.4); ease(N[2],h);
+  ease(N[3], sig((N[2].a*1.0-0.4)*2.4));
+  ease(N[4], sig((N[2].a*0.8+N[0].a*0.7-0.7)*2.4));
+  function setIn(i,v){ const n=N[i]; if(n.hold>0){ n.a=1; n.hold-=dt; } else n.a+= (v-n.a)*0.08; }
+  function ease(n,v){ if(n.hold>0){ n.a=1; n.hold-=dt; } else n.a+=(v-n.a)*0.08; }
+  for(const e of NET.edges){ const src=N[e[0]];
+    if(src.a>0.5 && Math.random()<src.a*0.03*dt*60) e.p.push(0);
+    for(let k=e.p.length-1;k>=0;k--){ e.p[k]+=dt*2.6;
+      if(e.p[k]>=1){ const d=N[e[1]]; d.a=Math.min(1,d.a+0.15); if(d.hold<0.1)d.hold=0.1; e.p.splice(k,1);} }
+  }
+}
+function fireNode(i){
+  const n=NET.nodes[i]; n.a=1; n.hold=0.5; n.pulse=1;
+  for(const e of NET.edges) if(e[0]===i) e.p.push(0);
+  if(n.id==='reach'){ lunge=1.0; }
+  if(n.id==='engulf'){ tryEngulf=true; }
+}
+let lunge=0, tryEngulf=false;
+
+// ---------- interaction (no pan/zoom) ----------
+let hintTimer=2.0, hinted=false, lastInput=0;
+cnv.addEventListener('pointerdown',e=>{
+  const x=e.clientX, y=e.clientY; lastInput=0; hinted=true;
+  for(let i=0;i<NET.nodes.length;i++){ const n=NET.nodes[i];
+    if(Math.hypot(n.x-x,n.y-y)<26){ fireNode(i); return; } }
+  if(x>netBox.x-6&&x<netBox.x+netBox.w+6&&y>netBox.y-6&&y<netBox.y+netBox.h+6) return;
+  spawnFood(x,y);
+},{passive:true});
+
+// ---------- resize ----------
+function resize(){
+  DPR=Math.min(2,window.devicePixelRatio||1);
+  W=innerWidth; H=innerHeight;
+  cnv.width=W*DPR; cnv.height=H*DPR; cnv.style.width=W+'px'; cnv.style.height=H+'px';
+  ctx.setTransform(DPR,0,0,DPR,0,0);
+  AMO.x=W/2; AMO.y=H*0.44;
+  buildSprites(); layoutNet();
+}
+addEventListener('resize',resize);
+
+// ---------- simulation ----------
+let nearest=null, nearD=1e9, nearAng=0;
+function step(dt){
+  AMO.hunger=Math.min(1, AMO.hunger+dt*0.012);
+  lunge=Math.max(0,lunge-dt*0.8);
+
+  respawn-=dt;
+  if(food.length<3 && respawn<=0){ spawnFood(); respawn=3+Math.random()*2; }
+
+  nearest=null; nearD=1e9;
+  for(const fd of food){ if(fd.eat>0) continue;
+    const d=Math.hypot(fd.x-AMO.x,fd.y-AMO.y); if(d<nearD){nearD=d;nearest=fd;} }
+  const sensing = nearest && nearD<SENSE;
+  if(sensing) nearAng=Math.atan2(nearest.y-AMO.y, nearest.x-AMO.x);
+  const foodProx = sensing ? 1-Math.min(1,nearD/SENSE) : 0;
+
+  netStep(dt, foodProx);
+
+  const urge=(0.4+AMO.hunger*0.5+NET.nodes[3].a*0.4+lunge*1.5);
+  let tx=0,ty=0;
+  if(sensing){ tx=Math.cos(nearAng); ty=Math.sin(nearAng); }
+  else { AMO.dir+=(Math.random()-0.5)*dt*0.8; tx=Math.cos(AMO.dir); ty=Math.sin(AMO.dir); }
+  const sp=22*urge;
+  AMO.vx+=(tx*sp-AMO.vx)*Math.min(1,dt*1.5);
+  AMO.vy+=(ty*sp-AMO.vy)*Math.min(1,dt*1.5);
+  AMO.x+=AMO.vx*dt; AMO.y+=AMO.vy*dt;
+  const fcx=W/2, fcy=H*0.46, fr=Math.min(W,H)*0.40;
+  const dc=Math.hypot(AMO.x-fcx,AMO.y-fcy);
+  if(dc>fr){ AMO.x+=(fcx-AMO.x)*dt*0.6; AMO.y+=(fcy-AMO.y)*dt*0.6; }
+
+  const strength = sensing ? AMO.r*(0.30+0.25*NET.nodes[3].a) : 0;
+  for(let i=0;i<NP;i++){
+    const a=(i/NP)*Math.PI*2; let d=Math.abs(a-nearAng); d=Math.min(d,Math.PI*2-d);
+    const w=Math.max(0,1-d/0.85); const want=strength*w*w;
+    AMO.pseudo[i]+=(want-AMO.pseudo[i])*Math.min(1,dt*1.2);
+  }
+
+  if(nearest){
+    const eatR=AMO.r*0.9;
+    if(nearD<eatR || (tryEngulf && nearD<SENSE)){ nearest.eat=Math.max(nearest.eat,0.001); }
+  }
+  tryEngulf=false;
+  for(const fd of food){
+    if(fd.eat>0){ fd.eat+=dt/0.7;
+      fd.x+=(AMO.x-fd.x)*Math.min(1,dt*3); fd.y+=(AMO.y-fd.y)*Math.min(1,dt*3);
+      if(fd.eat>=1){
+        vacuoles.push({ax:(fd.x-AMO.x),ay:(fd.y-AMO.y),r:fd.r*1.1,color:S.vacuole,life:1});
+        AMO.hunger=Math.max(0,AMO.hunger-0.4);
+        AMO.r=Math.min(MAXR*0.78, AMO.r*1.02);
+      }
+    }
+  }
+  food=food.filter(fd=>fd.eat<1);
+  for(const fd of food){ if(fd.eat>0) continue;
+    fd.jx+=dt*1.3; fd.jy+=dt*1.1;
+    fd.x+=Math.sin(fd.jx)*8*dt; fd.y+=Math.cos(fd.jy)*8*dt;
+  }
+  for(const v of vacuoles){ v.life-=dt*0.06; v.r*=(1-dt*0.05); }
+  vacuoles=vacuoles.filter(v=>v.life>0 && v.r>1);
+
+  AMO.drift+=dt*0.15;
+  if(!hinted){ hintTimer-=dt; if(hintTimer<=0){ NET.nodes[3].pulse=1; for(const e of NET.edges) if(e[0]===2)e.p.push(0); hinted=true; } }
+}
+
+// ---------- render ----------
+function drawAmoeba(t){
+  const pts=membranePts(t);
+
+  // Clip + fill interior (flat gray cytoplasm + granule sprite)
+  ctx.save(); pathClosed(ctx,pts); ctx.clip();
+  const isz=MAXR*2.4, h=isz/2;
+  ctx.save(); ctx.translate(AMO.x,AMO.y); ctx.rotate(Math.sin(AMO.drift*0.3)*0.05);
+  const dx=Math.cos(AMO.drift)*4, dy=Math.sin(AMO.drift*0.8)*4;
+  ctx.drawImage(interior, -h+dx, -h+dy, isz, isz);
+  ctx.restore();
+
+  // Vacuoles: embossed ring treatment inside the clip
+  for(const v of vacuoles){
+    const vx=AMO.x+v.ax, vy=AMO.y+v.ay;
+    ctx.fillStyle=hexA(S.nucleus, 0.10*v.life);
+    ctx.beginPath(); ctx.arc(vx,vy,v.r,0,7); ctx.fill();
+    // shadow arc lower-right
+    ctx.strokeStyle=hexA(S.reliefDark, 0.45*v.life); ctx.lineWidth=1.2;
+    ctx.beginPath(); ctx.arc(vx+0.8,vy+0.8,v.r,0,7); ctx.stroke();
+    // light arc upper-left
+    ctx.strokeStyle=hexA(S.reliefLight, 0.55*v.life); ctx.lineWidth=1.0;
+    ctx.beginPath(); ctx.arc(vx-0.8,vy-0.8,v.r,0,7); ctx.stroke();
+  }
+
+  // Nucleus (drifts slowly off-center) — embossed arc pair: light upper-left, dark lower-right
+  const nx=AMO.x+Math.cos(AMO.drift*0.7)*AMO.r*0.18, ny=AMO.y+Math.sin(AMO.drift*0.5)*AMO.r*0.18;
+  const nr=AMO.r*0.34;
+  // Base fill: subtle darker gray blob
+  const ng=ctx.createRadialGradient(nx,ny,1,nx,ny,nr);
+  ng.addColorStop(0,'rgba(148,151,156,0.50)'); ng.addColorStop(1,'rgba(148,151,156,0)');
+  ctx.fillStyle=ng; ctx.beginPath(); ctx.arc(nx,ny,nr,0,7); ctx.fill();
+  // Shadow relief (lower-right)
+  const rOff=S.reliefOffset;
+  ctx.strokeStyle=S.nucleusDark; ctx.lineWidth=1.5;
+  ctx.beginPath(); ctx.arc(nx+rOff,ny+rOff,nr,0,7); ctx.stroke();
+  // Light relief (upper-left)
+  ctx.strokeStyle=S.nucleusLight; ctx.lineWidth=1.3;
+  ctx.beginPath(); ctx.arc(nx-rOff,ny-rOff,nr,0,7); ctx.stroke();
+
+  ctx.restore(); // end clip
+
+  // Membrane: DIC double-stroke relief (outside the clip — drawn on top of interior)
+  // Shadow stroke (offset lower-right)
+  pathClosed(ctx, offsetPts(pts, rOff, rOff));
+  ctx.strokeStyle=S.reliefDark; ctx.lineWidth=2.2; ctx.stroke();
+  // Light stroke (offset upper-left)
+  pathClosed(ctx, offsetPts(pts, -rOff, -rOff));
+  ctx.strokeStyle=S.reliefLight; ctx.lineWidth=2.0; ctx.stroke();
+  // Center base line (very faint, ties the two)
+  pathClosed(ctx, pts);
+  ctx.strokeStyle='rgba(120,123,128,0.30)'; ctx.lineWidth=1.0; ctx.stroke();
+}
+
+function drawFood(){
+  for(const fd of food){
+    const sc=(fd.eat>0? (1-fd.eat) : 1) * fd.scale;
+    if(sc<=0.02) continue;
+    const sz=44*sc, h=sz/2;
+    ctx.globalAlpha=(fd.eat>0?(1-fd.eat):1);
+    ctx.drawImage(foodSpr, fd.x-h, fd.y-h, sz, sz);
+    ctx.globalAlpha=1;
+  }
+}
+
+function drawNet(){
+  // Panel: translucent dark gray, embossed border
+  ctx.fillStyle=S.netPanel;
+  roundRect(ctx,netBox.x,netBox.y,netBox.w,netBox.h,12); ctx.fill();
+  // Panel border relief
+  const rOff=S.reliefOffset;
+  roundRect(ctx,netBox.x+rOff,netBox.y+rOff,netBox.w,netBox.h,12);
+  ctx.strokeStyle=S.netRelDark; ctx.lineWidth=1.0; ctx.stroke();
+  roundRect(ctx,netBox.x-rOff,netBox.y-rOff,netBox.w,netBox.h,12);
+  ctx.strokeStyle='rgba(200,202,206,0.18)'; ctx.lineWidth=0.8; ctx.stroke();
+
+  // Edges
+  for(const e of NET.edges){ const A=NET.nodes[e[0]],B=NET.nodes[e[1]];
+    const act=(A.a+B.a)*0.5;
+    ctx.strokeStyle = act>0.15 ? hexA(S.netInk,0.14+act*0.75) : S.netDim;
+    ctx.lineWidth=0.8+act*1.4;
+    ctx.beginPath(); ctx.moveTo(A.x,A.y); ctx.lineTo(B.x,B.y); ctx.stroke();
+    for(const p of e.p){ const x=A.x+(B.x-A.x)*p, y=A.y+(B.y-A.y)*p;
+      // Pulse dot: small embossed speck
+      ctx.fillStyle=hexA(S.netHot,0.90); ctx.beginPath(); ctx.arc(x,y,2,0,7); ctx.fill(); }
+  }
+
+  // Nodes: embossed rings (shadow lower-right, light upper-left)
+  for(const n of NET.nodes){
+    const breath=0.5+0.5*Math.sin(performance.now()/900+n.x);
+    const isHot = n.a>0.55;
+    const col = isHot ? S.netHot : S.netInk;
+    const spr = isHot ? glowHot : glowInk;
+    const nOff=rOff*0.9;
+    const nR=7+n.a*3;
+
+    // Soft glow behind (muted)
+    const gl=28+n.a*18; ctx.globalAlpha=0.18+n.a*0.40;
+    ctx.drawImage(spr,n.x-gl/2,n.y-gl/2,gl,gl); ctx.globalAlpha=1;
+
+    // Shadow ring (lower-right offset)
+    ctx.strokeStyle=S.netRelDark; ctx.lineWidth=1.5;
+    ctx.beginPath(); ctx.arc(n.x+nOff,n.y+nOff,nR,0,7); ctx.stroke();
+    // Light ring (upper-left offset)
+    ctx.strokeStyle=S.netRelLight; ctx.lineWidth=1.3;
+    ctx.beginPath(); ctx.arc(n.x-nOff,n.y-nOff,nR,0,7); ctx.stroke();
+    // Base ring
+    ctx.strokeStyle=hexA(col,0.55+n.a*0.45); ctx.lineWidth=1.0;
+    ctx.beginPath(); ctx.arc(n.x,n.y,nR,0,7); ctx.stroke();
+
+    // Center fill dot
+    ctx.fillStyle=hexA(col,0.35+n.a*0.65+breath*0.08);
+    ctx.beginPath(); ctx.arc(n.x,n.y,2.4+n.a*1.5,0,7); ctx.fill();
+
+    // Ripple on tap
+    if(n.pulse>0.01){ ctx.strokeStyle=hexA(S.netHot,n.pulse*0.7); ctx.lineWidth=1.2;
+      ctx.beginPath(); ctx.arc(n.x,n.y,10+(1-n.pulse)*18,0,7); ctx.stroke(); n.pulse*=0.92; }
+  }
+}
+
+function roundRect(c,x,y,w,h,r){ c.beginPath(); c.moveTo(x+r,y); c.arcTo(x+w,y,x+w,y+h,r);
+  c.arcTo(x+w,y+h,x,y+h,r); c.arcTo(x,y+h,x,y,r); c.arcTo(x,y,x+w,y,r); c.closePath(); }
+
+// ---------- main loop ----------
+let last=performance.now();
+function frame(now){
+  let dt=(now-last)/1000; last=now; if(dt>0.1) dt=0.1;     // clamp on tab restore
+  const t=now/1000;
+  step(dt);
+  ctx.setTransform(DPR,0,0,DPR,0,0);
+  ctx.fillStyle=S.bg; ctx.fillRect(0,0,W,H);
+  drawFood();
+  drawAmoeba(t);
+  ctx.drawImage(furniture,0,0,W,H);        // static lens vignette + dust
+  drawNet();
+  requestAnimationFrame(frame);
+}
+resize();
+spawnFood(W*0.5+90,H*0.40); spawnFood(W*0.5-110,H*0.5); spawnFood(W*0.5+40,H*0.56);
+AMO.pseudo[0]=20;                           // start mid-movement, not a perfect circle
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
