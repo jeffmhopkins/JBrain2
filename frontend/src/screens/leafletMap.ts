@@ -64,6 +64,9 @@ export interface LocationMapHandle {
   // Recenter on a point (the member map's tap-a-person-to-center), keeping at least
   // a street-level zoom.
   centerOn: (lat: number, lon: number) => void;
+  // Smoothly pan to a point at the CURRENT zoom — the focused person's map "follows"
+  // them as live fixes move them, without the zoom jump of a recenter.
+  follow: (lat: number, lon: number) => void;
   // Swap the basemap style in place (the light/dark tile toggle). Re-points the
   // existing tile layer, so overlays/markers stay put.
   setScheme: (scheme: TileScheme) => void;
@@ -256,21 +259,29 @@ export function createLocationMap(
         .addTo(overlay);
     }
 
-    // The tapped/scrubbed trail point: a ringed dot + a permanent callout ("J: 35 mph"),
-    // tinted by the active metric. Not added to `bounds` — selecting must not re-frame.
+    // The tapped/scrubbed trail point: a permanent callout ("J: 35 mph"), tinted by
+    // the active metric. Not added to `bounds` — selecting must not re-frame.
     if (state.selected) {
-      L.circleMarker(L.latLng(state.selected.lat, state.selected.lon), {
-        radius: 7,
-        color: state.selected.color,
-        weight: 3,
+      const sel = state.selected;
+      // When the selected point IS the person's current position, its teardrop pin
+      // already marks the spot — so skip the redundant ringed dot and lift the callout
+      // clear of the pin head (38px tall) instead of sitting on top of its label.
+      const onPin = (state.pins ?? []).some(
+        (p) => Math.abs(p.lat - sel.lat) < 1e-6 && Math.abs(p.lon - sel.lon) < 1e-6,
+      );
+      L.circleMarker(L.latLng(sel.lat, sel.lon), {
+        radius: onPin ? 0 : 7,
+        color: sel.color,
+        weight: onPin ? 0 : 3,
         fillColor: "#0e0f11",
-        fillOpacity: 1,
+        fillOpacity: onPin ? 0 : 1,
+        opacity: onPin ? 0 : 1,
         className: "loc-lf-pick",
       })
-        .bindTooltip(state.selected.label, {
+        .bindTooltip(sel.label, {
           permanent: true,
           direction: "top",
-          offset: [0, -7],
+          offset: onPin ? [0, -42] : [0, -8],
           className: "loc-lf-pick-tip",
         })
         .addTo(overlay);
@@ -293,6 +304,14 @@ export function createLocationMap(
     centerOn: (lat, lon) => {
       map.setView([lat, lon], Math.max(map.getZoom(), 15), { animate: true });
       lastFit = null; // a manual recenter; a later autoFit (Everyone) should re-fit
+    },
+    follow: (lat, lon) => {
+      // Pan at the current zoom; skip the work when they're already ~centred so GPS
+      // jitter doesn't nudge the view every fix.
+      const c = map.getCenter();
+      if (Math.abs(c.lat - lat) < 1e-5 && Math.abs(c.lng - lon) < 1e-5) return;
+      map.panTo([lat, lon], { animate: true, duration: 0.6 });
+      lastFit = null;
     },
     setScheme: (next) => {
       if (next === currentScheme) return;

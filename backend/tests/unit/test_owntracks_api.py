@@ -80,6 +80,43 @@ def test_valid_location_is_ingested_under_the_device_subject(
     assert fix.battery_pct == 80
 
 
+class _RecordingBroadcaster:
+    """Captures live publishes so the HTTP path's real-time fan-out can be asserted."""
+
+    def __init__(self) -> None:
+        self.published: list[object] = []
+
+    def publish(self, fix: object) -> None:
+        self.published.append(fix)
+
+
+def test_stored_fix_fans_out_to_the_live_socket(
+    client: tuple[TestClient, FakeLocationRepo],
+) -> None:
+    c, _repo = client
+    bc = _RecordingBroadcaster()
+    c.app.state.live_broadcaster = bc  # type: ignore[attr-defined]
+    resp = c.post("/api/owntracks", json=_loc(_now(), vel=36.0), headers=_basic(_KEY))
+    assert resp.status_code == 200
+    # The newly-stored fix is published live so the dashboard map moves in real time
+    # (the MQTT feeder never sees an HTTP fix, so the HTTP path publishes itself).
+    assert len(bc.published) == 1
+    fix = bc.published[0]
+    assert fix.subject_id == "subj-1"  # type: ignore[attr-defined]  # code-set, never payload
+    assert fix.velocity_mps == pytest.approx(10.0)  # type: ignore[attr-defined]
+
+
+def test_idempotent_dup_is_not_republished_live(
+    client: tuple[TestClient, FakeLocationRepo],
+) -> None:
+    c, loc = client
+    loc.dup = True  # the repo reports the fix as an idempotent duplicate (no new store)
+    bc = _RecordingBroadcaster()
+    c.app.state.live_broadcaster = bc  # type: ignore[attr-defined]
+    assert c.post("/api/owntracks", json=_loc(_now()), headers=_basic(_KEY)).status_code == 200
+    assert bc.published == []  # a dup must not re-fan-out
+
+
 def test_non_location_messages_are_acked_and_ignored(
     client: tuple[TestClient, FakeLocationRepo],
 ) -> None:

@@ -336,13 +336,25 @@ function LiveMap({ deps }: { deps: MemberDeps | undefined }) {
     };
   }, [sel, windowPreset, listPositions]);
 
-  // Selecting a person recenters the map on them (their current pin at select time).
+  // Keep the focused person in view: recenter (with a comfortable zoom) when first
+  // selected, then smoothly PAN to follow as their live fixes move them. `roster` is a
+  // dep so the follow fires on each position update; an unchanged coordinate is a no-op
+  // in the map (jitter guard there).
+  const focusedRef = useRef<string | null>(null);
   useEffect(() => {
-    if (sel === "all") return;
-    const p = rosterRef.current?.find((s) => s.subject_id === sel);
-    if (p?.latitude != null && p?.longitude != null)
+    if (sel === "all") {
+      focusedRef.current = null;
+      return;
+    }
+    const p = roster?.find((s) => s.subject_id === sel);
+    if (p?.latitude == null || p?.longitude == null) return;
+    if (focusedRef.current === sel) {
+      handle.current?.follow(p.latitude, p.longitude);
+    } else {
+      focusedRef.current = sel;
       handle.current?.centerOn(p.latitude, p.longitude);
-  }, [sel]);
+    }
+  }, [sel, roster]);
 
   // History has no meaning for Everyone — collapse it on the way there.
   useEffect(() => {

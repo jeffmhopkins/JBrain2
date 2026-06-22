@@ -19,15 +19,48 @@ export interface LiveHandle {
   close: () => void;
 }
 
+// Reconnect backoff: a dropped socket (a network blip while driving, a server
+// restart, a long background) must recover on its own — otherwise the map silently
+// freezes until a reload. Capped exponential, reset on a clean open.
+const RECONNECT_BASE_MS = 1000;
+const RECONNECT_MAX_MS = 15_000;
+
 export function connectLive(onFix: (fix: LiveFix) => void): LiveHandle {
   const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
-  const ws = new WebSocket(`${proto}//${window.location.host}/api/locations/live`);
-  ws.onmessage = (ev) => {
-    try {
-      onFix(JSON.parse(ev.data as string) as LiveFix);
-    } catch {
-      // Ignore a malformed frame rather than tear down the live stream.
-    }
+  const url = `${proto}//${window.location.host}/api/locations/live`;
+  let ws: WebSocket | null = null;
+  let closed = false; // the caller asked to stop — don't reconnect
+  let attempt = 0;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+
+  const open = () => {
+    if (closed) return;
+    const sock = new WebSocket(url);
+    ws = sock;
+    sock.onopen = () => {
+      attempt = 0; // a good connection resets the backoff
+    };
+    sock.onmessage = (ev) => {
+      try {
+        onFix(JSON.parse(ev.data as string) as LiveFix);
+      } catch {
+        // Ignore a malformed frame rather than tear down the live stream.
+      }
+    };
+    sock.onclose = () => {
+      if (closed) return;
+      const delay = Math.min(RECONNECT_BASE_MS * 2 ** attempt, RECONNECT_MAX_MS);
+      attempt += 1;
+      timer = setTimeout(open, delay);
+    };
   };
-  return { close: () => ws.close() };
+  open();
+
+  return {
+    close: () => {
+      closed = true;
+      if (timer !== undefined) clearTimeout(timer);
+      ws?.close();
+    },
+  };
 }
