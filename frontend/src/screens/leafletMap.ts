@@ -256,21 +256,29 @@ export function createLocationMap(
         .addTo(overlay);
     }
 
-    // The tapped/scrubbed trail point: a ringed dot + a permanent callout ("J: 35 mph"),
-    // tinted by the active metric. Not added to `bounds` — selecting must not re-frame.
+    // The tapped/scrubbed trail point: a permanent callout ("J: 35 mph"), tinted by
+    // the active metric. Not added to `bounds` — selecting must not re-frame.
     if (state.selected) {
-      L.circleMarker(L.latLng(state.selected.lat, state.selected.lon), {
-        radius: 7,
-        color: state.selected.color,
-        weight: 3,
+      const sel = state.selected;
+      // When the selected point IS the person's current position, its teardrop pin
+      // already marks the spot — so skip the redundant ringed dot and lift the callout
+      // clear of the pin head (38px tall) instead of sitting on top of its label.
+      const onPin = (state.pins ?? []).some(
+        (p) => Math.abs(p.lat - sel.lat) < 1e-6 && Math.abs(p.lon - sel.lon) < 1e-6,
+      );
+      L.circleMarker(L.latLng(sel.lat, sel.lon), {
+        radius: onPin ? 0 : 7,
+        color: sel.color,
+        weight: onPin ? 0 : 3,
         fillColor: "#0e0f11",
-        fillOpacity: 1,
+        fillOpacity: onPin ? 0 : 1,
+        opacity: onPin ? 0 : 1,
         className: "loc-lf-pick",
       })
-        .bindTooltip(state.selected.label, {
+        .bindTooltip(sel.label, {
           permanent: true,
           direction: "top",
-          offset: [0, -7],
+          offset: onPin ? [0, -42] : [0, -8],
           className: "loc-lf-pick-tip",
         })
         .addTo(overlay);
