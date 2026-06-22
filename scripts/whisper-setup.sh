@@ -124,7 +124,8 @@ sed -i '/^WHISPER_ENABLED=/d; /^WHISPER_URL=/d; /^WHISPER_MODEL=/d; /^VIDEO_GID=
   [ -n "$RENDER_GID" ] && echo "RENDER_GID=$RENDER_GID"
 } >> .env
 
-say "Starting the whisper service"
+say "Building the whisper image (compiles whisper.cpp's server) and starting it"
+docker compose --profile whisper build whisper
 docker compose --profile whisper up -d whisper
 # Recreate the api + worker so they pick up the new JBRAIN_WHISPER_* env (audio
 # attachments now transcribe and jerv gains the transcribe tool).
