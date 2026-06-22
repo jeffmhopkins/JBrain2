@@ -57,7 +57,9 @@ def client() -> Iterator[tuple[TestClient, FastAPI]]:
 
 def _enable(app: FastAPI, gateway: _FakeGateway, models: list[str]) -> None:
     """Flip fish hosting on for one test (SettingsDep reads app.state.settings)."""
-    app.state.settings = _settings(fish_id_url="http://fish-id:8200", fish_id_models=models)
+    app.state.settings = _settings(
+        fish_id_url="http://fish-id:8200", fish_id_models=models, supervisor_token="sup-secret"
+    )
     app.state.fish_id_gateway = gateway
 
 
@@ -114,14 +116,14 @@ def test_free_502_on_gateway_error(client: tuple[TestClient, FastAPI]) -> None:
     assert test_client.post("/api/settings/fish/free").status_code == 502
 
 
-def _install_supervisor(app: FastAPI, status_code: int, seen: list[tuple[str, Any]]) -> None:
+def _install_supervisor(app: FastAPI, status_code: int, seen: list[tuple[str, Any, str]]) -> None:
     """Replace the supervisor proxy client with one that records the call and returns
     `status_code` (so start/stop can be driven without a real supervisor)."""
 
     def handle(req: httpx.Request) -> httpx.Response:
         import json
 
-        seen.append((req.url.path, json.loads(req.content)))
+        seen.append((req.url.path, json.loads(req.content), req.headers.get("authorization", "")))
         return httpx.Response(status_code, json={})
 
     app.state.supervisor_client = httpx.AsyncClient(
@@ -135,12 +137,14 @@ def test_service_toggle_proxies_to_supervisor(
 ) -> None:
     test_client, app = client
     _enable(app, _FakeGateway(FishIdStatus(reachable=True)), models=["fishial-v2"])
-    seen: list[tuple[str, Any]] = []
+    seen: list[tuple[str, Any, str]] = []
     _install_supervisor(app, 202, seen)
     resp = test_client.post(f"/api/settings/fish/service/{action}")
     assert resp.status_code == 202
     assert resp.json() == {"service": "fish-id", "action": action}
-    assert seen == [(f"/{action}", {"service": "fish-id"})]
+    # The proxy hits the matching supervisor command for the fish-id service AND carries
+    # the supervisor bearer token (its only auth) — never a user-controlled service name.
+    assert seen == [(f"/{action}", {"service": "fish-id"}, "Bearer sup-secret")]
 
 
 def test_service_start_404_when_not_provisioned(client: tuple[TestClient, FastAPI]) -> None:

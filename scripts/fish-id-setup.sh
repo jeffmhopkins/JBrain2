@@ -114,6 +114,9 @@ PY
 # fish-id profile from FISH_ID_ENABLED so the service isn't dragged into unrelated commands.
 RENDER_GID="$(stat -c %g /dev/dri/renderD128 2>/dev/null || getent group render | cut -d: -f3 || true)"
 VIDEO_GID="$(getent group video | cut -d: -f3 || true)"
+if [ -z "$RENDER_GID" ] && [ -z "$VIDEO_GID" ]; then
+  say "WARNING: could not resolve a render/video GID — the service may be denied /dev/dri."
+fi
 FISH_ID_MODELS_JSON="$(printf '%s\n' "${IDS[@]}" | python3 -c 'import json,sys; print(json.dumps([l.strip() for l in sys.stdin if l.strip()]))')"
 say "Enabling fish identification in .env"
 sed -i '/^FISH_ID_ENABLED=/d; /^FISH_ID_URL=/d; /^FISH_ID_MODELS=/d' .env
