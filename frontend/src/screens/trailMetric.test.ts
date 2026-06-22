@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
 import type { LocationFix } from "../api/client";
-import { colorForFix, computeDwell, legendInfo, metricBucket, metricLabel } from "./trailMetric";
+import {
+  bucketColor,
+  colorForFix,
+  computeDwell,
+  legendInfo,
+  metricBucket,
+  metricLabel,
+} from "./trailMetric";
 
 function fix(over: Partial<LocationFix> = {}): LocationFix {
   return {
@@ -49,15 +56,20 @@ describe("legendInfo", () => {
   });
 });
 
-describe("time-at-place piecewise scale", () => {
-  it("spreads short dwells across the ramp instead of squashing them at 0", () => {
+describe("time-at-place banding", () => {
+  it("puts each dwell interval in its own band (hard hue change at the boundaries)", () => {
     const f = fix();
-    const max = 120; // a 2h window → anchors 0/5m/15m/1h/2h at 0,¼,½,¾,1
-    const b = (min: number) => metricBucket("timeplace", f, min, max, 12);
-    expect(b(5)).toBe(3); // 5m sits a quarter up the ramp, not ~0
-    expect(b(15)).toBe(6);
-    expect(b(60)).toBe(9);
-    expect(b(120)).toBe(12);
+    const band = (min: number) => metricBucket("timeplace", f, min, 120, 12);
+    expect(band(2)).toBe(0); // 0–5m
+    expect(band(8)).toBe(1); // 5–15m
+    expect(band(40)).toBe(2); // 15m–1h
+    expect(band(90)).toBe(3); // 1h+
+  });
+
+  it("colours the bands distinctly (not one blended ramp)", () => {
+    const colors = [0, 1, 2, 3].map((b) => bucketColor("timeplace", b, 12));
+    for (const c of colors) expect(c).toMatch(/^rgb\(/);
+    expect(new Set(colors).size).toBe(4); // four distinct band colours
   });
 });
 

@@ -120,12 +120,13 @@ function drawMetricTrail(
   flush();
 }
 
-/** `onSelect` fires when a person pin is tapped, so the switcher can follow a tap on
- * the map. */
+/** `onSelect` fires when a person pin is tapped (the switcher follows a map tap);
+ * `onPointSelect` fires with the nearest fix when the trail is tapped, or with null
+ * when empty map is tapped (so a tap off the trail deselects the inspected point). */
 export function createLocationMap(
   container: HTMLElement,
   onSelect?: (subjectId: string) => void,
-  onPointSelect?: (fix: LocationFix) => void,
+  onPointSelect?: (fix: LocationFix | null) => void,
   scheme: TileScheme = readTileScheme(),
 ): LocationMapHandle {
   // Zoom moves to the bottom-right so the floating control bar owns the top edge.
@@ -134,6 +135,9 @@ export function createLocationMap(
     zoomControl: false,
   }).setView([20, 0], 2);
   L.control.zoom({ position: "bottomright" }).addTo(map);
+  // A tap on the basemap (not on the trail/pins — Leaflet doesn't bubble those to the
+  // map) clears the inspected point.
+  if (onPointSelect) map.on("click", () => onPointSelect(null));
   const tiles = L.tileLayer(tileUrl(scheme), {
     maxZoom: 19,
     attribution: "© OpenStreetMap contributors © CARTO",

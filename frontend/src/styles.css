@@ -12606,7 +12606,9 @@ input.ld-title {
 }
 
 .lm-float {
-  background: color-mix(in srgb, var(--surface) 80%, transparent);
+  /* Near-opaque so the panels stay legible over a LIGHT (day) basemap — the old 80%
+     mix washed out and the muted labels blended into the bright map behind. */
+  background: color-mix(in srgb, var(--surface) 94%, transparent);
   -webkit-backdrop-filter: blur(16px);
   backdrop-filter: blur(16px);
   border: 1px solid var(--border);
@@ -12686,10 +12688,14 @@ input.ld-title {
   border-radius: var(--r-pill);
   color: var(--text);
   cursor: pointer;
-  font-size: 16px;
-  line-height: 1;
   display: grid;
   place-items: center;
+  padding: 0;
+}
+.lm-tiles svg {
+  width: 18px;
+  height: 18px;
+  display: block;
 }
 
 .lm-chip {
@@ -13351,7 +13357,7 @@ input.ld-title {
 }
 .lm-legend-unit {
   font-size: 10.5px;
-  color: var(--text-3);
+  color: var(--text-2);
   margin-left: auto;
 }
 .lm-legend-ramp {
@@ -13363,7 +13369,7 @@ input.ld-title {
   display: flex;
   justify-content: space-between;
   font-size: 10px;
-  color: var(--text-3);
+  color: var(--text-2);
   font-variant-numeric: tabular-nums;
 }
 .lm-legend-menu {
@@ -13452,7 +13458,7 @@ input.ld-title {
 }
 .lm-pc-k {
   font-size: 11px;
-  color: var(--text-3);
+  color: var(--text-2);
 }
 .lm-pc-v {
   font-size: 12.5px;

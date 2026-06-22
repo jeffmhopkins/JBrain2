@@ -136,6 +136,24 @@ function presetToMs(preset: WindowPreset): { sinceMs: number; untilMs: number } 
 // extent (0 = first fix, 100 = newest). It's a pure in-memory trim, never a refetch.
 type ScrubWindow = { lo: number; hi: number };
 
+/** A "current position" fix from a roster row (its latest coordinate + speed/battery),
+ * for the detail card when a person is selected but their trail hasn't loaded yet.
+ * Course/accel/altitude aren't on the roster, so they read as "—". */
+function subjectCurrentFix(m: MemberSubject | undefined): LocationFix | null {
+  if (!m || m.latitude == null || m.longitude == null) return null;
+  return {
+    captured_at: m.last_seen ?? new Date().toISOString(),
+    latitude: m.latitude,
+    longitude: m.longitude,
+    accuracy_m: null,
+    battery_pct: m.battery_pct,
+    velocity_mps: m.velocity_mps,
+    course_deg: null,
+    acceleration_mps2: null,
+    altitude_m: null,
+  };
+}
+
 /** Trim a (time-ordered) trail to the slider's [lo, hi] fraction of its own span. */
 function trimByWindow(trail: LocationFix[], win: ScrubWindow): LocationFix[] {
   if (trail.length === 0 || (win.lo <= 0 && win.hi >= 100)) return trail;
@@ -292,17 +310,23 @@ function LiveMap({ deps }: { deps: MemberDeps | undefined }) {
     };
   }, []);
 
-  // The focused person's trail over the time window (Everyone → no trail).
+  // The focused person's trail over the time window (Everyone → no trail). On load,
+  // auto-inspect their CURRENT point (the newest fix) — selecting a person brings up
+  // their live detail, as if you'd tapped the right-now end of the trail.
   useEffect(() => {
     if (sel === "all") {
       setTrail([]);
+      setPicked(null);
       return;
     }
     let stale = false;
     const { sinceMs, untilMs } = presetToMs(windowPreset);
     listPositions(sel, new Date(sinceMs).toISOString(), new Date(untilMs).toISOString())
       .then((fixes) => {
-        if (!stale) setTrail(fixes);
+        if (stale) return;
+        setTrail(fixes);
+        const m = rosterRef.current?.find((s) => s.subject_id === sel);
+        setPicked(fixes[fixes.length - 1] ?? subjectCurrentFix(m));
       })
       .catch(() => {
         if (!stale) setTrail([]);
@@ -325,13 +349,12 @@ function LiveMap({ deps }: { deps: MemberDeps | undefined }) {
     if (sel === "all") setSheet((s) => (s === "history" ? null : s));
   }, [sel]);
 
-  // Changing person or span resets the scrub window to full and drops any inspected
-  // point (it may no longer be in range). The deps are intentional triggers (the body
-  // only calls setters), so the exhaustive-deps heuristic doesn't apply.
+  // Changing person or span resets the scrub window to full (the trail-load effect
+  // owns `picked`). The deps are intentional triggers (the body only calls a setter),
+  // so the exhaustive-deps heuristic doesn't apply.
   // biome-ignore lint/correctness/useExhaustiveDependencies: sel/windowPreset are reset triggers
   useEffect(() => {
     setWin({ lo: 0, hi: 100 });
-    setPicked(null);
   }, [sel, windowPreset]);
 
   // The slider trims the loaded trail in memory (no refetch → snappy).
@@ -426,6 +449,13 @@ function LiveMap({ deps }: { deps: MemberDeps | undefined }) {
     setPicked(newest && (newest.velocity_mps ?? 0) >= TRAVELING_MIN_MPS ? newest : null);
   };
 
+  // Tapping the focused person (dock) re-shows their current detail (newest fix).
+  const pickCurrent = () => {
+    if (sel === "all") return;
+    const m = roster?.find((s) => s.subject_id === sel);
+    setPicked(trail[trail.length - 1] ?? subjectCurrentFix(m));
+  };
+
   return (
     <div className="livemap">
       <div className="livemap-canvas" ref={canvas} data-testid="map-canvas" />
@@ -465,7 +495,14 @@ function LiveMap({ deps }: { deps: MemberDeps | undefined }) {
           onClose={() => setPicked(null)}
         />
       )}
-      <DockBar roster={roster} sel={sel} colorOf={colorOf} sheet={sheet} onToggle={toggleSheet} />
+      <DockBar
+        roster={roster}
+        sel={sel}
+        colorOf={colorOf}
+        sheet={sheet}
+        onToggle={toggleSheet}
+        onPickCurrent={pickCurrent}
+      />
     </div>
   );
 }
@@ -546,7 +583,25 @@ function TileToggle({
       title={`Switch to ${next} map`}
       onClick={() => onPick(next)}
     >
-      {next === "light" ? "☀" : "☾"}
+      {next === "light" ? (
+        // Sun (switch to the light basemap).
+        <svg
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+          aria-hidden="true"
+        >
+          <circle cx="12" cy="12" r="4" />
+          <path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" />
+        </svg>
+      ) : (
+        // Moon (switch to the dark basemap).
+        <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+          <path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8Z" />
+        </svg>
+      )}
     </button>
   );
 }
@@ -559,12 +614,14 @@ function DockBar({
   colorOf,
   sheet,
   onToggle,
+  onPickCurrent,
 }: {
   roster: MemberSubject[] | null;
   sel: Selection;
   colorOf: Map<string, string>;
   sheet: Sheet;
   onToggle: (which: Exclude<Sheet, null>) => void;
+  onPickCurrent: () => void;
 }) {
   if (!roster) return null;
   if (roster.length === 0) {
@@ -576,9 +633,10 @@ function DockBar({
     <div className="lm-bar lm-float">
       <button
         type="button"
-        className={`lm-bar-who${sheet === "details" ? " on" : ""}`}
-        aria-expanded={sheet === "details"}
-        onClick={() => onToggle("details")}
+        className={`lm-bar-who${everyone && sheet === "details" ? " on" : ""}`}
+        aria-expanded={everyone ? sheet === "details" : undefined}
+        // Everyone → open the roster; a focused person → (re)show their current detail.
+        onClick={() => (everyone ? onToggle("details") : onPickCurrent())}
       >
         {everyone ? (
           <>
@@ -615,6 +673,16 @@ function DockBar({
             </span>
           </>
         ) : null}
+      </button>
+      <button
+        type="button"
+        className={`lm-pull${!everyone && sheet === "details" ? " on" : ""}`}
+        aria-expanded={!everyone && sheet === "details"}
+        disabled={everyone}
+        onClick={() => onToggle("details")}
+      >
+        <PullChevron />
+        Activity
       </button>
       <button
         type="button"
