@@ -125,43 +125,50 @@ def parse_transcript(raw: str) -> Transcript:
 
 
 def _words_from_segments(segments: list[Any]) -> tuple[Word, ...]:
-    """Fold whisper segments → words. Each segment carries tokens (sub-word units);
-    a token that starts a new word begins with whitespace (BPE convention), so we
-    accumulate continuation tokens (punctuation, word-internal pieces) onto the
-    current word. A word's time spans its tokens; its confidence is the mean of its
-    tokens' probabilities, falling back to the segment's avg_logprob."""
+    """Fold whisper segments → words.
+
+    whisper.cpp's verbose_json gives each segment an OpenAI-style `words` array
+    ({word, start, end, probability}) — the per-word truth we want. Its `tokens`
+    are bare integer IDs (no text), so when there is no usable `words`/token-object
+    detail we fall back to the segment as one word (text + start/end + the
+    segment's avg_logprob confidence), so color + sync still work coarsely. Other
+    builds emit sub-word token OBJECTS; those fold by the BPE leading-space rule
+    (a piece starting with whitespace begins a new word; the rest attach)."""
     out: list[Word] = []
     for seg in segments:
         if not isinstance(seg, dict):
             continue
         seg_conf = _logprob_to_conf(seg.get("avg_logprob"))
-        tokens = seg.get("tokens")
-        if not isinstance(tokens, list) or not tokens:
-            # No token detail — emit the whole segment as one "word" so sync + a
-            # (segment-level) confidence still work.
+        # Prefer the per-word array; else sub-word token objects. Integer token IDs
+        # carry no text and fall through to the segment fallback below.
+        units = seg.get("words")
+        if not isinstance(units, list) or not units:
+            units = seg.get("tokens")
+        before = len(out)
+        if isinstance(units, list):
+            cur: dict[str, Any] | None = None
+            for u in units:
+                if not isinstance(u, dict):
+                    continue
+                piece = str(u.get("text") or u.get("word") or "")
+                if not piece or _is_special(piece):
+                    continue
+                prob = _token_conf(u, seg_conf)
+                start, end = _token_span(u)
+                if piece[:1].isspace() or cur is None:
+                    if cur is not None:
+                        out.append(_finish(cur))
+                    cur = {"text": piece.strip(), "start": start, "end": end, "probs": [prob]}
+                else:
+                    cur["text"] += piece
+                    cur["end"] = end if end is not None else cur["end"]
+                    cur["probs"].append(prob)
+                if cur["start"] is None and start is not None:
+                    cur["start"] = start
+            if cur is not None:
+                out.append(_finish(cur))
+        if len(out) == before:  # nothing usable in this segment (e.g. integer tokens)
             out.extend(_segment_as_word(seg, seg_conf))
-            continue
-        cur: dict[str, Any] | None = None
-        for tok in tokens:
-            if not isinstance(tok, dict):
-                continue
-            piece = str(tok.get("text") or tok.get("word") or "")
-            if not piece or _is_special(piece):
-                continue
-            prob = _token_conf(tok, seg_conf)
-            start, end = _token_span(tok)
-            if piece[:1].isspace() or cur is None:
-                if cur is not None:
-                    out.append(_finish(cur))
-                cur = {"text": piece.strip(), "start": start, "end": end, "probs": [prob]}
-            else:
-                cur["text"] += piece
-                cur["end"] = end if end is not None else cur["end"]
-                cur["probs"].append(prob)
-            if cur["start"] is None and start is not None:
-                cur["start"] = start
-        if cur is not None:
-            out.append(_finish(cur))
     return tuple(w for w in out if w.text)
 
 
