@@ -9,6 +9,7 @@ import "leaflet/dist/leaflet.css";
 // Side-effect import: augments L with `heatLayer` (the gradient Heat view).
 import "leaflet.heat";
 import type { LocationFix, PlaceGeofence } from "../api/client";
+import { heatOvalPoints } from "./heatOval";
 import { withinAccuracy } from "./locationFilter";
 import { type TrailMetric, bucketColor, computeDwell, metricBucket } from "./trailMetric";
 
@@ -246,8 +247,14 @@ export function createLocationMap(
       // A real gradient heat layer: dwell density reads as the blue→red ramp; the
       // per-point radius and weight are owner-tunable from the Heat control. A modest
       // default weight so transit reads cool and only repeated dwell builds to hot.
+      // Speed shapes each blob: a moving fix is smeared into an oval pointing the way
+      // it was going (longer the faster), while parked spots stay round.
       const weight = state.heatWeight ?? 0.4;
-      const pts = track.map((ll) => [ll.lat, ll.lng, weight] as [number, number, number]);
+      const pts = heatOvalPoints(
+        kept,
+        track.map((ll) => ({ lat: ll.lat, lon: ll.lng })),
+        weight,
+      );
       L.heatLayer(pts, {
         radius: state.heatRadius,
         blur: Math.round(state.heatRadius * 0.6),
