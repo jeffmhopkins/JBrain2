@@ -127,10 +127,11 @@ function withTemporal(text: string, key: string): ReactNode[] {
   return out;
 }
 
-// A place worth a map pin: a US postal address or a raw GPS pair, each rendered
-// with a small place glyph after it that deep-links to Google Maps. The scanner
-// runs ahead of entity/temporal scanning so a multi-word address stays one unit
-// (a city name that is also an entity doesn't fragment it).
+// A place worth a map pin: a US postal address (ZIP-bearing, or a ZIP-less street
+// address) or a raw GPS pair, each rendered with a small place glyph after it that
+// deep-links to Google Maps. The scanner runs ahead of entity/temporal scanning so
+// a multi-word address stays one unit (a city name that is also an entity doesn't
+// fragment it).
 
 // A Google Maps deep link — opens the native app on mobile, the web map elsewhere.
 // The `search` endpoint takes a free-text address or a bare "lat,lng" pair equally.
@@ -151,6 +152,17 @@ const COUNTRY = "(?:\\s*,\\s*(?:USA|U\\.S\\.A\\.|United States))?";
 // stray uppercase word from reading as a code.
 const ADDR_SRC = `(?:(?:[^,\\n]+,\\s*){0,3}(?:${STATE_NAMES})|(?:[^,\\n]+,\\s*){1,3}(?:${STATE_CODES}))\\.?\\s+\\d{5}(?:-\\d{4})?${COUNTRY}`;
 
+// Common US street-type suffixes — the anchor for a ZIP-less street address.
+const STREET_SUFFIX =
+  "Street|St|Avenue|Ave|Boulevard|Blvd|Road|Rd|Drive|Dr|Lane|Ln|Way|Court|Ct|Circle|Cir|Place|Pl|Terrace|Ter|Highway|Hwy|Parkway|Pkwy|Square|Sq|Trail|Trl|Plaza|Crossing|Xing";
+// A street address the model emitted without a trailing ZIP ("2505 South Hopkins
+// Ave, Titusville, FL"). A leading house number plus a street suffix (Ave, St, …)
+// makes the shape unambiguous enough to pin without a ZIP — that number+suffix
+// pair is the false-positive guard (ordinary prose doesn't pair them ahead of a
+// city + state). City segments, ZIP, and country all stay optional; the state
+// (full name or code) is still required as the locality gate.
+const STREET_ADDR_SRC = `\\d{1,6}\\s+[^,\\n]*\\b(?:${STREET_SUFFIX})\\b\\.?[^,\\n]*,\\s*(?:[^,\\n]+,\\s*){0,2}(?:${STATE_NAMES}|${STATE_CODES})\\b(?:\\.?\\s+\\d{5}(?:-\\d{4})?)?${COUNTRY}`;
+
 // A decimal lat/lng pair. To stay clear of prose number-lists and prices, a plain
 // comma'd pair must carry a minus on one side (40.71, -74.01) and fractional
 // digits on both; an all-positive pair instead needs the N/S + E/W hemisphere form
@@ -158,7 +170,7 @@ const ADDR_SRC = `(?:(?:[^,\\n]+,\\s*){0,3}(?:${STATE_NAMES})|(?:[^,\\n]+,\\s*){
 const GPS_SRC =
   "(?<![\\w.])(?:-\\d{1,2}\\.\\d+\\s*,\\s*[-+]?\\d{1,3}\\.\\d+|[-+]?\\d{1,2}\\.\\d+\\s*,\\s*-\\d{1,3}\\.\\d+|\\d{1,2}(?:\\.\\d+)?\\s*°?\\s*[NSns]\\s*,?\\s*\\d{1,3}(?:\\.\\d+)?\\s*°?\\s*[EWew])(?!\\w)(?!\\.\\d)";
 
-const PLACE = new RegExp(`(?<gps>${GPS_SRC})|(?<addr>${ADDR_SRC})`, "g");
+const PLACE = new RegExp(`(?<gps>${GPS_SRC})|(?<addr>${ADDR_SRC}|${STREET_ADDR_SRC})`, "g");
 
 /** A "lat,lng" map query from a matched coordinate run, or null when the numbers
  * fall outside the lat/lng ranges — so a false positive degrades back to prose. */
