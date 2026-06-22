@@ -52,7 +52,7 @@
   .chip.on .chip-nm{color:var(--text)}
 
   /* legend — top-left, under the names */
-  .legend{position:absolute;top:92px;left:12px;z-index:8;border-radius:13px;padding:9px 11px;width:150px}
+  .legend{position:absolute;top:92px;left:12px;z-index:8;border-radius:13px;padding:9px 11px;width:172px}
   .legend .lt{display:flex;justify-content:space-between;align-items:center;gap:6px;margin-bottom:6px;
     width:100%;background:transparent;border:0;color:inherit;cursor:pointer;padding:0;text-align:left}
   .legend .lt-l{display:flex;align-items:center;gap:6px}
@@ -169,6 +169,8 @@
           <button data-metric="speed" class="on"><span class="sw" data-sw="speed"></span><span class="mlbl">Speed</span><svg class="chk" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5 9-11"/></svg></button>
           <button data-metric="accel"><span class="sw" data-sw="accel"></span><span class="mlbl">Accel</span><svg class="chk" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5 9-11"/></svg></button>
           <button data-metric="battery"><span class="sw" data-sw="battery"></span><span class="mlbl">Battery</span><svg class="chk" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5 9-11"/></svg></button>
+          <button data-metric="heading"><span class="sw" data-sw="heading"></span><span class="mlbl">Heading</span><svg class="chk" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5 9-11"/></svg></button>
+          <button data-metric="timeplace"><span class="sw" data-sw="timeplace"></span><span class="mlbl">Time at place</span><svg class="chk" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5 9-11"/></svg></button>
         </div>
       </div>
 
@@ -213,7 +215,7 @@
     <div class="caption">
       <h3>What this mock shows</h3>
       <ul>
-        <li><b>Legend is the metric picker</b> — tap the icon in the legend (top-left, under the names) to drop down <b>Speed</b> (default) / <b>Accel</b> / <b>Battery</b>; the trail recolors and the legend's scale follows.</li>
+        <li><b>Legend is the metric picker</b> — tap the icon in the legend (top-left, under the names) to drop down <b>Speed</b> (default) / <b>Accel</b> / <b>Battery</b> / <b>Heading</b> (a hue wheel, N→E→S→W) / <b>Time at place</b> (minutes spent within ~100 m of each point — dwell glows hot). The trail recolors and the legend's scale follows.</li>
         <li><b>Tap a point on the trail</b> — a map callout (“J: 35 mph”, in the active metric) pins to that point, and the card below fills in everything: time, speed, heading vector, accel, battery, etc.</li>
         <li><b>Span buttons set the slider range</b> — 1h / 8h / 1d / 7d choose the total span; the <b>dual start/stop slider</b> scrubs a sub-window within it.</li>
         <li><b>Drag an end of the slider</b> — if the data point at that end was moving, the card shows that point's readout live as you scrub (and the callout follows it).</li>
@@ -225,11 +227,16 @@
 <script>
 // ---- ramps ---------------------------------------------------------------
 const RAMPS = {
-  speed:   {stops:[[0,[58,110,200]],[.3,[60,180,170]],[.55,[120,200,90]],[.78,[230,190,70]],[1,[224,86,79]]], unit:"mph", lo:"0", hi:"60+", max:60, dir:1},
-  accel:   {stops:[[0,[91,191,138]],[.5,[230,198,106]],[1,[224,86,79]]], unit:"m/s²", lo:"0", hi:"4", max:4, dir:1},
+  speed:   {stops:[[0,[58,110,200]],[.3,[60,180,170]],[.55,[120,200,90]],[.78,[230,190,70]],[1,[224,86,79]]], unit:"mph", lo:"0", hi:"60+", max:60},
+  accel:   {stops:[[0,[91,191,138]],[.5,[230,198,106]],[1,[224,86,79]]], unit:"m/s²", lo:"0", hi:"4", max:4},
   // battery: high = good (green) on the RIGHT; low = red on the left.
-  battery: {stops:[[0,[224,86,79]],[.5,[230,198,106]],[1,[91,191,138]]], unit:"%", lo:"0", hi:"100", max:100, dir:1},
+  battery: {stops:[[0,[224,86,79]],[.5,[230,198,106]],[1,[91,191,138]]], unit:"%", lo:"0", hi:"100", max:100},
+  // heading is cyclic → a hue wheel (N→E→S→W→N), not a linear ramp.
+  heading: {isHue:true, unit:"compass", lo:"N", hi:"N"},
+  // time-at-place: minutes spent within ~100 m of each point (dwell); max set after data.
+  timeplace:{stops:[[0,[70,120,200]],[.5,[200,120,170]],[1,[235,150,70]]], unit:"min near", lo:"0", hi:"—", max:30},
 };
+const NAMES={speed:"Speed",accel:"Accel",battery:"Battery",heading:"Heading",timeplace:"Time at place"};
 const lerp=(a,b,t)=>a+(b-a)*t;
 function rampColor(stops,t){
   t=Math.max(0,Math.min(1,t));
@@ -241,9 +248,10 @@ function rampColor(stops,t){
   const c=stops[stops.length-1][1];return`rgb(${c.join(",")})`;
 }
 const cssGradient=s=>"linear-gradient(90deg,"+s.map(([p,c])=>`rgb(${c.join(",")}) ${Math.round(p*100)}%`).join(",")+")";
-function metricValue(p,m){return m==="speed"?p.speed:m==="accel"?p.accel:p.battery;}
-function metricT(p,m){return Math.max(0,Math.min(1,metricValue(p,m)/RAMPS[m].max));}
-function colorFor(p,m){return rampColor(RAMPS[m].stops,metricT(p,m));}
+function hueGradient(){const s=[];for(let h=0;h<=360;h+=30)s.push(`hsl(${h},62%,58%) ${Math.round(h/360*100)}%`);return`linear-gradient(90deg,${s.join(",")})`;}
+function metricValue(p,m){return m==="speed"?p.speed:m==="accel"?p.accel:m==="battery"?p.battery:m==="heading"?p.course:p.timeNear;}
+function metricT(p,m){if(m==="heading")return p.course/360;return Math.max(0,Math.min(1,metricValue(p,m)/RAMPS[m].max));}
+function colorFor(p,m){return m==="heading"?`hsl(${p.course},62%,58%)`:rampColor(RAMPS[m].stops,metricT(p,m));}
 
 // ---- synthetic trip ------------------------------------------------------
 // Waypoints (screen space) for a ~40-min drive; we interpolate + attach metrics.
@@ -273,6 +281,14 @@ for(let i=0;i<POINTS.length;i++){
   p.acc=4+Math.round(5*Math.abs(Math.sin(i/3)));
   p.speed=p.spd;
 }
+// "Time at place": minutes spent within ~100 m of each point. At this mock's scale
+// 25 px ≈ 100 m; counting neighbours × the per-point interval gives the dwell time.
+{
+  const RADIUS_PX=25, dt=totalMin/(POINTS.length-1);
+  for(const p of POINTS){let c=0;for(const q of POINTS)if((p.x-q.x)**2+(p.y-q.y)**2<=RADIUS_PX*RADIUS_PX)c++;p.timeNear=c*dt;}
+  const mx=Math.max(...POINTS.map(p=>p.timeNear));
+  RAMPS.timeplace.max=Math.max(1,mx);RAMPS.timeplace.hi=`${Math.round(mx)}m`;
+}
 const COMPASS=["N","NE","E","SE","S","SW","W","NW"];
 const compass=d=>COMPASS[Math.round(d/45)%8];
 function clockOf(minAgo){const d=new Date(Date.now()-minAgo*60000);return d.toLocaleTimeString([],{hour:"numeric",minute:"2-digit"});}
@@ -294,13 +310,15 @@ function drawTrail(){
   const pts=windowPts();
   SVG.innerHTML="";
   for(let i=0;i<pts.length-1;i++){
-    const a=pts[i],b=pts[i+1],mid={speed:(a.speed+b.speed)/2,accel:(a.accel+b.accel)/2,battery:(a.battery+b.battery)/2};
+    const a=pts[i],b=pts[i+1];
+    const mid={speed:(a.speed+b.speed)/2,accel:(a.accel+b.accel)/2,battery:(a.battery+b.battery)/2,
+      timeNear:(a.timeNear+b.timeNear)/2,course:a.course};
     const casing=document.createElementNS("http://www.w3.org/2000/svg","path");
     casing.setAttribute("d",`M${a.x} ${a.y} L${b.x} ${b.y}`);casing.setAttribute("stroke","rgba(5,7,10,.55)");casing.setAttribute("stroke-width","11");
     SVG.appendChild(casing);
     const seg=document.createElementNS("http://www.w3.org/2000/svg","path");
     seg.setAttribute("d",`M${a.x} ${a.y} L${b.x} ${b.y}`);
-    seg.setAttribute("stroke",colorFor({speed:mid.speed,accel:mid.accel,battery:mid.battery},metric));
+    seg.setAttribute("stroke",colorFor(mid,metric));
     seg.setAttribute("stroke-width","6");
     SVG.appendChild(seg);
   }
@@ -339,7 +357,12 @@ function showMarker(p){
   const col=colorFor(p,metric);
   document.getElementById("markerCap").style.background=col;
   MK.style.setProperty("--mc",col);
-  const v=metric==="speed"?`${Math.round(p.speed)} mph`:metric==="accel"?`${p.accel.toFixed(1)} m/s²`:`${p.battery}%`;
+  let v;
+  if(metric==="speed")v=`${Math.round(p.speed)} mph`;
+  else if(metric==="accel")v=`${p.accel.toFixed(1)} m/s²`;
+  else if(metric==="battery")v=`${p.battery}%`;
+  else if(metric==="heading")v=`${compass(p.course)} ${p.course}°`;
+  else v=`${Math.round(p.timeNear)} min here`;
   document.getElementById("markerTxt").textContent=`J: ${v}`;
 }
 function showPoint(p,marker){
@@ -358,12 +381,11 @@ function showPoint(p,marker){
 // ---- legend --------------------------------------------------------------
 function drawLegend(){
   const r=RAMPS[metric];
-  document.getElementById("legTitle").textContent=metric[0].toUpperCase()+metric.slice(1);
+  document.getElementById("legTitle").textContent=NAMES[metric];
   document.getElementById("legUnit").textContent=r.unit;
-  document.getElementById("legRamp").style.background=cssGradient(r.stops);
+  document.getElementById("legRamp").style.background=r.isHue?hueGradient():cssGradient(r.stops);
   document.getElementById("legLo").textContent=r.lo;document.getElementById("legHi").textContent=r.hi;
-  document.documentElement.style.setProperty("--mc",rampColor(r.stops,1));
-  document.getElementById("metricSeg").style.setProperty("--mc",rampColor(r.stops,1));
+  document.documentElement.style.setProperty("--mc",r.isHue?"hsl(204,62%,58%)":rampColor(r.stops,1));
 }
 
 // ---- slider --------------------------------------------------------------
@@ -384,7 +406,8 @@ function endpointPoint(which){
 // ---- wire up -------------------------------------------------------------
 // metric dropdown, opened from the legend icon
 const legBtn=document.getElementById("legBtn"), metricMenu=document.getElementById("metricMenu");
-["speed","accel","battery"].forEach(m=>{const el=metricMenu.querySelector(`[data-sw="${m}"]`);if(el)el.style.background=cssGradient(RAMPS[m].stops);});
+["speed","accel","battery","timeplace"].forEach(m=>{const el=metricMenu.querySelector(`[data-sw="${m}"]`);if(el)el.style.background=cssGradient(RAMPS[m].stops);});
+{const h=metricMenu.querySelector('[data-sw="heading"]');if(h)h.style.background=hueGradient();}
 function setMenuOpen(open){metricMenu.hidden=!open;legBtn.classList.toggle("open",open);}
 legBtn.addEventListener("click",e=>{e.stopPropagation();setMenuOpen(metricMenu.hidden);});
 document.addEventListener("click",()=>setMenuOpen(false));
