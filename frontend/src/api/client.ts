@@ -206,6 +206,8 @@ export interface OpsMetrics {
   gpu_busy_percent: number | null;
   /** Fan speeds in RPM keyed by sensor label, or null when the host exposes no fan telemetry. */
   fan_rpm: Record<string, number> | null;
+  /** APU/SoC package power in watts (amdgpu power1_average), or null when absent. */
+  apu_power_w: number | null;
   containers: { service: string; mem_bytes: number }[];
   db: {
     db_size_bytes: number;
@@ -233,6 +235,7 @@ export interface MetricPoint {
   disk_total_bytes: number | null;
   gpu_busy_percent: number | null;
   fan_rpm_max: number | null;
+  power_w: number | null;
 }
 
 export interface MetricsHistory {
@@ -1143,6 +1146,12 @@ export function attachmentUrl(id: string): string {
 /** Download URL for a chat attachment (distinct from a note attachment's path). */
 export function chatAttachmentUrl(id: string): string {
   return `/api/chat-attachments/${encodeURIComponent(id)}`;
+}
+
+/** A frame thumbnail from a chat attachment's analyze_video result. The backend
+ * validates `thumbId` against the attachment's stored frames under the firewall. */
+export function chatAttachmentThumbUrl(id: string, thumbId: string): string {
+  return `/api/chat-attachments/${encodeURIComponent(id)}/thumb/${encodeURIComponent(thumbId)}`;
 }
 
 export function exportFileUrl(name: string): string {

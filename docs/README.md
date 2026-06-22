@@ -62,6 +62,19 @@ Phase-5 build record is `archive/PHASE5_COMPLETION_PLAN.md`.
   an accuracy filter, and batched array upload, for Life360-grade member trails.
   Wave 0 (plan) is this doc; open decisions await owner sign-off before Wave 1.
 
+## Proposed (not scheduled)
+
+`proposed/` is the icebox: forward-looking design specs kept for the record but
+**not on the roadmap** — nothing built, no phase committed. See `proposed/README.md`.
+
+- `proposed/PHOTO_ARCHIVE_PLAN.md` — the **photo archive pipeline** design spec:
+  a staged, idempotent map over a decade of phone dumps — hash-keyed dedup,
+  deterministic EXIF/filename dating, a vision worker (VLM) that turns pixels into
+  caption/OCR/class text for the text-only 120B, CLIP search, InsightFace faces,
+  and residual `infer_date`/`infer_identity` reasoning over JBrain2's RAG, surfaced
+  in a browser viewer. Must reconcile with the `CLAUDE.md` non-negotiables (LLM
+  adapter, storage abstraction, RLS + isolation tests) when picked up.
+
 ## Archive (history, not active)
 
 `archive/` holds completed build plans and the design research that fed them.

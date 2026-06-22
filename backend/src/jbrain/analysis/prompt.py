@@ -112,6 +112,10 @@ def prompt_block(
     if source_kind == "transcript":
         low = confidence is not None and confidence < TRANSCRIPT_LOW_CONFIDENCE
         return f"[{'low-confidence ' if low else ''}transcript from {name}]\n{text}"
+    if source_kind == "video_analysis":
+        # A machine-watched summary, not the author's words — mark it so facts mined
+        # from it inherit the same reduced confidence as OCR/transcript (Guards).
+        return f"[video analysis of {name}]\n{text}"
     return text
 
 

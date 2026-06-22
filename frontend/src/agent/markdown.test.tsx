@@ -199,6 +199,24 @@ describe("Markdown", () => {
     ).toContain("Clanton, AL 35046");
   });
 
+  it("pins a ZIP-less street address anchored by its street suffix", () => {
+    // The shape the showtimes answer emitted — a street number + suffix, city, and
+    // state code, but no ZIP. The number+suffix pair is enough to pin it.
+    const out = html(
+      "Now playing at Epic Theatres – Titusville (2505 South Hopkins Ave, Titusville, FL) today.",
+    );
+    expect(out).toContain('class="md-place"');
+    expect(
+      decodeURIComponent(document.querySelector("a.md-place")?.getAttribute("href") ?? ""),
+    ).toContain("2505 South Hopkins Ave, Titusville, FL");
+  });
+
+  it("does not pin a number+comma prose run lacking a street suffix", () => {
+    // A leading number and a stray uppercase code, but no street suffix — must not
+    // masquerade as an address.
+    expect(html("I waited 20 minutes, Tom, IN a hurry to leave.")).not.toContain("md-place");
+  });
+
   it("links a signed decimal GPS pair to its lat,lng query", () => {
     const out = html("HQ is at 40.7128, -74.0060 near the river.");
     const pin = document.querySelector("a.md-place");

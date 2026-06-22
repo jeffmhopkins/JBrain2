@@ -32,6 +32,10 @@ class HostMetrics:
     # Fan speeds in RPM keyed by sensor label, or None when the host exposes no
     # fan telemetry at all — the card omits the row rather than imply a dead fan.
     fan_rpm: dict[str, int] | None = None
+    # APU/SoC package power in watts (amdgpu power1_average), or None when absent.
+    # On Strix Halo the CPU+iGPU share one die, so this is the whole-chip draw —
+    # the dominant consumer, though not wall power.
+    apu_power_w: float | None = None
 
 
 def _meminfo_kb(text: str) -> dict[str, int]:
@@ -117,6 +121,30 @@ def read_fan_rpm(hwmon: Path = Path("/sys/class/hwmon")) -> dict[str, int] | Non
     return fans or None
 
 
+def read_apu_power_w(hwmon: Path = Path("/sys/class/hwmon")) -> float | None:
+    """APU package power in watts from the amdgpu hwmon's `power1_average` (µW), or
+    None when absent (non-AMD box / no /sys). On Strix Halo the CPU+iGPU are one
+    die, so this socket average is the whole-APU draw — the dominant consumer,
+    though not the wall total. Falls back to `power1_input` if no average."""
+    try:
+        chips = sorted(hwmon.glob("hwmon*"))
+    except OSError:
+        return None
+    for chip in chips:
+        try:
+            if (chip / "name").read_text().strip() != "amdgpu":
+                continue
+        except OSError:
+            continue
+        for attr in ("power1_average", "power1_input"):
+            try:
+                microwatts = int((chip / attr).read_text().strip())
+            except (OSError, ValueError):
+                continue
+            return round(microwatts / 1_000_000, 3)
+    return None
+
+
 def read_host_metrics(
     proc: Path = Path("/proc"),
     disk_path: str = "/",
@@ -140,4 +168,5 @@ def read_host_metrics(
         uptime_seconds=int(uptime),
         gpu_busy_percent=read_gpu_busy_percent(drm),
         fan_rpm=read_fan_rpm(hwmon),
+        apu_power_w=read_apu_power_w(hwmon),
     )

@@ -2941,6 +2941,7 @@ export const mockFetch: typeof fetch = async (input, init) => {
         disk_total_bytes: 2000 * 2 ** 30,
         gpu_busy_percent: Math.max(0, Math.round(40 + wave * 30)),
         fan_rpm_max: Math.round(2000 + wave * 400),
+        power_w: Math.round((25 + wave * 15) * 10) / 10,
       };
     });
     return json({
@@ -3060,6 +3061,7 @@ export const mockFetch: typeof fetch = async (input, init) => {
       load_15m: 0.2,
       uptime_seconds: 3 * 86400 + 7 * 3600,
       gpu_busy_percent: 63,
+      apu_power_w: 28.5,
       fan_rpm: { "CPU fan": 2100, "System fan": 1850 },
       containers: CONTAINERS.map((c, i) => ({
         service: c.service,

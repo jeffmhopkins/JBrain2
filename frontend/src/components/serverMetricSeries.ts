@@ -37,6 +37,13 @@ export function serverMetricSeries(points: MetricPoint[]): PlotSeries[] {
       fmt: pct,
     },
     {
+      // APU/SoC package power (not wall power).
+      label: "APU power",
+      color: "var(--green)",
+      values: points.map((p) => p.power_w),
+      fmt: (v) => `${v.toFixed(1)} W`,
+    },
+    {
       label: "Fan",
       color: "var(--rose)",
       values: points.map((p) => p.fan_rpm_max),

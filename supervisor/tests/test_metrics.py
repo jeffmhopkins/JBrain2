@@ -43,7 +43,14 @@ def test_read_host_metrics_parses_proc(tmp_path: Path) -> None:
     (tmp_path / "uptime").write_text("86400.55 170000.00\n")
     drm = _drm_with_busy(tmp_path / "drm", {"card0": "37\n"})
     hwmon = _hwmon_with_fans(
-        tmp_path / "hwmon", {"hwmon0": {"name": "amdgpu\n", "fan1_input": "2100\n"}}
+        tmp_path / "hwmon",
+        {
+            "hwmon0": {
+                "name": "amdgpu\n",
+                "fan1_input": "2100\n",
+                "power1_average": "14001000\n",
+            }
+        },
     )
 
     m = host_metrics.read_host_metrics(
@@ -59,6 +66,36 @@ def test_read_host_metrics_parses_proc(tmp_path: Path) -> None:
     assert m.disk_total_bytes > 0
     assert m.gpu_busy_percent == 37.0
     assert m.fan_rpm == {"amdgpu fan1": 2100}
+    assert m.apu_power_w == 14.001
+
+
+def test_read_apu_power_prefers_average_over_input(tmp_path: Path) -> None:
+    hwmon = _hwmon_with_fans(
+        tmp_path,
+        {
+            "hwmon0": {"name": "k10temp\n"},  # a non-amdgpu chip is skipped
+            "hwmon1": {
+                "name": "amdgpu\n",
+                "power1_average": "14001000\n",
+                "power1_input": "9000000\n",
+            },
+        },
+    )
+    # µW -> W, from the amdgpu chip, preferring the smoothed average.
+    assert host_metrics.read_apu_power_w(hwmon) == 14.001
+
+
+def test_read_apu_power_falls_back_to_input(tmp_path: Path) -> None:
+    hwmon = _hwmon_with_fans(
+        tmp_path, {"hwmon0": {"name": "amdgpu\n", "power1_input": "5500000\n"}}
+    )
+    assert host_metrics.read_apu_power_w(hwmon) == 5.5
+
+
+def test_read_apu_power_is_none_without_amdgpu(tmp_path: Path) -> None:
+    # No amdgpu power attribute (non-AMD / no /sys): None, never a fake 0.
+    _hwmon_with_fans(tmp_path, {"hwmon0": {"name": "k10temp\n"}})
+    assert host_metrics.read_apu_power_w(tmp_path) is None
 
 
 def test_read_fan_rpm_prefers_label_and_keeps_zero(tmp_path: Path) -> None:
@@ -121,6 +158,7 @@ def test_metrics_route(client: TestClient, monkeypatch) -> None:  # type: ignore
             uptime_seconds=12345,
             gpu_busy_percent=42.0,
             fan_rpm={"CPU Fan": 2100},
+            apu_power_w=14.0,
         ),
     )
     assert client.get("/metrics").status_code == 401
@@ -130,5 +168,6 @@ def test_metrics_route(client: TestClient, monkeypatch) -> None:  # type: ignore
     assert body["disk_free_bytes"] == 25 << 30
     assert body["gpu_busy_percent"] == 42.0
     assert body["fan_rpm"] == {"CPU Fan": 2100}
+    assert body["apu_power_w"] == 14.0
     assert body["containers"]
     assert body["containers"][0]["mem_bytes"] == 100 << 20

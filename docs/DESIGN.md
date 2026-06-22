@@ -873,6 +873,41 @@ the record in `docs/mocks/genimage-README.md` (B/C both subsume A's generate-onl
 layout, so this choice still fixes the generate rendering). Owner-only (the table
 mirrors `wiki_*` RLS); never a note, never RAG-indexed — a chat artifact.
 
+### `video_analysis` tool-view (settled in a GUI review — binding mock: `docs/mocks/analyze-video-approved.html`)
+
+The in-chat card jerv shows after an `analyze_video` call (`docs/VIDEO_ANALYSIS_PLAN.md`,
+Wave 4). A registered, data-only view: the model fills `{attachment_id, source
+('chat'|'note'), media:'video', filename, summary, duration_ms, frames:[{t_ms,
+caption, thumb_id}], transcript:{text, words:[{text,start_ms,end_ms,confidence}]}|null}`
+and **authors no markup and no URL** — the component builds the media source from the
+id + source (`/api/chat-attachments/${id}` for jerv's tool, `/api/attachments/${id}`
+for a note). One `<video>` drives **one shared clock** across a **filmstrip scrubber**
+(the sampled frame thumbnails ARE the timeline — tap a frame to seek, the active frame
+lifts and the strip auto-scrolls to it) and three tabs — **Summary**, **Moments** (a
+karaoke caption feed, each moment its frame thumbnail + caption + the words said then),
+and **Transcript** (the approved `AudioTranscript` reader, reused verbatim:
+confidence-gradient words, steel-pill karaoke, tap-to-seek). Tabs with no content are
+omitted (frames-only → no Transcript; summary-only → no tab bar). Tokens-only
+`.tv-vid-*` classes; the Transcript tab reuses `.atx-*`.
+
+Chosen **D — combined** (filmstrip scrubber + tabs + scrolling moment feed) over A
+(filmstrip), B (moment feed), and C (tabs), with the owner's edits: **no Frames tab**,
+and the Transcript tab reuses the audio-transcript card.
+
+**Thumbnails + the firewall.** The frame stills are real, but a frame JPEG is a
+content-addressed blob with **no per-blob domain firewall**, so it is never served by
+raw sha. Instead the `analyze_video` tool **caches its result on the chat-attachment
+row** (`turn_attachments.analysis`, migration 0084 — which also makes a re-ask free),
+and the thumbnail endpoint `GET /api/chat-attachments/${id}/thumb/${thumb_id}`
+validates the requested `thumb_id` against THAT row's stored frame list **under the
+attachment's domain scope** (`TurnAttachmentRepo.frame_thumb`, RLS): a sha that isn't
+one of the attachment's analysed frames — or any frame of an out-of-scope attachment —
+is a 404, so the firewall (invariant #3) holds and no URL rides the payload (#9). The
+component builds each thumbnail src from `attachment_id` + `thumb_id` exactly as it
+builds the media src. The same shape supports a future note-attachment card
+(`source:'note'`) once a note thumbnail route validates against `attachment_extracts`.
+Owner-facing chat artifact; never a note, never RAG-indexed.
+
 ## Wiki Talk board (settled in a three-way GUI review — reference mock: `docs/mocks/wiki-talk-b-topics.html`)
 
 The article's editorial board (Phase 6) — the wiki's second surface after the reader. Chosen

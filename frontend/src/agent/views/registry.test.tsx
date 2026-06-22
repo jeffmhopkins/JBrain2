@@ -1,4 +1,4 @@
-import { createEvent, fireEvent, render, waitFor } from "@testing-library/react";
+import { createEvent, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { type ListOut, api } from "../../api/client";
 import type { ViewPayload } from "../types";
@@ -204,6 +204,39 @@ describe("ToolView registry", () => {
     expect(container.querySelector(".tv-genimg-cmp")).toBeNull();
   });
 
+  it("renders a video_analysis card, building the chat-attachment src by id", () => {
+    const { container } = render(
+      <ToolView
+        payload={payload({
+          view: "video_analysis",
+          data: {
+            attachment_id: "att_123",
+            source: "chat",
+            media: "video",
+            filename: "meeting.mp4",
+            summary: "A short standup.",
+            duration_ms: 8000,
+            frames: [{ t_ms: 0, caption: "A title card.", thumb_id: "sha-deadbeef" }],
+            transcript: {
+              text: "Hello team",
+              words: [{ text: "Hello", start_ms: 0, end_ms: 500, confidence: 0.95 }],
+            },
+          },
+        })}
+      />,
+    );
+    const video = container.querySelector("video") as HTMLVideoElement;
+    // Data-only: the component BUILDS the src from attachment_id + source (no URL).
+    expect(video.getAttribute("src")).toBe("/api/chat-attachments/att_123");
+    // …and each frame's thumbnail src from its blob id under the attachment.
+    const thumb = container.querySelector<HTMLImageElement>(".tv-vid-frame-img");
+    expect(thumb?.getAttribute("src")).toBe("/api/chat-attachments/att_123/thumb/sha-deadbeef");
+    expect(container.querySelector(".tv-vid")).not.toBeNull();
+    expect(screen.getByText("meeting.mp4")).toBeInTheDocument();
+    expect(screen.getByText("A short standup.")).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Transcript" })).toBeInTheDocument();
+  });
+
   it("shows the seed on the card so the owner can reuse it", () => {
     const withSeed = render(
       <ToolView
@@ -389,6 +422,7 @@ describe("ToolView registry", () => {
       disk_total_bytes: 2000 * 2 ** 30,
       gpu_busy_percent: 40,
       fan_rpm_max: 2100,
+      power_w: 14.0,
       ...over,
     });
     const { getByText } = render(
@@ -398,7 +432,10 @@ describe("ToolView registry", () => {
           data: {
             range: "24h",
             resolution: "raw",
-            points: [point({ load_1m: 0.5 }), point({ load_1m: 1.5, fan_rpm_max: 2600 })],
+            points: [
+              point({ load_1m: 0.5 }),
+              point({ load_1m: 1.5, fan_rpm_max: 2600, power_w: 31.0 }),
+            ],
           },
         })}
       />,
@@ -406,9 +443,11 @@ describe("ToolView registry", () => {
     expect(getByText("Server health · 24h")).toBeInTheDocument();
     expect(getByText("2 30s buckets")).toBeInTheDocument();
     expect(getByText("CPU load")).toBeInTheDocument();
-    // Peak readout reflects the higher bucket (load 1.5, fan 2600).
+    expect(getByText("APU power")).toBeInTheDocument();
+    // Peak readout reflects the higher bucket (load 1.5, fan 2600, power 31W).
     expect(getByText("1.50 peak")).toBeInTheDocument();
     expect(getByText("2600 rpm peak")).toBeInTheDocument();
+    expect(getByText("31.0 W peak")).toBeInTheDocument();
   });
 
   it("server_metrics with no points states it, no crash", () => {

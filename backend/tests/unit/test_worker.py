@@ -451,6 +451,9 @@ async def test_run_registers_all_job_handlers(
         # The audio sibling of ocr_attachment — in-code only, not in ACTION_SPECS /
         # the app.actions seed (docs/WHISPER_TRANSCRIPTION_PLAN.md).
         "transcribe_attachment",
+        # The video sibling — in-code only, not in ACTION_SPECS / the app.actions
+        # seed (docs/VIDEO_ANALYSIS_PLAN.md).
+        "analyze_video_attachment",
         "consolidate_predicates",
         "sync_predicates",
         # The purge sweep is now a fireable action (Phase-5 Track B).

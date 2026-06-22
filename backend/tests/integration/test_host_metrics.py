@@ -33,7 +33,7 @@ async def maker(database_url: str) -> AsyncIterator[async_sessionmaker]:  # noqa
     await engine.dispose()
 
 
-def _sample(*, load: float = 0.5, gpu: float | None = 42.0) -> dict:
+def _sample(*, load: float = 0.5, gpu: float | None = 42.0, power: float | None = 14.0) -> dict:
     return {
         "mem_total_bytes": 128 << 30,
         "mem_available_bytes": 64 << 30,
@@ -46,6 +46,7 @@ def _sample(*, load: float = 0.5, gpu: float | None = 42.0) -> dict:
         "load_15m": load,
         "uptime_seconds": 12345,
         "gpu_busy_percent": gpu,
+        "apu_power_w": power,
         "fan_rpm": {"CPU fan": 2100, "System fan": 1850},
         "containers": [{"service": "api", "mem_bytes": 90 << 20}],
     }
@@ -84,6 +85,7 @@ async def test_store_and_read_raw(maker: async_sessionmaker) -> None:
     assert point["mem_total_bytes"] == 128 << 30
     assert point["fan_rpm_max"] == 2100
     assert point["gpu_busy_percent"] == 42.0
+    assert point["power_w"] == 14.0
 
 
 async def test_rollup_feeds_hourly_read(maker: async_sessionmaker) -> None:
@@ -104,6 +106,8 @@ async def test_rollup_feeds_hourly_read(maker: async_sessionmaker) -> None:
     assert out["resolution"] == "hourly"
     assert out["points"], "expected a rolled-up hourly point"
     assert any(p["mem_used_bytes"] == 64 << 30 for p in out["points"])
+    # APU power rolls up through the hourly path too.
+    assert any(p["power_w"] == 14.0 for p in out["points"])
 
 
 async def test_prune_drops_old_rows(maker: async_sessionmaker) -> None:

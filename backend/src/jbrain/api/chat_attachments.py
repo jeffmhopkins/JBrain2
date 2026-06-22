@@ -128,6 +128,30 @@ async def download_chat_attachment(
     )
 
 
+@router.get("/{attachment_id}/thumb/{thumb_id}")
+async def chat_attachment_thumb(
+    attachment_id: str,
+    thumb_id: str,
+    principal: PrincipalDep,
+    repo: TurnAttachmentsDep,
+    blobs: BlobStoreDep,
+) -> FileResponse:
+    """A frame thumbnail from the cached analyze_video result. `thumb_id` (a blob sha)
+    is validated against THIS attachment's stored frame list under the domain firewall
+    (repo.frame_thumb is RLS-scoped), so a raw blob is never served by sha — that would
+    cross the firewall (invariant #3)."""
+    sha = await repo.frame_thumb(ctx_for(principal), attachment_id, thumb_id)
+    if sha is None:
+        raise HTTPException(status_code=404, detail="thumbnail not found")
+    # Frames are always JPEG (jbrain.media downscales to JPEG); cache hard — a blob
+    # sha is immutable content.
+    return FileResponse(
+        blobs.path_for(sha),
+        media_type="image/jpeg",
+        headers={"Cache-Control": "private, max-age=31536000, immutable"},
+    )
+
+
 @router.delete("/{attachment_id}", status_code=204)
 async def delete_chat_attachment(
     attachment_id: str, principal: PrincipalDep, repo: TurnAttachmentsDep

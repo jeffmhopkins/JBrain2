@@ -263,9 +263,10 @@ function SystemCard({ metrics }: { metrics: OpsMetrics | null }) {
     );
     const gpu =
       metrics.gpu_busy_percent != null ? `gpu ${Math.round(metrics.gpu_busy_percent)}% · ` : "";
+    const power = metrics.apu_power_w != null ? `${metrics.apu_power_w.toFixed(1)}W · ` : "";
     const fanRpms = metrics.fan_rpm ? Object.values(metrics.fan_rpm) : [];
     const fan = fanRpms.length > 0 ? `fan ${Math.max(...fanRpms)}rpm · ` : "";
-    summary = `mem ${memPct}% · disk ${diskPct}% · ${gpu}${fan}load ${metrics.load_1m.toFixed(2)} · up ${fmtUptime(metrics.uptime_seconds)}`;
+    summary = `mem ${memPct}% · disk ${diskPct}% · ${gpu}${power}${fan}load ${metrics.load_1m.toFixed(2)} · up ${fmtUptime(metrics.uptime_seconds)}`;
   }
   return (
     <OpsCard
@@ -315,6 +316,17 @@ function SystemRows({ metrics }: { metrics: OpsMetrics }) {
           <div className="ops-vmid">
             <span className="ops-vv">{Math.round(metrics.gpu_busy_percent)}%</span>
             <Meter used={metrics.gpu_busy_percent} total={100} tone="util" />
+          </div>
+        </div>
+      )}
+      {metrics.apu_power_w != null && (
+        <div className="ops-vrow">
+          <span className="ops-vk">Power</span>
+          <div className="ops-vmid">
+            {/* APU/SoC package power (amdgpu), not wall power — text readout, no meter. */}
+            <span className="ops-vv">
+              {metrics.apu_power_w.toFixed(1)} W <small>APU package</small>
+            </span>
           </div>
         </div>
       )}
