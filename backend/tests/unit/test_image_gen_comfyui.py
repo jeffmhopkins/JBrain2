@@ -92,6 +92,41 @@ async def test_generate_fills_prompt_seed_steps_and_dims() -> None:
     assert wf["7"]["inputs"]["text"] == ""
 
 
+async def test_generate_fast_model_drives_the_dreamshaper_sdxl_graph() -> None:
+    """speed: fast routes to DreamShaper XL — the stock SDXL graph (CheckpointLoaderSimple),
+    with prompt/seed/steps/dims filled into its node ids (6/3/5) and the negative on node 7."""
+    import dataclasses
+
+    seen: dict = {}
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/prompt":
+            seen["wf"] = json.loads(request.content)["prompt"]
+            return httpx.Response(200, json={"prompt_id": "abc123"})
+        if request.url.path == "/history/abc123":
+            return httpx.Response(200, json=_HISTORY_DONE)
+        return httpx.Response(200, content=PNG)
+
+    fast = dataclasses.replace(
+        GEN, model="dreamshaper-xl-lightning", steps=4, negative_prompt="blurry"
+    )
+    await _client(handle).generate(fast)
+    wf = seen["wf"]
+    assert wf["4"]["class_type"] == "CheckpointLoaderSimple"  # the SDXL all-in-one loader
+    assert wf["6"]["inputs"]["text"] == "a cat"
+    assert wf["7"]["inputs"]["text"] == "blurry"
+    assert wf["3"]["inputs"]["seed"] == 42 and wf["3"]["inputs"]["steps"] == 4
+    assert wf["5"]["inputs"]["width"] == 768 and wf["5"]["inputs"]["height"] == 512
+
+
+async def test_generate_unknown_model_raises_rather_than_running_the_wrong_graph() -> None:
+    import dataclasses
+
+    gen = _client(lambda r: httpx.Response(404))
+    with pytest.raises(ImageGenError):
+        await gen.generate(dataclasses.replace(GEN, model="not-a-real-model"))
+
+
 async def test_negative_prompt_fills_the_negative_node_in_both_graphs() -> None:
     """A negative prompt lands on the negative encoder — node 7 (generate, CLIPTextEncode)
     and node 69 (edit, the TextEncodeQwenImageEditPlus sibling of the positive 68)."""

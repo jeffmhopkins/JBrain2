@@ -148,8 +148,9 @@ app and `jbrain logs`, not `curl localhost:8080`.
 
 ## Image generation — ComfyUI + Qwen-Image (optional, opt-in)
 Powers jerv's `generate_image` / `edit_image` tools
-(`docs/IMAGE_GEN_SERVICE_PLAN.md`): text→image via **Qwen-Image** (native bf16) and
-image→image via **Qwen-Image-Edit**, served by a **ROCm ComfyUI JBrain manages
+(`docs/IMAGE_GEN_SERVICE_PLAN.md`): text→image via **Qwen-Image** (native bf16),
+a near-instant **fast** path via **DreamShaper XL Lightning** (`generate_image`
+`speed: fast`), and image→image via **Qwen-Image-Edit**, served by a **ROCm ComfyUI JBrain manages
 as a compose service** — the sibling of the local-LLM gateway. Like that
 gateway, it is **opt-in**: a stock deploy never starts it, and JBrain only ever
 **POSTs a workflow graph** to it over HTTP (no new backend dependency). Leave it
@@ -163,9 +164,12 @@ ROCm treats the iGPU as gfx1151 — without it the stack silently CPU-falls-back
 
 **One command provisions and enables it:**
 ```bash
-sudo bash scripts/comfyui-setup.sh            # the recommended set (Qwen-Image)
-sudo bash scripts/comfyui-setup.sh qwen-image # or explicit catalog ids
+sudo bash scripts/comfyui-setup.sh                          # the recommended set (Qwen-Image)
+sudo bash scripts/comfyui-setup.sh qwen-image               # or explicit catalog ids
+sudo bash scripts/comfyui-setup.sh dreamshaper-xl-lightning # add the fast model (~7 GB)
 ```
+Models are additive: provisioning `dreamshaper-xl-lightning` downloads only its
+~7 GB checkpoint and leaves an already-installed Qwen-Image in place.
 The script (the sibling of `local-llm-setup.sh`) downloads the weight files named
 by the catalog (`jbrain.image_gen.catalog`) into `./comfyui-models/<subdir>`,
 writes `JBRAIN_COMFYUI_*` into `.env`, and starts the `comfyui` profile. The api
@@ -182,10 +186,17 @@ editing the script.
   load anyway), minus the quantization loss. The `qwen-image-edit` model ships
   **non-recommended** — its graph is wired but its bf16 weights await an on-box
   download+run.
+- **Fast path — DreamShaper XL Lightning.** `generate_image` with `speed: fast`
+  routes to a single all-in-one SDXL checkpoint (~6.7 GB, baked VAE) driven by the
+  stock SDXL graph at 4–8 steps, so a render returns in **seconds** rather than
+  minutes — lower fidelity than Qwen, but the right tool for quick or exploratory
+  requests. It ships **non-recommended** (its standard SDXL graph is authored, not
+  yet box-exported); a first on-box render is the final confirmation.
 - **JBrain owns the graph, not the model.** The backend POSTs the workflow JSON in
   `backend/src/jbrain/image_gen/workflows/` (`qwen_image.json`,
-  `qwen_image_edit.json` — the real graphs exported from this box), filling typed
-  slots (prompt, seed, steps, dims, and — for edit — the uploaded input image).
+  `qwen_image_edit.json`, `dreamshaper_xl.json`), filling typed slots (prompt,
+  seed, steps, dims, and — for edit — the uploaded input image). The driver picks the
+  graph from the requested model, so a model is a JSON + binding pair, not a code path.
 
 ✅ **Checkpoint:** after `comfyui-setup.sh`, ask jerv to generate an image; the
 result streams back inline in the chat turn (a chat-only artifact — never a note,

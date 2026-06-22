@@ -21,7 +21,10 @@ Two consumers read this:
 Validated on-box: the `qwen-image` generate model and its 20-step workflow (now on
 native bf16 weights). The `qwen-image-edit` entry is wired structurally (its graph is
 real, exported from the box) but its weights/repo path await an on-box
-download+run, so it ships non-recommended.
+download+run, so it ships non-recommended. The `dreamshaper-xl-lightning` entry is the
+fast generate path: a single all-in-one SDXL checkpoint driven by the stock SDXL graph
+(dreamshaper_xl.json) — standard enough to author confidently, though a first on-box
+render is the final confirmation, so it too ships non-recommended.
 """
 
 import json
@@ -32,7 +35,12 @@ from dataclasses import asdict, dataclass
 # ComfyUI models subdirs each weight file must land in (relative to the models
 # mount). The setup script places files by these names; the catalog is validated
 # against this set so a typo can't write to a directory ComfyUI never reads.
-MODEL_SUBDIRS: frozenset[str] = frozenset({"diffusion_models", "text_encoders", "vae", "loras"})
+# `checkpoints` holds all-in-one SDXL-style checkpoints (model+CLIP+VAE in one file,
+# loaded by CheckpointLoaderSimple) — the form DreamShaper XL ships in, distinct from
+# the split diffusion_models/text_encoders/vae layout Qwen uses.
+MODEL_SUBDIRS: frozenset[str] = frozenset(
+    {"diffusion_models", "text_encoders", "vae", "loras", "checkpoints"}
+)
 
 
 @dataclass(frozen=True)
@@ -104,6 +112,16 @@ _EDIT_DIFFUSION = ImageFile(
     dest_subdir="diffusion_models",
 )
 
+# DreamShaper XL Lightning (Lykon): a single all-in-one SDXL checkpoint — model + CLIP +
+# baked VAE in one file — so it needs no separate encoder/VAE, unlike the Qwen split. It is
+# step-distilled (Lightning), so a few steps at low CFG produce a usable image in seconds on
+# the iGPU; that speed is the whole point of the `fast` generate path.
+_DREAMSHAPER_CHECKPOINT = ImageFile(
+    hf_repo="Lykon/dreamshaper-xl-lightning",
+    repo_path="DreamShaperXL_Lightning.safetensors",
+    dest_subdir="checkpoints",
+)
+
 
 # Order is the order the settings screen and setup prompt present them.
 CATALOG: tuple[ImageModel, ...] = (
@@ -143,6 +161,28 @@ CATALOG: tuple[ImageModel, ...] = (
         note="Graph validated structurally (exported from the box); the bf16 "
         "weights/repo path await an on-box download+run. ~55 GB resident with the bf16 "
         "text encoder. VAE decode is tiled to keep the decode peak in budget.",
+    ),
+    ImageModel(
+        id="dreamshaper-xl-lightning",
+        label="DreamShaper XL · fast (Lightning)",
+        kind="generate",
+        workflow="dreamshaper_xl.json",
+        files=(_DREAMSHAPER_CHECKPOINT,),
+        size_gb=6.7,
+        # Tiny next to Qwen: one ~6.7 GB SDXL checkpoint, baked VAE, loads in seconds and
+        # leaves the unified pool almost untouched — it can even sit alongside a local LLM.
+        vram_gb=7.0,
+        # Distilled: 4 steps is the model's sweet spot, ~8 the useful ceiling — more steps
+        # don't add detail, they just cost time. CFG/sampler (2.0 / dpmpp_sde+karras) are
+        # authored into the workflow, not driven per request.
+        fast_steps=4,
+        quality_steps=8,
+        # The `fast` generate path's model. Provisioned on demand (its own setup id), not
+        # in the default set, so a box that only wants the quality model stays lean.
+        recommended=False,
+        note="All-in-one SDXL checkpoint (model+CLIP+baked VAE) — the fast generate path. "
+        "~6.7 GB; renders in seconds on the iGPU at 4-8 steps. Lower fidelity than Qwen, "
+        "but near-instant — install with `comfyui-setup.sh dreamshaper-xl-lightning`.",
     ),
 )
 

@@ -15,6 +15,7 @@ from __future__ import annotations
 import base64
 import secrets
 import uuid
+from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
 import structlog
@@ -44,8 +45,11 @@ if TYPE_CHECKING:
 
 log = structlog.get_logger()
 
-# The full image model; the edit sibling is selected per-kind.
+# The two generate models behind the `speed` knob: the full Qwen model (quality, the
+# default) and the distilled SDXL Lightning checkpoint (fast). The edit sibling is the full
+# model — edit has no fast path. The recorded `model` string is the graph key the driver routes on.
 _GEN_MODEL = "qwen-image-2512"
+_FAST_MODEL = "dreamshaper-xl-lightning"
 _EDIT_MODEL = "qwen-image-edit"
 
 # `effort` (0–10) is the owner-facing quality/time knob; it maps to diffusion steps on a
@@ -58,6 +62,13 @@ _MAX_EFFORT = 10
 def _steps_for_effort(effort: int) -> int:
     """Steps for an effort in 0–10: round(0.2·e² + 2·e + 5) — hits 5 / 20 / 45 at 0 / 5 / 10."""
     return round(0.2 * effort * effort + 2 * effort + 5)
+
+
+def _fast_steps_for_effort(effort: int) -> int:
+    """Steps for the distilled fast model: round(0.4·e + 4) — 4 / 6 / 8 at 0 / 5 / 10. The
+    Lightning checkpoint's useful band is tiny (4 is its sweet spot, ~8 the ceiling); the
+    quality curve's tens of steps would only waste time here, not add detail."""
+    return round(0.4 * effort + 4)
 
 
 # A bigint seed: positive and within the model's accepted range (random when absent).
@@ -150,13 +161,22 @@ def _resolve_effort(raw: object) -> int:
     return _DEFAULT_EFFORT
 
 
-def _resolve_steps(arguments: dict) -> int:
+def _resolve_steps(arguments: dict, *, fast: bool = False) -> int:
     """The step count for a request: an explicit positive `steps` wins (an advanced escape
-    hatch), otherwise it comes from `effort` (0–10) via the quality curve."""
+    hatch), otherwise it comes from `effort` (0–10) via the curve for the chosen model — the
+    distilled fast model has its own short curve, since it tops out at a handful of steps."""
     raw_steps = arguments.get("steps")
     if isinstance(raw_steps, int) and not isinstance(raw_steps, bool) and raw_steps > 0:
         return raw_steps
-    return _steps_for_effort(_resolve_effort(arguments.get("effort")))
+    effort = _resolve_effort(arguments.get("effort"))
+    return _fast_steps_for_effort(effort) if fast else _steps_for_effort(effort)
+
+
+def _resolve_fast(raw: object) -> bool:
+    """Whether the `fast` (distilled) generate model was asked for. Only the exact "fast"
+    opts in; anything else (absent, "quality", or a hallucinated value) is the quality default,
+    so an unknown speed never silently degrades the image."""
+    return isinstance(raw, str) and raw.strip().lower() == "fast"
 
 
 _STOPPED_MESSAGE = "Stopped the render — nothing was saved."
@@ -282,14 +302,21 @@ def build_image_handlers(
     local_gateway: LocalGateway,
     comfyui_gateway: ComfyUiMemory,
     router: LlmRouter,
+    provisioned_models: Sequence[str] = (),
 ) -> dict[str, ToolHandler]:
     """`generate_image` + `edit_image` + `analyze_image`. Wired only when image generation
     is configured (a localhost ComfyUI); the registry omits all three otherwise (graceful
     degrade). `router` routes `analyze_image`'s vision read (the `agent.vision` task) so a
     text-only agent model can still see an image by delegating to a vision model.
 
+    `provisioned_models` is the catalog ids the operator actually downloaded (settings'
+    comfyui_models): the `speed: fast` path is gated on it so a request for a model that was
+    never installed fails with an actionable message, not ComfyUI's opaque missing-checkpoint
+    error. The quality model is ungated — the tool's base contract, offered whenever ComfyUI is.
+
     `maker` opens the RLS-scoped transaction each write/read runs under (the repo takes an
     already-scoped `AsyncSession`); the firewall is Postgres', applied from `ctx.session`."""
+    installed = set(provisioned_models)
 
     async def generate_image_tool(arguments: dict, ctx: ToolContext) -> str:
         prompt = str(arguments.get("prompt", "")).strip()
@@ -303,14 +330,24 @@ def build_image_handlers(
             return "resolution must be one of: small, medium, large."
         width, height = dims
         seed = _resolve_seed(arguments.get("seed"))
-        steps = _resolve_steps(arguments)
+        fast = _resolve_fast(arguments.get("speed"))
+        if fast and _FAST_MODEL not in installed:
+            # The fast knob is always in the schema, but the model is a separate install — say
+            # so plainly (and how to fix it) instead of letting ComfyUI 404 on the checkpoint.
+            return (
+                "The fast image model (DreamShaper XL Lightning) isn't installed on this box "
+                "yet. Generate at the default quality instead, or ask the owner to run "
+                "`comfyui-setup.sh dreamshaper-xl-lightning`."
+            )
+        model = _FAST_MODEL if fast else _GEN_MODEL
+        steps = _resolve_steps(arguments, fast=fast)
         spec = GenSpec(
             prompt=prompt,
             width=width,
             height=height,
             steps=steps,
             seed=seed,
-            model=_GEN_MODEL,
+            model=model,
             negative_prompt=str(arguments.get("negative_prompt", "")).strip(),
         )
         await _free_local_llms(local_gateway)
@@ -329,7 +366,7 @@ def build_image_handlers(
                 session,
                 blob_sha256=sha,
                 kind="generate",
-                model=_GEN_MODEL,
+                model=model,
                 prompt=prompt,
                 source_sha256=None,
                 width=out_w,

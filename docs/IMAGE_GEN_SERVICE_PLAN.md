@@ -85,6 +85,26 @@ The owner does not want to hand‑assemble the kyuz0 toolbox; JBrain owns everyt
   (`loadImageModel`/`unloadImageModel`/`stageImageModel`, service start/stop); the shared memory bar
   renders image segments; capability chips (generate/edit). Mock‑mode fixtures + tests.
 
+## Wave G7 — the fast generate path (DreamShaper XL Lightning)
+A second generate model behind a `speed` knob on `generate_image`, so jerv can choose a
+near‑instant draft over the minutes‑long Qwen render. One script + one `jbrain update` enables it.
+
+- **Catalog:** a `dreamshaper-xl-lightning` `ImageModel` — a single all‑in‑one SDXL checkpoint
+  (model+CLIP+baked VAE) in a new `checkpoints` subdir (added to `MODEL_SUBDIRS`), `recommended:
+  false`. The setup script is already catalog‑driven, so `sudo bash scripts/comfyui-setup.sh
+  dreamshaper-xl-lightning` downloads only its ~7 GB checkpoint and leaves Qwen in place (the
+  disk‑space warning is now manifest‑driven, not a fixed ~58 GB guess).
+- **Driver:** `comfyui.py` resolves the generate (template, binding) from `spec.model` via a small
+  registry (`_GEN_GRAPHS`) instead of a hard‑coded Qwen graph; an unknown model raises a clean
+  `ImageGenError` rather than running the wrong graph. New `dreamshaper_xl.json` is the stock SDXL
+  graph (CheckpointLoaderSimple → 2× CLIPTextEncode → KSampler → VAEDecode), CFG/sampler authored in.
+- **Tool:** `generate_image` gains `speed: fast|quality` (default quality — unchanged behavior).
+  `fast` routes to DreamShaper and a short effort→steps curve (4/6/8 at effort 0/5/10) since the
+  distilled model tops out at a handful of steps; the recorded `model` is the routed id. Version
+  bumped 4→5, digest re‑pinned. `edit_image` is unchanged (no fast path).
+- **Residual risk:** the SDXL graph is authored from the well‑known standard form, not yet exported
+  from the box, so it ships non‑recommended; a first on‑box render is the final confirmation.
+
 ---
 
 ## Non‑negotiables check

@@ -90,6 +90,45 @@ def test_image_tools_are_jerv_only_not_curator() -> None:
     assert {"generate_image", "edit_image"} <= jerv_offered
 
 
+def test_generate_image_sidecar_offers_the_speed_knob() -> None:
+    """generate_image carries the fast/quality `speed` knob (the DreamShaper fast path);
+    edit_image does not — edit has no distilled model."""
+    gen = load_tool(TOOLS_DIR / "generate_image.tool")
+    assert gen.spec.params["properties"]["speed"]["enum"] == ["fast", "quality"]
+    assert "speed" not in gen.spec.params["required"]  # optional; defaults to quality
+    edit = load_tool(TOOLS_DIR / "edit_image.tool")
+    assert "speed" not in edit.spec.params["properties"]
+
+
+def test_fast_steps_curve_stays_in_the_distilled_band() -> None:
+    """The fast model's effort curve hits 4 / 6 / 8 at effort 0 / 5 / 10 and never leaves
+    the Lightning checkpoint's useful low-step band — unlike the quality curve's 5..45."""
+    from jbrain.agent.imagegentools import _fast_steps_for_effort, _steps_for_effort
+
+    assert (_fast_steps_for_effort(0), _fast_steps_for_effort(5), _fast_steps_for_effort(10)) == (
+        4,
+        6,
+        8,
+    )
+    # Across the whole range the fast curve is small and monotonic, and far below quality.
+    fast = [_fast_steps_for_effort(e) for e in range(11)]
+    assert fast == sorted(fast) and max(fast) <= 8
+    assert _steps_for_effort(10) == 45  # the quality curve is untouched
+
+
+def test_resolve_fast_only_opts_in_on_exact_fast() -> None:
+    """Only "fast" (any case) selects the distilled model; absent/quality/garbage all stay
+    on the quality default, so an unknown speed never silently degrades the render."""
+    from jbrain.agent.imagegentools import _resolve_fast, _resolve_steps
+
+    assert _resolve_fast("fast") and _resolve_fast("FAST") and _resolve_fast(" fast ")
+    assert not _resolve_fast("quality") and not _resolve_fast(None) and not _resolve_fast("turbo")
+    # The chosen speed routes the step curve; an explicit `steps` still overrides either.
+    assert _resolve_steps({"effort": 5}, fast=True) == 6
+    assert _resolve_steps({"effort": 5}, fast=False) == 20
+    assert _resolve_steps({"steps": 30}, fast=True) == 30
+
+
 def test_progress_callback_data_uris_previews_and_passes_steps() -> None:
     """The driver's (step, total, preview_bytes) ticks reach the turn sink with the
     preview base-64'd into a data URI; a missing preview passes through as None."""
