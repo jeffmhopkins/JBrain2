@@ -6,6 +6,7 @@ Postgres in the integration suite.
 """
 
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from typing import Protocol
 
 from jbrain.auth import keys
@@ -24,6 +25,19 @@ class PrincipalInfo:
     # Phase 7 device keys carry their device subject so a device session can pin
     # its row visibility to that subject (jbrain.db.session.device_context).
     subject_id: str = ""
+
+
+@dataclass(frozen=True)
+class CapabilityToken:
+    """A debug-console capability token as the owner's management list sees it.
+    Carries no secret — the key is shown exactly once, at mint."""
+
+    id: str
+    label: str
+    created_at: datetime
+    expires_at: datetime | None
+    last_used_at: datetime | None
+    revoked_at: datetime | None
 
 
 class AuthRepo(Protocol):
@@ -50,6 +64,16 @@ class AuthRepo(Protocol):
     async def create_principal(
         self, kind: str, key_hash: str, label: str, subject_id: str | None = None
     ) -> None: ...
+
+    async def create_capability(
+        self, key_hash: str, label: str, expires_at: datetime | None
+    ) -> CapabilityToken: ...
+
+    async def find_active_capability_by_key_hash(self, key_hash: str) -> PrincipalInfo | None: ...
+
+    async def list_capabilities(self) -> list[CapabilityToken]: ...
+
+    async def revoke_capability(self, capability_id: str) -> bool: ...
 
 
 async def login(repo: AuthRepo, owner_key: str, device_label: str) -> str:
@@ -103,6 +127,32 @@ async def mint_dashboard_session(repo: AuthRepo, device_key: str) -> str | None:
     token = keys.generate_session_token()
     await repo.create_session(principal.id, keys.hash_token(token), principal.label)
     return token
+
+
+async def mint_capability(
+    repo: AuthRepo, label: str, ttl_hours: float
+) -> tuple[str, CapabilityToken]:
+    """Mint a debug-console capability token; returns the secret exactly once
+    alongside its management record. The secret travels embedded in the debug
+    payload, so it is hashed like a session token (plain SHA-256), never the
+    paper-key path. A non-positive TTL is meaningless — the caller validates."""
+    key = keys.generate_capability_key()
+    expires_at = datetime.now(UTC) + timedelta(hours=ttl_hours)
+    record = await repo.create_capability(keys.hash_token(key), label, expires_at)
+    return key, record
+
+
+async def authenticate_capability(repo: AuthRepo, key: str) -> PrincipalInfo | None:
+    """Resolve a debug-console bearer key to its principal, or None.
+
+    Kind-filtered in SQL so an owner or device key presented here never
+    authenticates (no kind confusion, mirroring the device path). The repo also
+    enforces `revoked_at IS NULL` AND a live `expires_at`, and stamps `last_used_at`
+    — so a revoked or lapsed token fails closed and the caller 401s, writing nothing.
+    """
+    if not key:
+        return None
+    return await repo.find_active_capability_by_key_hash(keys.hash_token(key))
 
 
 async def rotate_owner_key(repo: AuthRepo) -> str:

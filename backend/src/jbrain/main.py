@@ -35,6 +35,8 @@ from jbrain.api import (
     analysis,
     auth,
     chat_attachments,
+    debug,
+    debug_tokens,
     devices,
     family,
     feed,
@@ -408,6 +410,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(chat_attachments.sessions_router, prefix="/api")
     app.include_router(chat_attachments.router, prefix="/api")
     app.include_router(chat_attachments.capabilities_router, prefix="/api")
+    # Owner mint/list/revoke is always available (owner-gated; mint itself refuses
+    # when the flag is off). The debug SURFACE mounts only when enabled, so a stock
+    # deploy exposes no /api/debug/* routes at all.
+    app.include_router(debug_tokens.router, prefix="/api")
+    if settings.debug_access_enabled:
+        app.include_router(debug.router, prefix="/api")
     app.include_router(devices.router, prefix="/api")
     app.include_router(family.router, prefix="/api")
     app.include_router(feed.router, prefix="/api")

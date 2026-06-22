@@ -92,6 +92,12 @@ services:
       # validates it in /internal/mqtt-auth and the consumer connects with it. Empty
       # disables the identity (fail-closed). Only meaningful with the `mqtt` profile.
       JBRAIN_MQTT_INGEST_SECRET: ${MQTT_INGEST_SECRET:-}
+      # Owner debug console (docs/DEBUG_ACCESS.md) — OFF unless the operator opts
+      # in. When false the /api/debug/* surface is not mounted and minting is
+      # refused, so it adds zero attack surface. Turn it on only on a box you are
+      # comfortable letting an external assistant read in full (incl. health/
+      # finance/location). Tokens are still revocable + time-boxed.
+      JBRAIN_DEBUG_ACCESS_ENABLED: ${DEBUG_ACCESS_ENABLED:-false}
     volumes:
       - blobs:/data/blobs
       # Server-side basemap tile cache (location map proxy) — public map data, so

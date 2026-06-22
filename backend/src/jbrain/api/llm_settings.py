@@ -363,13 +363,7 @@ async def unload_local_model(
     """Evict one resident model from the gateway's memory. 404 for a model that
     isn't a provisioned catalog id; 409 when hosting is off; 502 if the gateway
     rejects or can't be reached."""
-    model = _require_provisioned(settings, model_id)
-    try:
-        await gateway.unload(model.served_model)
-    except LocalGatewayError as exc:
-        raise HTTPException(status_code=502, detail=f"gateway unload failed: {exc}") from exc
-    loaded = await _loaded_ids(settings, gateway)
-    return LoadedModelsOut(loaded=sorted(loaded), reachable=True)
+    return await gateway_unload(model_id, settings, gateway)
 
 
 @router.post("/settings/llm/local-models/{model_id}/load")
@@ -382,13 +376,7 @@ async def load_local_model(
     """Make the gateway load one model into memory (a warm-up probe — llama-swap
     loads on first request). 404 for an unprovisioned id; 409 when hosting is off;
     502 if the gateway rejects or can't be reached."""
-    model = _require_provisioned(settings, model_id)
-    try:
-        await gateway.load(model.served_model)
-    except LocalGatewayError as exc:
-        raise HTTPException(status_code=502, detail=f"gateway load failed: {exc}") from exc
-    loaded = await _loaded_ids(settings, gateway)
-    return LoadedModelsOut(loaded=sorted(loaded), reachable=True)
+    return await gateway_load(model_id, settings, gateway)
 
 
 class ContextWindowIn(BaseModel):
@@ -461,15 +449,27 @@ async def unstage_local_model(
     return await _snapshot(settings, store, ctx, gateway)
 
 
-@router.put("/settings/llm")
-async def update_llm_settings(
-    body: LlmSettingsPut,
-    principal: PrincipalDep,
-    settings: SettingsDep,
-    store: SettingsStoreDep,
-    gateway: LocalGatewayDep,
+async def snapshot(
+    settings: Settings,
+    store: SqlSettingsStore,
+    ctx: SessionContext,
+    gateway: LocalGatewayClient,
 ) -> LlmSettingsOut:
-    ctx = ctx_for(principal)
+    """The full LLM-settings snapshot under `ctx`. Public entry shared by the
+    owner settings screen and the owner debug console (api/debug.py)."""
+    return await _snapshot(settings, store, ctx, gateway)
+
+
+async def apply_overrides(
+    body: LlmSettingsPut,
+    settings: Settings,
+    store: SqlSettingsStore,
+    ctx: SessionContext,
+    gateway: LocalGatewayClient,
+) -> LlmSettingsOut:
+    """Validate and persist per-task routing overrides, then return the snapshot.
+    Shared by the owner PUT and the debug console so both enforce the same rules
+    (known task, known provider, vision-capable for vision tasks)."""
     for task in body.tasks:
         if task not in TASK_DEFAULTS:
             raise HTTPException(status_code=422, detail=f"unknown task: {task}")
@@ -497,3 +497,40 @@ async def update_llm_settings(
         overrides[task] = entry
     await store.upsert(ctx, LLM_TASK_OVERRIDES_KEY, overrides)
     return await _snapshot(settings, store, ctx, gateway)
+
+
+async def gateway_load(
+    model_id: str, settings: Settings, gateway: LocalGatewayClient
+) -> LoadedModelsOut:
+    """Warm one provisioned model into the gateway. Shared by the owner screen and
+    the debug console. 404/409 for unprovisioned/off; 502 if the gateway rejects."""
+    model = _require_provisioned(settings, model_id)
+    try:
+        await gateway.load(model.served_model)
+    except LocalGatewayError as exc:
+        raise HTTPException(status_code=502, detail=f"gateway load failed: {exc}") from exc
+    return LoadedModelsOut(loaded=sorted(await _loaded_ids(settings, gateway)), reachable=True)
+
+
+async def gateway_unload(
+    model_id: str, settings: Settings, gateway: LocalGatewayClient
+) -> LoadedModelsOut:
+    """Evict one provisioned model from the gateway. Shared by the owner screen and
+    the debug console. 404/409 for unprovisioned/off; 502 if the gateway rejects."""
+    model = _require_provisioned(settings, model_id)
+    try:
+        await gateway.unload(model.served_model)
+    except LocalGatewayError as exc:
+        raise HTTPException(status_code=502, detail=f"gateway unload failed: {exc}") from exc
+    return LoadedModelsOut(loaded=sorted(await _loaded_ids(settings, gateway)), reachable=True)
+
+
+@router.put("/settings/llm")
+async def update_llm_settings(
+    body: LlmSettingsPut,
+    principal: PrincipalDep,
+    settings: SettingsDep,
+    store: SettingsStoreDep,
+    gateway: LocalGatewayDep,
+) -> LlmSettingsOut:
+    return await apply_overrides(body, settings, store, ctx_for(principal), gateway)

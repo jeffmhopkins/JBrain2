@@ -39,6 +39,13 @@ def verify_key(key: str, key_hash: str) -> bool:
     return hmac.compare_digest(hash_key(key), key_hash)
 
 
+def generate_capability_key() -> str:
+    """A 256-bit capability-token secret. Unlike the owner key it is never hand-
+    transcribed — it travels embedded in the debug payload — so it skips the base32
+    paper formatting and is stored with the plain SHA-256 of `hash_token`."""
+    return secrets.token_urlsafe(32)
+
+
 def generate_session_token() -> str:
     return secrets.token_urlsafe(32)
 

@@ -38,6 +38,7 @@ Phase-5 build record is `archive/PHASE5_COMPLETION_PLAN.md`.
 | `STRIX_HALO_SETUP.md` | End-to-end runbook for self-hosting the optional local models on an AMD Strix Halo (Ryzen AI Max+ 395) box: distro → kernel → Vulkan → install → routing. |
 | `CLOUDFLARE_TUNNEL.md` | Reaching a home-network box from outside via Cloudflare Tunnel — the dynamic-IP / CGNAT path: no static IP, no port-forwarding, TLS at Cloudflare's edge. |
 | `LOCAL_ACCESS.md` | Signing in on the LAN when the internet/tunnel is down: mDNS `<name>.local` + Caddy local HTTPS (internal CA) so the Secure session cookie works locally. |
+| `DEBUG_ACCESS.md` | The owner debug console: a revocable, time-boxed `capability_token` that lets an external assistant iterate on prompts, run read-only SQL, read logs, and switch LLM routing on a running box. Off by default. |
 | `mocks/` | Interactive HTML UI mockups. `DESIGN.md` cites these as the **binding spec** for reviewed surfaces — a living reference, not throwaway prototypes. |
 
 ## Active plan

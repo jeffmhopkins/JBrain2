@@ -102,6 +102,12 @@ class Settings(BaseSettings):
     # the `local-llm` compose profile + scripts/local-llm-setup.sh). When false the
     # `local` provider client is still wired but nothing routes to it.
     local_llm_enabled: bool = False
+    # OPT-IN owner debug console (docs/DEBUG_ACCESS.md): the gate for the
+    # capability-token surface (/api/debug/*) the owner uses to let an external
+    # assistant run prompt iteration, read-only SQL, logs, and live LLM routing.
+    # OFF by default — when false the debug router is not mounted and minting is
+    # refused, so the feature adds zero surface unless the owner turns it on.
+    debug_access_enabled: bool = False
     # Future-GPU escape hatch: any OpenAI-compatible server (the llama-swap gateway
     # the local-llm profile runs, or an Ollama default).
     local_llm_url: str = "http://localhost:11434/v1"
