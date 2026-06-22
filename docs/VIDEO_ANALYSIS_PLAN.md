@@ -65,5 +65,11 @@ structure.
 - Long/static content can later drop to a lower rate; scene-detection is a v2 option.
 
 ## Status
-- **Wave 1 — in progress** (this PR: `jbrain.media` + ffmpeg wiring + tests).
-- Waves 2–4 — not started.
+- **Wave 1 — done** (`jbrain.media` + ffmpeg wiring + tests; PR #477).
+- **Wave 2 — done** (`jbrain.ingest.video`: `analyze_video_attachment` map→fuse→reduce,
+  `AttachmentExtract(kind="video_analysis")` + the `analysis` jsonb column + frame-thumb
+  blobs, the `video.summarize` task, migration 0083, worker wiring, and real-Postgres +
+  RLS isolation tests). Frame captions route by `agent.vision`; the reduce summarizes the
+  fused `[mm:ss]` timeline. Degrades to frames-only (whisper off) or transcript-only
+  (ffmpeg can't decode); an empty clip caches nothing so the tool re-tries.
+- Waves 3–4 — not started.

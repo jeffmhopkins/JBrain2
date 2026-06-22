@@ -96,7 +96,7 @@ class AttachmentExtract(Base):
     attachment_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("app.attachments.id")
     )
-    kind: Mapped[str] = mapped_column(Text)  # 'ocr' | 'caption'
+    kind: Mapped[str] = mapped_column(Text)  # 'ocr' | 'caption' | 'transcript' | 'video_analysis'
     tool: Mapped[str] = mapped_column(Text)  # provider:model provenance
     text: Mapped[str] = mapped_column(Text)
     confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
@@ -104,6 +104,11 @@ class AttachmentExtract(Base):
     # [{"text", "start_ms", "end_ms", "confidence"}, ...] for the karaoke UI.
     # Display-only; the searchable chunks use `text`. NULL for ocr/caption.
     words: Mapped[list[dict[str, Any]] | None] = mapped_column(JSONB, nullable=True)
+    # Structured analyze_video result (migration 0083), video_analysis rows only:
+    # {"duration_ms", "frames": [{"t_ms", "caption", "thumb_id"}, ...],
+    #  "transcript": {"text", "words", "duration_ms"} | None}. `thumb_id` is a blob
+    # sha256 (no URLs — invariant #9). Display-only; the summary in `text` chunks.
+    analysis: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
     source_anchor: Mapped[str | None] = mapped_column(Text, nullable=True)
     domain_code: Mapped[str] = mapped_column(Text, ForeignKey("app.domains.code"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

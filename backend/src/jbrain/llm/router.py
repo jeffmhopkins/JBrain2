@@ -59,6 +59,11 @@ TASK_DEFAULTS: dict[str, str] = {
     # judgment that produces an IntegrationIntent (docs/archive/INTEGRATOR_PLAN.md). Strong
     # tier — it owns the hard decisions the deterministic core then validates.
     "integrate.note": "xai:grok-4.3",
+    # analyze_video's reduce step: fold a clip's frame-caption + transcript timeline
+    # into one summary (docs/VIDEO_ANALYSIS_PLAN.md). Text-only — the per-frame
+    # captioning is the separate `agent.vision` route. Individually routable so the
+    # summary can run on a cheaper/local model than the vision pass.
+    "video.summarize": "xai:grok-4.3",
     # Auto-titling a chat from its first exchange — a cheap one-shot summary; the
     # prompt declares the `low` tier (a reasoning model, so its prompt budgets
     # tokens for the thinking trace, not just the title). This default is just the
