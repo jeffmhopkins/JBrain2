@@ -26,6 +26,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from jbrain.api.deps import DeviceDep
 from jbrain.locations import SqlLocationRepo
 from jbrain.locations.ingest import OwnTracksLocation, ingest_location, is_location_message
+from jbrain.locations.live import LiveBroadcaster, live_fix_from_owntracks
 from jbrain.locations.ratelimit import TokenBucket
 
 router = APIRouter()
@@ -51,6 +52,14 @@ def get_rate_limiter(request: Request) -> TokenBucket:
 
 def get_session_maker(request: Request) -> "async_sessionmaker[AsyncSession]":
     return cast("async_sessionmaker[AsyncSession]", request.app.state.session_maker)
+
+
+def get_live_broadcaster(request: Request) -> LiveBroadcaster | None:
+    """The in-process live fan-out, when wired (always in the real app; absent in some
+    unit tests). HTTP-ingested fixes publish here so the dashboard's live socket sees
+    them in real time — the MQTT path has its own feeder, so an HTTP fix is never the
+    feeder's fix and there's no double publish."""
+    return cast(LiveBroadcaster | None, getattr(request.app.state, "live_broadcaster", None))
 
 
 LocationRepoDep = Annotated[SqlLocationRepo, Depends(get_location_repo)]
@@ -99,8 +108,11 @@ async def owntracks(
     # Store oldest-first. The device subject is code-set from the authenticated
     # principal, never the payload (L9); a dup (idempotent retry) is a no-op. A
     # crossing fires a content-free poke when FCM is configured (push_notifier, M6).
+    # A newly-stored fix also fans out to the live socket so the dashboard map moves in
+    # real time (the live feeder only sees MQTT, so the HTTP path must publish itself).
+    broadcaster = get_live_broadcaster(request)
     for item in locations:
-        await ingest_location(
+        inserted = await ingest_location(
             repo,
             maker,
             principal_id=principal.id,
@@ -108,4 +120,8 @@ async def owntracks(
             body=item,
             notifier=getattr(request.app.state, "push_notifier", None),
         )
+        if inserted and broadcaster is not None:
+            fix = live_fix_from_owntracks(principal.subject_id, item)
+            if fix is not None:
+                broadcaster.publish(fix)
     return []
