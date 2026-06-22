@@ -16,8 +16,8 @@ export const METRIC_LABEL: Record<TrailMetric, string> = {
 };
 
 type Stop = [number, [number, number, number]];
-// Linear ramps (heading is cyclic and handled as a hue wheel instead).
-const RAMP: Record<"speed" | "accel" | "battery" | "timeplace", Stop[]> = {
+// Linear ramps (heading is a hue wheel; time-at-place is banded — both handled apart).
+const RAMP: Record<"speed" | "accel" | "battery", Stop[]> = {
   speed: [
     [0, [58, 110, 200]],
     [0.3, [60, 180, 170]],
@@ -35,11 +35,6 @@ const RAMP: Record<"speed" | "accel" | "battery" | "timeplace", Stop[]> = {
     [0, [224, 86, 79]],
     [0.5, [230, 198, 106]],
     [1, [91, 191, 138]],
-  ],
-  timeplace: [
-    [0, [70, 120, 200]],
-    [0.5, [200, 120, 170]],
-    [1, [235, 150, 70]],
   ],
 };
 const MAXV: Record<"speed" | "accel" | "battery", number> = { speed: 60, accel: 4, battery: 100 };
@@ -112,20 +107,28 @@ export function metricBucket(
   metric: TrailMetric,
   fix: LocationFix,
   dwell: number,
-  dwellMax: number,
+  _dwellMax: number,
   buckets: number,
 ): number {
+  // Time-at-place is banded, so the "bucket" is the dwell band index (not a ramp step);
+  // contiguous same-band stretches then merge into one polyline like the others.
+  if (metric === "timeplace") return timeplaceBand(dwell);
   let t: number;
   if (metric === "heading") t = (fix.course_deg ?? 0) / 360;
-  else if (metric === "timeplace") t = timeplaceT(dwell, timeplaceAnchors(dwellMax));
   else t = (metricValue(metric, fix) ?? 0) / MAXV[metric];
   return Math.round(Math.max(0, Math.min(1, t)) * buckets);
 }
 
 export function bucketColor(metric: TrailMetric, bucket: number, buckets: number): string {
-  const f = buckets > 0 ? bucket / buckets : 0;
-  if (metric === "heading") return `hsl(${Math.round(f * 360)}, 62%, 58%)`;
-  return rampColor(metric === "timeplace" ? RAMP.timeplace : RAMP[metric], f);
+  if (metric === "heading") {
+    const f = buckets > 0 ? bucket / buckets : 0;
+    return `hsl(${Math.round(f * 360)}, 62%, 58%)`;
+  }
+  if (metric === "timeplace") {
+    const c = TP_BAND_COLORS[Math.max(0, Math.min(TP_BAND_COLORS.length - 1, Math.round(bucket)))];
+    return c ? `rgb(${c[0]}, ${c[1]}, ${c[2]})` : "rgb(120, 120, 120)";
+  }
+  return rampColor(RAMP[metric], buckets > 0 ? bucket / buckets : 0);
 }
 
 /** The exact colour for a single fix (a finer quantization than the trail's), for the
@@ -140,35 +143,45 @@ export function colorForFix(
   return bucketColor(metric, metricBucket(metric, fix, dwell, dwellMax, n), n);
 }
 
-// "Time at place" uses a piecewise scale, not a flat 0→max: fixed minute
-// breakpoints (5m / 15m / 1h) each take an equal slice of the colour ramp, then the
-// last slice scales to the window's max. So 0–5m occupies a quarter of the ramp and
-// short dwells are easy to tell apart, while a multi-hour dwell still reads as "hot".
+// "Time at place" is BANDED, not a smooth ramp: each dwell interval gets its own
+// distinct hue so the boundaries read as hard colour changes (a 7-min stay is plainly
+// a different colour from a 40-min one). The bands are fixed in minutes (independent of
+// the window) so a colour always means the same dwell. The breakpoints are 5m/15m/1h.
 const TP_BREAKPOINTS_MIN = [0, 5, 15, 60];
+const TP_BAND_COLORS: [number, number, number][] = [
+  [102, 170, 224], // 0–5m   · blue
+  [110, 200, 120], // 5–15m  · green
+  [235, 200, 90], //  15m–1h · amber
+  [224, 86, 79], //   1h+    · red
+];
 
-/** The dwell breakpoints (minutes) for the current window: the fixed ones below the
- * window max, then the max itself as the top anchor. Evenly spaced on the ramp. */
+/** The dwell band (0..3) for a duration in minutes. */
+function timeplaceBand(minutes: number): number {
+  if (minutes < 5) return 0;
+  if (minutes < 15) return 1;
+  if (minutes < 60) return 2;
+  return 3;
+}
+
+/** The breakpoints visible for a window: the fixed ones below the max, then the max
+ * itself (the band boundaries, for the legend ticks). */
 export function timeplaceAnchors(maxMin: number): number[] {
   const fixed = TP_BREAKPOINTS_MIN.filter((m) => m < maxMin);
   const top = Math.max(maxMin, (fixed[fixed.length - 1] ?? 0) + 0.001);
   return [...fixed, top];
 }
 
-/** Map dwell minutes to t∈[0,1] across the (evenly-spaced) anchors. */
-function timeplaceT(minutes: number, anchors: number[]): number {
-  const n = anchors.length;
-  if (n < 2) return 0;
-  if (minutes <= (anchors[0] ?? 0)) return 0;
-  if (minutes >= (anchors[n - 1] ?? 1)) return 1;
-  for (let i = 0; i < n - 1; i++) {
-    const a = anchors[i] ?? 0;
-    const b = anchors[i + 1] ?? 0;
-    if (minutes >= a && minutes <= b) {
-      const frac = b > a ? (minutes - a) / (b - a) : 0;
-      return (i + frac) / (n - 1);
-    }
+/** A hard-stepped gradient of the bands present in the window — equal-width solid
+ * blocks, so the legend shows the bands (not a blend) and aligns with the ticks. */
+function bandedGradient(maxMin: number): string {
+  const n = TP_BREAKPOINTS_MIN.filter((m) => m < maxMin).length || 1;
+  const stops: string[] = [];
+  for (let i = 0; i < n; i++) {
+    const c = TP_BAND_COLORS[i] ?? TP_BAND_COLORS[TP_BAND_COLORS.length - 1] ?? [120, 120, 120];
+    const col = `rgb(${c[0]}, ${c[1]}, ${c[2]})`;
+    stops.push(`${col} ${(i / n) * 100}%`, `${col} ${((i + 1) / n) * 100}%`);
   }
-  return 1;
+  return `linear-gradient(90deg,${stops.join(",")})`;
 }
 
 function fmtMinutes(m: number): string {
@@ -198,7 +211,7 @@ export function legendInfo(metric: TrailMetric, dwellMax: number): LegendInfo {
     return {
       label: "Time at place",
       unit: "min near",
-      gradient: cssGradient(RAMP.timeplace),
+      gradient: bandedGradient(dwellMax),
       ticks: timeplaceAnchors(dwellMax).map(fmtMinutes),
     };
   const unit = metric === "speed" ? "mph" : metric === "accel" ? "m/s²" : "%";

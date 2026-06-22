@@ -15,7 +15,7 @@ import type { LiveFix } from "./liveSocket";
 // and the pin-tap callback — so the tests assert what the screen drives, no real map.
 let lastState: MapState | null = null;
 let onSelect: ((id: string) => void) | null = null;
-let onPointSelect: ((fix: LocationFix) => void) | null = null;
+let onPointSelect: ((fix: LocationFix | null) => void) | null = null;
 const updateSpy = vi.fn((s: MapState) => {
   lastState = s;
 });
@@ -26,7 +26,7 @@ vi.mock("./leafletMap", () => ({
   createLocationMap: (
     _el: HTMLElement,
     sel?: (id: string) => void,
-    point?: (fix: LocationFix) => void,
+    point?: (fix: LocationFix | null) => void,
   ) => {
     onSelect = sel ?? null;
     onPointSelect = point ?? null;
@@ -236,14 +236,26 @@ describe("MemberDashboard", () => {
     expect(dock.textContent).toMatch(/30 mph/);
   });
 
-  it("pulls up Details by tapping the person area of the dock bar", async () => {
+  it("opens the person's activity timeline from the Activity button", async () => {
     render(<MemberDashboard deps={deps()} />);
     await selectBob();
-    // Tapping the dock's person area (not a separate Details button) opens Details.
-    fireEvent.click(screen.getByRole("button", { name: /Bob/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Activity/i }));
     expect(await screen.findByText(/recent activity/i)).toBeInTheDocument();
     expect(screen.getByText(/Arrived Home/)).toBeInTheDocument();
     expect(screen.getByText(/Left Work/)).toBeInTheDocument();
+  });
+
+  it("auto-shows current detail on select, clears it off-trail, re-shows on dock tap", async () => {
+    render(<MemberDashboard deps={deps()} />);
+    await selectBob();
+    // Selecting a person brings up their current detail card automatically.
+    expect(await screen.findByText("Heading")).toBeInTheDocument();
+    // A tap off the trail (map background) deselects → the card goes away.
+    act(() => onPointSelect?.(null));
+    await waitFor(() => expect(screen.queryByText("Heading")).toBeNull());
+    // Tapping the focused person in the dock re-shows the current detail.
+    fireEvent.click(screen.getByRole("button", { name: /Bob/ }));
+    expect(await screen.findByText("Heading")).toBeInTheDocument();
   });
 
   it("loads the focused person's trail onto the map", async () => {
