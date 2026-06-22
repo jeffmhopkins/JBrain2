@@ -277,6 +277,39 @@ services:
       - ./comfyui-models:/opt/ComfyUI/models:ro
     networks: [internal]
 
+  # OPT-IN on-box speech-to-text: whisper.cpp behind its OWN llama-swap, the audio
+  # sibling of the local-llm gateway but a SEPARATE service so transcription works
+  # without local LLMs and never entangles the LLM gateway's runtime config. Guarded
+  # by the `whisper` compose profile so it NEVER starts on a stock deploy —
+  # `scripts/whisper-setup.sh` (jbrain enable-whisper) downloads the GGML model,
+  # writes the one-model llama-swap config, and flips the profile on. Uses the
+  # official llama-swap unified Vulkan image, which bundles a Vulkan-built
+  # whisper-server (the kyuz0 LLM base does not). Like the Vulkan local-llm path it
+  # needs only /dev/dri (not /dev/kfd) + seccomp=unconfined for gfx1151. The api
+  # reaches it at http://whisper:8080 (internal only). llama-swap loads the model on
+  # the first request and frees it after `ttl:` idle — and the transcribe job/tool
+  # also unload it explicitly via the admin API (load-on-demand / unload-after).
+  whisper:
+    profiles: [whisper]
+    image: ${WHISPER_IMAGE:-ghcr.io/mostlygeek/llama-swap:vulkan}
+    restart: unless-stopped
+    # Same hot-reloadable config pattern as local-llm: read llama-swap.yaml from the
+    # mounted models dir (a missing single-file bind mount would wedge as a dir).
+    command:
+      ["llama-swap", "--listen", ":8080", "--config", "/models/llama-swap.yaml", "--watch-config"]
+    devices:
+      - /dev/dri:/dev/dri
+    security_opt:
+      - seccomp=unconfined
+    # Join the HOST's video/render GIDs to open /dev/dri/renderD128 — the setup
+    # script writes the numeric host GIDs (shared with the local-llm gateway).
+    group_add:
+      - "${VIDEO_GID:-video}"
+      - "${RENDER_GID:-render}"
+    volumes:
+      - ./whisper-models:/models:ro
+    networks: [internal]
+
   embed:
     image: ghcr.io/huggingface/text-embeddings-inference:cpu-latest
     restart: unless-stopped

@@ -62,35 +62,44 @@ This binds to `docs/PROCESS.md` (waves + independent review gate per wave) and t
 
 ### Wave 3 — Deploy + docs
 - `deploy/docker-compose.yml`: `JBRAIN_WHISPER_URL/ENABLED/MODEL` on the api env
-  (inherited by the worker via `*api_env`), off by default (empty URL).
+  (inherited by the worker via `*api_env`), off by default (empty URL); a dedicated
+  `whisper` profile service (below).
 - Docs: flip `docs/ANALYSIS.md` `audio/*` from deferred to shipped; add the
   `transcribe` tool to `docs/ASSISTANT.md`.
-- `video/*` + ffmpeg extraction: fast-follow (new system dep), not in this change.
+- `video/*` + ffmpeg extraction: fast-follow, not in this change.
+
+### Wave 3b — Turnkey gateway provisioning
+A **dedicated `whisper` compose service** (not folded into the LLM gateway, so
+transcription works without local LLMs and never entangles the LLM llama-swap
+config's runtime regeneration). It runs the official **`ghcr.io/mostlygeek/llama-swap:vulkan`**
+unified image, which bundles a **Vulkan-built `whisper-server`** (the kyuz0 LLM base
+ships only llama.cpp). Verified facts (web research) that make this work:
+- llama-swap routes `POST /v1/audio/transcriptions` by the multipart **`model` form
+  field** (`proxyOAIPostFormHandler` → `FormValue("model")`), so the existing
+  `WhisperCppClient` works unchanged — no `/upstream/` hack.
+- `ttl:` gives idle-unload and `POST /api/models/unload/{model}` works for a
+  whisper-server upstream, so both the app's explicit unload-after and idle-unload
+  hold (load-on-demand / unload-after).
+- the one gotcha: launch whisper-server with `--inference-path /v1/audio/transcriptions`
+  (it defaults to `/inference`).
+
+Operator flow (turnkey): **`jbrain update`** then **`jbrain enable-whisper [model]`**.
+The `enable-whisper` subcommand runs `scripts/whisper-setup.sh`, which downloads the
+GGML model into `./whisper-models/`, writes the one-model `llama-swap.yaml`
+(whisper-server on the OpenAI path, `ttl: 300`), flips `WHISPER_*` on in `.env`, and
+starts the service. `jbrain` adds `--profile whisper` whenever `WHISPER_ENABLED=true`
+so `update` rebuilds/restarts it.
 
 ## Status
 
-- **Wave 1 — done** (commit: whisper.cpp client + config + unit tests).
+- **Wave 1 — done** (whisper.cpp client + config + unit tests).
 - **Wave 2 — done** (analyzer job + agent tool; integration tests incl. RLS;
-  independent red-team review passed with no HIGH findings, MEDIUM/LOW fixed).
-- **Wave 3 — code/docs done; one on-box step remains.**
-
-### Remaining (flagged — needs on-box verification, can't be validated from CI)
-
-The application seam is complete and off by default. To actually serve audio the
-operator must provision the whisper model **in the llama-swap gateway** and point
-the env at it. That step is **not shipped here** because it can't be verified
-without the Strix Halo box, and shipping unverified Dockerfile/gateway-config
-changes risks a broken build:
-
-- a `whisper-server` (whisper.cpp, Vulkan) binary in the `local-llm` gateway image
-  (the kyuz0 toolbox is a llama.cpp build — confirm whether it ships whisper.cpp or
-  add a build stage), and a model entry in the generated `llama-swap.yaml` (extend
-  `jbrain.llm.llama_swap_config` + `scripts/local-llm-setup.sh` to write it and the
-  `WHISPER_*` env), confirming llama-swap proxies the multipart
-  `/v1/audio/transcriptions` endpoint and the load/unload admin API covers it.
-
-Until then: set `WHISPER_URL=http://local-llm:8080/v1` + `WHISPER_MODEL=<served
-name>` once that model is registered, and the feature lights up end to end.
+  independent red-team review, no HIGH findings, MEDIUM/LOW fixed).
+- **Wave 3 — done** (compose env + docs).
+- **Wave 3b — done** (dedicated whisper service + `jbrain enable-whisper` +
+  `scripts/whisper-setup.sh`). Shell + generated-config validated locally; the
+  GPU container itself can only be exercised on the Strix Halo box, so the first
+  `enable-whisper` is the on-box smoke test.
 
 ## Open decisions (resolved)
 - Engine: **whisper.cpp via the existing llama-swap gateway** (owner's choice — best
