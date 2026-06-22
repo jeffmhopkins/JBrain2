@@ -13178,6 +13178,8 @@ input.ld-title {
   place-items: center;
 }
 .atx-fn {
+  flex: 1; /* take the row's slack and ellipsize, so the model meta isn't crammed */
+  min-width: 0; /* allow the flex item to shrink below its content width */
   font-size: var(--fs-secondary);
   font-weight: 500;
   overflow: hidden;
@@ -13185,7 +13187,9 @@ input.ld-title {
   white-space: nowrap;
 }
 .atx-meta {
+  flex: 0 0 auto; /* never wrap/shrink the model name (e.g. "whisper") */
   margin-left: auto;
+  white-space: nowrap;
   font-size: var(--fs-micro);
   color: var(--text-2);
 }
@@ -13270,7 +13274,7 @@ input.ld-title {
   text-align: left;
   cursor: pointer;
   border-radius: 5px;
-  transition: background 0.08s;
+  /* No transition: the karaoke highlight snaps to the spoken word (owner choice). */
 }
 /* box-shadow (not padding) makes the pill, so the highlight never reflows words. */
 .atx-w.now {
