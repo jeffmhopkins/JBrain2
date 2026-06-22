@@ -74,6 +74,27 @@ describe("AudioTranscript", () => {
     expect(screen.getByRole("button", { name: "Hello" }).className).not.toContain("now");
   });
 
+  it("keeps a word highlighted across a tiny inter-word gap", () => {
+    // A gap between words (500→520): a clock landing in it must still highlight the
+    // word just spoken, not drop to nothing (the window extends to the next start).
+    const gapped = [
+      { text: "Hello", startMs: 0, endMs: 500, confidence: 0.9 },
+      { text: "world", startMs: 520, endMs: 1100, confidence: 0.9 },
+    ];
+    const { container } = render(
+      <AudioTranscript
+        audioUrl="/audio.wav"
+        filename="memo.wav"
+        words={gapped}
+        durationMs={1100}
+      />,
+    );
+    const audio = container.querySelector("audio") as HTMLAudioElement;
+    audio.currentTime = 0.51; // 510ms — inside the 500→520 gap
+    fireEvent.timeUpdate(audio);
+    expect(screen.getByRole("button", { name: "Hello" }).className).toContain("now");
+  });
+
   it("falls back to plain text when there are no words", () => {
     render(<AudioTranscript audioUrl="/a.wav" filename="m.wav" words={[]} text="plain body" />);
     expect(screen.getByText("plain body")).toBeTruthy();

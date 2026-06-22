@@ -106,10 +106,31 @@ export function AudioTranscript({
   const currentIdx = useMemo(() => {
     for (let i = 0; i < words.length; i++) {
       const w = words[i];
-      if (w && currentMs >= w.startMs && currentMs < w.endMs) return i;
+      if (!w) continue;
+      // Extend a word's window to the next word's start so a tiny inter-word gap
+      // never drops the highlight between consecutive words.
+      const next = words[i + 1];
+      const end = next ? Math.max(w.endMs, next.startMs) : w.endMs;
+      if (currentMs >= w.startMs && currentMs < end) return i;
     }
     return -1;
   }, [currentMs, words]);
+
+  // `timeupdate` fires only ~4×/second, so in fast dialogue a short word's whole
+  // window can fall between two events and never highlight. While playing, sample
+  // the media clock every animation frame (~60fps) so every word is caught; the
+  // effect tears the loop down on pause/ended (it re-runs when `playing` flips).
+  useEffect(() => {
+    if (!playing) return;
+    let raf = 0;
+    const tick = () => {
+      const m = mediaRef.current;
+      if (m) setCurrentMs(m.currentTime * 1000);
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [playing]);
 
   // Keep the spoken word centered in the (≈5-line) body as playback advances.
   // Scroll the body itself — never the page — so a long transcript karaoke-scrolls
