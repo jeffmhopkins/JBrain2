@@ -378,6 +378,13 @@ export const PauseIcon = (p: IconProps) => (
   </Icon>
 );
 
+export const VideoIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="m22 8-6 4 6 4V8z" />
+    <rect x="2" y="6" width="14" height="12" rx="2" />
+  </Icon>
+);
+
 export const ZapIcon = (p: IconProps) => (
   <Icon {...p}>
     <path d="M13 2 4 14h7l-1 8 9-12h-7l1-8z" />

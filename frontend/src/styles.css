@@ -13183,6 +13183,15 @@ input.ld-title {
   font-size: var(--fs-micro);
   color: var(--text-2);
 }
+/* Video uses native controls (owner choice); it spans the card full-bleed, letter-
+   boxed on black, between the header and the transcript body. */
+.atx-video {
+  display: block;
+  width: 100%;
+  max-height: 320px;
+  background: #000;
+  object-fit: contain;
+}
 .atx-player {
   display: flex;
   align-items: center;
@@ -13235,10 +13244,14 @@ input.ld-title {
   text-align: right;
 }
 .atx-body {
+  box-sizing: border-box;
+  position: relative; /* the karaoke scroll centers words by their offsetTop in here */
   padding: 4px 14px 14px;
   font-size: var(--fs-body);
   line-height: 1.75;
-  max-height: 360px;
+  /* Cap at ~5 lines (line-height × 5 + the vertical padding); longer transcripts
+     scroll, keeping the active line centered. */
+  max-height: calc(var(--fs-body) * 1.75 * 5 + 18px);
   overflow: auto;
 }
 .atx-w {

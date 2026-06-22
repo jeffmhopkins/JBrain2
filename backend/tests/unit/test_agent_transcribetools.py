@@ -128,6 +128,7 @@ async def test_transcribes_audio_and_unloads_after() -> None:
     assert isinstance(out, ToolOutput) and out.view is not None
     assert out.view.view == "transcript" and out.view.data["attachment_id"] == AUDIO_ID
     assert out.view.data["source"] == "chat" and out.view.data["duration_ms"] == 900
+    assert out.view.data["media"] == "audio"  # the card renders an <audio> element
     assert "hello team" in out.view.data["text"]
     assert out.view.data["words"][1] == {
         "text": "team",
@@ -159,13 +160,30 @@ async def test_unknown_or_non_uuid_id_is_a_clean_miss() -> None:
     assert client.calls == [] and gateway.unloaded == []  # never reached the model
 
 
-async def test_non_audio_attachment_is_refused() -> None:
+async def test_video_is_transcribed_and_view_marks_it_video() -> None:
+    # A video file rides the same path: its bytes go to the gateway (whose ffmpeg
+    # extracts the audio track), and the view tells the card to render a <video>.
+    blobs, repo = FakeBlobs(), FakeAttachments()
+    blobs.data["sha-v"] = b"\x00\x00\x00\x18ftypmp42"
+    repo.add(AUDIO_ID, media_type="video/mp4", sha="sha-v", filename="clip.mp4")
+    client = FakeClient(Transcript(text="rolling now", words=(Word("rolling", 0, 500, 0.8),)))
+    gateway = FakeGateway()
+
+    out = await _tool(client, blobs, repo, gateway)({"source_attachment_id": AUDIO_ID}, CTX)
+
+    assert client.calls == [{"filename": "clip.mp4", "media_type": "video/mp4"}]
+    assert gateway.unloaded == ["whisper-x"]
+    assert isinstance(out, ToolOutput) and out.view is not None
+    assert out.view.data["media"] == "video" and out.view.data["source"] == "chat"
+
+
+async def test_non_audio_video_attachment_is_refused() -> None:
     blobs, repo = FakeBlobs(), FakeAttachments()
     blobs.data["sha-i"] = b"png"
     repo.add(AUDIO_ID, media_type="image/png", sha="sha-i", filename="pic.png")
     client = FakeClient(Transcript(text="x"))
     out = await _tool(client, blobs, repo, FakeGateway())({"source_attachment_id": AUDIO_ID}, CTX)
-    assert "isn't audio" in out and client.calls == []
+    assert "isn't audio or video" in out and client.calls == []
 
 
 async def test_empty_transcript_reports_no_speech() -> None:
@@ -210,8 +228,11 @@ async def test_oversized_audio_is_refused_before_the_model() -> None:
     assert client.calls == [] and gateway.unloaded == []  # never reached the model
 
 
-@pytest.mark.parametrize("media_type", ["audio/mpeg", "audio/mp4", "audio/ogg", "audio/flac"])
-async def test_common_audio_types_are_accepted(media_type: str) -> None:
+@pytest.mark.parametrize(
+    "media_type",
+    ["audio/mpeg", "audio/mp4", "audio/ogg", "audio/flac", "video/mp4", "video/quicktime"],
+)
+async def test_common_audio_and_video_types_are_accepted(media_type: str) -> None:
     blobs, repo = FakeBlobs(), FakeAttachments()
     blobs.data["sha-a"] = b"data"
     repo.add(AUDIO_ID, media_type=media_type, sha="sha-a", filename="clip")

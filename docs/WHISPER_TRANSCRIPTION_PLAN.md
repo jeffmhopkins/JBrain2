@@ -2,10 +2,12 @@
 
 Add on-box speech-to-text (whisper.cpp) to JBrain2 in two roles:
 
-1. **Attachment analyzer** — `audio/*` (and, fast-follow, `video/*` via ffmpeg)
+1. **Attachment analyzer** — `audio/*` (and, fast-follow, `video/*`)
    attachments are transcribed and indexed alongside note bodies, filling the
    `audio/*` slot `docs/ANALYSIS.md` already reserves (currently "deferred").
-2. **Agent tool** — `jerv` can transcribe an attachment on demand mid-chat.
+2. **Agent tool** — `jerv` can transcribe an attachment on demand mid-chat
+   (`audio/*` **and `video/*`** — the gateway's ffmpeg extracts a video's audio
+   track, so no backend decoding; the result card plays the video itself).
 
 The model is **load-on-demand / unload-after**: it rides the existing on-box
 **llama-swap gateway** (the `local-llm` compose profile built for this Strix Halo
@@ -66,7 +68,8 @@ This binds to `docs/PROCESS.md` (waves + independent review gate per wave) and t
   `whisper` profile service (below).
 - Docs: flip `docs/ANALYSIS.md` `audio/*` from deferred to shipped; add the
   `transcribe` tool to `docs/ASSISTANT.md`.
-- `video/*` + ffmpeg extraction: fast-follow, not in this change.
+- `video/*`: fast-follow for the **agent tool** (now shipped, Wave 4); the **note
+  ingest analyzer** stays `audio/*`-only for now (a later fast-follow).
 
 ### Wave 3b — Turnkey gateway provisioning
 A **dedicated `whisper` compose service** (not folded into the LLM gateway, so
@@ -100,6 +103,12 @@ so `update` rebuilds/restarts it.
   `scripts/whisper-setup.sh`). Shell + generated-config validated locally; the
   GPU container itself can only be exercised on the Strix Halo box, so the first
   `enable-whisper` is the on-box smoke test.
+- **Wave 4 — done** (karaoke transcript card + `video/*` agent tool). The
+  `transcript` view gained the per-word confidence gradient, the in-time word
+  highlight + tap-to-seek, a ≈5-line body that keeps the active line centered, and
+  a `media` slot: a video attachment renders a native-controls `<video>` (the
+  gateway's ffmpeg extracts its audio track) while audio keeps the custom player.
+  Chat uploads now allow `video/*`; the `transcribe` tool reads audio **or** video.
 
 ## Open decisions (resolved)
 - Engine: **whisper.cpp via the existing llama-swap gateway** (owner's choice — best

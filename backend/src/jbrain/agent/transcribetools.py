@@ -1,11 +1,13 @@
-"""The `transcribe` agent tool: jerv reads an attached audio file with the local
-whisper model (docs/WHISPER_TRANSCRIPTION_PLAN.md).
+"""The `transcribe` agent tool: jerv reads an attached audio OR video file with the
+local whisper model (docs/WHISPER_TRANSCRIPTION_PLAN.md).
 
 The audio sibling of `analyze_image`: resolves a chat attachment by id under the
 session's RLS scope (a foreign/out-of-scope id reads as a clean miss, never a
-leak), fetches its bytes, and delegates to the whisper gateway. Wired only when
-the whisper backend is configured; the registry drops the sidecar otherwise
-(graceful degrade, like the image tools). The model is freed after each call
+leak), fetches its bytes, and delegates to the whisper gateway. A video file is
+sent the same way — the gateway's ffmpeg (whisper-server --convert) extracts its
+audio track before transcribing, so no decoding happens here. Wired only when the
+whisper backend is configured; the registry drops the sidecar otherwise (graceful
+degrade, like the image tools). The model is freed after each call
 (load-on-demand / unload-after), best-effort — VRAM hygiene, not correctness.
 """
 
@@ -13,7 +15,11 @@ import uuid
 
 import structlog
 
-from jbrain.agent.attachments import TurnAttachmentRepo
+from jbrain.agent.attachments import (
+    TurnAttachmentRepo,
+    is_transcribable_media_type,
+    is_video_media_type,
+)
 from jbrain.agent.contracts import ViewPayload
 from jbrain.agent.loop import ToolContext, ToolHandler, ToolOutput
 from jbrain.llm.local_gateway import LocalGateway, LocalGatewayError
@@ -22,7 +28,7 @@ from jbrain.transcribe import TranscribeClient, Transcript
 
 log = structlog.get_logger()
 
-_NO_AUDIO = "No attached audio with that id is in this chat."
+_NO_AUDIO = "No attached audio or video with that id is in this chat."
 # The chat tool's size ceiling, the ingest budget's sibling (config.whisper_max_bytes,
 # DEFAULT_TRANSCRIBE_MAX_BYTES): refuse an oversized clip up front rather than block on
 # a multi-minute call that the gateway timeout would kill anyway.
@@ -63,49 +69,53 @@ def build_transcribe_handlers(
         info = await attachments.get(att_ctx, attachment_id)
         if info is None:
             return _NO_AUDIO
-        if not info.media_type.startswith("audio/"):
-            return "That attachment isn't audio — transcribe only reads audio files."
+        if not is_transcribable_media_type(info.media_type):
+            return (
+                "That attachment isn't audio or video — transcribe only reads audio or video files."
+            )
         if info.size_bytes > max_bytes:
-            return "That audio file is too large to transcribe."
+            return "That file is too large to transcribe."
         try:
             data = await blobs.get(info.sha256)
         except FileNotFoundError:
-            return "That audio file is no longer available."
+            return "That file is no longer available."
         try:
             transcript = await client.transcribe(
                 data, filename=info.filename, media_type=info.media_type
             )
         except Exception as exc:  # noqa: BLE001 - a tool error is a recoverable observation
             log.warning("transcribe_tool_failed", error=repr(exc))
-            return "I couldn't transcribe that audio right now — the speech model didn't respond."
+            return "I couldn't transcribe that right now — the speech model didn't respond."
         finally:
             await _unload(gateway, model)
 
         text = transcript.text.strip()
         if not text:
             return f'No speech was found in "{info.filename}".'
-        # The model reads the transcript text; the owner sees the rich card (audio
-        # player + per-word confidence + sync). The view carries the attachment id,
-        # not a URL — the component builds the audio src (invariant #9).
+        # The model reads the transcript text; the owner sees the rich card (audio or
+        # video player + per-word confidence + sync). The view carries the attachment
+        # id, not a URL — the component builds the media src (invariant #9).
         return ToolOutput(
             f'Transcript of "{info.filename}":\n{text}',
-            view=_transcript_view(attachment_id, info.filename, model, transcript),
+            view=_transcript_view(attachment_id, info.filename, model, transcript, info.media_type),
         )
 
     return {"transcribe": transcribe_tool}
 
 
 def _transcript_view(
-    attachment_id: str, filename: str, model: str, transcript: Transcript
+    attachment_id: str, filename: str, model: str, transcript: Transcript, media_type: str
 ) -> ViewPayload:
     return ViewPayload(
         view="transcript",
         surface="inline",
         data={
             # `source` tells the component which download endpoint to build the
-            # audio src from (a chat attachment here vs a note attachment).
+            # media src from (a chat attachment here vs a note attachment); `media`
+            # tells it which element to render (<video> for video, else <audio>).
             "attachment_id": attachment_id,
             "source": "chat",
+            "media": "video" if is_video_media_type(media_type) else "audio",
             "filename": filename,
             "model": model,
             "duration_ms": transcript.duration_ms,

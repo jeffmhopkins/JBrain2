@@ -50,12 +50,32 @@ ALLOWED_MEDIA_TYPES: frozenset[str] = frozenset(
         "audio/ogg",
         "audio/webm",
         "audio/flac",
+        # Video: like audio, the model can't watch it inline — but its id rides the
+        # turn so jerv can pass it to `transcribe`, which sends it to the whisper
+        # gateway whose ffmpeg (--convert) extracts the audio track. The player card
+        # then plays the video itself. Same gate posture as audio: the tool, not the
+        # upload, decides whether transcription is configured.
+        "video/mp4",
+        "video/quicktime",
+        "video/webm",
+        "video/x-matroska",
+        "video/mpeg",
     }
 )
 
 
 def is_audio_media_type(media_type: str) -> bool:
     return media_type.startswith("audio/")
+
+
+def is_video_media_type(media_type: str) -> bool:
+    return media_type.startswith("video/")
+
+
+def is_transcribable_media_type(media_type: str) -> bool:
+    """Audio or video — both reach the whisper gateway, which extracts a video's
+    audio track via ffmpeg before transcribing."""
+    return is_audio_media_type(media_type) or is_video_media_type(media_type)
 
 
 def is_allowed_media_type(media_type: str) -> bool:

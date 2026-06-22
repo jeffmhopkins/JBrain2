@@ -74,19 +74,19 @@ def _text_block(info: AttachmentInfo, data: bytes) -> _Converted:
     return _Converted(images=[], text_blocks=[f"[{info.filename}]:\n{body}"])
 
 
-def _audio_block(info: AttachmentInfo, *, transcribe_enabled: bool) -> _Converted:
-    # The model can't hear the bytes, so only its id rides the turn (no inline data).
-    # When the whisper backend is configured the id is actionable via the transcribe
-    # tool; when it isn't, say so plainly rather than pointing at a tool that was
-    # dropped from the registry (no dead-end).
+def _media_block(info: AttachmentInfo, *, kind: str, transcribe_enabled: bool) -> _Converted:
+    # The model can't hear/watch the bytes, so only its id rides the turn (no inline
+    # data). When the whisper backend is configured the id is actionable via the
+    # transcribe tool (a video's audio track is extracted gateway-side); when it
+    # isn't, say so plainly rather than pointing at a dropped tool (no dead-end).
     if transcribe_enabled:
         note = (
-            f'[attached audio "{info.filename}" — its id is {info.id}: pass it as '
+            f'[attached {kind} "{info.filename}" — its id is {info.id}: pass it as '
             "source_attachment_id to the transcribe tool to read what it says]"
         )
     else:
         note = (
-            f'[attached audio "{info.filename}" — audio transcription is not configured '
+            f'[attached {kind} "{info.filename}" — transcription is not configured '
             "on this box, so its words can't be read]"
         )
     return _Converted(images=[], text_blocks=[note])
@@ -143,7 +143,11 @@ def _convert_one(
     if info.media_type.startswith("audio/"):
         # Binary audio has no inline reading — decoding it as text would be garbage;
         # surface its id (and whether it's actionable) instead.
-        return _audio_block(info, transcribe_enabled=transcribe_enabled)
+        return _media_block(info, kind="audio", transcribe_enabled=transcribe_enabled)
+    if info.media_type.startswith("video/"):
+        # Same as audio: unreadable inline, but transcribable (the gateway extracts
+        # the audio track) — surface its id pointing at the transcribe tool.
+        return _media_block(info, kind="video", transcribe_enabled=transcribe_enabled)
     # Everything else reaching here is a known-text type (the upload allowlist gates
     # the set); decode it inline.
     return _text_block(info, data)
