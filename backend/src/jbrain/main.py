@@ -59,6 +59,7 @@ from jbrain.api import (
 from jbrain.api import (
     appointments as appointments_api,
 )
+from jbrain.api import fish_settings as fish_settings_api
 from jbrain.api import image_settings as image_settings_api
 from jbrain.api import lists as lists_api
 from jbrain.api import llm_settings as llm_settings_api
@@ -422,6 +423,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(feed.router, prefix="/api")
     app.include_router(images.generated_router, prefix="/api")
     app.include_router(image_settings_api.router, prefix="/api")
+    app.include_router(fish_settings_api.router, prefix="/api")
     app.include_router(lists_api.router, prefix="/api")
     app.include_router(llm_settings_api.router, prefix="/api")
     app.include_router(locations.router, prefix="/api")
