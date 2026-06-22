@@ -103,6 +103,20 @@ class LocationService : Service(), LocationListener {
             current = next
             requestUpdates(next)
         }
+        // Loopback first: push this fix straight to the dashboard WebView so the
+        // self-pin moves now, independent of the batched network upload below (which
+        // can sit up to ~30 s before the server fans it back). No-op when the
+        // dashboard isn't foregrounded (no listener registered).
+        LocalFixBus.publish(
+            LocalFix(
+                lat = location.latitude,
+                lon = location.longitude,
+                tst = location.time / 1000,
+                accuracyM = accuracyM,
+                velocityMps = if (location.hasSpeed()) location.speed.toDouble() else null,
+                batteryPct = batteryPct(),
+            ),
+        )
         // Both the paired server and the key come from pairing; either gone → idle.
         val base = store.serverBase() ?: return
         val key = store.deviceKey() ?: return

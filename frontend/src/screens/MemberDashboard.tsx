@@ -220,12 +220,18 @@ function LiveMap({ deps }: { deps: MemberDeps | undefined }) {
     });
   }, []);
 
-  // Create the Leaflet map once; a pin tap follows through to the switcher.
+  // Create the Leaflet map once; a pin tap follows through to the switcher AND
+  // inspects that person's current point (so tapping the pin shows its value even
+  // when they're already the focused person — re-selecting alone is a no-op).
   useEffect(() => {
     if (!canvas.current) return;
     const h = createLocationMap(
       canvas.current,
-      (id) => setSel(id),
+      (id) => {
+        setSel(id);
+        const cur = subjectCurrentFix(rosterRef.current?.find((s) => s.subject_id === id));
+        if (cur) setPicked(cur);
+      },
       (fix) => setPicked(fix),
     );
     handle.current = h;
@@ -276,22 +282,29 @@ function LiveMap({ deps }: { deps: MemberDeps | undefined }) {
           ) ?? prev,
       );
       if (fix.subject_id === selRef.current) {
-        setTrail((t) => [
-          ...t,
-          {
-            captured_at: fix.captured_at,
-            latitude: fix.lat,
-            longitude: fix.lon,
-            accuracy_m: fix.accuracy_m,
-            battery_pct: fix.battery_pct,
-            velocity_mps: fix.velocity_mps,
-            // The live feed carries speed but not course/accel/altitude; the historical
-            // trail (from positions) does. The live tail is just the newest few points.
-            course_deg: null,
-            acceleration_mps2: null,
-            altitude_m: null,
-          },
-        ]);
+        setTrail((t) => {
+          // The same GPS fix can arrive twice for the viewer's own device — once via
+          // the native loopback (instant) and again when the server fans it out — so
+          // skip a point identical to the tail rather than doubling the trail.
+          const tail = t[t.length - 1];
+          if (tail && tail.latitude === fix.lat && tail.longitude === fix.lon) return t;
+          return [
+            ...t,
+            {
+              captured_at: fix.captured_at,
+              latitude: fix.lat,
+              longitude: fix.lon,
+              accuracy_m: fix.accuracy_m,
+              battery_pct: fix.battery_pct,
+              velocity_mps: fix.velocity_mps,
+              // The live feed carries speed but not course/accel/altitude; the historical
+              // trail (from positions) does. The live tail is just the newest few points.
+              course_deg: null,
+              acceleration_mps2: null,
+              altitude_m: null,
+            },
+          ];
+        });
       }
     };
     const live = connectLive((fix: LiveFix) => {
@@ -304,9 +317,30 @@ function LiveMap({ deps }: { deps: MemberDeps | undefined }) {
       pendingRef.current.clear();
       for (const f of fixes) applyFix(f);
     }, OTHERS_FLUSH_MS);
+    // Native loopback: the Android app pushes THIS phone's own fixes straight into the
+    // page (the network upload is batched up to ~30 s, so without this the self-pin
+    // lags badly while driving). The payload omits subject_id — it's always this
+    // viewer's own device — so stamp it with the self id and run the normal apply path.
+    const w = window as Window & { __jbrainLocalFix?: ((payload: unknown) => void) | undefined };
+    w.__jbrainLocalFix = (payload) => {
+      const id = selfIdRef.current;
+      if (!id || typeof payload !== "object" || payload === null) return;
+      const p = payload as Partial<LiveFix>;
+      if (typeof p.lat !== "number" || typeof p.lon !== "number") return;
+      applyFix({
+        subject_id: id,
+        lat: p.lat,
+        lon: p.lon,
+        accuracy_m: p.accuracy_m ?? null,
+        battery_pct: p.battery_pct ?? null,
+        velocity_mps: p.velocity_mps ?? null,
+        captured_at: p.captured_at ?? new Date().toISOString(),
+      });
+    };
     return () => {
       live.close();
       window.clearInterval(flush);
+      w.__jbrainLocalFix = undefined;
     };
   }, []);
 
@@ -473,7 +507,7 @@ function LiveMap({ deps }: { deps: MemberDeps | undefined }) {
       <div className="livemap-canvas" ref={canvas} data-testid="map-canvas" />
       <PeopleSwitcher roster={roster} sel={sel} colorOf={colorOf} failed={failed} onPick={setSel} />
       <TileToggle scheme={tileScheme} onPick={pickScheme} />
-      {sel !== "all" && (
+      {sel !== "all" && mode === "trail" && (
         <MetricLegend metric={metric} dwellMax={dwellInfo.max} onPick={setMetric} />
       )}
       <DetailsSheet

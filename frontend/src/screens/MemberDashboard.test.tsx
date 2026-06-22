@@ -189,6 +189,31 @@ describe("MemberDashboard", () => {
     expect(centerSpy).toHaveBeenCalledTimes(1); // still just the one initial center
   });
 
+  it("applies a native loopback fix for the viewer's own device", async () => {
+    render(<MemberDashboard deps={deps()} />);
+    await screen.findByRole("tab", { name: /Everyone/ });
+    await waitFor(() => expect(lastState?.pins?.length).toBe(2));
+    // The Android app pushes this phone's own fix straight into the page (no subject_id;
+    // it's always self) — the self pin must move without waiting on the network round-trip.
+    const w = window as Window & { __jbrainLocalFix?: (p: unknown) => void };
+    expect(w.__jbrainLocalFix).toBeTypeOf("function");
+    act(() =>
+      w.__jbrainLocalFix?.({
+        lat: 42.5,
+        lon: -71.5,
+        accuracy_m: 8,
+        battery_pct: 77,
+        velocity_mps: 9,
+        captured_at: new Date().toISOString(),
+      }),
+    );
+    await waitFor(() => {
+      const me = lastState?.pins?.find((p) => p.subjectId === "s-me");
+      expect(me?.lat).toBe(42.5);
+      expect(me?.lon).toBe(-71.5);
+    });
+  });
+
   it("pulls up History and toggles Heat (focused person)", async () => {
     render(<MemberDashboard deps={deps()} />);
     await selectBob();
@@ -363,6 +388,18 @@ describe("MemberDashboard", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("hides the trail legend on the heat map (it has no meaning there)", async () => {
+    render(<MemberDashboard deps={deps()} />);
+    await selectBob();
+    // The legend's color-metric trigger is present for the trail...
+    expect(screen.getByRole("button", { name: "Trail color metric" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /History/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Heat" }));
+    await waitFor(() => expect(lastState?.mode).toBe("heat"));
+    // ...and gone once the view is the heat map.
+    expect(screen.queryByRole("button", { name: "Trail color metric" })).not.toBeInTheDocument();
   });
 
   it("recolors the trail when a metric is picked from the legend dropdown", async () => {
