@@ -30,6 +30,22 @@ export type Panel = "none" | "sessions" | "proposals";
 // when its buffer is absent (no needless re-renders of the conversation).
 const EMPTY_MESSAGES: TranscriptMessage[] = [];
 
+/** What a live turn is doing, for the session picker's activity glyph: an image tool
+ * mid-flight reads as a render; everything else (reasoning, other tools, answering)
+ * reads as thinking. */
+export type TurnKind = "thinking" | "rendering";
+export interface ActiveTurn {
+  sessionId: string;
+  kind: TurnKind;
+}
+const IMAGE_TOOLS = new Set(["generate_image", "edit_image"]);
+function turnKind(buffer: TranscriptMessage[] | undefined): TurnKind {
+  const last = buffer?.[buffer.length - 1];
+  if (!last || last.role !== "assistant") return "thinking";
+  const running = last.tools.find((t) => t.ok === undefined);
+  return running && IMAGE_TOOLS.has(running.name) ? "rendering" : "thinking";
+}
+
 /** Live context-window fill for the open chat, from the stream's `usage` events:
  * `used` (the latest turn's prompt + output, the fullest the context has been) over
  * the model's total `window`. Null until the first usage event of a session. */
@@ -190,6 +206,11 @@ export interface FullBrain {
   setOpenProposal: (id: string | null) => void;
   messages: TranscriptMessage[];
   busy: boolean;
+  /** The chat with a turn streaming right now (and what it's doing), or null when
+   * idle — drives the session picker's per-row activity glyph so an in-flight
+   * thinking/render is visible even from another chat. At most one at a time (busy
+   * gates sends). */
+  activeTurn: ActiveTurn | null;
   /** A turn can be sent only once a session (read scope) is chosen and no stream
    * is in flight. */
   canSend: boolean;
@@ -253,6 +274,9 @@ export function useFullBrain(
     {},
   );
   const [busy, setBusy] = useState(false);
+  // The chat a turn is streaming into right now (reactive twin of turnSessionRef), so
+  // the picker can glyph that row's activity. Null when idle.
+  const [activeTurnSessionId, setActiveTurnSessionId] = useState<string | null>(null);
   // Live context-window fill from the stream's `usage` events; cleared when the
   // open chat changes (a different session has its own context).
   const [usage, setUsage] = useState<ContextUsage | null>(null);
@@ -277,6 +301,11 @@ export function useFullBrain(
   // The visible transcript: the active chat's buffer (empty until loaded). A stable
   // empty array keeps the reference steady across renders when there's nothing to show.
   const messages = (activeId !== null ? messagesBySession[activeId] : undefined) ?? EMPTY_MESSAGES;
+  // The live turn's session + what it's doing, recomputed as its buffer streams (so the
+  // glyph flips thinking → rendering when an image tool starts).
+  const activeTurn: ActiveTurn | null = activeTurnSessionId
+    ? { sessionId: activeTurnSessionId, kind: turnKind(messagesBySession[activeTurnSessionId]) }
+    : null;
   // Update one session's buffer, leaving the others untouched — the streaming reducer
   // and the transcript load both go through here so a turn only ever edits its own chat.
   const setSessionMessages = useCallback(
@@ -456,6 +485,7 @@ export function useFullBrain(
     // Mark which chat this turn streams into, so its buffer survives a switch away and
     // back, and its own (pre-turn) transcript reload doesn't clobber the live render.
     turnSessionRef.current = turnSessionId;
+    setActiveTurnSessionId(turnSessionId);
     setSessionMessages(turnSessionId, (ms) => [
       ...ms,
       userMessage(text, attachments),
@@ -532,8 +562,10 @@ export function useFullBrain(
       // the next turn.
       runIdRef.current = null;
       // The turn settled — release its chat so reopening it now reloads the stored
-      // transcript (which carries the finished render) instead of the live buffer.
+      // transcript (which carries the finished render) instead of the live buffer, and
+      // drop the picker's activity glyph for it.
       if (turnSessionRef.current === turnSessionId) turnSessionRef.current = null;
+      setActiveTurnSessionId((cur) => (cur === turnSessionId ? null : cur));
       setBusy(false);
       // The turn may have staged a Proposal — refresh the review inbox.
       reloadProposals();
@@ -621,6 +653,8 @@ export function useFullBrain(
       const { [id]: _gone, ...rest } = prev;
       return rest;
     });
+    // Don't leave the picker's activity glyph pointing at a chat that no longer exists.
+    setActiveTurnSessionId((cur) => (cur === id ? null : cur));
     if (active?.id === id) setActive(null);
   }
 
@@ -653,6 +687,7 @@ export function useFullBrain(
     setOpenProposal,
     messages,
     busy,
+    activeTurn,
     canSend: !busy && active !== null,
     usage,
     stop,

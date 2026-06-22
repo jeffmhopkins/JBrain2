@@ -752,6 +752,21 @@ footer chip row) didn't scale, so the picker is now:
   bucketing the owner asked for; A (tap-to-unfold preview) and B (two-line swatch
   tiles + filter chips) are retained as the record.
 
+**Live-turn activity glyph on the row (in-place addition; chip-state exemption — owner
+chose the *stateful mini-glyph* over a pulsing dot and a spinner ring; reference mock
+`docs/mocks/session-active-turn-glyph.html`).** A chat with a turn streaming right now
+replaces its leading scope dot with an **accent (`--steel`) activity glyph** so an
+in-flight thinking/render is visible from the picker even while another chat is open
+(the turn is detached from the SSE connection and keyed to its own session — see
+`docs/ASSISTANT.md`). The glyph is **stateful**: **three bouncing dots while thinking**
+(any non-image activity — reasoning, tools, answering), a **twinkling spark while an
+image tool renders** (`generate_image`/`edit_image`). The row's `turns / staged` meta is
+replaced by a calm accent **`thinking…` / `rendering…`** word for the duration. The glyph
+is **decorative** (`aria-hidden`) — the visible status word carries the state and rides
+the row button's accessible name, so a screen reader hears it without a nagging live
+region. Honors `prefers-reduced-motion` with a steady glyph. At most one chat shows it at
+a time (a single turn is in flight — `busy` gates sends).
+
 ## Surface paradigms (which container for which job)
 
 | Job | Paradigm |

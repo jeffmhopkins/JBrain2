@@ -7709,6 +7709,78 @@ button.small {
   background: var(--green);
   box-shadow: 0 0 0 3px var(--green-tint);
 }
+/* The live-activity glyph stands in for the leading dot while a turn streams. It
+   anchors the 8px dot lane but sizes to its contents (the dots/spark run a touch
+   wider) so it never clips; only the one active row's title nudges, harmlessly.
+   Accent-tinted to read as "working". */
+.fb-shell .session-tap .turn-glyph {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  min-width: 8px;
+  height: 8px;
+  color: var(--accent);
+}
+.fb-shell .session-tap .turn-glyph.thinking i {
+  width: 3px;
+  height: 3px;
+  border-radius: 999px;
+  background: currentColor;
+  animation: turn-bounce 1s infinite ease-in-out both;
+}
+.fb-shell .session-tap .turn-glyph.thinking i:nth-child(2) {
+  animation-delay: 0.16s;
+}
+.fb-shell .session-tap .turn-glyph.thinking i:nth-child(3) {
+  animation-delay: 0.32s;
+}
+.fb-shell .session-tap .turn-glyph.rendering {
+  animation: turn-twinkle 1.2s infinite ease-in-out;
+}
+@keyframes turn-bounce {
+  0%,
+  80%,
+  100% {
+    transform: translateY(0);
+    opacity: 0.45;
+  }
+  40% {
+    transform: translateY(-3px);
+    opacity: 1;
+  }
+}
+@keyframes turn-twinkle {
+  0%,
+  100% {
+    transform: scale(0.82) rotate(0deg);
+    opacity: 0.6;
+  }
+  50% {
+    transform: scale(1.12) rotate(18deg);
+    opacity: 1;
+  }
+}
+/* Reduced motion: hold a steady, legible glyph rather than animate. */
+@media (prefers-reduced-motion: reduce) {
+  .fb-shell .session-tap .turn-glyph.thinking i,
+  .fb-shell .session-tap .turn-glyph.rendering {
+    animation: none;
+  }
+  .fb-shell .session-tap .turn-glyph.thinking i {
+    opacity: 0.9;
+  }
+  .fb-shell .session-tap .turn-glyph.rendering {
+    opacity: 1;
+    transform: none;
+  }
+}
+/* The live-turn status word ("thinking…"/"rendering…") in place of the turn/staged
+   counts while a turn streams. */
+.fb-shell .m-meta .stat.turn-status {
+  color: var(--accent);
+}
 .fb-shell .m-title {
   flex: 1;
   min-width: 0;

@@ -45,6 +45,52 @@ describe("SessionsPanel", () => {
     expect(screen.getByTitle("reads financial")).toBeInTheDocument();
   });
 
+  it("shows an activity glyph + status on the chat with a live turn, not the others", () => {
+    render(
+      <SessionsPanel
+        sessions={[
+          session({}), // idle → scope dot
+          session({ id: "s2", title: "Lighthouse image", domain_scopes: ["general"] }),
+        ]}
+        activeTurn={{ sessionId: "s2", kind: "rendering" }}
+        onOpen={vi.fn()}
+        onCreate={vi.fn()}
+        onClose={vi.fn()}
+        onRename={vi.fn()}
+        onDelete={vi.fn()}
+        onArchive={vi.fn()}
+        onUnarchive={vi.fn()}
+        onRescope={vi.fn()}
+      />,
+    );
+    // The live chat shows the (decorative) glyph and a "rendering…" status word that
+    // rides the row button's accessible name.
+    expect(document.querySelector(".turn-glyph.rendering")).toBeInTheDocument();
+    expect(screen.getByText("rendering…")).toBeInTheDocument();
+    // The idle chat keeps its plain scope dot — no glyph, no status word.
+    expect(screen.getByTitle("reads medical")).toBeInTheDocument();
+    expect(screen.queryByText("thinking…")).not.toBeInTheDocument();
+  });
+
+  it("shows the thinking glyph + word for a non-render turn", () => {
+    render(
+      <SessionsPanel
+        sessions={[session({ id: "s2", title: "Weekly recap" })]}
+        activeTurn={{ sessionId: "s2", kind: "thinking" }}
+        onOpen={vi.fn()}
+        onCreate={vi.fn()}
+        onClose={vi.fn()}
+        onRename={vi.fn()}
+        onDelete={vi.fn()}
+        onArchive={vi.fn()}
+        onUnarchive={vi.fn()}
+        onRescope={vi.fn()}
+      />,
+    );
+    expect(document.querySelector(".turn-glyph.thinking")).toBeInTheDocument();
+    expect(screen.getByText("thinking…")).toBeInTheDocument();
+  });
+
   it("opens a chat on tap", () => {
     const onOpen = vi.fn();
     render(
