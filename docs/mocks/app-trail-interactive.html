@@ -1,0 +1,401 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>JBrain360 — interactive trail (color metric · click-a-point · dual slider)</title>
+<style>
+  :root{
+    --bg:#0e0f11;--surface:#17181b;--surface-2:#1e2024;--border:#26282c;
+    --text:#e6e7e9;--text-2:#9a9da3;--text-3:#5c5f66;--scrim:rgba(14,15,17,.55);
+    --green:#8fbc9a;--amber:#c9a36a;--location:#6fb6b1;
+    --grid:#191b1f;--road:#23262c;--park:#15211a;--water:#13232a;
+    --float:rgba(22,24,28,.82);
+    --p0:#7fa7c9;--p1:#cf8a8f;--p2:#a493c9;--p3:#6fb6b1;
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  body{margin:0;background:#05070a;color:var(--text);
+    font:15px/1.5 system-ui,-apple-system,sans-serif;display:grid;place-items:center;min-height:100vh;padding:22px}
+  .wrap{display:flex;gap:26px;flex-wrap:wrap;justify-content:center;align-items:flex-start}
+  .phone{width:390px;height:820px;background:var(--bg);border-radius:32px;overflow:hidden;
+    position:relative;box-shadow:0 24px 70px rgba(0,0,0,.5);user-select:none}
+
+  .mapwrap{position:absolute;inset:0;overflow:hidden}
+  .map{position:absolute;inset:0;
+    background:
+      repeating-linear-gradient(0deg,transparent 0 31px,var(--grid) 31px 32px),
+      repeating-linear-gradient(90deg,transparent 0 31px,var(--grid) 31px 32px),
+      var(--bg)}
+  .road{position:absolute;background:var(--road);border-radius:3px}
+  .park{position:absolute;background:var(--park);border-radius:45% 55% 50% 45%}
+  .water{position:absolute;background:var(--water)}
+  svg.trail{position:absolute;inset:0;width:100%;height:100%}
+  svg.trail path{fill:none;stroke-linecap:round;stroke-linejoin:round}
+  .endcap{fill:#fff;stroke:var(--bg);stroke-width:2}
+
+  .float{background:var(--float);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);
+    border:1px solid var(--border);box-shadow:0 6px 22px var(--scrim)}
+
+  .status{position:absolute;top:0;left:0;right:0;height:30px;display:flex;align-items:center;
+    justify-content:space-between;padding:0 20px;font-size:13px;font-weight:600;z-index:9;pointer-events:none}
+
+  /* names row */
+  .people{position:absolute;top:36px;left:10px;right:10px;z-index:8;display:flex;gap:8px;padding:7px 9px;
+    border-radius:15px;overflow-x:auto;scrollbar-width:none}
+  .people::-webkit-scrollbar{display:none}
+  .chip{flex:0 0 auto;display:flex;align-items:center;gap:7px;border:0;background:transparent;cursor:pointer;
+    padding:3px 8px 3px 3px;border-radius:20px}
+  .chip.on{background:var(--surface-2)}
+  .av{width:30px;height:30px;border-radius:50%;display:grid;place-items:center;background:var(--pc,#6fb6b1);
+    color:#0c1012;font-weight:700;font-size:13px}
+  .chip-nm{font-size:12.5px;color:var(--text-2);font-weight:600}
+  .chip.on .chip-nm{color:var(--text)}
+
+  /* legend — top-left, under the names */
+  .legend{position:absolute;top:92px;left:12px;z-index:8;border-radius:13px;padding:9px 11px;width:150px}
+  .legend .lt{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px}
+  .legend h4{margin:0;font-size:10.5px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:var(--text-2)}
+  .legend .unit{font-size:10.5px;color:var(--text-3)}
+  .legend .ramp{height:9px;border-radius:5px;margin-bottom:4px}
+  .legend .ticks{display:flex;justify-content:space-between;font-size:10px;color:var(--text-3);font-variant-numeric:tabular-nums}
+
+  /* click marker callout */
+  .marker{position:absolute;z-index:7;transform:translate(-50%,-100%);pointer-events:none;transition:left .08s,top .08s}
+  .marker .cap{position:relative;display:flex;align-items:center;gap:6px;padding:4px 9px;border-radius:11px;
+    font-size:12.5px;font-weight:700;white-space:nowrap;color:#0c1012}
+  .marker .cap::after{content:"";position:absolute;left:50%;top:100%;transform:translateX(-50%);
+    border:6px solid transparent;border-top-color:var(--mc,#fff)}
+  .marker .dot{position:absolute;left:50%;top:calc(100% + 6px);transform:translate(-50%,-50%);
+    width:11px;height:11px;border-radius:50%;background:#fff;border:3px solid var(--bg);box-shadow:0 0 0 3px var(--mc,#fff)}
+
+  /* bottom dock */
+  .dock{position:absolute;left:10px;right:10px;bottom:12px;z-index:8;border-radius:20px;padding:12px 13px 14px}
+  .seg{display:flex;gap:4px;background:var(--surface);border:1px solid var(--border);border-radius:11px;padding:3px;margin-bottom:11px}
+  .seg button{flex:1;border:0;background:transparent;color:var(--text-2);font-size:12.5px;font-weight:650;
+    padding:7px 4px;border-radius:8px;cursor:pointer}
+  .seg button.on{background:var(--location);color:#04100f}
+  .seg.metric button.on{background:var(--mc,var(--location))}
+
+  .row-h{display:flex;justify-content:space-between;align-items:center;margin:2px 2px 7px}
+  .row-h .lbl{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--text-3);font-weight:700}
+  .row-h .val{font-size:12px;color:var(--text-2);font-variant-numeric:tabular-nums}
+
+  .spanrow{display:flex;gap:4px;background:var(--surface);border:1px solid var(--border);border-radius:11px;padding:3px;margin-bottom:12px}
+  .spanrow button{flex:1;border:0;background:transparent;color:var(--text-2);font-size:12.5px;font-weight:650;
+    padding:6px 4px;border-radius:8px;cursor:pointer}
+  .spanrow button.on{background:var(--surface-2);color:var(--text)}
+
+  /* dual slider */
+  .range{position:relative;height:30px;margin:0 4px 4px}
+  .range .track{position:absolute;left:0;right:0;top:13px;height:4px;border-radius:2px;background:var(--surface-2)}
+  .range .fill{position:absolute;top:13px;height:4px;border-radius:2px;background:var(--location)}
+  .range input{position:absolute;left:0;right:0;top:0;width:100%;margin:0;background:transparent;
+    pointer-events:none;-webkit-appearance:none;appearance:none;height:30px}
+  .range input::-webkit-slider-thumb{-webkit-appearance:none;pointer-events:auto;width:18px;height:18px;border-radius:50%;
+    background:var(--text);border:3px solid var(--bg);box-shadow:0 1px 4px rgba(0,0,0,.5);cursor:grab;margin-top:0}
+  .range input::-moz-range-thumb{pointer-events:auto;width:18px;height:18px;border-radius:50%;
+    background:var(--text);border:3px solid var(--bg);cursor:grab}
+  .winlbl{display:flex;justify-content:space-between;font-size:11.5px;color:var(--text-2);margin:0 4px;font-variant-numeric:tabular-nums}
+
+  /* details card */
+  .details{margin:11px 2px 2px;border-top:1px solid var(--border);padding-top:11px;display:none}
+  .details.show{display:block}
+  .det-h{display:flex;align-items:center;gap:9px;margin-bottom:9px}
+  .det-h .av{width:30px;height:30px}
+  .det-nm{font-weight:650}
+  .det-sub{font-size:11.5px;color:var(--text-2)}
+  .det-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px}
+  .cell{background:var(--surface);border:1px solid var(--border);border-radius:9px;padding:7px 9px}
+  .cell .k{font-size:10px;text-transform:uppercase;letter-spacing:.04em;color:var(--text-3);font-weight:700}
+  .cell .v{font-size:15px;font-weight:650;font-variant-numeric:tabular-nums;margin-top:1px}
+  .vec{display:inline-flex;align-items:center;gap:5px}
+  .vec .arr{width:15px;height:15px;display:inline-block;transition:transform .1s}
+  .hint{font-size:11px;color:var(--text-3);text-align:center;margin-top:9px}
+
+  .caption{max-width:360px;color:var(--text-2);font-size:13px;line-height:1.65}
+  .caption h3{color:var(--text);font-size:14px;margin:0 0 8px}
+  .caption li{margin-bottom:7px}
+  .caption b{color:var(--text)}
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="phone">
+      <div class="mapwrap" id="mapwrap">
+        <div class="map">
+          <div class="water" style="left:-30px;top:470px;width:230px;height:260px;transform:rotate(-12deg);border-radius:40% 60% 55% 45%"></div>
+          <div class="park" style="right:18px;top:120px;width:120px;height:96px"></div>
+          <div class="road" style="left:64px;top:0;width:13px;height:820px;transform:rotate(6deg)"></div>
+          <div class="road" style="left:0;top:330px;width:390px;height:12px;transform:rotate(-3deg)"></div>
+          <div class="road" style="left:130px;top:0;width:11px;height:820px;transform:rotate(-9deg)"></div>
+        </div>
+        <svg class="trail" id="svg" viewBox="0 0 390 820" preserveAspectRatio="none"></svg>
+        <div class="marker" id="marker" style="display:none">
+          <div class="cap float" id="markerCap"><span id="markerTxt">J: 35 mph</span></div>
+          <div class="dot" id="markerDot"></div>
+        </div>
+      </div>
+
+      <div class="status"><span>9:41</span><span>JBrain360</span></div>
+
+      <div class="people float">
+        <button class="chip on" style="--pc:var(--p3)"><span class="av">J</span><span class="chip-nm">Jeff</span></button>
+        <button class="chip" style="--pc:var(--p1)"><span class="av">C</span><span class="chip-nm">Celine</span></button>
+        <button class="chip" style="--pc:var(--p2)"><span class="av">S</span><span class="chip-nm">Sam</span></button>
+      </div>
+
+      <div class="legend float" id="legend">
+        <div class="lt"><h4 id="legTitle">Speed</h4><span class="unit" id="legUnit">mph</span></div>
+        <div class="ramp" id="legRamp"></div>
+        <div class="ticks"><span id="legLo">0</span><span id="legHi">60+</span></div>
+      </div>
+
+      <div class="dock float">
+        <!-- color metric -->
+        <div class="seg metric" id="metricSeg">
+          <button data-metric="speed" class="on">Speed</button>
+          <button data-metric="accel">Accel</button>
+          <button data-metric="battery">Battery</button>
+        </div>
+
+        <!-- span sets the slider's total range -->
+        <div class="row-h"><span class="lbl">Window</span><span class="val" id="spanVal">last 1h</span></div>
+        <div class="spanrow" id="spanRow">
+          <button data-span="60" class="on">1h</button>
+          <button data-span="480">8h</button>
+          <button data-span="1440">1d</button>
+          <button data-span="10080">7d</button>
+        </div>
+
+        <!-- dual start/stop slider within the span -->
+        <div class="range" id="range">
+          <div class="track"></div>
+          <div class="fill" id="rangeFill"></div>
+          <input type="range" min="0" max="100" value="0" id="loThumb" aria-label="Start time" />
+          <input type="range" min="0" max="100" value="100" id="hiThumb" aria-label="End time" />
+        </div>
+        <div class="winlbl"><span id="loLbl">—</span><span id="hiLbl">now</span></div>
+
+        <!-- details: a clicked point, or the moving endpoint while dragging -->
+        <div class="details" id="details">
+          <div class="det-h">
+            <span class="av" style="--pc:var(--p3)">J</span>
+            <span><span class="det-nm">Jeff</span><br><span class="det-sub" id="detWhen">2 min ago · 9:39 AM</span></span>
+          </div>
+          <div class="det-grid">
+            <div class="cell"><div class="k">Speed</div><div class="v" id="detSpeed">35 mph</div></div>
+            <div class="cell"><div class="k">Heading</div><div class="v"><span class="vec"><svg class="arr" id="detArr" viewBox="0 0 24 24"><path d="M12 3 L12 21 M12 3 L7 9 M12 3 L17 9" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg><span id="detVec">NE 47°</span></span></div></div>
+            <div class="cell"><div class="k">Accel</div><div class="v" id="detAccel">1.8 m/s²</div></div>
+            <div class="cell"><div class="k">Battery</div><div class="v" id="detBatt">78%</div></div>
+            <div class="cell"><div class="k">Altitude</div><div class="v" id="detAlt">41 m</div></div>
+            <div class="cell"><div class="k">Accuracy</div><div class="v" id="detAcc">±6 m</div></div>
+          </div>
+        </div>
+        <div class="hint" id="hint">Tap the trail to inspect a point · drag the slider ends to scrub</div>
+      </div>
+    </div>
+
+    <div class="caption">
+      <h3>What this mock shows</h3>
+      <ul>
+        <li><b>Color metric toggle</b> — recolor the whole trail by <b>Speed</b> (default), <b>Accel</b>, or <b>Battery</b>. The legend (top-left, under the names) updates to that metric's scale.</li>
+        <li><b>Tap a point on the trail</b> — a map callout (“J: 35 mph”, in the active metric) pins to that point, and the card below fills in everything: time, speed, heading vector, accel, battery, etc.</li>
+        <li><b>Span buttons set the slider range</b> — 1h / 8h / 1d / 7d choose the total span; the <b>dual start/stop slider</b> scrubs a sub-window within it.</li>
+        <li><b>Drag an end of the slider</b> — if the data point at that end was moving, the card shows that point's readout live as you scrub (and the callout follows it).</li>
+      </ul>
+      <p>Nothing here is wired to the backend — it's a synthetic trip so the interactions are real to click through.</p>
+    </div>
+  </div>
+
+<script>
+// ---- ramps ---------------------------------------------------------------
+const RAMPS = {
+  speed:   {stops:[[0,[58,110,200]],[.3,[60,180,170]],[.55,[120,200,90]],[.78,[230,190,70]],[1,[224,86,79]]], unit:"mph", lo:"0", hi:"60+", max:60, dir:1},
+  accel:   {stops:[[0,[91,191,138]],[.5,[230,198,106]],[1,[224,86,79]]], unit:"m/s²", lo:"0", hi:"4", max:4, dir:1},
+  // battery: high = good (green) on the RIGHT; low = red on the left.
+  battery: {stops:[[0,[224,86,79]],[.5,[230,198,106]],[1,[91,191,138]]], unit:"%", lo:"0", hi:"100", max:100, dir:1},
+};
+const lerp=(a,b,t)=>a+(b-a)*t;
+function rampColor(stops,t){
+  t=Math.max(0,Math.min(1,t));
+  for(let i=0;i<stops.length-1;i++){
+    const[s0,c0]=stops[i],[s1,c1]=stops[i+1];
+    if(t>=s0&&t<=s1){const k=(t-s0)/(s1-s0||1);
+      return`rgb(${Math.round(lerp(c0[0],c1[0],k))},${Math.round(lerp(c0[1],c1[1],k))},${Math.round(lerp(c0[2],c1[2],k))})`;}
+  }
+  const c=stops[stops.length-1][1];return`rgb(${c.join(",")})`;
+}
+const cssGradient=s=>"linear-gradient(90deg,"+s.map(([p,c])=>`rgb(${c.join(",")}) ${Math.round(p*100)}%`).join(",")+")";
+function metricValue(p,m){return m==="speed"?p.speed:m==="accel"?p.accel:p.battery;}
+function metricT(p,m){return Math.max(0,Math.min(1,metricValue(p,m)/RAMPS[m].max));}
+function colorFor(p,m){return rampColor(RAMPS[m].stops,metricT(p,m));}
+
+// ---- synthetic trip ------------------------------------------------------
+// Waypoints (screen space) for a ~40-min drive; we interpolate + attach metrics.
+const WP=[[80,720],[96,672],[112,620],[128,566],[140,512],[156,458],[176,408],[150,360],[120,316],[132,268],[158,214],[188,164],[224,128],[252,150],[236,196]];
+const POINTS=[];
+const N=44, nowMin=0, totalMin=40; // data spans the last 40 minutes (ending "now")
+for(let i=0;i<N;i++){
+  const f=i/(N-1), seg=f*(WP.length-1), k=Math.floor(seg), kk=Math.min(k+1,WP.length-1), t=seg-k;
+  const x=lerp(WP[k][0],WP[kk][0],t), y=lerp(WP[k][1],WP[kk][1],t);
+  // speed profile: park → accelerate → cruise ~40 → slow for a turn → speed up → park
+  let spd;
+  if(f<0.06) spd=2+f*40; else if(f>0.94) spd=Math.max(0,(1-f)*120);
+  else spd=30+18*Math.sin(f*Math.PI*1.6)-(Math.abs(f-0.52)<0.06?22:0);
+  spd=Math.max(0,Math.round(spd));
+  POINTS.push({x,y,spd,minAgo:totalMin*(1-f)});
+}
+// accel from speed delta; course from path direction; battery declines
+for(let i=0;i<POINTS.length;i++){
+  const p=POINTS[i], prev=POINTS[i-1]||p, next=POINTS[i+1]||p;
+  p.accel=Math.min(4,Math.abs((next.spd-prev.spd))*0.5*0.447+ (i%7===0?1.2:0)); // m/s², 0..4
+  p.accel=Math.round(p.accel*10)/10;
+  const dx=next.x-prev.x, dy=next.y-prev.y;
+  let deg=Math.round((Math.atan2(dx,-dy)*180/Math.PI+360)%360); // screen → compass-ish
+  p.course=deg;
+  p.battery=Math.round(92-(1-i/(POINTS.length-1))*0 - (i/(POINTS.length-1))*16); // 92 → 76
+  p.alt=38+Math.round(8*Math.sin(i/5));
+  p.acc=4+Math.round(5*Math.abs(Math.sin(i/3)));
+  p.speed=p.spd;
+}
+const COMPASS=["N","NE","E","SE","S","SW","W","NW"];
+const compass=d=>COMPASS[Math.round(d/45)%8];
+function clockOf(minAgo){const d=new Date(Date.now()-minAgo*60000);return d.toLocaleTimeString([],{hour:"numeric",minute:"2-digit"});}
+function agoOf(minAgo){const m=Math.round(minAgo);return m<1?"just now":m+" min ago";}
+
+// ---- state ---------------------------------------------------------------
+let metric="speed", spanMin=60, lo=0, hi=100, selected=null, dragging=null;
+const SVG=document.getElementById("svg"), MK=document.getElementById("marker");
+
+// which points fall inside the current [lo,hi] sub-window of the span
+function windowPts(){
+  // pos 0 = (now - span) oldest ; pos 100 = now. data minAgo in [0,40].
+  const startAgo=spanMin*(1-lo/100), endAgo=spanMin*(1-hi/100);
+  return POINTS.filter(p=>p.minAgo<=startAgo && p.minAgo>=endAgo);
+}
+function isMoving(p){return p.speed>3;}
+
+function drawTrail(){
+  const pts=windowPts();
+  SVG.innerHTML="";
+  for(let i=0;i<pts.length-1;i++){
+    const a=pts[i],b=pts[i+1],mid={speed:(a.speed+b.speed)/2,accel:(a.accel+b.accel)/2,battery:(a.battery+b.battery)/2};
+    const casing=document.createElementNS("http://www.w3.org/2000/svg","path");
+    casing.setAttribute("d",`M${a.x} ${a.y} L${b.x} ${b.y}`);casing.setAttribute("stroke","rgba(5,7,10,.55)");casing.setAttribute("stroke-width","11");
+    SVG.appendChild(casing);
+    const seg=document.createElementNS("http://www.w3.org/2000/svg","path");
+    seg.setAttribute("d",`M${a.x} ${a.y} L${b.x} ${b.y}`);
+    seg.setAttribute("stroke",colorFor({speed:mid.speed,accel:mid.accel,battery:mid.battery},metric));
+    seg.setAttribute("stroke-width","6");
+    SVG.appendChild(seg);
+  }
+  if(pts.length){
+    for(const e of [pts[0],pts[pts.length-1]]){
+      const c=document.createElementNS("http://www.w3.org/2000/svg","circle");
+      c.setAttribute("cx",e.x);c.setAttribute("cy",e.y);c.setAttribute("r","5");c.setAttribute("class","endcap");
+      SVG.appendChild(c);
+    }
+  }
+  // invisible fat hit-line for "click the path"
+  if(pts.length>1){
+    const hit=document.createElementNS("http://www.w3.org/2000/svg","polyline");
+    hit.setAttribute("points",pts.map(p=>`${p.x},${p.y}`).join(" "));
+    hit.setAttribute("stroke","transparent");hit.setAttribute("stroke-width","22");hit.setAttribute("fill","none");
+    hit.style.cursor="pointer";hit.style.pointerEvents="stroke";
+    hit.addEventListener("pointerdown",onTrailClick);
+    SVG.appendChild(hit);
+  }
+}
+
+function svgPoint(evt){
+  const pt=SVG.createSVGPoint();pt.x=evt.clientX;pt.y=evt.clientY;
+  return pt.matrixTransform(SVG.getScreenCTM().inverse());
+}
+function nearest(x,y,pts){
+  let best=null,bd=1e9;for(const p of (pts||POINTS)){const d=(p.x-x)**2+(p.y-y)**2;if(d<bd){bd=d;best=p;}}return best;
+}
+function onTrailClick(evt){
+  const sp=svgPoint(evt), p=nearest(sp.x,sp.y,windowPts());
+  selected=p;dragging=null;showPoint(p,true);
+}
+
+function showMarker(p){
+  MK.style.display="block";MK.style.left=p.x+"px";MK.style.top=(p.y-8)+"px";
+  const col=colorFor(p,metric);
+  document.getElementById("markerCap").style.background=col;
+  MK.style.setProperty("--mc",col);
+  const v=metric==="speed"?`${Math.round(p.speed)} mph`:metric==="accel"?`${p.accel.toFixed(1)} m/s²`:`${p.battery}%`;
+  document.getElementById("markerTxt").textContent=`J: ${v}`;
+}
+function showPoint(p,marker){
+  document.getElementById("details").classList.add("show");
+  document.getElementById("detWhen").textContent=`${agoOf(p.minAgo)} · ${clockOf(p.minAgo)}`;
+  document.getElementById("detSpeed").textContent=isMoving(p)?`${Math.round(p.speed)} mph`:"stopped";
+  document.getElementById("detVec").textContent=`${compass(p.course)} ${p.course}°`;
+  document.getElementById("detArr").style.transform=`rotate(${p.course}deg)`;
+  document.getElementById("detAccel").textContent=`${p.accel.toFixed(1)} m/s²`;
+  document.getElementById("detBatt").textContent=`${p.battery}%`;
+  document.getElementById("detAlt").textContent=`${p.alt} m`;
+  document.getElementById("detAcc").textContent=`±${p.acc} m`;
+  if(marker) showMarker(p);
+}
+
+// ---- legend --------------------------------------------------------------
+function drawLegend(){
+  const r=RAMPS[metric];
+  document.getElementById("legTitle").textContent=metric[0].toUpperCase()+metric.slice(1);
+  document.getElementById("legUnit").textContent=r.unit;
+  document.getElementById("legRamp").style.background=cssGradient(r.stops);
+  document.getElementById("legLo").textContent=r.lo;document.getElementById("legHi").textContent=r.hi;
+  document.documentElement.style.setProperty("--mc",rampColor(r.stops,1));
+  document.getElementById("metricSeg").style.setProperty("--mc",rampColor(r.stops,1));
+}
+
+// ---- slider --------------------------------------------------------------
+function spanLabel(){return spanMin<1440?`last ${spanMin/60|0}h`:`last ${spanMin/1440}d`;}
+function fmtAgo(min){if(min<1)return"now";if(min<60)return`${Math.round(min)}m ago`;if(min<1440)return`${Math.round(min/60)}h ago`;return`${Math.round(min/1440)}d ago`;}
+function syncSlider(){
+  document.getElementById("rangeFill").style.left=lo+"%";
+  document.getElementById("rangeFill").style.width=(hi-lo)+"%";
+  document.getElementById("loLbl").textContent=fmtAgo(spanMin*(1-lo/100));
+  document.getElementById("hiLbl").textContent=hi>=99?"now":fmtAgo(spanMin*(1-hi/100));
+  document.getElementById("spanVal").textContent=spanLabel();
+}
+function endpointPoint(which){
+  const pts=windowPts();if(!pts.length)return null;
+  return which==="hi"?pts[pts.length-1]:pts[0];
+}
+
+// ---- wire up -------------------------------------------------------------
+document.getElementById("metricSeg").addEventListener("click",e=>{
+  const b=e.target.closest("button");if(!b)return;
+  metric=b.dataset.metric;
+  [...e.currentTarget.children].forEach(c=>c.classList.toggle("on",c===b));
+  drawLegend();drawTrail();if(selected)showPoint(selected,true);
+});
+document.getElementById("spanRow").addEventListener("click",e=>{
+  const b=e.target.closest("button");if(!b)return;
+  spanMin=+b.dataset.span;
+  [...e.currentTarget.children].forEach(c=>c.classList.toggle("on",c===b));
+  syncSlider();drawTrail();
+});
+function onThumb(which){
+  return e=>{
+    let v=+e.target.value;
+    if(which==="lo"){lo=Math.min(v,hi-2);e.target.value=lo;}else{hi=Math.max(v,lo+2);e.target.value=hi;}
+    dragging=which;syncSlider();drawTrail();
+    const p=endpointPoint(which);
+    if(p&&isMoving(p)){selected=null;showPoint(p,true);document.getElementById("hint").textContent="scrubbing — showing the moving point at this end";}
+    else{MK.style.display="none";document.getElementById("details").classList.remove("show");}
+  };
+}
+document.getElementById("loThumb").addEventListener("input",onThumb("lo"));
+document.getElementById("hiThumb").addEventListener("input",onThumb("hi"));
+["loThumb","hiThumb"].forEach(id=>document.getElementById(id).addEventListener("change",()=>{
+  document.getElementById("hint").textContent="Tap the trail to inspect a point · drag the slider ends to scrub";
+}));
+
+drawLegend();syncSlider();drawTrail();
+</script>
+</body>
+</html>
