@@ -1,0 +1,79 @@
+<!doctype html>
+<!--
+  Wave F5 — fish-model settings mock · VARIANT C — "service card"
+  ============================================================================
+  An appliance-style "Fish ID service" card (parallel to image-models variant C):
+  a prominent status block with a footprint estimate and a big Start/Stop, plus a
+  "loads on demand" note — set APART from the unified-memory bar rather than woven
+  into it. Reads as a distinct device. Diverges most from the existing drawer
+  styling, and separates the fish footprint from the shared-budget picture.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Fish settings — C · service card</title>
+<style>
+  :root{--bg:#0e0f11;--surface:#17181b;--surface-2:#1e2024;--border:#26282c;
+    --text:#e6e7e9;--text-2:#9a9da3;--text-3:#5c5f66;--steel:#7fa7c9;--green:#8fbc9a;
+    --rose:#cf8a8f;--teal:#6fb6b1;--r-card:16px;--r-pill:999px;font-size:15px}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;display:flex;justify-content:center;padding:28px 16px}
+  .col{width:100%;max-width:440px}
+  .variant{font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--text-3);margin:0 0 4px}
+  h1{font-size:18px;margin:0 0 2px}.sub{color:var(--text-2);font-size:13px;margin:0 0 20px}
+  .card{border:1px solid var(--border);border-radius:var(--r-card);background:var(--surface);padding:16px}
+  .top{display:flex;align-items:center;gap:12px}
+  .ring{width:62px;height:62px;border-radius:50%;flex:none;display:grid;place-items:center;
+    background:conic-gradient(var(--teal) 0 12%,var(--surface-2) 12% 100%);position:relative}
+  .ring::after{content:"";position:absolute;inset:7px;border-radius:50%;background:var(--surface)}
+  .ring b{position:relative;font-size:13px;font-weight:700}
+  .tmain{flex:1}
+  .tname{font-size:15px;font-weight:700}
+  .tmeta{font-size:12px;color:var(--text-2);margin-top:2px}
+  .pill{font-size:11px;font-weight:600;padding:3px 9px;border-radius:var(--r-pill)}
+  .pill.run{background:color-mix(in srgb,var(--green) 20%,var(--surface));color:var(--green)}
+  .pill.stop{background:color-mix(in srgb,var(--rose) 18%,var(--surface));color:var(--rose)}
+  .actions{display:flex;gap:8px;margin-top:14px}
+  .btn{flex:1;font-size:13px;padding:9px 12px;border-radius:10px;border:1px solid var(--border);background:var(--surface-2);color:var(--text);cursor:pointer;font-weight:600}
+  .btn:hover{border-color:var(--steel)}.btn.warn:hover{border-color:var(--rose);color:var(--rose)}
+  .note{font-size:11.5px;color:var(--text-3);margin-top:12px;line-height:1.5;border-top:1px solid var(--border);padding-top:11px}
+  .spec{display:flex;gap:18px;margin-top:11px}
+  .spec div{font-size:11px;color:var(--text-3)}.spec b{display:block;font-size:13px;color:var(--text);font-weight:600;margin-top:1px}
+</style>
+</head>
+<body>
+<div class="col">
+  <p class="variant">Variant C</p>
+  <h1>Service card (appliance)</h1>
+  <p class="sub">A standalone “Fish ID service” card with a footprint ring and a big Start/Stop, plus a “loads on demand” note — set apart from the shared‑memory bar. Reads clearly as a device; diverges most from the drawer styling and separates fish from the unified budget.</p>
+  <div class="card">
+    <div class="top">
+      <div class="ring"><b id="ringtxt">4G</b></div>
+      <div class="tmain">
+        <div class="tname">Fish ID — fishial</div>
+        <div class="tmeta">DINOv2+ViT · 866 species</div>
+      </div>
+      <span class="pill run" id="pill">running</span>
+    </div>
+    <div class="spec">
+      <div>peak footprint<b>~4 GB</b></div>
+      <div>on disk<b>2.0 GB</b></div>
+      <div>state<b id="state">idle</b></div>
+    </div>
+    <div class="actions">
+      <button class="btn" id="toggle">Stop service</button>
+      <button class="btn warn" id="free-btn">Free now</button>
+    </div>
+    <div class="note">Loaded for each identification and freed right after — it isn’t kept resident, so it draws unified memory only while a classification runs (peak ~4 GB). Provisioning the weights is the on‑box <code>fish‑id‑setup.sh</code> step.</div>
+  </div>
+  <div style="display:flex;gap:8px;margin-top:18px;border-top:1px solid var(--border);padding-top:14px"><button class="btn" style="flex:none" onclick="location.reload()">↺ Reset</button></div>
+</div>
+<script>
+  let running=true;
+  const pill=document.getElementById('pill'),toggle=document.getElementById('toggle'),state=document.getElementById('state');
+  toggle.onclick=()=>{running=!running;pill.className='pill '+(running?'run':'stop');pill.textContent=running?'running':'stopped';toggle.textContent=running?'Stop service':'Start service';state.textContent=running?'idle':'—';};
+  document.getElementById('free-btn').onclick=()=>{state.textContent='idle';};
+</script>
+</body>
+</html>

@@ -1,0 +1,133 @@
+<!doctype html>
+<!--
+  Wave F5 — fish-model settings mock · VARIANT A — "transient row" (RECOMMENDED)
+  ============================================================================
+  The fishial model slots into the SAME unified "On-box models" drawer the image
+  model landed in (image-models variant B), as a third subsection. The honest
+  difference: the fish model is LOAD → USE → UNLOAD per identification, so it is
+  NOT normally resident — it has no persistent load/unload toggle (unlike the LLM
+  and image models). The unified-memory bar shows it as a faint dashed "transient"
+  ghost segment that only fills WHILE an identification runs, then frees.
+
+  Controls: service Start/Stop (the container) + Free (force-unload now). Tokens
+  only; the "Simulate identify" button demonstrates the load/use/unload pulse.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Fish settings — A · transient row</title>
+<style>
+  :root{
+    --bg:#0e0f11;--surface:#17181b;--surface-2:#1e2024;--border:#26282c;
+    --text:#e6e7e9;--text-2:#9a9da3;--text-3:#5c5f66;
+    --steel:#7fa7c9;--green:#8fbc9a;--amber:#c9a36a;--rose:#cf8a8f;--violet:#a493c9;--teal:#6fb6b1;
+    --r-card:16px;--r-pill:999px;font-size:15px;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+    display:flex;justify-content:center;padding:28px 16px}
+  .col{width:100%;max-width:440px}
+  .variant{font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--text-3);margin:0 0 4px}
+  h1{font-size:18px;margin:0 0 2px}.sub{color:var(--text-2);font-size:13px;margin:0 0 20px}
+  .drawer{border:1px solid var(--border);border-radius:var(--r-card);background:var(--surface);overflow:hidden}
+  .dhead{display:flex;align-items:center;gap:9px;width:100%;padding:13px 14px;border:0;color:var(--text);text-align:left;background:none}
+  .dot{width:8px;height:8px;border-radius:50%;background:var(--green);box-shadow:0 0 0 3px color-mix(in srgb,var(--green) 22%,transparent);flex:none}
+  .dtitle{font-weight:600;font-size:14px}.dsum{margin-left:auto;font-size:12px;color:var(--text-2)}
+  .dbody{padding:0 14px 14px}
+  .meter{margin:14px 0 4px}
+  .mlabel{font-size:11px;color:var(--text-3);text-transform:uppercase;letter-spacing:.06em;margin-bottom:7px}
+  .mbar{height:30px;border-radius:8px;background:var(--surface-2);overflow:hidden;display:flex}
+  .seg{height:100%;display:flex;align-items:center;padding:0 8px;font-size:11px;color:#0e0f11;font-weight:600;white-space:nowrap;border-right:2px solid var(--bg);transition:width .5s ease}
+  .seg.llm1{background:linear-gradient(90deg,hsl(138 34% 58%),hsl(150 34% 58%))}
+  .seg.img{background:linear-gradient(90deg,hsl(28 48% 62%),hsl(42 48% 62%))}
+  /* the fish segment is a TRANSIENT ghost: dashed outline, translucent, 0 width at rest */
+  .seg.fish{background:repeating-linear-gradient(45deg,color-mix(in srgb,var(--teal) 55%,transparent) 0 6px,color-mix(in srgb,var(--teal) 30%,transparent) 6px 12px);color:#0e0f11}
+  .mcap{display:flex;justify-content:space-between;font-size:11.5px;color:var(--text-2);margin-top:7px}
+  .free{color:var(--green)}
+  .legend{display:flex;gap:14px;margin-top:9px;font-size:11px;color:var(--text-2);flex-wrap:wrap}
+  .legend span{display:flex;align-items:center;gap:5px}
+  .sw{width:9px;height:9px;border-radius:2px}.sw.l{background:hsl(144 34% 58%)}.sw.i{background:hsl(35 48% 62%)}
+  .sw.f{background:var(--teal);opacity:.6}
+  .sect{margin-top:18px}
+  .sect-h{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text-3);text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px}
+  .sect-h .ln{flex:1;height:1px;background:var(--border)}
+  .svc{display:flex;align-items:center;gap:10px;padding:11px 12px;background:var(--surface-2);border-radius:12px;margin-bottom:8px}
+  .pill{font-size:11px;font-weight:600;padding:3px 9px;border-radius:var(--r-pill)}
+  .pill.run{background:color-mix(in srgb,var(--green) 20%,var(--surface));color:var(--green)}
+  .pill.stop{background:color-mix(in srgb,var(--rose) 18%,var(--surface));color:var(--rose)}
+  .svc-actions{margin-left:auto;display:flex;gap:7px}
+  .btn{font-size:12px;padding:6px 12px;border-radius:10px;border:1px solid var(--border);background:var(--surface);color:var(--text);cursor:pointer}
+  .btn:hover{border-color:var(--steel)}.btn.warn:hover{border-color:var(--rose);color:var(--rose)}
+  .btn:disabled{opacity:.4;cursor:not-allowed}
+  .row{display:flex;align-items:center;gap:10px;padding:10px 2px}
+  .rname{font-size:13.5px;font-weight:600}.rmeta{font-size:11.5px;color:var(--text-3);margin-top:2px}
+  .chip{font-size:10px;font-weight:600;padding:2px 7px;border-radius:var(--r-pill);margin-left:7px;background:color-mix(in srgb,var(--teal) 20%,var(--surface));color:var(--teal)}
+  .rright{margin-left:auto}.badge{font-size:11px;color:var(--green)}
+  .note{font-size:11.5px;color:var(--text-3);padding:2px 2px 0;line-height:1.5}
+</style>
+</head>
+<body>
+<div class="col">
+  <p class="variant">Variant A — recommended</p>
+  <h1>Transient row (load on demand)</h1>
+  <p class="sub">The fish model joins the same “On‑box models” drawer, but it is <em>not</em> kept resident — it loads for each identification and frees right after, so it shows as a dashed <em>transient</em> segment that only fills while identifying. No persistent load/unload toggle; just the service Start/Stop and a Free.</p>
+
+  <div class="drawer">
+    <div class="dhead"><span class="dot"></span><span class="dtitle">On‑box models</span><span class="dsum" id="dsum">LLM + image · 52 GB of 128 GB</span></div>
+    <div class="dbody">
+      <div class="meter">
+        <div class="mlabel">Unified memory</div>
+        <div class="mbar">
+          <div class="seg llm1" style="width:25%">gpt‑oss 32G</div>
+          <div class="seg img" style="width:16%">Qwen‑Image 20G</div>
+          <div class="seg fish" id="fishseg" style="width:0">Fish 4G</div>
+        </div>
+        <div class="mcap"><span id="used">52 GB used</span><span class="free" id="free">76 GB free</span><span>128 GB total</span></div>
+        <div class="legend"><span><span class="sw l"></span>local LLM</span><span><span class="sw i"></span>image</span><span><span class="sw f"></span>fish (transient)</span></div>
+      </div>
+
+      <div class="sect">
+        <div class="sect-h">Local LLMs <span class="ln"></span></div>
+        <div class="row"><div><div class="rname">gpt‑oss 120B</div><div class="rmeta">loaded · 32 GB resident</div></div><div class="rright"><div class="badge">✓ loaded</div></div></div>
+      </div>
+
+      <div class="sect">
+        <div class="sect-h">Image — ComfyUI <span class="ln"></span></div>
+        <div class="row"><div><div class="rname">Qwen‑Image</div><div class="rmeta">bf16 · ~20 GB resident</div></div><div class="rright"><div class="badge">✓ provisioned</div></div></div>
+      </div>
+
+      <div class="sect">
+        <div class="sect-h">Fish ID — fishial <span class="ln"></span></div>
+        <div class="svc">
+          <span class="pill run" id="pill">running</span>
+          <span style="font-size:12px" id="svctext">reachable · idle</span>
+          <span class="svc-actions">
+            <button class="btn" id="toggle">Stop</button>
+            <button class="btn warn" id="free-btn">Free</button>
+          </span>
+        </div>
+        <div class="row"><div><div class="rname">Fishial<span class="chip">identify</span></div><div class="rmeta">DINOv2+ViT · 866 species · ~4 GB peak</div></div><div class="rright"><button class="btn" id="sim">Simulate identify</button></div></div>
+        <div class="note">Loaded per identification and freed right after — never kept resident. The dashed bar segment fills only while a classification runs.</div>
+      </div>
+    </div>
+  </div>
+
+  <div style="display:flex;gap:8px;margin-top:18px;border-top:1px solid var(--border);padding-top:14px">
+    <button class="btn" onclick="location.reload()">↺ Reset</button>
+  </div>
+</div>
+<script>
+  let running=true;
+  const pill=document.getElementById('pill'),toggle=document.getElementById('toggle'),svctext=document.getElementById('svctext'),
+        fishseg=document.getElementById('fishseg'),used=document.getElementById('used'),free=document.getElementById('free'),sim=document.getElementById('sim');
+  toggle.onclick=()=>{running=!running;pill.className='pill '+(running?'run':'stop');pill.textContent=running?'running':'stopped';
+    toggle.textContent=running?'Stop':'Start';svctext.textContent=running?'reachable · idle':'service stopped';sim.disabled=!running;};
+  document.getElementById('free-btn').onclick=()=>{fishseg.style.width='0';svctext.textContent='reachable · idle';used.textContent='52 GB used';free.textContent='76 GB free';};
+  // Demonstrate load → use → unload: the transient segment fills, then frees.
+  sim.onclick=()=>{if(!running)return;svctext.textContent='identifying… (model loaded)';fishseg.style.width='6%';used.textContent='56 GB used';free.textContent='72 GB free';
+    setTimeout(()=>{fishseg.style.width='0';svctext.textContent='reachable · idle';used.textContent='52 GB used';free.textContent='76 GB free';},1400);};
+</script>
+</body>
+</html>
