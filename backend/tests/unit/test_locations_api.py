@@ -155,6 +155,7 @@ def test_devices_merge_identity_with_activity(
             last_seen=NOW,
             battery_pct=72,
             connection="wifi",
+            velocity_mps=10.0,
             fix_count=140,
         )
     }
@@ -164,10 +165,12 @@ def test_devices_merge_identity_with_activity(
     assert active["label"] == "Phone" and active["revoked"] is False
     assert active["last_seen"] == NOW.isoformat() and active["battery_pct"] == 72
     assert active["connection"] == "wifi" and active["fix_count"] == 140
+    assert active["velocity_mps"] == 10.0
     # A device with no fixes yet still appears, with null activity + zero count.
     quiet = next(d for d in data if d["id"] == "d-quiet")
     assert quiet["revoked"] is True and quiet["last_seen"] is None
     assert quiet["battery_pct"] is None and quiet["connection"] is None and quiet["fix_count"] == 0
+    assert quiet["velocity_mps"] is None
 
 
 def test_fixes_passes_subject_and_window(

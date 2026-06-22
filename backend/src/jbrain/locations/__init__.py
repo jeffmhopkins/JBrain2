@@ -58,6 +58,7 @@ class LocationFix:
     altitude_m: float | None = None
     velocity_mps: float | None = None
     course_deg: float | None = None
+    acceleration_mps2: float | None = None
     battery_pct: int | None = None
     connection: str | None = None
     tracker_id: str | None = None
@@ -67,13 +68,14 @@ class LocationFix:
 @dataclass(frozen=True)
 class DeviceActivity:
     """Per-device location aggregates for the Devices tab: when the device was last
-    heard from and the battery/connection it reported then, plus its total fix
+    heard from and the battery/connection/speed it reported then, plus its total fix
     count. Keyed by the device's subject id."""
 
     subject_id: str
     last_seen: datetime | None
     battery_pct: int | None
     connection: str | None
+    velocity_mps: float | None
     fix_count: int
 
 
@@ -208,10 +210,11 @@ class SqlLocationRepo:
                     text(
                         "INSERT INTO app.location_fixes"
                         " (subject_id, principal_id, captured_at, latitude, longitude,"
-                        "  accuracy_m, altitude_m, velocity_mps, course_deg, battery_pct,"
-                        "  connection, tracker_id, raw)"
+                        "  accuracy_m, altitude_m, velocity_mps, course_deg,"
+                        "  acceleration_mps2, battery_pct, connection, tracker_id, raw)"
                         " VALUES (:sid, :pid, :captured_at, :lat, :lon,"
-                        "  :acc, :alt, :vel, :cog, :batt, :conn, :tid, cast(:raw AS jsonb))"
+                        "  :acc, :alt, :vel, :cog, :accel, :batt, :conn, :tid,"
+                        "  cast(:raw AS jsonb))"
                         " ON CONFLICT (subject_id, captured_at, latitude, longitude)"
                         " DO NOTHING RETURNING id"
                     ),
@@ -258,14 +261,14 @@ class SqlLocationRepo:
                     text(
                         "WITH latest AS ("
                         "  SELECT DISTINCT ON (subject_id) subject_id, captured_at,"
-                        "    battery_pct, connection"
+                        "    battery_pct, connection, velocity_mps"
                         "  FROM app.location_fixes ORDER BY subject_id, captured_at DESC"
                         "), counts AS ("
                         "  SELECT subject_id, count(*) AS fix_count"
                         "  FROM app.location_fixes GROUP BY subject_id"
                         ")"
                         " SELECT l.subject_id::text AS sid, l.captured_at, l.battery_pct,"
-                        "   l.connection, c.fix_count"
+                        "   l.connection, l.velocity_mps, c.fix_count"
                         " FROM latest l JOIN counts c ON c.subject_id = l.subject_id"
                     )
                 )
@@ -276,6 +279,7 @@ class SqlLocationRepo:
                 last_seen=r.captured_at,
                 battery_pct=r.battery_pct,
                 connection=r.connection,
+                velocity_mps=r.velocity_mps,
                 fix_count=r.fix_count,
             )
             for r in rows
@@ -899,6 +903,7 @@ def _params(principal_id: str, subject_id: str, fix: LocationFix) -> dict:
         "alt": fix.altitude_m,
         "vel": fix.velocity_mps,
         "cog": fix.course_deg,
+        "accel": fix.acceleration_mps2,
         "batt": fix.battery_pct,
         "conn": fix.connection,
         "tid": fix.tracker_id,

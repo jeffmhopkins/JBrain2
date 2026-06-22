@@ -2227,6 +2227,7 @@ interface MockDevice {
   last_seen: string | null;
   battery_pct: number | null;
   connection: string | null;
+  velocity_mps: number | null;
   fix_count: number;
 }
 
@@ -2239,6 +2240,7 @@ const MOCK_DEVICES: MockDevice[] = [
     last_seen: new Date(Date.now() - 4 * 60_000).toISOString(),
     battery_pct: 76,
     connection: "wifi",
+    velocity_mps: 13.4, // ~30 mph — traveling
     fix_count: 4821,
   },
   {
@@ -2249,6 +2251,7 @@ const MOCK_DEVICES: MockDevice[] = [
     last_seen: new Date(Date.now() - 9 * 3_600_000).toISOString(),
     battery_pct: 18,
     connection: "mobile",
+    velocity_mps: 0.3, // below the cutoff — not traveling
     fix_count: 2110,
   },
   {
@@ -2259,6 +2262,7 @@ const MOCK_DEVICES: MockDevice[] = [
     last_seen: null,
     battery_pct: null,
     connection: null,
+    velocity_mps: null,
     fix_count: 0,
   },
 ];

@@ -63,7 +63,11 @@ def test_valid_location_is_ingested_under_the_device_subject(
     client: tuple[TestClient, FakeLocationRepo],
 ) -> None:
     c, loc = client
-    resp = c.post("/api/owntracks", json=_loc(_now(), vel=36.0, batt=80), headers=_basic(_KEY))
+    resp = c.post(
+        "/api/owntracks",
+        json=_loc(_now(), vel=36.0, cog=270.0, accel=1.5, batt=80),
+        headers=_basic(_KEY),
+    )
     assert resp.status_code == 200
     assert resp.json() == []
     assert len(loc.calls) == 1
@@ -71,6 +75,8 @@ def test_valid_location_is_ingested_under_the_device_subject(
     assert subject_id == "subj-1"  # code-set from the principal, not the payload
     assert (fix.latitude, fix.longitude) == (40.0, -74.0)
     assert fix.velocity_mps == pytest.approx(10.0)  # 36 km/h -> 10 m/s
+    assert fix.course_deg == 270.0
+    assert fix.acceleration_mps2 == 1.5  # JBrain360 extension, stored verbatim
     assert fix.battery_pct == 80
 
 

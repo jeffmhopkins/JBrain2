@@ -52,7 +52,12 @@ async def _device(maker: async_sessionmaker) -> tuple[str, str]:
 
 def _fix(when: datetime) -> LocationFix:
     return LocationFix(
-        captured_at=when, latitude=40.0, longitude=-74.0, accuracy_m=5.0, velocity_mps=10.0
+        captured_at=when,
+        latitude=40.0,
+        longitude=-74.0,
+        accuracy_m=5.0,
+        velocity_mps=10.0,
+        acceleration_mps2=2.5,
     )
 
 
@@ -69,7 +74,8 @@ async def test_ingest_stores_a_fix_and_is_idempotent(maker: async_sessionmaker) 
         rows = (
             await session.execute(
                 text(
-                    "SELECT velocity_mps, ST_Y(geog::geometry) AS lat, ST_X(geog::geometry) AS lon"
+                    "SELECT velocity_mps, acceleration_mps2,"
+                    "   ST_Y(geog::geometry) AS lat, ST_X(geog::geometry) AS lon"
                     " FROM app.location_fixes WHERE subject_id = :s"
                 ),
                 {"s": sid},
@@ -77,5 +83,6 @@ async def test_ingest_stores_a_fix_and_is_idempotent(maker: async_sessionmaker) 
         ).all()
     assert len(rows) == 1
     assert rows[0].velocity_mps == 10.0
+    assert rows[0].acceleration_mps2 == 2.5
     # The generated geography mirrors the stored lat/lon (X=lon, Y=lat).
     assert (rows[0].lat, rows[0].lon) == (40.0, -74.0)

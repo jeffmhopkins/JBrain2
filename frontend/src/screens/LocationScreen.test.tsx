@@ -30,6 +30,7 @@ function device(over: Partial<DeviceSummary> = {}): DeviceSummary {
     last_seen: new Date(Date.now() - 5 * 60_000).toISOString(),
     battery_pct: 72,
     connection: "wifi",
+    velocity_mps: null,
     fix_count: 140,
     ...over,
   };
@@ -113,6 +114,17 @@ describe("LocationScreen", () => {
     expect(meta.textContent).toMatch(/72% battery/);
     expect(meta.textContent).toMatch(/wifi/);
     expect(meta.textContent).toMatch(/140 fixes/);
+  });
+
+  it("shows speed in mph when the phone is traveling, hides it when still", async () => {
+    const traveling = device({ label: "Moving phone", velocity_mps: 13.4 }); // ~30 mph
+    const still = device({ id: "d2", label: "Parked phone", velocity_mps: 0.3 }); // below cutoff
+    render(<LocationScreen deps={deps({ listDevices: vi.fn(async () => [traveling, still]) })} />);
+    fireEvent.click(screen.getByRole("tab", { name: "Phones" }));
+    const moving = await screen.findByText("Moving phone");
+    expect(moving.closest("button")?.textContent).toMatch(/30 mph/);
+    const parked = screen.getByText("Parked phone");
+    expect(parked.closest("button")?.textContent).not.toMatch(/mph/);
   });
 
   it("shows the empty state when there are no devices", async () => {

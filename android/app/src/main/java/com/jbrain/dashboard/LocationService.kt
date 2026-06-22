@@ -6,11 +6,13 @@ import android.app.NotificationManager
 import android.app.Service
 import android.content.Intent
 import android.content.pm.ServiceInfo
+import android.hardware.SensorManager
 import android.location.Location
 import android.location.LocationListener
 import android.location.LocationManager
 import android.net.ConnectivityManager
 import android.net.Network
+import android.os.BatteryManager
 import android.os.Build
 import android.os.Handler
 import android.os.IBinder
@@ -51,6 +53,9 @@ class LocationService : Service(), LocationListener {
     // change (moving <-> stationary) re-requests updates and nothing else does.
     private val policy = SamplingPolicy()
     private var current: RequestParams = policy.movingParams
+    // Continuous accelerometer stream; its latest 0.2 s-filtered magnitude is sampled
+    // onto each fix. Held open for the service's life (started/stopped with it).
+    private lateinit var accel: AccelerationMeter
     // When the queue was last flushed (io thread only) — the batched-upload cadence.
     private var lastFlushMs = 0L
 
@@ -60,6 +65,8 @@ class LocationService : Service(), LocationListener {
         super.onCreate()
         store = KeystoreCredentialStore(this)
         uploader = LocationUploader(queue, publisher)
+        accel = AccelerationMeter(getSystemService<SensorManager>())
+        accel.start()
         registerConnectivity()
         startInForeground()
     }
@@ -104,6 +111,11 @@ class LocationService : Service(), LocationListener {
             lon = location.longitude,
             tst = location.time / 1000,
             accuracyM = accuracyM,
+            // m/s -> km/h (OwnTracks `vel`); bearing is course-over-ground in degrees.
+            velocityKmh = if (location.hasSpeed()) Math.round(location.speed * 3.6).toInt() else null,
+            courseDeg = if (location.hasBearing()) Math.round(location.bearing).toInt() else null,
+            accelMps2 = accel.latest(),
+            batteryPct = batteryPct(),
         )
         // Persist the fix, then flush the backlog as a batch on a cadence (every N
         // points or T seconds) so a dense moving stream costs few requests instead
@@ -191,8 +203,17 @@ class LocationService : Service(), LocationListener {
         armHeartbeat()
     }
 
+    /** The current charge level as a whole percent (0–100), or null when the
+     * platform can't report it. Read fresh per fix so the trail carries battery. */
+    private fun batteryPct(): Int? {
+        val bm = getSystemService<BatteryManager>() ?: return null
+        val pct = bm.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
+        return if (pct in 0..100) pct else null
+    }
+
     override fun onDestroy() {
         heartbeat.removeCallbacks(forceFix)
+        accel.stop()
         connectivity?.let { getSystemService<ConnectivityManager>()?.unregisterNetworkCallback(it) }
         io.shutdown()
         try {

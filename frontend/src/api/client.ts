@@ -39,6 +39,8 @@ export interface DeviceSummary {
   last_seen: string | null;
   battery_pct: number | null;
   connection: string | null;
+  /** Speed (m/s) of the device's latest fix; null until it reports one. */
+  velocity_mps: number | null;
   fix_count: number;
 }
 
