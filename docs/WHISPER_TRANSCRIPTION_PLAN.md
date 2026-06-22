@@ -61,11 +61,36 @@ This binds to `docs/PROCESS.md` (waves + independent review gate per wave) and t
 - **Gate:** per-task review, then a wave-level review (touches RLS → red-team).
 
 ### Wave 3 — Deploy + docs
-- `deploy/docker-compose.yml` + `scripts/local-llm-setup.sh`: register the
-  whisper.cpp model in the llama-swap config; `scripts/dev-setup.sh` currency.
-- `video/*` + ffmpeg extraction (fast-follow; new system dep flagged).
-- Docs: flip `docs/ANALYSIS.md` `audio/*` from deferred to shipped; add the tool to
-  `docs/ASSISTANT.md`; note the feature in `docs/ARCHITECTURE.md`/`ROADMAP.md`.
+- `deploy/docker-compose.yml`: `JBRAIN_WHISPER_URL/ENABLED/MODEL` on the api env
+  (inherited by the worker via `*api_env`), off by default (empty URL).
+- Docs: flip `docs/ANALYSIS.md` `audio/*` from deferred to shipped; add the
+  `transcribe` tool to `docs/ASSISTANT.md`.
+- `video/*` + ffmpeg extraction: fast-follow (new system dep), not in this change.
+
+## Status
+
+- **Wave 1 — done** (commit: whisper.cpp client + config + unit tests).
+- **Wave 2 — done** (analyzer job + agent tool; integration tests incl. RLS;
+  independent red-team review passed with no HIGH findings, MEDIUM/LOW fixed).
+- **Wave 3 — code/docs done; one on-box step remains.**
+
+### Remaining (flagged — needs on-box verification, can't be validated from CI)
+
+The application seam is complete and off by default. To actually serve audio the
+operator must provision the whisper model **in the llama-swap gateway** and point
+the env at it. That step is **not shipped here** because it can't be verified
+without the Strix Halo box, and shipping unverified Dockerfile/gateway-config
+changes risks a broken build:
+
+- a `whisper-server` (whisper.cpp, Vulkan) binary in the `local-llm` gateway image
+  (the kyuz0 toolbox is a llama.cpp build — confirm whether it ships whisper.cpp or
+  add a build stage), and a model entry in the generated `llama-swap.yaml` (extend
+  `jbrain.llm.llama_swap_config` + `scripts/local-llm-setup.sh` to write it and the
+  `WHISPER_*` env), confirming llama-swap proxies the multipart
+  `/v1/audio/transcriptions` endpoint and the load/unload admin API covers it.
+
+Until then: set `WHISPER_URL=http://local-llm:8080/v1` + `WHISPER_MODEL=<served
+name>` once that model is registered, and the feature lights up end to end.
 
 ## Open decisions (resolved)
 - Engine: **whisper.cpp via the existing llama-swap gateway** (owner's choice — best

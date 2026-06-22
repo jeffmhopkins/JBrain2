@@ -317,7 +317,12 @@ the knowledge base** at all. The set is closed and code-defined
   **current date/time** as ambient context (non-personal). `current_location` is the
   one owner-approved exception: a `web`-gated, jerv-only on-box read of the owner's
   **coarse, coordinate-free presence** (a place name + freshness), which jerv's prompt
-  forbids volunteering or sending to the web. See the sandbox bound below.
+  forbids volunteering or sending to the web. See the sandbox bound below. When the
+  on-box backends are configured, jerv also gets the `web`-gated, jerv-only
+  **`transcribe`** (read an attached audio file via the local whisper gateway) and
+  the image tools (`generate_image`/`edit_image`/`analyze_image`) — each resolves a
+  chat attachment by id under the session scope, runs an on-box model, and is dropped
+  from the registry when its backend is unconfigured (graceful degrade).
 
 Tool gating layers on top of read-scope: the registry offers a tool only if the
 agent's allowlist admits it *and* the session holds its domain. The internet tools

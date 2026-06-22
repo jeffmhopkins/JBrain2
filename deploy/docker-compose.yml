@@ -80,6 +80,14 @@ services:
       JBRAIN_COMFYUI_URL: ${COMFYUI_URL:-}
       JBRAIN_COMFYUI_ENABLED: ${COMFYUI_ENABLED:-false}
       JBRAIN_COMFYUI_MODELS: ${COMFYUI_MODELS:-[]}
+      # On-box speech-to-text — OFF unless the operator opted in. When enabled,
+      # points at the whisper model the local-llm gateway serves (the same
+      # llama-swap container loads/frees it on demand) and names that served model.
+      # Empty URL = feature off: audio attachments aren't transcribed and jerv's
+      # transcribe tool is hidden. Inherited by the worker via *api_env.
+      JBRAIN_WHISPER_URL: ${WHISPER_URL:-}
+      JBRAIN_WHISPER_ENABLED: ${WHISPER_ENABLED:-false}
+      JBRAIN_WHISPER_MODEL: ${WHISPER_MODEL:-whisper}
       # Shared secret for the MQTT ingest service identity (JBrain360 M1): the API
       # validates it in /internal/mqtt-auth and the consumer connects with it. Empty
       # disables the identity (fail-closed). Only meaningful with the `mqtt` profile.
