@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { LocationFix } from "../api/client";
-import { colorForFix, computeDwell, legendInfo, metricLabel } from "./trailMetric";
+import { colorForFix, computeDwell, legendInfo, metricBucket, metricLabel } from "./trailMetric";
 
 function fix(over: Partial<LocationFix> = {}): LocationFix {
   return {
@@ -32,10 +32,32 @@ describe("metricLabel", () => {
 });
 
 describe("legendInfo", () => {
-  it("uses a hue wheel for heading and the dwell max for time-at-place", () => {
-    expect(legendInfo("heading", 0).gradient).toMatch(/hsl/);
-    expect(legendInfo("timeplace", 12.4).hi).toBe("12m");
-    expect(legendInfo("speed", 0).hi).toBe("60+");
+  it("uses a hue wheel + compass ticks for heading", () => {
+    const h = legendInfo("heading", 0);
+    expect(h.gradient).toMatch(/hsl/);
+    expect(h.ticks).toEqual(["N", "E", "S", "W", "N"]);
+  });
+
+  it("labels time-at-place at the 5m/15m/1h breakpoints up to the window max", () => {
+    expect(legendInfo("timeplace", 120).ticks).toEqual(["0", "5m", "15m", "1h", "2h"]);
+    // A short window drops the breakpoints above its max.
+    expect(legendInfo("timeplace", 12).ticks).toEqual(["0", "5m", "12m"]);
+  });
+
+  it("uses end ticks for the linear metrics", () => {
+    expect(legendInfo("speed", 0).ticks).toEqual(["0", "60+"]);
+  });
+});
+
+describe("time-at-place piecewise scale", () => {
+  it("spreads short dwells across the ramp instead of squashing them at 0", () => {
+    const f = fix();
+    const max = 120; // a 2h window → anchors 0/5m/15m/1h/2h at 0,¼,½,¾,1
+    const b = (min: number) => metricBucket("timeplace", f, min, max, 12);
+    expect(b(5)).toBe(3); // 5m sits a quarter up the ramp, not ~0
+    expect(b(15)).toBe(6);
+    expect(b(60)).toBe(9);
+    expect(b(120)).toBe(12);
   });
 });
 

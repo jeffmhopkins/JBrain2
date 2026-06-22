@@ -12672,35 +12672,24 @@ input.ld-title {
   padding: 12px;
 }
 
-/* Basemap light/dark toggle — a small floating pill on the line BELOW the person
-   switcher (the switcher is ~76px tall, so this clears it), right-aligned. Tiles
-   only, never the app chrome. */
+/* Basemap light/dark toggle — a single floating icon button on the line BELOW the
+   person switcher (the switcher is ~76px tall, so this clears it), right-aligned.
+   Tiles only, never the app chrome. Shares the legend's top so they line up. */
 .lm-tiles {
   position: absolute;
   top: calc(max(env(safe-area-inset-top), 10px) + 88px);
   right: 10px;
   z-index: 8;
-  display: flex;
-  gap: 2px;
-  padding: 3px;
-  border-radius: var(--r-pill);
-}
-.lm-tiles button {
-  width: 34px;
-  height: 30px;
+  width: 38px;
+  height: 38px;
   border: 0;
-  background: transparent;
-  color: var(--text-2);
-  border-radius: calc(var(--r-pill) - 3px);
+  border-radius: var(--r-pill);
+  color: var(--text);
   cursor: pointer;
-  font-size: 15px;
+  font-size: 16px;
   line-height: 1;
   display: grid;
   place-items: center;
-}
-.lm-tiles button.on {
-  background: var(--surface-2);
-  color: var(--text);
 }
 
 .lm-chip {
@@ -13321,8 +13310,10 @@ input.ld-title {
 /* --- trail metric legend (top-left, under the names) -------------------- */
 .lm-legend {
   position: absolute;
-  top: 92px;
-  left: 12px;
+  /* Same offset as the people switcher (+ its height) and the tile toggle, so the
+     three line up; a hardcoded top rode up over the avatars on notched phones. */
+  top: calc(max(env(safe-area-inset-top), 10px) + 88px);
+  left: 10px;
   z-index: 8;
   width: 172px;
   border-radius: 13px;

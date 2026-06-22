@@ -527,8 +527,9 @@ function PeopleSwitcher({
 
 // --- basemap light/dark toggle (tiles only) -------------------------------
 
-/** A compact floating control that switches ONLY the basemap tiles between the
- * dark and light schemes — the app's own dark chrome is untouched. */
+/** A single floating icon that toggles ONLY the basemap tiles between the dark and
+ * light schemes (the app's own dark chrome is untouched). It shows the scheme it will
+ * switch TO, so the icon doubles as the action. */
 function TileToggle({
   scheme,
   onPick,
@@ -536,31 +537,17 @@ function TileToggle({
   scheme: TileScheme;
   onPick: (s: TileScheme) => void;
 }) {
+  const next: TileScheme = scheme === "dark" ? "light" : "dark";
   return (
-    <div className="lm-tiles lm-float" role="tablist" aria-label="Map style">
-      <button
-        type="button"
-        role="tab"
-        className={scheme === "dark" ? "on" : ""}
-        aria-selected={scheme === "dark"}
-        aria-label="Dark map"
-        title="Dark map"
-        onClick={() => onPick("dark")}
-      >
-        ☾
-      </button>
-      <button
-        type="button"
-        role="tab"
-        className={scheme === "light" ? "on" : ""}
-        aria-selected={scheme === "light"}
-        aria-label="Light map"
-        title="Light map"
-        onClick={() => onPick("light")}
-      >
-        ☀
-      </button>
-    </div>
+    <button
+      type="button"
+      className="lm-tiles lm-float"
+      aria-label={`Switch to ${next} map`}
+      title={`Switch to ${next} map`}
+      onClick={() => onPick(next)}
+    >
+      {next === "light" ? "☀" : "☾"}
+    </button>
   );
 }
 
@@ -1041,8 +1028,10 @@ function MetricLegend({
       </button>
       <div className="lm-legend-ramp" style={{ background: info.gradient }} />
       <div className="lm-legend-ticks">
-        <span>{info.lo}</span>
-        <span>{info.hi}</span>
+        {info.ticks.map((t, i) => (
+          // biome-ignore lint/suspicious/noArrayIndexKey: fixed positional tick labels (may repeat, e.g. N…N)
+          <span key={i}>{t}</span>
+        ))}
       </div>
       {open && (
         <div className="lm-legend-menu lm-float" role="menu">
