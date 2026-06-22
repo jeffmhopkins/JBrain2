@@ -51,6 +51,8 @@ def fake_supervisor(request: httpx.Request) -> httpx.Response:
                 "load_5m": 0.4,
                 "load_15m": 0.3,
                 "uptime_seconds": 12345,
+                "gpu_busy_percent": 42.0,
+                "fan_rpm": {"CPU Fan": 2100},
                 "containers": [{"service": "api", "mem_bytes": 100 << 20}],
             },
         )
@@ -167,6 +169,8 @@ def test_ops_metrics_merges_supervisor_and_local(client: TestClient, repo: FakeA
     login(client, repo)
     body = client.get("/api/ops/metrics").json()
     assert body["mem_total_bytes"] == 4 << 30
+    # Host telemetry the proxy carries through untouched (incl. fan RPM).
+    assert body["fan_rpm"] == {"CPU Fan": 2100}
     assert body["containers"][0]["service"] == "api"
     # The unit-test app has no reachable database or blob store wired, so
     # the best-effort sections degrade to null instead of failing the call.

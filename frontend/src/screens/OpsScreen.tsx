@@ -259,7 +259,9 @@ function SystemCard({ metrics }: { metrics: OpsMetrics | null }) {
     );
     const gpu =
       metrics.gpu_busy_percent != null ? `gpu ${Math.round(metrics.gpu_busy_percent)}% · ` : "";
-    summary = `mem ${memPct}% · disk ${diskPct}% · ${gpu}load ${metrics.load_1m.toFixed(2)} · up ${fmtUptime(metrics.uptime_seconds)}`;
+    const fanRpms = metrics.fan_rpm ? Object.values(metrics.fan_rpm) : [];
+    const fan = fanRpms.length > 0 ? `fan ${Math.max(...fanRpms)}rpm · ` : "";
+    summary = `mem ${memPct}% · disk ${diskPct}% · ${gpu}${fan}load ${metrics.load_1m.toFixed(2)} · up ${fmtUptime(metrics.uptime_seconds)}`;
   }
   return (
     <OpsCard
@@ -309,6 +311,19 @@ function SystemRows({ metrics }: { metrics: OpsMetrics }) {
           <div className="ops-vmid">
             <span className="ops-vv">{Math.round(metrics.gpu_busy_percent)}%</span>
             <Meter used={metrics.gpu_busy_percent} total={100} tone="util" />
+          </div>
+        </div>
+      )}
+      {metrics.fan_rpm && Object.keys(metrics.fan_rpm).length > 0 && (
+        <div className="ops-vrow">
+          <span className="ops-vk">Fans</span>
+          <div className="ops-vmid">
+            {/* RPM has no fixed ceiling, so this is a text readout (no meter). */}
+            <span className="ops-vv">
+              {Object.entries(metrics.fan_rpm)
+                .map(([label, rpm]) => `${label} ${rpm}rpm`)
+                .join(" · ")}
+            </span>
           </div>
         </div>
       )}

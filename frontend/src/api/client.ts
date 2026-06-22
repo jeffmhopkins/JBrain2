@@ -198,6 +198,8 @@ export interface OpsMetrics {
   uptime_seconds: number;
   /** iGPU/dGPU utilization 0-100, or null when the host exposes no GPU telemetry. */
   gpu_busy_percent: number | null;
+  /** Fan speeds in RPM keyed by sensor label, or null when the host exposes no fan telemetry. */
+  fan_rpm: Record<string, number> | null;
   containers: { service: string; mem_bytes: number }[];
   db: {
     db_size_bytes: number;

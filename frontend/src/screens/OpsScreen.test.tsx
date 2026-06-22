@@ -41,6 +41,7 @@ const METRICS: OpsMetrics = {
   load_15m: 0.62,
   uptime_seconds: 5 * 3600 + 40 * 60,
   gpu_busy_percent: 41,
+  fan_rpm: { "CPU fan": 2100, "System fan": 1850 },
   containers: [{ service: "api", mem_bytes: 87 * 2 ** 20 }],
   db: {
     db_size_bytes: 23 * 2 ** 20,
@@ -101,6 +102,9 @@ describe("OpsScreen", () => {
     expect(await screen.findByText("Memory")).toBeInTheDocument();
     expect(screen.getByText("Database")).toBeInTheDocument();
     expect(screen.getByText("Load")).toBeInTheDocument();
+    // Fan telemetry renders one labelled row, RPM per fan.
+    expect(screen.getByText("Fans")).toBeInTheDocument();
+    expect(screen.getByText("CPU fan 2100rpm · System fan 1850rpm")).toBeInTheDocument();
     // Server update is folded into the Load row, not a separate footer card.
     expect(screen.getByRole("button", { name: "Update server" })).toBeInTheDocument();
   });
