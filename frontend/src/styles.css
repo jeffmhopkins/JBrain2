@@ -7709,15 +7709,17 @@ button.small {
   background: var(--green);
   box-shadow: 0 0 0 3px var(--green-tint);
 }
-/* The live-activity glyph stands in for the leading dot while a turn streams, in the
-   same 8px-wide lane so the row doesn't shift. Accent-tinted to read as "working". */
+/* The live-activity glyph stands in for the leading dot while a turn streams. It
+   anchors the 8px dot lane but sizes to its contents (the dots/spark run a touch
+   wider) so it never clips; only the one active row's title nudges, harmlessly.
+   Accent-tinted to read as "working". */
 .fb-shell .session-tap .turn-glyph {
   flex: none;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 2px;
-  width: 8px;
+  min-width: 8px;
   height: 8px;
   color: var(--accent);
 }

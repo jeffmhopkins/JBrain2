@@ -653,6 +653,8 @@ export function useFullBrain(
       const { [id]: _gone, ...rest } = prev;
       return rest;
     });
+    // Don't leave the picker's activity glyph pointing at a chat that no longer exists.
+    setActiveTurnSessionId((cur) => (cur === id ? null : cur));
     if (active?.id === id) setActive(null);
   }
 

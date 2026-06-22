@@ -761,10 +761,11 @@ in-flight thinking/render is visible from the picker even while another chat is 
 `docs/ASSISTANT.md`). The glyph is **stateful**: **three bouncing dots while thinking**
 (any non-image activity — reasoning, tools, answering), a **twinkling spark while an
 image tool renders** (`generate_image`/`edit_image`). The row's `turns / staged` meta is
-replaced by a calm accent **`thinking…` / `rendering…`** word for the duration. It's an
-`<output>` (implicit `role=status`, labelled) and honors `prefers-reduced-motion` with a
-steady glyph. At most one chat shows it at a time (a single turn is in flight — `busy`
-gates sends).
+replaced by a calm accent **`thinking…` / `rendering…`** word for the duration. The glyph
+is **decorative** (`aria-hidden`) — the visible status word carries the state and rides
+the row button's accessible name, so a screen reader hears it without a nagging live
+region. Honors `prefers-reduced-motion` with a steady glyph. At most one chat shows it at
+a time (a single turn is in flight — `busy` gates sends).
 
 ## Surface paradigms (which container for which job)
 

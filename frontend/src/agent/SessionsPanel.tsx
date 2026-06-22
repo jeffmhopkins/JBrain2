@@ -600,13 +600,15 @@ function SessionRow({
 
 // The session row's live-activity glyph, sitting where the leading scope dot would:
 // bouncing dots while the agent is thinking, a twinkling spark while it renders an
-// image. `role="status"` + a label so it reads to assistive tech; the motion honors
+// image. Purely DECORATIVE (aria-hidden) — the meaning is carried by the visible
+// "thinking…/rendering…" word, which is part of the row button's accessible name, so a
+// screen reader hears the state without a nagging live region. Motion honors
 // prefers-reduced-motion in CSS (it falls back to a steady glyph).
 function TurnGlyph({ kind }: { kind: "thinking" | "rendering" }): ReactNode {
   return (
-    <output className={`turn-glyph ${kind}`} aria-label={kind}>
+    <span className={`turn-glyph ${kind}`} aria-hidden="true">
       {kind === "rendering" ? (
-        <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+        <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor">
           <path d="M12 2l2.3 6.4L21 11l-6.7 2.6L12 20l-2.3-6.4L3 11l6.7-2.6z" />
         </svg>
       ) : (
@@ -616,7 +618,7 @@ function TurnGlyph({ kind }: { kind: "thinking" | "rendering" }): ReactNode {
           <i />
         </>
       )}
-    </output>
+    </span>
   );
 }
 

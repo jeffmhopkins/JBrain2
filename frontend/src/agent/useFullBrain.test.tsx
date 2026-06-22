@@ -147,6 +147,37 @@ describe("useFullBrain — a turn stays attached to its own chat", () => {
     await waitFor(() => expect(result.current.activeTurn).toBeNull());
   });
 
+  it("reports a non-image tool as kind 'thinking', not rendering", async () => {
+    let release: () => void = () => {};
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
+    async function* chat(): AsyncGenerator<ChatEvent> {
+      yield { type: "run", run_id: "r1" };
+      yield { type: "tool_call", id: "c1", name: "search", arguments: {} };
+      await gate; // a non-image tool is in flight
+      yield { type: "tool_result", tool_call_id: "c1", ok: true, summary: "2 notes" };
+      yield { type: "text_delta", text: "found it" };
+      yield { type: "done", stop_reason: "end_turn" };
+    }
+
+    const d = deps({ chat });
+    const { result } = renderHook(() => useFullBrain("fullbrain", d));
+    await waitFor(() => expect(result.current.active?.id).toBe("A"));
+
+    await act(async () => {
+      await result.current.send("look it up");
+    });
+    // A running non-image tool reads as thinking (only image tools are "rendering").
+    await waitFor(() => expect(result.current.activeTurn?.kind).toBe("thinking"));
+
+    await act(async () => {
+      release();
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(result.current.activeTurn).toBeNull());
+  });
+
   it("keeps a thinking turn (reasoning, no answer yet) across a chat switch", async () => {
     // Same scoping, but a turn that's mid-THOUGHT rather than rendering: the live
     // reasoning/thinking state must survive A→B→A just like an image render does.

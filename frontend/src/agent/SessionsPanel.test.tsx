@@ -63,15 +63,16 @@ describe("SessionsPanel", () => {
         onRescope={vi.fn()}
       />,
     );
-    // The live chat shows the labelled glyph and a "rendering…" status word.
-    expect(screen.getByLabelText("rendering")).toBeInTheDocument();
+    // The live chat shows the (decorative) glyph and a "rendering…" status word that
+    // rides the row button's accessible name.
+    expect(document.querySelector(".turn-glyph.rendering")).toBeInTheDocument();
     expect(screen.getByText("rendering…")).toBeInTheDocument();
     // The idle chat keeps its plain scope dot — no glyph, no status word.
     expect(screen.getByTitle("reads medical")).toBeInTheDocument();
-    expect(screen.queryByLabelText("thinking")).not.toBeInTheDocument();
+    expect(screen.queryByText("thinking…")).not.toBeInTheDocument();
   });
 
-  it("labels the glyph 'thinking' for a non-render turn", () => {
+  it("shows the thinking glyph + word for a non-render turn", () => {
     render(
       <SessionsPanel
         sessions={[session({ id: "s2", title: "Weekly recap" })]}
@@ -86,7 +87,7 @@ describe("SessionsPanel", () => {
         onRescope={vi.fn()}
       />,
     );
-    expect(screen.getByLabelText("thinking")).toBeInTheDocument();
+    expect(document.querySelector(".turn-glyph.thinking")).toBeInTheDocument();
     expect(screen.getByText("thinking…")).toBeInTheDocument();
   });
 
