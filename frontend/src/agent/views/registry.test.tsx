@@ -1,4 +1,4 @@
-import { createEvent, fireEvent, render, waitFor } from "@testing-library/react";
+import { createEvent, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { type ListOut, api } from "../../api/client";
 import type { ViewPayload } from "../types";
@@ -202,6 +202,36 @@ describe("ToolView registry", () => {
     expect(frame.style.aspectRatio).toBe("768 / 1024");
     // A generate has no before/after compare.
     expect(container.querySelector(".tv-genimg-cmp")).toBeNull();
+  });
+
+  it("renders a video_analysis card, building the chat-attachment src by id", () => {
+    const { container } = render(
+      <ToolView
+        payload={payload({
+          view: "video_analysis",
+          data: {
+            attachment_id: "att_123",
+            source: "chat",
+            media: "video",
+            filename: "meeting.mp4",
+            summary: "A short standup.",
+            duration_ms: 8000,
+            frames: [{ t_ms: 0, caption: "A title card.", thumb_id: "sha-deadbeef" }],
+            transcript: {
+              text: "Hello team",
+              words: [{ text: "Hello", start_ms: 0, end_ms: 500, confidence: 0.95 }],
+            },
+          },
+        })}
+      />,
+    );
+    const video = container.querySelector("video") as HTMLVideoElement;
+    // Data-only: the component BUILDS the src from attachment_id + source (no URL).
+    expect(video.getAttribute("src")).toBe("/api/chat-attachments/att_123");
+    expect(container.querySelector(".tv-vid")).not.toBeNull();
+    expect(screen.getByText("meeting.mp4")).toBeInTheDocument();
+    expect(screen.getByText("A short standup.")).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Transcript" })).toBeInTheDocument();
   });
 
   it("shows the seed on the card so the owner can reuse it", () => {

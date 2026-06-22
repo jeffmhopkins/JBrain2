@@ -873,6 +873,35 @@ the record in `docs/mocks/genimage-README.md` (B/C both subsume A's generate-onl
 layout, so this choice still fixes the generate rendering). Owner-only (the table
 mirrors `wiki_*` RLS); never a note, never RAG-indexed — a chat artifact.
 
+### `video_analysis` tool-view (settled in a GUI review — binding mock: `docs/mocks/analyze-video-approved.html`)
+
+The in-chat card jerv shows after an `analyze_video` call (`docs/VIDEO_ANALYSIS_PLAN.md`,
+Wave 4). A registered, data-only view: the model fills `{attachment_id, source
+('chat'|'note'), media:'video', filename, summary, duration_ms, frames:[{t_ms,
+caption, thumb_id}], transcript:{text, words:[{text,start_ms,end_ms,confidence}]}|null}`
+and **authors no markup and no URL** — the component builds the media source from the
+id + source (`/api/chat-attachments/${id}` for jerv's tool, `/api/attachments/${id}`
+for a note). One `<video>` drives **one shared clock** across a marker rail (a tick per
+analysed moment) and three tabs — **Summary**, **Moments** (a karaoke caption feed,
+each moment its frame caption + the words said then), and **Transcript** (the approved
+`AudioTranscript` reader, reused verbatim: confidence-gradient words, steel-pill
+karaoke, tap-to-seek). Tabs with no content are omitted (frames-only → no Transcript;
+summary-only → no tab bar). Tokens-only `.tv-vid-*` classes; the Transcript tab reuses
+`.atx-*`.
+
+Chosen **D — combined** (filmstrip scrubber + tabs + scrolling moment feed) over A
+(filmstrip), B (moment feed), and C (tabs), with the owner's edits: **no Frames tab**,
+and the Transcript tab reuses the audio-transcript card. **Deviation from the mock:**
+the card renders the rail as **timestamp markers, not frame thumbnails**. The
+`analyze_video` tool computes the analysis **inline and does not persist it** (a jerv
+chat attachment has no note pipeline / extract cache), and the frame JPEGs are
+content-addressed blobs with **no per-blob domain firewall** — so there is no safe id
+to serve a thumbnail by without crossing the firewall (invariant #3) or bloating the
+payload with inline data (#9). The `<video>` is the visual; the rail/feed/transcript
+are the AI overlay. `thumb_id` rides the payload for a future note-attachment card,
+whose persisted, RLS-scoped analysis can validate a thumbnail-by-id endpoint. Owner-
+facing chat artifact; never a note, never RAG-indexed.
+
 ## Wiki Talk board (settled in a three-way GUI review — reference mock: `docs/mocks/wiki-talk-b-topics.html`)
 
 The article's editorial board (Phase 6) — the wiki's second surface after the reader. Chosen

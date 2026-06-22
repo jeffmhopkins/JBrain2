@@ -84,6 +84,80 @@ function fmtTime(seconds: number): string {
   return `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
 }
 
+/** The index of the word being spoken at `currentMs`, or -1. A word's window extends
+ * to the next word's start so a tiny inter-word gap never drops the highlight. */
+export function currentWordIndex(words: TranscriptWord[], currentMs: number): number {
+  for (let i = 0; i < words.length; i++) {
+    const w = words[i];
+    if (!w) continue;
+    const next = words[i + 1];
+    const end = next ? Math.max(w.endMs, next.startMs) : w.endMs;
+    if (currentMs >= w.startMs && currentMs < end) return i;
+  }
+  return -1;
+}
+
+/** The presentational karaoke transcript body + confidence legend, driven by an
+ * externally-owned clock (`currentIdx`). Shared by AudioTranscript (its own player)
+ * and the video-analysis card (one card-wide clock) so both render words identically:
+ * tinted on the rose→amber→green gradient, the spoken word a steel pill, tap to seek.
+ * Falls back to plain `text` when there is no per-word data. */
+export function TranscriptBody({
+  words,
+  currentIdx,
+  onSeek,
+  text,
+}: {
+  words: TranscriptWord[];
+  currentIdx: number;
+  onSeek: (ms: number) => void;
+  text?: string | undefined;
+}): ReactNode {
+  const bodyRef = useRef<HTMLDivElement>(null);
+  // Keep the spoken word centered in the (≈5-line) body as playback advances. Scroll
+  // the body itself — never the page — so a long transcript karaoke-scrolls in place.
+  useEffect(() => {
+    const body = bodyRef.current;
+    if (currentIdx < 0 || !body) return;
+    const el = body.querySelector<HTMLElement>(`[data-i="${currentIdx}"]`);
+    if (!el) return;
+    const target = Math.max(0, el.offsetTop - body.clientHeight / 2 + el.offsetHeight / 2);
+    if (typeof body.scrollTo === "function") body.scrollTo({ top: target, behavior: "smooth" });
+    else body.scrollTop = target; // jsdom / older engines: no smooth scrollTo
+  }, [currentIdx]);
+  if (words.length === 0) return <div className="atx-body atx-plain">{text ?? ""}</div>;
+  return (
+    <>
+      <div className="atx-body" ref={bodyRef}>
+        {words.map((w, i) => (
+          // The inter-word space sits OUTSIDE the button so the highlight pill wraps
+          // only the word — not the gap, which otherwise bled into the next word.
+          <Fragment
+            // biome-ignore lint/suspicious/noArrayIndexKey: words are static for this transcript.
+            key={i}
+          >
+            <button
+              type="button"
+              data-i={i}
+              className={`atx-w${i === currentIdx ? " now" : ""}`}
+              style={i === currentIdx ? undefined : { color: confidenceColor(w.confidence) }}
+              onClick={() => onSeek(w.startMs)}
+            >
+              {w.text}
+            </button>{" "}
+          </Fragment>
+        ))}
+      </div>
+      <div className="atx-legend">
+        <span>low</span>
+        <span className="atx-grad" aria-hidden="true" />
+        <span>high confidence</span>
+        <span className="atx-hint">tap a word to jump</span>
+      </div>
+    </>
+  );
+}
+
 export function AudioTranscript({
   audioUrl,
   filename,
@@ -95,7 +169,6 @@ export function AudioTranscript({
 }: AudioTranscriptProps): ReactNode {
   // Audio and video are both HTMLMediaElement; one ref drives sync/seek for either.
   const mediaRef = useRef<HTMLMediaElement | null>(null);
-  const bodyRef = useRef<HTMLDivElement>(null);
   const [currentMs, setCurrentMs] = useState(0);
   const [playing, setPlaying] = useState(false);
   // Prefer the media element's real duration once metadata loads; the prop is the
@@ -103,18 +176,7 @@ export function AudioTranscript({
   const [durMs, setDurMs] = useState(durationMs ?? 0);
   const isVideo = media === "video";
 
-  const currentIdx = useMemo(() => {
-    for (let i = 0; i < words.length; i++) {
-      const w = words[i];
-      if (!w) continue;
-      // Extend a word's window to the next word's start so a tiny inter-word gap
-      // never drops the highlight between consecutive words.
-      const next = words[i + 1];
-      const end = next ? Math.max(w.endMs, next.startMs) : w.endMs;
-      if (currentMs >= w.startMs && currentMs < end) return i;
-    }
-    return -1;
-  }, [currentMs, words]);
+  const currentIdx = useMemo(() => currentWordIndex(words, currentMs), [currentMs, words]);
 
   // `timeupdate` fires only ~4×/second, so in fast dialogue a short word's whole
   // window can fall between two events and never highlight. While playing, sample
@@ -131,22 +193,6 @@ export function AudioTranscript({
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
   }, [playing]);
-
-  // Keep the spoken word centered in the (≈5-line) body as playback advances.
-  // Scroll the body itself — never the page — so a long transcript karaoke-scrolls
-  // in place. offsetTop is relative to the body (it's position:relative).
-  useEffect(() => {
-    const body = bodyRef.current;
-    if (currentIdx < 0 || !body) return;
-    const el = body.querySelector<HTMLElement>(`[data-i="${currentIdx}"]`);
-    if (!el) return;
-    const target = Math.max(0, el.offsetTop - body.clientHeight / 2 + el.offsetHeight / 2);
-    if (typeof body.scrollTo === "function") {
-      body.scrollTo({ top: target, behavior: "smooth" });
-    } else {
-      body.scrollTop = target; // jsdom / older engines: no smooth scrollTo
-    }
-  }, [currentIdx]);
 
   const seekTo = useCallback((ms: number) => {
     const m = mediaRef.current;
@@ -247,39 +293,7 @@ export function AudioTranscript({
           </div>
         </>
       )}
-      {words.length > 0 ? (
-        <>
-          <div className="atx-body" ref={bodyRef}>
-            {words.map((w, i) => (
-              // The inter-word space sits OUTSIDE the button so the highlight pill
-              // wraps only the word — not the gap, which otherwise bled into the
-              // next word.
-              <Fragment
-                // biome-ignore lint/suspicious/noArrayIndexKey: words are static for this transcript.
-                key={i}
-              >
-                <button
-                  type="button"
-                  data-i={i}
-                  className={`atx-w${i === currentIdx ? " now" : ""}`}
-                  style={i === currentIdx ? undefined : { color: confidenceColor(w.confidence) }}
-                  onClick={() => seekTo(w.startMs)}
-                >
-                  {w.text}
-                </button>{" "}
-              </Fragment>
-            ))}
-          </div>
-          <div className="atx-legend">
-            <span>low</span>
-            <span className="atx-grad" aria-hidden="true" />
-            <span>high confidence</span>
-            <span className="atx-hint">tap a word to jump</span>
-          </div>
-        </>
-      ) : (
-        <div className="atx-body atx-plain">{text ?? ""}</div>
-      )}
+      <TranscriptBody words={words} currentIdx={currentIdx} onSeek={seekTo} text={text} />
     </div>
   );
 }

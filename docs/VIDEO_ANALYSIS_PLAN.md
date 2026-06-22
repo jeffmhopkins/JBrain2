@@ -81,5 +81,13 @@ structure.
   over the shared `run_video_analysis`, ffmpeg-gated registry wiring, jerv allowlist,
   digest pin, unit tests). Owner chose inline (chat attachments have no cache) over the
   originally-planned deferred-job; the Wave 2 job stays the note-pipeline path.
-- Wave 4 — not started (the scrubbing card, after the mock gate — spec approved:
-  docs/mocks/analyze-video-approved.html).
+- **Wave 4 — done** (the `video_analysis` card: `frontend/.../VideoAnalysis.tsx` +
+  registry wiring + `.tv-vid-*` styles; the `AudioTranscript` reader extracted into a
+  shared `TranscriptBody` the Transcript tab reuses; component + registry tests). One
+  `<video>`, one clock, marker rail + Summary/Moments/Transcript tabs. **Deviation:**
+  the rail shows timestamp markers, not frame thumbnails — an inline chat analysis
+  isn't persisted and the frame blobs have no per-blob firewall, so there's no safe id
+  to serve a thumbnail by (see docs/DESIGN.md `video_analysis`). `thumb_id` is kept in
+  the payload for a future note-attachment card.
+
+All four waves are shipped on `claude/whisper-agent-tool-750zbj` (Wave 1 merged as #477).
