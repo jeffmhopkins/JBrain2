@@ -8,6 +8,10 @@ where you're comfortable letting the assistant read everything.
 
 It is **off by default** and adds no surface until you enable it.
 
+> Driving it from a session? The assistant-facing runbook —
+> requesting a token, saving it, and the `scripts/debug-connect.sh` commands — is
+> `docs/DEBUG_ACCESS_SESSION_GUIDE.md`.
+
 ## The shape
 
 ```
