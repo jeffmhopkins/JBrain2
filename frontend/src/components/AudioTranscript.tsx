@@ -10,6 +10,7 @@
 // ever rides the tool payload, invariant #9).
 
 import {
+  Fragment,
   type MouseEvent,
   type ReactNode,
   useCallback,
@@ -229,17 +230,23 @@ export function AudioTranscript({
         <>
           <div className="atx-body" ref={bodyRef}>
             {words.map((w, i) => (
-              <button
+              // The inter-word space sits OUTSIDE the button so the highlight pill
+              // wraps only the word — not the gap, which otherwise bled into the
+              // next word.
+              <Fragment
                 // biome-ignore lint/suspicious/noArrayIndexKey: words are static for this transcript.
                 key={i}
-                type="button"
-                data-i={i}
-                className={`atx-w${i === currentIdx ? " now" : ""}`}
-                style={i === currentIdx ? undefined : { color: confidenceColor(w.confidence) }}
-                onClick={() => seekTo(w.startMs)}
               >
-                {w.text}{" "}
-              </button>
+                <button
+                  type="button"
+                  data-i={i}
+                  className={`atx-w${i === currentIdx ? " now" : ""}`}
+                  style={i === currentIdx ? undefined : { color: confidenceColor(w.confidence) }}
+                  onClick={() => seekTo(w.startMs)}
+                >
+                  {w.text}
+                </button>{" "}
+              </Fragment>
             ))}
           </div>
           <div className="atx-legend">
