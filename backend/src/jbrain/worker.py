@@ -34,10 +34,13 @@ from jbrain.embed import NoteEmbedder, PredicateEmbedder, TeiEmbedClient
 from jbrain.ingest import ocr
 from jbrain.ingest.ocr import OcrPipeline
 from jbrain.ingest.pipeline import IngestPipeline
+from jbrain.ingest.transcribe_job import TRANSCRIBE_ATTACHMENT_SPEC, TranscribePipeline
 from jbrain.llm import build_router
+from jbrain.llm.local_gateway import LocalGatewayClient
 from jbrain.schema import get_registry
 from jbrain.settings_store import SqlSettingsStore
 from jbrain.storage import FsBlobStore
+from jbrain.transcribe import WhisperCppClient
 from jbrain.usage import SqlUsageRecorder
 from jbrain.wiki.actions import WIKI_SPECS, wiki_handlers
 from jbrain.wiki.rewriter import LlmRewriter
@@ -140,11 +143,12 @@ async def _after_exhaustion(
 ) -> None:
     """Kind-specific fallbacks once a job has burned its whole retry budget.
 
-    An exhausted ocr_attachment must not strand its note unanalyzed: the
-    ingest gate deferred analysis to OCR work that will now never finish, so
-    fall back to body-only analysis (jbrain.ingest.ocr).
+    An exhausted ocr_attachment or transcribe_attachment must not strand its note
+    unanalyzed: the ingest gate deferred analysis to attachment work that will now
+    never finish, so fall back to body-only analysis (jbrain.ingest.ocr's gate
+    spans both backends).
     """
-    if not exhausted or job.kind != "ocr_attachment":
+    if not exhausted or job.kind not in ("ocr_attachment", "transcribe_attachment"):
         return
     attachment_id = job.payload.get("attachment_id")
     if attachment_id is not None:
@@ -229,7 +233,16 @@ async def run() -> None:
     engine = create_async_engine(settings.database_url)
     maker = async_sessionmaker(engine, expire_on_commit=False)
     blobs = FsBlobStore(settings.blob_dir)
-    pipeline = IngestPipeline(maker, blobs)
+    # Audio transcription is gated on the whisper backend being configured: an
+    # empty whisper_url leaves audio attachments un-enqueued (no chunks) rather
+    # than queuing a transcribe_attachment job no model can serve.
+    transcribe_enabled = bool(settings.whisper_url)
+    pipeline = IngestPipeline(
+        maker,
+        blobs,
+        transcribe_enabled=transcribe_enabled,
+        transcribe_max_bytes=settings.whisper_max_bytes,
+    )
     embedder = NoteEmbedder(maker, TeiEmbedClient(settings.embed_url), settings.embed_model)
     predicate_embedder = PredicateEmbedder(
         maker, TeiEmbedClient(settings.embed_url), settings.embed_model
@@ -263,6 +276,19 @@ async def run() -> None:
         "integrate_note": analyzer.integrate_note,
         # The vision handler reads the image-analysis mode setting per job.
         "ocr_attachment": OcrPipeline(maker, blobs, router, SqlSettingsStore(maker)).ocr_attachment,
+        # The audio sibling: transcribe an audio attachment via the whisper model in
+        # the local gateway, unloading it after (load-on-demand / unload-after). The
+        # handler is always wired so the action registry pairs; when whisper is
+        # unconfigured ingest enqueues no transcribe job, so it stays dormant.
+        "transcribe_attachment": TranscribePipeline(
+            maker,
+            blobs,
+            WhisperCppClient(
+                settings.whisper_url, settings.whisper_model, timeout=settings.whisper_timeout
+            ),
+            settings.whisper_model,
+            gateway=LocalGatewayClient(settings.whisper_url) if transcribe_enabled else None,
+        ).transcribe_attachment,
         # Retroactive predicate normalization; trigger is the Phase-5 engine.
         "consolidate_predicates": Consolidator(maker).run,
         # Keep the canonical_predicates index in step with the schema registry.
@@ -350,6 +376,7 @@ async def run() -> None:
             scheduler.RECONCILE_PENDING_INTEGRATION_ACTION,
             scheduler.RECONCILE_UNEMBEDDED_NOTES_ACTION,
             scheduler.GEOFENCE_SWEEP_ACTION,
+            TRANSCRIBE_ATTACHMENT_SPEC,
             EVAL_RUN_SPEC,
             SKILL_DISTILL_SPEC,
             SKILL_SWEEP_SPEC,

@@ -74,15 +74,16 @@ DESCRIPTION_SYSTEM = _DESCRIPTION.render()
 async def enqueue_analysis_fallback(
     maker: async_sessionmaker[AsyncSession], attachment_id: str
 ) -> str | None:
-    """OCR retry exhaustion fallback: analyze the note body-only.
+    """Attachment-job retry exhaustion fallback: analyze the note body-only.
 
-    The failed job row stays the durable record; analysis must not wait on
-    text that will never arrive. Enqueues integrate_note DIRECTLY — a re-ingest
-    would re-enqueue OCR for the still-cache-less attachment and loop. Skipped
-    while another ocr_attachment job for the note is still active (that job's
-    own completion or exhaustion triggers analysis) or an integrate_note job is
-    already queued/running. Returns the job id, or None when nothing was
-    enqueued.
+    Shared by the exhausted ocr_attachment and transcribe_attachment paths (both
+    feed the same analysis gate). The failed job row stays the durable record;
+    analysis must not wait on text that will never arrive. Enqueues integrate_note
+    DIRECTLY — a re-ingest would re-enqueue the still-cache-less attachment and
+    loop. Skipped while another ocr_attachment OR transcribe_attachment job for the
+    note is still active (that job's own completion or exhaustion triggers
+    analysis) or an integrate_note job is already queued/running. Returns the job
+    id, or None when nothing was enqueued.
     """
     async with scoped_session(maker, SYSTEM_CTX) as session:
         note_id = (
@@ -92,6 +93,8 @@ async def enqueue_analysis_fallback(
         return None
     nid = str(note_id)
     if await queue.has_active_ocr_for_note(maker, SYSTEM_CTX, nid):
+        return None
+    if await queue.has_active_transcribe_for_note(maker, SYSTEM_CTX, nid):
         return None
     if await queue.has_active_analysis(maker, SYSTEM_CTX, nid):
         return None

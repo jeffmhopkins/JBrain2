@@ -30,6 +30,7 @@ from jbrain.ingest.extract import (
     image_segments,
 )
 from jbrain.ingest.ocr import MAX_OCR_BYTES
+from jbrain.ingest.transcribe_job import DEFAULT_TRANSCRIBE_MAX_BYTES
 from jbrain.models.notes import AttachmentExtract, Chunk, Note
 from jbrain.queue import SYSTEM_CTX
 from jbrain.storage import BlobStore
@@ -53,10 +54,19 @@ class IngestPipeline:
         maker: async_sessionmaker[AsyncSession],
         blobs: BlobStore,
         registry: ExtractorRegistry | None = None,
+        *,
+        transcribe_enabled: bool = False,
+        transcribe_max_bytes: int = DEFAULT_TRANSCRIBE_MAX_BYTES,
     ):
         self._maker = maker
         self._blobs = blobs
         self._registry = registry or default_registry()
+        # Audio transcription is an opt-in backend (the whisper gateway): when it
+        # is unconfigured, audio attachments enqueue no job and simply yield no
+        # chunks — never a queued transcribe_attachment with no handler-reachable
+        # model. The worker flips this on when settings.whisper_url is set.
+        self._transcribe_enabled = transcribe_enabled
+        self._transcribe_max_bytes = transcribe_max_bytes
 
     async def ingest_note(self, payload: dict[str, Any]) -> None:
         """Handle an ingest_note job: {note_id}; missing note is a no-op."""
@@ -125,6 +135,11 @@ class IngestPipeline:
         # an async ocr_attachment job; the handler re-enqueues ingest_note, so
         # the cache check is what keeps that loop from spinning.
         outstanding = await self._enqueue_ocr_jobs(note_id, attachments, set(extracts))
+        # Audio rides the identical doctrine: an uncached audio attachment gets an
+        # async transcribe_attachment job whose handler re-ingests, so the cache
+        # check is what keeps that loop from spinning. Its outstanding ids join the
+        # OCR set — analysis waits on EITHER backend.
+        outstanding |= await self._enqueue_transcribe_jobs(note_id, attachments, set(extracts))
         # Extraction is likewise a follow-up job (ingest stays LLM-free,
         # docs/ANALYSIS.md), gated on outstanding vision WORK — never on
         # extract kinds or the image-analysis mode: a mode flip on a cached
@@ -242,6 +257,62 @@ class IngestPipeline:
             )
             outstanding.add(str(att.id))
             log.info("ingest.ocr_enqueued", note_id=note_id, attachment_id=str(att.id))
+        return outstanding
+
+    async def _enqueue_transcribe_jobs(
+        self, note_id: str, attachments: list[_AttachmentRef], cached: set[UUID]
+    ) -> set[str]:
+        """The audio twin of _enqueue_ocr_jobs: one transcribe_attachment job per
+        audio attachment with no cache rows yet; returns the attachment ids with
+        transcription outstanding after this run (newly enqueued + already
+        queued/running). No-op when the whisper backend is unconfigured — audio
+        then yields no chunks rather than a job with no reachable model.
+
+        Oversized files are skipped at enqueue time (the per-task budget,
+        docs/ANALYSIS.md), deliberately without a cache row, so a smaller
+        re-upload transcribes normally; they are never outstanding, so they never
+        block analysis.
+        """
+        if not self._transcribe_enabled:
+            return set()
+        audio_ids = [str(a.id) for a in attachments if a.media_type.startswith("audio/")]
+        if not audio_ids:
+            return set()
+        candidates: list[_AttachmentRef] = []
+        for att in attachments:
+            if not att.media_type.startswith("audio/") or att.id in cached:
+                continue
+            if att.size_bytes > self._transcribe_max_bytes:
+                log.warning(
+                    "ingest.transcribe_skipped_too_large",
+                    attachment_id=str(att.id),
+                    size_bytes=att.size_bytes,
+                    cap_bytes=self._transcribe_max_bytes,
+                )
+                continue
+            candidates.append(att)
+        async with scoped_session(self._maker, SYSTEM_CTX) as session:
+            outstanding = set(
+                (
+                    await session.execute(
+                        text(
+                            "SELECT payload->>'attachment_id' FROM app.jobs"
+                            " WHERE kind = 'transcribe_attachment'"
+                            " AND status IN ('queued', 'running')"
+                            " AND payload->>'attachment_id' IN :ids"
+                        ).bindparams(bindparam("ids", expanding=True)),
+                        {"ids": audio_ids},
+                    )
+                ).scalars()
+            )
+        for att in candidates:
+            if str(att.id) in outstanding:
+                continue
+            await queue.enqueue(
+                self._maker, SYSTEM_CTX, "transcribe_attachment", {"attachment_id": str(att.id)}
+            )
+            outstanding.add(str(att.id))
+            log.info("ingest.transcribe_enqueued", note_id=note_id, attachment_id=str(att.id))
         return outstanding
 
     async def _build_chunks(

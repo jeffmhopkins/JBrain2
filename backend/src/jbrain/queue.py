@@ -89,6 +89,10 @@ class JobEnqueuer(Protocol):
 
     async def has_active_ocr_for_note(self, ctx: SessionContext, note_id: str) -> bool: ...
 
+    async def has_active_transcribe_for_note(
+        self, ctx: SessionContext, note_id: str
+    ) -> bool: ...
+
     async def has_active_analysis(self, ctx: SessionContext, note_id: str) -> bool: ...
 
 
@@ -126,6 +130,9 @@ class PgJobQueue:
 
     async def has_active_ocr_for_note(self, ctx: SessionContext, note_id: str) -> bool:
         return await has_active_ocr_for_note(self._maker, ctx, note_id)
+
+    async def has_active_transcribe_for_note(self, ctx: SessionContext, note_id: str) -> bool:
+        return await has_active_transcribe_for_note(self._maker, ctx, note_id)
 
     async def has_active_analysis(self, ctx: SessionContext, note_id: str) -> bool:
         return await has_active_analysis(self._maker, ctx, note_id)
@@ -269,18 +276,33 @@ async def has_active_ocr_for_note(
     """Whether any queued/running ocr_attachment job targets one of this
     note's attachments — the outstanding-vision-work signal the analysis gate
     keys on (jbrain.ingest.pipeline)."""
+    return await _has_active_attachment_job(maker, ctx, "ocr_attachment", note_id)
+
+
+async def has_active_transcribe_for_note(
+    maker: async_sessionmaker[AsyncSession], ctx: SessionContext, note_id: str
+) -> bool:
+    """The audio twin of has_active_ocr_for_note: whether any queued/running
+    transcribe_attachment job targets one of this note's attachments — the other
+    half of the outstanding-attachment-work signal the analysis gate keys on."""
+    return await _has_active_attachment_job(maker, ctx, "transcribe_attachment", note_id)
+
+
+async def _has_active_attachment_job(
+    maker: async_sessionmaker[AsyncSession], ctx: SessionContext, kind: str, note_id: str
+) -> bool:
     async with scoped_session(maker, ctx) as session:
         row = (
             await session.execute(
                 text(
                     "SELECT 1 FROM app.jobs j"
-                    " WHERE j.kind = 'ocr_attachment'"
+                    " WHERE j.kind = :kind"
                     " AND j.status IN ('queued', 'running')"
                     " AND j.payload->>'attachment_id' IN ("
                     "     SELECT a.id::text FROM app.attachments a WHERE a.note_id = :note_id"
                     " ) LIMIT 1"
                 ),
-                {"note_id": note_id},
+                {"kind": kind, "note_id": note_id},
             )
         ).first()
     return row is not None

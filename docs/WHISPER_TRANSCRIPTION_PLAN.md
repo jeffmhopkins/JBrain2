@@ -27,11 +27,13 @@ This binds to `docs/PROCESS.md` (waves + independent review gate per wave) and t
   (`docs/ANALYSIS.md`), so audio transcription is an async `transcribe_attachment`
   job — the sibling of `ocr_attachment` — that writes the `attachment_extracts`
   cache and re-enqueues `ingest_note`. Ingest reads only the cache.
-- **No migration.** `transcript` is already a defined `Segment` kind; there is no
-  CHECK constraint on `attachment_extracts.kind` or `chunks.source_kind`. The new
-  job kind registers as an **in-code-only** action (added to the `build_registry`
-  tuple in `worker.py`, like `eval_run`/`skill_*`/`wiki_*`), so the `app.actions`
-  seed and its lockstep test are untouched.
+- **One small migration.** `transcript` is already a defined `Segment` kind and
+  `chunks.source_kind` is unconstrained, but `attachment_extracts.kind` has an
+  allowlist CHECK (migration 0011) — so migration 0079 admits `'transcript'`
+  (no new table; rides the existing RLS policy + grants). The new job kind
+  registers as an **in-code-only** action (added to the `build_registry` tuple in
+  `worker.py`, like `eval_run`/`skill_*`/`wiki_*`), so the `app.actions` seed and
+  its lockstep test are untouched.
 - **Graceful disable.** Empty `whisper_url` disables the feature end to end (no
   client wired; audio attachments extract to nothing), mirroring `comfyui`.
 
