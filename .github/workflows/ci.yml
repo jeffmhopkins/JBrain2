@@ -18,6 +18,10 @@ jobs:
       TESTCONTAINERS_RYUK_DISABLED: "true"
     steps:
       - uses: actions/checkout@v5
+      # ffmpeg/ffprobe back the analyze_video frame-sampling tests (jbrain.media);
+      # ubuntu-latest ships them, but install explicitly so the suite never silently
+      # skips and drops coverage.
+      - run: sudo apt-get update && sudo apt-get install -y ffmpeg
       - uses: astral-sh/setup-uv@v7
       - run: uv sync --all-extras
       - run: uv run ruff check .

@@ -1,5 +1,11 @@
 FROM python:3.12-slim AS base
 
+# ffmpeg/ffprobe: the worker's analyze_video job samples video frames and extracts
+# the audio track through them (jbrain.media). A slim base has neither.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends ffmpeg \
+ && rm -rf /var/lib/apt/lists/*
+
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
 WORKDIR /app
