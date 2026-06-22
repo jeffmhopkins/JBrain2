@@ -128,23 +128,21 @@ describe("OpsScreen", () => {
     expect(screen.getByText("jbrain/api:edge", { exact: false })).toBeInTheDocument();
   });
 
-  it("the History card lazy-loads graphs on expand and switches range", async () => {
+  it("the History card is expanded by default on the 6h window and switches range", async () => {
     fetchMock.mockImplementation(
       async (input) => baseMock(input) ?? new Response(null, { status: 404 }),
     );
 
     render(<OpsScreen />);
 
-    // Collapsed by default — no history fetch until opened.
-    const history = await screen.findByRole("button", { name: /History/ });
-    expect(fetchMock.mock.calls.some(([u]) => String(u).includes("metrics/history"))).toBe(false);
-
-    fireEvent.click(history);
-
-    // Charts render once the body mounts and the fetch resolves. "CPU load" and
-    // "Fan" are unique to the History card (System shows "Load"/"Fans").
+    // Open by default: charts render on mount, fetched over the 6h window.
+    // "CPU load" and "Fan" are unique to the History card (System shows
+    // "Load"/"Fans").
     expect(await screen.findByText("CPU load")).toBeInTheDocument();
     expect(screen.getByText("Fan")).toBeInTheDocument();
+    expect(fetchMock.mock.calls.some(([u]) => String(u).includes("metrics/history?range=6h"))).toBe(
+      true,
+    );
     // Peak label reflects the higher of the two buckets (load 1.5).
     expect(screen.getByText("1.50 peak")).toBeInTheDocument();
     expect(screen.getByText("2 30s buckets")).toBeInTheDocument();
@@ -236,7 +234,10 @@ describe("OpsScreen", () => {
 
     render(<OpsScreen />);
 
-    expect(await screen.findByRole("alert")).toHaveTextContent("Request failed: 500");
+    // With everything down the now-open History card also surfaces its own
+    // alert, so assert the failure is reported rather than that it's the lone one.
+    const alerts = await screen.findAllByRole("alert");
+    expect(alerts.some((el) => el.textContent?.includes("Request failed: 500"))).toBe(true);
   });
 
   it("opens the Runs surface from the Ops header (Direction C, reachable from Ops)", async () => {
