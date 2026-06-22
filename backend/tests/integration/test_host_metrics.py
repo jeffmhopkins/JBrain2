@@ -91,7 +91,9 @@ async def test_rollup_feeds_hourly_read(maker: async_sessionmaker) -> None:
     old = now - timedelta(days=3)
     for i in range(4):
         await ops_metrics.store_sample(
-            maker, OWNER, _sample(load=1.0, gpu=float(i * 10)),
+            maker,
+            OWNER,
+            _sample(load=1.0, gpu=float(i * 10)),
             captured_at=old + timedelta(minutes=i),
         )
     written = await ops_metrics.rollup(maker, OWNER, window=timedelta(days=10), now=now)

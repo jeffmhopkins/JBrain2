@@ -171,9 +171,7 @@ async def _sample_metrics_safely(
         log.warning("worker.metrics_sample_error", error=repr(exc))
 
 
-async def _maintain_metrics_safely(
-    maker: async_sessionmaker[AsyncSession], *, boot: bool
-) -> None:
+async def _maintain_metrics_safely(maker: async_sessionmaker[AsyncSession], *, boot: bool) -> None:
     """Refresh the hourly rollup and prune past-retention rows. The boot pass
     rolls up the full raw-retention window in case the worker was down for a
     while; steady-state passes only refresh the trailing few hours."""
@@ -236,10 +234,7 @@ async def run_loop(
         if supervisor_client is not None and now - last_sample >= METRICS_SAMPLE_SECONDS:
             await _sample_metrics_safely(maker, supervisor_client, supervisor_token)
             last_sample = now
-        if (
-            supervisor_client is not None
-            and now - last_maintenance >= METRICS_MAINTENANCE_SECONDS
-        ):
+        if supervisor_client is not None and now - last_maintenance >= METRICS_MAINTENANCE_SECONDS:
             await _maintain_metrics_safely(maker, boot=not metrics_booted)
             metrics_booted = True
             last_maintenance = now

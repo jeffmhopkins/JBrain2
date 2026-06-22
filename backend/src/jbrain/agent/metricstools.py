@@ -59,8 +59,7 @@ def _format(range_label: str, data: dict[str, Any]) -> str:
         return f"No host-metrics samples were recorded in the last {range_label}."
 
     lines = [
-        f"Server health over the last {range_label}"
-        f" ({len(points)} {data['resolution']} buckets):"
+        f"Server health over the last {range_label} ({len(points)} {data['resolution']} buckets):"
     ]
 
     load = _stats(_series(points, "load_1m"))

@@ -273,10 +273,10 @@ async def history(
     """  # noqa: S608 - table/column names are module constants, only values bind
     async with scoped_session(maker, ctx) as session:
         rows = (
-            await session.execute(
-                text(sql), {"step": step, "since": since, "until": until}
-            )
-        ).mappings().all()
+            (await session.execute(text(sql), {"step": step, "since": since, "until": until}))
+            .mappings()
+            .all()
+        )
 
     def _int(value: Any) -> int | None:
         return int(value) if value is not None else None
