@@ -12,15 +12,15 @@ list shows liveness (and a stale grant is obvious to revoke).
 Both columns are nullable and only ever set for capability tokens, so existing
 owner/device principals are untouched (NULL expiry = never lapses).
 
-Revision ID: 0083
-Revises: 0082
+Revision ID: 0086
+Revises: 0085
 Create Date: 2026-06-22
 """
 
 from alembic import op
 
-revision = "0083"
-down_revision = "0082"
+revision = "0086"
+down_revision = "0085"
 branch_labels = None
 depends_on = None
 

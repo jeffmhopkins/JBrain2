@@ -11,15 +11,15 @@ transcript live in a new nullable `analysis` jsonb column alongside the existing
 Both kind allowlists are explicit CHECKs (migrations 0011 / 0003+0014), so the new
 kind is admitted in each. Rides the existing RLS policies + grants (no new table).
 
-Revision ID: 0083
-Revises: 0082
+Revision ID: 0084
+Revises: 0083
 Create Date: 2026-06-22
 """
 
 from alembic import op
 
-revision = "0083"
-down_revision = "0082"
+revision = "0084"
+down_revision = "0083"
 branch_labels = None
 depends_on = None
 
