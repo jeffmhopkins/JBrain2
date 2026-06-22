@@ -38,7 +38,8 @@ const SAMPLE_INTERVAL_S = 5;
 
 function metersBetween(a: LatLon, b: LatLon): number {
   const north = (b.lat - a.lat) * EARTH_M_PER_DEG;
-  const east = (b.lon - a.lon) * EARTH_M_PER_DEG * Math.cos((((a.lat + b.lat) / 2) * Math.PI) / 180);
+  const east =
+    (b.lon - a.lon) * EARTH_M_PER_DEG * Math.cos((((a.lat + b.lat) / 2) * Math.PI) / 180);
   return Math.hypot(north, east);
 }
 
