@@ -9,7 +9,7 @@ import "leaflet/dist/leaflet.css";
 // Side-effect import: augments L with `heatLayer` (the gradient Heat view).
 import "leaflet.heat";
 import type { LocationFix, PlaceGeofence } from "../api/client";
-import { heatOvalPoints } from "./heatOval";
+import { heatTrailPoints } from "./heatTrail";
 import { withinAccuracy } from "./locationFilter";
 import { type TrailMetric, bucketColor, computeDwell, metricBucket } from "./trailMetric";
 
@@ -247,20 +247,18 @@ export function createLocationMap(
       // A real gradient heat layer: dwell density reads as the blue→red ramp; the
       // per-point radius and weight are owner-tunable from the Heat control. A modest
       // default weight so transit reads cool and only repeated dwell builds to hot.
-      // Speed shapes each blob: a moving fix is smeared into an oval pointing the way
-      // it was going (longer the faster), while parked spots stay round.
+      // Movement shapes it: travelled segments are filled point-to-point into a ribbon,
+      // while parked spots stay round (see heatTrailPoints).
       const weight = state.heatWeight ?? 0.4;
-      // The spot radius is in screen pixels; convert to meters at the current zoom so
-      // the speed-ovals are sized against the blob you actually see (not raw metres,
-      // which made fast fixes look round when the radius dwarfed the stretch).
+      // The spot radius is in screen pixels; convert to meters at the current zoom so the
+      // ribbon's fill spacing tracks the blob you actually see (a fraction of the radius).
       const lat0 = (track[0] as L.LatLng).lat;
       const metersPerPixel =
         (40_075_016.686 * Math.cos((lat0 * Math.PI) / 180)) / 2 ** (map.getZoom() + 8);
-      const pts = heatOvalPoints(
-        kept,
+      const pts = heatTrailPoints(
         track.map((ll) => ({ lat: ll.lat, lon: ll.lng })),
         weight,
-        state.heatRadius * metersPerPixel,
+        state.heatRadius * metersPerPixel * 0.5,
       );
       L.heatLayer(pts, {
         radius: state.heatRadius,
