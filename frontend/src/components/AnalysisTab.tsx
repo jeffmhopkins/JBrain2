@@ -9,10 +9,18 @@
 import { type KeyboardEvent, useCallback, useEffect, useRef, useState } from "react";
 import { EdgeValue, FactCitation, FactTenure, KindBadge, StatusChip } from "../analysis/bits";
 import { dedupeTokens, edgePath, fmtConfidence, fmtTemporal } from "../analysis/format";
-import { type AnalysisEntity, type FactOut, type NoteAnalysis, api } from "../api/client";
+import {
+  type AnalysisEntity,
+  type AttachmentExtract,
+  type FactOut,
+  type NoteAnalysis,
+  api,
+  attachmentUrl,
+} from "../api/client";
 import { awaitingImageCount } from "../notes/lifecycle";
 import type { StreamAttachment } from "../notes/useNotes";
 import { useForegroundRef } from "../visibility";
+import { AudioTranscript, transcriptWords } from "./AudioTranscript";
 import {
   ImageExpansion,
   type ImageExtractsApi,
@@ -124,6 +132,86 @@ function imageSources(attachments: StreamAttachment[] | null): ImageSource[] {
   );
 }
 
+interface AudioSource {
+  id: string;
+  filename: string;
+}
+
+function audioSources(attachments: StreamAttachment[] | null): AudioSource[] {
+  return (attachments ?? []).flatMap((a) =>
+    a.id !== null && a.mediaType.startsWith("audio/") ? [{ id: a.id, filename: a.filename }] : [],
+  );
+}
+
+/** The audio attachments' transcripts, each as a playable karaoke card. Lazily
+ * loads each attachment's transcript extract (with its per-word data) and renders
+ * the reused AudioTranscript component over the note's audio download URL. */
+function AudioTranscriptSources({ audio }: { audio: AudioSource[] }) {
+  const [extracts, setExtracts] = useState<Record<string, AttachmentExtract | null>>({});
+  const loaded = useRef<Set<string>>(new Set());
+  const ids = audio.map((a) => a.id).join(",");
+
+  // Keyed on the id list (a new `audio` array every render would loop); the ref
+  // tracks which ids were already fetched.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: id-list keyed, ref-guarded
+  useEffect(() => {
+    let cancelled = false;
+    for (const a of audio) {
+      if (loaded.current.has(a.id)) continue;
+      loaded.current.add(a.id);
+      api
+        .attachmentExtracts(a.id)
+        .then((rows) => {
+          if (cancelled) return;
+          const transcript = rows.find((r) => r.kind === "transcript") ?? null;
+          setExtracts((prev) => ({ ...prev, [a.id]: transcript }));
+        })
+        .catch(() => {
+          if (!cancelled) setExtracts((prev) => ({ ...prev, [a.id]: null }));
+        });
+    }
+    return () => {
+      cancelled = true;
+    };
+  }, [ids]);
+
+  return (
+    <>
+      {audio.map((a) => {
+        const extract = extracts[a.id];
+        if (extract === undefined) {
+          return (
+            <p key={a.id} className="analysis-sources-meta">
+              {a.filename} · loading transcript…
+            </p>
+          );
+        }
+        if (extract === null || !extract.text) {
+          return (
+            <p key={a.id} className="analysis-sources-meta">
+              {a.filename} · no transcript yet
+            </p>
+          );
+        }
+        const words = transcriptWords(extract.words);
+        const lastWord = words[words.length - 1];
+        return (
+          <div key={a.id} className="analysis-audio-card">
+            <AudioTranscript
+              audioUrl={attachmentUrl(a.id)}
+              filename={a.filename}
+              model={extract.tool}
+              words={words}
+              text={extract.text}
+              durationMs={lastWord ? lastWord.endMs : null}
+            />
+          </div>
+        );
+      })}
+    </>
+  );
+}
+
 function StageMark({ status }: { status: StageStatus }) {
   if (status === "done") return <span className="stage-done">✓</span>;
   if (status === "running") {
@@ -218,6 +306,7 @@ function SourceImageRow({ source, extractsApi, settled, onMore }: SourceImageRow
 interface SourcesCardProps {
   bodyChars: number;
   images: ImageSource[];
+  audio: AudioSource[];
   extractsApi: ImageExtractsApi;
   /** null = not yet analyzed (gated/waiting) — the footer re-run disables. */
   analysis: NoteAnalysis | null;
@@ -229,6 +318,7 @@ interface SourcesCardProps {
 function SourcesCard({
   bodyChars,
   images,
+  audio,
   extractsApi,
   analysis,
   rerunning,
@@ -264,6 +354,7 @@ function SourcesCard({
             onMore={() => setSheetFor(source)}
           />
         ))}
+        {audio.length > 0 && <AudioTranscriptSources audio={audio} />}
         <div className="analysis-sources-foot">
           {analysis !== null ? (
             <p className="analysis-sources-provenance">
@@ -333,6 +424,7 @@ export function AnalysisTab({
   const [state, setState] = useState<AnalysisState>({ phase: "loading" });
   const [rerunning, setRerunning] = useState(false);
   const images = imageSources(attachments);
+  const audio = audioSources(attachments);
   const extractsApi = useImageExtracts(images.map((a) => a.id));
   const { refresh: refreshExtracts } = extractsApi;
 
@@ -438,6 +530,7 @@ export function AnalysisTab({
         <SourcesCard
           bodyChars={bodyChars}
           images={images}
+          audio={audio}
           extractsApi={extractsApi}
           analysis={null}
           rerunning={false}
@@ -510,6 +603,7 @@ export function AnalysisTab({
       <SourcesCard
         bodyChars={bodyChars}
         images={images}
+        audio={audio}
         extractsApi={extractsApi}
         analysis={analysis}
         rerunning={rerunning}

@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Protocol
+from typing import Any, Protocol
 
 from jbrain.db.session import SessionContext
 
@@ -35,6 +35,8 @@ class ExtractInfo:
     tool: str
     confidence: float | None
     created_at: datetime
+    # Per-word transcript breakdown (transcript rows only; None otherwise).
+    words: list[dict[str, Any]] | None = None
 
 
 @dataclass(frozen=True)

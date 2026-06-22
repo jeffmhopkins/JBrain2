@@ -8,10 +8,10 @@ LLM, no database. RLS is modeled by membership (an unknown id reads as missing).
 import pytest
 
 from jbrain.agent.attachments import AttachmentInfo
-from jbrain.agent.loop import ToolContext
+from jbrain.agent.loop import ToolContext, ToolOutput
 from jbrain.agent.transcribetools import build_transcribe_handlers
 from jbrain.db.session import SessionContext
-from jbrain.transcribe import Transcript
+from jbrain.transcribe import Transcript, Word
 
 SESSION = "11111111-1111-1111-1111-111111111111"
 CTX = ToolContext(
@@ -109,14 +109,31 @@ async def test_transcribes_audio_and_unloads_after() -> None:
     blobs, repo = FakeBlobs(), FakeAttachments()
     blobs.data["sha-a"] = b"RIFF audio"
     repo.add(AUDIO_ID, media_type="audio/wav", sha="sha-a", filename="memo.wav")
-    client = FakeClient(Transcript(text="  hello team  "))
+    client = FakeClient(
+        Transcript(
+            text="  hello team  ",
+            words=(Word("hello", 0, 400, 0.9), Word("team", 400, 900, 0.5)),
+            duration_ms=900,
+        )
+    )
     gateway = FakeGateway()
 
     out = await _tool(client, blobs, repo, gateway)({"source_attachment_id": AUDIO_ID}, CTX)
 
-    assert "memo.wav" in out and "hello team" in out
+    assert "memo.wav" in out and "hello team" in out  # model still sees the text
     assert client.calls == [{"filename": "memo.wav", "media_type": "audio/wav"}]
     assert gateway.unloaded == ["whisper-x"]  # unload-after
+    # The owner gets the rich `transcript` view, carrying the attachment id (not a
+    # URL) + the per-word breakdown for the karaoke card.
+    assert isinstance(out, ToolOutput) and out.view is not None
+    assert out.view.view == "transcript" and out.view.data["attachment_id"] == AUDIO_ID
+    assert out.view.data["source"] == "chat" and out.view.data["duration_ms"] == 900
+    assert out.view.data["words"][1] == {
+        "text": "team",
+        "start_ms": 400,
+        "end_ms": 900,
+        "confidence": 0.5,
+    }
 
 
 async def test_unknown_or_non_uuid_id_is_a_clean_miss() -> None:

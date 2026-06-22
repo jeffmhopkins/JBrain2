@@ -140,12 +140,26 @@ class TranscribePipeline:
             await self._unload()
 
         clean = transcript.text.strip()
+        # Per-word breakdown for the karaoke UI (display-only; the chunks still use
+        # `text`). NULL when the build emitted no word detail. The row's overall
+        # `confidence` stays the flat Guards cap; per-word confidence lives here and
+        # is what the analysis weighting (a follow-up) will read.
+        words = [
+            {
+                "text": w.text,
+                "start_ms": w.start_ms,
+                "end_ms": w.end_ms,
+                "confidence": round(w.confidence, 4),
+            }
+            for w in transcript.words
+        ] or None
         row = AttachmentExtract(
             attachment_id=attachment_uuid,
             kind=KIND_TRANSCRIPT,
             tool=f"whisper:{self._model}",
             text=clean,
             confidence=TRANSCRIPT_CONFIDENCE if clean else 0.0,
+            words=words,
             source_anchor=filename,
             domain_code=domain,
         )

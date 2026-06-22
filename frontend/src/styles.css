@@ -13126,3 +13126,139 @@ input.ld-title {
   color: var(--text-3);
   margin-top: 14px;
 }
+
+/* ===== Audio transcript (AudioTranscript.tsx; spec: docs/mocks/audio-transcript-approved.html) ===== */
+.atx {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-card);
+  overflow: hidden;
+}
+.atx-hd {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border);
+}
+.atx-fi {
+  width: 34px;
+  height: 34px;
+  flex: 0 0 auto;
+  border-radius: 10px;
+  background: var(--steel-tint);
+  color: var(--steel);
+  display: grid;
+  place-items: center;
+}
+.atx-fn {
+  font-size: var(--fs-secondary);
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.atx-meta {
+  margin-left: auto;
+  font-size: var(--fs-micro);
+  color: var(--text-2);
+}
+.atx-player {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 12px 14px;
+}
+.atx-play {
+  width: 40px;
+  height: 40px;
+  flex: 0 0 auto;
+  border: 0;
+  border-radius: var(--r-pill);
+  background: var(--steel);
+  color: #0e0f11;
+  font-size: 14px;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+}
+.atx-track {
+  flex: 1;
+  height: 6px;
+  border-radius: var(--r-pill);
+  background: var(--surface-2);
+  position: relative;
+  cursor: pointer;
+}
+.atx-fill {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  border-radius: var(--r-pill);
+  background: var(--steel);
+}
+.atx-knob {
+  position: absolute;
+  top: 50%;
+  width: 13px;
+  height: 13px;
+  border-radius: var(--r-pill);
+  background: var(--text);
+  transform: translate(-50%, -50%);
+}
+.atx-time {
+  font-family: var(--mono, ui-monospace, monospace);
+  font-size: var(--fs-micro);
+  color: var(--text-2);
+  min-width: 74px;
+  text-align: right;
+}
+.atx-body {
+  padding: 4px 14px 14px;
+  font-size: var(--fs-body);
+  line-height: 1.75;
+  max-height: 360px;
+  overflow: auto;
+}
+.atx-w {
+  display: inline;
+  border: 0;
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  border-radius: 5px;
+  transition: background 0.08s;
+}
+.atx-w.now {
+  background: var(--steel);
+  color: #0e0f11 !important;
+  padding: 1px 3px;
+  margin: 0 -2px;
+}
+.atx-plain {
+  color: var(--text);
+  white-space: pre-wrap;
+}
+.atx-legend {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 10px 14px 14px;
+  border-top: 1px solid var(--border);
+  font-size: var(--fs-micro);
+  color: var(--text-2);
+}
+.atx-grad {
+  flex: 0 1 160px;
+  height: 7px;
+  border-radius: var(--r-pill);
+  background: linear-gradient(90deg, var(--rose), var(--amber), var(--green));
+}
+.atx-hint {
+  margin-left: auto;
+  color: var(--text-3);
+}

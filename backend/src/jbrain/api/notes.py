@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Annotated, cast
+from typing import Annotated, Any, cast
 
 from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse
@@ -325,6 +325,8 @@ class ExtractOut(BaseModel):
     tool: str
     confidence: float | None
     created_at: datetime
+    # Per-word transcript breakdown for the karaoke UI (transcript rows only).
+    words: list[dict[str, Any]] | None = None
 
 
 class ExtractsOut(BaseModel):
@@ -348,6 +350,7 @@ async def attachment_extracts(
                 tool=r.tool,
                 confidence=r.confidence,
                 created_at=r.created_at,
+                words=r.words,
             )
             for r in rows
         ]

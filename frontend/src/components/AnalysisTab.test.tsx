@@ -100,6 +100,7 @@ function extract(kind: "ocr" | "caption", text: string): AttachmentExtract {
     tool: "xai:grok-4.3",
     confidence: kind === "ocr" ? 0.7 : 0.6,
     created_at: "2026-06-11T09:00:00.000Z",
+    words: null,
   };
 }
 

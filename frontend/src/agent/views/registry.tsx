@@ -6,7 +6,13 @@
 // component is a deliberate change here, like adding a tool.
 
 import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
-import { generatedImageSourceUrl, generatedImageUrl } from "../../api/client";
+import {
+  attachmentUrl,
+  chatAttachmentUrl,
+  generatedImageSourceUrl,
+  generatedImageUrl,
+} from "../../api/client";
+import { AudioTranscript, transcriptWords } from "../../components/AudioTranscript";
 import type { CitationRef, ViewPayload } from "../types";
 import { Lightbox } from "./Lightbox";
 import {
@@ -670,6 +676,27 @@ function GeneratedImage({ data }: ViewProps): ReactNode {
   return <GenerateImage src={generatedImageUrl(imageId)} alt={alt} meta={meta} data={data} />;
 }
 
+/** `{attachment_id, source, filename, model?, duration_ms?, words: [...]}` — the
+ * audio-transcript card. The component builds the `<audio>` src from the id +
+ * source (a chat attachment for jerv's tool, a note attachment otherwise); no URL
+ * rides the payload (invariant #9). */
+function Transcript({ data }: ViewProps): ReactNode {
+  const attachmentId = String(data.attachment_id ?? "");
+  const source = data.source === "note" ? "note" : "chat";
+  const audioUrl =
+    source === "note" ? attachmentUrl(attachmentId) : chatAttachmentUrl(attachmentId);
+  return (
+    <AudioTranscript
+      audioUrl={audioUrl}
+      filename={typeof data.filename === "string" ? data.filename : "audio"}
+      model={typeof data.model === "string" ? data.model : undefined}
+      durationMs={typeof data.duration_ms === "number" ? data.duration_ms : null}
+      words={transcriptWords(data.words)}
+      text={typeof data.text === "string" ? data.text : undefined}
+    />
+  );
+}
+
 function GenerateImage({
   src,
   alt,
@@ -780,6 +807,7 @@ const REGISTRY: Record<string, (props: ViewProps) => ReactNode> = {
   location_map: LocationMap,
   place_card: PlaceCard,
   generated_image: GeneratedImage,
+  transcript: Transcript,
 };
 
 export function isKnownView(name: string): boolean {

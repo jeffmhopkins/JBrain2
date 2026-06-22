@@ -1,5 +1,6 @@
 import uuid
 from datetime import datetime
+from typing import Any
 
 from sqlalchemy import (
     BigInteger,
@@ -13,7 +14,7 @@ from sqlalchemy import (
     func,
     select,
 )
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, column_property, mapped_column, relationship
 
 from jbrain.models.analysis import NoteAnalysis
@@ -99,6 +100,10 @@ class AttachmentExtract(Base):
     tool: Mapped[str] = mapped_column(Text)  # provider:model provenance
     text: Mapped[str] = mapped_column(Text)
     confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # Per-word transcript breakdown (migration 0081), transcript rows only:
+    # [{"text", "start_ms", "end_ms", "confidence"}, ...] for the karaoke UI.
+    # Display-only; the searchable chunks use `text`. NULL for ocr/caption.
+    words: Mapped[list[dict[str, Any]] | None] = mapped_column(JSONB, nullable=True)
     source_anchor: Mapped[str | None] = mapped_column(Text, nullable=True)
     domain_code: Mapped[str] = mapped_column(Text, ForeignKey("app.domains.code"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

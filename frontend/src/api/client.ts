@@ -229,6 +229,9 @@ export interface AttachmentExtract {
   tool: string;
   confidence: number | null;
   created_at: string;
+  /** Per-word transcript breakdown ({text, start_ms, end_ms, confidence}), for the
+   * karaoke transcript card. Present on transcript rows only; null otherwise. */
+  words: { text: string; start_ms: number; end_ms: number; confidence: number }[] | null;
 }
 
 export type ImageAnalysisMode = "full" | "ocr";

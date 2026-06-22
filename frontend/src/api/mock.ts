@@ -453,6 +453,7 @@ function extractFixtures(): AttachmentExtract[] {
       tool: "xai:grok-4.3",
       confidence: 0.7,
       created_at: daysAgo(1, 10, 30),
+      words: null,
     },
     {
       kind: "caption",
@@ -460,6 +461,7 @@ function extractFixtures(): AttachmentExtract[] {
       tool: "xai:grok-4.3",
       confidence: 0.6,
       created_at: daysAgo(1, 10, 30),
+      words: null,
     },
   ];
 }
