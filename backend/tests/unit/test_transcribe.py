@@ -67,6 +67,45 @@ async def test_posts_verbose_json_multipart_and_parses_words() -> None:
     assert result.words[1].confidence == pytest.approx(0.6)  # mean(0.4, 0.8)
 
 
+def test_whisper_cpp_words_array_is_used_over_integer_tokens() -> None:
+    # The real whisper.cpp verbose_json shape: integer token IDs PLUS a per-word
+    # `words` array. The words array is the source of truth (the IDs carry no text).
+    body = {
+        "text": "Sammy talked",
+        "segments": [
+            {
+                "avg_logprob": -0.04,
+                "tokens": [2411, 50],
+                "words": [
+                    {"word": " Sammy", "start": 0.0, "end": 0.5, "probability": 0.9},
+                    {"word": " talked", "start": 0.5, "end": 1.0, "probability": 0.4},
+                ],
+            }
+        ],
+    }
+    tr = parse_transcript(json.dumps(body))
+    assert tr.words == (Word("Sammy", 0, 500, 0.9), Word("talked", 500, 1000, 0.4))
+
+
+def test_integer_tokens_without_words_fall_back_to_one_word_per_segment() -> None:
+    # A build that emits only integer token IDs (no `words`) must not yield nothing:
+    # the segment becomes one word so color + coarse sync still work.
+    body = {
+        "segments": [
+            {
+                "text": " hello world",
+                "start": 0.0,
+                "end": 2.0,
+                "avg_logprob": -0.7,
+                "tokens": [1, 2],
+            }
+        ]
+    }
+    tr = parse_transcript(json.dumps(body))
+    assert len(tr.words) == 1
+    assert tr.words[0].text == "hello world" and tr.words[0].end_ms == 2000
+
+
 def test_token_centiseconds_t0_t1_are_normalized() -> None:
     body = {
         "segments": [
