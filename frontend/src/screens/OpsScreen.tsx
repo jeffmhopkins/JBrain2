@@ -569,7 +569,7 @@ const HISTORY_RANGES: MetricRange[] = ["6h", "24h", "7d", "30d", "1y"];
  * is expanded — a collapsed History card costs nothing. The range buttons drive
  * the refetch; the resolution note tells the operator raw vs hourly rollup. */
 function HistoryBody() {
-  const [range, setRange] = useState<MetricRange>("24h");
+  const [range, setRange] = useState<MetricRange>("6h");
   const [history, setHistory] = useState<MetricsHistory | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -637,7 +637,11 @@ function HistoryBody() {
 
 function HistoryCard() {
   return (
-    <OpsCard title="History" summaryCollapsed={<span className="ops-card-summary">graphs</span>}>
+    <OpsCard
+      title="History"
+      defaultOpen
+      summaryCollapsed={<span className="ops-card-summary">graphs</span>}
+    >
       <HistoryBody />
     </OpsCard>
   );
