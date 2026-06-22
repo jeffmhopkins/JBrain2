@@ -794,6 +794,24 @@ def test_sidecars_pinned_to_their_versions() -> None:
         assert (tf.spec.name, tf.spec.version, tf.digest) == expected
 
 
+def test_query_server_metrics_offered_to_jerv() -> None:
+    """The host-metrics read is on jerv's allowlist and (declaring no domains) is
+    visible to jerv's empty-scope session — owner data stays gated by the tables' RLS,
+    but the hardware-telemetry summary is offered."""
+    from jbrain.agent.agents import JERV_TOOLS
+    from jbrain.agent.toolregistry import RegisteredTool, ToolRegistry
+
+    async def noop(_args: dict, _ctx: ToolContext) -> ToolOutput:
+        return ToolOutput("")
+
+    assert "query_server_metrics" in JERV_TOOLS
+    registry = ToolRegistry(
+        [RegisteredTool(load_tool(TOOLS_DIR / "query_server_metrics.tool"), noop)]
+    )
+    # Empty scopes (a sandboxed jerv session) + jerv's allowlist still surfaces it.
+    assert {t.name for t in registry.schemas_for(set(), JERV_TOOLS)} == {"query_server_metrics"}
+
+
 # --- read_wiki (the read-only wiki-editorial tool) ------------------------
 
 
