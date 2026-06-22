@@ -1,0 +1,198 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Session picker — live-turn activity glyph (chosen: stateful mini-glyph)</title>
+    <style>
+      /* Tokens mirrored from frontend/src/styles/tokens.css (dark). Reference artifact
+         for the DESIGN.md "Live-turn activity glyph on the row" decision. */
+      :root {
+        --bg: #0e0f11;
+        --surface: #17181b;
+        --border: #26282c;
+        --text: #e6e7e9;
+        --text-2: #9a9da3;
+        --text-3: #5c5f66;
+        --steel: #7fa7c9;
+        --rose: #cf8a8f;
+        --violet: #a493c9;
+        --accent: var(--steel);
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--text);
+        font: 14.5px/1.4 -apple-system, system-ui, sans-serif;
+        display: flex;
+        justify-content: center;
+        padding: 28px 14px;
+      }
+      .wrap {
+        width: 360px;
+      }
+      h1 {
+        font-size: 13px;
+        color: var(--text-2);
+        font-weight: 600;
+        margin: 0 0 12px;
+      }
+      .card {
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 14px;
+        overflow: hidden;
+      }
+      .row {
+        display: flex;
+        align-items: center;
+        gap: 11px;
+        height: 44px;
+        padding: 0 13px;
+        border-bottom: 1px solid var(--border);
+      }
+      .row:last-child {
+        border-bottom: none;
+      }
+      .dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 999px;
+        flex: none;
+      }
+      .dot.medical {
+        background: var(--rose);
+      }
+      .dot.financial {
+        background: var(--violet);
+      }
+      .title {
+        flex: 1;
+        min-width: 0;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .meta {
+        flex: none;
+        color: var(--text-2);
+        font-size: 12.5px;
+      }
+      .meta.turn {
+        color: var(--accent);
+      }
+      .car {
+        flex: none;
+        color: var(--text-3);
+      }
+
+      /* The glyph: sits in the same 8px lane as the dot, accent-tinted. */
+      .turn-glyph {
+        flex: none;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 2px;
+        width: 8px;
+        height: 8px;
+        color: var(--accent);
+      }
+      .turn-glyph.thinking i {
+        width: 3px;
+        height: 3px;
+        border-radius: 999px;
+        background: currentColor;
+        animation: turn-bounce 1s infinite ease-in-out both;
+      }
+      .turn-glyph.thinking i:nth-child(2) {
+        animation-delay: 0.16s;
+      }
+      .turn-glyph.thinking i:nth-child(3) {
+        animation-delay: 0.32s;
+      }
+      .turn-glyph.rendering {
+        animation: turn-twinkle 1.2s infinite ease-in-out;
+      }
+      @keyframes turn-bounce {
+        0%,
+        80%,
+        100% {
+          transform: translateY(0);
+          opacity: 0.45;
+        }
+        40% {
+          transform: translateY(-3px);
+          opacity: 1;
+        }
+      }
+      @keyframes turn-twinkle {
+        0%,
+        100% {
+          transform: scale(0.82) rotate(0deg);
+          opacity: 0.6;
+        }
+        50% {
+          transform: scale(1.12) rotate(18deg);
+          opacity: 1;
+        }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .turn-glyph.thinking i,
+        .turn-glyph.rendering {
+          animation: none;
+        }
+        .turn-glyph.rendering {
+          opacity: 1;
+          transform: none;
+        }
+      }
+      .note {
+        margin-top: 14px;
+        color: var(--text-3);
+        font-size: 12px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <h1>Chats — a chat with a live turn shows a stateful activity glyph</h1>
+      <div class="card">
+        <div class="row">
+          <span class="dot medical"></span>
+          <span class="title">Tax planning</span>
+          <span class="meta">2 turns</span>
+          <span class="car">›</span>
+        </div>
+        <div class="row">
+          <span class="turn-glyph rendering" aria-label="rendering">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+              <path d="M12 2l2.3 6.4L21 11l-6.7 2.6L12 20l-2.3-6.4L3 11l6.7-2.6z" />
+            </svg>
+          </span>
+          <span class="title">Lighthouse image</span>
+          <span class="meta turn">rendering…</span>
+          <span class="car">›</span>
+        </div>
+        <div class="row">
+          <span class="turn-glyph thinking" aria-label="thinking"><i></i><i></i><i></i></span>
+          <span class="title">Weekly recap</span>
+          <span class="meta turn">thinking…</span>
+          <span class="car">›</span>
+        </div>
+        <div class="row">
+          <span class="dot financial"></span>
+          <span class="title">Grocery list</span>
+          <span class="meta">5 turns</span>
+          <span class="car">›</span>
+        </div>
+      </div>
+      <p class="note">
+        Bouncing dots = thinking (reasoning / tools / answering); twinkling spark = an image
+        render. Reduced-motion holds a steady glyph.
+      </p>
+    </div>
+  </body>
+</html>

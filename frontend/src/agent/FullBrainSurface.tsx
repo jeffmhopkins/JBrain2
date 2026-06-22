@@ -121,6 +121,7 @@ export function FullBrainSurface({
           sessions={fb.sessions}
           agentOptions={fb.agentOptions}
           activeId={fb.active?.id ?? null}
+          activeTurn={fb.activeTurn}
           onOpen={fb.open}
           onCreate={fb.create}
           onClose={() => setPanel("none")}

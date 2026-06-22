@@ -159,6 +159,10 @@ interface Props {
   agentOptions?: readonly string[];
   /** The chat currently open in the surface, marked "you are here". */
   activeId?: string | null;
+  /** The chat with a turn streaming right now (and what it's doing) — drives the
+   * animated activity glyph on that row, so an in-flight thinking/render is visible
+   * even while another chat is open. */
+  activeTurn?: { sessionId: string; kind: "thinking" | "rendering" } | null;
   onOpen: (session: AgentSession) => void;
   onCreate: (body: SessionCreate) => Promise<AgentSession>;
   onClose: () => void;
@@ -173,6 +177,7 @@ export function SessionsPanel({
   sessions,
   agentOptions = ["curator", "teacher", "jerv"],
   activeId,
+  activeTurn,
   onOpen,
   onCreate,
   onClose,
@@ -234,6 +239,7 @@ export function SessionsPanel({
       key={s.id}
       session={s}
       active={s.id === activeId}
+      {...(activeTurn?.sessionId === s.id ? { turn: activeTurn.kind } : {})}
       onOpen={onOpen}
       onRename={onRename}
       onDelete={onDelete}
@@ -349,6 +355,7 @@ export function SessionsPanel({
 function SessionRow({
   session,
   active,
+  turn,
   onOpen,
   onRename,
   onDelete,
@@ -360,6 +367,8 @@ function SessionRow({
 }: {
   session: AgentSession;
   active: boolean;
+  /** Set when this chat has a turn streaming now: its activity glyph + label. */
+  turn?: "thinking" | "rendering";
   onOpen: (s: AgentSession) => void;
   onRename: (id: string, title: string) => void;
   onDelete: (id: string) => void;
@@ -538,22 +547,35 @@ function SessionRow({
             onClick={onTap}
             aria-current={active ? "true" : undefined}
           >
-            <span
-              className={`dot ${active ? "live" : scope.cls}`}
-              title={active ? `open · reads ${scope.label}` : `reads ${scope.label}`}
-            />
+            {turn ? (
+              <TurnGlyph kind={turn} />
+            ) : (
+              <span
+                className={`dot ${active ? "live" : scope.cls}`}
+                title={active ? `open · reads ${scope.label}` : `reads ${scope.label}`}
+              />
+            )}
             <span className={`m-title${session.title ? "" : " untitled"}`}>
               {session.title || "Untitled chat"}
             </span>
             <span className="m-meta">
-              {session.staged_count ? (
-                <span className="stat staged">{session.staged_count} staged</span>
-              ) : null}
-              {session.turn_count ? (
-                <span className="r-turns">
-                  {session.turn_count} turn{session.turn_count === 1 ? "" : "s"}
+              {turn ? (
+                // A live turn supersedes the turn/staged counts — say what it's doing.
+                <span className="stat turn-status">
+                  {turn === "rendering" ? "rendering…" : "thinking…"}
                 </span>
-              ) : null}
+              ) : (
+                <>
+                  {session.staged_count ? (
+                    <span className="stat staged">{session.staged_count} staged</span>
+                  ) : null}
+                  {session.turn_count ? (
+                    <span className="r-turns">
+                      {session.turn_count} turn{session.turn_count === 1 ? "" : "s"}
+                    </span>
+                  ) : null}
+                </>
+              )}
             </span>
             <svg
               className="m-car"
@@ -573,6 +595,28 @@ function SessionRow({
         )}
       </div>
     </div>
+  );
+}
+
+// The session row's live-activity glyph, sitting where the leading scope dot would:
+// bouncing dots while the agent is thinking, a twinkling spark while it renders an
+// image. `role="status"` + a label so it reads to assistive tech; the motion honors
+// prefers-reduced-motion in CSS (it falls back to a steady glyph).
+function TurnGlyph({ kind }: { kind: "thinking" | "rendering" }): ReactNode {
+  return (
+    <output className={`turn-glyph ${kind}`} aria-label={kind}>
+      {kind === "rendering" ? (
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+          <path d="M12 2l2.3 6.4L21 11l-6.7 2.6L12 20l-2.3-6.4L3 11l6.7-2.6z" />
+        </svg>
+      ) : (
+        <>
+          <i />
+          <i />
+          <i />
+        </>
+      )}
+    </output>
   );
 }
 

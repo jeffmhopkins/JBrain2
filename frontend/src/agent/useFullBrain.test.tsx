@@ -113,6 +113,40 @@ describe("useFullBrain — a turn stays attached to its own chat", () => {
     expect(result.current.messages.at(-1)?.text).toContain("here's your cat");
   });
 
+  it("exposes activeTurn — rendering while an image tool runs, cleared when idle", async () => {
+    let release: () => void = () => {};
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
+    async function* chat(): AsyncGenerator<ChatEvent> {
+      yield { type: "run", run_id: "r1" };
+      yield { type: "tool_call", id: "c1", name: "generate_image", arguments: {} };
+      yield { type: "tool_progress", tool_call_id: "c1", step: 3, total: 20 };
+      await gate;
+      yield { type: "text_delta", text: "done" };
+      yield { type: "done", stop_reason: "end_turn" };
+    }
+
+    const d = deps({ chat });
+    const { result } = renderHook(() => useFullBrain("fullbrain", d));
+    await waitFor(() => expect(result.current.active?.id).toBe("A"));
+    expect(result.current.activeTurn).toBeNull();
+
+    await act(async () => {
+      await result.current.send("draw");
+    });
+    // The running image tool reads as a render, scoped to its chat.
+    await waitFor(() => expect(result.current.activeTurn?.kind).toBe("rendering"));
+    expect(result.current.activeTurn?.sessionId).toBe("A");
+
+    await act(async () => {
+      release();
+      await Promise.resolve();
+    });
+    // Settled → no live turn.
+    await waitFor(() => expect(result.current.activeTurn).toBeNull());
+  });
+
   it("keeps a thinking turn (reasoning, no answer yet) across a chat switch", async () => {
     // Same scoping, but a turn that's mid-THOUGHT rather than rendering: the live
     // reasoning/thinking state must survive A→B→A just like an image render does.
