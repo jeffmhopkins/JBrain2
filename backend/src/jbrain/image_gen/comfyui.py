@@ -79,6 +79,20 @@ class _Binding:
 # Qwen-Image text->image, validated on the Strix Halo box: prompt=6, negative=7,
 # KSampler=3, EmptySD3LatentImage=58 (the loaders + ModelSamplingAuraFlow are authored).
 _GEN_BINDING = _Binding(prompt="6", sampler="3", latent="58", negative="7")
+# DreamShaper XL Lightning (the `fast` path) — the stock ComfyUI SDXL graph: positive=6,
+# negative=7, KSampler=3, EmptyLatentImage=5 (CheckpointLoaderSimple=4 supplies model/CLIP/VAE
+# and the sampler/CFG are authored into the template, so the driver fills only the shared slots).
+_DREAMSHAPER_TEMPLATE = "dreamshaper_xl.json"
+_DREAMSHAPER_BINDING = _Binding(prompt="6", sampler="3", latent="5", negative="7")
+
+# A generate model id -> its (template, binding). The handler passes the recorded model
+# string (e.g. "qwen-image-2512", "dreamshaper-xl-lightning"); the driver stays graph-agnostic
+# by looking the graph up here rather than hard-coding one, so adding a model is a JSON +
+# binding pair, not a code path. An unknown id raises (below) — we never run the wrong graph.
+_GEN_GRAPHS: dict[str, tuple[str, _Binding]] = {
+    "qwen-image-2512": (_GEN_TEMPLATE, _GEN_BINDING),
+    "dreamshaper-xl-lightning": (_DREAMSHAPER_TEMPLATE, _DREAMSHAPER_BINDING),
+}
 # Qwen-Image-Edit image->image, exported from the box: the positive prompt is a
 # TextEncodeQwenImageEditPlus (68, key "prompt"), the negative its sibling (69), KSampler
 # is 65, LoadImage is 41, and ImageScaleToTotalPixels (79) sets the output's total-pixel
@@ -192,14 +206,25 @@ class ComfyUiImageGen:
         self._sleep = sleep
 
     async def generate(self, spec: GenSpec, on_progress: OnProgress | None = None) -> bytes:
-        workflow = _load_template(_GEN_TEMPLATE)
-        self._fill_common(workflow, spec, _GEN_BINDING)
-        latent_node = _GEN_BINDING.latent
-        assert latent_node is not None  # the gen graph always carries a latent node
+        template, binding = self._gen_graph(spec.model)
+        workflow = _load_template(template)
+        self._fill_common(workflow, spec, binding)
+        latent_node = binding.latent
+        assert latent_node is not None  # every gen graph carries an Empty*LatentImage node
         latent = workflow[latent_node]["inputs"]
         latent["width"] = spec.width
         latent["height"] = spec.height
         return await self._run(workflow, on_progress)
+
+    @staticmethod
+    def _gen_graph(model: str) -> tuple[str, _Binding]:
+        """The (template, binding) for a generate model. Unknown id -> ImageGenError, so a
+        misrouted model fails as a clean tool error rather than silently rendering the wrong
+        graph (e.g. an SDXL request running the Qwen graph against whatever weights are loaded)."""
+        graph = _GEN_GRAPHS.get(model)
+        if graph is None:
+            raise ImageGenError(f"no generate graph for model {model!r}")
+        return graph
 
     async def edit(
         self,

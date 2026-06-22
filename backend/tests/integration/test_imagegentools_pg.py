@@ -186,6 +186,32 @@ async def test_generate_plumbs_effort_and_negative_prompt_into_the_spec(
     assert fake.last_gen.steps == 20 and fake.last_gen.negative_prompt == ""
 
 
+async def test_generate_fast_uses_the_dreamshaper_model_and_short_step_curve(
+    maker: async_sessionmaker,
+) -> None:
+    """speed: fast records the DreamShaper model on the row and drives the distilled step
+    curve (effort 5 → 6 steps), while the default stays the full Qwen model at 20 steps."""
+    owner = await _owner(maker)
+    fake = FakeImageGen()
+    handlers = await _handlers(maker, owner, fake)
+
+    out = await handlers["generate_image"](
+        {"prompt": "a quick sketch", "speed": "fast"}, _ctx(owner)
+    )
+    assert isinstance(out, ToolOutput) and isinstance(out.view, ViewPayload)
+    assert out.view.data["model"] == "dreamshaper-xl-lightning"
+    assert fake.last_gen is not None and fake.last_gen.model == "dreamshaper-xl-lightning"
+    assert fake.last_gen.steps == 6  # effort 5 default → the fast curve's 6, not 20
+
+    # The row really recorded the fast model; the default request stays on Qwen.
+    async with scoped_session(maker, owner) as s:
+        model = (await s.execute(text("SELECT model FROM app.generated_images"))).scalar()
+    assert model == "dreamshaper-xl-lightning"
+
+    await handlers["generate_image"]({"prompt": "a finished piece"}, _ctx(owner))
+    assert fake.last_gen.model == "qwen-image-2512" and fake.last_gen.steps == 20
+
+
 async def test_generate_frees_comfyui_after_the_render(maker: async_sessionmaker) -> None:
     # After the image is in hand, ComfyUI's resident model is unloaded so its ~39 GB
     # returns to the unified pool (for the reply's LLM reload / a follow-up edit).

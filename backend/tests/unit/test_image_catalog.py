@@ -34,6 +34,22 @@ def test_generate_model_is_the_recommended_default() -> None:
     assert edit is not None and not edit.recommended and edit.kind == "edit"
 
 
+def test_dreamshaper_is_a_single_all_in_one_checkpoint() -> None:
+    # The fast SDXL path ships as ONE checkpoint file (model+CLIP+baked VAE) in the
+    # `checkpoints` subdir — no separate encoder/VAE, unlike the Qwen split layout.
+    m = catalog.get("dreamshaper-xl-lightning")
+    assert m is not None
+    assert m.kind == "generate" and m.workflow == "dreamshaper_xl.json"
+    (only,) = m.files
+    assert only.dest_subdir == "checkpoints"
+    assert only.hf_repo == "Lykon/dreamshaper-xl-lightning"
+    assert only.repo_path == "DreamShaperXL_Lightning.safetensors"
+    # Distilled: a tight low step band (its sweet spot through its ceiling).
+    assert m.fast_steps == 4 and m.quality_steps == 8
+    # Opt-in, so a quality-only box stays lean.
+    assert not m.recommended
+
+
 def test_generate_and_edit_share_the_text_encoder_and_vae() -> None:
     gen = catalog.get("qwen-image")
     edit = catalog.get("qwen-image-edit")

@@ -10,7 +10,7 @@
 # It:
 #   1. resolves the chosen catalog models (jbrain.image_gen.catalog),
 #   2. downloads their weight files into ./comfyui-models/<subdir> (the layout
-#      ComfyUI expects: diffusion_models / text_encoders / vae / loras),
+#      ComfyUI expects: diffusion_models / text_encoders / vae / loras / checkpoints),
 #   3. prunes weight files no longer named by the catalog (so a model swap — e.g.
 #      fp8 -> bf16 — reclaims the superseded file),
 #   4. flips JBRAIN_COMFYUI_* on in .env and starts the `comfyui` compose profile.
@@ -57,12 +57,6 @@ if [ "$(printf '6.18.4\n%s\n' "${KREL%%-*}" | sort -V | head -1)" != "6.18.4" ];
   say "WARNING: kernel $KREL is older than 6.18.4 — gfx1151 has a stability bug below that."
 fi
 
-# Weights are tens of GB; warn (don't block) if the install disk looks tight.
-AVAIL_GB="$(df -BG --output=avail "$INSTALL_DIR" | tail -1 | tr -dc '0-9')"
-if [ -n "$AVAIL_GB" ] && [ "$AVAIL_GB" -lt 65 ]; then
-  say "WARNING: only ${AVAIL_GB} GB free on $INSTALL_DIR — the recommended set needs ~58 GB (bf16)."
-fi
-
 # Read from the catalog via the api image. --no-deps so a pure-Python dump doesn't
 # wait on the database. Fail LOUDLY if the image isn't built — otherwise an empty
 # result would silently fall through to "all models" instead of the requested set.
@@ -87,6 +81,15 @@ say "Selected models: ${IDS[*]}"
 # never hard-codes repos or filenames.
 MANIFEST="$(catalog -m jbrain.image_gen.catalog "${IDS[@]}")"
 [ -n "$MANIFEST" ] || { echo "[comfyui] empty manifest — aborting before download." >&2; exit 1; }
+
+# Warn (don't block) if the install disk looks tight for THIS run's selection — the
+# requested models' total download from the manifest, not a fixed guess, so installing a
+# small model (DreamShaper ~7 GB) doesn't print a scary ~58 GB warning.
+NEED_GB="$(MANIFEST="$MANIFEST" python3 -c 'import json,os,math; print(math.ceil(sum(m["size_gb"] for m in json.loads(os.environ["MANIFEST"]))))')"
+AVAIL_GB="$(df -BG --output=avail "$INSTALL_DIR" | tail -1 | tr -dc '0-9')"
+if [ -n "$AVAIL_GB" ] && [ -n "$NEED_GB" ] && [ "$AVAIL_GB" -lt "$NEED_GB" ]; then
+  say "WARNING: only ${AVAIL_GB} GB free on $INSTALL_DIR — the selected models need ~${NEED_GB} GB."
+fi
 
 mkdir -p "$MODELS_DIR"
 
@@ -178,5 +181,6 @@ sed -i '/^COMFYUI_ENABLED=/d; /^COMFYUI_URL=/d; /^COMFYUI_MODELS=/d; /^VIDEO_GID
 say "Starting the ComfyUI service"
 docker compose --profile comfyui up -d comfyui
 
-say "Done. Image generation is now available to jerv. First generation pays a"
-say "one-time model load; a 20-step Qwen-Image takes ~3.5 min on the iGPU."
+say "Done. Image generation is now available to jerv. The first render with a model pays a"
+say "one-time load; a 20-step Qwen-Image takes ~3.5 min on the iGPU, while the DreamShaper XL"
+say "fast model (generate_image speed: fast) renders in seconds."
