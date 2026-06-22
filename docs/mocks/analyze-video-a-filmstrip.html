@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>analyze_video — A: filmstrip timeline</title>
+<!--
+  MOCK A (analyze_video card, docs/PROCESS.md GUI gate). Variant: FILMSTRIP TIMELINE.
+  Video pane on top; a horizontal filmstrip of sampled frames sits right under the
+  scrubber and IS the timeline — the playhead rides it, the current frame lifts, and
+  tapping a frame seeks there. A synced "now" strip shows the active frame's AI
+  caption + the line being spoken. The summary is a collapsible panel at the bottom.
+  Reused in jerv's analyze_video result and a note's video attachment.
+  Component data (no URLs — invariant #9): { attachment_id, source, filename, model,
+  duration_ms, summary, frames:[{t_ms, caption, thumb_id}], words:[{text,start_ms,end_ms,confidence}] }
+-->
+<style>
+  :root{
+    --bg:#0E0F11; --surface:#17181B; --surface-2:#1E2024; --border:#26282C;
+    --text:#E6E7E9; --text-2:#9A9DA3; --text-3:#5C5F66;
+    --steel:#7FA7C9; --steel-tint:rgba(127,167,201,.13);
+    --amber:#C9A36A; --green:#8FBC9A; --rose:#CF8A8F;
+    --r-card:16px; --r-input:12px; --r-pill:999px;
+    --font:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+    --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+  }
+  [data-theme="light"]{--bg:#F7F7F5;--surface:#FFFFFF;--surface-2:#F0F0EE;--border:#E2E2DF;
+    --text:#1A1B1E;--text-2:#5C5F66;--text-3:#9A9DA3;}
+  *{box-sizing:border-box}
+  body{margin:0;background:#000;font-family:var(--font);color:var(--text);
+    display:flex;flex-direction:column;align-items:center;padding:18px 12px 40px}
+  .phone{width:390px;max-width:calc(100vw - 24px);min-height:760px;background:var(--bg);
+    border:1px solid var(--border);border-radius:34px;overflow:hidden;display:flex;flex-direction:column}
+  .topbar{height:52px;display:flex;align-items:center;justify-content:space-between;padding:0 16px;border-bottom:1px solid var(--border)}
+  .topbar .ttl{font-size:16px;font-weight:500}.topbar .sub{font-size:12px;color:var(--text-2)}
+  .iconbtn{width:32px;height:32px;border-radius:var(--r-pill);border:1px solid var(--border);background:var(--surface);color:var(--text-2);display:grid;place-items:center;cursor:pointer}
+  .scroll{flex:1;overflow:auto;padding:14px}
+  .toolnote{font-size:12px;color:var(--text-2);margin:2px 2px 10px}
+
+  .card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-card);overflow:hidden}
+  .hd{display:flex;align-items:center;gap:10px;padding:12px 14px;border-bottom:1px solid var(--border)}
+  .hd .fi{width:34px;height:34px;border-radius:10px;background:var(--steel-tint);color:var(--steel);display:grid;place-items:center;flex:0 0 auto}
+  .hd .fn{font-size:14px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .hd .meta{font-size:11px;color:var(--text-2);margin-left:auto;white-space:nowrap}
+
+  .stage{position:relative;aspect-ratio:16/9;background:#000;display:grid;place-items:center;overflow:hidden}
+  .stage .frm{position:absolute;inset:0;display:grid;place-items:center;color:#fff;font-size:13px;letter-spacing:.3px;text-shadow:0 1px 4px #0008}
+  .play{width:54px;height:54px;border-radius:var(--r-pill);border:0;background:#fff9;color:#0E0F11;display:grid;place-items:center;cursor:pointer;font-size:18px;position:relative;z-index:2}
+  .track{height:5px;background:var(--surface-2);position:relative;cursor:pointer}
+  .fill{position:absolute;left:0;top:0;bottom:0;background:var(--steel);width:0%}
+  .knob{position:absolute;top:50%;width:12px;height:12px;border-radius:var(--r-pill);background:#fff;transform:translate(-50%,-50%);left:0%}
+
+  .strip{display:flex;gap:6px;padding:10px 12px;overflow-x:auto;scrollbar-width:thin;border-bottom:1px solid var(--border)}
+  .thumb{flex:0 0 auto;width:62px;height:38px;border-radius:7px;position:relative;cursor:pointer;border:2px solid transparent;overflow:hidden;opacity:.7;transition:opacity .12s}
+  .thumb .tl{position:absolute;left:3px;bottom:2px;font-family:var(--mono);font-size:9px;color:#fff;text-shadow:0 1px 2px #000a}
+  .thumb.now{border-color:var(--steel);opacity:1}
+
+  .now{display:flex;gap:10px;padding:12px 14px}
+  .now .nt{font-family:var(--mono);font-size:11px;color:var(--steel);flex:0 0 auto;padding-top:2px}
+  .now .cap{font-size:14px;line-height:1.5}
+  .now .said{font-size:13px;color:var(--text-2);margin-top:5px}
+  .now .said b{color:var(--text);font-weight:600}
+
+  .sumwrap{border-top:1px solid var(--border)}
+  .sumtog{width:100%;border:0;background:transparent;color:var(--text-2);font:inherit;font-size:13px;text-align:left;padding:11px 14px;cursor:pointer;display:flex;align-items:center;gap:8px}
+  .sumtog .chev{margin-left:auto;transition:transform .15s}
+  .sumwrap.open .chev{transform:rotate(90deg)}
+  .sum{display:none;padding:0 14px 14px;font-size:14px;line-height:1.6;color:var(--text)}
+  .sumwrap.open .sum{display:block}
+  .pagecap{font-size:11px;color:var(--text-3);text-align:center;margin-top:12px;line-height:1.5}
+</style>
+</head>
+<body>
+  <div class="phone">
+    <div class="topbar">
+      <div><div class="ttl">A · Filmstrip timeline</div><div class="sub">frames ARE the scrubber</div></div>
+      <button class="iconbtn" id="theme">◑</button>
+    </div>
+    <div class="scroll">
+      <div class="toolnote">✓ analyze_video · qwen3-vl · 18 frames · 0:32</div>
+      <div class="card">
+        <div class="hd">
+          <div class="fi">▦</div>
+          <div style="min-width:0"><div class="fn">whiteboard-walkthrough.mp4</div></div>
+          <div class="meta">0:16 · qwen3-vl</div>
+        </div>
+        <div class="stage" id="stage">
+          <div class="frm" id="frm"></div>
+          <button class="play" id="play">▶</button>
+        </div>
+        <div class="track" id="track"><div class="fill" id="fill"></div><div class="knob" id="knob"></div></div>
+        <div class="strip" id="strip"></div>
+        <div class="now">
+          <div class="nt" id="nt">0:00</div>
+          <div><div class="cap" id="cap"></div><div class="said" id="said"></div></div>
+        </div>
+        <div class="sumwrap open" id="sumwrap">
+          <button class="sumtog" id="sumtog">Summary <span class="chev">▸</span></button>
+          <div class="sum" id="sum"></div>
+        </div>
+      </div>
+      <div class="pagecap">A: the sampled frames are the timeline. The playhead rides the filmstrip, the current frame lifts, tap any frame to jump. The synced strip shows that frame's AI caption + what's being said; the summary collapses.</div>
+    </div>
+  </div>
+<script>
+const FRAMES=[
+ {t:0,c:"A man stands at a whiteboard with an empty flow diagram outline.",h:"linear-gradient(135deg,#2b3a55,#46618f)"},
+ {t:2,c:"He writes 'INGEST' in the first box and underlines it.",h:"linear-gradient(135deg,#3a2b55,#6f4f8f)"},
+ {t:4,c:"Close-up of the board: arrows now connect INGEST → QUEUE.",h:"linear-gradient(135deg,#553a2b,#8f6f4f)"},
+ {t:6,c:"He points to a 'WORKER' box he's just added on the right.",h:"linear-gradient(135deg,#2b5540,#4f8f6f)"},
+ {t:8,c:"A laptop on the desk shows a terminal scrolling green log lines.",h:"linear-gradient(135deg,#1f2d22,#3f5f48)"},
+ {t:10,c:"Back to the board; he circles the QUEUE box emphatically.",h:"linear-gradient(135deg,#552b3a,#8f4f6f)"},
+ {t:12,c:"He gestures between WORKER and a new 'DB' cylinder.",h:"linear-gradient(135deg,#2b4a55,#4f7f8f)"},
+ {t:14,c:"Final board: full pipeline INGEST→QUEUE→WORKER→DB, all linked.",h:"linear-gradient(135deg,#3a3a55,#5f5f8f)"},
+];
+const TOTAL=16;
+const SAID=[
+ [0,2,"So the first stage is ingestion —"],[2,4,"we write the note to the queue before anything else."],
+ [4,6,"The worker picks it up from the queue,"],[6,8,"and that's where the heavy lifting happens."],
+ [8,10,"You can see the logs scrolling as it processes."],[10,12,"The queue is really the backbone here."],
+ [12,14,"Then the worker writes the structured result to the database."],[14,16,"And that's the whole pipeline end to end."],
+];
+const SUMMARY="A whiteboard walkthrough of a data pipeline. The speaker builds the diagram live — INGEST → QUEUE → WORKER → DB — explaining that notes are written to the queue first, a worker does the heavy processing (shown via scrolling terminal logs), and results land in the database. Emphasis throughout on the queue as the system's backbone.";
+const fmt=s=>`${Math.floor(s/60)}:${String(Math.floor(s%60)).padStart(2,'0')}`;
+const stage=document.getElementById('frm'),strip=document.getElementById('strip');
+FRAMES.forEach((f,i)=>{const d=document.createElement('div');d.className='thumb';d.style.background=f.h;d.dataset.i=i;d.innerHTML=`<span class="tl">${fmt(f.t)}</span>`;d.onclick=()=>{clock=f.t;render();};strip.appendChild(d);});
+const thumbs=[...strip.children];
+let clock=0,playing=false,last=0;
+function curFrame(){let i=0;for(let k=0;k<FRAMES.length;k++)if(clock>=FRAMES[k].t)i=k;return i;}
+function render(){
+  const fi=curFrame();const f=FRAMES[fi];
+  stage.style.background=f.h;stage.textContent='frame '+(fi+1)+' / '+FRAMES.length;
+  document.getElementById('cap').textContent=f.c;
+  document.getElementById('nt').textContent=fmt(f.t);
+  const said=SAID.find(s=>clock>=s[0]&&clock<s[1]);
+  document.getElementById('said').innerHTML=said?('“<b>'+said[2]+'</b>”'):'';
+  const p=clock/TOTAL*100;document.getElementById('fill').style.width=p+'%';document.getElementById('knob').style.left=p+'%';
+  thumbs.forEach((t,i)=>t.classList.toggle('now',i===fi));
+  const el=thumbs[fi];if(el){const r=el.getBoundingClientRect(),sr=strip.getBoundingClientRect();if(r.left<sr.left||r.right>sr.right)el.scrollIntoView({inline:'center',block:'nearest',behavior:'smooth'});}
+}
+function tick(ts){if(!playing)return;if(!last)last=ts;clock+=(ts-last)/1000;last=ts;if(clock>=TOTAL){clock=TOTAL;playing=false;document.getElementById('play').textContent='▶';render();return;}render();requestAnimationFrame(tick);}
+document.getElementById('play').onclick=()=>{playing=!playing;document.getElementById('play').textContent=playing?'❚❚':'▶';if(playing){if(clock>=TOTAL)clock=0;last=0;requestAnimationFrame(tick);}};
+document.getElementById('track').onclick=e=>{const r=e.currentTarget.getBoundingClientRect();clock=Math.max(0,Math.min(1,(e.clientX-r.left)/r.width))*TOTAL;render();};
+document.getElementById('sumtog').onclick=()=>document.getElementById('sumwrap').classList.toggle('open');
+document.getElementById('sum').textContent=SUMMARY;
+document.getElementById('theme').onclick=()=>{const h=document.documentElement;h.dataset.theme=h.dataset.theme==='light'?'dark':'light';};
+render();
+</script>
+</body>
+</html>

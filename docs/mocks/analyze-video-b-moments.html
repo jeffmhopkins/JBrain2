@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>analyze_video — B: moment feed</title>
+<!--
+  MOCK B (analyze_video card, docs/PROCESS.md GUI gate). Variant: MOMENT FEED.
+  Video pinned on top with the summary; below it a vertical feed of timestamped
+  "moments" — each a frame thumbnail + its AI caption + the words spoken then. The
+  current moment karaoke-highlights and the feed auto-scrolls to keep it centered as
+  the video plays (the transcript-card behaviour, extended to frames); tap any moment
+  to seek. This is the richest reading view of "the AI stuff".
+  Component data (no URLs — invariant #9): { attachment_id, source, filename, model,
+  duration_ms, summary, frames:[{t_ms, caption, thumb_id}], words:[{text,start_ms,end_ms,confidence}] }
+-->
+<style>
+  :root{
+    --bg:#0E0F11; --surface:#17181B; --surface-2:#1E2024; --border:#26282C;
+    --text:#E6E7E9; --text-2:#9A9DA3; --text-3:#5C5F66;
+    --steel:#7FA7C9; --steel-tint:rgba(127,167,201,.13);
+    --amber:#C9A36A; --green:#8FBC9A; --rose:#CF8A8F;
+    --r-card:16px; --r-input:12px; --r-pill:999px;
+    --font:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+    --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+  }
+  [data-theme="light"]{--bg:#F7F7F5;--surface:#FFFFFF;--surface-2:#F0F0EE;--border:#E2E2DF;
+    --text:#1A1B1E;--text-2:#5C5F66;--text-3:#9A9DA3;}
+  *{box-sizing:border-box}
+  body{margin:0;background:#000;font-family:var(--font);color:var(--text);
+    display:flex;flex-direction:column;align-items:center;padding:18px 12px 40px}
+  .phone{width:390px;max-width:calc(100vw - 24px);height:760px;background:var(--bg);
+    border:1px solid var(--border);border-radius:34px;overflow:hidden;display:flex;flex-direction:column}
+  .topbar{height:52px;display:flex;align-items:center;justify-content:space-between;padding:0 16px;border-bottom:1px solid var(--border);flex:0 0 auto}
+  .topbar .ttl{font-size:16px;font-weight:500}.topbar .sub{font-size:12px;color:var(--text-2)}
+  .iconbtn{width:32px;height:32px;border-radius:var(--r-pill);border:1px solid var(--border);background:var(--surface);color:var(--text-2);display:grid;place-items:center;cursor:pointer}
+  .scroll{flex:1;overflow:auto;padding:14px}
+  .toolnote{font-size:12px;color:var(--text-2);margin:2px 2px 10px}
+
+  .card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-card);overflow:hidden}
+  .hd{display:flex;align-items:center;gap:10px;padding:12px 14px;border-bottom:1px solid var(--border)}
+  .hd .fi{width:34px;height:34px;border-radius:10px;background:var(--steel-tint);color:var(--steel);display:grid;place-items:center;flex:0 0 auto}
+  .hd .fn{font-size:14px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .hd .meta{font-size:11px;color:var(--text-2);margin-left:auto;white-space:nowrap}
+
+  .stage{position:relative;aspect-ratio:16/9;background:#000;display:grid;place-items:center;overflow:hidden;color:#fff;font-size:13px;text-shadow:0 1px 4px #0008}
+  .play{position:absolute;width:54px;height:54px;border-radius:var(--r-pill);border:0;background:#fff9;color:#0E0F11;display:grid;place-items:center;cursor:pointer;font-size:18px}
+  .track{height:5px;background:var(--surface-2);position:relative;cursor:pointer}
+  .fill{position:absolute;left:0;top:0;bottom:0;background:var(--steel);width:0%}
+  .knob{position:absolute;top:50%;width:12px;height:12px;border-radius:var(--r-pill);background:#fff;transform:translate(-50%,-50%);left:0%}
+
+  .sum{padding:12px 14px;font-size:13px;line-height:1.55;color:var(--text-2);border-bottom:1px solid var(--border)}
+  .sum b{color:var(--text);font-weight:600}
+
+  .feed{max-height:248px;overflow:auto;padding:6px 0}
+  .moment{display:flex;gap:11px;padding:9px 14px;cursor:pointer;border-left:3px solid transparent}
+  .moment .th{flex:0 0 auto;width:74px;height:46px;border-radius:8px;position:relative;overflow:hidden}
+  .moment .th .tl{position:absolute;left:4px;bottom:3px;font-family:var(--mono);font-size:9px;color:#fff;text-shadow:0 1px 2px #000a}
+  .moment .cap{font-size:13.5px;line-height:1.4}
+  .moment .said{font-size:12.5px;color:var(--text-3);margin-top:4px}
+  .moment.now{background:var(--steel-tint);border-left-color:var(--steel)}
+  .moment.now .said{color:var(--text-2)}
+  .pagecap{font-size:11px;color:var(--text-3);text-align:center;margin-top:12px;line-height:1.5}
+</style>
+</head>
+<body>
+  <div class="phone">
+    <div class="topbar">
+      <div><div class="ttl">B · Moment feed</div><div class="sub">karaoke list of frames + speech</div></div>
+      <button class="iconbtn" id="theme">◑</button>
+    </div>
+    <div class="scroll">
+      <div class="toolnote">✓ analyze_video · qwen3-vl · 18 frames · 0:32</div>
+      <div class="card">
+        <div class="hd">
+          <div class="fi">▦</div>
+          <div style="min-width:0"><div class="fn">whiteboard-walkthrough.mp4</div></div>
+          <div class="meta">0:16 · qwen3-vl</div>
+        </div>
+        <div class="stage" id="stage"><span id="stagelbl"></span><button class="play" id="play">▶</button></div>
+        <div class="track" id="track"><div class="fill" id="fill"></div><div class="knob" id="knob"></div></div>
+        <div class="sum" id="sum"></div>
+        <div class="feed" id="feed"></div>
+      </div>
+      <div class="pagecap">B: a scrolling feed of moments — each frame's AI caption beside what was said then. The current moment highlights and the feed auto-scrolls as the video plays; tap a moment to jump. Summary pinned under the player.</div>
+    </div>
+  </div>
+<script>
+const FRAMES=[
+ {t:0,c:"A man stands at a whiteboard with an empty flow diagram outline.",s:"So the first stage is ingestion —",h:"linear-gradient(135deg,#2b3a55,#46618f)"},
+ {t:2,c:"He writes 'INGEST' in the first box and underlines it.",s:"we write the note to the queue before anything else.",h:"linear-gradient(135deg,#3a2b55,#6f4f8f)"},
+ {t:4,c:"Close-up of the board: arrows now connect INGEST → QUEUE.",s:"The worker picks it up from the queue,",h:"linear-gradient(135deg,#553a2b,#8f6f4f)"},
+ {t:6,c:"He points to a 'WORKER' box he's just added on the right.",s:"and that's where the heavy lifting happens.",h:"linear-gradient(135deg,#2b5540,#4f8f6f)"},
+ {t:8,c:"A laptop on the desk shows a terminal scrolling green log lines.",s:"You can see the logs scrolling as it processes.",h:"linear-gradient(135deg,#1f2d22,#3f5f48)"},
+ {t:10,c:"Back to the board; he circles the QUEUE box emphatically.",s:"The queue is really the backbone here.",h:"linear-gradient(135deg,#552b3a,#8f4f6f)"},
+ {t:12,c:"He gestures between WORKER and a new 'DB' cylinder.",s:"Then the worker writes the result to the database.",h:"linear-gradient(135deg,#2b4a55,#4f7f8f)"},
+ {t:14,c:"Final board: full pipeline INGEST→QUEUE→WORKER→DB, all linked.",s:"And that's the whole pipeline end to end.",h:"linear-gradient(135deg,#3a3a55,#5f5f8f)"},
+];
+const TOTAL=16;
+const SUMMARY="A whiteboard walkthrough of a data pipeline: the speaker builds <b>INGEST → QUEUE → WORKER → DB</b> live, stressing that notes hit the queue first, a worker does the heavy processing (terminal logs shown), and results land in the database. The queue is framed as the backbone.";
+const fmt=s=>`${Math.floor(s/60)}:${String(Math.floor(s%60)).padStart(2,'0')}`;
+const feed=document.getElementById('feed');
+FRAMES.forEach((f,i)=>{const m=document.createElement('div');m.className='moment';m.dataset.i=i;
+  m.innerHTML=`<div class="th" style="background:${f.h}"><span class="tl">${fmt(f.t)}</span></div><div><div class="cap">${f.c}</div><div class="said">“${f.s}”</div></div>`;
+  m.onclick=()=>{clock=f.t;render();};feed.appendChild(m);});
+const moments=[...feed.children];
+document.getElementById('sum').innerHTML=SUMMARY;
+let clock=0,playing=false,last=0;
+function curFrame(){let i=0;for(let k=0;k<FRAMES.length;k++)if(clock>=FRAMES[k].t)i=k;return i;}
+function render(){
+  const fi=curFrame(),f=FRAMES[fi];
+  document.getElementById('stage').style.background=f.h;
+  document.getElementById('stagelbl').textContent='frame '+(fi+1)+' / '+FRAMES.length;
+  const p=clock/TOTAL*100;document.getElementById('fill').style.width=p+'%';document.getElementById('knob').style.left=p+'%';
+  moments.forEach((m,i)=>m.classList.toggle('now',i===fi));
+  const el=moments[fi];if(el){const r=el.getBoundingClientRect(),fr=feed.getBoundingClientRect();if(r.top<fr.top||r.bottom>fr.bottom)el.scrollIntoView({block:'center',behavior:'smooth'});}
+}
+function tick(ts){if(!playing)return;if(!last)last=ts;clock+=(ts-last)/1000;last=ts;if(clock>=TOTAL){clock=TOTAL;playing=false;document.getElementById('play').textContent='▶';render();return;}render();requestAnimationFrame(tick);}
+document.getElementById('play').onclick=()=>{playing=!playing;document.getElementById('play').textContent=playing?'❚❚':'▶';if(playing){if(clock>=TOTAL)clock=0;last=0;requestAnimationFrame(tick);}};
+document.getElementById('track').onclick=e=>{const r=e.currentTarget.getBoundingClientRect();clock=Math.max(0,Math.min(1,(e.clientX-r.left)/r.width))*TOTAL;render();};
+document.getElementById('theme').onclick=()=>{const h=document.documentElement;h.dataset.theme=h.dataset.theme==='light'?'dark':'light';};
+render();
+</script>
+</body>
+</html>
