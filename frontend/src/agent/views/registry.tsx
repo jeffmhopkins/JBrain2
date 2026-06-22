@@ -7,12 +7,15 @@
 
 import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import {
+  type MetricPoint,
   attachmentUrl,
   chatAttachmentUrl,
   generatedImageSourceUrl,
   generatedImageUrl,
 } from "../../api/client";
 import { AudioTranscript, transcriptWords } from "../../components/AudioTranscript";
+import { TimeSeriesPlot } from "../../components/TimeSeriesPlot";
+import { serverMetricSeries } from "../../components/serverMetricSeries";
 import type { CitationRef, ViewPayload } from "../types";
 import { Lightbox } from "./Lightbox";
 import {
@@ -798,6 +801,27 @@ function EditView({
   );
 }
 
+/** Host-metrics history (the `query_server_metrics` tool's view): the same
+ * sparkline stack the Ops screen draws, from data-only points
+ * (`{range, resolution, points: MetricPoint[]}`). */
+function ServerMetrics({ data }: ViewProps): ReactNode {
+  const points = (Array.isArray(data.points) ? data.points : []) as MetricPoint[];
+  const range = typeof data.range === "string" ? data.range : "";
+  const resolution = data.resolution === "hourly" ? "hourly" : "30s";
+  if (points.length === 0) {
+    return <p className="tv-metrics-empty">No host-metrics samples recorded.</p>;
+  }
+  return (
+    <div className="tv-metrics">
+      <div className="tv-metrics-head">
+        <span>Server health{range ? ` · ${range}` : ""}</span>
+        <span className="tv-metrics-sub">{`${points.length} ${resolution} buckets`}</span>
+      </div>
+      <TimeSeriesPlot series={serverMetricSeries(points)} />
+    </div>
+  );
+}
+
 const REGISTRY: Record<string, (props: ViewProps) => ReactNode> = {
   stat_block: StatBlock,
   data_table: DataTable,
@@ -808,6 +832,7 @@ const REGISTRY: Record<string, (props: ViewProps) => ReactNode> = {
   place_card: PlaceCard,
   generated_image: GeneratedImage,
   transcript: Transcript,
+  server_metrics: ServerMetrics,
 };
 
 export function isKnownView(name: string): boolean {

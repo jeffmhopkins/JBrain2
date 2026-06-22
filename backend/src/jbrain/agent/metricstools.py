@@ -14,6 +14,7 @@ from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 from jbrain import ops_metrics
+from jbrain.agent.contracts import ViewPayload
 from jbrain.agent.loop import ToolContext, ToolHandler, ToolOutput
 
 if TYPE_CHECKING:
@@ -93,6 +94,21 @@ def _format(range_label: str, data: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def _metrics_view(range_label: str, data: dict[str, Any]) -> ViewPayload:
+    """The data-only twin of the prose summary: a `server_metrics` view the app
+    renders as the same sparkline stack the Ops screen draws (DESIGN.md "Agent
+    tool views"). Carries the raw points; the component owns colors/formatting."""
+    return ViewPayload(
+        view="server_metrics",
+        surface="inline",
+        data={
+            "range": range_label,
+            "resolution": data["resolution"],
+            "points": data["points"],
+        },
+    )
+
+
 def build_metrics_handlers(
     maker: async_sessionmaker[AsyncSession],
 ) -> dict[str, ToolHandler]:
@@ -108,6 +124,9 @@ def build_metrics_handlers(
                 f"'{requested}' isn't a known range. Use one of: {', '.join(_RANGES)}."
             )
         data = await ops_metrics.history(maker, ctx.session, since=datetime.now(UTC) - window)
-        return ToolOutput(_format(requested, data))
+        # The prose grounds the model's reasoning; the view (when there's data) is
+        # the human-facing graph rendered in the chat bubble.
+        view = _metrics_view(requested, data) if data["points"] else None
+        return ToolOutput(_format(requested, data), view=view)
 
     return {"query_server_metrics": query_server_metrics_tool}

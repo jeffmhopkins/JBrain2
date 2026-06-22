@@ -2501,43 +2501,61 @@ button.small {
   border-color: color-mix(in srgb, var(--steel) 30%, transparent);
 }
 
-.ops-charts {
+/* TimeSeriesPlot: a reusable stack of labeled sparklines (Ops history + the
+   agent's server_metrics view). */
+.plot-stack {
   display: flex;
   flex-direction: column;
   gap: 16px;
 }
 
-.ops-chart-head {
+.plot-head {
   display: flex;
   justify-content: space-between;
   align-items: baseline;
   margin-bottom: 4px;
 }
 
-.ops-chart-label {
+.plot-label {
   font-size: var(--fs-sm);
   color: var(--text-2);
 }
 
-.ops-chart-now {
+.plot-now {
   font-size: var(--fs-sm);
   color: var(--text);
   font-variant-numeric: tabular-nums;
 }
 
-.ops-chart-svg {
+.plot-svg {
   display: block;
   width: 100%;
   height: 40px;
 }
 
-.ops-chart-axis {
+.plot-axis {
   display: flex;
   justify-content: space-between;
   margin-top: 2px;
   font-size: var(--fs-micro);
   color: var(--text-3);
   font-variant-numeric: tabular-nums;
+}
+
+/* server_metrics tool view header (the plot itself reuses .plot-* above). */
+.tv-metrics-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: 12px;
+  font-size: var(--fs-sm);
+  color: var(--text);
+}
+
+.tv-metrics-sub,
+.tv-metrics-empty {
+  font-size: var(--fs-micro);
+  color: var(--text-3);
 }
 
 .ops-chart-note {

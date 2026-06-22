@@ -379,6 +379,45 @@ describe("ToolView registry", () => {
     expect(cmp.style.getPropertyValue("--pos")).toBe("75%");
   });
 
+  it("renders a server_metrics view as a labeled sparkline stack", () => {
+    const point = (over: Record<string, unknown>) => ({
+      t: "2026-06-22T00:00:00Z",
+      load_1m: 0.5,
+      mem_used_bytes: 60 * 2 ** 30,
+      mem_total_bytes: 128 * 2 ** 30,
+      disk_used_bytes: 500 * 2 ** 30,
+      disk_total_bytes: 2000 * 2 ** 30,
+      gpu_busy_percent: 40,
+      fan_rpm_max: 2100,
+      ...over,
+    });
+    const { getByText } = render(
+      <ToolView
+        payload={payload({
+          view: "server_metrics",
+          data: {
+            range: "24h",
+            resolution: "raw",
+            points: [point({ load_1m: 0.5 }), point({ load_1m: 1.5, fan_rpm_max: 2600 })],
+          },
+        })}
+      />,
+    );
+    expect(getByText("Server health · 24h")).toBeInTheDocument();
+    expect(getByText("2 30s buckets")).toBeInTheDocument();
+    expect(getByText("CPU load")).toBeInTheDocument();
+    // Peak readout reflects the higher bucket (load 1.5, fan 2600).
+    expect(getByText("1.50 peak")).toBeInTheDocument();
+    expect(getByText("2600 rpm peak")).toBeInTheDocument();
+  });
+
+  it("server_metrics with no points states it, no crash", () => {
+    const { getByText } = render(
+      <ToolView payload={payload({ view: "server_metrics", data: { points: [] } })} />,
+    );
+    expect(getByText("No host-metrics samples recorded.")).toBeInTheDocument();
+  });
+
   it("tolerates missing/extra slots without crashing", () => {
     const { container } = render(<ToolView payload={payload({ view: "data_table" })} />);
     expect(container.querySelector("table")).toBeInTheDocument();

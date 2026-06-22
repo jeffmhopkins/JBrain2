@@ -47,6 +47,12 @@ async def test_summarizes_each_metric(monkeypatch: pytest.MonkeyPatch) -> None:
     assert "CPU load (1m): now 2.00, peak 2.00" in out  # latest is the 2.0 point
     assert "Memory used: now 50%" in out
     assert "Fan (hottest): now 3000 rpm, peak 3000 rpm" in out
+    # It also emits a server_metrics view carrying the raw points for the chart.
+    assert out.view is not None
+    assert out.view.view == "server_metrics"
+    assert out.view.surface == "inline"
+    assert out.view.data["range"] == "24h"
+    assert out.view.data["points"] == points
 
 
 async def test_empty_history_is_stated(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -58,6 +64,7 @@ async def test_empty_history_is_stated(monkeypatch: pytest.MonkeyPatch) -> None:
 
     out = await handler({"range": "7d"}, _Ctx())  # type: ignore[arg-type]
     assert "No host-metrics samples" in out
+    assert out.view is None  # nothing to plot
 
 
 async def test_unknown_range_is_rejected_without_querying(monkeypatch: pytest.MonkeyPatch) -> None:

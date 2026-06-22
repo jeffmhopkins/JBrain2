@@ -2,13 +2,14 @@ import { type ReactNode, useCallback, useEffect, useRef, useState } from "react"
 import {
   ApiError,
   type ContainerStatus,
-  type MetricPoint,
   type MetricRange,
   type MetricsHistory,
   type OpsMetrics,
   type UpdateStatus,
   api,
 } from "../api/client";
+import { TimeSeriesPlot } from "../components/TimeSeriesPlot";
+import { serverMetricSeries } from "../components/serverMetricSeries";
 import { useForeground, useForegroundRef } from "../visibility";
 import { RunsScreen } from "./RunsScreen";
 
@@ -564,88 +565,6 @@ function ServiceBody({
 
 const HISTORY_RANGES: MetricRange[] = ["6h", "24h", "7d", "30d", "1y"];
 
-function memPct(p: MetricPoint): number | null {
-  return p.mem_used_bytes != null && p.mem_total_bytes
-    ? (p.mem_used_bytes / p.mem_total_bytes) * 100
-    : null;
-}
-function diskPct(p: MetricPoint): number | null {
-  return p.disk_used_bytes != null && p.disk_total_bytes
-    ? (p.disk_used_bytes / p.disk_total_bytes) * 100
-    : null;
-}
-const fmtPct = (v: number) => `${Math.round(v)}%`;
-const fmtLoad = (v: number) => v.toFixed(2);
-const fmtRpm = (v: number) => `${Math.round(v)} rpm`;
-
-/** A single metric's sparkline. The path is built in a 100×32 viewBox stretched
- * to the card width; null samples (a metric the host didn't report that bucket)
- * break the line rather than dropping to zero. Renders nothing when the whole
- * series is null, so an absent GPU/fan simply omits its graph. */
-function MetricChart({
-  label,
-  color,
-  points,
-  accessor,
-  fmt,
-}: {
-  label: string;
-  color: string;
-  points: MetricPoint[];
-  accessor: (p: MetricPoint) => number | null;
-  fmt: (v: number) => string;
-}) {
-  const ys = points.map(accessor);
-  const present = ys.filter((v): v is number => v != null);
-  if (present.length === 0) return null;
-  const min = Math.min(...present);
-  const max = Math.max(...present);
-  const span = max - min || 1;
-  const n = ys.length;
-  const W = 100;
-  const H = 32;
-  let d = "";
-  let penDown = false;
-  ys.forEach((v, i) => {
-    if (v == null) {
-      penDown = false;
-      return;
-    }
-    const x = n > 1 ? (i / (n - 1)) * W : W / 2;
-    const y = H - ((v - min) / span) * H;
-    d += `${penDown ? "L" : "M"}${x.toFixed(2)} ${y.toFixed(2)} `;
-    penDown = true;
-  });
-  // present is non-empty (guarded above); `?? max` only satisfies the indexer type.
-  const latest = present[present.length - 1] ?? max;
-  return (
-    <div className="ops-chart">
-      <div className="ops-chart-head">
-        <span className="ops-chart-label">{label}</span>
-        <span className="ops-chart-now">{fmt(latest)}</span>
-      </div>
-      <svg
-        className="ops-chart-svg"
-        viewBox={`0 0 ${W} ${H}`}
-        preserveAspectRatio="none"
-        aria-hidden="true"
-      >
-        <path
-          d={d.trim()}
-          fill="none"
-          stroke={color}
-          strokeWidth={1.5}
-          vectorEffect="non-scaling-stroke"
-        />
-      </svg>
-      <div className="ops-chart-axis">
-        <span>{fmt(max)} peak</span>
-        <span>{fmt(min)} low</span>
-      </div>
-    </div>
-  );
-}
-
 /** The body is a child of OpsCard, so it mounts (and fetches) only when the card
  * is expanded — a collapsed History card costs nothing. The range buttons drive
  * the refetch; the resolution note tells the operator raw vs hourly rollup. */
@@ -704,43 +623,7 @@ function HistoryBody() {
         </p>
       ) : (
         <>
-          <div className="ops-charts">
-            <MetricChart
-              label="CPU load"
-              color="var(--steel)"
-              points={points}
-              accessor={(p) => p.load_1m}
-              fmt={fmtLoad}
-            />
-            <MetricChart
-              label="Memory"
-              color="var(--violet)"
-              points={points}
-              accessor={memPct}
-              fmt={fmtPct}
-            />
-            <MetricChart
-              label="Disk"
-              color="var(--amber)"
-              points={points}
-              accessor={diskPct}
-              fmt={fmtPct}
-            />
-            <MetricChart
-              label="GPU"
-              color="var(--location)"
-              points={points}
-              accessor={(p) => p.gpu_busy_percent}
-              fmt={fmtPct}
-            />
-            <MetricChart
-              label="Fan"
-              color="var(--rose)"
-              points={points}
-              accessor={(p) => p.fan_rpm_max}
-              fmt={fmtRpm}
-            />
-          </div>
+          <TimeSeriesPlot series={serverMetricSeries(points)} />
           {history && (
             <p className="ops-chart-note">
               {`${points.length} ${history.resolution === "raw" ? "30s" : "hourly"} buckets`}
