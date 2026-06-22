@@ -15,6 +15,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { PauseIcon, PlayIcon } from "./icons";
 
 export interface TranscriptWord {
   text: string;
@@ -166,7 +167,7 @@ export function AudioTranscript({
           onClick={toggle}
           aria-label={playing ? "Pause" : "Play"}
         >
-          {playing ? "❚❚" : "▶"}
+          {playing ? <PauseIcon size={14} /> : <PlayIcon size={14} />}
         </button>
         {/* biome-ignore lint/a11y/useKeyWithClickEvents: arrow-key seek is a nice-to-have; tap/drag is the control. */}
         <div
