@@ -282,16 +282,23 @@ services:
   # without local LLMs and never entangles the LLM gateway's runtime config. Guarded
   # by the `whisper` compose profile so it NEVER starts on a stock deploy —
   # `scripts/whisper-setup.sh` (jbrain enable-whisper) downloads the GGML model,
-  # writes the one-model llama-swap config, and flips the profile on. Uses the
-  # official llama-swap unified Vulkan image, which bundles a Vulkan-built
-  # whisper-server (the kyuz0 LLM base does not). Like the Vulkan local-llm path it
-  # needs only /dev/dri (not /dev/kfd) + seccomp=unconfined for gfx1151. The api
-  # reaches it at http://whisper:8080 (internal only). llama-swap loads the model on
-  # the first request and frees it after `ttl:` idle — and the transcribe job/tool
-  # also unload it explicitly via the admin API (load-on-demand / unload-after).
+  # writes the one-model llama-swap config, and flips the profile on. Built on the
+  # official llama-swap unified image (llama-swap + ffmpeg, Vulkan-capable) with
+  # whisper.cpp's server compiled in (deploy/Dockerfile.whisper) — the image bundles
+  # llama-server/sd-server but NOT whisper. Keeps /dev/dri + seccomp=unconfined so a
+  # future Vulkan whisper build needs no compose change. The api reaches it at
+  # http://whisper:8080 (internal only). llama-swap loads the model on the first
+  # request and frees it after `ttl:` idle — and the transcribe job/tool also unload
+  # it explicitly via the admin API (load-on-demand / unload-after).
   whisper:
     profiles: [whisper]
-    image: ${WHISPER_IMAGE:-ghcr.io/mostlygeek/llama-swap:vulkan}
+    image: jbrain2-whisper:local
+    build:
+      context: ./src
+      dockerfile: deploy/Dockerfile.whisper
+      args:
+        # The base providing llama-swap + ffmpeg; whisper.cpp is layered on top.
+        WHISPER_BASE: ${WHISPER_IMAGE:-ghcr.io/mostlygeek/llama-swap:vulkan}
     restart: unless-stopped
     # This image ships its OWN entrypoint that hardcodes `-config /app/config.yaml`
     # (a bundled multi-model sample), so a plain `command:` can't repoint it —
