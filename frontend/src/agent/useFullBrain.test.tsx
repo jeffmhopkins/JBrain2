@@ -112,4 +112,49 @@ describe("useFullBrain — a turn stays attached to its own chat", () => {
     );
     expect(result.current.messages.at(-1)?.text).toContain("here's your cat");
   });
+
+  it("keeps a thinking turn (reasoning, no answer yet) across a chat switch", async () => {
+    // Same scoping, but a turn that's mid-THOUGHT rather than rendering: the live
+    // reasoning/thinking state must survive A→B→A just like an image render does.
+    let release: () => void = () => {};
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
+    async function* chat(): AsyncGenerator<ChatEvent> {
+      yield { type: "run", run_id: "r1" };
+      yield { type: "reasoning_delta", text: "let me reason about this" };
+      await gate;
+      yield { type: "text_delta", text: "the answer" };
+      yield { type: "done", stop_reason: "end_turn" };
+    }
+
+    const d = deps({ chat });
+    const { result } = renderHook(() => useFullBrain("fullbrain", d));
+    await waitFor(() => expect(result.current.active?.id).toBe("A"));
+
+    await act(async () => {
+      await result.current.send("think hard");
+    });
+    // Thinking: reasoning is accruing, no answer text yet, still streaming.
+    await waitFor(() => expect(result.current.messages.at(-1)?.reasoning).toContain("reason"));
+    expect(result.current.messages.at(-1)?.thinking).toBe(true);
+    expect(result.current.messages.at(-1)?.text).toBe("");
+
+    act(() => result.current.open(session({ id: "B", title: "B" })));
+    await waitFor(() => expect(result.current.active?.id).toBe("B"));
+    expect(result.current.messages).toHaveLength(0);
+
+    // Back to A — the thinking turn is intact and still streaming.
+    act(() => result.current.open(session({ id: "A", title: "A" })));
+    await waitFor(() => expect(result.current.active?.id).toBe("A"));
+    expect(result.current.messages.at(-1)?.reasoning).toContain("reason");
+    expect(result.current.messages.at(-1)?.streaming).toBe(true);
+
+    await act(async () => {
+      release();
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(result.current.messages.at(-1)?.streaming).toBe(false));
+    expect(result.current.messages.at(-1)?.text).toContain("the answer");
+  });
 });
