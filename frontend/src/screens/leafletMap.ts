@@ -250,10 +250,17 @@ export function createLocationMap(
       // Speed shapes each blob: a moving fix is smeared into an oval pointing the way
       // it was going (longer the faster), while parked spots stay round.
       const weight = state.heatWeight ?? 0.4;
+      // The spot radius is in screen pixels; convert to meters at the current zoom so
+      // the speed-ovals are sized against the blob you actually see (not raw metres,
+      // which made fast fixes look round when the radius dwarfed the stretch).
+      const lat0 = (track[0] as L.LatLng).lat;
+      const metersPerPixel =
+        (40_075_016.686 * Math.cos((lat0 * Math.PI) / 180)) / 2 ** (map.getZoom() + 8);
       const pts = heatOvalPoints(
         kept,
         track.map((ll) => ({ lat: ll.lat, lon: ll.lng })),
         weight,
+        state.heatRadius * metersPerPixel,
       );
       L.heatLayer(pts, {
         radius: state.heatRadius,
