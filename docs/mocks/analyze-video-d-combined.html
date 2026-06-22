@@ -1,0 +1,226 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>analyze_video — D: combined (A filmstrip + C tabs + B moment feed)</title>
+<!--
+  MOCK D (analyze_video card, docs/PROCESS.md GUI gate) — SYNTHESIS per owner: A+C
+  with a dedicated transcript view and B's scrolling moment feed.
+    • TOP  : video + A's FILMSTRIP scrubber — the sampled frames are the timeline;
+             the playhead rides them, the current frame lifts, tap a frame to seek.
+             A one-line "now" caption shows the active frame + the line being spoken.
+    • TABS : C's switcher over four panels —
+        - Summary    : the reduce-step summary.
+        - Moments    : B's vertical karaoke feed (frame thumb + caption + speech),
+                       auto-scrolls with playback, tap a moment to seek.
+        - Transcript : a DEDICATED transcript view — the approved audio-card reader,
+                       words tinted on the rose→amber→green confidence gradient, the
+                       spoken word highlighted (karaoke), tap a word to seek.
+        - Frames     : a tap-to-seek grid of every analysed frame + its caption.
+  All panels share one clock, so scrubbing the filmstrip drives every view at once.
+  Component data (no URLs — invariant #9): { attachment_id, source, filename, model,
+  duration_ms, summary, frames:[{t_ms, caption, thumb_id}], words:[{text,start_ms,end_ms,confidence}] }
+-->
+<style>
+  :root{
+    --bg:#0E0F11; --surface:#17181B; --surface-2:#1E2024; --border:#26282C;
+    --text:#E6E7E9; --text-2:#9A9DA3; --text-3:#5C5F66;
+    --steel:#7FA7C9; --steel-tint:rgba(127,167,201,.13);
+    --amber:#C9A36A; --green:#8FBC9A; --rose:#CF8A8F;
+    --r-card:16px; --r-input:12px; --r-pill:999px;
+    --font:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+    --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+  }
+  [data-theme="light"]{--bg:#F7F7F5;--surface:#FFFFFF;--surface-2:#F0F0EE;--border:#E2E2DF;
+    --text:#1A1B1E;--text-2:#5C5F66;--text-3:#9A9DA3;}
+  *{box-sizing:border-box}
+  body{margin:0;background:#000;font-family:var(--font);color:var(--text);
+    display:flex;flex-direction:column;align-items:center;padding:18px 12px 40px}
+  .phone{width:390px;max-width:calc(100vw - 24px);min-height:760px;background:var(--bg);
+    border:1px solid var(--border);border-radius:34px;overflow:hidden;display:flex;flex-direction:column}
+  .topbar{height:52px;display:flex;align-items:center;justify-content:space-between;padding:0 16px;border-bottom:1px solid var(--border)}
+  .topbar .ttl{font-size:16px;font-weight:500}.topbar .sub{font-size:12px;color:var(--text-2)}
+  .iconbtn{width:32px;height:32px;border-radius:var(--r-pill);border:1px solid var(--border);background:var(--surface);color:var(--text-2);display:grid;place-items:center;cursor:pointer}
+  .scroll{flex:1;overflow:auto;padding:14px}
+  .toolnote{font-size:12px;color:var(--text-2);margin:2px 2px 10px}
+
+  .card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-card);overflow:hidden}
+  .hd{display:flex;align-items:center;gap:10px;padding:12px 14px;border-bottom:1px solid var(--border)}
+  .hd .fi{width:34px;height:34px;border-radius:10px;background:var(--steel-tint);color:var(--steel);display:grid;place-items:center;flex:0 0 auto}
+  .hd .fn{font-size:14px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .hd .meta{font-size:11px;color:var(--text-2);margin-left:auto;white-space:nowrap}
+
+  .stage{position:relative;aspect-ratio:16/9;background:#000;display:grid;place-items:center;overflow:hidden;color:#fff;font-size:13px;text-shadow:0 1px 4px #0008}
+  .play{position:absolute;width:54px;height:54px;border-radius:var(--r-pill);border:0;background:#fff9;color:#0E0F11;display:grid;place-items:center;cursor:pointer;font-size:18px}
+  .track{height:5px;background:var(--surface-2);position:relative;cursor:pointer}
+  .fill{position:absolute;left:0;top:0;bottom:0;background:var(--steel);width:0%}
+  .knob{position:absolute;top:50%;width:12px;height:12px;border-radius:var(--r-pill);background:#fff;transform:translate(-50%,-50%);left:0%}
+
+  .strip{display:flex;gap:6px;padding:9px 12px;overflow-x:auto;scrollbar-width:thin}
+  .thumb{flex:0 0 auto;width:60px;height:37px;border-radius:7px;position:relative;cursor:pointer;border:2px solid transparent;overflow:hidden;opacity:.66;transition:opacity .12s,transform .12s}
+  .thumb .tl{position:absolute;left:3px;bottom:2px;font-family:var(--mono);font-size:9px;color:#fff;text-shadow:0 1px 2px #000a}
+  .thumb.now{border-color:var(--steel);opacity:1;transform:translateY(-2px)}
+
+  .now{display:flex;gap:9px;padding:9px 14px 11px;border-bottom:1px solid var(--border)}
+  .now .nt{font-family:var(--mono);font-size:11px;color:var(--steel);flex:0 0 auto;padding-top:2px}
+  .now .cap{font-size:13.5px;line-height:1.45}
+  .now .said{font-size:12.5px;color:var(--text-3);margin-top:3px}
+  .now .said b{color:var(--text-2);font-weight:600}
+
+  .seg{display:flex;background:var(--surface-2);border-bottom:1px solid var(--border)}
+  .seg button{flex:1;border:0;background:transparent;color:var(--text-2);font:inherit;font-size:12.5px;padding:9px 4px;cursor:pointer;border-bottom:2px solid transparent}
+  .seg button.on{color:var(--text);border-bottom-color:var(--steel)}
+  .panel{padding:13px 14px}
+  .pane{display:none}.pane.on{display:block}
+
+  #pSum{font-size:14px;line-height:1.6}#pSum b{font-weight:600}
+
+  .feed{max-height:236px;overflow:auto;margin:-3px -4px;padding:3px 0}
+  .moment{display:flex;gap:11px;padding:8px 12px;cursor:pointer;border-left:3px solid transparent;border-radius:0 8px 8px 0}
+  .moment .th{flex:0 0 auto;width:70px;height:44px;border-radius:8px;position:relative;overflow:hidden}
+  .moment .th .tl{position:absolute;left:4px;bottom:3px;font-family:var(--mono);font-size:9px;color:#fff;text-shadow:0 1px 2px #000a}
+  .moment .cap{font-size:13px;line-height:1.4}
+  .moment .said{font-size:12px;color:var(--text-3);margin-top:3px}
+  .moment.now{background:var(--steel-tint);border-left-color:var(--steel)}
+  .moment.now .said{color:var(--text-2)}
+
+  .txbody{font-size:16px;line-height:1.78;max-height:236px;overflow:auto;position:relative}
+  .w{cursor:pointer;border-radius:5px;transition:background .08s}
+  .w.now{background:var(--steel);color:#0E0F11 !important;border-radius:5px;box-shadow:0 0 0 3px var(--steel)}
+  .legend{display:flex;align-items:center;gap:9px;padding:11px 0 2px;font-size:12px;color:var(--text-2)}
+  .grad{flex:1;height:7px;max-width:150px;border-radius:var(--r-pill);background:linear-gradient(90deg,var(--rose),var(--amber),var(--green))}
+
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:9px;max-height:236px;overflow:auto}
+  .gc{cursor:pointer;border:1px solid var(--border);border-radius:9px;overflow:hidden;background:var(--surface-2)}
+  .gc .gt{height:60px;position:relative}.gc .gt .tl{position:absolute;left:5px;bottom:4px;font-family:var(--mono);font-size:9px;color:#fff;text-shadow:0 1px 2px #000a}
+  .gc.now{outline:2px solid var(--steel)}
+  .gc .gx{padding:7px 8px;font-size:11.5px;line-height:1.35;color:var(--text-2)}
+  .pagecap{font-size:11px;color:var(--text-3);text-align:center;margin-top:12px;line-height:1.5}
+</style>
+</head>
+<body>
+  <div class="phone">
+    <div class="topbar">
+      <div><div class="ttl">D · Combined</div><div class="sub">filmstrip scrubber · moments · transcript · frames</div></div>
+      <button class="iconbtn" id="theme">◑</button>
+    </div>
+    <div class="scroll">
+      <div class="toolnote">✓ analyze_video · qwen3-vl + whisper · 18 frames · 0:32</div>
+      <div class="card">
+        <div class="hd">
+          <div class="fi">▦</div>
+          <div style="min-width:0"><div class="fn">whiteboard-walkthrough.mp4</div></div>
+          <div class="meta">0:16 · qwen3-vl</div>
+        </div>
+        <div class="stage" id="stage"><span id="stagelbl"></span><button class="play" id="play">▶</button></div>
+        <div class="track" id="track"><div class="fill" id="fill"></div><div class="knob" id="knob"></div></div>
+        <div class="strip" id="strip"></div>
+        <div class="now"><div class="nt" id="nt">0:00</div><div><div class="cap" id="cap"></div><div class="said" id="said"></div></div></div>
+
+        <div class="seg" id="seg">
+          <button data-p="Sum" class="on">Summary</button>
+          <button data-p="Mo">Moments</button>
+          <button data-p="Tx">Transcript</button>
+          <button data-p="Fr">Frames</button>
+        </div>
+        <div class="panel">
+          <div class="pane on" id="pSum"></div>
+          <div class="pane" id="pMo"><div class="feed" id="feed"></div></div>
+          <div class="pane" id="pTx">
+            <div class="txbody" id="txbody"></div>
+            <div class="legend"><span>low</span><span class="grad"></span><span>high confidence</span><span style="color:var(--text-3);margin-left:auto">tap a word to jump</span></div>
+          </div>
+          <div class="pane" id="pFr"><div class="grid" id="grid"></div></div>
+        </div>
+      </div>
+      <div class="pagecap">D (synthesis): the filmstrip is the scrubber (A); tabs hold the summary, B's scrolling moment feed, a dedicated confidence-gradient transcript (C + audio-card reader), and a frame grid. One clock drives them all.</div>
+    </div>
+  </div>
+<script>
+const FRAMES=[
+ {t:0,c:"A man stands at a whiteboard with an empty flow diagram outline.",h:"linear-gradient(135deg,#2b3a55,#46618f)"},
+ {t:2,c:"He writes 'INGEST' in the first box and underlines it.",h:"linear-gradient(135deg,#3a2b55,#6f4f8f)"},
+ {t:4,c:"Close-up of the board: arrows now connect INGEST → QUEUE.",h:"linear-gradient(135deg,#553a2b,#8f6f4f)"},
+ {t:6,c:"He points to a 'WORKER' box he's just added on the right.",h:"linear-gradient(135deg,#2b5540,#4f8f6f)"},
+ {t:8,c:"A laptop on the desk shows a terminal scrolling green log lines.",h:"linear-gradient(135deg,#1f2d22,#3f5f48)"},
+ {t:10,c:"Back to the board; he circles the QUEUE box emphatically.",h:"linear-gradient(135deg,#552b3a,#8f4f6f)"},
+ {t:12,c:"He gestures between WORKER and a new 'DB' cylinder.",h:"linear-gradient(135deg,#2b4a55,#4f7f8f)"},
+ {t:14,c:"Final board: full pipeline INGEST→QUEUE→WORKER→DB, all linked.",h:"linear-gradient(135deg,#3a3a55,#5f5f8f)"},
+];
+const TOTAL=16;
+// Per-segment speech (drives both the Moments feed and the word-level transcript).
+const SEG=[
+ [0,2,[["So",.98],["the",.98],["first",.95],["stage",.9],["is",.96],["ingestion",.72],["—",.9]]],
+ [2,4,[["we",.96],["write",.93],["the",.97],["note",.9],["to",.97],["the",.97],["queue",.8],["before",.9],["anything",.86],["else.",.9]]],
+ [4,6,[["The",.97],["worker",.84],["picks",.9],["it",.95],["up",.94],["from",.95],["the",.97],["queue,",.8]]],
+ [6,8,[["and",.97],["that's",.93],["where",.94],["the",.97],["heavy",.86],["lifting",.82],["happens.",.9]]],
+ [8,10,[["You",.96],["can",.95],["see",.94],["the",.97],["logs",.78],["scrolling",.7],["as",.94],["it",.95],["processes.",.84]]],
+ [10,12,[["The",.97],["queue",.8],["is",.96],["really",.9],["the",.97],["backbone",.64],["here.",.9]]],
+ [12,14,[["Then",.94],["the",.97],["worker",.85],["writes",.88],["the",.97],["result",.86],["to",.96],["the",.97],["database.",.7]]],
+ [14,16,[["And",.96],["that's",.93],["the",.97],["whole",.92],["pipeline",.8],["end",.9],["to",.95],["end.",.9]]],
+];
+const SUMMARY="A whiteboard walkthrough of a data pipeline. The speaker builds the diagram live — <b>INGEST → QUEUE → WORKER → DB</b> — explaining that notes are written to the queue first, a worker does the heavy processing (shown via scrolling terminal logs), and results land in the database. The queue is repeatedly framed as the system's backbone.";
+
+// Flatten segments into per-word {w,c,t0,t1} evenly across each segment's span.
+const WORDS=[];
+SEG.forEach(([a,b,ws])=>{const d=(b-a)/ws.length;ws.forEach(([w,c],i)=>WORDS.push({w,c,t0:a+i*d,t1:a+(i+1)*d}));});
+const SAID=SEG.map(([a,b,ws])=>[a,b,ws.map(x=>x[0]).join(' ')]);
+
+const ROSE=[207,138,143],AMB=[201,163,106],GRN=[143,188,154];
+const lerp=(a,b,t)=>a.map((v,i)=>Math.round(v+(b[i]-v)*t));
+const col=c=>{const r=c<.5?lerp(ROSE,AMB,c/.5):lerp(AMB,GRN,(c-.5)/.5);return `rgb(${r.join(',')})`;};
+const fmt=s=>`${Math.floor(s/60)}:${String(Math.floor(s%60)).padStart(2,'0')}`;
+
+// filmstrip
+const strip=document.getElementById('strip');
+FRAMES.forEach((f,i)=>{const d=document.createElement('div');d.className='thumb';d.style.background=f.h;d.innerHTML=`<span class="tl">${fmt(f.t)}</span>`;d.onclick=()=>{clock=f.t;render();};strip.appendChild(d);});
+const thumbs=[...strip.children];
+// summary
+document.getElementById('pSum').innerHTML=SUMMARY;
+// moments feed
+const feed=document.getElementById('feed');
+FRAMES.forEach((f,i)=>{const said=SAID.find(s=>f.t>=s[0]&&f.t<s[1]);const m=document.createElement('div');m.className='moment';
+  m.innerHTML=`<div class="th" style="background:${f.h}"><span class="tl">${fmt(f.t)}</span></div><div><div class="cap">${f.c}</div><div class="said">“${said?said[2]:''}”</div></div>`;
+  m.onclick=()=>{clock=f.t;render();};feed.appendChild(m);});
+const moments=[...feed.children];
+// transcript words
+const txbody=document.getElementById('txbody');
+WORDS.forEach((o,i)=>{const s=document.createElement('span');s.className='w';s.style.color=col(o.c);s.textContent=o.w+' ';s.dataset.i=i;s.onclick=()=>{clock=o.t0;render();};txbody.appendChild(s);});
+const words=[...txbody.children];
+// frame grid
+const grid=document.getElementById('grid');
+FRAMES.forEach((f,i)=>{const g=document.createElement('div');g.className='gc';g.innerHTML=`<div class="gt" style="background:${f.h}"><span class="tl">${fmt(f.t)}</span></div><div class="gx">${f.c}</div>`;g.onclick=()=>{clock=f.t;render();};grid.appendChild(g);});
+const cells=[...grid.children];
+
+let clock=0,playing=false,last=0;
+function curFrame(){let i=0;for(let k=0;k<FRAMES.length;k++)if(clock>=FRAMES[k].t)i=k;return i;}
+function activePane(){const b=document.querySelector('#seg button.on');return b?b.dataset.p:'Sum';}
+function render(){
+  const fi=curFrame(),f=FRAMES[fi];
+  document.getElementById('stage').style.background=f.h;
+  document.getElementById('stagelbl').textContent='frame '+(fi+1)+' / '+FRAMES.length;
+  const p=clock/TOTAL*100;document.getElementById('fill').style.width=p+'%';document.getElementById('knob').style.left=p+'%';
+  document.getElementById('cap').textContent=f.c;document.getElementById('nt').textContent=fmt(clock);
+  const said=SAID.find(s=>clock>=s[0]&&clock<s[1]);
+  document.getElementById('said').innerHTML=said?('“<b>'+said[2]+'</b>”'):'';
+  thumbs.forEach((t,i)=>t.classList.toggle('now',i===fi));
+  const tel=thumbs[fi];if(tel){const r=tel.getBoundingClientRect(),sr=strip.getBoundingClientRect();if(r.left<sr.left||r.right>sr.right)tel.scrollIntoView({inline:'center',block:'nearest',behavior:'smooth'});}
+  moments.forEach((m,i)=>m.classList.toggle('now',i===fi));
+  cells.forEach((c,i)=>c.classList.toggle('now',i===fi));
+  let wi=WORDS.findIndex(o=>clock>=o.t0&&clock<o.t1);if(wi<0&&clock>=TOTAL)wi=WORDS.length-1;
+  words.forEach((s,i)=>s.classList.toggle('now',i===wi));
+  // keep the active element centered in whichever scrolling pane is showing
+  const pane=activePane();
+  if(pane==='Mo'&&moments[fi]){const el=moments[fi],c=feed,r=el.getBoundingClientRect(),cr=c.getBoundingClientRect();if(r.top<cr.top||r.bottom>cr.bottom)el.scrollIntoView({block:'center',behavior:'smooth'});}
+  if(pane==='Tx'&&wi>=0&&words[wi]){const el=words[wi],c=txbody,r=el.getBoundingClientRect(),cr=c.getBoundingClientRect();if(r.bottom>cr.bottom||r.top<cr.top)el.scrollIntoView({block:'center',behavior:'smooth'});}
+}
+function tick(ts){if(!playing)return;if(!last)last=ts;clock+=(ts-last)/1000;last=ts;if(clock>=TOTAL){clock=TOTAL;playing=false;document.getElementById('play').textContent='▶';render();return;}render();requestAnimationFrame(tick);}
+document.getElementById('play').onclick=()=>{playing=!playing;document.getElementById('play').textContent=playing?'❚❚':'▶';if(playing){if(clock>=TOTAL)clock=0;last=0;requestAnimationFrame(tick);}};
+document.getElementById('track').onclick=e=>{const r=e.currentTarget.getBoundingClientRect();clock=Math.max(0,Math.min(1,(e.clientX-r.left)/r.width))*TOTAL;render();};
+document.getElementById('seg').onclick=e=>{const b=e.target.closest('button');if(!b)return;[...e.currentTarget.children].forEach(x=>x.classList.toggle('on',x===b));['Sum','Mo','Tx','Fr'].forEach(p=>document.getElementById('p'+p).classList.toggle('on',p===b.dataset.p));render();};
+document.getElementById('theme').onclick=()=>{const h=document.documentElement;h.dataset.theme=h.dataset.theme==='light'?'dark':'light';};
+render();
+</script>
+</body>
+</html>
