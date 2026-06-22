@@ -412,15 +412,15 @@ describe("MemberDashboard", () => {
     await waitFor(() => expect(lastState?.pins?.length).toBe(0));
   });
 
-  it("toggles only the basemap tiles between dark and light, and persists it", async () => {
+  it("toggles the basemap between dark and light with one button, and persists it", async () => {
     render(<MemberDashboard deps={deps()} />);
-    await screen.findByRole("tab", { name: /Everyone/ });
-    // Switching to Light drives the map's tile scheme and remembers the choice;
-    // it never touches the redraw path (update), so the app chrome is unaffected.
-    fireEvent.click(screen.getByRole("tab", { name: /Light map/i }));
+    // Starts dark, so the single toggle offers "switch to light"; it drives the tile
+    // scheme + remembers the choice, never the redraw path (the app chrome is unaffected).
+    fireEvent.click(await screen.findByRole("button", { name: /Switch to light map/i }));
     await waitFor(() => expect(schemeSpy).toHaveBeenLastCalledWith("light"));
     expect(writeSchemeSpy).toHaveBeenLastCalledWith("light");
-    fireEvent.click(screen.getByRole("tab", { name: /Dark map/i }));
+    // Now the same button offers "switch to dark".
+    fireEvent.click(screen.getByRole("button", { name: /Switch to dark map/i }));
     await waitFor(() => expect(schemeSpy).toHaveBeenLastCalledWith("dark"));
     expect(writeSchemeSpy).toHaveBeenLastCalledWith("dark");
   });
