@@ -14,13 +14,13 @@ from __future__ import annotations
 
 import base64
 import secrets
-import uuid
 from typing import TYPE_CHECKING
 
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from jbrain.agent.contracts import ViewPayload
+from jbrain.agent.image_source import ImageSourceResolver
 from jbrain.agent.loop import ToolContext, ToolHandler, ToolOutput
 from jbrain.db.session import scoped_session
 from jbrain.image_gen.comfyui import (
@@ -100,17 +100,6 @@ def _reference_ids(arguments: dict) -> list[tuple[str, str]]:
         if isinstance(value, str) and value.strip():
             refs.append(("", value.strip()))
     return refs
-
-
-def _is_uuid(value: str) -> bool:
-    """Whether a string is a parseable uuid — the form every image/attachment id takes.
-    A non-uuid source id (a model hallucinating "latest") is rejected here so the lookup
-    never hands the DB a bad argument and leaks a raw error to the model."""
-    try:
-        uuid.UUID(value)
-    except ValueError:
-        return False
-    return True
 
 
 def _snap64(value: float) -> int:
@@ -291,6 +280,8 @@ def build_image_handlers(
     `maker` opens the RLS-scoped transaction each write/read runs under (the repo takes an
     already-scoped `AsyncSession`); the firewall is Postgres', applied from `ctx.session`."""
 
+    resolver = ImageSourceResolver(repo, blob_store, attachments, maker)
+
     async def generate_image_tool(arguments: dict, ctx: ToolContext) -> str:
         prompt = str(arguments.get("prompt", "")).strip()
         if not prompt:
@@ -344,58 +335,6 @@ def build_image_handlers(
             view=generated_image_view(row),
         )
 
-    async def _source_bytes(
-        arguments: dict, ctx: ToolContext, *, tool: str
-    ) -> tuple[bytes, str] | str:
-        """Resolve EXACTLY ONE source to (bytes, sha) or a clean error string (naming the
-        calling `tool`). Both/neither is rejected before any spend; an unknown/out-of-scope
-        id is a clean miss (RLS-scoped — a foreign artifact simply isn't visible)."""
-        image_id = str(arguments.get("source_image_id", "")).strip()
-        attachment_id = str(arguments.get("source_attachment_id", "")).strip()
-        if bool(image_id) == bool(attachment_id):
-            return (
-                f"{tool} needs exactly one source: source_image_id (an image you generated)"
-                " or source_attachment_id (an image the owner attached) — not both, not neither."
-            )
-        return await _resolve_source(image_id, attachment_id, ctx)
-
-    async def _resolve_source(
-        image_id: str, attachment_id: str, ctx: ToolContext
-    ) -> tuple[bytes, str] | str:
-        """Resolve a single source — exactly one of the two ids non-empty — to (bytes, sha)
-        or a clean error string. Shared by the primary source and each reference image."""
-        if image_id:
-            # Both ids are uuid PKs; a non-uuid (e.g. the model guessing "latest") would
-            # make the lookup raise a raw DB DataError that leaks to the model — treat it
-            # as a clean miss instead, the same as an unknown id.
-            if not _is_uuid(image_id):
-                return "No generated image with that id is in this chat."
-            # generated_images is owner-only, so jerv's empty-scope owner context reads it.
-            async with scoped_session(maker, ctx.session) as session:
-                row = await repo.get(session, image_id)
-            if row is None:
-                return "No generated image with that id is in this chat."
-            try:
-                return await blob_store.get(row.blob_sha256), row.blob_sha256
-            except FileNotFoundError:
-                return "That source image is no longer available."
-        # A chat attachment is DOMAIN-scoped (stamped 'general' for a jerv session), so it
-        # is read under the attachment context (the session's scopes + that stamped domain),
-        # not jerv's empty read scopes — the same widening the chat turn uses to load
-        # attachments. RLS still hides a foreign-domain id, which reads as a clean miss.
-        if ctx.agent_session_id is None or not _is_uuid(attachment_id):
-            return "No attached image with that id is in this chat."
-        att_ctx = await attachments.session_read_context(ctx.session, ctx.agent_session_id)
-        if att_ctx is None:
-            return "No attached image with that id is in this chat."
-        info = await attachments.get(att_ctx, attachment_id)
-        if info is None:
-            return "No attached image with that id is in this chat."
-        try:
-            return await blob_store.get(info.sha256), info.sha256
-        except FileNotFoundError:
-            return "That source image is no longer available."
-
     async def edit_image_tool(arguments: dict, ctx: ToolContext) -> str:
         prompt = str(arguments.get("prompt", "")).strip()
         if not prompt:
@@ -406,7 +345,7 @@ def build_image_handlers(
             if (aspect or _DEFAULT_ASPECT) not in _ASPECTS:
                 return "aspect must be one of: square, portrait, landscape, tall, wide."
             return "resolution must be one of: small, medium, large."
-        source = await _source_bytes(arguments, ctx, tool="edit_image")
+        source = await resolver.source_bytes(arguments, ctx, tool="edit_image")
         if isinstance(source, str):
             return source  # a clean error — no row, no spend
         source_bytes, source_sha = source
@@ -421,7 +360,7 @@ def build_image_handlers(
             )
         extra_sources: list[bytes] = []
         for ref_image_id, ref_attachment_id in references:
-            resolved = await _resolve_source(ref_image_id, ref_attachment_id, ctx)
+            resolved = await resolver.resolve(ref_image_id, ref_attachment_id, ctx)
             if isinstance(resolved, str):
                 return resolved  # a bad reference is a clean error — no spend
             extra_sources.append(resolved[0])
@@ -481,7 +420,7 @@ def build_image_handlers(
         prompt = str(arguments.get("prompt", "")).strip()
         if not prompt:
             return "analyze_image needs a prompt (what you want to know about the image)."
-        source = await _source_bytes(arguments, ctx, tool="analyze_image")
+        source = await resolver.source_bytes(arguments, ctx, tool="analyze_image")
         if isinstance(source, str):
             return source  # a clean error — no spend
         source_bytes, _ = source

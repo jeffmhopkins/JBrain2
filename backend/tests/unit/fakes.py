@@ -317,3 +317,20 @@ class FakeComfyUiGateway:
         if self.fail_free:
             raise ComfyUiGatewayError("simulated gateway failure")
         self.frees.append((unload_models, free_memory))
+
+
+class FakeFishIdGateway:
+    """In-memory stand-in for the fishial management client (the load/use/unload
+    tail — free() only); records each free so a handler test can assert the model
+    is unloaded after every identification."""
+
+    def __init__(self, *, fail_free: bool = False) -> None:
+        self.fail_free = fail_free
+        self.frees = 0
+
+    async def free(self) -> None:
+        from jbrain.fish_id.gateway import FishIdGatewayError
+
+        if self.fail_free:
+            raise FishIdGatewayError("simulated gateway failure")
+        self.frees += 1

@@ -31,6 +31,10 @@ log = structlog.get_logger()
 DEFAULT_TOP_K = 5
 MAX_TOP_K = 10
 
+# Overall budget for one identification (cold model load + segment/detect/embed); the
+# single source the config default (fish_id_timeout) and the client default share.
+DEFAULT_TIMEOUT = 120.0
+
 
 class FishIdError(Exception):
     """An identification failed — the service was unreachable, returned a non-2xx,
@@ -110,7 +114,9 @@ class HttpFishIdentifier(FishIdentifier):
     shared `httpx.AsyncClient`; `timeout` covers a cold model load + inference (the
     service loads lazily and we free it after each call, so a request pays the load)."""
 
-    def __init__(self, base_url: str, client: httpx.AsyncClient, *, timeout: float = 120.0):
+    def __init__(
+        self, base_url: str, client: httpx.AsyncClient, *, timeout: float = DEFAULT_TIMEOUT
+    ):
         self._root = base_url.rstrip("/")
         self._client = client
         self._timeout = timeout

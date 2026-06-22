@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from jbrain.agent.attachments import TurnAttachmentRepo
 from jbrain.agent.correctionmine import CORRECTION_MINE_SPEC
+from jbrain.agent.fishtools import build_fish_handlers
 from jbrain.agent.imagegentools import build_image_handlers
 from jbrain.agent.loop import ToolHandler
 from jbrain.agent.memory import MemoryRepo, MemoryService
@@ -74,6 +75,9 @@ from jbrain.connectors.service import ConnectorService
 from jbrain.devices.repo import SqlDeviceRepo
 from jbrain.embed import TeiEmbedClient
 from jbrain.family import SqlFamilyRepo
+from jbrain.fish_id import catalog as fish_catalog
+from jbrain.fish_id.client import HttpFishIdentifier
+from jbrain.fish_id.gateway import FishIdGatewayClient
 from jbrain.geocode import NominatimReverseClient
 from jbrain.image_gen.comfyui import ComfyUiImageGen
 from jbrain.image_gen.gateway import ComfyUiGatewayClient
@@ -314,6 +318,35 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         else:
             app.state.image_gen = None
             app.state.comfyui_gateway = None
+        # The on-box fish identifier, on the same graceful-degrade gate as image-gen: a
+        # dedicated httpx client (its own cold-load timeout budget) when a host-managed
+        # fishial service is configured, None otherwise (the registry then drops the
+        # identify_fish sidecar). docs/FISH_ID_PLAN.md.
+        fish_id_client: httpx.AsyncClient | None = None
+        fish_handlers: dict[str, ToolHandler] = {}
+        if settings.fish_id_url:
+            fish_id_client = httpx.AsyncClient()
+            app.state.fish_id = HttpFishIdentifier(
+                settings.fish_id_url, fish_id_client, timeout=settings.fish_id_timeout
+            )
+            # The management client (status/free) — the load → use → unload tail the
+            # handler runs after each identification, the sibling of comfyui_gateway.
+            app.state.fish_id_gateway = FishIdGatewayClient(settings.fish_id_url)
+            # The active catalog entry (the provisioned model, else the recommended set)
+            # drives the result card's arch/species-count caption.
+            fish_model = (fish_catalog.selected(settings.fish_id_models) or fish_catalog.CATALOG)[0]
+            fish_handlers = build_fish_handlers(
+                app.state.fish_id,
+                app.state.fish_id_gateway,
+                app.state.blob_store,
+                app.state.generated_image_repo,
+                app.state.turn_attachments,
+                maker,
+                fish_model,
+            )
+        else:
+            app.state.fish_id = None
+            app.state.fish_id_gateway = None
         app.state.agent_registry = build_registry(
             app.state.search_service,
             app.state.notes_repo,
@@ -333,6 +366,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             router=app.state.llm_router,
             settings=settings_store,
             image_handlers=image_handlers,
+            fish_handlers=fish_handlers,
         )
         app.state.agent_runlog = AgentRunLog(maker)
         app.state.run_reader = RunLogReader(maker)
@@ -369,6 +403,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         await app.state.supervisor_client.aclose()
         if image_gen_client is not None:
             await image_gen_client.aclose()
+        if fish_id_client is not None:
+            await fish_id_client.aclose()
         await engine.dispose()
 
     app = FastAPI(title="JBrain", lifespan=lifespan)

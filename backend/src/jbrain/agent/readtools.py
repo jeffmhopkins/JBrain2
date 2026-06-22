@@ -61,6 +61,10 @@ IMAGE_TOOL_NAMES = frozenset({"generate_image", "edit_image"})
 # registry when no ComfyUI is configured (no handlers passed), so an unconfigured box
 # silently lacks the feature.
 OPTIONAL_IMAGE_TOOLS = IMAGE_TOOL_NAMES | frozenset({"analyze_image"})
+# The on-box fish-identification sidecar — a `web`-class, expensive, jerv-only tool
+# behind the localhost fishial service. Optional: dropped from the registry when no
+# service is configured (no handler passed), so an unconfigured box silently lacks it.
+OPTIONAL_FISH_TOOLS = frozenset({"identify_fish"})
 
 
 class EntityReader(Protocol):
@@ -403,6 +407,7 @@ def build_registry(
     router: "LlmRouter | None" = None,
     settings: "SqlSettingsStore | None" = None,
     image_handlers: dict[str, ToolHandler] | None = None,
+    fish_handlers: dict[str, ToolHandler] | None = None,
 ) -> ToolRegistry:
     """The agent's tool registry: every shipped sidecar bound to its handler — the
     read tools, the Tier-A memory tools, the list tools (which write the owner's
@@ -412,7 +417,8 @@ def build_registry(
     never call out).
     `image_handlers` is jerv's local image-gen tools, present only when a ComfyUI is
     configured; when absent the `generate_image`/`edit_image` sidecars are dropped
-    (graceful degrade, docs/IMAGE_GEN_PLAN.md).
+    (graceful degrade, docs/IMAGE_GEN_PLAN.md). `fish_handlers` is the same story for
+    `identify_fish` behind the localhost fishial service (docs/FISH_ID_PLAN.md).
     Fails at startup if a sidecar and handler don't match exactly, so a new .tool
     can never ship unwired."""
     return load_registry(
@@ -445,6 +451,9 @@ def build_registry(
             # jerv's local image-gen tools (`web`-gated, on-box), present only when a
             # ComfyUI is configured; otherwise their sidecars are dropped below.
             **(image_handlers or {}),
+            # jerv's on-box fish-identification tool, present only when the fishial
+            # service is configured; otherwise its sidecar is dropped below.
+            **(fish_handlers or {}),
         },
-        optional=OPTIONAL_IMAGE_TOOLS,
+        optional=OPTIONAL_IMAGE_TOOLS | OPTIONAL_FISH_TOOLS,
     )

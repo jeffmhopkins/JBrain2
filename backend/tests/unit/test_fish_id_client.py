@@ -61,6 +61,17 @@ async def test_identify_clamps_top_k_to_max() -> None:
     assert seen["top_k"] == str(MAX_TOP_K)
 
 
+async def test_identify_clamps_top_k_to_floor() -> None:
+    seen: dict[str, object] = {}
+
+    def handle(req: httpx.Request) -> httpx.Response:
+        seen["top_k"] = req.url.params.get("top_k")
+        return httpx.Response(200, json=_OK)
+
+    await _identifier(handle).identify(b"x", top_k=0)
+    assert seen["top_k"] == "1"
+
+
 async def test_identify_raises_on_http_error() -> None:
     with pytest.raises(FishIdError):
         await _identifier(lambda r: httpx.Response(503)).identify(b"x")

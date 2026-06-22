@@ -772,6 +772,11 @@ def test_sidecars_pinned_to_their_versions() -> None:
             1,
             "e20ed2107fb866bf2f5d09357f63317146e4604780274796105ea68eae76bdc0",
         ),
+        "identify_fish.tool": (
+            "identify_fish",
+            1,
+            "64982d040ed14a5f19bb54087860fb54df202b4bfcfc054d4e3ff8ebbcf188ec",
+        ),
     }
     # Every shipped sidecar must appear above — a new `.tool` cannot slip in
     # unpinned (the gap this closes: propose_merge was registered but never pinned).
