@@ -61,6 +61,9 @@ IMAGE_TOOL_NAMES = frozenset({"generate_image", "edit_image"})
 # registry when no ComfyUI is configured (no handlers passed), so an unconfigured box
 # silently lacks the feature.
 OPTIONAL_IMAGE_TOOLS = IMAGE_TOOL_NAMES | frozenset({"analyze_image"})
+# jerv's on-box audio transcription sidecar, dropped from the registry when the
+# whisper gateway is unconfigured (graceful degrade, like the image tools).
+OPTIONAL_TRANSCRIBE_TOOL = frozenset({"transcribe"})
 
 
 class EntityReader(Protocol):
@@ -403,6 +406,7 @@ def build_registry(
     router: "LlmRouter | None" = None,
     settings: "SqlSettingsStore | None" = None,
     image_handlers: dict[str, ToolHandler] | None = None,
+    transcribe_handlers: dict[str, ToolHandler] | None = None,
 ) -> ToolRegistry:
     """The agent's tool registry: every shipped sidecar bound to its handler — the
     read tools, the Tier-A memory tools, the list tools (which write the owner's
@@ -445,6 +449,9 @@ def build_registry(
             # jerv's local image-gen tools (`web`-gated, on-box), present only when a
             # ComfyUI is configured; otherwise their sidecars are dropped below.
             **(image_handlers or {}),
+            # jerv's local audio transcription (`web`-gated, on-box), present only when
+            # the whisper gateway is configured; otherwise its sidecar is dropped below.
+            **(transcribe_handlers or {}),
         },
-        optional=OPTIONAL_IMAGE_TOOLS,
+        optional=OPTIONAL_IMAGE_TOOLS | OPTIONAL_TRANSCRIBE_TOOL,
     )

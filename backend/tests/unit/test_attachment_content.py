@@ -103,6 +103,19 @@ async def _build(repo: FakeRepo, blobs: FakeBlobs, ids: list[str]) -> tuple[list
     return await build_attachment_content(repo, blobs, CTX, ids)  # type: ignore[arg-type]
 
 
+async def test_audio_becomes_a_transcribe_hint_not_inline_bytes() -> None:
+    repo, blobs = FakeRepo(), FakeBlobs()
+    # Binary audio must never be decoded as text (garbage); it surfaces only its id.
+    blobs.put("sha-aud", b"RIFF\x00\x01\x02binary-audio")
+    aid = repo.add("audio/wav", "sha-aud", filename="memo.wav")
+    images, text = await _build(repo, blobs, [aid])
+    assert images == []
+    assert aid in text
+    assert "source_attachment_id" in text and "transcribe" in text
+    assert "memo.wav" in text
+    assert "binary-audio" not in text  # the bytes are not decoded inline
+
+
 async def test_image_becomes_one_llm_image() -> None:
     repo, blobs = FakeRepo(), FakeBlobs()
     blobs.put("sha-img", b"\x89PNG-bytes")

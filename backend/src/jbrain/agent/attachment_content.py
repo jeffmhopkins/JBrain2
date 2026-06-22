@@ -74,6 +74,16 @@ def _text_block(info: AttachmentInfo, data: bytes) -> _Converted:
     return _Converted(images=[], text_blocks=[f"[{info.filename}]:\n{body}"])
 
 
+def _audio_block(info: AttachmentInfo) -> _Converted:
+    # The model can't hear the bytes, so only its id rides the turn (no inline data):
+    # pass the id as source_attachment_id to the transcribe tool to read its words.
+    note = (
+        f'[attached audio "{info.filename}" — its id is {info.id}: pass it as '
+        "source_attachment_id to the transcribe tool to read what it says]"
+    )
+    return _Converted(images=[], text_blocks=[note])
+
+
 def _pdf_block(info: AttachmentInfo, data: bytes, image_budget: int) -> _Converted:
     """Each page (up to MAX_PDF_PAGES and the remaining image budget) → a PNG image
     for vision AND its extracted text layer. Synchronous PyMuPDF work — the caller
@@ -120,6 +130,10 @@ def _convert_one(info: AttachmentInfo, data: bytes, image_budget: int) -> _Conve
         return _image_block(info, data) if image_budget > 0 else _Converted([], [])
     if info.media_type == "application/pdf":
         return _pdf_block(info, data, image_budget)
+    if info.media_type.startswith("audio/"):
+        # Binary audio has no inline reading — decoding it as text would be garbage;
+        # surface its id for the transcribe tool instead.
+        return _audio_block(info)
     # Everything else reaching here is a known-text type (the upload allowlist gates
     # the set); decode it inline.
     return _text_block(info, data)

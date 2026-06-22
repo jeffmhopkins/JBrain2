@@ -22,6 +22,7 @@ from jbrain.agent.session import AgentSessionRepo
 from jbrain.agent.skilldistill import SKILL_DISTILL_SPEC
 from jbrain.agent.skills import SkillService, SkillsRepo
 from jbrain.agent.skillsweep import SKILL_SWEEP_SPEC
+from jbrain.agent.transcribetools import build_transcribe_handlers
 from jbrain.agent.transcript_store import AgentTranscript
 from jbrain.agent.webtools import build_web_handlers
 from jbrain.agent.wikiwritetools import build_wiki_write_handlers
@@ -94,6 +95,7 @@ from jbrain.search.service import SearchService
 from jbrain.settings_store import SqlSettingsStore
 from jbrain.storage import FsBackupShelf, FsBlobStore
 from jbrain.tiles import FsTileCache, HttpTileFetcher, TileService, TileSet, tile_cache_namespace
+from jbrain.transcribe import WhisperCppClient
 from jbrain.usage import SqlUsageRecorder
 from jbrain.web import SearxngClient, WebFetcher
 from jbrain.wiki.actions import WIKI_SPECS
@@ -314,6 +316,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         else:
             app.state.image_gen = None
             app.state.comfyui_gateway = None
+        # jerv's on-box audio transcription (docs/WHISPER_TRANSCRIPTION_PLAN.md).
+        # Wired only when the whisper gateway is configured; the registry drops the
+        # `transcribe` sidecar otherwise (graceful degrade, like the image tools).
+        # The gateway frees the model after each call (load-on-demand / unload-after).
+        transcribe_handlers: dict[str, ToolHandler] = {}
+        if settings.whisper_url:
+            transcribe_handlers = build_transcribe_handlers(
+                WhisperCppClient(
+                    settings.whisper_url,
+                    settings.whisper_model,
+                    timeout=settings.whisper_timeout,
+                ),
+                app.state.blob_store,
+                app.state.turn_attachments,
+                settings.whisper_model,
+                gateway=LocalGatewayClient(settings.whisper_url),
+            )
         app.state.agent_registry = build_registry(
             app.state.search_service,
             app.state.notes_repo,
@@ -333,6 +352,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             router=app.state.llm_router,
             settings=settings_store,
             image_handlers=image_handlers,
+            transcribe_handlers=transcribe_handlers,
         )
         app.state.agent_runlog = AgentRunLog(maker)
         app.state.run_reader = RunLogReader(maker)
