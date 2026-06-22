@@ -24,6 +24,27 @@ def test_ocr_and_caption_blocks_announce_their_provenance() -> None:
     assert prompt_block("x", source_kind="ocr", filename=None).startswith("[ocr from attachment]")
 
 
+def test_transcript_block_announces_provenance_and_low_confidence() -> None:
+    # A clean transcript: provenance only.
+    assert (
+        prompt_block(
+            "Discussed the roadmap.", source_kind="transcript", filename="memo.wav", confidence=0.8
+        )
+        == "[transcript from memo.wav]\nDiscussed the roadmap."
+    )
+    # Missing confidence still marks provenance (no qualifier).
+    assert prompt_block("hi", source_kind="transcript", filename="memo.wav").startswith(
+        "[transcript from memo.wav]"
+    )
+    # Noisy audio (below the threshold): the model is told to discount it harder.
+    assert (
+        prompt_block(
+            "muffled words", source_kind="transcript", filename="memo.wav", confidence=0.35
+        )
+        == "[low-confidence transcript from memo.wav]\nmuffled words"
+    )
+
+
 def test_marked_blocks_flow_into_the_user_prompt() -> None:
     prompt = build_user_prompt(
         ["body text", prompt_block("OCR text", source_kind="ocr", filename="scan.png")],

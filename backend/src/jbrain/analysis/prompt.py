@@ -85,21 +85,33 @@ EXTRACTION_SCHEMA: dict[str, Any] = _PROMPT.output_schema or {}
 DOMAIN_GUIDANCE: dict[str, str] = dict(_PROMPT.domain_guidance)
 
 
-def prompt_block(text: str, *, source_kind: str, filename: str | None) -> str:
+# An audio transcript whose words' mean confidence sits below this reads as
+# "low-confidence" in its marker, so the model discounts facts built on it harder
+# than a clean transcription (the analysis half of the per-word data the UI colors).
+TRANSCRIPT_LOW_CONFIDENCE = 0.6
+
+
+def prompt_block(
+    text: str, *, source_kind: str, filename: str | None, confidence: float | None = None
+) -> str:
     """One chunk as the extraction model sees it.
 
-    OCR and caption chunks announce their provenance: the system prompt's
-    confidence rule ("lower it for garbled, OCR-derived, or inferred
-    content") only fires if the model can TELL the text is machine-read —
-    nothing else in the concatenated note content conveys it. Facts from
-    these blocks then inherit reduced confidence, which is what keeps a
-    misread health number from auto-superseding anything (docs/ANALYSIS.md
-    "Guards")."""
+    OCR, caption, and transcript chunks announce their provenance: the system
+    prompt's confidence rule ("lower it for garbled, OCR-derived,
+    audio-transcribed, or uncertain content") only fires if the model can TELL the
+    text is machine-read — nothing else in the concatenated note content conveys
+    it. Facts from these blocks then inherit reduced confidence, which is what
+    keeps a misread health number from auto-superseding anything (docs/ANALYSIS.md
+    "Guards"). A transcript additionally carries a "low-confidence" qualifier when
+    its measured confidence was low, so the model discounts a noisy clip harder."""
     name = filename or "attachment"
     if source_kind == "ocr":
         return f"[ocr from {name}]\n{text}"
     if source_kind == "caption":
         return f"[image caption of {name}]\n{text}"
+    if source_kind == "transcript":
+        low = confidence is not None and confidence < TRANSCRIPT_LOW_CONFIDENCE
+        return f"[{'low-confidence ' if low else ''}transcript from {name}]\n{text}"
     return text
 
 
