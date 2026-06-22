@@ -8166,6 +8166,13 @@ button.small {
   padding: 10px 12px;
   background: var(--surface-2);
 }
+/* The transcript brings its own card chrome (border/radius/surface); drop the
+   generic wrapper's so the two don't stack into a double border. */
+.fb-shell .tool-view:has(.atx) {
+  border: 0;
+  padding: 0;
+  background: none;
+}
 .fb-shell .tv-stat .tv-stat-value {
   font-size: 22px;
   font-weight: 600;
@@ -13258,15 +13265,21 @@ input.ld-title {
 }
 .atx-legend {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 9px;
+  gap: 6px 9px;
   padding: 10px 14px 14px;
   border-top: 1px solid var(--border);
   font-size: var(--fs-micro);
   color: var(--text-2);
 }
+/* Labels stay whole — a tight viewport wraps the row by phrase, never mid-word. */
+.atx-legend > span:not(.atx-grad) {
+  white-space: nowrap;
+}
 .atx-grad {
-  flex: 0 1 160px;
+  flex: 1 1 80px;
+  min-width: 48px;
   height: 7px;
   border-radius: var(--r-pill);
   background: linear-gradient(90deg, var(--rose), var(--amber), var(--green));

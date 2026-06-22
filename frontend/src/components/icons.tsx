@@ -372,6 +372,12 @@ export const PlayIcon = (p: IconProps) => (
   </Icon>
 );
 
+export const PauseIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M8 5v14M16 5v14" />
+  </Icon>
+);
+
 export const ZapIcon = (p: IconProps) => (
   <Icon {...p}>
     <path d="M13 2 4 14h7l-1 8 9-12h-7l1-8z" />
