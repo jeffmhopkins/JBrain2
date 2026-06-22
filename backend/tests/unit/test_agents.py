@@ -25,7 +25,7 @@ def test_curator_is_the_full_brain_default() -> None:
     curator = AGENTS["curator"]
     assert curator.tools is None
     assert curator.reads_knowledge_base is True
-    assert curator.version == "agent-system-v4"
+    assert curator.version == "agent-system-v5"
 
 
 def test_teacher_is_a_tool_less_socratic_tutor() -> None:
@@ -85,16 +85,16 @@ def test_persona_prompts_pinned_to_their_versions() -> None:
     version bump, like every .prompt file (DEVELOPMENT.md)."""
     pins = {
         "curator": (
-            "agent-system-v4",
-            "9d86df3adb7be857a153015a9da2aeb93a48eb17f1807651fa206e52efe61772",
+            "agent-system-v5",
+            "b054afdb6cff884bfce5c6c161500aeb2254a08a6dfde16bb2c9ef83f33f8906",
         ),
         "teacher": (
             "agent-teacher-v1",
             "e457d7504be94746132de7cc0c7b50fa1567867b3573a64ddfe6030b45909b16",
         ),
         "jerv": (
-            "agent-jerv-v10",
-            "03cc9a4d7326b353ad7be257a2950631336b30fe72c70211315acc49f4b8d398",
+            "agent-jerv-v13",
+            "dbbc6c0457e4305bad73e2bf368878c150fe3019158867edb8c40f1c9cdfca9e",
         ),
     }
     assert set(pins) == AGENT_NAMES

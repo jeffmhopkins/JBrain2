@@ -309,7 +309,7 @@ def test_chat_streams_text_then_done(
         {"type": "done", "stop_reason": "end_turn"},
     ]
     # The run was opened, the session touched, and the run closed with its summary.
-    assert runlog.started == [("sess-1", "agent-system-v4")]
+    assert runlog.started == [("sess-1", "agent-system-v5")]
     assert sessions_store.touched == ["sess-1"]
     assert runlog.finished == [
         {"status": "done", "stop_reason": "end_turn", "step_count": 1, "cost_tokens": 10}
@@ -1493,7 +1493,7 @@ def test_chat_runs_the_selected_agents_prompt_and_only_its_tools(
     assert {t.name for t in call["tools"]} == {"web_search", "web_fetch"}
     # Sandboxed: a non-KB agent never recalls skills, and the run carries its version.
     assert not skills.called
-    assert ("sess-j", "agent-jerv-v10") in client.app.state.agent_runlog.started  # type: ignore[attr-defined]
+    assert ("sess-j", "agent-jerv-v13") in client.app.state.agent_runlog.started  # type: ignore[attr-defined]
 
 
 def test_chat_curator_is_offered_no_web_tools(
