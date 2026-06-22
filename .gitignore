@@ -16,5 +16,8 @@ dist/
 *.key
 secrets/
 
+# Debug-console capability token an owner pastes for a session (never commit it).
+.jbrain-debug-token
+
 # Claude Code agent worktrees (harness scratch)
 .claude/worktrees/

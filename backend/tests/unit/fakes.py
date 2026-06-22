@@ -6,7 +6,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 
-from jbrain.auth.service import PrincipalInfo
+from jbrain.auth.service import CapabilityToken, PrincipalInfo
 from jbrain.db.session import SessionContext
 from jbrain.devices.repo import DeviceInfo
 from jbrain.locations.pairing import CODE_TTL, RedeemedDevice
@@ -20,6 +20,9 @@ class FakePrincipal:
     label: str
     revoked: bool = False
     subject_id: str = ""
+    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    expires_at: datetime | None = None
+    last_used_at: datetime | None = None
 
 
 @dataclass
@@ -81,9 +84,48 @@ class FakeAuthRepo:
             FakePrincipal(str(uuid.uuid4()), kind, key_hash, label, subject_id=subject_id or "")
         )
 
+    async def create_capability(
+        self, key_hash: str, label: str, expires_at: datetime | None
+    ) -> CapabilityToken:
+        p = FakePrincipal(
+            str(uuid.uuid4()), "capability_token", key_hash, label, expires_at=expires_at
+        )
+        self.principals.append(p)
+        return _capability(p)
+
+    async def find_active_capability_by_key_hash(self, key_hash: str) -> PrincipalInfo | None:
+        now = datetime.now(UTC)
+        for p in self.principals:
+            live = p.expires_at is None or p.expires_at > now
+            if p.key_hash == key_hash and p.kind == "capability_token" and not p.revoked and live:
+                p.last_used_at = now
+                return _info(p)
+        return None
+
+    async def list_capabilities(self) -> list[CapabilityToken]:
+        return [_capability(p) for p in self.principals if p.kind == "capability_token"]
+
+    async def revoke_capability(self, capability_id: str) -> bool:
+        for p in self.principals:
+            if p.id == capability_id and p.kind == "capability_token" and not p.revoked:
+                p.revoked = True
+                return True
+        return False
+
 
 def _info(p: FakePrincipal) -> PrincipalInfo:
     return PrincipalInfo(id=p.id, kind=p.kind, label=p.label, subject_id=p.subject_id)
+
+
+def _capability(p: FakePrincipal) -> CapabilityToken:
+    return CapabilityToken(
+        id=p.id,
+        label=p.label,
+        created_at=p.created_at,
+        expires_at=p.expires_at,
+        last_used_at=p.last_used_at,
+        revoked_at=p.created_at if p.revoked else None,
+    )
 
 
 @dataclass

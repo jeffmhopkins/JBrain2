@@ -298,6 +298,25 @@ export interface FeedConfig {
   token: string | null;
 }
 
+// ----- Debug-console capability tokens (owner mints; an assistant uses) -----
+
+export interface DebugToken {
+  id: string;
+  label: string;
+  created_at: string;
+  expires_at: string | null;
+  last_used_at: string | null;
+  revoked_at: string | null;
+}
+
+/** The mint response — `payload` (server URL + key) is shown exactly once. */
+export interface DebugTokenMint {
+  id: string;
+  label: string;
+  expires_at: string | null;
+  payload: string;
+}
+
 // ----- Per-task LLM routing (GET/PUT /api/settings/llm) -----
 
 /**
@@ -1377,6 +1396,24 @@ export const api = {
 
   async disableFeed(): Promise<void> {
     await request("/api/feed/appointments", { method: "DELETE" });
+  },
+
+  // ----- Debug-console capability tokens (owner-only) -----
+  async debugTokens(): Promise<DebugToken[]> {
+    const response = await request("/api/settings/debug-tokens");
+    return (await response.json()) as DebugToken[];
+  },
+
+  async mintDebugToken(label: string, ttlHours: number): Promise<DebugTokenMint> {
+    const response = await request(
+      "/api/settings/debug-tokens",
+      jsonInit("POST", { label, ttl_hours: ttlHours }),
+    );
+    return (await response.json()) as DebugTokenMint;
+  },
+
+  async revokeDebugToken(id: string): Promise<void> {
+    await request(`/api/settings/debug-tokens/${encodeURIComponent(id)}`, { method: "DELETE" });
   },
 
   // The owner's read-only calendar (Day/Week/Month/Tasks read this projection).

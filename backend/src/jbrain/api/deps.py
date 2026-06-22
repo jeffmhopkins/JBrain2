@@ -93,3 +93,39 @@ async def current_device_principal(request: Request, repo: AuthRepoDep) -> Princ
 
 
 DeviceDep = Annotated[PrincipalInfo, Depends(current_device_principal)]
+
+
+def _bearer(authorization: str) -> str | None:
+    """The token from an `Authorization: Bearer` header, or None if malformed."""
+    scheme, _, token = authorization.partition(" ")
+    if scheme.lower() != "bearer" or not token:
+        return None
+    return token.strip()
+
+
+async def current_debug_principal(
+    request: Request, repo: AuthRepoDep, settings: SettingsDep
+) -> PrincipalInfo:
+    """Authenticate the owner debug console by a capability-token bearer key.
+
+    Two gates, both fail-closed: the feature must be enabled (a 404 hides the
+    surface entirely when it is off — no oracle that the route even exists), and
+    the key must resolve to a live, unexpired, unrevoked capability_token. The
+    lookup is physically distinct from the owner-cookie and device paths, so a
+    debug token can never reach owner/member/data routes and vice-versa."""
+    if not settings.debug_access_enabled:
+        raise HTTPException(status_code=404, detail="not found")
+    key = _bearer(request.headers.get("Authorization", ""))
+    principal = await service.authenticate_capability(repo, key) if key else None
+    if principal is None:
+        raise HTTPException(
+            status_code=401,
+            detail="invalid debug token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    return principal
+
+
+# A debug-console principal: gates the /api/debug/* surface behind a live,
+# revocable, time-boxed capability token (and the JBRAIN_DEBUG_ACCESS_ENABLED flag).
+DebugDep = Annotated[PrincipalInfo, Depends(current_debug_principal)]

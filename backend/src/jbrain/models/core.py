@@ -50,6 +50,12 @@ class Principal(Base):
     label: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Set only for capability_token (debug-console) principals: a time-box so the
+    # grant lapses on its own. NULL = never expires (owner/device principals).
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Stamped on each successful capability-token auth so the owner's token list
+    # shows liveness. NULL until first use.
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class DeviceSession(Base):

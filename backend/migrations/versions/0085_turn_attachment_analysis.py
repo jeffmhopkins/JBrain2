@@ -10,15 +10,15 @@ frames:[{t_ms, caption, thumb_id}], transcript:{text, words}|null}.
 
 Rides the existing app.turn_attachments RLS policy + grants (no new table).
 
-Revision ID: 0084
-Revises: 0083
+Revision ID: 0085
+Revises: 0084
 Create Date: 2026-06-22
 """
 
 from alembic import op
 
-revision = "0084"
-down_revision = "0083"
+revision = "0085"
+down_revision = "0084"
 branch_labels = None
 depends_on = None
 

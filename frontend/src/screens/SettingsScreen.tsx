@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
-import type { FeedConfig, ImageAnalysisMode } from "../api/client";
-import { api } from "../api/client";
+import type { DebugToken, FeedConfig, ImageAnalysisMode } from "../api/client";
+import { ApiError, api } from "../api/client";
 import { FONT_SCALES, type FontScale, getFontScale, setFontScale } from "../fontScale";
 import { isLocationCaptureEnabled, setLocationCaptureEnabled } from "../location";
 import { type ThemePref, getThemePref, setThemePref } from "../theme";
@@ -102,6 +102,58 @@ export function SettingsScreen({ deviceLabel, onLogout }: SettingsScreenProps) {
       setCopied(true);
     }
   }
+
+  // Debug access (Claude): owner-minted, revocable, time-boxed capability tokens.
+  // The minted payload (server URL + key) is shown ONCE, here, to copy and hand off.
+  const [debugTokens, setDebugTokens] = useState<DebugToken[] | null>(null);
+  const [debugLabel, setDebugLabel] = useState("");
+  const [debugTtl, setDebugTtl] = useState<number>(24);
+  const [mintedPayload, setMintedPayload] = useState<string | null>(null);
+  const [payloadCopied, setPayloadCopied] = useState(false);
+  const [debugError, setDebugError] = useState<string | null>(null);
+  const [revoking, setRevoking] = useState<string | null>(null);
+
+  function loadDebugTokens() {
+    void api
+      .debugTokens()
+      .then(setDebugTokens)
+      .catch(() => setDebugTokens([]));
+  }
+  useEffect(loadDebugTokens, []);
+
+  function mintDebugToken() {
+    setDebugError(null);
+    setPayloadCopied(false);
+    void api
+      .mintDebugToken(debugLabel.trim() || "Claude debug", debugTtl)
+      .then((m) => {
+        setMintedPayload(m.payload);
+        setDebugLabel("");
+        loadDebugTokens();
+      })
+      .catch((e) => {
+        setDebugError(
+          e instanceof ApiError && e.status === 409
+            ? "Debug access is off on the server (set JBRAIN_DEBUG_ACCESS_ENABLED)."
+            : "Could not mint a token.",
+        );
+      });
+  }
+
+  function revokeDebugToken(id: string) {
+    void api
+      .revokeDebugToken(id)
+      .then(loadDebugTokens)
+      .catch(() => {});
+    setRevoking(null);
+  }
+
+  const DEBUG_TTL_OPTIONS: { hours: number; label: string }[] = [
+    { hours: 1, label: "1h" },
+    { hours: 24, label: "24h" },
+    { hours: 24 * 7, label: "7d" },
+    { hours: 24 * 30, label: "30d" },
+  ];
 
   function pick(pref: ThemePref) {
     setThemePref(pref);
@@ -266,6 +318,108 @@ export function SettingsScreen({ deviceLabel, onLogout }: SettingsScreenProps) {
           <button type="button" className="seg" onClick={generateFeed} disabled={feed === null}>
             Generate link
           </button>
+        )}
+      </section>
+
+      <section className="settings-card">
+        <h2 className="settings-label">Debug access (Claude)</h2>
+        <p className="settings-meta">
+          mint a revocable, time-boxed token an assistant uses to iterate on prompts against your
+          local model, run read-only SQL, read logs, and switch model routing — live. the token
+          carries a key into your box, including health, finance, and location data, so treat it
+          like a password: share it only with a session you trust and revoke it the moment you're
+          done.
+        </p>
+        <div className="settings-actions" aria-label="New debug token">
+          <input
+            className="feed-url"
+            value={debugLabel}
+            placeholder="Label (e.g. Claude session)"
+            aria-label="Debug token label"
+            onChange={(e) => setDebugLabel(e.currentTarget.value)}
+          />
+          <div className="theme-picker" aria-label="Token lifetime">
+            {DEBUG_TTL_OPTIONS.map((opt) => (
+              <button
+                key={opt.hours}
+                type="button"
+                aria-pressed={debugTtl === opt.hours}
+                className={`seg${debugTtl === opt.hours ? " seg-on" : ""}`}
+                onClick={() => setDebugTtl(opt.hours)}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+          <button type="button" className="seg" onClick={mintDebugToken}>
+            Mint token
+          </button>
+        </div>
+        {debugError && <p className="settings-meta settings-error">{debugError}</p>}
+        {mintedPayload && (
+          <>
+            <p className="settings-meta">
+              copy this now — it is shown once and can't be recovered. paste it to the assistant.
+            </p>
+            <input
+              className="feed-url"
+              readOnly
+              value={mintedPayload}
+              aria-label="Debug token payload"
+              onFocus={(e) => e.currentTarget.select()}
+            />
+            <div className="settings-actions">
+              <button
+                type="button"
+                className="seg"
+                onClick={() => {
+                  void navigator.clipboard?.writeText(mintedPayload);
+                  setPayloadCopied(true);
+                }}
+              >
+                {payloadCopied ? "Copied" : "Copy token"}
+              </button>
+              <button type="button" className="seg" onClick={() => setMintedPayload(null)}>
+                Done
+              </button>
+            </div>
+          </>
+        )}
+        {debugTokens && debugTokens.length > 0 && (
+          <ul className="debug-token-list" aria-label="Debug tokens">
+            {debugTokens.map((t) => {
+              const expired = t.expires_at != null && new Date(t.expires_at) < new Date();
+              const status = t.revoked_at ? "revoked" : expired ? "expired" : "active";
+              return (
+                <li key={t.id} className="debug-token-row">
+                  <div>
+                    <span className="settings-value">{t.label}</span>
+                    <span className={`debug-token-status debug-token-${status}`}> {status}</span>
+                    <p className="settings-meta">
+                      {t.expires_at
+                        ? `expires ${new Date(t.expires_at).toLocaleString()}`
+                        : "no expiry"}
+                      {t.last_used_at
+                        ? ` · last used ${new Date(t.last_used_at).toLocaleString()}`
+                        : " · never used"}
+                    </p>
+                  </div>
+                  {status === "active" && (
+                    <button
+                      type="button"
+                      className="btn-destructive"
+                      onClick={() =>
+                        revoking === t.id ? revokeDebugToken(t.id) : setRevoking(t.id)
+                      }
+                      onBlur={() => setRevoking(null)}
+                    >
+                      {revoking === t.id ? "Tap to confirm" : "Revoke"}
+                    </button>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
         )}
       </section>
 

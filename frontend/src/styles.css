@@ -928,6 +928,37 @@ h3 {
   gap: 8px;
 }
 
+/* Debug-access (capability token) management list */
+.settings-error {
+  color: var(--danger, #e5484d);
+}
+.debug-token-list {
+  list-style: none;
+  margin: 12px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.debug-token-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.debug-token-status {
+  font-size: var(--fs-micro);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.debug-token-active {
+  color: var(--accent, #30a46c);
+}
+.debug-token-expired,
+.debug-token-revoked {
+  color: var(--text-2);
+}
+
 /* ===== LLM Settings (Strategy C — tiered groups) ===== */
 
 /* Each tier is a card with a colored left rail keying its role. */

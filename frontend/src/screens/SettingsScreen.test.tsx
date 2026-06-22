@@ -21,6 +21,13 @@ function stubSettingsFetch(initial: "full" | "ocr" = "full") {
         headers: { "Content-Type": "application/json" },
       });
     }
+    // The debug-access section lists its tokens on mount; default to none.
+    if (path.startsWith("/api/settings/debug-tokens")) {
+      return new Response(JSON.stringify([]), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
     if (path !== "/api/settings") {
       throw new Error(`Unexpected fetch: ${path}`);
     }
@@ -164,6 +171,76 @@ describe("SettingsScreen calendar feed", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Generate link" }));
     const url = (await screen.findByLabelText("Calendar feed URL")) as HTMLInputElement;
     expect(url.value).toContain("/api/feed/appointments.ics?token=secret-tok");
+  });
+});
+
+describe("SettingsScreen debug access", () => {
+  function json(body: unknown, status = 200) {
+    return new Response(JSON.stringify(body), {
+      status,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+
+  // A stateful stub for the debug-token endpoints (plus the settings/feed loads
+  // the screen does on mount). `mintStatus` lets a test force the 409 path.
+  function stubDebug(opts: { tokens?: unknown[]; mintStatus?: number } = {}) {
+    const tokens = opts.tokens ?? [];
+    const deletes: string[] = [];
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      const path = String(input);
+      const method = (init?.method ?? "GET").toUpperCase();
+      if (path === "/api/settings") return json({ image_analysis_mode: "full" });
+      if (path.startsWith("/api/feed/appointments")) return json({ enabled: false, token: null });
+      if (path === "/api/settings/debug-tokens" && method === "GET") return json(tokens);
+      if (path === "/api/settings/debug-tokens" && method === "POST") {
+        if (opts.mintStatus) return json({ detail: "off" }, opts.mintStatus);
+        return json({ id: "t1", label: "Claude", expires_at: null, payload: "PASTE-ME" }, 201);
+      }
+      if (path.startsWith("/api/settings/debug-tokens/") && method === "DELETE") {
+        deletes.push(path.split("/").pop() ?? "");
+        return new Response(null, { status: 204 });
+      }
+      throw new Error(`Unexpected fetch: ${path}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    return { deletes };
+  }
+
+  it("mints a token and reveals the one-time payload", async () => {
+    stubDebug();
+    setup();
+    fireEvent.click(await screen.findByRole("button", { name: "Mint token" }));
+    const payload = (await screen.findByLabelText("Debug token payload")) as HTMLInputElement;
+    expect(payload.value).toBe("PASTE-ME");
+  });
+
+  it("explains when debug access is disabled on the server", async () => {
+    stubDebug({ mintStatus: 409 });
+    setup();
+    fireEvent.click(await screen.findByRole("button", { name: "Mint token" }));
+    expect(await screen.findByText(/Debug access is off/)).toBeInTheDocument();
+  });
+
+  it("lists an active token and revokes it on a confirmed tap", async () => {
+    const { deletes } = stubDebug({
+      tokens: [
+        {
+          id: "abc",
+          label: "Phone debug",
+          created_at: "2026-06-22T00:00:00Z",
+          expires_at: "2099-01-01T00:00:00Z",
+          last_used_at: null,
+          revoked_at: null,
+        },
+      ],
+    });
+    setup();
+    expect(await screen.findByText("Phone debug")).toBeInTheDocument();
+    const revoke = screen.getByRole("button", { name: "Revoke" });
+    fireEvent.click(revoke); // first tap arms the inline confirm
+    fireEvent.click(screen.getByRole("button", { name: "Tap to confirm" }));
+    await waitFor(() => expect(deletes).toEqual(["abc"]));
   });
 });
 
