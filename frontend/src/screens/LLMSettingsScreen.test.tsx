@@ -108,6 +108,14 @@ function stubLlmFetch(seed?: LlmSettings) {
         { status: 200, headers: { "Content-Type": "application/json" } },
       );
     }
+    // The screen also self-fetches the fish service; serve a disabled snapshot so
+    // these LLM-focused tests don't error on a path they don't care about.
+    if (path === "/api/settings/fish") {
+      return new Response(
+        JSON.stringify({ enabled: false, reachable: false, loaded: false, models: [] }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    }
     if (path !== "/api/settings/llm") throw new Error(`Unexpected fetch: ${path}`);
     if ((init?.method ?? "GET").toUpperCase() === "PUT") {
       const body = JSON.parse(String(init?.body)) as (typeof puts)[number];
@@ -619,6 +627,8 @@ describe("LLMSettingsScreen", () => {
         const method = (init?.method ?? "GET").toUpperCase();
         if (path === "/api/ops/llm-usage") return resp(USAGE);
         if (path === "/api/settings/llm") return resp(s);
+        if (path === "/api/settings/fish")
+          return resp({ enabled: false, reachable: false, loaded: false, models: [] });
         if (path === "/api/settings/image" && method === "GET") return resp(img);
         if (path === "/api/settings/image/free" && method === "POST") {
           calls.push("free");
@@ -646,6 +656,76 @@ describe("LLMSettingsScreen", () => {
     expect(document.querySelector(".llm-mem-img")).not.toBeNull();
 
     // Free unloads the resident model; Stop halts the service — both proxy through.
+    fireEvent.click(within(section).getByText("Free"));
+    await waitFor(() => expect(calls).toContain("free"));
+    fireEvent.click(within(section).getByText("Stop"));
+    await waitFor(() => expect(calls).toContain("stop"));
+  });
+
+  it("surfaces the fish service: transient meter segment, identify row, and stop/free", async () => {
+    const s = initialSettings();
+    s.local_hosting_enabled = true;
+    s.host_memory = { total_gb: 128, used_gb: 32 };
+    const fish = {
+      enabled: true,
+      reachable: true,
+      loaded: true, // mid-identification → a transient bar segment
+      models: [
+        {
+          id: "fishial-v2",
+          label: "Fishial · classify (DINOv2+ViT)",
+          arch: "DINOv2+ViT",
+          enabled: true,
+          recommended: true,
+          size_gb: 2.0,
+          disk_gb: 2.0,
+          footprint_gb: 4.0,
+          species_count: 866,
+          note: "",
+        },
+      ],
+    };
+    const calls: string[] = [];
+    const resp = (o: unknown, status = 200) =>
+      new Response(JSON.stringify(o), { status, headers: { "Content-Type": "application/json" } });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>(async (input, init) => {
+        const path = String(input);
+        const method = (init?.method ?? "GET").toUpperCase();
+        if (path === "/api/ops/llm-usage") return resp(USAGE);
+        if (path === "/api/settings/llm") return resp(s);
+        if (path === "/api/settings/image")
+          return resp({ enabled: false, reachable: false, models: [], memory: null });
+        if (path === "/api/settings/fish" && method === "GET") return resp(fish);
+        if (path === "/api/settings/fish/free" && method === "POST") {
+          calls.push("free");
+          fish.loaded = false;
+          return resp(fish);
+        }
+        if (path === "/api/settings/fish/service/stop" && method === "POST") {
+          calls.push("stop");
+          return resp({ service: "fish-id", action: "stop" }, 202);
+        }
+        throw new Error(`Unexpected fetch: ${path}`);
+      }),
+    );
+    render(<LLMSettingsScreen />);
+
+    const toggle = await screen.findByRole("button", { name: /On-box models/i });
+    expect(toggle).toHaveTextContent("fish on"); // shown in the collapsed summary
+    fireEvent.click(toggle);
+
+    // The fish subsection renders the service + its identify row.
+    const section = (await screen.findByText("Fish ID · fishial")).closest(
+      ".llm-fish",
+    ) as HTMLElement;
+    expect(within(section).getByText("running")).toBeInTheDocument();
+    expect(within(section).getByText("Fishial · classify (DINOv2+ViT)")).toBeInTheDocument();
+    // The transient segment is on the shared bar while loaded (it isn't resident).
+    expect(document.querySelector(".llm-mem-fish")).not.toBeNull();
+
+    // Free force-unloads; Stop halts the service — both proxy through.
     fireEvent.click(within(section).getByText("Free"));
     await waitFor(() => expect(calls).toContain("free"));
     fireEvent.click(within(section).getByText("Stop"));

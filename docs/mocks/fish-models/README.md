@@ -40,7 +40,14 @@ variants differ mainly in how honestly they represent that.
 
 ## Decision
 
-_Pending owner selection._ Once chosen, this records the pick + rationale, the chosen
-file becomes the binding spec for the `FishServiceSection` + its styles in
-`frontend/src/screens/LLMSettingsScreen.tsx`, and the selection lands in
+**Chosen: A — transient row** (`fish-models-a-transient-row.html`). It is the binding
+spec for the `FishServiceSection` + its styles in
+`frontend/src/screens/LLMSettingsScreen.tsx`: the fish model joins the unified "On-box
+models" drawer as a third subsection, with a service status pill + Start/Stop + Free,
+a model row (arch · species · ~peak), and a **dashed transient segment** on the shared
+memory bar that fills only while the gateway reports `loaded` (mid-identification) and
+is otherwise absent. No persistent load/unload toggle — the model is load → use →
+unload per call. A won because it is the only variant that tells the truth about the
+memory model (B's solid segment overstates a non-resident footprint; C abandons the
+shared-budget picture). B and C are retained here as the record. The selection lands in
 `docs/DESIGN.md` (the On-box models drawer entry).

@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type {
+  FishModelInfo,
+  FishSettings,
   ImageModelInfo,
   ImageSettings,
   LlmProviderId,
@@ -129,6 +131,9 @@ export function LLMSettingsScreen() {
   // The on-box image service, surfaced in the same drawer (shared meter). Fetched
   // alongside the LLM settings; null until it loads / when the feature is absent.
   const [image, setImage] = useState<ImageSettings | null>(null);
+  // The on-box fish-identification service, surfaced in the same drawer. Like image,
+  // fetched alongside the LLM settings; null until it loads / when the feature is absent.
+  const [fish, setFish] = useState<FishSettings | null>(null);
 
   useEffect(() => {
     let stale = false;
@@ -142,6 +147,12 @@ export function LLMSettingsScreen() {
       .getImageSettings()
       .then((s) => {
         if (!stale) setImage(s);
+      })
+      .catch(() => {});
+    api
+      .getFishSettings()
+      .then((s) => {
+        if (!stale) setFish(s);
       })
       .catch(() => {});
     return () => {
@@ -162,9 +173,10 @@ export function LLMSettingsScreen() {
   // the poll (re-runs with an immediate tick on return).
   const hostingEnabled = settings?.local_hosting_enabled ?? false;
   const imageEnabled = image?.enabled ?? false;
+  const fishEnabled = fish?.enabled ?? false;
   const foreground = useForeground();
   useEffect(() => {
-    if (!localOpen || !foreground || (!hostingEnabled && !imageEnabled)) return;
+    if (!localOpen || !foreground || (!hostingEnabled && !imageEnabled && !fishEnabled)) return;
     let stop = false;
     const tick = () => {
       if (hostingEnabled) {
@@ -197,13 +209,23 @@ export function LLMSettingsScreen() {
           })
           .catch(() => {});
       }
+      // The fish model loads transiently per call; its `loaded` flag is the live
+      // signal for the transient bar segment, so re-pull the whole snapshot.
+      if (fishEnabled) {
+        api
+          .getFishSettings()
+          .then((fresh) => {
+            if (!stop) setFish(fresh);
+          })
+          .catch(() => {});
+      }
     };
     const id = setInterval(tick, 4000);
     return () => {
       stop = true;
       clearInterval(id);
     };
-  }, [localOpen, hostingEnabled, imageEnabled, foreground]);
+  }, [localOpen, hostingEnabled, imageEnabled, fishEnabled, foreground]);
 
   const mark = (id: string) => setBusy((s) => new Set(s).add(id));
   const unmark = (id: string) =>
@@ -294,6 +316,29 @@ export function LLMSettingsScreen() {
       .stopImageService()
       .then(() => api.getImageSettings())
       .then(setImage)
+      .catch(() => {});
+  }
+
+  // Fish-service controls (owner-only): free force-unloads the model; start/stop toggle
+  // the service via the supervisor. Each reconciles from a fresh snapshot.
+  function freeFish() {
+    api
+      .freeFishMemory()
+      .then(setFish)
+      .catch(() => {});
+  }
+  function startFishService() {
+    api
+      .startFishService()
+      .then(() => api.getFishSettings())
+      .then(setFish)
+      .catch(() => {});
+  }
+  function stopFishService() {
+    api
+      .stopFishService()
+      .then(() => api.getFishSettings())
+      .then(setFish)
       .catch(() => {});
   }
 
@@ -412,6 +457,7 @@ export function LLMSettingsScreen() {
         models={settings.local_models}
         hostMemory={settings.host_memory}
         image={image}
+        fish={fish}
         busy={busy}
         onUnload={unloadModel}
         onLoad={loadModel}
@@ -420,6 +466,9 @@ export function LLMSettingsScreen() {
         onFreeImage={freeImage}
         onStartImageService={startImageService}
         onStopImageService={stopImageService}
+        onFreeFish={freeFish}
+        onStartFishService={startFishService}
+        onStopFishService={stopFishService}
       />
 
       {groups.map((group) => {
@@ -623,6 +672,11 @@ const IMG_GRADIENT = "linear-gradient(90deg, hsl(265 35% 64%), hsl(284 35% 64%))
 // model is resident" so the bar shows it. An estimate — tune on the box.
 const IMG_ACTIVE_GB = 4;
 
+// The fish model's bar segment — a teal accent, distinct from the LLM palette and the
+// image violet. It's a TRANSIENT segment: shown only while the gateway reports the
+// model loaded (mid-identification), then it frees (the .llm-mem-fish dashed style).
+const FISH_GRADIENT = "linear-gradient(90deg, hsl(176 35% 56%), hsl(188 35% 56%))";
+
 // The size picker's choices, capped per model at its catalog window.
 const WINDOW_CHOICES = [16384, 32768, 65536, 131072];
 const fmtTokens = (n: number) => (n % 1024 === 0 ? `${n / 1024}k` : `${Math.round(n / 1000)}k`);
@@ -640,6 +694,7 @@ function LocalModelsDrawer({
   models,
   hostMemory,
   image,
+  fish,
   busy,
   onUnload,
   onLoad,
@@ -648,6 +703,9 @@ function LocalModelsDrawer({
   onFreeImage,
   onStartImageService,
   onStopImageService,
+  onFreeFish,
+  onStartFishService,
+  onStopFishService,
 }: {
   open: boolean;
   onToggle: () => void;
@@ -655,6 +713,7 @@ function LocalModelsDrawer({
   models: LocalModelInfo[];
   hostMemory: { total_gb: number; used_gb: number } | null;
   image: ImageSettings | null;
+  fish: FishSettings | null;
   busy: Set<string>;
   onUnload: (id: string) => void;
   onLoad: (id: string) => void;
@@ -663,6 +722,9 @@ function LocalModelsDrawer({
   onFreeImage: () => void;
   onStartImageService: () => void;
   onStopImageService: () => void;
+  onFreeFish: () => void;
+  onStartFishService: () => void;
+  onStopFishService: () => void;
 }) {
   const enabledCount = models.filter((m) => m.enabled).length;
   const shown = models.filter((m) => m.enabled);
@@ -679,6 +741,13 @@ function LocalModelsDrawer({
   const imgActive = (image?.reachable ?? false) && imgUsedGb > IMG_ACTIVE_GB;
   const imgName =
     (image?.models?.find((m) => m.enabled) ?? image?.models?.[0])?.label.split(" ")[0] ?? "Image";
+  // The fish model is TRANSIENT — it draws unified memory only while an identification
+  // runs (the gateway's `loaded` flag). Its segment is its peak footprint, shown only
+  // then. No steady-state segment (it isn't kept resident, unlike LLM/image).
+  const fishModel = fish?.models?.find((m) => m.enabled) ?? fish?.models?.[0];
+  const fishActive = (fish?.reachable ?? false) && (fish?.loaded ?? false);
+  const fishGb = fishActive ? (fishModel?.footprint_gb ?? 0) : 0;
+  const fishName = fishModel?.label.split(" ")[0] ?? "Fish";
 
   const llmSummary = hostingEnabled
     ? `${enabledCount} of ${models.length} enabled · ${loaded.length} loaded${
@@ -686,15 +755,17 @@ function LocalModelsDrawer({
       } · ${Math.round(residentGb)} GB`
     : "";
   const summary =
-    [llmSummary, image?.reachable ? "image on" : ""].filter(Boolean).join(" · ") || "off";
-  const anyOn = hostingEnabled || (image?.reachable ?? false);
+    [llmSummary, image?.reachable ? "image on" : "", fish?.reachable ? "fish on" : ""]
+      .filter(Boolean)
+      .join(" · ") || "off";
+  const anyOn = hostingEnabled || (image?.reachable ?? false) || (fish?.reachable ?? false);
   const ariaLabel = `On-box models — ${anyOn ? summary : "off"}`;
 
   // Loaded segments first (resident), then staged (projected) — colored by slot.
   const onBar = [...loaded, ...stagedOnly];
   const total = hostMemory?.total_gb ?? imgMem?.total_gb ?? 0;
   const projectedGb = residentGb + stagedGb;
-  const over = total > 0 && projectedGb + imgUsedGb > total;
+  const over = total > 0 && projectedGb + imgUsedGb + fishGb > total;
 
   return (
     <section className="llm-local">
@@ -715,7 +786,7 @@ function LocalModelsDrawer({
 
       {open && (
         <div className="llm-local-body">
-          {total > 0 && (onBar.length > 0 || imgActive) && (
+          {total > 0 && (onBar.length > 0 || imgActive || fishActive) && (
             <div className="llm-mem" aria-label="unified memory in use">
               <div className="llm-mem-bar">
                 {onBar.map((m, i) => {
@@ -763,9 +834,24 @@ function LocalModelsDrawer({
                     </span>
                   </div>
                 )}
+                {fishActive && (
+                  <div
+                    className="llm-mem-seg llm-mem-fish"
+                    style={{ width: `${(fishGb / total) * 100}%` }}
+                    title={`${fishName} — ~${Math.round(fishGb)} GB while identifying (transient)`}
+                  >
+                    <div
+                      className="llm-mem-w"
+                      style={{ width: "100%", background: FISH_GRADIENT }}
+                    />
+                    <span className="llm-mem-label">
+                      {fishName} <span className="gb">{Math.round(fishGb)}G</span>
+                    </span>
+                  </div>
+                )}
               </div>
               <div className="llm-mem-cap">
-                <span>{Math.round(residentGb + imgUsedGb)} GB used</span>
+                <span>{Math.round(residentGb + imgUsedGb + fishGb)} GB used</span>
                 {stagedGb > 0.05 && (
                   <span className={`staged-note${over ? " over" : ""}`}>
                     +{Math.round(stagedGb)} GB staged → {Math.round(projectedGb)} GB
@@ -904,6 +990,14 @@ function LocalModelsDrawer({
               onStop={onStopImageService}
             />
           )}
+          {fish && (
+            <FishServiceSection
+              fish={fish}
+              onFree={onFreeFish}
+              onStart={onStartFishService}
+              onStop={onStopFishService}
+            />
+          )}
         </div>
       )}
     </section>
@@ -972,6 +1066,77 @@ function imageRow(m: ImageModelInfo) {
       <div className="llm-img-meta">
         {sizeText} · {m.disk_gb != null ? "provisioned" : "not provisioned"}
         {m.disk_gb != null ? ` · ~${m.vram_gb} GB resident` : ""}
+      </div>
+    </div>
+  );
+}
+
+// The fish side of the shared "On-box models" drawer: the fishial service status, its
+// start/stop/free controls, and the catalog rows. Unlike the LLM/image sections there
+// is NO per-model load/unload — the model loads per identification and frees right
+// after (load → use → unload), so the only runtime levers are the service start/stop
+// and a manual Free. Provisioning stays the on-box scripts/fish-id-setup.sh step.
+function FishServiceSection({
+  fish,
+  onFree,
+  onStart,
+  onStop,
+}: {
+  fish: FishSettings;
+  onFree: () => void;
+  onStart: () => void;
+  onStop: () => void;
+}) {
+  const state = fish.reachable ? "running" : fish.enabled ? "stopped" : "off";
+  return (
+    <div className={`llm-img llm-fish llm-img-${state}`}>
+      <div className="llm-img-head">
+        <span className="llm-img-title">Fish ID · fishial</span>
+        <span className={`llm-img-state ${state}`}>{state}</span>
+        <div className="llm-img-acts">
+          {fish.reachable ? (
+            <>
+              <button type="button" className="llm-local-btn" onClick={onFree}>
+                Free
+              </button>
+              <button type="button" className="llm-local-btn" onClick={onStop}>
+                Stop
+              </button>
+            </>
+          ) : fish.enabled ? (
+            <button type="button" className="llm-local-btn load" onClick={onStart}>
+              Start
+            </button>
+          ) : null}
+        </div>
+      </div>
+      {(fish.models ?? []).map((m) => fishRow(m))}
+      {fish.reachable && (
+        <p className="llm-local-hint">
+          Loaded per identification and freed right after — never kept resident.
+        </p>
+      )}
+      {!fish.enabled && (
+        <p className="llm-local-hint">
+          Fish identification is off. Provision on the box with <code>fish-id-setup.sh</code>.
+        </p>
+      )}
+    </div>
+  );
+}
+
+function fishRow(m: FishModelInfo) {
+  const footprint = m.disk_gb ?? m.size_gb;
+  const sizeText = `${m.disk_gb == null ? "~" : ""}${footprint} GB`;
+  return (
+    <div key={m.id} className="llm-img-row">
+      <div className="llm-img-name">
+        {m.label}
+        <span className="llm-chip llm-chip-identify">identify</span>
+      </div>
+      <div className="llm-img-meta">
+        {m.arch} · {m.species_count} species · {sizeText} ·{" "}
+        {m.disk_gb != null ? "provisioned" : "not provisioned"} · ~{m.footprint_gb} GB peak
       </div>
     </div>
   );

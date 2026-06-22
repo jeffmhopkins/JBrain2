@@ -359,6 +359,35 @@ export interface ImageSettings {
   memory: { total_gb: number; free_gb: number } | null;
 }
 
+export interface FishModelInfo {
+  id: string;
+  label: string;
+  /** Model architecture, e.g. "DINOv2+ViT" — shown on the result card caption. */
+  arch: string;
+  /** Offered to jerv (in the provisioned set) on this box. */
+  enabled: boolean;
+  recommended: boolean;
+  /** Catalog's nominal download estimate. */
+  size_gb: number;
+  /** Real measured on-disk size, or null when not provisioned here. */
+  disk_gb: number | null;
+  /** Peak unified-memory footprint — drawn only while an identification runs. */
+  footprint_gb: number;
+  species_count: number;
+  note: string;
+}
+
+/** The fishial service's state — its catalog, reachability, and whether the model
+ * is TRANSIENTLY loaded right now (mid-identification). The fish model is load → use
+ * → unload per call, so there's no resident model and no VRAM gauge — `loaded` drives
+ * the dashed transient segment on the shared memory bar. */
+export interface FishSettings {
+  enabled: boolean;
+  reachable: boolean;
+  loaded: boolean;
+  models: FishModelInfo[];
+}
+
 /** One attendee on an appointment — name plus optional iCalendar params. */
 export interface AttendeeOut {
   name: string;
@@ -1304,6 +1333,28 @@ export const api = {
   /** Stop the ComfyUI service via the supervisor (frees its memory by halting it). */
   async stopImageService(): Promise<void> {
     await request("/api/settings/image/service/stop", { method: "POST" });
+  },
+
+  // ----- On-box fish-identification service (fishial), same On-box drawer -----
+  async getFishSettings(): Promise<FishSettings> {
+    const response = await request("/api/settings/fish");
+    return (await response.json()) as FishSettings;
+  },
+
+  /** Force-unload the fish model now; returns the refreshed snapshot. */
+  async freeFishMemory(): Promise<FishSettings> {
+    const response = await request("/api/settings/fish/free", { method: "POST" });
+    return (await response.json()) as FishSettings;
+  },
+
+  /** Start the (provisioned) fishial service via the supervisor. */
+  async startFishService(): Promise<void> {
+    await request("/api/settings/fish/service/start", { method: "POST" });
+  },
+
+  /** Stop the fishial service via the supervisor. */
+  async stopFishService(): Promise<void> {
+    await request("/api/settings/fish/service/stop", { method: "POST" });
   },
 
   // ----- Appointments ICS feed (a revocable, read-only subscribe URL) -----

@@ -1159,6 +1159,10 @@ h3 {
   color: var(--amber);
   background: var(--amber-tint);
 }
+.llm-chip-identify {
+  color: var(--location);
+  background: var(--location-tint);
+}
 
 /* The image service subsection — sits in the On-box models drawer beneath the LLM
    rows, sharing the unified meter above. */
@@ -1218,6 +1222,17 @@ h3 {
 }
 /* The image segment's KV-less weight block fills the whole segment (no context split). */
 .llm-mem-img .llm-mem-w {
+  border-radius: inherit;
+}
+/* The fish segment is TRANSIENT — present only while an identification runs. A dashed
+   outline + slight transparency mark it as "loads on demand, not resident", distinct
+   from the solid LLM/image segments. KV-less, so the weight block fills it. */
+.llm-mem-fish {
+  outline: 1px dashed color-mix(in srgb, var(--location) 70%, transparent);
+  outline-offset: -2px;
+  opacity: 0.85;
+}
+.llm-mem-fish .llm-mem-w {
   border-radius: inherit;
 }
 .llm-local-state {
