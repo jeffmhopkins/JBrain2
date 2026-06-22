@@ -1,0 +1,437 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no">
+<meta name="theme-color" content="#100a02">
+<title>JBrain — Genesis / Amber CRT</title>
+<style>
+  html,body { margin:0; padding:0; height:100%; overflow:hidden; background:#100a02;
+    touch-action:none; -webkit-user-select:none; user-select:none; }
+  #c   { display:block; position:fixed; left:0; top:0; }
+  #net { display:block; position:fixed; left:0; bottom:0; }
+  /* Heavier warm-tinted scanline overlay for CRT feel */
+  #sl  { position:fixed; inset:0; pointer-events:none; z-index:9;
+         background:repeating-linear-gradient(to bottom,
+           rgba(0,0,0,0) 0px, rgba(0,0,0,0) 2px,
+           rgba(8,4,0,0.14) 2px, rgba(8,4,0,0.14) 4px); }
+  /* Faint screen-curvature vignette via radial gradient overlay */
+  #vg  { position:fixed; inset:0; pointer-events:none; z-index:8;
+         background:radial-gradient(ellipse 85% 80% at 50% 50%,
+           transparent 40%, rgba(0,0,0,0.45) 100%); }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<canvas id="net"></canvas>
+<div id="vg"></div>
+<div id="sl"></div>
+
+<script>
+"use strict";
+/* ============================================================ genesis engine — AMBER CRT variant
+   Pure-canvas software 3D renderer — holographic amber phosphor sonar look.
+   Top ~2/3 = boid scene (#c); bottom 1/3 = neural schematic (#net).
+   Tap a boid to select it. Tap a NEURON to fire it — the charge ripples
+   forward through the net. 10 boids + 1 predator. No menus. */
+
+const STYLE = {
+  bg:[16,10,2],          // very dark warm brown-black
+  fog0:18, fog1:80,
+  // Amber phosphor: primary ink hue=41 (amber #ffb000), hot/firing near-white-amber #ffd98a
+  amberH:41, amberS:100, amberL:50,    // primary amber
+  hotH:42, hotS:100, hotL:76,          // hot/firing highlight (#ffd98a-ish)
+  // Predator/threat alert: red-amber #ff6a00, hue≈26
+  alertH:26, alertS:100, alertL:50,
+  netInk:'#ffb000', netHot:'#ffd98a', netBg:[16,10,2],
+};
+
+const cnv=document.getElementById('c'), ctx=cnv.getContext('2d');
+const net=document.getElementById('net'), nctx=net.getContext('2d');
+let W=0,H=0,SCENE_H=0,NET_H=0,focal=1,cx=0,cyc=0,DPR=1,vig=null;
+
+function resize(){
+  DPR=Math.min(2,window.devicePixelRatio||1);
+  W=innerWidth; H=innerHeight;
+  NET_H=Math.round(H*0.33); SCENE_H=H-NET_H;
+  cnv.width=W*DPR; cnv.height=SCENE_H*DPR; cnv.style.width=W+'px'; cnv.style.height=SCENE_H+'px';
+  ctx.setTransform(DPR,0,0,DPR,0,0);
+  net.width=W*DPR; net.height=NET_H*DPR; net.style.width=W+'px'; net.style.height=NET_H+'px';
+  nctx.setTransform(DPR,0,0,DPR,0,0);
+  focal=SCENE_H*1.15; cx=W/2; cyc=SCENE_H/2;
+  vig=ctx.createRadialGradient(cx,cyc,Math.min(W,SCENE_H)*0.25,cx,cyc,Math.max(W,SCENE_H)*0.75);
+  vig.addColorStop(0,'rgba(0,0,0,0)'); vig.addColorStop(1,'rgba(0,0,0,0.60)');
+  layoutNet();
+}
+addEventListener('resize',resize);
+
+// ---- vec math ----
+const TAU=Math.PI*2;
+const sub=(a,b)=>[a[0]-b[0],a[1]-b[1],a[2]-b[2]];
+const add=(a,b)=>[a[0]+b[0],a[1]+b[1],a[2]+b[2]];
+const scl=(a,s)=>[a[0]*s,a[1]*s,a[2]*s];
+const dot=(a,b)=>a[0]*b[0]+a[1]*b[1]+a[2]*b[2];
+const cross=(a,b)=>[a[1]*b[2]-a[2]*b[1],a[2]*b[0]-a[0]*b[2],a[0]*b[1]-a[1]*b[0]];
+const len=a=>Math.hypot(a[0],a[1],a[2]);
+const norm=a=>{const l=len(a)||1;return [a[0]/l,a[1]/l,a[2]/l];};
+const clamp=(v,a,b)=>v<a?a:v>b?b:v;
+const lerp=(a,b,t)=>a+(b-a)*t;
+function rnd(a,b){return a+Math.random()*(b-a);}
+
+// ---- camera (very gentle orbit) ----
+const cam={pos:[0,0,40],f:[0,0,-1],r:[1,0,0],u:[0,1,0]};
+let camYaw=0.5,camPitch=0.18,camDist=42,yawV=0,pitchV=0;
+function updateCamera(t){
+  camYaw+=yawV; camPitch+=pitchV; yawV*=0.9; pitchV*=0.9;
+  if(!dragging) camYaw+=0.0004;
+  camPitch=clamp(camPitch,-1.0,1.0);
+  const cp=Math.cos(camPitch),sp=Math.sin(camPitch);
+  cam.pos=[Math.sin(camYaw)*cp*camDist, sp*camDist+Math.sin(t*0.00012)*1.5, Math.cos(camYaw)*cp*camDist];
+  const f=norm(sub([0,0,0],cam.pos));
+  const r=norm(cross(f,[0,1,0]));
+  cam.f=f; cam.r=r; cam.u=cross(r,f);
+}
+function project(p){
+  const d=sub(p,cam.pos), z=dot(d,cam.f);
+  if(z<=0.05) return {vis:false};
+  const inv=focal/z;
+  return {x:cx+dot(d,cam.r)*inv, y:cyc-dot(d,cam.u)*inv, z, inv, vis:true};
+}
+function fogAt(z){ return clamp(1-(z-STYLE.fog0)/(STYLE.fog1-STYLE.fog0),0,1); }
+
+// ---- render list (painter) ----
+const RL=[];
+function pushWireEdge(pA,pB,hue,sat,l,fog,lineW,alpha){
+  RL.push({t:'line',x1:pA.x,y1:pA.y,x2:pB.x,y2:pB.y,depth:(pA.z+pB.z)/2,h:hue,s:sat,l,a:alpha*fog,w:lineW});
+}
+function pushMeshWire(mesh,pos,basis,hue,sat,l,scale,alpha){
+  const [R,U,F]=basis;
+  const wv=mesh.v.map(p=>[
+    pos[0]+R[0]*p[0]*scale+U[0]*p[1]*scale+F[0]*p[2]*scale,
+    pos[1]+R[1]*p[0]*scale+U[1]*p[1]*scale+F[1]*p[2]*scale,
+    pos[2]+R[2]*p[0]*scale+U[2]*p[1]*scale+F[2]*p[2]*scale]);
+  const pj=wv.map(project);
+  const drawn=new Set();
+  for(const fc of mesh.f){
+    const a=pj[fc[0]],b=pj[fc[1]],c=pj[fc[2]];
+    if(!a.vis||!b.vis||!c.vis) continue;
+    if(fogAt((a.z+b.z+c.z)/3)<0.02) continue;
+    for(const [i0,i1] of [[fc[0],fc[1]],[fc[1],fc[2]],[fc[2],fc[0]]]){
+      const key=i0<i1?`${i0}_${i1}`:`${i1}_${i0}`;
+      if(drawn.has(key)) continue; drawn.add(key);
+      const pa=pj[i0],pb=pj[i1]; if(!pa.vis||!pb.vis) continue;
+      const ef=fogAt((pa.z+pb.z)/2); if(ef<0.02) continue;
+      pushWireEdge(pa,pb,hue,sat,l,ef,1.1,alpha);
+    }
+  }
+}
+function pushLine3(p,q,hue,sat,l,a,w){
+  const A=project(p),B=project(q); if(!A.vis||!B.vis) return;
+  const fog=fogAt((A.z+B.z)/2); if(fog<0.02) return;
+  RL.push({t:'line',x1:A.x,y1:A.y,x2:B.x,y2:B.y,depth:(A.z+B.z)/2,h:hue,s:sat,l,a:a*fog,w});
+}
+function pushReticle(sx,sy,hue,sat,l,a){ RL.push({t:'reticle',x:sx,y:sy,depth:-1,h:hue,s:sat,l,a}); }
+function flush(){
+  RL.sort((a,b)=>b.depth-a.depth);
+  ctx.lineJoin='round'; ctx.lineCap='round';
+  for(const f of RL){
+    if(f.t==='line'){
+      ctx.strokeStyle=`hsla(${f.h},${f.s}%,${f.l}%,${f.a})`; ctx.lineWidth=f.w;
+      ctx.beginPath(); ctx.moveTo(f.x1,f.y1); ctx.lineTo(f.x2,f.y2); ctx.stroke();
+    } else if(f.t==='reticle'){
+      const {x,y,h,s,l,a}=f, hs=14, c=9;
+      ctx.save(); ctx.globalCompositeOperation='lighter';
+      ctx.strokeStyle=`hsla(${h},${s}%,${l}%,${a})`; ctx.lineWidth=1.5;
+      ctx.beginPath();
+      ctx.moveTo(x-hs+c,y-hs); ctx.lineTo(x-hs,y-hs); ctx.lineTo(x-hs,y-hs+c);
+      ctx.moveTo(x+hs-c,y-hs); ctx.lineTo(x+hs,y-hs); ctx.lineTo(x+hs,y-hs+c);
+      ctx.moveTo(x-hs+c,y+hs); ctx.lineTo(x-hs,y+hs); ctx.lineTo(x-hs,y+hs-c);
+      ctx.moveTo(x+hs-c,y+hs); ctx.lineTo(x+hs,y+hs); ctx.lineTo(x+hs,y+hs-c);
+      ctx.stroke();
+      ctx.strokeStyle=`hsla(${h},${s}%,${l}%,${a*0.45})`; ctx.lineWidth=0.7;
+      ctx.beginPath(); ctx.moveTo(x-4,y); ctx.lineTo(x+4,y); ctx.moveTo(x,y-4); ctx.lineTo(x,y+4); ctx.stroke();
+      ctx.restore();
+    }
+  }
+  RL.length=0;
+}
+
+// ---- geometry ----
+const FISH={
+  v:[[0,0,1.15],[0.32,0,0.1],[-0.32,0,0.1],[0,0.34,0.1],[0,-0.30,0.1],
+     [0,0,-0.85],[0,0.55,-1.2],[0,-0.5,-1.2],[0,0.62,-0.2]],
+  f:[[0,3,1],[0,1,4],[0,4,2],[0,2,3],[3,5,1],[1,5,4],[4,5,2],[2,5,3],[5,6,7],[3,8,5]]};
+const PRED={
+  v:[[0,0,1.8],[0.55,0,0],[-0.55,0,0],[0,0.55,0],[0,-0.5,0],
+     [0,0,-1.5],[0,0.95,-2.1],[0,-0.85,-2.1],[0,1.0,-0.3],[0.3,-0.25,1.2],[-0.3,-0.25,1.2]],
+  f:[[0,3,1],[0,1,4],[0,4,2],[0,2,3],[3,5,1],[1,5,4],[4,5,2],[2,5,3],[5,6,7],[3,8,5],[0,9,1],[0,2,10]]};
+
+// ---- boids — 10 + 1 predator, SLOW gliding-fish motion ----
+const BND=16, N=10;
+const boids=[];
+for(let i=0;i<N;i++) boids.push({
+  p:[rnd(-BND,BND),rnd(-BND,BND),rnd(-BND,BND)],
+  v:scl(norm([rnd(-1,1),rnd(-1,1),rnd(-1,1)]),0.05),
+  state:{density:0,speed:0,threat:0,sep:0,ali:0,coh:0}, sx:-1,sy:-1,sz:1e9,
+});
+const predator={p:[0,0,-26],v:[0,0,0.05]};
+
+// slow: ~1/3 of prior speed, gentler turning force for graceful banking
+const MAXSPD=0.055, MAXF=0.0020, R_NEI=11, R_SEP=5, R_FLEE=13;
+function limit(v,m){const l=len(v);return l>m?scl(v,m/l):v;}
+function stepBoids(){
+  for(const b of boids){
+    let sep=[0,0,0],ali=[0,0,0],coh=[0,0,0],cnt=0,scnt=0;
+    for(const o of boids){ if(o===b) continue;
+      const d=sub(b.p,o.p), dl=len(d);
+      if(dl<R_NEI){ ali=add(ali,o.v); coh=add(coh,o.p); cnt++; }
+      if(dl<R_SEP&&dl>1e-4){ sep=add(sep,scl(d,1/(dl*dl))); scnt++; }
+    }
+    let acc=[0,0,0];
+    if(scnt){ sep=limit(sub(scl(norm(sep),MAXSPD),b.v),MAXF); acc=add(acc,scl(sep,1.6)); }
+    if(cnt){
+      ali=limit(sub(scl(norm(ali),MAXSPD),b.v),MAXF); acc=add(acc,scl(ali,1.0));
+      coh=sub(scl(coh,1/cnt),b.p); coh=limit(sub(scl(norm(coh),MAXSPD),b.v),MAXF); acc=add(acc,scl(coh,0.9));
+    }
+    const dp=sub(b.p,predator.p), dpl=len(dp); let threat=0;
+    if(dpl<R_FLEE&&dpl>1e-3){
+      const flee=limit(sub(scl(norm(dp),MAXSPD),b.v),MAXF*2.5);
+      acc=add(acc,scl(flee,2.2*(R_FLEE/Math.max(dpl,1)))); threat=1-clamp(dpl/R_FLEE,0,1);
+    }
+    for(let k=0;k<3;k++){
+      if(b.p[k]>BND-3) acc[k]-=0.004*(b.p[k]-(BND-3));
+      if(b.p[k]<-BND+3) acc[k]-=0.004*(b.p[k]-(-BND+3));
+    }
+    b.v=limit(add(b.v,acc),MAXSPD);
+    if(len(b.v)<0.014) b.v=scl(norm(b.v),0.014);
+    b.p=add(b.p,b.v);
+    b.state.density=clamp(cnt/6,0,1); b.state.speed=clamp(len(b.v)/MAXSPD,0,1);
+    b.state.threat=threat; b.state.sep=clamp(len(sep)/MAXF,0,1);
+    b.state.ali=clamp(len(ali)/MAXF,0,1); b.state.coh=clamp(len(coh)/MAXF,0,1);
+  }
+  let c=[0,0,0]; for(const b of boids) c=add(c,b.p); c=scl(c,1/N);
+  const seek=limit(sub(scl(norm(sub(c,predator.p)),MAXSPD*0.78),predator.v),MAXF*0.9);
+  predator.v=limit(add(predator.v,seek),MAXSPD*0.78); predator.p=add(predator.p,predator.v);
+}
+function basisFrom(v){ const F=norm(v); let R=cross(F,[0,1,0]); if(len(R)<1e-3) R=[1,0,0]; R=norm(R); return [R,cross(R,F),F]; }
+
+// ---- radar ground grid (circular: rings + spokes + rotating sweep) ----
+// sweepAngle increments each frame for the slow rotating sweep line
+let sweepAngle=0;
+function drawRadarGrid(t){
+  sweepAngle+=0.002; // slow rotation — one full revolution per ~3141 frames
+  const y=-BND;
+  const MAXR=BND, ringCount=4, spokeCount=8;
+  const H=STYLE.amberH, S=STYLE.amberS;
+
+  // concentric rings on y=-BND plane
+  for(let r=1;r<=ringCount;r++){
+    const radius=(r/ringCount)*MAXR;
+    const segs=48;
+    for(let i=0;i<segs;i++){
+      const a0=(i/segs)*TAU, a1=((i+1)/segs)*TAU;
+      const p0=[Math.cos(a0)*radius, y, Math.sin(a0)*radius];
+      const p1=[Math.cos(a1)*radius, y, Math.sin(a1)*radius];
+      pushLine3(p0,p1, H,S,30, 0.12,0.6);
+    }
+  }
+
+  // radial spokes
+  for(let i=0;i<spokeCount;i++){
+    const a=(i/spokeCount)*TAU;
+    const inner=[Math.cos(a)*MAXR*0.08, y, Math.sin(a)*MAXR*0.08];
+    const outer=[Math.cos(a)*MAXR, y, Math.sin(a)*MAXR];
+    pushLine3(inner,outer, H,S,30, 0.10,0.5);
+  }
+
+  // rotating sweep line — brightest at current angle, fades to trailing ghost
+  const sweepSegs=28; // number of segments in the sweep trail
+  for(let k=0;k<sweepSegs;k++){
+    const frac=k/sweepSegs;
+    const trailAngle=sweepAngle - frac*0.55; // trailing arc behind sweep
+    const alpha=lerp(0.70, 0.0, frac); // bright at head, fades at tail
+    const lightness=lerp(72, 30, frac);
+    const r0=MAXR*0.02, r1=MAXR;
+    const p0=[Math.cos(trailAngle)*r0, y, Math.sin(trailAngle)*r0];
+    const p1=[Math.cos(trailAngle)*r1, y, Math.sin(trailAngle)*r1];
+    pushLine3(p0,p1, H,S,lightness, alpha,frac===0?1.8:1.0);
+  }
+}
+
+let selected=0;
+function drawWorld(t){
+  drawRadarGrid(t);
+  for(let i=0;i<N;i++){
+    const b=boids[i], basis=basisFrom(b.v);
+    const isSel=i===selected, isAlert=b.state.threat>0.30;
+    let hue=STYLE.amberH, sat=STYLE.amberS, l=STYLE.amberL;
+    if(isAlert){ hue=STYLE.alertH; sat=STYLE.alertS; l=STYLE.alertL; }
+    if(isSel){ hue=STYLE.hotH; sat=STYLE.hotS; l=Math.min(88,STYLE.hotL+8); }
+    pushMeshWire(FISH,b.p,basis,hue,sat,l,isSel?1.7:1.15,isSel?0.95:0.68);
+    const P=project(b.p); if(P.vis){ b.sx=P.x; b.sy=P.y; b.sz=P.z; } else b.sz=1e9;
+    if(isSel&&P.vis) pushReticle(P.x,P.y,hue,sat,l,0.90);
+  }
+  pushMeshWire(PRED,predator.p,basisFrom(predator.v),STYLE.alertH,STYLE.alertS,STYLE.alertL,2.1,0.90);
+}
+
+// ============================================================ neural schematic (bottom 1/3)
+const LAYERS=[6,6,3];
+const IN_LABELS=['density','speed','threat','sep','align','cohere'];
+const OUT_LABELS=['turn','flee','throttle'];
+let nodes=[],edges=[];
+function layoutNet(){
+  nodes=[]; edges=[];
+  const hdrH=18, padX=62, padY=hdrH+16, footH=12;
+  const gw=(W-padX*2)/(LAYERS.length-1);
+  const availH=NET_H-padY-footH;
+  for(let l=0;l<LAYERS.length;l++){
+    const col=[]; const gh=availH/Math.max(1,LAYERS[l]-1);
+    for(let i=0;i<LAYERS[l];i++) col.push({x:padX+l*gw, y:LAYERS[l]===1?padY+availH/2:padY+i*gh, a:0, hold:0, poke:0});
+    nodes.push(col);
+  }
+  for(let l=1;l<LAYERS.length;l++) for(let i=0;i<LAYERS[l-1];i++) for(let j=0;j<LAYERS[l];j++)
+    edges.push({l,i,j,w:rnd(-1,1),pulses:[]});
+}
+function sig(x){return 1/(1+Math.exp(-x));}
+function netForward(){
+  const s=boids[selected].state;
+  const inp=[s.density,s.speed,s.threat,s.sep,s.ali,s.coh];
+  for(let i=0;i<LAYERS[0];i++){ const nd=nodes[0][i];
+    if(nd.hold>0){ nd.a=1; nd.hold--; } else nd.a=lerp(nd.a,inp[i],0.10); }
+  for(let l=1;l<LAYERS.length;l++) for(let j=0;j<LAYERS[l];j++){ const nd=nodes[l][j];
+    let sum=-0.4; for(const e of edges) if(e.l===l&&e.j===j) sum+=nodes[l-1][e.i].a*e.w*0.9;
+    if(nd.hold>0){ nd.a=1; nd.hold--; } else nd.a=lerp(nd.a,sig(sum*2.2),0.10);
+  }
+  for(const e of edges){ const src=nodes[e.l-1][e.i];
+    if(src.a>0.42&&Math.random()<src.a*0.045) e.pulses.push({t:0,sp:rnd(0.010,0.026)}); }
+}
+function hexA(hex,a){ const n=parseInt(hex.slice(1),16); return `rgba(${(n>>16)&255},${(n>>8)&255},${n&255},${a})`; }
+function fmt(v){ return v.toFixed(2); }
+function drawNet(){
+  nctx.globalCompositeOperation='source-over';
+  nctx.fillStyle=`rgb(${STYLE.netBg[0]},${STYLE.netBg[1]},${STYLE.netBg[2]})`;
+  nctx.fillRect(0,0,W,NET_H);
+  nctx.strokeStyle=hexA(STYLE.netInk,0.30); nctx.lineWidth=0.7;
+  nctx.beginPath(); nctx.moveTo(0,0); nctx.lineTo(W,0); nctx.stroke();
+
+  nctx.fillStyle=hexA(STYLE.netInk,0.88);
+  nctx.font="bold 9px 'Courier New',ui-monospace,monospace"; nctx.textAlign='left';
+  nctx.fillText('BOID #'+selected+' · NEURAL TRACE', 8, 13);
+  nctx.fillStyle=hexA(STYLE.netHot,0.55); nctx.font="8px 'Courier New',ui-monospace,monospace"; nctx.textAlign='right';
+  nctx.fillText('▸ TAP A NEURON TO FIRE', W-6, 13);
+  nctx.strokeStyle=hexA(STYLE.netInk,0.20); nctx.lineWidth=0.5;
+  nctx.beginPath(); nctx.moveTo(4,17); nctx.lineTo(W-4,17); nctx.stroke();
+
+  nctx.globalCompositeOperation='lighter';
+  for(const e of edges){
+    const A=nodes[e.l-1][e.i], B=nodes[e.l][e.j], act=(A.a+B.a)*0.5;
+    nctx.strokeStyle=hexA(STYLE.netInk,0.03+act*0.20); nctx.lineWidth=0.5+act*1.0;
+    nctx.beginPath(); nctx.moveTo(A.x,A.y); nctx.lineTo(B.x,B.y); nctx.stroke();
+    for(let k=e.pulses.length-1;k>=0;k--){ const p=e.pulses[k]; p.t+=p.sp;
+      if(p.t>=1){ B.a=Math.min(1,B.a+0.10); if(B.hold<6)B.hold=6; e.pulses.splice(k,1); continue; }
+      const x=lerp(A.x,B.x,p.t), y=lerp(A.y,B.y,p.t);
+      nctx.fillStyle=hexA(B.a>0.6?STYLE.netHot:STYLE.netInk,0.90);
+      nctx.beginPath(); nctx.arc(x,y,1.7,0,TAU); nctx.fill();
+    }
+  }
+
+  // AMBER CRT: round RING nodes (stroke circles) instead of squares
+  for(let l=0;l<nodes.length;l++) for(const nd of nodes[l]){
+    const col=nd.a>0.55?STYLE.netHot:STYLE.netInk, r=4+nd.a*5;
+    // glow halo
+    const g=nctx.createRadialGradient(nd.x,nd.y,0,nd.x,nd.y,r+5);
+    g.addColorStop(0,hexA(col,0.28+nd.a*0.52)); g.addColorStop(1,hexA(col,0));
+    nctx.fillStyle=g; nctx.beginPath(); nctx.arc(nd.x,nd.y,r+5,0,TAU); nctx.fill();
+    // ring node: stroke circle, no fill square
+    nctx.strokeStyle=hexA(col,0.72+nd.a*0.28); nctx.lineWidth=1.4;
+    nctx.beginPath(); nctx.arc(nd.x,nd.y,r,0,TAU); nctx.stroke();
+    // small bright dot at center
+    nctx.fillStyle=hexA(col,0.22+nd.a*0.78);
+    nctx.beginPath(); nctx.arc(nd.x,nd.y,1.4,0,TAU); nctx.fill();
+    if(nd.poke>0.01){ // expanding ring feedback on tap
+      nctx.strokeStyle=hexA(STYLE.netHot,nd.poke*0.8); nctx.lineWidth=1.2;
+      nctx.beginPath(); nctx.arc(nd.x,nd.y,8+(1-nd.poke)*16,0,TAU); nctx.stroke();
+      nd.poke*=0.90;
+    }
+  }
+  nctx.globalCompositeOperation='source-over';
+  nctx.font="8px 'Courier New',ui-monospace,monospace";
+  nctx.textAlign='right';
+  for(let i=0;i<LAYERS[0];i++){ const nd=nodes[0][i], col=nd.a>0.55?STYLE.netHot:STYLE.netInk;
+    nctx.fillStyle=hexA(col,0.72); nctx.fillText(IN_LABELS[i], nd.x-10, nd.y-3);
+    nctx.fillStyle=hexA(col,0.50); nctx.fillText(fmt(nd.a), nd.x-10, nd.y+9); }
+  nctx.textAlign='center';
+  for(const nd of nodes[1]){ const col=nd.a>0.55?STYLE.netHot:STYLE.netInk;
+    nctx.fillStyle=hexA(col,0.48); nctx.fillText(fmt(nd.a), nd.x, nd.y+15); }
+  nctx.textAlign='left';
+  for(let i=0;i<LAYERS[2];i++){ const nd=nodes[2][i], col=nd.a>0.55?STYLE.netHot:STYLE.netInk;
+    nctx.fillStyle=hexA(col,0.72); nctx.fillText(OUT_LABELS[i], nd.x+10, nd.y-3);
+    nctx.fillStyle=hexA(col,0.50); nctx.fillText(fmt(nd.a), nd.x+10, nd.y+9); }
+
+  nctx.strokeStyle=hexA(STYLE.netInk,0.18); nctx.lineWidth=0.5;
+  nctx.beginPath(); nctx.moveTo(4,NET_H-11); nctx.lineTo(W-4,NET_H-11); nctx.stroke();
+  nctx.fillStyle=hexA(STYLE.netInk,0.22); nctx.font="7px 'Courier New',ui-monospace,monospace";
+  nctx.textAlign='left'; nctx.fillText('JBRAIN SIM',6,NET_H-3);
+  nctx.textAlign='right'; nctx.fillText('LIVE',W-6,NET_H-3);
+}
+
+// ---- tap a neuron to fire it ----
+function stimulateAt(lx,ly){
+  let best=null,bd=24;
+  for(let l=0;l<nodes.length;l++) for(let i=0;i<nodes[l].length;i++){
+    const nd=nodes[l][i], d=Math.hypot(nd.x-lx,nd.y-ly);
+    if(d<bd){ bd=d; best={l,i,nd}; }
+  }
+  if(best){ const nd=best.nd; nd.a=1; nd.hold=24; nd.poke=1;
+    for(const e of edges) if(e.l===best.l+1&&e.i===best.i) e.pulses.push({t:0,sp:rnd(0.02,0.04)});
+    return true; }
+  return false;
+}
+
+// ============================================================ interaction
+let dragging=false,lastX=0,lastY=0,downX=0,downY=0,moved=false;
+const ptrs=new Map(); let pinchD=0;
+cnv.addEventListener('pointerdown',e=>{ ptrs.set(e.pointerId,[e.clientX,e.clientY]);
+  if(ptrs.size===1){ dragging=true; lastX=e.clientX; lastY=e.clientY; downX=e.clientX; downY=e.clientY; moved=false; }
+  else if(ptrs.size===2){ const v=[...ptrs.values()]; pinchD=Math.hypot(v[0][0]-v[1][0],v[0][1]-v[1][1]); } });
+addEventListener('pointermove',e=>{
+  if(!ptrs.has(e.pointerId)) return; ptrs.set(e.pointerId,[e.clientX,e.clientY]);
+  if(ptrs.size===2){ const v=[...ptrs.values()]; const d=Math.hypot(v[0][0]-v[1][0],v[0][1]-v[1][1]);
+    if(pinchD) camDist=clamp(camDist*(pinchD/d),18,80); pinchD=d; return; }
+  if(dragging){ const dx=e.clientX-lastX, dy=e.clientY-lastY;
+    if(Math.hypot(e.clientX-downX,e.clientY-downY)>6) moved=true;
+    yawV+=-dx*0.0012; pitchV+=dy*0.0012; lastX=e.clientX; lastY=e.clientY; } });
+function endPtr(e){ ptrs.delete(e.pointerId);
+  if(ptrs.size<2) pinchD=0;
+  if(ptrs.size===0){ dragging=false;
+    if(!moved&&e.clientY<SCENE_H) pick(e.clientX,e.clientY); } }
+addEventListener('pointerup',endPtr); addEventListener('pointercancel',endPtr);
+cnv.addEventListener('wheel',e=>{ e.preventDefault(); camDist=clamp(camDist*(1+Math.sign(e.deltaY)*0.08),18,80); },{passive:false});
+function pick(mx,my){ let best=-1,bd=1e9;
+  for(let i=0;i<N;i++){ const b=boids[i]; if(b.sz>1e8) continue;
+    const d=Math.hypot(b.sx-mx,b.sy-my); if(d<40&&d<bd){bd=d;best=i;} }
+  if(best>=0) selected=best; }
+
+// neuron taps on the bottom panel (own listeners — independent of camera)
+let netDown=null;
+net.addEventListener('pointerdown',e=>{ netDown=[e.clientX,e.clientY]; });
+net.addEventListener('pointerup',e=>{
+  if(netDown && Math.hypot(e.clientX-netDown[0],e.clientY-netDown[1])<12)
+    stimulateAt(e.clientX, e.clientY-SCENE_H);
+  netDown=null;
+});
+
+// ============================================================ main loop
+function frame(now){
+  updateCamera(now); stepBoids();
+  ctx.setTransform(DPR,0,0,DPR,0,0); ctx.globalCompositeOperation='source-over';
+  ctx.fillStyle=`rgba(${STYLE.bg[0]},${STYLE.bg[1]},${STYLE.bg[2]},0.30)`; ctx.fillRect(0,0,W,SCENE_H);
+  drawWorld(now); flush();
+  ctx.fillStyle=vig; ctx.fillRect(0,0,W,SCENE_H);
+  netForward(); drawNet();
+  requestAnimationFrame(frame);
+}
+resize(); requestAnimationFrame(frame);
+</script>
+</body>
+</html>

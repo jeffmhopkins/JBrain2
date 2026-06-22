@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>JBrain — Wireframe Genesis variations</title>
+<style>
+  :root{ --ink:#2fffe0; --hot:#ffb000; --dim:#3c6f74; }
+  html,body{ margin:0; background:#021016; color:#bfeef0;
+    font:14px/1.6 ui-monospace,'Courier New',monospace; min-height:100%; }
+  .wrap{ max-width:1100px; margin:0 auto; padding:40px 24px 80px; }
+  h1{ color:var(--ink); font-size:20px; letter-spacing:3px; text-shadow:0 0 12px rgba(47,255,224,.4); margin:0 0 4px; }
+  .sub{ color:var(--dim); margin:0 0 4px; }
+  .lead{ max-width:680px; margin:14px 0 30px; }
+  .lead b{ color:var(--hot); }
+  .grid{ display:grid; grid-template-columns:repeat(auto-fill,minmax(320px,1fr)); gap:20px; }
+  .card{ border:1px solid rgba(47,255,224,.18); border-radius:12px; overflow:hidden;
+    background:rgba(2,18,24,.6); display:flex; flex-direction:column; transition:border-color .2s, transform .2s; }
+  .card:hover{ border-color:var(--ink); transform:translateY(-2px); }
+  .frame{ position:relative; aspect-ratio:16/10; background:#021016; overflow:hidden; }
+  .frame iframe{ position:absolute; inset:0; width:200%; height:200%; transform:scale(.5); transform-origin:top left; border:0; pointer-events:none; }
+  .frame .open{ position:absolute; inset:0; z-index:2; text-decoration:none; }
+  .frame .tag{ position:absolute; left:10px; top:10px; z-index:3; font-size:10px; letter-spacing:1px;
+    color:var(--ink); background:rgba(2,6,14,.7); border:1px solid rgba(47,255,224,.25); border-radius:6px; padding:2px 7px; }
+  .meta{ padding:12px 14px 16px; }
+  .meta h2{ font-size:15px; color:var(--ink); margin:0 0 6px; letter-spacing:1px; }
+  .meta p{ margin:0 0 12px; font-size:12.5px; min-height:40px; }
+  .swatches{ display:flex; gap:6px; margin-bottom:12px; }
+  .sw{ width:18px; height:18px; border-radius:4px; border:1px solid rgba(255,255,255,.12); }
+  .actions a{ color:var(--ink); text-decoration:none; border:1px solid rgba(47,255,224,.3); border-radius:6px; padding:5px 12px; font-size:12px; }
+  .actions a:hover{ background:rgba(47,255,224,.1); }
+  .pending{ display:grid; place-items:center; position:absolute; inset:0; color:var(--dim); font-size:11px; z-index:1; }
+  footer{ margin-top:40px; color:var(--dim); font-size:12px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>WIREFRAME · GENESIS</h1>
+  <p class="sub">// five holographic variations</p>
+  <p class="lead">All built on the chosen Wireframe Genesis direction: <b>10 slow gliding fish</b>
+  + a predator, rendered as glowing wireframes; a live neural schematic in the bottom third.
+  <b>Tap a fish</b> to select it; <b>tap a neuron</b> to fire it and watch the charge ripple
+  through the net. Same engine, five looks.</p>
+  <div class="grid" id="grid"></div>
+  <footer>tap a fish · tap a neuron · drag to orbit · pinch / scroll to zoom</footer>
+</div>
+<script>
+const CARDS=[
+  { file:'01-phosphor-cyan.html', tag:'01', name:'Phosphor Cyan',
+    desc:'The original — dark teal void, cyan wireframes, perspective floor grid, amber alerts.',
+    sw:['#021016','#2fffe0','#ffb000','#0a3a40'] },
+  { file:'02-amber-crt.html', tag:'02', name:'Amber CRT',
+    desc:'Old amber-phosphor sonar. Radar rings + rotating sweep, ring nodes, heavy scanlines.',
+    sw:['#100a02','#ffb000','#ff6a00','#3a2600'] },
+  { file:'03-synthwave.html', tag:'03', name:'Synthwave Horizon',
+    desc:'80s retrowave — magenta/cyan neon, glowing horizon sun + perspective floor grid.',
+    sw:['#1a0833','#ff2bd6','#36e0ff','#05010d'] },
+  { file:'04-green-oscilloscope.html', tag:'04', name:'Green Oscilloscope',
+    desc:'Vintage phosphor-green vector scope — flicker, long persistence, waveform baseline.',
+    sw:['#020a04','#38ff7a','#c8ffd8','#0a2412'] },
+  { file:'05-ice-blueprint.html', tag:'05', name:'Ice Blueprint',
+    desc:'Cold minimalist blueprint — pale ice lines on navy, full wireframe tank, no CRT.',
+    sw:['#060c18','#dff3ff','#5a9bd8','#8fc8e8'] },
+];
+document.getElementById('grid').innerHTML=CARDS.map(c=>`
+  <div class="card">
+    <div class="frame">
+      <span class="tag">${c.tag}</span>
+      <div class="pending">loading preview…</div>
+      <iframe src="${c.file}" loading="lazy" title="${c.name}"></iframe>
+      <a class="open" href="${c.file}" aria-label="Open ${c.name}"></a>
+    </div>
+    <div class="meta">
+      <h2>${c.name}</h2>
+      <p>${c.desc}</p>
+      <div class="swatches">${c.sw.map(s=>`<span class="sw" style="background:${s}"></span>`).join('')}</div>
+      <div class="actions"><a href="${c.file}">open fullscreen →</a></div>
+    </div>
+  </div>`).join('');
+</script>
+</body>
+</html>
