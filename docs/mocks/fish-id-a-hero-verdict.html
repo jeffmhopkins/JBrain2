@@ -1,0 +1,138 @@
+<!doctype html>
+<!--
+  Wave F3 — fish_identification chat-view mock · VARIANT A — "hero verdict"
+  ============================================================================
+  Photo-forward: the owner's photo fills the card, the top species sits over a
+  bottom scrim with a confidence pill, and a single muted line names the runners-
+  up. The picture leads; the verdict reads at a glance.
+
+  Tokens-only (docs/DESIGN.md): every color is a var() from the app token set
+  (frontend/src/styles/tokens.css). The card frame matches the live `.tool-view`
+  (--surface-2 / --border / 12px radius).
+
+  Data-only slots received: {thumb_id, thumb_kind ('attachment'|'image'),
+  top:{species, common, score}, others:[{species, common, score}], model,
+  species_count}. PRODUCTION builds the <img src> from the id
+  (`/api/attachments/${thumb_id}` or the generated-image route) — never a
+  model-authored URL (DESIGN.md "Agent tool views"). The inline SVG data: URI is
+  an offline stand-in for the photo.
+-->
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Fish identification — A — hero verdict</title>
+<style>
+  :root{
+    --bg:#0e0f11;--surface:#17181b;--surface-2:#1e2024;--border:#26282c;
+    --text:#e6e7e9;--text-2:#9a9da3;--text-3:#5c5f66;--surface-composer:#141518;
+    --steel:#7fa7c9;--steel-tint:rgba(127,167,201,.13);
+    --green:#8fbc9a;--green-tint:rgba(143,188,154,.13);
+    --amber:#c9a36a;--amber-tint:rgba(201,163,106,.13);
+    --accent:var(--steel);--r-card:16px;--r-input:12px;--r-pill:999px;
+  }
+  [data-theme="light"]{--bg:#f7f7f5;--surface:#fff;--surface-2:#f0f0ee;--border:#e2e2df;
+    --text:#1a1b1e;--text-2:#5c5f66;--text-3:#9a9da3;--surface-composer:#fff}
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  body{margin:0;background:#000;color:var(--text);
+    font:15px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+    display:flex;flex-wrap:wrap;gap:28px;justify-content:center;padding:28px}
+  .phone{width:390px;height:820px;background:var(--bg);border-radius:34px;overflow:hidden;
+    border:1px solid var(--border);display:flex;flex-direction:column}
+  .topbar{flex:0 0 auto;height:56px;display:flex;align-items:center;gap:10px;padding:0 14px;
+    border-bottom:1px solid var(--border);background:var(--surface)}
+  .topbar .t{font-size:17px;font-weight:600;flex:1}
+  .topbar .t small{display:block;font-size:11px;font-weight:400;color:var(--text-3)}
+  .icon-btn{width:36px;height:36px;display:grid;place-items:center;border-radius:9px;
+    color:var(--text-2);background:transparent;border:0;cursor:pointer}
+  .icon-btn:hover{background:var(--surface-2);color:var(--text)}
+  svg{width:20px;height:20px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+  .chat{flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:14px}
+  .bubble{max-width:82%;padding:11px 13px;border-radius:15px;font-size:14px;line-height:1.45}
+  .me{align-self:flex-end;background:var(--steel-tint);border:1px solid color-mix(in srgb,var(--steel) 30%,transparent);border-bottom-right-radius:5px}
+  .ai{align-self:flex-start;background:var(--surface-2);border:1px solid var(--border);border-bottom-left-radius:5px}
+
+  /* the fish_identification tool-view — hero verdict */
+  .tv-fish{align-self:flex-start;max-width:88%;border:1px solid var(--border);
+    border-radius:var(--r-input);background:var(--surface-2);padding:6px;overflow:hidden}
+  .tv-fish-hero{position:relative;border-radius:10px;overflow:hidden;background:var(--surface);display:block;width:100%}
+  .tv-fish-img{display:block;width:100%;height:auto}
+  .tv-fish-scrim{position:absolute;left:0;right:0;bottom:0;padding:34px 12px 11px;
+    background:linear-gradient(to top,rgba(0,0,0,.78),rgba(0,0,0,0))}
+  .tv-fish-sp{font-size:16px;font-weight:700;color:#fff;font-style:italic}
+  .tv-fish-common{font-size:12.5px;color:rgba(255,255,255,.82);margin-top:1px}
+  .tv-fish-pill{position:absolute;top:8px;right:8px;display:inline-flex;align-items:center;gap:5px;
+    font-size:11px;font-weight:700;padding:4px 9px;border-radius:var(--r-pill);
+    background:color-mix(in srgb,var(--green) 26%,var(--surface));color:var(--green);
+    border:1px solid color-mix(in srgb,var(--green) 38%,transparent);backdrop-filter:blur(3px)}
+  .tv-fish-pill.mid{background:color-mix(in srgb,var(--amber) 26%,var(--surface));color:var(--amber);
+    border-color:color-mix(in srgb,var(--amber) 38%,transparent)}
+  .tv-fish-pill .dot{width:6px;height:6px;border-radius:50%;background:currentColor}
+  .tv-fish-others{font-size:11.5px;color:var(--text-3);padding:8px 6px 3px;line-height:1.5}
+  .tv-fish-others b{color:var(--text-2);font-weight:600}
+  .tv-fish-cap{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--text-3);padding:2px 6px 3px}
+  .tv-fish-cap .d{width:3px;height:3px;border-radius:50%;background:var(--text-3)}
+
+  .composer{flex:0 0 auto;display:flex;gap:8px;align-items:center;
+    padding:10px 12px calc(10px + env(safe-area-inset-bottom));
+    border-top:1px solid var(--border);background:var(--surface-composer)}
+  .composer input{flex:1;background:var(--surface-2);border:1px solid var(--border);
+    border-radius:var(--r-pill);padding:10px 14px;color:var(--text);font-size:14px;outline:none}
+  .composer .send{width:40px;height:40px;border-radius:50%;border:0;background:var(--accent);
+    color:#10141a;display:grid;place-items:center;cursor:pointer;flex:0 0 40px}
+  .composer .send svg{stroke:#10141a}
+  .label{text-align:center;color:var(--text-2);font-size:12px;max-width:390px;line-height:1.45;margin:4px auto}
+  .label b{color:var(--text)}
+</style>
+</head>
+<body>
+<div>
+  <div class="phone">
+    <div class="topbar">
+      <button class="icon-btn"><svg viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6"/></svg></button>
+      <div class="t">jerv<small>identify</small></div>
+      <button class="icon-btn" id="theme" title="Toggle theme">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4.5"/><path d="M12 2v2M12 20v2M4 12H2M22 12h-2M5 5l1.5 1.5M17.5 17.5L19 19M19 5l-1.5 1.5M6.5 17.5L5 19"/></svg>
+      </button>
+    </div>
+
+    <div class="chat" id="chat">
+      <div class="bubble me">What fish is this? 📷</div>
+      <div class="bubble ai">That looks like a <i>yellow tang</i> — here's what the on-box identifier found.</div>
+
+      <!-- fish_identification · hero verdict -->
+      <div class="tv-fish">
+        <div class="tv-fish-hero">
+          <!-- prod: src="/api/attachments/att_a91f" -->
+          <img class="tv-fish-img" alt="photo the owner sent" src="data:image/svg+xml;utf8,&lt;svg xmlns='http://www.w3.org/2000/svg' width='600' height='480'&gt;&lt;defs&gt;&lt;linearGradient id='w' x1='0' y1='0' x2='0' y2='1'&gt;&lt;stop offset='0' stop-color='%231a5a7a'/&gt;&lt;stop offset='1' stop-color='%230d2f44'/&gt;&lt;/linearGradient&gt;&lt;/defs&gt;&lt;rect width='600' height='480' fill='url(%23w)'/&gt;&lt;circle cx='120' cy='110' r='10' fill='%23fff' opacity='0.14'/&gt;&lt;circle cx='150' cy='80' r='6' fill='%23fff' opacity='0.12'/&gt;&lt;ellipse cx='300' cy='250' rx='180' ry='92' fill='%23d9a441'/&gt;&lt;path d='M120 250 L40 180 L40 320 Z' fill='%23c2902f'/&gt;&lt;path d='M250 168 Q320 100 390 168 Z' fill='%23c2902f'/&gt;&lt;path d='M300 165 Q346 250 300 335' stroke='%238a6a1f' stroke-width='14' fill='none' opacity='0.5'/&gt;&lt;circle cx='420' cy='230' r='16' fill='%23fff'/&gt;&lt;circle cx='424' cy='230' r='8' fill='%23111'/&gt;&lt;/svg&gt;" />
+          <span class="tv-fish-pill"><span class="dot"></span>92% confident</span>
+          <div class="tv-fish-scrim">
+            <div class="tv-fish-sp">Zebrasoma flavescens</div>
+            <div class="tv-fish-common">Yellow tang</div>
+          </div>
+        </div>
+        <div class="tv-fish-others">also considered: <b>Acanthurus coeruleus</b> 5% · <b>Centropyge flavissima</b> 2%</div>
+        <div class="tv-fish-cap">fishial · DINOv2+ViT<span class="d"></span>866 species</div>
+      </div>
+
+      <div class="bubble me">Nice, thanks!</div>
+    </div>
+
+    <div class="composer">
+      <input id="inp" placeholder="Ask about a photo…" />
+      <button class="send" onclick="send()"><svg viewBox="0 0 24 24"><path d="M22 2L11 13M22 2l-7 20-4-9-9-4z"/></svg></button>
+    </div>
+  </div>
+  <p class="label">A · <b>Hero verdict.</b> The photo fills the card; the top species reads over a scrim with a confidence pill; runners-up are one muted line. Calmest, most photo-feed-like.</p>
+</div>
+<script>
+  document.getElementById('theme').onclick=()=>{const h=document.documentElement;
+    h.dataset.theme=h.dataset.theme==='light'?'dark':'light'};
+  function send(){const i=document.getElementById('inp');if(!i.value.trim())return;
+    const c=document.getElementById('chat');
+    const b=document.createElement('div');b.className='bubble me';b.textContent=i.value;
+    c.appendChild(b);i.value='';c.scrollTop=9e9;}
+  document.getElementById('inp').addEventListener('keydown',e=>{if(e.key==='Enter')send()});
+</script>
+</body>
+</html>

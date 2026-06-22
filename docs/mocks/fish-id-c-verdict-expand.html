@@ -1,0 +1,153 @@
+<!doctype html>
+<!--
+  Wave F3 — fish_identification chat-view mock · VARIANT C — "verdict + expand"
+  ============================================================================
+  Hybrid: a compact verdict row by default (thumb + top species + confidence
+  pill + chevron); tap to reveal the full ranked top-k with bars. A's calm
+  default with B's honesty one tap away — the disclosure pattern of the
+  genimage-b mock, applied to the candidate list instead of the prompt/seed.
+
+  Tokens-only (docs/DESIGN.md). Confidence is an ENUM → token class, never a raw
+  color. Data-only slots: {thumb_id, thumb_kind, top:{species,common,score},
+  candidates:[{species,common,score}], model, species_count}. No model-authored
+  URLs/markup; the <img src> is built from the id in production.
+-->
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Fish identification — C — verdict + expand</title>
+<style>
+  :root{
+    --bg:#0e0f11;--surface:#17181b;--surface-2:#1e2024;--border:#26282c;
+    --text:#e6e7e9;--text-2:#9a9da3;--text-3:#5c5f66;--surface-composer:#141518;
+    --steel:#7fa7c9;--steel-tint:rgba(127,167,201,.13);
+    --green:#8fbc9a;--amber:#c9a36a;--text-4:#44464c;
+    --accent:var(--steel);--r-card:16px;--r-input:12px;--r-pill:999px;
+  }
+  [data-theme="light"]{--bg:#f7f7f5;--surface:#fff;--surface-2:#f0f0ee;--border:#e2e2df;
+    --text:#1a1b1e;--text-2:#5c5f66;--text-3:#9a9da3;--text-4:#c6c6c2;--surface-composer:#fff}
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  body{margin:0;background:#000;color:var(--text);
+    font:15px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+    display:flex;flex-wrap:wrap;gap:28px;justify-content:center;padding:28px}
+  .phone{width:390px;height:820px;background:var(--bg);border-radius:34px;overflow:hidden;
+    border:1px solid var(--border);display:flex;flex-direction:column}
+  .topbar{flex:0 0 auto;height:56px;display:flex;align-items:center;gap:10px;padding:0 14px;
+    border-bottom:1px solid var(--border);background:var(--surface)}
+  .topbar .t{font-size:17px;font-weight:600;flex:1}
+  .topbar .t small{display:block;font-size:11px;font-weight:400;color:var(--text-3)}
+  .icon-btn{width:36px;height:36px;display:grid;place-items:center;border-radius:9px;
+    color:var(--text-2);background:transparent;border:0;cursor:pointer}
+  .icon-btn:hover{background:var(--surface-2);color:var(--text)}
+  svg{width:20px;height:20px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+  .chat{flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:14px}
+  .bubble{max-width:82%;padding:11px 13px;border-radius:15px;font-size:14px;line-height:1.45}
+  .me{align-self:flex-end;background:var(--steel-tint);border:1px solid color-mix(in srgb,var(--steel) 30%,transparent);border-bottom-right-radius:5px}
+  .ai{align-self:flex-start;background:var(--surface-2);border:1px solid var(--border);border-bottom-left-radius:5px}
+
+  /* the fish_identification tool-view — verdict + expand */
+  .tv-fish{align-self:flex-start;max-width:90%;border:1px solid var(--border);
+    border-radius:var(--r-input);background:var(--surface-2);padding:6px;overflow:hidden;min-width:268px}
+  .tv-fish-verdict{display:flex;gap:10px;align-items:center;width:100%;text-align:left;
+    background:transparent;border:0;cursor:pointer;padding:4px;border-radius:9px;color:inherit}
+  .tv-fish-verdict:hover{background:color-mix(in srgb,var(--text) 5%,transparent)}
+  .tv-fish-thumb{width:54px;height:54px;border-radius:9px;object-fit:cover;flex:0 0 54px;background:var(--surface)}
+  .tv-fish-vmain{flex:1;min-width:0}
+  .tv-fish-sp{font-size:14.5px;font-weight:700;color:var(--text);font-style:italic;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .tv-fish-common{font-size:12px;color:var(--text-2);margin-top:1px}
+  .tv-fish-pill{display:inline-flex;align-items:center;gap:5px;font-size:10.5px;font-weight:700;
+    padding:3px 8px;border-radius:var(--r-pill);flex:0 0 auto;
+    background:color-mix(in srgb,var(--green) 18%,var(--surface));color:var(--green);
+    border:1px solid color-mix(in srgb,var(--green) 32%,transparent)}
+  .tv-fish-pill .dot{width:6px;height:6px;border-radius:50%;background:currentColor}
+  .chev{color:var(--text-3);flex:0 0 auto;transition:transform .2s}
+  .tv-fish.open .chev{transform:rotate(180deg)}
+  .tv-fish-detail{max-height:0;overflow:hidden;transition:max-height .28s ease}
+  .tv-fish.open .tv-fish-detail{max-height:260px}
+  .tv-fish-list{display:flex;flex-direction:column;gap:7px;padding:9px 6px 2px;margin-top:5px;border-top:1px solid var(--border)}
+  .row{display:grid;grid-template-columns:1fr auto;gap:3px 8px;align-items:center}
+  .row .name{font-size:12.5px;color:var(--text-2);font-style:italic;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .row.top .name{color:var(--text);font-weight:600}
+  .row .pct{font-size:11.5px;font-weight:700;color:var(--text-3);font-variant-numeric:tabular-nums}
+  .row.top .pct{color:var(--green)}
+  .bar{grid-column:1 / -1;height:5px;border-radius:99px;background:var(--text-4);overflow:hidden;opacity:.55}
+  .bar i{display:block;height:100%;width:0;border-radius:99px;background:var(--text-3);transition:width .6s cubic-bezier(.2,.7,.2,1)}
+  .row.top .bar{opacity:1}.row.top .bar i{background:var(--green)}.row.mid .bar i{background:var(--amber)}
+  .tv-fish-cap{font-size:10.5px;color:var(--text-3);padding:7px 6px 2px}
+
+  .composer{flex:0 0 auto;display:flex;gap:8px;align-items:center;
+    padding:10px 12px calc(10px + env(safe-area-inset-bottom));
+    border-top:1px solid var(--border);background:var(--surface-composer)}
+  .composer input{flex:1;background:var(--surface-2);border:1px solid var(--border);
+    border-radius:var(--r-pill);padding:10px 14px;color:var(--text);font-size:14px;outline:none}
+  .composer .send{width:40px;height:40px;border-radius:50%;border:0;background:var(--accent);
+    color:#10141a;display:grid;place-items:center;cursor:pointer;flex:0 0 40px}
+  .composer .send svg{stroke:#10141a}
+  .label{text-align:center;color:var(--text-2);font-size:12px;max-width:390px;line-height:1.45;margin:4px auto}
+  .label b{color:var(--text)}
+</style>
+</head>
+<body>
+<div>
+  <div class="phone">
+    <div class="topbar">
+      <button class="icon-btn"><svg viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6"/></svg></button>
+      <div class="t">jerv<small>identify</small></div>
+      <button class="icon-btn" id="theme" title="Toggle theme">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4.5"/><path d="M12 2v2M12 20v2M4 12H2M22 12h-2M5 5l1.5 1.5M17.5 17.5L19 19M19 5l-1.5 1.5M6.5 17.5L5 19"/></svg>
+      </button>
+    </div>
+
+    <div class="chat" id="chat">
+      <div class="bubble me">ID this one for me 📷</div>
+      <div class="bubble ai">That's a <i>clownfish</i> — tap the card for the full ranking.</div>
+
+      <!-- fish_identification · verdict + expand (tap the verdict row) -->
+      <div class="tv-fish" id="card">
+        <button class="tv-fish-verdict" onclick="document.getElementById('card').classList.toggle('open')">
+          <!-- prod: src="/api/attachments/att_5d22" -->
+          <img class="tv-fish-thumb" alt="photo the owner sent" src="data:image/svg+xml;utf8,&lt;svg xmlns='http://www.w3.org/2000/svg' width='240' height='240'&gt;&lt;defs&gt;&lt;linearGradient id='w' x1='0' y1='0' x2='0' y2='1'&gt;&lt;stop offset='0' stop-color='%231a5a7a'/&gt;&lt;stop offset='1' stop-color='%230d2f44'/&gt;&lt;/linearGradient&gt;&lt;/defs&gt;&lt;rect width='240' height='240' fill='url(%23w)'/&gt;&lt;ellipse cx='120' cy='125' rx='78' ry='42' fill='%23e8772a'/&gt;&lt;path d='M46 125 L14 96 L14 154 Z' fill='%23cf6620'/&gt;&lt;rect x='96' y='84' width='13' height='82' fill='%23fff'/&gt;&lt;rect x='134' y='86' width='13' height='78' fill='%23fff'/&gt;&lt;circle cx='170' cy='116' r='7' fill='%23fff'/&gt;&lt;circle cx='172' cy='116' r='3.5' fill='%23111'/&gt;&lt;/svg&gt;" />
+          <div class="tv-fish-vmain">
+            <div class="tv-fish-sp">Amphiprion ocellaris</div>
+            <div class="tv-fish-common">Ocellaris clownfish</div>
+          </div>
+          <span class="tv-fish-pill"><span class="dot"></span>96%</span>
+          <span class="chev"><svg viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg></span>
+        </button>
+        <div class="tv-fish-detail">
+          <div class="tv-fish-list">
+            <div class="row top"><span class="name">Amphiprion ocellaris</span><span class="pct">96%</span><span class="bar"><i data-w="96"></i></span></div>
+            <div class="row"><span class="name">Amphiprion percula</span><span class="pct">3%</span><span class="bar"><i data-w="3"></i></span></div>
+            <div class="row"><span class="name">Premnas biaculeatus</span><span class="pct">1%</span><span class="bar"><i data-w="1"></i></span></div>
+          </div>
+          <div class="tv-fish-cap">fishial · DINOv2+ViT · top 3 of 866</div>
+        </div>
+      </div>
+
+      <div class="bubble me">Finding Nemo was right 🐠</div>
+    </div>
+
+    <div class="composer">
+      <input id="inp" placeholder="Ask about a photo…" />
+      <button class="send" onclick="send()"><svg viewBox="0 0 24 24"><path d="M22 2L11 13M22 2l-7 20-4-9-9-4z"/></svg></button>
+    </div>
+  </div>
+  <p class="label">C · <b>Verdict + expand.</b> A compact verdict row by default; tap to reveal the full ranked top-k with bars. A's calm default, B's honesty one tap away.</p>
+</div>
+<script>
+  document.getElementById('theme').onclick=()=>{const h=document.documentElement;
+    h.dataset.theme=h.dataset.theme==='light'?'dark':'light'};
+  // fill bars when the detail first expands
+  const card=document.getElementById('card');
+  new MutationObserver(()=>{if(card.classList.contains('open'))
+    card.querySelectorAll('.bar i').forEach(b=>{b.style.width=b.dataset.w+'%'})})
+    .observe(card,{attributes:true,attributeFilter:['class']});
+  function send(){const i=document.getElementById('inp');if(!i.value.trim())return;
+    const c=document.getElementById('chat');
+    const b=document.createElement('div');b.className='bubble me';b.textContent=i.value;
+    c.appendChild(b);i.value='';c.scrollTop=9e9;}
+  document.getElementById('inp').addEventListener('keydown',e=>{if(e.key==='Enter')send()});
+</script>
+</body>
+</html>

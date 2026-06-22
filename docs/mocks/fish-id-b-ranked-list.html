@@ -1,0 +1,142 @@
+<!doctype html>
+<!--
+  Wave F3 — fish_identification chat-view mock · VARIANT B — "ranked list"
+  ============================================================================
+  Uncertainty-forward: a thumbnail beside a ranked list of candidates, each with
+  a confidence bar. The top match is highlighted, but the model's full top-k is
+  visible so a close call is obvious — the honest read when 866 classes overlap.
+
+  Tokens-only (docs/DESIGN.md). The bars are a confidence ENUM mapped to a token
+  class (good/mid/low), never a raw color — the theme owns the palette.
+
+  Data-only slots received: {thumb_id, thumb_kind, candidates:[{species, common,
+  score}] (ranked, top-k), model, species_count}. PRODUCTION builds the <img src>
+  from the id; the bar width is `score`. No model-authored URLs/markup.
+-->
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Fish identification — B — ranked list</title>
+<style>
+  :root{
+    --bg:#0e0f11;--surface:#17181b;--surface-2:#1e2024;--border:#26282c;
+    --text:#e6e7e9;--text-2:#9a9da3;--text-3:#5c5f66;--surface-composer:#141518;
+    --steel:#7fa7c9;--steel-tint:rgba(127,167,201,.13);
+    --green:#8fbc9a;--amber:#c9a36a;--text-4:#44464c;
+    --accent:var(--steel);--r-card:16px;--r-input:12px;--r-pill:999px;
+  }
+  [data-theme="light"]{--bg:#f7f7f5;--surface:#fff;--surface-2:#f0f0ee;--border:#e2e2df;
+    --text:#1a1b1e;--text-2:#5c5f66;--text-3:#9a9da3;--text-4:#c6c6c2;--surface-composer:#fff}
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  body{margin:0;background:#000;color:var(--text);
+    font:15px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+    display:flex;flex-wrap:wrap;gap:28px;justify-content:center;padding:28px}
+  .phone{width:390px;height:820px;background:var(--bg);border-radius:34px;overflow:hidden;
+    border:1px solid var(--border);display:flex;flex-direction:column}
+  .topbar{flex:0 0 auto;height:56px;display:flex;align-items:center;gap:10px;padding:0 14px;
+    border-bottom:1px solid var(--border);background:var(--surface)}
+  .topbar .t{font-size:17px;font-weight:600;flex:1}
+  .topbar .t small{display:block;font-size:11px;font-weight:400;color:var(--text-3)}
+  .icon-btn{width:36px;height:36px;display:grid;place-items:center;border-radius:9px;
+    color:var(--text-2);background:transparent;border:0;cursor:pointer}
+  .icon-btn:hover{background:var(--surface-2);color:var(--text)}
+  svg{width:20px;height:20px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+  .chat{flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:14px}
+  .bubble{max-width:82%;padding:11px 13px;border-radius:15px;font-size:14px;line-height:1.45}
+  .me{align-self:flex-end;background:var(--steel-tint);border:1px solid color-mix(in srgb,var(--steel) 30%,transparent);border-bottom-right-radius:5px}
+  .ai{align-self:flex-start;background:var(--surface-2);border:1px solid var(--border);border-bottom-left-radius:5px}
+
+  /* the fish_identification tool-view — ranked list */
+  .tv-fish{align-self:flex-start;max-width:90%;border:1px solid var(--border);
+    border-radius:var(--r-input);background:var(--surface-2);padding:8px;overflow:hidden}
+  .tv-fish-head{display:flex;gap:10px;align-items:center;padding:2px 2px 9px}
+  .tv-fish-thumb{width:62px;height:62px;border-radius:9px;object-fit:cover;flex:0 0 62px;background:var(--surface)}
+  .tv-fish-htext{min-width:0}
+  .tv-fish-htext .k{font-size:10.5px;letter-spacing:.04em;text-transform:uppercase;color:var(--text-3)}
+  .tv-fish-htext .v{font-size:13.5px;font-weight:600;color:var(--text);margin-top:1px}
+  .tv-fish-htext .v small{font-weight:400;color:var(--text-2)}
+  .tv-fish-list{display:flex;flex-direction:column;gap:7px}
+  .row{display:grid;grid-template-columns:1fr auto;gap:3px 8px;align-items:center}
+  .row .name{font-size:13px;color:var(--text-2);font-style:italic;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .row.top .name{color:var(--text);font-weight:600}
+  .row .pct{font-size:12px;font-weight:700;color:var(--text-3);font-variant-numeric:tabular-nums}
+  .row.top .pct{color:var(--green)}
+  .bar{grid-column:1 / -1;height:6px;border-radius:99px;background:var(--text-4);overflow:hidden;opacity:.55}
+  .bar i{display:block;height:100%;width:0;border-radius:99px;background:var(--text-3);
+    transition:width .7s cubic-bezier(.2,.7,.2,1)}
+  .row.top .bar{opacity:1}
+  .row.top .bar i{background:var(--green)}
+  .row.mid .bar i{background:var(--amber)}
+  .tv-fish-cap{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--text-3);padding:9px 2px 1px}
+  .tv-fish-cap .d{width:3px;height:3px;border-radius:50%;background:var(--text-3)}
+
+  .composer{flex:0 0 auto;display:flex;gap:8px;align-items:center;
+    padding:10px 12px calc(10px + env(safe-area-inset-bottom));
+    border-top:1px solid var(--border);background:var(--surface-composer)}
+  .composer input{flex:1;background:var(--surface-2);border:1px solid var(--border);
+    border-radius:var(--r-pill);padding:10px 14px;color:var(--text);font-size:14px;outline:none}
+  .composer .send{width:40px;height:40px;border-radius:50%;border:0;background:var(--accent);
+    color:#10141a;display:grid;place-items:center;cursor:pointer;flex:0 0 40px}
+  .composer .send svg{stroke:#10141a}
+  .label{text-align:center;color:var(--text-2);font-size:12px;max-width:390px;line-height:1.45;margin:4px auto}
+  .label b{color:var(--text)}
+</style>
+</head>
+<body>
+<div>
+  <div class="phone">
+    <div class="topbar">
+      <button class="icon-btn"><svg viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6"/></svg></button>
+      <div class="t">jerv<small>identify</small></div>
+      <button class="icon-btn" id="theme" title="Toggle theme">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4.5"/><path d="M12 2v2M12 20v2M4 12H2M22 12h-2M5 5l1.5 1.5M17.5 17.5L19 19M19 5l-1.5 1.5M6.5 17.5L5 19"/></svg>
+      </button>
+    </div>
+
+    <div class="chat" id="chat">
+      <div class="bubble me">Caught this off the dock — what is it? 📷</div>
+      <div class="bubble ai">It's most likely a <i>redfish</i>, but it's a close call with black drum — here's the full read.</div>
+
+      <!-- fish_identification · ranked list -->
+      <div class="tv-fish">
+        <div class="tv-fish-head">
+          <!-- prod: src="/api/attachments/att_3c70" -->
+          <img class="tv-fish-thumb" alt="photo the owner sent" src="data:image/svg+xml;utf8,&lt;svg xmlns='http://www.w3.org/2000/svg' width='240' height='240'&gt;&lt;defs&gt;&lt;linearGradient id='w' x1='0' y1='0' x2='0' y2='1'&gt;&lt;stop offset='0' stop-color='%231a5a7a'/&gt;&lt;stop offset='1' stop-color='%230d2f44'/&gt;&lt;/linearGradient&gt;&lt;/defs&gt;&lt;rect width='240' height='240' fill='url(%23w)'/&gt;&lt;ellipse cx='120' cy='125' rx='80' ry='40' fill='%23c45a3f'/&gt;&lt;path d='M44 125 L12 95 L12 155 Z' fill='%23a8472f'/&gt;&lt;circle cx='172' cy='115' r='7' fill='%23fff'/&gt;&lt;circle cx='174' cy='115' r='3.5' fill='%23111'/&gt;&lt;circle cx='150' cy='150' r='9' fill='%23111' opacity='0.5'/&gt;&lt;/svg&gt;" />
+          <div class="tv-fish-htext">
+            <div class="k">Identified</div>
+            <div class="v">Sciaenops ocellatus <small>· redfish</small></div>
+          </div>
+        </div>
+        <div class="tv-fish-list">
+          <div class="row top"><span class="name">Sciaenops ocellatus</span><span class="pct">61%</span><span class="bar"><i data-w="61"></i></span></div>
+          <div class="row mid"><span class="name">Pogonias cromis</span><span class="pct">28%</span><span class="bar"><i data-w="28"></i></span></div>
+          <div class="row"><span class="name">Cynoscion nebulosus</span><span class="pct">7%</span><span class="bar"><i data-w="7"></i></span></div>
+          <div class="row"><span class="name">Micropogonias undulatus</span><span class="pct">3%</span><span class="bar"><i data-w="3"></i></span></div>
+        </div>
+        <div class="tv-fish-cap">fishial · DINOv2+ViT<span class="d"></span>top 4 of 866</div>
+      </div>
+
+      <div class="bubble me">Yeah it had the tail spot — redfish it is.</div>
+    </div>
+
+    <div class="composer">
+      <input id="inp" placeholder="Ask about a photo…" />
+      <button class="send" onclick="send()"><svg viewBox="0 0 24 24"><path d="M22 2L11 13M22 2l-7 20-4-9-9-4z"/></svg></button>
+    </div>
+  </div>
+  <p class="label">B · <b>Ranked list.</b> Thumbnail + the model's full top-k with confidence bars. A close call (61% vs 28%) is impossible to miss — the most honest about uncertainty.</p>
+</div>
+<script>
+  document.getElementById('theme').onclick=()=>{const h=document.documentElement;
+    h.dataset.theme=h.dataset.theme==='light'?'dark':'light'};
+  // animate the confidence bars to their score on load
+  requestAnimationFrame(()=>document.querySelectorAll('.bar i').forEach(b=>{b.style.width=b.dataset.w+'%'}));
+  function send(){const i=document.getElementById('inp');if(!i.value.trim())return;
+    const c=document.getElementById('chat');
+    const b=document.createElement('div');b.className='bubble me';b.textContent=i.value;
+    c.appendChild(b);i.value='';c.scrollTop=9e9;}
+  document.getElementById('inp').addEventListener('keydown',e=>{if(e.key==='Enter')send()});
+</script>
+</body>
+</html>
