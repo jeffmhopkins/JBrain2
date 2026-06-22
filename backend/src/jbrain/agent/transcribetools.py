@@ -109,6 +109,9 @@ def _transcript_view(
             "filename": filename,
             "model": model,
             "duration_ms": transcript.duration_ms,
+            # The plain transcript is the component's fallback when the build emits
+            # no per-word data (no colors/sync, but the text still shows).
+            "text": transcript.text,
             "words": [
                 {
                     "text": w.text,

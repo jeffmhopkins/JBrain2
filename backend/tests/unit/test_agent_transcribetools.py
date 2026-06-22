@@ -128,12 +128,27 @@ async def test_transcribes_audio_and_unloads_after() -> None:
     assert isinstance(out, ToolOutput) and out.view is not None
     assert out.view.view == "transcript" and out.view.data["attachment_id"] == AUDIO_ID
     assert out.view.data["source"] == "chat" and out.view.data["duration_ms"] == 900
+    assert "hello team" in out.view.data["text"]
     assert out.view.data["words"][1] == {
         "text": "team",
         "start_ms": 400,
         "end_ms": 900,
         "confidence": 0.5,
     }
+
+
+async def test_view_carries_text_when_the_build_emits_no_per_word_data() -> None:
+    # whisper returned plain text (no words) — the card must still show the text
+    # (the regression: an empty `words` with no `text` rendered a blank component).
+    blobs, repo = FakeBlobs(), FakeAttachments()
+    blobs.data["sha-a"] = b"RIFF"
+    repo.add(AUDIO_ID, media_type="audio/wav", sha="sha-a", filename="memo.wav")
+    out = await _tool(
+        FakeClient(Transcript(text="just the words, no timings")), blobs, repo, FakeGateway()
+    )({"source_attachment_id": AUDIO_ID}, CTX)
+    assert isinstance(out, ToolOutput) and out.view is not None
+    assert out.view.data["words"] == []
+    assert out.view.data["text"] == "just the words, no timings"
 
 
 async def test_unknown_or_non_uuid_id_is_a_clean_miss() -> None:
