@@ -22,21 +22,6 @@ export function fmtQuantity(value: number, unit: string): string {
   return `${value} ${unit}`;
 }
 
-// A value is the bare datum, never a clause. Detect a statement-shaped string
-// (too long, multi-clause, or subject-verb + terminal stop) so the renderer can
-// blank it rather than show a full sentence as a fact's value — the frontend
-// half of the deterministic backstop (mirrors display._looks_like_sentence). */
-const SENTENCE_BREAK = /[.!?]\s+\S/;
-const FINITE_VERB =
-  /\b(is|are|was|were|am|be|been|being|has|have|had|will|would|shall|should|can|could|may|might|must|do|does|did|went|said|told|recommend(?:ed|s)?|start(?:ed|s)?|stopped|moved|like[sd]?|love[sd]?|prefer(?:s|red)?|work(?:s|ed|ing)?|live[sd]?|feel(?:s|ing)?|need(?:s|ed)?|want(?:s|ed)?|took|takes|got|admitted|diagnosed|prescribed)\b/i;
-
-function looksLikeSentence(s: string): boolean {
-  const t = s.trim();
-  const words = t.split(/\s+/).filter(Boolean);
-  if (t.length > 80 || words.length > 7 || SENTENCE_BREAK.test(t)) return true;
-  return /[.!?]$/.test(t) && FINITE_VERB.test(t) && words.length >= 3;
-}
-
 /** The bare datum a structured value reduces to, or null when it carries none. */
 function structuredLabel(value: unknown, fallbackPrecision?: string): string | null {
   if (typeof value === "string") return value;
@@ -53,9 +38,8 @@ function structuredLabel(value: unknown, fallbackPrecision?: string): string | n
     return `${String(o.value)}${typeof o.unit === "string" ? ` ${o.unit}` : ""}`;
   }
   // Common single-datum shapes the extractor emits: a name ({"name": "Bella"},
-  // {"name": "Jeff Hopkins"}) or a place ({"place": "Denver"}). The name keys
-  // mirror the backend's entities._NAME_VALUE_KEYS so a name.* fact stored under
-  // fullname/alias/text renders its bare name here too.
+  // {"name": "Jeff Hopkins"}) or a place ({"place": "Denver"}), and the other
+  // name-value keys a name.* fact may be stored under (fullname/alias/text).
   for (const key of ["name", "place", "fullname", "alias", "text"] as const) {
     if (typeof o[key] === "string") return o[key] as string;
   }
@@ -65,25 +49,25 @@ function structuredLabel(value: unknown, fallbackPrecision?: string): string | n
     const precision = typeof o.precision === "string" ? o.precision : fallbackPrecision;
     return fmtTemporal(o.start, precision ?? "");
   }
-  // Any other single-datum shape ({"street": …}, …): the first scalar leaf is
-  // the datum — never the prose. Mirrors display._structured_label.
+  // Any other single-datum shape ({"street": …}, …): the first non-empty string
+  // leaf is the datum (mirrors display._structured_label). String-only and
+  // numbers/booleans skipped so an incidental numeric/flag field is never
+  // surfaced as the value, and the two renderers agree.
   for (const v of Object.values(o)) {
     if (typeof v === "string" && v.trim()) return v;
-    if (typeof v === "number") return String(v);
   }
   return null;
 }
 
-/** Render a structured `value_json` into a concise display value. The value is
- * always the bare datum (a recognized shape, else any scalar leaf); only with no
- * datum at all does it fall back to `statement` — and a sentence-shaped fallback
- * is BLANKED, never shown as a value (mirrors display.value_label). This is the
+/** Render a structured `value_json` into a concise display value: the bare datum
+ * (a recognized shape, else the first string leaf of an unhandled shape), falling
+ * back to `statement` when value_json carries no datum. NEVER empty — a value cell
+ * / choice button always shows something (mirrors display.value_label). This is the
  * part of factValue past the object-node short-circuit, factored out so other
  * surfaces (the review card's proposed-fact panel) describe a fact's value
  * identically to the entity page. `fallbackPrecision` dates a {start} value. */
 export function valueLabel(value: unknown, statement: string, fallbackPrecision?: string): string {
-  const label = structuredLabel(value, fallbackPrecision) ?? statement;
-  return looksLikeSentence(label) ? "" : label;
+  return structuredLabel(value, fallbackPrecision) ?? statement;
 }
 
 /** Render value_json into the edge's value; falls back to the statement. */

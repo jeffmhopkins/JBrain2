@@ -12,35 +12,12 @@ action POST /review/{id}/resolve accepts, and the wording stays in the UI's
 lowercase-calm register (frontend mock.ts is the reference fixtures).
 """
 
-import re
 from collections.abc import Sequence
 from typing import Any
 
 SNIPPET_CHARS = 240
 # Context kept before a span that sits deeper in the chunk than the window.
 _LEAD_CHARS = 60
-
-# A value must be the bare datum, never a sentence. These detect a statement-shaped
-# string so the renderer can blank it rather than store/show a full sentence as a
-# fact's value (the deterministic backstop for note-extraction calibration).
-_SENTENCE_BREAK = re.compile(r"[.!?]\s+\S")
-_FINITE_VERB = re.compile(
-    r"\b(is|are|was|were|am|be|been|being|has|have|had|will|would|shall|should|can|could|"
-    r"may|might|must|do|does|did|went|said|told|recommend(?:ed|s)?|start(?:ed|s)?|stopped|"
-    r"moved|like[sd]?|love[sd]?|prefer(?:s|red)?|work(?:s|ed|ing)?|live[sd]?|feel(?:s|ing)?|"
-    r"need(?:s|ed)?|want(?:s|ed)?|took|takes|got|admitted|diagnosed|prescribed)\b",
-    re.I,
-)
-
-
-def _looks_like_sentence(s: str) -> bool:
-    """A datum is a noun phrase / number / date — not a clause. Flag a value that
-    reads as a sentence (too long, multi-clause, or subject-verb + terminal stop)."""
-    t = s.strip()
-    words = t.split()
-    if len(t) > 80 or len(words) > 7 or _SENTENCE_BREAK.search(t):
-        return True
-    return bool(t.rstrip().endswith((".", "!", "?")) and _FINITE_VERB.search(t) and len(words) >= 3)
 
 
 def mark_snippet(text: str | None, start: int | None = None, end: int | None = None) -> str | None:
@@ -70,14 +47,12 @@ def value_label(value_json: dict[str, Any] | None, statement: str) -> str:
     """Plain-language value for a choice button — mirrors the UI's factValue
     renderer so the card and the entity page describe a fact identically.
 
-    Backstop: the value is always the bare datum from value_json (a recognized
-    shape, else any scalar leaf); only with no datum at all does it fall back to
-    the statement — and a sentence-shaped fallback is BLANKED, never rendered as a
-    value (the fact keeps its statement as provenance elsewhere)."""
-    label = _structured_label(value_json)
-    if label is None:
-        label = statement
-    return "" if _looks_like_sentence(label) else label
+    Renders the bare datum from value_json (a recognized shape, else the first
+    string leaf of an unhandled shape), and falls back to the statement when
+    value_json carries no datum. NEVER empty: a choice button / value cell must
+    always show something, so the statement is the floor (the note.extract prompt
+    is what keeps value_json a bare datum; this only renders what is stored)."""
+    return _structured_label(value_json) or statement
 
 
 def _structured_label(value_json: dict[str, Any] | None) -> str | None:
@@ -92,13 +67,16 @@ def _structured_label(value_json: dict[str, Any] | None) -> str | None:
     if "value" in value_json:
         rendered = _number(value_json["value"])
         return f"{rendered} {unit}" if isinstance(unit, str) else rendered
-    # Any other single-datum shape ({"name": …}, {"place": …}, {"street": …}, a
-    # {"start": ISO} date): the first scalar leaf is the datum — never the prose.
-    for v in value_json.values():
+    # Any other single-datum shape ({"name": …}, {"place": …}, {"street": …}): the
+    # first non-empty STRING leaf is the datum. A date shape ({"start": ISO}) is
+    # left to the statement — there is no date formatter here, and the entity page
+    # (format.ts) renders {start} via fmtTemporal — so the start/end keys are
+    # skipped rather than surfaced as a raw ISO timestamp.
+    for key, v in value_json.items():
+        if key in ("start", "end"):
+            continue
         if isinstance(v, str) and v.strip():
             return v
-        if isinstance(v, (int, float)):
-            return _number(v)
     return None
 
 

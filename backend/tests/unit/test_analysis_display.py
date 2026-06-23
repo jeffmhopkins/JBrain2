@@ -70,21 +70,28 @@ class TestValueLabel:
         assert value_label({"value": 95, "unit": "mg/dL"}, "s") == "95 mg/dL"
         assert value_label({"value": "Denver, CO"}, "s") == "Denver, CO"
 
-    def test_unrecognized_shape_renders_its_scalar_leaf(self) -> None:
-        # Backstop: an unhandled shape still yields its bare datum (the first
-        # scalar leaf) rather than falling through to the statement sentence.
+    def test_unrecognized_shape_renders_its_string_leaf(self) -> None:
+        # An unhandled shape yields its bare datum (the first string leaf) rather
+        # than falling through to the statement sentence.
         assert value_label({"street": "99 Pine Ave"}, "Lives at 99 Pine Ave.") == "99 Pine Ave"
 
-    def test_blanks_a_sentence_shaped_fallback(self) -> None:
-        # No datum in value_json and the statement is a full sentence: the value
-        # is blanked, never rendered (the statement survives as provenance).
-        assert value_label(None, "Sarah works for Ridgeline.") == ""
-        assert value_label({}, "He was admitted to the hospital on Tuesday.") == ""
+    def test_falls_back_to_the_statement_never_empty(self) -> None:
+        # No datum in value_json: the statement is the floor — a choice button /
+        # value cell must never render empty (it would orphan a review card).
+        assert value_label(None, "Sarah works for Ridgeline.") == "Sarah works for Ridgeline."
+        assert value_label({}, "He was admitted on Tuesday.") == "He was admitted on Tuesday."
 
-    def test_short_fallback_label_survives(self) -> None:
-        # A bare datum left as the statement (no value_json) is not a sentence —
-        # it passes through unblanked.
-        assert value_label(None, "data engineer") == "data engineer"
+    def test_date_shape_defers_to_the_statement_not_a_raw_iso(self) -> None:
+        # The backend has no date formatter; a {start} shape is left to the
+        # statement rather than surfacing a raw ISO timestamp as the value.
+        assert value_label(
+            {"start": "2026-06-15T14:00:00-06:00"}, "Appointment is Monday at 2pm."
+        ) == "Appointment is Monday at 2pm."
+
+    def test_abbreviated_name_datum_is_not_dropped(self) -> None:
+        # A short datum with an internal period (a title, an initial) is the value,
+        # never mistaken for a sentence.
+        assert value_label({"value": "Dr. Patel"}, "Saw Dr. Patel.") == "Dr. Patel"
 
 
 class TestReviewDisplays:
