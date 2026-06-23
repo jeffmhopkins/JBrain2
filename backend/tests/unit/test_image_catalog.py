@@ -26,18 +26,42 @@ def test_every_model_references_a_real_workflow_template() -> None:
         assert (workflows / m.workflow).is_file(), f"{m.id} -> missing {m.workflow}"
 
 
-def test_generate_model_is_the_recommended_default() -> None:
-    # Only the on-box-validated generate model is provisioned by default; edit ships
-    # non-recommended until its weights are validated on-box.
-    assert catalog.recommended_ids() == ("qwen-image",)
-    edit = catalog.get("qwen-image-edit")
-    assert edit is not None and not edit.recommended and edit.kind == "edit"
+def test_recommended_set_covers_both_tools_fast_and_quality() -> None:
+    # A default provision downloads generate + edit and both 4-step Lightning siblings, so
+    # the `fast` and `quality` paths of generate_image AND edit_image all work after one run.
+    assert catalog.recommended_ids() == (
+        "qwen-image",
+        "qwen-image-lightning",
+        "qwen-image-edit",
+        "qwen-image-edit-lightning",
+    )
+    # DreamShaper is the only opt-in entry now (it's no longer the fast path).
+    assert not catalog.get("dreamshaper").recommended  # type: ignore[union-attr]
+
+
+def test_lightning_models_add_the_shared_step_distill_lora() -> None:
+    # The fast generate + edit paths are the base models plus the SAME Lightning LoRA (lightx2v),
+    # fixed at 4 steps. The LoRA lands in `loras`, and both fast models reference the same file.
+    gen = catalog.get("qwen-image-lightning")
+    edit = catalog.get("qwen-image-edit-lightning")
+    assert gen is not None and edit is not None
+    assert gen.workflow == "qwen_image_lightning.json" and gen.fast_steps == 4
+    assert edit.workflow == "qwen_image_edit_lightning.json" and edit.kind == "edit"
+    gen_lora = next(f for f in gen.files if f.dest_subdir == "loras")
+    edit_lora = next(f for f in edit.files if f.dest_subdir == "loras")
+    assert gen_lora == edit_lora
+    assert gen_lora.hf_repo == "lightx2v/Qwen-Image-Edit-2511-Lightning"
+    assert gen_lora.repo_path == "Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors"
+    # Each fast model reuses its base model's weights, so it only adds the LoRA download.
+    base_gen = catalog.get("qwen-image")
+    assert base_gen is not None
+    assert {f.repo_path for f in base_gen.files} < {f.repo_path for f in gen.files}
 
 
 def test_dreamshaper_is_a_single_all_in_one_checkpoint() -> None:
-    # The fast SDXL path ships as ONE checkpoint file (model+CLIP+baked VAE) in the
-    # `checkpoints` subdir — no separate encoder/VAE, unlike the Qwen split layout.
-    m = catalog.get("dreamshaper-xl-lightning")
+    # A lightweight standalone (no longer the fast path): ONE checkpoint file (model+CLIP+baked
+    # VAE) in the `checkpoints` subdir — no separate encoder/VAE, unlike the Qwen split layout.
+    m = catalog.get("dreamshaper")
     assert m is not None
     assert m.kind == "generate" and m.workflow == "dreamshaper_xl.json"
     (only,) = m.files

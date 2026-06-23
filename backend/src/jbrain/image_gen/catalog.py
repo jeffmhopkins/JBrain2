@@ -18,13 +18,14 @@ Two consumers read this:
   - scripts/comfyui-setup.sh reads `python -m jbrain.image_gen.catalog <ids>`
     for the JSON download manifest.
 
-Validated on-box: the `qwen-image` generate model and its 20-step workflow (now on
-native bf16 weights). The `qwen-image-edit` entry is wired structurally (its graph is
-real, exported from the box) but its weights/repo path await an on-box
-download+run, so it ships non-recommended. The `dreamshaper-xl-lightning` entry is the
-fast generate path: a single all-in-one SDXL checkpoint driven by the stock SDXL graph
-(dreamshaper_xl.json) — standard enough to author confidently, though a first on-box
-render is the final confirmation, so it too ships non-recommended.
+Validated on-box: the `qwen-image` generate model and its workflow (native bf16 weights).
+The `*-lightning` entries add the 4-step Lightning LoRA (lightx2v) to the generate and edit
+base models for the interactive `fast` path — the form kyuz0's validated Strix Halo 4-step
+workflows ship (LoRA at CFG 1). Generate, edit, and both Lightning variants are recommended,
+so a default provision downloads everything the `fast` and `quality` paths of both tools need
+(the Lightning LoRA is shared, ~0.85 GB on top of the base weights). The `dreamshaper` entry
+is a tiny standalone SDXL checkpoint kept as a lightweight option; it ships non-recommended
+and is no longer wired to the `speed` knob.
 """
 
 import json
@@ -111,6 +112,15 @@ _EDIT_DIFFUSION = ImageFile(
     repo_path="split_files/diffusion_models/qwen_image_edit_2511_bf16.safetensors",
     dest_subdir="diffusion_models",
 )
+# The Lightning step-distill LoRA (lightx2v) that makes the 4-step `fast` path work: it
+# collapses the ~20-40 step schedule to 4 at CFG 1. The same bf16 LoRA (~0.85 GB) drives
+# BOTH the base-generate and the edit Lightning graphs (the form kyuz0's validated Strix
+# Halo 4-step workflows ship), so a box that runs either fast path downloads it once.
+_LIGHTNING_LORA = ImageFile(
+    hf_repo="lightx2v/Qwen-Image-Edit-2511-Lightning",
+    repo_path="Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors",
+    dest_subdir="loras",
+)
 
 # DreamShaper XL Lightning (Lykon): a single all-in-one SDXL checkpoint — model + CLIP +
 # baked VAE in one file — so it needs no separate encoder/VAE, unlike the Qwen split. It is
@@ -136,13 +146,36 @@ CATALOG: tuple[ImageModel, ...] = (
         # the fp8 build used after its load-time upcast, minus the fp8 quantization loss. The
         # LLMs are unloaded during a render, so this fits the box's unified memory with room.
         vram_gb=58.0,
-        fast_steps=4,
-        quality_steps=20,
+        # The quality generate path: effort maps to a 20-40 step band (the fast 4-step path
+        # is the separate qwen-image-lightning entry below).
+        fast_steps=20,
+        quality_steps=40,
         recommended=True,
         note="Native bf16 (2512 checkpoint) — no fp8 upcast, so no quantization loss. "
         "~58 GB resident; fits with the LLMs offloaded during the render. VAE decode is "
-        "tiled to keep the decode peak in budget. The fast preset needs a step-distill "
-        "(Lightning) LoRA — add it once confirmed.",
+        "tiled to keep the decode peak in budget. The interactive `fast` path is the "
+        "separate qwen-image-lightning model (the 4-step Lightning LoRA).",
+    ),
+    ImageModel(
+        id="qwen-image-lightning",
+        label="Qwen-Image · fast (4-step Lightning)",
+        kind="generate",
+        workflow="qwen_image_lightning.json",
+        # The same base model + encoder + VAE as qwen-image, plus the small Lightning LoRA —
+        # so a box that already provisioned qwen-image adds only the ~0.85 GB LoRA to gain the
+        # fast path (hf skips the shared weights it already has).
+        files=(_GEN_DIFFUSION, _TEXT_ENCODER, _VAE, _LIGHTNING_LORA),
+        size_gb=58.9,
+        vram_gb=58.0,
+        # Fixed 4 steps at CFG 1 — the distilled schedule's sweet spot; more steps don't add
+        # detail here, so the `fast` knob is not step-tunable (the handler pins it to 4).
+        fast_steps=4,
+        quality_steps=4,
+        recommended=True,
+        note="The interactive `fast` generate path: the qwen-image base model driven through "
+        "the 4-step Lightning LoRA (lightx2v) at CFG 1 — far higher fidelity than DreamShaper, "
+        "the same ~58 GB family as quality but a fraction of the render time. Shares qwen-image's "
+        "weights, so it only adds the ~0.85 GB LoRA.",
     ),
     ImageModel(
         id="qwen-image-edit",
@@ -155,16 +188,36 @@ CATALOG: tuple[ImageModel, ...] = (
         # resident. Multi-image edits add encode memory per reference, all within budget once
         # the LLMs are offloaded for the render.
         vram_gb=55.0,
-        fast_steps=4,
-        quality_steps=20,
-        recommended=False,
-        note="Graph validated structurally (exported from the box); the bf16 "
-        "weights/repo path await an on-box download+run. ~55 GB resident with the bf16 "
-        "text encoder. VAE decode is tiled to keep the decode peak in budget.",
+        # The quality edit path: effort maps to a 20-40 step band (the fast 4-step path is the
+        # separate qwen-image-edit-lightning entry below).
+        fast_steps=20,
+        quality_steps=40,
+        recommended=True,
+        note="Graph validated structurally (exported from the box). ~55 GB resident with the "
+        "bf16 text encoder. VAE decode is tiled to keep the decode peak in budget. The "
+        "interactive `fast` edit path is the separate qwen-image-edit-lightning model.",
     ),
     ImageModel(
-        id="dreamshaper-xl-lightning",
-        label="DreamShaper XL · fast (Lightning)",
+        id="qwen-image-edit-lightning",
+        label="Qwen-Image-Edit · fast (4-step Lightning)",
+        kind="edit",
+        workflow="qwen_image_edit_lightning.json",
+        # qwen-image-edit's base model + the shared encoder/VAE + the Lightning LoRA: a box that
+        # provisioned qwen-image-edit adds only the ~0.85 GB LoRA to gain the fast edit path.
+        files=(_EDIT_DIFFUSION, _TEXT_ENCODER, _VAE, _LIGHTNING_LORA),
+        size_gb=51.9,
+        vram_gb=55.0,
+        # Fixed 4 steps at CFG 1 — the `fast` edit knob is not step-tunable (handler pins to 4).
+        fast_steps=4,
+        quality_steps=4,
+        recommended=True,
+        note="The interactive `fast` edit path: the qwen-image-edit base model driven through "
+        "the 4-step Lightning LoRA (lightx2v) at CFG 1 — a fraction of the quality render time. "
+        "Shares qwen-image-edit's weights, so it only adds the ~0.85 GB LoRA.",
+    ),
+    ImageModel(
+        id="dreamshaper",
+        label="DreamShaper XL · lightweight (SDXL Lightning)",
         kind="generate",
         workflow="dreamshaper_xl.json",
         files=(_DREAMSHAPER_CHECKPOINT,),
@@ -177,12 +230,13 @@ CATALOG: tuple[ImageModel, ...] = (
         # authored into the workflow, not driven per request.
         fast_steps=4,
         quality_steps=8,
-        # The `fast` generate path's model. Provisioned on demand (its own setup id), not
-        # in the default set, so a box that only wants the quality model stays lean.
+        # A standalone lightweight checkpoint, no longer wired to the `speed` knob (the fast
+        # path is now qwen-image-lightning). Opt-in, so a box that doesn't want it stays lean.
         recommended=False,
-        note="All-in-one SDXL checkpoint (model+CLIP+baked VAE) — the fast generate path. "
-        "~6.7 GB; renders in seconds on the iGPU at 4-8 steps. Lower fidelity than Qwen, "
-        "but near-instant — install with `comfyui-setup.sh dreamshaper-xl-lightning`.",
+        note="All-in-one SDXL checkpoint (model+CLIP+baked VAE) — a tiny ~6.7 GB option that "
+        "renders in seconds on the iGPU at 4-8 steps. Lower fidelity than Qwen; kept as a "
+        "lightweight standalone (the agent's fast path is qwen-image-lightning). Install with "
+        "`comfyui-setup.sh dreamshaper`.",
     ),
 )
 

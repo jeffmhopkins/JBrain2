@@ -90,30 +90,38 @@ def test_image_tools_are_jerv_only_not_curator() -> None:
     assert {"generate_image", "edit_image"} <= jerv_offered
 
 
-def test_generate_image_sidecar_offers_the_speed_knob() -> None:
-    """generate_image carries the fast/quality `speed` knob (the DreamShaper fast path);
-    edit_image does not — edit has no distilled model."""
+def test_both_image_sidecars_offer_the_speed_knob() -> None:
+    """generate offers three speed tiers (dreamshaper/fast/quality); edit offers fast/quality
+    (DreamShaper can't edit). It's optional and defaults to quality on each."""
     gen = load_tool(TOOLS_DIR / "generate_image.tool")
-    assert gen.spec.params["properties"]["speed"]["enum"] == ["fast", "quality"]
-    assert "speed" not in gen.spec.params["required"]  # optional; defaults to quality
+    assert gen.spec.params["properties"]["speed"]["enum"] == ["dreamshaper", "fast", "quality"]
     edit = load_tool(TOOLS_DIR / "edit_image.tool")
-    assert "speed" not in edit.spec.params["properties"]
+    assert edit.spec.params["properties"]["speed"]["enum"] == ["fast", "quality"]
+    for tool in (gen, edit):
+        assert "speed" not in tool.spec.params["required"]  # optional; defaults to quality
 
 
-def test_fast_steps_curve_stays_in_the_distilled_band() -> None:
-    """The fast model's effort curve hits 4 / 6 / 8 at effort 0 / 5 / 10 and never leaves
-    the Lightning checkpoint's useful low-step band — unlike the quality curve's 5..45."""
-    from jbrain.agent.imagegentools import _fast_steps_for_effort, _steps_for_effort
+def test_resolve_gen_speed_maps_each_tier_to_its_model_and_steps() -> None:
+    """The three generate tiers resolve to their model + fixed step count; quality uses the
+    band (None), and an unknown/absent speed falls back to quality — never a silent downgrade."""
+    from jbrain.agent.imagegentools import _GEN_SPEEDS, _resolve_gen_speed
 
-    assert (_fast_steps_for_effort(0), _fast_steps_for_effort(5), _fast_steps_for_effort(10)) == (
-        4,
-        6,
-        8,
-    )
-    # Across the whole range the fast curve is small and monotonic, and far below quality.
-    fast = [_fast_steps_for_effort(e) for e in range(11)]
-    assert fast == sorted(fast) and max(fast) <= 8
-    assert _steps_for_effort(10) == 45  # the quality curve is untouched
+    assert _resolve_gen_speed("dreamshaper") == "dreamshaper"
+    assert _resolve_gen_speed("FAST") == "fast" and _resolve_gen_speed(" Quality ") == "quality"
+    assert _resolve_gen_speed(None) == "quality" and _resolve_gen_speed("turbo") == "quality"
+    assert _GEN_SPEEDS["dreamshaper"] == ("dreamshaper", 6)
+    assert _GEN_SPEEDS["fast"] == ("qwen-image-lightning", 4)
+    assert _GEN_SPEEDS["quality"] == ("qwen-image-2512", None)  # None → the quality steps band
+
+
+def test_fast_path_is_a_fixed_four_steps() -> None:
+    """The fast (Lightning) path is a fixed 4 steps regardless of the `steps` argument — the
+    distilled schedule isn't tunable, so the knob can't drift it off its sweet spot."""
+    from jbrain.agent.imagegentools import _FAST_STEPS, _resolve_steps
+
+    assert _FAST_STEPS == 4
+    assert _resolve_steps({}, fast=True) == 4
+    assert _resolve_steps({"steps": 30}, fast=True) == 4  # an explicit steps is ignored when fast
 
 
 def test_resolve_fast_only_opts_in_on_exact_fast() -> None:
@@ -123,10 +131,9 @@ def test_resolve_fast_only_opts_in_on_exact_fast() -> None:
 
     assert _resolve_fast("fast") and _resolve_fast("FAST") and _resolve_fast(" fast ")
     assert not _resolve_fast("quality") and not _resolve_fast(None) and not _resolve_fast("turbo")
-    # The chosen speed routes the step curve; an explicit `steps` still overrides either.
-    assert _resolve_steps({"effort": 5}, fast=True) == 6
-    assert _resolve_steps({"effort": 5}, fast=False) == 20
-    assert _resolve_steps({"steps": 30}, fast=True) == 30
+    # fast is a fixed 4 steps; quality defaults to the 20-step band floor.
+    assert _resolve_steps({}, fast=True) == 4
+    assert _resolve_steps({}, fast=False) == 20
 
 
 def test_progress_callback_data_uris_previews_and_passes_steps() -> None:
@@ -188,38 +195,17 @@ def test_dims_reject_unknown_aspect_or_resolution() -> None:
     assert _dims("square", "gigantic") is None
 
 
-def test_effort_maps_to_steps_through_the_three_anchors() -> None:
-    """effort 0–10 -> steps on the quality curve: 0 a 5-step draft, 5 the 20-step normal
-    default, 10 the 45-step max; effort 1 (a quick draft) lands at a handful of steps."""
-    from jbrain.agent.imagegentools import _steps_for_effort
-
-    assert _steps_for_effort(0) == 5
-    assert _steps_for_effort(5) == 20
-    assert _steps_for_effort(10) == 45
-    assert _steps_for_effort(1) == 7  # a draft
-    # Monotonic across the whole range.
-    steps = [_steps_for_effort(e) for e in range(11)]
-    assert steps == sorted(steps)
-
-
-def test_resolve_effort_clamps_to_0_10_and_defaults_to_5() -> None:
-    from jbrain.agent.imagegentools import _resolve_effort
-
-    assert _resolve_effort(None) == 5  # absent → normal
-    assert _resolve_effort("loads") == 5  # non-int → normal
-    assert _resolve_effort(True) == 5  # a bool is not an effort
-    assert _resolve_effort(-3) == 0 and _resolve_effort(99) == 10  # clamped
-
-
-def test_resolve_steps_uses_effort_unless_explicit_steps_given() -> None:
-    """`effort` drives steps; a raw `steps` (advanced escape hatch) overrides it."""
+def test_resolve_steps_takes_the_quality_band_and_defaults_to_twenty() -> None:
+    """The quality path reads `steps` directly, clamped into the 20–40 band, and defaults to
+    the 20-step floor when absent or nonsensical."""
     from jbrain.agent.imagegentools import _resolve_steps
 
-    assert _resolve_steps({}) == 20  # default effort 5
-    assert _resolve_steps({"effort": 1}) == 7  # a draft
-    assert _resolve_steps({"effort": 10}) == 45
-    assert _resolve_steps({"steps": 33}) == 33  # explicit steps wins
-    assert _resolve_steps({"steps": 33, "effort": 1}) == 33  # …over effort
+    assert _resolve_steps({}) == 20  # absent → the band floor / default
+    assert _resolve_steps({"steps": "lots"}) == 20  # non-int → default
+    assert _resolve_steps({"steps": 33}) == 33  # an in-band value passes through
+    assert _resolve_steps({"steps": 40}) == 40  # the band ceiling
+    # Out-of-band values are clamped, never escaping 20–40.
+    assert _resolve_steps({"steps": 5}) == 20 and _resolve_steps({"steps": 100}) == 40
 
 
 def test_megapixels_track_resolution_for_the_edit_path() -> None:

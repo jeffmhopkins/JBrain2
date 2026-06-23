@@ -45,30 +45,38 @@ if TYPE_CHECKING:
 
 log = structlog.get_logger()
 
-# The two generate models behind the `speed` knob: the full Qwen model (quality, the
-# default) and the distilled SDXL Lightning checkpoint (fast). The edit sibling is the full
-# model — edit has no fast path. The recorded `model` string is the graph key the driver routes on.
+# The models behind the `speed` knob. Generate has three tiers — `quality` (the full Qwen
+# model, default), `fast` (its 4-step Lightning sibling), and `dreamshaper` (a tiny SDXL
+# checkpoint that renders in seconds). Edit has only `fast`/`quality` (DreamShaper can't edit).
+# The recorded `model` string is the graph key the driver routes on; the non-quality ids double
+# as the provisioned-catalog ids each tier is gated on (they coincide, so one id serves both).
 _GEN_MODEL = "qwen-image-2512"
-_FAST_MODEL = "dreamshaper-xl-lightning"
+_FAST_MODEL = "qwen-image-lightning"
+_DREAMSHAPER_MODEL = "dreamshaper"
 _EDIT_MODEL = "qwen-image-edit"
+_FAST_EDIT_MODEL = "qwen-image-edit-lightning"
 
-# `effort` (0–10) is the owner-facing quality/time knob; it maps to diffusion steps on a
-# gentle quadratic through three anchors — effort 0 → 5 steps (quick draft), 5 → 20 (the
-# normal default), 10 → 45 (max detail) — so the low end is cheap and the top end splurges.
-_DEFAULT_EFFORT = 5
-_MAX_EFFORT = 10
+# The quality path takes a direct `steps` count in the 20–40 band (default 20 — the band's
+# floor, a quick-but-finished render; raise toward 40 for more detail at more time). The `fast`
+# path ignores steps entirely: the distilled Lightning schedule is a fixed 4 steps (its sweet
+# spot — more steps add time, not detail). DreamShaper is likewise fixed at its sweet spot.
+_FAST_STEPS = 4
+_DREAMSHAPER_STEPS = 6  # DreamShaper XL Lightning's sweet spot in its tiny 4–8 band; not tunable
 
-
-def _steps_for_effort(effort: int) -> int:
-    """Steps for an effort in 0–10: round(0.2·e² + 2·e + 5) — hits 5 / 20 / 45 at 0 / 5 / 10."""
-    return round(0.2 * effort * effort + 2 * effort + 5)
-
-
-def _fast_steps_for_effort(effort: int) -> int:
-    """Steps for the distilled fast model: round(0.4·e + 4) — 4 / 6 / 8 at 0 / 5 / 10. The
-    Lightning checkpoint's useful band is tiny (4 is its sweet spot, ~8 the ceiling); the
-    quality curve's tens of steps would only waste time here, not add detail."""
-    return round(0.4 * effort + 4)
+# Generate's speed tiers -> (recorded model id, fixed step count or None to use the quality band).
+# The non-quality tiers also carry the human label + setup id for the not-installed message.
+_GEN_SPEEDS: dict[str, tuple[str, int | None]] = {
+    "dreamshaper": (_DREAMSHAPER_MODEL, _DREAMSHAPER_STEPS),
+    "fast": (_FAST_MODEL, _FAST_STEPS),
+    "quality": (_GEN_MODEL, None),
+}
+_GEN_SPEED_INSTALL_HINT: dict[str, tuple[str, str]] = {
+    "dreamshaper": ("DreamShaper XL (SDXL Lightning)", "dreamshaper"),
+    "fast": ("Qwen-Image 4-step Lightning", "qwen-image-lightning"),
+}
+_QUALITY_MIN_STEPS = 20
+_QUALITY_MAX_STEPS = 40
+_DEFAULT_QUALITY_STEPS = _QUALITY_MIN_STEPS
 
 
 # A bigint seed: positive and within the model's accepted range (random when absent).
@@ -154,29 +162,34 @@ def _resolve_seed(raw: object) -> int:
     return secrets.randbits(_SEED_BITS)
 
 
-def _resolve_effort(raw: object) -> int:
-    """An effort clamped to 0–10; the default (5 = normal) when absent or nonsensical."""
-    if isinstance(raw, int) and not isinstance(raw, bool):
-        return max(0, min(_MAX_EFFORT, raw))
-    return _DEFAULT_EFFORT
-
-
 def _resolve_steps(arguments: dict, *, fast: bool = False) -> int:
-    """The step count for a request: an explicit positive `steps` wins (an advanced escape
-    hatch), otherwise it comes from `effort` (0–10) via the curve for the chosen model — the
-    distilled fast model has its own short curve, since it tops out at a handful of steps."""
+    """The step count for a request. The `fast` (Lightning) path is a FIXED 4 steps — its
+    distilled schedule isn't tunable, so `steps` is ignored there. The quality path takes the
+    `steps` argument clamped into the 20–40 band, defaulting to 20 when absent or nonsensical."""
+    if fast:
+        return _FAST_STEPS
     raw_steps = arguments.get("steps")
     if isinstance(raw_steps, int) and not isinstance(raw_steps, bool) and raw_steps > 0:
-        return raw_steps
-    effort = _resolve_effort(arguments.get("effort"))
-    return _fast_steps_for_effort(effort) if fast else _steps_for_effort(effort)
+        return max(_QUALITY_MIN_STEPS, min(_QUALITY_MAX_STEPS, raw_steps))
+    return _DEFAULT_QUALITY_STEPS
 
 
 def _resolve_fast(raw: object) -> bool:
-    """Whether the `fast` (distilled) generate model was asked for. Only the exact "fast"
-    opts in; anything else (absent, "quality", or a hallucinated value) is the quality default,
-    so an unknown speed never silently degrades the image."""
+    """Whether the `fast` (4-step Lightning) model was asked for. Only the exact "fast" opts
+    in; anything else (absent, "quality", or a hallucinated value) is the quality default, so
+    an unknown speed never silently degrades the image. Used by the edit path (fast/quality)."""
     return isinstance(raw, str) and raw.strip().lower() == "fast"
+
+
+def _resolve_gen_speed(raw: object) -> str:
+    """The generate speed tier: 'dreamshaper' | 'fast' | 'quality'. Only an exact
+    (case-insensitive) match opts into a non-default tier; anything else stays 'quality', so an
+    unknown/hallucinated speed never silently degrades the render."""
+    if isinstance(raw, str):
+        token = raw.strip().lower()
+        if token in _GEN_SPEEDS:
+            return token
+    return "quality"
 
 
 _STOPPED_MESSAGE = "Stopped the render — nothing was saved."
@@ -330,17 +343,19 @@ def build_image_handlers(
             return "resolution must be one of: small, medium, large."
         width, height = dims
         seed = _resolve_seed(arguments.get("seed"))
-        fast = _resolve_fast(arguments.get("speed"))
-        if fast and _FAST_MODEL not in installed:
-            # The fast knob is always in the schema, but the model is a separate install — say
-            # so plainly (and how to fix it) instead of letting ComfyUI 404 on the checkpoint.
+        speed = _resolve_gen_speed(arguments.get("speed"))
+        model, fixed_steps = _GEN_SPEEDS[speed]
+        if speed != "quality" and model not in installed:
+            # A non-quality tier is always in the schema, but its model is a separate install —
+            # say so plainly (and how to fix it) instead of letting ComfyUI 404 on the checkpoint.
+            label, setup_id = _GEN_SPEED_INSTALL_HINT[speed]
             return (
-                "The fast image model (DreamShaper XL Lightning) isn't installed on this box "
-                "yet. Generate at the default quality instead, or ask the owner to run "
-                "`comfyui-setup.sh dreamshaper-xl-lightning`."
+                f"The {speed} image model ({label}) isn't installed on this box yet. Generate at "
+                f"the default quality instead, or ask the owner to run "
+                f"`comfyui-setup.sh {setup_id}`."
             )
-        model = _FAST_MODEL if fast else _GEN_MODEL
-        steps = _resolve_steps(arguments, fast=fast)
+        # quality reads the `steps` band; the fixed tiers (fast/dreamshaper) ignore it.
+        steps = fixed_steps if fixed_steps is not None else _resolve_steps(arguments)
         spec = GenSpec(
             prompt=prompt,
             width=width,
@@ -464,14 +479,23 @@ def build_image_handlers(
             extra_sources.append(resolved[0])
         width, height = dims
         seed = _resolve_seed(arguments.get("seed"))
-        steps = _resolve_steps(arguments)
+        fast = _resolve_fast(arguments.get("speed"))
+        if fast and _FAST_EDIT_MODEL not in installed:
+            # Same actionable bail as generate: the fast edit model is a separate install.
+            return (
+                "The fast image model (Qwen-Image-Edit 4-step Lightning) isn't installed on "
+                "this box yet. Edit at the default quality instead, or ask the owner to run "
+                "`comfyui-setup.sh qwen-image-edit-lightning`."
+            )
+        model = _FAST_EDIT_MODEL if fast else _EDIT_MODEL
+        steps = _resolve_steps(arguments, fast=fast)
         spec = EditSpec(
             prompt=prompt,
             width=width,
             height=height,
             steps=steps,
             seed=seed,
-            model=_EDIT_MODEL,
+            model=model,
             megapixels=_megapixels(resolution),
             negative_prompt=str(arguments.get("negative_prompt", "")).strip(),
         )
@@ -496,7 +520,7 @@ def build_image_handlers(
                 session,
                 blob_sha256=sha,
                 kind="edit",
-                model=_EDIT_MODEL,
+                model=model,
                 prompt=prompt,
                 source_sha256=source_sha,
                 width=out_w,

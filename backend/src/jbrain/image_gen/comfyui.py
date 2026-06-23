@@ -54,6 +54,11 @@ DEFAULT_POLL_INTERVAL = 1.5
 # graph exported from the Strix Halo box.
 _GEN_TEMPLATE = "qwen_image.json"
 _EDIT_TEMPLATE = "qwen_image_edit.json"
+# The `fast` (4-step Lightning) variants: the same graphs with a LoraLoaderModelOnly node
+# inserted (UNET -> LoRA -> ModelSamplingAuraFlow) and CFG pinned to 1. The node ids the
+# driver fills are unchanged, so each reuses its base graph's binding.
+_GEN_LIGHTNING_TEMPLATE = "qwen_image_lightning.json"
+_EDIT_LIGHTNING_TEMPLATE = "qwen_image_edit_lightning.json"
 
 
 @dataclass(frozen=True)
@@ -78,20 +83,22 @@ class _Binding:
 
 # Qwen-Image text->image, validated on the Strix Halo box: prompt=6, negative=7,
 # KSampler=3, EmptySD3LatentImage=58 (the loaders + ModelSamplingAuraFlow are authored).
+# The Lightning variant keeps these ids (it only inserts a LoRA node), so it shares the binding.
 _GEN_BINDING = _Binding(prompt="6", sampler="3", latent="58", negative="7")
-# DreamShaper XL Lightning (the `fast` path) — the stock ComfyUI SDXL graph: positive=6,
-# negative=7, KSampler=3, EmptyLatentImage=5 (CheckpointLoaderSimple=4 supplies model/CLIP/VAE
-# and the sampler/CFG are authored into the template, so the driver fills only the shared slots).
+# DreamShaper XL Lightning (a standalone lightweight model) — the stock ComfyUI SDXL graph:
+# positive=6, negative=7, KSampler=3, EmptyLatentImage=5 (CheckpointLoaderSimple=4 supplies
+# model/CLIP/VAE and the sampler/CFG are authored, so the driver fills only the shared slots).
 _DREAMSHAPER_TEMPLATE = "dreamshaper_xl.json"
 _DREAMSHAPER_BINDING = _Binding(prompt="6", sampler="3", latent="5", negative="7")
 
 # A generate model id -> its (template, binding). The handler passes the recorded model
-# string (e.g. "qwen-image-2512", "dreamshaper-xl-lightning"); the driver stays graph-agnostic
+# string (e.g. "qwen-image-2512", "qwen-image-lightning"); the driver stays graph-agnostic
 # by looking the graph up here rather than hard-coding one, so adding a model is a JSON +
 # binding pair, not a code path. An unknown id raises (below) — we never run the wrong graph.
 _GEN_GRAPHS: dict[str, tuple[str, _Binding]] = {
     "qwen-image-2512": (_GEN_TEMPLATE, _GEN_BINDING),
-    "dreamshaper-xl-lightning": (_DREAMSHAPER_TEMPLATE, _DREAMSHAPER_BINDING),
+    "qwen-image-lightning": (_GEN_LIGHTNING_TEMPLATE, _GEN_BINDING),
+    "dreamshaper": (_DREAMSHAPER_TEMPLATE, _DREAMSHAPER_BINDING),
 }
 # Qwen-Image-Edit image->image, exported from the box: the positive prompt is a
 # TextEncodeQwenImageEditPlus (68, key "prompt"), the negative its sibling (69), KSampler
@@ -105,6 +112,13 @@ _EDIT_BINDING = _Binding(
     negative="69",
     prompt_key="prompt",
 )
+
+# An edit model id -> its (template, binding), mirroring _GEN_GRAPHS. The `fast` Lightning
+# variant keeps the same node ids (it only inserts a LoRA node), so it shares _EDIT_BINDING.
+_EDIT_GRAPHS: dict[str, tuple[str, _Binding]] = {
+    "qwen-image-edit": (_EDIT_TEMPLATE, _EDIT_BINDING),
+    "qwen-image-edit-lightning": (_EDIT_LIGHTNING_TEMPLATE, _EDIT_BINDING),
+}
 
 _INPUT_IMAGE_KEY = "image"
 
@@ -226,6 +240,16 @@ class ComfyUiImageGen:
             raise ImageGenError(f"no generate graph for model {model!r}")
         return graph
 
+    @staticmethod
+    def _edit_graph(model: str) -> tuple[str, _Binding]:
+        """The (template, binding) for an edit model. Unknown id -> ImageGenError, the same
+        guard as _gen_graph: a misrouted edit model fails cleanly rather than running the
+        wrong graph against whatever weights ComfyUI has loaded."""
+        graph = _EDIT_GRAPHS.get(model)
+        if graph is None:
+            raise ImageGenError(f"no edit graph for model {model!r}")
+        return graph
+
     async def edit(
         self,
         spec: EditSpec,
@@ -234,13 +258,14 @@ class ComfyUiImageGen:
         *,
         extra_sources: Sequence[bytes] = (),
     ) -> bytes:
+        template, binding = self._edit_graph(spec.model)
         server_name = await self._upload_input(source)
-        workflow = _load_template(_EDIT_TEMPLATE)
-        self._fill_common(workflow, spec, _EDIT_BINDING)
-        image_node = _EDIT_BINDING.input_image
+        workflow = _load_template(template)
+        self._fill_common(workflow, spec, binding)
+        image_node = binding.input_image
         assert image_node is not None  # the edit graph always carries a LoadImage node
         workflow[image_node]["inputs"][_INPUT_IMAGE_KEY] = server_name
-        scale_node = _EDIT_BINDING.total_pixels
+        scale_node = binding.total_pixels
         assert scale_node is not None  # the edit graph always carries the scale node
         workflow[scale_node]["inputs"]["megapixels"] = spec.megapixels
         # Each extra reference (Qwen-Image-Edit-2511 takes up to 3 images total) gets its own

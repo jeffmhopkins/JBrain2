@@ -92,6 +92,23 @@ case "${1:-}" in
     docker compose "${PROFILE[@]}" build
     docker compose run --rm migrate
     docker compose "${PROFILE[@]}" up -d
+    # When on-box image generation is enabled, re-sync its models so an update that adds
+    # newly-recommended models (or new weight files for existing ones) downloads them without a
+    # separate manual step. We provision the UNION of the operator's current selection and the
+    # recommended set, so nothing they chose is dropped and anything newly recommended is pulled
+    # (hf skips files already present, so an unchanged set is a cheap no-op). The api image is
+    # rebuilt above, so the catalog read sees the new code. Best-effort: a provisioning failure
+    # must never abort the update — the operator can re-run `sudo bash scripts/comfyui-setup.sh`.
+    if grep -q '^COMFYUI_ENABLED=true' .env; then
+      current_models="$(python3 -c "import json,re; t=open('.env').read(); m=re.search(r'^COMFYUI_MODELS=(.*)\$',t,re.M); print(' '.join(json.loads(m.group(1))) if m else '')" 2>/dev/null || true)"
+      reco_models="$(docker compose run --rm --no-deps -T api python -c "from jbrain.image_gen import catalog; print(' '.join(catalog.recommended_ids()))" 2>/dev/null || true)"
+      sync_ids="$(printf '%s\n%s\n' "$current_models" "$reco_models" | tr ' ' '\n' | grep -v '^[[:space:]]*$' | sort -u | tr '\n' ' ')"
+      if [ -n "${sync_ids// /}" ]; then
+        echo "[update] syncing on-box image models: $sync_ids"
+        JBRAIN_INSTALL_DIR=/opt/jbrain2 bash /opt/jbrain2/src/scripts/comfyui-setup.sh $sync_ids \
+          || echo "[update] image-model sync skipped (retry: sudo bash scripts/comfyui-setup.sh)"
+      fi
+    fi
     # Reclaim layers orphaned by the rebuild; shared (cached) layers survive,
     # so disk use stays bounded without losing build speed.
     docker image prune -f

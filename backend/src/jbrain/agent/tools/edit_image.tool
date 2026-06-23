@@ -1,6 +1,6 @@
 ---
 name: edit_image
-version: 5
+version: 6
 permission: web
 side_effecting: true
 cost_class: expensive
@@ -10,6 +10,10 @@ params:
     prompt:
       type: string
       description: The edit instruction — what to change, e.g. "make it night-time" or "add a red hat".
+    speed:
+      type: string
+      enum: [fast, quality]
+      description: Speed vs. fidelity. quality (the default) runs the full edit model at 20–40 diffusion steps — best detail, but a slow render. fast runs the same model through a 4-step Lightning distillation — much quicker at slightly lower detail. Prefer fast for quick, exploratory tweaks and when the owner wants a result now; use quality for a finished result.
     negative_prompt:
       type: string
       description: What to keep OUT of the result, e.g. "blurry, extra fingers, text, watermark" (optional).
@@ -37,9 +41,9 @@ params:
       type: string
       enum: [small, medium, large]
       description: The output size. Defaults to medium. Use small for a quicker, lighter render and large for more detail.
-    effort:
+    steps:
       type: integer
-      description: Quality/time tradeoff, 0–10. 1 is a quick draft, 5 is normal high quality (the default), 10 is maximum detail. Higher means more diffusion steps and a slower render — preview at a low effort, then re-run at the same seed with higher effort to finalize.
+      description: Number of diffusion steps on the quality path, 20–40 (default 20). 20 is a quick but finished render; raise toward 40 for more detail at more time. Values outside the range are clamped. Ignored when speed is fast (that path is a fixed 4 steps).
     seed:
       type: integer
       description: A fixed seed for a repeatable result (optional). When omitted a random seed is chosen and recorded.
