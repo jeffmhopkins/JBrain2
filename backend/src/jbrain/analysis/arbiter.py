@@ -25,7 +25,7 @@ What the plan encodes:
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from jbrain.analysis.extraction import (
     ExtractedFact,
@@ -217,6 +217,52 @@ def _value_attested(value_json: dict | None, haystack: str) -> bool:
         if len(token) >= 2 and token in haystack:
             return True
     return False
+
+
+def recover_dropped_objects(
+    intent: IntegrationIntent, extraction: Extraction
+) -> IntegrationIntent:
+    """Backfill the object the integrator drops when it re-types a fact.
+
+    note.extract reliably emits `object_entity_ref` (Me.children -> Eli); the
+    integrator non-deterministically omits it, orphaning the edge (and then the
+    arbiter, finding no named object, treats it as inferred and holds it). Restore
+    it deterministically from the extraction — the source of truth for what the
+    note states — keyed on the subject + canonical predicate. Then GUARANTEE every
+    referenced entity (subject and object) carries a resolution: a backfilled
+    object with no resolution would otherwise make apply_intent DROP the whole
+    fact, so mint a provisional from the extraction mention's kind. Only fills
+    gaps — an existing resolution (including a deliberate `ambiguous`) is never
+    overridden."""
+    registry = get_registry()
+    ext_obj: dict[tuple[str, str], str] = {}
+    for f in extraction.facts:
+        if f.object_entity_ref:
+            ext_obj.setdefault(
+                (f.entity_ref, registry.normalize_predicate(f.predicate)), f.object_entity_ref
+            )
+    mention_kind = {m.name: m.kind for m in extraction.mentions}
+    resolved = {r.mention_ref for r in intent.entity_resolutions}
+
+    facts: list[IntentFact] = []
+    added: list[EntityResolution] = []
+    for fact in intent.facts:
+        if fact.object_entity_ref is None:
+            obj = ext_obj.get((fact.entity_ref, registry.normalize_predicate(fact.predicate)))
+            if obj is not None:
+                fact = replace(fact, object_entity_ref=obj)
+        facts.append(fact)
+        for ref in (fact.entity_ref, fact.object_entity_ref):
+            if ref and ref not in resolved and ref in mention_kind:
+                added.append(
+                    EntityResolution(
+                        mention_ref=ref, mode="new", new_kind=mention_kind[ref], new_name=ref
+                    )
+                )
+                resolved.add(ref)
+    if not added and facts == intent.facts:
+        return intent
+    return replace(intent, facts=facts, entity_resolutions=[*intent.entity_resolutions, *added])
 
 
 def compute_signals(

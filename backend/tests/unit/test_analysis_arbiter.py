@@ -577,3 +577,58 @@ def test_compute_signals_value_does_not_rescue_an_inferred_attribute():
         ],
     )
     assert compute_signals(intent, ["Eli, 12, going into 7th grade."])[0].surface_attested is False
+
+
+def _extraction(facts, mentions):
+    from jbrain.analysis.extraction import ExtractedFact, ExtractedMention, Extraction
+    ef = [ExtractedFact(predicate=p, qualifier="", kind=k, statement="s", value_json=None,
+                        assertion="asserted", entity_ref=e, object_entity_ref=o, temporal=None,
+                        domain="general", confidence=0.9) for (e, p, k, o) in facts]
+    em = [ExtractedMention(name=n, kind=kd, surface_text=n) for (n, kd) in mentions]
+    return Extraction(title="t", tags=["x"], mentions=em, facts=ef, tokens=[])
+
+
+def test_recover_backfills_a_dropped_object_and_resolution():
+    from jbrain.analysis.arbiter import recover_dropped_objects
+    # integrate dropped the object (None); extraction carried it.
+    intent = _intent(
+        entity_resolutions=[_res("Me", proposed_entity_id="ent-owner")],
+        facts=[_fact(entity_ref="Me", predicate="children", kind="relationship",
+                     object_entity_ref=None, inferred=False)],
+    )
+    ext = _extraction([("Me", "children", "relationship", "Eli")], [("Eli", "Person")])
+    out = recover_dropped_objects(intent, ext)
+    assert out.facts[0].object_entity_ref == "Eli"  # backfilled from extraction
+    # and a provisional resolution was minted so apply_intent can link the edge
+    eli = next(r for r in out.entity_resolutions if r.mention_ref == "Eli")
+    assert eli.mode == "new" and eli.new_kind == "Person" and eli.new_name == "Eli"
+
+
+def test_recover_leaves_a_present_object_untouched():
+    from jbrain.analysis.arbiter import recover_dropped_objects
+    intent = _intent(
+        entity_resolutions=[_res("Me", proposed_entity_id="ent-owner"),
+                            _res("Maya", mode="new", new_kind="Person", new_name="Maya")],
+        facts=[_fact(entity_ref="Me", predicate="spouse", kind="relationship",
+                     object_entity_ref="Maya", inferred=False)],
+    )
+    ext = _extraction([("Me", "spouse", "relationship", "Maya")], [("Maya", "Person")])
+    out = recover_dropped_objects(intent, ext)
+    assert out.facts[0].object_entity_ref == "Maya"
+    # no duplicate resolution added (Maya already resolved)
+    assert sum(r.mention_ref == "Maya" for r in out.entity_resolutions) == 1
+
+
+def test_recover_does_not_override_an_existing_ambiguous_resolution():
+    from jbrain.analysis.arbiter import recover_dropped_objects
+    intent = _intent(
+        entity_resolutions=[_res("Me", proposed_entity_id="ent-owner"),
+                            EntityResolution(mention_ref="Sam", mode="ambiguous")],
+        facts=[_fact(entity_ref="Me", predicate="friend", kind="relationship",
+                     object_entity_ref=None, inferred=False)],
+    )
+    ext = _extraction([("Me", "friend", "relationship", "Sam")], [("Sam", "Person")])
+    out = recover_dropped_objects(intent, ext)
+    assert out.facts[0].object_entity_ref == "Sam"  # ref restored
+    sam = [r for r in out.entity_resolutions if r.mention_ref == "Sam"]
+    assert len(sam) == 1 and sam[0].mode == "ambiguous"  # left as the integrator judged
