@@ -116,7 +116,12 @@ async def _handlers(
     fake: FakeImageGen,
     comfy: FakeComfyUiGateway | None = None,
     router: LlmRouter | None = None,
-    provisioned: Sequence[str] = ("qwen-image", "dreamshaper-xl-lightning"),
+    provisioned: Sequence[str] = (
+        "qwen-image",
+        "qwen-image-lightning",
+        "qwen-image-edit",
+        "qwen-image-edit-lightning",
+    ),
 ):
     sessions = AgentSessionRepo(maker)
     attachments = TurnAttachmentRepo(maker, sessions)
@@ -180,19 +185,19 @@ async def test_generate_plumbs_effort_and_negative_prompt_into_the_spec(
         {"prompt": "a fox", "effort": 1, "negative_prompt": "blurry, text"}, _ctx(owner)
     )
     assert fake.last_gen is not None
-    assert fake.last_gen.steps == 7  # effort 1 → a 7-step draft
+    assert fake.last_gen.steps == 22  # effort 1 → low end of the 20–40 quality band
     assert fake.last_gen.negative_prompt == "blurry, text"
 
-    # Absent effort → the 20-step normal default; absent negative prompt → empty.
+    # Absent effort → the 30-step normal default; absent negative prompt → empty.
     await handlers["generate_image"]({"prompt": "a fox"}, _ctx(owner))
-    assert fake.last_gen.steps == 20 and fake.last_gen.negative_prompt == ""
+    assert fake.last_gen.steps == 30 and fake.last_gen.negative_prompt == ""
 
 
-async def test_generate_fast_uses_the_dreamshaper_model_and_short_step_curve(
+async def test_generate_fast_uses_the_qwen_lightning_model_at_four_steps(
     maker: async_sessionmaker,
 ) -> None:
-    """speed: fast records the DreamShaper model on the row and drives the distilled step
-    curve (effort 5 → 6 steps), while the default stays the full Qwen model at 20 steps."""
+    """speed: fast records the Qwen Lightning model on the row at a fixed 4 steps, while the
+    default stays the full Qwen model on the 20–40 quality band (effort 5 → 30 steps)."""
     owner = await _owner(maker)
     fake = FakeImageGen()
     handlers = await _handlers(maker, owner, fake)
@@ -201,24 +206,24 @@ async def test_generate_fast_uses_the_dreamshaper_model_and_short_step_curve(
         {"prompt": "a quick sketch", "speed": "fast"}, _ctx(owner)
     )
     assert isinstance(out, ToolOutput) and isinstance(out.view, ViewPayload)
-    assert out.view.data["model"] == "dreamshaper-xl-lightning"
-    assert fake.last_gen is not None and fake.last_gen.model == "dreamshaper-xl-lightning"
-    assert fake.last_gen.steps == 6  # effort 5 default → the fast curve's 6, not 20
+    assert out.view.data["model"] == "qwen-image-lightning"
+    assert fake.last_gen is not None and fake.last_gen.model == "qwen-image-lightning"
+    assert fake.last_gen.steps == 4  # the Lightning path is a fixed 4 steps
 
-    # The row really recorded the fast model; the default request stays on Qwen.
+    # The row really recorded the fast model; the default request stays on quality Qwen.
     async with scoped_session(maker, owner) as s:
         model = (await s.execute(text("SELECT model FROM app.generated_images"))).scalar()
-    assert model == "dreamshaper-xl-lightning"
+    assert model == "qwen-image-lightning"
 
     await handlers["generate_image"]({"prompt": "a finished piece"}, _ctx(owner))
-    assert fake.last_gen.model == "qwen-image-2512" and fake.last_gen.steps == 20
+    assert fake.last_gen.model == "qwen-image-2512" and fake.last_gen.steps == 30
 
 
-async def test_generate_fast_when_dreamshaper_not_installed_is_a_clean_actionable_error(
+async def test_generate_fast_when_lightning_not_installed_is_a_clean_actionable_error(
     maker: async_sessionmaker,
 ) -> None:
-    """speed: fast on a box that provisioned only Qwen returns an actionable message (and the
-    setup command) before any spend — no row, no render, no opaque ComfyUI checkpoint error."""
+    """speed: fast on a box that provisioned only quality Qwen returns an actionable message
+    (and the setup command) before any spend — no row, no render, no opaque ComfyUI error."""
     owner = await _owner(maker)
     fake = FakeImageGen()
     handlers = await _handlers(maker, owner, fake, provisioned=("qwen-image",))
@@ -227,7 +232,7 @@ async def test_generate_fast_when_dreamshaper_not_installed_is_a_clean_actionabl
         {"prompt": "a quick sketch", "speed": "fast"}, _ctx(owner)
     )
     assert isinstance(out, str)
-    assert "comfyui-setup.sh dreamshaper-xl-lightning" in out
+    assert "comfyui-setup.sh qwen-image-lightning" in out
     assert fake.last_gen is None  # bailed before driving the model
     async with scoped_session(maker, owner) as s:
         count = (await s.execute(text("SELECT count(*) FROM app.generated_images"))).scalar()
@@ -333,6 +338,52 @@ async def test_edit_by_generated_id_records_source(maker: async_sessionmaker) ->
             )
         ).scalar()
     assert edit_source == source_sha  # the source blob's sha is recorded on the edit row
+
+
+async def test_edit_fast_uses_the_lightning_model_at_four_steps(maker: async_sessionmaker) -> None:
+    """speed: fast on edit records the Qwen-Edit Lightning model at a fixed 4 steps; the default
+    stays the full edit model on the quality band (effort 5 → 30 steps)."""
+    owner = await _owner(maker)
+    fake = FakeImageGen()
+    handlers = await _handlers(maker, owner, fake)
+
+    gen = await handlers["generate_image"]({"prompt": "a cat"}, _ctx(owner))
+    assert isinstance(gen, ToolOutput) and gen.view is not None
+    source_id = gen.view.data["image_id"]
+
+    out = await handlers["edit_image"](
+        {"prompt": "make it blue", "source_image_id": source_id, "speed": "fast"}, _ctx(owner)
+    )
+    assert isinstance(out, ToolOutput) and out.view is not None
+    assert out.view.data["model"] == "qwen-image-edit-lightning"
+    assert fake.last_edit is not None
+    assert fake.last_edit.model == "qwen-image-edit-lightning" and fake.last_edit.steps == 4
+
+    # The quality default stays on the full edit model at a mid-band step count.
+    await handlers["edit_image"](
+        {"prompt": "and add a hat", "source_image_id": source_id}, _ctx(owner)
+    )
+    assert fake.last_edit.model == "qwen-image-edit" and fake.last_edit.steps == 30
+
+
+async def test_edit_fast_when_lightning_not_installed_is_a_clean_actionable_error(
+    maker: async_sessionmaker,
+) -> None:
+    """speed: fast on edit, on a box without the Lightning edit model, bails with an actionable
+    message before any render — same guard as the generate fast path."""
+    owner = await _owner(maker)
+    fake = FakeImageGen()
+    handlers = await _handlers(maker, owner, fake, provisioned=("qwen-image", "qwen-image-edit"))
+
+    gen = await handlers["generate_image"]({"prompt": "a cat"}, _ctx(owner))
+    assert isinstance(gen, ToolOutput) and gen.view is not None
+    out = await handlers["edit_image"](
+        {"prompt": "make it blue", "source_image_id": gen.view.data["image_id"], "speed": "fast"},
+        _ctx(owner),
+    )
+    assert isinstance(out, str)
+    assert "comfyui-setup.sh qwen-image-edit-lightning" in out
+    assert fake.last_edit is None  # bailed before driving the model
 
 
 async def test_edit_with_reference_images_passes_every_source(maker: async_sessionmaker) -> None:

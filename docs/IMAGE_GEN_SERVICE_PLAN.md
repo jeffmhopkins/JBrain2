@@ -86,6 +86,13 @@ The owner does not want to hand‑assemble the kyuz0 toolbox; JBrain owns everyt
   renders image segments; capability chips (generate/edit). Mock‑mode fixtures + tests.
 
 ## Wave G7 — the fast generate path (DreamShaper XL Lightning)
+> **Superseded:** the `speed: fast` path now routes to the **Qwen 4‑step Lightning LoRA**
+> graphs (`qwen-image-lightning` / `qwen-image-edit-lightning`, fixed 4 steps at CFG 1) for
+> both `generate_image` and `edit_image`, with the quality path on a 20–40 step band. The
+> `dreamshaper` checkpoint below is retained as a lightweight standalone model but is no longer
+> wired to the `speed` knob. The Wave G7 design (the `_GEN_GRAPHS` registry, the catalog‑driven
+> setup) still stands; only the model behind `fast` changed.
+
 A second generate model behind a `speed` knob on `generate_image`, so jerv can choose a
 near‑instant draft over the minutes‑long Qwen render. One script + one `jbrain update` enables it.
 

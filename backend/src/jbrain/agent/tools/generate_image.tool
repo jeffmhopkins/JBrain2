@@ -1,6 +1,6 @@
 ---
 name: generate_image
-version: 5
+version: 6
 permission: web
 side_effecting: true
 cost_class: expensive
@@ -13,7 +13,7 @@ params:
     speed:
       type: string
       enum: [fast, quality]
-      description: Speed vs. fidelity. quality (the default) uses the full local model — best detail, but a slow render (a minute or more). fast uses a lightweight distilled model that renders in seconds at lower fidelity. Prefer fast for casual, exploratory, or "just show me something" requests and when the owner wants a result now; use quality when they want a finished, detailed piece.
+      description: Speed vs. fidelity. quality (the default) runs the full local model at 20–40 diffusion steps — best detail, but a slow render (a minute or more). fast runs the same model through a 4-step Lightning distillation — much quicker (a fraction of the time) at slightly lower detail, but still high quality. Prefer fast for casual, exploratory, or "just show me something" requests and when the owner wants a result now; use quality when they want a finished, detailed piece.
     negative_prompt:
       type: string
       description: What to keep OUT of the image, e.g. "blurry, extra fingers, text, watermark" (optional).
@@ -27,7 +27,7 @@ params:
       description: The image size. Defaults to medium (the model's native ~1MP). Use small for a quicker, lighter render and large for more detail.
     effort:
       type: integer
-      description: Quality/time tradeoff, 0–10. 1 is a quick draft, 5 is normal high quality (the default), 10 is maximum detail. Higher means more diffusion steps and a slower render — use a low effort to preview, then re-run at the same seed with higher effort to finalize.
+      description: Quality/time tradeoff for the quality path, 0–10 (mapping to 20–40 diffusion steps). 0 is the lighter end, 5 is the normal default, 10 is maximum detail. Higher means more steps and a slower render — preview at a low effort, then re-run at the same seed with higher effort to finalize. Ignored when speed is fast (that path is a fixed 4 steps).
     seed:
       type: integer
       description: A fixed seed for a repeatable result (optional). When omitted a random seed is chosen and recorded so the owner can reproduce it.

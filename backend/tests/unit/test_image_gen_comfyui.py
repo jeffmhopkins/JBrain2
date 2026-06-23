@@ -92,9 +92,9 @@ async def test_generate_fills_prompt_seed_steps_and_dims() -> None:
     assert wf["7"]["inputs"]["text"] == ""
 
 
-async def test_generate_fast_model_drives_the_dreamshaper_sdxl_graph() -> None:
-    """speed: fast routes to DreamShaper XL — the stock SDXL graph (CheckpointLoaderSimple),
-    with prompt/seed/steps/dims filled into its node ids (6/3/5) and the negative on node 7."""
+async def test_dreamshaper_model_drives_the_sdxl_graph() -> None:
+    """The dreamshaper model routes to the stock SDXL graph (CheckpointLoaderSimple), with
+    prompt/seed/steps/dims filled into its node ids (6/3/5) and the negative on node 7."""
     import dataclasses
 
     seen: dict = {}
@@ -107,9 +107,7 @@ async def test_generate_fast_model_drives_the_dreamshaper_sdxl_graph() -> None:
             return httpx.Response(200, json=_HISTORY_DONE)
         return httpx.Response(200, content=PNG)
 
-    fast = dataclasses.replace(
-        GEN, model="dreamshaper-xl-lightning", steps=4, negative_prompt="blurry"
-    )
+    fast = dataclasses.replace(GEN, model="dreamshaper", steps=4, negative_prompt="blurry")
     await _client(handle).generate(fast)
     wf = seen["wf"]
     assert wf["4"]["class_type"] == "CheckpointLoaderSimple"  # the SDXL all-in-one loader
@@ -117,6 +115,35 @@ async def test_generate_fast_model_drives_the_dreamshaper_sdxl_graph() -> None:
     assert wf["7"]["inputs"]["text"] == "blurry"
     assert wf["3"]["inputs"]["seed"] == 42 and wf["3"]["inputs"]["steps"] == 4
     assert wf["5"]["inputs"]["width"] == 768 and wf["5"]["inputs"]["height"] == 512
+
+
+async def test_fast_generate_drives_the_qwen_lightning_lora_graph() -> None:
+    """speed: fast routes to the qwen-image-lightning graph: the Qwen-Image graph with a
+    LoraLoaderModelOnly node (the 4-step Lightning LoRA) wired UNET(37)->LoRA(73)->AuraFlow(66)
+    and CFG pinned to 1. The driver still fills the shared prompt/seed/steps/dims slots."""
+    import dataclasses
+
+    seen: dict = {}
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/prompt":
+            seen["wf"] = json.loads(request.content)["prompt"]
+            return httpx.Response(200, json={"prompt_id": "abc123"})
+        if request.url.path == "/history/abc123":
+            return httpx.Response(200, json=_HISTORY_DONE)
+        return httpx.Response(200, content=PNG)
+
+    fast = dataclasses.replace(GEN, model="qwen-image-lightning", steps=4)
+    await _client(handle).generate(fast)
+    wf = seen["wf"]
+    lora = wf["73"]
+    assert lora["class_type"] == "LoraLoaderModelOnly"
+    assert "Lightning-4steps" in lora["inputs"]["lora_name"]
+    assert lora["inputs"]["model"] == ["37", 0]  # off the UNET loader
+    assert wf["66"]["inputs"]["model"] == ["73", 0]  # AuraFlow consumes the LoRA output
+    assert wf["3"]["inputs"]["cfg"] == 1  # the distilled path runs CFG 1
+    assert wf["3"]["inputs"]["seed"] == 42 and wf["3"]["inputs"]["steps"] == 4
+    assert wf["6"]["inputs"]["text"] == "a cat"
 
 
 async def test_generate_unknown_model_raises_rather_than_running_the_wrong_graph() -> None:
@@ -178,6 +205,45 @@ async def test_edit_uploads_source_then_renders() -> None:
     assert referenced["image"] == "input.png"
     # The resolution's total-pixel budget reached the scale node.
     assert referenced["megapixels"] == 1.6
+
+
+async def test_fast_edit_drives_the_qwen_edit_lightning_lora_graph() -> None:
+    """speed: fast on edit routes to the qwen-image-edit-lightning graph: the edit graph with a
+    LoraLoaderModelOnly node (74) wired UNET(12)->LoRA(74)->AuraFlow(67) and CFG pinned to 1,
+    while the shared prompt/source/megapixel slots still fill exactly as the quality graph's."""
+    import dataclasses
+
+    seen: dict = {}
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/upload/image":
+            return httpx.Response(200, json={"name": "in.png"})
+        if request.url.path == "/prompt":
+            seen["wf"] = json.loads(request.content)["prompt"]
+            return httpx.Response(200, json={"prompt_id": "abc123"})
+        if request.url.path == "/history/abc123":
+            return httpx.Response(200, json=_HISTORY_DONE)
+        return httpx.Response(200, content=PNG)
+
+    fast = dataclasses.replace(EDIT, model="qwen-image-edit-lightning", steps=4)
+    await _client(handle).edit(fast, b"\x89PNG\r\n\x1a\nsource")
+    wf = seen["wf"]
+    lora = wf["74"]
+    assert lora["class_type"] == "LoraLoaderModelOnly"
+    assert "Lightning-4steps" in lora["inputs"]["lora_name"]
+    assert lora["inputs"]["model"] == ["12", 0]  # off the edit UNET loader
+    assert wf["67"]["inputs"]["model"] == ["74", 0]  # AuraFlow consumes the LoRA output
+    assert wf["65"]["inputs"]["cfg"] == 1 and wf["65"]["inputs"]["steps"] == 4
+    assert wf["68"]["inputs"]["prompt"] == EDIT.prompt  # the shared slots still fill
+    assert wf["41"]["inputs"]["image"] == "in.png"
+
+
+async def test_edit_unknown_model_raises_rather_than_running_the_wrong_graph() -> None:
+    import dataclasses
+
+    gen = _client(lambda r: httpx.Response(404))
+    with pytest.raises(ImageGenError):
+        await gen.edit(dataclasses.replace(EDIT, model="not-a-real-edit-model"), b"src")
 
 
 async def test_edit_with_reference_images_uploads_and_wires_each_encoder() -> None:

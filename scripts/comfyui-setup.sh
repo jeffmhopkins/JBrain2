@@ -182,5 +182,5 @@ say "Starting the ComfyUI service"
 docker compose --profile comfyui up -d comfyui
 
 say "Done. Image generation is now available to jerv. The first render with a model pays a"
-say "one-time load; a 20-step Qwen-Image takes ~3.5 min on the iGPU, while the DreamShaper XL"
-say "fast model (generate_image speed: fast) renders in seconds."
+say "one-time load; a quality Qwen-Image render (20-40 steps) takes a few minutes on the iGPU,"
+say "while the 4-step Lightning fast path (generate_image/edit_image speed: fast) is far quicker."

@@ -164,12 +164,16 @@ ROCm treats the iGPU as gfx1151 — without it the stack silently CPU-falls-back
 
 **One command provisions and enables it:**
 ```bash
-sudo bash scripts/comfyui-setup.sh                          # the recommended set (Qwen-Image)
-sudo bash scripts/comfyui-setup.sh qwen-image               # or explicit catalog ids
-sudo bash scripts/comfyui-setup.sh dreamshaper-xl-lightning # add the fast model (~7 GB)
+sudo bash scripts/comfyui-setup.sh             # the recommended set: Qwen-Image generate +
+                                               # edit and both 4-step Lightning fast siblings
+sudo bash scripts/comfyui-setup.sh qwen-image  # or explicit catalog ids
+sudo bash scripts/comfyui-setup.sh dreamshaper # add the lightweight SDXL model (~7 GB)
 ```
-Models are additive: provisioning `dreamshaper-xl-lightning` downloads only its
-~7 GB checkpoint and leaves an already-installed Qwen-Image in place.
+The recommended set covers the `fast` and `quality` paths of both `generate_image`
+and `edit_image`: the generate + edit base models plus their 4-step Lightning LoRA
+siblings (the LoRA is shared, ~0.85 GB on top of the base weights). Models are
+additive: provisioning `dreamshaper` downloads only its ~7 GB checkpoint and leaves
+an already-installed Qwen-Image in place.
 The script (the sibling of `local-llm-setup.sh`) downloads the weight files named
 by the catalog (`jbrain.image_gen.catalog`) into `./comfyui-models/<subdir>`,
 writes `JBRAIN_COMFYUI_*` into `.env`, and starts the `comfyui` profile. The api
