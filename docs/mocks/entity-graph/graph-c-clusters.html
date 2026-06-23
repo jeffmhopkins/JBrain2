@@ -1,0 +1,187 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Entity graph — C — Clusters (communities + minimap)</title>
+<style>
+  :root{
+    --bg:#0E0F11;--surface:#17181B;--surface-2:#1E2024;--border:#26282C;
+    --text:#E6E7E9;--text-2:#9A9DA3;--text-3:#5C5F66;--shadow:rgba(0,0,0,.45);
+    --steel:#7FA7C9;--green:#8FBC9A;--amber:#C9A36A;--rose:#CF8A8F;--violet:#A493C9;
+    --periwinkle:#8F9FD0;--sage:#A8BD7E;--terracotta:#D0917F;--teal:#6FB6B1;--orchid:#C98AB4;--slate:#9AA0A8;
+  }
+  [data-theme="light"]{
+    --bg:#F7F7F5;--surface:#FFFFFF;--surface-2:#F0F0EE;--border:#E2E2DF;
+    --text:#1A1B1E;--text-2:#5C5F66;--text-3:#9A9DA3;--shadow:rgba(20,30,50,.12);
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  body{margin:0;background:#05070a;font:15px/1.5 system-ui,-apple-system,sans-serif;display:grid;place-items:center;min-height:100vh;color:var(--text);gap:14px;padding:24px 0}
+  .cap{color:#8b9099;font-size:12.5px;max-width:390px;text-align:center;padding:0 12px}
+  .cap b{color:#cfd3d9;font-weight:600}
+  .phone{width:390px;height:800px;background:var(--bg);border-radius:30px;overflow:hidden;position:relative;box-shadow:0 20px 60px var(--shadow);display:flex;flex-direction:column}
+  .topbar{height:56px;flex:0 0 56px;display:flex;align-items:center;gap:9px;padding:0 14px;border-bottom:1px solid var(--border);background:var(--surface);z-index:5}
+  .topbar .chev{width:36px;height:36px;display:grid;place-items:center;border-radius:9px;color:var(--text-2);background:transparent;border:0;cursor:pointer}
+  .ttl{flex:1;font-size:17px;font-weight:600}
+  .icon-btn{width:36px;height:36px;display:grid;place-items:center;border-radius:9px;color:var(--text-2);background:transparent;border:0;cursor:pointer}
+  .icon-btn:hover{background:var(--surface-2);color:var(--text)}
+  svg.i{width:20px;height:20px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+  .modebar{display:flex;align-items:center;gap:8px;padding:8px 12px;border-bottom:1px solid var(--border);background:var(--surface);z-index:4}
+  .modebar .lab{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--text-3)}
+  .seg{display:flex;background:var(--surface-2);border-radius:999px;padding:2px}
+  .seg button{border:0;background:transparent;color:var(--text-2);font-size:12px;padding:5px 13px;border-radius:999px;cursor:pointer;font-weight:500}
+  .seg button.on{background:var(--steel);color:#0c1014}
+  .stage{position:relative;flex:1;overflow:hidden;touch-action:none}
+  #svg{width:100%;height:100%;display:block;cursor:grab}
+  #svg:active{cursor:grabbing}
+  .hull{stroke-width:1;transition:opacity .15s}
+  .hulllbl{font-size:11px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;paint-order:stroke;stroke:var(--bg);stroke-width:3px}
+  .edge{stroke:var(--border);stroke-width:1.1;fill:none;transition:opacity .15s,stroke .15s}
+  .dot{stroke:var(--bg);stroke-width:1.4;cursor:pointer;transition:opacity .15s}
+  .dlbl{font-size:10.5px;fill:var(--text-2);text-anchor:middle;paint-order:stroke;stroke:var(--bg);stroke-width:3px;pointer-events:none;transition:opacity .12s}
+  .zoom{position:absolute;right:12px;bottom:118px;display:flex;flex-direction:column;background:var(--surface);border:1px solid var(--border);border-radius:12px;overflow:hidden;z-index:4}
+  .zoom button{width:40px;height:40px;display:grid;place-items:center;border:0;background:transparent;color:var(--text-2);cursor:pointer;border-bottom:1px solid var(--border)}
+  .zoom button:last-child{border-bottom:0}
+  /* minimap */
+  .mini{position:absolute;left:12px;bottom:14px;width:104px;height:78px;background:color-mix(in srgb,var(--surface) 90%,transparent);backdrop-filter:blur(6px);border:1px solid var(--border);border-radius:10px;overflow:hidden;z-index:4}
+  .mini svg{width:100%;height:100%}
+  .mini .vp{fill:rgba(127,167,201,.14);stroke:var(--steel);stroke-width:1}
+  .clustertog{position:absolute;right:12px;bottom:14px;display:flex;flex-direction:column;gap:6px;align-items:flex-end;z-index:4}
+  .ct{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--text-2);background:color-mix(in srgb,var(--surface) 86%,transparent);backdrop-filter:blur(4px);border:1px solid var(--border);border-radius:999px;padding:4px 10px;cursor:pointer}
+  .ct .sw{width:9px;height:9px;border-radius:50%}
+  .ct.off{opacity:.4}
+  .countpill{position:absolute;left:12px;top:10px;font-size:11px;color:var(--text-3);background:color-mix(in srgb,var(--surface) 85%,transparent);backdrop-filter:blur(4px);border:1px solid var(--border);border-radius:999px;padding:4px 10px;z-index:3}
+</style>
+</head>
+<body>
+<div class="cap"><b>C — Clusters.</b> For the whole-graph view: a force layout that <b>pulls communities together</b> and frames each in a soft, type-tinted region with a heading — structure is legible at a glance even at hundreds of nodes. Hover lights a node's links; a <b>minimap</b> tracks where you are; group toggles fold whole communities. Switch the grouping by <b>type</b> or <b>domain</b>.</div>
+<div class="phone">
+  <div class="topbar">
+    <button class="chev"><svg class="i" viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6"/></svg></button>
+    <div class="ttl">Graph</div>
+    <button class="icon-btn" id="theme" title="Toggle theme"><svg class="i" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4.5"/><path d="M12 2v2M12 20v2M4 12H2M22 12h-2M5 5l1.5 1.5M17.5 17.5L19 19M19 5l-1.5 1.5M6.5 17.5L5 19"/></svg></button>
+  </div>
+  <div class="modebar">
+    <span class="lab">Cluster by</span>
+    <div class="seg" id="seg"><button data-g="kind" class="on">Type</button><button data-g="domain">Domain</button></div>
+  </div>
+  <div class="stage" id="stage">
+    <svg id="svg"><g id="view"><g id="hulls"></g><g id="edges"></g><g id="nodes"></g></g></svg>
+    <div class="countpill" id="countpill"></div>
+    <div class="zoom">
+      <button id="zin"><svg class="i" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button>
+      <button id="zfit"><svg class="i" viewBox="0 0 24 24"><path d="M4 9V5a1 1 0 011-1h4M20 9V5a1 1 0 00-1-1h-4M4 15v4a1 1 0 001 1h4M20 15v4a1 1 0 01-1 1h-4"/></svg></button>
+      <button id="zout"><svg class="i" viewBox="0 0 24 24"><path d="M5 12h14"/></svg></button>
+    </div>
+    <div class="mini"><svg id="minisvg" viewBox="0 0 390 700"><g id="minidots"></g><rect id="vp" class="vp" x="0" y="0" width="0" height="0"/></svg></div>
+    <div class="clustertog" id="clustertog"></div>
+  </div>
+</div>
+<script>
+document.getElementById('theme').onclick=()=>{const h=document.documentElement;h.dataset.theme=h.dataset.theme==='dark'?'light':'dark'};
+const TYPE={Person:'--steel',Organization:'--violet',Place:'--green',Event:'--amber',Product:'--periwinkle',Animal:'--sage',MedicalCondition:'--terracotta',Drug:'--orchid',Thing:'--slate'};
+const DOMC={general:'--steel',medical:'--rose',financial:'--violet',location:'--teal'};
+// larger graph so clustering reads
+const N=[
+  {id:'me',name:'Me',kind:'Person',dom:'general'},
+  {id:'celine',name:'Celine',kind:'Person',dom:'general'},{id:'priya',name:'Priya',kind:'Person',dom:'general'},
+  {id:'dad',name:'Dad',kind:'Person',dom:'general'},{id:'mom',name:'Mom',kind:'Person',dom:'general'},
+  {id:'patel',name:'Dr. Patel',kind:'Person',dom:'medical'},{id:'lee',name:'Dr. Lee',kind:'Person',dom:'medical'},
+  {id:'globex',name:'Globex',kind:'Organization',dom:'general'},{id:'nair',name:'Nair Peds',kind:'Organization',dom:'general'},
+  {id:'mgh',name:'Mass General',kind:'Organization',dom:'medical'},{id:'fidelity',name:'Fidelity',kind:'Organization',dom:'financial'},
+  {id:'denver',name:'Denver',kind:'Place',dom:'location'},{id:'brookline',name:'Brookline',kind:'Place',dom:'location'},
+  {id:'boston',name:'Boston',kind:'Place',dom:'location'},{id:'office',name:'Globex HQ',kind:'Place',dom:'location'},
+  {id:'htn',name:'Hypertension',kind:'MedicalCondition',dom:'medical'},{id:'asthma',name:'Asthma',kind:'MedicalCondition',dom:'medical'},
+  {id:'lisin',name:'Lisinopril',kind:'Drug',dom:'medical'},{id:'albut',name:'Albuterol',kind:'Drug',dom:'medical'},
+  {id:'marathon',name:'Boston Marathon',kind:'Event',dom:'general'},{id:'wedding',name:'Wedding',kind:'Event',dom:'general'},
+  {id:'rex',name:'Rex',kind:'Animal',dom:'general'},{id:'kayak',name:'Sea kayak',kind:'Product',dom:'general'},{id:'roth',name:'Roth IRA',kind:'Product',dom:'financial'}
+];
+const E=[['me','celine','spouse'],['me','priya','sibling'],['me','dad','parent'],['me','mom','parent'],['me','patel','physician'],['me','globex','worksFor'],['me','denver','residence'],['me','htn','diagnosed'],['me','asthma','diagnosed'],['me','marathon','ran'],['me','wedding','attended'],['me','rex','owns'],['me','kayak','owns'],['me','roth','holds'],['me','fidelity','client'],['celine','globex','worksFor'],['celine','denver','residence'],['celine','wedding','married'],['priya','nair','founder'],['priya','brookline','residence'],['patel','mgh','worksAt'],['lee','mgh','worksAt'],['patel','htn','treats'],['lee','asthma','treats'],['htn','lisin','treatedWith'],['asthma','albut','treatedWith'],['marathon','boston','heldIn'],['globex','office','locatedAt'],['office','boston','in'],['roth','fidelity','custodian'],['dad','mom','spouse']];
+const byId=Object.fromEntries(N.map(n=>[n.id,n]));
+const deg={};N.forEach(n=>deg[n.id]=0);E.forEach(([a,b])=>{deg[a]++;deg[b]++});
+const W=390,H=700;let groupBy='kind';
+function groupKey(n){return groupBy==='kind'?n.kind:n.dom;}
+function groupColor(k){return groupBy==='kind'?TYPE[k]:DOMC[k];}
+const GLBL={Person:'People',Organization:'Orgs',Place:'Places',Event:'Events',Product:'Products',Animal:'Animals',MedicalCondition:'Conditions',Drug:'Drugs',general:'General',medical:'Medical',financial:'Financial',location:'Location'};
+
+N.forEach((n,i)=>{const a=i/N.length*6.283;n.x=W/2+Math.cos(a)*150;n.y=H/2+Math.sin(a)*150;n.vx=0;n.vy=0;});
+let clusters=[],hidden=new Set();
+function computeClusters(){const keys=[...new Set(N.map(groupKey))];clusters=keys.map((k,i)=>{const a=i/keys.length*6.283;return{key:k,cx:W/2+Math.cos(a)*135,cy:H/2+Math.sin(a)*120};});}
+computeClusters();
+
+function tick(){
+  const cmap=Object.fromEntries(clusters.map(c=>[c.key,c]));
+  for(let i=0;i<N.length;i++)for(let j=i+1;j<N.length;j++){const a=N[i],b=N[j];if(hidden.has(groupKey(a))||hidden.has(groupKey(b)))continue;let dx=a.x-b.x,dy=a.y-b.y,d2=dx*dx+dy*dy||1,d=Math.sqrt(d2);const rep=1900/d2;a.vx+=dx/d*rep;a.vy+=dy/d*rep;b.vx-=dx/d*rep;b.vy-=dy/d*rep;}
+  for(const[s,t]of E){const a=byId[s],b=byId[t];if(hidden.has(groupKey(a))||hidden.has(groupKey(b)))continue;let dx=b.x-a.x,dy=b.y-a.y,d=Math.sqrt(dx*dx+dy*dy)||1;const f=(d-72)*0.01;a.vx+=dx/d*f;a.vy+=dy/d*f;b.vx-=dx/d*f;b.vy-=dy/d*f;}
+  for(const n of N){if(hidden.has(groupKey(n)))continue;const c=cmap[groupKey(n)];n.vx+=(c.cx-n.x)*0.022;n.vy+=(c.cy-n.y)*0.022;n.vx*=0.82;n.vy*=0.82;if(n!==drag){n.x+=n.vx;n.y+=n.vy;}}
+  render();requestAnimationFrame(tick);
+}
+
+const view=document.getElementById('view'),hullsG=document.getElementById('hulls'),eG=document.getElementById('edges'),nG=document.getElementById('nodes');
+let scale=.7,tx=58,ty=10,hoverId=null;
+const eEls={},nEls={},lEls={};
+function radius(n){return 4+Math.sqrt(deg[n.id])*2.8;}
+function rebuild(){
+  eG.innerHTML='';nG.innerHTML='';Object.keys(eEls).forEach(k=>delete eEls[k]);
+  for(const[s,t]of E){const el=document.createElementNS('http://www.w3.org/2000/svg','line');el.setAttribute('class','edge');eG.appendChild(el);eEls[s+'>'+t]=el;}
+  for(const n of N){const c=document.createElementNS('http://www.w3.org/2000/svg','circle');c.setAttribute('class','dot');c.setAttribute('r',radius(n));c.dataset.id=n.id;nG.appendChild(c);nEls[n.id]=c;
+    const l=document.createElementNS('http://www.w3.org/2000/svg','text');l.setAttribute('class','dlbl');l.textContent=n.name;nG.appendChild(l);lEls[n.id]=l;
+    c.addEventListener('pointerenter',()=>{if(!drag){hoverId=n.id;}});c.addEventListener('pointerleave',()=>{if(!drag)hoverId=null;});
+  }
+}
+function neighbors(id){const s=new Set([id]);for(const[a,b]of E){if(a===id)s.add(b);if(b===id)s.add(a);}return s;}
+// convex hull (Andrew monotone chain)
+function hull(pts){if(pts.length<3)return pts;pts=pts.slice().sort((a,b)=>a.x-b.x||a.y-b.y);const cross=(o,a,b)=>(a.x-o.x)*(b.y-o.y)-(a.y-o.y)*(b.x-o.x);const lo=[],up=[];for(const p of pts){while(lo.length>=2&&cross(lo[lo.length-2],lo[lo.length-1],p)<=0)lo.pop();lo.push(p);}for(let i=pts.length-1;i>=0;i--){const p=pts[i];while(up.length>=2&&cross(up[up.length-2],up[up.length-1],p)<=0)up.pop();up.push(p);}lo.pop();up.pop();return lo.concat(up);}
+function expand(h,pad){const cx=h.reduce((s,p)=>s+p.x,0)/h.length,cy=h.reduce((s,p)=>s+p.y,0)/h.length;return h.map(p=>{const dx=p.x-cx,dy=p.y-cy,d=Math.hypot(dx,dy)||1;return{x:p.x+dx/d*pad,y:p.y+dy/d*pad};});}
+function roundedPath(h){if(h.length<3)return '';let d=`M ${h[0].x} ${h[0].y}`;for(let i=1;i<h.length;i++)d+=` L ${h[i].x} ${h[i].y}`;return d+' Z';}
+
+const mini=document.getElementById('minidots'),vp=document.getElementById('vp');
+function render(){
+  view.setAttribute('transform',`translate(${tx},${ty}) scale(${scale})`);
+  // hulls
+  hullsG.innerHTML='';mini.innerHTML='';
+  for(const c of clusters){if(hidden.has(c.key))continue;const grp=N.filter(n=>groupKey(n)===c.key);const pts=grp.map(n=>({x:n.x,y:n.y}));let h=expand(hull(pts),26);
+    const path=document.createElementNS('http://www.w3.org/2000/svg','path');path.setAttribute('class','hull');path.setAttribute('d',roundedPath(h));
+    path.setAttribute('fill',`color-mix(in srgb,var(${groupColor(c.key)}) 9%,transparent)`);path.setAttribute('stroke',`color-mix(in srgb,var(${groupColor(c.key)}) 30%,transparent)`);
+    if(hoverId)path.style.opacity=.4;hullsG.appendChild(path);
+    const cx=grp.reduce((s,n)=>s+n.x,0)/grp.length,top=Math.min(...grp.map(n=>n.y));
+    const t=document.createElementNS('http://www.w3.org/2000/svg','text');t.setAttribute('class','hulllbl');t.setAttribute('x',cx);t.setAttribute('y',top-32);t.setAttribute('text-anchor','middle');t.setAttribute('fill',`var(${groupColor(c.key)})`);t.textContent=GLBL[c.key]||c.key;hullsG.appendChild(t);
+  }
+  const set=hoverId?neighbors(hoverId):null;
+  for(const[a,b]of E){const el=eEls[a+'>'+b];const na=byId[a],nb=byId[b];const hide=hidden.has(groupKey(na))||hidden.has(groupKey(nb));el.style.display=hide?'none':'';if(hide)continue;
+    el.setAttribute('x1',na.x);el.setAttribute('y1',na.y);el.setAttribute('x2',nb.x);el.setAttribute('y2',nb.y);
+    const inset=!set||(set.has(a)&&set.has(b));el.style.opacity=inset?(set?.85:.5):.07;el.style.stroke=inset&&set?`var(${groupColor(groupKey(byId[hoverId]))})`:'var(--border)';
+  }
+  for(const n of N){const c=nEls[n.id],l=lEls[n.id];const hide=hidden.has(groupKey(n));c.style.display=hide?'none':'';l.style.display=hide?'none':'';if(hide)continue;
+    c.setAttribute('cx',n.x);c.setAttribute('cy',n.y);c.setAttribute('fill',`color-mix(in srgb,var(${groupColor(groupKey(n))}) 72%,var(--surface))`);
+    l.setAttribute('x',n.x);l.setAttribute('y',n.y+radius(n)+10);l.setAttribute('font-size',10.5/scale);
+    const inset=!set||set.has(n.id);c.style.opacity=inset?1:.1;
+    const force=n.id===hoverId||(set&&set.has(n.id));l.style.opacity=(force||scale>=1.05||deg[n.id]>=4)?(inset?1:.15):0;
+    // minimap dot
+    const md=document.createElementNS('http://www.w3.org/2000/svg','circle');md.setAttribute('cx',n.x);md.setAttribute('cy',n.y);md.setAttribute('r',5);md.setAttribute('fill',`var(${groupColor(groupKey(n))})`);mini.appendChild(md);
+  }
+  // viewport rect on minimap (world coords currently shown)
+  const r=svg.getBoundingClientRect();vp.setAttribute('x',-tx/scale);vp.setAttribute('y',-ty/scale);vp.setAttribute('width',r.width/scale);vp.setAttribute('height',r.height/scale);
+}
+
+// cluster toggles
+function buildTog(){const tog=document.getElementById('clustertog');tog.innerHTML='';const keys=[...new Set(N.map(groupKey))];for(const k of keys){const b=document.createElement('button');b.className='ct';b.innerHTML=`<span class="sw" style="background:var(${groupColor(k)})"></span>${GLBL[k]||k}`;b.onclick=()=>{b.classList.toggle('off');hidden.has(k)?hidden.delete(k):hidden.add(k);};tog.appendChild(b);}}
+document.getElementById('countpill').textContent=`${N.length} entities · ${E.length} links`;
+
+// pan/zoom/drag
+const stage=document.getElementById('stage'),svg=document.getElementById('svg');let drag=null,dragMoved=false,panning=null;
+function toWorld(e){const r=svg.getBoundingClientRect();return{x:(e.clientX-r.left-tx)/scale,y:(e.clientY-r.top-ty)/scale};}
+nG.addEventListener('pointerdown',e=>{const id=e.target.dataset.id;if(!id)return;e.stopPropagation();drag=byId[id];dragMoved=false;});
+stage.addEventListener('pointerdown',e=>{if(drag)return;panning={x:e.clientX,y:e.clientY,tx,ty};});
+window.addEventListener('pointermove',e=>{if(drag){const w=toWorld(e);drag.x=w.x;drag.y=w.y;drag.vx=0;drag.vy=0;dragMoved=true;}else if(panning){tx=panning.tx+(e.clientX-panning.x);ty=panning.ty+(e.clientY-panning.y);}});
+window.addEventListener('pointerup',()=>{drag=null;panning=null;});
+svg.addEventListener('wheel',e=>{e.preventDefault();const r=svg.getBoundingClientRect();const mx=e.clientX-r.left,my=e.clientY-r.top;const f=e.deltaY<0?1.12:.89;const ns=Math.min(3,Math.max(.4,scale*f));const k=ns/scale;tx=mx-(mx-tx)*k;ty=my-(my-ty)*k;scale=ns;},{passive:false});
+document.getElementById('zin').onclick=()=>z(1.25);document.getElementById('zout').onclick=()=>z(.8);document.getElementById('zfit').onclick=()=>{scale=.7;tx=58;ty=10;};
+function z(f){const r=svg.getBoundingClientRect(),mx=r.width/2,my=r.height/2,ns=Math.min(3,Math.max(.4,scale*f)),k=ns/scale;tx=mx-(mx-tx)*k;ty=my-(my-ty)*k;scale=ns;}
+
+document.querySelectorAll('#seg button').forEach(b=>b.onclick=()=>{document.querySelectorAll('#seg button').forEach(x=>x.classList.remove('on'));b.classList.add('on');groupBy=b.dataset.g;hidden.clear();computeClusters();buildTog();});
+
+rebuild();buildTog();requestAnimationFrame(tick);
+</script>
+</body>
+</html>
