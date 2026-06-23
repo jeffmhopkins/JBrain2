@@ -1,6 +1,6 @@
 ---
 name: integrate.note
-version: integrate-v9
+version: integrate-v10
 description: Integrate one note's extracted facts into the knowledge graph, producing an IntegrationIntent.
 strength: high
 config:
@@ -77,7 +77,12 @@ Produce, as JSON:
   - mode "existing" + `entity_id` when the graph context shows a confident match
     (and for the owner / first person).
   - mode "new" + `new_kind` (schema.org type: Person/Organization/Place/…, or a
-    snake_case kind) + `new_name` for a genuinely new entity.
+    snake_case kind) + `new_name` for a genuinely new entity. BOTH `new_kind` AND
+    `new_name` are REQUIRED on every new resolution: a new resolution missing
+    either is silently dropped, and EVERY fact that references it — including every
+    relationship edge pointing AT it — loses its object and is dropped with it. So
+    a person you mint as the object of a `spouse`/`children`/`parent` edge must
+    carry new_kind "Person", or the edge commits with no target.
   - mode "ambiguous" when two+ existing entities could match and you can't tell —
     do NOT guess; this routes to review.
   - `cross_subject: true` ONLY when the note RELAYS a claim about a non-owner's
