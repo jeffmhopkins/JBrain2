@@ -87,6 +87,29 @@ class DebugRouter:
             "json_schema": json_schema,
             "max_tokens": max_tokens,
         }
+        # The local model occasionally returns an empty/blank completion (a transient
+        # hiccup); a single blank would otherwise crash a whole multi-hour run at the
+        # JSON parse. Retry the job once on a blank result before giving up.
+        for _ in range(2):
+            result = await self._submit_and_poll(req)
+            parsed = result.get("parsed")
+            text = result.get("text", "") or ""
+            if parsed is None and text.strip():
+                try:
+                    parsed = json.loads(text)
+                except json.JSONDecodeError:
+                    parsed = None
+            if parsed is not None or text.strip():
+                return _Result(
+                    parsed=parsed,
+                    text=text,
+                    usage=_Usage(
+                        result.get("input_tokens", 0), result.get("output_tokens", 0)
+                    ),
+                )
+        raise RuntimeError("box returned an empty completion twice")
+
+    async def _submit_and_poll(self, req: dict[str, Any]) -> dict[str, Any]:
         submit = await self._client.post(
             f"{self._base}/api/debug/complete-async", headers=self._headers, json=req
         )
@@ -106,22 +129,7 @@ class DebugRouter:
             except httpx.HTTPError:  # a flaky poll is fine — keep waiting
                 continue
             if st["status"] == "done":
-                result = st["result"]
-                parsed = result.get("parsed")
-                if parsed is None and result.get("text"):
-                    try:
-                        parsed = json.loads(result["text"])
-                    except json.JSONDecodeError:
-                        parsed = None
-                # CompleteOut flattens token counts to the top level (no nested
-                # `usage` object), so read them directly.
-                return _Result(
-                    parsed=parsed,
-                    text=result.get("text", ""),
-                    usage=_Usage(
-                        result.get("input_tokens", 0), result.get("output_tokens", 0)
-                    ),
-                )
+                return st["result"]
             if st["status"] == "error":
                 raise RuntimeError(f"box job error: {st.get('error')}")
         raise TimeoutError(f"box job {job_id} did not finish within {self._max_wait}s")

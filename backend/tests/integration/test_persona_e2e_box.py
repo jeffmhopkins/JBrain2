@@ -98,6 +98,44 @@ async def _tally(maker) -> tuple[int, int, int]:  # noqa: F811
     return ents, facts, sup
 
 
+async def _dump_report(maker, path: str) -> None:  # noqa: F811
+    """Write a rich graph diagnostic to `path` so the data survives the ephemeral
+    DB's teardown (and any later-note failure): the commit split, relationship
+    linkage per predicate, what's still held for review by predicate, the predicate
+    frequency (to spot coined/odd names), review cards, and duplicate entities.
+    This is the artifact that guides the next round of prompt/predicate fixes."""
+    import json as _json
+
+    def rows(r):
+        return [dict(m) for m in r.mappings().all()]
+
+    async with maker() as s:
+        await s.execute(text("SELECT set_config('app.principal_kind','owner',true)"))
+        report = {
+            "by_kind_status": rows(await s.execute(text(
+                "SELECT kind, status, count(*) n FROM app.facts GROUP BY 1,2 ORDER BY 1,2"))),
+            "relationship_linkage": rows(await s.execute(text(
+                "SELECT predicate, count(*) total, count(object_entity_id) linked,"
+                " sum((status='active')::int) active FROM app.facts WHERE kind='relationship'"
+                " GROUP BY 1 ORDER BY 2 DESC"))),
+            "pending_by_predicate": rows(await s.execute(text(
+                "SELECT predicate, kind, count(*) n FROM app.facts WHERE status='pending_review'"
+                " GROUP BY 1,2 ORDER BY 3 DESC"))),
+            "predicate_frequency": rows(await s.execute(text(
+                "SELECT predicate, count(*) n FROM app.facts GROUP BY 1 ORDER BY 2 DESC"))),
+            "review_items": rows(await s.execute(text(
+                "SELECT kind, status, count(*) n FROM app.review_items"
+                " GROUP BY 1,2 ORDER BY 3 DESC"))),
+            "duplicate_entities": rows(await s.execute(text(
+                "SELECT canonical_name, count(*) n FROM app.entities WHERE status<>'merged'"
+                " GROUP BY 1 HAVING count(*)>1 ORDER BY 2 DESC"))),
+            "entities": rows(await s.execute(text(
+                "SELECT canonical_name, kind FROM app.entities"
+                " WHERE status<>'merged' ORDER BY 1"))),
+        }
+    Path(path).write_text(_json.dumps(report, indent=1, default=str))  # noqa: ASYNC240  (one-time)
+
+
 async def _snapshot(maker) -> dict:  # noqa: F811
     async with maker() as s:
         await s.execute(text("SELECT set_config('app.principal_kind','owner',true)"))
@@ -136,13 +174,20 @@ async def test_persona_year_builds_the_entity_graph(maker) -> None:  # noqa: F81
     # DebugRouter is a duck-typed router shim (complete/spec/effective_spec over the
     # box); the pipeline only uses those three, so passing it is sound for the test.
     pipeline = AnalysisPipeline(maker, router)  # type: ignore[arg-type]
-    fed = 0
+    fed = skipped = 0
     try:
         for note in notes:
             note_id = await _seed_note(maker, note)
             # integrate_note runs the shared extract front-half (box) then the
-            # integrator (box) and applies the intent — committing to the graph.
-            await pipeline.integrate_note({"note_id": note_id})
+            # integrator (box) and applies the intent — committing to the graph. A
+            # transient box failure on one note SKIPS it (logged) rather than
+            # aborting the whole multi-hour run.
+            try:
+                await pipeline.integrate_note({"note_id": note_id})
+            except Exception as exc:  # noqa: BLE001
+                skipped += 1
+                print(f"  SKIPPED {note['id']}: {type(exc).__name__}: {exc}", flush=True)
+                continue
             fed += 1
             e, f, sup = await _tally(maker)
             print(
@@ -152,6 +197,10 @@ async def test_persona_year_builds_the_entity_graph(maker) -> None:  # noqa: F81
             )
     finally:
         await router.aclose()
+        dump = os.environ.get("JBRAIN_BOX_E2E_DUMP")
+        if dump:
+            await _dump_report(maker, dump)
+            print(f"\nwrote graph diagnostic → {dump} (fed={fed}, skipped={skipped})", flush=True)
 
     snap = await _snapshot(maker)
     ents, facts, reviews = snap["entities"], snap["facts"], snap["reviews"]
