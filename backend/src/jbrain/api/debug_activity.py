@@ -22,6 +22,8 @@ _DETAIL_MAX = 300
 def classify(method: str, path: str) -> str:
     """A short command label for a debug route, for the console's type badge."""
     tail = path.removeprefix("/api/debug/")
+    if tail in ("complete", "complete-async"):
+        return "complete"
     if tail.startswith("logs/"):
         return "logs"
     if tail.startswith("llm/local-models/"):
