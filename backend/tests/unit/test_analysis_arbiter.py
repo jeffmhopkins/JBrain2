@@ -521,3 +521,59 @@ def test_correction_still_forced_to_review_by_a_safety_flag() -> None:
     )
     pf = plan.facts[0]
     assert pf.status == "pending_review" and "cross_subject_link" in pf.review_reasons
+
+
+def test_compute_signals_quote_drift_is_attested_after_normalization():
+    # The model's attestation quote differs only by whitespace/casing from the
+    # note — a clearly-stated fact must not be held just because the quote isn't
+    # byte-identical (the run-to-run quote-drift that floods the review inbox).
+    intent = _intent(
+        entity_resolutions=[_res()],
+        facts=[_fact(attested_span=AttestedSpan("c1", "work   at  GLOBEX"), inferred=False)],
+    )
+    assert compute_signals(intent, ["I work at Globex now."])[0].surface_attested is True
+
+
+def test_compute_signals_value_in_note_attests_an_attribute_without_a_quote():
+    # An attribute (no object to fall back on) whose stored VALUE is literally in
+    # the note is surface-attested even when the model omitted/paraphrased its
+    # quote — the attribute twin of the named-object backstop.
+    intent = _intent(
+        entity_resolutions=[_res()],
+        facts=[
+            _fact(
+                predicate="grade", kind="attribute", object_entity_ref=None,
+                value_json={"value": "7th"}, attested_span=None, inferred=False,
+            )
+        ],
+    )
+    assert compute_signals(intent, ["Eli, 12, going into 7th grade."])[0].surface_attested is True
+
+
+def test_compute_signals_value_not_in_note_stays_unattested():
+    # The value must actually appear: a value the note never states is not promoted.
+    intent = _intent(
+        entity_resolutions=[_res()],
+        facts=[
+            _fact(
+                predicate="grade", kind="attribute", object_entity_ref=None,
+                value_json={"value": "11th"}, attested_span=None, inferred=False,
+            )
+        ],
+    )
+    assert compute_signals(intent, ["Eli, 12, going into 7th grade."])[0].surface_attested is False
+
+
+def test_compute_signals_value_does_not_rescue_an_inferred_attribute():
+    # The `not inferred` gate still governs: a value-in-note match never promotes a
+    # fact the model itself flagged inferred (a guessed value the note happens to contain).
+    intent = _intent(
+        entity_resolutions=[_res()],
+        facts=[
+            _fact(
+                predicate="grade", kind="attribute", object_entity_ref=None,
+                value_json={"value": "7th"}, attested_span=None, inferred=True,
+            )
+        ],
+    )
+    assert compute_signals(intent, ["Eli, 12, going into 7th grade."])[0].surface_attested is False

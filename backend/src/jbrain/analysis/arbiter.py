@@ -191,7 +191,32 @@ def _object_named(
     if res is None:
         return False
     surface = (res.attested_span.surface if res.attested_span else None) or res.new_name
-    return bool(surface) and surface in haystack
+    return bool(surface) and _norm(surface) in haystack
+
+
+def _norm(s: str) -> str:
+    """Collapse whitespace and casing so an attestation check survives the model's
+    quote drift (a reworded space, a capital, a smart quote) — the same string the
+    note holds, just normalized."""
+    return " ".join(s.split()).casefold()
+
+
+def _value_attested(value_json: dict | None, haystack: str) -> bool:
+    """A fact whose stored VALUE is literally in the note is surface-attested even
+    when the model's `attested_span` quote was paraphrased or omitted — the
+    attribute twin of `_object_named` (an attribute carries no object to fall back
+    on). `haystack` is already normalized. The 2-char floor avoids a one-letter
+    value matching by accident; gated upstream by `not fact.inferred`, so a guessed
+    value the note never states is never promoted this way."""
+    if not isinstance(value_json, dict):
+        return False
+    for v in value_json.values():
+        if not isinstance(v, (str, int, float)):
+            continue
+        token = _norm(str(v))
+        if len(token) >= 2 and token in haystack:
+            return True
+    return False
 
 
 def compute_signals(
@@ -214,7 +239,7 @@ def compute_signals(
     # the arbiter resolves it, so "known" here means declared by ANY type — a
     # sound global proxy for the minor unknown-predicate weight penalty.
     types = registry.types.values()
-    haystack = "\n".join(chunk_texts)
+    haystack = _norm("\n".join(chunk_texts))
     res_by_ref = {r.mention_ref: r for r in intent.entity_resolutions}
     supersede_keys = {
         (s.entity_ref, s.predicate, s.qualifier)
@@ -223,9 +248,15 @@ def compute_signals(
     }
     out: dict[int, ConfidenceSignals] = {}
     for i, fact in enumerate(intent.facts):
+        # surface_attested holds when the model didn't flag the fact inferred AND the
+        # note independently grounds it — by the model's (normalized) quote, the
+        # object's name, or the stored VALUE appearing in the note. The last two are
+        # deterministic backstops for the model's run-to-run quote drift, which
+        # otherwise dumps a clearly-stated fact into review under the inferred ceiling.
         surface_attested = not fact.inferred and (
-            (fact.attested_span is not None and fact.attested_span.surface in haystack)
+            (fact.attested_span is not None and _norm(fact.attested_span.surface) in haystack)
             or _object_named(fact, res_by_ref, haystack)
+            or _value_attested(fact.value_json, haystack)
         )
         out[i] = ConfidenceSignals(
             surface_attested=surface_attested,
