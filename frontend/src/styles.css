@@ -9535,83 +9535,81 @@ input.ld-title {
   text-align: center;
 }
 
-/* legend = filter: a horizontal chip row, "All" sticky at the left */
-.filter-bar {
+/* search = the front door: name an entity, drop into its local graph */
+.graph-search-bar {
   flex: none;
-  display: flex;
-  gap: 8px;
-  align-items: center;
-  padding: 9px 12px;
+  position: relative;
+  padding: 8px 12px;
   border-bottom: 1px solid var(--border);
-  overflow-x: auto;
-  scrollbar-width: none;
 }
-.filter-bar::-webkit-scrollbar {
-  display: none;
-}
-.fchip {
-  flex: none;
-  display: inline-flex;
+.graph-search {
+  display: flex;
   align-items: center;
-  gap: 7px;
-  min-height: 36px;
-  padding: 0 12px;
-  border-radius: var(--r-pill);
+  gap: 9px;
+  height: 44px;
+  padding: 0 13px;
   border: 1px solid var(--border);
+  border-radius: var(--r-input);
   background: var(--surface-2);
+  color: var(--text-3);
+}
+.graph-search-input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  background: none;
   color: var(--text);
   font: inherit;
-  font-size: var(--fs-micro);
-  font-weight: 500;
-  white-space: nowrap;
-  cursor: pointer;
-  transition: opacity 0.15s ease-out, background 0.15s ease-out;
+  font-size: var(--fs-note);
 }
-.fchip-all {
-  position: sticky;
-  left: 0;
-  z-index: 2;
-  background: var(--surface);
-}
-.fchip-swatch {
-  display: inline-flex;
-}
-/* additive-mode cue: an empty box on each type chip once a selection exists,
-   filled with a check when that type is on — signals "taps add, not replace". */
-.fchip-ck {
-  position: relative;
-  width: 14px;
-  height: 14px;
-  flex: none;
-  border: 1.5px solid var(--border);
-  border-radius: 4px;
-}
-.fchip-on .fchip-ck {
-  background: var(--accent);
-  border-color: transparent;
-}
-.fchip-on .fchip-ck::after {
-  content: "";
-  position: absolute;
-  left: 4px;
-  top: 1px;
-  width: 3px;
-  height: 7px;
-  border: solid var(--bg);
-  border-width: 0 1.5px 1.5px 0;
-  transform: rotate(45deg);
-}
-.fchip-count {
+.graph-search-input::placeholder {
   color: var(--text-3);
-  font-variant-numeric: tabular-nums;
 }
-.fchip-on {
-  background: var(--accent-tint);
-  border-color: transparent;
+.graph-search-input:focus {
+  outline: none;
 }
-/* once a selection is active, unselected types dim — they're hidden in-graph */
-.filter-bar[data-active="true"] .fchip-type:not(.fchip-on) {
-  opacity: 0.42;
+.graph-results {
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  top: 58px;
+  z-index: 7;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  max-height: 300px;
+  overflow-y: auto;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-input);
+  box-shadow: 0 12px 40px var(--scrim);
+}
+.graph-result {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 10px;
+  min-height: 48px;
+  padding: 0 12px;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.graph-results li:last-child .graph-result {
+  border-bottom: 0;
+}
+.graph-result-name {
+  flex: 1;
+  text-align: left;
+  font-size: var(--fs-secondary);
+  font-weight: 500;
+}
+.graph-result-kind {
+  font-size: var(--fs-micro);
+  color: var(--text-3);
 }
 
 .graph-stage {
@@ -9634,10 +9632,15 @@ input.ld-title {
   overflow: visible;
   pointer-events: none;
 }
-.graph-edges path {
+.graph-edges path,
+.graph-edge {
   fill: none;
   stroke: var(--border);
   stroke-width: 1.4;
+}
+.graph-edge.lit {
+  stroke: color-mix(in srgb, var(--steel) 55%, var(--border));
+  stroke-width: 1.6;
 }
 .graph-edges marker path {
   fill: var(--border);
@@ -9701,13 +9704,6 @@ input.ld-title {
   opacity: 1;
 }
 /* in focus mode a ring node's label sits above the disc (on its outer side) */
-.graph-node[data-anchor="top"] .graph-node-label {
-  top: auto;
-  bottom: calc(100% + 2px);
-}
-.graph-stage[data-mode="focus"] .graph-node-label {
-  max-width: 132px;
-}
 .graph-node.is-focal .graph-node-label {
   max-width: 140px;
   font-size: var(--fs-secondary);
@@ -9717,72 +9713,19 @@ input.ld-title {
 .graph-node.is-focal .etype-disc {
   box-shadow: 0 0 0 3px var(--bg), 0 0 0 5px color-mix(in srgb, var(--steel) 70%, transparent);
 }
-.graph-exempt {
-  position: absolute;
-  bottom: calc(100% + 2px);
-  left: 50%;
-  transform: translateX(-50%);
-  font-size: var(--fs-micro);
-  color: var(--text-3);
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--r-pill);
-  padding: 1px 6px;
-  white-space: nowrap;
+/* re-centring re-lays the local graph; ease nodes between layouts for constancy */
+.graph-viewport:not([data-reduced="true"]) .graph-node {
+  transition: left 0.18s ease-out, top 0.18s ease-out, opacity 0.18s ease-out;
 }
 
-.graph-lod {
-  position: absolute;
-  left: 12px;
-  top: 12px;
-  font-size: var(--fs-micro);
-  color: var(--text-3);
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--r-pill);
-  padding: 4px 10px;
-}
-
-/* focus-mode overlay: explicit, labelled return + breadcrumb (no hidden gesture) */
-.graph-overlay {
-  position: absolute;
-  left: 0;
-  right: 0;
-  top: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 10px 12px;
-  background: linear-gradient(
-    var(--bg),
-    color-mix(in srgb, var(--bg) 70%, transparent) 70%,
-    transparent
-  );
-  z-index: 3;
-}
-.graph-return {
-  align-self: flex-start;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  min-height: 44px;
-  padding: 8px 14px 8px 10px;
-  border: 1px solid var(--border);
-  border-radius: var(--r-pill);
-  background: var(--surface);
-  color: var(--text);
-  font: inherit;
-  font-size: var(--fs-secondary);
-  font-weight: 500;
-  cursor: pointer;
-}
-.graph-return svg {
-  color: var(--steel);
-}
+/* breadcrumb bar: the path of focal entities, tap to walk back */
 .graph-crumbs {
+  flex: none;
   display: flex;
   gap: 6px;
   align-items: center;
+  padding: 7px 12px;
+  border-bottom: 1px solid var(--border);
   overflow-x: auto;
   scrollbar-width: none;
 }
@@ -9791,7 +9734,8 @@ input.ld-title {
 }
 .graph-crumb {
   flex: none;
-  padding: 5px 11px;
+  min-height: 36px;
+  padding: 6px 11px;
   border: 1px solid var(--border);
   border-radius: var(--r-pill);
   background: var(--surface-2);
@@ -9807,61 +9751,37 @@ input.ld-title {
   color: var(--text);
 }
 
-.graph-zoom {
-  position: absolute;
-  right: 12px;
-  bottom: 12px;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  padding: 4px;
-  border: 1px solid var(--border);
-  border-radius: var(--r-pill);
-  background: var(--surface);
-  z-index: 3;
-}
-.graph-zoom button {
-  width: 42px;
-  height: 42px;
-  border: 0;
-  border-radius: var(--r-pill);
-  background: none;
-  color: var(--text-2);
-  font: inherit;
-  font-size: 20px;
-  cursor: pointer;
-}
-.graph-zoom button:hover {
-  color: var(--text);
-  background: var(--surface-2);
-}
-
-.graph-hidden {
+/* depth toggle — floating, one-thumb, ≥44px targets */
+.graph-depth {
   position: absolute;
   left: 12px;
   bottom: 12px;
   display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 6px 6px 12px;
+  gap: 3px;
+  margin: 0;
+  min-inline-size: 0;
+  padding: 3px;
   border: 1px solid var(--border);
-  border-radius: var(--r-pill);
-  background: var(--surface);
-  color: var(--text-2);
-  font-size: var(--fs-micro);
+  border-radius: var(--r-input);
+  background: color-mix(in srgb, var(--surface) 90%, transparent);
+  backdrop-filter: blur(6px);
   z-index: 3;
 }
-.graph-hidden button {
-  min-height: 30px;
-  padding: 5px 10px;
+.graph-depth button {
+  min-width: 62px;
+  min-height: 38px;
   border: 0;
-  border-radius: var(--r-pill);
-  background: var(--surface-2);
-  color: var(--text);
+  border-radius: 9px;
+  background: none;
+  color: var(--text-2);
   font: inherit;
   font-size: var(--fs-micro);
-  font-weight: 500;
+  font-weight: 600;
   cursor: pointer;
+}
+.graph-depth button.is-on {
+  background: var(--accent);
+  color: var(--bg);
 }
 .graph-empty-note {
   position: absolute;
@@ -9873,123 +9793,140 @@ input.ld-title {
   color: var(--text-2);
   font-size: var(--fs-secondary);
 }
-.graph-hint {
+/* persistent bottom panel: the focal entity + its relationships, drag-resizable.
+   Not the modal Sheet — it co-occupies the screen with the map (Maps model). */
+.graph-panel {
   flex: none;
-  margin: 0;
-  padding: 7px 16px;
-  text-align: center;
-  color: var(--text-3);
-  font-size: var(--fs-micro);
-}
-
-/* the entity peek sheet */
-.peek-head {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 4px 0 12px;
-}
-.peek-meta {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  min-height: 0;
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+  border-radius: var(--r-card) var(--r-card) 0 0;
+  box-shadow: 0 -10px 30px var(--scrim);
 }
-.peek-kind {
+.graph-panel-grab {
+  flex: none;
+  display: grid;
+  place-items: center;
+  padding: 8px 0 4px;
+  cursor: grab;
+  touch-action: none;
+}
+.graph-panel-grab:active {
+  cursor: grabbing;
+}
+.graph-panel-handle {
+  width: 36px;
+  height: 4px;
+  border-radius: var(--r-pill);
+  background: var(--text-3);
+}
+.graph-panel-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 4px 16px 12px;
+}
+.graph-panel-meta {
+  min-width: 0;
+}
+.graph-panel-title {
+  margin: 0;
+  font-size: var(--fs-title);
+  font-weight: 600;
+  line-height: 1.2;
+}
+.graph-panel-sub {
+  margin: 2px 0 0;
   font-size: var(--fs-micro);
-  text-transform: uppercase;
-  letter-spacing: 0.07em;
   color: var(--text-3);
 }
-.peek-domain {
-  font-size: var(--fs-micro);
+.graph-panel-domain {
   color: var(--rose);
 }
-.peek-actions {
-  display: flex;
-  gap: 8px;
-  padding-bottom: 8px;
-}
-.peek-btn {
+.graph-panel-body {
   flex: 1;
-  min-height: 44px;
-  border: 1px solid var(--border);
-  border-radius: var(--r-input);
-  background: var(--surface-2);
-  color: var(--text);
-  font: inherit;
-  font-size: var(--fs-secondary);
-  font-weight: 500;
-  cursor: pointer;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0 16px 12px;
 }
-.peek-btn.primary {
-  background: var(--accent-tint);
-  border-color: transparent;
-}
-.peek-attrs {
-  list-style: none;
-  margin: 8px 0 0;
-  padding: 0;
-}
-.peek-attr {
-  display: flex;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 10px 0;
-  border-top: 1px solid var(--border);
-}
-.peek-attr-pred {
-  font-size: var(--fs-secondary);
-  color: var(--text-2);
-}
-.peek-attr-val {
-  font-size: var(--fs-secondary);
-  color: var(--text);
-  text-align: right;
-}
-.peek-rels {
-  margin-top: 14px;
-}
-.peek-rels-head {
-  margin: 0 0 4px;
+.graph-rels-head,
+.graph-rels-empty {
+  margin: 4px 2px;
   font-size: var(--fs-micro);
   text-transform: uppercase;
   letter-spacing: 0.07em;
   color: var(--text-3);
 }
-.peek-rels-list {
+.graph-rels {
   list-style: none;
   margin: 0;
   padding: 0;
 }
-.peek-rel {
+.graph-rel {
   display: flex;
   width: 100%;
   align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  min-height: 44px;
-  padding: 10px 0;
+  gap: 11px;
+  min-height: 52px;
+  padding: 7px 0;
   border: 0;
-  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
   background: none;
   color: inherit;
   font: inherit;
+  text-align: left;
   cursor: pointer;
 }
-.peek-rel-pred {
-  font-size: var(--fs-secondary);
-  color: var(--text-2);
+.graph-rels li:last-child .graph-rel {
+  border-bottom: 0;
 }
-.peek-rel-name {
-  font-size: var(--fs-secondary);
-  color: var(--steel);
-  text-align: right;
+.graph-rel-mid {
+  flex: 1;
+  min-width: 0;
+}
+.graph-rel-obj {
+  display: block;
+  font-size: var(--fs-note);
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.graph-rel-pred {
+  display: block;
+  font-family: var(--font-mono);
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+}
+.graph-rel svg {
+  flex: none;
+  color: var(--text-3);
+}
+.graph-panel-foot {
+  flex: none;
+  padding: 10px 16px calc(12px + env(safe-area-inset-bottom));
+  border-top: 1px solid var(--border);
+}
+.graph-panel-open {
+  width: 100%;
+  min-height: 48px;
+  border: 0;
+  border-radius: var(--r-input);
+  background: var(--accent-tint);
+  color: var(--accent);
+  font: inherit;
+  font-size: var(--fs-note);
+  font-weight: 600;
+  cursor: pointer;
 }
 
 /* User-driven pan/zoom stay direct; only decorative transitions are dropped. */
 @media (prefers-reduced-motion: reduce) {
   .graph-node-label,
-  .fchip {
+  .graph-node {
     transition: none;
   }
 }
