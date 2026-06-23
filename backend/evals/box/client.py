@@ -103,9 +103,7 @@ class DebugRouter:
                 return _Result(
                     parsed=parsed,
                     text=text,
-                    usage=_Usage(
-                        result.get("input_tokens", 0), result.get("output_tokens", 0)
-                    ),
+                    usage=_Usage(result.get("input_tokens", 0), result.get("output_tokens", 0)),
                 )
         raise RuntimeError("box returned an empty completion twice")
 

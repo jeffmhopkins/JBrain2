@@ -33,19 +33,41 @@ def _choice(name: str, entity_id: str | None) -> str:
 
 
 _CASES: list[dict[str, Any]] = [
-    {"name": "c_link", "mention": "Bob", "kind": "Person", "context": "ctx",
-     "candidates": [{"id": "e1", "name": "Bob Reyes", "kind": "Person", "summary": "s"}],
-     "gold": "e1"},
-    {"name": "c_null", "mention": "Sam", "kind": "Person", "context": "ctx",
-     "candidates": [{"id": "e2", "name": "Sam W", "kind": "Person", "summary": "s"},
-                    {"id": "e3", "name": "Sam O", "kind": "Person", "summary": "s"}],
-     "gold": None},
-    {"name": "c_false", "mention": "X", "kind": "Person", "context": "ctx",
-     "candidates": [{"id": "e4", "name": "X Y", "kind": "Person", "summary": "s"}],
-     "gold": None},
-    {"name": "c_missed", "mention": "Y", "kind": "Person", "context": "ctx",
-     "candidates": [{"id": "e5", "name": "Y Z", "kind": "Person", "summary": "s"}],
-     "gold": "e5"},
+    {
+        "name": "c_link",
+        "mention": "Bob",
+        "kind": "Person",
+        "context": "ctx",
+        "candidates": [{"id": "e1", "name": "Bob Reyes", "kind": "Person", "summary": "s"}],
+        "gold": "e1",
+    },
+    {
+        "name": "c_null",
+        "mention": "Sam",
+        "kind": "Person",
+        "context": "ctx",
+        "candidates": [
+            {"id": "e2", "name": "Sam W", "kind": "Person", "summary": "s"},
+            {"id": "e3", "name": "Sam O", "kind": "Person", "summary": "s"},
+        ],
+        "gold": None,
+    },
+    {
+        "name": "c_false",
+        "mention": "X",
+        "kind": "Person",
+        "context": "ctx",
+        "candidates": [{"id": "e4", "name": "X Y", "kind": "Person", "summary": "s"}],
+        "gold": None,
+    },
+    {
+        "name": "c_missed",
+        "mention": "Y",
+        "kind": "Person",
+        "context": "ctx",
+        "candidates": [{"id": "e5", "name": "Y Z", "kind": "Person", "summary": "s"}],
+        "gold": "e5",
+    },
 ]
 
 

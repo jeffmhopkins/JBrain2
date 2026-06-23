@@ -77,9 +77,13 @@ def _dt(s: str | None) -> datetime | None:
 def _fact_lines(facts: list[dict[str, Any]]) -> tuple[FactLine, ...]:
     return tuple(
         FactLine(
-            predicate=f["predicate"], qualifier=f.get("qualifier", ""), kind=f["kind"],
-            assertion=f["assertion"], value=f.get("value", ""),
-            valid_from=_dt(f.get("valid_from")), valid_to=_dt(f.get("valid_to")),
+            predicate=f["predicate"],
+            qualifier=f.get("qualifier", ""),
+            kind=f["kind"],
+            assertion=f["assertion"],
+            value=f.get("value", ""),
+            valid_from=_dt(f.get("valid_from")),
+            valid_to=_dt(f.get("valid_to")),
         )
         for f in facts
     )
@@ -87,8 +91,11 @@ def _fact_lines(facts: list[dict[str, Any]]) -> tuple[FactLine, ...]:
 
 def _candidate(d: dict[str, Any]) -> CandidateEntity:
     return CandidateEntity(
-        entity_id=d["id"], name=d["name"], kind=d["kind"],
-        aliases=tuple(d.get("aliases", ())), facts=_fact_lines(d.get("facts", [])),
+        entity_id=d["id"],
+        name=d["name"],
+        kind=d["kind"],
+        aliases=tuple(d.get("aliases", ())),
+        facts=_fact_lines(d.get("facts", [])),
     )
 
 
@@ -102,10 +109,17 @@ def build_inputs(case: dict[str, Any]) -> tuple[Extraction, str]:
     ]
     facts = [
         ExtractedFact(
-            predicate=f["predicate"], qualifier=f.get("qualifier", ""), kind=f["kind"],
-            statement=f["statement"], value_json=f.get("value_json"), assertion=f["assertion"],
-            entity_ref=f["entity_ref"], object_entity_ref=f.get("object_entity_ref"),
-            temporal=None, domain=f.get("domain", "general"), confidence=0.9,
+            predicate=f["predicate"],
+            qualifier=f.get("qualifier", ""),
+            kind=f["kind"],
+            statement=f["statement"],
+            value_json=f.get("value_json"),
+            assertion=f["assertion"],
+            entity_ref=f["entity_ref"],
+            object_entity_ref=f.get("object_entity_ref"),
+            temporal=None,
+            domain=f.get("domain", "general"),
+            confidence=0.9,
         )
         for f in case["facts"]
     ]
@@ -194,8 +208,11 @@ async def score_integrate_cases(
             )
             tokens += out.usage.input_tokens + out.usage.output_tokens
             intent = parse_intent(
-                out.parsed, note_id=case["name"], schema_version=1,
-                prompt_version="eval", integrator_version="eval",
+                out.parsed,
+                note_id=case["name"],
+                schema_version=1,
+                prompt_version="eval",
+                integrator_version="eval",
             )
             r = _score(case, intent)
         except Exception as exc:  # a live call / parse fails many ways; report, don't crash

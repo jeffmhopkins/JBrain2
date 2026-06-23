@@ -102,9 +102,10 @@ class TestValueLabel:
     def test_date_shape_defers_to_the_statement_not_a_raw_iso(self) -> None:
         # The backend has no date formatter; a {start} shape is left to the
         # statement rather than surfacing a raw ISO timestamp as the value.
-        assert value_label(
-            {"start": "2026-06-15T14:00:00-06:00"}, "Appointment is Monday at 2pm."
-        ) == "Appointment is Monday at 2pm."
+        assert (
+            value_label({"start": "2026-06-15T14:00:00-06:00"}, "Appointment is Monday at 2pm.")
+            == "Appointment is Monday at 2pm."
+        )
 
     def test_abbreviated_name_datum_is_not_dropped(self) -> None:
         # A short datum with an internal period (a title, an initial) is the value,

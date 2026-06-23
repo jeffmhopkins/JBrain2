@@ -234,9 +234,7 @@ def _value_attested(value_json: dict | None, haystack: str) -> bool:
     return False
 
 
-def recover_dropped_fields(
-    intent: IntegrationIntent, extraction: Extraction
-) -> IntegrationIntent:
+def recover_dropped_fields(intent: IntegrationIntent, extraction: Extraction) -> IntegrationIntent:
     """Backfill the object AND value the integrator drops when it re-types a fact.
 
     note.extract reliably emits `object_entity_ref` (Me.children -> Eli),

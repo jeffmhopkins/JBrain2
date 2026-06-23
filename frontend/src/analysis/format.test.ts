@@ -1,15 +1,17 @@
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+// Shared with the backend (test_analysis_display.py). Imported (not read via node:fs)
+// so the test typechecks without pulling node types into this browser project; guards
+// the backend/frontend value-renderer drift a code review caught.
+import parity from "../../../testdata/value_label_parity.json";
 import type { FactOut } from "../api/client";
 import { dedupeTokens, factSpan, factValue, fmtQuantity, fmtTemporal, valueLabel } from "./format";
 
-// Shared with the backend (test_analysis_display.py) — see testdata/value_label_parity.json.
-// Guards the backend/frontend value-renderer drift a code review caught. cwd is the
-// frontend/ dir under vitest, so testdata/ sits one level up at the repo root.
-const parityCases = JSON.parse(
-  readFileSync(resolve(process.cwd(), "../testdata/value_label_parity.json"), "utf8"),
-).cases as { name: string; value_json: unknown; statement: string; expected: string }[];
+const parityCases = parity.cases as {
+  name: string;
+  value_json: unknown;
+  statement: string;
+  expected: string;
+}[];
 
 describe("value renderer parity with the backend", () => {
   for (const c of parityCases) {

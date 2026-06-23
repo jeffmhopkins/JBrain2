@@ -68,8 +68,12 @@ async def _seed_note(maker, note: dict) -> str:  # noqa: F811
                 " tz_offset_minutes) VALUES (:i, :c, :d, :b, :t, :tz)"
             ),
             {
-                "i": note_id, "c": note_id[:12], "d": domain,
-                "b": note["body"], "t": created, "tz": tz,
+                "i": note_id,
+                "c": note_id[:12],
+                "d": domain,
+                "b": note["body"],
+                "t": created,
+                "tz": tz,
             },
         )
         await s.execute(
@@ -112,26 +116,57 @@ async def _dump_report(maker, path: str) -> None:  # noqa: F811
     async with maker() as s:
         await s.execute(text("SELECT set_config('app.principal_kind','owner',true)"))
         report = {
-            "by_kind_status": rows(await s.execute(text(
-                "SELECT kind, status, count(*) n FROM app.facts GROUP BY 1,2 ORDER BY 1,2"))),
-            "relationship_linkage": rows(await s.execute(text(
-                "SELECT predicate, count(*) total, count(object_entity_id) linked,"
-                " sum((status='active')::int) active FROM app.facts WHERE kind='relationship'"
-                " GROUP BY 1 ORDER BY 2 DESC"))),
-            "pending_by_predicate": rows(await s.execute(text(
-                "SELECT predicate, kind, count(*) n FROM app.facts WHERE status='pending_review'"
-                " GROUP BY 1,2 ORDER BY 3 DESC"))),
-            "predicate_frequency": rows(await s.execute(text(
-                "SELECT predicate, count(*) n FROM app.facts GROUP BY 1 ORDER BY 2 DESC"))),
-            "review_items": rows(await s.execute(text(
-                "SELECT kind, status, count(*) n FROM app.review_items"
-                " GROUP BY 1,2 ORDER BY 3 DESC"))),
-            "duplicate_entities": rows(await s.execute(text(
-                "SELECT canonical_name, count(*) n FROM app.entities WHERE status<>'merged'"
-                " GROUP BY 1 HAVING count(*)>1 ORDER BY 2 DESC"))),
-            "entities": rows(await s.execute(text(
-                "SELECT canonical_name, kind FROM app.entities"
-                " WHERE status<>'merged' ORDER BY 1"))),
+            "by_kind_status": rows(
+                await s.execute(
+                    text("SELECT kind, status, count(*) n FROM app.facts GROUP BY 1,2 ORDER BY 1,2")
+                )
+            ),
+            "relationship_linkage": rows(
+                await s.execute(
+                    text(
+                        "SELECT predicate, count(*) total, count(object_entity_id) linked,"
+                        " sum((status='active')::int) active FROM app.facts"
+                        " WHERE kind='relationship' GROUP BY 1 ORDER BY 2 DESC"
+                    )
+                )
+            ),
+            "pending_by_predicate": rows(
+                await s.execute(
+                    text(
+                        "SELECT predicate, kind, count(*) n FROM app.facts"
+                        " WHERE status='pending_review' GROUP BY 1,2 ORDER BY 3 DESC"
+                    )
+                )
+            ),
+            "predicate_frequency": rows(
+                await s.execute(
+                    text("SELECT predicate, count(*) n FROM app.facts GROUP BY 1 ORDER BY 2 DESC")
+                )
+            ),
+            "review_items": rows(
+                await s.execute(
+                    text(
+                        "SELECT kind, status, count(*) n FROM app.review_items"
+                        " GROUP BY 1,2 ORDER BY 3 DESC"
+                    )
+                )
+            ),
+            "duplicate_entities": rows(
+                await s.execute(
+                    text(
+                        "SELECT canonical_name, count(*) n FROM app.entities WHERE status<>'merged'"
+                        " GROUP BY 1 HAVING count(*)>1 ORDER BY 2 DESC"
+                    )
+                )
+            ),
+            "entities": rows(
+                await s.execute(
+                    text(
+                        "SELECT canonical_name, kind FROM app.entities"
+                        " WHERE status<>'merged' ORDER BY 1"
+                    )
+                )
+            ),
         }
     Path(path).write_text(_json.dumps(report, indent=1, default=str))  # noqa: ASYNC240  (one-time)
 
@@ -208,8 +243,10 @@ async def test_persona_year_builds_the_entity_graph(maker) -> None:  # noqa: F81
     health_facts = [f for f in facts if f.domain_code == "health"]
 
     print(f"\n=== GRAPH after {fed} notes ===")
-    print(f"entities: {len(ents)} | facts: {len(facts)} | superseded: {len(superseded)} |"
-          f" review items: {len(reviews)} | health-domain facts: {len(health_facts)}")
+    print(
+        f"entities: {len(ents)} | facts: {len(facts)} | superseded: {len(superseded)} |"
+        f" review items: {len(reviews)} | health-domain facts: {len(health_facts)}"
+    )
     print("entities:", ", ".join(f"{e.canonical_name}({e.kind})" for e in ents))
 
     # Robust accumulation invariants (a non-deterministic model run, so assert
