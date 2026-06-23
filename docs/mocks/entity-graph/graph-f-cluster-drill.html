@@ -1,0 +1,231 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Entity graph — F — Cluster Drill (mobile-first)</title>
+<style>
+  :root{
+    --bg:#0E0F11;--surface:#17181B;--surface-2:#1E2024;--border:#26282C;
+    --text:#E6E7E9;--text-2:#9A9DA3;--text-3:#5C5F66;--shadow:rgba(0,0,0,.45);--scrim:rgba(14,15,17,.6);
+    --steel:#7FA7C9;--green:#8FBC9A;--amber:#C9A36A;--rose:#CF8A8F;--violet:#A493C9;
+    --periwinkle:#8F9FD0;--sage:#A8BD7E;--terracotta:#D0917F;--teal:#6FB6B1;--orchid:#C98AB4;--slate:#9AA0A8;
+  }
+  [data-theme="light"]{
+    --bg:#F7F7F5;--surface:#FFFFFF;--surface-2:#F0F0EE;--border:#E2E2DF;
+    --text:#1A1B1E;--text-2:#5C5F66;--text-3:#9A9DA3;--shadow:rgba(20,30,50,.12);--scrim:rgba(247,247,245,.6);
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  body{margin:0;background:#05070a;font:15px/1.5 system-ui,-apple-system,sans-serif;display:grid;place-items:center;min-height:100vh;color:var(--text);gap:14px;padding:24px 0}
+  .cap{color:#8b9099;font-size:12.5px;max-width:390px;text-align:center;padding:0 12px}
+  .cap b{color:#cfd3d9;font-weight:600}
+  .phone{width:390px;height:800px;background:var(--bg);border-radius:30px;overflow:hidden;position:relative;box-shadow:0 20px 60px var(--shadow);display:flex;flex-direction:column}
+  .topbar{height:56px;flex:0 0 56px;display:flex;align-items:center;gap:9px;padding:0 14px;border-bottom:1px solid var(--border);background:var(--surface);z-index:6}
+  .topbar .chev{width:44px;height:44px;display:grid;place-items:center;border-radius:10px;color:var(--text-2);background:transparent;border:0;cursor:pointer;margin-left:-8px}
+  .ttl{flex:1;font-size:17px;font-weight:600}
+  .icon-btn{width:44px;height:44px;display:grid;place-items:center;border-radius:10px;color:var(--text-2);background:transparent;border:0;cursor:pointer}
+  svg.i{width:21px;height:21px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+  .modebar{display:flex;align-items:center;gap:10px;padding:8px 12px;border-bottom:1px solid var(--border);background:var(--surface);z-index:5}
+  .modebar .lab{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--text-3)}
+  .seg{display:flex;background:var(--surface-2);border-radius:12px;padding:3px;flex:1}
+  .seg button{flex:1;border:0;background:transparent;color:var(--text-2);font-size:14px;height:38px;border-radius:9px;cursor:pointer;font-weight:500}
+  .seg button.on{background:var(--steel);color:#0c1014}
+  .crumbs{display:flex;align-items:center;gap:4px;padding:8px 12px;background:var(--bg);border-bottom:1px solid var(--border);z-index:4}
+  .crumb{font-size:13px;color:var(--text-2);background:var(--surface-2);border:1px solid var(--border);border-radius:999px;padding:7px 13px;cursor:pointer;min-height:36px;display:flex;align-items:center}
+  .crumb.cur{color:var(--text);border-color:color-mix(in srgb,var(--steel) 50%,var(--border))}
+  .crumbsep{color:var(--text-3)}
+  .stage{position:relative;flex:1;overflow:hidden;touch-action:none}
+  #svg{width:100%;height:100%;display:block}
+  .bub{cursor:pointer}
+  .bub .ring{stroke-width:1.5;transition:opacity .2s}
+  .bub .cnt{text-anchor:middle;font-weight:700;paint-order:stroke;stroke:var(--bg);stroke-width:4px}
+  .bub .lab{text-anchor:middle;font-size:12px;font-weight:600;paint-order:stroke;stroke:var(--bg);stroke-width:4px}
+  .mnode{cursor:pointer}
+  .hit{fill:transparent}
+  .disc{stroke-width:2}
+  .glyph path,.glyph circle,.glyph rect{fill:none;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
+  .nlbl{text-anchor:middle;paint-order:stroke;stroke:var(--bg);stroke-width:3.5px;fill:var(--text-2);font-weight:500}
+  .hint{position:absolute;left:50%;bottom:10px;transform:translateX(-50%);font-size:11px;color:var(--text-3);background:color-mix(in srgb,var(--surface) 85%,transparent);border:1px solid var(--border);border-radius:999px;padding:4px 11px;pointer-events:none}
+  .countpill{position:absolute;left:12px;top:10px;font-size:11px;color:var(--text-3);background:color-mix(in srgb,var(--surface) 85%,transparent);border:1px solid var(--border);border-radius:999px;padding:4px 10px}
+  /* member overflow / detail sheet */
+  .scrim{position:absolute;inset:0;background:var(--scrim);opacity:0;pointer-events:none;transition:opacity .15s;z-index:8}
+  .scrim.on{opacity:1;pointer-events:auto}
+  .sheet{position:absolute;left:0;right:0;bottom:0;background:var(--surface);border-radius:18px 18px 0 0;border-top:1px solid var(--border);box-shadow:0 -10px 30px var(--shadow);transform:translateY(110%);transition:transform .2s cubic-bezier(.2,.8,.2,1);z-index:9;max-height:74%;display:flex;flex-direction:column}
+  .sheet.on{transform:translateY(0)}
+  .handle{width:36px;height:4px;border-radius:999px;background:var(--text-3);margin:9px auto 4px}
+  .shead{display:flex;align-items:center;gap:11px;padding:4px 16px 12px}
+  .shead .sd{width:46px;height:46px;border-radius:50%;display:grid;place-items:center;flex:0 0 46px}
+  .shead .sd svg{width:24px;height:24px;stroke:currentColor;fill:none;stroke-width:1.7}
+  .shead .stt{font-size:18px;font-weight:600}
+  .shead .smeta{font-size:12px;color:var(--text-3)}
+  .sbody{overflow-y:auto;padding:0 12px 8px}
+  .mrow{display:flex;align-items:center;gap:11px;min-height:52px;padding:6px 4px;border-bottom:1px solid var(--border);cursor:pointer}
+  .mrow:last-child{border-bottom:0}
+  .mrow .md{width:34px;height:34px;border-radius:50%;display:grid;place-items:center;flex:0 0 34px}
+  .mrow .md svg{width:18px;height:18px;stroke:currentColor;fill:none;stroke-width:1.7}
+  .mrow .mn{flex:1;font-size:15px;font-weight:500}
+  .mrow .mk{font-size:11.5px;color:var(--text-3)}
+  .sfoot{padding:10px 16px calc(14px + env(safe-area-inset-bottom));border-top:1px solid var(--border)}
+  .sfoot button{width:100%;height:48px;border-radius:12px;font-weight:600;font-size:15px;cursor:pointer;border:0;background:rgba(127,167,201,.13);color:var(--steel)}
+</style>
+</head>
+<body>
+<div class="cap"><b>F — Cluster Drill (mobile-first).</b> Semantic zoom for large graphs: the phone <b>never shows 240 raw nodes</b>. It opens on a handful of <b>community bubbles</b> (by type or domain, sized by count). <b>Tap a bubble to expand its members</b> into tappable discs; tap a member for its detail sheet; the breadcrumb collapses back. Switch grouping with the segmented control. Big targets, tap-only.</div>
+<div class="phone">
+  <div class="topbar">
+    <button class="chev"><svg class="i" viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6"/></svg></button>
+    <div class="ttl">Graph</div>
+    <button class="icon-btn" id="theme"><svg class="i" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4.5"/><path d="M12 2v2M12 20v2M4 12H2M22 12h-2M5 5l1.5 1.5M17.5 17.5L19 19M19 5l-1.5 1.5M6.5 17.5L5 19"/></svg></button>
+  </div>
+  <div class="modebar"><span class="lab">Group</span><div class="seg" id="seg"><button data-g="kind" class="on">Type</button><button data-g="domain">Domain</button></div></div>
+  <div class="crumbs" id="crumbs"></div>
+  <div class="stage" id="stage">
+    <svg id="svg"><g id="bubbles"></g><g id="members"></g></svg>
+    <div class="countpill" id="countpill"></div>
+    <div class="hint" id="hint">tap a community to open it</div>
+  </div>
+  <div class="scrim" id="scrim"></div>
+  <div class="sheet" id="sheet">
+    <div class="handle"></div>
+    <div class="shead"><div class="sd" id="sd"></div><div style="flex:1"><div class="stt" id="stt"></div><div class="smeta" id="smeta"></div></div></div>
+    <div class="sbody" id="sbody"></div>
+    <div class="sfoot"><button id="explore">Explore connections →</button></div>
+  </div>
+</div>
+<script>
+document.getElementById('theme').onclick=()=>{const h=document.documentElement;h.dataset.theme=h.dataset.theme==='dark'?'light':'dark';draw();};
+const TYPE={Person:'--steel',Organization:'--violet',Place:'--green',Event:'--amber',Product:'--periwinkle',Animal:'--sage',MedicalCondition:'--terracotta',Drug:'--orchid',CreativeWork:'--rose',Thing:'--slate'};
+const DOMC={general:'--steel',medical:'--rose',financial:'--violet',location:'--teal'};
+const ICON={Person:'<circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 3.6-7 8-7s8 3 8 7"/>',Organization:'<path d="M3 21h18M5 21V7l7-4 7 4v14M9 21v-5h6v5"/>',Place:'<path d="M12 21s-7-5.5-7-11a7 7 0 0114 0c0 5.5-7 11-7 11z"/><circle cx="12" cy="10" r="2.5"/>',Event:'<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 9h18M8 3v4M16 3v4"/>',Animal:'<path d="M4 11a3 3 0 116 0 5 5 0 005 5 3 3 0 11-6 0 5 5 0 00-5-5z"/>',MedicalCondition:'<path d="M12 21s-7-4.5-7-10a4 4 0 017-2 4 4 0 017 2c0 5.5-7 10-7 10z"/>',Drug:'<rect x="3" y="9" width="18" height="6" rx="3" transform="rotate(45 12 12)"/>',Product:'<path d="M3 7l9-4 9 4-9 4-9-4z"/><path d="M3 7v10l9 4 9-4V7"/>',CreativeWork:'<path d="M5 4a1 1 0 011-1h8l5 5v11a1 1 0 01-1 1H6a1 1 0 01-1-1z"/><path d="M14 3v5h5"/>',Thing:'<circle cx="12" cy="12" r="8"/>'};
+const GLBL={Person:'People',Organization:'Orgs',Place:'Places',Event:'Events',Product:'Products',Animal:'Animals',MedicalCondition:'Conditions',Drug:'Drugs',CreativeWork:'Media',Thing:'Things',general:'General',medical:'Medical',financial:'Financial',location:'Location'};
+let _seed=20260623;function rnd(){_seed=(_seed*1664525+1013904223)>>>0;return _seed/4294967296;}
+function pk(a){return a[Math.floor(rnd()*a.length)];}function chance(p){return rnd()<p;}
+const FN=['Celine','Priya','Marcus','Elena','Tom','Nina','Raj','Sofia','Liam','Maya','Omar','Grace','Dmitri','Aisha','Ben','Clara','Hugo','Lena','Sam','Tara','Noah','Iris','Felix','Zoe','Arjun','Mira','Leo','Ava','Kai','Ruth','Dev','Nora'];
+const LN=['Hopkins','Nair','Vance','Ortiz','Reed','Cho','Mehta','Park','Frost','Quinn','Adler','Bose','Hale','Diaz','Yang','Kerr'];
+const ORGN=['Globex','Initech','Umbra Labs','Northwind','Acme Co','Hooli','Vandelay','Cyberdyne','Stark Mfg','Tyrell','Wonka Ind'];
+const PLACEN=['Denver','Brookline','Boston','Cambridge','Austin','Portland','Riverside','Oakwood','Hillcrest','Fairview','Midtown','Bayshore','Cedar Falls','Glenwood'];
+const CONDN=['Hypertension','Asthma','Migraine','Type 2 Diabetes','Eczema','Insomnia','Anemia'];
+const DRUGN=['Lisinopril','Albuterol','Sumatriptan','Metformin','Omeprazole','Melatonin','Atorvastatin'];
+const EVTN=['Boston Marathon','Wedding','Reunion 2025','Q3 Offsite','Charity 10K','DevConf','Housewarming','Recital'];
+const PRODN=['Sea kayak','Trek bike','Espresso machine','Standing desk','DSLR','Mountain tent','Drone','e-Reader'];
+const FINN=['Roth IRA','Brokerage','529 Plan','HSA','Index fund','Pension'];
+const WORKN=['Atlas paper','Onboarding doc','Design spec','Patent filing','Podcast ep','Photo series'];
+const ANIN=['Rex','Maple','Biscuit','Shadow'];
+function genGraph(TARGET){
+  const N=[],E=[],byId={};let _id=0;
+  const add=(kind,name,dom)=>{const id=kind.slice(0,2).toLowerCase()+(_id++);const n={id,name,kind,dom};N.push(n);byId[id]=n;return n;};
+  const link=(a,b,p)=>{if(a&&b&&a.id!==b.id)E.push([a.id,b.id,p]);};
+  const me=add('Person','Me','general');delete byId[me.id];me.id='me';byId.me=me;
+  const fam=[];for(let i=0;i<12;i++){const f=add('Person',pk(FN)+' '+pk(LN),'general');fam.push(f);link(me,f,pk(['spouse','parent','sibling','child','cousin']));}
+  for(let i=0;i<10;i++)link(pk(fam),pk(fam),'relative');
+  const placePool=[];const place=dom=>{const p=add('Place',pk(PLACEN),dom||'location');placePool.push(p);return p;};
+  const orgs=[];for(let k=0;k<8;k++){const o=add('Organization',pk(ORGN),'general');orgs.push(o);const hq=place('location');link(o,hq,'locatedAt');
+    const staff=[];const cnt=5+Math.floor(rnd()*8);for(let i=0;i<cnt;i++){const s=add('Person',pk(FN)+' '+pk(LN),'general');staff.push(s);link(s,o,'worksFor');}
+    for(let i=0;i<cnt;i++)link(pk(staff),pk(staff),'colleague');for(let i=0;i<3;i++){const w=add('CreativeWork',pk(WORKN),'general');link(pk(staff),w,'authored');link(w,o,'forOrg');}}
+  link(me,orgs[0],'worksFor');
+  const friends=[];for(let i=0;i<16;i++){const fr=add('Person',pk(FN)+' '+pk(LN),'general');friends.push(fr);link(me,fr,'friend');if(chance(.5))link(fr,pk(orgs),'worksFor');}
+  for(let i=0;i<16;i++)link(pk(friends),pk(friends),'friend');
+  const hosp=add('Organization','Mass General','medical'),hosp2=add('Organization','City Clinic','medical');
+  const docs=[];for(let i=0;i<6;i++){const d=add('Person','Dr. '+pk(LN),'medical');docs.push(d);link(d,chance(.5)?hosp:hosp2,'worksAt');}
+  link(me,pk(docs),'physician');
+  const conds=CONDN.map(c=>add('MedicalCondition',c,'medical'));const drugs=DRUGN.map(c=>add('Drug',c,'medical'));
+  conds.forEach((c,i)=>{link(me,c,'diagnosed');link(c,drugs[i],'treatedWith');link(pk(docs),c,'treats');});
+  const fin=add('Organization','Fidelity','financial');FINN.forEach(p=>{const a=add('Product',p,'financial');link(me,a,'holds');link(a,fin,'custodian');});
+  for(let i=0;i<2;i++){const adv=add('Person',pk(FN)+' '+pk(LN),'financial');link(me,adv,'advisor');link(adv,fin,'worksFor');}
+  EVTN.forEach(e=>{const ev=add('Event',e,'general');link(me,ev,chance(.5)?'attended':'organized');link(ev,pk(placePool),'heldIn');for(let i=0;i<3;i++)link(pk(friends.concat(fam)),ev,'attended');});
+  PRODN.forEach(p=>{const pr=add('Product',p,'general');if(chance(.6))link(me,pr,'owns');else link(pk(friends),pr,'owns');});
+  ANIN.forEach(a=>{const an=add('Animal',a,'general');link(chance(.6)?me:pk(fam),an,'owns');});
+  for(let i=0;i<12;i++){const p=place('location');link(pk(friends.concat(fam)),p,'residence');}
+  const KINDS=[['Person','general'],['Place','location'],['Product','general'],['Organization','general'],['CreativeWork','general'],['Event','general']];
+  while(N.length<TARGET){const [k,d]=pk(KINDS);const nm=k==='Person'?pk(FN)+' '+pk(LN):k==='Place'?pk(PLACEN):k==='Organization'?pk(ORGN):k==='Event'?pk(EVTN):k==='CreativeWork'?pk(WORKN):pk(PRODN);
+    const n=add(k,nm,d);const host=N[1+Math.floor(rnd()*(N.length-2))];link(n,host,'related');}
+  return {N,E,byId};
+}
+const {N,E,byId}=genGraph(240);
+const deg={};N.forEach(n=>deg[n.id]=0);E.forEach(([a,b])=>{deg[a]++;deg[b]++});
+document.getElementById('countpill').textContent=`${N.length} entities · ${E.length} links`;
+
+let groupBy='kind',open=null;
+const groupKey=n=>groupBy==='kind'?n.kind:n.dom;
+const groupColor=k=>groupBy==='kind'?TYPE[k]:DOMC[k];
+const svg=document.getElementById('svg'),bubblesG=document.getElementById('bubbles'),membersG=document.getElementById('members'),stage=document.getElementById('stage');
+function groups(){const g={};for(const n of N)(g[groupKey(n)]??=[]).push(n);return g;}
+
+function bubbleLayout(g){const w=stage.clientWidth||390,h=stage.clientHeight||440;const keys=Object.keys(g).sort((a,b)=>g[b].length-g[a].length);
+  const maxN=Math.max(...keys.map(k=>g[k].length));const B=keys.map(k=>({k,n:g[k].length,r:26+Math.sqrt(g[k].length/maxN)*48}));
+  // seed on a spiral, then settle with bounded repulsion so they don't overlap
+  B.forEach((b,i)=>{const a=i*2.399,rr=22*Math.sqrt(i);b.x=w/2+Math.cos(a)*rr;b.y=h/2+Math.sin(a)*rr;});
+  for(let it=0;it<260;it++){for(let i=0;i<B.length;i++)for(let j=i+1;j<B.length;j++){const a=B[i],b=B[j];let dx=a.x-b.x,dy=a.y-b.y,d=Math.hypot(dx,dy)||1;const min=a.r+b.r+18;if(d<min){const push=(min-d)/d*0.5;a.x+=dx*push;a.y+=dy*push;b.x-=dx*push;b.y-=dy*push;}}
+    for(const b of B){b.x+=(w/2-b.x)*0.04;b.y+=(h/2-b.y)*0.04;b.x=Math.max(b.r+6,Math.min(w-b.r-6,b.x));b.y=Math.max(b.r+6,Math.min(h-b.r-6,b.y));}}
+  return B;
+}
+function memberLayout(members){const w=stage.clientWidth||390,h=stage.clientHeight||440;const cx=w/2,cy=h*0.42;
+  const cap=Math.min(members.length,18);const out=[];const rings=cap>9?2:1;
+  for(let i=0;i<cap;i++){const ringIdx=rings===2?(i<8?0:1):0;const inRing=rings===2?(ringIdx===0?8:cap-8):cap;const idx=rings===2?(ringIdx===0?i:i-8):i;
+    const R=rings===2?(ringIdx===0?96:168):120;const a=-Math.PI/2+idx/inRing*Math.PI*2;out.push({n:members[i],x:cx+Math.cos(a)*R,y:cy+Math.sin(a)*R});}
+  return {cx,cy,out,overflow:members.length-cap};
+}
+
+function draw(){
+  bubblesG.innerHTML='';membersG.innerHTML='';const g=groups();
+  if(!open){
+    document.getElementById('hint').textContent='tap a community to open it';
+    const B=bubbleLayout(g);
+    for(const b of B){const grp=document.createElementNS('http://www.w3.org/2000/svg','g');grp.setAttribute('class','bub');grp.dataset.k=b.k;
+      const c=document.createElementNS('http://www.w3.org/2000/svg','circle');c.setAttribute('class','ring');c.setAttribute('cx',b.x);c.setAttribute('cy',b.y);c.setAttribute('r',b.r);
+      c.setAttribute('fill',`color-mix(in srgb,var(${groupColor(b.k)}) 13%,var(--surface))`);c.setAttribute('stroke',`color-mix(in srgb,var(${groupColor(b.k)}) 50%,var(--bg))`);grp.appendChild(c);
+      const cnt=document.createElementNS('http://www.w3.org/2000/svg','text');cnt.setAttribute('class','cnt');cnt.setAttribute('x',b.x);cnt.setAttribute('y',b.y+2);cnt.setAttribute('font-size',Math.min(30,b.r*0.7));cnt.setAttribute('fill',`var(${groupColor(b.k)})`);cnt.textContent=b.n;grp.appendChild(cnt);
+      const lab=document.createElementNS('http://www.w3.org/2000/svg','text');lab.setAttribute('class','lab');lab.setAttribute('x',b.x);lab.setAttribute('y',b.y+b.r+16);lab.setAttribute('fill','var(--text)');lab.textContent=GLBL[b.k]||b.k;grp.appendChild(lab);
+      bubblesG.appendChild(grp);}
+  } else {
+    document.getElementById('hint').textContent='tap a member · tap a crumb to go back';
+    const members=g[open].slice().sort((a,b)=>deg[b.id]-deg[a.id]);const {cx,cy,out,overflow}=memberLayout(members);
+    // central cluster marker
+    const cg=document.createElementNS('http://www.w3.org/2000/svg','g');
+    const cc=document.createElementNS('http://www.w3.org/2000/svg','circle');cc.setAttribute('cx',cx);cc.setAttribute('cy',cy);cc.setAttribute('r',30);cc.setAttribute('fill',`color-mix(in srgb,var(${groupColor(open)}) 18%,var(--surface))`);cc.setAttribute('stroke',`var(${groupColor(open)})`);cc.setAttribute('stroke-width',2);cg.appendChild(cc);
+    const ct=document.createElementNS('http://www.w3.org/2000/svg','text');ct.setAttribute('text-anchor','middle');ct.setAttribute('x',cx);ct.setAttribute('y',cy+2);ct.setAttribute('font-size',22);ct.setAttribute('font-weight',700);ct.setAttribute('fill',`var(${groupColor(open)})`);ct.setAttribute('paint-order','stroke');ct.setAttribute('stroke','var(--bg)');ct.setAttribute('stroke-width',4);ct.textContent=members.length;cg.appendChild(ct);
+    membersG.appendChild(cg);
+    for(const m of out){const n=m.n;const grp=document.createElementNS('http://www.w3.org/2000/svg','g');grp.setAttribute('class','mnode');grp.dataset.id=n.id;
+      const ln=document.createElementNS('http://www.w3.org/2000/svg','line');ln.setAttribute('x1',cx);ln.setAttribute('y1',cy);ln.setAttribute('x2',m.x);ln.setAttribute('y2',m.y);ln.setAttribute('stroke','var(--border)');ln.setAttribute('stroke-width',1.2);membersG.insertBefore(ln,membersG.firstChild);
+      const hit=document.createElementNS('http://www.w3.org/2000/svg','circle');hit.setAttribute('class','hit');hit.setAttribute('cx',m.x);hit.setAttribute('cy',m.y);hit.setAttribute('r',26);grp.appendChild(hit);
+      const disc=document.createElementNS('http://www.w3.org/2000/svg','circle');disc.setAttribute('class','disc');disc.setAttribute('cx',m.x);disc.setAttribute('cy',m.y);disc.setAttribute('r',21);disc.setAttribute('fill',`color-mix(in srgb,var(${TYPE[n.kind]}) 16%,var(--surface))`);disc.setAttribute('stroke',`color-mix(in srgb,var(${TYPE[n.kind]}) 45%,var(--bg))`);grp.appendChild(disc);
+      const gl=document.createElementNS('http://www.w3.org/2000/svg','g');gl.setAttribute('stroke',`var(${TYPE[n.kind]})`);gl.setAttribute('transform',`translate(${m.x-11.5},${m.y-11.5}) scale(${21*1.1/24})`);gl.innerHTML=ICON[n.kind]||ICON.Thing;grp.appendChild(gl);
+      const lbl=document.createElementNS('http://www.w3.org/2000/svg','text');lbl.setAttribute('class','nlbl');lbl.setAttribute('x',m.x);lbl.setAttribute('y',m.y+34);lbl.setAttribute('font-size',11);let nm=n.name;if(nm.length>13)nm=nm.slice(0,12)+'…';lbl.textContent=nm;grp.appendChild(lbl);
+      membersG.appendChild(grp);}
+    if(overflow>0){const {cx:ox}=memberLayout(members);const grp=document.createElementNS('http://www.w3.org/2000/svg','g');grp.setAttribute('class','mnode');grp.dataset.more='1';
+      const x=stage.clientWidth/2,y=cy+ (members.length>9?168:120);
+      const disc=document.createElementNS('http://www.w3.org/2000/svg','circle');disc.setAttribute('cx',x);disc.setAttribute('cy',y);disc.setAttribute('r',21);disc.setAttribute('fill','var(--surface-2)');disc.setAttribute('stroke','var(--border)');disc.setAttribute('stroke-width',2);grp.appendChild(disc);
+      const t=document.createElementNS('http://www.w3.org/2000/svg','text');t.setAttribute('text-anchor','middle');t.setAttribute('x',x);t.setAttribute('y',y+4);t.setAttribute('font-size',12);t.setAttribute('font-weight',600);t.setAttribute('fill','var(--text-2)');t.textContent=`+${overflow}`;grp.appendChild(t);
+      membersG.appendChild(grp);}
+  }
+  renderCrumbs();
+}
+bubblesG.addEventListener('click',e=>{const b=e.target.closest('.bub');if(!b)return;open=b.dataset.k;draw();});
+membersG.addEventListener('click',e=>{const m=e.target.closest('.mnode');if(!m)return;if(m.dataset.more){openList();return;}openDetail(m.dataset.id);});
+
+function renderCrumbs(){const c=document.getElementById('crumbs');c.innerHTML='';
+  const all=document.createElement('button');all.className='crumb'+(open?'':' cur');all.textContent='All communities';all.onclick=()=>{open=null;draw();};c.appendChild(all);
+  if(open){c.insertAdjacentHTML('beforeend','<span class="crumbsep">›</span>');const b=document.createElement('button');b.className='crumb cur';b.textContent=`${GLBL[open]||open} · ${groups()[open].length}`;c.appendChild(b);}}
+
+document.querySelectorAll('#seg button').forEach(b=>b.onclick=()=>{document.querySelectorAll('#seg button').forEach(x=>x.classList.remove('on'));b.classList.add('on');groupBy=b.dataset.g;open=null;draw();});
+
+// detail sheet
+const sheet=document.getElementById('sheet'),scrim=document.getElementById('scrim');
+function openDetail(id){const n=byId[id];document.getElementById('stt').textContent=n.name;document.getElementById('smeta').textContent=`${n.kind} · ${n.dom} · ${deg[id]} links`;
+  const sd=document.getElementById('sd');sd.style.background=`color-mix(in srgb,var(${TYPE[n.kind]}) 16%,transparent)`;sd.style.color=`var(${TYPE[n.kind]})`;sd.innerHTML=`<svg viewBox="0 0 24 24">${ICON[n.kind]||ICON.Thing}</svg>`;
+  const rels=[];for(const[a,b,p]of E){if(a===id)rels.push([p,byId[b]]);else if(b===id)rels.push([p,byId[a]]);}
+  document.getElementById('sbody').innerHTML=`<div style="font-size:11px;text-transform:uppercase;letter-spacing:.07em;color:var(--text-3);margin:6px 4px">${rels.length} relationships</div>`+rels.slice(0,30).map(([p,o])=>`<div class="mrow"><div class="md" style="background:color-mix(in srgb,var(${TYPE[o.kind]}) 16%,transparent);color:var(${TYPE[o.kind]})"><svg viewBox="0 0 24 24">${ICON[o.kind]||ICON.Thing}</svg></div><div class="mn">${o.name}<div class="mk" style="font-weight:400">${p}</div></div></div>`).join('');
+  sheet.classList.add('on');scrim.classList.add('on');}
+function openList(){const members=groups()[open].slice().sort((a,b)=>deg[b.id]-deg[a.id]);
+  document.getElementById('stt').textContent=`${GLBL[open]||open}`;document.getElementById('smeta').textContent=`${members.length} entities`;
+  const sd=document.getElementById('sd');sd.style.background=`color-mix(in srgb,var(${groupColor(open)}) 16%,transparent)`;sd.style.color=`var(${groupColor(open)})`;sd.innerHTML=`<svg viewBox="0 0 24 24">${ICON[open]||ICON.Thing}</svg>`;
+  document.getElementById('sbody').innerHTML=members.map(n=>`<div class="mrow" data-id="${n.id}"><div class="md" style="background:color-mix(in srgb,var(${TYPE[n.kind]}) 16%,transparent);color:var(${TYPE[n.kind]})"><svg viewBox="0 0 24 24">${ICON[n.kind]||ICON.Thing}</svg></div><div class="mn">${n.name}</div><div class="mk">${deg[n.id]}</div></div>`).join('');
+  document.getElementById('sbody').querySelectorAll('[data-id]').forEach(r=>r.onclick=()=>openDetail(r.dataset.id));
+  sheet.classList.add('on');scrim.classList.add('on');}
+function closeSheet(){sheet.classList.remove('on');scrim.classList.remove('on');}
+scrim.onclick=closeSheet;document.getElementById('explore').onclick=closeSheet;
+
+draw();
+</script>
+</body>
+</html>

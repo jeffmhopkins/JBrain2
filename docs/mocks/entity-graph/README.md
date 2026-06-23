@@ -71,6 +71,48 @@ lights a node's links.
 and how do they connect" — and surfacing the domain firewalls visually.
 *Trade-off:* the most chrome; the hull framing is overkill for a small graph.
 
+## Mobile-first round (D, E, F) — informed by UX research
+
+The first three (A–C) are desktop-grade renders but lean on **hover, wheel-zoom,
+and sub-44px chrome** — wrong for a phone-first, one-thumb system. Three UX
+research passes (mobile touch-graph patterns, mobile graph IA, and the JBrain
+design-system constraints) converged on a clear brief: **never show the whole
+hairball on a phone — open on a *local* graph; replace hover with tap-to-select
++ a bottom Sheet; give small dots invisible ≥44px hit targets; prefer
+deterministic/typed layouts over free force (no fat-finger overlap, no
+gesture-vs-physics fights); pre-settle and freeze any sim; and make search the
+front door.** D, E, F each take that brief a different way.
+
+### D — Focus + Sheet (`graph-d-focus-sheet.html`)
+The Google-Maps model. A **local graph** (focal entity + its 1-hop neighbours,
+deterministic radial, fits the region) sits up top; a **persistent draggable
+bottom sheet** lists the entity's relationships as fat tappable rows. **Tap a
+node or a row to re-centre** (breadcrumb tracks the walk); **drag the sheet
+handle** to trade graph height for detail. A search field is the front door.
+*Best default* — lowest-risk, most phone-native, scales to dense hubs (the list
+never overlaps). Pinch-zoom is a bonus, not required.
+
+### E — Orbit Deck (`graph-e-orbit-deck.html`)
+No force layout at all. A **deterministic orbit** centres the focal entity and
+arranges neighbours on one ring **grouped into type sectors** — always legible,
+never overlapping, no panning needed. Below, a **swipeable card deck** walks the
+neighbours one at a time; the active card lights its node + edge, and **Dive**
+re-orbits on it (breadcrumb tracks the path). *Best for* sequential, one-thumb
+exploration of a typed knowledge graph; the swipe-deck is the hop-by-hop spine.
+
+### F — Cluster Drill (`graph-f-cluster-drill.html`)
+Semantic zoom for large graphs — the phone **never paints 240 raw nodes**. It
+opens on a handful of **community bubbles** (group by **Type** or **Domain**,
+sized by count); **tap a bubble to expand its members** into tappable discs
+(capped, with a `+N` disc that opens the full list in a sheet); tap a member for
+its detail sheet; the breadcrumb collapses back a tier. *Best for* sense-making
+over the whole graph and seeing the domain firewalls as distinct communities —
+the only direction that gives global structure on a 390px screen.
+
+All three: tap-only (no hover), every control ≥44px, primary actions in the
+bottom half (one-thumb), bottom-Sheet detail (reuses the system's shared Sheet
+paradigm), safe-area padding, and no continuously-running physics.
+
 ## Notes for implementation
 
 - All three are reachable from the current `GraphScreen` data contract
