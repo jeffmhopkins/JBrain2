@@ -59,6 +59,9 @@ export function agentStatus(messages: TranscriptMessage[]): AgentStatus | null {
 
   if (last.streaming) {
     const running = last.tools.find((t) => t.ok === undefined);
+    // A multi-phase tool streams a live phase label ("Analyzing frame 12/30") — show
+    // that instead of the generic verb so the owner sees real progress, not a freeze.
+    if (running?.progress?.label) return { kind: "tool", label: running.progress.label };
     if (running) return toolStatus(running.name);
     if (last.text) return { kind: "answering", label: "Writing the answer" };
     return { kind: "thinking", label: "Thinking it through" };

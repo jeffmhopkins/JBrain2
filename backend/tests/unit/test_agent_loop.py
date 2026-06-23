@@ -293,10 +293,11 @@ async def collect(
 
 
 async def _progress_tool(arguments: dict, ctx: ToolContext) -> str:
-    # A tool that reports progress mid-execution (image generation's pattern).
+    # A tool that reports progress mid-execution: an image-gen step+preview tick, then
+    # a multi-phase tool's text label tick (analyze_video's pattern).
     assert ctx.emit_progress is not None
-    ctx.emit_progress(5, 20, "data:image/jpeg;base64,AAA")
-    ctx.emit_progress(20, 20, "data:image/jpeg;base64,BBB")
+    ctx.emit_progress(5, 20, "data:image/jpeg;base64,AAA", None)
+    ctx.emit_progress(0, 0, None, "Analyzing frame 12/30")
     return "rendered"
 
 
@@ -310,9 +311,9 @@ async def test_run_stream_interleaves_tool_progress_before_the_result() -> None:
     events = await collect(loop)
 
     progress = [e for e in events if isinstance(e, ToolProgressEvent)]
-    assert [(p.step, p.total, p.preview) for p in progress] == [
-        (5, 20, "data:image/jpeg;base64,AAA"),
-        (20, 20, "data:image/jpeg;base64,BBB"),
+    assert [(p.step, p.total, p.preview, p.label) for p in progress] == [
+        (5, 20, "data:image/jpeg;base64,AAA", None),
+        (0, 0, None, "Analyzing frame 12/30"),
     ]
     assert all(p.tool_call_id == "c1" for p in progress)
     # Every progress tick lands BEFORE the tool's result (it streamed while running).

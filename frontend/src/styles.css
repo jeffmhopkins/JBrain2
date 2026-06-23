@@ -8780,6 +8780,46 @@ button.small {
 .fb-shell .fb-genprev {
   margin: 4px 0 2px;
 }
+/* Live phase status for a multi-step tool (analyze_video) — replaced by its card. */
+.fb-shell .fb-toolstatus {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin: 6px 0 2px;
+  padding: 10px 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-card);
+  font-size: var(--fs-secondary);
+}
+.fb-shell .fb-toolstatus-spin {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+  border-radius: var(--r-pill);
+  border: 2px solid var(--steel-tint);
+  border-top-color: var(--steel);
+  animation: spin-rot 0.8s linear infinite;
+}
+.fb-shell .fb-toolstatus-label {
+  flex: 1;
+  min-width: 0;
+  color: var(--text);
+}
+.fb-shell .fb-toolstatus-bar {
+  flex: 0 0 64px;
+  height: 4px;
+  border-radius: var(--r-pill);
+  background: var(--surface-2);
+  overflow: hidden;
+}
+.fb-shell .fb-toolstatus-fill {
+  display: block;
+  height: 100%;
+  background: var(--steel);
+  border-radius: var(--r-pill);
+  transition: width 200ms ease-out;
+}
 .fb-shell .fb-genprev-frame {
   position: relative;
   width: 100%;

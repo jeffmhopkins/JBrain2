@@ -24,7 +24,7 @@ import structlog
 from jbrain.agent.attachments import AttachmentInfo, TurnAttachmentRepo, is_video_media_type
 from jbrain.agent.contracts import ViewPayload
 from jbrain.agent.loop import ToolContext, ToolHandler, ToolOutput
-from jbrain.ingest.video import VideoSampler, run_video_analysis
+from jbrain.ingest.video import ProgressFn, VideoSampler, run_video_analysis
 from jbrain.llm import LlmRouter
 from jbrain.llm.local_gateway import LocalGateway
 from jbrain.media import sample_frames
@@ -94,6 +94,13 @@ def build_video_handlers(
             data = await blobs.get(info.sha256)
         except FileNotFoundError:
             return "That file is no longer available."
+        # Stream each phase ("Extracting frames…", "Analyzing frame 12/30", …) into the
+        # turn as a live status the card replaces on completion. Only on the streaming
+        # path (ctx.emit_progress set); the batch path reports nothing.
+        on_progress: ProgressFn | None = None
+        sink = ctx.emit_progress
+        if sink is not None:
+            on_progress = lambda step, total, label: sink(step, total, None, label)  # noqa: E731
         try:
             result = await run_video_analysis(
                 data,
@@ -105,6 +112,7 @@ def build_video_handlers(
                 transcribe=transcribe,
                 transcribe_model=transcribe_model,
                 gateway=gateway,
+                on_progress=on_progress,
             )
         except Exception as exc:  # noqa: BLE001 - a tool error is a recoverable observation
             log.warning("analyze_video_tool_failed", error=repr(exc))

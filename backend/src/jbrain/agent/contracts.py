@@ -196,19 +196,22 @@ class ToolViewEvent(BaseModel):
 
 
 class ToolProgressEvent(BaseModel):
-    """A progress tick a still-running tool emitted mid-execution — today only image
-    generation, which streams ComfyUI's sampling progress + a sharpening preview so
-    a 3.5-min render isn't a blind wait (docs/IMAGE_GEN_LIVE_PLAN.md). `step`/`total`
-    are the sampler steps; `preview` is a small base-64 data URI the BACKEND authors
-    for the ephemeral frame (invariant #9 forbids the *model* authoring a URL — this
-    is app-authored, like the view component's <img> src). Display-only and EPHEMERAL
-    — never persisted to the transcript; the final image is the durable artifact."""
+    """A progress tick a still-running tool emitted mid-execution. Image generation
+    streams ComfyUI's sampling progress + a sharpening preview (`step`/`total` are the
+    sampler steps; `preview` is a small base-64 data URI the BACKEND authors for the
+    ephemeral frame — invariant #9 forbids the *model* authoring a URL, this is
+    app-authored, like the view component's <img> src). A multi-phase tool
+    (analyze_video) instead sets `label` to a human phase ("Extracting frames…",
+    "Analyzing frame 12/30") and may leave `total` 0. Display-only and EPHEMERAL —
+    never persisted to the transcript; the final view is the durable artifact."""
 
     type: Literal["tool_progress"] = "tool_progress"
     tool_call_id: str
     step: int
     total: int
     preview: str | None = None
+    # A human-readable phase for a multi-step tool (None for image gen's step bar).
+    label: str | None = None
 
 
 class JobEnqueuedEvent(BaseModel):

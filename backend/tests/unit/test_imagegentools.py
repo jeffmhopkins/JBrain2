@@ -136,18 +136,19 @@ def test_progress_callback_data_uris_previews_and_passes_steps() -> None:
     from jbrain.agent.loop import ToolContext
     from jbrain.db.session import SessionContext
 
-    seen: list[tuple[int, int, str | None]] = []
+    seen: list[tuple[int, int, str | None, str | None]] = []
     ctx = ToolContext(
         session=SessionContext(principal_kind="owner"),
         scopes=(),
-        emit_progress=lambda s, t, p: seen.append((s, t, p)),
+        emit_progress=lambda s, t, p, label: seen.append((s, t, p, label)),
     )
     cb = _progress_callback(ctx)
     assert cb is not None
     cb(5, 20, b"jpegbytes")
     cb(20, 20, None)
-    assert seen[0] == (5, 20, "data:image/jpeg;base64,anBlZ2J5dGVz")
-    assert seen[1] == (20, 20, None)
+    # Image gen drives the step bar with no phase label.
+    assert seen[0] == (5, 20, "data:image/jpeg;base64,anBlZ2J5dGVz", None)
+    assert seen[1] == (20, 20, None, None)
 
 
 def test_progress_callback_is_none_without_a_sink() -> None:

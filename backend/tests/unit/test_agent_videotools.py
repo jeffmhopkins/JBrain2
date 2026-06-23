@@ -184,6 +184,33 @@ async def test_reanalysis_reads_the_cache_without_re_billing() -> None:
     assert [f["t_ms"] for f in out.view.data["frames"]] == [0, 4000]
 
 
+async def test_streams_phase_progress_labels() -> None:
+    blobs, attachments = _setup()
+    frames = [SampledFrame(0, b"\xff\xd8a"), SampledFrame(4000, b"\xff\xd8b")]
+    fake = FakeLlmClient(["cap a", "cap b", "a summary"])
+    whisper = FakeTranscribe(_transcript())
+    handlers = _handlers(
+        blobs, attachments, _router(fake), transcribe=whisper, sampler=_sampler(frames)
+    )
+    ticks: list[tuple[int, int, str | None, str | None]] = []
+    ctx = ToolContext(
+        session=SessionContext(principal_kind="owner"),
+        scopes=(),
+        agent_session_id=SESSION,
+        emit_progress=lambda s, t, p, label: ticks.append((s, t, p, label)),
+    )
+    await handlers["analyze_video"]({"source_attachment_id": ATT}, ctx)
+    assert [label for *_, label in ticks] == [
+        "Extracting frames…",
+        "Analyzing frame 1/2",
+        "Analyzing frame 2/2",
+        "Transcribing audio…",
+        "Writing summary…",
+    ]
+    # The per-frame ticks carry a step/total for an optional bar.
+    assert (ticks[1][0], ticks[1][1]) == (1, 2)
+
+
 async def test_frames_only_when_no_whisper() -> None:
     blobs, attachments = _setup()
     fake = FakeLlmClient(["A single frame.", "A frames-only summary."])

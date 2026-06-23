@@ -88,6 +88,8 @@ export interface ToolProgressEvent {
   step: number;
   total: number;
   preview?: string | null;
+  /** A human phase for a multi-step tool ("Analyzing frame 12/30"); image gen omits it. */
+  label?: string | null;
 }
 export interface JobEnqueuedEvent {
   type: "job_enqueued";

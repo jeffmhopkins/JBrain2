@@ -152,6 +152,14 @@ class VideoSampler(Protocol):
     def __call__(self, video: bytes) -> list[SampledFrame]: ...
 
 
+class ProgressFn(Protocol):
+    """A phase reporter the caller passes to stream live updates into a turn: a human
+    `label` ("Extracting frames…", "Analyzing frame 12/30") plus a `step`/`total` that
+    drive an optional bar (0/0 for label-only phases). The note job passes none."""
+
+    def __call__(self, step: int, total: int, label: str) -> None: ...
+
+
 @dataclass(frozen=True)
 class VideoAnalysis:
     """The map→fuse→reduce product, before it is persisted or rendered: the reduce
@@ -175,6 +183,7 @@ async def run_video_analysis(
     transcribe: TranscribeClient | None = None,
     transcribe_model: str = "",
     gateway: LocalGateway | None = None,
+    on_progress: ProgressFn | None = None,
 ) -> VideoAnalysis | None:
     """Run map→fuse→reduce on one video's bytes (no DB, no attachment identity).
 
@@ -182,11 +191,20 @@ async def run_video_analysis(
     [mm:ss] timeline, and summarize. Frame JPEGs are stored as content-addressed
     blobs whose ids ride the timeline as `thumb_id` (no URLs — invariant #9). Returns
     None when the clip yields neither a frame nor any speech (nothing to summarize),
-    so the caller skips rather than inventing a summary from an empty timeline."""
+    so the caller skips rather than inventing a summary from an empty timeline.
+
+    `on_progress` (when given) reports each phase for a live in-turn status."""
+
+    def report(step: int, total: int, label: str) -> None:
+        if on_progress is not None:
+            on_progress(step, total, label)
+
     # MAP — sample frames (off the event loop) and caption each.
+    report(0, 0, "Extracting frames…")
     frames = await asyncio.to_thread(sampler, data)
     captioned: list[dict[str, Any]] = []
-    for frame in frames:
+    for i, frame in enumerate(frames, start=1):
+        report(i, len(frames), f"Analyzing frame {i}/{len(frames)}")
         image = LlmImage(media_type="image/jpeg", data=base64.b64encode(frame.jpeg).decode("ascii"))
         caption = await router.complete(
             FRAME_CAPTION_TASK,
@@ -201,6 +219,8 @@ async def run_video_analysis(
         )
 
     # MAP — transcribe the audio track (best-effort; absent when whisper is off).
+    if transcribe is not None:
+        report(0, 0, "Transcribing audio…")
     transcript = await _transcribe_audio(
         transcribe, gateway, transcribe_model, data, filename=filename, media_type=media_type
     )
@@ -208,6 +228,7 @@ async def run_video_analysis(
         return None
 
     # FUSE + REDUCE — one timeline, one summary.
+    report(0, 0, "Writing summary…")
     words = list(transcript["words"]) if transcript else []
     timeline = build_timeline(captioned, words)
     summary = await router.complete(

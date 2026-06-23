@@ -42,6 +42,22 @@ describe("agentStatus", () => {
     expect(s).toEqual({ kind: "tool", label: "Searching", emphasis: "your notes" });
   });
 
+  it("shows a multi-phase tool's live phase label instead of the generic verb", () => {
+    const s = agentStatus([
+      USER,
+      asst({
+        tools: [
+          {
+            id: "c1",
+            name: "analyze_video",
+            progress: { step: 12, total: 30, label: "Analyzing frame 12/30" },
+          },
+        ],
+      }),
+    ]);
+    expect(s).toEqual({ kind: "tool", label: "Analyzing frame 12/30" });
+  });
+
   it("maps a connector lookup_* tool to its subject", () => {
     const s = agentStatus([USER, asst({ tools: [{ id: "c1", name: "lookup_medication" }] })]);
     expect(s).toEqual({ kind: "tool", label: "Checking", emphasis: "medication" });
