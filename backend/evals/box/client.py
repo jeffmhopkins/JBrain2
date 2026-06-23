@@ -51,12 +51,24 @@ class DebugRouter:
     """Drop-in for the scorers' `router`: routes `.complete` to the box via the
     debug async-job API. One job at a time (single-GPU serial)."""
 
-    def __init__(self, *, max_wait: float = 600.0, poll: float = 5.0) -> None:
+    def __init__(
+        self, *, model: str = "gpt-oss-120b", max_wait: float = 600.0, poll: float = 5.0
+    ) -> None:
         self._base, key = decode_token()
         self._headers = {"Authorization": f"Bearer {key}"}
+        self._model = model
         self._max_wait = max_wait
         self._poll = poll
         self._client = httpx.AsyncClient(timeout=120)
+
+    # The pipeline probes routability (spec) and stamps provenance (effective_spec)
+    # besides calling complete; the box routes by task server-side, so a fixed
+    # (local, model) is the honest answer here and keeps the disambiguate layer live.
+    def spec(self, task: str, strength: str | None = None) -> tuple[str, str]:
+        return ("local", self._model)
+
+    async def effective_spec(self, task: str, strength: str | None = None) -> tuple[str, str]:
+        return ("local", self._model)
 
     async def complete(
         self,
