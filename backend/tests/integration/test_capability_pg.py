@@ -115,8 +115,13 @@ async def test_read_only_transaction_allows_reads_blocks_writes(maker: async_ses
 
 def _request(maker: async_sessionmaker) -> SimpleNamespace:
     """A minimal stand-in for the FastAPI Request the debug SQL route reads
-    app.state off of — enough to drive run_sql directly against real Postgres."""
-    return SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(session_maker=maker)))
+    app.state off of — enough to drive run_sql directly against real Postgres. The
+    `state` namespace is where the route stashes its activity-feed detail (the real
+    Request always has one; this stub supplies it)."""
+    return SimpleNamespace(
+        app=SimpleNamespace(state=SimpleNamespace(session_maker=maker)),
+        state=SimpleNamespace(),
+    )
 
 
 async def test_run_sql_route_reads_and_coerces_types(maker: async_sessionmaker) -> None:
