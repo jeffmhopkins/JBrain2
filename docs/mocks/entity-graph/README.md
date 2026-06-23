@@ -113,6 +113,13 @@ All three: tap-only (no hover), every control ≥44px, primary actions in the
 bottom half (one-thumb), bottom-Sheet detail (reuses the system's shared Sheet
 paradigm), safe-area padding, and no continuously-running physics.
 
+**D · 2-hop variant (`graph-d-focus-sheet-2hop.html`)** — D with a deeper local
+graph: focal at centre, 1-hop neighbours on the inner ring, their neighbours
+(2-hop) clustered just outside each parent. A bottom-left **1 / 2 hops** toggle
+switches depth; pinch-zoom and a draggable sheet handle the extra density. The
+sheet still lists the *centred* entity's direct relationships. ("Me" shows ~11
+nodes at 1 hop, ~19 at 2 hops.)
+
 ## Notes for implementation
 
 - All three are reachable from the current `GraphScreen` data contract
