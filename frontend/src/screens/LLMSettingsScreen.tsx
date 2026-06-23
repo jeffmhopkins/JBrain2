@@ -28,16 +28,23 @@ interface GroupDef {
 // which work is heavy: note.extract/integrate.note/agent.turn are `high`,
 // entity.disambiguate/session.title are `low`. fact.adjudicate &
 // correction_note.extract have no prompt yet — placed by their design intent
-// (docs/ANALYSIS.md: adjudicate=cheap, correction=strong). A task the API
-// returns outside these defs lands in a synthesized "Other" group, so new
-// routable tasks are never silently dropped.
+// (docs/ANALYSIS.md: adjudicate=cheap, correction=strong). video.summarize is the
+// analyze_video reduce step — owner-placed in high-stakes for a richer summary,
+// though its prompt is `low`. A task the API returns outside these defs lands in a
+// synthesized "Other" group, so new routable tasks are never silently dropped.
 const GROUP_DEFS: GroupDef[] = [
   {
     key: "high",
     accent: "high",
     name: "High-stakes reasoning",
     desc: "The hard judgment calls — worth deeper thinking.",
-    taskIds: ["agent.turn", "integrate.note", "note.extract", "correction_note.extract"],
+    taskIds: [
+      "agent.turn",
+      "integrate.note",
+      "note.extract",
+      "correction_note.extract",
+      "video.summarize",
+    ],
   },
   {
     key: "light",
