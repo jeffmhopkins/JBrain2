@@ -3,11 +3,12 @@ commands **as they happen** — including ones an external assistant runs over c
 not just the ones typed in that browser tab.
 
 Every `/api/debug/*` request is recorded here by a middleware (main.py) with its
-method, path, status, and a derived `kind`; the console polls `GET /api/debug/
-activity?after=<seq>` for new entries. It is deliberately bodiless: only the verb,
-route, and outcome are kept (never the SQL text or prompt), so the feed itself
-carries no personal data beyond what a route path implies. The ring is process-
-local and best-effort — it is a live view, not an audit log.
+method, path, status, a derived `kind`, and a short `detail` — the SQL text, the
+prompt, the routing change — that the handler stashes on `request.state` so the
+owner can see WHAT ran, not just the route. The detail is truncated; this surface
+is owner-token-gated, and the owner already has full read, so showing their own
+commands back to them is intentional. The ring is process-local and best-effort —
+a live view, not an audit log.
 """
 
 import datetime as dt
@@ -15,6 +16,7 @@ from collections import deque
 from typing import Any
 
 _RING = 200
+_DETAIL_MAX = 300
 
 
 def classify(method: str, path: str) -> str:
@@ -36,7 +38,8 @@ class DebugActivity:
         self._events: deque[dict[str, Any]] = deque(maxlen=maxlen)
         self._seq = 0
 
-    def record(self, *, method: str, path: str, status: int, client: str) -> None:
+    def record(self, *, method: str, path: str, status: int, client: str, detail: str = "") -> None:
+        clipped = detail if len(detail) <= _DETAIL_MAX else detail[:_DETAIL_MAX] + "…"
         self._seq += 1
         self._events.append(
             {
@@ -46,6 +49,7 @@ class DebugActivity:
                 "path": path,
                 "status": status,
                 "kind": classify(method, path),
+                "detail": clipped,
                 "client": client,
             }
         )

@@ -19,12 +19,14 @@ def test_classify_maps_each_route_to_a_label() -> None:
 def test_ring_records_and_snapshots_incrementally() -> None:
     a = DebugActivity(maxlen=3)
     a.record(method="GET", path="/api/debug/whoami", status=200, client="c1")
-    a.record(method="POST", path="/api/debug/sql", status=200, client="")
+    a.record(method="POST", path="/api/debug/sql", status=200, client="", detail="select 1")
 
     snap = a.snapshot()
     assert [e["seq"] for e in snap["events"]] == [1, 2]
     assert snap["last"] == 2
     assert snap["events"][0]["kind"] == "whoami" and snap["events"][0]["client"] == "c1"
+    # The command detail (SQL/prompt) rides along so the console shows what ran.
+    assert snap["events"][1]["detail"] == "select 1" and snap["events"][0]["detail"] == ""
 
     # `after` returns only newer events — the console's incremental poll.
     assert [e["seq"] for e in a.snapshot(after=1)["events"]] == [2]
@@ -35,3 +37,10 @@ def test_ring_records_and_snapshots_incrementally() -> None:
     a.record(method="PUT", path="/api/debug/llm", status=200, client="")
     assert [e["seq"] for e in a.snapshot()["events"]] == [2, 3, 4]
     assert a.snapshot()["last"] == 4
+
+
+def test_detail_is_truncated() -> None:
+    a = DebugActivity()
+    a.record(method="POST", path="/api/debug/sql", status=200, client="", detail="x" * 500)
+    detail = a.snapshot()["events"][0]["detail"]
+    assert len(detail) == 301 and detail.endswith("…")

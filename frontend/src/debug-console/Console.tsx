@@ -35,6 +35,7 @@ interface ActivityEvent {
   path: string;
   status: number;
   kind: string;
+  detail: string;
   client: string;
 }
 
@@ -50,6 +51,22 @@ interface CallResult {
 }
 
 const STORAGE_KEY = "jbrain.debug.token";
+const CLIENT_KEY = "jbrain.debug.client";
+
+// A STABLE per-browser id (persisted), so the console recognises its own calls
+// across refreshes and filters them out of the live feed. A fresh id per page-load
+// would make every reconnect's whoami look like "another client".
+function clientIdFor(): string {
+  const fresh = (globalThis.crypto?.randomUUID?.() ?? String(Math.random())).slice(0, 16);
+  try {
+    const saved = localStorage.getItem(CLIENT_KEY);
+    if (saved) return saved;
+    localStorage.setItem(CLIENT_KEY, fresh);
+  } catch {
+    /* private mode — a per-session id is fine */
+  }
+  return fresh;
+}
 
 const CMD_LABELS: Record<CmdType, string> = {
   complete: "complete — run a prompt",
@@ -93,9 +110,7 @@ function loadSavedToken(): DebugToken | null {
 }
 
 export function Console() {
-  const clientId = useRef<string>(
-    (globalThis.crypto?.randomUUID?.() ?? String(Math.random())).slice(0, 16),
-  );
+  const clientId = useRef<string>(clientIdFor());
 
   const [token, setToken] = useState<DebugToken | null>(loadSavedToken);
   const [connected, setConnected] = useState(false);
@@ -198,10 +213,12 @@ export function Console() {
             .map((e) => ({
               id: -e.seq,
               type: e.kind,
-              summary: `${e.method} ${e.path.replace("/api/debug/", "")}`,
+              // Show the actual command (SQL/prompt/routing change) when present,
+              // so the feed reads as "what ran", not just the route.
+              summary: e.detail || `${e.method} ${e.path.replace("/api/debug/", "")}`,
               detail: `${fmtTime(e.ts)} · HTTP ${e.status}`,
               status: (e.status < 400 ? "ok" : "err") as "ok" | "err",
-              output: `Issued from another client (e.g. the assistant).\n\n${e.method} ${e.path}\nHTTP ${e.status} · ${e.ts}`,
+              output: `Issued from another client (e.g. the assistant).\n\n${e.method} ${e.path} → HTTP ${e.status}\n${e.ts}${e.detail ? `\n\n${e.detail}` : ""}`,
             })),
           ...h,
         ]);

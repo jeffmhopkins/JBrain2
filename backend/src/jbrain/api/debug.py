@@ -118,6 +118,10 @@ class ActivityEvent(BaseModel):
     path: str
     status: int
     kind: str
+    # A short, human-readable summary of the command — the SQL text, the prompt, the
+    # routing change, the log target — so the console shows WHAT ran, not just the
+    # route. Bodies are truncated; "" for routes with nothing to show (whoami).
+    detail: str
     # Which console client issued the call (the console tags its own requests so it
     # can skip them in the feed); "" for an external caller (e.g. a curl session).
     client: str
@@ -168,6 +172,7 @@ async def complete(body: CompleteRequest, request: Request, _p: DebugDep) -> Com
     """Run one system+user prompt through the LLM adapter against whatever model is
     currently routed, and return the output plus the resolved provider:model. The
     sole prompt-iteration primitive — all egress stays on the adapter (non-neg #1)."""
+    request.state.debug_detail = body.user_text
     router_ = _llm_router(request)
     task = body.task or "debug.complete"
     strength = body.strength if body.task is None else None
@@ -245,6 +250,7 @@ async def run_sql(body: SqlRequest, request: Request, _p: DebugDep) -> SqlOut:
     """Run one read-only SELECT under an owner RLS context inside a READ-ONLY
     transaction (so it reads everything but can write nothing). 400 on a non-read
     statement or a SQL error."""
+    request.state.debug_detail = body.sql
     if not _is_single_read(body.sql):
         raise HTTPException(status_code=400, detail="only a single read-only statement is allowed")
     try:
@@ -276,6 +282,7 @@ async def logs(
 ) -> PlainTextResponse:
     """Tail one container's logs by proxying to the supervisor (the single owner of
     docker access), mirroring the owner ops surface."""
+    request.state.debug_detail = f"{service} (tail {tail})"
     resp = await _supervisor(request).get(
         f"/logs/{service}",
         params={"tail": tail},
@@ -301,6 +308,7 @@ async def switch_llm(
 ) -> LlmSettingsOut:
     """Switch which model serves each task, live — the 'choose which AI you're using'
     control. Shares validation with the owner settings screen."""
+    request.state.debug_detail = ", ".join(f"{t}→{o.provider}" for t, o in body.tasks.items())
     return await llm_settings.apply_overrides(
         body, settings, _store(request), _OWNER_CTX, _gateway(request)
     )
@@ -310,6 +318,7 @@ async def switch_llm(
 async def load_model(
     model_id: str, request: Request, settings: SettingsDep, _p: DebugDep
 ) -> LoadedModelsOut:
+    request.state.debug_detail = model_id
     return await llm_settings.gateway_load(model_id, settings, _gateway(request))
 
 
@@ -317,4 +326,5 @@ async def load_model(
 async def unload_model(
     model_id: str, request: Request, settings: SettingsDep, _p: DebugDep
 ) -> LoadedModelsOut:
+    request.state.debug_detail = model_id
     return await llm_settings.gateway_unload(model_id, settings, _gateway(request))
