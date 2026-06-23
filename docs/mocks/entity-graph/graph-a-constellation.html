@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Entity graph — A — Constellation (Obsidian-faithful)</title>
+<title>Entity graph — A — Constellation (≈140 nodes)</title>
 <style>
   :root{
     --bg:#0E0F11;--surface:#17181B;--surface-2:#1E2024;--border:#26282C;
@@ -29,45 +29,42 @@
   .stage{position:relative;flex:1;overflow:hidden;touch-action:none;cursor:grab}
   .stage:active{cursor:grabbing}
   #svg{width:100%;height:100%;display:block}
-  .edge{stroke:var(--border);stroke-width:1.2;fill:none;transition:stroke .15s,opacity .15s,stroke-width .15s}
-  .node-dot{stroke:var(--bg);stroke-width:1.5;cursor:pointer;transition:opacity .15s}
-  .node-lbl{font-size:11px;fill:var(--text-2);text-anchor:middle;paint-order:stroke;stroke:var(--bg);stroke-width:3px;pointer-events:none;transition:opacity .12s}
-  .dim{opacity:.12}
-  .lit .edge{stroke-width:1.6}
-  /* search / control chrome */
+  .edge{stroke:var(--border);stroke-width:1;fill:none}
+  .node-dot{stroke:var(--bg);stroke-width:1.2;cursor:pointer}
+  .node-lbl{font-size:11px;fill:var(--text-2);text-anchor:middle;paint-order:stroke;stroke:var(--bg);stroke-width:3px;pointer-events:none}
   .searchbar{position:absolute;top:10px;left:10px;right:10px;display:flex;align-items:center;gap:8px;background:color-mix(in srgb,var(--surface) 88%,transparent);backdrop-filter:blur(6px);border:1px solid var(--border);border-radius:12px;padding:9px 12px;color:var(--text-3);font-size:13.5px;z-index:4}
   .searchbar svg{width:17px;height:17px;stroke:currentColor;fill:none;stroke-width:1.8}
   .zoom{position:absolute;right:12px;bottom:96px;display:flex;flex-direction:column;background:var(--surface);border:1px solid var(--border);border-radius:12px;overflow:hidden;z-index:4}
   .zoom button{width:40px;height:40px;display:grid;place-items:center;border:0;background:transparent;color:var(--text-2);cursor:pointer;border-bottom:1px solid var(--border)}
   .zoom button:last-child{border-bottom:0}
   .zoom button:hover{background:var(--surface-2);color:var(--text)}
-  .legend{position:absolute;left:12px;bottom:14px;right:64px;display:flex;flex-wrap:wrap;gap:6px 10px;z-index:4}
-  .lchip{display:flex;align-items:center;gap:5px;font-size:11px;color:var(--text-2);background:color-mix(in srgb,var(--surface) 80%,transparent);backdrop-filter:blur(4px);border:1px solid var(--border);border-radius:999px;padding:3px 9px 3px 6px;cursor:pointer;user-select:none}
-  .lchip .sw{width:9px;height:9px;border-radius:50%}
+  .legend{position:absolute;left:12px;bottom:14px;right:64px;display:flex;flex-wrap:wrap;gap:6px 8px;z-index:4}
+  .lchip{display:flex;align-items:center;gap:5px;font-size:10.5px;color:var(--text-2);background:color-mix(in srgb,var(--surface) 80%,transparent);backdrop-filter:blur(4px);border:1px solid var(--border);border-radius:999px;padding:3px 8px 3px 6px;cursor:pointer;user-select:none}
+  .lchip .sw{width:8px;height:8px;border-radius:50%}
   .lchip.off{opacity:.4}
-  /* peek card */
+  .countpill{position:absolute;left:12px;top:54px;font-size:11px;color:var(--text-3);background:color-mix(in srgb,var(--surface) 85%,transparent);backdrop-filter:blur(4px);border:1px solid var(--border);border-radius:999px;padding:4px 10px;z-index:3}
   .peek{position:absolute;left:12px;right:12px;bottom:14px;background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:14px;box-shadow:0 -8px 30px var(--shadow);transform:translateY(150%);transition:transform .22s cubic-bezier(.2,.8,.2,1);z-index:6}
   .peek.on{transform:translateY(0)}
   .peek .ph{display:flex;align-items:center;gap:10px;margin-bottom:9px}
   .peek .pd{width:34px;height:34px;border-radius:50%;display:grid;place-items:center;flex:0 0 34px}
   .peek .pd svg{width:18px;height:18px;stroke:currentColor;fill:none;stroke-width:1.8}
-  .peek .pt{font-weight:600;font-size:16px;flex:1}
+  .peek .pt{font-weight:600;font-size:16px}
   .peek .pmeta{font-size:11.5px;color:var(--text-3)}
   .peek .close{width:28px;height:28px;border-radius:8px;border:0;background:var(--surface-2);color:var(--text-2);cursor:pointer}
-  .peek .rels{display:flex;flex-direction:column;gap:0;margin:4px 0 10px}
+  .peek .rels{display:flex;flex-direction:column;gap:0;margin:4px 0 10px;max-height:132px;overflow:auto}
   .peek .rel{display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid var(--border);font-size:13px}
   .peek .rel:last-child{border-bottom:0}
   .peek .rel .pred{font-family:ui-monospace,Menlo,monospace;font-size:11.5px;color:var(--text-3)}
   .peek .rel .obj{color:var(--text);font-weight:500}
   .peek .acts{display:flex;gap:8px}
   .peek .acts button{flex:1;height:40px;border-radius:10px;font-weight:600;font-size:13px;cursor:pointer;border:1px solid var(--border)}
-  .peek .b-focus{background:var(--steel-tint,rgba(127,167,201,.13));color:var(--steel);border-color:transparent;background:rgba(127,167,201,.13)}
+  .peek .b-focus{background:rgba(127,167,201,.13);color:var(--steel);border-color:transparent}
   .peek .b-open{background:var(--surface-2);color:var(--text)}
   .hint{position:absolute;left:50%;transform:translateX(-50%);bottom:54px;font-size:11px;color:var(--text-3);background:color-mix(in srgb,var(--surface) 85%,transparent);padding:3px 10px;border-radius:999px;border:1px solid var(--border);z-index:3;pointer-events:none;opacity:.9}
 </style>
 </head>
 <body>
-<div class="cap"><b>A — Constellation.</b> Faithful Obsidian feel: degree-scaled dots, labels fade in as you zoom, <b>hover/tap a node lights its neighbourhood and dims the rest</b>, drag any node and the graph reflows live. Type = colour. Try dragging a node, scrolling to zoom, tapping a dot.</div>
+<div class="cap"><b>A — Constellation (≈140 nodes).</b> The Obsidian feel at scale: degree-scaled dots, a settling force layout, labels that fade in as you zoom, hover/tap to light a node's neighbourhood and dim the rest, drag any node to reflow. Use <b>fit</b> (middle zoom button) to frame the whole graph.</div>
 <div class="phone">
   <div class="topbar">
     <button class="chev"><svg class="i" viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6"/></svg></button>
@@ -76,18 +73,15 @@
   </div>
   <div class="stage" id="stage">
     <svg id="svg"><g id="view"><g id="edges"></g><g id="nodes"></g></g></svg>
-
     <div class="searchbar"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4-4"/></svg>Find an entity…</div>
-
+    <div class="countpill" id="countpill"></div>
     <div class="zoom">
       <button id="zin"><svg class="i" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button>
       <button id="zfit"><svg class="i" viewBox="0 0 24 24"><path d="M4 9V5a1 1 0 011-1h4M20 9V5a1 1 0 00-1-1h-4M4 15v4a1 1 0 001 1h4M20 15v4a1 1 0 01-1 1h-4"/></svg></button>
       <button id="zout"><svg class="i" viewBox="0 0 24 24"><path d="M5 12h14"/></svg></button>
     </div>
-
     <div class="legend" id="legend"></div>
     <div class="hint">drag a node · scroll to zoom · tap to focus</div>
-
     <div class="peek" id="peek">
       <div class="ph">
         <div class="pd" id="pd"></div>
@@ -99,166 +93,124 @@
     </div>
   </div>
 </div>
-
 <script>
 document.getElementById('theme').onclick=()=>{const h=document.documentElement;h.dataset.theme=h.dataset.theme==='dark'?'light':'dark'};
+const TYPE={Person:'--steel',Organization:'--violet',Place:'--green',Event:'--amber',Product:'--periwinkle',Animal:'--sage',MedicalCondition:'--terracotta',Drug:'--orchid',CreativeWork:'--rose',Thing:'--slate'};
+const ICON={Person:'<circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 3.6-7 8-7s8 3 8 7"/>',Organization:'<path d="M3 21h18M5 21V7l7-4 7 4v14M9 21v-5h6v5"/>',Place:'<path d="M12 21s-7-5.5-7-11a7 7 0 0114 0c0 5.5-7 11-7 11z"/><circle cx="12" cy="10" r="2.5"/>',Event:'<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 9h18M8 3v4M16 3v4"/>',Animal:'<path d="M4 11a3 3 0 116 0 5 5 0 005 5 3 3 0 11-6 0 5 5 0 00-5-5z"/>',MedicalCondition:'<path d="M12 21s-7-4.5-7-10a4 4 0 017-2 4 4 0 017 2c0 5.5-7 10-7 10z"/>',Drug:'<rect x="3" y="9" width="18" height="6" rx="3" transform="rotate(45 12 12)"/>',Product:'<path d="M3 7l9-4 9 4-9 4-9-4z"/><path d="M3 7v10l9 4 9-4V7"/>',CreativeWork:'<path d="M5 4a1 1 0 011-1h8l5 5v11a1 1 0 01-1 1H6a1 1 0 01-1-1z"/><path d="M14 3v5h5"/>',Thing:'<circle cx="12" cy="12" r="8"/>'};
+const LBL={Person:'People',Organization:'Orgs',Place:'Places',Event:'Events',Product:'Products',Animal:'Animals',MedicalCondition:'Conditions',Drug:'Drugs',CreativeWork:'Media',Thing:'Things'};
 
-// ---- data ----------------------------------------------------------------
-const TYPE={Person:'--steel',Organization:'--violet',Place:'--green',Event:'--amber',
-  Product:'--periwinkle',Animal:'--sage',MedicalCondition:'--terracotta',
-  MedicalProcedure:'--teal',Drug:'--orchid',Thing:'--slate'};
-const ICON={
-  Person:'<circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 3.6-7 8-7s8 3 8 7"/>',
-  Organization:'<path d="M3 21h18M5 21V7l7-4 7 4v14M9 21v-5h6v5"/>',
-  Place:'<path d="M12 21s-7-5.5-7-11a7 7 0 0114 0c0 5.5-7 11-7 11z"/><circle cx="12" cy="10" r="2.5"/>',
-  Event:'<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 9h18M8 3v4M16 3v4"/>',
-  Animal:'<path d="M4 11a3 3 0 116 0 5 5 0 005 5 3 3 0 11-6 0 5 5 0 00-5-5z"/>',
-  MedicalCondition:'<path d="M12 21s-7-4.5-7-10a4 4 0 017-2 4 4 0 017 2c0 5.5-7 10-7 10z"/>',
-  Drug:'<rect x="3" y="9" width="18" height="6" rx="3" transform="rotate(45 12 12)"/>',
-  Product:'<path d="M3 7l9-4 9 4-9 4-9-4z"/><path d="M3 7v10l9 4 9-4V7"/>',
-  Thing:'<circle cx="12" cy="12" r="8"/>'
-};
-const N=[
-  {id:'me',name:'Me',kind:'Person'},
-  {id:'celine',name:'Celine',kind:'Person'},
-  {id:'priya',name:'Priya Nair',kind:'Person'},
-  {id:'patel',name:'Dr. Patel',kind:'Person'},
-  {id:'globex',name:'Globex',kind:'Organization'},
-  {id:'nair',name:'Nair Peds',kind:'Organization'},
-  {id:'mgh',name:'Mass General',kind:'Organization'},
-  {id:'denver',name:'Denver',kind:'Place'},
-  {id:'brookline',name:'Brookline',kind:'Place'},
-  {id:'htn',name:'Hypertension',kind:'MedicalCondition'},
-  {id:'lisin',name:'Lisinopril',kind:'Drug'},
-  {id:'marathon',name:'Boston Marathon',kind:'Event'},
-  {id:'rex',name:'Rex',kind:'Animal'},
-  {id:'kayak',name:'Sea kayak',kind:'Product'}
-];
-const E=[
-  ['me','celine','spouse'],['me','priya','sibling'],['me','patel','physician'],
-  ['me','globex','worksFor'],['me','denver','residence'],['me','htn','diagnosedWith'],
-  ['me','marathon','ran'],['me','rex','owns'],['me','kayak','owns'],
-  ['celine','globex','worksFor'],['celine','denver','residence'],
-  ['priya','nair','founder'],['priya','brookline','residence'],
-  ['patel','mgh','worksAt'],['htn','lisin','treatedWith'],['patel','htn','treats'],
-  ['marathon','brookline','heldIn']
-];
-const RELS={ // for peek card
-  me:[['spouse','Celine'],['physician','Dr. Patel'],['diagnosedWith','Hypertension'],['residence','Denver']],
-  celine:[['spouse','Me'],['worksFor','Globex'],['residence','Denver']],
-  patel:[['worksAt','Mass General'],['treats','Hypertension'],['physician of','Me']],
-  htn:[['treatedWith','Lisinopril'],['diagnosedIn','Me'],['managedBy','Dr. Patel']]
-};
+// ---- seeded synthetic graph ---------------------------------------------
+let _seed=20260623;
+function rnd(){_seed=(_seed*1664525+1013904223)>>>0;return _seed/4294967296;}
+function pk(a){return a[Math.floor(rnd()*a.length)];}
+function chance(p){return rnd()<p;}
+const FN=['Celine','Priya','Marcus','Elena','Tom','Nina','Raj','Sofia','Liam','Maya','Omar','Grace','Dmitri','Aisha','Ben','Clara','Hugo','Lena','Sam','Tara','Noah','Iris','Felix','Zoe','Arjun','Mira','Leo','Ava','Kai','Ruth','Dev','Nora','Eli','Jade','Cole','Vera','Ian','Suki','Paul','Gina'];
+const LN=['Hopkins','Nair','Vance','Ortiz','Reed','Cho','Mehta','Park','Frost','Quinn','Adler','Bose','Hale','Diaz','Yang','Kerr','Wolfe','Sato','Pike','Bauer'];
+const ORGN=['Globex','Initech','Umbra Labs','Northwind','Acme Co','Soylent','Hooli','Vandelay','Massive Dyn','Cyberdyne','Stark Mfg','Tyrell','Pied Piper','Wonka Ind'];
+const PLACEN=['Denver','Brookline','Boston','Cambridge','Austin','Portland','Seattle','Lincoln Park','Riverside','Oakwood','Hillcrest','Fairview','Midtown','Bayshore','Elm Street','Harbor Point','Cedar Falls','Glenwood','Ashbury','Kenmore'];
+const CONDN=['Hypertension','Asthma','Migraine','Type 2 Diabetes','Eczema','Insomnia','Anemia','GERD'];
+const DRUGN=['Lisinopril','Albuterol','Sumatriptan','Metformin','Omeprazole','Melatonin','Atorvastatin','Loratadine'];
+const EVTN=['Boston Marathon','Wedding','Reunion 2025','Q3 Offsite','Charity 10K','DevConf','Housewarming','Recital','Summer BBQ','Ski trip'];
+const PRODN=['Sea kayak','Trek bike','Espresso machine','Standing desk','DSLR','Mountain tent','Vinyl player','Drone','e-Reader','Smart watch'];
+const FINN=['Roth IRA','Brokerage','529 Plan','HSA','Index fund'];
+const WORKN=['Atlas paper','Onboarding doc','Design spec','Patent filing','Podcast ep','Photo series','Q3 deck','Field notes'];
+const ANIN=['Rex','Maple','Biscuit','Shadow','Pepper'];
 
-const byId=Object.fromEntries(N.map(n=>[n,n].map(x=>x)[0]&&[n.id,n]));
-const deg={}; N.forEach(n=>deg[n.id]=0); E.forEach(([a,b])=>{deg[a]++;deg[b]++});
+function genGraph(TARGET){
+  const N=[],E=[],byId={};let _id=0;
+  const add=(kind,name,dom)=>{const id=kind.slice(0,2).toLowerCase()+(_id++);const n={id,name,kind,dom};N.push(n);byId[id]=n;return n;};
+  const link=(a,b,p)=>{if(a&&b&&a.id!==b.id)E.push([a.id,b.id,p]);};
+  const me=add('Person','Me','general');
+  const fam=[];for(let i=0;i<10;i++){const f=add('Person',pk(FN)+' '+pk(LN),'general');fam.push(f);link(me,f,pk(['spouse','parent','sibling','child','in-law','cousin']));}
+  for(let i=0;i<8;i++)link(pk(fam),pk(fam),'relative');
+  const placePool=[];const place=dom=>{const p=add('Place',pk(PLACEN),dom||'location');placePool.push(p);return p;};
+  const orgs=[];
+  for(let k=0;k<6;k++){const o=add('Organization',pk(ORGN),'general');orgs.push(o);const hq=place('location');link(o,hq,'locatedAt');
+    const staff=[];const cnt=4+Math.floor(rnd()*7);for(let i=0;i<cnt;i++){const s=add('Person',pk(FN)+' '+pk(LN),'general');staff.push(s);link(s,o,'worksFor');}
+    for(let i=0;i<cnt;i++)link(pk(staff),pk(staff),'colleague');
+    for(let i=0;i<2;i++){const w=add('CreativeWork',pk(WORKN),'general');link(pk(staff),w,'authored');link(w,o,'forOrg');}}
+  link(me,orgs[0],'worksFor');
+  const friends=[];for(let i=0;i<12;i++){const fr=add('Person',pk(FN)+' '+pk(LN),'general');friends.push(fr);link(me,fr,'friend');if(chance(.5))link(fr,pk(orgs),'worksFor');if(chance(.4))link(fr,pk(placePool),'residence');}
+  for(let i=0;i<12;i++)link(pk(friends),pk(friends),'friend');
+  const hosp=add('Organization','Mass General','medical'),hosp2=add('Organization','City Clinic','medical');
+  const docs=[];for(let i=0;i<5;i++){const d=add('Person','Dr. '+pk(LN),'medical');docs.push(d);link(d,chance(.5)?hosp:hosp2,'worksAt');}
+  link(me,pk(docs),'physician');
+  const conds=CONDN.map(c=>add('MedicalCondition',c,'medical'));
+  const drugs=DRUGN.map(c=>add('Drug',c,'medical'));
+  conds.forEach((c,i)=>{link(me,c,'diagnosed');link(c,drugs[i],'treatedWith');link(pk(docs),c,'treats');});
+  const fin=add('Organization','Fidelity','financial');FINN.forEach(p=>{const a=add('Product',p,'financial');link(me,a,'holds');link(a,fin,'custodian');});
+  const adv=add('Person',pk(FN)+' '+pk(LN),'financial');link(me,adv,'advisor');link(adv,fin,'worksFor');
+  EVTN.forEach(e=>{const ev=add('Event',e,'general');link(me,ev,chance(.5)?'attended':'organized');link(ev,pk(placePool),'heldIn');for(let i=0;i<3;i++)link(pk(friends.concat(fam)),ev,'attended');});
+  PRODN.forEach(p=>{const pr=add('Product',p,'general');if(chance(.6))link(me,pr,'owns');else link(pk(friends),pr,'owns');});
+  ANIN.forEach(a=>{const an=add('Animal',a,'general');link(chance(.6)?me:pk(fam),an,'owns');});
+  for(let i=0;i<10;i++){const p=place('location');link(pk(friends.concat(fam)),p,'residence');if(chance(.3))link(p,pk(placePool),'near');}
+  const KINDS=[['Person','general'],['Place','location'],['Product','general'],['Organization','general'],['CreativeWork','general'],['Event','general']];
+  while(N.length<TARGET){const [k,d]=pk(KINDS);const nm=k==='Person'?pk(FN)+' '+pk(LN):k==='Place'?pk(PLACEN):k==='Organization'?pk(ORGN):k==='Event'?pk(EVTN):k==='CreativeWork'?pk(WORKN):pk(PRODN);
+    const n=add(k,nm,d);const host=N[1+Math.floor(rnd()*(N.length-2))];link(n,host,pk(['related','knows','near','refers to','member']));}
+  return {N,E,byId};
+}
+const {N,E,byId}=genGraph(140);
+const deg={};N.forEach(n=>deg[n.id]=0);E.forEach(([a,b])=>{deg[a]++;deg[b]++});
+document.getElementById('countpill').textContent=`${N.length} entities · ${E.length} links`;
 
 // ---- layout / sim --------------------------------------------------------
-const W=390,H=688; // stage size approx
-N.forEach((n,i)=>{const a=i/N.length*6.283;n.x=W/2+Math.cos(a)*120*(n.id==='me'?0:1);n.y=H/2+Math.sin(a)*120*(n.id==='me'?0:1);n.vx=0;n.vy=0;});
+const W=390,H=688;
+N.forEach((n,i)=>{const a=i/N.length*6.283,r=40+rnd()*220;n.x=W/2+Math.cos(a)*r;n.y=H/2+Math.sin(a)*r;n.vx=0;n.vy=0;});
 byId.me.x=W/2;byId.me.y=H/2;
-
 function tick(){
-  for(let i=0;i<N.length;i++)for(let j=i+1;j<N.length;j++){
-    const a=N[i],b=N[j];let dx=a.x-b.x,dy=a.y-b.y;let d2=dx*dx+dy*dy||1;let d=Math.sqrt(d2);
-    const rep=2400/d2; a.vx+=dx/d*rep;a.vy+=dy/d*rep;b.vx-=dx/d*rep;b.vy-=dy/d*rep;
-  }
-  for(const [s,t] of E){const a=byId[s],b=byId[t];let dx=b.x-a.x,dy=b.y-a.y;let d=Math.sqrt(dx*dx+dy*dy)||1;
-    const f=(d-104)*0.012;a.vx+=dx/d*f;a.vy+=dy/d*f;b.vx-=dx/d*f;b.vy-=dy/d*f;}
-  for(const n of N){n.vx+=(W/2-n.x)*0.003;n.vy+=(H/2-n.y)*0.003;n.vx*=0.84;n.vy*=0.84;
-    if(n===drag){continue} n.x+=n.vx;n.y+=n.vy;}
-  byId.me.x+= (W/2-byId.me.x)*0.05; byId.me.y+=(H/2-byId.me.y)*0.05;
+  for(let i=0;i<N.length;i++)for(let j=i+1;j<N.length;j++){const a=N[i],b=N[j];let dx=a.x-b.x,dy=a.y-b.y,d2=dx*dx+dy*dy||1,d=Math.sqrt(d2);const rep=1500/d2;a.vx+=dx/d*rep;a.vy+=dy/d*rep;b.vx-=dx/d*rep;b.vy-=dy/d*rep;}
+  for(const[s,t]of E){const a=byId[s],b=byId[t];let dx=b.x-a.x,dy=b.y-a.y,d=Math.sqrt(dx*dx+dy*dy)||1;const f=(d-58)*0.016;a.vx+=dx/d*f;a.vy+=dy/d*f;b.vx-=dx/d*f;b.vy-=dy/d*f;}
+  for(const n of N){n.vx+=(W/2-n.x)*0.009;n.vy+=(H/2-n.y)*0.009;n.vx*=0.82;n.vy*=0.82;if(n!==drag){n.x+=n.vx;n.y+=n.vy;}}
+  byId.me.x+=(W/2-byId.me.x)*0.06;byId.me.y+=(H/2-byId.me.y)*0.06;
   render();requestAnimationFrame(tick);
 }
 
-// ---- render --------------------------------------------------------------
 const view=document.getElementById('view'),eG=document.getElementById('edges'),nG=document.getElementById('nodes');
-let scale=1,tx=0,ty=0; let focusId=null; let hoverId=null;
+let scale=.7,tx=60,ty=10,focusId=null,hoverId=null;
 const eEls={},nEls={},lEls={};
-function radius(n){return 5+Math.sqrt(deg[n.id])*3.4;}
-for(const [s,t,p] of E){const el=document.createElementNS('http://www.w3.org/2000/svg','line');el.setAttribute('class','edge');eG.appendChild(el);eEls[s+'>'+t]=el;}
-for(const n of N){
-  const c=document.createElementNS('http://www.w3.org/2000/svg','circle');
-  c.setAttribute('class','node-dot');c.setAttribute('r',radius(n));
-  c.setAttribute('fill',`color-mix(in srgb, var(${TYPE[n.kind]}) 70%, var(--surface))`);
-  c.dataset.id=n.id;nG.appendChild(c);nEls[n.id]=c;
-  const l=document.createElementNS('http://www.w3.org/2000/svg','text');
-  l.setAttribute('class','node-lbl');l.textContent=n.name;nG.appendChild(l);lEls[n.id]=l;
-  c.addEventListener('pointerenter',()=>{if(!drag){hoverId=n.id;applyLit();}});
-  c.addEventListener('pointerleave',()=>{if(!drag){hoverId=null;applyLit();}});
-}
+const radius=n=>4+Math.sqrt(deg[n.id])*2.5;
+for(const[s,t]of E){const el=document.createElementNS('http://www.w3.org/2000/svg','line');el.setAttribute('class','edge');eG.appendChild(el);eEls[s+'>'+t]=el;}
+for(const n of N){const c=document.createElementNS('http://www.w3.org/2000/svg','circle');c.setAttribute('class','node-dot');c.setAttribute('r',radius(n));c.setAttribute('fill',`color-mix(in srgb, var(${TYPE[n.kind]}) 70%, var(--surface))`);c.dataset.id=n.id;nG.appendChild(c);nEls[n.id]=c;
+  const l=document.createElementNS('http://www.w3.org/2000/svg','text');l.setAttribute('class','node-lbl');l.textContent=n.name;nG.appendChild(l);lEls[n.id]=l;
+  c.addEventListener('pointerenter',()=>{if(!drag){hoverId=n.id;applyLit();}});c.addEventListener('pointerleave',()=>{if(!drag){hoverId=null;applyLit();}});}
 const disabled=new Set();
 function neighbors(id){const s=new Set([id]);for(const[a,b]of E){if(a===id)s.add(b);if(b===id)s.add(a);}return s;}
-function applyLit(){
-  const lit=hoverId||focusId; const set=lit?neighbors(lit):null;
-  for(const n of N){const on=!disabled.has(n.kind); const inset=!set||set.has(n.id);
-    nEls[n.id].style.opacity=on?(inset?1:.12):.06;
-    lEls[n.id].classList.toggle('dim',set&&!set.has(n.id));
-  }
-  for(const[a,b]of E){const el=eEls[a+'>'+b];const inset=!set||(set.has(a)&&set.has(b));
-    const on=!disabled.has(byId[a].kind)&&!disabled.has(byId[b].kind);
-    el.style.opacity=on?(inset?(set?.9:.55):.08):.04;
-    el.style.stroke= inset&&set?`var(${TYPE[byId[lit]?.kind]||'--border'})`:'var(--border)';
-  }
+let litSet=null;
+function applyLit(){const lit=hoverId||focusId;litSet=lit?neighbors(lit):null;
+  for(const n of N){const on=!disabled.has(n.kind),inset=!litSet||litSet.has(n.id);nEls[n.id].style.opacity=on?(inset?1:.1):.05;}
+  for(const[a,b]of E){const el=eEls[a+'>'+b];const inset=!litSet||(litSet.has(a)&&litSet.has(b));const on=!disabled.has(byId[a].kind)&&!disabled.has(byId[b].kind);el.style.opacity=on?(inset?(litSet?.9:.32):.05):.03;el.style.stroke=inset&&litSet?`var(${TYPE[byId[lit].kind]})`:'var(--border)';}
 }
-function render(){
-  view.setAttribute('transform',`translate(${tx},${ty}) scale(${scale})`);
+function render(){view.setAttribute('transform',`translate(${tx},${ty}) scale(${scale})`);
   for(const[a,b]of E){const el=eEls[a+'>'+b];el.setAttribute('x1',byId[a].x);el.setAttribute('y1',byId[a].y);el.setAttribute('x2',byId[b].x);el.setAttribute('y2',byId[b].y);}
-  for(const n of N){nEls[n.id].setAttribute('cx',n.x);nEls[n.id].setAttribute('cy',n.y);
-    const l=lEls[n.id];l.setAttribute('x',n.x);l.setAttribute('y',n.y+radius(n)+11);
-    l.setAttribute('font-size',(11/scale));
-    // labels fade in with zoom; hubs & focus/hover always shown
-    const showAt=Math.max(.55,1.5-deg[n.id]*0.13);
-    const force=(n.id===focusId||n.id===hoverId||(hoverId&&neighbors(hoverId).has(n.id)));
-    l.style.opacity=(force||scale>=showAt)?1:0;
-  }
+  for(const n of N){const c=nEls[n.id],l=lEls[n.id];c.setAttribute('cx',n.x);c.setAttribute('cy',n.y);l.setAttribute('x',n.x);l.setAttribute('y',n.y+radius(n)+10);l.setAttribute('font-size',11/scale);
+    const force=(n.id===focusId||n.id===hoverId||(litSet&&litSet.has(n.id)));const showAt=Math.max(.85,2.0-deg[n.id]*0.12);l.style.opacity=(force||scale>=showAt)?(litSet&&!litSet.has(n.id)?.12:1):0;}
 }
+// legend
+const present=[...new Set(N.map(n=>n.kind))];const legend=document.getElementById('legend');
+for(const k of present){const b=document.createElement('button');b.className='lchip';b.innerHTML=`<span class="sw" style="background:var(${TYPE[k]})"></span>${LBL[k]||k}`;b.onclick=()=>{b.classList.toggle('off');disabled.has(k)?disabled.delete(k):disabled.add(k);applyLit();};legend.appendChild(b);}
 
-// ---- legend --------------------------------------------------------------
-const present=[...new Set(N.map(n=>n.kind))];
-const legend=document.getElementById('legend');
-const LBL={Person:'People',Organization:'Orgs',Place:'Places',Event:'Events',Product:'Products',Animal:'Animals',MedicalCondition:'Conditions',Drug:'Drugs',Thing:'Things'};
-for(const k of present){const b=document.createElement('button');b.className='lchip';
-  b.innerHTML=`<span class="sw" style="background:var(${TYPE[k]})"></span>${LBL[k]||k}`;
-  b.onclick=()=>{b.classList.toggle('off');if(disabled.has(k))disabled.delete(k);else disabled.add(k);applyLit();};
-  legend.appendChild(b);}
+// interaction
+const stage=document.getElementById('stage'),svg=document.getElementById('svg');let drag=null,dragMoved=false,panning=null;
+const toWorld=e=>{const r=svg.getBoundingClientRect();return{x:(e.clientX-r.left-tx)/scale,y:(e.clientY-r.top-ty)/scale};};
+nG.addEventListener('pointerdown',e=>{const id=e.target.dataset.id;if(!id)return;e.stopPropagation();drag=byId[id];dragMoved=false;});
+stage.addEventListener('pointerdown',e=>{if(drag)return;panning={x:e.clientX,y:e.clientY,tx,ty};});
+window.addEventListener('pointermove',e=>{if(drag){const w=toWorld(e);drag.x=w.x;drag.y=w.y;drag.vx=0;drag.vy=0;dragMoved=true;}else if(panning){tx=panning.tx+(e.clientX-panning.x);ty=panning.ty+(e.clientY-panning.y);}});
+window.addEventListener('pointerup',()=>{if(drag&&!dragMoved)openPeek(drag.id);drag=null;panning=null;});
+stage.addEventListener('wheel',e=>{e.preventDefault();const r=svg.getBoundingClientRect();const mx=e.clientX-r.left,my=e.clientY-r.top;const f=e.deltaY<0?1.12:.89;const ns=Math.min(4,Math.max(.25,scale*f));const k=ns/scale;tx=mx-(mx-tx)*k;ty=my-(my-ty)*k;scale=ns;},{passive:false});
+document.getElementById('zin').onclick=()=>zc(1.25);document.getElementById('zout').onclick=()=>zc(.8);document.getElementById('zfit').onclick=fit;
+function zc(f){const r=svg.getBoundingClientRect(),mx=r.width/2,my=r.height/2,ns=Math.min(4,Math.max(.25,scale*f)),k=ns/scale;tx=mx-(mx-tx)*k;ty=my-(my-ty)*k;scale=ns;}
+function fit(){let a=1e9,b=1e9,c=-1e9,d=-1e9;for(const n of N){if(disabled.has(n.kind))continue;a=Math.min(a,n.x);b=Math.min(b,n.y);c=Math.max(c,n.x);d=Math.max(d,n.y);}const r=svg.getBoundingClientRect(),pad=46;scale=Math.min(3,Math.max(.2,Math.min((r.width-pad)/(c-a||1),(r.height-pad)/(d-b||1))));tx=r.width/2-((a+c)/2)*scale;ty=r.height/2-((b+d)/2)*scale;}
 
-// ---- interaction: drag node, pan, zoom -----------------------------------
-const stage=document.getElementById('stage'),svg=document.getElementById('svg');
-let drag=null,dragMoved=false,panning=null;
-function toWorld(e){const r=svg.getBoundingClientRect();return{x:(e.clientX-r.left-tx)/scale,y:(e.clientY-r.top-ty)/scale};}
-nG.addEventListener('pointerdown',e=>{const id=e.target.dataset.id;if(!id)return;e.stopPropagation();
-  drag=byId[id];dragMoved=false;svg.setPointerCapture(e.pointerId);});
-stage.addEventListener('pointerdown',e=>{if(drag)return;panning={x:e.clientX,y:e.clientY,tx,ty};svg.setPointerCapture?.(e.pointerId);});
-window.addEventListener('pointermove',e=>{
-  if(drag){const w=toWorld(e);drag.x=w.x;drag.y=w.y;drag.vx=0;drag.vy=0;dragMoved=true;}
-  else if(panning){tx=panning.tx+(e.clientX-panning.x);ty=panning.ty+(e.clientY-panning.y);}
-});
-window.addEventListener('pointerup',e=>{
-  if(drag&&!dragMoved){openPeek(drag.id);}
-  drag=null;panning=null;
-});
-stage.addEventListener('wheel',e=>{e.preventDefault();const r=svg.getBoundingClientRect();
-  const mx=e.clientX-r.left,my=e.clientY-r.top;const f=e.deltaY<0?1.12:0.89;const ns=Math.min(3,Math.max(.4,scale*f));
-  const k=ns/scale;tx=mx-(mx-tx)*k;ty=my-(my-ty)*k;scale=ns;},{passive:false});
-document.getElementById('zin').onclick=()=>zoomC(1.25);
-document.getElementById('zout').onclick=()=>zoomC(.8);
-document.getElementById('zfit').onclick=()=>{scale=1;tx=0;ty=0;};
-function zoomC(f){const r=svg.getBoundingClientRect();const mx=r.width/2,my=r.height/2;const ns=Math.min(3,Math.max(.4,scale*f));const k=ns/scale;tx=mx-(mx-tx)*k;ty=my-(my-ty)*k;scale=ns;}
-
-// ---- peek ----------------------------------------------------------------
+// peek
 const peek=document.getElementById('peek');
-function openPeek(id){focusId=id;applyLit();const n=byId[id];
-  document.getElementById('pt').textContent=n.name;
-  document.getElementById('pm').textContent=`${n.kind} · ${deg[id]} links · general`;
-  const pd=document.getElementById('pd');pd.style.background=`color-mix(in srgb,var(${TYPE[n.kind]}) 16%,transparent)`;
-  pd.style.color=`var(${TYPE[n.kind]})`;pd.innerHTML=`<svg viewBox="0 0 24 24">${ICON[n.kind]||ICON.Thing}</svg>`;
-  const rels=RELS[id]||N.filter(x=>E.some(([a,b])=>(a===id&&b===x.id)||(b===id&&a===x.id))).slice(0,4).map(x=>{const ed=E.find(([a,b])=>(a===id&&b===x.id)||(b===id&&a===x.id));return[ed[2],x.name];});
-  document.getElementById('prels').innerHTML=rels.map(([p,o])=>`<div class="rel"><span class="pred">${p}</span><span style="flex:1"></span><span class="obj">${o}</span></div>`).join('');
+function openPeek(id){focusId=id;applyLit();const n=byId[id];document.getElementById('pt').textContent=n.name;document.getElementById('pm').textContent=`${n.kind} · ${deg[id]} links · ${n.dom}`;
+  const pd=document.getElementById('pd');pd.style.background=`color-mix(in srgb,var(${TYPE[n.kind]}) 16%,transparent)`;pd.style.color=`var(${TYPE[n.kind]})`;pd.innerHTML=`<svg viewBox="0 0 24 24">${ICON[n.kind]||ICON.Thing}</svg>`;
+  const rels=[];for(const[a,b,p]of E){if(a===id)rels.push([p,byId[b].name]);else if(b===id)rels.push([p,byId[a].name]);}
+  document.getElementById('prels').innerHTML=rels.slice(0,12).map(([p,o])=>`<div class="rel"><span class="pred">${p}</span><span style="flex:1"></span><span class="obj">${o}</span></div>`).join('');
   peek.classList.add('on');}
 document.getElementById('pclose').onclick=()=>{peek.classList.remove('on');focusId=null;applyLit();};
 
-applyLit();requestAnimationFrame(tick);
+applyLit();requestAnimationFrame(tick);setTimeout(fit,1400);
 </script>
 </body>
 </html>

@@ -7,6 +7,14 @@ browser — every file is self-contained, dark/light-toggleable (sun icon,
 top-right), and uses the design tokens. Each ships a real mini force/zoom
 engine so the *feel* is testable, not just the look.
 
+**Scale.** Each mock builds its graph from a seeded generator that synthesises a
+realistic personal knowledge graph — family, employers + colleagues, doctors +
+conditions + drugs, financial accounts, places, events, hobbies — so the
+directions are tested at the scale they need to survive: **A and B ≈155 nodes /
+~280 edges, C ≈240 nodes / ~430 edges**. Change the `genGraph(N)` target at the
+bottom of each file to stress them harder. Use the **fit** button (middle zoom
+control) to frame the whole graph.
+
 ## Why revisit the current graph
 
 `frontend/src/screens/GraphScreen.tsx` is a solid custom force layout, but it

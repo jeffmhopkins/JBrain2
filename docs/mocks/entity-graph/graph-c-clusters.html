@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Entity graph — C — Clusters (communities + minimap)</title>
+<title>Entity graph — C — Clusters (≈240 nodes, communities + minimap)</title>
 <style>
   :root{
     --bg:#0E0F11;--surface:#17181B;--surface-2:#1E2024;--border:#26282C;
@@ -24,7 +24,6 @@
   .topbar .chev{width:36px;height:36px;display:grid;place-items:center;border-radius:9px;color:var(--text-2);background:transparent;border:0;cursor:pointer}
   .ttl{flex:1;font-size:17px;font-weight:600}
   .icon-btn{width:36px;height:36px;display:grid;place-items:center;border-radius:9px;color:var(--text-2);background:transparent;border:0;cursor:pointer}
-  .icon-btn:hover{background:var(--surface-2);color:var(--text)}
   svg.i{width:20px;height:20px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
   .modebar{display:flex;align-items:center;gap:8px;padding:8px 12px;border-bottom:1px solid var(--border);background:var(--surface);z-index:4}
   .modebar .lab{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--text-3)}
@@ -34,18 +33,17 @@
   .stage{position:relative;flex:1;overflow:hidden;touch-action:none}
   #svg{width:100%;height:100%;display:block;cursor:grab}
   #svg:active{cursor:grabbing}
-  .hull{stroke-width:1;transition:opacity .15s}
-  .hulllbl{font-size:11px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;paint-order:stroke;stroke:var(--bg);stroke-width:3px}
-  .edge{stroke:var(--border);stroke-width:1.1;fill:none;transition:opacity .15s,stroke .15s}
-  .dot{stroke:var(--bg);stroke-width:1.4;cursor:pointer;transition:opacity .15s}
-  .dlbl{font-size:10.5px;fill:var(--text-2);text-anchor:middle;paint-order:stroke;stroke:var(--bg);stroke-width:3px;pointer-events:none;transition:opacity .12s}
+  .hull{stroke-width:1}
+  .hulllbl{font-size:12px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;paint-order:stroke;stroke:var(--bg);stroke-width:4px}
+  .edge{stroke:var(--border);stroke-width:.9;fill:none}
+  .dot{stroke:var(--bg);stroke-width:1.2;cursor:pointer}
+  .dlbl{font-size:10.5px;fill:var(--text-2);text-anchor:middle;paint-order:stroke;stroke:var(--bg);stroke-width:3px;pointer-events:none}
   .zoom{position:absolute;right:12px;bottom:118px;display:flex;flex-direction:column;background:var(--surface);border:1px solid var(--border);border-radius:12px;overflow:hidden;z-index:4}
   .zoom button{width:40px;height:40px;display:grid;place-items:center;border:0;background:transparent;color:var(--text-2);cursor:pointer;border-bottom:1px solid var(--border)}
   .zoom button:last-child{border-bottom:0}
-  /* minimap */
-  .mini{position:absolute;left:12px;bottom:14px;width:104px;height:78px;background:color-mix(in srgb,var(--surface) 90%,transparent);backdrop-filter:blur(6px);border:1px solid var(--border);border-radius:10px;overflow:hidden;z-index:4}
+  .mini{position:absolute;left:12px;bottom:14px;width:110px;height:84px;background:color-mix(in srgb,var(--surface) 90%,transparent);backdrop-filter:blur(6px);border:1px solid var(--border);border-radius:10px;overflow:hidden;z-index:4}
   .mini svg{width:100%;height:100%}
-  .mini .vp{fill:rgba(127,167,201,.14);stroke:var(--steel);stroke-width:1}
+  .mini .vp{fill:rgba(127,167,201,.14);stroke:var(--steel);stroke-width:2}
   .clustertog{position:absolute;right:12px;bottom:14px;display:flex;flex-direction:column;gap:6px;align-items:flex-end;z-index:4}
   .ct{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--text-2);background:color-mix(in srgb,var(--surface) 86%,transparent);backdrop-filter:blur(4px);border:1px solid var(--border);border-radius:999px;padding:4px 10px;cursor:pointer}
   .ct .sw{width:9px;height:9px;border-radius:50%}
@@ -54,7 +52,7 @@
 </style>
 </head>
 <body>
-<div class="cap"><b>C — Clusters.</b> For the whole-graph view: a force layout that <b>pulls communities together</b> and frames each in a soft, type-tinted region with a heading — structure is legible at a glance even at hundreds of nodes. Hover lights a node's links; a <b>minimap</b> tracks where you are; group toggles fold whole communities. Switch the grouping by <b>type</b> or <b>domain</b>.</div>
+<div class="cap"><b>C — Clusters (≈240 nodes).</b> The whole-graph view at real scale: a force layout that <b>pulls communities together</b> and frames each in a soft, type-tinted region with a heading, so structure stays legible even at hundreds of nodes. Group by <b>Type</b> or <b>Domain</b> (watch the medical/financial/location firewalls separate), fold whole communities, and use the <b>minimap</b> to navigate. Hover lights a node's links.</div>
 <div class="phone">
   <div class="topbar">
     <button class="chev"><svg class="i" viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6"/></svg></button>
@@ -73,115 +71,132 @@
       <button id="zfit"><svg class="i" viewBox="0 0 24 24"><path d="M4 9V5a1 1 0 011-1h4M20 9V5a1 1 0 00-1-1h-4M4 15v4a1 1 0 001 1h4M20 15v4a1 1 0 01-1 1h-4"/></svg></button>
       <button id="zout"><svg class="i" viewBox="0 0 24 24"><path d="M5 12h14"/></svg></button>
     </div>
-    <div class="mini"><svg id="minisvg" viewBox="0 0 390 700"><g id="minidots"></g><rect id="vp" class="vp" x="0" y="0" width="0" height="0"/></svg></div>
+    <div class="mini"><svg id="minisvg" viewBox="0 0 390 700" preserveAspectRatio="xMidYMid meet"><g id="minidots"></g><rect id="vp" class="vp" x="0" y="0" width="0" height="0"/></svg></div>
     <div class="clustertog" id="clustertog"></div>
   </div>
 </div>
 <script>
 document.getElementById('theme').onclick=()=>{const h=document.documentElement;h.dataset.theme=h.dataset.theme==='dark'?'light':'dark'};
-const TYPE={Person:'--steel',Organization:'--violet',Place:'--green',Event:'--amber',Product:'--periwinkle',Animal:'--sage',MedicalCondition:'--terracotta',Drug:'--orchid',Thing:'--slate'};
+const TYPE={Person:'--steel',Organization:'--violet',Place:'--green',Event:'--amber',Product:'--periwinkle',Animal:'--sage',MedicalCondition:'--terracotta',Drug:'--orchid',CreativeWork:'--rose',Thing:'--slate'};
 const DOMC={general:'--steel',medical:'--rose',financial:'--violet',location:'--teal'};
-// larger graph so clustering reads
-const N=[
-  {id:'me',name:'Me',kind:'Person',dom:'general'},
-  {id:'celine',name:'Celine',kind:'Person',dom:'general'},{id:'priya',name:'Priya',kind:'Person',dom:'general'},
-  {id:'dad',name:'Dad',kind:'Person',dom:'general'},{id:'mom',name:'Mom',kind:'Person',dom:'general'},
-  {id:'patel',name:'Dr. Patel',kind:'Person',dom:'medical'},{id:'lee',name:'Dr. Lee',kind:'Person',dom:'medical'},
-  {id:'globex',name:'Globex',kind:'Organization',dom:'general'},{id:'nair',name:'Nair Peds',kind:'Organization',dom:'general'},
-  {id:'mgh',name:'Mass General',kind:'Organization',dom:'medical'},{id:'fidelity',name:'Fidelity',kind:'Organization',dom:'financial'},
-  {id:'denver',name:'Denver',kind:'Place',dom:'location'},{id:'brookline',name:'Brookline',kind:'Place',dom:'location'},
-  {id:'boston',name:'Boston',kind:'Place',dom:'location'},{id:'office',name:'Globex HQ',kind:'Place',dom:'location'},
-  {id:'htn',name:'Hypertension',kind:'MedicalCondition',dom:'medical'},{id:'asthma',name:'Asthma',kind:'MedicalCondition',dom:'medical'},
-  {id:'lisin',name:'Lisinopril',kind:'Drug',dom:'medical'},{id:'albut',name:'Albuterol',kind:'Drug',dom:'medical'},
-  {id:'marathon',name:'Boston Marathon',kind:'Event',dom:'general'},{id:'wedding',name:'Wedding',kind:'Event',dom:'general'},
-  {id:'rex',name:'Rex',kind:'Animal',dom:'general'},{id:'kayak',name:'Sea kayak',kind:'Product',dom:'general'},{id:'roth',name:'Roth IRA',kind:'Product',dom:'financial'}
-];
-const E=[['me','celine','spouse'],['me','priya','sibling'],['me','dad','parent'],['me','mom','parent'],['me','patel','physician'],['me','globex','worksFor'],['me','denver','residence'],['me','htn','diagnosed'],['me','asthma','diagnosed'],['me','marathon','ran'],['me','wedding','attended'],['me','rex','owns'],['me','kayak','owns'],['me','roth','holds'],['me','fidelity','client'],['celine','globex','worksFor'],['celine','denver','residence'],['celine','wedding','married'],['priya','nair','founder'],['priya','brookline','residence'],['patel','mgh','worksAt'],['lee','mgh','worksAt'],['patel','htn','treats'],['lee','asthma','treats'],['htn','lisin','treatedWith'],['asthma','albut','treatedWith'],['marathon','boston','heldIn'],['globex','office','locatedAt'],['office','boston','in'],['roth','fidelity','custodian'],['dad','mom','spouse']];
-const byId=Object.fromEntries(N.map(n=>[n.id,n]));
+const GLBL={Person:'People',Organization:'Orgs',Place:'Places',Event:'Events',Product:'Products',Animal:'Animals',MedicalCondition:'Conditions',Drug:'Drugs',CreativeWork:'Media',Thing:'Things',general:'General',medical:'Medical',financial:'Financial',location:'Location'};
+
+let _seed=20260623;function rnd(){_seed=(_seed*1664525+1013904223)>>>0;return _seed/4294967296;}
+function pk(a){return a[Math.floor(rnd()*a.length)];}function chance(p){return rnd()<p;}
+const FN=['Celine','Priya','Marcus','Elena','Tom','Nina','Raj','Sofia','Liam','Maya','Omar','Grace','Dmitri','Aisha','Ben','Clara','Hugo','Lena','Sam','Tara','Noah','Iris','Felix','Zoe','Arjun','Mira','Leo','Ava','Kai','Ruth','Dev','Nora','Eli','Jade','Cole','Vera','Ian','Suki','Paul','Gina'];
+const LN=['Hopkins','Nair','Vance','Ortiz','Reed','Cho','Mehta','Park','Frost','Quinn','Adler','Bose','Hale','Diaz','Yang','Kerr','Wolfe','Sato','Pike','Bauer'];
+const ORGN=['Globex','Initech','Umbra Labs','Northwind','Acme Co','Soylent','Hooli','Vandelay','Massive Dyn','Cyberdyne','Stark Mfg','Tyrell','Pied Piper','Wonka Ind'];
+const PLACEN=['Denver','Brookline','Boston','Cambridge','Austin','Portland','Seattle','Lincoln Park','Riverside','Oakwood','Hillcrest','Fairview','Midtown','Bayshore','Elm Street','Harbor Point','Cedar Falls','Glenwood','Ashbury','Kenmore'];
+const CONDN=['Hypertension','Asthma','Migraine','Type 2 Diabetes','Eczema','Insomnia','Anemia','GERD'];
+const DRUGN=['Lisinopril','Albuterol','Sumatriptan','Metformin','Omeprazole','Melatonin','Atorvastatin','Loratadine'];
+const EVTN=['Boston Marathon','Wedding','Reunion 2025','Q3 Offsite','Charity 10K','DevConf','Housewarming','Recital','Summer BBQ','Ski trip'];
+const PRODN=['Sea kayak','Trek bike','Espresso machine','Standing desk','DSLR','Mountain tent','Vinyl player','Drone','e-Reader','Smart watch'];
+const FINN=['Roth IRA','Brokerage','529 Plan','HSA','Index fund','Pension','Crypto wallet'];
+const WORKN=['Atlas paper','Onboarding doc','Design spec','Patent filing','Podcast ep','Photo series','Q3 deck','Field notes'];
+const ANIN=['Rex','Maple','Biscuit','Shadow','Pepper'];
+function genGraph(TARGET){
+  const N=[],E=[],byId={};let _id=0;
+  const add=(kind,name,dom)=>{const id=kind.slice(0,2).toLowerCase()+(_id++);const n={id,name,kind,dom};N.push(n);byId[id]=n;return n;};
+  const link=(a,b,p)=>{if(a&&b&&a.id!==b.id)E.push([a.id,b.id,p]);};
+  const me=add('Person','Me','general');
+  const fam=[];for(let i=0;i<12;i++){const f=add('Person',pk(FN)+' '+pk(LN),'general');fam.push(f);link(me,f,pk(['spouse','parent','sibling','child','in-law','cousin']));}
+  for(let i=0;i<10;i++)link(pk(fam),pk(fam),'relative');
+  const placePool=[];const place=dom=>{const p=add('Place',pk(PLACEN),dom||'location');placePool.push(p);return p;};
+  const orgs=[];
+  for(let k=0;k<8;k++){const o=add('Organization',pk(ORGN),'general');orgs.push(o);const hq=place('location');link(o,hq,'locatedAt');
+    const staff=[];const cnt=5+Math.floor(rnd()*8);for(let i=0;i<cnt;i++){const s=add('Person',pk(FN)+' '+pk(LN),'general');staff.push(s);link(s,o,'worksFor');}
+    for(let i=0;i<cnt;i++)link(pk(staff),pk(staff),'colleague');
+    for(let i=0;i<3;i++){const w=add('CreativeWork',pk(WORKN),'general');link(pk(staff),w,'authored');link(w,o,'forOrg');}}
+  link(me,orgs[0],'worksFor');
+  const friends=[];for(let i=0;i<18;i++){const fr=add('Person',pk(FN)+' '+pk(LN),'general');friends.push(fr);link(me,fr,'friend');if(chance(.5))link(fr,pk(orgs),'worksFor');if(chance(.4))link(fr,pk(placePool),'residence');}
+  for(let i=0;i<18;i++)link(pk(friends),pk(friends),'friend');
+  const hosp=add('Organization','Mass General','medical'),hosp2=add('Organization','City Clinic','medical'),hosp3=add('Organization','Lakeside Med','medical');
+  const docs=[];for(let i=0;i<8;i++){const d=add('Person','Dr. '+pk(LN),'medical');docs.push(d);link(d,pk([hosp,hosp2,hosp3]),'worksAt');}
+  for(let i=0;i<3;i++)link(me,pk(docs),'physician');
+  const conds=CONDN.map(c=>add('MedicalCondition',c,'medical'));
+  const drugs=DRUGN.map(c=>add('Drug',c,'medical'));
+  conds.forEach((c,i)=>{link(me,c,'diagnosed');link(c,drugs[i],'treatedWith');link(pk(docs),c,'treats');if(chance(.4))link(c,drugs[(i+3)%drugs.length],'alsoTreatedWith');});
+  const fin=add('Organization','Fidelity','financial'),fin2=add('Organization','Vanguard','financial');
+  FINN.forEach(p=>{const a=add('Product',p,'financial');link(me,a,'holds');link(a,chance(.5)?fin:fin2,'custodian');});
+  for(let i=0;i<2;i++){const adv=add('Person',pk(FN)+' '+pk(LN),'financial');link(me,adv,'advisor');link(adv,chance(.5)?fin:fin2,'worksFor');}
+  EVTN.forEach(e=>{const ev=add('Event',e,'general');link(me,ev,chance(.5)?'attended':'organized');link(ev,pk(placePool),'heldIn');for(let i=0;i<4;i++)link(pk(friends.concat(fam)),ev,'attended');});
+  PRODN.forEach(p=>{const pr=add('Product',p,'general');if(chance(.6))link(me,pr,'owns');else link(pk(friends),pr,'owns');});
+  ANIN.forEach(a=>{const an=add('Animal',a,'general');link(chance(.6)?me:pk(fam),an,'owns');});
+  for(let i=0;i<14;i++){const p=place('location');link(pk(friends.concat(fam)),p,'residence');if(chance(.4))link(p,pk(placePool),'near');}
+  const KINDS=[['Person','general'],['Place','location'],['Product','general'],['Organization','general'],['CreativeWork','general'],['Event','general'],['Person','medical']];
+  while(N.length<TARGET){const [k,d]=pk(KINDS);const nm=k==='Person'?(d==='medical'?'Dr. '+pk(LN):pk(FN)+' '+pk(LN)):k==='Place'?pk(PLACEN):k==='Organization'?pk(ORGN):k==='Event'?pk(EVTN):k==='CreativeWork'?pk(WORKN):pk(PRODN);
+    const n=add(k,nm,d);const host=N[1+Math.floor(rnd()*(N.length-2))];link(n,host,pk(['related','knows','near','refers to','member']));}
+  return {N,E,byId};
+}
+const {N,E,byId}=genGraph(240);
 const deg={};N.forEach(n=>deg[n.id]=0);E.forEach(([a,b])=>{deg[a]++;deg[b]++});
-const W=390,H=700;let groupBy='kind';
-function groupKey(n){return groupBy==='kind'?n.kind:n.dom;}
-function groupColor(k){return groupBy==='kind'?TYPE[k]:DOMC[k];}
-const GLBL={Person:'People',Organization:'Orgs',Place:'Places',Event:'Events',Product:'Products',Animal:'Animals',MedicalCondition:'Conditions',Drug:'Drugs',general:'General',medical:'Medical',financial:'Financial',location:'Location'};
+document.getElementById('countpill').textContent=`${N.length} entities · ${E.length} links`;
 
-N.forEach((n,i)=>{const a=i/N.length*6.283;n.x=W/2+Math.cos(a)*150;n.y=H/2+Math.sin(a)*150;n.vx=0;n.vy=0;});
+let groupBy='kind';
+const groupKey=n=>groupBy==='kind'?n.kind:n.dom;
+const groupColor=k=>groupBy==='kind'?TYPE[k]:DOMC[k];
+N.forEach((n,i)=>{const a=i/N.length*6.283,r=60+rnd()*260;n.x=195+Math.cos(a)*r;n.y=350+Math.sin(a)*r;n.vx=0;n.vy=0;});
 let clusters=[],hidden=new Set();
-function computeClusters(){const keys=[...new Set(N.map(groupKey))];clusters=keys.map((k,i)=>{const a=i/keys.length*6.283;return{key:k,cx:W/2+Math.cos(a)*135,cy:H/2+Math.sin(a)*120};});}
+function computeClusters(){const keys=[...new Set(N.map(groupKey))];const R=keys.length>6?230:170;clusters=keys.map((k,i)=>{const a=i/keys.length*6.283;return{key:k,cx:195+Math.cos(a)*R,cy:350+Math.sin(a)*R*0.92};});}
 computeClusters();
-
 function tick(){
   const cmap=Object.fromEntries(clusters.map(c=>[c.key,c]));
-  for(let i=0;i<N.length;i++)for(let j=i+1;j<N.length;j++){const a=N[i],b=N[j];if(hidden.has(groupKey(a))||hidden.has(groupKey(b)))continue;let dx=a.x-b.x,dy=a.y-b.y,d2=dx*dx+dy*dy||1,d=Math.sqrt(d2);const rep=1900/d2;a.vx+=dx/d*rep;a.vy+=dy/d*rep;b.vx-=dx/d*rep;b.vy-=dy/d*rep;}
-  for(const[s,t]of E){const a=byId[s],b=byId[t];if(hidden.has(groupKey(a))||hidden.has(groupKey(b)))continue;let dx=b.x-a.x,dy=b.y-a.y,d=Math.sqrt(dx*dx+dy*dy)||1;const f=(d-72)*0.01;a.vx+=dx/d*f;a.vy+=dy/d*f;b.vx-=dx/d*f;b.vy-=dy/d*f;}
-  for(const n of N){if(hidden.has(groupKey(n)))continue;const c=cmap[groupKey(n)];n.vx+=(c.cx-n.x)*0.022;n.vy+=(c.cy-n.y)*0.022;n.vx*=0.82;n.vy*=0.82;if(n!==drag){n.x+=n.vx;n.y+=n.vy;}}
+  for(let i=0;i<N.length;i++)for(let j=i+1;j<N.length;j++){const a=N[i],b=N[j];if(hidden.has(groupKey(a))||hidden.has(groupKey(b)))continue;let dx=a.x-b.x,dy=a.y-b.y,d2=dx*dx+dy*dy||1,d=Math.sqrt(d2);const rep=1200/d2;a.vx+=dx/d*rep;a.vy+=dy/d*rep;b.vx-=dx/d*rep;b.vy-=dy/d*rep;}
+  for(const[s,t]of E){const a=byId[s],b=byId[t];if(hidden.has(groupKey(a))||hidden.has(groupKey(b)))continue;let dx=b.x-a.x,dy=b.y-a.y,d=Math.sqrt(dx*dx+dy*dy)||1;const f=(d-50)*0.011;a.vx+=dx/d*f;a.vy+=dy/d*f;b.vx-=dx/d*f;b.vy-=dy/d*f;}
+  for(const n of N){if(hidden.has(groupKey(n)))continue;const c=cmap[groupKey(n)];n.vx+=(c.cx-n.x)*0.026;n.vy+=(c.cy-n.y)*0.026;n.vx*=0.8;n.vy*=0.8;if(n!==drag){n.x+=n.vx;n.y+=n.vy;}}
   render();requestAnimationFrame(tick);
 }
 
 const view=document.getElementById('view'),hullsG=document.getElementById('hulls'),eG=document.getElementById('edges'),nG=document.getElementById('nodes');
-let scale=.7,tx=58,ty=10,hoverId=null;
+const svg=document.getElementById('svg'),minisvg=document.getElementById('minisvg'),mini=document.getElementById('minidots'),vp=document.getElementById('vp');
+let scale=.45,tx=80,ty=40,hoverId=null;
 const eEls={},nEls={},lEls={};
-function radius(n){return 4+Math.sqrt(deg[n.id])*2.8;}
-function rebuild(){
-  eG.innerHTML='';nG.innerHTML='';Object.keys(eEls).forEach(k=>delete eEls[k]);
+const radius=n=>3.5+Math.sqrt(deg[n.id])*2.4;
+function rebuild(){eG.innerHTML='';nG.innerHTML='';for(const k in eEls)delete eEls[k];
   for(const[s,t]of E){const el=document.createElementNS('http://www.w3.org/2000/svg','line');el.setAttribute('class','edge');eG.appendChild(el);eEls[s+'>'+t]=el;}
   for(const n of N){const c=document.createElementNS('http://www.w3.org/2000/svg','circle');c.setAttribute('class','dot');c.setAttribute('r',radius(n));c.dataset.id=n.id;nG.appendChild(c);nEls[n.id]=c;
     const l=document.createElementNS('http://www.w3.org/2000/svg','text');l.setAttribute('class','dlbl');l.textContent=n.name;nG.appendChild(l);lEls[n.id]=l;
-    c.addEventListener('pointerenter',()=>{if(!drag){hoverId=n.id;}});c.addEventListener('pointerleave',()=>{if(!drag)hoverId=null;});
-  }
-}
+    c.addEventListener('pointerenter',()=>{if(!drag)hoverId=n.id;});c.addEventListener('pointerleave',()=>{if(!drag)hoverId=null;});}}
 function neighbors(id){const s=new Set([id]);for(const[a,b]of E){if(a===id)s.add(b);if(b===id)s.add(a);}return s;}
-// convex hull (Andrew monotone chain)
-function hull(pts){if(pts.length<3)return pts;pts=pts.slice().sort((a,b)=>a.x-b.x||a.y-b.y);const cross=(o,a,b)=>(a.x-o.x)*(b.y-o.y)-(a.y-o.y)*(b.x-o.x);const lo=[],up=[];for(const p of pts){while(lo.length>=2&&cross(lo[lo.length-2],lo[lo.length-1],p)<=0)lo.pop();lo.push(p);}for(let i=pts.length-1;i>=0;i--){const p=pts[i];while(up.length>=2&&cross(up[up.length-2],up[up.length-1],p)<=0)up.pop();up.push(p);}lo.pop();up.pop();return lo.concat(up);}
+function hull(pts){if(pts.length<3)return pts;pts=pts.slice().sort((a,b)=>a.x-b.x||a.y-b.y);const cr=(o,a,b)=>(a.x-o.x)*(b.y-o.y)-(a.y-o.y)*(b.x-o.x);const lo=[],up=[];for(const p of pts){while(lo.length>=2&&cr(lo[lo.length-2],lo[lo.length-1],p)<=0)lo.pop();lo.push(p);}for(let i=pts.length-1;i>=0;i--){const p=pts[i];while(up.length>=2&&cr(up[up.length-2],up[up.length-1],p)<=0)up.pop();up.push(p);}lo.pop();up.pop();return lo.concat(up);}
 function expand(h,pad){const cx=h.reduce((s,p)=>s+p.x,0)/h.length,cy=h.reduce((s,p)=>s+p.y,0)/h.length;return h.map(p=>{const dx=p.x-cx,dy=p.y-cy,d=Math.hypot(dx,dy)||1;return{x:p.x+dx/d*pad,y:p.y+dy/d*pad};});}
-function roundedPath(h){if(h.length<3)return '';let d=`M ${h[0].x} ${h[0].y}`;for(let i=1;i<h.length;i++)d+=` L ${h[i].x} ${h[i].y}`;return d+' Z';}
-
-const mini=document.getElementById('minidots'),vp=document.getElementById('vp');
+function rpath(h){if(h.length<3)return '';let d=`M ${h[0].x} ${h[0].y}`;for(let i=1;i<h.length;i++)d+=` L ${h[i].x} ${h[i].y}`;return d+' Z';}
 function render(){
   view.setAttribute('transform',`translate(${tx},${ty}) scale(${scale})`);
-  // hulls
   hullsG.innerHTML='';mini.innerHTML='';
-  for(const c of clusters){if(hidden.has(c.key))continue;const grp=N.filter(n=>groupKey(n)===c.key);const pts=grp.map(n=>({x:n.x,y:n.y}));let h=expand(hull(pts),26);
-    const path=document.createElementNS('http://www.w3.org/2000/svg','path');path.setAttribute('class','hull');path.setAttribute('d',roundedPath(h));
-    path.setAttribute('fill',`color-mix(in srgb,var(${groupColor(c.key)}) 9%,transparent)`);path.setAttribute('stroke',`color-mix(in srgb,var(${groupColor(c.key)}) 30%,transparent)`);
-    if(hoverId)path.style.opacity=.4;hullsG.appendChild(path);
+  let mnx=1e9,mny=1e9,mxx=-1e9,mxy=-1e9;
+  for(const c of clusters){if(hidden.has(c.key))continue;const grp=N.filter(n=>groupKey(n)===c.key);if(!grp.length)continue;const pts=grp.map(n=>({x:n.x,y:n.y}));const h=expand(hull(pts),24);
+    const path=document.createElementNS('http://www.w3.org/2000/svg','path');path.setAttribute('class','hull');path.setAttribute('d',rpath(h));path.setAttribute('fill',`color-mix(in srgb,var(${groupColor(c.key)}) 8%,transparent)`);path.setAttribute('stroke',`color-mix(in srgb,var(${groupColor(c.key)}) 28%,transparent)`);if(hoverId)path.style.opacity=.4;hullsG.appendChild(path);
     const cx=grp.reduce((s,n)=>s+n.x,0)/grp.length,top=Math.min(...grp.map(n=>n.y));
-    const t=document.createElementNS('http://www.w3.org/2000/svg','text');t.setAttribute('class','hulllbl');t.setAttribute('x',cx);t.setAttribute('y',top-32);t.setAttribute('text-anchor','middle');t.setAttribute('fill',`var(${groupColor(c.key)})`);t.textContent=GLBL[c.key]||c.key;hullsG.appendChild(t);
-  }
+    const t=document.createElementNS('http://www.w3.org/2000/svg','text');t.setAttribute('class','hulllbl');t.setAttribute('x',cx);t.setAttribute('y',top-30);t.setAttribute('text-anchor','middle');t.setAttribute('fill',`var(${groupColor(c.key)})`);t.textContent=`${GLBL[c.key]||c.key} · ${grp.length}`;hullsG.appendChild(t);}
   const set=hoverId?neighbors(hoverId):null;
   for(const[a,b]of E){const el=eEls[a+'>'+b];const na=byId[a],nb=byId[b];const hide=hidden.has(groupKey(na))||hidden.has(groupKey(nb));el.style.display=hide?'none':'';if(hide)continue;
-    el.setAttribute('x1',na.x);el.setAttribute('y1',na.y);el.setAttribute('x2',nb.x);el.setAttribute('y2',nb.y);
-    const inset=!set||(set.has(a)&&set.has(b));el.style.opacity=inset?(set?.85:.5):.07;el.style.stroke=inset&&set?`var(${groupColor(groupKey(byId[hoverId]))})`:'var(--border)';
-  }
+    el.setAttribute('x1',na.x);el.setAttribute('y1',na.y);el.setAttribute('x2',nb.x);el.setAttribute('y2',nb.y);const inset=!set||(set.has(a)&&set.has(b));el.style.opacity=inset?(set?.85:.28):.04;el.style.stroke=inset&&set?`var(${groupColor(groupKey(byId[hoverId]))})`:'var(--border)';}
   for(const n of N){const c=nEls[n.id],l=lEls[n.id];const hide=hidden.has(groupKey(n));c.style.display=hide?'none':'';l.style.display=hide?'none':'';if(hide)continue;
     c.setAttribute('cx',n.x);c.setAttribute('cy',n.y);c.setAttribute('fill',`color-mix(in srgb,var(${groupColor(groupKey(n))}) 72%,var(--surface))`);
     l.setAttribute('x',n.x);l.setAttribute('y',n.y+radius(n)+10);l.setAttribute('font-size',10.5/scale);
-    const inset=!set||set.has(n.id);c.style.opacity=inset?1:.1;
-    const force=n.id===hoverId||(set&&set.has(n.id));l.style.opacity=(force||scale>=1.05||deg[n.id]>=4)?(inset?1:.15):0;
-    // minimap dot
-    const md=document.createElementNS('http://www.w3.org/2000/svg','circle');md.setAttribute('cx',n.x);md.setAttribute('cy',n.y);md.setAttribute('r',5);md.setAttribute('fill',`var(${groupColor(groupKey(n))})`);mini.appendChild(md);
-  }
-  // viewport rect on minimap (world coords currently shown)
+    const inset=!set||set.has(n.id);c.style.opacity=inset?1:.08;const force=n.id===hoverId||(set&&set.has(n.id));l.style.opacity=(force||scale>=1.15||deg[n.id]>=6)?(inset?1:.12):0;
+    const md=document.createElementNS('http://www.w3.org/2000/svg','circle');md.setAttribute('cx',n.x);md.setAttribute('cy',n.y);md.setAttribute('r',6);md.setAttribute('fill',`var(${groupColor(groupKey(n))})`);mini.appendChild(md);
+    mnx=Math.min(mnx,n.x);mny=Math.min(mny,n.y);mxx=Math.max(mxx,n.x);mxy=Math.max(mxy,n.y);}
+  // minimap viewBox to graph bounds + viewport rect
+  if(mnx<mxx){const pad=40;minisvg.setAttribute('viewBox',`${mnx-pad} ${mny-pad} ${(mxx-mnx)+2*pad} ${(mxy-mny)+2*pad}`);}
   const r=svg.getBoundingClientRect();vp.setAttribute('x',-tx/scale);vp.setAttribute('y',-ty/scale);vp.setAttribute('width',r.width/scale);vp.setAttribute('height',r.height/scale);
 }
-
-// cluster toggles
 function buildTog(){const tog=document.getElementById('clustertog');tog.innerHTML='';const keys=[...new Set(N.map(groupKey))];for(const k of keys){const b=document.createElement('button');b.className='ct';b.innerHTML=`<span class="sw" style="background:var(${groupColor(k)})"></span>${GLBL[k]||k}`;b.onclick=()=>{b.classList.toggle('off');hidden.has(k)?hidden.delete(k):hidden.add(k);};tog.appendChild(b);}}
-document.getElementById('countpill').textContent=`${N.length} entities · ${E.length} links`;
 
-// pan/zoom/drag
-const stage=document.getElementById('stage'),svg=document.getElementById('svg');let drag=null,dragMoved=false,panning=null;
-function toWorld(e){const r=svg.getBoundingClientRect();return{x:(e.clientX-r.left-tx)/scale,y:(e.clientY-r.top-ty)/scale};}
+const stage=document.getElementById('stage');let drag=null,dragMoved=false,panning=null;
+const toWorld=e=>{const r=svg.getBoundingClientRect();return{x:(e.clientX-r.left-tx)/scale,y:(e.clientY-r.top-ty)/scale};};
 nG.addEventListener('pointerdown',e=>{const id=e.target.dataset.id;if(!id)return;e.stopPropagation();drag=byId[id];dragMoved=false;});
 stage.addEventListener('pointerdown',e=>{if(drag)return;panning={x:e.clientX,y:e.clientY,tx,ty};});
 window.addEventListener('pointermove',e=>{if(drag){const w=toWorld(e);drag.x=w.x;drag.y=w.y;drag.vx=0;drag.vy=0;dragMoved=true;}else if(panning){tx=panning.tx+(e.clientX-panning.x);ty=panning.ty+(e.clientY-panning.y);}});
 window.addEventListener('pointerup',()=>{drag=null;panning=null;});
-svg.addEventListener('wheel',e=>{e.preventDefault();const r=svg.getBoundingClientRect();const mx=e.clientX-r.left,my=e.clientY-r.top;const f=e.deltaY<0?1.12:.89;const ns=Math.min(3,Math.max(.4,scale*f));const k=ns/scale;tx=mx-(mx-tx)*k;ty=my-(my-ty)*k;scale=ns;},{passive:false});
-document.getElementById('zin').onclick=()=>z(1.25);document.getElementById('zout').onclick=()=>z(.8);document.getElementById('zfit').onclick=()=>{scale=.7;tx=58;ty=10;};
-function z(f){const r=svg.getBoundingClientRect(),mx=r.width/2,my=r.height/2,ns=Math.min(3,Math.max(.4,scale*f)),k=ns/scale;tx=mx-(mx-tx)*k;ty=my-(my-ty)*k;scale=ns;}
-
+svg.addEventListener('wheel',e=>{e.preventDefault();const r=svg.getBoundingClientRect();const mx=e.clientX-r.left,my=e.clientY-r.top;const f=e.deltaY<0?1.12:.89;const ns=Math.min(4,Math.max(.18,scale*f));const k=ns/scale;tx=mx-(mx-tx)*k;ty=my-(my-ty)*k;scale=ns;},{passive:false});
+document.getElementById('zin').onclick=()=>z(1.25);document.getElementById('zout').onclick=()=>z(.8);document.getElementById('zfit').onclick=fitBounds;
+function z(f){const r=svg.getBoundingClientRect(),mx=r.width/2,my=r.height/2,ns=Math.min(4,Math.max(.18,scale*f)),k=ns/scale;tx=mx-(mx-tx)*k;ty=my-(my-ty)*k;scale=ns;}
+function fitBounds(){let a=1e9,b=1e9,c=-1e9,d=-1e9;for(const n of N){if(hidden.has(groupKey(n)))continue;a=Math.min(a,n.x);b=Math.min(b,n.y);c=Math.max(c,n.x);d=Math.max(d,n.y);}const r=svg.getBoundingClientRect(),pad=70;scale=Math.min(2,Math.max(.12,Math.min((r.width-pad)/(c-a||1),(r.height-pad)/(d-b||1))));tx=r.width/2-((a+c)/2)*scale;ty=r.height/2-((b+d)/2)*scale;}
 document.querySelectorAll('#seg button').forEach(b=>b.onclick=()=>{document.querySelectorAll('#seg button').forEach(x=>x.classList.remove('on'));b.classList.add('on');groupBy=b.dataset.g;hidden.clear();computeClusters();buildTog();});
 
-rebuild();buildTog();requestAnimationFrame(tick);
+rebuild();buildTog();requestAnimationFrame(tick);setTimeout(fitBounds,2000);
 </script>
 </body>
 </html>
