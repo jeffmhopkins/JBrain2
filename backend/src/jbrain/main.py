@@ -2,10 +2,11 @@ import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager, suppress
 from pathlib import Path
+from typing import Any
 
 import httpx
 import structlog
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from jbrain.agent.attachments import TurnAttachmentRepo
@@ -66,6 +67,7 @@ from jbrain.api import image_settings as image_settings_api
 from jbrain.api import lists as lists_api
 from jbrain.api import llm_settings as llm_settings_api
 from jbrain.api import settings as settings_api
+from jbrain.api.debug_activity import DebugActivity
 from jbrain.appointments.repo import SqlAppointmentsRepo
 from jbrain.auth.repo import SqlAuthRepo
 from jbrain.citygeocode import CityGeocoder
@@ -428,6 +430,27 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     app = FastAPI(title="JBrain", lifespan=lifespan)
     app.state.settings = settings
+    # A live, process-local feed of debug-console activity so the web console can
+    # show every /api/debug/* call as it lands — including ones run from outside
+    # that browser tab. Only the verb/route/outcome are kept (no bodies).
+    app.state.debug_activity = DebugActivity()
+
+    if settings.debug_access_enabled:
+
+        @app.middleware("http")
+        async def _record_debug_activity(request: Request, call_next: Any) -> Any:
+            response = await call_next(request)
+            path = request.url.path
+            # Skip the poll endpoint itself so the feed doesn't record its own reads.
+            if path.startswith("/api/debug/") and not path.startswith("/api/debug/activity"):
+                app.state.debug_activity.record(
+                    method=request.method,
+                    path=path,
+                    status=response.status_code,
+                    client=request.headers.get("x-debug-client", ""),
+                )
+            return response
+
     app.include_router(health.router, prefix="/api")
     app.include_router(agent.router, prefix="/api")
     app.include_router(analysis.router, prefix="/api")

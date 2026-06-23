@@ -48,6 +48,14 @@
 }
 
 {$JBRAIN_SITE_ADDR} {
+	# The owner debug console is LAN-only: its page must not be reachable from the
+	# public internet, so 404 its entry here. The LAN site below (which also imports
+	# app) still serves it. The shared hash-named /assets/* carry no secrets, and
+	# the /api/debug/* surface stays reachable (an external assistant connects to it
+	# with a token) — it is only the human-facing console PAGE that is LAN-gated.
+	handle /debug-console /debug-console/ /debug-console.html {
+		respond 404
+	}
 	import app
 }
 

@@ -67,6 +67,25 @@ def test_mint_list_revoke_roundtrip(owner_client: tuple[TestClient, FakeAuthRepo
     assert client.delete(f"/api/settings/debug-tokens/{token_id}").status_code == 404
 
 
+def test_public_base_url_points_handed_off_tokens_at_the_public_host() -> None:
+    # public_base_url wins over the request origin, so a token minted from the LAN
+    # PWA still embeds the public host for an external assistant to connect to.
+    app = create_app(
+        _settings(debug_access_enabled=True, public_base_url="https://pub.example.com/")
+    )
+    repo = FakeAuthRepo()
+    with TestClient(app) as client:
+        app.state.auth_repo = repo
+        key = asyncio.run(auth_service.rotate_owner_key(repo))
+        client.post("/api/auth/session", json={"owner_key": key, "device_label": "t"})
+        minted = client.post(
+            "/api/settings/debug-tokens",
+            json={"label": "x"},
+            headers={"origin": "https://jbrain.local"},
+        )
+        assert _decode(minted.json()["payload"])["u"] == "https://pub.example.com"
+
+
 def test_mint_refused_when_feature_disabled() -> None:
     app = create_app(_settings(debug_access_enabled=False))
     repo = FakeAuthRepo()

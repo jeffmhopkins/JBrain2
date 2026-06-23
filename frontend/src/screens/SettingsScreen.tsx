@@ -169,6 +169,12 @@ export function SettingsScreen({ deviceLabel, onLogout }: SettingsScreenProps) {
     { hours: 24 * 30, label: "30d" },
   ];
 
+  // Show only live tokens (active or suspended); revoked/expired ones are dropped
+  // rather than kept as history.
+  const liveDebugTokens = (Array.isArray(debugTokens) ? debugTokens : []).filter(
+    (t) => t.revoked_at == null && !(t.expires_at != null && new Date(t.expires_at) < new Date()),
+  );
+
   function pick(pref: ThemePref) {
     setThemePref(pref);
     setTheme(pref);
@@ -407,18 +413,10 @@ export function SettingsScreen({ deviceLabel, onLogout }: SettingsScreenProps) {
             </div>
           </>
         )}
-        {debugTokens && debugTokens.length > 0 && (
+        {liveDebugTokens.length > 0 && (
           <ul className="debug-token-list" aria-label="Debug tokens">
-            {debugTokens.map((t) => {
-              const expired = t.expires_at != null && new Date(t.expires_at) < new Date();
-              const status = t.revoked_at
-                ? "revoked"
-                : expired
-                  ? "expired"
-                  : t.suspended_at
-                    ? "suspended"
-                    : "active";
-              const live = status === "active" || status === "suspended";
+            {liveDebugTokens.map((t) => {
+              const status = t.suspended_at ? "suspended" : "active";
               return (
                 <li key={t.id} className="debug-token-row">
                   <div>
@@ -433,37 +431,27 @@ export function SettingsScreen({ deviceLabel, onLogout }: SettingsScreenProps) {
                         : " · never used"}
                     </p>
                   </div>
-                  {live && (
-                    <div className="debug-token-actions">
-                      {status === "active" ? (
-                        <button
-                          type="button"
-                          className="seg"
-                          onClick={() => suspendDebugToken(t.id)}
-                        >
-                          Suspend
-                        </button>
-                      ) : (
-                        <button
-                          type="button"
-                          className="seg"
-                          onClick={() => resumeDebugToken(t.id)}
-                        >
-                          Resume
-                        </button>
-                      )}
-                      <button
-                        type="button"
-                        className="btn-destructive"
-                        onClick={() =>
-                          revoking === t.id ? revokeDebugToken(t.id) : setRevoking(t.id)
-                        }
-                        onBlur={() => setRevoking(null)}
-                      >
-                        {revoking === t.id ? "Tap to confirm" : "Revoke"}
+                  <div className="debug-token-actions">
+                    {status === "active" ? (
+                      <button type="button" className="seg" onClick={() => suspendDebugToken(t.id)}>
+                        Suspend
                       </button>
-                    </div>
-                  )}
+                    ) : (
+                      <button type="button" className="seg" onClick={() => resumeDebugToken(t.id)}>
+                        Resume
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      className="btn-destructive"
+                      onClick={() =>
+                        revoking === t.id ? revokeDebugToken(t.id) : setRevoking(t.id)
+                      }
+                      onBlur={() => setRevoking(null)}
+                    >
+                      {revoking === t.id ? "Tap to confirm" : "Revoke"}
+                    </button>
+                  </div>
                 </li>
               );
             })}

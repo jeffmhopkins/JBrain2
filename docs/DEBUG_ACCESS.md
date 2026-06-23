@@ -84,15 +84,47 @@ The owner-side counterparts live on the management surface (owner-cookie gated):
 `DELETE /api/settings/debug-tokens/{id}` (revoke) and
 `POST /api/settings/debug-tokens/{id}/suspend|resume`.
 
+`GET /api/debug/activity?after=<seq>` returns a live ring of recent `/api/debug/*`
+calls (verb, route, status, derived kind — never bodies), so the console can show
+what is happening on the box, including commands an external assistant runs.
+
 ## The web console
 
 `/debug-console.html` (opened from **Settings → Debug access** via **Open
 console**, or by pasting a payload) is a standalone, **token-authed** page — not
-part of the cookie-authed PWA. It reads the key from the URL fragment (never sent
-to the server, and stripped from the address bar on load) and drives the routes
-above from a two-pane UI: command history on the left, output on the right, with
-**Suspend** and **Revoke** top-right as the token's own kill switch. It is a
-separate Vite entry, precached by the service worker like `/dash`.
+part of the cookie-authed PWA. Two-pane UI: a **live activity** feed on the left
+(it polls `/api/debug/activity`, so an assistant's commands stream in as they run,
+not just this tab's), output on the right, and **Suspend** / **Revoke** top-right
+as the token's own kill switch. It is a separate Vite entry, precached by the
+service worker like `/dash`.
+
+Two properties make it work across the public/LAN split:
+
+- **Same-origin API calls.** The console calls the API with *relative* paths, so
+  it always targets the host that served the page — never the token's embedded
+  host. That is what lets a LAN-only console (served over `jbrain.local`) drive the
+  box even though the token it carries points an external assistant at the public
+  host. The token supplies only the bearer **key**; its `u` host is for off-box
+  clients.
+- **Cached connection.** The key is saved to `localStorage`, so a refresh
+  auto-reconnects (and the fragment is stripped from the address bar on load). It
+  is cleared on **Revoke**. A suspended token still 401s until the owner resumes it
+  in the PWA, after which a reload reconnects.
+
+### Public token, LAN-only console
+
+By design the token defaults to the **public** host (so a handed-off token reaches
+the box from the internet), while the console **page** is **LAN-only** (it must not
+be exposed publicly):
+
+- `JBRAIN_PUBLIC_BASE_URL` (e.g. `https://your-tunnel-host`) is embedded in every
+  minted payload, even when minted from the LAN PWA, so an external assistant
+  connects over the public host. Empty falls back to the mint origin.
+- The console page is served only on the LAN site; the public site **404s**
+  `/debug-console*` (its shared `/assets/*` carry no secrets, and `/api/debug/*`
+  stays reachable for the token). So the human UI requires LAN access
+  (`jbrain enable-lan`); a remote assistant still uses the `/api/debug/*` routes
+  directly (or `scripts/debug-connect.sh`).
 
 ## Security posture (and the deliberate trade)
 
@@ -120,6 +152,9 @@ Set in `/opt/jbrain2/.env`:
 
 ```
 DEBUG_ACCESS_ENABLED=true
+# So a handed-off token reaches the box from the internet even when minted from
+# the LAN PWA (the LAN console ignores this and calls same-origin):
+PUBLIC_BASE_URL=https://your-tunnel-host
 ```
 
 then `sudo jbrain up` (**not** `jbrain restart`). A `.env` change is only injected

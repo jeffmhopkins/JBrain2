@@ -98,6 +98,12 @@ services:
       # comfortable letting an external assistant read in full (incl. health/
       # finance/location). Tokens are still revocable + time-boxed.
       JBRAIN_DEBUG_ACCESS_ENABLED: ${DEBUG_ACCESS_ENABLED:-false}
+      # Public, internet-reachable base URL (e.g. https://your-tunnel-host) embedded
+      # in a minted debug-token payload, so a token handed to an external assistant
+      # points at the public host even when minted from the LAN PWA. The LAN-only
+      # console ignores it (it calls same-origin). Set it to your full https URL;
+      # empty falls back to the PWA origin the token was minted from.
+      JBRAIN_PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-}
     volumes:
       - blobs:/data/blobs
       # Server-side basemap tile cache (location map proxy) — public map data, so
