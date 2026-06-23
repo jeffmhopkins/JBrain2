@@ -762,7 +762,7 @@ def test_sidecars_pinned_to_their_versions() -> None:
         "generate_image.tool": (
             "generate_image",
             6,
-            "f3b75182c3e0640a992f203f94fec640850c291f1c70f2e04ffb98a69646c93d",
+            "95ea01195ec987596896de7d1e38da19fbe2ebca9b6434659cbb85d8e31bb4d6",
         ),
         "edit_image.tool": (
             "edit_image",

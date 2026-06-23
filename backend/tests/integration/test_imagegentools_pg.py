@@ -239,6 +239,41 @@ async def test_generate_fast_when_lightning_not_installed_is_a_clean_actionable_
     assert count == 0  # no row written
 
 
+async def test_generate_dreamshaper_uses_the_sdxl_model_at_its_fixed_steps(
+    maker: async_sessionmaker,
+) -> None:
+    """speed: dreamshaper records the SDXL model on the row at its fixed 6-step sweet spot,
+    when that (separately-provisioned) model is installed."""
+    owner = await _owner(maker)
+    fake = FakeImageGen()
+    handlers = await _handlers(maker, owner, fake, provisioned=("qwen-image", "dreamshaper"))
+
+    out = await handlers["generate_image"](
+        {"prompt": "just show me something", "speed": "dreamshaper"}, _ctx(owner)
+    )
+    assert isinstance(out, ToolOutput) and isinstance(out.view, ViewPayload)
+    assert out.view.data["model"] == "dreamshaper"
+    assert fake.last_gen is not None and fake.last_gen.model == "dreamshaper"
+    assert fake.last_gen.steps == 6  # DreamShaper's fixed sweet spot, not the quality band
+
+
+async def test_generate_dreamshaper_when_not_installed_is_a_clean_actionable_error(
+    maker: async_sessionmaker,
+) -> None:
+    """speed: dreamshaper without that model provisioned bails with its own setup id (not the
+    Lightning one) before any spend."""
+    owner = await _owner(maker)
+    fake = FakeImageGen()
+    handlers = await _handlers(maker, owner, fake, provisioned=("qwen-image",))
+
+    out = await handlers["generate_image"](
+        {"prompt": "a quick sketch", "speed": "dreamshaper"}, _ctx(owner)
+    )
+    assert isinstance(out, str)
+    assert "comfyui-setup.sh dreamshaper" in out
+    assert fake.last_gen is None  # bailed before driving the model
+
+
 async def test_generate_frees_comfyui_after_the_render(maker: async_sessionmaker) -> None:
     # After the image is in hand, ComfyUI's resident model is unloaded so its ~39 GB
     # returns to the unified pool (for the reply's LLM reload / a follow-up edit).

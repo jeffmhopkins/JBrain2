@@ -91,12 +91,27 @@ def test_image_tools_are_jerv_only_not_curator() -> None:
 
 
 def test_both_image_sidecars_offer_the_speed_knob() -> None:
-    """generate_image AND edit_image carry the fast/quality `speed` knob (both have a 4-step
-    Lightning sibling); it's optional and defaults to quality on each."""
-    for name in ("generate_image.tool", "edit_image.tool"):
-        tool = load_tool(TOOLS_DIR / name)
-        assert tool.spec.params["properties"]["speed"]["enum"] == ["fast", "quality"]
+    """generate offers three speed tiers (dreamshaper/fast/quality); edit offers fast/quality
+    (DreamShaper can't edit). It's optional and defaults to quality on each."""
+    gen = load_tool(TOOLS_DIR / "generate_image.tool")
+    assert gen.spec.params["properties"]["speed"]["enum"] == ["dreamshaper", "fast", "quality"]
+    edit = load_tool(TOOLS_DIR / "edit_image.tool")
+    assert edit.spec.params["properties"]["speed"]["enum"] == ["fast", "quality"]
+    for tool in (gen, edit):
         assert "speed" not in tool.spec.params["required"]  # optional; defaults to quality
+
+
+def test_resolve_gen_speed_maps_each_tier_to_its_model_and_steps() -> None:
+    """The three generate tiers resolve to their model + fixed step count; quality uses the
+    band (None), and an unknown/absent speed falls back to quality — never a silent downgrade."""
+    from jbrain.agent.imagegentools import _GEN_SPEEDS, _resolve_gen_speed
+
+    assert _resolve_gen_speed("dreamshaper") == "dreamshaper"
+    assert _resolve_gen_speed("FAST") == "fast" and _resolve_gen_speed(" Quality ") == "quality"
+    assert _resolve_gen_speed(None) == "quality" and _resolve_gen_speed("turbo") == "quality"
+    assert _GEN_SPEEDS["dreamshaper"] == ("dreamshaper", 6)
+    assert _GEN_SPEEDS["fast"] == ("qwen-image-lightning", 4)
+    assert _GEN_SPEEDS["quality"] == ("qwen-image-2512", None)  # None → the quality steps band
 
 
 def test_fast_path_is_a_fixed_four_steps() -> None:

@@ -45,20 +45,35 @@ if TYPE_CHECKING:
 
 log = structlog.get_logger()
 
-# The models behind the `speed` knob, for both generate and edit: the full Qwen model
-# (quality, the default) and its 4-step Lightning sibling (fast). The recorded `model` string
-# is the graph key the driver routes on; the fast ids double as the provisioned-catalog ids the
-# `fast` path is gated on (they coincide, so one constant serves both checks).
+# The models behind the `speed` knob. Generate has three tiers — `quality` (the full Qwen
+# model, default), `fast` (its 4-step Lightning sibling), and `dreamshaper` (a tiny SDXL
+# checkpoint that renders in seconds). Edit has only `fast`/`quality` (DreamShaper can't edit).
+# The recorded `model` string is the graph key the driver routes on; the non-quality ids double
+# as the provisioned-catalog ids each tier is gated on (they coincide, so one id serves both).
 _GEN_MODEL = "qwen-image-2512"
 _FAST_MODEL = "qwen-image-lightning"
+_DREAMSHAPER_MODEL = "dreamshaper"
 _EDIT_MODEL = "qwen-image-edit"
 _FAST_EDIT_MODEL = "qwen-image-edit-lightning"
 
 # The quality path takes a direct `steps` count in the 20–40 band (default 20 — the band's
 # floor, a quick-but-finished render; raise toward 40 for more detail at more time). The `fast`
 # path ignores steps entirely: the distilled Lightning schedule is a fixed 4 steps (its sweet
-# spot — more steps add time, not detail).
+# spot — more steps add time, not detail). DreamShaper is likewise fixed at its sweet spot.
 _FAST_STEPS = 4
+_DREAMSHAPER_STEPS = 6  # DreamShaper XL Lightning's sweet spot in its tiny 4–8 band; not tunable
+
+# Generate's speed tiers -> (recorded model id, fixed step count or None to use the quality band).
+# The non-quality tiers also carry the human label + setup id for the not-installed message.
+_GEN_SPEEDS: dict[str, tuple[str, int | None]] = {
+    "dreamshaper": (_DREAMSHAPER_MODEL, _DREAMSHAPER_STEPS),
+    "fast": (_FAST_MODEL, _FAST_STEPS),
+    "quality": (_GEN_MODEL, None),
+}
+_GEN_SPEED_INSTALL_HINT: dict[str, tuple[str, str]] = {
+    "dreamshaper": ("DreamShaper XL (SDXL Lightning)", "dreamshaper"),
+    "fast": ("Qwen-Image 4-step Lightning", "qwen-image-lightning"),
+}
 _QUALITY_MIN_STEPS = 20
 _QUALITY_MAX_STEPS = 40
 _DEFAULT_QUALITY_STEPS = _QUALITY_MIN_STEPS
@@ -162,8 +177,19 @@ def _resolve_steps(arguments: dict, *, fast: bool = False) -> int:
 def _resolve_fast(raw: object) -> bool:
     """Whether the `fast` (4-step Lightning) model was asked for. Only the exact "fast" opts
     in; anything else (absent, "quality", or a hallucinated value) is the quality default, so
-    an unknown speed never silently degrades the image. Shared by generate and edit."""
+    an unknown speed never silently degrades the image. Used by the edit path (fast/quality)."""
     return isinstance(raw, str) and raw.strip().lower() == "fast"
+
+
+def _resolve_gen_speed(raw: object) -> str:
+    """The generate speed tier: 'dreamshaper' | 'fast' | 'quality'. Only an exact
+    (case-insensitive) match opts into a non-default tier; anything else stays 'quality', so an
+    unknown/hallucinated speed never silently degrades the render."""
+    if isinstance(raw, str):
+        token = raw.strip().lower()
+        if token in _GEN_SPEEDS:
+            return token
+    return "quality"
 
 
 _STOPPED_MESSAGE = "Stopped the render — nothing was saved."
@@ -317,17 +343,19 @@ def build_image_handlers(
             return "resolution must be one of: small, medium, large."
         width, height = dims
         seed = _resolve_seed(arguments.get("seed"))
-        fast = _resolve_fast(arguments.get("speed"))
-        if fast and _FAST_MODEL not in installed:
-            # The fast knob is always in the schema, but the model is a separate install — say
-            # so plainly (and how to fix it) instead of letting ComfyUI 404 on the checkpoint.
+        speed = _resolve_gen_speed(arguments.get("speed"))
+        model, fixed_steps = _GEN_SPEEDS[speed]
+        if speed != "quality" and model not in installed:
+            # A non-quality tier is always in the schema, but its model is a separate install —
+            # say so plainly (and how to fix it) instead of letting ComfyUI 404 on the checkpoint.
+            label, setup_id = _GEN_SPEED_INSTALL_HINT[speed]
             return (
-                "The fast image model (Qwen-Image 4-step Lightning) isn't installed on this box "
-                "yet. Generate at the default quality instead, or ask the owner to run "
-                "`comfyui-setup.sh qwen-image-lightning`."
+                f"The {speed} image model ({label}) isn't installed on this box yet. Generate at "
+                f"the default quality instead, or ask the owner to run "
+                f"`comfyui-setup.sh {setup_id}`."
             )
-        model = _FAST_MODEL if fast else _GEN_MODEL
-        steps = _resolve_steps(arguments, fast=fast)
+        # quality reads the `steps` band; the fixed tiers (fast/dreamshaper) ignore it.
+        steps = fixed_steps if fixed_steps is not None else _resolve_steps(arguments)
         spec = GenSpec(
             prompt=prompt,
             width=width,
