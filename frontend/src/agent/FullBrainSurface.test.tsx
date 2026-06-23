@@ -308,6 +308,33 @@ describe("FullBrainSurface", () => {
     await waitFor(() => expect(chat.scrollTop).toBe(1000));
   });
 
+  it("re-pins the foot when the viewport resizes out of band (status line)", async () => {
+    // The status line below the chat appears/hides on its own timers, shrinking or
+    // growing the scroll box with no `messages` change. A ResizeObserver must catch
+    // that and keep the newest turn in view — otherwise the last bubble slips behind
+    // the status line. Stand in jsdom's missing layout metrics, then fire the resize.
+    render(<Harness d={deps()} />);
+    const chat = await waitFor(() => screen.getByLabelText("Conversation"));
+    Object.defineProperty(chat, "scrollHeight", { value: 1000, configurable: true });
+    Object.defineProperty(chat, "clientHeight", { value: 300, configurable: true });
+
+    const observers = (globalThis.ResizeObserver as unknown as { instances: { trigger(): void }[] })
+      .instances;
+    expect(observers.length).toBeGreaterThan(0);
+    const ro = observers[observers.length - 1];
+
+    // Pinned (default): an out-of-band resize re-snaps to the foot.
+    chat.scrollTop = 0;
+    ro?.trigger();
+    expect(chat.scrollTop).toBe(1000);
+
+    // Scrolled up to read back: a resize must not yank the view down.
+    chat.scrollTop = 120;
+    fireEvent.scroll(chat);
+    ro?.trigger();
+    expect(chat.scrollTop).toBe(120);
+  });
+
   it("splits an image turn into preamble, image, and reply bubbles", async () => {
     async function* answer(): AsyncGenerator<ChatEvent> {
       yield { type: "text_delta", text: "I'll make that now." };
