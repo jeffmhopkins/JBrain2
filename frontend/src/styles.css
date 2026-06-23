@@ -13597,63 +13597,6 @@ input.ld-title {
   color: var(--text);
   white-space: pre-wrap;
 }
-.tv-vid-feed {
-  max-height: 236px;
-  overflow: auto;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-.tv-vid-moment {
-  display: flex;
-  gap: 10px;
-  align-items: flex-start;
-  width: 100%;
-  padding: 8px 6px;
-  border: 0;
-  border-left: 3px solid transparent;
-  border-radius: 0 8px 8px 0;
-  background: transparent;
-  text-align: left;
-  cursor: pointer;
-}
-.tv-vid-moment.on {
-  background: var(--steel-tint);
-  border-left-color: var(--steel);
-}
-.tv-vid-moment-t {
-  flex: 0 0 auto;
-  padding-top: 2px;
-  font-family: var(--mono, ui-monospace, monospace);
-  font-size: var(--fs-micro);
-  color: var(--text-2);
-}
-.tv-vid-moment-thumb {
-  flex: 0 0 auto;
-  width: 70px;
-  height: 44px;
-  border-radius: 8px;
-  object-fit: cover;
-}
-.tv-vid-moment-body {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  min-width: 0;
-}
-.tv-vid-moment-cap {
-  font-size: var(--fs-secondary);
-  line-height: 1.4;
-  color: var(--text);
-}
-.tv-vid-moment-said {
-  font-size: var(--fs-micro);
-  line-height: 1.4;
-  color: var(--text-3);
-}
-.tv-vid-moment.on .tv-vid-moment-said {
-  color: var(--text-2);
-}
 /* --- trail metric legend (top-left, under the names) -------------------- */
 .lm-legend {
   position: absolute;
