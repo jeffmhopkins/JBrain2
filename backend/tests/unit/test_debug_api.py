@@ -218,6 +218,53 @@ def test_complete_defaults_to_high_tier_when_unspecified(
     assert resp.status_code == 200 and resp.json()["text"] == "echo:hi"
 
 
+# --- async completion jobs --------------------------------------------------
+
+
+def test_complete_async_runs_as_a_job(debug_client: tuple[TestClient, str]) -> None:
+    import time
+
+    client, key = debug_client
+    sub = client.post("/api/debug/complete-async", headers=_auth(key), json={"user_text": "hi"})
+    assert sub.status_code == 202
+    job_id = sub.json()["job_id"]
+
+    status: dict[str, Any] = {"status": "pending"}
+    for _ in range(60):  # the background task resolves on the app's loop between polls
+        status = client.get(f"/api/debug/jobs/{job_id}", headers=_auth(key)).json()
+        if status["status"] != "pending":
+            break
+        time.sleep(0.05)
+    assert status["status"] == "done"
+    assert status["result"]["text"] == "echo:hi"
+    assert status["error"] is None
+
+
+def test_async_job_error_is_surfaced(debug_client: tuple[TestClient, str]) -> None:
+    import time
+
+    client, key = debug_client
+    # The stub router raises for task 'bad' -> the job records an error, not a crash.
+    job_id = client.post(
+        "/api/debug/complete-async", headers=_auth(key), json={"user_text": "x", "task": "bad"}
+    ).json()["job_id"]
+    status: dict[str, Any] = {"status": "pending"}
+    for _ in range(60):
+        status = client.get(f"/api/debug/jobs/{job_id}", headers=_auth(key)).json()
+        if status["status"] != "pending":
+            break
+        time.sleep(0.05)
+    assert status["status"] == "error" and status["result"] is None and status["error"]
+
+
+def test_async_routes_require_a_valid_bearer(debug_client: tuple[TestClient, str]) -> None:
+    client, key = debug_client
+    assert client.post("/api/debug/complete-async", json={"user_text": "x"}).status_code == 401
+    assert client.get("/api/debug/jobs/whatever").status_code == 401
+    # A bearer is valid but the job id is unknown.
+    assert client.get("/api/debug/jobs/nope", headers=_auth(key)).status_code == 404
+
+
 # --- local-model load / unload ----------------------------------------------
 
 

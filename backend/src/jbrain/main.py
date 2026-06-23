@@ -434,6 +434,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # show every /api/debug/* call as it lands — including ones run from outside
     # that browser tab. Only the verb/route/outcome are kept (no bodies).
     app.state.debug_activity = DebugActivity()
+    # In-memory async-completion jobs (slow models behind a short proxy timeout):
+    # job_id -> {status, result, error}, plus the live task refs so they aren't GC'd.
+    app.state.debug_jobs = {}
+    app.state.debug_job_tasks = set()
 
     if settings.debug_access_enabled:
 
@@ -441,8 +445,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         async def _record_debug_activity(request: Request, call_next: Any) -> Any:
             response = await call_next(request)
             path = request.url.path
-            # Skip the poll endpoint itself so the feed doesn't record its own reads.
-            if path.startswith("/api/debug/") and not path.startswith("/api/debug/activity"):
+            # Skip the high-frequency poll endpoints so the feed doesn't record its
+            # own reads (the activity feed and the job-status polling).
+            if (
+                path.startswith("/api/debug/")
+                and not path.startswith("/api/debug/activity")
+                and not path.startswith("/api/debug/jobs")
+            ):
                 # The handler stashes a short command summary (SQL/prompt/...) on
                 # request.state; scope["state"] is shared, so it is readable here.
                 app.state.debug_activity.record(

@@ -12,6 +12,7 @@ RLS context (full read, no domain firewall) but inside a READ-ONLY transaction, 
 it can read anything yet write nothing.
 """
 
+import asyncio
 import datetime as dt
 import decimal
 import uuid
@@ -167,13 +168,9 @@ class CompleteOut(BaseModel):
     output_tokens: int
 
 
-@router.post("/complete")
-async def complete(body: CompleteRequest, request: Request, _p: DebugDep) -> CompleteOut:
-    """Run one system+user prompt through the LLM adapter against whatever model is
-    currently routed, and return the output plus the resolved provider:model. The
-    sole prompt-iteration primitive — all egress stays on the adapter (non-neg #1)."""
-    request.state.debug_detail = body.user_text
-    router_ = _llm_router(request)
+async def _run_completion(router_: LlmRouter, body: CompleteRequest) -> CompleteOut:
+    """The shared completion primitive behind both the sync and the async (job)
+    routes — all egress stays on the adapter (non-neg #1)."""
     task = body.task or "debug.complete"
     strength = body.strength if body.task is None else None
     if body.task is None and body.strength is None:
@@ -200,6 +197,80 @@ async def complete(body: CompleteRequest, request: Request, _p: DebugDep) -> Com
         reasoning_effort=effort,
         input_tokens=result.usage.input_tokens,
         output_tokens=result.usage.output_tokens,
+    )
+
+
+@router.post("/complete")
+async def complete(body: CompleteRequest, request: Request, _p: DebugDep) -> CompleteOut:
+    """Run one system+user prompt synchronously. Fine for quick calls; a slow model
+    (a long, high-effort local extraction) can outlast a proxy's request timeout —
+    use /complete-async + /jobs/{id} for those."""
+    request.state.debug_detail = body.user_text
+    return await _run_completion(_llm_router(request), body)
+
+
+# --- Async completion jobs (for slow models behind a short proxy timeout) ----
+# A long local extraction can take minutes — longer than a Cloudflare Tunnel (or
+# any proxy) will hold a request open. So the caller SUBMITS a job (returns at
+# once) and POLLS /jobs/{id}; the model call runs in a background task on the box,
+# never held open across the wire. The store is in-memory and best-effort — a
+# process restart drops in-flight jobs, which is fine for a debug aid.
+
+_MAX_JOBS = 256
+
+
+class JobSubmitOut(BaseModel):
+    job_id: str
+
+
+class JobStatusOut(BaseModel):
+    job_id: str
+    status: str  # "pending" | "done" | "error"
+    result: CompleteOut | None = None
+    error: str | None = None
+
+
+@router.post("/complete-async", status_code=202)
+async def complete_async(body: CompleteRequest, request: Request, _p: DebugDep) -> JobSubmitOut:
+    """Submit a completion as a background job; poll GET /jobs/{job_id} for the
+    result. Lets the console/harness drive minutes-long calls through a proxy whose
+    request timeout is far shorter than the model takes."""
+    request.state.debug_detail = body.user_text
+    jobs = request.app.state.debug_jobs
+    tasks = request.app.state.debug_job_tasks
+    router_ = _llm_router(request)
+    job_id = uuid.uuid4().hex
+    jobs[job_id] = {"status": "pending", "result": None, "error": None}
+    # Keep the map bounded: drop the oldest already-finished jobs.
+    if len(jobs) > _MAX_JOBS:
+        for jid, val in list(jobs.items())[:-_MAX_JOBS]:
+            if val["status"] != "pending":
+                jobs.pop(jid, None)
+
+    async def _run() -> None:
+        try:
+            out = await _run_completion(router_, body)
+            jobs[job_id] = {"status": "done", "result": out, "error": None}
+        except HTTPException as exc:
+            jobs[job_id] = {"status": "error", "result": None, "error": str(exc.detail)}
+        except Exception as exc:  # noqa: BLE001 - a debug job must surface, not crash the loop
+            jobs[job_id] = {"status": "error", "result": None, "error": str(exc)}
+
+    task = asyncio.create_task(_run())
+    tasks.add(task)  # hold a ref so the task isn't GC'd mid-flight
+    task.add_done_callback(tasks.discard)
+    return JobSubmitOut(job_id=job_id)
+
+
+@router.get("/jobs/{job_id}")
+async def job_status(job_id: str, request: Request, _p: DebugDep) -> JobStatusOut:
+    """Poll a submitted completion job — pending until the model returns, then the
+    full result (or an error message)."""
+    job = request.app.state.debug_jobs.get(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="unknown job")
+    return JobStatusOut(
+        job_id=job_id, status=job["status"], result=job["result"], error=job["error"]
     )
 
 
