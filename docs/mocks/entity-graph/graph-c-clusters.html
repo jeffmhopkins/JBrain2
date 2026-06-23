@@ -98,7 +98,7 @@ function genGraph(TARGET){
   const N=[],E=[],byId={};let _id=0;
   const add=(kind,name,dom)=>{const id=kind.slice(0,2).toLowerCase()+(_id++);const n={id,name,kind,dom};N.push(n);byId[id]=n;return n;};
   const link=(a,b,p)=>{if(a&&b&&a.id!==b.id)E.push([a.id,b.id,p]);};
-  const me=add('Person','Me','general');
+  const me=add('Person','Me','general');delete byId[me.id];me.id='me';byId.me=me;
   const fam=[];for(let i=0;i<12;i++){const f=add('Person',pk(FN)+' '+pk(LN),'general');fam.push(f);link(me,f,pk(['spouse','parent','sibling','child','in-law','cousin']));}
   for(let i=0;i<10;i++)link(pk(fam),pk(fam),'relative');
   const placePool=[];const place=dom=>{const p=add('Place',pk(PLACEN),dom||'location');placePool.push(p);return p;};
@@ -135,17 +135,20 @@ document.getElementById('countpill').textContent=`${N.length} entities · ${E.le
 let groupBy='kind';
 const groupKey=n=>groupBy==='kind'?n.kind:n.dom;
 const groupColor=k=>groupBy==='kind'?TYPE[k]:DOMC[k];
+let drag=null,dragMoved=false,panning=null,alpha=1;
 N.forEach((n,i)=>{const a=i/N.length*6.283,r=60+rnd()*260;n.x=195+Math.cos(a)*r;n.y=350+Math.sin(a)*r;n.vx=0;n.vy=0;});
 let clusters=[],hidden=new Set();
-function computeClusters(){const keys=[...new Set(N.map(groupKey))];const R=keys.length>6?230:170;clusters=keys.map((k,i)=>{const a=i/keys.length*6.283;return{key:k,cx:195+Math.cos(a)*R,cy:350+Math.sin(a)*R*0.92};});}
+function computeClusters(){const keys=[...new Set(N.map(groupKey))];const R=keys.length>6?240:175;clusters=keys.map((k,i)=>{const a=i/keys.length*6.283;return{key:k,cx:195+Math.cos(a)*R,cy:350+Math.sin(a)*R*0.92};});}
 computeClusters();
-function tick(){
+function physics(){
   const cmap=Object.fromEntries(clusters.map(c=>[c.key,c]));
-  for(let i=0;i<N.length;i++)for(let j=i+1;j<N.length;j++){const a=N[i],b=N[j];if(hidden.has(groupKey(a))||hidden.has(groupKey(b)))continue;let dx=a.x-b.x,dy=a.y-b.y,d2=dx*dx+dy*dy||1,d=Math.sqrt(d2);const rep=1200/d2;a.vx+=dx/d*rep;a.vy+=dy/d*rep;b.vx-=dx/d*rep;b.vy-=dy/d*rep;}
-  for(const[s,t]of E){const a=byId[s],b=byId[t];if(hidden.has(groupKey(a))||hidden.has(groupKey(b)))continue;let dx=b.x-a.x,dy=b.y-a.y,d=Math.sqrt(dx*dx+dy*dy)||1;const f=(d-50)*0.011;a.vx+=dx/d*f;a.vy+=dy/d*f;b.vx-=dx/d*f;b.vy-=dy/d*f;}
-  for(const n of N){if(hidden.has(groupKey(n)))continue;const c=cmap[groupKey(n)];n.vx+=(c.cx-n.x)*0.026;n.vy+=(c.cy-n.y)*0.026;n.vx*=0.8;n.vy*=0.8;if(n!==drag){n.x+=n.vx;n.y+=n.vy;}}
-  render();requestAnimationFrame(tick);
+  for(let i=0;i<N.length;i++)for(let j=i+1;j<N.length;j++){const a=N[i],b=N[j];if(hidden.has(groupKey(a))||hidden.has(groupKey(b)))continue;let dx=a.x-b.x,dy=a.y-b.y,d2=dx*dx+dy*dy;if(d2<1)d2=1;const d=Math.sqrt(d2);const rep=Math.min(22,1100/d2);a.vx+=dx/d*rep;a.vy+=dy/d*rep;b.vx-=dx/d*rep;b.vy-=dy/d*rep;}
+  for(const[s,t]of E){const a=byId[s],b=byId[t];if(hidden.has(groupKey(a))||hidden.has(groupKey(b)))continue;let dx=b.x-a.x,dy=b.y-a.y,d=Math.sqrt(dx*dx+dy*dy)||1;const f=(d-45)*0.014;a.vx+=dx/d*f;a.vy+=dy/d*f;b.vx-=dx/d*f;b.vy-=dy/d*f;}
+  for(const n of N){if(hidden.has(groupKey(n)))continue;const c=cmap[groupKey(n)];n.vx+=(c.cx-n.x)*0.03;n.vy+=(c.cy-n.y)*0.03;n.vx*=0.8;n.vy*=0.8;const sp=Math.hypot(n.vx,n.vy);if(sp>16){n.vx*=16/sp;n.vy*=16/sp;}if(n!==drag){n.x+=n.vx*alpha;n.y+=n.vy*alpha;}}
 }
+for(let i=0;i<340;i++){alpha=Math.max(0.05,alpha*0.985);physics();}
+alpha=0.08;
+function tick(){alpha=drag?0.5:Math.max(0.04,alpha*0.95+0.002);physics();render();requestAnimationFrame(tick);}
 
 const view=document.getElementById('view'),hullsG=document.getElementById('hulls'),eG=document.getElementById('edges'),nG=document.getElementById('nodes');
 const svg=document.getElementById('svg'),minisvg=document.getElementById('minisvg'),mini=document.getElementById('minidots'),vp=document.getElementById('vp');
@@ -184,7 +187,7 @@ function render(){
 }
 function buildTog(){const tog=document.getElementById('clustertog');tog.innerHTML='';const keys=[...new Set(N.map(groupKey))];for(const k of keys){const b=document.createElement('button');b.className='ct';b.innerHTML=`<span class="sw" style="background:var(${groupColor(k)})"></span>${GLBL[k]||k}`;b.onclick=()=>{b.classList.toggle('off');hidden.has(k)?hidden.delete(k):hidden.add(k);};tog.appendChild(b);}}
 
-const stage=document.getElementById('stage');let drag=null,dragMoved=false,panning=null;
+const stage=document.getElementById('stage');
 const toWorld=e=>{const r=svg.getBoundingClientRect();return{x:(e.clientX-r.left-tx)/scale,y:(e.clientY-r.top-ty)/scale};};
 nG.addEventListener('pointerdown',e=>{const id=e.target.dataset.id;if(!id)return;e.stopPropagation();drag=byId[id];dragMoved=false;});
 stage.addEventListener('pointerdown',e=>{if(drag)return;panning={x:e.clientX,y:e.clientY,tx,ty};});
@@ -196,7 +199,7 @@ function z(f){const r=svg.getBoundingClientRect(),mx=r.width/2,my=r.height/2,ns=
 function fitBounds(){let a=1e9,b=1e9,c=-1e9,d=-1e9;for(const n of N){if(hidden.has(groupKey(n)))continue;a=Math.min(a,n.x);b=Math.min(b,n.y);c=Math.max(c,n.x);d=Math.max(d,n.y);}const r=svg.getBoundingClientRect(),pad=70;scale=Math.min(2,Math.max(.12,Math.min((r.width-pad)/(c-a||1),(r.height-pad)/(d-b||1))));tx=r.width/2-((a+c)/2)*scale;ty=r.height/2-((b+d)/2)*scale;}
 document.querySelectorAll('#seg button').forEach(b=>b.onclick=()=>{document.querySelectorAll('#seg button').forEach(x=>x.classList.remove('on'));b.classList.add('on');groupBy=b.dataset.g;hidden.clear();computeClusters();buildTog();});
 
-rebuild();buildTog();requestAnimationFrame(tick);setTimeout(fitBounds,2000);
+rebuild();buildTog();fitBounds();requestAnimationFrame(tick);
 </script>
 </body>
 </html>

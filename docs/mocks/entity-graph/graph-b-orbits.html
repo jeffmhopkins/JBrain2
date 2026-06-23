@@ -103,7 +103,7 @@ function genGraph(TARGET){
   const N=[],E=[],byId={};let _id=0;
   const add=(kind,name,dom)=>{const id=kind.slice(0,2).toLowerCase()+(_id++);const n={id,name,kind,dom};N.push(n);byId[id]=n;return n;};
   const link=(a,b,p)=>{if(a&&b&&a.id!==b.id)E.push([a.id,b.id,p]);};
-  const me=add('Person','Me','general');
+  const me=add('Person','Me','general');delete byId[me.id];me.id='me';byId.me=me;
   const fam=[];for(let i=0;i<10;i++){const f=add('Person',pk(FN)+' '+pk(LN),'general');fam.push(f);link(me,f,pk(['spouse','parent','sibling','child','in-law','cousin']));}
   for(let i=0;i<8;i++)link(pk(fam),pk(fam),'relative');
   const placePool=[];const place=dom=>{const p=add('Place',pk(PLACEN),dom||'location');placePool.push(p);return p;};
