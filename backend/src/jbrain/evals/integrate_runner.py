@@ -122,18 +122,26 @@ def _score(case: dict[str, Any], intent: IntegrationIntent) -> IntegrateResult:
     g = case["gold"]
     r = IntegrateResult(name=case["name"])
     res = {x.mention_ref: x for x in intent.entity_resolutions}
-    sup = {s.predicate: s.action for s in intent.supersession_proposals}
+    # predicate -> the SET of actions proposed for it. A set (not a last-wins dict)
+    # so two proposals on the same predicate (different qualifiers) don't mask each
+    # other; the predicate-keyed golds below then test membership.
+    sup: dict[str, set[str]] = {}
+    for s in intent.supersession_proposals:
+        sup.setdefault(s.predicate, set()).add(s.action)
 
     for mref, eid in g.get("resolve_existing", {}).items():
         x = res.get(mref)
         ok = bool(x and x.mode == "existing" and x.proposed_entity_id == eid)
         r.checks.append((f"resolve:{mref}={eid}", ok, f"{x.mode if x else 'none'}"))
     for pred, act in g.get("supersede", {}).items():
-        r.checks.append((f"supersede:{pred}={act}", sup.get(pred) == act, f"{sup.get(pred)}"))
+        actions = sup.get(pred, set())
+        r.checks.append((f"supersede:{pred}={act}", act in actions, f"{actions or '-'}"))
     for pred in g.get("no_supersede", []):
-        r.checks.append((f"no_supersede:{pred}", sup.get(pred) != "supersede", f"{sup.get(pred)}"))
+        actions = sup.get(pred, set())
+        r.checks.append((f"no_supersede:{pred}", "supersede" not in actions, f"{actions or '-'}"))
     for pred in g.get("conflict", []):
-        r.checks.append((f"conflict:{pred}", sup.get(pred) == "conflict", f"{sup.get(pred)}"))
+        actions = sup.get(pred, set())
+        r.checks.append((f"conflict:{pred}", "conflict" in actions, f"{actions or '-'}"))
     for mref, want in g.get("cross_subject", {}).items():
         x = res.get(mref)
         r.checks.append((f"cross_subject:{mref}={want}", bool(x and x.cross_subject == want), ""))

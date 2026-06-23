@@ -76,11 +76,22 @@ async def test_eval_run_splits_task_and_safety() -> None:
     assert (scores["c_null"].task, scores["c_null"].safety) == (1.0, 1.0)
 
 
-async def test_unanswered_mention_is_a_miss_not_a_crash() -> None:
-    # The model returns an empty choice set: the mention is unscored-correct (a
-    # miss), never a false link.
+async def test_unanswered_mention_on_a_link_case_is_a_miss() -> None:
+    # Empty choices on a gold=id case: not linking is the wrong call (a miss), but
+    # never a false link (no entity was fused).
     results, _ = await score_disambiguate_cases(_router(['{"choices": []}']), _CASES[:1])
-    assert not results[0].passed and results[0].got is None
+    r = results[0]
+    assert not r.passed and r.got is None
+    assert all(ok for label, ok, _ in r.checks if label.startswith("no_false_link:"))
+
+
+async def test_omitting_a_null_gold_mention_is_correct_not_a_miss() -> None:
+    # gold is "none of these": omitting the mention (empty choices) is the SAME
+    # correct decision as an explicit null — not linking — so it must score task=1,
+    # not be penalized. (Half the corpus is null-gold; this is the common path.)
+    null_case = [_CASES[1]]  # gold is None
+    results, _ = await score_disambiguate_cases(_router(['{"choices": []}']), null_case)
+    assert results[0].passed and results[0].got is None
 
 
 def test_committed_corpus_is_well_formed() -> None:

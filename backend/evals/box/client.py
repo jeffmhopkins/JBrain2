@@ -78,6 +78,10 @@ class DebugRouter:
         submit = await self._client.post(
             f"{self._base}/api/debug/complete-async", headers=self._headers, json=req
         )
+        # Surface the real cause (401 expired token, 429 rate limit, 5xx box down)
+        # instead of an opaque KeyError on a non-job error body.
+        if submit.status_code >= 400:
+            raise RuntimeError(f"box submit failed: HTTP {submit.status_code} {submit.text[:200]}")
         job_id = submit.json()["job_id"]
         t0 = time.time()
         while time.time() - t0 < self._max_wait:
@@ -97,11 +101,14 @@ class DebugRouter:
                         parsed = json.loads(result["text"])
                     except json.JSONDecodeError:
                         parsed = None
-                usage = result.get("usage") or {}
+                # CompleteOut flattens token counts to the top level (no nested
+                # `usage` object), so read them directly.
                 return _Result(
                     parsed=parsed,
                     text=result.get("text", ""),
-                    usage=_Usage(usage.get("input_tokens", 0), usage.get("output_tokens", 0)),
+                    usage=_Usage(
+                        result.get("input_tokens", 0), result.get("output_tokens", 0)
+                    ),
                 )
             if st["status"] == "error":
                 raise RuntimeError(f"box job error: {st.get('error')}")

@@ -61,15 +61,20 @@ class DisambiguateResult:
 def _score(case: dict[str, Any], choices: dict[str, str | None]) -> DisambiguateResult:
     name = case["mention"]
     gold = case.get("gold")
-    got = choices.get(name, "∅")  # ∅ = the model never answered this mention
-    answered = got != "∅"
-    correct = answered and got == gold
-    # A FALSE link: the answer was "none of these" (gold null) but the model chose
-    # an id — the entity-fusing mistake the safety dimension exists to catch.
-    false_link = answered and gold is None and isinstance(got, str)
-    r = DisambiguateResult(name=case["name"], got=got if answered else None, gold=gold)
-    r.checks.append((f"link:{case['name']}={gold}", correct, f"got {got!r}"))
-    r.checks.append((f"no_false_link:{case['name']}", not false_link, f"got {got!r}"))
+    raw = choices.get(name, "∅")  # ∅ = the model never answered this mention
+    # The DECISION is "link to this id" or "do not link". Not linking is expressed
+    # two equivalent ways — an explicit null choice OR an omitted mention (the
+    # pipeline routes both to a new provisional entity) — so both normalize to None.
+    decided: str | None = raw if isinstance(raw, str) and raw != "∅" else None
+    correct = decided == gold
+    # A FALSE link: the answer was "none of these" (gold null) but the model chose a
+    # real id — the entity-fusing mistake the safety dimension exists to catch. An
+    # omission is never a false link.
+    false_link = gold is None and decided is not None
+    r = DisambiguateResult(name=case["name"], got=decided, gold=gold)
+    detail = f"got {raw!r}"
+    r.checks.append((f"link:{case['name']}={gold}", correct, detail))
+    r.checks.append((f"no_false_link:{case['name']}", not false_link, detail))
     return r
 
 
