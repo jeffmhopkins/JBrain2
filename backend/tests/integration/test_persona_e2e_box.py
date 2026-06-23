@@ -83,6 +83,21 @@ async def _seed_note(maker, note: dict) -> str:  # noqa: F811
     return note_id
 
 
+async def _tally(maker) -> tuple[int, int, int]:  # noqa: F811
+    """A cheap running count — (entities, active facts, superseded) — printed after
+    each note so a long run shows the graph GROWING, not just notes consumed."""
+    async with maker() as s:
+        await s.execute(text("SELECT set_config('app.principal_kind','owner',true)"))
+        ents = (
+            await s.execute(text("SELECT count(*) FROM app.entities WHERE status <> 'merged'"))
+        ).scalar_one()
+        facts = (await s.execute(text("SELECT count(*) FROM app.facts"))).scalar_one()
+        sup = (
+            await s.execute(text("SELECT count(*) FROM app.facts WHERE superseded_by IS NOT NULL"))
+        ).scalar_one()
+    return ents, facts, sup
+
+
 async def _snapshot(maker) -> dict:  # noqa: F811
     async with maker() as s:
         await s.execute(text("SELECT set_config('app.principal_kind','owner',true)"))
@@ -129,8 +144,12 @@ async def test_persona_year_builds_the_entity_graph(maker) -> None:  # noqa: F81
             # integrator (box) and applies the intent — committing to the graph.
             await pipeline.integrate_note({"note_id": note_id})
             fed += 1
-            print(f"  fed [{fed}/{len(notes)}] {note['id']} "
-                  f"({_canonical_domain(note)}) {note['title']}")
+            e, f, sup = await _tally(maker)
+            print(
+                f"  fed [{fed}/{len(notes)}] {note['id']} ({_canonical_domain(note)}) "
+                f"{note['title']}  → graph: {e} entities, {f} facts, {sup} superseded",
+                flush=True,
+            )
     finally:
         await router.aclose()
 
