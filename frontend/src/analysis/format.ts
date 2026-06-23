@@ -22,42 +22,52 @@ export function fmtQuantity(value: number, unit: string): string {
   return `${value} ${unit}`;
 }
 
-/** Render a structured `value_json` into a concise display value, falling back
- * to `statement` for shapes with no scalar datum. This is the part of factValue
- * past the object-node short-circuit, factored out so other surfaces (the review
- * card's proposed-fact panel) describe a fact's value identically to the entity
- * page. `fallbackPrecision` dates a {start} value when it carries no own precision. */
-export function valueLabel(value: unknown, statement: string, fallbackPrecision?: string): string {
+/** The bare datum a structured value reduces to, or null when it carries none. */
+function structuredLabel(value: unknown, fallbackPrecision?: string): string | null {
   if (typeof value === "string") return value;
   if (typeof value === "number") return String(value);
-  if (value !== null && typeof value === "object") {
-    const o = value as Record<string, unknown>;
-    if (typeof o.systolic === "number" && typeof o.diastolic === "number") {
-      return `${o.systolic}/${o.diastolic}${typeof o.unit === "string" ? ` ${o.unit}` : ""}`;
-    }
-    if (o.value !== undefined) {
-      if (typeof o.value === "number" && typeof o.unit === "string") {
-        return fmtQuantity(o.value, o.unit);
-      }
-      return `${String(o.value)}${typeof o.unit === "string" ? ` ${o.unit}` : ""}`;
-    }
-    // Common single-datum shapes the extractor emits: a name ({"name": "Bella"},
-    // {"name": "Jeff Hopkins"}) or a place ({"place": "Denver"}). Without this a
-    // populated value_json still fell through to the whole statement sentence.
-    // The name keys mirror the backend's entities._NAME_VALUE_KEYS so a name.*
-    // fact stored under fullname/alias/text renders its bare name here too,
-    // instead of falling through to "Full name Celine Kitina Hopkins.".
-    for (const key of ["name", "place", "fullname", "alias", "text"] as const) {
-      if (typeof o[key] === "string") return o[key] as string;
-    }
-    // A date-valued state fact (scheduledTime, startDate, …) stores its datum as
-    // {start: ISO}; render the concise date/time, not the prose statement.
-    if (typeof o.start === "string") {
-      const precision = typeof o.precision === "string" ? o.precision : fallbackPrecision;
-      return fmtTemporal(o.start, precision ?? "");
-    }
+  if (value === null || typeof value !== "object") return null;
+  const o = value as Record<string, unknown>;
+  if (typeof o.systolic === "number" && typeof o.diastolic === "number") {
+    return `${o.systolic}/${o.diastolic}${typeof o.unit === "string" ? ` ${o.unit}` : ""}`;
   }
-  return statement;
+  if (o.value !== undefined) {
+    if (typeof o.value === "number" && typeof o.unit === "string") {
+      return fmtQuantity(o.value, o.unit);
+    }
+    return `${String(o.value)}${typeof o.unit === "string" ? ` ${o.unit}` : ""}`;
+  }
+  // Common single-datum shapes the extractor emits: a name ({"name": "Bella"},
+  // {"name": "Jeff Hopkins"}) or a place ({"place": "Denver"}), and the other
+  // name-value keys a name.* fact may be stored under (fullname/alias/text).
+  for (const key of ["name", "place", "fullname", "alias", "text"] as const) {
+    if (typeof o[key] === "string") return o[key] as string;
+  }
+  // A date-valued state fact (scheduledTime, startDate, …) stores its datum as
+  // {start: ISO}; render the concise date/time, not the prose statement.
+  if (typeof o.start === "string") {
+    const precision = typeof o.precision === "string" ? o.precision : fallbackPrecision;
+    return fmtTemporal(o.start, precision ?? "");
+  }
+  // Any other single-datum shape ({"street": …}, …): the first non-empty string
+  // leaf is the datum (mirrors display._structured_label). String-only and
+  // numbers/booleans skipped so an incidental numeric/flag field is never
+  // surfaced as the value, and the two renderers agree.
+  for (const v of Object.values(o)) {
+    if (typeof v === "string" && v.trim()) return v;
+  }
+  return null;
+}
+
+/** Render a structured `value_json` into a concise display value: the bare datum
+ * (a recognized shape, else the first string leaf of an unhandled shape), falling
+ * back to `statement` when value_json carries no datum. NEVER empty — a value cell
+ * / choice button always shows something (mirrors display.value_label). This is the
+ * part of factValue past the object-node short-circuit, factored out so other
+ * surfaces (the review card's proposed-fact panel) describe a fact's value
+ * identically to the entity page. `fallbackPrecision` dates a {start} value. */
+export function valueLabel(value: unknown, statement: string, fallbackPrecision?: string): string {
+  return structuredLabel(value, fallbackPrecision) ?? statement;
 }
 
 /** Render value_json into the edge's value; falls back to the statement. */

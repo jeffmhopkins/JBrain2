@@ -74,6 +74,27 @@ predicates:
     value_shape: text
     kind: state
     schema_org_ref: schema:nationality
+  # Social / work / ownership edges — high-traffic in a personal KB and previously
+  # coined many ways (buddy, coworker, possesses); canonicalize the synonyms so the
+  # graph addresses one edge, not five. All accumulating (a person has many), so none
+  # functional. range_type is the usual object; a ref edge never gates on range.
+  - canonical_name: friend
+    value_shape: ref
+    range_type: person
+    kind: relationship
+    schema_org_ref: schema:knows
+    renamed_from: [buddy, pal, friends, bestie, bestFriend]
+  - canonical_name: colleague
+    value_shape: ref
+    range_type: person
+    kind: relationship
+    schema_org_ref: schema:colleague
+    renamed_from: [worksWith, coworker, workmate, colleagues]
+  - canonical_name: owns               # owned thing (vehicle/device/product/place); polymorphic object
+    value_shape: ref
+    kind: relationship
+    schema_org_ref: schema:owns
+    renamed_from: [possesses, owned, ownsVehicle]
 
 # Fed to the existing declared-name -> exact-alias machinery (NOT an identity key).
 alias_seeding_predicates: [name.full, name.preferred, name.aka, name.maiden]

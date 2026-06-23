@@ -2,6 +2,11 @@
 marked snippets, choice labels, and the invariant that advertised actions are
 exactly what the resolve endpoint accepts."""
 
+import json
+from pathlib import Path
+
+import pytest
+
 from jbrain.analysis.display import (
     SNIPPET_CHARS,
     ambiguous_display,
@@ -12,6 +17,19 @@ from jbrain.analysis.display import (
     truncation_display,
     value_label,
 )
+
+# Shared with the frontend (format.test.ts) — see testdata/value_label_parity.json.
+_PARITY = json.loads(
+    (Path(__file__).parents[3] / "testdata" / "value_label_parity.json").read_text()
+)["cases"]
+
+
+@pytest.mark.parametrize("case", _PARITY, ids=[c["name"] for c in _PARITY])
+def test_value_label_matches_the_shared_frontend_contract(case: dict) -> None:
+    # The backend value_label and the frontend valueLabel must agree on this
+    # fixture (a code review caught backend/frontend drift). Intentional
+    # divergences are excluded from the fixture, not asserted here.
+    assert value_label(case["value_json"], case["statement"]) == case["expected"]
 
 
 def test_new_predicate_advertises_map_accept_reject_choices() -> None:
@@ -70,13 +88,29 @@ class TestValueLabel:
         assert value_label({"value": 95, "unit": "mg/dL"}, "s") == "95 mg/dL"
         assert value_label({"value": "Denver, CO"}, "s") == "Denver, CO"
 
-    def test_falls_back_to_the_statement(self) -> None:
-        # Mirrors the UI's factValue: unrecognized shapes read as the
-        # rendered sentence, never raw JSON.
-        assert value_label({"street": "99 Pine Ave"}, "Lives at 99 Pine Ave.") == (
-            "Lives at 99 Pine Ave."
-        )
+    def test_unrecognized_shape_renders_its_string_leaf(self) -> None:
+        # An unhandled shape yields its bare datum (the first string leaf) rather
+        # than falling through to the statement sentence.
+        assert value_label({"street": "99 Pine Ave"}, "Lives at 99 Pine Ave.") == "99 Pine Ave"
+
+    def test_falls_back_to_the_statement_never_empty(self) -> None:
+        # No datum in value_json: the statement is the floor — a choice button /
+        # value cell must never render empty (it would orphan a review card).
         assert value_label(None, "Sarah works for Ridgeline.") == "Sarah works for Ridgeline."
+        assert value_label({}, "He was admitted on Tuesday.") == "He was admitted on Tuesday."
+
+    def test_date_shape_defers_to_the_statement_not_a_raw_iso(self) -> None:
+        # The backend has no date formatter; a {start} shape is left to the
+        # statement rather than surfacing a raw ISO timestamp as the value.
+        assert (
+            value_label({"start": "2026-06-15T14:00:00-06:00"}, "Appointment is Monday at 2pm.")
+            == "Appointment is Monday at 2pm."
+        )
+
+    def test_abbreviated_name_datum_is_not_dropped(self) -> None:
+        # A short datum with an internal period (a title, an initial) is the value,
+        # never mistaken for a sentence.
+        assert value_label({"value": "Dr. Patel"}, "Saw Dr. Patel.") == "Dr. Patel"
 
 
 class TestReviewDisplays:

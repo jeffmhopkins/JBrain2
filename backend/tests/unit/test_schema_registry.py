@@ -61,6 +61,12 @@ def test_person_carries_family_kinship_edges(registry: SchemaRegistry) -> None:
     assert registry.normalize_predicate("son") == "children"  # schema.org plural canonical
     assert registry.normalize_predicate("brother") == "sibling"
     assert registry.normalize_predicate("speaksLanguage") == "knowsLanguage"
+    # Social / work / ownership synonyms collapse to one canonical edge (the
+    # persona-run predicate sprawl: buddy/coworker/possesses minted five ways).
+    assert registry.normalize_predicate("buddy") == "friend"
+    assert registry.normalize_predicate("worksWith") == "colleague"
+    assert registry.normalize_predicate("coworker") == "colleague"
+    assert registry.normalize_predicate("possesses") == "owns"
 
 
 def test_priority_is_a_shared_facet_so_members_agree(registry: SchemaRegistry) -> None:

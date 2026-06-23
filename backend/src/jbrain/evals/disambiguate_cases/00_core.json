@@ -1,0 +1,55 @@
+[
+  { "name": "context_decisive_link", "mention": "Bob", "kind": "Person",
+    "context": "Dana's husband Bob came over; he's the firefighter.",
+    "candidates": [
+      { "id": "ent-bob-reyes", "name": "Bob Reyes", "kind": "Person", "summary": "Dana's husband; firefighter; brother-in-law." },
+      { "id": "ent-bob-chen", "name": "Bob Chen", "kind": "Person", "summary": "Coworker at Nimbus; software engineer." }],
+    "gold": "ent-bob-reyes" },
+
+  { "name": "single_obvious_candidate", "mention": "Dr. Patel", "kind": "Person",
+    "context": "Saw Dr. Patel about the blood pressure follow-up.",
+    "candidates": [
+      { "id": "ent-patel", "name": "Dr. Anita Patel", "kind": "Person", "summary": "Primary care physician; treats the owner." }],
+    "gold": "ent-patel" },
+
+  { "name": "ambiguous_prefers_null", "mention": "Sam", "kind": "Person",
+    "context": "Grabbed coffee with Sam yesterday.",
+    "candidates": [
+      { "id": "ent-sam-w", "name": "Sam Whitfield", "kind": "Person", "summary": "College friend; lives in Denver." },
+      { "id": "ent-sam-o", "name": "Samantha Ortiz", "kind": "Person", "summary": "Neighbor; two doors down." }],
+    "gold": null },
+
+  { "name": "novel_reference_no_match", "mention": "the new place", "kind": "Place",
+    "context": "Tried the new place that just opened for dinner.",
+    "candidates": [
+      { "id": "ent-blackbelly", "name": "Blackbelly Market", "kind": "Place", "summary": "Restaurant the owner has been to many times." },
+      { "id": "ent-frasca", "name": "Frasca", "kind": "Place", "summary": "Long-time favorite Italian restaurant." }],
+    "gold": null },
+
+  { "name": "org_link_by_name", "mention": "Nimbus", "kind": "Organization",
+    "context": "The Nimbus offsite is in Tahoe this year.",
+    "candidates": [
+      { "id": "ent-nimbus", "name": "Nimbus Software", "kind": "Organization", "summary": "The owner's employer." },
+      { "id": "ent-atlas", "name": "Atlas Corp", "kind": "Organization", "summary": "A client company." }],
+    "gold": "ent-nimbus" },
+
+  { "name": "species_consistent_pet_link", "mention": "Biscuit", "kind": "dog",
+    "context": "Biscuit had his rabies shot at the vet.",
+    "candidates": [
+      { "id": "ent-biscuit", "name": "Biscuit", "kind": "dog", "summary": "The family's golden retriever." },
+      { "id": "ent-mochi", "name": "Mochi", "kind": "cat", "summary": "The family's cat." }],
+    "gold": "ent-biscuit" },
+
+  { "name": "same_surname_different_role", "mention": "Mr. Reyes", "kind": "Person",
+    "context": "Mateo's teacher Mr. Reyes sent a note home about the fun run.",
+    "candidates": [
+      { "id": "ent-bob-reyes", "name": "Bob Reyes", "kind": "Person", "summary": "Dana's husband; firefighter." }],
+    "gold": null },
+
+  { "name": "generic_reference_two_candidates", "mention": "the bank", "kind": "Organization",
+    "context": "Need to call the bank about the statement.",
+    "candidates": [
+      { "id": "ent-ally", "name": "Ally Bank", "kind": "Organization", "summary": "Online bank; owner's savings." },
+      { "id": "ent-chase", "name": "Chase", "kind": "Organization", "summary": "Owner's checking account." }],
+    "gold": null }
+]

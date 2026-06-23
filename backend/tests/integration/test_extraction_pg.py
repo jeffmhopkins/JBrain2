@@ -1206,7 +1206,9 @@ async def test_state_change_forms_supersession_chain(
     # The change-notice card: ids plus the display fields the UI renders.
     assert item["summary"] == "Me's residence changed"
     assert [c["action"] for c in item["choices"]] == ["accept_a", "accept_b"]
-    assert item["choices"][0]["label"] == "Lives at 4 Cedar Ct."
+    # The card label renders the fact's datum (the place), not the prose sentence
+    # (value-renderer fix: never echo the whole statement as the value).
+    assert item["choices"][0]["label"] == "4 Cedar Ct"
     assert "<mark>We</mark>" in item["snippet"]
     # The subject the review UI groups the card under (vs the "Other" bucket).
     assert item["entity_ref"] == "Me"
@@ -1493,7 +1495,8 @@ async def test_analysis_and_review_api_round_trip(
             assert payload["summary"] == "two values recorded for Mom's birthDate"
             assert "<mark>Mom</mark>" in payload["snippet"]
             assert [c["action"] for c in payload["choices"]] == ["accept_a", "accept_b"]
-            assert payload["choices"][1]["label"] == "Mom was born on 1958-04-03."
+            # The card label renders the date datum, not the prose sentence.
+            assert payload["choices"][1]["label"] == "1958-04-03"
 
             # Unknown action -> 400, untouched.
             bad = client.post(

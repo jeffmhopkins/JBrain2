@@ -1,0 +1,14 @@
+{
+  "_comment": "Shared contract for the value renderer, asserted by BOTH backend (test_analysis_display.py: value_label) and frontend (format.test.ts: valueLabel). Each case: value_json + statement -> the label both must return. Guards the backend/frontend drift a code review caught. Intentional divergences are EXCLUDED here and documented: imperial inch->feet display (frontend only), {start} ISO date formatting (frontend fmtTemporal; backend defers to statement), and numbers with >6 significant digits (backend :g vs frontend String).",
+  "cases": [
+    { "name": "blood_pressure", "value_json": {"systolic": 128, "diastolic": 82, "unit": "mmHg"}, "statement": "BP was 128/82.", "expected": "128/82 mmHg" },
+    { "name": "value_with_unit", "value_json": {"value": 95, "unit": "mg/dL"}, "statement": "Glucose 95.", "expected": "95 mg/dL" },
+    { "name": "value_string", "value_json": {"value": "Denver, CO"}, "statement": "Lives in Denver.", "expected": "Denver, CO" },
+    { "name": "name_shape", "value_json": {"name": "Bella"}, "statement": "The dog is named Bella.", "expected": "Bella" },
+    { "name": "place_shape", "value_json": {"place": "Denver"}, "statement": "Moved to Denver.", "expected": "Denver" },
+    { "name": "scalar_leaf_unknown_shape", "value_json": {"street": "99 Pine Ave"}, "statement": "Lives at 99 Pine Ave.", "expected": "99 Pine Ave" },
+    { "name": "abbreviated_datum_not_a_sentence", "value_json": {"value": "Dr. Patel"}, "statement": "Saw Dr. Patel.", "expected": "Dr. Patel" },
+    { "name": "null_falls_back_to_statement_never_empty", "value_json": null, "statement": "Sarah works for Ridgeline.", "expected": "Sarah works for Ridgeline." },
+    { "name": "empty_dict_falls_back_to_statement", "value_json": {}, "statement": "He was admitted on Tuesday.", "expected": "He was admitted on Tuesday." }
+  ]
+}

@@ -1,6 +1,25 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+// Shared with the backend (test_analysis_display.py). Imported (not read via node:fs)
+// so the test typechecks without pulling node types into this browser project; guards
+// the backend/frontend value-renderer drift a code review caught.
+import parity from "../../../testdata/value_label_parity.json";
 import type { FactOut } from "../api/client";
 import { dedupeTokens, factSpan, factValue, fmtQuantity, fmtTemporal, valueLabel } from "./format";
+
+const parityCases = parity.cases as {
+  name: string;
+  value_json: unknown;
+  statement: string;
+  expected: string;
+}[];
+
+describe("value renderer parity with the backend", () => {
+  for (const c of parityCases) {
+    it(c.name, () => {
+      expect(valueLabel(c.value_json, c.statement)).toBe(c.expected);
+    });
+  }
+});
 
 // The field bug only reproduces in a negative-offset zone: UTC-midnight
 // calendar dates rendered locally slip to the previous evening. Node re-reads
@@ -86,9 +105,19 @@ describe("fmtQuantity / factValue imperial display", () => {
     expect(factValue(fact({ value: 193, unit: "cm" }))).toBe("193 cm");
   });
 
-  it("blood pressure and statement fallback keep their rendering", () => {
+  it("blood pressure renders its shape", () => {
     expect(factValue(fact({ systolic: 128, diastolic: 82, unit: "mmHg" }))).toBe("128/82 mmHg");
+  });
+
+  it("falls back to the statement, never empty", () => {
+    // No datum in value_json: the statement is the floor so a value cell is
+    // never left empty.
     expect(factValue(fact(null))).toBe("Jeff is 6'4\" tall.");
+  });
+
+  it("an unrecognized shape renders its string leaf", () => {
+    // The bare datum (first string leaf) of an unhandled shape, not the statement.
+    expect(factValue(fact({ street: "99 Pine Ave" }))).toBe("99 Pine Ave");
   });
 
   it("name and place shapes render their datum, not the statement sentence", () => {
@@ -143,11 +172,13 @@ describe("valueLabel (shared by factValue and the review card)", () => {
     expect(valueLabel("Jeff Hopkins", "s")).toBe("Jeff Hopkins");
   });
 
-  it("falls back to the statement for shapes with no scalar datum", () => {
-    expect(valueLabel({ street: "99 Pine Ave" }, "Lives at 99 Pine Ave.")).toBe(
-      "Lives at 99 Pine Ave.",
-    );
+  it("renders the string leaf of an unrecognized shape, not the statement", () => {
+    expect(valueLabel({ street: "99 Pine Ave" }, "Lives at 99 Pine Ave.")).toBe("99 Pine Ave");
+  });
+
+  it("falls back to the statement (never empty) when there is no datum", () => {
     expect(valueLabel(null, "Sarah works for Ridgeline.")).toBe("Sarah works for Ridgeline.");
+    expect(valueLabel({}, "He was admitted on Tuesday.")).toBe("He was admitted on Tuesday.");
   });
 
   it("dates a bare {start} value with the fallback precision", () => {

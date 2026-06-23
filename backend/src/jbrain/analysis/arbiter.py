@@ -24,8 +24,9 @@ What the plan encodes:
 
 from __future__ import annotations
 
-from collections.abc import Mapping
-from dataclasses import dataclass
+import re
+from collections.abc import Iterable, Mapping
+from dataclasses import dataclass, replace
 
 from jbrain.analysis.extraction import (
     ExtractedFact,
@@ -38,6 +39,7 @@ from jbrain.analysis.intent import (
     EntityResolution,
     IntegrationIntent,
     IntentFact,
+    IntentTemporal,
     IntentViolation,
     has_fatal,
     validate_intent,
@@ -191,7 +193,125 @@ def _object_named(
     if res is None:
         return False
     surface = (res.attested_span.surface if res.attested_span else None) or res.new_name
-    return bool(surface) and surface in haystack
+    return bool(surface) and _norm(surface) in haystack
+
+
+def _norm(s: str) -> str:
+    """Collapse whitespace and casing so an attestation check survives the model's
+    quote drift (a reworded space, a capital, a smart quote) — the same string the
+    note holds, just normalized."""
+    return " ".join(s.split()).casefold()
+
+
+def _token_present(token: str, haystack: str) -> bool:
+    """The value appears in the note as a STANDALONE token, not merely as a
+    substring. Containment (`token in haystack`) makes short values match by
+    accident — `7` lands inside "$17", "7am", "level 7B" — which once forced a
+    blunt length floor that wrongly rejected legitimate short values (a grade `7`,
+    a blood type `A`). Word-edge anchors (not flanked by a word char) are the
+    principled fix: a coincidental in-word hit fails the boundary, a genuinely
+    stated short value passes. The lookarounds (not `\\b`) keep tokens whose own
+    edge is non-word — `A+`, `B-` — matchable. Both args are already normalized."""
+    if not token:
+        return False
+    return re.search(rf"(?<!\w){re.escape(token)}(?!\w)", haystack) is not None
+
+
+def _value_attested(value_json: dict | None, haystack: str) -> bool:
+    """A fact whose stored VALUE is stated in the note (as a standalone token) is
+    surface-attested even when the model's `attested_span` quote was paraphrased or
+    omitted — the attribute twin of `_object_named` (an attribute carries no object
+    to fall back on). `haystack` is already normalized. Gated upstream by
+    `not fact.inferred`, so a guessed value the note never states is never promoted
+    this way."""
+    if not isinstance(value_json, dict):
+        return False
+    for v in value_json.values():
+        if not isinstance(v, (str, int, float)):
+            continue
+        if _token_present(_norm(str(v)), haystack):
+            return True
+    return False
+
+
+def recover_dropped_fields(intent: IntegrationIntent, extraction: Extraction) -> IntegrationIntent:
+    """Backfill the object AND value the integrator drops when it re-types a fact.
+
+    note.extract reliably emits `object_entity_ref` (Me.children -> Eli),
+    `value_json` (grade {"value": "7th"}), and the `temporal` it resolved (an age
+    phrase -> birthDate); the integrator non-deterministically omits them when it
+    re-types the fact — orphaning the edge, blanking the value, or stripping the
+    date phrase, after which the arbiter finds no named object / no datum / no
+    grounding and holds the fact as inferred. Restore all three deterministically
+    from the extraction — the source of truth for what the note states — keyed on
+    the subject + canonical predicate. Then GUARANTEE every referenced entity
+    (subject and object) carries a resolution: a backfilled object with no
+    resolution would otherwise make apply_intent DROP the whole fact, so mint a
+    provisional from the extraction mention's kind. Only fills gaps — an existing
+    object/value/temporal/resolution (including a deliberate `ambiguous`) is never
+    overridden."""
+    registry = get_registry()
+    ext_obj: dict[tuple[str, str], str] = {}
+    ext_val: dict[tuple[str, str], dict] = {}
+    ext_temporal: dict[tuple[str, str], ExtractedTemporal] = {}
+    for f in extraction.facts:
+        key = (f.entity_ref, registry.normalize_predicate(f.predicate))
+        if f.object_entity_ref:
+            ext_obj.setdefault(key, f.object_entity_ref)
+        if isinstance(f.value_json, dict) and f.value_json:
+            ext_val.setdefault(key, f.value_json)
+        if f.temporal and f.temporal.phrase and f.temporal.resolved_start:
+            ext_temporal.setdefault(key, f.temporal)
+    mention_kind = {m.name: m.kind for m in extraction.mentions}
+    resolved = {r.mention_ref for r in intent.entity_resolutions}
+
+    facts: list[IntentFact] = []
+    added: list[EntityResolution] = []
+    for fact in intent.facts:
+        key = (fact.entity_ref, registry.normalize_predicate(fact.predicate))
+        if fact.object_entity_ref is None and key in ext_obj:
+            fact = replace(fact, object_entity_ref=ext_obj[key])
+        if not isinstance(fact.value_json, dict) and key in ext_val:
+            fact = replace(fact, value_json=ext_val[key])
+        if fact.temporal is None and key in ext_temporal:
+            t = ext_temporal[key]
+            fact = replace(
+                fact,
+                temporal=IntentTemporal(
+                    phrase=t.phrase,
+                    resolved_start=t.resolved_start,
+                    resolved_end=t.resolved_end,
+                    precision=t.precision,
+                ),
+            )
+        facts.append(fact)
+        for ref in (fact.entity_ref, fact.object_entity_ref):
+            if ref and ref not in resolved and ref in mention_kind:
+                added.append(
+                    EntityResolution(
+                        mention_ref=ref, mode="new", new_kind=mention_kind[ref], new_name=ref
+                    )
+                )
+                resolved.add(ref)
+    if not added and facts == intent.facts:
+        return intent
+    return replace(intent, facts=facts, entity_resolutions=[*intent.entity_resolutions, *added])
+
+
+def _date_phrase_grounded(fact: IntentFact, types: Iterable, haystack: str) -> bool:
+    """A date-shape attribute is grounded when the temporal PHRASE it was resolved
+    from appears in the note — even if the model flagged it inferred. An age ->
+    birthDate derivation ("Eli, 12" -> born 2013) marks the fact inferred because
+    the note never states the birthday, yet it is deterministic arithmetic over a
+    STATED age, not a guess; holding one per family member per note is pure review
+    noise. Scoped to date-shape predicates so a non-date inferred fact is never
+    promoted by a mere timestamp, and `haystack` is already normalized."""
+    if not (fact.temporal and fact.temporal.phrase and fact.temporal.resolved_start):
+        return False
+    is_date = any(
+        (p := t.predicate(fact.predicate)) is not None and p.value_shape == "date" for t in types
+    )
+    return is_date and _norm(fact.temporal.phrase) in haystack
 
 
 def compute_signals(
@@ -214,7 +334,7 @@ def compute_signals(
     # the arbiter resolves it, so "known" here means declared by ANY type — a
     # sound global proxy for the minor unknown-predicate weight penalty.
     types = registry.types.values()
-    haystack = "\n".join(chunk_texts)
+    haystack = _norm("\n".join(chunk_texts))
     res_by_ref = {r.mention_ref: r for r in intent.entity_resolutions}
     supersede_keys = {
         (s.entity_ref, s.predicate, s.qualifier)
@@ -223,10 +343,19 @@ def compute_signals(
     }
     out: dict[int, ConfidenceSignals] = {}
     for i, fact in enumerate(intent.facts):
-        surface_attested = not fact.inferred and (
-            (fact.attested_span is not None and fact.attested_span.surface in haystack)
-            or _object_named(fact, res_by_ref, haystack)
-        )
+        # surface_attested holds when the model didn't flag the fact inferred AND the
+        # note independently grounds it — by the model's (normalized) quote, the
+        # object's name, or the stored VALUE appearing in the note. The last two are
+        # deterministic backstops for the model's run-to-run quote drift, which
+        # otherwise dumps a clearly-stated fact into review under the inferred ceiling.
+        surface_attested = (
+            not fact.inferred
+            and (
+                (fact.attested_span is not None and _norm(fact.attested_span.surface) in haystack)
+                or _object_named(fact, res_by_ref, haystack)
+                or _value_attested(fact.value_json, haystack)
+            )
+        ) or _date_phrase_grounded(fact, types, haystack)
         out[i] = ConfidenceSignals(
             surface_attested=surface_attested,
             predicate_known=any(t.predicate(fact.predicate) is not None for t in types),

@@ -45,17 +45,39 @@ def _number(value: Any) -> str:
 
 def value_label(value_json: dict[str, Any] | None, statement: str) -> str:
     """Plain-language value for a choice button — mirrors the UI's factValue
-    renderer so the card and the entity page describe a fact identically."""
-    if isinstance(value_json, dict):
-        systolic, diastolic = value_json.get("systolic"), value_json.get("diastolic")
-        unit = value_json.get("unit")
-        if isinstance(systolic, (int, float)) and isinstance(diastolic, (int, float)):
-            reading = f"{_number(systolic)}/{_number(diastolic)}"
-            return f"{reading} {unit}" if isinstance(unit, str) else reading
-        if "value" in value_json:
-            rendered = _number(value_json["value"])
-            return f"{rendered} {unit}" if isinstance(unit, str) else rendered
-    return statement
+    renderer so the card and the entity page describe a fact identically.
+
+    Renders the bare datum from value_json (a recognized shape, else the first
+    string leaf of an unhandled shape), and falls back to the statement when
+    value_json carries no datum. NEVER empty: a choice button / value cell must
+    always show something, so the statement is the floor (the note.extract prompt
+    is what keeps value_json a bare datum; this only renders what is stored)."""
+    return _structured_label(value_json) or statement
+
+
+def _structured_label(value_json: dict[str, Any] | None) -> str | None:
+    """The bare datum a value_json reduces to, or None when it carries none."""
+    if not isinstance(value_json, dict):
+        return None
+    systolic, diastolic = value_json.get("systolic"), value_json.get("diastolic")
+    unit = value_json.get("unit")
+    if isinstance(systolic, (int, float)) and isinstance(diastolic, (int, float)):
+        reading = f"{_number(systolic)}/{_number(diastolic)}"
+        return f"{reading} {unit}" if isinstance(unit, str) else reading
+    if "value" in value_json:
+        rendered = _number(value_json["value"])
+        return f"{rendered} {unit}" if isinstance(unit, str) else rendered
+    # Any other single-datum shape ({"name": …}, {"place": …}, {"street": …}): the
+    # first non-empty STRING leaf is the datum. A date shape ({"start": ISO}) is
+    # left to the statement — there is no date formatter here, and the entity page
+    # (format.ts) renders {start} via fmtTemporal — so the start/end keys are
+    # skipped rather than surfaced as a raw ISO timestamp.
+    for key, v in value_json.items():
+        if key in ("start", "end"):
+            continue
+        if isinstance(v, str) and v.strip():
+            return v
+    return None
 
 
 def collision_display(

@@ -27,7 +27,13 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from jbrain.analysis import purge
 from jbrain.analysis.appointment_projection import project_appointments
-from jbrain.analysis.arbiter import ArbiterPlan, compute_signals, plan_intent, plan_to_extraction
+from jbrain.analysis.arbiter import (
+    ArbiterPlan,
+    compute_signals,
+    plan_intent,
+    plan_to_extraction,
+    recover_dropped_fields,
+)
 from jbrain.analysis.canonical import (
     PromotionOutcome,
     promote_if_corroborated,
@@ -362,6 +368,10 @@ class AnalysisPipeline:
             schema_version=_SCHEMA_VERSION,
             note_text=note_text,
         )
+        # Restore objects the integrator dropped when re-typing relationship facts
+        # (it non-deterministically omits object_entity_ref the extraction carried),
+        # so the edge links instead of orphaning + holding for review.
+        intent = recover_dropped_fields(intent, extraction)
         # Canonicalize unknown predicates BEFORE the arbiter keys facts, so a
         # STRONG embedding match collapses the committed graph address and the
         # weight model sees the canonical name (Phase 3 §3.1; no-op when off).
