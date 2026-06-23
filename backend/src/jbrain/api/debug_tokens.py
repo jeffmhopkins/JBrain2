@@ -40,8 +40,13 @@ def build_debug_payload(server_base: str, key: str) -> str:
 
 
 def _public_base(request: Request, settings: Settings) -> str:
-    """The server's public base URL to embed in the payload — the configured
-    dashboard_url if set, else the origin the owner's browser actually hit."""
+    """The base URL to embed in the payload, for the EXTERNAL clients that use it
+    (an assistant over the internet) — the LAN-only console ignores it and calls
+    same-origin. Prefer the explicit public host so a token minted from the LAN PWA
+    still points off-box clients at the public tunnel; then dashboard_url; else fall
+    back to the origin the owner's browser actually hit."""
+    if settings.public_base_url:
+        return settings.public_base_url.rstrip("/")
     if settings.dashboard_url:
         return settings.dashboard_url.rstrip("/")
     origin = request.headers.get("origin")

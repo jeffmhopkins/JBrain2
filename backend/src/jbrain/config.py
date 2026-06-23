@@ -34,6 +34,13 @@ class Settings(BaseSettings):
     mqtt_public_port: int = 8883
     # The dashboard URL the forked app's WebView loads; set when M4 lands.
     dashboard_url: str = ""
+    # The public, internet-reachable base URL of this box (e.g. the Cloudflare
+    # Tunnel host). Embedded in a minted debug-token payload so a handed-off token
+    # points an EXTERNAL assistant at the public host — even when the token is
+    # minted from the LAN PWA. The LAN-only web console ignores this (it calls the
+    # API same-origin); only off-box clients use it. Empty = fall back to the
+    # request origin (dev / single-host installs).
+    public_base_url: str = ""
     # The Origins allowed to open the live WebSocket (CSWSH defense, plan B8): a
     # comma-separated allow-list. A browser always sends `Origin` on the WS
     # handshake, so a cross-site page on a victim's machine is rejected. Empty =

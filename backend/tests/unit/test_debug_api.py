@@ -162,6 +162,26 @@ def test_self_lifecycle_requires_a_valid_bearer(debug_client: tuple[TestClient, 
     assert client.post("/api/debug/revoke-self", headers=_auth("garbage")).status_code == 401
 
 
+# --- live activity feed -----------------------------------------------------
+
+
+def test_activity_feed_records_commands(debug_client: tuple[TestClient, str]) -> None:
+    client, key = debug_client
+    client.get("/api/debug/whoami", headers=_auth(key))
+    client.post("/api/debug/complete", headers=_auth(key), json={"user_text": "hi"})
+    body = client.get("/api/debug/activity", headers=_auth(key)).json()
+    kinds = [e["kind"] for e in body["events"]]
+    assert "whoami" in kinds and "complete" in kinds
+    # The poll endpoint never records itself, so the feed doesn't grow on every read.
+    assert all(not e["path"].startswith("/api/debug/activity") for e in body["events"])
+    assert body["last"] >= 2
+
+
+def test_activity_feed_requires_a_valid_bearer(debug_client: tuple[TestClient, str]) -> None:
+    client, _ = debug_client
+    assert client.get("/api/debug/activity").status_code == 401
+
+
 # --- prompt completion ------------------------------------------------------
 
 

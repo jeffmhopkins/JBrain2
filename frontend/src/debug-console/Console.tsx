@@ -1,8 +1,16 @@
 // The owner debug console — a standalone, token-authenticated page (not part of
 // the cookie-authed PWA). It drives the /api/debug/* surface: prompt completion,
 // read-only SQL, logs, and live LLM routing, with the token's own kill switch
-// (Suspend / Revoke) top-right. The bearer key lives only in this tab's memory
-// (from the URL fragment or a paste) and is never persisted.
+// (Suspend / Revoke) top-right, and a LIVE activity pane that shows every command
+// hitting the box — including ones an external assistant runs, not just this tab's.
+//
+// API calls are SAME-ORIGIN (relative paths): the page talks to whatever host
+// served it, so the LAN-only console works against the box over jbrain.local even
+// though the token it carries points an external assistant at the public host. The
+// token supplies only the bearer key; its embedded host is for those other clients.
+//
+// The key is cached in localStorage so a refresh auto-reconnects; it is cleared on
+// Revoke. (A deliberate convenience trade — see the PWA copy on the token's reach.)
 
 import { type FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
@@ -13,11 +21,21 @@ type SessionState = "active" | "suspended" | "revoked";
 
 interface HistoryEntry {
   id: number;
-  type: CmdType | "whoami";
+  type: string; // command label, also drives the badge color (dbg-b-<type>)
   summary: string;
   detail: string;
   status: "ok" | "err" | "pending";
   output: string;
+}
+
+interface ActivityEvent {
+  seq: number;
+  ts: string;
+  method: string;
+  path: string;
+  status: number;
+  kind: string;
+  client: string;
 }
 
 interface Whoami {
@@ -31,33 +49,7 @@ interface CallResult {
   text: string;
 }
 
-async function call(
-  token: DebugToken,
-  method: string,
-  path: string,
-  body?: unknown,
-): Promise<CallResult> {
-  const headers: Record<string, string> = { Authorization: `Bearer ${token.key}` };
-  const init: RequestInit = { method, headers };
-  if (body !== undefined) {
-    headers["Content-Type"] = "application/json";
-    init.body = JSON.stringify(body);
-  }
-  try {
-    const res = await fetch(`${token.base}${path}`, init);
-    return { ok: res.ok, status: res.status, text: await res.text() };
-  } catch (e) {
-    return { ok: false, status: 0, text: `network error: ${String(e)}` };
-  }
-}
-
-function pretty(text: string): string {
-  try {
-    return JSON.stringify(JSON.parse(text), null, 2);
-  } catch {
-    return text;
-  }
-}
+const STORAGE_KEY = "jbrain.debug.token";
 
 const CMD_LABELS: Record<CmdType, string> = {
   complete: "complete — run a prompt",
@@ -68,10 +60,45 @@ const CMD_LABELS: Record<CmdType, string> = {
   model: "model — load / unload",
 };
 
+function pretty(text: string): string {
+  try {
+    return JSON.stringify(JSON.parse(text), null, 2);
+  } catch {
+    return text;
+  }
+}
+
+function fmtTime(iso: string): string {
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? iso : d.toLocaleTimeString();
+}
+
+function loadSavedToken(): DebugToken | null {
+  const fromHash = decodeToken(window.location.hash.slice(1));
+  if (fromHash) {
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(fromHash));
+    } catch {
+      /* private mode — fall back to in-memory only */
+    }
+    return fromHash;
+  }
+  try {
+    const saved = localStorage.getItem(STORAGE_KEY);
+    if (saved) return JSON.parse(saved) as DebugToken;
+  } catch {
+    /* ignore */
+  }
+  return null;
+}
+
 export function Console() {
-  const [token, setToken] = useState<DebugToken | null>(() =>
-    decodeToken(window.location.hash.slice(1)),
+  const clientId = useRef<string>(
+    (globalThis.crypto?.randomUUID?.() ?? String(Math.random())).slice(0, 16),
   );
+
+  const [token, setToken] = useState<DebugToken | null>(loadSavedToken);
+  const [connected, setConnected] = useState(false);
   const [paste, setPaste] = useState("");
   const [whoami, setWhoami] = useState<Whoami | null>(null);
   const [connectError, setConnectError] = useState<string | null>(null);
@@ -95,32 +122,98 @@ export function Console() {
   const [modelAction, setModelAction] = useState<"load" | "unload">("load");
   const [confirmRevoke, setConfirmRevoke] = useState(false);
 
-  // Drop the secret from the address bar once read, so a copied URL never leaks it.
+  // Same-origin call: relative path, so it targets the host that served the page.
+  const call = useCallback(
+    async (key: string, method: string, path: string, body?: unknown): Promise<CallResult> => {
+      const headers: Record<string, string> = {
+        Authorization: `Bearer ${key}`,
+        "X-Debug-Client": clientId.current,
+      };
+      const init: RequestInit = { method, headers };
+      if (body !== undefined) {
+        headers["Content-Type"] = "application/json";
+        init.body = JSON.stringify(body);
+      }
+      try {
+        const res = await fetch(path, init);
+        return { ok: res.ok, status: res.status, text: await res.text() };
+      } catch (e) {
+        return { ok: false, status: 0, text: `network error: ${String(e)}` };
+      }
+    },
+    [],
+  );
+
+  // Drop the secret from the address bar once read (it is cached in localStorage).
   useEffect(() => {
-    if (token && window.location.hash) {
+    if (window.location.hash) {
       window.history.replaceState(null, "", window.location.pathname + window.location.search);
     }
-  }, [token]);
-
-  const connect = useCallback(async (t: DebugToken) => {
-    const res = await call(t, "GET", "/api/debug/whoami");
-    if (res.ok) {
-      const body = JSON.parse(res.text) as Whoami;
-      setWhoami(body);
-      setSession("active");
-      setConnectError(null);
-    } else {
-      setConnectError(
-        res.status === 401
-          ? "This token is invalid, expired, suspended, or revoked."
-          : `Could not reach the box (HTTP ${res.status || "—"}).`,
-      );
-    }
   }, []);
+
+  const connect = useCallback(
+    async (t: DebugToken) => {
+      setConnectError(null);
+      const res = await call(t.key, "GET", "/api/debug/whoami");
+      if (res.ok) {
+        setWhoami(JSON.parse(res.text) as Whoami);
+        setSession("active");
+        setConnected(true);
+      } else {
+        setConnected(false);
+        setConnectError(
+          res.status === 401
+            ? "This token is invalid, expired, suspended, or revoked."
+            : `Could not reach the box (HTTP ${res.status || "—"}).`,
+        );
+      }
+    },
+    [call],
+  );
 
   useEffect(() => {
     if (token) void connect(token);
   }, [token, connect]);
+
+  // Live activity: poll the server feed while connected, and fold in any command
+  // issued by ANOTHER client (e.g. the assistant over the public host) — our own
+  // calls carry our client id and are already shown locally, so we skip them.
+  useEffect(() => {
+    if (!token || !connected || session !== "active") return;
+    let stop = false;
+    let after: number | undefined;
+    const tick = async () => {
+      const path =
+        after === undefined ? "/api/debug/activity" : `/api/debug/activity?after=${after}`;
+      const res = await call(token.key, "GET", path);
+      if (stop || !res.ok) return;
+      const data = JSON.parse(res.text) as { events: ActivityEvent[]; last: number };
+      after = data.last;
+      const external = data.events.filter((e) => e.client !== clientId.current);
+      if (external.length) {
+        setHistory((h) => [
+          ...external
+            .slice()
+            .reverse()
+            .map((e) => ({
+              id: -e.seq,
+              type: e.kind,
+              summary: `${e.method} ${e.path.replace("/api/debug/", "")}`,
+              detail: `${fmtTime(e.ts)} · HTTP ${e.status}`,
+              status: (e.status < 400 ? "ok" : "err") as "ok" | "err",
+              output: `Issued from another client (e.g. the assistant).\n\n${e.method} ${e.path}\nHTTP ${e.status} · ${e.ts}`,
+            })),
+          ...h,
+        ]);
+      }
+    };
+    void tick();
+    const id = window.setInterval(() => void tick(), 1500);
+    return () => {
+      stop = true;
+      window.clearInterval(id);
+    };
+  }, [token, connected, session, call]);
 
   const record = useCallback((entry: Omit<HistoryEntry, "id">): number => {
     const id = nextId.current++;
@@ -141,7 +234,7 @@ export function Console() {
       let method = "GET";
       let path = "";
       let body: unknown;
-      let type: HistoryEntry["type"] = cmd;
+      let type = cmd as string;
       let summary = "";
 
       if (cmd === "complete") {
@@ -177,7 +270,7 @@ export function Console() {
         summary = `${task} → ${provider}${effort ? ` ${effort}` : ""}`;
       } else {
         if (!modelId.trim()) return;
-        type = "model";
+        type = modelAction;
         method = "POST";
         path = `/api/debug/llm/local-models/${encodeURIComponent(modelId)}/${modelAction}`;
         summary = `${modelAction} ${modelId}`;
@@ -190,7 +283,7 @@ export function Console() {
         status: "pending",
         output: "…",
       });
-      const res = await call(token, method, path, body);
+      const res = await call(token.key, method, path, body);
       settle(id, {
         status: res.ok ? "ok" : "err",
         detail: `HTTP ${res.status || "—"}`,
@@ -213,42 +306,68 @@ export function Console() {
       modelAction,
       record,
       settle,
+      call,
     ],
   );
 
   const suspend = useCallback(async () => {
     if (!token) return;
-    const res = await call(token, "POST", "/api/debug/suspend-self");
+    const res = await call(token.key, "POST", "/api/debug/suspend-self");
     if (res.ok) setSession("suspended");
-  }, [token]);
+  }, [token, call]);
 
   const revoke = useCallback(async () => {
     if (!token) return;
-    const res = await call(token, "POST", "/api/debug/revoke-self");
-    if (res.ok) setSession("revoked");
+    const res = await call(token.key, "POST", "/api/debug/revoke-self");
+    if (res.ok) {
+      setSession("revoked");
+      try {
+        localStorage.removeItem(STORAGE_KEY); // a dead token must not auto-reconnect
+      } catch {
+        /* ignore */
+      }
+    }
     setConfirmRevoke(false);
-  }, [token]);
+  }, [token, call]);
+
+  const adoptPaste = useCallback(() => {
+    const t = decodeToken(paste);
+    if (t) {
+      try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(t));
+      } catch {
+        /* ignore */
+      }
+      setToken(t);
+      setPaste("");
+    } else {
+      setConnectError("That doesn't look like a valid token payload.");
+    }
+  }, [paste]);
 
   const current = useMemo(
     () => history.find((e) => e.id === selected) ?? null,
     [history, selected],
   );
 
-  if (!token) {
+  if (!connected) {
     return (
       <main className="dbg-gate">
         <h1 className="dbg-wordmark">
           JBrain<span className="dbg-dot">.</span> Debug Console
         </h1>
-        <p className="dbg-gate-hint">
-          Paste the debug token payload you minted in the PWA (Settings → Debug access).
-        </p>
+        {token && !connectError ? (
+          <p className="dbg-gate-hint">Connecting to {window.location.host}…</p>
+        ) : (
+          <p className="dbg-gate-hint">
+            Paste the debug token payload you minted in the PWA (Settings → Debug access).
+          </p>
+        )}
+        {connectError && <p className="dbg-error">{connectError}</p>}
         <form
           onSubmit={(e) => {
             e.preventDefault();
-            const t = decodeToken(paste);
-            if (t) setToken(t);
-            else setConnectError("That doesn't look like a valid token payload.");
+            adoptPaste();
           }}
         >
           <input
@@ -262,7 +381,16 @@ export function Console() {
             Connect
           </button>
         </form>
-        {connectError && <p className="dbg-error">{connectError}</p>}
+        {token && connectError && (
+          <button
+            type="button"
+            className="dbg-btn"
+            style={{ marginTop: "8px" }}
+            onClick={() => void connect(token)}
+          >
+            Reconnect saved token
+          </button>
+        )}
       </main>
     );
   }
@@ -275,8 +403,7 @@ export function Console() {
         </span>
         <span className="dbg-crumb">Debug Console</span>
         <span className="dbg-conn">
-          <span className={`dbg-status-dot dbg-${session}`} />{" "}
-          {token.base.replace(/^https?:\/\//, "")}
+          <span className={`dbg-status-dot dbg-${session}`} /> {window.location.host}
         </span>
         {whoami && (
           <span className="dbg-meta">
@@ -318,7 +445,7 @@ export function Console() {
 
       <div className="dbg-body">
         <aside className="dbg-pane">
-          <h2 className="dbg-section">Commands sent</h2>
+          <h2 className="dbg-section">Live activity</h2>
           <div className="dbg-history">
             {history.length === 0 && <p className="dbg-empty">No commands yet.</p>}
             {history.map((e) => (
@@ -473,7 +600,7 @@ export function Console() {
                 <pre className="dbg-pre">{current.output}</pre>
               </>
             ) : (
-              <p className="dbg-empty">Run a command to see its output here.</p>
+              <p className="dbg-empty">Run a command, or watch activity stream in on the left.</p>
             )}
           </section>
         </main>

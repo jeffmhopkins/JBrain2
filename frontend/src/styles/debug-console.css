@@ -229,9 +229,16 @@ body {
 }
 .dbg-b-routing,
 .dbg-b-switch,
-.dbg-b-model {
+.dbg-b-model,
+.dbg-b-load,
+.dbg-b-unload {
   color: var(--amber);
   background: var(--amber-tint);
+}
+.dbg-b-suspend,
+.dbg-b-revoke {
+  color: var(--rose);
+  background: var(--rose-tint);
 }
 .dbg-summary {
   flex: 1;

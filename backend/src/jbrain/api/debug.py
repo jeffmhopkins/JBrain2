@@ -108,6 +108,34 @@ async def suspend_self(principal: DebugDep, repo: AuthRepoDep) -> None:
     await repo.suspend_capability(principal.id)
 
 
+# --- Live activity feed (the console's "watch what's happening" pane) --------
+
+
+class ActivityEvent(BaseModel):
+    seq: int
+    ts: str
+    method: str
+    path: str
+    status: int
+    kind: str
+    # Which console client issued the call (the console tags its own requests so it
+    # can skip them in the feed); "" for an external caller (e.g. a curl session).
+    client: str
+
+
+class ActivityOut(BaseModel):
+    events: list[ActivityEvent]
+    last: int
+
+
+@router.get("/activity")
+async def activity(request: Request, _p: DebugDep, after: int | None = None) -> ActivityOut:
+    """Poll the debug-activity ring for entries newer than `after` (every
+    /api/debug/* call lands here), so the console can show live what's running —
+    including commands an external assistant issues, not just this tab's."""
+    return ActivityOut(**request.app.state.debug_activity.snapshot(after))
+
+
 # --- Prompt iteration -------------------------------------------------------
 
 

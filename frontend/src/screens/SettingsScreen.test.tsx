@@ -270,6 +270,22 @@ describe("SettingsScreen debug access", () => {
     fireEvent.click(screen.getByRole("button", { name: "Resume" }));
     await waitFor(() => expect(resumes).toEqual(["abc"]));
   });
+
+  it("lists only active/suspended tokens, hiding revoked and expired ones", async () => {
+    stubDebug({
+      tokens: [
+        tokenRow({ id: "a", label: "Active one" }),
+        tokenRow({ id: "s", label: "Suspended one", suspended_at: "2026-06-22T01:00:00Z" }),
+        tokenRow({ id: "r", label: "Revoked one", revoked_at: "2026-06-22T00:00:00Z" }),
+        tokenRow({ id: "e", label: "Expired one", expires_at: "2000-01-01T00:00:00Z" }),
+      ],
+    });
+    setup();
+    expect(await screen.findByText("Active one")).toBeInTheDocument();
+    expect(screen.getByText("Suspended one")).toBeInTheDocument();
+    expect(screen.queryByText("Revoked one")).not.toBeInTheDocument();
+    expect(screen.queryByText("Expired one")).not.toBeInTheDocument();
+  });
 });
 
 describe("SettingsScreen time zone", () => {
