@@ -51,7 +51,7 @@ def _canonical_domain(note: dict) -> str:
     return "general"
 
 
-async def _seed_note(maker, note: dict) -> str:
+async def _seed_note(maker, note: dict) -> str:  # noqa: F811
     """Insert one note + one chunk (body verbatim) with the note's capture time and
     local offset — mirrors tests.harness.runner._seed_note so the temporal anchor
     and firewall behave exactly as a real capture."""
@@ -83,7 +83,7 @@ async def _seed_note(maker, note: dict) -> str:
     return note_id
 
 
-async def _snapshot(maker) -> dict:
+async def _snapshot(maker) -> dict:  # noqa: F811
     async with maker() as s:
         await s.execute(text("SELECT set_config('app.principal_kind','owner',true)"))
         entities = (
@@ -107,7 +107,7 @@ async def _snapshot(maker) -> dict:
     return {"entities": entities, "facts": facts, "reviews": reviews}
 
 
-async def test_persona_year_builds_the_entity_graph(maker) -> None:
+async def test_persona_year_builds_the_entity_graph(maker) -> None:  # noqa: F811
     corpus_path = os.environ.get("JBRAIN_PERSONA_CORPUS")
     assert corpus_path, "set JBRAIN_PERSONA_CORPUS to the corpus JSON"
     notes = json.loads(Path(corpus_path).read_text())  # noqa: ASYNC240  (one-time fixture read)
