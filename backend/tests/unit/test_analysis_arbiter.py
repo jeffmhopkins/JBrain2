@@ -580,6 +580,36 @@ def test_compute_signals_value_does_not_rescue_an_inferred_attribute():
     assert compute_signals(intent, ["Eli, 12, going into 7th grade."])[0].surface_attested is False
 
 
+def test_compute_signals_genuine_one_char_value_attests():
+    # A legitimately STATED single-char value (a blood type "A") is attested — the
+    # old length floor wrongly rejected it; standalone-token matching accepts it.
+    intent = _intent(
+        entity_resolutions=[_res()],
+        facts=[
+            _fact(
+                predicate="bloodType", kind="attribute", object_entity_ref=None,
+                value_json={"value": "A"}, attested_span=None, inferred=False,
+            )
+        ],
+    )
+    assert compute_signals(intent, ["Blood type A, Rh positive."])[0].surface_attested is True
+
+
+def test_compute_signals_in_word_value_match_does_not_attest():
+    # The coincidental substring hit the length floor existed to block: value "7"
+    # appears only INSIDE "$17", never as its own token, so it must not attest.
+    intent = _intent(
+        entity_resolutions=[_res()],
+        facts=[
+            _fact(
+                predicate="grade", kind="attribute", object_entity_ref=None,
+                value_json={"value": "7"}, attested_span=None, inferred=False,
+            )
+        ],
+    )
+    assert compute_signals(intent, ["Lunch was $17 today."])[0].surface_attested is False
+
+
 def _extraction(facts, mentions):
     from jbrain.analysis.extraction import ExtractedFact, ExtractedMention, Extraction
     ef = [ExtractedFact(predicate=p, qualifier="", kind=k, statement="s", value_json=None,

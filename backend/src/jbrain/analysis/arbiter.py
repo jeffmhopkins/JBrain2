@@ -24,6 +24,7 @@ What the plan encodes:
 
 from __future__ import annotations
 
+import re
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, replace
 
@@ -202,20 +203,33 @@ def _norm(s: str) -> str:
     return " ".join(s.split()).casefold()
 
 
+def _token_present(token: str, haystack: str) -> bool:
+    """The value appears in the note as a STANDALONE token, not merely as a
+    substring. Containment (`token in haystack`) makes short values match by
+    accident — `7` lands inside "$17", "7am", "level 7B" — which once forced a
+    blunt length floor that wrongly rejected legitimate short values (a grade `7`,
+    a blood type `A`). Word-edge anchors (not flanked by a word char) are the
+    principled fix: a coincidental in-word hit fails the boundary, a genuinely
+    stated short value passes. The lookarounds (not `\\b`) keep tokens whose own
+    edge is non-word — `A+`, `B-` — matchable. Both args are already normalized."""
+    if not token:
+        return False
+    return re.search(rf"(?<!\w){re.escape(token)}(?!\w)", haystack) is not None
+
+
 def _value_attested(value_json: dict | None, haystack: str) -> bool:
-    """A fact whose stored VALUE is literally in the note is surface-attested even
-    when the model's `attested_span` quote was paraphrased or omitted — the
-    attribute twin of `_object_named` (an attribute carries no object to fall back
-    on). `haystack` is already normalized. The 2-char floor avoids a one-letter
-    value matching by accident; gated upstream by `not fact.inferred`, so a guessed
-    value the note never states is never promoted this way."""
+    """A fact whose stored VALUE is stated in the note (as a standalone token) is
+    surface-attested even when the model's `attested_span` quote was paraphrased or
+    omitted — the attribute twin of `_object_named` (an attribute carries no object
+    to fall back on). `haystack` is already normalized. Gated upstream by
+    `not fact.inferred`, so a guessed value the note never states is never promoted
+    this way."""
     if not isinstance(value_json, dict):
         return False
     for v in value_json.values():
         if not isinstance(v, (str, int, float)):
             continue
-        token = _norm(str(v))
-        if len(token) >= 2 and token in haystack:
+        if _token_present(_norm(str(v)), haystack):
             return True
     return False
 
