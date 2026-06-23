@@ -1,7 +1,7 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { confidenceColor } from "./AudioTranscript";
-import { VideoAnalysis, activeFrameIndex, buildMoments } from "./VideoAnalysis";
+import { VideoAnalysis, activeFrameIndex } from "./VideoAnalysis";
 
 const FRAMES = [
   { tMs: 0, caption: "A title card.", thumbUrl: "/api/chat-attachments/att/thumb/sha0" },
@@ -24,15 +24,6 @@ function renderCard(over: Partial<Parameters<typeof VideoAnalysis>[0]> = {}) {
     />,
   );
 }
-
-describe("buildMoments", () => {
-  it("pairs each frame with its thumbnail and the words spoken in its window", () => {
-    expect(buildMoments(FRAMES, WORDS)).toEqual([
-      { tMs: 0, caption: "A title card.", thumbUrl: FRAMES[0]?.thumbUrl, said: "Hello" },
-      { tMs: 4000, caption: "A pipeline diagram.", thumbUrl: FRAMES[1]?.thumbUrl, said: "world" },
-    ]);
-  });
-});
 
 describe("activeFrameIndex", () => {
   it("is the latest frame at or before the clock", () => {
@@ -78,15 +69,11 @@ describe("VideoAnalysis", () => {
     expect(container.querySelector(".tv-vid-frame-img")).toBeNull();
   });
 
-  it("switching to Moments shows the caption + said feed and seeks on tap", () => {
-    const { container } = renderCard();
-    fireEvent.click(screen.getByRole("tab", { name: "Moments" }));
-    expect(screen.getByText("A pipeline diagram.")).toBeInTheDocument();
-    expect(screen.getByText("“world”")).toBeInTheDocument();
-    expect(container.querySelectorAll(".tv-vid-moment-thumb")).toHaveLength(2);
-    const video = container.querySelector("video") as HTMLVideoElement;
-    fireEvent.click(screen.getByText("A pipeline diagram."));
-    expect(video.currentTime).toBeCloseTo(4);
+  it("has no Moments tab — the filmstrip is the only timeline", () => {
+    renderCard();
+    expect(screen.queryByRole("tab", { name: "Moments" })).toBeNull();
+    expect(screen.getByRole("tab", { name: "Summary" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Transcript" })).toBeInTheDocument();
   });
 
   it("switching to Transcript reuses the karaoke reader (confidence colors + seek)", () => {
@@ -99,15 +86,11 @@ describe("VideoAnalysis", () => {
     expect(video.currentTime).toBeCloseTo(4.2); // 4200ms
   });
 
-  it("omits the Transcript tab when the clip has no speech", () => {
-    renderCard({ words: [], transcriptText: undefined });
-    expect(screen.queryByRole("tab", { name: "Transcript" })).toBeNull();
-    expect(screen.getByRole("tab", { name: "Moments" })).toBeInTheDocument();
-  });
-
-  it("shows no tab bar when only the summary is present", () => {
-    renderCard({ frames: [], words: [] });
+  it("shows no tab bar when the clip has no speech (summary only), but keeps the filmstrip", () => {
+    const { container } = renderCard({ words: [], transcriptText: undefined });
     expect(screen.queryByRole("tablist")).toBeNull();
+    expect(screen.queryByRole("tab", { name: "Transcript" })).toBeNull();
+    expect(container.querySelectorAll(".tv-vid-frame")).toHaveLength(2); // filmstrip stays
     expect(screen.getByText("A walkthrough of the build pipeline.")).toBeInTheDocument();
   });
 });

@@ -883,16 +883,19 @@ and **authors no markup and no URL** — the component builds the media source f
 id + source (`/api/chat-attachments/${id}` for jerv's tool, `/api/attachments/${id}`
 for a note). One `<video>` drives **one shared clock** across a **filmstrip scrubber**
 (the sampled frame thumbnails ARE the timeline — tap a frame to seek, the active frame
-lifts and the strip auto-scrolls to it) and three tabs — **Summary**, **Moments** (a
-karaoke caption feed, each moment its frame thumbnail + caption + the words said then),
-and **Transcript** (the approved `AudioTranscript` reader, reused verbatim:
-confidence-gradient words, steel-pill karaoke, tap-to-seek). Tabs with no content are
-omitted (frames-only → no Transcript; summary-only → no tab bar). Tokens-only
-`.tv-vid-*` classes; the Transcript tab reuses `.atx-*`.
+lifts and the strip auto-scrolls to it; a live "now" line under it shows the active
+frame's caption) and two tabs — **Summary** and **Transcript** (the approved
+`AudioTranscript` reader, reused verbatim: confidence-gradient words, steel-pill
+karaoke, tap-to-seek). The Transcript tab is omitted when the clip has no speech (then
+no tab bar, just the summary); the filmstrip is always shown when there are frames.
+Tokens-only `.tv-vid-*` classes; the Transcript tab reuses `.atx-*`.
 
-Chosen **D — combined** (filmstrip scrubber + tabs + scrolling moment feed) over A
-(filmstrip), B (moment feed), and C (tabs), with the owner's edits: **no Frames tab**,
-and the Transcript tab reuses the audio-transcript card.
+Chosen **D — combined** (filmstrip scrubber + tabs) over A (filmstrip), B (moment
+feed), and C (tabs), with the owner's edits: **no Frames tab**, the Transcript tab
+reuses the audio-transcript card, and — after owner review — **no Moments tab**: the
+horizontal filmstrip is the only timeline (the vertical moment feed was redundant with
+it + the now-line + the Transcript), so per-frame "said" snippets are dropped (the full
+speech lives in Transcript).
 
 **Thumbnails + the firewall.** The frame stills are real, but a frame JPEG is a
 content-addressed blob with **no per-blob domain firewall**, so it is never served by
