@@ -85,8 +85,11 @@ The owner-side counterparts live on the management surface (owner-cookie gated):
 `POST /api/settings/debug-tokens/{id}/suspend|resume`.
 
 `GET /api/debug/activity?after=<seq>` returns a live ring of recent `/api/debug/*`
-calls (verb, route, status, derived kind — never bodies), so the console can show
-what is happening on the box, including commands an external assistant runs.
+calls — verb, route, status, derived kind, and a short **detail** (the SQL text,
+the prompt, the routing change, truncated) that each handler stashes on
+`request.state`. So the console shows *what* ran, not just the route, including
+commands an external assistant issues. The surface is owner-token-gated and the
+owner already has full read, so echoing their own commands back is intentional.
 
 ## The web console
 

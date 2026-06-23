@@ -443,11 +443,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             path = request.url.path
             # Skip the poll endpoint itself so the feed doesn't record its own reads.
             if path.startswith("/api/debug/") and not path.startswith("/api/debug/activity"):
+                # The handler stashes a short command summary (SQL/prompt/...) on
+                # request.state; scope["state"] is shared, so it is readable here.
                 app.state.debug_activity.record(
                     method=request.method,
                     path=path,
                     status=response.status_code,
                     client=request.headers.get("x-debug-client", ""),
+                    detail=getattr(request.state, "debug_detail", ""),
                 )
             return response
 

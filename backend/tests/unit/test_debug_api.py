@@ -170,8 +170,11 @@ def test_activity_feed_records_commands(debug_client: tuple[TestClient, str]) ->
     client.get("/api/debug/whoami", headers=_auth(key))
     client.post("/api/debug/complete", headers=_auth(key), json={"user_text": "hi"})
     body = client.get("/api/debug/activity", headers=_auth(key)).json()
-    kinds = [e["kind"] for e in body["events"]]
-    assert "whoami" in kinds and "complete" in kinds
+    by_kind = {e["kind"]: e for e in body["events"]}
+    assert "whoami" in by_kind and "complete" in by_kind
+    # The command detail (the prompt) is captured so the console shows what ran.
+    assert by_kind["complete"]["detail"] == "hi"
+    assert by_kind["whoami"]["detail"] == ""
     # The poll endpoint never records itself, so the feed doesn't grow on every read.
     assert all(not e["path"].startswith("/api/debug/activity") for e in body["events"])
     assert body["last"] >= 2
