@@ -86,9 +86,20 @@ describe("fmtQuantity / factValue imperial display", () => {
     expect(factValue(fact({ value: 193, unit: "cm" }))).toBe("193 cm");
   });
 
-  it("blood pressure and statement fallback keep their rendering", () => {
+  it("blood pressure renders its shape", () => {
     expect(factValue(fact({ systolic: 128, diastolic: 82, unit: "mmHg" }))).toBe("128/82 mmHg");
-    expect(factValue(fact(null))).toBe("Jeff is 6'4\" tall.");
+  });
+
+  it("a sentence-shaped fallback is blanked, never shown as a value", () => {
+    // No datum in value_json and the statement is a full sentence: the value is
+    // blanked (the backstop), so the card never shows "Jeff is 6'4\" tall." as a value.
+    expect(factValue(fact(null))).toBe("");
+  });
+
+  it("an unrecognized shape still renders its scalar leaf", () => {
+    // The backstop yields the bare datum (first scalar leaf) of an unhandled
+    // shape rather than falling through to the statement sentence.
+    expect(factValue(fact({ street: "99 Pine Ave" }))).toBe("99 Pine Ave");
   });
 
   it("name and place shapes render their datum, not the statement sentence", () => {
@@ -143,11 +154,17 @@ describe("valueLabel (shared by factValue and the review card)", () => {
     expect(valueLabel("Jeff Hopkins", "s")).toBe("Jeff Hopkins");
   });
 
-  it("falls back to the statement for shapes with no scalar datum", () => {
-    expect(valueLabel({ street: "99 Pine Ave" }, "Lives at 99 Pine Ave.")).toBe(
-      "Lives at 99 Pine Ave.",
-    );
-    expect(valueLabel(null, "Sarah works for Ridgeline.")).toBe("Sarah works for Ridgeline.");
+  it("renders the scalar leaf of an unrecognized shape, not the statement", () => {
+    expect(valueLabel({ street: "99 Pine Ave" }, "Lives at 99 Pine Ave.")).toBe("99 Pine Ave");
+  });
+
+  it("blanks a sentence-shaped fallback rather than showing it as a value", () => {
+    expect(valueLabel(null, "Sarah works for Ridgeline.")).toBe("");
+    expect(valueLabel({}, "He was admitted to the hospital on Tuesday.")).toBe("");
+  });
+
+  it("a short non-sentence fallback survives unblanked", () => {
+    expect(valueLabel(null, "data engineer")).toBe("data engineer");
   });
 
   it("dates a bare {start} value with the fallback precision", () => {

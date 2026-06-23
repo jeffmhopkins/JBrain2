@@ -70,13 +70,21 @@ class TestValueLabel:
         assert value_label({"value": 95, "unit": "mg/dL"}, "s") == "95 mg/dL"
         assert value_label({"value": "Denver, CO"}, "s") == "Denver, CO"
 
-    def test_falls_back_to_the_statement(self) -> None:
-        # Mirrors the UI's factValue: unrecognized shapes read as the
-        # rendered sentence, never raw JSON.
-        assert value_label({"street": "99 Pine Ave"}, "Lives at 99 Pine Ave.") == (
-            "Lives at 99 Pine Ave."
-        )
-        assert value_label(None, "Sarah works for Ridgeline.") == "Sarah works for Ridgeline."
+    def test_unrecognized_shape_renders_its_scalar_leaf(self) -> None:
+        # Backstop: an unhandled shape still yields its bare datum (the first
+        # scalar leaf) rather than falling through to the statement sentence.
+        assert value_label({"street": "99 Pine Ave"}, "Lives at 99 Pine Ave.") == "99 Pine Ave"
+
+    def test_blanks_a_sentence_shaped_fallback(self) -> None:
+        # No datum in value_json and the statement is a full sentence: the value
+        # is blanked, never rendered (the statement survives as provenance).
+        assert value_label(None, "Sarah works for Ridgeline.") == ""
+        assert value_label({}, "He was admitted to the hospital on Tuesday.") == ""
+
+    def test_short_fallback_label_survives(self) -> None:
+        # A bare datum left as the statement (no value_json) is not a sentence —
+        # it passes through unblanked.
+        assert value_label(None, "data engineer") == "data engineer"
 
 
 class TestReviewDisplays:
