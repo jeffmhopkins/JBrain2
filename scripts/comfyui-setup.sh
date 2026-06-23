@@ -6,7 +6,9 @@
 #
 # The sibling of scripts/local-llm-setup.sh, tuned for an AMD Strix Halo box
 # (gfx1151). NEVER run by the default install or dev-setup.sh — it downloads tens
-# of GB of weights and starts a GPU service, so it is a deliberate, separate step.
+# of GB of weights and starts a GPU service, so enabling it is a deliberate, separate
+# step. Once enabled (COMFYUI_ENABLED=true), `jbrain update` re-runs it to sync model
+# files — idempotent, so an unchanged catalog is a cheap no-op download.
 # It:
 #   1. resolves the chosen catalog models (jbrain.image_gen.catalog),
 #   2. downloads their weight files into ./comfyui-models/<subdir> (the layout

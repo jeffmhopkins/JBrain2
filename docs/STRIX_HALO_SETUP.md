@@ -182,6 +182,13 @@ published host port**, mirroring the LLM gateway. The model catalog is the singl
 source of truth for repos/filenames; add a model by adding a catalog entry, not by
 editing the script.
 
+Once image generation is enabled, **`jbrain update` re-syncs the models for you**:
+after rebuilding it re-runs the provisioning step for the union of your current
+selection and the recommended set, so an update that introduces a new model (or new
+weight file) downloads it automatically — no manual re-run. It's idempotent, so an
+unchanged catalog is a no-op; it never drops a model you provisioned, and a sync
+failure is logged without aborting the update.
+
 - **Validated on-box.** A 1328×1328, 20-step Qwen-Image renders on the iGPU from
   **native bf16** weights (~58 GB resident, the 2512 checkpoint). The renders
   **time-share** the unified memory — the local LLMs are unloaded before a render
