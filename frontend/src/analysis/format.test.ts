@@ -1,6 +1,23 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { FactOut } from "../api/client";
 import { dedupeTokens, factSpan, factValue, fmtQuantity, fmtTemporal, valueLabel } from "./format";
+
+// Shared with the backend (test_analysis_display.py) — see testdata/value_label_parity.json.
+// Guards the backend/frontend value-renderer drift a code review caught. cwd is the
+// frontend/ dir under vitest, so testdata/ sits one level up at the repo root.
+const parityCases = JSON.parse(
+  readFileSync(resolve(process.cwd(), "../testdata/value_label_parity.json"), "utf8"),
+).cases as { name: string; value_json: unknown; statement: string; expected: string }[];
+
+describe("value renderer parity with the backend", () => {
+  for (const c of parityCases) {
+    it(c.name, () => {
+      expect(valueLabel(c.value_json, c.statement)).toBe(c.expected);
+    });
+  }
+});
 
 // The field bug only reproduces in a negative-offset zone: UTC-midnight
 // calendar dates rendered locally slip to the previous evening. Node re-reads

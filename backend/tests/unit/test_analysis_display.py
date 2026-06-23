@@ -2,6 +2,11 @@
 marked snippets, choice labels, and the invariant that advertised actions are
 exactly what the resolve endpoint accepts."""
 
+import json
+from pathlib import Path
+
+import pytest
+
 from jbrain.analysis.display import (
     SNIPPET_CHARS,
     ambiguous_display,
@@ -12,6 +17,19 @@ from jbrain.analysis.display import (
     truncation_display,
     value_label,
 )
+
+# Shared with the frontend (format.test.ts) — see testdata/value_label_parity.json.
+_PARITY = json.loads(
+    (Path(__file__).parents[3] / "testdata" / "value_label_parity.json").read_text()
+)["cases"]
+
+
+@pytest.mark.parametrize("case", _PARITY, ids=[c["name"] for c in _PARITY])
+def test_value_label_matches_the_shared_frontend_contract(case: dict) -> None:
+    # The backend value_label and the frontend valueLabel must agree on this
+    # fixture (a code review caught backend/frontend drift). Intentional
+    # divergences are excluded from the fixture, not asserted here.
+    assert value_label(case["value_json"], case["statement"]) == case["expected"]
 
 
 def test_new_predicate_advertises_map_accept_reject_choices() -> None:
