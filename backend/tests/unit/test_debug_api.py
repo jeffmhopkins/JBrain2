@@ -229,7 +229,7 @@ def test_complete_async_runs_as_a_job(debug_client: tuple[TestClient, str]) -> N
     assert sub.status_code == 202
     job_id = sub.json()["job_id"]
 
-    status = {"status": "pending"}
+    status: dict[str, Any] = {"status": "pending"}
     for _ in range(60):  # the background task resolves on the app's loop between polls
         status = client.get(f"/api/debug/jobs/{job_id}", headers=_auth(key)).json()
         if status["status"] != "pending":
@@ -248,7 +248,7 @@ def test_async_job_error_is_surfaced(debug_client: tuple[TestClient, str]) -> No
     job_id = client.post(
         "/api/debug/complete-async", headers=_auth(key), json={"user_text": "x", "task": "bad"}
     ).json()["job_id"]
-    status = {"status": "pending"}
+    status: dict[str, Any] = {"status": "pending"}
     for _ in range(60):
         status = client.get(f"/api/debug/jobs/{job_id}", headers=_auth(key)).json()
         if status["status"] != "pending":
