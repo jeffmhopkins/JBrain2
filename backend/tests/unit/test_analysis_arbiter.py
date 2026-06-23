@@ -654,6 +654,73 @@ def test_recover_backfills_a_dropped_value_json():
     assert out.facts[0].value_json == {"value": "7th"}  # restored from extraction
 
 
+def test_recover_backfills_a_dropped_temporal():
+    from jbrain.analysis.arbiter import recover_dropped_fields
+    # integrate re-typed the birthDate and stripped the age phrase it resolved from;
+    # extraction carried the temporal -> restore it so _date_phrase_grounded can fire.
+    intent = _intent(
+        entity_resolutions=[_res("Eli", mode="new", new_kind="Person", new_name="Eli")],
+        facts=[_fact(entity_ref="Eli", predicate="birthDate", kind="attribute",
+                     object_entity_ref=None, value_json={"value": "2013"}, temporal=None,
+                     inferred=True)],
+    )
+    from jbrain.analysis.extraction import (
+        ExtractedFact,
+        ExtractedMention,
+        ExtractedTemporal,
+        Extraction,
+    )
+    t = ExtractedTemporal(phrase="12", resolved_start=datetime(2013, 1, 1),
+                          resolved_end=None, precision="year")
+    ef = ExtractedFact(predicate="birthDate", qualifier="", kind="attribute", statement="s",
+                       value_json={"value": "2013"}, assertion="asserted", entity_ref="Eli",
+                       object_entity_ref=None, temporal=t, domain="general", confidence=0.9)
+    ext = Extraction(title="t", tags=["x"],
+                     mentions=[ExtractedMention(name="Eli", kind="Person", surface_text="Eli")],
+                     facts=[ef], tokens=[])
+    out = recover_dropped_fields(intent, ext)
+    assert out.facts[0].temporal is not None  # restored from extraction
+    assert out.facts[0].temporal.phrase == "12"
+    assert out.facts[0].temporal.resolved_start == datetime(2013, 1, 1)
+
+
+def test_recover_then_ground_commits_an_inferred_birthdate_active():
+    # The whole chain the box exercises, deterministically: integrate dropped the
+    # birthDate's temporal (age phrase), so without recovery the inferred fact is
+    # held. recover restores the temporal from the extraction -> compute_signals
+    # grounds it (date-shape + phrase in note) -> assess commits it active.
+    from jbrain.analysis.arbiter import compute_signals, recover_dropped_fields
+    from jbrain.analysis.extraction import (
+        ExtractedFact,
+        ExtractedMention,
+        ExtractedTemporal,
+        Extraction,
+    )
+    from jbrain.analysis.weight import assess
+
+    body = "Eli, 12, going into 7th grade."
+    intent = _intent(
+        entity_resolutions=[_res("Eli", mode="new", new_kind="Person", new_name="Eli")],
+        facts=[_fact(entity_ref="Eli", predicate="birthDate", kind="attribute",
+                     object_entity_ref=None, value_json={"value": "2013"}, temporal=None,
+                     inferred=True)],
+    )
+    t = ExtractedTemporal(phrase="12", resolved_start=datetime(2013, 1, 1),
+                          resolved_end=None, precision="year")
+    ef = ExtractedFact(predicate="birthDate", qualifier="", kind="attribute", statement="s",
+                       value_json={"value": "2013"}, assertion="asserted", entity_ref="Eli",
+                       object_entity_ref=None, temporal=t, domain="general", confidence=0.9)
+    ext = Extraction(title="t", tags=["x"],
+                     mentions=[ExtractedMention(name="Eli", kind="Person", surface_text="Eli")],
+                     facts=[ef], tokens=[])
+
+    recovered = recover_dropped_fields(intent, ext)
+    sig = compute_signals(recovered, [body])[0]
+    assert sig.surface_attested is True
+    _w, status = assess(recovered.facts[0].kind, recovered.facts[0].self_confidence, sig)
+    assert status == "active"  # no longer held for review
+
+
 def test_date_phrase_in_note_attests_an_inferred_birthdate():
     from jbrain.analysis.arbiter import compute_signals
     # birthDate derived from a stated age: inferred=True, but the age phrase "12"

@@ -38,6 +38,7 @@ from jbrain.analysis.intent import (
     EntityResolution,
     IntegrationIntent,
     IntentFact,
+    IntentTemporal,
     IntentViolation,
     has_fatal,
     validate_intent,
@@ -224,26 +225,31 @@ def recover_dropped_fields(
 ) -> IntegrationIntent:
     """Backfill the object AND value the integrator drops when it re-types a fact.
 
-    note.extract reliably emits `object_entity_ref` (Me.children -> Eli) and
-    `value_json` (grade {"value": "7th"}); the integrator non-deterministically
-    omits them when it re-types the fact — orphaning the edge or blanking the value,
-    after which the arbiter finds no named object / no datum and holds the fact as
-    inferred. Restore both deterministically from the extraction — the source of
-    truth for what the note states — keyed on the subject + canonical predicate.
-    Then GUARANTEE every referenced entity (subject and object) carries a
-    resolution: a backfilled object with no resolution would otherwise make
-    apply_intent DROP the whole fact, so mint a provisional from the extraction
-    mention's kind. Only fills gaps — an existing object/value/resolution
-    (including a deliberate `ambiguous`) is never overridden."""
+    note.extract reliably emits `object_entity_ref` (Me.children -> Eli),
+    `value_json` (grade {"value": "7th"}), and the `temporal` it resolved (an age
+    phrase -> birthDate); the integrator non-deterministically omits them when it
+    re-types the fact — orphaning the edge, blanking the value, or stripping the
+    date phrase, after which the arbiter finds no named object / no datum / no
+    grounding and holds the fact as inferred. Restore all three deterministically
+    from the extraction — the source of truth for what the note states — keyed on
+    the subject + canonical predicate. Then GUARANTEE every referenced entity
+    (subject and object) carries a resolution: a backfilled object with no
+    resolution would otherwise make apply_intent DROP the whole fact, so mint a
+    provisional from the extraction mention's kind. Only fills gaps — an existing
+    object/value/temporal/resolution (including a deliberate `ambiguous`) is never
+    overridden."""
     registry = get_registry()
     ext_obj: dict[tuple[str, str], str] = {}
     ext_val: dict[tuple[str, str], dict] = {}
+    ext_temporal: dict[tuple[str, str], ExtractedTemporal] = {}
     for f in extraction.facts:
         key = (f.entity_ref, registry.normalize_predicate(f.predicate))
         if f.object_entity_ref:
             ext_obj.setdefault(key, f.object_entity_ref)
         if isinstance(f.value_json, dict) and f.value_json:
             ext_val.setdefault(key, f.value_json)
+        if f.temporal and f.temporal.phrase and f.temporal.resolved_start:
+            ext_temporal.setdefault(key, f.temporal)
     mention_kind = {m.name: m.kind for m in extraction.mentions}
     resolved = {r.mention_ref for r in intent.entity_resolutions}
 
@@ -255,6 +261,17 @@ def recover_dropped_fields(
             fact = replace(fact, object_entity_ref=ext_obj[key])
         if not isinstance(fact.value_json, dict) and key in ext_val:
             fact = replace(fact, value_json=ext_val[key])
+        if fact.temporal is None and key in ext_temporal:
+            t = ext_temporal[key]
+            fact = replace(
+                fact,
+                temporal=IntentTemporal(
+                    phrase=t.phrase,
+                    resolved_start=t.resolved_start,
+                    resolved_end=t.resolved_end,
+                    precision=t.precision,
+                ),
+            )
         facts.append(fact)
         for ref in (fact.entity_ref, fact.object_entity_ref):
             if ref and ref not in resolved and ref in mention_kind:
