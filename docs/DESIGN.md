@@ -424,6 +424,37 @@ input plus kind chips over standard list rows in a card, each row opening
 the entity page — pure reuse of settled paradigms, so it shipped without a
 variant review.
 
+**The graph "Map" — Focus + Sheet, 2-hop local view** (settled in a
+mobile-first review against five rivals; reference mocks under
+`docs/mocks/entity-graph/` — desktop renders A "constellation", B "orbits",
+C "clusters", then the mobile-first trio D "focus + sheet", E "orbit deck",
+F "cluster drill"; **owner chose D, 2-hop**, `graph-d-focus-sheet-2hop.html`).
+The earlier force-directed overview/focus map was a desktop port — it leaned on
+hover, wheel-zoom, and sub-44px chrome, and a whole-graph hairball is unreadable
+on a phone (the convergent finding of the UX research pass). The Map is now a
+**local view centred on one focal entity**, never the whole graph at once:
+
+- **Deterministic 2-hop layout** — focal at the centre, 1-hop neighbours on an
+  inner ring, 2-hop clustered just outside each parent (capped: 8 first-ring,
+  4 second per parent). No force simulation, so nodes never overlap tap targets
+  and the layout never fights gestures. A floating **1 / 2 hops** toggle
+  (bottom-left, one-thumb) sets depth; default is 2.
+- **Tap is the only affordance** (no hover): tapping a node or a relationship
+  row **re-centres** on it, pushing a **breadcrumb** that walks the path back.
+  Every node carries a ≥44px target (the disc *is* the button).
+- **A persistent bottom panel** (not the modal `<Sheet>` — it co-occupies the
+  screen, Google-Maps style; drag the handle to resize) shows the focal's
+  type-disc, name, kind · domain · link count (firewalled domains flagged rose),
+  and its relationships as fat tappable rows. The single footer action is
+  **Open entity →**.
+- **Search is the front door** — a top input filters the in-memory graph; a
+  result drops you into that entity's local view.
+- One dataset backs it: the whole graph (centred on "Me") by default, or a
+  named root's 2-hop ego; re-centring explores within what's loaded. Pinch /
+  drag pan and focal-anchored zoom stay as a bonus, never required (the layout
+  fits the stage). Edge labels show only on the focal's own edges, and the
+  density-aware label grid keeps the rest legible.
+
 **Former / past relationships — the interval timeline** (settled in a three-way
 review — **variant C** won over an inline "former" chip [A] and a current/
 previously section split [B]; reference mock:

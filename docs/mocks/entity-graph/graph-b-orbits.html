@@ -1,0 +1,191 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Entity graph — B — Orbits (≈140 nodes, depth rings)</title>
+<style>
+  :root{
+    --bg:#0E0F11;--surface:#17181B;--surface-2:#1E2024;--border:#26282C;
+    --text:#E6E7E9;--text-2:#9A9DA3;--text-3:#5C5F66;--shadow:rgba(0,0,0,.45);
+    --steel:#7FA7C9;--green:#8FBC9A;--amber:#C9A36A;--rose:#CF8A8F;--violet:#A493C9;
+    --periwinkle:#8F9FD0;--sage:#A8BD7E;--terracotta:#D0917F;--teal:#6FB6B1;--orchid:#C98AB4;--slate:#9AA0A8;
+  }
+  [data-theme="light"]{
+    --bg:#F7F7F5;--surface:#FFFFFF;--surface-2:#F0F0EE;--border:#E2E2DF;
+    --text:#1A1B1E;--text-2:#5C5F66;--text-3:#9A9DA3;--shadow:rgba(20,30,50,.12);
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  body{margin:0;background:#05070a;font:15px/1.5 system-ui,-apple-system,sans-serif;display:grid;place-items:center;min-height:100vh;color:var(--text);gap:14px;padding:24px 0}
+  .cap{color:#8b9099;font-size:12.5px;max-width:390px;text-align:center;padding:0 12px}
+  .cap b{color:#cfd3d9;font-weight:600}
+  .phone{width:390px;height:800px;background:var(--bg);border-radius:30px;overflow:hidden;position:relative;box-shadow:0 20px 60px var(--shadow);display:flex;flex-direction:column}
+  .topbar{height:56px;flex:0 0 56px;display:flex;align-items:center;gap:9px;padding:0 14px;border-bottom:1px solid var(--border);background:var(--surface);z-index:5}
+  .topbar .chev{width:36px;height:36px;display:grid;place-items:center;border-radius:9px;color:var(--text-2);background:transparent;border:0;cursor:pointer}
+  .ttl{flex:1;font-size:17px;font-weight:600}
+  .icon-btn{width:36px;height:36px;display:grid;place-items:center;border-radius:9px;color:var(--text-2);background:transparent;border:0;cursor:pointer}
+  svg.i{width:20px;height:20px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+  .rootbar{display:flex;align-items:center;gap:8px;padding:8px 12px;border-bottom:1px solid var(--border);background:var(--surface);z-index:4}
+  .rootbar .lab{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--text-3)}
+  .rootchip{display:flex;align-items:center;gap:7px;background:var(--surface-2);border:1px solid var(--border);border-radius:999px;padding:5px 12px 5px 8px;font-size:13px;font-weight:500}
+  .rootchip .rd{width:22px;height:22px;border-radius:50%;display:grid;place-items:center}
+  .rootchip .rd svg{width:14px;height:14px;stroke:currentColor;fill:none;stroke-width:1.8}
+  .depthseg{margin-left:auto;display:flex;background:var(--surface-2);border-radius:999px;padding:2px}
+  .depthseg button{border:0;background:transparent;color:var(--text-2);font-size:12px;padding:4px 11px;border-radius:999px;cursor:pointer;font-weight:500}
+  .depthseg button.on{background:var(--steel);color:#0c1014}
+  .stage{position:relative;flex:1;overflow:hidden;touch-action:none}
+  #svg{width:100%;height:100%;display:block;cursor:grab}
+  #svg:active{cursor:grabbing}
+  .ring{fill:none;stroke:var(--border);stroke-dasharray:2 6;opacity:.6}
+  .ringlbl{fill:var(--text-3);font-size:9.5px;letter-spacing:.08em;text-transform:uppercase}
+  .edge{fill:none;stroke:var(--border);stroke-width:1.1}
+  .edgelbl{font-size:10px;fill:var(--text-2);text-anchor:middle;paint-order:stroke;stroke:var(--bg);stroke-width:3px;opacity:0}
+  .nodewrap{cursor:pointer}
+  .disc{stroke:var(--bg);stroke-width:1.6}
+  .glyph{pointer-events:none}
+  .glyph path,.glyph circle,.glyph rect{fill:none;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
+  .nlbl{font-size:11px;fill:var(--text);text-anchor:middle;paint-order:stroke;stroke:var(--bg);stroke-width:3px;pointer-events:none}
+  .zoom{position:absolute;right:12px;bottom:16px;display:flex;flex-direction:column;background:var(--surface);border:1px solid var(--border);border-radius:12px;overflow:hidden;z-index:4}
+  .zoom button{width:40px;height:40px;display:grid;place-items:center;border:0;background:transparent;color:var(--text-2);cursor:pointer;border-bottom:1px solid var(--border)}
+  .zoom button:last-child{border-bottom:0}
+  .filter{position:absolute;left:10px;right:62px;bottom:16px;display:flex;gap:6px;overflow-x:auto;z-index:4;scrollbar-width:none}
+  .filter::-webkit-scrollbar{display:none}
+  .fchip{flex:0 0 auto;display:flex;align-items:center;gap:5px;font-size:11px;color:var(--text-2);background:color-mix(in srgb,var(--surface) 82%,transparent);backdrop-filter:blur(4px);border:1px solid var(--border);border-radius:999px;padding:5px 10px;cursor:pointer}
+  .fchip .sw{width:9px;height:9px;border-radius:50%}
+  .fchip.off{opacity:.4}
+  .legendnote{position:absolute;left:12px;top:10px;font-size:11px;color:var(--text-3);background:color-mix(in srgb,var(--surface) 85%,transparent);backdrop-filter:blur(4px);border:1px solid var(--border);border-radius:999px;padding:4px 10px;z-index:3}
+</style>
+</head>
+<body>
+<div class="cap"><b>B — Orbits (≈140 nodes).</b> JBrain's identity at scale — type-tinted icon discs, the pinned "Me" hub — with <b>auto-sizing depth rings</b>: the rings widen to fit however many neighbours land on them, same-type entities cluster on an arc, and <b>edge labels stay hidden until you touch a node</b>. The <b>1 hop</b> view stays calm; <b>2 hops</b> shows the reachable graph. This is also the honest stress test of a radial layout — the outer ring gets busy.</div>
+<div class="phone">
+  <div class="topbar">
+    <button class="chev"><svg class="i" viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6"/></svg></button>
+    <div class="ttl">Graph</div>
+    <button class="icon-btn" id="theme" title="Toggle theme"><svg class="i" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4.5"/><path d="M12 2v2M12 20v2M4 12H2M22 12h-2M5 5l1.5 1.5M17.5 17.5L19 19M19 5l-1.5 1.5M6.5 17.5L5 19"/></svg></button>
+  </div>
+  <div class="rootbar">
+    <span class="lab">Centred on</span>
+    <span class="rootchip"><span class="rd" style="background:rgba(127,167,201,.16);color:var(--steel)"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 3.6-7 8-7s8 3 8 7"/></svg></span>Me</span>
+    <div class="depthseg"><button data-d="1">1 hop</button><button data-d="2" class="on">2 hops</button></div>
+  </div>
+  <div class="stage" id="stage">
+    <svg id="svg"><g id="view"><g id="rings"></g><g id="edges"></g><g id="nodes"></g></g></svg>
+    <div class="legendnote" id="legendnote">tap a node to trace its links</div>
+    <div class="zoom">
+      <button id="zin"><svg class="i" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button>
+      <button id="zfit"><svg class="i" viewBox="0 0 24 24"><path d="M4 9V5a1 1 0 011-1h4M20 9V5a1 1 0 00-1-1h-4M4 15v4a1 1 0 001 1h4M20 15v4a1 1 0 01-1 1h-4"/></svg></button>
+      <button id="zout"><svg class="i" viewBox="0 0 24 24"><path d="M5 12h14"/></svg></button>
+    </div>
+    <div class="filter" id="filter"></div>
+  </div>
+</div>
+<script>
+document.getElementById('theme').onclick=()=>{const h=document.documentElement;h.dataset.theme=h.dataset.theme==='dark'?'light':'dark'};
+const TYPE={Person:'--steel',Organization:'--violet',Place:'--green',Event:'--amber',Product:'--periwinkle',Animal:'--sage',MedicalCondition:'--terracotta',Drug:'--orchid',CreativeWork:'--rose',Thing:'--slate'};
+const ICON={Person:'<circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 3.6-7 8-7s8 3 8 7"/>',Organization:'<path d="M3 21h18M5 21V7l7-4 7 4v14M9 21v-5h6v5"/>',Place:'<path d="M12 21s-7-5.5-7-11a7 7 0 0114 0c0 5.5-7 11-7 11z"/><circle cx="12" cy="10" r="2.5"/>',Event:'<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 9h18M8 3v4M16 3v4"/>',Animal:'<path d="M4 11a3 3 0 116 0 5 5 0 005 5 3 3 0 11-6 0 5 5 0 00-5-5z"/>',MedicalCondition:'<path d="M12 21s-7-4.5-7-10a4 4 0 017-2 4 4 0 017 2c0 5.5-7 10-7 10z"/>',Drug:'<rect x="3" y="9" width="18" height="6" rx="3" transform="rotate(45 12 12)"/>',Product:'<path d="M3 7l9-4 9 4-9 4-9-4z"/><path d="M3 7v10l9 4 9-4V7"/>',CreativeWork:'<path d="M5 4a1 1 0 011-1h8l5 5v11a1 1 0 01-1 1H6a1 1 0 01-1-1z"/><path d="M14 3v5h5"/>',Thing:'<circle cx="12" cy="12" r="8"/>'};
+const LBL={Person:'People',Organization:'Orgs',Place:'Places',Event:'Events',Product:'Products',Animal:'Animals',MedicalCondition:'Conditions',Drug:'Drugs',CreativeWork:'Media'};
+
+let _seed=20260623;function rnd(){_seed=(_seed*1664525+1013904223)>>>0;return _seed/4294967296;}
+function pk(a){return a[Math.floor(rnd()*a.length)];}function chance(p){return rnd()<p;}
+const FN=['Celine','Priya','Marcus','Elena','Tom','Nina','Raj','Sofia','Liam','Maya','Omar','Grace','Dmitri','Aisha','Ben','Clara','Hugo','Lena','Sam','Tara','Noah','Iris','Felix','Zoe','Arjun','Mira','Leo','Ava','Kai','Ruth','Dev','Nora','Eli','Jade','Cole','Vera','Ian','Suki','Paul','Gina'];
+const LN=['Hopkins','Nair','Vance','Ortiz','Reed','Cho','Mehta','Park','Frost','Quinn','Adler','Bose','Hale','Diaz','Yang','Kerr','Wolfe','Sato','Pike','Bauer'];
+const ORGN=['Globex','Initech','Umbra Labs','Northwind','Acme Co','Soylent','Hooli','Vandelay','Massive Dyn','Cyberdyne','Stark Mfg','Tyrell','Pied Piper','Wonka Ind'];
+const PLACEN=['Denver','Brookline','Boston','Cambridge','Austin','Portland','Seattle','Lincoln Park','Riverside','Oakwood','Hillcrest','Fairview','Midtown','Bayshore','Elm Street','Harbor Point','Cedar Falls','Glenwood','Ashbury','Kenmore'];
+const CONDN=['Hypertension','Asthma','Migraine','Type 2 Diabetes','Eczema','Insomnia','Anemia','GERD'];
+const DRUGN=['Lisinopril','Albuterol','Sumatriptan','Metformin','Omeprazole','Melatonin','Atorvastatin','Loratadine'];
+const EVTN=['Boston Marathon','Wedding','Reunion 2025','Q3 Offsite','Charity 10K','DevConf','Housewarming','Recital','Summer BBQ','Ski trip'];
+const PRODN=['Sea kayak','Trek bike','Espresso machine','Standing desk','DSLR','Mountain tent','Vinyl player','Drone','e-Reader','Smart watch'];
+const FINN=['Roth IRA','Brokerage','529 Plan','HSA','Index fund'];
+const WORKN=['Atlas paper','Onboarding doc','Design spec','Patent filing','Podcast ep','Photo series','Q3 deck','Field notes'];
+const ANIN=['Rex','Maple','Biscuit','Shadow','Pepper'];
+function genGraph(TARGET){
+  const N=[],E=[],byId={};let _id=0;
+  const add=(kind,name,dom)=>{const id=kind.slice(0,2).toLowerCase()+(_id++);const n={id,name,kind,dom};N.push(n);byId[id]=n;return n;};
+  const link=(a,b,p)=>{if(a&&b&&a.id!==b.id)E.push([a.id,b.id,p]);};
+  const me=add('Person','Me','general');delete byId[me.id];me.id='me';byId.me=me;
+  const fam=[];for(let i=0;i<10;i++){const f=add('Person',pk(FN)+' '+pk(LN),'general');fam.push(f);link(me,f,pk(['spouse','parent','sibling','child','in-law','cousin']));}
+  for(let i=0;i<8;i++)link(pk(fam),pk(fam),'relative');
+  const placePool=[];const place=dom=>{const p=add('Place',pk(PLACEN),dom||'location');placePool.push(p);return p;};
+  const orgs=[];
+  for(let k=0;k<6;k++){const o=add('Organization',pk(ORGN),'general');orgs.push(o);const hq=place('location');link(o,hq,'locatedAt');
+    const staff=[];const cnt=4+Math.floor(rnd()*7);for(let i=0;i<cnt;i++){const s=add('Person',pk(FN)+' '+pk(LN),'general');staff.push(s);link(s,o,'worksFor');}
+    for(let i=0;i<cnt;i++)link(pk(staff),pk(staff),'colleague');
+    for(let i=0;i<2;i++){const w=add('CreativeWork',pk(WORKN),'general');link(pk(staff),w,'authored');link(w,o,'forOrg');}}
+  link(me,orgs[0],'worksFor');
+  const friends=[];for(let i=0;i<12;i++){const fr=add('Person',pk(FN)+' '+pk(LN),'general');friends.push(fr);link(me,fr,'friend');if(chance(.5))link(fr,pk(orgs),'worksFor');if(chance(.4))link(fr,pk(placePool),'residence');}
+  for(let i=0;i<12;i++)link(pk(friends),pk(friends),'friend');
+  const hosp=add('Organization','Mass General','medical'),hosp2=add('Organization','City Clinic','medical');
+  const docs=[];for(let i=0;i<5;i++){const d=add('Person','Dr. '+pk(LN),'medical');docs.push(d);link(d,chance(.5)?hosp:hosp2,'worksAt');}
+  link(me,pk(docs),'physician');
+  const conds=CONDN.map(c=>add('MedicalCondition',c,'medical'));
+  const drugs=DRUGN.map(c=>add('Drug',c,'medical'));
+  conds.forEach((c,i)=>{link(me,c,'diagnosed');link(c,drugs[i],'treatedWith');link(pk(docs),c,'treats');});
+  const fin=add('Organization','Fidelity','financial');FINN.forEach(p=>{const a=add('Product',p,'financial');link(me,a,'holds');link(a,fin,'custodian');});
+  const adv=add('Person',pk(FN)+' '+pk(LN),'financial');link(me,adv,'advisor');link(adv,fin,'worksFor');
+  EVTN.forEach(e=>{const ev=add('Event',e,'general');link(me,ev,chance(.5)?'attended':'organized');link(ev,pk(placePool),'heldIn');for(let i=0;i<3;i++)link(pk(friends.concat(fam)),ev,'attended');});
+  PRODN.forEach(p=>{const pr=add('Product',p,'general');if(chance(.6))link(me,pr,'owns');else link(pk(friends),pr,'owns');});
+  ANIN.forEach(a=>{const an=add('Animal',a,'general');link(chance(.6)?me:pk(fam),an,'owns');});
+  for(let i=0;i<10;i++){const p=place('location');link(pk(friends.concat(fam)),p,'residence');if(chance(.3))link(p,pk(placePool),'near');}
+  const KINDS=[['Person','general'],['Place','location'],['Product','general'],['Organization','general'],['CreativeWork','general'],['Event','general']];
+  while(N.length<TARGET){const [k,d]=pk(KINDS);const nm=k==='Person'?pk(FN)+' '+pk(LN):k==='Place'?pk(PLACEN):k==='Organization'?pk(ORGN):k==='Event'?pk(EVTN):k==='CreativeWork'?pk(WORKN):pk(PRODN);
+    const n=add(k,nm,d);const host=N[1+Math.floor(rnd()*(N.length-2))];link(n,host,pk(['related','knows','near','refers to','member']));}
+  const adj={};N.forEach(n=>adj[n.id]=[]);E.forEach(([a,b])=>{adj[a].push(b);adj[b].push(a);});
+  N.forEach(n=>n.hop=Infinity);me.hop=0;let q=[me.id];while(q.length){const cur=q.shift();for(const nb of adj[cur])if(byId[nb].hop>byId[cur].hop+1){byId[nb].hop=byId[cur].hop+1;q.push(nb);}}
+  N.forEach(n=>{if(!isFinite(n.hop))n.hop=3;});
+  return {N,E,byId};
+}
+const {N,E,byId}=genGraph(140);
+const c1=N.filter(n=>n.hop===1).length,c2=N.filter(n=>n.hop===2).length;
+document.getElementById('legendnote').textContent=`${c1} at 1 hop · ${c2} at 2 hops · tap a node`;
+
+const W=390,Cx=W/2,Cy=340,RING={};let depth=2;const disabled=new Set();
+function layout(){byId.me.x=Cx;byId.me.y=Cy;
+  for(const hop of [1,2]){const ring=N.filter(n=>n.hop===hop);ring.sort((a,b)=>a.kind.localeCompare(b.kind)||a.name.localeCompare(b.name));
+    const need=ring.length*30/(2*Math.PI);RING[hop]=Math.max(hop===1?120:0,need,(hop===2?(RING[1]+130):0));
+    ring.forEach((n,i)=>{const a=-Math.PI/2+i/ring.length*Math.PI*2+(hop===2?0.12:0);n.x=Cx+Math.cos(a)*RING[hop];n.y=Cy+Math.sin(a)*RING[hop];n.ang=a;});}
+}
+layout();
+
+const view=document.getElementById('view'),ringsG=document.getElementById('rings'),eG=document.getElementById('edges'),nG=document.getElementById('nodes');
+const svg=document.getElementById('svg');let scale=.5,tx=0,ty=0,focusId=null;
+function neighbors(id){const s=new Set([id]);for(const[a,b]of E){if(a===id)s.add(b);if(b===id)s.add(a);}return s;}
+function visible(n){return n.hop<=depth&&!disabled.has(n.kind);}
+function setView(){view.setAttribute('transform',`translate(${tx},${ty}) scale(${scale})`);}
+function draw(){
+  ringsG.innerHTML='';eG.innerHTML='';nG.innerHTML='';
+  for(const hop of (depth===1?[1]:[1,2])){const c=document.createElementNS('http://www.w3.org/2000/svg','circle');c.setAttribute('class','ring');c.setAttribute('cx',Cx);c.setAttribute('cy',Cy);c.setAttribute('r',RING[hop]);ringsG.appendChild(c);
+    const t=document.createElementNS('http://www.w3.org/2000/svg','text');t.setAttribute('class','ringlbl');t.setAttribute('x',Cx);t.setAttribute('y',Cy-RING[hop]-8);t.setAttribute('text-anchor','middle');t.textContent=hop+(hop===1?' hop':' hops');ringsG.appendChild(t);}
+  const set=focusId?neighbors(focusId):null;
+  for(const[a,b,p]of E){const na=byId[a],nb=byId[b];if(!visible(na)||!visible(nb))continue;const inset=!set||(set.has(a)&&set.has(b));
+    const path=document.createElementNS('http://www.w3.org/2000/svg','path');const mx=(na.x+nb.x)/2,my=(na.y+nb.y)/2,cx2=mx+(Cx-mx)*0.12,cy2=my+(Cy-my)*0.12;
+    path.setAttribute('d',`M${na.x} ${na.y} Q${cx2} ${cy2} ${nb.x} ${nb.y}`);path.setAttribute('class','edge');
+    if(inset&&set){path.style.stroke=`var(${TYPE[byId[focusId].kind]})`;path.style.opacity=.85;}else path.style.opacity=set?.06:.4;eG.appendChild(path);
+    if(inset&&set){const lt=document.createElementNS('http://www.w3.org/2000/svg','text');lt.setAttribute('class','edgelbl');lt.setAttribute('x',cx2);lt.setAttribute('y',cy2-3);lt.textContent=p;lt.style.opacity=1;eG.appendChild(lt);}}
+  for(const n of N){if(!visible(n))continue;const inset=!set||set.has(n.id);const r=n.hop===0?26:n.hop===1?18:13;
+    const g=document.createElementNS('http://www.w3.org/2000/svg','g');g.setAttribute('class','nodewrap');g.dataset.id=n.id;if(set&&!inset)g.style.opacity=.12;
+    const disc=document.createElementNS('http://www.w3.org/2000/svg','circle');disc.setAttribute('class','disc');disc.setAttribute('cx',n.x);disc.setAttribute('cy',n.y);disc.setAttribute('r',r);disc.setAttribute('fill',`color-mix(in srgb,var(${TYPE[n.kind]}) 16%,var(--surface))`);disc.setAttribute('stroke',`color-mix(in srgb,var(${TYPE[n.kind]}) 45%,var(--bg))`);g.appendChild(disc);
+    const gl=document.createElementNS('http://www.w3.org/2000/svg','g');gl.setAttribute('class','glyph');gl.setAttribute('stroke',`var(${TYPE[n.kind]})`);const s=(r*1.05)/24;gl.setAttribute('transform',`translate(${n.x-r*0.525},${n.y-r*0.525}) scale(${s})`);gl.innerHTML=ICON[n.kind]||ICON.Thing;g.appendChild(gl);
+    // label only for hub, focus set, or hop<=1 (outer ring would be label soup)
+    if(n.hop===0||(set&&inset)||n.hop===1){const lbl=document.createElementNS('http://www.w3.org/2000/svg','text');lbl.setAttribute('class','nlbl');lbl.setAttribute('x',n.x);lbl.setAttribute('y',n.y+r+12);lbl.textContent=n.name;g.appendChild(lbl);}
+    g.addEventListener('pointerenter',()=>{if(!panning){focusId=n.id;draw();}});nG.appendChild(g);}
+  setView();
+}
+document.getElementById('stage').addEventListener('pointerleave',()=>{focusId=null;draw();});
+
+const present=[...new Set(N.map(n=>n.kind))];const filter=document.getElementById('filter');
+for(const k of present){const b=document.createElement('button');b.className='fchip';b.innerHTML=`<span class="sw" style="background:var(${TYPE[k]})"></span>${LBL[k]||k}`;b.onclick=()=>{b.classList.toggle('off');disabled.has(k)?disabled.delete(k):disabled.add(k);draw();};filter.appendChild(b);}
+document.querySelectorAll('.depthseg button').forEach(b=>b.onclick=()=>{document.querySelectorAll('.depthseg button').forEach(x=>x.classList.remove('on'));b.classList.add('on');depth=+b.dataset.d;fit();draw();});
+
+let panning=null;
+svg.addEventListener('pointerdown',e=>{if(e.target.closest('.nodewrap'))return;panning={x:e.clientX,y:e.clientY,tx,ty};});
+window.addEventListener('pointermove',e=>{if(panning){tx=panning.tx+(e.clientX-panning.x);ty=panning.ty+(e.clientY-panning.y);setView();}});
+window.addEventListener('pointerup',()=>panning=null);
+svg.addEventListener('wheel',e=>{e.preventDefault();const r=svg.getBoundingClientRect();const mx=e.clientX-r.left,my=e.clientY-r.top;const f=e.deltaY<0?1.12:.89;const ns=Math.min(4,Math.max(.2,scale*f));const k=ns/scale;tx=mx-(mx-tx)*k;ty=my-(my-ty)*k;scale=ns;setView();},{passive:false});
+document.getElementById('zin').onclick=()=>z(1.25);document.getElementById('zout').onclick=()=>z(.8);document.getElementById('zfit').onclick=()=>{fit();setView();};
+function z(f){const r=svg.getBoundingClientRect(),mx=r.width/2,my=r.height/2,ns=Math.min(4,Math.max(.2,scale*f)),k=ns/scale;tx=mx-(mx-tx)*k;ty=my-(my-ty)*k;scale=ns;setView();}
+function fit(){const R=(depth===1?RING[1]:RING[2])+40;const r=svg.getBoundingClientRect();scale=Math.min(2,Math.max(.18,Math.min(r.width/(2*R),r.height/(2*R))));tx=r.width/2-Cx*scale;ty=r.height/2-Cy*scale;}
+requestAnimationFrame(()=>{fit();draw();});
+</script>
+</body>
+</html>

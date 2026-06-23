@@ -1,65 +1,27 @@
-// The entity graph "Map": a force-directed overview that drills into a radial
-// ego focus on tap (docs/DESIGN.md, graph-view mockups). One dataset backs both
-// modes — by default the whole graph (every entity, disconnected ones included,
-// centered on "Me"), or a root's 2-hop ego when one is named. Focus re-lays-out
-// the same nodes around a focal entity, so node elements persist across the
-// transition (object constancy) and the force layout is never re-run on a
-// filter — survivors keep their positions, filtered types just fade. Return to
-// overview is an explicit labelled control, never a hidden gesture. The chip bar
-// doubles as the legend: "All" is the empty selection, each tap toggles a type.
+// The entity graph "Map" — a mobile-first local view (docs/DESIGN.md "The graph
+// 'Map' — Focus + Sheet"; mock docs/mocks/entity-graph/graph-d-focus-sheet-2hop.html).
+// Approved direction D (2-hop): the screen centres on
+// one focal entity and lays its neighbourhood out deterministically — focal in
+// the middle, 1-hop on an inner ring, 2-hop clustered just outside each parent —
+// so it never becomes an unreadable hairball on a phone and never overlaps tap
+// targets. A persistent bottom panel lists the focal's relationships as fat
+// tappable rows; tapping a node or a row re-centres (the breadcrumb tracks the
+// walk). Search is the front door. Tap-only: hover is never the affordance.
 
-import {
-  type KeyboardEvent,
-  type MouseEvent,
-  type PointerEvent,
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
-import { factValue } from "../analysis/format";
-import { type EgoGraph, type EntityOut, api } from "../api/client";
-import { Sheet } from "../components/Sheet";
-import { ChevronLeftIcon, FitIcon, MinusIcon, PlusIcon } from "../components/icons";
+import { type PointerEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { type EgoGraph, api } from "../api/client";
+import { ChevronRightIcon, SearchIcon } from "../components/icons";
 import { EntityTypeIcon, type EntityTypeKey, resolveEntityKind } from "../entities/kinds";
 
 interface GraphScreenProps {
   onOpenEntity: (entityId: string) => void;
-  /** Entity to center an ego view on; when absent, the whole graph loads. */
+  /** Entity to centre on at open; when absent, the whole graph loads (root = "Me"). */
   rootId?: string;
   load?: (entityId: string, depth: number) => Promise<EgoGraph>;
   loadFull?: () => Promise<EgoGraph>;
 }
 
 type Phase = "loading" | "ready" | "empty" | "error";
-type Mode = "overview" | "focus";
-
-interface Sim {
-  x: number;
-  y: number;
-  vx: number;
-  vy: number;
-  tx: number;
-  ty: number;
-  op: number;
-  top: number;
-}
-
-// Friendlier chip labels than the raw schema keys.
-const KIND_LABEL: Record<EntityTypeKey, string> = {
-  Person: "People",
-  Organization: "Orgs",
-  Place: "Places",
-  Event: "Events",
-  Product: "Products",
-  Animal: "Animals",
-  CreativeWork: "Media",
-  MedicalCondition: "Conditions",
-  MedicalProcedure: "Procedures",
-  Drug: "Drugs",
-  Thing: "Things",
-};
 
 const SCALE_MIN = 0.45;
 const SCALE_MAX = 2.4;
@@ -78,8 +40,6 @@ export interface ViewTransform {
 /**
  * Zoom about a fixed screen point `(fx, fy)` (stage-local) so whatever sits
  * under it stays put across the scale change — the anchor-point invariant.
- * With `transform-origin: 0 0`, naively changing `scale` pivots about the
- * stage corner, which is the "doesn't zoom where I want" bug; this counters it.
  */
 export function focalZoom(v: ViewTransform, fx: number, fy: number, factor: number): ViewTransform {
   const scale = clampScale(v.scale * factor);
@@ -99,7 +59,6 @@ export function edgeLabelText(predicate: string): string {
 export interface EdgePlan {
   /** Symmetric fan index for parallel connections (0 = straight). */
   idx: number;
-  /** Arrowhead at the canonical-start / canonical-end of the p→q geometry. */
   arrowStart: boolean;
   arrowEnd: boolean;
   /** This edge is folded into its reciprocal partner and isn't drawn. */
@@ -109,10 +68,8 @@ export interface EdgePlan {
 
 /**
  * Decide how each directed edge renders. A pair of opposite edges (A→B and
- * B→A) collapses into one connection with arrowheads at both ends — so
- * reciprocal facts like owns/owned-by or spouse/spouse read as a single
- * bidirectional link instead of two parallel curves. Everything else stays a
- * directional arrow (parent→child et al.), with same-pair siblings fanned out.
+ * B→A) collapses into one connection with arrowheads at both ends; everything
+ * else stays a directional arrow, with same-pair siblings fanned out.
  */
 export function planEdges(
   edges: readonly { source: string; target: string; predicate: string }[],
@@ -151,7 +108,7 @@ export function planEdges(
     }
     const k = list.length;
     list.forEach((e, i) => {
-      const arrowEnd = e.target === q; // geometry runs p→q; arrow points at target
+      const arrowEnd = e.target === q;
       plan.set(key(e), {
         idx: i - (k - 1) / 2,
         arrowStart: !arrowEnd,
@@ -164,7 +121,7 @@ export function planEdges(
   return plan;
 }
 
-/** Minimal node shape the label grid needs (Sim is a structural superset). */
+/** Minimal node shape the label grid needs. */
 export interface LabelNode {
   x: number;
   y: number;
@@ -172,12 +129,10 @@ export interface LabelNode {
 }
 
 /**
- * Decide which node labels to show, screen-space and density-aware (sigma.js
- * LabelGrid): bucket on-screen nodes into ~cell-sized cells and keep the
- * highest-priority label per cell, so labels appear wherever there's actually
- * room — not only when zoomed past a fixed scale. `forced` labels (focal, the
- * tapped node, the focus ring) always win; below a legibility floor only forced
- * labels render. Deterministic priority keeps the choice stable (no flicker).
+ * Decide which node labels to show, screen-space and density-aware: bucket
+ * on-screen nodes into cells and keep the highest-priority label per cell.
+ * `forced` labels (focal, focus ring) always win; below a legibility floor only
+ * forced labels render.
  */
 export function chooseLabels(args: {
   nodes: ReadonlyMap<string, LabelNode>;
@@ -197,14 +152,14 @@ export function chooseLabels(args: {
   const fontPx = args.fontPx ?? 12;
   const floorPx = args.floorPx ?? 9;
   const shown = new Set<string>(forced);
-  if (fontPx * scale < floorPx) return shown; // text too small to read; forced only
+  if (fontPx * scale < floorPx) return shown;
   const cols = Math.max(1, Math.ceil(w / cell));
   const best = new Map<number, string>();
   for (const [id, n] of nodes) {
     if (forced.has(id) || n.op < 0.5) continue;
     const sx = n.x * scale + tx;
     const sy = n.y * scale + ty;
-    if (sx < 0 || sy < 0 || sx > w || sy > h) continue; // never label off-screen
+    if (sx < 0 || sy < 0 || sx > w || sy > h) continue;
     const c = Math.floor(sy / cell) * cols + Math.floor(sx / cell);
     const cur = best.get(c);
     if (cur === undefined || priority(id) > priority(cur)) best.set(c, id);
@@ -213,17 +168,31 @@ export function chooseLabels(args: {
   return shown;
 }
 
-function selSummary(sel: ReadonlySet<EntityTypeKey>): string {
-  if (sel.size === 1) {
-    const [only] = sel;
-    if (only) return `only ${KIND_LABEL[only].toLowerCase()}`;
-  }
-  return `${sel.size} types`;
-}
-
 const REDUCED = (): boolean =>
   typeof window !== "undefined" &&
   window.matchMedia?.("(prefers-reduced-motion: reduce)").matches === true;
+
+// Disc diameters per hop (focal / 1-hop / 2-hop); radii are half of these and
+// drive where edges meet the circle.
+const DISC = { 0: 60, 1: 44, 2: 32 } as const;
+const radiusOf = (hop: number) => (hop === 0 ? 30 : hop === 1 ? 22 : 16);
+// First-ring fan: how many neighbours a node shows on the inner ring, and how
+// many of each of theirs reach the outer ring — capped so the phone stays legible.
+const FIRST_CAP = { 1: 12, 2: 8 } as const;
+const SECOND_CAP = 4;
+
+interface Pos {
+  x: number;
+  y: number;
+  hop: number;
+}
+interface Rel {
+  id: string;
+  name: string;
+  kind: string;
+  predicate: string;
+  dir: "out" | "in";
+}
 
 export function GraphScreen({
   onOpenEntity,
@@ -233,16 +202,15 @@ export function GraphScreen({
 }: GraphScreenProps) {
   const [phase, setPhase] = useState<Phase>("loading");
   const [graph, setGraph] = useState<EgoGraph | null>(null);
-  const [mode, setMode] = useState<Mode>("overview");
   const [focal, setFocal] = useState<string | null>(null);
+  const [depth, setDepth] = useState<1 | 2>(2);
   const [trail, setTrail] = useState<string[]>([]);
-  const [sel, setSel] = useState<ReadonlySet<EntityTypeKey>>(new Set());
-  const [sheetId, setSheetId] = useState<string | null>(null);
-  const [focusEmpty, setFocusEmpty] = useState(false);
+  const [query, setQuery] = useState("");
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [panelH, setPanelH] = useState(300);
 
-  // The single dataset both modes draw from: the whole graph by default
-  // (centered on "Me"), or a 2-hop ego view when an explicit root is given.
-  // Selecting a node still narrows to a radial focus over this same dataset.
+  // The dataset both the map and the panel read: a named root's 2-hop ego when
+  // given, else the whole graph (centred on "Me"). Re-centring explores within it.
   useEffect(() => {
     let stale = false;
     setPhase("loading");
@@ -250,9 +218,13 @@ export function GraphScreen({
       .then((g) => {
         if (stale) return;
         setGraph(g);
-        setMode("overview");
-        setFocal(null);
-        setTrail([]);
+        const start =
+          rootId ??
+          (g.root && g.nodes.some((n) => n.id === g.root)
+            ? g.root
+            : (mostConnected(g) ?? g.nodes[0]?.id ?? null));
+        setFocal(start);
+        setTrail(start ? [start] : []);
         setPhase(g.nodes.length > 0 ? "ready" : "empty");
       })
       .catch(() => {
@@ -263,480 +235,257 @@ export function GraphScreen({
     };
   }, [rootId, load, loadFull]);
 
-  // ---- derived graph structure ----
-  const nodeKind = useMemo(() => {
-    const m = new Map<string, EntityTypeKey>();
-    for (const n of graph?.nodes ?? []) m.set(n.id, resolveEntityKind(n.kind));
+  const nodeById = useMemo(() => {
+    const m = new Map<string, EgoGraph["nodes"][number]>();
+    for (const n of graph?.nodes ?? []) m.set(n.id, n);
     return m;
   }, [graph]);
 
-  // How each edge draws: fan index, arrowheads, reciprocal-merge, label.
-  const edgeRender = useMemo(() => planEdges(graph?.edges ?? []), [graph]);
-
-  const adjacency = useMemo(() => {
-    const m = new Map<string, Set<string>>();
-    const link = (a: string, b: string) => {
-      let set = m.get(a);
-      if (!set) {
-        set = new Set();
-        m.set(a, set);
+  // Adjacency (ordered, deduped) + the representative edge per neighbour pair,
+  // used for the ring layout and the panel's relationship rows.
+  const { adjacency, relOf, degree } = useMemo(() => {
+    const adj = new Map<string, string[]>();
+    const rel = new Map<string, Map<string, { predicate: string; dir: "out" | "in" }>>();
+    const seen = (m: Map<string, string[]>, a: string) => {
+      let s = m.get(a);
+      if (!s) {
+        s = [];
+        m.set(a, s);
       }
-      set.add(b);
+      return s;
+    };
+    const relSeen = (a: string) => {
+      let s = rel.get(a);
+      if (!s) {
+        s = new Map();
+        rel.set(a, s);
+      }
+      return s;
     };
     for (const e of graph?.edges ?? []) {
-      link(e.source, e.target);
-      link(e.target, e.source);
+      const sa = seen(adj, e.source);
+      const ta = seen(adj, e.target);
+      if (!sa.includes(e.target)) sa.push(e.target);
+      if (!ta.includes(e.source)) ta.push(e.source);
+      const rs = relSeen(e.source);
+      if (!rs.has(e.target)) rs.set(e.target, { predicate: e.predicate, dir: "out" });
+      const rt = relSeen(e.target);
+      if (!rt.has(e.source)) rt.set(e.source, { predicate: e.predicate, dir: "in" });
     }
-    return m;
+    const deg = new Map<string, number>();
+    for (const n of graph?.nodes ?? []) deg.set(n.id, adj.get(n.id)?.length ?? 0);
+    return { adjacency: adj, relOf: rel, degree: deg };
   }, [graph]);
 
-  const hops = useMemo(() => {
-    const m = new Map<string, number>();
-    if (!graph) return m;
-    m.set(graph.root, 0);
-    let frontier = [graph.root];
-    for (let d = 1; d <= 2 && frontier.length; d++) {
-      const next: string[] = [];
-      for (const id of frontier)
-        for (const nb of adjacency.get(id) ?? [])
-          if (!m.has(nb)) {
-            m.set(nb, d);
-            next.push(nb);
-          }
-      frontier = next;
-    }
-    return m;
-  }, [graph, adjacency]);
-
-  const kindsPresent = useMemo(() => {
-    const counts = new Map<EntityTypeKey, number>();
-    for (const k of nodeKind.values()) counts.set(k, (counts.get(k) ?? 0) + 1);
-    return [...counts.entries()]
-      .sort((a, b) => b[1] - a[1])
-      .map(([k, n]) => ({ kind: k, count: n }));
-  }, [nodeKind]);
-
-  const isHidden = useCallback(
-    (id: string) => sel.size > 0 && !sel.has(nodeKind.get(id) ?? "Thing"),
-    [sel, nodeKind],
-  );
-
-  const hiddenCount = useMemo(
-    () => (graph ? graph.nodes.filter((n) => isHidden(n.id)).length : 0),
-    [graph, isHidden],
-  );
-
-  // ---- imperative animation state (read by the rAF loop) ----
-  const stageRef = useRef<HTMLDivElement>(null);
-  const viewportRef = useRef<HTMLDivElement>(null);
-  const nodeEls = useRef(new Map<string, HTMLButtonElement>());
-  const edgeEls = useRef(new Map<string, SVGPathElement>());
-  const edgeTextEls = useRef(new Map<string, SVGTextElement>());
-  const labelShown = useRef(new Map<string, boolean>()); // last data-label per node
-  const vw = useRef({
-    nodes: new Map<string, Sim>(),
-    mode: "overview" as Mode,
-    focal: null as string | null,
-    hidden: (_id: string): boolean => false,
-    visAdj: new Map<string, string[]>(),
-    scale: 1,
-    tx: 0,
-    ty: 0,
-    w: 360,
-    h: 560,
-  });
-
-  const edgeKey = (s: string, t: string, p: string) => `${s}|${t}|${p}`;
-
-  // Build the sim + run the loop whenever the dataset changes.
-  useEffect(() => {
-    if (!graph) return;
-    const stage = stageRef.current;
-    const w = stage?.clientWidth || 360;
-    const h = stage?.clientHeight || 560;
-    vw.current.w = w;
-    vw.current.h = h;
-    const nodes = new Map<string, Sim>();
-    for (const n of graph.nodes) {
-      const d = hops.get(n.id) ?? 2;
-      const r = d * 130 + Math.random() * 30;
-      const a = Math.random() * Math.PI * 2;
-      nodes.set(n.id, {
-        x: w / 2 + Math.cos(a) * r,
-        y: h / 2 + Math.sin(a) * r,
-        vx: 0,
-        vy: 0,
-        tx: w / 2,
-        ty: h / 2,
-        op: 1,
-        top: 1,
-      });
-    }
-    const rootSim = nodes.get(graph.root);
-    if (rootSim) {
-      rootSim.x = w / 2;
-      rootSim.y = h / 2;
-    }
-    vw.current.nodes = nodes;
-    vw.current.scale = 1;
-    vw.current.tx = 0;
-    vw.current.ty = 0;
-
-    let raf = 0;
-    const reduced = REDUCED();
-    const frame = () => {
-      step(reduced);
-      raf = requestAnimationFrame(frame);
-    };
-    raf = requestAnimationFrame(frame);
-    return () => cancelAnimationFrame(raf);
-  }, [graph, hops]);
-
-  // Recompute targets/visibility whenever mode, focus, or the filter changes.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: relayout reads refs and stable derived maps; listing them would force needless reruns.
-  useEffect(() => {
-    const v = vw.current;
-    v.mode = mode;
-    v.focal = focal;
-    v.hidden = isHidden;
-    const vis = new Map<string, string[]>();
-    for (const id of v.nodes.keys())
-      vis.set(
-        id,
-        [...(adjacency.get(id) ?? [])].filter((n) => !isHidden(n)),
-      );
-    v.visAdj = vis;
-    relayout();
-  }, [mode, focal, sel, graph, adjacency, isHidden]);
-
-  function relayout() {
-    const v = vw.current;
-    const cx = v.w / 2;
-    const cy = v.h / 2;
-    if (v.mode === "overview" || !v.focal) {
-      for (const [id, n] of v.nodes) {
-        n.top = v.hidden(id) ? 0 : 1;
-        nodeEls.current.get(id)?.removeAttribute("data-anchor"); // labels below
-      }
-      setFocusEmpty(false);
-      return;
-    }
-    const fo = v.focal;
-    const ring = (v.visAdj.get(fo) ?? []).slice();
-    const f = v.nodes.get(fo);
-    if (f) {
-      f.tx = cx;
-      f.ty = cy;
-      f.top = 1;
-      nodeEls.current.get(fo)?.removeAttribute("data-anchor");
-    }
-    const R = Math.min(v.w, v.h) * 0.34;
-    ring.forEach((id, i) => {
-      const a = -Math.PI / 2 + (i * 2 * Math.PI) / ring.length;
-      const n = v.nodes.get(id);
-      if (n) {
-        n.tx = cx + R * Math.cos(a);
-        n.ty = cy + R * Math.sin(a);
-        n.top = 1;
-        // place the label on the node's outer side so it clears the spokes
-        nodeEls.current.get(id)?.setAttribute("data-anchor", n.ty < cy ? "top" : "bottom");
-      }
+  // The local layout for the current focal + depth, in world coordinates with
+  // the focal at the origin. Two rings: 1-hop around the focal, 2-hop fanned
+  // just outside each parent so the second ring reads as "who connects to whom".
+  const layout = useMemo(() => {
+    const pos = new Map<string, Pos>();
+    if (!focal || !nodeById.has(focal)) return pos;
+    pos.set(focal, { x: 0, y: 0, hop: 0 });
+    const first = (adjacency.get(focal) ?? []).slice(0, FIRST_CAP[depth]);
+    const R1 = depth === 1 ? 150 : 116;
+    const placed = new Set<string>([focal, ...first]);
+    const ang = new Map<string, number>();
+    first.forEach((id, i) => {
+      const a = -Math.PI / 2 + (i * 2 * Math.PI) / Math.max(1, first.length);
+      ang.set(id, a);
+      pos.set(id, { x: Math.cos(a) * R1, y: Math.sin(a) * R1, hop: 1 });
     });
-    const onRing = new Set(ring);
-    for (const [id, n] of v.nodes)
-      if (id !== fo && !onRing.has(id)) {
-        n.tx = n.x;
-        n.ty = n.y;
-        n.top = 0;
+    if (depth === 2) {
+      const R2 = 236;
+      for (const fid of first) {
+        const fa = ang.get(fid) ?? 0;
+        const seconds = (adjacency.get(fid) ?? [])
+          .filter((s) => !placed.has(s))
+          .slice(0, SECOND_CAP);
+        seconds.forEach((sid, j) => {
+          placed.add(sid);
+          const spread = 0.55;
+          const a = fa + (seconds.length === 1 ? 0 : (j / (seconds.length - 1) - 0.5) * spread);
+          pos.set(sid, { x: Math.cos(a) * R2, y: Math.sin(a) * R2, hop: 2 });
+        });
       }
-    setFocusEmpty(ring.length === 0);
-  }
+    }
+    return pos;
+  }, [focal, depth, adjacency, nodeById]);
 
-  function step(reduced: boolean) {
-    const v = vw.current;
-    if (v.mode === "overview") physics(v);
-    else {
-      const k = reduced ? 1 : 0.16;
-      for (const n of v.nodes.values()) {
-        n.x += (n.tx - n.x) * k;
-        n.y += (n.ty - n.y) * k;
-      }
-    }
-    const ok = reduced ? 1 : 0.2;
-    for (const n of v.nodes.values()) n.op += (n.top - n.op) * ok;
-    paint(v);
-  }
-
-  function physics(v: typeof vw.current) {
-    const live = [...v.nodes.entries()].filter(([id]) => !v.hidden(id));
-    for (let i = 0; i < live.length; i++) {
-      const ei = live[i];
-      if (!ei) continue;
-      for (let j = i + 1; j < live.length; j++) {
-        const ej = live[j];
-        if (!ej) continue;
-        const a = ei[1];
-        const b = ej[1];
-        const dx = a.x - b.x;
-        const dy = a.y - b.y;
-        const d2 = dx * dx + dy * dy || 1;
-        const d = Math.sqrt(d2);
-        const rep = 2600 / d2;
-        a.vx += (dx / d) * rep;
-        a.vy += (dy / d) * rep;
-        b.vx -= (dx / d) * rep;
-        b.vy -= (dy / d) * rep;
-      }
-    }
-    const rootId = graph?.root;
-    for (const e of graph?.edges ?? []) {
-      const a = v.nodes.get(e.source);
-      const b = v.nodes.get(e.target);
-      if (!a || !b || v.hidden(e.source) || v.hidden(e.target)) continue;
-      const dx = b.x - a.x;
-      const dy = b.y - a.y;
-      const d = Math.sqrt(dx * dx + dy * dy) || 1;
-      const f = (d - 118) * 0.012;
-      a.vx += (dx / d) * f;
-      a.vy += (dy / d) * f;
-      b.vx -= (dx / d) * f;
-      b.vy -= (dy / d) * f;
-    }
-    for (const [id, n] of live) {
-      if (id === rootId) {
-        n.x = v.w / 2;
-        n.y = v.h / 2;
-        n.vx = 0;
-        n.vy = 0;
-        continue;
-      }
-      n.vx += (v.w / 2 - n.x) * 0.004;
-      n.vy += (v.h / 2 - n.y) * 0.004;
-      n.vx *= 0.82;
-      n.vy *= 0.82;
-      n.x += n.vx;
-      n.y += n.vy;
-    }
-  }
-
-  function paint(v: typeof vw.current) {
-    for (const [id, n] of v.nodes) {
-      const el = nodeEls.current.get(id);
-      if (!el) continue;
-      el.style.left = `${n.x}px`;
-      el.style.top = `${n.y}px`;
-      el.style.opacity = `${n.op}`;
-      el.style.pointerEvents = n.op > 0.5 ? "auto" : "none";
-    }
-    // Disc radius (viewport px) so edges/arrows meet the circle's edge exactly.
-    // Matches the rendered disc (focal 64 / hop≤1 46 / hop2 34); the focal value
-    // clears its selection ring.
-    const radiusOf = (id: string) =>
-      v.mode === "focus" && id === v.focal ? 36 : (hops.get(id) ?? 2) <= 1 ? 23 : 17;
-    for (const e of graph?.edges ?? []) {
-      const key = edgeKey(e.source, e.target, e.predicate);
-      if (edgeRender.get(key)?.skip) continue; // folded into its reciprocal partner
-      const path = edgeEls.current.get(key);
-      const txt = edgeTextEls.current.get(key);
-      const na = v.nodes.get(e.source);
-      const nb = v.nodes.get(e.target);
-      if (!na || !nb) continue;
-      // Orient geometry on the canonical (sorted) pair so parallel edges fan
-      // out to consistent sides regardless of each edge's stored direction.
-      const flip = e.source > e.target;
-      const a = flip ? nb : na;
-      const b = flip ? na : nb;
-      const ra = radiusOf(flip ? e.target : e.source);
-      const rb = radiusOf(flip ? e.source : e.target);
+  // Visible edges (both endpoints placed) with reciprocal-merge + geometry.
+  const edges = useMemo(() => {
+    const vis = (graph?.edges ?? []).filter((e) => layout.has(e.source) && layout.has(e.target));
+    const plan = planEdges(vis);
+    const out: {
+      key: string;
+      x1: number;
+      y1: number;
+      x2: number;
+      y2: number;
+      mx: number;
+      my: number;
+      label: string;
+      arrowStart: boolean;
+      arrowEnd: boolean;
+      lit: boolean;
+    }[] = [];
+    for (const e of vis) {
+      const key = `${e.source}|${e.target}|${e.predicate}`;
+      const pl = plan.get(key);
+      if (pl?.skip) continue;
+      const a = layout.get(e.source);
+      const b = layout.get(e.target);
+      if (!a || !b) continue;
       const dx = b.x - a.x;
       const dy = b.y - a.y;
       const len = Math.hypot(dx, dy) || 1;
-      const nx = -dy / len;
-      const ny = dx / len;
-      // apex = perpendicular distance of the curve's peak from the chord; the
-      // quadratic control point sits at twice that. Gentle, length-scaled, capped.
-      const apex = (edgeRender.get(key)?.idx ?? 0) * Math.min(13, 0.16 * len);
-      const mx = (a.x + b.x) / 2;
-      const my = (a.y + b.y) / 2;
-      const cx = mx + nx * apex * 2;
-      const cy = my + ny * apex * 2;
-      // trim each end toward the control point so the curve leaves the disc edge
-      const da = Math.hypot(cx - a.x, cy - a.y) || 1;
-      const db = Math.hypot(cx - b.x, cy - b.y) || 1;
-      const x1 = a.x + ((cx - a.x) / da) * ra;
-      const y1 = a.y + ((cy - a.y) / da) * ra;
-      const x2 = b.x + ((cx - b.x) / db) * rb;
-      const y2 = b.y + ((cy - b.y) / db) * rb;
-      const gap = len - ra - rb; // visible span between the two discs
-      const shown =
-        !v.hidden(e.source) &&
-        !v.hidden(e.target) &&
-        (v.mode === "overview" || e.source === v.focal || e.target === v.focal) &&
-        gap > 0;
-      const op = shown ? `${Math.min(a.op, b.op)}` : "0";
-      if (path) {
-        path.setAttribute("d", `M ${x1} ${y1} Q ${cx} ${cy} ${x2} ${y2}`);
-        path.style.opacity = op;
-      }
-      if (txt) {
-        // Predicate runs along its own curve, revealed only once the on-screen
-        // span is long enough to read it without crowding the discs.
-        if (shown && gap * v.scale > 80) {
-          const ax = mx + nx * apex; // curve apex (t=0.5)
-          const ay = my + ny * apex;
-          const s = apex === 0 ? 1 : Math.sign(apex);
-          const lx = ax + nx * 7 * s; // nudge just outside the curve
-          const ly = ay + ny * 7 * s;
-          let deg = (Math.atan2(dy, dx) * 180) / Math.PI;
-          if (deg > 90) deg -= 180;
-          else if (deg < -90) deg += 180;
-          txt.setAttribute("x", `${lx}`);
-          txt.setAttribute("y", `${ly}`);
-          txt.setAttribute("transform", `rotate(${deg} ${lx} ${ly})`);
-          txt.style.opacity = op;
-        } else {
-          txt.style.opacity = "0";
-        }
-      }
+      const ra = radiusOf(a.hop);
+      const rb = radiusOf(b.hop);
+      out.push({
+        key,
+        x1: a.x + (dx / len) * ra,
+        y1: a.y + (dy / len) * ra,
+        x2: b.x - (dx / len) * rb,
+        y2: b.y - (dy / len) * rb,
+        mx: (a.x + b.x) / 2,
+        my: (a.y + b.y) / 2,
+        label: pl?.label ?? edgeLabelText(e.predicate),
+        arrowStart: pl?.arrowStart ?? false,
+        arrowEnd: pl?.arrowEnd ?? true,
+        lit: e.source === focal || e.target === focal,
+      });
     }
-    const vp = viewportRef.current;
-    if (vp) vp.style.transform = `translate(${v.tx}px, ${v.ty}px) scale(${v.scale})`;
-    paintLabels(v);
-  }
+    return out;
+  }, [graph, layout, focal]);
 
-  // Per-node label visibility via the screen-space grid; the focal, the focus
-  // ring, and the tapped node are forced on so tap-to-read never needs a zoom.
-  function paintLabels(v: typeof vw.current) {
+  // The focal's direct relationships, for the panel rows (unique neighbours).
+  const rels = useMemo<Rel[]>(() => {
+    if (!focal) return [];
+    const out: Rel[] = [];
+    for (const [id, meta] of relOf.get(focal) ?? []) {
+      const n = nodeById.get(id);
+      if (!n) continue;
+      out.push({
+        id,
+        name: n.canonical_name,
+        kind: n.kind,
+        predicate: meta.predicate,
+        dir: meta.dir,
+      });
+    }
+    return out;
+  }, [focal, relOf, nodeById]);
+
+  const searchResults = useMemo(() => {
+    const all = graph?.nodes ?? [];
+    const q = query.trim().toLowerCase();
+    const matches = q
+      ? all.filter((n) => n.canonical_name.toLowerCase().includes(q))
+      : [...all].sort((a, b) => (degree.get(b.id) ?? 0) - (degree.get(a.id) ?? 0));
+    return matches.slice(0, 10);
+  }, [graph, query, degree]);
+
+  // ---- view transform (pan/zoom), applied imperatively ----
+  const stageRef = useRef<HTMLDivElement>(null);
+  const viewportRef = useRef<HTMLDivElement>(null);
+  const nodeEls = useRef(new Map<string, HTMLButtonElement>());
+  const view = useRef<ViewTransform>({ scale: 1, tx: 0, ty: 0 });
+
+  const updateLabels = useCallback(() => {
+    const stage = stageRef.current;
+    const w = stage?.clientWidth || 360;
+    const h = stage?.clientHeight || 560;
     const forced = new Set<string>();
-    if (v.focal) {
-      forced.add(v.focal);
-      if (v.mode === "focus") for (const id of v.visAdj.get(v.focal) ?? []) forced.add(id);
-    }
+    if (focal) forced.add(focal);
+    for (const [id, p] of layout) if (p.hop === 1) forced.add(id);
+    const ln = new Map<string, LabelNode>();
+    for (const [id, p] of layout) ln.set(id, { x: p.x, y: p.y, op: 1 });
     const shown = chooseLabels({
-      nodes: v.nodes,
-      scale: v.scale,
-      tx: v.tx,
-      ty: v.ty,
-      w: v.w,
-      h: v.h,
+      nodes: ln,
+      scale: view.current.scale,
+      tx: view.current.tx,
+      ty: view.current.ty,
+      w,
+      h,
       forced,
-      // root/near nodes outrank distant ones; deterministic id tiebreak.
-      priority: (id) => -(hops.get(id) ?? 9),
+      priority: (id) => -(layout.get(id)?.hop ?? 9),
     });
-    for (const [id, el] of nodeEls.current) {
-      const on = shown.has(id);
-      if (labelShown.current.get(id) !== on) {
-        el.dataset.label = on ? "on" : "off";
-        labelShown.current.set(id, on);
-      }
-    }
-  }
+    for (const [id, el] of nodeEls.current) el.dataset.label = shown.has(id) ? "on" : "off";
+  }, [focal, layout]);
 
-  // ---- interactions ----
-  function enterFocus(id: string) {
-    vw.current.scale = 1;
-    vw.current.tx = 0;
-    vw.current.ty = 0;
-    setMode("focus");
-    setFocal(id);
-    setTrail([id]);
-  }
-  function recenter(id: string) {
-    setFocal(id);
-    setTrail((t) => [...t, id]);
-  }
-  function exitFocus() {
-    setMode("overview");
-    setFocal(null);
-    setTrail([]);
-  }
-  function onNodeTap(id: string) {
-    if (mode === "overview") enterFocus(id);
-    else if (id === focal) setSheetId(id);
-    else recenter(id);
-  }
-  function jumpCrumb(i: number) {
+  const applyView = useCallback(() => {
+    const vp = viewportRef.current;
+    const v = view.current;
+    if (vp) vp.style.transform = `translate(${v.tx}px, ${v.ty}px) scale(${v.scale})`;
+    updateLabels();
+  }, [updateLabels]);
+
+  // Centre the fresh local layout whenever the focal, depth, or panel size
+  // changes — the focal (world origin) sits at the middle of the stage.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: panelH is read via the stage size at apply time; it must retrigger centring.
+  useEffect(() => {
+    const stage = stageRef.current;
+    view.current = {
+      scale: 1,
+      tx: (stage?.clientWidth || 360) / 2,
+      ty: (stage?.clientHeight || 560) / 2,
+    };
+    applyView();
+  }, [focal, depth, panelH, applyView]);
+
+  useEffect(() => {
+    const onResize = () => applyView();
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, [applyView]);
+
+  // ---- navigation ----
+  const recenter = useCallback(
+    (id: string) => {
+      if (!nodeById.has(id)) {
+        onOpenEntity(id);
+        return;
+      }
+      setFocal(id);
+      setTrail((t) => {
+        const i = t.indexOf(id);
+        return i >= 0 ? t.slice(0, i + 1) : [...t, id];
+      });
+    },
+    [nodeById, onOpenEntity],
+  );
+  const jumpCrumb = (i: number) => {
     setTrail((t) => t.slice(0, i + 1));
     setFocal(trail[i] ?? null);
-  }
-  function toggleKind(k: EntityTypeKey) {
-    setSel((prev) => {
-      const next = new Set(prev);
-      if (next.has(k)) next.delete(k);
-      else next.add(k);
-      return next;
-    });
-  }
+  };
+  const pickSearch = (id: string) => {
+    setSearchOpen(false);
+    setQuery("");
+    setFocal(id);
+    setTrail([id]);
+  };
 
-  // pan / pinch / wheel / keyboard — one finger pans empty canvas, two fingers
-  // pinch-zoom about the finger midpoint; node and control taps are excluded so
-  // they never get captured (kills the pan-vs-tap conflict). All zoom is
-  // focal-anchored (focalZoom): the point under the cursor/fingers stays put.
+  // ---- pan / pinch / wheel / double-tap ----
   const ptrs = useRef(new Map<number, { x: number; y: number }>());
   const gesture = useRef({ sd: 0, ss: 1, panX: 0, panY: 0, midX: 0, midY: 0 });
-
-  // clientX/Y are page coords but tx/ty (and node positions) are stage-local —
-  // subtract the stage's offset to anchor zoom in the right space.
-  function stageOffset() {
+  const stageOffset = () => {
     const r = stageRef.current?.getBoundingClientRect();
     return { ox: r?.left ?? 0, oy: r?.top ?? 0 };
-  }
-
-  // Keep at least a sliver of the laid-out graph on screen after pan/zoom.
-  function clampPan() {
-    const v = vw.current;
-    const m = 64;
-    let minx = Number.POSITIVE_INFINITY;
-    let miny = Number.POSITIVE_INFINITY;
-    let maxx = Number.NEGATIVE_INFINITY;
-    let maxy = Number.NEGATIVE_INFINITY;
-    for (const n of v.nodes.values()) {
-      minx = Math.min(minx, n.x);
-      miny = Math.min(miny, n.y);
-      maxx = Math.max(maxx, n.x);
-      maxy = Math.max(maxy, n.y);
-    }
-    if (!Number.isFinite(minx)) return;
-    const s = v.scale;
-    const loX = m - s * maxx;
-    const hiX = v.w - m - s * minx;
-    const loY = m - s * maxy;
-    const hiY = v.h - m - s * miny;
-    v.tx = loX > hiX ? (loX + hiX) / 2 : Math.min(hiX, Math.max(loX, v.tx));
-    v.ty = loY > hiY ? (loY + hiY) / 2 : Math.min(hiY, Math.max(loY, v.ty));
-  }
-
-  function zoomAt(fx: number, fy: number, factor: number) {
-    const next = focalZoom(vw.current, fx, fy, factor);
-    vw.current.scale = next.scale;
-    vw.current.tx = next.tx;
-    vw.current.ty = next.ty;
-    clampPan();
-  }
-  function zoom(f: number) {
-    const stage = stageRef.current;
-    if (stage) zoomAt(stage.clientWidth / 2, stage.clientHeight / 2, f);
-  }
-  function fit() {
-    vw.current.scale = 1;
-    vw.current.tx = 0;
-    vw.current.ty = 0;
-  }
-
+  };
   function onPointerDown(e: PointerEvent<HTMLDivElement>) {
-    if ((e.target as HTMLElement).closest(".graph-node, .graph-overlay, .graph-zoom")) return;
+    if (searchOpen) setSearchOpen(false);
+    if ((e.target as HTMLElement).closest(".graph-node, .graph-depth")) return;
     e.currentTarget.setPointerCapture?.(e.pointerId);
     ptrs.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
     const g = gesture.current;
     const { ox, oy } = stageOffset();
     if (ptrs.current.size === 1) {
-      g.panX = e.clientX - vw.current.tx;
-      g.panY = e.clientY - vw.current.ty;
+      g.panX = e.clientX - view.current.tx;
+      g.panY = e.clientY - view.current.ty;
     } else if (ptrs.current.size === 2) {
       const [a, b] = [...ptrs.current.values()];
       if (!a || !b) return;
       g.sd = Math.hypot(a.x - b.x, a.y - b.y);
-      g.ss = vw.current.scale;
+      g.ss = view.current.scale;
       g.midX = (a.x + b.x) / 2 - ox;
       g.midY = (a.y + b.y) / 2 - oy;
     }
@@ -745,11 +494,11 @@ export function GraphScreen({
     if (!ptrs.current.has(e.pointerId)) return;
     ptrs.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
     const g = gesture.current;
-    const v = vw.current;
+    const v = view.current;
     if (ptrs.current.size === 1) {
       v.tx = e.clientX - g.panX;
       v.ty = e.clientY - g.panY;
-      clampPan();
+      applyView();
     } else if (ptrs.current.size === 2 && g.sd > 0) {
       const [a, b] = [...ptrs.current.values()];
       if (!a || !b) return;
@@ -759,7 +508,6 @@ export function GraphScreen({
       const my = (a.y + b.y) / 2 - oy;
       const s1 = clampScale(g.ss * (d / g.sd));
       const k = s1 / v.scale;
-      // zoom about the current midpoint, then translate by its movement (pan)
       v.tx = mx - (mx - v.tx) * k;
       v.ty = my - (my - v.ty) * k;
       v.scale = s1;
@@ -767,61 +515,57 @@ export function GraphScreen({
       v.ty += my - g.midY;
       g.midX = mx;
       g.midY = my;
-      clampPan();
+      applyView();
     }
   }
   function onPointerUp(e: PointerEvent<HTMLDivElement>) {
     e.currentTarget.releasePointerCapture?.(e.pointerId);
     ptrs.current.delete(e.pointerId);
     const g = gesture.current;
-    if (ptrs.current.size < 2) g.sd = 0; // clear stale pinch baseline on 2→1
+    if (ptrs.current.size < 2) g.sd = 0;
     const p = [...ptrs.current.values()][0];
     if (p) {
-      g.panX = p.x - vw.current.tx;
-      g.panY = p.y - vw.current.ty;
+      g.panX = p.x - view.current.tx;
+      g.panY = p.y - view.current.ty;
     }
   }
-  function onDoubleClick(e: MouseEvent<HTMLDivElement>) {
-    if ((e.target as HTMLElement).closest(".graph-node, .graph-overlay, .graph-zoom")) return;
-    const { ox, oy } = stageOffset();
-    zoomAt(e.clientX - ox, e.clientY - oy, 1.8);
-  }
-  function onKeyDown(e: KeyboardEvent<HTMLDivElement>) {
-    const v = vw.current;
-    if (e.key === "+" || e.key === "=") zoom(1.25);
-    else if (e.key === "-" || e.key === "_") zoom(0.8);
-    else if (e.key === "0") fit();
-    else if (e.key === "ArrowLeft") {
-      v.tx += 40;
-      clampPan();
-    } else if (e.key === "ArrowRight") {
-      v.tx -= 40;
-      clampPan();
-    } else if (e.key === "ArrowUp") {
-      v.ty += 40;
-      clampPan();
-    } else if (e.key === "ArrowDown") {
-      v.ty -= 40;
-      clampPan();
-    } else return;
-    e.preventDefault();
-  }
 
-  // Desktop wheel / trackpad-pinch zoom, focal at the cursor. Bound natively so
-  // it can preventDefault (React's onWheel can be passive).
-  // biome-ignore lint/correctness/useExhaustiveDependencies: handler only reads refs (stable); rebinding per render is unnecessary.
+  // Desktop wheel / trackpad-pinch zoom, focal at the cursor.
   useEffect(() => {
     const stage = stageRef.current;
     if (!stage) return;
     const handler = (e: WheelEvent) => {
-      if ((e.target as HTMLElement).closest(".graph-zoom, .graph-overlay")) return;
+      if ((e.target as HTMLElement).closest(".graph-depth")) return;
       e.preventDefault();
       const r = stage.getBoundingClientRect();
-      zoomAt(e.clientX - r.left, e.clientY - r.top, Math.exp(-e.deltaY * 0.0015));
+      const next = focalZoom(
+        view.current,
+        e.clientX - r.left,
+        e.clientY - r.top,
+        Math.exp(-e.deltaY * 0.0015),
+      );
+      view.current = next;
+      applyView();
     };
     stage.addEventListener("wheel", handler, { passive: false });
     return () => stage.removeEventListener("wheel", handler);
-  }, []);
+  }, [applyView]);
+
+  // ---- draggable panel handle ----
+  const drag = useRef<{ y: number; h: number } | null>(null);
+  function onHandleDown(e: PointerEvent<HTMLDivElement>) {
+    drag.current = { y: e.clientY, h: panelH };
+    e.currentTarget.setPointerCapture?.(e.pointerId);
+  }
+  function onHandleMove(e: PointerEvent<HTMLDivElement>) {
+    const d = drag.current;
+    if (!d) return;
+    const max = (stageRef.current?.parentElement?.clientHeight ?? 640) - 120;
+    setPanelH(Math.max(140, Math.min(max, d.h + (d.y - e.clientY))));
+  }
+  function onHandleUp() {
+    drag.current = null;
+  }
 
   if (phase === "loading") return <main className="screen-body graph-state">loading graph…</main>;
   if (phase === "error")
@@ -830,39 +574,60 @@ export function GraphScreen({
         couldn't load the graph — check the connection.
       </main>
     );
-  if (phase === "empty" || !graph)
+  if (phase === "empty" || !graph || !focal)
     return (
       <main className="screen-body graph-state">
         no entities yet — they appear as notes are analyzed.
       </main>
     );
 
+  const focalNode = nodeById.get(focal);
+  const reduced = REDUCED();
+
   return (
     <main className="screen-body graph-screen">
-      <div className="filter-bar" data-active={sel.size > 0} aria-label="Type filter">
-        <button
-          type="button"
-          className={`fchip fchip-all${sel.size === 0 ? " fchip-on" : ""}`}
-          aria-pressed={sel.size === 0}
-          onClick={() => setSel(new Set())}
-        >
-          All
-        </button>
-        {kindsPresent.map(({ kind, count }) => (
+      <div className="graph-search-bar">
+        <div className="graph-search">
+          <SearchIcon size={18} />
+          <input
+            type="text"
+            className="graph-search-input"
+            placeholder="Jump to an entity…"
+            value={query}
+            onChange={(e) => {
+              setQuery(e.target.value);
+              setSearchOpen(true);
+            }}
+            onFocus={() => setSearchOpen(true)}
+            aria-label="Search entities"
+          />
+        </div>
+        {searchOpen && searchResults.length > 0 && (
+          <ul className="graph-results" aria-label="Search results">
+            {searchResults.map((n) => (
+              <li key={n.id}>
+                <button type="button" className="graph-result" onClick={() => pickSearch(n.id)}>
+                  <EntityTypeIcon kind={n.kind} size={28} />
+                  <span className="graph-result-name">{n.canonical_name}</span>
+                  <span className="graph-result-kind">
+                    {KIND_LABEL[resolveEntityKind(n.kind)]} · {degree.get(n.id) ?? 0}
+                  </span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+
+      <div className="graph-crumbs" aria-label="Breadcrumb">
+        {trail.map((id, i) => (
           <button
-            key={kind}
             type="button"
-            className={`fchip fchip-type${sel.has(kind) ? " fchip-on" : ""}`}
-            aria-pressed={sel.has(kind)}
-            onClick={() => toggleKind(kind)}
+            key={id}
+            className={`graph-crumb${i === trail.length - 1 ? " is-current" : ""}`}
+            onClick={() => jumpCrumb(i)}
           >
-            {/* Empty box once a selection is active = "taps add a type" cue. */}
-            {sel.size > 0 && <span className="fchip-ck" aria-hidden="true" />}
-            <span className="fchip-swatch">
-              <EntityTypeIcon kind={kind} size={16} />
-            </span>
-            {KIND_LABEL[kind]}
-            <span className="fchip-count">{count}</span>
+            {nodeById.get(id)?.canonical_name ?? "—"}
           </button>
         ))}
       </div>
@@ -870,20 +635,15 @@ export function GraphScreen({
       <div
         className="graph-stage"
         ref={stageRef}
-        data-mode={mode}
         role="application"
-        aria-label="Entity graph (zoom: +/- or scroll, fit: 0, pan: arrow keys)"
-        // biome-ignore lint/a11y/noNoninteractiveTabindex: role=application canvas must be focusable for the keyboard zoom/pan handlers below.
-        tabIndex={0}
+        aria-label="Entity graph — tap a node to re-centre, pinch to zoom"
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
         onPointerCancel={onPointerUp}
-        onDoubleClick={onDoubleClick}
-        onKeyDown={onKeyDown}
       >
-        <div className="graph-viewport" ref={viewportRef}>
-          {/* biome-ignore lint/a11y/noSvgWithoutTitle: edges are decorative; the nodes carry the labels. */}
+        <div className="graph-viewport" ref={viewportRef} data-reduced={reduced}>
+          {/* biome-ignore lint/a11y/noSvgWithoutTitle: edges are decorative; nodes carry the labels. */}
           <svg className="graph-edges">
             <defs>
               <marker
@@ -898,260 +658,166 @@ export function GraphScreen({
                 <path d="M0 0 L8 4 L0 8 Z" />
               </marker>
             </defs>
-            {graph.edges.map((e) => {
-              const key = edgeKey(e.source, e.target, e.predicate);
-              const r = edgeRender.get(key);
-              if (r?.skip) return null;
-              return (
-                <g key={key}>
-                  <path
-                    markerStart={r?.arrowStart ? "url(#graph-arrow)" : undefined}
-                    markerEnd={r?.arrowEnd ? "url(#graph-arrow)" : undefined}
-                    ref={(el) => {
-                      if (el) edgeEls.current.set(key, el);
-                      else edgeEls.current.delete(key);
-                    }}
-                  />
-                  <text
-                    className="graph-edge-label"
-                    ref={(el) => {
-                      if (el) edgeTextEls.current.set(key, el);
-                      else edgeTextEls.current.delete(key);
-                    }}
-                  >
-                    {r?.label ?? edgeLabelText(e.predicate)}
+            {edges.map((e) => (
+              <g key={e.key}>
+                <line
+                  x1={e.x1}
+                  y1={e.y1}
+                  x2={e.x2}
+                  y2={e.y2}
+                  className={e.lit ? "graph-edge lit" : "graph-edge"}
+                  markerStart={e.arrowStart ? "url(#graph-arrow)" : undefined}
+                  markerEnd={e.arrowEnd ? "url(#graph-arrow)" : undefined}
+                />
+                {e.lit && (
+                  <text className="graph-edge-label" x={e.mx} y={e.my}>
+                    {e.label}
                   </text>
-                </g>
-              );
-            })}
+                )}
+              </g>
+            ))}
           </svg>
-          {graph.nodes.map((n) => {
-            const focused = mode === "focus" && n.id === focal;
-            const exemptShown = focused && isHidden(n.id);
+          {[...layout].map(([id, p]) => {
+            const node = nodeById.get(id);
+            if (!node) return null;
             return (
               <button
                 type="button"
-                key={n.id}
+                key={id}
                 ref={(el) => {
-                  if (el) nodeEls.current.set(n.id, el);
-                  else nodeEls.current.delete(n.id);
+                  if (el) nodeEls.current.set(id, el);
+                  else nodeEls.current.delete(id);
                 }}
-                className={`graph-node${focused ? " is-focal" : ""}`}
-                data-hop={hops.get(n.id) ?? 2}
-                aria-label={n.canonical_name}
-                onClick={() => onNodeTap(n.id)}
+                className={`graph-node${p.hop === 0 ? " is-focal" : ""}`}
+                data-hop={p.hop}
+                style={{ left: `${p.x}px`, top: `${p.y}px` }}
+                aria-label={node.canonical_name}
+                onClick={() => recenter(id)}
               >
-                <EntityTypeIcon
-                  kind={n.kind}
-                  size={focused ? 64 : (hops.get(n.id) ?? 2) <= 1 ? 46 : 34}
-                />
-                {exemptShown && <span className="graph-exempt">shown · focus</span>}
-                <span className="graph-node-label">{n.canonical_name}</span>
+                <EntityTypeIcon kind={node.kind} size={DISC[p.hop as 0 | 1 | 2] ?? 32} />
+                <span className="graph-node-label">{node.canonical_name}</span>
               </button>
             );
           })}
         </div>
 
-        <span className="graph-lod" aria-hidden="true">
-          {mode === "focus" ? "focus" : "overview"}
-        </span>
+        <fieldset className="graph-depth" aria-label="Depth">
+          <button
+            type="button"
+            className={depth === 1 ? "is-on" : ""}
+            aria-pressed={depth === 1}
+            onClick={() => setDepth(1)}
+          >
+            1 hop
+          </button>
+          <button
+            type="button"
+            className={depth === 2 ? "is-on" : ""}
+            aria-pressed={depth === 2}
+            onClick={() => setDepth(2)}
+          >
+            2 hops
+          </button>
+        </fieldset>
 
-        {mode === "focus" && (
-          <div className="graph-overlay">
-            <button type="button" className="graph-return" onClick={exitFocus}>
-              <ChevronLeftIcon size={18} />
-              Overview
-            </button>
-            <div className="graph-crumbs">
-              {trail.map((id, i) => {
-                const node = graph.nodes.find((n) => n.id === id);
-                return (
-                  <button
-                    type="button"
-                    key={id}
-                    className={`graph-crumb${i === trail.length - 1 ? " is-current" : ""}`}
-                    onClick={() => jumpCrumb(i)}
-                  >
-                    {node?.canonical_name ?? "—"}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-        )}
-
-        {mode === "overview" && (
-          <div className="graph-zoom">
-            <button type="button" onClick={() => zoom(1.25)} aria-label="Zoom in">
-              <PlusIcon size={20} />
-            </button>
-            <button type="button" onClick={fit} aria-label="Fit to view">
-              <FitIcon size={18} />
-            </button>
-            <button type="button" onClick={() => zoom(0.8)} aria-label="Zoom out">
-              <MinusIcon size={20} />
-            </button>
-          </div>
-        )}
-
-        {hiddenCount > 0 && (
-          <div className="graph-hidden">
-            <span>
-              showing {selSummary(sel)} · {hiddenCount} hidden
-            </span>
-            <button type="button" onClick={() => setSel(new Set())}>
-              All
-            </button>
-          </div>
-        )}
-
-        {mode === "focus" && focusEmpty && (
-          <p className="graph-empty-note">no neighbours match these filters.</p>
-        )}
-
-        {mode === "overview" && graph.edges.length === 0 && (
+        {rels.length === 0 && (
           <p className="graph-empty-note">
             no connections yet — links appear as more notes are analyzed.
           </p>
         )}
       </div>
 
-      <p className="graph-hint">
-        {mode === "overview"
-          ? graph.edges.length === 0
-            ? "drag to pan · scroll or pinch to zoom"
-            : "tap a node to focus · scroll or pinch to zoom · double-tap to zoom in"
-          : "tap a neighbour to re-center · use Overview to return"}
-      </p>
-
-      {sheetId && (
-        <EntityPeek
-          entityId={sheetId}
-          onClose={() => setSheetId(null)}
-          onFocus={(id) => {
-            setSheetId(null);
-            if (mode === "overview") enterFocus(id);
-            else recenter(id);
-          }}
-          onOpen={(id) => {
-            setSheetId(null);
-            onOpenEntity(id);
-          }}
-          onNeighbor={(id) => {
-            setSheetId(null);
-            // A neighbour already on the map re-centers in place; anything
-            // further out opens its full page.
-            if (nodeKind.has(id)) {
-              if (mode === "overview") enterFocus(id);
-              else recenter(id);
-            } else {
-              onOpenEntity(id);
-            }
-          }}
-        />
-      )}
+      <section className="graph-panel" style={{ height: `${panelH}px` }} aria-label="Entity detail">
+        <div
+          className="graph-panel-grab"
+          onPointerDown={onHandleDown}
+          onPointerMove={onHandleMove}
+          onPointerUp={onHandleUp}
+          onPointerCancel={onHandleUp}
+        >
+          <span className="graph-panel-handle" aria-hidden="true" />
+        </div>
+        <header className="graph-panel-head">
+          {focalNode && <EntityTypeIcon kind={focalNode.kind} size={46} />}
+          <div className="graph-panel-meta">
+            <h2 className="graph-panel-title">{focalNode?.canonical_name ?? "—"}</h2>
+            <p className="graph-panel-sub">
+              {focalNode ? KIND_LABEL[resolveEntityKind(focalNode.kind)] : ""} · {rels.length} links
+              {focalNode && focalNode.domain !== "general" && (
+                <span className="graph-panel-domain"> · ● {focalNode.domain} · firewalled</span>
+              )}
+            </p>
+          </div>
+        </header>
+        <div className="graph-panel-body">
+          {rels.length > 0 ? (
+            <>
+              <p className="graph-rels-head">{rels.length} relationships</p>
+              <ul className="graph-rels">
+                {rels.map((r) => (
+                  <li key={`${r.id}-${r.predicate}-${r.dir}`}>
+                    <button type="button" className="graph-rel" onClick={() => recenter(r.id)}>
+                      <EntityTypeIcon kind={r.kind} size={34} />
+                      <span className="graph-rel-mid">
+                        <span className="graph-rel-obj">{r.name}</span>
+                        <span className="graph-rel-pred">
+                          {r.dir === "out" ? r.predicate : `${r.predicate} of`}
+                        </span>
+                      </span>
+                      <ChevronRightIcon size={18} />
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </>
+          ) : (
+            <p className="graph-rels-empty">no relationships yet.</p>
+          )}
+        </div>
+        <footer className="graph-panel-foot">
+          <button
+            type="button"
+            className="graph-panel-open"
+            onClick={() => focal && onOpenEntity(focal)}
+          >
+            Open entity →
+          </button>
+        </footer>
+      </section>
     </main>
   );
 }
 
-// A peek at one entity's attributes without leaving the graph — fetched on
-// open, with the two onward actions (focus here, open the full page).
-function EntityPeek({
-  entityId,
-  onClose,
-  onFocus,
-  onOpen,
-  onNeighbor,
-}: {
-  entityId: string;
-  onClose: () => void;
-  onFocus: (id: string) => void;
-  onOpen: (id: string) => void;
-  onNeighbor: (id: string) => void;
-}) {
-  const [entity, setEntity] = useState<EntityOut | null>(null);
-  const [failed, setFailed] = useState(false);
-  useEffect(() => {
-    let stale = false;
-    api
-      .getEntity(entityId)
-      .then((e) => !stale && setEntity(e))
-      .catch(() => !stale && setFailed(true));
-    return () => {
-      stale = true;
-    };
-  }, [entityId]);
+// Friendlier chip labels than the raw schema keys.
+const KIND_LABEL: Record<EntityTypeKey, string> = {
+  Person: "Person",
+  Organization: "Organization",
+  Place: "Place",
+  Event: "Event",
+  Product: "Product",
+  Animal: "Animal",
+  CreativeWork: "Media",
+  MedicalCondition: "Condition",
+  MedicalProcedure: "Procedure",
+  Drug: "Drug",
+  Thing: "Thing",
+};
 
-  const title = entity?.canonical_name ?? "Entity";
-  const attrs = (entity?.predicates ?? [])
-    .map((p) => p.current)
-    .filter((f): f is NonNullable<typeof f> => f !== null && f.object_entity_id === null)
-    .slice(0, 8);
-
-  // Relationships = outbound object-edges + inbound edges, the in-sheet path
-  // back into the graph.
-  const rels: { id: string; name: string; predicate: string }[] = [];
-  for (const p of entity?.predicates ?? []) {
-    const c = p.current;
-    if (c?.object_entity_id) {
-      rels.push({
-        id: c.object_entity_id,
-        name: c.object_entity_name ?? "—",
-        predicate: c.predicate,
-      });
+/** The most-connected node — the sensible focal when a graph has no "Me" root. */
+function mostConnected(g: EgoGraph): string | null {
+  const deg = new Map<string, number>();
+  for (const e of g.edges) {
+    deg.set(e.source, (deg.get(e.source) ?? 0) + 1);
+    deg.set(e.target, (deg.get(e.target) ?? 0) + 1);
+  }
+  let best: string | null = null;
+  let bestN = -1;
+  for (const n of g.nodes) {
+    const d = deg.get(n.id) ?? 0;
+    if (d > bestN) {
+      bestN = d;
+      best = n.id;
     }
   }
-  for (const ib of entity?.inbound ?? []) {
-    rels.push({ id: ib.entity_id, name: ib.name, predicate: ib.predicate });
-  }
-
-  return (
-    <Sheet title={title} onClose={onClose}>
-      <div className="peek-head">
-        {entity && <EntityTypeIcon kind={entity.kind} size={40} />}
-        <div className="peek-meta">
-          <span className="peek-kind">{entity?.kind ?? "…"}</span>
-          {entity && entity.domain !== "general" && (
-            <span className="peek-domain" data-domain={entity.domain}>
-              ● {entity.domain} · firewalled
-            </span>
-          )}
-        </div>
-      </div>
-      <div className="peek-actions">
-        <button type="button" className="peek-btn primary" onClick={() => onFocus(entityId)}>
-          Focus here
-        </button>
-        <button type="button" className="peek-btn" onClick={() => onOpen(entityId)}>
-          Open entity →
-        </button>
-      </div>
-      {failed && <p className="graph-state">couldn't load details.</p>}
-      {attrs.length > 0 && (
-        <ul className="peek-attrs">
-          {attrs.map((f) => (
-            <li key={f.id} className="peek-attr">
-              <span className="peek-attr-pred">{f.predicate}</span>
-              <span className="peek-attr-val">{factValue(f)}</span>
-            </li>
-          ))}
-        </ul>
-      )}
-      {rels.length > 0 && (
-        <div className="peek-rels">
-          <h3 className="peek-rels-head">relationships ({rels.length})</h3>
-          <ul className="peek-rels-list">
-            {rels.slice(0, 12).map((r, i) => (
-              <li key={`${r.id}-${r.predicate}-${i}`}>
-                <button type="button" className="peek-rel" onClick={() => onNeighbor(r.id)}>
-                  <span className="peek-rel-pred">{r.predicate}</span>
-                  <span className="peek-rel-name">{r.name} →</span>
-                </button>
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
-    </Sheet>
-  );
+  return best;
 }

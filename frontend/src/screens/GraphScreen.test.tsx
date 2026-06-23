@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import { type EgoGraph, type EntityOut, type FactOut, api } from "../api/client";
+import type { EgoGraph } from "../api/client";
 import {
   GraphScreen,
   chooseLabels,
@@ -10,9 +10,11 @@ import {
   planEdges,
 } from "./GraphScreen";
 
+// A small whole-graph fixture with a genuine 2-hop reach from "me":
+// 1-hop = Wife, Acme, Portland; 2-hop = Headquarters (via Acme), Sister (via Wife).
 const GRAPH: EgoGraph = {
   root: "me",
-  depth: 2,
+  depth: 0,
   nodes: [
     { id: "me", kind: "Person", canonical_name: "Me", status: "confirmed", domain: "general" },
     { id: "wife", kind: "Person", canonical_name: "Wife", status: "confirmed", domain: "general" },
@@ -30,183 +32,135 @@ const GRAPH: EgoGraph = {
       status: "confirmed",
       domain: "location",
     },
+    {
+      id: "hq",
+      kind: "Place",
+      canonical_name: "Headquarters",
+      status: "confirmed",
+      domain: "general",
+    },
+    {
+      id: "sis",
+      kind: "Person",
+      canonical_name: "Sister",
+      status: "confirmed",
+      domain: "general",
+    },
   ],
   edges: [
     { source: "me", target: "wife", predicate: "spouse" },
     { source: "me", target: "acme", predicate: "worksFor" },
     { source: "me", target: "pdx", predicate: "residence" },
+    { source: "acme", target: "hq", predicate: "locatedAt" },
+    { source: "wife", target: "sis", predicate: "sibling" },
   ],
-};
-
-function fact(over: Partial<FactOut> = {}): FactOut {
-  return {
-    id: "f1",
-    entity_id: "me",
-    entity_name: "Me",
-    predicate: "occupation",
-    qualifier: null,
-    kind: "attribute",
-    statement: "Software engineer",
-    value_json: null,
-    assertion: "asserted",
-    status: "active",
-    pinned: false,
-    confidence: 0.9,
-    valid_from: null,
-    valid_to: null,
-    reported_at: "2026-06-10T09:00:00Z",
-    temporal_precision: "day",
-    object_entity_id: null,
-    object_entity_name: null,
-    source_snippet: null,
-    ...over,
-  };
-}
-
-const ME_DETAIL: EntityOut = {
-  id: "me",
-  kind: "Person",
-  canonical_name: "Me",
-  status: "confirmed",
-  aliases: [],
-  domain: "general",
-  predicates: [
-    {
-      predicate: "occupation",
-      qualifier: null,
-      // value_json differs from the prose statement so the peek must render the
-      // value ("Engineer"), never the sentence ("Occupation is Engineer.").
-      current: fact({ value_json: { value: "Engineer" }, statement: "Occupation is Engineer." }),
-      history: [fact({ value_json: { value: "Engineer" }, statement: "Occupation is Engineer." })],
-    },
-    {
-      predicate: "owns",
-      qualifier: null,
-      current: fact({
-        id: "f2",
-        predicate: "owns",
-        statement: "owns the F-150",
-        object_entity_id: "truck",
-        object_entity_name: "F-150",
-      }),
-      history: [],
-    },
-  ],
-  inbound: [{ entity_id: "wife", name: "Wife", predicate: "spouse", statement: "married to" }],
-  mentions: [],
 };
 
 function setup() {
+  const loadFull = vi.fn(async () => GRAPH);
   const load = vi.fn(async () => GRAPH);
   const onOpenEntity = vi.fn();
-  render(<GraphScreen onOpenEntity={onOpenEntity} rootId="me" load={load} />);
-  return { load, onOpenEntity };
+  render(<GraphScreen onOpenEntity={onOpenEntity} load={load} loadFull={loadFull} />);
+  return { loadFull, load, onOpenEntity };
 }
 
 async function loaded() {
   await waitFor(() => expect(screen.queryByText("loading graph…")).not.toBeInTheDocument());
 }
 
+const graphNode = (name: string) =>
+  screen
+    .getAllByRole("button", { name })
+    .find((b) => b.classList.contains("graph-node")) as HTMLElement;
+const panel = () => screen.getByRole("region", { name: "Entity detail" });
+
 describe("GraphScreen", () => {
-  it("defaults to the whole graph (loadFull), not a root ego view", async () => {
-    // A disconnected island must still render in the everything-graph default.
-    const full: EgoGraph = {
-      ...GRAPH,
-      depth: 0,
-      nodes: [
-        ...GRAPH.nodes,
-        {
-          id: "island",
-          kind: "Animal",
-          canonical_name: "Island Cat",
-          status: "confirmed",
-          domain: "general",
-        },
-      ],
-    };
-    const load = vi.fn(async () => GRAPH);
-    const loadFull = vi.fn(async () => full);
-    render(<GraphScreen onOpenEntity={vi.fn()} load={load} loadFull={loadFull} />);
+  it("opens on the whole-graph root (loadFull) and shows its 2-hop neighbourhood", async () => {
+    const { loadFull, load } = setup();
     await loaded();
     expect(loadFull).toHaveBeenCalled();
     expect(load).not.toHaveBeenCalled();
-    // Edgeless node included — the whole graph, not just what connects to "Me".
-    expect(screen.getByText("Island Cat")).toBeInTheDocument();
+    // focal "Me" plus 1-hop and 2-hop nodes are laid out.
+    for (const name of ["Me", "Wife", "Acme", "Portland", "Headquarters", "Sister"]) {
+      expect(graphNode(name)).toBeTruthy();
+    }
+    // panel reflects the focal entity and lists its direct relationships.
+    expect(within(panel()).getByRole("heading", { name: "Me" })).toBeInTheDocument();
+    expect(within(panel()).getByText("3 relationships")).toBeInTheDocument();
   });
 
-  it("loads the root ego graph and renders nodes + type chips", async () => {
-    const { load } = setup();
+  it("centres on an explicit root via load(rootId, 2)", async () => {
+    const load = vi.fn(async () => GRAPH);
+    render(<GraphScreen onOpenEntity={vi.fn()} rootId="me" load={load} />);
     await loaded();
     expect(load).toHaveBeenCalledWith("me", 2);
-    for (const name of ["Me", "Wife", "Acme", "Portland"]) {
-      expect(screen.getByText(name)).toBeInTheDocument();
-    }
-    const bar = screen.getByLabelText("Type filter");
-    // Chips derive from the data: People (2), Orgs (1), Places (1), plus All.
-    expect(within(bar).getByRole("button", { name: /People/ })).toBeInTheDocument();
-    expect(within(bar).getByRole("button", { name: /Orgs/ })).toBeInTheDocument();
-    expect(within(bar).getByRole("button", { name: "All" })).toHaveAttribute(
-      "aria-pressed",
-      "true",
-    );
   });
 
-  it("tap a type chip shows only that type; All resets (additive model, empty = All)", async () => {
+  it("the depth toggle drops the 2-hop ring", async () => {
     setup();
     await loaded();
-    const bar = screen.getByLabelText("Type filter");
-    fireEvent.click(within(bar).getByRole("button", { name: /Orgs/ }));
-    expect(within(bar).getByRole("button", { name: /Orgs/ })).toHaveAttribute(
-      "aria-pressed",
-      "true",
-    );
-    // 3 of 4 nodes (People×2, Place) are hidden; the focal-less overview pill says so.
-    expect(screen.getByText(/showing only orgs · 3 hidden/)).toBeInTheDocument();
-    // Adding a second type is additive, not radio.
-    fireEvent.click(within(bar).getByRole("button", { name: /People/ }));
-    expect(screen.getByText(/showing 2 types · 1 hidden/)).toBeInTheDocument();
-    fireEvent.click(within(bar).getByRole("button", { name: "All" }));
-    expect(screen.queryByText(/hidden/)).not.toBeInTheDocument();
-  });
-
-  it("tap enters radial focus; Overview returns (no hidden gesture)", async () => {
-    setup();
-    await loaded();
-    expect(screen.queryByRole("button", { name: "Overview" })).not.toBeInTheDocument();
-    fireEvent.click(screen.getByText("Wife").closest("button") as HTMLElement);
-    const overview = await screen.findByRole("button", { name: "Overview" });
-    // Breadcrumb reflects the focal entity (the crumb, not the node label).
-    expect(screen.getByText("Wife", { selector: ".graph-crumb" })).toBeInTheDocument();
-    fireEvent.click(overview);
+    expect(graphNode("Headquarters")).toBeTruthy(); // 2-hop present at default depth 2
+    fireEvent.click(screen.getByRole("button", { name: "1 hop" }));
     await waitFor(() =>
-      expect(screen.queryByRole("button", { name: "Overview" })).not.toBeInTheDocument(),
+      expect(
+        screen
+          .queryAllByRole("button", { name: "Headquarters" })
+          .find((b) => b.classList.contains("graph-node")),
+      ).toBeUndefined(),
+    );
+    // 1-hop neighbours stay.
+    expect(graphNode("Wife")).toBeTruthy();
+  });
+
+  it("tapping a neighbour node re-centres and pushes a breadcrumb", async () => {
+    setup();
+    await loaded();
+    fireEvent.click(graphNode("Acme"));
+    // panel now describes Acme and its links (Me + Headquarters).
+    await waitFor(() =>
+      expect(within(panel()).getByRole("heading", { name: "Acme" })).toBeInTheDocument(),
+    );
+    const crumbs = screen.getByLabelText("Breadcrumb");
+    expect(within(crumbs).getByText("Me")).toBeInTheDocument();
+    expect(within(crumbs).getByText("Acme")).toBeInTheDocument();
+    // a crumb walks back to Me.
+    fireEvent.click(within(crumbs).getByText("Me"));
+    await waitFor(() =>
+      expect(within(panel()).getByRole("heading", { name: "Me" })).toBeInTheDocument(),
     );
   });
 
-  it("tapping the focal node opens the peek sheet; Open entity navigates", async () => {
-    const getEntity = vi.spyOn(api, "getEntity").mockResolvedValue(ME_DETAIL);
+  it("a relationship row in the panel re-centres on that entity", async () => {
+    setup();
+    await loaded();
+    fireEvent.click(within(panel()).getByRole("button", { name: /Portland/ }));
+    await waitFor(() =>
+      expect(within(panel()).getByRole("heading", { name: "Portland" })).toBeInTheDocument(),
+    );
+  });
+
+  it("Open entity navigates to the focal's full page", async () => {
     const { onOpenEntity } = setup();
     await loaded();
-    const meNode = () =>
-      screen
-        .getAllByText("Me")
-        .map((l) => l.closest("button"))
-        .find((b) => b?.classList.contains("graph-node")) as HTMLElement;
-    fireEvent.click(meNode()); // overview -> focus on Me
-    await screen.findByRole("button", { name: "Overview" });
-    fireEvent.click(meNode()); // focal tap -> peek sheet
-    expect(await screen.findByRole("button", { name: "Open entity →" })).toBeInTheDocument();
-    await waitFor(() => expect(screen.getByText("Engineer")).toBeInTheDocument());
-    // The peek attr renders the value, not the prose statement.
-    expect(screen.queryByText("Occupation is Engineer.")).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Open entity →" }));
     expect(onOpenEntity).toHaveBeenCalledWith("me");
-    getEntity.mockRestore();
   });
 
-  it("shows the calm empty state when the root has no graph", async () => {
-    const load = vi.fn(async () => ({ root: "me", depth: 2, nodes: [], edges: [] }));
-    render(<GraphScreen onOpenEntity={vi.fn()} rootId="me" load={load} />);
+  it("search jumps the focal to the chosen entity", async () => {
+    setup();
+    await loaded();
+    const input = screen.getByLabelText("Search entities");
+    fireEvent.change(input, { target: { value: "Sister" } });
+    const results = screen.getByRole("list", { name: "Search results" });
+    fireEvent.click(within(results).getByText("Sister"));
+    await waitFor(() =>
+      expect(within(panel()).getByRole("heading", { name: "Sister" })).toBeInTheDocument(),
+    );
+  });
+
+  it("shows the calm empty state when there are no entities", async () => {
+    const loadFull = vi.fn(async () => ({ root: "", depth: 0, nodes: [], edges: [] }));
+    render(<GraphScreen onOpenEntity={vi.fn()} loadFull={loadFull} />);
     await waitFor(() =>
       expect(
         screen.getByText("no entities yet — they appear as notes are analyzed."),
@@ -215,10 +169,10 @@ describe("GraphScreen", () => {
   });
 
   it("shows the quiet error state when the load fails", async () => {
-    const load = vi.fn(async () => {
+    const loadFull = vi.fn(async () => {
       throw new Error("down");
     });
-    render(<GraphScreen onOpenEntity={vi.fn()} rootId="me" load={load} />);
+    render(<GraphScreen onOpenEntity={vi.fn()} loadFull={loadFull} />);
     await waitFor(() =>
       expect(
         screen.getByText("couldn't load the graph — check the connection."),
@@ -226,33 +180,20 @@ describe("GraphScreen", () => {
     );
   });
 
-  it("explains a single-node graph instead of leaving a lone disc", async () => {
-    const [me] = GRAPH.nodes;
-    const lone: EgoGraph = { root: "me", depth: 2, nodes: me ? [me] : [], edges: [] };
-    const load = vi.fn(async () => lone);
-    render(<GraphScreen onOpenEntity={vi.fn()} rootId="me" load={load} />);
-    await waitFor(() => expect(screen.getByText("Me")).toBeInTheDocument());
+  it("explains a connectionless focal instead of leaving a lone disc", async () => {
+    const lone: EgoGraph = {
+      root: "me",
+      depth: 0,
+      nodes: [
+        { id: "me", kind: "Person", canonical_name: "Me", status: "confirmed", domain: "general" },
+      ],
+      edges: [],
+    };
+    render(<GraphScreen onOpenEntity={vi.fn()} loadFull={async () => lone} />);
+    await waitFor(() => expect(graphNode("Me")).toBeTruthy());
     expect(
       screen.getByText("no connections yet — links appear as more notes are analyzed."),
     ).toBeInTheDocument();
-  });
-
-  it("peek sheet lists relationships; tapping one off the map opens it", async () => {
-    vi.spyOn(api, "getEntity").mockResolvedValue(ME_DETAIL);
-    const { onOpenEntity } = setup();
-    await loaded();
-    const meNode = () =>
-      screen
-        .getAllByText("Me")
-        .map((l) => l.closest("button"))
-        .find((b) => b?.classList.contains("graph-node")) as HTMLElement;
-    fireEvent.click(meNode());
-    await screen.findByRole("button", { name: "Overview" });
-    fireEvent.click(meNode());
-    expect(await screen.findByText("relationships (2)")).toBeInTheDocument();
-    // The F-150 isn't a node on the loaded map → it opens the full entity page.
-    fireEvent.click(screen.getByText("F-150 →").closest("button") as HTMLElement);
-    expect(onOpenEntity).toHaveBeenCalledWith("truck");
   });
 });
 
@@ -267,7 +208,6 @@ describe("focalZoom", () => {
     const v = { scale: 1, tx: 50, ty: 20 };
     const z = focalZoom(v, 100, 60, 2);
     expect(z.scale).toBe(2);
-    // world point under the anchor maps back to the same screen pixel
     const worldX = (100 - v.tx) / v.scale;
     const worldY = (60 - v.ty) / v.scale;
     expect(worldX * z.scale + z.tx).toBeCloseTo(100);
@@ -339,8 +279,8 @@ describe("planEdges", () => {
     const fwd = plan.get("a|b|owns");
     const bwd = plan.get("b|a|ownedBy");
     expect(fwd).toMatchObject({ arrowStart: true, arrowEnd: true, skip: false, idx: 0 });
-    expect(fwd?.label).toBe("owns · owned by"); // both predicates, arrow both ends
-    expect(bwd?.skip).toBe(true); // drawn once, by its partner
+    expect(fwd?.label).toBe("owns · owned by");
+    expect(bwd?.skip).toBe(true);
   });
 
   it("shows a symmetric reciprocal as a single predicate", () => {
