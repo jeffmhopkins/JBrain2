@@ -69,6 +69,13 @@ TASK_DEFAULTS: dict[str, str] = {
     # tokens for the thinking trace, not just the title). This default is just the
     # operator-override hook.
     "session.title": "xai:grok-4.3",
+    # The Phase-6 wiki builder (docs/PHASE6_WIKI_PLAN.md): `wiki.rewrite` drafts a
+    # type-guided article from an entity's cited facts; `wiki.ground` is the strict
+    # grounding verifier (the entity graph wins on conflict). Without these the
+    # builder's router.complete() raises `unknown LLM task` and every build aborts.
+    # Individually routable so an on-box operator can point them at a local model.
+    "wiki.rewrite": "xai:grok-4.3",
+    "wiki.ground": "xai:grok-4.3",
 }
 
 # Capability tiers (a prompt's `strength:`) → "provider:model". A prompt names a

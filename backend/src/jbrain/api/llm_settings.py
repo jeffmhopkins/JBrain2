@@ -49,6 +49,8 @@ TASK_LABELS: dict[str, str] = {
     "vision.caption": "Vision caption",
     "video.summarize": "Video summary",
     "session.title": "Session title",
+    "wiki.rewrite": "Wiki rewrite",
+    "wiki.ground": "Wiki grounding",
 }
 
 
