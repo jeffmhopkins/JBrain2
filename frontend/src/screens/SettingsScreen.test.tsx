@@ -187,6 +187,8 @@ describe("SettingsScreen debug access", () => {
   function stubDebug(opts: { tokens?: unknown[]; mintStatus?: number } = {}) {
     const tokens = opts.tokens ?? [];
     const deletes: string[] = [];
+    const suspends: string[] = [];
+    const resumes: string[] = [];
     const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
       const path = String(input);
       const method = (init?.method ?? "GET").toUpperCase();
@@ -197,6 +199,14 @@ describe("SettingsScreen debug access", () => {
         if (opts.mintStatus) return json({ detail: "off" }, opts.mintStatus);
         return json({ id: "t1", label: "Claude", expires_at: null, payload: "PASTE-ME" }, 201);
       }
+      if (path.endsWith("/suspend") && method === "POST") {
+        suspends.push(path.split("/").at(-2) ?? "");
+        return new Response(null, { status: 204 });
+      }
+      if (path.endsWith("/resume") && method === "POST") {
+        resumes.push(path.split("/").at(-2) ?? "");
+        return new Response(null, { status: 204 });
+      }
       if (path.startsWith("/api/settings/debug-tokens/") && method === "DELETE") {
         deletes.push(path.split("/").pop() ?? "");
         return new Response(null, { status: 204 });
@@ -204,8 +214,19 @@ describe("SettingsScreen debug access", () => {
       throw new Error(`Unexpected fetch: ${path}`);
     });
     vi.stubGlobal("fetch", fetchMock);
-    return { deletes };
+    return { deletes, suspends, resumes };
   }
+
+  const tokenRow = (over: Record<string, unknown> = {}) => ({
+    id: "abc",
+    label: "Phone debug",
+    created_at: "2026-06-22T00:00:00Z",
+    expires_at: "2099-01-01T00:00:00Z",
+    last_used_at: null,
+    revoked_at: null,
+    suspended_at: null,
+    ...over,
+  });
 
   it("mints a token and reveals the one-time payload", async () => {
     stubDebug();
@@ -223,24 +244,31 @@ describe("SettingsScreen debug access", () => {
   });
 
   it("lists an active token and revokes it on a confirmed tap", async () => {
-    const { deletes } = stubDebug({
-      tokens: [
-        {
-          id: "abc",
-          label: "Phone debug",
-          created_at: "2026-06-22T00:00:00Z",
-          expires_at: "2099-01-01T00:00:00Z",
-          last_used_at: null,
-          revoked_at: null,
-        },
-      ],
-    });
+    const { deletes } = stubDebug({ tokens: [tokenRow()] });
     setup();
     expect(await screen.findByText("Phone debug")).toBeInTheDocument();
     const revoke = screen.getByRole("button", { name: "Revoke" });
     fireEvent.click(revoke); // first tap arms the inline confirm
     fireEvent.click(screen.getByRole("button", { name: "Tap to confirm" }));
     await waitFor(() => expect(deletes).toEqual(["abc"]));
+  });
+
+  it("suspends an active token", async () => {
+    const { suspends } = stubDebug({ tokens: [tokenRow()] });
+    setup();
+    fireEvent.click(await screen.findByRole("button", { name: "Suspend" }));
+    await waitFor(() => expect(suspends).toEqual(["abc"]));
+  });
+
+  it("resumes a suspended token", async () => {
+    const { resumes } = stubDebug({
+      tokens: [tokenRow({ suspended_at: "2026-06-22T01:00:00Z" })],
+    });
+    setup();
+    // A suspended token shows its status and offers Resume instead of Suspend.
+    expect(await screen.findByText("suspended")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Resume" }));
+    await waitFor(() => expect(resumes).toEqual(["abc"]));
   });
 });
 

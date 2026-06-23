@@ -38,6 +38,9 @@ class CapabilityToken:
     expires_at: datetime | None
     last_used_at: datetime | None
     revoked_at: datetime | None
+    # Set while the token is paused (reversible); None when active. A suspended
+    # token fails auth but the owner can resume it.
+    suspended_at: datetime | None = None
 
 
 class AuthRepo(Protocol):
@@ -74,6 +77,10 @@ class AuthRepo(Protocol):
     async def list_capabilities(self) -> list[CapabilityToken]: ...
 
     async def revoke_capability(self, capability_id: str) -> bool: ...
+
+    async def suspend_capability(self, capability_id: str) -> bool: ...
+
+    async def resume_capability(self, capability_id: str) -> bool: ...
 
 
 async def login(repo: AuthRepo, owner_key: str, device_label: str) -> str:

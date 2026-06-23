@@ -74,6 +74,30 @@ async def test_expiry_and_revocation_fail_closed(maker: async_sessionmaker) -> N
     assert await repo.revoke_capability(live.id) is False
 
 
+async def test_suspend_and_resume_fail_closed_then_restore(maker: async_sessionmaker) -> None:
+    repo = SqlAuthRepo(maker)
+    key, record = await auth_service.mint_capability(repo, "pausable", ttl_hours=24)
+    assert await auth_service.authenticate_capability(repo, key) is not None
+
+    # Suspend freezes auth against real Postgres (the suspended_at filter), and the
+    # owner list surfaces the stamp; a second suspend reports no row changed.
+    assert await repo.suspend_capability(record.id) is True
+    assert await auth_service.authenticate_capability(repo, key) is None
+    listed = {t.id: t for t in await repo.list_capabilities()}
+    assert listed[record.id].suspended_at is not None
+    assert await repo.suspend_capability(record.id) is False
+
+    # Resume clears the stamp; the same key authenticates again.
+    assert await repo.resume_capability(record.id) is True
+    assert await auth_service.authenticate_capability(repo, key) is not None
+    assert await repo.resume_capability(record.id) is False
+
+    # A revoked token can be neither suspended nor resumed (stays dead).
+    assert await repo.revoke_capability(record.id) is True
+    assert await repo.suspend_capability(record.id) is False
+    assert await repo.resume_capability(record.id) is False
+
+
 async def test_read_only_transaction_allows_reads_blocks_writes(maker: async_sessionmaker) -> None:
     # A read works under the read-only owner context the debug SQL route uses.
     async with scoped_session(maker, _DEBUG_OWNER) as session:

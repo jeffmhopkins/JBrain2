@@ -157,6 +157,7 @@ class SqlAuthRepo:
                         Principal.key_hash == key_hash,
                         Principal.kind == "capability_token",
                         Principal.revoked_at.is_(None),
+                        Principal.suspended_at.is_(None),
                         or_(Principal.expires_at.is_(None), Principal.expires_at > func.now()),
                     )
                 )
@@ -201,6 +202,47 @@ class SqlAuthRepo:
             )
             return (cast("CursorResult[Any]", result).rowcount or 0) > 0
 
+    async def suspend_capability(self, capability_id: str) -> bool:
+        """Pause a live token (set suspended_at) so it stops authenticating. No-op
+        on an unknown / revoked / already-suspended token (reports no row changed)."""
+        try:
+            cid = uuid.UUID(capability_id)
+        except ValueError:
+            return False
+        async with scoped_session(self._maker, _BOOTSTRAP) as session:
+            result = await session.execute(
+                update(Principal)
+                .where(
+                    Principal.id == cid,
+                    Principal.kind == "capability_token",
+                    Principal.revoked_at.is_(None),
+                    Principal.suspended_at.is_(None),
+                )
+                .values(suspended_at=text("now()"))
+            )
+            return (cast("CursorResult[Any]", result).rowcount or 0) > 0
+
+    async def resume_capability(self, capability_id: str) -> bool:
+        """Clear a suspension so a paused token authenticates again. Owner-only — a
+        suspended token cannot reach this path itself. No-op on an unknown / revoked
+        / not-suspended token (a revoked token stays dead: the revoked_at filter)."""
+        try:
+            cid = uuid.UUID(capability_id)
+        except ValueError:
+            return False
+        async with scoped_session(self._maker, _BOOTSTRAP) as session:
+            result = await session.execute(
+                update(Principal)
+                .where(
+                    Principal.id == cid,
+                    Principal.kind == "capability_token",
+                    Principal.revoked_at.is_(None),
+                    Principal.suspended_at.is_not(None),
+                )
+                .values(suspended_at=None)
+            )
+            return (cast("CursorResult[Any]", result).rowcount or 0) > 0
+
 
 def _capability_token(row: Principal) -> CapabilityToken:
     return CapabilityToken(
@@ -210,6 +252,7 @@ def _capability_token(row: Principal) -> CapabilityToken:
         expires_at=row.expires_at,
         last_used_at=row.last_used_at,
         revoked_at=row.revoked_at,
+        suspended_at=row.suspended_at,
     )
 
 

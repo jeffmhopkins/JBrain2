@@ -136,6 +136,32 @@ def test_whoami_reports_scopes(debug_client: tuple[TestClient, str]) -> None:
     assert "sql.read" in body["scopes"]
 
 
+# --- self-service token lifecycle (console kill switch) ---------------------
+
+
+def test_suspend_self_then_token_is_rejected(debug_client: tuple[TestClient, str]) -> None:
+    client, key = debug_client
+    # Suspending its own token succeeds, then the SAME key no longer authenticates.
+    assert client.post("/api/debug/suspend-self", headers=_auth(key)).status_code == 204
+    assert client.get("/api/debug/whoami", headers=_auth(key)).status_code == 401
+    repo = _state(client).auth_repo
+    assert asyncio.run(repo.list_capabilities())[0].suspended_at is not None
+
+
+def test_revoke_self_kills_the_token(debug_client: tuple[TestClient, str]) -> None:
+    client, key = debug_client
+    assert client.post("/api/debug/revoke-self", headers=_auth(key)).status_code == 204
+    assert client.get("/api/debug/whoami", headers=_auth(key)).status_code == 401
+    repo = _state(client).auth_repo
+    assert asyncio.run(repo.list_capabilities())[0].revoked_at is not None
+
+
+def test_self_lifecycle_requires_a_valid_bearer(debug_client: tuple[TestClient, str]) -> None:
+    client, _ = debug_client
+    assert client.post("/api/debug/suspend-self").status_code == 401
+    assert client.post("/api/debug/revoke-self", headers=_auth("garbage")).status_code == 401
+
+
 # --- prompt completion ------------------------------------------------------
 
 

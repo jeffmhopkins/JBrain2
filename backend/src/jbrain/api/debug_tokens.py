@@ -73,6 +73,7 @@ class TokenOut(BaseModel):
     expires_at: datetime | None
     last_used_at: datetime | None
     revoked_at: datetime | None
+    suspended_at: datetime | None
 
 
 @router.post("", status_code=201)
@@ -100,6 +101,7 @@ async def list_tokens(_owner: OwnerDep, repo: AuthRepoDep) -> list[TokenOut]:
             expires_at=t.expires_at,
             last_used_at=t.last_used_at,
             revoked_at=t.revoked_at,
+            suspended_at=t.suspended_at,
         )
         for t in await repo.list_capabilities()
     ]
@@ -109,3 +111,18 @@ async def list_tokens(_owner: OwnerDep, repo: AuthRepoDep) -> list[TokenOut]:
 async def revoke_token(token_id: Annotated[str, ...], _owner: OwnerDep, repo: AuthRepoDep) -> None:
     if not await repo.revoke_capability(token_id):
         raise HTTPException(status_code=404, detail="unknown or already-revoked token")
+
+
+@router.post("/{token_id}/suspend", status_code=204)
+async def suspend_token(token_id: Annotated[str, ...], _owner: OwnerDep, repo: AuthRepoDep) -> None:
+    """Pause a live token: it stops authenticating until the owner resumes it."""
+    if not await repo.suspend_capability(token_id):
+        raise HTTPException(status_code=404, detail="unknown, revoked, or already-suspended token")
+
+
+@router.post("/{token_id}/resume", status_code=204)
+async def resume_token(token_id: Annotated[str, ...], _owner: OwnerDep, repo: AuthRepoDep) -> None:
+    """Wake a suspended token so it authenticates again (owner-only — a suspended
+    token cannot reach the debug surface to un-suspend itself)."""
+    if not await repo.resume_capability(token_id):
+        raise HTTPException(status_code=404, detail="unknown, revoked, or not-suspended token")

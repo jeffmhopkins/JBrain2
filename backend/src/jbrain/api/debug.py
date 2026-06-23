@@ -27,7 +27,7 @@ from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from jbrain.api import llm_settings
-from jbrain.api.deps import DebugDep, SettingsDep
+from jbrain.api.deps import AuthRepoDep, DebugDep, SettingsDep
 from jbrain.api.llm_settings import LlmSettingsOut, LlmSettingsPut, LoadedModelsOut
 from jbrain.db.session import SessionContext, scoped_session
 from jbrain.llm.errors import LlmError
@@ -84,6 +84,28 @@ async def whoami(principal: DebugDep) -> WhoamiOut:
         kind=principal.kind,
         scopes=["llm.complete", "sql.read", "logs.read", "llm.routing"],
     )
+
+
+# --- Self-service token lifecycle (the console's kill switch) ----------------
+# A capability token can de-escalate ITSELF — revoke (permanent) or suspend
+# (reversible). Both are strictly safe: the only state change a token can make to
+# its own grant is to weaken or end it, never extend it. Resume is deliberately
+# absent here — a suspended token can no longer authenticate, so waking it back up
+# is owner-only (api/debug_tokens.py). 204 even when already revoked/suspended so
+# the console's button is idempotent.
+
+
+@router.post("/revoke-self", status_code=204)
+async def revoke_self(principal: DebugDep, repo: AuthRepoDep) -> None:
+    """Permanently revoke the presenting token — the console's 'Revoke' button."""
+    await repo.revoke_capability(principal.id)
+
+
+@router.post("/suspend-self", status_code=204)
+async def suspend_self(principal: DebugDep, repo: AuthRepoDep) -> None:
+    """Pause the presenting token — the console's 'Suspend' button. The owner
+    resumes it later from the PWA token list (a suspended token cannot itself)."""
+    await repo.suspend_capability(principal.id)
 
 
 # --- Prompt iteration -------------------------------------------------------
