@@ -4,6 +4,7 @@ Pure: the commit / review / reject disposition of an IntegrationIntent,
 composing validate_intent (N3) and the weight model (N11).
 """
 
+from datetime import datetime
 from typing import Any
 
 import pytest
@@ -589,7 +590,7 @@ def _extraction(facts, mentions):
 
 
 def test_recover_backfills_a_dropped_object_and_resolution():
-    from jbrain.analysis.arbiter import recover_dropped_objects
+    from jbrain.analysis.arbiter import recover_dropped_fields
     # integrate dropped the object (None); extraction carried it.
     intent = _intent(
         entity_resolutions=[_res("Me", proposed_entity_id="ent-owner")],
@@ -597,7 +598,7 @@ def test_recover_backfills_a_dropped_object_and_resolution():
                      object_entity_ref=None, inferred=False)],
     )
     ext = _extraction([("Me", "children", "relationship", "Eli")], [("Eli", "Person")])
-    out = recover_dropped_objects(intent, ext)
+    out = recover_dropped_fields(intent, ext)
     assert out.facts[0].object_entity_ref == "Eli"  # backfilled from extraction
     # and a provisional resolution was minted so apply_intent can link the edge
     eli = next(r for r in out.entity_resolutions if r.mention_ref == "Eli")
@@ -605,7 +606,7 @@ def test_recover_backfills_a_dropped_object_and_resolution():
 
 
 def test_recover_leaves_a_present_object_untouched():
-    from jbrain.analysis.arbiter import recover_dropped_objects
+    from jbrain.analysis.arbiter import recover_dropped_fields
     intent = _intent(
         entity_resolutions=[_res("Me", proposed_entity_id="ent-owner"),
                             _res("Maya", mode="new", new_kind="Person", new_name="Maya")],
@@ -613,14 +614,14 @@ def test_recover_leaves_a_present_object_untouched():
                      object_entity_ref="Maya", inferred=False)],
     )
     ext = _extraction([("Me", "spouse", "relationship", "Maya")], [("Maya", "Person")])
-    out = recover_dropped_objects(intent, ext)
+    out = recover_dropped_fields(intent, ext)
     assert out.facts[0].object_entity_ref == "Maya"
     # no duplicate resolution added (Maya already resolved)
     assert sum(r.mention_ref == "Maya" for r in out.entity_resolutions) == 1
 
 
 def test_recover_does_not_override_an_existing_ambiguous_resolution():
-    from jbrain.analysis.arbiter import recover_dropped_objects
+    from jbrain.analysis.arbiter import recover_dropped_fields
     intent = _intent(
         entity_resolutions=[_res("Me", proposed_entity_id="ent-owner"),
                             EntityResolution(mention_ref="Sam", mode="ambiguous")],
@@ -628,7 +629,55 @@ def test_recover_does_not_override_an_existing_ambiguous_resolution():
                      object_entity_ref=None, inferred=False)],
     )
     ext = _extraction([("Me", "friend", "relationship", "Sam")], [("Sam", "Person")])
-    out = recover_dropped_objects(intent, ext)
+    out = recover_dropped_fields(intent, ext)
     assert out.facts[0].object_entity_ref == "Sam"  # ref restored
     sam = [r for r in out.entity_resolutions if r.mention_ref == "Sam"]
     assert len(sam) == 1 and sam[0].mode == "ambiguous"  # left as the integrator judged
+
+
+def test_recover_backfills_a_dropped_value_json():
+    from jbrain.analysis.arbiter import recover_dropped_fields
+    # integrate re-typed the fact and blanked value_json; extraction carried it.
+    intent = _intent(
+        entity_resolutions=[_res("Eli", mode="new", new_kind="Person", new_name="Eli")],
+        facts=[_fact(entity_ref="Eli", predicate="grade", kind="attribute",
+                     object_entity_ref=None, value_json=None, inferred=False)],
+    )
+    ext = _extraction([], [("Eli", "Person")])
+    # add an extraction fact carrying the value
+    from jbrain.analysis.extraction import ExtractedFact, Extraction
+    ef = ExtractedFact(predicate="grade", qualifier="", kind="attribute", statement="s",
+                       value_json={"value": "7th"}, assertion="asserted", entity_ref="Eli",
+                       object_entity_ref=None, temporal=None, domain="general", confidence=0.9)
+    ext = Extraction(title="t", tags=["x"], mentions=ext.mentions, facts=[ef], tokens=[])
+    out = recover_dropped_fields(intent, ext)
+    assert out.facts[0].value_json == {"value": "7th"}  # restored from extraction
+
+
+def test_date_phrase_in_note_attests_an_inferred_birthdate():
+    from jbrain.analysis.arbiter import compute_signals
+    # birthDate derived from a stated age: inferred=True, but the age phrase "12"
+    # is in the note and the predicate is date-shape -> grounded -> attested.
+    t = IntentTemporal(phrase="12", resolved_start=datetime(2013,1,1),
+                       resolved_end=None, precision="year")
+    intent = _intent(
+        entity_resolutions=[_res("Eli", mode="new", new_kind="Person", new_name="Eli")],
+        facts=[_fact(entity_ref="Eli", predicate="birthDate", kind="attribute",
+                     object_entity_ref=None, value_json={"value": "2013"}, temporal=t,
+                     inferred=True)],
+    )
+    assert compute_signals(intent, ["Eli, 12, going into 7th grade."])[0].surface_attested is True
+
+
+def test_date_grounding_is_scoped_to_date_predicates():
+    from jbrain.analysis.arbiter import compute_signals
+    # A NON-date inferred fact with a note-present temporal phrase is NOT promoted
+    # (a stated timestamp doesn't attest a guessed value).
+    t = IntentTemporal(phrase="Tuesday", resolved_start=datetime(2026,6,16),
+                       resolved_end=None, precision="day")
+    intent = _intent(
+        entity_resolutions=[_res("m1")],
+        facts=[_fact(entity_ref="m1", predicate="jobTitle", kind="attribute",
+                     object_entity_ref=None, value_json=None, temporal=t, inferred=True)],
+    )
+    assert compute_signals(intent, ["Saw them Tuesday."])[0].surface_attested is False

@@ -24,7 +24,7 @@ What the plan encodes:
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, replace
 
 from jbrain.analysis.extraction import (
@@ -219,38 +219,42 @@ def _value_attested(value_json: dict | None, haystack: str) -> bool:
     return False
 
 
-def recover_dropped_objects(
+def recover_dropped_fields(
     intent: IntegrationIntent, extraction: Extraction
 ) -> IntegrationIntent:
-    """Backfill the object the integrator drops when it re-types a fact.
+    """Backfill the object AND value the integrator drops when it re-types a fact.
 
-    note.extract reliably emits `object_entity_ref` (Me.children -> Eli); the
-    integrator non-deterministically omits it, orphaning the edge (and then the
-    arbiter, finding no named object, treats it as inferred and holds it). Restore
-    it deterministically from the extraction — the source of truth for what the
-    note states — keyed on the subject + canonical predicate. Then GUARANTEE every
-    referenced entity (subject and object) carries a resolution: a backfilled
-    object with no resolution would otherwise make apply_intent DROP the whole
-    fact, so mint a provisional from the extraction mention's kind. Only fills
-    gaps — an existing resolution (including a deliberate `ambiguous`) is never
-    overridden."""
+    note.extract reliably emits `object_entity_ref` (Me.children -> Eli) and
+    `value_json` (grade {"value": "7th"}); the integrator non-deterministically
+    omits them when it re-types the fact — orphaning the edge or blanking the value,
+    after which the arbiter finds no named object / no datum and holds the fact as
+    inferred. Restore both deterministically from the extraction — the source of
+    truth for what the note states — keyed on the subject + canonical predicate.
+    Then GUARANTEE every referenced entity (subject and object) carries a
+    resolution: a backfilled object with no resolution would otherwise make
+    apply_intent DROP the whole fact, so mint a provisional from the extraction
+    mention's kind. Only fills gaps — an existing object/value/resolution
+    (including a deliberate `ambiguous`) is never overridden."""
     registry = get_registry()
     ext_obj: dict[tuple[str, str], str] = {}
+    ext_val: dict[tuple[str, str], dict] = {}
     for f in extraction.facts:
+        key = (f.entity_ref, registry.normalize_predicate(f.predicate))
         if f.object_entity_ref:
-            ext_obj.setdefault(
-                (f.entity_ref, registry.normalize_predicate(f.predicate)), f.object_entity_ref
-            )
+            ext_obj.setdefault(key, f.object_entity_ref)
+        if isinstance(f.value_json, dict) and f.value_json:
+            ext_val.setdefault(key, f.value_json)
     mention_kind = {m.name: m.kind for m in extraction.mentions}
     resolved = {r.mention_ref for r in intent.entity_resolutions}
 
     facts: list[IntentFact] = []
     added: list[EntityResolution] = []
     for fact in intent.facts:
-        if fact.object_entity_ref is None:
-            obj = ext_obj.get((fact.entity_ref, registry.normalize_predicate(fact.predicate)))
-            if obj is not None:
-                fact = replace(fact, object_entity_ref=obj)
+        key = (fact.entity_ref, registry.normalize_predicate(fact.predicate))
+        if fact.object_entity_ref is None and key in ext_obj:
+            fact = replace(fact, object_entity_ref=ext_obj[key])
+        if not isinstance(fact.value_json, dict) and key in ext_val:
+            fact = replace(fact, value_json=ext_val[key])
         facts.append(fact)
         for ref in (fact.entity_ref, fact.object_entity_ref):
             if ref and ref not in resolved and ref in mention_kind:
@@ -263,6 +267,22 @@ def recover_dropped_objects(
     if not added and facts == intent.facts:
         return intent
     return replace(intent, facts=facts, entity_resolutions=[*intent.entity_resolutions, *added])
+
+
+def _date_phrase_grounded(fact: IntentFact, types: Iterable, haystack: str) -> bool:
+    """A date-shape attribute is grounded when the temporal PHRASE it was resolved
+    from appears in the note — even if the model flagged it inferred. An age ->
+    birthDate derivation ("Eli, 12" -> born 2013) marks the fact inferred because
+    the note never states the birthday, yet it is deterministic arithmetic over a
+    STATED age, not a guess; holding one per family member per note is pure review
+    noise. Scoped to date-shape predicates so a non-date inferred fact is never
+    promoted by a mere timestamp, and `haystack` is already normalized."""
+    if not (fact.temporal and fact.temporal.phrase and fact.temporal.resolved_start):
+        return False
+    is_date = any(
+        (p := t.predicate(fact.predicate)) is not None and p.value_shape == "date" for t in types
+    )
+    return is_date and _norm(fact.temporal.phrase) in haystack
 
 
 def compute_signals(
@@ -299,11 +319,14 @@ def compute_signals(
         # object's name, or the stored VALUE appearing in the note. The last two are
         # deterministic backstops for the model's run-to-run quote drift, which
         # otherwise dumps a clearly-stated fact into review under the inferred ceiling.
-        surface_attested = not fact.inferred and (
-            (fact.attested_span is not None and _norm(fact.attested_span.surface) in haystack)
-            or _object_named(fact, res_by_ref, haystack)
-            or _value_attested(fact.value_json, haystack)
-        )
+        surface_attested = (
+            not fact.inferred
+            and (
+                (fact.attested_span is not None and _norm(fact.attested_span.surface) in haystack)
+                or _object_named(fact, res_by_ref, haystack)
+                or _value_attested(fact.value_json, haystack)
+            )
+        ) or _date_phrase_grounded(fact, types, haystack)
         out[i] = ConfidenceSignals(
             surface_attested=surface_attested,
             predicate_known=any(t.predicate(fact.predicate) is not None for t in types),

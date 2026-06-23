@@ -32,7 +32,7 @@ from jbrain.analysis.arbiter import (
     compute_signals,
     plan_intent,
     plan_to_extraction,
-    recover_dropped_objects,
+    recover_dropped_fields,
 )
 from jbrain.analysis.canonical import (
     PromotionOutcome,
@@ -371,7 +371,7 @@ class AnalysisPipeline:
         # Restore objects the integrator dropped when re-typing relationship facts
         # (it non-deterministically omits object_entity_ref the extraction carried),
         # so the edge links instead of orphaning + holding for review.
-        intent = recover_dropped_objects(intent, extraction)
+        intent = recover_dropped_fields(intent, extraction)
         # Canonicalize unknown predicates BEFORE the arbiter keys facts, so a
         # STRONG embedding match collapses the committed graph address and the
         # weight model sees the canonical name (Phase 3 §3.1; no-op when off).
