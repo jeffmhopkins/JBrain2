@@ -79,6 +79,26 @@ export function FullBrainSurface({
     if (el && stickRef.current) el.scrollTop = el.scrollHeight;
   }, [fb.messages]);
 
+  // The status line below the chat (AgentStatusLine) appears, swaps, and hides on
+  // its own timers — a held tool label, the thinking→answering flip, the clean
+  // finish that fades after a beat — none of which are `messages` changes. It
+  // lives outside this scroll box, so each height change silently shrinks or grows
+  // the viewport; without re-pinning, the newest turn slips behind it (the status
+  // sits over the last bubble instead of nudging it up). Observe the box's size and
+  // re-snap whenever the reader is already at the foot, so any out-of-band reflow
+  // keeps the live turn in view. Re-armed per session: the scroll box only exists
+  // while a chat is open, and a fresh open mounts a new element to observe.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the id re-attaches the observer when the chat element remounts.
+  useEffect(() => {
+    const el = chatRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(() => {
+      if (stickRef.current) el.scrollTop = el.scrollHeight;
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [fb.active?.id]);
+
   // The session's name lives in the top bar (HomeScreen owns it); the panels are
   // a swipe away on the omnibox — right for Sessions, left for Proposals.
   return (
