@@ -954,9 +954,18 @@ h3 {
 .debug-token-active {
   color: var(--accent, #30a46c);
 }
+.debug-token-suspended {
+  color: var(--warn, #c9a36a);
+}
 .debug-token-expired,
 .debug-token-revoked {
   color: var(--text-2);
+}
+.debug-token-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
 }
 
 /* ===== LLM Settings (Strategy C — tiered groups) ===== */

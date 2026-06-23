@@ -83,3 +83,28 @@ def test_mint_requires_owner() -> None:
     with TestClient(app) as anon:
         app.state.auth_repo = FakeAuthRepo()
         assert anon.post("/api/settings/debug-tokens", json={"label": "x"}).status_code == 401
+
+
+def test_suspend_resume_roundtrip(owner_client: tuple[TestClient, FakeAuthRepo]) -> None:
+    client, _ = owner_client
+    token_id = client.post(
+        "/api/settings/debug-tokens", json={"label": "claude", "ttl_hours": 12}
+    ).json()["id"]
+
+    # Suspend → the list reflects it; suspending again 404s (already suspended).
+    assert client.post(f"/api/settings/debug-tokens/{token_id}/suspend").status_code == 204
+    assert client.get("/api/settings/debug-tokens").json()[0]["suspended_at"] is not None
+    assert client.post(f"/api/settings/debug-tokens/{token_id}/suspend").status_code == 404
+
+    # Resume clears it; resuming an active token 404s.
+    assert client.post(f"/api/settings/debug-tokens/{token_id}/resume").status_code == 204
+    assert client.get("/api/settings/debug-tokens").json()[0]["suspended_at"] is None
+    assert client.post(f"/api/settings/debug-tokens/{token_id}/resume").status_code == 404
+
+
+def test_suspend_resume_require_owner() -> None:
+    app = create_app(_settings(debug_access_enabled=True))
+    with TestClient(app) as anon:
+        app.state.auth_repo = FakeAuthRepo()
+        assert anon.post("/api/settings/debug-tokens/x/suspend").status_code == 401
+        assert anon.post("/api/settings/debug-tokens/x/resume").status_code == 401

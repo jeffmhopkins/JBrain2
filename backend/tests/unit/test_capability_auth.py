@@ -74,3 +74,34 @@ async def test_list_capabilities_reflects_state() -> None:
     assert set(listed) == {a.id, b.id}
     assert listed[a.id].revoked_at is not None
     assert listed[b.id].revoked_at is None
+
+
+@pytest.mark.asyncio
+async def test_suspend_blocks_auth_then_resume_restores_it() -> None:
+    repo = FakeAuthRepo()
+    key, record = await auth_service.mint_capability(repo, "debug", ttl_hours=24)
+    assert await auth_service.authenticate_capability(repo, key) is not None
+
+    # Suspend freezes the token: it no longer authenticates, and the list shows it.
+    assert await repo.suspend_capability(record.id) is True
+    assert await auth_service.authenticate_capability(repo, key) is None
+    assert (await repo.list_capabilities())[0].suspended_at is not None
+    # Idempotent: a second suspend changes nothing.
+    assert await repo.suspend_capability(record.id) is False
+
+    # Resume clears the pause and the same key works again.
+    assert await repo.resume_capability(record.id) is True
+    assert await auth_service.authenticate_capability(repo, key) is not None
+    assert (await repo.list_capabilities())[0].suspended_at is None
+    # Resuming an already-active token is a no-op.
+    assert await repo.resume_capability(record.id) is False
+
+
+@pytest.mark.asyncio
+async def test_revoked_token_cannot_be_suspended_or_resumed() -> None:
+    repo = FakeAuthRepo()
+    _, record = await auth_service.mint_capability(repo, "debug", ttl_hours=24)
+    assert await repo.revoke_capability(record.id) is True
+    # A revoked token is permanently dead: neither lifecycle op touches it.
+    assert await repo.suspend_capability(record.id) is False
+    assert await repo.resume_capability(record.id) is False

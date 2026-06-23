@@ -28,12 +28,17 @@
 		@dash path /dash /dash/
 		rewrite @dash /dash.html
 
+		# The owner debug console is a third standalone entry; the clean /debug-console
+		# path resolves to its built page (token-authed, opened from the PWA).
+		@console path /debug-console /debug-console/
+		rewrite @console /debug-console.html
+
 		try_files {path} /index.html
 
 		# The PWA's update entrypoints must always revalidate, while Vite's
 		# hash-named assets are immutable — this pair is what makes every
 		# launch pick up a new deploy.
-		@entry path / /index.html /sw.js /manifest.webmanifest /registerSW.js
+		@entry path / /index.html /debug-console.html /sw.js /manifest.webmanifest /registerSW.js
 		header @entry Cache-Control "no-cache"
 		@hashed path /assets/* /workbox-*.js
 		header @hashed Cache-Control "public, max-age=31536000, immutable"

@@ -148,6 +148,20 @@ export function SettingsScreen({ deviceLabel, onLogout }: SettingsScreenProps) {
     setRevoking(null);
   }
 
+  function suspendDebugToken(id: string) {
+    void api
+      .suspendDebugToken(id)
+      .then(loadDebugTokens)
+      .catch(() => {});
+  }
+
+  function resumeDebugToken(id: string) {
+    void api
+      .resumeDebugToken(id)
+      .then(loadDebugTokens)
+      .catch(() => {});
+  }
+
   const DEBUG_TTL_OPTIONS: { hours: number; label: string }[] = [
     { hours: 1, label: "1h" },
     { hours: 24, label: "24h" },
@@ -379,6 +393,14 @@ export function SettingsScreen({ deviceLabel, onLogout }: SettingsScreenProps) {
               >
                 {payloadCopied ? "Copied" : "Copy token"}
               </button>
+              <a
+                className="seg"
+                href={`/debug-console.html#${mintedPayload}`}
+                target="_blank"
+                rel="noreferrer"
+              >
+                Open console
+              </a>
               <button type="button" className="seg" onClick={() => setMintedPayload(null)}>
                 Done
               </button>
@@ -389,7 +411,14 @@ export function SettingsScreen({ deviceLabel, onLogout }: SettingsScreenProps) {
           <ul className="debug-token-list" aria-label="Debug tokens">
             {debugTokens.map((t) => {
               const expired = t.expires_at != null && new Date(t.expires_at) < new Date();
-              const status = t.revoked_at ? "revoked" : expired ? "expired" : "active";
+              const status = t.revoked_at
+                ? "revoked"
+                : expired
+                  ? "expired"
+                  : t.suspended_at
+                    ? "suspended"
+                    : "active";
+              const live = status === "active" || status === "suspended";
               return (
                 <li key={t.id} className="debug-token-row">
                   <div>
@@ -404,17 +433,36 @@ export function SettingsScreen({ deviceLabel, onLogout }: SettingsScreenProps) {
                         : " · never used"}
                     </p>
                   </div>
-                  {status === "active" && (
-                    <button
-                      type="button"
-                      className="btn-destructive"
-                      onClick={() =>
-                        revoking === t.id ? revokeDebugToken(t.id) : setRevoking(t.id)
-                      }
-                      onBlur={() => setRevoking(null)}
-                    >
-                      {revoking === t.id ? "Tap to confirm" : "Revoke"}
-                    </button>
+                  {live && (
+                    <div className="debug-token-actions">
+                      {status === "active" ? (
+                        <button
+                          type="button"
+                          className="seg"
+                          onClick={() => suspendDebugToken(t.id)}
+                        >
+                          Suspend
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          className="seg"
+                          onClick={() => resumeDebugToken(t.id)}
+                        >
+                          Resume
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        className="btn-destructive"
+                        onClick={() =>
+                          revoking === t.id ? revokeDebugToken(t.id) : setRevoking(t.id)
+                        }
+                        onBlur={() => setRevoking(null)}
+                      >
+                        {revoking === t.id ? "Tap to confirm" : "Revoke"}
+                      </button>
+                    </div>
                   )}
                 </li>
               );

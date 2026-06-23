@@ -56,6 +56,9 @@ class Principal(Base):
     # Stamped on each successful capability-token auth so the owner's token list
     # shows liveness. NULL until first use.
     last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Set only for capability_token principals: a reversible pause. A suspended
+    # token fails auth (like revoked) but the owner can clear this to resume it.
+    suspended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class DeviceSession(Base):

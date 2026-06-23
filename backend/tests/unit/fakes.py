@@ -23,6 +23,7 @@ class FakePrincipal:
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     expires_at: datetime | None = None
     last_used_at: datetime | None = None
+    suspended_at: datetime | None = None
 
 
 @dataclass
@@ -97,7 +98,13 @@ class FakeAuthRepo:
         now = datetime.now(UTC)
         for p in self.principals:
             live = p.expires_at is None or p.expires_at > now
-            if p.key_hash == key_hash and p.kind == "capability_token" and not p.revoked and live:
+            if (
+                p.key_hash == key_hash
+                and p.kind == "capability_token"
+                and not p.revoked
+                and p.suspended_at is None
+                and live
+            ):
                 p.last_used_at = now
                 return _info(p)
         return None
@@ -109,6 +116,30 @@ class FakeAuthRepo:
         for p in self.principals:
             if p.id == capability_id and p.kind == "capability_token" and not p.revoked:
                 p.revoked = True
+                return True
+        return False
+
+    async def suspend_capability(self, capability_id: str) -> bool:
+        for p in self.principals:
+            if (
+                p.id == capability_id
+                and p.kind == "capability_token"
+                and not p.revoked
+                and p.suspended_at is None
+            ):
+                p.suspended_at = datetime.now(UTC)
+                return True
+        return False
+
+    async def resume_capability(self, capability_id: str) -> bool:
+        for p in self.principals:
+            if (
+                p.id == capability_id
+                and p.kind == "capability_token"
+                and not p.revoked
+                and p.suspended_at is not None
+            ):
+                p.suspended_at = None
                 return True
         return False
 
@@ -125,6 +156,7 @@ def _capability(p: FakePrincipal) -> CapabilityToken:
         expires_at=p.expires_at,
         last_used_at=p.last_used_at,
         revoked_at=p.created_at if p.revoked else None,
+        suspended_at=p.suspended_at,
     )
 
 
