@@ -172,32 +172,32 @@ async def test_generate_inserts_row_and_returns_view(maker: async_sessionmaker) 
     assert data["seed"] == row[1]  # the view's seed is the resolved/recorded one
 
 
-async def test_generate_plumbs_effort_and_negative_prompt_into_the_spec(
+async def test_generate_plumbs_steps_and_negative_prompt_into_the_spec(
     maker: async_sessionmaker,
 ) -> None:
-    """effort maps to the diffusion step count and a negative prompt rides the spec; both
-    flow from the tool arguments through to the image model."""
+    """A quality `steps` value rides the spec (clamped to the band) and a negative prompt does
+    too; both flow from the tool arguments through to the image model."""
     owner = await _owner(maker)
     fake = FakeImageGen()
     handlers = await _handlers(maker, owner, fake)
 
     await handlers["generate_image"](
-        {"prompt": "a fox", "effort": 1, "negative_prompt": "blurry, text"}, _ctx(owner)
+        {"prompt": "a fox", "steps": 35, "negative_prompt": "blurry, text"}, _ctx(owner)
     )
     assert fake.last_gen is not None
-    assert fake.last_gen.steps == 22  # effort 1 → low end of the 20–40 quality band
+    assert fake.last_gen.steps == 35  # an in-band quality steps passes through
     assert fake.last_gen.negative_prompt == "blurry, text"
 
-    # Absent effort → the 30-step normal default; absent negative prompt → empty.
+    # Absent steps → the 20-step default; absent negative prompt → empty.
     await handlers["generate_image"]({"prompt": "a fox"}, _ctx(owner))
-    assert fake.last_gen.steps == 30 and fake.last_gen.negative_prompt == ""
+    assert fake.last_gen.steps == 20 and fake.last_gen.negative_prompt == ""
 
 
 async def test_generate_fast_uses_the_qwen_lightning_model_at_four_steps(
     maker: async_sessionmaker,
 ) -> None:
     """speed: fast records the Qwen Lightning model on the row at a fixed 4 steps, while the
-    default stays the full Qwen model on the 20–40 quality band (effort 5 → 30 steps)."""
+    default stays the full Qwen model on the quality band at the 20-step default."""
     owner = await _owner(maker)
     fake = FakeImageGen()
     handlers = await _handlers(maker, owner, fake)
@@ -216,7 +216,7 @@ async def test_generate_fast_uses_the_qwen_lightning_model_at_four_steps(
     assert model == "qwen-image-lightning"
 
     await handlers["generate_image"]({"prompt": "a finished piece"}, _ctx(owner))
-    assert fake.last_gen.model == "qwen-image-2512" and fake.last_gen.steps == 30
+    assert fake.last_gen.model == "qwen-image-2512" and fake.last_gen.steps == 20
 
 
 async def test_generate_fast_when_lightning_not_installed_is_a_clean_actionable_error(
@@ -342,7 +342,7 @@ async def test_edit_by_generated_id_records_source(maker: async_sessionmaker) ->
 
 async def test_edit_fast_uses_the_lightning_model_at_four_steps(maker: async_sessionmaker) -> None:
     """speed: fast on edit records the Qwen-Edit Lightning model at a fixed 4 steps; the default
-    stays the full edit model on the quality band (effort 5 → 30 steps)."""
+    stays the full edit model on the quality band at the 20-step default."""
     owner = await _owner(maker)
     fake = FakeImageGen()
     handlers = await _handlers(maker, owner, fake)
@@ -359,11 +359,11 @@ async def test_edit_fast_uses_the_lightning_model_at_four_steps(maker: async_ses
     assert fake.last_edit is not None
     assert fake.last_edit.model == "qwen-image-edit-lightning" and fake.last_edit.steps == 4
 
-    # The quality default stays on the full edit model at a mid-band step count.
+    # The quality default stays on the full edit model at the 20-step default.
     await handlers["edit_image"](
         {"prompt": "and add a hat", "source_image_id": source_id}, _ctx(owner)
     )
-    assert fake.last_edit.model == "qwen-image-edit" and fake.last_edit.steps == 30
+    assert fake.last_edit.model == "qwen-image-edit" and fake.last_edit.steps == 20
 
 
 async def test_edit_fast_when_lightning_not_installed_is_a_clean_actionable_error(

@@ -100,13 +100,13 @@ def test_both_image_sidecars_offer_the_speed_knob() -> None:
 
 
 def test_fast_path_is_a_fixed_four_steps() -> None:
-    """The fast (Lightning) path is a fixed 4 steps regardless of effort or an explicit steps —
-    the distilled schedule isn't tunable, so the knob can't drift it off its sweet spot."""
+    """The fast (Lightning) path is a fixed 4 steps regardless of the `steps` argument — the
+    distilled schedule isn't tunable, so the knob can't drift it off its sweet spot."""
     from jbrain.agent.imagegentools import _FAST_STEPS, _resolve_steps
 
     assert _FAST_STEPS == 4
-    assert all(_resolve_steps({"effort": e}, fast=True) == 4 for e in range(11))
-    assert _resolve_steps({"steps": 30}, fast=True) == 4  # explicit steps ignored when fast
+    assert _resolve_steps({}, fast=True) == 4
+    assert _resolve_steps({"steps": 30}, fast=True) == 4  # an explicit steps is ignored when fast
 
 
 def test_resolve_fast_only_opts_in_on_exact_fast() -> None:
@@ -116,9 +116,9 @@ def test_resolve_fast_only_opts_in_on_exact_fast() -> None:
 
     assert _resolve_fast("fast") and _resolve_fast("FAST") and _resolve_fast(" fast ")
     assert not _resolve_fast("quality") and not _resolve_fast(None) and not _resolve_fast("turbo")
-    # fast is a fixed 4 steps; quality maps effort onto the 20–40 band (effort 5 → 30).
-    assert _resolve_steps({"effort": 5}, fast=True) == 4
-    assert _resolve_steps({"effort": 5}, fast=False) == 30
+    # fast is a fixed 4 steps; quality defaults to the 20-step band floor.
+    assert _resolve_steps({}, fast=True) == 4
+    assert _resolve_steps({}, fast=False) == 20
 
 
 def test_progress_callback_data_uris_previews_and_passes_steps() -> None:
@@ -180,39 +180,16 @@ def test_dims_reject_unknown_aspect_or_resolution() -> None:
     assert _dims("square", "gigantic") is None
 
 
-def test_effort_maps_to_steps_across_the_quality_band() -> None:
-    """effort 0–10 -> steps on the quality curve, which stays inside the 20–40 band: 0 the
-    20-step floor, 5 the 30-step normal default, 10 the 40-step max."""
-    from jbrain.agent.imagegentools import _steps_for_effort
-
-    assert _steps_for_effort(0) == 20
-    assert _steps_for_effort(5) == 30
-    assert _steps_for_effort(10) == 40
-    # Monotonic across the whole range, and never leaves the band.
-    steps = [_steps_for_effort(e) for e in range(11)]
-    assert steps == sorted(steps) and min(steps) >= 20 and max(steps) <= 40
-
-
-def test_resolve_effort_clamps_to_0_10_and_defaults_to_5() -> None:
-    from jbrain.agent.imagegentools import _resolve_effort
-
-    assert _resolve_effort(None) == 5  # absent → normal
-    assert _resolve_effort("loads") == 5  # non-int → normal
-    assert _resolve_effort(True) == 5  # a bool is not an effort
-    assert _resolve_effort(-3) == 0 and _resolve_effort(99) == 10  # clamped
-
-
-def test_resolve_steps_uses_effort_unless_explicit_steps_given() -> None:
-    """`effort` drives steps on the quality band; a raw `steps` (advanced escape hatch)
-    overrides it but is clamped into the 20–40 band."""
+def test_resolve_steps_takes_the_quality_band_and_defaults_to_twenty() -> None:
+    """The quality path reads `steps` directly, clamped into the 20–40 band, and defaults to
+    the 20-step floor when absent or nonsensical."""
     from jbrain.agent.imagegentools import _resolve_steps
 
-    assert _resolve_steps({}) == 30  # default effort 5 → mid-band
-    assert _resolve_steps({"effort": 0}) == 20  # the band floor
-    assert _resolve_steps({"effort": 10}) == 40  # the band ceiling
-    assert _resolve_steps({"steps": 33}) == 33  # explicit steps wins (in band)
-    assert _resolve_steps({"steps": 33, "effort": 1}) == 33  # …over effort
-    # Out-of-band explicit steps are clamped, never escaping 20–40.
+    assert _resolve_steps({}) == 20  # absent → the band floor / default
+    assert _resolve_steps({"steps": "lots"}) == 20  # non-int → default
+    assert _resolve_steps({"steps": 33}) == 33  # an in-band value passes through
+    assert _resolve_steps({"steps": 40}) == 40  # the band ceiling
+    # Out-of-band values are clamped, never escaping 20–40.
     assert _resolve_steps({"steps": 5}) == 20 and _resolve_steps({"steps": 100}) == 40
 
 

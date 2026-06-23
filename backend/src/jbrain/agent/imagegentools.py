@@ -54,21 +54,14 @@ _FAST_MODEL = "qwen-image-lightning"
 _EDIT_MODEL = "qwen-image-edit"
 _FAST_EDIT_MODEL = "qwen-image-edit-lightning"
 
-# `effort` (0–10) is the owner-facing quality/time knob on the QUALITY path; it maps linearly
-# across the quality step band — effort 0 → 20 steps (the band's floor), 5 → 30 (the normal
-# default), 10 → 40 (max detail). The `fast` path ignores effort entirely: the distilled
-# Lightning schedule is a fixed 4 steps (its sweet spot — more steps add time, not detail).
-_DEFAULT_EFFORT = 5
-_MAX_EFFORT = 10
+# The quality path takes a direct `steps` count in the 20–40 band (default 20 — the band's
+# floor, a quick-but-finished render; raise toward 40 for more detail at more time). The `fast`
+# path ignores steps entirely: the distilled Lightning schedule is a fixed 4 steps (its sweet
+# spot — more steps add time, not detail).
 _FAST_STEPS = 4
 _QUALITY_MIN_STEPS = 20
 _QUALITY_MAX_STEPS = 40
-
-
-def _steps_for_effort(effort: int) -> int:
-    """Quality steps for an effort in 0–10: round(20 + 2·e) — hits 20 / 30 / 40 at 0 / 5 / 10,
-    so the whole range stays inside the model's 20–40 quality band."""
-    return round(_QUALITY_MIN_STEPS + 2 * effort)
+_DEFAULT_QUALITY_STEPS = _QUALITY_MIN_STEPS
 
 
 # A bigint seed: positive and within the model's accepted range (random when absent).
@@ -154,24 +147,16 @@ def _resolve_seed(raw: object) -> int:
     return secrets.randbits(_SEED_BITS)
 
 
-def _resolve_effort(raw: object) -> int:
-    """An effort clamped to 0–10; the default (5 = normal) when absent or nonsensical."""
-    if isinstance(raw, int) and not isinstance(raw, bool):
-        return max(0, min(_MAX_EFFORT, raw))
-    return _DEFAULT_EFFORT
-
-
 def _resolve_steps(arguments: dict, *, fast: bool = False) -> int:
     """The step count for a request. The `fast` (Lightning) path is a FIXED 4 steps — its
-    distilled schedule isn't tunable, so `steps`/`effort` are ignored there. The quality path
-    takes an explicit positive `steps` (an advanced escape hatch), clamped into the 20–40 band,
-    else maps `effort` (0–10) onto that band via the curve."""
+    distilled schedule isn't tunable, so `steps` is ignored there. The quality path takes the
+    `steps` argument clamped into the 20–40 band, defaulting to 20 when absent or nonsensical."""
     if fast:
         return _FAST_STEPS
     raw_steps = arguments.get("steps")
     if isinstance(raw_steps, int) and not isinstance(raw_steps, bool) and raw_steps > 0:
         return max(_QUALITY_MIN_STEPS, min(_QUALITY_MAX_STEPS, raw_steps))
-    return _steps_for_effort(_resolve_effort(arguments.get("effort")))
+    return _DEFAULT_QUALITY_STEPS
 
 
 def _resolve_fast(raw: object) -> bool:

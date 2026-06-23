@@ -25,9 +25,9 @@ params:
       type: string
       enum: [small, medium, large]
       description: The image size. Defaults to medium (the model's native ~1MP). Use small for a quicker, lighter render and large for more detail.
-    effort:
+    steps:
       type: integer
-      description: Quality/time tradeoff for the quality path, 0–10 (mapping to 20–40 diffusion steps). 0 is the lighter end, 5 is the normal default, 10 is maximum detail. Higher means more steps and a slower render — preview at a low effort, then re-run at the same seed with higher effort to finalize. Ignored when speed is fast (that path is a fixed 4 steps).
+      description: Number of diffusion steps on the quality path, 20–40 (default 20). 20 is a quick but finished render; raise toward 40 for more detail at more time. Values outside the range are clamped. Ignored when speed is fast (that path is a fixed 4 steps).
     seed:
       type: integer
       description: A fixed seed for a repeatable result (optional). When omitted a random seed is chosen and recorded so the owner can reproduce it.
