@@ -143,11 +143,12 @@ class ToolContext:
     timezone: str | None = None
     agent_session_id: str | None = None
     here: tuple[float, float] | None = None
-    # Mid-execution progress sink, set only on the streaming path: a tool (image
-    # generation) calls it with (step, total, preview_data_uri | None) and the loop
-    # turns each call into an ephemeral ToolProgressEvent on the turn's SSE. Sync +
+    # Mid-execution progress sink, set only on the streaming path: a tool calls it with
+    # (step, total, preview_data_uri | None, label | None) and the loop turns each call
+    # into an ephemeral ToolProgressEvent on the turn's SSE. Image gen sends a step bar +
+    # preview; a multi-phase tool (analyze_video) sends a `label` per phase. Sync +
     # fire-and-forget; None for the batch path and tools that don't report progress.
-    emit_progress: Callable[[int, int, str | None], None] | None = None
+    emit_progress: Callable[[int, int, str | None, str | None], None] | None = None
 
 
 @dataclass(frozen=True)
@@ -401,19 +402,19 @@ class AgentLoop:
         tools = self._registry.schemas_for(scopes, tools_allow)
         allowed = self._registry.allowed_names(scopes, tools_allow)
         messages: list[LlmMessage] = list(conversation)
-        # A tool may report progress mid-execution (image generation); the sink
-        # enqueues (step, total, preview) tuples that the per-call dispatch below
-        # drains into ToolProgressEvents. Tool calls run one at a time, so every
-        # enqueued tick belongs to the call currently dispatching.
-        progress_q: asyncio.Queue[tuple[int, int, str | None] | None] = asyncio.Queue()
+        # A tool may report progress mid-execution; the sink enqueues
+        # (step, total, preview, label) tuples that the per-call dispatch below drains
+        # into ToolProgressEvents. Tool calls run one at a time, so every enqueued tick
+        # belongs to the call currently dispatching.
+        progress_q: asyncio.Queue[tuple[int, int, str | None, str | None] | None] = asyncio.Queue()
         tool_ctx = ToolContext(
             session=session,
             scopes=scopes,
             timezone=timezone,
             agent_session_id=agent_session_id,
             here=here,
-            emit_progress=lambda step, total, preview: progress_q.put_nowait(
-                (step, total, preview)
+            emit_progress=lambda step, total, preview, label: progress_q.put_nowait(
+                (step, total, preview, label)
             ),
         )
         cost = 0
@@ -519,9 +520,9 @@ class AgentLoop:
                     tick = await progress_q.get()
                     if tick is None:
                         break
-                    step, total, preview = tick
+                    step, total, preview, label = tick
                     yield ToolProgressEvent(
-                        tool_call_id=call.id, step=step, total=total, preview=preview
+                        tool_call_id=call.id, step=step, total=total, preview=preview, label=label
                     )
                 dispatched = await task
                 results.append(dispatched.result)

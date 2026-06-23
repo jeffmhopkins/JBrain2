@@ -216,6 +216,23 @@ describe("applyEvent reducer", () => {
     expect(ms[0]?.tools[0]?.ok).toBe(true);
   });
 
+  it("carries a multi-phase tool's text label into progress", () => {
+    let ms: TranscriptMessage[] = [streaming()];
+    ms = applyEvent(ms, { type: "tool_call", id: "v1", name: "analyze_video", arguments: {} });
+    ms = applyEvent(ms, {
+      type: "tool_progress",
+      tool_call_id: "v1",
+      step: 12,
+      total: 30,
+      label: "Analyzing frame 12/30",
+    });
+    expect(ms[0]?.tools[0]?.progress).toEqual({
+      step: 12,
+      total: 30,
+      label: "Analyzing frame 12/30",
+    });
+  });
+
   it("ignores progress for an unknown tool call", () => {
     let ms: TranscriptMessage[] = [streaming()];
     ms = applyEvent(ms, { type: "tool_progress", tool_call_id: "ghost", step: 1, total: 4 });

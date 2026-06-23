@@ -267,7 +267,7 @@ def _progress_callback(ctx: ToolContext) -> OnProgress | None:
 
     def on_progress(step: int, total: int, preview: bytes | None) -> None:
         uri = f"data:image/jpeg;base64,{base64.b64encode(preview).decode()}" if preview else None
-        sink(step, total, uri)
+        sink(step, total, uri, None)  # image gen drives the step bar, not a phase label
 
     return on_progress
 

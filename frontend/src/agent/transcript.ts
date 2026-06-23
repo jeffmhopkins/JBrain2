@@ -29,10 +29,10 @@ export interface ToolActivity {
   proposal?: ProposalRef;
   /** Entities this tool resolved (tappable chips). */
   entities?: EntityRef[];
-  /** Live generation progress for an in-flight image tool — the sampler step/total
-   * and the latest sharpening preview (a data URI). Set by `tool_progress`, cleared
-   * when the result lands (the final image view then renders). */
-  progress?: { step: number; total: number; preview?: string };
+  /** Live progress for an in-flight tool — image gen's sampler step/total + sharpening
+   * preview, or a multi-phase tool's text `label` ("Analyzing frame 12/30"). Set by
+   * `tool_progress`, cleared when the result lands (the final view then renders). */
+  progress?: { step: number; total: number; preview?: string; label?: string };
   /** The last live preview frame, kept after the result settles so the final image
    * view can show it as a placeholder until the full-res image loads — no blank gap
    * between "finalizing" and the rendered image. Live-only (absent on reopen). */
@@ -146,6 +146,7 @@ export function applyEvent(messages: TranscriptMessage[], event: ChatEvent): Tra
                 step: event.step,
                 total: event.total,
                 ...(event.preview ? { preview: event.preview } : {}),
+                ...(event.label ? { label: event.label } : {}),
               },
             }
           : t,

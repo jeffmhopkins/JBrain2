@@ -305,12 +305,24 @@ function Bubble({
   const livePreviews = message.tools.filter(
     (t) => IMAGE_TOOL_NAMES.has(t.name) && t.ok === undefined,
   );
+  // In-flight non-image tools that stream a phase label (analyze_video): a live status
+  // line shows the phase ("Extracting frames…", "Analyzing frame 12/30") until the
+  // result lands and the tool's final view replaces it.
+  const liveStatuses = message.tools.filter(
+    (t) => !IMAGE_TOOL_NAMES.has(t.name) && t.ok === undefined && t.progress?.label,
+  );
   // While the turn is still streaming, hold the whole bubble until the answer
   // text begins — tool calls alone shouldn't pop an empty Worked block ahead of
   // any prose. EXCEPT a reasoning model (show the live "Thinking…" disclosure) or a
   // running image render (show its live preview). The status line above the omnibox
   // still carries "what it's doing" until the typed answer lands.
-  if (message.streaming && !message.text && !message.reasoning && livePreviews.length === 0) {
+  if (
+    message.streaming &&
+    !message.text &&
+    !message.reasoning &&
+    livePreviews.length === 0 &&
+    liveStatuses.length === 0
+  ) {
     return null;
   }
   // A settled turn with nothing to show (no text, tools, views, or reasoning)
@@ -381,6 +393,9 @@ function Bubble({
       )}
       {livePreviews.map((t) => (
         <GeneratingPreview key={t.id} tool={t} />
+      ))}
+      {liveStatuses.map((t) => (
+        <LiveToolStatus key={t.id} tool={t} />
       ))}
       {viewsToRender.map((v, i) => (
         // biome-ignore lint/suspicious/noArrayIndexKey: views append in order
@@ -734,6 +749,26 @@ function GeneralKnowledgeNote(): ReactNode {
 // The two image-gen tools, by name — the only tools that drive a live preview
 // surface (so an in-flight render shows the sharpening frame, not a Worked step).
 const IMAGE_TOOL_NAMES = new Set(["generate_image", "edit_image"]);
+
+// A live status line for a multi-phase non-image tool (analyze_video): its streamed
+// phase label, with a thin determinate bar while a counted phase (frame i/N) advances.
+// Ephemeral — the tool's final view (the card) replaces it once the result lands.
+function LiveToolStatus({ tool }: { tool: ToolActivity }): ReactNode {
+  const p = tool.progress;
+  const counted = p !== undefined && p.total > 0;
+  const pct = counted && p ? Math.round((p.step / p.total) * 100) : 0;
+  return (
+    <output className="fb-toolstatus" aria-live="polite">
+      <span className="fb-toolstatus-spin" aria-hidden="true" />
+      <span className="fb-toolstatus-label">{p?.label ?? "Working…"}</span>
+      {counted && (
+        <span className="fb-toolstatus-bar" aria-hidden="true">
+          <span className="fb-toolstatus-fill" style={{ width: `${pct}%` }} />
+        </span>
+      )}
+    </output>
+  );
+}
 
 // aspect arg → CSS ratio, so the preview frame holds a stable size before the
 // first preview frame arrives (matching the image-gen tool's three presets).
