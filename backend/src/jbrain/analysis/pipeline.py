@@ -30,6 +30,7 @@ from jbrain.analysis.appointment_projection import project_appointments
 from jbrain.analysis.arbiter import (
     ArbiterPlan,
     compute_signals,
+    derive_kinship_gender,
     plan_intent,
     plan_to_extraction,
     recover_dropped_fields,
@@ -375,6 +376,10 @@ class AnalysisPipeline:
         # so the edge links instead of orphaning + holding for review.
         intent = recover_dropped_fields(intent, extraction)
         flow_trace.intent(note_id, "recover", intent)
+        # Deterministically emit the gender a kinship edge implies for its object
+        # (four "daughters" → four female children) when the model captured the
+        # edges but omitted gender; _gender_grounded then attests it so it commits.
+        intent = derive_kinship_gender(intent, note_text)
         # Canonicalize unknown predicates BEFORE the arbiter keys facts, so a
         # STRONG embedding match collapses the committed graph address and the
         # weight model sees the canonical name (Phase 3 §3.1; no-op when off).
@@ -2073,15 +2078,31 @@ class AnalysisPipeline:
                 "confidence": fact.confidence,
             }
             refreshed = next((e for e in existing if e.id == decision.refresh_id), None)
-            # Re-analysis healing: reaching the commit path (not _insert_held_fact)
-            # means the arbiter now rates this fact ACTIVE, so a still-held row it
-            # restates is PROMOTED in place — editing a note and re-analyzing is
-            # exactly how a fact the model earlier under-attested should clear review,
-            # rather than staying stuck behind that stale flag. Its open card is then
-            # unservable, and an open relationship edge gets the reciprocal the held
-            # row never minted. Idempotent: once active, later runs find no held row
-            # to promote and re-mint nothing (the inverse write dedups on its own).
-            promoted = refreshed is not None and refreshed.status == "pending_review"
+            # Re-analysis healing: a row still held purely by WEIGHT (it carries an
+            # open low_confidence_inference card) that the arbiter now rates active is
+            # PROMOTED in place — editing a note / fixing the pipeline and
+            # re-analyzing is how an under-attested fact should clear review, rather
+            # than staying stuck behind a stale flag. Its card is then unservable, and
+            # an open relationship edge gets the reciprocal the held row never minted.
+            # A row held for a STRUCTURAL reason (a fact_conflict contradiction, an
+            # attribute_collision) must NOT be promoted: that conflict is unresolved,
+            # and this refresh path runs BEFORE decide()'s conflict branch on
+            # idempotent re-ingest, so it would otherwise silently flip a parked
+            # negation live. Gate strictly on the weight-hold card. Idempotent: once
+            # active there is no held row (and no card) to promote on later runs.
+            promoted = False
+            if refreshed is not None and refreshed.status == "pending_review":
+                promoted = (
+                    await session.execute(
+                        select(ReviewItem.id)
+                        .where(
+                            ReviewItem.kind == "low_confidence_inference",
+                            ReviewItem.status == "open",
+                            ReviewItem.payload["fact_id"].astext == str(fact_id),
+                        )
+                        .limit(1)
+                    )
+                ).first() is not None
             if promoted:
                 values["status"] = "active"
             # This note DIRECTLY asserts what so far was only a derived shadow of
