@@ -2063,9 +2063,8 @@ class AnalysisPipeline:
             return fact_id
 
         if decision.refresh_id is not None:
-            # Same identity key, same value: refresh the rendering and
-            # provenance in place — citations survive, no chain link, and no
-            # repeated promotion review on re-analysis.
+            # Same identity key, same value: refresh the rendering and provenance in
+            # place — citations survive, no chain link, no duplicate row.
             fact_id = uuid.UUID(decision.refresh_id)
             values: dict[str, Any] = {
                 "statement": fact.statement,
@@ -2073,13 +2072,24 @@ class AnalysisPipeline:
                 "prompt_version": PROMPT_VERSION,
                 "confidence": fact.confidence,
             }
+            refreshed = next((e for e in existing if e.id == decision.refresh_id), None)
+            # Re-analysis healing: reaching the commit path (not _insert_held_fact)
+            # means the arbiter now rates this fact ACTIVE, so a still-held row it
+            # restates is PROMOTED in place — editing a note and re-analyzing is
+            # exactly how a fact the model earlier under-attested should clear review,
+            # rather than staying stuck behind that stale flag. Its open card is then
+            # unservable, and an open relationship edge gets the reciprocal the held
+            # row never minted. Idempotent: once active, later runs find no held row
+            # to promote and re-mint nothing (the inverse write dedups on its own).
+            promoted = refreshed is not None and refreshed.status == "pending_review"
+            if promoted:
+                values["status"] = "active"
             # This note DIRECTLY asserts what so far was only a derived shadow of
             # another note's edge: adopt it as a primary fact owned by THIS note,
             # so the human-stated claim survives deletion of the source that
             # first reflected it (red-team Finding 1). Without this, "Celine's
             # spouse is Jeff" in its own note would silently ride Jeff's note and
             # vanish when his note is deleted.
-            refreshed = next((e for e in existing if e.id == decision.refresh_id), None)
             if refreshed is not None and refreshed.derived:
                 anchor = anchor_for.get(fact.entity_ref)
                 base_chunk = anchor[0] if anchor else (chunks[0].id if chunks else None)
@@ -2094,6 +2104,38 @@ class AnalysisPipeline:
                 )
             await session.execute(update(Fact).where(Fact.id == fact_id).values(values))
             await self._update_shadows_in_place(session, source_id=fact_id)
+            if promoted:
+                # The row's open review card is now unservable (the fact committed);
+                # resolved/dismissed history survives. Then give an open relationship
+                # edge the reciprocal a held edge never got (_materialize_inverse
+                # dedups, so no duplicate if one already exists).
+                await purge.delete_review_items(session, {fact_id}, statuses=("open",))
+                if fact.kind == "relationship" and object_entity is not None and valid_to is None:
+                    anchor = anchor_for.get(fact.entity_ref)
+                    base_chunk = anchor[0] if anchor else (chunks[0].id if chunks else None)
+                    await self._materialize_inverse(
+                        session,
+                        fact=fact,
+                        source_fact_id=fact_id,
+                        entity=entity,
+                        object_entity=object_entity,
+                        valid_from=valid_from,
+                        valid_to=valid_to,
+                        precision=precision,
+                        token_id=token_id,
+                        note_id=note_id,
+                        fact_domain=fact_domain,
+                        captured_at=captured_at,
+                        chunk_id=await self._citation_chunk(
+                            session,
+                            source_chunk_id=base_chunk,
+                            fact_domain=fact_domain,
+                            note_domain=note_domain,
+                            note_id=note_id,
+                        ),
+                        extractor=extractor,
+                        snippet=_cite(anchor, chunks),
+                    )
             return fact_id
 
         anchor = anchor_for.get(fact.entity_ref)

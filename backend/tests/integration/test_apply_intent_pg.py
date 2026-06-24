@@ -516,6 +516,119 @@ async def test_held_fact_is_idempotent_across_reanalysis(maker, tmp_path):  # no
     assert cards[0].payload["fact_id"] == str(held[0].id)  # link still valid
 
 
+async def _seed_person(maker, name: str) -> str:  # noqa: F811
+    async with scoped_session(maker, SYSTEM_CTX) as session:
+        ent = Entity(kind="Person", canonical_name=name, status="confirmed", domain_code="general")
+        session.add(ent)
+        await session.flush()
+        return str(ent.id)
+
+
+async def test_reanalysis_promotes_a_held_edge_to_active_and_mints_reciprocal(maker, tmp_path):  # noqa: F811
+    # A relationship edge held below threshold on the first pass, then re-analyzed
+    # with signals that now clear the threshold (the named-object grounding fix is
+    # one such cause), is PROMOTED in place to active — same row — and finally gets
+    # the reciprocal a held edge never minted. This is the "reanalyze after edit
+    # heals a stuck fact" path. Both resolutions are `existing` so the two runs key
+    # on the SAME entities (mode=new would mint fresh ones — not reprocessing).
+    parent_id = await _seed_person(maker, "Parent")
+    child_id = await _seed_person(maker, "Kiddo")
+    note_id = await make_note(maker, domain="general", body="Family notes.")
+    await ingest(maker, note_id, tmp_path)
+    resolutions = [
+        EntityResolution(mention_ref="m1", mode="existing", proposed_entity_id=parent_id),
+        EntityResolution(mention_ref="m2", mode="existing", proposed_entity_id=child_id),
+    ]
+    facts = [
+        _fact(
+            "m1",
+            predicate="children",
+            kind="relationship",
+            object_entity_ref="m2",
+            statement="Parent has a child Kiddo.",
+            self_confidence=0.2,
+        )
+    ]
+
+    # Run 1: below threshold → held, and a held edge mints no reciprocal.
+    held_plan = plan_intent(
+        _intent(note_id, resolutions, facts), signals={0: ConfidenceSignals(False, True, False)}
+    )
+    assert held_plan.to_review and not held_plan.to_commit
+    await _run(maker, note_id, _intent(note_id, resolutions, facts), held_plan, tmp_path=tmp_path)
+    async with scoped_session(maker, SYSTEM_CTX) as session:
+        children = (
+            (
+                await session.execute(
+                    select(Fact).where(
+                        Fact.note_id == uuid.UUID(note_id), Fact.predicate == "children"
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        parents = (
+            (
+                await session.execute(
+                    select(Fact).where(
+                        Fact.predicate == "parent", Fact.entity_id == uuid.UUID(child_id)
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+    assert len(children) == 1 and children[0].status == "pending_review"
+    held_id = children[0].id
+    assert parents == []  # no reciprocal while held
+
+    # Run 2: now clears threshold → promote the same row in place + mint reciprocal.
+    commit_plan = plan_intent(_intent(note_id, resolutions, facts), signals={0: _SURFACE})
+    assert commit_plan.to_commit and not commit_plan.to_review
+    await _run(maker, note_id, _intent(note_id, resolutions, facts), commit_plan, tmp_path=tmp_path)
+    async with scoped_session(maker, SYSTEM_CTX) as session:
+        children2 = (
+            (
+                await session.execute(
+                    select(Fact).where(
+                        Fact.note_id == uuid.UUID(note_id), Fact.predicate == "children"
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        parents2 = (
+            (
+                await session.execute(
+                    select(Fact).where(
+                        Fact.predicate == "parent", Fact.entity_id == uuid.UUID(child_id)
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        open_cards = (
+            (
+                await session.execute(
+                    select(ReviewItem).where(
+                        ReviewItem.payload["fact_id"].astext == str(held_id),
+                        ReviewItem.status == "open",
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+    assert len(children2) == 1
+    assert children2[0].id == held_id  # promoted in place, stable id
+    assert children2[0].status == "active"
+    assert len(parents2) == 1 and parents2[0].object_entity_id == uuid.UUID(parent_id)  # reciprocal
+    assert open_cards == []  # the now-unservable held card is gone
+
+
 async def test_held_health_fact_floors_to_health_on_row_and_card(maker, tmp_path):  # noqa: F811
     # Firewall: a cross-subject health-predicate fact held in a GENERAL note must
     # floor to the health domain on BOTH the pending_review row and its card, so
