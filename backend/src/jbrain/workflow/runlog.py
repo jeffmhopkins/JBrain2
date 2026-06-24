@@ -21,9 +21,11 @@ RLS), mirroring AgentRunLog — the dispatcher's claim loop already runs under
 
 from __future__ import annotations
 
+import json
 import uuid
 from dataclasses import dataclass
 
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from jbrain.db.session import SessionContext, scoped_session
@@ -44,9 +46,10 @@ class PipelineRunLog:
 
     Mirrors `agent/runlog.py`'s AgentRunLog style (owner-scoped sessions, the ORM
     models), but stamps `kind='pipeline'` for a session-less engine run rather than
-    `kind='agent'`. One call records a whole dispatched pipeline: the run row plus a
-    step per enqueued job, committed together so a run never logs steps for jobs it
-    did not produce (or vice versa)."""
+    `kind='agent'`. One `record` call opens a RUNNING run the moment the pipeline's
+    steps are enqueued; the worker calls `finalize_job_step` as each step's job
+    finishes, so the run reflects real execution — status, duration, and tokens —
+    rather than a 0-token placeholder that was `done` before any work ran."""
 
     def __init__(self, maker: async_sessionmaker[AsyncSession]):
         self._maker = maker
@@ -62,10 +65,11 @@ class PipelineRunLog:
         principal_id: str | None,
         steps: list[EnqueuedStep],
     ) -> str:
-        """Write one completed pipeline run + its enqueued-job steps; return the run
-        id. The run is `done` on write: the dispatcher's job is to ENQUEUE the
-        pipeline's steps (the executor runs them later under their own job records),
-        so the dispatch itself completes the moment the jobs are on the queue."""
+        """Open a RUNNING pipeline run + a step per enqueued job; return the run id.
+        The run is NOT done on write — its bound jobs run later in the worker, which
+        finalizes each step (and, once every step's job is terminal, the run itself)
+        via `finalize_job_step`. Steps start `ok=True` provisionally (the column is
+        non-null); a job that fails flips its step to `ok=False` on finalize."""
         run_id = str(uuid.uuid4())
         async with scoped_session(self._maker, ctx) as session:
             session.add(
@@ -77,7 +81,7 @@ class PipelineRunLog:
                     ran_as=ran_as,
                     domain_code=domain_code,
                     principal_id=uuid.UUID(principal_id) if principal_id is not None else None,
-                    status="done",
+                    status="running",
                     step_count=len(steps),
                 )
             )
@@ -93,3 +97,55 @@ class PipelineRunLog:
                     )
                 )
         return run_id
+
+
+async def finalize_job_step(
+    maker: async_sessionmaker[AsyncSession],
+    ctx: SessionContext,
+    job_id: str,
+    *,
+    ok: bool,
+    cost_tokens: int,
+    detail: list[dict[str, object]] | None = None,
+) -> None:
+    """Stamp a job's terminal outcome + token cost (+ its captured log `detail`, the
+    "full logs" review trace) onto its run-log step, then close the parent run once
+    ALL its steps' jobs are terminal — setting status (error if any step failed, else
+    done), `ended_at` (so the run shows a real duration), and the run's total tokens.
+    A no-op when the job has no run step (an ad-hoc enqueue).
+
+    The worker calls this AFTER the job's queue transition (so this job already reads
+    as terminal), best-effort: a run-log hiccup must never fail the executor job."""
+    async with scoped_session(maker, ctx) as session:
+        row = (
+            await session.execute(
+                text(
+                    "UPDATE app.run_steps SET ok = :ok, cost_tokens = :tok,"
+                    " detail = cast(:detail AS jsonb) WHERE job_id = :jid RETURNING run_id"
+                ),
+                {
+                    "ok": ok,
+                    "tok": cost_tokens,
+                    "detail": json.dumps(detail) if detail else None,
+                    "jid": job_id,
+                },
+            )
+        ).first()
+        if row is None:
+            return  # this job isn't part of a dispatched pipeline run
+        await session.execute(
+            text(
+                "UPDATE app.runs r SET"
+                "   status = CASE WHEN EXISTS (SELECT 1 FROM app.run_steps s"
+                "                              WHERE s.run_id = r.id AND NOT s.ok)"
+                "                  THEN 'error' ELSE 'done' END,"
+                "   ended_at = now(),"
+                "   cost_tokens = (SELECT COALESCE(SUM(s.cost_tokens), 0)"
+                "                  FROM app.run_steps s WHERE s.run_id = r.id)"
+                " WHERE r.id = :rid AND r.status = 'running'"
+                "   AND NOT EXISTS (SELECT 1 FROM app.run_steps s"
+                "                   JOIN app.jobs j ON j.id = s.job_id"
+                "                   WHERE s.run_id = :rid AND j.status IN ('queued', 'running'))"
+            ),
+            {"rid": str(row.run_id)},
+        )

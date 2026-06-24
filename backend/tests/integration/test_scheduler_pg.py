@@ -29,6 +29,7 @@ from jbrain.db.session import scoped_session
 from jbrain.wiki.actions import WIKI_SPECS
 from jbrain.workflow.evalaction import EVAL_RUN_SPEC
 from jbrain.workflow.registry import ACTION_SPECS, build_registry
+from jbrain.workflow.runlog import finalize_job_step
 from jbrain.workflow.scheduler import (
     GEOFENCE_SWEEP_ACTION,
     PURGE_ACTION,
@@ -266,10 +267,13 @@ async def test_fire_trigger_enqueues_immediately(maker: async_sessionmaker) -> N
     assert await _jobs_of_kind(maker, "consolidate_predicates") == before + 1
 
 
-async def test_fire_trigger_records_a_run_on_the_run_log(maker: async_sessionmaker) -> None:
-    # A fired trigger writes a runs row (kind='pipeline') + a run_step per enqueued
-    # job, so a manual "Run now" / nightly sweep is auditable from the Ops Runs
-    # surface — not just a silent job on the queue (the gap this closes).
+async def test_fire_trigger_records_a_running_run_on_the_run_log(
+    maker: async_sessionmaker,
+) -> None:
+    # A fired trigger opens a RUNNING runs row (kind='pipeline') + a run_step per
+    # enqueued job, so a manual "Run now" / nightly sweep is auditable from the Ops
+    # Runs surface — not just a silent job on the queue (the gap this closes). The
+    # run stays running (no ended_at) until the worker finalizes its job's step.
     ids = await _seed_schedule(
         maker, action="consolidate_predicates", next_run_at=NOW + timedelta(days=1)
     )
@@ -278,7 +282,7 @@ async def test_fire_trigger_records_a_run_on_the_run_log(maker: async_sessionmak
         run = (
             await s.execute(
                 text(
-                    "SELECT id, kind, trigger_id, ran_as, status, step_count"
+                    "SELECT id, kind, trigger_id, ran_as, status, step_count, ended_at"
                     " FROM app.runs WHERE pipeline = :p"
                 ),
                 {"p": ids["pipeline"]},
@@ -288,7 +292,8 @@ async def test_fire_trigger_records_a_run_on_the_run_log(maker: async_sessionmak
         assert run.kind == "pipeline"
         assert str(run.trigger_id) == ids["trigger"]
         assert run.ran_as == "system"
-        assert run.status == "done"
+        assert run.status == "running"  # not finalized until the job runs
+        assert run.ended_at is None
         assert run.step_count == 1
         steps = (
             await s.execute(
@@ -298,6 +303,69 @@ async def test_fire_trigger_records_a_run_on_the_run_log(maker: async_sessionmak
         ).all()
     assert [st.name for st in steps] == ["consolidate_predicates"]
     assert {str(st.job_id) for st in steps} == set(fired.job_ids)
+
+
+async def test_finalize_job_step_closes_the_run_with_tokens_and_duration(
+    maker: async_sessionmaker,
+) -> None:
+    # When the worker finishes a dispatched job, finalize_job_step stamps the step's
+    # outcome + token cost and, once every step's job is terminal, closes the run:
+    # status done, ended_at set (a real duration), cost_tokens = sum of its steps.
+    ids = await _seed_schedule(
+        maker, action="consolidate_predicates", next_run_at=NOW + timedelta(days=1)
+    )
+    fired = await fire_trigger(maker, _registry(), ids["trigger"])
+    job_id = fired.job_ids[0]
+    # Simulate the worker reaching the job's terminal queue state before finalizing.
+    async with scoped_session(maker, queue.SYSTEM_CTX) as s:
+        await s.execute(
+            text("UPDATE app.jobs SET status = 'done', finished_at = now() WHERE id = :j"),
+            {"j": job_id},
+        )
+    trace = [{"event": "llm.complete", "task": "x", "tokens": 1234}]
+    await finalize_job_step(
+        maker, queue.SYSTEM_CTX, job_id, ok=True, cost_tokens=1234, detail=trace
+    )
+    async with scoped_session(maker, queue.SYSTEM_CTX) as s:
+        run = (
+            await s.execute(
+                text("SELECT status, ended_at, cost_tokens FROM app.runs WHERE pipeline = :p"),
+                {"p": ids["pipeline"]},
+            )
+        ).first()
+        step = (
+            await s.execute(
+                text("SELECT ok, cost_tokens, detail FROM app.run_steps WHERE job_id = :j"),
+                {"j": job_id},
+            )
+        ).first()
+    assert run is not None and run.status == "done"
+    assert run.ended_at is not None  # a real duration is now computable
+    assert run.cost_tokens == 1234
+    assert step is not None and step.ok is True and step.cost_tokens == 1234
+    assert step.detail == trace  # the captured "full logs" trace round-trips
+
+
+async def test_finalize_job_step_marks_a_failed_run_error(maker: async_sessionmaker) -> None:
+    # A failed job flips its step to ok=False and the run to status='error'.
+    ids = await _seed_schedule(
+        maker, action="consolidate_predicates", next_run_at=NOW + timedelta(days=1)
+    )
+    fired = await fire_trigger(maker, _registry(), ids["trigger"])
+    job_id = fired.job_ids[0]
+    async with scoped_session(maker, queue.SYSTEM_CTX) as s:
+        await s.execute(
+            text("UPDATE app.jobs SET status = 'failed', finished_at = now() WHERE id = :j"),
+            {"j": job_id},
+        )
+    await finalize_job_step(maker, queue.SYSTEM_CTX, job_id, ok=False, cost_tokens=42)
+    async with scoped_session(maker, queue.SYSTEM_CTX) as s:
+        status = (
+            await s.execute(
+                text("SELECT status FROM app.runs WHERE pipeline = :p"), {"p": ids["pipeline"]}
+            )
+        ).scalar_one()
+    assert status == "error"
 
 
 async def test_fire_trigger_require_manual_rejects_a_non_manual_trigger(

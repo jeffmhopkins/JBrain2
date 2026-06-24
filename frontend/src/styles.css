@@ -660,9 +660,10 @@ h3 {
   color: var(--amber);
 }
 
-/* The live context-usage meter in the composer foot: a thin fill bar + a terse
-   "used/window · %%". Sits between the footer text and the action icons, muted
-   until the window actually fills. */
+/* The live context-usage meter in the composer foot: a thin two-tone fill bar + a
+   terse "used/window · %%". The solid segment is the carried-forward floor; the
+   dimmer segment over it is the turn's transient tool I/O. Sits between the footer
+   text and the action icons, muted until the window actually fills. */
 .ctx-meter {
   display: flex;
   align-items: center;
@@ -672,6 +673,8 @@ h3 {
   font-size: var(--fs-micro);
   color: var(--text-3);
   font-variant-numeric: tabular-nums;
+  /* The fill hue; thresholds below warm it, both fill segments derive from it. */
+  --ctx-hue: var(--steel);
 }
 
 /* The foot-icons row already claims `margin-left: auto`; with the meter present it
@@ -681,6 +684,7 @@ h3 {
 }
 
 .ctx-bar {
+  position: relative;
   width: 40px;
   height: 4px;
   border-radius: var(--r-pill);
@@ -689,12 +693,26 @@ h3 {
   flex: none;
 }
 
+/* Both segments are absolute so they stack from the left; the base (painted last in
+   the DOM) sits over the peak's left portion. */
 .ctx-fill {
-  display: block;
+  position: absolute;
+  left: 0;
+  top: 0;
   height: 100%;
   border-radius: var(--r-pill);
-  background: var(--steel);
   transition: width 200ms ease-out;
+}
+
+/* The transient peak: a dimmed wash of the hue, blended toward the track so it reads
+   as "this turn's tool I/O" without competing with the solid carried floor. */
+.ctx-fill-peak {
+  background: color-mix(in srgb, var(--ctx-hue) 42%, var(--surface-2));
+}
+
+/* The carried-forward floor: the hue at full strength. */
+.ctx-fill-base {
+  background: var(--ctx-hue);
 }
 
 .ctx-text {
@@ -703,16 +721,13 @@ h3 {
 
 /* Past ~70% the meter warms to amber; past ~90% it goes full warning, so a context
    about to overflow reads at a glance without nagging earlier. */
-.ctx-meter.ctx-mid .ctx-fill {
-  background: var(--amber);
+.ctx-meter.ctx-mid {
+  --ctx-hue: var(--amber);
 }
 
 .ctx-meter.ctx-high {
+  --ctx-hue: var(--danger);
   color: var(--amber);
-}
-
-.ctx-meter.ctx-high .ctx-fill {
-  background: var(--danger);
 }
 
 /* ===== Toast ===== */
@@ -10340,6 +10355,35 @@ input.ld-title {
   line-height: 1.5;
 }
 
+/* The step's captured "full logs" trace — a collapsed disclosure to keep the step
+   tree glanceable, expanding to a scrollable monospace event list. */
+.runs-slog {
+  margin-top: 6px;
+}
+
+.runs-slog > summary {
+  font-size: var(--fs-micro);
+  color: var(--text-dim);
+  cursor: pointer;
+  user-select: none;
+}
+
+.runs-slog-body {
+  margin: 6px 0 0;
+  font-size: var(--fs-micro);
+  font-family: var(--font-mono);
+  color: var(--text-dim);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  padding: 7px 9px;
+  line-height: 1.5;
+  max-height: 260px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 .runs-sp-foot {
   margin-top: 12px;
   display: flex;
@@ -13525,6 +13569,7 @@ input.ld-title {
   gap: 9px;
   padding: 9px 14px;
   border-bottom: 1px solid var(--border);
+  align-items: flex-start; /* timestamp pins to the top as the caption scrolls */
 }
 .tv-vid-now-t {
   flex: 0 0 auto;
@@ -13534,9 +13579,15 @@ input.ld-title {
   color: var(--steel);
 }
 .tv-vid-now-cap {
+  flex: 1;
+  min-width: 0;
   font-size: var(--fs-secondary);
   line-height: 1.45;
   color: var(--text);
+  /* A fixed 4-line viewport (scroll past it) so the tabs + transcript below sit at the
+     same vertical position no matter how long the active frame's caption runs. */
+  height: calc(var(--fs-secondary) * 1.45 * 4);
+  overflow-y: auto;
 }
 /* Tabs: a steel underline marks the active panel (self-contained, no --mode dep). */
 .tv-vid-tabs {

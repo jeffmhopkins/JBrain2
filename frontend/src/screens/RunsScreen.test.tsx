@@ -49,6 +49,10 @@ const DETAIL: RunDetail = {
       cost_tokens: 300,
       job_id: null,
       error: null,
+      detail: [
+        { event: "llm.complete", task: "note.extract", timestamp: "2026-06-24T02:00:01Z" },
+        { event: "integration.done", committed: 9, review: 1, timestamp: "2026-06-24T02:00:03Z" },
+      ],
     },
     {
       idx: 1,
@@ -97,6 +101,17 @@ describe("RunsScreen", () => {
     expect(await within(sheet).findByText("classify domain")).toBeInTheDocument();
     expect(within(sheet).getByText("ocr_attachment")).toBeInTheDocument();
     expect(within(sheet).getByText(/vision adapter timeout/)).toBeInTheDocument();
+  });
+
+  it("shows a step's captured log trace (the full-logs view)", async () => {
+    mount();
+    fireEvent.click(await screen.findByText("predicate_sweep"));
+    const sheet = await screen.findByRole("dialog");
+    // The trace is a collapsed disclosure summarizing its event count...
+    expect(await within(sheet).findByText("2 log events")).toBeInTheDocument();
+    // ...whose body carries each event's message + its structured fields.
+    expect(within(sheet).getByText(/integration\.done/)).toBeInTheDocument();
+    expect(within(sheet).getByText(/committed=9/)).toBeInTheDocument();
   });
 
   it("fires a sweep trigger through B's endpoint", async () => {

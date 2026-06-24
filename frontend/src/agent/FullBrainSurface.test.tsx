@@ -76,6 +76,7 @@ function Harness({
       </button>
       <span data-testid="busy">{String(fb.busy)}</span>
       <span data-testid="usage">{fb.usage ? `${fb.usage.used}/${fb.usage.window}` : "none"}</span>
+      <span data-testid="usage-base">{fb.usage ? String(fb.usage.base) : "none"}</span>
       {/* The lateral-panel affordances the home screen provides (top bar tap and
           the omnibox swipe live there); the surface itself no longer swipes. */}
       <button type="button" onClick={() => fb.setPanel("sessions")}>
@@ -1269,6 +1270,9 @@ describe("FullBrainSurface", () => {
 
     // The latest usage event wins (4000 + 96), against the model's window.
     await waitFor(() => expect(screen.getByTestId("usage").textContent).toBe("4096/32768"));
+    // ...but the carried-forward floor stays pinned to the turn's FIRST step's prompt
+    // (1000), so the meter can shade it apart from the later tool growth.
+    expect(screen.getByTestId("usage-base").textContent).toBe("1000");
   });
 
   it("clears the context meter when the open chat changes", async () => {

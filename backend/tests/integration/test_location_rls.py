@@ -180,6 +180,60 @@ async def test_force_rls_holds_across_hypertable_chunks(maker: async_sessionmake
     assert await _count(maker, unscoped, one, {"a": sid_a}) == 0
 
 
+# --- owner_last_fix (the warm-fix cache) ------------------------------------
+
+
+async def _owner_principal(maker: async_sessionmaker) -> SessionContext:
+    """An owner Principal row + a FULL-owner ctx bound to it (the cache's FK target)."""
+    pid = str(uuid.uuid4())
+    async with scoped_session(maker, OWNER) as session:
+        await session.execute(
+            text("INSERT INTO app.principals (id, kind, key_hash) VALUES (:p, 'owner', :kh)"),
+            {"p": pid, "kh": uuid.uuid4().hex},
+        )
+    return SessionContext(principal_id=pid, principal_kind="owner")
+
+
+async def test_owner_last_fix_firewall(maker: async_sessionmaker) -> None:
+    owner = await _owner_principal(maker)
+    one = "SELECT count(*) FROM app.owner_last_fix WHERE principal_id = cast(:p AS uuid)"
+    args = {"p": owner.principal_id}
+    # The full owner seeds + reads its own warm-fix cache.
+    async with scoped_session(maker, owner) as session:
+        await session.execute(
+            text(
+                "INSERT INTO app.owner_last_fix (principal_id, latitude, longitude)"
+                " VALUES (cast(:p AS uuid), 40.0, -74.0)"
+            ),
+            args,
+        )
+    assert await _count(maker, owner, one, args) == 1
+    # A narrowed owner agent session is NOT a full owner → the cache is invisible.
+    narrowed = read_context(owner.principal_id, ("location",))
+    assert await _count(maker, narrowed, one, args) == 0
+    # A device key and a location-scoped capability token also see nothing.
+    pid_a, sid_a = await _device(maker, "phone A")
+    assert await _count(maker, device_context(pid_a, sid_a), one, args) == 0
+    loc_token = SessionContext(principal_kind="capability_token", domain_scopes=("location",))
+    assert await _count(maker, loc_token, one, args) == 0
+
+
+async def test_owner_last_fix_with_check_blocks_a_narrowed_owner(maker: async_sessionmaker) -> None:
+    # WITH CHECK (is_full_owner + location scope): a narrowed agent session — owner
+    # identity but owner_scoped — cannot seed or overwrite the cache.
+    owner = await _owner_principal(maker)
+    narrowed = read_context(owner.principal_id, ("location",))
+    with pytest.raises(ProgrammingError):
+        async with scoped_session(maker, narrowed) as session:
+            await session.execute(
+                text(
+                    "INSERT INTO app.owner_last_fix (principal_id, latitude, longitude)"
+                    " VALUES (cast(:p AS uuid), 1.0, 2.0)"
+                ),
+                {"p": owner.principal_id},
+            )
+
+
 # --- place_geofence (derived mirror) ---------------------------------------
 
 

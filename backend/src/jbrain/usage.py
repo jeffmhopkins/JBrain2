@@ -7,8 +7,10 @@ dollar figure.
 """
 
 import uuid
+from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
+from types import TracebackType
 from typing import Any
 
 from sqlalchemy import text
@@ -23,6 +25,35 @@ USAGE_CTX = SessionContext(principal_id="llm-usage", principal_kind="owner")
 
 DAYS_WINDOW = 30
 
+# Per-unit-of-work token tally. The recorder is the SINGLE chokepoint every LLM
+# call passes through, so a caller (the worker, around one job) opens a scope and
+# the recorder tallies that scope's tokens here. A ContextVar is task-local and
+# propagates through `await`, so a job's nested calls land in its own counter even
+# if another job runs concurrently. None = no scope active (the tally is skipped).
+_token_tally: ContextVar[list[int] | None] = ContextVar("llm_token_tally", default=None)
+
+
+class TokenScope:
+    """Scope the running LLM-token tally to a unit of work (one worker job). Every
+    `SqlUsageRecorder.record` inside the scope adds to `total`; reads it after."""
+
+    def __enter__(self) -> "TokenScope":
+        self._acc: list[int] = [0]
+        self._token = _token_tally.set(self._acc)
+        return self
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: TracebackType | None,
+    ) -> None:
+        _token_tally.reset(self._token)
+
+    @property
+    def total(self) -> int:
+        return self._acc[0]
+
 
 class SqlUsageRecorder:
     """UsageRecorder backed by app.llm_usage; one row per adapter call."""
@@ -31,6 +62,11 @@ class SqlUsageRecorder:
         self._maker = maker
 
     async def record(self, *, task: str, provider: str, model: str, usage: LlmUsage) -> None:
+        # Tally into the active per-job TokenScope (if any) so the run-log can show
+        # the tokens that job spent — the recorder is the one place every call meets.
+        acc = _token_tally.get()
+        if acc is not None:
+            acc[0] += usage.input_tokens + usage.output_tokens
         async with scoped_session(self._maker, USAGE_CTX) as session:
             await session.execute(
                 text(

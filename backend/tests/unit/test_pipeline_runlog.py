@@ -56,7 +56,7 @@ async def test_record_writes_a_pipeline_run_and_a_step_per_job(monkeypatch: Any)
     assert run.ran_as == "scoped"
     assert run.domain_code == "general"
     assert run.principal_id == uuid.UUID(PID)
-    assert run.status == "done"
+    assert run.status == "running"  # opened running; the worker finalizes it
     assert run.step_count == 1
     # The step references the enqueued job and is stamped kind='action'.
     assert steps[0].run_id == uuid.UUID(run_id)
