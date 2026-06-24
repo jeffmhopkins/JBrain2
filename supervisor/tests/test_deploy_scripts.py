@@ -104,3 +104,17 @@ def test_update_marks_worktree_safe_before_pull() -> None:
     assert safe is not None, "update-inner.sh must mark the worktree safe.directory"
     assert pull is not None, "update-inner.sh must run the pull"
     assert safe < pull, "safe.directory must be set before the pull"
+
+
+def test_downloader_python_heredoc_delimiter_is_quoted() -> None:
+    # download-local-weights.sh embeds a Python program as a heredoc inside a
+    # single-quoted `bash -c '...'`. The heredoc delimiter MUST be quoted (<<'PY')
+    # so the body is fed to Python verbatim. With an unquoted <<PY, the container's
+    # bash command-substitutes any backtick in the body and expands $-expressions —
+    # a backticked `hf download` in a comment actually ran the command and injected
+    # its help text ("Download files from the Hub.") into the source, so Python died
+    # with an IndentationError and the download silently never started.
+    text = (DEPLOY / "download-local-weights.sh").read_text()
+    # The quoted delimiter, escaped to survive the outer single-quoted bash -c string.
+    assert "<<'\"'\"'PY'\"'\"'" in text, "the Python heredoc delimiter must be quoted (<<'PY')"
+    assert "<<PY" not in text, "a bare <<PY would let bash expand backticks/$ in the Python body"
