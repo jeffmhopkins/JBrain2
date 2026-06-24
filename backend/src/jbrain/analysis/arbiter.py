@@ -196,6 +196,22 @@ def _object_named(
     return bool(surface) and _norm(surface) in haystack
 
 
+def _relationship_object_named(fact: IntentFact, haystack: str) -> bool:
+    """A relationship edge whose OBJECT the note names verbatim is surface-stated,
+    even when the model flagged it inferred. The integrator under-flags ENUMERATED
+    kinship ("daughters named Summer, Lydian, Harmony, Elora") as inferred for the
+    non-first members — sinking them to the inferred ceiling and into review while
+    the first commits — yet the note names each child outright. `object_entity_ref`
+    is the extraction mention name, i.e. the note's own surface for the object, so
+    its verbatim presence is deterministic grounding the model's self-assessment
+    cannot override. This is the relationship twin of `_date_phrase_grounded`, and
+    unlike `_object_named` it is NOT gated behind `not fact.inferred` — that gate is
+    exactly what the under-flagging defeats. Scoped to relationship edges so a
+    non-relationship inferred fact is never promoted by a bare name match."""
+    ref = fact.object_entity_ref
+    return fact.kind == "relationship" and ref is not None and _norm(ref) in haystack
+
+
 def _norm(s: str) -> str:
     """Collapse whitespace and casing so an attestation check survives the model's
     quote drift (a reworded space, a capital, a smart quote) — the same string the
@@ -369,14 +385,23 @@ def compute_signals(
         # object's name, or the stored VALUE appearing in the note. The last two are
         # deterministic backstops for the model's run-to-run quote drift, which
         # otherwise dumps a clearly-stated fact into review under the inferred ceiling.
+        # _relationship_object_named is a further backstop that fires EVEN when the
+        # model flagged the edge inferred (see its docstring) — the date-phrase twin.
         surface_attested = (
-            not fact.inferred
-            and (
-                (fact.attested_span is not None and _norm(fact.attested_span.surface) in haystack)
-                or _object_named(fact, res_by_ref, haystack)
-                or _value_attested(fact.value_json, haystack)
+            (
+                not fact.inferred
+                and (
+                    (
+                        fact.attested_span is not None
+                        and _norm(fact.attested_span.surface) in haystack
+                    )
+                    or _object_named(fact, res_by_ref, haystack)
+                    or _value_attested(fact.value_json, haystack)
+                )
             )
-        ) or _date_phrase_grounded(fact, types, haystack)
+            or _date_phrase_grounded(fact, types, haystack)
+            or _relationship_object_named(fact, haystack)
+        )
         out[i] = ConfidenceSignals(
             surface_attested=surface_attested,
             predicate_known=any(t.predicate(fact.predicate) is not None for t in types),
