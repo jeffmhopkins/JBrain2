@@ -40,7 +40,7 @@ mutation, which is why v1 writes are confined to reversible label/archive operat
 | **Auth** | OAuth2 **refresh token + client id/secret in config** (env), like `mqtt_ingest_secret`; a one-time bootstrap script mints the refresh token | No token table, no DB; single-owner box, so a config secret is coherent |
 | **OAuth scope** | `gmail.modify` only — read + create-label + label + archive. **No delete/trash scope requested** | Writes are non-destructive and reversible by construction; permanent delete is out of reach even if asked |
 | **Organization model** | Gmail **labels, not folders** — the agent builds and applies a label taxonomy (Gmail's `Parent/Child` nesting). "Move" = apply a label + remove `INBOX` | Matches how Gmail actually organizes; a synced client shows the result as folders |
-| **v1 actions** | `gmail_search`, `gmail_read`, `gmail_list_labels`, `gmail_label` (apply/remove a label, **creating it if missing**), `gmail_archive` (remove `INBOX`) | "Move" in Gmail = label + un-inbox; both reversible. Destructive ops deferred |
+| **Tool primitives (v1)** | `gmail_search`, `gmail_read`, `gmail_list_labels`, `gmail_create_label`, `gmail_label` (apply/remove → move into a label), `gmail_archive` (remove `INBOX`) | A clean primitive set; the organizing *tasks* are built on top of these later. "Move" in Gmail = label + un-inbox; both reversible. Destructive ops deferred |
 | **Permission class** | `web` (direct-exec, opt-in gate), allowlisted to `archivist` only | Runs directly (no Proposal), exactly like jerv's web tools; `curator` never gains them |
 | **Persistence** | **None on the DB.** The nightly cursor lives in a single **storage-abstraction blob**; Gmail's own labels are the real state | Honors "no DB access"; storage is the sanctioned file-I/O path (non-negotiable #2) |
 | **RAG ingestion** | **Out of scope.** Email never becomes a note in this plan | The notes/RLS/ingest surface stays untouched; a clean follow-on if desired |
@@ -74,14 +74,17 @@ egress Proposal instead of acting directly (noted in Wave E3).
   httpx (OAuth refresh-token → access-token mint, typed search/read/modify calls), the
   `gmail_*` config fields, a one-time **OAuth bootstrap script**, and a `FakeGmail`
   for tests. `dev-setup.sh` updated for the new env vars + bootstrap step (#8).
-- **Wave E2 — tools + persona** (no GUI): the five `.tool` sidecars + handlers (thin
+- **Wave E2 — tools + persona** (no GUI): the six `.tool` sidecars + handlers (thin
   over the client), the `archivist` persona + its allowlist in `agents.py`, the
   `archivist.prompt` system prompt, and the `web`-gate wiring in `main.py`. This is
   the **interactive agent session** — the user's "first step."
-- **Wave E3 — the nightly batch task** (no GUI): a standalone scheduled entrypoint
-  that chews through history chronologically, a **dry-run mode** for the first runs,
-  and the cursor blob. Independent of the Phase-5 workflow engine (which is
-  DB-backed) to keep the feature DB-free.
+
+**Scope of this plan = E1 + E2: the persona and the tool primitives.** The
+organizing *tasks* built on top of the persona — nightly/batch runs, how the label
+taxonomy is decided, dry-run, cursor/checkpointing — are **designed separately,
+later** (see "The task layer (deferred)" below). The foundation deliberately stops at
+a clean, reusable set of Gmail primitives so any number of tasks can be built on it
+without reopening the tool surface.
 
 Per `PROCESS.md`: each wave runs its tasks in parallel worktrees off a `wave-N`
 branch, gets an independent per-task review and a per-wave review, and lands as
@@ -161,15 +164,18 @@ client (the `build_web_handlers` pattern):
 |---|---|---|
 | `gmail_search` | `{query, limit?}` | matching messages (id, from, subject, date, snippet) |
 | `gmail_read` | `{message_id}` | the full message as text (headers + body) |
-| `gmail_list_labels` | `{}` | the account's labels (so the model reuses an existing one before inventing) |
-| `gmail_label` | `{message_id, add?, remove?}` | confirmation; `add`/`remove` are label **names** resolved to ids in the handler, **creating an `add` label if it doesn't exist** (`Parent/Child` for nesting) |
+| `gmail_list_labels` | `{}` | the account's labels (so the model reuses an existing one before creating) |
+| `gmail_create_label` | `{name}` | creates a label (`Parent/Child` for nesting); idempotent — returns the existing one if the name is taken |
+| `gmail_label` | `{message_id, add?, remove?}` | confirmation; `add`/`remove` are label **names** resolved to ids in the handler (this is "move into a label") |
 | `gmail_archive` | `{message_id}` | confirmation (removes `INBOX`) |
 
 Handlers receive the standard `ToolContext` but use **none** of its DB-backed
-fields — they call only the client. `gmail_label` resolves names against
-`list_labels()` and creates a missing label via `create_label` rather than failing,
-so the persona can build a taxonomy in one step; the `archivist.prompt` instructs it
-to `gmail_list_labels` first and reuse existing labels to avoid drift (e.g. a typo'd
+fields — they call only the client. Creation is its own primitive (`gmail_create_label`)
+rather than a side effect of applying a label, so a task can build the taxonomy
+deliberately; `gmail_label` resolves an `add` name against `list_labels()` and, if it
+is missing, returns a message telling the model to `gmail_create_label` first
+(predictable over implicit creation). The `archivist.prompt` instructs the
+list → create → apply workflow and to reuse existing labels to avoid drift (a typo'd
 near-duplicate). Errors return the `GmailError` message as the tool result.
 
 ### The persona (`agents.py` + `archivist.prompt`)
@@ -178,7 +184,14 @@ Following the jerv block exactly:
 
 ```python
 GMAIL_TOOLS = frozenset(
-    {"gmail_search", "gmail_read", "gmail_list_labels", "gmail_label", "gmail_archive"}
+    {
+        "gmail_search",
+        "gmail_read",
+        "gmail_list_labels",
+        "gmail_create_label",
+        "gmail_label",
+        "gmail_archive",
+    }
 )
 
 AGENTS = {
@@ -203,37 +216,34 @@ threaded into the registry build beside `web_handlers`.
 
 ### Tests
 
-Loop tests drive `archivist` against `FakeGmail` (search → read → label → archive);
-a persona test asserts the allowlist and that `archivist` is rejected from any
-knowledge tool; a registry test asserts the gmail sidecars are web-gated and absent
-from `curator`. Coverage stays at the 80% gate.
+Loop tests drive `archivist` against `FakeGmail` (search → create-label → label →
+archive); a persona test asserts the six-tool allowlist and that `archivist` is
+rejected from any knowledge tool; a registry test asserts the gmail sidecars are
+web-gated and absent from `curator`. Coverage stays at the 80% gate.
 
 ---
 
-## Wave E3 — the nightly batch task
+## The task layer (deferred — designed separately, later)
 
-A standalone scheduled entrypoint (`backend/src/jbrain/gmail/nightly.py` + a CLI/cron
-hook), **independent of the Phase-5 workflow engine** (which is DB-backed) so the
-feature stays DB-free:
+The persona + primitives above are the foundation; the organizing **tasks** are built
+on top of them and are out of scope for this plan. They are sketched here only so the
+foundation doesn't paint them into a corner — none of this is committed by E1–E2:
 
-- **Cursor.** A single JSON blob via the storage abstraction (`BlobStore`) records how
-  far back through history the job has processed (by Gmail internal date / page
-  token). Loss of the cursor only re-scans; Gmail's labels are the real state, so the
-  loop is idempotent.
-- **The loop.** Each run pulls the next batch of un-triaged messages, runs the
-  `archivist` persona over them (search/read), and applies labels/archive. Bounded by
-  a per-run message/cost cap so a 20-year backlog is chewed in nightly slices.
-- **Dry-run mode (default for the first runs).** The loop logs intended
-  label/archive actions **without** calling `modify`, so the owner can eyeball the
-  agent's judgment before granting it the write. A config flag flips it live.
-- **Future: batch-approve.** If the owner later wants human-in-the-loop at scale,
-  this is where the run emits one batch egress Proposal of intended moves instead of
-  acting directly — the architecture-native consent path, deferred here.
+- **How the taxonomy is decided** — the agent infers categories from the mail vs. it
+  is handed a fixed label scheme. A task-prompt decision, not a tool change.
+- **Nightly / batch runs** — a standalone scheduled entrypoint chewing the 20-year
+  backlog in slices, with a **cursor** (a JSON blob via the storage abstraction, since
+  Gmail's labels are the real state and the loop is idempotent) and a per-run
+  message/cost cap. Kept **independent of the Phase-5 workflow engine** (which is
+  DB-backed) so the feature stays DB-free.
+- **Dry-run** — a run that logs intended label/archive actions without calling the
+  write, so the owner can vet the agent's judgment before it acts.
+- **Batch-approve** — if the owner later wants human-in-the-loop at scale, a run can
+  emit one batch egress Proposal of intended moves instead of acting directly (the
+  architecture-native consent path).
 
-### Tests
-
-`FakeGmail` + a fake clock drive a multi-batch run; assertions cover cursor advance,
-idempotent re-run, the per-run cap, and that dry-run performs zero `modify` calls.
+Because every task reuses the same six primitives, the tool surface does not reopen
+when a new task is designed.
 
 ---
 
