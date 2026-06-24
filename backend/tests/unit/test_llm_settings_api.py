@@ -600,8 +600,13 @@ def test_install_download_progress_climbs_with_on_disk_bytes(tmp_path: Any) -> N
     # shards included), so the drawer can render download_gb / size_gb as a live bar.
     model_dir = tmp_path / "qwen3-235b-a22b"
     model_dir.mkdir()
-    (model_dir / "shard-00001-of-00003.gguf").write_bytes(b"\0" * (1024**3))
-    (model_dir / "shard-00002.gguf.incomplete").write_bytes(b"\0" * (1024**3 // 2))
+    # Sparse files so the GiB sizes cost no disk (st_size is all dir_size_gb reads).
+    for name, size in (
+        ("shard-00001-of-00003.gguf", 1024**3),
+        ("shard-00002.gguf.incomplete", 1024**3 // 2),
+    ):
+        with (model_dir / name).open("wb") as f:
+            f.truncate(size)
     settings = _cloud_settings(
         local_llm_enabled=True,
         local_models=["qwen3-vl-30b", "gpt-oss-120b"],

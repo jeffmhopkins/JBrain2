@@ -8,7 +8,11 @@ _GIB = 1024**3
 
 
 def _write(path: Path, size_bytes: int) -> None:
-    path.write_bytes(b"\0" * size_bytes)
+    # Sparse: set the file's apparent size without writing size_bytes of real data,
+    # so the GiB-scale sizes these tests assert on cost no disk (st_size still reads
+    # the full length, which is all weights_size_gb/dir_size_gb measure).
+    with path.open("wb") as f:
+        f.truncate(size_bytes)
 
 
 def test_sums_every_gguf_in_the_model_dir(tmp_path: Path) -> None:

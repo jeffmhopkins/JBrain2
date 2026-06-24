@@ -352,6 +352,9 @@ export interface LocalModelInfo {
   id: string;
   label: string;
   enabled: boolean;
+  /** Queued for install from the PWA but not yet on the box — the next update
+   * provisions it. Mutually exclusive with `enabled`. */
+  queued: boolean;
   /** Runtime state from the gateway (best-effort): resident in memory right now. */
   loaded: boolean;
   supports_vision: boolean;
@@ -362,6 +365,10 @@ export interface LocalModelInfo {
   size_gb: number;
   /** Real measured weights size on disk, or null when the model isn't provisioned. */
   disk_gb: number | null;
+  /** Bytes on disk for the model's dir (partial downloads included), in GB, or null
+   * when nothing is downloaded / hosting off. Numerator of the live install bar:
+   * download_gb / size_gb is the percentage while a queued model provisions. */
+  download_gb: number | null;
   note: string;
   /** The model's catalog default context window — the gateway's `-c` absent an
    * override, and the ceiling the size picker caps at. */
@@ -1360,6 +1367,16 @@ export const api = {
   async stageLocalModel(id: string, on: boolean): Promise<LlmSettings> {
     const response = await request(
       `/api/settings/llm/local-models/${encodeURIComponent(id)}/stage`,
+      { method: on ? "POST" : "DELETE" },
+    );
+    return (await response.json()) as LlmSettings;
+  },
+
+  /** Queue / unqueue an un-provisioned model for install on the next update;
+   * returns the full snapshot. */
+  async queueLocalInstall(id: string, on: boolean): Promise<LlmSettings> {
+    const response = await request(
+      `/api/settings/llm/local-models/${encodeURIComponent(id)}/install`,
       { method: on ? "POST" : "DELETE" },
     );
     return (await response.json()) as LlmSettings;

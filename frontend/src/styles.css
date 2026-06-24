@@ -1303,6 +1303,89 @@ h3 {
   opacity: 0.5;
   cursor: default;
 }
+.llm-local-state.queued {
+  color: var(--steel);
+}
+/* "Available to install": the catalog models not yet on the box. A subtle header
+   separates them from the provisioned roster above; an Install row reuses the
+   model-row layout but adds a note and (while downloading) a progress bar. */
+.llm-local-avail-h {
+  font-size: var(--fs-micro);
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-3);
+  margin: 16px 0 4px;
+}
+.llm-local-row.install.queued {
+  border-left: 2px solid var(--steel);
+  padding-left: 10px;
+  margin-left: -12px;
+}
+.llm-local-note {
+  font-size: var(--fs-micro);
+  color: var(--text-2);
+  line-height: 1.5;
+  margin: 8px 0 0;
+}
+/* Live download bar: a thin track that fills with the steel accent as the queued
+   model's on-disk bytes climb toward its catalog size. */
+.llm-local-dl {
+  margin-top: 10px;
+}
+.llm-local-dl-bar {
+  height: 6px;
+  border-radius: var(--r-pill);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  overflow: hidden;
+}
+.llm-local-dl-bar i {
+  display: block;
+  height: 100%;
+  background: var(--steel);
+  transition: width 0.4s ease;
+}
+.llm-local-dl-cap {
+  display: block;
+  font-size: var(--fs-micro);
+  color: var(--text-2);
+  margin-top: 5px;
+}
+/* Sticky-feeling action bar shown while models are queued: the download tally and
+   the "Update & install now" button that kicks the provisioning update. */
+.llm-local-queue {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 14px;
+  padding: 12px 14px;
+  border: 1px solid var(--steel);
+  border-radius: var(--r-card);
+  background: var(--steel-tint);
+}
+.llm-local-queue-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.llm-local-queue-text b {
+  font-size: var(--fs-body);
+  font-weight: 600;
+  color: var(--text);
+}
+.llm-local-queue-text span {
+  font-size: var(--fs-micro);
+  color: var(--text-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.llm-local-queue .llm-local-btn {
+  margin-left: auto;
+  flex: none;
+}
 /* Context-window control: a compact label + size dropdown + KV estimate, editable
    while idle/staged and locked (disabled) while the model is loaded. */
 .llm-local-ctx {

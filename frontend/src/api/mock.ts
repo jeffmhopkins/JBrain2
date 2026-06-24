@@ -333,6 +333,7 @@ const LLM_SETTINGS: LlmSettings = {
       id: "qwen3-vl-30b",
       label: "Qwen3-VL 30B · vision",
       enabled: false,
+      queued: false,
       loaded: false,
       supports_vision: true,
       supports_tools: true,
@@ -340,6 +341,7 @@ const LLM_SETTINGS: LlmSettings = {
       quant: "Q8_0",
       size_gb: 32,
       disk_gb: null,
+      download_gb: null,
       note: "Vision + a capable cheap text model.",
       context_window: 32768,
       context_window_override: null,
@@ -350,6 +352,7 @@ const LLM_SETTINGS: LlmSettings = {
       id: "gpt-oss-120b",
       label: "GPT-OSS 120B · reasoning",
       enabled: false,
+      queued: false,
       loaded: false,
       supports_vision: false,
       supports_tools: true,
@@ -357,11 +360,31 @@ const LLM_SETTINGS: LlmSettings = {
       quant: "MXFP4",
       size_gb: 59,
       disk_gb: null,
+      download_gb: null,
       note: "Strongest open reasoning that still runs fast here.",
       context_window: 131072,
       context_window_override: null,
       staged: false,
       kv_gb: 4.5,
+    },
+    {
+      id: "qwen3-235b-a22b",
+      label: "Qwen3-235B-A22B · reasoning (alt, 3-bit)",
+      enabled: false,
+      queued: false,
+      loaded: false,
+      supports_vision: false,
+      supports_tools: true,
+      tiers: ["high"],
+      quant: "UD-Q3_K_XL",
+      size_gb: 104.2,
+      disk_gb: null,
+      download_gb: null,
+      note: "235B MoE, 22B active — the strongest open model that fits this 128 GB box, at 3-bit. Standalone only (swappable).",
+      context_window: 32768,
+      context_window_override: null,
+      staged: false,
+      kv_gb: 11.5,
     },
   ],
   host_memory: null,
@@ -2635,6 +2658,13 @@ export const mockFetch: typeof fetch = async (input, init) => {
     const id = decodeURIComponent(stageMatch[1] ?? "");
     const model = LLM_SETTINGS.local_models.find((m) => m.id === id);
     if (model) model.staged = method === "POST";
+    return json(LLM_SETTINGS);
+  }
+  const installMatch = path.match(/^\/api\/settings\/llm\/local-models\/(.+)\/install$/);
+  if (installMatch && (method === "POST" || method === "DELETE")) {
+    const id = decodeURIComponent(installMatch[1] ?? "");
+    const model = LLM_SETTINGS.local_models.find((m) => m.id === id);
+    if (model && !model.enabled) model.queued = method === "POST";
     return json(LLM_SETTINGS);
   }
   const windowMatch = path.match(/^\/api\/settings\/llm\/local-models\/(.+)\/context-window$/);

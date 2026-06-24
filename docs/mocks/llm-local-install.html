@@ -1,0 +1,370 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>JBrain · Install local models from the PWA — mock</title>
+<style>
+  :root {
+    --bg:#0E0F11; --surface:#17181B; --surface-2:#1E2024; --border:#26282C;
+    --text:#E6E7E9; --text-2:#9A9DA3; --text-3:#5C5F66;
+    --steel:#7FA7C9; --green:#8FBC9A; --amber:#C9A36A; --rose:#CF8A8F; --violet:#A493C9;
+    --teal:#6FB6B1;
+    --font:-apple-system,system-ui,"Segoe UI",Roboto,sans-serif;
+    --mono:"SF Mono",ui-monospace,Menlo,Consolas,monospace;
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font-family:var(--font);
+         font-size:15px; line-height:1.4; -webkit-font-smoothing:antialiased; }
+  .wrap { max-width:520px; margin:0 auto; padding:16px 16px 60px; }
+  h1.title { font-size:22px; font-weight:500; margin:6px 0 2px; }
+  p.meta { color:var(--text-2); font-size:13px; margin:0 0 18px; }
+  .note { color:var(--text-2); font-size:12.5px; margin:10px 2px 0; }
+  code { font-family:var(--mono); font-size:.9em; background:var(--surface-2);
+         padding:1px 5px; border-radius:5px; color:var(--text); }
+
+  /* drawer shell */
+  .drawer { background:var(--surface); border:1px solid var(--border);
+            border-radius:16px; overflow:hidden; }
+  .drawer-top { display:flex; align-items:center; gap:10px; padding:13px 14px;
+                cursor:pointer; user-select:none; }
+  .dot { width:9px; height:9px; border-radius:999px; background:var(--green);
+         box-shadow:0 0 0 4px color-mix(in srgb,var(--green) 18%,transparent); flex:none; }
+  .drawer-title { font-weight:500; }
+  .drawer-sub { color:var(--text-2); font-size:12.5px; margin-left:auto; }
+  .body { border-top:1px solid var(--border); padding:14px; }
+
+  /* memory meter */
+  .mem { margin-bottom:16px; }
+  .mem-bar { height:26px; border-radius:8px; background:var(--surface-2);
+             border:1px solid var(--border); overflow:hidden; display:flex; }
+  .mem-seg { height:100%; display:flex; align-items:center; position:relative;
+             min-width:0; transition:width .5s ease; }
+  .mem-seg .lab { font-size:11px; padding-left:7px; white-space:nowrap; overflow:hidden;
+                  color:#0E0F11; font-weight:600; }
+  .mem-seg.queued { opacity:.5; }
+  .mem-seg.queued .lab { color:var(--text); }
+  .mem-cap { display:flex; gap:10px; font-size:12px; color:var(--text-2);
+             margin-top:6px; }
+  .mem-cap .total { margin-left:auto; }
+  .mem-cap .warn { color:var(--amber); }
+
+  /* section heading */
+  .sec-h { font-size:11.5px; letter-spacing:.08em; text-transform:uppercase;
+           color:var(--text-3); margin:20px 2px 9px; font-weight:600;
+           display:flex; align-items:center; gap:8px; }
+  .sec-h .count { color:var(--text-2); letter-spacing:0; text-transform:none; font-weight:500; }
+
+  /* model row */
+  .row { background:var(--surface-2); border:1px solid var(--border);
+         border-radius:13px; padding:12px 13px; margin-bottom:9px; }
+  .row.installing { border-color:color-mix(in srgb,var(--steel) 55%,var(--border)); }
+  .row-head { display:flex; align-items:flex-start; gap:10px; }
+  .row-name { font-weight:500; font-size:14.5px; }
+  .row-meta { color:var(--text-2); font-size:12px; margin-top:2px; }
+  .row-acts { margin-left:auto; display:flex; gap:6px; align-items:center; flex:none; }
+  .state { font-size:11px; padding:2px 8px; border-radius:999px; border:1px solid var(--border);
+           color:var(--text-2); background:var(--bg); white-space:nowrap; }
+  .state.loaded { color:var(--green); border-color:color-mix(in srgb,var(--green) 40%,var(--border)); }
+  .state.staged { color:var(--amber); border-color:color-mix(in srgb,var(--amber) 40%,var(--border)); }
+  .state.queued { color:var(--steel); border-color:color-mix(in srgb,var(--steel) 40%,var(--border)); }
+
+  button.btn { border:1px solid var(--border); background:var(--bg); color:var(--text);
+               font:inherit; font-size:12.5px; padding:5px 11px; border-radius:9px;
+               cursor:pointer; font-weight:500; }
+  button.btn:hover { border-color:var(--text-3); }
+  button.btn.primary { background:var(--steel); color:#0E0F11; border-color:var(--steel); }
+  button.btn.primary:hover { filter:brightness(1.06); }
+  button.btn:disabled { opacity:.45; cursor:default; }
+  button.btn.ghost { background:transparent; }
+
+  .chips { display:flex; flex-wrap:wrap; gap:5px; margin-top:9px; }
+  .chip { font-size:11px; padding:2px 8px; border-radius:999px; border:1px solid var(--border);
+          color:var(--text-2); }
+  .chip.tier { color:var(--steel); border-color:color-mix(in srgb,var(--steel) 35%,var(--border)); }
+  .chip.tools { color:var(--teal); border-color:color-mix(in srgb,var(--teal) 35%,var(--border)); }
+  .chip.vision { color:var(--violet); border-color:color-mix(in srgb,var(--violet) 35%,var(--border)); }
+  .chip.warn { color:var(--amber); border-color:color-mix(in srgb,var(--amber) 35%,var(--border)); }
+
+  .row-note { font-size:12px; color:var(--text-2); margin-top:9px; line-height:1.45; }
+
+  /* download progress inside a row */
+  .dl { margin-top:11px; }
+  .dl-bar { height:7px; border-radius:999px; background:var(--bg); overflow:hidden;
+            border:1px solid var(--border); }
+  .dl-bar i { display:block; height:100%; background:var(--steel); width:0; transition:width .3s ease; }
+  .dl-cap { font-size:11.5px; color:var(--text-2); margin-top:5px; font-family:var(--mono); }
+
+  /* queued action bar (sticky) */
+  .queuebar { position:sticky; bottom:0; margin-top:16px; background:var(--surface);
+              border:1px solid color-mix(in srgb,var(--steel) 45%,var(--border));
+              border-radius:14px; padding:12px 14px; display:flex; align-items:center;
+              gap:12px; box-shadow:0 6px 22px rgba(0,0,0,.4); }
+  .queuebar .qtext { font-size:13px; }
+  .queuebar .qtext b { font-weight:600; }
+  .queuebar .qsub { color:var(--text-2); font-size:11.5px; margin-top:2px; }
+  .queuebar .qacts { margin-left:auto; display:flex; gap:8px; flex:none; }
+
+  /* update console modal */
+  .scrim { position:fixed; inset:0; background:rgba(0,0,0,.6); display:none;
+           align-items:flex-end; justify-content:center; z-index:20; }
+  .scrim.on { display:flex; }
+  .sheet { width:100%; max-width:520px; background:var(--surface);
+           border:1px solid var(--border); border-radius:16px 16px 0 0; padding:16px;
+           max-height:82vh; overflow:auto; }
+  .sheet h2 { font-size:16px; margin:0 0 3px; font-weight:500; }
+  .sheet .sub { color:var(--text-2); font-size:12.5px; margin:0 0 13px; }
+  .console { background:#0B0C0E; border:1px solid var(--border); border-radius:10px;
+             padding:11px 12px; font-family:var(--mono); font-size:12px; line-height:1.6;
+             color:var(--text-2); min-height:150px; max-height:300px; overflow:auto; }
+  .console .ok { color:var(--green); }
+  .console .run { color:var(--steel); }
+  .console .dim { color:var(--text-3); }
+  .sheet-acts { display:flex; gap:8px; margin-top:14px; justify-content:flex-end; }
+
+  .seg { display:flex; gap:4px; background:var(--surface-2); padding:4px;
+         border-radius:11px; border:1px solid var(--border); margin-bottom:14px; }
+  .seg button { flex:1; border:0; background:transparent; color:var(--text-2);
+                padding:8px; border-radius:8px; font:inherit; font-weight:500;
+                cursor:pointer; font-size:12.5px; }
+  .seg button.on { background:var(--steel); color:#0E0F11; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1 class="title">Settings · LLM → On-box models</h1>
+  <p class="meta">Mock of the proposed <b>install-from-PWA</b> flow. Today this drawer is read-only and
+  models can only be added by SSHing in and running <code>jbrain enable-local-models</code>. This adds an
+  <b>Install</b> control to each un-provisioned catalog model; selected models are queued and provisioned
+  by the existing <b>Update</b> run — no shell.</p>
+
+  <div class="seg">
+    <button id="tab-a" class="on" onclick="setTab('a')">1 · Pick a model</button>
+    <button id="tab-b" onclick="setTab('b')">2 · Update installs it</button>
+  </div>
+
+  <div class="drawer">
+    <div class="drawer-top">
+      <span class="dot"></span>
+      <span class="drawer-title">On-box models</span>
+      <span class="drawer-sub" id="drawer-sub">2 enabled · 1 loaded · 65 GB</span>
+    </div>
+    <div class="body">
+      <!-- memory meter -->
+      <div class="mem">
+        <div class="mem-bar" id="mem-bar"></div>
+        <div class="mem-cap" id="mem-cap"></div>
+      </div>
+
+      <div class="sec-h">Enabled <span class="count" id="enabled-count"></span></div>
+      <div id="enabled-list"></div>
+
+      <div class="sec-h">Available to install <span class="count" id="avail-count"></span></div>
+      <div id="avail-list"></div>
+
+      <p class="note">Provisioning downloads the GGUF weights and adds the model to your routing menu.
+      Large models (like the 235B at 104 GB) can't co-reside — they load <b>swappable</b>, one at a time.</p>
+    </div>
+  </div>
+
+  <!-- sticky queue bar -->
+  <div class="queuebar" id="queuebar" style="display:none">
+    <div>
+      <div class="qtext"><b id="q-n">0</b> queued · <span id="q-gb">0</span> GB to download</div>
+      <div class="qsub">Provisioned on your next update, or kick it off now.</div>
+    </div>
+    <div class="qacts">
+      <button class="btn ghost" onclick="clearQueue()">Clear</button>
+      <button class="btn primary" onclick="openUpdate()">Update &amp; install now</button>
+    </div>
+  </div>
+</div>
+
+<!-- update console sheet -->
+<div class="scrim" id="scrim">
+  <div class="sheet">
+    <h2>Updating JBrain</h2>
+    <p class="sub">Pull · rebuild · migrate · <b>provision queued models</b> · restart. Runs in the background —
+    you can close this; the download continues.</p>
+    <div class="console" id="console"></div>
+    <div class="sheet-acts">
+      <button class="btn ghost" id="close-btn" onclick="closeUpdate()" disabled>Close</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const TOTAL = 128; // GB unified memory
+
+// catalog — enabled = already provisioned; the rest are installable from the PWA
+let models = [
+  { id:'qwen3-vl-30b',   label:'Qwen3-VL 30B · vision',   quant:'Q8_0',       gb:32,    kv:1.5, chips:[['vision','vision'],['tier','vision · low'],['tools','tools']], status:'loaded',  enabled:true },
+  { id:'gpt-oss-120b',   label:'GPT-OSS 120B · reasoning',quant:'MXFP4',      gb:59,    kv:4.5, chips:[['tier','high'],['tools','tools']],                          status:'staged',  enabled:true },
+  { id:'qwen3-235b-a22b',label:'Qwen3-235B-A22B · reasoning (3-bit)', quant:'UD-Q3_K_XL', gb:104, kv:11.5,
+    chips:[['tier','high'],['tools','tools'],['warn','standalone · swappable']],
+    note:'235B MoE, 22B active — the strongest open model that fits this 128 GB box. Too large to co-reside, so it loads on its own with a tight context budget.',
+    status:'available', enabled:false },
+  { id:'glm-4.5-air',    label:'GLM-4.5 Air · reasoning', quant:'Q4_K_M',     gb:70,    kv:5,   chips:[['tier','high'],['tools','tools']], status:'available', enabled:false },
+  { id:'qwen3-next-80b', label:'Qwen3-Next 80B · reasoning',quant:'UD-Q4_K_XL',gb:46,  kv:5,   chips:[['tier','high'],['tools','tools']], status:'available', enabled:false },
+  { id:'qwen3-30b-a3b',  label:'Qwen3 30B · lightweight', quant:'Q4_K_M',     gb:18,    kv:3.2, chips:[['tier','low'],['tools','tools']], status:'available', enabled:false },
+];
+
+const SEG_COLORS = ['#7FA7C9','#8FBC9A','#A493C9','#C9A36A','#6FB6B1'];
+const fmt = n => Math.round(n);
+
+function residentGb(m){ return m.gb + m.kv; }
+
+function render(){
+  const enabled = models.filter(m=>m.enabled || m.status==='installing');
+  const avail   = models.filter(m=>!m.enabled && m.status!=='installing');
+  const queued  = models.filter(m=>m.status==='queued');
+
+  // memory meter: loaded/staged resident now, queued shown faded (projected)
+  const onNow = enabled.filter(m=>m.status==='loaded'||m.status==='staged'||m.status==='installing');
+  const bar = document.getElementById('mem-bar'); bar.innerHTML='';
+  let idx=0, usedGb=0, queuedGb=0;
+  onNow.forEach(m=>{ usedGb+=residentGb(m); addSeg(bar, m, residentGb(m), SEG_COLORS[idx++%SEG_COLORS.length], false); });
+  queued.forEach(m=>{ queuedGb+=residentGb(m); addSeg(bar, m, residentGb(m), SEG_COLORS[idx++%SEG_COLORS.length], true); });
+  const projected = usedGb+queuedGb;
+  const over = projected>TOTAL;
+  const cap = document.getElementById('mem-cap');
+  cap.innerHTML = `<span>${fmt(usedGb)} GB resident</span>` +
+    (queuedGb>0?`<span class="${over?'warn':''}">+${fmt(queuedGb)} GB queued → ${fmt(projected)} GB${over?' ⚠ swaps (won’t co-reside)':''}</span>`:'') +
+    `<span class="total">${TOTAL} GB total</span>`;
+
+  // lists
+  document.getElementById('enabled-list').innerHTML = enabled.map(rowHTML).join('') || '<p class="note">None provisioned yet.</p>';
+  document.getElementById('avail-list').innerHTML   = avail.map(rowHTML).join('');
+  document.getElementById('enabled-count').textContent = `${enabled.length} model${enabled.length!==1?'s':''}`;
+  document.getElementById('avail-count').textContent   = `${avail.length} in catalog`;
+  document.getElementById('drawer-sub').textContent =
+    `${models.filter(m=>m.enabled).length} enabled · ${models.filter(m=>m.status==='loaded').length} loaded · ${fmt(usedGb)} GB`;
+
+  // queue bar
+  const qb = document.getElementById('queuebar');
+  if(queued.length){
+    qb.style.display='flex';
+    document.getElementById('q-n').textContent = queued.length;
+    document.getElementById('q-gb').textContent = fmt(queued.reduce((s,m)=>s+m.gb,0));
+  } else qb.style.display='none';
+}
+
+function addSeg(bar, m, gb, color, queued){
+  const d=document.createElement('div');
+  d.className='mem-seg'+(queued?' queued':'');
+  d.style.width = (gb/TOTAL*100)+'%';
+  d.style.background = color;
+  d.innerHTML = `<span class="lab">${m.label.split(' ')[0]} ${fmt(gb)}G</span>`;
+  bar.appendChild(d);
+}
+
+function rowHTML(m){
+  const stateClass = {loaded:'loaded',staged:'staged',queued:'queued'}[m.status]||'';
+  const sizeText = (m.enabled?'':'~') + m.gb + ' GB';
+  let acts='';
+  if(m.status==='available') acts = `<button class="btn primary" onclick="queue('${m.id}')">Install</button>`;
+  else if(m.status==='queued') acts = `<button class="btn ghost" onclick="unqueue('${m.id}')">Remove</button><span class="state queued">queued</span>`;
+  else if(m.status==='installing') acts = `<span class="state staged">installing…</span>`;
+  else acts = `<span class="state ${stateClass}">${m.status}</span>`;
+
+  const chips = (m.chips||[]).map(([cls,lab])=>`<span class="chip ${cls}">${lab}</span>`).join('');
+  const dl = m.status==='installing'
+    ? `<div class="dl"><div class="dl-bar"><i id="dl-${m.id}" style="width:${m.dl||0}%"></i></div>
+       <div class="dl-cap" id="dlcap-${m.id}">starting…</div></div>` : '';
+  return `<div class="row ${m.status==='installing'?'installing':''}">
+    <div class="row-head">
+      <div>
+        <div class="row-name">${m.label}</div>
+        <div class="row-meta">${m.quant} · ${sizeText}${m.status==='loaded'?' · '+fmt(residentGb(m))+' GB resident':''}</div>
+      </div>
+      <div class="row-acts">${acts}</div>
+    </div>
+    <div class="chips">${chips}</div>
+    ${m.note?`<div class="row-note">${m.note}</div>`:''}
+    ${dl}
+  </div>`;
+}
+
+function queue(id){ const m=models.find(x=>x.id===id); m.status='queued'; render(); }
+function unqueue(id){ const m=models.find(x=>x.id===id); m.status='available'; render(); }
+function clearQueue(){ models.forEach(m=>{ if(m.status==='queued') m.status='available'; }); render(); }
+
+// ---- update console simulation ----
+let conTimer=null;
+function line(html){ const c=document.getElementById('console'); c.innerHTML += html+'\n'; c.scrollTop=c.scrollHeight; }
+
+function openUpdate(){
+  setTab('b');
+  document.getElementById('scrim').classList.add('on');
+  const c=document.getElementById('console'); c.innerHTML='';
+  document.getElementById('close-btn').disabled=true;
+  runUpdate();
+}
+function closeUpdate(){ document.getElementById('scrim').classList.remove('on'); }
+
+function runUpdate(){
+  const queued = models.filter(m=>m.status==='queued');
+  const steps = [
+    ['<span class="dim">[update] starting · backup · pull latest main</span>', 500],
+    ['<span class="ok">[update] ✓</span> source at origin/main · <span class="dim">building images</span>', 700],
+    ['<span class="ok">[update] ✓</span> images built · running migrations', 600],
+    ['<span class="run">[local-llm] syncing models: '+queued.map(m=>m.id).join(', ')+'</span>', 600],
+  ];
+  let i=0;
+  function next(){
+    if(i<steps.length){ line(steps[i][0]); const d=steps[i][1]; i++; conTimer=setTimeout(next,d); }
+    else downloadQueued(queued, 0);
+  }
+  next();
+}
+
+function downloadQueued(queued, qi){
+  if(qi>=queued.length){ finishUpdate(); return; }
+  const m=queued[qi];
+  m.status='installing'; m.dl=0; render();
+  line(`<span class="run">[local-llm] ↓ ${m.id}</span> — ${m.gb} GB (${m.quant}) from huggingface`);
+  const cap=()=>document.getElementById('dlcap-'+m.id);
+  const bar=()=>document.getElementById('dl-'+m.id);
+  const tick=()=>{
+    m.dl += Math.random()*9+5;
+    if(m.dl>=100){
+      m.dl=100; if(bar())bar().style.width='100%';
+      if(cap())cap().textContent = `${m.gb}.0 / ${m.gb}.0 GB · done`;
+      line(`<span class="ok">[local-llm] ✓ ${m.id}</span> downloaded · added to <code>LOCAL_MODELS</code>`);
+      m.status='loaded'; m.enabled=true;
+      // big standalone models load swappable, not staged-resident
+      if(m.gb>90) m.status='staged';
+      render();
+      conTimer=setTimeout(()=>downloadQueued(queued, qi+1), 500);
+    } else {
+      if(bar())bar().style.width=m.dl+'%';
+      const got=(m.gb*m.dl/100).toFixed(1);
+      if(cap())cap().textContent = `${got} / ${m.gb}.0 GB · ${(Math.random()*60+90|0)} MB/s`;
+      conTimer=setTimeout(tick, 220);
+    }
+  };
+  conTimer=setTimeout(tick, 300);
+}
+
+function finishUpdate(){
+  line('<span class="run">[local-llm] re-stamping llama-swap.yaml · restarting gateway</span>');
+  conTimer=setTimeout(()=>{
+    line('<span class="ok">[update] complete</span> — new models are now routable in the tiers above.');
+    document.getElementById('close-btn').disabled=false;
+    render();
+  }, 800);
+}
+
+function setTab(t){
+  document.getElementById('tab-a').classList.toggle('on', t==='a');
+  document.getElementById('tab-b').classList.toggle('on', t==='b');
+  if(t==='b' && !models.some(m=>m.status==='queued'||m.status==='installing')){
+    // demo helper: pre-queue the 235B so the update tab has something to show
+    const m=models.find(x=>x.id==='qwen3-235b-a22b'); if(m.status==='available'){ m.status='queued'; render(); }
+  }
+}
+
+render();
+</script>
+</body>
+</html>
