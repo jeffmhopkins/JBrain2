@@ -1,16 +1,20 @@
 """The live pipeline flow trace (analysis.flow_trace): flag gating and the
 structured payload each seam emits. Pure projection over the pipeline's objects,
-so the inputs are lightweight stand-ins exercising the attributes it reads."""
+so the inputs are lightweight stand-ins (cast to the real types) exercising only
+the attributes each emitter reads."""
 
 from __future__ import annotations
 
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 
 import structlog
 
 from jbrain.analysis import flow_trace
-from jbrain.analysis.supersession import Decision
+from jbrain.analysis.arbiter import ArbiterPlan
+from jbrain.analysis.extraction import Extraction
+from jbrain.analysis.intent import IntegrationIntent
+from jbrain.analysis.supersession import Decision, FactView
 
 
 def _ext_fact(
@@ -20,7 +24,7 @@ def _ext_fact(
     *,
     kind: str = "relationship",
     qualifier: str = "",
-) -> SimpleNamespace:
+) -> Any:
     return SimpleNamespace(
         entity_ref=entity_ref,
         predicate=predicate,
@@ -30,15 +34,50 @@ def _ext_fact(
     )
 
 
-def _extraction() -> SimpleNamespace:
-    return SimpleNamespace(
-        mentions=[SimpleNamespace(name=n) for n in ("Me", "summer", "lydian")],
-        facts=[
-            _ext_fact("Me", "children", "summer"),
-            _ext_fact("Me", "children", "lydian"),
-            _ext_fact("summer", "name.full", None, kind="attribute"),
-        ],
+def _extraction() -> Extraction:
+    return cast(
+        Extraction,
+        SimpleNamespace(
+            mentions=[SimpleNamespace(name=n) for n in ("Me", "summer", "lydian")],
+            facts=[
+                _ext_fact("Me", "children", "summer"),
+                _ext_fact("Me", "children", "lydian"),
+                _ext_fact("summer", "name.full", None, kind="attribute"),
+            ],
+        ),
     )
+
+
+def _intent(
+    *,
+    resolutions: list[Any] | None = None,
+    facts: list[Any] | None = None,
+    supersessions: list[Any] | None = None,
+) -> IntegrationIntent:
+    return cast(
+        IntegrationIntent,
+        SimpleNamespace(
+            entity_resolutions=resolutions or [],
+            facts=facts or [],
+            supersession_proposals=supersessions or [],
+        ),
+    )
+
+
+def _plan(
+    *,
+    rejected: bool = False,
+    facts: list[Any] | None = None,
+    violations: list[Any] | None = None,
+) -> ArbiterPlan:
+    return cast(
+        ArbiterPlan,
+        SimpleNamespace(rejected=rejected, facts=facts or [], fatal_violations=violations or []),
+    )
+
+
+def _factview(id: str, obj: str | None, status: str = "active") -> FactView:
+    return cast(FactView, SimpleNamespace(id=id, object_entity_id=obj, status=status))
 
 
 def setup_function() -> None:
@@ -65,7 +104,8 @@ def test_enabled_reads_settings_and_auto_arms_with_debug_access(monkeypatch: Any
     flow_trace.reset()
     assert flow_trace.enabled() is True
 
-    # Debug access alone auto-arms it.
+    # Debug access alone auto-arms it — independent of any mint event, so an
+    # already-minted token (console enabled) keeps tracing on across restarts.
     monkeypatch.setattr(flow_trace, "get_settings", lambda: _settings(False, True))
     flow_trace.reset()
     assert flow_trace.enabled() is True
@@ -81,8 +121,8 @@ def test_disabled_emits_nothing() -> None:
     flow_trace.set_enabled(False)
     with structlog.testing.capture_logs() as logs:
         flow_trace.extract("n1", _extraction())
-        flow_trace.intent("n1", "integrate", _extraction())
-        flow_trace.plan("n1", SimpleNamespace(rejected=False, facts=[]))
+        flow_trace.intent("n1", "integrate", _intent())
+        flow_trace.plan("n1", _plan())
         flow_trace.commit(
             "n1",
             entity_ref="Me",
@@ -112,15 +152,13 @@ def test_extract_lists_only_relationship_edges() -> None:
 
 def test_intent_stage_resolutions_and_supersessions() -> None:
     flow_trace.set_enabled(True)
-    intent = SimpleNamespace(
-        entity_resolutions=[
+    intent = _intent(
+        resolutions=[
             SimpleNamespace(mention_ref="summer", mode="new"),
             SimpleNamespace(mention_ref="Me", mode="existing"),
         ],
         facts=[_ext_fact("Me", "children", "summer", qualifier="step")],
-        supersession_proposals=[
-            SimpleNamespace(entity_ref="Me", predicate="children", action="supersede")
-        ],
+        supersessions=[SimpleNamespace(entity_ref="Me", predicate="children", action="supersede")],
     )
     with structlog.testing.capture_logs() as logs:
         flow_trace.intent("n1", "recover", intent)
@@ -134,9 +172,7 @@ def test_intent_stage_resolutions_and_supersessions() -> None:
 
 def test_plan_rejected_lists_violation_codes() -> None:
     flow_trace.set_enabled(True)
-    plan = SimpleNamespace(
-        rejected=True, fatal_violations=[SimpleNamespace(code="resolution_missing_entity")]
-    )
+    plan = _plan(rejected=True, violations=[SimpleNamespace(code="resolution_missing_entity")])
     with structlog.testing.capture_logs() as logs:
         flow_trace.plan("n1", plan)
     [ev] = logs
@@ -146,22 +182,24 @@ def test_plan_rejected_lists_violation_codes() -> None:
 
 def test_plan_facts_show_status_and_weight() -> None:
     flow_trace.set_enabled(True)
-    facts = [
-        SimpleNamespace(
-            fact=_ext_fact("Me", "children", "summer"),
-            status="active",
-            weight=0.9123,
-            review_reasons=(),
-        ),
-        SimpleNamespace(
-            fact=_ext_fact("Me", "children", "lydian"),
-            status="pending_review",
-            weight=0.4,
-            review_reasons=("below_threshold",),
-        ),
-    ]
+    plan = _plan(
+        facts=[
+            SimpleNamespace(
+                fact=_ext_fact("Me", "children", "summer"),
+                status="active",
+                weight=0.9123,
+                review_reasons=(),
+            ),
+            SimpleNamespace(
+                fact=_ext_fact("Me", "children", "lydian"),
+                status="pending_review",
+                weight=0.4,
+                review_reasons=("below_threshold",),
+            ),
+        ]
+    )
     with structlog.testing.capture_logs() as logs:
-        flow_trace.plan("n1", SimpleNamespace(rejected=False, facts=facts))
+        flow_trace.plan("n1", plan)
     [ev] = logs
     assert ev["facts"][0] == {
         "edge": "Me.children -> summer",
@@ -189,7 +227,7 @@ def _commit(**over: Any) -> dict[str, Any]:
     with structlog.testing.capture_logs() as logs:
         flow_trace.commit("n1", **args)
     [ev] = logs
-    return ev
+    return dict(ev)
 
 
 def test_commit_insert_against_empty_graph() -> None:
@@ -210,9 +248,7 @@ def test_commit_surfaces_collapse_when_lookup_hits_a_sibling_row() -> None:
     ev = _commit(
         object_ref="Elora",
         object_id="62c477b7-0000",
-        existing=[
-            SimpleNamespace(id="68f005d9-aaaa", object_entity_id="68f005d9-aaaa", status="active")
-        ],
+        existing=[_factview("68f005d9-aaaa", "68f005d9-aaaa", "active")],
         decision=Decision(refresh_id="68f005d9-aaaa"),
     )
     assert ev["edge"] == "Me.children -> Elora"
