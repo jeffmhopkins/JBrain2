@@ -322,7 +322,10 @@ async def test_finalize_job_step_closes_the_run_with_tokens_and_duration(
             text("UPDATE app.jobs SET status = 'done', finished_at = now() WHERE id = :j"),
             {"j": job_id},
         )
-    await finalize_job_step(maker, queue.SYSTEM_CTX, job_id, ok=True, cost_tokens=1234)
+    trace = [{"event": "llm.complete", "task": "x", "tokens": 1234}]
+    await finalize_job_step(
+        maker, queue.SYSTEM_CTX, job_id, ok=True, cost_tokens=1234, detail=trace
+    )
     async with scoped_session(maker, queue.SYSTEM_CTX) as s:
         run = (
             await s.execute(
@@ -332,7 +335,7 @@ async def test_finalize_job_step_closes_the_run_with_tokens_and_duration(
         ).first()
         step = (
             await s.execute(
-                text("SELECT ok, cost_tokens FROM app.run_steps WHERE job_id = :j"),
+                text("SELECT ok, cost_tokens, detail FROM app.run_steps WHERE job_id = :j"),
                 {"j": job_id},
             )
         ).first()
@@ -340,6 +343,7 @@ async def test_finalize_job_step_closes_the_run_with_tokens_and_duration(
     assert run.ended_at is not None  # a real duration is now computable
     assert run.cost_tokens == 1234
     assert step is not None and step.ok is True and step.cost_tokens == 1234
+    assert step.detail == trace  # the captured "full logs" trace round-trips
 
 
 async def test_finalize_job_step_marks_a_failed_run_error(maker: async_sessionmaker) -> None:

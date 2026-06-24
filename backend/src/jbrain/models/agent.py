@@ -123,6 +123,9 @@ class RunStep(Base):
     job_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
     ok: Mapped[bool] = mapped_column(Boolean)
     cost_tokens: Mapped[int] = mapped_column(BigInteger, default=0, server_default="0")
+    # The step's captured structured-log trace (the Runs "full logs" review view): a
+    # JSONB array of compact event dicts a job emitted, or NULL when it logged nothing.
+    detail: Mapped[list[dict[str, Any]] | None] = mapped_column(JSONB, nullable=True)
     at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 

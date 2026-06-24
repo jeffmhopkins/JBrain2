@@ -61,6 +61,7 @@ class FakeRunReader:
                     cost_tokens=300,
                     job_id=None,
                     error=None,
+                    detail=[{"event": "llm.complete", "task": "note.extract"}],
                 ),
                 RunStepView(
                     idx=1,
@@ -70,6 +71,7 @@ class FakeRunReader:
                     cost_tokens=1100,
                     job_id="job-7",
                     error="ocr_attachment · labs.pdf",
+                    detail=None,
                 ),
             ],
         )

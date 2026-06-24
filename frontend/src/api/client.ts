@@ -806,6 +806,9 @@ export interface RunStepView {
   job_id: string | null;
   /** A failing step's error text; null on a successful step. */
   error: string | null;
+  /** The step's captured structured-log trace (the "full logs" view) — an array of
+   * compact event objects, or null/absent for a step that recorded none. */
+  detail?: Record<string, unknown>[] | null;
 }
 
 export interface RunDetail {

@@ -39,6 +39,7 @@ from jbrain.ingest.transcribe_job import TRANSCRIBE_ATTACHMENT_SPEC, TranscribeP
 from jbrain.ingest.video import VIDEO_ANALYSIS_SPEC, VideoPipeline
 from jbrain.llm import build_router
 from jbrain.llm.local_gateway import LocalGatewayClient
+from jbrain.log_capture import LogScope, configure_logging
 from jbrain.schema import get_registry
 from jbrain.settings_store import SqlSettingsStore
 from jbrain.storage import FsBlobStore
@@ -124,9 +125,10 @@ async def process_one(
         log.error("worker.job_bad_scope_stamp", job_id=job.id, kind=job.kind, error=repr(exc))
         return True
     ran_as = "system" if exec_ctx is queue.SYSTEM_CTX else "scoped"
-    # Tally the LLM tokens this job spends so its run-log step (a dispatched
-    # pipeline/event run) shows the real cost + duration, not a 0-token placeholder.
-    with TokenScope() as toks:
+    # Tally the LLM tokens AND capture the structured-log trace this job emits, so its
+    # run-log step shows the real cost + duration + a reviewable "full logs" view —
+    # not the 0-token placeholder. logs.events is the tap; toks.total the token sum.
+    with TokenScope() as toks, LogScope() as logs:
         try:
             await _invoke(handler, job.payload, exec_ctx)
         except queue.PermanentJobError as exc:
@@ -134,7 +136,7 @@ async def process_one(
             # fail now instead of burning the retry budget.
             exhausted = await queue.fail(maker, queue.SYSTEM_CTX, job.id, repr(exc), permanent=True)
             log.error("worker.job_failed_permanent", job_id=job.id, kind=job.kind, error=repr(exc))
-            await _finalize_run_step(maker, job.id, ok=False, cost_tokens=toks.total)
+            await _finalize_run_step(maker, job.id, ok=False, toks=toks, logs=logs)
             await _after_exhaustion(maker, job, exhausted)
         except Exception as exc:  # noqa: BLE001 - one bad job must not kill the worker
             exhausted = await queue.fail(maker, queue.SYSTEM_CTX, job.id, repr(exc))
@@ -142,24 +144,36 @@ async def process_one(
             # Only finalize when the job is truly done retrying; a re-queued job's
             # step stays open until its terminal attempt.
             if exhausted:
-                await _finalize_run_step(maker, job.id, ok=False, cost_tokens=toks.total)
+                await _finalize_run_step(maker, job.id, ok=False, toks=toks, logs=logs)
             await _after_exhaustion(maker, job, exhausted)
         else:
             await queue.complete(maker, queue.SYSTEM_CTX, job.id)
             # ran_as records E1's scope choice (system vs scoped) on the audit line:
             # an owner-system run is visible as such, not a smuggled escalation.
             log.info("worker.job_done", job_id=job.id, kind=job.kind, ran_as=ran_as)
-            await _finalize_run_step(maker, job.id, ok=True, cost_tokens=toks.total)
+            await _finalize_run_step(maker, job.id, ok=True, toks=toks, logs=logs)
     return True
 
 
 async def _finalize_run_step(
-    maker: async_sessionmaker[AsyncSession], job_id: str, *, ok: bool, cost_tokens: int
+    maker: async_sessionmaker[AsyncSession],
+    job_id: str,
+    *,
+    ok: bool,
+    toks: TokenScope,
+    logs: LogScope,
 ) -> None:
-    """Stamp the job's outcome on its dispatched-run step (best-effort): a run-log
-    write must never fail the executor job it is only annotating."""
+    """Stamp the job's outcome + token cost + captured log trace on its dispatched-run
+    step (best-effort): a run-log write must never fail the executor job it annotates."""
     try:
-        await finalize_job_step(maker, queue.SYSTEM_CTX, job_id, ok=ok, cost_tokens=cost_tokens)
+        await finalize_job_step(
+            maker,
+            queue.SYSTEM_CTX,
+            job_id,
+            ok=ok,
+            cost_tokens=toks.total,
+            detail=logs.events,
+        )
     except Exception:  # noqa: BLE001 — the run-log is an annotation, never the job's gate
         log.warning("worker.run_step_finalize_failed", job_id=job_id)
 
@@ -294,6 +308,9 @@ async def run_loop(
 
 
 async def run() -> None:
+    # Install the capture-tapped log chain so each job's structured-log trace lands
+    # on its run step (the Runs "full logs" view); a no-scope job logs as normal.
+    configure_logging()
     settings = get_settings()
     engine = create_async_engine(settings.database_url)
     maker = async_sessionmaker(engine, expire_on_commit=False)

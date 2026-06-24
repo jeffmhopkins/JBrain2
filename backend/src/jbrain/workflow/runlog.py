@@ -21,6 +21,7 @@ RLS), mirroring AgentRunLog — the dispatcher's claim loop already runs under
 
 from __future__ import annotations
 
+import json
 import uuid
 from dataclasses import dataclass
 
@@ -105,11 +106,13 @@ async def finalize_job_step(
     *,
     ok: bool,
     cost_tokens: int,
+    detail: list[dict[str, object]] | None = None,
 ) -> None:
-    """Stamp a job's terminal outcome + token cost onto its run-log step, then close
-    the parent run once ALL its steps' jobs are terminal — setting status (error if
-    any step failed, else done), `ended_at` (so the run shows a real duration), and
-    the run's total tokens. A no-op when the job has no run step (an ad-hoc enqueue).
+    """Stamp a job's terminal outcome + token cost (+ its captured log `detail`, the
+    "full logs" review trace) onto its run-log step, then close the parent run once
+    ALL its steps' jobs are terminal — setting status (error if any step failed, else
+    done), `ended_at` (so the run shows a real duration), and the run's total tokens.
+    A no-op when the job has no run step (an ad-hoc enqueue).
 
     The worker calls this AFTER the job's queue transition (so this job already reads
     as terminal), best-effort: a run-log hiccup must never fail the executor job."""
@@ -117,10 +120,15 @@ async def finalize_job_step(
         row = (
             await session.execute(
                 text(
-                    "UPDATE app.run_steps SET ok = :ok, cost_tokens = :tok"
-                    " WHERE job_id = :jid RETURNING run_id"
+                    "UPDATE app.run_steps SET ok = :ok, cost_tokens = :tok,"
+                    " detail = cast(:detail AS jsonb) WHERE job_id = :jid RETURNING run_id"
                 ),
-                {"ok": ok, "tok": cost_tokens, "jid": job_id},
+                {
+                    "ok": ok,
+                    "tok": cost_tokens,
+                    "detail": json.dumps(detail) if detail else None,
+                    "jid": job_id,
+                },
             )
         ).first()
         if row is None:
