@@ -67,6 +67,9 @@ docker compose up -d
 echo "[update] syncing local models"
 sh src/deploy/local-models-sync.sh || echo "[update] local-model sync skipped (will retry next update)"
 
-docker image prune -f
+# Reclaim space, but never let a prune hiccup fail the whole update (set -e) after
+# the real work is done — a transient daemon error here once surfaced as a bogus
+# "update failed" with a fully-updated stack.
+docker image prune -f || true
 docker builder prune -f --keep-storage 10GB >/dev/null 2>&1 || true
 echo "[update] complete"

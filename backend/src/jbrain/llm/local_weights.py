@@ -13,6 +13,7 @@ catalog's nominal size.
 
 from __future__ import annotations
 
+import contextlib
 import os
 
 # Weights are GiB-scale; report in GiB to match the catalog's size_gb units.
@@ -44,13 +45,20 @@ def dir_size_gb(models_dir: str, model_id: str) -> float | None:
     only), this climbs smoothly through an in-flight huggingface download, so
     `dir_size_gb / catalog size_gb` is a real percentage mid-provision. Returns
     0.0 for an empty (just-created) directory so a started download reads as 0%,
-    not 'not started'."""
-    total = 0
-    try:
-        with os.scandir(os.path.join(models_dir, model_id)) as entries:
-            for entry in entries:
-                if entry.is_file():
-                    total += entry.stat().st_size
-    except OSError:
+    not 'not started'.
+
+    Recursive on purpose: huggingface streams in-flight shards into a
+    `<dir>/.cache/huggingface/download/*.incomplete` SUBDIRECTORY and only moves
+    each up to the top level when it completes. A non-recursive scan would read 0
+    through the whole download (every byte sits in .cache until a ~50 GB shard
+    finishes), so the bar would never move — walk the tree and count every file."""
+    root = os.path.join(models_dir, model_id)
+    if not os.path.isdir(root):
         return None
+    total = 0
+    for dirpath, _dirs, files in os.walk(root):
+        for name in files:
+            # A file vanishing mid-walk (a shard being renamed out of .cache) is fine.
+            with contextlib.suppress(OSError):
+                total += os.path.getsize(os.path.join(dirpath, name))
     return round(total / _BYTES_PER_GIB, 1)
