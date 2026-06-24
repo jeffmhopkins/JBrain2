@@ -266,6 +266,40 @@ async def test_fire_trigger_enqueues_immediately(maker: async_sessionmaker) -> N
     assert await _jobs_of_kind(maker, "consolidate_predicates") == before + 1
 
 
+async def test_fire_trigger_records_a_run_on_the_run_log(maker: async_sessionmaker) -> None:
+    # A fired trigger writes a runs row (kind='pipeline') + a run_step per enqueued
+    # job, so a manual "Run now" / nightly sweep is auditable from the Ops Runs
+    # surface — not just a silent job on the queue (the gap this closes).
+    ids = await _seed_schedule(
+        maker, action="consolidate_predicates", next_run_at=NOW + timedelta(days=1)
+    )
+    fired = await fire_trigger(maker, _registry(), ids["trigger"])
+    async with scoped_session(maker, queue.SYSTEM_CTX) as s:
+        run = (
+            await s.execute(
+                text(
+                    "SELECT id, kind, trigger_id, ran_as, status, step_count"
+                    " FROM app.runs WHERE pipeline = :p"
+                ),
+                {"p": ids["pipeline"]},
+            )
+        ).first()
+        assert run is not None
+        assert run.kind == "pipeline"
+        assert str(run.trigger_id) == ids["trigger"]
+        assert run.ran_as == "system"
+        assert run.status == "done"
+        assert run.step_count == 1
+        steps = (
+            await s.execute(
+                text("SELECT name, job_id FROM app.run_steps WHERE run_id = :r ORDER BY idx"),
+                {"r": str(run.id)},
+            )
+        ).all()
+    assert [st.name for st in steps] == ["consolidate_predicates"]
+    assert {str(st.job_id) for st in steps} == set(fired.job_ids)
+
+
 async def test_fire_trigger_require_manual_rejects_a_non_manual_trigger(
     maker: async_sessionmaker,
 ) -> None:

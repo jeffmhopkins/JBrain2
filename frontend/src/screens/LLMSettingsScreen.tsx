@@ -30,8 +30,10 @@ interface GroupDef {
 // correction_note.extract have no prompt yet — placed by their design intent
 // (docs/ANALYSIS.md: adjudicate=cheap, correction=strong). video.summarize is the
 // analyze_video reduce step — owner-placed in high-stakes for a richer summary,
-// though its prompt is `low`. A task the API returns outside these defs lands in a
-// synthesized "Other" group, so new routable tasks are never silently dropped.
+// though its prompt is `low`. wiki.rewrite/wiki.ground (the Phase-6 builder's draft
+// + grounding-verify pass) are reasoning-heavy, so they sit in high-stakes too. A
+// task the API returns outside these defs lands in a synthesized "Other" group, so
+// new routable tasks are never silently dropped.
 const GROUP_DEFS: GroupDef[] = [
   {
     key: "high",
@@ -44,6 +46,8 @@ const GROUP_DEFS: GroupDef[] = [
       "note.extract",
       "correction_note.extract",
       "video.summarize",
+      "wiki.rewrite",
+      "wiki.ground",
     ],
   },
   {

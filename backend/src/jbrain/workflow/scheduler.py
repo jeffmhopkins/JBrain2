@@ -42,6 +42,7 @@ from jbrain import queue
 from jbrain.db.session import scoped_session
 from jbrain.workflow.contracts import Pipeline
 from jbrain.workflow.registry import ActionRegistry, ActionSpec
+from jbrain.workflow.runlog import EnqueuedStep, PipelineRunLog
 
 log = structlog.get_logger()
 
@@ -198,12 +199,13 @@ async def _enqueue_pipeline(
     maker: async_sessionmaker[AsyncSession],
     registry: ActionRegistry,
     pipeline: Pipeline,
-) -> list[str]:
+) -> list[EnqueuedStep]:
     """Enqueue one job per pipeline step through the existing queue (E3: every
     step names a registered action; an unknown action is config drift and fails
     the fire loudly rather than enqueuing a job no handler can run). The job
     `kind` is the action's handler key, identical to what a hardcoded trigger
-    enqueues today — the scheduler is a different *trigger*, not a new executor."""
+    enqueues today — the scheduler is a different *trigger*, not a new executor.
+    Returns one EnqueuedStep per enqueued job so the caller can record the run."""
     # Validate every step resolves BEFORE enqueuing any, so a bad later step never
     # leaves a half-enqueued run (a pipeline fires all-or-nothing).
     for step in pipeline.steps:
@@ -214,11 +216,12 @@ async def _enqueue_pipeline(
                 f" v{step.action_version}, registry has v{spec.version}"
             )
     # enqueue opens its own scoped session per job (the queue's contract).
-    job_ids: list[str] = []
+    steps: list[EnqueuedStep] = []
     for step in pipeline.steps:
         spec = registry.get(step.action)
-        job_ids.append(await queue.enqueue(maker, queue.SYSTEM_CTX, spec.handler, step.params))
-    return job_ids
+        job_id = await queue.enqueue(maker, queue.SYSTEM_CTX, spec.handler, step.params)
+        steps.append(EnqueuedStep(kind=spec.handler, job_id=job_id))
+    return steps
 
 
 async def fire_trigger(
@@ -249,11 +252,28 @@ async def fire_trigger(
         raise ScheduleResolutionError(f"trigger {trigger_id!r} is not manually fireable")
     async with scoped_session(maker, queue.SYSTEM_CTX) as session:
         pipeline = await _load_pipeline(session, row.pipeline)
-    job_ids = await _enqueue_pipeline(maker, registry, pipeline)
+    steps = await _enqueue_pipeline(maker, registry, pipeline)
+    # Record the dispatch on the unified run-log so a schedule/Ops fire is auditable
+    # from app.runs — exactly like the event-triggered path (dispatcher.live_enqueue)
+    # and the agent loop. Without this, manual "Run now" and nightly sweeps enqueued
+    # real jobs but left no run row, so the Ops Runs surface showed nothing. The run
+    # is `done` on write (the dispatch's job is to enqueue; each step's job carries
+    # its own status), and `system` since a trigger fire runs under SYSTEM_CTX.
+    run_id = await PipelineRunLog(maker).record(
+        queue.SYSTEM_CTX,
+        pipeline=pipeline.name,
+        trigger_id=trigger_id,
+        ran_as="system",
+        domain_code=None,
+        principal_id=None,
+        steps=steps,
+    )
+    job_ids = [step.job_id for step in steps]
     log.info(
         "scheduler.trigger_fired",
         trigger_id=trigger_id,
         pipeline=pipeline.name,
+        run_id=run_id,
         job_ids=job_ids,
     )
     return FiredTrigger(trigger_id=trigger_id, pipeline=pipeline.name, job_ids=job_ids)
