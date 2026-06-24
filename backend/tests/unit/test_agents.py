@@ -94,8 +94,8 @@ def test_persona_prompts_pinned_to_their_versions() -> None:
             "e457d7504be94746132de7cc0c7b50fa1567867b3573a64ddfe6030b45909b16",
         ),
         "jerv": (
-            "agent-jerv-v14",
-            "e1bdc9c30c923b44895c97ad5647ce1a2dcd3136178eea1e2bb7b3aa2c0e402d",
+            "agent-jerv-v15",
+            "2d687bd63dc39eccc3a1501d5668684c57b6bccfcbc159ea1c96d96bba5a07e5",
         ),
     }
     assert set(pins) == AGENT_NAMES

@@ -58,19 +58,29 @@ async def test_current_location_says_in_city_when_essentially_at_it() -> None:
 
 
 @pytest.mark.asyncio
-async def test_current_location_precise_uses_the_external_geocoder() -> None:
+async def test_current_location_address_uses_the_external_geocoder() -> None:
     city = _City(CityHit(name="London", region="", country="United Kingdom", distance_m=300.0))
     ext = _Ext("221B Baker St, London NW1, United Kingdom")
-    out = await _tool(city, ext)({"precise": True}, _here_ctx(51.52, -0.16))
+    out = await _tool(city, ext)({"detail": "address"}, _here_ctx(51.52, -0.16))
     assert "221B Baker St" in out and ext.calls == 1
 
 
 @pytest.mark.asyncio
-async def test_current_location_precise_without_external_falls_back_to_city() -> None:
-    # No external geocoder configured → a precise request still answers at city level.
+async def test_current_location_address_without_external_falls_back_to_city() -> None:
+    # No external geocoder configured → an address request still answers at city level.
     city = _City(CityHit(name="London", region="", country="United Kingdom", distance_m=300.0))
-    out = await _tool(city, None)({"precise": True}, _here_ctx(51.52, -0.16))
+    out = await _tool(city, None)({"detail": "address"}, _here_ctx(51.52, -0.16))
     assert "in London, United Kingdom" in out
+
+
+@pytest.mark.asyncio
+async def test_current_location_coordinates_returns_raw_lat_lon_without_geocoding() -> None:
+    # detail="coordinates" reports the raw fix and never touches either geocoder.
+    city = _City(CityHit(name="London", region="", country="United Kingdom", distance_m=300.0))
+    ext = _Ext("221B Baker St, London NW1, United Kingdom")
+    out = await _tool(city, ext)({"detail": "coordinates"}, _here_ctx(51.52000, -0.16000))
+    assert "51.52000" in out and "-0.16000" in out
+    assert city.calls == [] and ext.calls == 0
 
 
 @pytest.mark.asyncio

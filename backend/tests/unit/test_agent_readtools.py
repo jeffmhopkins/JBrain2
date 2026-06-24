@@ -746,8 +746,8 @@ def test_sidecars_pinned_to_their_versions() -> None:
         ),
         "current_location.tool": (
             "current_location",
-            4,
-            "35695a101148e13b2cd66bec9a6516bfa7cf5efa4adb75ecd9cba221c729ca87",
+            5,
+            "6335b6a50335f0fa0b1edf68d8a2fdbab1a0c80258a277e25130c9c4ab9d4e77",
         ),
         "web_search.tool": (
             "web_search",

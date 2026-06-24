@@ -4,13 +4,15 @@ jerv answers location only from the live position the PWA captured for THIS turn
 same warm geolocation fix note sends attach) — it does NOT read the owner's location
 domain: no saved places, no OwnTracks device history.
 
-Resolution is low-footprint by default and escalates only when asked:
-- an in-process offline reverse-geocode (`CityGeocoder`, the bundled GeoNames cities)
-  names the NEAREST city/region/country — no service, no index, no egress;
-- when the owner wants a SPECIFIC street address (`precise`), and they configured an
+Resolution is low-footprint by default and the caller picks the detail (`detail`):
+- `"city"` (default) — an in-process offline reverse-geocode (`CityGeocoder`, the
+  bundled GeoNames cities) names the NEAREST city/region/country: no service, no
+  index, no egress;
+- `"address"` — when the owner wants a SPECIFIC street address and they configured an
   external geocoder, a direct reverse lookup returns the street (jerv's direct-egress
-  sandbox — only the coordinate leaves the box);
-- otherwise the coordinate itself is the answer.
+  sandbox — only the coordinate leaves the box), falling back to the city otherwise;
+- `"coordinates"` — the raw latitude/longitude of this turn's fix, reported verbatim
+  with no geocoding (also the fallback when no populated place is near enough).
 
 It is gated to jerv alone — a `web`-class (opt-in) tool the default knowledge agent
 is never offered (see contracts.PermissionClass).
@@ -38,6 +40,10 @@ def _city_phrase(hit) -> str:  # noqa: ANN001 - CityHit, kept loose to avoid an 
     return f"The owner is near {where} (about {round(km)} km away)."
 
 
+def _coords_phrase(lat: float, lon: float) -> str:
+    return f"The owner's current coordinates are {lat:.5f}, {lon:.5f}."
+
+
 def build_presence_handlers(
     city_geocoder: CityGeocoder, external_reverse: NominatimReverseClient | None = None
 ) -> dict[str, ToolHandler]:
@@ -45,8 +51,12 @@ def build_presence_handlers(
         if ctx.here is None:
             return _NO_FIX
         lat, lon = ctx.here
+        detail = str(arguments.get("detail") or "city").lower()
+        # Raw coordinates when explicitly asked — no geocoding, the fix is the answer.
+        if detail == "coordinates":
+            return _coords_phrase(lat, lon)
         # A specific street address only when asked AND an external geocoder is set.
-        if bool(arguments.get("precise")) and external_reverse is not None:
+        if detail == "address" and external_reverse is not None:
             addr = await external_reverse.reverse(lat, lon)
             if addr:
                 return f"The owner is at {addr}."
@@ -59,6 +69,6 @@ def build_presence_handlers(
         if hit is not None:
             return _city_phrase(hit)
         # No populated place close enough — the coordinate is the answer.
-        return f"The owner's current coordinates are approximately {lat:.5f}, {lon:.5f}."
+        return _coords_phrase(lat, lon)
 
     return {"current_location": current_location_tool}
