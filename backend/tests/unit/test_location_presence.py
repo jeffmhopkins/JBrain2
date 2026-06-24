@@ -87,7 +87,7 @@ def test_absent_presence_yields_no_line_or_block() -> None:
     assert presence_block(p) == ""
 
 
-def test_block_is_data_framed_like_the_skills_block() -> None:
+def test_block_is_data_framed() -> None:
     p = Presence(present=True, place_name="Home", last_seen=NOW, age_seconds=120, stale=False)
     block = presence_block(p)
     # The DATA frame leads (the data/instruction boundary), and the line follows it.

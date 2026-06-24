@@ -12,8 +12,6 @@ const BADGE: Record<ProposalKind, string> = {
   merge: "⧉",
   correction: "✎",
   appointment: "◷",
-  "prompt-edit": "⌥",
-  "skill-promotion": "★",
   egress: "↗",
 };
 

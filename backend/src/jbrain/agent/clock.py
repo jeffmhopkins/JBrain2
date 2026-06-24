@@ -5,8 +5,8 @@ A turn needs to know *when it is* — "what's due this week", "is that today" �
 the model has no clock of its own. Two complementary surfaces close that gap:
 
 - `now_block` injects the current date + local time as a DATA-framed reference line
-  at the head of every turn (the same conversation-channel pattern as the skills and
-  presence blocks), so every agent passively knows the day without calling anything.
+  at the head of every turn (the same conversation-channel pattern as the presence
+  block), so every agent passively knows the day without calling anything.
 - `current_time` is a tool for a fresh reading mid-conversation or the time in a
   SPECIFIC timezone — it reads a clock only, no owner notes or domain data, so it is
   safe even for the sandboxed `jerv` chatbot.
@@ -20,7 +20,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from jbrain.agent.loop import ToolContext, ToolHandler, ToolOutput
 
-# The data-boundary frame for the injected line (modeled on `skills._SKILL_FRAME` /
+# The data-boundary frame for the injected line (modeled on
 # `presence._PRESENCE_FRAME`): the line is DATA — an ambient reference fact about the
 # current instant — explicitly not an instruction.
 _CLOCK_FRAME = (
@@ -48,7 +48,7 @@ def _sentence(local: datetime, label: str) -> str:
 def now_block(tz: str | None, *, now: datetime | None = None) -> str:
     """The data-framed current-date/time line prepended to the agent conversation:
     the `_CLOCK_FRAME` banner leads, demoting the sentence after it to DATA. Always
-    present (a turn always has a "now") — unlike presence/skills, there is nothing to
+    present (a turn always has a "now") — unlike presence, there is nothing to
     be absent."""
     zone, label = _resolve(tz)
     local = (now or datetime.now(UTC)).astimezone(zone)
