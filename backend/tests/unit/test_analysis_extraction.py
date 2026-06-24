@@ -94,6 +94,35 @@ def test_parse_valid_payload() -> None:
     assert token.phrase == "this morning" and token.kind == "point"
 
 
+def test_day_temporal_with_clock_time_phrase_upgrades_to_instant() -> None:
+    # An appointment time the model mislabeled precision "day" (its phrase names a
+    # clock time) is upgraded to instant, so the time renders instead of being
+    # hidden behind a date-only precision.
+    payload = valid_payload()
+    payload["facts"][0]["temporal"] = {
+        "phrase": "Starts at 13:15",
+        "resolved_start": "2026-07-02T13:15:00-04:00",
+        "resolved_end": None,
+        "precision": "day",
+    }
+    fact = parse_extraction(payload).facts[0]
+    assert fact.temporal is not None and fact.temporal.precision == "instant"
+
+
+def test_day_temporal_with_vague_phrase_stays_day() -> None:
+    # "this morning" stamped to a representative 08:00 carries no clock time in its
+    # phrase, so it is NOT upgraded — it stays day precision.
+    payload = valid_payload()
+    payload["facts"][0]["temporal"] = {
+        "phrase": "this morning",
+        "resolved_start": "2026-06-10T08:00:00+00:00",
+        "resolved_end": None,
+        "precision": "day",
+    }
+    fact = parse_extraction(payload).facts[0]
+    assert fact.temporal is not None and fact.temporal.precision == "day"
+
+
 def test_tags_capped_at_six() -> None:
     payload = valid_payload()
     payload["tags"] = [f"tag-{i}" for i in range(10)]
@@ -483,7 +512,7 @@ def test_user_prompt_carries_the_per_note_fact_budget() -> None:
 
 
 def test_prompt_version_is_current() -> None:
-    assert PROMPT_VERSION == "note-extract-v23"
+    assert PROMPT_VERSION == "note-extract-v27"
 
 
 def test_user_prompt_carries_anchor_with_timezone_domain_and_content() -> None:

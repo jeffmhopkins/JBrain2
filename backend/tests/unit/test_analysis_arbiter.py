@@ -567,6 +567,55 @@ def test_compute_signals_gender_value_must_match_the_terms_gender():
     assert compute_signals(intent, ["I have two daughters."])[0].surface_attested is False
 
 
+def test_compute_signals_appointment_time_grounds_via_clock_time_in_note():
+    # `arriveBy` is a coined predicate (not date-shape) with no object, so neither
+    # the named-object nor the date-phrase path applies — only _time_grounded: the
+    # resolved 13:00 is printed in the note, so it's attested instead of held at 0.5.
+    intent = _intent(
+        entity_resolutions=[_res("appt")],
+        facts=[
+            _fact(
+                entity_ref="appt",
+                predicate="arriveBy",
+                kind="state",
+                object_entity_ref=None,
+                attested_span=None,
+                inferred=False,
+                temporal=IntentTemporal(
+                    phrase="arrive by",
+                    resolved_start=datetime(2026, 7, 2, 13, 0),
+                    resolved_end=None,
+                    precision="instant",
+                ),
+            )
+        ],
+    )
+    assert compute_signals(intent, ["Arrive by 13:00 for the appointment."])[0].surface_attested
+
+
+def test_compute_signals_time_not_printed_in_note_is_not_grounded():
+    intent = _intent(
+        entity_resolutions=[_res("appt")],
+        facts=[
+            _fact(
+                entity_ref="appt",
+                predicate="arriveBy",
+                kind="state",
+                object_entity_ref=None,
+                attested_span=None,
+                inferred=True,
+                temporal=IntentTemporal(
+                    phrase="arrive by",
+                    resolved_start=datetime(2026, 7, 2, 13, 0),
+                    resolved_end=None,
+                    precision="instant",
+                ),
+            )
+        ],
+    )
+    assert compute_signals(intent, ["I have an appointment soon."])[0].surface_attested is False
+
+
 def test_compute_signals_named_object_does_not_rescue_an_inferred_state_edge():
     # The `not inferred` gate still holds for a non-relationship (state) edge: a
     # genuinely inferred worksFor to a named org is NOT promoted — the model made
@@ -943,6 +992,31 @@ def test_recover_leaves_a_present_object_untouched():
     assert out.facts[0].object_entity_ref == "Maya"
     # no duplicate resolution added (Maya already resolved)
     assert sum(r.mention_ref == "Maya" for r in out.entity_resolutions) == 1
+
+
+def test_recover_drops_an_objectless_relationship_edge():
+    from jbrain.analysis.arbiter import recover_dropped_fields
+
+    # A `parent` edge with no object — and none to backfill from the extraction —
+    # is an edge to nothing: dropped, not carried forward as an object-less row.
+    # A non-relationship fact with no object (a goal) is unaffected.
+    intent = _intent(
+        entity_resolutions=[_res("Me")],
+        facts=[
+            _fact(entity_ref="Me", predicate="parent", kind="relationship", object_entity_ref=None),
+            _fact(
+                entity_ref="Me",
+                predicate="goal",
+                kind="preference",
+                object_entity_ref=None,
+                value_json={"value": "save more"},
+            ),
+        ],
+    )
+    out = recover_dropped_fields(intent, _extraction([], []))
+    preds = [f.predicate for f in out.facts]
+    assert "parent" not in preds  # object-less relationship dropped
+    assert "goal" in preds  # object-less non-relationship kept
 
 
 def test_recover_does_not_override_an_existing_ambiguous_resolution():

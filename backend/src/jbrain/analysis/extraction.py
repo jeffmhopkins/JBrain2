@@ -442,11 +442,30 @@ def validate_backward_temporal(
     return replace(temporal, resolved_start=start, resolved_end=end), True
 
 
+# An explicit clock time in a temporal phrase ("Starts at 13:15", "2pm", "2:00 PM").
+_CLOCK_TIME = re.compile(r"\b\d{1,2}:\d{2}\b|\b\d{1,2}\s*[ap]\.?m\.?\b", re.IGNORECASE)
+
+
+def _instant_if_timed(precision: str, phrase: Any, raw_start: Any) -> str:
+    """A `day` temporal whose PHRASE names an explicit clock time ("Starts at
+    13:15", "2pm") is really an instant: the model routinely mislabels an
+    appointment time as day precision, and since the UI renders BY precision the
+    time is then hidden (and a bare value would mis-stamp to UTC, not the note's
+    local offset). Keyed on the phrase, NOT merely a resolved value — a vague phrase
+    the model stamped to a representative hour ("this morning" → 08:00) carries no
+    clock time and correctly STAYS `day`. Resolved before `_naive_tz` so the offset
+    path matches the upgraded precision."""
+    if precision != "day" or not isinstance(phrase, str) or not _CLOCK_TIME.search(phrase):
+        return precision
+    return "instant" if parse_datetime(raw_start) is not None else precision
+
+
 def _parse_temporal(raw: Any, anchor: datetime | None = None) -> ExtractedTemporal | None:
     if not isinstance(raw, dict):
         return None
     precision = raw.get("precision")
     precision = precision if precision in PRECISIONS else "unknown"
+    precision = _instant_if_timed(precision, raw.get("phrase"), raw.get("resolved_start"))
     naive_tz = _naive_tz(precision, anchor)
     phrase = raw.get("phrase")
     return ExtractedTemporal(

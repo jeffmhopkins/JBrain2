@@ -459,6 +459,12 @@ def recover_dropped_fields(intent: IntegrationIntent, extraction: Extraction) ->
                     precision=t.precision,
                 ),
             )
+        # A relationship is an edge to another entity, so a relationship fact left
+        # with NO object after recovery is an edge to nothing — drop it rather than
+        # persist or park a meaningless object-less row in review (e.g. a bare
+        # `parent` the model emitted with no parent named).
+        if fact.kind == "relationship" and fact.object_entity_ref is None:
+            continue
         facts.append(fact)
         for ref in (fact.entity_ref, fact.object_entity_ref):
             if ref and ref not in resolved and ref in mention_kind:
@@ -487,6 +493,27 @@ def _date_phrase_grounded(fact: IntentFact, types: Iterable, haystack: str) -> b
         (p := t.predicate(fact.predicate)) is not None and p.value_shape == "date" for t in types
     )
     return is_date and _norm(fact.temporal.phrase) in haystack
+
+
+def _time_grounded(fact: IntentFact, haystack: str) -> bool:
+    """A fact whose resolved CLOCK TIME appears verbatim in the note is surface-
+    attested. An appointment OCR'd as "Starts at 13:15" lands as a `scheduledTime`
+    or coined `arriveBy` fact with that time, but it has no object to ground on
+    (unlike provider/location) and the date-phrase path is fragile or skips coined
+    predicates — so a time printed right there in the screenshot otherwise falls to
+    the inferred ceiling and into review. Check the resolved time in both 24-hour
+    ("13:15") and 12-hour ("1:15") forms; the minute-anchored "h:MM" token keeps a
+    bare hour from matching. Predicate-agnostic, so it rescues both scheduledTime
+    and arriveBy. `haystack` is already normalized."""
+    t = fact.temporal
+    if t is None or t.resolved_start is None:
+        return False
+    dt = t.resolved_start
+    if not (dt.hour or dt.minute):  # midnight / no clock time — not a time fact
+        return False
+    mm = f"{dt.minute:02d}"
+    candidates = {f"{dt.hour}:{mm}", f"{dt.hour % 12 or 12}:{mm}"}
+    return any(_token_present(c, haystack) for c in candidates)
 
 
 def compute_signals(
@@ -540,6 +567,7 @@ def compute_signals(
             or _date_phrase_grounded(fact, types, haystack)
             or _relationship_object_named(fact, haystack)
             or _gender_grounded(fact, haystack)
+            or _time_grounded(fact, haystack)
         )
         out[i] = ConfidenceSignals(
             surface_attested=surface_attested,
