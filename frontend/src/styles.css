@@ -13525,6 +13525,7 @@ input.ld-title {
   gap: 9px;
   padding: 9px 14px;
   border-bottom: 1px solid var(--border);
+  align-items: flex-start; /* timestamp pins to the top as the caption scrolls */
 }
 .tv-vid-now-t {
   flex: 0 0 auto;
@@ -13534,9 +13535,15 @@ input.ld-title {
   color: var(--steel);
 }
 .tv-vid-now-cap {
+  flex: 1;
+  min-width: 0;
   font-size: var(--fs-secondary);
   line-height: 1.45;
   color: var(--text);
+  /* A fixed 4-line viewport (scroll past it) so the tabs + transcript below sit at the
+     same vertical position no matter how long the active frame's caption runs. */
+  height: calc(var(--fs-secondary) * 1.45 * 4);
+  overflow-y: auto;
 }
 /* Tabs: a steel underline marks the active panel (self-contained, no --mode dep). */
 .tv-vid-tabs {
