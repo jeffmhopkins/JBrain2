@@ -43,6 +43,17 @@ docker run --rm $TTY_FLAG --name "$CONTAINER" \
   pip install --quiet -U "huggingface_hub[cli]"
   python - <<PY
 import json, os, subprocess, time
+
+def _bytes(p):
+    total = 0
+    for dp, _d, fs in os.walk(p):
+        for f in fs:
+            try:
+                total += os.path.getsize(os.path.join(dp, f))
+            except OSError:
+                pass
+    return total
+
 for m in json.loads(os.environ["MANIFEST"]):
     mid = m["id"]
     dest = f"/models/{mid}"
@@ -51,17 +62,28 @@ for m in json.loads(os.environ["MANIFEST"]):
     for inc in includes:
         args += ["--include", inc]
     print("==>", " ".join(args), flush=True)
-    # Retry with backoff: a 100 GB pull can drop its connection mid-transfer, and
-    # `hf download` resumes from the .incomplete partials on the next attempt, so a
-    # transient stall self-heals instead of stranding the install half-done.
-    for attempt in range(1, 6):
+    # Progress-aware resume. A 100 GB pull over a flaky link can reset its
+    # connection every few hundred MB; `hf download` resumes from the .incomplete
+    # partials each attempt. A FIXED retry count gives up mid-download (5 retries
+    # buys only ~3 GB if it drops every ~0.6 GB), so instead keep going as long as
+    # each attempt grows the on-disk size, and bail only after several attempts
+    # that make NO progress — a genuinely stuck failure, not a slow one.
+    stuck = 0
+    while True:
+        before = _bytes(dest)
         try:
             subprocess.check_call(args)
             break
         except subprocess.CalledProcessError:
-            if attempt == 5:
-                raise
-            print(f"== download error; retry {attempt}/4, resuming from partials ==", flush=True)
-            time.sleep(5 * attempt)
+            gained = _bytes(dest) - before
+            if gained > 0:
+                stuck = 0
+                print(f"== connection dropped; resuming (+{gained // (1024 * 1024)} MB this pass) ==", flush=True)
+            else:
+                stuck += 1
+                print(f"== download failed with no progress ({stuck}/5) ==", flush=True)
+                if stuck >= 5:
+                    raise
+            time.sleep(min(15, 3 * (stuck + 1)))
 PY
 '
