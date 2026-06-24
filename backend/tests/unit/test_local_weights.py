@@ -29,6 +29,20 @@ def test_sums_every_gguf_in_the_model_dir(tmp_path: Path) -> None:
     assert local_weights.weights_size_gb(str(tmp_path), "qwen3-vl-30b") == 2.1
 
 
+def test_sums_gguf_nested_in_a_quant_subdir(tmp_path: Path) -> None:
+    # Unsloth's UD-Q* shards land in a <id>/<quant>/ subdir; the footprint must count
+    # them recursively (so disk_gb isn't null for the 235B), while ignoring hf's
+    # .cache/ staging.
+    model = tmp_path / "qwen3-235b-a22b"
+    (model / "UD-Q3_K_XL").mkdir(parents=True)
+    _write(model / "UD-Q3_K_XL" / "shard-00001-of-00002.gguf", int(1.0 * _GIB))
+    _write(model / "UD-Q3_K_XL" / "shard-00002-of-00002.gguf", int(1.5 * _GIB))
+    cache = model / ".cache" / "huggingface" / "download"
+    cache.mkdir(parents=True)
+    _write(cache / "stale-00001-of-00002.gguf", int(5.0 * _GIB))  # must NOT count
+    assert local_weights.weights_size_gb(str(tmp_path), "qwen3-235b-a22b") == 2.5
+
+
 def test_missing_model_dir_is_none(tmp_path: Path) -> None:
     assert local_weights.weights_size_gb(str(tmp_path), "not-provisioned") is None
 

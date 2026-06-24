@@ -25,16 +25,21 @@ def weights_size_gb(models_dir: str, model_id: str) -> float | None:
     for one provisioned model, in GiB — or None when its directory is missing or
     unreadable. scripts/local-llm-setup.sh downloads each model into
     `<models_dir>/<model_id>/`, so the directory name is the catalog id."""
+    # Recursive: some repos (Unsloth's UD-Q*) nest the shards in a quant subdir, so
+    # the weights live under <id>/<quant>/. Skip hf's .cache/ download staging.
+    root = os.path.join(models_dir, model_id)
+    if not os.path.isdir(root):
+        return None
     total = 0
     found = False
-    try:
-        with os.scandir(os.path.join(models_dir, model_id)) as entries:
-            for entry in entries:
-                if entry.name.endswith(".gguf") and entry.is_file():
-                    total += entry.stat().st_size
+    for dirpath, _dirs, files in os.walk(root):
+        if ".cache" in os.path.relpath(dirpath, root).split(os.sep):
+            continue
+        for name in files:
+            if name.endswith(".gguf"):
+                with contextlib.suppress(OSError):
+                    total += os.path.getsize(os.path.join(dirpath, name))
                     found = True
-    except OSError:
-        return None
     return round(total / _BYTES_PER_GIB, 1) if found else None
 
 

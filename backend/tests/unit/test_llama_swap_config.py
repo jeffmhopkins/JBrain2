@@ -81,6 +81,43 @@ def test_resolve_weight_missing_file_raises(tmp_path: Path) -> None:
         llama_swap_config.resolve_weight(str(tmp_path), "m", "*.gguf")
 
 
+def test_resolve_weight_finds_shards_nested_in_a_quant_subdir(tmp_path: Path) -> None:
+    # Unsloth's UD-Q* repos nest the shards in a quant subdir, so hf saves them under
+    # <id>/<quant>/. The resolver must find them recursively and return the path
+    # RELATIVE to the model dir (so the gateway's -m /models/<id>/<rel> resolves), not
+    # raise "download incomplete" as it did on the box for the 235B.
+    sub = tmp_path / "qwen3-235b-a22b" / "UD-Q3_K_XL"
+    sub.mkdir(parents=True)
+    for i in (1, 2, 3):
+        (sub / f"Qwen3-235B-UD-Q3_K_XL-0000{i}-of-00003.gguf").write_bytes(b"\0")
+    # An hf .cache staging dir alongside must be ignored.
+    cache = tmp_path / "qwen3-235b-a22b" / ".cache" / "huggingface" / "download"
+    cache.mkdir(parents=True)
+    (cache / "Qwen3-235B-UD-Q3_K_XL-00001-of-00003.gguf").write_bytes(b"\0")
+
+    rel = llama_swap_config.resolve_weight(str(tmp_path), "qwen3-235b-a22b", "*UD-Q3_K_XL*.gguf")
+    assert rel == "UD-Q3_K_XL/Qwen3-235B-UD-Q3_K_XL-00001-of-00003.gguf"
+
+
+def test_render_resolves_a_nested_quant_subdir_into_the_model_path(tmp_path: Path) -> None:
+    model = tmp_path / "qwen3-235b-a22b" / "UD-Q3_K_XL"
+    model.mkdir(parents=True)
+    (model / "Qwen3-235B-UD-Q3_K_XL-00001-of-00002.gguf").write_bytes(b"\0")
+    (model / "Qwen3-235B-UD-Q3_K_XL-00002-of-00002.gguf").write_bytes(b"\0")
+    manifest = [
+        {
+            "id": "qwen3-235b-a22b",
+            "served_model": "qwen3-235b-a22b",
+            "gguf_include": "*UD-Q3_K_XL*.gguf",
+            "mmproj_include": None,
+            "context_window": 32768,
+            "recommended": False,
+        }
+    ]
+    text = llama_swap_config.render(manifest, str(tmp_path))
+    assert "/models/qwen3-235b-a22b/UD-Q3_K_XL/Qwen3-235B-UD-Q3_K_XL-00001-of-00002.gguf" in text
+
+
 def test_write_is_atomic_and_round_trips(tmp_path: Path) -> None:
     _lay_down(tmp_path)
     path = llama_swap_config.write(str(tmp_path), _manifest(), windows={"gpt-oss-120b": 16384})

@@ -36,25 +36,37 @@ _TRUTHY = ("1", "true", "yes", "on")
 
 
 def resolve_weight(root: str, model_id: str, pattern: str) -> str:
-    """The real weight filename for a model's glob — the first shard for a
-    multi-part GGUF (llama.cpp follows it to the rest). Raises if nothing matches
-    or a shard set is incomplete, so a partial download fails here, not cryptically
-    at gateway load."""
-    matches = sorted(glob.glob(os.path.join(root, model_id, pattern)))
+    """The weight path (RELATIVE to the model dir) for a model's glob — the first
+    shard for a multi-part GGUF (llama.cpp follows it to the rest). Raises if
+    nothing matches or a shard set is incomplete, so a partial download fails here,
+    not cryptically at gateway load.
+
+    Searches recursively: some repos (Unsloth's UD-Q* quants) nest the shards in a
+    quant subdirectory, so `hf download` saves them under `<id>/<quant>/`. The
+    return value is relative to `<root>/<id>` (a bare filename at the top level, or
+    `<quant>/<file>` when nested) so the gateway's `-m /models/<id>/<rel>` resolves
+    either way. hf's `.cache/` download-staging dir is skipped."""
+    base = os.path.join(root, model_id)
+    matches = sorted(
+        m
+        for m in glob.glob(os.path.join(base, "**", pattern), recursive=True)
+        if ".cache" not in os.path.relpath(m, base).split(os.sep)
+    )
     if not matches:
         raise FileNotFoundError(
             f"no file matching {pattern!r} for {model_id} under {root} — download incomplete?"
         )
-    shards = [os.path.basename(m) for m in matches if "-00001-of-" in os.path.basename(m)]
+    rels = [os.path.relpath(m, base) for m in matches]
+    shards = [r for r in rels if "-00001-of-" in os.path.basename(r)]
     if shards:
         first = shards[0]
-        total = int(first.split("-of-")[1].split(".gguf")[0])
+        total = int(os.path.basename(first).split("-of-")[1].split(".gguf")[0])
         if len(matches) != total:
             raise FileNotFoundError(
                 f"{model_id}: expected {total} shards for {pattern!r}, found {len(matches)}"
             )
         return first
-    return os.path.basename(matches[0])
+    return rels[0]
 
 
 def render(
