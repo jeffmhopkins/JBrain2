@@ -677,6 +677,77 @@ def test_recover_backfills_a_dropped_object_and_resolution():
     assert eli.mode == "new" and eli.new_kind == "Person" and eli.new_name == "Eli"
 
 
+def test_recover_distributes_objects_across_enumerated_set_valued_edges():
+    from jbrain.analysis.arbiter import recover_dropped_fields
+
+    # The integrator emitted four Me.children edges but dropped the object on
+    # EVERY one (a set-valued predicate); extraction carried one object each.
+    # Recovery must restore a DISTINCT child per edge — broadcasting the first
+    # would collapse four edges into four copies of `summer`, which then de-dup to
+    # one (the enumerated-kinship collapse this regression guards).
+    kids = ["summer", "lydian", "Harmony", "Elora"]
+    intent = _intent(
+        entity_resolutions=[_res("Me", proposed_entity_id="ent-owner")],
+        facts=[
+            _fact(
+                entity_ref="Me",
+                predicate="children",
+                kind="relationship",
+                object_entity_ref=None,
+                inferred=False,
+            )
+            for _ in kids
+        ],
+    )
+    ext = _extraction(
+        [("Me", "children", "relationship", k) for k in kids],
+        [(k, "Person") for k in kids],
+    )
+    out = recover_dropped_fields(intent, ext)
+    objs = [f.object_entity_ref for f in out.facts]
+    assert None not in objs  # no edge left orphaned
+    assert sorted(o for o in objs if o is not None) == sorted(kids)  # one each, no collapse
+    for k in kids:  # every child gets a provisional resolution so the edge links
+        r = next(r for r in out.entity_resolutions if r.mention_ref == k)
+        assert r.mode == "new" and r.new_kind == "Person"
+
+
+def test_recover_does_not_reassign_an_object_a_sibling_edge_already_holds():
+    from jbrain.analysis.arbiter import recover_dropped_fields
+
+    # One edge kept its object (lydian); two were dropped. Recovery hands out only
+    # the REMAINING extraction objects, never re-assigning lydian to a sibling.
+    intent = _intent(
+        entity_resolutions=[
+            _res("Me", proposed_entity_id="ent-owner"),
+            _res("lydian", mode="new", new_kind="Person", new_name="lydian"),
+        ],
+        facts=[
+            _fact(
+                entity_ref="Me",
+                predicate="children",
+                kind="relationship",
+                object_entity_ref="lydian",
+            ),
+            _fact(
+                entity_ref="Me", predicate="children", kind="relationship", object_entity_ref=None
+            ),
+            _fact(
+                entity_ref="Me", predicate="children", kind="relationship", object_entity_ref=None
+            ),
+        ],
+    )
+    kids = ["summer", "lydian", "Harmony"]
+    ext = _extraction(
+        [("Me", "children", "relationship", k) for k in kids],
+        [(k, "Person") for k in kids],
+    )
+    out = recover_dropped_fields(intent, ext)
+    objs = [f.object_entity_ref for f in out.facts]
+    assert None not in objs
+    assert sorted(o for o in objs if o is not None) == sorted(kids)
+
+
 def test_recover_leaves_a_present_object_untouched():
     from jbrain.analysis.arbiter import recover_dropped_fields
 

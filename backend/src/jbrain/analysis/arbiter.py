@@ -251,26 +251,47 @@ def recover_dropped_fields(intent: IntegrationIntent, extraction: Extraction) ->
     object/value/temporal/resolution (including a deliberate `ambiguous`) is never
     overridden."""
     registry = get_registry()
-    ext_obj: dict[tuple[str, str], str] = {}
+    # Objects can be MULTI-valued on one (subject, predicate): a set-valued
+    # predicate (Me.children -> each kid) has one extraction edge per object, and
+    # the integrator may drop the object on several of them at once. Keep EVERY
+    # extraction object, in order, and hand them out positionally below — a single
+    # value broadcast to all the object-less edges would turn N distinct edges
+    # into N copies of the first, which then de-dup to one (the enumerated-kinship
+    # collapse). value/temporal stay single-valued: they key on distinct subjects
+    # (summer.name, lydian.name), not a shared one, so the first-wins is correct.
+    ext_objs: dict[tuple[str, str], list[str]] = {}
     ext_val: dict[tuple[str, str], dict] = {}
     ext_temporal: dict[tuple[str, str], ExtractedTemporal] = {}
     for f in extraction.facts:
         key = (f.entity_ref, registry.normalize_predicate(f.predicate))
         if f.object_entity_ref:
-            ext_obj.setdefault(key, f.object_entity_ref)
+            objs = ext_objs.setdefault(key, [])
+            if f.object_entity_ref not in objs:
+                objs.append(f.object_entity_ref)
         if isinstance(f.value_json, dict) and f.value_json:
             ext_val.setdefault(key, f.value_json)
         if f.temporal and f.temporal.phrase and f.temporal.resolved_start:
             ext_temporal.setdefault(key, f.temporal)
     mention_kind = {m.name: m.kind for m in extraction.mentions}
     resolved = {r.mention_ref for r in intent.entity_resolutions}
+    # Objects still free to backfill per key: the extraction's, minus any an intent
+    # edge already carries, so a kept edge's object is never handed to a sibling
+    # too. The main loop consumes these in order as it meets each object-less edge.
+    avail_objs: dict[tuple[str, str], list[str]] = {k: list(v) for k, v in ext_objs.items()}
+    for kept in intent.facts:
+        if kept.object_entity_ref:
+            free = avail_objs.get((kept.entity_ref, registry.normalize_predicate(kept.predicate)))
+            if free and kept.object_entity_ref in free:
+                free.remove(kept.object_entity_ref)
 
     facts: list[IntentFact] = []
     added: list[EntityResolution] = []
     for fact in intent.facts:
         key = (fact.entity_ref, registry.normalize_predicate(fact.predicate))
-        if fact.object_entity_ref is None and key in ext_obj:
-            fact = replace(fact, object_entity_ref=ext_obj[key])
+        if fact.object_entity_ref is None:
+            free = avail_objs.get(key)
+            if free:
+                fact = replace(fact, object_entity_ref=free.pop(0))
         if not isinstance(fact.value_json, dict) and key in ext_val:
             fact = replace(fact, value_json=ext_val[key])
         if fact.temporal is None and key in ext_temporal:
