@@ -40,8 +40,15 @@ docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
 docker run --rm $TTY_FLAG --name "$CONTAINER" \
   -e MANIFEST="$MANIFEST" -v "$MODELS_DIR:/models" python:3.11-slim bash -c '
   set -euo pipefail
-  pip install --quiet -U "huggingface_hub[cli]"
-  python - <<PY
+  pip install --quiet -U huggingface_hub
+  # The heredoc delimiter is QUOTED so the Python below is fed verbatim. With an
+  # unquoted delimiter bash would command-substitute backticks in the body (a
+  # backticked hf-download mention in a comment actually ran the command and
+  # injected its help text into the source, breaking the parse) and expand any
+  # dollar sign. Python reads MANIFEST from the environment at runtime, so it needs
+  # no shell expansion here. The quoted delimiter is written '"'"'PY'"'"' to survive
+  # this outer single-quoted bash -c string.
+  python - <<'"'"'PY'"'"'
 import json, os, subprocess, time
 
 def _bytes(p):
