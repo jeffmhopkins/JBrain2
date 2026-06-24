@@ -629,20 +629,6 @@ h3 {
   flex: none;
 }
 
-.mode-dot {
-  width: 11px;
-  height: 11px;
-  border-radius: var(--r-pill);
-  background: var(--mode);
-  flex: none;
-}
-
-.foot-text {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .foot-icons {
   margin-left: auto;
   display: flex;
@@ -662,25 +648,18 @@ h3 {
 
 /* The live context-usage meter in the composer foot: a thin two-tone fill bar + a
    terse "used/window · %%". The solid segment is the carried-forward floor; the
-   dimmer segment over it is the turn's transient tool I/O. Sits between the footer
-   text and the action icons, muted until the window actually fills. */
+   dimmer segment over it is the turn's transient tool I/O. Sits at the foot's
+   left, muted until the window actually fills; the action icons take the right. */
 .ctx-meter {
   display: flex;
   align-items: center;
   gap: 6px;
-  margin-left: auto;
   flex: none;
   font-size: var(--fs-micro);
   color: var(--text-3);
   font-variant-numeric: tabular-nums;
   /* The fill hue; thresholds below warm it, both fill segments derive from it. */
   --ctx-hue: var(--steel);
-}
-
-/* The foot-icons row already claims `margin-left: auto`; with the meter present it
-   sits right after the meter (which took the auto margin), so reset its own. */
-.ctx-meter + .foot-icons {
-  margin-left: 14px;
 }
 
 .ctx-bar {

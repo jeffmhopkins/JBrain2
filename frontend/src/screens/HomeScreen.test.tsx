@@ -257,14 +257,14 @@ describe("HomeScreen mode scoping", () => {
       />,
     );
     // First entry reopens the existing Curator chat — no new session.
-    fireEvent.click(screen.getByRole("tab", { name: "Full Brain" }));
+    fireEvent.click(screen.getByRole("tab", { name: "Brain" }));
     await waitFor(() =>
       expect(document.querySelector(".session-title")?.textContent).toBe("Recap"),
     );
     expect(deps.createSession).not.toHaveBeenCalled();
 
     // Re-clicking Full Brain starts a fresh full-domain Curator chat.
-    fireEvent.click(screen.getByRole("tab", { name: "Full Brain" }));
+    fireEvent.click(screen.getByRole("tab", { name: "Brain" }));
     await waitFor(() =>
       expect(deps.createSession).toHaveBeenCalledWith({
         domain_scopes: ["general", "health", "finance", "location"],
@@ -325,7 +325,7 @@ describe("HomeScreen mode scoping", () => {
     expect(document.querySelector(".session-title")).not.toBeInTheDocument();
     expect(document.querySelector(".wordmark")).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("tab", { name: "Full Brain" }));
+    fireEvent.click(screen.getByRole("tab", { name: "Brain" }));
     // The real surface, not a placeholder: the transcript, with the session name
     // standing in for the wordmark up in the top bar (no extra title row).
     await waitFor(() => expect(screen.getByLabelText("Conversation")).toBeInTheDocument());
@@ -343,7 +343,7 @@ describe("HomeScreen mode scoping", () => {
 
   it("tapping the session name in the top bar reopens the Sessions panel", async () => {
     setup();
-    fireEvent.click(screen.getByRole("tab", { name: "Full Brain" }));
+    fireEvent.click(screen.getByRole("tab", { name: "Brain" }));
     await waitFor(() => screen.getByLabelText("Conversation"));
     expect(document.querySelector(".panel.left.open")).not.toBeInTheDocument();
 
@@ -353,7 +353,7 @@ describe("HomeScreen mode scoping", () => {
 
   it("shuttles the panels on an omnibox swipe but not on a chat-window swipe", async () => {
     setup();
-    fireEvent.click(screen.getByRole("tab", { name: "Full Brain" }));
+    fireEvent.click(screen.getByRole("tab", { name: "Brain" }));
     await waitFor(() => screen.getByLabelText("Conversation"));
 
     // A swipe across the transcript itself is inert — it never opens a panel.
@@ -397,7 +397,7 @@ describe("HomeScreen mode scoping", () => {
         fbDeps={offDeps}
       />,
     );
-    fireEvent.click(screen.getByRole("tab", { name: "Full Brain" }));
+    fireEvent.click(screen.getByRole("tab", { name: "Brain" }));
     await waitFor(() => screen.getByLabelText("Conversation"));
     await waitFor(() =>
       expect(screen.queryByRole("button", { name: "Attach files" })).not.toBeInTheDocument(),
@@ -420,7 +420,7 @@ describe("HomeScreen mode scoping", () => {
         fbDeps={onDeps}
       />,
     );
-    fireEvent.click(screen.getByRole("tab", { name: "Full Brain" }));
+    fireEvent.click(screen.getByRole("tab", { name: "Brain" }));
     await waitFor(() =>
       expect(screen.getByRole("button", { name: "Attach files" })).toBeInTheDocument(),
     );
@@ -468,7 +468,7 @@ describe("HomeScreen mode scoping", () => {
         fbDeps={deps}
       />,
     );
-    fireEvent.click(screen.getByRole("tab", { name: "Full Brain" }));
+    fireEvent.click(screen.getByRole("tab", { name: "Brain" }));
     await waitFor(() => screen.getByLabelText("Conversation"));
 
     fireEvent.change(screen.getByLabelText("Composer"), { target: { value: "summarize my week" } });

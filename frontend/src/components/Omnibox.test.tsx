@@ -69,7 +69,7 @@ describe("Omnibox", () => {
     expect(screen.queryByRole("tab", { name: "Research" })).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("tab", { name: "Entry" }));
-    expect(screen.getByRole("tab", { name: "Full Brain" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Brain" })).toBeInTheDocument();
   });
 
   it("shows the destination row only for Medical/Financial and sends the domain", () => {
