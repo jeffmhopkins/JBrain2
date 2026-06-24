@@ -161,4 +161,15 @@ fi
 # single-source-of-truth rule (CLAUDE.md rule #8); see docs/STRIX_HALO_SETUP.md
 # ("Image generation"), docs/IMAGE_GEN_SERVICE_PLAN.md, and docs/IMAGE_GEN_LIVE_PLAN.md.
 
+# --- Gmail archivist (opt-in, NOT bootstrapped here) ---
+# The `archivist` persona organizes a Gmail history via gmail_* tools over a thin
+# httpx client (no new dependency — httpx is a normal pyproject dep). Auth is a
+# one-time OAuth2 bootstrap done by the OWNER, never in dev/CI:
+#   JBRAIN_GMAIL_CLIENT_ID=... JBRAIN_GMAIL_CLIENT_SECRET=... \
+#     python scripts/gmail-oauth-bootstrap.py
+# which mints JBRAIN_GMAIL_REFRESH_TOKEN to paste into config. Empty
+# JBRAIN_GMAIL_REFRESH_TOKEN (the default) disables the feature and drops the gmail_*
+# tools, so this is a no-op here. Mentioned per CLAUDE.md rule #8; full click-path in
+# docs/EMAIL_ARCHIVIST_PLAN.md ("OAuth setup" appendix).
+
 log "done"
