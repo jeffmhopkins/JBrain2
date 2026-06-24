@@ -25,7 +25,7 @@ from sqlalchemy import and_, bindparam, delete, func, select, text, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from jbrain.analysis import purge
+from jbrain.analysis import flow_trace, purge
 from jbrain.analysis.appointment_projection import project_appointments
 from jbrain.analysis.arbiter import (
     ArbiterPlan,
@@ -343,6 +343,7 @@ class AnalysisPipeline:
             parse_anchor=parse_anchor,
             note_id=note_id,
         )
+        flow_trace.extract(note_id, extraction)
 
         # Graph-aware context: the existing entities + active facts near this
         # note's mentions, so the agent can resolve to known entities and propose
@@ -368,10 +369,12 @@ class AnalysisPipeline:
             schema_version=_SCHEMA_VERSION,
             note_text=note_text,
         )
+        flow_trace.intent(note_id, "integrate", intent)
         # Restore objects the integrator dropped when re-typing relationship facts
         # (it non-deterministically omits object_entity_ref the extraction carried),
         # so the edge links instead of orphaning + holding for review.
         intent = recover_dropped_fields(intent, extraction)
+        flow_trace.intent(note_id, "recover", intent)
         # Canonicalize unknown predicates BEFORE the arbiter keys facts, so a
         # STRONG embedding match collapses the committed graph address and the
         # weight model sees the canonical name (Phase 3 §3.1; no-op when off).
@@ -379,6 +382,7 @@ class AnalysisPipeline:
         plan = plan_intent(
             intent, compute_signals(intent, [c.text for c in chunks]), correction=correction
         )
+        flow_trace.plan(note_id, plan)
 
         provider, model = await self._router.effective_spec("integrate.note", INTEGRATE_STRENGTH)
         async with scoped_session(self._maker, SYSTEM_CTX) as session:
@@ -2020,6 +2024,17 @@ class AnalysisPipeline:
             fact_domain,
         )
         decision = decide(candidate, existing, predicate=fact.predicate)
+        flow_trace.commit(
+            str(note_id),
+            entity_ref=fact.entity_ref,
+            predicate=fact.predicate,
+            qualifier=fact.qualifier,
+            object_ref=fact.object_entity_ref,
+            subject_id=entity.id,
+            object_id=object_entity.id if object_entity else None,
+            existing=existing,
+            decision=decision,
+        )
 
         if decision.close_id is not None:
             # In-place interval close: the candidate is the END of the existing
