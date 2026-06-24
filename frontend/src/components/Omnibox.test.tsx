@@ -249,15 +249,17 @@ describe("Omnibox", () => {
         onSend={vi.fn()}
         onConversation={vi.fn()}
         onOpenLauncher={vi.fn()}
-        contextUsage={{ used: 8192, window: 32768 }}
+        contextUsage={{ used: 8192, base: 4096, window: 32768 }}
       />,
     );
     // 8192 / 32768 = 25%; the bar fills to match and the label reads compactly.
     const meter = screen.getByRole("status", {
-      name: /Context used: 8192 of 32768 tokens \(25%\)/,
+      name: /Context used: 8192 of 32768 tokens \(25%\) — 4096 carried, 4096 this turn/,
     });
     expect(meter).toHaveTextContent("8.2k/33k · 25%");
-    expect(meter.querySelector(".ctx-fill")).toHaveStyle({ width: "25%" });
+    // Two-tone: the peak reaches 25%, the solid carried floor (4096) to 13%.
+    expect(meter.querySelector(".ctx-fill-peak")).toHaveStyle({ width: "25%" });
+    expect(meter.querySelector(".ctx-fill-base")).toHaveStyle({ width: "13%" });
   });
 
   it("warms the context meter toward warning as the window fills", () => {
@@ -268,7 +270,7 @@ describe("Omnibox", () => {
         onSend={vi.fn()}
         onConversation={vi.fn()}
         onOpenLauncher={vi.fn()}
-        contextUsage={{ used: 30000, window: 32768 }}
+        contextUsage={{ used: 30000, base: 1000, window: 32768 }}
       />,
     );
     // ~92% → the high/over-budget register.
@@ -281,7 +283,7 @@ describe("Omnibox", () => {
         onSend={vi.fn()}
         onConversation={vi.fn()}
         onOpenLauncher={vi.fn()}
-        contextUsage={{ used: 25000, window: 32768 }}
+        contextUsage={{ used: 25000, base: 1000, window: 32768 }}
       />,
     );
     // ~76% → the mid register, not yet high.

@@ -46,11 +46,16 @@ function turnKind(buffer: TranscriptMessage[] | undefined): TurnKind {
   return running && IMAGE_TOOLS.has(running.name) ? "rendering" : "thinking";
 }
 
-/** Live context-window fill for the open chat, from the stream's `usage` events:
- * `used` (the latest turn's prompt + output, the fullest the context has been) over
- * the model's total `window`. Null until the first usage event of a session. */
+/** Live context-window fill for the open chat, from the stream's `usage` events.
+ * `used` is the latest step's prompt + output (the fullest the context has been);
+ * `base` is the turn's FIRST model call — the carried-forward floor (system + text
+ * history + the new message, before any tool scaffolding piles on). Their gap is the
+ * turn's transient tool I/O, which the meter shades separately so the intra-turn spike
+ * reads apart from what actually survives into the next turn. Both over the model's
+ * total `window`; null until the first usage event of a session. */
 export interface ContextUsage {
   used: number;
+  base: number;
   window: number;
 }
 
@@ -529,12 +534,21 @@ export function useFullBrain(
     // How many SERVER frames we've folded — the offset a reconnect resumes from. The
     // synthetic `run` event is client-made (from the X-Run-Id header), so it doesn't count.
     let framesSeen = 0;
+    // The turn's first usage event is its carried-forward floor (history + system +
+    // new message, no tools yet); later steps in the same turn only stack transient
+    // tool I/O on top. Captured once so the meter can shade base vs. transient.
+    let turnBase: number | null = null;
     // Fold one server event into the turn's own chat buffer (not whatever chat is on
     // screen — the owner may be viewing another session while this one streams). Usage
     // rides the whole conversation, so it's tracked apart from the transcript reducer.
     const fold = (event: ChatEvent): void => {
       if (event.type === "usage") {
-        setUsage({ used: event.input_tokens + event.output_tokens, window: event.context_window });
+        if (turnBase === null) turnBase = event.input_tokens;
+        setUsage({
+          used: event.input_tokens + event.output_tokens,
+          base: turnBase,
+          window: event.context_window,
+        });
       } else {
         setSessionMessages(turnSessionId, (ms) => applyEvent(ms, event));
       }
