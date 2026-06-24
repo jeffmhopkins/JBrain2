@@ -250,6 +250,144 @@ def _value_attested(value_json: dict | None, haystack: str) -> bool:
     return False
 
 
+# Gendered kinship/role terms the note can state, mapped to the gender they
+# DETERMINISTICALLY imply. Mirrors the set the integrator infers gender from (it
+# never infers from the non-gendered partner/spouse/sibling/parent/child), plus the
+# plurals and everyday variants a note actually uses.
+_GENDER_TERMS: dict[str, frozenset[str]] = {
+    "female": frozenset(
+        {
+            "daughter",
+            "daughters",
+            "wife",
+            "mother",
+            "mom",
+            "sister",
+            "sisters",
+            "aunt",
+            "aunts",
+            "niece",
+            "nieces",
+            "grandmother",
+            "granddaughter",
+        }
+    ),
+    "male": frozenset(
+        {
+            "son",
+            "sons",
+            "husband",
+            "father",
+            "dad",
+            "brother",
+            "brothers",
+            "uncle",
+            "uncles",
+            "nephew",
+            "nephews",
+            "grandfather",
+            "grandson",
+        }
+    ),
+}
+
+
+def _gender_grounded(fact: IntentFact, haystack: str) -> bool:
+    """A `gender` fact the note grounds with a gendered kinship/role term
+    ("daughter" ⇒ female) is a DETERMINISTIC implication, not a speculative guess,
+    so it is surface-attested even when the model flagged it inferred — the kinship
+    twin of `_date_phrase_grounded` / `_relationship_object_named`. The term set
+    mirrors what the integrator infers gender from (never the non-gendered
+    partner/spouse/sibling/parent), so a fact grounded here genuinely is 1:1.
+
+    The check is note-global like `_object_named`: a mixed-gender note ("a daughter
+    and a son") could ground a model-misassigned gender against the wrong member —
+    accepted, since the model rarely misassigns and the value is corrigible, and the
+    common roster case (all same gender, or each gender named) is right. `haystack`
+    is already normalized."""
+    if fact.predicate != "gender" or not isinstance(fact.value_json, dict):
+        return False
+    value = fact.value_json.get("value")
+    terms = _GENDER_TERMS.get(value.casefold()) if isinstance(value, str) else None
+    return terms is not None and any(_token_present(t, haystack) for t in terms)
+
+
+# The object-gender a kinship edge implies, by canonical predicate: the gendered
+# noun for each side. A `children` edge to a child the note calls a "daughter"
+# implies the child is female; spouse/parent/sibling likewise. Neutral terms (kid,
+# child, partner, sibling, parent) imply nothing and are intentionally absent.
+_KINSHIP_GENDER_TERMS: dict[str, dict[str, frozenset[str]]] = {
+    "children": {
+        "female": frozenset({"daughter", "daughters"}),
+        "male": frozenset({"son", "sons"}),
+    },
+    "spouse": {"female": frozenset({"wife"}), "male": frozenset({"husband"})},
+    "parent": {"female": frozenset({"mother", "mom"}), "male": frozenset({"father", "dad"})},
+    "sibling": {
+        "female": frozenset({"sister", "sisters"}),
+        "male": frozenset({"brother", "brothers"}),
+    },
+}
+
+
+def derive_kinship_gender(intent: IntegrationIntent, note_text: str) -> IntegrationIntent:
+    """Emit the gender a kinship edge DETERMINISTICALLY implies for its object, so a
+    roster the model captured as relationships but for which it omitted gender ("four
+    daughters named …" → four children edges, no gender) still records each child's
+    gender — the recall companion to `_gender_grounded`, which only weights a gender
+    fact once it exists.
+
+    For each kinship predicate, derive the object gender ONLY when the note uses that
+    predicate's gendered term for exactly ONE gender (all daughters, or all sons); a
+    mixed roster ("a daughter and a son") can't be associated to each object
+    positionally here, so it is left to the model/review. An object that already
+    carries a gender fact this note is left untouched. The derived fact is `inferred`
+    (the note never types "female"), but `_gender_grounded` attests it, so it commits
+    rather than landing in review."""
+    registry = get_registry()
+    haystack = _norm(note_text)
+    implied: dict[str, str] = {}
+    for canon, by_gender in _KINSHIP_GENDER_TERMS.items():
+        present = {
+            g for g, terms in by_gender.items() if any(_token_present(t, haystack) for t in terms)
+        }
+        if len(present) == 1:
+            implied[canon] = next(iter(present))
+    if not implied:
+        return intent
+
+    have_gender = {
+        f.entity_ref for f in intent.facts if registry.normalize_predicate(f.predicate) == "gender"
+    }
+    added: list[IntentFact] = []
+    seen: set[str] = set()
+    for fact in intent.facts:
+        gender = implied.get(registry.normalize_predicate(fact.predicate))
+        obj = fact.object_entity_ref
+        if gender is None or obj is None or obj in have_gender or obj in seen:
+            continue
+        seen.add(obj)
+        added.append(
+            IntentFact(
+                entity_ref=obj,
+                predicate="gender",
+                qualifier="",
+                kind="state",
+                statement=f"{obj}'s gender is {gender}.",
+                value_json={"value": gender},
+                assertion="asserted",
+                object_entity_ref=None,
+                temporal=None,
+                attested_span=None,
+                self_confidence=1.0,
+                inferred=True,
+            )
+        )
+    if not added:
+        return intent
+    return replace(intent, facts=[*intent.facts, *added])
+
+
 def recover_dropped_fields(intent: IntegrationIntent, extraction: Extraction) -> IntegrationIntent:
     """Backfill the object AND value the integrator drops when it re-types a fact.
 
@@ -401,6 +539,7 @@ def compute_signals(
             )
             or _date_phrase_grounded(fact, types, haystack)
             or _relationship_object_named(fact, haystack)
+            or _gender_grounded(fact, haystack)
         )
         out[i] = ConfidenceSignals(
             surface_attested=surface_attested,

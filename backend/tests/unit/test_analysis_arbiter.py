@@ -445,6 +445,128 @@ def test_compute_signals_inferred_relationship_with_unnamed_object_stays_unattes
     assert compute_signals(intent, ["I have a kid."])[0].surface_attested is False
 
 
+def test_derive_kinship_gender_adds_female_for_a_daughters_roster():
+    from jbrain.analysis.arbiter import derive_kinship_gender
+
+    # The model captured four children edges but omitted gender; "daughters" is the
+    # only gendered child-term in the note → derive female for each child object.
+    intent = _intent(
+        entity_resolutions=[
+            _res("Me"),
+            _res("summer", mode="new", new_kind="Person", new_name="summer"),
+            _res("lydian", mode="new", new_kind="Person", new_name="lydian"),
+        ],
+        facts=[
+            _fact(entity_ref="Me", predicate="children", object_entity_ref="summer"),
+            _fact(entity_ref="Me", predicate="children", object_entity_ref="lydian"),
+        ],
+    )
+    out = derive_kinship_gender(intent, "I have two daughters named summer and lydian")
+    genders = sorted(
+        (f.entity_ref, (f.value_json or {}).get("value"), f.inferred)
+        for f in out.facts
+        if f.predicate == "gender"
+    )
+    assert genders == [("lydian", "female", True), ("summer", "female", True)]
+
+
+def test_derive_kinship_gender_skips_a_mixed_gender_roster():
+    from jbrain.analysis.arbiter import derive_kinship_gender
+
+    # Both daughter and son terms present → can't associate positionally → derive
+    # nothing for children, leaving it to the model/review.
+    intent = _intent(
+        entity_resolutions=[_res("Me"), _res("kid", mode="new", new_kind="Person", new_name="kid")],
+        facts=[_fact(entity_ref="Me", predicate="children", object_entity_ref="kid")],
+    )
+    out = derive_kinship_gender(intent, "I have a daughter and a son.")
+    assert [f for f in out.facts if f.predicate == "gender"] == []
+
+
+def test_derive_kinship_gender_does_not_override_an_existing_gender_fact():
+    from jbrain.analysis.arbiter import derive_kinship_gender
+
+    existing = _fact(
+        entity_ref="summer",
+        predicate="gender",
+        kind="state",
+        value_json={"value": "male"},
+        object_entity_ref=None,
+    )
+    intent = _intent(
+        entity_resolutions=[
+            _res("Me"),
+            _res("summer", mode="new", new_kind="Person", new_name="summer"),
+        ],
+        facts=[_fact(entity_ref="Me", predicate="children", object_entity_ref="summer"), existing],
+    )
+    out = derive_kinship_gender(intent, "my daughter summer")
+    summer_genders = [
+        (f.value_json or {}).get("value")
+        for f in out.facts
+        if f.predicate == "gender" and f.entity_ref == "summer"
+    ]
+    assert summer_genders == ["male"]  # existing kept, no derived female added
+
+
+def test_compute_signals_gender_grounded_by_a_kinship_term_attests():
+    # "daughter ⇒ female" is a deterministic implication: an inferred gender fact
+    # the note grounds with a gendered term is surface-attested, so it commits
+    # instead of sitting in review like a guess.
+    intent = _intent(
+        entity_resolutions=[_res("m1")],
+        facts=[
+            _fact(
+                predicate="gender",
+                kind="state",
+                value_json={"value": "female"},
+                object_entity_ref=None,
+                attested_span=None,
+                inferred=True,
+            )
+        ],
+    )
+    note = "I have four daughters named summer lydian Harmony and Elora"
+    assert compute_signals(intent, [note])[0].surface_attested is True
+
+
+def test_compute_signals_gender_not_grounded_without_a_kinship_term():
+    # No gendered term in the note → the inferred gender fact stays unattested.
+    intent = _intent(
+        entity_resolutions=[_res("m1")],
+        facts=[
+            _fact(
+                predicate="gender",
+                kind="state",
+                value_json={"value": "female"},
+                object_entity_ref=None,
+                attested_span=None,
+                inferred=True,
+            )
+        ],
+    )
+    assert compute_signals(intent, ["Summer came over today."])[0].surface_attested is False
+
+
+def test_compute_signals_gender_value_must_match_the_terms_gender():
+    # A male gender fact is not grounded by female terms (and vice versa): the
+    # value must match the gender the note's term implies.
+    intent = _intent(
+        entity_resolutions=[_res("m1")],
+        facts=[
+            _fact(
+                predicate="gender",
+                kind="state",
+                value_json={"value": "male"},
+                object_entity_ref=None,
+                attested_span=None,
+                inferred=True,
+            )
+        ],
+    )
+    assert compute_signals(intent, ["I have two daughters."])[0].surface_attested is False
+
+
 def test_compute_signals_named_object_does_not_rescue_an_inferred_state_edge():
     # The `not inferred` gate still holds for a non-relationship (state) edge: a
     # genuinely inferred worksFor to a named org is NOT promoted — the model made
