@@ -154,7 +154,7 @@ pinned base URL and that no field is model-supplied. **No RLS test — no table.
 
 ## Wave E2 — tools + persona (the interactive session)
 
-### The five `.tool` sidecars + handlers
+### The six `.tool` sidecars + handlers
 
 Co-located `.tool` sidecars (`agent/tools/gmail_*.tool`), each `permission: web`,
 each version CI-guarded, with handlers in a new `agent/gmailtools.py` thin over the
