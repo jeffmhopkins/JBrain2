@@ -264,9 +264,7 @@ class SqlLocationRepo:
                 {"pid": ctx.principal_id, "lat": latitude, "lon": longitude},
             )
 
-    async def owner_fix(
-        self, ctx: SessionContext, *, max_age_seconds: float
-    ) -> OwnerFix | None:
+    async def owner_fix(self, ctx: SessionContext, *, max_age_seconds: float) -> OwnerFix | None:
         """The owner's cached warm fix if one was stored within `max_age_seconds`,
         else None — the fallback when a turn arrives with no live position. STRICT
         RLS (full owner + location scope) fails closed for a narrowed/non-owner
@@ -286,9 +284,7 @@ class SqlLocationRepo:
             ).first()
         if row is None:
             return None
-        return OwnerFix(
-            captured_at=row.captured_at, latitude=row.latitude, longitude=row.longitude
-        )
+        return OwnerFix(captured_at=row.captured_at, latitude=row.latitude, longitude=row.longitude)
 
     async def record_view(
         self,
