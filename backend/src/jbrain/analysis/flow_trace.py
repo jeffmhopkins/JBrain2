@@ -2,10 +2,11 @@
 
 Distinct from `analysis.trace`, which builds the persisted review-card explanation
 for a single HELD fact. This one is live operator lighting: when on, each seam of
-`integrate_note` emits ONE structured INFO event keyed by note_id — extract →
-integrate → recover → plan → per-fact commit decision — so an operator tailing the
-worker logs can watch a single note's facts flow end to end and see exactly where
-an edge is dropped, refreshed, or superseded.
+`integrate_note` emits ONE structured INFO event keyed by note_id — vision (the
+OCR/caption an attachment produced) → extract → integrate → recover → plan →
+per-fact commit decision — so an operator tailing the worker logs can watch a
+single note's facts flow end to end, from what the image model read to where an
+edge is dropped, refreshed, or superseded.
 
 OFF by default and cheap when off: every emitter checks one cached flag before
 touching its arguments, so the hot path pays nothing in production. This module is
@@ -65,11 +66,48 @@ def set_enabled(value: bool) -> None:
     _enabled = value
 
 
+# The vision text can be long (a full screenshot transcription); cap it so a
+# trace line stays readable while still showing what the image model actually read.
+_VISION_TEXT_CAP = 2000
+
+
 def _short(value: Any) -> str | None:
     """First segment of a UUID/id — compact and greppable in log lines."""
     if value is None:
         return None
     return str(value).split("-", 1)[0]
+
+
+def vision(
+    attachment_id: Any,
+    *,
+    note_id: Any,
+    kind: str,
+    provider: str,
+    model: str,
+    filename: str,
+    text: str,
+) -> None:
+    """Seam 0 — what vision.ocr / vision.caption produced for an attachment, BEFORE
+    it becomes chunks the extractor mines. Logs the verbatim transcription/caption
+    (capped) with the model that produced it, so an operator can see exactly what
+    the image model read — where a screenshot's app chrome or a tool's own narration
+    entered the pipeline — without querying the extract cache. Same debug-console
+    gate as the rest of the trace."""
+    if not enabled():
+        return
+    log.info(
+        "analysis.flow.vision",
+        attachment_id=_short(attachment_id),
+        note_id=_short(note_id),
+        kind=kind,
+        provider=provider,
+        model=model,
+        filename=filename,
+        chars=len(text),
+        text=text[:_VISION_TEXT_CAP],
+        truncated=len(text) > _VISION_TEXT_CAP,
+    )
 
 
 def _edge(entity_ref: str, predicate: str, qualifier: str, obj: str | None) -> str:

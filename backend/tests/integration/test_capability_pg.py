@@ -7,8 +7,10 @@ and that the read-only transaction the /api/debug/sql route opens truly blocks
 writes while allowing reads, even under an owner RLS context.
 """
 
+import io
 from collections.abc import AsyncIterator
 from types import SimpleNamespace
+from uuid import UUID, uuid4
 
 import pytest
 from fastapi import HTTPException
@@ -22,8 +24,11 @@ from jbrain.auth import service as auth_service
 from jbrain.auth.repo import SqlAuthRepo
 from jbrain.auth.service import InvalidCredentials, PrincipalInfo
 from jbrain.db.session import SessionContext, scoped_session
+from jbrain.llm.types import LlmResult, LlmUsage
+from jbrain.notes.repo import SqlNotesRepo
+from jbrain.storage import FsBlobStore
 from tests.conftest import docker_available
-from tests.integration.test_rls import database_url  # noqa: F401
+from tests.integration.test_rls import OWNER, database_url  # noqa: F401
 
 pytestmark = [
     pytest.mark.integration,
@@ -165,3 +170,86 @@ async def test_run_sql_route_maps_a_sql_error_to_400(maker: async_sessionmaker) 
             principal,
         )
     assert exc.value.status_code == 400
+
+
+# --- vision route (drive vision.* over an on-box attachment) ----------------
+
+
+class _FakeVisionRouter:
+    """The two router methods the vision route touches; echoes the user prompt so
+    the test can confirm the call reached the adapter."""
+
+    async def effective_spec(self, task: str, strength: str | None = None) -> tuple[str, str]:
+        return ("local", "qwen3-vl-30b")
+
+    async def complete(self, task: str, **kw: object) -> LlmResult:
+        return LlmResult(
+            text=f"caption:{kw['user_text']}",
+            parsed=None,
+            usage=LlmUsage(input_tokens=3, output_tokens=5),
+        )
+
+
+def _png_bytes() -> bytes:
+    from PIL import Image
+
+    buf = io.BytesIO()
+    Image.new("RGB", (4, 4), (120, 30, 30)).save(buf, format="PNG")
+    return buf.getvalue()
+
+
+def _vision_request(maker: async_sessionmaker, blobs: FsBlobStore) -> SimpleNamespace:
+    """The Request stand-in the vision route reads app.state off of: the session
+    maker (attachment lookup), the LLM router (egress), and the blob store (bytes)."""
+    return SimpleNamespace(
+        app=SimpleNamespace(
+            state=SimpleNamespace(
+                session_maker=maker, llm_router=_FakeVisionRouter(), blob_store=blobs
+            )
+        ),
+        state=SimpleNamespace(),
+    )
+
+
+async def test_vision_route_reads_a_real_attachment_and_runs(
+    maker: async_sessionmaker, tmp_path: object
+) -> None:
+    # Seed a note + attachment + blob, then drive the route exactly as the console
+    # does: it looks the attachment up under the read-only owner context and runs
+    # the routed vision task. Proves the real-Postgres round-trip end to end.
+    blobs = FsBlobStore(tmp_path)  # type: ignore[arg-type]
+    png = _png_bytes()
+    sha = await blobs.put(png)
+    note, _ = await SqlNotesRepo(maker).create_note(
+        OWNER, client_id=f"vis-{uuid4()}", domain="general", destination=None, body="pic"
+    )
+    att = await SqlNotesRepo(maker).add_attachment(
+        OWNER,
+        note_id=note.id,
+        sha256=sha,
+        filename="me.png",
+        media_type="image/png",
+        size_bytes=len(png),
+    )
+    assert att is not None
+    principal = PrincipalInfo(id="x", kind="capability_token", label="x")
+    out = await debug.vision(
+        debug.VisionRequest(attachment_id=UUID(att.id), task="vision.caption"),
+        _vision_request(maker, blobs),  # type: ignore[arg-type]
+        principal,
+    )
+    assert out.text.startswith("caption:") and out.filename == "me.png"
+    assert out.task == "vision.caption" and out.model == "qwen3-vl-30b"
+
+
+async def test_vision_route_404s_on_a_missing_attachment(
+    maker: async_sessionmaker, tmp_path: object
+) -> None:
+    principal = PrincipalInfo(id="x", kind="capability_token", label="x")
+    with pytest.raises(HTTPException) as exc:
+        await debug.vision(
+            debug.VisionRequest(attachment_id=uuid4(), task="vision.caption"),
+            _vision_request(maker, FsBlobStore(tmp_path)),  # type: ignore[arg-type]
+            principal,
+        )
+    assert exc.value.status_code == 404

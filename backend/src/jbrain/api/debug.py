@@ -13,6 +13,7 @@ it can read anything yet write nothing.
 """
 
 import asyncio
+import base64
 import datetime as dt
 import decimal
 import uuid
@@ -23,7 +24,7 @@ import structlog
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel, Field
-from sqlalchemy import text
+from sqlalchemy import select, text
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -31,10 +32,20 @@ from jbrain.api import llm_settings
 from jbrain.api.deps import AuthRepoDep, DebugDep, SettingsDep
 from jbrain.api.llm_settings import LlmSettingsOut, LlmSettingsPut, LoadedModelsOut
 from jbrain.db.session import SessionContext, scoped_session
+from jbrain.ingest.imageprep import downscale_for_vision
+from jbrain.ingest.ocr import (
+    DESCRIPTION_MAX_TOKENS,
+    DESCRIPTION_SYSTEM,
+    OCR_MAX_TOKENS,
+    OCR_SYSTEM,
+)
+from jbrain.llm import LlmImage
 from jbrain.llm.errors import LlmError
 from jbrain.llm.router import LlmRouter
 from jbrain.llm.types import DEFAULT_MAX_TOKENS
+from jbrain.models.notes import Attachment
 from jbrain.settings_store import SqlSettingsStore
+from jbrain.storage import BlobStore
 
 log = structlog.get_logger()
 
@@ -55,6 +66,10 @@ def _maker(request: Request) -> async_sessionmaker[AsyncSession]:
 
 def _llm_router(request: Request) -> LlmRouter:
     return cast(LlmRouter, request.app.state.llm_router)
+
+
+def _blobs(request: Request) -> BlobStore:
+    return cast(BlobStore, request.app.state.blob_store)
 
 
 def _store(request: Request) -> SqlSettingsStore:
@@ -207,6 +222,94 @@ async def complete(body: CompleteRequest, request: Request, _p: DebugDep) -> Com
     use /complete-async + /jobs/{id} for those."""
     request.state.debug_detail = body.user_text
     return await _run_completion(_llm_router(request), body)
+
+
+# --- Vision iteration -------------------------------------------------------
+# Drive vision.ocr / vision.caption against an image ALREADY on the box (by
+# attachment id) so the OCR/caption prompts can be iterated on the real vision
+# model the same way /complete iterates text prompts. Reuses the llm.complete
+# scope (vision IS a completion); image bytes flow through the storage
+# abstraction (non-neg #2), egress through the adapter (non-neg #1). Read-only:
+# the attachment lookup runs in the same owner read-only context as /sql.
+
+# The shipped per-task defaults, applied when the caller passes no system override.
+_VISION_DEFAULTS = {
+    "vision.ocr": (OCR_SYSTEM, OCR_MAX_TOKENS, "Transcribe this image (file: {name})."),
+    "vision.caption": (
+        DESCRIPTION_SYSTEM,
+        DESCRIPTION_MAX_TOKENS,
+        "Describe this image (file: {name}).",
+    ),
+}
+
+
+class VisionRequest(BaseModel):
+    attachment_id: uuid.UUID
+    # Which vision task to run — picks the routed model + the shipped default prompt.
+    task: str = "vision.caption"
+    # A prompt override to iterate against; empty falls back to the shipped prompt.
+    system: str = ""
+    # 0 means "use the task's shipped budget"; an explicit value overrides it.
+    max_tokens: int = Field(default=0, ge=0, le=32768)
+
+
+class VisionOut(BaseModel):
+    text: str
+    provider: str
+    model: str
+    task: str
+    filename: str
+    media_type: str
+
+
+async def _run_vision(
+    router_: LlmRouter, blobs: BlobStore, att: Attachment, body: VisionRequest
+) -> VisionOut:
+    """The vision primitive: load the attachment's bytes, downscale exactly as the
+    ingest path does, and run the chosen vision task with an optional prompt
+    override. Pure of the DB so it unit-tests with fakes; the route owns the lookup."""
+    default = _VISION_DEFAULTS.get(body.task)
+    if default is None:
+        raise HTTPException(status_code=400, detail=f"unknown vision task: '{body.task}'")
+    default_system, default_max, user_tmpl = default
+    data, media_type = downscale_for_vision(await blobs.get(att.sha256), att.media_type)
+    image = LlmImage(media_type=media_type, data=base64.b64encode(data).decode("ascii"))
+    try:
+        provider, model = await router_.effective_spec(body.task, "vision")
+        result = await router_.complete(
+            body.task,
+            system=body.system or default_system,
+            user_text=user_tmpl.format(name=att.filename),
+            images=[image],
+            max_tokens=body.max_tokens or default_max,
+            strength="vision",
+        )
+    except LlmError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    log.info("debug.vision", task=body.task, provider=provider, model=model, attachment=str(att.id))
+    return VisionOut(
+        text=result.text,
+        provider=provider,
+        model=model,
+        task=body.task,
+        filename=att.filename,
+        media_type=att.media_type,
+    )
+
+
+@router.post("/vision")
+async def vision(body: VisionRequest, request: Request, _p: DebugDep) -> VisionOut:
+    """Run one vision task (OCR or caption) over an on-box attachment, optionally
+    with a candidate system prompt — the image-layer twin of /complete."""
+    request.state.debug_detail = f"{body.task} {body.attachment_id}"
+    async with scoped_session(_maker(request), _OWNER_CTX) as session:
+        await session.execute(text("SET TRANSACTION READ ONLY"))
+        att = (
+            await session.execute(select(Attachment).where(Attachment.id == body.attachment_id))
+        ).scalar_one_or_none()
+        if att is None:
+            raise HTTPException(status_code=404, detail="attachment not found")
+        return await _run_vision(_llm_router(request), _blobs(request), att, body)
 
 
 # --- Async completion jobs (for slow models behind a short proxy timeout) ----

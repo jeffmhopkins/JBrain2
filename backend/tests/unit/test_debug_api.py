@@ -4,13 +4,17 @@ gateway, settings store, and supervisor all faked). The read-only SQL round-trip
 against real Postgres lives in test_capability_pg."""
 
 import asyncio
+import io
+import uuid
 from collections.abc import Iterator
+from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
-from jbrain.api.debug import _jsonable
+from jbrain.api.debug import VisionRequest, _jsonable, _run_vision
 from jbrain.auth import service as auth_service
 from jbrain.config import Settings
 from jbrain.llm.errors import LlmError
@@ -216,6 +220,103 @@ def test_complete_defaults_to_high_tier_when_unspecified(
     client, key = debug_client
     resp = client.post("/api/debug/complete", headers=_auth(key), json={"user_text": "hi"})
     assert resp.status_code == 200 and resp.json()["text"] == "echo:hi"
+
+
+# --- vision iteration -------------------------------------------------------
+
+
+class _FakeBlobs:
+    """A BlobStore that hands back one canned image regardless of digest."""
+
+    def __init__(self, data: bytes) -> None:
+        self._data = data
+
+    async def get(self, sha256: str) -> bytes:
+        return self._data
+
+
+class _RecordingVisionRouter:
+    """Records the kwargs each complete() saw so the test can assert the prompt
+    override and image actually reached the adapter."""
+
+    def __init__(self) -> None:
+        self.calls: list[dict[str, Any]] = []
+
+    async def effective_spec(self, task: str, strength: str | None = None) -> tuple[str, str]:
+        return ("local", "qwen3-vl-30b")
+
+    async def complete(self, task: str, **kw: Any) -> LlmResult:
+        self.calls.append({"task": task, **kw})
+        return LlmResult(
+            text=f"caption:{kw['user_text']}",
+            parsed=None,
+            usage=LlmUsage(input_tokens=7, output_tokens=11),
+        )
+
+
+def _png_bytes() -> bytes:
+    from PIL import Image
+
+    buf = io.BytesIO()
+    Image.new("RGB", (4, 4), (120, 30, 30)).save(buf, format="PNG")
+    return buf.getvalue()
+
+
+def _attachment() -> Any:
+    return cast(
+        Any,
+        SimpleNamespace(
+            id=uuid.uuid4(), sha256="deadbeef", media_type="image/png", filename="me.png"
+        ),
+    )
+
+
+def test_run_vision_uses_the_shipped_prompt_by_default() -> None:
+    from jbrain.ingest.ocr import DESCRIPTION_SYSTEM
+
+    router = _RecordingVisionRouter()
+    body = VisionRequest(attachment_id=uuid.uuid4(), task="vision.caption")
+    out = asyncio.run(
+        _run_vision(cast(Any, router), cast(Any, _FakeBlobs(_png_bytes())), _attachment(), body)
+    )
+    assert out.provider == "local" and out.model == "qwen3-vl-30b" and out.task == "vision.caption"
+    assert out.text.startswith("caption:") and out.filename == "me.png"
+    call = router.calls[0]
+    # Routed as the vision task, with the shipped caption prompt and one image.
+    assert call["task"] == "vision.caption" and call["strength"] == "vision"
+    assert call["system"] == DESCRIPTION_SYSTEM and call["images"] and "me.png" in call["user_text"]
+
+
+def test_run_vision_applies_a_system_override() -> None:
+    router = _RecordingVisionRouter()
+    body = VisionRequest(
+        attachment_id=uuid.uuid4(), task="vision.ocr", system="ONLY transcribe legible text."
+    )
+    asyncio.run(
+        _run_vision(cast(Any, router), cast(Any, _FakeBlobs(_png_bytes())), _attachment(), body)
+    )
+    assert router.calls[0]["task"] == "vision.ocr"
+    assert router.calls[0]["system"] == "ONLY transcribe legible text."
+
+
+def test_run_vision_rejects_an_unknown_task() -> None:
+    body = VisionRequest(attachment_id=uuid.uuid4(), task="vision.bogus")
+    with pytest.raises(HTTPException) as excinfo:
+        asyncio.run(
+            _run_vision(
+                cast(Any, _RecordingVisionRouter()),
+                cast(Any, _FakeBlobs(_png_bytes())),
+                _attachment(),
+                body,
+            )
+        )
+    assert excinfo.value.status_code == 400
+
+
+def test_vision_route_requires_a_valid_bearer(debug_client: tuple[TestClient, str]) -> None:
+    client, _ = debug_client
+    resp = client.post("/api/debug/vision", json={"attachment_id": str(uuid.uuid4())})
+    assert resp.status_code == 401
 
 
 # --- async completion jobs --------------------------------------------------
