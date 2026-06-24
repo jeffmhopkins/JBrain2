@@ -353,9 +353,7 @@ class FakeSettingsStore:
                 out.append(mid)
         return out
 
-    async def set_llm_local_provision_requested(
-        self, ctx: object, ids: list[str]
-    ) -> list[str]:
+    async def set_llm_local_provision_requested(self, ctx: object, ids: list[str]) -> list[str]:
         seen: set[str] = set()
         clean: list[str] = []
         for mid in ids:

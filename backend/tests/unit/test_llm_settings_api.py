@@ -579,9 +579,7 @@ def test_cancel_install_removes_from_the_queue_and_tolerates_absence() -> None:
     assert store.values["llm_local_provision_requested"] == []
     # Cancelling something not queued reconciles rather than 404 (a concurrent
     # update may have just provisioned and cleared it).
-    assert (
-        c.delete("/api/settings/llm/local-models/glm-4.5-air/install").status_code == 200
-    )
+    assert c.delete("/api/settings/llm/local-models/glm-4.5-air/install").status_code == 200
 
 
 def test_install_404_unknown_and_409_already_provisioned_or_hosting_off() -> None:
