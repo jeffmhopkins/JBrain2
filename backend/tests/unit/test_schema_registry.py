@@ -50,14 +50,16 @@ def test_shipped_registry_loads_all_catalog_types(registry: SchemaRegistry) -> N
 
 
 def test_person_residence_is_homelocation_not_generic_location(registry: SchemaRegistry) -> None:
-    # A person's residence is the functional homeLocation (a Place ref); the
-    # residence drift-spellings fold to it, but the generic `location` does NOT
-    # (it stays canonical for event/org venues — global rename would mis-fold it).
+    # A person's home is the functional homeLocation (a Place ref); the drift
+    # spellings fold to it, but the generic `location` does NOT (it stays canonical
+    # for event/org venues — global rename would mis-fold it). `residence` is ALSO
+    # left alone: it is allowlist-functional with its own existing history, so a
+    # global rename would silently rewrite it onto homeLocation (cf. worksFor/employer).
     home = registry.predicate_for_kind("Person", "homeLocation")
     assert home is not None and home.value_shape == "ref" and home.range_type == "place"
     assert home.functional  # one current home; former residences are closed history
-    assert registry.normalize_predicate("residence") == "homeLocation"
     assert registry.normalize_predicate("livesIn") == "homeLocation"
+    assert registry.normalize_predicate("residence") == "residence"  # historied; not folded
     assert registry.normalize_predicate("location") == "location"  # untouched
 
 

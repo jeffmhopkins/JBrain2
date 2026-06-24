@@ -100,13 +100,16 @@ predicates:
   # generic `location` for an event/org/thing's venue — NOT a person's home — so
   # `location` is intentionally ABSENT from renamed_from (it is canonical elsewhere
   # and a global rename would mis-fold appointment/org locations onto it).
+  # `residence` is ALSO absent: the residual supersession allowlist already makes
+  # it functional and existing `residence`-keyed history would be silently rewritten
+  # onto homeLocation if folded here (same reasoning as worksFor/employer above).
   - canonical_name: homeLocation
     value_shape: ref
     range_type: place
     kind: state
     functional: true
     schema_org_ref: schema:homeLocation
-    renamed_from: [residence, livesIn, livesAt, resides, residesIn, home_location, homeAddress]
+    renamed_from: [livesIn, livesAt, resides, residesIn, home_location, homeAddress]
   - canonical_name: birthPlace         # 🔒 location — where born; timeless
     value_shape: ref
     range_type: place
@@ -114,11 +117,15 @@ predicates:
     schema_org_ref: schema:birthPlace
     renamed_from: [bornIn, placeOfBirth]
   # Body measurements — instant readings that accumulate as a time series.
+  # `bodyWeight` is intentionally NOT folded into weight: it is already in use as
+  # its own measurement-series spelling, and a global rename would split/rewrite
+  # that existing time series onto weight (same history-preservation reasoning as
+  # worksFor/employer and residence). `bodyHeight` has no such history, so the
+  # generic height absorbs it.
   - canonical_name: weight
     value_shape: quantity              # {value, unit} e.g. {value: 255, unit: lb}
     kind: measurement
     schema_org_ref: schema:weight
-    renamed_from: [bodyWeight]
   - canonical_name: height
     value_shape: quantity
     kind: measurement
