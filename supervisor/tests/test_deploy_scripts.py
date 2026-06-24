@@ -119,3 +119,38 @@ def test_downloader_python_heredoc_delimiter_is_quoted() -> None:
     quoted = "<<'\"'\"'PY'\"'\"'"
     assert quoted in text, "the Python heredoc delimiter must be quoted (<<'PY')"
     assert "<<PY" not in text, "a bare <<PY lets bash expand backticks/$ in the body"
+
+
+def _logical_lines(text: str) -> list[str]:
+    # Join backslash-continued shell lines into one logical command.
+    out: list[str] = []
+    buf = ""
+    for raw in text.splitlines():
+        line = raw.rstrip()
+        if line.endswith("\\"):
+            buf += line[:-1] + " "
+        else:
+            out.append(buf + line)
+            buf = ""
+    if buf:
+        out.append(buf)
+    return out
+
+
+def test_config_write_runs_as_root() -> None:
+    # The weights dir is bind-mounted root-owned (the sudo setup + the root download
+    # container), but the api image runs as non-root appuser. The llama-swap.yaml
+    # write must run as root (--user 0) or it fails with PermissionError, which the
+    # best-effort sync swallows — so the model downloads but never gets a gateway
+    # config and never enables. Guard both the sync and the first-enable script.
+    scripts = (
+        DEPLOY / "local-models-sync.sh",
+        DEPLOY.parent / "scripts" / "local-llm-setup.sh",
+    )
+    # Match the invocation, not a comment that merely mentions the module.
+    needle = "python -m jbrain.llm.llama_swap_config"
+    for script in scripts:
+        cmd = next(ln for ln in _logical_lines(script.read_text()) if needle in ln)
+        assert "--user 0" in cmd, (
+            f"{script.name}: the llama-swap.yaml write must run as root"
+        )

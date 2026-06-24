@@ -61,8 +61,11 @@ MANIFEST="$manifest" DOWNLOAD_CONTAINER="jbrain-local-models-sync-dl" \
 #    each glob to a real downloaded filename). resident_group stays off unless the
 #    operator persisted it — every model swappable is the safe default, and the
 #    only one a 100+ GB model can use.
+#    --user 0: the bind-mounted weights dir is root-owned (sudo setup + the root
+#    download container), but the api image runs as non-root appuser, so the default
+#    user can't create llama-swap.yaml there. Write as root, like the weights.
 resident="$(grep '^LOCAL_LLM_RESIDENT_GROUP=' .env | cut -d= -f2- || true)"
-docker compose run --rm --no-deps -T \
+docker compose run --rm --no-deps -T --user 0 \
   -e MANIFEST="$manifest" \
   -e LOCAL_LLM_RESIDENT_GROUP="$resident" \
   api python -m jbrain.llm.llama_swap_config /data/local-models

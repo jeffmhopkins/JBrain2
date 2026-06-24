@@ -112,7 +112,10 @@ MANIFEST="$MANIFEST" DOWNLOAD_CONTAINER="$DOWNLOAD_CONTAINER" \
 # reports to the PWA's context meter). The gateway paths inside the cmd are the
 # gateway-container view (/models/...), which is the same host dir.
 say "Writing $MODELS_DIR/llama-swap.yaml"
-docker compose run --rm --no-deps -T \
+# --user 0: the weights dir is root-owned (this script + the root download
+# container), but the api image runs as non-root appuser and can't create the
+# config there. Write as root, matching the weights.
+docker compose run --rm --no-deps -T --user 0 \
   -e MANIFEST="$MANIFEST" \
   -e LOCAL_LLM_RESIDENT_GROUP="${LOCAL_LLM_RESIDENT_GROUP:-}" \
   api python -m jbrain.llm.llama_swap_config /data/local-models
