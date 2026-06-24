@@ -396,15 +396,23 @@ function fmtTokens(n: number): string {
 function ContextMeter({ usage }: { usage: ContextUsage }): ReactNode {
   const frac = usage.window > 0 ? Math.min(usage.used / usage.window, 1) : 0;
   const pct = Math.round(frac * 100);
+  // The carried-forward floor, clamped under the peak so the solid segment never
+  // overruns the transient one it sits on (window guards a zero/garbage window).
+  const baseFrac = usage.window > 0 ? Math.min(usage.base / usage.window, frac) : 0;
+  const basePct = Math.round(baseFrac * 100);
   const level = frac >= 0.9 ? "high" : frac >= 0.7 ? "mid" : "";
+  const transient = Math.max(usage.used - usage.base, 0);
   return (
     <output
       className={`ctx-meter${level ? ` ctx-${level}` : ""}`}
-      aria-label={`Context used: ${usage.used} of ${usage.window} tokens (${pct}%)`}
-      title={`${usage.used.toLocaleString()} / ${usage.window.toLocaleString()} tokens`}
+      aria-label={`Context used: ${usage.used} of ${usage.window} tokens (${pct}%) — ${usage.base} carried, ${transient} this turn`}
+      title={`${usage.base.toLocaleString()} carried + ${transient.toLocaleString()} this turn / ${usage.window.toLocaleString()} tokens`}
     >
+      {/* Two stacked fills: the lighter peak reaches `pct`, the solid base layers over
+          its left to `basePct`. The base is painted last so it sits on top. */}
       <span className="ctx-bar" aria-hidden="true">
-        <span className="ctx-fill" style={{ width: `${pct}%` }} />
+        <span className="ctx-fill ctx-fill-peak" style={{ width: `${pct}%` }} />
+        <span className="ctx-fill ctx-fill-base" style={{ width: `${basePct}%` }} />
       </span>
       <span className="ctx-text">
         {fmtTokens(usage.used)}/{fmtTokens(usage.window)} · {pct}%
