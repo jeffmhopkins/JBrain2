@@ -29,9 +29,11 @@ import structlog
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from jbrain.analysis.canonical import name_fact_value, project_display_name
 from jbrain.db.session import scoped_session
 from jbrain.embed import EmbedClient, vector_literal
 from jbrain.queue import SYSTEM_CTX
+from jbrain.schema import get_registry
 from jbrain.wiki.budget import WikiBudgetExceeded
 
 log = structlog.get_logger()
@@ -190,6 +192,42 @@ class StubRewriter:
 def _slug(name: str) -> str:
     base = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-") or "article"
     return f"{base}-{uuid.uuid4().hex[:6]}"
+
+
+async def _headword(
+    session: AsyncSession,
+    entity_id: uuid.UUID,
+    kind: str,
+    canonical: str,
+    subject_id: uuid.UUID | None,
+) -> str:
+    """The article's title. Every entity already carries its projected display name as
+    `canonical_name` EXCEPT the owner, who is pinned to "Me" app-wide (the KB is
+    first-person, analysis/canonical.reproject_canonical_name). The wiki is an
+    encyclopedia surface, so the owner's article is titled by their real name —
+    projected from active name.* facts (name.given+name.family / name.full ...) — and
+    falls back to "Me" only when no name fact resolves. Non-owner entities are
+    untouched (the cheap casefold guard skips the fact query entirely)."""
+    if subject_id is None or canonical.strip().casefold() != "me":
+        return canonical
+    facts = (
+        await session.execute(
+            text(
+                "SELECT predicate, value_json FROM app.facts WHERE entity_id = :e"
+                " AND status = 'active' AND valid_to IS NULL AND assertion = 'asserted'"
+            ),
+            {"e": entity_id},
+        )
+    ).all()
+    values: dict[str, str] = {}
+    for fact in facts:
+        nm = name_fact_value(fact.predicate, fact.value_json)
+        if nm is not None:
+            values.setdefault(fact.predicate, nm)
+    etype = get_registry().by_kind.get(kind)
+    if etype is None:
+        return canonical
+    return project_display_name(etype.display_name, values) or canonical
 
 
 # The reader's inline-marker grammar (mirrors the frontend citations.tsx INLINE_RE): a `[n]`
@@ -466,8 +504,8 @@ class WikiBuilder:
         ent = (
             await session.execute(
                 text(
-                    "SELECT canonical_name, kind, domain_code, merged_into_id, image_sha"
-                    " FROM app.entities WHERE id = :e"
+                    "SELECT canonical_name, kind, domain_code, merged_into_id, image_sha,"
+                    " subject_id FROM app.entities WHERE id = :e"
                 ),
                 {"e": entity_id},
             )
@@ -535,7 +573,7 @@ class WikiBuilder:
         notes |= mention_notes
         return SourcedEntity(
             entity_id=entity_id,
-            name=ent.canonical_name,
+            name=await _headword(session, entity_id, ent.kind, ent.canonical_name, ent.subject_id),
             kind=ent.kind,
             domain_code=ent.domain_code,
             claims=claims,

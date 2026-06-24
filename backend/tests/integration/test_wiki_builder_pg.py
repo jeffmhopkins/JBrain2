@@ -245,6 +245,81 @@ async def test_refresh_builds_a_cited_article_and_marks_built(maker: async_sessi
         assert idx == 1
 
 
+async def _owner_entity(maker: async_sessionmaker) -> str:
+    """The owner entity: hard-linked to a subject and pinned to the "Me" display
+    override (analysis/canonical), exactly as the real owner row is shaped."""
+    eid, sid = str(uuid.uuid4()), str(uuid.uuid4())
+    async with scoped_session(maker, OWNER) as s:
+        await s.execute(
+            text("INSERT INTO app.subjects (id, display_name, kind) VALUES (:i, 'Me', 'person')"),
+            {"i": sid},
+        )
+        await s.execute(
+            text(
+                "INSERT INTO app.entities (id, kind, canonical_name, domain_code, subject_id)"
+                " VALUES (:i, 'Person', 'Me', 'general', :s)"
+            ),
+            {"i": eid, "s": sid},
+        )
+    return eid
+
+
+async def _name_fact(maker: async_sessionmaker, entity_id: str, predicate: str, value: str) -> None:
+    note, chunk, fact = (str(uuid.uuid4()) for _ in range(3))
+    async with scoped_session(maker, OWNER) as s:
+        await s.execute(
+            text(
+                "INSERT INTO app.notes (id, client_id, domain_code, body)"
+                " VALUES (:i, :c, 'general', :b)"
+            ),
+            {"i": note, "c": note[:12], "b": f"name {value}"},
+        )
+        await s.execute(
+            text(
+                "INSERT INTO app.chunks (id, note_id, domain_code, granularity, seq, text)"
+                " VALUES (:i, :n, 'general', 'paragraph', 0, :b)"
+            ),
+            {"i": chunk, "n": note, "b": f"name {value}"},
+        )
+        await s.execute(
+            text(
+                "INSERT INTO app.facts (id, entity_id, predicate, kind, statement, value_json,"
+                " assertion, reported_at, note_id, chunk_id, extractor, prompt_version,"
+                " domain_code)"
+                " VALUES (:i, :e, :p, 'attribute', :st, cast(:vj AS jsonb), 'asserted',"
+                " '2026-01-01T00:00:00Z', :n, :c, 'fake', 'v1', 'general')"
+            ),
+            {
+                "i": fact,
+                "e": entity_id,
+                "p": predicate,
+                "st": f"name is {value}",
+                "vj": json.dumps({"value": value}),
+                "n": note,
+                "c": chunk,
+            },
+        )
+
+
+async def test_owner_article_is_titled_by_projected_name_not_me(maker: async_sessionmaker) -> None:
+    # The owner is pinned to "Me" app-wide, but the wiki titles their article by the
+    # projected name (name.full) — the encyclopedia surface uses the real name.
+    eid = await _owner_entity(maker)
+    await _name_fact(maker, eid, "name.full", "Jeff Hopkins")
+    for i in range(2):  # name fact + 2 more clears the ≥3-fact notability gate
+        await _fact(maker, eid, "general", f"owner claim {i}")
+    builder, _ = _builder(maker)
+
+    await builder.refresh()
+    async with scoped_session(maker, OWNER) as s:
+        title = (
+            await s.execute(
+                text("SELECT title FROM app.wiki_articles WHERE entity_ref = :e"), {"e": eid}
+            )
+        ).scalar()
+    assert title == "Jeff Hopkins"  # not the "Me" canonical override
+
+
 async def test_below_notability_is_skipped_but_marked_built(maker: async_sessionmaker) -> None:
     eid = await _entity(maker, "general", "Minor")
     await _fact(maker, eid, "general", "only one claim")  # 1 fact, 1 note → not notable
