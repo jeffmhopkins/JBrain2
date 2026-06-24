@@ -166,13 +166,35 @@ async def test_llm_local_staged_round_trip_and_dedups(
     assert await store.llm_local_staged(OWNER) == ["a", "b"]
 
 
+async def test_llm_local_provision_requested_round_trip_and_dedups(
+    maker: async_sessionmaker[AsyncSession],
+) -> None:
+    from jbrain.settings_store import LLM_LOCAL_PROVISION_REQUESTED_KEY
+
+    store = SqlSettingsStore(maker)
+    assert await store.llm_local_provision_requested(OWNER) == []
+
+    await store.set_llm_local_provision_requested(OWNER, ["qwen3-235b-a22b", "qwen3-235b-a22b"])
+    assert await store.llm_local_provision_requested(OWNER) == ["qwen3-235b-a22b"]
+
+    # Non-list / non-string entries are dropped on read.
+    await store.upsert(OWNER, LLM_LOCAL_PROVISION_REQUESTED_KEY, ["a", 5, "a", None, "b"])
+    assert await store.llm_local_provision_requested(OWNER) == ["a", "b"]
+
+    # Clearing empties the queue (what the update one-shot does post-provision).
+    await store.set_llm_local_provision_requested(OWNER, [])
+    assert await store.llm_local_provision_requested(OWNER) == []
+
+
 async def test_llm_local_settings_are_owner_only(
     maker: async_sessionmaker[AsyncSession],
 ) -> None:
-    # The new keys ride the owner-RLS app.settings table: a window/staged write by
-    # the owner is invisible to a non-owner session.
+    # The new keys ride the owner-RLS app.settings table: a window/staged/queue write
+    # by the owner is invisible to a non-owner session.
     store = SqlSettingsStore(maker)
     await store.set_llm_local_context_window(OWNER, model_id="gpt-oss-120b", window=65536)
     await store.set_llm_local_staged(OWNER, ["gpt-oss-120b"])
+    await store.set_llm_local_provision_requested(OWNER, ["qwen3-235b-a22b"])
     assert await store.llm_local_context_windows(UNSCOPED) == {}
     assert await store.llm_local_staged(UNSCOPED) == []
+    assert await store.llm_local_provision_requested(UNSCOPED) == []

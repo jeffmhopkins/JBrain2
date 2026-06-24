@@ -39,3 +39,25 @@ def test_dir_without_weights_is_none(tmp_path: Path) -> None:
 
 def test_absent_mount_is_none() -> None:
     assert local_weights.weights_size_gb("/no/such/mount", "qwen3-vl-30b") is None
+
+
+def test_dir_size_counts_partial_downloads(tmp_path: Path) -> None:
+    # The progress reader counts EVERY file, including huggingface's in-flight
+    # `*.incomplete` shards and a not-yet-renamed temp — so the bar climbs smoothly
+    # mid-download instead of jumping per finished shard.
+    model = tmp_path / "qwen3-235b-a22b"
+    model.mkdir()
+    _write(model / "shard-00001-of-00003.gguf", int(1.0 * _GIB))
+    _write(model / "shard-00002-of-00003.gguf.incomplete", int(0.5 * _GIB))
+    assert local_weights.dir_size_gb(str(tmp_path), "qwen3-235b-a22b") == 1.5
+
+
+def test_dir_size_is_zero_for_a_started_empty_dir(tmp_path: Path) -> None:
+    # A just-created download dir reads as 0.0 (0%), distinct from None (not started):
+    # the progress bar shows "downloading" rather than "nothing here".
+    (tmp_path / "glm-4.5-air").mkdir()
+    assert local_weights.dir_size_gb(str(tmp_path), "glm-4.5-air") == 0.0
+
+
+def test_dir_size_missing_dir_is_none(tmp_path: Path) -> None:
+    assert local_weights.dir_size_gb(str(tmp_path), "not-started") is None

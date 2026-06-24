@@ -13,6 +13,8 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from jbrain.auth import service
 from jbrain.auth.repo import SqlAuthRepo
 from jbrain.config import get_settings
+from jbrain.queue import SYSTEM_CTX
+from jbrain.settings_store import SqlSettingsStore
 
 
 def _print_key_block(key: str) -> None:
@@ -38,15 +40,49 @@ async def _rotate() -> None:
         await engine.dispose()
 
 
+async def _print_provision_ids() -> None:
+    """Print the install queue (one catalog id per line) for the update one-shot.
+    Owner-scoped (settings RLS is is_owner()); empty output is the normal 'nothing
+    queued' case, so the caller treats a clean exit with no lines as no-op."""
+    settings = get_settings()
+    engine = create_async_engine(settings.database_url)
+    try:
+        store = SqlSettingsStore(async_sessionmaker(engine, expire_on_commit=False))
+        for model_id in await store.llm_local_provision_requested(SYSTEM_CTX):
+            print(model_id)
+    finally:
+        await engine.dispose()
+
+
+async def _clear_provision_ids() -> None:
+    """Empty the install queue — called by the update one-shot after a successful
+    provision so a completed install stops re-appearing as queued."""
+    settings = get_settings()
+    engine = create_async_engine(settings.database_url)
+    try:
+        store = SqlSettingsStore(async_sessionmaker(engine, expire_on_commit=False))
+        await store.set_llm_local_provision_requested(SYSTEM_CTX, [])
+    finally:
+        await engine.dispose()
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="jbrain-cli")
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("init", help="create the owner principal and print the owner key")
     sub.add_parser("reset-owner-key", help="revoke the owner key and print a new one")
+    sub.add_parser("local-provision-ids", help="print the local-model install queue")
+    sub.add_parser("local-provision-clear", help="empty the local-model install queue")
     args = parser.parse_args(argv)
 
     if args.command in ("init", "reset-owner-key"):
         asyncio.run(_rotate())
+        return 0
+    if args.command == "local-provision-ids":
+        asyncio.run(_print_provision_ids())
+        return 0
+    if args.command == "local-provision-clear":
+        asyncio.run(_clear_provision_ids())
         return 0
     return 1
 

@@ -136,6 +136,19 @@ one) → **Settings → LLM**:
 - **High-stakes reasoning** → `GPT-OSS 120B`.
 - Leave the rest on cloud or go fully local — per task, your call.
 
+### Adding more models later — from the PWA, no shell
+Once hosting is on, **Settings → LLM → On-box models** lists the whole catalog,
+not just what's provisioned. Each un-provisioned model (e.g. **Qwen3-235B-A22B**
+at 3-bit, ~104 GB) has an **Install** button that *queues* it. The next
+**Update** (Ops → Update, or `jbrain update`) downloads the queued weights, adds
+them to `LOCAL_MODELS`, re-stamps the gateway config, and restarts — the same
+provisioning `enable-local-models` does, driven from the queue instead of the
+shell. The drawer follows the download live (a per-model GB bar reading the bytes
+on disk); the coarse phase streams into the Ops update log. A model too large to
+co-reside (the 235B) installs **swappable** — it loads on its own, one at a time.
+First-time host prep (GPU GIDs, the gateway image, kernel params) still needs
+Phases 1–6 on the box; the PWA path only *adds models* to an already-enabled stack.
+
 ## Phase 8 — Confirm it's really local
 - Add a note with a photo → it should OCR locally; watch `jbrain logs local-llm`.
 - Ops screen → AI usage card shows the local model serving those tasks ($0 cost,

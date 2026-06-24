@@ -115,6 +115,12 @@ case "${1:-}" in
           || echo "[update] image-model sync skipped (retry: sudo bash scripts/comfyui-setup.sh)"
       fi
     fi
+    # Provision local LLM models the operator queued from the PWA + keep the
+    # current/recommended set present — host parity with the PWA update path
+    # (deploy/update-inner.sh). The shared sync is POSIX sh; best-effort so a
+    # provisioning hiccup never aborts the update.
+    bash /opt/jbrain2/src/deploy/local-models-sync.sh \
+      || echo "[update] local-model sync skipped (retry on next update)"
     # Reclaim layers orphaned by the rebuild; shared (cached) layers survive,
     # so disk use stays bounded without losing build speed.
     docker image prune -f

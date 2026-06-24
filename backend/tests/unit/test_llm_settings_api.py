@@ -552,6 +552,69 @@ def test_stage_404_and_409() -> None:
     assert c2.post("/api/settings/llm/local-models/gpt-oss-120b/stage").status_code == 409
 
 
+def test_install_queues_an_unprovisioned_model() -> None:
+    # qwen3-235b-a22b is in the catalog but not in this install's local_models, so
+    # it can be queued for provisioning from the PWA.
+    c, store = _authed_client(_local_settings())
+    resp = c.post("/api/settings/llm/local-models/qwen3-235b-a22b/install")
+    assert resp.status_code == 200, resp.text
+    by_id = {m["id"]: m for m in resp.json()["local_models"]}
+    assert by_id["qwen3-235b-a22b"]["queued"] is True
+    assert by_id["qwen3-235b-a22b"]["enabled"] is False
+    # An already-provisioned model is never marked queued.
+    assert by_id["gpt-oss-120b"]["queued"] is False
+    assert store.values["llm_local_provision_requested"] == ["qwen3-235b-a22b"]
+    # Queuing again is idempotent (no duplicate).
+    c.post("/api/settings/llm/local-models/qwen3-235b-a22b/install")
+    assert store.values["llm_local_provision_requested"] == ["qwen3-235b-a22b"]
+
+
+def test_cancel_install_removes_from_the_queue_and_tolerates_absence() -> None:
+    c, store = _authed_client(_local_settings())
+    c.post("/api/settings/llm/local-models/qwen3-235b-a22b/install")
+    resp = c.delete("/api/settings/llm/local-models/qwen3-235b-a22b/install")
+    assert resp.status_code == 200, resp.text
+    by_id = {m["id"]: m for m in resp.json()["local_models"]}
+    assert by_id["qwen3-235b-a22b"]["queued"] is False
+    assert store.values["llm_local_provision_requested"] == []
+    # Cancelling something not queued reconciles rather than 404 (a concurrent
+    # update may have just provisioned and cleared it).
+    assert (
+        c.delete("/api/settings/llm/local-models/glm-4.5-air/install").status_code == 200
+    )
+
+
+def test_install_404_unknown_and_409_already_provisioned_or_hosting_off() -> None:
+    c, _ = _authed_client(_local_settings())
+    # Not a catalog id.
+    assert c.post("/api/settings/llm/local-models/nope/install").status_code == 404
+    # Already provisioned in this install → nothing to queue.
+    assert c.post("/api/settings/llm/local-models/gpt-oss-120b/install").status_code == 409
+    # Hosting off → the GPU/gateway env is a one-time host step the PWA can't bootstrap.
+    c2, _ = _authed_client(_cloud_settings())
+    assert c2.post("/api/settings/llm/local-models/qwen3-235b-a22b/install").status_code == 409
+
+
+def test_install_download_progress_climbs_with_on_disk_bytes(tmp_path: Any) -> None:
+    # A queued model mid-download reports download_gb from the bytes on disk (partial
+    # shards included), so the drawer can render download_gb / size_gb as a live bar.
+    model_dir = tmp_path / "qwen3-235b-a22b"
+    model_dir.mkdir()
+    (model_dir / "shard-00001-of-00003.gguf").write_bytes(b"\0" * (1024**3))
+    (model_dir / "shard-00002.gguf.incomplete").write_bytes(b"\0" * (1024**3 // 2))
+    settings = _cloud_settings(
+        local_llm_enabled=True,
+        local_models=["qwen3-vl-30b", "gpt-oss-120b"],
+        local_models_dir=str(tmp_path),
+    )
+    c, _ = _authed_client(settings)
+    c.post("/api/settings/llm/local-models/qwen3-235b-a22b/install")
+    by_id = {m["id"]: m for m in c.get("/api/settings/llm").json()["local_models"]}
+    assert by_id["qwen3-235b-a22b"]["download_gb"] == 1.5
+    # A model with nothing on disk reports null, not 0 — the drawer shows "queued".
+    assert by_id["glm-4.5-air"]["download_gb"] is None
+
+
 def test_load_makes_the_model_resident() -> None:
     gw = FakeLocalGateway()
     c, _ = _authed_client(_local_settings(), gw)

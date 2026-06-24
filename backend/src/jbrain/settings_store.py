@@ -68,6 +68,12 @@ LLM_LOCAL_CONTEXT_WINDOWS_KEY = "llm_local_context_windows"
 # projects RAM for) but that isn't necessarily resident yet. A list of catalog ids;
 # non-string and duplicate entries are dropped on read (order preserved).
 LLM_LOCAL_STAGED_KEY = "llm_local_staged"
+# Catalog ids the operator has asked to PROVISION (download + enable) from the PWA,
+# but that aren't on the box yet — the install queue. The update one-shot reads this
+# (owner-scoped, via jbrain.cli) and provisions the union of it, the current
+# LOCAL_MODELS, and the recommended set, then clears it. A list of catalog ids;
+# non-string and duplicate entries are dropped on read (first-seen order preserved).
+LLM_LOCAL_PROVISION_REQUESTED_KEY = "llm_local_provision_requested"
 
 # The owner's IANA display timezone (e.g. "America/New_York"). Absent = UTC.
 # Server-rendered times — the agent's appointment prose — localize to it so they
@@ -184,6 +190,21 @@ WORKFLOW_DISPATCH_MODE_DEFAULT: WorkflowDispatchMode = "live"
 # absent row earns the live default; corrupt input degrades to shadow until fixed.
 WORKFLOW_DISPATCH_MODE_FALLBACK: WorkflowDispatchMode = "shadow"
 WORKFLOW_DISPATCH_MODE_KEY = "workflow_dispatch_mode"
+
+
+def _dedup_str_list(raw: object) -> list[str]:
+    """The sanitize shared by the catalog-id list settings (staged, install queue):
+    a non-list store, or non-string / duplicate entries, are dropped — first-seen
+    order preserved. A junk store must never read as a model id."""
+    if not isinstance(raw, list):
+        return []
+    seen: set[str] = set()
+    out: list[str] = []
+    for item in raw:
+        if isinstance(item, str) and item not in seen:
+            seen.add(item)
+            out.append(item)
+    return out
 
 
 class SqlSettingsStore:
@@ -420,24 +441,23 @@ class SqlSettingsStore:
     async def llm_local_staged(self, ctx: SessionContext) -> list[str]:
         """Catalog ids the operator has staged, sanitized: a non-list store, or
         non-string / duplicate entries, are dropped (first-seen order preserved)."""
-        raw = await self.get(ctx, LLM_LOCAL_STAGED_KEY, [])
-        if not isinstance(raw, list):
-            return []
-        seen: set[str] = set()
-        out: list[str] = []
-        for mid in raw:
-            if isinstance(mid, str) and mid not in seen:
-                seen.add(mid)
-                out.append(mid)
-        return out
+        return _dedup_str_list(await self.get(ctx, LLM_LOCAL_STAGED_KEY, []))
 
     async def set_llm_local_staged(self, ctx: SessionContext, ids: list[str]) -> list[str]:
         """Replace the staged set with `ids` (sanitized like the reader); returns it."""
-        seen: set[str] = set()
-        clean: list[str] = []
-        for mid in ids:
-            if isinstance(mid, str) and mid not in seen:
-                seen.add(mid)
-                clean.append(mid)
+        clean = _dedup_str_list(ids)
         await self.upsert(ctx, LLM_LOCAL_STAGED_KEY, clean)
+        return clean
+
+    async def llm_local_provision_requested(self, ctx: SessionContext) -> list[str]:
+        """Catalog ids queued for provisioning from the PWA, sanitized like the
+        staged set (non-list store / non-string / duplicates dropped, order kept)."""
+        return _dedup_str_list(await self.get(ctx, LLM_LOCAL_PROVISION_REQUESTED_KEY, []))
+
+    async def set_llm_local_provision_requested(
+        self, ctx: SessionContext, ids: list[str]
+    ) -> list[str]:
+        """Replace the install queue with `ids` (sanitized like the reader); returns it."""
+        clean = _dedup_str_list(ids)
+        await self.upsert(ctx, LLM_LOCAL_PROVISION_REQUESTED_KEY, clean)
         return clean

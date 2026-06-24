@@ -111,13 +111,17 @@ class TaskInfo(BaseModel):
 
 
 class LocalModelInfo(BaseModel):
-    """A catalog model for the 'Manage local models' drawer — what it is and
-    whether it is currently offered for routing. Provisioning (the weight
-    download) stays a server-side, opt-in step, so this is read-only."""
+    """A catalog model for the 'Manage local models' drawer — what it is, whether
+    it is offered for routing, and (for an un-provisioned model) whether the operator
+    has queued it for install. Provisioning runs during the next update one-shot; the
+    drawer follows it live via download_gb."""
 
     id: str
     label: str
     enabled: bool
+    # Queued for provisioning from the PWA but not yet on the box (in the install
+    # queue and not enabled). The next update downloads it and flips it to enabled.
+    queued: bool
     # Runtime state from the gateway (best-effort): True when resident in memory.
     # Always False when hosting is off or the gateway can't be reached.
     loaded: bool
@@ -132,6 +136,11 @@ class LocalModelInfo(BaseModel):
     # model isn't on this box (so the drawer can show the true footprint for what's
     # installed and the estimate for what isn't).
     disk_gb: float | None
+    # Bytes on disk for this model's directory (partial downloads included), in GB,
+    # or null when nothing is downloaded yet / hosting is off. Drives the live
+    # install-progress bar: download_gb / size_gb is the percentage while a queued
+    # model is being provisioned by an update.
+    download_gb: float | None
     note: str
     # The model's catalog default context window — the gateway's `-c` absent an
     # override, and the ceiling the drawer caps the size picker at.
@@ -231,6 +240,7 @@ async def _snapshot(
     overrides = await store.llm_task_overrides(ctx)
     windows = await store.llm_local_context_windows(ctx)
     staged = set(await store.llm_local_staged(ctx))
+    requested = set(await store.llm_local_provision_requested(ctx))
     loaded = await _loaded_ids(settings, gateway)
     return LlmSettingsOut(
         providers=[
@@ -247,7 +257,9 @@ async def _snapshot(
         tasks=[_effective(settings, task, overrides) for task in TASK_DEFAULTS],
         local_hosting_enabled=settings.local_llm_enabled,
         local_models=[
-            _local_model_info(settings, m, m.id in loaded, windows, m.id in staged)
+            _local_model_info(
+                settings, m, m.id in loaded, windows, m.id in staged, m.id in requested
+            )
             for m in local_catalog.CATALOG
         ],
         host_memory=_host_memory(settings),
@@ -260,6 +272,15 @@ def _disk_gb(settings: Settings, model_id: str) -> float | None:
     if not settings.local_llm_enabled:
         return None
     return local_weights.weights_size_gb(settings.local_models_dir, model_id)
+
+
+def _download_gb(settings: Settings, model_id: str) -> float | None:
+    """Bytes on disk for a model's dir (partial shards included), or None when
+    hosting is off or nothing has been downloaded — the numerator of the live
+    install-progress bar."""
+    if not settings.local_llm_enabled:
+        return None
+    return local_weights.dir_size_gb(settings.local_models_dir, model_id)
 
 
 def _host_memory(settings: Settings) -> HostMemory | None:
@@ -280,6 +301,7 @@ def _local_model_info(
     loaded: bool,
     windows: dict[str, int],
     staged: bool,
+    requested: bool,
 ) -> LocalModelInfo:
     enabled = settings.local_llm_enabled and m.id in settings.local_models
     override = windows.get(m.id)
@@ -289,6 +311,9 @@ def _local_model_info(
         id=m.id,
         label=m.label,
         enabled=enabled,
+        # Queued only while not yet provisioned — once an install completes the model
+        # is enabled, so it leaves the "available to install" list on its own.
+        queued=requested and not enabled,
         loaded=loaded,
         supports_vision=m.supports_vision,
         supports_tools=m.supports_tools,
@@ -296,6 +321,7 @@ def _local_model_info(
         quant=m.quant,
         size_gb=m.size_gb,
         disk_gb=_disk_gb(settings, m.id),
+        download_gb=_download_gb(settings, m.id),
         note=m.note,
         context_window=m.context_window,
         context_window_override=override,
@@ -312,6 +338,21 @@ def _require_provisioned(settings: Settings, model_id: str) -> local_catalog.Loc
     model = local_catalog.get(model_id)
     if model is None or model_id not in settings.local_models:
         raise HTTPException(status_code=404, detail=f"unknown or unprovisioned model: {model_id}")
+    return model
+
+
+def _require_installable(settings: Settings, model_id: str) -> local_catalog.LocalModel:
+    """The catalog model for `model_id` when it can be queued for install, or raise:
+    409 when hosting is off (the gateway/GPU env is a one-time host setup the PWA
+    can't bootstrap), 404 for an id outside the catalog, 409 when it is already
+    provisioned (enabled). The gate for the install-queue endpoints."""
+    if not settings.local_llm_enabled:
+        raise HTTPException(status_code=409, detail="local hosting is not enabled")
+    model = local_catalog.get(model_id)
+    if model is None:
+        raise HTTPException(status_code=404, detail=f"unknown model: {model_id}")
+    if model_id in settings.local_models:
+        raise HTTPException(status_code=409, detail=f"already provisioned: {model_id}")
     return model
 
 
@@ -449,6 +490,45 @@ async def unstage_local_model(
     ctx = ctx_for(principal)
     staged = [s for s in await store.llm_local_staged(ctx) if s != model_id]
     await store.set_llm_local_staged(ctx, staged)
+    return await _snapshot(settings, store, ctx, gateway)
+
+
+@router.post("/settings/llm/local-models/{model_id}/install")
+async def queue_local_install(
+    model_id: str,
+    principal: PrincipalDep,
+    settings: SettingsDep,
+    store: SettingsStoreDep,
+    gateway: LocalGatewayDep,
+) -> LlmSettingsOut:
+    """Queue an un-provisioned catalog model for install — the next update one-shot
+    downloads its weights, adds it to LOCAL_MODELS, and restarts the gateway. 409
+    when hosting is off or the model is already provisioned; 404 for an unknown id.
+    Pure settings write (no download here), so it can't fail on an unreachable
+    gateway; the download is followed live via each model's download_gb."""
+    _require_installable(settings, model_id)
+    ctx = ctx_for(principal)
+    requested = await store.llm_local_provision_requested(ctx)
+    if model_id not in requested:
+        requested.append(model_id)
+        await store.set_llm_local_provision_requested(ctx, requested)
+    return await _snapshot(settings, store, ctx, gateway)
+
+
+@router.delete("/settings/llm/local-models/{model_id}/install")
+async def cancel_local_install(
+    model_id: str,
+    principal: PrincipalDep,
+    settings: SettingsDep,
+    store: SettingsStoreDep,
+    gateway: LocalGatewayDep,
+) -> LlmSettingsOut:
+    """Remove a model from the install queue. Tolerant of an id no longer in the
+    queue (a concurrent update may have just provisioned and cleared it) — returns
+    the current snapshot rather than 404 so the drawer always reconciles."""
+    ctx = ctx_for(principal)
+    requested = [r for r in await store.llm_local_provision_requested(ctx) if r != model_id]
+    await store.set_llm_local_provision_requested(ctx, requested)
     return await _snapshot(settings, store, ctx, gateway)
 
 

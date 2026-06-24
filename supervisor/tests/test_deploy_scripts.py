@@ -25,6 +25,11 @@ ONESHOT_SCRIPTS = [
     "reset-inner.sh",
     "update-inner.sh",
     "backup.sh",
+    # Reached from update-inner.sh: the local-model provisioning sync and the
+    # weight downloader it calls both run in the bash-less updater, so both must
+    # parse under POSIX sh.
+    "local-models-sync.sh",
+    "download-local-weights.sh",
 ]
 
 
