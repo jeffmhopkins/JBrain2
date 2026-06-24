@@ -43,14 +43,14 @@ from jbrain.schema import get_registry
 from jbrain.settings_store import SqlSettingsStore
 from jbrain.storage import FsBlobStore
 from jbrain.transcribe import WhisperCppClient
-from jbrain.usage import SqlUsageRecorder
+from jbrain.usage import SqlUsageRecorder, TokenScope
 from jbrain.wiki.actions import WIKI_SPECS, wiki_handlers
 from jbrain.wiki.rewriter import LlmRewriter
 from jbrain.workflow import dispatcher, scheduler
 from jbrain.workflow.eval_scorer import build_live_scorer, eval_run_handler
 from jbrain.workflow.evalaction import EVAL_RUN_SPEC
 from jbrain.workflow.registry import ACTION_SPECS, ActionRegistry, build_registry
-from jbrain.workflow.runlog import PipelineRunLog
+from jbrain.workflow.runlog import PipelineRunLog, finalize_job_step
 
 log = structlog.get_logger()
 
@@ -124,24 +124,44 @@ async def process_one(
         log.error("worker.job_bad_scope_stamp", job_id=job.id, kind=job.kind, error=repr(exc))
         return True
     ran_as = "system" if exec_ctx is queue.SYSTEM_CTX else "scoped"
-    try:
-        await _invoke(handler, job.payload, exec_ctx)
-    except queue.PermanentJobError as exc:
-        # Retrying cannot help (e.g. malformed extraction after the re-ask):
-        # fail now instead of burning the retry budget.
-        exhausted = await queue.fail(maker, queue.SYSTEM_CTX, job.id, repr(exc), permanent=True)
-        log.error("worker.job_failed_permanent", job_id=job.id, kind=job.kind, error=repr(exc))
-        await _after_exhaustion(maker, job, exhausted)
-    except Exception as exc:  # noqa: BLE001 - one bad job must not kill the worker
-        exhausted = await queue.fail(maker, queue.SYSTEM_CTX, job.id, repr(exc))
-        log.warning("worker.job_failed", job_id=job.id, kind=job.kind, error=repr(exc))
-        await _after_exhaustion(maker, job, exhausted)
-    else:
-        await queue.complete(maker, queue.SYSTEM_CTX, job.id)
-        # ran_as records E1's scope choice (system vs scoped) on the audit line:
-        # an owner-system run is visible as such, not a smuggled escalation.
-        log.info("worker.job_done", job_id=job.id, kind=job.kind, ran_as=ran_as)
+    # Tally the LLM tokens this job spends so its run-log step (a dispatched
+    # pipeline/event run) shows the real cost + duration, not a 0-token placeholder.
+    with TokenScope() as toks:
+        try:
+            await _invoke(handler, job.payload, exec_ctx)
+        except queue.PermanentJobError as exc:
+            # Retrying cannot help (e.g. malformed extraction after the re-ask):
+            # fail now instead of burning the retry budget.
+            exhausted = await queue.fail(maker, queue.SYSTEM_CTX, job.id, repr(exc), permanent=True)
+            log.error("worker.job_failed_permanent", job_id=job.id, kind=job.kind, error=repr(exc))
+            await _finalize_run_step(maker, job.id, ok=False, cost_tokens=toks.total)
+            await _after_exhaustion(maker, job, exhausted)
+        except Exception as exc:  # noqa: BLE001 - one bad job must not kill the worker
+            exhausted = await queue.fail(maker, queue.SYSTEM_CTX, job.id, repr(exc))
+            log.warning("worker.job_failed", job_id=job.id, kind=job.kind, error=repr(exc))
+            # Only finalize when the job is truly done retrying; a re-queued job's
+            # step stays open until its terminal attempt.
+            if exhausted:
+                await _finalize_run_step(maker, job.id, ok=False, cost_tokens=toks.total)
+            await _after_exhaustion(maker, job, exhausted)
+        else:
+            await queue.complete(maker, queue.SYSTEM_CTX, job.id)
+            # ran_as records E1's scope choice (system vs scoped) on the audit line:
+            # an owner-system run is visible as such, not a smuggled escalation.
+            log.info("worker.job_done", job_id=job.id, kind=job.kind, ran_as=ran_as)
+            await _finalize_run_step(maker, job.id, ok=True, cost_tokens=toks.total)
     return True
+
+
+async def _finalize_run_step(
+    maker: async_sessionmaker[AsyncSession], job_id: str, *, ok: bool, cost_tokens: int
+) -> None:
+    """Stamp the job's outcome on its dispatched-run step (best-effort): a run-log
+    write must never fail the executor job it is only annotating."""
+    try:
+        await finalize_job_step(maker, queue.SYSTEM_CTX, job_id, ok=ok, cost_tokens=cost_tokens)
+    except Exception:  # noqa: BLE001 — the run-log is an annotation, never the job's gate
+        log.warning("worker.run_step_finalize_failed", job_id=job_id)
 
 
 async def _after_exhaustion(
