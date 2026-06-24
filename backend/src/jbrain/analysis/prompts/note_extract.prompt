@@ -1,6 +1,6 @@
 ---
 name: note.extract
-version: note-extract-v26
+version: note-extract-v27
 description: Extract facts, entities, and temporal references from one personal note.
 strength: high
 config:
@@ -195,7 +195,7 @@ Produce, as JSON:
 - "surface_text" is copied verbatim from the note. Keep a reference phrase AS the name — "the rat", "my dentist", "the new place" stay verbatim; never invent a proper name for one. The integrator owns identity, so you must not guess which entity a reference denotes.
 
 4. "facts": every durable, useful statement the note genuinely makes, up to the per-note budget given with the note (never more than {{ max_facts }}). Each fact is one property-graph edge entity.predicate[.qualifier] -> value or object. Capture facts about ANYONE the note discusses, not only the author: a family member's diagnosis or medication, a friend's new job, a colleague's move are all facts — attribute each to the person it is about (entity_ref is that person's mention). Skip pleasantries, reflection, and sensory color ("the kitchen felt fresher"); do not pad to reach the budget, but never drop a real fact to stay small. Each fact's fields:
-- "predicate": the relation as a natural or schema.org property name — homeLocation, worksFor, memberOf, address, spouse, partner, children, parent, sibling, birthDate, jobTitle, weight, height, bloodPressure, medication, and the like. Use the word that fits; the integrator normalizes synonyms, so do not agonize over the exact spelling — just stay consistent within the note. "qualifier" sub-types a predicate ("" when none).
+- "predicate": the relation as a natural or schema.org property name — homeLocation, worksFor, memberOf, address, spouse, partner, children, parent, sibling, birthDate, jobTitle, weight, height, bloodPressure, medication, and the like. Use the word that fits; the integrator normalizes synonyms, so do not agonize over the exact spelling — just stay consistent within the note. Where a PERSON lives — their home, residence, where they are based — is `homeLocation` (object = the place), NOT the generic `location`; reserve `location` for an event, appointment, organization, or thing's venue, never a person's home. "qualifier" sub-types a predicate ("" when none).
 - "kind": choose by what the fact IS, not the sentence's verb tense:
   * state — a condition that holds over an interval and changes by being replaced: where someone lives (homeLocation), their employer (worksFor), their address, marital status, a current medication regimen, an appointment's scheduled time.
   * event — something that occurred at a time and is then fixed ("saw Dr. Patel yesterday"); never use event for a condition that persists.

@@ -95,6 +95,42 @@ predicates:
     kind: relationship
     schema_org_ref: schema:owns
     renamed_from: [possesses, owned, ownsVehicle]
+  # Where a person lives — the current residence, a Place ref. 🔒 location. One
+  # CURRENT home (functional); former residences are closed history. Reserve the
+  # generic `location` for an event/org/thing's venue — NOT a person's home — so
+  # `location` is intentionally ABSENT from renamed_from (it is canonical elsewhere
+  # and a global rename would mis-fold appointment/org locations onto it).
+  - canonical_name: homeLocation
+    value_shape: ref
+    range_type: place
+    kind: state
+    functional: true
+    schema_org_ref: schema:homeLocation
+    renamed_from: [residence, livesIn, livesAt, resides, residesIn, home_location, homeAddress]
+  - canonical_name: birthPlace         # 🔒 location — where born; timeless
+    value_shape: ref
+    range_type: place
+    kind: attribute
+    schema_org_ref: schema:birthPlace
+    renamed_from: [bornIn, placeOfBirth]
+  # Body measurements — instant readings that accumulate as a time series.
+  - canonical_name: weight
+    value_shape: quantity              # {value, unit} e.g. {value: 255, unit: lb}
+    kind: measurement
+    schema_org_ref: schema:weight
+    renamed_from: [bodyWeight]
+  - canonical_name: height
+    value_shape: quantity
+    kind: measurement
+    schema_org_ref: schema:height
+    renamed_from: [bodyHeight]
+  - canonical_name: goal               # a soft objective/intention; accumulating
+    value_shape: text
+    kind: preference
+    # NO renamed_from: `goal` is too generic to rewrite globally (cf. project.yaml).
+  - canonical_name: siblingCount       # a stated count ("I have four brothers"); denormalized
+    value_shape: scalar
+    kind: state
 
 # Fed to the existing declared-name -> exact-alias machinery (NOT an identity key).
 alias_seeding_predicates: [name.full, name.preferred, name.aka, name.maiden]

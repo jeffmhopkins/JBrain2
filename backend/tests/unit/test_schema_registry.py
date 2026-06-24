@@ -49,6 +49,34 @@ def test_shipped_registry_loads_all_catalog_types(registry: SchemaRegistry) -> N
     assert registry.meta.schema_version >= 1
 
 
+def test_person_residence_is_homelocation_not_generic_location(registry: SchemaRegistry) -> None:
+    # A person's residence is the functional homeLocation (a Place ref); the
+    # residence drift-spellings fold to it, but the generic `location` does NOT
+    # (it stays canonical for event/org venues — global rename would mis-fold it).
+    home = registry.predicate_for_kind("Person", "homeLocation")
+    assert home is not None and home.value_shape == "ref" and home.range_type == "place"
+    assert home.functional  # one current home; former residences are closed history
+    assert registry.normalize_predicate("residence") == "homeLocation"
+    assert registry.normalize_predicate("livesIn") == "homeLocation"
+    assert registry.normalize_predicate("location") == "location"  # untouched
+
+
+def test_person_registers_body_and_misc_coined_predicates(registry: SchemaRegistry) -> None:
+    # The previously-coined long-tail predicates are now first-class on Person.
+    for canonical, shape, kind in (
+        ("weight", "quantity", "measurement"),
+        ("height", "quantity", "measurement"),
+        ("goal", "text", "preference"),
+        ("siblingCount", "scalar", "state"),
+    ):
+        p = registry.predicate_for_kind("Person", canonical)
+        assert p is not None and p.value_shape == shape and p.kind == kind
+    birth = registry.predicate_for_kind("Person", "birthPlace")
+    assert birth is not None and birth.value_shape == "ref" and birth.range_type == "place"
+    assert registry.normalize_predicate("bornIn") == "birthPlace"
+    assert registry.normalize_predicate("goal") == "goal"  # generic; not a rename target
+
+
 def test_person_carries_family_kinship_edges(registry: SchemaRegistry) -> None:
     # Family edges are accumulating (a person has many relatives), so none are
     # functional, and the common drift spellings fold to the schema.org canonical.
