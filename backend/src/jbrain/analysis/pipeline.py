@@ -384,10 +384,9 @@ class AnalysisPipeline:
         # STRONG embedding match collapses the committed graph address and the
         # weight model sees the canonical name (Phase 3 §3.1; no-op when off).
         await self.canonicalize_intent(intent, note_domain=domain)
-        plan = plan_intent(
-            intent, compute_signals(intent, [c.text for c in chunks]), correction=correction
-        )
-        flow_trace.plan(note_id, plan)
+        signals = compute_signals(intent, [c.text for c in chunks])
+        plan = plan_intent(intent, signals, correction=correction)
+        flow_trace.plan(note_id, plan, signals)
 
         provider, model = await self._router.effective_spec("integrate.note", INTEGRATE_STRENGTH)
         async with scoped_session(self._maker, SYSTEM_CTX) as session:

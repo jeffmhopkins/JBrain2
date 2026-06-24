@@ -24,6 +24,12 @@ def _ext_fact(
     *,
     kind: str = "relationship",
     qualifier: str = "",
+    assertion: str = "asserted",
+    inferred: bool = False,
+    value_json: dict[str, Any] | None = None,
+    temporal: Any = None,
+    attested_span: Any = None,
+    self_confidence: float = 0.9,
 ) -> Any:
     return SimpleNamespace(
         entity_ref=entity_ref,
@@ -31,6 +37,12 @@ def _ext_fact(
         qualifier=qualifier,
         object_entity_ref=obj,
         kind=kind,
+        assertion=assertion,
+        inferred=inferred,
+        value_json=value_json,
+        temporal=temporal,
+        attested_span=attested_span,
+        self_confidence=self_confidence,
     )
 
 
@@ -166,8 +178,39 @@ def test_intent_stage_resolutions_and_supersessions() -> None:
     assert ev["event"] == "analysis.flow.intent"
     assert ev["stage"] == "recover"
     assert ev["resolutions"] == ["summer:new", "Me:existing"]
-    assert ev["edges"] == ["Me.children.step -> summer"]
+    assert ev["facts"] == [
+        {
+            "edge": "Me.children.step -> summer",
+            "kind": "relationship",
+            "assertion": "asserted",
+            "inferred": False,
+        }
+    ]
     assert ev["supersessions"] == ["Me.children:supersede"]
+
+
+def test_intent_facts_surface_value_and_temporal() -> None:
+    flow_trace.set_enabled(True)
+    intent = _intent(
+        facts=[
+            _ext_fact(
+                "Allan",
+                "birthDate",
+                None,
+                kind="attribute",
+                inferred=True,
+                value_json={"value": "1985-02-15"},
+                temporal=SimpleNamespace(phrase="February 15th 1985", resolved_start="1985-02-15"),
+            )
+        ],
+    )
+    with structlog.testing.capture_logs() as logs:
+        flow_trace.intent("n1", "integrate", intent)
+    [ev] = logs
+    [f] = ev["facts"]
+    assert f["value"] == "1985-02-15"
+    assert f["temporal"] == {"phrase": "February 15th 1985", "start": "1985-02-15"}
+    assert f["inferred"] is True
 
 
 def test_plan_rejected_lists_violation_codes() -> None:
@@ -198,17 +241,42 @@ def test_plan_facts_show_status_and_weight() -> None:
             ),
         ]
     )
+    signals = {
+        0: SimpleNamespace(surface_attested=True, predicate_known=True),
+        1: SimpleNamespace(surface_attested=False, predicate_known=True),
+    }
+    with structlog.testing.capture_logs() as logs:
+        flow_trace.plan("n1", plan, signals)
+    [ev] = logs
+    f0 = ev["facts"][0]
+    assert f0["edge"] == "Me.children -> summer"
+    assert f0["status"] == "active"
+    assert f0["weight"] == 0.912  # rounded to 3 places
+    assert f0["review"] == []
+    assert f0["surface_attested"] is True  # the signal behind the weight
+    f1 = ev["facts"][1]
+    assert f1["status"] == "pending_review"
+    assert f1["review"] == ["below_threshold"]
+    assert f1["surface_attested"] is False  # held: no grounding fired
+
+
+def test_plan_facts_omit_signals_when_not_supplied() -> None:
+    flow_trace.set_enabled(True)
+    plan = _plan(
+        facts=[
+            SimpleNamespace(
+                fact=_ext_fact("Me", "children", "summer"),
+                status="active",
+                weight=1.0,
+                review_reasons=(),
+            )
+        ]
+    )
     with structlog.testing.capture_logs() as logs:
         flow_trace.plan("n1", plan)
     [ev] = logs
-    assert ev["facts"][0] == {
-        "edge": "Me.children -> summer",
-        "status": "active",
-        "weight": 0.912,  # rounded to 3 places
-        "review": [],
-    }
-    assert ev["facts"][1]["status"] == "pending_review"
-    assert ev["facts"][1]["review"] == ["below_threshold"]
+    assert "surface_attested" not in ev["facts"][0]
+    assert ev["facts"][0]["has_value"] is False
 
 
 def _commit(**over: Any) -> dict[str, Any]:
