@@ -10,6 +10,7 @@ the loop's concern; what a tool *does* is the handler's.
 import asyncio
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Protocol
 
@@ -133,16 +134,20 @@ class ToolContext:
     None for non-chat callers (e.g. the wiki Editor) and background loops, which
     stage session-less proposals that surface in every session's inbox.
 
-    `here` is the owner's live (latitude, longitude) captured by the PWA this turn —
-    the same warm geolocation fix note sends attach — or None. It lets a location
-    tool answer from the phone's current position (foreground, mode-independent)
-    rather than only the OwnTracks device stack."""
+    `here` is the owner's (latitude, longitude) for this turn — the warm geolocation
+    fix the PWA attached, or, when this turn carried none, the owner's cached
+    last-known warm fix. It lets a location tool answer from the phone's current (or
+    most recent) position rather than only the OwnTracks device stack. `here_as_of`
+    is None when `here` is this turn's live fix and the fix's capture time when it is
+    the cached fallback — so the tool labels a stale position honestly and never
+    reports it as "here now"."""
 
     session: SessionContext
     scopes: tuple[str, ...]
     timezone: str | None = None
     agent_session_id: str | None = None
     here: tuple[float, float] | None = None
+    here_as_of: datetime | None = None
     # Mid-execution progress sink, set only on the streaming path: a tool calls it with
     # (step, total, preview_data_uri | None, label | None) and the loop turns each call
     # into an ephemeral ToolProgressEvent on the turn's SSE. Image gen sends a step bar +
@@ -352,6 +357,7 @@ class AgentLoop:
         tools_allow: frozenset[str] | None = None,
         general_knowledge_label: bool = True,
         here: tuple[float, float] | None = None,
+        here_as_of: datetime | None = None,
         context_window: int | None = None,
     ) -> AsyncIterator[ChatEvent]:
         """The streaming twin of `run`: the same turn loop and guardrails, but it
@@ -391,6 +397,7 @@ class AgentLoop:
                 tools_allow,
                 general_knowledge_label,
                 here,
+                here_as_of,
                 context_window,
             ):
                 yield ev
@@ -413,6 +420,7 @@ class AgentLoop:
             timezone=timezone,
             agent_session_id=agent_session_id,
             here=here,
+            here_as_of=here_as_of,
             emit_progress=lambda step, total, preview, label: progress_q.put_nowait(
                 (step, total, preview, label)
             ),
@@ -588,6 +596,7 @@ class AgentLoop:
         tools_allow: frozenset[str] | None = None,
         general_knowledge_label: bool = True,
         here: tuple[float, float] | None = None,
+        here_as_of: datetime | None = None,
         context_window: int | None = None,
     ) -> AsyncIterator[ChatEvent]:
         """Mode (a): produce the turn non-streaming, run `reflect` (strict
@@ -619,6 +628,7 @@ class AgentLoop:
                 system,
                 tools_allow,
                 here,
+                here_as_of,
                 context_window,
             )
             corpus = _grounding_corpus(turn.sources, turn.entities)
@@ -676,6 +686,7 @@ class AgentLoop:
         system: str | None = None,
         tools_allow: frozenset[str] | None = None,
         here: tuple[float, float] | None = None,
+        here_as_of: datetime | None = None,
         context_window: int | None = None,
     ) -> _BufferedTurn:
         """One full non-streaming produce-step for mode (a): run the turn loop to a
@@ -692,6 +703,7 @@ class AgentLoop:
             timezone=timezone,
             agent_session_id=agent_session_id,
             here=here,
+            here_as_of=here_as_of,
         )
         events: list[ChatEvent] = []
         answer_parts: list[str] = []

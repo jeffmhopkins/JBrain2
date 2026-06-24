@@ -1,6 +1,8 @@
 """jerv's owner-location tool: `current_location` — names the live PWA fix via the
 offline city geocoder, escalating to the external geocoder only for a street address."""
 
+from datetime import UTC, datetime, timedelta
+
 import pytest
 
 from jbrain.agent.loop import ToolContext
@@ -31,9 +33,9 @@ class _Ext:
         return self._address
 
 
-def _here_ctx(lat: float, lon: float) -> ToolContext:
+def _here_ctx(lat: float, lon: float, as_of: datetime | None = None) -> ToolContext:
     session = SessionContext(principal_id="own", principal_kind="owner", owner_scoped=True)
-    return ToolContext(session=session, scopes=(), here=(lat, lon))
+    return ToolContext(session=session, scopes=(), here=(lat, lon), here_as_of=as_of)
 
 
 def _tool(city: _City, ext: "_Ext | None" = None):  # noqa: ANN202
@@ -94,3 +96,25 @@ async def test_current_location_without_a_live_fix_asks_to_share() -> None:
     session = SessionContext(principal_id="own", principal_kind="owner", owner_scoped=True)
     out = await _tool(_City(None))({}, ToolContext(session=session, scopes=()))
     assert "share it" in out
+
+
+@pytest.mark.asyncio
+async def test_current_location_cached_fix_is_reported_as_last_known_with_age() -> None:
+    # here_as_of set → the fix is the cached fallback, not a live position: the answer
+    # names it "last known", carries the age, and warns they may have moved.
+    city = _City(
+        CityHit(name="Springfield", region="Illinois", country="United States", distance_m=2400.0)
+    )
+    as_of = datetime.now(UTC) - timedelta(hours=2)
+    out = await _tool(city)({}, _here_ctx(39.8, -89.6, as_of=as_of))
+    assert "last known location" in out
+    assert "near Springfield, Illinois, United States" in out
+    assert "2 h ago" in out and "may have moved" in out
+
+
+@pytest.mark.asyncio
+async def test_current_location_cached_coordinates_are_labelled_last_known() -> None:
+    as_of = datetime.now(UTC) - timedelta(minutes=20)
+    out = await _tool(_City(None))({"detail": "coordinates"}, _here_ctx(28.6, -80.8, as_of=as_of))
+    assert "last known coordinates" in out and "20 min ago" in out
+    assert "28.60000" in out and "-80.80000" in out

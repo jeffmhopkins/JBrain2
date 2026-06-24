@@ -1,6 +1,6 @@
 ---
 name: current_location
-version: 5
+version: 6
 permission: web
 params:
   type: object
@@ -16,9 +16,12 @@ turn. By default (or `detail: "city"`) it names the nearest city (city, region,
 country) — enough for "where am I" and nearby info. Use `detail: "address"` ONLY when
 the owner explicitly wants their exact street address; if no address can be resolved it
 returns the city. Use `detail: "coordinates"` when the owner wants the raw
-latitude/longitude. If their app didn't share a position this turn, it returns nothing
-— say so and ask them to share it. Use the result to answer what they asked: when it
-names a place you may web-search by that place/city for nearby things; when it's
-coordinates, report them and stop — never web-search raw coordinates to resolve them.
+latitude/longitude. If their app didn't share a position this turn, it falls back to
+their last known position and says so with its age ("last known … N ago"); relay that
+honestly as a past location, and don't present a stale fix as where they are now. Only
+when there's no recent fix at all does it return nothing — then say so and ask them to
+share it. Use the result to answer what they asked: when it names a place you may
+web-search by that place/city for nearby things; when it's coordinates, report them and
+stop — never web-search raw coordinates to resolve them.
 Don't volunteer the location unprompted or repeat the precise address/coordinates
 beyond what's needed.
