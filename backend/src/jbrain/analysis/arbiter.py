@@ -459,6 +459,12 @@ def recover_dropped_fields(intent: IntegrationIntent, extraction: Extraction) ->
                     precision=t.precision,
                 ),
             )
+        # A relationship is an edge to another entity, so a relationship fact left
+        # with NO object after recovery is an edge to nothing — drop it rather than
+        # persist or park a meaningless object-less row in review (e.g. a bare
+        # `parent` the model emitted with no parent named).
+        if fact.kind == "relationship" and fact.object_entity_ref is None:
+            continue
         facts.append(fact)
         for ref in (fact.entity_ref, fact.object_entity_ref):
             if ref and ref not in resolved and ref in mention_kind:

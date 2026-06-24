@@ -512,7 +512,7 @@ def test_user_prompt_carries_the_per_note_fact_budget() -> None:
 
 
 def test_prompt_version_is_current() -> None:
-    assert PROMPT_VERSION == "note-extract-v25"
+    assert PROMPT_VERSION == "note-extract-v26"
 
 
 def test_user_prompt_carries_anchor_with_timezone_domain_and_content() -> None:

@@ -994,6 +994,31 @@ def test_recover_leaves_a_present_object_untouched():
     assert sum(r.mention_ref == "Maya" for r in out.entity_resolutions) == 1
 
 
+def test_recover_drops_an_objectless_relationship_edge():
+    from jbrain.analysis.arbiter import recover_dropped_fields
+
+    # A `parent` edge with no object — and none to backfill from the extraction —
+    # is an edge to nothing: dropped, not carried forward as an object-less row.
+    # A non-relationship fact with no object (a goal) is unaffected.
+    intent = _intent(
+        entity_resolutions=[_res("Me")],
+        facts=[
+            _fact(entity_ref="Me", predicate="parent", kind="relationship", object_entity_ref=None),
+            _fact(
+                entity_ref="Me",
+                predicate="goal",
+                kind="preference",
+                object_entity_ref=None,
+                value_json={"value": "save more"},
+            ),
+        ],
+    )
+    out = recover_dropped_fields(intent, _extraction([], []))
+    preds = [f.predicate for f in out.facts]
+    assert "parent" not in preds  # object-less relationship dropped
+    assert "goal" in preds  # object-less non-relationship kept
+
+
 def test_recover_does_not_override_an_existing_ambiguous_resolution():
     from jbrain.analysis.arbiter import recover_dropped_fields
 
