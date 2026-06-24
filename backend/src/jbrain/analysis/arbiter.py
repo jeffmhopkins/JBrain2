@@ -312,6 +312,82 @@ def _gender_grounded(fact: IntentFact, haystack: str) -> bool:
     return terms is not None and any(_token_present(t, haystack) for t in terms)
 
 
+# The object-gender a kinship edge implies, by canonical predicate: the gendered
+# noun for each side. A `children` edge to a child the note calls a "daughter"
+# implies the child is female; spouse/parent/sibling likewise. Neutral terms (kid,
+# child, partner, sibling, parent) imply nothing and are intentionally absent.
+_KINSHIP_GENDER_TERMS: dict[str, dict[str, frozenset[str]]] = {
+    "children": {
+        "female": frozenset({"daughter", "daughters"}),
+        "male": frozenset({"son", "sons"}),
+    },
+    "spouse": {"female": frozenset({"wife"}), "male": frozenset({"husband"})},
+    "parent": {"female": frozenset({"mother", "mom"}), "male": frozenset({"father", "dad"})},
+    "sibling": {
+        "female": frozenset({"sister", "sisters"}),
+        "male": frozenset({"brother", "brothers"}),
+    },
+}
+
+
+def derive_kinship_gender(intent: IntegrationIntent, note_text: str) -> IntegrationIntent:
+    """Emit the gender a kinship edge DETERMINISTICALLY implies for its object, so a
+    roster the model captured as relationships but for which it omitted gender ("four
+    daughters named …" → four children edges, no gender) still records each child's
+    gender — the recall companion to `_gender_grounded`, which only weights a gender
+    fact once it exists.
+
+    For each kinship predicate, derive the object gender ONLY when the note uses that
+    predicate's gendered term for exactly ONE gender (all daughters, or all sons); a
+    mixed roster ("a daughter and a son") can't be associated to each object
+    positionally here, so it is left to the model/review. An object that already
+    carries a gender fact this note is left untouched. The derived fact is `inferred`
+    (the note never types "female"), but `_gender_grounded` attests it, so it commits
+    rather than landing in review."""
+    registry = get_registry()
+    haystack = _norm(note_text)
+    implied: dict[str, str] = {}
+    for canon, by_gender in _KINSHIP_GENDER_TERMS.items():
+        present = {
+            g for g, terms in by_gender.items() if any(_token_present(t, haystack) for t in terms)
+        }
+        if len(present) == 1:
+            implied[canon] = next(iter(present))
+    if not implied:
+        return intent
+
+    have_gender = {
+        f.entity_ref for f in intent.facts if registry.normalize_predicate(f.predicate) == "gender"
+    }
+    added: list[IntentFact] = []
+    seen: set[str] = set()
+    for fact in intent.facts:
+        gender = implied.get(registry.normalize_predicate(fact.predicate))
+        obj = fact.object_entity_ref
+        if gender is None or obj is None or obj in have_gender or obj in seen:
+            continue
+        seen.add(obj)
+        added.append(
+            IntentFact(
+                entity_ref=obj,
+                predicate="gender",
+                qualifier="",
+                kind="state",
+                statement=f"{obj}'s gender is {gender}.",
+                value_json={"value": gender},
+                assertion="asserted",
+                object_entity_ref=None,
+                temporal=None,
+                attested_span=None,
+                self_confidence=1.0,
+                inferred=True,
+            )
+        )
+    if not added:
+        return intent
+    return replace(intent, facts=[*intent.facts, *added])
+
+
 def recover_dropped_fields(intent: IntegrationIntent, extraction: Extraction) -> IntegrationIntent:
     """Backfill the object AND value the integrator drops when it re-types a fact.
 
