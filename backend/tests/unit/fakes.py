@@ -363,6 +363,28 @@ class FakeSettingsStore:
         self.values["llm_local_provision_requested"] = clean
         return clean
 
+    async def llm_local_remove_requested(self, ctx: object) -> list[str]:
+        raw = self.values.get("llm_local_remove_requested", [])
+        if not isinstance(raw, list):
+            return []
+        seen: set[str] = set()
+        out: list[str] = []
+        for mid in raw:
+            if isinstance(mid, str) and mid not in seen:
+                seen.add(mid)
+                out.append(mid)
+        return out
+
+    async def set_llm_local_remove_requested(self, ctx: object, ids: list[str]) -> list[str]:
+        seen: set[str] = set()
+        clean: list[str] = []
+        for mid in ids:
+            if isinstance(mid, str) and mid not in seen:
+                seen.add(mid)
+                clean.append(mid)
+        self.values["llm_local_remove_requested"] = clean
+        return clean
+
 
 class FakeLocalGateway:
     """In-memory stand-in for the llama-swap admin client (LocalGatewayClient)."""

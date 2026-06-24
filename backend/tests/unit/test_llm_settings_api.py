@@ -618,6 +618,87 @@ def test_install_download_progress_climbs_with_on_disk_bytes(tmp_path: Any) -> N
     assert by_id["glm-4.5-air"]["download_gb"] is None
 
 
+def test_uninstall_queues_a_provisioned_model() -> None:
+    # gpt-oss-120b is provisioned in this install, so it can be queued for uninstall.
+    c, store = _authed_client(_local_settings())
+    resp = c.post("/api/settings/llm/local-models/gpt-oss-120b/uninstall")
+    assert resp.status_code == 200, resp.text
+    by_id = {m["id"]: m for m in resp.json()["local_models"]}
+    assert by_id["gpt-oss-120b"]["remove_queued"] is True
+    assert by_id["gpt-oss-120b"]["enabled"] is True
+    # An un-provisioned catalog model is never marked remove_queued.
+    assert by_id["qwen3-235b-a22b"]["remove_queued"] is False
+    assert store.values["llm_local_remove_requested"] == ["gpt-oss-120b"]
+    # Queuing again is idempotent (no duplicate).
+    c.post("/api/settings/llm/local-models/gpt-oss-120b/uninstall")
+    assert store.values["llm_local_remove_requested"] == ["gpt-oss-120b"]
+
+
+def test_uninstall_404_unknown_and_409_unprovisioned_or_hosting_off() -> None:
+    c, _ = _authed_client(_local_settings())
+    # Not a catalog id.
+    assert c.post("/api/settings/llm/local-models/nope/uninstall").status_code == 404
+    # A catalog model that isn't provisioned here → nothing to uninstall.
+    assert c.post("/api/settings/llm/local-models/qwen3-235b-a22b/uninstall").status_code == 409
+    # Hosting off → no local roster to uninstall from.
+    c2, _ = _authed_client(_cloud_settings())
+    assert c2.post("/api/settings/llm/local-models/gpt-oss-120b/uninstall").status_code == 409
+
+
+def test_cancel_uninstall_removes_from_the_queue_and_tolerates_absence() -> None:
+    c, store = _authed_client(_local_settings())
+    c.post("/api/settings/llm/local-models/gpt-oss-120b/uninstall")
+    resp = c.delete("/api/settings/llm/local-models/gpt-oss-120b/uninstall")
+    assert resp.status_code == 200, resp.text
+    by_id = {m["id"]: m for m in resp.json()["local_models"]}
+    assert by_id["gpt-oss-120b"]["remove_queued"] is False
+    assert store.values["llm_local_remove_requested"] == []
+    # Cancelling something not queued reconciles rather than 404 (a concurrent
+    # update may have just removed and cleared it).
+    assert c.delete("/api/settings/llm/local-models/qwen3-vl-30b/uninstall").status_code == 200
+
+
+def test_install_and_uninstall_queues_are_disjoint() -> None:
+    # An id can't sit in both queues; queueing one strips the other so the sync's
+    # set algebra stays unambiguous.
+    c, store = _authed_client(_local_settings())
+    # qwen3-235b-a22b is unprovisioned → installable; queue it, then uninstall a
+    # provisioned model, then re-install/uninstall the SAME id to prove the swap.
+    c.post("/api/settings/llm/local-models/qwen3-235b-a22b/install")
+    assert store.values["llm_local_provision_requested"] == ["qwen3-235b-a22b"]
+    # gpt-oss-120b is provisioned: queue uninstall, then (hypothetically) install —
+    # but install requires unprovisioned, so use the unprovisioned id for the swap.
+    # First: uninstall gpt-oss-120b, then install qwen3-235b stays untouched.
+    c.post("/api/settings/llm/local-models/gpt-oss-120b/uninstall")
+    assert store.values["llm_local_remove_requested"] == ["gpt-oss-120b"]
+    assert store.values["llm_local_provision_requested"] == ["qwen3-235b-a22b"]
+    # Now force a collision on the SAME id by seeding the remove queue with an
+    # installable id, then installing it: the install must strip it from removing.
+    store.values["llm_local_remove_requested"] = ["gpt-oss-120b", "qwen3-235b-a22b"]
+    c.post("/api/settings/llm/local-models/qwen3-235b-a22b/install")
+    assert store.values["llm_local_remove_requested"] == ["gpt-oss-120b"]
+    assert store.values["llm_local_provision_requested"] == ["qwen3-235b-a22b"]
+    # And the reverse: seed the install queue with a provisioned id, uninstall it →
+    # the uninstall strips it from the install queue.
+    store.values["llm_local_provision_requested"] = ["qwen3-235b-a22b", "gpt-oss-120b"]
+    c.post("/api/settings/llm/local-models/gpt-oss-120b/uninstall")
+    assert store.values["llm_local_provision_requested"] == ["qwen3-235b-a22b"]
+    assert store.values["llm_local_remove_requested"] == ["gpt-oss-120b"]
+
+
+def test_remove_queued_self_clears_for_a_model_no_longer_provisioned() -> None:
+    # The mirror of queued's self-clear: `remove_queued = removing and enabled`, so a
+    # stale remove-queue entry for an id that already left LOCAL_MODELS (the update
+    # applied the uninstall but a clear was missed) reports remove_queued False — the
+    # row stops claiming "uninstalling" without waiting for the queue to be cleared.
+    c, store = _authed_client(_local_settings())
+    # qwen3-235b-a22b is NOT in local_models (unprovisioned), yet sits in the queue.
+    store.values["llm_local_remove_requested"] = ["qwen3-235b-a22b"]
+    by_id = {m["id"]: m for m in c.get("/api/settings/llm").json()["local_models"]}
+    assert by_id["qwen3-235b-a22b"]["enabled"] is False
+    assert by_id["qwen3-235b-a22b"]["remove_queued"] is False
+
+
 def test_load_makes_the_model_resident() -> None:
     gw = FakeLocalGateway()
     c, _ = _authed_client(_local_settings(), gw)

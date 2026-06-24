@@ -30,6 +30,9 @@ ONESHOT_SCRIPTS = [
     # parse under POSIX sh.
     "local-models-sync.sh",
     "download-local-weights.sh",
+    # The (destructive) weight pruner the sync calls for uninstalled models — also
+    # runs in the bash-less updater, so it gets the POSIX-shebang + sh -n checks.
+    "prune-local-weights.sh",
 ]
 
 
@@ -154,3 +157,107 @@ def test_config_write_runs_as_root() -> None:
         assert "--user 0" in cmd, (
             f"{script.name}: the llama-swap.yaml write must run as root"
         )
+
+
+def test_prune_script_guards_each_delete() -> None:
+    # The ONE destructive `rm -rf` must sit behind all four hard guards (charset,
+    # keep-set exclusion, realpath containment, directory type) and only ever name
+    # the guarded $target_abs — never a raw, unvalidated catalog id.
+    text = (DEPLOY / "prune-local-weights.sh").read_text()
+    # Guard 1 — charset regex rejecting traversal/slashes/spaces.
+    assert "[!a-z0-9._-]" in text, "prune must reject non-catalog-id charsets"
+    # Guard 2 — keep-set exclusion (never delete a still-served model).
+    assert "$KEEP" in text, "prune must exclude ids still in the final keep set"
+    # Guard 3 — realpath containment against the models dir prefix.
+    assert "realpath" in text and '"$dir_abs"/*' in text, (
+        "prune must verify the resolved target stays under the models dir"
+    )
+    # The single rm -rf must reference the guarded variable, never a raw id, and
+    # appear exactly once.
+    rm_lines = [
+        ln
+        for ln in text.splitlines()
+        if "rm -rf" in ln and not ln.lstrip().startswith("#")
+    ]
+    assert rm_lines == ['  rm -rf -- "$target_abs"'], (
+        f"the destructive delete must be a single guarded rm; got: {rm_lines}"
+    )
+
+
+def test_sync_subtracts_the_remove_queue() -> None:
+    # The sync must read the uninstall queue, subtract it from the union BEFORE the
+    # manifest is built (so the removed model drops out of everything downstream),
+    # and clear the queue at the end.
+    lines = (DEPLOY / "local-models-sync.sh").read_text().splitlines()
+    text = "\n".join(lines)
+    assert "local-remove-ids" in text, "sync must read the uninstall queue"
+    assert "local-remove-clear" in text, "sync must clear the uninstall queue"
+    assert "prune-local-weights.sh" in text, "sync must invoke the guarded pruner"
+    # The subtraction (grep -vxF on the remove ids) must precede the manifest build.
+    subtract = next((i for i, ln in enumerate(lines) if "grep -vxF" in ln), None)
+    manifest = next(
+        (i for i, ln in enumerate(lines) if "jbrain.llm.local_catalog $ids" in ln), None
+    )
+    assert subtract is not None, "sync must subtract the remove set with grep -vxF"
+    assert manifest is not None, "sync must build the manifest from $ids"
+    assert subtract < manifest, "the remove subtraction must precede the manifest build"
+
+
+def test_sync_applies_removals_when_the_roster_empties() -> None:
+    # Regression: "uninstall every served model" leaves an empty post-subtraction
+    # $ids, which is now a VALID terminal state — the removal must still be APPLIED
+    # (LOCAL_MODELS=[], restart, prune, clear). A bare `[ -n "$ids" ] || exit 0`
+    # would bail before any of that, wedging the uninstall forever. The early exit
+    # must therefore also require an EMPTY remove queue, and the download/swap steps
+    # (which `_manifest([])` would otherwise turn into a full-catalog pull) must be
+    # gated on a non-empty $ids.
+    text = (DEPLOY / "local-models-sync.sh").read_text()
+    assert '[ -n "$ids" ] || { say "no models to sync"; exit 0; }' not in text, (
+        "the unconditional empty-$ids exit drops queued removals — it must also "
+        "require an empty remove queue"
+    )
+    assert '[ ! -s "$remove_file" ]' in text, (
+        "the no-op early exit must also require the remove queue to be empty"
+    )
+    assert 'if [ -n "$ids" ]; then' in text, (
+        "the download/llama-swap steps must be gated on a non-empty $ids so an "
+        "empty roster does not re-pull the whole catalog via _manifest([])"
+    )
+
+
+@pytest.mark.skipif(shutil.which("sh") is None, reason="no POSIX sh available")
+def test_prune_deletes_only_guarded_targets(tmp_path: Path) -> None:
+    # Behavioral coverage for the destructive deleter: run the real script against a
+    # scratch models dir and assert each guard holds in practice — a removed id is
+    # deleted, a kept id and a traversal/charset-violating id survive, and a symlink
+    # escaping the models dir is never followed into a delete.
+    models = tmp_path / "models"
+    models.mkdir()
+    (models / "removed").mkdir()
+    (models / "kept").mkdir()
+    (models / "also-kept").mkdir()
+
+    # An escape target outside the models dir, reachable via a symlink inside it.
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "canary").write_text("do not delete me")
+    (models / "escape").symlink_to(outside)
+
+    script = DEPLOY / "prune-local-weights.sh"
+    # removed: deletable; kept: in KEEP; ../escape & "bad id": charset; escape: a
+    # symlink out of the dir (containment guard).
+    argv = ["removed", "kept", "../escape", "bad id", "escape"]
+    result = subprocess.run(
+        ["sh", str(script), str(models), *argv],
+        capture_output=True,
+        text=True,
+        env={"KEEP": "kept also-kept", "PATH": "/usr/bin:/bin"},
+    )
+    assert result.returncode == 0, result.stderr
+
+    assert not (models / "removed").exists(), "a plain removed id must be deleted"
+    assert (models / "kept").exists(), "an id still in KEEP must never be deleted"
+    assert (models / "also-kept").exists(), "KEEP entries not on argv stay untouched"
+    assert outside.exists() and (outside / "canary").exists(), (
+        "a symlink escaping the models dir must not be followed into a delete"
+    )

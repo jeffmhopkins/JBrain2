@@ -74,6 +74,13 @@ LLM_LOCAL_STAGED_KEY = "llm_local_staged"
 # LOCAL_MODELS, and the recommended set, then clears it. A list of catalog ids;
 # non-string and duplicate entries are dropped on read (first-seen order preserved).
 LLM_LOCAL_PROVISION_REQUESTED_KEY = "llm_local_provision_requested"
+# Catalog ids the operator has asked to UNINSTALL (remove from LOCAL_MODELS, and —
+# guarded — delete the downloaded weights) on the next update. The mirror of the
+# install queue: the update one-shot reads this (owner-scoped, via jbrain.cli),
+# subtracts it from the kept set so the model stops being served/enabled, prunes its
+# weights behind hard guards, then clears it. A list of catalog ids; non-string and
+# duplicate entries are dropped on read (first-seen order preserved).
+LLM_LOCAL_REMOVE_REQUESTED_KEY = "llm_local_remove_requested"
 
 # The owner's IANA display timezone (e.g. "America/New_York"). Absent = UTC.
 # Server-rendered times — the agent's appointment prose — localize to it so they
@@ -460,4 +467,17 @@ class SqlSettingsStore:
         """Replace the install queue with `ids` (sanitized like the reader); returns it."""
         clean = _dedup_str_list(ids)
         await self.upsert(ctx, LLM_LOCAL_PROVISION_REQUESTED_KEY, clean)
+        return clean
+
+    async def llm_local_remove_requested(self, ctx: SessionContext) -> list[str]:
+        """Catalog ids queued for uninstall from the PWA, sanitized like the install
+        queue (non-list store / non-string / duplicates dropped, order kept)."""
+        return _dedup_str_list(await self.get(ctx, LLM_LOCAL_REMOVE_REQUESTED_KEY, []))
+
+    async def set_llm_local_remove_requested(
+        self, ctx: SessionContext, ids: list[str]
+    ) -> list[str]:
+        """Replace the uninstall queue with `ids` (sanitized like the reader); returns it."""
+        clean = _dedup_str_list(ids)
+        await self.upsert(ctx, LLM_LOCAL_REMOVE_REQUESTED_KEY, clean)
         return clean
