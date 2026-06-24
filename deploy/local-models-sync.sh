@@ -51,8 +51,11 @@ say "syncing models: $ids"
 # shellcheck disable=SC2086  # $ids is a deliberately word-split id list.
 manifest="$(catalog -m jbrain.llm.local_catalog $ids)"
 [ -n "$manifest" ] || { say "empty manifest — aborting sync"; exit 1; }
+# Absolute models dir: `docker run -v` resolves its source on the daemon, which has
+# no notion of this script's cwd, so a relative `./local-models` is not the host
+# path the api reads — pass the absolute path (cwd is the install dir).
 MANIFEST="$manifest" DOWNLOAD_CONTAINER="jbrain-local-models-sync-dl" \
-  sh src/deploy/download-local-weights.sh ./local-models
+  sh src/deploy/download-local-weights.sh "$PWD/local-models"
 
 # 5. Re-stamp llama-swap.yaml for the new set (the api re-renders it, resolving
 #    each glob to a real downloaded filename). resident_group stays off unless the

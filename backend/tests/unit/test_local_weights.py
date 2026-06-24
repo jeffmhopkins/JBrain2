@@ -45,14 +45,18 @@ def test_absent_mount_is_none() -> None:
     assert local_weights.weights_size_gb("/no/such/mount", "qwen3-vl-30b") is None
 
 
-def test_dir_size_counts_partial_downloads(tmp_path: Path) -> None:
-    # The progress reader counts EVERY file, including huggingface's in-flight
-    # `*.incomplete` shards and a not-yet-renamed temp — so the bar climbs smoothly
-    # mid-download instead of jumping per finished shard.
+def test_dir_size_counts_partial_downloads_including_the_hf_cache(tmp_path: Path) -> None:
+    # The progress reader counts EVERY file recursively, including the in-flight
+    # shards huggingface streams into the `.cache/huggingface/download/*.incomplete`
+    # SUBDIR before renaming them up — so the bar climbs through the whole download
+    # instead of reading 0 until a ~50 GB shard finishes (the bug that left a 94 GB
+    # in-progress 235B reading 0% on the box).
     model = tmp_path / "qwen3-235b-a22b"
     model.mkdir()
-    _write(model / "shard-00001-of-00003.gguf", int(1.0 * _GIB))
-    _write(model / "shard-00002-of-00003.gguf.incomplete", int(0.5 * _GIB))
+    _write(model / "shard-00001-of-00003.gguf", int(1.0 * _GIB))  # one shard done, moved up
+    cache = model / ".cache" / "huggingface" / "download"
+    cache.mkdir(parents=True)
+    _write(cache / "shard-00002-of-00003.gguf.incomplete", int(0.5 * _GIB))  # still downloading
     assert local_weights.dir_size_gb(str(tmp_path), "qwen3-235b-a22b") == 1.5
 
 

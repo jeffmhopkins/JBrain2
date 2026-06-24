@@ -30,13 +30,19 @@ TTY_FLAG=""
 [ -t 1 ] && TTY_FLAG="-t"
 
 mkdir -p "$MODELS_DIR"
+# Remove any stale container of this name FIRST. A previous run that was killed
+# uncleanly (the update one-shot dying mid-download) leaves the named container
+# behind despite --rm and the trap, and then every retry fails instantly with
+# "container name already in use" — no network, no progress. Pre-clean so a resume
+# is never blocked by the corpse of the run it's resuming.
+docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
 # shellcheck disable=SC2086  # TTY_FLAG is an intentional optional word.
 docker run --rm $TTY_FLAG --name "$CONTAINER" \
   -e MANIFEST="$MANIFEST" -v "$MODELS_DIR:/models" python:3.11-slim bash -c '
   set -euo pipefail
   pip install --quiet -U "huggingface_hub[cli]"
   python - <<PY
-import json, os, subprocess
+import json, os, subprocess, time
 for m in json.loads(os.environ["MANIFEST"]):
     mid = m["id"]
     dest = f"/models/{mid}"
@@ -45,6 +51,17 @@ for m in json.loads(os.environ["MANIFEST"]):
     for inc in includes:
         args += ["--include", inc]
     print("==>", " ".join(args), flush=True)
-    subprocess.check_call(args)
+    # Retry with backoff: a 100 GB pull can drop its connection mid-transfer, and
+    # `hf download` resumes from the .incomplete partials on the next attempt, so a
+    # transient stall self-heals instead of stranding the install half-done.
+    for attempt in range(1, 6):
+        try:
+            subprocess.check_call(args)
+            break
+        except subprocess.CalledProcessError:
+            if attempt == 5:
+                raise
+            print(f"== download error; retry {attempt}/4, resuming from partials ==", flush=True)
+            time.sleep(5 * attempt)
 PY
 '
