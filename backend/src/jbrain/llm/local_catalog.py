@@ -120,7 +120,9 @@ CATALOG: tuple[LocalModel, ...] = (
         gguf_include="*UD-Q3_K_XL*.gguf",
         mmproj_include=None,
         quant="UD-Q3_K_XL",
-        size_gb=104.2,
+        # Measured on-box footprint of the three UD-Q3_K_XL shards (Unsloth nests
+        # them in a UD-Q3_K_XL/ subdir); the HF web estimate of ~104 was high.
+        size_gb=97.0,
         note="235B MoE, 22B active — the strongest open model that fits this "
         "128 GB box, at Unsloth's 3-bit dynamic quant (~104 GB weights). "
         "Standalone only: too large to co-reside, so expect a cold load on every "
