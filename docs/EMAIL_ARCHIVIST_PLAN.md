@@ -138,11 +138,14 @@ entry pinning this persona's turns to a local model.
 ### OAuth bootstrap (no prior art in the repo)
 
 A one-time, owner-run script (`scripts/gmail-oauth-bootstrap.py`) that runs the
-installed-app authorization-code flow: prints the consent URL for the
-`gmail.modify` scope, takes the pasted code, exchanges it for a refresh token, and
+authorization-code flow with a **loopback redirect** (Google deprecated the OOB
+copy-paste flow): it starts a throwaway HTTP server on `127.0.0.1:<port>`, opens the
+consent URL for the `gmail.modify` scope in the browser, captures the redirected
+authorization code locally (nothing to paste), exchanges it for a refresh token, and
 prints the three env values to paste into the box's config. It writes nothing to the
-DB and is never part of the request path. Documented in `dev-setup.sh` and
-`docs/OPERATIONS.md`.
+DB and is never part of the request path. The exact Cloud Console click-path,
+publishing-status gotcha, and run steps are in the **OAuth setup appendix** below; it
+is also summarized in `dev-setup.sh` and `docs/OPERATIONS.md`.
 
 ### Tests
 
@@ -254,3 +257,60 @@ when a new task is designed.
 - **No new table / migration / RLS test** — the persona is stateless on the box.
 - **No destructive Gmail ops** — `gmail.modify` scope only; delete/trash unreachable.
 - **No `curator` access** — the tools are web-gated to `archivist`.
+
+---
+
+## Appendix: OAuth setup (paint-by-numbers)
+
+A one-time setup. You need a regular `@gmail.com` account and a free Google Cloud
+project — **no Google Workspace required**. Budget ~10 minutes. (Google reshuffles
+the Cloud Console UI periodically and tweaks these policies; labels below may differ
+slightly — confirm against current Google docs if a screen doesn't match.)
+
+### Part 1 — register the OAuth app (Google Cloud Console, browser)
+
+1. Go to <https://console.cloud.google.com/> and **create a project** (e.g.
+   `jbrain-archivist`). Select it.
+2. **APIs & Services → Library →** search **Gmail API → Enable**.
+3. **APIs & Services → OAuth consent screen:**
+   - User type **External** (consumer Gmail), create.
+   - App name (e.g. `JBrain Archivist`), your email as support + developer contact.
+   - **Scopes:** add `https://www.googleapis.com/auth/gmail.modify` (a *restricted*
+     scope — that's expected). Save.
+   - **Test users:** add your own Gmail address.
+4. **Publishing status — the gotcha that bites the nightly task.** Leaving the app in
+   **Testing** makes refresh tokens **expire after 7 days**. So **Publish app →
+   Production**. Because `gmail.modify` is restricted you'll be warned the app is
+   unverified; for your own single account that's fine — full verification (CASA
+   assessment) is only needed to drop the warning or serve other users. You will click
+   through an "unverified app" screen once at consent (Part 3); the token is then
+   long-lived.
+5. **APIs & Services → Credentials → Create credentials → OAuth client ID:**
+   - Application type **Desktop app** (this enables the loopback redirect the
+     bootstrap uses). Name it, Create.
+   - Copy the **Client ID** and **Client secret** → these become `gmail_client_id`
+     and `gmail_client_secret`.
+
+### Part 2 — mint the refresh token (the loopback bootstrap)
+
+6. Put the client id/secret where the script can read them, then run
+   `python scripts/gmail-oauth-bootstrap.py`. It opens your browser to Google's
+   consent page (scope: read + modify your mail).
+7. Sign in, click through the one-time **"unverified app"** warning
+   (**Advanced → Go to JBrain Archivist**), then **Allow**.
+8. The browser redirects to `127.0.0.1:<port>`; the script captures the code, exchanges
+   it, and prints **`gmail_refresh_token`** (plus echoes the client id/secret).
+
+### Part 3 — wire the box
+
+9. Put the three values into the box's config/env:
+   `gmail_client_id`, `gmail_client_secret`, `gmail_refresh_token`
+   (`gmail_api_url` stays at its default). Empty `gmail_refresh_token` = the persona's
+   tools are dropped from the registry (fail-closed), so this step is what "turns on"
+   the archivist. The refresh token is the only long-lived secret; the script's local
+   server and the access tokens are ephemeral.
+
+**If it ever stops working:** a refresh token dies on owner revoke
+(myaccount.google.com → Security → third-party access), ~6 months of disuse, or if the
+app was accidentally left in Testing (the 7-day expiry). Re-running the bootstrap
+mints a fresh one.
