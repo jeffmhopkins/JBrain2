@@ -61,7 +61,13 @@ case "${1:-}" in
     ;;
   update)
     ./backup.sh || echo "backup skipped (stack not running yet?)"
-    git -C src pull --ff-only
+    # Mirror the remote exactly rather than `pull --ff-only`: a deploy box should
+    # never diverge, but if it has (a stray commit/edit), ff-only refuses and — under
+    # `set -e` — aborts the whole update, leaving the stack pinned to stale source
+    # that every rebuild keeps baking. fetch + hard reset to the tracked upstream
+    # self-heals, discarding local src changes by design (src is a pristine mirror).
+    git -C src fetch origin
+    git -C src reset --hard "@{u}"
     # Refresh helpers from the updated tree; mv keeps this running script
     # reading its old inode safely.
     for f in docker-compose.yml backup.sh restore.sh jbrain; do
