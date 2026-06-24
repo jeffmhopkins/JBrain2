@@ -397,9 +397,59 @@ def test_compute_signals_named_object_attests_a_fumbled_quote():
     assert sig[0].surface_attested is True
 
 
-def test_compute_signals_named_object_does_not_rescue_an_inferred_edge():
-    # The `not inferred` gate still holds: a genuinely inferred edge to a named
-    # object is NOT promoted — the model made no honest claim the note states it.
+def test_compute_signals_named_object_rescues_an_inferred_relationship_edge():
+    # The enumerated-kinship case: the integrator flags a `children` edge inferred
+    # for the non-first members even though the note names each child. A
+    # RELATIONSHIP edge whose object is named is grounded regardless of the
+    # inferred flag (the relationship twin of date-phrase grounding), so it commits
+    # instead of being held at the inferred ceiling — fixing the "50% on some
+    # daughters" / missing reciprocal `parent` symptom.
+    intent = _intent(
+        entity_resolutions=[
+            _res("Me"),
+            _res("lydian", mode="new", new_kind="Person", new_name="lydian"),
+        ],
+        facts=[
+            _fact(
+                entity_ref="Me",
+                predicate="children",
+                kind="relationship",
+                object_entity_ref="lydian",
+                attested_span=None,
+                inferred=True,
+            )
+        ],
+    )
+    note = "I have four daughters named summer lydian Harmony and Elora"
+    assert compute_signals(intent, [note])[0].surface_attested is True
+
+
+def test_compute_signals_inferred_relationship_with_unnamed_object_stays_unattested():
+    # Scope guard: the relationship backstop fires ONLY when the object is named.
+    intent = _intent(
+        entity_resolutions=[
+            _res("Me"),
+            _res("Eli", mode="new", new_kind="Person", new_name="Eli"),
+        ],
+        facts=[
+            _fact(
+                entity_ref="Me",
+                predicate="children",
+                kind="relationship",
+                object_entity_ref="Eli",
+                attested_span=None,
+                inferred=True,
+            )
+        ],
+    )
+    assert compute_signals(intent, ["I have a kid."])[0].surface_attested is False
+
+
+def test_compute_signals_named_object_does_not_rescue_an_inferred_state_edge():
+    # The `not inferred` gate still holds for a non-relationship (state) edge: a
+    # genuinely inferred worksFor to a named org is NOT promoted — the model made
+    # no honest claim the note states it, and only relationship edges get the
+    # named-object override above.
     intent = _intent(
         entity_resolutions=[
             _res("m1"),
