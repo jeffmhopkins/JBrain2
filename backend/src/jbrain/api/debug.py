@@ -468,6 +468,28 @@ async def logs(
     return PlainTextResponse(resp.text)
 
 
+@router.get("/update/status")
+async def update_status(
+    request: Request,
+    settings: SettingsDep,
+    _p: DebugDep,
+    tail: Annotated[int, Query(ge=1, le=2000)] = 200,
+) -> dict[str, object]:
+    """The most recent update one-shot's state + log tail (state, exit_code,
+    log_tail), proxied from the supervisor. The updater runs OUTSIDE the compose
+    project, so /debug/logs/<service> can't reach it — this is the read-only
+    console's only window into why an update (and its local-model sync) failed.
+    Mirrors the owner ops surface."""
+    request.state.debug_detail = f"update (tail {tail})"
+    resp = await _supervisor(request).get(
+        "/update/status",
+        params={"tail": tail},
+        headers={"Authorization": f"Bearer {settings.supervisor_token}"},
+    )
+    resp.raise_for_status()
+    return cast(dict[str, object], resp.json())
+
+
 # --- Live LLM routing (read / switch / load / unload) -----------------------
 
 

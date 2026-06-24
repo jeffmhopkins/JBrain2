@@ -48,13 +48,17 @@ class _StubRouter:
 
 
 class _FakeResp:
-    def __init__(self, status_code: int, text: str) -> None:
+    def __init__(self, status_code: int, text: str, json_body: Any = None) -> None:
         self.status_code = status_code
         self.text = text
+        self._json = json_body
 
     def raise_for_status(self) -> None:
         if self.status_code >= 400:
             raise AssertionError("unexpected error status")
+
+    def json(self) -> Any:
+        return self._json
 
 
 class _FakeSupervisor:
@@ -67,6 +71,16 @@ class _FakeSupervisor:
         self.calls.append((url, params or {}))
         if url.endswith("/nope"):
             return _FakeResp(404, "")
+        if url == "/update/status":
+            return _FakeResp(
+                200,
+                "",
+                json_body={
+                    "state": "running",
+                    "exit_code": None,
+                    "log_tail": "[update] syncing local models",
+                },
+            )
         return _FakeResp(200, "log line one\nlog line two")
 
     async def aclose(self) -> None:
@@ -431,6 +445,23 @@ def test_logs_proxies_to_supervisor(debug_client: tuple[TestClient, str]) -> Non
 def test_logs_unknown_service_404s(debug_client: tuple[TestClient, str]) -> None:
     client, key = debug_client
     assert client.get("/api/debug/logs/nope", headers=_auth(key)).status_code == 404
+
+
+def test_update_status_proxies_to_supervisor(debug_client: tuple[TestClient, str]) -> None:
+    # The updater one-shot runs outside the compose project, so /debug/logs can't see
+    # it — /debug/update/status proxies the supervisor for the read-only console.
+    client, key = debug_client
+    resp = client.get("/api/debug/update/status", headers=_auth(key), params={"tail": 120})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["state"] == "running"
+    assert body["log_tail"] == "[update] syncing local models"
+    assert ("/update/status", {"tail": 120}) in _state(client).supervisor_client.calls
+
+
+def test_update_status_requires_the_debug_token(debug_client: tuple[TestClient, str]) -> None:
+    client, _ = debug_client
+    assert client.get("/api/debug/update/status").status_code == 401
 
 
 # --- live routing -----------------------------------------------------------
