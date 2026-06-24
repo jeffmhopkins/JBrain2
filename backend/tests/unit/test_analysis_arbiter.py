@@ -445,6 +445,64 @@ def test_compute_signals_inferred_relationship_with_unnamed_object_stays_unattes
     assert compute_signals(intent, ["I have a kid."])[0].surface_attested is False
 
 
+def test_compute_signals_gender_grounded_by_a_kinship_term_attests():
+    # "daughter ⇒ female" is a deterministic implication: an inferred gender fact
+    # the note grounds with a gendered term is surface-attested, so it commits
+    # instead of sitting in review like a guess.
+    intent = _intent(
+        entity_resolutions=[_res("m1")],
+        facts=[
+            _fact(
+                predicate="gender",
+                kind="state",
+                value_json={"value": "female"},
+                object_entity_ref=None,
+                attested_span=None,
+                inferred=True,
+            )
+        ],
+    )
+    note = "I have four daughters named summer lydian Harmony and Elora"
+    assert compute_signals(intent, [note])[0].surface_attested is True
+
+
+def test_compute_signals_gender_not_grounded_without_a_kinship_term():
+    # No gendered term in the note → the inferred gender fact stays unattested.
+    intent = _intent(
+        entity_resolutions=[_res("m1")],
+        facts=[
+            _fact(
+                predicate="gender",
+                kind="state",
+                value_json={"value": "female"},
+                object_entity_ref=None,
+                attested_span=None,
+                inferred=True,
+            )
+        ],
+    )
+    assert compute_signals(intent, ["Summer came over today."])[0].surface_attested is False
+
+
+def test_compute_signals_gender_value_must_match_the_terms_gender():
+    # A male gender fact is not grounded by female terms (and vice versa): the
+    # value must match the gender the note's term implies.
+    intent = _intent(
+        entity_resolutions=[_res("m1")],
+        facts=[
+            _fact(
+                predicate="gender",
+                kind="state",
+                value_json={"value": "male"},
+                object_entity_ref=None,
+                attested_span=None,
+                inferred=True,
+            )
+        ],
+    )
+    assert compute_signals(intent, ["I have two daughters."])[0].surface_attested is False
+
+
 def test_compute_signals_named_object_does_not_rescue_an_inferred_state_edge():
     # The `not inferred` gate still holds for a non-relationship (state) edge: a
     # genuinely inferred worksFor to a named org is NOT promoted — the model made
