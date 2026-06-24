@@ -38,8 +38,9 @@ mutation, which is why v1 writes are confined to reversible label/archive operat
 | **Persona shape** | A 4th persona `archivist`, modeled on `jerv` | `reads_knowledge_base=False`, empty scopes, tools = Gmail-only allowlist |
 | **Transport** | A thin `jbrain.gmail` client over **httpx** against the Gmail REST API — no Google SDK | Matches the `SearxngClient`/`WebFetcher` "thin client" pattern; no heavy new dependency |
 | **Auth** | OAuth2 **refresh token + client id/secret in config** (env), like `mqtt_ingest_secret`; a one-time bootstrap script mints the refresh token | No token table, no DB; single-owner box, so a config secret is coherent |
-| **OAuth scope** | `gmail.modify` only — read + label + archive. **No delete/trash scope requested** | Writes are non-destructive and reversible by construction; permanent delete is out of reach even if asked |
-| **v1 actions** | `gmail_search`, `gmail_read`, `gmail_list_labels`, `gmail_label` (apply/remove a label), `gmail_archive` (remove `INBOX`) | "Move" in Gmail = label + un-inbox; both reversible. Destructive ops deferred |
+| **OAuth scope** | `gmail.modify` only — read + create-label + label + archive. **No delete/trash scope requested** | Writes are non-destructive and reversible by construction; permanent delete is out of reach even if asked |
+| **Organization model** | Gmail **labels, not folders** — the agent builds and applies a label taxonomy (Gmail's `Parent/Child` nesting). "Move" = apply a label + remove `INBOX` | Matches how Gmail actually organizes; a synced client shows the result as folders |
+| **v1 actions** | `gmail_search`, `gmail_read`, `gmail_list_labels`, `gmail_label` (apply/remove a label, **creating it if missing**), `gmail_archive` (remove `INBOX`) | "Move" in Gmail = label + un-inbox; both reversible. Destructive ops deferred |
 | **Permission class** | `web` (direct-exec, opt-in gate), allowlisted to `archivist` only | Runs directly (no Proposal), exactly like jerv's web tools; `curator` never gains them |
 | **Persistence** | **None on the DB.** The nightly cursor lives in a single **storage-abstraction blob**; Gmail's own labels are the real state | Honors "no DB access"; storage is the sanctioned file-I/O path (non-negotiable #2) |
 | **RAG ingestion** | **Out of scope.** Email never becomes a note in this plan | The notes/RLS/ingest surface stays untouched; a clean follow-on if desired |
@@ -105,8 +106,11 @@ It is thin over `httpx.AsyncClient`, mirroring `jbrain.web.search.SearxngClient`
 - `search(query, *, max_results)` → message ids/threads (Gmail `users.messages.list`).
 - `get(message_id)` → typed `GmailMessage` (subject, from, to, date, snippet, body
   text — HTML stripped to text in the client, not the handler).
-- `list_labels()` → the account's labels (id + name).
-- `modify(message_id, *, add_label_ids, remove_label_ids)` → the one write call
+- `list_labels()` → the account's labels (id + name, including nesting).
+- `create_label(name)` → a new label (Gmail `users.labels.create`, a POST), using the
+  `Parent/Child` name convention for hierarchy; returns its id. Idempotent at the
+  handler layer (resolve-or-create), so re-running never duplicates a label.
+- `modify(message_id, *, add_label_ids, remove_label_ids)` → the message write call
   (Gmail `users.messages.modify`, a POST with a JSON body). Archive = remove `INBOX`.
 
 A `GmailError` mirrors `WebFetchError`/`WebSearchError` so handlers surface a clean
@@ -157,13 +161,16 @@ client (the `build_web_handlers` pattern):
 |---|---|---|
 | `gmail_search` | `{query, limit?}` | matching messages (id, from, subject, date, snippet) |
 | `gmail_read` | `{message_id}` | the full message as text (headers + body) |
-| `gmail_list_labels` | `{}` | the account's labels (so the model can target an existing one) |
-| `gmail_label` | `{message_id, add?, remove?}` | confirmation; `add`/`remove` are label names resolved to ids in the handler |
+| `gmail_list_labels` | `{}` | the account's labels (so the model reuses an existing one before inventing) |
+| `gmail_label` | `{message_id, add?, remove?}` | confirmation; `add`/`remove` are label **names** resolved to ids in the handler, **creating an `add` label if it doesn't exist** (`Parent/Child` for nesting) |
 | `gmail_archive` | `{message_id}` | confirmation (removes `INBOX`) |
 
 Handlers receive the standard `ToolContext` but use **none** of its DB-backed
-fields — they call only the client. Errors return the `GmailError` message as the
-tool result.
+fields — they call only the client. `gmail_label` resolves names against
+`list_labels()` and creates a missing label via `create_label` rather than failing,
+so the persona can build a taxonomy in one step; the `archivist.prompt` instructs it
+to `gmail_list_labels` first and reuse existing labels to avoid drift (e.g. a typo'd
+near-duplicate). Errors return the `GmailError` message as the tool result.
 
 ### The persona (`agents.py` + `archivist.prompt`)
 
