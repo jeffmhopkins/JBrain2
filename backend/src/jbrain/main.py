@@ -10,19 +10,14 @@ from fastapi import FastAPI, Request
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from jbrain.agent.attachments import TurnAttachmentRepo
-from jbrain.agent.correctionmine import CORRECTION_MINE_SPEC
 from jbrain.agent.imagegentools import build_image_handlers
 from jbrain.agent.loop import ToolHandler
 from jbrain.agent.memory import MemoryRepo, MemoryService
-from jbrain.agent.predicatereview import PREDICATE_REVIEW_SPEC
-from jbrain.agent.promptselfedit import PROMPT_SELF_EDIT_SPEC
 from jbrain.agent.proposals import ProposalRepo
 from jbrain.agent.readtools import build_registry
 from jbrain.agent.runlog import AgentRunLog, RunLogReader
 from jbrain.agent.session import AgentSessionRepo
-from jbrain.agent.skilldistill import SKILL_DISTILL_SPEC
 from jbrain.agent.skills import SkillService, SkillsRepo
-from jbrain.agent.skillsweep import SKILL_SWEEP_SPEC
 from jbrain.agent.transcribetools import build_transcribe_handlers
 from jbrain.agent.transcript_store import AgentTranscript
 from jbrain.agent.videotools import build_video_handlers
@@ -108,7 +103,6 @@ from jbrain.wiki.actions import WIKI_SPECS
 from jbrain.wiki.readstore import WikiReadStore
 from jbrain.wiki.talkstore import WikiTalkStore
 from jbrain.workflow.automations import AutomationsReader
-from jbrain.workflow.evalaction import EVAL_RUN_SPEC
 from jbrain.workflow.registry import ACTION_SPECS
 from jbrain.workflow.registry import build_registry as build_action_registry
 from jbrain.workflow.scheduler import (
@@ -199,8 +193,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # pipeline through (workflow/scheduler.fire_trigger) and the Automations
         # surface renders the Catalog from. Mirrors the worker's composed registry
         # EXACTLY — the shipped six plus every in-code action (purge, the three
-        # reconcilers, the geofence sweep, the opt-in eval_run, the Loop 2-4
-        # self-improvement actions, the Phase-6 hygiene sweeps, and the wiki builder)
+        # reconcilers, the geofence sweep, the Phase-6 hygiene sweeps, and the
+        # wiki builder)
         # — so any manual trigger fired from Ops resolves to the same handler the
         # scheduler would (else registry.get raises ActionRegistryError), and the
         # Catalog lists the full set the worker can run. Keep in lockstep with the
@@ -213,14 +207,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 RECONCILE_PENDING_INTEGRATION_ACTION,
                 RECONCILE_UNEMBEDDED_NOTES_ACTION,
                 GEOFENCE_SWEEP_ACTION,
-                EVAL_RUN_SPEC,
-                # The Loop 2-4 self-improvement actions — seeded manual=true, so they
-                # must resolve from Ops too (they were worker-only before).
-                SKILL_DISTILL_SPEC,
-                SKILL_SWEEP_SPEC,
-                PREDICATE_REVIEW_SPEC,
-                CORRECTION_MINE_SPEC,
-                PROMPT_SELF_EDIT_SPEC,
                 # The Phase-6 hygiene sweeps, so their seeded manual triggers resolve from
                 # Ops (POST /ops/triggers/{id}/run -> registry.get) — emergency-fireable.
                 ENTITY_HYGIENE_SPEC,

@@ -17,17 +17,11 @@ from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async
 from sqlalchemy.pool import NullPool
 
 from jbrain import queue
-from jbrain.agent.correctionmine import CORRECTION_MINE_SPEC
-from jbrain.agent.predicatereview import PREDICATE_REVIEW_SPEC
-from jbrain.agent.promptselfedit import PROMPT_SELF_EDIT_SPEC
-from jbrain.agent.skilldistill import SKILL_DISTILL_SPEC
-from jbrain.agent.skillsweep import SKILL_SWEEP_SPEC
 from jbrain.analysis.hygiene import ENTITY_HYGIENE_SPEC
 from jbrain.analysis.reembed import REEMBED_SPEC
 from jbrain.analysis.tagconsolidate import TAG_CONSOLIDATE_SPEC
 from jbrain.db.session import scoped_session
 from jbrain.wiki.actions import WIKI_SPECS
-from jbrain.workflow.evalaction import EVAL_RUN_SPEC
 from jbrain.workflow.registry import ACTION_SPECS, build_registry
 from jbrain.workflow.runlog import finalize_job_step
 from jbrain.workflow.scheduler import (
@@ -63,12 +57,6 @@ def _registry():  # noqa: ANN202
             RECONCILE_PENDING_INTEGRATION_ACTION,
             RECONCILE_UNEMBEDDED_NOTES_ACTION,
             GEOFENCE_SWEEP_ACTION,
-            EVAL_RUN_SPEC,
-            SKILL_DISTILL_SPEC,
-            SKILL_SWEEP_SPEC,
-            PREDICATE_REVIEW_SPEC,
-            CORRECTION_MINE_SPEC,
-            PROMPT_SELF_EDIT_SPEC,
             ENTITY_HYGIENE_SPEC,
             REEMBED_SPEC,
             TAG_CONSOLIDATE_SPEC,
@@ -133,18 +121,6 @@ async def _jobs_of_kind(maker: async_sessionmaker, kind: str) -> int:
 async def _total_jobs(maker: async_sessionmaker) -> int:
     async with scoped_session(maker, queue.SYSTEM_CTX) as s:
         return (await s.execute(text("SELECT count(*) FROM app.jobs"))).scalar_one()
-
-
-async def _latest_payload_of_kind(maker: async_sessionmaker, kind: str) -> dict:
-    async with scoped_session(maker, queue.SYSTEM_CTX) as s:
-        return (
-            await s.execute(
-                text(
-                    "SELECT payload FROM app.jobs WHERE kind = :k ORDER BY created_at DESC LIMIT 1"
-                ),
-                {"k": kind},
-            )
-        ).scalar_one()
 
 
 async def _jobs_for_note(maker: async_sessionmaker, kind: str, note_id: str) -> int:
@@ -391,29 +367,38 @@ async def test_seeded_nightly_sweeps_exist_and_are_fireable(maker: async_session
     triggers; EVERY one is fireable on demand (the emergency Ops control), and each
     resolves against the worker-equivalent registry — the drift guard for the api/worker
     action-registry lockstep."""
-    async with scoped_session(maker, queue.SYSTEM_CTX) as s:
-        rows = (
-            await s.execute(
-                text(
-                    "SELECT t.id, t.pipeline FROM app.triggers t"
-                    " JOIN app.schedules s ON s.id = t.on_schedule_id"
-                    " WHERE t.manual AND t.pipeline LIKE 'nightly_%'"
-                )
-            )
-        ).all()
-    pipelines = {r.pipeline for r in rows}
-    assert pipelines == {
-        "nightly_consolidate_predicates",
-        "nightly_sync_predicates",
-        "nightly_purge_deleted_artifacts",
+    # The self-improvement/eval nightlies (eval_run + the Loop 2-4 actions) were
+    # removed from the action registry; their seed rows are torn down in a later
+    # migration wave, so exclude them here to stay in lockstep with the registry.
+    removed_pipelines = (
         "nightly_eval_run",
-        "nightly_wiki_refresh",
-        "nightly_wiki_prune",
         "nightly_skill_distill",
         "nightly_skill_sweep",
         "nightly_predicate_review",
         "nightly_correction_mine",
         "nightly_prompt_self_edit",
+    )
+    async with scoped_session(maker, queue.SYSTEM_CTX) as s:
+        rows = [
+            r
+            for r in (
+                await s.execute(
+                    text(
+                        "SELECT t.id, t.pipeline FROM app.triggers t"
+                        " JOIN app.schedules s ON s.id = t.on_schedule_id"
+                        " WHERE t.manual AND t.pipeline LIKE 'nightly_%'"
+                    )
+                )
+            ).all()
+            if r.pipeline not in removed_pipelines
+        ]
+    pipelines = {r.pipeline for r in rows}
+    assert pipelines == {
+        "nightly_consolidate_predicates",
+        "nightly_sync_predicates",
+        "nightly_purge_deleted_artifacts",
+        "nightly_wiki_refresh",
+        "nightly_wiki_prune",
         "nightly_entity_hygiene",
         "nightly_reembed_stale",
         "nightly_tag_consolidate",
@@ -428,52 +413,6 @@ async def test_seeded_nightly_sweeps_exist_and_are_fireable(maker: async_session
     for r in rows:
         await fire_trigger(maker, registry, str(r.id))
     assert await _total_jobs(maker) == before + len(rows)
-
-
-async def test_seeded_nightly_eval_exists_and_carries_its_run_params(
-    maker: async_sessionmaker,
-) -> None:
-    """Migration 0044 seeds the nightly eval as a manual, schedule-bound trigger.
-    Firing it enqueues an `eval_run` job whose payload carries the seeded run params
-    (`suite`/`version_label`) — a scheduled trigger has no per-fire payload, so the
-    step params ARE the payload the handler reads. The action is referenced by name
-    through the in-code registry with NO app.actions row (like the sweeps)."""
-    async with scoped_session(maker, queue.SYSTEM_CTX) as s:
-        trigger_id = (
-            await s.execute(
-                text(
-                    "SELECT t.id FROM app.triggers t"
-                    " JOIN app.schedules sc ON sc.id = t.on_schedule_id"
-                    " WHERE t.manual AND t.pipeline = 'nightly_eval_run'"
-                )
-            )
-        ).scalar_one()
-
-    before = await _jobs_of_kind(maker, "eval_run")
-    fired = await fire_trigger(maker, _registry(), str(trigger_id))
-    assert fired.pipeline == "nightly_eval_run"
-    assert await _jobs_of_kind(maker, "eval_run") == before + 1
-    # The run params bound in the migration reach the job verbatim (the handler reads
-    # payload["suite"]/["version_label"]); "all" scores the whole curated corpus.
-    payload = await _latest_payload_of_kind(maker, "eval_run")
-    assert payload == {"suite": "all", "version_label": "nightly"}
-
-
-async def test_due_eval_schedule_enqueues_eval_run_via_tick(maker: async_sessionmaker) -> None:
-    """The scheduled path (not just manual fire) delivers the seeded params: drive the
-    real nightly-eval schedule due and tick — an `eval_run` job lands with the params."""
-    async with scoped_session(maker, queue.SYSTEM_CTX) as s:
-        await s.execute(
-            text(
-                "UPDATE app.schedules SET next_run_at = :nr"
-                " WHERE id = '00000000-0000-0000-0000-0000000c0017'"
-            ),
-            {"nr": NOW - timedelta(minutes=1)},
-        )
-    before = await _jobs_of_kind(maker, "eval_run")
-    await scheduler_tick(maker, _registry(), now=NOW)
-    assert await _jobs_of_kind(maker, "eval_run") == before + 1
-    assert (await _latest_payload_of_kind(maker, "eval_run"))["version_label"] == "nightly"
 
 
 # --- the dropped-event safety net (Wave 2 — the whole point of this task) -----

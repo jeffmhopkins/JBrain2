@@ -18,11 +18,6 @@ import structlog
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from jbrain import ops_metrics, queue
-from jbrain.agent.correctionmine import CORRECTION_MINE_SPEC, correction_mine_handler
-from jbrain.agent.predicatereview import PREDICATE_REVIEW_SPEC, predicate_review_handler
-from jbrain.agent.promptselfedit import PROMPT_SELF_EDIT_SPEC, prompt_self_edit_handler
-from jbrain.agent.skilldistill import SKILL_DISTILL_SPEC, skill_distill_handler
-from jbrain.agent.skillsweep import SKILL_SWEEP_SPEC, skill_sweep_handler
 from jbrain.analysis import purge
 from jbrain.analysis.consolidation import Consolidator
 from jbrain.analysis.hygiene import ENTITY_HYGIENE_SPEC, entity_hygiene_handler
@@ -48,8 +43,6 @@ from jbrain.usage import SqlUsageRecorder, TokenScope
 from jbrain.wiki.actions import WIKI_SPECS, wiki_handlers
 from jbrain.wiki.rewriter import LlmRewriter
 from jbrain.workflow import dispatcher, scheduler
-from jbrain.workflow.eval_scorer import build_live_scorer, eval_run_handler
-from jbrain.workflow.evalaction import EVAL_RUN_SPEC
 from jbrain.workflow.registry import ACTION_SPECS, ActionRegistry, build_registry
 from jbrain.workflow.runlog import PipelineRunLog, finalize_job_step
 
@@ -413,34 +406,6 @@ async def run() -> None:
         # projector hook or inline transition. In-code only (not the app.actions
         # seed); a migration seeds its schedule + pipeline. Runs as the full owner.
         "geofence_sweep": scheduler.geofence_sweep_handler(maker),
-        # The opt-in self-improvement eval (Phase-5 Track H·A): runs the note.extract
-        # suite through the LLM adapter behind the budget gate (fail-closed over the
-        # kill-switch / daily token budget). The live scorer is built here off the
-        # worker's router; CI never reaches it (no model). Like the purge/reconcile
-        # actions it lives in-code only — NOT in the app.actions seed — so the 0035
-        # seed-lockstep holds (the seed projection + nightly schedule are H·B).
-        "eval_run": eval_run_handler(maker, build_live_scorer(router)),
-        # Loop 2 skill distillation (Wave 2): distill successful runs into owner-reviewed shadow
-        # skills, budget-gated. In-code only (not in app.actions); a migration seeds the schedule.
-        "skill_distill": skill_distill_handler(
-            maker,
-            router=router,
-            embedder=TeiEmbedClient(settings.embed_url),
-            embedding_model=settings.embed_model,
-        ),
-        # Loop 2 skill hygiene (Wave 3): cap active skills per domain, demoting the least-useful
-        # back to shadow (reversible). No LLM call; in-code only (a migration seeds the schedule).
-        "skill_sweep": skill_sweep_handler(maker),
-        # Loop 3a predicate-canon review (Wave 2): stage owner proposals to resolve open
-        # new_predicate cards (map/mint). No LLM call; in-code only (a migration seeds it).
-        "predicate_review": predicate_review_handler(maker),
-        # Loop 3b Tier-B (correction mining): read ended chats for owner corrections of facts and
-        # stage owner correction-note proposals (the LLM judges; budget-gated). In-code only.
-        "correction_mine": correction_mine_handler(maker, router=router),
-        # Loop 4 Wave 3 (prompt self-edit): draft prompt-edit proposals for prompts whose
-        # proposals the owner keeps rejecting, budget-gated. In-code only (a migration seeds it,
-        # disabled by default). Propose-only — never applies a change (#6).
-        "prompt_self_edit": prompt_self_edit_handler(maker, router=router),
         # Phase-6 hygiene sweeps (docs/HYGIENE_SWEEPS_PLAN.md): core-data maintenance, no LLM,
         # in-code only (a migration seeds the schedules, disabled by default). entity_hygiene
         # deletes provisional orphan entities; reembed_stale re-embeds stale-model skills/entities
@@ -466,9 +431,9 @@ async def run() -> None:
     # here at boot, like the schema registry above, rather than failing a job at run
     # time (the old "no handler for kind" path). Behavior for known kinds is
     # unchanged: the dispatch table is the same {kind: handler} map as before. The
-    # registry adds the purge action, the three reconcilers, and the opt-in eval_run
-    # to the shipped six (all in-code only, not in the app.actions seed — see
-    # scheduler.PURGE_ACTION / RECONCILE_*_ACTION / EVAL_RUN_SPEC).
+    # registry adds the purge action and the three reconcilers to the shipped six
+    # (all in-code only, not in the app.actions seed — see scheduler.PURGE_ACTION /
+    # RECONCILE_*_ACTION).
     registry = build_registry(
         (
             *ACTION_SPECS,
@@ -479,12 +444,6 @@ async def run() -> None:
             scheduler.GEOFENCE_SWEEP_ACTION,
             TRANSCRIBE_ATTACHMENT_SPEC,
             VIDEO_ANALYSIS_SPEC,
-            EVAL_RUN_SPEC,
-            SKILL_DISTILL_SPEC,
-            SKILL_SWEEP_SPEC,
-            PREDICATE_REVIEW_SPEC,
-            CORRECTION_MINE_SPEC,
-            PROMPT_SELF_EDIT_SPEC,
             ENTITY_HYGIENE_SPEC,
             REEMBED_SPEC,
             TAG_CONSOLIDATE_SPEC,
