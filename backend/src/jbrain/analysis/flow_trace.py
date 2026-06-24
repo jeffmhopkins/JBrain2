@@ -36,11 +36,19 @@ _enabled: bool | None = None
 
 
 def enabled() -> bool:
-    """Whether per-note flow tracing is on. Cached after the first read: the env
-    flag is fixed for the process, so this avoids re-parsing settings per fact."""
+    """Whether per-note flow tracing is on. Cached after the first read: both
+    flags are env-fixed for the process, so this avoids re-parsing settings per
+    fact.
+
+    Auto-arms whenever the debug console is enabled: that gate is the only way
+    these logs get read and is the prerequisite for minting an assistant's debug
+    token, so an enabled console IS the debugging session this trace exists for.
+    The explicit `analysis_trace` flag stays as an override for tracing without
+    the console."""
     global _enabled
     if _enabled is None:
-        _enabled = get_settings().analysis_trace
+        s = get_settings()
+        _enabled = s.analysis_trace or s.debug_access_enabled
     return _enabled
 
 

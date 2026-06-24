@@ -49,6 +49,34 @@ def teardown_function() -> None:
     flow_trace.reset()
 
 
+def test_enabled_reads_settings_and_auto_arms_with_debug_access(monkeypatch: Any) -> None:
+    def _settings(analysis_trace: bool, debug_access_enabled: bool) -> SimpleNamespace:
+        return SimpleNamespace(
+            analysis_trace=analysis_trace, debug_access_enabled=debug_access_enabled
+        )
+
+    # Off when both flags are off.
+    monkeypatch.setattr(flow_trace, "get_settings", lambda: _settings(False, False))
+    flow_trace.reset()
+    assert flow_trace.enabled() is False
+
+    # The explicit flag turns it on without the console.
+    monkeypatch.setattr(flow_trace, "get_settings", lambda: _settings(True, False))
+    flow_trace.reset()
+    assert flow_trace.enabled() is True
+
+    # Debug access alone auto-arms it.
+    monkeypatch.setattr(flow_trace, "get_settings", lambda: _settings(False, True))
+    flow_trace.reset()
+    assert flow_trace.enabled() is True
+
+    # Cached after first read: a later settings change is not seen until reset().
+    monkeypatch.setattr(flow_trace, "get_settings", lambda: _settings(False, False))
+    assert flow_trace.enabled() is True
+    flow_trace.reset()
+    assert flow_trace.enabled() is False
+
+
 def test_disabled_emits_nothing() -> None:
     flow_trace.set_enabled(False)
     with structlog.testing.capture_logs() as logs:
