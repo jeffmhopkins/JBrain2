@@ -8,6 +8,7 @@ function lm(over: Partial<LocalModelInfo> & Pick<LocalModelInfo, "id" | "label">
   return {
     enabled: false,
     queued: false,
+    remove_queued: false,
     loaded: false,
     supports_vision: false,
     supports_tools: true,
@@ -303,10 +304,11 @@ describe("LLMSettingsScreen", () => {
     );
     render(<LLMSettingsScreen />);
 
-    const toggle = await screen.findByRole("button", { name: /On-box models/i });
-    expect(toggle).toHaveTextContent("2 of 2 enabled");
-    fireEvent.click(toggle);
+    // The On-box LLMs section is open by default; its meta count reflects the roster.
+    const toggle = await screen.findByRole("button", { name: /On-box LLMs/i });
+    expect(toggle).toHaveTextContent("2 installed");
 
+    // The Installed tab (default) shows the enabled roster.
     expect(await screen.findByText("Qwen3-VL 30B")).toBeInTheDocument();
     // Enabled-but-not-resident reads "idle" (both, here).
     expect(screen.getAllByText("idle")).toHaveLength(2);
@@ -321,7 +323,7 @@ describe("LLMSettingsScreen", () => {
     expect(within(gpt).getByText(/MXFP4 · ~59 GB/)).toBeInTheDocument();
   });
 
-  it("offers un-provisioned catalog models under 'Available to install'", async () => {
+  it("offers un-provisioned catalog models with Install in the Catalog tab", async () => {
     const s = initialSettings();
     s.local_hosting_enabled = true;
     s.local_models = [
@@ -355,16 +357,15 @@ describe("LLMSettingsScreen", () => {
     );
     render(<LLMSettingsScreen />);
 
-    const toggle = await screen.findByRole("button", { name: /On-box models/i });
-    // The summary counts the full catalog so "how many more could I install".
-    expect(toggle).toHaveTextContent("1 of 2 enabled");
-    fireEvent.click(toggle);
+    // The On-box LLMs section meta counts the installed roster.
+    const toggle = await screen.findByRole("button", { name: /On-box LLMs/i });
+    expect(toggle).toHaveTextContent("1 installed");
 
-    // The provisioned model is in the enabled roster; the un-provisioned one is now
-    // offered under "Available to install" with an Install button rather than hidden.
+    // The provisioned model is in the Installed roster (default tab); the
+    // un-provisioned one shows under the Catalog tab with an Install button.
     expect(await screen.findByText("Qwen3-VL 30B")).toBeInTheDocument();
-    expect(screen.getByText("Available to install")).toBeInTheDocument();
-    const gpt = screen.getByText("GPT-OSS 120B").closest(".llm-local-row") as HTMLElement;
+    fireEvent.click(screen.getByRole("tab", { name: /Catalog/i }));
+    const gpt = (await screen.findByText("GPT-OSS 120B")).closest(".llm-local-row") as HTMLElement;
     expect(within(gpt).getByRole("button", { name: "Install" })).toBeInTheDocument();
   });
 
@@ -410,14 +411,13 @@ describe("LLMSettingsScreen", () => {
     );
     render(<LLMSettingsScreen />);
 
-    const toggle = await screen.findByRole("button", { name: /On-box models/i });
-    // Summary surfaces runtime state with the resident footprint (weights + KV).
-    expect(toggle).toHaveTextContent("1 loaded · 34 GB");
-    fireEvent.click(toggle);
+    // The On-box LLMs section is open by default and shows the loaded count.
+    const toggle = await screen.findByRole("button", { name: /On-box LLMs/i });
+    expect(toggle).toHaveTextContent("1 loaded");
 
     // The resident model reads "loaded" and offers an Unload button.
     expect(await screen.findByText("loaded")).toBeInTheDocument();
-    // The memory map sums the resident model's footprint (32 weights + 2 KV).
+    // The always-visible shared meter sums the resident footprint (32 weights + 2 KV).
     expect(screen.getByText("34 GB used")).toBeInTheDocument();
     expect(screen.getByText("128 GB total")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Unload" }));
@@ -471,7 +471,8 @@ describe("LLMSettingsScreen", () => {
       }),
     );
     render(<LLMSettingsScreen />);
-    fireEvent.click(await screen.findByRole("button", { name: /On-box models/i }));
+    // The On-box LLMs section + Installed tab are the defaults.
+    await screen.findByRole("button", { name: /On-box LLMs/i });
 
     // Idle → Stage.
     expect(await screen.findByText("idle")).toBeInTheDocument();
@@ -521,7 +522,7 @@ describe("LLMSettingsScreen", () => {
       }),
     );
     render(<LLMSettingsScreen />);
-    fireEvent.click(await screen.findByRole("button", { name: /On-box models/i }));
+    await screen.findByRole("button", { name: /On-box LLMs/i });
 
     const select = (await screen.findByLabelText("context window")) as HTMLSelectElement;
     // Defaults to the catalog window (128k) and offers the capped choices.
@@ -553,7 +554,7 @@ describe("LLMSettingsScreen", () => {
       vi.fn<typeof fetch>(async () => new Response(JSON.stringify(s), { status: 200 })),
     );
     render(<LLMSettingsScreen />);
-    fireEvent.click(await screen.findByRole("button", { name: /On-box models/i }));
+    await screen.findByRole("button", { name: /On-box LLMs/i });
 
     const select = (await screen.findByLabelText("context window")) as HTMLSelectElement;
     expect(select.disabled).toBe(true);
@@ -594,7 +595,9 @@ describe("LLMSettingsScreen", () => {
       }),
     );
     render(<LLMSettingsScreen />);
-    fireEvent.click(await screen.findByRole("button", { name: /On-box models/i }));
+    await screen.findByRole("button", { name: /On-box LLMs/i });
+    // The un-provisioned model lives in the Catalog tab.
+    fireEvent.click(screen.getByRole("tab", { name: /Catalog/i }));
 
     // No queue bar until something is queued.
     expect(screen.queryByRole("button", { name: /Update & install now/i })).not.toBeInTheDocument();
@@ -604,8 +607,52 @@ describe("LLMSettingsScreen", () => {
     );
 
     // The queue bar appears with the GB tally; clicking it kicks the update one-shot.
-    expect(await screen.findByText(/1 queued · 104 GB to download/)).toBeInTheDocument();
+    expect(await screen.findByText(/1 to install · 104 GB/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /Update & install now/i }));
+    await waitFor(() => expect(calls).toContain("/api/ops/update"));
+  });
+
+  it("surfaces the update bar for a pending uninstall with nothing queued to install", async () => {
+    const s = initialSettings();
+    s.local_hosting_enabled = true;
+    s.host_memory = { total_gb: 128, used_gb: 0 };
+    // One provisioned model queued for removal, nothing queued for install.
+    s.local_models = [
+      lm({
+        id: "qwen3-vl-30b",
+        label: "Qwen3-VL 30B",
+        enabled: true,
+        remove_queued: true,
+        size_gb: 32,
+        disk_gb: 32,
+      }),
+    ];
+    const calls: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>(async (input, init) => {
+        const path = String(input);
+        const method = (init?.method ?? "GET").toUpperCase();
+        if (path === "/api/settings/llm" && method === "GET")
+          return new Response(JSON.stringify(s), { status: 200 });
+        if (path === "/api/ops/update" && method === "POST") {
+          calls.push(path);
+          return new Response(JSON.stringify({ updater: "jbrain-updater-1" }), { status: 202 });
+        }
+        if (path === "/api/ops/update/status")
+          return new Response(JSON.stringify({ state: "running", exit_code: null, log_tail: "" }), {
+            status: 200,
+          });
+        throw new Error(`unexpected fetch: ${method} ${path}`);
+      }),
+    );
+    render(<LLMSettingsScreen />);
+    await screen.findByRole("button", { name: /On-box LLMs/i });
+    fireEvent.click(screen.getByRole("tab", { name: /Catalog/i }));
+
+    // The bar reports the pending removal and offers an in-app trigger to apply it.
+    expect(await screen.findByText(/1 to uninstall/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /Update & apply now/i }));
     await waitFor(() => expect(calls).toContain("/api/ops/update"));
   });
 
@@ -628,7 +675,8 @@ describe("LLMSettingsScreen", () => {
       vi.fn<typeof fetch>(async () => new Response(JSON.stringify(s), { status: 200 })),
     );
     render(<LLMSettingsScreen />);
-    fireEvent.click(await screen.findByRole("button", { name: /On-box models/i }));
+    await screen.findByRole("button", { name: /On-box LLMs/i });
+    fireEvent.click(screen.getByRole("tab", { name: /Catalog/i }));
 
     // 52 / 104 GB on disk → 50%.
     expect(await screen.findByText(/52 \/ 104 GB · 50%/)).toBeInTheDocument();
@@ -636,9 +684,9 @@ describe("LLMSettingsScreen", () => {
 
   it("points at the CLI when local hosting is off", async () => {
     render(<LLMSettingsScreen />); // default fixture: hosting off
-    const toggle = await screen.findByRole("button", { name: /On-box models/i });
+    const toggle = await screen.findByRole("button", { name: /On-box LLMs/i });
     expect(toggle).toHaveTextContent("off");
-    fireEvent.click(toggle);
+    // The LLM section is open by default, so the CLI hint shows without a click.
     expect(await screen.findByText(/enable-local-models/)).toBeInTheDocument();
   });
 
@@ -713,22 +761,235 @@ describe("LLMSettingsScreen", () => {
     );
     render(<LLMSettingsScreen />);
 
-    const toggle = await screen.findByRole("button", { name: /On-box models/i });
-    expect(toggle).toHaveTextContent("image on"); // shown in the collapsed summary
-    fireEvent.click(toggle);
-
-    // The image subsection renders the service + its catalog rows.
-    const section = (await screen.findByText("Image · ComfyUI")).closest(".llm-img") as HTMLElement;
-    expect(within(section).getByText("running")).toBeInTheDocument();
-    expect(within(section).getByText("Qwen-Image · generate (fp8)")).toBeInTheDocument();
-    // The shared unified-memory bar carries an image segment (128 - 96 = 32 GB).
+    // The always-visible shared meter carries an image segment (128 - 96 = 32 GB),
+    // and the Image section's meta reads "running" — before opening the section.
+    const imgToggle = await screen.findByRole("button", { name: /Image models/i });
+    expect(imgToggle).toHaveTextContent("running");
     expect(document.querySelector(".llm-mem-img")).not.toBeNull();
+
+    // Open the Image section to reach its service controls + catalog rows.
+    fireEvent.click(imgToggle);
+    const section = (await screen.findByText("Image · ComfyUI")).closest(
+      ".onbox-svc",
+    ) as HTMLElement;
+    expect(within(section).getByText("running")).toBeInTheDocument();
+    // The Installed tab (default) shows the enabled image model.
+    expect(await screen.findByText("Qwen-Image · generate (fp8)")).toBeInTheDocument();
 
     // Free unloads the resident model; Stop halts the service — both proxy through.
     fireEvent.click(within(section).getByText("Free"));
     await waitFor(() => expect(calls).toContain("free"));
     fireEvent.click(within(section).getByText("Stop"));
     await waitFor(() => expect(calls).toContain("stop"));
+  });
+
+  it("renders the shared meter, two sections, and omnibox tabs", async () => {
+    const s = initialSettings();
+    s.local_hosting_enabled = true;
+    s.host_memory = { total_gb: 128, used_gb: 34 };
+    s.local_models = [
+      lm({
+        id: "qwen3-vl-30b",
+        label: "Qwen3-VL 30B",
+        enabled: true,
+        loaded: true,
+        size_gb: 32,
+        disk_gb: 32,
+        kv_gb: 2,
+      }),
+    ];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>(async () => new Response(JSON.stringify(s), { status: 200 })),
+    );
+    render(<LLMSettingsScreen />);
+
+    // Both section toggles are present; the shared meter is visible without expanding.
+    expect(await screen.findByRole("button", { name: /On-box LLMs/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Image models/i })).toBeInTheDocument();
+    expect(screen.getByText("34 GB used")).toBeInTheDocument();
+
+    // The LLM section (open by default) carries Staged / Installed / Catalog tabs;
+    // Installed is the active segment.
+    expect(screen.getByRole("tab", { name: /Staged/i })).toBeInTheDocument();
+    const installed = screen.getByRole("tab", { name: /Installed/i });
+    expect(installed).toBeInTheDocument();
+    expect(installed.className).toContain("seg-on");
+    expect(screen.getByRole("tab", { name: /Catalog/i })).toBeInTheDocument();
+  });
+
+  it("filters by tab: Installed / Staged (empty hint) / Catalog", async () => {
+    const s = initialSettings();
+    s.local_hosting_enabled = true;
+    s.host_memory = { total_gb: 128, used_gb: 0 };
+    s.local_models = [
+      lm({ id: "qwen3-vl-30b", label: "Qwen3-VL 30B", enabled: true, size_gb: 32, disk_gb: 32 }),
+      lm({ id: "gpt-oss-120b", label: "GPT-OSS 120B", size_gb: 59 }), // un-provisioned
+    ];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>(async () => new Response(JSON.stringify(s), { status: 200 })),
+    );
+    render(<LLMSettingsScreen />);
+    await screen.findByRole("button", { name: /On-box LLMs/i });
+
+    // Installed (default): only the enabled model.
+    expect(await screen.findByText("Qwen3-VL 30B")).toBeInTheDocument();
+    expect(screen.queryByText("GPT-OSS 120B")).not.toBeInTheDocument();
+
+    // Staged: none staged → the empty hint.
+    fireEvent.click(screen.getByRole("tab", { name: /Staged/i }));
+    expect(await screen.findByText(/No staged models/i)).toBeInTheDocument();
+
+    // Catalog: the full catalog (both models).
+    fireEvent.click(screen.getByRole("tab", { name: /Catalog/i }));
+    expect(await screen.findByText("GPT-OSS 120B")).toBeInTheDocument();
+    expect(screen.getByText("Qwen3-VL 30B")).toBeInTheDocument();
+  });
+
+  it("uninstalls a provisioned model from the Catalog tab", async () => {
+    const s = initialSettings();
+    s.local_hosting_enabled = true;
+    s.host_memory = { total_gb: 128, used_gb: 0 };
+    s.local_models = [
+      lm({ id: "qwen3-vl-30b", label: "Qwen3-VL 30B", enabled: true, size_gb: 32, disk_gb: 32 }),
+    ];
+    const calls: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>(async (input, init) => {
+        const path = String(input);
+        const method = (init?.method ?? "GET").toUpperCase();
+        if (path === "/api/settings/llm" && method === "GET")
+          return new Response(JSON.stringify(s), { status: 200 });
+        if (path.endsWith("/qwen3-vl-30b/uninstall") && method === "POST") {
+          calls.push(path);
+          const m0 = s.local_models[0];
+          if (m0) m0.remove_queued = true;
+          return new Response(JSON.stringify(s), { status: 200 });
+        }
+        throw new Error(`unexpected fetch: ${method} ${path}`);
+      }),
+    );
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+    render(<LLMSettingsScreen />);
+    await screen.findByRole("button", { name: /On-box LLMs/i });
+    fireEvent.click(screen.getByRole("tab", { name: /Catalog/i }));
+
+    // A provisioned model in Catalog offers an Uninstall (danger) button.
+    fireEvent.click(await screen.findByRole("button", { name: "Uninstall" }));
+    await waitFor(() =>
+      expect(calls).toContain("/api/settings/llm/local-models/qwen3-vl-30b/uninstall"),
+    );
+    // Confirmed before queueing; the row now reads "uninstalling".
+    expect(confirm).toHaveBeenCalled();
+    expect(await screen.findByText("uninstalling")).toBeInTheDocument();
+    confirm.mockRestore();
+  });
+
+  it("does not queue an uninstall when the confirm is declined", async () => {
+    const s = initialSettings();
+    s.local_hosting_enabled = true;
+    s.host_memory = { total_gb: 128, used_gb: 0 };
+    s.local_models = [
+      lm({ id: "qwen3-vl-30b", label: "Qwen3-VL 30B", enabled: true, size_gb: 32, disk_gb: 32 }),
+    ];
+    const calls: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>(async (input, init) => {
+        const path = String(input);
+        const method = (init?.method ?? "GET").toUpperCase();
+        if (path === "/api/settings/llm" && method === "GET")
+          return new Response(JSON.stringify(s), { status: 200 });
+        if (path.endsWith("/uninstall")) calls.push(`${method} ${path}`);
+        return new Response(JSON.stringify(s), { status: 200 });
+      }),
+    );
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+    render(<LLMSettingsScreen />);
+    await screen.findByRole("button", { name: /On-box LLMs/i });
+    fireEvent.click(screen.getByRole("tab", { name: /Catalog/i }));
+
+    fireEvent.click(await screen.findByRole("button", { name: "Uninstall" }));
+    expect(confirm).toHaveBeenCalled();
+    // Declined → no uninstall request fires, and the model stays installed.
+    await waitFor(() => expect(calls).toEqual([]));
+    expect(screen.getByRole("button", { name: "Uninstall" })).toBeInTheDocument();
+    confirm.mockRestore();
+  });
+
+  it("cancels a queued uninstall via Keep (DELETE, no confirm)", async () => {
+    const s = initialSettings();
+    s.local_hosting_enabled = true;
+    s.host_memory = { total_gb: 128, used_gb: 0 };
+    s.local_models = [
+      lm({
+        id: "qwen3-vl-30b",
+        label: "Qwen3-VL 30B",
+        enabled: true,
+        remove_queued: true,
+        size_gb: 32,
+        disk_gb: 32,
+      }),
+    ];
+    const calls: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>(async (input, init) => {
+        const path = String(input);
+        const method = (init?.method ?? "GET").toUpperCase();
+        if (path === "/api/settings/llm" && method === "GET")
+          return new Response(JSON.stringify(s), { status: 200 });
+        if (path.endsWith("/qwen3-vl-30b/uninstall")) {
+          calls.push(`${method} ${path}`);
+          if (method === "DELETE") {
+            const m0 = s.local_models[0];
+            if (m0) m0.remove_queued = false;
+          }
+          return new Response(JSON.stringify(s), { status: 200 });
+        }
+        throw new Error(`unexpected fetch: ${method} ${path}`);
+      }),
+    );
+    const confirm = vi.spyOn(window, "confirm");
+    render(<LLMSettingsScreen />);
+    await screen.findByRole("button", { name: /On-box LLMs/i });
+    fireEvent.click(screen.getByRole("tab", { name: /Catalog/i }));
+
+    // A queued removal swaps Uninstall → Keep; clicking it backs the removal out
+    // with a DELETE and no confirm prompt.
+    fireEvent.click(await screen.findByRole("button", { name: "Keep" }));
+    await waitFor(() =>
+      expect(calls).toContain("DELETE /api/settings/llm/local-models/qwen3-vl-30b/uninstall"),
+    );
+    expect(confirm).not.toHaveBeenCalled();
+    expect(await screen.findByRole("button", { name: "Uninstall" })).toBeInTheDocument();
+    confirm.mockRestore();
+  });
+
+  it("shows Install and Uninstall side-by-side in the Catalog tab", async () => {
+    const s = initialSettings();
+    s.local_hosting_enabled = true;
+    s.host_memory = { total_gb: 128, used_gb: 0 };
+    s.local_models = [
+      lm({ id: "qwen3-vl-30b", label: "Qwen3-VL 30B", enabled: true, size_gb: 32, disk_gb: 32 }),
+      lm({ id: "gpt-oss-120b", label: "GPT-OSS 120B", size_gb: 59 }), // un-provisioned
+    ];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>(async () => new Response(JSON.stringify(s), { status: 200 })),
+    );
+    render(<LLMSettingsScreen />);
+    await screen.findByRole("button", { name: /On-box LLMs/i });
+    fireEvent.click(screen.getByRole("tab", { name: /Catalog/i }));
+
+    const provisioned = (await screen.findByText("Qwen3-VL 30B")).closest(
+      ".llm-local-row",
+    ) as HTMLElement;
+    expect(within(provisioned).getByRole("button", { name: "Uninstall" })).toBeInTheDocument();
+    const unprovisioned = screen.getByText("GPT-OSS 120B").closest(".llm-local-row") as HTMLElement;
+    expect(within(unprovisioned).getByRole("button", { name: "Install" })).toBeInTheDocument();
   });
 
   it("lets a per-task override diverge from its tier", async () => {

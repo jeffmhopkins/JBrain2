@@ -186,6 +186,26 @@ async def test_llm_local_provision_requested_round_trip_and_dedups(
     assert await store.llm_local_provision_requested(OWNER) == []
 
 
+async def test_llm_local_remove_requested_round_trip_and_dedups(
+    maker: async_sessionmaker[AsyncSession],
+) -> None:
+    from jbrain.settings_store import LLM_LOCAL_REMOVE_REQUESTED_KEY
+
+    store = SqlSettingsStore(maker)
+    assert await store.llm_local_remove_requested(OWNER) == []
+
+    await store.set_llm_local_remove_requested(OWNER, ["gpt-oss-120b", "gpt-oss-120b"])
+    assert await store.llm_local_remove_requested(OWNER) == ["gpt-oss-120b"]
+
+    # Non-list / non-string entries are dropped on read.
+    await store.upsert(OWNER, LLM_LOCAL_REMOVE_REQUESTED_KEY, ["a", 5, "a", None, "b"])
+    assert await store.llm_local_remove_requested(OWNER) == ["a", "b"]
+
+    # Clearing empties the queue (what the update one-shot does post-uninstall).
+    await store.set_llm_local_remove_requested(OWNER, [])
+    assert await store.llm_local_remove_requested(OWNER) == []
+
+
 async def test_llm_local_settings_are_owner_only(
     maker: async_sessionmaker[AsyncSession],
 ) -> None:
@@ -195,6 +215,8 @@ async def test_llm_local_settings_are_owner_only(
     await store.set_llm_local_context_window(OWNER, model_id="gpt-oss-120b", window=65536)
     await store.set_llm_local_staged(OWNER, ["gpt-oss-120b"])
     await store.set_llm_local_provision_requested(OWNER, ["qwen3-235b-a22b"])
+    await store.set_llm_local_remove_requested(OWNER, ["gpt-oss-120b"])
     assert await store.llm_local_context_windows(UNSCOPED) == {}
     assert await store.llm_local_staged(UNSCOPED) == []
     assert await store.llm_local_provision_requested(UNSCOPED) == []
+    assert await store.llm_local_remove_requested(UNSCOPED) == []

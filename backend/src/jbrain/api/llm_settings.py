@@ -122,6 +122,10 @@ class LocalModelInfo(BaseModel):
     # Queued for provisioning from the PWA but not yet on the box (in the install
     # queue and not enabled). The next update downloads it and flips it to enabled.
     queued: bool
+    # Queued for uninstall from the PWA but still provisioned (in the remove queue
+    # and still enabled). The next update drops it from LOCAL_MODELS — and, guarded,
+    # prunes its weights — and it leaves the roster on its own once enabled flips.
+    remove_queued: bool
     # Runtime state from the gateway (best-effort): True when resident in memory.
     # Always False when hosting is off or the gateway can't be reached.
     loaded: bool
@@ -241,6 +245,7 @@ async def _snapshot(
     windows = await store.llm_local_context_windows(ctx)
     staged = set(await store.llm_local_staged(ctx))
     requested = set(await store.llm_local_provision_requested(ctx))
+    removing = set(await store.llm_local_remove_requested(ctx))
     loaded = await _loaded_ids(settings, gateway)
     return LlmSettingsOut(
         providers=[
@@ -258,7 +263,13 @@ async def _snapshot(
         local_hosting_enabled=settings.local_llm_enabled,
         local_models=[
             _local_model_info(
-                settings, m, m.id in loaded, windows, m.id in staged, m.id in requested
+                settings,
+                m,
+                m.id in loaded,
+                windows,
+                m.id in staged,
+                m.id in requested,
+                m.id in removing,
             )
             for m in local_catalog.CATALOG
         ],
@@ -302,6 +313,7 @@ def _local_model_info(
     windows: dict[str, int],
     staged: bool,
     requested: bool,
+    removing: bool,
 ) -> LocalModelInfo:
     enabled = settings.local_llm_enabled and m.id in settings.local_models
     override = windows.get(m.id)
@@ -314,6 +326,10 @@ def _local_model_info(
         # Queued only while not yet provisioned — once an install completes the model
         # is enabled, so it leaves the "available to install" list on its own.
         queued=requested and not enabled,
+        # The mirror: queued for uninstall only while still provisioned — once the
+        # update drops it from LOCAL_MODELS it stops being enabled, so the flag
+        # clears on its own.
+        remove_queued=removing and enabled,
         loaded=loaded,
         supports_vision=m.supports_vision,
         supports_tools=m.supports_tools,
@@ -353,6 +369,21 @@ def _require_installable(settings: Settings, model_id: str) -> local_catalog.Loc
         raise HTTPException(status_code=404, detail=f"unknown model: {model_id}")
     if model_id in settings.local_models:
         raise HTTPException(status_code=409, detail=f"already provisioned: {model_id}")
+    return model
+
+
+def _require_uninstallable(settings: Settings, model_id: str) -> local_catalog.LocalModel:
+    """The catalog model for `model_id` when it can be queued for uninstall, or raise:
+    409 when hosting is off, 404 for an id outside the catalog, 409 when it is NOT
+    provisioned (you can't uninstall what isn't installed). The gate for the
+    uninstall-queue endpoints — the mirror of _require_installable."""
+    if not settings.local_llm_enabled:
+        raise HTTPException(status_code=409, detail="local hosting is not enabled")
+    model = local_catalog.get(model_id)
+    if model is None:
+        raise HTTPException(status_code=404, detail=f"unknown model: {model_id}")
+    if model_id not in settings.local_models:
+        raise HTTPException(status_code=409, detail=f"not provisioned: {model_id}")
     return model
 
 
@@ -512,6 +543,11 @@ async def queue_local_install(
     if model_id not in requested:
         requested.append(model_id)
         await store.set_llm_local_provision_requested(ctx, requested)
+    # Disjoint-set guard: an id can't be queued for both install and uninstall, or
+    # the sync's set algebra is ambiguous. Strip it from the remove queue here.
+    removing = await store.llm_local_remove_requested(ctx)
+    if model_id in removing:
+        await store.set_llm_local_remove_requested(ctx, [r for r in removing if r != model_id])
     return await _snapshot(settings, store, ctx, gateway)
 
 
@@ -529,6 +565,50 @@ async def cancel_local_install(
     ctx = ctx_for(principal)
     requested = [r for r in await store.llm_local_provision_requested(ctx) if r != model_id]
     await store.set_llm_local_provision_requested(ctx, requested)
+    return await _snapshot(settings, store, ctx, gateway)
+
+
+@router.post("/settings/llm/local-models/{model_id}/uninstall")
+async def queue_local_uninstall(
+    model_id: str,
+    principal: PrincipalDep,
+    settings: SettingsDep,
+    store: SettingsStoreDep,
+    gateway: LocalGatewayDep,
+) -> LlmSettingsOut:
+    """Queue a provisioned catalog model for uninstall — the next update one-shot
+    drops it from LOCAL_MODELS (so it stops being served/enabled) and, behind hard
+    guards, prunes its weights. 409 when hosting is off or the model isn't
+    provisioned; 404 for an unknown id. Pure settings write (no disk/gateway action
+    here), so it can't fail on an unreachable gateway; the removal lands on update."""
+    _require_uninstallable(settings, model_id)
+    ctx = ctx_for(principal)
+    removing = await store.llm_local_remove_requested(ctx)
+    if model_id not in removing:
+        removing.append(model_id)
+        await store.set_llm_local_remove_requested(ctx, removing)
+    # Disjoint-set guard: an id can't be queued for both install and uninstall, or
+    # the sync's set algebra is ambiguous. Strip it from the install queue here.
+    requested = await store.llm_local_provision_requested(ctx)
+    if model_id in requested:
+        await store.set_llm_local_provision_requested(ctx, [r for r in requested if r != model_id])
+    return await _snapshot(settings, store, ctx, gateway)
+
+
+@router.delete("/settings/llm/local-models/{model_id}/uninstall")
+async def cancel_local_uninstall(
+    model_id: str,
+    principal: PrincipalDep,
+    settings: SettingsDep,
+    store: SettingsStoreDep,
+    gateway: LocalGatewayDep,
+) -> LlmSettingsOut:
+    """Remove a model from the uninstall queue. Tolerant of an id no longer in the
+    queue (a concurrent update may have just removed and cleared it) — returns the
+    current snapshot rather than 404 so the drawer always reconciles."""
+    ctx = ctx_for(principal)
+    removing = [r for r in await store.llm_local_remove_requested(ctx) if r != model_id]
+    await store.set_llm_local_remove_requested(ctx, removing)
     return await _snapshot(settings, store, ctx, gateway)
 
 
