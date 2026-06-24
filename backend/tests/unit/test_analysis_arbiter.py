@@ -567,6 +567,55 @@ def test_compute_signals_gender_value_must_match_the_terms_gender():
     assert compute_signals(intent, ["I have two daughters."])[0].surface_attested is False
 
 
+def test_compute_signals_appointment_time_grounds_via_clock_time_in_note():
+    # `arriveBy` is a coined predicate (not date-shape) with no object, so neither
+    # the named-object nor the date-phrase path applies — only _time_grounded: the
+    # resolved 13:00 is printed in the note, so it's attested instead of held at 0.5.
+    intent = _intent(
+        entity_resolutions=[_res("appt")],
+        facts=[
+            _fact(
+                entity_ref="appt",
+                predicate="arriveBy",
+                kind="state",
+                object_entity_ref=None,
+                attested_span=None,
+                inferred=False,
+                temporal=IntentTemporal(
+                    phrase="arrive by",
+                    resolved_start=datetime(2026, 7, 2, 13, 0),
+                    resolved_end=None,
+                    precision="instant",
+                ),
+            )
+        ],
+    )
+    assert compute_signals(intent, ["Arrive by 13:00 for the appointment."])[0].surface_attested
+
+
+def test_compute_signals_time_not_printed_in_note_is_not_grounded():
+    intent = _intent(
+        entity_resolutions=[_res("appt")],
+        facts=[
+            _fact(
+                entity_ref="appt",
+                predicate="arriveBy",
+                kind="state",
+                object_entity_ref=None,
+                attested_span=None,
+                inferred=True,
+                temporal=IntentTemporal(
+                    phrase="arrive by",
+                    resolved_start=datetime(2026, 7, 2, 13, 0),
+                    resolved_end=None,
+                    precision="instant",
+                ),
+            )
+        ],
+    )
+    assert compute_signals(intent, ["I have an appointment soon."])[0].surface_attested is False
+
+
 def test_compute_signals_named_object_does_not_rescue_an_inferred_state_edge():
     # The `not inferred` gate still holds for a non-relationship (state) edge: a
     # genuinely inferred worksFor to a named org is NOT promoted — the model made
