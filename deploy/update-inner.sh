@@ -15,7 +15,12 @@ echo "[update] pulling latest main"
 # worktree safe for the container's root user — a host-side `safe.directory`
 # never reaches here, since root's container HOME carries no gitconfig.
 git config --global --add safe.directory "$PWD/src"
-git -C src pull --ff-only
+# Mirror the remote exactly rather than `pull --ff-only`: a deploy box should never
+# diverge, but if it has (a stray commit/edit), ff-only refuses and aborts the update,
+# pinning the stack to stale source. fetch + hard reset to the tracked upstream
+# self-heals — discarding local src changes by design, since src is a pristine mirror.
+git -C src fetch origin
+git -C src reset --hard "@{u}"
 
 # Refresh host helper scripts from the updated tree (mv keeps any running
 # reader on its old inode).
