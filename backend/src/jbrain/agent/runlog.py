@@ -156,6 +156,9 @@ class RunStepView:
     cost_tokens: int
     job_id: str | None
     error: str | None
+    # The step's captured structured-log trace (engine steps; null for agent steps
+    # and any job that logged nothing) — the Runs "full logs" review view.
+    detail: list[dict[str, object]] | None
 
 
 @dataclass(frozen=True)
@@ -275,6 +278,7 @@ class RunLogReader:
                         # A not-ok step is a failure; we carry its name as the
                         # error text (the step has no free-form message column).
                         error=None if s.ok else s.name,
+                        detail=s.detail,
                     )
                     for s in steps
                 ],

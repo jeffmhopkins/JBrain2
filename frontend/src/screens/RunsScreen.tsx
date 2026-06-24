@@ -69,6 +69,17 @@ function errorMessage(err: unknown): string {
   return err instanceof ApiError ? err.message : "Request failed. Is the server reachable?";
 }
 
+/** One captured log event as a compact line: HH:MM:SS, the event message, then its
+ * remaining structured fields as k=v — the "full logs" review trace. */
+function fmtLogEvent(ev: Record<string, unknown>): string {
+  const { event, timestamp, level, ...rest } = ev;
+  const time = typeof timestamp === "string" ? timestamp.slice(11, 19) : "";
+  const fields = Object.entries(rest)
+    .map(([k, v]) => `${k}=${typeof v === "string" ? v : JSON.stringify(v)}`)
+    .join(" ");
+  return [time, String(event ?? ""), fields].filter(Boolean).join("  ");
+}
+
 interface TilesProps {
   runs: RunSummary[];
 }
@@ -227,6 +238,16 @@ function RunDetailSheet({ run, detail, error, onClose, onRerun }: DetailProps) {
                   <span className="runs-scost">{fmtTokens(step.cost_tokens)}</span>
                 </div>
                 {step.error !== null && <div className="runs-serr">{step.error}</div>}
+                {step.detail && step.detail.length > 0 && (
+                  <details className="runs-slog">
+                    <summary>
+                      {step.detail.length} log {step.detail.length === 1 ? "event" : "events"}
+                    </summary>
+                    <pre className="runs-slog-body">
+                      {step.detail.map((ev) => fmtLogEvent(ev)).join("\n")}
+                    </pre>
+                  </details>
+                )}
               </div>
             </div>
           ))

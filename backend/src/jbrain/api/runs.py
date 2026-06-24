@@ -52,6 +52,9 @@ class RunStepOut(BaseModel):
     cost_tokens: int
     job_id: str | None
     error: str | None
+    # The step's captured structured-log trace (the "full logs" review view), or
+    # null for a step that recorded none.
+    detail: list[dict[str, object]] | None = None
 
 
 class RunDetailOut(BaseModel):
