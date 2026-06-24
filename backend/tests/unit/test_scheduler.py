@@ -91,6 +91,18 @@ def enqueued(monkeypatch: pytest.MonkeyPatch) -> Iterator[list[tuple[str, dict[s
     yield calls
 
 
+@pytest.fixture(autouse=True)
+def _stub_runlog(monkeypatch: pytest.MonkeyPatch) -> None:
+    # fire_trigger records a PipelineRunLog row (runs + run_steps) so a fire is
+    # auditable from app.runs. That ORM write needs a real session; here the DB is
+    # faked, and the persistence is covered in test_scheduler_pg, so stub the writer
+    # to a no-op and keep these tests on the enqueue/advance logic.
+    async def _record(self: Any, *args: Any, **kwargs: Any) -> str:
+        return "run-stub"
+
+    monkeypatch.setattr(scheduler.PipelineRunLog, "record", _record)
+
+
 # --- the pure advance helper (the clock contract) ---------------------------
 
 
