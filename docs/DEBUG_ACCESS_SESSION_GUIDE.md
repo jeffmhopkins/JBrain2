@@ -63,6 +63,12 @@ scripts/debug-connect.sh complete --strength low \
   --json-schema '{"type":"object","properties":{"ok":{"type":"boolean"}}}' \
   "Reply with {\"ok\": true}"
 
+# Vision iteration — run vision.ocr / vision.caption over an on-box attachment
+# (by id; find one with `sql`), optionally with a candidate prompt to iterate the
+# OCR/caption prose against the real vision model. The image-layer twin of `complete`.
+scripts/debug-connect.sh vision <attachment_id> --task vision.caption
+scripts/debug-connect.sh vision <attachment_id> --task vision.ocr --system "ONLY transcribe legible text."
+
 # Read-only SQL (full read; runs in a READ ONLY transaction — writes are rejected).
 scripts/debug-connect.sh sql "select code, name from app.domains order by code"
 

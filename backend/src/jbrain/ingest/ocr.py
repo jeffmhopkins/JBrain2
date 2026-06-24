@@ -35,6 +35,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from jbrain import queue
+from jbrain.analysis import flow_trace
 from jbrain.db.session import SessionContext, scoped_session
 from jbrain.ingest.imageprep import downscale_for_vision
 from jbrain.llm import LlmImage, LlmRouter
@@ -202,6 +203,16 @@ class OcrPipeline:
                 max_tokens=OCR_MAX_TOKENS,
                 strength=OCR_STRENGTH,
             )
+            spec = await self._router.effective_spec("vision.ocr", OCR_STRENGTH)
+            flow_trace.vision(
+                attachment_id,
+                note_id=note_id,
+                kind="ocr",
+                provider=spec[0],
+                model=spec[1],
+                filename=filename,
+                text=ocr.text,
+            )
             rows.append(
                 build_extract(
                     attachment_id=att.id,
@@ -209,7 +220,7 @@ class OcrPipeline:
                     filename=filename,
                     kind="ocr",
                     text=ocr.text,
-                    tool=":".join(await self._router.effective_spec("vision.ocr", OCR_STRENGTH)),
+                    tool=":".join(spec),
                 )
             )
         if "caption" in run_kinds:
@@ -221,6 +232,16 @@ class OcrPipeline:
                 max_tokens=DESCRIPTION_MAX_TOKENS,
                 strength=DESCRIPTION_STRENGTH,
             )
+            spec = await self._router.effective_spec("vision.caption", DESCRIPTION_STRENGTH)
+            flow_trace.vision(
+                attachment_id,
+                note_id=note_id,
+                kind="caption",
+                provider=spec[0],
+                model=spec[1],
+                filename=filename,
+                text=description.text,
+            )
             rows.append(
                 build_extract(
                     attachment_id=att.id,
@@ -228,9 +249,7 @@ class OcrPipeline:
                     filename=filename,
                     kind="caption",
                     text=description.text,
-                    tool=":".join(
-                        await self._router.effective_spec("vision.caption", DESCRIPTION_STRENGTH)
-                    ),
+                    tool=":".join(spec),
                 )
             )
 

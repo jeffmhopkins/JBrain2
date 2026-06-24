@@ -149,6 +149,42 @@ def test_disabled_emits_nothing() -> None:
     assert logs == []
 
 
+def test_disabled_emits_no_vision() -> None:
+    flow_trace.set_enabled(False)
+    with structlog.testing.capture_logs() as logs:
+        flow_trace.vision(
+            "att-1",
+            note_id="n1",
+            kind="caption",
+            provider="local",
+            model="qwen3-vl-30b",
+            filename="x.png",
+            text="hello",
+        )
+    assert logs == []
+
+
+def test_vision_surfaces_the_model_text_capped() -> None:
+    flow_trace.set_enabled(True)
+    long_text = "x" * (flow_trace._VISION_TEXT_CAP + 50)
+    with structlog.testing.capture_logs() as logs:
+        flow_trace.vision(
+            "5a747d5e-bab2-0000",
+            note_id="ea6c62cb-0000",
+            kind="ocr",
+            provider="local",
+            model="qwen3-vl-30b",
+            filename="Screenshot.png",
+            text=long_text,
+        )
+    [ev] = logs
+    assert ev["event"] == "analysis.flow.vision"
+    assert ev["attachment_id"] == "5a747d5e" and ev["note_id"] == "ea6c62cb"  # shortened ids
+    assert ev["kind"] == "ocr" and ev["model"] == "qwen3-vl-30b"
+    assert ev["chars"] == len(long_text)
+    assert len(ev["text"]) == flow_trace._VISION_TEXT_CAP and ev["truncated"] is True
+
+
 def test_extract_lists_only_relationship_edges() -> None:
     flow_trace.set_enabled(True)
     with structlog.testing.capture_logs() as logs:

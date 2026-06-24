@@ -12,6 +12,7 @@
 #   scripts/debug-connect.sh whoami
 #   scripts/debug-connect.sh complete --strength high --system "Be terse" "ping"
 #   echo "long prompt..." | scripts/debug-connect.sh complete --task agent.turn
+#   scripts/debug-connect.sh vision <attachment_id> --task vision.caption --system "..."
 #   scripts/debug-connect.sh sql "select code, name from app.domains"
 #   scripts/debug-connect.sh logs api --tail 100
 #   scripts/debug-connect.sh llm                       # show live routing
@@ -108,6 +109,30 @@ print(json.dumps(b))
 PY
 )"
     _call POST /api/debug/complete "$body" | _pp
+    ;;
+
+  vision) # <attachment_id> [--task vision.caption|vision.ocr] [--system "<prompt>"] [--max-tokens N]
+    ATT="${1:-}"; [ -n "$ATT" ] || { echo "usage: debug-connect.sh vision <attachment_id> [--task ...] [--system ...]" >&2; exit 2; }
+    shift
+    SYSTEM="" TASK="" MAXTOK=""
+    while [ "${1:-}" != "" ]; do
+      case "$1" in
+        --task) TASK="$2"; shift 2 ;;
+        --system) SYSTEM="$2"; shift 2 ;;
+        --max-tokens) MAXTOK="$2"; shift 2 ;;
+        *) echo "unknown flag: $1" >&2; exit 2 ;;
+      esac
+    done
+    body="$(ATT="$ATT" SYSTEM="$SYSTEM" TASK="$TASK" MAXTOK="$MAXTOK" python3 - <<'PY'
+import json, os
+b = {"attachment_id": os.environ["ATT"]}
+if os.environ.get("TASK"): b["task"] = os.environ["TASK"]
+if os.environ.get("SYSTEM"): b["system"] = os.environ["SYSTEM"]
+if os.environ.get("MAXTOK"): b["max_tokens"] = int(os.environ["MAXTOK"])
+print(json.dumps(b))
+PY
+)"
+    _call POST /api/debug/vision "$body" | _pp
     ;;
 
   sql)
