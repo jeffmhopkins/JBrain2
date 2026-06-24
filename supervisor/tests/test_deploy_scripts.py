@@ -116,5 +116,6 @@ def test_downloader_python_heredoc_delimiter_is_quoted() -> None:
     # with an IndentationError and the download silently never started.
     text = (DEPLOY / "download-local-weights.sh").read_text()
     # The quoted delimiter, escaped to survive the outer single-quoted bash -c string.
-    assert "<<'\"'\"'PY'\"'\"'" in text, "the Python heredoc delimiter must be quoted (<<'PY')"
-    assert "<<PY" not in text, "a bare <<PY would let bash expand backticks/$ in the Python body"
+    quoted = "<<'\"'\"'PY'\"'\"'"
+    assert quoted in text, "the Python heredoc delimiter must be quoted (<<'PY')"
+    assert "<<PY" not in text, "a bare <<PY lets bash expand backticks/$ in the body"
