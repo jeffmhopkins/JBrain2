@@ -891,6 +891,69 @@ export interface AutomationsResponse {
   actions: CatalogAction[];
 }
 
+// ===== Tasks: saved prompts that spawn an agent session (docs/mocks/tasks-launcher) =====
+
+export type TaskAgent = "jerv" | "curator" | "teacher";
+export type ScheduleKind = "on_demand" | "once" | "repeat";
+export type ScheduleFreq = "daily" | "weekdays" | "weekly";
+
+/** A saved task — a prompt + persona + schedule + delivery. `next_run_at`/`last_run_at`
+ * are server-computed; the editor sends only the spec. */
+export interface Task {
+  id: string;
+  name: string;
+  prompt: string;
+  agent: TaskAgent;
+  domain_scopes: string[];
+  schedule_kind: ScheduleKind;
+  schedule_freq: ScheduleFreq | null;
+  /** Sunday=0 … Saturday=6, for a weekly repeat. */
+  schedule_days: number[];
+  /** "HH:MM" local time for a repeat. */
+  schedule_time: string | null;
+  /** ISO instant for a one-off. */
+  run_at: string | null;
+  timezone: string;
+  enabled: boolean;
+  notify_push: boolean;
+  home_card: boolean;
+  next_run_at: string | null;
+  last_run_at: string | null;
+}
+
+/** The create/replace payload — the spec the editor authors (server computes the rest). */
+export interface TaskInput {
+  name: string;
+  prompt: string;
+  agent: TaskAgent;
+  domain_scopes: string[];
+  schedule_kind: ScheduleKind;
+  schedule_freq: ScheduleFreq | null;
+  schedule_days: number[];
+  schedule_time: string | null;
+  run_at: string | null;
+  timezone: string;
+  enabled: boolean;
+  notify_push: boolean;
+  home_card: boolean;
+}
+
+/** One execution of a task — links to the agent session it produced. */
+export interface TaskRun {
+  id: string;
+  task_id: string;
+  session_id: string | null;
+  status: RunStatus;
+  trigger: "schedule" | "manual";
+  /** A short excerpt of the answer (owner-only). */
+  summary: string;
+  error: string | null;
+  step_count: number;
+  cost_tokens: number;
+  started_at: string;
+  ended_at: string | null;
+}
+
 // ===== Phase 6: the wiki — the read-only article reader (docs/mocks/wiki-*) =====
 // The wiki is machine-written from notes; the reader renders it current-only and
 // read-only, every claim carrying a numbered citation back to its source note.
@@ -1830,6 +1893,47 @@ export const api = {
       `/api/ops/schedules/${encodeURIComponent(scheduleId)}`,
       jsonInit("PATCH", { enabled }),
     );
+  },
+
+  // ===== Tasks (the launcher's Tasks surface) =====
+
+  async tasks(): Promise<Task[]> {
+    const response = await request("/api/tasks");
+    return (await response.json()) as Task[];
+  },
+
+  async createTask(body: TaskInput): Promise<Task> {
+    const response = await request("/api/tasks", jsonInit("POST", body));
+    return (await response.json()) as Task;
+  },
+
+  async replaceTask(id: string, body: TaskInput): Promise<Task> {
+    const response = await request(`/api/tasks/${encodeURIComponent(id)}`, jsonInit("PUT", body));
+    return (await response.json()) as Task;
+  },
+
+  // The optimistic enable/disable toggle on a card.
+  async setTaskEnabled(id: string, enabled: boolean): Promise<Task> {
+    const response = await request(
+      `/api/tasks/${encodeURIComponent(id)}`,
+      jsonInit("PATCH", { enabled }),
+    );
+    return (await response.json()) as Task;
+  },
+
+  async deleteTask(id: string): Promise<void> {
+    await request(`/api/tasks/${encodeURIComponent(id)}`, { method: "DELETE" });
+  },
+
+  // Run a task now (synchronous on the server); returns the finished run.
+  async runTask(id: string): Promise<TaskRun> {
+    const response = await request(`/api/tasks/${encodeURIComponent(id)}/run`, { method: "POST" });
+    return (await response.json()) as TaskRun;
+  },
+
+  async taskRuns(id: string): Promise<TaskRun[]> {
+    const response = await request(`/api/tasks/${encodeURIComponent(id)}/runs`);
+    return (await response.json()) as TaskRun[];
   },
 
   // ===== Phase 4: the agent — sessions + Full Brain chat (docs/ASSISTANT.md) =====

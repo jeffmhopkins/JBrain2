@@ -70,6 +70,16 @@ task: you author a task the way you'd start a chat.
 - **Tradeoffs:** managing many existing tasks is secondary (the list is compact/abridged); the
   always-present composer spends the top third of the screen even when you came to check a run.
 
+## Chosen: A (implemented)
+
+The owner picked **Direction A**. It is now the binding spec and is implemented: a `tasks`
+launcher tile → `TasksScreen` (list + full-screen editor), backed by owner-only RLS tables
+(`tasks` / `task_runs`, migration 0091), a schedule engine + minute-cadence web-process loop,
+a headless runner that spawns an agent session per run, and the `/api/tasks` surface. The
+historical sessions a run produces are browsable in Full Brain → Chats. Deferred follow-ups:
+sourcing FCM tokens for the push poke, the home-feed card surface, and a deep-link that opens a
+specific run's session directly from the run row.
+
 ## Recommendation
 
 **Direction A (list-first + full-screen editor)** as the primary — it reuses the most already-settled
