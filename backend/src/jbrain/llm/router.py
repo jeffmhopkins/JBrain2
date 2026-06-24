@@ -12,6 +12,7 @@ The "local" provider must exist now so going all-local is config, not
 refactor — docs/ANALYSIS.md "Privacy routing".
 """
 
+import time
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
 from typing import Any
 
@@ -297,6 +298,15 @@ class LlmRouter:
         task the operator re-routed in Settings."""
         return (await self._resolve_live(task, strength))[:2]
 
+    @staticmethod
+    def _toks_per_s(output_tokens: int, elapsed_s: float) -> float | None:
+        """End-to-end output tokens/sec (prefill included) — the throughput a caller
+        actually feels, which is why a big-active-param local model like the 235B
+        reads low. None for a zero/negative interval. Logged per call so 'ask vs
+        response time and t/s' is visible in the api log without llama-server's own
+        timings (llama-swap doesn't surface those)."""
+        return round(output_tokens / elapsed_s, 1) if elapsed_s > 0 else None
+
     async def _record(self, task: str, provider: str, model: str, usage: LlmUsage) -> None:
         if self._recorder is None:
             return
@@ -318,6 +328,7 @@ class LlmRouter:
     ) -> LlmResult:
         provider, model, reasoning_effort = await self._resolve_live(task, strength)
         client = self._clients[provider]
+        start = time.perf_counter()
         result = await client.complete(
             model=model,
             system=system,
@@ -346,6 +357,7 @@ class LlmRouter:
                 raise LlmBadResponseError(
                     f"{provider}: invalid JSON for task {task!r} after re-ask"
                 )
+        elapsed = time.perf_counter() - start
         log.info(
             "llm.complete",
             task=task,
@@ -353,6 +365,8 @@ class LlmRouter:
             model=model,
             input_tokens=result.usage.input_tokens,
             output_tokens=result.usage.output_tokens,
+            elapsed_ms=round(elapsed * 1000),
+            output_tokens_per_s=self._toks_per_s(result.usage.output_tokens, elapsed),
         )
         return result
 
@@ -371,6 +385,7 @@ class LlmRouter:
         owns retry/continuation. Usage is recorded per call like everything else."""
         provider, model, reasoning_effort = await self._resolve_live(task, strength)
         client = self._clients[provider]
+        start = time.perf_counter()
         turn = await client.converse(
             model=model,
             system=system,
@@ -379,6 +394,7 @@ class LlmRouter:
             max_tokens=max_tokens,
             reasoning_effort=reasoning_effort,
         )
+        elapsed = time.perf_counter() - start
         await self._record(task, provider, model, turn.usage)
         log.info(
             "llm.converse",
@@ -389,6 +405,8 @@ class LlmRouter:
             tool_calls=len(turn.tool_calls),
             input_tokens=turn.usage.input_tokens,
             output_tokens=turn.usage.output_tokens,
+            elapsed_ms=round(elapsed * 1000),
+            output_tokens_per_s=self._toks_per_s(turn.usage.output_tokens, elapsed),
         )
         return turn
 
@@ -408,6 +426,7 @@ class LlmRouter:
         provider, model, reasoning_effort = await self._resolve_live(task, strength)
         client = self._clients[provider]
         final: LlmTurn | None = None
+        start = time.perf_counter()
         async for part in client.converse_stream(
             model=model,
             system=system,
@@ -420,6 +439,7 @@ class LlmRouter:
                 final = part
             yield part
         if final is not None:
+            elapsed = time.perf_counter() - start
             await self._record(task, provider, model, final.usage)
             log.info(
                 "llm.converse_stream",
@@ -430,6 +450,8 @@ class LlmRouter:
                 tool_calls=len(final.tool_calls),
                 input_tokens=final.usage.input_tokens,
                 output_tokens=final.usage.output_tokens,
+                elapsed_ms=round(elapsed * 1000),
+                output_tokens_per_s=self._toks_per_s(final.usage.output_tokens, elapsed),
             )
 
 
