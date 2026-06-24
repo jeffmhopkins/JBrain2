@@ -57,6 +57,12 @@ Phase-5 build record is `archive/PHASE5_COMPLETION_PLAN.md`.
   (tools + by-id serving) shipped; G3 (the chat view, after the GUI mock gate — chosen
   mock C) is in progress.
 
+- `EMAIL_ARCHIVIST_PLAN.md` — the **email archivist** build plan: a 4th Full Brain
+  persona (`archivist`), shaped like `jerv`, that triages a 20+ year Gmail history
+  via web-gated `gmail_*` tools over a thin httpx client. Reads no knowledge base,
+  adds no table/migration/RLS surface (stateless on the box), writes only reversible
+  label/archive ops (`gmail.modify` scope, no delete). Email-into-RAG is a deferred
+  second step. Open owner decision: local vs cloud LLM routing for email content.
 - `PHASE7_LOCATION_DETAIL_PLAN.md` — the **high-detail, low-battery trails** build
   plan: motion-adaptive sampling on the framework fused provider (no Play Services),
   an accuracy filter, and batched array upload, for Life360-grade member trails.
