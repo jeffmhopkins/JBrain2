@@ -211,9 +211,7 @@ def test_commit_surfaces_collapse_when_lookup_hits_a_sibling_row() -> None:
         object_ref="Elora",
         object_id="62c477b7-0000",
         existing=[
-            SimpleNamespace(
-                id="68f005d9-aaaa", object_entity_id="68f005d9-aaaa", status="active"
-            )
+            SimpleNamespace(id="68f005d9-aaaa", object_entity_id="68f005d9-aaaa", status="active")
         ],
         decision=Decision(refresh_id="68f005d9-aaaa"),
     )
