@@ -449,3 +449,12 @@ async def test_converse_stream_threads_stored_reasoning_effort() -> None:
     async for _ in router.converse_stream("note.extract", system="s", messages=[]):
         pass
     assert xai.stream_calls[0]["reasoning_effort"] == "medium"
+
+
+def test_toks_per_s_is_end_to_end_throughput() -> None:
+    # The per-call t/s logged with every llm.complete/converse: output tokens over
+    # the wall-clock interval (prefill included), guarding against divide-by-zero.
+    assert LlmRouter._toks_per_s(120, 4.0) == 30.0
+    assert LlmRouter._toks_per_s(0, 2.0) == 0.0
+    assert LlmRouter._toks_per_s(120, 0.0) is None
+    assert LlmRouter._toks_per_s(50, -1.0) is None
