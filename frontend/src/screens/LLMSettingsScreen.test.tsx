@@ -7,6 +7,7 @@ import { LLMSettingsScreen } from "./LLMSettingsScreen";
 function lm(over: Partial<LocalModelInfo> & Pick<LocalModelInfo, "id" | "label">): LocalModelInfo {
   return {
     enabled: false,
+    queued: false,
     loaded: false,
     supports_vision: false,
     supports_tools: true,
@@ -14,6 +15,7 @@ function lm(over: Partial<LocalModelInfo> & Pick<LocalModelInfo, "id" | "label">
     quant: "Q8_0",
     size_gb: 0,
     disk_gb: null,
+    download_gb: null,
     note: "",
     context_window: 32768,
     context_window_override: null,
@@ -319,7 +321,7 @@ describe("LLMSettingsScreen", () => {
     expect(within(gpt).getByText(/MXFP4 · ~59 GB/)).toBeInTheDocument();
   });
 
-  it("hides catalog models that aren't provisioned on this box", async () => {
+  it("offers un-provisioned catalog models under 'Available to install'", async () => {
     const s = initialSettings();
     s.local_hosting_enabled = true;
     s.local_models = [
@@ -354,13 +356,16 @@ describe("LLMSettingsScreen", () => {
     render(<LLMSettingsScreen />);
 
     const toggle = await screen.findByRole("button", { name: /On-box models/i });
-    // The summary still counts the full catalog so "how many more could I install".
+    // The summary counts the full catalog so "how many more could I install".
     expect(toggle).toHaveTextContent("1 of 2 enabled");
     fireEvent.click(toggle);
 
+    // The provisioned model is in the enabled roster; the un-provisioned one is now
+    // offered under "Available to install" with an Install button rather than hidden.
     expect(await screen.findByText("Qwen3-VL 30B")).toBeInTheDocument();
-    // The un-provisioned model is absent from the list entirely.
-    expect(screen.queryByText("GPT-OSS 120B")).not.toBeInTheDocument();
+    expect(screen.getByText("Available to install")).toBeInTheDocument();
+    const gpt = screen.getByText("GPT-OSS 120B").closest(".llm-local-row") as HTMLElement;
+    expect(within(gpt).getByRole("button", { name: "Install" })).toBeInTheDocument();
   });
 
   it("shows loaded models and unloads them from memory", async () => {
@@ -553,6 +558,80 @@ describe("LLMSettingsScreen", () => {
     const select = (await screen.findByLabelText("context window")) as HTMLSelectElement;
     expect(select.disabled).toBe(true);
     expect(screen.getByText(/unload to change/)).toBeInTheDocument();
+  });
+
+  it("queues an un-provisioned model for install and offers 'Update & install now'", async () => {
+    const s = initialSettings();
+    s.local_hosting_enabled = true;
+    s.host_memory = { total_gb: 128, used_gb: 0 };
+    s.local_models = [
+      lm({ id: "qwen3-235b-a22b", label: "Qwen3-235B-A22B", tiers: ["high"], size_gb: 104 }),
+    ];
+    const calls: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>(async (input, init) => {
+        const path = String(input);
+        const method = (init?.method ?? "GET").toUpperCase();
+        if (path === "/api/settings/llm" && method === "GET")
+          return new Response(JSON.stringify(s), { status: 200 });
+        if (path.endsWith("/qwen3-235b-a22b/install") && method === "POST") {
+          calls.push(path);
+          const m0 = s.local_models[0];
+          if (m0) m0.queued = true;
+          return new Response(JSON.stringify(s), { status: 200 });
+        }
+        if (path === "/api/ops/update" && method === "POST") {
+          calls.push(path);
+          return new Response(JSON.stringify({ updater: "jbrain-updater-1" }), { status: 202 });
+        }
+        if (path === "/api/ops/update/status")
+          return new Response(
+            JSON.stringify({ state: "running", exit_code: null, log_tail: "[local-llm] ↓" }),
+            { status: 200 },
+          );
+        throw new Error(`unexpected fetch: ${method} ${path}`);
+      }),
+    );
+    render(<LLMSettingsScreen />);
+    fireEvent.click(await screen.findByRole("button", { name: /On-box models/i }));
+
+    // No queue bar until something is queued.
+    expect(screen.queryByRole("button", { name: /Update & install now/i })).not.toBeInTheDocument();
+    fireEvent.click(await screen.findByRole("button", { name: "Install" }));
+    await waitFor(() =>
+      expect(calls).toContain("/api/settings/llm/local-models/qwen3-235b-a22b/install"),
+    );
+
+    // The queue bar appears with the GB tally; clicking it kicks the update one-shot.
+    expect(await screen.findByText(/1 queued · 104 GB to download/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /Update & install now/i }));
+    await waitFor(() => expect(calls).toContain("/api/ops/update"));
+  });
+
+  it("renders a live download bar from a queued model's on-disk bytes", async () => {
+    const s = initialSettings();
+    s.local_hosting_enabled = true;
+    s.host_memory = { total_gb: 128, used_gb: 0 };
+    s.local_models = [
+      lm({
+        id: "qwen3-235b-a22b",
+        label: "Qwen3-235B-A22B",
+        tiers: ["high"],
+        size_gb: 104,
+        queued: true,
+        download_gb: 52, // half-way through the download
+      }),
+    ];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>(async () => new Response(JSON.stringify(s), { status: 200 })),
+    );
+    render(<LLMSettingsScreen />);
+    fireEvent.click(await screen.findByRole("button", { name: /On-box models/i }));
+
+    // 52 / 104 GB on disk → 50%.
+    expect(await screen.findByText(/52 \/ 104 GB · 50%/)).toBeInTheDocument();
   });
 
   it("points at the CLI when local hosting is off", async () => {

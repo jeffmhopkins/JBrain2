@@ -35,3 +35,22 @@ def weights_size_gb(models_dir: str, model_id: str) -> float | None:
     except OSError:
         return None
     return round(total / _BYTES_PER_GIB, 1) if found else None
+
+
+def dir_size_gb(models_dir: str, model_id: str) -> float | None:
+    """Summed size of EVERY file in a model's directory, in GiB — partial
+    `*.incomplete` shards included — or None when the directory is absent. Drives
+    the PWA's live install-progress bar: unlike weights_size_gb (final `*.gguf`
+    only), this climbs smoothly through an in-flight huggingface download, so
+    `dir_size_gb / catalog size_gb` is a real percentage mid-provision. Returns
+    0.0 for an empty (just-created) directory so a started download reads as 0%,
+    not 'not started'."""
+    total = 0
+    try:
+        with os.scandir(os.path.join(models_dir, model_id)) as entries:
+            for entry in entries:
+                if entry.is_file():
+                    total += entry.stat().st_size
+    except OSError:
+        return None
+    return round(total / _BYTES_PER_GIB, 1)

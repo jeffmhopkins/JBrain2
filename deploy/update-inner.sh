@@ -59,6 +59,14 @@ docker compose run --rm migrate
 echo "[update] restarting stack"
 docker compose up -d
 
+# Provision any locally-hosted LLM models the operator queued from the PWA (and
+# keep the current + recommended set present). Runs AFTER the stack is up so the
+# app stays usable during a long weight download, and the per-model progress bar
+# can read on-disk bytes through the live api. Best-effort: a sync failure must
+# never abort the update — the queue persists and the next update retries.
+echo "[update] syncing local models"
+sh src/deploy/local-models-sync.sh || echo "[update] local-model sync skipped (will retry next update)"
+
 docker image prune -f
 docker builder prune -f --keep-storage 10GB >/dev/null 2>&1 || true
 echo "[update] complete"

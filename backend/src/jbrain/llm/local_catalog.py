@@ -109,6 +109,30 @@ CATALOG: tuple[LocalModel, ...] = (
         kv_gb_per_128k=4.5,
     ),
     LocalModel(
+        id="qwen3-235b-a22b",
+        label="Qwen3-235B-A22B · reasoning (alt, 3-bit)",
+        served_model="qwen3-235b-a22b",
+        tiers=("high",),
+        supports_vision=False,
+        supports_tools=True,
+        recommended=False,
+        hf_repo="unsloth/Qwen3-235B-A22B-Instruct-2507-GGUF",
+        gguf_include="*UD-Q3_K_XL*.gguf",
+        mmproj_include=None,
+        quant="UD-Q3_K_XL",
+        size_gb=104.2,
+        note="235B MoE, 22B active — the strongest open model that fits this "
+        "128 GB box, at Unsloth's 3-bit dynamic quant (~104 GB weights). "
+        "Standalone only: too large to co-reside, so expect a cold load on every "
+        "switch and a tight context budget beside the weights. Instruct-2507 "
+        "(non-thinking).",
+        # Native window is 262144, but ~104 GB of weights leaves little headroom on
+        # the box — its 94 dense-attention layers make the KV cache the binding
+        # constraint, so it serves the gateway default (raise -c only with proof it
+        # fits).
+        kv_gb_per_128k=46.0,
+    ),
+    LocalModel(
         id="qwen3-next-80b-a3b",
         label="Qwen3-Next 80B · reasoning (alt)",
         served_model="qwen3-next-80b-a3b",

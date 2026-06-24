@@ -95,31 +95,13 @@ MANIFEST="$(catalog -m jbrain.llm.local_catalog "${IDS[@]}")"
 
 mkdir -p "$MODELS_DIR"
 
-# Download weights with the official huggingface_hub CLI in a throwaway
-# container; only the --include globs from the manifest are pulled.
+# Download weights with the official huggingface_hub CLI in a throwaway container;
+# only the --include globs from the manifest are pulled. Shared with the update
+# one-shot's sync (deploy/local-models-sync.sh) so the download logic is defined
+# once; we pass our DOWNLOAD_CONTAINER name so the trap above still cleans it up.
 say "Downloading weights into $MODELS_DIR (this can take a while)"
-# Allocate a TTY when we have one so huggingface_hub renders live per-file
-# percentage bars (size, speed, ETA); without a TTY it collapses to a terse
-# file counter. The named container is force-cleaned by the trap above.
-TTY_FLAG=""
-[ -t 1 ] && TTY_FLAG="-t"
-docker run --rm $TTY_FLAG --name "$DOWNLOAD_CONTAINER" \
-  -e MANIFEST="$MANIFEST" -v "$MODELS_DIR:/models" python:3.11-slim bash -c '
-  set -euo pipefail
-  pip install --quiet -U "huggingface_hub[cli]"
-  python - <<PY
-import json, os, subprocess
-for m in json.loads(os.environ["MANIFEST"]):
-    mid = m["id"]
-    dest = f"/models/{mid}"
-    includes = [m["gguf_include"]] + ([m["mmproj_include"]] if m["mmproj_include"] else [])
-    args = ["hf", "download", m["hf_repo"], "--local-dir", dest]
-    for inc in includes:
-        args += ["--include", inc]
-    print("==>", " ".join(args), flush=True)
-    subprocess.check_call(args)
-PY
-'
+MANIFEST="$MANIFEST" DOWNLOAD_CONTAINER="$DOWNLOAD_CONTAINER" \
+  bash "$INSTALL_DIR/src/deploy/download-local-weights.sh" "$MODELS_DIR"
 
 # Generate the llama-swap config with the SHARED generator
 # (jbrain.llm.llama_swap_config) so the install-time config and the API's runtime

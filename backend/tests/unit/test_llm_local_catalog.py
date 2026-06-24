@@ -66,6 +66,23 @@ def test_manifest_is_json_with_provisioning_fields() -> None:
     assert entry["served_model"] == "qwen3-vl-30b-a3b"
 
 
+def test_qwen3_235b_is_a_text_only_alt_high_tier_at_3bit() -> None:
+    m = local_catalog.get("qwen3-235b-a22b")
+    assert m is not None
+    assert m.tiers == ("high",)
+    assert not m.supports_vision and m.mmproj_include is None
+    # Instruct-2507 is non-thinking — not in the reasoning gating set.
+    assert not m.supports_reasoning
+    assert m.served_model not in local_catalog.REASONING_SERVED_MODELS
+    # The 3-bit dynamic quant the manifest pulls.
+    assert m.quant == "UD-Q3_K_XL"
+    assert "UD-Q3_K_XL" in m.gguf_include
+    assert m.hf_repo == "unsloth/Qwen3-235B-A22B-Instruct-2507-GGUF"
+    # Alternate, not part of the default resident set the install prompt offers.
+    assert m.id not in local_catalog.recommended_ids()
+    assert m.spec == "local:qwen3-235b-a22b"
+
+
 def test_qwen3_next_is_a_text_only_alt_high_tier() -> None:
     m = local_catalog.get("qwen3-next-80b-a3b")
     assert m is not None

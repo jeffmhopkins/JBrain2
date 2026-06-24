@@ -188,10 +188,24 @@ export function LLMSettingsScreen() {
                 ? {
                     ...prev,
                     host_memory: fresh.host_memory,
-                    local_models: prev.local_models.map((m) => ({
-                      ...m,
-                      loaded: fresh.local_models.find((f) => f.id === m.id)?.loaded ?? m.loaded,
-                    })),
+                    // Carry the live runtime + install-progress fields (loaded,
+                    // and an in-flight install's queued/enabled/download_gb) so a
+                    // download bar climbs and a finished install flips to enabled
+                    // without a manual refresh — but not the operator's in-flight
+                    // window/staged edits, which the snapshot may not yet reflect.
+                    local_models: prev.local_models.map((m) => {
+                      const f = fresh.local_models.find((x) => x.id === m.id);
+                      return f
+                        ? {
+                            ...m,
+                            loaded: f.loaded,
+                            enabled: f.enabled,
+                            queued: f.queued,
+                            disk_gb: f.disk_gb,
+                            download_gb: f.download_gb,
+                          }
+                        : m;
+                    }),
                   }
                 : prev,
             );
@@ -284,6 +298,54 @@ export function LLMSettingsScreen() {
       .catch(() => {})
       .finally(() => unmark(id));
   }
+
+  // Queue / unqueue an un-provisioned model for install; the snapshot reflects the
+  // queued flag at once (the download itself happens during the next update).
+  function queueInstall(id: string, on: boolean) {
+    mark(id);
+    const seq = ++putSeq.current;
+    api
+      .queueLocalInstall(id, on)
+      .then((s) => {
+        if (seq === putSeq.current) setSettings(s);
+      })
+      .catch(() => {})
+      .finally(() => unmark(id));
+  }
+
+  // "Update & install now": kick the supervisor update one-shot, which provisions
+  // the queued models at its tail. We follow it two ways: the coarse phase from the
+  // update log tail (here), and each model's live download bar (the snapshot poll).
+  const [updateState, setUpdateState] = useState<"idle" | "running" | "failed">("idle");
+  const [updateTail, setUpdateTail] = useState("");
+  function startInstallUpdate() {
+    setUpdateState("running");
+    setUpdateTail("");
+    api.opsUpdateStart().catch(() => setUpdateState("failed"));
+  }
+  useEffect(() => {
+    if (updateState !== "running" || !foreground) return;
+    let stop = false;
+    const tick = () => {
+      api
+        .opsUpdateStatus()
+        .then((s) => {
+          if (stop) return;
+          const lines = s.log_tail.trimEnd().split("\n");
+          setUpdateTail(lines[lines.length - 1] ?? "");
+          // The download runs inside the one-shot, so an exit means provisioning is
+          // done (the snapshot poll has the models enabled by now).
+          if (s.state === "exited") setUpdateState(s.exit_code === 0 ? "idle" : "failed");
+        })
+        .catch(() => {});
+    };
+    tick();
+    const id = setInterval(tick, 5000);
+    return () => {
+      stop = true;
+      clearInterval(id);
+    };
+  }, [updateState, foreground]);
 
   // Image-service controls (owner-only): free unloads the resident model; start/stop
   // toggle the service via the supervisor. Each reconciles from a fresh snapshot.
@@ -428,6 +490,10 @@ export function LLMSettingsScreen() {
         onLoad={loadModel}
         onStage={stageModel}
         onSetWindow={setContextWindow}
+        onInstall={queueInstall}
+        onUpdate={startInstallUpdate}
+        updateState={updateState}
+        updateTail={updateTail}
         onFreeImage={freeImage}
         onStartImageService={startImageService}
         onStopImageService={stopImageService}
@@ -656,6 +722,10 @@ function LocalModelsDrawer({
   onLoad,
   onStage,
   onSetWindow,
+  onInstall,
+  onUpdate,
+  updateState,
+  updateTail,
   onFreeImage,
   onStartImageService,
   onStopImageService,
@@ -671,12 +741,21 @@ function LocalModelsDrawer({
   onLoad: (id: string) => void;
   onStage: (id: string, on: boolean) => void;
   onSetWindow: (id: string, window: number | null) => void;
+  onInstall: (id: string, on: boolean) => void;
+  onUpdate: () => void;
+  updateState: "idle" | "running" | "failed";
+  updateTail: string;
   onFreeImage: () => void;
   onStartImageService: () => void;
   onStopImageService: () => void;
 }) {
   const enabledCount = models.filter((m) => m.enabled).length;
   const shown = models.filter((m) => m.enabled);
+  // Catalog models not on the box: the "available to install" rows. Queued ones
+  // carry an in-flight download the next update finishes.
+  const available = hostingEnabled ? models.filter((m) => !m.enabled) : [];
+  const queued = available.filter((m) => m.queued);
+  const queuedGb = queued.reduce((sum, m) => sum + m.size_gb, 0);
   const loaded = shown.filter((m) => m.loaded);
   const stagedOnly = shown.filter((m) => m.staged && !m.loaded);
   // Resident footprint = weights + KV for everything actually loaded.
@@ -796,7 +875,7 @@ function LocalModelsDrawer({
           )}
           {hostingEnabled && shown.length === 0 && (
             <p className="llm-local-hint">
-              No models enabled yet — provision more with <code>jbrain enable-local-models</code>.
+              No models enabled yet — install one from “Available to install” below.
             </p>
           )}
           {shown.map((m) => {
@@ -907,6 +986,45 @@ function LocalModelsDrawer({
               </div>
             );
           })}
+
+          {available.length > 0 && (
+            <div className="llm-local-avail">
+              <div className="llm-local-avail-h">Available to install</div>
+              {available.map((m) => (
+                <InstallRow key={m.id} model={m} busy={busy.has(m.id)} onInstall={onInstall} />
+              ))}
+              <p className="llm-local-hint">
+                Installing downloads the weights and adds the model to the tiers above. A model too
+                large to co-reside loads swappable — one at a time.
+              </p>
+            </div>
+          )}
+
+          {queued.length > 0 && (
+            <div className="llm-local-queue">
+              <div className="llm-local-queue-text">
+                <b>
+                  {queued.length} queued · {Math.round(queuedGb)} GB to download
+                </b>
+                <span>
+                  {updateState === "running"
+                    ? updateTail || "Update running — provisioning after rebuild…"
+                    : updateState === "failed"
+                      ? "Update failed — check the Ops screen."
+                      : "Provisioned on your next update, or start one now."}
+                </span>
+              </div>
+              <button
+                type="button"
+                className="llm-local-btn load"
+                disabled={updateState === "running"}
+                onClick={onUpdate}
+              >
+                {updateState === "running" ? "Updating…" : "Update & install now"}
+              </button>
+            </div>
+          )}
+
           {image && (
             <ImageServiceSection
               image={image}
@@ -918,6 +1036,68 @@ function LocalModelsDrawer({
         </div>
       )}
     </section>
+  );
+}
+
+// One un-provisioned catalog model in the "Available to install" list: its
+// capabilities, an Install/Remove toggle for the install queue, and — once queued
+// and downloading — a live progress bar (download_gb / size_gb) the snapshot poll
+// drives, so the operator can follow the weight pull without shell access.
+function InstallRow({
+  model,
+  busy,
+  onInstall,
+}: {
+  model: LocalModelInfo;
+  busy: boolean;
+  onInstall: (id: string, on: boolean) => void;
+}) {
+  const downloading = model.queued && model.download_gb != null;
+  const pct = downloading
+    ? Math.min(100, Math.round(((model.download_gb ?? 0) / model.size_gb) * 100))
+    : 0;
+  return (
+    <div className={`llm-local-row install${model.queued ? " queued" : ""}`}>
+      <div className="llm-local-head">
+        <div className="llm-local-name">
+          {model.label}
+          <span className="llm-local-meta">
+            {model.quant} · ~{model.size_gb} GB
+          </span>
+        </div>
+        <div className="llm-local-topright">
+          <div className="llm-local-act">
+            <button
+              type="button"
+              className={`llm-local-btn${model.queued ? "" : " load"}`}
+              disabled={busy}
+              onClick={() => onInstall(model.id, !model.queued)}
+            >
+              {busy ? "…" : model.queued ? "Remove" : "Install"}
+            </button>
+          </div>
+          {model.queued && <span className="llm-local-state queued">queued</span>}
+        </div>
+      </div>
+      <div className="llm-local-chips">
+        {capabilityChips(model).map((c) => (
+          <span key={c.key} className={`llm-chip llm-chip-${c.cls}`}>
+            {c.label}
+          </span>
+        ))}
+      </div>
+      {model.note && <p className="llm-local-note">{model.note}</p>}
+      {downloading && (
+        <div className="llm-local-dl">
+          <div className="llm-local-dl-bar">
+            <i style={{ width: `${pct}%` }} />
+          </div>
+          <span className="llm-local-dl-cap">
+            {model.download_gb} / {model.size_gb} GB · {pct}%
+          </span>
+        </div>
+      )}
+    </div>
   );
 }
 
