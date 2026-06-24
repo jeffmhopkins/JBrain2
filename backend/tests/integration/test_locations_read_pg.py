@@ -1068,3 +1068,33 @@ async def test_presence_read_refuses_a_narrowed_owner(maker: async_sessionmaker)
     for ctx in (NARROWED_LOCATION, NARROWED_GENERAL):
         with pytest.raises(LocationToolRefusal):
             await read_owner_presence(repo, devices, ctx)
+
+
+async def _owner_principal(maker: async_sessionmaker) -> SessionContext:
+    """An owner Principal row + a FULL-owner ctx bound to it (the warm-fix cache's
+    FK target)."""
+    pid = str(uuid.uuid4())
+    async with scoped_session(maker, OWNER) as session:
+        await session.execute(
+            text("INSERT INTO app.principals (id, kind, key_hash) VALUES (:p, 'owner', :kh)"),
+            {"p": pid, "kh": uuid.uuid4().hex},
+        )
+    return SessionContext(principal_id=pid, principal_kind="owner")
+
+
+async def test_owner_last_fix_roundtrip_upsert_and_age_cap(maker: async_sessionmaker) -> None:
+    owner = await _owner_principal(maker)
+    repo = SqlLocationRepo(maker)
+    # Nothing cached yet.
+    assert await repo.owner_fix(owner, max_age_seconds=3600) is None
+    # Remember a fix, read it back.
+    await repo.remember_owner_fix(owner, latitude=28.6, longitude=-80.8)
+    got = await repo.owner_fix(owner, max_age_seconds=3600)
+    assert got is not None and round(got.latitude, 1) == 28.6 and round(got.longitude, 1) == -80.8
+    # A second remember UPSERTS in place — still one fix, the newer coordinate.
+    await repo.remember_owner_fix(owner, latitude=51.5, longitude=-0.13)
+    got2 = await repo.owner_fix(owner, max_age_seconds=3600)
+    assert got2 is not None
+    assert round(got2.latitude, 1) == 51.5 and round(got2.longitude, 2) == -0.13
+    # The age cap hides a fix older than the window (here: anything before "now").
+    assert await repo.owner_fix(owner, max_age_seconds=0) is None

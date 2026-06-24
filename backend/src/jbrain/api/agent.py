@@ -17,6 +17,7 @@ import asyncio
 import contextlib
 import uuid
 from collections.abc import AsyncIterator, Sequence
+from datetime import datetime
 from typing import Annotated, Literal, cast
 
 import structlog
@@ -229,6 +230,42 @@ async def _presence_block(
         log.warning("agent.presence_failed", error=repr(exc))
         return ""
     return presence_block(presence)
+
+
+# A cached warm fix older than this is not resurfaced as the owner's location: past a
+# few hours "where am I" wants a current fix, not yesterday's spot. The fallback always
+# states the fix's age, so this is a ceiling on what's worth reporting, not a precision
+# claim. (The OwnTracks presence stack keeps a far longer "last known" horizon; this is
+# the narrower bound for the turn-local PWA fix.)
+_LAST_FIX_MAX_AGE_SECONDS = 6 * 60 * 60.0
+
+
+async def _resolve_here(
+    request: Request, owner_ctx: SessionContext, live: tuple[float, float] | None
+) -> tuple[tuple[float, float] | None, datetime | None]:
+    """Resolve the position the location tool answers from + its as-of time.
+
+    A live fix this turn is cached as the owner's last-known position and returned
+    as-is (as_of None). A turn with no live fix falls back to that cache when it is
+    fresh enough (as_of = its capture time, so the tool labels it last-known). Both
+    sides run under the FULL owner ctx — the cache lives behind the location firewall —
+    and are best-effort: a cache read/write failure leaves the live value untouched and
+    never breaks the turn."""
+    locations = get_location_repo(request)
+    if live is not None:
+        try:
+            await locations.remember_owner_fix(owner_ctx, latitude=live[0], longitude=live[1])
+        except Exception as exc:  # noqa: BLE001 - caching is best-effort, never fatal
+            log.warning("agent.remember_fix_failed", error=repr(exc))
+        return live, None
+    try:
+        cached = await locations.owner_fix(owner_ctx, max_age_seconds=_LAST_FIX_MAX_AGE_SECONDS)
+    except Exception as exc:  # noqa: BLE001 - a cache miss must not break the turn
+        log.warning("agent.last_fix_failed", error=repr(exc))
+        return None, None
+    if cached is None:
+        return None, None
+    return (cached.latitude, cached.longitude), cached.captured_at
 
 
 async def _record_episode(
@@ -466,12 +503,21 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
     # the buffer-then-retry path (off by default — a spinner-latency tradeoff).
     buffer_retry = await get_settings_store(request).reflexion_buffer_retry(owner_ctx)
     # The PWA's live position for this turn (both coords or nothing), reused by the
-    # location tool to answer from the phone's current spot — turn-local, not stored.
+    # location tool to answer from the phone's current spot. When a turn carries a
+    # fix we cache it as the owner's last-known position; when it carries none we fall
+    # back to that cache (clearly labelled with its age) so a fixless turn can still
+    # answer "where am I". `here_as_of` is None for a live fix, the cache's capture
+    # time for the fallback. Both the write and the read are owner-GATED on the
+    # location scope and run under the FULL owner ctx (the cache lives behind the
+    # location firewall) — best-effort, a cache hiccup never breaks the turn.
     here = (
         (body.latitude, body.longitude)
         if body.latitude is not None and body.longitude is not None
         else None
     )
+    here_as_of = None
+    if "location" in session.domain_scopes:
+        here, here_as_of = await _resolve_here(request, owner_ctx, here)
 
     async def drive_turn(live: _LiveTurn) -> None:
         stop_reason = "error"
@@ -502,6 +548,7 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
             # none to contrast with, so suppress it.
             general_knowledge_label=profile.reads_knowledge_base,
             here=here,
+            here_as_of=here_as_of,
             context_window=context_window,
         )
         try:

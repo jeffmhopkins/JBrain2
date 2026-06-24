@@ -36,6 +36,7 @@ __all__ = [
     "DeviceActivity",
     "FixPoint",
     "NearestFix",
+    "OwnerFix",
     "LatestPlace",
     "Dwell",
     "TimelineEntry",
@@ -103,6 +104,17 @@ class NearestFix:
 
     fix: FixPoint
     gap_seconds: float
+
+
+@dataclass(frozen=True)
+class OwnerFix:
+    """The owner's cached last-known warm fix (the PWA position from an earlier turn),
+    with `captured_at` so the caller can label its age and never report it as "here
+    now". Raw doubles — the owner's own coordinate, read only by a full-owner ctx."""
+
+    captured_at: datetime
+    latitude: float
+    longitude: float
 
 
 @dataclass(frozen=True)
@@ -231,6 +243,48 @@ class SqlLocationRepo:
                 )
             ).first()
         return inserted is not None
+
+    async def remember_owner_fix(
+        self, ctx: SessionContext, *, latitude: float, longitude: float
+    ) -> None:
+        """Cache the owner's latest warm PWA fix (one row per owner principal),
+        stamping `captured_at` server-side. Runs under the FULL owner ctx; the
+        `owner_last_fix` WITH CHECK (is_full_owner + location scope) is the barrier,
+        so a narrowed/non-owner session cannot seed or overwrite it."""
+        async with scoped_session(self._maker, ctx) as session:
+            await session.execute(
+                text(
+                    "INSERT INTO app.owner_last_fix (principal_id, latitude, longitude)"
+                    " VALUES (cast(:pid AS uuid), :lat, :lon)"
+                    " ON CONFLICT (principal_id) DO UPDATE SET"
+                    "   latitude = EXCLUDED.latitude,"
+                    "   longitude = EXCLUDED.longitude,"
+                    "   captured_at = now()"
+                ),
+                {"pid": ctx.principal_id, "lat": latitude, "lon": longitude},
+            )
+
+    async def owner_fix(self, ctx: SessionContext, *, max_age_seconds: float) -> OwnerFix | None:
+        """The owner's cached warm fix if one was stored within `max_age_seconds`,
+        else None — the fallback when a turn arrives with no live position. STRICT
+        RLS (full owner + location scope) fails closed for a narrowed/non-owner
+        session, so this needs no extra application gate. The age cap keeps a
+        long-stale fix from being resurfaced as a current location."""
+        async with scoped_session(self._maker, ctx) as session:
+            row = (
+                await session.execute(
+                    text(
+                        "SELECT captured_at, latitude, longitude"
+                        " FROM app.owner_last_fix"
+                        " WHERE principal_id = cast(:pid AS uuid)"
+                        "   AND captured_at >= now() - make_interval(secs => :max_age)"
+                    ),
+                    {"pid": ctx.principal_id, "max_age": max_age_seconds},
+                )
+            ).first()
+        if row is None:
+            return None
+        return OwnerFix(captured_at=row.captured_at, latitude=row.latitude, longitude=row.longitude)
 
     async def record_view(
         self,
