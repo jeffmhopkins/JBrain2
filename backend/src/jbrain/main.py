@@ -67,6 +67,9 @@ from jbrain.api import image_settings as image_settings_api
 from jbrain.api import lists as lists_api
 from jbrain.api import llm_settings as llm_settings_api
 from jbrain.api import settings as settings_api
+from jbrain.api import (
+    tasks as tasks_api,
+)
 from jbrain.api.debug_activity import DebugActivity
 from jbrain.appointments.repo import SqlAppointmentsRepo
 from jbrain.auth.repo import SqlAuthRepo
@@ -100,6 +103,9 @@ from jbrain.search.repo import SqlSearchRepo
 from jbrain.search.service import SearchService
 from jbrain.settings_store import SqlSettingsStore
 from jbrain.storage import FsBackupShelf, FsBlobStore
+from jbrain.tasks.repo import TaskRepo, TaskRunRepo
+from jbrain.tasks.runner import LoopTurnExecutor, TaskRunner
+from jbrain.tasks.scheduler import run_tasks_loop
 from jbrain.tiles import FsTileCache, HttpTileFetcher, TileService, TileSet, tile_cache_namespace
 from jbrain.transcribe import WhisperCppClient
 from jbrain.usage import SqlUsageRecorder
@@ -402,6 +408,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             frozenset(spec.name for spec in ACTION_SPECS),
         )
         app.state.agent_transcript = AgentTranscript(maker, app.state.turn_attachments)
+        # Tasks: saved prompts that spawn an agent session on a schedule or on demand.
+        # The runner reuses the same session/run/transcript stack /chat does, headless;
+        # the scheduler loop (below) is the web-process driver (that's where the agent
+        # stack lives and where "Run now" already executes).
+        app.state.task_repo = TaskRepo(maker)
+        app.state.task_runs = TaskRunRepo(maker)
+        app.state.task_runner = TaskRunner(
+            sessions=app.state.agent_sessions,
+            runlog=app.state.agent_runlog,
+            transcript=app.state.agent_transcript,
+            runs=app.state.task_runs,
+            executor=LoopTurnExecutor(app.state.llm_router, app.state.agent_registry),
+            push=app.state.push_notifier,
+        )
+        tasks_loop_task = asyncio.create_task(
+            run_tasks_loop(maker, app.state.task_repo, app.state.task_runner)
+        )
         # Stopping a service is a synchronous `docker stop` on the supervisor — up to
         # the container's SIGTERM grace (ComfyUI's ~10 s) before it returns — so the
         # default 5 s httpx timeout would spuriously fail a stop that actually succeeds.
@@ -411,6 +434,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         yield
         if live_task is not None:
             live_task.cancel()
+        tasks_loop_task.cancel()
         # Stop any chat turns still running detached from a (now-gone) SSE response, so
         # shutdown doesn't strand them; each closes via its own CancelledError path. AWAIT
         # their tasks (bounded) before disposing the engine: their cancel-cleanup runs the
@@ -500,6 +524,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(session_bridge.router, prefix="/api")
     app.include_router(sessions.router, prefix="/api")
     app.include_router(settings_api.router, prefix="/api")
+    app.include_router(tasks_api.router, prefix="/api")
     app.include_router(tiles.router, prefix="/api")
     app.include_router(wiki.router, prefix="/api")
     return app
