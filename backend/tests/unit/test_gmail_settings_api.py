@@ -222,3 +222,16 @@ def test_connect_derives_redirect_uri_from_request_without_public_base() -> None
             "redirect_uri=http%3A%2F%2Ftestserver%2Fapi%2Fsettings%2Fgmail%2Fcallback"
             in resp.headers["location"]
         )
+
+
+def test_put_normalizes_a_url_ified_client_id(
+    client: tuple[TestClient, FastAPI, FakeSettingsStore],
+) -> None:
+    """Mobile keyboards sometimes paste a client_id as http://…/. Store the bare id so
+    Google doesn't reject it as invalid_client."""
+    test_client, _, store = client
+    test_client.put(
+        "/api/settings/gmail",
+        json={"client_id": "http://460754514015-abc.apps.googleusercontent.com/"},
+    )
+    assert store.values["gmail_client_id"] == "460754514015-abc.apps.googleusercontent.com"

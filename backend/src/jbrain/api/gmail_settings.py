@@ -124,9 +124,20 @@ async def update_gmail_settings(
     def clean(v: str | None) -> str | None:
         return v.strip() if isinstance(v, str) and v.strip() else None
 
+    def clean_client_id(v: str | None) -> str | None:
+        # A Google client_id is never a URL, but mobile keyboards/paste sometimes
+        # URL-ify it (http://…apps.googleusercontent.com/). Strip any scheme + trailing
+        # slash so a fumbled paste doesn't store an unusable client_id. (Secret/refresh
+        # token are left verbatim — refresh tokens legitimately contain '/'.)
+        cleaned = clean(v)
+        if cleaned is None:
+            return None
+        cleaned = cleaned.removeprefix("https://").removeprefix("http://").rstrip("/")
+        return cleaned or None
+
     await store.set_gmail_credentials(
         ctx_for(principal),
-        client_id=clean(body.client_id),
+        client_id=clean_client_id(body.client_id),
         client_secret=clean(body.client_secret),
         refresh_token=clean(body.refresh_token),
     )
