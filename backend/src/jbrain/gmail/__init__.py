@@ -10,11 +10,13 @@ from jbrain.gmail.client import (
     GmailMessage,
 )
 from jbrain.gmail.fake import FakeGmail
+from jbrain.gmail.provider import GmailClientProvider
 
 __all__ = [
     "FakeGmail",
     "GmailApi",
     "GmailClient",
+    "GmailClientProvider",
     "GmailError",
     "GmailLabel",
     "GmailMessage",

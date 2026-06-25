@@ -64,6 +64,7 @@ from jbrain.api import (
 from jbrain.api import (
     appointments as appointments_api,
 )
+from jbrain.api import gmail_settings as gmail_settings_api
 from jbrain.api import image_settings as image_settings_api
 from jbrain.api import lists as lists_api
 from jbrain.api import llm_settings as llm_settings_api
@@ -82,7 +83,7 @@ from jbrain.devices.repo import SqlDeviceRepo
 from jbrain.embed import TeiEmbedClient
 from jbrain.family import SqlFamilyRepo
 from jbrain.geocode import NominatimReverseClient
-from jbrain.gmail import GmailClient
+from jbrain.gmail import GmailClientProvider
 from jbrain.image_gen.comfyui import ComfyUiImageGen
 from jbrain.image_gen.gateway import ComfyUiGatewayClient
 from jbrain.lists.repo import SqlListsRepo
@@ -278,21 +279,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # The jerv chatbot's on-box internet tools — direct, sandboxed web access
         # (no owner data in context; docs/ASSISTANT.md "Agent selection").
         web_handlers = build_web_handlers(SearxngClient(settings.searxng_url), WebFetcher())
-        # The archivist persona's Gmail tools — wired only when a refresh token is
-        # configured; otherwise the gmail_* sidecars drop from the registry (graceful
-        # degrade, docs/EMAIL_ARCHIVIST_PLAN.md). The client holds the long-lived
-        # refresh token and mints access tokens on demand; no DB, no token table.
-        gmail_handlers: dict[str, ToolHandler] = {}
-        if settings.gmail_refresh_token:
-            gmail_handlers = build_gmail_handlers(
-                GmailClient(
-                    settings.gmail_client_id,
-                    settings.gmail_client_secret,
-                    settings.gmail_refresh_token,
-                    base_url=settings.gmail_api_url,
-                    token_url=settings.gmail_token_url,
-                )
-            )
+        # The archivist persona's Gmail tools. Always wired over a provider that reads
+        # the OAuth credentials live from the settings panel (env fallback), so a saved
+        # change takes effect with no restart; until a refresh token exists the tools
+        # report "connect Gmail in Settings" (docs/EMAIL_ARCHIVIST_PLAN.md).
+        app.state.gmail_provider = GmailClientProvider(
+            settings_store,
+            settings,
+            base_url=settings.gmail_api_url,
+            token_url=settings.gmail_token_url,
+        )
+        gmail_handlers = build_gmail_handlers(app.state.gmail_provider.client)
         # The on-box geocoder: an offline nearest-city reverse lookup (no resident
         # service, no RAM at rest, no egress) shared by the curator's geocode_reverse,
         # the map's reverse-geocode endpoint, and jerv's current_location. The
@@ -518,6 +515,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(session_bridge.router, prefix="/api")
     app.include_router(sessions.router, prefix="/api")
     app.include_router(settings_api.router, prefix="/api")
+    app.include_router(gmail_settings_api.router, prefix="/api")
     app.include_router(tiles.router, prefix="/api")
     app.include_router(wiki.router, prefix="/api")
     return app

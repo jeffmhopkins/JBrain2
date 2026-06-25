@@ -9,15 +9,22 @@ content as DATA (the model treats it as such, never as instructions); the three 
 (create_label / label / archive) act only on the owner's own mailbox and never delete.
 """
 
+from collections.abc import Awaitable, Callable
+
 from jbrain.agent.loop import ToolContext, ToolHandler
 from jbrain.gmail import GmailApi, GmailError
 
 _SEARCH_DEFAULT = 25
 _SEARCH_MAX = 100
 
+# Resolves the live Gmail client per call (credentials come from the settings panel,
+# so they can change without a restart). Raises GmailError when Gmail isn't connected
+# yet — each handler catches it and surfaces the "connect in Settings" message.
+GmailClientGetter = Callable[[], Awaitable[GmailApi]]
 
-def build_gmail_handlers(client: GmailApi) -> dict[str, ToolHandler]:
-    """One handler per gmail_* tool, each closing over the one Gmail client."""
+
+def build_gmail_handlers(get_client: GmailClientGetter) -> dict[str, ToolHandler]:
+    """One handler per gmail_* tool, each resolving the live client on every call."""
 
     async def gmail_search(arguments: dict, ctx: ToolContext) -> str:
         query = str(arguments.get("query", "")).strip()
@@ -26,6 +33,7 @@ def build_gmail_handlers(client: GmailApi) -> dict[str, ToolHandler]:
         raw_limit = arguments.get("limit", _SEARCH_DEFAULT) or _SEARCH_DEFAULT
         limit = max(1, min(int(raw_limit), _SEARCH_MAX))
         try:
+            client = await get_client()
             ids = await client.search(query, max_results=limit)
             if not ids:
                 return f"No Gmail messages match '{query}'."
@@ -44,6 +52,7 @@ def build_gmail_handlers(client: GmailApi) -> dict[str, ToolHandler]:
         if not message_id:
             return "gmail_read needs a message_id."
         try:
+            client = await get_client()
             msg = await client.get(message_id)
         except GmailError as exc:
             return str(exc)
@@ -52,6 +61,7 @@ def build_gmail_handlers(client: GmailApi) -> dict[str, ToolHandler]:
 
     async def gmail_list_labels(arguments: dict, ctx: ToolContext) -> str:
         try:
+            client = await get_client()
             labels = await client.list_labels()
         except GmailError as exc:
             return str(exc)
@@ -65,6 +75,7 @@ def build_gmail_handlers(client: GmailApi) -> dict[str, ToolHandler]:
         if not name:
             return "gmail_create_label needs a name."
         try:
+            client = await get_client()
             label = await client.create_label(name)
         except GmailError as exc:
             return str(exc)
@@ -79,6 +90,7 @@ def build_gmail_handlers(client: GmailApi) -> dict[str, ToolHandler]:
         if not add and not remove:
             return "gmail_label needs at least one label to add or remove."
         try:
+            client = await get_client()
             by_name = {label.name: label.id for label in await client.list_labels()}
             missing = [n for n in add if n not in by_name]
             if missing:
@@ -107,6 +119,7 @@ def build_gmail_handlers(client: GmailApi) -> dict[str, ToolHandler]:
         if not message_id:
             return "gmail_archive needs a message_id."
         try:
+            client = await get_client()
             await client.modify(message_id, remove_label_ids=["INBOX"])
         except GmailError as exc:
             return str(exc)
@@ -117,6 +130,7 @@ def build_gmail_handlers(client: GmailApi) -> dict[str, ToolHandler]:
         if not query:
             return "gmail_count needs a non-empty query."
         try:
+            client = await get_client()
             total, capped = await client.count(query)
         except GmailError as exc:
             return str(exc)
@@ -133,6 +147,7 @@ def build_gmail_handlers(client: GmailApi) -> dict[str, ToolHandler]:
         if not add and not remove:
             return "gmail_bulk_label needs at least one label to add or remove."
         try:
+            client = await get_client()
             by_name = {label.name: label.id for label in await client.list_labels()}
             missing = [n for n in add if n not in by_name]
             if missing:

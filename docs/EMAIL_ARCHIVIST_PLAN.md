@@ -168,6 +168,20 @@ gmail_api_url: str = "https://gmail.googleapis.com/gmail/v1"
 The `archivist` uses the default agent routing (the selected reasoning model), so no
 task-profile entry is added — see "LLM routing (decided)" above.
 
+### Credentials via the GUI (settings panel)
+
+Beyond the env vars, the OAuth credentials are settable from a **Settings → Gmail
+(Archivist)** panel: three write-only fields (client id / secret / refresh token) +
+Save + a Test button, owner-only over `app.settings` (`GET/PUT /api/settings/gmail`,
+`POST …/test`). Secrets are stored server-side and **never echoed back** — the status
+is booleans only (`*_set`, `connected`). A `GmailClientProvider` resolves the live
+credentials (stored values over the `JBRAIN_GMAIL_*` env fallback) and rebuilds the
+client only when they change, so a saved change takes effect **with no restart** — the
+same posture as the LLM routing settings. The gmail_* handlers are therefore wired
+unconditionally and report "connect Gmail in Settings" until a refresh token exists.
+The refresh token itself still comes from the one-time bootstrap below (a Desktop
+client + loopback); the panel is where it's pasted and stored.
+
 ### OAuth bootstrap (no prior art in the repo)
 
 A one-time, owner-run script (`scripts/gmail-oauth-bootstrap.py`) that runs the

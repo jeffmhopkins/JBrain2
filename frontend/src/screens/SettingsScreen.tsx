@@ -1,5 +1,11 @@
 import { useEffect, useState } from "react";
-import type { DebugToken, FeedConfig, ImageAnalysisMode } from "../api/client";
+import type {
+  DebugToken,
+  FeedConfig,
+  GmailSettings,
+  GmailTestResult,
+  ImageAnalysisMode,
+} from "../api/client";
 import { ApiError, api } from "../api/client";
 import { FONT_SCALES, type FontScale, getFontScale, setFontScale } from "../fontScale";
 import { isLocationCaptureEnabled, setLocationCaptureEnabled } from "../location";
@@ -55,6 +61,50 @@ export function SettingsScreen({ deviceLabel, onLogout }: SettingsScreenProps) {
       stale = true;
     };
   }, []);
+
+  // The archivist's Gmail connection. Status is booleans only (secrets never leave
+  // the server); the three inputs are write-only — empty fields are left unchanged.
+  const [gmail, setGmail] = useState<GmailSettings | null>(null);
+  const [gmailId, setGmailId] = useState("");
+  const [gmailSecret, setGmailSecret] = useState("");
+  const [gmailToken, setGmailToken] = useState("");
+  const [gmailSaving, setGmailSaving] = useState(false);
+  const [gmailTest, setGmailTest] = useState<GmailTestResult | null>(null);
+  useEffect(() => {
+    let stale = false;
+    api
+      .getGmailSettings()
+      .then((s) => {
+        if (!stale) setGmail(s);
+      })
+      .catch(() => {});
+    return () => {
+      stale = true;
+    };
+  }, []);
+
+  function saveGmail() {
+    const patch: { client_id?: string; client_secret?: string; refresh_token?: string } = {};
+    if (gmailId.trim()) patch.client_id = gmailId.trim();
+    if (gmailSecret.trim()) patch.client_secret = gmailSecret.trim();
+    if (gmailToken.trim()) patch.refresh_token = gmailToken.trim();
+    setGmailSaving(true);
+    setGmailTest(null);
+    void api
+      .updateGmailSettings(patch)
+      .then((s) => {
+        setGmail(s);
+        setGmailId("");
+        setGmailSecret("");
+        setGmailToken("");
+      })
+      .finally(() => setGmailSaving(false));
+  }
+
+  function testGmail() {
+    setGmailTest(null);
+    void api.testGmailSettings().then(setGmailTest);
+  }
 
   // The read-only appointments ICS feed — a revocable subscribe URL the owner
   // hands to a calendar app. Server-held token; absent => the feed is off.
@@ -280,6 +330,73 @@ export function SettingsScreen({ deviceLabel, onLogout }: SettingsScreenProps) {
         <div className="settings-value" aria-label="Time zone">
           {timezone}
         </div>
+      </section>
+
+      <section className="settings-card">
+        <h2 className="settings-label">Gmail (Archivist)</h2>
+        <p className="settings-meta">
+          connects the Archivist agent to your Gmail so it can organize your mail. Paste the OAuth
+          credentials from Google Cloud, plus the refresh token from the bootstrap script. The
+          Archivist reads, labels and archives — it never deletes. Secrets are stored on the server
+          and never shown again.
+        </p>
+        <div className="settings-value" aria-label="Gmail connection status">
+          {gmail === null
+            ? "…"
+            : gmail.connected
+              ? "Connected"
+              : gmail.client_id_set || gmail.client_secret_set
+                ? "Credentials saved — add a refresh token to connect"
+                : "Not connected"}
+        </div>
+        <label className="settings-field">
+          Client ID
+          <input
+            type="text"
+            autoComplete="off"
+            placeholder={gmail?.client_id_set ? "•••••• (saved)" : "…apps.googleusercontent.com"}
+            value={gmailId}
+            onChange={(e) => setGmailId(e.target.value)}
+          />
+        </label>
+        <label className="settings-field">
+          Client secret
+          <input
+            type="password"
+            autoComplete="off"
+            placeholder={gmail?.client_secret_set ? "•••••• (saved)" : ""}
+            value={gmailSecret}
+            onChange={(e) => setGmailSecret(e.target.value)}
+          />
+        </label>
+        <label className="settings-field">
+          Refresh token
+          <input
+            type="password"
+            autoComplete="off"
+            placeholder={gmail?.refresh_token_set ? "•••••• (saved)" : ""}
+            value={gmailToken}
+            onChange={(e) => setGmailToken(e.target.value)}
+          />
+        </label>
+        <div className="settings-actions">
+          <button
+            type="button"
+            className="seg"
+            disabled={gmailSaving || (!gmailId.trim() && !gmailSecret.trim() && !gmailToken.trim())}
+            onClick={saveGmail}
+          >
+            {gmailSaving ? "Saving…" : "Save"}
+          </button>
+          <button type="button" className="seg" disabled={!gmail?.connected} onClick={testGmail}>
+            Test connection
+          </button>
+        </div>
+        {gmailTest && (
+          <p className={`settings-meta${gmailTest.ok ? "" : " settings-error"}`}>
+            {gmailTest.detail}
+          </p>
+        )}
       </section>
 
       <section className="settings-card">

@@ -27,7 +27,21 @@ def _msg(mid: str, subject: str = "Invoice", body: str = "please pay", sender: s
 
 
 def _handlers(fake: FakeGmail):
-    return build_gmail_handlers(fake)
+    async def get_client():
+        return fake
+
+    return build_gmail_handlers(get_client)
+
+
+async def test_handlers_report_when_gmail_is_not_connected() -> None:
+    async def get_client():
+        raise GmailError("Gmail isn't connected yet — add your OAuth credentials in Settings.")
+
+    handlers = build_gmail_handlers(get_client)
+    out = await handlers["gmail_search"]({"query": "x"}, CTX)
+    assert "connect" in out.lower() and "Settings" in out
+    out2 = await handlers["gmail_label"]({"message_id": "m1", "add": ["X"]}, CTX)
+    assert "connect" in out2.lower()
 
 
 # --- reads -----------------------------------------------------------------

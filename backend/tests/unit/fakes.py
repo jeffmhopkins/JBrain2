@@ -269,6 +269,28 @@ class FakeSettingsStore:
         tz = self.values.get("owner_timezone")
         return tz if isinstance(tz, str) and is_valid_timezone(tz) else None
 
+    async def gmail_credentials(self, ctx: object) -> tuple[str, str, str]:
+        return (
+            str(self.values.get("gmail_client_id", "") or ""),
+            str(self.values.get("gmail_client_secret", "") or ""),
+            str(self.values.get("gmail_refresh_token", "") or ""),
+        )
+
+    async def set_gmail_credentials(
+        self,
+        ctx: object,
+        *,
+        client_id: str | None = None,
+        client_secret: str | None = None,
+        refresh_token: str | None = None,
+    ) -> None:
+        if client_id is not None:
+            self.values["gmail_client_id"] = client_id
+        if client_secret is not None:
+            self.values["gmail_client_secret"] = client_secret
+        if refresh_token is not None:
+            self.values["gmail_refresh_token"] = refresh_token
+
     async def reflexion_buffer_retry(self, ctx: object) -> bool:
         return self.values.get("reflexion_buffer_retry", False) is True
 
