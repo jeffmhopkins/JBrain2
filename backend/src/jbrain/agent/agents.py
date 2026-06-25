@@ -94,8 +94,12 @@ GMAIL_TOOLS = frozenset(
 # base (docs/EMAIL_ARCHIVIST_PLAN.md).
 MEMORY_TOOLS = frozenset({"archivist_memory_read", "archivist_memory_write"})
 
-# The archivist's full allowlist: the Gmail organize-an-inbox tools plus its memory.
-ARCHIVIST_TOOLS = GMAIL_TOOLS | MEMORY_TOOLS
+# The archivist's full allowlist: the Gmail organize-an-inbox tools, its memory, and
+# `current_time` — a shared default-knowledge tool (also in JERV_TOOLS) it needs to
+# ground relative date queries (older_than:, before:/after:) against today, since
+# date-by-date filing is the heart of the job. Every turn already prepends today's date
+# (now_block); the tool covers an explicit fresh / other-zone read.
+ARCHIVIST_TOOLS = GMAIL_TOOLS | MEMORY_TOOLS | frozenset({"current_time"})
 
 DEFAULT_AGENT = "curator"
 

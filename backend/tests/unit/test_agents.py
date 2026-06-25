@@ -72,11 +72,12 @@ def test_image_tools_are_jerv_only() -> None:
 
 
 def test_archivist_is_a_sandboxed_gmail_organizer() -> None:
-    """archivist may call only the gmail_* tools and its own cross-session memory, and
-    reads no knowledge base, so no owner note/entity data is in context while it triages
-    mail."""
+    """archivist may call the gmail_* tools, its own cross-session memory, and the
+    shared current_time read (to ground date queries), and reads no knowledge base, so
+    no owner note/entity data is in context while it triages mail."""
     archivist = AGENTS["archivist"]
-    assert archivist.tools == ARCHIVIST_TOOLS == GMAIL_TOOLS | MEMORY_TOOLS
+    assert archivist.tools == ARCHIVIST_TOOLS == GMAIL_TOOLS | MEMORY_TOOLS | {"current_time"}
+    assert "current_time" in archivist.tools  # date awareness for older_than:/before: queries
     assert {
         "gmail_search",
         "gmail_read",
@@ -92,11 +93,14 @@ def test_archivist_is_a_sandboxed_gmail_organizer() -> None:
 
 
 def test_archivist_tools_are_archivist_only() -> None:
-    """The gmail_* and memory tools live in the archivist's allowlist and nowhere else —
-    curator (allow=None) never offers the opt-in `web` class, jerv doesn't hold them, and
-    the tool-less teacher offers nothing."""
+    """The gmail_* and memory tools — the archivist's EXCLUSIVE surface — live in its
+    allowlist and nowhere else: curator (allow=None) never offers the opt-in `web` class,
+    jerv doesn't hold them, and the tool-less teacher offers nothing. (current_time is a
+    deliberate shared default-knowledge tool, so it's excluded from the exclusivity
+    check.)"""
     assert AGENTS["curator"].tools is None
-    assert not (ARCHIVIST_TOOLS & JERV_TOOLS)
+    assert not ((GMAIL_TOOLS | MEMORY_TOOLS) & JERV_TOOLS)
+    assert ARCHIVIST_TOOLS & JERV_TOOLS == {"current_time"}  # the one shared tool
     assert AGENTS["teacher"].tools == frozenset()
 
 
@@ -130,8 +134,8 @@ def test_persona_prompts_pinned_to_their_versions() -> None:
             "2d687bd63dc39eccc3a1501d5668684c57b6bccfcbc159ea1c96d96bba5a07e5",
         ),
         "archivist": (
-            "agent-archivist-v3",
-            "075d12e643c3ff60091160120532e98cf7ade3436b9790fb1b5f6045e46c87c8",
+            "agent-archivist-v4",
+            "0ab3148dfc0937a4175939dbec5a6260bc3f1151f6657143778ad579204176f7",
         ),
     }
     assert set(pins) == AGENT_NAMES

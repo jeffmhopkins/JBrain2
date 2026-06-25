@@ -78,7 +78,11 @@ egress Proposal instead of acting directly (noted in Wave E3).
 - **Wave E2 — tools + persona** (no GUI): the six `.tool` sidecars + handlers (thin
   over the client), the `archivist` persona + its allowlist in `agents.py`, the
   `archivist.prompt` system prompt, and the `web`-gate wiring in `main.py`. This is
-  the **interactive agent session** — the user's "first step."
+  the **interactive agent session** — the user's "first step." The persona is
+  selectable in the GUI under the **Research** tab (alongside jerv/teacher — the
+  no-knowledge-base agents; `frontend/.../useFullBrain.ts` `MODE_AGENTS`), and holds
+  the shared `current_time` read so it can ground relative date queries (`older_than:`,
+  `before:/after:`) — every turn already prepends today's date.
 - **Wave E2.5 — count + bulk primitives** (no GUI): the per-message tools above can't
   scale to a 20-year mailbox (search caps a page; label/archive act on one id). E2.5
   adds the two operations that make the archivist actually capable at scale, both
