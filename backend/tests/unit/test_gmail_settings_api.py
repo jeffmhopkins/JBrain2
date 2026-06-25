@@ -3,6 +3,7 @@ with Gmail's HTTP faked (no network). Secrets are stored but never echoed back."
 
 import asyncio
 from collections.abc import Iterator
+from typing import Any
 
 import httpx
 import pytest
@@ -16,7 +17,7 @@ from jbrain.main import create_app
 from tests.unit.fakes import FakeAuthRepo, FakeSettingsStore
 
 
-def _settings(**kw: object) -> Settings:
+def _settings(**kw: Any) -> Settings:
     kw.setdefault("secure_cookies", False)
     kw.setdefault("database_url", "postgresql+asyncpg://nobody@localhost:1/none")
     return Settings(**kw)

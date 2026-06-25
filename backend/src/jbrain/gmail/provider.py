@@ -11,7 +11,7 @@ recoverable GmailError the handlers surface as "connect Gmail in Settings".
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol
 
 import httpx
 
@@ -20,11 +20,17 @@ from jbrain.gmail.client import GmailApi, GmailClient, GmailError
 
 if TYPE_CHECKING:
     from jbrain.config import Settings
-    from jbrain.settings_store import SqlSettingsStore
 
 # Gmail credentials are owner-only settings; reading them needs only the owner
 # identity, not a specific principal id (app.is_owner() is principal-kind based).
 _OWNER = SessionContext(principal_kind="owner")
+
+
+class CredentialStore(Protocol):
+    """The slice of the settings store the provider needs — just the Gmail credential
+    read. A Protocol so the live SqlSettingsStore and the test fake both satisfy it."""
+
+    async def gmail_credentials(self, ctx: SessionContext) -> tuple[str, str, str]: ...
 
 
 class GmailClientProvider:
@@ -32,7 +38,7 @@ class GmailClientProvider:
 
     def __init__(
         self,
-        store: SqlSettingsStore,
+        store: CredentialStore,
         settings: Settings,
         *,
         base_url: str,

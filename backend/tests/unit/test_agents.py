@@ -77,7 +77,7 @@ def test_archivist_is_a_sandboxed_gmail_organizer() -> None:
     no owner note/entity data is in context while it triages mail."""
     archivist = AGENTS["archivist"]
     assert archivist.tools == ARCHIVIST_TOOLS == GMAIL_TOOLS | MEMORY_TOOLS | {"current_time"}
-    assert "current_time" in archivist.tools  # date awareness for older_than:/before: queries
+    assert "current_time" in ARCHIVIST_TOOLS  # date awareness for older_than:/before: queries
     assert {
         "gmail_search",
         "gmail_read",

@@ -1,6 +1,8 @@
 """GmailClientProvider — resolves live credentials (settings store over env) into a
 cached client (docs/EMAIL_ARCHIVIST_PLAN.md). No network: client() only constructs."""
 
+from typing import Any
+
 import pytest
 
 from jbrain.config import Settings
@@ -8,7 +10,7 @@ from jbrain.gmail import GmailClient, GmailClientProvider, GmailError
 from tests.unit.fakes import FakeSettingsStore
 
 
-def _settings(**kw: str) -> Settings:
+def _settings(**kw: Any) -> Settings:
     kw.setdefault("database_url", "postgresql+asyncpg://nobody@localhost:1/none")
     return Settings(**kw)
 
