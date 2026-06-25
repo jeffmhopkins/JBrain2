@@ -139,11 +139,7 @@ export function HomeScreen({
   // list), so the transcript starts right under it; other modes keep the wordmark.
   // The empty fallback names the tab, and a Teacher chat reads "Teacher".
   const convTitleFallback =
-    seg.mode === "research"
-      ? fb.active?.agent === "teacher"
-        ? "Teacher"
-        : "Research"
-      : "Full Brain";
+    seg.mode === "research" ? (fb.active?.agent === "teacher" ? "Teacher" : "Research") : "Brain";
   const fbSession = conversational
     ? {
         title: fb.active ? fb.active.title || convTitleFallback : convTitleFallback,

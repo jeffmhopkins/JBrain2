@@ -629,20 +629,6 @@ h3 {
   flex: none;
 }
 
-.mode-dot {
-  width: 11px;
-  height: 11px;
-  border-radius: var(--r-pill);
-  background: var(--mode);
-  flex: none;
-}
-
-.foot-text {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .foot-icons {
   margin-left: auto;
   display: flex;
@@ -662,25 +648,18 @@ h3 {
 
 /* The live context-usage meter in the composer foot: a thin two-tone fill bar + a
    terse "used/window · %%". The solid segment is the carried-forward floor; the
-   dimmer segment over it is the turn's transient tool I/O. Sits between the footer
-   text and the action icons, muted until the window actually fills. */
+   dimmer segment over it is the turn's transient tool I/O. Sits at the foot's
+   left, muted until the window actually fills; the action icons take the right. */
 .ctx-meter {
   display: flex;
   align-items: center;
   gap: 6px;
-  margin-left: auto;
   flex: none;
   font-size: var(--fs-micro);
   color: var(--text-3);
   font-variant-numeric: tabular-nums;
   /* The fill hue; thresholds below warm it, both fill segments derive from it. */
   --ctx-hue: var(--steel);
-}
-
-/* The foot-icons row already claims `margin-left: auto`; with the meter present it
-   sits right after the meter (which took the auto margin), so reset its own. */
-.ctx-meter + .foot-icons {
-  margin-left: 14px;
 }
 
 .ctx-bar {
@@ -1433,6 +1412,171 @@ h3 {
   font-size: var(--fs-micro);
   color: var(--text-3);
   margin-left: auto;
+}
+
+/* ---- On-box models redesign: one card, a shared always-visible meter, and two
+   independently-collapsible sections (On-box LLMs / Image models). Reuses the
+   .llm-mem* meter chrome and the .llm-local-* row internals; only the card shell,
+   section toggles, and omnibox tabs are new. */
+.onbox-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-card);
+  margin-bottom: 12px;
+  overflow: hidden;
+  /* Same hazard as .llm-group: .settings is the scroll container and a flex column,
+     so pin natural height and let the body scroll instead of being clipped. */
+  flex: none;
+}
+.onbox-head {
+  padding: 13px 16px;
+}
+.onbox-status {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.onbox-status-title {
+  font-weight: 500;
+}
+.onbox-status-sub {
+  margin-left: auto;
+  font-size: var(--fs-micro);
+  color: var(--text-2);
+}
+/* The shared meter sits in the head, always visible (not gated by a collapse). */
+.onbox-head .llm-mem {
+  margin: 12px 0 2px;
+}
+.onbox-mem-empty {
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+  margin: 10px 0 2px;
+}
+/* The image-VRAM key swatch in the meter caption (violet, matching the segment). */
+.onbox-mem-key {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--text-3);
+}
+.onbox-mem-sw {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  background: var(--violet);
+}
+/* The amber "staged" dot state on the shared meter's status light. */
+.onbox-status .llm-local-dot.amber {
+  background: var(--amber);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--amber) 18%, transparent);
+}
+
+/* Section header buttons: an accent rail (steel / violet), the section name, a live
+   meta count, and a caret that rotates open. */
+.onbox-sec-toggle {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  background: transparent;
+  border: 0;
+  border-top: 1px solid var(--border);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--fs-secondary);
+  font-weight: 500;
+  padding: 12px 16px;
+  cursor: pointer;
+}
+.onbox-rail {
+  width: 3px;
+  height: 15px;
+  border-radius: 2px;
+  flex: none;
+}
+.onbox-sec-toggle.llm .onbox-rail {
+  background: var(--steel);
+}
+.onbox-sec-toggle.img .onbox-rail {
+  background: var(--violet);
+}
+.onbox-sec-meta {
+  margin-left: auto;
+  color: var(--text-3);
+  font-size: var(--fs-micro);
+  font-weight: 400;
+}
+.onbox-sec-toggle .llm-exp-caret {
+  color: var(--text-3);
+  margin-left: 8px;
+}
+
+/* Collapsible section body. Each body sets the ambient --mode/--mode-tint so its
+   active omnibox tab fills with the section accent (steel / violet) — and, by NOT
+   living under .llm-group, never inherits that selector's inset ring. */
+.onbox-body {
+  border-top: 1px solid var(--border);
+  background: color-mix(in srgb, var(--surface) 92%, #000);
+  padding-bottom: 8px;
+}
+.onbox-llm {
+  --mode: var(--steel);
+  --mode-tint: var(--steel-tint);
+}
+.onbox-img {
+  --mode: var(--violet);
+  --mode-tint: var(--violet-tint);
+}
+/* The omnibox tabs reuse .seg-row/.seg; just give them the card's side gutter. */
+.onbox-tabs {
+  margin: 12px 16px 0;
+}
+.onbox-tabs .seg-ic svg {
+  width: 15px;
+  height: 15px;
+  display: block;
+}
+.onbox-list {
+  padding: 0 16px;
+}
+.onbox-tab-hint {
+  font-size: var(--fs-micro);
+  color: var(--text-2);
+  line-height: 1.5;
+  margin: 10px 2px 2px;
+}
+.onbox-tab-hint code {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 1px 6px;
+  font-size: 0.92em;
+}
+/* The image service control row sits flush at the top of the image body. */
+.onbox-svc {
+  margin: 12px 16px 0;
+  padding-top: 0;
+  border-top: 0;
+}
+/* The Catalog tab's Uninstall button: a danger pill (rose), and the "uninstalling"
+   state chip while its removal is queued. */
+.llm-local-btn.danger {
+  color: var(--rose);
+  border-color: color-mix(in srgb, var(--rose) 40%, var(--border));
+}
+.llm-local-btn.danger:hover:not(:disabled) {
+  border-color: var(--rose);
+  color: var(--rose);
+  background: var(--rose-tint);
+}
+.llm-local-state.removing {
+  color: var(--rose);
+}
+.llm-local-row.removing {
+  border-left: 2px solid var(--rose);
+  padding-left: 10px;
+  margin-left: -12px;
 }
 
 /* The ambient --mode-tint that .seg-on fills with isn't set on this screen, so
@@ -9256,19 +9400,6 @@ button.small {
   flex-wrap: wrap;
   gap: 6px;
   min-width: 0;
-}
-/* A prompt-edit diff (Loop 4): monospace, scroll a long line rather than overflow
-   the sheet, so the owner can read the exact change on a phone. */
-.fb-shell .prompt-edit-diff {
-  margin: 6px 0 0;
-  padding: 8px;
-  background: var(--surface-2);
-  border: 1px solid var(--border);
-  border-radius: var(--r-sm, 6px);
-  font-size: 12px;
-  line-height: 1.4;
-  overflow-x: auto;
-  white-space: pre;
 }
 .fb-shell .merge-chip {
   display: inline-flex;

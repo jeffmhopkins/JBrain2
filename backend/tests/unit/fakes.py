@@ -272,9 +272,6 @@ class FakeSettingsStore:
     async def reflexion_buffer_retry(self, ctx: object) -> bool:
         return self.values.get("reflexion_buffer_retry", False) is True
 
-    async def skills_enabled(self, ctx: object) -> bool:
-        return self.values.get("skills_enabled", False) is True
-
     async def llm_task_overrides(self, ctx: object) -> dict[str, dict[str, str]]:
         # Mirrors the SQL store's sanitizing read (drops malformed entries).
         raw = self.values.get("llm_task_overrides", {})
@@ -361,6 +358,28 @@ class FakeSettingsStore:
                 seen.add(mid)
                 clean.append(mid)
         self.values["llm_local_provision_requested"] = clean
+        return clean
+
+    async def llm_local_remove_requested(self, ctx: object) -> list[str]:
+        raw = self.values.get("llm_local_remove_requested", [])
+        if not isinstance(raw, list):
+            return []
+        seen: set[str] = set()
+        out: list[str] = []
+        for mid in raw:
+            if isinstance(mid, str) and mid not in seen:
+                seen.add(mid)
+                out.append(mid)
+        return out
+
+    async def set_llm_local_remove_requested(self, ctx: object, ids: list[str]) -> list[str]:
+        seen: set[str] = set()
+        clean: list[str] = []
+        for mid in ids:
+            if isinstance(mid, str) and mid not in seen:
+                seen.add(mid)
+                clean.append(mid)
+        self.values["llm_local_remove_requested"] = clean
         return clean
 
 

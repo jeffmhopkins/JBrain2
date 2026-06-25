@@ -2,10 +2,10 @@
 
 A closed, repeatable loop for calibrating the three analysis-layer prompts
 (`note.extract`, `integrate.note`, `entity.disambiguate`) against the owner's
-local model on the box, and for guarding their quality in CI. This is the
-testing spine behind the deferred Loop-4 self-edit (docs/ROADMAP.md Phase 6):
-the same eval corpora + deterministic scorers a human uses to calibrate a prompt
-by hand are what an agent would later optimize against.
+local model on the box, and for guarding their quality in CI. It is the
+analysis-prompt calibration harness and the CI quality guard: eval corpora +
+deterministic scorers that a human uses to calibrate a prompt by hand on the box,
+and that gate merges in CI against a faked model.
 
 ## Two tracks (the load-bearing distinction)
 
@@ -41,11 +41,9 @@ CI replays real model behavior deterministically.
   `CaseResult` shape and the proven case JSON schema (note.extract only today).
 - `backend/evals/audit.py` — offline case validator, CI-enforced via
   `test_eval_scoring.py::test_eval_cases_pass_audit`.
-- `jbrain.workflow.promotion.promotion_decision` — the two-dimensional
-  `{task, safety}` gate (candidate must win its new case with no task OR safety
-  regression); `EvalRun` / `FixtureScore`.
-- `jbrain.workflow.evalaction` — the nightly `eval_run` action with
-  `SelfImprovementGate` (kill-switch + token budget) and `EvalRunStore`.
+- `jbrain.evals.scores` — the two-dimensional `{task, safety}` score shape
+  (`EvalRun` / `FixtureScore`): each case carries a task-success and a safety
+  dimension, so a scorer change that trades safety for task success is visible.
 - The debug async-job path (`/api/debug/complete-async` + `/jobs/{id}`) — the box
   driver that survives the Cloudflare ~100s edge timeout.
 - Deterministic oracles: `analysis.intent.validate_intent` (L2 violation codes),

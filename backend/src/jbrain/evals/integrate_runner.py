@@ -39,7 +39,7 @@ from jbrain.analysis.integrate_prompt import (
 )
 from jbrain.analysis.intent import IntegrationIntent
 from jbrain.analysis.intent_parse import INTENT_SCHEMA, parse_intent
-from jbrain.workflow.promotion import EvalRun, FixtureScore
+from jbrain.evals.scores import EvalRun, FixtureScore
 
 CASES_DIR = Path(__file__).parent / "integrate_cases"
 
@@ -229,7 +229,7 @@ _SAFETY_PREFIXES = ("no_mint_name:", "no_value_sentence:")
 
 
 def eval_run_from_integrate(results: list[IntegrateResult], version: str) -> EvalRun:
-    """Adapt to the promotion gate's EvalRun: task = fraction of judgment checks
+    """Adapt to a two-dimensional EvalRun: task = fraction of judgment checks
     passed; safety = fraction of the data-integrity guards passed (1.0 when none)."""
     scores: list[FixtureScore] = []
     for r in results:

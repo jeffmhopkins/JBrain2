@@ -17,8 +17,6 @@ from jbrain.locations import Dwell, FixPoint, LatestPlace, NearestFix, PlaceGeof
 from jbrain.main import create_app
 from tests.unit.fakes import FakeAuthRepo
 
-NOW = datetime(2026, 6, 18, 12, 0, tzinfo=UTC)
-
 
 class FakeLocationRepo:
     def __init__(self) -> None:
@@ -123,7 +121,8 @@ def test_digest_weekly_default_period(
     locs.place_rows = [
         PlaceGeofence("e-home", "Home", True, (40.0, -74.0), 100.0, None),
     ]
-    locs.dwell_rows = [_dwell("Home", NOW - timedelta(hours=10), NOW - timedelta(hours=2))]
+    now = datetime.now(UTC)
+    locs.dwell_rows = [_dwell("Home", now - timedelta(hours=10), now - timedelta(hours=2))]
     body = client.get("/api/locations/digest").json()
     assert body["period"] == "week"
     # Default window ~7 days.
@@ -153,9 +152,10 @@ def test_digest_response_is_coordinate_free(
     login(client, repo)
     devices.subs = ["sub-1"]
     locs.place_rows = [PlaceGeofence("e-home", "Home", True, (40.0, -74.0), 100.0, None)]
+    now = datetime.now(UTC)
     locs.dwell_rows = [
-        _dwell("Office", NOW - timedelta(hours=20), NOW - timedelta(hours=12)),
-        _dwell("Home", NOW - timedelta(hours=8), NOW - timedelta(hours=1)),
+        _dwell("Office", now - timedelta(hours=20), now - timedelta(hours=12)),
+        _dwell("Home", now - timedelta(hours=8), now - timedelta(hours=1)),
     ]
     body = client.get("/api/locations/digest").json()
     # The serialized payload exposes no coordinate field and no fence coordinate value.

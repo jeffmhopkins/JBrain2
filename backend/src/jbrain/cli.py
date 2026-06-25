@@ -66,6 +66,32 @@ async def _clear_provision_ids() -> None:
         await engine.dispose()
 
 
+async def _print_remove_ids() -> None:
+    """Print the uninstall queue (one catalog id per line) for the update one-shot.
+    Owner-scoped (settings RLS is is_owner()); empty output is the normal 'nothing
+    queued' case, so the caller treats a clean exit with no lines as no-op."""
+    settings = get_settings()
+    engine = create_async_engine(settings.database_url)
+    try:
+        store = SqlSettingsStore(async_sessionmaker(engine, expire_on_commit=False))
+        for model_id in await store.llm_local_remove_requested(SYSTEM_CTX):
+            print(model_id)
+    finally:
+        await engine.dispose()
+
+
+async def _clear_remove_ids() -> None:
+    """Empty the uninstall queue — called by the update one-shot after a successful
+    pass so a completed uninstall stops re-appearing as queued."""
+    settings = get_settings()
+    engine = create_async_engine(settings.database_url)
+    try:
+        store = SqlSettingsStore(async_sessionmaker(engine, expire_on_commit=False))
+        await store.set_llm_local_remove_requested(SYSTEM_CTX, [])
+    finally:
+        await engine.dispose()
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="jbrain-cli")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -73,6 +99,8 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("reset-owner-key", help="revoke the owner key and print a new one")
     sub.add_parser("local-provision-ids", help="print the local-model install queue")
     sub.add_parser("local-provision-clear", help="empty the local-model install queue")
+    sub.add_parser("local-remove-ids", help="print the local-model uninstall queue")
+    sub.add_parser("local-remove-clear", help="empty the local-model uninstall queue")
     args = parser.parse_args(argv)
 
     if args.command in ("init", "reset-owner-key"):
@@ -83,6 +111,12 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.command == "local-provision-clear":
         asyncio.run(_clear_provision_ids())
+        return 0
+    if args.command == "local-remove-ids":
+        asyncio.run(_print_remove_ids())
+        return 0
+    if args.command == "local-remove-clear":
+        asyncio.run(_clear_remove_ids())
         return 0
     return 1
 

@@ -36,7 +36,6 @@ from jbrain.agent.metricstools import build_metrics_handlers
 from jbrain.agent.presencetools import build_presence_handlers
 from jbrain.agent.proposals import ProposalRepo
 from jbrain.agent.proposaltools import build_proposal_handlers
-from jbrain.agent.selfedittools import build_selfedit_handlers
 from jbrain.agent.toolregistry import ToolRegistry, load_registry
 from jbrain.analysis.relationships import predicate_candidates
 from jbrain.appointments.service import AppointmentsRepo
@@ -453,7 +452,6 @@ def build_registry(
             # The owner-only host-telemetry read (query_server_metrics): RLS-gated
             # by the metrics tables' owner policy, so a non-owner session sees nothing.
             **build_metrics_handlers(maker),
-            **build_selfedit_handlers(proposals, router, settings),
             **wiki_write,
             # The jerv chatbot's internet tools (`web` permission), opt-in per agent.
             **web_handlers,

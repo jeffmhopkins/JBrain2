@@ -6,13 +6,13 @@ The container image ships only `src/jbrain` — `backend/evals/` (the prompt-eva
 would crash-loop api/worker with `ModuleNotFoundError: No module named 'evals'` at
 import time. CI runs with `evals/` on `sys.path`, so it never caught this. This test
 hides the package entirely (an import hook that raises for `evals` and `evals.*`) and
-proves that importing `jbrain.workflow.eval_scorer`, `jbrain.worker`, and `jbrain.main`
-(building the app) all succeed regardless.
+proves that importing `jbrain.worker` and `jbrain.main` (building the app) succeed
+regardless.
 
-The eval RUNTIME (the scorer core + the case corpus) now lives IN the package as
-`jbrain.evals.runner` (Phase-5 Track H·B), so the nightly `eval_run` schedule runs in
-production; the dead "missing harness" branch is gone. The remaining fail-closed path
-is an EMPTY corpus (a stripped/mis-packaged image), asserted below."""
+The eval RUNTIME (the scorer core + the case corpus) lives IN the package as
+`jbrain.evals.runner`, so the analysis eval scoring runs in production. The
+fail-closed path on an EMPTY corpus (a stripped/mis-packaged image) is asserted
+below: no cases means no fixture scores, so there is nothing to read as a pass."""
 
 from __future__ import annotations
 
@@ -23,8 +23,6 @@ from collections.abc import Iterator
 from typing import Any
 
 import pytest
-
-from jbrain.queue import PermanentJobError
 
 _HIDDEN = "evals"
 
@@ -54,11 +52,7 @@ def evals_hidden() -> Iterator[None]:
     saved_modules = {n: m for n, m in sys.modules.items() if _is_hidden(n)}
     # Re-import the shipped modules under test from scratch so their module-level
     # imports actually execute while evals is hidden (a cached module would not).
-    reimport = [
-        n
-        for n in list(sys.modules)
-        if n == "jbrain.main" or n == "jbrain.worker" or n.startswith("jbrain.workflow.eval")
-    ]
+    reimport = [n for n in list(sys.modules) if n == "jbrain.main" or n == "jbrain.worker"]
     saved_reimport = {n: sys.modules[n] for n in reimport}
 
     for n in (*saved_modules, *reimport):
@@ -92,10 +86,8 @@ def test_evals_is_actually_hidden(evals_hidden: None) -> None:
 
 
 def test_shipped_modules_import_without_evals(evals_hidden: None) -> None:
-    """The boot path the container actually runs: importing the scorer, the worker,
-    and the api app must NOT require `evals`. This is the exact failure that took the
-    deploy down."""
-    importlib.import_module("jbrain.workflow.eval_scorer")
+    """The boot path the container actually runs: importing the worker and the api app
+    must NOT require `evals`. This is the exact failure that took the deploy down."""
     importlib.import_module("jbrain.worker")
     main = importlib.import_module("jbrain.main")
     # Building the app/registry must also work — `app = create_app()` runs at import,
@@ -103,22 +95,15 @@ def test_shipped_modules_import_without_evals(evals_hidden: None) -> None:
     assert main.create_app() is not None
 
 
-def test_promotion_gate_still_imports_from_jbrain(evals_hidden: None) -> None:
-    """The production gate types now live in `jbrain.workflow.promotion` (stdlib only),
-    so they remain importable with the dev harness gone."""
-    promotion = importlib.import_module("jbrain.workflow.promotion")
-    assert hasattr(promotion, "EvalRun")
-    assert hasattr(promotion, "promotion_decision")
-
-
-async def test_live_scorer_fails_closed_on_empty_corpus(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Firing the live scorer when the case corpus is empty (a stripped/mis-packaged
-    image) must fail closed with `PermanentJobError`, NOT silently store a contentless
-    `EvalRun`. The worker fails the job cleanly (no retry — re-running finds no cases)."""
+async def test_runner_fails_closed_on_empty_corpus(monkeypatch: pytest.MonkeyPatch) -> None:
+    """An empty case corpus (a stripped/mis-packaged image) must NOT read as a pass: the
+    in-package analysis runner produces an EvalRun with NO fixture scores, so there is
+    nothing to count as success — a contentless run can never clear a bar."""
     import jbrain.evals.runner as runner
 
     monkeypatch.setattr(runner, "load_cases", lambda: [])
-    eval_scorer = importlib.import_module("jbrain.workflow.eval_scorer")
-    scorer = eval_scorer.build_live_scorer(router=object())
-    with pytest.raises(PermanentJobError):
-        await scorer("all", "v-test")
+    results, tokens = await runner.score_cases(object(), runner.load_cases())
+    assert results == []
+    assert tokens == 0
+    run = runner.eval_run_from_cases(results, "v-test")
+    assert run.scores == ()

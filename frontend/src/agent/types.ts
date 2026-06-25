@@ -259,8 +259,6 @@ export type ProposalKind =
   | "merge"
   | "appointment"
   | "wiki-restructure"
-  | "prompt-edit"
-  | "skill-promotion"
   | "egress";
 
 export interface ProposalSummary {

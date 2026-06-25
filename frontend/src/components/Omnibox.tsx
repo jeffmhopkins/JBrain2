@@ -326,8 +326,6 @@ export function Omnibox({
         {!attachEnabled && attachHint && <p className="vis-hint">{attachHint}</p>}
 
         <div className="composer-foot">
-          <span className="mode-dot" />
-          <span className="foot-text">{meta.footer}</span>
           {contextUsage && <ContextMeter usage={contextUsage} />}
           <div className="foot-icons">
             {attachEnabled && (

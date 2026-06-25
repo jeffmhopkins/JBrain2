@@ -29,7 +29,6 @@ export interface ModeMeta {
   color: string;
   tint: string;
   placeholder: string;
-  footer: string;
   /** Backend domain code for capture modes; null = conversation modes (Research /
    * Full Brain), which hand off to the agent surface instead of writing a note. */
   domain: "general" | "health" | "finance" | null;
@@ -42,7 +41,6 @@ export const MODES: Record<Mode, ModeMeta> = {
     color: "var(--green)",
     tint: "var(--green-tint)",
     placeholder: "Write an entry…",
-    footer: "Saved to your wiki · no AI.",
     domain: "general",
     dest: null,
   },
@@ -51,16 +49,14 @@ export const MODES: Record<Mode, ModeMeta> = {
     color: "var(--amber)",
     tint: "var(--amber-tint)",
     placeholder: "Ask the web, or work a problem…",
-    footer: "Web search & study tutor — not your notes.",
     domain: null,
     dest: null,
   },
   fullbrain: {
-    label: "Full Brain",
+    label: "Brain",
     color: "var(--steel)",
     tint: "var(--steel-tint)",
     placeholder: "Talk it out — full tool access…",
-    footer: "Full tool access.",
     domain: null,
     dest: null,
   },
@@ -69,7 +65,6 @@ export const MODES: Record<Mode, ModeMeta> = {
     color: "var(--rose)",
     tint: "var(--rose-tint)",
     placeholder: "Log a lab, note, procedure…",
-    footer: "Files to notes/medical/ · PDFs staged.",
     domain: "health",
     dest: { path: "notes/medical/", options: ["Records", "Labs", "Medications", "Appointments"] },
   },
@@ -78,7 +73,6 @@ export const MODES: Record<Mode, ModeMeta> = {
     color: "var(--violet)",
     tint: "var(--violet-tint)",
     placeholder: "Log a statement, receipt, transaction…",
-    footer: "Files to notes/financial/.",
     domain: "finance",
     dest: { path: "notes/financial/", options: ["Receipts", "Statements", "Accounts"] },
   },

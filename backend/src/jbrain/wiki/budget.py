@@ -1,7 +1,7 @@
 """The wiki-build spend gate (docs/PHASE6_WIKI_PLAN.md §3b).
 
-Mirrors `SelfImprovementGate` exactly, but on the SEPARATE wiki-build budget/kill-switch so a
-runaway rewrite loop can never starve eval (or interactive) spend. Fail-closed: refuses before
+A fail-closed daily token budget + kill-switch for wiki builds, SEPARATE from every other budget
+so a runaway rewrite loop can never starve eval (or interactive) spend. Fail-closed: refuses before
 a single token is spent when the kill-switch is on, the day's budget is exhausted, or the next
 build's estimate would overrun. `record_spend` meters the real cost after, keyed by UTC date.
 """

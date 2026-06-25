@@ -47,7 +47,7 @@ articles; and (f) the `wiki_built` dirty bit on entities.
 ## 1. What already exists (reuse, don't rebuild) — cited
 
 - **Workflow engine** (Phase 5): the wiki actions are **in-code ActionSpecs** (no
-  `app.actions` row — mirror `EVAL_RUN_SPEC`/`PURGE_ACTION`; `registry.py`, `scheduler.py`).
+  `app.actions` row — mirror `PURGE_ACTION` / the reconcilers; `registry.py`, `scheduler.py`).
   Pipelines + schedules + `manual=true` triggers are seeded by migration **with the
   builder (Wave C)**, not before — a no-op scheduled action would log empty nightly `runs`.
 - **Embeddings + retrieval** (Phase 2): TEI `bge-small-en-v1.5` 384-dim, `chunks` pgvector
@@ -369,11 +369,11 @@ consumed by Wave B2b.
   a named exit gate for this wave, not a sub-bullet.
 
 **Out of scope (named follow-ons, each its own plan — the ROADMAP edit relocates these here):**
-self-improvement Loops 2 (skill learning), 3 (durable-knowledge + predicate-canon), 4
-(prompt/tool self-edit + adversarial suite); and the **not-yet-built hygiene sweeps** the
-ROADMAP listed under Phase 6 — **entity hygiene, summary re-embedding, tag consolidation**
-(distinct from `wiki_reindex`, which only re-embeds wiki summaries). Each is engine-action
-work on the Phase-5 pattern, deferred — not silently dropped.
+the **not-yet-built hygiene sweeps** the ROADMAP lists under Phase 6 — **entity hygiene,
+summary re-embedding, tag consolidation** (distinct from `wiki_reindex`, which only re-embeds
+wiki summaries) — engine-action work on the Phase-5 pattern, deferred, not silently dropped.
+*(The self-improvement Loops 2–4 once listed here — skill learning, durable-knowledge +
+predicate-canon, prompt/tool self-edit — and their eval/promotion harness were removed.)*
 
 **Deferred wiki sub-features (built half-way, explicitly tracked, not implied-working):**
 - **Entity profile images** — SHIPPED. `entities.image_sha` (migration 0052) is set by the owner

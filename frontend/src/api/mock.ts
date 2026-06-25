@@ -325,22 +325,25 @@ const LLM_SETTINGS: LlmSettings = {
     { id: "vision.ocr", label: "Vision OCR", provider: "local", reasoning_effort: null },
     { id: "vision.caption", label: "Vision caption", provider: "grok", reasoning_effort: "low" },
   ],
-  local_hosting_enabled: false,
+  local_hosting_enabled: true,
   // A non-authoritative snapshot of jbrain.llm.local_catalog for the offline UI
-  // mock only — the backend is the source of truth; this may drift.
+  // mock only — the backend is the source of truth; this may drift. One model is
+  // provisioned (enabled) so the redesign's Installed/Catalog tabs + the Uninstall
+  // control are exercisable in `dev:mock`.
   local_models: [
     {
       id: "qwen3-vl-30b",
       label: "Qwen3-VL 30B · vision",
-      enabled: false,
+      enabled: true,
       queued: false,
+      remove_queued: false,
       loaded: false,
       supports_vision: true,
       supports_tools: true,
       tiers: ["vision", "low"],
       quant: "Q8_0",
       size_gb: 32,
-      disk_gb: null,
+      disk_gb: 31.7,
       download_gb: null,
       note: "Vision + a capable cheap text model.",
       context_window: 32768,
@@ -353,6 +356,7 @@ const LLM_SETTINGS: LlmSettings = {
       label: "GPT-OSS 120B · reasoning",
       enabled: false,
       queued: false,
+      remove_queued: false,
       loaded: false,
       supports_vision: false,
       supports_tools: true,
@@ -372,6 +376,7 @@ const LLM_SETTINGS: LlmSettings = {
       label: "Qwen3-235B-A22B · reasoning (alt, 3-bit)",
       enabled: false,
       queued: false,
+      remove_queued: false,
       loaded: false,
       supports_vision: false,
       supports_tools: true,
@@ -2665,6 +2670,13 @@ export const mockFetch: typeof fetch = async (input, init) => {
     const id = decodeURIComponent(installMatch[1] ?? "");
     const model = LLM_SETTINGS.local_models.find((m) => m.id === id);
     if (model && !model.enabled) model.queued = method === "POST";
+    return json(LLM_SETTINGS);
+  }
+  const uninstallMatch = path.match(/^\/api\/settings\/llm\/local-models\/(.+)\/uninstall$/);
+  if (uninstallMatch && (method === "POST" || method === "DELETE")) {
+    const id = decodeURIComponent(uninstallMatch[1] ?? "");
+    const model = LLM_SETTINGS.local_models.find((m) => m.id === id);
+    if (model?.enabled) model.remove_queued = method === "POST";
     return json(LLM_SETTINGS);
   }
   const windowMatch = path.match(/^\/api\/settings\/llm\/local-models\/(.+)\/context-window$/);

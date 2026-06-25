@@ -355,6 +355,10 @@ export interface LocalModelInfo {
   /** Queued for install from the PWA but not yet on the box — the next update
    * provisions it. Mutually exclusive with `enabled`. */
   queued: boolean;
+  /** Queued for uninstall: a provisioned model the operator has asked to remove
+   * from LOCAL_MODELS (and prune its weights) on the next update. True only while
+   * still `enabled`; the flag clears once the update drops it from the catalog. */
+  remove_queued: boolean;
   /** Runtime state from the gateway (best-effort): resident in memory right now. */
   loaded: boolean;
   supports_vision: boolean;
@@ -1440,6 +1444,16 @@ export const api = {
   async queueLocalInstall(id: string, on: boolean): Promise<LlmSettings> {
     const response = await request(
       `/api/settings/llm/local-models/${encodeURIComponent(id)}/install`,
+      { method: on ? "POST" : "DELETE" },
+    );
+    return (await response.json()) as LlmSettings;
+  },
+
+  /** Queue / unqueue a provisioned model for uninstall on the next update (which
+   * drops it from LOCAL_MODELS and prunes its weights); returns the full snapshot. */
+  async queueLocalUninstall(id: string, on: boolean): Promise<LlmSettings> {
+    const response = await request(
+      `/api/settings/llm/local-models/${encodeURIComponent(id)}/uninstall`,
       { method: on ? "POST" : "DELETE" },
     );
     return (await response.json()) as LlmSettings;
