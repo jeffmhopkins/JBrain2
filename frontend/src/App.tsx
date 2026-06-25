@@ -14,6 +14,7 @@ import { EntityListScreen } from "./screens/EntityListScreen";
 import { EntityScreen } from "./screens/EntityScreen";
 import { GraphScreen } from "./screens/GraphScreen";
 import { type ComposeHandoff, HomeScreen } from "./screens/HomeScreen";
+import { JcodeScreen } from "./screens/JcodeScreen";
 import { LLMSettingsScreen } from "./screens/LLMSettingsScreen";
 import { ListDetailScreen } from "./screens/ListDetailScreen";
 import { ListsScreen } from "./screens/ListsScreen";
@@ -55,12 +56,13 @@ type Card =
   | "calendar"
   | "graph"
   | "location"
-  | "wiki";
+  | "wiki"
+  | "jcode";
 
-// Automations brings its own full-screen overlay (its own back bar + slide-in),
-// so it renders outside the shared subscreen TopBar wrapper — hence no entry
-// here. Every Card that uses the wrapper needs a title.
-const SCREEN_TITLES: Record<Exclude<Card, "automations" | "tasks">, string> = {
+// Automations/Tasks/jcode bring their own full-screen overlay (own back bar +
+// slide-in), so they render outside the shared subscreen TopBar wrapper — hence no
+// entry here. Every Card that uses the wrapper needs a title.
+const SCREEN_TITLES: Record<Exclude<Card, "automations" | "tasks" | "jcode">, string> = {
   ops: "Ops",
   data: "Data",
   settings: "Settings",
@@ -397,8 +399,9 @@ export function App() {
     // Runs stacks above Automations, so it climbs off first.
     if (runsOpen) return setRunsOpen(false);
     if (card === "automations") return closeAutomations();
-    // Tasks closes straight to the launcher (its own overlay, no subscreen slide).
+    // Tasks/jcode close straight to the launcher (own overlay, no subscreen slide).
     if (card === "tasks") return setCard(null);
+    if (card === "jcode") return setCard(null);
     if (card !== null) return closeCardToLauncher();
     // Drops the depth immediately; the launcher plays its retreat off `open`.
     if (launcherOpen) return setLauncherOpen(false);
@@ -444,7 +447,7 @@ export function App() {
 
       {/* Automations is a self-contained full-screen overlay (its own back bar +
           slide-in), rendered below — it skips the shared subscreen TopBar. */}
-      {card !== null && card !== "automations" && card !== "tasks" && (
+      {card !== null && card !== "automations" && card !== "tasks" && card !== "jcode" && (
         <div
           className={`subscreen${cardClosing ? " subscreen-closing" : ""}`}
           ref={subRef}
@@ -516,6 +519,10 @@ export function App() {
           }}
         />
       )}
+
+      {/* Code mode (jcode) is a self-contained full-screen overlay (its own back
+          bar + internal list↔session navigation), like Tasks/Automations. */}
+      {card === "jcode" && <JcodeScreen onClose={() => setCard(null)} />}
 
       {/* The wiki reader brings its own subscreen + TopBar (like the entity
           page), so it renders outside the shared wrapper. It stacks above the

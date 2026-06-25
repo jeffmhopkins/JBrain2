@@ -2402,6 +2402,63 @@ function mockTrail(): {
   return out;
 }
 
+// --- Code mode (jcode) fixtures (dev:mock) ---
+interface MockJcodeSession {
+  id: string;
+  repo: string;
+  branch: string;
+  work_branch: string;
+  status: string;
+  created_at: string;
+  last_active_at: string;
+}
+const jcodeSessions: MockJcodeSession[] = [
+  {
+    id: "j1",
+    repo: "github.com/jeffmhopkins/scratch-todo",
+    branch: "main",
+    work_branch: "jcode/spike",
+    status: "ready",
+    created_at: "2026-06-25T12:00:00Z",
+    last_active_at: new Date().toISOString(),
+  },
+  {
+    id: "j2",
+    repo: "github.com/jeffmhopkins/JBrain2",
+    branch: "main",
+    work_branch: "jcode/local-mode",
+    status: "ready",
+    created_at: "2026-06-20T09:00:00Z",
+    last_active_at: "2026-06-20T09:00:00Z",
+  },
+];
+let jcodeN = 2;
+
+function jcodeTurnStream(): Response {
+  const frames = [
+    { type: "text", text: "On it — reading the file and planning the change.", tool: "", data: {} },
+    { type: "tool_use", text: "", tool: "Read", data: { command: "read src/store/todos.ts" } },
+    { type: "tool_result", text: "ok", tool: "Read", data: { ok: true } },
+    { type: "tool_use", text: "", tool: "Edit", data: { command: "edit src/store/todos.ts" } },
+    { type: "tool_result", text: "+4 −0", tool: "Edit", data: { ok: true } },
+    { type: "text", text: "\n\nDone — added clearCompleted; tests pass.", tool: "", data: {} },
+    { type: "done", text: "", tool: "", data: {} },
+  ];
+  const enc = new TextEncoder();
+  const stream = new ReadableStream<Uint8Array>({
+    async start(controller) {
+      for (const f of frames) {
+        controller.enqueue(enc.encode(`data: ${JSON.stringify(f)}\n\n`));
+        await sleep();
+      }
+      controller.close();
+    },
+  });
+  return new Response(stream, {
+    headers: { "Content-Type": "text/event-stream", "X-Jcode-Run-Id": `run-${jcodeN}` },
+  });
+}
+
 export const mockFetch: typeof fetch = async (input, init) => {
   await sleep();
   const url = new URL(String(input instanceof Request ? input.url : input), "http://mock");
@@ -2410,6 +2467,45 @@ export const mockFetch: typeof fetch = async (input, init) => {
 
   if (path === "/api/auth/session") return new Response(null, { status: 204 });
   if (path === "/api/auth/me") return json(PRINCIPAL);
+
+  // --- Code mode (jcode) ---
+  if (path === "/api/jcode/sessions" && method === "GET") return json(jcodeSessions);
+  if (path === "/api/jcode/sessions" && method === "POST") {
+    const body = JSON.parse(String(init?.body)) as {
+      repo: string;
+      branch: string;
+      work_branch: string;
+    };
+    jcodeN += 1;
+    const id = `j${jcodeN}`;
+    const now = new Date().toISOString();
+    const s: MockJcodeSession = {
+      id,
+      repo: body.repo,
+      branch: body.branch || "main",
+      work_branch: body.work_branch || `jcode/${id}`,
+      status: "ready",
+      created_at: now,
+      last_active_at: now,
+    };
+    jcodeSessions.unshift(s);
+    return json(s, 201);
+  }
+  if (path.startsWith("/api/jcode/sessions/") && path.endsWith("/turn") && method === "POST") {
+    return jcodeTurnStream();
+  }
+  if (path.startsWith("/api/jcode/sessions/") && path.endsWith("/reset") && method === "POST") {
+    const s = jcodeSessions.find((x) => x.id === path.split("/")[4]);
+    return s ? json(s) : json({ detail: "unknown session" }, 404);
+  }
+  if (path.startsWith("/api/jcode/sessions/") && method === "DELETE") {
+    const i = jcodeSessions.findIndex((x) => x.id === path.split("/")[4]);
+    if (i >= 0) jcodeSessions.splice(i, 1);
+    return new Response(null, { status: 204 });
+  }
+  if (path.startsWith("/api/jcode/runs/") && path.endsWith("/cancel") && method === "POST") {
+    return new Response(null, { status: 202 });
+  }
 
   if (path === "/api/notes" && method === "GET") {
     const limit = Number(url.searchParams.get("limit") ?? "50");
