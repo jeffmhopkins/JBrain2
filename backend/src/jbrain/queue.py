@@ -245,6 +245,18 @@ async def has_active_kind(
     return row is not None
 
 
+async def queued_depth(maker: async_sessionmaker[AsyncSession], ctx: SessionContext) -> int:
+    """How many jobs are waiting to run (status='queued') — the Ops "Runs"
+    queue-depth tile. Running jobs are excluded: they have already started, so they
+    are not waiting. A scheduled retry whose backoff has not elapsed is still
+    counted (it is queued), matching the table's own notion of the backlog."""
+    async with scoped_session(maker, ctx) as session:
+        count = (
+            await session.execute(text("SELECT count(*) FROM app.jobs WHERE status = 'queued'"))
+        ).scalar()
+    return int(count or 0)
+
+
 async def has_active_analysis(
     maker: async_sessionmaker[AsyncSession],
     ctx: SessionContext,

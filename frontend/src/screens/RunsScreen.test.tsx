@@ -5,19 +5,21 @@ import { RunsScreen } from "./RunsScreen";
 
 const NOW = new Date().toISOString();
 
+const RUNNING: RunSummary = {
+  id: "r1",
+  kind: "integration",
+  status: "running",
+  name: "integrate_note",
+  started_at: NOW,
+  duration_ms: null,
+  step_count: 3,
+  cost_tokens: 4100,
+  last_error: null,
+  progress_note: "processed 12 of 30 emails",
+};
+
 const RUNS: RunSummary[] = [
-  {
-    id: "r1",
-    kind: "integration",
-    status: "running",
-    name: "integrate_note",
-    started_at: NOW,
-    duration_ms: null,
-    step_count: 3,
-    cost_tokens: 4100,
-    last_error: null,
-    progress_note: "processed 12 of 30 emails",
-  },
+  RUNNING,
   {
     id: "r3",
     kind: "pipeline",
@@ -73,10 +75,11 @@ const SWEEPS: SweepTrigger[] = [
   { id: "t1", pipeline: "consolidate_predicates", label: "Consolidate" },
 ];
 
-function mount(opts: { runs?: RunSummary[]; sweeps?: SweepTrigger[] } = {}) {
+function mount(opts: { runs?: RunSummary[]; sweeps?: SweepTrigger[]; queueDepth?: number } = {}) {
   vi.spyOn(api, "runs").mockResolvedValue(opts.runs ?? RUNS);
   vi.spyOn(api, "run").mockResolvedValue(DETAIL);
   vi.spyOn(api, "sweepTriggers").mockResolvedValue(opts.sweeps ?? SWEEPS);
+  vi.spyOn(api, "queueDepth").mockResolvedValue(opts.queueDepth ?? 0);
   const onClose = vi.fn();
   render(<RunsScreen onClose={onClose} />);
   return { onClose };
@@ -94,6 +97,32 @@ describe("RunsScreen", () => {
     expect(within(active as HTMLElement).getByText("1")).toBeInTheDocument();
     const failed = screen.getByText("failed today").closest(".runs-tile");
     expect(within(failed as HTMLElement).getByText("1")).toBeInTheDocument();
+  });
+
+  it("counts a queued run as waiting, not active, and shows the job-queue depth", async () => {
+    const queued: RunSummary = {
+      id: "rq",
+      kind: "pipeline",
+      status: "queued",
+      name: "daily_inbox_triage",
+      started_at: NOW,
+      duration_ms: null,
+      step_count: 2,
+      cost_tokens: 0,
+      last_error: null,
+      progress_note: null,
+    };
+    mount({ runs: [RUNNING, queued], queueDepth: 4 });
+    expect(await screen.findByText("daily_inbox_triage")).toBeInTheDocument();
+    // The queued run waits behind the worker: "active now" stays at the one running.
+    const active = screen.getByText("runs active now").closest(".runs-tile");
+    expect(within(active as HTMLElement).getByText("1")).toBeInTheDocument();
+    // Its row reads "queued" and "waiting to start", not a 0-token summary.
+    expect(screen.getByText("queued")).toBeInTheDocument();
+    expect(screen.getByText(/waiting to start/)).toBeInTheDocument();
+    // The "jobs queued" tile now shows a real backlog instead of "—".
+    const queue = screen.getByText("jobs queued").closest(".runs-tile");
+    expect(within(queue as HTMLElement).getByText("4")).toBeInTheDocument();
   });
 
   it("shows a running run's live progress note in place of the stats line", async () => {

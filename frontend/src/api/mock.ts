@@ -180,6 +180,31 @@ const MOCK_RUN_DETAILS: RunDetail[] = [
     ],
   },
   {
+    // A manually-fired pipeline whose steps are still waiting behind the
+    // single-threaded worker — derived 'queued', not yet running.
+    id: "run-rq",
+    kind: "pipeline",
+    status: "queued",
+    name: "daily_inbox_triage",
+    started_at: ago(4_000),
+    duration_ms: null,
+    step_count: 1,
+    cost_tokens: 0,
+    stop_reason: null,
+    progress_note: null,
+    steps: [
+      {
+        idx: 0,
+        kind: "job",
+        name: "daily_inbox_triage",
+        ok: true,
+        cost_tokens: 0,
+        job_id: "job-q1",
+        error: null,
+      },
+    ],
+  },
+  {
     id: "run-r3",
     kind: "integration",
     status: "error",
@@ -3235,6 +3260,9 @@ export const mockFetch: typeof fetch = async (input, init) => {
 
   // The Runs surface (owner-only run log) + the sweep-trigger controls.
   if (path === "/api/runs") return json(MOCK_RUNS);
+  if (path === "/api/runs/queue-depth") {
+    return json({ queued: MOCK_RUNS.filter((r) => r.status === "queued").length });
+  }
   const runMatch = path.match(/^\/api\/runs\/([^/]+)$/);
   if (runMatch) {
     const detail = MOCK_RUN_DETAILS.find((r) => r.id === decodeURIComponent(runMatch[1] ?? ""));

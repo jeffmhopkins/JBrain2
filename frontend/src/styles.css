@@ -10364,6 +10364,10 @@ input.ld-title {
   background: var(--green);
   animation: runs-pulse 1.4s ease-in-out infinite;
 }
+.runs-dot-queued {
+  background: var(--text-3);
+  animation: runs-pulse 1.8s ease-in-out infinite;
+}
 .runs-dot-done {
   background: var(--text-3);
 }
@@ -10382,7 +10386,8 @@ input.ld-title {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .runs-dot-running {
+  .runs-dot-running,
+  .runs-dot-queued {
     animation: none;
   }
 }
@@ -10451,6 +10456,9 @@ input.ld-title {
 .runs-status-running {
   color: var(--green);
 }
+.runs-status-queued {
+  color: var(--text-3);
+}
 
 .runs-empty {
   padding: 10px 2px;
@@ -10474,6 +10482,10 @@ input.ld-title {
 .runs-badge-running {
   background: var(--green-tint);
   color: var(--green);
+}
+.runs-badge-queued {
+  background: var(--surface-2);
+  color: var(--text-2);
 }
 .runs-badge-done {
   background: var(--surface-2);

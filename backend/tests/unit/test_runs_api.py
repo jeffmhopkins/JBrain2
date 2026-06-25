@@ -85,6 +85,9 @@ class FakeRunReader:
     async def load(self, ctx: object, run_id: str) -> RunDetail | None:
         return self._detail if run_id == "r3" else None
 
+    async def queue_depth(self, ctx: object) -> int:
+        return 5
+
 
 @pytest.fixture
 def repo() -> FakeAuthRepo:
@@ -116,6 +119,14 @@ def login(client: TestClient, repo: FakeAuthRepo) -> None:
 def test_runs_require_owner(client: TestClient) -> None:
     assert client.get("/api/runs").status_code == 401
     assert client.get("/api/runs/r3").status_code == 401
+    assert client.get("/api/runs/queue-depth").status_code == 401
+
+
+def test_queue_depth(client: TestClient, repo: FakeAuthRepo) -> None:
+    login(client, repo)
+    resp = client.get("/api/runs/queue-depth")
+    assert resp.status_code == 200
+    assert resp.json() == {"queued": 5}
 
 
 def test_list_runs_shape(client: TestClient, repo: FakeAuthRepo) -> None:
