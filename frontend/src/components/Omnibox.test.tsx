@@ -136,7 +136,7 @@ describe("Omnibox", () => {
     expect(onSend).not.toHaveBeenCalled();
   });
 
-  it("hides the chat paperclip and shows the muted hint when attach is off", () => {
+  it("hides the chat paperclip when attach is off (no stand-in hint)", () => {
     render(
       <Omnibox
         seg={{ row: "main", mode: "fullbrain" }}
@@ -145,11 +145,9 @@ describe("Omnibox", () => {
         onConversation={vi.fn()}
         onOpenLauncher={vi.fn()}
         attachEnabled={false}
-        attachHint="This model can't read images — attachments are off."
       />,
     );
     expect(screen.queryByRole("button", { name: "Attach files" })).not.toBeInTheDocument();
-    expect(screen.getByText(/This model can't read images/)).toBeInTheDocument();
   });
 
   it("always shows the paperclip for capture modes (note attachments, not chat)", () => {
@@ -166,7 +164,6 @@ describe("Omnibox", () => {
       />,
     );
     expect(screen.getByRole("button", { name: "Attach files" })).toBeInTheDocument();
-    expect(screen.queryByText(/can't read images/)).not.toBeInTheDocument();
   });
 
   it("forwards staged files on a conversational send, then clears them", async () => {

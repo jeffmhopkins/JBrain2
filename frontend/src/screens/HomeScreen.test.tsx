@@ -382,7 +382,7 @@ describe("HomeScreen mode scoping", () => {
   });
 
   it("gates the chat paperclip on the model's vision capability", async () => {
-    // Vision off: the conversation composer hides the paperclip and shows the hint.
+    // Vision off: the conversation composer hides the paperclip (no stand-in hint).
     const offDeps = {
       ...fbDeps(),
       getChatCapabilities: vi.fn(async () => ({ supports_vision: false, can_edit_images: false })),
@@ -402,10 +402,10 @@ describe("HomeScreen mode scoping", () => {
     await waitFor(() =>
       expect(screen.queryByRole("button", { name: "Attach files" })).not.toBeInTheDocument(),
     );
-    expect(screen.getByText(/This model can't read images/)).toBeInTheDocument();
+    expect(screen.queryByText(/This model can't read images/)).not.toBeInTheDocument();
     unmount();
 
-    // Vision on: the paperclip is offered, no hint.
+    // Vision on: the paperclip is offered.
     const onDeps = {
       ...fbDeps(),
       getChatCapabilities: vi.fn(async () => ({ supports_vision: true, can_edit_images: false })),
