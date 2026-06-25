@@ -10,6 +10,7 @@ import {
   BotIcon,
   CalendarIcon,
   CheckSquareIcon,
+  CodeIcon,
   DatabaseIcon,
   FlaskIcon,
   GaugeIcon,
@@ -37,7 +38,8 @@ export type LauncherTarget =
   | "graph"
   | "location"
   | "wiki"
-  | "tasks";
+  | "tasks"
+  | "jcode";
 
 interface Tile {
   title: string;
@@ -70,7 +72,10 @@ const SECTIONS: Section[] = [
     header: "Authoring",
     // Full Brain is integral to the home screen (the omnibox's Full Brain
     // mode), not a launcher tile.
-    tiles: [{ title: "Review", icon: <CheckSquareIcon size={24} />, target: "review" }],
+    tiles: [
+      { title: "Review", icon: <CheckSquareIcon size={24} />, target: "review" },
+      { title: "Code", icon: <CodeIcon size={24} />, target: "jcode" },
+    ],
   },
   {
     header: "System",

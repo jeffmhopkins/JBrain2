@@ -390,3 +390,37 @@ export const ZapIcon = (p: IconProps) => (
     <path d="M13 2 4 14h7l-1 8 9-12h-7l1-8z" />
   </Icon>
 );
+
+// Code mode (jcode) — Wave J3: the launcher tile and the session view tabs.
+export const CodeIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M16 18l6-6-6-6M8 6l-6 6 6 6" />
+  </Icon>
+);
+
+export const TerminalIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M4 17l6-6-6-6M12 19h8" />
+  </Icon>
+);
+
+export const GitCompareIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <circle cx="6" cy="6" r="3" />
+    <circle cx="18" cy="18" r="3" />
+    <path d="M9 6h6a3 3 0 0 1 3 3v6M15 18H9a3 3 0 0 1-3-3V9" />
+  </Icon>
+);
+
+export const GlobeIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <circle cx="12" cy="12" r="9" />
+    <path d="M3 12h18M12 3a15 15 0 0 1 0 18 15 15 0 0 1 0-18z" />
+  </Icon>
+);
+
+export const MessageIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M21 11.5a8.4 8.4 0 0 1-12 7.5L3 21l2-6a8.4 8.4 0 1 1 16-3.5z" />
+  </Icon>
+);
