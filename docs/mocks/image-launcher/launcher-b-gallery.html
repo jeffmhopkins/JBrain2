@@ -1,0 +1,800 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Image launcher — B + gallery shortcut</title>
+<!--
+  ============================================================================
+  IMAGE LAUNCHER — DIRECTION B + GALLERY SHORTCUT
+  ============================================================================
+  WHAT THIS IS
+    Direction B (the segmented Generate | Edit form — the config-forward, one-
+    focused-task-at-a-time screen) PLUS a gallery shortcut: a grid icon in the
+    top bar opens a full-screen, scrollable IMAGE-ONLY pinboard of every render
+    (a masonry of generated images, nothing else). New renders flow into it
+    live; tap any image to view it large with its meta and "use as edit source".
+
+    The form is the workshop; the gallery is the shelf. The active segment and
+    accents take the image-domain colour — VIOLET.
+
+  SCREEN-VS-AGENT INTENT
+    The DIRECT screen path: ComfyUI renders on its VRAM budget while the
+    language models stay UNLOADED. Not the jerv chatbot — no chat surface. The
+    same request can be asked of jerv in chat; acknowledged only as a one-line,
+    unobtrusive note, never the primary affordance.
+
+  IMAGES ARE STAND-INS
+    Generated images are owner-only chat artifacts served in production by id at
+    /api/images/generated/{id}. This mock is fully offline: every image is an
+    inline SVG data: URI placeholder. Meta lines (dimensions · model · seed)
+    mirror the production caption.
+
+  INTERACTIVITY
+    - Generate | Edit segment swaps the task panel.
+    - Every config knob changes state: speed (segmented), aspect (5-way),
+      resolution, steps slider (LOCKED with a fixed-step hint when speed !=
+      quality), negative prompt, seed (placeholder "random").
+    - Mock render runs an honest phased sequence (queued -> rendering, shimmer,
+      no fake progress bar) then reveals the SVG with meta + small actions, and
+      the new image lands at the top of the gallery.
+    - Gallery: grid icon (top bar) opens a scrollable masonry of all renders
+      with a live count; tap a tile for a large view + "use as edit source".
+    - Edit panel: source dropzone (or pick from the gallery) + up to 2 refs;
+      result shows a before -> after swipe-compare.
+    - Theme toggle (light/dark). Honors prefers-reduced-motion.
+
+  Tokens only — no raw hex outside :root / [data-theme="light"].
+  Values match frontend/src/styles/tokens.css and docs/DESIGN.md.
+  ============================================================================
+-->
+<style>
+  :root{
+    color-scheme:dark;
+    --bg:#0e0f11; --surface:#17181b; --surface-2:#1e2024; --border:#26282c;
+    --text:#e6e7e9; --text-2:#9a9da3; --text-3:#5c5f66;
+    --scrim:rgba(14,15,17,.6);
+    --steel:#7fa7c9; --green:#8fbc9a; --amber:#c9a36a; --rose:#cf8a8f; --violet:#a493c9;
+    --steel-tint:rgba(127,167,201,.13); --green-tint:rgba(143,188,154,.13);
+    --amber-tint:rgba(201,163,106,.13); --rose-tint:rgba(207,138,143,.13);
+    --violet-tint:rgba(164,147,201,.13);
+    --r-input:12px; --r-seg:14px; --r-card:16px; --r-box:24px; --r-pill:999px;
+    --fs-micro:12px; --fs-head:13px; --fs-secondary:14px; --fs-note:15px;
+    --fs-body:16px; --fs-title:18px; --fs-screen:22px;
+    --mono:ui-monospace,"SF Mono","Cascadia Mono",Menlo,Consolas,monospace;
+    --shadow-card:none;
+  }
+  [data-theme="light"]{
+    color-scheme:light;
+    --bg:#f7f7f5; --surface:#ffffff; --surface-2:#f0f0ee; --border:#e2e2df;
+    --text:#1a1b1e; --text-2:#5c5f66; --text-3:#9a9da3;
+    --scrim:rgba(247,247,245,.6);
+    --shadow-card:0 1px 2px rgba(0,0,0,.06);
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;background:var(--bg);color:var(--text);
+    font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;-webkit-font-smoothing:antialiased}
+  body{padding:0}
+  .phone{max-width:430px;margin:0 auto;min-height:100vh;background:var(--bg);
+    border-left:1px solid var(--border);border-right:1px solid var(--border);position:relative;overflow:hidden}
+
+  /* ---- chrome ---- */
+  .statusbar{display:flex;justify-content:space-between;align-items:center;
+    padding:10px 18px 4px;font-size:var(--fs-head);color:var(--text);font-weight:600}
+  .statusbar .right{display:flex;gap:7px;align-items:center;font-weight:500;opacity:.9}
+  .nav{display:flex;align-items:center;gap:6px;padding:8px 12px 6px;min-height:56px}
+  .nav .back{color:var(--text-2);font-size:24px;line-height:1;background:none;border:0;cursor:pointer;padding:4px 6px}
+  .nav .title{font-size:var(--fs-screen);font-weight:600;letter-spacing:-.2px;margin-left:2px}
+  .nav .sp{margin-left:auto}
+  .nav .dot{width:9px;height:9px;border-radius:50%;background:var(--violet);box-shadow:0 0 0 4px var(--violet-tint);margin:0 4px}
+  .iconbtn{background:none;border:0;cursor:pointer;color:var(--text-2);display:grid;place-items:center;
+    width:38px;height:38px;border-radius:var(--r-input);position:relative}
+  .iconbtn:hover{background:var(--surface-2)}
+  .iconbtn svg{width:20px;height:20px}
+  /* count badge on the gallery shortcut */
+  .iconbtn .badge{position:absolute;top:1px;right:1px;min-width:16px;height:16px;padding:0 4px;border-radius:var(--r-pill);
+    background:var(--violet);color:var(--bg);font-size:10px;font-weight:700;display:grid;place-items:center;line-height:1}
+
+  .body{padding:8px 16px 60px}
+
+  /* ---- honest status line ---- */
+  .residency{display:flex;align-items:center;gap:8px;background:var(--violet-tint);
+    border:1px solid var(--border);border-radius:var(--r-input);padding:9px 12px;margin-bottom:14px}
+  .residency svg{width:15px;height:15px;color:var(--violet);flex:none}
+  .residency span{font-size:var(--fs-micro);color:var(--text-2);line-height:1.45}
+  .residency b{color:var(--violet);font-weight:600}
+
+  /* ---- segmented control (Generate | Edit) ---- */
+  .seg{display:flex;background:var(--surface-2);border:1px solid var(--border);
+    border-radius:var(--r-seg);padding:3px;margin-bottom:16px}
+  .seg button{flex:1;font:inherit;font-size:var(--fs-secondary);font-weight:600;cursor:pointer;
+    border:0;background:transparent;color:var(--text-2);padding:10px 4px;border-radius:11px;
+    transition:background .15s,color .15s;display:flex;align-items:center;justify-content:center;gap:7px}
+  .seg button svg{width:16px;height:16px}
+  .seg button.on{background:var(--violet-tint);color:var(--violet)}
+
+  .panel{display:none}
+  .panel.on{display:block;animation:fade .16s ease-out}
+  @keyframes fade{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+
+  /* ---- prompt field ---- */
+  .field{margin-bottom:14px}
+  .field>label{display:block;font-size:var(--fs-head);color:var(--text-2);font-weight:600;margin:0 2px 6px}
+  textarea,input[type="text"],input[type="number"]{width:100%;font:inherit;font-size:var(--fs-body);
+    color:var(--text);background:var(--surface-2);border:1px solid var(--border);border-radius:var(--r-input);
+    padding:12px 13px;resize:none;outline:none}
+  textarea{min-height:88px;line-height:1.5}
+  textarea#editPrompt{min-height:64px}
+  input::placeholder,textarea::placeholder{color:var(--text-3)}
+  textarea:focus-visible,input:focus-visible{border-color:var(--violet);box-shadow:0 0 0 2px var(--violet-tint)}
+
+  /* ---- config card ---- */
+  .card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-card);
+    margin-bottom:16px;box-shadow:var(--shadow-card);overflow:hidden}
+  .card-head{display:flex;align-items:center;gap:8px;width:100%;background:none;border:0;cursor:pointer;
+    font:inherit;color:var(--text);padding:13px 15px;text-align:left}
+  .card-head .ct{font-size:var(--fs-secondary);font-weight:600}
+  .card-head .cs{margin-left:auto;font-size:var(--fs-micro);color:var(--text-3);
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:54%}
+  .card-head .caret{flex:none;color:var(--text-3);transition:transform .16s}
+  .card-head .caret svg{width:16px;height:16px;display:block}
+  .card.open .caret{transform:rotate(180deg)}
+  .card-body{display:none;padding:2px 15px 15px;border-top:1px solid var(--border)}
+  .card.open .card-body{display:block}
+
+  .row{padding:11px 0;border-bottom:1px solid var(--border)}
+  .row:last-child{border-bottom:0}
+  .row>.rl{display:flex;align-items:baseline;gap:8px;margin-bottom:9px}
+  .row .rlabel{font-size:var(--fs-secondary);font-weight:600;color:var(--text)}
+  .row .rhint{font-size:var(--fs-micro);color:var(--text-3);margin-left:auto;text-align:right}
+
+  /* ---- mini segmented (config knobs) ---- */
+  .mseg{display:flex;flex-wrap:wrap;gap:6px}
+  .mseg button{flex:1;min-width:0;font:inherit;font-size:var(--fs-micro);font-weight:600;cursor:pointer;
+    background:var(--surface-2);border:1px solid var(--border);color:var(--text-2);
+    border-radius:10px;padding:9px 6px;transition:.13s;white-space:nowrap}
+  .mseg button.on{background:var(--violet-tint);border-color:transparent;color:var(--violet)}
+  .mseg.five button{flex:0 0 calc((100% - 24px)/5)}
+
+  /* ---- steps slider ---- */
+  .slider-wrap{display:flex;align-items:center;gap:12px}
+  input[type="range"]{flex:1;-webkit-appearance:none;appearance:none;height:6px;border-radius:var(--r-pill);
+    background:var(--surface-2);outline:none}
+  input[type="range"]::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:20px;height:20px;
+    border-radius:50%;background:var(--violet);border:3px solid var(--surface);cursor:pointer}
+  input[type="range"]::-moz-range-thumb{width:20px;height:20px;border-radius:50%;background:var(--violet);
+    border:3px solid var(--surface);cursor:pointer}
+  input[type="range"]:focus-visible{box-shadow:0 0 0 2px var(--violet-tint)}
+  .stepval{font-family:var(--mono);font-size:var(--fs-secondary);color:var(--text);min-width:26px;text-align:right}
+  .row.locked{opacity:.55}
+  .row.locked input[type="range"]{pointer-events:none}
+  .row.locked .stepval{color:var(--text-3)}
+  .lockhint{display:none;font-size:var(--fs-micro);color:var(--amber);margin-top:7px;align-items:center;gap:6px}
+  .row.locked .lockhint{display:flex}
+  .lockhint svg{width:13px;height:13px;flex:none}
+
+  /* ---- dropzone / reference slots ---- */
+  .drop{display:flex;flex-direction:column;align-items:center;gap:8px;text-align:center;
+    background:var(--surface-2);border:1.5px dashed var(--border);border-radius:var(--r-card);
+    padding:22px 16px;cursor:pointer;transition:.13s}
+  .drop:hover{border-color:var(--violet)}
+  .drop svg{width:26px;height:26px;color:var(--text-3)}
+  .drop .dt{font-size:var(--fs-secondary);color:var(--text-2)}
+  .drop .ds{font-size:var(--fs-micro);color:var(--text-3)}
+  .drop .ds b{color:var(--violet);font-weight:600}
+  .src{display:none;align-items:center;gap:12px;background:var(--surface-2);border:1px solid var(--border);
+    border-radius:var(--r-card);padding:11px}
+  .src.show{display:flex}
+  .src .thumb{width:52px;height:52px;border-radius:10px;flex:none;overflow:hidden;background:var(--bg);
+    border:1px solid var(--border)}
+  .src .thumb img{width:100%;height:100%;object-fit:cover;display:block}
+  .src .meta{min-width:0}
+  .src .meta .n{font-size:var(--fs-secondary);font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .src .meta .d{font-size:var(--fs-micro);color:var(--text-3)}
+  .src .x{margin-left:auto;background:none;border:0;color:var(--text-3);cursor:pointer;padding:6px;
+    border-radius:8px;flex:none}
+  .src .x:hover{background:var(--bg);color:var(--text-2)}
+  .src .x svg{width:16px;height:16px;display:block}
+
+  .pickbtn{width:100%;margin-top:9px;font:inherit;font-size:var(--fs-micro);font-weight:600;cursor:pointer;
+    background:none;border:0;color:var(--violet);display:flex;align-items:center;justify-content:center;gap:6px;padding:6px}
+  .pickbtn svg{width:14px;height:14px}
+
+  .refs{display:flex;gap:10px;margin-top:4px}
+  .refslot{flex:1;aspect-ratio:1;border-radius:12px;background:var(--surface-2);border:1.5px dashed var(--border);
+    display:grid;place-items:center;cursor:pointer;position:relative;overflow:hidden;transition:.13s}
+  .refslot:hover{border-color:var(--violet)}
+  .refslot svg{width:20px;height:20px;color:var(--text-3)}
+  .refslot.filled{border-style:solid}
+  .refslot img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+  .refslot .rx{position:absolute;top:4px;right:4px;width:20px;height:20px;border-radius:50%;
+    background:var(--scrim);border:0;color:var(--text);display:none;place-items:center;cursor:pointer}
+  .refslot.filled .rx{display:grid}
+  .refslot .rx svg{width:12px;height:12px;color:var(--text)}
+
+  /* ---- primary action ---- */
+  .btn{width:100%;font:inherit;font-size:var(--fs-body);font-weight:600;cursor:pointer;border-radius:var(--r-input);
+    padding:14px;border:1px solid transparent;background:var(--violet-tint);color:var(--violet);
+    display:flex;align-items:center;justify-content:center;gap:8px;min-height:44px}
+  .btn svg{width:18px;height:18px}
+  .btn.sec{background:var(--surface-2);color:var(--text-2);border-color:var(--border)}
+  .btn:disabled{opacity:.55;cursor:default}
+
+  .note{font-size:var(--fs-micro);color:var(--text-3);text-align:center;margin:11px 2px 0;line-height:1.5}
+  .note a,.linklike{color:var(--text-2);text-decoration:underline;text-underline-offset:2px;cursor:pointer}
+
+  /* ---- result / render ---- */
+  .result{margin-top:18px}
+  .stage{position:relative;width:100%;border-radius:var(--r-card);overflow:hidden;background:var(--surface);
+    border:1px solid var(--border)}
+  .stage .ph{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;
+    width:100%;height:100%;min-height:220px;color:var(--text-2);padding:20px;text-align:center}
+  .stage .ph .spin{width:22px;height:22px;border-radius:50%;border:2.5px solid var(--surface-2);
+    border-top-color:var(--violet);animation:sp .8s linear infinite}
+  @keyframes sp{to{transform:rotate(360deg)}}
+  .stage .ph.shimmer{position:absolute;inset:0;background:linear-gradient(110deg,
+    var(--surface) 30%,var(--surface-2) 50%,var(--surface) 70%);background-size:220% 100%;
+    animation:sh 1.4s ease-in-out infinite}
+  @keyframes sh{from{background-position:140% 0}to{background-position:-40% 0}}
+  .stage .phase{font-size:var(--fs-secondary);color:var(--text-2)}
+  .stage .phase b{color:var(--text);font-weight:600}
+  .stage img{display:block;width:100%;height:auto}
+
+  .resmeta{display:flex;align-items:center;gap:8px;margin-top:10px;font-family:var(--mono);
+    font-size:var(--fs-micro);color:var(--text-2);flex-wrap:wrap}
+  .resmeta .sep{color:var(--text-3)}
+  .resactions{display:flex;gap:8px;margin-top:12px}
+  .chip{flex:1;font:inherit;font-size:var(--fs-micro);font-weight:600;cursor:pointer;background:var(--surface-2);
+    border:1px solid var(--border);color:var(--text-2);border-radius:var(--r-input);padding:10px 6px;
+    display:flex;align-items:center;justify-content:center;gap:6px;min-height:44px}
+  .chip:hover{color:var(--text)}
+  .chip.done{color:var(--green);border-color:transparent;background:var(--green-tint)}
+  .chip svg{width:15px;height:15px;flex:none}
+
+  /* ---- before/after swipe-compare (edit result) ---- */
+  .compare{position:relative;width:100%;border-radius:var(--r-card);overflow:hidden;border:1px solid var(--border);
+    background:var(--surface);touch-action:none;user-select:none}
+  .compare img{display:block;width:100%;height:auto;pointer-events:none}
+  .compare .after{position:absolute;inset:0;width:100%;height:100%;overflow:hidden}
+  .compare .after img{position:absolute;inset:0;height:100%;width:auto;min-width:100%;object-fit:cover}
+  .compare .handle{position:absolute;top:0;bottom:0;width:2px;background:var(--violet);left:50%;
+    transform:translateX(-50%)}
+  .compare .handle::after{content:"";position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);
+    width:30px;height:30px;border-radius:50%;background:var(--violet);box-shadow:0 0 0 4px var(--violet-tint)}
+  .compare .tag{position:absolute;bottom:8px;font-size:var(--fs-micro);font-weight:600;color:var(--text);
+    background:var(--scrim);padding:3px 8px;border-radius:var(--r-pill);backdrop-filter:blur(2px)}
+  .compare .tag.b{left:8px}.compare .tag.a{right:8px}
+
+  .legend{margin:24px 2px 0;font-size:var(--fs-micro);color:var(--text-3);line-height:1.65}
+  .legend b{color:var(--text-2)}
+
+  /* ============================================================
+     GALLERY SHORTCUT — full-screen scrollable image-only pinboard
+     ============================================================ */
+  .gallery{position:absolute;inset:0;z-index:40;background:var(--bg);display:flex;flex-direction:column;
+    transform:translateY(100%);transition:transform .18s ease-out;visibility:hidden}
+  .gallery.open{transform:none;visibility:visible}
+  .gnav{display:flex;align-items:center;gap:8px;padding:8px 12px 8px;min-height:56px;border-bottom:1px solid var(--border)}
+  .gnav .title{font-size:var(--fs-screen);font-weight:600;margin-left:2px}
+  .gnav .countpill{font-size:var(--fs-micro);font-weight:600;color:var(--violet);background:var(--violet-tint);
+    border-radius:var(--r-pill);padding:2px 9px;margin-left:8px}
+  .gnav .sp{margin-left:auto}
+  .ghint{font-size:var(--fs-micro);color:var(--text-3);padding:10px 16px 2px;line-height:1.4}
+  .ggrid{padding:8px 12px 40px;overflow-y:auto;flex:1;column-count:2;column-gap:10px;-webkit-overflow-scrolling:touch}
+  .gtile{break-inside:avoid;margin-bottom:10px;border-radius:14px;overflow:hidden;border:1px solid var(--border);
+    position:relative;cursor:pointer;background:var(--surface);display:block;transition:transform .12s}
+  .gtile:active{transform:scale(.985)}
+  .gtile img{width:100%;display:block}
+  .gtile .kind{position:absolute;top:7px;left:7px;font-size:10px;font-weight:700;letter-spacing:.03em;text-transform:uppercase;
+    padding:2px 7px;border-radius:var(--r-pill);background:var(--scrim);color:var(--text);backdrop-filter:blur(3px)}
+  .gtile.fresh{animation:pop .28s ease-out}
+  @keyframes pop{from{opacity:0;transform:translateY(8px) scale(.97)}to{opacity:1;transform:none}}
+  .gempty{padding:60px 24px;text-align:center;color:var(--text-2);font-size:var(--fs-secondary);line-height:1.5}
+
+  /* ---- lightbox: large single image over the gallery ---- */
+  .lightbox{position:absolute;inset:0;z-index:50;background:var(--scrim);backdrop-filter:blur(6px);
+    display:none;flex-direction:column;justify-content:flex-end}
+  .lightbox.open{display:flex;animation:fade .15s ease-out}
+  .lb-top{flex:1;display:grid;place-items:center;padding:18px;cursor:pointer}
+  .lb-top img{max-width:100%;max-height:100%;border-radius:var(--r-card);border:1px solid var(--border);display:block}
+  .lb-card{background:var(--surface);border-top:1px solid var(--border);border-radius:var(--r-box) var(--r-box) 0 0;
+    padding:14px 16px calc(16px + env(safe-area-inset-bottom));box-shadow:var(--shadow-card)}
+  .lb-card .grip{width:32px;height:4px;border-radius:var(--r-pill);background:var(--border);margin:0 auto 12px}
+  .lb-card .lbmeta{display:flex;align-items:center;gap:8px;font-family:var(--mono);font-size:var(--fs-micro);
+    color:var(--text-2);flex-wrap:wrap;margin-bottom:12px}
+  .lb-card .lbmeta .sep{color:var(--text-3)}
+  .lb-card .lbmeta .k{font-family:inherit;font-weight:700;text-transform:uppercase;letter-spacing:.03em;
+    font-size:10px;color:var(--violet);background:var(--violet-tint);border-radius:var(--r-pill);padding:2px 7px}
+
+  @media (prefers-reduced-motion:reduce){
+    *,*::before,*::after{animation-duration:.001ms!important;transition-duration:.001ms!important}
+    .stage .ph.shimmer{animation:none;background:var(--surface-2)}
+    .gallery{transition:none}
+  }
+</style>
+</head>
+<body>
+<div class="phone">
+  <div class="statusbar">
+    <span>16:57</span>
+    <span class="right">5G &#9201; 71%</span>
+  </div>
+
+  <div class="nav">
+    <button class="back" title="Back" aria-label="Back">&#8249;</button>
+    <span class="title">Image</span>
+    <span class="sp"></span>
+    <span class="dot" title="ComfyUI ready · LLMs unloaded"></span>
+    <button class="iconbtn" id="galleryBtn" title="Gallery" aria-label="Open gallery" onclick="openGallery()">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>
+      <span class="badge" id="galleryCount">6</span>
+    </button>
+    <button class="iconbtn" id="themeBtn" title="Toggle theme" aria-label="Toggle theme"></button>
+  </div>
+
+  <div class="body">
+    <div class="residency">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/><circle cx="12" cy="12" r="4"/></svg>
+      <span><b>renders on-box</b> &middot; language models stay unloaded</span>
+    </div>
+
+    <!-- ===== Generate | Edit segmented control ===== -->
+    <div class="seg" id="seg" role="tablist">
+      <button class="on" data-k="generate" onclick="seg('generate')" role="tab" aria-selected="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3v4M3 5h4M6 17v4M4 19h4M13 3l2.5 6.5L22 12l-6.5 2.5L13 21l-2.5-6.5L4 12l6.5-2.5L13 3z"/></svg>
+        Generate
+      </button>
+      <button data-k="edit" onclick="seg('edit')" role="tab" aria-selected="false">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/></svg>
+        Edit
+      </button>
+    </div>
+
+    <!-- =================== GENERATE PANEL =================== -->
+    <section class="panel on" id="p-generate" role="tabpanel">
+      <div class="field">
+        <label for="genPrompt">prompt</label>
+        <textarea id="genPrompt" placeholder="describe the image — a calm subject, a setting, a light…">a slate-blue ceramic teapot on a linen cloth, soft window light, shallow depth of field</textarea>
+      </div>
+
+      <div class="card open" id="genCard">
+        <button class="card-head" onclick="toggleCard('genCard')" aria-expanded="true">
+          <span class="ct">configuration</span>
+          <span class="cs" id="genSummary"></span>
+          <span class="caret"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg></span>
+        </button>
+        <div class="card-body" id="genKnobs"></div>
+      </div>
+
+      <button class="btn" id="genBtn" onclick="render('generate')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M13 3l2.5 6.5L22 12l-6.5 2.5L13 21l-2.5-6.5L4 12l6.5-2.5L13 3z"/></svg>
+        Generate
+      </button>
+      <p class="note">runs ComfyUI on-box &middot; same can be asked of
+        <span class="linklike" onclick="askJerv()">jerv in chat</span> instead</p>
+
+      <div class="result" id="genResult"></div>
+    </section>
+
+    <!-- =================== EDIT PANEL =================== -->
+    <section class="panel" id="p-edit" role="tabpanel">
+      <div class="field">
+        <label>source image</label>
+        <div class="drop" id="editDrop" onclick="loadSource()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12"/></svg>
+          <span class="dt">upload an image, or pick from the gallery</span>
+          <span class="ds">tap to load &middot; or <b>choose a render</b> below</span>
+        </div>
+        <div class="src" id="editSrc">
+          <div class="thumb"><img id="editSrcImg" alt="source"></div>
+          <div class="meta"><div class="n" id="editSrcName">render-0612.png</div><div class="d" id="editSrcDim">1024 &times; 1024</div></div>
+          <button class="x" onclick="clearSource()" title="Remove source" aria-label="Remove source"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6L6 18M6 6l12 12"/></svg></button>
+        </div>
+        <button class="pickbtn" onclick="openGallery('pick')">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>
+          pick from gallery
+        </button>
+      </div>
+
+      <div class="field">
+        <label>references <span style="color:var(--text-3);font-weight:400">— up to 2, for style or compositing</span></label>
+        <div class="refs">
+          <div class="refslot" id="ref0" onclick="loadRef(0)">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
+            <button class="rx" onclick="event.stopPropagation();clearRef(0)" aria-label="Remove reference"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6L6 18M6 6l12 12"/></svg></button>
+          </div>
+          <div class="refslot" id="ref1" onclick="loadRef(1)">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
+            <button class="rx" onclick="event.stopPropagation();clearRef(1)" aria-label="Remove reference"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6L6 18M6 6l12 12"/></svg></button>
+          </div>
+        </div>
+      </div>
+
+      <div class="field">
+        <label for="editPrompt">edit instruction</label>
+        <textarea id="editPrompt" placeholder="what to change — &ldquo;make the background a warm sunset&rdquo;">turn the linen cloth deep forest green, keep the teapot unchanged</textarea>
+      </div>
+
+      <div class="card open" id="editCard">
+        <button class="card-head" onclick="toggleCard('editCard')" aria-expanded="true">
+          <span class="ct">configuration</span>
+          <span class="cs" id="editSummary"></span>
+          <span class="caret"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg></span>
+        </button>
+        <div class="card-body" id="editKnobs"></div>
+      </div>
+
+      <button class="btn" id="editBtn" onclick="render('edit')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/></svg>
+        Apply edit
+      </button>
+      <p class="note">edits the source on-box &middot; same can be asked of
+        <span class="linklike" onclick="askJerv()">jerv in chat</span> instead</p>
+
+      <div class="result" id="editResult"></div>
+    </section>
+
+    <p class="legend"><b>Mockup is interactive.</b> <b>Direction B + gallery shortcut</b>: the segmented
+      Generate&nbsp;|&nbsp;Edit form, plus the <b>grid icon</b> in the top bar that opens a scrollable
+      image-only pinboard of every render. Try: tap <b>Generate</b> for the honest
+      queued&rarr;rendering sequence — the new image lands at the top of the gallery; open the
+      <b>gallery</b> and tap any image to view it large and <b>use it as an edit source</b>; change
+      <b>speed</b> away from <b>quality</b> to watch the steps slider lock. Images are inline-SVG
+      stand-ins for the production by-id source.</p>
+  </div>
+
+  <!-- ===================== GALLERY OVERLAY ===================== -->
+  <div class="gallery" id="gallery" aria-hidden="true">
+    <div class="gnav">
+      <button class="iconbtn" onclick="closeGallery()" title="Back" aria-label="Back to image screen">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+      </button>
+      <span class="title">Gallery</span>
+      <span class="countpill" id="galleryPill">6</span>
+      <span class="sp"></span>
+      <button class="iconbtn" onclick="closeGallery()" title="Close" aria-label="Close gallery">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
+      </button>
+    </div>
+    <div class="ghint" id="ghint">every render on this device &middot; owner-only, never a note &middot; tap to view</div>
+    <div class="ggrid" id="ggrid"></div>
+  </div>
+
+  <!-- ===================== LIGHTBOX ===================== -->
+  <div class="lightbox" id="lightbox" aria-hidden="true">
+    <div class="lb-top" onclick="closeLightbox()"><img id="lbImg" alt="render"></div>
+    <div class="lb-card">
+      <div class="grip"></div>
+      <div class="lbmeta" id="lbMeta"></div>
+      <div class="resactions">
+        <button class="chip" id="lbEdit" onclick="editFromLightbox()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/></svg>use as edit source</button>
+        <button class="chip" id="lbSeed" onclick="copySeed(this, lbCurrent? lbCurrent.seed:'')">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>copy seed</button>
+        <button class="chip" onclick="closeLightbox()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6L6 18M6 6l12 12"/></svg>close</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const $=id=>document.getElementById(id);
+
+/* ---------- theme ---------- */
+const sun='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>';
+const moon='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>';
+function paintTheme(){const d=document.documentElement.getAttribute('data-theme')==='dark';$('themeBtn').innerHTML=d?moon:sun;}
+$('themeBtn').onclick=()=>{const r=document.documentElement;r.setAttribute('data-theme',r.getAttribute('data-theme')==='dark'?'light':'dark');paintTheme();};
+paintTheme();
+
+/* ---------- config state ---------- */
+const SPEED={dreamshaper:{label:'dreamshaper',model:'dreamshaper',steps:8,note:'tiny SDXL · seconds'},
+             fast:{label:'fast',model:'qwen-image-lightning',steps:4,note:'4-step Lightning · quick'},
+             quality:{label:'quality',model:'qwen-image',steps:30,note:'full model · 20–40 steps · ~1min+'}};
+const EDIT_MODEL={fast:'qwen-image-edit-lightning',quality:'qwen-image-edit',dreamshaper:'qwen-image-edit-lightning'};
+const ASPECT={square:{label:'1:1',dims:[1024,1024]},portrait:{label:'3:4',dims:[896,1152]},
+              landscape:{label:'4:3',dims:[1152,896]},tall:{label:'9:16',dims:[768,1344]},wide:{label:'16:9',dims:[1344,768]}};
+const RESMUL={small:.75,medium:1,large:1.4};
+
+const cfg={
+  generate:{speed:'quality',aspect:'square',resolution:'medium',steps:30,neg:'',seed:''},
+  edit:{speed:'quality',resolution:'medium',steps:30,neg:'',seed:''}
+};
+
+function knobMarkup(mode){
+  const c=cfg[mode];
+  const speedBtns=Object.keys(SPEED).map(k=>
+    `<button data-v="${k}" class="${c.speed===k?'on':''}" onclick="setSpeed('${mode}','${k}')">${SPEED[k].label}</button>`).join('');
+  const aspectBtns=Object.keys(ASPECT).map(k=>
+    `<button data-v="${k}" class="${c.aspect===k?'on':''}" onclick="setKnob('${mode}','aspect','${k}')">${ASPECT[k].label}</button>`).join('');
+  const resBtns=['small','medium','large'].map(k=>
+    `<button data-v="${k}" class="${c.resolution===k?'on':''}" onclick="setKnob('${mode}','resolution','${k}')">${k}</button>`).join('');
+
+  const aspectRow = mode==='generate' ? `
+    <div class="row">
+      <div class="rl"><span class="rlabel">aspect</span><span class="rhint">ratio of the frame</span></div>
+      <div class="mseg five">${aspectBtns}</div>
+    </div>` : `
+    <div class="row">
+      <div class="rl"><span class="rlabel">aspect</span><span class="rhint">inherited from source</span></div>
+      <div class="mseg"><button class="on" disabled style="flex:1">matches source image</button></div>
+    </div>`;
+
+  return `
+    <div class="row">
+      <div class="rl"><span class="rlabel">speed</span><span class="rhint" id="${mode}-speednote">${SPEED[c.speed].note}</span></div>
+      <div class="mseg">${speedBtns}</div>
+    </div>
+    ${aspectRow}
+    <div class="row">
+      <div class="rl"><span class="rlabel">resolution</span><span class="rhint">medium = native ~1MP</span></div>
+      <div class="mseg">${resBtns}</div>
+    </div>
+    <div class="row ${c.speed!=='quality'?'locked':''}" id="${mode}-stepsRow">
+      <div class="rl"><span class="rlabel">steps</span><span class="rhint">20–40 · quality path only</span></div>
+      <div class="slider-wrap">
+        <input type="range" min="20" max="40" value="${c.speed==='quality'?c.steps:30}" oninput="setSteps('${mode}',this.value)">
+        <span class="stepval" id="${mode}-stepval">${c.speed==='quality'?c.steps:SPEED[c.speed].steps}</span>
+      </div>
+      <div class="lockhint"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg><span id="${mode}-lockmsg">fixed ${SPEED[c.speed].steps} steps on the ${c.speed} path</span></div>
+    </div>
+    <div class="row">
+      <div class="rl"><span class="rlabel">negative prompt</span><span class="rhint">keep out</span></div>
+      <input type="text" placeholder="things to avoid — blur, text, extra fingers" value="${c.neg}" oninput="cfg['${mode}'].neg=this.value">
+    </div>
+    <div class="row">
+      <div class="rl"><span class="rlabel">seed</span><span class="rhint">blank = random</span></div>
+      <input type="number" placeholder="random" value="${c.seed}" oninput="cfg['${mode}'].seed=this.value;syncSummary('${mode}')">
+    </div>`;
+}
+
+function mountKnobs(){
+  $('genKnobs').innerHTML=knobMarkup('generate');
+  $('editKnobs').innerHTML=knobMarkup('edit');
+  syncSummary('generate');syncSummary('edit');
+}
+
+function setSpeed(mode,v){
+  cfg[mode].speed=v;
+  (mode==='generate'?$('genKnobs'):$('editKnobs')).innerHTML=knobMarkup(mode);
+  syncSummary(mode);
+}
+function setKnob(mode,key,v){
+  cfg[mode][key]=v;
+  (mode==='generate'?$('genKnobs'):$('editKnobs')).innerHTML=knobMarkup(mode);
+  syncSummary(mode);
+}
+function setSteps(mode,v){cfg[mode].steps=+v;$(`${mode}-stepval`).textContent=v;syncSummary(mode);}
+
+function effSteps(mode){const c=cfg[mode];return c.speed==='quality'?c.steps:SPEED[c.speed].steps;}
+function modelFor(mode){return mode==='edit'?EDIT_MODEL[cfg.edit.speed]:SPEED[cfg.generate.speed].model;}
+function dimsFor(mode){
+  if(mode==='edit')return editState.dims||[1024,1024];
+  const base=ASPECT[cfg.generate.aspect].dims, m=RESMUL[cfg.generate.resolution];
+  return [Math.round(base[0]*m/8)*8,Math.round(base[1]*m/8)*8];
+}
+function syncSummary(mode){
+  const c=cfg[mode], d=dimsFor(mode);
+  const seed=c.seed?c.seed:'random';
+  $(mode==='generate'?'genSummary':'editSummary').textContent=
+    `${SPEED[c.speed].label} · ${d[0]}×${d[1]} · ${effSteps(mode)} steps · seed ${seed}`;
+}
+
+function toggleCard(id){const el=$(id);el.classList.toggle('open');
+  el.querySelector('.card-head').setAttribute('aria-expanded',el.classList.contains('open'));}
+
+/* ---------- segments ---------- */
+function seg(k){
+  document.querySelectorAll('#seg button').forEach(b=>{const on=b.dataset.k===k;b.classList.toggle('on',on);b.setAttribute('aria-selected',on);});
+  document.querySelectorAll('.panel').forEach(p=>p.classList.toggle('on',p.id==='p-'+k));
+}
+
+/* ---------- SVG placeholder factory (offline stand-in) ---------- */
+function svgURI(w,h,hue,label){
+  const s=`<svg xmlns='http://www.w3.org/2000/svg' width='${w}' height='${h}' viewBox='0 0 ${w} ${h}'>
+    <defs><linearGradient id='g' x1='0' y1='0' x2='1' y2='1'>
+      <stop offset='0' stop-color='${hue[0]}'/><stop offset='1' stop-color='${hue[1]}'/></linearGradient></defs>
+    <rect width='${w}' height='${h}' fill='url(#g)'/>
+    <circle cx='${w*.62}' cy='${h*.42}' r='${Math.min(w,h)*.16}' fill='rgba(255,255,255,.10)'/>
+    <rect x='${w*.16}' y='${h*.6}' width='${w*.55}' height='${h*.16}' rx='${h*.04}' fill='rgba(0,0,0,.12)'/>
+    <text x='50%' y='${h*.92}' fill='rgba(255,255,255,.55)' font-family='monospace' font-size='${Math.round(Math.min(w,h)*.05)}' text-anchor='middle'>${label}</text>
+  </svg>`;
+  return 'data:image/svg+xml;utf8,'+encodeURIComponent(s);
+}
+const HUE_GEN=['#3a3550','#6f5b8c'], HUE_EDIT=['#2c4a3a','#5a8c6f'], HUE_SRC=['#403a3a','#7a6a5a'];
+const HUES=[['#3a3550','#6f5b8c'],['#2c4a3a','#5a8c6f'],['#2c3a4a','#5a7a8c'],['#4a3a2c','#8c6f5a'],
+            ['#43304a','#7a5a8c'],['#2c4a47','#5a8c86'],['#4a2c3a','#8c5a6f'],['#3a4a2c','#6f8c5a']];
+
+/* ---------- gallery model ---------- */
+let GALLERY=[];   // newest first: {uri, kind, dims, model, seed}
+function seedGallery(){
+  const seeds=[
+    {kind:'generate',dims:[1024,1024],model:'qwen-image',seed:'418207733',label:'teapot · linen'},
+    {kind:'edit',    dims:[1024,1024],model:'qwen-image-edit',seed:'901338121',label:'cloth → green'},
+    {kind:'generate',dims:[768,1344], model:'qwen-image-lightning',seed:'77410023',label:'rainy alley'},
+    {kind:'generate',dims:[1344,768], model:'qwen-image',seed:'553201984',label:'foggy ridge'},
+    {kind:'generate',dims:[896,1152], model:'dreamshaper',seed:'12009654',label:'paper crane'},
+    {kind:'edit',    dims:[1152,896], model:'qwen-image-edit',seed:'644120097',label:'sky → dusk'},
+  ];
+  GALLERY=seeds.map((s,i)=>({...s,uri:svgURI(640,Math.round(640*s.dims[1]/s.dims[0]),HUES[i%HUES.length],
+    `${s.label} · ${s.dims[0]}×${s.dims[1]}`)}));
+}
+function updateCounts(){const n=GALLERY.length;$('galleryCount').textContent=n;$('galleryPill').textContent=n;}
+function renderGallery(freshUri){
+  const grid=$('ggrid');
+  if(!GALLERY.length){grid.innerHTML='<div class="gempty">nothing rendered yet — generate an image and it lands here.</div>';updateCounts();return;}
+  grid.innerHTML=GALLERY.map((g,i)=>`
+    <button class="gtile ${g.uri===freshUri?'fresh':''}" onclick="openLightbox(${i})" aria-label="${g.kind} render">
+      <span class="kind">${g.kind}</span>
+      <img src="${g.uri}" alt="${g.kind} render ${g.dims[0]}×${g.dims[1]}">
+    </button>`).join('');
+  updateCounts();
+}
+function pushGallery(kind,dims,model,seed,uri){
+  GALLERY.unshift({kind,dims,model,seed,uri});
+  renderGallery(uri);
+}
+
+/* ---------- gallery open/close (mode: 'view' | 'pick') ---------- */
+let galleryMode='view';
+function openGallery(mode){
+  galleryMode = mode==='pick' ? 'pick' : 'view';
+  $('ghint').textContent = galleryMode==='pick'
+    ? 'tap a render to use it as the edit source'
+    : 'every render on this device · owner-only, never a note · tap to view';
+  renderGallery();
+  const g=$('gallery');g.classList.add('open');g.setAttribute('aria-hidden','false');
+}
+function closeGallery(){const g=$('gallery');g.classList.remove('open');g.setAttribute('aria-hidden','true');}
+
+/* ---------- lightbox ---------- */
+let lbCurrent=null, lbIndex=-1;
+function openLightbox(i){
+  // in 'pick' mode, a tile tap goes straight to setting the edit source
+  if(galleryMode==='pick'){ const g=GALLERY[i]; setEditSourceFrom(g); return; }
+  lbIndex=i; lbCurrent=GALLERY[i];
+  $('lbImg').src=lbCurrent.uri;
+  $('lbMeta').innerHTML=`<span class="k">${lbCurrent.kind}</span>
+    <span>${lbCurrent.dims[0]}×${lbCurrent.dims[1]}</span><span class="sep">·</span>
+    <span>${lbCurrent.model}</span><span class="sep">·</span><span>seed ${lbCurrent.seed}</span>`;
+  const lb=$('lightbox');lb.classList.add('open');lb.setAttribute('aria-hidden','false');
+}
+function closeLightbox(){const lb=$('lightbox');lb.classList.remove('open');lb.setAttribute('aria-hidden','true');}
+function editFromLightbox(){ if(lbCurrent) setEditSourceFrom(lbCurrent); }
+
+function setEditSourceFrom(g){
+  closeLightbox();closeGallery();
+  seg('edit');
+  editState.loaded=true;editState.dims=g.dims;
+  $('editSrcImg').src=g.uri;
+  $('editSrcName').textContent='from gallery';
+  $('editSrcDim').textContent=`${g.dims[0]} × ${g.dims[1]} · ${g.model} · seed ${g.seed}`;
+  $('editDrop').style.display='none';$('editSrc').classList.add('show');
+  syncSummary('edit');
+}
+
+/* ---------- edit source / refs ---------- */
+const editState={loaded:false,dims:[1024,1024],refs:[false,false]};
+function loadSource(){
+  editState.loaded=true;editState.dims=[1024,1024];
+  $('editSrcImg').src=svgURI(256,256,HUE_SRC,'source · 1024×1024');
+  $('editSrcName').textContent='uploaded.png';
+  $('editSrcDim').textContent='1024 × 1024';
+  $('editDrop').style.display='none';$('editSrc').classList.add('show');
+  syncSummary('edit');
+}
+function clearSource(){editState.loaded=false;$('editSrc').classList.remove('show');$('editDrop').style.display='flex';}
+function loadRef(i){const el=$('ref'+i);editState.refs[i]=true;el.classList.add('filled');
+  if(!el.querySelector('img')){const im=new Image();im.src=svgURI(160,160,HUE_SRC,'ref');el.insertBefore(im,el.firstChild);}}
+function clearRef(i){const el=$('ref'+i);editState.refs[i]=false;el.classList.remove('filled');const im=el.querySelector('img');if(im)im.remove();}
+
+/* ---------- render sequence ---------- */
+const PHASES=[
+  {t:700, html:'<span class="phase">queued — ComfyUI is free, starting…</span>'},
+  {t:1200,html:'<span class="phase"><b>rendering…</b> the language models stay unloaded</span>'},
+];
+function render(mode){
+  if(mode==='edit'&&!editState.loaded){
+    clearSource();
+    if($('editDrop').animate)$('editDrop').animate([{borderColor:'var(--rose)'},{borderColor:'var(--border)'}],{duration:600});
+    return;
+  }
+  const btn=$(mode==='generate'?'genBtn':'editBtn');
+  const out=$(mode==='generate'?'genResult':'editResult');
+  btn.disabled=true;
+  const dims=dimsFor(mode), model=modelFor(mode);
+  const seed=cfg[mode].seed?cfg[mode].seed:String(Math.floor(Math.random()*4294967295));
+
+  out.innerHTML=`<div class="stage" id="${mode}-stage" style="aspect-ratio:${dims[0]}/${dims[1]}">
+      <div class="ph"><div class="spin"></div><div id="${mode}-phase"></div></div>
+      <div class="ph shimmer"></div>
+    </div>`;
+  out.scrollIntoView({behavior:'smooth',block:'nearest'});
+
+  let i=0;
+  const step=()=>{
+    if(i<PHASES.length){$(`${mode}-phase`).innerHTML=PHASES[i].html;const wait=PHASES[i].t;i++;setTimeout(step,wait);}
+    else reveal(mode,out,btn,dims,model,seed);
+  };
+  setTimeout(step,120);
+}
+
+function reveal(mode,out,btn,dims,model,seed){
+  btn.disabled=false;
+  const isEdit=mode==='edit';
+  const resultURI=svgURI(512,Math.round(512*dims[1]/dims[0]),isEdit?HUE_EDIT:HUE_GEN,
+                         `${isEdit?'edited':'generated'} · ${dims[0]}×${dims[1]}`);
+
+  const meta=`<div class="resmeta"><span>${dims[0]}×${dims[1]}</span><span class="sep">·</span>
+      <span>${model}</span><span class="sep">·</span><span>seed ${seed}</span></div>`;
+
+  const actions=`<div class="resactions">
+      <button class="chip" onclick='useAsEditSource(${JSON.stringify(dims)},"${model}","${seed}","${resultURI.replace(/'/g,"%27")}")'>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/></svg>edit source</button>
+      <button class="chip" onclick="openGallery()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>gallery</button>
+      <button class="chip" onclick="copySeed(this,'${seed}')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>copy seed</button>
+    </div>`;
+
+  if(isEdit){
+    const srcURI=$('editSrcImg').src;
+    out.innerHTML=`
+      <div class="compare" id="cmp">
+        <img src="${srcURI}" alt="before">
+        <div class="after" id="cmpAfter"><img src="${resultURI}" alt="after"></div>
+        <div class="handle" id="cmpHandle"></div>
+        <span class="tag b">before</span><span class="tag a">after</span>
+      </div>${meta}${actions}`;
+    initCompare();
+  }else{
+    out.innerHTML=`<div class="stage"><img src="${resultURI}" alt="generated"></div>${meta}${actions}`;
+  }
+  // the new render flows into the gallery (newest first)
+  pushGallery(isEdit?'edit':'generate',dims,model,seed,resultURI);
+}
+
+function useAsEditSource(dims,model,seed,uri){
+  seg('edit');editState.loaded=true;editState.dims=dims;
+  $('editSrcImg').src=uri;
+  $('editSrcName').textContent='this render';
+  $('editSrcDim').textContent=`${dims[0]} × ${dims[1]} · ${model} · seed ${seed}`;
+  $('editDrop').style.display='none';$('editSrc').classList.add('show');
+  syncSummary('edit');
+  window.scrollTo({top:0,behavior:'smooth'});
+}
+
+function copySeed(btn,seed){
+  try{navigator.clipboard&&navigator.clipboard.writeText(seed);}catch(e){}
+  const o=btn.innerHTML;btn.classList.add('done');btn.innerHTML='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>copied';
+  setTimeout(()=>{btn.classList.remove('done');btn.innerHTML=o;},1600);
+}
+
+/* ---------- before/after swipe ---------- */
+function initCompare(){
+  const cmp=$('cmp'),after=$('cmpAfter'),handle=$('cmpHandle');
+  const set=x=>{const r=cmp.getBoundingClientRect();let p=(x-r.left)/r.width;p=Math.max(0,Math.min(1,p));
+    after.style.width=(p*100)+'%';handle.style.left=(p*100)+'%';};
+  let drag=false;
+  const dn=e=>{drag=true;set((e.touches?e.touches[0]:e).clientX);};
+  const mv=e=>{if(drag)set((e.touches?e.touches[0]:e).clientX);};
+  const up=()=>drag=false;
+  cmp.addEventListener('mousedown',dn);window.addEventListener('mousemove',mv);window.addEventListener('mouseup',up);
+  cmp.addEventListener('touchstart',dn,{passive:true});cmp.addEventListener('touchmove',mv,{passive:true});cmp.addEventListener('touchend',up);
+}
+
+function askJerv(){
+  alert('Opens Full-Brain chat with this prompt prefilled — there jerv runs generate_image as a tool, so the language model is resident. This screen keeps it unloaded.');
+}
+
+/* ---------- esc closes overlays ---------- */
+document.addEventListener('keydown',e=>{if(e.key==='Escape'){if($('lightbox').classList.contains('open'))closeLightbox();else if($('gallery').classList.contains('open'))closeGallery();}});
+
+/* ---------- init ---------- */
+seedGallery();
+renderGallery();
+mountKnobs();
+</script>
+</body>
+</html>
