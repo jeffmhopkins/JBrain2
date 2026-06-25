@@ -51,19 +51,17 @@ _LOCAL_HOSTS = frozenset({"localhost", "127.0.0.1", "::1", "testserver"})
 
 
 def _request_scheme(request: Request) -> str:
-    """The scheme the browser actually used. Trust `X-Forwarded-Proto` when the proxy
-    sets it; otherwise default to https for any public host. A tunnelled box is only
-    reachable from the internet over https (the Cloudflare tunnel terminates TLS at the
-    edge and doesn't always forward the proto header), so a request that arrives as
-    plain http from a public hostname still has an https public origin — and Google
-    rejects a non-https redirect_uri anyway. Loopback/test hosts keep the raw scheme."""
-    forwarded = request.headers.get("x-forwarded-proto")
-    if forwarded:
-        return forwarded.split(",")[0].strip()
+    """The public scheme to build the redirect_uri with. Any non-loopback host is https,
+    unconditionally: a tunnelled box is only reachable from the internet over https (the
+    Cloudflare tunnel terminates TLS at the edge and forwards the origin hop as plain
+    http — sending `x-forwarded-proto: http` or no proto header at all), and Google
+    rejects a non-https redirect_uri regardless. Trusting the request's apparent scheme
+    here is what produced the `http://` redirect that Google rejected as a mismatch.
+    Loopback/test hosts honour `x-forwarded-proto` then the raw scheme, for local dev."""
     host = request.headers.get("host", request.url.netloc).split(":")[0]
-    if host in _LOCAL_HOSTS:
-        return request.url.scheme
-    return "https"
+    if host not in _LOCAL_HOSTS:
+        return "https"
+    return request.headers.get("x-forwarded-proto", request.url.scheme).split(",")[0].strip()
 
 
 def _public_base(request: Request, settings: Settings) -> str:

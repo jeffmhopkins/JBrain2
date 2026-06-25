@@ -225,9 +225,10 @@ def test_connect_derives_redirect_uri_from_request_without_public_base() -> None
 
 
 def test_redirect_uri_defaults_to_https_for_a_public_host() -> None:
-    """No public_base_url and the tunnel doesn't forward x-forwarded-proto: a request
-    arriving as http from a public hostname still derives an https redirect_uri (Google
-    rejects non-https), so a tunnelled box connects after a plain update — no env edit."""
+    """No public_base_url: a request from a public hostname derives an https redirect_uri
+    even when the tunnel drops x-forwarded-proto OR forwards it as plain http (the origin
+    hop is http) — Google rejects non-https, so a tunnelled box connects after a plain
+    update, no env edit. Loopback/test hosts still honour the raw scheme (covered above)."""
     app = create_app(_settings())  # public_base_url left empty
     with TestClient(app) as test_client:
         app.state.auth_repo = FakeAuthRepo()
@@ -242,9 +243,16 @@ def test_redirect_uri_defaults_to_https_for_a_public_host() -> None:
             token_url="https://oauth2.googleapis.com/token",
             transport=_gmail_transport(),
         )
-        # Host header is the public domain; no x-forwarded-proto (the tunnel dropped it).
-        out = test_client.get("/api/settings/gmail", headers={"host": "hopkinsbrain.com"}).json()
-        assert out["redirect_uri"] == "https://hopkinsbrain.com/api/settings/gmail/callback"
+        want = "https://hopkinsbrain.com/api/settings/gmail/callback"
+        # No proto header at all (the tunnel dropped it)...
+        no_proto = test_client.get("/api/settings/gmail", headers={"host": "hopkinsbrain.com"})
+        assert no_proto.json()["redirect_uri"] == want
+        # ...and a literal x-forwarded-proto: http (the origin hop) is overridden too.
+        http_proto = test_client.get(
+            "/api/settings/gmail",
+            headers={"host": "hopkinsbrain.com", "x-forwarded-proto": "http"},
+        )
+        assert http_proto.json()["redirect_uri"] == want
 
 
 def test_put_normalizes_a_url_ified_client_id(
