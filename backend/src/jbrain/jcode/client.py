@@ -39,6 +39,12 @@ class JcodeApi(Protocol):
 
     def stream_turn(self, sid: str, prompt: str) -> AsyncIterator[bytes]: ...
 
+    async def preview_status(self, sid: str) -> dict[str, Any]: ...
+
+    async def preview_open(self, sid: str, port: int | None) -> dict[str, Any]: ...
+
+    async def preview_close(self, sid: str) -> None: ...
+
 
 class JcodeClient:
     def __init__(
@@ -91,6 +97,15 @@ class JcodeClient:
     async def cancel(self, sid: str) -> None:
         await self._json("POST", f"/sessions/{sid}/cancel")
 
+    async def preview_status(self, sid: str) -> dict[str, Any]:
+        return await self._json("GET", f"/sessions/{sid}/preview")
+
+    async def preview_open(self, sid: str, port: int | None) -> dict[str, Any]:
+        return await self._json("POST", f"/sessions/{sid}/preview", json={"port": port})
+
+    async def preview_close(self, sid: str) -> None:
+        await self._json("DELETE", f"/sessions/{sid}/preview")
+
     async def stream_turn(self, sid: str, prompt: str) -> AsyncIterator[bytes]:
         """Proxy the control server's SSE, yielding one complete `data:` frame per
         event (so the caller's frame buffer / reconnect offset counts real events)."""
@@ -110,10 +125,12 @@ class JcodeClient:
 class FakeJcodeClient:
     """In-memory control server for tests: no httpx, no network."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, preview_enabled: bool = True) -> None:
         self._sessions: dict[str, dict[str, Any]] = {}
         self._n = 0
         self.cancelled: list[str] = []
+        self._preview_enabled = preview_enabled
+        self._previews: dict[str, str] = {}
 
     async def create_session(self, repo: str, branch: str, work_branch: str) -> dict[str, Any]:
         self._n += 1
@@ -146,6 +163,19 @@ class FakeJcodeClient:
 
     async def cancel(self, sid: str) -> None:
         self.cancelled.append(sid)
+
+    async def preview_status(self, sid: str) -> dict[str, Any]:
+        return {"enabled": self._preview_enabled, "url": self._previews.get(sid)}
+
+    async def preview_open(self, sid: str, port: int | None) -> dict[str, Any]:
+        if not self._preview_enabled:
+            raise JcodeError("web preview is not enabled")
+        url = f"https://demo-{sid}.trycloudflare.com"
+        self._previews[sid] = url
+        return {"enabled": True, "url": url}
+
+    async def preview_close(self, sid: str) -> None:
+        self._previews.pop(sid, None)
 
     async def stream_turn(self, sid: str, prompt: str) -> AsyncIterator[bytes]:
         for payload in (

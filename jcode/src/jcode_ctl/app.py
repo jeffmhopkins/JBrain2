@@ -12,14 +12,16 @@ from __future__ import annotations
 import hmac
 import json
 from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, FastAPI, Header, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from jcode_ctl.agent import TurnEvent
 from jcode_ctl.config import Settings
+from jcode_ctl.preview import PreviewError, PreviewManager
 from jcode_ctl.sessions import SessionError, SessionManager
 
 # SSE responses must not be buffered by a proxy (Caddy/nginx), or the turn stream
@@ -37,13 +39,25 @@ class TurnRequest(BaseModel):
     prompt: str
 
 
+class PreviewRequest(BaseModel):
+    port: int | None = Field(default=None, ge=1, le=65535)
+
+
 def _frame(ev: TurnEvent) -> bytes:
     payload = {"type": ev.type, "text": ev.text, "tool": ev.tool, "data": ev.data}
     return f"data: {json.dumps(payload)}\n\n".encode()
 
 
-def create_app(settings: Settings, sessions: SessionManager) -> FastAPI:
-    app = FastAPI(title="jcode control server")
+def create_app(
+    settings: Settings, sessions: SessionManager, preview: PreviewManager
+) -> FastAPI:
+    @asynccontextmanager
+    async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+        yield
+        # Tear down every live tunnel so no preview outlives the server.
+        await preview.close_all()
+
+    app = FastAPI(title="jcode control server", lifespan=lifespan)
 
     expected_header = f"Bearer {settings.token}"
 
@@ -60,6 +74,11 @@ def create_app(settings: Settings, sessions: SessionManager) -> FastAPI:
     @app.exception_handler(SessionError)
     async def _session_error(_: Request, exc: SessionError) -> JSONResponse:
         return JSONResponse(status_code=404, content={"detail": str(exc)})
+
+    @app.exception_handler(PreviewError)
+    async def _preview_error(_: Request, exc: PreviewError) -> JSONResponse:
+        # 409: the preview can't be opened right now (disabled, or the tunnel failed).
+        return JSONResponse(status_code=409, content={"detail": str(exc)})
 
     authed = APIRouter(dependencies=[Depends(require_token)])
 
@@ -106,8 +125,28 @@ def create_app(settings: Settings, sessions: SessionManager) -> FastAPI:
         return (await sessions.reset(sid)).public()
 
     @authed.delete("/sessions/{sid}", status_code=204)
-    def delete(sid: str) -> None:
+    async def delete(sid: str) -> None:
+        # Close the tunnel FIRST, so it's torn down even if the delete below raises
+        # (review N3) — a deleted session must keep no live tunnel.
+        await preview.close(sid)
         sessions.delete(sid)
+
+    # --- Web preview (Wave J4): an ephemeral tunnel to the sandbox's dev server ---
+
+    @authed.get("/sessions/{sid}/preview")
+    def preview_status(sid: str) -> dict[str, object]:
+        sessions.get(sid)
+        return {"enabled": preview.enabled, "url": preview.url(sid)}
+
+    @authed.post("/sessions/{sid}/preview")
+    async def preview_open(sid: str, body: PreviewRequest) -> dict[str, object]:
+        sessions.get(sid)
+        url = await preview.open(sid, body.port)
+        return {"enabled": True, "url": url}
+
+    @authed.delete("/sessions/{sid}/preview", status_code=204)
+    async def preview_close(sid: str) -> None:
+        await preview.close(sid)
 
     app.include_router(authed)
     return app

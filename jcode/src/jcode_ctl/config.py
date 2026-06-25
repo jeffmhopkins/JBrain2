@@ -42,3 +42,10 @@ class Settings(BaseSettings):
     # Ceiling on concurrent live sandboxes (full governance — CPU/mem/disk, TTL —
     # is Wave J5). Zero or negative disables the cap.
     max_sessions: int = 8
+
+    # Per-session web preview (Wave J4): an ephemeral Cloudflare quick-tunnel to the
+    # sandbox's dev server. OFF by default — it exposes the running app to anyone with
+    # the (unguessable) URL, so the owner opts in. Zero Cloudflare config needed
+    # (TryCloudflare: no account/token/DNS); the URL dies with the session.
+    preview_enabled: bool = False
+    preview_default_port: int = 5173

@@ -23,7 +23,7 @@ import type {
   TranscriptTurn,
 } from "../agent/types";
 import { parseJcodeStream } from "../jcode/stream";
-import type { JcodeEvent, JcodeSession, NewSessionInput } from "../jcode/types";
+import type { JcodeEvent, JcodePreview, JcodeSession, NewSessionInput } from "../jcode/types";
 
 export interface Principal {
   principal_id: string;
@@ -2162,6 +2162,24 @@ export const api = {
 
   async cancelJcodeRun(runId: string): Promise<void> {
     await request(`/api/jcode/runs/${encodeURIComponent(runId)}/cancel`, { method: "POST" });
+  },
+
+  /** Per-session web preview (Wave J4): an ephemeral tunnel to the sandbox dev server. */
+  async jcodePreviewStatus(id: string): Promise<JcodePreview> {
+    return (await request(`/api/jcode/sessions/${encodeURIComponent(id)}/preview`)).json();
+  },
+
+  async jcodePreviewOpen(id: string, port?: number): Promise<JcodePreview> {
+    return (
+      await request(
+        `/api/jcode/sessions/${encodeURIComponent(id)}/preview`,
+        jsonInit("POST", { port: port ?? null }),
+      )
+    ).json();
+  },
+
+  async jcodePreviewClose(id: string): Promise<void> {
+    await request(`/api/jcode/sessions/${encodeURIComponent(id)}/preview`, { method: "DELETE" });
   },
 
   // `sessionId` scopes the review inbox to a Full Brain chat: its own staged

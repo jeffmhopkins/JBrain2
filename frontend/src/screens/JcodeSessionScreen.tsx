@@ -1,8 +1,9 @@
 // Code mode (jcode) — the tabbed session (docs/DESIGN.md "jcode", variant C, icon
 // tabs). One session, four views behind an icon-only segmented control: Chat (the
 // live coding turn over SSE), Terminal (the raw tool/command log derived from the
-// stream), Diff and Preview (placeholders until the diff feed / preview tunnel land
-// in later waves). The Chat tab is the workhorse; it streams api.jcodeTurn frames.
+// stream), Preview (an ephemeral tunnel to the sandbox dev server, Wave J4), and Diff
+// (a placeholder until the diff feed lands). The Chat tab is the workhorse; it streams
+// api.jcodeTurn frames.
 
 import { useEffect, useRef, useState } from "react";
 import { api } from "../api/client";
@@ -15,7 +16,7 @@ import {
   StopIcon,
   TerminalIcon,
 } from "../components/icons";
-import type { JcodeEvent, JcodeSession } from "../jcode/types";
+import type { JcodeEvent, JcodePreview, JcodeSession } from "../jcode/types";
 
 type Tab = "chat" | "diff" | "term" | "prev";
 
@@ -46,8 +47,47 @@ export function JcodeSessionScreen({
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [confirm, setConfirm] = useState<"reset" | "delete" | null>(null);
+  const [preview, setPreview] = useState<JcodePreview | null>(null);
+  const [pvBusy, setPvBusy] = useState(false);
   const runId = useRef<string | null>(null);
   const abort = useRef<AbortController | null>(null);
+
+  // Fetch the preview status the first time the Preview tab is opened (the feature
+  // flag + any already-live tunnel). Failures leave it null → a neutral empty state.
+  useEffect(() => {
+    if (tab !== "prev" || preview !== null) return;
+    let stale = false;
+    api
+      .jcodePreviewStatus(session.id)
+      .then((p) => {
+        if (!stale) setPreview(p);
+      })
+      .catch(() => {});
+    return () => {
+      stale = true;
+    };
+  }, [tab, preview, session.id]);
+
+  async function openPreview() {
+    setPvBusy(true);
+    try {
+      setPreview(await api.jcodePreviewOpen(session.id));
+    } catch {
+      setPreview({ enabled: true, url: null });
+    } finally {
+      setPvBusy(false);
+    }
+  }
+
+  async function closePreview() {
+    setPvBusy(true);
+    try {
+      await api.jcodePreviewClose(session.id);
+      setPreview({ enabled: true, url: null });
+    } finally {
+      setPvBusy(false);
+    }
+  }
 
   function patchLastJcode(fn: (it: Extract<Item, { kind: "jcode" }>) => void) {
     setItems((prev) => {
@@ -258,10 +298,57 @@ export function JcodeSessionScreen({
 
       {tab === "prev" && (
         <div className="jcode-panel">
-          <p className="jcode-empty">
-            A web preview — a temporary tunnel to the sandbox's dev server — arrives in a later
-            update.
-          </p>
+          {preview === null ? (
+            <p className="jcode-empty">Loading…</p>
+          ) : !preview.enabled ? (
+            <p className="jcode-empty">
+              Web preview isn't enabled on this server. Turn it on with
+              <code> jcode-setup.sh</code> — it opens a temporary tunnel to the sandbox's dev
+              server.
+            </p>
+          ) : preview.url ? (
+            <div className="jcode-preview">
+              <div className="jcode-pvurl">
+                <a href={preview.url} target="_blank" rel="noreferrer noopener">
+                  {preview.url}
+                </a>
+                <button
+                  type="button"
+                  className="jcode-act"
+                  onClick={() => navigator.clipboard?.writeText(preview.url ?? "")}
+                >
+                  Copy
+                </button>
+              </div>
+              <p className="jcode-empty">
+                A temporary tunnel to the sandbox's dev server — dies with the session, never
+                indexed. Anyone with this URL can reach it while it's live.
+              </p>
+              <button
+                type="button"
+                className="jcode-act danger"
+                disabled={pvBusy}
+                onClick={closePreview}
+              >
+                {pvBusy ? "Stopping…" : "Stop preview"}
+              </button>
+            </div>
+          ) : (
+            <div className="jcode-preview">
+              <p className="jcode-empty">
+                Start your dev server in the sandbox (e.g. <code>npm run dev</code> on{" "}
+                <code>:5173</code>), then open a temporary public URL to it.
+              </p>
+              <button
+                type="button"
+                className="jcode-act teal"
+                disabled={pvBusy}
+                onClick={openPreview}
+              >
+                {pvBusy ? "Opening…" : "Open preview tunnel"}
+              </button>
+            </div>
+          )}
         </div>
       )}
 

@@ -34,3 +34,10 @@ export interface NewSessionInput {
   branch: string;
   work_branch: string;
 }
+
+// The per-session web preview (Wave J4): `enabled` is the server feature flag;
+// `url` is the live ephemeral tunnel URL (null when no preview is open).
+export interface JcodePreview {
+  enabled: boolean;
+  url: string | null;
+}

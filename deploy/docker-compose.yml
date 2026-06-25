@@ -382,6 +382,12 @@ services:
       # is a placeholder the local gateway ignores (the SDK requires the var be set).
       ANTHROPIC_BASE_URL: ${JCODE_MODEL_URL:-http://local-llm:8080}
       ANTHROPIC_API_KEY: ${JCODE_GATEWAY_TOKEN:-local}
+      # Per-session web preview (Wave J4): an ephemeral Cloudflare quick-tunnel
+      # (cloudflared, bundled in the image) to the sandbox's dev server. OFF by
+      # default — it exposes the running app to anyone with the random URL — and
+      # enabled via scripts/jcode-setup.sh. The tunnel dials OUT (no inbound), so the
+      # container's default egress covers it; no compose network change.
+      JCODE_PREVIEW_ENABLED: ${JCODE_PREVIEW_ENABLED:-false}
     volumes:
       # The per-session git checkouts — sandbox scratch, NEVER a JBrain blob/note.
       - jcode_work:/work

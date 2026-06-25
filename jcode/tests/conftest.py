@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 from jcode_ctl.agent import FakeCodingAgent
 from jcode_ctl.app import create_app
 from jcode_ctl.config import Settings
+from jcode_ctl.preview import FakeTunnel, PreviewManager
 from jcode_ctl.sessions import SessionManager
 from jcode_ctl.workspace import FakeWorkspace
 
@@ -20,9 +21,14 @@ def manager() -> SessionManager:
 
 
 @pytest.fixture
-def client(manager: SessionManager) -> TestClient:
+def preview() -> PreviewManager:
+    return PreviewManager(FakeTunnel, enabled=True)
+
+
+@pytest.fixture
+def client(manager: SessionManager, preview: PreviewManager) -> TestClient:
     settings = Settings(token=TOKEN)
-    return TestClient(create_app(settings, manager))
+    return TestClient(create_app(settings, manager, preview))
 
 
 @pytest.fixture

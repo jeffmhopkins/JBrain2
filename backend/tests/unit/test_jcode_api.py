@@ -38,6 +38,28 @@ def test_owner_but_unconfigured_is_404() -> None:
     assert "not enabled" in r.json()["detail"]
 
 
+def test_preview_open_status_close() -> None:
+    client = TestClient(_app(OWNER, jcode_client=FakeJcodeClient()))
+    assert client.get("/api/jcode/sessions/sess1/preview").json() == {
+        "enabled": True,
+        "url": None,
+    }
+    opened = client.post("/api/jcode/sessions/sess1/preview", json={}).json()
+    assert opened["url"].endswith(".trycloudflare.com")
+    assert client.delete("/api/jcode/sessions/sess1/preview").status_code == 204
+
+
+def test_preview_reports_disabled() -> None:
+    client = TestClient(_app(OWNER, jcode_client=FakeJcodeClient(preview_enabled=False)))
+    assert client.get("/api/jcode/sessions/sess1/preview").json()["enabled"] is False
+
+
+def test_preview_is_owner_gated() -> None:
+    client = TestClient(_app(NON_OWNER, jcode_client=FakeJcodeClient()))
+    assert client.get("/api/jcode/sessions/sess1/preview").status_code == 403
+    assert client.post("/api/jcode/sessions/sess1/preview", json={}).status_code == 403
+
+
 def test_malformed_sid_is_404_before_any_db_or_control_call() -> None:
     # A sid carrying a path char never reaches the DB (None here) or the control
     # server — _valid_sid 404s first (review S2). session_maker is None, so reaching

@@ -2458,6 +2458,7 @@ const jcodeSessions: MockJcodeSession[] = [
   },
 ];
 let jcodeN = 2;
+const jcodePreview = new Map<string, string>();
 
 function jcodeTurnStream(): Response {
   const frames = [
@@ -2522,6 +2523,20 @@ export const mockFetch: typeof fetch = async (input, init) => {
   if (path.startsWith("/api/jcode/sessions/") && path.endsWith("/reset") && method === "POST") {
     const s = jcodeSessions.find((x) => x.id === path.split("/")[4]);
     return s ? json(s) : json({ detail: "unknown session" }, 404);
+  }
+  // Preview routes first — the DELETE here would otherwise match the session DELETE.
+  if (path.startsWith("/api/jcode/sessions/") && path.endsWith("/preview")) {
+    const sid = path.split("/")[4] ?? "";
+    if (method === "GET") return json({ enabled: true, url: jcodePreview.get(sid) ?? null });
+    if (method === "POST") {
+      const url = `https://demo-${sid}.trycloudflare.com`;
+      jcodePreview.set(sid, url);
+      return json({ enabled: true, url });
+    }
+    if (method === "DELETE") {
+      jcodePreview.delete(sid);
+      return new Response(null, { status: 204 });
+    }
   }
   if (path.startsWith("/api/jcode/sessions/") && method === "DELETE") {
     const i = jcodeSessions.findIndex((x) => x.id === path.split("/")[4]);
