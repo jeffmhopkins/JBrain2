@@ -426,6 +426,8 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
     tally = _RunTally(runlog.bound(owner_ctx, run_id))
     # Size the tool budget to how hard the agent.turn model is set to think: a high/
     # medium reasoning effort earns a deeper ReAct chain before the step cap stops it.
+    # The persona's budget_multiplier then scales both caps — the archivist's long
+    # mailbox cleanups run at 4 so a sweep isn't cut off mid-chain.
     router = get_llm_router(request)
     effort = await router.effective_reasoning_effort("agent.turn")
     # The resolved model's total context window — the denominator for the PWA's live
@@ -437,7 +439,7 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
         router,
         get_agent_registry(request),
         recorder=tally,
-        guardrails=guardrails_for_effort(effort),
+        guardrails=guardrails_for_effort(effort, scale=profile.budget_multiplier),
     )
     read_ctx = read_context(principal.id, read_scopes)
     # The turn's attachments are fetched under the SESSION's own scopes PLUS the domain

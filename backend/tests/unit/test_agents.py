@@ -93,6 +93,16 @@ def test_archivist_is_a_sandboxed_gmail_organizer() -> None:
     assert archivist.reads_knowledge_base is False
 
 
+def test_archivist_earns_a_4x_turn_budget() -> None:
+    """The archivist runs a long, many-tool, date-by-date mailbox cleanup, so it gets
+    a 4x budget_multiplier (the loop scales both the step cap and the cost-token
+    budget by it); every other persona keeps the shared 1x default."""
+    assert AGENTS["archivist"].budget_multiplier == 4
+    assert AGENTS["curator"].budget_multiplier == 1
+    assert AGENTS["jerv"].budget_multiplier == 1
+    assert AGENTS["teacher"].budget_multiplier == 1
+
+
 def test_archivist_tools_are_archivist_only() -> None:
     """The gmail_* and memory tools — the archivist's EXCLUSIVE surface — live in its
     allowlist and nowhere else: curator (allow=None) never offers the opt-in `web` class,

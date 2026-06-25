@@ -112,7 +112,13 @@ class AgentProfile:
     knowledge tool, a frozenset = exactly those, the empty set = none);
     `reads_knowledge_base` gates retrieval, episodic memory, and skill recall — a
     False agent runs with empty read scopes so even a mis-scoped session reads no
-    domain data."""
+    domain data.
+
+    `budget_multiplier` scales the loop's per-turn guardrails (the ReAct step cap and
+    the cost-token budget) for this persona — 1 keeps the shared defaults; the
+    archivist runs at 4 because a date-by-date mailbox cleanup is a long, many-tool
+    ReAct chain that the default 10-step / 200k-token budget cut off mid-sweep
+    (docs/EMAIL_ARCHIVIST_PLAN.md)."""
 
     name: str
     prompt: str
@@ -120,6 +126,7 @@ class AgentProfile:
     strength: str
     tools: frozenset[str] | None
     reads_knowledge_base: bool
+    budget_multiplier: int = 1
 
 
 def _profile(
@@ -128,6 +135,7 @@ def _profile(
     *,
     tools: frozenset[str] | None,
     reads_knowledge_base: bool,
+    budget_multiplier: int = 1,
 ) -> AgentProfile:
     pf = load_prompt(_PROMPTS / filename)
     return AgentProfile(
@@ -137,6 +145,7 @@ def _profile(
         strength=pf.strength,
         tools=tools,
         reads_knowledge_base=reads_knowledge_base,
+        budget_multiplier=budget_multiplier,
     )
 
 
@@ -148,7 +157,11 @@ AGENTS: dict[str, AgentProfile] = {
     "teacher": _profile("teacher", "teacher.prompt", tools=frozenset(), reads_knowledge_base=False),
     "jerv": _profile("jerv", "jerv.prompt", tools=JERV_TOOLS, reads_knowledge_base=False),
     "archivist": _profile(
-        "archivist", "archivist.prompt", tools=ARCHIVIST_TOOLS, reads_knowledge_base=False
+        "archivist",
+        "archivist.prompt",
+        tools=ARCHIVIST_TOOLS,
+        reads_knowledge_base=False,
+        budget_multiplier=4,
     ),
 }
 

@@ -117,10 +117,18 @@ class Guardrails:
 STEPS_BY_EFFORT: dict[str, int] = {"high": 20, "medium": 15}
 
 
-def guardrails_for_effort(effort: str | None) -> Guardrails:
-    """The loop's budget sized to the task's effective reasoning effort."""
-    steps = STEPS_BY_EFFORT.get(effort or "")
-    return Guardrails() if steps is None else Guardrails(max_steps=steps)
+def guardrails_for_effort(effort: str | None, *, scale: int = 1) -> Guardrails:
+    """The loop's budget sized to the task's effective reasoning effort, then scaled
+    by a per-agent factor. `scale` (an agent's `budget_multiplier`, default 1) widens
+    BOTH the step cap and the cost-token budget together: the archivist's long, many-
+    tool mailbox cleanups run at 4, so a single sweep isn't cut off mid-chain
+    (docs/EMAIL_ARCHIVIST_PLAN.md). The consecutive-error cap is unscaled — a wedged
+    chain should still bail fast regardless of persona."""
+    base = STEPS_BY_EFFORT.get(effort or "", Guardrails.max_steps)
+    return Guardrails(
+        max_steps=base * scale,
+        max_cost_tokens=Guardrails.max_cost_tokens * scale,
+    )
 
 
 @dataclass(frozen=True)
