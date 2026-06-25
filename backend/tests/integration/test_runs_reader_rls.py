@@ -101,8 +101,10 @@ async def _seed_pipeline(maker: async_sessionmaker, owner: SessionContext) -> tu
         ran_as="system",
         domain_code=None,
         principal_id=None,
-        steps=[EnqueuedStep(kind="daily_inbox_triage", job_id=job_a),
-               EnqueuedStep(kind="daily_inbox_triage", job_id=job_b)],
+        steps=[
+            EnqueuedStep(kind="daily_inbox_triage", job_id=job_a),
+            EnqueuedStep(kind="daily_inbox_triage", job_id=job_b),
+        ],
     )
     return run_id, [job_a, job_b]
 

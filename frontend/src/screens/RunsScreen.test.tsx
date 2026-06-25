@@ -73,9 +73,7 @@ const SWEEPS: SweepTrigger[] = [
   { id: "t1", pipeline: "consolidate_predicates", label: "Consolidate" },
 ];
 
-function mount(
-  opts: { runs?: RunSummary[]; sweeps?: SweepTrigger[]; queueDepth?: number } = {},
-) {
+function mount(opts: { runs?: RunSummary[]; sweeps?: SweepTrigger[]; queueDepth?: number } = {}) {
   vi.spyOn(api, "runs").mockResolvedValue(opts.runs ?? RUNS);
   vi.spyOn(api, "run").mockResolvedValue(DETAIL);
   vi.spyOn(api, "sweepTriggers").mockResolvedValue(opts.sweeps ?? SWEEPS);
