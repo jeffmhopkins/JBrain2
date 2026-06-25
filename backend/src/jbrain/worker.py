@@ -408,7 +408,7 @@ async def run() -> None:
         "geofence_sweep": scheduler.geofence_sweep_handler(maker),
         # Phase-6 hygiene sweeps (docs/HYGIENE_SWEEPS_PLAN.md): core-data maintenance, no LLM,
         # in-code only (a migration seeds the schedules, disabled by default). entity_hygiene
-        # deletes provisional orphan entities; reembed_stale re-embeds stale-model skills/entities
+        # deletes provisional orphan entities; reembed_stale re-embeds stale-model entities
         # (local embed container); tag_consolidate folds drift tag spellings to canonical.
         "entity_hygiene": entity_hygiene_handler(maker),
         "reembed_stale": reembed_handler(

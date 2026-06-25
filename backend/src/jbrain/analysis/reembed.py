@@ -3,8 +3,8 @@
 Nightly maintenance: re-embed the embedded rows whose `embedding_model` is stale (or whose
 embedding is NULL) after an embed-model change — the rows that have NO existing re-embed
 path. `wiki_index` already re-embeds via `wiki_reindex` and `canonical_predicates` via
-`sync_predicates`, so this covers the gap: **skills** (description+body) and **entities**
-(summary, when one exists). Uses the local embed container, not the LLM router, so it spends
+`sync_predicates`, so this covers the gap: **entities** (summary, when one exists). Uses
+the local embed container, not the LLM router, so it spends
 no LLM tokens and needs no self-improvement budget; it is mechanical, idempotent
 (`embedding_model IS DISTINCT FROM :model` self-clears as rows are updated), and bounded per
 run so a big post-upgrade backlog spreads across nights. Runs under SYSTEM_CTX; the schedule
@@ -40,7 +40,7 @@ REEMBED_SPEC = ActionSpec(
     mutating=True,  # writes embedding + embedding_model
     cost_class="standard",  # local embed container, no LLM router
     dedup_key_expr=None,
-    description="Re-embed skills/entities whose embedding_model is stale after a model change.",
+    description="Re-embed entities whose embedding_model is stale after a model change.",
 )
 
 
@@ -55,21 +55,6 @@ class _Target:
 
 
 _TARGETS = (
-    _Target(
-        name="skills",
-        select=(
-            "SELECT id::text AS id,"
-            " coalesce(description, '') || E'\n' || coalesce(body, '') AS src"
-            " FROM app.skills"
-            " WHERE (embedding IS NULL OR embedding_model IS DISTINCT FROM :model)"
-            "   AND btrim(coalesce(description, '') || coalesce(body, '')) <> ''"
-            " ORDER BY id LIMIT :limit"
-        ),
-        update=(
-            "UPDATE app.skills SET embedding = cast(:emb AS vector), embedding_model = :model"
-            " WHERE id = cast(:id AS uuid)"
-        ),
-    ),
     _Target(
         name="entities",
         select=(
