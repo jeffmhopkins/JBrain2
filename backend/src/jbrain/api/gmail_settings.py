@@ -72,6 +72,11 @@ class GmailStatusOut(BaseModel):
     client_secret_set: bool
     refresh_token_set: bool
     connected: bool
+    # The client_id is NOT a secret (Google puts it in every auth URL), so we echo it
+    # back, plus the exact redirect_uri the box will send — the two values that cause
+    # `invalid_client` / `redirect_uri_mismatch` when they don't match the Google client.
+    client_id: str
+    redirect_uri: str
 
 
 class GmailCredsPatch(BaseModel):
@@ -88,24 +93,32 @@ class GmailTestOut(BaseModel):
     detail: str
 
 
-async def _status(provider: GmailClientProvider) -> GmailStatusOut:
-    cid, secret, rt = await provider.credentials()
+async def _status(request: Request, settings: Settings) -> GmailStatusOut:
+    cid, secret, rt = await get_gmail_provider(request).credentials()
     return GmailStatusOut(
         client_id_set=bool(cid),
         client_secret_set=bool(secret),
         refresh_token_set=bool(rt),
         connected=bool(rt),
+        client_id=cid,
+        redirect_uri=_redirect_uri(request, settings),
     )
 
 
 @router.get("/settings/gmail")
-async def read_gmail_settings(request: Request, principal: PrincipalDep) -> GmailStatusOut:
-    return await _status(get_gmail_provider(request))
+async def read_gmail_settings(
+    request: Request, principal: PrincipalDep, settings: SettingsDep
+) -> GmailStatusOut:
+    return await _status(request, settings)
 
 
 @router.put("/settings/gmail")
 async def update_gmail_settings(
-    body: GmailCredsPatch, request: Request, principal: PrincipalDep, store: SettingsStoreDep
+    body: GmailCredsPatch,
+    request: Request,
+    principal: PrincipalDep,
+    store: SettingsStoreDep,
+    settings: SettingsDep,
 ) -> GmailStatusOut:
     # Only set fields the caller actually provided (non-empty after strip).
     def clean(v: str | None) -> str | None:
@@ -117,7 +130,7 @@ async def update_gmail_settings(
         client_secret=clean(body.client_secret),
         refresh_token=clean(body.refresh_token),
     )
-    return await _status(get_gmail_provider(request))
+    return await _status(request, settings)
 
 
 @router.post("/settings/gmail/test")
