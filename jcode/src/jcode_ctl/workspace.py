@@ -18,6 +18,31 @@ class WorkspaceError(RuntimeError):
     """A clone/checkout/reset failed — surfaced as a clean control-API error."""
 
 
+# Only fetch-over-the-wire transports. git's ``ext::`` transport runs an arbitrary
+# command AT CLONE TIME (before any sandbox boundary), and ``file://``/local paths
+# would let the sandbox read arbitrary host-visible trees — both are refused. The
+# repo and refs are caller-supplied (CreateSessionRequest), so they are validated
+# before they reach a git argument.
+_ALLOWED_SCHEMES = ("https://", "git://")
+
+
+def validate_repo(repo: str) -> None:
+    """Reject anything but an https://|git:// URL (empty = a scratch workspace)."""
+    if not repo:
+        return
+    if "::" in repo or not repo.startswith(_ALLOWED_SCHEMES):
+        raise WorkspaceError(
+            "repo must be an https:// or git:// URL — ssh/scp, file://, and git's "
+            "ext:: transport are refused"
+        )
+
+
+def validate_ref(name: str, *, field: str) -> None:
+    """A branch/work-branch must not be parseable as a git option (leading '-')."""
+    if name.startswith("-"):
+        raise WorkspaceError(f"{field} may not start with '-'")
+
+
 class Workspace(Protocol):
     """Owns the on-disk lifecycle of one session's checkout."""
 
@@ -50,9 +75,23 @@ class GitWorkspace:
             raise WorkspaceError(f"git {args[0]} failed: {detail}")
 
     async def clone(self, path: Path, repo: str, branch: str, work_branch: str) -> None:
+        validate_repo(repo)
+        validate_ref(branch, field="branch")
+        validate_ref(work_branch, field="work_branch")
+        # Defense in depth beyond validate_repo: forbid the ext/file transports at
+        # the git layer too, and use ``--`` so a value can never be read as an option.
+        deny = ("-c", "protocol.ext.allow=never", "-c", "protocol.file.allow=never")
         if repo:  # empty repo = a scratch workspace (no clone)
             await self._git(
-                "clone", "--branch", branch, "--depth", "1", repo, str(path)
+                *deny,
+                "clone",
+                "--branch",
+                branch,
+                "--depth",
+                "1",
+                "--",
+                repo,
+                str(path),
             )
             await self._git("checkout", "-b", work_branch, cwd=path)
         else:

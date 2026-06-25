@@ -18,8 +18,13 @@ from fastapi import APIRouter, Depends, FastAPI, Header, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
+from jcode_ctl.agent import TurnEvent
 from jcode_ctl.config import Settings
 from jcode_ctl.sessions import SessionError, SessionManager
+
+# SSE responses must not be buffered by a proxy (Caddy/nginx), or the turn stream
+# arrives all-at-once and the live UX is lost — mirrors the supervisor's SSE.
+_SSE_HEADERS = {"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
 
 
 class CreateSessionRequest(BaseModel):
@@ -32,18 +37,20 @@ class TurnRequest(BaseModel):
     prompt: str
 
 
+def _frame(ev: TurnEvent) -> bytes:
+    payload = {"type": ev.type, "text": ev.text, "tool": ev.tool, "data": ev.data}
+    return f"data: {json.dumps(payload)}\n\n".encode()
+
+
 def create_app(settings: Settings, sessions: SessionManager) -> FastAPI:
     app = FastAPI(title="jcode control server")
 
+    expected_header = f"Bearer {settings.token}"
+
     def require_token(authorization: Annotated[str | None, Header()] = None) -> None:
-        prefix = "Bearer "
-        token = (
-            authorization[len(prefix) :]
-            if authorization and authorization.startswith(prefix)
-            else ""
-        )
-        # Constant-time compare; reject before any work happens.
-        if not token or not hmac.compare_digest(token, settings.token):
+        # Compare the WHOLE header in constant time (supervisor-style), so a wrong
+        # scheme fails identically to a wrong token. Fail-closed on a missing header.
+        if not authorization or not hmac.compare_digest(authorization, expected_header):
             raise HTTPException(status_code=401, detail="Unauthorized")
 
     @app.get("/healthz")
@@ -76,16 +83,18 @@ def create_app(settings: Settings, sessions: SessionManager) -> FastAPI:
         sessions.get(sid)
 
         async def frames() -> AsyncIterator[bytes]:
-            async for ev in sessions.run_turn(sid, body.prompt):
-                payload = {
-                    "type": ev.type,
-                    "text": ev.text,
-                    "tool": ev.tool,
-                    "data": ev.data,
-                }
-                yield f"data: {json.dumps(payload)}\n\n".encode()
+            # Guarantee a terminal frame even if the agent RAISES mid-turn (vs. yielding
+            # an error event), so the client never sees a silently truncated stream.
+            try:
+                async for ev in sessions.run_turn(sid, body.prompt):
+                    yield _frame(ev)
+            except Exception as exc:
+                yield _frame(TurnEvent("error", text=str(exc)))
+                yield _frame(TurnEvent("done"))
 
-        return StreamingResponse(frames(), media_type="text/event-stream")
+        return StreamingResponse(
+            frames(), media_type="text/event-stream", headers=_SSE_HEADERS
+        )
 
     @authed.post("/sessions/{sid}/cancel", status_code=202)
     async def cancel(sid: str) -> dict[str, str]:

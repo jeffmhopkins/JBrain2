@@ -260,7 +260,9 @@ services:
       - "${RENDER_GID:-render}"
     volumes:
       - ./local-models:/models:ro
-    networks: [internal]
+    # Also joins the `jcode` network so the coding sandbox can reach the model
+    # endpoint here — and ONLY this — without being on the shared `internal` net.
+    networks: [internal, jcode]
 
   # OPT-IN on-box image generation: a ROCm ComfyUI serving Qwen-Image, the sibling
   # of the local-llm gateway. Guarded by the `comfyui` compose profile so it NEVER
@@ -354,11 +356,15 @@ services:
   # checkouts on the `jcode_work` volume. The model is local — ANTHROPIC_BASE_URL
   # points the Agent SDK at the local-llm gateway's Anthropic-compatible endpoint, so
   # no code leaves the box (the on-box smoke test in the plan decides native vs a
-  # shim). It is internal-only (no published port); the api proxies its control
-  # surface to the owner (Wave J2). CRITICALLY it mounts NO Docker socket and reaches
-  # no other service. NOTE: egress is currently the `internal` network's default
-  # (reaches the gateway + outbound for git/npm); the git/npm ALLOWLIST is enforced in
-  # Wave J5 hardening (an egress proxy), not here.
+  # shim). It has NO published port and mounts NO Docker socket.
+  #
+  # ISOLATION: the sandbox runs arbitrary agent-driven shell, so it sits on its OWN
+  # `jcode` network — NOT the shared `internal` — and is therefore unable to reach
+  # `db`, `supervisor` (which holds the docker socket), `worker`, `embed`, or the blob
+  # store. The only peer on the `jcode` network is the `local-llm` gateway (the model
+  # endpoint); the api joins it in Wave J2 to proxy the control surface. The container
+  # still has default outbound NAT for git/npm; restricting THAT to a git/npm allowlist
+  # (an egress proxy) is Wave J5 hardening.
   jcode:
     profiles: [jcode]
     image: jbrain2-jcode:local
@@ -379,7 +385,7 @@ services:
     volumes:
       # The per-session git checkouts — sandbox scratch, NEVER a JBrain blob/note.
       - jcode_work:/work
-    networks: [internal]
+    networks: [jcode]
 
   embed:
     image: ghcr.io/huggingface/text-embeddings-inference:cpu-latest
@@ -465,6 +471,10 @@ services:
 networks:
   edge:
   internal:
+  # Isolates the opt-in coding sandbox (`jcode` profile) from the rest of the stack:
+  # only `jcode` + `local-llm` (and `api` from Wave J2) join it, so the arbitrary-code
+  # sandbox has no network route to db/supervisor/worker/embed/blobs.
+  jcode:
 
 volumes:
   blobs:

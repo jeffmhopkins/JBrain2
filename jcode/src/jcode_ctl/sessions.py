@@ -12,11 +12,12 @@ from collections.abc import AsyncIterator, Callable
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Literal
 
 from jcode_ctl.agent import CodingAgent, TurnEvent
 from jcode_ctl.workspace import Workspace
 
-Status = str  # "ready" | "running" | "error"
+Status = Literal["ready", "running", "error"]
 
 
 class SessionError(RuntimeError):
