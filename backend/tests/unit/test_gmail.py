@@ -8,7 +8,13 @@ from collections.abc import Callable
 import httpx
 import pytest
 
-from jbrain.gmail import FakeGmail, GmailClient, GmailError, GmailMessage
+from jbrain.gmail import (
+    FakeGmail,
+    GmailClient,
+    GmailError,
+    GmailMessage,
+    exchange_authorization_code,
+)
 
 _BASE = "https://gmail.googleapis.com/gmail/v1"
 _TOKEN = "https://oauth2.googleapis.com/token"
@@ -317,3 +323,43 @@ async def test_fake_count_search_all_and_batch_modify() -> None:
     assert fake.labels_on("m1") == {label.id}
     assert fake.labels_on("m2") == {label.id}
     assert fake.labels_on("m3") == {"INBOX"}  # untouched
+
+
+# --- authorization-code exchange (the in-app Connect flow) ------------------
+
+
+async def test_exchange_authorization_code_returns_refresh_token() -> None:
+    seen: list[httpx.Request] = []
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(200, json={"refresh_token": "rt-x", "access_token": "a"})
+
+    rt = await exchange_authorization_code(
+        client_id="c",
+        client_secret="s",
+        code="auth-code",
+        redirect_uri="https://box.example/api/settings/gmail/callback",
+        token_url="https://oauth2.googleapis.com/token",
+        transport=httpx.MockTransport(handle),
+    )
+    assert rt == "rt-x"
+    body = dict(httpx.QueryParams(seen[-1].content.decode()))
+    assert body["grant_type"] == "authorization_code"
+    assert body["code"] == "auth-code"
+    assert body["redirect_uri"] == "https://box.example/api/settings/gmail/callback"
+
+
+async def test_exchange_authorization_code_without_refresh_token_raises() -> None:
+    def handle(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"access_token": "a"})  # no refresh_token
+
+    with pytest.raises(GmailError):
+        await exchange_authorization_code(
+            client_id="c",
+            client_secret="s",
+            code="auth-code",
+            redirect_uri="https://box.example/cb",
+            token_url="https://oauth2.googleapis.com/token",
+            transport=httpx.MockTransport(handle),
+        )

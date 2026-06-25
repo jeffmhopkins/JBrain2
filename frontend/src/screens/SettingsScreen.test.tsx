@@ -372,4 +372,21 @@ describe("SettingsScreen Gmail (Archivist)", () => {
     expect(await screen.findByText("Connected")).toBeInTheDocument();
     expect(puts).toEqual([{ client_id: "cid", client_secret: "sec", refresh_token: "rt" }]);
   });
+
+  it("enables Connect once the client id + secret are saved (no token needed)", async () => {
+    stubGmail();
+    setup();
+    // Disconnected on load: Connect is disabled until credentials exist.
+    expect(await screen.findByText("Not connected")).toBeInTheDocument();
+    const connect = () => screen.getByRole("button", { name: "Connect Gmail" });
+    expect(connect()).toBeDisabled();
+
+    // Save just the client id + secret (no refresh token) — the in-app path.
+    fireEvent.change(screen.getByLabelText(/Client ID/), { target: { value: "cid" } });
+    fireEvent.change(screen.getByLabelText(/Client secret/), { target: { value: "sec" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    expect(await screen.findByText("Credentials saved — not connected yet")).toBeInTheDocument();
+    expect(connect()).toBeEnabled(); // ready to launch the OAuth consent
+  });
 });
