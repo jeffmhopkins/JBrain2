@@ -37,9 +37,7 @@ def upgrade() -> None:
         USING (app.is_owner()) WITH CHECK (app.is_owner())
         """
     )
-    op.execute(
-        "GRANT SELECT, INSERT, UPDATE, DELETE ON app.jcode_sessions TO jbrain_app"
-    )
+    op.execute("GRANT SELECT, INSERT, UPDATE, DELETE ON app.jcode_sessions TO jbrain_app")
 
 
 def downgrade() -> None:
