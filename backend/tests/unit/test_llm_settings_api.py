@@ -545,30 +545,6 @@ def test_stage_and_unstage_toggle_the_flag() -> None:
     assert store.values["llm_local_staged"] == []
 
 
-def test_staging_pins_the_staged_set_into_the_gateway_group(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    # Staging is no longer a bare flag: it re-stamps llama-swap with the staged set
-    # as a non-swapping group (pinned=...) so the models stay co-resident. Capture
-    # the pinned arg the endpoint passes to the config writer.
-    import jbrain.api.llm_settings as mod
-
-    pinned_calls: list[list[str] | None] = []
-    monkeypatch.setattr(
-        mod.llama_swap_config,
-        "write",
-        lambda *a, **k: pinned_calls.append(list(k.get("pinned") or [])) or "x",
-    )
-    c, _ = _authed_client(_local_settings())
-    c.post("/api/settings/llm/local-models/qwen3-vl-30b/stage")
-    c.post("/api/settings/llm/local-models/gpt-oss-120b/stage")
-    # Both staged → both pinned in the most recent re-stamp.
-    assert pinned_calls[-1] == ["qwen3-vl-30b", "gpt-oss-120b"]
-    # Unstaging removes it from the pinned group, leaving the other.
-    c.delete("/api/settings/llm/local-models/qwen3-vl-30b/stage")
-    assert pinned_calls[-1] == ["gpt-oss-120b"]
-
-
 def test_stage_404_and_409() -> None:
     c, _ = _authed_client(_local_settings())
     assert c.post("/api/settings/llm/local-models/nope/stage").status_code == 404

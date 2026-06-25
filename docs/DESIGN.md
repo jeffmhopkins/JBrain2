@@ -601,69 +601,6 @@ scheduled — tap to add."* No illustrations.
 **Toasts** — bottom-anchored above the nav, `--surface-2`, auto-dismiss 4s,
 single action max.
 
-**On-box models — the residency ladder (LLM Settings)** (settled in a two-round
-mock review; reference mock `docs/mocks/llm-tabs-redesign/e2-residency-ladder.html`).
-The on-box-models card replaces its three omnibox tabs (Staged / Installed /
-Catalog) and twin collapsible LLM/image sections with a **capacity gauge + a
-two-way surface switch (residency · library) + a residency ladder**. The first
-round offered three conservative, tab-preserving treatments (A grouped headers,
-B collapsible group cards, C density list + filter rail — all in
-`docs/mocks/llm-tabs-redesign/`); the owner rejected all three as too timid and
-asked for a **memory-centric / spatial** re-envision. The second round offered
-three spatial takes (D memory-canvas + shelf, E residency swimlanes, F
-capacity-gauge hero); the owner chose **E**, refined into E2:
-
-- **Capacity gauge** (replacing the shared meter) is the hero: the single
-  unified RAM pool, resident LLM segments solid (weights + a lighter KV
-  sub-tint, slot-colored), the image VRAM segment violet, **staged segments
-  ghosted** (projected, not yet realized), free headroom visible, and an honest
-  rose "+X GB staged → over" signal when the projection exceeds the pool. The
-  bar is always a glance aid paired with text (the meters rule).
-- **Residency ladder** — three lanes are **rungs**, top→bottom **RESIDENT →
-  STAGED → UNLOADED**, each a bounded spatial region with an accent rail
-  (green / amber / muted), a dot, a count, and a GB subtotal. A model moves
-  **exactly one rung at a time, never skipping staged** — ▲ promotes, ▼ demotes,
-  and the tile relocates to the adjacent lane (≤165ms, reduced-motion aware).
-  unloaded → ▲stage → staged → ▲load → resident, and back down resident →
-  ▼unload → staged → ▼unstage → unloaded. A model is therefore **always warmed
-  (staged) before it goes resident, and steps back through staged on its way
-  out.** Context-window control lives on the staged/resident rungs, locked with
-  the 🔒 "unload to change" hint while resident.
-- **The ladder reuses existing endpoints [decided: option 2]** — the
-  resident→staged "unload" step is the existing `unload` call followed by
-  `stage(true)` so the tile lands in the staged lane; a second `unstage` clears
-  it. No new endpoints.
-- **Staging pins models co-resident (it is no longer a bare flag).** llama-swap
-  runs in swap mode by default (one model resident at a time), so loading a
-  second model used to evict the first — which surfaced as "staging keeps
-  demoting my model." Staging now re-stamps `llama-swap.yaml` with the staged set
-  as a **non-swapping group** (`swap: false`, hot-reloaded via `--watch-config`),
-  so every staged model stays resident together; unstaging frees it to swap. This
-  is what makes "load both 120B and VL at once" work, and gives the staged rung
-  real teeth. The re-stamp is best-effort (an unreachable/read-only gateway never
-  fails the staging write).
-- **Image / ComfyUI is read-only on the lanes [decided: option 1]** — image
-  models ride the same lanes in **violet**, but image residency has no
-  per-model API (ComfyUI loads on first request and keeps one model resident),
-  so image tiles are **status-only**: the VRAM-resident model (heuristic: the
-  enabled model, else the first) shows in RESIDENT with a ▼ **free** control;
-  the rest sit in UNLOADED with a calm "loads on first image request" note;
-  image never appears in STAGED. The service running/stopped + start/stop
-  control sits above the lanes. A true per-model image ladder was deferred
-  rather than grow the backend (kept the change frontend-only, scoped to the
-  LLM tabs).
-- **Library surface** holds the catalog (install / uninstall + the "Update &
-  install now" queue bar), split by a language-models / image-models divider;
-  image catalog rows stay informational (provisioning is the on-box
-  `comfyui-setup.sh` step).
-
-The full-pool decision-support read (what fits, what to unload before loading a
-big model) is the point of the gauge-first layout; the ladder makes the warm→
-resident cost explicit at the moment of action. Rejected: the conservative
-tab-preserving trio (too timid), the canvas/shelf (splits installed models
-across two surfaces) and gauge-hero (radial gauge spatially expensive on a
-phone) spatial rivals.
-
 ## Motion
 
 Fast and physical: 120–180ms ease-out for state changes; segment/theme
