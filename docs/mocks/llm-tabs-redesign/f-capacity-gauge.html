@@ -1,0 +1,469 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>JBrain · On-box LLMs — capacity gauge + resident-group clusters (mock F)</title>
+<style>
+  :root{
+    --bg:#0E0F11; --surface:#17181B; --surface-2:#1E2024; --border:#26282C;
+    --text:#E6E7E9; --text-2:#9A9DA3; --text-3:#5C5F66;
+    --steel:#7FA7C9; --green:#8FBC9A; --amber:#C9A36A; --rose:#CF8A8F; --violet:#A493C9; --teal:#6FB6B1;
+    --steel-tint:rgba(127,167,201,.14); --green-tint:rgba(143,188,154,.14); --rose-tint:rgba(207,138,143,.14);
+    --violet-tint:rgba(164,147,201,.16); --amber-tint:rgba(201,163,106,.16);
+    --font:-apple-system,system-ui,"Segoe UI",Roboto,sans-serif; --mono:ui-monospace,Menlo,Consolas,monospace;
+    --r-card:16px; --r-seg:12px; --r-pill:999px; --r-tile:13px;
+    --t:cubic-bezier(.4,0,.2,1);
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);font-family:var(--font);font-size:15px;line-height:1.4;-webkit-font-smoothing:antialiased}
+  .wrap{max-width:520px;margin:0 auto;padding:16px 16px 60px}
+  h1.title{font-size:20px;font-weight:500;margin:6px 0 2px}
+  p.meta{color:var(--text-2);font-size:13px;margin:0 0 16px}
+
+  .card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-card);overflow:hidden}
+
+  /* ============ HERO: capacity gauge ============ */
+  .hero{padding:18px 16px 14px}
+  .hero-top{display:flex;align-items:baseline;gap:8px;margin-bottom:14px}
+  .hero-top .ttl{font-weight:500}
+  .hero-top .sub{color:var(--text-2);font-size:12.5px;margin-left:auto;font-family:var(--mono)}
+
+  .gauge-stage{display:flex;justify-content:center;position:relative}
+  svg.gauge{width:248px;height:200px;display:block;overflow:visible}
+  .gauge .track{fill:none;stroke:var(--surface-2);stroke-width:22;stroke-linecap:butt}
+  .gauge .arc{fill:none;stroke-width:22;stroke-linecap:butt;transition:stroke-dasharray .18s var(--t),stroke-dashoffset .18s var(--t)}
+  .gauge .arc.preview{stroke-dasharray:2 4;opacity:.85;transition:stroke-dasharray .18s var(--t),stroke-dashoffset .18s var(--t),stroke .18s var(--t)}
+  .gauge .tick{stroke:var(--bg);stroke-width:2}
+  /* center readout */
+  .gauge-center{position:absolute;left:0;right:0;top:88px;text-align:center;pointer-events:none}
+  .gauge-center .big{font-size:30px;font-weight:600;font-family:var(--mono);letter-spacing:-.5px;line-height:1}
+  .gauge-center .big .unit{font-size:14px;color:var(--text-2);font-weight:500;margin-left:2px}
+  .gauge-center .lab{font-size:11.5px;color:var(--text-2);margin-top:3px}
+  .gauge-center .lab.over{color:var(--amber)}
+  .gauge-center .lab.preview{color:var(--steel)}
+
+  /* legend under the gauge — doubles as honest key */
+  .legend{display:flex;justify-content:center;flex-wrap:wrap;gap:6px 14px;margin-top:8px;font-size:11.5px;color:var(--text-2)}
+  .legend .k{display:inline-flex;align-items:center;gap:6px}
+  .legend .sw{width:9px;height:9px;border-radius:2px;flex:none}
+  .legend .sw.res{background:var(--green)} .legend .sw.stg{background:var(--amber)}
+  .legend .sw.img{background:var(--violet)} .legend .sw.free{background:var(--surface-2);border:1px solid var(--border)}
+  .legend .sw.prev{background:transparent;border:1.5px dashed var(--steel)}
+
+  /* preview banner — the decision-support payoff line */
+  .verdict{margin:12px 0 2px;padding:10px 12px;border-radius:12px;border:1px solid var(--border);
+           background:var(--surface-2);display:flex;align-items:center;gap:10px;font-size:12.5px;
+           opacity:0;transform:translateY(-4px);transition:opacity .18s var(--t),transform .18s var(--t),border-color .18s,background-color .18s}
+  .verdict.show{opacity:1;transform:none}
+  .verdict .vdot{width:9px;height:9px;border-radius:999px;flex:none;background:var(--steel)}
+  .verdict.fits{border-color:color-mix(in srgb,var(--green) 38%,var(--border));background:var(--green-tint)} .verdict.fits .vdot{background:var(--green)}
+  .verdict.over{border-color:color-mix(in srgb,var(--amber) 42%,var(--border));background:var(--amber-tint)} .verdict.over .vdot{background:var(--amber)}
+  .verdict .vtxt b{font-weight:600}
+  .verdict .vtxt .em{color:var(--amber);font-weight:600}
+  .verdict .vact{margin-left:auto;flex:none}
+
+  /* ============ CLUSTER ZONES ============ */
+  .zones{border-top:1px solid var(--border)}
+  .zone{padding:13px 14px 4px;border-top:1px solid var(--border)}
+  .zone:first-child{border-top:0}
+  .zone-head{display:flex;align-items:center;gap:9px;margin-bottom:10px}
+  .zone-head .rail{width:3px;height:14px;border-radius:2px;flex:none}
+  .zone.res .rail{background:var(--green)} .zone.stg .rail{background:var(--amber)} .zone.idle .rail{background:var(--text-3)}
+  .zone-head .zttl{font-size:12.5px;font-weight:600;letter-spacing:.02em}
+  .zone.res .zttl{color:var(--green)} .zone.stg .zttl{color:var(--amber)} .zone.idle .zttl{color:var(--text-2)}
+  .zone-head .zsub{margin-left:auto;font-size:11.5px;color:var(--text-3);font-family:var(--mono)}
+  .zone-empty{font-size:12px;color:var(--text-3);padding:2px 0 10px;line-height:1.45}
+
+  /* tile cluster */
+  .cluster{display:flex;flex-wrap:wrap;gap:8px;padding-bottom:10px}
+  .tile{flex:1 1 100%;min-width:0;text-align:left;background:var(--surface-2);border:1px solid var(--border);
+        border-radius:var(--r-tile);padding:10px 12px;cursor:pointer;color:var(--text);font:inherit;
+        transition:border-color .15s,background-color .15s,transform .18s var(--t);position:relative}
+  .tile:hover{border-color:var(--text-3)}
+  .tile.focused{transform:translateY(-1px)}
+  .zone.res .tile.focused{border-color:color-mix(in srgb,var(--green) 55%,var(--border));background:color-mix(in srgb,var(--green-tint) 60%,var(--surface-2))}
+  .zone.stg .tile.focused{border-color:color-mix(in srgb,var(--amber) 55%,var(--border));background:color-mix(in srgb,var(--amber-tint) 60%,var(--surface-2))}
+  .zone.idle .tile.focused{border-color:color-mix(in srgb,var(--steel) 50%,var(--border));background:color-mix(in srgb,var(--steel-tint) 70%,var(--surface-2))}
+  .tile-top{display:flex;align-items:center;gap:8px}
+  .tile .tdot{width:8px;height:8px;border-radius:999px;flex:none;background:var(--text-3)}
+  .zone.res .tile .tdot{background:var(--green);box-shadow:0 0 0 3px var(--green-tint)}
+  .zone.stg .tile .tdot{background:var(--amber)}
+  .tile.violet .tdot{background:var(--violet)}
+  .tile .tname{font-weight:500;font-size:14px;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .tile .tgb{font-size:11.5px;color:var(--text-2);font-family:var(--mono);flex:none}
+  .tile .tmeta{font-size:11px;color:var(--text-3);margin-top:3px}
+
+  /* focused-tile detail drawer inside the tile */
+  .tdetail{max-height:0;overflow:hidden;transition:max-height .18s var(--t)}
+  .tile.focused .tdetail{max-height:240px}
+  .tdetail-inner{padding-top:10px;margin-top:10px;border-top:1px solid var(--border)}
+  .chips{display:flex;flex-wrap:wrap;gap:5px}
+  .chip{font-size:11px;padding:2px 8px;border-radius:999px;border:1px solid var(--border);color:var(--text-2)}
+  .chip.tier{color:var(--steel);border-color:color-mix(in srgb,var(--steel) 35%,var(--border))}
+  .chip.tools{color:var(--teal);border-color:color-mix(in srgb,var(--teal) 35%,var(--border))}
+  .chip.vision{color:var(--violet);border-color:color-mix(in srgb,var(--violet) 35%,var(--border))}
+  .chip.warn{color:var(--amber);border-color:color-mix(in srgb,var(--amber) 35%,var(--border))}
+  .note{font-size:12px;color:var(--text-2);line-height:1.45;margin:9px 0 0}
+
+  .ctx{display:flex;align-items:center;gap:8px;margin-top:10px}
+  .ctx label{font-size:11.5px;color:var(--text-3)}
+  .ctx select{background:var(--bg);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:5px 8px;font:inherit;font-size:12px}
+  .ctx select:disabled{opacity:.5}
+  .ctx .kv{font-size:11.5px;color:var(--text-3);margin-left:auto}
+
+  .tacts{display:flex;gap:7px;margin-top:11px;flex-wrap:wrap}
+  .btn{font:inherit;font-size:12px;font-weight:500;cursor:pointer;border-radius:var(--r-pill);min-height:34px;padding:6px 14px;
+       border:1px solid var(--border);background:transparent;color:var(--text-2);transition:.15s;white-space:nowrap}
+  .btn:hover:not(:disabled){border-color:var(--rose);color:var(--rose);background:var(--rose-tint)}
+  .btn.stage:hover:not(:disabled){border-color:var(--steel);color:var(--steel);background:var(--steel-tint)}
+  .btn.go{color:var(--green);border-color:color-mix(in srgb,var(--green) 40%,var(--border))}
+  .btn.go:hover:not(:disabled){border-color:var(--green);color:var(--green);background:var(--green-tint)}
+  .btn.danger{color:var(--rose);border-color:color-mix(in srgb,var(--rose) 40%,var(--border))}
+  .btn:disabled{opacity:.45;cursor:default}
+
+  /* ============ CATALOG sheet ============ */
+  .cat-open{width:100%;display:flex;align-items:center;gap:9px;background:transparent;border:0;border-top:1px solid var(--border);
+            color:var(--text);font:inherit;font-size:13px;font-weight:500;padding:14px;cursor:pointer}
+  .cat-open .rail{width:3px;height:15px;border-radius:2px;background:var(--steel);flex:none}
+  .cat-open .meta{margin-left:auto;color:var(--text-3);font-size:12px;font-weight:400}
+  .cat-open .caret{color:var(--text-3);margin-left:6px}
+
+  .scrim{position:fixed;inset:0;background:rgba(0,0,0,.55);opacity:0;pointer-events:none;transition:opacity .18s var(--t);z-index:5}
+  .scrim.show{opacity:1;pointer-events:auto}
+  .sheet{position:fixed;left:0;right:0;bottom:0;max-width:520px;margin:0 auto;background:var(--surface);
+         border-top-left-radius:18px;border-top-right-radius:18px;border:1px solid var(--border);border-bottom:0;
+         transform:translateY(100%);transition:transform .2s var(--t);z-index:6;max-height:84vh;display:flex;flex-direction:column}
+  .sheet.show{transform:none}
+  .sheet-grip{width:38px;height:4px;border-radius:999px;background:var(--border);margin:9px auto 4px}
+  .sheet-head{display:flex;align-items:center;gap:10px;padding:6px 16px 12px;border-bottom:1px solid var(--border)}
+  .sheet-head .h{font-weight:500}
+  .sheet-head .x{margin-left:auto;background:transparent;border:0;color:var(--text-2);font-size:20px;cursor:pointer;line-height:1;padding:4px}
+  .sheet-body{overflow:auto;padding:6px 16px 18px}
+  .cat-hint{font-size:12px;color:var(--text-2);margin:10px 2px 6px;line-height:1.45}
+
+  .crow{padding:12px 0;border-top:1px solid var(--border)}.crow:first-of-type{border-top:0}
+  .crow-head{display:flex;align-items:flex-start;gap:10px}
+  .crow-name{flex:1;min-width:0;font-weight:500;font-size:14px}
+  .crow-meta{display:block;font-size:11px;color:var(--text-3);margin-top:2px}
+  .crow-right{flex:none;display:flex;align-items:center;gap:8px}
+  .state{font-size:11px;color:var(--text-3)}.state.queued{color:var(--steel)}
+  .dl{margin-top:9px}.dl-bar{height:6px;border-radius:999px;background:var(--surface-2);border:1px solid var(--border);overflow:hidden}
+  .dl-bar i{display:block;height:100%;background:var(--steel);transition:width .4s}
+  .dl-cap{display:block;font-size:11.5px;color:var(--text-2);margin-top:5px;font-family:var(--mono)}
+  .queuebar{display:flex;align-items:center;gap:12px;margin:14px 0 2px;padding:11px 13px;
+            border:1px solid color-mix(in srgb,var(--steel) 45%,var(--border));border-radius:13px;background:var(--steel-tint)}
+  .queuebar b{font-size:13px}.queuebar span{display:block;color:var(--text-2);font-size:11.5px;margin-top:2px}.queuebar .btn{margin-left:auto;flex:none}
+
+  @media (prefers-reduced-motion: reduce){
+    *{transition:none !important;animation:none !important}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1 class="title">Settings · LLM</h1>
+  <p class="meta">Mock F — <b>capacity-gauge hero + docked resident-group clusters</b>. A radial gauge of the one ~128 GB unified pool is the centerpiece: a solid green arc for resident weights+KV, an amber arc for staged (warm), a violet slice for image VRAM, and the rest free headroom. Models live as tiles docked into <b>RESIDENT / STAGED / IDLE</b> clusters, each labeled with a count and GB subtotal. Tapping a tile <b>focuses</b> it — the gauge grows a dashed <b>preview wedge</b> of what loading it would cost and a verdict line answers <b>"fits"</b> or honest <b>"over by X GB"</b>; acting (stage/load/unstage/unload) re-docks the tile into its new cluster and the gauge re-settles. Decision-support first: it answers "will it fit / what do I unload" before it's a list. Catalog (install/uninstall + queue) lives in a bottom sheet; image VRAM rides the same gauge as a violet slice.</p>
+
+  <div class="card">
+    <!-- ============ HERO GAUGE ============ -->
+    <div class="hero">
+      <div class="hero-top">
+        <span class="ttl">On-box memory</span>
+        <span class="sub" id="hero-sub"></span>
+      </div>
+      <div class="gauge-stage">
+        <svg class="gauge" viewBox="0 0 248 200" id="gauge">
+          <!-- track + arcs injected -->
+        </svg>
+        <div class="gauge-center">
+          <div class="big" id="g-big"></div>
+          <div class="lab" id="g-lab"></div>
+        </div>
+      </div>
+      <div class="legend" id="legend"></div>
+      <div class="verdict" id="verdict">
+        <span class="vdot"></span>
+        <span class="vtxt" id="v-txt"></span>
+        <span class="vact" id="v-act"></span>
+      </div>
+    </div>
+
+    <!-- ============ CLUSTER ZONES ============ -->
+    <div class="zones">
+      <div class="zone res">
+        <div class="zone-head"><span class="rail"></span><span class="zttl">RESIDENT</span><span class="zsub" id="z-res-sub"></span></div>
+        <div class="cluster" id="z-res"></div>
+        <div class="zone-empty" id="z-res-empty" style="display:none">Nothing loaded. Load a staged model to make it resident.</div>
+      </div>
+      <div class="zone stg">
+        <div class="zone-head"><span class="rail"></span><span class="zttl">STAGED · warm</span><span class="zsub" id="z-stg-sub"></span></div>
+        <div class="cluster" id="z-stg"></div>
+        <div class="zone-empty" id="z-stg-empty" style="display:none">Nothing staged. Staging keeps weights warm so the next request skips the cold load.</div>
+      </div>
+      <div class="zone idle">
+        <div class="zone-head"><span class="rail"></span><span class="zttl">IDLE · on device</span><span class="zsub" id="z-idle-sub"></span></div>
+        <div class="cluster" id="z-idle"></div>
+        <div class="zone-empty" id="z-idle-empty" style="display:none">Everything installed is in memory.</div>
+      </div>
+    </div>
+
+    <!-- ============ CATALOG reach ============ -->
+    <button class="cat-open" onclick="openCat()">
+      <span class="rail"></span><span>Catalog</span>
+      <span class="meta" id="cat-meta"></span><span class="caret">›</span>
+    </button>
+  </div>
+</div>
+
+<!-- ============ CATALOG SHEET ============ -->
+<div class="scrim" id="scrim" onclick="closeCat()"></div>
+<div class="sheet" id="sheet" role="dialog" aria-label="Catalog">
+  <div class="sheet-grip"></div>
+  <div class="sheet-head">
+    <span class="h">Catalog</span>
+    <button class="x" onclick="closeCat()" aria-label="close">×</button>
+  </div>
+  <div class="sheet-body">
+    <p class="cat-hint">Every catalog model. Install pulls the weights; Uninstall removes them and frees the disk. Queued installs apply on your next update.</p>
+    <div id="cat-list"></div>
+    <div id="cat-queue"></div>
+  </div>
+</div>
+
+<script>
+const TOTAL=128, WINDOWS=[8192,16384,32768,65536,131072];
+const fmt=n=>Math.round(n);
+
+let llm={ models:[
+    {id:'qwen3-vl-30b',label:'Qwen3-VL 30B',sub:'vision',quant:'Q8_0',gb:32,kv:1.5,win:32768,winMax:32768,chips:[['vision','vision'],['tier','vision · low'],['tools','tools']],installed:true,status:'loaded'},
+    {id:'gpt-oss-120b',label:'GPT-OSS 120B',sub:'reasoning',quant:'MXFP4',gb:59,kv:4.5,win:131072,winMax:131072,chips:[['tier','high'],['tools','tools']],installed:true,status:'staged'},
+    {id:'qwen3-235b',label:'Qwen3-235B-A22B',sub:'3-bit',quant:'UD-Q3_K_XL',gb:97,kv:11.5,win:32768,winMax:32768,chips:[['tier','high'],['tools','tools'],['warn','standalone · slow']],installed:true,status:'idle',note:'235B MoE, 22B active — strongest fit, ~single-digit tok/s here. Batch use.'},
+    {id:'qwen3-30b',label:'Qwen3 30B',sub:'lightweight',quant:'Q4_K_M',gb:18,kv:3.2,win:32768,winMax:32768,chips:[['tier','low'],['tools','tools']],installed:false,status:'available'},
+    {id:'glm-4.5-air',label:'GLM-4.5 Air',sub:'reasoning',quant:'Q4_K_M',gb:70,kv:5,win:32768,winMax:131072,chips:[['tier','high'],['tools','tools']],installed:false,status:'available'},
+    {id:'llama-3.3-70b',label:'Llama 3.3 70B',sub:'batch',quant:'Q4_K_M',gb:40,kv:8,win:32768,winMax:32768,chips:[['tier','high'],['tools','tools'],['warn','~5 t/s']],installed:false,status:'available'},
+  ]};
+// Image service rides the same pool: one resident model draws VRAM (minimal controls, not redesigned).
+let img={ running:true, resident:true, label:'Qwen-Image', vram:20 };
+
+const resGb=m=>m.gb+m.kv;
+const find=id=>llm.models.find(m=>m.id===id);
+let focusId=null;        // currently focused tile
+let preview=null;        // {deltaGb, fits, label, mode}
+
+/* ---------- gauge geometry (radial, 270° sweep) ---------- */
+const CX=124, CY=124, R=92, START=135, SWEEP=270; // degrees; opens at bottom
+const pol=(deg)=>{const a=(deg-90)*Math.PI/180;return [CX+R*Math.cos(a),CY+R*Math.sin(a)];};
+function arcPath(fromFrac,toFrac){
+  const a0=START+fromFrac*SWEEP, a1=START+toFrac*SWEEP;
+  const [x0,y0]=pol(a0),[x1,y1]=pol(a1);
+  const large=(a1-a0)>180?1:0;
+  return `M ${x0.toFixed(2)} ${y0.toFixed(2)} A ${R} ${R} 0 ${large} 1 ${x1.toFixed(2)} ${y1.toFixed(2)}`;
+}
+
+function memState(){
+  const loaded=llm.models.filter(m=>m.installed&&m.status==='loaded');
+  const staged=llm.models.filter(m=>m.installed&&m.status==='staged');
+  const idle=llm.models.filter(m=>m.installed&&m.status==='idle');
+  const resG=loaded.reduce((s,m)=>s+resGb(m),0);
+  const stgG=staged.reduce((s,m)=>s+resGb(m),0);
+  const imgG=(img.running&&img.resident)?img.vram:0;
+  return {loaded,staged,idle,resG,stgG,imgG,used:resG+imgG,proj:resG+stgG+imgG};
+}
+
+/* ---------- render gauge ---------- */
+function renderGauge(){
+  const s=memState();
+  const g=document.getElementById('gauge');
+  // fractions of TOTAL, clamped for drawing
+  const cl=v=>Math.max(0,Math.min(1,v/TOTAL));
+  const fRes=cl(s.resG), fImg=cl(s.imgG), fStg=cl(s.stgG);
+  let cur=0;
+  const segs=[];
+  segs.push(`<path class="track" d="${arcPath(0,1)}"/>`);
+  // resident weights+KV (green)
+  if(s.resG>0){segs.push(`<path class="arc" style="stroke:var(--green)" d="${arcPath(cur,Math.min(1,cur+fRes))}"/>`);cur+=fRes;}
+  // image VRAM (violet)
+  if(s.imgG>0){segs.push(`<path class="arc" style="stroke:var(--violet)" d="${arcPath(cur,Math.min(1,cur+fImg))}"/>`);cur+=fImg;}
+  // staged warm (amber)
+  if(s.stgG>0){segs.push(`<path class="arc" style="stroke:var(--amber)" d="${arcPath(cur,Math.min(1,cur+fStg))}"/>`);cur+=fStg;}
+
+  const usedFrac=cur; // resident+img+staged occupy up to here
+  // preview wedge: dashed steel (fits) or amber (over), starting at the projected fill point
+  let centerBig, centerLab='', centerCls='';
+  if(preview){
+    const startFrac=usedFrac;
+    const need=preview.deltaGb;
+    const endFrac=Math.min(1,startFrac+cl(need));
+    const overBy=(s.proj+need)-TOTAL;
+    const prevColor=overBy>0?'var(--amber)':'var(--steel)';
+    if(endFrac>startFrac) segs.push(`<path class="arc preview" style="stroke:${prevColor}" d="${arcPath(startFrac,endFrac)}"/>`);
+    // if over, also draw the slice that would spill past full in amber (visually pinned at the end)
+    centerBig=`${fmt(need)}<span class="unit">GB</span>`;
+    if(overBy>0){centerLab=`over by ${fmt(overBy)} GB`;centerCls='over';}
+    else{centerLab=`${preview.mode} fits · ${fmt(TOTAL-s.proj-need)} GB left`;centerCls='preview';}
+  }else{
+    const free=Math.max(0,TOTAL-s.used);
+    centerBig=`${fmt(s.used)}<span class="unit">/ ${TOTAL}</span>`;
+    centerLab=s.used>0?`${fmt(free)} GB free`+(s.stgG>0?` · +${fmt(s.stgG)} staged`:''):'nothing resident';
+  }
+  g.innerHTML=segs.join('');
+  document.getElementById('g-big').innerHTML=centerBig;
+  const lab=document.getElementById('g-lab'); lab.textContent=centerLab; lab.className='lab '+centerCls;
+
+  // legend
+  const L=[];
+  if(s.resG>0)L.push(`<span class="k"><span class="sw res"></span>resident ${fmt(s.resG)}G</span>`);
+  if(s.imgG>0)L.push(`<span class="k"><span class="sw img"></span>image ${fmt(s.imgG)}G</span>`);
+  if(s.stgG>0)L.push(`<span class="k"><span class="sw stg"></span>staged ${fmt(s.stgG)}G</span>`);
+  L.push(`<span class="k"><span class="sw free"></span>free ${fmt(Math.max(0,TOTAL-s.used))}G</span>`);
+  if(preview)L.push(`<span class="k"><span class="sw prev"></span>would load</span>`);
+  document.getElementById('legend').innerHTML=L.join('');
+
+  document.getElementById('hero-sub').textContent=
+    `${s.loaded.length} loaded · ${s.staged.length} staged${s.imgG?' · image resident':''}`;
+
+  renderVerdict(s);
+}
+
+function renderVerdict(s){
+  const v=document.getElementById('verdict');
+  if(!preview){v.className='verdict';document.getElementById('v-txt').innerHTML='';document.getElementById('v-act').innerHTML='';return;}
+  const m=find(focusId);
+  const overBy=(s.proj+preview.deltaGb)-TOTAL;
+  if(preview.mode==='unload'||preview.mode==='unstage'){
+    // freeing memory — always "frees X"
+    v.className='verdict show fits';
+    document.getElementById('v-txt').innerHTML=`<b>${m.label}</b> frees <b>${fmt(Math.abs(preview.deltaGb))} GB</b> → ${fmt(s.used+preview.deltaGb)} GB resident`;
+    document.getElementById('v-act').innerHTML=actBtn(m);
+    return;
+  }
+  if(overBy>0){
+    v.className='verdict show over';
+    // suggest what to free: largest resident or staged
+    const cand=[...s.loaded,...s.staged].sort((a,b)=>resGb(b)-resGb(a))[0];
+    const tip=cand?` — unload <span class="em">${cand.label}</span> (${fmt(resGb(cand))}G) to make room`:'';
+    document.getElementById('v-txt').innerHTML=`<b>${m.label}</b> needs ${fmt(preview.deltaGb)} GB · <span class="em">over by ${fmt(overBy)} GB</span>${tip}`;
+  }else{
+    v.className='verdict show fits';
+    document.getElementById('v-txt').innerHTML=`<b>${m.label}</b> ${preview.mode}s into ${fmt(preview.deltaGb)} GB · <b>${fmt(TOTAL-s.proj-preview.deltaGb)} GB</b> would remain`;
+  }
+  document.getElementById('v-act').innerHTML=actBtn(m);
+}
+
+/* primary action for a focused model, by state */
+function actBtn(m){
+  if(m.status==='idle') return `<button class="btn stage" onclick="event.stopPropagation();act('stage','${m.id}')">stage</button>`;
+  if(m.status==='staged') return `<button class="btn go" onclick="event.stopPropagation();act('load','${m.id}')">load</button>`;
+  if(m.status==='loaded') return `<button class="btn" onclick="event.stopPropagation();act('unload','${m.id}')">unload</button>`;
+  return '';
+}
+
+/* ---------- preview cost when a tile is focused ---------- */
+function setPreview(m){
+  if(!m){preview=null;return;}
+  if(m.status==='idle'||m.status==='staged') preview={deltaGb:resGb(m),mode:'load',label:m.label}; // both would end resident
+  else if(m.status==='loaded') preview={deltaGb:-resGb(m),mode:'unload',label:m.label};
+  // (staged tiles preview their *load* cost — the decision the user is weighing)
+}
+
+/* ---------- clusters ---------- */
+function clusterTile(m){
+  const focused=m.id===focusId;
+  const dotCls=m.violet?' violet':'';
+  const gb=(m.status==='loaded'||m.status==='staged')?`${fmt(resGb(m))}G`:`~${fmt(resGb(m))}G`;
+  const chips=(m.chips||[]).map(([c,l])=>`<span class="chip ${c}">${l}</span>`).join('');
+  // context control — locked while loaded
+  const ed=m.status!=='loaded';
+  const opts=Array.from(new Set([...WINDOWS.filter(w=>w<=m.winMax),m.winMax])).sort((a,b)=>a-b)
+    .map(w=>`<option value="${w}" ${w===m.win?'selected':''}>${w>=1024?(w/1024)+'k':w}</option>`).join('');
+  const ctx=`<div class="ctx"><label>context</label><select ${ed?'':'disabled'} onclick="event.stopPropagation()" onchange="event.stopPropagation();setWin('${m.id}',this.value)">${opts}</select>`+
+    (m.status==='loaded'?'<span class="kv">🔒 unload to change</span>':`<span class="kv">KV ~${m.kv} GB</span>`)+`</div>`;
+  // secondary action (unstage from staged)
+  let secondary='';
+  if(m.status==='staged') secondary=`<button class="btn" onclick="event.stopPropagation();act('unstage','${m.id}')">unstage</button>`;
+  const primary=actBtn(m);
+  const detail=`<div class="tdetail"><div class="tdetail-inner">`+
+    `<div class="chips">${chips}</div>`+
+    (m.note?`<p class="note">${m.note}</p>`:'')+
+    ctx+
+    `<div class="tacts">${primary}${secondary}</div>`+
+  `</div></div>`;
+  return `<button class="tile${focused?' focused':''}${dotCls}" onclick="focusTile('${m.id}')">`+
+    `<div class="tile-top"><span class="tdot"></span>`+
+      `<span class="tname">${m.label}</span><span class="tgb">${gb}</span></div>`+
+    `<div class="tmeta">${m.sub} · ${m.quant} · ${m.win>=1024?(m.win/1024)+'k ctx':m.win}</div>`+
+    detail+
+  `</button>`;
+}
+
+function renderClusters(){
+  const s=memState();
+  const res=[...s.loaded];
+  // image tile rides the resident cluster (shared pool) — minimal, not focusable lifecycle
+  const resHtml=res.map(clusterTile).join('')+(s.imgG>0?imgTile():'');
+  fillZone('res',res.length+(s.imgG>0?1:0),s.resG+s.imgG,resHtml);
+  fillZone('stg',s.staged.length,s.stgG,s.staged.map(clusterTile).join(''));
+  fillZone('idle',s.idle.length,s.idle.reduce((a,m)=>a+resGb(m),0),s.idle.map(clusterTile).join(''),true);
+}
+function fillZone(key,count,gb,html,approx){
+  document.getElementById('z-'+key).innerHTML=html;
+  document.getElementById('z-'+key+'-sub').textContent=count?`${count} · ${approx?'~':''}${fmt(gb)} GB`:'';
+  document.getElementById('z-'+key+'-empty').style.display=count?'none':'block';
+}
+function imgTile(){
+  return `<button class="tile violet" onclick="focusTile(null)">`+
+    `<div class="tile-top"><span class="tdot"></span>`+
+      `<span class="tname">${img.label}</span><span class="tgb">${fmt(img.vram)}G</span></div>`+
+    `<div class="tmeta">image service · VRAM · shared pool</div>`+
+  `</button>`;
+}
+
+/* ---------- catalog sheet ---------- */
+function renderCat(){
+  const avail=llm.models.filter(m=>!m.installed);
+  const queued=avail.filter(m=>m.status==='queued');
+  document.getElementById('cat-meta').textContent=`${avail.length} available${queued.length?` · ${queued.length} queued`:''}`;
+  document.getElementById('cat-list').innerHTML=avail.map(catRow).join('');
+  document.getElementById('cat-queue').innerHTML=queued.length
+    ? `<div class="queuebar"><div><b>${queued.length} queued · ${fmt(queued.reduce((s,x)=>s+x.gb,0))} GB</b><span>Installs on your next update.</span></div><button class="btn go" onclick="alert('(mock) kicks the provisioning update')">Update &amp; install</button></div>`
+    : '';
+}
+function catRow(m){
+  const chips=(m.chips||[]).map(([c,l])=>`<span class="chip ${c}">${l}</span>`).join('');
+  let acts='',sc='';
+  if(m.status==='queued'){acts=`<button class="btn" onclick="catInstall('${m.id}',false)">remove</button>`;sc=`<span class="state queued">queued</span>`;}
+  else acts=`<button class="btn go" onclick="catInstall('${m.id}',true)">install</button>`;
+  const dl=m.status==='queued'?`<div class="dl"><div class="dl-bar"><i style="width:${m.dl||0}%"></i></div><div class="dl-cap">${fmt((m.dl||0)/100*m.gb)} / ${m.gb} GB · ${m.dl||0}%</div></div>`:'';
+  return `<div class="crow"><div class="crow-head"><div class="crow-name">${m.label} · ${m.sub}<span class="crow-meta">${m.quant} · ~${m.gb} GB</span></div><div class="crow-right"><div>${acts}</div>${sc}</div></div><div class="chips" style="margin-top:8px">${chips}</div>${dl}</div>`;
+}
+
+/* ---------- render ---------- */
+function render(){ renderGauge(); renderClusters(); renderCat(); }
+
+/* ---------- interactions ---------- */
+function focusTile(id){
+  if(id===null){focusId=null;preview=null;render();return;}
+  if(focusId===id){focusId=null;preview=null;} // tap again to defocus
+  else{focusId=id;setPreview(find(id));}
+  render();
+}
+function act(kind,id){
+  const m=find(id);
+  if(kind==='stage')m.status='staged';
+  else if(kind==='load')m.status='loaded';
+  else if(kind==='unstage')m.status='idle';
+  else if(kind==='unload')m.status='idle';
+  // keep the tile focused through its re-dock so the gauge updates live; refresh preview to new state
+  setPreview(m);
+  render();
+}
+function setWin(id,v){ find(id).win=+v; render(); }
+function catInstall(id,on){ const m=find(id); m.status=on?'queued':'available'; m.dl=on?0:undefined; render(); }
+function openCat(){ document.getElementById('scrim').classList.add('show'); document.getElementById('sheet').classList.add('show'); }
+function closeCat(){ document.getElementById('scrim').classList.remove('show'); document.getElementById('sheet').classList.remove('show'); }
+
+render();
+</script>
+</body>
+</html>
