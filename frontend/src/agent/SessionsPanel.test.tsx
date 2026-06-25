@@ -292,6 +292,10 @@ describe("SessionsPanel", () => {
     // It reads no owner data: the scope dial is gone, replaced by the Gmail-only caveat.
     expect(screen.queryByRole("button", { name: "Everything" })).not.toBeInTheDocument();
     expect(screen.getByText(/No access to your notes/i)).toBeInTheDocument();
+    // The Start pill shows the Archivist's own hint, not a fallen-through Teacher caption.
+    expect(screen.getByRole("button", { name: /Start/ })).toHaveTextContent(
+      "your Gmail only, not your notes",
+    );
 
     fireEvent.click(screen.getByRole("button", { name: /Start/ }));
     await waitFor(() =>
