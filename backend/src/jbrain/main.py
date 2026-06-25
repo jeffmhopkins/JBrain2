@@ -81,6 +81,7 @@ from jbrain.embed import TeiEmbedClient
 from jbrain.family import SqlFamilyRepo
 from jbrain.geocode import NominatimReverseClient
 from jbrain.gmail import GmailClientProvider
+from jbrain.gmail.triage import TRIAGE_INBOX_SPEC
 from jbrain.image_gen.comfyui import ComfyUiImageGen
 from jbrain.image_gen.gateway import ComfyUiGatewayClient
 from jbrain.lists.repo import SqlListsRepo
@@ -123,6 +124,28 @@ from jbrain.workflow.scheduler import (
 
 structlog.configure(
     processors=[structlog.processors.TimeStamper(fmt="iso"), structlog.processors.JSONRenderer()]
+)
+
+# The action specs the API's registry carries: the shipped six plus every in-code
+# action the worker can dispatch that the Ops surface must resolve — the purge sweep,
+# the three reconcilers, the geofence sweep, the Phase-6 hygiene sweeps, the wiki
+# builder, and the archivist's inbox triage. An action with a seeded manual trigger
+# MUST be here, or `fire_trigger` -> `registry.get` raises and "Run now" fails; the
+# Catalog/Automations surface renders this set. (Dispatch-only actions with no Ops
+# trigger — transcribe/video — live only in the worker's registry.) A module constant
+# so the seeded-trigger lockstep is unit-testable (test_main_registry).
+API_ACTION_SPECS = (
+    *ACTION_SPECS,
+    PURGE_ACTION,
+    RECONCILE_PENDING_NOTES_ACTION,
+    RECONCILE_PENDING_INTEGRATION_ACTION,
+    RECONCILE_UNEMBEDDED_NOTES_ACTION,
+    GEOFENCE_SWEEP_ACTION,
+    ENTITY_HYGIENE_SPEC,
+    REEMBED_SPEC,
+    TAG_CONSOLIDATE_SPEC,
+    *WIKI_SPECS,
+    TRIAGE_INBOX_SPEC,
 )
 
 
@@ -199,30 +222,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.job_queue = PgJobQueue(maker)
         # The action registry the emergency-trigger control resolves a sweep's
         # pipeline through (workflow/scheduler.fire_trigger) and the Automations
-        # surface renders the Catalog from. Mirrors the worker's composed registry
-        # EXACTLY — the shipped six plus every in-code action (purge, the three
-        # reconcilers, the geofence sweep, the Phase-6 hygiene sweeps, and the
-        # wiki builder)
-        # — so any manual trigger fired from Ops resolves to the same handler the
-        # scheduler would (else registry.get raises ActionRegistryError), and the
-        # Catalog lists the full set the worker can run. Keep in lockstep with the
-        # worker's build_registry composition.
-        action_registry = build_action_registry(
-            (
-                *ACTION_SPECS,
-                PURGE_ACTION,
-                RECONCILE_PENDING_NOTES_ACTION,
-                RECONCILE_PENDING_INTEGRATION_ACTION,
-                RECONCILE_UNEMBEDDED_NOTES_ACTION,
-                GEOFENCE_SWEEP_ACTION,
-                # The Phase-6 hygiene sweeps, so their seeded manual triggers resolve from
-                # Ops (POST /ops/triggers/{id}/run -> registry.get) — emergency-fireable.
-                ENTITY_HYGIENE_SPEC,
-                REEMBED_SPEC,
-                TAG_CONSOLIDATE_SPEC,
-                *WIKI_SPECS,
-            )
-        )
+        # surface renders the Catalog from. Composed from API_ACTION_SPECS (module
+        # scope, so the seeded-trigger lockstep is unit-tested) — every action with a
+        # seeded manual trigger must be in it, or "Run now" raises ActionRegistryError.
+        action_registry = build_action_registry(API_ACTION_SPECS)
         app.state.action_registry = action_registry
         app.state.search_service = SearchService(
             SqlSearchRepo(maker), TeiEmbedClient(settings.embed_url)
