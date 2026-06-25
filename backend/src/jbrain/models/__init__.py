@@ -23,12 +23,10 @@ from jbrain.models.wiki import (
     WikiSourceExclusion,
 )
 from jbrain.models.workflow import (
-    EvalRun,
     Event,
     Pipeline,
     ResolutionPin,
     Schedule,
-    Skill,
     Trigger,
 )
 
@@ -41,7 +39,6 @@ __all__ = [
     "EntityAlias",
     "EntityDistinction",
     "EntityMention",
-    "EvalRun",
     "Event",
     "Fact",
     "GeneratedImage",
@@ -59,7 +56,6 @@ __all__ = [
     "Run",
     "RunStep",
     "Schedule",
-    "Skill",
     "Subject",
     "TemporalToken",
     "Trigger",

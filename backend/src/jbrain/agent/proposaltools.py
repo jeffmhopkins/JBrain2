@@ -22,7 +22,6 @@ from jbrain.agent.proposals import (
     ProposalRow,
     ProposalSpec,
 )
-from jbrain.agent.skills import SkillsRepo
 from jbrain.analysis.repo import AlreadyResolved, SqlAnalysisRepo, UnknownAction
 from jbrain.db.session import SessionContext
 from jbrain.notes.repo import SqlNotesRepo
@@ -109,42 +108,6 @@ def agent_note_executor(notes: SqlNotesRepo, jobs: JobEnqueuer) -> LeafExecutor:
         # has a note and a job). Without this the note never leaves 'pending'.
         if created:
             await jobs.enqueue(ctx, "ingest_note", {"note_id": note.id})
-
-    return execute
-
-
-def skill_promotion_executor(skills: SkillsRepo) -> LeafExecutor:
-    """Enact a skill-promotion leaf (Loop 2): flip the owner-reviewed shadow skill to `active`,
-    so it becomes eligible for turn-time retrieval. Idempotent — set_status is a plain UPDATE, so
-    a re-enact is a no-op. The owner approving the proposal IS the trust+promotion gate (the MVP's
-    answer to auto-promotion); no auto path writes 'active'."""
-
-    async def execute(ctx: SessionContext, proposal: ProposalRow, node: NodeRow) -> None:
-        skill_id = str(node.preview.get("skill_id", "")).strip()
-        if not skill_id:
-            return
-        await skills.set_status(ctx, skill_id, "active")
-
-    return execute
-
-
-def prompt_edit_executor() -> LeafExecutor:
-    """Enact a prompt-edit leaf (Loop 4): RECORD-ONLY. A self-edit is PR-shaped and
-    is NEVER runtime-applied (non-neg #6) — the box is air-gapped from git. So enact
-    writes NO prompt/tool file, creates NO note, runs NO connector, and changes NO
-    runtime behavior; the diff in the proposal preview IS the deliverable, which the
-    owner applies as a real PR off-box. This explicit op exists so a prompt-edit leaf
-    never falls through to the agent-note executor; the proposal row + its enacted
-    status are the record (an audit line, nothing else)."""
-
-    async def execute(ctx: SessionContext, proposal: ProposalRow, node: NodeRow) -> None:
-        log.info(
-            "prompt_edit_recorded",
-            proposal_id=proposal.id,
-            node_id=node.id,
-            target=node.preview.get("target_name"),
-            proposed_version=node.preview.get("proposed_version"),
-        )
 
     return execute
 

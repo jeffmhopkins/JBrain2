@@ -1,6 +1,6 @@
 """The four wiki workflow actions (docs/PHASE6_WIKI_PLAN.md §3b), as in-code ActionSpecs.
 
-Like `EVAL_RUN_SPEC` / `PURGE_ACTION` / the reconcilers, these live in the in-code registry
+Like `PURGE_ACTION` / the reconcilers, these live in the in-code registry
 only — NOT in the `app.actions` seed (the seed-lockstep test pins the shipped six). They are
 composed into the worker/api registry at boot, and a migration seeds their pipelines/schedules/
 manual triggers (referencing them by name). The handlers run the `WikiBuilder` (Wave C2a:

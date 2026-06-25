@@ -996,8 +996,8 @@ coordinate** (this is why neither needs a basemap):
   semantics via an `<output>` element). The toast reads `GET /api/locations/presence`
   (owner + full-owner gated). The SAME presence read also reaches the assistant — but
   as a **data-framed `UserMessage` prepended to the conversation** in
-  `api/agent.py::chat` (mirroring the Loop-2 skills block's data/instruction
-  boundary), **not** the system prompt and **not** the toast — owner-gated (present
+  `api/agent.py::chat` (inside the agent's data/instruction boundary — ASSISTANT.md
+  non-negotiable #1), **not** the system prompt and **not** the toast — owner-gated (present
   only for a location-scoped full-owner session), so a narrowed session gets neither.
 
 ### Phones tab — paired-phone management (settled in a three-way review; chosen **B — swipe rail** over A "family roster + device-hub sheet" and C "inline accordion + credential strip"; reference mocks `docs/mocks/phone-management/{a-family-roster,b-swipe-rail,c-inline-accordion}.html`)

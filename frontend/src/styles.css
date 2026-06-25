@@ -9401,19 +9401,6 @@ button.small {
   gap: 6px;
   min-width: 0;
 }
-/* A prompt-edit diff (Loop 4): monospace, scroll a long line rather than overflow
-   the sheet, so the owner can read the exact change on a phone. */
-.fb-shell .prompt-edit-diff {
-  margin: 6px 0 0;
-  padding: 8px;
-  background: var(--surface-2);
-  border: 1px solid var(--border);
-  border-radius: var(--r-sm, 6px);
-  font-size: 12px;
-  line-height: 1.4;
-  overflow-x: auto;
-  white-space: pre;
-}
 .fb-shell .merge-chip {
   display: inline-flex;
   align-items: center;

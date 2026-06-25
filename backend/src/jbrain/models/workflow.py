@@ -1,14 +1,10 @@
 """Workflow-engine ORM models (docs/WORKFLOW_ENGINE_PLAN.md §3).
 
 The data-defined engine substrate created by migration 0036: the event log, the
-trigger/pipeline/schedule definitions, the persisted resolution pins, stored eval
-runs, and reversible `skills` groundwork. `runs`/`run_steps` live in
-`models.agent` (`Run`/`RunStep`) — they are the in-place `agent_runs` rename from
-migration 0037 — and `actions` is the sibling W0.1 registry task.
-
-The pgvector `skills.embedding` column is intentionally unmapped: it is written
-and cosine-queried via raw SQL exactly like `Entity.summary_embedding`, the
-established convention (models/analysis.py).
+trigger/pipeline/schedule definitions, and the persisted resolution pins.
+`runs`/`run_steps` live in `models.agent` (`Run`/`RunStep`) — they are the in-place
+`agent_runs` rename from migration 0037 — and `actions` is the sibling W0.1 registry
+task.
 """
 
 import uuid
@@ -23,7 +19,6 @@ from sqlalchemy import (
     Integer,
     PrimaryKeyConstraint,
     Text,
-    UniqueConstraint,
     func,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
@@ -151,46 +146,4 @@ class ResolutionPin(Base):
     )
     normalized_predicate: Mapped[str | None] = mapped_column(Text, nullable=True)
     domain_code: Mapped[str] = mapped_column(Text, ForeignKey("app.domains.code"))
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
-
-
-class EvalRun(Base):
-    """A stored eval-suite result. scores is the per-fixture {fixture, task,
-    safety} split so promotion_decision reconstructs the two-dimensional gate
-    without collapsing it. Owner/system audit, append-only."""
-
-    __tablename__ = "eval_runs"
-    __table_args__ = {"schema": "app"}
-
-    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    suite: Mapped[str] = mapped_column(Text)
-    version_label: Mapped[str] = mapped_column(Text)
-    model: Mapped[str] = mapped_column(Text)
-    new_case: Mapped[str | None] = mapped_column(Text, nullable=True)
-    scores: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, default=list, server_default="[]")
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
-
-
-class Skill(Base):
-    """Reversible Phase-6 groundwork (no promotion logic this phase, I-5/I-6).
-    The pgvector `embedding` column is unmapped — written/queried via raw SQL like
-    Entity.summary_embedding. Domain-firewalled."""
-
-    __tablename__ = "skills"
-    __table_args__ = (
-        UniqueConstraint("name", "version", name="skills_name_version_key"),
-        {"schema": "app"},
-    )
-
-    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    name: Mapped[str] = mapped_column(Text)
-    version: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
-    status: Mapped[str] = mapped_column(
-        Text, default="shadow", server_default="shadow"
-    )  # shadow | active | quarantined
-    domain_code: Mapped[str] = mapped_column(Text, ForeignKey("app.domains.code"))
-    body: Mapped[str] = mapped_column(Text, default="", server_default="")
-    description: Mapped[str] = mapped_column(Text, default="", server_default="")
-    embedding_model: Mapped[str | None] = mapped_column(Text, nullable=True)
-    success_stats: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict, server_default="{}")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

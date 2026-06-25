@@ -50,7 +50,7 @@ async def _isolate(database_url: str) -> AsyncIterator[None]:  # noqa: F811
         async with admin.begin() as conn:
             await conn.execute(
                 text(
-                    "TRUNCATE app.entities, app.skills, app.notes, app.note_analysis, app.subjects"
+                    "TRUNCATE app.entities, app.notes, app.note_analysis, app.subjects"
                     " RESTART IDENTITY CASCADE"
                 )
             )
@@ -249,92 +249,60 @@ async def test_entity_hygiene_is_domain_firewalled(maker: async_sessionmaker) ->
 # --- reembed_stale --------------------------------------------------------
 
 
-async def _skill(maker: async_sessionmaker, *, model: str | None, domain: str = "general") -> str:
-    sid = str(uuid.uuid4())
+async def _stale_entity(
+    maker: async_sessionmaker, *, model: str | None, domain: str = "general"
+) -> str:
+    """A confirmed entity with a summary, stamped with `model` so reembed re-stamps it."""
+    eid = await _entity(maker, status="confirmed", domain=domain)
     async with scoped_session(maker, OWNER) as session:
         await session.execute(
             text(
-                "INSERT INTO app.skills (id, name, version, status, domain_code, body, description,"
-                " embedding, embedding_model)"
-                " VALUES (:id, :name, 1, 'active', :d, 'do a thing', 'a skill',"
-                "  cast(:emb AS vector), :model)"
+                "UPDATE app.entities SET summary = 'a summary', embedding_model = :m"
+                " WHERE id = cast(:id AS uuid)"
             ),
-            {
-                "id": sid,
-                "name": f"s-{sid[:8]}",
-                "d": domain,
-                "emb": "[" + ",".join(["0"] * 384) + "]",
-                "model": model,
-            },
+            {"id": eid, "m": model},
         )
-    return sid
+    return eid
 
 
-async def _skill_model(maker: async_sessionmaker, sid: str) -> str | None:
+async def _entity_model(maker: async_sessionmaker, eid: str) -> str | None:
     async with scoped_session(maker, OWNER) as session:
         return (
             await session.execute(
-                text("SELECT embedding_model FROM app.skills WHERE id = cast(:id AS uuid)"),
-                {"id": sid},
+                text("SELECT embedding_model FROM app.entities WHERE id = cast(:id AS uuid)"),
+                {"id": eid},
             )
         ).scalar()
-
-
-async def test_reembed_restamps_a_stale_skill_and_skips_a_current_one(
-    maker: async_sessionmaker,
-) -> None:
-    stale = await _skill(maker, model="old-model")
-    current = await _skill(maker, model="test-model")
-    await reembed_handler(maker, embedder=FakeEmbed(), embedding_model="test-model")({})
-    assert await _skill_model(maker, stale) == "test-model"  # re-embedded + restamped
-    assert await _skill_model(maker, current) == "test-model"  # untouched (already current)
 
 
 async def test_reembed_restamps_an_entity_with_a_summary_but_skips_a_null_summary(
     maker: async_sessionmaker,
 ) -> None:
-    with_summary = await _entity(maker, status="confirmed")
+    with_summary = await _stale_entity(maker, model="old")
     no_summary = await _entity(maker, status="confirmed")
-    async with scoped_session(maker, OWNER) as session:
-        await session.execute(
-            text(
-                "UPDATE app.entities SET summary = 'a summary', embedding_model = 'old'"
-                " WHERE id = cast(:id AS uuid)"
-            ),
-            {"id": with_summary},
-        )
     await reembed_handler(maker, embedder=FakeEmbed(), embedding_model="test-model")({})
-
-    async def _model(eid: str) -> str | None:
-        async with scoped_session(maker, OWNER) as session:
-            return (
-                await session.execute(
-                    text("SELECT embedding_model FROM app.entities WHERE id = cast(:id AS uuid)"),
-                    {"id": eid},
-                )
-            ).scalar()
-
-    assert await _model(with_summary) == "test-model"
-    assert await _model(no_summary) is None  # NULL summary → nothing to embed → left alone
+    assert await _entity_model(maker, with_summary) == "test-model"
+    # NULL summary → nothing to embed → left alone.
+    assert await _entity_model(maker, no_summary) is None
 
 
 async def test_reembed_converges_over_runs_with_a_small_batch(maker: async_sessionmaker) -> None:
     """The per-run cap drains a backlog across runs and then no-ops (the convergence claim)."""
-    ids = [await _skill(maker, model="old-model") for _ in range(3)]
+    ids = [await _stale_entity(maker, model="old-model") for _ in range(3)]
     action = ReembedAction(maker, embedder=FakeEmbed(), embedding_model="test-model", batch=1)
     await action.run({})  # 1 of 3
     await action.run({})  # 2 of 3
-    still_stale = [s for s in ids if await _skill_model(maker, s) != "test-model"]
+    still_stale = [e for e in ids if await _entity_model(maker, e) != "test-model"]
     assert len(still_stale) == 1
     await action.run({})  # 3 of 3
-    assert all([await _skill_model(maker, s) == "test-model" for s in ids])  # noqa: C419
+    assert all([await _entity_model(maker, e) == "test-model" for e in ids])  # noqa: C419
 
 
 async def test_reembed_is_domain_firewalled(maker: async_sessionmaker) -> None:
-    """RLS on the embed-write path: a health-narrowed re-embed leaves a finance skill stale."""
+    """RLS on the embed-write path: a health-narrowed re-embed leaves a finance entity stale."""
     pid = await _owner_principal(maker)
-    health = await _skill(maker, model="old", domain="health")
-    finance = await _skill(maker, model="old", domain="finance")
+    health = await _stale_entity(maker, model="old", domain="health")
+    finance = await _stale_entity(maker, model="old", domain="finance")
     action = ReembedAction(
         maker,
         embedder=FakeEmbed(),
@@ -342,8 +310,8 @@ async def test_reembed_is_domain_firewalled(maker: async_sessionmaker) -> None:
         ctx=read_context(pid, ("health",)),
     )
     await action.run({})
-    assert await _skill_model(maker, health) == "test-model"
-    assert await _skill_model(maker, finance) == "old"  # out of scope → untouched
+    assert await _entity_model(maker, health) == "test-model"
+    assert await _entity_model(maker, finance) == "old"  # out of scope → untouched
 
 
 # --- tag_consolidate ------------------------------------------------------
