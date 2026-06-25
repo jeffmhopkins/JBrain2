@@ -1,4 +1,4 @@
-"""Migration 0091 against real Postgres: tasks + task_runs are owner-only (CLAUDE.md
+"""Migration 0093 against real Postgres: tasks + task_runs are owner-only (CLAUDE.md
 rule 3), the persona/schedule/status sets are pinned by CHECKs, the scheduler claim
 advances `next_run_at`, deleting a task cascades its runs, and a full task run lands
 real session/run/transcript/task_run rows.

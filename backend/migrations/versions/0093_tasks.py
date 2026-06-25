@@ -6,15 +6,15 @@
 its task is deleted. The persona/schedule sets are pinned by CHECKs so a malformed
 value can never reach the runner. See docs/mocks/tasks-launcher-README.md.
 
-Revision ID: 0091
-Revises: 0090
+Revision ID: 0093
+Revises: 0092
 Create Date: 2026-06-24
 """
 
 from alembic import op
 
-revision = "0091"
-down_revision = "0090"
+revision = "0093"
+down_revision = "0092"
 branch_labels = None
 depends_on = None
 
