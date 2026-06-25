@@ -288,7 +288,11 @@ describe("SessionsPanel", () => {
     // The Archivist is on offer in the Research picker.
     expect(screen.getByRole("button", { name: /Archivist/ })).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: /Archivist/ }));
+    const archivistOpt = screen.getByRole("button", { name: /Archivist/ });
+    fireEvent.click(archivistOpt);
+    // The selection sticks (aria-pressed + the .on class the picker styles green).
+    expect(archivistOpt).toHaveAttribute("aria-pressed", "true");
+    expect(archivistOpt.className).toContain("on");
     // It reads no owner data: the scope dial is gone, replaced by the Gmail-only caveat.
     expect(screen.queryByRole("button", { name: "Everything" })).not.toBeInTheDocument();
     expect(screen.getByText(/No access to your notes/i)).toBeInTheDocument();
