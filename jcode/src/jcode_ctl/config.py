@@ -49,3 +49,11 @@ class Settings(BaseSettings):
     # (TryCloudflare: no account/token/DNS); the URL dies with the session.
     preview_enabled: bool = False
     preview_default_port: int = 5173
+
+    # Session GC (Wave J5): reap a session (its checkout + any tunnel) after this many
+    # seconds with no turn — abandoned sandboxes don't pile up. A *running* turn keeps
+    # a session fresh, so an active session is never reaped. Default 24h; 0 disables.
+    # A committed/pushed branch survives a reap; only the local checkout is dropped.
+    session_ttl_seconds: int = 86_400
+    # How often the reaper sweeps for idle sessions.
+    reap_interval_seconds: int = 600

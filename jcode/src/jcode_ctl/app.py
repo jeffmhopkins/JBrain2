@@ -9,6 +9,8 @@ and proxies these to the owner (Wave J2).
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import hmac
 import json
 from collections.abc import AsyncIterator
@@ -27,6 +29,28 @@ from jcode_ctl.sessions import SessionError, SessionManager
 # SSE responses must not be buffered by a proxy (Caddy/nginx), or the turn stream
 # arrives all-at-once and the live UX is lost — mirrors the supervisor's SSE.
 _SSE_HEADERS = {"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
+
+
+async def reap_idle(
+    sessions: SessionManager, preview: PreviewManager, ttl_seconds: int
+) -> list[str]:
+    """Delete every session idle past the TTL (and close its tunnel). Returns the
+    reaped ids. The unit the GC loop calls — testable with a fake clock + fakes."""
+    reaped = sessions.idle_sessions(ttl_seconds=ttl_seconds)
+    for sid in reaped:
+        sessions.delete(sid)
+        await preview.close(sid)
+    return reaped
+
+
+async def _reaper_loop(
+    sessions: SessionManager, preview: PreviewManager, settings: Settings
+) -> None:
+    while True:
+        await asyncio.sleep(settings.reap_interval_seconds)
+        # A reap failure (e.g. a workspace removal error) must not kill the loop.
+        with contextlib.suppress(Exception):
+            await reap_idle(sessions, preview, settings.session_ttl_seconds)
 
 
 class CreateSessionRequest(BaseModel):
@@ -53,9 +77,16 @@ def create_app(
 ) -> FastAPI:
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
-        yield
-        # Tear down every live tunnel so no preview outlives the server.
-        await preview.close_all()
+        # The session GC reaper runs for the life of the server.
+        reaper = asyncio.create_task(_reaper_loop(sessions, preview, settings))
+        try:
+            yield
+        finally:
+            reaper.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await reaper
+            # Tear down every live tunnel so no preview outlives the server.
+            await preview.close_all()
 
     app = FastAPI(title="jcode control server", lifespan=lifespan)
 

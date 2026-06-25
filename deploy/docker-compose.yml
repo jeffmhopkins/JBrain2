@@ -362,9 +362,11 @@ services:
   # `jcode` network — NOT the shared `internal` — and is therefore unable to reach
   # `db`, `supervisor` (which holds the docker socket), `worker`, `embed`, or the blob
   # store. The only peer on the `jcode` network is the `local-llm` gateway (the model
-  # endpoint); the api joins it in Wave J2 to proxy the control surface. The container
-  # still has default outbound NAT for git/npm; restricting THAT to a git/npm allowlist
-  # (an egress proxy) is Wave J5 hardening.
+  # endpoint); the api joins it in Wave J2 to proxy the control surface.
+  # HARDENING (Wave J5): resource caps (below) bound CPU/memory/PIDs; the control server
+  # GC-reaps idle sessions. Outbound is still default NAT by DEFAULT; the HTTP(S)_PROXY
+  # seam below makes a git/npm egress ALLOWLIST opt-in (an allowlisting forward proxy),
+  # left opt-in because routing cloudflared over a proxy needs on-box verification.
   jcode:
     profiles: [jcode]
     image: jbrain2-jcode:local
@@ -388,10 +390,27 @@ services:
       # enabled via scripts/jcode-setup.sh. The tunnel dials OUT (no inbound), so the
       # container's default egress covers it; no compose network change.
       JCODE_PREVIEW_ENABLED: ${JCODE_PREVIEW_ENABLED:-false}
+      # Session GC (Wave J5): reap a session (checkout + tunnel) after this many idle
+      # seconds (default 24h; 0 disables). A running turn is never reaped.
+      JCODE_SESSION_TTL_SECONDS: ${JCODE_SESSION_TTL_SECONDS:-86400}
+      JCODE_REAP_INTERVAL_SECONDS: ${JCODE_REAP_INTERVAL_SECONDS:-600}
+      # OPT-IN strict egress (Wave J5): point these at an allowlisting forward proxy to
+      # confine the sandbox's outbound to git/npm (and Cloudflare, when preview is on).
+      # Empty = direct NAT (the default today). git/npm/the SDK honor these; cloudflared
+      # over a proxy needs on-box verification, so strict egress is opt-in, not default.
+      HTTP_PROXY: ${JCODE_EGRESS_PROXY:-}
+      HTTPS_PROXY: ${JCODE_EGRESS_PROXY:-}
+      # Never proxy the on-box model gateway — it's a local peer on the jcode network.
+      NO_PROXY: ${JCODE_NO_PROXY:-local-llm,localhost,127.0.0.1}
     volumes:
       # The per-session git checkouts — sandbox scratch, NEVER a JBrain blob/note.
       - jcode_work:/work
     networks: [jcode]
+    # Resource caps (Wave J5): an arbitrary-code sandbox must not be able to starve the
+    # box. Tunable; sane ceilings for a coding session. pids_limit blunts fork bombs.
+    mem_limit: ${JCODE_MEM_LIMIT:-4g}
+    cpus: ${JCODE_CPUS:-2.0}
+    pids_limit: ${JCODE_PIDS_LIMIT:-512}
 
   embed:
     image: ghcr.io/huggingface/text-embeddings-inference:cpu-latest

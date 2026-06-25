@@ -10,7 +10,7 @@ from __future__ import annotations
 import secrets
 from collections.abc import AsyncIterator, Callable
 from dataclasses import asdict, dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Literal
 
@@ -128,3 +128,18 @@ class SessionManager:
         session = self.get(sid)
         self._workspace.remove(Path(session.workspace))
         del self._sessions[sid]
+
+    def idle_sessions(
+        self, *, ttl_seconds: int, now: datetime | None = None
+    ) -> list[str]:
+        """Ids of sessions with no activity for ``ttl_seconds`` (0 disables). A running
+        turn keeps a session fresh, so an in-flight session is never reaped."""
+        if ttl_seconds <= 0:
+            return []
+        cutoff = (now or self._now()) - timedelta(seconds=ttl_seconds)
+        return [
+            s.id
+            for s in self._sessions.values()
+            if s.status != "running"
+            and datetime.fromisoformat(s.last_active_at) < cutoff
+        ]
