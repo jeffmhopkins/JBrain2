@@ -1,0 +1,264 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>JBrain · jcode — session launcher (mock)</title>
+<style>
+  :root{
+    --bg:#0E0F11; --surface:#17181B; --surface-2:#1E2024; --border:#26282C;
+    --text:#E6E7E9; --text-2:#9A9DA3; --text-3:#5C5F66;
+    --steel:#7FA7C9; --green:#8FBC9A; --amber:#C9A36A; --rose:#CF8A8F; --violet:#A493C9; --teal:#6FB6B1;
+    --steel-tint:rgba(127,167,201,.14); --green-tint:rgba(143,188,154,.14);
+    --amber-tint:rgba(201,163,106,.14); --rose-tint:rgba(207,138,143,.14); --teal-tint:rgba(111,182,177,.14);
+    --font:-apple-system,system-ui,"Segoe UI",Roboto,sans-serif; --mono:ui-monospace,Menlo,Consolas,monospace;
+    --r-card:16px; --r-seg:12px; --r-pill:999px;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);font-family:var(--font);font-size:15px;line-height:1.4;-webkit-font-smoothing:antialiased}
+  .wrap{max-width:520px;margin:0 auto;padding:0 14px 40px}
+
+  /* top bar */
+  .topbar{display:flex;align-items:center;gap:10px;height:56px;position:sticky;top:0;background:var(--bg);z-index:5}
+  .topbar .chev{width:24px;height:24px;color:var(--text-2)}
+  .topbar .tt{font-size:18px;font-weight:600}
+  .topbar .tt .d{color:var(--steel)}
+  .topbar .health{margin-left:auto;display:flex;align-items:center;gap:6px;font-size:11.5px;color:var(--text-2)}
+  .topbar .health .dot{width:8px;height:8px;border-radius:999px;background:var(--green);box-shadow:0 0 0 3px var(--green-tint)}
+
+  p.intro{color:var(--text-2);font-size:13px;margin:2px 0 14px;line-height:1.5}
+  p.intro b{color:var(--text)}
+
+  .card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-card);overflow:hidden;margin-bottom:14px}
+
+  /* ===== new session (compose-first) ===== */
+  .new-head{display:flex;align-items:center;gap:10px;width:100%;background:transparent;border:0;color:var(--text);font:inherit;padding:14px;cursor:pointer;text-align:left}
+  .new-head .plus{width:34px;height:34px;border-radius:10px;background:var(--steel-tint);color:var(--steel);display:flex;align-items:center;justify-content:center;flex:none}
+  .new-head .plus svg{width:18px;height:18px}
+  .new-head .nt{font-weight:600;font-size:15px}
+  .new-head .ns{display:block;font-size:12px;color:var(--text-2);font-weight:400;margin-top:1px}
+  .new-head .caret{margin-left:auto;color:var(--text-3);transition:transform .2s}
+  .new.open .new-head .caret{transform:rotate(90deg)}
+  .new-body{display:none;border-top:1px solid var(--border);padding:14px}
+  .new.open .new-body{display:block}
+
+  .lab{font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:var(--text-3);margin:0 2px 7px}
+  .lab.mt{margin-top:15px}
+
+  /* source segmented */
+  .seg-row{display:flex;border:1px solid var(--border);border-radius:var(--r-seg);overflow:hidden}
+  .seg{flex:1;display:flex;align-items:center;justify-content:center;gap:7px;padding:.72em .3em;font-size:13px;font-weight:500;color:var(--text-2);background:transparent;border:none;cursor:pointer;transition:background-color .15s}
+  .seg + .seg{border-left:1px solid var(--border)}
+  .seg .ic{display:inline-flex}.seg .ic svg{width:15px;height:15px;display:block}
+  .seg.on{color:var(--text);background:var(--steel-tint)}
+  .seg.on .ic{color:var(--steel)}
+
+  /* repo input */
+  .field{margin-top:11px}
+  .inp{width:100%;background:var(--surface-2);border:1px solid var(--border);border-radius:11px;color:var(--text);font:inherit;font-family:var(--mono);font-size:13px;padding:11px 12px;outline:none}
+  .inp:focus{border-color:var(--steel)}
+  .inp::placeholder{color:var(--text-3)}
+  .tworow{display:flex;gap:9px;margin-top:9px}
+  .tworow .inp{flex:1}
+  .recent{display:flex;flex-wrap:wrap;gap:6px;margin-top:9px}
+  .rchip{font-size:11.5px;font-family:var(--mono);padding:5px 10px;border-radius:999px;border:1px solid var(--border);background:var(--surface-2);color:var(--text-2);cursor:pointer}
+  .rchip:hover{border-color:var(--steel);color:var(--steel)}
+  .scratchnote{font-size:12px;color:var(--text-2);line-height:1.5;margin:11px 2px 0;display:none}
+  .new[data-src="scratch"] .field, .new[data-src="scratch"] .recent{display:none}
+  .new[data-src="scratch"] .scratchnote{display:block}
+
+  /* model segmented (fast/local) */
+  .mseg .seg.on.fast{background:var(--steel-tint)} .mseg .seg.on.fast .ic{color:var(--steel)}
+  .mseg .seg.on.local{background:var(--amber-tint);color:var(--text)} .mseg .seg.on.local .ic{color:var(--amber)}
+  .mseg .seg .sub{display:block;font-size:10px;color:var(--text-3);font-weight:400;margin-top:1px}
+  .mseg .seg{flex-direction:column;gap:2px}
+
+  /* local two-model pair (revealed when Local is chosen) */
+  .localpair{display:none;margin-top:11px;border:1px solid color-mix(in srgb,var(--amber) 30%,var(--border));border-radius:12px;overflow:hidden;background:var(--amber-tint)}
+  .localpair.show{display:block}
+  .lp-row{display:flex;align-items:center;gap:9px;padding:10px 12px;border-top:1px solid color-mix(in srgb,var(--amber) 18%,var(--border))}
+  .lp-row:first-child{border-top:0}
+  .lp-k{font-size:10px;text-transform:uppercase;letter-spacing:.06em;width:46px;flex:none;font-weight:600}
+  .lp-row.fast .lp-k{color:var(--green)} .lp-row.strong .lp-k{color:var(--amber)}
+  .lp-v{font-family:var(--mono);font-size:12.5px;color:var(--text)}
+  .lp-t{margin-left:auto;font-size:11px;color:var(--text-2)}
+  .lp-sel{margin-left:6px;background:var(--surface-2);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:3px 7px;font:inherit;font-size:11px;font-family:var(--mono)}
+  .lp-note{font-size:11px;color:var(--text-2);line-height:1.5;margin:0;padding:9px 12px;border-top:1px solid color-mix(in srgb,var(--amber) 18%,var(--border));background:color-mix(in srgb,var(--surface) 80%,transparent)}
+  .lp-note b{color:var(--text)}
+
+  /* single on-box model card (local-only) */
+  .modelcard{display:flex;align-items:center;gap:11px;padding:11px 12px;border:1px solid color-mix(in srgb,var(--amber) 30%,var(--border));border-radius:12px;background:var(--amber-tint)}
+  .modelcard .mc-ic{width:30px;height:30px;border-radius:9px;background:var(--surface);display:flex;align-items:center;justify-content:center;color:var(--amber);flex:none}
+  .modelcard .mc-ic svg{width:17px;height:17px}
+  .modelcard .mc-main{flex:1;min-width:0}
+  .modelcard .mc-name{font-family:var(--mono);font-size:13px;color:var(--text);font-weight:500}
+  .modelcard .mc-meta{font-size:11px;color:var(--text-2);margin-top:2px}
+  .modelcard .mc-badge{font-size:10px;color:var(--green);border:1px solid color-mix(in srgb,var(--green) 32%,var(--border));border-radius:999px;padding:1px 8px;flex:none}
+  .mc-note{font-size:11px;color:var(--text-2);line-height:1.5;margin:9px 2px 0}
+  .mc-note b{color:var(--text)}
+
+  .sbxnote{display:flex;align-items:center;gap:8px;margin-top:13px;font-size:11.5px;color:var(--text-2);line-height:1.45}
+  .sbxnote svg{width:14px;height:14px;color:var(--teal);flex:none}
+
+  .start{width:100%;margin-top:15px;padding:12px;border-radius:12px;border:1px solid color-mix(in srgb,var(--steel) 45%,var(--border));background:var(--steel-tint);color:var(--steel);font:inherit;font-weight:600;font-size:14px;cursor:pointer}
+  .start:hover{background:color-mix(in srgb,var(--steel) 22%,transparent)}
+  .start.local{border-color:color-mix(in srgb,var(--amber) 45%,var(--border));background:var(--amber-tint);color:var(--amber)}
+
+  /* ===== sessions list ===== */
+  .sessions-lab{display:flex;align-items:center;margin:2px 2px 9px}
+  .sessions-lab .l{font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:var(--text-3)}
+  .sessions-lab .count{margin-left:auto;font-size:11.5px;color:var(--text-3)}
+
+  .buckets{display:flex;border:1px solid var(--border);border-radius:var(--r-seg);overflow:hidden;margin-bottom:11px}
+  .bk{flex:1;display:flex;align-items:center;justify-content:center;gap:6px;padding:.6em 0;font-size:12.5px;font-weight:500;color:var(--text-2);background:transparent;border:0;cursor:pointer}
+  .bk + .bk{border-left:1px solid var(--border)}
+  .bk.on{color:var(--text);background:var(--steel-tint)}
+  .bk .pill{font-size:10.5px;padding:0 6px;border-radius:999px;background:var(--surface-2);color:var(--text-3);min-width:16px}
+  .bk.on .pill{background:var(--steel);color:#0E0F11}
+
+  .rows{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-card);overflow:hidden}
+  .row{display:flex;align-items:center;gap:11px;padding:11px 13px;border-top:1px solid var(--border);cursor:pointer}
+  .row:first-child{border-top:0}
+  .row:hover{background:var(--surface-2)}
+  .row .sd{width:9px;height:9px;border-radius:999px;flex:none}
+  .sd.live{background:var(--green);box-shadow:0 0 0 3px var(--green-tint)}
+  .sd.idle{background:var(--text-3)}
+  .sd.local{background:var(--amber);box-shadow:0 0 0 3px var(--amber-tint)}
+  .row .main{flex:1;min-width:0}
+  .row .repo{font-family:var(--mono);font-size:13px;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .row .sub{font-size:11px;color:var(--text-3);font-family:var(--mono);margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .row .right{display:flex;align-items:center;gap:8px;flex:none}
+  .mchip{font-size:10px;padding:1px 7px;border-radius:999px;border:1px solid var(--border)}
+  .mchip.fast{color:var(--steel);border-color:color-mix(in srgb,var(--steel) 32%,var(--border))}
+  .mchip.local{color:var(--amber);border-color:color-mix(in srgb,var(--amber) 32%,var(--border))}
+  .row .turns{font-size:11px;color:var(--text-3);font-family:var(--mono)}
+  .row .chev{width:16px;height:16px;color:var(--text-3);flex:none}
+  .activity{display:inline-flex;gap:2px;align-items:center}
+  .activity i{width:3px;height:3px;border-radius:999px;background:var(--steel);animation:bnc 1.2s infinite}
+  .activity i:nth-child(2){animation-delay:.15s}.activity i:nth-child(3){animation-delay:.3s}
+  @keyframes bnc{0%,80%,100%{transform:translateY(0);opacity:.4}40%{transform:translateY(-3px);opacity:1}}
+  .runword{font-size:11px;color:var(--steel);font-family:var(--mono)}
+  .empty{padding:22px 14px;text-align:center;color:var(--text-2);font-size:13px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M15 18l-6-6 6-6"/></svg>
+    <span class="tt">jcode<span class="d">.</span></span>
+    <span class="health"><span class="dot"></span>sandbox ready</span>
+  </div>
+
+  <p class="intro">The <b>session launcher</b> — what the jcode tile opens. Start a new sandboxed coding session (pick a repo + coder model) or
+  resume a past one. Starting drops you into the live session screen (<b>jcode-session.html</b>).</p>
+
+  <!-- ===== NEW SESSION ===== -->
+  <div class="card new open" id="new" data-src="clone">
+    <button class="new-head" onclick="document.getElementById('new').classList.toggle('open')">
+      <span class="plus"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg></span>
+      <span><span class="nt">New session</span><span class="ns">spin a fresh isolated sandbox</span></span>
+      <span class="caret"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" width="16" height="16"><path d="M9 18l6-6-6-6"/></svg></span>
+    </button>
+    <div class="new-body">
+      <div class="lab">Workspace</div>
+      <div class="seg-row">
+        <button class="seg on" onclick="setSrc('clone',this)">
+          <span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M6 3v12M6 15a3 3 0 1 0 0 6 3 3 0 0 0 0-6zM6 3a3 3 0 1 0 0 0M18 9a3 3 0 1 0 0 0M18 9v1a4 4 0 0 1-4 4H9"/></svg></span>
+          Clone repo</button>
+        <button class="seg" onclick="setSrc('scratch',this)">
+          <span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg></span>
+          Scratch</button>
+      </div>
+
+      <div class="field">
+        <input class="inp" id="repo" placeholder="github.com/you/repo  (or paste a git URL)" value="github.com/jeffmhopkins/scratch-todo" />
+        <div class="tworow">
+          <input class="inp" id="branch" placeholder="branch (default: main)" value="main" />
+          <input class="inp" id="newbranch" placeholder="work branch: jcode/spike" value="jcode/spike" />
+        </div>
+        <div class="recent">
+          <span class="rchip" onclick="document.getElementById('repo').value=this.textContent">jeffmhopkins/JBrain2</span>
+          <span class="rchip" onclick="document.getElementById('repo').value=this.textContent">jeffmhopkins/dotfiles</span>
+          <span class="rchip" onclick="document.getElementById('repo').value=this.textContent">scratch-todo</span>
+        </div>
+      </div>
+      <p class="scratchnote">Empty workspace — a blank sandbox to prototype in. <code>git init</code> happens on first commit; you can push it to a new remote later.</p>
+
+      <div class="lab mt">Coder model</div>
+      <div class="modelcard">
+        <span class="mc-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M9 9h6v6H9z"/></svg></span>
+        <div class="mc-main">
+          <div class="mc-name">Qwen3-Coder-Next 80B-A3B</div>
+          <div class="mc-meta">on-box · 80B total / 3B active · &gt;70% SWE-Bench Verified</div>
+        </div>
+        <span class="mc-badge">on-box</span>
+      </div>
+      <p class="mc-note">Runs entirely on the Strix Halo box via llama-swap — <b>no cloud, nothing leaves the sandbox</b>.
+      The A3B sparsity (3B active) keeps an 80B model fast on the iGPU. Reached through the gateway's Anthropic-compatible endpoint.</p>
+
+      <div class="sbxnote">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+        <span id="sbxnote">Fresh isolated checkout · no host access · reads no notes · <b>completions on-box</b> · git/npm egress only.</span>
+      </div>
+
+      <button class="start" id="start" onclick="alert('(mock) clones the repo into a fresh sandbox and opens the jcode session screen')">Start session →</button>
+    </div>
+  </div>
+
+  <!-- ===== RESUME ===== -->
+  <div class="sessions-lab"><span class="l">Sessions</span><span class="count" id="count"></span></div>
+  <div class="buckets" id="buckets"></div>
+  <div class="rows" id="rows"></div>
+</div>
+
+<script>
+let src='clone', bucket='today';
+
+function setSrc(s,el){ src=s; document.getElementById('new').dataset.src=s;
+  el.parentElement.querySelectorAll('.seg').forEach(x=>x.classList.remove('on')); el.classList.add('on'); }
+
+const SESSIONS=[
+  {bucket:'today', repo:'scratch-todo', branch:'jcode/spike', turns:6, when:'now', run:true},
+  {bucket:'today', repo:'JBrain2', branch:'jcode/local-mode', turns:23, when:'2h ago'},
+  {bucket:'older', repo:'dotfiles', branch:'jcode/zsh-fix', turns:4, when:'yesterday'},
+  {bucket:'older', repo:'scratch-todo', branch:'jcode/dark-theme', turns:11, when:'tue'},
+  {bucket:'older', repo:'apib', branch:'jcode/rate-limit', turns:8, when:'mon'},
+  {bucket:'archived', repo:'old-prototype', branch:'jcode/poc', turns:31, when:'may 12'},
+];
+const BUCKETS=[['today','Today'],['older','Older'],['archived','Archived']];
+
+function renderBuckets(){
+  document.getElementById('buckets').innerHTML=BUCKETS.map(([id,label])=>{
+    const n=SESSIONS.filter(s=>s.bucket===id).length;
+    return `<button class="bk ${bucket===id?'on':''}" onclick="setBucket('${id}')">${label}<span class="pill">${n}</span></button>`;
+  }).join('');
+}
+function setBucket(b){ bucket=b; renderBuckets(); renderRows(); }
+
+function renderRows(){
+  const list=SESSIONS.filter(s=>s.bucket===bucket);
+  document.getElementById('count').textContent=list.length+(list.length===1?' session':' sessions');
+  const rows=document.getElementById('rows');
+  if(!list.length){ rows.innerHTML=`<div class="empty">No ${bucket} sessions.</div>`; return; }
+  rows.innerHTML=list.map(s=>{
+    const sd = s.run?'live':'idle';
+    const right = s.run
+      ? `<span class="activity"><i></i><i></i><i></i></span><span class="runword">running…</span>`
+      : `<span class="turns">${s.turns} turns</span>`;
+    return `<div class="row" onclick="alert('(mock) resumes this session in the jcode screen')">
+      <span class="sd ${sd}" title="${s.run?'turn in flight':'idle'}"></span>
+      <div class="main">
+        <div class="repo">${s.repo}</div>
+        <div class="sub">@ ${s.branch} · ${s.when}</div>
+      </div>
+      <div class="right">${right}
+        <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M9 18l6-6-6-6"/></svg>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+renderBuckets(); renderRows();
+</script>
+</body>
+</html>

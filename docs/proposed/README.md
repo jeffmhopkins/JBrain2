@@ -17,6 +17,12 @@ given a roadmap slot in `../ROADMAP.md`, and promoted out of this folder.
 
 ## Contents
 
+- `JCODE_PLAN.md` — **jcode** code mode: an opt-in, on-box **sidecar** running Claude
+  Code's agent engine against a local coder model (Qwen3-Coder-Next 80B-A3B), fronted by
+  the PWA (launcher → session). Local-only (no cloud/terms surface), reads no knowledge
+  base, works in isolated per-session git checkouts, with an optional per-session preview
+  tunnel. Five-wave build plan; one owner-only `jcode_sessions` table. Reference mocks:
+  `../mocks/jcode-launcher.html`, `../mocks/jcode-session.html`.
 - `PHOTO_ARCHIVE_PLAN.md` — photo archive pipeline: a staged, idempotent map over
   a decade of phone dumps (hash-keyed dedup, deterministic dating, a vision worker
   bridging pixels to the text-only 120B, CLIP search, InsightFace faces, residual
