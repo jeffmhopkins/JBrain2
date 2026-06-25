@@ -478,6 +478,7 @@ export function App() {
               onOpenNote={(noteId) => void openNoteById(noteId)}
               onCompose={(text, appt) => {
                 setCard(null);
+                setLauncherOpen(false);
                 setCompose({ text, appt });
               }}
             />
@@ -507,7 +508,10 @@ export function App() {
         <TasksScreen
           onClose={() => setCard(null)}
           onOpenSession={(sessionId, agent) => {
+            // Drop both the Tasks card AND the launcher beneath it, so home/Full
+            // Brain is revealed (not the launcher) to receive the session handoff.
             setCard(null);
+            setLauncherOpen(false);
             setOpenSession({ id: sessionId, agent });
           }}
         />
