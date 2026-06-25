@@ -51,8 +51,9 @@ function mount(tasks: Task[] = [SCHEDULED, MANUAL]) {
   vi.spyOn(api, "tasks").mockResolvedValue(tasks);
   vi.spyOn(api, "taskRuns").mockResolvedValue([RUN]);
   const onClose = vi.fn();
-  render(<TasksScreen onClose={onClose} />);
-  return { onClose };
+  const onOpenSession = vi.fn();
+  render(<TasksScreen onClose={onClose} onOpenSession={onOpenSession} />);
+  return { onClose, onOpenSession };
 }
 
 describe("TasksScreen", () => {
@@ -93,7 +94,7 @@ describe("TasksScreen", () => {
   it("creates a task from the editor", async () => {
     const createTask = vi.spyOn(api, "createTask").mockResolvedValue(SCHEDULED);
     mount();
-    fireEvent.click(await screen.findByText("New task"));
+    fireEvent.click(await screen.findByRole("button", { name: "New task" }));
     const prompt = await screen.findByPlaceholderText("Tell the agent what to do on each run…");
     fireEvent.change(prompt, { target: { value: "Summarize my week." } });
     fireEvent.click(screen.getByText("Save task"));
@@ -106,7 +107,7 @@ describe("TasksScreen", () => {
       .spyOn(api, "createTask")
       .mockResolvedValue({ ...SCHEDULED, agent: "archivist" });
     mount();
-    fireEvent.click(await screen.findByText("New task"));
+    fireEvent.click(await screen.findByRole("button", { name: "New task" }));
     const prompt = await screen.findByPlaceholderText("Tell the agent what to do on each run…");
     fireEvent.change(prompt, { target: { value: "Label everything from chase.com." } });
     // The Archivist is offered in the agent picker; selecting it starts with no scopes.
@@ -115,6 +116,13 @@ describe("TasksScreen", () => {
     await waitFor(() => expect(createTask).toHaveBeenCalled());
     expect(createTask.mock.calls[0]?.[0].agent).toBe("archivist");
     expect(createTask.mock.calls[0]?.[0].domain_scopes).toEqual([]); // a non-KB persona reads nothing
+  });
+
+  it("opens the session a run produced", async () => {
+    const { onOpenSession } = mount();
+    fireEvent.click(await screen.findByText("Morning brief")); // expand to reveal runs
+    fireEvent.click(await screen.findByRole("button", { name: /Open session/ }));
+    expect(onOpenSession).toHaveBeenCalledWith("s1", "jerv");
   });
 
   it("returns to the launcher via the back control", async () => {
