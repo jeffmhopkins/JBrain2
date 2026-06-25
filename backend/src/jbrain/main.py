@@ -39,6 +39,7 @@ from jbrain.api import (
     feed,
     health,
     images,
+    jcode,
     live,
     locations,
     member,
@@ -84,6 +85,7 @@ from jbrain.gmail import GmailClientProvider
 from jbrain.gmail.triage import TRIAGE_INBOX_SPEC
 from jbrain.image_gen.comfyui import ComfyUiImageGen
 from jbrain.image_gen.gateway import ComfyUiGatewayClient
+from jbrain.jcode import JcodeClient
 from jbrain.lists.repo import SqlListsRepo
 from jbrain.llm import build_router
 from jbrain.llm.local_gateway import LocalGatewayClient
@@ -348,6 +350,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 gateway=LocalGatewayClient(settings.whisper_url),
                 max_bytes=settings.whisper_max_bytes,
             )
+        # Code mode (docs/proposed/JCODE_PLAN.md, Wave J2): the api proxies an owner's
+        # sandboxed coding session to the internal jcode control server. Wired only when
+        # configured — the owner-gated routes 404 otherwise (graceful degrade). The turn
+        # registry holds in-flight SSE turns for reconnect/cancel.
+        app.state.jcode_client = (
+            JcodeClient(settings.jcode_url, settings.jcode_token)
+            if settings.jcode_url
+            else None
+        )
+        app.state.jcode_turns = {}
         # jerv's on-box video analysis (docs/VIDEO_ANALYSIS_PLAN.md): sample + caption
         # frames and transcribe the audio inline, like analyze_image/transcribe. Wired
         # only when ffmpeg can sample frames, so a box without it silently lacks the
@@ -505,6 +517,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(feed.router, prefix="/api")
     app.include_router(images.generated_router, prefix="/api")
     app.include_router(image_settings_api.router, prefix="/api")
+    # Code mode (docs/proposed/JCODE_PLAN.md). Always mounted, but every route is
+    # owner-gated and 404s when jcode isn't configured (app.state.jcode_client is None).
+    app.include_router(jcode.router, prefix="/api")
     app.include_router(lists_api.router, prefix="/api")
     app.include_router(llm_settings_api.router, prefix="/api")
     app.include_router(locations.router, prefix="/api")
