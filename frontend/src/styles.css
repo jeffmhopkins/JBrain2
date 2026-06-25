@@ -608,17 +608,6 @@ h3 {
   flex: none;
 }
 
-/* The muted line that replaces the chat paperclip when the agent's model can't
-   read images (docs/mocks/chat-attach-b-chips.html). */
-.vis-hint {
-  margin: 0;
-  padding: 4px 6px 0;
-  font-size: var(--fs-micro);
-  line-height: 1.4;
-  color: var(--text-3);
-  flex: none;
-}
-
 .composer-foot {
   display: flex;
   align-items: center;

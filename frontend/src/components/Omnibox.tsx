@@ -79,11 +79,8 @@ interface OmniboxProps {
   onLateralSwipe?: ((dx: number) => void) | undefined;
   /** Whether the attach paperclip is offered. Capture modes always allow it (note
    * attachments). A conversation mode allows it only when the agent's model is
-   * vision-capable; with vision off the paperclip is hidden and `attachHint`
-   * stands in its place (docs/mocks/chat-attach-b-chips.html). Defaults to true. */
+   * vision-capable; with vision off the paperclip is simply hidden. Defaults to true. */
   attachEnabled?: boolean;
-  /** The muted line shown in place of a hidden chat paperclip (vision off). */
-  attachHint?: string | undefined;
 }
 
 export function Omnibox({
@@ -102,7 +99,6 @@ export function Omnibox({
   onClearApptRef,
   onLateralSwipe,
   attachEnabled = true,
-  attachHint,
 }: OmniboxProps) {
   const [text, setText] = useState("");
   const [files, setFiles] = useState<File[]>([]);
@@ -321,10 +317,8 @@ export function Omnibox({
           </div>
         )}
 
-        {/* Vision off on a conversation mode: no paperclip, the muted hint stands
-            in its place (capture modes always keep their attach). */}
-        {!attachEnabled && attachHint && <p className="vis-hint">{attachHint}</p>}
-
+        {/* Vision off on a conversation mode just hides the paperclip — no stand-in
+            line (capture modes always keep their attach). */}
         <div className="composer-foot">
           {contextUsage && <ContextMeter usage={contextUsage} />}
           <div className="foot-icons">

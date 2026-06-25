@@ -11,11 +11,6 @@ import type { NotesController, StreamItem } from "../notes/useNotes";
 
 const TOAST_MS = 4000;
 
-// Shown in place of the chat paperclip when the agent's model can't read images
-// (docs/mocks/chat-attach-b-chips.html).
-const ATTACH_VISION_OFF_HINT =
-  "This model can't read images — attachments are off. Switch the agent's model to a vision one in Settings.";
-
 /** A calendar → Full Brain handoff: the prose that seeds the composer plus the
  * appointment it's about (the agent resolves the id; the owner sees the pill). */
 export interface ComposeHandoff {
@@ -254,11 +249,10 @@ export function HomeScreen({
         // research mode, when the on-box image tools are configured: jerv can then
         // analyze_image / edit_image an attachment by id even without seeing it. The
         // curator (fullbrain) has no image tools, so there it still needs vision;
-        // otherwise the paperclip is hidden and the muted hint stands in (mock B).
+        // otherwise the paperclip is simply hidden.
         attachEnabled={
           !conversational || fb.supportsVision || (seg.mode === "research" && fb.canEditImages)
         }
-        attachHint={ATTACH_VISION_OFF_HINT}
       />
       {toast && (
         <output className="toast">
