@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>JBrain · jcode session — C: tabbed (mock)</title>
+<style>
+  :root{
+    --bg:#0E0F11; --surface:#17181B; --surface-2:#1E2024; --border:#26282C;
+    --text:#E6E7E9; --text-2:#9A9DA3; --text-3:#5C5F66;
+    --steel:#7FA7C9; --green:#8FBC9A; --amber:#C9A36A; --rose:#CF8A8F; --teal:#6FB6B1;
+    --steel-tint:rgba(127,167,201,.14); --green-tint:rgba(143,188,154,.14); --amber-tint:rgba(201,163,106,.14);
+    --teal-tint:rgba(111,182,177,.14); --rose-tint:rgba(207,138,143,.14);
+    --font:-apple-system,system-ui,"Segoe UI",Roboto,sans-serif; --mono:ui-monospace,Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);font-family:var(--font);font-size:15px;line-height:1.4}
+  .wrap{max-width:520px;margin:0 auto;padding:14px 14px 130px}
+  h1{font-size:19px;font-weight:500;margin:4px 0 2px}p.meta{color:var(--text-2);font-size:13px;margin:0 0 12px;line-height:1.5}p.meta b{color:var(--text)}
+
+  .hdr{display:flex;align-items:center;gap:9px;background:var(--surface);border:1px solid var(--border);border-radius:13px;padding:11px 13px;margin-bottom:11px}
+  .dot{width:9px;height:9px;border-radius:999px;background:var(--green);box-shadow:0 0 0 4px var(--green-tint);flex:none}
+  .hrepo{font-family:var(--mono);font-size:12.5px}.hbranch{font-family:var(--mono);font-size:11px;color:var(--text-3)}
+  .mchip{margin-left:auto;font-size:10.5px;color:var(--amber);border:1px solid color-mix(in srgb,var(--amber) 32%,var(--border));border-radius:999px;padding:2px 8px;font-family:var(--mono)}
+
+  .tabs{display:flex;border:1px solid var(--border);border-radius:12px;overflow:hidden;margin-bottom:13px;position:sticky;top:0;background:var(--bg);z-index:3}
+  .tab{flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;padding:.6em 0;font-size:12px;font-weight:500;color:var(--text-2);background:transparent;border:0;cursor:pointer}
+  .tab + .tab{border-left:1px solid var(--border)}
+  .tab .ic svg{width:16px;height:16px;display:block}
+  .tab.on{color:var(--text)}
+  .tab.on.chat{background:var(--steel-tint)}.tab.on.chat .ic{color:var(--steel)}
+  .tab.on.diff{background:var(--green-tint)}.tab.on.diff .ic{color:var(--green)}
+  .tab.on.term{background:var(--surface-2)}.tab.on.term .ic{color:var(--text)}
+  .tab.on.prev{background:var(--teal-tint)}.tab.on.prev .ic{color:var(--teal)}
+  .tab .badge{font-size:9px;color:var(--text-3)}
+  .panel{display:none}.panel.on{display:block}
+
+  /* chat */
+  .msg{margin-bottom:10px}.who{font-size:10.5px;text-transform:uppercase;letter-spacing:.07em;color:var(--text-3);margin:0 2px 4px}.who.you{color:var(--text-2)}
+  .bubble{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:10px 12px;font-size:14px;line-height:1.5}
+  .bubble.you{background:var(--surface-2)}
+  .bubble code{font-family:var(--mono);font-size:12px;background:var(--surface-2);padding:1px 5px;border-radius:5px;color:var(--steel)}.bubble.you code{background:var(--surface)}
+  .tool{display:inline-flex;align-items:center;gap:6px;font-family:var(--mono);font-size:11.5px;color:var(--text-2);border:1px solid var(--border);border-radius:8px;padding:4px 9px;margin:6px 6px 0 0;background:var(--bg)}.tool .ok{color:var(--green)}
+
+  /* diff */
+  .files{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px}
+  .file{font-family:var(--mono);font-size:11.5px;padding:3px 9px;border-radius:999px;border:1px solid var(--border);color:var(--text-2);cursor:pointer}
+  .file.on{color:var(--text);background:var(--surface-2);border-color:var(--green)}
+  .code{background:var(--surface);border:1px solid var(--border);border-radius:12px;font-family:var(--mono);font-size:11.5px;line-height:1.65;padding:11px 13px;overflow-x:auto}
+  .code .ln{display:block;white-space:pre}.code .add{color:var(--green)}.code .del{color:var(--rose)}.code .ctx{color:var(--text-3)}.code .hh{color:var(--steel)}
+  .code .out{color:var(--text-2)}.code .pass{color:var(--green)}
+
+  /* preview */
+  .prevbar{display:flex;align-items:center;gap:8px;margin-bottom:10px}
+  .urlpill{flex:1;font-family:var(--mono);font-size:11.5px;color:var(--teal);background:var(--surface);border:1px solid var(--border);border-radius:9px;padding:8px 10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .btn{font:inherit;font-size:12px;font-weight:500;cursor:pointer;border-radius:999px;padding:6px 12px;border:1px solid color-mix(in srgb,var(--teal) 40%,var(--border));background:transparent;color:var(--teal)}
+  .frame{background:var(--surface);border:1px solid var(--border);border-radius:12px;height:300px;display:flex;align-items:center;justify-content:center;color:var(--text-3);font-size:13px;text-align:center;padding:20px}
+  .frame .app{width:100%;max-width:280px}
+  .appbar{height:34px;border-radius:8px;background:var(--surface-2);display:flex;align-items:center;padding:0 11px;font-size:12px;color:var(--text-2);margin-bottom:10px}
+  .todo{display:flex;align-items:center;gap:9px;padding:9px 11px;background:var(--surface-2);border-radius:8px;margin-bottom:7px;font-size:13px;color:var(--text);text-align:left}
+  .todo .box{width:15px;height:15px;border-radius:4px;border:1px solid var(--text-3);flex:none}.todo.done .box{background:var(--green);border-color:var(--green)}.todo.done span{color:var(--text-3);text-decoration:line-through}
+  .clearbtn{margin-top:4px;font-size:12px;color:var(--steel);background:none;border:0;cursor:pointer}
+
+  .composer{position:fixed;left:0;right:0;bottom:0;background:var(--bg);border-top:1px solid var(--border)}
+  .cin{max-width:520px;margin:0 auto;padding:10px 14px calc(10px + env(safe-area-inset-bottom))}
+  .cbox{display:flex;align-items:flex-end;gap:9px;background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:9px 11px}
+  .cbox textarea{flex:1;background:transparent;border:0;resize:none;color:var(--text);font:inherit;font-size:15px;outline:none;max-height:80px}
+  .send{width:38px;height:38px;border-radius:11px;border:0;flex:none;cursor:pointer;display:flex;align-items:center;justify-content:center;background:var(--amber-tint);color:var(--amber)}.send svg{width:18px;height:18px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>jcode session — C: tabbed</h1>
+  <p class="meta"><b>Variant C — IDE-like.</b> One session, four views behind a segmented control: <b>Chat · Diff · Terminal · Preview</b>. Densest of the three — closest to a real coding tool, more chrome to learn.</p>
+
+  <div class="hdr">
+    <span class="dot"></span>
+    <span><span class="hrepo">scratch-todo</span> <span class="hbranch">@ jcode/spike</span></span>
+    <span class="mchip">qwen 80B-A3B · on-box</span>
+  </div>
+
+  <div class="tabs">
+    <button class="tab chat on" id="t-chat" onclick="setTab('chat')"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M21 11.5a8.4 8.4 0 0 1-12 7.5L3 21l2-6a8.4 8.4 0 1 1 16-3.5z"/></svg></span>Chat</button>
+    <button class="tab diff" id="t-diff" onclick="setTab('diff')"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M12 3v18M5 8h7M5 16h7M16 12h3"/></svg></span>Diff<span class="badge">+18 −3</span></button>
+    <button class="tab term" id="t-term" onclick="setTab('term')"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M4 17l6-6-6-6"/><path d="M12 19h8"/></svg></span>Terminal</button>
+    <button class="tab prev" id="t-prev" onclick="setTab('prev')"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a15 15 0 0 1 0 18M12 3a15 15 0 0 0 0 18"/></svg></span>Preview</button>
+  </div>
+
+  <div class="panel on" id="p-chat">
+    <div class="msg"><div class="who you">you</div><div class="bubble you">Add a <code>clear completed</code> button and wire it to the store.</div></div>
+    <div class="msg"><div class="who">jcode</div><div class="bubble">Done — store action + button added, tests pass. Check the <code>Diff</code> tab to review, or <code>Preview</code> to see it running.
+      <div><span class="tool"><span>edit</span> store/todos.ts <span class="ok">+4</span></span><span class="tool"><span>edit</span> TodoList.tsx <span class="ok">+13 −3</span></span><span class="tool"><span>bash</span> npm test <span class="ok">✓ 7</span></span></div>
+    </div></div>
+  </div>
+
+  <div class="panel" id="p-diff">
+    <div class="files" id="files"></div>
+    <div class="code" id="diff"></div>
+  </div>
+
+  <div class="panel" id="p-term">
+    <div class="code"><span class="ln ctx">$ npm test -- todos</span><span class="ln out"></span><span class="ln pass">PASS  src/store/todos.test.ts</span><span class="ln out">  ✓ clearCompleted removes done items (12 ms)</span><span class="ln out">  ✓ toggle marks a todo done (4 ms)</span><span class="ln out"></span><span class="ln out">Tests: 7 passed, 7 total</span><span class="ln out">Time:  1.84 s</span><span class="ln ctx">$ ▍</span></div>
+  </div>
+
+  <div class="panel" id="p-prev">
+    <div class="prevbar"><span class="urlpill">https://spike-7f3a2c.preview.jbrain.dev</span><button class="btn">Copy</button></div>
+    <div class="frame"><div class="app">
+      <div class="appbar">todo · localhost:5173</div>
+      <div class="todo done"><span class="box"></span><span>buy milk</span></div>
+      <div class="todo"><span class="box"></span><span>ship jcode J3</span></div>
+      <div class="todo done"><span class="box"></span><span>review PR</span></div>
+      <button class="clearbtn">clear completed</button>
+    </div></div>
+    <p style="font-size:11.5px;color:var(--text-2);margin:10px 2px 0;line-height:1.5">Live dev server over a temporary Cloudflare tunnel — dies with the session, owner-only, never indexed.</p>
+  </div>
+</div>
+
+<div class="composer"><div class="cin">
+  <div class="cbox"><textarea rows="1" placeholder="Tell jcode what to build…"></textarea>
+    <button class="send"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M13 6l6 6-6 6"/></svg></button></div>
+</div></div>
+
+<script>
+function setTab(t){['chat','diff','term','prev'].forEach(x=>{document.getElementById('t-'+x).classList.toggle('on',x===t);document.getElementById('p-'+x).classList.toggle('on',x===t)})}
+const FILES={
+  'store/todos.ts':[['hh','@@ store/todos.ts @@'],['ctx','  add: (text) => set(...),'],['add','+  clearCompleted: () =>'],['add','+    set((s) => ({ items: s.items.filter((t) => !t.done) })),'],['ctx','}))']],
+  'TodoList.tsx':[['hh','@@ TodoList.tsx @@'],['add','+  const clear = useTodos((s) => s.clearCompleted)'],['del','-    <ul>{items.map(...)}</ul>'],['add','+    <><ul>{items.map(...)}</ul>'],['add','+    <button onClick={clear}>clear completed</button></>']],
+};
+let cur='store/todos.ts';
+function rf(){document.getElementById('files').innerHTML=Object.keys(FILES).map(f=>`<span class="file ${f===cur?'on':''}" onclick="pick('${f}')">${f}</span>`).join('')}
+function rd(){document.getElementById('diff').innerHTML=FILES[cur].map(([c,t])=>`<span class="ln ${c}">${t.replace(/</g,'&lt;')}</span>`).join('')}
+function pick(f){cur=f;rf();rd()}
+rf();rd();
+</script>
+</body>
+</html>

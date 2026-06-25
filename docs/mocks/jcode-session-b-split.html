@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>JBrain · jcode session — B: split workspace + chat (mock)</title>
+<style>
+  :root{
+    --bg:#0E0F11; --surface:#17181B; --surface-2:#1E2024; --border:#26282C;
+    --text:#E6E7E9; --text-2:#9A9DA3; --text-3:#5C5F66;
+    --steel:#7FA7C9; --green:#8FBC9A; --amber:#C9A36A; --rose:#CF8A8F; --teal:#6FB6B1;
+    --steel-tint:rgba(127,167,201,.14); --green-tint:rgba(143,188,154,.14); --amber-tint:rgba(201,163,106,.14); --rose-tint:rgba(207,138,143,.14);
+    --font:-apple-system,system-ui,"Segoe UI",Roboto,sans-serif; --mono:ui-monospace,Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);font-family:var(--font);font-size:15px;line-height:1.4}
+  .wrap{max-width:520px;margin:0 auto;padding:14px 14px 130px}
+  h1{font-size:19px;font-weight:500;margin:4px 0 2px}p.meta{color:var(--text-2);font-size:13px;margin:0 0 12px;line-height:1.5}p.meta b{color:var(--text)}
+
+  .hdr{display:flex;align-items:center;gap:9px;background:var(--surface);border:1px solid var(--border);border-radius:13px;padding:11px 13px;margin-bottom:11px}
+  .dot{width:9px;height:9px;border-radius:999px;background:var(--green);box-shadow:0 0 0 4px var(--green-tint);flex:none}
+  .hrepo{font-family:var(--mono);font-size:12.5px}.hbranch{font-family:var(--mono);font-size:11px;color:var(--text-3)}
+  .mchip{margin-left:auto;font-size:10.5px;color:var(--amber);border:1px solid color-mix(in srgb,var(--amber) 32%,var(--border));border-radius:999px;padding:2px 8px;font-family:var(--mono)}
+
+  /* workspace / diff panel — the hero */
+  .ws{background:var(--surface);border:1px solid var(--border);border-radius:14px;overflow:hidden;margin-bottom:12px}
+  .ws-head{display:flex;align-items:center;gap:8px;padding:10px 13px;border-bottom:1px solid var(--border)}
+  .ws-head .t{font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--text-2)}
+  .ws-head .stat{margin-left:auto;font-size:11px;font-family:var(--mono);color:var(--text-3)}
+  .ws-head .stat .a{color:var(--green)}.ws-head .stat .d{color:var(--rose)}
+  .files{display:flex;flex-wrap:wrap;gap:6px;padding:10px 13px;border-bottom:1px solid var(--border)}
+  .file{font-family:var(--mono);font-size:11.5px;padding:3px 9px;border-radius:999px;border:1px solid var(--border);color:var(--text-2);cursor:pointer}
+  .file.on{color:var(--text);background:var(--surface-2);border-color:var(--steel)}
+  .file .pm{color:var(--green)}
+  .diff{font-family:var(--mono);font-size:11.5px;line-height:1.6;padding:11px 13px;overflow-x:auto;max-height:240px}
+  .diff .ln{display:block;white-space:pre}
+  .diff .add{color:var(--green);background:rgba(143,188,154,.08)}
+  .diff .del{color:var(--rose);background:rgba(207,138,143,.08)}
+  .diff .ctx{color:var(--text-3)}
+  .diff .hh{color:var(--steel)}
+
+  /* chat below */
+  .clab{font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:var(--text-3);margin:0 2px 8px}
+  .msg{margin-bottom:10px}.who{font-size:10.5px;text-transform:uppercase;letter-spacing:.07em;color:var(--text-3);margin:0 2px 4px}.who.you{color:var(--text-2)}
+  .bubble{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:10px 12px;font-size:14px;line-height:1.5}
+  .bubble.you{background:var(--surface-2)}
+  .bubble code{font-family:var(--mono);font-size:12px;background:var(--surface-2);padding:1px 5px;border-radius:5px;color:var(--steel)}
+  .bubble.you code{background:var(--surface)}
+  .tool{display:inline-flex;align-items:center;gap:6px;font-family:var(--mono);font-size:11.5px;color:var(--text-2);border:1px solid var(--border);border-radius:8px;padding:4px 9px;margin:6px 6px 0 0;background:var(--bg)}
+  .tool .ok{color:var(--green)}
+
+  .composer{position:fixed;left:0;right:0;bottom:0;background:var(--bg);border-top:1px solid var(--border)}
+  .cin{max-width:520px;margin:0 auto;padding:10px 14px calc(10px + env(safe-area-inset-bottom))}
+  .cbox{display:flex;align-items:flex-end;gap:9px;background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:9px 11px}
+  .cbox textarea{flex:1;background:transparent;border:0;resize:none;color:var(--text);font:inherit;font-size:15px;outline:none;max-height:80px}
+  .send{width:38px;height:38px;border-radius:11px;border:0;flex:none;cursor:pointer;display:flex;align-items:center;justify-content:center;background:var(--amber-tint);color:var(--amber)}
+  .send svg{width:18px;height:18px}
+  .cfoot{display:flex;align-items:center;gap:7px;margin-top:7px;padding:0 2px;font-size:11px;color:var(--text-3)}.cfoot .d{width:6px;height:6px;border-radius:999px;background:var(--green)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>jcode session — B: split workspace + chat</h1>
+  <p class="meta"><b>Variant B — terminal-forward.</b> The <b>working tree / diff</b> is the hero up top (tap a file to see its change); the conversation sits beneath it. You're always looking at what changed, not just what was said.</p>
+
+  <div class="hdr">
+    <span class="dot"></span>
+    <span><span class="hrepo">scratch-todo</span> <span class="hbranch">@ jcode/spike</span></span>
+    <span class="mchip">qwen 80B-A3B · on-box</span>
+  </div>
+
+  <div class="ws">
+    <div class="ws-head"><span class="t">Working tree</span><span class="stat"><span class="a">+18</span> <span class="d">−3</span> · 3 files</span></div>
+    <div class="files" id="files"></div>
+    <div class="diff" id="diff"></div>
+  </div>
+
+  <div class="clab">Conversation</div>
+  <div class="msg"><div class="who you">you</div><div class="bubble you">Add a <code>clear completed</code> button and wire it to the store.</div></div>
+  <div class="msg"><div class="who">jcode</div><div class="bubble">Added <code>clearCompleted</code> to the store and the button to <code>TodoList.tsx</code>; tests pass. The diff is above — tap a file to review.
+    <div><span class="tool"><span>edit</span> store/todos.ts <span class="ok">+4</span></span><span class="tool"><span>edit</span> TodoList.tsx <span class="ok">+13 −3</span></span><span class="tool"><span>bash</span> npm test <span class="ok">✓ 7</span></span></div>
+  </div></div>
+</div>
+
+<div class="composer"><div class="cin">
+  <div class="cbox"><textarea rows="1" placeholder="Tell jcode what to build…"></textarea>
+    <button class="send"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M13 6l6 6-6 6"/></svg></button></div>
+  <div class="cfoot"><span class="d"></span>Qwen3-Coder-Next 80B-A3B · on-box — ready</div>
+</div></div>
+
+<script>
+const FILES={
+  'store/todos.ts':[['hh','@@ store/todos.ts @@'],['ctx','  add: (text) => set(...),'],['add','+  clearCompleted: () =>'],['add','+    set((s) => ({ items: s.items.filter((t) => !t.done) })),'],['ctx','}))']],
+  'TodoList.tsx':[['hh','@@ TodoList.tsx @@'],['ctx','  const items = useTodos((s) => s.items)'],['add','+  const clear = useTodos((s) => s.clearCompleted)'],['ctx','  return ('],['del','-    <ul>{items.map(...)}</ul>'],['add','+    <><ul>{items.map(...)}</ul>'],['add','+    <button onClick={clear}>clear completed</button></>'],['ctx','  )']],
+  'todos.test.ts':[['hh','@@ todos.test.ts @@'],['add','+  it("clearCompleted removes done", () => {'],['add','+    /* ... */ })']],
+};
+let cur='store/todos.ts';
+function rf(){document.getElementById('files').innerHTML=Object.keys(FILES).map(f=>`<span class="file ${f===cur?'on':''}" onclick="pick('${f}')">${f}</span>`).join('')}
+function rd(){document.getElementById('diff').innerHTML=FILES[cur].map(([c,t])=>`<span class="ln ${c}">${t.replace(/</g,'&lt;')}</span>`).join('')}
+function pick(f){cur=f;rf();rd()}
+rf();rd();
+</script>
+</body>
+</html>

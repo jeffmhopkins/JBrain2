@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>JBrain · jcode launcher — B: resume-first (mock)</title>
+<style>
+  :root{
+    --bg:#0E0F11; --surface:#17181B; --surface-2:#1E2024; --border:#26282C;
+    --text:#E6E7E9; --text-2:#9A9DA3; --text-3:#5C5F66;
+    --steel:#7FA7C9; --green:#8FBC9A; --amber:#C9A36A; --rose:#CF8A8F; --teal:#6FB6B1;
+    --steel-tint:rgba(127,167,201,.14); --green-tint:rgba(143,188,154,.14);
+    --amber-tint:rgba(201,163,106,.14); --rose-tint:rgba(207,138,143,.14);
+    --font:-apple-system,system-ui,"Segoe UI",Roboto,sans-serif; --mono:ui-monospace,Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);font-family:var(--font);font-size:15px;line-height:1.4}
+  .wrap{max-width:520px;margin:0 auto;padding:0 14px 40px}
+  .topbar{display:flex;align-items:center;gap:10px;height:56px;position:sticky;top:0;background:var(--bg);z-index:5}
+  .chev{width:24px;height:24px;color:var(--text-2)}
+  .tt{font-size:18px;font-weight:600}.tt .d{color:var(--steel)}
+  .health{margin-left:auto;display:flex;align-items:center;gap:6px;font-size:11.5px;color:var(--text-2)}
+  .health .dot{width:8px;height:8px;border-radius:999px;background:var(--green);box-shadow:0 0 0 3px var(--green-tint)}
+  p.intro{color:var(--text-2);font-size:13px;margin:2px 0 14px;line-height:1.5}
+  p.intro b{color:var(--text)}
+
+  /* big new-session button */
+  .newbtn{display:flex;align-items:center;gap:11px;width:100%;padding:14px;border:1px solid color-mix(in srgb,var(--steel) 45%,var(--border));
+          border-radius:14px;background:var(--steel-tint);color:var(--text);font:inherit;cursor:pointer;margin-bottom:18px}
+  .newbtn .plus{width:34px;height:34px;border-radius:10px;background:var(--steel);color:#0E0F11;display:flex;align-items:center;justify-content:center;flex:none}
+  .newbtn .plus svg{width:18px;height:18px}
+  .newbtn .nt{font-weight:600;font-size:15px}.newbtn .ns{display:block;font-size:12px;color:var(--text-2);margin-top:1px}
+
+  .lab{display:flex;align-items:center;margin:0 2px 9px}
+  .lab .l{font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:var(--text-3)}
+  .lab .count{margin-left:auto;font-size:11.5px;color:var(--text-3)}
+  .buckets{display:flex;border:1px solid var(--border);border-radius:12px;overflow:hidden;margin-bottom:11px}
+  .bk{flex:1;display:flex;align-items:center;justify-content:center;gap:6px;padding:.6em 0;font-size:12.5px;font-weight:500;color:var(--text-2);background:transparent;border:0;cursor:pointer}
+  .bk + .bk{border-left:1px solid var(--border)}
+  .bk.on{color:var(--text);background:var(--steel-tint)}
+  .bk .pill{font-size:10.5px;padding:0 6px;border-radius:999px;background:var(--surface-2);color:var(--text-3);min-width:16px}
+  .bk.on .pill{background:var(--steel);color:#0E0F11}
+  .rows{background:var(--surface);border:1px solid var(--border);border-radius:16px;overflow:hidden}
+  .row{display:flex;align-items:center;gap:11px;padding:13px;border-top:1px solid var(--border);cursor:pointer}
+  .row:first-child{border-top:0}.row:hover{background:var(--surface-2)}
+  .sd{width:9px;height:9px;border-radius:999px;flex:none;background:var(--text-3)}
+  .sd.live{background:var(--green);box-shadow:0 0 0 3px var(--green-tint)}
+  .main{flex:1;min-width:0}
+  .repo{font-family:var(--mono);font-size:13.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .sub{font-size:11.5px;color:var(--text-3);font-family:var(--mono);margin-top:2px}
+  .right{display:flex;align-items:center;gap:9px;flex:none}
+  .turns{font-size:11px;color:var(--text-3);font-family:var(--mono)}
+  .rchev{width:16px;height:16px;color:var(--text-3)}
+  .activity{display:inline-flex;gap:2px}.activity i{width:3px;height:3px;border-radius:999px;background:var(--steel);animation:bnc 1.2s infinite}
+  .activity i:nth-child(2){animation-delay:.15s}.activity i:nth-child(3){animation-delay:.3s}
+  @keyframes bnc{0%,80%,100%{transform:translateY(0);opacity:.4}40%{transform:translateY(-3px);opacity:1}}
+  .runword{font-size:11px;color:var(--steel);font-family:var(--mono)}
+
+  /* bottom sheet */
+  .scrim{position:fixed;inset:0;background:rgba(14,15,17,.6);opacity:0;pointer-events:none;transition:.15s;z-index:10}
+  .scrim.on{opacity:1;pointer-events:auto}
+  .sheet{position:fixed;left:0;right:0;bottom:0;background:var(--surface);border:1px solid var(--border);border-radius:16px 16px 0 0;
+         transform:translateY(100%);transition:transform .2s;z-index:11;max-width:520px;margin:0 auto;padding:8px 16px calc(18px + env(safe-area-inset-bottom))}
+  .sheet.on{transform:translateY(0)}
+  .handle{width:32px;height:4px;border-radius:999px;background:var(--border);margin:6px auto 12px}
+  .sheet h3{font-size:18px;font-weight:500;margin:0 0 14px}
+  .seg-row{display:flex;border:1px solid var(--border);border-radius:12px;overflow:hidden;margin-bottom:11px}
+  .seg{flex:1;display:flex;align-items:center;justify-content:center;gap:7px;padding:.7em 0;font-size:13px;font-weight:500;color:var(--text-2);background:transparent;border:0;cursor:pointer}
+  .seg + .seg{border-left:1px solid var(--border)}.seg.on{color:var(--text);background:var(--steel-tint)}
+  .seg.on .ic{color:var(--steel)}.ic svg{width:15px;height:15px;display:block}
+  .inp{width:100%;background:var(--surface-2);border:1px solid var(--border);border-radius:11px;color:var(--text);font:inherit;font-family:var(--mono);font-size:13px;padding:11px 12px;outline:none;margin-bottom:9px}
+  .inp:focus{border-color:var(--steel)}
+  .modelcard{display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px solid color-mix(in srgb,var(--amber) 30%,var(--border));border-radius:11px;background:var(--amber-tint);margin:4px 0 4px}
+  .mc-ic{width:28px;height:28px;border-radius:8px;background:var(--surface);color:var(--amber);display:flex;align-items:center;justify-content:center;flex:none}
+  .mc-ic svg{width:16px;height:16px}
+  .mc-name{font-family:var(--mono);font-size:12.5px}.mc-meta{font-size:11px;color:var(--text-2);margin-top:1px}
+  .mc-badge{margin-left:auto;font-size:10px;color:var(--green);border:1px solid color-mix(in srgb,var(--green) 32%,var(--border));border-radius:999px;padding:1px 8px}
+  .start{width:100%;margin-top:13px;padding:12px;border-radius:12px;border:1px solid color-mix(in srgb,var(--steel) 45%,var(--border));background:var(--steel-tint);color:var(--steel);font:inherit;font-weight:600;font-size:14px;cursor:pointer}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M15 18l-6-6 6-6"/></svg>
+    <span class="tt">jcode<span class="d">.</span></span>
+    <span class="health"><span class="dot"></span>sandbox ready</span>
+  </div>
+  <p class="intro"><b>Variant B — resume-first.</b> Your sessions are the hero (you reopen far more than you start). <b>New session</b> is a single button that opens setup as a bottom sheet.</p>
+
+  <button class="newbtn" onclick="openSheet()">
+    <span class="plus"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg></span>
+    <span><span class="nt">New session</span><span class="ns">clone a repo into a fresh sandbox</span></span>
+  </button>
+
+  <div class="lab"><span class="l">Sessions</span><span class="count" id="count"></span></div>
+  <div class="buckets" id="buckets"></div>
+  <div class="rows" id="rows"></div>
+</div>
+
+<div class="scrim" id="scrim" onclick="closeSheet()"></div>
+<div class="sheet" id="sheet">
+  <div class="handle"></div>
+  <h3>New session</h3>
+  <div class="seg-row">
+    <button class="seg on"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M6 3v12M6 15a3 3 0 1 0 0 6 3 3 0 0 0 0-6zM18 9a3 3 0 1 0 0 0M18 9v1a4 4 0 0 1-4 4H9"/></svg></span>Clone repo</button>
+    <button class="seg"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg></span>Scratch</button>
+  </div>
+  <input class="inp" placeholder="github.com/you/repo" value="github.com/jeffmhopkins/scratch-todo" />
+  <input class="inp" placeholder="work branch" value="jcode/spike" />
+  <div class="modelcard">
+    <span class="mc-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M9 9h6v6H9z"/></svg></span>
+    <div><div class="mc-name">Qwen3-Coder-Next 80B-A3B</div><div class="mc-meta">on-box · no code leaves the box</div></div>
+    <span class="mc-badge">on-box</span>
+  </div>
+  <button class="start" onclick="alert('(mock) clones + opens the session')">Start session →</button>
+</div>
+
+<script>
+const SESSIONS=[
+  {b:'today',repo:'scratch-todo',br:'jcode/spike',t:6,when:'now',run:true},
+  {b:'today',repo:'JBrain2',br:'jcode/local-mode',t:23,when:'2h ago'},
+  {b:'older',repo:'dotfiles',br:'jcode/zsh-fix',t:4,when:'yesterday'},
+  {b:'older',repo:'scratch-todo',br:'jcode/dark-theme',t:11,when:'tue'},
+  {b:'older',repo:'apib',br:'jcode/rate-limit',t:8,when:'mon'},
+  {b:'archived',repo:'old-prototype',br:'jcode/poc',t:31,when:'may 12'},
+];
+const BUCKETS=[['today','Today'],['older','Older'],['archived','Archived']];
+let bucket='today';
+function rb(){document.getElementById('buckets').innerHTML=BUCKETS.map(([id,l])=>{const n=SESSIONS.filter(s=>s.b===id).length;return `<button class="bk ${bucket===id?'on':''}" onclick="sb('${id}')">${l}<span class="pill">${n}</span></button>`}).join('')}
+function sb(b){bucket=b;rb();rr()}
+function rr(){const list=SESSIONS.filter(s=>s.b===bucket);document.getElementById('count').textContent=list.length+(list.length===1?' session':' sessions');
+  document.getElementById('rows').innerHTML=list.map(s=>{
+    const right=s.run?`<span class="activity"><i></i><i></i><i></i></span><span class="runword">running…</span>`:`<span class="turns">${s.t} turns</span>`;
+    return `<div class="row" onclick="alert('(mock) resumes this session')"><span class="sd ${s.run?'live':''}"></span><div class="main"><div class="repo">${s.repo}</div><div class="sub">@ ${s.br} · ${s.when}</div></div><div class="right">${right}<svg class="rchev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M9 18l6-6-6-6"/></svg></div></div>`;
+  }).join('')}
+function openSheet(){document.getElementById('scrim').classList.add('on');document.getElementById('sheet').classList.add('on')}
+function closeSheet(){document.getElementById('scrim').classList.remove('on');document.getElementById('sheet').classList.remove('on')}
+rb();rr();
+</script>
+</body>
+</html>
