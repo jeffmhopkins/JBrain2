@@ -186,9 +186,12 @@ a single-use CSRF `state` and redirects to Google's consent; Google redirects to
 `GET /api/settings/gmail/callback`, which validates the state, exchanges the code for a
 refresh token (`exchange_authorization_code` / `provider.exchange_code`), stores it, and
 bounces back to `…/settings?gmail=connected`. The callback is owner-gated (the Lax
-session cookie rides Google's top-level redirect) **and** state-validated. This needs a
-**Web application** OAuth client whose Authorized redirect URI is
-`{public_base_url}/api/settings/gmail/callback`. The bootstrap script below remains as
+session cookie rides Google's top-level redirect) **and** state-validated. The
+redirect_uri is `public_base_url` when set, else **derived from the request the browser
+hit** (same pattern as debug-tokens/pairing) — so a tunneled box needs no env edit,
+just a redeploy; connect from the public hostname so it matches the Google client. This
+needs a **Web application** OAuth client whose Authorized redirect URI is
+`https://<public-host>/api/settings/gmail/callback`. The bootstrap script below remains
 an alternative (paste a refresh token directly).
 
 ### OAuth bootstrap (no prior art in the repo)

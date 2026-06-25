@@ -189,3 +189,30 @@ def test_callback_rejects_a_bad_state(
     )
     assert resp.headers["location"] == "https://box.example/settings?gmail=error"
     assert "gmail_refresh_token" not in store.values  # nothing stored on a state mismatch
+
+
+def test_connect_derives_redirect_uri_from_request_without_public_base() -> None:
+    """No public_base_url set: the redirect_uri is derived from the host the browser
+    hit, so a tunneled box works after a plain redeploy (no env editing)."""
+    app = create_app(_settings())  # public_base_url left empty
+    with TestClient(app) as test_client:
+        app.state.auth_repo = FakeAuthRepo()
+        key = asyncio.run(auth_service.rotate_owner_key(app.state.auth_repo))
+        test_client.post("/api/auth/session", json={"owner_key": key, "device_label": "t"})
+        store = FakeSettingsStore()
+        app.state.settings_store = store
+        app.state.gmail_provider = GmailClientProvider(
+            store,
+            _settings(),
+            base_url="https://gmail.googleapis.com/gmail/v1",
+            token_url="https://oauth2.googleapis.com/token",
+            transport=_gmail_transport(),
+        )
+        test_client.put("/api/settings/gmail", json={"client_id": "cid", "client_secret": "sec"})
+        resp = test_client.get("/api/settings/gmail/connect", follow_redirects=False)
+        assert resp.status_code in (302, 307)
+        # Derived from the request host (TestClient → testserver) since no public base.
+        assert (
+            "redirect_uri=http%3A%2F%2Ftestserver%2Fapi%2Fsettings%2Fgmail%2Fcallback"
+            in resp.headers["location"]
+        )
