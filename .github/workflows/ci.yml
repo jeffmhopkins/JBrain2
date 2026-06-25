@@ -47,6 +47,23 @@ jobs:
       - run: uv run pyright
       - run: uv run pytest
 
+  # The jcode control server (opt-in code mode) — a Python service tested like the
+  # supervisor: its unit tests run against fakes (no SDK, no model, no network), so
+  # CI needs no GPU/box. The box-only SDK + CLI live in jcode/Dockerfile.
+  jcode:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: jcode
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v7
+      - run: uv sync --all-extras
+      - run: uv run ruff check .
+      - run: uv run ruff format --check .
+      - run: uv run pyright
+      - run: uv run pytest
+
   frontend:
     runs-on: ubuntu-latest
     defaults:
