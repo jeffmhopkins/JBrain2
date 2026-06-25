@@ -78,6 +78,8 @@ def test_starts_disconnected(client: tuple[TestClient, FastAPI, FakeSettingsStor
         "client_secret_set": False,
         "refresh_token_set": False,
         "connected": False,
+        "client_id": "",
+        "redirect_uri": "https://box.example/api/settings/gmail/callback",
     }
 
 
@@ -87,7 +89,7 @@ def test_put_sets_credentials_and_connects(
     test_client, _, store = client
     body = test_client.put(
         "/api/settings/gmail",
-        json={"client_id": "cid", "client_secret": "sec", "refresh_token": "rt"},
+        json={"client_id": "cid", "client_secret": "zzsecretval", "refresh_token": "zztokenval"},
     ).json()
     assert body["connected"] is True
     assert body == {
@@ -95,11 +97,15 @@ def test_put_sets_credentials_and_connects(
         "client_secret_set": True,
         "refresh_token_set": True,
         "connected": True,
+        "client_id": "cid",  # client_id is public, echoed back for verification
+        "redirect_uri": "https://box.example/api/settings/gmail/callback",
     }
     # Stored, so the provider picks it up live...
-    assert store.values["gmail_refresh_token"] == "rt"
-    # ...but the secret is never echoed back in any response.
-    assert "rt" not in test_client.get("/api/settings/gmail").text
+    assert store.values["gmail_refresh_token"] == "zztokenval"
+    # ...but the secret + refresh token are never echoed back (distinctive values that
+    # can't collide with field names like client_secret_set).
+    text = test_client.get("/api/settings/gmail").text
+    assert "zzsecretval" not in text and "zztokenval" not in text
 
 
 def test_put_is_partial_and_does_not_wipe(
