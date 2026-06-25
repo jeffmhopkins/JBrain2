@@ -78,7 +78,7 @@ class LoopTurnExecutor:
             self.router,
             self.registry,
             recorder=recorder,  # type: ignore[arg-type]
-            guardrails=guardrails_for_effort(effort),
+            guardrails=guardrails_for_effort(effort, scale=profile.budget_multiplier),
         )
         return await loop.run(
             session=read_ctx,
