@@ -52,10 +52,7 @@ async def seed_health_workflow(maker: async_sessionmaker) -> dict[str, str]:
     """Insert one health-domain row in every domain-firewalled workflow table
     (plus the note/chunk/entity/principal a resolution_pin and event need); return
     ids. Fresh UUIDs per call so parametrized tests never collide."""
-    ids = {
-        name: str(uuid.uuid4())
-        for name in ("note", "chunk", "entity", "principal", "event")
-    }
+    ids = {name: str(uuid.uuid4()) for name in ("note", "chunk", "entity", "principal", "event")}
     async with scoped_session(maker, OWNER) as s:
         await s.execute(
             text(

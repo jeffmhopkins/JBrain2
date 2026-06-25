@@ -39,8 +39,7 @@ _REMOVED_KINDS = "('prompt-edit', 'skill-promotion')"
 
 # The kind set after removal (the 0057 set minus prompt-edit + skill-promotion).
 _NEW_KINDS = (
-    "('correction', 'knowledge', 'appointment', 'wiki-restructure',"
-    " 'predicate-canon', 'egress')"
+    "('correction', 'knowledge', 'appointment', 'wiki-restructure', 'predicate-canon', 'egress')"
 )
 # The prior set restored on downgrade (verbatim 0057 _NEW).
 _OLD_KINDS = (
