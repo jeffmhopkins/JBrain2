@@ -3,9 +3,11 @@ priority labels and archive it (docs/EMAIL_ARCHIVIST_PLAN.md).
 
 A mostly-deterministic sweep. The Gmail mechanics — find the inbox, read each
 message, apply labels, drop INBOX — are direct API calls through the `GmailApi`; the
-LLM is invoked ONLY to classify a batch of emails into one of four priority buckets,
-reading each message's sender, subject, and full body (the body is the strongest
-signal for separating real, actionable mail from marketing fluff or junk).
+LLM is invoked once per email to classify it into one of four priority buckets,
+reading that message's sender, subject, and full body (the body is the strongest
+signal for separating real, actionable mail from marketing fluff or junk). One call
+per email — each gets the model's whole attention and its full body, rather than
+sharing one prompt's context with nine others.
 
 One run triages a single calendar day — the newest day still present in the inbox —
 so repeated runs walk back through history, and because each filed message leaves
@@ -21,7 +23,6 @@ never a provider SDK (CLAUDE.md rule 1).
 from __future__ import annotations
 
 import asyncio
-import json
 from collections import defaultdict
 from collections.abc import Awaitable, Callable, Sequence
 from datetime import UTC, date
@@ -61,32 +62,19 @@ _SEARCH_CAP = 200
 # Full-message reads run in bounded-concurrency chunks (mirrors GmailClient.sender_sample)
 # rather than one slow id-at-a-time loop.
 _FETCH_CHUNK = 10
-# Emails per classification call. Smaller than a metadata batch would be because each
-# email now carries its full body — this keeps one prompt (and its JSON answer) bounded.
-_CLASSIFY_CHUNK = 10
 # A per-body character cap fed to the classifier. Not normal truncation — real mail is
 # far shorter; it guards a single pathological message (a megabyte newsletter) from
 # blowing the model's context. The bucket signal lives in the opening of the body.
 _BODY_CHARS = 8000
 
-# Returned by the classifier per email; defined here (not only in the prompt) because
-# the handler passes it to router.complete and maps the result back.
+# Returned by the classifier for ONE email; defined here (not only in the prompt)
+# because the handler passes it to router.complete and reads the result back.
 _SCHEMA: dict[str, Any] = {
     "type": "object",
-    "required": ["classifications"],
+    "required": ["bucket", "confidence"],
     "properties": {
-        "classifications": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "required": ["index", "bucket", "confidence"],
-                "properties": {
-                    "index": {"type": "integer"},
-                    "bucket": {"type": "string", "enum": list(BUCKETS)},
-                    "confidence": {"type": "number"},
-                },
-            },
-        }
+        "bucket": {"type": "string", "enum": list(BUCKETS)},
+        "confidence": {"type": "number"},
     },
 }
 
@@ -96,7 +84,7 @@ TRIAGE_INBOX_SPEC = ActionSpec(
     handler="triage_inbox",
     domain_optional=True,
     mutating=True,  # relabels + archives inbox mail (never deletes)
-    cost_class="expensive",  # one LLM classification call per batch of messages
+    cost_class="expensive",  # one LLM classification call per email
     dedup_key_expr=None,
     description="Classify the newest day of inbox mail into triaged/* labels and archive it.",
 )
@@ -184,43 +172,36 @@ class InboxTriage:
         return target, batch
 
     async def _classify(self, batch: Sequence[GmailMessage]) -> dict[str, str]:
-        """Map each message id to its bucket via the LLM, in chunks. A verdict the
-        model omits, indexes out of range, or labels with an unknown bucket is dropped
-        (that message stays in the inbox); a low-confidence spam verdict is downgraded
-        to the safe, visible bucket."""
+        """Map each message id to its bucket via a SEPARATE LLM call per email. A
+        verdict the model omits or labels with an unknown bucket is dropped (that
+        message stays in the inbox); a low-confidence spam verdict is downgraded to
+        the safe, visible bucket."""
         verdicts: dict[str, str] = {}
-        for chunk in _chunks(batch, _CLASSIFY_CHUNK):
-            emails = [
-                {
-                    "index": i,
-                    "from": m.sender,
-                    "subject": m.subject,
-                    "body": m.body[:_BODY_CHARS],
-                }
-                for i, m in enumerate(chunk)
-            ]
+        for msg in batch:
             result = await self._router.complete(
                 task="triage.classify",
                 system=_PROMPT.render(),
-                user_text=json.dumps(emails, ensure_ascii=False),
+                user_text=self._render_email(msg),
                 json_schema=_SCHEMA,
-                max_tokens=int(_PROMPT.config.get("max_tokens", 2048)),
+                max_tokens=int(_PROMPT.config.get("max_tokens", 1024)),
             )
-            for item in (result.parsed or {}).get("classifications", []):
-                bucket = self._resolve_bucket(item, len(chunk))
-                if bucket is not None:
-                    verdicts[chunk[item["index"]].id] = bucket
+            bucket = self._resolve_bucket(result.parsed)
+            if bucket is not None:
+                verdicts[msg.id] = bucket
         return verdicts
 
     @staticmethod
-    def _resolve_bucket(item: Any, chunk_len: int) -> str | None:
-        if not isinstance(item, dict):
+    def _render_email(msg: GmailMessage) -> str:
+        """One email as the classifier sees it: sender, subject, and (capped) body."""
+        return f"From: {msg.sender}\nSubject: {msg.subject}\n\n{msg.body[:_BODY_CHARS]}"
+
+    @staticmethod
+    def _resolve_bucket(parsed: Any) -> str | None:
+        if not isinstance(parsed, dict) or parsed.get("bucket") not in BUCKETS:
             return None
-        idx, bucket = item.get("index"), item.get("bucket")
-        if not isinstance(idx, int) or not 0 <= idx < chunk_len or bucket not in BUCKETS:
-            return None
+        bucket = parsed["bucket"]
         try:
-            confidence = float(item.get("confidence", 0.0))
+            confidence = float(parsed.get("confidence", 0.0))
         except (TypeError, ValueError):
             confidence = 0.0
         if bucket == "spam" and confidence < _SPAM_CONFIDENCE_FLOOR:
