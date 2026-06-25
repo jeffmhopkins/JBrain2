@@ -11,7 +11,6 @@ from jbrain.models.analysis import (
 )
 from jbrain.models.archivist import ArchivistMemory
 from jbrain.models.core import Base, DeviceSession, Domain, Principal, Subject
-from jbrain.models.gmail_index import GmailIndexState, GmailMessageMeta
 from jbrain.models.images import GeneratedImage
 from jbrain.models.location import GeofenceState, LocationFix, PlaceGeofence
 from jbrain.models.telemetry import HostMetric, HostMetricHourly, LlmUsage
@@ -46,8 +45,6 @@ __all__ = [
     "Fact",
     "GeneratedImage",
     "GeofenceState",
-    "GmailIndexState",
-    "GmailMessageMeta",
     "HostMetric",
     "HostMetricHourly",
     "LlmUsage",

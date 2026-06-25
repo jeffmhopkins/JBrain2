@@ -38,30 +38,14 @@ class FakeGmail:
 
     def _match(self, query: str) -> list[str]:
         needle = query.strip().lower()
-        # "in:anywhere" is Gmail's whole-mailbox selector (the index's discovery query);
-        # an empty query is all mail too. Otherwise fall back to a naive substring match.
-        if needle in ("", "in:anywhere"):
-            return list(self._messages)
         return [
             m.id
             for m in self._messages.values()
-            if needle in f"{m.subject}\n{m.body}\n{m.sender}".lower()
+            if not needle or needle in f"{m.subject}\n{m.body}\n{m.sender}".lower()
         ]
 
     async def search(self, query: str, *, max_results: int = 25) -> list[str]:
         return self._match(query)[: max(1, max_results)]
-
-    async def get_profile(self) -> tuple[int, str]:
-        return len(self._messages), "h1"
-
-    async def list_page(
-        self, query: str, *, page_token: str | None = None, page_size: int = 500
-    ) -> tuple[list[str], str | None]:
-        ids = self._match(query)
-        start = int(page_token) if page_token else 0
-        page = ids[start : start + max(1, page_size)]
-        nxt = start + len(page)
-        return page, (str(nxt) if nxt < len(ids) else None)
 
     async def count(self, query: str, *, cap: int = 50_000) -> tuple[int, bool]:
         hits = self._match(query)
@@ -90,8 +74,6 @@ class FakeGmail:
                 date=msg.date,
                 snippet=msg.snippet,
                 body="",
-                label_ids=msg.label_ids,
-                internal_date_ms=msg.internal_date_ms,
             )
         return msg
 
