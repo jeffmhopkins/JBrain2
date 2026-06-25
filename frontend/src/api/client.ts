@@ -2136,7 +2136,9 @@ export const api = {
     yield* parseJcodeStream(response.body);
   },
 
-  /** Reconnect to an in-flight turn (a dropped socket), resuming from `after`. */
+  /** Reconnect to an in-flight turn (a dropped socket), resuming from `after`. The
+   * backend supports it now; the session screen wires reconnect in a later wave, so
+   * this method is intentionally ahead of its caller. */
   async *jcodeResume(
     runId: string,
     after: number,

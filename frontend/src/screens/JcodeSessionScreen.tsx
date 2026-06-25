@@ -4,7 +4,7 @@
 // stream), Diff and Preview (placeholders until the diff feed / preview tunnel land
 // in later waves). The Chat tab is the workhorse; it streams api.jcodeTurn frames.
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api } from "../api/client";
 import {
   ChevronLeftIcon,
@@ -78,9 +78,13 @@ export function JcodeSessionScreen({
         applyEvent(ev);
       }
     } catch {
-      patchLastJcode((it) => {
-        it.text += it.text ? "\n\n(stream interrupted)" : "(stream interrupted)";
-      });
+      // A user-initiated Stop aborts the fetch — that's not a failure, so don't
+      // annotate the bubble; only a genuine drop reads as interrupted (review S3).
+      if (!ctrl.signal.aborted) {
+        patchLastJcode((it) => {
+          it.text += it.text ? "\n\n(stream interrupted)" : "(stream interrupted)";
+        });
+      }
     } finally {
       setBusy(false);
       runId.current = null;
@@ -89,6 +93,8 @@ export function JcodeSessionScreen({
   }
 
   function applyEvent(ev: JcodeEvent) {
+    // `done` needs no case — the for-await loop ending IS the completion signal
+    // (finally clears `busy`); we only fold text/tool/error frames here.
     if (ev.type === "run") {
       runId.current = ev.run_id;
       return;
@@ -120,6 +126,17 @@ export function JcodeSessionScreen({
     if (runId.current) void api.cancelJcodeRun(runId.current);
   }
 
+  // Tearing the screen down (Back/unmount) must not strand a live turn: the turn
+  // runs DETACHED server-side (like /chat), so aborting the fetch alone leaves the
+  // sandbox running it — stop() also fires cancelJcodeRun. The unmount effect aborts
+  // the fetch so the generator can't setState after we're gone (review B1).
+  useEffect(() => () => abort.current?.abort(), []);
+
+  function closeSession() {
+    if (busy) stop();
+    onClose();
+  }
+
   async function doConfirm() {
     if (confirm === "reset") {
       await api.jcodeResetSession(session.id);
@@ -135,7 +152,12 @@ export function JcodeSessionScreen({
   return (
     <section className="jcode-screen">
       <header className="jcode-bar">
-        <button type="button" className="icon-btn" onClick={onClose} aria-label="Back to sessions">
+        <button
+          type="button"
+          className="icon-btn"
+          onClick={closeSession}
+          aria-label="Back to sessions"
+        >
           <ChevronLeftIcon size={22} />
         </button>
         <span className="jcode-sesshead">

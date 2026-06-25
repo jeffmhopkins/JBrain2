@@ -7,7 +7,7 @@
 import { useEffect, useState } from "react";
 import { ApiError, api } from "../api/client";
 import { Sheet } from "../components/Sheet";
-import { ChevronLeftIcon, PlusIcon } from "../components/icons";
+import { ChevronLeftIcon, ChevronRightIcon, PlusIcon } from "../components/icons";
 import type { JcodeSession, NewSessionInput } from "../jcode/types";
 import { JcodeSessionScreen } from "./JcodeSessionScreen";
 
@@ -29,10 +29,10 @@ function isToday(iso: string): boolean {
 
 function relative(iso: string): string {
   const ms = Date.now() - new Date(iso).getTime();
-  const min = Math.round(ms / 60000);
+  const min = Math.floor(ms / 60000);
   if (min < 1) return "now";
   if (min < 60) return `${min}m ago`;
-  const hr = Math.round(min / 60);
+  const hr = Math.floor(min / 60);
   if (hr < 24) return `${hr}h ago`;
   return new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
@@ -109,6 +109,9 @@ export function JcodeScreen({ onClose }: { onClose: () => void }) {
             </span>
           </button>
 
+          {/* Today/Older only: the chosen mock's Archived bucket and per-row turn
+              count are deferred — the J2 backend exposes neither (no archive state,
+              no turn count on JcodeSession). Add them when the api does. */}
           <div className="jcode-buckets" role="tablist" aria-label="Sessions">
             {(["today", "older"] as const).map((b) => (
               <button
@@ -148,7 +151,7 @@ export function JcodeScreen({ onClose }: { onClose: () => void }) {
                   ) : (
                     <span className="jcode-status">{s.status}</span>
                   )}
-                  <ChevronLeftIcon size={16} />
+                  <ChevronRightIcon size={16} />
                 </button>
               ))}
             </div>

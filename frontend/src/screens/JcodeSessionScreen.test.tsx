@@ -50,6 +50,32 @@ describe("JcodeSessionScreen", () => {
     expect(screen.getByText(/\$ edit src\/app\.ts/)).toBeInTheDocument();
   });
 
+  it("cancels the detached server turn when you leave mid-stream (B1)", async () => {
+    let release: () => void = () => {};
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
+    async function* slow(): AsyncGenerator<JcodeEvent> {
+      yield { type: "run", run_id: "run-9" };
+      await gate; // hold the turn open until the test releases it
+      yield { type: "done" };
+    }
+    vi.spyOn(api, "jcodeTurn").mockImplementation(() => slow());
+    const cancel = vi.spyOn(api, "cancelJcodeRun").mockResolvedValue();
+    const onClose = vi.fn();
+    render(<JcodeSessionScreen session={SESSION} onClose={onClose} />);
+
+    fireEvent.change(screen.getByPlaceholderText(/Tell jcode/i), { target: { value: "go" } });
+    fireEvent.click(screen.getByLabelText("Send"));
+    // The run event flows first (Stop replaces Send while busy), capturing the run id.
+    await waitFor(() => expect(screen.getByLabelText("Stop")).toBeInTheDocument());
+
+    fireEvent.click(screen.getByLabelText("Back to sessions"));
+    expect(onClose).toHaveBeenCalled();
+    await waitFor(() => expect(cancel).toHaveBeenCalledWith("run-9"));
+    release();
+  });
+
   it("arms a tap-again confirm before deleting", async () => {
     const del = vi.spyOn(api, "jcodeDeleteSession").mockResolvedValue();
     const onClose = vi.fn();

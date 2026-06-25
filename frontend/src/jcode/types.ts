@@ -15,13 +15,18 @@ export interface JcodeSession {
 
 export type JcodeEventType = "text" | "tool_use" | "tool_result" | "done" | "error";
 
+// `data` is an opportunistic, optional hint bag the renderer reads when present:
+// for a tool frame it may carry `command` (the displayed label) and/or `ok`. The
+// real shape depends on the on-box SDK→TurnEvent mapping (JCODE_PLAN.md open
+// decision 1); the UI falls back to the tool name when a hint is absent, so a
+// thinner real frame degrades gracefully.
 export type JcodeEvent =
   | { type: "run"; run_id: string }
   | {
       type: JcodeEventType;
       text?: string;
       tool?: string;
-      data?: Record<string, unknown>;
+      data?: { command?: string; ok?: boolean } & Record<string, unknown>;
     };
 
 export interface NewSessionInput {

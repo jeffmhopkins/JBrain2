@@ -14833,7 +14833,6 @@ input.ld-title {
 }
 .jcode-row > svg {
   color: var(--text-3);
-  transform: rotate(180deg);
   flex: none;
 }
 
