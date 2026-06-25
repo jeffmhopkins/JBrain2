@@ -12,6 +12,7 @@ MockTransport with no network (DEVELOPMENT.md "no network in tests").
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import time
 from collections.abc import Sequence
@@ -36,6 +37,11 @@ _PAGE_SIZE = 500
 _BATCH_SIZE = 1000
 _COUNT_CAP = 50_000
 _BULK_CAP = 10_000
+# A sender/domain breakdown samples recent mail (Gmail has no server-side group-by) and
+# fetches each From header; the sample is bounded so the scan stays quick, and metadata
+# fetches run in small concurrent chunks rather than one slow id-at-a-time loop.
+_SENDER_SAMPLE_MAX = 500
+_SENDER_FETCH_CHUNK = 10
 
 
 class GmailError(RuntimeError):
@@ -96,6 +102,8 @@ class GmailApi(Protocol):
     async def count(self, query: str, *, cap: int = ...) -> tuple[int, bool]: ...
 
     async def search_all(self, query: str, *, cap: int = ...) -> tuple[list[str], bool]: ...
+
+    async def sender_sample(self, query: str, *, sample: int = ...) -> tuple[list[str], bool]: ...
 
     async def batch_modify(
         self,
@@ -340,6 +348,22 @@ class GmailClient:
 
     async def search_all(self, query: str, *, cap: int = _BULK_CAP) -> tuple[list[str], bool]:
         return await self._list_ids(query, cap=cap)
+
+    async def sender_sample(self, query: str, *, sample: int = 200) -> tuple[list[str], bool]:
+        """The From headers of up to `sample` recent messages matching `query` — the raw
+        material for a sender/domain breakdown. Gmail has no server-side group-by, so a
+        breakdown samples recent mail (then the agent confirms exact totals with count).
+        Returns (froms, capped): capped is True when the sample came back full, so more
+        matched than were read. Fetches metadata in bounded-concurrency chunks to stay
+        quick rather than one slow id-at-a-time loop."""
+        want = min(max(1, sample), _SENDER_SAMPLE_MAX)
+        ids = await self.search(query, max_results=want)
+        froms: list[str] = []
+        for start in range(0, len(ids), _SENDER_FETCH_CHUNK):
+            chunk = ids[start : start + _SENDER_FETCH_CHUNK]
+            msgs = await asyncio.gather(*(self.get(mid, metadata_only=True) for mid in chunk))
+            froms.extend(m.sender for m in msgs)
+        return froms, len(ids) >= want
 
     async def batch_modify(
         self,

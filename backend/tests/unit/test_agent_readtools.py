@@ -825,6 +825,11 @@ def test_sidecars_pinned_to_their_versions() -> None:
             1,
             "fff8ba00d650a1e2180f7fdad5b1f15b511cce63392a6b9815c171a1a81d1e23",
         ),
+        "gmail_sender_breakdown.tool": (
+            "gmail_sender_breakdown",
+            1,
+            "1d00b606a3eeb36d8f99f056403f17b99b6a7744bea1848d8319036a04cf518e",
+        ),
         "gmail_bulk_label.tool": (
             "gmail_bulk_label",
             1,

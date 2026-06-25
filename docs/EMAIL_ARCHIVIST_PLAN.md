@@ -40,7 +40,7 @@ mutation, which is why v1 writes are confined to reversible label/archive operat
 | **Auth** | OAuth2 **refresh token + client id/secret in config** (env), like `mqtt_ingest_secret`; a one-time bootstrap script mints the refresh token | No token table, no DB; single-owner box, so a config secret is coherent |
 | **OAuth scope** | `gmail.modify` only — read + create-label + label + archive. **No delete/trash scope requested** | Writes are non-destructive and reversible by construction; permanent delete is out of reach even if asked |
 | **Organization model** | Gmail **labels, not folders** — the agent builds and applies a label taxonomy (Gmail's `Parent/Child` nesting). "Move" = apply a label + remove `INBOX` | Matches how Gmail actually organizes; a synced client shows the result as folders |
-| **Tool primitives** | E2: `gmail_search`, `gmail_read`, `gmail_list_labels`, `gmail_create_label`, `gmail_label` (apply/remove → move into a label), `gmail_archive` (remove `INBOX`). E2.5: `gmail_count` (exact count for a query) and `gmail_bulk_label` (apply/remove across a whole query via `batchModify`, ≤1000/call; `remove:["INBOX"]` = bulk archive) | A clean primitive set; the organizing *tasks* are built on top of these later. "Move" in Gmail = label + un-inbox; both reversible. Destructive ops deferred |
+| **Tool primitives** | E2: `gmail_search`, `gmail_read`, `gmail_list_labels`, `gmail_create_label`, `gmail_label` (apply/remove → move into a label), `gmail_archive` (remove `INBOX`). E2.5: `gmail_count` (exact count for a query) and `gmail_bulk_label` (apply/remove across a whole query via `batchModify`, ≤1000/call; `remove:["INBOX"]` = bulk archive). E2.6: `gmail_sender_breakdown` (sample recent mail and rank the real senders by domain/address — Gmail has no group-by) | A clean primitive set; the organizing *tasks* are built on top of these later. "Move" in Gmail = label + un-inbox; both reversible. Destructive ops deferred |
 | **Permission class** | `web` (direct-exec, opt-in gate), allowlisted to `archivist` only | Runs directly (no Proposal), exactly like jerv's web tools; `curator` never gains them |
 | **Persistence** | **None on the DB.** The nightly cursor lives in a single **storage-abstraction blob**; Gmail's own labels are the real state | Honors "no DB access"; storage is the sanctioned file-I/O path (non-negotiable #2) |
 | **RAG ingestion** | **Out of scope.** Email never becomes a note in this plan | The notes/RLS/ingest surface stays untouched; a clean follow-on if desired |
@@ -96,6 +96,18 @@ egress Proposal instead of acting directly (noted in Wave E3).
   reversible (label/archive, never delete) — the dry-run in the deferred task layer is
   where a preview-before-write belongs. Beyond a safety cap (`_BULK_CAP`) the bulk tool
   touches the first slice and says so, so a partial job is never silent.
+
+- **Wave E2.6 — sender breakdown** (no GUI): the Gmail API has **no server-side
+  group-by**, so "who fills the mailbox?" can't be answered by a query — without a way
+  to *see* the senders the agent just guesses common domains and counts those.
+  `gmail_sender_breakdown` closes that: it samples recent messages for a query
+  (`client.sender_sample`, ≤500, From headers fetched in bounded-concurrency chunks)
+  and ranks the **actual** senders by volume, grouped by domain (default) or full
+  address. It is explicitly a *sample* of recent mail (Gmail can't aggregate the whole
+  history cheaply), so the result is flagged as such and the prompt (v5) routes the
+  agent breakdown → `gmail_count` (exact per-sender total) → `gmail_bulk_label`. The
+  exact-history alternative — a one-time metadata index with SQL `GROUP BY` — belongs to
+  the deferred ingestion phase, not this stateless tool.
 
 - **Wave E3 — cross-session memory** (no GUI): a single **owner-only** `archivist_memory`
   table (one row per principal) the persona reads at session start and rewrites as it

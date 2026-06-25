@@ -145,6 +145,44 @@ async def test_count_empty_query_rejected() -> None:
     assert "non-empty query" in out
 
 
+async def test_sender_breakdown_ranks_real_domains() -> None:
+    # Three chase.com, two amazon.com, one personal — the breakdown must reflect the
+    # ACTUAL senders, ranked, not a guessed list.
+    fake = FakeGmail(
+        [
+            _msg("m1", sender="alerts@chase.com"),
+            _msg("m2", sender="no-reply@chase.com"),
+            _msg("m3", sender="Chase <statements@chase.com>"),
+            _msg("m4", sender="ship@amazon.com"),
+            _msg("m5", sender="deals@amazon.com"),
+            _msg("m6", sender="mom@family.net"),
+        ]
+    )
+    out = await _handlers(fake)["gmail_sender_breakdown"]({"query": "pay"}, CTX)
+    assert "chase.com — 3" in out
+    assert "amazon.com — 2" in out
+    assert "family.net — 1" in out
+    assert "domains" in out  # grouped by domain by default
+
+
+async def test_sender_breakdown_by_address_keeps_full_addresses() -> None:
+    fake = FakeGmail([_msg("m1", sender="A <a@x.com>"), _msg("m2", sender="a@x.com")])
+    out = await _handlers(fake)["gmail_sender_breakdown"]({"query": "x", "by": "address"}, CTX)
+    assert "a@x.com — 2" in out
+
+
+async def test_sender_breakdown_empty_query_rejected() -> None:
+    out = await _handlers(FakeGmail())["gmail_sender_breakdown"]({"query": " "}, CTX)
+    assert "non-empty query" in out
+
+
+async def test_sender_breakdown_flags_a_capped_sample() -> None:
+    fake = FakeGmail([_msg(f"m{i}", sender="x@a.com") for i in range(5)])
+    out = await _handlers(fake)["gmail_sender_breakdown"]({"query": "x", "sample": 2}, CTX)
+    assert "2 sampled" in out
+    assert "gmail_count" in out  # nudges the agent to confirm an exact total
+
+
 async def test_bulk_label_applies_across_the_whole_query() -> None:
     fake = FakeGmail(
         [_msg("m1", subject="Invoice"), _msg("m2", subject="Invoice"), _msg("m3", subject="Hello")]
