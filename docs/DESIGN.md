@@ -1073,6 +1073,34 @@ family group** (RLS `viewer_may_see`/`view_scope`), the basemap is self-hosted, 
 the Details/History content is **names + times only — never a raw coordinate in
 prose**. Build plan + wave breakdown: `docs/PHASE7_APP_MAP_PLAN.md`.
 
+## jcode — code mode (GUI gate settled; build plan `docs/proposed/JCODE_PLAN.md`, Wave J3)
+
+Code mode is a sandboxed coding session fronted by the PWA (a launcher tile →
+launcher → live session). The two surfaces went through the mock-first gate
+(three variants each; rivals retained under `docs/mocks/jcode-*`):
+
+- **Launcher — `jcode-launcher-b-resume-first.html` [chosen].** The **session list is
+  the hero**, reusing the **Chats-picker paradigm** (`Today/Older/Archived` segmented
+  buckets, ~44px micro rows with a scope/live dot, repo `@ branch · when`, turn count,
+  and the bouncing-dots live-turn glyph for an in-flight turn). A single prominent
+  **New session** button opens setup as a **bottom sheet** (workspace = clone-repo /
+  scratch, work branch, the pinned on-box model card, Start). Chosen over A
+  (compose-first form always open) and C (a `New·Sessions` toggle) for consistency with
+  the settled Chats picker — you resume far more than you start.
+- **Session — `jcode-session-c-tabbed.html` [chosen].** One session, four views behind a
+  **segmented control: Chat · Diff · Terminal · Preview** (the settled segmented paradigm,
+  per Data screen / calendar). The active view takes its accent (chat = steel, diff =
+  green, terminal = neutral, preview = teal). **The tabs are icon-only** [owner decision]
+  — the Lucide glyph carries the view (44px+ targets, `aria-label`/`title` for a11y),
+  no text labels or badges. A pinned model chip (`qwen 80B-A3B · on-box`) and the
+  sandbox status dot sit in the header; the composer docks at the bottom. Chosen over A
+  (chat-forward, most minimal) and B (split workspace+chat) because the **diff and the
+  preview tunnel are core to the coding loop** and earn first-class views — the one place
+  an IDE-like density is warranted.
+
+Both reuse settled paradigms (Chats picker, segmented control, tool-use accordions, the
+preview tunnel), so J3 implements rather than re-litigates them.
+
 ## Implementation rules
 
 1. Tokens live in one file (`frontend/src/styles/tokens.css`); components
