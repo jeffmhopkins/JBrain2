@@ -11,6 +11,7 @@ import type {
   EntityListItem,
   EntityOut,
   FactOut,
+  GeneratedImageOut,
   GraphEdge,
   ImageSettings,
   LlmProviderId,
@@ -2167,13 +2168,151 @@ const TRANSPARENT_PNG = Uint8Array.from(
   (c) => c.charCodeAt(0),
 );
 
-// Seeded generated-image ids the GET /api/images/generated route serves (Wave
+// Seeded generated-image ids the GET /api/images/generated/{id} route serves (Wave
 // G3). The chat's data: URI placeholders (client.ts MOCK_GENIMG) share these ids
 // so a generate card and an edit card both render — and round-trip — offline.
 const GENERATED_IMAGES = new Set<string>([
   "mock-genimg-lighthouse",
   "mock-genimg-lighthouse-stormy",
 ]);
+
+// The image-launcher gallery (Wave L1): the owner-only render list the screen
+// lists and prepends to, newest first. Seeded with a varied spread (kinds, dims)
+// so the masonry + meta have content; a generate/edit fabricates a row and
+// unshifts it here. Its ids serve a placeholder PNG via the by-id route below.
+let imageGallery: GeneratedImageOut[] = [];
+let imageGallerySeq = 0;
+
+function seedImageGallery(): GeneratedImageOut[] {
+  const base = Date.parse("2026-06-24T16:57:00Z");
+  const seeds: Array<Omit<GeneratedImageOut, "id" | "created_at">> = [
+    {
+      kind: "generate",
+      prompt: "a slate-blue ceramic teapot on a linen cloth, soft window light",
+      width: 1024,
+      height: 1024,
+      model: "qwen-image",
+      seed: 418207733,
+    },
+    {
+      kind: "edit",
+      prompt: "turn the linen cloth deep forest green, keep the teapot unchanged",
+      width: 1024,
+      height: 1024,
+      model: "qwen-image-edit",
+      seed: 901338121,
+    },
+    {
+      kind: "generate",
+      prompt: "a rainy alley at night, neon reflections",
+      width: 768,
+      height: 1344,
+      model: "qwen-image-lightning",
+      seed: 77410023,
+    },
+    {
+      kind: "generate",
+      prompt: "a foggy mountain ridge at dawn",
+      width: 1344,
+      height: 768,
+      model: "qwen-image",
+      seed: 553201984,
+    },
+    {
+      kind: "generate",
+      prompt: "a single paper crane on dark wood",
+      width: 896,
+      height: 1152,
+      model: "dreamshaper",
+      seed: 12009654,
+    },
+    {
+      kind: "edit",
+      prompt: "make the sky a warm dusk",
+      width: 1152,
+      height: 896,
+      model: "qwen-image-edit",
+      seed: 644120097,
+    },
+  ];
+  // Newest first: later seeds get older timestamps so index 0 reads as freshest.
+  return seeds.map((s, i) => ({
+    ...s,
+    id: `mock-gallery-${imageGallerySeq++}`,
+    created_at: new Date(base - i * 3_600_000).toISOString(),
+  }));
+}
+imageGallery = seedImageGallery();
+for (const g of imageGallery) GENERATED_IMAGES.add(g.id);
+
+// Resolution multipliers + aspect base dims mirror the form's summary so a
+// fabricated render's dims match what the screen previewed (the real service
+// owns these; here they only need to be plausible + varied).
+const MOCK_ASPECT: Record<string, [number, number]> = {
+  square: [1024, 1024],
+  portrait: [896, 1152],
+  landscape: [1152, 896],
+  tall: [768, 1344],
+  wide: [1344, 768],
+};
+const MOCK_RESMUL: Record<string, number> = { small: 0.75, medium: 1, large: 1.4 };
+const MOCK_GEN_MODEL: Record<string, string> = {
+  dreamshaper: "dreamshaper",
+  fast: "qwen-image-lightning",
+  quality: "qwen-image",
+};
+const MOCK_EDIT_MODEL: Record<string, string> = {
+  dreamshaper: "qwen-image-edit-lightning",
+  fast: "qwen-image-edit-lightning",
+  quality: "qwen-image-edit",
+};
+
+interface MockGenSpec {
+  prompt?: string;
+  speed?: string;
+  aspect?: string;
+  resolution?: string;
+  seed?: number | null;
+  sourceImageId?: string | null;
+}
+
+function mockDims(aspect: string, resolution: string): [number, number] {
+  const [w, h] = MOCK_ASPECT[aspect] ?? [1024, 1024];
+  const m = MOCK_RESMUL[resolution] ?? 1;
+  return [Math.round((w * m) / 8) * 8, Math.round((h * m) / 8) * 8];
+}
+
+function recordRender(kind: "generate" | "edit", spec: MockGenSpec): GeneratedImageOut {
+  const speed = spec.speed ?? "quality";
+  let width = 1024;
+  let height = 1024;
+  if (kind === "generate") {
+    [width, height] = mockDims(spec.aspect ?? "square", spec.resolution ?? "medium");
+  } else if (spec.sourceImageId) {
+    // Edit inherits the source's dims (aspect "matches source" on the form).
+    const src = imageGallery.find((g) => g.id === spec.sourceImageId);
+    if (src) {
+      width = src.width;
+      height = src.height;
+    }
+  }
+  const out: GeneratedImageOut = {
+    id: `mock-render-${imageGallerySeq++}`,
+    kind,
+    prompt: spec.prompt ?? "",
+    width,
+    height,
+    model:
+      kind === "edit"
+        ? (MOCK_EDIT_MODEL[speed] ?? "qwen-image-edit")
+        : (MOCK_GEN_MODEL[speed] ?? "qwen-image"),
+    seed: spec.seed ?? Math.floor(Math.random() * 4_294_967_295),
+    created_at: new Date().toISOString(),
+  };
+  imageGallery.unshift(out);
+  GENERATED_IMAGES.add(out.id);
+  return out;
+}
 
 const VALID_DOMAINS = new Set(["general", "health", "finance", "location"]);
 
@@ -2724,6 +2863,29 @@ export const mockFetch: typeof fetch = async (input, init) => {
     const blob = attachmentBlobs.get(decodeURIComponent(blobMatch[1] ?? ""));
     if (!blob) return json({ detail: "unknown attachment" }, 404);
     return new Response(blob, { status: 200, headers: { "Content-Type": blob.type } });
+  }
+
+  // Image launcher (Wave L1). The gallery list, and the direct generate/edit
+  // renders that fabricate a row after a short await (the honest render delay)
+  // and prepend it newest-first. The edit reads the source's dims via the spec's
+  // sourceImageId. Mock-only until the L3 render API.
+  if (path === "/api/images/generated" && method === "GET") {
+    return json(imageGallery);
+  }
+  if (path === "/api/images/generate" && method === "POST") {
+    const spec = JSON.parse(String(init?.body)) as MockGenSpec;
+    return json(recordRender("generate", spec));
+  }
+  if (path === "/api/images/edit" && method === "POST") {
+    // The real call is multipart (spec part + source/reference files); here we
+    // only need the spec part to fabricate the row.
+    let spec: MockGenSpec = {};
+    const body = init?.body;
+    if (body instanceof FormData) {
+      const raw = body.get("spec");
+      if (typeof raw === "string") spec = JSON.parse(raw) as MockGenSpec;
+    }
+    return json(recordRender("edit", spec));
   }
 
   // Generated-image bytes (Wave G3): the image-gen tool's result, by id, plus an

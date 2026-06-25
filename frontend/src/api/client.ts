@@ -1292,10 +1292,38 @@ const MOCK_GENIMG: Record<string, string> = {
   ),
 };
 
+// The image-launcher gallery/render ids (mock.ts `mock-gallery-*`/`mock-render-*`)
+// have no hand-authored placeholder, so derive a deterministic gradient SVG from
+// the id — the same id always yields the same stand-in, offline. (Hex is image
+// *content*, not theme styling.) Only reached in MOCK_MODE.
+const MOCK_GALLERY_HUES: Array<[string, string]> = [
+  ["#3a3550", "#6f5b8c"],
+  ["#2c4a3a", "#5a8c6f"],
+  ["#2c3a4a", "#5a7a8c"],
+  ["#4a3a2c", "#8c6f5a"],
+  ["#43304a", "#7a5a8c"],
+  ["#2c4a47", "#5a8c86"],
+];
+function mockLauncherSvg(id: string): string {
+  let h = 0;
+  for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) >>> 0;
+  const [a, b] = MOCK_GALLERY_HUES[h % MOCK_GALLERY_HUES.length] ?? ["#3a3550", "#6f5b8c"];
+  return svgDataUri(
+    `<svg xmlns='http://www.w3.org/2000/svg' width='640' height='640'>
+      <defs><linearGradient id='g' x1='0' y1='0' x2='1' y2='1'>
+        <stop offset='0' stop-color='${a}'/><stop offset='1' stop-color='${b}'/></linearGradient></defs>
+      <rect width='640' height='640' fill='url(#g)'/>
+      <circle cx='400' cy='270' r='100' fill='rgba(255,255,255,.10)'/>
+      <rect x='100' y='384' width='350' height='100' rx='26' fill='rgba(0,0,0,.12)'/></svg>`,
+  );
+}
+
 /** Source URL for the served result of a generated image (data-only contract:
  * the tool-view payload carries only `image_id`; the component builds this). */
 export function generatedImageUrl(id: string): string {
   if (MOCK_MODE && MOCK_GENIMG[id]) return MOCK_GENIMG[id];
+  if (MOCK_MODE && (id.startsWith("mock-gallery-") || id.startsWith("mock-render-")))
+    return mockLauncherSvg(id);
   return `/api/images/generated/${encodeURIComponent(id)}`;
 }
 
@@ -1305,6 +1333,53 @@ export function generatedImageSourceUrl(id: string): string {
   if (MOCK_MODE && MOCK_GENIMG["mock-genimg-lighthouse"] && id === "mock-genimg-lighthouse-stormy")
     return MOCK_GENIMG["mock-genimg-lighthouse"];
   return `/api/images/generated/${encodeURIComponent(id)}/source`;
+}
+
+// --- Image launcher (Wave L1): the standalone on-box generate/edit screen. The
+// gallery shares the owner-only `generated_images` rows the jerv tools also write
+// (docs/IMAGE_LAUNCHER_PLAN.md). Mock-backed until the L3 direct render API.
+
+/** One render in the gallery — the by-id summary the screen lists and reveals.
+ * `seed` is the resolved seed (null only before a render is recorded). */
+export interface GeneratedImageOut {
+  id: string;
+  kind: "generate" | "edit";
+  prompt: string;
+  width: number;
+  height: number;
+  model: string;
+  seed: number | null;
+  created_at: string;
+}
+
+export type ImageSpeed = "dreamshaper" | "fast" | "quality";
+export type ImageAspect = "square" | "portrait" | "landscape" | "tall" | "wide";
+export type ImageResolution = "small" | "medium" | "large";
+
+/** The generate form's config (speed implies the model; aspect+resolution imply
+ * the dims). `seed` blank = random; `negativePrompt` blank = none. */
+export interface GenerateImageRequest {
+  prompt: string;
+  speed: ImageSpeed;
+  aspect: ImageAspect;
+  resolution: ImageResolution;
+  steps: number;
+  seed: number | null;
+  negativePrompt: string;
+}
+
+/** The edit form's config. The source is a prior render (by id) or an uploaded
+ * file (passed alongside, not on this object); aspect is inherited from the
+ * source, so it carries no aspect knob. */
+export interface EditImageRequest {
+  prompt: string;
+  speed: ImageSpeed;
+  resolution: ImageResolution;
+  steps: number;
+  seed: number | null;
+  negativePrompt: string;
+  /** A prior render to edit, when the source isn't an uploaded file. */
+  sourceImageId: string | null;
 }
 
 export const api = {
@@ -2219,5 +2294,34 @@ export const api = {
   async memberTimeline(): Promise<TimelineEntry[]> {
     const response = await request("/api/member/timeline");
     return (await response.json()) as TimelineEntry[];
+  },
+
+  // --- Image launcher (Wave L1). Newest-first owner-only gallery + the direct,
+  // non-agent generate/edit calls. Mock-backed until the L3 render API lands.
+
+  async listGeneratedImages(): Promise<GeneratedImageOut[]> {
+    const response = await request("/api/images/generated");
+    return (await response.json()) as GeneratedImageOut[];
+  },
+
+  async generateImage(req: GenerateImageRequest): Promise<GeneratedImageOut> {
+    const response = await request("/api/images/generate", jsonInit("POST", req));
+    return (await response.json()) as GeneratedImageOut;
+  },
+
+  // The source/references are bytes, so this is multipart: the spec rides a JSON
+  // part, an uploaded source (when there's no `sourceImageId`) and up to 2
+  // references ride file parts the L3 endpoint sniffs + size-caps.
+  async editImage(
+    req: EditImageRequest,
+    source?: File | null,
+    refs?: File[],
+  ): Promise<GeneratedImageOut> {
+    const form = new FormData();
+    form.append("spec", JSON.stringify(req));
+    if (source) form.append("source", source, source.name);
+    for (const ref of refs ?? []) form.append("references", ref, ref.name);
+    const response = await request("/api/images/edit", { method: "POST", body: form });
+    return (await response.json()) as GeneratedImageOut;
   },
 };

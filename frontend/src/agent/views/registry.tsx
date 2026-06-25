@@ -529,7 +529,9 @@ function asDim(value: unknown): number {
 
 // The before/after wipe: drag (or the grip) reveals the source under the edited
 // result. Just the slider now — the Compare/Edited mode switch lives in EditView.
-function EditCompare({
+// Exported so the image-launcher screen reuses the same swipe-compare rather than
+// duplicating it (the .tv-genimg-* classes work in either scope, see styles.css).
+export function EditCompare({
   beforeSrc,
   afterSrc,
   width,
@@ -600,8 +602,9 @@ function EditCompare({
 
 // The clickable image frame shared by a generated image and an edit's "Edited" view:
 // the picture fills the frame, fades in over its placeholder/skeleton, and opens the
-// full-screen pinch/zoom viewer on tap.
-function ImageFrame({
+// full-screen pinch/zoom viewer on tap. Exported for the image-launcher screen's
+// result + gallery lightbox (same reuse note as EditCompare).
+export function ImageFrame({
   src,
   alt,
   width,

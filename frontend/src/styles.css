@@ -15139,3 +15139,843 @@ input.ld-title {
 .task-run-link:active {
   background: var(--surface-2);
 }
+
+/* ============================================================================
+   Image launcher (Wave L1) — the standalone on-box generate/edit screen
+   (docs/IMAGE_LAUNCHER_PLAN.md, mock launcher-b-gallery.html). Violet image
+   accent; tokens only. The reused EditCompare/ImageFrame (.tv-genimg-*) are
+   given this scope at the end of the block.
+   ============================================================================ */
+.imgscreen {
+  --img-accent: var(--violet);
+  --img-tint: var(--violet-tint);
+}
+.imgscreen-nav {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px 6px;
+  min-height: 56px;
+}
+.imgscreen-nav .back-btn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: none;
+  border: 0;
+  cursor: pointer;
+  color: var(--text);
+  padding: 4px 6px;
+}
+.imgscreen-nav .back-btn svg {
+  color: var(--text-2);
+}
+.imgscreen-nav .screen-title {
+  font-size: var(--fs-screen);
+  font-weight: 600;
+  letter-spacing: -0.2px;
+}
+.imgscreen-nav-right {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.imgscreen-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--violet);
+  box-shadow: 0 0 0 4px var(--violet-tint);
+  margin: 0 4px;
+}
+.imgscreen-gallery-btn {
+  position: relative;
+}
+.imgscreen-badge {
+  position: absolute;
+  top: 0;
+  right: 0;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: var(--r-pill);
+  background: var(--violet);
+  color: var(--bg);
+  font-size: 10px;
+  font-weight: 700;
+  display: grid;
+  place-items: center;
+  line-height: 1;
+}
+
+.imgscreen-residency {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--violet-tint);
+  border: 1px solid var(--border);
+  border-radius: var(--r-input);
+  padding: 9px 12px;
+  margin-bottom: 14px;
+}
+.imgscreen-residency span {
+  font-size: var(--fs-micro);
+  color: var(--text-2);
+  line-height: 1.45;
+}
+.imgscreen-residency b {
+  color: var(--violet);
+  font-weight: 600;
+}
+
+/* segmented Generate | Edit */
+.imgseg {
+  display: flex;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-seg);
+  padding: 3px;
+  margin-bottom: 16px;
+}
+.imgseg button {
+  flex: 1;
+  font: inherit;
+  font-size: var(--fs-secondary);
+  font-weight: 600;
+  cursor: pointer;
+  border: 0;
+  background: transparent;
+  color: var(--text-2);
+  padding: 10px 4px;
+  border-radius: 11px;
+  transition: background 0.15s, color 0.15s;
+}
+.imgseg button.on {
+  background: var(--violet-tint);
+  color: var(--violet);
+}
+
+.imgfield {
+  margin-bottom: 14px;
+}
+.imgfield > label {
+  display: block;
+  font-size: var(--fs-head);
+  color: var(--text-2);
+  font-weight: 600;
+  margin: 0 2px 6px;
+}
+.imgfield .imgmuted {
+  color: var(--text-3);
+  font-weight: 400;
+}
+.imgscreen textarea,
+.imgscreen input[type="text"],
+.imgscreen input[type="number"] {
+  width: 100%;
+  font: inherit;
+  font-size: var(--fs-body);
+  color: var(--text);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-input);
+  padding: 12px 13px;
+  resize: none;
+  outline: none;
+}
+.imgscreen textarea {
+  min-height: 88px;
+  line-height: 1.5;
+}
+.imgscreen textarea.imgedit-prompt {
+  min-height: 64px;
+}
+.imgscreen input::placeholder,
+.imgscreen textarea::placeholder {
+  color: var(--text-3);
+}
+.imgscreen textarea:focus-visible,
+.imgscreen input:focus-visible {
+  border-color: var(--violet);
+  box-shadow: 0 0 0 2px var(--violet-tint);
+}
+
+/* config card */
+.imgcard {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-card);
+  margin-bottom: 16px;
+  overflow: hidden;
+}
+.imgcard-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  background: none;
+  border: 0;
+  cursor: pointer;
+  font: inherit;
+  color: var(--text);
+  padding: 13px 15px;
+  text-align: left;
+}
+.imgcard-title {
+  font-size: var(--fs-secondary);
+  font-weight: 600;
+}
+.imgcard-summary {
+  margin-left: auto;
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 54%;
+}
+.imgcard-caret {
+  flex: none;
+  color: var(--text-3);
+  display: grid;
+  place-items: center;
+  transform: rotate(-90deg);
+  transition: transform 0.16s;
+}
+.imgcard.open .imgcard-caret {
+  transform: rotate(-90deg) rotate(180deg);
+}
+.imgcard-body {
+  padding: 2px 15px 15px;
+  border-top: 1px solid var(--border);
+}
+
+.imgrow {
+  padding: 11px 0;
+  border-bottom: 1px solid var(--border);
+}
+.imgrow:last-child {
+  border-bottom: 0;
+}
+.imgrow-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 9px;
+}
+.imgrow-label {
+  font-size: var(--fs-secondary);
+  font-weight: 600;
+  color: var(--text);
+}
+.imgrow-hint {
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+  margin-left: auto;
+  text-align: right;
+}
+
+/* mini segmented (config knobs) */
+.imgmseg {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.imgmseg button {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  font-size: var(--fs-micro);
+  font-weight: 600;
+  cursor: pointer;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text-2);
+  border-radius: 10px;
+  padding: 9px 6px;
+  transition: 0.13s;
+  white-space: nowrap;
+}
+.imgmseg button.on {
+  background: var(--violet-tint);
+  border-color: transparent;
+  color: var(--violet);
+}
+.imgmseg button:disabled {
+  cursor: default;
+}
+.imgmseg.five button {
+  flex: 0 0 calc((100% - 24px) / 5);
+}
+
+/* steps slider — visibly locks off the quality path */
+.imgslider {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.imgscreen input[type="range"] {
+  flex: 1;
+  -webkit-appearance: none;
+  appearance: none;
+  height: 6px;
+  border-radius: var(--r-pill);
+  background: var(--surface-2);
+  outline: none;
+}
+.imgscreen input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--violet);
+  border: 3px solid var(--surface);
+  cursor: pointer;
+}
+.imgscreen input[type="range"]::-moz-range-thumb {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--violet);
+  border: 3px solid var(--surface);
+  cursor: pointer;
+}
+.imgstepval {
+  font-family: var(--mono);
+  font-size: var(--fs-secondary);
+  color: var(--text);
+  min-width: 26px;
+  text-align: right;
+}
+.imgsteps.locked {
+  opacity: 0.55;
+}
+.imgsteps.locked .imgstepval {
+  color: var(--text-3);
+}
+.imglockhint {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--fs-micro);
+  color: var(--amber);
+  margin-top: 7px;
+}
+
+/* edit source dropzone + chosen source + refs */
+.imgdrop {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  text-align: center;
+  background: var(--surface-2);
+  border: 1.5px dashed var(--border);
+  border-radius: var(--r-card);
+  padding: 22px 16px;
+  cursor: pointer;
+  transition: 0.13s;
+}
+.imgdrop:hover {
+  border-color: var(--violet);
+}
+.imgdrop svg {
+  color: var(--text-3);
+}
+.imgdrop-t {
+  font-size: var(--fs-secondary);
+  color: var(--text-2);
+}
+.imgdrop-s {
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+}
+.imgdrop-s b {
+  color: var(--violet);
+  font-weight: 600;
+}
+.imgsrc {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-card);
+  padding: 11px;
+}
+.imgsrc-thumb {
+  width: 52px;
+  height: 52px;
+  border-radius: 10px;
+  flex: none;
+  overflow: hidden;
+  background: var(--bg);
+  border: 1px solid var(--border);
+}
+.imgsrc-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.imgsrc-meta {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.imgsrc-name {
+  font-size: var(--fs-secondary);
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.imgsrc-dim {
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+}
+.imgsrc-x {
+  margin-left: auto;
+  background: none;
+  border: 0;
+  color: var(--text-3);
+  cursor: pointer;
+  padding: 6px;
+  border-radius: 8px;
+  flex: none;
+}
+.imgsrc-x:hover {
+  background: var(--bg);
+  color: var(--text-2);
+}
+.imgpick {
+  width: 100%;
+  margin-top: 9px;
+  font: inherit;
+  font-size: var(--fs-micro);
+  font-weight: 600;
+  cursor: pointer;
+  background: none;
+  border: 0;
+  color: var(--violet);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 6px;
+}
+.imgrefs {
+  display: flex;
+  gap: 10px;
+  margin-top: 4px;
+}
+.imgrefslot {
+  flex: 1;
+  aspect-ratio: 1;
+  border-radius: 12px;
+  background: var(--surface-2);
+  border: 1.5px dashed var(--border);
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  position: relative;
+  overflow: hidden;
+  transition: 0.13s;
+}
+.imgrefslot:hover {
+  border-color: var(--violet);
+}
+.imgrefslot svg {
+  color: var(--text-3);
+}
+.imgrefslot.filled {
+  border-style: solid;
+}
+.imgrefslot img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.imgrefslot-x {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--scrim);
+  border: 0;
+  color: var(--text);
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+}
+
+/* primary action + note */
+.imgbtn {
+  width: 100%;
+  font: inherit;
+  font-size: var(--fs-body);
+  font-weight: 600;
+  cursor: pointer;
+  border-radius: var(--r-input);
+  padding: 14px;
+  border: 1px solid transparent;
+  background: var(--violet-tint);
+  color: var(--violet);
+  min-height: 44px;
+}
+.imgbtn:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+.imgnote {
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+  text-align: center;
+  margin: 11px 2px 0;
+  line-height: 1.5;
+}
+
+/* render result */
+.imgresult {
+  margin-top: 18px;
+}
+.imgstage-pending {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  min-height: 220px;
+  border-radius: var(--r-card);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  padding: 20px;
+  text-align: center;
+}
+.imgspin {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 2.5px solid var(--surface-2);
+  border-top-color: var(--violet);
+  animation: spin-rot 0.8s linear infinite;
+}
+.imgphase {
+  font-size: var(--fs-secondary);
+  color: var(--text-2);
+}
+.imgmeta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+  font-family: var(--mono);
+  font-size: var(--fs-micro);
+  color: var(--text-2);
+  flex-wrap: wrap;
+}
+.imgactions {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+}
+.imgchip {
+  flex: 1;
+  font: inherit;
+  font-size: var(--fs-micro);
+  font-weight: 600;
+  cursor: pointer;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text-2);
+  border-radius: var(--r-input);
+  padding: 10px 6px;
+  min-height: 44px;
+}
+.imgchip:hover {
+  color: var(--text);
+}
+.imgchip.done {
+  color: var(--green);
+  border-color: transparent;
+  background: var(--green-tint);
+}
+.imgchip:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* gallery overlay — full-screen image-only masonry */
+.imggallery {
+  position: absolute;
+  inset: 0;
+  z-index: 40;
+  background: var(--bg);
+  display: flex;
+  flex-direction: column;
+  padding-top: env(safe-area-inset-top);
+}
+.imggallery-nav {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  min-height: 56px;
+  border-bottom: 1px solid var(--border);
+}
+.imggallery-nav .screen-title {
+  font-size: var(--fs-screen);
+  font-weight: 600;
+}
+.imggallery-count {
+  font-size: var(--fs-micro);
+  font-weight: 600;
+  color: var(--violet);
+  background: var(--violet-tint);
+  border-radius: var(--r-pill);
+  padding: 2px 9px;
+}
+.imggallery-sp {
+  margin-left: auto;
+}
+.imggallery-hint {
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+  padding: 10px 16px 2px;
+  line-height: 1.4;
+  margin: 0;
+}
+.imggallery-grid {
+  padding: 8px 12px calc(40px + env(safe-area-inset-bottom));
+  overflow-y: auto;
+  flex: 1;
+  column-count: 2;
+  column-gap: 10px;
+}
+.imggallery-empty {
+  padding: 60px 24px;
+  text-align: center;
+  color: var(--text-2);
+  font-size: var(--fs-secondary);
+  line-height: 1.5;
+}
+.imgtile {
+  break-inside: avoid;
+  margin: 0 0 10px;
+  padding: 0;
+  width: 100%;
+  border-radius: 14px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  position: relative;
+  cursor: pointer;
+  background: var(--surface);
+  display: block;
+}
+.imgtile img {
+  width: 100%;
+  display: block;
+}
+.imgtile-kind {
+  position: absolute;
+  top: 7px;
+  left: 7px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  padding: 2px 7px;
+  border-radius: var(--r-pill);
+  background: var(--scrim);
+  color: var(--text);
+  backdrop-filter: blur(3px);
+}
+
+/* lightbox — large single render over the gallery */
+.imglb {
+  position: absolute;
+  inset: 0;
+  z-index: 50;
+  background: var(--scrim);
+  backdrop-filter: blur(6px);
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+}
+.imglb-top {
+  flex: 1;
+  display: grid;
+  place-items: center;
+  padding: 18px;
+  cursor: pointer;
+}
+.imglb-top img {
+  max-width: 100%;
+  max-height: 100%;
+  border-radius: var(--r-card);
+  border: 1px solid var(--border);
+  display: block;
+}
+.imglb-card {
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+  border-radius: var(--r-box) var(--r-box) 0 0;
+  padding: 14px 16px calc(16px + env(safe-area-inset-bottom));
+}
+.imglb-grip {
+  display: block;
+  width: 32px;
+  height: 4px;
+  border-radius: var(--r-pill);
+  background: var(--border);
+  margin: 0 auto 12px;
+}
+.imglb-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--mono);
+  font-size: var(--fs-micro);
+  color: var(--text-2);
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+.imglb-kind {
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  font-size: 10px;
+  color: var(--violet);
+  background: var(--violet-tint);
+  border-radius: var(--r-pill);
+  padding: 2px 7px;
+}
+
+/* The reused EditCompare/ImageFrame are scoped to .fb-shell in the chat; bring
+   the same component classes into the launcher's result + lightbox scope so they
+   render here too (the launcher accents the wipe handle/grip violet). */
+.imgscreen .tv-genimg-frame {
+  position: relative;
+  display: block;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--surface);
+  cursor: zoom-in;
+  -webkit-appearance: none;
+  appearance: none;
+}
+.imgscreen .tv-genimg-img {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+.imgscreen .tv-genimg-frame .tv-genimg-img {
+  position: absolute;
+  inset: 0;
+  height: 100%;
+  object-fit: cover;
+  transition: opacity 0.35s ease;
+}
+.imgscreen .tv-genimg-skeleton {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(110deg, var(--surface) 30%, var(--surface-2) 50%, var(--surface) 70%);
+  background-size: 200% 100%;
+  animation: fb-genprev-shimmer 1.3s linear infinite;
+}
+.imgscreen .tv-genimg-expand {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: flex;
+  width: 28px;
+  height: 28px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  background: var(--scrim);
+  backdrop-filter: blur(3px);
+  opacity: 0.85;
+}
+.imgscreen .tv-genimg-expand svg {
+  width: 15px;
+  height: 15px;
+  fill: none;
+  stroke: var(--text);
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.imgscreen .tv-genimg-cmp {
+  position: relative;
+  width: 100%;
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--surface);
+  touch-action: none;
+  user-select: none;
+  cursor: ew-resize;
+}
+.imgscreen .tv-genimg-cmp .tv-genimg-img {
+  pointer-events: none;
+}
+.imgscreen .tv-genimg-after {
+  position: absolute;
+  inset: 0;
+  clip-path: inset(0 0 0 var(--pos, 50%));
+}
+.imgscreen .tv-genimg-lbl {
+  position: absolute;
+  bottom: 8px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  padding: 2px 7px;
+  border-radius: var(--r-pill);
+  background: var(--scrim);
+  color: var(--text);
+  backdrop-filter: blur(3px);
+}
+.imgscreen .tv-genimg-lbl.b {
+  left: 8px;
+}
+.imgscreen .tv-genimg-lbl.a {
+  right: 8px;
+}
+.imgscreen .tv-genimg-handle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: var(--pos, 50%);
+  width: 2px;
+  transform: translateX(-1px);
+  background: var(--violet);
+}
+.imgscreen .tv-genimg-grip {
+  position: absolute;
+  top: 50%;
+  left: var(--pos, 50%);
+  transform: translate(-50%, -50%);
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: var(--violet);
+  box-shadow: 0 0 0 4px var(--violet-tint);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .imgspin,
+  .imgscreen .tv-genimg-skeleton {
+    animation: none;
+  }
+}
