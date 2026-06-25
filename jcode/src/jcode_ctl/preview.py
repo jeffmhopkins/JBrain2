@@ -67,10 +67,17 @@ class CloudflaredTunnel:
     async def close(self) -> None:  # pragma: no cover - exercised on-box
         proc = self._proc
         self._proc = None
-        if proc is not None and proc.returncode is None:
-            proc.terminate()
+        if proc is None or proc.returncode is not None:
+            return
+        proc.terminate()
+        try:
+            await asyncio.wait_for(proc.wait(), timeout=5)
+        except TimeoutError:
+            # cloudflared ignored SIGTERM — escalate to SIGKILL so an internet-facing
+            # tunnel can never outlive its close() (review SF2).
+            proc.kill()
             with contextlib.suppress(Exception):
-                await asyncio.wait_for(proc.wait(), timeout=5)
+                await proc.wait()
 
 
 class FakeTunnel:
@@ -114,7 +121,14 @@ class PreviewManager:
             raise PreviewError("web preview is not enabled")
         await self.close(sid)  # one tunnel per session — replace any prior
         tunnel = self._make()
-        url = await tunnel.open(port or self._default_port)
+        try:
+            url = await tunnel.open(port or self._default_port)
+        except BaseException:
+            # Cancelled or failed AFTER the process spawned — tear it down before it
+            # leaks: an unregistered tunnel can never be reached by close()/close_all()
+            # (review SF1). BaseException so a cancellation is cleaned up too.
+            await tunnel.close()
+            raise
         self._tunnels[sid] = tunnel
         self._urls[sid] = url
         return url

@@ -62,3 +62,21 @@ async def test_disabled_manager_refuses() -> None:
     assert mgr.enabled is False
     with pytest.raises(PreviewError, match="not enabled"):
         await mgr.open("s1")
+
+
+async def test_failed_open_tears_down_the_tunnel() -> None:
+    """If open() fails after the process spawned, the tunnel is closed, not leaked."""
+    closed: list[bool] = []
+
+    class Boom:
+        async def open(self, port: int) -> str:
+            raise RuntimeError("boom")
+
+        async def close(self) -> None:
+            closed.append(True)
+
+    mgr = PreviewManager(Boom, enabled=True)
+    with pytest.raises(RuntimeError, match="boom"):
+        await mgr.open("s1")
+    assert closed == [True]
+    assert mgr.url("s1") is None

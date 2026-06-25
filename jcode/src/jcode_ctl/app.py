@@ -17,7 +17,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, FastAPI, Header, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from jcode_ctl.agent import TurnEvent
 from jcode_ctl.config import Settings
@@ -40,7 +40,7 @@ class TurnRequest(BaseModel):
 
 
 class PreviewRequest(BaseModel):
-    port: int | None = None
+    port: int | None = Field(default=None, ge=1, le=65535)
 
 
 def _frame(ev: TurnEvent) -> bytes:
@@ -126,8 +126,10 @@ def create_app(
 
     @authed.delete("/sessions/{sid}", status_code=204)
     async def delete(sid: str) -> None:
+        # Close the tunnel FIRST, so it's torn down even if the delete below raises
+        # (review N3) — a deleted session must keep no live tunnel.
+        await preview.close(sid)
         sessions.delete(sid)
-        await preview.close(sid)  # a deleted session keeps no live tunnel
 
     # --- Web preview (Wave J4): an ephemeral tunnel to the sandbox's dev server ---
 

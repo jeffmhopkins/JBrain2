@@ -136,7 +136,7 @@ class TurnBody(BaseModel):
 
 
 class PreviewBody(BaseModel):
-    port: int | None = None
+    port: int | None = Field(default=None, ge=1, le=65535)
 
 
 @router.post("/jcode/sessions", status_code=201)
