@@ -3,8 +3,10 @@
 // sweep-control row for emergency triggers, then the compact run log. Tapping a
 // run raises the shared bottom Sheet (the mock's "split panel" — half-height
 // over the still-visible, dimmed list) showing its step tree with ok/error
-// nodes and a failing step's error. Tokens only, honest live status — the queue
-// tile reads "—" until a queue-depth source exists. Reachable from Ops.
+// nodes and a failing step's error. Tokens only, honest live status: an in-flight
+// pipeline whose steps have not started reads 'queued' (it waits behind the
+// single-threaded worker), and the queue tile shows the live job backlog (GET
+// /api/runs/queue-depth). Reachable from Ops.
 
 import { useCallback, useEffect, useState } from "react";
 import {
@@ -82,11 +84,14 @@ function fmtLogEvent(ev: Record<string, unknown>): string {
 
 interface TilesProps {
   runs: RunSummary[];
+  /** Jobs waiting in app.jobs (GET /api/runs/queue-depth); null until it loads. */
+  queueDepth: number | null;
 }
 
-/** The status-tile grid: active now / failed today / queued / tokens today —
- * all derived honestly from the run log (queue depth has no source here). */
-function StatusTiles({ runs }: TilesProps) {
+/** The status-tile grid: active now / failed today / queued / tokens today — all
+ * derived honestly from the run log, plus the live job-queue depth. */
+function StatusTiles({ runs, queueDepth }: TilesProps) {
+  // 'running' only — a 'queued' run is waiting, not active (the queue tile counts it).
   const active = runs.filter((r) => r.status === "running").length;
   const failedToday = runs.filter((r) => r.status === "error" && isToday(r.started_at)).length;
   const tokensToday = runs
@@ -112,7 +117,7 @@ function StatusTiles({ runs }: TilesProps) {
         <span className="runs-tile-icon">
           <ListIcon size={14} />
         </span>
-        <span className="runs-tile-num">—</span>
+        <span className="runs-tile-num">{queueDepth === null ? "—" : queueDepth}</span>
         <span className="runs-tile-label">jobs queued</span>
       </div>
       <div className="runs-tile runs-tile-cost">
@@ -170,7 +175,10 @@ function RunRow({ run, onOpen }: RunRowProps) {
           {run.name}
         </span>
         <span className="runs-row-sub">
-          {run.status === "running" && run.progress_note ? (
+          {run.status === "queued" ? (
+            // Nothing has run yet — there is no duration/token summary to show.
+            <>waiting to start · {run.step_count} steps</>
+          ) : run.status === "running" && run.progress_note ? (
             // While in flight, the live "processed X of Y" line is the useful thing to
             // show; the duration/tokens summary lands when the run closes.
             run.progress_note
@@ -281,6 +289,7 @@ interface RunsScreenProps {
 
 export function RunsScreen({ onClose }: RunsScreenProps) {
   const [runs, setRuns] = useState<RunSummary[] | null>(null);
+  const [queueDepth, setQueueDepth] = useState<number | null>(null);
   const [sweeps, setSweeps] = useState<SweepTrigger[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<RunSummary | null>(null);
@@ -295,6 +304,11 @@ export function RunsScreen({ onClose }: RunsScreenProps) {
       .sweepTriggers()
       .then(setSweeps)
       .catch(() => setSweeps([]));
+    // Best-effort: a missing/erroring queue-depth source leaves the tile at "—".
+    api
+      .queueDepth()
+      .then(setQueueDepth)
+      .catch(() => setQueueDepth(null));
     try {
       setRuns(await api.runs());
     } catch (err) {
@@ -311,9 +325,11 @@ export function RunsScreen({ onClose }: RunsScreenProps) {
   // and tokens tick up without a manual refresh. Stops the moment nothing is
   // running (a backgrounded app suspends the poll, like the LLM-settings drawer).
   const foreground = useForeground();
-  const anyRunning = (runs ?? []).some((r) => r.status === "running");
+  // Poll while anything is in flight OR waiting — a queued run will flip to running
+  // and on to done, and the queue tile drains, all without a manual refresh.
+  const anyActive = (runs ?? []).some((r) => r.status === "running" || r.status === "queued");
   useEffect(() => {
-    if (!foreground || !anyRunning) return;
+    if (!foreground || !anyActive) return;
     const tick = () => {
       api
         .runs()
@@ -323,6 +339,10 @@ export function RunsScreen({ onClose }: RunsScreenProps) {
           setSelected((cur) => (cur ? (fresh.find((r) => r.id === cur.id) ?? cur) : cur));
         })
         .catch(() => {});
+      api
+        .queueDepth()
+        .then(setQueueDepth)
+        .catch(() => {});
       if (selected)
         api
           .run(selected.id)
@@ -331,7 +351,7 @@ export function RunsScreen({ onClose }: RunsScreenProps) {
     };
     const id = setInterval(tick, 3000);
     return () => clearInterval(id);
-  }, [foreground, anyRunning, selected]);
+  }, [foreground, anyActive, selected]);
 
   const openRun = useCallback((run: RunSummary) => {
     setSelected(run);
@@ -397,7 +417,7 @@ export function RunsScreen({ onClose }: RunsScreenProps) {
           </p>
         )}
 
-        {runs !== null && <StatusTiles runs={runs} />}
+        {runs !== null && <StatusTiles runs={runs} queueDepth={queueDepth} />}
 
         <SweepRow sweeps={sweeps} onFire={(t) => void fireSweep(t)} />
 

@@ -797,7 +797,9 @@ export interface LlmUsage {
 
 /** A run's lifecycle state as stored (migration 0016 CHECK). 'error' is the
  * failed state; the Runs surface renders it as the red "failed" tile/dot. */
-export type RunStatus = "running" | "done" | "error";
+// 'queued' is a derived display state (no stored value): an in-flight pipeline run
+// whose steps have not started yet, waiting behind the single-threaded worker.
+export type RunStatus = "queued" | "running" | "done" | "error";
 
 /** A manual/sweep trigger the owner can fire on demand. The list endpoint is
  * sibling Track B's (`GET /api/ops/triggers`); the Runs surface reads it
@@ -1912,6 +1914,12 @@ export const api = {
   async run(id: string): Promise<RunDetail> {
     const response = await request(`/api/runs/${encodeURIComponent(id)}`);
     return (await response.json()) as RunDetail;
+  },
+
+  // The job-queue backlog (status='queued' in app.jobs) for the "jobs queued" tile.
+  async queueDepth(): Promise<number> {
+    const response = await request("/api/runs/queue-depth");
+    return ((await response.json()) as { queued: number }).queued;
   },
 
   // The manual/sweep triggers for the dashboard's sweep-control row (sibling

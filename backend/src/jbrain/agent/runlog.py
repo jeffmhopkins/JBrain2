@@ -18,12 +18,13 @@ import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
-from sqlalchemy import select, update
+from sqlalchemy import bindparam, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from jbrain.db.session import SessionContext, scoped_session
 from jbrain.models.agent import Run, RunStep
 from jbrain.models.workflow import Trigger
+from jbrain.queue import queued_depth
 
 
 class AgentRunLog:
@@ -185,6 +186,53 @@ class RunLogReader:
         # names the run; agent runs are session-less here so they read 'agent'.
         return pipeline or trigger_pipeline or kind or "agent"
 
+    async def queue_depth(self, ctx: SessionContext) -> int:
+        """The job-queue backlog for the Ops "Runs" queue-depth tile — jobs waiting
+        (status='queued') in app.jobs. Reads under the owner context like the rest of
+        this reader; the jobs table is owner-only RLS, so a non-owner sees zero."""
+        return await queued_depth(self._maker, ctx)
+
+    async def _queued_pipeline_ids(
+        self, session: AsyncSession, candidates: list[uuid.UUID]
+    ) -> set[str]:
+        """Of these in-flight pipeline runs, the ids whose every enqueued step is
+        still waiting (its job is status='queued') — so no step has started and the
+        run is honestly QUEUED behind the single-threaded worker, not running.
+
+        Derived, never stored: the `runs.status` CHECK (migration 0016) has no
+        'queued', and the worker already serializes the jobs — this only surfaces
+        that truth so the dashboard shows 1 running + N queued, not N running. A run
+        counts as started (kept 'running') the moment any step's job is missing, aged
+        out, or past 'queued', so we only ever demote when certain nothing ran."""
+        if not candidates:
+            return set()
+        rows = (
+            (
+                await session.execute(
+                    text(
+                        "SELECT r.id FROM app.runs r"
+                        " WHERE r.id IN :ids"
+                        "   AND EXISTS (SELECT 1 FROM app.run_steps s WHERE s.run_id = r.id)"
+                        "   AND NOT EXISTS ("
+                        "     SELECT 1 FROM app.run_steps s"
+                        "     LEFT JOIN app.jobs j ON j.id = s.job_id"
+                        "     WHERE s.run_id = r.id"
+                        "       AND (s.job_id IS NULL OR j.id IS NULL OR j.status <> 'queued'))"
+                    ).bindparams(bindparam("ids", expanding=True)),
+                    {"ids": candidates},
+                )
+            )
+            .scalars()
+            .all()
+        )
+        return {str(r) for r in rows}
+
+    @staticmethod
+    def _effective_status(run: Run, queued_ids: set[str]) -> str:
+        """A run's display status: the stored value, except an in-flight pipeline run
+        whose steps are all still queued reads as 'queued' (see `_queued_pipeline_ids`)."""
+        return "queued" if str(run.id) in queued_ids else run.status
+
     async def list_recent(self, ctx: SessionContext, *, limit: int = 50) -> list[RunSummary]:
         async with scoped_session(self._maker, ctx) as session:
             rows = (
@@ -195,6 +243,12 @@ class RunLogReader:
                     .limit(limit)
                 )
             ).all()
+            # In-flight pipeline runs whose steps have not started yet read as
+            # 'queued' (derived, not stored) so the dashboard shows them waiting.
+            queued_ids = await self._queued_pipeline_ids(
+                session,
+                [run.id for run, _ in rows if run.kind == "pipeline" and run.status == "running"],
+            )
             out: list[RunSummary] = []
             for run, trigger_pipeline in rows:
                 last_error = None
@@ -215,7 +269,7 @@ class RunLogReader:
                     RunSummary(
                         id=str(run.id),
                         kind=run.kind,
-                        status=run.status,
+                        status=self._effective_status(run, queued_ids),
                         name=self._display_name(run.kind, run.pipeline, trigger_pipeline),
                         started_at=run.started_at,
                         duration_ms=_duration_ms(run.started_at, run.ended_at),
@@ -243,6 +297,11 @@ class RunLogReader:
             if row is None:
                 return None
             run, trigger_pipeline = row
+            queued_ids = (
+                await self._queued_pipeline_ids(session, [run.id])
+                if run.kind == "pipeline" and run.status == "running"
+                else set()
+            )
             steps = (
                 (
                     await session.execute(
@@ -255,7 +314,7 @@ class RunLogReader:
             return RunDetail(
                 id=str(run.id),
                 kind=run.kind,
-                status=run.status,
+                status=self._effective_status(run, queued_ids),
                 name=self._display_name(run.kind, run.pipeline, trigger_pipeline),
                 started_at=run.started_at,
                 duration_ms=_duration_ms(run.started_at, run.ended_at),

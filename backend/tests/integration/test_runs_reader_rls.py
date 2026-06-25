@@ -9,11 +9,13 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
+from jbrain import queue
 from jbrain.agent.runlog import AgentRunLog, RunLogReader
 from jbrain.agent.session import AgentSessionRepo
 from jbrain.auth import service
 from jbrain.auth.repo import SqlAuthRepo
 from jbrain.db.session import SessionContext, scoped_session
+from jbrain.workflow.runlog import EnqueuedStep, PipelineRunLog
 from tests.conftest import docker_available
 from tests.integration.test_rls import database_url  # noqa: F401
 
@@ -85,3 +87,57 @@ async def test_reader_bad_uuid_is_none(maker: async_sessionmaker) -> None:
     owner = await _owner(maker)
     reader = RunLogReader(maker)
     assert await reader.load(owner, "not-a-uuid") is None
+
+
+async def _seed_pipeline(maker: async_sessionmaker, owner: SessionContext) -> tuple[str, list[str]]:
+    """A pipeline run with two enqueued (status='queued') step jobs — the shape of a
+    freshly-fired manual trigger before the single-threaded worker picks it up."""
+    job_a = await queue.enqueue(maker, owner, "daily_inbox_triage", {"n": 1})
+    job_b = await queue.enqueue(maker, owner, "daily_inbox_triage", {"n": 2})
+    run_id = await PipelineRunLog(maker).record(
+        owner,
+        pipeline="daily_inbox_triage",
+        trigger_id=None,
+        ran_as="system",
+        domain_code=None,
+        principal_id=None,
+        steps=[EnqueuedStep(kind="daily_inbox_triage", job_id=job_a),
+               EnqueuedStep(kind="daily_inbox_triage", job_id=job_b)],
+    )
+    return run_id, [job_a, job_b]
+
+
+async def test_pipeline_run_reads_queued_until_a_step_starts(maker: async_sessionmaker) -> None:
+    owner = await _owner(maker)
+    run_id, jobs = await _seed_pipeline(maker, owner)
+    reader = RunLogReader(maker)
+
+    # Stored 'running', but every step's job is still queued → derived 'queued'.
+    assert (await reader.list_recent(owner))[0].status == "queued"
+    detail = await reader.load(owner, run_id)
+    assert detail is not None and detail.status == "queued"
+
+    # Once the worker claims one step's job, the run is genuinely running.
+    async with scoped_session(maker, owner) as session:
+        await session.execute(
+            text("UPDATE app.jobs SET status = 'running' WHERE id = :id"), {"id": jobs[0]}
+        )
+    assert (await reader.list_recent(owner))[0].status == "running"
+    assert (await reader.load(owner, run_id)).status == "running"  # type: ignore[union-attr]
+
+
+async def test_queue_depth_counts_queued_jobs(maker: async_sessionmaker) -> None:
+    owner = await _owner(maker)
+    reader = RunLogReader(maker)
+    # Deltas, not absolutes: the test DB is shared, so other rows may already exist.
+    base = await reader.queue_depth(owner)
+
+    _, jobs = await _seed_pipeline(maker, owner)
+    assert await reader.queue_depth(owner) == base + 2
+
+    # A running job has left the queue; only the still-queued one is counted.
+    async with scoped_session(maker, owner) as session:
+        await session.execute(
+            text("UPDATE app.jobs SET status = 'running' WHERE id = :id"), {"id": jobs[0]}
+        )
+    assert await reader.queue_depth(owner) == base + 1
