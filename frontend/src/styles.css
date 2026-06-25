@@ -8422,6 +8422,15 @@ button.small {
   background: var(--violet-tint);
   color: var(--violet);
 }
+.sheet .agent-opt.archivist.on {
+  border-color: var(--green);
+  background: var(--green-tint);
+}
+.sheet .agent-opt.archivist.on .agent-opt-ico,
+.sheet .agent-opt.archivist.on .agent-opt-check {
+  background: var(--green-tint);
+  color: var(--green);
+}
 .sheet .reads-summary.agent-nodata {
   margin-top: 12px;
   padding: 12px;
