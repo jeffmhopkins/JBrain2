@@ -1568,6 +1568,506 @@ h3 {
   margin-left: -12px;
 }
 
+/* ===== On-box models: residency-ladder redesign =====
+   One card: a capacity gauge (always visible), a residency/library surface switch,
+   then the chosen surface. The gauge is the honest "what fits" signal over the
+   single unified ~128 GB pool; the lanes are the ladder rungs (resident → staged →
+   unloaded); tiles encode footprint and carry the one-rung stepper. Tokens only —
+   no raw hex; the mock's :root values map to the repo accents. */
+
+/* ---- capacity gauge ---- */
+.gauge {
+  padding: 14px 16px 13px;
+}
+.gauge-top {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.gauge-ttl {
+  font-weight: 500;
+}
+.gauge-free {
+  margin-left: auto;
+  font-size: var(--fs-micro);
+  color: var(--text-2);
+}
+.gauge-free.warn {
+  color: var(--amber);
+}
+.gauge-free.over {
+  color: var(--rose);
+}
+.gauge-bar {
+  position: relative;
+  height: 30px;
+  border-radius: 9px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  overflow: hidden;
+  display: flex;
+  margin-top: 11px;
+}
+.gseg {
+  height: 100%;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  transition: width 0.18s ease;
+}
+.gseg-lab {
+  font-size: 11px;
+  padding-left: 7px;
+  white-space: nowrap;
+  overflow: hidden;
+  color: #0d1016;
+  font-weight: 600;
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.18);
+}
+/* Staged segments are projected, not resident — render as a translucent ghost. */
+.gseg.staged {
+  opacity: 0.42;
+}
+.gseg.staged .gseg-lab {
+  color: var(--text);
+  text-shadow: none;
+}
+/* The ceiling marker when the staged projection pushes the pool over. */
+.gauge-over-rail {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  right: 0;
+  width: 2px;
+  background: var(--rose);
+  opacity: 0.85;
+}
+.gauge-cap {
+  display: flex;
+  gap: 10px;
+  font-size: var(--fs-micro);
+  color: var(--text-2);
+  margin-top: 7px;
+  flex-wrap: wrap;
+}
+.gauge-cap .warn {
+  color: var(--amber);
+}
+.gauge-cap .over {
+  color: var(--rose);
+}
+.gauge-total {
+  margin-left: auto;
+  font-family: var(--font-mono);
+}
+.gauge-key {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.gauge-sw {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  display: inline-block;
+  background: var(--violet);
+}
+.gauge-empty {
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+  margin: 9px 0 0;
+}
+
+/* ---- surface switch (reuses .seg-row/.seg, steel accent) ---- */
+.surf-row {
+  border-radius: 0;
+  border-left: 0;
+  border-right: 0;
+  --mode: var(--steel);
+  --mode-tint: var(--steel-tint);
+}
+.surf {
+  font-size: var(--fs-head);
+  min-height: 44px;
+}
+.surf-badge {
+  font-size: 11px;
+  color: var(--text-3);
+  font-weight: 400;
+  font-family: var(--font-mono);
+}
+
+/* ---- surface body gutter ---- */
+.onbox-surface {
+  padding-bottom: 8px;
+}
+.onbox-gutter {
+  margin: 13px 16px 2px;
+}
+
+/* ---- ladder hint ---- */
+.ladder-hint {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 13px 16px 1px;
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+  line-height: 1.5;
+}
+.ladder-rungs {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  margin-top: 1px;
+  color: var(--text-2);
+}
+.ladder-rungs span {
+  font-size: 9px;
+  line-height: 1;
+}
+
+/* ---- lanes (rungs) ---- */
+.lanes {
+  padding: 6px 16px 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+.lane {
+  position: relative;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--surface-2);
+  padding: 11px 12px 12px 14px;
+  overflow: hidden;
+}
+/* Accent rail: the rung's identity color on the left edge. */
+.lane::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 4px;
+}
+.lane.resident::before {
+  background: var(--green);
+}
+.lane.staged::before {
+  background: var(--amber);
+}
+.lane.unloaded::before {
+  background: var(--text-3);
+}
+.lane.over {
+  border-color: color-mix(in srgb, var(--rose) 50%, var(--border));
+}
+.lane-head {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-height: 24px;
+}
+.lane-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: var(--r-pill);
+  flex: none;
+  background: var(--text-3);
+}
+.lane.resident .lane-dot {
+  background: var(--green);
+  box-shadow: 0 0 0 3px var(--green-tint);
+}
+.lane.staged .lane-dot {
+  background: var(--amber);
+  box-shadow: 0 0 0 3px var(--amber-tint);
+}
+.lane-name {
+  font-weight: 600;
+  font-size: var(--fs-head);
+  letter-spacing: 0.02em;
+}
+.lane-sub {
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+  font-weight: 400;
+}
+.lane-subtotal {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: var(--fs-micro);
+  color: var(--text-2);
+}
+.lane.resident .lane-subtotal {
+  color: var(--green);
+}
+.lane.staged .lane-subtotal {
+  color: var(--amber);
+}
+.lane-subtotal.over {
+  color: var(--rose);
+}
+.lane-tiles {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 10px;
+}
+.lane-empty {
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+  line-height: 1.45;
+  margin: 9px 0 0;
+  padding: 9px 0 3px;
+  border-top: 1px dashed var(--border);
+}
+
+/* ---- model tile ---- */
+.tile {
+  position: relative;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+  padding: 11px 12px;
+  transition: opacity 0.17s ease, transform 0.17s ease;
+}
+.tile.relocating-up {
+  opacity: 0;
+  transform: translateY(-10px) scale(0.98);
+}
+.tile.relocating-down {
+  opacity: 0;
+  transform: translateY(10px) scale(0.98);
+}
+/* Footprint strip across the bottom — proportional fill of the pool. */
+.tile-foot {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  height: 3px;
+  border-radius: 0 0 0 12px;
+}
+.tile.resident .tile-foot {
+  background: var(--green);
+}
+.tile.staged .tile-foot {
+  background: var(--amber);
+}
+.tile.unloaded .tile-foot {
+  background: var(--text-3);
+  opacity: 0.5;
+}
+.tile.img {
+  border-color: color-mix(in srgb, var(--violet) 35%, var(--border));
+}
+.tile.img .tile-foot {
+  background: var(--violet);
+}
+.tile-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+.tile-name {
+  flex: 1;
+  min-width: 0;
+  font-weight: 500;
+  font-size: var(--fs-secondary);
+  color: var(--text);
+}
+.tile-meta {
+  display: block;
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+  font-weight: 400;
+  margin-top: 2px;
+  font-family: var(--font-mono);
+}
+.tile-foot-lab {
+  font-size: var(--fs-micro);
+  color: var(--text-2);
+  font-family: var(--font-mono);
+  flex: none;
+  text-align: right;
+  white-space: nowrap;
+}
+.tile-foot-lab b {
+  color: var(--text);
+  font-weight: 600;
+}
+.tile.resident .tile-foot-lab b {
+  color: var(--green);
+}
+.tile.staged .tile-foot-lab b {
+  color: var(--amber);
+}
+.tile.img .tile-foot-lab b {
+  color: var(--violet);
+}
+.tile-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+.tile-note {
+  font-size: var(--fs-micro);
+  color: var(--text-2);
+  line-height: 1.45;
+  margin: 8px 0 0;
+}
+.tile-note.gate {
+  color: var(--text-3);
+}
+/* context-window control on the tile (LLMs, in-memory rungs). */
+.tile-ctx {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 9px;
+  flex-wrap: wrap;
+}
+.tile-ctx-label {
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+}
+.tile-ctx-select {
+  font: inherit;
+  font-size: var(--fs-micro);
+  color: var(--text);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 4px 8px;
+  min-height: 32px;
+  cursor: pointer;
+}
+.tile-ctx-select:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.tile-ctx-meta,
+.tile-ctx-hint {
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+  margin-left: auto;
+}
+/* ladder stepper buttons — one rung up/down, direction made explicit. */
+.tile-acts {
+  display: flex;
+  gap: 6px;
+  margin-top: 10px;
+  flex-wrap: wrap;
+}
+.tile-btn {
+  font: inherit;
+  font-size: var(--fs-micro);
+  font-weight: 500;
+  cursor: pointer;
+  border-radius: var(--r-pill);
+  padding: 6px 13px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-2);
+  transition: 0.15s;
+  white-space: nowrap;
+  min-height: 32px;
+}
+.tile-btn .dir {
+  font-weight: 700;
+  font-size: 12.5px;
+  line-height: 1;
+}
+.tile-btn:hover:not(:disabled) {
+  border-color: var(--steel);
+  color: var(--steel);
+  background: var(--steel-tint);
+}
+.tile-btn.up {
+  color: var(--green);
+  border-color: color-mix(in srgb, var(--green) 40%, var(--border));
+}
+.tile-btn.up:hover:not(:disabled) {
+  border-color: var(--green);
+  color: var(--green);
+  background: var(--green-tint);
+}
+.tile-btn.down {
+  color: var(--amber);
+  border-color: color-mix(in srgb, var(--amber) 40%, var(--border));
+}
+.tile-btn.down:hover:not(:disabled) {
+  border-color: var(--amber);
+  color: var(--amber);
+  background: var(--amber-tint);
+}
+.tile-btn:disabled {
+  opacity: 0.42;
+  cursor: default;
+}
+/* An image RESIDENT tile's "free" is a demotion (violet→rose register on hover). */
+.tile.img .tile-btn.down {
+  color: var(--violet);
+  border-color: color-mix(in srgb, var(--violet) 40%, var(--border));
+}
+.tile.img .tile-btn.down:hover:not(:disabled) {
+  border-color: var(--violet);
+  color: var(--violet);
+  background: var(--violet-tint);
+}
+
+/* ---- library (catalog) surface ---- */
+.cat-list {
+  padding: 8px 16px 6px;
+}
+.cat-divider {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin: 14px 2px 2px;
+  font-size: var(--fs-micro);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--text-2);
+}
+.cat-rail {
+  width: 3px;
+  height: 13px;
+  border-radius: 2px;
+  flex: none;
+}
+.cat-divider.llm .cat-rail {
+  background: var(--steel);
+}
+.cat-divider.img .cat-rail {
+  background: var(--violet);
+}
+.cat-line {
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+}
+/* The queue bar lives in the library surface; give it the card gutter. */
+.onbox-surface .llm-local-queue {
+  margin: 10px 16px 16px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .gseg,
+  .tile {
+    transition: none;
+  }
+  .tile.relocating-up,
+  .tile.relocating-down {
+    opacity: 1;
+    transform: none;
+  }
+}
+
 /* The ambient --mode-tint that .seg-on fills with isn't set on this screen, so
    a selected segment had no fill and was nearly invisible in both themes. Tie
    the selected reasoning/provider segment to its tier accent — a tinted fill

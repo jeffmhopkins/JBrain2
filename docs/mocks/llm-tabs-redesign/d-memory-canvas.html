@@ -1,0 +1,423 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>JBrain · On-box LLMs — memory canvas + model shelf (mock D)</title>
+<style>
+  :root{
+    --bg:#0E0F11; --surface:#17181B; --surface-2:#1E2024; --border:#26282C;
+    --text:#E6E7E9; --text-2:#9A9DA3; --text-3:#5C5F66;
+    --steel:#7FA7C9; --green:#8FBC9A; --amber:#C9A36A; --rose:#CF8A8F; --violet:#A493C9; --teal:#6FB6B1;
+    --steel-tint:rgba(127,167,201,.14); --green-tint:rgba(143,188,154,.14); --rose-tint:rgba(207,138,143,.14);
+    --violet-tint:rgba(164,147,201,.16); --amber-tint:rgba(201,163,106,.14);
+    --font:-apple-system,system-ui,"Segoe UI",Roboto,sans-serif; --mono:ui-monospace,Menlo,Consolas,monospace;
+    --r-card:16px; --r-seg:12px; --r-pill:999px;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);font-family:var(--font);font-size:15px;line-height:1.4;-webkit-font-smoothing:antialiased}
+  .wrap{max-width:520px;margin:0 auto;padding:16px 16px 96px}
+  h1.title{font-size:20px;font-weight:500;margin:6px 0 2px}
+  p.meta{color:var(--text-2);font-size:13px;margin:0 0 16px}
+  b{font-weight:600}
+
+  .card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-card);overflow:hidden}
+
+  /* ============ THE CANVAS (centerpiece) ============ */
+  .canvas-head{display:flex;align-items:center;gap:10px;padding:14px 16px 0}
+  .dot{width:9px;height:9px;border-radius:999px;background:var(--green);box-shadow:0 0 0 4px var(--green-tint);flex:none}
+  .dot.amber{background:var(--amber);box-shadow:0 0 0 4px var(--amber-tint)}
+  .dot.off{background:var(--text-3);box-shadow:none}
+  .canvas-head .ttl{font-weight:500}
+  .canvas-head .sub{margin-left:auto;color:var(--text-2);font-size:12.5px;font-family:var(--mono)}
+
+  .canvas-wrap{padding:12px 16px 4px}
+  /* The pool — a tall vertical canvas so footprint reads as physical volume. */
+  .canvas{position:relative;height:300px;border-radius:14px;background:var(--surface-2);
+          border:1px solid var(--border);overflow:hidden;display:flex;flex-direction:column-reverse}
+  .blk{position:relative;display:flex;flex-direction:column;justify-content:center;gap:1px;
+       min-height:0;overflow:hidden;cursor:pointer;border-top:1px solid rgba(14,15,17,.55);
+       transition:height .16s ease,opacity .16s ease,background-color .16s ease}
+  .blk:first-child{border-top:0}
+  .blk .blk-name{font-size:12px;font-weight:600;padding:0 10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:#0E0F11}
+  .blk .blk-sub{font-size:10.5px;padding:0 10px;color:rgba(14,15,17,.62);font-family:var(--mono);white-space:nowrap;overflow:hidden}
+  /* KV cache: a lighter striped sub-segment pinned to the top of a loaded block. */
+  .blk .kv{position:absolute;top:0;left:0;right:0;background:repeating-linear-gradient(45deg,rgba(255,255,255,.18) 0 5px,rgba(255,255,255,.06) 5px 10px);
+           display:flex;align-items:center;border-bottom:1px solid rgba(14,15,17,.35)}
+  .blk .kv span{font-size:9.5px;padding-left:10px;color:rgba(14,15,17,.7);font-weight:600;white-space:nowrap;overflow:hidden}
+  /* ghost (staged/warm — not resident) */
+  .blk.ghost{background:transparent !important;border:1px dashed currentColor;border-radius:8px;margin:3px 4px;cursor:pointer}
+  .blk.ghost .blk-name{color:var(--amber)}
+  .blk.ghost .blk-sub{color:var(--text-2)}
+  .blk.ghost .kv{display:none}
+  /* image VRAM block — secondary, violet, minimal controls */
+  .blk.img{cursor:default}
+  /* selected block gets a focus ring */
+  .blk.sel{outline:2px solid var(--text);outline-offset:-2px;z-index:2}
+  /* free headroom — the remaining space, quietly labeled */
+  .free{flex:1 1 auto;min-height:0;display:flex;align-items:center;justify-content:center}
+  .free .flab{font-size:11.5px;color:var(--text-3);font-family:var(--mono)}
+  /* projection overlay: where a previewed action would land */
+  .proj{position:absolute;left:0;right:0;border-top:1px dashed var(--text-2);pointer-events:none;
+         display:flex;align-items:flex-start;justify-content:flex-end;transition:bottom .16s ease}
+  .proj .ptag{font-size:10.5px;font-family:var(--mono);background:var(--surface);border:1px solid var(--border);
+              border-radius:999px;padding:1px 8px;margin:-9px 8px 0;color:var(--text-2)}
+  .proj.over{border-top-color:var(--rose)} .proj.over .ptag{color:var(--rose);border-color:color-mix(in srgb,var(--rose) 45%,var(--border))}
+
+  .legend{display:flex;gap:12px;flex-wrap:wrap;font-size:11px;color:var(--text-2);margin:8px 2px 2px}
+  .legend .k{display:inline-flex;align-items:center;gap:5px}
+  .legend .sw{width:9px;height:9px;border-radius:2px;display:inline-block}
+  .legend .sw.ghost{background:transparent;border:1px dashed var(--amber)}
+  .legend .sw.kv{background:repeating-linear-gradient(45deg,rgba(230,231,233,.5) 0 3px,rgba(230,231,233,.15) 3px 6px)}
+  .legend .total{margin-left:auto;font-family:var(--mono);color:var(--text-3)}
+
+  /* ============ SELECTION CONTROL SHEET (for a block on the canvas) ============ */
+  .ctl{border-top:1px solid var(--border);background:color-mix(in srgb,var(--surface) 92%,#000);padding:13px 16px}
+  .ctl-top{display:flex;align-items:flex-start;gap:10px}
+  .ctl-name{flex:1;min-width:0;font-weight:600;font-size:14.5px}
+  .ctl-name .m{display:block;font-size:11.5px;color:var(--text-3);font-weight:400;margin-top:2px;font-family:var(--mono)}
+  .ctl-state{font-size:11px}
+  .ctl-state.loaded{color:var(--green)}.ctl-state.staged{color:var(--amber)}.ctl-state.resident{color:var(--violet)}
+  .chips{display:flex;flex-wrap:wrap;gap:5px;margin-top:9px}
+  .chip{font-size:11px;padding:2px 8px;border-radius:999px;border:1px solid var(--border);color:var(--text-2)}
+  .chip.tier{color:var(--steel);border-color:color-mix(in srgb,var(--steel) 35%,var(--border))}
+  .chip.tools{color:var(--teal);border-color:color-mix(in srgb,var(--teal) 35%,var(--border))}
+  .chip.vision{color:var(--violet);border-color:color-mix(in srgb,var(--violet) 35%,var(--border))}
+  .chip.warn{color:var(--amber);border-color:color-mix(in srgb,var(--amber) 35%,var(--border))}
+  .note{font-size:12px;color:var(--text-2);line-height:1.45;margin:9px 0 0}
+  .ctx{display:flex;align-items:center;gap:8px;margin-top:11px}
+  .ctx label{font-size:11.5px;color:var(--text-3)}
+  .ctx select{background:var(--surface-2);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:6px 8px;font:inherit;font-size:12px;min-height:34px}
+  .ctx select:disabled{opacity:.5}.ctx .kvh{font-size:11.5px;color:var(--text-3);margin-left:auto}
+  /* primary action bar lives low on screen, one-thumb reachable */
+  .acts{display:flex;gap:8px;margin-top:13px}
+  .btn{font:inherit;font-size:13px;font-weight:500;cursor:pointer;border-radius:var(--r-pill);padding:0 16px;min-height:44px;
+       border:1px solid var(--border);background:transparent;color:var(--text-2);transition:.15s;white-space:nowrap;display:inline-flex;align-items:center;justify-content:center;gap:7px}
+  .btn.grow{flex:1}
+  .btn:hover:not(:disabled){border-color:var(--text-2);color:var(--text)}
+  .btn.go{color:var(--green);border-color:color-mix(in srgb,var(--green) 42%,var(--border))}
+  .btn.go:hover:not(:disabled){border-color:var(--green);color:var(--green);background:var(--green-tint)}
+  .btn.stage{color:var(--steel);border-color:color-mix(in srgb,var(--steel) 42%,var(--border))}
+  .btn.stage:hover:not(:disabled){border-color:var(--steel);color:var(--steel);background:var(--steel-tint)}
+  .btn.danger{color:var(--rose);border-color:color-mix(in srgb,var(--rose) 42%,var(--border))}
+  .btn.danger:hover:not(:disabled){background:var(--rose-tint)}
+  .btn:disabled{opacity:.4;cursor:default}
+  .blocked{font-size:12px;color:var(--amber);margin-top:11px;line-height:1.45}
+  .ctl-hint{font-size:12px;color:var(--text-3);line-height:1.45;text-align:center;padding:4px 0}
+
+  /* ============ THE SHELF (installed-but-idle) ============ */
+  .shelf-head{display:flex;align-items:center;gap:8px;padding:14px 16px 2px;border-top:1px solid var(--border)}
+  .shelf-head .h{font-size:13px;font-weight:600}
+  .shelf-head .h .c{color:var(--text-3);font-weight:400;margin-left:6px}
+  .shelf-head .browse{margin-left:auto}
+  .shelf-head .browse .btn{min-height:34px;font-size:11.5px;padding:0 12px}
+  .shelf{display:flex;gap:9px;overflow-x:auto;padding:10px 16px 16px;-webkit-overflow-scrolling:touch;scrollbar-width:none}
+  .shelf::-webkit-scrollbar{display:none}
+  .tile{flex:none;width:150px;background:var(--surface-2);border:1px solid var(--border);border-radius:12px;padding:11px 12px;cursor:pointer;transition:.15s;text-align:left}
+  .tile:hover{border-color:var(--steel);transform:translateY(-2px)}
+  .tile.sel{border-color:var(--text);outline:1px solid var(--text);outline-offset:-2px}
+  .tile .tn{font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .tile .tm{font-size:11px;color:var(--text-3);font-family:var(--mono);margin-top:3px}
+  .tile .tchips{display:flex;gap:4px;margin-top:8px;flex-wrap:wrap}
+  .tile .tchips .chip{font-size:10px;padding:1px 6px}
+  .shelf-empty{color:var(--text-3);font-size:12.5px;padding:4px 16px 16px}
+
+  /* ============ CATALOG SHEET (slide-up) ============ */
+  .scrim{position:fixed;inset:0;background:rgba(0,0,0,.5);opacity:0;pointer-events:none;transition:opacity .16s ease;z-index:40}
+  .scrim.on{opacity:1;pointer-events:auto}
+  .sheet{position:fixed;left:0;right:0;bottom:0;z-index:50;max-width:520px;margin:0 auto;
+          background:var(--surface);border:1px solid var(--border);border-bottom:0;border-radius:18px 18px 0 0;
+          transform:translateY(100%);transition:transform .18s ease;max-height:86vh;display:flex;flex-direction:column}
+  .sheet.on{transform:translateY(0)}
+  .sheet-grip{width:38px;height:4px;border-radius:999px;background:var(--border);margin:9px auto 2px}
+  .sheet-head{display:flex;align-items:center;gap:8px;padding:6px 16px 10px;border-bottom:1px solid var(--border)}
+  .sheet-head .h{font-weight:600}
+  .sheet-head .x{margin-left:auto;background:transparent;border:0;color:var(--text-2);font-size:22px;cursor:pointer;line-height:1;padding:0 4px;min-height:44px}
+  .sheet-body{overflow-y:auto;padding:4px 16px 16px}
+  .cat-hint{font-size:12px;color:var(--text-2);margin:11px 2px 4px;line-height:1.45}
+  .row{padding:13px 0;border-top:1px solid var(--border)}.row:first-child{border-top:0}
+  .row-head{display:flex;align-items:flex-start;gap:10px}
+  .row-name{flex:1;min-width:0;font-weight:500;font-size:14px}
+  .row-meta{display:block;font-size:11.5px;color:var(--text-3);font-weight:400;margin-top:2px;font-family:var(--mono)}
+  .row-right{display:flex;align-items:center;gap:8px;flex:none}
+  .rbtn{font:inherit;font-size:11.5px;font-weight:500;cursor:pointer;border-radius:var(--r-pill);padding:6px 13px;min-height:34px;border:1px solid var(--border);background:transparent;color:var(--text-2);transition:.15s;white-space:nowrap}
+  .rbtn.go{color:var(--green);border-color:color-mix(in srgb,var(--green) 40%,var(--border))}
+  .rbtn.go:hover{background:var(--green-tint)}
+  .rbtn.danger{color:var(--rose);border-color:color-mix(in srgb,var(--rose) 40%,var(--border))}
+  .rbtn.danger:hover{background:var(--rose-tint)}
+  .state{font-size:11px;color:var(--text-3)}.state.queued{color:var(--steel)}.state.loaded{color:var(--green)}.state.staged{color:var(--amber)}
+  .dl{margin-top:9px}.dl-bar{height:6px;border-radius:999px;background:var(--surface-2);border:1px solid var(--border);overflow:hidden}
+  .dl-bar i{display:block;height:100%;background:var(--steel);transition:width .4s}
+  .dl-cap{display:block;font-size:11px;color:var(--text-2);margin-top:5px;font-family:var(--mono)}
+  .queuebar{display:flex;align-items:center;gap:12px;margin:14px 0 4px;padding:11px 13px;border:1px solid color-mix(in srgb,var(--steel) 45%,var(--border));border-radius:13px;background:var(--steel-tint)}
+  .queuebar b{font-size:13px}.queuebar span{display:block;color:var(--text-2);font-size:11.5px;margin-top:2px}.queuebar .rbtn{margin-left:auto;flex:none}
+
+  @media (prefers-reduced-motion:reduce){
+    .blk,.proj,.sheet,.scrim,.tile{transition:none !important}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1 class="title">Settings · LLM</h1>
+  <p class="meta">Mock D — <b>memory canvas + model shelf</b>. The unified ~128 GB pool is the primary interface, not a readout:
+  a tall <b>capacity canvas</b> where loaded models are solid blocks sized to their real footprint (weights + a lighter striped <b>KV</b> sub-segment),
+  staged models are hollow <b>ghost</b> blocks (warm, not resident), the image service is one quiet violet block, and free headroom is visible space.
+  Below sits a horizontal <b>shelf</b> of installed-but-idle models — tap a tile to lift it into the canvas, where its primary action stages or loads it.
+  Tap any block to surface its controls low on screen; previews show the headroom math honestly (<b>+X GB → over by Y</b>) before you commit. The Catalog lives in a slide-up sheet.</p>
+
+  <div class="card">
+    <!-- ===== CANVAS ===== -->
+    <div class="canvas-head">
+      <span class="dot" id="dot"></span>
+      <span class="ttl">On-box memory</span>
+      <span class="sub" id="sub"></span>
+    </div>
+    <div class="canvas-wrap">
+      <div class="canvas" id="canvas"></div>
+      <div class="legend">
+        <span class="k"><span class="sw kv"></span>kv cache</span>
+        <span class="k"><span class="sw ghost"></span>staged · warm</span>
+        <span class="k"><span class="sw" style="background:var(--violet)"></span>image vram</span>
+        <span class="total" id="total"></span>
+      </div>
+    </div>
+
+    <!-- ===== SELECTION CONTROL SHEET (inline, for canvas blocks) ===== -->
+    <div class="ctl" id="ctl"></div>
+
+    <!-- ===== SHELF ===== -->
+    <div class="shelf-head">
+      <span class="h">shelf<span class="c" id="shelf-c"></span></span>
+      <span class="browse"><button class="btn" onclick="openCat()">browse catalog</button></span>
+    </div>
+    <div class="shelf" id="shelf"></div>
+  </div>
+</div>
+
+<!-- ===== CATALOG SHEET ===== -->
+<div class="scrim" id="scrim" onclick="closeCat()"></div>
+<div class="sheet" id="sheet" role="dialog" aria-label="Model catalog">
+  <div class="sheet-grip"></div>
+  <div class="sheet-head">
+    <span class="h">catalog</span>
+    <button class="x" onclick="closeCat()" aria-label="close">×</button>
+  </div>
+  <div class="sheet-body" id="sheet-body"></div>
+</div>
+
+<script>
+const TOTAL=128, WINDOWS=[8192,16384,32768,65536,131072];
+const fmt=n=>Math.round(n);
+// muted block fills keyed off the design tokens (steel/green/teal rotation for resident weights)
+const FILL=['#7FA7C9','#8FBC9A','#6FB6B1','#C9A36A'];
+const IMGCOL='#A493C9';
+
+let llm={
+  models:[
+    {id:'qwen3-vl-30b',label:'Qwen3-VL 30B · vision',short:'Qwen3-VL',quant:'Q8_0',gb:32,kv:1.5,win:32768,winMax:32768,
+     chips:[['vision','vision'],['tier','vision · low'],['tools','tools']],installed:true,status:'loaded'},
+    {id:'gpt-oss-120b',label:'GPT-OSS 120B · reasoning',short:'GPT-OSS',quant:'MXFP4',gb:59,kv:4.5,win:131072,winMax:131072,
+     chips:[['tier','high'],['tools','tools']],installed:true,status:'staged'},
+    {id:'qwen3-235b',label:'Qwen3-235B-A22B · 3-bit',short:'Qwen3-235B',quant:'UD-Q3_K_XL',gb:97,kv:11.5,win:32768,winMax:32768,
+     chips:[['tier','high'],['tools','tools'],['warn','standalone · slow']],installed:true,status:'idle',
+     note:'235B MoE, 22B active — strongest fit, ~single-digit tok/s here. batch use.'},
+    {id:'qwen3-30b',label:'Qwen3 30B · lightweight',short:'Qwen3 30B',quant:'Q4_K_M',gb:18,kv:3.2,win:32768,winMax:32768,
+     chips:[['tier','low'],['tools','tools']],installed:false,status:'available'},
+    {id:'glm-4.5-air',label:'GLM-4.5 Air · reasoning',short:'GLM-4.5',quant:'Q4_K_M',gb:70,kv:5,win:32768,winMax:131072,
+     chips:[['tier','high'],['tools','tools']],installed:false,status:'available'},
+    {id:'llama-3.3-70b',label:'Llama 3.3 70B · batch',short:'Llama 70B',quant:'Q4_K_M',gb:40,kv:8,win:32768,winMax:32768,
+     chips:[['tier','high'],['tools','tools'],['warn','~5 t/s']],installed:false,status:'available'},
+  ]};
+// image service: one resident model draws VRAM from the shared pool
+let img={running:true,vram:20,label:'Qwen-Image'};
+
+const resGb=m=>m.gb+m.kv;
+const find=id=>llm.models.find(m=>m.id===id);
+let sel=null;        // selected canvas block id (or 'img')
+let preview=null;    // {id, addGb} headroom preview while a shelf tile is selected
+let shelfSel=null;   // selected shelf tile id
+
+/* ---------- usage math ---------- */
+function usage(){
+  const loaded=llm.models.filter(m=>m.installed&&m.status==='loaded');
+  const staged=llm.models.filter(m=>m.installed&&m.status==='staged');
+  const residentGb=loaded.reduce((s,m)=>s+resGb(m),0)+(img.running?img.vram:0);
+  const stagedGb=staged.reduce((s,m)=>s+resGb(m),0);
+  return {loaded,staged,residentGb,stagedGb,free:TOTAL-residentGb-stagedGb};
+}
+
+/* ---------- canvas ---------- */
+function pctH(gb){return (gb/TOTAL*100);}
+function renderCanvas(){
+  const u=usage(), c=document.getElementById('canvas'); c.innerHTML='';
+  let fi=0;
+  // resident blocks first (bottom of the column-reverse stack), then ghosts, then free
+  u.loaded.forEach(m=>{
+    const fill=FILL[fi++%FILL.length];
+    const b=document.createElement('div');
+    b.className='blk'+(sel===m.id?' sel':''); b.style.height=pctH(resGb(m))+'%'; b.style.background=fill;
+    b.onclick=()=>selectBlock(m.id);
+    b.innerHTML=`<div class="kv" style="height:${(m.kv/resGb(m))*100}%"><span>kv ${fmt(m.kv)}G</span></div>`+
+                `<div class="blk-name">${m.short}</div><div class="blk-sub">${fmt(resGb(m))}G resident</div>`;
+    c.appendChild(b);
+  });
+  if(img.running){
+    const b=document.createElement('div');
+    b.className='blk img'+(sel==='img'?' sel':''); b.style.height=pctH(img.vram)+'%'; b.style.background=IMGCOL;
+    b.onclick=()=>selectBlock('img');
+    b.innerHTML=`<div class="blk-name">${img.label} · image</div><div class="blk-sub">${fmt(img.vram)}G vram</div>`;
+    c.appendChild(b);
+  }
+  u.staged.forEach(m=>{
+    const b=document.createElement('div');
+    b.className='blk ghost'+(sel===m.id?' sel':''); b.style.height=pctH(resGb(m))+'%'; b.style.color='var(--amber)';
+    b.onclick=()=>selectBlock(m.id);
+    b.innerHTML=`<div class="blk-name">${m.short}</div><div class="blk-sub">staged · ${fmt(resGb(m))}G warm</div>`;
+    c.appendChild(b);
+  });
+  // free headroom fills the rest
+  const free=document.createElement('div'); free.className='free';
+  free.innerHTML=`<span class="flab">${fmt(Math.max(u.free,0))} GB free</span>`;
+  c.appendChild(free);
+
+  // projection overlay when a shelf tile is selected (preview an add)
+  if(preview){
+    const usedFrac=(TOTAL-u.free)/TOTAL;                 // current fill from bottom
+    const projFrac=(TOTAL-u.free+preview.addGb)/TOTAL;
+    const over=projFrac>1;
+    const p=document.createElement('div'); p.className='proj'+(over?' over':'');
+    p.style.bottom=Math.min(projFrac,1)*100+'%';
+    const overBy=fmt((TOTAL-u.free+preview.addGb)-TOTAL);
+    p.innerHTML=`<span class="ptag">${over?`over by ${overBy}G`:`+${fmt(preview.addGb)}G → ${fmt(TOTAL-u.free+preview.addGb)}G`}</span>`;
+    c.appendChild(p);
+  }
+
+  // header
+  const anyResident=u.loaded.length||img.running;
+  document.getElementById('dot').className='dot'+(anyResident?'':(u.staged.length?' amber':' off'));
+  document.getElementById('sub').textContent=`${fmt(u.residentGb)}G resident · ${fmt(Math.max(u.free,0))}G free`;
+  document.getElementById('total').textContent=`${fmt(u.residentGb)} / ${TOTAL} GB`;
+}
+
+/* ---------- selection control sheet (canvas block) ---------- */
+function ctxPicker(m){
+  const ed=m.status!=='loaded';
+  const opts=Array.from(new Set([...WINDOWS.filter(w=>w<=m.winMax),m.winMax])).sort((a,b)=>a-b)
+    .map(w=>`<option value="${w}" ${w===m.win?'selected':''}>${w>=1024?(w/1024)+'k':w}</option>`).join('');
+  return `<div class="ctx"><label>context</label><select ${ed?'':'disabled'} onchange="setWin('${m.id}',this.value)">${opts}</select>`+
+    (m.status==='loaded'?'<span class="kvh">🔒 unload to change</span>':`<span class="kvh">kv ~${m.kv}G</span>`)+`</div>`;
+}
+function renderCtl(){
+  const el=document.getElementById('ctl');
+  // shelf tile selected → show its lift actions (stage / load) with headroom preview
+  if(shelfSel){
+    const m=find(shelfSel), u=usage();
+    const loadAdd=resGb(m), overLoad=u.free-loadAdd<0;
+    const chips=(m.chips||[]).map(([c,l])=>`<span class="chip ${c}">${l}</span>`).join('');
+    el.innerHTML=`<div class="ctl-top"><div class="ctl-name">${m.label}<span class="m">${m.quant} · ${fmt(m.gb)}G weights · ${fmt(loadAdd)}G resident</span></div>
+        <span class="ctl-state">on shelf · idle</span></div>
+      <div class="chips">${chips}</div>${m.note?`<p class="note">${m.note}</p>`:''}
+      ${ctxPicker(m)}
+      ${overLoad?`<p class="blocked">loading needs ${fmt(loadAdd)}G — only ${fmt(Math.max(u.free,0))}G free (over by ${fmt(loadAdd-u.free)}G). stage it warm, or free a block first.</p>`:''}
+      <div class="acts">
+        <button class="btn stage grow" onclick="stage('${m.id}')">stage warm</button>
+        <button class="btn go grow" onclick="load('${m.id}')" ${overLoad?'disabled':''}>load → resident</button>
+      </div>`;
+    return;
+  }
+  if(sel==='img'){
+    el.innerHTML=`<div class="ctl-top"><div class="ctl-name">${img.label} · image service<span class="m">${fmt(img.vram)}G vram · shares the pool</span></div>
+        <span class="ctl-state resident">resident</span></div>
+      <p class="note">image generation shares this memory pool. manage models and steps in image settings — here you can only free the VRAM.</p>
+      <div class="acts"><button class="btn danger grow" onclick="freeImg()">free image vram</button></div>`;
+    return;
+  }
+  if(sel){
+    const m=find(sel), u=usage();
+    const chips=(m.chips||[]).map(([c,l])=>`<span class="chip ${c}">${l}</span>`).join('');
+    if(m.status==='loaded'){
+      el.innerHTML=`<div class="ctl-top"><div class="ctl-name">${m.label}<span class="m">${m.quant} · ${fmt(resGb(m))}G resident (${fmt(m.gb)}G + ${fmt(m.kv)}G kv)</span></div>
+          <span class="ctl-state loaded">loaded</span></div>
+        <div class="chips">${chips}</div>${ctxPicker(m)}
+        <div class="acts"><button class="btn grow" onclick="unload('${m.id}')">unload</button></div>`;
+    } else if(m.status==='staged'){
+      const loadAdd=resGb(m), overLoad=u.free-loadAdd<0;
+      el.innerHTML=`<div class="ctl-top"><div class="ctl-name">${m.label}<span class="m">${m.quant} · warm · would take ${fmt(loadAdd)}G resident</span></div>
+          <span class="ctl-state staged">staged · warm</span></div>
+        <div class="chips">${chips}</div>${ctxPicker(m)}
+        ${overLoad?`<p class="blocked">loading needs ${fmt(loadAdd)}G — only ${fmt(Math.max(u.free,0))}G free (over by ${fmt(loadAdd-u.free)}G).</p>`:''}
+        <div class="acts">
+          <button class="btn grow" onclick="unstage('${m.id}')">unstage</button>
+          <button class="btn go grow" onclick="load('${m.id}')" ${overLoad?'disabled':''}>load → resident</button>
+        </div>`;
+    }
+    return;
+  }
+  el.innerHTML=`<p class="ctl-hint">tap a block above for its controls — or a shelf tile below to lift it into memory.</p>`;
+}
+
+/* ---------- shelf ---------- */
+function renderShelf(){
+  const idle=llm.models.filter(m=>m.installed&&m.status==='idle');
+  document.getElementById('shelf-c').textContent=` · ${idle.length} idle, installed`;
+  const s=document.getElementById('shelf');
+  if(!idle.length){ s.outerHTML='<div class="shelf-empty" id="shelf">nothing idle — everything installed is in memory.</div>'; return; }
+  s.innerHTML=idle.map(m=>{
+    const chips=(m.chips||[]).slice(0,2).map(([c,l])=>`<span class="chip ${c}">${l}</span>`).join('');
+    return `<button class="tile${shelfSel===m.id?' sel':''}" onclick="pickShelf('${m.id}')">
+      <div class="tn">${m.short}</div><div class="tm">${fmt(m.gb)}G · ${fmt(resGb(m))}G resident</div>
+      <div class="tchips">${chips}</div></button>`;
+  }).join('');
+}
+
+/* ---------- catalog sheet ---------- */
+function renderCat(){
+  const body=document.getElementById('sheet-body');
+  const queued=llm.models.filter(m=>!m.installed&&m.status==='queued');
+  const queuedGb=queued.reduce((s,m)=>s+m.gb,0);
+  const rows=llm.models.map(catRow).join('');
+  const qbar=queued.length?`<div class="queuebar"><div><b>${queued.length} queued · ${fmt(queuedGb)} GB</b><span>installs on your next update.</span></div>
+      <button class="rbtn go" onclick="alert('(mock) kicks the provisioning update')">update &amp; install</button></div>`:'';
+  body.innerHTML=`<p class="cat-hint">every catalog model. install pulls the weights to the box; uninstall removes them and frees the disk. installed models land on the shelf.</p>${rows}${qbar}`;
+}
+function catRow(m){
+  let acts='',sc='';
+  if(!m.installed){
+    if(m.status==='queued'){ acts=`<button class="rbtn" onclick="install('${m.id}',false)">remove</button>`; sc=`<span class="state queued">queued</span>`; }
+    else acts=`<button class="rbtn go" onclick="install('${m.id}',true)">install</button>`;
+  } else {
+    acts=`<button class="rbtn danger" onclick="uninstall('${m.id}')">uninstall</button>`;
+    sc=`<span class="state ${m.status}">${m.status}</span>`;
+  }
+  const size=(m.installed?'':'~')+fmt(m.gb)+' GB';
+  const dl=m.status==='queued'?`<div class="dl"><div class="dl-bar"><i style="width:${m.dl||0}%"></i></div><div class="dl-cap">${fmt((m.dl||0)/100*m.gb)} / ${fmt(m.gb)} GB · ${m.dl||0}%</div></div>`:'';
+  const chips=(m.chips||[]).map(([c,l])=>`<span class="chip ${c}">${l}</span>`).join('');
+  return `<div class="row"><div class="row-head"><div class="row-name">${m.label}<span class="row-meta">${m.quant} · ${size}</span></div>
+      <div class="row-right">${acts}${sc}</div></div><div class="chips">${chips}</div>${dl}</div>`;
+}
+
+/* ---------- interactions ---------- */
+function render(){ renderCanvas(); renderCtl(); renderShelf(); }
+function selectBlock(id){ shelfSel=null; preview=null; sel=(sel===id?null:id); render(); }
+function pickShelf(id){
+  if(shelfSel===id){ shelfSel=null; preview=null; }
+  else { shelfSel=id; sel=null; const m=find(id); preview={id, addGb:resGb(m)}; }
+  render();
+}
+function stage(id){ find(id).status='staged'; shelfSel=null; preview=null; sel=id; render(); }
+function load(id){ find(id).status='loaded'; shelfSel=null; preview=null; sel=id; render(); }
+function unstage(id){ find(id).status='idle'; sel=null; render(); }
+function unload(id){ find(id).status='idle'; sel=null; render(); }
+function freeImg(){ img.running=false; sel=null; render(); }
+function setWin(id,v){ find(id).win=+v; render(); }
+function install(id,on){ const m=find(id); m.status=on?'queued':'available'; m.dl=0; renderCat(); }
+function uninstall(id){ const m=find(id); if(!confirm('(mock) uninstall '+m.label+' and delete its weights?'))return;
+  m.installed=false; m.status='available'; render(); renderCat(); }
+function openCat(){ renderCat(); document.getElementById('scrim').classList.add('on'); document.getElementById('sheet').classList.add('on'); }
+function closeCat(){ document.getElementById('scrim').classList.remove('on'); document.getElementById('sheet').classList.remove('on'); }
+
+render();
+</script>
+</body>
+</html>

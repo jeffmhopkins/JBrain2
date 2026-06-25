@@ -1,3 +1,4 @@
+import type { CSSProperties, ReactNode } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type {
   ImageModelInfo,
@@ -162,12 +163,9 @@ export function LLMSettingsScreen() {
 
   // Which tiers have their per-task overrides expanded.
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
-  // The On-box card's two independently-collapsible sections + their omnibox tabs.
-  // LLMs open by default (the common case); the image section opens on demand.
-  const [llmOpen, setLlmOpen] = useState(true);
-  const [imgOpen, setImgOpen] = useState(false);
-  const [llmTab, setLlmTab] = useState<LlmTab>("installed");
-  const [imgTab, setImgTab] = useState<ImgTab>("installed");
+  // The On-box card's surface switch: the residency ladder (lanes) or the library
+  // (catalog). The ladder is the common case, so it opens by default.
+  const [surface, setSurface] = useState<OnBoxSurface>("lanes");
   // Catalog ids with a per-model action (stage/load/unload/window) in flight — the
   // row's controls show a pending state and lock out a second concurrent action.
   const [busy, setBusy] = useState<Set<string>>(new Set());
@@ -180,9 +178,9 @@ export function LLMSettingsScreen() {
   const imageEnabled = image?.enabled ?? false;
   const foreground = useForeground();
   useEffect(() => {
-    // Poll while either section is open (the shared meter is always visible, but a
-    // collapsed card needs no live refresh).
-    if ((!llmOpen && !imgOpen) || !foreground || (!hostingEnabled && !imageEnabled)) return;
+    // The card is always showing (the gauge + a surface), so refresh whenever the
+    // app is foregrounded and any backend is on.
+    if (!foreground || (!hostingEnabled && !imageEnabled)) return;
     let stop = false;
     const tick = () => {
       if (hostingEnabled) {
@@ -239,7 +237,7 @@ export function LLMSettingsScreen() {
       stop = true;
       clearInterval(id);
     };
-  }, [llmOpen, imgOpen, hostingEnabled, imageEnabled, foreground]);
+  }, [hostingEnabled, imageEnabled, foreground]);
 
   const mark = (id: string) => setBusy((s) => new Set(s).add(id));
   const unmark = (id: string) =>
@@ -267,15 +265,6 @@ export function LLMSettingsScreen() {
     );
   }
 
-  function unloadModel(id: string) {
-    mark(id);
-    api
-      .unloadLocalModel(id)
-      .then(reconcileLoaded)
-      .catch(() => {})
-      .finally(() => unmark(id));
-  }
-
   function loadModel(id: string) {
     mark(id);
     api
@@ -291,6 +280,25 @@ export function LLMSettingsScreen() {
     const seq = ++putSeq.current;
     api
       .stageLocalModel(id, on)
+      .then((s) => {
+        if (seq === putSeq.current) setSettings(s);
+      })
+      .catch(() => {})
+      .finally(() => unmark(id));
+  }
+
+  // The ladder's resident→staged step (one rung down). The backend has no single
+  // "unload but keep staged" call, so sequence the two existing ones: unload the
+  // process, then stage it so the tile lands in the STAGED lane (never resident→
+  // unloaded directly). The full snapshot from stage reconciles last; the putSeq
+  // guard keeps a stale 4s poll from clobbering the result. This is the only
+  // unload path on the ladder — a resident model never drops straight to idle.
+  function unloadToStaged(id: string) {
+    mark(id);
+    const seq = ++putSeq.current;
+    api
+      .unloadLocalModel(id)
+      .then(() => api.stageLocalModel(id, true))
       .then((s) => {
         if (seq === putSeq.current) setSettings(s);
       })
@@ -507,20 +515,14 @@ export function LLMSettingsScreen() {
       </p>
 
       <OnBoxModelsCard
-        llmOpen={llmOpen}
-        imgOpen={imgOpen}
-        onToggleLlm={() => setLlmOpen((v) => !v)}
-        onToggleImg={() => setImgOpen((v) => !v)}
-        llmTab={llmTab}
-        imgTab={imgTab}
-        onLlmTab={setLlmTab}
-        onImgTab={setImgTab}
+        surface={surface}
+        onSurface={setSurface}
         hostingEnabled={settings.local_hosting_enabled}
         models={settings.local_models}
         hostMemory={settings.host_memory}
         image={image}
         busy={busy}
-        onUnload={unloadModel}
+        onUnloadToStaged={unloadToStaged}
         onLoad={loadModel}
         onStage={stageModel}
         onSetWindow={setContextWindow}
@@ -728,134 +730,65 @@ function slotGradient(slot: number, lighten = 0): string {
   return `linear-gradient(90deg, hsl(${h - HUE_SPREAD} ${s}% ${lt}%), hsl(${h + HUE_SPREAD} ${s}% ${lt}%))`;
 }
 
-// The image model's bar segment — a distinct violet (the "generate" accent), so it
-// reads apart from the LLM slot palette (greens/oranges) on the shared meter.
-const IMG_GRADIENT = "linear-gradient(90deg, hsl(265 35% 64%), hsl(284 35% 64%))";
 // ComfyUI reports VRAM, not a per-model load flag; treat a draw above this as "a
-// model is resident" so the bar shows it. An estimate — tune on the box.
+// model is resident" so the gauge shows it. An estimate — tune on the box.
 const IMG_ACTIVE_GB = 4;
 
 // The size picker's choices, capped per model at its catalog window.
 const WINDOW_CHOICES = [16384, 32768, 65536, 131072];
 const fmtTokens = (n: number) => (n % 1024 === 0 ? `${n / 1024}k` : `${Math.round(n / 1000)}k`);
-const barName = (m: LocalModelInfo) => m.label.split(" ")[0];
+const firstWord = (label: string) => label.split(" ")[0] ?? label;
+// Resident/staged footprint for an LLM = weights (on-disk, or the estimate) + KV.
 const residentGbOf = (m: LocalModelInfo) => (m.disk_gb ?? m.size_gb) + m.kv_gb;
+// An image model's resident draw is its VRAM estimate; the service holds one at a time.
+const imgFootGb = (m: ImageModelInfo) => m.vram_gb;
 
-// The On-box LLM section's omnibox tabs and the image section's; both reuse the
-// shared `.seg-row` segmented control, accented per section (steel / violet).
-type LlmTab = "staged" | "installed" | "catalog";
-type ImgTab = "installed" | "catalog";
+// The On-box card's surface switch: the residency ladder (lanes) or the library
+// (catalog of installs/uninstalls). The two reuse the shared `.seg-row` register.
+type OnBoxSurface = "lanes" | "catalog";
 
-// Small inline glyphs for the omnibox tabs (mirrors the mock's IC set): a clock for
-// staged-warm, a check for installed, a grid for the catalog.
-const TabIcon = {
-  staged: (
+// Small inline glyphs for the surface switch (mirrors the mock's IC set): stacked
+// rungs for the residency ladder, an open book for the library/catalog.
+const SurfaceIcon = {
+  lanes: (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true">
-      <circle cx="12" cy="12" r="9" />
-      <path d="M12 7v5l3 2" />
-    </svg>
-  ),
-  installed: (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true">
-      <path d="M20 6 9 17l-5-5" />
+      <rect x="3" y="4" width="18" height="4.5" rx="1.5" />
+      <rect x="3" y="10" width="18" height="4.5" rx="1.5" />
+      <rect x="3" y="16" width="18" height="4.5" rx="1.5" />
     </svg>
   ),
   catalog: (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true">
-      <rect x="3" y="3" width="7" height="7" rx="1" />
-      <rect x="14" y="3" width="7" height="7" rx="1" />
-      <rect x="3" y="14" width="7" height="7" rx="1" />
-      <rect x="14" y="14" width="7" height="7" rx="1" />
+      <path d="M4 5.5A1.5 1.5 0 0 1 5.5 4H10v16H5.5A1.5 1.5 0 0 1 4 18.5z" />
+      <path d="M14 4h4.5A1.5 1.5 0 0 1 20 5.5v13a1.5 1.5 0 0 1-1.5 1.5H14z" />
     </svg>
   ),
 } as const;
 
-type TabIconKey = keyof typeof TabIcon;
+// A model's place on the residency ladder. RESIDENT = loaded; STAGED = staged but
+// not loaded; UNLOADED = neither. Image models never reach STAGED (no staging
+// concept on the service), so they only ride the resident / unloaded rungs.
+type Rung = "resident" | "staged" | "unloaded";
 
-// The omnibox segmented tabs (reuses `.seg-row`/`.seg`/`.seg-on`). The active
-// segment is a clean tint fill — the parent section sets `--mode`/`--mode-tint`,
-// and these tabs deliberately do NOT live under `.llm-group`, so they never inherit
-// its inset ring.
-function OmniTabs<T extends string>({
-  label,
-  tabs,
-  active,
-  onTab,
-}: {
-  label: string;
-  tabs: { id: T; label: string; icon: TabIconKey }[];
-  active: T;
-  onTab: (tab: T) => void;
-}) {
-  return (
-    <div className="seg-row onbox-tabs" role="tablist" aria-label={label}>
-      {tabs.map((t) => (
-        <button
-          key={t.id}
-          type="button"
-          role="tab"
-          aria-selected={active === t.id}
-          className={`seg${active === t.id ? " seg-on" : ""}`}
-          onClick={() => onTab(t.id)}
-        >
-          <span className="seg-ic">{TabIcon[t.icon]}</span>
-          {t.label}
-        </button>
-      ))}
-    </div>
-  );
-}
+const reduceMotion = () =>
+  typeof window !== "undefined" &&
+  typeof window.matchMedia === "function" &&
+  window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
-// One section header in the card: an accent rail, its name, a live meta count, and
-// a caret that rotates open. The two sections share this chrome (steel / violet).
-function SectionToggle({
-  accent,
-  name,
-  meta,
-  open,
-  onToggle,
-}: {
-  accent: "llm" | "img";
-  name: string;
-  meta: string;
-  open: boolean;
-  onToggle: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      className={`onbox-sec-toggle ${accent}${open ? " open" : ""}`}
-      aria-expanded={open}
-      onClick={onToggle}
-    >
-      <span className="onbox-rail" aria-hidden="true" />
-      <span className="onbox-sec-name">{name}</span>
-      <span className="onbox-sec-meta">{meta}</span>
-      <span className={`llm-exp-caret${open ? " llm-exp-open" : ""}`} aria-hidden="true">
-        ›
-      </span>
-    </button>
-  );
-}
-
-// One card, a shared always-visible unified-memory meter, then two independently
-// collapsible sections (On-box LLMs / Image models). The meter is fed BOTH the LLM
-// (loaded + staged) and the image-VRAM segments since the box shares one RAM pool.
+// One card: a unified-memory capacity gauge (always visible), a residency/library
+// surface switch, then the chosen surface. The single ~128 GB pool is shared by the
+// LLM weights+KV (slot-colored), staged LLMs (ghosted/projected), and the image
+// VRAM segment (violet). Installed LLMs ride a strict one-rung ladder; image models
+// appear read-only on the lanes (their lifecycle is the service's, not per-model).
 function OnBoxModelsCard({
-  llmOpen,
-  imgOpen,
-  onToggleLlm,
-  onToggleImg,
-  llmTab,
-  imgTab,
-  onLlmTab,
-  onImgTab,
+  surface,
+  onSurface,
   hostingEnabled,
   models,
   hostMemory,
   image,
   busy,
-  onUnload,
+  onUnloadToStaged,
   onLoad,
   onStage,
   onSetWindow,
@@ -868,20 +801,14 @@ function OnBoxModelsCard({
   onStartImageService,
   onStopImageService,
 }: {
-  llmOpen: boolean;
-  imgOpen: boolean;
-  onToggleLlm: () => void;
-  onToggleImg: () => void;
-  llmTab: LlmTab;
-  imgTab: ImgTab;
-  onLlmTab: (tab: LlmTab) => void;
-  onImgTab: (tab: ImgTab) => void;
+  surface: OnBoxSurface;
+  onSurface: (s: OnBoxSurface) => void;
   hostingEnabled: boolean;
   models: LocalModelInfo[];
   hostMemory: { total_gb: number; used_gb: number } | null;
   image: ImageSettings | null;
   busy: Set<string>;
-  onUnload: (id: string) => void;
+  onUnloadToStaged: (id: string) => void;
   onLoad: (id: string) => void;
   onStage: (id: string, on: boolean) => void;
   onSetWindow: (id: string, window: number | null) => void;
@@ -897,187 +824,327 @@ function OnBoxModelsCard({
   const enabled = models.filter((m) => m.enabled);
   const loaded = enabled.filter((m) => m.loaded);
   const stagedOnly = enabled.filter((m) => m.staged && !m.loaded);
-  // Catalog models not on the box: the install rows. Queued ones carry an in-flight
-  // download the next update finishes.
+  const unloaded = enabled.filter((m) => !m.loaded && !m.staged);
+
+  // Catalog (library surface): everything in the roster. Un-provisioned ones get an
+  // Install row; provisioned ones get an Uninstall row. Queued installs + pending
+  // removals both reach the supervisor update one-shot via the queue bar.
   const available = hostingEnabled ? models.filter((m) => !m.enabled) : [];
   const queued = available.filter((m) => m.queued);
   const queuedGb = queued.reduce((sum, m) => sum + m.size_gb, 0);
-  // Provisioned models queued for removal — they reach the supervisor update via the
-  // same one-shot as installs, so a pending uninstall must surface the update bar too
-  // (otherwise a queued removal has no in-app control to apply it).
   const removing = hostingEnabled ? enabled.filter((m) => m.remove_queued) : [];
-  // Resident footprint = weights + KV for everything actually loaded.
-  const residentGb = loaded.reduce((sum, m) => sum + residentGbOf(m), 0);
-  const stagedGb = stagedOnly.reduce((sum, m) => sum + residentGbOf(m), 0);
 
-  // The image service's live VRAM draw shares the meter. ComfyUI has no per-model
-  // "loaded" flag, so a non-trivial VRAM draw stands in for "a model is resident".
+  // The image service's live VRAM draw shares the pool. ComfyUI has no per-model
+  // "loaded" flag, so a non-trivial draw stands in for "a model is resident".
   const imgMem = image?.memory ?? null;
   const imgUsedGb = imgMem ? Math.max(imgMem.total_gb - imgMem.free_gb, 0) : 0;
-  const imgActive = (image?.reachable ?? false) && imgUsedGb > IMG_ACTIVE_GB;
-  const imgName =
-    (image?.models?.find((m) => m.enabled) ?? image?.models?.[0])?.label.split(" ")[0] ?? "Image";
+  const imgReachable = image?.reachable ?? false;
+  const imgActive = imgReachable && imgUsedGb > IMG_ACTIVE_GB;
+  // The resident image model heuristic: the enabled one, else the first.
+  const imgModels = image?.models ?? [];
+  const enabledImg = imgModels.filter((m) => m.enabled);
+  const residentImg = imgActive ? (enabledImg[0] ?? imgModels[0] ?? null) : null;
 
-  const anyOn = hostingEnabled || (image?.reachable ?? false);
-  const summary = [
-    hostingEnabled
-      ? `${loaded.length} loaded${stagedOnly.length ? ` · ${stagedOnly.length} staged` : ""}`
-      : "",
-    image?.reachable ? (imgActive ? "image resident" : "image idle") : "",
-    anyOn ? `${Math.round(residentGb + imgUsedGb)} GB` : "",
-  ]
-    .filter(Boolean)
-    .join(" · ");
-
-  // Loaded segments first (resident), then staged (projected) — colored by slot.
-  const onBar = [...loaded, ...stagedOnly];
+  // Resident / staged LLM footprints feeding the gauge + lane subtotals.
+  const residentGb = loaded.reduce((sum, m) => sum + residentGbOf(m), 0);
+  const stagedGb = stagedOnly.reduce((sum, m) => sum + residentGbOf(m), 0);
+  // The single unified pool: prefer the host gauge, fall back to image VRAM total.
   const total = hostMemory?.total_gb ?? imgMem?.total_gb ?? 0;
-  const projectedGb = residentGb + stagedGb;
-  const over = total > 0 && projectedGb + imgUsedGb > total;
-  const meterShown = total > 0 && (onBar.length > 0 || imgActive);
+  const usedGb = residentGb + imgUsedGb;
+  const projectedGb = usedGb + stagedGb;
+  const freeGb = Math.max(total - usedGb, 0);
+  const over = total > 0 && projectedGb > total;
 
-  const llmMeta = hostingEnabled ? `${enabled.length} installed · ${loaded.length} loaded` : "off";
-  const imgMeta = image?.reachable
-    ? imgActive
-      ? "running · resident"
-      : "running"
-    : image?.enabled
-      ? "stopped"
-      : "off";
+  // The residency lanes: image models ride the same rungs (read-only), violet.
+  // RESIDENT carries loaded LLMs + the resident image model; UNLOADED carries
+  // unloaded LLMs + every enabled image model that isn't the resident one.
+  const residentImgLane = residentImg ? [residentImg] : [];
+  const unloadedImg = enabledImg.filter((m) => m.id !== residentImg?.id);
 
-  // LLM tab filtering.
-  const llmRows = llmTab === "staged" ? stagedOnly : llmTab === "installed" ? enabled : models;
+  const anyResident = loaded.length + residentImgLane.length;
+  const meterShown = total > 0 && (anyResident > 0 || stagedOnly.length > 0);
+
+  // Library badge: how much of the catalog is installed.
+  const catBadge = `${enabled.length}/${models.length}`;
+
+  function gaugeSegs() {
+    const segs: { key: string; name: string; gb: number; style: CSSProperties }[] = [];
+    let slot = 0;
+    for (const m of loaded) {
+      const gb = residentGbOf(m);
+      segs.push({
+        key: m.id,
+        name: firstWord(m.label),
+        gb,
+        style: { width: `${(gb / total) * 100}%`, background: slotGradient(slot++) },
+      });
+    }
+    if (residentImg) {
+      const gb = imgUsedGb || imgFootGb(residentImg);
+      segs.push({
+        key: residentImg.id,
+        name: firstWord(residentImg.label),
+        gb,
+        style: { width: `${(gb / total) * 100}%`, background: "var(--violet)" },
+      });
+    }
+    return segs;
+  }
+  function stagedSegs() {
+    let slot = loaded.length;
+    return stagedOnly.map((m) => {
+      const gb = residentGbOf(m);
+      return {
+        key: m.id,
+        name: firstWord(m.label),
+        gb,
+        style: { width: `${(gb / total) * 100}%`, background: slotGradient(slot++) },
+      };
+    });
+  }
 
   return (
-    <section className="onbox-card" aria-label={`On-box models — ${anyOn ? summary : "off"}`}>
-      {/* Shared, always-visible unified-memory meter (LLM + image). */}
-      <div className="onbox-head">
-        <div className="onbox-status">
-          <span
-            className={`llm-local-dot${loaded.length > 0 || imgActive ? " on" : stagedOnly.length > 0 ? " amber" : ""}`}
-            aria-hidden="true"
-          />
-          <span className="onbox-status-title">On-box memory</span>
-          <span className="onbox-status-sub">{anyOn ? summary : "off"}</span>
+    <section className="onbox-card" aria-label="On-box models">
+      {/* ===== capacity gauge — the honest "what fits" signal ===== */}
+      <div className="gauge">
+        <div className="gauge-top">
+          <span className="gauge-ttl">on-box memory</span>
+          {meterShown && (
+            <span className={`gauge-free${over ? " over" : freeGb < total * 0.1 ? " warn" : ""}`}>
+              {over
+                ? `${Math.round(projectedGb - total)} GB over if staged loads`
+                : `${Math.round(freeGb)} GB free`}
+            </span>
+          )}
         </div>
         {meterShown ? (
-          <div className="llm-mem" aria-label="unified memory in use">
-            <div className="llm-mem-bar">
-              {onBar.map((m, i) => {
-                const weights = m.disk_gb ?? m.size_gb;
-                const res = weights + m.kv_gb;
-                const isStaged = m.staged && !m.loaded;
-                return (
-                  <div
-                    key={m.id}
-                    className={`llm-mem-seg${isStaged ? " staged" : ""}`}
-                    style={{ width: `${(res / total) * 100}%` }}
-                    title={`${m.label} — ${weights} GB weights + ${m.kv_gb} GB KV${
-                      isStaged ? " (staged)" : ""
-                    }`}
-                  >
-                    <div
-                      className="llm-mem-w"
-                      style={{ width: `${(weights / res) * 100}%`, background: slotGradient(i) }}
-                    />
-                    <div
-                      className="llm-mem-c"
-                      style={{
-                        width: `${(m.kv_gb / res) * 100}%`,
-                        background: slotGradient(i, 18),
-                      }}
-                    />
-                    <span className="llm-mem-label">
-                      {barName(m)} <span className="gb">{Math.round(res)}G</span>
-                    </span>
-                  </div>
-                );
-              })}
-              {imgActive && (
-                <div
-                  className="llm-mem-seg llm-mem-img"
-                  style={{ width: `${(imgUsedGb / total) * 100}%` }}
-                  title={`ComfyUI image — ${Math.round(imgUsedGb)} GB resident`}
-                >
-                  <div className="llm-mem-w" style={{ width: "100%", background: IMG_GRADIENT }} />
-                  <span className="llm-mem-label">
-                    {imgName} <span className="gb">{Math.round(imgUsedGb)}G</span>
+          <>
+            <div className="gauge-bar" aria-label="unified memory in use">
+              {gaugeSegs().map((s) => (
+                <div key={s.key} className="gseg" style={s.style}>
+                  <span className="gseg-lab">
+                    {s.name} {Math.round(s.gb)}G
                   </span>
                 </div>
-              )}
+              ))}
+              {stagedSegs().map((s) => (
+                <div key={s.key} className="gseg staged" style={s.style}>
+                  <span className="gseg-lab">
+                    {s.name} {Math.round(s.gb)}G
+                  </span>
+                </div>
+              ))}
+              {over && <span className="gauge-over-rail" aria-hidden="true" />}
             </div>
-            <div className="llm-mem-cap">
-              <span>{Math.round(residentGb + imgUsedGb)} GB used</span>
+            <div className="gauge-cap">
+              <span>{Math.round(usedGb)} GB resident</span>
               {imgActive && (
-                <span className="onbox-mem-key">
-                  <span className="onbox-mem-sw" />
+                <span className="gauge-key">
+                  <span className="gauge-sw" />
                   image {Math.round(imgUsedGb)} GB
                 </span>
               )}
-              {stagedGb > 0.05 && (
-                <span className={`staged-note${over ? " over" : ""}`}>
+              {stagedGb > 0.5 && (
+                <span className={over ? "over" : "warn"}>
                   +{Math.round(stagedGb)} GB staged → {Math.round(projectedGb)} GB
-                  {over ? " ⚠ over" : ""}
+                  {over ? " over" : ""}
                 </span>
               )}
-              <span className="total">{Math.round(total)} GB total</span>
+              <span className="gauge-total">{Math.round(total)} GB total</span>
             </div>
-          </div>
+          </>
         ) : (
-          <p className="onbox-mem-empty">
-            Nothing resident — load or stage a model, or run image generation, to fill the bar.
+          <p className="gauge-empty">
+            nothing resident — stage a model to warm it, then load it up into memory.
           </p>
         )}
       </div>
 
-      {/* Section 1: On-box LLMs */}
-      <SectionToggle
-        accent="llm"
-        name="On-box LLMs"
-        meta={llmMeta}
-        open={llmOpen}
-        onToggle={onToggleLlm}
-      />
-      {llmOpen && (
-        <div className="onbox-body onbox-llm open">
-          <OmniTabs
-            label="On-box LLM models"
-            active={llmTab}
-            onTab={onLlmTab}
-            tabs={[
-              { id: "staged", label: "Staged", icon: "staged" },
-              { id: "installed", label: "Installed", icon: "installed" },
-              { id: "catalog", label: "Catalog", icon: "catalog" },
-            ]}
-          />
-          <div className="onbox-list">
-            {!hostingEnabled && (
-              <p className="llm-local-hint">
-                Self-hosting is off. Provision on the server with{" "}
-                <code>jbrain enable-local-models</code>; models you enable there become selectable
-                in the tiers above.
-              </p>
-            )}
-            {hostingEnabled && llmTab === "staged" && stagedOnly.length === 0 && (
-              <p className="onbox-tab-hint">
-                No staged models. Staging keeps a model warm so it skips the cold load on its next
-                request.
-              </p>
-            )}
-            {hostingEnabled && llmTab === "catalog" && (
-              <p className="onbox-tab-hint">
-                Every catalog model. Install pulls the weights; Uninstall removes them and frees the
-                disk.
-              </p>
-            )}
-            {hostingEnabled && llmTab === "installed" && enabled.length === 0 && (
-              <p className="llm-local-hint">
-                No models enabled yet — install one from the Catalog tab.
-              </p>
-            )}
-            {hostingEnabled &&
-              llmRows.map((m) =>
-                llmTab === "catalog" ? (
+      {/* ===== surface switch: residency vs library ===== */}
+      <div className="surf-row seg-row" role="tablist" aria-label="On-box surface">
+        <button
+          type="button"
+          role="tab"
+          aria-selected={surface === "lanes"}
+          className={`surf seg${surface === "lanes" ? " seg-on" : ""}`}
+          onClick={() => onSurface("lanes")}
+        >
+          <span className="seg-ic">{SurfaceIcon.lanes}</span>
+          residency
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={surface === "catalog"}
+          className={`surf seg${surface === "catalog" ? " seg-on" : ""}`}
+          onClick={() => onSurface("catalog")}
+        >
+          <span className="seg-ic">{SurfaceIcon.catalog}</span>
+          library <span className="surf-badge">{hostingEnabled ? catBadge : ""}</span>
+        </button>
+      </div>
+
+      {/* ===== residency (ladder) surface ===== */}
+      {surface === "lanes" && (
+        <div className="onbox-surface">
+          {!hostingEnabled ? (
+            <p className="llm-local-hint onbox-gutter">
+              Self-hosting is off. Provision on the server with{" "}
+              <code>jbrain enable-local-models</code>; models you enable there become selectable in
+              the tiers above.
+            </p>
+          ) : (
+            <>
+              <div className="ladder-hint">
+                <span className="ladder-rungs" aria-hidden="true">
+                  <span>▲</span>
+                  <span>│</span>
+                  <span>▼</span>
+                </span>
+                <span>
+                  the ladder runs resident → staged → unloaded. you move a model one rung at a time
+                  — never skipping staged. ▲ promotes one rung, ▼ demotes one rung.
+                </span>
+              </div>
+
+              {image && (
+                <ImageServiceRow
+                  image={image}
+                  onFree={onFreeImage}
+                  onStart={onStartImageService}
+                  onStop={onStopImageService}
+                />
+              )}
+
+              <div className="lanes">
+                <Lane
+                  rung="resident"
+                  name="RESIDENT"
+                  sub="ceiling · in memory, serving"
+                  subtotal={`${Math.round(residentGb + imgUsedGb)} / ${Math.round(total)} GB`}
+                  empty={
+                    anyResident
+                      ? null
+                      : "nothing resident — load a staged model up one rung into memory."
+                  }
+                >
+                  {loaded.map((m) => (
+                    <LlmTile
+                      key={m.id}
+                      model={m}
+                      rung="resident"
+                      total={total}
+                      busy={busy.has(m.id)}
+                      onUnloadToStaged={onUnloadToStaged}
+                      onLoad={onLoad}
+                      onStage={onStage}
+                      onSetWindow={onSetWindow}
+                    />
+                  ))}
+                  {residentImgLane.map((m) => (
+                    <ImageTile
+                      key={m.id}
+                      model={m}
+                      rung="resident"
+                      total={total}
+                      vramGb={imgUsedGb || imgFootGb(m)}
+                      serviceRunning={imgReachable}
+                      onFree={onFreeImage}
+                    />
+                  ))}
+                </Lane>
+
+                <Lane
+                  rung="staged"
+                  name="STAGED"
+                  sub="warm · skips the cold load"
+                  subtotal={stagedOnly.length ? `+${Math.round(stagedGb)} GB projected` : "—"}
+                  over={over && stagedOnly.length > 0}
+                  empty={
+                    stagedOnly.length
+                      ? null
+                      : "nothing staged — staging warms weights so the next request skips the cold load. it is the only path between unloaded and resident."
+                  }
+                >
+                  {stagedOnly.map((m) => (
+                    <LlmTile
+                      key={m.id}
+                      model={m}
+                      rung="staged"
+                      total={total}
+                      busy={busy.has(m.id)}
+                      onUnloadToStaged={onUnloadToStaged}
+                      onLoad={onLoad}
+                      onStage={onStage}
+                      onSetWindow={onSetWindow}
+                    />
+                  ))}
+                </Lane>
+
+                <Lane
+                  rung="unloaded"
+                  name="UNLOADED"
+                  sub="floor · on device, idle"
+                  subtotal=""
+                  empty={
+                    unloaded.length + unloadedImg.length
+                      ? null
+                      : "nothing unloaded — every installed model is staged or resident."
+                  }
+                >
+                  {unloaded.map((m) => (
+                    <LlmTile
+                      key={m.id}
+                      model={m}
+                      rung="unloaded"
+                      total={total}
+                      busy={busy.has(m.id)}
+                      onUnloadToStaged={onUnloadToStaged}
+                      onLoad={onLoad}
+                      onStage={onStage}
+                      onSetWindow={onSetWindow}
+                    />
+                  ))}
+                  {unloadedImg.map((m) => (
+                    <ImageTile
+                      key={m.id}
+                      model={m}
+                      rung="unloaded"
+                      total={total}
+                      vramGb={imgFootGb(m)}
+                      serviceRunning={imgReachable}
+                      onFree={onFreeImage}
+                    />
+                  ))}
+                </Lane>
+              </div>
+            </>
+          )}
+        </div>
+      )}
+
+      {/* ===== library (catalog) surface ===== */}
+      {surface === "catalog" && (
+        <div className="onbox-surface">
+          {!hostingEnabled ? (
+            <p className="llm-local-hint onbox-gutter">
+              Self-hosting is off. Provision on the server with{" "}
+              <code>jbrain enable-local-models</code>; models you enable there become selectable in
+              the tiers above.
+            </p>
+          ) : (
+            <>
+              <div className="cat-list">
+                <p className="onbox-tab-hint">
+                  Every catalog model — language and image. Install pulls the weights; Uninstall
+                  removes them and frees the disk. Installed models appear on the residency ladder.
+                </p>
+                <div className="cat-divider llm">
+                  <span className="cat-rail" aria-hidden="true" />
+                  language models
+                  <span className="cat-line" aria-hidden="true" />
+                </div>
+                {models.map((m) =>
                   m.enabled ? (
                     <UninstallRow
                       key={m.id}
@@ -1087,228 +1154,327 @@ function OnBoxModelsCard({
                     />
                   ) : (
                     <InstallRow key={m.id} model={m} busy={busy.has(m.id)} onInstall={onInstall} />
-                  )
+                  ),
+                )}
+                <div className="cat-divider img">
+                  <span className="cat-rail" aria-hidden="true" />
+                  image models
+                  <span className="cat-line" aria-hidden="true" />
+                </div>
+                {imgModels.length > 0 ? (
+                  imgModels.map((m) => imageCatalogRow(m))
                 ) : (
-                  <LlmModelRow
-                    key={m.id}
-                    model={m}
-                    busy={busy.has(m.id)}
-                    onUnload={onUnload}
-                    onLoad={onLoad}
-                    onStage={onStage}
-                    onSetWindow={onSetWindow}
-                  />
-                ),
-              )}
-          </div>
-          {llmTab === "catalog" && (queued.length > 0 || removing.length > 0) && (
-            <div className="llm-local-queue">
-              <div className="llm-local-queue-text">
-                <b>
-                  {[
-                    queued.length > 0 && `${queued.length} to install · ${Math.round(queuedGb)} GB`,
-                    removing.length > 0 && `${removing.length} to uninstall`,
-                  ]
-                    .filter(Boolean)
-                    .join(" · ")}
-                </b>
-                <span>
-                  {updateState === "running"
-                    ? updateTail || "Update running — applying changes after rebuild…"
-                    : updateState === "failed"
-                      ? "Update failed — check the Ops screen."
-                      : "Applied on your next update, or start one now."}
-                </span>
+                  <p className="onbox-tab-hint">
+                    Image catalog. Provision the weights on the box with{" "}
+                    <code>comfyui-setup.sh</code>. One model is resident at a time.
+                  </p>
+                )}
               </div>
-              <button
-                type="button"
-                className="llm-local-btn load"
-                disabled={updateState === "running"}
-                onClick={onUpdate}
-              >
-                {updateState === "running"
-                  ? "Updating…"
-                  : queued.length > 0
-                    ? "Update & install now"
-                    : "Update & apply now"}
-              </button>
-            </div>
+              {(queued.length > 0 || removing.length > 0) && (
+                <div className="llm-local-queue">
+                  <div className="llm-local-queue-text">
+                    <b>
+                      {[
+                        queued.length > 0 &&
+                          `${queued.length} to install · ${Math.round(queuedGb)} GB`,
+                        removing.length > 0 && `${removing.length} to uninstall`,
+                      ]
+                        .filter(Boolean)
+                        .join(" · ")}
+                    </b>
+                    <span>
+                      {updateState === "running"
+                        ? updateTail || "Update running — applying changes after rebuild…"
+                        : updateState === "failed"
+                          ? "Update failed — check the Ops screen."
+                          : "Applied on your next update, or start one now."}
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    className="llm-local-btn load"
+                    disabled={updateState === "running"}
+                    onClick={onUpdate}
+                  >
+                    {updateState === "running"
+                      ? "Updating…"
+                      : queued.length > 0
+                        ? "Update & install now"
+                        : "Update & apply now"}
+                  </button>
+                </div>
+              )}
+            </>
           )}
-        </div>
-      )}
-
-      {/* Section 2: Image models */}
-      <SectionToggle
-        accent="img"
-        name="Image models"
-        meta={imgMeta}
-        open={imgOpen}
-        onToggle={onToggleImg}
-      />
-      {imgOpen && image && (
-        <div className="onbox-body onbox-img open">
-          <ImageServiceRow
-            image={image}
-            onFree={onFreeImage}
-            onStart={onStartImageService}
-            onStop={onStopImageService}
-          />
-          <OmniTabs
-            label="Image models"
-            active={imgTab}
-            onTab={onImgTab}
-            tabs={[
-              { id: "installed", label: "Installed", icon: "installed" },
-              { id: "catalog", label: "Catalog", icon: "catalog" },
-            ]}
-          />
-          <div className="onbox-list">
-            {imgTab === "catalog" && (
-              <p className="onbox-tab-hint">
-                Image catalog. Provision the weights on the box with <code>comfyui-setup.sh</code>.
-                One model is resident at a time.
-              </p>
-            )}
-            {(image.models ?? [])
-              .filter((m) => imgTab === "catalog" || m.enabled)
-              .map((m) => imageRow(m))}
-            {!image.enabled && (
-              <p className="llm-local-hint">
-                Image generation is off. Provision on the box with <code>comfyui-setup.sh</code>.
-              </p>
-            )}
-          </div>
         </div>
       )}
     </section>
   );
 }
 
-// One provisioned LLM in the Installed/Staged tabs: its stage→load→unload lifecycle
-// controls, capability chips, and the live context-window picker (locked while loaded).
-function LlmModelRow({
+// One ladder lane (rung): an accent rail, a dot, the rung name + one-line sub, a GB
+// subtotal in the head, the tiles, and a quiet empty-state line when no tile sits here.
+function Lane({
+  rung,
+  name,
+  sub,
+  subtotal,
+  over,
+  empty,
+  children,
+}: {
+  rung: Rung;
+  name: string;
+  sub: string;
+  subtotal: string;
+  over?: boolean;
+  empty: string | null;
+  children: ReactNode;
+}) {
+  return (
+    <section className={`lane ${rung}${over ? " over" : ""}`}>
+      <div className="lane-head">
+        <span className="lane-dot" aria-hidden="true" />
+        <span className="lane-name">{name}</span>
+        <span className="lane-sub">{sub}</span>
+        {subtotal && <span className={`lane-subtotal${over ? " over" : ""}`}>{subtotal}</span>}
+      </div>
+      {empty ? <p className="lane-empty">{empty}</p> : <div className="lane-tiles">{children}</div>}
+    </section>
+  );
+}
+
+// A small motion helper: relocate the tile to the adjacent lane (≤165ms), then run
+// the actual API move. prefers-reduced-motion skips the animation entirely.
+function steppedMove(node: HTMLElement | null, dir: "up" | "down", run: () => void) {
+  if (!node || reduceMotion()) {
+    run();
+    return;
+  }
+  node.classList.add(dir === "up" ? "relocating-up" : "relocating-down");
+  window.setTimeout(run, 165);
+}
+
+// One installed LLM as a ladder tile: footprint strip, capability chips, the
+// context-window control (in-memory rungs only, locked while resident), and the
+// ladder stepper (exactly one rung up and/or down — never skipping staged).
+function LlmTile({
   model: m,
+  rung,
+  total,
   busy: isBusy,
-  onUnload,
+  onUnloadToStaged,
   onLoad,
   onStage,
   onSetWindow,
 }: {
   model: LocalModelInfo;
+  rung: Rung;
+  total: number;
   busy: boolean;
-  onUnload: (id: string) => void;
+  onUnloadToStaged: (id: string) => void;
   onLoad: (id: string) => void;
   onStage: (id: string, on: boolean) => void;
   onSetWindow: (id: string, window: number | null) => void;
 }) {
-  const footprint = m.disk_gb ?? m.size_gb;
-  const sizeText = `${m.disk_gb == null ? "~" : ""}${footprint} GB`;
-  const state = m.loaded ? "loaded" : m.staged ? "staged" : "idle";
-  const editable = !m.loaded; // idle or staged — no live process to disrupt
+  const tileRef = useRef<HTMLDivElement>(null);
+  const weights = m.disk_gb ?? m.size_gb;
+  const sizeText = `${m.disk_gb == null ? "~" : ""}${weights} GB`;
+  const foot = residentGbOf(m);
+  const footW = total > 0 ? (foot / total) * 100 : 0;
+  const footLab = rung === "resident" ? "weights+KV" : rung === "staged" ? "warm" : "if loaded";
+  const footPrefix = rung === "unloaded" ? "~" : "";
+
+  // Context window: editable on in-memory rungs (staged), locked while resident.
+  const showCtx = rung !== "unloaded";
+  const editable = rung !== "resident" && !isBusy;
   const effWindow = m.context_window_override ?? m.context_window;
   const windowOpts = Array.from(
     new Set([...WINDOW_CHOICES.filter((w) => w <= m.context_window), m.context_window]),
   ).sort((a, b) => a - b);
+
+  const step = (dir: "up" | "down", run: () => void) => steppedMove(tileRef.current, dir, run);
+
   return (
-    <div className={`llm-local-row on ${state}`}>
-      <div className="llm-local-head">
-        <div className="llm-local-name">
+    <div ref={tileRef} className={`tile ${rung}`} data-id={m.id}>
+      <div className="tile-foot" style={{ width: `${footW}%` }} aria-hidden="true" />
+      <div className="tile-head">
+        <div className="tile-name">
           {m.label}
-          <span className="llm-local-meta">
+          <span className="tile-meta">
             {m.quant} · {sizeText}
-            {m.loaded ? ` · ${Math.round(residentGbOf(m))} GB resident` : ""}
           </span>
         </div>
-        <div className="llm-local-topright">
-          <div className="llm-local-act">
-            {state === "idle" && (
-              <button
-                type="button"
-                className="llm-local-btn stage"
-                disabled={isBusy}
-                onClick={() => onStage(m.id, true)}
-              >
-                {isBusy ? "…" : "Stage"}
-              </button>
-            )}
-            {state === "staged" && (
-              <>
-                <button
-                  type="button"
-                  className="llm-local-btn load"
-                  disabled={isBusy}
-                  onClick={() => onLoad(m.id)}
-                >
-                  {isBusy ? "…" : "Load"}
-                </button>
-                <button
-                  type="button"
-                  className="llm-local-btn"
-                  disabled={isBusy}
-                  onClick={() => onStage(m.id, false)}
-                >
-                  Unstage
-                </button>
-              </>
-            )}
-            {state === "loaded" && (
-              <button
-                type="button"
-                className="llm-local-btn"
-                disabled={isBusy}
-                onClick={() => onUnload(m.id)}
-              >
-                {isBusy ? "…" : "Unload"}
-              </button>
-            )}
-          </div>
-          <span className={`llm-local-state${m.loaded ? " on" : m.staged ? " staged" : ""}`}>
-            {state}
-          </span>
-        </div>
+        <span className="tile-foot-lab">
+          <b>
+            {footPrefix}
+            {Math.round(foot)} GB
+          </b>
+          <br />
+          {footLab}
+        </span>
       </div>
-      <div className="llm-local-chips">
+      <div className="tile-chips">
         {capabilityChips(m).map((c) => (
           <span key={c.key} className={`llm-chip llm-chip-${c.cls}`}>
             {c.label}
           </span>
         ))}
       </div>
-      <div className="llm-local-ctx">
-        <label className="llm-local-ctx-label" htmlFor={`ctx-${m.id}`}>
-          context window
-        </label>
-        <select
-          id={`ctx-${m.id}`}
-          className="llm-local-ctx-select"
-          value={String(effWindow)}
-          disabled={!editable || isBusy}
-          onChange={(e) => {
-            const v = Number(e.target.value);
-            // The catalog default is "no override" — store null for it so a
-            // redundant override row is never persisted.
-            onSetWindow(m.id, v === m.context_window ? null : v);
-          }}
-        >
-          {windowOpts.map((w) => (
-            <option key={w} value={w}>
-              {fmtTokens(w)}
-            </option>
-          ))}
-        </select>
-        {m.loaded ? (
-          <span className="llm-local-ctx-hint">🔒 unload to change</span>
-        ) : (
-          <span className="llm-local-ctx-meta">KV ~{m.kv_gb} GB</span>
+      {m.note && <p className="tile-note">{m.note}</p>}
+      {showCtx && (
+        <div className="tile-ctx">
+          <label className="tile-ctx-label" htmlFor={`ctx-${m.id}`}>
+            context
+          </label>
+          <select
+            id={`ctx-${m.id}`}
+            className="tile-ctx-select"
+            value={String(effWindow)}
+            disabled={!editable}
+            onChange={(e) => {
+              const v = Number(e.target.value);
+              onSetWindow(m.id, v === m.context_window ? null : v);
+            }}
+          >
+            {windowOpts.map((w) => (
+              <option key={w} value={w}>
+                {fmtTokens(w)}
+              </option>
+            ))}
+          </select>
+          {rung === "resident" ? (
+            <span className="tile-ctx-hint">🔒 unload to change</span>
+          ) : (
+            <span className="tile-ctx-meta">KV ~{m.kv_gb} GB</span>
+          )}
+        </div>
+      )}
+      <div className="tile-acts">
+        {rung === "unloaded" && (
+          <button
+            type="button"
+            className="tile-btn up"
+            disabled={isBusy}
+            onClick={() => step("up", () => onStage(m.id, true))}
+          >
+            <span className="dir" aria-hidden="true">
+              ▲
+            </span>{" "}
+            {isBusy ? "…" : "stage"}
+          </button>
+        )}
+        {rung === "staged" && (
+          <>
+            <button
+              type="button"
+              className="tile-btn up"
+              disabled={isBusy}
+              onClick={() => step("up", () => onLoad(m.id))}
+            >
+              <span className="dir" aria-hidden="true">
+                ▲
+              </span>{" "}
+              {isBusy ? "…" : "load"}
+            </button>
+            <button
+              type="button"
+              className="tile-btn down"
+              disabled={isBusy}
+              onClick={() => step("down", () => onStage(m.id, false))}
+            >
+              <span className="dir" aria-hidden="true">
+                ▼
+              </span>{" "}
+              unstage
+            </button>
+          </>
+        )}
+        {rung === "resident" && (
+          <button
+            type="button"
+            className="tile-btn down"
+            disabled={isBusy}
+            onClick={() => step("down", () => onUnloadToStaged(m.id))}
+          >
+            <span className="dir" aria-hidden="true">
+              ▼
+            </span>{" "}
+            {isBusy ? "…" : "unload"}
+          </button>
         )}
       </div>
     </div>
   );
 }
 
-// A provisioned model in the Catalog tab: its current state chip + a danger
-// "Uninstall" button (queues the removal). Once queued it reads "uninstalling" and
-// offers "Keep" to back out before the next update prunes it.
+// An image model as a read-only ladder tile (violet). Its lifecycle is the
+// service's, not per-model: a RESIDENT tile can be ▼ freed; an UNLOADED tile has no
+// per-model load (it loads on first request), gated by the service running.
+function ImageTile({
+  model: m,
+  rung,
+  total,
+  vramGb,
+  serviceRunning,
+  onFree,
+}: {
+  model: ImageModelInfo;
+  rung: Rung;
+  total: number;
+  vramGb: number;
+  serviceRunning: boolean;
+  onFree: () => void;
+}) {
+  const footW = total > 0 ? (vramGb / total) * 100 : 0;
+  const footLab = rung === "resident" ? "VRAM" : "if loaded";
+  const footPrefix = rung === "resident" ? "" : "~";
+  const sizeText = `${m.disk_gb == null ? "~" : ""}${m.disk_gb ?? m.size_gb} GB disk`;
+  return (
+    <div className={`tile img ${rung}`} data-id={m.id}>
+      <div className="tile-foot" style={{ width: `${footW}%` }} aria-hidden="true" />
+      <div className="tile-head">
+        <div className="tile-name">
+          {m.label}
+          <span className="tile-meta">{sizeText}</span>
+        </div>
+        <span className="tile-foot-lab">
+          <b>
+            {footPrefix}
+            {Math.round(vramGb)} GB
+          </b>
+          <br />
+          {footLab}
+        </span>
+      </div>
+      <div className="tile-chips">
+        <span className={`llm-chip llm-chip-${m.kind === "edit" ? "imgedit" : "imggen"}`}>
+          {m.kind === "edit" ? "edit" : "generate"}
+        </span>
+      </div>
+      {m.note && <p className="tile-note">{m.note}</p>}
+      {rung === "resident" ? (
+        <div className="tile-acts">
+          <button type="button" className="tile-btn down" onClick={onFree}>
+            <span className="dir" aria-hidden="true">
+              ▼
+            </span>{" "}
+            free
+          </button>
+        </div>
+      ) : (
+        <p className="tile-note gate">
+          {serviceRunning
+            ? "loads on first image request"
+            : "image service stopped — start it to use image models"}
+        </p>
+      )}
+    </div>
+  );
+}
+
+// A provisioned model in the library: its capability chips and a danger "Uninstall"
+// (queues the removal). Once queued it reads "uninstalling" and offers "Keep".
 function UninstallRow({
   model: m,
   busy,
@@ -1368,10 +1534,9 @@ function UninstallRow({
   );
 }
 
-// One un-provisioned catalog model in the "Available to install" list: its
-// capabilities, an Install/Remove toggle for the install queue, and — once queued
-// and downloading — a live progress bar (download_gb / size_gb) the snapshot poll
-// drives, so the operator can follow the weight pull without shell access.
+// An un-provisioned catalog model in the library: capabilities, an Install/Remove
+// toggle for the install queue, and — once queued and downloading — a live progress
+// bar (download_gb / size_gb) the snapshot poll drives.
 function InstallRow({
   model,
   busy,
@@ -1430,9 +1595,9 @@ function InstallRow({
   );
 }
 
-// The image section's service control row: ComfyUI's reachability status plus its
-// Start / Stop / Free controls. The catalog rows render below it in the card's tab
-// body; provisioning (the weight download) stays the on-box comfyui-setup.sh step.
+// The image service control row (calm): ComfyUI's running/stopped/off state plus its
+// Start / Stop / Free controls. Sits above the lanes; provisioning the weights stays
+// the on-box comfyui-setup.sh step.
 function ImageServiceRow({
   image,
   onFree,
@@ -1471,7 +1636,9 @@ function ImageServiceRow({
   );
 }
 
-function imageRow(m: ImageModelInfo) {
+// One image model in the library list: informational (no install button — image
+// provisioning is the on-box comfyui-setup.sh step).
+function imageCatalogRow(m: ImageModelInfo) {
   const footprint = m.disk_gb ?? m.size_gb;
   const sizeText = `${m.disk_gb == null ? "~" : ""}${footprint} GB`;
   return (

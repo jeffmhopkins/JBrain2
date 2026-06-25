@@ -1,0 +1,500 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>JBrain · On-box models — residency ladder (mock E2)</title>
+<style>
+  :root{
+    --bg:#0E0F11; --surface:#17181B; --surface-2:#1E2024; --border:#26282C;
+    --text:#E6E7E9; --text-2:#9A9DA3; --text-3:#5C5F66;
+    --steel:#7FA7C9; --green:#8FBC9A; --amber:#C9A36A; --rose:#CF8A8F; --violet:#A493C9; --teal:#6FB6B1;
+    --steel-tint:rgba(127,167,201,.14); --green-tint:rgba(143,188,154,.14); --rose-tint:rgba(207,138,143,.14);
+    --violet-tint:rgba(164,147,201,.16); --amber-tint:rgba(201,163,106,.16);
+    --font:-apple-system,system-ui,"Segoe UI",Roboto,sans-serif; --mono:ui-monospace,Menlo,Consolas,monospace;
+    --r-card:16px; --r-lane:14px; --r-tile:12px; --r-pill:999px;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);font-family:var(--font);font-size:15px;line-height:1.4;-webkit-font-smoothing:antialiased}
+  .wrap{max-width:520px;margin:0 auto;padding:16px 16px 60px}
+  h1.title{font-size:20px;font-weight:500;margin:6px 0 2px}
+  p.meta{color:var(--text-2);font-size:13px;margin:0 0 16px}
+  p.meta b{color:var(--text)}
+
+  .card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-card);overflow:hidden}
+
+  /* ---- capacity gauge: the honest "what fits" signal ---- */
+  .gauge{padding:14px 14px 13px}
+  .gauge-top{display:flex;align-items:baseline;gap:8px}
+  .gauge-top .ttl{font-weight:500}
+  .gauge-top .free{margin-left:auto;font-size:12.5px;color:var(--text-2)}
+  .gauge-top .free.warn{color:var(--amber)}
+  .gauge-top .free.over{color:var(--rose)}
+  .gauge-bar{position:relative;height:30px;border-radius:9px;background:var(--surface-2);border:1px solid var(--border);overflow:hidden;display:flex;margin-top:11px}
+  .gseg{height:100%;display:flex;align-items:center;min-width:0;transition:width .18s ease}
+  .gseg .lab{font-size:11px;padding-left:7px;white-space:nowrap;overflow:hidden;color:#0E0F11;font-weight:600}
+  .gseg.staged{opacity:.42}.gseg.staged .lab{color:var(--text)}
+  /* projected ceiling marker when staged would push us over */
+  .gauge-bar .over-rail{position:absolute;top:0;bottom:0;width:2px;background:var(--rose);opacity:.85;display:none}
+  .gauge-cap{display:flex;gap:10px;font-size:12px;color:var(--text-2);margin-top:7px;flex-wrap:wrap}
+  .gauge-cap .total{margin-left:auto;font-family:var(--mono)}
+  .gauge-cap .warn{color:var(--amber)}
+  .gauge-cap .over{color:var(--rose)}
+  .gauge-cap .key{display:inline-flex;align-items:center;gap:5px}
+  .gauge-cap .sw{width:8px;height:8px;border-radius:2px;display:inline-block}
+  .gauge-empty{font-size:12.5px;color:var(--text-3);margin-top:9px}
+
+  /* ---- surface switch: residency vs library ---- */
+  .surf-row{display:flex;border-top:1px solid var(--border);border-bottom:1px solid var(--border)}
+  .surf{flex:1;display:flex;align-items:center;justify-content:center;gap:7px;padding:.85em 0;font:inherit;font-size:13px;font-weight:500;
+        color:var(--text-2);background:transparent;border:none;cursor:pointer;min-height:44px;transition:background-color .15s}
+  .surf + .surf{border-left:1px solid var(--border)}
+  .surf-ic{display:inline-flex}.surf-ic svg{width:15px;height:15px;display:block}
+  .surf.on{color:var(--text);font-weight:600;background:var(--steel-tint)}
+  .surf.on .surf-ic{color:var(--steel)}
+  .surf .badge{font-size:11px;color:var(--text-3);font-weight:400;font-family:var(--mono)}
+
+  /* ================= LADDER (lanes = rungs) ================= */
+  .ladder-hint{display:flex;align-items:flex-start;gap:8px;margin:13px 14px 1px;font-size:11.5px;color:var(--text-3);line-height:1.5}
+  .ladder-hint .rungs{flex:none;display:flex;flex-direction:column;align-items:center;gap:2px;margin-top:1px;color:var(--text-2)}
+  .ladder-hint .rungs span{font-size:9px;line-height:1}
+  .lanes{padding:6px 14px 4px;display:flex;flex-direction:column;gap:9px}
+  .lane{position:relative;border:1px solid var(--border);border-radius:var(--r-lane);background:var(--surface-2);
+        padding:11px 12px 12px 14px;overflow:hidden}
+  /* accent rail: the rung's identity colour, on the left edge */
+  .lane::before{content:"";position:absolute;left:0;top:0;bottom:0;width:4px}
+  .lane.resident::before{background:var(--green)}
+  .lane.staged::before{background:var(--amber)}
+  .lane.idle::before{background:var(--text-3)}
+  .lane.over{border-color:color-mix(in srgb,var(--rose) 50%,var(--border))}
+
+  .lane-head{display:flex;align-items:center;gap:9px;min-height:24px}
+  .lane-dot{width:8px;height:8px;border-radius:999px;flex:none}
+  .lane.resident .lane-dot{background:var(--green);box-shadow:0 0 0 3px var(--green-tint)}
+  .lane.staged .lane-dot{background:var(--amber);box-shadow:0 0 0 3px var(--amber-tint)}
+  .lane.idle .lane-dot{background:var(--text-3)}
+  .lane-rung{font-family:var(--mono);font-size:10px;color:var(--text-3);flex:none}
+  .lane-name{font-weight:600;font-size:13.5px;letter-spacing:.02em}
+  .lane-sub{font-size:11.5px;color:var(--text-3);font-weight:400}
+  .lane-subtotal{margin-left:auto;font-family:var(--mono);font-size:12px;color:var(--text-2)}
+  .lane.resident .lane-subtotal{color:var(--green)}
+  .lane.staged .lane-subtotal{color:var(--amber)}
+  .lane-subtotal.over{color:var(--rose)}
+
+  .lane-tiles{display:flex;flex-direction:column;gap:8px;margin-top:10px}
+  .lane-empty{font-size:12px;color:var(--text-3);line-height:1.45;margin-top:9px;padding:9px 0 3px;border-top:1px dashed var(--border)}
+
+  /* ---- model tile: size/weight encodes footprint ---- */
+  .tile{position:relative;border:1px solid var(--border);border-radius:var(--r-tile);background:var(--surface);
+        padding:11px 12px;transition:opacity .17s ease,transform .17s ease}
+  .tile.relocating-up{opacity:0;transform:translateY(-10px) scale(.98)}
+  .tile.relocating-down{opacity:0;transform:translateY(10px) scale(.98)}
+  /* footprint weight strip across the bottom — proportional fill of the pool */
+  .tile .foot{position:absolute;left:0;bottom:0;height:3px;border-radius:0 0 0 var(--r-tile)}
+  .tile.resident .foot{background:var(--green)}
+  .tile.staged .foot{background:var(--amber)}
+  .tile.idle .foot{background:var(--text-3);opacity:.5}
+  .tile.img{border-color:color-mix(in srgb,var(--violet) 35%,var(--border))}
+  .tile.img .foot{background:var(--violet)}
+
+  .tile-head{display:flex;align-items:flex-start;gap:10px}
+  .tile-name{flex:1;min-width:0;font-weight:500;font-size:14px}
+  .tile-meta{display:block;font-size:11.5px;color:var(--text-3);font-weight:400;margin-top:2px;font-family:var(--mono)}
+  .tile-foot-lab{font-size:11px;color:var(--text-2);font-family:var(--mono);flex:none;text-align:right;white-space:nowrap}
+  .tile-foot-lab b{color:var(--text);font-weight:600}
+  .tile.resident .tile-foot-lab b{color:var(--green)}
+  .tile.staged .tile-foot-lab b{color:var(--amber)}
+  .tile.img .tile-foot-lab b{color:var(--violet)}
+
+  .chips{display:flex;flex-wrap:wrap;gap:5px;margin-top:8px}
+  .chip{font-size:11px;padding:2px 8px;border-radius:999px;border:1px solid var(--border);color:var(--text-2)}
+  .chip.tier{color:var(--steel);border-color:color-mix(in srgb,var(--steel) 35%,var(--border))}
+  .chip.tools{color:var(--teal);border-color:color-mix(in srgb,var(--teal) 35%,var(--border))}
+  .chip.vision{color:var(--violet);border-color:color-mix(in srgb,var(--violet) 35%,var(--border))}
+  .chip.warn{color:var(--amber);border-color:color-mix(in srgb,var(--amber) 35%,var(--border))}
+  .chip.gen{color:var(--violet);border-color:color-mix(in srgb,var(--violet) 40%,var(--border))}
+  .chip.edit{color:var(--violet);border-color:color-mix(in srgb,var(--violet) 40%,var(--border))}
+
+  .note{font-size:12px;color:var(--text-2);line-height:1.45;margin:8px 0 0}
+  .note.gate{color:var(--text-3)}
+
+  .ctx{display:flex;align-items:center;gap:8px;margin-top:9px}
+  .ctx label{font-size:11.5px;color:var(--text-3)}
+  .ctx select{background:var(--surface-2);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:4px 8px;font:inherit;font-size:12px;min-height:32px}
+  .ctx select:disabled{opacity:.5}.ctx .kv{font-size:11.5px;color:var(--text-3);margin-left:auto}
+
+  /* tile action row — the ladder stepper (one rung up / down) */
+  .tile-acts{display:flex;gap:6px;margin-top:10px;flex-wrap:wrap}
+  .btn{font:inherit;font-size:11.5px;font-weight:500;cursor:pointer;border-radius:var(--r-pill);padding:6px 13px;border:1px solid var(--border);
+       background:transparent;color:var(--text-2);transition:.15s;white-space:nowrap;min-height:32px}
+  .btn:hover:not(:disabled){border-color:var(--steel);color:var(--steel);background:var(--steel-tint)}
+  .btn.up{color:var(--green);border-color:color-mix(in srgb,var(--green) 40%,var(--border))}
+  .btn.up:hover:not(:disabled){border-color:var(--green);color:var(--green);background:var(--green-tint)}
+  .btn.down{color:var(--amber);border-color:color-mix(in srgb,var(--amber) 40%,var(--border))}
+  .btn.down:hover:not(:disabled){border-color:var(--amber);color:var(--amber);background:var(--amber-tint)}
+  .btn.danger{color:var(--rose);border-color:color-mix(in srgb,var(--rose) 40%,var(--border))}
+  .btn.danger:hover:not(:disabled){border-color:var(--rose);color:var(--rose);background:var(--rose-tint)}
+  .btn:disabled{opacity:.42;cursor:default}
+  .btn .dir{font-weight:700;font-size:12.5px;line-height:1}
+
+  /* image-service control rail (calm, sits above the lanes) */
+  .svc{display:flex;align-items:center;gap:9px;margin:0 14px;padding:10px 12px;border:1px solid var(--border);border-radius:12px;background:var(--surface)}
+  .svc.stopped{border-color:color-mix(in srgb,var(--violet) 30%,var(--border))}
+  .svc-dot{width:8px;height:8px;border-radius:999px;flex:none;background:var(--text-3)}
+  .svc.running .svc-dot{background:var(--violet);box-shadow:0 0 0 3px var(--violet-tint)}
+  .svc-txt{font-size:12px;color:var(--text-2)}
+  .svc-txt b{color:var(--text);font-weight:600}
+  .svc .acts{margin-left:auto;display:flex;gap:6px}
+  .btn.violet{color:var(--violet);border-color:color-mix(in srgb,var(--violet) 40%,var(--border))}
+  .btn.violet:hover:not(:disabled){border-color:var(--violet);color:var(--violet);background:var(--violet-tint)}
+
+  /* ================= CATALOG (library surface) ================= */
+  .surface-body[hidden]{display:none}
+  .list{padding:8px 14px 6px}
+  .tab-hint{font-size:12px;color:var(--text-2);margin:6px 2px 8px;line-height:1.45}
+  .cat-divider{display:flex;align-items:center;gap:9px;margin:14px 2px 2px;font-size:11px;font-weight:600;letter-spacing:.04em;color:var(--text-2)}
+  .cat-divider .rail{width:3px;height:13px;border-radius:2px;flex:none}
+  .cat-divider.llm .rail{background:var(--steel)} .cat-divider.img .rail{background:var(--violet)}
+  .cat-divider .ln{flex:1;height:1px;background:var(--border)}
+  .row{padding:13px 0;border-top:1px solid var(--border)}.row:first-child{border-top:0}
+  .row-head{display:flex;align-items:flex-start;gap:10px}
+  .row-name{flex:1;min-width:0;font-weight:500;font-size:14px}
+  .row-meta{display:block;font-size:11.5px;color:var(--text-3);font-weight:400;margin-top:2px;font-family:var(--mono)}
+  .row-right{display:flex;align-items:center;gap:8px;flex:none}
+  .state{font-size:11px;color:var(--text-3)}
+  .state.queued{color:var(--steel)}.state.idle{color:var(--text-3)}.state.loaded{color:var(--green)}.state.staged{color:var(--amber)}.state.resident{color:var(--violet)}
+  .dl{margin-top:10px}.dl-bar{height:6px;border-radius:999px;background:var(--surface-2);border:1px solid var(--border);overflow:hidden}
+  .dl-bar i{display:block;height:100%;background:var(--steel);transition:width .4s}
+  .dl-cap{display:block;font-size:11.5px;color:var(--text-2);margin-top:5px;font-family:var(--mono)}
+  .queuebar{display:flex;align-items:center;gap:12px;margin:10px 14px 16px;padding:11px 13px;border:1px solid color-mix(in srgb,var(--steel) 45%,var(--border));border-radius:13px;background:var(--steel-tint)}
+  .queuebar b{font-size:13px}.queuebar span{display:block;color:var(--text-2);font-size:11.5px;margin-top:2px}.queuebar .btn{margin-left:auto;flex:none}
+
+  @media (prefers-reduced-motion: reduce){
+    .gseg,.tile{transition:none}
+    .tile.relocating-up,.tile.relocating-down{opacity:1;transform:none}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1 class="title">Settings · LLM</h1>
+  <p class="meta">Mock <b>E2 — residency ladder</b>. The three lanes are <b>rungs</b> — resident → staged → unloaded, top to bottom.
+  A model steps <b>one rung at a time</b>, up or down, and the tile relocates to the adjacent lane while the gauge re-settles. load and
+  unload step one rung at a time — a model is always warmed (<b>staged</b>) before it goes resident, and steps back down through staged on
+  its way out. Image models ride the <b>same ladder</b> in violet, gated by the ComfyUI service.</p>
+
+  <div class="card">
+    <!-- ===== capacity gauge ===== -->
+    <div class="gauge">
+      <div class="gauge-top">
+        <span class="ttl">on-box memory</span>
+        <span class="free" id="g-free"></span>
+      </div>
+      <div class="gauge-bar" id="g-bar"><span class="over-rail" id="g-over"></span></div>
+      <div class="gauge-cap" id="g-cap"></div>
+      <div class="gauge-empty" id="g-empty" style="display:none">nothing resident — stage a model to warm it, then load it up into memory.</div>
+    </div>
+
+    <!-- ===== surface switch ===== -->
+    <div class="surf-row">
+      <button class="surf on" id="s-lanes" onclick="setSurface('lanes')">
+        <span class="surf-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="3" y="4" width="18" height="4.5" rx="1.5"/><rect x="3" y="10" width="18" height="4.5" rx="1.5"/><rect x="3" y="16" width="18" height="4.5" rx="1.5"/></svg></span>
+        residency
+      </button>
+      <button class="surf" id="s-catalog" onclick="setSurface('catalog')">
+        <span class="surf-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M4 5.5A1.5 1.5 0 0 1 5.5 4H10v16H5.5A1.5 1.5 0 0 1 4 18.5z"/><path d="M14 4h4.5A1.5 1.5 0 0 1 20 5.5v13a1.5 1.5 0 0 1-1.5 1.5H14z"/></svg></span>
+        library <span class="badge" id="s-cat-badge"></span>
+      </button>
+    </div>
+
+    <!-- ===== lanes (ladder) surface ===== -->
+    <div class="surface-body" id="body-lanes">
+      <div class="ladder-hint">
+        <span class="rungs"><span>▲</span><span>│</span><span>▼</span></span>
+        <span>the ladder runs resident → staged → unloaded. you move a model one rung at a time — never skipping staged. ▲ promotes one rung, ▼ demotes one rung.</span>
+      </div>
+      <div id="svc-host"></div>
+      <div class="lanes" id="lanes"></div>
+    </div>
+
+    <!-- ===== catalog surface ===== -->
+    <div class="surface-body" id="body-catalog" hidden>
+      <div class="list" id="cat-list"></div>
+      <div id="cat-queue"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+const TOTAL=128, SEG=['#7FA7C9','#8FBC9A','#C9A36A','#6FB6B1'], IMGCOL='#A493C9', WINDOWS=[8192,16384,32768,65536,131072];
+const fmt=n=>Math.round(n);
+let surface='lanes';
+
+/* ---- data model ----
+   LLMs and image models share one residency ladder. status: 'resident' | 'staged' | 'unloaded' | 'available' | 'queued'
+   type:'llm' uses gb (weights, disk) + kv (KV cache); footprint = gb + kv.
+   type:'img' uses gb (disk) + vram (resident draw); footprint = vram. gated by the ComfyUI service. */
+const models=[
+  {id:'qwen3-vl-30b',type:'llm',label:'Qwen3-VL 30B · vision',quant:'Q8_0',gb:32,kv:1.5,win:32768,winMax:32768,chips:[['vision','vision'],['tier','vision · low'],['tools','tools']],installed:true,status:'resident'},
+  {id:'gpt-oss-120b',type:'llm',label:'GPT-OSS 120B · reasoning',quant:'MXFP4',gb:59,kv:4.5,win:131072,winMax:131072,chips:[['tier','high'],['tools','tools']],installed:true,status:'staged'},
+  {id:'qwen3-235b',type:'llm',label:'Qwen3-235B-A22B · 3-bit',quant:'UD-Q3_K_XL',gb:97,kv:11.5,win:32768,winMax:32768,chips:[['tier','high'],['tools','tools'],['warn','standalone · slow']],installed:true,status:'unloaded',note:'235B MoE, 22B active — strongest fit, ~single-digit tok/s here. batch use.'},
+  // image models — first-class tiles on the same ladder, violet-accented.
+  {id:'qwen-image',type:'img',label:'Qwen-Image · generate',quant:'bf16',gb:58,vram:20,kind:'gen',installed:true,status:'resident',note:'1328², 20 steps ≈ 3.5 min on the iGPU.'},
+  {id:'qwen-image-edit',type:'img',label:'Qwen-Image-Edit · edit',quant:'bf16',gb:44,vram:38,kind:'edit',installed:true,status:'unloaded'},
+  // catalog-only
+  {id:'qwen3-30b',type:'llm',label:'Qwen3 30B · lightweight',quant:'Q4_K_M',gb:18,kv:3.2,win:32768,winMax:32768,chips:[['tier','low'],['tools','tools']],installed:false,status:'available'},
+  {id:'glm-4.5-air',type:'llm',label:'GLM-4.5 Air · reasoning',quant:'Q4_K_M',gb:70,kv:5,win:32768,winMax:131072,chips:[['tier','high'],['tools','tools']],installed:false,status:'available'},
+  {id:'llama-3.3-70b',type:'llm',label:'Llama 3.3 70B · batch',quant:'Q4_K_M',gb:40,kv:8,win:32768,winMax:32768,chips:[['tier','high'],['tools','tools'],['warn','~5 t/s']],installed:false,status:'available'},
+];
+// ComfyUI is a service with a running/stopped state. image residency requires it running.
+const comfy={ running:true };
+
+const find=id=>models.find(m=>m.id===id);
+const footGb=m=>m.type==='img'?m.vram:m.gb+m.kv;        // resident/staged footprint in the pool
+const pct=gb=>(gb/TOTAL*100);
+const winLab=w=>w>=1024?(w/1024)+'k':w;
+const firstWord=l=>l.split(' ')[0];
+
+/* ---------- capacity gauge: resident solid, staged ghost ---------- */
+function gseg(bar,name,gb,color,staged){
+  const d=document.createElement('div');
+  d.className='gseg'+(staged?' staged':'');
+  d.style.width=pct(gb)+'%'; d.style.background=color;
+  d.innerHTML=`<span class="lab">${name} ${fmt(gb)}G</span>`;
+  bar.insertBefore(d,document.getElementById('g-over'));
+}
+function renderGauge(){
+  const resident=models.filter(m=>m.installed&&m.status==='resident');
+  const staged=models.filter(m=>m.installed&&m.status==='staged');
+  const bar=document.getElementById('g-bar');
+  bar.querySelectorAll('.gseg').forEach(e=>e.remove());
+  let used=0,sg=0,i=0,imgUsed=0;
+  resident.forEach(m=>{const g=footGb(m);used+=g; if(m.type==='img'){imgUsed+=g;gseg(bar,firstWord(m.label),g,IMGCOL,false);} else gseg(bar,firstWord(m.label),g,SEG[i++%SEG.length],false);});
+  staged.forEach(m=>{const g=footGb(m);sg+=g; gseg(bar,firstWord(m.label),g,m.type==='img'?IMGCOL:SEG[i++%SEG.length],true);});
+  const any=resident.length+staged.length, proj=used+sg, over=proj>TOTAL, free=TOTAL-used;
+  bar.style.display=any?'flex':'none';
+  document.getElementById('g-empty').style.display=any?'none':'block';
+
+  const overRail=document.getElementById('g-over');
+  if(over){ overRail.style.display='block'; overRail.style.left='100%'; overRail.style.marginLeft='-2px'; }
+  else overRail.style.display='none';
+
+  const freeEl=document.getElementById('g-free');
+  freeEl.textContent=any?(over?`${fmt(proj-TOTAL)} GB over if staged loads`:`${fmt(free)} GB free`):'';
+  freeEl.className='free'+(over?' over':(free<TOTAL*.1?' warn':''));
+
+  document.getElementById('g-cap').innerHTML=!any?'':
+    `<span>${fmt(used)} GB resident</span>`+
+    (imgUsed>.5?`<span class="key"><span class="sw" style="background:${IMGCOL}"></span>image ${fmt(imgUsed)} GB</span>`:'')+
+    (sg>.5?`<span class="${over?'over':'warn'}">+${fmt(sg)} GB staged → ${fmt(proj)} GB${over?' over':''}</span>`:'')+
+    `<span class="total">${TOTAL} GB total</span>`;
+}
+
+/* ---------- image-service control ---------- */
+function renderSvc(){
+  const host=document.getElementById('svc-host');
+  const r=comfy.running;
+  const imgResident=models.some(m=>m.type==='img'&&m.installed&&m.status==='resident');
+  host.innerHTML=`<div class="svc ${r?'running':'stopped'}">
+    <span class="svc-dot"></span>
+    <span class="svc-txt">${r
+      ? `image service — <b>running</b>${imgResident?' · one model resident':' · idle'}`
+      : `image service — <b>stopped</b> · start to allow image models to go resident`}</span>
+    <span class="acts">${r
+      ? `<button class="btn danger" onclick="svcStop()">stop</button>`
+      : `<button class="btn violet" onclick="svcStart()">start</button>`}</span>
+  </div>`;
+}
+
+/* ---------- lanes (ladder rungs) ---------- */
+function renderLanes(){
+  const el=document.getElementById('lanes');
+  const installed=models.filter(m=>m.installed);
+  const resident=installed.filter(m=>m.status==='resident');
+  const staged=installed.filter(m=>m.status==='staged');
+  const unloaded=installed.filter(m=>m.status==='unloaded');
+  const usedGb=resident.reduce((s,m)=>s+footGb(m),0);
+  const stagedGb=staged.reduce((s,m)=>s+footGb(m),0);
+  const over=usedGb+stagedGb>TOTAL;
+
+  el.innerHTML=
+    lane('resident','RESIDENT','ceiling · in memory, serving',
+         `${fmt(usedGb)} / ${TOTAL} GB`, false,
+         resident.map(m=>tile(m,'resident')).join(''),
+         resident.length?'':'nothing resident — load a staged model up one rung into memory.')
+   +lane('staged','STAGED','warm · skips the cold load',
+         staged.length?`+${fmt(stagedGb)} GB projected`:'—', over&&staged.length>0,
+         staged.map(m=>tile(m,'staged')).join(''),
+         staged.length?'':'nothing staged — staging warms weights so the next request skips the cold load. it is the only path between unloaded and resident.')
+   +lane('idle','UNLOADED','floor · on device, idle','',false,
+         unloaded.map(m=>tile(m,'unloaded')).join(''),
+         unloaded.length?'':'nothing unloaded — every installed model is staged or resident.');
+}
+function lane(cls,name,sub,subtotal,over,tiles,empty){
+  return `<section class="lane ${cls}${over?' over':''}">
+    <div class="lane-head">
+      <span class="lane-dot"></span>
+      <span class="lane-name">${name}</span>
+      <span class="lane-sub">${sub}</span>
+      <span class="lane-subtotal${over?' over':''}">${subtotal}</span>
+    </div>
+    ${tiles?`<div class="lane-tiles">${tiles}</div>`:''}
+    ${empty?`<div class="lane-empty">${empty}</div>`:''}
+  </section>`;
+}
+
+function tile(m,rung){
+  const isImg=m.type==='img';
+  const chips=isImg
+    ? `<span class="chip ${m.kind==='edit'?'edit':'gen'}">${m.kind==='edit'?'edit':'generate'}</span>`
+    : (m.chips||[]).map(([c,l])=>`<span class="chip ${c}">${l}</span>`).join('');
+  const footW=pct(footGb(m));
+  const footLab=isImg
+    ? (rung==='resident'?`<b>${m.vram} GB</b><br>VRAM`:rung==='staged'?`<b>${m.vram} GB</b><br>warm`:`~${m.vram} GB<br>if loaded`)
+    : (rung==='resident'?`<b>${fmt(footGb(m))} GB</b><br>weights+KV`:rung==='staged'?`<b>${fmt(footGb(m))} GB</b><br>warm`:`~${fmt(footGb(m))} GB<br>if loaded`);
+  const metaLine=isImg?`${m.quant} · ${m.gb} GB disk`:`${m.quant} · ${m.gb} GB disk`;
+
+  // context-window control — LLMs only, in-memory rungs, locked while resident.
+  let ctx='';
+  if(!isImg&&rung!=='unloaded'){
+    const ed=rung!=='resident';
+    const opts=Array.from(new Set([...WINDOWS.filter(w=>w<=m.winMax),m.winMax])).sort((a,b)=>a-b)
+      .map(w=>`<option value="${w}" ${w===m.win?'selected':''}>${winLab(w)}</option>`).join('');
+    ctx=`<div class="ctx"><label>context</label><select ${ed?'':'disabled'} onchange="setWin('${m.id}',this.value)">${opts}</select>`+
+        (rung==='resident'?'<span class="kv">🔒 unload to change</span>':`<span class="kv">KV ~${m.kv} GB</span>`)+`</div>`;
+  }
+
+  // ===== the ladder stepper: exactly one rung, up and/or down =====
+  // image up-action from staged is gated on the service running.
+  const imgGated=isImg&&!comfy.running;
+  let acts='',gate='';
+  if(rung==='unloaded'){
+    // floor: only ▲ stage. no down.
+    acts=`<button class="btn up" onclick="promote('${m.id}')"><span class="dir">▲</span> stage</button>`;
+  } else if(rung==='staged'){
+    // middle: ▲ load (to resident) and ▼ unstage (to unloaded).
+    const upDis=imgGated?'disabled':'';
+    acts=`<button class="btn up" onclick="promote('${m.id}')" ${upDis}><span class="dir">▲</span> load</button>`+
+         `<button class="btn down" onclick="demote('${m.id}')"><span class="dir">▼</span> unstage</button>`;
+    if(imgGated) gate=`<p class="note gate">image service stopped — start it to load this model.</p>`;
+  } else if(rung==='resident'){
+    // ceiling: only ▼ unload (to staged). no up.
+    acts=`<button class="btn down" onclick="demote('${m.id}')"><span class="dir">▼</span> unload</button>`;
+  }
+
+  return `<div class="tile ${rung}${isImg?' img':''}" data-id="${m.id}">
+    <div class="foot" style="width:${footW}%"></div>
+    <div class="tile-head">
+      <div class="tile-name">${m.label}<span class="tile-meta">${metaLine}</span></div>
+      <span class="tile-foot-lab">${footLab}</span>
+    </div>
+    <div class="chips">${chips}</div>
+    ${m.note?`<p class="note">${m.note}</p>`:''}
+    ${ctx}
+    <div class="tile-acts">${acts}</div>
+    ${gate}
+  </div>`;
+}
+
+/* ---------- catalog (library) ---------- */
+function renderCatalog(){
+  const installedCount=models.filter(m=>m.installed).length;
+  document.getElementById('s-cat-badge').textContent=`${installedCount}/${models.length}`;
+  const llmRows=models.filter(m=>m.type==='llm');
+  const imgRows=models.filter(m=>m.type==='img');
+  const queued=models.filter(m=>!m.installed&&m.status==='queued');
+  document.getElementById('cat-list').innerHTML=
+    `<p class="tab-hint">every catalog model — language and image. install pulls the weights; uninstall removes them and frees the disk. installed models appear on the residency ladder.</p>`
+    +`<div class="cat-divider llm"><span class="rail"></span>language models<span class="ln"></span></div>`
+    +llmRows.map(catRow).join('')
+    +`<div class="cat-divider img"><span class="rail"></span>image models<span class="ln"></span></div>`
+    +imgRows.map(catRow).join('');
+  document.getElementById('cat-queue').innerHTML=queued.length
+    ?`<div class="queuebar"><div><b>${queued.length} queued · ${fmt(queued.reduce((s,x)=>s+x.gb,0))} GB</b><span>installs on your next update.</span></div><button class="btn up" onclick="alert('(mock) kicks the provisioning update')">update &amp; install</button></div>`
+    :'';
+}
+function catRow(m){
+  const isImg=m.type==='img';
+  let acts='',sc='';
+  if(!m.installed){
+    if(m.status==='queued'){ acts=`<button class="btn" onclick="install('${m.id}',false)">remove</button>`; sc=`<span class="state queued">queued</span>`; }
+    else acts=`<button class="btn up" onclick="install('${m.id}',true)">install</button>`;
+  } else {
+    acts=`<button class="btn danger" onclick="uninstall('${m.id}')">uninstall</button>`;
+    sc=`<span class="state ${m.status}">${m.status}</span>`;
+  }
+  const chips=isImg
+    ? `<span class="chip ${m.kind==='edit'?'edit':'gen'}">${m.kind==='edit'?'edit':'generate'}</span>`
+    : (m.chips||[]).map(([c,l])=>`<span class="chip ${c}">${l}</span>`).join('');
+  const size=(m.installed?'':'~')+m.gb+' GB'+(isImg?` · ${m.vram} GB VRAM`:'');
+  const dl=m.status==='queued'?`<div class="dl"><div class="dl-bar"><i style="width:${m.dl||0}%"></i></div><div class="dl-cap">${fmt((m.dl||0)/100*m.gb)} / ${m.gb} GB · ${m.dl||0}%</div></div>`:'';
+  return `<div class="row"><div class="row-head"><div class="row-name">${m.label}<span class="row-meta">${m.quant} · ${size}</span></div><div class="row-right">${acts}${sc}</div></div><div class="chips">${chips}</div>${dl}</div>`;
+}
+
+/* ---------- surface + render ---------- */
+function setSurface(s){
+  surface=s;
+  document.getElementById('s-lanes').classList.toggle('on',s==='lanes');
+  document.getElementById('s-catalog').classList.toggle('on',s==='catalog');
+  document.getElementById('body-lanes').hidden=s!=='lanes';
+  document.getElementById('body-catalog').hidden=s!=='catalog';
+  render();
+}
+function render(){
+  renderGauge();
+  if(surface==='lanes'){ renderSvc(); renderLanes(); } else renderCatalog();
+  document.getElementById('s-cat-badge').textContent=`${models.filter(m=>m.installed).length}/${models.length}`;
+}
+
+/* ---------- ladder moves: STRICTLY ONE RUNG ----------
+   ladder order, top→bottom: resident > staged > unloaded.
+   promote = up one rung; demote = down one rung. never skip. */
+const RUNG_UP={ unloaded:'staged', staged:'resident' };   // resident has no up (ceiling)
+const RUNG_DOWN={ resident:'staged', staged:'unloaded' };  // unloaded has no down (floor)
+const reduce=window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+function move(id,dir,mutate){
+  const node=document.querySelector(`.tile[data-id="${id}"]`);
+  if(reduce||!node){ mutate(); render(); return; }
+  node.classList.add(dir==='up'?'relocating-up':'relocating-down');
+  setTimeout(()=>{ mutate(); render(); },165);
+}
+
+function promote(id){
+  const m=find(id); const dest=RUNG_UP[m.status];
+  if(!dest) return;                                        // ceiling — no up
+  // image up-actions require the running service.
+  if(m.type==='img'&&dest==='resident'&&!comfy.running) return;
+  move(id,'up',()=>{
+    // ComfyUI keeps ONE image model resident — promoting one steps any other
+    // resident image model DOWN to staged (the real single-resident constraint).
+    if(m.type==='img'&&dest==='resident'){
+      models.forEach(o=>{ if(o!==m&&o.type==='img'&&o.status==='resident') o.status='staged'; });
+    }
+    m.status=dest;
+  });
+}
+function demote(id){
+  const m=find(id); const dest=RUNG_DOWN[m.status];
+  if(!dest) return;                                        // floor — no down
+  move(id,'down',()=>{ m.status=dest; });
+}
+
+/* ---------- image service start/stop ---------- */
+function svcStart(){ comfy.running=true; render(); }
+function svcStop(){
+  // stopping the service drops any resident image model down one rung to staged
+  // (it can't keep a process resident with the service off; weights stay warm-earmarked).
+  models.forEach(m=>{ if(m.type==='img'&&m.status==='resident') m.status='staged'; });
+  comfy.running=false; render();
+}
+
+/* ---------- context + catalog ---------- */
+function setWin(id,v){ find(id).win=+v; renderGauge(); }
+function install(id,on){ const m=find(id); m.status=on?'queued':'available'; m.dl=0; render(); }
+function uninstall(id){ const m=find(id); if(!confirm('(mock) uninstall '+m.label+' and delete its weights?'))return; m.installed=false; m.status='available'; render(); }
+
+render();
+</script>
+</body>
+</html>
