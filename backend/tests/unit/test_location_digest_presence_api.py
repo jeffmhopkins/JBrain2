@@ -17,7 +17,11 @@ from jbrain.locations import Dwell, FixPoint, LatestPlace, NearestFix, PlaceGeof
 from jbrain.main import create_app
 from tests.unit.fakes import FakeAuthRepo
 
-NOW = datetime(2026, 6, 18, 12, 0, tzinfo=UTC)
+# Anchored a couple of days back from the real wall clock (at a stable noon, so the
+# civil-day night bucketing is deterministic regardless of when the suite runs). The
+# digest window is [now-7d, now), so a fixed past date would drift out of it as the
+# clock advances — which is exactly the time-bomb this replaces.
+NOW = (datetime.now(UTC) - timedelta(days=2)).replace(hour=12, minute=0, second=0, microsecond=0)
 
 
 class FakeLocationRepo:
