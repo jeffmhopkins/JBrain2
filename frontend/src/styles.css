@@ -8005,6 +8005,13 @@ button.small {
   border: 1px solid var(--border);
   border-radius: 13px;
   overflow: hidden;
+  /* .panel-list is a flex column (to center the empty state); this card is its
+     single flex item. Because the card clips its rows (overflow:hidden), its flex
+     auto-min-size is 0, so the layout would SHRINK it to the list height and the
+     clip would eat every row past the fold — the list never overflows, so it never
+     scrolls. flex:none holds the card at its full content height so .panel-list
+     overflows and scrolls instead. This is what actually makes a long history scroll. */
+  flex: none;
 }
 /* swipe-left action rail on a session row (reuses the home note rail buttons) */
 .fb-shell .session-wrap {
