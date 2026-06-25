@@ -176,8 +176,8 @@ function RunRow({ run, onOpen }: RunRowProps) {
             run.progress_note
           ) : (
             <>
-              {fmtDuration(run.duration_ms)} · {run.step_count} steps ·{" "}
-              {fmtTokens(run.cost_tokens)} tok
+              {fmtDuration(run.duration_ms)} · {run.step_count} steps · {fmtTokens(run.cost_tokens)}{" "}
+              tok
               {run.last_error ? ` · ${run.last_error}` : ""}
             </>
           )}

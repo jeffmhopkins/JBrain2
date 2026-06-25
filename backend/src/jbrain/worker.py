@@ -87,7 +87,7 @@ def resolve_exec_context(job: queue.Job) -> SessionContext:
 
 
 async def _invoke(
-    handler: Handler | ScopedHandler,
+    handler: Callable[..., Awaitable[None]],
     payload: dict[str, Any],
     ctx: SessionContext,
     progress: ProgressFn,
