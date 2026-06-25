@@ -101,6 +101,22 @@ describe("TasksScreen", () => {
     expect(createTask.mock.calls[0]?.[0].prompt).toBe("Summarize my week.");
   });
 
+  it("creates an Archivist task (Gmail organizer, no scope dial)", async () => {
+    const createTask = vi
+      .spyOn(api, "createTask")
+      .mockResolvedValue({ ...SCHEDULED, agent: "archivist" });
+    mount();
+    fireEvent.click(await screen.findByText("New task"));
+    const prompt = await screen.findByPlaceholderText("Tell the agent what to do on each run…");
+    fireEvent.change(prompt, { target: { value: "Label everything from chase.com." } });
+    // The Archivist is offered in the agent picker; selecting it starts with no scopes.
+    fireEvent.click(screen.getByRole("button", { name: /Archivist/ }));
+    fireEvent.click(screen.getByText("Save task"));
+    await waitFor(() => expect(createTask).toHaveBeenCalled());
+    expect(createTask.mock.calls[0]?.[0].agent).toBe("archivist");
+    expect(createTask.mock.calls[0]?.[0].domain_scopes).toEqual([]); // a non-KB persona reads nothing
+  });
+
   it("returns to the launcher via the back control", async () => {
     const { onClose } = mount();
     await screen.findByText("Morning brief");

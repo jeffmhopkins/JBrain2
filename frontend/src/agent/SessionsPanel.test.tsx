@@ -266,6 +266,40 @@ describe("SessionsPanel", () => {
     );
   });
 
+  it("offers the Archivist in Research and starts it as a no-data agent", async () => {
+    const created = session({ id: "a", title: "", domain_scopes: [], agent: "archivist" });
+    const onCreate = vi.fn(async (_body: SessionCreate) => created);
+    const onOpen = vi.fn();
+    render(
+      <SessionsPanel
+        sessions={[]}
+        agentOptions={["jerv", "teacher", "archivist"]}
+        onOpen={onOpen}
+        onCreate={onCreate}
+        onClose={vi.fn()}
+        onRename={vi.fn()}
+        onDelete={vi.fn()}
+        onArchive={vi.fn()}
+        onUnarchive={vi.fn()}
+        onRescope={vi.fn()}
+      />,
+    );
+    fireEvent.click(screen.getByText("＋ New chat"));
+    // The Archivist is on offer in the Research picker.
+    expect(screen.getByRole("button", { name: /Archivist/ })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /Archivist/ }));
+    // It reads no owner data: the scope dial is gone, replaced by the Gmail-only caveat.
+    expect(screen.queryByRole("button", { name: "Everything" })).not.toBeInTheDocument();
+    expect(screen.getByText(/No access to your notes/i)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /Start/ }));
+    await waitFor(() =>
+      expect(onCreate).toHaveBeenCalledWith({ domain_scopes: [], title: "", agent: "archivist" }),
+    );
+    await waitFor(() => expect(onOpen).toHaveBeenCalledWith(created));
+  });
+
   it("a single-agent tab (Full Brain → Curator) shows the scope dial and no picker", () => {
     render(
       <SessionsPanel

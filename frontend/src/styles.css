@@ -14352,6 +14352,10 @@ input.ld-title {
   background: var(--amber-tint);
   color: var(--amber);
 }
+.ted-agent.archivist .ted-av {
+  background: var(--green-tint);
+  color: var(--green);
+}
 .ted-am {
   flex: 1;
   min-width: 0;
@@ -14391,6 +14395,10 @@ input.ld-title {
   border-color: var(--amber);
   background: var(--amber-tint);
 }
+.ted-agent.archivist.on {
+  border-color: var(--green);
+  background: var(--green-tint);
+}
 .ted-agent.on .ted-ck {
   border-color: currentColor;
   color: var(--steel);
@@ -14400,6 +14408,9 @@ input.ld-title {
 }
 .ted-agent.teacher.on .ted-ck {
   color: var(--amber);
+}
+.ted-agent.archivist.on .ted-ck {
+  color: var(--green);
 }
 .ted-scope {
   margin-top: 12px;

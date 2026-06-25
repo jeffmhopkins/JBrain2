@@ -22,6 +22,7 @@ from jbrain.agent.appointmenttools import (
     build_appointment_handlers,
     build_appointment_write_handlers,
 )
+from jbrain.agent.archivisttools import build_archivist_memory_handlers
 from jbrain.agent.clock import build_clock_handlers
 from jbrain.agent.connectortools import build_connector_handlers
 from jbrain.agent.contracts import EntityRef, NoteSource
@@ -69,6 +70,21 @@ OPTIONAL_TRANSCRIBE_TOOL = frozenset({"transcribe"})
 # jerv's on-box video analysis sidecar, dropped from the registry when ffmpeg is
 # absent (graceful degrade, like the image/whisper tools).
 OPTIONAL_VIDEO_TOOL = frozenset({"analyze_video"})
+# The archivist persona's Gmail sidecars (`web`-class, opt-in), dropped from the
+# registry when Gmail is unconfigured — no refresh token, so no handlers are passed
+# (graceful degrade, docs/EMAIL_ARCHIVIST_PLAN.md).
+OPTIONAL_GMAIL_TOOLS = frozenset(
+    {
+        "gmail_search",
+        "gmail_read",
+        "gmail_list_labels",
+        "gmail_create_label",
+        "gmail_label",
+        "gmail_archive",
+        "gmail_count",
+        "gmail_bulk_label",
+    }
+)
 
 
 class EntityReader(Protocol):
@@ -414,6 +430,7 @@ def build_registry(
     image_handlers: dict[str, ToolHandler] | None = None,
     transcribe_handlers: dict[str, ToolHandler] | None = None,
     video_handlers: dict[str, ToolHandler] | None = None,
+    gmail_handlers: dict[str, ToolHandler] | None = None,
 ) -> ToolRegistry:
     """The agent's tool registry: every shipped sidecar bound to its handler — the
     read tools, the Tier-A memory tools, the list tools (which write the owner's
@@ -464,6 +481,18 @@ def build_registry(
             # jerv's local video analysis (`web`-gated, on-box), present only when
             # ffmpeg is available; otherwise its sidecar is dropped below.
             **(video_handlers or {}),
+            # The archivist persona's Gmail tools (`web`-gated), present only when a
+            # Gmail refresh token is configured; otherwise their sidecars are dropped.
+            **(gmail_handlers or {}),
+            # The archivist's cross-session memory (`web`-gated, archivist-only) over
+            # the owner-only `archivist_memory` table — always wired (the table always
+            # exists); curator never sees it (the opt-in web class).
+            **build_archivist_memory_handlers(maker),
         },
-        optional=OPTIONAL_IMAGE_TOOLS | OPTIONAL_TRANSCRIBE_TOOL | OPTIONAL_VIDEO_TOOL,
+        optional=(
+            OPTIONAL_IMAGE_TOOLS
+            | OPTIONAL_TRANSCRIBE_TOOL
+            | OPTIONAL_VIDEO_TOOL
+            | OPTIONAL_GMAIL_TOOLS
+        ),
     )

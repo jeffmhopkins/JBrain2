@@ -68,6 +68,13 @@ const AGENTS: AgentChoice[] = [
     readsKb: false,
     note: "Talks to the open web. No access to your notes or any of your data.",
   },
+  {
+    id: "archivist",
+    label: "Archivist",
+    desc: "Organizes your Gmail — searches, counts, labels and archives email into a clean taxonomy.",
+    readsKb: false,
+    note: "Works only in your Gmail (read, label, archive — never deletes). No access to your notes or other data.",
+  },
 ];
 const agentById = (id: string): AgentChoice => AGENTS.find((a) => a.id === id) ?? CURATOR_AGENT;
 

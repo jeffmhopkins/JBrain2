@@ -298,6 +298,28 @@ export interface FeedConfig {
   token: string | null;
 }
 
+/** The archivist's Gmail connection (GET /api/settings/gmail). Booleans only — the
+ * secret/refresh token are stored server-side and never returned. */
+export interface GmailSettings {
+  client_id_set: boolean;
+  client_secret_set: boolean;
+  refresh_token_set: boolean;
+  connected: boolean;
+}
+
+/** Partial credential write — omit a field to leave it unchanged. */
+export interface GmailCredsPatch {
+  client_id?: string;
+  client_secret?: string;
+  refresh_token?: string;
+}
+
+/** Result of POST /api/settings/gmail/test — did the saved credentials work. */
+export interface GmailTestResult {
+  ok: boolean;
+  detail: string;
+}
+
 // ----- Debug-console capability tokens (owner mints; an assistant uses) -----
 
 export interface DebugToken {
@@ -897,7 +919,7 @@ export interface AutomationsResponse {
 
 // ===== Tasks: saved prompts that spawn an agent session (docs/mocks/tasks-launcher) =====
 
-export type TaskAgent = "jerv" | "curator" | "teacher";
+export type TaskAgent = "jerv" | "curator" | "teacher" | "archivist";
 export type ScheduleKind = "on_demand" | "once" | "repeat";
 export type ScheduleFreq = "daily" | "weekdays" | "weekly";
 
@@ -1389,6 +1411,23 @@ export const api = {
   async updateSettings(patch: Partial<AppSettings>): Promise<AppSettings> {
     const response = await request("/api/settings", jsonInit("PUT", patch));
     return (await response.json()) as AppSettings;
+  },
+
+  // The archivist's Gmail connection. Status is booleans only; saving a partial
+  // patch leaves the other fields intact; test verifies the saved credentials.
+  async getGmailSettings(): Promise<GmailSettings> {
+    const response = await request("/api/settings/gmail");
+    return (await response.json()) as GmailSettings;
+  },
+
+  async updateGmailSettings(patch: GmailCredsPatch): Promise<GmailSettings> {
+    const response = await request("/api/settings/gmail", jsonInit("PUT", patch));
+    return (await response.json()) as GmailSettings;
+  },
+
+  async testGmailSettings(): Promise<GmailTestResult> {
+    const response = await request("/api/settings/gmail/test", { method: "POST" });
+    return (await response.json()) as GmailTestResult;
   },
 
   // Per-task LLM routing: the provider each task runs on, plus grok's reasoning

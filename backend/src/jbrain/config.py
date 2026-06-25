@@ -204,6 +204,21 @@ class Settings(BaseSettings):
     # transcribes normally. 100 MB ~ a long lossy recording.
     whisper_max_bytes: int = 100 * 1024 * 1024
 
+    # OPT-IN Gmail access for the `archivist` persona (docs/EMAIL_ARCHIVIST_PLAN.md):
+    # OAuth2 client credentials + a long-lived refresh token, minted once by
+    # scripts/gmail-oauth-bootstrap.py and pasted here. No token table, no DB — a
+    # single-owner box, so a config secret mirrors `mqtt_ingest_secret`. EMPTY
+    # `gmail_refresh_token` DISABLES the feature (fail-closed): the client is not
+    # wired and the gmail_* tools drop from the registry, the same graceful degrade
+    # as comfyui_url/whisper_url. The scope minted is `gmail.modify` (read + label +
+    # archive, never delete); `gmail_api_url`/`gmail_token_url` are pinned, never
+    # model-supplied.
+    gmail_client_id: str = ""
+    gmail_client_secret: str = ""
+    gmail_refresh_token: str = ""
+    gmail_api_url: str = "https://gmail.googleapis.com/gmail/v1"
+    gmail_token_url: str = "https://oauth2.googleapis.com/token"
+
     # JSON object of per-task "provider:model" overrides, merged over the
     # adapter defaults — see jbrain.llm.router.TASK_DEFAULTS.
     llm_tasks: dict[str, str] = {}

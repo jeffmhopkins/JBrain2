@@ -36,6 +36,7 @@ const AGENT_LABEL: Record<TaskAgent, string> = {
   jerv: "Jerv",
   curator: "Curator",
   teacher: "Teacher",
+  archivist: "Archivist",
 };
 const DAY_LABELS = ["S", "M", "T", "W", "T", "F", "S"]; // Sunday=0 … Saturday=6
 const DAY_KEYS = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"]; // stable keys for the chips
@@ -348,7 +349,7 @@ function Editor({ draft, onChange, onClose, onSave, saving }: EditorProps) {
         <div className="ted-field">
           <span className="ted-lab">Agent</span>
           <div className="ted-agents">
-            {(["jerv", "curator", "teacher"] as TaskAgent[]).map((a) => (
+            {(["jerv", "curator", "teacher", "archivist"] as TaskAgent[]).map((a) => (
               <button
                 type="button"
                 key={a}
@@ -364,7 +365,9 @@ function Editor({ draft, onChange, onClose, onSave, saving }: EditorProps) {
                       ? "Web chatbot — reads the open internet, not your notes."
                       : a === "curator"
                         ? "Your Full Brain — reads your notes, facts, lists."
-                        : "A Socratic tutor — works from the prompt only."}
+                        : a === "archivist"
+                          ? "Organizes your Gmail — labels and archives, never deletes."
+                          : "A Socratic tutor — works from the prompt only."}
                   </span>
                 </span>
                 <span className="ted-ck" aria-hidden="true">

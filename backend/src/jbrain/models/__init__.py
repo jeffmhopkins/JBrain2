@@ -9,6 +9,7 @@ from jbrain.models.analysis import (
     ReviewItem,
     TemporalToken,
 )
+from jbrain.models.archivist import ArchivistMemory
 from jbrain.models.core import Base, DeviceSession, Domain, Principal, Subject
 from jbrain.models.images import GeneratedImage
 from jbrain.models.location import GeofenceState, LocationFix, PlaceGeofence
@@ -32,6 +33,7 @@ from jbrain.models.workflow import (
 
 __all__ = [
     "AgentSession",
+    "ArchivistMemory",
     "Base",
     "DeviceSession",
     "Domain",

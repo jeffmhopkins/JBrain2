@@ -6,16 +6,19 @@ import hashlib
 from jbrain.agent.agents import (
     AGENT_NAMES,
     AGENTS,
+    ARCHIVIST_TOOLS,
     DEFAULT_AGENT,
+    GMAIL_TOOLS,
     JERV_TOOLS,
+    MEMORY_TOOLS,
     WEB_TOOLS,
     agent_for,
     is_agent,
 )
 
 
-def test_three_agents_are_defined() -> None:
-    assert frozenset({"curator", "teacher", "jerv"}) == AGENT_NAMES
+def test_four_agents_are_defined() -> None:
+    assert frozenset({"curator", "teacher", "jerv", "archivist"}) == AGENT_NAMES
     assert DEFAULT_AGENT == "curator"
 
 
@@ -68,6 +71,40 @@ def test_image_tools_are_jerv_only() -> None:
     assert AGENTS["teacher"].tools == frozenset()
 
 
+def test_archivist_is_a_sandboxed_gmail_organizer() -> None:
+    """archivist may call the gmail_* tools, its own cross-session memory, and the
+    shared current_time read (to ground date queries), and reads no knowledge base, so
+    no owner note/entity data is in context while it triages mail."""
+    archivist = AGENTS["archivist"]
+    assert archivist.tools == ARCHIVIST_TOOLS == GMAIL_TOOLS | MEMORY_TOOLS | {"current_time"}
+    assert "current_time" in ARCHIVIST_TOOLS  # date awareness for older_than:/before: queries
+    assert {
+        "gmail_search",
+        "gmail_read",
+        "gmail_list_labels",
+        "gmail_create_label",
+        "gmail_label",
+        "gmail_archive",
+        "gmail_count",
+        "gmail_bulk_label",
+    } == GMAIL_TOOLS
+    assert {"archivist_memory_read", "archivist_memory_write"} == MEMORY_TOOLS
+    assert archivist.reads_knowledge_base is False
+
+
+def test_archivist_tools_are_archivist_only() -> None:
+    """The gmail_* and memory tools — the archivist's EXCLUSIVE surface — live in its
+    allowlist and nowhere else: curator (allow=None) never offers the opt-in `web` class,
+    jerv doesn't hold them, and the tool-less teacher offers nothing. (current_time is a
+    deliberate shared default-knowledge tool, so it's excluded from the exclusivity
+    check.)"""
+    assert AGENTS["curator"].tools is None
+    assert not ((GMAIL_TOOLS | MEMORY_TOOLS) & JERV_TOOLS)
+    shared_with_jerv = ARCHIVIST_TOOLS & JERV_TOOLS
+    assert shared_with_jerv == {"current_time"}  # the one deliberate shared tool
+    assert AGENTS["teacher"].tools == frozenset()
+
+
 def test_agent_for_falls_back_to_curator() -> None:
     assert agent_for("jerv").name == "jerv"
     # An unknown/old/malformed stored value never breaks a turn — it runs as curator.
@@ -96,6 +133,10 @@ def test_persona_prompts_pinned_to_their_versions() -> None:
         "jerv": (
             "agent-jerv-v15",
             "2d687bd63dc39eccc3a1501d5668684c57b6bccfcbc159ea1c96d96bba5a07e5",
+        ),
+        "archivist": (
+            "agent-archivist-v4",
+            "0ab3148dfc0937a4175939dbec5a6260bc3f1151f6657143778ad579204176f7",
         ),
     }
     assert set(pins) == AGENT_NAMES

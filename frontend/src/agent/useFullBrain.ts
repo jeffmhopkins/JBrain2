@@ -70,12 +70,13 @@ export class AttachmentUploadError extends Error {
 }
 
 /** The two conversation tabs and the agents each owns. Full Brain is the Curator
- * (your knowledge base, full domain access); Research is Jerv (web) or Teacher
- * (study tutor) — neither reads your notes. A null mode means the surface is off
- * screen (Entry / capture modes), so the controller does no network work. */
+ * (your knowledge base, full domain access); Research is Jerv (web), Teacher
+ * (study tutor), or the Archivist (Gmail organizer) — none read your notes. A null
+ * mode means the surface is off screen (Entry / capture modes), so the controller
+ * does no network work. */
 export type ConvMode = "research" | "fullbrain";
 const MODE_AGENTS: Record<ConvMode, readonly string[]> = {
-  research: ["jerv", "teacher"],
+  research: ["jerv", "teacher", "archivist"],
   fullbrain: ["curator"],
 };
 /** The agent a re-click / empty-state start spins up for each tab. */

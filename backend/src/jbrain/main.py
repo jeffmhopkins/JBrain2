@@ -10,6 +10,7 @@ from fastapi import FastAPI, Request
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from jbrain.agent.attachments import TurnAttachmentRepo
+from jbrain.agent.gmailtools import build_gmail_handlers
 from jbrain.agent.imagegentools import build_image_handlers
 from jbrain.agent.loop import ToolHandler
 from jbrain.agent.memory import MemoryRepo, MemoryService
@@ -57,6 +58,7 @@ from jbrain.api import (
 from jbrain.api import (
     appointments as appointments_api,
 )
+from jbrain.api import gmail_settings as gmail_settings_api
 from jbrain.api import image_settings as image_settings_api
 from jbrain.api import lists as lists_api
 from jbrain.api import llm_settings as llm_settings_api
@@ -78,6 +80,7 @@ from jbrain.devices.repo import SqlDeviceRepo
 from jbrain.embed import TeiEmbedClient
 from jbrain.family import SqlFamilyRepo
 from jbrain.geocode import NominatimReverseClient
+from jbrain.gmail import GmailClientProvider
 from jbrain.image_gen.comfyui import ComfyUiImageGen
 from jbrain.image_gen.gateway import ComfyUiGatewayClient
 from jbrain.lists.repo import SqlListsRepo
@@ -263,6 +266,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # The jerv chatbot's on-box internet tools — direct, sandboxed web access
         # (no owner data in context; docs/ASSISTANT.md "Agent selection").
         web_handlers = build_web_handlers(SearxngClient(settings.searxng_url), WebFetcher())
+        # The archivist persona's Gmail tools. Always wired over a provider that reads
+        # the OAuth credentials live from the settings panel (env fallback), so a saved
+        # change takes effect with no restart; until a refresh token exists the tools
+        # report "connect Gmail in Settings" (docs/EMAIL_ARCHIVIST_PLAN.md).
+        app.state.gmail_provider = GmailClientProvider(
+            settings_store,
+            settings,
+            base_url=settings.gmail_api_url,
+            token_url=settings.gmail_token_url,
+        )
+        gmail_handlers = build_gmail_handlers(app.state.gmail_provider.client)
         # The on-box geocoder: an offline nearest-city reverse lookup (no resident
         # service, no RAM at rest, no egress) shared by the curator's geocode_reverse,
         # the map's reverse-geocode endpoint, and jerv's current_location. The
@@ -376,6 +390,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             image_handlers=image_handlers,
             transcribe_handlers=transcribe_handlers,
             video_handlers=video_handlers,
+            gmail_handlers=gmail_handlers,
         )
         app.state.agent_runlog = AgentRunLog(maker)
         app.state.run_reader = RunLogReader(maker)
@@ -505,6 +520,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(session_bridge.router, prefix="/api")
     app.include_router(sessions.router, prefix="/api")
     app.include_router(settings_api.router, prefix="/api")
+    app.include_router(gmail_settings_api.router, prefix="/api")
     app.include_router(tasks_api.router, prefix="/api")
     app.include_router(tiles.router, prefix="/api")
     app.include_router(wiki.router, prefix="/api")

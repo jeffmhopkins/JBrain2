@@ -20,6 +20,13 @@ call, and whether it reads the owner's knowledge base:
   returns a place name only, never a coordinate, and jerv's prompt forbids
   volunteering it or sending it to the web. jerv still calls no knowledge-base tool
   and reads no note/entity/list/appointment.
+- `archivist` — a sandboxed Gmail organizer: the `gmail_*` tools (search/read,
+  list/create labels, label/archive), present only when Gmail is configured, plus a
+  private cross-session memory (`archivist_memory_read`/`write`) over an owner-only
+  scratchpad table so a 20-year cleanup continues across sessions. Like jerv it reads
+  no knowledge base, so no owner note/entity data is in context while it triages mail;
+  its Gmail writes act only on the owner's own mailbox and never delete; its memory is
+  its own notes, not the owner's (docs/EMAIL_ARCHIVIST_PLAN.md).
 
 The set is closed and code-defined: a session's stored `agent` is validated
 against `AGENT_NAMES` before it is honoured.
@@ -63,6 +70,36 @@ JERV_TOOLS = WEB_TOOLS | frozenset(
         "query_server_metrics",
     }
 )
+
+# The archivist persona's allowlist: the Gmail organize-an-inbox tools and nothing
+# else (the `web` permission class, opt-in like jerv's). The archivist reads no
+# knowledge base and holds no other tool, so no owner note/entity data is in context
+# while it triages mail (docs/EMAIL_ARCHIVIST_PLAN.md).
+GMAIL_TOOLS = frozenset(
+    {
+        "gmail_search",
+        "gmail_read",
+        "gmail_list_labels",
+        "gmail_create_label",
+        "gmail_label",
+        "gmail_archive",
+        "gmail_count",
+        "gmail_bulk_label",
+    }
+)
+
+# The archivist's cross-session memory: a `web`-gated read/write pair over the
+# owner-only `archivist_memory` scratchpad, so it continues a 20-year cleanup across
+# sessions instead of starting blind. Owner-only (its own notes), never the knowledge
+# base (docs/EMAIL_ARCHIVIST_PLAN.md).
+MEMORY_TOOLS = frozenset({"archivist_memory_read", "archivist_memory_write"})
+
+# The archivist's full allowlist: the Gmail organize-an-inbox tools, its memory, and
+# `current_time` — a shared default-knowledge tool (also in JERV_TOOLS) it needs to
+# ground relative date queries (older_than:, before:/after:) against today, since
+# date-by-date filing is the heart of the job. Every turn already prepends today's date
+# (now_block); the tool covers an explicit fresh / other-zone read.
+ARCHIVIST_TOOLS = GMAIL_TOOLS | MEMORY_TOOLS | frozenset({"current_time"})
 
 DEFAULT_AGENT = "curator"
 
@@ -109,6 +146,9 @@ AGENTS: dict[str, AgentProfile] = {
     "curator": _profile("curator", "system.prompt", tools=None, reads_knowledge_base=True),
     "teacher": _profile("teacher", "teacher.prompt", tools=frozenset(), reads_knowledge_base=False),
     "jerv": _profile("jerv", "jerv.prompt", tools=JERV_TOOLS, reads_knowledge_base=False),
+    "archivist": _profile(
+        "archivist", "archivist.prompt", tools=ARCHIVIST_TOOLS, reads_knowledge_base=False
+    ),
 }
 
 AGENT_NAMES = frozenset(AGENTS)

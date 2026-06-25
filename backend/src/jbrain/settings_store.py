@@ -88,6 +88,13 @@ LLM_LOCAL_REMOVE_REQUESTED_KEY = "llm_local_remove_requested"
 # syncs the browser's detected zone here. Stored as an IANA name, not an offset,
 # so a future instant reads correctly across a DST boundary.
 OWNER_TIMEZONE_KEY = "owner_timezone"
+# The archivist's Gmail OAuth credentials, set from the GUI settings panel
+# (docs/EMAIL_ARCHIVIST_PLAN.md). Owner-only like every other app.settings row; the
+# refresh token is the durable credential. Stored values take precedence over the
+# JBRAIN_GMAIL_* env fallback, so the GUI is the live control surface (no restart).
+GMAIL_CLIENT_ID_KEY = "gmail_client_id"
+GMAIL_CLIENT_SECRET_KEY = "gmail_client_secret"
+GMAIL_REFRESH_TOKEN_KEY = "gmail_refresh_token"
 
 
 def is_valid_timezone(tz: str) -> bool:
@@ -242,6 +249,32 @@ class SqlSettingsStore:
         rather than trusted — a bad zone must never crash a render."""
         tz = await self.get(ctx, OWNER_TIMEZONE_KEY, None)
         return tz if isinstance(tz, str) and is_valid_timezone(tz) else None
+
+    async def gmail_credentials(self, ctx: SessionContext) -> tuple[str, str, str]:
+        """The stored (client_id, client_secret, refresh_token) — each "" when unset.
+        The caller falls back to the JBRAIN_GMAIL_* env values for any blank field."""
+        return (
+            str(await self.get(ctx, GMAIL_CLIENT_ID_KEY, "") or ""),
+            str(await self.get(ctx, GMAIL_CLIENT_SECRET_KEY, "") or ""),
+            str(await self.get(ctx, GMAIL_REFRESH_TOKEN_KEY, "") or ""),
+        )
+
+    async def set_gmail_credentials(
+        self,
+        ctx: SessionContext,
+        *,
+        client_id: str | None = None,
+        client_secret: str | None = None,
+        refresh_token: str | None = None,
+    ) -> None:
+        """Upsert only the provided fields (None = leave as-is), so a partial save
+        from the panel doesn't wipe the others."""
+        if client_id is not None:
+            await self.upsert(ctx, GMAIL_CLIENT_ID_KEY, client_id)
+        if client_secret is not None:
+            await self.upsert(ctx, GMAIL_CLIENT_SECRET_KEY, client_secret)
+        if refresh_token is not None:
+            await self.upsert(ctx, GMAIL_REFRESH_TOKEN_KEY, refresh_token)
 
     async def entity_promotion(self, ctx: SessionContext) -> bool:
         """Whether provisional->confirmed entity promotion is on (docs/entity.md).

@@ -28,6 +28,18 @@ function stubSettingsFetch(initial: "full" | "ocr" = "full") {
         headers: { "Content-Type": "application/json" },
       });
     }
+    // The Gmail (Archivist) section loads its status on mount; default disconnected.
+    if (path.startsWith("/api/settings/gmail")) {
+      return new Response(
+        JSON.stringify({
+          client_id_set: false,
+          client_secret_set: false,
+          refresh_token_set: false,
+          connected: false,
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    }
     if (path !== "/api/settings") {
       throw new Error(`Unexpected fetch: ${path}`);
     }
@@ -303,5 +315,61 @@ describe("SettingsScreen time zone", () => {
     vi.stubGlobal("fetch", fetchMock);
     setup();
     expect(await screen.findByLabelText("Time zone")).toHaveTextContent("America/New_York");
+  });
+});
+
+describe("SettingsScreen Gmail (Archivist)", () => {
+  function json(body: unknown, status = 200) {
+    return new Response(JSON.stringify(body), {
+      status,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+
+  // A stateful stub for the gmail credential endpoints (plus the other mount loads).
+  function stubGmail() {
+    const state = {
+      client_id_set: false,
+      client_secret_set: false,
+      refresh_token_set: false,
+      connected: false,
+    };
+    const puts: unknown[] = [];
+    const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
+      const path = String(input);
+      if (path === "/api/settings") return json({ image_analysis_mode: "full" });
+      if (path.startsWith("/api/feed/appointments")) return json({ enabled: false, token: null });
+      if (path.startsWith("/api/settings/debug-tokens")) return json([]);
+      if (path === "/api/settings/gmail") {
+        if ((init?.method ?? "GET").toUpperCase() === "PUT") {
+          const body = JSON.parse(String(init?.body)) as Record<string, string>;
+          puts.push(body);
+          if (body.client_id) state.client_id_set = true;
+          if (body.client_secret) state.client_secret_set = true;
+          if (body.refresh_token) {
+            state.refresh_token_set = true;
+            state.connected = true;
+          }
+        }
+        return json(state);
+      }
+      throw new Error(`Unexpected fetch: ${path}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    return { puts };
+  }
+
+  it("saves pasted credentials and shows Connected", async () => {
+    const { puts } = stubGmail();
+    setup();
+    expect(await screen.findByText("Not connected")).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText(/Client ID/), { target: { value: "cid" } });
+    fireEvent.change(screen.getByLabelText(/Client secret/), { target: { value: "sec" } });
+    fireEvent.change(screen.getByLabelText(/Refresh token/), { target: { value: "rt" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    expect(await screen.findByText("Connected")).toBeInTheDocument();
+    expect(puts).toEqual([{ client_id: "cid", client_secret: "sec", refresh_token: "rt" }]);
   });
 });
