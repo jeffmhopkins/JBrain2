@@ -44,6 +44,10 @@ interface AgentChoice {
   desc: string;
   readsKb: boolean;
   note: string;
+  // The terse caption under the Start button for a no-data agent (readsKb agents
+  // show their read scope there instead). Each agent owns its own line so the
+  // Start pill matches the selection rather than falling through to a default.
+  hint: string;
 }
 const CURATOR_AGENT: AgentChoice = {
   id: "curator",
@@ -51,6 +55,7 @@ const CURATOR_AGENT: AgentChoice = {
   desc: "Your Full Brain — searches your notes, facts, lists and appointments.",
   readsKb: true,
   note: "",
+  hint: "",
 };
 const AGENTS: AgentChoice[] = [
   CURATOR_AGENT,
@@ -60,6 +65,7 @@ const AGENTS: AgentChoice[] = [
     desc: "A Socratic homework tutor — guides you to the answer instead of handing it over.",
     readsKb: false,
     note: "Teaches from this conversation only — no access to your notes or data.",
+    hint: "no data — a study tutor",
   },
   {
     id: "jerv",
@@ -67,6 +73,7 @@ const AGENTS: AgentChoice[] = [
     desc: "A web chatbot — searches and reads the open internet to answer you.",
     readsKb: false,
     note: "Talks to the open web. No access to your notes or any of your data.",
+    hint: "reads the web, not your notes",
   },
   {
     id: "archivist",
@@ -74,6 +81,7 @@ const AGENTS: AgentChoice[] = [
     desc: "Organizes your Gmail — searches, counts, labels and archives email into a clean taxonomy.",
     readsKb: false,
     note: "Works only in your Gmail (read, label, archive — never deletes). No access to your notes or other data.",
+    hint: "your Gmail only, not your notes",
   },
 ];
 const agentById = (id: string): AgentChoice => AGENTS.find((a) => a.id === id) ?? CURATOR_AGENT;
@@ -718,9 +726,7 @@ function ScopeSheet({
   const summary = scopeKind(scope);
   const canStart = showScope ? scope.length > 0 : true;
   const startHint = !showScope
-    ? currentAgent.id === "jerv"
-      ? "reads the web, not your notes"
-      : "no data — a study tutor"
+    ? currentAgent.hint
     : `reads ${scope.length === 0 ? "nothing yet" : summary.label}`;
 
   function pick(id: string): void {
