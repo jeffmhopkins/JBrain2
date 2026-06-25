@@ -47,6 +47,25 @@ def get_gmail_provider(request: Request) -> GmailClientProvider:
     return cast(GmailClientProvider, request.app.state.gmail_provider)
 
 
+_LOCAL_HOSTS = frozenset({"localhost", "127.0.0.1", "::1", "testserver"})
+
+
+def _request_scheme(request: Request) -> str:
+    """The scheme the browser actually used. Trust `X-Forwarded-Proto` when the proxy
+    sets it; otherwise default to https for any public host. A tunnelled box is only
+    reachable from the internet over https (the Cloudflare tunnel terminates TLS at the
+    edge and doesn't always forward the proto header), so a request that arrives as
+    plain http from a public hostname still has an https public origin — and Google
+    rejects a non-https redirect_uri anyway. Loopback/test hosts keep the raw scheme."""
+    forwarded = request.headers.get("x-forwarded-proto")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    host = request.headers.get("host", request.url.netloc).split(":")[0]
+    if host in _LOCAL_HOSTS:
+        return request.url.scheme
+    return "https"
+
+
 def _public_base(request: Request, settings: Settings) -> str:
     """The box's public origin: the explicit `public_base_url` when set (preferred, so
     the redirect_uri is guaranteed to match the Google client), else derived from the
@@ -55,8 +74,7 @@ def _public_base(request: Request, settings: Settings) -> str:
     if settings.public_base_url:
         return settings.public_base_url.rstrip("/")
     host = request.headers.get("host", request.url.netloc)
-    proto = request.headers.get("x-forwarded-proto", request.url.scheme)
-    return f"{proto}://{host}".rstrip("/")
+    return f"{_request_scheme(request)}://{host}".rstrip("/")
 
 
 def _redirect_uri(request: Request, settings: Settings) -> str:
@@ -124,9 +142,20 @@ async def update_gmail_settings(
     def clean(v: str | None) -> str | None:
         return v.strip() if isinstance(v, str) and v.strip() else None
 
+    def clean_client_id(v: str | None) -> str | None:
+        # A Google client_id is never a URL, but mobile keyboards/paste sometimes
+        # URL-ify it (http://…apps.googleusercontent.com/). Strip any scheme + trailing
+        # slash so a fumbled paste doesn't store an unusable client_id. (Secret/refresh
+        # token are left verbatim — refresh tokens legitimately contain '/'.)
+        cleaned = clean(v)
+        if cleaned is None:
+            return None
+        cleaned = cleaned.removeprefix("https://").removeprefix("http://").rstrip("/")
+        return cleaned or None
+
     await store.set_gmail_credentials(
         ctx_for(principal),
-        client_id=clean(body.client_id),
+        client_id=clean_client_id(body.client_id),
         client_secret=clean(body.client_secret),
         refresh_token=clean(body.refresh_token),
     )
