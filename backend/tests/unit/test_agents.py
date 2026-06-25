@@ -7,6 +7,7 @@ from jbrain.agent.agents import (
     AGENT_NAMES,
     AGENTS,
     DEFAULT_AGENT,
+    GMAIL_TOOLS,
     JERV_TOOLS,
     WEB_TOOLS,
     agent_for,
@@ -14,8 +15,8 @@ from jbrain.agent.agents import (
 )
 
 
-def test_three_agents_are_defined() -> None:
-    assert frozenset({"curator", "teacher", "jerv"}) == AGENT_NAMES
+def test_four_agents_are_defined() -> None:
+    assert frozenset({"curator", "teacher", "jerv", "archivist"}) == AGENT_NAMES
     assert DEFAULT_AGENT == "curator"
 
 
@@ -68,6 +69,31 @@ def test_image_tools_are_jerv_only() -> None:
     assert AGENTS["teacher"].tools == frozenset()
 
 
+def test_archivist_is_a_sandboxed_gmail_organizer() -> None:
+    """archivist may call only the gmail_* tools and reads no knowledge base, so no
+    owner note/entity data is in context while it triages mail."""
+    archivist = AGENTS["archivist"]
+    assert archivist.tools == GMAIL_TOOLS
+    assert {
+        "gmail_search",
+        "gmail_read",
+        "gmail_list_labels",
+        "gmail_create_label",
+        "gmail_label",
+        "gmail_archive",
+    } == GMAIL_TOOLS
+    assert archivist.reads_knowledge_base is False
+
+
+def test_gmail_tools_are_archivist_only() -> None:
+    """The gmail_* tools live in the archivist's allowlist and nowhere else — curator
+    (allow=None) never offers the opt-in `web` class, jerv doesn't hold them, and the
+    tool-less teacher offers nothing."""
+    assert AGENTS["curator"].tools is None
+    assert not (GMAIL_TOOLS & JERV_TOOLS)
+    assert AGENTS["teacher"].tools == frozenset()
+
+
 def test_agent_for_falls_back_to_curator() -> None:
     assert agent_for("jerv").name == "jerv"
     # An unknown/old/malformed stored value never breaks a turn — it runs as curator.
@@ -96,6 +122,10 @@ def test_persona_prompts_pinned_to_their_versions() -> None:
         "jerv": (
             "agent-jerv-v15",
             "2d687bd63dc39eccc3a1501d5668684c57b6bccfcbc159ea1c96d96bba5a07e5",
+        ),
+        "archivist": (
+            "agent-archivist-v1",
+            "523ad08aa7008b06639648a33cec5d55e9238e956a6dc27ae762c0f6d8660d40",
         ),
     }
     assert set(pins) == AGENT_NAMES

@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from jbrain.agent.attachments import TurnAttachmentRepo
 from jbrain.agent.correctionmine import CORRECTION_MINE_SPEC
+from jbrain.agent.gmailtools import build_gmail_handlers
 from jbrain.agent.imagegentools import build_image_handlers
 from jbrain.agent.loop import ToolHandler
 from jbrain.agent.memory import MemoryRepo, MemoryService
@@ -81,6 +82,7 @@ from jbrain.devices.repo import SqlDeviceRepo
 from jbrain.embed import TeiEmbedClient
 from jbrain.family import SqlFamilyRepo
 from jbrain.geocode import NominatimReverseClient
+from jbrain.gmail import GmailClient
 from jbrain.image_gen.comfyui import ComfyUiImageGen
 from jbrain.image_gen.gateway import ComfyUiGatewayClient
 from jbrain.lists.repo import SqlListsRepo
@@ -276,6 +278,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # The jerv chatbot's on-box internet tools — direct, sandboxed web access
         # (no owner data in context; docs/ASSISTANT.md "Agent selection").
         web_handlers = build_web_handlers(SearxngClient(settings.searxng_url), WebFetcher())
+        # The archivist persona's Gmail tools — wired only when a refresh token is
+        # configured; otherwise the gmail_* sidecars drop from the registry (graceful
+        # degrade, docs/EMAIL_ARCHIVIST_PLAN.md). The client holds the long-lived
+        # refresh token and mints access tokens on demand; no DB, no token table.
+        gmail_handlers: dict[str, ToolHandler] = {}
+        if settings.gmail_refresh_token:
+            gmail_handlers = build_gmail_handlers(
+                GmailClient(
+                    settings.gmail_client_id,
+                    settings.gmail_client_secret,
+                    settings.gmail_refresh_token,
+                    base_url=settings.gmail_api_url,
+                    token_url=settings.gmail_token_url,
+                )
+            )
         # The on-box geocoder: an offline nearest-city reverse lookup (no resident
         # service, no RAM at rest, no egress) shared by the curator's geocode_reverse,
         # the map's reverse-geocode endpoint, and jerv's current_location. The
@@ -389,6 +406,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             image_handlers=image_handlers,
             transcribe_handlers=transcribe_handlers,
             video_handlers=video_handlers,
+            gmail_handlers=gmail_handlers,
         )
         app.state.agent_runlog = AgentRunLog(maker)
         app.state.run_reader = RunLogReader(maker)

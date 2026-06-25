@@ -45,13 +45,14 @@ mutation, which is why v1 writes are confined to reversible label/archive operat
 | **Persistence** | **None on the DB.** The nightly cursor lives in a single **storage-abstraction blob**; Gmail's own labels are the real state | Honors "no DB access"; storage is the sanctioned file-I/O path (non-negotiable #2) |
 | **RAG ingestion** | **Out of scope.** Email never becomes a note in this plan | The notes/RLS/ingest surface stays untouched; a clean follow-on if desired |
 
-### Open decision (owner sign-off before Wave 1)
+### LLM routing (decided)
 
-- **LLM routing for email content.** The `archivist`'s turns send private email
-  through the LLM adapter. Either (a) route this persona's task profile to a
-  **local model** so content stays on-box, or (b) accept the configured cloud
-  provider for email. This is the one genuine privacy fork and it is **not** locked
-  here.
+The `archivist` uses the **default agent routing — the selected reasoning model**,
+exactly like `curator`; no per-persona pinning and no local-only override. Email
+content therefore flows through the configured provider like any agent turn (the
+known trade-off recorded under "the one honest asterisk"). If the owner later wants
+email kept on-box, pinning this persona's task profile to a local model is a
+one-line follow-up — but it is **not** done now.
 
 ### Escalation-worthy decision (recorded)
 
@@ -132,8 +133,8 @@ gmail_refresh_token: str = ""
 gmail_api_url: str = "https://gmail.googleapis.com/gmail/v1"
 ```
 
-The `archivist`'s model routing is the open decision above; if (a), add a task-profile
-entry pinning this persona's turns to a local model.
+The `archivist` uses the default agent routing (the selected reasoning model), so no
+task-profile entry is added — see "LLM routing (decided)" above.
 
 ### OAuth bootstrap (no prior art in the repo)
 

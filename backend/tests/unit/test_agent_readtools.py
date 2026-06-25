@@ -789,6 +789,36 @@ def test_sidecars_pinned_to_their_versions() -> None:
             1,
             "c913e40d4769f173fe57a03f30f1a9ef5380970fb423729001f4e3dffa353647",
         ),
+        "gmail_search.tool": (
+            "gmail_search",
+            1,
+            "ed90c5e6eff5ca4ec063a5a0f15b829ac9a4d18566f93b89fb4f0bbdaa2c3318",
+        ),
+        "gmail_read.tool": (
+            "gmail_read",
+            1,
+            "568ebdb2e62865b2044fa6ce35ee02e09fccf1f5dcc52d95c0a2df460925ab69",
+        ),
+        "gmail_list_labels.tool": (
+            "gmail_list_labels",
+            1,
+            "5c9447164ccd0feea0389ddb6c5780f77acc9153435976ce1b34b64d57126996",
+        ),
+        "gmail_create_label.tool": (
+            "gmail_create_label",
+            1,
+            "1b0b281b0eb755e49c6d5982c2702e8380f997c2eee7ea14d2940a98546ef2d1",
+        ),
+        "gmail_label.tool": (
+            "gmail_label",
+            1,
+            "6504995269735307d76f3b33ffbf560b4a40f7e6317a8428d7b0838569304b37",
+        ),
+        "gmail_archive.tool": (
+            "gmail_archive",
+            1,
+            "965d8f55bde6ce3ed7ac181ca06b60e7a6e2fdb237ec043bfcdc9ac8940b5607",
+        ),
     }
     # Every shipped sidecar must appear above — a new `.tool` cannot slip in
     # unpinned (the gap this closes: propose_merge was registered but never pinned).

@@ -20,6 +20,11 @@ call, and whether it reads the owner's knowledge base:
   returns a place name only, never a coordinate, and jerv's prompt forbids
   volunteering it or sending it to the web. jerv still calls no knowledge-base tool
   and reads no note/entity/list/appointment.
+- `archivist` — a sandboxed Gmail organizer: the `gmail_*` tools (search/read,
+  list/create labels, label/archive) and nothing else, present only when Gmail is
+  configured. Like jerv it reads no knowledge base, so no owner note/entity data is in
+  context while it triages mail; its writes act only on the owner's own mailbox and
+  never delete (docs/EMAIL_ARCHIVIST_PLAN.md).
 
 The set is closed and code-defined: a session's stored `agent` is validated
 against `AGENT_NAMES` before it is honoured.
@@ -61,6 +66,21 @@ JERV_TOOLS = WEB_TOOLS | frozenset(
         "transcribe",
         "analyze_video",
         "query_server_metrics",
+    }
+)
+
+# The archivist persona's allowlist: the Gmail organize-an-inbox tools and nothing
+# else (the `web` permission class, opt-in like jerv's). The archivist reads no
+# knowledge base and holds no other tool, so no owner note/entity data is in context
+# while it triages mail (docs/EMAIL_ARCHIVIST_PLAN.md).
+GMAIL_TOOLS = frozenset(
+    {
+        "gmail_search",
+        "gmail_read",
+        "gmail_list_labels",
+        "gmail_create_label",
+        "gmail_label",
+        "gmail_archive",
     }
 )
 
@@ -109,6 +129,9 @@ AGENTS: dict[str, AgentProfile] = {
     "curator": _profile("curator", "system.prompt", tools=None, reads_knowledge_base=True),
     "teacher": _profile("teacher", "teacher.prompt", tools=frozenset(), reads_knowledge_base=False),
     "jerv": _profile("jerv", "jerv.prompt", tools=JERV_TOOLS, reads_knowledge_base=False),
+    "archivist": _profile(
+        "archivist", "archivist.prompt", tools=GMAIL_TOOLS, reads_knowledge_base=False
+    ),
 }
 
 AGENT_NAMES = frozenset(AGENTS)
