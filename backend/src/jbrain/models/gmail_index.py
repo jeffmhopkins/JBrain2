@@ -91,8 +91,12 @@ class GmailMetaRepo:
         rows = [
             {"principal_id": principal_id, "gmail_id": gid, "thread_id": tid} for gid, tid in ids
         ]
-        stmt = pg_insert(GmailMessageMeta).values(rows).on_conflict_do_nothing(
-            index_elements=[GmailMessageMeta.principal_id, GmailMessageMeta.gmail_id]
+        stmt = (
+            pg_insert(GmailMessageMeta)
+            .values(rows)
+            .on_conflict_do_nothing(
+                index_elements=[GmailMessageMeta.principal_id, GmailMessageMeta.gmail_id]
+            )
         )
         result = cast("CursorResult[object]", await session.execute(stmt))
         return result.rowcount or 0
@@ -229,9 +233,13 @@ class GmailIndexStateRepo:
 
     async def upsert(self, session: AsyncSession, principal_id: str, **fields: object) -> None:
         values = {"principal_id": principal_id, "updated_at": func.now(), **fields}
-        stmt = pg_insert(GmailIndexState).values(**values).on_conflict_do_update(
-            index_elements=[GmailIndexState.principal_id],
-            set_={k: v for k, v in values.items() if k != "principal_id"},
+        stmt = (
+            pg_insert(GmailIndexState)
+            .values(**values)
+            .on_conflict_do_update(
+                index_elements=[GmailIndexState.principal_id],
+                set_={k: v for k, v in values.items() if k != "principal_id"},
+            )
         )
         await session.execute(stmt)
 
