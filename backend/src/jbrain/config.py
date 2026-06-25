@@ -219,6 +219,19 @@ class Settings(BaseSettings):
     gmail_api_url: str = "https://gmail.googleapis.com/gmail/v1"
     gmail_token_url: str = "https://oauth2.googleapis.com/token"
 
+    # OPT-IN code mode (docs/proposed/JCODE_PLAN.md): a sandboxed coding-session
+    # SIDECAR running Claude Code's agent engine against an on-box coder model, fronted
+    # by the PWA. NOT a knowledge agent — it reads no notes and is not in the agent
+    # loop; the api only PROXIES its control surface to the owner (Wave J2). EMPTY
+    # `jcode_url` DISABLES the feature (fail-closed): no jcode routes, no launcher tile
+    # — the same graceful degrade as comfyui_url/whisper_url. `jcode_token` is the
+    # shared bearer the api presents to the internal control server; `jcode_enabled`
+    # mirrors the install-time choice for parity with the other opt-in services.
+    jcode_url: str = ""
+    jcode_enabled: bool = False
+    jcode_token: str = ""
+    jcode_model: str = "qwen3-coder-next"
+
     # JSON object of per-task "provider:model" overrides, merged over the
     # adapter defaults — see jbrain.llm.router.TASK_DEFAULTS.
     llm_tasks: dict[str, str] = {}

@@ -88,6 +88,14 @@ services:
       JBRAIN_WHISPER_URL: ${WHISPER_URL:-}
       JBRAIN_WHISPER_ENABLED: ${WHISPER_ENABLED:-false}
       JBRAIN_WHISPER_MODEL: ${WHISPER_MODEL:-whisper}
+      # Code mode (docs/proposed/JCODE_PLAN.md) — OFF unless the operator opts in via
+      # scripts/jcode-setup.sh. When enabled, points the api at the internal jcode
+      # control server (Wave J2 proxies it to the owner); the shared token authenticates
+      # those calls. Empty URL = feature off (fail-closed): no jcode routes, no tile.
+      JBRAIN_JCODE_URL: ${JCODE_URL:-}
+      JBRAIN_JCODE_ENABLED: ${JCODE_ENABLED:-false}
+      JBRAIN_JCODE_TOKEN: ${JCODE_TOKEN:-}
+      JBRAIN_JCODE_MODEL: ${JCODE_MODEL:-qwen3-coder-next}
       # Shared secret for the MQTT ingest service identity (JBrain360 M1): the API
       # validates it in /internal/mqtt-auth and the consumer connects with it. Empty
       # disables the identity (fail-closed). Only meaningful with the `mqtt` profile.
@@ -338,6 +346,41 @@ services:
       - ./whisper-models:/models:ro
     networks: [internal]
 
+  # OPT-IN code mode (docs/proposed/JCODE_PLAN.md): a sandboxed coding-session
+  # service running Claude Code's agent engine against an ON-BOX coder model, fronted
+  # by the PWA. Guarded by the `jcode` compose profile so it NEVER starts on a stock
+  # deploy — `scripts/jcode-setup.sh` provisions it and flips the profile on. It reads
+  # NO knowledge base and holds NO owner data: its only state is per-session git
+  # checkouts on the `jcode_work` volume. The model is local — ANTHROPIC_BASE_URL
+  # points the Agent SDK at the local-llm gateway's Anthropic-compatible endpoint, so
+  # no code leaves the box (the on-box smoke test in the plan decides native vs a
+  # shim). It is internal-only (no published port); the api proxies its control
+  # surface to the owner (Wave J2). CRITICALLY it mounts NO Docker socket and reaches
+  # no other service. NOTE: egress is currently the `internal` network's default
+  # (reaches the gateway + outbound for git/npm); the git/npm ALLOWLIST is enforced in
+  # Wave J5 hardening (an egress proxy), not here.
+  jcode:
+    profiles: [jcode]
+    image: jbrain2-jcode:local
+    build:
+      context: ./src/jcode
+    restart: unless-stopped
+    environment:
+      # Bearer token the api presents on every control call (fail-closed: no token,
+      # the service refuses to start). Shared with the api via JBRAIN_JCODE_TOKEN.
+      JCODE_TOKEN: ${JCODE_TOKEN:-}
+      JCODE_MODEL: ${JCODE_MODEL:-qwen3-coder-next}
+      JCODE_MODEL_BASE_URL: ${JCODE_MODEL_URL:-http://local-llm:8080}
+      # What the Claude Agent SDK + its `claude` CLI actually read to reach the model:
+      # the on-box gateway's Anthropic-compatible endpoint. No cloud. ANTHROPIC_API_KEY
+      # is a placeholder the local gateway ignores (the SDK requires the var be set).
+      ANTHROPIC_BASE_URL: ${JCODE_MODEL_URL:-http://local-llm:8080}
+      ANTHROPIC_API_KEY: ${JCODE_GATEWAY_TOKEN:-local}
+    volumes:
+      # The per-session git checkouts — sandbox scratch, NEVER a JBrain blob/note.
+      - jcode_work:/work
+    networks: [internal]
+
   embed:
     image: ghcr.io/huggingface/text-embeddings-inference:cpu-latest
     restart: unless-stopped
@@ -430,3 +473,6 @@ volumes:
   caddy_config:
   embed_models:
   tiles:
+  # Per-session coding sandboxes (opt-in `jcode` profile) — scratch checkouts,
+  # kept out of backups (no owner data lives here).
+  jcode_work:

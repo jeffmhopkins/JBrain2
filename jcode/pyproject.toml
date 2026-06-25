@@ -1,0 +1,51 @@
+[project]
+name = "jbrain-jcode"
+version = "0.1.0"
+description = "jcode control server: a sandboxed coding-session surface over the Claude Agent SDK, driving an on-box coder model."
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.115",
+    "pydantic-settings>=2",
+    "uvicorn[standard]>=0.30",
+]
+
+# The Claude Agent SDK (`claude-agent-sdk`) and the `@anthropic-ai/claude-code`
+# CLI it drives are installed in the IMAGE (jcode/Dockerfile), not declared here,
+# for the same reason the local-llm/comfyui weights live in their images: they are
+# box-only runtime, never bootstrapped into dev/CI (which have no model gateway).
+# The real adapter (jcode_ctl.agent.ClaudeCodeAgent) lazy-imports the SDK, so the
+# service builds and its unit tests run against the fake adapter without it.
+
+[project.optional-dependencies]
+dev = [
+    "httpx>=0.27",
+    "pyright>=1.1",
+    "pytest>=8",
+    "pytest-asyncio>=0.24",
+    "ruff>=0.6",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/jcode_ctl"]
+
+[tool.ruff]
+target-version = "py311"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
+
+[tool.pyright]
+include = ["src", "tests"]
+typeCheckingMode = "standard"
+pythonVersion = "3.11"
+venvPath = "."
+venv = ".venv"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
