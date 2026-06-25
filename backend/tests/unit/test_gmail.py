@@ -250,6 +250,47 @@ async def test_search_all_collects_ids_across_pages() -> None:
     assert capped is False
 
 
+async def test_get_profile_parses_total_and_history_id() -> None:
+    body = {"emailAddress": "me@x.com", "messagesTotal": 240117, "historyId": "99123"}
+    total, history_id = await _client(lambda r: httpx.Response(200, json=body)).get_profile()
+    assert total == 240117
+    assert history_id == "99123"
+
+
+async def test_list_page_returns_ids_and_next_token() -> None:
+    seen: list[httpx.Request] = []
+
+    def api(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(
+            200, json={"messages": [{"id": "a"}, {"id": "b"}], "nextPageToken": "p2"}
+        )
+
+    ids, token = await _client(api).list_page("in:anywhere", page_token="p1")
+    assert ids == ["a", "b"]
+    assert token == "p2"
+    assert seen[-1].url.params["pageToken"] == "p1"
+
+
+async def test_list_page_none_token_when_exhausted() -> None:
+    client = _client(lambda r: httpx.Response(200, json={"messages": [{"id": "z"}]}))
+    ids, token = await client.list_page("q")
+    assert ids == ["z"]
+    assert token is None
+
+
+async def test_get_metadata_parses_labels_and_internal_date() -> None:
+    raw = {
+        "id": "m1",
+        "labelIds": ["INBOX", "CATEGORY_PROMOTIONS"],
+        "internalDate": "1767312000000",
+        "payload": {"headers": [{"name": "From", "value": "a@b.com"}]},
+    }
+    msg = await _client(lambda r: httpx.Response(200, json=raw)).get("m1", metadata_only=True)
+    assert msg.label_ids == ("INBOX", "CATEGORY_PROMOTIONS")
+    assert msg.internal_date_ms == 1767312000000
+
+
 async def test_sender_sample_lists_ids_then_fetches_each_from() -> None:
     # messages.list returns ids; each metadata get returns that id's From header. The
     # method bundles them into the From strings the breakdown tool aggregates.

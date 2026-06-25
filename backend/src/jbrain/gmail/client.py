@@ -58,7 +58,9 @@ class GmailError(RuntimeError):
 @dataclass(frozen=True)
 class GmailMessage:
     """One message, flattened to what a triage agent reads. `body` is the decoded
-    text/plain part (empty for a metadata-only fetch)."""
+    text/plain part (empty for a metadata-only fetch). `label_ids` / `internal_date_ms`
+    ride along from the message resource (present on metadata fetches too) and feed the
+    metadata index — the From/Date/labels the breakdown aggregates exactly."""
 
     id: str
     thread_id: str
@@ -68,6 +70,8 @@ class GmailMessage:
     date: str
     snippet: str
     body: str
+    label_ids: tuple[str, ...] = ()
+    internal_date_ms: int = 0
 
 
 @dataclass(frozen=True)
@@ -84,6 +88,12 @@ class GmailApi(Protocol):
     (live) and `FakeGmail` (tests), so the handlers never know which they hold."""
 
     async def search(self, query: str, *, max_results: int = ...) -> list[str]: ...
+
+    async def get_profile(self) -> tuple[int, str]: ...
+
+    async def list_page(
+        self, query: str, *, page_token: str | None = ..., page_size: int = ...
+    ) -> tuple[list[str], str | None]: ...
 
     async def get(self, message_id: str, *, metadata_only: bool = ...) -> GmailMessage: ...
 
@@ -154,6 +164,10 @@ def _extract_text(payload: dict[str, Any]) -> str:
 def _message_from_payload(raw: dict[str, Any]) -> GmailMessage:
     payload = raw.get("payload") or {}
     headers = payload.get("headers") or []
+    try:
+        internal_ms = int(raw.get("internalDate") or 0)
+    except (TypeError, ValueError):
+        internal_ms = 0
     return GmailMessage(
         id=str(raw.get("id", "")),
         thread_id=str(raw.get("threadId", "")),
@@ -163,6 +177,8 @@ def _message_from_payload(raw: dict[str, Any]) -> GmailMessage:
         date=_header(headers, "Date"),
         snippet=str(raw.get("snippet", "")).strip(),
         body=_extract_text(payload),
+        label_ids=tuple(str(x) for x in (raw.get("labelIds") or [])),
+        internal_date_ms=internal_ms,
     )
 
 
@@ -273,6 +289,30 @@ class GmailClient:
             params={"q": query, "maxResults": max(1, max_results)},
         )
         return [str(m.get("id", "")) for m in (body.get("messages") or []) if m.get("id")]
+
+    async def get_profile(self) -> tuple[int, str]:
+        """(messagesTotal, historyId) from users.getProfile — the exact mailbox size for
+        the index progress denominator, and the history cursor incremental sync resumes
+        from. One cheap call (no paging)."""
+        body = await self._api("GET", "/users/me/profile")
+        try:
+            total = int(body.get("messagesTotal") or 0)
+        except (TypeError, ValueError):
+            total = 0
+        return total, str(body.get("historyId") or "")
+
+    async def list_page(
+        self, query: str, *, page_token: str | None = None, page_size: int = _PAGE_SIZE
+    ) -> tuple[list[str], str | None]:
+        """One page of messages.list ids + the next page token (None when exhausted).
+        Unlike `search_all`, this hands pagination to the caller, so the metadata index
+        can checkpoint its page cursor and resume an interrupted full-mailbox scan."""
+        params: dict[str, Any] = {"q": query, "maxResults": max(1, min(page_size, _PAGE_SIZE))}
+        if page_token:
+            params["pageToken"] = page_token
+        body = await self._api("GET", "/users/me/messages", params=params)
+        ids = [str(m["id"]) for m in (body.get("messages") or []) if m.get("id")]
+        return ids, body.get("nextPageToken")
 
     async def get(self, message_id: str, *, metadata_only: bool = False) -> GmailMessage:
         params: dict[str, Any] = {"format": "metadata" if metadata_only else "full"}
