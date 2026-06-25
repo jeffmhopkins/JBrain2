@@ -360,3 +360,40 @@ class GmailClient:
                     "removeLabelIds": list(remove_label_ids),
                 },
             )
+
+
+async def exchange_authorization_code(
+    *,
+    client_id: str,
+    client_secret: str,
+    code: str,
+    redirect_uri: str,
+    token_url: str,
+    transport: httpx.AsyncBaseTransport | None = None,
+) -> str:
+    """Exchange an OAuth authorization code for a long-lived refresh token (the
+    in-app Connect flow's one-shot, docs/EMAIL_ARCHIVIST_PLAN.md). `redirect_uri` must
+    match the one the consent URL used. Raises GmailError if Google returns no refresh
+    token (e.g. a re-consent without prompt=consent / access_type=offline)."""
+    data = {
+        "client_id": client_id,
+        "client_secret": client_secret,
+        "code": code,
+        "grant_type": "authorization_code",
+        "redirect_uri": redirect_uri,
+    }
+    try:
+        async with httpx.AsyncClient(timeout=_TIMEOUT, transport=transport) as client:
+            resp = await client.post(token_url, data=data)
+            resp.raise_for_status()
+            body: dict[str, Any] = resp.json()
+    except (httpx.HTTPError, ValueError) as exc:
+        log.warning("gmail.code_exchange_failed", error=repr(exc))
+        raise GmailError("Google rejected the authorization — try connecting again.") from exc
+    token = str(body.get("refresh_token") or "")
+    if not token:
+        raise GmailError(
+            "Google did not return a refresh token. Revoke prior access at "
+            "myaccount.google.com and connect again."
+        )
+    return token

@@ -26,7 +26,12 @@ def _settings(**kw: Any) -> Settings:
 def _gmail_transport() -> httpx.MockTransport:
     def handle(request: httpx.Request) -> httpx.Response:
         if request.url.host == "oauth2.googleapis.com":
-            return httpx.Response(200, json={"access_token": "tok", "expires_in": 3600})
+            # Covers both grants: access_token for the refresh flow (test endpoint),
+            # refresh_token for the authorization-code exchange (Connect callback).
+            return httpx.Response(
+                200,
+                json={"access_token": "tok", "expires_in": 3600, "refresh_token": "rt-from-google"},
+            )
         return httpx.Response(
             200,
             json={"labels": [{"id": "INBOX", "name": "INBOX"}, {"id": "L1", "name": "Finance"}]},
@@ -37,7 +42,7 @@ def _gmail_transport() -> httpx.MockTransport:
 
 @pytest.fixture
 def client() -> Iterator[tuple[TestClient, FastAPI, FakeSettingsStore]]:
-    app = create_app(_settings())
+    app = create_app(_settings(public_base_url="https://box.example"))
     with TestClient(app) as test_client:
         app.state.auth_repo = FakeAuthRepo()
         key = asyncio.run(auth_service.rotate_owner_key(app.state.auth_repo))
@@ -122,3 +127,65 @@ def test_test_endpoint_reports_connection(
     out = test_client.post("/api/settings/gmail/test").json()
     assert out["ok"] is True
     assert "labels" in out["detail"]
+
+
+def _save_creds(test_client: TestClient) -> None:
+    test_client.put(
+        "/api/settings/gmail",
+        json={"client_id": "cid.apps.googleusercontent.com", "client_secret": "sec"},
+    )
+
+
+def test_connect_redirects_to_google_consent(
+    client: tuple[TestClient, FastAPI, FakeSettingsStore],
+) -> None:
+    test_client, _, store = client
+    _save_creds(test_client)
+    resp = test_client.get("/api/settings/gmail/connect", follow_redirects=False)
+    assert resp.status_code in (302, 307)
+    loc = resp.headers["location"]
+    assert loc.startswith("https://accounts.google.com/o/oauth2/v2/auth?")
+    assert "client_id=cid.apps.googleusercontent.com" in loc
+    assert "redirect_uri=https%3A%2F%2Fbox.example%2Fapi%2Fsettings%2Fgmail%2Fcallback" in loc
+    assert "access_type=offline" in loc and "prompt=consent" in loc
+    # A single-use CSRF state was stashed for the callback to check.
+    assert store.values["gmail_oauth_state"]
+    assert f"state={store.values['gmail_oauth_state']}" in loc
+
+
+def test_connect_requires_saved_credentials(
+    client: tuple[TestClient, FastAPI, FakeSettingsStore],
+) -> None:
+    test_client, _, _ = client
+    assert test_client.get("/api/settings/gmail/connect", follow_redirects=False).status_code == 400
+
+
+def test_callback_exchanges_code_and_stores_token(
+    client: tuple[TestClient, FastAPI, FakeSettingsStore],
+) -> None:
+    test_client, _, store = client
+    _save_creds(test_client)
+    test_client.get("/api/settings/gmail/connect", follow_redirects=False)
+    state = store.values["gmail_oauth_state"]
+
+    resp = test_client.get(
+        f"/api/settings/gmail/callback?code=auth-code&state={state}", follow_redirects=False
+    )
+    assert resp.status_code in (302, 307)
+    assert resp.headers["location"] == "https://box.example/settings?gmail=connected"
+    assert store.values["gmail_refresh_token"] == "rt-from-google"  # minted via the code exchange
+    assert store.values["gmail_oauth_state"] == ""  # single-use state cleared
+
+
+def test_callback_rejects_a_bad_state(
+    client: tuple[TestClient, FastAPI, FakeSettingsStore],
+) -> None:
+    test_client, _, store = client
+    _save_creds(test_client)
+    test_client.get("/api/settings/gmail/connect", follow_redirects=False)
+
+    resp = test_client.get(
+        "/api/settings/gmail/callback?code=auth-code&state=forged", follow_redirects=False
+    )
+    assert resp.headers["location"] == "https://box.example/settings?gmail=error"
+    assert "gmail_refresh_token" not in store.values  # nothing stored on a state mismatch

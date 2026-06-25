@@ -8,6 +8,7 @@ from jbrain.gmail.client import (
     GmailError,
     GmailLabel,
     GmailMessage,
+    exchange_authorization_code,
 )
 from jbrain.gmail.fake import FakeGmail
 from jbrain.gmail.provider import GmailClientProvider
@@ -20,4 +21,5 @@ __all__ = [
     "GmailError",
     "GmailLabel",
     "GmailMessage",
+    "exchange_authorization_code",
 ]

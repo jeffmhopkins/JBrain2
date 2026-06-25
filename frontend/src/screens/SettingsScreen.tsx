@@ -70,6 +70,7 @@ export function SettingsScreen({ deviceLabel, onLogout }: SettingsScreenProps) {
   const [gmailToken, setGmailToken] = useState("");
   const [gmailSaving, setGmailSaving] = useState(false);
   const [gmailTest, setGmailTest] = useState<GmailTestResult | null>(null);
+  const [gmailNotice, setGmailNotice] = useState<string | null>(null);
   useEffect(() => {
     let stale = false;
     api
@@ -78,10 +79,24 @@ export function SettingsScreen({ deviceLabel, onLogout }: SettingsScreenProps) {
         if (!stale) setGmail(s);
       })
       .catch(() => {});
+    // The in-app Connect flow bounces back to /settings?gmail=connected|error; show
+    // the outcome, refresh status, then strip the query so a reload doesn't repeat it.
+    const outcome = new URLSearchParams(window.location.search).get("gmail");
+    if (outcome) {
+      setGmailNotice(
+        outcome === "connected" ? "Gmail connected." : "Couldn't connect to Gmail — try again.",
+      );
+      window.history.replaceState(null, "", window.location.pathname);
+    }
     return () => {
       stale = true;
     };
   }, []);
+
+  // A full-page navigation (not fetch): OAuth consent needs a top-level redirect.
+  function connectGmail() {
+    window.location.href = "/api/settings/gmail/connect";
+  }
 
   function saveGmail() {
     const patch: { client_id?: string; client_secret?: string; refresh_token?: string } = {};
@@ -336,9 +351,10 @@ export function SettingsScreen({ deviceLabel, onLogout }: SettingsScreenProps) {
         <h2 className="settings-label">Gmail (Archivist)</h2>
         <p className="settings-meta">
           connects the Archivist agent to your Gmail so it can organize your mail. Paste the OAuth
-          credentials from Google Cloud, plus the refresh token from the bootstrap script. The
-          Archivist reads, labels and archives — it never deletes. Secrets are stored on the server
-          and never shown again.
+          Client ID and secret from your Google Cloud "Web application" client, Save, then Connect
+          to approve access. The Archivist reads, labels and archives — it never deletes. Secrets
+          are stored on the server and never shown again. (A refresh token from the bootstrap script
+          can be pasted instead, if you prefer.)
         </p>
         <div className="settings-value" aria-label="Gmail connection status">
           {gmail === null
@@ -346,7 +362,7 @@ export function SettingsScreen({ deviceLabel, onLogout }: SettingsScreenProps) {
             : gmail.connected
               ? "Connected"
               : gmail.client_id_set || gmail.client_secret_set
-                ? "Credentials saved — add a refresh token to connect"
+                ? "Credentials saved — not connected yet"
                 : "Not connected"}
         </div>
         <label className="settings-field">
@@ -388,10 +404,23 @@ export function SettingsScreen({ deviceLabel, onLogout }: SettingsScreenProps) {
           >
             {gmailSaving ? "Saving…" : "Save"}
           </button>
+          <button
+            type="button"
+            className="seg"
+            disabled={!gmail?.client_id_set || !gmail?.client_secret_set}
+            onClick={connectGmail}
+          >
+            {gmail?.connected ? "Reconnect Gmail" : "Connect Gmail"}
+          </button>
           <button type="button" className="seg" disabled={!gmail?.connected} onClick={testGmail}>
             Test connection
           </button>
         </div>
+        <p className="settings-meta">
+          Save your Client ID and secret, then Connect to approve access in Google — no need to
+          paste a refresh token by hand.
+        </p>
+        {gmailNotice && <p className="settings-meta">{gmailNotice}</p>}
         {gmailTest && (
           <p className={`settings-meta${gmailTest.ok ? "" : " settings-error"}`}>
             {gmailTest.detail}

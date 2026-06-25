@@ -5,26 +5,50 @@ secret, refresh token) into owner-only app.settings, and the provider picks them
 live — no restart. Secrets are NEVER echoed back: the GET reports only which fields
 are set and whether Gmail is connected; the POST /test verifies the saved credentials
 by listing labels. Owner-only via the store's RLS (and the router's owner gate).
+
+The refresh token can be set two ways: pasted directly (from the bootstrap script),
+or minted by the in-app **Connect** flow — `/connect` redirects the owner to Google's
+consent, and `/callback` exchanges the returned code for the refresh token and stores
+it. The callback is owner-gated (the Lax session cookie rides Google's top-level
+redirect) AND validated against a single-use `state` (CSRF), so only the owner who
+started the connect can complete it.
 """
 
+import secrets
 from typing import cast
+from urllib.parse import urlencode
 
 import structlog
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, ConfigDict
 
-from jbrain.api.deps import PrincipalDep
+from jbrain.api.deps import OwnerDep, PrincipalDep, SettingsDep
 from jbrain.api.notes import ctx_for
 from jbrain.api.settings import SettingsStoreDep
+from jbrain.config import Settings
 from jbrain.gmail import GmailClientProvider, GmailError
 
 log = structlog.get_logger()
 
 router = APIRouter()
 
+# The owner-consent endpoints. `gmail.modify` only (read/label/archive, never delete);
+# offline + consent so Google returns a refresh token. `_STATE_KEY` holds the
+# single-use CSRF state across the round-trip.
+_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
+_SCOPE = "https://www.googleapis.com/auth/gmail.modify"
+_STATE_KEY = "gmail_oauth_state"
+
 
 def get_gmail_provider(request: Request) -> GmailClientProvider:
     return cast(GmailClientProvider, request.app.state.gmail_provider)
+
+
+def _redirect_uri(settings: Settings) -> str:
+    """The callback URL Google redirects to — must match the Web client's registered
+    Authorized redirect URI exactly."""
+    return f"{settings.public_base_url.rstrip('/')}/api/settings/gmail/callback"
 
 
 class GmailStatusOut(BaseModel):
@@ -93,3 +117,58 @@ async def test_gmail_settings(request: Request, principal: PrincipalDep) -> Gmai
     except GmailError as exc:
         return GmailTestOut(ok=False, detail=str(exc))
     return GmailTestOut(ok=True, detail=f"Connected — {len(labels)} labels visible.")
+
+
+@router.get("/settings/gmail/connect")
+async def gmail_connect(
+    request: Request, principal: OwnerDep, store: SettingsStoreDep, settings: SettingsDep
+) -> RedirectResponse:
+    """Start the in-app Connect flow: stash a CSRF state, then redirect the owner to
+    Google's consent screen. The owner must have saved a client id + secret first."""
+    client_id, client_secret, _ = await get_gmail_provider(request).credentials()
+    if not client_id or not client_secret:
+        raise HTTPException(status_code=400, detail="Save your Client ID and secret first.")
+    if not settings.public_base_url:
+        raise HTTPException(status_code=400, detail="This box has no public URL configured.")
+    state = secrets.token_urlsafe(24)
+    await store.upsert(ctx_for(principal), _STATE_KEY, state)
+    params = urlencode(
+        {
+            "client_id": client_id,
+            "redirect_uri": _redirect_uri(settings),
+            "response_type": "code",
+            "scope": _SCOPE,
+            "access_type": "offline",  # ask for a refresh token
+            "prompt": "consent",  # force it so a refresh token is always returned
+            "state": state,
+        }
+    )
+    return RedirectResponse(f"{_AUTH_URL}?{params}")
+
+
+@router.get("/settings/gmail/callback")
+async def gmail_callback(
+    request: Request,
+    principal: OwnerDep,
+    store: SettingsStoreDep,
+    settings: SettingsDep,
+    code: str | None = None,
+    state: str | None = None,
+    error: str | None = None,
+) -> RedirectResponse:
+    """Google's redirect target: validate the single-use state, exchange the code for a
+    refresh token, store it, and bounce back to the settings screen."""
+    ctx = ctx_for(principal)
+    expected = await store.get(ctx, _STATE_KEY, "")
+    await store.upsert(ctx, _STATE_KEY, "")  # single-use, cleared regardless of outcome
+    settings_url = f"{settings.public_base_url.rstrip('/')}/settings"
+    if error or not code or not state or not expected or state != expected:
+        return RedirectResponse(f"{settings_url}?gmail=error")
+    try:
+        refresh_token = await get_gmail_provider(request).exchange_code(
+            code, _redirect_uri(settings)
+        )
+    except GmailError:
+        return RedirectResponse(f"{settings_url}?gmail=error")
+    await store.set_gmail_credentials(ctx, refresh_token=refresh_token)
+    return RedirectResponse(f"{settings_url}?gmail=connected")

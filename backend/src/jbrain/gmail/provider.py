@@ -16,7 +16,12 @@ from typing import TYPE_CHECKING, Protocol
 import httpx
 
 from jbrain.db.session import SessionContext
-from jbrain.gmail.client import GmailApi, GmailClient, GmailError
+from jbrain.gmail.client import (
+    GmailApi,
+    GmailClient,
+    GmailError,
+    exchange_authorization_code,
+)
 
 if TYPE_CHECKING:
     from jbrain.config import Settings
@@ -67,6 +72,20 @@ class GmailClientProvider:
         """Whether a refresh token is present — the one credential that gates the
         feature (the gmail_* tools report "not connected" until then)."""
         return bool((await self.credentials())[2])
+
+    async def exchange_code(self, code: str, redirect_uri: str) -> str:
+        """Exchange an OAuth authorization code (the in-app Connect flow) for a refresh
+        token, using the stored client id/secret. Transport-injectable via the provider
+        for tests."""
+        cid, secret, _ = await self.credentials()
+        return await exchange_authorization_code(
+            client_id=cid,
+            client_secret=secret,
+            code=code,
+            redirect_uri=redirect_uri,
+            token_url=self._token_url,
+            transport=self._transport,
+        )
 
     async def client(self) -> GmailApi:
         creds = await self.credentials()
