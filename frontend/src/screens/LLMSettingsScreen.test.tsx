@@ -871,61 +871,6 @@ describe("LLMSettingsScreen", () => {
     await waitFor(() => expect(calls).toContain("stop"));
   });
 
-  it("reads ComfyUI's idle baseline (~6 GB) as not resident, not a stuck model", async () => {
-    // Regression: after Free, ComfyUI keeps drawing a ~6 GB idle baseline. The
-    // residency heuristic must clear that baseline so a freed service doesn't keep
-    // showing a phantom resident image model.
-    const s = initialSettings();
-    s.local_hosting_enabled = true;
-    s.host_memory = { total_gb: 128, used_gb: 0 };
-    const img: ImageSettings = {
-      enabled: true,
-      reachable: true,
-      models: [
-        {
-          id: "qwen-image",
-          label: "Qwen-Image · generate (fp8)",
-          kind: "generate",
-          enabled: true,
-          recommended: true,
-          size_gb: 28,
-          disk_gb: 27.3,
-          vram_gb: 20,
-          note: "",
-        },
-      ],
-      memory: { total_gb: 128, free_gb: 122 }, // 6 GB idle baseline — NOT a resident model
-    };
-    const resp = (o: unknown) =>
-      new Response(JSON.stringify(o), {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      });
-    vi.stubGlobal(
-      "fetch",
-      vi.fn<typeof fetch>(async (input) => {
-        const path = String(input);
-        if (path === "/api/ops/llm-usage") return resp(USAGE);
-        if (path === "/api/settings/llm") return resp(s);
-        if (path === "/api/settings/image") return resp(img);
-        throw new Error(`Unexpected fetch: ${path}`);
-      }),
-    );
-    render(<LLMSettingsScreen />);
-
-    // The image model sits on the UNLOADED lane (idle), not RESIDENT.
-    const tile = (await screen.findByText("Qwen-Image · generate (fp8)")).closest(
-      ".tile",
-    ) as HTMLElement;
-    expect((tile.closest(".lane") as HTMLElement).className).toContain("unloaded");
-    // No free action and no violet gauge segment for a baseline-only draw.
-    expect(within(tile).queryByRole("button", { name: /free/i })).not.toBeInTheDocument();
-    const violet = Array.from(document.querySelectorAll<HTMLElement>(".gseg")).find((el) =>
-      el.style.background.includes("--violet"),
-    );
-    expect(violet).toBeUndefined();
-  });
-
   it("renders the gauge, the surface switch, and the three lanes", async () => {
     const s = initialSettings();
     s.local_hosting_enabled = true;

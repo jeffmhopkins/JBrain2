@@ -629,19 +629,10 @@ capacity-gauge hero); the owner chose **E**, refined into E2:
   (staged) before it goes resident, and steps back through staged on its way
   out.** Context-window control lives on the staged/resident rungs, locked with
   the 🔒 "unload to change" hint while resident.
-- **The ladder reuses existing endpoints [decided: option 2]** — the
-  resident→staged "unload" step is the existing `unload` call followed by
-  `stage(true)` so the tile lands in the staged lane; a second `unstage` clears
-  it. No new endpoints.
-- **Staging pins models co-resident (it is no longer a bare flag).** llama-swap
-  runs in swap mode by default (one model resident at a time), so loading a
-  second model used to evict the first — which surfaced as "staging keeps
-  demoting my model." Staging now re-stamps `llama-swap.yaml` with the staged set
-  as a **non-swapping group** (`swap: false`, hot-reloaded via `--watch-config`),
-  so every staged model stays resident together; unstaging frees it to swap. This
-  is what makes "load both 120B and VL at once" work, and gives the staged rung
-  real teeth. The re-stamp is best-effort (an unreachable/read-only gateway never
-  fails the staging write).
+- **The ladder is UI-only [decided: option 2]** — it changes no gateway
+  lifecycle semantics. The resident→staged "unload" step is the existing
+  `unload` call followed by `stage(true)` so the tile lands in the staged lane;
+  a second `unstage` clears it. No new backend endpoints.
 - **Image / ComfyUI is read-only on the lanes [decided: option 1]** — image
   models ride the same lanes in **violet**, but image residency has no
   per-model API (ComfyUI loads on first request and keeps one model resident),

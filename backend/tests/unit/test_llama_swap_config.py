@@ -67,33 +67,6 @@ def test_render_emits_resident_group_when_enabled(tmp_path: Path) -> None:
     assert "- qwen3-vl-30b-a3b" in text and "- gpt-oss-120b" in text
 
 
-def test_render_pins_staged_models_into_the_swap_group(tmp_path: Path) -> None:
-    # Staging is what pins: with resident_group off (the box default), the staged
-    # set alone forms the non-swapping group so both models stay co-resident.
-    _lay_down(tmp_path)
-    text = llama_swap_config.render(
-        _manifest(), str(tmp_path), pinned=["qwen3-vl-30b", "gpt-oss-120b"]
-    )
-    assert "groups:" in text and "swap: false" in text
-    assert "- qwen3-vl-30b-a3b" in text and "- gpt-oss-120b" in text
-
-
-def test_render_pins_a_single_staged_model(tmp_path: Path) -> None:
-    # A lone staged model still pins itself — its served_model is the only member,
-    # and the other model is absent from the group (free to swap).
-    _lay_down(tmp_path)
-    text = llama_swap_config.render(_manifest(), str(tmp_path), pinned=["gpt-oss-120b"])
-    assert "groups:" in text and "- gpt-oss-120b" in text
-    assert "- qwen3-vl-30b-a3b" not in text
-
-
-def test_render_no_group_when_nothing_pinned_or_recommended(tmp_path: Path) -> None:
-    # The box default: resident_group off, nothing staged → no group, all swappable.
-    _lay_down(tmp_path)
-    text = llama_swap_config.render(_manifest(), str(tmp_path), pinned=[])
-    assert "groups:" not in text
-
-
 def test_resolve_weight_requires_a_complete_shard_set(tmp_path: Path) -> None:
     d = tmp_path / "m"
     d.mkdir()

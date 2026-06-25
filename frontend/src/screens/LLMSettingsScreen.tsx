@@ -731,10 +731,8 @@ function slotGradient(slot: number, lighten = 0): string {
 }
 
 // ComfyUI reports VRAM, not a per-model load flag; treat a draw above this as "a
-// model is resident" so the gauge shows it. The bar must clear ComfyUI's idle
-// baseline (~6 GB resident even after Free), so a freed service doesn't keep
-// reading as resident; real image models draw 20–38 GB, so 12 separates cleanly.
-const IMG_ACTIVE_GB = 12;
+// model is resident" so the gauge shows it. An estimate — tune on the box.
+const IMG_ACTIVE_GB = 4;
 
 // The size picker's choices, capped per model at its catalog window.
 const WINDOW_CHOICES = [16384, 32768, 65536, 131072];
