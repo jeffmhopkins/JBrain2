@@ -156,9 +156,7 @@ def write(
 ) -> str:
     """Render and atomically write {root}/llama-swap.yaml (temp + rename so the
     gateway's --watch-config never sees a half-written file). Returns the path."""
-    text = render(
-        models, root, windows=windows, resident_group=resident_group, pinned=pinned
-    )
+    text = render(models, root, windows=windows, resident_group=resident_group, pinned=pinned)
     path = os.path.join(root, "llama-swap.yaml")
     tmp = f"{path}.tmp"
     with open(tmp, "w") as f:
