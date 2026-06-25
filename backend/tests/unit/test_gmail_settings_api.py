@@ -224,6 +224,29 @@ def test_connect_derives_redirect_uri_from_request_without_public_base() -> None
         )
 
 
+def test_redirect_uri_defaults_to_https_for_a_public_host() -> None:
+    """No public_base_url and the tunnel doesn't forward x-forwarded-proto: a request
+    arriving as http from a public hostname still derives an https redirect_uri (Google
+    rejects non-https), so a tunnelled box connects after a plain update — no env edit."""
+    app = create_app(_settings())  # public_base_url left empty
+    with TestClient(app) as test_client:
+        app.state.auth_repo = FakeAuthRepo()
+        key = asyncio.run(auth_service.rotate_owner_key(app.state.auth_repo))
+        test_client.post("/api/auth/session", json={"owner_key": key, "device_label": "t"})
+        store = FakeSettingsStore()
+        app.state.settings_store = store
+        app.state.gmail_provider = GmailClientProvider(
+            store,
+            _settings(),
+            base_url="https://gmail.googleapis.com/gmail/v1",
+            token_url="https://oauth2.googleapis.com/token",
+            transport=_gmail_transport(),
+        )
+        # Host header is the public domain; no x-forwarded-proto (the tunnel dropped it).
+        out = test_client.get("/api/settings/gmail", headers={"host": "hopkinsbrain.com"}).json()
+        assert out["redirect_uri"] == "https://hopkinsbrain.com/api/settings/gmail/callback"
+
+
 def test_put_normalizes_a_url_ified_client_id(
     client: tuple[TestClient, FastAPI, FakeSettingsStore],
 ) -> None:
