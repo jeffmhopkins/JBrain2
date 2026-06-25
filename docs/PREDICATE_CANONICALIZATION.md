@@ -1,7 +1,8 @@
 # Predicate canonicalization (embedding-assisted) + typed value shapes
 
-Status: **core shipped** (Phases 1–4); the self-improvement loop (Phase 5) is
-deferred. Typed value-shape enforcement (`value_shape_enforce`) and
+Status: **core shipped** (Phases 1–4); the self-improvement loop that once sat on
+top of it (an agent batching and auto-resolving new-predicate cards) was removed.
+Typed value-shape enforcement (`value_shape_enforce`) and
 embedding-assisted predicate canonicalization (`predicate_canonicalization`,
 via `AnalysisPipeline.canonicalize_intent` inside `integrate_note`, before the
 arbiter keys facts) both ship and **default ON** (`settings_store.py`). Owner-facing
@@ -90,9 +91,9 @@ band acts automatically (it merges into an *existing* canonical, which is safe a
 reversible). Both other bands are *proposals*: the fact still commits immediately
 with its raw predicate (the storage invariant — a predicate name is never
 rejected — holds), and the canonicalization is deferred to a review item. This
-keeps the registry from sprawling on the model's whim and puts a human (or the
-self-improving agent) in the loop exactly where judgment is needed: "is this a
-genuinely new concept, or a worse spelling of one we have?"
+keeps the registry from sprawling on the model's whim and puts the owner in the
+loop exactly where judgment is needed: "is this a genuinely new concept, or a
+worse spelling of one we have?"
 
 ### 3.1a The new-predicate review action
 
@@ -114,7 +115,7 @@ sources:
   close). This is the same "model proposes, deterministic layer disposes" shape
   the integrator already uses.
 
-The reviewer — owner in the UI, or the agent per `docs/ASSISTANT.md` — then:
+The reviewer — the owner, in the UI — then:
 
 - **Picks a suggested alternate** → register the raw spelling as a `renamed_from`
   of that canonical (so it auto-collapses next time) and queue a consolidation
@@ -200,15 +201,11 @@ backfill discipline as entities/chunks).
 A self-extending vocabulary can sprawl. Mitigations:
 
 - **New predicates are gated by review, not auto-minted** (§3.1a): the cold and
-  WEAK bands raise a proposal a human/agent must accept, so the registry never
+  WEAK bands raise a proposal the owner must accept, so the registry never
   grows on the model's whim. Only the STRONG band (merge into an *existing*
   canonical) is automatic.
 - **High STRONG threshold** so near-duplicates auto-merge and the review queue
   stays small; tune on the eval, not by guess.
-- **The agent is a valid reviewer** — `docs/ASSISTANT.md` self-improvement: it
-  batches new-predicate cards, proposes accept/map/rename, and the accepted
-  merges flow back into the registry YAML via a correction note (never a silent
-  edit — CLAUDE.md rule 7).
 - **A minted predicate's value-type** is the reviewer's choice (defaulting to the
   shape inferred from its first `value_json`), captured when the proposal is
   accepted — not trusted from the model blindly.
@@ -245,8 +242,8 @@ So the bands were tuned to make the feature a **suggestion-led review assistant,
 not an auto-merger**: `_PRED_STRONG` stays 0.90 (auto-merge effectively never
 fires — safe, since auto-merging onto a *wrong* canonical is worse than minting),
 and `_PRED_WEAK` drops to 0.55 so an unknown predicate files a `new_predicate`
-card that CARRIES the top suggestions (which ARE right for the clean drifts) for a
-human/agent to confirm. Reliable STRONG auto-merge is gated on a **richer
+card that CARRIES the top suggestions (which ARE right for the clean drifts) for
+the owner to confirm. Reliable STRONG auto-merge is gated on a **richer
 descriptor** (§7) — a definition/example, or the entity kind — which is the next
 lever before lowering STRONG. Until then the live flips keep auto-merge off in
 practice and lean on the review loop (3b).
@@ -272,10 +269,11 @@ practice and lean on the review loop (3b).
 4. **Eval calibration.** Drift/mint/near-miss corpus cases; tune bands; re-pin
    the firewall predicates and flip `mixed-domain-journal`; confirm stability
    over repeated runs. Bands calibrated and the setting now defaults ON
-   (`predicate_canonicalization` / `value_shape_enforce`).
-5. **Self-improvement loop.** Agent reviews minted predicates, proposes
-   merges/renames into the registry YAML via correction notes; consolidation
-   sweep heals stored drift.
+   (`predicate_canonicalization` / `value_shape_enforce`). *(Phases 1–4 above are
+   the shipped core. A planned fifth phase — an agent that reviewed minted
+   predicates and proposed registry merges via correction notes — was removed;
+   the owner is the reviewer, and the consolidation sweep heals stored drift on
+   accept.)*
 
 ## 7. Open questions
 

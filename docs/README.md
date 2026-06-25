@@ -13,11 +13,12 @@ ingestion/search, the v3 note→graph analysis pipeline, the personal agent
 the Full Brain chat surface), lists and appointments, and the **workflow engine**
 (`events`/`triggers`/`pipelines`/`actions`/`runs` + scheduler + unified run-log +
 the cutover of ingest/integration/consolidation onto the engine), reflexion in the
-live turn, a fed eval harness (the live scorer + a nightly schedule that stores
-`EvalRun`s), and the recurring self-heal reconcilers. Migrations run through 0044.
+live turn, and the recurring self-heal reconcilers. The note-analysis calibration
+evals run as a CI quality guard. Migrations run through 0044.
 
 **Phase 5 is complete; next is Phase 6 (Wiki).** The self-improvement Loops 2–4
-(skill learning, durable-knowledge promotion, prompt/tool self-edit) and the
+(skill learning, durable-knowledge promotion, prompt/tool self-edit) and their
+eval/promotion harness were **removed** — only Loop 1 (reflexion) shipped. The
 not-yet-built hygiene sweeps are deferred to Phase 6. See `ROADMAP.md`; the completed
 Phase-5 build record is `archive/PHASE5_COMPLETION_PLAN.md`.
 
@@ -32,8 +33,8 @@ Phase-5 build record is `archive/PHASE5_COMPLETION_PLAN.md`.
 | `DESIGN.md` | Binding GUI design system: theming, components, navigation, the agent tool-view contract, settled UI decisions. |
 | `ANALYSIS.md` | The note→fact→entity pipeline (extract → Integrator → arbiter), supersession, the review inbox. |
 | `entity.md` | The entity & soft-schema model: predicates, facets, names, relationships, resolution. |
-| `PREDICATE_CANONICALIZATION.md` | Embedding-assisted predicate registry + typed value shapes (core shipped; self-improvement loop deferred). |
-| `ASSISTANT.md` | The self-improving agent design — the Phase-4 core (shipped) plus the deferred loops 2–4 (Phases 5–7). |
+| `PREDICATE_CANONICALIZATION.md` | Embedding-assisted predicate registry + typed value shapes (core shipped; the self-improvement loop on top of it was removed). |
+| `ASSISTANT.md` | The agent design — the Phase-4 core (shipped, incl. Loop 1 reflexion); the further self-improvement loops 2–4 were removed. |
 | `OPERATIONS.md` | JBrain360 operator runbook: revoking a member, the encryption-at-rest compensating control, and rotating the device Keystore key + the server's pinned cert (SPKI). |
 | `STRIX_HALO_SETUP.md` | End-to-end runbook for self-hosting the optional local models on an AMD Strix Halo (Ryzen AI Max+ 395) box: distro → kernel → Vulkan → install → routing. |
 | `CLOUDFLARE_TUNNEL.md` | Reaching a home-network box from outside via Cloudflare Tunnel — the dynamic-IP / CGNAT path: no static IP, no port-forwarding, TLS at Cloudflare's edge. |

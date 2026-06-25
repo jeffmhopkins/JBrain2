@@ -16,7 +16,6 @@ from jbrain.auth import service
 from jbrain.auth.repo import SqlAuthRepo
 from jbrain.db.session import SessionContext, scoped_session
 from jbrain.workflow.automations import AutomationsReader
-from jbrain.workflow.evalaction import EVAL_RUN_SPEC
 from jbrain.workflow.registry import ACTION_SPECS, ActionRegistry, build_registry
 from jbrain.workflow.scheduler import (
     PURGE_ACTION,
@@ -48,7 +47,6 @@ def _registry() -> ActionRegistry:
             RECONCILE_PENDING_NOTES_ACTION,
             RECONCILE_PENDING_INTEGRATION_ACTION,
             RECONCILE_UNEMBEDDED_NOTES_ACTION,
-            EVAL_RUN_SPEC,
         )
     )
 
@@ -110,11 +108,9 @@ async def test_catalog_flags_seeded_vs_in_code(maker: async_sessionmaker) -> Non
     # The shipped six are mirrored into app.actions (migration 0035).
     assert by_name["ingest_note"].seeded is True
     assert by_name["integrate_note"].seeded is True
-    # The reconcilers, purge, and eval live in-code only.
+    # The reconcilers and purge live in-code only.
     assert by_name["reconcile_pending_notes"].seeded is False
     assert by_name["purge_deleted_artifacts"].seeded is False
-    assert by_name["eval_run"].seeded is False
-    assert by_name["eval_run"].mutating is False
 
 
 async def test_toggle_enabled_round_trips(maker: async_sessionmaker) -> None:

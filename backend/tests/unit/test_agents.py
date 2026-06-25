@@ -100,7 +100,8 @@ def test_archivist_tools_are_archivist_only() -> None:
     check.)"""
     assert AGENTS["curator"].tools is None
     assert not ((GMAIL_TOOLS | MEMORY_TOOLS) & JERV_TOOLS)
-    assert ARCHIVIST_TOOLS & JERV_TOOLS == {"current_time"}  # the one shared tool
+    shared_with_jerv = ARCHIVIST_TOOLS & JERV_TOOLS
+    assert shared_with_jerv == {"current_time"}  # the one deliberate shared tool
     assert AGENTS["teacher"].tools == frozenset()
 
 

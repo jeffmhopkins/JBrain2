@@ -33,7 +33,6 @@ from jbrain.agent.loop import AgentLoop, guardrails_for_effort
 from jbrain.agent.memory import MemoryService
 from jbrain.agent.runlog import AgentRunLog
 from jbrain.agent.session import AgentSessionInfo, AgentSessionRepo, read_context
-from jbrain.agent.skills import SkillService, format_skills
 from jbrain.agent.titler import SessionTitler
 from jbrain.agent.toolregistry import ToolRegistry
 from jbrain.agent.transcript_store import AgentTranscript
@@ -177,10 +176,6 @@ def get_agent_memory(request: Request) -> MemoryService:
     return cast(MemoryService, request.app.state.agent_memory)
 
 
-def get_skill_service(request: Request) -> SkillService:
-    return cast(SkillService, request.app.state.skill_service)
-
-
 def get_agent_transcript(request: Request) -> AgentTranscript:
     return cast(AgentTranscript, request.app.state.agent_transcript)
 
@@ -205,7 +200,7 @@ async def _presence_block(
     request: Request, owner_ctx: SessionContext, session: AgentSessionInfo
 ) -> str:
     """The data-framed owner-presence line to prepend to the conversation (L7b), or
-    "" when none. Owner-GATED and freshness-honest, mirroring the skills block's
+    "" when none. Owner-GATED and freshness-honest, on the conversation channel's
     data/instruction boundary (a prepended data-framed `UserMessage`, NOT the system
     prompt — `run_stream` hardcodes `system=SYSTEM_PROMPT`, so a system injection
     would silently no-op in streaming).
@@ -470,19 +465,8 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
     if images and not await router.supports_vision("agent.turn"):
         images = []
     conversation = _conversation(body, images, attach_text)
-    # Loop 2: surface matching active skills as a DATA-framed reference block in the conversation
-    # channel (never the system prompt — the data/instruction boundary). Off by default until
-    # distillation + owner promotion populate active skills; recall is RLS-scoped (in-scope only).
-    # Only a knowledge-base agent recalls skills — a sandboxed chatbot never touches owner data.
-    if profile.reads_knowledge_base and await get_settings_store(request).skills_enabled(read_ctx):
-        hits = await get_skill_service(request).recall(read_ctx, body.message)
-        if hits:
-            conversation = [UserMessage(text=format_skills(hits)), *conversation]
-            await runlog.stamp_skill_version(
-                owner_ctx, run_id, skill_version=",".join(f"{h.name}@v{h.version}" for h in hits)
-            )
-    # L7b: prepend the owner's coarse presence as a DATA-framed UserMessage, exactly
-    # like the skills block above (same data/instruction boundary) — NOT the system
+    # L7b: prepend the owner's coarse presence as a DATA-framed UserMessage, on the
+    # conversation channel (the data/instruction boundary) — NOT the system
     # prompt (run_stream hardcodes SYSTEM_PROMPT, so a system injection would no-op in
     # streaming). Owner-gated: absent unless the session holds the `location` scope,
     # and the read runs under the FULL owner ctx (require_full_owner), so a narrowed
@@ -495,7 +479,7 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
     # read ctx — a preference, not domain data.
     owner_tz = await get_settings_store(request).owner_timezone(owner_ctx)
     # Every turn knows when it is: prepend the current date + local time as a DATA-
-    # framed UserMessage (same conversation-channel boundary as skills/presence), so
+    # framed UserMessage (same conversation-channel boundary as presence), so
     # any agent — including the sandboxed jerv — grounds "today"/"this week" without
     # having to call a tool. The `current_time` tool covers fresh/other-zone reads.
     conversation = [UserMessage(text=now_block(owner_tz)), *conversation]

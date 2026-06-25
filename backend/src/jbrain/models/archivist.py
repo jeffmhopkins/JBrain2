@@ -1,4 +1,4 @@
-"""Archivist memory ORM + repo (migration 0091).
+"""Archivist memory ORM + repo (migration 0094).
 
 `archivist_memory` is an owner-only scratchpad (mirrors `generated_images`/`wiki_*`):
 one row per principal holding the archivist persona's cross-session working notes —

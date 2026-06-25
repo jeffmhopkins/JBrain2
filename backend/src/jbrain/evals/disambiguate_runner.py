@@ -4,8 +4,8 @@ prompt through a model via the LLM adapter and scores the link decision.
 Mirrors `runner.py` (note.extract): `load_disambiguate_cases` reads the corpus
 beside this module (`disambiguate_cases/*.json`), `score_disambiguate_cases`
 drives each case through an injected router (the adapter — never a provider SDK)
-and scores it, and `eval_run_from_disambiguate` adapts the results into the
-promotion gate's two-dimensional `{task, safety}` EvalRun.
+and scores it, and `eval_run_from_disambiguate` adapts the results into a
+two-dimensional `{task, safety}` EvalRun.
 
 The decision has an asymmetric cost: a FALSE link (an id chosen when the answer
 is "none of these") is the dangerous outcome — it silently fuses two entities —
@@ -29,7 +29,7 @@ from jbrain.analysis.entities import (
     build_disambiguation_prompt,
     parse_disambiguation,
 )
-from jbrain.workflow.promotion import EvalRun, FixtureScore
+from jbrain.evals.scores import EvalRun, FixtureScore
 
 CASES_DIR = Path(__file__).parent / "disambiguate_cases"
 

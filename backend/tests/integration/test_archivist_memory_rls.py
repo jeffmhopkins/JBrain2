@@ -1,4 +1,4 @@
-"""Migration 0091 against real Postgres: `archivist_memory` is owner-only (CLAUDE.md
+"""Migration 0094 against real Postgres: `archivist_memory` is owner-only (CLAUDE.md
 rule 3).
 
 The mandatory per-new-table RLS isolation test for the archivist's scratchpad. The

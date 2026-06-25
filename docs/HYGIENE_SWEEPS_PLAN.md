@@ -2,7 +2,7 @@
 
 Phase-6 follow-on (ROADMAP §"Phase 6 follow-ons", `docs/ANALYSIS.md` nightly list); relocated
 out of the wiki build as its own plan (`docs/PHASE6_WIKI_PLAN.md` "Out of scope"). Three
-**core-data maintenance** engine actions on the Phase-5 sweep pattern (the `skill_sweep` /
+**core-data maintenance** engine actions on the Phase-5 sweep pattern (the
 `consolidate_predicates` template): in-code `ActionSpec`s, run under `SYSTEM_CTX`, seeded as
 **disabled-by-default** nightly schedules that are **Ops-fireable** (`manual=true`). Executed
 under `docs/PROCESS.md`.
@@ -18,8 +18,8 @@ under `docs/PROCESS.md`.
 
 ## Shared posture (all three)
 
-- **Not self-improvement — data maintenance.** None spends LLM tokens, so none uses the
-  `SelfImprovementGate`; they are siblings of the reconcilers (mechanical cleanup), gated only by
+- **Not self-improvement — data maintenance.** None spends LLM tokens, so none needs a token
+  budget; they are siblings of the reconcilers (mechanical cleanup), gated only by
   the schedule's **enabled flag** (ships off) and the owner's Ops control. `mutating=True`.
 - **In-code spec, seeded schedule.** Each `ActionSpec` is composed into the worker registry at
   boot (not in `app.actions`, so the 0035 seed-lockstep holds); migration `0066` seeds a
@@ -46,9 +46,9 @@ and tombstones are all excluded. Auto-delete is consistent with the existing on-
 ### 2. `reembed_stale` — re-embed stale-model rows (insurance)
 
 `analysis/reembed.py`. Re-embeds the embedded rows with **no existing re-embed path** whose
-`embedding_model IS DISTINCT FROM` the current model (or whose embedding is NULL): **skills**
-(`description`+`body`) and **entities** (`summary`, when one exists; a NULL-summary entity has
-nothing to embed and is skipped). `wiki_index` (via `wiki_reindex`) and `canonical_predicates`
+`embedding_model IS DISTINCT FROM` the current model (or whose embedding is NULL): **entities**
+(`summary`, when one exists; a NULL-summary entity has nothing to embed and is skipped).
+`wiki_index` (via `wiki_reindex`) and `canonical_predicates`
 (via `sync_predicates`) already self-heal, so they are deliberately **not** duplicated here. Uses
 the **local embed container** (not the LLM router) → no tokens, no budget. **Bounded per run**
 (`_BATCH=256` per target) so a big post-upgrade backlog spreads across nights; the
@@ -70,7 +70,7 @@ surfaced or searched, so building that registry now would be bloat).
 
 Integration (`test_hygiene_sweeps_pg.py`, real Postgres): entity_hygiene deletes a provisional
 orphan, keeps a confirmed/subject entity and one with a surviving mention, and is idempotent;
-reembed restamps a stale skill + a stale-model entity-with-summary and skips a current skill and a
+reembed restamps a stale-model entity-with-summary and skips a current entity and a
 NULL-summary entity; tag_consolidate folds case/whitespace duplicates, drops empties, and is
 idempotent. The worker handler-set + the scheduler seeded-pipeline-set lockstep tests gain the
 three new entries.

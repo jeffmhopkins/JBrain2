@@ -10,20 +10,14 @@ from fastapi import FastAPI, Request
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from jbrain.agent.attachments import TurnAttachmentRepo
-from jbrain.agent.correctionmine import CORRECTION_MINE_SPEC
 from jbrain.agent.gmailtools import build_gmail_handlers
 from jbrain.agent.imagegentools import build_image_handlers
 from jbrain.agent.loop import ToolHandler
 from jbrain.agent.memory import MemoryRepo, MemoryService
-from jbrain.agent.predicatereview import PREDICATE_REVIEW_SPEC
-from jbrain.agent.promptselfedit import PROMPT_SELF_EDIT_SPEC
 from jbrain.agent.proposals import ProposalRepo
 from jbrain.agent.readtools import build_registry
 from jbrain.agent.runlog import AgentRunLog, RunLogReader
 from jbrain.agent.session import AgentSessionRepo
-from jbrain.agent.skilldistill import SKILL_DISTILL_SPEC
-from jbrain.agent.skills import SkillService, SkillsRepo
-from jbrain.agent.skillsweep import SKILL_SWEEP_SPEC
 from jbrain.agent.transcribetools import build_transcribe_handlers
 from jbrain.agent.transcript_store import AgentTranscript
 from jbrain.agent.videotools import build_video_handlers
@@ -69,6 +63,9 @@ from jbrain.api import image_settings as image_settings_api
 from jbrain.api import lists as lists_api
 from jbrain.api import llm_settings as llm_settings_api
 from jbrain.api import settings as settings_api
+from jbrain.api import (
+    tasks as tasks_api,
+)
 from jbrain.api.debug_activity import DebugActivity
 from jbrain.appointments.repo import SqlAppointmentsRepo
 from jbrain.auth.repo import SqlAuthRepo
@@ -103,6 +100,9 @@ from jbrain.search.repo import SqlSearchRepo
 from jbrain.search.service import SearchService
 from jbrain.settings_store import SqlSettingsStore
 from jbrain.storage import FsBackupShelf, FsBlobStore
+from jbrain.tasks.repo import TaskRepo, TaskRunRepo
+from jbrain.tasks.runner import LoopTurnExecutor, TaskRunner
+from jbrain.tasks.scheduler import run_tasks_loop
 from jbrain.tiles import FsTileCache, HttpTileFetcher, TileService, TileSet, tile_cache_namespace
 from jbrain.transcribe import WhisperCppClient
 from jbrain.usage import SqlUsageRecorder
@@ -111,7 +111,6 @@ from jbrain.wiki.actions import WIKI_SPECS
 from jbrain.wiki.readstore import WikiReadStore
 from jbrain.wiki.talkstore import WikiTalkStore
 from jbrain.workflow.automations import AutomationsReader
-from jbrain.workflow.evalaction import EVAL_RUN_SPEC
 from jbrain.workflow.registry import ACTION_SPECS
 from jbrain.workflow.registry import build_registry as build_action_registry
 from jbrain.workflow.scheduler import (
@@ -202,8 +201,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # pipeline through (workflow/scheduler.fire_trigger) and the Automations
         # surface renders the Catalog from. Mirrors the worker's composed registry
         # EXACTLY — the shipped six plus every in-code action (purge, the three
-        # reconcilers, the geofence sweep, the opt-in eval_run, the Loop 2-4
-        # self-improvement actions, the Phase-6 hygiene sweeps, and the wiki builder)
+        # reconcilers, the geofence sweep, the Phase-6 hygiene sweeps, and the
+        # wiki builder)
         # — so any manual trigger fired from Ops resolves to the same handler the
         # scheduler would (else registry.get raises ActionRegistryError), and the
         # Catalog lists the full set the worker can run. Keep in lockstep with the
@@ -216,14 +215,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 RECONCILE_PENDING_INTEGRATION_ACTION,
                 RECONCILE_UNEMBEDDED_NOTES_ACTION,
                 GEOFENCE_SWEEP_ACTION,
-                EVAL_RUN_SPEC,
-                # The Loop 2-4 self-improvement actions — seeded manual=true, so they
-                # must resolve from Ops too (they were worker-only before).
-                SKILL_DISTILL_SPEC,
-                SKILL_SWEEP_SPEC,
-                PREDICATE_REVIEW_SPEC,
-                CORRECTION_MINE_SPEC,
-                PROMPT_SELF_EDIT_SPEC,
                 # The Phase-6 hygiene sweeps, so their seeded manual triggers resolve from
                 # Ops (POST /ops/triggers/{id}/run -> registry.get) — emergency-fireable.
                 ENTITY_HYGIENE_SPEC,
@@ -261,10 +252,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # sidecars at startup), the session capability store, and the run log.
         app.state.agent_memory = MemoryService(
             MemoryRepo(maker), TeiEmbedClient(settings.embed_url), settings.embed_model
-        )
-        app.state.skills_repo = SkillsRepo(maker)
-        app.state.skill_service = SkillService(
-            app.state.skills_repo, TeiEmbedClient(settings.embed_url), settings.embed_model
         )
         app.state.agent_proposals = ProposalRepo(maker)
         # The egress chokepoint: a fixed allowlist of connectors, served only on an
@@ -417,6 +404,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             frozenset(spec.name for spec in ACTION_SPECS),
         )
         app.state.agent_transcript = AgentTranscript(maker, app.state.turn_attachments)
+        # Tasks: saved prompts that spawn an agent session on a schedule or on demand.
+        # The runner reuses the same session/run/transcript stack /chat does, headless;
+        # the scheduler loop (below) is the web-process driver (that's where the agent
+        # stack lives and where "Run now" already executes).
+        app.state.task_repo = TaskRepo(maker)
+        app.state.task_runs = TaskRunRepo(maker)
+        app.state.task_runner = TaskRunner(
+            sessions=app.state.agent_sessions,
+            runlog=app.state.agent_runlog,
+            transcript=app.state.agent_transcript,
+            runs=app.state.task_runs,
+            executor=LoopTurnExecutor(app.state.llm_router, app.state.agent_registry),
+            push=app.state.push_notifier,
+        )
+        tasks_loop_task = asyncio.create_task(
+            run_tasks_loop(maker, app.state.task_repo, app.state.task_runner)
+        )
         # Stopping a service is a synchronous `docker stop` on the supervisor — up to
         # the container's SIGTERM grace (ComfyUI's ~10 s) before it returns — so the
         # default 5 s httpx timeout would spuriously fail a stop that actually succeeds.
@@ -426,6 +430,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         yield
         if live_task is not None:
             live_task.cancel()
+        tasks_loop_task.cancel()
         # Stop any chat turns still running detached from a (now-gone) SSE response, so
         # shutdown doesn't strand them; each closes via its own CancelledError path. AWAIT
         # their tasks (bounded) before disposing the engine: their cancel-cleanup runs the
@@ -516,6 +521,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(sessions.router, prefix="/api")
     app.include_router(settings_api.router, prefix="/api")
     app.include_router(gmail_settings_api.router, prefix="/api")
+    app.include_router(tasks_api.router, prefix="/api")
     app.include_router(tiles.router, prefix="/api")
     app.include_router(wiki.router, prefix="/api")
     return app

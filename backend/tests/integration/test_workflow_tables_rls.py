@@ -2,11 +2,10 @@
 table (CLAUDE.md rule 3, docs/WORKFLOW_ENGINE_PLAN.md E2).
 
 Two postures are proven separately:
-- domain-firewalled tables (`events`, `resolution_pin`, `skills`): a health-domain
-  row is invisible without the health scope — the analysis-table pattern;
-- owner/system tables (`triggers`, `schedules`, `eval_runs`): visible to the owner
-  context, invisible to any narrowed (owner_scoped) session — the agent_runs
-  pattern;
+- domain-firewalled tables (`events`, `resolution_pin`): a health-domain row is
+  invisible without the health scope — the analysis-table pattern;
+- owner/system tables (`triggers`, `schedules`): visible to the owner context,
+  invisible to any narrowed (owner_scoped) session — the agent_runs pattern;
 - `pipelines` is global-read reference data (canonical_predicates precedent): every
   reader sees it; only the owner/system context writes it.
 """
@@ -53,10 +52,7 @@ async def seed_health_workflow(maker: async_sessionmaker) -> dict[str, str]:
     """Insert one health-domain row in every domain-firewalled workflow table
     (plus the note/chunk/entity/principal a resolution_pin and event need); return
     ids. Fresh UUIDs per call so parametrized tests never collide."""
-    ids = {
-        name: str(uuid.uuid4())
-        for name in ("note", "chunk", "entity", "principal", "event", "skill")
-    }
+    ids = {name: str(uuid.uuid4()) for name in ("note", "chunk", "entity", "principal", "event")}
     async with scoped_session(maker, OWNER) as s:
         await s.execute(
             text(
@@ -103,13 +99,6 @@ async def seed_health_workflow(maker: async_sessionmaker) -> dict[str, str]:
             ),
             {"nid": ids["note"], "cid": ids["chunk"], "eid": ids["entity"]},
         )
-        await s.execute(
-            text(
-                "INSERT INTO app.skills (id, name, version, domain_code)"
-                " VALUES (:id, :name, 1, 'health')"
-            ),
-            {"id": ids["skill"], "name": f"log_bp_{ids['skill'][:8]}"},
-        )
     return ids
 
 
@@ -129,7 +118,6 @@ DOMAIN_TABLES = [
         "SELECT count(*) FROM app.resolution_pin WHERE note_id = :id",
         "note",
     ),
-    ("skills", "SELECT count(*) FROM app.skills WHERE id = :id", "skill"),
 ]
 
 
@@ -150,9 +138,9 @@ async def test_scoped_writer_cannot_smuggle_workflow_rows_across_domains(
     maker: async_sessionmaker,
 ) -> None:
     """A general-only writer cannot stamp a health domain on ANY firewalled row —
-    events and resolution_pin (the content-bearing tables) and skills all carry the
-    same WITH CHECK (has_domain_scope(domain_code)), so the write firewall is
-    exercised on each, not just one."""
+    events and resolution_pin (the content-bearing tables) both carry the same
+    WITH CHECK (has_domain_scope(domain_code)), so the write firewall is exercised
+    on each, not just one."""
     ids = await seed_health_workflow(maker)
     smuggles = [
         (
@@ -166,11 +154,6 @@ async def test_scoped_writer_cannot_smuggle_workflow_rows_across_domains(
             " VALUES (:nid, :cid, 0, 'predicate_key', 'spouse', 'health')",
             {"nid": ids["note"], "cid": ids["chunk"]},
         ),
-        (
-            "INSERT INTO app.skills (id, name, version, domain_code)"
-            " VALUES (gen_random_uuid(), 'sneaky', 1, 'health')",
-            {},
-        ),
     ]
     for stmt, params in smuggles:
         with pytest.raises(ProgrammingError):
@@ -179,8 +162,8 @@ async def test_scoped_writer_cannot_smuggle_workflow_rows_across_domains(
 
 
 async def seed_owner_definitions(maker: async_sessionmaker) -> dict[str, str]:
-    """Insert one row in every owner/system definition + audit table; return ids."""
-    ids = {name: str(uuid.uuid4()) for name in ("schedule", "trigger", "eval_run")}
+    """Insert one row in every owner/system definition table; return ids."""
+    ids = {name: str(uuid.uuid4()) for name in ("schedule", "trigger")}
     async with scoped_session(maker, OWNER) as s:
         await s.execute(
             text(
@@ -196,20 +179,12 @@ async def seed_owner_definitions(maker: async_sessionmaker) -> dict[str, str]:
             ),
             {"id": ids["trigger"], "sid": ids["schedule"]},
         )
-        await s.execute(
-            text(
-                "INSERT INTO app.eval_runs (id, suite, version_label, model)"
-                " VALUES (:id, 'integration', 'v1', 'fake-model')"
-            ),
-            {"id": ids["eval_run"]},
-        )
     return ids
 
 
 OWNER_TABLES = [
     ("schedules", "schedule"),
     ("triggers", "trigger"),
-    ("eval_runs", "eval_run"),
 ]
 
 

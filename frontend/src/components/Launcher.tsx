@@ -36,7 +36,8 @@ export type LauncherTarget =
   | "calendar"
   | "graph"
   | "location"
-  | "wiki";
+  | "wiki"
+  | "tasks";
 
 interface Tile {
   title: string;
@@ -76,6 +77,7 @@ const SECTIONS: Section[] = [
     tiles: [
       { title: "Ops", icon: <GaugeIcon size={24} />, target: "ops" },
       { title: "Workflow", icon: <ZapIcon size={24} />, target: "automations" },
+      { title: "Tasks", icon: <CheckSquareIcon size={24} />, target: "tasks" },
       { title: "Data", icon: <DatabaseIcon size={24} />, target: "data" },
       { title: "Settings", icon: <SettingsIcon size={24} />, target: "settings" },
       { title: "LLM", icon: <BotIcon size={24} />, target: "llm-settings" },

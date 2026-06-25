@@ -99,47 +99,6 @@ describe("ProposalTree", () => {
     expect(container.textContent).not.toContain("98f10c10");
   });
 
-  it("renders a prompt-edit leaf's diff so the owner can review it", async () => {
-    const edit = detail({
-      kind: "prompt-edit",
-      title: "edit prompt session.title → session-title-v2",
-      nodes: [
-        {
-          id: "e",
-          parent_id: null,
-          type: "leaf",
-          op: "prompt_edit_record",
-          label: "session.title: session-title-v1 → session-title-v2",
-          preview: {
-            target_name: "session.title",
-            current_version: "session-title-v1",
-            proposed_version: "session-title-v2",
-            rationale: "Cap the title length.",
-            new_eval_fixture: "Title is at most five words.",
-            unified_diff: "--- a/session_title.prompt\n+++ b/session_title.prompt\n-old\n+new",
-          },
-          deps: [],
-          status: "pending",
-        },
-      ],
-    });
-    const { container } = render(
-      <ProposalTree
-        proposalId="p1"
-        onClose={vi.fn()}
-        getProposal={vi.fn(async () => edit)}
-        decideNode={vi.fn()}
-        enactProposal={vi.fn()}
-      />,
-    );
-    // The owner sees the diff, the rationale, and the version transition — the
-    // terminal review gate is real, not a bare label.
-    expect(await screen.findByText("Cap the title length.")).toBeInTheDocument();
-    expect(container.textContent).toContain("--- a/session_title.prompt");
-    expect(container.textContent).toContain("+new");
-    expect(container.textContent).toContain("Title is at most five words.");
-  });
-
   it("does not echo the panel title when a leaf's label repeats it", async () => {
     const dup = detail({
       title: "PCP is Dr. Lin",

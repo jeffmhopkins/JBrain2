@@ -90,11 +90,6 @@ class Run(Base):
     step_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     cost_tokens: Mapped[int] = mapped_column(BigInteger, default=0, server_default="0")
     prompt_version: Mapped[str | None] = mapped_column(Text, nullable=True)
-    # The version of the promoted skill a run executed under, for Phase-6
-    # skill-learning auditability (docs/ASSISTANT.md). Nullable groundwork: no
-    # logic writes it yet — stamping the column now keeps a future skill-promoted
-    # run auditable without a later schema change (migration 0043).
-    skill_version: Mapped[str | None] = mapped_column(Text, nullable=True)
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 

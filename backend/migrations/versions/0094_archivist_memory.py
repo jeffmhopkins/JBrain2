@@ -7,15 +7,15 @@ the owner's knowledge base (no domain, no notes/entities). Owner-only RLS mirror
 principal (the single owner), updated in place — so SELECT/INSERT/UPDATE/DELETE are
 granted (unlike the immutable image-provenance rows).
 
-Revision ID: 0091
-Revises: 0090
+Revision ID: 0094
+Revises: 0093
 Create Date: 2026-06-25
 """
 
 from alembic import op
 
-revision = "0091"
-down_revision = "0090"
+revision = "0094"
+down_revision = "0093"
 branch_labels = None
 depends_on = None
 

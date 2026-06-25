@@ -14,7 +14,6 @@ const OP_LABEL: Record<string, string> = {
   add_note: "New note",
   egress_call: "External call",
   merge_entities: "Merge entities",
-  prompt_edit_record: "Prompt/tool edit",
 };
 
 interface Props {
@@ -124,7 +123,6 @@ function NodeRow({
         {isMerge ? <MergeHead preview={node.preview} /> : heading}
       </div>
       {body && <div className="r-sub">{body}</div>}
-      {node.op === "prompt_edit_record" && <PromptEditPreview preview={node.preview} />}
       {node.type === "leaf" && node.status === "pending" && (
         <div className="node-actions">
           <button
@@ -145,31 +143,6 @@ function NodeRow({
           </button>
         </div>
       )}
-    </div>
-  );
-}
-
-// A prompt-edit leaf (Loop 4): the owner reviews the EXACT diff before approving —
-// the diff is the deliverable and this owner review is the loop's terminal safety
-// gate (the agent never applies its own edits, #6). The diff is plain text in a
-// <pre> — React escapes it, so it renders no markup and loads no external resource
-// (#9); the agent never writes HTML/markup here.
-function PromptEditPreview({ preview }: { preview: Record<string, unknown> }): ReactNode {
-  const diff = typeof preview.unified_diff === "string" ? preview.unified_diff : "";
-  const rationale = typeof preview.rationale === "string" ? preview.rationale : "";
-  const fixture = typeof preview.new_eval_fixture === "string" ? preview.new_eval_fixture : "";
-  const from = String(preview.current_version ?? "");
-  const to = String(preview.proposed_version ?? "");
-  return (
-    <div className="prompt-edit-preview">
-      {(from || to) && (
-        <div className="r-sub">
-          version {from} → {to}
-        </div>
-      )}
-      {rationale && <div className="r-sub">{rationale}</div>}
-      {diff && <pre className="prompt-edit-diff">{diff}</pre>}
-      {fixture && <div className="r-sub">New test: {fixture}</div>}
     </div>
   );
 }

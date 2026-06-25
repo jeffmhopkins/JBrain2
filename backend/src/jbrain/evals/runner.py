@@ -1,12 +1,11 @@
 """The note.extract eval scoring core — runs the REAL system prompt through a
 REAL model via the LLM adapter and scores the model's own output.
 
-This is the runtime path the in-code `eval_run` action's live `Scorer` reuses
-(`jbrain.workflow.eval_scorer`): `load_cases` reads the curated corpus shipped
-beside this module (`cases/*.json`), `score_cases` drives each case's note
-through an injected router (the adapter — never a provider SDK) and scores it,
-and `eval_run_from_cases` adapts the results into the promotion gate's two-
-dimensional `{task, safety}` `EvalRun`. It lives in the `jbrain` package (not the
+`load_cases` reads the curated corpus shipped beside this module
+(`cases/*.json`), `score_cases` drives each case's note through an injected
+router (the adapter — never a provider SDK) and scores it, and
+`eval_run_from_cases` adapts the results into a two-dimensional
+`{task, safety}` `EvalRun`. It lives in the `jbrain` package (not the
 dev-only `backend/evals/` CLI) so it ships in the container image and the nightly
 schedule can score the live model in production.
 
@@ -32,7 +31,7 @@ from jbrain.analysis.prompt import (
     build_user_prompt,
     fact_cap,
 )
-from jbrain.workflow.promotion import EvalRun, FixtureScore
+from jbrain.evals.scores import EvalRun, FixtureScore
 
 CASES_DIR = Path(__file__).parent / "cases"
 
@@ -218,9 +217,9 @@ async def score_cases(
 ) -> tuple[list[CaseResult], int]:
     """Drive every case's note through `router` (the LLM adapter — never a provider
     SDK), score the model's own output, and return the results plus the total tokens
-    billed across the run. Router-injectable so the in-code `eval_run` action's live
-    Scorer reuses this exact path (CI passes a faked router), and the total spend is
-    what the self-improvement budget gate is charged via `record_spend`.
+    billed across the run. Router-injectable so callers can run it against the live
+    adapter or a faked router (CI passes a faked router), and the returned token total
+    lets a caller account the spend.
 
     Parses WITH the case anchor, exactly as the pipeline does for a note whose client
     offset is known: the score reflects what the app actually STORES (model output
@@ -255,17 +254,16 @@ async def score_cases(
 
 
 # Check-label prefixes that guard against fabricated/over-personified entities —
-# the groundedness dimension the promotion gate scores separately from task
-# success (a prompt edit can't trade groundedness for task points).
+# the groundedness dimension scored separately from task success, so the two
+# dimensions stay distinguishable (task points can't mask a groundedness loss).
 _GROUNDEDNESS_PREFIXES = ("absent:", "not_person:")
 
 
 def eval_run_from_cases(results: list[CaseResult], version: str) -> EvalRun:
-    """Adapt the note.extract eval's CaseResults into the promotion gate's EvalRun:
-    task = fraction of checks passed; safety = fraction of the groundedness-guard
-    checks passed (1.0 when a case has none). This is how a note.extract prompt
-    edit (Loop 4) is gated — it must win its new case without regressing task OR
-    groundedness on the existing set."""
+    """Adapt the note.extract eval's CaseResults into an EvalRun: task = fraction of
+    checks passed; safety = fraction of the groundedness-guard checks passed (1.0 when
+    a case has none). Keeping the two dimensions split is what lets a reader see a
+    task win that came at the cost of groundedness on the existing set."""
     scores: list[FixtureScore] = []
     for r in results:
         if r.error:
