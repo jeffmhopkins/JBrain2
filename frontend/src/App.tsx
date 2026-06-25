@@ -31,6 +31,7 @@ import { RunsScreen } from "./screens/RunsScreen";
 import { SearchScreen } from "./screens/SearchScreen";
 import { SettingsScreen } from "./screens/SettingsScreen";
 import { TalkScreen } from "./screens/TalkScreen";
+import { TasksScreen } from "./screens/TasksScreen";
 import { WikiLandingScreen } from "./screens/WikiLandingScreen";
 import { WikiScreen } from "./screens/WikiScreen";
 import { useBackGesture } from "./useBackGesture";
@@ -43,6 +44,7 @@ type Session =
 type Card =
   | "ops"
   | "automations"
+  | "tasks"
   | "data"
   | "settings"
   | "llm-settings"
@@ -58,7 +60,7 @@ type Card =
 // Automations brings its own full-screen overlay (its own back bar + slide-in),
 // so it renders outside the shared subscreen TopBar wrapper — hence no entry
 // here. Every Card that uses the wrapper needs a title.
-const SCREEN_TITLES: Record<Exclude<Card, "automations">, string> = {
+const SCREEN_TITLES: Record<Exclude<Card, "automations" | "tasks">, string> = {
   ops: "Ops",
   data: "Data",
   settings: "Settings",
@@ -391,6 +393,8 @@ export function App() {
     // Runs stacks above Automations, so it climbs off first.
     if (runsOpen) return setRunsOpen(false);
     if (card === "automations") return closeAutomations();
+    // Tasks closes straight to the launcher (its own overlay, no subscreen slide).
+    if (card === "tasks") return setCard(null);
     if (card !== null) return closeCardToLauncher();
     // Drops the depth immediately; the launcher plays its retreat off `open`.
     if (launcherOpen) return setLauncherOpen(false);
@@ -434,7 +438,7 @@ export function App() {
 
       {/* Automations is a self-contained full-screen overlay (its own back bar +
           slide-in), rendered below — it skips the shared subscreen TopBar. */}
-      {card !== null && card !== "automations" && (
+      {card !== null && card !== "automations" && card !== "tasks" && (
         <div
           className={`subscreen${cardClosing ? " subscreen-closing" : ""}`}
           ref={subRef}
@@ -490,6 +494,10 @@ export function App() {
         <AutomationsScreen onClose={closeAutomations} onOpenRuns={() => setRunsOpen(true)} />
       )}
       {runsOpen && <RunsScreen onClose={() => setRunsOpen(false)} />}
+
+      {/* Tasks is a self-contained full-screen overlay (its own back bar), like
+          Automations — so it renders outside the shared subscreen TopBar wrapper. */}
+      {card === "tasks" && <TasksScreen onClose={() => setCard(null)} />}
 
       {/* The wiki reader brings its own subscreen + TopBar (like the entity
           page), so it renders outside the shared wrapper. It stacks above the

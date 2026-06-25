@@ -1,0 +1,502 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Tasks · B — agenda-first + history tab</title>
+<style>
+  :root{
+    --bg:#0E0F11; --surface:#17181B; --surface-2:#1E2024; --border:#26282C;
+    --text:#E6E7E9; --text-2:#9A9DA3; --text-3:#5C5F66;
+    --steel:#7FA7C9; --green:#8FBC9A; --amber:#C9A36A; --rose:#CF8A8F; --violet:#A493C9;
+    --steel-tint:rgba(127,167,201,.13); --green-tint:rgba(143,188,154,.13);
+    --amber-tint:rgba(201,163,106,.13); --rose-tint:rgba(207,138,143,.13); --violet-tint:rgba(164,147,201,.13);
+    --ok:var(--green); --warn:var(--amber); --danger:var(--rose); --info:var(--steel);
+    --font-mono:ui-monospace,"SF Mono","Cascadia Mono",Menlo,Consolas,monospace;
+    font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  }
+  [data-theme="light"]{
+    color-scheme:light;
+    --bg:#F7F7F5; --surface:#FFFFFF; --surface-2:#F0F0EE; --border:#E2E2DF;
+    --text:#1A1B1E; --text-2:#5C5F66; --text-3:#9A9DA3;
+  }
+  [data-theme="dark"]{ color-scheme:dark; }
+  *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
+  body{background:#000;color:var(--text);display:flex;flex-direction:column;align-items:center;gap:14px;padding:18px 0 40px;min-height:100vh;}
+  svg{fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;}
+
+  .caption{max-width:392px;padding:0 18px;color:var(--text-2);font-size:13px;line-height:1.55;}
+  .caption b{color:var(--text);font-weight:500;}
+  .caption .tag{display:inline-block;background:var(--steel-tint);color:var(--steel);font-size:11px;padding:2px 8px;border-radius:999px;margin-bottom:6px;}
+  .toggle{display:inline-flex;background:var(--surface);border:1px solid var(--border);border-radius:999px;padding:3px;margin-left:8px;}
+  .toggle button{appearance:none;border:none;background:none;color:var(--text-2);font:inherit;font-size:11px;padding:4px 11px;border-radius:999px;cursor:pointer;}
+  .toggle button[aria-pressed="true"]{background:var(--steel-tint);color:var(--steel);font-weight:600;}
+
+  .phone{width:390px;height:800px;background:var(--bg);border:1px solid #2a2c30;border-radius:34px;overflow:hidden;position:relative;display:flex;flex-direction:column;}
+
+  .bar{height:56px;display:flex;align-items:center;gap:12px;padding:0 14px;border-bottom:1px solid var(--border);flex:none;}
+  .bar .back{color:var(--text-2);background:none;border:none;padding:4px;cursor:pointer;}
+  .bar .ttl{font-size:18px;font-weight:600;}
+  .bar .dot{margin-left:auto;width:8px;height:8px;border-radius:999px;background:var(--green);}
+  .bar .health{font-size:12px;color:var(--text-2);}
+
+  .tabs{display:flex;gap:4px;padding:10px 14px 6px;flex:none;}
+  .tab{flex:1;appearance:none;border:1px solid var(--border);background:var(--surface-2);color:var(--text-2);font:inherit;font-size:13px;font-weight:500;padding:9px;border-radius:11px;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:7px;}
+  .tab[aria-selected="true"]{background:var(--steel-tint);color:var(--steel);border-color:transparent;}
+
+  .body{flex:1;overflow-y:auto;padding:4px 14px 90px;}
+  .pane{display:none;} .pane.show{display:block;}
+  .sect{font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--text-3);margin:16px 2px 9px;display:flex;align-items:center;gap:8px;}
+  .sect:first-child{margin-top:8px;}
+  .sect .count{color:var(--text-3);font-weight:400;}
+
+  @keyframes pulse{0%,100%{opacity:1;}50%{opacity:.3;}}
+  @keyframes spin{to{transform:rotate(360deg);}}
+
+  /* agenda timeline */
+  .agenda{position:relative;padding-left:6px;}
+  .ag-day{font-size:12px;color:var(--text-2);font-weight:600;margin:14px 0 8px 4px;}
+  .ag-row{display:flex;gap:12px;align-items:flex-start;padding:2px 0;}
+  .ag-rail{display:flex;flex-direction:column;align-items:center;flex:none;width:14px;padding-top:14px;}
+  .ag-node{width:10px;height:10px;border-radius:999px;flex:none;border:2px solid var(--bg);}
+  .ag-node.jerv{background:var(--violet);}
+  .ag-node.curator{background:var(--steel);}
+  .ag-node.running{background:var(--green);animation:pulse 1.4s ease-in-out infinite;}
+  .ag-node.pending{background:var(--amber);}
+  .ag-conn{width:2px;flex:1;min-height:18px;background:var(--border);}
+  .ag-card{flex:1;min-width:0;background:var(--surface);border:1px solid var(--border);border-radius:13px;padding:11px 13px;margin-bottom:10px;cursor:pointer;}
+  .ag-card.live{border-color:rgba(143,188,154,.4);}
+  .ag-time{font-size:11.5px;color:var(--text-3);font-variant-numeric:tabular-nums;display:flex;align-items:center;gap:7px;}
+  .ag-time .now{color:var(--green);font-weight:600;}
+  .ag-name{font-size:14.5px;font-weight:600;margin-top:3px;}
+  .ag-sub{font-size:12px;color:var(--text-2);margin-top:4px;display:flex;align-items:center;gap:7px;flex-wrap:wrap;}
+  .agc{display:inline-flex;align-items:center;gap:5px;font-size:10.5px;font-weight:600;padding:2px 7px;border-radius:999px;}
+  .agc.jerv{background:var(--violet-tint);color:var(--violet);}
+  .agc.curator{background:var(--steel-tint);color:var(--steel);}
+  .agc.teacher{background:var(--amber-tint);color:var(--amber);}
+  .ag-prog{height:4px;border-radius:999px;background:var(--surface-2);margin-top:9px;overflow:hidden;}
+  .ag-prog i{display:block;height:100%;width:52%;background:var(--green);border-radius:999px;}
+
+  /* library list (compact) */
+  .lib{background:var(--surface);border:1px solid var(--border);border-radius:16px;overflow:hidden;}
+  .lib-row{display:flex;gap:11px;align-items:center;padding:12px 14px;border-bottom:1px solid var(--border);cursor:pointer;}
+  .lib-row:last-child{border-bottom:none;}
+  .lib-row.off{opacity:.55;}
+  .sdot{width:8px;height:8px;border-radius:999px;flex:none;}
+  .sdot.ok{background:var(--green);}.sdot.failed{background:var(--rose);}.sdot.running{background:var(--green);animation:pulse 1.4s ease-in-out infinite;}.sdot.idle{background:var(--text-3);}.sdot.pending{background:var(--amber);}
+  .lib-m{flex:1;min-width:0;}
+  .lib-n{font-size:14px;font-weight:500;}
+  .lib-s{font-size:11.5px;color:var(--text-3);margin-top:3px;}
+  .sw{flex:none;width:40px;height:24px;border-radius:999px;background:var(--surface-2);border:1px solid var(--border);position:relative;cursor:pointer;transition:.16s;padding:0;}
+  .sw[aria-checked="true"]{background:var(--green-tint);border-color:rgba(143,188,154,.45);}
+  .sw .knob{position:absolute;top:2px;left:2px;width:18px;height:18px;border-radius:999px;background:var(--text-3);transition:.16s;}
+  .sw[aria-checked="true"] .knob{left:18px;background:var(--green);}
+
+  /* history feed */
+  .hrow{display:flex;gap:11px;align-items:center;padding:12px 13px;background:var(--surface);border:1px solid var(--border);border-radius:13px;margin-bottom:9px;cursor:pointer;font-variant-numeric:tabular-nums;}
+  .hrow .hd{width:8px;height:8px;border-radius:999px;flex:none;}
+  .hrow .hd.ok{background:var(--green);}.hrow .hd.failed{background:var(--rose);}.hrow .hd.run{background:var(--green);animation:pulse 1.4s ease-in-out infinite;}
+  .hm{flex:1;min-width:0;}
+  .hn{font-size:13.5px;font-weight:500;}
+  .hs{font-size:11.5px;color:var(--text-3);margin-top:3px;display:flex;gap:7px;flex-wrap:wrap;}
+  .hr-go{width:15px;height:15px;color:var(--steel);flex:none;}
+  .herr{font-size:11px;color:var(--rose);font-family:var(--font-mono);background:var(--bg);border:1px solid var(--border);border-radius:7px;padding:6px 8px;margin:-3px 0 9px;line-height:1.5;}
+
+  .fab{position:absolute;left:14px;right:14px;bottom:18px;height:50px;border:none;border-radius:14px;background:var(--steel);color:#0E0F11;font:inherit;font-size:15px;font-weight:600;display:flex;align-items:center;justify-content:center;gap:9px;cursor:pointer;z-index:20;box-shadow:0 6px 22px rgba(0,0,0,.35);}
+
+  /* ---- stepped editor (sheet) ---- */
+  .scrim{position:absolute;inset:0;background:rgba(14,15,17,.6);opacity:0;pointer-events:none;transition:.2s;z-index:29;}
+  .scrim.show{opacity:1;pointer-events:auto;}
+  .sheet{position:absolute;left:0;right:0;bottom:0;height:88%;background:var(--surface);border-top:1px solid var(--border);border-radius:20px 20px 0 0;transform:translateY(100%);transition:transform .26s cubic-bezier(.2,.7,.3,1);z-index:30;display:flex;flex-direction:column;}
+  .sheet.show{transform:translateY(0);}
+  .grip{width:40px;height:4px;border-radius:999px;background:var(--border);margin:9px auto 4px;flex:none;}
+  .steps-head{display:flex;gap:7px;padding:6px 16px 12px;flex:none;}
+  .stepdot{flex:1;height:4px;border-radius:999px;background:var(--surface-2);}
+  .stepdot.on{background:var(--steel);}
+  .stepdot.done{background:var(--green);}
+  .sheet-body{flex:1;overflow-y:auto;padding:2px 16px 16px;}
+  .step{display:none;} .step.show{display:block;}
+  .step-h{font-size:18px;font-weight:600;}
+  .step-sub{font-size:12.5px;color:var(--text-2);margin-top:4px;line-height:1.5;}
+
+  .flab{font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--text-3);margin:18px 0 8px;}
+  input.txt,textarea.txt{font:inherit;width:100%;color:var(--text);background:var(--surface-2);border:1px solid var(--border);border-radius:12px;padding:11px 13px;font-size:15px;}
+  input.txt::placeholder,textarea.txt::placeholder{color:var(--text-3);}
+  textarea.txt{min-height:150px;resize:vertical;line-height:1.55;}
+  input.txt:focus-visible,textarea.txt:focus-visible{outline:2px solid var(--steel);outline-offset:1px;}
+
+  .agents{display:flex;flex-direction:column;gap:8px;margin-top:4px;}
+  .agent{display:flex;gap:11px;align-items:center;text-align:left;background:var(--surface-2);border:1px solid var(--border);border-radius:13px;padding:11px 12px;cursor:pointer;color:inherit;font:inherit;}
+  .agent .av{width:32px;height:32px;border-radius:9px;flex:none;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;}
+  .agent.jerv .av{background:var(--violet-tint);color:var(--violet);}
+  .agent.curator .av{background:var(--steel-tint);color:var(--steel);}
+  .agent.teacher .av{background:var(--amber-tint);color:var(--amber);}
+  .agent .am{flex:1;min-width:0;}
+  .agent .at{font-size:14px;font-weight:600;}
+  .agent .ad{font-size:11.5px;color:var(--text-3);margin-top:2px;line-height:1.4;}
+  .agent .ck{width:20px;height:20px;border-radius:999px;border:1.5px solid var(--border);flex:none;display:flex;align-items:center;justify-content:center;color:transparent;}
+  .agent.on{border-color:var(--steel);background:var(--steel-tint);}
+  .agent.jerv.on{border-color:var(--violet);background:var(--violet-tint);}
+  .agent.teacher.on{border-color:var(--amber);background:var(--amber-tint);}
+  .agent.on .ck{border-color:currentColor;color:var(--steel);}
+  .agent.jerv.on .ck{color:var(--violet);}
+  .agent.teacher.on .ck{color:var(--amber);}
+
+  .scope{margin-top:14px;display:none;}
+  .scope.show{display:block;}
+  .presets{display:flex;gap:7px;flex-wrap:wrap;}
+  .preset{appearance:none;border:1px solid var(--border);background:var(--surface-2);color:var(--text-2);font:inherit;font-size:12.5px;padding:7px 13px;border-radius:999px;cursor:pointer;}
+  .preset.on{border-color:var(--steel);background:var(--steel-tint);color:var(--steel);font-weight:600;}
+  .reads{font-size:12px;color:var(--text-2);margin-top:9px;}
+  .reads b{color:var(--text);}
+
+  .seg{display:flex;border:1px solid var(--border);border-radius:13px;overflow:hidden;}
+  .seg button{flex:1;appearance:none;border:none;border-left:1px solid var(--border);background:transparent;color:var(--text-2);font:inherit;font-size:12.5px;font-weight:500;padding:11px 6px;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px;}
+  .seg button:first-child{border-left:none;}
+  .seg button.on{background:var(--steel-tint);color:var(--steel);font-weight:600;}
+  .sp{display:none;margin-top:12px;} .sp.show{display:block;}
+  .row2{display:flex;gap:9px;} .row2>*{flex:1;}
+  .daychips{display:flex;gap:6px;margin-top:10px;}
+  .day{flex:1;appearance:none;border:1px solid var(--border);background:var(--surface-2);color:var(--text-2);font:inherit;font-size:12px;padding:9px 0;border-radius:9px;cursor:pointer;}
+  .day.on{border-color:var(--steel);background:var(--steel-tint);color:var(--steel);font-weight:600;}
+  .sched-sum{font-size:12.5px;color:var(--text-2);margin-top:13px;background:var(--surface-2);border:1px solid var(--border);border-radius:10px;padding:10px 12px;display:flex;gap:8px;align-items:center;}
+  .sched-sum svg{width:15px;height:15px;color:var(--steel);flex:none;}
+  .sched-sum b{color:var(--text);}
+
+  .deliv{display:flex;flex-direction:column;gap:1px;background:var(--surface-2);border:1px solid var(--border);border-radius:13px;overflow:hidden;margin-top:4px;}
+  .deliv-row{display:flex;gap:11px;align-items:center;padding:13px;border-bottom:1px solid var(--border);}
+  .deliv-row:last-child{border-bottom:none;}
+  .deliv-row .di{width:30px;height:30px;border-radius:8px;flex:none;display:flex;align-items:center;justify-content:center;background:var(--surface);color:var(--text-2);}
+  .deliv-row .dm{flex:1;min-width:0;}
+  .deliv-row .dt{font-size:13.5px;font-weight:500;}
+  .deliv-row .dd{font-size:11px;color:var(--text-3);margin-top:2px;line-height:1.4;}
+  .deliv-row .lockpill{font-size:10px;color:var(--text-3);background:var(--surface);padding:3px 8px;border-radius:999px;flex:none;}
+
+  .sheet-foot{display:flex;gap:9px;padding:12px 16px calc(14px + env(safe-area-inset-bottom));border-top:1px solid var(--border);flex:none;}
+  .sheet-foot button{font:inherit;border-radius:13px;padding:13px;font-size:14.5px;font-weight:600;cursor:pointer;}
+  .sheet-foot .ghost{flex:none;border:1px solid var(--border);background:var(--surface-2);color:var(--text-2);}
+  .sheet-foot .next{flex:1;border:none;background:var(--steel);color:#0E0F11;}
+
+  .toast{position:absolute;left:16px;right:16px;bottom:80px;background:var(--surface-2);border:1px solid var(--border);border-radius:12px;padding:12px 14px;font-size:13px;color:var(--text-2);transform:translateY(220%);opacity:0;transition:.2s;z-index:50;display:flex;gap:9px;align-items:center;}
+  .toast.show{transform:translateY(0);opacity:1;}
+  .toast .ti{color:var(--steel);flex:none;}
+</style>
+</head>
+<body>
+  <div class="caption">
+    <span class="tag">Tasks · B — agenda-first + history tab</span>
+    <span class="toggle" role="group" aria-label="theme">
+      <button id="t-dark" aria-pressed="true" onclick="setTheme('dark')">dark</button>
+      <button id="t-light" aria-pressed="false" onclick="setTheme('light')">light</button>
+    </span><br/>
+    <b>Agenda-first</b> — the screen leads with <b>what runs next</b> on a time spine (running tasks
+    carry a live meter), then the task library beneath. A dedicated <b>History</b> tab is the
+    chronological session feed. <b>＋ New task</b> opens a <b>stepped editor</b>
+    (Prompt → Agent → Schedule → Delivery).
+  </div>
+
+  <div class="phone">
+    <div class="bar">
+      <button class="back"><svg width="22" height="22" viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6"/></svg></button>
+      <span class="ttl">Tasks</span>
+      <span class="dot"></span><span class="health">1 running · scheduler live</span>
+    </div>
+
+    <div class="tabs" role="tablist">
+      <button class="tab" role="tab" aria-selected="true" onclick="showTab('agenda')">
+        <svg width="16" height="16" viewBox="0 0 24 24"><path d="M12 7v5l3 2"/><circle cx="12" cy="12" r="9"/></svg>Agenda</button>
+      <button class="tab" role="tab" aria-selected="false" onclick="showTab('library')">
+        <svg width="16" height="16" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/></svg>Library</button>
+      <button class="tab" role="tab" aria-selected="false" onclick="showTab('history')">
+        <svg width="16" height="16" viewBox="0 0 24 24"><path d="M3 3v5h5"/><path d="M3 8a9 9 0 1 0 3-5"/><path d="M12 8v4l3 2"/></svg>History</button>
+    </div>
+
+    <div class="body">
+      <div class="pane show" id="pane-agenda">
+        <div class="agenda">
+          <div class="ag-day">Now</div>
+          <div class="ag-row">
+            <div class="ag-rail"><span class="ag-node running"></span><span class="ag-conn"></span></div>
+            <div class="ag-card live" onclick="toast('Opening the live session…')">
+              <div class="ag-time"><span class="now">running now</span> · started 16:30</div>
+              <div class="ag-name">Markets &amp; portfolio watch</div>
+              <div class="ag-sub"><span class="agc jerv">Jerv</span> reading 2 of 4 sources</div>
+              <div class="ag-prog"><i></i></div>
+            </div>
+          </div>
+
+          <div class="ag-day">Tomorrow</div>
+          <div class="ag-row">
+            <div class="ag-rail"><span class="ag-node jerv"></span><span class="ag-conn"></span></div>
+            <div class="ag-card" onclick="toast('Opening task — Morning news brief')">
+              <div class="ag-time">7:00 · in 16h</div>
+              <div class="ag-name">Morning news brief</div>
+              <div class="ag-sub"><span class="agc jerv">Jerv</span> weekdays · last run ok</div>
+            </div>
+          </div>
+          <div class="ag-row">
+            <div class="ag-rail"><span class="ag-node jerv"></span><span class="ag-conn"></span></div>
+            <div class="ag-card" onclick="toast('Opening task — Markets &amp; portfolio watch')">
+              <div class="ag-time">16:30 · in 25h</div>
+              <div class="ag-name">Markets &amp; portfolio watch</div>
+              <div class="ag-sub"><span class="agc jerv">Jerv</span> daily</div>
+            </div>
+          </div>
+
+          <div class="ag-day">Friday</div>
+          <div class="ag-row">
+            <div class="ag-rail"><span class="ag-node pending"></span><span class="ag-conn"></span></div>
+            <div class="ag-card" onclick="toast('Opening task — Spring break trip ideas')">
+              <div class="ag-time">9:00 · once</div>
+              <div class="ag-name">Spring break trip ideas</div>
+              <div class="ag-sub"><span class="agc jerv">Jerv</span> one-off · scheduled</div>
+            </div>
+          </div>
+
+          <div class="ag-day">Sunday</div>
+          <div class="ag-row">
+            <div class="ag-rail"><span class="ag-node curator"></span></div>
+            <div class="ag-card" onclick="toast('Opening task — Weekly note review')">
+              <div class="ag-time">18:00 · weekly</div>
+              <div class="ag-name">Weekly note review</div>
+              <div class="ag-sub"><span class="agc curator">Curator · everything</span> last run failed</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="pane" id="pane-library">
+        <div class="sect">Scheduled <span class="count">· 4</span></div>
+        <div class="lib" id="lib-sched"></div>
+        <div class="sect">On demand <span class="count">· 1</span></div>
+        <div class="lib" id="lib-manual"></div>
+      </div>
+
+      <div class="pane" id="pane-history">
+        <div class="sect">Today</div>
+        <div id="hist-today"></div>
+        <div class="sect">Earlier</div>
+        <div id="hist-older"></div>
+      </div>
+    </div>
+
+    <button class="fab" onclick="openEditor()">
+      <svg width="20" height="20" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>New task
+    </button>
+
+    <!-- stepped editor -->
+    <div class="scrim" id="scrim" onclick="closeEditor()"></div>
+    <div class="sheet" id="sheet">
+      <div class="grip"></div>
+      <div class="steps-head">
+        <span class="stepdot on" id="sd0"></span>
+        <span class="stepdot" id="sd1"></span>
+        <span class="stepdot" id="sd2"></span>
+        <span class="stepdot" id="sd3"></span>
+      </div>
+      <div class="sheet-body">
+        <div class="step show" id="step0">
+          <div class="step-h">What should this task do?</div>
+          <div class="step-sub">This prompt runs verbatim every time the task fires. Write it like an instruction to an assistant.</div>
+          <div class="flab">Name</div>
+          <input class="txt" value="Morning news brief" />
+          <div class="flab">Prompt</div>
+          <textarea class="txt">Give me a tight 5-bullet brief of overnight world news, plus anything notable on AI policy. Link sources. Skip sports.</textarea>
+        </div>
+
+        <div class="step" id="step1">
+          <div class="step-h">Who runs it?</div>
+          <div class="step-sub">Data access follows the agent — Curator reads your notes, Jerv reads the web, Teacher reads neither.</div>
+          <div class="agents">
+            <button class="agent jerv on" onclick="pickAgent('jerv')">
+              <span class="av">J</span>
+              <span class="am"><span class="at">Jerv</span><span class="ad">Web chatbot — searches &amp; reads the open internet.</span></span>
+              <span class="ck"><svg width="12" height="12" viewBox="0 0 24 24"><path d="M5 12l4 4L19 7"/></svg></span>
+            </button>
+            <button class="agent curator" onclick="pickAgent('curator')">
+              <span class="av">C</span>
+              <span class="am"><span class="at">Curator</span><span class="ad">Your Full Brain — reads your notes, facts, lists &amp; appointments.</span></span>
+              <span class="ck"><svg width="12" height="12" viewBox="0 0 24 24"><path d="M5 12l4 4L19 7"/></svg></span>
+            </button>
+            <button class="agent teacher" onclick="pickAgent('teacher')">
+              <span class="av">T</span>
+              <span class="am"><span class="at">Teacher</span><span class="ad">A Socratic tutor — works from the prompt only.</span></span>
+              <span class="ck"><svg width="12" height="12" viewBox="0 0 24 24"><path d="M5 12l4 4L19 7"/></svg></span>
+            </button>
+          </div>
+          <div class="scope" id="scope">
+            <div class="flab">Reads</div>
+            <div class="presets">
+              <button class="preset on" onclick="pickScope(this,'everything')">Everything</button>
+              <button class="preset" onclick="pickScope(this,'general')">General</button>
+              <button class="preset" onclick="pickScope(this,'medical')">Medical</button>
+              <button class="preset" onclick="pickScope(this,'financial')">Financial</button>
+              <button class="preset" onclick="pickScope(this,'custom')">Custom…</button>
+            </div>
+            <p class="reads" id="reads">reads <b>everything</b>. Changes it wants are staged as Proposals for your okay.</p>
+          </div>
+        </div>
+
+        <div class="step" id="step2">
+          <div class="step-h">When does it run?</div>
+          <div class="step-sub">Run it yourself any time, once at a set moment, or on a repeat.</div>
+          <div class="flab">Schedule</div>
+          <div class="seg" id="sched-seg">
+            <button onclick="pickSched('demand',this)"><svg width="15" height="15" viewBox="0 0 24 24"><path d="M5 3l14 9-14 9V3z"/></svg>On demand</button>
+            <button onclick="pickSched('once',this)"><svg width="15" height="15" viewBox="0 0 24 24"><path d="M12 7v5l3 2"/><circle cx="12" cy="12" r="9"/></svg>Once</button>
+            <button class="on" onclick="pickSched('repeat',this)"><svg width="15" height="15" viewBox="0 0 24 24"><path d="M17 1l4 4-4 4"/><path d="M3 11V9a4 4 0 0 1 4-4h14M7 23l-4-4 4-4"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg>Repeats</button>
+          </div>
+          <div class="sp" id="p-demand"><p class="reads">No schedule — fire it from the Library whenever you like.</p></div>
+          <div class="sp" id="p-once"><div class="row2"><input class="txt" type="date" value="2026-06-26" /><input class="txt" type="time" value="09:00" /></div></div>
+          <div class="sp show" id="p-repeat">
+            <div class="seg"><button onclick="pickFreq('daily',this)">Daily</button><button class="on" onclick="pickFreq('weekdays',this)">Weekdays</button><button onclick="pickFreq('weekly',this)">Weekly</button></div>
+            <div class="daychips" id="weekdays" style="display:none">
+              <button class="day" onclick="this.classList.toggle('on')">S</button><button class="day on" onclick="this.classList.toggle('on')">M</button><button class="day on" onclick="this.classList.toggle('on')">T</button><button class="day on" onclick="this.classList.toggle('on')">W</button><button class="day on" onclick="this.classList.toggle('on')">T</button><button class="day on" onclick="this.classList.toggle('on')">F</button><button class="day" onclick="this.classList.toggle('on')">S</button>
+            </div>
+            <div style="margin-top:10px"><input class="txt" type="time" value="07:00" /></div>
+          </div>
+          <p class="sched-sum" id="sched-sum"><svg viewBox="0 0 24 24"><path d="M12 7v5l3 2"/><circle cx="12" cy="12" r="9"/></svg><span>Runs <b>every weekday at 7:00</b> — next tomorrow, 7:00.</span></p>
+        </div>
+
+        <div class="step" id="step3">
+          <div class="step-h">When it finishes…</div>
+          <div class="step-sub">Every run is saved as a session. Choose how a scheduled run reaches you while you're away.</div>
+          <div class="deliv">
+            <div class="deliv-row">
+              <span class="di"><svg width="16" height="16" viewBox="0 0 24 24"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9M13.7 21a2 2 0 0 1-3.4 0"/></svg></span>
+              <span class="dm"><span class="dt">Push notification</span><span class="dd">Ping me when a run finishes or errors.</span></span>
+              <span class="sw" role="switch" aria-checked="true" onclick="flipSwitch(this)"><span class="knob"></span></span>
+            </div>
+            <div class="deliv-row">
+              <span class="di"><svg width="16" height="16" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18"/></svg></span>
+              <span class="dm"><span class="dt">Home feed card</span><span class="dd">Surface the latest summary on my home screen.</span></span>
+              <span class="sw" role="switch" aria-checked="true" onclick="flipSwitch(this)"><span class="knob"></span></span>
+            </div>
+            <div class="deliv-row">
+              <span class="di"><svg width="16" height="16" viewBox="0 0 24 24"><path d="M3 3v18h18"/><path d="M7 14l3-3 3 3 4-5"/></svg></span>
+              <span class="dm"><span class="dt">Saved to history</span><span class="dd">Open the full session any time.</span></span>
+              <span class="lockpill">always on</span>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="sheet-foot">
+        <button class="ghost" id="ed-back" onclick="prevStep()" style="display:none">Back</button>
+        <button class="next" id="ed-next" onclick="nextStep()">Continue</button>
+      </div>
+    </div>
+
+    <div class="toast" id="toast"></div>
+  </div>
+
+<script>
+function setTheme(t){
+  document.documentElement.dataset.theme=t;
+  document.getElementById('t-dark').setAttribute('aria-pressed',String(t==='dark'));
+  document.getElementById('t-light').setAttribute('aria-pressed',String(t==='light'));
+}
+function showTab(which){
+  const order=['agenda','library','history'];
+  document.querySelectorAll('.tab').forEach((t,i)=>t.setAttribute('aria-selected',String(order[i]===which)));
+  order.forEach(p=>document.getElementById('pane-'+p).classList.toggle('show',p===which));
+}
+
+const AGENT_LABEL={jerv:'Jerv',curator:'Curator',teacher:'Teacher'};
+const LIB=[
+  {id:'t1',name:'Morning news brief',sched:'Jerv · weekdays 7:00',enabled:true,last:'ok',group:'sched'},
+  {id:'t2',name:'Markets & portfolio watch',sched:'Jerv · daily 16:30',enabled:true,last:'running',group:'sched'},
+  {id:'t3',name:'Weekly note review',sched:'Curator · Sun 18:00',enabled:true,last:'failed',group:'sched'},
+  {id:'t4',name:'Spring break trip ideas',sched:'Jerv · once Fri 9:00',enabled:true,last:'pending',group:'sched'},
+  {id:'t5',name:'Summarize today’s medical notes',sched:'Curator · medical · on demand',enabled:true,last:'ok',group:'manual'},
+];
+function libRow(t){
+  return `<div class="lib-row ${t.enabled?'':'off'}" onclick="rowTap('${t.id}',event)">
+    <span class="sdot ${t.enabled?t.last:'idle'}"></span>
+    <span class="lib-m"><span class="lib-n">${t.name}</span><span class="lib-s">${t.sched}</span></span>
+    <span class="sw" role="switch" aria-checked="${t.enabled}" onclick="flip('${t.id}',event)"><span class="knob"></span></span>
+  </div>`;
+}
+function render(){
+  document.getElementById('lib-sched').innerHTML=LIB.filter(t=>t.group==='sched').map(libRow).join('');
+  document.getElementById('lib-manual').innerHTML=LIB.filter(t=>t.group==='manual').map(libRow).join('');
+}
+function rowTap(id,e){ if(e.target.closest('.sw'))return; toast('Opening task — '+LIB.find(t=>t.id===id).name); }
+function flip(id,e){
+  e.stopPropagation();const t=LIB.find(x=>x.id===id);t.enabled=!t.enabled;
+  e.currentTarget.setAttribute('aria-checked',String(t.enabled));
+  e.currentTarget.closest('.lib-row').classList.toggle('off',!t.enabled);
+  e.currentTarget.closest('.lib-row').querySelector('.sdot').className='sdot '+(t.enabled?t.last:'idle');
+  toast(`${t.name} ${t.enabled?'resumed':'paused'}.`);
+}
+
+const HIST=[
+  {d:'today',s:'run',n:'Markets & portfolio watch',meta:['Jerv','live','started 16:30']},
+  {d:'today',s:'ok',n:'Morning news brief',meta:['Jerv','4 turns','7:00']},
+  {d:'older',s:'failed',n:'Weekly note review',meta:['Curator','2 turns','Sun 18:00'],err:'curator: search step exceeded 30s — partial answer staged, retry queued.'},
+  {d:'older',s:'ok',n:'Morning news brief',meta:['Jerv','4 turns','yest 7:00']},
+  {d:'older',s:'ok',n:'Markets & portfolio watch',meta:['Jerv','5 turns','yest 16:30']},
+  {d:'older',s:'ok',n:'Summarize today’s medical notes',meta:['Curator','3 turns','3d ago']},
+];
+function histRow(r){
+  const main=`<div class="hrow" onclick="toast('Opening session — ${r.n.replace(/'/g,'')}')">
+    <span class="hd ${r.s}"></span>
+    <span class="hm"><span class="hn">${r.n}</span><span class="hs">${r.meta.map(m=>`<span>${m}</span>`).join('<span style="color:var(--border)">·</span>')}</span></span>
+    <svg class="hr-go" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>
+  </div>`;
+  return main + (r.err?`<div class="herr">${r.err}</div>`:'');
+}
+function renderHist(){
+  document.getElementById('hist-today').innerHTML=HIST.filter(r=>r.d==='today').map(histRow).join('');
+  document.getElementById('hist-older').innerHTML=HIST.filter(r=>r.d==='older').map(histRow).join('');
+}
+
+/* editor — stepped */
+let stepN=0;
+function openEditor(){document.getElementById('scrim').classList.add('show');document.getElementById('sheet').classList.add('show');setStep(0);}
+function closeEditor(){document.getElementById('scrim').classList.remove('show');document.getElementById('sheet').classList.remove('show');}
+function setStep(n){
+  stepN=n;
+  for(let i=0;i<4;i++){
+    document.getElementById('step'+i).classList.toggle('show',i===n);
+    const sd=document.getElementById('sd'+i);
+    sd.className='stepdot'+(i<n?' done':i===n?' on':'');
+  }
+  document.getElementById('ed-back').style.display=n===0?'none':'block';
+  document.getElementById('ed-next').textContent=n===3?'Save task':'Continue';
+}
+function nextStep(){ if(stepN<3){setStep(stepN+1);} else {closeEditor();toast('Task saved — next run tomorrow at 7:00.');} }
+function prevStep(){ if(stepN>0) setStep(stepN-1); }
+
+function pickAgent(a){
+  document.querySelectorAll('.agent').forEach(el=>el.classList.toggle('on',el.classList.contains(a)));
+  document.getElementById('scope').classList.toggle('show',a==='curator');
+}
+const READS={everything:'<b>everything</b> — all your notes',general:'<b>general</b> notes only',medical:'<b>medical</b> + general',financial:'<b>financial</b> + general',custom:'a <b>custom</b> set'};
+function pickScope(el,k){
+  document.querySelectorAll('.preset').forEach(p=>p.classList.remove('on'));el.classList.add('on');
+  document.getElementById('reads').innerHTML='reads '+READS[k]+'. Changes it wants are staged as Proposals for your okay.';
+}
+function pickSched(k,el){
+  [...el.parentNode.children].forEach(b=>b.classList.toggle('on',b===el));
+  ['demand','once','repeat'].forEach(x=>document.getElementById('p-'+x).classList.toggle('show',x===k));
+  const sum=document.getElementById('sched-sum');
+  if(k==='demand'){sum.style.display='none';}
+  else{sum.style.display='flex';sum.querySelector('span').innerHTML=k==='once'?'Runs <b>once</b> on Fri Jun 26, 9:00.':'Runs <b>every weekday at 7:00</b> — next tomorrow, 7:00.';}
+}
+function pickFreq(k,el){
+  [...el.parentNode.children].forEach(b=>b.classList.toggle('on',b===el));
+  document.getElementById('weekdays').style.display=k==='weekly'?'flex':'none';
+  document.getElementById('sched-sum').querySelector('span').innerHTML=k==='daily'?'Runs <b>every day at 7:00</b> — next tomorrow, 7:00.':k==='weekdays'?'Runs <b>every weekday at 7:00</b> — next tomorrow, 7:00.':'Runs <b>weekly</b> on the chosen days at 7:00.';
+}
+function flipSwitch(el){el.setAttribute('aria-checked',String(el.getAttribute('aria-checked')!=='true'));}
+
+function toast(msg){
+  const t=document.getElementById('toast');
+  t.innerHTML=`<svg class="ti" width="16" height="16" viewBox="0 0 24 24"><path d="M5 12l4 4L19 7"/></svg>${msg}`;
+  t.classList.add('show');clearTimeout(toast._t);toast._t=setTimeout(()=>t.classList.remove('show'),3000);
+}
+
+render();renderHist();
+</script>
+</body>
+</html>

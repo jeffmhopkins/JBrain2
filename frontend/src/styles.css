@@ -13987,3 +13987,601 @@ input.ld-title {
   font-weight: 650;
   font-variant-numeric: tabular-nums;
 }
+
+/* ===== Tasks surface (docs/mocks/tasks-launcher-a-list-editor.html) ===== */
+
+.task-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-card);
+  margin-bottom: 11px;
+  overflow: hidden;
+}
+.task-card.off {
+  opacity: 0.6;
+}
+.task-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 13px 14px;
+}
+.task-headbtn {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  gap: 11px;
+  align-items: flex-start;
+  text-align: left;
+  background: none;
+  border: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  padding: 0;
+}
+.task-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: var(--r-pill);
+  flex: none;
+  margin-top: 5px;
+}
+.task-dot.ok {
+  background: var(--green);
+}
+.task-dot.idle {
+  background: var(--text-3);
+}
+.task-dot.failed {
+  background: var(--rose);
+}
+.task-dot.running {
+  background: var(--green);
+  animation: pulse 1.4s ease-in-out infinite;
+}
+.task-main {
+  flex: 1;
+  min-width: 0;
+}
+.task-name {
+  display: block;
+  font-size: var(--fs-note);
+  font-weight: 600;
+  line-height: 1.3;
+}
+.task-when {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex-wrap: wrap;
+  margin-top: 4px;
+  font-size: var(--fs-secondary);
+  color: var(--text-2);
+}
+.task-ag {
+  display: inline-flex;
+  align-items: center;
+  font-size: var(--fs-micro);
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: var(--r-pill);
+}
+.task-ag.jerv {
+  background: var(--violet-tint);
+  color: var(--violet);
+}
+.task-ag.curator {
+  background: var(--steel-tint);
+  color: var(--steel);
+}
+.task-ag.teacher {
+  background: var(--amber-tint);
+  color: var(--amber);
+}
+.task-meta {
+  display: block;
+  margin-top: 5px;
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+.task-headbtn > svg {
+  color: var(--text-3);
+  flex: none;
+  margin-top: 4px;
+  transition: transform 0.16s;
+}
+.task-card.open .task-headbtn > svg {
+  transform: rotate(90deg);
+}
+.task-sw {
+  flex: none;
+  width: 42px;
+  height: 25px;
+  border-radius: var(--r-pill);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  position: relative;
+  cursor: pointer;
+  transition: 0.16s;
+  padding: 0;
+  margin-top: 2px;
+}
+.task-sw[aria-checked="true"] {
+  background: var(--green-tint);
+  border-color: color-mix(in srgb, var(--green) 45%, transparent);
+}
+.task-knob {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 19px;
+  height: 19px;
+  border-radius: var(--r-pill);
+  background: var(--text-3);
+  transition: 0.16s;
+}
+.task-sw[aria-checked="true"] .task-knob {
+  left: 19px;
+  background: var(--green);
+}
+.task-body {
+  border-top: 1px solid var(--border);
+  padding: 0 14px 14px;
+}
+.task-blab {
+  font-size: var(--fs-micro);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-3);
+  margin: 13px 0 7px;
+}
+.task-prompt {
+  font-size: var(--fs-secondary);
+  color: var(--text-2);
+  line-height: 1.5;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--r-input);
+  padding: 9px 11px;
+}
+.task-norun {
+  margin: 2px 0 4px;
+}
+.task-run {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 8px 0;
+  border-top: 1px solid var(--border);
+  font-variant-numeric: tabular-nums;
+}
+.task-run:first-of-type {
+  border-top: none;
+}
+.task-rd {
+  width: 7px;
+  height: 7px;
+  border-radius: var(--r-pill);
+  flex: none;
+}
+.task-rd.ok {
+  background: var(--green);
+}
+.task-rd.failed {
+  background: var(--rose);
+}
+.task-rd.running {
+  background: var(--green);
+  animation: pulse 1.4s ease-in-out infinite;
+}
+.task-rt {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--fs-secondary);
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.task-rm {
+  flex: none;
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+}
+.task-acts {
+  display: flex;
+  gap: 8px;
+  margin-top: 11px;
+}
+.task-acts button {
+  flex: 1;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text-2);
+  font: inherit;
+  font-size: var(--fs-secondary);
+  font-weight: 500;
+  border-radius: var(--r-input);
+  padding: 9px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  cursor: pointer;
+}
+.task-acts .task-runbtn {
+  background: var(--green-tint);
+  color: var(--green);
+  border-color: transparent;
+}
+.task-acts .task-runbtn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.task-acts .task-runbtn.running svg {
+  animation: spin 1.1s linear infinite;
+}
+.task-delwrap {
+  margin: 8px 2px 0;
+}
+.task-del {
+  width: 100%;
+  border: 1px solid var(--border);
+  background: none;
+  color: var(--rose);
+  font: inherit;
+  font-size: var(--fs-secondary);
+  padding: 10px;
+  border-radius: var(--r-input);
+  cursor: pointer;
+}
+.task-fab {
+  position: absolute;
+  left: 14px;
+  right: 14px;
+  bottom: calc(16px + env(safe-area-inset-bottom));
+  height: 50px;
+  border: none;
+  border-radius: var(--r-seg);
+  background: var(--steel);
+  color: var(--bg);
+  font: inherit;
+  font-size: var(--fs-note);
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  cursor: pointer;
+  max-width: 402px;
+  margin: 0 auto;
+}
+
+/* the task editor (full-screen, reuses runs-screen/runs-bar) */
+.ted {
+  position: fixed;
+  inset: 0;
+  z-index: 71;
+  background: var(--bg);
+  display: flex;
+  flex-direction: column;
+  max-width: 430px;
+  margin: 0 auto;
+  animation: launcher-in 150ms ease-out;
+}
+@media (prefers-reduced-motion: reduce) {
+  .ted {
+    animation: none;
+  }
+}
+.ted-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 6px 16px 96px;
+}
+.ted-field {
+  display: block;
+  margin-top: 18px;
+}
+.ted-lab {
+  display: block;
+  font-size: var(--fs-micro);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-3);
+  margin-bottom: 8px;
+}
+.ted-input {
+  font: inherit;
+  width: 100%;
+  color: var(--text);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-input);
+  padding: 11px 13px;
+  font-size: var(--fs-body);
+}
+.ted-input::placeholder {
+  color: var(--text-3);
+}
+.ted-area {
+  min-height: 120px;
+  resize: vertical;
+  line-height: 1.55;
+}
+.ted-agents {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.ted-agent {
+  display: flex;
+  gap: 11px;
+  align-items: center;
+  text-align: left;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-input);
+  padding: 11px 12px;
+  cursor: pointer;
+  color: inherit;
+  font: inherit;
+}
+.ted-av {
+  width: 32px;
+  height: 32px;
+  border-radius: 9px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  font-size: var(--fs-secondary);
+}
+.ted-agent.jerv .ted-av {
+  background: var(--violet-tint);
+  color: var(--violet);
+}
+.ted-agent.curator .ted-av {
+  background: var(--steel-tint);
+  color: var(--steel);
+}
+.ted-agent.teacher .ted-av {
+  background: var(--amber-tint);
+  color: var(--amber);
+}
+.ted-am {
+  flex: 1;
+  min-width: 0;
+}
+.ted-at {
+  display: block;
+  font-size: var(--fs-secondary);
+  font-weight: 600;
+}
+.ted-ad {
+  display: block;
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+  margin-top: 2px;
+  line-height: 1.4;
+}
+.ted-ck {
+  width: 20px;
+  height: 20px;
+  border-radius: var(--r-pill);
+  border: 1.5px solid var(--border);
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: transparent;
+}
+.ted-agent.on {
+  border-color: var(--steel);
+  background: var(--steel-tint);
+}
+.ted-agent.jerv.on {
+  border-color: var(--violet);
+  background: var(--violet-tint);
+}
+.ted-agent.teacher.on {
+  border-color: var(--amber);
+  background: var(--amber-tint);
+}
+.ted-agent.on .ted-ck {
+  border-color: currentColor;
+  color: var(--steel);
+}
+.ted-agent.jerv.on .ted-ck {
+  color: var(--violet);
+}
+.ted-agent.teacher.on .ted-ck {
+  color: var(--amber);
+}
+.ted-scope {
+  margin-top: 12px;
+}
+.ted-presets {
+  display: flex;
+  gap: 7px;
+  flex-wrap: wrap;
+}
+.ted-preset {
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text-2);
+  font: inherit;
+  font-size: var(--fs-secondary);
+  padding: 7px 13px;
+  border-radius: var(--r-pill);
+  cursor: pointer;
+}
+.ted-preset.on {
+  border-color: var(--steel);
+  background: var(--steel-tint);
+  color: var(--steel);
+  font-weight: 600;
+}
+.ted-grid {
+  display: flex;
+  gap: 7px;
+  flex-wrap: wrap;
+  margin-top: 10px;
+}
+.ted-dom {
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text-2);
+  font: inherit;
+  font-size: var(--fs-secondary);
+  padding: 8px 13px;
+  border-radius: var(--r-input);
+  cursor: pointer;
+}
+.ted-dom.on {
+  border-color: var(--steel);
+  background: var(--steel-tint);
+  color: var(--steel);
+  font-weight: 600;
+}
+.ted-seg {
+  display: flex;
+  border: 1px solid var(--border);
+  border-radius: var(--r-seg);
+  overflow: hidden;
+}
+.ted-segbtn {
+  flex: 1;
+  border: none;
+  border-left: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-2);
+  font: inherit;
+  font-size: var(--fs-secondary);
+  font-weight: 500;
+  padding: 11px 6px;
+  cursor: pointer;
+}
+.ted-segbtn:first-child {
+  border-left: none;
+}
+.ted-segbtn.on {
+  background: var(--steel-tint);
+  color: var(--steel);
+  font-weight: 600;
+}
+.ted-hint {
+  font-size: var(--fs-secondary);
+  color: var(--text-2);
+  margin-top: 10px;
+}
+.ted-row2 {
+  display: flex;
+  gap: 9px;
+  margin-top: 12px;
+}
+.ted-row2 > * {
+  flex: 1;
+}
+.ted-days {
+  display: flex;
+  gap: 6px;
+  margin-top: 10px;
+}
+.ted-day {
+  flex: 1;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text-2);
+  font: inherit;
+  font-size: var(--fs-secondary);
+  padding: 9px 0;
+  border-radius: 9px;
+  cursor: pointer;
+}
+.ted-day.on {
+  border-color: var(--steel);
+  background: var(--steel-tint);
+  color: var(--steel);
+  font-weight: 600;
+}
+.ted-deliv {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-input);
+  overflow: hidden;
+}
+.ted-delivrow {
+  display: flex;
+  gap: 11px;
+  align-items: center;
+  padding: 12px 13px;
+  border-bottom: 1px solid var(--border);
+}
+.ted-delivrow:last-child {
+  border-bottom: none;
+}
+.ted-delivrow.fixed {
+  opacity: 0.85;
+}
+.ted-dm {
+  flex: 1;
+  min-width: 0;
+}
+.ted-dt {
+  display: block;
+  font-size: var(--fs-secondary);
+  font-weight: 500;
+}
+.ted-dd {
+  display: block;
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+  margin-top: 2px;
+  line-height: 1.4;
+}
+.ted-lock {
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+  background: var(--surface-2);
+  padding: 3px 8px;
+  border-radius: var(--r-pill);
+  flex: none;
+}
+.ted-foot {
+  flex: none;
+  padding: 12px 16px calc(14px + env(safe-area-inset-bottom));
+  border-top: 1px solid var(--border);
+}
+.ted-save {
+  width: 100%;
+  border: none;
+  border-radius: var(--r-seg);
+  background: var(--steel);
+  color: var(--bg);
+  font: inherit;
+  font-size: var(--fs-note);
+  font-weight: 600;
+  padding: 13px;
+  cursor: pointer;
+}
+.ted-save:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.3;
+  }
+}
