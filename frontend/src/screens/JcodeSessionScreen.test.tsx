@@ -76,6 +76,26 @@ describe("JcodeSessionScreen", () => {
     release();
   });
 
+  it("opens a web preview tunnel from the Preview tab", async () => {
+    vi.spyOn(api, "jcodePreviewStatus").mockResolvedValue({ enabled: true, url: null });
+    vi.spyOn(api, "jcodePreviewOpen").mockResolvedValue({
+      enabled: true,
+      url: "https://demo-x.trycloudflare.com",
+    });
+    render(<JcodeSessionScreen session={SESSION} onClose={vi.fn()} />);
+
+    fireEvent.click(screen.getByLabelText("Preview"));
+    fireEvent.click(await screen.findByText("Open preview tunnel"));
+    expect(await screen.findByText("https://demo-x.trycloudflare.com")).toBeInTheDocument();
+  });
+
+  it("shows a disabled state when preview is off", async () => {
+    vi.spyOn(api, "jcodePreviewStatus").mockResolvedValue({ enabled: false, url: null });
+    render(<JcodeSessionScreen session={SESSION} onClose={vi.fn()} />);
+    fireEvent.click(screen.getByLabelText("Preview"));
+    expect(await screen.findByText(/isn't enabled/i)).toBeInTheDocument();
+  });
+
   it("arms a tap-again confirm before deleting", async () => {
     const del = vi.spyOn(api, "jcodeDeleteSession").mockResolvedValue();
     const onClose = vi.fn();

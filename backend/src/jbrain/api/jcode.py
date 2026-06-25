@@ -135,6 +135,10 @@ class TurnBody(BaseModel):
     prompt: str = Field(min_length=1)
 
 
+class PreviewBody(BaseModel):
+    port: int | None = None
+
+
 @router.post("/jcode/sessions", status_code=201)
 async def create_session(
     body: CreateSessionBody, owner: OwnerDep, request: Request
@@ -284,3 +288,33 @@ async def cancel_turn(run_id: str, owner: OwnerDep, request: Request) -> dict[st
     with contextlib.suppress(JcodeError):
         await _client(request).cancel(turn.session_id)
     return {"status": "cancelling"}
+
+
+# --- Web preview (Wave J4): proxy the control server's ephemeral-tunnel surface ---
+
+
+@router.get("/jcode/sessions/{sid}/preview")
+async def preview_status(sid: str, owner: OwnerDep, request: Request) -> dict[str, object]:
+    _valid_sid(sid)
+    try:
+        return await _client(request).preview_status(sid)
+    except JcodeError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@router.post("/jcode/sessions/{sid}/preview")
+async def preview_open(
+    sid: str, body: PreviewBody, owner: OwnerDep, request: Request
+) -> dict[str, object]:
+    _valid_sid(sid)
+    try:
+        return await _client(request).preview_open(sid, body.port)
+    except JcodeError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@router.delete("/jcode/sessions/{sid}/preview", status_code=204)
+async def preview_close(sid: str, owner: OwnerDep, request: Request) -> None:
+    _valid_sid(sid)
+    with contextlib.suppress(JcodeError):
+        await _client(request).preview_close(sid)

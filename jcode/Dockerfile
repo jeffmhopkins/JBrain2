@@ -8,11 +8,15 @@ FROM python:3.12-slim
 COPY --from=ghcr.io/astral-sh/uv:0.8.17 /uv /uvx /usr/local/bin/
 
 # git: per-session checkouts. nodejs/npm: the Claude Code CLI the SDK drives.
+# cloudflared: the per-session web-preview quick-tunnel (Wave J4) — a single binary,
+# no Cloudflare account/config (TryCloudflare). The release name matches dpkg's arch.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends git ca-certificates curl gnupg \
     && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
     && apt-get install -y --no-install-recommends nodejs \
     && npm install -g @anthropic-ai/claude-code \
+    && curl -fsSL "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-$(dpkg --print-architecture)" -o /usr/local/bin/cloudflared \
+    && chmod +x /usr/local/bin/cloudflared \
     && apt-get purge -y gnupg && apt-get autoremove -y \
     && rm -rf /var/lib/apt/lists/*
 
