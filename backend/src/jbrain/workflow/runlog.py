@@ -99,6 +99,27 @@ class PipelineRunLog:
         return run_id
 
 
+async def set_run_progress(
+    maker: async_sessionmaker[AsyncSession],
+    ctx: SessionContext,
+    job_id: str,
+    note: str,
+) -> None:
+    """Update the live progress note on the RUNNING run that owns this job's step
+    ("processed 15 of 30 emails"). The Ops "Runs" screen polls it while the run is in
+    flight. A no-op when the job has no run step (an ad-hoc enqueue) or its run is no
+    longer running. Best-effort: a progress write must never fail the executor job."""
+    async with scoped_session(maker, ctx) as session:
+        await session.execute(
+            text(
+                "UPDATE app.runs r SET progress_note = :note"
+                " FROM app.run_steps s"
+                " WHERE s.job_id = :jid AND r.id = s.run_id AND r.status = 'running'"
+            ),
+            {"note": note, "jid": job_id},
+        )
+
+
 async def finalize_job_step(
     maker: async_sessionmaker[AsyncSession],
     ctx: SessionContext,
@@ -140,6 +161,7 @@ async def finalize_job_step(
                 "                              WHERE s.run_id = r.id AND NOT s.ok)"
                 "                  THEN 'error' ELSE 'done' END,"
                 "   ended_at = now(),"
+                "   progress_note = NULL,"  # the run is closing; a live note no longer applies
                 "   cost_tokens = (SELECT COALESCE(SUM(s.cost_tokens), 0)"
                 "                  FROM app.run_steps s WHERE s.run_id = r.id)"
                 " WHERE r.id = :rid AND r.status = 'running'"

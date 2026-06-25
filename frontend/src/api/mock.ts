@@ -125,6 +125,7 @@ const MOCK_RUN_DETAILS: RunDetail[] = [
     step_count: 5,
     cost_tokens: 4100,
     stop_reason: null,
+    progress_note: "processed 3 of 5 steps",
     steps: [
       {
         idx: 0,
@@ -165,6 +166,7 @@ const MOCK_RUN_DETAILS: RunDetail[] = [
     step_count: 2,
     cost_tokens: 800,
     stop_reason: null,
+    progress_note: null,
     steps: [
       {
         idx: 0,
@@ -187,6 +189,7 @@ const MOCK_RUN_DETAILS: RunDetail[] = [
     step_count: 3,
     cost_tokens: 6700,
     stop_reason: "step_error",
+    progress_note: null,
     steps: [
       {
         idx: 0,
@@ -219,6 +222,7 @@ const MOCK_RUN_DETAILS: RunDetail[] = [
     step_count: 4,
     cost_tokens: 21_400,
     stop_reason: "end_turn",
+    progress_note: null,
     steps: [
       {
         idx: 0,
@@ -252,7 +256,18 @@ const MOCK_RUN_DETAILS: RunDetail[] = [
 ];
 
 const MOCK_RUNS: RunSummary[] = MOCK_RUN_DETAILS.map(
-  ({ id, kind, status, name, started_at, duration_ms, step_count, cost_tokens, steps }) => ({
+  ({
+    id,
+    kind,
+    status,
+    name,
+    started_at,
+    duration_ms,
+    step_count,
+    cost_tokens,
+    progress_note,
+    steps,
+  }) => ({
     id,
     kind,
     status,
@@ -262,6 +277,7 @@ const MOCK_RUNS: RunSummary[] = MOCK_RUN_DETAILS.map(
     step_count,
     cost_tokens,
     last_error: status === "error" ? (steps.find((s) => !s.ok)?.name ?? null) : null,
+    progress_note,
   }),
 );
 

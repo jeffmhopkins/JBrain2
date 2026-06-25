@@ -10,6 +10,41 @@ from jbrain import queue, worker
 from jbrain.queue import Job
 
 
+async def _noop_progress(_note: str) -> None:
+    return None
+
+
+async def test_invoke_passes_only_the_extras_a_handler_declares() -> None:
+    seen: dict[str, Any] = {}
+
+    async def payload_only(payload: dict[str, Any]) -> None:
+        seen["payload_only"] = payload
+
+    async def with_ctx(payload: dict[str, Any], ctx: Any) -> None:
+        seen["ctx"] = ctx
+
+    async def with_progress(payload: dict[str, Any], *, progress: Any) -> None:
+        await progress("processed 1 of 1 emails")
+        seen["progress"] = progress
+
+    notes: list[str] = []
+
+    async def reporter(note: str) -> None:
+        notes.append(note)
+
+    await worker._invoke(payload_only, {"a": 1}, queue.SYSTEM_CTX, _noop_progress)
+    assert seen["payload_only"] == {"a": 1}
+
+    sentinel = object()
+    await worker._invoke(with_ctx, {}, sentinel, _noop_progress)  # type: ignore[arg-type]
+    assert seen["ctx"] is sentinel
+
+    # A `progress`-declaring handler gets the reporter by keyword (and no ctx, since it
+    # has only one positional parameter) and can drive it.
+    await worker._invoke(with_progress, {}, queue.SYSTEM_CTX, reporter)
+    assert notes == ["processed 1 of 1 emails"]
+
+
 class FakeQueue:
     def __init__(self, jobs: list[Job] | None = None):
         self.jobs = list(jobs or [])
@@ -476,6 +511,9 @@ async def test_run_registers_all_job_handlers(
         "wiki_rebuild",
         "wiki_reindex",
         "wiki_prune",
+        # The archivist's inbox-triage sweep — in-code only, not in ACTION_SPECS /
+        # the app.actions seed; a migration seeds its schedule (docs/EMAIL_ARCHIVIST_PLAN.md).
+        "triage_inbox",
     }
 
 

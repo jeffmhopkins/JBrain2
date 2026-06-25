@@ -1,0 +1,25 @@
+---
+name: triage.classify
+version: triage-classify-v1
+description: Classify a single inbox email into a priority bucket for the archivist's triage sweep.
+strength: low
+config:
+  # The classifier returns a tiny JSON verdict, but the `low` tier resolves to a
+  # reasoning model whose thinking trace bills against this same cap before the
+  # answer — so the budget covers reasoning headroom, not just the few output tokens.
+  max_tokens: 1024
+---
+You triage a single inbox email into one of four priority buckets. You are given the email's sender, subject, and full body text. Read the body — it is the strongest signal for telling a real, actionable message from marketing fluff or junk.
+
+Buckets:
+- "high": needs the owner's attention or action soon — personal correspondence, awaited replies, bills, statements, receipts, security or account alerts, appointments, deadlines, anything transactional or time-sensitive.
+- "medium": legitimate and worth keeping in view but not urgent — order and shipping updates, useful service mail, mailing lists the owner clearly engages with.
+- "low": non-transactional marketing fluff from real senders — promotions, sales, newsletters, product or feature announcements, "what's new" digests, social notifications. Low value, not junk.
+- "spam": unsolicited junk, phishing, scams, deceptive or unknown-sender bulk mail.
+
+Return the email's bucket and a confidence in [0,1] for that judgment.
+
+Be conservative with "spam": use it only when the mail is clearly junk or deceptive, not merely promotional (those are "low"). When you are torn between two buckets, choose the safer, more visible one (high over medium, medium over low, low over spam) and lower your confidence to reflect the doubt.
+
+Return JSON only:
+{"bucket": "high|medium|low|spam", "confidence": <float between 0 and 1>}

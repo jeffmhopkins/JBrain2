@@ -77,6 +77,11 @@ TASK_DEFAULTS: dict[str, str] = {
     # Individually routable so an on-box operator can point them at a local model.
     "wiki.rewrite": "xai:grok-4.3",
     "wiki.ground": "xai:grok-4.3",
+    # The archivist's `triage_inbox` sweep (docs/EMAIL_ARCHIVIST_PLAN.md): classify a
+    # batch of inbox emails into priority buckets from sender/subject/snippet alone.
+    # The prompt declares the `low` tier (a cheap one-shot judgment over many emails);
+    # individually routable so an on-box operator can point it at a local model.
+    "triage.classify": "xai:grok-4.3",
 }
 
 # Capability tiers (a prompt's `strength:`) → "provider:model". A prompt names a

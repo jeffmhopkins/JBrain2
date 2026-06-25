@@ -37,12 +37,20 @@ class FakeGmail:
     # --- GmailApi ----------------------------------------------------------
 
     def _match(self, query: str) -> list[str]:
-        needle = query.strip().lower()
-        return [
-            m.id
-            for m in self._messages.values()
-            if not needle or needle in f"{m.subject}\n{m.body}\n{m.sender}".lower()
-        ]
+        # Model the one structured operator the workflows depend on — `in:inbox` reads
+        # the live label state (so a filed message drops out) — and treat the remainder
+        # as a content substring, exactly as before for the existing callers.
+        q = query.strip().lower()
+        inbox_only = "in:inbox" in q
+        needle = q.replace("in:inbox", "").strip()
+        out: list[str] = []
+        for m in self._messages.values():
+            if inbox_only and _INBOX not in self._on.get(m.id, set()):
+                continue
+            if needle and needle not in f"{m.subject}\n{m.body}\n{m.sender}".lower():
+                continue
+            out.append(m.id)
+        return out
 
     async def search(self, query: str, *, max_results: int = 25) -> list[str]:
         return self._match(query)[: max(1, max_results)]

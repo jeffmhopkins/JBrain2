@@ -26,7 +26,7 @@ interface GroupDef {
 
 // Groups mirror the prompts' `strength:` so the screen tells the truth about
 // which work is heavy: note.extract/integrate.note/agent.turn are `high`,
-// entity.disambiguate/session.title are `low`. fact.adjudicate &
+// entity.disambiguate/session.title/triage.classify are `low`. fact.adjudicate &
 // correction_note.extract have no prompt yet — placed by their design intent
 // (docs/ANALYSIS.md: adjudicate=cheap, correction=strong). video.summarize is the
 // analyze_video reduce step — owner-placed in high-stakes for a richer summary,
@@ -55,7 +55,7 @@ const GROUP_DEFS: GroupDef[] = [
     accent: "light",
     name: "Lightweight",
     desc: "Cheap, frequent extraction & one-shots.",
-    taskIds: ["entity.disambiguate", "fact.adjudicate", "session.title"],
+    taskIds: ["entity.disambiguate", "fact.adjudicate", "session.title", "triage.classify"],
   },
   {
     key: "vision",

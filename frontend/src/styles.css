@@ -10481,6 +10481,15 @@ input.ld-title {
   font-variant-numeric: tabular-nums;
 }
 
+/* The live "processed X of Y" line under the header while a run is in flight. */
+.runs-sp-progress {
+  display: block;
+  margin-top: 4px;
+  font-size: var(--fs-micro);
+  color: var(--steel);
+  font-variant-numeric: tabular-nums;
+}
+
 .runs-sp-body {
   max-height: 46vh;
   overflow-y: auto;

@@ -29,6 +29,7 @@ class FakeRunReader:
                 step_count=4,
                 cost_tokens=6700,
                 last_error="ocr_attachment · labs.pdf",
+                progress_note=None,
             ),
             RunSummary(
                 id="r1",
@@ -40,6 +41,7 @@ class FakeRunReader:
                 step_count=3,
                 cost_tokens=4100,
                 last_error=None,
+                progress_note="processed 12 of 30 emails",
             ),
         ]
         self._detail = RunDetail(
@@ -52,6 +54,7 @@ class FakeRunReader:
             step_count=4,
             cost_tokens=6700,
             stop_reason="step_error",
+            progress_note=None,
             steps=[
                 RunStepView(
                     idx=0,
@@ -126,8 +129,10 @@ def test_list_runs_shape(client: TestClient, repo: FakeAuthRepo) -> None:
     # as the "failed" tile/dot.
     assert failed["status"] == "error"
     assert failed["last_error"] == "ocr_attachment · labs.pdf"
-    # A running run reports no honest duration yet.
+    # A running run reports no honest duration yet, but carries its live progress note.
     assert body[1]["duration_ms"] is None
+    assert body[1]["progress_note"] == "processed 12 of 30 emails"
+    assert failed["progress_note"] is None
 
 
 def test_run_detail_step_tree(client: TestClient, repo: FakeAuthRepo) -> None:
