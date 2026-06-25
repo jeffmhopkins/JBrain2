@@ -201,6 +201,66 @@ async def test_server_error_raises_gmail_error() -> None:
         await _client(lambda r: httpx.Response(500)).search("q")
 
 
+# --- count / bulk (pagination + batchModify) -------------------------------
+
+
+def _paged_api(pages: list[dict]):
+    """An api handler that serves messages.list pages in order by nextPageToken."""
+    state = {"i": 0}
+
+    def api(request: httpx.Request) -> httpx.Response:
+        page = pages[state["i"]]
+        state["i"] += 1
+        return httpx.Response(200, json=page)
+
+    return api
+
+
+async def test_count_paginates_to_an_exact_total() -> None:
+    pages = [
+        {"messages": [{"id": "a"}, {"id": "b"}], "nextPageToken": "p2"},
+        {"messages": [{"id": "c"}]},  # no nextPageToken → exhausted
+    ]
+    total, capped = await _client(_paged_api(pages)).count("from:x")
+    assert (total, capped) == (3, False)
+
+
+async def test_count_reports_capped_when_more_remains() -> None:
+    pages = [
+        {"messages": [{"id": "a"}, {"id": "b"}], "nextPageToken": "p2"},
+        {"messages": [{"id": "c"}], "nextPageToken": "p3"},  # still more after the cap
+    ]
+    total, capped = await _client(_paged_api(pages)).count("from:x", cap=3)
+    assert (total, capped) == (3, True)
+
+
+async def test_search_all_collects_ids_across_pages() -> None:
+    pages = [
+        {"messages": [{"id": "a"}], "nextPageToken": "p2"},
+        {"messages": [{"id": "b"}, {"id": "c"}]},
+    ]
+    ids, capped = await _client(_paged_api(pages)).search_all("q")
+    assert ids == ["a", "b", "c"]
+    assert capped is False
+
+
+async def test_batch_modify_chunks_at_1000() -> None:
+    seen: list[httpx.Request] = []
+
+    def api(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(200, json={})
+
+    ids = [f"m{i}" for i in range(1500)]
+    await _client(api).batch_modify(ids, add_label_ids=["L1"], remove_label_ids=["INBOX"])
+    assert len(seen) == 2  # 1000 + 500
+    first = json.loads(seen[0].content)
+    assert len(first["ids"]) == 1000
+    assert first["addLabelIds"] == ["L1"] and first["removeLabelIds"] == ["INBOX"]
+    assert len(json.loads(seen[1].content)["ids"]) == 500
+    assert "/messages/batchModify" in str(seen[0].url)
+
+
 # --- FakeGmail -------------------------------------------------------------
 
 
@@ -242,3 +302,18 @@ async def test_fake_metadata_only_drops_body() -> None:
 async def test_fake_get_missing_raises() -> None:
     with pytest.raises(GmailError):
         await FakeGmail().get("nope")
+
+
+async def test_fake_count_search_all_and_batch_modify() -> None:
+    fake = FakeGmail(
+        [_msg("m1", subject="Invoice"), _msg("m2", subject="Invoice"), _msg("m3", subject="Hello")]
+    )
+    assert await fake.count("invoice") == (2, False)
+    assert await fake.count("invoice", cap=1) == (1, True)  # capped: more than 1 match
+    ids, capped = await fake.search_all("invoice")
+    assert set(ids) == {"m1", "m2"} and capped is False
+    label = await fake.create_label("Finance")
+    await fake.batch_modify(ids, add_label_ids=[label.id], remove_label_ids=["INBOX"])
+    assert fake.labels_on("m1") == {label.id}
+    assert fake.labels_on("m2") == {label.id}
+    assert fake.labels_on("m3") == {"INBOX"}  # untouched

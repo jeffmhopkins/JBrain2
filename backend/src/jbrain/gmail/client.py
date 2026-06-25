@@ -28,6 +28,14 @@ _TIMEOUT = 30.0
 _EXPIRY_MARGIN = 60.0
 # Headers worth surfacing when we fetch a message as metadata-only (no body).
 _METADATA_HEADERS = ("From", "To", "Subject", "Date")
+# Pagination + bulk limits. A messages.list page is ≤500 ids; batchModify takes ≤1000
+# ids per call. The count/bulk caps bound a runaway scan over a 20-year mailbox — a
+# count beyond _COUNT_CAP reports "N+", a bulk beyond _BULK_CAP touches the first slice
+# and says so, so the agent narrows the query rather than silently doing a partial job.
+_PAGE_SIZE = 500
+_BATCH_SIZE = 1000
+_COUNT_CAP = 50_000
+_BULK_CAP = 10_000
 
 
 class GmailError(RuntimeError):
@@ -80,6 +88,18 @@ class GmailApi(Protocol):
     async def modify(
         self,
         message_id: str,
+        *,
+        add_label_ids: Sequence[str] = (),
+        remove_label_ids: Sequence[str] = (),
+    ) -> None: ...
+
+    async def count(self, query: str, *, cap: int = ...) -> tuple[int, bool]: ...
+
+    async def search_all(self, query: str, *, cap: int = ...) -> tuple[list[str], bool]: ...
+
+    async def batch_modify(
+        self,
+        message_ids: Sequence[str],
         *,
         add_label_ids: Sequence[str] = (),
         remove_label_ids: Sequence[str] = (),
@@ -296,3 +316,47 @@ class GmailClient:
                 "removeLabelIds": list(remove_label_ids),
             },
         )
+
+    async def _list_ids(self, query: str, *, cap: int) -> tuple[list[str], bool]:
+        """Paginate messages.list for `query`, collecting ids until exhausted or `cap`.
+        Returns (ids, capped): capped is True when more pages exist beyond the cap."""
+        ids: list[str] = []
+        page_token: str | None = None
+        while True:
+            params: dict[str, Any] = {"q": query, "maxResults": _PAGE_SIZE}
+            if page_token:
+                params["pageToken"] = page_token
+            body = await self._api("GET", "/users/me/messages", params=params)
+            ids.extend(str(m["id"]) for m in (body.get("messages") or []) if m.get("id"))
+            page_token = body.get("nextPageToken")
+            if not page_token:
+                return ids, False  # exhausted — an exact set
+            if len(ids) >= cap:
+                return ids[:cap], True  # more pages remain, but we stop at the cap
+
+    async def count(self, query: str, *, cap: int = _COUNT_CAP) -> tuple[int, bool]:
+        ids, capped = await self._list_ids(query, cap=cap)
+        return len(ids), capped
+
+    async def search_all(self, query: str, *, cap: int = _BULK_CAP) -> tuple[list[str], bool]:
+        return await self._list_ids(query, cap=cap)
+
+    async def batch_modify(
+        self,
+        message_ids: Sequence[str],
+        *,
+        add_label_ids: Sequence[str] = (),
+        remove_label_ids: Sequence[str] = (),
+    ) -> None:
+        """Apply label changes to many messages in ≤1000-id batchModify calls."""
+        ids = list(message_ids)
+        for start in range(0, len(ids), _BATCH_SIZE):
+            await self._api(
+                "POST",
+                "/users/me/messages/batchModify",
+                json={
+                    "ids": ids[start : start + _BATCH_SIZE],
+                    "addLabelIds": list(add_label_ids),
+                    "removeLabelIds": list(remove_label_ids),
+                },
+            )

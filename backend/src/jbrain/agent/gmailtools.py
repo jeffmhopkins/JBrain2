@@ -112,6 +112,59 @@ def build_gmail_handlers(client: GmailApi) -> dict[str, ToolHandler]:
             return str(exc)
         return f"Message {message_id} archived — out of the inbox, still in All Mail."
 
+    async def gmail_count(arguments: dict, ctx: ToolContext) -> str:
+        query = str(arguments.get("query", "")).strip()
+        if not query:
+            return "gmail_count needs a non-empty query."
+        try:
+            total, capped = await client.count(query)
+        except GmailError as exc:
+            return str(exc)
+        if capped:
+            return f"At least {total:,} messages match '{query}' (stopped counting at the cap)."
+        return f"{total:,} message(s) match '{query}'."
+
+    async def gmail_bulk_label(arguments: dict, ctx: ToolContext) -> str:
+        query = str(arguments.get("query", "")).strip()
+        if not query:
+            return "gmail_bulk_label needs a non-empty query."
+        add = [str(x).strip() for x in (arguments.get("add") or []) if str(x).strip()]
+        remove = [str(x).strip() for x in (arguments.get("remove") or []) if str(x).strip()]
+        if not add and not remove:
+            return "gmail_bulk_label needs at least one label to add or remove."
+        try:
+            by_name = {label.name: label.id for label in await client.list_labels()}
+            missing = [n for n in add if n not in by_name]
+            if missing:
+                return (
+                    "These labels don't exist yet: "
+                    + ", ".join(missing)
+                    + ". Create them with gmail_create_label first — I won't invent labels."
+                )
+            ids, capped = await client.search_all(query)
+            if not ids:
+                return f"No messages match '{query}' — nothing changed."
+            removed = [n for n in remove if n in by_name]
+            await client.batch_modify(
+                ids,
+                add_label_ids=[by_name[n] for n in add],
+                remove_label_ids=[by_name[n] for n in removed],
+            )
+        except GmailError as exc:
+            return str(exc)
+        done = []
+        if add:
+            done.append("applied " + ", ".join(add))
+        if removed:
+            done.append("removed " + ", ".join(removed))
+        result = f"Bulk-updated {len(ids):,} message(s) for '{query}': " + "; ".join(done) + "."
+        if capped:
+            result += (
+                f" NOTE: more than {len(ids):,} matched — only the first {len(ids):,} were"
+                " changed. Narrow the query and run again for the rest."
+            )
+        return result
+
     return {
         "gmail_search": gmail_search,
         "gmail_read": gmail_read,
@@ -119,4 +172,6 @@ def build_gmail_handlers(client: GmailApi) -> dict[str, ToolHandler]:
         "gmail_create_label": gmail_create_label,
         "gmail_label": gmail_label,
         "gmail_archive": gmail_archive,
+        "gmail_count": gmail_count,
+        "gmail_bulk_label": gmail_bulk_label,
     }

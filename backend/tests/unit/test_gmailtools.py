@@ -115,6 +115,55 @@ async def test_write_error_surfaces_as_tool_message() -> None:
     assert "no such message" in out
 
 
+# --- count + bulk ----------------------------------------------------------
+
+
+async def test_count_reports_total() -> None:
+    fake = FakeGmail(
+        [_msg("m1", subject="Invoice"), _msg("m2", subject="Invoice"), _msg("m3", subject="Hello")]
+    )
+    out = await _handlers(fake)["gmail_count"]({"query": "invoice"}, CTX)
+    assert "2 message(s)" in out
+
+
+async def test_count_empty_query_rejected() -> None:
+    out = await _handlers(FakeGmail())["gmail_count"]({"query": ""}, CTX)
+    assert "non-empty query" in out
+
+
+async def test_bulk_label_applies_across_the_whole_query() -> None:
+    fake = FakeGmail(
+        [_msg("m1", subject="Invoice"), _msg("m2", subject="Invoice"), _msg("m3", subject="Hello")]
+    )
+    label = await fake.create_label("Finance")
+    out = await _handlers(fake)["gmail_bulk_label"](
+        {"query": "invoice", "add": ["Finance"], "remove": ["INBOX"]}, CTX
+    )
+    assert "Bulk-updated 2 message(s)" in out
+    assert fake.labels_on("m1") == {label.id}
+    assert fake.labels_on("m2") == {label.id}
+    assert fake.labels_on("m3") == {"INBOX"}  # didn't match the query, untouched
+
+
+async def test_bulk_label_refuses_to_invent_a_missing_label() -> None:
+    fake = FakeGmail([_msg("m1", subject="Invoice")])
+    out = await _handlers(fake)["gmail_bulk_label"]({"query": "invoice", "add": ["Ghost"]}, CTX)
+    assert "don't exist yet" in out
+    assert fake.labels_on("m1") == {"INBOX"}  # nothing changed
+
+
+async def test_bulk_label_no_matches() -> None:
+    fake = FakeGmail([_msg("m1", subject="Invoice")])
+    await fake.create_label("Finance")
+    out = await _handlers(fake)["gmail_bulk_label"]({"query": "zzz", "add": ["Finance"]}, CTX)
+    assert "No messages match" in out
+
+
+async def test_bulk_label_needs_a_change() -> None:
+    out = await _handlers(FakeGmail([_msg("m1")]))["gmail_bulk_label"]({"query": "x"}, CTX)
+    assert "at least one label" in out
+
+
 async def test_empty_arguments_are_rejected() -> None:
     h = _handlers(FakeGmail())
     assert "needs a message_id" in await h["gmail_read"]({}, CTX)

@@ -36,14 +36,24 @@ class FakeGmail:
 
     # --- GmailApi ----------------------------------------------------------
 
-    async def search(self, query: str, *, max_results: int = 25) -> list[str]:
+    def _match(self, query: str) -> list[str]:
         needle = query.strip().lower()
-        hits = [
+        return [
             m.id
             for m in self._messages.values()
             if not needle or needle in f"{m.subject}\n{m.body}\n{m.sender}".lower()
         ]
-        return hits[: max(1, max_results)]
+
+    async def search(self, query: str, *, max_results: int = 25) -> list[str]:
+        return self._match(query)[: max(1, max_results)]
+
+    async def count(self, query: str, *, cap: int = 50_000) -> tuple[int, bool]:
+        hits = self._match(query)
+        return min(len(hits), cap), len(hits) > cap
+
+    async def search_all(self, query: str, *, cap: int = 10_000) -> tuple[list[str], bool]:
+        hits = self._match(query)
+        return hits[:cap], len(hits) > cap
 
     async def get(self, message_id: str, *, metadata_only: bool = False) -> GmailMessage:
         msg = self._messages.get(message_id)
@@ -85,3 +95,17 @@ class FakeGmail:
         on = self._on.setdefault(message_id, set())
         on.update(add_label_ids)
         on.difference_update(remove_label_ids)
+
+    async def batch_modify(
+        self,
+        message_ids: Sequence[str],
+        *,
+        add_label_ids: Sequence[str] = (),
+        remove_label_ids: Sequence[str] = (),
+    ) -> None:
+        for message_id in message_ids:
+            if message_id not in self._messages:
+                continue
+            on = self._on.setdefault(message_id, set())
+            on.update(add_label_ids)
+            on.difference_update(remove_label_ids)

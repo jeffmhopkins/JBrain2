@@ -84,6 +84,8 @@ def test_archivist_is_a_sandboxed_gmail_organizer() -> None:
         "gmail_create_label",
         "gmail_label",
         "gmail_archive",
+        "gmail_count",
+        "gmail_bulk_label",
     } == GMAIL_TOOLS
     assert {"archivist_memory_read", "archivist_memory_write"} == MEMORY_TOOLS
     assert archivist.reads_knowledge_base is False
@@ -128,8 +130,8 @@ def test_persona_prompts_pinned_to_their_versions() -> None:
             "2d687bd63dc39eccc3a1501d5668684c57b6bccfcbc159ea1c96d96bba5a07e5",
         ),
         "archivist": (
-            "agent-archivist-v2",
-            "84ae562d761f0049fb40de9dae4e0c829772a2fb53b46d1adc26bdb41aaa82da",
+            "agent-archivist-v3",
+            "075d12e643c3ff60091160120532e98cf7ade3436b9790fb1b5f6045e46c87c8",
         ),
     }
     assert set(pins) == AGENT_NAMES

@@ -83,13 +83,15 @@ egress Proposal instead of acting directly (noted in Wave E3).
   scale to a 20-year mailbox (search caps a page; label/archive act on one id). E2.5
   adds the two operations that make the archivist actually capable at scale, both
   still within `gmail.modify`: `gmail_count` (an exact count for a query, by
-  paginating ids) and `gmail_bulk_label` (resolve a whole query to ids and apply
-  label/archive changes via Gmail `batchModify`, ≤1000 per call). `remove: ["INBOX"]`
-  covers bulk-archive, so no separate bulk-archive tool. The client gains id
-  pagination + a `batch_modify`; the prompt requires a **count before any bulk move**
-  so the blast radius is stated first. Bulk is higher-leverage *and* higher-blast-
-  radius, but stays reversible (label/archive, never delete) — the dry-run in the
-  deferred task layer is where a preview-before-write belongs.
+  paginating ids — large totals report "N+") and `gmail_bulk_label` (resolve a whole
+  query to ids and apply label/archive changes via Gmail `batchModify`, ≤1000 per
+  call). `remove: ["INBOX"]` covers bulk-archive, so no separate bulk-archive tool.
+  The client gains id pagination (`_list_ids`) + `count`/`search_all`/`batch_modify`;
+  the prompt (v3) requires a **count before any bulk move** so the blast radius is
+  stated first. Bulk is higher-leverage *and* higher-blast-radius, but stays
+  reversible (label/archive, never delete) — the dry-run in the deferred task layer is
+  where a preview-before-write belongs. Beyond a safety cap (`_BULK_CAP`) the bulk tool
+  touches the first slice and says so, so a partial job is never silent.
 
 - **Wave E3 — cross-session memory** (no GUI): a single **owner-only** `archivist_memory`
   table (one row per principal) the persona reads at session start and rewrites as it

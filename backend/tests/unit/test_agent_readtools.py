@@ -826,6 +826,16 @@ def test_sidecars_pinned_to_their_versions() -> None:
             1,
             "965d8f55bde6ce3ed7ac181ca06b60e7a6e2fdb237ec043bfcdc9ac8940b5607",
         ),
+        "gmail_count.tool": (
+            "gmail_count",
+            1,
+            "fff8ba00d650a1e2180f7fdad5b1f15b511cce63392a6b9815c171a1a81d1e23",
+        ),
+        "gmail_bulk_label.tool": (
+            "gmail_bulk_label",
+            1,
+            "8fd9bf109b08255b11ce674cb105fc720e041e6f300d9541f106f3dccdf89f44",
+        ),
         "archivist_memory_read.tool": (
             "archivist_memory_read",
             1,
