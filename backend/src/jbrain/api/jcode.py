@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import re
 import uuid
 from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING, cast
@@ -86,6 +87,17 @@ class _JcodeTurn:
             self._subs.discard(q)
 
 
+# The control server mints opaque ids (hex / uuid). Validate the shape at the api
+# boundary so a caller-supplied sid can never carry a `/` or `..` into the control
+# server's URL path (review S2) — even though the base host is pinned.
+_SID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+
+
+def _valid_sid(sid: str) -> None:
+    if not _SID_RE.match(sid):
+        raise HTTPException(status_code=404, detail="unknown session")
+
+
 def _frame(type_: str, *, text: str = "", tool: str = "") -> bytes:
     payload = {"type": type_, "text": text, "tool": tool, "data": {}}
     return f"data: {json.dumps(payload)}\n\n".encode()
@@ -152,6 +164,7 @@ async def list_sessions(owner: OwnerDep, request: Request) -> list[dict[str, obj
 
 @router.get("/jcode/sessions/{sid}")
 async def get_session(sid: str, owner: OwnerDep, request: Request) -> dict[str, object]:
+    _valid_sid(sid)
     async with scoped_session(_maker(request), _owner_ctx(owner.id)) as db:
         row = await _REPO.get(db, sid)
     if row is None:
@@ -161,6 +174,7 @@ async def get_session(sid: str, owner: OwnerDep, request: Request) -> dict[str, 
 
 @router.delete("/jcode/sessions/{sid}", status_code=204)
 async def delete_session(sid: str, owner: OwnerDep, request: Request) -> None:
+    _valid_sid(sid)
     try:
         await _client(request).delete(sid)
     except JcodeError as exc:
@@ -171,6 +185,7 @@ async def delete_session(sid: str, owner: OwnerDep, request: Request) -> None:
 
 @router.post("/jcode/sessions/{sid}/reset")
 async def reset_session(sid: str, owner: OwnerDep, request: Request) -> dict[str, object]:
+    _valid_sid(sid)
     try:
         session = await _client(request).reset(sid)
     except JcodeError as exc:
@@ -194,44 +209,55 @@ async def _drive(
     prompt: str,
     maker: async_sessionmaker[AsyncSession],
     owner_id: str,
-    turns: dict[str, _JcodeTurn],
-    run_id: str,
 ) -> None:
     """Detached: pump control-server frames into the buffer, keep the index status
-    honest, and always emit a terminal frame — even on error or cancel."""
-    await _set_status(maker, owner_id, sid, "running")
+    honest, and ALWAYS emit a terminal frame + unblock the client — on success, error,
+    or cancel. Registry removal is the caller's add_done_callback, so it survives even a
+    crash here."""
     try:
+        # Inside the try so a failed "running" write still reaches the finally below
+        # (else the client would hang and the run would leak — review B1).
+        await _set_status(maker, owner_id, sid, "running")
         async for frame in client.stream_turn(sid, prompt):
             turn.emit(frame)
-    except JcodeError as exc:
-        turn.emit(_frame("error", text=str(exc)))
-        turn.emit(_frame("done"))
     except asyncio.CancelledError:
         turn.emit(_frame("done"))
         raise
+    except Exception as exc:  # JcodeError or anything unexpected → a terminal frame
+        turn.emit(_frame("error", text=str(exc)))
+        turn.emit(_frame("done"))
     finally:
-        # Settle the index status BEFORE finish() unblocks the client's stream, so a
-        # read right after the stream ends sees "ready" — never a lingering "running".
-        # finish() still runs even if the status write fails, so the client never hangs.
+        # Settle the index status BEFORE finish() unblocks the client's stream, so a read
+        # right after the stream ends sees "ready" — never a lingering "running". finish()
+        # still runs even if the status write fails, so the client never hangs.
         try:
             await _set_status(maker, owner_id, sid, "ready")
         finally:
             turn.finish()
-            turns.pop(run_id, None)
 
 
 @router.post("/jcode/sessions/{sid}/turn")
 async def run_turn(
     sid: str, body: TurnBody, owner: OwnerDep, request: Request
 ) -> StreamingResponse:
+    _valid_sid(sid)
     client = _client(request)
     turns = _turns(request)
     run_id = uuid.uuid4().hex
     turn = _JcodeTurn(sid)
     turns[run_id] = turn
     turn.task = asyncio.create_task(
-        _drive(turn, client, sid, body.prompt, _maker(request), owner.id, turns, run_id)
+        _drive(turn, client, sid, body.prompt, _maker(request), owner.id)
     )
+
+    # Guarantee the run leaves the registry however the task ends (done/error/cancel),
+    # and retrieve any exception so it isn't logged as "never retrieved" (review B1).
+    def _cleanup(task: asyncio.Task[None]) -> None:
+        turns.pop(run_id, None)
+        with contextlib.suppress(asyncio.CancelledError, Exception):
+            task.exception()
+
+    turn.task.add_done_callback(_cleanup)
     headers = {**_SSE_HEADERS, "X-Jcode-Run-Id": run_id}
     return StreamingResponse(turn.stream(), media_type="text/event-stream", headers=headers)
 

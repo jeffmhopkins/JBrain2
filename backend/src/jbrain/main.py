@@ -355,9 +355,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # configured — the owner-gated routes 404 otherwise (graceful degrade). The turn
         # registry holds in-flight SSE turns for reconnect/cancel.
         app.state.jcode_client = (
-            JcodeClient(settings.jcode_url, settings.jcode_token)
-            if settings.jcode_url
-            else None
+            JcodeClient(settings.jcode_url, settings.jcode_token) if settings.jcode_url else None
         )
         app.state.jcode_turns = {}
         # jerv's on-box video analysis (docs/VIDEO_ANALYSIS_PLAN.md): sample + caption
@@ -458,6 +456,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if tasks:
             with suppress(asyncio.TimeoutError):
                 await asyncio.wait_for(asyncio.gather(*tasks, return_exceptions=True), timeout=10.0)
+        # Same for any detached jcode coding turns (docs/proposed/JCODE_PLAN.md, Wave J2):
+        # cancel + await before the engine is disposed, so their status-cleanup doesn't race
+        # a dead pool and the upstream control-server stream is torn down.
+        jcode_turns = list(getattr(app.state, "jcode_turns", {}).values())
+        for jt in jcode_turns:
+            jt.cancel()
+        jcode_tasks = [jt.task for jt in jcode_turns if getattr(jt, "task", None) is not None]
+        if jcode_tasks:
+            with suppress(asyncio.TimeoutError):
+                await asyncio.wait_for(
+                    asyncio.gather(*jcode_tasks, return_exceptions=True), timeout=10.0
+                )
         await app.state.supervisor_client.aclose()
         if image_gen_client is not None:
             await image_gen_client.aclose()

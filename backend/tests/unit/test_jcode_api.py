@@ -38,6 +38,16 @@ def test_owner_but_unconfigured_is_404() -> None:
     assert "not enabled" in r.json()["detail"]
 
 
+def test_malformed_sid_is_404_before_any_db_or_control_call() -> None:
+    # A sid carrying a path char never reaches the DB (None here) or the control
+    # server — _valid_sid 404s first (review S2). session_maker is None, so reaching
+    # it would error; a clean 404 proves the guard runs before the body.
+    client = TestClient(_app(OWNER, jcode_client=FakeJcodeClient()))
+    assert client.get("/api/jcode/sessions/bad.id").status_code == 404
+    assert client.post("/api/jcode/sessions/bad.id/reset").status_code == 404
+    assert client.post("/api/jcode/sessions/bad.id/turn", json={"prompt": "x"}).status_code == 404
+
+
 def test_reconnect_unknown_run_is_404() -> None:
     client = TestClient(_app(OWNER, jcode_client=FakeJcodeClient()))
     assert client.get("/api/jcode/runs/nope/stream").status_code == 404
