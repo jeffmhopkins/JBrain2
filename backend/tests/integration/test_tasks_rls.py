@@ -13,6 +13,7 @@ from sqlalchemy.exc import IntegrityError, ProgrammingError
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
+from jbrain.agent.agents import AGENT_NAMES
 from jbrain.agent.loop import AgentResult
 from jbrain.agent.runlog import AgentRunLog
 from jbrain.agent.session import AgentSessionRepo
@@ -96,6 +97,18 @@ async def test_check_constraints_pin_the_sets(maker: async_sessionmaker) -> None
                     ),
                     {"pid": owner.principal_id, "v": val},
                 )
+
+
+async def test_every_code_defined_persona_is_a_valid_task_agent(
+    maker: async_sessionmaker,
+) -> None:
+    """The tasks.agent CHECK (0093, widened in 0095) must admit every persona the code
+    offers, so the task launcher can schedule any of them — the archivist included."""
+    owner = await _owner_ctx(maker)
+    repo = TaskRepo(maker)
+    for name in sorted(AGENT_NAMES):
+        task = await _make_task(repo, owner, name=name, agent=name)
+        assert task.agent == name
 
 
 async def test_repeat_schedule_computes_next_run(maker: async_sessionmaker) -> None:
