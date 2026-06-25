@@ -309,8 +309,8 @@ const MODES={
   fast:{ name:'Cloud · Claude', text:'Claude via your API key (metered) — fastest, strongest tool use.', egress:['out','code → Anthropic'],
          note:'Cloud model — your <b>code</b> is sent to Anthropic (your <b>API key</b>, billed per token), but never any note, fact, or owner data. The sandbox can\'t read the knowledge base.',
          foot:'Claude · cloud · API key — ready', speed:14 },
-  local:{ name:'Local · Qwen coders', text:'Qwen coders on-box — fast 7B for routine steps, strong 30B for hard ones (swaps as needed).', egress:['onbox','stays on-box'],
-          note:'Local models — completions run on the Strix Halo box. <b>No code leaves the sandbox.</b> A fast 7B handles routine turns; jcode swaps up to the strong 30B for hard reasoning (llama-swap). Reached via an Anthropic-compat shim over the OpenAI gateway.',
+  local:{ name:'Local · Qwen coders', text:'Qwen coders on-box — fast 7B for routine steps, Qwen3-Coder-Next 80B-A3B for hard ones.', egress:['onbox','stays on-box'],
+          note:'Local models — completions run on the Strix Halo box. <b>No code leaves the sandbox.</b> A fast 7B handles routine turns; jcode escalates to <b>Qwen3-Coder-Next 80B-A3B</b> (80B capacity, 3B active — fast and strong) for hard reasoning. Reached via the gateway\'s Anthropic-compatible endpoint.',
           foot:'Qwen coders · on-box — fast 7B active', speed:38 }
 };
 let mode='fast', busy=false;
@@ -333,7 +333,7 @@ function setActive(which){ // local fast/strong swap indicator
   const a=document.getElementById('pactive');
   if(mode!=='local'){ a.innerHTML=''; return; }
   a.className='p-active'+(which==='strong'?' strong':'');
-  a.innerHTML=`<span class="ad"></span>${which==='strong'?'strong 30B':'fast 7B'}`;
+  a.innerHTML=`<span class="ad"></span>${which==='strong'?'strong 80B-A3B':'fast 7B'}`;
 }
 
 function grow(){ const ta=document.getElementById('ta'); ta.style.height='auto'; ta.style.height=Math.min(ta.scrollHeight,88)+'px';
@@ -359,7 +359,7 @@ function run(){
     live.textContent=reply.slice(0,i++);
     if(mode==='local'&&!swapped&&i>reply.length*0.4){ // hard step → swap up to strong 30B
       swapped=true; setActive('strong');
-      document.getElementById('footmodel').textContent='Qwen coders · on-box — swapped to strong 30B';
+      document.getElementById('footmodel').textContent='Qwen coders · on-box — swapped to strong 80B-A3B';
     }
     if(i>reply.length){ clearInterval(tick);
       msg.querySelector('.cursor').remove();

@@ -192,11 +192,12 @@
         </div>
         <div class="lp-row strong">
           <span class="lp-k">strong</span>
-          <select class="lp-sel"><option>Qwen3-Coder 30B</option><option>Qwen3-Coder 480B (slow)</option></select>
+          <select class="lp-sel"><option>Qwen3-Coder-Next 80B-A3B</option><option>Qwen3-Coder 30B-A3B</option><option>Qwen3-Coder 480B (batch)</option></select>
           <span class="lp-t">planning · hard reasoning</span>
         </div>
-        <p class="lp-note">jcode runs the <b>fast</b> model by default and <b>swaps up to the strong</b> one for hard steps —
-        on-demand via llama-swap (one resident at a time), or both kept hot if memory allows.</p>
+        <p class="lp-note"><b>Qwen3-Coder-Next 80B-A3B</b> is the recommended strong model — 80B capacity but only <b>3B active</b>,
+        so it's both fast and strong (&gt;70% SWE-Bench Verified). On 128 GB it co-resides with the fast 7B, so the swap is
+        optional — keep both hot, or let llama-swap page the 7B in for instant edits.</p>
       </div>
 
       <div class="sbxnote">
