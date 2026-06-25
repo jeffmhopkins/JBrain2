@@ -87,6 +87,9 @@ const SECTIONS: Section[] = [
 
 const SWIPE_DOWN_PX = 48;
 const EXIT_MS = 150;
+// The Tasks tile badge counts runs since the owner last opened Tasks; that marker
+// is stamped by TasksScreen on open and read here. Same key on both sides.
+export const TASKS_SEEN_KEY = "jb.tasks.seenAt";
 // The Review badge polls while the launcher is open so it reads live — new
 // holds tick up, resolved ones clear — without reopening the menu. Human/
 // analysis pace, so a light interval; the launcher is only mounted while open.
@@ -111,6 +114,8 @@ export function Launcher({ open, active = true, onClose, onNavigate }: LauncherP
   // a poll while the launcher is the surface on screen. Failures just leave the
   // badge at its last value.
   const [reviewCount, setReviewCount] = useState<number | null>(null);
+  // The Tasks tile badge: runs that finished since the owner last opened Tasks.
+  const [taskCount, setTaskCount] = useState<number | null>(null);
   // Two gates quiet the poll: a backgrounded PWA, and a launcher buried under a
   // card. Returning to either re-runs this effect — an immediate refetch, then
   // re-arm — so the badge is current the moment the menu is back on screen.
@@ -119,13 +124,31 @@ export function Launcher({ open, active = true, onClose, onNavigate }: LauncherP
   useEffect(() => {
     if (!open || !active || !foreground) return;
     let stale = false;
-    const refresh = () =>
+    const refresh = () => {
       api
         .reviewQueue()
         .then((queue) => {
           if (!stale) setReviewCount(queue.items.length);
         })
         .catch(() => {});
+      // Seed the "seen" marker on first run so the badge has a baseline; then count
+      // runs started since the owner last opened Tasks.
+      let seen = localStorage.getItem(TASKS_SEEN_KEY);
+      if (seen === null) {
+        seen = new Date().toISOString();
+        try {
+          localStorage.setItem(TASKS_SEEN_KEY, seen);
+        } catch {
+          // best-effort; a missing marker just re-seeds next tick
+        }
+      }
+      api
+        .taskRunActivity(seen)
+        .then((count) => {
+          if (!stale) setTaskCount(count);
+        })
+        .catch(() => {});
+    };
     refresh();
     const interval = setInterval(refresh, REVIEW_POLL_MS);
     return () => {
@@ -225,6 +248,9 @@ export function Launcher({ open, active = true, onClose, onNavigate }: LauncherP
                 {tile.phase && <span className="phase-badge">{tile.phase}</span>}
                 {tile.target === "review" && reviewCount !== null && reviewCount > 0 && (
                   <span className="tile-badge">{reviewCount}</span>
+                )}
+                {tile.target === "tasks" && taskCount !== null && taskCount > 0 && (
+                  <span className="tile-badge">{taskCount}</span>
                 )}
               </button>
             ))}

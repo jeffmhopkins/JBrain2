@@ -12,7 +12,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
-from sqlalchemy import delete, select, update
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from jbrain.db.session import SessionContext, scoped_session
@@ -301,6 +301,19 @@ class TaskRunRepo:
                     cost_tokens=cost_tokens,
                     ended_at=datetime.now(UTC),
                 )
+            )
+
+    async def count_since(self, ctx: SessionContext, since: datetime) -> int:
+        """How many runs started after `since` — the launcher's "new since you last
+        opened Tasks" badge."""
+        async with scoped_session(self._maker, ctx) as session:
+            return int(
+                (
+                    await session.execute(
+                        select(func.count()).select_from(TaskRun).where(TaskRun.started_at > since)
+                    )
+                ).scalar()
+                or 0
             )
 
     async def list_for_task(

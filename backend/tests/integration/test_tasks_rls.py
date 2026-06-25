@@ -186,6 +186,41 @@ async def test_runs_are_owner_only_and_cascade_with_the_task(maker: async_sessio
     assert remaining == 0
 
 
+async def test_count_since_powers_the_badge(maker: async_sessionmaker) -> None:
+    owner = await _owner_ctx(maker)
+    repo, runs = TaskRepo(maker), TaskRunRepo(maker)
+    task = await _make_task(repo, owner)
+
+    marker = datetime.now(UTC)
+    # A run started before the marker doesn't count; two after it do.
+    before = await runs.start(
+        owner,
+        task_id=task.id,
+        principal_id=owner.principal_id,
+        session_id=None,
+        run_id=None,
+        trigger="schedule",
+    )
+    async with scoped_session(maker, owner) as session:
+        await session.execute(
+            text("UPDATE app.task_runs SET started_at = :t WHERE id = :id"),
+            {"t": marker - timedelta(minutes=5), "id": before},
+        )
+    for _ in range(2):
+        await runs.start(
+            owner,
+            task_id=task.id,
+            principal_id=owner.principal_id,
+            session_id=None,
+            run_id=None,
+            trigger="manual",
+        )
+    assert await runs.count_since(owner, marker) == 2
+    # A non-owner sees nothing (RLS).
+    token = SessionContext(principal_kind="capability_token", domain_scopes=("general",))
+    assert await runs.count_since(token, marker) == 0
+
+
 async def test_full_run_lands_session_run_and_task_run(maker: async_sessionmaker) -> None:
     owner = await _owner_ctx(maker)
     repo = TaskRepo(maker)

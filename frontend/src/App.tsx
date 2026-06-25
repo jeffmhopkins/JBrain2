@@ -89,6 +89,10 @@ export function App() {
   // composer: close the card, then HomeScreen flips to Full Brain and seeds it.
   const [compose, setCompose] = useState<ComposeHandoff | null>(null);
   const clearCompose = useCallback(() => setCompose(null), []);
+  // A Tasks run → open its session in Full Brain: close the card, hand the id +
+  // persona to HomeScreen, which flips to the right tab and opens it.
+  const [openSession, setOpenSession] = useState<{ id: string; agent: string } | null>(null);
+  const clearOpenSession = useCallback(() => setOpenSession(null), []);
   // The note view is its own tree layer above home AND above search results.
   const [noteView, setNoteView] = useState<NoteViewSource | null>(null);
   const [noteClosing, setNoteClosing] = useState(false);
@@ -426,6 +430,8 @@ export function App() {
           onOpenLauncher={() => setLauncherOpen(true)}
           compose={compose}
           onComposeConsumed={clearCompose}
+          openSession={openSession}
+          onOpenSessionConsumed={clearOpenSession}
         />
       </div>
 
@@ -497,7 +503,15 @@ export function App() {
 
       {/* Tasks is a self-contained full-screen overlay (its own back bar), like
           Automations — so it renders outside the shared subscreen TopBar wrapper. */}
-      {card === "tasks" && <TasksScreen onClose={() => setCard(null)} />}
+      {card === "tasks" && (
+        <TasksScreen
+          onClose={() => setCard(null)}
+          onOpenSession={(sessionId, agent) => {
+            setCard(null);
+            setOpenSession({ id: sessionId, agent });
+          }}
+        />
+      )}
 
       {/* The wiki reader brings its own subscreen + TopBar (like the entity
           page), so it renders outside the shared wrapper. It stacks above the

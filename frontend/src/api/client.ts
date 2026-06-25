@@ -1989,6 +1989,12 @@ export const api = {
     return (await response.json()) as TaskRun[];
   },
 
+  // The launcher badge: how many task runs have started since `since` (ISO).
+  async taskRunActivity(since: string): Promise<number> {
+    const response = await request(`/api/tasks/run-activity?since=${encodeURIComponent(since)}`);
+    return ((await response.json()) as { count: number }).count;
+  },
+
   // ===== Phase 4: the agent — sessions + Full Brain chat (docs/ASSISTANT.md) =====
 
   async listSessions(): Promise<AgentSession[]> {

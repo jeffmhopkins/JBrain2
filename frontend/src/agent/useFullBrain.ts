@@ -247,6 +247,10 @@ export interface FullBrain {
    * repeated tap doesn't pile up blank sessions. */
   startFresh: () => void;
   open: (session: AgentSession) => void;
+  /** Open a session by id (a Tasks run → its session). Records the request, fetches
+   * the list if needed, and opens it once loaded — suppressing the mode's auto-open
+   * of the latest chat in the meantime so the targeted session isn't clobbered. */
+  requestOpen: (id: string) => void;
   rename: (id: string, title: string) => void;
   remove: (id: string) => void;
   archive: (id: string) => void;
@@ -272,6 +276,9 @@ export function useFullBrain(
   const [sessions, setSessions] = useState<AgentSession[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [active, setActive] = useState<AgentSession | null>(null);
+  // A pending targeted open (requestOpen) — while set, the mode effect won't auto-
+  // open the latest chat, so the requested session isn't clobbered before it loads.
+  const pendingOpenRef = useRef<string | null>(null);
   const [panel, setPanel] = useState<Panel>("none");
   const [proposals, setProposals] = useState<ProposalSummary[]>([]);
   const [openProposal, setOpenProposal] = useState<string | null>(null);
@@ -379,6 +386,9 @@ export function useFullBrain(
   // biome-ignore lint/correctness/useExhaustiveDependencies: keyed on mode/loaded; reads the freshest sessions/active via state + ref.
   useEffect(() => {
     if (!enabled || !mode || !loaded) return;
+    // A targeted open is pending — let the fulfill effect open it; don't auto-open
+    // (or auto-create) this mode's latest chat over the top of it.
+    if (pendingOpenRef.current !== null) return;
     const latest = latestForMode(sessions, mode);
     if (latest) {
       if (latest.id !== activeRef.current?.id) open(latest);
@@ -400,6 +410,17 @@ export function useFullBrain(
     setActive(null);
     setPanel("sessions");
   }, [enabled, mode, loaded, autoStart]);
+
+  // Fulfill a pending targeted open (requestOpen) once its session is in the list.
+  useEffect(() => {
+    const want = pendingOpenRef.current;
+    if (!enabled || want === null) return;
+    const found = sessions.find((s) => s.id === want);
+    if (found) {
+      pendingOpenRef.current = null;
+      open(found);
+    }
+  }, [enabled, sessions]);
 
   // The review inbox, scoped to the open chat: its own staged proposals plus the
   // session-less background ones. Keyed on `activeId` so switching chats reloads
@@ -690,6 +711,24 @@ export function useFullBrain(
     });
   }
 
+  function requestOpen(id: string): void {
+    pendingOpenRef.current = id;
+    const found = sessions.find((s) => s.id === id);
+    if (found) {
+      pendingOpenRef.current = null;
+      open(found);
+      return;
+    }
+    // Not in the loaded list (or the surface was off screen) — fetch so the fulfill
+    // effect can open it. Best-effort: a failed fetch just leaves the request pending.
+    listSessions()
+      .then((all) => {
+        setSessions(all);
+        setLoaded(true);
+      })
+      .catch(() => {});
+  }
+
   async function rename(id: string, title: string): Promise<void> {
     await renameSession(id, title);
     setSessions((prev) => prev.map((s) => (s.id === id ? { ...s, title } : s)));
@@ -758,6 +797,7 @@ export function useFullBrain(
     create,
     startFresh,
     open,
+    requestOpen,
     rename: (id, title) => void rename(id, title).catch(() => {}),
     remove: (id) => void remove(id).catch(() => {}),
     archive: (id) => void archive(id).catch(() => {}),

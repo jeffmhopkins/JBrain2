@@ -17,8 +17,8 @@ import {
   type TaskRun,
   api,
 } from "../api/client";
+import { TASKS_SEEN_KEY } from "../components/Launcher";
 import {
-  CalendarIcon,
   CheckIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
@@ -100,9 +100,20 @@ interface CardProps {
   onFlip: () => void;
   onRun: () => void;
   onEdit: () => void;
+  onOpenSession: (sessionId: string) => void;
 }
 
-function TaskCard({ task, open, running, runs, onToggleOpen, onFlip, onRun, onEdit }: CardProps) {
+function TaskCard({
+  task,
+  open,
+  running,
+  runs,
+  onToggleOpen,
+  onFlip,
+  onRun,
+  onEdit,
+  onOpenSession,
+}: CardProps) {
   const dot = running ? "running" : !task.enabled ? "idle" : "ok";
   return (
     <div className={`task-card${task.enabled ? "" : " off"}${open ? " open" : ""}`}>
@@ -145,20 +156,42 @@ function TaskCard({ task, open, running, runs, onToggleOpen, onFlip, onRun, onEd
           ) : runs.length === 0 ? (
             <p className="muted task-norun">No runs yet.</p>
           ) : (
-            runs.map((r) => (
-              <div key={r.id} className="task-run">
-                <span className={`task-rd ${runDot(r.status)}`} aria-hidden="true" />
-                <span className="task-rt">
-                  {r.status === "error" ? (r.error ?? "failed") : r.summary || "(no output)"}
-                </span>
-                <span className="task-rm">
-                  {r.step_count > 0
-                    ? `${r.step_count} turn${r.step_count === 1 ? "" : "s"} · `
-                    : ""}
-                  {fmtAgo(r.started_at)}
-                </span>
-              </div>
-            ))
+            runs.map((r) =>
+              r.session_id ? (
+                <button
+                  type="button"
+                  key={r.id}
+                  className="task-run task-run-link"
+                  onClick={() => onOpenSession(r.session_id as string)}
+                  aria-label={`Open session: ${r.summary || r.status}`}
+                >
+                  <span className={`task-rd ${runDot(r.status)}`} aria-hidden="true" />
+                  <span className="task-rt">
+                    {r.status === "error" ? (r.error ?? "failed") : r.summary || "(no output)"}
+                  </span>
+                  <span className="task-rm">
+                    {r.step_count > 0
+                      ? `${r.step_count} turn${r.step_count === 1 ? "" : "s"} · `
+                      : ""}
+                    {fmtAgo(r.started_at)}
+                  </span>
+                  <ChevronRightIcon size={14} />
+                </button>
+              ) : (
+                <div key={r.id} className="task-run">
+                  <span className={`task-rd ${runDot(r.status)}`} aria-hidden="true" />
+                  <span className="task-rt">
+                    {r.status === "error" ? (r.error ?? "failed") : r.summary || "(no output)"}
+                  </span>
+                  <span className="task-rm">
+                    {r.step_count > 0
+                      ? `${r.step_count} turn${r.step_count === 1 ? "" : "s"} · `
+                      : ""}
+                    {fmtAgo(r.started_at)}
+                  </span>
+                </div>
+              ),
+            )
           )}
           <div className="task-acts">
             <button type="button" onClick={onEdit}>
@@ -557,9 +590,11 @@ function DeliveryRow({
 
 interface TasksScreenProps {
   onClose: () => void;
+  /** Open the agent session a run produced (hands off to Full Brain). */
+  onOpenSession: (sessionId: string, agent: TaskAgent) => void;
 }
 
-export function TasksScreen({ onClose }: TasksScreenProps) {
+export function TasksScreen({ onClose, onOpenSession }: TasksScreenProps) {
   const [tasks, setTasks] = useState<Task[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [openId, setOpenId] = useState<string | null>(null);
@@ -581,6 +616,16 @@ export function TasksScreen({ onClose }: TasksScreenProps) {
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  // Opening Tasks marks every run so far as "seen", so the launcher's Tasks badge
+  // (runs since last opened) clears the next time the menu is shown.
+  useEffect(() => {
+    try {
+      localStorage.setItem(TASKS_SEEN_KEY, new Date().toISOString());
+    } catch {
+      // best-effort; the launcher re-seeds a missing marker
+    }
+  }, []);
 
   const loadRuns = useCallback(async (taskId: string) => {
     try {
@@ -679,6 +724,7 @@ export function TasksScreen({ onClose }: TasksScreenProps) {
             onFlip={() => void flip(task)}
             onRun={() => void runNow(task)}
             onEdit={() => setDraft(draftFrom(task))}
+            onOpenSession={(sessionId) => onOpenSession(sessionId, task.agent)}
           />
         ))}
       </div>
@@ -707,9 +753,12 @@ export function TasksScreen({ onClose }: TasksScreenProps) {
         <button
           type="button"
           className="icon-btn runs-refresh"
-          onClick={refresh}
-          aria-label="Refresh"
+          onClick={() => setDraft(draftFrom(null))}
+          aria-label="New task"
         >
+          <PlusIcon size={22} />
+        </button>
+        <button type="button" className="icon-btn" onClick={refresh} aria-label="Refresh">
           <RefreshIcon size={20} />
         </button>
       </header>
@@ -749,11 +798,6 @@ export function TasksScreen({ onClose }: TasksScreenProps) {
           </div>
         )}
       </div>
-
-      <button type="button" className="task-fab" onClick={() => setDraft(draftFrom(null))}>
-        <CalendarIcon size={18} />
-        New task
-      </button>
 
       {toast !== null && (
         <output className="runs-toast">

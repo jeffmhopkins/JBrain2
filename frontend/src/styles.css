@@ -14596,3 +14596,26 @@ input.ld-title {
     opacity: 0.3;
   }
 }
+
+/* a run row that opens its session */
+.task-run-link {
+  appearance: none;
+  width: 100%;
+  font: inherit;
+  text-align: left;
+  background: none;
+  border: none;
+  border-top: 1px solid var(--border);
+  cursor: pointer;
+  color: inherit;
+}
+.task-run-link:first-of-type {
+  border-top: none;
+}
+.task-run-link > svg {
+  color: var(--text-3);
+  flex: none;
+}
+.task-run-link:active {
+  background: var(--surface-2);
+}

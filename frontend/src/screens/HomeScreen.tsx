@@ -38,6 +38,11 @@ interface HomeScreenProps {
    * onComposeConsumed. */
   compose?: ComposeHandoff | null;
   onComposeConsumed?: () => void;
+  /** A Tasks run → open its session: flips to the matching conversation tab
+   * (Research for jerv/teacher/archivist, Full Brain for curator) and opens it.
+   * Cleared via onOpenSessionConsumed. */
+  openSession?: { id: string; agent: string } | null;
+  onOpenSessionConsumed?: () => void;
   /** Injected in tests; defaults to the live API client. */
   fbDeps?: FullBrainDeps;
 }
@@ -58,6 +63,8 @@ export function HomeScreen({
   onOpenEntity,
   compose,
   onComposeConsumed,
+  openSession,
+  onOpenSessionConsumed,
   fbDeps,
 }: HomeScreenProps) {
   const [seg, setSeg] = useState<SegState>({ row: "main", mode: "entry" });
@@ -88,6 +95,18 @@ export function HomeScreen({
   // a fresh one) on entry.
   const convMode = seg.mode === "research" || seg.mode === "fullbrain" ? seg.mode : null;
   const fb = useFullBrain(convMode, fbDeps, true);
+
+  // A Tasks run → open its session: flip to the conversation tab that hosts the
+  // session's persona, then open it by id (the controller suppresses the tab's
+  // auto-open of the latest chat until the requested one loads).
+  // biome-ignore lint/correctness/useExhaustiveDependencies: fb methods are recreated each render; keying on them would re-fire the handoff.
+  useEffect(() => {
+    if (!openSession) return;
+    setSeg({ row: "main", mode: openSession.agent === "curator" ? "fullbrain" : "research" });
+    fb.requestOpen(openSession.id);
+    fb.setPanel("none");
+    onOpenSessionConsumed?.();
+  }, [openSession, onOpenSessionConsumed]);
 
   // Re-clicking the conversation tab you're already on starts a fresh chat (a new
   // Jerv in Research, a full-domain Curator in Full Brain); reuse handles empties.
