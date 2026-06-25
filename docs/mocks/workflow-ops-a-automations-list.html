@@ -194,7 +194,6 @@ const ACTIONS={
   reconcile_pending_notes:{cost:'cheap',desc:'Re-enqueue ingest for notes still pending.'},
   reconcile_pending_integration:{cost:'cheap',desc:'Re-enqueue integration for indexed-but-unintegrated notes.'},
   reconcile_unembedded_notes:{cost:'cheap',desc:'Embed notes whose chunks slipped through.'},
-  eval_run:{cost:'expensive',desc:'Run the eval suite (opt-in, budget-gated).'},
 };
 
 // ---- triggers as automations (seeds 0040 event / 0038 nightly / 0041 reconcilers) ----
@@ -328,7 +327,6 @@ const CATALOG=[
   {n:'ocr_attachment',dom:false},{n:'consolidate_predicates',dom:false},{n:'sync_predicates',dom:false},
   {n:'purge_deleted_artifacts',dom:false},{n:'reconcile_pending_notes',dom:false},
   {n:'reconcile_pending_integration',dom:false},{n:'reconcile_unembedded_notes',dom:false},
-  {n:'eval_run',dom:false,opt:true},
 ];
 function renderCat(){
   const rows=CATALOG.map(c=>{
@@ -351,8 +349,8 @@ function renderCat(){
     `<div class="sect">Action registry · ${CATALOG.length} actions</div><div class="cat">${rows}</div>
      <div style="font-size:11.5px;color:var(--text-3);margin:12px 4px 0;line-height:1.5;">
        Data-defined handlers the engine can wire into a pipeline. The six shipped actions are mirrored 1:1
-       to <span style="font-family:var(--font-mono)">app.actions</span>; the cheap reconcilers, purge, and
-       <span style="font-family:var(--font-mono)">eval_run</span> live in-code only.</div>`;
+       to <span style="font-family:var(--font-mono)">app.actions</span>; the cheap reconcilers and purge
+       live in-code only.</div>`;
 }
 
 function showTab(which){

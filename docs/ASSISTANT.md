@@ -1,30 +1,36 @@
 # JBrain2 — Assistant
 
-The self-improving personal agent. This is the **binding design** for evolving
-the Phase-4 tool-calling agent (ROADMAP.md) into a smart, tool-using assistant
-with durable memory and bounded self-improvement — built natively on JBrain2's
-existing substrate (LLM adapter, storage abstraction, RLS-scoped Postgres, job
-queue, review inbox), not bolted on. **The Phase-4 core is shipped** — the
-agent loop, the small tool set, Tier-A memory, Reflexion (Loop 1), the Proposal
+The personal agent. This is the **binding design** for the tool-calling agent
+(ROADMAP.md): a smart, tool-using assistant with durable memory — built natively
+on JBrain2's existing substrate (LLM adapter, storage abstraction, RLS-scoped
+Postgres, job queue, review inbox), not bolted on. **The Phase-4 core is shipped** —
+the agent loop, the small tool set, Tier-A memory, Reflexion (Loop 1), the Proposal
 primitive, and external connectors are all live (see `docs/archive/ASSISTANT_PLAN.md`
-for the build record). The remaining self-improvement loops (2–4) below are
-staged into Phases 5–7 (see Phasing). Synthesized from the research dossiers in
-`docs/archive/research/self-improving-agent/` (A landscape, B memory, C loops,
-D runtime, E fit-review, F red-team).
+for the build record).
+
+The design once staged three further self-improvement loops on top of this core —
+skill learning (Loop 2), durable-knowledge + predicate-canon promotion (Loop 3),
+and prompt/tool self-edit (Loop 4), plus an eval/promotion gate to admit them.
+**Those loops and their promotion harness were removed**; only Loop 1 (reflexion,
+shipped) remains. What stays below is the live agent and its kept primitives;
+references to Loops 2–4 are retained only to record what was cut. Synthesized from
+the research dossiers in `docs/archive/research/self-improving-agent/` (A landscape,
+B memory, C loops, D runtime, E fit-review, F red-team).
 
 ## The paradigm in one paragraph
 
-Steal the **lean core** of a self-improving assistant — file-style working
-memory, a verified skill library, periodic reflection, a small well-shaped tool
-set — and **refuse every breadth axis** (the messaging-platform / model-provider
-/ terminal-backend / plugin sprawl that makes such systems feel bloated). Express
-that core entirely on JBrain2's existing stores: a thin in-house agent loop over
-the LLM adapter; MemGPT-style two-tier memory where the "MD files" are
-storage-backed rows and the "RAG DB" is the existing pgvector hybrid search; and
-four self-improvement loops gated by **blast radius × reversibility**. The
-load-bearing rule that makes all of it safe and keeps the wiki contract intact:
-**the agent improves how it works; the notes→facts→wiki pipeline owns what is
+Steal the **lean core** of a personal assistant — file-style working memory, a
+small well-shaped tool set, ephemeral self-critique (reflexion) — and **refuse
+every breadth axis** (the messaging-platform / model-provider / terminal-backend /
+plugin sprawl that makes such systems feel bloated). Express that core entirely on
+JBrain2's existing stores: a thin in-house agent loop over the LLM adapter; and
+MemGPT-style two-tier memory where the "MD files" are storage-backed rows and the
+"RAG DB" is the existing pgvector hybrid search. The load-bearing rule that makes
+all of it safe and keeps the wiki contract intact: **the agent's only durable
+improvement is ephemeral reflexion; the notes→facts→wiki pipeline owns what is
 true. The agent never gets a privileged write path into citable knowledge.**
+(An earlier design layered a verified skill library and prompt/tool self-edit on
+top, each gated by blast radius × reversibility; those were removed.)
 
 ## Non-negotiables for the assistant
 
@@ -53,16 +59,16 @@ instead enforced by RLS, by an owner confirmation, or by a fail-closed default.
    enforced by an RLS column, not an LLM classifier. A multi-domain answer's
    episode is visible only to a session holding **all** touched scopes; it is
    never decomposed into a `general` row.
-5. **No cross-domain skill or memory composition.** A skill body runs at a
-   **single** domain scope; a skill that reads one domain may not write an
-   artifact in another. Fused memory-plus-corpus retrieval is **owner-full-scope
-   only**.
+5. **No cross-domain memory composition.** Fused memory-plus-corpus retrieval is
+   **owner-full-scope only** — a query runs at a single domain scope, and a turn
+   that reads one domain may not stage an artifact in another.
 6. **Self-improvement cannot auto-change behavior or truth.** Only ephemeral
-   self-correction (Reflexion) is fully auto. Mutating/side-effecting skills never
-   auto-promote. Durable world-knowledge enters **only** as a note through normal
-   ingestion. Prompt/tool edits are PR-shaped, owner-approved, **never**
-   runtime-applied. Skill promotion gates include a **safety/groundedness
-   regression**, not task-success alone.
+   self-correction (Reflexion, Loop 1) is auto, and it persists nothing. Durable
+   world-knowledge enters **only** as a note through normal ingestion. The agent
+   has no runtime path to change its own prompts, tools, or behavior. *(The
+   removed Loops 2–4 — skill promotion, durable-knowledge promotion, prompt/tool
+   self-edit — and their promotion gate are gone; this rule now bounds Loop 1 and
+   the note door alone.)*
 7. **Agent-drafted corrections are attributed and not privileged.** Agent-authored
    notes are provenance-flagged, carry the source ID of the content that prompted
    them, get **normal (not elevated) extraction weight** when sourced from
@@ -70,11 +76,10 @@ instead enforced by RLS, by an owner confirmation, or by a fail-closed default.
    subject-checked and rate-limited. Elevated weight is reserved for owner-authored
    corrections.
 8. **Least privilege; no confused deputy.** Every agent-internal job (reflection,
-   distillation, compaction) runs at the **domain scope and principal of the
+   compaction) runs at the **domain scope and principal of the
    content/session that triggered it** — never an escalation to owner scope.
    Non-owner principals (intake links, device keys) get a **default-deny,
-   capture-only** tool allowlist and cannot write agent memory/skills or trigger
-   self-improvement jobs.
+   capture-only** tool allowlist and cannot write agent memory.
 9. **Controlled egress only.** Agent **output never triggers external resource
    loads** (no markdown images/links/render-time fetches) and there is **no
    arbitrary fetch/HTTP tool**. The *only* outbound egress is the **connector
@@ -86,28 +91,25 @@ instead enforced by RLS, by an owner confirmation, or by a fail-closed default.
    widening, and any connector can be disabled. Location connectors are
    **local-first** so location data stays on-box (an on-box lookup egresses
    nothing and needs no Proposal).
-10. **Bounded self-improvement spend.** Self-improvement pipelines carry hard
-    per-principal and global daily token/cost/job budgets, separate from
-    interactive budgets; they are batched and **never** triggered by
-    untrusted-origin content.
+10. **Untrusted-origin content never triggers a background job.** Any batched or
+    scheduled agent processing runs only on owner-originated content, never on note
+    bodies, intake submissions, or other untrusted-origin input. *(This once also
+    capped a per-principal self-improvement spend budget; those pipelines were
+    removed, but the no-untrusted-trigger rule stands for every remaining job.)*
 11. **Purge is total.** Note deletion cascades to agent episodic memory — delete
     or redact the episode, not merely repair pointers — with a test asserting no
     agent-memory row retains content derived from a deleted note.
-12. **Self-edits cannot weaken safety.** The data/instruction-boundary prompt and
-    the domain-classification logic are **immutable to self-edit**. Self-edit PRs
-    touching security-relevant prompts/tools must pass an adversarial-injection
-    regression suite at 100% before merge.
 
 ## What we steal, and what we refuse
 
-**Steal (the lean core):** a verified, embedding-retrieved **skill library** as
-procedural memory (Voyager); **two-tier memory** with self-edited working blocks
-and paged archival (MemGPT/Letta); **scored retrieval + periodic reflection**
-(Generative Agents) — which maps onto the existing nightly job pattern; the
-**curated-MD + lazy-load** discipline and **progressive disclosure** for skills
-(Claude Agent SDK); **ACI tool discipline** — few, well-shaped, feedback-rich
-tools (SWE-agent); **delta-edit** memory updates that resist context collapse
-(ACE); and **Reflexion/Self-Refine** as the bounded improvement primitives.
+**Steal (the lean core):** **two-tier memory** with self-edited working blocks
+and paged archival (MemGPT/Letta); **scored retrieval** (Generative Agents); the
+**curated-MD + lazy-load** discipline and **progressive disclosure** (Claude Agent
+SDK); **ACI tool discipline** — few, well-shaped, feedback-rich tools (SWE-agent);
+**delta-edit** memory updates that resist context collapse (ACE); and
+**Reflexion/Self-Refine** as the bounded, ephemeral self-correction primitive.
+*(An earlier design also stole a verified, embedding-retrieved skill library
+(Voyager) as procedural memory; that was removed.)*
 
 **Refuse (the breadth bloat that motivated this work):** no messaging-transport
 sprawl (the phone PWA chat is the one interface that matters); no model-provider
@@ -150,8 +152,7 @@ next turn.
 `max_consecutive_tool_errors` (~3, breaks self-repair loops), and a per-session
 `tool_allowlist`. Every run writes a full step log (prompt/tool versions, calls,
 costs, outcome) — at Phase 4 to an agent-run table; from Phase 5 these **are**
-workflow-engine `runs` rows. That log is the training signal the self-improvement
-loops consume.
+workflow-engine `runs` rows — the audit trail for every turn.
 
 **Long-running / expensive tools defer to the Postgres job queue** (a wiki
 rebuild, a bulk re-embed): the tool enqueues a job, returns a handle inline, and
@@ -319,7 +320,7 @@ the knowledge base** at all. The set is closed and code-defined
 - **`jerv`** — a sandboxed general-purpose web chatbot: the internet tools
   (`web_search`, `web_fetch`), the dataless `current_time`, and the owner-approved
   `current_location`, and **no knowledge-base tools** — it runs with empty read
-  scopes, recalls no skills, and writes no episodic memory, so it calls no knowledge
+  scopes and writes no episodic memory, so it calls no knowledge
   tool and reads no note, entity, list, or appointment. Every turn is also given the
   **current date/time** as ambient context (non-personal). `current_location` is the
   one owner-approved exception: a `web`-gated, jerv-only on-box read of the owner's
@@ -432,11 +433,10 @@ it, every time.
 |---|---|---|---|---|
 | **Working / core identity** (persona, owner preferences, behavioral rules) | `agent_memory` rows rendered as MD; small always-loaded index | Owner (policy) + owner-confirmed `remember` | No | **Owner-confirmed only** (non-neg. 3) |
 | **Working / task scratchpad** (current multi-step state, plan, IDs) | `agent_memory` row, task-scoped | Agent | No | Auto; archived on task completion |
-| **Semantic (self)** — distilled behavioral learnings | `agent_memory` topic blocks, lazy-loaded | Owner-confirmed; seeded by owner corrections | No | **Owner-confirmed only** |
+| **Semantic (self)** — behavioral learnings | `agent_memory` topic blocks, lazy-loaded | Owner-confirmed; seeded by owner corrections | No | **Owner-confirmed only** |
 | **Episodic** — conversation/task traces, tool logs | `agent_episodes` rows + segregated-namespace embeddings; pointers to fact/entity IDs | Agent (auto-append) | No | Auto-write; fail-closed domain scope; nightly decay |
 | **Semantic (world)** — facts about the owner's life | **NOT agent memory** — `facts`/`entities`, cited to chunks | Extraction pipeline, from **notes** | **Yes** | Pipeline + review inbox |
 | **Prose knowledge** — articles | **NOT agent memory** — the wiki | Machine-only wiki builder | Yes (citation FKs) | Auto build; split/merge gated |
-| **Procedural** — skills/playbooks | `skills` rows (see loops) | Distilled from verified runs | No | Read-only auto-promote; mutating owner-gated |
 
 **MD files are rows, not paths.** There is no `MEMORY.md` on a disk the agent
 opens by path (non-negotiable #2). The "files" are a presentation format over an
@@ -497,29 +497,38 @@ memory-domain classifier** (owned by the memory layer) is required, and it is
   is cheap; *out of* it is a leak); `general` only if provably generic; ambiguous
   consequential writes → review inbox.
 
-Every new memory/skill table ships the mandated RLS isolation test, including one
+Every new memory table ships the mandated RLS isolation test, including one
 proving a single-scope session cannot read a multi-scope episode. **Note deletion
 cascades** to episodic memory (delete/redact, not just pointer-repair), with a
 test asserting no orphaned content survives.
 
-## Self-improvement loops
+## Reflexion (Loop 1), and the memory door
 
-Four loops, gated by **blast radius × reversibility**. They form a value ladder
-from ephemeral to durable, and each rung up tightens the gate — which is what
-prevents compounding runaway.
+The agent's one durable-improvement primitive is **Reflexion (Loop 1)** — ephemeral
+self-critique, gated by **blast radius × reversibility** at the cheapest rung: it
+writes nothing, so it cannot drift. Alongside it, ordinary **memory growth** stays
+inside the bright line (below): behavioral memory changes only on owner
+confirmation, episodic traces auto-append within a fail-closed scope, and any
+durable world-knowledge re-enters through the **notes door**, never as a privileged
+agent write.
 
 | Loop | Trigger | Autonomy boundary | Degradation guard |
 |---|---|---|---|
 | **1. Reflexion / self-critique** | Task profile flags a turn "critique-worthy" (citation-bearing, mutating, sensitive-domain) | **Auto.** Fully ephemeral; never persists | Mostly **deterministic** verifiers (do cited facts exist and are in-scope? do claims ground in retrieved chunks? does a mutation validate against schema?); LLM critic is a tiebreaker only (judges are noisy). Retry only if the verifier score **strictly improves**; hard cap (N=2) → runaway impossible |
-| **2. Skill / playbook learning** | A run self-verified successful, shaped as a reusable multi-step procedure (≥2 tool calls, parameterizable) | **Read-only skills: auto-with-rollback** (shadow→active on a replay eval). **Mutating/side-effecting or cross-domain skills: owner-gated**, never auto-promote | Replay eval must beat baseline **including a safety/groundedness regression** (citation validity, caveat presence, refusal on out-of-policy asks), not task-success alone. Per-skill rolling success auto-quarantines stale skills. Skills tagged at their single domain; descriptions are sanitized data, not copied trace prose; active-skill count capped with usefulness-decay eviction |
-| **3. Memory / knowledge growth** | Chat reveals a durable preference (behavioral) or the agent infers durable world-knowledge | **Behavioral tier: owner-confirmed write only** (non-neg. 3) — not auto. **Episodic tier: auto** (fail-closed scope, decay). **Durable world-knowledge: re-enters as a note**, governed by the existing fact-conflict / supersession / review-inbox flow | The agent is a **source, never an editor** of citable knowledge. Agent notes get normal weight, distinct inbox item, rate limit, subject check. Conflicting preferences route to the review inbox |
-| **4. Prompt / tool self-editing** | Offline eval flags a regressing `.prompt`; a correction/rejection cluster on one prompt's failure mode; or the agent proposes an improvement | **Human-gated, no runtime self-application.** The agent drafts a `.prompt`/`.tool` **diff with a version bump** + rationale + a new eval fixture; it lands as a **branch + PR** (or a review-inbox item that drafts one) | Reuse the existing safety stack verbatim: the CI **version-bump guard**, the prompt-quality **eval suite** (no regression on the existing set + a win on the new case), `git revert` rollback, git history as the immutable audit log. Security-relevant edits must pass an **adversarial-injection** suite at 100%; the data/instruction-boundary and domain-classification prompts are **immutable to self-edit** |
 
-**One-sentence policy:** ephemeral self-correction is free; reusable read-only
-procedures are auto-but-shadow-and-safety-gated; durable knowledge re-enters
-through the notes door so the wiki contract holds; behavior-defining prompt/tool
-edits are deliberate, versioned, reviewed migrations — never runtime self-mutation;
-and behavioral memory changes only on explicit owner confirmation.
+**Memory / knowledge growth** is not a self-improvement loop but the ordinary
+memory discipline: a chat that reveals a durable behavioral preference writes only
+on **owner-confirmed `remember`** (non-neg. 3); episodic traces **auto-append**
+(fail-closed scope, nightly decay); and **durable world-knowledge re-enters as a
+note**, governed by the existing fact-conflict / supersession / review-inbox flow —
+the agent is a **source, never an editor** of citable knowledge (agent notes get
+normal weight, a distinct inbox item, a rate limit, a subject check).
+
+*The design once added three further self-improvement loops here — **Loop 2**
+(skill/playbook learning), **Loop 3** (durable-knowledge + predicate-canon
+promotion), and **Loop 4** (prompt/tool self-edit) — each behind an eval/promotion
+gate. **Those loops and the gate were removed.** Only Loop 1 above shipped and
+remains.*
 
 **Loop 1 in the live turn (shipped, Phase 5 Track R).** Reflexion is wired into
 the only production turn — `AgentLoop.run_stream` (the `/chat` SSE path). The turn
@@ -544,33 +553,27 @@ Two modes:
   verification clears.
 
 Crucially, reflexion in the live turn is bound by the **ordinary per-turn cost
-guardrail** (`Guardrails.max_cost_tokens`), **not** the self-improvement daily
-budget — a live interactive turn must never be starved by a nightly eval. It
-writes **nothing durable** (Loop 1 is ephemeral): the verdict is forwarded to the
-phone but never persisted to the transcript, so there is no table, no migration,
-and no RLS surface.
+guardrail** (`Guardrails.max_cost_tokens`) — a live interactive turn must never be
+starved by a background job. It writes **nothing durable** (Loop 1 is ephemeral):
+the verdict is forwarded to the phone but never persisted to the transcript, so
+there is no table, no migration, and no RLS surface.
 
-**Composition without runaway.** Each promotion strictly requires a *measured*
-gain (a verifier improvement, beating a safety-inclusive baseline, passing the
-fact-conflict flow, an eval win + human approval), so the system cannot spin
-without producing value. Cost is bounded by hard daily budgets on the
-self-improvement pipelines (separate from interactive chat), nightly batching, and
-the rule that **untrusted-origin content never triggers a self-improvement job**.
-The only loops that can change durable truth (Tier-B) or behavior (Loop 4) are
-both gated by existing human surfaces; drift can only accumulate in reversible
-episodic memory and shadow skills (prune / quarantine). All four loops report into
-one offline eval store, giving a single baseline every promotion must beat.
+**No runaway.** Loop 1 changes nothing durable — it can only improve a single live
+answer, capped at N=2 retries, and persists no state, so there is no promotion to
+compound and no drift to accumulate. Durable world-knowledge can still enter, but
+only through the **notes door** under the existing fact-conflict / supersession /
+review-inbox flow, and **untrusted-origin content never triggers a background
+job**.
 
 ## Staging & approval (the Proposal primitive)
 
-Several gated paths above (agent-correction, knowledge-proposal, prompt/tool
-self-edit, mutating-skill promotion) are the same shape: **the agent wants an
-effect it is not privileged to cause directly, so it stages the effect and the
-owner enacts it.** Promote that shape to one first-class primitive instead of
-re-inventing it per feature.
+Several gated paths above (agent-correction, knowledge-proposal, wiki-restructure,
+egress) are the same shape: **the agent wants an effect it is not privileged to
+cause directly, so it stages the effect and the owner enacts it.** Promote that
+shape to one first-class primitive instead of re-inventing it per feature.
 
 **A `Proposal` is the unit of staged work, and it is a tree.** It captures: `kind`
-(correction / knowledge / wiki-restructure / prompt-edit / skill-promotion / egress), a
+(correction / knowledge / wiki-restructure / egress), a
 **tree of staged operations** in enactable form (structured intents the relevant
 machine executor will run — never prose for a human to copy), a **rendered preview
 of the effect** at every node (the diff, the new revision, the article-tree change
@@ -579,8 +582,7 @@ attachments, or intake that prompted it, by ID), the **requesting principal and
 domain scope**, and a **per-node `status`** (`staged → approved → enacted | rejected
 | expired`). Every Proposal surfaces as a distinct, typed **review-inbox** item; the
 inbox is the one approval surface, presented as the **Proposals page** (reached by a
-left-swipe from the Full Brain composer — DESIGN.md). PRs remain the surface for the
-code/prompt/tool subset — a `kind=prompt-edit` Proposal *is* a drafted PR.
+left-swipe from the Full Brain composer — DESIGN.md).
 
 **The tree is approvable in whole or in part.** Operations are organized
 hierarchically — a root intent ("restructure the health wiki"), grouping nodes (one
@@ -656,26 +658,25 @@ JBrain2's existing parts.
 
 | Need | Reuses | Net-new |
 |---|---|---|
-| Loops as scheduled, audited processes | Workflow engine (`events`→`triggers`→`pipelines`→`runs`); self-improvement loops are pipeline defs (Phase 5+) | A few pipeline defs + nightly triggers |
-| Human gating | Review inbox ("one queue for everything needing judgment") | The unified **Proposal** primitive + typed items: agent-correction, knowledge-proposal, wiki-restructure, prompt-self-edit, skill-promotion |
-| Behavior versioning / rollback / audit | `.prompt`/`.tool` files + YAML `version` + CI version-bump guard + git + eval suite | Reuse verbatim |
+| Agent jobs as scheduled, audited processes | Workflow engine (`events`→`triggers`→`pipelines`→`runs`) | A few pipeline defs + nightly triggers |
+| Human gating | Review inbox ("one queue for everything needing judgment") | The unified **Proposal** primitive + typed items: agent-correction, knowledge-proposal, wiki-restructure |
+| Behavior versioning / rollback / audit | `.prompt`/`.tool` files + YAML `version` + CI version-bump guard + git | Reuse verbatim |
 | Durable knowledge respecting the wiki contract | Notes→facts→wiki spine + correction loop + supersession + per-domain gating | `notes.provenance` flag |
-| Skill & memory retrieval | pgvector + RRF hybrid search | `skills`, `agent_memory`, `agent_episodes` tables |
+| Memory retrieval | pgvector + RRF hybrid search | `agent_memory`, `agent_episodes` tables |
 | Domain firewalls across all of it | RLS domain scoping + mandated isolation tests; subjects/principals/domains | The domain classifier; RLS tests per new table; the **session read-scope selector** + per-tool permission class + session action policy |
 | Cheap-vs-strong routing | LLM-adapter task profiles | A couple of profiles + `.prompt` files |
 | Tests | Adapter fake + testcontainers + coverage gates | Tests-with-code as usual |
 
-**Net new:** three tables (`agent_memory`, `agent_episodes`, `skills`, each
-`domain_id` + RLS test), the `notes.provenance` flag, the `.tool` sidecar
-convention + registry, the write-time domain classifier, a handful of `.prompt`/
-pipeline defs and review-inbox item types, and the shared offline eval harness.
-**Goal: zero new runtime dependencies** — validate any sandbox/eval tooling against
-the existing stack first, and update `scripts/dev-setup.sh` in the same PR as any
-new dep, tool, or setup step (non-negotiable #8).
+**Net new:** two tables (`agent_memory`, `agent_episodes`, each `domain_id` + RLS
+test), the `notes.provenance` flag, the `.tool` sidecar convention + registry, the
+write-time domain classifier, and a handful of `.prompt`/pipeline defs and
+review-inbox item types. **Goal: zero new runtime dependencies** — validate any new
+tooling against the existing stack first, and update `scripts/dev-setup.sh` in the
+same PR as any new dep, tool, or setup step (non-negotiable #8).
 
 ## Phasing
 
-The agent **shipped in Phase 4** (✅); the loops as written lean on later
+The agent **shipped in Phase 4** (✅); some kept capabilities lean on later
 machinery (`runs`/scheduler = Phase 5, wiki/correction-note loop = Phase 6).
 Stage accordingly — **do not describe a Phase-6 world as Phase 4**.
 
@@ -684,20 +685,18 @@ Stage accordingly — **do not describe a Phase-6 world as Phase 4**.
   chat streaming; **Reflexion (Loop 1)** (ephemeral, needs nothing durable);
   **Tier-A memory** — `agent_memory`/`agent_episodes` with owner-confirmed
   behavioral writes, auto fail-closed episodic writes, the domain classifier, and
-  the three RLS tables/tests; agent-authored **notes** producing reviewable facts
+  the RLS tables/tests; agent-authored **notes** producing reviewable facts
   (the note→fact path is Phase 3; the wiki-citation half lands with the wiki). The
   **Proposal / stage-and-approve primitive** is introduced here as the unified shape
   for the review-inbox item types (agent-correction, knowledge-proposal).
-- **Phase 5 (workflow engine):** agent runs become `runs` rows; self-improvement
-  loops become scheduled pipeline defs with daily budgets; the **eval harness** is
-  stood up as the gating dependency for Loops 2 and 4 — and *fed* by a nightly
-  `eval_run` schedule (Track H·B) that scores the live model and stores `EvalRun`s,
-  a standalone regression signal even before a promotion consumer exists.
-- **Phase 6 (wiki):** **Skill learning (Loop 2)** auto-promotion against the eval
-  harness; **prompt/tool self-editing (Loop 4)** as PR-shaped proposals;
-  **Tier-B** durable-knowledge promotion fully closes the loop through the wiki's
-  correction-note machinery; the **wiki analysis & restructuring** capability and
-  its `wiki-restructure` Proposal flow build here on the wiki + review-inbox machinery.
+- **Phase 5 (workflow engine):** agent runs become `runs` rows; **Reflexion
+  (Loop 1)** is wired into the live `/chat` turn (Track R). *(This phase once also
+  stood up an eval/promotion harness to gate the later self-improvement loops; that
+  harness and those loops were removed — the note-analysis calibration evals
+  (`docs/CALIBRATION_LOOP.md`) remain as a CI quality guard only, never a promotion
+  gate.)*
+- **Phase 6 (wiki):** the **wiki analysis & restructuring** capability and its
+  `wiki-restructure` Proposal flow build here on the wiki + review-inbox machinery.
 - **Phase 7 (outer ring):** intake-link and device-key principals get the
   default-deny capture-only tool allowlist; confused-deputy scoping
   (non-negotiable #8) is enforced as those principals come online.
@@ -707,12 +706,7 @@ Stage accordingly — **do not describe a Phase-6 world as Phase 4**.
 The sequenced, codebase-grounded build-out — PRs, the new-table data model, and
 resolutions to the questions below — lives in `docs/archive/ASSISTANT_PLAN.md`.
 
-- The eval/benchmark harness specifics: fixtures, baseline, and who curates "the
-  originating task class" for skill replay and prompt-edit gating.
-- The combined ER model (the three tables + namespace discriminator + episode→fact
+- The combined ER model (the two memory tables + namespace discriminator + episode→fact
   pointer table + `notes.provenance`) drawn explicitly with FKs.
 - One mechanism or two for session compaction (mid-conversation) vs nightly
   episodic decay — both touch `agent_episodes`.
-- `skill_version` stamped on `runs` for auditability, mirroring the `.prompt`
-  version stamp, and the Alembic migration/rollback story for the `skills` schema.
-- The exact daily self-improvement cost ceiling and kill-switch values.

@@ -184,7 +184,6 @@ const ACTIONS={
   reconcile_pending_notes:{cost:'cheap',desc:'Re-enqueue ingest for notes still pending — dropped-event safety net (in-code).'},
   reconcile_pending_integration:{cost:'cheap',desc:'Re-enqueue integration for indexed-but-unintegrated notes (in-code).'},
   reconcile_unembedded_notes:{cost:'cheap',desc:'Embed notes whose chunks slipped through (in-code).'},
-  eval_run:{cost:'expensive',desc:'Run the eval suite — opt-in, budget-gated, not in the always-on six (in-code).',mutating:false},
 };
 const SEEDED=new Set(['ingest_note','embed_note','integrate_note','ocr_attachment','consolidate_predicates','sync_predicates']);
 
