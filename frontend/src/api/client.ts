@@ -825,6 +825,8 @@ export interface RunSummary {
   cost_tokens: number;
   /** The first failing step's name; null unless status is "error". */
   last_error: string | null;
+  /** A live "processed X of Y" line while the run is in flight; null once it closes. */
+  progress_note: string | null;
 }
 
 /** One node in a run's step tree (the split-panel; GET /api/runs/{id}). */
@@ -854,6 +856,8 @@ export interface RunDetail {
   step_count: number;
   cost_tokens: number;
   stop_reason: string | null;
+  /** A live "processed X of Y" line while the run is in flight; null once it closes. */
+  progress_note: string | null;
   steps: RunStepView[];
 }
 

@@ -46,7 +46,7 @@ from jbrain.wiki.actions import WIKI_SPECS, wiki_handlers
 from jbrain.wiki.rewriter import LlmRewriter
 from jbrain.workflow import dispatcher, scheduler
 from jbrain.workflow.registry import ACTION_SPECS, ActionRegistry, build_registry
-from jbrain.workflow.runlog import PipelineRunLog, finalize_job_step
+from jbrain.workflow.runlog import PipelineRunLog, finalize_job_step, set_run_progress
 
 log = structlog.get_logger()
 
@@ -69,6 +69,10 @@ Handler = Callable[[dict[str, Any]], Awaitable[None]]
 # A handler that opts into the narrowed execution scope by accepting it explicitly.
 ScopedHandler = Callable[[dict[str, Any], SessionContext], Awaitable[None]]
 
+# A live-progress sink a long-running handler may opt into (a keyword-only `progress`
+# parameter): each call updates its run's `progress_note` for the Ops "Runs" screen.
+ProgressFn = Callable[[str], Awaitable[None]]
+
 
 def resolve_exec_context(job: queue.Job) -> SessionContext:
     """The `SessionContext` a claimed job's handler runs under (E1, no confused
@@ -83,16 +87,30 @@ def resolve_exec_context(job: queue.Job) -> SessionContext:
 
 
 async def _invoke(
-    handler: Handler | ScopedHandler, payload: dict[str, Any], ctx: SessionContext
+    handler: Handler | ScopedHandler,
+    payload: dict[str, Any],
+    ctx: SessionContext,
+    progress: ProgressFn,
 ) -> None:
-    """Call a handler, passing the resolved execution context only to a handler that
-    declares a second parameter for it (the narrowed-scope handlers). The existing
-    payload-only handlers are called exactly as before."""
-    takes_ctx = len(inspect.signature(handler).parameters) >= 2
-    if takes_ctx:
-        await cast("ScopedHandler", handler)(payload, ctx)
+    """Call a handler, injecting only the extras it actually declares. The execution
+    context is passed positionally to a handler with a second positional parameter (the
+    narrowed-scope handlers); a `progress` callback is passed by keyword to a handler
+    that declares a `progress` parameter (a long sweep reporting its progress). A plain
+    payload-only handler is still called exactly as before."""
+    params = inspect.signature(handler).parameters
+    kwargs: dict[str, Any] = {}
+    if "progress" in params:
+        kwargs["progress"] = progress
+    positional = sum(
+        1
+        for name, p in params.items()
+        if name != "progress"
+        and p.kind in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)
+    )
+    if positional >= 2:
+        await cast("ScopedHandler", handler)(payload, ctx, **kwargs)
     else:
-        await cast("Handler", handler)(payload)
+        await cast("Handler", handler)(payload, **kwargs)
 
 
 async def process_one(
@@ -120,12 +138,21 @@ async def process_one(
         log.error("worker.job_bad_scope_stamp", job_id=job.id, kind=job.kind, error=repr(exc))
         return True
     ran_as = "system" if exec_ctx is queue.SYSTEM_CTX else "scoped"
+
+    async def report_progress(note: str) -> None:
+        # Live "processed X of Y" on this job's run, for the Ops "Runs" screen.
+        # Best-effort: a progress write must never disturb the job it annotates.
+        try:
+            await set_run_progress(maker, queue.SYSTEM_CTX, job.id, note)
+        except Exception:  # noqa: BLE001 — progress is an annotation, never the job's gate
+            log.warning("worker.progress_write_failed", job_id=job.id)
+
     # Tally the LLM tokens AND capture the structured-log trace this job emits, so its
     # run-log step shows the real cost + duration + a reviewable "full logs" view —
     # not the 0-token placeholder. logs.events is the tap; toks.total the token sum.
     with TokenScope() as toks, LogScope() as logs:
         try:
-            await _invoke(handler, job.payload, exec_ctx)
+            await _invoke(handler, job.payload, exec_ctx, report_progress)
         except queue.PermanentJobError as exc:
             # Retrying cannot help (e.g. malformed extraction after the re-ask):
             # fail now instead of burning the retry budget.

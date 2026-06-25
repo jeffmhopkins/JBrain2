@@ -42,6 +42,7 @@ class RunSummaryOut(BaseModel):
     step_count: int
     cost_tokens: int
     last_error: str | None
+    progress_note: str | None
 
 
 class RunStepOut(BaseModel):
@@ -67,6 +68,7 @@ class RunDetailOut(BaseModel):
     step_count: int
     cost_tokens: int
     stop_reason: str | None
+    progress_note: str | None
     steps: list[RunStepOut]
 
 

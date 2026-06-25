@@ -87,6 +87,9 @@ class Run(Base):
     )
     status: Mapped[str] = mapped_column(Text, default="running", server_default="running")
     stop_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # A free-text "processed X of Y" line a long-running job updates as it works (the
+    # Ops "Runs" screen polls it live); cleared when the run closes. Counts/phase only.
+    progress_note: Mapped[str | None] = mapped_column(Text, nullable=True)
     step_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     cost_tokens: Mapped[int] = mapped_column(BigInteger, default=0, server_default="0")
     prompt_version: Mapped[str | None] = mapped_column(Text, nullable=True)

@@ -263,6 +263,7 @@ describe("OpsScreen", () => {
             step_count: 3,
             cost_tokens: 4100,
             last_error: null,
+            progress_note: null,
           },
         ]);
       // The sweep-trigger list is sibling Track B's; absent here.

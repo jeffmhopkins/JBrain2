@@ -170,8 +170,17 @@ function RunRow({ run, onOpen }: RunRowProps) {
           {run.name}
         </span>
         <span className="runs-row-sub">
-          {fmtDuration(run.duration_ms)} · {run.step_count} steps · {fmtTokens(run.cost_tokens)} tok
-          {run.last_error ? ` · ${run.last_error}` : ""}
+          {run.status === "running" && run.progress_note ? (
+            // While in flight, the live "processed X of Y" line is the useful thing to
+            // show; the duration/tokens summary lands when the run closes.
+            run.progress_note
+          ) : (
+            <>
+              {fmtDuration(run.duration_ms)} · {run.step_count} steps ·{" "}
+              {fmtTokens(run.cost_tokens)} tok
+              {run.last_error ? ` · ${run.last_error}` : ""}
+            </>
+          )}
         </span>
       </span>
       <span className="runs-row-right">
@@ -215,6 +224,9 @@ function RunDetailSheet({ run, detail, error, onClose, onRerun }: DetailProps) {
           {run.kind} · {fmtAgo(run.started_at)} · {fmtDuration(run.duration_ms)} ·{" "}
           {fmtTokens(run.cost_tokens)} tok
         </span>
+        {run.status === "running" && run.progress_note && (
+          <span className="runs-sp-progress">{run.progress_note}</span>
+        )}
       </div>
       <div className="runs-sp-body">
         {error !== null ? (

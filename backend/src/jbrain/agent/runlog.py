@@ -134,6 +134,8 @@ class RunSummary:
     step_count: int
     cost_tokens: int
     last_error: str | None
+    # A live "processed X of Y" line while the run is in flight; null once it closes.
+    progress_note: str | None
 
 
 @dataclass(frozen=True)
@@ -165,6 +167,7 @@ class RunDetail:
     step_count: int
     cost_tokens: int
     stop_reason: str | None
+    progress_note: str | None
     steps: list[RunStepView]
 
 
@@ -219,6 +222,7 @@ class RunLogReader:
                         step_count=run.step_count,
                         cost_tokens=run.cost_tokens,
                         last_error=last_error,
+                        progress_note=run.progress_note,
                     )
                 )
             return out
@@ -258,6 +262,7 @@ class RunLogReader:
                 step_count=run.step_count,
                 cost_tokens=run.cost_tokens,
                 stop_reason=run.stop_reason,
+                progress_note=run.progress_note,
                 steps=[
                     RunStepView(
                         idx=s.idx,

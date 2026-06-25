@@ -16,6 +16,7 @@ const RUNS: RunSummary[] = [
     step_count: 3,
     cost_tokens: 4100,
     last_error: null,
+    progress_note: "processed 12 of 30 emails",
   },
   {
     id: "r3",
@@ -27,6 +28,7 @@ const RUNS: RunSummary[] = [
     step_count: 4,
     cost_tokens: 6700,
     last_error: "ocr_attachment",
+    progress_note: null,
   },
 ];
 
@@ -40,6 +42,7 @@ const DETAIL: RunDetail = {
   step_count: 4,
   cost_tokens: 6700,
   stop_reason: "step_error",
+  progress_note: null,
   steps: [
     {
       idx: 0,
@@ -91,6 +94,14 @@ describe("RunsScreen", () => {
     expect(within(active as HTMLElement).getByText("1")).toBeInTheDocument();
     const failed = screen.getByText("failed today").closest(".runs-tile");
     expect(within(failed as HTMLElement).getByText("1")).toBeInTheDocument();
+  });
+
+  it("shows a running run's live progress note in place of the stats line", async () => {
+    mount();
+    // The in-flight run surfaces its "processed X of Y" note; the done/failed run
+    // still shows the duration/steps/tokens summary.
+    expect(await screen.findByText("processed 12 of 30 emails")).toBeInTheDocument();
+    expect(screen.getByText(/4 steps/)).toBeInTheDocument();
   });
 
   it("raises the split panel with the step tree on tapping a run", async () => {

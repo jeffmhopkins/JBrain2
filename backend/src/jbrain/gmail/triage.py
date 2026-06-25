@@ -94,6 +94,10 @@ TRIAGE_INBOX_SPEC = ActionSpec(
 # credential change with no restart.
 ClientFactory = Callable[[], Awaitable[GmailApi]]
 
+# A live-progress sink the worker injects (the run-log's progress_note); None when the
+# handler runs outside the worker (a direct test call).
+ProgressFn = Callable[[str], Awaitable[None]]
+
 
 def _message_day(msg: GmailMessage) -> date | None:
     """The UTC calendar day of a message's Date header, or None when it can't be
@@ -123,7 +127,7 @@ class InboxTriage:
         self._client_factory = client_factory
         self._router = router
 
-    async def run(self, _payload: dict[str, Any]) -> None:
+    async def run(self, _payload: dict[str, Any], *, progress: ProgressFn | None = None) -> None:
         gmail = await self._client_factory()
         ids = await gmail.search("in:inbox", max_results=_SEARCH_CAP)
         if not ids:
@@ -136,12 +140,14 @@ class InboxTriage:
             log.info("triage_inbox.nothing_to_triage", fetched=len(messages))
             return
 
-        verdicts = await self._classify(batch)
+        await self._note(progress, f"reading {len(batch)} emails from {day}")
+        verdicts = await self._classify(batch, progress)
         if not verdicts:
             log.warning("triage_inbox.no_verdicts", day=str(day), considered=len(batch))
             return
 
         counts = await self._file(gmail, batch, verdicts)
+        await self._note(progress, f"filed {sum(counts.values())} of {len(batch)} emails")
         log.info(
             "triage_inbox.filed",
             day=str(day),
@@ -171,13 +177,15 @@ class InboxTriage:
         batch.sort(key=lambda m: m.id)
         return target, batch
 
-    async def _classify(self, batch: Sequence[GmailMessage]) -> dict[str, str]:
-        """Map each message id to its bucket via a SEPARATE LLM call per email. A
-        verdict the model omits or labels with an unknown bucket is dropped (that
-        message stays in the inbox); a low-confidence spam verdict is downgraded to
-        the safe, visible bucket."""
+    async def _classify(
+        self, batch: Sequence[GmailMessage], progress: ProgressFn | None
+    ) -> dict[str, str]:
+        """Map each message id to its bucket via a SEPARATE LLM call per email,
+        reporting "processed X of Y" as it goes. A verdict the model omits or labels
+        with an unknown bucket is dropped (that message stays in the inbox); a
+        low-confidence spam verdict is downgraded to the safe, visible bucket."""
         verdicts: dict[str, str] = {}
-        for msg in batch:
+        for i, msg in enumerate(batch):
             result = await self._router.complete(
                 task="triage.classify",
                 system=_PROMPT.render(),
@@ -188,7 +196,14 @@ class InboxTriage:
             bucket = self._resolve_bucket(result.parsed)
             if bucket is not None:
                 verdicts[msg.id] = bucket
+            await self._note(progress, f"processed {i + 1} of {len(batch)} emails")
         return verdicts
+
+    @staticmethod
+    async def _note(progress: ProgressFn | None, note: str) -> None:
+        """Emit a live progress note when the worker injected a sink (no-op in tests)."""
+        if progress is not None:
+            await progress(note)
 
     @staticmethod
     def _render_email(msg: GmailMessage) -> str:
