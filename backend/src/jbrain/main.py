@@ -39,6 +39,7 @@ from jbrain.api import (
     feed,
     health,
     images,
+    images_render,
     live,
     locations,
     member,
@@ -84,6 +85,7 @@ from jbrain.gmail import GmailClientProvider
 from jbrain.gmail.triage import TRIAGE_INBOX_SPEC
 from jbrain.image_gen.comfyui import ComfyUiImageGen
 from jbrain.image_gen.gateway import ComfyUiGatewayClient
+from jbrain.image_gen.render import ImageRenderService
 from jbrain.lists.repo import SqlListsRepo
 from jbrain.llm import build_router
 from jbrain.llm.local_gateway import LocalGatewayClient
@@ -306,6 +308,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             # The management client (status/free) for the owner image-settings surface
             # — the sibling of app.state.local_gateway, wired on the same gate.
             app.state.comfyui_gateway = ComfyUiGatewayClient(settings.comfyui_url)
+            # The shared render core (Wave L2): the jerv handlers AND the direct owner API
+            # (api/images_render) drive this one path, so behavior never diverges. It owns the
+            # unified-memory time-share (free the LLM before / ComfyUI after a render), the
+            # blob put, and the RLS-scoped row insert.
+            app.state.image_render = ImageRenderService(
+                app.state.image_gen,
+                app.state.blob_store,
+                app.state.generated_image_repo,
+                maker,
+                app.state.local_gateway,
+                app.state.comfyui_gateway,
+                settings.comfyui_models,
+            )
             image_handlers = build_image_handlers(
                 app.state.image_gen,
                 app.state.blob_store,
@@ -326,10 +341,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 # for a model the operator never installed fails with a clear, actionable
                 # message rather than ComfyUI's opaque missing-checkpoint error.
                 settings.comfyui_models,
+                # The handlers are a thin adapter over the shared service.
+                render=app.state.image_render,
             )
         else:
             app.state.image_gen = None
             app.state.comfyui_gateway = None
+            app.state.image_render = None
         # jerv's on-box audio transcription (docs/WHISPER_TRANSCRIPTION_PLAN.md).
         # Wired only when the whisper gateway is configured; the registry drops the
         # `transcribe` sidecar otherwise (graceful degrade, like the image tools).
@@ -504,6 +522,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(family.router, prefix="/api")
     app.include_router(feed.router, prefix="/api")
     app.include_router(images.generated_router, prefix="/api")
+    # The gallery list reads existing rows, so it is always available. The direct
+    # generate/edit render endpoints mount only when image hosting is configured —
+    # an unconfigured box 404s them (graceful degrade, mirroring the tool omission).
+    app.include_router(images_render.list_router, prefix="/api")
+    if settings.comfyui_url:
+        app.include_router(images_render.router, prefix="/api")
     app.include_router(image_settings_api.router, prefix="/api")
     app.include_router(lists_api.router, prefix="/api")
     app.include_router(llm_settings_api.router, prefix="/api")

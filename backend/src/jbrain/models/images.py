@@ -81,3 +81,12 @@ class GeneratedImageRepo:
         return (
             await session.execute(select(GeneratedImage).where(GeneratedImage.id == key))
         ).scalar_one_or_none()
+
+    async def list(self, session: AsyncSession, *, limit: int) -> list[GeneratedImage]:
+        """The owner's rows newest-first (the gallery). RLS-scoped: an owner session sees its
+        own artifacts, a non-owner session sees none (the owner-only firewall does the hiding,
+        not this query)."""
+        rows = await session.execute(
+            select(GeneratedImage).order_by(GeneratedImage.created_at.desc()).limit(limit)
+        )
+        return list(rows.scalars().all())
