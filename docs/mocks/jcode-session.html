@@ -51,6 +51,19 @@
   .modeline{display:flex;align-items:center;gap:8px;margin-top:9px;font-size:12px;color:var(--text-2);line-height:1.45}
   .modeline .pin{width:7px;height:7px;border-radius:2px;flex:none}
   .modeline.fast .pin{background:var(--steel)} .modeline.local .pin{background:var(--amber)}
+  .pinned-tag{font-size:9.5px;font-weight:600;color:var(--text-3);border:1px solid var(--border);border-radius:999px;padding:1px 6px;margin-left:4px;letter-spacing:.04em}
+  .mock-toggle{float:right;font-size:10px;color:var(--steel);cursor:pointer;text-transform:none;letter-spacing:0}
+  .pinned{display:flex;align-items:center;gap:9px;padding:10px 11px;background:var(--surface-2);border:1px solid var(--border);border-radius:11px}
+  .pinned.fast{border-color:color-mix(in srgb,var(--steel) 32%,var(--border))}
+  .pinned.local{border-color:color-mix(in srgb,var(--amber) 32%,var(--border))}
+  .pinned .p-ic{width:17px;height:17px;flex:none}
+  .pinned.fast .p-ic{color:var(--steel)} .pinned.local .p-ic{color:var(--amber)}
+  .pinned .p-name{font-weight:600;font-size:13px}
+  .pinned .p-active{font-size:11px;color:var(--text-2);font-family:var(--mono);display:none;align-items:center;gap:5px}
+  .pinned.local .p-active{display:inline-flex}
+  .pinned .p-active .ad{width:6px;height:6px;border-radius:999px;background:var(--green);transition:.2s}
+  .pinned .p-active.strong .ad{background:var(--amber)}
+  .pinned .egress{margin-left:auto;font-size:11px;padding:2px 8px;border-radius:999px;border:1px solid var(--border);white-space:nowrap}
   .modeline .egress{margin-left:auto;font-size:11px;padding:2px 8px;border-radius:999px;border:1px solid var(--border);white-space:nowrap}
   .egress.out{color:var(--steel);border-color:color-mix(in srgb,var(--steel) 35%,var(--border))}
   .egress.onbox{color:var(--green);border-color:color-mix(in srgb,var(--green) 35%,var(--border))}
@@ -143,7 +156,7 @@
   <h1 class="title">jcode · coding session</h1>
   <p class="meta">Brainstorm mock for <b>code mode</b> — a sandboxed Claude Code session fronted by the JBrain PWA.
   jcode is a <b>fronted sidecar</b>, not a knowledge agent: it reads no notes, runs in its own container, and works only in an
-  <b>isolated per-session git checkout</b>. Try the <b>Fast / Local</b> model switch, run a turn, open a <b>preview tunnel</b>, reset the sandbox.</p>
+  <b>isolated per-session git checkout</b>. The coder model is <b>pinned at session start</b> (preview both via the mock link). Run a turn (local swaps fast↔strong), open a <b>preview tunnel</b>, reset the sandbox.</p>
 
   <!-- ===== session header ===== -->
   <div class="card">
@@ -159,23 +172,18 @@
         <span class="branch">@ jcode/spike</span>
       </div>
 
-      <div class="lab">Coder model</div>
-      <div class="seg-row" id="modeseg">
-        <button class="seg fast on" data-mode="fast" onclick="setMode('fast')">
-          <span class="seg-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M13 2 3 14h7l-1 8 10-12h-7z"/></svg></span>
-          Fast · Claude
-          <span class="seg-sub">cloud · Max plan</span>
-        </button>
-        <button class="seg local" data-mode="local" onclick="setMode('local')">
-          <span class="seg-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M9 9h6v6H9z"/></svg></span>
-          Local · Qwen3-Coder
-          <span class="seg-sub">on-box · Strix Halo</span>
-        </button>
+      <div class="lab">Coder model <span class="pinned-tag">pinned at start</span>
+        <span class="mock-toggle" onclick="setMode(mode==='fast'?'local':'fast')">(mock: preview other)</span>
+      </div>
+      <div class="pinned fast" id="pinned">
+        <span class="p-ic" id="picon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M13 2 3 14h7l-1 8 10-12h-7z"/></svg></span>
+        <span class="p-name" id="pname">Cloud · Claude</span>
+        <span class="p-active" id="pactive"></span>
+        <span class="egress out" id="egress">code → Anthropic</span>
       </div>
       <div class="modeline fast" id="modeline">
         <span class="pin"></span>
-        <span id="modetext">Claude (cloud) — fastest, strongest tool use. Default.</span>
-        <span class="egress out" id="egress">code → Anthropic</span>
+        <span id="modetext">Claude via your API key (metered) — fastest, strongest tool use.</span>
       </div>
     </div>
   </div>
@@ -288,31 +296,44 @@ Tests: 7 passed, 7 total</pre></div>
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
       </button>
     </div>
-    <div class="cfoot"><span class="d"></span><span id="footmodel">Claude · cloud — ready</span></div>
+    <div class="cfoot"><span class="d"></span><span id="footmodel">Claude · cloud · API key — ready</span></div>
   </div>
 </div>
 
 <script>
+const ICON={
+  fast:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M13 2 3 14h7l-1 8 10-12h-7z"/></svg>',
+  local:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M9 9h6v6H9z"/></svg>'
+};
 const MODES={
-  fast:{ text:'Claude (cloud) — fastest, strongest tool use. Default.', egress:['out','code → Anthropic'],
-         note:'Cloud model selected — your <b>code</b> is sent to Anthropic for completions, but never any note, fact, or owner data. The sandbox can\'t read the knowledge base.',
-         foot:'Claude · cloud — ready', speed:14 },
-  local:{ text:'Qwen3-Coder 30B (on-box) — slower, fully private. The experiment.', egress:['onbox','stays on-box'],
-          note:'Local model selected — completions run on the Strix Halo box through the on-box gateway. <b>No code leaves the sandbox.</b> Reached via an Anthropic-compat shim over the OpenAI gateway. ~18 tok/s.',
-          foot:'Qwen3-Coder · on-box — ~18 tok/s', speed:42 }
+  fast:{ name:'Cloud · Claude', text:'Claude via your API key (metered) — fastest, strongest tool use.', egress:['out','code → Anthropic'],
+         note:'Cloud model — your <b>code</b> is sent to Anthropic (your <b>API key</b>, billed per token), but never any note, fact, or owner data. The sandbox can\'t read the knowledge base.',
+         foot:'Claude · cloud · API key — ready', speed:14 },
+  local:{ name:'Local · Qwen coders', text:'Qwen coders on-box — fast 7B for routine steps, strong 30B for hard ones (swaps as needed).', egress:['onbox','stays on-box'],
+          note:'Local models — completions run on the Strix Halo box. <b>No code leaves the sandbox.</b> A fast 7B handles routine turns; jcode swaps up to the strong 30B for hard reasoning (llama-swap). Reached via an Anthropic-compat shim over the OpenAI gateway.',
+          foot:'Qwen coders · on-box — fast 7B active', speed:38 }
 };
 let mode='fast', busy=false;
 
 function setMode(m){
   mode=m;
-  document.querySelectorAll('#modeseg .seg').forEach(s=>s.classList.toggle('on',s.dataset.mode===m));
   const cfg=MODES[m];
+  document.getElementById('pinned').className='pinned '+m;
+  document.getElementById('picon').innerHTML=ICON[m];
+  document.getElementById('pname').textContent=cfg.name;
+  setActive('fast');
   const ml=document.getElementById('modeline'); ml.className='modeline '+m;
   document.getElementById('modetext').textContent=cfg.text;
   const eg=document.getElementById('egress'); eg.className='egress '+cfg.egress[0]; eg.textContent=cfg.egress[1];
   document.getElementById('egressnote').innerHTML=cfg.note;
   document.getElementById('footmodel').textContent=cfg.foot;
   document.getElementById('send').classList.toggle('local',m==='local');
+}
+function setActive(which){ // local fast/strong swap indicator
+  const a=document.getElementById('pactive');
+  if(mode!=='local'){ a.innerHTML=''; return; }
+  a.className='p-active'+(which==='strong'?' strong':'');
+  a.innerHTML=`<span class="ad"></span>${which==='strong'?'strong 30B':'fast 7B'}`;
 }
 
 function grow(){ const ta=document.getElementById('ta'); ta.style.height='auto'; ta.style.height=Math.min(ta.scrollHeight,88)+'px';
@@ -333,11 +354,16 @@ function run(){
   const reply=mode==='local'
     ? 'On it — running locally on the box. Reading the file, planning the change, and I\'ll keep everything in the sandbox.'
     : 'On it. I\'ll scope the change, edit, and run the tests before reporting back.';
-  let i=0; const live=msg.querySelector('#liveb'); const sp=MODES[mode].speed;
+  let i=0, swapped=false; const live=msg.querySelector('#liveb'); const sp=MODES[mode].speed;
   const tick=setInterval(()=>{
     live.textContent=reply.slice(0,i++);
+    if(mode==='local'&&!swapped&&i>reply.length*0.4){ // hard step → swap up to strong 30B
+      swapped=true; setActive('strong');
+      document.getElementById('footmodel').textContent='Qwen coders · on-box — swapped to strong 30B';
+    }
     if(i>reply.length){ clearInterval(tick);
       msg.querySelector('.cursor').remove();
+      if(mode==='local'){ setActive('fast'); document.getElementById('footmodel').textContent=MODES.local.foot; }
       busy=false; grow();
       msg.scrollIntoView({behavior:'smooth',block:'end'});
     }
