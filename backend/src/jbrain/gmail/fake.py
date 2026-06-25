@@ -55,6 +55,11 @@ class FakeGmail:
         hits = self._match(query)
         return hits[:cap], len(hits) > cap
 
+    async def sender_sample(self, query: str, *, sample: int = 200) -> tuple[list[str], bool]:
+        hits = self._match(query)
+        sampled = hits[: max(1, sample)]
+        return [self._messages[i].sender for i in sampled], len(hits) > len(sampled)
+
     async def get(self, message_id: str, *, metadata_only: bool = False) -> GmailMessage:
         msg = self._messages.get(message_id)
         if msg is None:

@@ -250,6 +250,38 @@ async def test_search_all_collects_ids_across_pages() -> None:
     assert capped is False
 
 
+async def test_sender_sample_lists_ids_then_fetches_each_from() -> None:
+    # messages.list returns ids; each metadata get returns that id's From header. The
+    # method bundles them into the From strings the breakdown tool aggregates.
+    senders = {"a": "x@chase.com", "b": "y@chase.com", "c": "z@amazon.com"}
+
+    def api(request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        if path.endswith("/messages"):  # messages.list
+            return httpx.Response(200, json={"messages": [{"id": k} for k in senders]})
+        mid = path.rsplit("/", 1)[-1]  # messages.get
+        return httpx.Response(
+            200, json={"id": mid, "payload": {"headers": [{"name": "From", "value": senders[mid]}]}}
+        )
+
+    froms, capped = await _client(api).sender_sample("in:anywhere", sample=10)
+    assert sorted(froms) == ["x@chase.com", "y@chase.com", "z@amazon.com"]
+    assert capped is False  # 3 returned for a sample of 10 → not full, nothing truncated
+
+
+async def test_sender_sample_flags_a_full_sample_as_capped() -> None:
+    def api(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/messages"):
+            return httpx.Response(200, json={"messages": [{"id": "a"}, {"id": "b"}]})
+        return httpx.Response(
+            200, json={"payload": {"headers": [{"name": "From", "value": "a@b.com"}]}}
+        )
+
+    froms, capped = await _client(api).sender_sample("q", sample=2)
+    assert len(froms) == 2
+    assert capped is True  # the sample came back full, so more may match
+
+
 async def test_batch_modify_chunks_at_1000() -> None:
     seen: list[httpx.Request] = []
 

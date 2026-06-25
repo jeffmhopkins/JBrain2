@@ -9,13 +9,18 @@ content as DATA (the model treats it as such, never as instructions); the three 
 (create_label / label / archive) act only on the owner's own mailbox and never delete.
 """
 
+from collections import Counter
 from collections.abc import Awaitable, Callable
+from email.utils import parseaddr
 
 from jbrain.agent.loop import ToolContext, ToolHandler
 from jbrain.gmail import GmailApi, GmailError
 
 _SEARCH_DEFAULT = 25
 _SEARCH_MAX = 100
+_BREAKDOWN_DEFAULT = 200
+_BREAKDOWN_MAX = 500
+_BREAKDOWN_TOP = 20
 
 # Resolves the live Gmail client per call (credentials come from the settings panel,
 # so they can change without a restart). Raises GmailError when Gmail isn't connected
@@ -138,6 +143,46 @@ def build_gmail_handlers(get_client: GmailClientGetter) -> dict[str, ToolHandler
             return f"At least {total:,} messages match '{query}' (stopped counting at the cap)."
         return f"{total:,} message(s) match '{query}'."
 
+    async def gmail_sender_breakdown(arguments: dict, ctx: ToolContext) -> str:
+        query = str(arguments.get("query", "")).strip()
+        if not query:
+            return (
+                "gmail_sender_breakdown needs a non-empty query"
+                " (use in:anywhere to cover the whole mailbox)."
+            )
+        by = str(arguments.get("by", "domain")).strip().lower()
+        if by not in ("domain", "address"):
+            by = "domain"
+        try:
+            sample = max(1, min(int(arguments.get("sample", _BREAKDOWN_DEFAULT)), _BREAKDOWN_MAX))
+        except (TypeError, ValueError):
+            sample = _BREAKDOWN_DEFAULT
+        try:
+            client = await get_client()
+            froms, capped = await client.sender_sample(query, sample=sample)
+        except GmailError as exc:
+            return str(exc)
+        if not froms:
+            return f"No messages match '{query}' to break down."
+        counts: Counter[str] = Counter()
+        for frm in froms:
+            addr = parseaddr(frm)[1].lower()
+            if "@" not in addr:
+                key = addr or "(unknown sender)"
+            else:
+                key = addr.rsplit("@", 1)[-1] if by == "domain" else addr
+            counts[key] += 1
+        rows = [f"- {key} — {n}" for key, n in counts.most_common(_BREAKDOWN_TOP)]
+        head = f"Top {by}s across {len(froms)} sampled message(s) for '{query}':"
+        note = ""
+        if capped:
+            note = (
+                f"\nNOTE: this is the {len(froms)} most recent of more matches — the busiest"
+                " among recent mail, not a full-history tally. Confirm an exact per-sender"
+                " total with gmail_count before a bulk move."
+            )
+        return f"{head}\n" + "\n".join(rows) + note
+
     async def gmail_bulk_label(arguments: dict, ctx: ToolContext) -> str:
         query = str(arguments.get("query", "")).strip()
         if not query:
@@ -188,5 +233,6 @@ def build_gmail_handlers(get_client: GmailClientGetter) -> dict[str, ToolHandler
         "gmail_label": gmail_label,
         "gmail_archive": gmail_archive,
         "gmail_count": gmail_count,
+        "gmail_sender_breakdown": gmail_sender_breakdown,
         "gmail_bulk_label": gmail_bulk_label,
     }

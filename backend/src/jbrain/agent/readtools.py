@@ -82,6 +82,7 @@ OPTIONAL_GMAIL_TOOLS = frozenset(
         "gmail_label",
         "gmail_archive",
         "gmail_count",
+        "gmail_sender_breakdown",
         "gmail_bulk_label",
     }
 )
