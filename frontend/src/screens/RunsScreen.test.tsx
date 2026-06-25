@@ -5,19 +5,21 @@ import { RunsScreen } from "./RunsScreen";
 
 const NOW = new Date().toISOString();
 
+const RUNNING: RunSummary = {
+  id: "r1",
+  kind: "integration",
+  status: "running",
+  name: "integrate_note",
+  started_at: NOW,
+  duration_ms: null,
+  step_count: 3,
+  cost_tokens: 4100,
+  last_error: null,
+  progress_note: "processed 12 of 30 emails",
+};
+
 const RUNS: RunSummary[] = [
-  {
-    id: "r1",
-    kind: "integration",
-    status: "running",
-    name: "integrate_note",
-    started_at: NOW,
-    duration_ms: null,
-    step_count: 3,
-    cost_tokens: 4100,
-    last_error: null,
-    progress_note: "processed 12 of 30 emails",
-  },
+  RUNNING,
   {
     id: "r3",
     kind: "pipeline",
@@ -110,7 +112,7 @@ describe("RunsScreen", () => {
       last_error: null,
       progress_note: null,
     };
-    mount({ runs: [RUNS[0], queued], queueDepth: 4 });
+    mount({ runs: [RUNNING, queued], queueDepth: 4 });
     expect(await screen.findByText("daily_inbox_triage")).toBeInTheDocument();
     // The queued run waits behind the worker: "active now" stays at the one running.
     const active = screen.getByText("runs active now").closest(".runs-tile");
