@@ -106,25 +106,8 @@ egress Proposal instead of acting directly (noted in Wave E3).
   address. It is explicitly a *sample* of recent mail (Gmail can't aggregate the whole
   history cheaply), so the result is flagged as such and the prompt (v5) routes the
   agent breakdown → `gmail_count` (exact per-sender total) → `gmail_bulk_label`. The
-  exact-history alternative — a one-time metadata index with SQL `GROUP BY` — is Wave F.
-
-- **Wave F — Gmail metadata index** (Settings button + agent tools): the exact, complete
-  answer sampling can't give. `gmail_message_meta` (owner-only RLS, migration 0096) holds
-  one row per message — `From`/`Date`/`labels` only, never the body — so the archivist can
-  run true top-N by domain/address over any window and a per-day volume histogram via SQL
-  `GROUP BY`. A resumable two-phase backfill (`jbrain.gmail.indexer`) **discovers** every
-  id (`in:anywhere`, cheap) into `pending` rows, then **fetches** each id's metadata in
-  bounded concurrent batches and marks it `done`; it checkpoints in `gmail_index_state`
-  (the discovery cursor + per-row state) so a restart resumes with no redone work. Gmail's
-  ~50-gets/sec quota makes a large mailbox an hour-plus job, so it runs on the Phase-5
-  worker (the bounded-reconciler pattern), not a request. **F1** (shipped): the table +
-  state, client `get_profile`/`list_page` + `labels`/`internalDate` on messages, the
-  indexer, and exact-aggregate repos, with RLS + drain/resume/aggregate tests. **F2**:
-  the Settings "Build / rebuild index" button with live progress (poll a status endpoint,
-  mirroring OpsScreen's `UpdateControl`) + the worker wiring + `history.list` incremental
-  sync. **F3**: the agent tools — `gmail_sender_stats`, `gmail_volume_by_day`,
-  `gmail_index_status`, `gmail_index_sync`. Sampling's `gmail_sender_breakdown` stays as
-  the no-index quick-look.
+  exact-history alternative — a one-time metadata index with SQL `GROUP BY` — belongs to
+  the deferred ingestion phase, not this stateless tool.
 
 - **Wave E3 — cross-session memory** (no GUI): a single **owner-only** `archivist_memory`
   table (one row per principal) the persona reads at session start and rewrites as it
