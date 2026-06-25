@@ -20,6 +20,7 @@ EXPECTED_TASKS = {
     "integrate.note",
     "wiki.rewrite",
     "wiki.ground",
+    "triage.classify",
 }
 
 

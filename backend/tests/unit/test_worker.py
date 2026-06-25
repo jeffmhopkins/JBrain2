@@ -476,6 +476,9 @@ async def test_run_registers_all_job_handlers(
         "wiki_rebuild",
         "wiki_reindex",
         "wiki_prune",
+        # The archivist's inbox-triage sweep — in-code only, not in ACTION_SPECS /
+        # the app.actions seed; a migration seeds its schedule (docs/EMAIL_ARCHIVIST_PLAN.md).
+        "triage_inbox",
     }
 
 

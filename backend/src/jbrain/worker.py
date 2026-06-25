@@ -27,6 +27,8 @@ from jbrain.analysis.tagconsolidate import TAG_CONSOLIDATE_SPEC, tag_consolidate
 from jbrain.config import get_settings
 from jbrain.db.session import ScopeStampError, SessionContext, narrowed_context
 from jbrain.embed import NoteEmbedder, PredicateEmbedder, TeiEmbedClient
+from jbrain.gmail.provider import GmailClientProvider
+from jbrain.gmail.triage import TRIAGE_INBOX_SPEC, triage_inbox_handler
 from jbrain.ingest import ocr
 from jbrain.ingest.ocr import OcrPipeline
 from jbrain.ingest.pipeline import IngestPipeline
@@ -341,6 +343,17 @@ async def run() -> None:
         # (Phase 3/4); both default ON, flip off live via a settings upsert.
         settings=SqlSettingsStore(maker),
     )
+    # The archivist's Gmail provider, reading OAuth credentials live from the same
+    # settings store the API uses (env fallback). The triage_inbox sweep holds the
+    # bound `client` method, so a saved credential change takes effect with no restart;
+    # until a refresh token exists the sweep fails with a recoverable "connect Gmail"
+    # error and retries (docs/EMAIL_ARCHIVIST_PLAN.md).
+    gmail_provider = GmailClientProvider(
+        worker_settings_store,
+        settings,
+        base_url=settings.gmail_api_url,
+        token_url=settings.gmail_token_url,
+    )
     # Eager-load the schema registry so a missing/malformed defs/ fails the
     # worker LOUDLY at startup — never mid-note, where the SchemaError would
     # otherwise re-bill the extraction call on every retry.
@@ -415,6 +428,13 @@ async def run() -> None:
             maker, embedder=TeiEmbedClient(settings.embed_url), embedding_model=settings.embed_model
         ),
         "tag_consolidate": tag_consolidate_handler(maker),
+        # The archivist's inbox-triage sweep (docs/EMAIL_ARCHIVIST_PLAN.md): classify the
+        # newest day of inbox mail into triaged/* priority labels and archive it. The
+        # Gmail mechanics are direct API calls; only the per-batch classification is an
+        # LLM call (the `triage.classify` route). In-code only (not in the app.actions
+        # seed); a migration seeds the schedule, disabled by default. Dormant until Gmail
+        # is connected — the handler fails recoverably and retries until then.
+        "triage_inbox": triage_inbox_handler(gmail_provider.client, router),
         # The wiki builder (Phase-6 Wave C2): dirty-bit-driven article build + reindex + prune.
         # In-code only (not in the app.actions seed); a migration seeds the schedules. The live
         # LLM rewriter (C2b) drives router.complete behind the grounding gate + wiki-build budget;
@@ -447,6 +467,7 @@ async def run() -> None:
             ENTITY_HYGIENE_SPEC,
             REEMBED_SPEC,
             TAG_CONSOLIDATE_SPEC,
+            TRIAGE_INBOX_SPEC,
             *WIKI_SPECS,
         )
     )

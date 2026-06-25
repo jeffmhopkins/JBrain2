@@ -51,6 +51,7 @@ TASK_LABELS: dict[str, str] = {
     "session.title": "Session title",
     "wiki.rewrite": "Wiki rewrite",
     "wiki.ground": "Wiki grounding",
+    "triage.classify": "Inbox triage",
 }
 
 
