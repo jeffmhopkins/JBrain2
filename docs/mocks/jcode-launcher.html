@@ -86,6 +86,17 @@
   .lp-note{font-size:11px;color:var(--text-2);line-height:1.5;margin:0;padding:9px 12px;border-top:1px solid color-mix(in srgb,var(--amber) 18%,var(--border));background:color-mix(in srgb,var(--surface) 80%,transparent)}
   .lp-note b{color:var(--text)}
 
+  /* single on-box model card (local-only) */
+  .modelcard{display:flex;align-items:center;gap:11px;padding:11px 12px;border:1px solid color-mix(in srgb,var(--amber) 30%,var(--border));border-radius:12px;background:var(--amber-tint)}
+  .modelcard .mc-ic{width:30px;height:30px;border-radius:9px;background:var(--surface);display:flex;align-items:center;justify-content:center;color:var(--amber);flex:none}
+  .modelcard .mc-ic svg{width:17px;height:17px}
+  .modelcard .mc-main{flex:1;min-width:0}
+  .modelcard .mc-name{font-family:var(--mono);font-size:13px;color:var(--text);font-weight:500}
+  .modelcard .mc-meta{font-size:11px;color:var(--text-2);margin-top:2px}
+  .modelcard .mc-badge{font-size:10px;color:var(--green);border:1px solid color-mix(in srgb,var(--green) 32%,var(--border));border-radius:999px;padding:1px 8px;flex:none}
+  .mc-note{font-size:11px;color:var(--text-2);line-height:1.5;margin:9px 2px 0}
+  .mc-note b{color:var(--text)}
+
   .sbxnote{display:flex;align-items:center;gap:8px;margin-top:13px;font-size:11.5px;color:var(--text-2);line-height:1.45}
   .sbxnote svg{width:14px;height:14px;color:var(--teal);flex:none}
 
@@ -174,35 +185,20 @@
       <p class="scratchnote">Empty workspace — a blank sandbox to prototype in. <code>git init</code> happens on first commit; you can push it to a new remote later.</p>
 
       <div class="lab mt">Coder model</div>
-      <div class="seg-row mseg" id="mseg">
-        <button class="seg on fast" data-mode="fast" onclick="setMode('fast')">
-          <span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M13 2 3 14h7l-1 8 10-12h-7z"/></svg></span>
-          Cloud · Claude<span class="sub">API key · metered</span></button>
-        <button class="seg local" data-mode="local" onclick="setMode('local')">
-          <span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M9 9h6v6H9z"/></svg></span>
-          Local · Qwen coders<span class="sub">on-box · private · free</span></button>
-      </div>
-
-      <!-- local fast/strong pair — swaps on demand (llama-swap) -->
-      <div class="localpair" id="localpair">
-        <div class="lp-row fast">
-          <span class="lp-k">fast</span>
-          <select class="lp-sel"><option>Qwen2.5-Coder 7B</option><option>Qwen3-Coder 7B</option></select>
-          <span class="lp-t">routine edits · tool glue</span>
+      <div class="modelcard">
+        <span class="mc-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M9 9h6v6H9z"/></svg></span>
+        <div class="mc-main">
+          <div class="mc-name">Qwen3-Coder-Next 80B-A3B</div>
+          <div class="mc-meta">on-box · 80B total / 3B active · &gt;70% SWE-Bench Verified</div>
         </div>
-        <div class="lp-row strong">
-          <span class="lp-k">strong</span>
-          <select class="lp-sel"><option>Qwen3-Coder-Next 80B-A3B</option><option>Qwen3-Coder 30B-A3B</option><option>Qwen3-Coder 480B (batch)</option></select>
-          <span class="lp-t">planning · hard reasoning</span>
-        </div>
-        <p class="lp-note"><b>Qwen3-Coder-Next 80B-A3B</b> is the recommended strong model — 80B capacity but only <b>3B active</b>,
-        so it's both fast and strong (&gt;70% SWE-Bench Verified). On 128 GB it co-resides with the fast 7B, so the swap is
-        optional — keep both hot, or let llama-swap page the 7B in for instant edits.</p>
+        <span class="mc-badge">on-box</span>
       </div>
+      <p class="mc-note">Runs entirely on the Strix Halo box via llama-swap — <b>no cloud, nothing leaves the sandbox</b>.
+      The A3B sparsity (3B active) keeps an 80B model fast on the iGPU. Reached through the gateway's Anthropic-compatible endpoint.</p>
 
       <div class="sbxnote">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
-        <span id="sbxnote">Fresh isolated checkout · no host access · reads no notes · code → Anthropic.</span>
+        <span id="sbxnote">Fresh isolated checkout · no host access · reads no notes · <b>completions on-box</b> · git/npm egress only.</span>
       </div>
 
       <button class="start" id="start" onclick="alert('(mock) clones the repo into a fresh sandbox and opens the jcode session screen')">Start session →</button>
@@ -216,27 +212,18 @@
 </div>
 
 <script>
-let src='clone', mode='fast', bucket='today';
+let src='clone', bucket='today';
 
 function setSrc(s,el){ src=s; document.getElementById('new').dataset.src=s;
   el.parentElement.querySelectorAll('.seg').forEach(x=>x.classList.remove('on')); el.classList.add('on'); }
 
-function setMode(m){ mode=m;
-  document.querySelectorAll('#mseg .seg').forEach(s=>s.classList.toggle('on',s.dataset.mode===m));
-  document.getElementById('start').classList.toggle('local',m==='local');
-  document.getElementById('localpair').classList.toggle('show',m==='local');
-  document.getElementById('sbxnote').innerHTML = m==='local'
-    ? 'Fresh isolated checkout · no host access · reads no notes · <b>code stays on-box</b> (Qwen coders, fast+strong).'
-    : 'Fresh isolated checkout · no host access · reads no notes · code → Anthropic (your <b>API key</b>, metered).';
-}
-
 const SESSIONS=[
-  {bucket:'today', repo:'scratch-todo', branch:'jcode/spike', model:'fast', turns:6, state:'live', when:'now', run:true},
-  {bucket:'today', repo:'JBrain2', branch:'jcode/local-mode', model:'local', turns:23, state:'idle', when:'2h ago'},
-  {bucket:'older', repo:'dotfiles', branch:'jcode/zsh-fix', model:'fast', turns:4, state:'idle', when:'yesterday'},
-  {bucket:'older', repo:'scratch-todo', branch:'jcode/dark-theme', model:'local', turns:11, state:'idle', when:'tue'},
-  {bucket:'older', repo:'apib', branch:'jcode/rate-limit', model:'fast', turns:8, state:'idle', when:'mon'},
-  {bucket:'archived', repo:'old-prototype', branch:'jcode/poc', model:'fast', turns:31, state:'idle', when:'may 12'},
+  {bucket:'today', repo:'scratch-todo', branch:'jcode/spike', turns:6, when:'now', run:true},
+  {bucket:'today', repo:'JBrain2', branch:'jcode/local-mode', turns:23, when:'2h ago'},
+  {bucket:'older', repo:'dotfiles', branch:'jcode/zsh-fix', turns:4, when:'yesterday'},
+  {bucket:'older', repo:'scratch-todo', branch:'jcode/dark-theme', turns:11, when:'tue'},
+  {bucket:'older', repo:'apib', branch:'jcode/rate-limit', turns:8, when:'mon'},
+  {bucket:'archived', repo:'old-prototype', branch:'jcode/poc', turns:31, when:'may 12'},
 ];
 const BUCKETS=[['today','Today'],['older','Older'],['archived','Archived']];
 
@@ -254,12 +241,12 @@ function renderRows(){
   const rows=document.getElementById('rows');
   if(!list.length){ rows.innerHTML=`<div class="empty">No ${bucket} sessions.</div>`; return; }
   rows.innerHTML=list.map(s=>{
-    const sd = s.run?'live':(s.model==='local'?'local':'idle');
+    const sd = s.run?'live':'idle';
     const right = s.run
       ? `<span class="activity"><i></i><i></i><i></i></span><span class="runword">running…</span>`
-      : `<span class="mchip ${s.model}">${s.model==='local'?'qwen':'claude'}</span><span class="turns">${s.turns} turns</span>`;
+      : `<span class="turns">${s.turns} turns</span>`;
     return `<div class="row" onclick="alert('(mock) resumes this session in the jcode screen')">
-      <span class="sd ${sd}" title="${s.run?'turn in flight':(s.model==='local'?'on-box model':'idle')}"></span>
+      <span class="sd ${sd}" title="${s.run?'turn in flight':'idle'}"></span>
       <div class="main">
         <div class="repo">${s.repo}</div>
         <div class="sub">@ ${s.branch} · ${s.when}</div>

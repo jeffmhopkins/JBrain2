@@ -156,7 +156,7 @@
   <h1 class="title">jcode · coding session</h1>
   <p class="meta">Brainstorm mock for <b>code mode</b> — a sandboxed Claude Code session fronted by the JBrain PWA.
   jcode is a <b>fronted sidecar</b>, not a knowledge agent: it reads no notes, runs in its own container, and works only in an
-  <b>isolated per-session git checkout</b>. The coder model is <b>pinned at session start</b> (preview both via the mock link). Run a turn (local swaps fast↔strong), open a <b>preview tunnel</b>, reset the sandbox.</p>
+  <b>isolated per-session git checkout</b>. <b>Local-only</b> — Claude Code drives the on-box Qwen3-Coder-Next 80B-A3B, so no code ever leaves the box. Run a turn, open a <b>preview tunnel</b>, reset the sandbox.</p>
 
   <!-- ===== session header ===== -->
   <div class="card">
@@ -172,18 +172,15 @@
         <span class="branch">@ jcode/spike</span>
       </div>
 
-      <div class="lab">Coder model <span class="pinned-tag">pinned at start</span>
-        <span class="mock-toggle" onclick="setMode(mode==='fast'?'local':'fast')">(mock: preview other)</span>
+      <div class="lab">Coder model</div>
+      <div class="pinned local" id="pinned">
+        <span class="p-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M9 9h6v6H9z"/></svg></span>
+        <span class="p-name">Qwen3-Coder-Next 80B-A3B</span>
+        <span class="egress onbox">stays on-box</span>
       </div>
-      <div class="pinned fast" id="pinned">
-        <span class="p-ic" id="picon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M13 2 3 14h7l-1 8 10-12h-7z"/></svg></span>
-        <span class="p-name" id="pname">Cloud · Claude</span>
-        <span class="p-active" id="pactive"></span>
-        <span class="egress out" id="egress">code → Anthropic</span>
-      </div>
-      <div class="modeline fast" id="modeline">
+      <div class="modeline local">
         <span class="pin"></span>
-        <span id="modetext">Claude via your API key (metered) — fastest, strongest tool use.</span>
+        <span>On-box · 80B total / 3B active — no cloud, completions never leave the sandbox.</span>
       </div>
     </div>
   </div>
@@ -249,14 +246,14 @@ Tests: 7 passed, 7 total</pre></div>
       <div class="kv"><span class="k">workspace</span><span class="v">/work/scratch-todo  (per-session clone)</span></div>
       <div class="kv"><span class="k">egress</span>
         <span class="chips">
-          <span class="chip allow">api.anthropic.com</span>
           <span class="chip allow">github.com</span>
           <span class="chip allow">registry.npmjs.org</span>
           <span class="chip block">· everything else blocked</span>
         </span>
       </div>
+      <div class="kv"><span class="k">model</span><span class="v">on-box · no LLM egress</span></div>
       <div class="kv"><span class="k">isolation</span><span class="v">no docker socket · no db · no notes</span></div>
-      <p class="note" id="egressnote">Cloud model selected — your <b>code</b> is sent to Anthropic for completions, but never any note, fact, or owner data. The sandbox can't read the knowledge base.</p>
+      <p class="note" id="egressnote"><b>Fully on-box.</b> Completions run on the Strix Halo box — <b>no code leaves the sandbox</b>. The only egress is git push / package installs you initiate; the sandbox reads no note, fact, or owner data.</p>
 
       <!-- preview tunnel -->
       <div class="preview" id="preview">
@@ -292,49 +289,16 @@ Tests: 7 passed, 7 total</pre></div>
     </div>
     <div class="cbox">
       <textarea id="ta" rows="1" placeholder="Tell jcode what to build…" oninput="grow()"></textarea>
-      <button class="send" id="send" onclick="run()" disabled>
+      <button class="send local" id="send" onclick="run()" disabled>
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
       </button>
     </div>
-    <div class="cfoot"><span class="d"></span><span id="footmodel">Claude · cloud · API key — ready</span></div>
+    <div class="cfoot"><span class="d"></span><span id="footmodel">Qwen3-Coder-Next 80B-A3B · on-box — ready</span></div>
   </div>
 </div>
 
 <script>
-const ICON={
-  fast:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M13 2 3 14h7l-1 8 10-12h-7z"/></svg>',
-  local:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M9 9h6v6H9z"/></svg>'
-};
-const MODES={
-  fast:{ name:'Cloud · Claude', text:'Claude via your API key (metered) — fastest, strongest tool use.', egress:['out','code → Anthropic'],
-         note:'Cloud model — your <b>code</b> is sent to Anthropic (your <b>API key</b>, billed per token), but never any note, fact, or owner data. The sandbox can\'t read the knowledge base.',
-         foot:'Claude · cloud · API key — ready', speed:14 },
-  local:{ name:'Local · Qwen coders', text:'Qwen coders on-box — fast 7B for routine steps, Qwen3-Coder-Next 80B-A3B for hard ones.', egress:['onbox','stays on-box'],
-          note:'Local models — completions run on the Strix Halo box. <b>No code leaves the sandbox.</b> A fast 7B handles routine turns; jcode escalates to <b>Qwen3-Coder-Next 80B-A3B</b> (80B capacity, 3B active — fast and strong) for hard reasoning. Reached via the gateway\'s Anthropic-compatible endpoint.',
-          foot:'Qwen coders · on-box — fast 7B active', speed:38 }
-};
-let mode='fast', busy=false;
-
-function setMode(m){
-  mode=m;
-  const cfg=MODES[m];
-  document.getElementById('pinned').className='pinned '+m;
-  document.getElementById('picon').innerHTML=ICON[m];
-  document.getElementById('pname').textContent=cfg.name;
-  setActive('fast');
-  const ml=document.getElementById('modeline'); ml.className='modeline '+m;
-  document.getElementById('modetext').textContent=cfg.text;
-  const eg=document.getElementById('egress'); eg.className='egress '+cfg.egress[0]; eg.textContent=cfg.egress[1];
-  document.getElementById('egressnote').innerHTML=cfg.note;
-  document.getElementById('footmodel').textContent=cfg.foot;
-  document.getElementById('send').classList.toggle('local',m==='local');
-}
-function setActive(which){ // local fast/strong swap indicator
-  const a=document.getElementById('pactive');
-  if(mode!=='local'){ a.innerHTML=''; return; }
-  a.className='p-active'+(which==='strong'?' strong':'');
-  a.innerHTML=`<span class="ad"></span>${which==='strong'?'strong 80B-A3B':'fast 7B'}`;
-}
+let busy=false;
 
 function grow(){ const ta=document.getElementById('ta'); ta.style.height='auto'; ta.style.height=Math.min(ta.scrollHeight,88)+'px';
   document.getElementById('send').disabled=!ta.value.trim()||busy; }
@@ -348,26 +312,19 @@ function run(){
     `<div class="msg"><div class="who you">you</div><div class="bubble you">${esc(text)}</div></div>`);
   ta.value=''; grow();
   const msg=document.createElement('div'); msg.className='msg';
-  msg.innerHTML=`<div class="who">jcode</div><div class="bubble"><span id="liveb"></span><span class="cursor ${mode==='local'?'local':''}"></span></div>`;
+  msg.innerHTML=`<div class="who">jcode</div><div class="bubble"><span id="liveb"></span><span class="cursor local"></span></div>`;
   stream.appendChild(msg);
   msg.scrollIntoView({behavior:'smooth',block:'end'});
-  const reply=mode==='local'
-    ? 'On it — running locally on the box. Reading the file, planning the change, and I\'ll keep everything in the sandbox.'
-    : 'On it. I\'ll scope the change, edit, and run the tests before reporting back.';
-  let i=0, swapped=false; const live=msg.querySelector('#liveb'); const sp=MODES[mode].speed;
+  const reply='On it — running on the box. Reading the file, planning the change, and keeping everything in the sandbox.';
+  let i=0; const live=msg.querySelector('#liveb');
   const tick=setInterval(()=>{
     live.textContent=reply.slice(0,i++);
-    if(mode==='local'&&!swapped&&i>reply.length*0.4){ // hard step → swap up to strong 30B
-      swapped=true; setActive('strong');
-      document.getElementById('footmodel').textContent='Qwen coders · on-box — swapped to strong 80B-A3B';
-    }
     if(i>reply.length){ clearInterval(tick);
       msg.querySelector('.cursor').remove();
-      if(mode==='local'){ setActive('fast'); document.getElementById('footmodel').textContent=MODES.local.foot; }
       busy=false; grow();
       msg.scrollIntoView({behavior:'smooth',block:'end'});
     }
-  }, sp);
+  }, 34);
 }
 function esc(s){ return s.replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
 
