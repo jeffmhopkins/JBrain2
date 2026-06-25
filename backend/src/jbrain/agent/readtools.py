@@ -22,6 +22,7 @@ from jbrain.agent.appointmenttools import (
     build_appointment_handlers,
     build_appointment_write_handlers,
 )
+from jbrain.agent.archivisttools import build_archivist_memory_handlers
 from jbrain.agent.clock import build_clock_handlers
 from jbrain.agent.connectortools import build_connector_handlers
 from jbrain.agent.contracts import EntityRef, NoteSource
@@ -483,6 +484,10 @@ def build_registry(
             # The archivist persona's Gmail tools (`web`-gated), present only when a
             # Gmail refresh token is configured; otherwise their sidecars are dropped.
             **(gmail_handlers or {}),
+            # The archivist's cross-session memory (`web`-gated, archivist-only) over
+            # the owner-only `archivist_memory` table — always wired (the table always
+            # exists); curator never sees it (the opt-in web class).
+            **build_archivist_memory_handlers(maker),
         },
         optional=(
             OPTIONAL_IMAGE_TOOLS

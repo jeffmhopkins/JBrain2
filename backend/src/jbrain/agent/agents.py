@@ -21,10 +21,12 @@ call, and whether it reads the owner's knowledge base:
   volunteering it or sending it to the web. jerv still calls no knowledge-base tool
   and reads no note/entity/list/appointment.
 - `archivist` — a sandboxed Gmail organizer: the `gmail_*` tools (search/read,
-  list/create labels, label/archive) and nothing else, present only when Gmail is
-  configured. Like jerv it reads no knowledge base, so no owner note/entity data is in
-  context while it triages mail; its writes act only on the owner's own mailbox and
-  never delete (docs/EMAIL_ARCHIVIST_PLAN.md).
+  list/create labels, label/archive), present only when Gmail is configured, plus a
+  private cross-session memory (`archivist_memory_read`/`write`) over an owner-only
+  scratchpad table so a 20-year cleanup continues across sessions. Like jerv it reads
+  no knowledge base, so no owner note/entity data is in context while it triages mail;
+  its Gmail writes act only on the owner's own mailbox and never delete; its memory is
+  its own notes, not the owner's (docs/EMAIL_ARCHIVIST_PLAN.md).
 
 The set is closed and code-defined: a session's stored `agent` is validated
 against `AGENT_NAMES` before it is honoured.
@@ -84,6 +86,15 @@ GMAIL_TOOLS = frozenset(
     }
 )
 
+# The archivist's cross-session memory: a `web`-gated read/write pair over the
+# owner-only `archivist_memory` scratchpad, so it continues a 20-year cleanup across
+# sessions instead of starting blind. Owner-only (its own notes), never the knowledge
+# base (docs/EMAIL_ARCHIVIST_PLAN.md).
+MEMORY_TOOLS = frozenset({"archivist_memory_read", "archivist_memory_write"})
+
+# The archivist's full allowlist: the Gmail organize-an-inbox tools plus its memory.
+ARCHIVIST_TOOLS = GMAIL_TOOLS | MEMORY_TOOLS
+
 DEFAULT_AGENT = "curator"
 
 
@@ -130,7 +141,7 @@ AGENTS: dict[str, AgentProfile] = {
     "teacher": _profile("teacher", "teacher.prompt", tools=frozenset(), reads_knowledge_base=False),
     "jerv": _profile("jerv", "jerv.prompt", tools=JERV_TOOLS, reads_knowledge_base=False),
     "archivist": _profile(
-        "archivist", "archivist.prompt", tools=GMAIL_TOOLS, reads_knowledge_base=False
+        "archivist", "archivist.prompt", tools=ARCHIVIST_TOOLS, reads_knowledge_base=False
     ),
 }
 

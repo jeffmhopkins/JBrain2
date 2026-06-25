@@ -40,7 +40,7 @@ mutation, which is why v1 writes are confined to reversible label/archive operat
 | **Auth** | OAuth2 **refresh token + client id/secret in config** (env), like `mqtt_ingest_secret`; a one-time bootstrap script mints the refresh token | No token table, no DB; single-owner box, so a config secret is coherent |
 | **OAuth scope** | `gmail.modify` only — read + create-label + label + archive. **No delete/trash scope requested** | Writes are non-destructive and reversible by construction; permanent delete is out of reach even if asked |
 | **Organization model** | Gmail **labels, not folders** — the agent builds and applies a label taxonomy (Gmail's `Parent/Child` nesting). "Move" = apply a label + remove `INBOX` | Matches how Gmail actually organizes; a synced client shows the result as folders |
-| **Tool primitives (v1)** | `gmail_search`, `gmail_read`, `gmail_list_labels`, `gmail_create_label`, `gmail_label` (apply/remove → move into a label), `gmail_archive` (remove `INBOX`) | A clean primitive set; the organizing *tasks* are built on top of these later. "Move" in Gmail = label + un-inbox; both reversible. Destructive ops deferred |
+| **Tool primitives** | E2: `gmail_search`, `gmail_read`, `gmail_list_labels`, `gmail_create_label`, `gmail_label` (apply/remove → move into a label), `gmail_archive` (remove `INBOX`). E2.5: `gmail_count` (exact count for a query) and `gmail_bulk_label` (apply/remove across a whole query via `batchModify`, ≤1000/call; `remove:["INBOX"]` = bulk archive) | A clean primitive set; the organizing *tasks* are built on top of these later. "Move" in Gmail = label + un-inbox; both reversible. Destructive ops deferred |
 | **Permission class** | `web` (direct-exec, opt-in gate), allowlisted to `archivist` only | Runs directly (no Proposal), exactly like jerv's web tools; `curator` never gains them |
 | **Persistence** | **None on the DB.** The nightly cursor lives in a single **storage-abstraction blob**; Gmail's own labels are the real state | Honors "no DB access"; storage is the sanctioned file-I/O path (non-negotiable #2) |
 | **RAG ingestion** | **Out of scope.** Email never becomes a note in this plan | The notes/RLS/ingest surface stays untouched; a clean follow-on if desired |
@@ -79,8 +79,34 @@ egress Proposal instead of acting directly (noted in Wave E3).
   over the client), the `archivist` persona + its allowlist in `agents.py`, the
   `archivist.prompt` system prompt, and the `web`-gate wiring in `main.py`. This is
   the **interactive agent session** — the user's "first step."
+- **Wave E2.5 — count + bulk primitives** (no GUI): the per-message tools above can't
+  scale to a 20-year mailbox (search caps a page; label/archive act on one id). E2.5
+  adds the two operations that make the archivist actually capable at scale, both
+  still within `gmail.modify`: `gmail_count` (an exact count for a query, by
+  paginating ids) and `gmail_bulk_label` (resolve a whole query to ids and apply
+  label/archive changes via Gmail `batchModify`, ≤1000 per call). `remove: ["INBOX"]`
+  covers bulk-archive, so no separate bulk-archive tool. The client gains id
+  pagination + a `batch_modify`; the prompt requires a **count before any bulk move**
+  so the blast radius is stated first. Bulk is higher-leverage *and* higher-blast-
+  radius, but stays reversible (label/archive, never delete) — the dry-run in the
+  deferred task layer is where a preview-before-write belongs.
 
-**Scope of this plan = E1 + E2: the persona and the tool primitives.** The
+- **Wave E3 — cross-session memory** (no GUI): a single **owner-only** `archivist_memory`
+  table (one row per principal) the persona reads at session start and rewrites as it
+  decides — its taxonomy, filing rules, and progress, so a 20-year cleanup continues
+  across sessions instead of starting blind. Two `web`-gated, archivist-only tools
+  (`archivist_memory_read` / `archivist_memory_write`) over the table via an RLS-scoped
+  session. This is the agent's **own scratchpad, not the owner's knowledge base** — no
+  domain, no notes/entities — so it does not breach the read-nothing sandbox. Owner-only
+  RLS mirrors `generated_images`/`wiki_*` (`app.is_owner()`), with the mandatory RLS
+  isolation test. Reintroduces a small (owner-only) DB surface — the one deliberate
+  exception to "stateless on the box," chosen because durable cross-session memory is
+  inherently stateful and the DB is where JBrain2 keeps durable, backed-up, RLS-guarded
+  state. The firewall keeping it archivist-only is the **tool allowlist** (the `web`
+  gate), not RLS — jerv runs as the owner too, so RLS wouldn't exclude it; the memory
+  tools simply aren't in any other persona's allowlist.
+
+**Scope of this plan = E1 + E2 + E2.5 + E3: the persona and the tool primitives.** The
 organizing *tasks* built on top of the persona — nightly/batch runs, how the label
 taxonomy is decided, dry-run, cursor/checkpointing — are **designed separately,
 later** (see "The task layer (deferred)" below). The foundation deliberately stops at

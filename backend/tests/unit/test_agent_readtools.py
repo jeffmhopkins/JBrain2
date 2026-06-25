@@ -474,10 +474,17 @@ def test_build_registry_binds_the_shipped_sidecars() -> None:
         object(),  # type: ignore[arg-type]  # sessionmaker (query_server_metrics)
         object(),  # type: ignore[arg-type]  # external reverse geocoder
     )
-    # The `web` (opt-in / jerv-only) permission class — never offered to the default
-    # knowledge agent (allow=None) at any scope. current_location is on-box but rides
-    # this gate, so it sits with the web tools here.
-    web = {"web_search", "web_fetch", "current_location"}
+    # The `web` (opt-in) permission class — never offered to the default knowledge
+    # agent (allow=None) at any scope. current_location is on-box but rides this gate;
+    # so do the archivist's memory tools (owner-only scratchpad, archivist-only) — they
+    # sit with the web tools here.
+    web = {
+        "web_search",
+        "web_fetch",
+        "current_location",
+        "archivist_memory_read",
+        "archivist_memory_write",
+    }
     shipped = {
         "search",
         "current_time",
@@ -818,6 +825,16 @@ def test_sidecars_pinned_to_their_versions() -> None:
             "gmail_archive",
             1,
             "965d8f55bde6ce3ed7ac181ca06b60e7a6e2fdb237ec043bfcdc9ac8940b5607",
+        ),
+        "archivist_memory_read.tool": (
+            "archivist_memory_read",
+            1,
+            "ecc3e239973ba3ab28bb52ecac3827f1bf2cf2bf2e94545e86d0c47ec64923ef",
+        ),
+        "archivist_memory_write.tool": (
+            "archivist_memory_write",
+            1,
+            "29c46e596faccbd1779549d6b6d020d185fa38b2d3d8acf2c31e01c2462ccbb8",
         ),
     }
     # Every shipped sidecar must appear above — a new `.tool` cannot slip in
