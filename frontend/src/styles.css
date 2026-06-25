@@ -7894,6 +7894,14 @@ button.small {
   display: flex;
   flex-direction: column;
   min-width: 0;
+  /* This intermediate flex column must also refuse to grow past the panel, or its
+     inner .panel-list (flex:1, overflow:auto) inherits the full content height and
+     never scrolls — the rows just clip at the panel foot. Every level of a nested
+     flex-column scroll chain needs min-height:0, not just the scrolling leaf
+     (iOS Safari is strict about this). height:100% pins it to the absolute panel. */
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
 }
 .fb-shell .panel-bar {
   height: 56px;
