@@ -30,8 +30,8 @@ depends_on = None
 
 _ACTION = "triage_inbox"
 _PIPELINE = "daily_inbox_triage"
-_SCHEDULE_ID = "00000000-0000-0000-0000-0000000d0001"
-_TRIGGER_ID = "00000000-0000-0000-0000-0000000d0002"
+_SCHEDULE_ID = "00000000-0000-0000-0000-000000100001"
+_TRIGGER_ID = "00000000-0000-0000-0000-000000100002"
 _RUN_HOUR = 3  # staggered after the 02:00 graph/hygiene sweeps; inert while disabled
 _DESC = "Classify the newest day of inbox mail into triaged/* labels and archive it."
 
