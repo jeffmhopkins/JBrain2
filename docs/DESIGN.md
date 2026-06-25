@@ -852,6 +852,46 @@ the row button's accessible name, so a screen reader hears it without a nagging 
 region. Honors `prefers-reduced-motion` with a steady glyph. At most one chat shows it at
 a time (a single turn is in flight — `busy` gates sends).
 
+## The image launcher — standalone generate/edit screen (settled in a four-way mock review; chosen **B + gallery shortcut**, reference mock `docs/mocks/image-launcher/launcher-b-gallery.html`; rivals A "composer-dock studio", C "pinboard gallery", D "render console / darkroom" retained in `docs/mocks/image-launcher/README.md`)
+
+A **card-launcher destination** for on-box image generation/editing that drives ComfyUI
+**directly** — the headline property is that the **language models stay unloaded**. This is
+distinct from today's only path (`generate_image`/`edit_image` as jerv tool calls, which need
+the LLM resident); the screen is the "I just want a picture — don't wake the brain" path. Its
+accent is **`--violet`** (image models ride violet on the residency ladder); it is **not** a
+chat surface. The screen path and the jerv path coexist — the screen carries only a one-line,
+unobtrusive "ask jerv in chat" note, never a chat affordance.
+
+- **Segmented Generate | Edit form** (the settled Data-screen segmented-tasks paradigm): one
+  focused task panel at a time, the active segment taking the violet image tint. A persistent
+  **honest residency line** ("renders on-box · language models stay unloaded").
+- **Configuration is explicit, in a collapsible card** with a one-line summary when collapsed:
+  **speed** (`dreamshaper` · `fast` · `quality`, default quality), **aspect** (square / portrait
+  / landscape / tall / wide), **resolution** (small / medium / large, default medium), **steps**
+  (20–40, **visibly locked** with a "fixed N steps" hint when speed ≠ quality), **negative
+  prompt**, **seed** (blank = random, the resolved seed recorded and shown). speed implies the
+  model (no model-id picker on this surface). Edit inherits the source's aspect.
+- **Edit** leads with a **source**: a dropzone (upload) **or** "pick from gallery"; plus up to
+  **2 reference** slots (compositing/style). The result shows the edit's **before→after
+  swipe-compare** (the same paradigm as the in-chat `generated_image` view,
+  `docs/mocks/genimage-c-edit-aware.html`).
+- **Render is synchronous and honest**: queued → rendering… (shimmer, no fake progress bar;
+  reduced-motion shows steady phased text) → the sized result with its meta
+  (`dimensions · model · seed`) and small actions (use as edit source, copy seed).
+- **The gallery shortcut** — a grid icon in the top bar with a live count — opens a full-screen,
+  scrollable **image-only pinboard** of every render (a 2-column masonry, kind badge per tile,
+  newest first). New renders flow in at the top; tapping a tile opens a **large view** with its
+  meta and **use as edit source**. An empty board is one `--text-2` sentence with the action
+  inline. The board is the workshop's shelf, not a separate destination — creation stays on the
+  form, never behind a modal.
+
+**Build sequencing (binding UI process — mock-first):** the screen is implemented first against
+the **mock API client** (fixtures) so the working mocked UI is owner-approved before any backend
+wiring. The **direct, non-agent render endpoints are a follow-up wave** and are **escalation-
+worthy** (a non-agent surface that drives ComfyUI renders) — owner-only RLS, security-100%, and
+the shared render logic extracted from the jerv tool handlers so the two paths never diverge.
+See `docs/IMAGE_LAUNCHER_PLAN.md`.
+
 ## Surface paradigms (which container for which job)
 
 | Job | Paradigm |

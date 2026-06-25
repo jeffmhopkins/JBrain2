@@ -48,6 +48,27 @@ synchronous render-state sequence (queued → rendering… → done; no fake pro
 
 ## Decision
 
-_Pending owner review._ Once chosen, the selection + rationale land here and in
-`docs/DESIGN.md` (a new "Image launcher" component entry), and the rejected three are
-retained in this directory as the record.
+**Chosen: B + the gallery shortcut** (`launcher-b-gallery.html`) — the binding spec for
+the standalone **Image launcher** screen. The segmented Generate | Edit form (direction B)
+is the workshop: one focused task at a time behind a violet-accented switch, every config
+knob laid out explicitly (speed / aspect / resolution / steps-with-lock / negative / seed),
+the edit dropzone + references, and the before→after swipe-compare for edits. A **gallery
+shortcut** — a grid icon in the top bar with a live count — opens a full-screen, scrollable
+**image-only pinboard** of every render; new renders flow in at the top, and tapping a tile
+opens a large view with its meta and **"use as edit source"** (also reachable as "pick from
+gallery" from the edit dropzone). B won for being the most config-forward and the cleanest
+reuse of the settled Data-screen segmented-tasks paradigm; the gallery folds in C's
+"pins page" value as a secondary surface without making creation a modal. A / C / D are
+retained here as the record.
+
+The screen is a **direct, non-agent render path** — the headline property is that the
+**language models stay unloaded** (ComfyUI renders on its own memory budget; jerv is not
+involved). This is distinct from today's only path: `generate_image`/`edit_image` as jerv
+tool calls, which require the LLM resident.
+
+**Build sequencing (per the binding UI process — mock-first, approval-gated):** the real
+screen is built first against the **mock API client** (fixtures in `frontend/src/api/mock.ts`)
+so the working mocked UI can be approved before any backend wiring. The backend direct-render
+endpoints are a **follow-up wave** and are escalation-worthy (a non-agent surface that drives
+ComfyUI renders) — see `docs/IMAGE_LAUNCHER_PLAN.md`. The selection + rationale also land in
+`docs/DESIGN.md` (the "Image launcher" component entry).
