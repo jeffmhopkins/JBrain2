@@ -24,12 +24,16 @@ import structlog
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, ConfigDict
+from sqlalchemy.ext.asyncio import async_sessionmaker
 
-from jbrain.api.deps import OwnerDep, PrincipalDep, SettingsDep
+from jbrain.api.deps import OwnerDep, PrincipalDep, PrincipalInfo, SettingsDep
 from jbrain.api.notes import ctx_for
 from jbrain.api.settings import SettingsStoreDep
 from jbrain.config import Settings
+from jbrain.db.session import scoped_session
 from jbrain.gmail import GmailClientProvider, GmailError
+from jbrain.gmail.indexer import GmailIndexer
+from jbrain.models.gmail_index import GmailIndexStateRepo, GmailMetaRepo
 
 log = structlog.get_logger()
 
@@ -224,3 +228,70 @@ async def gmail_callback(
         return RedirectResponse(f"{settings_url}?gmail=error")
     await store.set_gmail_credentials(ctx, refresh_token=refresh_token)
     return RedirectResponse(f"{settings_url}?gmail=connected")
+
+
+# --- The metadata index (docs/EMAIL_ARCHIVIST_PLAN.md Wave F) -----------------
+# The Settings panel starts/rebuilds the index here and polls status for the live
+# progress bar; the worker drains the backfill out-of-band (the hour-plus scan can't
+# block a request), so these endpoints only flip the control row and read progress.
+
+
+class GmailIndexStatusOut(BaseModel):
+    phase: str  # idle | discovering | fetching | ready | error
+    enabled: bool
+    indexed: int  # messages whose metadata is stored
+    total: int  # the mailbox size estimate (the progress denominator)
+    pending: int
+    percent: int  # 0-100, for the progress bar
+    error: str | None
+
+
+class GmailIndexStart(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    # A plain start resumes/extends the existing index; rebuild clears it first.
+    rebuild: bool = False
+
+
+def _session_maker(request: Request) -> async_sessionmaker:
+    return cast(async_sessionmaker, request.app.state.session_maker)
+
+
+async def _index_status(request: Request, principal: PrincipalInfo) -> GmailIndexStatusOut:
+    ctx = ctx_for(principal)
+    meta, state = GmailMetaRepo(), GmailIndexStateRepo()
+    async with scoped_session(_session_maker(request), ctx) as session:
+        progress = await state.progress(session, ctx.principal_id or "", meta)
+    if progress.total_estimate:
+        percent = min(100, round(100 * progress.indexed / progress.total_estimate))
+    else:
+        percent = 100 if progress.phase == "ready" else 0
+    return GmailIndexStatusOut(
+        phase=progress.phase,
+        enabled=progress.enabled,
+        indexed=progress.indexed,
+        total=progress.total_estimate,
+        pending=progress.pending,
+        percent=percent,
+        error=progress.error,
+    )
+
+
+@router.get("/settings/gmail/index")
+async def read_gmail_index(request: Request, principal: PrincipalDep) -> GmailIndexStatusOut:
+    return await _index_status(request, principal)
+
+
+@router.post("/settings/gmail/index")
+async def start_gmail_index(
+    body: GmailIndexStart, request: Request, principal: OwnerDep
+) -> GmailIndexStatusOut:
+    """Start (or rebuild) the backfill: stamp the mailbox size + enable the index, then
+    return status. The worker does the actual draining; the panel polls this for progress."""
+    try:
+        client = await get_gmail_provider(request).client()
+    except GmailError as exc:
+        raise HTTPException(status_code=400, detail="Connect Gmail first.") from exc
+    ctx = ctx_for(principal)
+    async with scoped_session(_session_maker(request), ctx) as session:
+        await GmailIndexer().begin(session, ctx.principal_id or "", client, reset=body.rebuild)
+    return await _index_status(request, principal)

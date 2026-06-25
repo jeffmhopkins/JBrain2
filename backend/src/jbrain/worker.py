@@ -27,6 +27,8 @@ from jbrain.analysis.tagconsolidate import TAG_CONSOLIDATE_SPEC, tag_consolidate
 from jbrain.config import get_settings
 from jbrain.db.session import ScopeStampError, SessionContext, narrowed_context
 from jbrain.embed import NoteEmbedder, PredicateEmbedder, TeiEmbedClient
+from jbrain.gmail.drain import gmail_drain_loop
+from jbrain.gmail.provider import GmailClientProvider
 from jbrain.ingest import ocr
 from jbrain.ingest.ocr import OcrPipeline
 from jbrain.ingest.pipeline import IngestPipeline
@@ -460,17 +462,31 @@ async def run() -> None:
         if settings.supervisor_token
         else None
     )
+    # The archivist's Gmail metadata backfill drains in its own loop (docs Wave F): the
+    # hour-plus scan reads creds live from the settings store (same as the API provider),
+    # so it stays dormant until the owner connects Gmail + starts a build, and never
+    # blocks the job loop.
+    gmail_provider = GmailClientProvider(
+        worker_settings_store,
+        settings,
+        base_url=settings.gmail_api_url,
+        token_url=settings.gmail_token_url,
+    )
     try:
         # The shadow dispatcher reads its `workflow_dispatch` gate through the same
         # live settings store the LLM router uses, so the operator can silence it
-        # without a redeploy.
-        await run_loop(
-            maker,
-            handlers,
-            registry,
-            settings=worker_settings_store,
-            supervisor_client=supervisor_client,
-            supervisor_token=settings.supervisor_token,
+        # without a redeploy. The Gmail drain runs concurrently — independent loops
+        # sharing the engine; either failing cancels the other for a clean exit.
+        await asyncio.gather(
+            run_loop(
+                maker,
+                handlers,
+                registry,
+                settings=worker_settings_store,
+                supervisor_client=supervisor_client,
+                supervisor_token=settings.supervisor_token,
+            ),
+            gmail_drain_loop(maker, gmail_provider),
         )
     finally:
         if supervisor_client is not None:

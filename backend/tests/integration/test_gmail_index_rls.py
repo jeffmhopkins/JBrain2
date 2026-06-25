@@ -5,15 +5,19 @@ exact, queryable sender/day aggregates — the analytics Gmail's API can't do it
 
 import uuid
 from collections.abc import AsyncIterator
+from types import SimpleNamespace
 
 import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
+from jbrain.api.gmail_settings import read_gmail_index, start_gmail_index
+from jbrain.auth.service import PrincipalInfo
 from jbrain.db.session import SessionContext, scoped_session
-from jbrain.gmail import FakeGmail
-from jbrain.gmail.client import GmailMessage
+from jbrain.gmail import FakeGmail, GmailError
+from jbrain.gmail.client import GmailApi, GmailMessage
+from jbrain.gmail.drain import drain_once
 from jbrain.gmail.indexer import GmailIndexer
 from jbrain.models.gmail_index import GmailIndexStateRepo, GmailMetaRepo
 from tests.conftest import docker_available
@@ -142,6 +146,89 @@ async def test_volume_by_day_buckets_by_date(maker: async_sessionmaker) -> None:
         days = await meta.volume_by_day(session, owner.principal_id)
     counts = [n for _, n in days]
     assert counts == [2, 4]  # 2 on day1, 4 on day2, ordered by day
+
+
+class _FakeProvider:
+    """Stands in for GmailClientProvider — hands the worker drain / API a FakeGmail (or
+    raises GmailError to simulate unconfigured credentials)."""
+
+    def __init__(self, client: GmailApi | None):
+        self._client = client
+
+    async def client(self) -> GmailApi:
+        if self._client is None:
+            raise GmailError("Gmail is not configured on this instance")
+        return self._client
+
+
+async def test_drain_loop_indexes_via_provider(maker: async_sessionmaker) -> None:
+    """The worker's drain_once advances an enabled index to ready, pulling its client from
+    the provider and keying off the stored principal_id under an owner-kind session."""
+    owner = _owner()
+    fake = _mailbox()
+    provider = _FakeProvider(fake)
+    indexer = GmailIndexer(fetch_batch=2)
+    async with scoped_session(maker, owner) as session:
+        await indexer.begin(session, owner.principal_id, fake)
+    for _ in range(50):
+        if not await drain_once(maker, provider, indexer):  # type: ignore[arg-type]
+            break
+    async with scoped_session(maker, owner) as session:
+        progress = await GmailIndexStateRepo().progress(
+            session, owner.principal_id, GmailMetaRepo()
+        )
+    assert progress.phase == "ready"
+    assert progress.indexed == 6
+
+
+async def test_drain_marks_error_when_gmail_unconfigured(maker: async_sessionmaker) -> None:
+    owner = _owner()
+    indexer = GmailIndexer()
+    # Enable the index pointed at a working client, then drain with creds revoked.
+    async with scoped_session(maker, owner) as session:
+        await indexer.begin(session, owner.principal_id, _mailbox())
+    did_work = await drain_once(maker, _FakeProvider(None), indexer)  # type: ignore[arg-type]
+    assert did_work is False
+    async with scoped_session(maker, owner) as session:
+        progress = await GmailIndexStateRepo().progress(
+            session, owner.principal_id, GmailMetaRepo()
+        )
+    assert progress.phase == "error"
+    assert progress.error
+
+
+def _req(maker: async_sessionmaker, provider: object) -> object:
+    return SimpleNamespace(
+        app=SimpleNamespace(state=SimpleNamespace(session_maker=maker, gmail_provider=provider))
+    )
+
+
+def _principal(owner: SessionContext) -> PrincipalInfo:
+    return PrincipalInfo(id=owner.principal_id or "", kind="owner", label="t")
+
+
+async def test_index_endpoints_start_and_report_status(maker: async_sessionmaker) -> None:
+    owner = _owner()
+    principal = _principal(owner)
+    request = _req(maker, _FakeProvider(_mailbox()))
+
+    before = await read_gmail_index(request, principal)  # type: ignore[arg-type]
+    assert before.phase == "idle" and before.enabled is False
+
+    started = await start_gmail_index(SimpleNamespace(rebuild=False), request, principal)  # type: ignore[arg-type]
+    assert started.enabled is True
+    assert started.phase == "discovering"
+    assert started.total == 6  # get_profile reported the mailbox size → progress denominator
+
+
+async def test_start_index_requires_connected_gmail(maker: async_sessionmaker) -> None:
+    from fastapi import HTTPException
+
+    owner = _owner()
+    request = _req(maker, _FakeProvider(None))  # creds not configured
+    with pytest.raises(HTTPException) as exc:
+        await start_gmail_index(SimpleNamespace(rebuild=False), request, _principal(owner))  # type: ignore[arg-type]
+    assert exc.value.status_code == 400
 
 
 async def test_backfill_is_resumable_midway(maker: async_sessionmaker) -> None:
