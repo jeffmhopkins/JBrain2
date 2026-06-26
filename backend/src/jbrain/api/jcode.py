@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import logging
 import re
 import uuid
 from collections.abc import AsyncIterator
@@ -25,6 +26,8 @@ from pydantic import BaseModel, Field
 from jbrain.api.deps import OwnerDep
 from jbrain.db import SessionContext, scoped_session
 from jbrain.jcode import JcodeApi, JcodeError
+from jbrain.llm import local_catalog
+from jbrain.llm.local_gateway import LocalGatewayError
 from jbrain.models.jcode import JcodeSessionRepo
 from jbrain.settings_store import SqlSettingsStore
 
@@ -32,6 +35,9 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
     from jbrain.config import Settings
+    from jbrain.llm.local_gateway import LocalGateway
+
+log = logging.getLogger(__name__)
 
 _SSE_HEARTBEAT_SECONDS = 20.0
 _SSE_HEADERS = {"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
@@ -142,6 +148,50 @@ async def _resolve_model(request: Request, owner_id: str) -> str:
     return (await _store(request).jcode_model(_owner_ctx(owner_id))) or settings.jcode_model
 
 
+def _served_model(model_id: str) -> str:
+    """The gateway's served-model name for a catalog id (they match for the coder, but
+    resolve via the catalog to be correct)."""
+    m = local_catalog.get(model_id)
+    return m.served_model if m else model_id
+
+
+def _warm_tasks(request: Request) -> set[asyncio.Task[None]]:
+    state = request.app.state
+    tasks = getattr(state, "jcode_warm_tasks", None)
+    if tasks is None:
+        tasks = set()
+        state.jcode_warm_tasks = tasks
+    return cast("set[asyncio.Task[None]]", tasks)
+
+
+async def _warm_model(gateway: LocalGateway, served: str) -> None:
+    # Give the coder the whole box: evict every OTHER resident model, then load it. A
+    # cold 80B load reads tens of GB (blocks up to ~2 min), so this runs in the
+    # background — never blocking session creation. NOT unloaded later: the coder stays
+    # resident until another JBrain task loads a different model (the gateway swaps it
+    # then). All best-effort: a gateway hiccup must never break a session.
+    with contextlib.suppress(Exception):
+        for resident in await gateway.running():
+            if resident != served:
+                with contextlib.suppress(LocalGatewayError):
+                    await gateway.unload(resident)
+        await gateway.load(served)
+
+
+def _maybe_warm_coder(request: Request, model_id: str) -> None:
+    """Fire-and-forget warm of the coder when a session opens (jcode_warm_on_create)."""
+    settings = cast("Settings", request.app.state.settings)
+    if not settings.jcode_warm_on_create or not settings.local_llm_enabled:
+        return
+    gateway = getattr(request.app.state, "local_gateway", None)
+    if gateway is None:
+        return
+    task = asyncio.create_task(_warm_model(gateway, _served_model(model_id)))
+    tasks = _warm_tasks(request)
+    tasks.add(task)
+    task.add_done_callback(tasks.discard)
+
+
 _REPO = JcodeSessionRepo()
 
 
@@ -181,7 +231,31 @@ async def create_session(
             work_branch=session.get("work_branch", ""),
             status=session.get("status", "ready"),
         )
+    # Warm the coder onto the gateway in the background so it's loading by the time the
+    # first prompt arrives (and gets the whole box). Best-effort; never blocks create.
+    _maybe_warm_coder(request, model)
     return session
+
+
+@router.get("/jcode/model")
+async def model_status(owner: OwnerDep, request: Request) -> dict[str, object]:
+    """Whether the code-mode coder is resident in the gateway — the session screen's
+    loading-bar poll. Owner-gated; `hosting` is false when local hosting is off."""
+    settings = cast("Settings", request.app.state.settings)
+    model_id = await _resolve_model(request, owner.id)
+    served = _served_model(model_id)
+    cat = local_catalog.get(model_id)
+    loaded = False
+    gateway = getattr(request.app.state, "local_gateway", None)
+    if settings.local_llm_enabled and gateway is not None:
+        loaded = served in await cast("LocalGateway", gateway).running()
+    return {
+        "model": model_id,
+        "served": served,
+        "loaded": loaded,
+        "hosting": settings.local_llm_enabled,
+        "size_gb": cat.size_gb if cat else 0.0,
+    }
 
 
 @router.get("/jcode/sessions")

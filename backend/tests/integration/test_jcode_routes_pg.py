@@ -3,6 +3,7 @@ server. Exercises create → list → get → turn(SSE) → reset → delete und
 so the session index stays honest and the detached turn streams to completion.
 """
 
+import asyncio
 from collections.abc import AsyncIterator
 
 import pytest
@@ -89,6 +90,50 @@ async def test_full_session_lifecycle_through_the_routes(maker: async_sessionmak
         assert (await client.post(f"/api/jcode/sessions/{sid}/reset")).status_code == 200
         assert (await client.delete(f"/api/jcode/sessions/{sid}")).status_code == 204
         assert (await client.get(f"/api/jcode/sessions/{sid}")).status_code == 404
+
+
+class _FakeGateway:
+    """Records load/unload + reports residency for the warm + status tests."""
+
+    def __init__(self, resident: set[str] | None = None) -> None:
+        self.resident: set[str] = set(resident or ())
+        self.loaded: list[str] = []
+        self.unloaded: list[str] = []
+
+    async def running(self) -> set[str]:
+        return set(self.resident)
+
+    async def load(self, served_model: str) -> None:
+        self.loaded.append(served_model)
+        self.resident = {served_model}
+
+    async def unload(self, served_model: str) -> None:
+        self.unloaded.append(served_model)
+        self.resident.discard(served_model)
+
+
+async def test_create_warms_the_coder_and_status_reports_loaded(
+    maker: async_sessionmaker,
+) -> None:
+    # Opening a session evicts the other resident model and warms the coder (it gets the
+    # whole box); the model-status poll then reports it loaded.
+    owner_id = await _owner_id(maker)
+    app = _app(maker, owner_id)
+    app.state.settings = Settings(secure_cookies=False, local_llm_enabled=True)
+    gw = _FakeGateway(resident={"gpt-oss-120b"})
+    app.state.local_gateway = gw
+    transport = ASGITransport(app=app)
+
+    async with AsyncClient(transport=transport, base_url="http://t") as client:
+        assert (await client.post("/api/jcode/sessions", json={"repo": "r"})).status_code == 201
+        await asyncio.sleep(0.1)  # let the background warm task run
+        assert gw.unloaded == ["gpt-oss-120b"]  # the other model was evicted
+        assert gw.loaded == ["qwen3-coder-next"]  # the coder was warmed
+
+        status = (await client.get("/api/jcode/model")).json()
+        assert status["model"] == "qwen3-coder-next"
+        assert status["loaded"] is True
+        assert status["hosting"] is True
 
 
 async def test_create_forwards_the_selected_model(maker: async_sessionmaker) -> None:

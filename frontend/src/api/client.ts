@@ -23,7 +23,13 @@ import type {
   TranscriptTurn,
 } from "../agent/types";
 import { parseJcodeStream } from "../jcode/stream";
-import type { JcodeEvent, JcodePreview, JcodeSession, NewSessionInput } from "../jcode/types";
+import type {
+  JcodeEvent,
+  JcodeModelStatus,
+  JcodePreview,
+  JcodeSession,
+  NewSessionInput,
+} from "../jcode/types";
 
 export interface Principal {
   principal_id: string;
@@ -2295,6 +2301,11 @@ export const api = {
 
   async jcodePreviewClose(id: string): Promise<void> {
     await request(`/api/jcode/sessions/${encodeURIComponent(id)}/preview`, { method: "DELETE" });
+  },
+
+  /** Whether the coder model is resident in the gateway — polled by the loading bar. */
+  async jcodeModelStatus(): Promise<JcodeModelStatus> {
+    return (await request("/api/jcode/model")).json();
   },
 
   // `sessionId` scopes the review inbox to a Full Brain chat: its own staged

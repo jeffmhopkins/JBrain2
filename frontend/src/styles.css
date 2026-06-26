@@ -15052,6 +15052,38 @@ input.ld-title {
   padding: 14px;
 }
 
+/* "loading model" bar — shown while the coder cold-loads onto the box */
+.jcode-modelload {
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+}
+.jcode-modelload-row {
+  display: flex;
+  justify-content: space-between;
+  font-size: 13px;
+  color: var(--text-dim);
+  margin-bottom: 8px;
+}
+.jcode-modelload-pct {
+  font-variant-numeric: tabular-nums;
+  color: var(--accent);
+}
+.jcode-modelload-track {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--accent-tint);
+  overflow: hidden;
+}
+.jcode-modelload-fill {
+  height: 100%;
+  background: var(--accent);
+  border-radius: 3px;
+  transition: width 0.4s ease;
+}
+
 /* chat transcript */
 .jcode-msg {
   margin-bottom: 10px;
