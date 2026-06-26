@@ -549,14 +549,6 @@ export function LLMSettingsScreen() {
         onStopImageService={stopImageService}
       />
 
-      {settings.jcode.enabled && (
-        <JcodeModelCard
-          jcode={settings.jcode}
-          busy={busy.has("jcode-model")}
-          onChange={setJcodeModel}
-        />
-      )}
-
       {groups.map((group) => {
         const provider = sharedProvider(group.tasks);
         const reasoning = sharedReasoning(group.tasks, reasonOn);
@@ -711,6 +703,16 @@ export function LLMSettingsScreen() {
         );
       })}
 
+      {/* Code mode sits at the bottom, under the role tiers (it's a single-model
+          choice, not a per-task tier), styled to match them. */}
+      {settings.jcode.enabled && (
+        <JcodeModelCard
+          jcode={settings.jcode}
+          busy={busy.has("jcode-model")}
+          onChange={setJcodeModel}
+        />
+      )}
+
       <AiUsageCard />
     </main>
   );
@@ -734,39 +736,44 @@ function JcodeModelCard({
   const missing = !!jcode.model && !jcode.options.some((o) => o.id === jcode.model);
   const hasChoices = jcode.options.length > 0 || missing;
   return (
-    <section className="onbox-card jcode-model-card" aria-label="Code mode model card">
-      <div className="onbox-head">
-        <span className="onbox-title">Code mode model</span>
-      </div>
-      <p className="settings-meta">
-        The local model the jcode coding agent runs. New sessions use the current choice; an
-        in-flight session keeps the model it started with.
-      </p>
-      {hasChoices ? (
-        <select
-          className="llm-select"
-          aria-label="Code mode model"
-          value={jcode.model}
-          disabled={busy}
-          onChange={(e) => onChange(e.target.value)}
-        >
-          {missing && (
-            <option value={jcode.model} disabled>
-              {jcode.model} (not installed)
-            </option>
-          )}
-          {jcode.options.map((o) => (
-            <option key={o.id} value={o.id}>
-              {o.label}
-              {o.id === jcode.default ? " · default" : ""}
-            </option>
-          ))}
-        </select>
-      ) : (
-        <p className="llm-na-note">
-          Install a tool-capable local model (above) to choose one for code mode.
+    <section className="llm-group llm-jcode" aria-label="Code mode model card">
+      <div className="llm-group-head">
+        <div className="llm-group-title">
+          <span className="llm-group-name">Code mode</span>
+          <span className="llm-group-count">1 agent</span>
+        </div>
+        <p className="llm-group-desc">
+          The local model the jcode coding agent runs. New sessions use the current choice; an
+          in-flight session keeps the model it started with.
         </p>
-      )}
+
+        <span className="llm-field-tag">Model</span>
+        {hasChoices ? (
+          <select
+            className="llm-select"
+            aria-label="Code mode model"
+            value={jcode.model}
+            disabled={busy}
+            onChange={(e) => onChange(e.target.value)}
+          >
+            {missing && (
+              <option value={jcode.model} disabled>
+                {jcode.model} (not installed)
+              </option>
+            )}
+            {jcode.options.map((o) => (
+              <option key={o.id} value={o.id}>
+                {o.label}
+                {o.id === jcode.default ? " · default" : ""}
+              </option>
+            ))}
+          </select>
+        ) : (
+          <p className="llm-na-note">
+            Install a tool-capable local model (above) to choose one for code mode.
+          </p>
+        )}
+      </div>
     </section>
   );
 }

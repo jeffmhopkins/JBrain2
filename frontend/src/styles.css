@@ -978,6 +978,10 @@ h3 {
   --llm-accent: var(--amber);
   --llm-accent-tint: var(--amber-tint);
 }
+.llm-jcode {
+  --llm-accent: var(--steel);
+  --llm-accent-tint: var(--steel-tint);
+}
 
 /* "Manage local models" drawer — a read-only roster of self-hosted models that
    sits above the tiers. Same hairline-card register as the tier cards. */
