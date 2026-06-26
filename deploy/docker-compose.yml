@@ -399,6 +399,13 @@ services:
       CLAUDE_CONFIG_DIR: ${JCODE_CLAUDE_CONFIG_DIR:-/tmp/claude}
       CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1"
       CLAUDECODE: ""
+      # The CLI refuses --dangerously-skip-permissions (our bypassPermissions mode) as
+      # root: "cannot be used with root/sudo privileges for security reasons". This
+      # container runs as root but IS a genuine sandbox — isolated `jcode` network (no
+      # host, db, or notes) + a throwaway per-session checkout — which is exactly the
+      # case the CLI's IS_SANDBOX escape hatch exists for. Without it every turn exits 1
+      # before any model call (confirmed on-box via the captured CLI stderr).
+      IS_SANDBOX: "1"
       # Per-session web preview (Wave J4): an ephemeral Cloudflare quick-tunnel
       # (cloudflared, bundled in the image) to the sandbox's dev server. OFF by
       # default — it exposes the running app to anyone with the random URL — and
