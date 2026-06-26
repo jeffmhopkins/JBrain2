@@ -138,6 +138,103 @@ async def test_toggle_enabled_round_trips(maker: async_sessionmaker) -> None:
     assert await reader.set_trigger_enabled(owner, EVENT_TRIGGER, True) is True
 
 
+async def test_update_schedule_recomputes_next_run_at(maker: async_sessionmaker) -> None:
+    from datetime import UTC, datetime, timedelta
+
+    owner = await _owner(maker)
+    reader = _reader(maker)
+    # Set the reconciler schedule to a task-style daily repeat at 06:00 UTC. The
+    # repo recomputes next_run_at from the spec (the next 06:00 strictly after now),
+    # and the legacy interval is cleared.
+    now = datetime(2026, 6, 15, 12, 0, tzinfo=UTC)
+    ok = await reader.update_schedule(
+        owner,
+        RECONCILE_SCHEDULE,
+        schedule_kind="repeat",
+        interval_seconds=None,
+        schedule_freq="daily",
+        schedule_days=[],
+        schedule_time="06:00",
+        run_at=None,
+        timezone="UTC",
+        now=now,
+    )
+    assert ok is True
+    async with scoped_session(maker, owner) as session:
+        row = (
+            await session.execute(
+                text(
+                    "SELECT schedule_kind, schedule_freq, schedule_time, interval_seconds,"
+                    " next_run_at FROM app.schedules WHERE id = cast(:id AS uuid)"
+                ),
+                {"id": RECONCILE_SCHEDULE},
+            )
+        ).first()
+    assert row is not None
+    assert row.schedule_kind == "repeat"
+    assert row.schedule_freq == "daily"
+    assert row.schedule_time == "06:00"
+    assert row.interval_seconds is None
+    # now is 12:00; the next 06:00 is tomorrow.
+    assert row.next_run_at == now + timedelta(hours=18)
+
+    # The card now reflects the new spec for the editor to re-open.
+    view = await reader.load(owner)
+    recon = {a.trigger_id: a for a in view.automations}[RECONCILE_TRIGGER]
+    assert recon.schedule_kind == "repeat"
+    assert recon.schedule_time == "06:00"
+
+    # Restore the seeded 300s interval so the suite stays order-independent.
+    await reader.update_schedule(
+        owner,
+        RECONCILE_SCHEDULE,
+        schedule_kind="interval",
+        interval_seconds=300,
+        schedule_freq=None,
+        schedule_days=[],
+        schedule_time=None,
+        run_at=None,
+        timezone="UTC",
+        now=now,
+    )
+
+
+async def test_update_schedule_is_owner_only(maker: async_sessionmaker) -> None:
+    await _owner(maker)
+    reader = _reader(maker)
+    # A non-owner session: RLS hides the schedule, so the UPDATE matches no row.
+    token = SessionContext(principal_kind="capability_token", domain_scopes=("general",))
+    assert (
+        await reader.update_schedule(
+            token,
+            RECONCILE_SCHEDULE,
+            schedule_kind="on_demand",
+            interval_seconds=None,
+            schedule_freq=None,
+            schedule_days=[],
+            schedule_time=None,
+            run_at=None,
+            timezone="UTC",
+        )
+        is False
+    )
+    # A malformed id short-circuits to False before touching the DB.
+    assert (
+        await reader.update_schedule(
+            await _owner(maker),
+            "not-a-uuid",
+            schedule_kind="on_demand",
+            interval_seconds=None,
+            schedule_freq=None,
+            schedule_days=[],
+            schedule_time=None,
+            run_at=None,
+            timezone="UTC",
+        )
+        is False
+    )
+
+
 async def test_toggle_unknown_id_is_false(maker: async_sessionmaker) -> None:
     owner = await _owner(maker)
     reader = _reader(maker)

@@ -18,8 +18,9 @@ from __future__ import annotations
 
 import json
 import uuid
+from collections.abc import Sequence
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any, cast
 
 from sqlalchemy import CursorResult, text
@@ -28,6 +29,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from jbrain.agent.runlog import _duration_ms
 from jbrain.db.session import SessionContext, scoped_session
 from jbrain.workflow.registry import ActionRegistry
+from jbrain.workflow.scheduler import next_schedule_run
 
 # The three groups the mock renders, in order. A trigger lands in a group by how
 # it fires and how often: event-bound -> note events; a sub-hourly schedule -> the
@@ -93,6 +95,15 @@ class AutomationView:
     interval_seconds: int | None = None
     next_run_at: datetime | None = None
     last_run_at: datetime | None = None
+    # The task-style schedule spec (migration 0099) the owner edits on a sweep card:
+    # kind=interval keeps the legacy fixed cadence; on_demand/once/repeat mirror a
+    # task's day/time schedule. All None/empty for an event trigger.
+    schedule_kind: str | None = None
+    schedule_freq: str | None = None
+    schedule_days: list[int] = field(default_factory=list)
+    schedule_time: str | None = None
+    run_at: datetime | None = None
+    timezone: str | None = None
 
 
 @dataclass(frozen=True)
@@ -192,6 +203,12 @@ class AutomationsReader:
                            s.interval_seconds,
                            s.next_run_at,
                            s.last_run_at,
+                           s.schedule_kind,
+                           s.schedule_freq,
+                           s.schedule_days,
+                           s.schedule_time,
+                           s.run_at,
+                           s.timezone,
                            coalesce(p.steps, '[]'::jsonb)::text AS steps
                     FROM app.triggers t
                     LEFT JOIN app.schedules s ON s.id = t.on_schedule_id
@@ -226,6 +243,12 @@ class AutomationsReader:
                     interval_seconds=row.interval_seconds,
                     next_run_at=row.next_run_at,
                     last_run_at=row.last_run_at,
+                    schedule_kind=row.schedule_kind,
+                    schedule_freq=row.schedule_freq,
+                    schedule_days=list(row.schedule_days) if row.schedule_days else [],
+                    schedule_time=row.schedule_time,
+                    run_at=row.run_at,
+                    timezone=row.timezone,
                 )
             )
         return out
@@ -316,5 +339,64 @@ class AutomationsReader:
             result = await session.execute(
                 text("UPDATE app.schedules SET enabled = :enabled WHERE id = cast(:id AS uuid)"),
                 {"enabled": enabled, "id": schedule_id},
+            )
+        return (cast(CursorResult[Any], result).rowcount or 0) > 0
+
+    async def update_schedule(
+        self,
+        ctx: SessionContext,
+        schedule_id: str,
+        *,
+        schedule_kind: str,
+        interval_seconds: int | None,
+        schedule_freq: str | None,
+        schedule_days: Sequence[int],
+        schedule_time: str | None,
+        run_at: datetime | None,
+        timezone: str,
+        now: datetime | None = None,
+    ) -> bool:
+        """Replace a schedule's timing spec and recompute its `next_run_at` from it —
+        the owner's "set this sweep's cadence like a task" control. `next_run_at` is
+        derived through the same `next_schedule_run` the tick uses, so the editor and
+        the scheduler never disagree on the next fire (an on_demand / spent-once spec
+        recomputes to NULL, dropping it from the due set). Owner-scoped (the caller
+        passes the owner ctx; the RLS UPDATE policy is the real gate). Returns False
+        on a malformed or out-of-scope id, so a bad id never silently succeeds."""
+        try:
+            uuid.UUID(schedule_id)
+        except ValueError:
+            return False
+        moment = now or datetime.now(UTC)
+        next_run = next_schedule_run(
+            now=moment,
+            schedule_kind=schedule_kind,
+            interval_seconds=interval_seconds,
+            schedule_freq=schedule_freq,
+            schedule_days=schedule_days,
+            schedule_time=schedule_time,
+            run_at=run_at,
+            timezone=timezone,
+        )
+        async with scoped_session(self._maker, ctx) as session:
+            result = await session.execute(
+                text(
+                    "UPDATE app.schedules SET"
+                    " schedule_kind = :kind, interval_seconds = :interval,"
+                    " schedule_freq = :freq, schedule_days = :days,"
+                    " schedule_time = :time, run_at = :run_at, timezone = :tz,"
+                    " next_run_at = :next WHERE id = cast(:id AS uuid)"
+                ),
+                {
+                    "kind": schedule_kind,
+                    "interval": interval_seconds,
+                    "freq": schedule_freq,
+                    "days": list(schedule_days),
+                    "time": schedule_time,
+                    "run_at": run_at,
+                    "tz": timezone,
+                    "next": next_run,
+                    "id": schedule_id,
+                },
             )
         return (cast(CursorResult[Any], result).rowcount or 0) > 0

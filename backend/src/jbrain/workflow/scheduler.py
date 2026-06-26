@@ -12,8 +12,13 @@ Two entry points, one resolution path:
 - `scheduler_tick` claims schedules whose `next_run_at <= now` `FOR UPDATE SKIP
   LOCKED` (so a second worker is safe later, §7), enqueues each bound pipeline,
   and advances `next_run_at` **in app code** off the injected `now` — never a SQL
-  `now()` — so a fake clock fully controls cadence in tests (N3). No cron parser:
-  interval + explicit `next_run_at` only (§7, zero-new-dep goal).
+  `now()` — so a fake clock fully controls cadence in tests (N3). The advance is
+  `next_schedule_run`: a fixed `interval` step (the reconcilers' sub-day cadence) or,
+  for the task-style `on_demand`/`once`/`repeat` kinds (migration 0099), the same
+  pure `jbrain.tasks.schedule.next_run_after` a task uses — so an owner can set a
+  sweep's day/time like a task. Still no cron-string parser and no new dependency
+  (§7, zero-new-dep goal): a `repeat` whose spec yields no next fire advances to a
+  NULL `next_run_at`, dropping out of the due set until re-armed.
 - `fire_trigger` enqueues a single trigger's pipeline immediately. It backs both
   the schedule path (a schedule fires its bound trigger) and the emergency
   "run now" Ops control (`POST /ops/triggers/{id}/run`), so a sweep is runnable
@@ -29,7 +34,7 @@ owner/agent-trigger scope path is Track A's event dispatcher, not built here.
 from __future__ import annotations
 
 import json
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -40,6 +45,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from jbrain import queue
 from jbrain.db.session import scoped_session
+from jbrain.tasks.schedule import next_run_after, spec_from
 from jbrain.workflow.contracts import Pipeline
 from jbrain.workflow.registry import ActionRegistry, ActionSpec
 from jbrain.workflow.runlog import EnqueuedStep, PipelineRunLog
@@ -153,6 +159,46 @@ def advance(now: datetime, interval_seconds: int) -> datetime:
     runs (the sweeps are idempotent, so a coalesced miss is harmless, and a
     catch-up storm after downtime would be worse than one skipped night)."""
     return now + timedelta(seconds=interval_seconds)
+
+
+def next_schedule_run(
+    *,
+    now: datetime,
+    schedule_kind: str,
+    interval_seconds: int | None,
+    schedule_freq: str | None,
+    schedule_days: Sequence[int],
+    schedule_time: str | None,
+    run_at: datetime | None,
+    timezone: str,
+) -> datetime | None:
+    """The next fire instant for a schedule, computed app-side off the injected
+    `now` (N3) — the single advance contract for both the legacy interval kind and
+    the task-style spec kinds (on_demand / once / repeat).
+
+    `interval` is the fixed forward step the reconcilers ride (a sub-day cadence the
+    task model can't express). The spec kinds reuse the exact pure
+    `jbrain.tasks.schedule.next_run_after` a task uses, so a sweep set to "every
+    weekday at 07:00" fires identically to a task with that schedule. Returns None
+    when the schedule has no upcoming fire (on_demand, or a once whose moment has
+    passed) — the tick stores that as a NULL next_run_at, removing it from the due
+    set until it is re-armed."""
+    if schedule_kind == "interval":
+        # A legacy interval row always carries an interval_seconds (the column was
+        # NOT NULL until this kind existed); guard defensively so a malformed row
+        # falls out of the due set rather than crashing the tick.
+        if interval_seconds is None:
+            return None
+        return advance(now, interval_seconds)
+    spec = spec_from(
+        kind=schedule_kind,
+        freq=schedule_freq,
+        days=schedule_days,
+        time=schedule_time,
+        run_at=run_at,
+        tz=timezone,
+    )
+    return next_run_after(spec, now)
 
 
 class ScheduleResolutionError(Exception):
@@ -308,7 +354,9 @@ async def scheduler_tick(
                 await session.execute(
                     text(
                         """
-                        SELECT s.id, s.interval_seconds,
+                        SELECT s.id, s.interval_seconds, s.schedule_kind,
+                               s.schedule_freq, s.schedule_days, s.schedule_time,
+                               s.run_at, s.timezone,
                                t.id AS trigger_id, t.pipeline
                         FROM app.schedules s
                         LEFT JOIN app.triggers t
@@ -324,7 +372,16 @@ async def scheduler_tick(
             ).first()
             if row is None:
                 return fired
-            next_run = advance(moment, row.interval_seconds)
+            next_run = next_schedule_run(
+                now=moment,
+                schedule_kind=row.schedule_kind,
+                interval_seconds=row.interval_seconds,
+                schedule_freq=row.schedule_freq,
+                schedule_days=row.schedule_days or (),
+                schedule_time=row.schedule_time,
+                run_at=row.run_at,
+                timezone=row.timezone,
+            )
             await session.execute(
                 text(
                     "UPDATE app.schedules"

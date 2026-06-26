@@ -934,6 +934,29 @@ export interface Automation {
   interval_seconds: number | null;
   next_run_at: string | null;
   last_run_at: string | null;
+  /** The task-style schedule spec the owner edits on a sweep card (null for events).
+   * `interval` keeps the legacy fixed cadence; on_demand/once/repeat mirror a task. */
+  schedule_kind: ScheduleSpecKind | null;
+  schedule_freq: ScheduleFreq | null;
+  schedule_days: number[];
+  schedule_time: string | null;
+  run_at: string | null;
+  timezone: string | null;
+}
+
+/** A schedule's timing kind: the legacy fixed `interval` plus the task spec kinds. */
+export type ScheduleSpecKind = "interval" | "on_demand" | "once" | "repeat";
+
+/** PUT /api/ops/schedules/{id} body — replace a schedule's timing spec. Mirrors the
+ * backend's ScheduleBody; cross-field rules are enforced server-side. */
+export interface ScheduleInput {
+  schedule_kind: ScheduleSpecKind;
+  interval_seconds: number | null;
+  schedule_freq: ScheduleFreq | null;
+  schedule_days: number[];
+  schedule_time: string | null;
+  run_at: string | null;
+  timezone: string;
 }
 
 /** A Catalog row: a registered action's metadata + whether it's seeded in app.actions. */
@@ -2081,6 +2104,12 @@ export const api = {
       `/api/ops/schedules/${encodeURIComponent(scheduleId)}`,
       jsonInit("PATCH", { enabled }),
     );
+  },
+
+  // Replace a schedule's timing spec (day/time/repeat, like a task). The server
+  // recomputes next_run_at from the spec. Owner-only mutation.
+  async updateSchedule(scheduleId: string, body: ScheduleInput): Promise<void> {
+    await request(`/api/ops/schedules/${encodeURIComponent(scheduleId)}`, jsonInit("PUT", body));
   },
 
   // ===== Tasks (the launcher's Tasks surface) =====

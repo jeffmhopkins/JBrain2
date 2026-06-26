@@ -117,6 +117,68 @@ def test_advance_does_not_catch_up_missed_runs() -> None:
     assert scheduler.advance(late, 86400) == late + timedelta(days=1)
 
 
+# --- next_schedule_run: the unified advance over interval + task-style spec --------
+
+
+def _next(**kw: Any) -> Any:
+    """next_schedule_run with the spec defaults filled in; pass only what a kind needs."""
+    base: dict[str, Any] = {
+        "now": NOW,
+        "schedule_kind": "interval",
+        "interval_seconds": None,
+        "schedule_freq": None,
+        "schedule_days": (),
+        "schedule_time": None,
+        "run_at": None,
+        "timezone": "UTC",
+    }
+    base.update(kw)
+    return scheduler.next_schedule_run(**base)
+
+
+def test_next_schedule_run_interval_is_one_step_out() -> None:
+    # The legacy kind: a fixed forward step off the injected clock (same as advance).
+    assert _next(schedule_kind="interval", interval_seconds=300) == NOW + timedelta(minutes=5)
+
+
+def test_next_schedule_run_interval_without_seconds_is_none() -> None:
+    # A malformed interval row (no interval_seconds) drops out of the due set instead
+    # of crashing the tick.
+    assert _next(schedule_kind="interval", interval_seconds=None) is None
+
+
+def test_next_schedule_run_repeat_daily_is_next_local_time() -> None:
+    # A daily repeat at 02:00 UTC, now exactly 02:00 → the NEXT day's 02:00 (strictly
+    # after now), proving it reuses the task schedule's wall-clock logic.
+    nxt = _next(schedule_kind="repeat", schedule_freq="daily", schedule_time="02:00")
+    assert nxt == NOW + timedelta(days=1)
+
+
+def test_next_schedule_run_repeat_weekly_picks_a_listed_day() -> None:
+    # NOW is 2026-06-15, a Monday (=1 in Sun=0 convention). A weekly repeat on Wed (=3)
+    # at 09:00 fires the coming Wednesday.
+    nxt = _next(
+        schedule_kind="repeat",
+        schedule_freq="weekly",
+        schedule_days=(3,),
+        schedule_time="09:00",
+    )
+    assert nxt is not None
+    assert nxt.weekday() == 2  # Python Wednesday
+    assert (nxt.hour, nxt.minute) == (9, 0)
+
+
+def test_next_schedule_run_once_returns_the_instant_then_none() -> None:
+    future = NOW + timedelta(hours=3)
+    assert _next(schedule_kind="once", run_at=future) == future
+    # A once whose moment has passed has no next fire (drops to NULL).
+    assert _next(schedule_kind="once", run_at=NOW - timedelta(hours=1)) is None
+
+
+def test_next_schedule_run_on_demand_never_fires() -> None:
+    assert _next(schedule_kind="on_demand") is None
+
+
 # --- fire_trigger -----------------------------------------------------------
 
 
@@ -208,7 +270,20 @@ async def test_tick_advances_next_run_at_app_side_off_injected_clock(
     # 1: claim due schedule + advance, 2: empty re-query (drain), then fire_trigger's
     # two sessions (trigger lookup, pipeline lookup).
     claim = FakeSession(
-        [Row(id="sch-1", interval_seconds=86400, trigger_id="trig-1", pipeline="p")]
+        [
+            Row(
+                id="sch-1",
+                interval_seconds=86400,
+                schedule_kind="interval",
+                schedule_freq=None,
+                schedule_days=[],
+                schedule_time=None,
+                run_at=None,
+                timezone="UTC",
+                trigger_id="trig-1",
+                pipeline="p",
+            )
+        ]
     )
     drain = FakeSession([None])
     trig = FakeSession([Row(pipeline="p", enabled=True)])
@@ -240,7 +315,22 @@ async def test_tick_advances_then_skips_a_schedule_with_no_trigger(
 ) -> None:
     # A dangling schedule (no enabled trigger) is advanced and skipped, not looped
     # on forever: the drain re-query returns nothing because it was advanced.
-    claim = FakeSession([Row(id="sch-x", interval_seconds=3600, trigger_id=None, pipeline=None)])
+    claim = FakeSession(
+        [
+            Row(
+                id="sch-x",
+                interval_seconds=3600,
+                schedule_kind="interval",
+                schedule_freq=None,
+                schedule_days=[],
+                schedule_time=None,
+                run_at=None,
+                timezone="UTC",
+                trigger_id=None,
+                pipeline=None,
+            )
+        ]
+    )
     drain = FakeSession([None])
     db = FakeDB([claim, drain])
     monkeypatch.setattr(scheduler, "scoped_session", db.scoped)

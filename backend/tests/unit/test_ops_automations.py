@@ -32,6 +32,7 @@ class FakeAutomationsReader:
     def __init__(self) -> None:
         self.trigger_toggles: list[tuple[str, bool]] = []
         self.schedule_toggles: list[tuple[str, bool]] = []
+        self.schedule_updates: list[tuple[str, dict[str, object]]] = []
         self._view = AutomationsView(
             automations=[
                 AutomationView(
@@ -113,6 +114,10 @@ class FakeAutomationsReader:
         self.schedule_toggles.append((schedule_id, enabled))
         return schedule_id == "sched-1"
 
+    async def update_schedule(self, ctx: object, schedule_id: str, **spec: object) -> bool:
+        self.schedule_updates.append((schedule_id, spec))
+        return schedule_id == "sched-1"
+
 
 @pytest.fixture
 def repo() -> FakeAuthRepo:
@@ -165,6 +170,10 @@ def test_non_owner_forbidden(client: TestClient, repo: FakeAuthRepo) -> None:
     assert client.get("/api/ops/actions").status_code == 403
     assert client.patch("/api/ops/triggers/e1", json={"enabled": False}).status_code == 403
     assert client.patch("/api/ops/schedules/sched-1", json={"enabled": False}).status_code == 403
+    assert (
+        client.put("/api/ops/schedules/sched-1", json={"schedule_kind": "on_demand"}).status_code
+        == 403
+    )
 
 
 # --- payload shapes ----------------------------------------------------------
@@ -232,6 +241,88 @@ def test_patch_schedule_unknown_404(client: TestClient, repo: FakeAuthRepo) -> N
     login(client, repo)
     resp = client.patch("/api/ops/schedules/ghost", json={"enabled": True})
     assert resp.status_code == 404
+
+
+# --- the schedule-spec editor (PUT /ops/schedules/{id}) ----------------------
+
+
+def test_put_schedule_requires_owner(client: TestClient) -> None:
+    # The spec editor is a real config mutation — owner-only like the toggles.
+    assert (
+        client.put(
+            "/api/ops/schedules/sched-1",
+            json={"schedule_kind": "repeat", "schedule_freq": "daily", "schedule_time": "07:00"},
+        ).status_code
+        == 401
+    )
+
+
+def test_put_schedule_sets_a_repeat_spec(
+    client: TestClient, repo: FakeAuthRepo, reader: "FakeAutomationsReader"
+) -> None:
+    login(client, repo)
+    resp = client.put(
+        "/api/ops/schedules/sched-1",
+        json={"schedule_kind": "repeat", "schedule_freq": "weekdays", "schedule_time": "07:00"},
+    )
+    assert resp.status_code == 200
+    assert resp.json() == {"schedule_id": "sched-1", "schedule_kind": "repeat"}
+    sid, spec = reader.schedule_updates[0]
+    assert sid == "sched-1"
+    assert spec["schedule_kind"] == "repeat"
+    assert spec["schedule_freq"] == "weekdays"
+    assert spec["schedule_time"] == "07:00"
+    # A repeat clears the legacy interval so the stored row is honest.
+    assert spec["interval_seconds"] is None
+
+
+def test_put_schedule_unknown_404(client: TestClient, repo: FakeAuthRepo) -> None:
+    login(client, repo)
+    resp = client.put(
+        "/api/ops/schedules/ghost",
+        json={"schedule_kind": "on_demand"},
+    )
+    assert resp.status_code == 404
+
+
+def test_put_schedule_rejects_incoherent_specs(client: TestClient, repo: FakeAuthRepo) -> None:
+    login(client, repo)
+    # repeat without a time, weekly without days, once without run_at, interval
+    # without a positive interval_seconds — each fails validation (422) at the edge.
+    bad_bodies = [
+        {"schedule_kind": "repeat", "schedule_freq": "daily"},  # no time
+        {"schedule_kind": "repeat", "schedule_freq": "weekly", "schedule_time": "07:00"},  # no days
+        {"schedule_kind": "once"},  # no run_at
+        {"schedule_kind": "interval", "interval_seconds": 0},  # non-positive
+        {"schedule_kind": "bogus"},  # unknown kind
+    ]
+    for body in bad_bodies:
+        assert client.put("/api/ops/schedules/sched-1", json=body).status_code == 422
+
+
+def test_schedule_body_coerces_by_kind() -> None:
+    # Pure validation: on_demand clears every spec field; interval clears the
+    # wall-clock spec; the day list is sorted + de-duped and range-checked.
+    from jbrain.api.ops import ScheduleBody
+
+    on_demand = ScheduleBody(
+        schedule_kind="on_demand", schedule_freq="daily", schedule_time="07:00"
+    )
+    assert on_demand.schedule_freq is None and on_demand.schedule_time is None
+
+    interval = ScheduleBody(schedule_kind="interval", interval_seconds=300, schedule_time="07:00")
+    assert interval.interval_seconds == 300 and interval.schedule_time is None
+
+    weekly = ScheduleBody(
+        schedule_kind="repeat",
+        schedule_freq="weekly",
+        schedule_time="09:00",
+        schedule_days=[6, 0, 0],
+    )
+    assert weekly.schedule_days == [0, 6]
+
+    with pytest.raises(ValueError, match="0..6"):
+        ScheduleBody(schedule_kind="on_demand", schedule_days=[7])
 
 
 # --- reader pure-logic edges (no DB needed) ---------------------------------
