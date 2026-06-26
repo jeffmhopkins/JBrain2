@@ -982,6 +982,37 @@ builds the media src. The same shape supports a future note-attachment card
 (`source:'note'`) once a note thumbnail route validates against `attachment_extracts`.
 Owner-facing chat artifact; never a note, never RAG-indexed.
 
+### `weather_card` tool-view (settled in a four-way GUI review — reference mocks: `docs/mocks/weather-view/`)
+
+The in-chat card jerv shows after a `weather` tool call — the glanceable replacement
+for the old web-search-and-scrape-into-a-markdown-table weather flow. A registered,
+data-only view like every other: the model fills
+`{place, as_of, tz, now:{temp_f, feels_f, cond, is_day, label, humidity, wind_mph,
+wind_dir}, hi_f, lo_f, hours:[{label, temp_f, feels_f, cond, is_day, pop, wind_mph,
+wind_dir}]}` and **authors no markup, no URL, and no color** — `cond` is a closed enum
+(`clear|partly|cloudy|rain|storm|snow|fog`) and `is_day` a flag the component maps to an
+**inline SVG glyph + token** (the night variants for clear/partly skies live in the
+component, not the payload). Tokens-only `.tv-wx-*` classes; weather is non-personal
+jerv info, so the card rides the **steel** info accent and a high heat index reads
+**amber** (the warn tone). The card frame matches the live `.tool-view`.
+
+Chosen **A — hero + hourly strip** (`docs/mocks/weather-view/weather-a-hero-strip.html`)
+over **B** temperature curve (`lab_plot`-style SVG — most distinctive, heaviest new
+component), **C** compact dossier rows (the `data_table` upgrade — most complete,
+tallest), and **D** segmented Now/Hourly/Rain-&-wind facets (the settled segmented-tasks
+pattern — compact, but hourly numbers a tap away). A won as the lowest-friction answer to
+the literal "what's the weather now → midnight" question: a big current-conditions hero
+(place · time, temperature, condition glyph, feels-like, H/L, wind) over a finger-
+scrollable hourly row (time · glyph · temp · precip %), reading in one glance. B/C/D are
+retained as the record in `docs/mocks/weather-view/README.md`.
+
+**The location firewall holds at the tool, not the view.** A named place is forward-
+geocoded by name; the owner's "here" fix is resolved to a nearest-city **name** on-box
+(the offline geocoder) and only that public name is geocoded — so the coordinate that
+reaches Open-Meteo is a city centre, the same coarseness as naming the city, never the
+precise fix. Coordinates never ride the data-only payload (#9). Owner-facing chat
+artifact; never a note, never RAG-indexed.
+
 ## Wiki Talk board (settled in a three-way GUI review — reference mock: `docs/mocks/wiki-talk-b-topics.html`)
 
 The article's editorial board (Phase 6) — the wiki's second surface after the reader. Chosen

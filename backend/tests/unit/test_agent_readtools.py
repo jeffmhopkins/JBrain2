@@ -19,6 +19,7 @@ from jbrain.agent.readtools import (
     format_wiki_article,
 )
 from jbrain.agent.toolfile import load_tool
+from jbrain.agent.weathertools import build_weather_handlers
 from jbrain.agent.webtools import build_web_handlers
 from jbrain.agent.wikiwritetools import build_wiki_write_handlers
 from jbrain.connectors.base import ConnectorRegistry
@@ -26,7 +27,7 @@ from jbrain.connectors.medical import medical_connectors
 from jbrain.db.session import SessionContext
 from jbrain.notes.service import NoteInfo
 from jbrain.search.service import SearchResponse, SearchResult
-from jbrain.web import SearxngClient, WebFetcher
+from jbrain.web import SearxngClient, WeatherClient, WebFetcher
 
 CTX = ToolContext(session=SessionContext(principal_kind="owner"), scopes=("general",))
 
@@ -469,7 +470,10 @@ def test_build_registry_binds_the_shipped_sidecars() -> None:
         build_wiki_write_handlers(object(), object(), object()),  # type: ignore[arg-type]
         object(),  # type: ignore[arg-type]  # location repo
         object(),  # type: ignore[arg-type]  # device repo
-        build_web_handlers(SearxngClient(""), WebFetcher()),
+        {
+            **build_web_handlers(SearxngClient(""), WebFetcher()),
+            **build_weather_handlers(WeatherClient("", ""), object()),  # type: ignore[arg-type]
+        },
         object(),  # type: ignore[arg-type]  # city geocoder
         object(),  # type: ignore[arg-type]  # sessionmaker (query_server_metrics)
         object(),  # type: ignore[arg-type]  # external reverse geocoder
@@ -482,6 +486,7 @@ def test_build_registry_binds_the_shipped_sidecars() -> None:
         "web_search",
         "web_fetch",
         "current_location",
+        "weather",
         "archivist_memory_read",
         "archivist_memory_write",
     }
@@ -789,6 +794,11 @@ def test_sidecars_pinned_to_their_versions() -> None:
             "query_server_metrics",
             1,
             "c913e40d4769f173fe57a03f30f1a9ef5380970fb423729001f4e3dffa353647",
+        ),
+        "weather.tool": (
+            "weather",
+            1,
+            "53820cecdd26e2d8a2b1789518b378cc2eddbfa99b89df073ea6f67ccf0808e3",
         ),
         "gmail_search.tool": (
             "gmail_search",

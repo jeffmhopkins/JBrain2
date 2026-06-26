@@ -1,5 +1,11 @@
 # Weather tool-view — mock round (4 variants)
 
+> **Decided: Variant A (hero + hourly strip) + Open-Meteo.** Shipped — the `weather`
+> tool (jerv-only, `web` class) + the registered `weather_card` view. The settled
+> pattern is recorded in `docs/DESIGN.md` "`weather_card` tool-view"; B/C/D are kept
+> below as the record.
+
+
 A `weather` tool for **jerv** + a registered in-chat **`weather_card`** view, to
 replace the long multi-step web-search-and-markdown-table flow with one glanceable
 component. Mock-first per DESIGN.md "UI development process" — these four are the

@@ -325,7 +325,13 @@ the knowledge base** at all. The set is closed and code-defined
   **current date/time** as ambient context (non-personal). `current_location` is the
   one owner-approved exception: a `web`-gated, jerv-only on-box read of the owner's
   **coarse, coordinate-free presence** (a place name + freshness), which jerv's prompt
-  forbids volunteering or sending to the web. See the sandbox bound below. When the
+  forbids volunteering or sending to the web. See the sandbox bound below. The
+  **`weather`** tool is a `web`-gated, jerv-only forecast lookup over a pinned
+  Open-Meteo upstream (free, no key, run directly like search): it replaces the
+  multi-step search-and-scrape weather flow with one call returning a summary plus a
+  `weather_card` view (DESIGN.md). It sends only a public place name / city centre off-
+  box — a named place geocodes by name, and "here" is resolved to a nearest-city name
+  on-box first — so the owner's precise fix never leaves the box. When the
   on-box backends are configured, jerv also gets the `web`-gated, jerv-only
   **`transcribe`** (read an attached audio file via the local whisper gateway) and
   the image tools (`generate_image`/`edit_image`/`analyze_image`) — each resolves a

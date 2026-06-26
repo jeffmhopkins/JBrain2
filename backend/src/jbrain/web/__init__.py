@@ -6,11 +6,15 @@ jerv agent may call.
 
 from jbrain.web.fetch import FetchResult, WebFetcher, WebFetchError
 from jbrain.web.search import SearchHit, SearxngClient, WebSearchError
+from jbrain.web.weather import Weather, WeatherClient, WeatherError
 
 __all__ = [
     "FetchResult",
     "SearchHit",
     "SearxngClient",
+    "Weather",
+    "WeatherClient",
+    "WeatherError",
     "WebFetchError",
     "WebFetcher",
     "WebSearchError",

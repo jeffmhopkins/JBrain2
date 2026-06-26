@@ -6,6 +6,7 @@ from typing import Any
 
 from jbrain.agent.readtools import build_registry
 from jbrain.agent.toolregistry import ToolRegistry
+from jbrain.agent.weathertools import build_weather_handlers
 from jbrain.agent.webtools import build_web_handlers
 from jbrain.agent.wikiwritetools import build_wiki_write_handlers
 from jbrain.connectors.base import ConnectorRegistry
@@ -14,7 +15,7 @@ from jbrain.db.session import SessionContext
 from jbrain.llm.fake import FakeLlmClient
 from jbrain.llm.router import LlmRouter
 from jbrain.llm.types import AssistantMessage, LlmTurn, LlmUsage, ToolCall, UserMessage
-from jbrain.web import SearxngClient, WebFetcher
+from jbrain.web import SearxngClient, WeatherClient, WebFetcher
 from jbrain.wiki.editor import _conversation, _outcome, _ToolTally, run_editor_turn
 
 OWNER = SessionContext(principal_id="00000000-0000-0000-0000-000000000001", principal_kind="owner")
@@ -133,7 +134,10 @@ async def test_run_editor_turn_chip_only_when_lever_fires_with_empty_prose() -> 
         build_wiki_write_handlers(notes, jobs, object()),  # type: ignore[arg-type]
         stub,  # location repo
         stub,  # device repo
-        build_web_handlers(SearxngClient(""), WebFetcher()),
+        {
+            **build_web_handlers(SearxngClient(""), WebFetcher()),
+            **build_weather_handlers(WeatherClient("", ""), stub),
+        },
         stub,  # city geocoder
         stub,  # sessionmaker (query_server_metrics binds it but never calls it here)
     )

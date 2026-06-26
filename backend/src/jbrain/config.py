@@ -87,6 +87,13 @@ class Settings(BaseSettings):
     # (the tool returns "not configured") but the sidecars still load so jerv always
     # has its handlers.
     searxng_url: str = "http://searxng:8080"
+    # The Open-Meteo upstreams backing jerv's `weather` tool (docs/ASSISTANT.md,
+    # DESIGN.md "weather_card tool-view"). Free, no API key, so these default to the
+    # public endpoints; empty disables the tool (it reports "not configured") while the
+    # sidecar still loads. Like SearXNG, the base URLs are pinned here and never
+    # model-supplied; only a public place name + a city-centre coordinate go out.
+    open_meteo_forecast_url: str = "https://api.open-meteo.com"
+    open_meteo_geocode_url: str = "https://geocoding-api.open-meteo.com"
     # The external reverse-geocoder fallback (Phase 7 Wave 4b), Nominatim-compatible.
     # DEFAULT OFF: empty means the connector is never registered, so there is no
     # off-box geocoding path at all. When set, a lookup still leaves the box only on
