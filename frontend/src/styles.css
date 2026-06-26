@@ -15356,6 +15356,28 @@ input.ld-title {
   transition: width 0.4s ease;
 }
 
+/* The load prompt shown before swapping the coder onto the box (asks first so opening
+   code mode never silently evicts a resident model). */
+.jcode-modelask {
+  margin-bottom: 12px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+}
+.jcode-modelask-head {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 4px;
+}
+.jcode-modelask-body {
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-dim);
+  margin: 0 0 10px;
+}
+
 /* chat transcript */
 .jcode-msg {
   margin-bottom: 10px;

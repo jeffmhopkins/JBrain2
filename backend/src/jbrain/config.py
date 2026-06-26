@@ -238,11 +238,6 @@ class Settings(BaseSettings):
     jcode_enabled: bool = False
     jcode_token: str = ""
     jcode_model: str = "qwen3-coder-next"
-    # When a code-mode session opens, warm its coder model into the gateway: evict the
-    # other resident models (llama-swap then gives the coder the whole box) and load it.
-    # It is NOT unloaded when the session ends — it stays resident until another JBrain
-    # task loads a different model, at which point the gateway swaps it out naturally.
-    jcode_warm_on_create: bool = True
 
     # JSON object of per-task "provider:model" overrides, merged over the
     # adapter defaults — see jbrain.llm.router.TASK_DEFAULTS.

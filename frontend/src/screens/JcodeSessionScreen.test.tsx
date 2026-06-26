@@ -35,6 +35,7 @@ const MODEL_STATUS: JcodeModelStatus = {
   warming: false,
   hosting: true,
   size_gb: 49.6,
+  resident: ["qwen3-coder-next"],
 };
 
 // The screen polls model residency on mount; default to settled (not warming) so the bar
@@ -88,15 +89,34 @@ describe("JcodeSessionScreen", () => {
     expect(await screen.findByText(/Loading qwen3-coder-next onto the box/i)).toBeInTheDocument();
   });
 
-  it("shows the loading bar when an existing session opens with the model evicted", async () => {
-    // No fresh warm fires on opening an existing session, so `warming` is false. The
-    // `hosting && !loaded` fallback still surfaces the bar when the model isn't resident.
+  it("prompts before swapping when the coder isn't on the box, naming what gets evicted", async () => {
+    // Coder absent + no warm in flight → the load prompt (not the bar), so opening code
+    // mode never silently evicts the resident model. It names what a swap would unload.
     vi.spyOn(api, "jcodeModelStatus").mockResolvedValue({
       ...MODEL_STATUS,
       loaded: false,
       warming: false,
+      resident: ["gpt-oss-120b"],
     });
     render(<JcodeSessionScreen session={SESSION} onClose={vi.fn()} />);
+    expect(await screen.findByText(/Load qwen3-coder-next onto the box\?/i)).toBeInTheDocument();
+    expect(screen.getByText(/will unload gpt-oss-120b/i)).toBeInTheDocument();
+    // The bar is NOT shown yet — we're waiting on the owner's tap.
+    expect(screen.queryByText(/Loading qwen3-coder-next onto the box/i)).not.toBeInTheDocument();
+  });
+
+  it("warms the coder and shows the loading bar when the owner confirms the swap", async () => {
+    vi.spyOn(api, "jcodeModelStatus")
+      .mockResolvedValueOnce({ ...MODEL_STATUS, loaded: false, warming: false, resident: [] })
+      .mockResolvedValue({ ...MODEL_STATUS, loaded: false, warming: true, resident: [] });
+    const warm = vi
+      .spyOn(api, "jcodeWarmModel")
+      .mockResolvedValue({ ...MODEL_STATUS, loaded: false, warming: true, resident: [] });
+    render(<JcodeSessionScreen session={SESSION} onClose={vi.fn()} />);
+
+    fireEvent.click(await screen.findByText("Load model"));
+    await waitFor(() => expect(warm).toHaveBeenCalled());
+    // The prompt gives way to the progress bar once the warm is under way.
     expect(await screen.findByText(/Loading qwen3-coder-next onto the box/i)).toBeInTheDocument();
   });
 

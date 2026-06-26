@@ -2616,6 +2616,9 @@ const jcodeSessions: MockJcodeSession[] = [
 ];
 let jcodeN = 2;
 let jcodeModelPolls = 0;
+// The coder isn't on the box until the owner confirms the swap (POST /jcode/model/warm);
+// before that the screen shows the load prompt naming what gets evicted.
+let jcodeWarmStarted = false;
 const jcodePreview = new Map<string, string>();
 
 function jcodeTurnStream(): Response {
@@ -2653,16 +2656,45 @@ export const mockFetch: typeof fetch = async (input, init) => {
   if (path === "/api/auth/me") return json(PRINCIPAL);
 
   // --- Code mode (jcode) ---
-  // Model status: report "loading" for the first couple of polls, then resident — so
-  // the dev:mock session screen shows the loading bar advancing, then complete.
+  // Model status: until the owner confirms the swap, report the coder absent with another
+  // model resident (the screen shows the load prompt). After the warm POST, report
+  // "loading" for a couple of polls, then resident — so the loading bar advances, then
+  // completes.
   if (path === "/api/jcode/model" && method === "GET") {
+    if (!jcodeWarmStarted) {
+      return json({
+        model: "qwen3-coder-next",
+        served: "qwen3-coder-next",
+        loaded: false,
+        warming: false,
+        hosting: true,
+        size_gb: 49.6,
+        resident: ["gpt-oss-120b"],
+      });
+    }
     jcodeModelPolls += 1;
+    const ready = jcodeModelPolls > 2;
     return json({
       model: "qwen3-coder-next",
       served: "qwen3-coder-next",
-      loaded: jcodeModelPolls > 2,
+      loaded: ready,
+      warming: !ready,
       hosting: true,
       size_gb: 49.6,
+      resident: ready ? ["qwen3-coder-next"] : [],
+    });
+  }
+  if (path === "/api/jcode/model/warm" && method === "POST") {
+    jcodeWarmStarted = true;
+    jcodeModelPolls = 0;
+    return json({
+      model: "qwen3-coder-next",
+      served: "qwen3-coder-next",
+      loaded: false,
+      warming: true,
+      hosting: true,
+      size_gb: 49.6,
+      resident: [],
     });
   }
   if (path === "/api/jcode/sessions" && method === "GET") return json(jcodeSessions);

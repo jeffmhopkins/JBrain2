@@ -2379,6 +2379,12 @@ export const api = {
     return (await request("/api/jcode/model")).json();
   },
 
+  /** Explicitly warm the coder onto the box (evicts the other resident models). Called
+   * after the owner confirms the swap; returns the fresh status. */
+  async jcodeWarmModel(): Promise<JcodeModelStatus> {
+    return (await request("/api/jcode/model/warm", { method: "POST" })).json();
+  },
+
   // `sessionId` scopes the review inbox to a Full Brain chat: its own staged
   // proposals plus the session-less background ones. Omit it for the full list.
   async listProposals(sessionId?: string): Promise<ProposalSummary[]> {
