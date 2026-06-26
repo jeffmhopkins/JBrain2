@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import contextlib
 import re
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, Protocol, cast
 
 import structlog
 import websockets
@@ -25,7 +25,17 @@ from jbrain.api.live import authenticated_viewer, origin_allowed
 from jbrain.config import Settings
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator
+    from collections.abc import AsyncIterable
+
+
+class _BrowserWS(Protocol):
+    """The slice of the browser-side WebSocket the pumps use — satisfied by Starlette's
+    WebSocket and by the test fakes (so neither side needs the concrete type)."""
+
+    async def receive(self) -> Any: ...
+    async def send_bytes(self, data: bytes) -> None: ...
+    async def send_text(self, data: str) -> None: ...
+
 
 router = APIRouter()
 log = structlog.get_logger()
@@ -41,7 +51,7 @@ def ws_url(base_url: str, sid: str) -> str:
     return f"{scheme.rstrip('/')}/sessions/{sid}/terminal"
 
 
-async def browser_to_upstream(browser: WebSocket, upstream: Any) -> None:
+async def browser_to_upstream(browser: _BrowserWS, upstream: Any) -> None:
     """Pump browser frames to the shell: binary keystrokes/paste verbatim, text frames
     (the resize control) as-is. Returns when the browser disconnects."""
     while True:
@@ -57,7 +67,7 @@ async def browser_to_upstream(browser: WebSocket, upstream: Any) -> None:
             await upstream.send(text)
 
 
-async def upstream_to_browser(upstream: AsyncIterator[Any], browser: WebSocket) -> None:
+async def upstream_to_browser(upstream: AsyncIterable[Any], browser: _BrowserWS) -> None:
     """Pump shell output to the browser, preserving binary vs. text framing."""
     async for message in upstream:
         if isinstance(message, bytes):

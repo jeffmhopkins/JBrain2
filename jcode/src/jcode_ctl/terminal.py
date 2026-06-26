@@ -64,14 +64,31 @@ def spawn_shell(cwd: str, argv: tuple[str, ...] = _SHELL) -> tuple[int, int]:
 
 
 def _close_child(pid: int, fd: int) -> None:
-    """Best-effort teardown: kill the shell's process group and reap it, close the
-    master. Called when the socket drops or the shell exits, so no PTY/zombie leaks."""
+    """Best-effort teardown: kill the shell's whole process group and reap it, close the
+    master. Called when the socket drops or the shell exits, so no PTY/zombie leaks. The
+    group (not the bare pid) matters: pty.fork makes the shell a session leader, so a
+    running ``claude``/``vim``/bg job is in its group and would otherwise orphan."""
     with contextlib.suppress(OSError):
-        os.kill(pid, signal.SIGKILL)
+        os.killpg(os.getpgid(pid), signal.SIGKILL)
+    with contextlib.suppress(OSError):
+        os.kill(pid, signal.SIGKILL)  # fallback if getpgid raced the exit
     with contextlib.suppress(OSError):
         os.waitpid(pid, 0)
     with contextlib.suppress(OSError):
         os.close(fd)
+
+
+async def _write_all(fd: int, data: bytes) -> None:  # pragma: no cover - deploy pump
+    """Write ALL of ``data`` to the non-blocking PTY master, yielding when its input
+    buffer is full (a large paste exceeds it). A bare ``os.write`` would either
+    short-write — silently dropping the tail — or raise BlockingIOError and kill it."""
+    view = memoryview(data)
+    while view:
+        try:
+            written = os.write(fd, view)
+            view = view[written:]
+        except (BlockingIOError, InterruptedError):
+            await asyncio.sleep(0)  # let the shell drain the PTY, then retry the rest
 
 
 async def serve_terminal(  # pragma: no cover - the PTY pump is exercised at deploy
@@ -120,7 +137,7 @@ async def serve_terminal(  # pragma: no cover - the PTY pump is exercised at dep
                 break
             data = message.get("bytes")
             if data is not None:
-                os.write(fd, data)
+                await _write_all(fd, data)
                 continue
             text = message.get("text")
             if text:
