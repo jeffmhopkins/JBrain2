@@ -5,6 +5,7 @@ a scripted mailbox with no network — the connector/LLM-adapter testing posture
 from __future__ import annotations
 
 import itertools
+import re
 from collections.abc import Iterable, Sequence
 
 from jbrain.gmail.client import GmailError, GmailLabel, GmailMessage
@@ -37,15 +38,20 @@ class FakeGmail:
     # --- GmailApi ----------------------------------------------------------
 
     def _match(self, query: str) -> list[str]:
-        # Model the one structured operator the workflows depend on — `in:inbox` reads
-        # the live label state (so a filed message drops out) — and treat the remainder
-        # as a content substring, exactly as before for the existing callers.
+        # Model the structured operators the workflows depend on — `in:inbox` reads the
+        # live label state (so a filed message drops out), and `-label:<name>` excludes
+        # messages carrying that label (the triage sweep skips already-filed `high`) —
+        # and treat the remainder as a content substring, as before for existing callers.
         q = query.strip().lower()
         inbox_only = "in:inbox" in q
-        needle = q.replace("in:inbox", "").strip()
+        exclude = re.findall(r"-label:(\S+)", q)
+        needle = re.sub(r"-label:\S+", "", q.replace("in:inbox", "")).strip()
+        excluded_ids = {lid for lid, lbl in self._labels.items() if lbl.name.lower() in exclude}
         out: list[str] = []
         for m in self._messages.values():
             if inbox_only and _INBOX not in self._on.get(m.id, set()):
+                continue
+            if excluded_ids & self._on.get(m.id, set()):
                 continue
             if needle and needle not in f"{m.subject}\n{m.body}\n{m.sender}".lower():
                 continue

@@ -455,17 +455,13 @@ async def run() -> None:
             maker, embedder=TeiEmbedClient(settings.embed_url), embedding_model=settings.embed_model
         ),
         "tag_consolidate": tag_consolidate_handler(maker),
-        # The archivist's inbox-triage sweep (docs/EMAIL_ARCHIVIST_PLAN.md): classify the
-        # newest day of inbox mail into triaged/* priority labels and archive it. The
-        # Gmail mechanics are direct API calls; only the per-batch classification is an
-        # LLM call (the `triage.classify` route). In-code only (not in the app.actions
-        # seed); a migration seeds the schedule, disabled by default. Dormant until Gmail
-        # is connected — the handler fails recoverably and retries until then.
-        "triage_inbox": triage_inbox_handler(
-            gmail_provider.client,
-            router,
-            lambda: worker_settings_store.owner_timezone(queue.SYSTEM_CTX),
-        ),
+        # The archivist's inbox-triage sweep (docs/EMAIL_ARCHIVIST_PLAN.md): classify
+        # untriaged inbox mail into triaged/* priority labels, archiving all but `high`
+        # (which stays in the inbox). The Gmail mechanics are direct API calls; only the
+        # per-message classification is an LLM call (the `triage.classify` route). In-code
+        # only (not in the app.actions seed); a migration seeds the schedule. Dormant until
+        # Gmail is connected — the handler fails recoverably and retries until then.
+        "triage_inbox": triage_inbox_handler(gmail_provider.client, router),
         # The wiki builder (Phase-6 Wave C2): dirty-bit-driven article build + reindex + prune.
         # In-code only (not in the app.actions seed); a migration seeds the schedules. The live
         # LLM rewriter (C2b) drives router.complete behind the grounding gate + wiki-build budget;
