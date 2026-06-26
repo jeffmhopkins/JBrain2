@@ -87,10 +87,53 @@ async def test_files_newest_day_and_leaves_older_mail_in_inbox() -> None:
     # Newest-day mail filed: triaged/* added, INBOX + untriaged removed.
     assert _names_on(fake, "m1") == {"triaged/high"}
     assert _names_on(fake, "m2") == {"triaged/low"}
-    # Low-confidence spam downgraded to the safe, visible bucket.
-    assert _names_on(fake, "m3") == {"triaged/medium"}
+    # The model's spam verdict stands as given — the confidence floor was removed.
+    assert _names_on(fake, "m3") == {"triaged/spam"}
     # Previous day untouched — still in the inbox for a later run.
     assert _names_on(fake, "m0") == {"INBOX", "untriaged"}
+
+
+async def test_html_body_is_rendered_to_markdown_for_the_model() -> None:
+    html = (
+        "<html><body><h1>Big Sale</h1><p>Save <strong>50%</strong> on "
+        "<a href='https://shop.example/x'>everything</a>.</p>"
+        "<script>track()</script></body></html>"
+    )
+    fake = FakeGmail(messages=[_msg("m1", date="Wed, 25 Jun 2026 09:00:00 +0000", body=html)])
+    router, llm = _router([{"bucket": "spam", "confidence": 0.9}])
+    await InboxTriage(_factory(fake), router).run({})
+
+    sent = llm.calls[0]["user_text"]
+    assert "<h1>" not in sent and "<script>" not in sent  # raw tags gone
+    assert "track()" not in sent  # the <script> subtree is dropped, not just its tags
+    assert "# Big Sale" in sent  # heading rendered as markdown
+    assert "**50%**" in sent  # emphasis rendered as markdown
+    assert "everything" in sent  # link text preserved
+
+
+async def test_buckets_the_newest_day_in_the_owner_timezone() -> None:
+    # mA is Jun 26 in UTC but Jun 25 21:00 in America/New_York (UTC-4 in June) — the
+    # same local day as mB. UTC bucketing would split them and file only mA, "missing"
+    # the rest of the local day; local-tz bucketing groups both into the newest day.
+    fake = FakeGmail(
+        messages=[
+            _msg("mA", date="Thu, 26 Jun 2026 01:00:00 +0000"),
+            _msg("mB", date="Wed, 25 Jun 2026 15:00:00 +0000"),
+        ]
+    )
+    router, llm = _router(
+        [{"bucket": "high", "confidence": 0.9}, {"bucket": "low", "confidence": 0.9}]
+    )
+
+    async def tz() -> str:
+        return "America/New_York"
+
+    await InboxTriage(_factory(fake), router, tz).run({})
+
+    # Both local-Jun-25 messages were classified and archived out of the inbox.
+    assert len(llm.calls) == 2
+    assert "INBOX" not in _names_on(fake, "mA")
+    assert "INBOX" not in _names_on(fake, "mB")
 
 
 async def test_empty_inbox_makes_no_llm_call() -> None:

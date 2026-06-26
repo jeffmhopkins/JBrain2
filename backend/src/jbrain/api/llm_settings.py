@@ -388,12 +388,15 @@ def _require_uninstallable(settings: Settings, model_id: str) -> local_catalog.L
     return model
 
 
-def _try_regenerate(settings: Settings, windows: dict[str, int]) -> None:
-    """Re-stamp llama-swap.yaml with the current per-model windows so the gateway
-    (run with --watch-config) reloads each model at its configured `-c`. Best-effort:
-    the override is already persisted (so the meter is correct), and the weights dir
-    may not be writable/complete in every deploy — a regen failure only delays the
-    gateway catching up, it must never fail the operator's edit."""
+def _try_regenerate(
+    settings: Settings, windows: dict[str, int], pinned: list[str] | None = None
+) -> None:
+    """Re-stamp llama-swap.yaml with the current per-model windows and staged set so
+    the gateway (run with --watch-config) reloads at the configured `-c` and keeps
+    the staged models co-resident (a non-swapping group). Best-effort: the settings
+    are already persisted (so the meter is correct), and the weights dir may not be
+    writable/complete in every deploy — a regen failure only delays the gateway
+    catching up, it must never fail the operator's edit."""
     try:
         manifest = [asdict(m) for m in local_catalog.selected(settings.local_models)]
         llama_swap_config.write(
@@ -401,6 +404,7 @@ def _try_regenerate(settings: Settings, windows: dict[str, int]) -> None:
             manifest,
             windows=windows,
             resident_group=settings.local_llm_resident_group,
+            pinned=pinned,
         )
     except Exception as exc:  # noqa: BLE001 — best-effort; the override is saved either way
         log.warning("llm_settings.gateway_config_regen_failed", error=str(exc))
@@ -485,7 +489,10 @@ async def set_local_context_window(
     windows = await store.set_llm_local_context_window(
         ctx, model_id=model_id, window=body.context_window
     )
-    _try_regenerate(settings, windows)
+    # Carry the staged set so re-stamping for a `-c` edit doesn't drop the
+    # non-swapping group the operator pinned via staging.
+    staged = await store.llm_local_staged(ctx)
+    _try_regenerate(settings, windows, pinned=staged)
     await _unload_if_loaded(settings, gateway, model)
     return await _snapshot(settings, store, ctx, gateway)
 
@@ -498,14 +505,19 @@ async def stage_local_model(
     store: SettingsStoreDep,
     gateway: LocalGatewayDep,
 ) -> LlmSettingsOut:
-    """Mark a model staged (intent to keep it served/warm). 404/409 as above. Pure
-    settings write — no gateway action, so it can't fail on an unreachable gateway."""
+    """Mark a model staged and pin it resident. 404/409 as above. Staging adds the
+    model to llama-swap's non-swapping group (re-stamped here, hot-reloaded by the
+    gateway's --watch-config) so it stays co-resident instead of being swapped out
+    when another model is requested — that re-stamp is best-effort, so an unreachable
+    or read-only gateway never fails the staging write."""
     _require_provisioned(settings, model_id)
     ctx = ctx_for(principal)
     staged = await store.llm_local_staged(ctx)
     if model_id not in staged:
         staged.append(model_id)
         await store.set_llm_local_staged(ctx, staged)
+    windows = await store.llm_local_context_windows(ctx)
+    _try_regenerate(settings, windows, pinned=staged)
     return await _snapshot(settings, store, ctx, gateway)
 
 
@@ -517,11 +529,15 @@ async def unstage_local_model(
     store: SettingsStoreDep,
     gateway: LocalGatewayDep,
 ) -> LlmSettingsOut:
-    """Clear a model's staged flag. 404/409 as above."""
+    """Clear a model's staged flag and unpin it. 404/409 as above. Removing it from
+    the non-swapping group (re-stamped here, best-effort) lets the gateway swap it
+    out again to make room for others."""
     _require_provisioned(settings, model_id)
     ctx = ctx_for(principal)
     staged = [s for s in await store.llm_local_staged(ctx) if s != model_id]
     await store.set_llm_local_staged(ctx, staged)
+    windows = await store.llm_local_context_windows(ctx)
+    _try_regenerate(settings, windows, pinned=staged)
     return await _snapshot(settings, store, ctx, gateway)
 
 

@@ -45,6 +45,11 @@ class RunSummaryOut(BaseModel):
     progress_note: str | None
 
 
+class QueueDepthOut(BaseModel):
+    # Jobs waiting in app.jobs (status='queued') — the dashboard "jobs queued" tile.
+    queued: int
+
+
 class RunStepOut(BaseModel):
     idx: int
     kind: str
@@ -77,6 +82,14 @@ async def list_runs(request: Request, principal: OwnerDep) -> list[RunSummaryOut
     reader = get_run_reader(request)
     runs = await reader.list_recent(ctx_for(principal), limit=RECENT_LIMIT)
     return [RunSummaryOut(**vars(r)) for r in runs]
+
+
+# Declared before "/{run_id}" so the literal path wins the route match (otherwise
+# "queue-depth" is captured as a run id and 404s).
+@router.get("/queue-depth")
+async def queue_depth(request: Request, principal: OwnerDep) -> QueueDepthOut:
+    reader = get_run_reader(request)
+    return QueueDepthOut(queued=await reader.queue_depth(ctx_for(principal)))
 
 
 @router.get("/{run_id}")

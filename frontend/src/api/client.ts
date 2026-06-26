@@ -22,6 +22,8 @@ import type {
   SessionCreate,
   TranscriptTurn,
 } from "../agent/types";
+import { parseJcodeStream } from "../jcode/stream";
+import type { JcodeEvent, JcodePreview, JcodeSession, NewSessionInput } from "../jcode/types";
 
 export interface Principal {
   principal_id: string;
@@ -797,7 +799,9 @@ export interface LlmUsage {
 
 /** A run's lifecycle state as stored (migration 0016 CHECK). 'error' is the
  * failed state; the Runs surface renders it as the red "failed" tile/dot. */
-export type RunStatus = "running" | "done" | "error";
+// 'queued' is a derived display state (no stored value): an in-flight pipeline run
+// whose steps have not started yet, waiting behind the single-threaded worker.
+export type RunStatus = "queued" | "running" | "done" | "error";
 
 /** A manual/sweep trigger the owner can fire on demand. The list endpoint is
  * sibling Track B's (`GET /api/ops/triggers`); the Runs surface reads it
@@ -1989,6 +1993,12 @@ export const api = {
     return (await response.json()) as RunDetail;
   },
 
+  // The job-queue backlog (status='queued' in app.jobs) for the "jobs queued" tile.
+  async queueDepth(): Promise<number> {
+    const response = await request("/api/runs/queue-depth");
+    return ((await response.json()) as { queued: number }).queued;
+  },
+
   // The manual/sweep triggers for the dashboard's sweep-control row (sibling
   // Track B). Best-effort: the surface treats a missing endpoint as "no sweeps"
   // and simply hides the row, so it never blocks the run log.
@@ -2172,6 +2182,79 @@ export const api = {
    * explicit signal does. Best-effort/idempotent on the server. */
   async cancelChatRun(runId: string): Promise<void> {
     await request(`/api/chat/runs/${encodeURIComponent(runId)}/cancel`, { method: "POST" });
+  },
+
+  // --- Code mode (jcode), Wave J3. Owner-only; routes 404 when jcode isn't enabled. ---
+
+  /** The launcher's session index (owner-only `jcode_sessions`). */
+  async jcodeSessions(): Promise<JcodeSession[]> {
+    return (await request("/api/jcode/sessions")).json();
+  },
+
+  /** Spin a new sandboxed session (clone a repo or scratch). */
+  async jcodeCreateSession(body: NewSessionInput): Promise<JcodeSession> {
+    return (await request("/api/jcode/sessions", jsonInit("POST", body))).json();
+  },
+
+  async jcodeResetSession(id: string): Promise<JcodeSession> {
+    return (
+      await request(`/api/jcode/sessions/${encodeURIComponent(id)}/reset`, { method: "POST" })
+    ).json();
+  },
+
+  async jcodeDeleteSession(id: string): Promise<void> {
+    await request(`/api/jcode/sessions/${encodeURIComponent(id)}`, { method: "DELETE" });
+  },
+
+  /** Stream a coding turn. Mirrors `chat`: yields a synthetic `run` event (from the
+   * X-Jcode-Run-Id header) so Stop can cancel server-side, then the parsed frames. */
+  async *jcodeTurn(id: string, prompt: string, signal?: AbortSignal): AsyncGenerator<JcodeEvent> {
+    const response = await request(`/api/jcode/sessions/${encodeURIComponent(id)}/turn`, {
+      ...jsonInit("POST", { prompt }),
+      ...(signal ? { signal } : {}),
+    });
+    const runId = response.headers.get("X-Jcode-Run-Id");
+    if (runId) yield { type: "run", run_id: runId };
+    if (!response.body) return;
+    yield* parseJcodeStream(response.body);
+  },
+
+  /** Reconnect to an in-flight turn (a dropped socket), resuming from `after`. The
+   * backend supports it now; the session screen wires reconnect in a later wave, so
+   * this method is intentionally ahead of its caller. */
+  async *jcodeResume(
+    runId: string,
+    after: number,
+    signal?: AbortSignal,
+  ): AsyncGenerator<JcodeEvent> {
+    const response = await request(
+      `/api/jcode/runs/${encodeURIComponent(runId)}/stream?after=${after}`,
+      { ...(signal ? { signal } : {}) },
+    );
+    if (!response.body) return;
+    yield* parseJcodeStream(response.body);
+  },
+
+  async cancelJcodeRun(runId: string): Promise<void> {
+    await request(`/api/jcode/runs/${encodeURIComponent(runId)}/cancel`, { method: "POST" });
+  },
+
+  /** Per-session web preview (Wave J4): an ephemeral tunnel to the sandbox dev server. */
+  async jcodePreviewStatus(id: string): Promise<JcodePreview> {
+    return (await request(`/api/jcode/sessions/${encodeURIComponent(id)}/preview`)).json();
+  },
+
+  async jcodePreviewOpen(id: string, port?: number): Promise<JcodePreview> {
+    return (
+      await request(
+        `/api/jcode/sessions/${encodeURIComponent(id)}/preview`,
+        jsonInit("POST", { port: port ?? null }),
+      )
+    ).json();
+  },
+
+  async jcodePreviewClose(id: string): Promise<void> {
+    await request(`/api/jcode/sessions/${encodeURIComponent(id)}/preview`, { method: "DELETE" });
   },
 
   // `sessionId` scopes the review inbox to a Full Brain chat: its own staged

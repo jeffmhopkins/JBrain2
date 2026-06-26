@@ -62,3 +62,7 @@ docker compose up -d api
 say "done — code mode enabled. ON-BOX VERIFICATION still required (JCODE_PLAN.md"
 say "open decision 1): confirm the gateway serves an Anthropic /v1/messages endpoint"
 say "(or add a shim) and that a coding turn drives Qwen3-Coder-Next end to end."
+say ""
+say "Web preview (Wave J4) is OFF by default — it opens an ephemeral Cloudflare tunnel"
+say "to the sandbox's dev server, reachable by anyone with the (random) URL. To enable:"
+say "set JCODE_PREVIEW_ENABLED=true in .env and re-run this script (or 'jbrain up jcode')."

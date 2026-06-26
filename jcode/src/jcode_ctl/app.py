@@ -9,22 +9,68 @@ and proxies these to the owner (Wave J2).
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import hmac
 import json
+import logging
 from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, FastAPI, Header, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from jcode_ctl.agent import TurnEvent
 from jcode_ctl.config import Settings
+from jcode_ctl.preview import PreviewError, PreviewManager
 from jcode_ctl.sessions import SessionError, SessionManager
 
 # SSE responses must not be buffered by a proxy (Caddy/nginx), or the turn stream
 # arrives all-at-once and the live UX is lost — mirrors the supervisor's SSE.
 _SSE_HEADERS = {"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
+
+_log = logging.getLogger("jcode_ctl")
+
+
+async def reap_idle(
+    sessions: SessionManager, preview: PreviewManager, ttl_seconds: int
+) -> list[str]:
+    """Delete every session idle past the TTL (and close its tunnel). Returns the
+    reaped ids. The unit the GC loop calls — testable with a fake clock + fakes."""
+    reaped: list[str] = []
+    for sid in sessions.idle_sessions(ttl_seconds=ttl_seconds):
+        # Cheap early-out: a clearly-running session is skipped before we touch its
+        # tunnel, so a turn that started since the snapshot keeps its preview.
+        snap = sessions.get_or_none(sid)
+        if snap is None or snap.status == "running":
+            continue
+        # Close the tunnel FIRST (the DELETE route's N3 invariant): a delete error must
+        # never leave a live tunnel behind a reaped session.
+        await preview.close(sid)
+        # Re-check with NO await before the synchronous delete: ``preview.close`` above
+        # is a suspension point, and a queued turn could have flipped this session to
+        # ``running`` — its checkout must never be removed out from under a live agent.
+        current = sessions.get_or_none(sid)
+        if current is None or current.status == "running":
+            continue
+        sessions.delete(sid)
+        reaped.append(sid)
+    return reaped
+
+
+async def _reaper_loop(
+    sessions: SessionManager, preview: PreviewManager, settings: Settings
+) -> None:
+    while True:
+        await asyncio.sleep(settings.reap_interval_seconds)
+        try:
+            await reap_idle(sessions, preview, settings.session_ttl_seconds)
+        except Exception:
+            # A reap failure (e.g. a workspace removal error) must not kill the loop —
+            # but log it, so a recurring failure isn't silently swallowed forever.
+            _log.exception("jcode session reaper sweep failed")
 
 
 class CreateSessionRequest(BaseModel):
@@ -37,13 +83,32 @@ class TurnRequest(BaseModel):
     prompt: str
 
 
+class PreviewRequest(BaseModel):
+    port: int | None = Field(default=None, ge=1, le=65535)
+
+
 def _frame(ev: TurnEvent) -> bytes:
     payload = {"type": ev.type, "text": ev.text, "tool": ev.tool, "data": ev.data}
     return f"data: {json.dumps(payload)}\n\n".encode()
 
 
-def create_app(settings: Settings, sessions: SessionManager) -> FastAPI:
-    app = FastAPI(title="jcode control server")
+def create_app(
+    settings: Settings, sessions: SessionManager, preview: PreviewManager
+) -> FastAPI:
+    @asynccontextmanager
+    async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+        # The session GC reaper runs for the life of the server.
+        reaper = asyncio.create_task(_reaper_loop(sessions, preview, settings))
+        try:
+            yield
+        finally:
+            reaper.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await reaper
+            # Tear down every live tunnel so no preview outlives the server.
+            await preview.close_all()
+
+    app = FastAPI(title="jcode control server", lifespan=lifespan)
 
     expected_header = f"Bearer {settings.token}"
 
@@ -60,6 +125,11 @@ def create_app(settings: Settings, sessions: SessionManager) -> FastAPI:
     @app.exception_handler(SessionError)
     async def _session_error(_: Request, exc: SessionError) -> JSONResponse:
         return JSONResponse(status_code=404, content={"detail": str(exc)})
+
+    @app.exception_handler(PreviewError)
+    async def _preview_error(_: Request, exc: PreviewError) -> JSONResponse:
+        # 409: the preview can't be opened right now (disabled, or the tunnel failed).
+        return JSONResponse(status_code=409, content={"detail": str(exc)})
 
     authed = APIRouter(dependencies=[Depends(require_token)])
 
@@ -106,8 +176,28 @@ def create_app(settings: Settings, sessions: SessionManager) -> FastAPI:
         return (await sessions.reset(sid)).public()
 
     @authed.delete("/sessions/{sid}", status_code=204)
-    def delete(sid: str) -> None:
+    async def delete(sid: str) -> None:
+        # Close the tunnel FIRST, so it's torn down even if the delete below raises
+        # (review N3) — a deleted session must keep no live tunnel.
+        await preview.close(sid)
         sessions.delete(sid)
+
+    # --- Web preview (Wave J4): an ephemeral tunnel to the sandbox's dev server ---
+
+    @authed.get("/sessions/{sid}/preview")
+    def preview_status(sid: str) -> dict[str, object]:
+        sessions.get(sid)
+        return {"enabled": preview.enabled, "url": preview.url(sid)}
+
+    @authed.post("/sessions/{sid}/preview")
+    async def preview_open(sid: str, body: PreviewRequest) -> dict[str, object]:
+        sessions.get(sid)
+        url = await preview.open(sid, body.port)
+        return {"enabled": True, "url": url}
+
+    @authed.delete("/sessions/{sid}/preview", status_code=204)
+    async def preview_close(sid: str) -> None:
+        await preview.close(sid)
 
     app.include_router(authed)
     return app

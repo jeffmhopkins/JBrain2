@@ -35,10 +35,25 @@ class Settings(BaseSettings):
     model: str = "qwen3-coder-next"
 
     # Outbound hosts the sandbox may reach for git/package work (no LLM egress —
-    # the model is on-box). Enforcement of this allowlist is a Wave J5 hardening
-    # item (an egress proxy / firewall); J1 carries the declared intent.
+    # the model is on-box). The declared intent; full enforcement is the opt-in
+    # egress-proxy seam in compose (Wave J5), left opt-in pending on-box verification.
     egress_allowlist: list[str] = ["github.com", "registry.npmjs.org"]
 
-    # Ceiling on concurrent live sandboxes (full governance — CPU/mem/disk, TTL —
-    # is Wave J5). Zero or negative disables the cap.
+    # Ceiling on concurrent live sandboxes. CPU/mem/PID governance ships as compose
+    # resource caps and idle-TTL GC (Wave J5). Zero or negative disables the cap.
     max_sessions: int = 8
+
+    # Per-session web preview (Wave J4): an ephemeral Cloudflare quick-tunnel to the
+    # sandbox's dev server. OFF by default — it exposes the running app to anyone with
+    # the (unguessable) URL, so the owner opts in. Zero Cloudflare config needed
+    # (TryCloudflare: no account/token/DNS); the URL dies with the session.
+    preview_enabled: bool = False
+    preview_default_port: int = 5173
+
+    # Session GC (Wave J5): reap a session (its checkout + any tunnel) after this many
+    # seconds with no turn — abandoned sandboxes don't pile up. A *running* turn keeps
+    # a session fresh, so an active session is never reaped. Default 24h; 0 disables.
+    # A committed/pushed branch survives a reap; only the local checkout is dropped.
+    session_ttl_seconds: int = 86_400
+    # How often the reaper sweeps for idle sessions.
+    reap_interval_seconds: int = 600

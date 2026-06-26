@@ -78,7 +78,7 @@ function worse(a: Level, b: Level): Level {
  * is flat; anything unrecognized falls into a trailing "Other" group. */
 const SERVICE_GROUPS: { label: string; services: string[] }[] = [
   { label: "Core", services: ["api", "worker", "supervisor", "web", "db", "postgres"] },
-  { label: "AI", services: ["local-llm", "embed"] },
+  { label: "AI", services: ["local-llm", "embed", "jcode"] },
   { label: "Infra", services: ["proxy", "searxng", "cloudflared"] },
 ];
 

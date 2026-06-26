@@ -10,6 +10,7 @@ import {
   BotIcon,
   CalendarIcon,
   CheckSquareIcon,
+  CodeIcon,
   DatabaseIcon,
   FlaskIcon,
   GaugeIcon,
@@ -39,7 +40,8 @@ export type LauncherTarget =
   | "location"
   | "wiki"
   | "image"
-  | "tasks";
+  | "tasks"
+  | "jcode";
 
 interface Tile {
   title: string;
@@ -75,6 +77,7 @@ const SECTIONS: Section[] = [
     tiles: [
       { title: "Review", icon: <CheckSquareIcon size={24} />, target: "review" },
       { title: "Image", icon: <ImageIcon size={24} />, target: "image" },
+      { title: "Code", icon: <CodeIcon size={24} />, target: "jcode" },
     ],
   },
   {
