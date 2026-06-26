@@ -151,11 +151,26 @@ Binding properties (red-team gated at the security-touching waves):
 - **No DB, no blob store, no knowledge base** — the sandbox cannot reach Postgres, the
   storage volume, or any JBrain service; `jcode_sessions` is written by the **api**, not
   the sandbox.
-- **Egress allowlist, no LLM egress.** Outbound is limited to owner-permitted git remotes
-  + package registries; the model is on-box so completions never leave. Default-deny.
-- **Owner-only.** Every `/api/jcode/*` route is owner-gated; non-owner principals can't
-  reach it. Purge: deleting a session removes its checkout and its index row.
-- **Resource ceilings** (Wave J5): per-session CPU/mem/disk caps, max concurrency, TTL.
+- **No LLM egress** — the model is on-box, so completions never leave the box. Network
+  egress *otherwise*, however, is NOT yet restricted: `egress_allowlist` is declared but
+  unenforced (clone only validates the URL scheme, not the host), and the allowlisting
+  forward proxy is opt-in and **off by default**, so a stock sandbox has unrestricted NAT
+  egress. Real default-deny egress is the remaining hardening item — deferred because
+  wiring it (and routing the preview tunnel's cloudflared through it) needs on-box
+  verification. Tracked honestly rather than claimed.
+- **Owner-only, with scoped share links.** Every `/api/jcode/*` route is owner-gated; a
+  share link (D2) grants a recipient access to exactly ONE session (scoped, expiring,
+  revocable). Purge: deleting a session removes its checkout and its index row.
+- **Cross-session reads are an accepted residual.** Checkouts are sibling dirs in one
+  container running as root, so a session's shell/agent can read another session's
+  checkout. Closing it needs per-session uids or a mount namespace (`SYS_ADMIN`) — both
+  on-box-risky — so for a single-owner box with owner-minted/revocable shares over
+  code-only data (the health/finance/location firewalls exclude sensitive notes
+  entirely), it is accepted and documented, not yet enforced.
+- **Resource ceilings.** Aggregate container CPU/mem/PID caps (compose) + per-session
+  **disk ceiling** and **max concurrent turns** + idle **TTL/GC** (Wave J5a). Per-session
+  *CPU/mem* isolation is the aggregate cap only — not split per session (the chosen
+  aggregate-caps lane).
 
 ## Wave split
 
@@ -213,15 +228,26 @@ Any GUI surface goes through the **three-interactive-mock gate** before implemen
   + index row), and an assertion sweep that the container holds no socket/DB/blob/notes
   access. Tests: lifecycle + the hardening assertions.
 
-  *Status — shipping incrementally.* Session TTL/GC + purge-on-delete + aggregate
-  CPU/mem/PID caps landed with the earlier waves. **J5a** adds the per-session **concurrency
-  ceiling** (in-flight turns) + per-session **disk ceiling** (du-style, refuses the next
-  turn over the limit) + the **dataless-sandbox assertion sweep** on the compose file (no
-  Docker socket, scratch-volume-only mounts, caps declared). Deferred to follow-ups: the
-  **cross-session filesystem guard** (a shared-session shell reading sibling checkouts —
-  newly live with share links; the per-session-CPU/mem-vs-aggregate and capability/privilege
-  trade-offs make it its own red-team-gated PR), and **J5b** = the Settings→jcode panel + Ops
-  health/status + image re-sync.
+  *Status — substantially shipped.* Session TTL/GC + purge-on-delete + aggregate
+  CPU/mem/PID caps landed with the earlier waves. **J5a** added the per-session
+  **concurrency ceiling** (in-flight turns) + per-session **disk ceiling** (du-style,
+  off the event loop, refuses the next turn over the limit; `reset` clears it via
+  `git clean -fdx`) + the **dataless-sandbox assertion sweep** on the compose file (no
+  Docker socket, scratch-volume-only mounts, caps declared). **Most of J5b was already in
+  place:** `update-inner.sh` rebuilds + recreates the jcode image and self-heals its `.env`
+  on every `jbrain update`; the image's `HEALTHCHECK` surfaces jcode health through the
+  supervisor → Ops status; and the **enable + model** settings ship in the LLM-settings
+  card (`JcodeModelCard`). The literal "egress allowlist *view*" is intentionally **not**
+  built — the allowlist is currently declarative/unenforced, so a view would imply a
+  restriction that isn't there; the honest remainder is real egress *enforcement* (below),
+  not a view of a list that does nothing.
+
+  *Remaining J5 hardening — both on-box-gated, both decision-laden (NOT safe blind
+  builds):* (1) the **cross-session filesystem guard** — accepted as a documented residual
+  for the single-owner box (see Security posture); revisit if sharing ever widens. (2) real
+  **default-deny egress** — an allowlisting forward proxy on by default, which needs on-box
+  verification that git/npm and the preview tunnel still work through it. Both touch the
+  freshly-working on-box sandbox, so they want on-box testing, not a remote blind merge.
 
 **Scope of this plan = J1–J5: the sidecar, its control plane, the GUI, the preview path,
 and operability/hardening.** Operating jcode on JBrain's own source, and any non-isolated
