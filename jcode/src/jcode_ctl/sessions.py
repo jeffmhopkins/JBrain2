@@ -137,7 +137,12 @@ class SessionManager:
                 events += 1
                 if ev.type == "error":
                     session.status = "error"
-                    _log.error("turn error sid=%s: %s", sid, ev.text)
+                    # A user-initiated cancel surfaces as an error event but isn't a
+                    # failure — log it at INFO so real errors stand out in the log.
+                    if ev.text == "cancelled":
+                        _log.info("turn cancelled sid=%s", sid)
+                    else:
+                        _log.error("turn error sid=%s: %s", sid, ev.text)
                 yield ev
         finally:
             if session.status == "running":
