@@ -4,6 +4,30 @@ import { api } from "../api/client";
 import type { JcodeEvent, JcodeModelStatus, JcodeSession } from "../jcode/types";
 import { JcodeSessionScreen } from "./JcodeSessionScreen";
 
+// xterm paints to a canvas renderer jsdom lacks, so stub it — the CLI tab's job here is
+// to mount a terminal and open the session's shell socket; the byte wiring is unit-tested
+// in jcode/terminal.test.ts.
+vi.mock("@xterm/xterm", () => ({
+  Terminal: class {
+    loadAddon() {}
+    open() {}
+    focus() {}
+    write() {}
+    dispose() {}
+    onData() {
+      return { dispose() {} };
+    }
+    onResize() {
+      return { dispose() {} };
+    }
+  },
+}));
+vi.mock("@xterm/addon-fit", () => ({
+  FitAddon: class {
+    fit() {}
+  },
+}));
+
 const MODEL_STATUS: JcodeModelStatus = {
   model: "qwen3-coder-next",
   served: "qwen3-coder-next",
@@ -144,6 +168,32 @@ describe("JcodeSessionScreen", () => {
 
     fireEvent.click(screen.getByLabelText("Terminal"));
     expect(screen.getByText(/\$ edit src\/app\.ts/)).toBeInTheDocument();
+  });
+
+  it("opens the session's shell socket when the CLI tab is selected", async () => {
+    const urls: string[] = [];
+    class FakeWS {
+      binaryType = "blob";
+      readyState = 1;
+      onmessage: ((ev: MessageEvent) => void) | null = null;
+      onclose: (() => void) | null = null;
+      constructor(url: string) {
+        urls.push(url);
+      }
+      send() {}
+      close() {}
+    }
+    vi.stubGlobal("WebSocket", FakeWS);
+    try {
+      render(<JcodeSessionScreen session={SESSION} onClose={vi.fn()} />);
+      fireEvent.click(screen.getByLabelText("CLI"));
+      // The terminal mounts via a dynamic import, then dials the owner's terminal proxy.
+      await waitFor(() =>
+        expect(urls).toContain(`ws://${window.location.host}/api/jcode/sessions/j1/terminal`),
+      );
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   it("cancels the detached server turn when you leave mid-stream (B1)", async () => {

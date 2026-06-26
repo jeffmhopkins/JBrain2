@@ -18,7 +18,15 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, FastAPI, Header, HTTPException, Request
+from fastapi import (
+    APIRouter,
+    Depends,
+    FastAPI,
+    Header,
+    HTTPException,
+    Request,
+    WebSocket,
+)
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
@@ -26,6 +34,7 @@ from jcode_ctl.agent import TurnEvent
 from jcode_ctl.config import Settings
 from jcode_ctl.preview import PreviewError, PreviewManager
 from jcode_ctl.sessions import SessionError, SessionManager
+from jcode_ctl.terminal import serve_terminal
 
 # SSE responses must not be buffered by a proxy (Caddy/nginx), or the turn stream
 # arrives all-at-once and the live UX is lost — mirrors the supervisor's SSE.
@@ -215,6 +224,27 @@ def create_app(
     @authed.delete("/sessions/{sid}/preview", status_code=204)
     async def preview_close(sid: str) -> None:
         await preview.close(sid)
+
+    @app.websocket("/sessions/{sid}/terminal")
+    async def terminal(websocket: WebSocket, sid: str) -> None:
+        # Manual token auth on the upgrade: a Depends that raises HTTPException can't
+        # close a WS cleanly, so check the same bearer header here (constant-time) and
+        # close 4401 on mismatch — the api forwards the token. 4404 for an unknown id.
+        header = websocket.headers.get("authorization", "")
+        if not hmac.compare_digest(header, expected_header):
+            await websocket.close(code=4401)
+            return
+        session = sessions.get_or_none(sid)
+        if session is None:
+            await websocket.close(code=4404)
+            return
+        await websocket.accept()
+        # Count the open terminal so the GC reaper won't remove the checkout under it.
+        sessions.terminal_opened(sid)
+        try:
+            await serve_terminal(websocket, session.workspace)
+        finally:
+            sessions.terminal_closed(sid)
 
     app.include_router(authed)
     return app

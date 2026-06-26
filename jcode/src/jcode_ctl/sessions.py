@@ -67,6 +67,9 @@ class SessionManager:
         self._now = now
         self._new_id = new_id
         self._sessions: dict[str, Session] = {}
+        # sid -> count of open interactive terminals. A live terminal is activity:
+        # the reaper must never remove a checkout out from under an open shell.
+        self._terminals: dict[str, int] = {}
 
     def _stamp(self) -> str:
         return self._now().isoformat()
@@ -152,6 +155,24 @@ class SessionManager:
                 "turn end sid=%s status=%s events=%d", sid, session.status, events
             )
 
+    def terminal_opened(self, sid: str) -> None:
+        """Note an interactive terminal opening on a session (the WS route). Counts so
+        concurrent terminals nest, and stamps activity so an open shell stays fresh."""
+        self.get(sid)
+        self._terminals[sid] = self._terminals.get(sid, 0) + 1
+        self._sessions[sid].last_active_at = self._stamp()
+
+    def terminal_closed(self, sid: str) -> None:
+        """Note an interactive terminal closing. Drops the session's entry at zero so
+        ``idle_sessions`` can reap it again once no terminal is open."""
+        remaining = self._terminals.get(sid, 0) - 1
+        if remaining <= 0:
+            self._terminals.pop(sid, None)
+        else:
+            self._terminals[sid] = remaining
+        if sid in self._sessions:
+            self._sessions[sid].last_active_at = self._stamp()
+
     async def cancel(self, sid: str) -> None:
         self.get(sid)
         await self._agent.cancel(sid)
@@ -186,5 +207,6 @@ class SessionManager:
             s.id
             for s in self._sessions.values()
             if s.status != "running"
+            and s.id not in self._terminals
             and datetime.fromisoformat(s.last_active_at) < cutoff
         ]

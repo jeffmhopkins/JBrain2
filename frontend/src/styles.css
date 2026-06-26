@@ -15147,6 +15147,21 @@ input.ld-title {
   word-break: break-word;
   margin: 0;
 }
+/* The interactive CLI fills its panel; xterm paints into .jcode-cli (it manages its own
+   scrollback). The panel drops its padding so the terminal goes edge to edge. */
+.jcode-clipanel {
+  padding: 0;
+  overflow: hidden;
+}
+.jcode-cli {
+  width: 100%;
+  height: 100%;
+  background: #0b0b0c;
+}
+.jcode-cli .xterm {
+  height: 100%;
+  padding: 8px 10px;
+}
 
 /* composer */
 .jcode-composer {

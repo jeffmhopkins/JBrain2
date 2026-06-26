@@ -5,6 +5,7 @@
 // (a placeholder until the diff feed lands). The Chat tab is the workhorse; it streams
 // api.jcodeTurn frames.
 
+import "@xterm/xterm/css/xterm.css";
 import { useEffect, useRef, useState } from "react";
 import { AgentStatusLine } from "../agent/FullBrainSurface";
 import { Markdown } from "../agent/markdown";
@@ -13,6 +14,7 @@ import { usePacedText } from "../agent/usePacedText";
 import { api } from "../api/client";
 import {
   ChevronLeftIcon,
+  CodeIcon,
   GitCompareIcon,
   GlobeIcon,
   MessageIcon,
@@ -20,13 +22,14 @@ import {
   StopIcon,
   TerminalIcon,
 } from "../components/icons";
+import { attachTerminal, terminalWsUrl } from "../jcode/terminal";
 import type { JcodeEvent, JcodeModelStatus, JcodePreview, JcodeSession } from "../jcode/types";
 
 // Rough cold-load read rate (s/GB) for the loading-bar estimate — the bar caps at 96%
 // until the gateway confirms the model resident, then completes.
 const LOAD_SEC_PER_GB = 1.2;
 
-type Tab = "chat" | "diff" | "term" | "prev";
+type Tab = "chat" | "diff" | "term" | "cli" | "prev";
 
 interface Tool {
   tool: string;
@@ -39,6 +42,7 @@ const TABS: { id: Tab; label: string; icon: typeof MessageIcon }[] = [
   { id: "chat", label: "Chat", icon: MessageIcon },
   { id: "diff", label: "Diff", icon: GitCompareIcon },
   { id: "term", label: "Terminal", icon: TerminalIcon },
+  { id: "cli", label: "CLI", icon: CodeIcon },
   { id: "prev", label: "Preview", icon: GlobeIcon },
 ];
 
@@ -113,6 +117,56 @@ function JcodeBubble({
       )}
     </div>
   );
+}
+
+// The interactive CLI: a real shell in the sandbox via xterm.js over the terminal WS.
+// xterm is dynamically imported so it (and its CSS) only load when the tab is opened,
+// and so tests can mock it without the canvas renderer touching jsdom. The WS pump +
+// resize wiring lives in jcode/terminal.ts; this just owns the xterm lifecycle.
+function JcodeCli({ sid }: { sid: string }) {
+  const host = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = host.current;
+    if (!el) return;
+    let disposed = false;
+    let cleanup = () => {};
+    void (async () => {
+      const [{ Terminal }, { FitAddon }] = await Promise.all([
+        import("@xterm/xterm"),
+        import("@xterm/addon-fit"),
+      ]);
+      if (disposed || !host.current) return;
+      const term = new Terminal({
+        fontSize: 13,
+        fontFamily: "ui-monospace, Menlo, Consolas, monospace",
+        cursorBlink: true,
+        theme: { background: "#0b0b0c", foreground: "#e6e6e6" },
+      });
+      const fit = new FitAddon();
+      term.loadAddon(fit);
+      term.open(el);
+      fit.fit();
+      const ws = new WebSocket(terminalWsUrl(sid));
+      const detach = attachTerminal(term, ws);
+      ws.onclose = () => {
+        if (!disposed) term.write("\r\n\x1b[2m— shell closed —\x1b[0m\r\n");
+      };
+      const onWindowResize = () => fit.fit();
+      window.addEventListener("resize", onWindowResize);
+      term.focus();
+      cleanup = () => {
+        window.removeEventListener("resize", onWindowResize);
+        detach();
+        ws.close();
+        term.dispose();
+      };
+    })();
+    return () => {
+      disposed = true;
+      cleanup();
+    };
+  }, [sid]);
+  return <div className="jcode-cli" ref={host} />;
 }
 
 export function JcodeSessionScreen({
@@ -420,6 +474,15 @@ export function JcodeSessionScreen({
       {tab === "term" && (
         <div className="jcode-panel">
           <pre className="jcode-term">{term.length === 0 ? "$ █" : `${term.join("\n")}\n$ █`}</pre>
+        </div>
+      )}
+
+      {/* The interactive CLI is mounted only while its tab is open (and remounts per
+          session id) so each session gets its own shell and the socket is torn down on
+          leave. */}
+      {tab === "cli" && (
+        <div className="jcode-panel jcode-clipanel">
+          <JcodeCli key={session.id} sid={session.id} />
         </div>
       )}
 
