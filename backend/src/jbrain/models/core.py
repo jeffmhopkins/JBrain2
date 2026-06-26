@@ -59,6 +59,10 @@ class Principal(Base):
     # Set only for capability_token principals: a reversible pause. A suspended
     # token fails auth (like revoked) but the owner can clear this to resume it.
     suspended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Set only for jcode_share_link principals: the single code-mode session this
+    # grant is scoped to (the control-server session id — a hex token, NOT a UUID).
+    # NULL for every other kind. Redeem + every operational jcode route checks it.
+    jcode_session_id: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
 class DeviceSession(Base):

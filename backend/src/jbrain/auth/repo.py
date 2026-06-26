@@ -93,6 +93,10 @@ class SqlAuthRepo:
                         DeviceSession.token_hash == token_hash,
                         DeviceSession.revoked_at.is_(None),
                         Principal.revoked_at.is_(None),
+                        # A time-boxed principal (a jcode share link) stops authenticating
+                        # the moment it lapses — the cookie can't outlive the share's
+                        # expiry. Owner/device principals have NULL expiry, so unaffected.
+                        or_(Principal.expires_at.is_(None), Principal.expires_at > func.now()),
                     )
                 )
             ).scalar_one_or_none()
@@ -243,6 +247,83 @@ class SqlAuthRepo:
             )
             return (cast("CursorResult[Any]", result).rowcount or 0) > 0
 
+    async def create_jcode_share(
+        self, key_hash: str, label: str, session_id: str, expires_at: datetime
+    ) -> CapabilityToken:
+        async with scoped_session(self._maker, _BOOTSTRAP) as session:
+            row = Principal(
+                kind="jcode_share_link",
+                key_hash=key_hash,
+                label=label,
+                jcode_session_id=session_id,
+                expires_at=expires_at,
+            )
+            session.add(row)
+            await session.flush()
+            return _capability_token(row)
+
+    async def find_active_jcode_share_by_key_hash(self, key_hash: str) -> PrincipalInfo | None:
+        """Resolve a share-link secret, kind-filtered so an owner / device / debug key
+        presented here never authenticates. Enforces revocation AND a live expiry, and
+        stamps last_used_at. The returned PrincipalInfo carries jcode_session_id, the
+        scope the access gate checks. Unknown / revoked / lapsed / wrong-kind → None."""
+        async with scoped_session(self._maker, _LOGIN) as session:
+            row = (
+                await session.execute(
+                    select(Principal).where(
+                        Principal.key_hash == key_hash,
+                        Principal.kind == "jcode_share_link",
+                        Principal.revoked_at.is_(None),
+                        or_(Principal.expires_at.is_(None), Principal.expires_at > func.now()),
+                    )
+                )
+            ).scalar_one_or_none()
+            if row is None:
+                return None
+            info = _principal_info(row)
+        async with scoped_session(self._maker, _BOOTSTRAP) as session:
+            await session.execute(
+                update(Principal).where(Principal.id == row.id).values(last_used_at=text("now()"))
+            )
+        return info
+
+    async def list_jcode_shares(self, session_id: str) -> list[CapabilityToken]:
+        """The non-revoked share links for one session, newest first (owner's list)."""
+        async with scoped_session(self._maker, _LOGIN) as session:
+            rows = (
+                await session.execute(
+                    select(Principal)
+                    .where(
+                        Principal.kind == "jcode_share_link",
+                        Principal.jcode_session_id == session_id,
+                        Principal.revoked_at.is_(None),
+                    )
+                    .order_by(Principal.created_at.desc())
+                )
+            ).scalars()
+            return [_capability_token(row) for row in rows]
+
+    async def revoke_jcode_share(self, share_id: str, session_id: str) -> bool:
+        """Revoke a share link — scoped to its session, so the owner can't revoke a
+        share of a session they didn't name (defence in depth). No-op (False) on an
+        unknown / already-revoked / wrong-session id."""
+        try:
+            pid = uuid.UUID(share_id)
+        except ValueError:
+            return False
+        async with scoped_session(self._maker, _BOOTSTRAP) as session:
+            result = await session.execute(
+                update(Principal)
+                .where(
+                    Principal.id == pid,
+                    Principal.kind == "jcode_share_link",
+                    Principal.jcode_session_id == session_id,
+                    Principal.revoked_at.is_(None),
+                )
+                .values(revoked_at=text("now()"))
+            )
+            return (cast("CursorResult[Any]", result).rowcount or 0) > 0
+
 
 def _capability_token(row: Principal) -> CapabilityToken:
     return CapabilityToken(
@@ -262,4 +343,5 @@ def _principal_info(row: Principal) -> PrincipalInfo:
         kind=row.kind,
         label=row.label,
         subject_id=str(row.subject_id) if row.subject_id is not None else "",
+        jcode_session_id=row.jcode_session_id or "",
     )

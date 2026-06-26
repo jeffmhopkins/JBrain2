@@ -12,7 +12,14 @@ import pytest
 from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
-from jbrain.api.jcode_terminal import browser_to_upstream, upstream_to_browser, ws_url
+from jbrain.api.jcode_terminal import (
+    _may_access,
+    browser_to_upstream,
+    upstream_to_browser,
+    ws_url,
+)
+from jbrain.auth import service as auth_service
+from jbrain.auth.service import PrincipalInfo
 from jbrain.config import Settings
 from jbrain.main import create_app
 from tests.unit.fakes import FakeAuthRepo
@@ -126,3 +133,40 @@ def test_terminal_ws_rejects_a_disallowed_origin() -> None:
         ):
             pass
     assert exc.value.code == 4403
+
+
+def test_may_access_admits_owner_and_same_session_share_only() -> None:
+    # The shell's scope predicate: owner reaches any session; a share only its own.
+    owner = PrincipalInfo(id="o", kind="owner", label="o")
+    same = PrincipalInfo(id="1", kind="jcode_share_link", label="s", jcode_session_id="abc")
+    cross = PrincipalInfo(id="2", kind="jcode_share_link", label="s", jcode_session_id="xyz")
+    device = PrincipalInfo(id="3", kind="device_key", label="d", subject_id="sub")
+    assert _may_access(owner, "abc") is True
+    assert _may_access(same, "abc") is True
+    assert _may_access(cross, "abc") is False
+    assert _may_access(device, "abc") is False
+
+
+def test_terminal_ws_rejects_a_cross_session_share() -> None:
+    # A redeemed share cookie for one session must NOT open another session's shell —
+    # the highest-value scope check on this credential. Closed 4401 before accept.
+    settings = Settings(
+        secure_cookies=False,
+        database_url="postgresql+asyncpg://nobody@localhost:1/none",
+        session_cookie="jbrain_session",
+        jcode_url="http://jcode:9100",
+    )
+    app = create_app(settings)
+    repo = FakeAuthRepo()
+    with TestClient(app) as client:
+        app.state.auth_repo = repo
+        key, _ = asyncio.run(auth_service.mint_jcode_share(repo, "other-sess", "x", 24.0))
+        redeemed = asyncio.run(auth_service.redeem_jcode_share(repo, key))
+        assert redeemed is not None
+        client.cookies.set("jbrain_session", redeemed[0])
+        with (
+            pytest.raises(WebSocketDisconnect) as exc,
+            client.websocket_connect("/api/jcode/sessions/this-sess/terminal"),
+        ):
+            pass
+    assert exc.value.code == 4401

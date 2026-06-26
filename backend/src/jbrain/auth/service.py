@@ -25,6 +25,10 @@ class PrincipalInfo:
     # Phase 7 device keys carry their device subject so a device session can pin
     # its row visibility to that subject (jbrain.db.session.device_context).
     subject_id: str = ""
+    # The single code-mode session a jcode_share_link is scoped to ("" for every
+    # other kind). The jcode access gate checks this against the route's session id
+    # so a share grant can never reach another session.
+    jcode_session_id: str = ""
 
 
 @dataclass(frozen=True)
@@ -81,6 +85,16 @@ class AuthRepo(Protocol):
     async def suspend_capability(self, capability_id: str) -> bool: ...
 
     async def resume_capability(self, capability_id: str) -> bool: ...
+
+    async def create_jcode_share(
+        self, key_hash: str, label: str, session_id: str, expires_at: datetime
+    ) -> CapabilityToken: ...
+
+    async def find_active_jcode_share_by_key_hash(self, key_hash: str) -> PrincipalInfo | None: ...
+
+    async def list_jcode_shares(self, session_id: str) -> list[CapabilityToken]: ...
+
+    async def revoke_jcode_share(self, share_id: str, session_id: str) -> bool: ...
 
 
 async def login(repo: AuthRepo, owner_key: str, device_label: str) -> str:
@@ -160,6 +174,47 @@ async def authenticate_capability(repo: AuthRepo, key: str) -> PrincipalInfo | N
     if not key:
         return None
     return await repo.find_active_capability_by_key_hash(keys.hash_token(key))
+
+
+async def mint_jcode_share(
+    repo: AuthRepo, session_id: str, label: str, ttl_hours: float
+) -> tuple[str, CapabilityToken]:
+    """Mint a jcode share link bound to ONE code-mode session; returns the secret
+    exactly once alongside its management record. Same shape as a debug capability
+    (256-bit key, SHA-256 hashed, time-boxed) but kind-tagged `jcode_share_link` and
+    scoped to ``session_id`` so it can never reach another session. The caller
+    validates the TTL (a non-positive box is meaningless)."""
+    key = keys.generate_capability_key()
+    expires_at = datetime.now(UTC) + timedelta(hours=ttl_hours)
+    record = await repo.create_jcode_share(keys.hash_token(key), label, session_id, expires_at)
+    return key, record
+
+
+async def validate_jcode_share(repo: AuthRepo, key: str) -> PrincipalInfo | None:
+    """Resolve a share-link secret to its principal — kind-filtered, revocation- and
+    expiry-enforced in SQL — WITHOUT minting a session. The redeem route uses this to
+    decide whether to issue a scoped cookie (it skips that when an owner session is
+    already present, so an owner opening their own link isn't downgraded). A revoked /
+    lapsed / wrong-kind / empty key returns None."""
+    if not key:
+        return None
+    return await repo.find_active_jcode_share_by_key_hash(keys.hash_token(key))
+
+
+async def redeem_jcode_share(repo: AuthRepo, key: str) -> tuple[str, str] | None:
+    """Exchange a share-link secret for ``(session_cookie_token, session_id)``, or None.
+
+    Validates the secret (`validate_jcode_share`), then mints a session bound to the
+    share principal so the browser carries the share's scope on every subsequent request
+    — exactly as `mint_dashboard_session` does for a device key, but the resulting cookie
+    reaches ONLY this one session's operational routes (the jcode access gate), never
+    owner or member surfaces."""
+    principal = await validate_jcode_share(repo, key)
+    if principal is None:
+        return None
+    token = keys.generate_session_token()
+    await repo.create_session(principal.id, keys.hash_token(token), principal.label)
+    return token, principal.jcode_session_id
 
 
 async def rotate_owner_key(repo: AuthRepo) -> str:
