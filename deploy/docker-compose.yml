@@ -392,6 +392,13 @@ services:
       ANTHROPIC_BASE_URL: ${JCODE_ANTHROPIC_BASE_URL:-http://claude-shim:4000}
       ANTHROPIC_API_KEY: ${JCODE_GATEWAY_TOKEN:-sk-jcode-local}
       ANTHROPIC_AUTH_TOKEN: ${JCODE_GATEWAY_TOKEN:-sk-jcode-local}
+      # Headless-sandbox hardening for the bundled Claude Code CLI the Agent SDK spawns:
+      # a writable config dir (it persists onboarding/ToS state there — a non-writable
+      # ~/.claude exits 1), suppress first-run/update/telemetry traffic that fails
+      # non-interactively, and clear any inherited nested-session marker (CLAUDECODE).
+      CLAUDE_CONFIG_DIR: ${JCODE_CLAUDE_CONFIG_DIR:-/tmp/claude}
+      CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1"
+      CLAUDECODE: ""
       # Per-session web preview (Wave J4): an ephemeral Cloudflare quick-tunnel
       # (cloudflared, bundled in the image) to the sandbox's dev server. OFF by
       # default — it exposes the running app to anyone with the random URL — and
