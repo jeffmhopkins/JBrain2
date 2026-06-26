@@ -9085,6 +9085,72 @@ button.small {
   stroke-linecap: round;
   stroke-linejoin: round;
 }
+/* weekly (range: week) — a daily list instead of the hourly strip */
+.fb-shell .tv-wx-days {
+  border-top: 1px solid var(--border);
+  padding: 4px 6px 6px;
+}
+.fb-shell .tv-wx-day {
+  display: grid;
+  grid-template-columns: 44px 24px 42px 1fr;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 9px;
+  border-bottom: 1px solid var(--border);
+}
+.fb-shell .tv-wx-day:last-child {
+  border-bottom: 0;
+}
+.fb-shell .tv-wx-dlabel {
+  font-size: 13px;
+  color: var(--text);
+}
+.fb-shell .tv-wx-day .tv-wx-svg {
+  width: 22px;
+  height: 22px;
+  color: var(--text-2);
+}
+.fb-shell .tv-wx-dpop {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  font-size: 11px;
+  color: var(--steel);
+}
+.fb-shell .tv-wx-dpop.none {
+  visibility: hidden;
+}
+.fb-shell .tv-wx-drange {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font-size: 13px;
+}
+.fb-shell .tv-wx-dlo {
+  color: var(--text-3);
+  min-width: 30px;
+  text-align: right;
+}
+.fb-shell .tv-wx-dhi {
+  color: var(--text);
+  font-weight: 600;
+  min-width: 30px;
+}
+.fb-shell .tv-wx-dtrack {
+  position: relative;
+  flex: 1;
+  height: 5px;
+  border-radius: 999px;
+  background: var(--surface-2);
+}
+.fb-shell .tv-wx-dfill {
+  position: absolute;
+  top: 0;
+  height: 100%;
+  border-radius: 999px;
+  /* warm-to-cool gradient across the week's own range; tokens only. */
+  background: linear-gradient(90deg, var(--steel), var(--amber));
+}
 
 /* generated_image — the image-gen tool-view (docs/mocks/genimage-c-edit-aware).
    A generate renders a single sized image; an edit renders a swipe before/after

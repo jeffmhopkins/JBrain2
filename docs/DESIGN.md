@@ -987,9 +987,10 @@ Owner-facing chat artifact; never a note, never RAG-indexed.
 The in-chat card jerv shows after a `weather` tool call — the glanceable replacement
 for the old web-search-and-scrape-into-a-markdown-table weather flow. A registered,
 data-only view like every other: the model fills
-`{place, as_of, tz, now:{temp_f, feels_f, cond, is_day, label, humidity, wind_mph,
-wind_dir}, hi_f, lo_f, hours:[{label, temp_f, feels_f, cond, is_day, pop, wind_mph,
-wind_dir}]}` and **authors no markup, no URL, and no color** — `cond` is a closed enum
+`{place, as_of, tz, range:('today'|'week'), now:{temp_f, feels_f, cond, is_day, label,
+humidity, wind_mph, wind_dir}, hi_f, lo_f, hours:[{label, temp_f, feels_f, cond, is_day,
+pop, wind_mph, wind_dir}], days:[{label, cond, hi_f, lo_f, pop, wind_mph, wind_dir}]}`
+and **authors no markup, no URL, and no color** — `cond` is a closed enum
 (`clear|partly|cloudy|rain|storm|snow|fog`) and `is_day` a flag the component maps to an
 **inline SVG glyph + token** (the night variants for clear/partly skies live in the
 component, not the payload). Tokens-only `.tv-wx-*` classes; weather is non-personal
@@ -1005,6 +1006,18 @@ the literal "what's the weather now → midnight" question: a big current-condit
 (place · time, temperature, condition glyph, feels-like, H/L, wind) over a finger-
 scrollable hourly row (time · glyph · temp · precip %), reading in one glance. B/C/D are
 retained as the record in `docs/mocks/weather-view/README.md`.
+
+**Two ranges, set by the tool's `range` param (`today` | `week`).** `today` (default) is
+the hero + hourly strip above. `week` keeps the same hero and swaps the strip for a
+**daily list** (`docs/mocks/weather-view/weather-a-week.html`): one row per day —
+weekday (first reads "Today") · condition glyph · precip % · a **temp-range bar scaled to
+the week's own min/max** (a steel→amber fill, so the warm and cool days read at a glance)
+· the day's high/low. The component picks the layout from `range`; only the matching
+detail list (`hours` or `days`) is populated. Open-Meteo gives a usable daily forecast to
+~16 days; the tool exposes a 7-day week and deliberately offers **no month-or-longer
+outlook** (climate-normal territory, not a forecast — jerv falls back to a web search if
+asked). The daily list reused the established list paradigms, so it shipped without its
+own mock round (owner call).
 
 **The location firewall holds at the tool, not the view.** A named place is forward-
 geocoded by name; the owner's "here" fix is resolved to a nearest-city **name** on-box

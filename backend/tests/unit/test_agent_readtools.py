@@ -797,8 +797,8 @@ def test_sidecars_pinned_to_their_versions() -> None:
         ),
         "weather.tool": (
             "weather",
-            1,
-            "53820cecdd26e2d8a2b1789518b378cc2eddbfa99b89df073ea6f67ccf0808e3",
+            2,
+            "8dcbee93763345bc3d63474d8d66cd2a9afc90f2e593c6e3854676a4624598eb",
         ),
         "gmail_search.tool": (
             "gmail_search",

@@ -26,7 +26,9 @@ import structlog
 log = structlog.get_logger()
 
 _TIMEOUT = 15.0
-_HOURS_AHEAD = 24  # the forecast window the card renders as the hourly strip
+_HOURS_AHEAD = 24  # the today card's hourly-strip window
+_WEEK_DAYS = 7  # the week card's daily-list window (Open-Meteo supports up to 16)
+_WEEKDAYS = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
 
 
 class WeatherError(RuntimeError):
@@ -101,13 +103,28 @@ class HourPoint:
 
 
 @dataclass(frozen=True)
+class DayPoint:
+    """One day of the weekly forecast: the slots the `weather_card` daily list renders."""
+
+    label: str  # short weekday, e.g. "Today" / "Mon"
+    cond: str
+    hi_f: int
+    lo_f: int
+    pop: int  # max precipitation probability for the day, %
+    wind_mph: int
+    wind_dir: str
+
+
+@dataclass(frozen=True)
 class Weather:
     """A resolved forecast for one place, shaped for both the model-facing summary
-    and the data-only `weather_card` view."""
+    and the data-only `weather_card` view. `kind` is `today` (current + hourly strip)
+    or `week` (current + a daily list); only the matching detail list is populated."""
 
     place: str
     as_of: str  # short local clock time the forecast was issued, e.g. "1:14 PM"
     tz_abbr: str  # the place's timezone abbreviation, e.g. "EDT"
+    kind: str  # "today" | "week"
     temp_f: int
     feels_f: int
     cond: str
@@ -118,7 +135,8 @@ class Weather:
     wind_dir: str
     hi_f: int
     lo_f: int
-    hours: tuple[HourPoint, ...]
+    hours: tuple[HourPoint, ...] = ()
+    days: tuple[DayPoint, ...] = ()
 
 
 _COMPASS = (
@@ -205,27 +223,39 @@ class WeatherClient:
         place = ", ".join(p for p in parts if p) or name
         return GeoHit(name=place, latitude=lat, longitude=lon)
 
-    async def forecast(self, hit: GeoHit) -> Weather:
-        """Fetch the current + hourly + daily forecast for a geocoded place."""
+    async def forecast(self, hit: GeoHit, *, weekly: bool = False) -> Weather:
+        """Fetch the forecast for a geocoded place. `weekly` swaps the hourly strip for
+        a 7-day daily list (today keeps the next-24h hourly detail)."""
         if not self._forecast_url:
             raise WeatherError("weather is not configured on this instance")
+        daily = "temperature_2m_max,temperature_2m_min"
         params = {
             "latitude": f"{hit.latitude:.4f}",
             "longitude": f"{hit.longitude:.4f}",
             "current": "temperature_2m,apparent_temperature,relative_humidity_2m,"
             "weather_code,wind_speed_10m,wind_direction_10m,is_day",
-            "hourly": "temperature_2m,apparent_temperature,weather_code,"
-            "precipitation_probability,wind_speed_10m,wind_direction_10m,is_day",
-            "daily": "temperature_2m_max,temperature_2m_min",
             "temperature_unit": "fahrenheit",
             "wind_speed_unit": "mph",
             "timezone": "auto",
-            "forecast_days": 2,
+            "forecast_days": _WEEK_DAYS if weekly else 2,
         }
+        if weekly:
+            # The daily list needs each day's sky, rain chance, and wind; skip the hourly
+            # block entirely (a week of hourly is a large payload the daily card never uses).
+            params["daily"] = (
+                f"{daily},weather_code,precipitation_probability_max,"
+                "wind_speed_10m_max,wind_direction_10m_dominant"
+            )
+        else:
+            params["daily"] = daily
+            params["hourly"] = (
+                "temperature_2m,apparent_temperature,weather_code,"
+                "precipitation_probability,wind_speed_10m,wind_direction_10m,is_day"
+            )
         body = await self._get(f"{self._forecast_url}/v1/forecast", params)
         if not isinstance(body, dict):
             raise WeatherError("the weather service returned an unexpected response")
-        return _shape(hit.name, body)
+        return _shape(hit.name, body, weekly=weekly)
 
     async def _get(self, url: str, params: dict) -> object:
         try:
@@ -241,13 +271,13 @@ class WeatherClient:
             raise WeatherError("the weather service is unavailable right now") from exc
 
 
-def _shape(place: str, body: dict) -> Weather:
+def _shape(place: str, body: dict, *, weekly: bool = False) -> Weather:
     """Turn Open-Meteo's column-arrays into a Weather. Defensive: a missing block or
-    a ragged array is a malformed body, surfaced as a WeatherError, not a crash."""
+    a ragged array is a malformed body, surfaced as a WeatherError, not a crash. The
+    current-conditions hero is shared; `weekly` swaps the hourly strip for a daily list."""
     cur = body.get("current")
-    hourly = body.get("hourly")
     daily = body.get("daily")
-    if not isinstance(cur, dict) or not isinstance(hourly, dict):
+    if not isinstance(cur, dict):
         raise WeatherError("the weather service returned an incomplete forecast")
 
     try:
@@ -258,19 +288,28 @@ def _shape(place: str, body: dict) -> Weather:
     cond, label = describe_code(cur.get("weather_code", 0))
     tz_abbr = str(body.get("timezone_abbreviation") or "").strip()
 
-    times = hourly.get("time")
-    if not isinstance(times, list) or not times:
-        raise WeatherError("the weather service returned no hourly forecast")
-    # The strip starts at the current hour: the first hourly slot at or after "now".
-    now_hour = now.replace(minute=0, second=0, microsecond=0).isoformat(timespec="minutes")
-    start = next((i for i, t in enumerate(times) if str(t) >= now_hour), 0)
-    hours = _hours(hourly, times, start)
+    hours: tuple[HourPoint, ...] = ()
+    days: tuple[DayPoint, ...] = ()
+    if weekly:
+        days = _days(daily)
+    else:
+        hourly = body.get("hourly")
+        if not isinstance(hourly, dict):
+            raise WeatherError("the weather service returned an incomplete forecast")
+        times = hourly.get("time")
+        if not isinstance(times, list) or not times:
+            raise WeatherError("the weather service returned no hourly forecast")
+        # The strip starts at the current hour: the first hourly slot at or after "now".
+        now_hour = now.replace(minute=0, second=0, microsecond=0).isoformat(timespec="minutes")
+        start = next((i for i, t in enumerate(times) if str(t) >= now_hour), 0)
+        hours = _hours(hourly, times, start)
 
     hi, lo = _today_hilo(daily)
     return Weather(
         place=place,
         as_of=_clock(now),
         tz_abbr=tz_abbr,
+        kind="week" if weekly else "today",
         temp_f=_i(cur.get("temperature_2m")),
         feels_f=_i(cur.get("apparent_temperature")),
         cond=cond,
@@ -282,7 +321,45 @@ def _shape(place: str, body: dict) -> Weather:
         hi_f=hi if hi is not None else _i(cur.get("temperature_2m")),
         lo_f=lo if lo is not None else _i(cur.get("temperature_2m")),
         hours=hours,
+        days=days,
     )
+
+
+def _days(daily: object) -> tuple[DayPoint, ...]:
+    """Parse the daily arrays into the weekly list. The first day reads "Today"; the
+    rest are weekday abbreviations from the date."""
+    if not isinstance(daily, dict):
+        raise WeatherError("the weather service returned no daily forecast")
+    times = daily.get("time")
+    if not isinstance(times, list) or not times:
+        raise WeatherError("the weather service returned no daily forecast")
+    highs = daily.get("temperature_2m_max") or []
+    lows = daily.get("temperature_2m_min") or []
+    code = daily.get("weather_code") or []
+    pop = daily.get("precipitation_probability_max") or []
+    wspd = daily.get("wind_speed_10m_max") or []
+    wdir = daily.get("wind_direction_10m_dominant") or []
+    out: list[DayPoint] = []
+    for i, raw in enumerate(times):
+        try:
+            dt = datetime.fromisoformat(str(raw))
+        except (TypeError, ValueError):
+            continue
+        cond, _ = describe_code(code[i] if i < len(code) else 0)
+        out.append(
+            DayPoint(
+                label="Today" if i == 0 else _WEEKDAYS[dt.weekday()],
+                cond=cond,
+                hi_f=_i(highs[i]) if i < len(highs) else 0,
+                lo_f=_i(lows[i]) if i < len(lows) else 0,
+                pop=_i(pop[i]) if i < len(pop) else 0,
+                wind_mph=_i(wspd[i]) if i < len(wspd) else 0,
+                wind_dir=_compass(float(wdir[i]) if i < len(wdir) else 0.0),
+            )
+        )
+    if not out:
+        raise WeatherError("the weather service returned no usable daily forecast")
+    return tuple(out)
 
 
 def _hours(hourly: dict, times: list, start: int) -> tuple[HourPoint, ...]:

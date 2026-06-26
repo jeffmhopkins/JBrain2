@@ -20,7 +20,10 @@ _NO_LOCATION = (
     'I need a place to check — name a city (e.g. "weather in Austin"), or share your '
     "location and I'll use the nearest city."
 )
-_SUMMARY_HOURS = 6  # how many hours the model-facing text spells out inline
+_SUMMARY_HOURS = 6  # how many hours the today text spells out inline
+_SUMMARY_DAYS = 7  # how many days the week text spells out inline
+# What `range` values mean "the week ahead"; anything else is the default single day.
+_WEEK_WORDS = frozenset({"week", "weekly", "7day", "7-day", "this week", "next week"})
 
 
 def build_weather_handlers(
@@ -28,6 +31,7 @@ def build_weather_handlers(
 ) -> dict[str, ToolHandler]:
     async def weather_tool(arguments: dict, ctx: ToolContext) -> str | ToolOutput:
         name = str(arguments.get("location", "")).strip()
+        weekly = str(arguments.get("range", "today")).strip().lower() in _WEEK_WORDS
         try:
             hit = await _resolve(client, city_geocoder, name, ctx)
         except WeatherError as exc:
@@ -37,7 +41,7 @@ def build_weather_handlers(
                 return f'I couldn\'t find a place called "{name}".'
             return _NO_LOCATION
         try:
-            weather = await client.forecast(hit)
+            weather = await client.forecast(hit, weekly=weekly)
         except WeatherError as exc:
             return str(exc)
         return ToolOutput(_summarize(weather), view=weather_view(weather))
@@ -77,6 +81,7 @@ def weather_view(w: Weather) -> ViewPayload:
             "place": w.place,
             "as_of": w.as_of,
             "tz": w.tz_abbr,
+            "range": w.kind,
             "now": {
                 "temp_f": w.temp_f,
                 "feels_f": w.feels_f,
@@ -102,18 +107,38 @@ def weather_view(w: Weather) -> ViewPayload:
                 }
                 for h in w.hours
             ],
+            "days": [
+                {
+                    "label": d.label,
+                    "cond": d.cond,
+                    "hi_f": d.hi_f,
+                    "lo_f": d.lo_f,
+                    "pop": d.pop,
+                    "wind_mph": d.wind_mph,
+                    "wind_dir": d.wind_dir,
+                }
+                for d in w.days
+            ],
         },
     )
 
 
 def _summarize(w: Weather) -> str:
     """A concise text observation so the model can answer in prose even though the card
-    carries the detail; spells out the next few hours, then notes the card is shown."""
+    carries the detail; spells out the next few hours (today) or days (week), then notes
+    the card is shown."""
     head = (
         f"{w.place} — now {w.temp_f}°F (feels {w.feels_f}°), {w.label.lower()}, "
         f"{w.wind_dir} {w.wind_mph} mph, humidity {w.humidity}%. "
         f"Today: high {w.hi_f}°, low {w.lo_f}°."
     )
+    if w.kind == "week":
+        parts = []
+        for d in w.days[:_SUMMARY_DAYS]:
+            rain = f", {d.pop}% rain" if d.pop else ""
+            parts.append(f"{d.label} {d.hi_f}°/{d.lo_f}° {d.cond}{rain}")
+        trend = f" This week: {'; '.join(parts)}." if parts else ""
+        return f"{head}{trend} The app is showing the 7-day forecast."
     parts = []
     for h in w.hours[1 : _SUMMARY_HOURS + 1]:
         rain = f", {h.pop}% rain" if h.pop else ""

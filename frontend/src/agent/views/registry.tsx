@@ -971,6 +971,48 @@ interface WxHour {
   pop: number;
 }
 
+interface WxDay {
+  label: string;
+  cond: WxCond;
+  hi_f: number;
+  lo_f: number;
+  pop: number;
+}
+
+/** The week card's daily list: one row per day with a temp-range bar scaled to the
+ * week's own min/max, so the warm and cool days read at a glance. */
+function DailyList({ days }: { days: WxDay[] }): ReactNode {
+  const min = Math.min(...days.map((d) => d.lo_f));
+  const max = Math.max(...days.map((d) => d.hi_f));
+  const span = max - min || 1;
+  return (
+    <div className="tv-wx-days">
+      {days.map((d, i) => {
+        const left = ((d.lo_f - min) / span) * 100;
+        const width = ((d.hi_f - d.lo_f) / span) * 100;
+        return (
+          // Positional daily rows have no stable id; the day label + index key it.
+          <div className="tv-wx-day" key={`${d.label}-${i}`}>
+            <div className="tv-wx-dlabel">{d.label}</div>
+            <WeatherGlyph cond={d.cond} day={true} />
+            <div className={`tv-wx-dpop${d.pop > 0 ? "" : " none"}`}>
+              <DropGlyph />
+              {d.pop}%
+            </div>
+            <div className="tv-wx-drange">
+              <span className="tv-wx-dlo">{d.lo_f}°</span>
+              <span className="tv-wx-dtrack">
+                <span className="tv-wx-dfill" style={{ left: `${left}%`, width: `${width}%` }} />
+              </span>
+              <span className="tv-wx-dhi">{d.hi_f}°</span>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function WeatherCard({ data }: ViewProps): ReactNode {
   const place = String(data.place ?? "");
   const asOf = typeof data.as_of === "string" ? data.as_of : "";
@@ -993,11 +1035,25 @@ function WeatherCard({ data }: ViewProps): ReactNode {
       pop: wxNum(row.pop),
     };
   });
+  const days: WxDay[] = (Array.isArray(data.days) ? data.days : []).map((d) => {
+    const row = (d ?? {}) as Record<string, unknown>;
+    return {
+      label: String(row.label ?? ""),
+      cond: wxCond(row.cond),
+      hi_f: wxNum(row.hi_f),
+      lo_f: wxNum(row.lo_f),
+      pop: wxNum(row.pop),
+    };
+  });
+  const week = data.range === "week" && days.length > 0;
   const when = [asOf, tz].filter(Boolean).join(" ");
 
   return (
     <div className="tv-wx">
-      <div className="tv-wx-cap">weather{place ? ` · ${place}` : ""}</div>
+      <div className="tv-wx-cap">
+        weather{place ? ` · ${place}` : ""}
+        {week ? " · 7-day" : ""}
+      </div>
       <div className="tv-wx-hero">
         <div className="tv-wx-glyph">
           <WeatherGlyph cond={cond} day={day} />
@@ -1027,21 +1083,25 @@ function WeatherCard({ data }: ViewProps): ReactNode {
           )}
         </div>
       </div>
-      {hours.length > 0 && (
-        <div className="tv-wx-strip">
-          {hours.map((h, i) => (
-            // Positional forecast rows have no stable id; the hour label + index key it.
-            <div className={`tv-wx-hr${i === 0 ? " now" : ""}`} key={`${h.label}-${i}`}>
-              <div className="tv-wx-ht">{h.label}</div>
-              <WeatherGlyph cond={h.cond} day={h.is_day} />
-              <div className="tv-wx-htemp">{h.temp_f}°</div>
-              <div className={`tv-wx-pop${h.pop > 0 ? "" : " none"}`}>
-                <DropGlyph />
-                {h.pop}%
+      {week ? (
+        <DailyList days={days} />
+      ) : (
+        hours.length > 0 && (
+          <div className="tv-wx-strip">
+            {hours.map((h, i) => (
+              // Positional forecast rows have no stable id; the hour label + index key it.
+              <div className={`tv-wx-hr${i === 0 ? " now" : ""}`} key={`${h.label}-${i}`}>
+                <div className="tv-wx-ht">{h.label}</div>
+                <WeatherGlyph cond={h.cond} day={h.is_day} />
+                <div className="tv-wx-htemp">{h.temp_f}°</div>
+                <div className={`tv-wx-pop${h.pop > 0 ? "" : " none"}`}>
+                  <DropGlyph />
+                  {h.pop}%
+                </div>
               </div>
-            </div>
-          ))}
-        </div>
+            ))}
+          </div>
+        )
       )}
     </div>
   );
