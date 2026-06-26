@@ -14667,6 +14667,18 @@ input.ld-title {
 }
 
 /* ===== Code mode (jcode) — Wave J3 (docs/DESIGN.md "jcode") ===== */
+/* The share-link boot states (opening / closed / invalid) — a centered full-screen
+   message, shown before/instead of the session screen. */
+.jcode-shareboot {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  text-align: center;
+  background: var(--bg);
+}
 .jcode-screen {
   position: fixed;
   inset: 0;

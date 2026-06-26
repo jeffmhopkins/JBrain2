@@ -254,4 +254,30 @@ describe("JcodeSessionScreen", () => {
     await waitFor(() => expect(del).toHaveBeenCalledWith("j1"));
     expect(onClose).toHaveBeenCalled();
   });
+
+  it("mints + copies a share link from the Copy link button", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+    vi.spyOn(api, "jcodeMintShare").mockResolvedValue({
+      id: "p1",
+      label: "shared link",
+      expires_at: null,
+      token: "sekret",
+    });
+    render(<JcodeSessionScreen session={SESSION} onClose={vi.fn()} />);
+    fireEvent.click(screen.getByText("Copy link"));
+    await waitFor(() =>
+      expect(writeText).toHaveBeenCalledWith(expect.stringContaining("/jcode/s/j1#t=sekret")),
+    );
+    expect(await screen.findByText("Link copied ✓")).toBeInTheDocument();
+  });
+
+  it("hides the owner controls (Reset / Delete / Copy link) in shared mode", () => {
+    render(<JcodeSessionScreen session={SESSION} onClose={vi.fn()} shared />);
+    expect(screen.queryByText("Copy link")).not.toBeInTheDocument();
+    expect(screen.queryByText("Reset")).not.toBeInTheDocument();
+    expect(screen.queryByText("Delete")).not.toBeInTheDocument();
+    // The owner-only model-status poll is skipped — a share principal would 403 it.
+    expect(api.jcodeModelStatus).not.toHaveBeenCalled();
+  });
 });

@@ -28,6 +28,7 @@ import type {
   JcodeModelStatus,
   JcodePreview,
   JcodeSession,
+  JcodeShareToken,
   NewSessionInput,
 } from "../jcode/types";
 
@@ -2267,6 +2268,29 @@ export const api = {
   /** The launcher's session index (owner-only `jcode_sessions`). */
   async jcodeSessions(): Promise<JcodeSession[]> {
     return (await request("/api/jcode/sessions")).json();
+  },
+
+  /** One session — reachable by the owner OR a redeemed share scoped to it (the launcher
+   * list is owner-only, so a share opens straight to the session via this). */
+  async jcodeGetSession(id: string): Promise<JcodeSession> {
+    return (await request(`/api/jcode/sessions/${encodeURIComponent(id)}`)).json();
+  },
+
+  /** Mint a copy-link for this session (owner only): a scoped, expiring, revocable
+   * secret. Returned ONCE — build the share URL from it; it can't be re-read. */
+  async jcodeMintShare(id: string, ttlHours = 24): Promise<JcodeShareToken> {
+    return (
+      await request(
+        `/api/jcode/sessions/${encodeURIComponent(id)}/share`,
+        jsonInit("POST", { ttl_hours: ttlHours }),
+      )
+    ).json();
+  },
+
+  /** Redeem a share secret on any browser: sets a session cookie scoped to that one
+   * session and returns its id. 401 (ApiError) on an invalid / expired / revoked link. */
+  async jcodeRedeemShare(token: string): Promise<{ session_id: string }> {
+    return (await request("/api/jcode/share/redeem", jsonInit("POST", { token }))).json();
   },
 
   /** Spin a new sandboxed session (clone a repo or scratch). */
