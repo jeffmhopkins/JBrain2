@@ -258,13 +258,16 @@ docker compose exec api curl -s -o /dev/null -w '%{http_code}\n' \
   OpenAI, not Anthropic). `200` ⇒ the gateway is Anthropic-native and jcode points straight
   at it.
 
-**2. If a shim is needed** (likely): run an Anthropic↔OpenAI translator as an opt-in service
-on the `jcode` network (claude-code-router or LiteLLM, exposing `/v1/messages` over the
-gateway's OpenAI API), and set `JCODE_ANTHROPIC_BASE_URL` in `.env` to the shim's URL. The
-compose `ANTHROPIC_BASE_URL` reads that var (default = the gateway), so switching is a
-`.env` change + `jbrain up jcode` — no code change. (The shim service itself is added once
-the curls confirm the gateway's exact request/response shape, to avoid shipping unverified
-plumbing.)
+**2. The shim — CONFIRMED needed and now wired.** On-box probe result (b9801 llama.cpp
+build, Qwen3-Coder-Next UD-Q4_K_XL): chat works (~44 t/s), tool calling works
+(`finish_reason: tool_calls`), and `/v1/messages` returns **404** — the gateway is
+OpenAI-only. So the `claude-shim` service (LiteLLM, `deploy/claude-shim/`) serves
+`/v1/messages` and translates to the gateway's OpenAI API; it ships in the `jcode` profile
+(so the turnkey update builds + starts it), and jcode's `ANTHROPIC_BASE_URL` defaults to
+`http://claude-shim:4000`. To bypass it, set `JCODE_ANTHROPIC_BASE_URL`. The shim is
+internal-only on the `jcode` network and its master key (`JCODE_GATEWAY_TOKEN`) is minted by
+`jcode-setup.sh`. **Pin the LiteLLM image to a digest on the box** (the `Dockerfile`'s
+`LITELLM_TAG` arg) — PyPI 1.82.7/1.82.8 shipped malware; never use those.
 
 **3. Smoke-test a real turn** end-to-end: open a jcode session in the PWA, send a one-line
 prompt ("create hello.txt with 'hi'"), and confirm the stream shows text + a tool_use

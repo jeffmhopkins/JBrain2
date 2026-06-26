@@ -381,13 +381,13 @@ services:
       JCODE_MODEL_BASE_URL: ${JCODE_MODEL_URL:-http://local-llm:8080}
       # What the Claude Agent SDK + its `claude` CLI read to reach the model. The SDK
       # speaks the Anthropic Messages API (/v1/messages); llama.cpp/llama-swap speak
-      # OpenAI (/v1/chat/completions), so unless the gateway serves /v1/messages
-      # natively this must point at an Anthropic<->OpenAI shim — see
-      # docs/proposed/JCODE_PLAN.md "On-box bring-up". Defaults to the gateway directly
-      # (the native path); set JCODE_ANTHROPIC_BASE_URL to the shim's URL to switch.
-      # ANTHROPIC_API_KEY is a placeholder the local path ignores (the SDK requires it).
-      ANTHROPIC_BASE_URL: ${JCODE_ANTHROPIC_BASE_URL:-http://local-llm:8080}
-      ANTHROPIC_API_KEY: ${JCODE_GATEWAY_TOKEN:-local}
+      # OpenAI, so jcode points at the `claude-shim` (LiteLLM) translator by default —
+      # on-box-confirmed the gateway has no native /v1/messages. ANTHROPIC_AUTH_TOKEN
+      # is the shim's master key (Bearer auth); ANTHROPIC_API_KEY is set too since the
+      # SDK requires it. Override JCODE_ANTHROPIC_BASE_URL to bypass the shim.
+      ANTHROPIC_BASE_URL: ${JCODE_ANTHROPIC_BASE_URL:-http://claude-shim:4000}
+      ANTHROPIC_API_KEY: ${JCODE_GATEWAY_TOKEN:-sk-jcode-local}
+      ANTHROPIC_AUTH_TOKEN: ${JCODE_GATEWAY_TOKEN:-sk-jcode-local}
       # Per-session web preview (Wave J4): an ephemeral Cloudflare quick-tunnel
       # (cloudflared, bundled in the image) to the sandbox's dev server. OFF by
       # default — it exposes the running app to anyone with the random URL — and
@@ -404,8 +404,8 @@ services:
       # over a proxy needs on-box verification, so strict egress is opt-in, not default.
       HTTP_PROXY: ${JCODE_EGRESS_PROXY:-}
       HTTPS_PROXY: ${JCODE_EGRESS_PROXY:-}
-      # Never proxy the on-box model gateway — it's a local peer on the jcode network.
-      NO_PROXY: ${JCODE_NO_PROXY:-local-llm,localhost,127.0.0.1}
+      # Never proxy the on-box peers (the shim + the model gateway) on the jcode network.
+      NO_PROXY: ${JCODE_NO_PROXY:-claude-shim,local-llm,localhost,127.0.0.1}
     volumes:
       # The per-session git checkouts — sandbox scratch, NEVER a JBrain blob/note.
       - jcode_work:/work
@@ -415,6 +415,26 @@ services:
     mem_limit: ${JCODE_MEM_LIMIT:-4g}
     cpus: ${JCODE_CPUS:-2.0}
     pids_limit: ${JCODE_PIDS_LIMIT:-512}
+
+  # Anthropic<->OpenAI shim for code mode: a LiteLLM proxy that serves the Anthropic
+  # /v1/messages API the Claude Agent SDK calls and translates it to the on-box
+  # llama-swap gateway's OpenAI API. Opt-in with the `jcode` profile, internal-only on
+  # the `jcode` network (no published port) — reachable only by the jcode sandbox and
+  # able to reach only `local-llm`. Config is baked into the image (deploy/claude-shim).
+  claude-shim:
+    profiles: [jcode]
+    image: jbrain2-claude-shim:local
+    build:
+      context: ./src/deploy/claude-shim
+    restart: unless-stopped
+    environment:
+      # The proxy's master key; jcode presents it as ANTHROPIC_AUTH_TOKEN. A shared
+      # secret on an internal network — scripts/jcode-setup.sh mints a real one; the
+      # default keeps the matched pair working if it's unset. LiteLLM wants an sk- key.
+      LITELLM_MASTER_KEY: ${JCODE_GATEWAY_TOKEN:-sk-jcode-local}
+    networks: [jcode]
+    # A translator, not a model host — a small cap is plenty and bounds a runaway.
+    mem_limit: ${JCODE_SHIM_MEM_LIMIT:-1g}
 
   embed:
     image: ghcr.io/huggingface/text-embeddings-inference:cpu-latest

@@ -40,6 +40,13 @@ if ! grep -q '^JCODE_TOKEN=.\+' .env; then
   say "minted a new JCODE_TOKEN"
 fi
 
+# The Anthropic<->OpenAI shim's master key, shared with the sandbox (it presents it
+# as ANTHROPIC_AUTH_TOKEN). LiteLLM wants an sk- key. Mint once; don't rotate on re-run.
+if ! grep -q '^JCODE_GATEWAY_TOKEN=.\+' .env; then
+  set_env JCODE_GATEWAY_TOKEN "sk-$(head -c 24 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+  say "minted a new JCODE_GATEWAY_TOKEN (shim master key)"
+fi
+
 # The served model id jcode asks the gateway for — also the catalog id whose GGUF
 # the gateway provisions (see backend/src/jbrain/llm/local_catalog.py). Resolved
 # once here so the .env key and the provisioning below can never drift.
