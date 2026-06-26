@@ -15,7 +15,7 @@ if TYPE_CHECKING:
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, PlainTextResponse, StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from jbrain import ops_metrics
 from jbrain.api.deps import PrincipalDep, SettingsDep, owner_only
@@ -23,10 +23,15 @@ from jbrain.config import Settings
 from jbrain.db.session import SessionContext
 from jbrain.db.stats import database_stats
 from jbrain.storage import BackupShelf, BlobStore
+from jbrain.tasks.schedule import FREQS
 from jbrain.usage import usage_summary
 from jbrain.workflow import scheduler
 from jbrain.workflow.automations import AutomationsReader
 from jbrain.workflow.registry import ActionRegistry
+
+# The schedule kinds the owner can set on a sweep: the legacy fixed `interval` plus
+# the task-style spec kinds (mirrors jbrain.tasks.schedule.KINDS + interval).
+_SCHEDULE_KINDS = frozenset({"interval", "on_demand", "once", "repeat"})
 
 router = APIRouter(prefix="/ops", dependencies=[Depends(owner_only)])
 
@@ -78,6 +83,12 @@ class AutomationOut(BaseModel):
     interval_seconds: int | None
     next_run_at: datetime | None
     last_run_at: datetime | None
+    schedule_kind: str | None
+    schedule_freq: str | None
+    schedule_days: list[int]
+    schedule_time: str | None
+    run_at: datetime | None
+    timezone: str | None
 
 
 class ActionOut(BaseModel):
@@ -96,6 +107,66 @@ class AutomationsOut(BaseModel):
 
 class EnabledPatch(BaseModel):
     enabled: bool
+
+
+class ScheduleBody(BaseModel):
+    """Replace a schedule's timing spec — the owner setting a sweep's cadence the way
+    a task is scheduled (day/time/repeat). Cross-validated by kind, mirroring
+    api.tasks.TaskBody; the DB CHECKs are the backstop. `interval` keeps the legacy
+    fixed cadence (the only kind that can express a sub-day reconciler)."""
+
+    schedule_kind: str = "interval"
+    interval_seconds: int | None = None
+    schedule_freq: str | None = None
+    schedule_days: list[int] = Field(default_factory=list)
+    schedule_time: str | None = None
+    run_at: datetime | None = None
+    timezone: str = "UTC"
+
+    @field_validator("schedule_kind")
+    @classmethod
+    def _kind(cls, v: str) -> str:
+        if v not in _SCHEDULE_KINDS:
+            raise ValueError("unknown schedule kind")
+        return v
+
+    @field_validator("schedule_days")
+    @classmethod
+    def _days(cls, v: list[int]) -> list[int]:
+        if any(d < 0 or d > 6 for d in v):
+            raise ValueError("schedule_days must be 0..6 (Sun..Sat)")
+        return sorted(set(v))
+
+    @model_validator(mode="after")
+    def _coherent(self) -> "ScheduleBody":
+        if self.schedule_kind == "interval":
+            if self.interval_seconds is None or self.interval_seconds <= 0:
+                raise ValueError("interval needs a positive interval_seconds")
+            # An interval row carries no wall-clock spec — clear it so the stored row
+            # is honest and the tick never reads a stale day/time.
+            self.schedule_freq = None
+            self.schedule_time = None
+            self.run_at = None
+            self.schedule_days = []
+        elif self.schedule_kind == "repeat":
+            self.interval_seconds = None
+            if self.schedule_freq not in FREQS:
+                raise ValueError("repeat needs a freq of daily|weekdays|weekly")
+            if not self.schedule_time:
+                raise ValueError("repeat needs a time (HH:MM)")
+            if self.schedule_freq == "weekly" and not self.schedule_days:
+                raise ValueError("weekly needs at least one day")
+        elif self.schedule_kind == "once":
+            self.interval_seconds = None
+            if self.run_at is None:
+                raise ValueError("once needs a run_at instant")
+        else:  # on_demand
+            self.interval_seconds = None
+            self.schedule_freq = None
+            self.schedule_time = None
+            self.run_at = None
+            self.schedule_days = []
+        return self
 
 
 @router.get("/automations")
@@ -121,6 +192,12 @@ async def list_automations(request: Request, principal: PrincipalDep) -> Automat
                 interval_seconds=a.interval_seconds,
                 next_run_at=a.next_run_at,
                 last_run_at=a.last_run_at,
+                schedule_kind=a.schedule_kind,
+                schedule_freq=a.schedule_freq,
+                schedule_days=a.schedule_days,
+                schedule_time=a.schedule_time,
+                run_at=a.run_at,
+                timezone=a.timezone,
             )
             for a in view.automations
         ],
@@ -165,6 +242,31 @@ async def patch_schedule(
     if not ok:
         raise HTTPException(status_code=404, detail="no such schedule")
     return {"schedule_id": schedule_id, "enabled": body.enabled}
+
+
+@router.put("/schedules/{schedule_id}")
+async def update_schedule(
+    schedule_id: str, body: ScheduleBody, request: Request, principal: PrincipalDep
+) -> dict[str, object]:
+    """Set a schedule's timing spec (kind/freq/days/time/run_at) — the owner editing
+    a sweep's cadence like a task. The repo recomputes `next_run_at` from the spec so
+    the editor and the scheduler agree on the next fire. Owner-only, RLS-scoped; 404
+    on an unknown id. Enable/disable stays on the narrow PATCH; this owns the cadence
+    while leaving the toggle untouched."""
+    ok = await _automations_reader(request).update_schedule(
+        _owner_ctx(principal),
+        schedule_id,
+        schedule_kind=body.schedule_kind,
+        interval_seconds=body.interval_seconds,
+        schedule_freq=body.schedule_freq,
+        schedule_days=body.schedule_days,
+        schedule_time=body.schedule_time,
+        run_at=body.run_at,
+        timezone=body.timezone,
+    )
+    if not ok:
+        raise HTTPException(status_code=404, detail="no such schedule")
+    return {"schedule_id": schedule_id, "schedule_kind": body.schedule_kind}
 
 
 @router.post("/triggers/{trigger_id}/run", status_code=202)

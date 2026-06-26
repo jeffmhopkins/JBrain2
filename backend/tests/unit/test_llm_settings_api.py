@@ -475,8 +475,11 @@ def test_drawer_reports_context_window_and_staged_fields() -> None:
     # Defaults: each model reports its catalog window, no override, not staged.
     c, _ = _authed_client(_local_settings())
     by_id = {m["id"]: m for m in c.get("/api/settings/llm").json()["local_models"]}
-    assert by_id["gpt-oss-120b"]["context_window"] == 131072  # the model's native window
+    assert by_id["gpt-oss-120b"]["context_window"] == 131072  # served default == native
     assert by_id["qwen3-vl-30b"]["context_window"] == 32768  # catalog default
+    # The native ceiling the picker caps at — above the conservative served default.
+    assert by_id["gpt-oss-120b"]["max_context_window"] == 131072
+    assert by_id["qwen3-vl-30b"]["max_context_window"] == 262144
     assert all(m["context_window_override"] is None for m in by_id.values())
     assert all(m["staged"] is False for m in by_id.values())
 
@@ -505,7 +508,7 @@ def test_set_context_window_round_trips_override() -> None:
 
 def test_set_context_window_rejects_a_window_over_the_models_max() -> None:
     c, store = _authed_client(_local_settings())
-    # gpt-oss native max is 131072.
+    # gpt-oss native max is 131072 — 256k exceeds it.
     assert (
         c.put(
             "/api/settings/llm/local-models/gpt-oss-120b/context-window",
@@ -513,11 +516,12 @@ def test_set_context_window_rejects_a_window_over_the_models_max() -> None:
         ).status_code
         == 422
     )
-    # qwen's catalog window is 32768 — 64k exceeds it.
+    # qwen3-vl serves a 32k default but its native window is 256k — a value above
+    # native (here 300k) is still rejected.
     assert (
         c.put(
             "/api/settings/llm/local-models/qwen3-vl-30b/context-window",
-            json={"context_window": 65536},
+            json={"context_window": 300000},
         ).status_code
         == 422
     )
@@ -530,6 +534,21 @@ def test_set_context_window_rejects_a_window_over_the_models_max() -> None:
         == 422
     )
     assert "llm_local_context_windows" not in store.values  # nothing leaked
+
+
+def test_set_context_window_allows_above_the_served_default_up_to_native() -> None:
+    # The drawer caps at the model's NATIVE window, not the conservative served
+    # default — so an operator can opt into a bigger -c the weights support. qwen3-vl
+    # serves 32k by default but accepts up to its 256k native window.
+    c, store = _authed_client(_local_settings())
+    resp = c.put(
+        "/api/settings/llm/local-models/qwen3-vl-30b/context-window",
+        json={"context_window": 131072},
+    )
+    assert resp.status_code == 200, resp.text
+    by_id = {m["id"]: m for m in resp.json()["local_models"]}
+    assert by_id["qwen3-vl-30b"]["context_window_override"] == 131072
+    assert store.values["llm_local_context_windows"] == {"qwen3-vl-30b": 131072}
 
 
 def test_set_context_window_404_and_409() -> None:

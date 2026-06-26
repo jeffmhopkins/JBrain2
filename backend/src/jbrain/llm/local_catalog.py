@@ -54,10 +54,18 @@ class LocalModel:
     # the router send an effort to this model; default False (the Qwen Instruct
     # variants and Llama here are non-thinking).
     supports_reasoning: bool = False
-    # The context window the gateway serves this model with (llama-server's `-c`).
-    # The single source of truth: scripts/local-llm-setup.sh stamps this into the
-    # llama-swap config, and the router reports it to the PWA's context-usage meter.
+    # The context window the gateway serves this model with (llama-server's `-c`)
+    # ABSENT an operator override. The single source of truth: scripts/local-llm-setup.sh
+    # stamps this into the llama-swap config, and the router reports it to the PWA's
+    # context-usage meter. Kept conservative on this memory-bound box — the operator
+    # raises it per-model up to `native_context_window` when the KV cache fits.
     context_window: int = 32768
+    # The model's native (architectural) maximum context — the CEILING the operator
+    # may raise the served window to from the settings drawer. 0 means "no headroom
+    # above context_window" (the served default is already the max we expose). The
+    # served default stays small for memory; this opens the door to the full window
+    # the weights support, with the drawer's KV-cache estimate as the guardrail.
+    native_context_window: int = 0
     # Rough KV-cache size (GB) at the model's full 131072-token window — an ESTIMATE
     # (not a measurement) the settings drawer's memory bar uses to size the context
     # portion of each model's segment, scaled linearly by the configured window.
@@ -67,6 +75,12 @@ class LocalModel:
     @property
     def spec(self) -> str:
         return f"{LOCAL_PROVIDER}:{self.served_model}"
+
+    @property
+    def max_context_window(self) -> int:
+        """The largest `-c` the operator may select for this model: its native
+        window when recorded, else the served default (no headroom above it)."""
+        return self.native_context_window or self.context_window
 
 
 # Order is the order the settings screen and install prompt present them.
@@ -85,6 +99,8 @@ CATALOG: tuple[LocalModel, ...] = (
         quant="Q8_0",
         size_gb=32.0,
         note="Vision + a capable cheap text model; Q8 preserves OCR fidelity.",
+        # Native 256k (expandable to 1M upstream); serves the gateway default.
+        native_context_window=262144,
         kv_gb_per_128k=6.0,
     ),
     LocalModel(
@@ -130,8 +146,9 @@ CATALOG: tuple[LocalModel, ...] = (
         "(non-thinking).",
         # Native window is 262144, but ~104 GB of weights leaves little headroom on
         # the box — its 94 dense-attention layers make the KV cache the binding
-        # constraint, so it serves the gateway default (raise -c only with proof it
-        # fits).
+        # constraint, so it serves the gateway default. The native ceiling is exposed
+        # for selection, but the drawer's KV estimate (46 GB/128k here) is the warning.
+        native_context_window=262144,
         kv_gb_per_128k=46.0,
     ),
     LocalModel(
@@ -149,6 +166,8 @@ CATALOG: tuple[LocalModel, ...] = (
         size_gb=46.1,
         note="80B MoE, 3B active — ~59 t/s, fits resident beside gpt-oss-120b. "
         "Hybrid-attention arch: confirm the gateway's llama.cpp build supports it.",
+        # Native 256k; serves the gateway default — its light KV makes a big -c cheap.
+        native_context_window=262144,
         kv_gb_per_128k=5.0,
     ),
     LocalModel(
@@ -170,7 +189,8 @@ CATALOG: tuple[LocalModel, ...] = (
         "behind code mode (jcode). Co-resides beside another large model. Same "
         "hybrid-attention arch as qwen3-next-80b — confirm the gateway's llama.cpp "
         "build supports it (a recent build fixed a Qwen looping bug). Native 256k "
-        "window; serves the gateway default — raise -c only with proof it fits.",
+        "window; serves the gateway default — raise -c toward native when it fits.",
+        native_context_window=262144,
         kv_gb_per_128k=5.0,
     ),
     LocalModel(
@@ -198,6 +218,8 @@ CATALOG: tuple[LocalModel, ...] = (
         note="80B MoE, 3B active — agentic coder at 8-bit (near-lossless) for jcode "
         "pinned to one model. Standalone only on a 128 GB box; cold-loads on switch. "
         "Same hybrid-attention arch — confirm the llama.cpp build serves Q8 on gfx1151.",
+        # Native 256k; standalone here, so the full window has the most room to grow.
+        native_context_window=262144,
         kv_gb_per_128k=5.0,
     ),
     LocalModel(
@@ -215,6 +237,8 @@ CATALOG: tuple[LocalModel, ...] = (
         size_gb=70.0,
         note="70B-class quality, MoE-fast; alternate high tier.",
         supports_reasoning=True,
+        # Native 128k; serves the gateway default.
+        native_context_window=131072,
         kv_gb_per_128k=5.0,
     ),
     LocalModel(
@@ -231,6 +255,8 @@ CATALOG: tuple[LocalModel, ...] = (
         quant="Q4_K_M",
         size_gb=18.0,
         note="Snappy text-only one-shots; swap-in for the low tier.",
+        # Native 256k (Instruct-2507); serves the gateway default.
+        native_context_window=262144,
         kv_gb_per_128k=3.2,
     ),
     LocalModel(
@@ -247,6 +273,8 @@ CATALOG: tuple[LocalModel, ...] = (
         quant="Q4_K_M",
         size_gb=40.0,
         note="Dense 70B — high quality but only ~5 t/s here; batch use only.",
+        # Native 128k; serves the gateway default. Dense KV — a big -c costs the most here.
+        native_context_window=131072,
         kv_gb_per_128k=8.0,
     ),
 )

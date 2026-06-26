@@ -53,6 +53,25 @@ def test_context_window_reads_the_catalog_then_falls_back() -> None:
     )
 
 
+def test_max_context_window_is_native_when_known_else_the_served_default() -> None:
+    # The override ceiling is the model's native window; never below its served
+    # default (the picker must always be able to keep the default selected).
+    for m in local_catalog.CATALOG:
+        assert m.max_context_window >= m.context_window
+        if m.native_context_window:
+            assert m.max_context_window == m.native_context_window
+        else:
+            assert m.max_context_window == m.context_window
+    # The Qwen 2507/VL/Coder line is natively 256k; the coder serves a small default
+    # but its ceiling opens up the full window.
+    coder = local_catalog.get("qwen3-coder-next")
+    assert coder is not None
+    assert coder.context_window == 32768 and coder.max_context_window == 262144
+    # gpt-oss already serves its full native window, so default and ceiling coincide.
+    gpt_oss = local_catalog.get("gpt-oss-120b")
+    assert gpt_oss is not None and gpt_oss.max_context_window == 131072
+
+
 def test_selected_keeps_catalog_order_and_drops_unknown() -> None:
     got = local_catalog.selected(["gpt-oss-120b", "nope", "qwen3-vl-30b"])
     assert [m.id for m in got] == ["qwen3-vl-30b", "gpt-oss-120b"]
