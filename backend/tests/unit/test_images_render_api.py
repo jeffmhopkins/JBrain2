@@ -71,6 +71,15 @@ def test_edit_requires_auth(app_anon: FastAPI) -> None:
         assert resp.status_code == 401
 
 
+def test_delete_requires_auth() -> None:
+    """The DELETE rides the always-mounted list_router, so it exists with hosting OFF too — but
+    still 401s an anonymous caller (the owner gate fires first)."""
+    app = create_app(_settings())  # hosting off; the list_router (with DELETE) is still mounted
+    with TestClient(app) as anon:
+        app.state.auth_repo = FakeAuthRepo()
+        assert anon.delete(f"/api/images/generated/{uuid.uuid4()}").status_code == 401
+
+
 def test_non_owner_is_forbidden() -> None:
     """The owner gate (OwnerDep) every render route depends on 403s a non-owner principal — the
     same dependency that fronts list/generate/edit. End-to-end RLS owner-scoping is asserted on
@@ -120,6 +129,11 @@ class _FakeRepo:
     async def list(self, session: object, *, limit: int) -> list[GeneratedImage]:
         return self._rows[:limit]
 
+    async def delete(self, session: object, image_id: str) -> bool:
+        before = len(self._rows)
+        self._rows = [r for r in self._rows if str(r.id) != image_id]
+        return len(self._rows) < before
+
 
 def test_list_returns_summary_shape(
     owner_client: tuple[TestClient, FastAPI], monkeypatch: pytest.MonkeyPatch
@@ -164,3 +178,55 @@ def test_list_returns_summary_shape(
     assert item["model"] == "qwen-image-2512"
     assert item["seed"] == 4242
     assert item["created_at"].startswith("2026-01-02T03:04:05")
+
+
+class _NoopScoped:
+    """Stand in for scoped_session so the route runs without a DB (the fake repo answers)."""
+
+    def __init__(self, *_a: object) -> None: ...
+
+    async def __aenter__(self) -> object:
+        return object()
+
+    async def __aexit__(self, *exc: object) -> None:
+        return None
+
+
+def _row() -> GeneratedImage:
+    return GeneratedImage(
+        id=uuid.uuid4(),
+        blob_sha256="ab" * 32,
+        kind="generate",
+        model="qwen-image-2512",
+        prompt="a red bicycle",
+        source_sha256=None,
+        width=1024,
+        height=1024,
+        steps=20,
+        seed=4242,
+        created_at=datetime(2026, 1, 2, 3, 4, 5, tzinfo=UTC),
+    )
+
+
+def test_delete_known_row_is_204(
+    owner_client: tuple[TestClient, FastAPI], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    client, app = owner_client
+    row = _row()
+    app.state.generated_image_repo = _FakeRepo([row])
+    import jbrain.api.images_render as mod
+
+    monkeypatch.setattr(mod, "scoped_session", _NoopScoped)
+    assert client.delete(f"/api/images/generated/{row.id}").status_code == 204
+
+
+def test_delete_unknown_row_is_404(
+    owner_client: tuple[TestClient, FastAPI], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No owner-visible row (the fake repo's delete returns False) → a clean 404, not a 403."""
+    client, app = owner_client
+    app.state.generated_image_repo = _FakeRepo([])
+    import jbrain.api.images_render as mod
+
+    monkeypatch.setattr(mod, "scoped_session", _NoopScoped)
+    assert client.delete(f"/api/images/generated/{uuid.uuid4()}").status_code == 404

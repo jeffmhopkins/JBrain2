@@ -39,6 +39,9 @@ function stubFetch(initial: GeneratedImageOut[], rendered?: GeneratedImageOut) {
         headers: { "Content-Type": "application/json" },
       });
     }
+    if (/\/api\/images\/generated\/[^/]+$/.test(path) && method === "DELETE") {
+      return new Response(null, { status: 204 });
+    }
     throw new Error(`Unexpected fetch: ${method} ${path}`);
   });
   vi.stubGlobal("fetch", m);
@@ -110,6 +113,36 @@ describe("ImageScreen", () => {
     expect(
       screen.getByText(/nothing rendered yet — generate an image and it lands here\./),
     ).toBeInTheDocument();
+  });
+
+  it("arms then deletes a render from the lightbox, dropping the tile and count", async () => {
+    stubFetch([
+      img({ id: "keep", model: "qwen-image", seed: 111, width: 1024, height: 1024 }),
+      img({ id: "doomed", model: "dreamshaper", seed: 12009654, width: 768, height: 1344 }),
+    ]);
+    render(<ImageScreen onClose={noop} />);
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: /Open gallery \(2 renders\)/ }),
+      ).toBeInTheDocument(),
+    );
+    fireEvent.click(screen.getByRole("button", { name: /Open gallery \(2 renders\)/ }));
+    // Open the doomed tile's lightbox (the 768×1344 render uniquely identifies it).
+    fireEvent.click(screen.getByRole("button", { name: /generate render 768×1344/ }));
+    await waitFor(() => expect(screen.getByText(/seed 12009654/)).toBeInTheDocument());
+
+    // First tap arms (destructive confirm); the second confirms the delete.
+    const del = screen.getByRole("button", { name: "delete" });
+    fireEvent.click(del);
+    const armed = await screen.findByRole("button", { name: /tap again — deletes this render/ });
+    fireEvent.click(armed);
+
+    // The lightbox closes and the live count drops to the one surviving render.
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: /Open gallery \(1 renders\)/ }),
+      ).toBeInTheDocument(),
+    );
   });
 
   it("opens a gallery tile in the lightbox with its meta", async () => {

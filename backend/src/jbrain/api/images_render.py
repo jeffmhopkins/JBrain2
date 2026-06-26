@@ -19,7 +19,7 @@ from __future__ import annotations
 
 from typing import Annotated, cast
 
-from fastapi import APIRouter, Form, HTTPException, Request, UploadFile
+from fastapi import APIRouter, Form, HTTPException, Request, Response, UploadFile
 from pydantic import BaseModel, ConfigDict
 from pydantic.alias_generators import to_camel
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -127,6 +127,19 @@ async def list_generated_images(owner: OwnerDep, request: Request) -> list[Gener
     async with scoped_session(_maker(request), ctx_for(owner)) as session:
         rows = await _repo(request).list(session, limit=_LIST_LIMIT)
     return [_summary(row) for row in rows]
+
+
+@list_router.delete("/generated/{image_id}", status_code=204)
+async def delete_generated_image(image_id: str, owner: OwnerDep, request: Request) -> Response:
+    """Delete one of the owner's renders. RLS-scoped, so a foreign/missing id matches no row and
+    is a clean 404 (never a 403 oracle). The blob stays — content-addressed/keep-all, possibly
+    shared by another row's result or an edit's source; after the row is gone the serve-by-id
+    route already 404s."""
+    async with scoped_session(_maker(request), ctx_for(owner)) as session:
+        removed = await _repo(request).delete(session, image_id)
+    if not removed:
+        raise HTTPException(status_code=404, detail="generated image not found")
+    return Response(status_code=204)
 
 
 @router.post("/generate")

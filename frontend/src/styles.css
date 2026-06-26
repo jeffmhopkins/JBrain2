@@ -15710,6 +15710,21 @@ input.ld-title {
   opacity: 0.5;
   cursor: default;
 }
+/* Destructive delete (DESIGN "Buttons"): rose-tinted at rest, filling solid rose
+   once armed for the tap-again confirm. */
+.imgchip-danger {
+  color: var(--rose);
+  background: var(--rose-tint);
+  border-color: color-mix(in srgb, var(--rose) 40%, var(--border));
+}
+.imgchip-danger:hover {
+  color: var(--rose);
+}
+.imgchip-danger.armed {
+  color: var(--bg);
+  background: var(--rose);
+  border-color: var(--rose);
+}
 
 /* gallery overlay — full-screen image-only masonry */
 .imggallery {

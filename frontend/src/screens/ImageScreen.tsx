@@ -30,6 +30,7 @@ import {
   generatedImageUrl,
 } from "../api/client";
 import { ChevronLeftIcon, ImageIcon, PlusIcon, XIcon } from "../components/icons";
+import { useArmed } from "../review/useArmed";
 
 // speed implies the model + a fixed step count off the quality path (the mock's
 // SPEED table). Only the quality path exposes the 20–40 steps slider.
@@ -203,6 +204,19 @@ export function ImageScreen({ onClose }: { onClose: () => void }): ReactNode {
     setTab("edit");
     setGalleryOpen(false);
     setPickMode(false);
+    setLightbox(null);
+  }
+
+  // Destructive (DESIGN "Buttons"): the lightbox arms the delete; confirm drops
+  // the row (blobs are keep-all), prunes the tile + live count, and closes the
+  // lightbox. The render bytes are unaffected — only this gallery row goes.
+  async function deleteRender(g: GeneratedImageOut): Promise<void> {
+    try {
+      await api.deleteGeneratedImage(g.id);
+    } catch {
+      return; // leave the tile in place if the delete didn't land
+    }
+    setGallery((prev) => prev.filter((x) => x.id !== g.id));
     setLightbox(null);
   }
 
@@ -610,6 +624,7 @@ export function ImageScreen({ onClose }: { onClose: () => void }): ReactNode {
           onClose={() => setLightbox(null)}
           onUseAsSource={useRenderAsSource}
           onCopySeed={copySeed}
+          onDelete={deleteRender}
           seedCopied={seedCopied}
         />
       )}
@@ -912,14 +927,20 @@ function LightboxCard({
   onClose,
   onUseAsSource,
   onCopySeed,
+  onDelete,
   seedCopied,
 }: {
   image: GeneratedImageOut;
   onClose: () => void;
   onUseAsSource: (g: GeneratedImageOut) => void;
   onCopySeed: (seed: number | null) => void;
+  onDelete: (g: GeneratedImageOut) => void;
   seedCopied: boolean;
 }): ReactNode {
+  // Tap-again confirm for the destructive delete (DESIGN "Buttons"): first tap
+  // arms to a filled-rose "tap again…" that auto-disarms in ~3s; second confirms.
+  const [armed, tap] = useArmed();
+  const deleteArmed = armed === "delete";
   return (
     <div className="imglb" aria-label="Render detail">
       {/* biome-ignore lint/a11y/useKeyWithClickEvents: the close + card buttons cover keyboard; the backdrop tap is a pointer convenience */}
@@ -943,6 +964,16 @@ function LightboxCard({
             onClick={() => onCopySeed(image.seed)}
           >
             {seedCopied ? "copied" : "copy seed"}
+          </button>
+          <button
+            type="button"
+            className={`imgchip imgchip-danger${deleteArmed ? " armed" : ""}`}
+            onClick={() => {
+              if (tap("delete")) onDelete(image);
+            }}
+            onBlur={() => deleteArmed && tap("delete")}
+          >
+            {deleteArmed ? "tap again — deletes this render" : "delete"}
           </button>
           <button type="button" className="imgchip" onClick={onClose}>
             close

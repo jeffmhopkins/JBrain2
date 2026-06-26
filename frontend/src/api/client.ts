@@ -2324,4 +2324,10 @@ export const api = {
     const response = await request("/api/images/edit", { method: "POST", body: form });
     return (await response.json()) as GeneratedImageOut;
   },
+
+  // Row-only: the owner-only row goes; the blob is content-addressed/keep-all
+  // (possibly shared by another render or an edit's source), so it stays.
+  async deleteGeneratedImage(id: string): Promise<void> {
+    await request(`/api/images/generated/${encodeURIComponent(id)}`, { method: "DELETE" });
+  },
 };

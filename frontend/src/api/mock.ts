@@ -2901,6 +2901,15 @@ export const mockFetch: typeof fetch = async (input, init) => {
       headers: { "Content-Type": "image/png" },
     });
   }
+  // Row-only delete: drop it from the in-memory gallery; the blob (here a shared
+  // placeholder) is keep-all, mirroring the backend. 404 an unknown id.
+  if (genImgMatch && !genImgMatch[2] && method === "DELETE") {
+    const imgId = decodeURIComponent(genImgMatch[1] ?? "");
+    if (!GENERATED_IMAGES.has(imgId)) return json({ detail: "image not found" }, 404);
+    imageGallery = imageGallery.filter((g) => g.id !== imgId);
+    GENERATED_IMAGES.delete(imgId);
+    return new Response(null, { status: 204 });
+  }
 
   {
     const noteMatch = path.match(/^\/api\/notes\/([^/]+)$/);

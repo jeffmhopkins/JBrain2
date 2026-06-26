@@ -92,6 +92,20 @@ const SECTIONS: Section[] = [
 
 const SWIPE_DOWN_PX = 48;
 const EXIT_MS = 150;
+
+// The Image tile is configuration-gated, mirroring the provider-hidden-when-unkeyed
+// pattern: generate/edit 404 on a box without image hosting, so the tile is omitted
+// unless `getImageSettings().enabled` is true. Fetched ONCE per session and cached in
+// a module-level promise so reopening the launcher never refetches or flashes; a fetch
+// failure resolves to false (tile hidden), never throwing.
+let imageEnabledPromise: Promise<boolean> | null = null;
+function fetchImageEnabled(): Promise<boolean> {
+  imageEnabledPromise ??= api
+    .getImageSettings()
+    .then((s) => s.enabled === true)
+    .catch(() => false);
+  return imageEnabledPromise;
+}
 // The Tasks tile badge counts runs since the owner last opened Tasks; that marker
 // is stamped by TasksScreen on open and read here. Same key on both sides.
 export const TASKS_SEEN_KEY = "jb.tasks.seenAt";
@@ -121,10 +135,28 @@ export function Launcher({ open, active = true, onClose, onNavigate }: LauncherP
   const [reviewCount, setReviewCount] = useState<number | null>(null);
   // The Tasks tile badge: runs that finished since the owner last opened Tasks.
   const [taskCount, setTaskCount] = useState<number | null>(null);
+  // Config gate for the Image tile (cached once per session). Null until resolved,
+  // so the tile only appears when image hosting is confirmed enabled.
+  const [imageEnabled, setImageEnabled] = useState<boolean | null>(null);
   // Two gates quiet the poll: a backgrounded PWA, and a launcher buried under a
   // card. Returning to either re-runs this effect — an immediate refetch, then
   // re-arm — so the badge is current the moment the menu is back on screen.
   const foreground = useForeground();
+
+  // Resolve image-hosting enablement when the launcher is the surface on screen.
+  // The fetch is cached at module scope, so this fires at most once per session
+  // (reopening reads the resolved promise — no refetch, no flash); a buried/
+  // backgrounded launcher defers it, like the badge poll.
+  useEffect(() => {
+    if (!open || !active || !foreground) return;
+    let stale = false;
+    fetchImageEnabled().then((on) => {
+      if (!stale) setImageEnabled(on);
+    });
+    return () => {
+      stale = true;
+    };
+  }, [open, active, foreground]);
 
   useEffect(() => {
     if (!open || !active || !foreground) return;
@@ -234,31 +266,35 @@ export function Launcher({ open, active = true, onClose, onNavigate }: LauncherP
         <section key={section.header} className="launcher-section">
           <h2 className="section-header">{section.header}</h2>
           <div className="tile-grid">
-            {section.tiles.map((tile) => (
-              <button
-                key={tile.title}
-                type="button"
-                className="tile"
-                disabled={tile.phase !== undefined}
-                onClick={() => {
-                  if (tile.target) {
-                    // Stay open beneath the card: the card slides up over
-                    // the launcher, and dismissing it reveals us again.
-                    onNavigate(tile.target);
-                  }
-                }}
-              >
-                <span className="tile-icon">{tile.icon}</span>
-                <span className="tile-title">{tile.title}</span>
-                {tile.phase && <span className="phase-badge">{tile.phase}</span>}
-                {tile.target === "review" && reviewCount !== null && reviewCount > 0 && (
-                  <span className="tile-badge">{reviewCount}</span>
-                )}
-                {tile.target === "tasks" && taskCount !== null && taskCount > 0 && (
-                  <span className="tile-badge">{taskCount}</span>
-                )}
-              </button>
-            ))}
+            {section.tiles
+              // Omit the Image tile entirely until hosting is confirmed enabled —
+              // configuration-gated, not an unbuilt phase (so no disabled badge).
+              .filter((tile) => tile.target !== "image" || imageEnabled === true)
+              .map((tile) => (
+                <button
+                  key={tile.title}
+                  type="button"
+                  className="tile"
+                  disabled={tile.phase !== undefined}
+                  onClick={() => {
+                    if (tile.target) {
+                      // Stay open beneath the card: the card slides up over
+                      // the launcher, and dismissing it reveals us again.
+                      onNavigate(tile.target);
+                    }
+                  }}
+                >
+                  <span className="tile-icon">{tile.icon}</span>
+                  <span className="tile-title">{tile.title}</span>
+                  {tile.phase && <span className="phase-badge">{tile.phase}</span>}
+                  {tile.target === "review" && reviewCount !== null && reviewCount > 0 && (
+                    <span className="tile-badge">{reviewCount}</span>
+                  )}
+                  {tile.target === "tasks" && taskCount !== null && taskCount > 0 && (
+                    <span className="tile-badge">{taskCount}</span>
+                  )}
+                </button>
+              ))}
           </div>
         </section>
       ))}

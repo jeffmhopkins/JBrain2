@@ -10,6 +10,7 @@ inside an async test would block the running loop the client's portal also drive
 import asyncio
 import hashlib
 import json
+import uuid
 from collections.abc import Awaitable, Iterator
 from pathlib import Path
 from typing import TypeVar
@@ -376,3 +377,75 @@ def test_list_is_owner_scoped_newest_first(
             await engine.dispose()
 
     assert _run(_non_owner_view()) == []
+
+
+def test_delete_removes_own_row_then_list_and_serve_miss(
+    app_client: tuple[TestClient, FastAPI, FakeImageGen, MemBlobStore],
+    db_url: str,
+) -> None:
+    client, _app, _fake, _blobs = app_client
+    gen = client.post("/api/images/generate", json=_gen_body()).json()
+
+    deleted = client.delete(f"/api/images/generated/{gen['id']}")
+    assert deleted.status_code == 204
+    assert _run(_count(db_url)) == 0
+
+    # The row is gone from the gallery and the serve-by-id route 404s (no oracle).
+    assert client.get("/api/images/generated").json() == []
+    assert client.get(f"/api/images/generated/{gen['id']}").status_code == 404
+
+
+def test_delete_keeps_the_blob(
+    app_client: tuple[TestClient, FastAPI, FakeImageGen, MemBlobStore],
+    db_url: str,
+) -> None:
+    """Blobs are content-addressed/keep-all (possibly shared), so a row delete never touches the
+    store — only the row vanishes."""
+    client, _app, _fake, blobs = app_client
+    gen = client.post("/api/images/generate", json=_gen_body()).json()
+    blob_sha = _run(
+        _scalar(
+            db_url,
+            "SELECT blob_sha256 FROM app.generated_images WHERE id = cast(:i AS uuid)",
+            i=gen["id"],
+        )
+    )
+    before = blobs.usage()
+
+    assert client.delete(f"/api/images/generated/{gen['id']}").status_code == 204
+    assert blobs.usage() == before  # nothing removed from the store
+    assert isinstance(blob_sha, str) and _run(blobs.exists(blob_sha))
+
+
+def test_delete_unknown_id_is_404(
+    app_client: tuple[TestClient, FastAPI, FakeImageGen, MemBlobStore],
+) -> None:
+    client, _app, _fake, _ = app_client
+    assert client.delete(f"/api/images/generated/{uuid.uuid4()}").status_code == 404
+
+
+def test_delete_on_non_owner_session_removes_nothing(
+    app_client: tuple[TestClient, FastAPI, FakeImageGen, MemBlobStore],
+    db_url: str,
+) -> None:
+    """RLS-level guard for repo.delete: the owner's row is invisible to a capability-scoped
+    session (the owner-only firewall), so its DELETE matches nothing — the row survives. The HTTP
+    route additionally 403s a non-owner at OwnerDep before reaching the repo, but the firewall
+    holds even if a session somehow reached it."""
+    client, _app, _fake, _ = app_client
+    gen = client.post("/api/images/generate", json=_gen_body(prompt="owner's render")).json()
+
+    async def _non_owner_delete() -> bool:
+        engine = create_async_engine(db_url, poolclass=NullPool)
+        try:
+            m = async_sessionmaker(engine, expire_on_commit=False)
+            non_owner = SessionContext(
+                principal_kind="capability_token", domain_scopes=("general",)
+            )
+            async with scoped_session(m, non_owner) as s:
+                return await GeneratedImageRepo().delete(s, gen["id"])
+        finally:
+            await engine.dispose()
+
+    assert _run(_non_owner_delete()) is False  # nothing visible → nothing removed
+    assert _run(_count(db_url)) == 1  # the owner's row survives
