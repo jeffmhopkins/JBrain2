@@ -96,6 +96,28 @@ def test_script_ensures_searxng_secret(name: str) -> None:
     assert "SEARXNG_SECRET" in text, f"{name} must ensure SEARXNG_SECRET is set"
 
 
+# Both update paths must keep the opt-in code-mode sandbox (jcode) turnkey: once the
+# operator has enabled it (a one-time scripts/jcode-setup.sh), the PWA update and the
+# host `jbrain update` keep it built/current with no CLI.
+JCODE_TURNKEY_SCRIPTS = ["update-inner.sh", "jbrain"]
+
+
+@pytest.mark.parametrize("name", JCODE_TURNKEY_SCRIPTS)
+def test_update_keeps_jcode_turnkey_when_enabled(name: str) -> None:
+    # Gated on JCODE_ENABLED=true so a stock stack never builds or starts the
+    # arbitrary-code sandbox; when on, activate the `jcode` profile (so the rebuild +
+    # recreate include it) and self-heal the api<->jcode bearer (so enabling it never
+    # requires re-running the setup script).
+    text = (DEPLOY / name).read_text()
+    assert "JCODE_ENABLED=true" in text, f"{name} must gate jcode on JCODE_ENABLED=true"
+    assert "--profile jcode" in text, (
+        f"{name} must activate the jcode profile when enabled so update rebuilds it"
+    )
+    assert "JCODE_TOKEN" in text, (
+        f"{name} must backfill the api<->jcode token so enable stays CLI-free"
+    )
+
+
 def test_update_marks_worktree_safe_before_pull() -> None:
     # The pull runs as root inside the updater container against a bind-mounted
     # worktree owned by the host operator's UID; without a safe.directory entry

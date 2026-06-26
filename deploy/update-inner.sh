@@ -50,14 +50,33 @@ if ! grep -q '^SEARXNG_SECRET=' .env; then
   printf 'SEARXNG_SECRET=%s\n' "$(head -c 32 /dev/urandom | sha256sum | cut -d' ' -f1)" >> .env
 fi
 
+# Code mode (jcode): an opt-in, profile-gated coding sandbox. When the operator has
+# enabled it (a deliberate one-time scripts/jcode-setup.sh), fold it into the PWA
+# update so it is rebuilt, recreated, and kept current with NO CLI — and self-heal
+# its .env keys (mint the api<->jcode bearer + fail-closed defaults) so an update
+# never needs a jcode-setup.sh re-run. Compose maps these bare keys to the api
+# (JBRAIN_JCODE_*) and the sandbox (JCODE_*). Disabled => empty profile => the
+# sandbox stays absent on a stock stack. ..* requires a non-empty value (busybox BRE).
+JCODE_PROFILE=""
+if grep -q '^JCODE_ENABLED=true' .env; then
+  JCODE_PROFILE="--profile jcode"
+  if ! grep -q '^JCODE_TOKEN=..*' .env; then
+    echo "[update] minting JCODE_TOKEN (api<->jcode bearer)"
+    printf 'JCODE_TOKEN=%s\n' "$(head -c 32 /dev/urandom | sha256sum | cut -d' ' -f1)" >> .env
+  fi
+  grep -q '^JCODE_URL=' .env || printf 'JCODE_URL=%s\n' 'http://jcode:9100' >> .env
+  grep -q '^JCODE_MODEL=' .env || printf 'JCODE_MODEL=%s\n' 'qwen3-coder-next' >> .env
+  grep -q '^JCODE_MODEL_URL=' .env || printf 'JCODE_MODEL_URL=%s\n' 'http://local-llm:8080' >> .env
+fi
+
 echo "[update] building images"
-docker compose build
+docker compose $JCODE_PROFILE build
 
 echo "[update] running migrations"
 docker compose run --rm migrate
 
 echo "[update] restarting stack"
-docker compose up -d
+docker compose $JCODE_PROFILE up -d
 
 # Provision any locally-hosted LLM models the operator queued from the PWA (and
 # keep the current + recommended set present). Runs AFTER the stack is up so the
