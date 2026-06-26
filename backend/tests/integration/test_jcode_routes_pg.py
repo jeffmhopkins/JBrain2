@@ -134,6 +134,49 @@ async def test_create_warms_the_coder_and_status_reports_loaded(
         assert status["model"] == "qwen3-coder-next"
         assert status["loaded"] is True
         assert status["hosting"] is True
+        # The warm task has finished, so the bar's signal is back down.
+        assert status["warming"] is False
+
+
+class _BlockingGateway(_FakeGateway):
+    """Lists the model resident the moment load() is requested (the gateway's real
+    behavior), then blocks until released — so a poll mid-load sees loaded AND warming."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.gate = asyncio.Event()
+
+    async def load(self, served_model: str) -> None:
+        self.resident = {served_model}  # resident-as-requested: `loaded` races true here
+        self.loaded.append(served_model)
+        await self.gate.wait()
+
+
+async def test_status_reports_warming_while_the_load_is_in_flight(
+    maker: async_sessionmaker,
+) -> None:
+    # The race the bar must survive: the gateway reports the model resident (loaded:true)
+    # while the warm task is still loading its weights. `warming` stays true until the
+    # task finishes, so the bar keys off it and doesn't vanish mid-load.
+    owner_id = await _owner_id(maker)
+    app = _app(maker, owner_id)
+    app.state.settings = Settings(secure_cookies=False, local_llm_enabled=True)
+    gw = _BlockingGateway()
+    app.state.local_gateway = gw
+    transport = ASGITransport(app=app)
+
+    async with AsyncClient(transport=transport, base_url="http://t") as client:
+        assert (await client.post("/api/jcode/sessions", json={"repo": "r"})).status_code == 201
+        await asyncio.sleep(0.05)  # let the warm task reach the blocked load()
+
+        mid = (await client.get("/api/jcode/model")).json()
+        assert mid["loaded"] is True  # the gateway already lists it...
+        assert mid["warming"] is True  # ...but the warm task is still loading
+
+        gw.gate.set()  # release the load
+        await asyncio.sleep(0.05)  # let the warm task finish + the done-callback fire
+        done = (await client.get("/api/jcode/model")).json()
+        assert done["warming"] is False
 
 
 async def test_create_forwards_the_selected_model(maker: async_sessionmaker) -> None:

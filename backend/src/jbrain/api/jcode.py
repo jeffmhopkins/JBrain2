@@ -155,6 +155,18 @@ def _served_model(model_id: str) -> str:
     return m.served_model if m else model_id
 
 
+def _warming_models(request: Request) -> set[str]:
+    """Served-model names with an in-flight warm task — the readiness signal the loading
+    bar polls. Tied to the warm task's lifecycle (not gateway `running()`, which lists a
+    model as soon as a load is *requested*, before its weights finish reading in)."""
+    state = request.app.state
+    warming = getattr(state, "jcode_warming", None)
+    if warming is None:
+        warming = set()
+        state.jcode_warming = warming
+    return cast("set[str]", warming)
+
+
 def _warm_tasks(request: Request) -> set[asyncio.Task[None]]:
     state = request.app.state
     tasks = getattr(state, "jcode_warm_tasks", None)
@@ -186,10 +198,21 @@ def _maybe_warm_coder(request: Request, model_id: str) -> None:
     gateway = getattr(request.app.state, "local_gateway", None)
     if gateway is None:
         return
-    task = asyncio.create_task(_warm_model(gateway, _served_model(model_id)))
+    served = _served_model(model_id)
+    # Mark warming BEFORE the task starts so the very first status poll (which can race
+    # the task) already sees it — and keep it set until the task finishes (the blocking
+    # health-gated load is the true readiness window the bar should span).
+    warming = _warming_models(request)
+    warming.add(served)
+    task = asyncio.create_task(_warm_model(gateway, served))
     tasks = _warm_tasks(request)
     tasks.add(task)
-    task.add_done_callback(tasks.discard)
+
+    def _done(t: asyncio.Task[None]) -> None:
+        tasks.discard(t)
+        warming.discard(served)
+
+    task.add_done_callback(_done)
 
 
 _REPO = JcodeSessionRepo()
@@ -251,10 +274,15 @@ async def model_status(owner: OwnerDep, request: Request) -> dict[str, object]:
     gateway = getattr(request.app.state, "local_gateway", None)
     if settings.local_llm_enabled and gateway is not None:
         loaded = served in await cast("LocalGateway", gateway).running()
+    # `warming` is the bar's primary signal: true while the warm task runs (eviction +
+    # the up-to-2-min health-gated load). `loaded` alone races true early, so the bar
+    # keys off `warming` to stay up for the whole real load.
+    warming = served in _warming_models(request)
     return {
         "model": model_id,
         "served": served,
         "loaded": loaded,
+        "warming": warming,
         "hosting": settings.local_llm_enabled,
         "size_gb": cat.size_gb if cat else 0.0,
     }
