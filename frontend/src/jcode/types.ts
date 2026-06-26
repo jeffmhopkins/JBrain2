@@ -13,6 +13,14 @@ export interface JcodeSession {
   last_active_at: string;
 }
 
+// The owner's copy-link secret for a session — returned once by mint, never re-readable.
+export interface JcodeShareToken {
+  id: string;
+  label: string;
+  expires_at: string | null;
+  token: string;
+}
+
 export type JcodeEventType = "text" | "tool_use" | "tool_result" | "done" | "error";
 
 // `data` is an opportunistic, optional hint bag the renderer reads when present:

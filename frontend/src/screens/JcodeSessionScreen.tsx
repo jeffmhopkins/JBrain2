@@ -22,6 +22,7 @@ import {
   StopIcon,
   TerminalIcon,
 } from "../components/icons";
+import { shareUrl } from "../jcode/share";
 import { attachTerminal, terminalWsUrl } from "../jcode/terminal";
 import type { JcodeEvent, JcodeModelStatus, JcodePreview, JcodeSession } from "../jcode/types";
 
@@ -172,9 +173,13 @@ function JcodeCli({ sid }: { sid: string }) {
 export function JcodeSessionScreen({
   session,
   onClose,
+  shared = false,
 }: {
   session: JcodeSession;
   onClose: () => void;
+  // True when reached via a redeemed share link (not the owner's launcher): owner-only
+  // controls (Reset / Delete / Copy link) are hidden — those routes 403 a share anyway.
+  shared?: boolean;
 }) {
   const [tab, setTab] = useState<Tab>("chat");
   const [items, setItems] = useState<Item[]>([]);
@@ -182,6 +187,8 @@ export function JcodeSessionScreen({
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [confirm, setConfirm] = useState<"reset" | "delete" | null>(null);
+  // The copy-link affordance: idle → "Copy link" → minting → "Copied!" (2s) or an error.
+  const [shareState, setShareState] = useState<"idle" | "busy" | "copied" | "error">("idle");
   const [preview, setPreview] = useState<JcodePreview | null>(null);
   const [pvBusy, setPvBusy] = useState(false);
   const [model, setModel] = useState<JcodeModelStatus | null>(null);
@@ -380,6 +387,20 @@ export function JcodeSessionScreen({
     setConfirm(null);
   }
 
+  async function copyShareLink() {
+    if (shareState === "busy") return;
+    setShareState("busy");
+    try {
+      const minted = await api.jcodeMintShare(session.id);
+      await navigator.clipboard.writeText(shareUrl(session.id, minted.token));
+      setShareState("copied");
+      setTimeout(() => setShareState("idle"), 2000);
+    } catch {
+      setShareState("error");
+      setTimeout(() => setShareState("idle"), 2500);
+    }
+  }
+
   return (
     <section className="jcode-screen">
       <header className="jcode-bar">
@@ -399,22 +420,41 @@ export function JcodeSessionScreen({
         <span className="jcode-modelchip">{model?.model ?? "qwen3-coder-next"} · on-box</span>
       </header>
 
-      <div className="jcode-actions">
-        <button
-          type="button"
-          className={`jcode-act${confirm === "reset" ? " armed" : ""}`}
-          onClick={() => (confirm === "reset" ? doConfirm() : setConfirm("reset"))}
-        >
-          {confirm === "reset" ? "Tap again — wipes changes" : "Reset"}
-        </button>
-        <button
-          type="button"
-          className={`jcode-act danger${confirm === "delete" ? " armed" : ""}`}
-          onClick={() => (confirm === "delete" ? doConfirm() : setConfirm("delete"))}
-        >
-          {confirm === "delete" ? "Tap again — deletes session" : "Delete"}
-        </button>
-      </div>
+      {/* Owner-only controls — hidden when reached via a share link (those routes 403
+          a share principal anyway). */}
+      {!shared && (
+        <div className="jcode-actions">
+          <button
+            type="button"
+            className={`jcode-act${confirm === "reset" ? " armed" : ""}`}
+            onClick={() => (confirm === "reset" ? doConfirm() : setConfirm("reset"))}
+          >
+            {confirm === "reset" ? "Tap again — wipes changes" : "Reset"}
+          </button>
+          <button
+            type="button"
+            className={`jcode-act danger${confirm === "delete" ? " armed" : ""}`}
+            onClick={() => (confirm === "delete" ? doConfirm() : setConfirm("delete"))}
+          >
+            {confirm === "delete" ? "Tap again — deletes session" : "Delete"}
+          </button>
+          <button
+            type="button"
+            className="jcode-act"
+            onClick={copyShareLink}
+            disabled={shareState === "busy"}
+            title="Copy a link that opens this session on any browser (expires in 24h, revocable)"
+          >
+            {shareState === "busy"
+              ? "Minting…"
+              : shareState === "copied"
+                ? "Link copied ✓"
+                : shareState === "error"
+                  ? "Couldn't copy"
+                  : "Copy link"}
+          </button>
+        </div>
+      )}
 
       <div className="jcode-tabs" role="tablist" aria-label="Session views">
         {TABS.map((t) => {

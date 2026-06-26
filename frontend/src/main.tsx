@@ -3,7 +3,9 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { App } from "./App";
 import { initFontScale } from "./fontScale";
+import { parseShareLink } from "./jcode/share";
 import { initLocationCapture } from "./location";
+import { JcodeShareApp } from "./screens/JcodeShareApp";
 import { initTheme } from "./theme";
 import { isForeground } from "./visibility";
 import "./styles/tokens.css";
@@ -35,8 +37,8 @@ registerSW({
 const container = document.getElementById("root");
 if (!container) throw new Error("Missing #root element");
 
+// A share link (/jcode/s/{sid}#t=token) mounts the scoped share app instead of the
+// full owner app — the recipient sees only that one session.
 createRoot(container).render(
-  <StrictMode>
-    <App />
-  </StrictMode>,
+  <StrictMode>{parseShareLink() ? <JcodeShareApp /> : <App />}</StrictMode>,
 );
