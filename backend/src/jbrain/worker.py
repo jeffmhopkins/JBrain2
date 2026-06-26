@@ -371,9 +371,7 @@ async def run_loop(
                     consolidate_jobs=consolidations,
                     predicate_sync_jobs=predicate_syncs,
                 )
-            if await process_one(
-                maker, handlers, registry=registry, preconditions=preconditions
-            ):
+            if await process_one(maker, handlers, registry=registry, preconditions=preconditions):
                 continue
         except asyncio.CancelledError:
             raise

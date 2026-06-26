@@ -67,9 +67,7 @@ class FakeQueue:
         assert ctx is queue.SYSTEM_CTX
         return self.jobs.pop(0) if self.jobs else None
 
-    async def defer(
-        self, maker: Any, ctx: Any, job_id: str, delay: Any, *, reason: str
-    ) -> None:
+    async def defer(self, maker: Any, ctx: Any, job_id: str, delay: Any, *, reason: str) -> None:
         self.deferred.append((job_id, reason))
 
     async def complete(self, maker: Any, ctx: Any, job_id: str) -> None:

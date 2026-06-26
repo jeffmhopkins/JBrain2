@@ -272,9 +272,7 @@ async def _enqueue_pipeline(
         # job absorb this fire's intent. These are payloadless system sweeps, so the
         # pending job and this one are interchangeable. A plain action enqueues as
         # before — re-firing it is handler-dedup-safe (E4).
-        if spec.precondition and await queue.has_active_kind(
-            maker, queue.SYSTEM_CTX, spec.handler
-        ):
+        if spec.precondition and await queue.has_active_kind(maker, queue.SYSTEM_CTX, spec.handler):
             log.info("scheduler.step_coalesced", action=step.action, kind=spec.handler)
             continue
         job_id = await queue.enqueue(maker, queue.SYSTEM_CTX, spec.handler, step.params)
