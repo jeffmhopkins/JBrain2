@@ -1,0 +1,178 @@
+<!doctype html>
+<!--
+  weather tool-view mock · VARIANT A — "Hero + hourly strip"
+  ============================================================================
+  The glanceable default: a big current-conditions hero (place, now-temp, a
+  condition glyph, feels-like, hi/lo) sits on top; a horizontal, finger-scrollable
+  hourly strip runs beneath it (one cell per hour: time · glyph · temp, a precip %
+  under hours with rain). One condition line summarizes the rest of the day.
+
+  Data-only slots (no URLs, no markup — invariant #9): the model fills
+    { view:"weather_card", place, as_of, tz, now:{temp_f,feels_f,cond,wind_mph,wind_dir},
+      hi_f, lo_f, summary, hours:[{label,temp_f,feels_f,cond,pop,wind_mph,wind_dir}] }
+  Condition is a `cond` ENUM (clear|cloudy|partly|rain|storm|night|night-cloudy),
+  never a color/hex — the component owns the glyph + token mapping (DESIGN.md
+  "components express tone/flag/kind enums, never colors").
+
+  Tokens-only; card frame matches the live `.tool-view`. Weather is non-personal
+  jerv info → the neutral steel info accent; a high heat index reads amber (warn).
+-->
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Weather — A — hero + hourly strip</title>
+<style>
+  :root{
+    --bg:#0e0f11;--surface:#17181b;--surface-2:#1e2024;--border:#26282c;
+    --text:#e6e7e9;--text-2:#9a9da3;--text-3:#5c5f66;--surface-composer:#141518;
+    --steel:#7fa7c9;--steel-tint:rgba(127,167,201,.13);
+    --green:#8fbc9a;--green-tint:rgba(143,188,154,.13);
+    --amber:#c9a36a;--amber-tint:rgba(201,163,106,.13);
+    --rose:#cf8a8f;--violet:#a493c9;
+    --accent:var(--steel);--r-card:16px;--r-input:12px;--r-pill:999px;
+  }
+  [data-theme="light"]{
+    --bg:#f7f7f5;--surface:#fff;--surface-2:#f0f0ee;--border:#e2e2df;
+    --text:#1a1b1e;--text-2:#5c5f66;--text-3:#9a9da3;--surface-composer:#fff;
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  body{margin:0;background:#000;color:var(--text);
+    font:15px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+    display:flex;flex-wrap:wrap;gap:28px;justify-content:center;padding:28px}
+  .phone{width:390px;height:820px;background:var(--bg);border-radius:34px;overflow:hidden;
+    border:1px solid var(--border);display:flex;flex-direction:column}
+  .topbar{flex:0 0 auto;height:56px;display:flex;align-items:center;gap:10px;padding:0 14px;
+    border-bottom:1px solid var(--border);background:var(--surface)}
+  .topbar .t{font-size:17px;font-weight:600;flex:1}
+  .topbar .t small{display:block;font-size:11px;font-weight:400;color:var(--text-3)}
+  .icon-btn{width:36px;height:36px;display:grid;place-items:center;border-radius:9px;
+    color:var(--text-2);background:transparent;border:0;cursor:pointer}
+  .icon-btn:hover{background:var(--surface-2);color:var(--text)}
+  svg{width:20px;height:20px;stroke:currentColor;fill:none;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
+  .chat{flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:14px}
+  .bubble{max-width:82%;padding:11px 13px;border-radius:15px;font-size:14px;line-height:1.45}
+  .me{align-self:flex-end;background:var(--steel-tint);border:1px solid color-mix(in srgb,var(--steel) 30%,transparent);border-bottom-right-radius:5px}
+  .ai{align-self:flex-start;background:var(--surface-2);border:1px solid var(--border);border-bottom-left-radius:5px}
+
+  /* ---- weather card ---- */
+  .wx{align-self:flex-start;max-width:92%;width:100%;border:1px solid var(--border);
+    border-radius:var(--r-card);background:var(--surface);overflow:hidden}
+  .wx-cap{display:flex;align-items:center;gap:7px;padding:9px 13px 0;font-size:10.5px;
+    color:var(--text-3);text-transform:uppercase;letter-spacing:.06em}
+  .wx-cap .vi{color:var(--steel);display:flex}
+  .wx-cap .vi svg{width:13px;height:13px}
+  /* hero */
+  .wx-hero{display:flex;align-items:center;gap:14px;padding:10px 15px 13px}
+  .wx-hero .glyph{flex:0 0 auto;color:var(--steel)}
+  .wx-hero .glyph svg{width:54px;height:54px;stroke-width:1.5}
+  .wx-hero .main{flex:1;min-width:0}
+  .wx-place{font-size:13px;color:var(--text-2);display:flex;align-items:center;gap:5px}
+  .wx-temp{font-size:46px;font-weight:600;line-height:1.05;letter-spacing:-.02em}
+  .wx-temp .deg{font-size:22px;font-weight:500;color:var(--text-2);vertical-align:top}
+  .wx-sub{font-size:13px;color:var(--text-2);margin-top:1px}
+  .wx-hilo{flex:0 0 auto;text-align:right;font-size:13px;color:var(--text-2);line-height:1.5}
+  .wx-hilo b{color:var(--text);font-weight:600}
+  .feels{display:inline-flex;align-items:center;gap:4px;padding:1px 7px;border-radius:var(--r-pill);
+    font-size:12px;font-weight:500;background:var(--amber-tint);color:var(--amber)}
+  .wx-summary{padding:0 15px 12px;font-size:13px;color:var(--text-2);line-height:1.45}
+  /* hourly strip */
+  .wx-strip{display:flex;gap:0;overflow-x:auto;border-top:1px solid var(--border);
+    padding:11px 8px;scrollbar-width:none}
+  .wx-strip::-webkit-scrollbar{display:none}
+  .hr{flex:0 0 auto;width:54px;display:flex;flex-direction:column;align-items:center;gap:5px;
+    padding:2px 0;border-radius:10px}
+  .hr.now{background:var(--steel-tint)}
+  .hr .ht{font-size:11.5px;color:var(--text-2)}
+  .hr.now .ht{color:var(--steel);font-weight:600}
+  .hr .hg{color:var(--text-2)}
+  .hr .hg svg{width:22px;height:22px;stroke-width:1.6}
+  .hr .htemp{font-size:14px;font-weight:600;color:var(--text)}
+  .hr .pop{font-size:10px;color:var(--steel);min-height:13px;display:flex;align-items:center;gap:2px}
+  .hr .pop svg{width:9px;height:9px;stroke-width:2}
+  .hr .pop.none{visibility:hidden}
+
+  .composer{flex:0 0 auto;display:flex;gap:8px;align-items:center;
+    padding:10px 12px calc(10px + env(safe-area-inset-bottom));
+    border-top:1px solid var(--border);background:var(--surface-composer)}
+  .composer input{flex:1;background:var(--surface-2);border:1px solid var(--border);
+    border-radius:var(--r-pill);padding:10px 14px;color:var(--text);font-size:14px;outline:none}
+  .composer .send{width:40px;height:40px;border-radius:50%;border:0;background:var(--accent);
+    color:#10141a;display:grid;place-items:center;cursor:pointer;flex:0 0 40px}
+  .composer .send svg{stroke:#10141a}
+  .label{text-align:center;color:var(--text-2);font-size:12px;max-width:390px;line-height:1.45;margin:4px auto}
+  .label b{color:var(--text)}
+</style>
+</head>
+<body>
+<div>
+  <div class="phone">
+    <div class="topbar">
+      <button class="icon-btn"><svg viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6"/></svg></button>
+      <div class="t">jerv<small>research</small></div>
+      <button class="icon-btn" id="theme" title="Toggle theme">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4.5"/><path d="M12 2v2M12 20v2M4 12H2M22 12h-2M5 5l1.5 1.5M17.5 17.5L19 19M19 5l-1.5 1.5M6.5 17.5L5 19"/></svg>
+      </button>
+    </div>
+
+    <div class="chat" id="chat">
+      <div class="bubble me">What's today's weather from now until midnight?</div>
+      <div class="bubble ai">Hot and muggy through late afternoon — a stray storm possible early evening, then clearing and cooler overnight.</div>
+
+      <!-- weather_card -->
+      <div class="wx" id="card">
+        <div class="wx-cap"><span class="vi"><svg viewBox="0 0 24 24"><path d="M12 2v2M12 20v2M4 12H2M22 12h-2M6 6L4.5 4.5M19.5 19.5L18 18M18 6l1.5-1.5M4.5 19.5L6 18"/><circle cx="12" cy="12" r="4"/></svg></span> weather · cocoa, fl</div>
+        <div class="wx-hero">
+          <div class="glyph" id="heroGlyph"></div>
+          <div class="main">
+            <div class="wx-place"><svg viewBox="0 0 24 24" style="width:13px;height:13px"><path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0z"/><circle cx="12" cy="10" r="2.5"/></svg> Cocoa, FL · 1:14 PM EDT</div>
+            <div class="wx-temp">90<span class="deg">°F</span></div>
+            <div class="wx-sub">Scattered storms · <span class="feels">feels 102°</span></div>
+          </div>
+          <div class="wx-hilo"><b>H 92°</b><br>L 80°<br><span style="color:var(--text-3)">SE 8 mph</span></div>
+        </div>
+        <div class="wx-summary">Heat index peaks near <b>105°</b> around 4 PM. Storm chance fades after 8 PM; clear and ~80° by midnight.</div>
+        <div class="wx-strip" id="strip"></div>
+      </div>
+
+      <div class="bubble me">Thanks — much easier to read.</div>
+    </div>
+
+    <div class="composer">
+      <input id="inp" placeholder="Ask the web, or work a problem…" />
+      <button class="send"><svg viewBox="0 0 24 24"><path d="M22 2L11 13M22 2l-7 20-4-9-9-4z"/></svg></button>
+    </div>
+  </div>
+  <p class="label">A · <b>Hero + hourly strip.</b> Big current-conditions hero, then a finger-scrollable hourly row. Most glanceable; mirrors the familiar phone-weather idiom. Detail lives in the strip rather than a table.</p>
+</div>
+<script>
+  const G={ // inline Lucide-style glyphs per condition enum — no external icons (#9)
+    clear:'<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4.4"/><path d="M12 2v2M12 20v2M4 12H2M22 12h-2M6 6L4.5 4.5M19.5 19.5L18 18M18 6l1.5-1.5M4.5 19.5L6 18"/></svg>',
+    partly:'<svg viewBox="0 0 24 24"><path d="M8 5.5a3.5 3.5 0 0 1 6.3 1.2"/><path d="M12 3v1.5M5.5 6L4.7 5.2M18.5 6l.8-.8M3.5 11H2.4"/><path d="M7 19h9a3.2 3.2 0 0 0 .3-6.4 4.3 4.3 0 0 0-8.2-1.1A3.4 3.4 0 0 0 7 19z"/></svg>',
+    cloudy:'<svg viewBox="0 0 24 24"><path d="M7 18h10a3.4 3.4 0 0 0 .3-6.8 4.6 4.6 0 0 0-8.8-1.2A3.6 3.6 0 0 0 7 18z"/></svg>',
+    rain:'<svg viewBox="0 0 24 24"><path d="M7 15h9a3.2 3.2 0 0 0 .3-6.4 4.3 4.3 0 0 0-8.2-1.1A3.4 3.4 0 0 0 7 15z"/><path d="M8 19l-1 2M12 19l-1 2M16 19l-1 2"/></svg>',
+    storm:'<svg viewBox="0 0 24 24"><path d="M7 15h9a3.2 3.2 0 0 0 .3-6.4 4.3 4.3 0 0 0-8.2-1.1A3.4 3.4 0 0 0 7 15z"/><path d="M12 16l-2 3.5h3L11 23"/></svg>',
+    night:'<svg viewBox="0 0 24 24"><path d="M20 14.5A8 8 0 1 1 9.5 4 6.3 6.3 0 0 0 20 14.5z"/></svg>',
+    nightcloud:'<svg viewBox="0 0 24 24"><path d="M15.5 5.2A5 5 0 0 0 9 8.5"/><path d="M7 18h9a3.2 3.2 0 0 0 .2-6.4 4.3 4.3 0 0 0-8-1.2A3.4 3.4 0 0 0 7 18z"/></svg>'
+  };
+  document.getElementById('heroGlyph').innerHTML=G.storm;
+  const hours=[
+    {t:'Now',c:'storm',temp:90,pop:20,now:1},{t:'2p',c:'storm',temp:91,pop:25},
+    {t:'3p',c:'storm',temp:91,pop:35},{t:'4p',c:'storm',temp:92,pop:40},
+    {t:'5p',c:'rain',temp:90,pop:45},{t:'6p',c:'rain',temp:88,pop:40},
+    {t:'7p',c:'partly',temp:87,pop:30},{t:'8p',c:'partly',temp:83,pop:20},
+    {t:'9p',c:'night',temp:82,pop:10},{t:'10p',c:'night',temp:81,pop:5},
+    {t:'11p',c:'night',temp:81,pop:0},{t:'12a',c:'night',temp:80,pop:0}
+  ];
+  document.getElementById('strip').innerHTML=hours.map(h=>`
+    <div class="hr ${h.now?'now':''}">
+      <div class="ht">${h.t}</div>
+      <div class="hg">${G[h.c]||G.clear}</div>
+      <div class="htemp">${h.temp}°</div>
+      <div class="pop ${h.pop?'':'none'}"><svg viewBox="0 0 24 24"><path d="M12 3s5 6 5 10a5 5 0 0 1-10 0c0-4 5-10 5-10z"/></svg>${h.pop}%</div>
+    </div>`).join('');
+  document.getElementById('theme').onclick=()=>{const h=document.documentElement;
+    h.dataset.theme=h.dataset.theme==='light'?'dark':'light'};
+</script>
+</body>
+</html>
