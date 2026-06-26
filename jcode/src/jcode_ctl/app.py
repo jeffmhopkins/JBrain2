@@ -77,6 +77,9 @@ class CreateSessionRequest(BaseModel):
     repo: str = ""
     branch: str = "main"
     work_branch: str = ""
+    # The served-model id the agent runs for this session. Empty = the server's
+    # configured default (settings.model). The api resolves the owner's selection.
+    model: str = ""
 
 
 class TurnRequest(BaseModel):
@@ -135,7 +138,9 @@ def create_app(
 
     @authed.post("/sessions", status_code=201)
     async def create_session(body: CreateSessionRequest) -> dict[str, object]:
-        session = await sessions.create(body.repo, body.branch, body.work_branch)
+        session = await sessions.create(
+            body.repo, body.branch, body.work_branch, model=body.model
+        )
         return session.public()
 
     @authed.get("/sessions")

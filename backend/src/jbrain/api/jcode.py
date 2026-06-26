@@ -26,9 +26,12 @@ from jbrain.api.deps import OwnerDep
 from jbrain.db import SessionContext, scoped_session
 from jbrain.jcode import JcodeApi, JcodeError
 from jbrain.models.jcode import JcodeSessionRepo
+from jbrain.settings_store import SqlSettingsStore
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+    from jbrain.config import Settings
 
 _SSE_HEARTBEAT_SECONDS = 20.0
 _SSE_HEADERS = {"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
@@ -122,6 +125,18 @@ def _maker(request: Request) -> async_sessionmaker[AsyncSession]:
     return cast("async_sessionmaker[AsyncSession]", request.app.state.session_maker)
 
 
+def _store(request: Request) -> SqlSettingsStore:
+    return cast(SqlSettingsStore, request.app.state.settings_store)
+
+
+async def _resolve_model(request: Request, owner_id: str) -> str:
+    """The model a new session runs: the owner's stored selection (Settings → LLM),
+    else the JBRAIN_JCODE_MODEL config default. Read here rather than via a Depends
+    so the unconfigured/owner gating runs before any settings access."""
+    settings = cast("Settings", request.app.state.settings)
+    return (await _store(request).jcode_model(_owner_ctx(owner_id))) or settings.jcode_model
+
+
 _REPO = JcodeSessionRepo()
 
 
@@ -143,8 +158,13 @@ class PreviewBody(BaseModel):
 async def create_session(
     body: CreateSessionBody, owner: OwnerDep, request: Request
 ) -> dict[str, object]:
+    # 404 first when code mode is unconfigured, before any settings read. The model
+    # is fixed at create (the owner's selection, else the default) so a mid-session
+    # settings change never re-points a live agent.
+    client = _client(request)
+    model = await _resolve_model(request, owner.id)
     try:
-        session = await _client(request).create_session(body.repo, body.branch, body.work_branch)
+        session = await client.create_session(body.repo, body.branch, body.work_branch, model)
     except JcodeError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     async with scoped_session(_maker(request), _owner_ctx(owner.id)) as db:

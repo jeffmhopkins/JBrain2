@@ -434,6 +434,15 @@ const LLM_SETTINGS: LlmSettings = {
     },
   ],
   host_memory: null,
+  jcode: {
+    enabled: true,
+    model: "qwen3-coder-next",
+    default: "qwen3-coder-next",
+    options: [
+      { id: "qwen3-coder-next", label: "Qwen3-Coder-Next 80B · coding agent" },
+      { id: "qwen3-vl-30b", label: "Qwen3-VL 30B · vision" },
+    ],
+  },
 };
 
 // The on-box image service for the drawer's image subsection + shared meter. On,
@@ -2785,6 +2794,14 @@ export const mockFetch: typeof fetch = async (input, init) => {
       tasks: Record<string, { provider: LlmProviderId; reasoning_effort?: ReasoningEffort }>;
     };
     for (const [taskId, patch] of Object.entries(body.tasks)) applyLlmPatch(taskId, patch);
+    return json(LLM_SETTINGS);
+  }
+  if (path === "/api/settings/llm/jcode-model" && method === "PUT") {
+    const body = JSON.parse(String(init?.body)) as { model: string };
+    // Mirror the API: "" reverts to the default; else it must be an offered option.
+    const valid = body.model === "" || LLM_SETTINGS.jcode.options.some((o) => o.id === body.model);
+    if (!valid) return new Response("model must be installed + tool-capable", { status: 422 });
+    LLM_SETTINGS.jcode.model = body.model || LLM_SETTINGS.jcode.default;
     return json(LLM_SETTINGS);
   }
   const unloadMatch = path.match(/^\/api\/settings\/llm\/local-models\/(.+)\/unload$/);

@@ -17,8 +17,10 @@ from jbrain.api.deps import current_principal
 from jbrain.auth import service
 from jbrain.auth.repo import SqlAuthRepo
 from jbrain.auth.service import PrincipalInfo
+from jbrain.config import Settings
 from jbrain.db.session import SessionContext, scoped_session
 from jbrain.jcode import FakeJcodeClient
+from jbrain.settings_store import SqlSettingsStore
 from tests.conftest import docker_available
 from tests.integration.test_rls import database_url  # noqa: F401
 
@@ -50,6 +52,8 @@ def _app(maker: async_sessionmaker, owner_id: str) -> FastAPI:
     app.state.session_maker = maker
     app.state.jcode_client = FakeJcodeClient()
     app.state.jcode_turns = {}
+    app.state.settings = Settings(secure_cookies=False)
+    app.state.settings_store = SqlSettingsStore(maker)
     app.dependency_overrides[current_principal] = lambda: PrincipalInfo(
         id=owner_id, kind="owner", label="owner"
     )
@@ -85,3 +89,21 @@ async def test_full_session_lifecycle_through_the_routes(maker: async_sessionmak
         assert (await client.post(f"/api/jcode/sessions/{sid}/reset")).status_code == 200
         assert (await client.delete(f"/api/jcode/sessions/{sid}")).status_code == 204
         assert (await client.get(f"/api/jcode/sessions/{sid}")).status_code == 404
+
+
+async def test_create_forwards_the_selected_model(maker: async_sessionmaker) -> None:
+    # No stored selection → the config default reaches the control server; after the
+    # owner picks a model (settings store), the next create forwards THAT id.
+    owner_id = await _owner_id(maker)
+    app = _app(maker, owner_id)
+    fake: FakeJcodeClient = app.state.jcode_client
+    transport = ASGITransport(app=app)
+
+    async with AsyncClient(transport=transport, base_url="http://t") as client:
+        await client.post("/api/jcode/sessions", json={"repo": "r"})
+        assert fake.created_models == ["qwen3-coder-next"]  # the config default
+
+        ctx = SessionContext(principal_id=owner_id, principal_kind="owner")
+        await SqlSettingsStore(maker).set_jcode_model(ctx, "gpt-oss-120b")
+        await client.post("/api/jcode/sessions", json={"repo": "r2"})
+        assert fake.created_models[-1] == "gpt-oss-120b"

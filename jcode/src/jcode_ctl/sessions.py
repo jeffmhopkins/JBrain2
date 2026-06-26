@@ -38,6 +38,9 @@ class Session:
     status: Status
     created_at: str
     last_active_at: str
+    # The served-model id the agent runs for this session (empty = the agent's
+    # configured default). Fixed at create so a turn never swaps model mid-session.
+    model: str = ""
 
     def public(self) -> dict[str, object]:
         return asdict(self)
@@ -66,7 +69,7 @@ class SessionManager:
         return self._now().isoformat()
 
     async def create(
-        self, repo: str, branch: str = "main", work_branch: str = ""
+        self, repo: str, branch: str = "main", work_branch: str = "", *, model: str = ""
     ) -> Session:
         if self._max > 0 and len(self._sessions) >= self._max:
             raise SessionError(f"at capacity ({self._max} sessions) — close one first")
@@ -84,6 +87,7 @@ class SessionManager:
             status="ready",
             created_at=now,
             last_active_at=now,
+            model=model,
         )
         self._sessions[sid] = session
         return session
@@ -109,7 +113,9 @@ class SessionManager:
         session.status = "running"
         session.last_active_at = self._stamp()
         try:
-            async for ev in self._agent.run_turn(sid, prompt, session.workspace):
+            async for ev in self._agent.run_turn(
+                sid, prompt, session.workspace, model=session.model
+            ):
                 if ev.type == "error":
                     session.status = "error"
                 yield ev

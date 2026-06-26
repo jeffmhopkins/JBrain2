@@ -40,7 +40,7 @@ class CodingAgent(Protocol):
     """
 
     def run_turn(
-        self, session_id: str, prompt: str, cwd: str
+        self, session_id: str, prompt: str, cwd: str, *, model: str = ""
     ) -> AsyncIterator[TurnEvent]: ...
 
     async def cancel(self, session_id: str) -> None: ...
@@ -52,10 +52,14 @@ class FakeCodingAgent:
     def __init__(self, script: list[TurnEvent] | None = None) -> None:
         self._script = script
         self.cancelled: list[str] = []
+        # The model passed to each run_turn, in order — tests assert the session's
+        # selected model reaches the agent.
+        self.models: list[str] = []
 
     async def run_turn(
-        self, session_id: str, prompt: str, cwd: str
+        self, session_id: str, prompt: str, cwd: str, *, model: str = ""
     ) -> AsyncIterator[TurnEvent]:
+        self.models.append(model)
         events = self._script or [
             TurnEvent("text", text="Reading the file and planning the change."),
             TurnEvent("tool_use", tool="Read", data={"command": "read src/app.ts"}),
@@ -102,12 +106,15 @@ class ClaudeCodeAgent:
         return self._sdk
 
     async def run_turn(  # pragma: no cover - exercised only on-box
-        self, session_id: str, prompt: str, cwd: str
+        self, session_id: str, prompt: str, cwd: str, *, model: str = ""
     ) -> AsyncIterator[TurnEvent]:
         sdk = self._require_sdk()
+        # The per-session model (from the owner's selection) overrides the adapter's
+        # construction-time default; both name a served model on the on-box gateway.
+        active_model = model or self._model
         # Mapping SDK message stream → TurnEvent lands here once verified on-box.
-        # Sketch: drive sdk.query(...) with options pinning cwd=cwd, the local
-        # model, and a resumable session id, then translate each message.
+        # Sketch: drive sdk.query(...) with options pinning cwd=cwd, active_model,
+        # and a resumable session id, then translate each message.
         raise NotImplementedError(
             "ClaudeCodeAgent.run_turn is wired and verified on the box (Wave J1 "
             "on-box smoke test); unit tests use FakeCodingAgent."
@@ -115,7 +122,7 @@ class ClaudeCodeAgent:
         # Unreachable, but documents the contract for the on-box wiring:
         if False:
             yield TurnEvent("done")
-        _ = (sdk, session_id, prompt, cwd)
+        _ = (sdk, session_id, prompt, cwd, active_model)
 
     async def cancel(self, session_id: str) -> None:  # pragma: no cover - on-box
         raise NotImplementedError

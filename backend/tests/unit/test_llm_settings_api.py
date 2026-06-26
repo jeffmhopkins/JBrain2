@@ -76,6 +76,43 @@ def test_get_defaults_grok_and_low_for_empty_store(
         assert task["reasoning_effort"] == "low"
 
 
+def test_jcode_section_defaults_disabled(
+    client: tuple[TestClient, FakeSettingsStore],
+) -> None:
+    # Code mode off (default settings) → the card is hidden (enabled False) and the
+    # dropdown is empty, but the config default is still reported.
+    c, _ = client
+    jc = c.get("/api/settings/llm").json()["jcode"]
+    assert jc["enabled"] is False
+    assert jc["options"] == []
+    assert jc["default"] == "qwen3-coder-next"
+    assert jc["model"] == "qwen3-coder-next"
+
+
+def test_jcode_model_selector_lists_installed_tool_capable_and_round_trips() -> None:
+    # Hosting on with one installed tool-capable model (qwen3-vl-30b) → it's the sole
+    # dropdown option; the default (qwen3-coder-next, not installed) is the effective
+    # model until the owner picks one.
+    c, _ = _authed_client(
+        _cloud_settings(jcode_enabled=True, local_llm_enabled=True, local_models=["qwen3-vl-30b"])
+    )
+    jc = c.get("/api/settings/llm").json()["jcode"]
+    assert jc["enabled"] is True
+    assert {o["id"] for o in jc["options"]} == {"qwen3-vl-30b"}
+    assert jc["model"] == "qwen3-coder-next"  # default, no override yet
+
+    picked = c.put("/api/settings/llm/jcode-model", json={"model": "qwen3-vl-30b"})
+    assert picked.status_code == 200
+    assert picked.json()["jcode"]["model"] == "qwen3-vl-30b"
+
+    # An id that isn't an installed, tool-capable model is rejected.
+    assert c.put("/api/settings/llm/jcode-model", json={"model": "nope"}).status_code == 422
+
+    # "" reverts to the config default.
+    reset = c.put("/api/settings/llm/jcode-model", json={"model": ""})
+    assert reset.json()["jcode"]["model"] == "qwen3-coder-next"
+
+
 def test_put_round_trips_effective_values(
     client: tuple[TestClient, FakeSettingsStore],
 ) -> None:

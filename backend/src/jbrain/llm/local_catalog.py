@@ -152,6 +152,28 @@ CATALOG: tuple[LocalModel, ...] = (
         kv_gb_per_128k=5.0,
     ),
     LocalModel(
+        id="qwen3-coder-next",
+        label="Qwen3-Coder-Next 80B · coding agent",
+        served_model="qwen3-coder-next",
+        tiers=("high",),
+        supports_vision=False,
+        supports_tools=True,
+        # Opt-in: code mode (jcode) provisions this via scripts/jcode-setup.sh; it is
+        # NOT recommended, so a plain local-hosting enable never pulls its ~50 GB.
+        recommended=False,
+        hf_repo="unsloth/Qwen3-Coder-Next-GGUF",
+        gguf_include="*UD-Q4_K_XL*.gguf",
+        mmproj_include=None,
+        quant="UD-Q4_K_XL",
+        size_gb=49.6,
+        note="80B MoE, 3B active — agentic coder (~70% SWE-Bench Verified); the model "
+        "behind code mode (jcode). Same hybrid-attention arch as qwen3-next-80b — "
+        "confirm the gateway's llama.cpp build supports it (a recent build fixed a "
+        "Qwen looping bug). Native 256k window; serves the gateway default — raise -c "
+        "only with proof it fits beside the weights.",
+        kv_gb_per_128k=5.0,
+    ),
+    LocalModel(
         id="glm-4.5-air",
         label="GLM-4.5 Air · reasoning (alt)",
         served_model="glm-4.5-air",

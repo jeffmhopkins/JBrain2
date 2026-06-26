@@ -73,6 +73,7 @@ function initialSettings(): LlmSettings {
       }),
     ],
     host_memory: null,
+    jcode: { enabled: false, model: "", default: "qwen3-coder-next", options: [] },
   };
 }
 
@@ -93,8 +94,19 @@ const USAGE = {
 function stubLlmFetch(seed?: LlmSettings) {
   const state = seed ?? initialSettings();
   const puts: { tasks: Record<string, { provider: string; reasoning_effort?: string }> }[] = [];
+  const jcodePuts: string[] = [];
   const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
     const path = String(input);
+    // The code-mode model selector PUTs here and gets the full snapshot back.
+    if (path === "/api/settings/llm/jcode-model") {
+      const body = JSON.parse(String(init?.body)) as { model: string };
+      jcodePuts.push(body.model);
+      state.jcode.model = body.model || state.jcode.default;
+      return new Response(JSON.stringify(state), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
     // The AI-usage drawer self-fetches its telemetry; serve it so the stub
     // doesn't throw on a path the screen now legitimately calls.
     if (path === "/api/ops/llm-usage") {
@@ -133,7 +145,7 @@ function stubLlmFetch(seed?: LlmSettings) {
     });
   });
   vi.stubGlobal("fetch", fetchMock);
-  return { puts, state };
+  return { puts, jcodePuts, state };
 }
 
 beforeEach(() => stubLlmFetch());
@@ -156,6 +168,33 @@ describe("LLMSettingsScreen", () => {
     // note.extract); entity.disambiguate + fact.adjudicate fall to lightweight.
     const high = await group("High-stakes reasoning");
     expect(within(high).getByText("3 tasks")).toBeInTheDocument();
+  });
+
+  it("hides the code-mode model card when jcode is disabled", async () => {
+    // Default fixture has jcode.enabled = false.
+    render(<LLMSettingsScreen />);
+    await screen.findByText("High-stakes reasoning");
+    expect(screen.queryByLabelText("Code mode model")).not.toBeInTheDocument();
+  });
+
+  it("changes the code-mode agent model via the jcode card", async () => {
+    const seed = initialSettings();
+    seed.local_hosting_enabled = true;
+    seed.jcode = {
+      enabled: true,
+      model: "qwen3-coder-next",
+      default: "qwen3-coder-next",
+      options: [
+        { id: "qwen3-coder-next", label: "Qwen3-Coder-Next 80B" },
+        { id: "qwen3-vl-30b", label: "Qwen3-VL 30B" },
+      ],
+    };
+    const { jcodePuts } = stubLlmFetch(seed);
+    render(<LLMSettingsScreen />);
+    const select = (await screen.findByLabelText("Code mode model")) as HTMLSelectElement;
+    expect(select.value).toBe("qwen3-coder-next");
+    fireEvent.change(select, { target: { value: "qwen3-vl-30b" } });
+    await waitFor(() => expect(jcodePuts).toContain("qwen3-vl-30b"));
   });
 
   it("hides reasoning and shows the Claude note when a tier moves off grok", async () => {
