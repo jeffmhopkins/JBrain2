@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
-from typing import Literal, Protocol, runtime_checkable
+from typing import Any, Literal, Protocol, runtime_checkable
 
 # The turn-event vocabulary mirrors the /chat SSE frames (docs/ASSISTANT.md
 # "Streaming to the phone") so the api can map jcode turns onto the SAME
@@ -91,9 +91,15 @@ class ClaudeCodeAgent:
 
     def __init__(self, model: str) -> None:
         self._model = model
-        self._sdk = None  # resolved on first use
+        self._sdk: Any = None  # resolved on first use
+        # Our session id -> the SDK's resumable session id, captured after a turn so
+        # the next turn of the same session continues the agent's context.
+        self._sdk_sessions: dict[str, str] = {}
+        # Session ids with a cancel requested mid-turn — the run loop checks this at
+        # each message boundary and stops (cooperative interrupt).
+        self._cancelled: set[str] = set()
 
-    def _require_sdk(self):  # pragma: no cover - exercised only on-box
+    def _require_sdk(self) -> Any:  # pragma: no cover - exercised only on-box
         if self._sdk is None:
             try:
                 import claude_agent_sdk  # type: ignore
@@ -109,20 +115,83 @@ class ClaudeCodeAgent:
         self, session_id: str, prompt: str, cwd: str, *, model: str = ""
     ) -> AsyncIterator[TurnEvent]:
         sdk = self._require_sdk()
-        # The per-session model (from the owner's selection) overrides the adapter's
-        # construction-time default; both name a served model on the on-box gateway.
-        active_model = model or self._model
-        # Mapping SDK message stream → TurnEvent lands here once verified on-box.
-        # Sketch: drive sdk.query(...) with options pinning cwd=cwd, active_model,
-        # and a resumable session id, then translate each message.
-        raise NotImplementedError(
-            "ClaudeCodeAgent.run_turn is wired and verified on the box (Wave J1 "
-            "on-box smoke test); unit tests use FakeCodingAgent."
+        self._cancelled.discard(session_id)
+        # The per-session model (the owner's selection) overrides the construction
+        # default; both name a served model on the on-box gateway, reached over
+        # ANTHROPIC_BASE_URL. bypassPermissions: the workspace is an isolated,
+        # throwaway per-session checkout on its own network (no host, no notes, no
+        # other services), so the agent runs fully autonomous — there is no
+        # interactive approver to prompt in this headless service. `resume` continues
+        # the SDK session so multi-turn keeps context.
+        options = sdk.ClaudeAgentOptions(
+            cwd=cwd,
+            model=model or self._model,
+            permission_mode="bypassPermissions",
+            resume=self._sdk_sessions.get(session_id),
+            include_partial_messages=False,
         )
-        # Unreachable, but documents the contract for the on-box wiring:
-        if False:
-            yield TurnEvent("done")
-        _ = (sdk, session_id, prompt, cwd, active_model)
+        result: dict[str, object] = {}
+        try:
+            async for message in sdk.query(prompt=prompt, options=options):
+                for ev in self._to_events(sdk, message):
+                    yield ev
+                if isinstance(message, sdk.ResultMessage):
+                    sid = getattr(message, "session_id", "")
+                    if sid:
+                        self._sdk_sessions[session_id] = sid
+                    result = {
+                        "status": getattr(message, "subtype", "success"),
+                        "cost_usd": getattr(message, "total_cost_usd", None) or 0.0,
+                    }
+                if session_id in self._cancelled:
+                    yield TurnEvent("error", text="cancelled")
+                    break
+        except Exception as exc:  # a turn must always end with a terminal frame
+            yield TurnEvent("error", text=str(exc))
+        finally:
+            self._cancelled.discard(session_id)
+        yield TurnEvent("done", data=result)
+
+    def _to_events(  # pragma: no cover - exercised only on-box
+        self, sdk: Any, message: Any
+    ) -> list[TurnEvent]:
+        """Map one SDK message to zero or more TurnEvents. Defensive (the SDK's block
+        shapes vary by version); finalized against real output in the on-box smoke
+        test (JCODE_PLAN.md open decision 1)."""
+        out: list[TurnEvent] = []
+        if isinstance(message, sdk.AssistantMessage):
+            for block in message.content:
+                if isinstance(block, sdk.TextBlock):
+                    out.append(TurnEvent("text", text=block.text))
+                elif isinstance(block, sdk.ToolUseBlock):
+                    out.append(
+                        TurnEvent(
+                            "tool_use",
+                            tool=block.name,
+                            data={"input": block.input},
+                        )
+                    )
+        elif isinstance(message, sdk.UserMessage):
+            # A UserMessage carries tool results back to the model.
+            for block in getattr(message, "content", []):
+                is_result = getattr(block, "type", "") == "tool_result" or hasattr(
+                    block, "content"
+                )
+                if is_result:
+                    out.append(
+                        TurnEvent(
+                            "tool_result",
+                            tool=getattr(block, "name", "") or "",
+                            data={"ok": not getattr(block, "is_error", False)},
+                        )
+                    )
+        elif isinstance(message, sdk.ResultMessage):
+            subtype = getattr(message, "subtype", "success")
+            if subtype != "success":
+                out.append(TurnEvent("error", text=str(subtype)))
+        return out
 
     async def cancel(self, session_id: str) -> None:  # pragma: no cover - on-box
-        raise NotImplementedError
+        # Cooperative interrupt: the run loop stops at the next message boundary. A
+        # hard mid-tool interrupt would need ClaudeSDKClient.interrupt — a follow-up.
+        self._cancelled.add(session_id)

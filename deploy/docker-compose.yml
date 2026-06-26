@@ -379,10 +379,14 @@ services:
       JCODE_TOKEN: ${JCODE_TOKEN:-}
       JCODE_MODEL: ${JCODE_MODEL:-qwen3-coder-next}
       JCODE_MODEL_BASE_URL: ${JCODE_MODEL_URL:-http://local-llm:8080}
-      # What the Claude Agent SDK + its `claude` CLI actually read to reach the model:
-      # the on-box gateway's Anthropic-compatible endpoint. No cloud. ANTHROPIC_API_KEY
-      # is a placeholder the local gateway ignores (the SDK requires the var be set).
-      ANTHROPIC_BASE_URL: ${JCODE_MODEL_URL:-http://local-llm:8080}
+      # What the Claude Agent SDK + its `claude` CLI read to reach the model. The SDK
+      # speaks the Anthropic Messages API (/v1/messages); llama.cpp/llama-swap speak
+      # OpenAI (/v1/chat/completions), so unless the gateway serves /v1/messages
+      # natively this must point at an Anthropic<->OpenAI shim — see
+      # docs/proposed/JCODE_PLAN.md "On-box bring-up". Defaults to the gateway directly
+      # (the native path); set JCODE_ANTHROPIC_BASE_URL to the shim's URL to switch.
+      # ANTHROPIC_API_KEY is a placeholder the local path ignores (the SDK requires it).
+      ANTHROPIC_BASE_URL: ${JCODE_ANTHROPIC_BASE_URL:-http://local-llm:8080}
       ANTHROPIC_API_KEY: ${JCODE_GATEWAY_TOKEN:-local}
       # Per-session web preview (Wave J4): an ephemeral Cloudflare quick-tunnel
       # (cloudflared, bundled in the image) to the sandbox's dev server. OFF by
