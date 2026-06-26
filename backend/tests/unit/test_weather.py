@@ -55,6 +55,29 @@ _FORECAST_OK = {
     "daily": {"temperature_2m_max": [92], "temperature_2m_min": [80]},
 }
 
+_WEEK_OK = {
+    "timezone_abbreviation": "PDT",
+    "current": {
+        "time": "2026-06-26T09:30",
+        "temperature_2m": 64.2,
+        "apparent_temperature": 62.0,
+        "relative_humidity_2m": 80,
+        "weather_code": 3,
+        "wind_speed_10m": 5.0,
+        "wind_direction_10m": 200,
+        "is_day": 1,
+    },
+    "daily": {
+        "time": ["2026-06-26", "2026-06-27", "2026-06-28"],
+        "temperature_2m_max": [78, 80, 71],
+        "temperature_2m_min": [55, 56, 52],
+        "weather_code": [3, 0, 61],
+        "precipitation_probability_max": [10, 0, 60],
+        "wind_speed_10m_max": [8, 7, 12],
+        "wind_direction_10m_dominant": [200, 210, 230],
+    },
+}
+
 
 def _client(handler) -> WeatherClient:  # type: ignore[no-untyped-def]
     return WeatherClient(
@@ -122,6 +145,30 @@ async def test_forecast_shapes_current_hourly_and_hilo() -> None:
     assert w.hours[-1].label == "12a" and w.hours[-1].is_day is False
 
 
+async def test_weekly_forecast_shapes_the_daily_list() -> None:
+    requested: dict[str, str] = {}
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        if "geo." in request.url.host:
+            return httpx.Response(200, json=_GEO_OK)
+        requested.update(request.url.params)
+        return httpx.Response(200, json=_WEEK_OK)
+
+    client = _client(handle)
+    hit = await client.geocode("Portland")
+    assert hit is not None
+    w = await client.forecast(hit, weekly=True)
+    assert w.kind == "week"
+    assert requested["forecast_days"] == "7"  # the week window was requested
+    assert "hourly" not in requested  # a week of hourly is never fetched
+    assert w.tz_abbr == "PDT" and w.temp_f == 64
+    # First day reads "Today"; the rest are weekday abbreviations from the date.
+    assert [d.label for d in w.days] == ["Today", "Sat", "Sun"]
+    assert (w.days[0].hi_f, w.days[0].lo_f, w.days[0].cond) == (78, 55, "cloudy")
+    assert (w.days[2].cond, w.days[2].pop, w.days[2].wind_dir) == ("rain", 60, "SW")
+    assert w.hours == ()  # the hourly strip is empty for a weekly forecast
+
+
 async def test_forecast_http_error_is_recoverable() -> None:
     client = _client(lambda r: httpx.Response(503))
     try:
@@ -173,6 +220,21 @@ async def test_named_place_returns_summary_and_view() -> None:
     assert data["hours"][0]["label"] == "1p"
     # No coordinate rides the data-only payload (#9) — names + numbers only.
     assert "latitude" not in data and "lon" not in str(data)
+
+
+async def test_range_week_returns_a_daily_view() -> None:
+    def handle(request: httpx.Request) -> httpx.Response:
+        if "geo." in request.url.host:
+            return httpx.Response(200, json=_GEO_OK)
+        return httpx.Response(200, json=_WEEK_OK)
+
+    out = await _tool(handle)({"location": "Portland, OR", "range": "week"}, CTX)
+    assert isinstance(out, ToolOutput)
+    assert "This week" in out and "7-day forecast" in out
+    data = out.view.data  # type: ignore[union-attr]
+    assert data["range"] == "week"
+    assert [d["label"] for d in data["days"]] == ["Today", "Sat", "Sun"]
+    assert data["hours"] == []  # the today-only hourly strip is empty for a week
 
 
 async def test_unknown_place_reports_not_found() -> None:

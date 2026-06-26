@@ -285,6 +285,43 @@ describe("ToolView registry", () => {
     expect(container.querySelectorAll(".tv-wx-svg").length).toBeGreaterThan(0);
   });
 
+  it("renders a weather_card week view as a daily list, not the hourly strip", () => {
+    const { container } = render(
+      <ToolView
+        payload={payload({
+          view: "weather_card",
+          data: {
+            place: "Portland, Oregon, United States",
+            as_of: "9:30 AM",
+            tz: "PDT",
+            range: "week",
+            now: { temp_f: 64, feels_f: 62, cond: "cloudy", is_day: true, label: "Overcast" },
+            hi_f: 78,
+            lo_f: 55,
+            hours: [],
+            days: [
+              { label: "Today", cond: "cloudy", hi_f: 78, lo_f: 55, pop: 10, wind_mph: 8 },
+              { label: "Sat", cond: "clear", hi_f: 80, lo_f: 56, pop: 0, wind_mph: 7 },
+              { label: "Sun", cond: "rain", hi_f: 71, lo_f: 52, pop: 60, wind_mph: 12 },
+            ],
+          },
+        })}
+      />,
+    );
+    expect(container.querySelector(".tv-wx-days")).not.toBeNull();
+    expect(container.querySelector(".tv-wx-strip")).toBeNull(); // no hourly strip for a week
+    const rows = container.querySelectorAll(".tv-wx-day");
+    expect(rows).toHaveLength(3);
+    expect(screen.getByText("Today")).toBeInTheDocument();
+    expect(screen.getByText("Sun")).toBeInTheDocument();
+    expect(screen.getByText("80°")).toBeInTheDocument(); // Saturday's high
+    // The dry day hides its precip cell; the wet day shows it.
+    const pops = container.querySelectorAll(".tv-wx-dpop");
+    expect(String(pops[1]?.className)).toContain("none");
+    expect(String(pops[2]?.className)).not.toContain("none");
+    expect(container.querySelector("img")).toBeNull(); // inline glyphs only (#9)
+  });
+
   it("shows the seed on the card so the owner can reuse it", () => {
     const withSeed = render(
       <ToolView

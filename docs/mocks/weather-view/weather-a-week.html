@@ -1,0 +1,113 @@
+<!doctype html>
+<!--
+  weather_card · range="week" — the daily-list variant of the shipped variant-A card.
+  Hero current conditions (shared) + a row-per-day list with a temp-range bar scaled to
+  the week's own min/max. Mirrors the production .tv-wx-day* markup/CSS. Data: Portland,
+  OR this week. Inline SVG glyphs only (#9).
+-->
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Weather — week (daily list)</title>
+<style>
+  :root{
+    --bg:#0e0f11;--surface:#17181b;--surface-2:#1e2024;--border:#26282c;
+    --text:#e6e7e9;--text-2:#9a9da3;--text-3:#5c5f66;--surface-composer:#141518;
+    --steel:#7fa7c9;--steel-tint:rgba(127,167,201,.13);
+    --amber:#c9a36a;--amber-tint:rgba(201,163,106,.13);--r-card:16px;--r-pill:999px;--accent:var(--steel);
+  }
+  [data-theme="light"]{--bg:#f7f7f5;--surface:#fff;--surface-2:#f0f0ee;--border:#e2e2df;
+    --text:#1a1b1e;--text-2:#5c5f66;--text-3:#9a9da3;--surface-composer:#fff;}
+  *{box-sizing:border-box}
+  body{margin:0;background:#000;color:var(--text);
+    font:15px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+    display:flex;justify-content:center;padding:28px}
+  .phone{width:390px;height:820px;background:var(--bg);border-radius:34px;overflow:hidden;
+    border:1px solid var(--border);display:flex;flex-direction:column}
+  .topbar{flex:0 0 56px;display:flex;align-items:center;gap:10px;padding:0 14px;
+    border-bottom:1px solid var(--border);background:var(--surface)}
+  .topbar .t{font-size:17px;font-weight:600;flex:1}
+  .topbar .t small{display:block;font-size:11px;font-weight:400;color:var(--text-3)}
+  svg{fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
+  .chat{flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:14px}
+  .bubble{max-width:82%;padding:11px 13px;border-radius:15px;font-size:14px}
+  .me{align-self:flex-end;background:var(--steel-tint);border:1px solid color-mix(in srgb,var(--steel) 30%,transparent);border-bottom-right-radius:5px}
+  .ai{align-self:flex-start;background:var(--surface-2);border:1px solid var(--border);border-bottom-left-radius:5px}
+  /* mirror of the production tool-view + .tv-wx* classes */
+  .tv-wx{width:100%;border:1px solid var(--border);border-radius:var(--r-card);background:var(--surface);overflow:hidden}
+  .tv-wx-cap{padding:9px 13px 0;font-size:10.5px;text-transform:uppercase;letter-spacing:.06em;color:var(--text-3)}
+  .tv-wx-hero{display:flex;align-items:center;gap:14px;padding:10px 15px 13px}
+  .tv-wx-glyph{color:var(--steel)}.tv-wx-glyph .tv-wx-svg{width:52px;height:52px}
+  .tv-wx-svg{fill:none;stroke:currentColor;stroke-width:1.6}
+  .tv-wx-main{flex:1;min-width:0}
+  .tv-wx-when{font-size:12.5px;color:var(--text-2)}
+  .tv-wx-temp{font-size:44px;font-weight:600;line-height:1.05;letter-spacing:-.02em}
+  .tv-wx-deg{font-size:21px;font-weight:500;color:var(--text-2);vertical-align:top}
+  .tv-wx-sub{font-size:13px;color:var(--text-2);margin-top:1px}
+  .tv-wx-feels{display:inline-flex;align-items:center;padding:1px 7px;border-radius:var(--r-pill);font-weight:500;background:var(--amber-tint);color:var(--amber)}
+  .tv-wx-hilo{flex:0 0 auto;text-align:right;font-size:13px;color:var(--text-2);line-height:1.5}
+  .tv-wx-hilo b{color:var(--text);font-weight:600}.tv-wx-wind{color:var(--text-3)}
+  .tv-wx-days{border-top:1px solid var(--border);padding:4px 6px 6px}
+  .tv-wx-day{display:grid;grid-template-columns:44px 24px 42px 1fr;align-items:center;gap:10px;padding:7px 9px;border-bottom:1px solid var(--border)}
+  .tv-wx-day:last-child{border-bottom:0}
+  .tv-wx-dlabel{font-size:13px;color:var(--text)}
+  .tv-wx-day .tv-wx-svg{width:22px;height:22px;color:var(--text-2)}
+  .tv-wx-dpop{display:flex;align-items:center;gap:2px;font-size:11px;color:var(--steel)}
+  .tv-wx-dpop.none{visibility:hidden}
+  .tv-wx-drop{width:9px;height:9px;stroke-width:2}
+  .tv-wx-drange{display:flex;align-items:center;gap:9px;font-size:13px}
+  .tv-wx-dlo{color:var(--text-3);min-width:30px;text-align:right}
+  .tv-wx-dhi{color:var(--text);font-weight:600;min-width:30px}
+  .tv-wx-dtrack{position:relative;flex:1;height:5px;border-radius:999px;background:var(--surface-2)}
+  .tv-wx-dfill{position:absolute;top:0;height:100%;border-radius:999px;background:linear-gradient(90deg,var(--steel),var(--amber))}
+  .composer{flex:0 0 auto;display:flex;gap:8px;align-items:center;padding:10px 12px;border-top:1px solid var(--border);background:var(--surface-composer)}
+  .composer input{flex:1;background:var(--surface-2);border:1px solid var(--border);border-radius:var(--r-pill);padding:10px 14px;color:var(--text);font-size:14px;outline:none}
+  .composer .send{width:40px;height:40px;border-radius:50%;border:0;background:var(--accent);color:#10141a;display:grid;place-items:center}
+  .composer .send svg{stroke:#10141a}
+</style>
+</head>
+<body>
+  <div class="phone">
+    <div class="topbar"><div class="t">jerv<small>research</small></div></div>
+    <div class="chat">
+      <div class="bubble me">Give me a weather update for Portland, Oregon this next week.</div>
+      <div class="bubble ai">Cool and grey to start, a sunny stretch midweek, then showers return — full week below.</div>
+      <div class="tv-wx" id="card">
+        <div class="tv-wx-cap">weather · Portland, Oregon · 7-day</div>
+        <div class="tv-wx-hero">
+          <div class="tv-wx-glyph"><svg class="tv-wx-svg" viewBox="0 0 24 24"><path d="M7 18h10a3.4 3.4 0 0 0 .3-6.8 4.6 4.6 0 0 0-8.8-1.2A3.6 3.6 0 0 0 7 18z"/></svg></div>
+          <div class="tv-wx-main">
+            <div class="tv-wx-when">9:30 AM PDT</div>
+            <div class="tv-wx-temp">64<span class="tv-wx-deg">°F</span></div>
+            <div class="tv-wx-sub">Overcast · <span class="tv-wx-feels">feels 62°</span></div>
+          </div>
+          <div class="tv-wx-hilo"><b>H 78°</b><br>L 55°<br><span class="tv-wx-wind">S 5 mph</span></div>
+        </div>
+        <div class="tv-wx-days" id="days"></div>
+      </div>
+    </div>
+    <div class="composer"><input placeholder="Ask the web, or work a problem…" /><button class="send"><svg viewBox="0 0 24 24" style="width:20px;height:20px"><path d="M22 2L11 13M22 2l-7 20-4-9-9-4z"/></svg></button></div>
+  </div>
+<script>
+  const G={clear:'<svg class="tv-wx-svg" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4.4"/><path d="M12 3v1.5M12 19.5V21M4.5 12H3M21 12h-1.5M6.4 6.4l-1-1M18.6 18.6l-1-1M17.6 6.4l1-1M5.4 18.6l1-1"/></svg>',
+    partly:'<svg class="tv-wx-svg" viewBox="0 0 24 24"><path d="M8 6a3 3 0 0 1 5.4 1"/><path d="M12 3.5v1"/><path d="M7 18h9a3.2 3.2 0 0 0 .2-6.4 4.3 4.3 0 0 0-8-1.2A3.4 3.4 0 0 0 7 18z"/></svg>',
+    cloudy:'<svg class="tv-wx-svg" viewBox="0 0 24 24"><path d="M7 18h10a3.4 3.4 0 0 0 .3-6.8 4.6 4.6 0 0 0-8.8-1.2A3.6 3.6 0 0 0 7 18z"/></svg>',
+    rain:'<svg class="tv-wx-svg" viewBox="0 0 24 24"><path d="M7 14h9a3.2 3.2 0 0 0 .3-6.4 4.3 4.3 0 0 0-8.2-1.1A3.4 3.4 0 0 0 7 14z"/><path d="M8 18l-1 2.5M12 18l-1 2.5M16 18l-1 2.5"/></svg>'};
+  const drop='<svg class="tv-wx-drop" viewBox="0 0 24 24"><path d="M12 3s5 6 5 10a5 5 0 0 1-10 0c0-4 5-10 5-10z"/></svg>';
+  const days=[
+    {l:'Today',c:'cloudy',hi:78,lo:55,pop:10},{l:'Sat',c:'clear',hi:80,lo:56,pop:0},
+    {l:'Sun',c:'rain',hi:71,lo:52,pop:60},{l:'Mon',c:'partly',hi:74,lo:53,pop:20},
+    {l:'Tue',c:'clear',hi:82,lo:57,pop:0},{l:'Wed',c:'rain',hi:69,lo:54,pop:70},
+    {l:'Thu',c:'cloudy',hi:72,lo:53,pop:30}];
+  const min=Math.min(...days.map(d=>d.lo)),max=Math.max(...days.map(d=>d.hi)),span=max-min||1;
+  document.getElementById('days').innerHTML=days.map(d=>{
+    const left=(d.lo-min)/span*100,width=(d.hi-d.lo)/span*100;
+    return `<div class="tv-wx-day"><div class="tv-wx-dlabel">${d.l}</div>${G[d.c]}
+      <div class="tv-wx-dpop ${d.pop?'':'none'}">${drop}${d.pop}%</div>
+      <div class="tv-wx-drange"><span class="tv-wx-dlo">${d.lo}°</span>
+        <span class="tv-wx-dtrack"><span class="tv-wx-dfill" style="left:${left}%;width:${width}%"></span></span>
+        <span class="tv-wx-dhi">${d.hi}°</span></div></div>`;}).join('');
+</script>
+</body>
+</html>
