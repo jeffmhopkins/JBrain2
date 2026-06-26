@@ -153,7 +153,7 @@ CATALOG: tuple[LocalModel, ...] = (
     ),
     LocalModel(
         id="qwen3-coder-next",
-        label="Qwen3-Coder-Next 80B · coding agent",
+        label="Qwen3-Coder-Next 80B · coding agent (Q4)",
         served_model="qwen3-coder-next",
         tiers=("high",),
         supports_vision=False,
@@ -167,10 +167,37 @@ CATALOG: tuple[LocalModel, ...] = (
         quant="UD-Q4_K_XL",
         size_gb=49.6,
         note="80B MoE, 3B active — agentic coder (~70% SWE-Bench Verified); the model "
-        "behind code mode (jcode). Same hybrid-attention arch as qwen3-next-80b — "
-        "confirm the gateway's llama.cpp build supports it (a recent build fixed a "
-        "Qwen looping bug). Native 256k window; serves the gateway default — raise -c "
-        "only with proof it fits beside the weights.",
+        "behind code mode (jcode). Co-resides beside another large model. Same "
+        "hybrid-attention arch as qwen3-next-80b — confirm the gateway's llama.cpp "
+        "build supports it (a recent build fixed a Qwen looping bug). Native 256k "
+        "window; serves the gateway default — raise -c only with proof it fits.",
+        kv_gb_per_128k=5.0,
+    ),
+    LocalModel(
+        id="qwen3-coder-next-q8",
+        label="Qwen3-Coder-Next 80B · coding agent (Q8)",
+        served_model="qwen3-coder-next-q8",
+        tiers=("high",),
+        supports_vision=False,
+        supports_tools=True,
+        # Opt-in, standalone high-fidelity coder for a box that PINS one jcode model.
+        # Not recommended (a plain local-hosting enable never pulls its ~85 GB).
+        recommended=False,
+        hf_repo="unsloth/Qwen3-Coder-Next-GGUF",
+        # Sharded into a Q8_0/ subdir; the glob matches each shard's path (same shape
+        # as the 235B's UD-Q3_K_XL/ subdir). The config generator resolves the shards.
+        gguf_include="*Q8_0*.gguf",
+        mmproj_include=None,
+        quant="Q8_0",
+        # ~85 GB (8-bit of 80B) — an ESTIMATE until measured on disk; the install bar
+        # tolerates it. Runs STANDALONE on a 128 GB box: it will NOT co-reside with
+        # gpt-oss-120b, so expect a cold load on every switch and a tight context
+        # budget beside the weights. If the gateway's llama.cpp build won't load Q8 on
+        # gfx1151, fall back to the Q4 entry above.
+        size_gb=85.0,
+        note="80B MoE, 3B active — agentic coder at 8-bit (near-lossless) for jcode "
+        "pinned to one model. Standalone only on a 128 GB box; cold-loads on switch. "
+        "Same hybrid-attention arch — confirm the llama.cpp build serves Q8 on gfx1151.",
         kv_gb_per_128k=5.0,
     ),
     LocalModel(
