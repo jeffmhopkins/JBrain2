@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { api } from "../api/client";
@@ -125,6 +127,18 @@ describe("JcodeSessionScreen", () => {
     // While the Edit tool is in flight, the reused AgentStatusLine names what it's doing.
     expect(await screen.findByText(/Editing/)).toBeInTheDocument();
     release();
+  });
+
+  it("scopes the markdown styles to the jcode bubble (parity, not just .fb-shell)", () => {
+    // The agent reply renders via the shared Markdown component, whose styles live under
+    // .fb-shell. The jcode bubble isn't inside .fb-shell, so those rules must ALSO target
+    // .jcode-bubble — otherwise markdown renders unstyled (UA defaults) and parity breaks.
+    const css = readFileSync(resolve(process.cwd(), "src/styles.css"), "utf8");
+    const mdRules = css.match(/^[^\n{]*\.md-[a-z-]+[^\n{]*\{/gim) ?? [];
+    const fbScoped = mdRules.filter((s) => s.includes(".fb-shell"));
+    expect(fbScoped.length).toBeGreaterThan(0);
+    // Every .fb-shell-scoped markdown rule must also reach the jcode bubble.
+    expect(fbScoped.every((s) => s.includes(".jcode-bubble"))).toBe(true);
   });
 
   it("shows the model and work-branch in the composer context bar", async () => {

@@ -342,7 +342,7 @@ export function JcodeSessionScreen({
           <span className="jcode-repo">{session.repo || "scratch"}</span>
           <span className="jcode-branch">@ {session.work_branch || session.branch}</span>
         </span>
-        <span className="jcode-modelchip">qwen 80B-A3B · on-box</span>
+        <span className="jcode-modelchip">{model?.model ?? "qwen3-coder-next"} · on-box</span>
       </header>
 
       <div className="jcode-actions">
@@ -525,7 +525,7 @@ export function JcodeSessionScreen({
               turn stream carries token usage.) */}
           <div className="jcode-cfoot">
             <span className="jcode-cdot" />
-            <span className="jcode-cmodel">{model?.model ?? "Qwen3-Coder-Next"}</span>
+            <span className="jcode-cmodel">{model?.model ?? "qwen3-coder-next"}</span>
             <span className="jcode-csep">·</span>
             <span className="jcode-cbranch">{session.work_branch || session.branch}</span>
             <span className="jcode-csep">·</span>

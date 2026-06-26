@@ -6929,24 +6929,24 @@ button.small {
   gap: 8px;
   min-width: 0;
 }
-.fb-shell .md-p {
+:is(.fb-shell, .jcode-bubble) .md-p {
   margin: 0;
   line-height: 1.45;
 }
-.fb-shell .md-h {
+:is(.fb-shell, .jcode-bubble) .md-h {
   margin: 2px 0 0;
   font-size: 15px;
   font-weight: 600;
 }
-.fb-shell .md-ul,
-.fb-shell .md-ol {
+:is(.fb-shell, .jcode-bubble) .md-ul,
+:is(.fb-shell, .jcode-bubble) .md-ol {
   margin: 0;
   padding-left: 20px;
   display: flex;
   flex-direction: column;
   gap: 3px;
 }
-.fb-shell .md-code {
+:is(.fb-shell, .jcode-bubble) .md-code {
   font-family: var(--font-mono);
   font-size: 0.9em;
   background: var(--surface-2);
@@ -6954,7 +6954,7 @@ button.small {
   border-radius: 5px;
   padding: 0 4px;
 }
-.fb-shell .md-pre {
+:is(.fb-shell, .jcode-bubble) .md-pre {
   margin: 0;
   background: var(--surface-2);
   border: 1px solid var(--border);
@@ -6962,13 +6962,13 @@ button.small {
   padding: 10px 12px;
   overflow-x: auto;
 }
-.fb-shell .md-pre code {
+:is(.fb-shell, .jcode-bubble) .md-pre code {
   font-family: var(--font-mono);
   font-size: 12px;
   line-height: 1.5;
   white-space: pre;
 }
-.fb-shell .md-quote {
+:is(.fb-shell, .jcode-bubble) .md-quote {
   margin: 0;
   padding: 2px 0 2px 12px;
   border-left: 2px solid var(--border);
@@ -6977,72 +6977,72 @@ button.small {
 /* A recognized pipe table — rendered as a real grid (models emit these as
    ragged ASCII that never lines up; the renderer reflows them here). The wrapper
    scrolls horizontally so a wide table stays inside the bubble on a phone. */
-.fb-shell .md-table-wrap {
+:is(.fb-shell, .jcode-bubble) .md-table-wrap {
   overflow-x: auto;
   border: 1px solid var(--border);
   border-radius: var(--r-input);
 }
-.fb-shell .md-table {
+:is(.fb-shell, .jcode-bubble) .md-table {
   border-collapse: collapse;
   width: 100%;
   font-size: 13px;
   line-height: 1.4;
 }
-.fb-shell .md-table th,
-.fb-shell .md-table td {
+:is(.fb-shell, .jcode-bubble) .md-table th,
+:is(.fb-shell, .jcode-bubble) .md-table td {
   padding: 6px 10px;
   text-align: left;
   vertical-align: top;
   border-bottom: 1px solid var(--border);
   border-right: 1px solid var(--border);
 }
-.fb-shell .md-table th:last-child,
-.fb-shell .md-table td:last-child {
+:is(.fb-shell, .jcode-bubble) .md-table th:last-child,
+:is(.fb-shell, .jcode-bubble) .md-table td:last-child {
   border-right: none;
 }
-.fb-shell .md-table thead th {
+:is(.fb-shell, .jcode-bubble) .md-table thead th {
   background: var(--surface-2);
   font-weight: 600;
   color: var(--text-2);
   white-space: nowrap;
 }
-.fb-shell .md-table tbody tr:last-child td {
+:is(.fb-shell, .jcode-bubble) .md-table tbody tr:last-child td {
   border-bottom: none;
 }
 /* KaTeX-typeset math. Inline math sits in the prose at the surrounding size;
    display math is centered on its own line in a horizontally scrollable wrapper so
    a wide equation stays bounded inside the bubble on a phone (mirrors the table
    treatment). KaTeX ships its own font sizing, so we only set flow/scroll here. */
-.fb-shell .md-math {
+:is(.fb-shell, .jcode-bubble) .md-math {
   font-size: 1.05em;
 }
-.fb-shell .md-math-wrap {
+:is(.fb-shell, .jcode-bubble) .md-math-wrap {
   overflow-x: auto;
   overflow-y: hidden;
   padding: 2px 0;
 }
-.fb-shell .md-math-block {
+:is(.fb-shell, .jcode-bubble) .md-math-block {
   display: block;
 }
 /* A formula whose LaTeX hasn't fully streamed in yet — a quiet stand-in held until
    the body completes, so the bubble never flashes KaTeX's red parse error. */
-.fb-shell .md-math-pending {
+:is(.fb-shell, .jcode-bubble) .md-math-pending {
   color: var(--text-3);
   font-style: italic;
 }
-.fb-shell .md-link {
+:is(.fb-shell, .jcode-bubble) .md-link {
   color: var(--steel);
   text-decoration: underline;
   text-underline-offset: 2px;
 }
 /* a quiet temporal chip — styled, not yet tappable (calendar is unbuilt) */
-.fb-shell .md-temporal {
+:is(.fb-shell, .jcode-bubble) .md-temporal {
   border-bottom: 1px dotted var(--text-3);
   cursor: help;
 }
 /* an inline entity link — the name reads as prose with a domain-tinted dotted
    underline (border color set per entity), tapping opens its page */
-.fb-shell .md-entity {
+:is(.fb-shell, .jcode-bubble) .md-entity {
   border: none;
   border-bottom: 1.5px dotted var(--text-3);
   background: none;
@@ -7054,15 +7054,15 @@ button.small {
   border-radius: 2px;
   transition: background 0.12s;
 }
-.fb-shell .md-entity:hover {
+:is(.fb-shell, .jcode-bubble) .md-entity:hover {
   background: var(--surface-2);
 }
 /* a tappable [^n] source citation superscript */
-.fb-shell .md-cite {
+:is(.fb-shell, .jcode-bubble) .md-cite {
   vertical-align: super;
   margin-left: 1px;
 }
-.fb-shell .md-cite button {
+:is(.fb-shell, .jcode-bubble) .md-cite button {
   font: inherit;
   font-size: 10px;
   font-weight: 600;
@@ -7079,14 +7079,14 @@ button.small {
 /* a place pin trailing a detected address / GPS pair — taps through to Google
    Maps; the glyph follows the steel link color and nudges down to sit on the
    text baseline */
-.fb-shell .md-place {
+:is(.fb-shell, .jcode-bubble) .md-place {
   display: inline-flex;
   align-items: center;
   vertical-align: -2px;
   margin-left: 3px;
   color: var(--steel);
 }
-.fb-shell .md-place:hover {
+:is(.fb-shell, .jcode-bubble) .md-place:hover {
   color: var(--text);
 }
 /* Full Brain glyphs are inlined line-art SVGs that carry no fill/stroke
@@ -7142,18 +7142,18 @@ button.small {
    reader sees which prose is unverified, without a solid highlight block —
    warning=amber (DESIGN.md). Paired with the inline ⚠; the end-of-bubble fallback
    carries no .md-claim. */
-.fb-shell .md-claim {
+:is(.fb-shell, .jcode-bubble) .md-claim {
   text-decoration: underline;
   text-decoration-color: color-mix(in srgb, var(--amber) 70%, transparent);
   text-underline-offset: 2px;
   background: color-mix(in srgb, var(--amber) 14%, transparent);
   border-radius: 3px;
 }
-.fb-shell .md-flag-wrap {
+:is(.fb-shell, .jcode-bubble) .md-flag-wrap {
   position: relative;
   white-space: nowrap;
 }
-.fb-shell .md-flag {
+:is(.fb-shell, .jcode-bubble) .md-flag {
   vertical-align: super;
   margin-left: 1px;
   font-size: 10px;
@@ -7167,11 +7167,11 @@ button.small {
   color: var(--amber);
   cursor: pointer;
 }
-.fb-shell .md-flag[aria-expanded="true"] {
+:is(.fb-shell, .jcode-bubble) .md-flag[aria-expanded="true"] {
   outline: 1px solid var(--amber);
 }
 /* the reason note: a calm amber-tinted inline aside the tap reveals */
-.fb-shell .md-flag-note {
+:is(.fb-shell, .jcode-bubble) .md-flag-note {
   display: inline-block;
   white-space: normal;
   margin-left: 6px;
@@ -7185,7 +7185,7 @@ button.small {
 }
 /* the graceful fallback row: an end-of-bubble flag when a claim couldn't anchor
    in the prose */
-.fb-shell .md-flag-fallback {
+:is(.fb-shell, .jcode-bubble) .md-flag-fallback {
   margin: 6px 0 0;
 }
 
