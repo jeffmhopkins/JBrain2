@@ -157,7 +157,8 @@ class FakeGeocoder:
 
 def _tool(handler, geocoder=None):  # type: ignore[no-untyped-def]
     geocoder = geocoder or FakeGeocoder(None)
-    return build_weather_handlers(_client(handler), geocoder)["weather"]
+    # FakeGeocoder is structural (it has nearest()); the handler never type-checks it.
+    return build_weather_handlers(_client(handler), geocoder)["weather"]  # type: ignore[arg-type]
 
 
 async def test_named_place_returns_summary_and_view() -> None:
