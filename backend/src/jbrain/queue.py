@@ -445,6 +445,40 @@ async def fail(
     return exhausted
 
 
+async def defer(
+    maker: async_sessionmaker[AsyncSession],
+    ctx: SessionContext,
+    job_id: str,
+    delay: timedelta,
+    *,
+    reason: str,
+) -> None:
+    """Reschedule a claimed (running) job to run again after `delay`, WITHOUT burning
+    an attempt — the worker's "not now, try again soon" for an unmet precondition.
+
+    Distinct from `fail`: a precondition that isn't satisfied yet (e.g. a local model
+    not loaded) is not an error, so attempts/max_attempts are untouched and the job
+    never reaches status='failed' however long it waits. The job returns to 'queued'
+    with a future `run_after`, so the claim loop skips it until the delay elapses, then
+    re-evaluates the gate. `reason` is recorded in `last_error` (the only diagnostic
+    column) prefixed 'deferred:' so Ops can see why it is waiting without mistaking it
+    for a failure — status stays 'queued'."""
+    async with scoped_session(maker, ctx) as session:
+        await session.execute(
+            text(
+                """
+                UPDATE app.jobs
+                SET status = 'queued',
+                    locked_at = NULL,
+                    last_error = :reason,
+                    run_after = now() + make_interval(secs => :delay)
+                WHERE id = :id AND status = 'running'
+                """
+            ),
+            {"id": job_id, "reason": f"deferred: {reason}", "delay": delay.total_seconds()},
+        )
+
+
 async def backfill_pending_notes(
     maker: async_sessionmaker[AsyncSession], ctx: SessionContext
 ) -> int:

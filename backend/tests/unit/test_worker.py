@@ -60,10 +60,15 @@ class FakeQueue:
         self.backfill_error: Exception | None = None
         # Whether a non-permanent fail() burned the last attempt.
         self.fail_exhausts = False
+        # (job_id, reason) for each precondition-driven defer.
+        self.deferred: list[tuple[str, str]] = []
 
     async def claim(self, maker: Any, ctx: Any) -> Job | None:
         assert ctx is queue.SYSTEM_CTX
         return self.jobs.pop(0) if self.jobs else None
+
+    async def defer(self, maker: Any, ctx: Any, job_id: str, delay: Any, *, reason: str) -> None:
+        self.deferred.append((job_id, reason))
 
     async def complete(self, maker: Any, ctx: Any, job_id: str) -> None:
         self.completed.append(job_id)
@@ -104,6 +109,7 @@ def install(monkeypatch: pytest.MonkeyPatch, fake: FakeQueue) -> None:
         "claim",
         "complete",
         "fail",
+        "defer",
         "backfill_pending_notes",
         "backfill_unembedded_notes",
         "backfill_pending_integration",
@@ -333,6 +339,74 @@ async def test_process_one_fails_unknown_kind(monkeypatch: pytest.MonkeyPatch) -
 async def test_process_one_reports_idle_queue(monkeypatch: pytest.MonkeyPatch) -> None:
     install(monkeypatch, FakeQueue())
     assert await worker.process_one(None, {}) is False  # type: ignore[arg-type]
+
+
+def _gated_registry() -> Any:
+    """A registry with one action that declares a precondition named 'gate'."""
+    from jbrain.workflow.registry import ActionSpec, build_registry
+
+    return build_registry(
+        [ActionSpec(name="triage_inbox", version=1, handler="triage_inbox", precondition="gate")]
+    )
+
+
+async def test_unmet_precondition_defers_without_running_or_failing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from jbrain.workflow.preconditions import PreconditionResult
+
+    fake = FakeQueue([job(kind="triage_inbox")])
+    install(monkeypatch, fake)
+    ran = False
+
+    async def handler(_payload: dict[str, Any]) -> None:
+        nonlocal ran
+        ran = True
+
+    async def gate() -> PreconditionResult:
+        return PreconditionResult(met=False, reason="local model 'x' not loaded")
+
+    assert (
+        await worker.process_one(
+            None,  # type: ignore[arg-type]
+            {"triage_inbox": handler},
+            registry=_gated_registry(),
+            preconditions={"gate": gate},
+        )
+        is True
+    )
+    # Deferred, not run — and never marked complete or failed (no attempt burned).
+    assert ran is False
+    assert fake.deferred == [("job-1", "local model 'x' not loaded")]
+    assert fake.completed == [] and fake.failed == []
+
+
+async def test_met_precondition_runs_the_handler(monkeypatch: pytest.MonkeyPatch) -> None:
+    from jbrain.workflow.preconditions import PreconditionResult
+
+    fake = FakeQueue([job(kind="triage_inbox")])
+    install(monkeypatch, fake)
+    ran = False
+
+    async def handler(_payload: dict[str, Any]) -> None:
+        nonlocal ran
+        ran = True
+
+    async def gate() -> PreconditionResult:
+        return PreconditionResult(met=True)
+
+    assert (
+        await worker.process_one(
+            None,  # type: ignore[arg-type]
+            {"triage_inbox": handler},
+            registry=_gated_registry(),
+            preconditions={"gate": gate},
+        )
+        is True
+    )
+    assert ran is True
+    assert fake.completed == ["job-1"]
+    assert fake.deferred == []
 
 
 async def test_run_loop_backfills_once_then_polls(monkeypatch: pytest.MonkeyPatch) -> None:

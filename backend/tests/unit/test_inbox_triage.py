@@ -1,6 +1,7 @@
-"""The `triage_inbox` engine action: classify the newest day of inbox mail into
-priority labels and archive it (docs/EMAIL_ARCHIVIST_PLAN.md). Driven against the
-in-memory FakeGmail and a scripted FakeLlmClient — no network, no real model."""
+"""The `triage_inbox` engine action: classify untriaged inbox mail into priority
+labels, archiving all but `high` (which stays in the inbox) — see
+docs/EMAIL_ARCHIVIST_PLAN.md. Driven against the in-memory FakeGmail and a scripted
+FakeLlmClient — no network, no real model."""
 
 from __future__ import annotations
 
@@ -40,7 +41,7 @@ def _factory(fake: FakeGmail) -> Callable[[], Awaitable[GmailApi]]:
 
 def _router(verdicts: list[dict]) -> tuple[LlmRouter, FakeLlmClient]:
     # One verdict per email, replayed in call order (the batch is classified one
-    # message at a time, sorted by id — see InboxTriage._newest_day).
+    # message at a time, sorted by id — see InboxTriage.run).
     fake = FakeLlmClient(responses=[json.dumps(v) for v in verdicts])
     return LlmRouter({"xai": fake}, {"triage.classify": ("xai", "m")}), fake
 
@@ -55,8 +56,9 @@ def _with_untriaged(fake: FakeGmail, *mids: str) -> None:
         fake._on[mid].add(_UNTRIAGED_ID)
 
 
-async def test_files_newest_day_and_leaves_older_mail_in_inbox() -> None:
-    # m0 is the previous day; m1/m2/m3 are the newest day and the only ones triaged.
+async def test_sweeps_whole_inbox_keeping_high_and_archiving_the_rest() -> None:
+    # m0 is a previous day; the run still sweeps it — there is no "newest day" window
+    # anymore, the whole inbox is classified each run.
     fake = FakeGmail(
         messages=[
             _msg("m0", date="Tue, 24 Jun 2026 23:00:00 +0000", subject="yesterday"),
@@ -67,10 +69,10 @@ async def test_files_newest_day_and_leaves_older_mail_in_inbox() -> None:
         labels=[GmailLabel(id=_UNTRIAGED_ID, name="untriaged")],
     )
     _with_untriaged(fake, "m0", "m1", "m2", "m3")
-    # Batch is sorted by id, so the calls land in m1, m2, m3 order. m3 is spam below
-    # the floor.
+    # Batch is sorted by id, so the calls land in m0, m1, m2, m3 order.
     router, llm = _router(
         [
+            {"bucket": "medium", "confidence": 0.9},
             {"bucket": "high", "confidence": 0.9},
             {"bucket": "low", "confidence": 0.95},
             {"bucket": "spam", "confidence": 0.3},
@@ -79,18 +81,35 @@ async def test_files_newest_day_and_leaves_older_mail_in_inbox() -> None:
 
     await InboxTriage(_factory(fake), router).run({})
 
-    # One LLM call per newest-day email; the email rides in user_text, not the system.
-    assert len(llm.calls) == 3
-    assert "invoice" in llm.calls[0]["user_text"]
-    assert "invoice" not in llm.calls[0]["system"]
+    # One LLM call per email — the whole inbox, not just one day; the email rides in
+    # user_text, not the system.
+    assert len(llm.calls) == 4
+    assert "invoice" in llm.calls[1]["user_text"]
+    assert "invoice" not in llm.calls[1]["system"]
 
-    # Newest-day mail filed: triaged/* added, INBOX + untriaged removed.
-    assert _names_on(fake, "m1") == {"triaged/high"}
+    # high is filed in place: labeled but KEPT in the inbox, with untriaged cleared.
+    assert _names_on(fake, "m1") == {"INBOX", "triaged/high"}
+    # Every other bucket is archived out of the inbox (INBOX + untriaged removed).
+    assert _names_on(fake, "m0") == {"triaged/medium"}
     assert _names_on(fake, "m2") == {"triaged/low"}
     # The model's spam verdict stands as given — the confidence floor was removed.
     assert _names_on(fake, "m3") == {"triaged/spam"}
-    # Previous day untouched — still in the inbox for a later run.
-    assert _names_on(fake, "m0") == {"INBOX", "untriaged"}
+
+
+async def test_already_filed_high_is_excluded_on_rerun() -> None:
+    fake = FakeGmail(messages=[_msg("m1", date="Wed, 25 Jun 2026 09:00:00 +0000")])
+    router1, _ = _router([{"bucket": "high", "confidence": 0.9}])
+    await InboxTriage(_factory(fake), router1).run({})
+    # high stays in the inbox, now carrying its label.
+    assert _names_on(fake, "m1") == {"INBOX", "triaged/high"}
+
+    # Second run: m1 still has INBOX, but `in:inbox -label:triaged/high` excludes it, so
+    # it is never re-classified (no LLM call) — that exclusion is what makes "keep high
+    # in the inbox" terminate instead of looping forever.
+    router2, llm2 = _router([])
+    await InboxTriage(_factory(fake), router2).run({})
+    assert llm2.calls == []
+    assert _names_on(fake, "m1") == {"INBOX", "triaged/high"}
 
 
 async def test_html_body_is_rendered_to_markdown_for_the_model() -> None:
@@ -111,31 +130,6 @@ async def test_html_body_is_rendered_to_markdown_for_the_model() -> None:
     assert "everything" in sent  # link text preserved
 
 
-async def test_buckets_the_newest_day_in_the_owner_timezone() -> None:
-    # mA is Jun 26 in UTC but Jun 25 21:00 in America/New_York (UTC-4 in June) — the
-    # same local day as mB. UTC bucketing would split them and file only mA, "missing"
-    # the rest of the local day; local-tz bucketing groups both into the newest day.
-    fake = FakeGmail(
-        messages=[
-            _msg("mA", date="Thu, 26 Jun 2026 01:00:00 +0000"),
-            _msg("mB", date="Wed, 25 Jun 2026 15:00:00 +0000"),
-        ]
-    )
-    router, llm = _router(
-        [{"bucket": "high", "confidence": 0.9}, {"bucket": "low", "confidence": 0.9}]
-    )
-
-    async def tz() -> str:
-        return "America/New_York"
-
-    await InboxTriage(_factory(fake), router, tz).run({})
-
-    # Both local-Jun-25 messages were classified and archived out of the inbox.
-    assert len(llm.calls) == 2
-    assert "INBOX" not in _names_on(fake, "mA")
-    assert "INBOX" not in _names_on(fake, "mB")
-
-
 async def test_empty_inbox_makes_no_llm_call() -> None:
     fake = FakeGmail(messages=[])
     router, llm = _router([])
@@ -150,29 +144,32 @@ async def test_unclassified_message_stays_in_inbox() -> None:
             _msg("m2", date="Wed, 25 Jun 2026 10:00:00 +0000"),
         ]
     )
-    # m1 classifies; m2's verdict is unusable (no bucket), so m2 is left in the inbox.
-    router, _ = _router([{"bucket": "high", "confidence": 0.8}, {"confidence": 0.5}])
+    # m1 classifies (medium → archived); m2's verdict is unusable (no bucket), so m2 is
+    # left in the inbox for a later run.
+    router, _ = _router([{"bucket": "medium", "confidence": 0.8}, {"confidence": 0.5}])
     await InboxTriage(_factory(fake), router).run({})
-    assert _names_on(fake, "m1") == {"triaged/high"}
+    assert _names_on(fake, "m1") == {"triaged/medium"}
     assert _names_on(fake, "m2") == {"INBOX"}
 
 
 async def test_archived_mail_drops_out_of_inbox_on_rerun() -> None:
-    # Resumability: after filing, the newest-day mail leaves the inbox, so a second
-    # run sees only what remains (here, the older day's message).
+    # Resumability: a filed (non-high) message leaves the inbox, so a second run sees
+    # only what remains.
     fake = FakeGmail(
         messages=[
             _msg("m0", date="Tue, 24 Jun 2026 12:00:00 +0000"),
             _msg("m1", date="Wed, 25 Jun 2026 12:00:00 +0000"),
         ]
     )
-    router1, _ = _router([{"bucket": "high", "confidence": 0.9}])
+    router1, llm1 = _router(
+        [{"bucket": "low", "confidence": 0.9}, {"bucket": "medium", "confidence": 0.9}]
+    )
     await InboxTriage(_factory(fake), router1).run({})
-    assert _names_on(fake, "m1") == {"triaged/high"}
-    assert _names_on(fake, "m0") == {"INBOX"}
-
-    # Second run: m1 is gone from the inbox; m0 (now the newest remaining) is filed.
-    router2, llm2 = _router([{"bucket": "low", "confidence": 0.9}])
-    await InboxTriage(_factory(fake), router2).run({})
-    assert len(llm2.calls) == 1
+    assert len(llm1.calls) == 2
     assert _names_on(fake, "m0") == {"triaged/low"}
+    assert _names_on(fake, "m1") == {"triaged/medium"}
+
+    # Second run: both are gone from the inbox, so there is nothing left to classify.
+    router2, llm2 = _router([])
+    await InboxTriage(_factory(fake), router2).run({})
+    assert llm2.calls == []

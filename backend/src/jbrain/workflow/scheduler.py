@@ -265,6 +265,16 @@ async def _enqueue_pipeline(
     steps: list[EnqueuedStep] = []
     for step in pipeline.steps:
         spec = registry.get(step.action)
+        # A preconditioned action can sit DEFERRED in the queue (status='queued' with a
+        # future run_after, waiting on its precondition — e.g. a model to load). Firing
+        # it again on the next tick would stack a second waiting job, so COALESCE: when
+        # one is already active (queued or running), enqueue nothing and let the waiting
+        # job absorb this fire's intent. These are payloadless system sweeps, so the
+        # pending job and this one are interchangeable. A plain action enqueues as
+        # before — re-firing it is handler-dedup-safe (E4).
+        if spec.precondition and await queue.has_active_kind(maker, queue.SYSTEM_CTX, spec.handler):
+            log.info("scheduler.step_coalesced", action=step.action, kind=spec.handler)
+            continue
         job_id = await queue.enqueue(maker, queue.SYSTEM_CTX, spec.handler, step.params)
         steps.append(EnqueuedStep(kind=spec.handler, job_id=job_id))
     return steps
