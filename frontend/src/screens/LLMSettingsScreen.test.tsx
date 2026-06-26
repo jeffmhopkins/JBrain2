@@ -196,6 +196,13 @@ describe("LLMSettingsScreen", () => {
     expect(select.value).toBe("qwen3-coder-next");
     fireEvent.change(select, { target: { value: "qwen3-vl-30b" } });
     await waitFor(() => expect(jcodePuts).toContain("qwen3-vl-30b"));
+
+    // The card now matches the role-tier styling (.llm-group) and sits LAST — at the
+    // bottom of the list, under the vision tier.
+    const groupNodes = Array.from(document.querySelectorAll(".llm-group"));
+    const codeMode = document.querySelector(".llm-group.llm-jcode");
+    expect(codeMode).not.toBeNull();
+    expect(groupNodes[groupNodes.length - 1]).toBe(codeMode);
   });
 
   it("hides reasoning and shows the Claude note when a tier moves off grok", async () => {
