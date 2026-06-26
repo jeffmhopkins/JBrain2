@@ -9,9 +9,10 @@ same-session share but 403s a cross-session share or any other kind.
 """
 
 from datetime import UTC, datetime, timedelta
+from typing import cast
 
 import pytest
-from fastapi import HTTPException
+from fastapi import HTTPException, Request
 
 from jbrain.api.deps import jcode_session_access
 from jbrain.auth import keys
@@ -20,9 +21,9 @@ from jbrain.auth.service import PrincipalInfo
 from tests.unit.fakes import FakeAuthRepo
 
 
-def _req(sid: str):
+def _req(sid: str) -> Request:
     """A minimal stand-in for the Starlette Request the gate reads path params off of."""
-    return type("Req", (), {"path_params": {"sid": sid}})()
+    return cast(Request, type("Req", (), {"path_params": {"sid": sid}})())
 
 
 @pytest.mark.asyncio
