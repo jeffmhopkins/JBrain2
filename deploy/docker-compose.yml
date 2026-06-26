@@ -129,7 +129,11 @@ services:
       # Read-only view of the provisioned image weights so the settings drawer can
       # report each image model's real on-disk footprint (the shared RAM meter).
       - ./comfyui-models:/data/comfyui-models:ro
-    networks: [edge, internal]
+    # `jcode`: the api proxies the owner's code-mode control surface to the jcode
+    # control server (http://jcode:9100), which lives ONLY on the jcode network — so
+    # the api must join it or every /api/jcode/* call 502s (Wave J2). On a stock deploy
+    # the network is empty (no jcode profile); the api's jcode client stays fail-closed.
+    networks: [edge, internal, jcode]
     depends_on:
       db:
         condition: service_healthy
