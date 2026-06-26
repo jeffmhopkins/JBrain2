@@ -61,6 +61,27 @@ async def test_client_maps_http_error_to_jcode_error() -> None:
         await client.get_session("s1")
 
 
+async def test_client_delete_swallows_404_already_gone() -> None:
+    # The control server lost the session (idle-reaped, or a restart wiped its
+    # in-memory index) but the launcher row persists. Delete must succeed so the
+    # route can drop the durable row — a 404 here is the desired end state.
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.method == "DELETE"
+        return httpx.Response(404, json={"detail": "unknown session: s1"})
+
+    client = JcodeClient("http://jcode:9100", "tok", transport=httpx.MockTransport(handler))
+    await client.delete("s1")  # does not raise
+
+
+async def test_client_delete_raises_on_other_errors() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(500, text="boom")
+
+    client = JcodeClient("http://jcode:9100", "tok", transport=httpx.MockTransport(handler))
+    with pytest.raises(JcodeError):
+        await client.delete("s1")
+
+
 async def test_unconfigured_client_raises() -> None:
     client = JcodeClient("", "tok")
     with pytest.raises(JcodeError):
