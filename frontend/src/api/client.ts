@@ -405,8 +405,11 @@ export interface LocalModelInfo {
   download_gb: number | null;
   note: string;
   /** The model's catalog default context window — the gateway's `-c` absent an
-   * override, and the ceiling the size picker caps at. */
+   * override (the picker's "no override" value). */
   context_window: number;
+  /** The model's native maximum window — the ceiling the size picker caps at, so
+   * the operator can raise `-c` toward what the weights support. */
+  max_context_window: number;
   /** The operator's per-model override (tokens), or null to use the default. */
   context_window_override: number | null;
   /** Whether the operator has staged this model (the middle lifecycle state). */

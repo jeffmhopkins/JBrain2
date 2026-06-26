@@ -148,8 +148,12 @@ class LocalModelInfo(BaseModel):
     download_gb: float | None
     note: str
     # The model's catalog default context window — the gateway's `-c` absent an
-    # override, and the ceiling the drawer caps the size picker at.
+    # override (the size picker's "no override" value).
     context_window: int
+    # The model's native maximum window — the ceiling the drawer caps the size picker
+    # at, so the operator can raise `-c` toward what the weights support (not just the
+    # conservative default). The picker's KV-cache estimate flags when a big one won't fit.
+    max_context_window: int
     # The operator's per-model override (tokens), or null to use the default. Drives
     # the size picker's current value; editable only while the model is idle.
     context_window_override: int | None
@@ -387,6 +391,7 @@ def _local_model_info(
         download_gb=_download_gb(settings, m.id),
         note=m.note,
         context_window=m.context_window,
+        max_context_window=m.max_context_window,
         context_window_override=override,
         staged=staged,
         kv_gb=kv_gb,
@@ -538,7 +543,7 @@ async def load_local_model(
 class ContextWindowIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    # null clears the override (revert to the catalog default); else 1..catalog-max.
+    # null clears the override (revert to the catalog default); else 1..native-max.
     context_window: int | None = None
 
 
@@ -552,15 +557,15 @@ async def set_local_context_window(
     gateway: LocalGatewayDep,
 ) -> LlmSettingsOut:
     """Set (or clear, with null) one model's context window. 409 when hosting is
-    off; 404 for an unprovisioned id; 422 for a window outside 1..catalog-max.
+    off; 404 for an unprovisioned id; 422 for a window outside 1..native-max (the
+    model's full architectural window, not the conservative served default).
     Persists the override (so the meter updates at once), re-stamps the gateway
     config, and unloads the model if resident so its next request reloads at the
     new `-c` — a running process can't resize its KV cache live."""
     model = _require_provisioned(settings, model_id)
-    if body.context_window is not None and not (1 <= body.context_window <= model.context_window):
-        raise HTTPException(
-            status_code=422, detail=f"context window must be 1..{model.context_window}"
-        )
+    ceiling = model.max_context_window
+    if body.context_window is not None and not (1 <= body.context_window <= ceiling):
+        raise HTTPException(status_code=422, detail=f"context window must be 1..{ceiling}")
     ctx = ctx_for(principal)
     windows = await store.set_llm_local_context_window(
         ctx, model_id=model_id, window=body.context_window

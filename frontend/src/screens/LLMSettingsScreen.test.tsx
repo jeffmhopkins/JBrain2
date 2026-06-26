@@ -19,6 +19,7 @@ function lm(over: Partial<LocalModelInfo> & Pick<LocalModelInfo, "id" | "label">
     download_gb: null,
     note: "",
     context_window: 32768,
+    max_context_window: 32768,
     context_window_override: null,
     staged: false,
     kv_gb: 0,
@@ -540,6 +541,7 @@ describe("LLMSettingsScreen", () => {
         size_gb: 59,
         disk_gb: 59,
         context_window: 131072,
+        max_context_window: 131072,
         kv_gb: 4.5,
       }),
     ];
@@ -570,6 +572,56 @@ describe("LLMSettingsScreen", () => {
     await waitFor(() => expect(putBody).toEqual({ context_window: 65536 }));
   });
 
+  it("offers windows above the served default up to the native ceiling", async () => {
+    const s = initialSettings();
+    s.local_hosting_enabled = true;
+    s.host_memory = { total_gb: 128, used_gb: 0 };
+    // Serves 32k by default but is natively 256k — the picker exposes the bigger
+    // windows so the operator can opt into a -c the weights support.
+    s.local_models = [
+      lm({
+        id: "qwen3-coder-next",
+        label: "Qwen3-Coder-Next 80B",
+        enabled: true,
+        tiers: ["high"],
+        quant: "UD-Q4_K_XL",
+        size_gb: 50,
+        disk_gb: 50,
+        context_window: 32768,
+        max_context_window: 262144,
+        kv_gb: 1.3,
+      }),
+    ];
+    let putBody: { context_window: number | null } | null = null;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>(async (input, init) => {
+        const path = String(input);
+        const method = (init?.method ?? "GET").toUpperCase();
+        if (path === "/api/settings/llm" && method === "GET")
+          return new Response(JSON.stringify(s), { status: 200 });
+        if (path.endsWith("/context-window") && method === "PUT") {
+          putBody = JSON.parse(String(init?.body));
+          const m0 = s.local_models[0];
+          if (m0) m0.context_window_override = putBody?.context_window ?? null;
+          return new Response(JSON.stringify(s), { status: 200 });
+        }
+        throw new Error(`unexpected fetch: ${method} ${path}`);
+      }),
+    );
+    render(<LLMSettingsScreen />);
+    await screen.findByRole("button", { name: /On-box LLMs/i });
+
+    const select = (await screen.findByLabelText("context window")) as HTMLSelectElement;
+    expect(select.value).toBe("32768"); // the served default
+    const values = Array.from(select.options).map((o) => o.value);
+    // The native window (256k) and intermediate steps above the default are offered.
+    expect(values).toContain("262144");
+    expect(values).toContain("131072");
+    fireEvent.change(select, { target: { value: "262144" } });
+    await waitFor(() => expect(putBody).toEqual({ context_window: 262144 }));
+  });
+
   it("locks the context window while a model is loaded", async () => {
     const s = initialSettings();
     s.local_hosting_enabled = true;
@@ -585,6 +637,7 @@ describe("LLMSettingsScreen", () => {
         size_gb: 59,
         disk_gb: 59,
         context_window: 131072,
+        max_context_window: 131072,
         kv_gb: 4.5,
       }),
     ];
