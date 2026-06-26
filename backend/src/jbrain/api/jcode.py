@@ -132,7 +132,12 @@ def _store(request: Request) -> SqlSettingsStore:
 async def _resolve_model(request: Request, owner_id: str) -> str:
     """The model a new session runs: the owner's stored selection (Settings → LLM),
     else the JBRAIN_JCODE_MODEL config default. Read here rather than via a Depends
-    so the unconfigured/owner gating runs before any settings access."""
+    so the unconfigured/owner gating runs before any settings access.
+
+    The stored id is taken as-is — not re-validated against the currently-installed
+    set. If the owner picked a model and later uninstalled it, the turn fails at the
+    gateway (same as the default before its weights are provisioned); the settings
+    screen surfaces that via the dropdown's "(not installed)" option."""
     settings = cast("Settings", request.app.state.settings)
     return (await _store(request).jcode_model(_owner_ctx(owner_id))) or settings.jcode_model
 
