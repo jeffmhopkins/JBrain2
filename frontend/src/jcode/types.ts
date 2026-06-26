@@ -43,12 +43,15 @@ export interface JcodePreview {
 }
 
 // Whether the coder model is resident in the on-box gateway — drives the session
-// screen's "loading model" bar. `loaded` flips true once the (cold ~tens-of-GB) load
-// finishes; `size_gb` lets the bar estimate progress; `hosting` is false off-box.
+// screen's "loading model" bar. `warming` is true while the api's warm task runs (the
+// real load window, and the bar's primary signal); `loaded` flips true once the model is
+// resident but races true early, so it's not the bar's trigger. `size_gb` lets the bar
+// estimate progress; `hosting` is false off-box.
 export interface JcodeModelStatus {
   model: string;
   served: string;
   loaded: boolean;
+  warming: boolean;
   hosting: boolean;
   size_gb: number;
 }

@@ -8,12 +8,13 @@ const MODEL_STATUS: JcodeModelStatus = {
   model: "qwen3-coder-next",
   served: "qwen3-coder-next",
   loaded: true,
+  warming: false,
   hosting: true,
   size_gb: 49.6,
 };
 
-// The screen polls model residency on mount; default to "loaded" so the bar is hidden
-// (each test overrides for its own case).
+// The screen polls model residency on mount; default to settled (not warming) so the bar
+// is hidden (each test overrides for its own case).
 beforeEach(() => {
   vi.spyOn(api, "jcodeModelStatus").mockResolvedValue(MODEL_STATUS);
 });
@@ -39,7 +40,36 @@ async function* turn(): AsyncGenerator<JcodeEvent> {
 
 describe("JcodeSessionScreen", () => {
   it("shows the loading bar while the coder warms onto the box", async () => {
-    vi.spyOn(api, "jcodeModelStatus").mockResolvedValue({ ...MODEL_STATUS, loaded: false });
+    // `warming` drives the bar (not `loaded`, which races true mid-load).
+    vi.spyOn(api, "jcodeModelStatus").mockResolvedValue({
+      ...MODEL_STATUS,
+      loaded: false,
+      warming: true,
+    });
+    render(<JcodeSessionScreen session={SESSION} onClose={vi.fn()} />);
+    expect(await screen.findByText(/Loading qwen3-coder-next onto the box/i)).toBeInTheDocument();
+  });
+
+  it("shows the loading bar mid-race when the model is listed but still warming", async () => {
+    // The race the fix targets: gateway lists the model (loaded:true) before the warm
+    // task finishes. The bar must follow `warming`, so loaded:true + warming:true → shown.
+    vi.spyOn(api, "jcodeModelStatus").mockResolvedValue({
+      ...MODEL_STATUS,
+      loaded: true,
+      warming: true,
+    });
+    render(<JcodeSessionScreen session={SESSION} onClose={vi.fn()} />);
+    expect(await screen.findByText(/Loading qwen3-coder-next onto the box/i)).toBeInTheDocument();
+  });
+
+  it("shows the loading bar when an existing session opens with the model evicted", async () => {
+    // No fresh warm fires on opening an existing session, so `warming` is false. The
+    // `hosting && !loaded` fallback still surfaces the bar when the model isn't resident.
+    vi.spyOn(api, "jcodeModelStatus").mockResolvedValue({
+      ...MODEL_STATUS,
+      loaded: false,
+      warming: false,
+    });
     render(<JcodeSessionScreen session={SESSION} onClose={vi.fn()} />);
     expect(await screen.findByText(/Loading qwen3-coder-next onto the box/i)).toBeInTheDocument();
   });
