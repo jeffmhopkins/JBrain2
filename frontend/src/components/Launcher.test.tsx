@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Launcher } from "./Launcher";
 
@@ -39,6 +39,55 @@ describe("Launcher tile navigation", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Data" }));
     expect(onNavigate).toHaveBeenCalledWith("data");
+  });
+});
+
+// The Image tile is configuration-gated: it appears only when image hosting is
+// enabled (getImageSettings().enabled), mirroring the provider-hidden-when-unkeyed
+// pattern. Enablement is fetched once per session and cached, so each case loads a
+// fresh module to reset that cache.
+describe("Launcher image tile gating", () => {
+  beforeEach(() => {
+    vi.resetModules();
+    vi.stubGlobal("matchMedia", () => ({ matches: true }));
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  function stubImageSettings(enabled: boolean): void {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const path = String(input);
+        if (path.endsWith("/api/settings/image")) {
+          return Promise.resolve(
+            new Response(JSON.stringify({ enabled, reachable: enabled, models: [] }), {
+              status: 200,
+              headers: { "Content-Type": "application/json" },
+            }),
+          );
+        }
+        // Other launcher fetches (review/tasks badges) are unrelated here.
+        return Promise.reject(new Error("no network"));
+      }),
+    );
+  }
+
+  it("shows the Image tile when image hosting is enabled", async () => {
+    stubImageSettings(true);
+    const { Launcher: Fresh } = await import("./Launcher");
+    render(<Fresh open onClose={() => {}} onNavigate={() => {}} />);
+    await waitFor(() => expect(screen.getByRole("button", { name: "Image" })).toBeInTheDocument());
+  });
+
+  it("hides the Image tile when image hosting is disabled", async () => {
+    stubImageSettings(false);
+    const { Launcher: Fresh } = await import("./Launcher");
+    render(<Fresh open onClose={() => {}} onNavigate={() => {}} />);
+    // Let the (cached) settings fetch resolve, then confirm the tile stays absent.
+    await waitFor(() => expect(screen.getByRole("button", { name: "Review" })).toBeInTheDocument());
+    expect(screen.queryByRole("button", { name: "Image" })).toBeNull();
   });
 });
 

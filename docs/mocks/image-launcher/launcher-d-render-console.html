@@ -1,0 +1,732 @@
+<!doctype html>
+<!--
+  Image Launcher · DIRECTION D — "Render console / darkroom"
+  ============================================================================
+  A standalone card-launcher destination for on-box image generation/editing
+  that runs ComfyUI DIRECTLY — NOT through the jerv chatbot/agent. The headline
+  property: the LANGUAGE MODELS STAY UNLOADED. This is the "I just want a
+  picture, don't wake the brain" path; image gen here is a direct synchronous
+  render on the image model's VRAM/unified-memory budget, while the LLMs remain
+  unloaded. An honest residency pill (violet — image models ride violet on the
+  residency ladder, docs/DESIGN.md) states "image model resident · LLMs unloaded".
+
+  Screen-vs-agent contrast: this is the direct screen path. An unobtrusive note
+  ("you can also ask jerv in chat") acknowledges the agent path without turning
+  this surface into a chat.
+
+  Layout (darkroom): one large IMAGE STAGE dominates the top and carries the
+  render-state overlay (queued → rendering… → done) with a shimmer — NO fake
+  progress bar; reduced-motion shows steady phased text. Creation controls sit
+  in one thumb-reachable zone below (Generate/Edit toggle · prompt · a
+  collapsible "tune" drawer for speed/aspect/resolution/steps/seed/negative ·
+  one big Render button). A FILMSTRIP of recent renders runs along the bottom;
+  tapping loads one into the stage with its meta; dragging/tapping a strip
+  render into the stage (or the upload affordance) sets the Edit source and
+  flips the toggle to Edit, exposing up to 2 reference slots. Edit results show
+  a before→after swipe-compare in the stage (paradigm reused from
+  docs/mocks/genimage-c-edit-aware.html).
+
+  Config = the REAL tool knobs: speed (dreamshaper/fast/quality — implies the
+  model), aspect, resolution, steps (20–40, only meaningful on quality; shown
+  LOCKED on fast/dreamshaper), seed (blank=random, resolved seed recorded).
+
+  Images are CHAT-ONLY artifacts today, owner-only, served by id at
+  /api/images/generated/{id}. Here, every image is an inline SVG data: URI
+  OFFLINE STAND-IN for that by-id production source. Caption shows
+  dimensions · model · seed.
+
+  Tokens only — no raw hex outside the :root token block (SVG stand-in fills are
+  the documented exception, matching genimage-c). Self-contained, fully offline,
+  phone-framed ≤430px, working light/dark toggle.
+-->
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Image launcher — D · render console</title>
+<style>
+  :root{
+    --bg:#0e0f11; --surface:#17181b; --surface-2:#1e2024; --border:#26282c;
+    --text:#e6e7e9; --text-2:#9a9da3; --text-3:#5c5f66; --surface-composer:#141518;
+    --scrim:rgba(14,15,17,.6);
+    --steel:#7fa7c9; --steel-tint:rgba(127,167,201,.13);
+    --green:#8fbc9a; --green-tint:rgba(143,188,154,.13);
+    --amber:#c9a36a; --amber-tint:rgba(201,163,106,.13);
+    --rose:#cf8a8f; --rose-tint:rgba(207,138,143,.13);
+    --violet:#a493c9; --violet-tint:rgba(164,147,201,.13);
+    --r-input:12px; --r-seg:14px; --r-card:16px; --r-box:24px; --r-pill:999px;
+    --fs-micro:12px; --fs-head:13px; --fs-secondary:14px; --fs-note:15px;
+    --fs-body:16px; --fs-title:18px; --fs-screen:22px;
+    --mono:ui-monospace,"SF Mono","Cascadia Mono",Menlo,Consolas,monospace;
+  }
+  [data-theme="light"]{
+    color-scheme:light;
+    --bg:#f7f7f5; --surface:#fff; --surface-2:#f0f0ee; --border:#e2e2df;
+    --text:#1a1b1e; --text-2:#5c5f66; --text-3:#9a9da3; --surface-composer:#fff;
+    --scrim:rgba(247,247,245,.6);
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{margin:0;background:#000;color:var(--text);
+    font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;-webkit-font-smoothing:antialiased}
+  .phone{max-width:430px;margin:0 auto;min-height:100vh;background:var(--bg);
+    border-left:1px solid #000;border-right:1px solid #000;display:flex;flex-direction:column}
+  svg{fill:none;stroke:currentColor;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round}
+
+  .statusbar{display:flex;justify-content:space-between;align-items:center;
+    padding:10px 18px 4px;font-size:var(--fs-head);color:var(--text);font-weight:600}
+  .statusbar .right{display:flex;gap:7px;align-items:center;font-weight:500;opacity:.9}
+  .nav{display:flex;align-items:center;gap:10px;padding:8px 14px 6px}
+  .nav .glyph{color:var(--text-2);width:24px;height:24px;display:grid;place-items:center}
+  .nav .glyph svg{width:22px;height:22px}
+  .nav .title{font-size:var(--fs-screen);font-weight:600}
+  .nav .sp{margin-left:auto}
+  .iconbtn{width:36px;height:36px;display:grid;place-items:center;border-radius:9px;
+    color:var(--text-2);background:transparent;border:0;cursor:pointer}
+  .iconbtn:hover{background:var(--surface-2);color:var(--text)}
+  .iconbtn svg{width:20px;height:20px}
+
+  /* honest residency pill (violet) */
+  .resi{display:flex;align-items:center;gap:7px;margin:0 14px 8px;padding:7px 11px;
+    background:var(--violet-tint);border:1px solid color-mix(in srgb,var(--violet) 30%,transparent);
+    border-radius:var(--r-pill);font-size:var(--fs-micro);color:var(--violet);font-weight:600}
+  .resi .vdot{width:7px;height:7px;border-radius:50%;background:var(--violet);
+    box-shadow:0 0 0 4px var(--violet-tint);flex:none}
+  .resi .ul{margin-left:auto;color:var(--text-3);font-weight:500}
+  .resi svg{width:14px;height:14px}
+
+  /* ============ STAGE ============ */
+  .stagewrap{padding:0 14px}
+  .stage{position:relative;width:100%;border:1px solid var(--border);border-radius:var(--r-box);
+    overflow:hidden;background:var(--surface);aspect-ratio:1/1;transition:aspect-ratio .18s ease-out;
+    display:grid;place-items:center}
+  .stage.drop{outline:2px dashed color-mix(in srgb,var(--violet) 55%,transparent);outline-offset:-6px}
+  .stage img{display:block;width:100%;height:100%;object-fit:cover}
+  .stage .empty{position:absolute;inset:0;display:grid;place-items:center;text-align:center;
+    padding:24px;color:var(--text-3);font-size:var(--fs-secondary);line-height:1.5;gap:10px}
+  .stage .empty svg{width:34px;height:34px;color:var(--text-3);margin:0 auto 4px}
+  .stage .empty b{color:var(--text-2);font-weight:600}
+
+  /* render-state overlay (shimmer, no fake progress bar) */
+  .overlay{position:absolute;inset:0;display:none;flex-direction:column;align-items:center;
+    justify-content:center;gap:14px;background:var(--scrim);backdrop-filter:blur(2px);text-align:center;padding:24px}
+  .overlay.on{display:flex}
+  .shim{width:74px;height:74px;border-radius:var(--r-box);position:relative;overflow:hidden;
+    background:var(--surface-2);border:1px solid var(--border)}
+  .shim::after{content:"";position:absolute;inset:0;
+    background:linear-gradient(110deg,transparent 20%,var(--violet-tint) 45%,
+      color-mix(in srgb,var(--violet) 26%,transparent) 50%,var(--violet-tint) 55%,transparent 80%);
+    background-size:220% 100%;animation:shimmer 1.25s ease-in-out infinite}
+  @keyframes shimmer{from{background-position:140% 0}to{background-position:-40% 0}}
+  .ovr-phase{font-size:var(--fs-body);font-weight:600;color:var(--text)}
+  .ovr-sub{font-size:var(--fs-micro);color:var(--text-2);max-width:240px;line-height:1.5}
+  .ovr-sub b{color:var(--violet)}
+
+  /* stage chips */
+  .stagechip{position:absolute;top:10px;display:inline-flex;align-items:center;gap:5px;
+    font-size:11px;font-weight:600;padding:4px 9px;border-radius:var(--r-pill);backdrop-filter:blur(3px)}
+  .stagechip svg{width:12px;height:12px}
+  .chip-gen{left:10px;background:color-mix(in srgb,var(--violet) 22%,var(--surface));color:var(--violet);
+    border:1px solid color-mix(in srgb,var(--violet) 34%,transparent)}
+  .chip-edit{left:10px;background:color-mix(in srgb,var(--amber) 22%,var(--surface));color:var(--amber);
+    border:1px solid color-mix(in srgb,var(--amber) 34%,transparent)}
+
+  /* swipe-compare (edit before/after) */
+  .cmp{position:absolute;inset:0;touch-action:none;user-select:none;cursor:ew-resize}
+  .cmp img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;pointer-events:none}
+  .cmp .after{position:absolute;inset:0;clip-path:inset(0 0 0 var(--pos,50%))}
+  .cmp .lbl{position:absolute;bottom:10px;font-size:10px;font-weight:700;letter-spacing:.05em;
+    padding:2px 7px;border-radius:var(--r-pill);background:color-mix(in srgb,var(--bg) 62%,transparent);
+    color:var(--text-2);backdrop-filter:blur(3px)}
+  .cmp .lbl.b{left:10px}.cmp .lbl.a{right:10px}
+  .cmp .handle{position:absolute;top:0;bottom:0;left:var(--pos,50%);width:2px;
+    background:color-mix(in srgb,var(--violet) 85%,#fff);transform:translateX(-1px)}
+  .cmp .grip{position:absolute;top:50%;left:var(--pos,50%);transform:translate(-50%,-50%);
+    width:34px;height:34px;border-radius:50%;background:var(--violet);
+    display:grid;place-items:center;box-shadow:0 2px 8px color-mix(in srgb,var(--bg) 70%,transparent)}
+  .cmp .grip svg{width:18px;height:18px;stroke:#10141a;stroke-width:2.2}
+
+  /* stage meta caption */
+  .meta{display:flex;align-items:center;gap:7px;font-size:11.5px;color:var(--text-3);
+    padding:8px 4px 2px;min-height:24px}
+  .meta b{color:var(--text-2);font-weight:600}
+  .meta .d{width:3px;height:3px;border-radius:50%;background:var(--text-3);flex:none}
+  .meta .cmpseg{margin-left:auto;display:inline-flex;border:1px solid var(--border);border-radius:var(--r-pill);overflow:hidden}
+  .meta .cmpseg button{font:inherit;font-size:11px;padding:4px 9px;border:0;background:transparent;color:var(--text-3);cursor:pointer}
+  .meta .cmpseg button.on{background:var(--violet-tint);color:var(--violet)}
+
+  /* ============ CONTROLS ============ */
+  .controls{padding:6px 14px 0}
+  .seg{display:flex;background:var(--surface-2);border:1px solid var(--border);
+    border-radius:var(--r-seg);padding:3px;margin-bottom:12px}
+  .seg button{flex:1;font:inherit;font-size:var(--fs-secondary);font-weight:600;cursor:pointer;border:0;
+    background:transparent;color:var(--text-2);padding:9px 4px;border-radius:11px;transition:.15s;
+    display:flex;align-items:center;justify-content:center;gap:6px}
+  .seg button svg{width:15px;height:15px}
+  .seg button.on{background:var(--violet-tint);color:var(--violet)}
+
+  /* edit source + reference slots */
+  .editrow{display:none;gap:8px;margin-bottom:12px}
+  .editrow.on{display:flex}
+  .slot{flex:1;aspect-ratio:1/1;max-width:74px;border-radius:var(--r-input);border:1px dashed var(--border);
+    background:var(--surface-2);display:grid;place-items:center;color:var(--text-3);cursor:pointer;
+    overflow:hidden;position:relative;text-align:center;font-size:10px;line-height:1.3}
+  .slot svg{width:18px;height:18px}
+  .slot.filled{border-style:solid}
+  .slot img{width:100%;height:100%;object-fit:cover}
+  .slot .tag{position:absolute;bottom:0;left:0;right:0;font-size:9px;font-weight:600;padding:2px;
+    background:color-mix(in srgb,var(--bg) 62%,transparent);color:var(--text-2);backdrop-filter:blur(2px)}
+  .slot.src.filled{border-color:color-mix(in srgb,var(--amber) 50%,transparent)}
+
+  .promptbox{position:relative;margin-bottom:10px}
+  .promptbox textarea{width:100%;resize:none;background:var(--surface-2);border:1px solid var(--border);
+    border-radius:var(--r-input);padding:12px 13px;color:var(--text);font:inherit;font-size:var(--fs-note);
+    line-height:1.45;outline:none;min-height:62px}
+  .promptbox textarea:focus{border-color:var(--violet);box-shadow:0 0 0 3px var(--violet-tint)}
+  .promptbox textarea::placeholder{color:var(--text-3)}
+
+  /* tune drawer */
+  .tunebtn{width:100%;display:flex;align-items:center;gap:8px;font:inherit;font-size:var(--fs-secondary);
+    font-weight:600;color:var(--text-2);background:transparent;border:0;cursor:pointer;padding:8px 2px;margin-bottom:2px}
+  .tunebtn svg{width:16px;height:16px}
+  .tunebtn .summ{margin-left:auto;font-size:var(--fs-micro);color:var(--text-3);font-weight:500;
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:56%}
+  .tunebtn .chev{margin-left:0;transition:transform .15s ease-out}
+  .tunebtn.open .chev{transform:rotate(180deg)}
+  .drawer{display:none;border:1px solid var(--border);border-radius:var(--r-card);background:var(--surface);
+    padding:14px;margin-bottom:12px;animation:fade .15s ease-out}
+  .drawer.open{display:block}
+  @keyframes fade{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+  .field{margin-bottom:14px}
+  .field:last-child{margin-bottom:0}
+  .field .lab{display:flex;align-items:center;font-size:var(--fs-micro);color:var(--text-3);
+    margin-bottom:7px;font-weight:600;letter-spacing:.02em}
+  .field .lab .v{margin-left:auto;color:var(--text-2);font-family:var(--mono);font-weight:500}
+  .field .lab .lock{margin-left:auto;display:inline-flex;align-items:center;gap:4px;color:var(--text-3);font-weight:500}
+  .field .lab .lock svg{width:11px;height:11px}
+  .chips{display:flex;flex-wrap:wrap;gap:6px}
+  .chips button{font:inherit;font-size:var(--fs-micro);font-weight:600;cursor:pointer;
+    padding:7px 11px;border-radius:var(--r-pill);border:1px solid var(--border);
+    background:var(--surface-2);color:var(--text-2);transition:.12s}
+  .chips button.on{background:var(--violet-tint);border-color:color-mix(in srgb,var(--violet) 40%,transparent);color:var(--violet)}
+  .chips button .sub{color:var(--text-3);font-weight:400}
+  .chips button.on .sub{color:color-mix(in srgb,var(--violet) 70%,var(--text-3))}
+  .field.locked{opacity:.5}
+  input[type=range]{width:100%;accent-color:var(--violet);height:22px}
+  input[type=range]:disabled{accent-color:var(--text-3)}
+  .seedrow{display:flex;gap:8px;align-items:center}
+  .seedrow input[type=text]{flex:1;background:var(--surface-2);border:1px solid var(--border);
+    border-radius:var(--r-input);padding:9px 11px;color:var(--text);font:inherit;font-size:var(--fs-secondary);
+    font-family:var(--mono);outline:none}
+  .seedrow input:focus{border-color:var(--violet);box-shadow:0 0 0 3px var(--violet-tint)}
+  .seedrow .mini{font:inherit;font-size:var(--fs-micro);font-weight:600;cursor:pointer;flex:none;
+    padding:9px 12px;border-radius:var(--r-input);border:1px solid var(--border);
+    background:var(--surface-2);color:var(--text-2);display:inline-flex;align-items:center;gap:5px}
+  .seedrow .mini svg{width:13px;height:13px}
+  .seedrow .mini.lock{background:var(--violet-tint);border-color:color-mix(in srgb,var(--violet) 40%,transparent);color:var(--violet)}
+  .neg textarea{min-height:0;height:42px}
+
+  /* render button */
+  .render{width:100%;font:inherit;font-size:var(--fs-body);font-weight:600;cursor:pointer;
+    border-radius:var(--r-input);padding:15px;border:1px solid color-mix(in srgb,var(--violet) 30%,transparent);
+    background:var(--violet-tint);color:var(--violet);display:flex;align-items:center;justify-content:center;gap:8px;
+    margin-bottom:6px}
+  .render svg{width:18px;height:18px}
+  .render:disabled{opacity:.55;cursor:default}
+  .render.editmode{border-color:color-mix(in srgb,var(--amber) 30%,transparent);background:var(--amber-tint);color:var(--amber)}
+
+  .ask{font-size:var(--fs-micro);color:var(--text-3);text-align:center;margin:2px 0 0;line-height:1.5}
+  .ask a{color:var(--text-2);text-decoration:none;border-bottom:1px solid var(--border)}
+
+  /* ============ FILMSTRIP ============ */
+  .strip-h{display:flex;align-items:baseline;gap:8px;padding:16px 16px 8px;margin-top:6px}
+  .strip-h b{font-size:var(--fs-head);font-weight:600;color:var(--text-2)}
+  .strip-h span{font-size:11px;color:var(--text-3)}
+  .strip{display:flex;gap:9px;overflow-x:auto;padding:0 14px 18px;scroll-snap-type:x proximity}
+  .strip::-webkit-scrollbar{display:none}
+  .film{flex:none;width:72px;scroll-snap-align:start;cursor:pointer}
+  .film .ph{width:72px;height:72px;border-radius:var(--r-input);overflow:hidden;border:1px solid var(--border);
+    position:relative;transition:.12s}
+  .film.active .ph{border-color:var(--violet);box-shadow:0 0 0 2px var(--violet-tint)}
+  .film .ph img{width:100%;height:100%;object-fit:cover;display:block}
+  .film .ph .badge{position:absolute;top:4px;right:4px;width:14px;height:14px;border-radius:50%;
+    display:grid;place-items:center;backdrop-filter:blur(2px)}
+  .film .ph .badge svg{width:9px;height:9px}
+  .film .ph .badge.gen{background:color-mix(in srgb,var(--violet) 30%,var(--bg));color:var(--violet)}
+  .film .ph .badge.edit{background:color-mix(in srgb,var(--amber) 30%,var(--bg));color:var(--amber)}
+  .film .cap{font-size:10px;color:var(--text-3);margin-top:5px;text-align:center;
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .upcard{flex:none;width:72px;cursor:pointer}
+  .upcard .ph{width:72px;height:72px;border-radius:var(--r-input);border:1px dashed var(--border);
+    background:var(--surface-2);display:grid;place-items:center;color:var(--text-3)}
+  .upcard .ph svg{width:20px;height:20px}
+  .upcard .cap{font-size:10px;color:var(--text-3);margin-top:5px;text-align:center}
+
+  .note{font-size:var(--fs-micro);color:var(--text-3);line-height:1.6;padding:0 16px 28px;margin:0}
+  .note b{color:var(--text-2)}
+
+  @media (prefers-reduced-motion: reduce){
+    .shim::after{animation:none;background-position:50% 0}
+    .stage{transition:none}
+    .panel,.drawer{animation:none}
+  }
+  .hidden{display:none}
+</style>
+</head>
+<body>
+<div class="phone">
+  <div class="statusbar"><span>16:57</span><span class="right">image · ◧ 🔋 28%</span></div>
+  <div class="nav">
+    <span class="glyph"><svg viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6"/></svg></span>
+    <span class="title">Render</span>
+    <span class="sp"></span>
+    <button class="iconbtn" id="theme" title="Toggle theme">
+      <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4.5"/><path d="M12 2v2M12 20v2M4 12H2M22 12h-2M5 5l1.5 1.5M17.5 17.5L19 19M19 5l-1.5 1.5M6.5 17.5L5 19"/></svg>
+    </button>
+  </div>
+
+  <!-- honest residency pill -->
+  <div class="resi">
+    <span class="vdot"></span>
+    <svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="M21 15l-5-5L5 21"/></svg>
+    image model resident
+    <span class="ul">· language models unloaded</span>
+  </div>
+
+  <!-- ============ STAGE ============ -->
+  <div class="stagewrap">
+    <div class="stage" id="stage">
+      <div class="empty" id="empty">
+        <div>
+          <svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="M21 15l-5-5L5 21"/></svg>
+          <div><b>nothing rendered yet</b><br>write a prompt below and tap render — or tap a recent render to load it.</div>
+        </div>
+      </div>
+      <!-- single still (generate or loaded film) -->
+      <img id="stageImg" class="hidden" alt="current render" />
+      <!-- edit before/after swipe -->
+      <div class="cmp hidden" id="cmp">
+        <img class="before" id="cmpBefore" alt="before edit" />
+        <div class="after"><img id="cmpAfter" alt="after edit" /></div>
+        <span class="lbl b">BEFORE</span>
+        <span class="lbl a">AFTER</span>
+        <div class="handle"></div>
+        <div class="grip"><svg viewBox="0 0 24 24"><path d="M8 7l-4 5 4 5M16 7l4 5-4 5"/></svg></div>
+      </div>
+      <span class="stagechip chip-gen hidden" id="chip">
+        <svg viewBox="0 0 24 24"><path d="M12 3v18M3 12h18"/></svg><span id="chipLbl">generated</span>
+      </span>
+      <!-- render-state overlay -->
+      <div class="overlay" id="overlay">
+        <div class="shim"></div>
+        <div class="ovr-phase" id="ovrPhase">queued</div>
+        <div class="ovr-sub" id="ovrSub">comfyui serializes one render at a time · <b>LLMs stay unloaded</b></div>
+      </div>
+    </div>
+    <div class="meta" id="meta">
+      <span class="cmpseg hidden" id="cmpseg">
+        <button class="on" data-m="cmp" onclick="setCompare('cmp',this)">compare</button>
+        <button data-m="before" onclick="setCompare('before',this)">before</button>
+        <button data-m="after" onclick="setCompare('after',this)">after</button>
+      </span>
+    </div>
+  </div>
+
+  <!-- ============ CONTROLS ============ -->
+  <div class="controls">
+    <div class="seg" id="seg">
+      <button class="on" data-k="generate" onclick="setMode('generate')">
+        <svg viewBox="0 0 24 24"><path d="M12 3v18M3 12h18"/></svg>Generate</button>
+      <button data-k="edit" onclick="setMode('edit')">
+        <svg viewBox="0 0 24 24"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>Edit</button>
+    </div>
+
+    <!-- edit source + up to 2 reference slots -->
+    <div class="editrow" id="editrow">
+      <div class="slot src" id="srcSlot" onclick="pickSource()">
+        <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
+        <span class="tag">source</span>
+      </div>
+      <div class="slot ref" onclick="addRef(this)">
+        <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
+        <span class="tag">ref 1</span>
+      </div>
+      <div class="slot ref" onclick="addRef(this)">
+        <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
+        <span class="tag">ref 2</span>
+      </div>
+    </div>
+
+    <div class="promptbox">
+      <textarea id="prompt" placeholder="a watercolor lighthouse at dusk, tall and narrow"></textarea>
+    </div>
+
+    <!-- TUNE drawer -->
+    <button class="tunebtn" id="tunebtn" onclick="toggleTune()">
+      <svg viewBox="0 0 24 24"><path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6"/></svg>
+      tune
+      <span class="summ" id="tuneSumm">quality · square · medium · 28 steps · seed random</span>
+      <svg class="chev" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg>
+    </button>
+    <div class="drawer" id="drawer">
+      <div class="field">
+        <div class="lab">speed</div>
+        <div class="chips" id="speed">
+          <button data-v="dreamshaper" onclick="setSpeed(this)">dreamshaper <span class="sub">· seconds</span></button>
+          <button data-v="fast" onclick="setSpeed(this)">fast <span class="sub">· 4-step</span></button>
+          <button class="on" data-v="quality" onclick="setSpeed(this)">quality <span class="sub">· full</span></button>
+        </div>
+      </div>
+      <div class="field">
+        <div class="lab">aspect</div>
+        <div class="chips" id="aspect">
+          <button class="on" data-v="square" data-r="1/1" onclick="setAspect(this)">square <span class="sub">1:1</span></button>
+          <button data-v="portrait" data-r="3/4" onclick="setAspect(this)">portrait</button>
+          <button data-v="landscape" data-r="4/3" onclick="setAspect(this)">landscape</button>
+          <button data-v="tall" data-r="9/16" onclick="setAspect(this)">tall <span class="sub">16:9</span></button>
+          <button data-v="wide" data-r="16/9" onclick="setAspect(this)">wide <span class="sub">16:9</span></button>
+        </div>
+      </div>
+      <div class="field">
+        <div class="lab">resolution</div>
+        <div class="chips" id="resolution">
+          <button data-v="small" onclick="setRes(this)">small</button>
+          <button class="on" data-v="medium" onclick="setRes(this)">medium <span class="sub">~1MP</span></button>
+          <button data-v="large" onclick="setRes(this)">large</button>
+        </div>
+      </div>
+      <div class="field" id="stepsField">
+        <div class="lab">steps <span class="v" id="stepsVal">28</span></div>
+        <input type="range" id="steps" min="20" max="40" value="28" oninput="onSteps()" />
+      </div>
+      <div class="field">
+        <div class="lab">seed</div>
+        <div class="seedrow">
+          <input type="text" id="seed" placeholder="random" inputmode="numeric" oninput="onSeedType()" />
+          <button class="mini" id="seedBtn" onclick="toggleSeedLock()">
+            <svg id="seedIco" viewBox="0 0 24 24"><path d="M16 3a4 4 0 0 1 4 4v3M4 11h12a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2v-6a2 2 0 0 1 2-2z"/></svg>
+            <span id="seedTxt">lock</span>
+          </button>
+        </div>
+      </div>
+      <div class="field neg">
+        <div class="lab">negative prompt <span class="lock" style="color:var(--text-3);font-weight:500">keep out</span></div>
+        <div class="promptbox" style="margin:0">
+          <textarea id="neg" placeholder="blurry, text, watermark"></textarea>
+        </div>
+      </div>
+    </div>
+
+    <button class="render" id="renderBtn" onclick="render()">
+      <svg viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+      <span id="renderTxt">render</span>
+    </button>
+    <p class="ask">direct render · no chat · <a href="#" onclick="return false">ask jerv in chat instead</a></p>
+  </div>
+
+  <!-- ============ FILMSTRIP ============ -->
+  <div class="strip-h"><b>recent renders</b><span>tap to load · drag into stage to edit</span></div>
+  <div class="strip" id="strip">
+    <div class="upcard" onclick="uploadSource()">
+      <div class="ph"><svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12"/></svg></div>
+      <div class="cap">upload</div>
+    </div>
+    <!-- films injected by script -->
+  </div>
+
+  <p class="note"><b>Mockup is interactive · Direction D — render console / darkroom.</b>
+    The stage dominates; controls sit in one thumb zone; the filmstrip runs along the bottom.
+    Toggle Generate/Edit, open <b>tune</b> (speed flips steps to <b>locked</b> on fast/dreamshaper),
+    set a seed + lock it, then <b>render</b> to watch the honest queued → rendering → done overlay
+    (shimmer, no fake bar). Tap a film to load it with its meta; in Edit, tap/drag a film or
+    <b>upload</b> to set the source — the result shows a before→after swipe. Images are inline-SVG
+    stand-ins for the by-id source at <code>/api/images/generated/{id}</code>.</p>
+</div>
+
+<script>
+const $=id=>document.getElementById(id);
+
+/* ---- offline SVG stand-ins (stand for /api/images/generated/{id}) ---- */
+function svgURI(stops, extra){
+  const w=768,h=768;
+  const g=`<linearGradient id='g' x1='0' y1='0' x2='0' y2='1'>${stops}</linearGradient>`;
+  const s=`<svg xmlns='http://www.w3.org/2000/svg' width='${w}' height='${h}'><defs>${g}</defs>`+
+    `<rect width='${w}' height='${h}' fill='url(%23g)'/>${extra||''}</svg>`;
+  return 'data:image/svg+xml;utf8,'+s.replace(/</g,'%3C').replace(/>/g,'%3E').replace(/#/g,'%23').replace(/"/g,"'");
+}
+const ART={
+  lighthouse: svgURI("<stop offset='0' stop-color='%237a6a9a'/><stop offset='.55' stop-color='%23c98a8f'/><stop offset='1' stop-color='%23e9c79a'/>",
+    "<rect x='600' y='560' width='40' height='180' rx='6' fill='%23f4ead2'/><rect x='600' y='560' width='40' height='44' fill='%23cf8a8f'/><circle cx='620' cy='545' r='26' fill='%23ffe9b0'/><circle cx='200' cy='180' r='90' fill='%23ffe9b0' opacity='.55'/>"),
+  storm: svgURI("<stop offset='0' stop-color='%232b3242'/><stop offset='.6' stop-color='%233a4a5e'/><stop offset='1' stop-color='%235a4b66'/>",
+    "<polygon points='620,545 540,768 700,768' fill='%23ffe9b0' opacity='.5'/><rect x='600' y='560' width='40' height='180' rx='6' fill='%23dcd2c0'/><rect x='600' y='560' width='40' height='44' fill='%23cf8a8f'/><circle cx='620' cy='545' r='26' fill='%23ffe9b0'/><rect width='768' height='200' fill='%23161922' opacity='.55'/>"),
+  forest: svgURI("<stop offset='0' stop-color='%238fbc9a'/><stop offset='1' stop-color='%232f4a3a'/>",
+    "<polygon points='384,180 520,640 248,640' fill='%231f3a2a'/><circle cx='560' cy='160' r='60' fill='%23ffe9b0' opacity='.4'/>"),
+  city: svgURI("<stop offset='0' stop-color='%23c9a36a'/><stop offset='1' stop-color='%237fa7c9'/>",
+    "<rect x='120' y='420' width='90' height='348' fill='%2326282c' opacity='.6'/><rect x='320' y='320' width='110' height='448' fill='%2326282c' opacity='.6'/><rect x='520' y='460' width='100' height='308' fill='%2326282c' opacity='.6'/>"),
+  bloom: svgURI("<stop offset='0' stop-color='%23a493c9'/><stop offset='1' stop-color='%23cf8a8f'/>",
+    "<circle cx='384' cy='384' r='150' fill='%23ffe9b0' opacity='.5'/><circle cx='384' cy='384' r='80' fill='%23cf8a8f' opacity='.7'/>")
+};
+
+/* ---- recent renders (newest first) ---- */
+const RENDERS=[
+  {id:'img_9c30', art:ART.storm,  kind:'edit',     dim:'768 × 1024', model:'qwen-image-edit', seed:'882104'},
+  {id:'img_7fa1', art:ART.lighthouse, kind:'generate', dim:'768 × 1024', model:'qwen-image', seed:'41552'},
+  {id:'img_5b2e', art:ART.forest, kind:'generate', dim:'1024 × 1024', model:'qwen-image', seed:'90817'},
+  {id:'img_3d70', art:ART.city,   kind:'generate', dim:'1216 × 832', model:'qwen-image-lightning', seed:'12003'},
+  {id:'img_1a44', art:ART.bloom,  kind:'generate', dim:'1024 × 1024', model:'dreamshaper', seed:'55510'}
+];
+
+/* ---- state ---- */
+const S={mode:'generate', speed:'quality', aspect:'square', ratio:'1/1', res:'medium',
+  steps:28, seedLocked:false, source:null, refs:0, current:null, theme:'dark'};
+const MODEL={dreamshaper:'dreamshaper', fast:'qwen-image-lightning', quality:'qwen-image'};
+const EDITMODEL={dreamshaper:'qwen-image-edit-lightning', fast:'qwen-image-edit-lightning', quality:'qwen-image-edit'};
+
+/* ---- theme ---- */
+$('theme').onclick=()=>{const h=document.documentElement;
+  h.dataset.theme=h.dataset.theme==='light'?'dark':'light';};
+
+/* ---- filmstrip render ---- */
+function buildStrip(){
+  const strip=$('strip');
+  // keep upload card (first child), append films
+  strip.querySelectorAll('.film').forEach(f=>f.remove());
+  RENDERS.forEach(r=>{
+    const el=document.createElement('div');
+    el.className='film'+(S.current&&S.current.id===r.id?' active':'');
+    el.dataset.id=r.id;
+    const badge=r.kind==='edit'
+      ? `<span class="badge edit"><svg viewBox="0 0 24 24"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg></span>`
+      : `<span class="badge gen"><svg viewBox="0 0 24 24"><path d="M12 3v18M3 12h18"/></svg></span>`;
+    el.innerHTML=`<div class="ph"><img src="${r.art}" alt="${r.id}"/>${badge}</div><div class="cap">${r.seed}</div>`;
+    el.onclick=()=>filmTap(r);
+    // drag-into-stage to set edit source
+    el.draggable=true;
+    el.addEventListener('dragstart',e=>{e.dataTransfer.setData('text/id',r.id);});
+    strip.appendChild(el);
+  });
+}
+
+/* tap a film: in generate → load into stage; in edit → set as source */
+function filmTap(r){
+  if(S.mode==='edit'){ setSource(r); return; }
+  loadIntoStage(r);
+}
+function loadIntoStage(r){
+  S.current=r;
+  $('empty').classList.add('hidden');
+  $('overlay').classList.remove('on');
+  $('cmp').classList.add('hidden');
+  $('cmpseg').classList.add('hidden');
+  const img=$('stageImg'); img.src=r.art; img.classList.remove('hidden');
+  const chip=$('chip'); chip.classList.remove('hidden','chip-edit'); chip.classList.add('chip-gen');
+  $('chipLbl').textContent=r.kind==='edit'?'edited':'generated';
+  chip.className='stagechip '+(r.kind==='edit'?'chip-edit':'chip-gen')+'';
+  // adjust stage ratio loosely to its meta
+  setMetaLine(r);
+  buildStrip();
+}
+function setMetaLine(r){
+  $('meta').innerHTML=`<b>${r.dim}</b><span class="d"></span>${r.model}<span class="d"></span>seed ${r.seed}`+
+    `<span class="cmpseg hidden" id="cmpseg"></span>`;
+}
+
+/* ---- mode toggle ---- */
+function setMode(k){
+  S.mode=k;
+  document.querySelectorAll('#seg button').forEach(b=>b.classList.toggle('on',b.dataset.k===k));
+  $('editrow').classList.toggle('on',k==='edit');
+  $('prompt').placeholder = k==='edit'
+    ? 'make the sky stormy and add a beam of light'
+    : 'a watercolor lighthouse at dusk, tall and narrow';
+  $('renderBtn').classList.toggle('editmode',k==='edit');
+  $('renderTxt').textContent = k==='edit' ? 'render edit' : 'render';
+  updateSumm();
+}
+
+/* ---- edit source / refs ---- */
+function setSource(r){
+  S.source=r;
+  const slot=$('srcSlot');
+  slot.classList.add('filled');
+  slot.innerHTML=`<img src="${r.art}" alt="source"/><span class="tag">source · ${r.seed}</span>`;
+  slot.onclick=()=>pickSource();
+  if(S.mode!=='edit') setMode('edit');
+}
+function pickSource(){
+  // cycle through recent renders as a stand-in picker
+  const next=RENDERS[(RENDERS.findIndex(x=>S.source&&x.id===S.source.id)+1)%RENDERS.length];
+  setSource(next);
+}
+function uploadSource(){
+  // stand-in for a real file upload — loads a placeholder as the edit source
+  const up={id:'upload_local', art:ART.city, kind:'generate', dim:'1024 × 1024', model:'uploaded', seed:'—'};
+  setSource(up);
+  if(S.mode!=='edit') setMode('edit');
+}
+function addRef(el){
+  if(el.classList.contains('filled')){ // clear
+    el.classList.remove('filled'); S.refs=Math.max(0,S.refs-1);
+    const tag=el.querySelector('.tag').textContent;
+    el.innerHTML=`<svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg><span class="tag">${tag}</span>`;
+    el.onclick=()=>addRef(el); return;
+  }
+  const r=RENDERS[(S.refs+2)%RENDERS.length];
+  el.classList.add('filled');
+  const which=el.querySelector('.tag').textContent;
+  el.innerHTML=`<img src="${r.art}" alt="reference"/><span class="tag">${which}</span>`;
+  el.onclick=()=>addRef(el);
+  S.refs++;
+}
+
+/* ---- stage drop target (drag a film in) ---- */
+const stage=$('stage');
+stage.addEventListener('dragover',e=>{e.preventDefault();stage.classList.add('drop');});
+stage.addEventListener('dragleave',()=>stage.classList.remove('drop'));
+stage.addEventListener('drop',e=>{
+  e.preventDefault();stage.classList.remove('drop');
+  const id=e.dataTransfer.getData('text/id');
+  const r=RENDERS.find(x=>x.id===id); if(r) setSource(r);
+});
+
+/* ---- tune drawer ---- */
+function toggleTune(){ $('drawer').classList.toggle('open'); $('tunebtn').classList.toggle('open'); }
+function setSpeed(b){ pick('speed',b); S.speed=b.dataset.v; applyStepsLock(); updateSumm(); }
+function setAspect(b){ pick('aspect',b); S.aspect=b.dataset.v; S.ratio=b.dataset.r;
+  $('stage').style.aspectRatio=S.ratio.replace('/',' / '); updateSumm(); }
+function setRes(b){ pick('resolution',b); S.res=b.dataset.v; updateSumm(); }
+function pick(group,b){ document.querySelectorAll('#'+group+' button').forEach(x=>x.classList.remove('on')); b.classList.add('on'); }
+
+function applyStepsLock(){
+  const locked = S.speed!=='quality';
+  const f=$('stepsField'); f.classList.toggle('locked',locked);
+  $('steps').disabled=locked;
+  const lab=f.querySelector('.lab');
+  if(locked){
+    lab.innerHTML=`steps <span class="lock"><svg viewBox="0 0 24 24"><path d="M16 3a4 4 0 0 1 4 4v3M4 11h12a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2v-6a2 2 0 0 1 2-2z"/></svg>fixed-step · ignored</span>`;
+  }else{
+    lab.innerHTML=`steps <span class="v" id="stepsVal">${S.steps}</span>`;
+  }
+}
+function onSteps(){ S.steps=+$('steps').value; const v=$('stepsVal'); if(v)v.textContent=S.steps; updateSumm(); }
+
+/* ---- seed ---- */
+function toggleSeedLock(){
+  S.seedLocked=!S.seedLocked;
+  const b=$('seedBtn'); b.classList.toggle('lock',S.seedLocked);
+  $('seedTxt').textContent=S.seedLocked?'locked':'lock';
+  $('seedIco').innerHTML = S.seedLocked
+    ? `<path d="M16 11V7a4 4 0 0 0-8 0v4M5 11h14a1 1 0 0 1 1 1v7a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-7a1 1 0 0 1 1-1z"/>` // closed lock
+    : `<path d="M16 3a4 4 0 0 1 4 4v3M4 11h12a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2v-6a2 2 0 0 1 2-2z"/>`; // open
+  if(S.seedLocked && !$('seed').value) $('seed').value = Math.floor(Math.random()*900000+10000);
+  updateSumm();
+}
+function onSeedType(){ if($('seed').value && !S.seedLocked) {/* typed seed implies intent */} updateSumm(); }
+function currentSeed(){ const v=$('seed').value.trim(); return v? v : (S.seedLocked? '—' : 'random'); }
+
+/* ---- tune summary line ---- */
+function updateSumm(){
+  const stepTxt = S.speed==='quality' ? `${S.steps} steps` : 'steps locked';
+  const seedTxt = $('seed').value.trim() ? `seed ${$('seed').value.trim()}` : (S.seedLocked?'seed locked':'seed random');
+  $('tuneSumm').textContent=`${S.speed} · ${S.aspect} · ${S.res} · ${stepTxt} · ${seedTxt}`;
+}
+
+/* ---- render sequence (honest phased text + shimmer; no fake bar) ---- */
+let rendering=false;
+function render(){
+  if(rendering) return;
+  if(S.mode==='edit' && !S.source){ // need a source first
+    $('editrow').classList.add('on');
+    $('srcSlot').animate? $('srcSlot').animate([{transform:'scale(1)'},{transform:'scale(1.06)'},{transform:'scale(1)'}],{duration:240}):0;
+    return;
+  }
+  rendering=true;
+  const btn=$('renderBtn'); btn.disabled=true;
+  $('empty').classList.add('hidden');
+  $('stageImg').classList.add('hidden');
+  $('cmp').classList.add('hidden');
+  $('chip').classList.add('hidden');
+  const ov=$('overlay'); ov.classList.add('on');
+  const isEdit=S.mode==='edit';
+  const model = isEdit ? EDITMODEL[S.speed] : MODEL[S.speed];
+
+  const phases = isEdit
+    ? [['queued','waiting for the render queue · one at a time'],
+       ['loading source','reading the edit source on-box'],
+       ['rendering…','applying your edit · <b>language models stay unloaded</b>'],
+       ['done','']]
+    : [['queued','waiting for the render queue · one at a time'],
+       ['rendering…', S.speed==='quality'? `full model · ${S.steps} steps · <b>LLMs unloaded</b>` : `${S.speed} path · <b>LLMs unloaded</b>`],
+       ['done','']];
+
+  let i=0;
+  const advance=()=>{
+    const [p,sub]=phases[i];
+    $('ovrPhase').textContent=p;
+    $('ovrSub').innerHTML=sub;
+    if(p==='done'){ finishRender(isEdit,model); return; }
+    i++;
+    // speed implies dwell: dreamshaper/fast quicker than quality
+    const dwell = S.speed==='quality'?1100 : S.speed==='fast'?650 : 480;
+    setTimeout(advance, p==='queued'?700:dwell);
+  };
+  advance();
+}
+
+function finishRender(isEdit,model){
+  const ov=$('overlay'); ov.classList.remove('on');
+  const seedResolved = $('seed').value.trim() || String(Math.floor(Math.random()*900000+10000));
+  if(!$('seed').value.trim() && !S.seedLocked){ /* resolved seed recorded */ }
+  const dimMap={square:'1024 × 1024',portrait:'880 × 1176',landscape:'1176 × 880',tall:'768 × 1366',wide:'1366 × 768'};
+  const dim=dimMap[S.aspect]||'1024 × 1024';
+
+  if(isEdit){
+    // before = source, after = a fresh stormy variant
+    $('cmpBefore').src=S.source.art;
+    $('cmpAfter').src=ART.storm;
+    $('cmp').classList.remove('hidden');
+    $('cmp').style.setProperty('--pos','50%');
+    const chip=$('chip'); chip.className='stagechip chip-edit'; chip.classList.remove('hidden');
+    $('chipLbl').textContent='edited';
+    $('meta').innerHTML=`<b>${dim}</b><span class="d"></span>${model}<span class="d"></span>seed ${seedResolved}`+
+      `<span class="cmpseg" id="cmpseg">`+
+        `<button class="on" data-m="cmp" onclick="setCompare('cmp',this)">compare</button>`+
+        `<button data-m="before" onclick="setCompare('before',this)">before</button>`+
+        `<button data-m="after" onclick="setCompare('after',this)">after</button>`+
+      `</span>`;
+    const rec={id:'img_'+Math.random().toString(16).slice(2,6), art:ART.storm, kind:'edit', dim, model, seed:seedResolved};
+    RENDERS.unshift(rec); S.current=rec;
+  }else{
+    const arts=[ART.lighthouse,ART.bloom,ART.forest,ART.city]; const art=arts[Math.floor(Math.random()*arts.length)];
+    const img=$('stageImg'); img.src=art; img.classList.remove('hidden');
+    const chip=$('chip'); chip.className='stagechip chip-gen'; chip.classList.remove('hidden');
+    $('chipLbl').textContent='generated';
+    $('meta').innerHTML=`<b>${dim}</b><span class="d"></span>${model}<span class="d"></span>seed ${seedResolved}`;
+    const rec={id:'img_'+Math.random().toString(16).slice(2,6), art, kind:'generate', dim, model, seed:seedResolved};
+    RENDERS.unshift(rec); S.current=rec;
+  }
+  if(!S.seedLocked) $('seed').value=''; // next render goes random again unless locked
+  buildStrip();
+  rendering=false; $('renderBtn').disabled=false;
+}
+
+/* ---- swipe-compare ---- */
+const cmp=$('cmp');
+function setPos(clientX){const r=cmp.getBoundingClientRect();
+  let p=(clientX-r.left)/r.width*100;p=Math.max(0,Math.min(100,p));cmp.style.setProperty('--pos',p+'%');}
+let drag=false;
+cmp.addEventListener('pointerdown',e=>{drag=true;cmp.setPointerCapture(e.pointerId);setPos(e.clientX);});
+cmp.addEventListener('pointermove',e=>{if(drag)setPos(e.clientX);});
+cmp.addEventListener('pointerup',()=>drag=false);
+cmp.addEventListener('pointercancel',()=>drag=false);
+function setCompare(mode,btn){
+  btn.parentNode.querySelectorAll('button').forEach(b=>b.classList.remove('on')); btn.classList.add('on');
+  cmp.style.setProperty('--pos', mode==='before'?'100%':mode==='after'?'0%':'50%');
+}
+
+/* ---- init ---- */
+buildStrip();
+updateSumm();
+applyStepsLock();
+</script>
+</body>
+</html>

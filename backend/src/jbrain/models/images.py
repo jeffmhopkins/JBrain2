@@ -10,8 +10,9 @@ metadata, decoupled from the ComfyUI client.
 
 import uuid
 from datetime import datetime
+from typing import Any, cast
 
-from sqlalchemy import BigInteger, DateTime, Integer, Text, func, select
+from sqlalchemy import BigInteger, CursorResult, DateTime, Integer, Text, delete, func, select
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Mapped, mapped_column
@@ -81,3 +82,24 @@ class GeneratedImageRepo:
         return (
             await session.execute(select(GeneratedImage).where(GeneratedImage.id == key))
         ).scalar_one_or_none()
+
+    async def list(self, session: AsyncSession, *, limit: int) -> list[GeneratedImage]:
+        """The owner's rows newest-first (the gallery). RLS-scoped: an owner session sees its
+        own artifacts, a non-owner session sees none (the owner-only firewall does the hiding,
+        not this query)."""
+        rows = await session.execute(
+            select(GeneratedImage).order_by(GeneratedImage.created_at.desc()).limit(limit)
+        )
+        return list(rows.scalars().all())
+
+    async def delete(self, session: AsyncSession, image_id: str) -> bool:
+        """Delete the owner's row by id, returning whether one was removed. RLS-scoped: a
+        foreign/missing id matches nothing, so a non-owner can't delete (and gets no oracle).
+        The blob is intentionally NOT touched — blobs are content-addressed/keep-all and may be
+        shared by another row's result or an edit's source, so there is no BlobStore.delete."""
+        try:
+            key = uuid.UUID(image_id)
+        except (ValueError, AttributeError):
+            return False
+        result = await session.execute(delete(GeneratedImage).where(GeneratedImage.id == key))
+        return (cast("CursorResult[Any]", result).rowcount or 0) > 0

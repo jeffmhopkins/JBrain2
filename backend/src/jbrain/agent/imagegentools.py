@@ -13,7 +13,6 @@ app builds the `<img>` src from the row id, so the model never authors a URL (in
 from __future__ import annotations
 
 import base64
-import secrets
 import uuid
 from collections.abc import Sequence
 from typing import TYPE_CHECKING
@@ -26,17 +25,39 @@ from jbrain.agent.loop import ToolContext, ToolHandler, ToolOutput
 from jbrain.db.session import scoped_session
 from jbrain.image_gen.comfyui import (
     MAX_EDIT_IMAGES,
-    EditSpec,
-    GenSpec,
     ImageGen,
     ImageGenError,
     ImageGenInterrupted,
     OnProgress,
 )
-from jbrain.image_gen.gateway import ComfyUiGatewayError, ComfyUiMemory
+from jbrain.image_gen.gateway import ComfyUiMemory
+
+# The render core (constants, helpers, and the unload/free primitives) now lives in
+# `image_gen/render.py` so the jerv handlers below AND the direct owner API share one path
+# (docs/IMAGE_LAUNCHER_PLAN.md, Wave L2). The dunder helpers are re-exported here so existing
+# imports — and the tests that pin the agent path's behavior — keep resolving from this module.
+from jbrain.image_gen.render import (
+    _DREAMSHAPER_STEPS,  # noqa: F401
+    _FAST_EDIT_MODEL,  # noqa: F401
+    _FAST_STEPS,  # noqa: F401
+    _GEN_SPEED_INSTALL_HINT,  # noqa: F401
+    _GEN_SPEEDS,  # noqa: F401
+    ImageRenderService,
+    ModelNotInstalledError,
+    RenderValidationError,
+    _dims,  # noqa: F401  (re-exported for the agent-path tests)
+    _free_comfyui_model,  # noqa: F401
+    _free_local_llms,  # noqa: F401
+    _megapixels,  # noqa: F401
+    _png_dims,  # noqa: F401
+    _resolve_fast,  # noqa: F401
+    _resolve_gen_speed,  # noqa: F401
+    _resolve_seed,  # noqa: F401
+    _resolve_steps,  # noqa: F401
+)
 from jbrain.llm import LlmImage, LlmRouter
 from jbrain.llm.errors import LlmError
-from jbrain.llm.local_gateway import LocalGateway, LocalGatewayError
+from jbrain.llm.local_gateway import LocalGateway
 from jbrain.models.images import GeneratedImage, GeneratedImageRepo
 from jbrain.storage import BlobStore
 
@@ -44,66 +65,6 @@ if TYPE_CHECKING:
     from jbrain.agent.attachments import TurnAttachmentRepo
 
 log = structlog.get_logger()
-
-# The models behind the `speed` knob. Generate has three tiers — `quality` (the full Qwen
-# model, default), `fast` (its 4-step Lightning sibling), and `dreamshaper` (a tiny SDXL
-# checkpoint that renders in seconds). Edit has only `fast`/`quality` (DreamShaper can't edit).
-# The recorded `model` string is the graph key the driver routes on; the non-quality ids double
-# as the provisioned-catalog ids each tier is gated on (they coincide, so one id serves both).
-_GEN_MODEL = "qwen-image-2512"
-_FAST_MODEL = "qwen-image-lightning"
-_DREAMSHAPER_MODEL = "dreamshaper"
-_EDIT_MODEL = "qwen-image-edit"
-_FAST_EDIT_MODEL = "qwen-image-edit-lightning"
-
-# The quality path takes a direct `steps` count in the 20–40 band (default 20 — the band's
-# floor, a quick-but-finished render; raise toward 40 for more detail at more time). The `fast`
-# path ignores steps entirely: the distilled Lightning schedule is a fixed 4 steps (its sweet
-# spot — more steps add time, not detail). DreamShaper is likewise fixed at its sweet spot.
-_FAST_STEPS = 4
-_DREAMSHAPER_STEPS = 6  # DreamShaper XL Lightning's sweet spot in its tiny 4–8 band; not tunable
-
-# Generate's speed tiers -> (recorded model id, fixed step count or None to use the quality band).
-# The non-quality tiers also carry the human label + setup id for the not-installed message.
-_GEN_SPEEDS: dict[str, tuple[str, int | None]] = {
-    "dreamshaper": (_DREAMSHAPER_MODEL, _DREAMSHAPER_STEPS),
-    "fast": (_FAST_MODEL, _FAST_STEPS),
-    "quality": (_GEN_MODEL, None),
-}
-_GEN_SPEED_INSTALL_HINT: dict[str, tuple[str, str]] = {
-    "dreamshaper": ("DreamShaper XL (SDXL Lightning)", "dreamshaper"),
-    "fast": ("Qwen-Image 4-step Lightning", "qwen-image-lightning"),
-}
-_QUALITY_MIN_STEPS = 20
-_QUALITY_MAX_STEPS = 40
-_DEFAULT_QUALITY_STEPS = _QUALITY_MIN_STEPS
-
-
-# A bigint seed: positive and within the model's accepted range (random when absent).
-_SEED_BITS = 63
-
-# aspect → (width_frac, height_frac) of a resolution's edge (the LONG side is always the
-# full edge). square is 1:1; portrait/landscape are a gentle 3:4; wide/tall are a dramatic
-# 16:9 (cinematic / phone-tall). Scaled by the edge below and snapped to multiples of 64.
-_ASPECTS: dict[str, tuple[float, float]] = {
-    "square": (1.0, 1.0),
-    "portrait": (0.75, 1.0),
-    "landscape": (1.0, 0.75),
-    "tall": (0.5625, 1.0),
-    "wide": (1.0, 0.5625),
-}
-_DEFAULT_ASPECT = "square"
-
-# resolution → (generate square-edge px, edit total-megapixels). Medium is the model's
-# native ~1 MP and the default; `small` cuts the activation/VAE-decode memory peak (the
-# weights are fixed, but decode memory scales with pixel count) for headroom on a tight
-# unified-memory box; `large` trades that headroom back for more detail.
-_RESOLUTIONS: dict[str, tuple[int, float]] = {
-    "small": (768, 0.9),
-    "medium": (1024, 1.6),
-    "large": (1280, 2.5),
-}
-_DEFAULT_RESOLUTION = "medium"
 
 
 def _reference_ids(arguments: dict) -> list[tuple[str, str]]:
@@ -130,66 +91,6 @@ def _is_uuid(value: str) -> bool:
     except ValueError:
         return False
     return True
-
-
-def _snap64(value: float) -> int:
-    """Round to the nearest multiple of 64 (>=64) — the latent grid Qwen expects."""
-    return max(64, round(value / 64) * 64)
-
-
-def _dims(aspect: str | None, resolution: str | None) -> tuple[int, int] | None:
-    """The (w, h) in px for an aspect at a resolution, snapped to multiples of 64;
-    None when either the aspect or the resolution is unrecognized (handler errors)."""
-    ratio = _ASPECTS.get(aspect or _DEFAULT_ASPECT)
-    res = _RESOLUTIONS.get(resolution or _DEFAULT_RESOLUTION)
-    if ratio is None or res is None:
-        return None
-    edge = res[0]
-    long_frac, short_frac = ratio
-    return _snap64(edge * long_frac), _snap64(edge * short_frac)
-
-
-def _megapixels(resolution: str | None) -> float:
-    """The edit path's total-pixel budget for a (pre-validated) resolution."""
-    return _RESOLUTIONS[resolution or _DEFAULT_RESOLUTION][1]
-
-
-def _resolve_seed(raw: object) -> int:
-    """The seed to use AND record: the caller's value when given, else a fresh random
-    one (so a random result stays reproducible)."""
-    if isinstance(raw, int) and not isinstance(raw, bool):
-        return raw
-    return secrets.randbits(_SEED_BITS)
-
-
-def _resolve_steps(arguments: dict, *, fast: bool = False) -> int:
-    """The step count for a request. The `fast` (Lightning) path is a FIXED 4 steps — its
-    distilled schedule isn't tunable, so `steps` is ignored there. The quality path takes the
-    `steps` argument clamped into the 20–40 band, defaulting to 20 when absent or nonsensical."""
-    if fast:
-        return _FAST_STEPS
-    raw_steps = arguments.get("steps")
-    if isinstance(raw_steps, int) and not isinstance(raw_steps, bool) and raw_steps > 0:
-        return max(_QUALITY_MIN_STEPS, min(_QUALITY_MAX_STEPS, raw_steps))
-    return _DEFAULT_QUALITY_STEPS
-
-
-def _resolve_fast(raw: object) -> bool:
-    """Whether the `fast` (4-step Lightning) model was asked for. Only the exact "fast" opts
-    in; anything else (absent, "quality", or a hallucinated value) is the quality default, so
-    an unknown speed never silently degrades the image. Used by the edit path (fast/quality)."""
-    return isinstance(raw, str) and raw.strip().lower() == "fast"
-
-
-def _resolve_gen_speed(raw: object) -> str:
-    """The generate speed tier: 'dreamshaper' | 'fast' | 'quality'. Only an exact
-    (case-insensitive) match opts into a non-default tier; anything else stays 'quality', so an
-    unknown/hallucinated speed never silently degrades the render."""
-    if isinstance(raw, str):
-        token = raw.strip().lower()
-        if token in _GEN_SPEEDS:
-            return token
-    return "quality"
 
 
 _STOPPED_MESSAGE = "Stopped the render — nothing was saved."
@@ -219,54 +120,6 @@ def _sniff_media_type(data: bytes) -> str:
     if data[:4] in (b"GIF8",):
         return "image/gif"
     return "image/png"
-
-
-def _png_dims(data: bytes) -> tuple[int, int] | None:
-    """The (width, height) from a PNG's IHDR — the two big-endian uint32 at offset 16
-    — or None if it isn't a PNG we can read. Used to record the ACTUAL output size: an
-    edit scales the source to a megapixel budget preserving its aspect, so the rendered
-    image's dims differ from the requested aspect preset; recording the real dims keeps
-    the card's aspect (and meta) honest, no letterbox band in the compare frame."""
-    if len(data) < 24 or data[:8] != _PNG_SIGNATURE:
-        return None
-    width = int.from_bytes(data[16:20], "big")
-    height = int.from_bytes(data[20:24], "big")
-    return (width, height) if width > 0 and height > 0 else None
-
-
-async def _free_local_llms(gateway: LocalGateway) -> None:
-    """Time-share unified memory: unload any resident local LLM before a render.
-
-    On a single unified-memory box (Strix Halo) the LLM that drove this turn (~tens
-    of GB) and the diffusion model (~39 GB bf16 on ROCm) can't both fit alongside the
-    VAE decode, so the image OOMs. We free the LLM now; the agent loop's NEXT call —
-    to compose the reply after this tool returns — transparently reloads it via
-    llama-swap's on-demand loading (no explicit reload needed, so the image still
-    surfaces promptly and the reload is just the usual "composing" wait).
-
-    Best-effort: a cloud-driven turn (nothing resident) or an unreachable gateway is a
-    clean no-op — never let memory housekeeping fail the generation."""
-    try:
-        for served in await gateway.running():
-            await gateway.unload(served)
-    except LocalGatewayError as exc:
-        log.info("image_gen.llm_unload_skipped", error=str(exc))
-
-
-async def _free_comfyui_model(gateway: ComfyUiMemory) -> None:
-    """Time-share the other direction: after a render, unload ComfyUI's resident
-    diffusion model so the ~39 GB it pins returns to the unified pool. ComfyUI caches
-    the model for the next render by default, but on this box that 39 GB blocks the
-    reply's LLM reload, a follow-up edit (a *different* ~38 GB model), or switching
-    back to a large local model (gpt-oss-120b) — so we reclaim it now. The cost is a
-    cold model-load on the next image; the memory headroom is worth it here.
-
-    Best-effort: the image is already in hand, so a gateway hiccup is logged, never
-    fatal."""
-    try:
-        await gateway.free(unload_models=True, free_memory=True)
-    except ComfyUiGatewayError as exc:
-        log.info("image_gen.comfyui_free_skipped", error=str(exc))
 
 
 def _progress_callback(ctx: ToolContext) -> OnProgress | None:
@@ -316,6 +169,8 @@ def build_image_handlers(
     comfyui_gateway: ComfyUiMemory,
     router: LlmRouter,
     provisioned_models: Sequence[str] = (),
+    *,
+    render: ImageRenderService | None = None,
 ) -> dict[str, ToolHandler]:
     """`generate_image` + `edit_image` + `analyze_image`. Wired only when image generation
     is configured (a localhost ComfyUI); the registry omits all three otherwise (graceful
@@ -328,71 +183,43 @@ def build_image_handlers(
     error. The quality model is ungated — the tool's base contract, offered whenever ComfyUI is.
 
     `maker` opens the RLS-scoped transaction each write/read runs under (the repo takes an
-    already-scoped `AsyncSession`); the firewall is Postgres', applied from `ctx.session`."""
-    installed = set(provisioned_models)
+    already-scoped `AsyncSession`); the firewall is Postgres', applied from `ctx.session`.
+
+    The render core lives in `ImageRenderService` (shared with the direct owner API). main.py
+    passes the one it stashes on `app.state.image_render`; absent (the tests), one is built from
+    the same deps — the agent path stays a thin adapter that resolves sources, maps the typed
+    render errors to the model-facing strings, and emits the `generated_image` view."""
+    service = render or ImageRenderService(
+        imagegen, blob_store, repo, maker, local_gateway, comfyui_gateway, provisioned_models
+    )
 
     async def generate_image_tool(arguments: dict, ctx: ToolContext) -> str:
         prompt = str(arguments.get("prompt", "")).strip()
         if not prompt:
             return "generate_image needs a prompt."
-        aspect, resolution = arguments.get("aspect"), arguments.get("resolution")
-        dims = _dims(aspect, resolution)
-        if dims is None:
-            if (aspect or _DEFAULT_ASPECT) not in _ASPECTS:
-                return "aspect must be one of: square, portrait, landscape, tall, wide."
-            return "resolution must be one of: small, medium, large."
-        width, height = dims
-        seed = _resolve_seed(arguments.get("seed"))
-        speed = _resolve_gen_speed(arguments.get("speed"))
-        model, fixed_steps = _GEN_SPEEDS[speed]
-        if speed != "quality" and model not in installed:
-            # A non-quality tier is always in the schema, but its model is a separate install —
-            # say so plainly (and how to fix it) instead of letting ComfyUI 404 on the checkpoint.
-            label, setup_id = _GEN_SPEED_INSTALL_HINT[speed]
-            return (
-                f"The {speed} image model ({label}) isn't installed on this box yet. Generate at "
-                f"the default quality instead, or ask the owner to run "
-                f"`comfyui-setup.sh {setup_id}`."
-            )
-        # quality reads the `steps` band; the fixed tiers (fast/dreamshaper) ignore it.
-        steps = fixed_steps if fixed_steps is not None else _resolve_steps(arguments)
-        spec = GenSpec(
-            prompt=prompt,
-            width=width,
-            height=height,
-            steps=steps,
-            seed=seed,
-            model=model,
-            negative_prompt=str(arguments.get("negative_prompt", "")).strip(),
-        )
-        await _free_local_llms(local_gateway)
         try:
-            png = await imagegen.generate(spec, _progress_callback(ctx))
+            row = await service.generate(
+                ctx.session,
+                prompt=prompt,
+                aspect=arguments.get("aspect"),
+                resolution=arguments.get("resolution"),
+                steps=arguments.get("steps"),
+                seed=arguments.get("seed"),
+                speed=arguments.get("speed"),
+                negative_prompt=str(arguments.get("negative_prompt", "")),
+                on_progress=_progress_callback(ctx),
+            )
+        except (RenderValidationError, ModelNotInstalledError) as exc:
+            return str(exc)  # a clean error — no row, no spend
         except ImageGenInterrupted:
             return _STOPPED_MESSAGE
         except ImageGenError as exc:
             log.warning("generate_image_failed", error=str(exc))
             return "I couldn't generate that image right now — the image model didn't respond."
-        await _free_comfyui_model(comfyui_gateway)
-        out_w, out_h = _png_dims(png) or (width, height)
-        sha = await blob_store.put(png)
-        async with scoped_session(maker, ctx.session) as session:
-            row = await repo.insert(
-                session,
-                blob_sha256=sha,
-                kind="generate",
-                model=model,
-                prompt=prompt,
-                source_sha256=None,
-                width=out_w,
-                height=out_h,
-                steps=steps,
-                seed=seed,
-            )
         return ToolOutput(
-            f"Generated a {out_w}x{out_h} image (seed {seed}); the app is showing it. "
-            f"To change it, call edit_image with source_image_id {row.id}; to reproduce "
-            f"or tweak it, reuse seed {seed}.",
+            f"Generated a {row.width}x{row.height} image (seed {row.seed}); the app is showing "
+            f"it. To change it, call edit_image with source_image_id {row.id}; to reproduce "
+            f"or tweak it, reuse seed {row.seed}.",
             view=generated_image_view(row),
         )
 
@@ -452,12 +279,8 @@ def build_image_handlers(
         prompt = str(arguments.get("prompt", "")).strip()
         if not prompt:
             return "edit_image needs a prompt (the edit instruction)."
-        aspect, resolution = arguments.get("aspect"), arguments.get("resolution")
-        dims = _dims(aspect, resolution)
-        if dims is None:
-            if (aspect or _DEFAULT_ASPECT) not in _ASPECTS:
-                return "aspect must be one of: square, portrait, landscape, tall, wide."
-            return "resolution must be one of: small, medium, large."
+        # The aspect/resolution presets are validated inside the service; resolve sources first
+        # only after the cheap arg checks, mirroring the original order (no spend on a bad arg).
         source = await _source_bytes(arguments, ctx, tool="edit_image")
         if isinstance(source, str):
             return source  # a clean error — no row, no spend
@@ -477,59 +300,30 @@ def build_image_handlers(
             if isinstance(resolved, str):
                 return resolved  # a bad reference is a clean error — no spend
             extra_sources.append(resolved[0])
-        width, height = dims
-        seed = _resolve_seed(arguments.get("seed"))
-        fast = _resolve_fast(arguments.get("speed"))
-        if fast and _FAST_EDIT_MODEL not in installed:
-            # Same actionable bail as generate: the fast edit model is a separate install.
-            return (
-                "The fast image model (Qwen-Image-Edit 4-step Lightning) isn't installed on "
-                "this box yet. Edit at the default quality instead, or ask the owner to run "
-                "`comfyui-setup.sh qwen-image-edit-lightning`."
-            )
-        model = _FAST_EDIT_MODEL if fast else _EDIT_MODEL
-        steps = _resolve_steps(arguments, fast=fast)
-        spec = EditSpec(
-            prompt=prompt,
-            width=width,
-            height=height,
-            steps=steps,
-            seed=seed,
-            model=model,
-            megapixels=_megapixels(resolution),
-            negative_prompt=str(arguments.get("negative_prompt", "")).strip(),
-        )
-        await _free_local_llms(local_gateway)
         try:
-            png = await imagegen.edit(
-                spec, source_bytes, _progress_callback(ctx), extra_sources=extra_sources
+            row = await service.edit(
+                ctx.session,
+                prompt=prompt,
+                source_bytes=source_bytes,
+                source_sha=source_sha,
+                aspect=arguments.get("aspect"),
+                resolution=arguments.get("resolution"),
+                extra_sources=extra_sources,
+                steps=arguments.get("steps"),
+                seed=arguments.get("seed"),
+                speed=arguments.get("speed"),
+                negative_prompt=str(arguments.get("negative_prompt", "")),
+                on_progress=_progress_callback(ctx),
             )
+        except (RenderValidationError, ModelNotInstalledError) as exc:
+            return str(exc)  # a clean error — no row, no spend
         except ImageGenInterrupted:
             return _STOPPED_MESSAGE
         except ImageGenError as exc:
             log.warning("edit_image_failed", error=str(exc))
             return "I couldn't edit that image right now — the image model didn't respond."
-        await _free_comfyui_model(comfyui_gateway)
-        # The edit scales the source to a megapixel budget preserving ITS aspect, so the
-        # output dims differ from the requested preset — record the real ones (the row's
-        # dims drive the card's aspect; a mismatch letterboxes the before/after frame).
-        out_w, out_h = _png_dims(png) or (width, height)
-        sha = await blob_store.put(png)
-        async with scoped_session(maker, ctx.session) as session:
-            row = await repo.insert(
-                session,
-                blob_sha256=sha,
-                kind="edit",
-                model=model,
-                prompt=prompt,
-                source_sha256=source_sha,
-                width=out_w,
-                height=out_h,
-                steps=steps,
-                seed=seed,
-            )
         return ToolOutput(
-            f"Edited the image (seed {seed}); the app is showing the result to the owner. "
+            f"Edited the image (seed {row.seed}); the app is showing the result to the owner. "
             f"To edit this result again, use source_image_id {row.id}.",
             view=generated_image_view(row),
         )

@@ -14,6 +14,7 @@ import { EntityListScreen } from "./screens/EntityListScreen";
 import { EntityScreen } from "./screens/EntityScreen";
 import { GraphScreen } from "./screens/GraphScreen";
 import { type ComposeHandoff, HomeScreen } from "./screens/HomeScreen";
+import { ImageScreen } from "./screens/ImageScreen";
 import { JcodeScreen } from "./screens/JcodeScreen";
 import { LLMSettingsScreen } from "./screens/LLMSettingsScreen";
 import { ListDetailScreen } from "./screens/ListDetailScreen";
@@ -57,12 +58,13 @@ type Card =
   | "graph"
   | "location"
   | "wiki"
+  | "image"
   | "jcode";
 
-// Automations/Tasks/jcode bring their own full-screen overlay (own back bar +
-// slide-in), so they render outside the shared subscreen TopBar wrapper — hence no
-// entry here. Every Card that uses the wrapper needs a title.
-const SCREEN_TITLES: Record<Exclude<Card, "automations" | "tasks" | "jcode">, string> = {
+// Automations, Tasks, Image and jcode bring their own full-screen overlay (own back
+// bar + slide-in), so they render outside the shared subscreen TopBar wrapper — hence
+// no entry here. Every Card that uses the wrapper needs a title.
+const SCREEN_TITLES: Record<Exclude<Card, "automations" | "tasks" | "image" | "jcode">, string> = {
   ops: "Ops",
   data: "Data",
   settings: "Settings",
@@ -399,8 +401,9 @@ export function App() {
     // Runs stacks above Automations, so it climbs off first.
     if (runsOpen) return setRunsOpen(false);
     if (card === "automations") return closeAutomations();
-    // Tasks/jcode close straight to the launcher (own overlay, no subscreen slide).
+    // Tasks/Image/jcode close straight to the launcher (own overlay, no subscreen slide).
     if (card === "tasks") return setCard(null);
+    if (card === "image") return setCard(null);
     if (card === "jcode") return setCard(null);
     if (card !== null) return closeCardToLauncher();
     // Drops the depth immediately; the launcher plays its retreat off `open`.
@@ -447,56 +450,63 @@ export function App() {
 
       {/* Automations is a self-contained full-screen overlay (its own back bar +
           slide-in), rendered below — it skips the shared subscreen TopBar. */}
-      {card !== null && card !== "automations" && card !== "tasks" && card !== "jcode" && (
-        <div
-          className={`subscreen${cardClosing ? " subscreen-closing" : ""}`}
-          ref={subRef}
-          onTouchStart={onSubTouchStart}
-          onTouchMove={onSubTouchMove}
-        >
-          <TopBar
-            title={SCREEN_TITLES[card]}
-            onBack={jumpHome}
-            syncStatus={notes.syncStatus}
-            onBolt={closeCardToLauncher}
-          />
-          {card === "ops" && (
-            <main className="screen-body">
-              <OpsScreen />
-            </main>
-          )}
-          {card === "settings" && (
-            <SettingsScreen deviceLabel={session.principal.label} onLogout={() => void logout()} />
-          )}
-          {card === "llm-settings" && <LLMSettingsScreen />}
-          {card === "data" && <DataScreen />}
-          {card === "search" && (
-            <SearchScreen onOpenResult={openNoteFromSearch} onOpenWiki={setWikiArticle} />
-          )}
-          {/* The wiki landing: search-first rails over the article set; a row
-              opens the reader layer above. */}
-          {card === "wiki" && <WikiLandingScreen onOpenArticle={setWikiArticle} />}
-          {card === "calendar" && (
-            <CalendarScreen
-              onOpenNote={(noteId) => void openNoteById(noteId)}
-              onCompose={(text, appt) => {
-                setCard(null);
-                setLauncherOpen(false);
-                setCompose({ text, appt });
-              }}
+      {card !== null &&
+        card !== "automations" &&
+        card !== "tasks" &&
+        card !== "image" &&
+        card !== "jcode" && (
+          <div
+            className={`subscreen${cardClosing ? " subscreen-closing" : ""}`}
+            ref={subRef}
+            onTouchStart={onSubTouchStart}
+            onTouchMove={onSubTouchMove}
+          >
+            <TopBar
+              title={SCREEN_TITLES[card]}
+              onBack={jumpHome}
+              syncStatus={notes.syncStatus}
+              onBolt={closeCardToLauncher}
             />
-          )}
-          {card === "review" && <ReviewScreen />}
-          {/* Rows open the same entity layer the analysis chips use. */}
-          {card === "entities" && <EntityListScreen onOpenEntity={setEntityView} />}
-          {/* The graph Map drills into focus in place; the sheet opens the entity layer. */}
-          {card === "graph" && <GraphScreen onOpenEntity={setEntityView} />}
-          {/* Cards open the list detail layer; listsKey remounts on its close. */}
-          {card === "lists" && <ListsScreen key={listsKey} onOpenList={setListView} />}
-          {/* Owner-only location surface: Devices / Timeline / Map. */}
-          {card === "location" && <LocationScreen />}
-        </div>
-      )}
+            {card === "ops" && (
+              <main className="screen-body">
+                <OpsScreen />
+              </main>
+            )}
+            {card === "settings" && (
+              <SettingsScreen
+                deviceLabel={session.principal.label}
+                onLogout={() => void logout()}
+              />
+            )}
+            {card === "llm-settings" && <LLMSettingsScreen />}
+            {card === "data" && <DataScreen />}
+            {card === "search" && (
+              <SearchScreen onOpenResult={openNoteFromSearch} onOpenWiki={setWikiArticle} />
+            )}
+            {/* The wiki landing: search-first rails over the article set; a row
+              opens the reader layer above. */}
+            {card === "wiki" && <WikiLandingScreen onOpenArticle={setWikiArticle} />}
+            {card === "calendar" && (
+              <CalendarScreen
+                onOpenNote={(noteId) => void openNoteById(noteId)}
+                onCompose={(text, appt) => {
+                  setCard(null);
+                  setLauncherOpen(false);
+                  setCompose({ text, appt });
+                }}
+              />
+            )}
+            {card === "review" && <ReviewScreen />}
+            {/* Rows open the same entity layer the analysis chips use. */}
+            {card === "entities" && <EntityListScreen onOpenEntity={setEntityView} />}
+            {/* The graph Map drills into focus in place; the sheet opens the entity layer. */}
+            {card === "graph" && <GraphScreen onOpenEntity={setEntityView} />}
+            {/* Cards open the list detail layer; listsKey remounts on its close. */}
+            {card === "lists" && <ListsScreen key={listsKey} onOpenList={setListView} />}
+            {/* Owner-only location surface: Devices / Timeline / Map. */}
+            {card === "location" && <LocationScreen />}
+          </div>
+        )}
 
       {/* The Workflow launcher card opens Automations as a top-level surface; its
           "All runs" drill-through raises the Runs surface one layer above. */}
@@ -504,6 +514,11 @@ export function App() {
         <AutomationsScreen onClose={closeAutomations} onOpenRuns={() => setRunsOpen(true)} />
       )}
       {runsOpen && <RunsScreen onClose={() => setRunsOpen(false)} />}
+
+      {/* The image launcher is a self-contained full-screen overlay (its own
+          bespoke top bar — gallery shortcut + residency dot — that the shared
+          TopBar can't carry), so it renders outside the shared subscreen wrapper. */}
+      {card === "image" && <ImageScreen onClose={() => setCard(null)} />}
 
       {/* Tasks is a self-contained full-screen overlay (its own back bar), like
           Automations — so it renders outside the shared subscreen TopBar wrapper. */}

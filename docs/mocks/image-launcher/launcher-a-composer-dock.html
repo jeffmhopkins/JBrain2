@@ -1,0 +1,649 @@
+<!doctype html>
+<!--
+  Image Launcher — DIRECTION A · "Composer-dock studio"
+  ============================================================================
+  WHAT THIS IS
+    A standalone card-launcher destination for image generation + editing that
+    drives the on-box ComfyUI image model DIRECTLY — NOT through the jerv
+    chatbot/agent. The headline property: the LANGUAGE MODELS STAY UNLOADED.
+    ComfyUI renders on its VRAM/unified-memory budget while the LLM is cold.
+    This is the "I just want a picture, don't wake the brain" path.
+
+  THE DIRECTION — composer-dock studio
+    The image-gen analogue of JBrain's signature bottom-docked omnibox: a
+    bottom-docked image COMPOSER (prompt field + Generate|Edit mode segment +
+    send) with a scrollable BOARD of this session's renders above it (newest at
+    the bottom, like a transcript — but it is NOT a chat: no AI turns, no
+    bubbles, just the renders the screen made).
+      • Edit mode grows a SOURCE row in the composer: a thumbnail slot you fill
+        by tapping a board render ("use as source") or by uploading, plus a
+        "+ ref" for up to 2 reference images.
+      • Configuration lives behind a "tune" bottom sheet (slider icon in the
+        composer footer) so the composer stays calm: speed · aspect · resolution
+        · steps (locked when speed≠quality) · negative prompt · seed. The current
+        key settings echo as small glanceable chips on the composer.
+      • Send runs a mock render: an inline render-state card in the board
+        (queued → rendering… → reveals the SVG placeholder) with caption
+        (dimensions · model · seed). An edit render shows before→after as a
+        swipe-compare, reusing the genimage-c-edit-aware paradigm.
+
+  SCREEN-vs-AGENT INTENT
+    The footer states honestly "renders on-box · language models stay unloaded",
+    and an unobtrusive line notes the same thing can be asked of jerv in chat
+    (a deliberate "do this in chat instead" exit, not a chat affordance).
+
+  SVG STAND-IN NOTE
+    Generated images are owner-only chat artifacts served by id at
+    /api/images/generated/{id}. This mock is fully offline: every image is an
+    inline SVG data: URI stand-in for that by-id production source. No network,
+    no external deps. Tokens only — no raw hex outside the :root token block.
+-->
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Image launcher — A · composer-dock studio</title>
+<style>
+  :root{
+    --bg:#0e0f11; --surface:#17181b; --surface-2:#1e2024; --border:#26282c;
+    --text:#e6e7e9; --text-2:#9a9da3; --text-3:#5c5f66;
+    --surface-composer:#141518; --scrim:rgba(14,15,17,.6);
+    --steel:#7fa7c9; --steel-tint:rgba(127,167,201,.13);
+    --green:#8fbc9a; --green-tint:rgba(143,188,154,.13);
+    --amber:#c9a36a; --amber-tint:rgba(201,163,106,.13);
+    --rose:#cf8a8f; --rose-tint:rgba(207,138,143,.13);
+    --violet:#a493c9; --violet-tint:rgba(164,147,201,.13);
+    --r-input:12px; --r-seg:14px; --r-card:16px; --r-pill:999px;
+    --fs-micro:12px; --fs-head:13px; --fs-secondary:14px; --fs-note:15px;
+    --fs-body:16px; --fs-composer:17px; --fs-title:18px; --fs-screen:22px;
+    --mono:ui-monospace,"SF Mono","Cascadia Mono",Menlo,Consolas,monospace;
+  }
+  [data-theme="light"]{
+    color-scheme:light;
+    --bg:#f7f7f5; --surface:#fff; --surface-2:#f0f0ee; --border:#e2e2df;
+    --text:#1a1b1e; --text-2:#5c5f66; --text-3:#9a9da3;
+    --surface-composer:#fff; --scrim:rgba(247,247,245,.6);
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{margin:0;background:#000;color:var(--text);
+    font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;-webkit-font-smoothing:antialiased}
+  svg{stroke:currentColor;fill:none;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round}
+
+  .phone{position:relative;max-width:430px;margin:0 auto;height:100vh;min-height:100vh;
+    background:var(--bg);border-left:1px solid #000;border-right:1px solid #000;
+    display:flex;flex-direction:column;overflow:hidden}
+
+  /* ── chrome ───────────────────────────────────────────────────────────── */
+  .statusbar{flex:0 0 auto;display:flex;justify-content:space-between;align-items:center;
+    padding:10px 18px 4px;font-size:13px;color:var(--text);font-weight:600}
+  .statusbar .right{display:flex;gap:7px;align-items:center;font-weight:500;opacity:.9}
+  .nav{flex:0 0 auto;display:flex;align-items:center;gap:10px;padding:6px 14px 8px;
+    border-bottom:1px solid var(--border)}
+  .nav .glyph{width:30px;height:30px;display:grid;place-items:center;color:var(--text-2);cursor:pointer}
+  .nav .glyph svg{width:22px;height:22px}
+  .nav .title{font-size:var(--fs-screen);font-weight:600;display:flex;align-items:baseline;gap:8px}
+  .nav .title small{font-size:var(--fs-head);font-weight:500;color:var(--violet)}
+  .nav .sp{margin-left:auto}
+  .nav .dot{width:8px;height:8px;border-radius:50%;background:var(--violet);
+    box-shadow:0 0 0 4px var(--violet-tint)}
+  .iconbtn{width:34px;height:34px;display:grid;place-items:center;border-radius:9px;
+    color:var(--text-2);background:transparent;border:0;cursor:pointer}
+  .iconbtn:hover{background:var(--surface-2);color:var(--text)}
+  .iconbtn svg{width:20px;height:20px}
+
+  /* ── board (transcript of renders) ───────────────────────────────────── */
+  .board{flex:1;overflow-y:auto;padding:14px 14px 8px;display:flex;flex-direction:column;gap:14px}
+  .board::-webkit-scrollbar{width:0}
+  .b-empty{margin:auto 8px;text-align:center;color:var(--text-2);font-size:var(--fs-secondary);
+    line-height:1.6;max-width:300px}
+  .b-empty .ic{width:46px;height:46px;border-radius:14px;margin:0 auto 12px;
+    background:var(--violet-tint);color:var(--violet);display:grid;place-items:center}
+  .b-empty .ic svg{width:24px;height:24px}
+  .b-empty b{color:var(--text)}
+
+  /* a render card */
+  .card{align-self:flex-start;max-width:90%;border:1px solid var(--border);
+    border-radius:var(--r-input);background:var(--surface-2);padding:6px;
+    animation:rise .18s ease-out}
+  @keyframes rise{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+  .frame{position:relative;border-radius:10px;overflow:hidden;background:var(--surface);display:block;width:100%}
+  .frame img{display:block;width:100%;height:auto}
+  .kindtag{position:absolute;top:8px;left:8px;display:inline-flex;align-items:center;gap:4px;
+    font-size:10.5px;font-weight:600;padding:3px 8px;border-radius:var(--r-pill);backdrop-filter:blur(3px)}
+  .kindtag svg{width:12px;height:12px;stroke-width:1.8}
+  .k-gen{background:color-mix(in srgb,var(--violet) 22%,var(--surface));color:var(--violet);
+    border:1px solid color-mix(in srgb,var(--violet) 34%,transparent)}
+  .k-edit{background:color-mix(in srgb,var(--amber) 22%,var(--surface));color:var(--amber);
+    border:1px solid color-mix(in srgb,var(--amber) 34%,transparent)}
+  .cap{display:flex;align-items:center;gap:6px;flex-wrap:wrap;font-size:11.5px;color:var(--text-3);padding:7px 6px 3px}
+  .cap b{color:var(--text-2);font-weight:600}
+  .cap .d{width:3px;height:3px;border-radius:50%;background:var(--text-3);flex:0 0 auto}
+  .cap .pr{flex-basis:100%;color:var(--text-2);font-size:11.5px;line-height:1.4;
+    overflow:hidden;text-overflow:ellipsis;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+  .acts{display:flex;gap:6px;padding:6px 4px 2px}
+  .minibtn{font:inherit;font-size:11px;font-weight:600;cursor:pointer;border-radius:8px;
+    padding:6px 10px;border:1px solid var(--border);background:var(--surface);color:var(--text-2)}
+  .minibtn:hover{color:var(--text)}
+  .minibtn.v{background:var(--violet-tint);color:var(--violet);border-color:transparent}
+
+  /* render-state card (queued → rendering) */
+  .rstate{align-self:flex-start;max-width:90%;border:1px solid var(--border);
+    border-radius:var(--r-input);background:var(--surface-2);padding:14px 14px;
+    display:flex;align-items:center;gap:11px;animation:rise .18s ease-out;min-width:240px}
+  .rstate .shim{width:40px;height:40px;border-radius:10px;flex:none;
+    background:linear-gradient(110deg,var(--surface) 30%,var(--surface-composer) 50%,var(--surface) 70%);
+    background-size:220% 100%;animation:shimmer 1.3s linear infinite}
+  @keyframes shimmer{from{background-position:120% 0}to{background-position:-120% 0}}
+  .rstate .lab{display:flex;flex-direction:column;gap:3px;min-width:0}
+  .rstate .lab .s{font-size:var(--fs-secondary);font-weight:600;color:var(--violet);
+    display:flex;align-items:center;gap:7px}
+  .rstate .lab .m{font-size:11.5px;color:var(--text-3);
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .pulse{width:7px;height:7px;border-radius:50%;background:var(--violet);animation:pulse 1.1s ease-in-out infinite}
+  @keyframes pulse{0%,100%{opacity:.35}50%{opacity:1}}
+
+  /* swipe-compare for edits */
+  .cmp{position:relative;border-radius:10px;overflow:hidden;background:var(--surface);
+    touch-action:none;user-select:none;cursor:ew-resize}
+  .cmp img{display:block;width:100%;height:auto;pointer-events:none}
+  .cmp .after{position:absolute;inset:0;clip-path:inset(0 0 0 var(--pos,50%))}
+  .cmp .lbl{position:absolute;bottom:8px;font-size:9.5px;font-weight:600;letter-spacing:.05em;
+    padding:2px 7px;border-radius:var(--r-pill);background:color-mix(in srgb,var(--bg) 62%,transparent);
+    color:var(--text-2);backdrop-filter:blur(3px)}
+  .cmp .lbl.b{left:8px}.cmp .lbl.a{right:8px}
+  .cmp .handle{position:absolute;top:0;bottom:0;left:var(--pos,50%);width:2px;
+    background:color-mix(in srgb,var(--violet) 80%,#fff);transform:translateX(-1px)}
+  .cmp .grip{position:absolute;top:50%;left:var(--pos,50%);transform:translate(-50%,-50%);
+    width:30px;height:30px;border-radius:50%;background:var(--violet);
+    display:grid;place-items:center;box-shadow:0 2px 8px color-mix(in srgb,var(--bg) 70%,transparent)}
+  .cmp .grip svg{width:16px;height:16px;stroke:#10141a;stroke-width:2.2}
+
+  /* ── composer dock ──────────────────────────────────────────────────── */
+  .composer{flex:0 0 auto;border-top:1px solid var(--border);background:var(--surface-composer);
+    padding:9px 12px calc(9px + env(safe-area-inset-bottom))}
+  /* mode segment */
+  .seg{display:flex;background:var(--surface-2);border:1px solid var(--border);
+    border-radius:var(--r-seg);padding:3px;margin-bottom:9px}
+  .seg button{flex:1;font:inherit;font-size:var(--fs-secondary);font-weight:600;cursor:pointer;border:0;
+    background:transparent;color:var(--text-2);padding:8px 4px;border-radius:11px;transition:.15s;
+    display:flex;align-items:center;justify-content:center;gap:6px}
+  .seg button svg{width:15px;height:15px;stroke-width:1.8}
+  .seg button.on{background:var(--violet-tint);color:var(--violet)}
+
+  /* source row (edit only) */
+  .srcrow{display:none;gap:8px;margin-bottom:9px;align-items:center}
+  .srcrow.on{display:flex;animation:fade .15s ease-out}
+  @keyframes fade{from{opacity:0;transform:translateY(3px)}to{opacity:1;transform:none}}
+  .slot{flex:none;width:54px;height:54px;border-radius:10px;border:1px dashed var(--border);
+    background:var(--surface-2);display:grid;place-items:center;color:var(--text-3);
+    cursor:pointer;position:relative;overflow:hidden}
+  .slot svg{width:18px;height:18px}
+  .slot.filled{border-style:solid;border-color:transparent}
+  .slot.filled img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+  .slot .x{position:absolute;top:2px;right:2px;width:16px;height:16px;border-radius:50%;
+    background:color-mix(in srgb,var(--bg) 75%,transparent);color:var(--text);
+    display:grid;place-items:center;font-size:11px;z-index:2}
+  .slot.main{width:54px}
+  .slot.ref{width:44px;height:44px}
+  .srccol{display:flex;flex-direction:column;gap:3px;min-width:0;flex:1}
+  .srccol .t{font-size:var(--fs-head);font-weight:600;color:var(--text)}
+  .srccol .h{font-size:11px;color:var(--text-3);line-height:1.4}
+  .refs{display:flex;gap:6px;align-items:center}
+  .addref{flex:none;width:44px;height:44px;border-radius:9px;border:1px dashed var(--border);
+    background:transparent;color:var(--text-3);cursor:pointer;display:grid;place-items:center;font-size:10px;
+    flex-direction:column;gap:1px}
+  .addref svg{width:14px;height:14px}
+  .addref:disabled{opacity:.4;cursor:default}
+
+  /* prompt field */
+  .field{display:flex;align-items:flex-end;gap:8px;background:var(--surface-2);
+    border:1px solid var(--border);border-radius:var(--r-card);padding:8px 8px 8px 14px}
+  .field:focus-within{border-color:var(--violet);box-shadow:0 0 0 1px var(--violet)}
+  .field textarea{flex:1;background:transparent;border:0;outline:none;resize:none;color:var(--text);
+    font:inherit;font-size:var(--fs-composer);line-height:1.4;max-height:120px;padding:5px 0}
+  .field textarea::placeholder{color:var(--text-3)}
+  .send{width:40px;height:40px;border-radius:50%;border:0;background:var(--violet-tint);
+    color:var(--violet);display:grid;place-items:center;cursor:pointer;flex:none;transition:.15s}
+  .send svg{width:18px;height:18px;stroke-width:1.9}
+  .send:disabled{opacity:.45;cursor:default}
+
+  /* footer: chips + status + tune */
+  .footer{display:flex;align-items:center;gap:8px;margin-top:9px}
+  .chips{display:flex;gap:6px;flex:1;overflow-x:auto;scrollbar-width:none;padding-bottom:1px}
+  .chips::-webkit-scrollbar{display:none}
+  .chip{flex:none;display:inline-flex;align-items:center;gap:5px;font-size:var(--fs-micro);
+    font-weight:500;padding:5px 9px;border-radius:var(--r-pill);background:var(--surface-2);
+    border:1px solid var(--border);color:var(--text-2);white-space:nowrap}
+  .chip svg{width:12px;height:12px;color:var(--text-3)}
+  .chip.locked{opacity:.5}
+  .chip b{color:var(--text);font-weight:600}
+  .tunebtn{flex:none;width:38px;height:38px;border-radius:var(--r-pill);border:1px solid var(--border);
+    background:var(--surface-2);color:var(--text-2);display:grid;place-items:center;cursor:pointer;position:relative}
+  .tunebtn:hover{color:var(--text)}
+  .tunebtn svg{width:18px;height:18px}
+
+  .microcopy{display:flex;align-items:center;gap:7px;margin-top:9px;font-size:var(--fs-micro);color:var(--text-3)}
+  .microcopy .sd{width:7px;height:7px;border-radius:50%;background:var(--violet);
+    box-shadow:0 0 0 3px var(--violet-tint);flex:none}
+  .microcopy a{color:var(--text-2);text-decoration:none;border-bottom:1px solid var(--border);
+    margin-left:auto;flex:none;cursor:pointer}
+  .microcopy a:hover{color:var(--text)}
+
+  /* ── tune sheet ─────────────────────────────────────────────────────── */
+  .scrim{position:absolute;inset:0;background:var(--scrim);opacity:0;pointer-events:none;
+    transition:opacity .18s ease-out;z-index:20}
+  .scrim.on{opacity:1;pointer-events:auto}
+  .sheet{position:absolute;left:0;right:0;bottom:0;background:var(--surface);z-index:21;
+    border-top-left-radius:16px;border-top-right-radius:16px;border-top:1px solid var(--border);
+    transform:translateY(100%);transition:transform .2s ease-out;
+    max-height:86%;overflow-y:auto;padding:0 18px calc(18px + env(safe-area-inset-bottom))}
+  .sheet.on{transform:none}
+  .sheet .grab{width:32px;height:4px;border-radius:2px;background:var(--border);margin:9px auto 4px}
+  .sheet h3{font-size:var(--fs-title);font-weight:600;margin:6px 2px 2px}
+  .sheet .sub{font-size:var(--fs-micro);color:var(--text-3);margin:0 2px 14px}
+  .grp{margin-bottom:16px}
+  .grp .lbl{font-size:var(--fs-head);font-weight:600;color:var(--text-2);margin:0 2px 8px;
+    display:flex;align-items:center;gap:6px}
+  .grp .lbl .hint{font-weight:400;color:var(--text-3)}
+  .optrow{display:flex;gap:7px}
+  .opt{flex:1;font:inherit;font-size:var(--fs-secondary);font-weight:500;cursor:pointer;
+    border:1px solid var(--border);background:var(--surface-2);color:var(--text-2);
+    border-radius:var(--r-input);padding:11px 6px;text-align:center;transition:.12s;
+    display:flex;flex-direction:column;align-items:center;gap:2px}
+  .opt small{font-size:10px;color:var(--text-3)}
+  .opt.on{background:var(--violet-tint);color:var(--violet);border-color:transparent}
+  .opt.on small{color:color-mix(in srgb,var(--violet) 70%,var(--text-3))}
+  .grp.locked{opacity:.45;pointer-events:none}
+  .stepwrap{display:flex;align-items:center;gap:12px;background:var(--surface-2);
+    border:1px solid var(--border);border-radius:var(--r-input);padding:12px 14px}
+  .stepwrap input[type=range]{flex:1;accent-color:var(--violet)}
+  .stepwrap .val{font-family:var(--mono);font-size:var(--fs-secondary);color:var(--text);
+    min-width:26px;text-align:right}
+  .lockmsg{font-size:11px;color:var(--text-3);margin:7px 2px 0;display:none}
+  .grp.locked .lockmsg{display:block}
+  .ti{width:100%;background:var(--surface-2);border:1px solid var(--border);border-radius:var(--r-input);
+    padding:11px 12px;color:var(--text);font:inherit;font-size:var(--fs-secondary);outline:none}
+  .ti:focus{border-color:var(--violet);box-shadow:0 0 0 1px var(--violet)}
+  .seedrow{display:flex;gap:8px;align-items:center}
+  .seedrow .ti{flex:1}
+  .seedrow .dice{flex:none;width:44px;height:44px;border-radius:var(--r-input);border:1px solid var(--border);
+    background:var(--surface-2);color:var(--text-2);display:grid;place-items:center;cursor:pointer}
+  .seedrow .dice svg{width:18px;height:18px}
+  .sheet .done{width:100%;font:inherit;font-size:var(--fs-body);font-weight:600;cursor:pointer;
+    border-radius:var(--r-input);padding:14px;border:0;background:var(--violet-tint);color:var(--violet);margin-top:4px}
+
+  .hidden{display:none!important}
+  @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+</style>
+</head>
+<body>
+<div class="phone">
+  <div class="statusbar"><span>16:57</span><span class="right">on-box · llm cold ⬡ 41%</span></div>
+  <div class="nav">
+    <span class="glyph" title="back home"><svg viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6"/></svg></span>
+    <span class="title">Images<small>on-box</small></span>
+    <span class="sp"></span>
+    <span class="dot" title="ComfyUI ready · models unloaded"></span>
+    <button class="iconbtn" id="theme" title="Toggle theme">
+      <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4.5"/><path d="M12 2v2M12 20v2M4 12H2M22 12h-2M5 5l1.5 1.5M17.5 17.5L19 19M19 5l-1.5 1.5M6.5 17.5L5 19"/></svg>
+    </button>
+  </div>
+
+  <!-- board: this session's renders, newest at the bottom -->
+  <div class="board" id="board">
+    <div class="b-empty" id="empty">
+      <div class="ic"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="9" cy="9" r="2"/><path d="M21 15l-5-5L5 21"/></svg></div>
+      <b>nothing rendered yet.</b><br>
+      describe an image below and tap send — it renders here on-box, newest at the bottom.
+    </div>
+  </div>
+
+  <!-- composer dock -->
+  <div class="composer">
+    <div class="seg" id="modeSeg">
+      <button class="on" data-mode="generate" onclick="setMode('generate')">
+        <svg viewBox="0 0 24 24"><path d="M12 3v18M3 12h18"/></svg>Generate</button>
+      <button data-mode="edit" onclick="setMode('edit')">
+        <svg viewBox="0 0 24 24"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>Edit</button>
+    </div>
+
+    <!-- source row — edit mode only -->
+    <div class="srcrow" id="srcrow">
+      <div class="slot main" id="srcSlot" onclick="pickSource()" title="tap a render above, or upload">
+        <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
+      </div>
+      <div class="srccol">
+        <span class="t" id="srcLabel">add a source</span>
+        <span class="h" id="srcHint">tap a render above → "use as source", or upload</span>
+        <div class="refs">
+          <button class="addref" id="addRef" onclick="addRef()"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>ref</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="field">
+      <textarea id="prompt" rows="1" placeholder="describe an image to render…"></textarea>
+      <button class="send" id="send" onclick="run()" title="render">
+        <svg viewBox="0 0 24 24"><path d="M22 2L11 13M22 2l-7 20-4-9-9-4z"/></svg>
+      </button>
+    </div>
+
+    <div class="footer">
+      <div class="chips" id="chips"></div>
+      <button class="tunebtn" id="tuneBtn" onclick="openSheet()" title="tune render settings">
+        <svg viewBox="0 0 24 24"><path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6"/></svg>
+      </button>
+    </div>
+
+    <div class="microcopy">
+      <span class="sd"></span>
+      <span>renders on-box · language models stay unloaded</span>
+      <a onclick="askJerv()">ask jerv in chat ›</a>
+    </div>
+  </div>
+
+  <!-- tune sheet -->
+  <div class="scrim" id="scrim" onclick="closeSheet()"></div>
+  <div class="sheet" id="sheet" role="dialog" aria-label="Tune render settings">
+    <div class="grab"></div>
+    <h3>Tune</h3>
+    <p class="sub">render settings · these stay until you change them</p>
+
+    <div class="grp" id="grp-speed">
+      <div class="lbl">Speed <span class="hint">— implies the model</span></div>
+      <div class="optrow" id="speedRow">
+        <button class="opt" data-v="dreamshaper" onclick="setSpeed('dreamshaper')">dreamshaper<small>seconds</small></button>
+        <button class="opt" data-v="fast" onclick="setSpeed('fast')">fast<small>4-step</small></button>
+        <button class="opt on" data-v="quality" onclick="setSpeed('quality')">quality<small>~1min+</small></button>
+      </div>
+    </div>
+
+    <div class="grp">
+      <div class="lbl">Aspect</div>
+      <div class="optrow" id="aspectRow">
+        <button class="opt on" data-v="square" onclick="setAspect('square','1:1')">square<small>1:1</small></button>
+        <button class="opt" data-v="portrait" onclick="setAspect('portrait','3:4')">portrait<small>3:4</small></button>
+        <button class="opt" data-v="landscape" onclick="setAspect('landscape','4:3')">landscape<small>4:3</small></button>
+        <button class="opt" data-v="tall" onclick="setAspect('tall','9:16')">tall<small>9:16</small></button>
+        <button class="opt" data-v="wide" onclick="setAspect('wide','16:9')">wide<small>16:9</small></button>
+      </div>
+    </div>
+
+    <div class="grp">
+      <div class="lbl">Resolution</div>
+      <div class="optrow" id="resRow">
+        <button class="opt" data-v="small" onclick="setRes('small')">small<small>~0.5MP</small></button>
+        <button class="opt on" data-v="medium" onclick="setRes('medium')">medium<small>~1MP</small></button>
+        <button class="opt" data-v="large" onclick="setRes('large')">large<small>~2MP</small></button>
+      </div>
+    </div>
+
+    <div class="grp" id="grp-steps">
+      <div class="lbl">Steps <span class="hint">— quality path only</span></div>
+      <div class="stepwrap">
+        <input type="range" id="steps" min="20" max="40" value="28" oninput="setSteps(this.value)" />
+        <span class="val" id="stepsVal">28</span>
+      </div>
+      <p class="lockmsg">fixed-step on this speed — steps ignored.</p>
+    </div>
+
+    <div class="grp">
+      <div class="lbl">Negative prompt <span class="hint">— keep out</span></div>
+      <input class="ti" id="neg" placeholder="e.g. blurry, text, watermark" oninput="syncChips()" />
+    </div>
+
+    <div class="grp">
+      <div class="lbl">Seed <span class="hint">— blank = random, recorded after render</span></div>
+      <div class="seedrow">
+        <input class="ti" id="seed" inputmode="numeric" placeholder="random" oninput="syncChips()" />
+        <button class="dice" onclick="clearSeed()" title="clear → random">
+          <svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="4"/><circle cx="8" cy="8" r="1.3" fill="currentColor"/><circle cx="16" cy="16" r="1.3" fill="currentColor"/><circle cx="16" cy="8" r="1.3" fill="currentColor"/><circle cx="8" cy="16" r="1.3" fill="currentColor"/></svg>
+        </button>
+      </div>
+    </div>
+
+    <button class="done" onclick="closeSheet()">Done</button>
+  </div>
+</div>
+
+<script>
+const $=id=>document.getElementById(id);
+
+/* ── settings state ───────────────────────────────────────────────────── */
+const S={mode:'generate', speed:'quality', aspect:'square', aspectRatio:'1:1',
+  res:'medium', steps:28, neg:'', seed:''};
+
+const MODELS={
+  generate:{dreamshaper:'dreamshaper', fast:'qwen-image-lightning', quality:'qwen-image'},
+  edit:{dreamshaper:'dreamshaper', fast:'qwen-image-edit-lightning', quality:'qwen-image-edit'}
+};
+// pixel dims per aspect+res — drives the SVG stand-in viewBox and the caption.
+const DIMS={
+  '1:1':{small:[640,640],medium:[1024,1024],large:[1536,1536]},
+  '3:4':{small:[576,768],medium:[896,1152],large:[1152,1536]},
+  '4:3':{small:[768,576],medium:[1152,896],large:[1536,1152]},
+  '9:16':{small:[480,832],medium:[768,1344],large:[864,1536]},
+  '16:9':{small:[832,480],medium:[1344,768],large:[1536,864]}
+};
+
+/* ── theme ────────────────────────────────────────────────────────────── */
+$('theme').onclick=()=>{const h=document.documentElement;
+  h.dataset.theme=h.dataset.theme==='light'?'dark':'light';};
+
+/* ── mode switch ──────────────────────────────────────────────────────── */
+function setMode(m){
+  S.mode=m;
+  document.querySelectorAll('#modeSeg button').forEach(b=>b.classList.toggle('on',b.dataset.mode===m));
+  $('srcrow').classList.toggle('on',m==='edit');
+  $('prompt').placeholder = m==='edit'
+    ? 'describe the edit — what to change…'
+    : 'describe an image to render…';
+  $('send').title = m==='edit' ? 'apply edit' : 'render';
+  syncChips();
+}
+
+/* ── tune sheet open/close ────────────────────────────────────────────── */
+function openSheet(){$('scrim').classList.add('on');$('sheet').classList.add('on');}
+function closeSheet(){$('scrim').classList.remove('on');$('sheet').classList.remove('on');}
+
+/* ── tune controls ────────────────────────────────────────────────────── */
+function pick(rowId,v){document.querySelectorAll('#'+rowId+' .opt').forEach(o=>o.classList.toggle('on',o.dataset.v===v));}
+function setSpeed(v){S.speed=v;pick('speedRow',v);
+  // steps only meaningful on quality — lock the group otherwise.
+  $('grp-steps').classList.toggle('locked',v!=='quality');
+  syncChips();}
+function setAspect(v,r){S.aspect=v;S.aspectRatio=r;pick('aspectRow',v);syncChips();}
+function setRes(v){S.res=v;pick('resRow',v);syncChips();}
+function setSteps(v){S.steps=+v;$('stepsVal').textContent=v;syncChips();}
+function clearSeed(){$('seed').value='';S.seed='';syncChips();}
+
+/* ── chips (glanceable settings echo on the composer) ─────────────────── */
+function syncChips(){
+  S.neg=$('neg').value.trim();
+  S.seed=$('seed').value.trim();
+  const [w,h]=DIMS[S.aspectRatio][S.res];
+  const model=MODELS[S.mode][S.speed];
+  const stepsLocked=S.speed!=='quality';
+  const c=$('chips');
+  const ic={
+    speed:'<path d="M13 2L3 14h7l-1 8 10-12h-7z"/>',
+    aspect:'<rect x="4" y="5" width="16" height="14" rx="2"/>',
+    res:'<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18M3 9h18"/>',
+    steps:'<path d="M3 6h18M3 12h18M3 18h18"/>',
+    seed:'<path d="M3 12a9 9 0 1 0 9-9"/><path d="M3 3v6h6"/>',
+    neg:'<circle cx="12" cy="12" r="9"/><path d="M6 6l12 12"/>'
+  };
+  const chip=(k,inner,cls='')=>`<span class="chip ${cls}"><svg viewBox="0 0 24 24" stroke-width="1.6">${ic[k]}</svg>${inner}</span>`;
+  let html='';
+  html+=chip('speed',`<b>${S.speed}</b>`);
+  html+=chip('aspect',`${S.aspect} <b>${S.aspectRatio}</b>`);
+  html+=chip('res',`${w}×${h}`);
+  html+=chip('steps', stepsLocked?`steps <b>fixed</b>`:`<b>${S.steps}</b> steps`, stepsLocked?'locked':'');
+  if(S.seed) html+=chip('seed',`seed <b>${S.seed}</b>`);
+  if(S.neg)  html+=chip('neg',`neg set`);
+  c.innerHTML=html;
+}
+
+/* ── edit source + refs ───────────────────────────────────────────────── */
+let refCount=0;
+// A small stand-in render pool to "use as source" / upload — same SVG family
+// as a board render. In production these come from /api/images/generated/{id}.
+function svgURI(w,h,tone){
+  const palettes={
+    dusk:['7a6a9a','c98a8f','e9c79a'], storm:['2b3242','3a4a5e','5a4b66'],
+    fresh:['4a6a5e','8fbc9a','d9e2c4'], lab:['3a3550','a493c9','d6cbe9'],
+    upl:['44484f','6b7079','9aa0a8']
+  };
+  const p=palettes[tone]||palettes.lab;
+  const s=`<svg xmlns='http://www.w3.org/2000/svg' width='${w}' height='${h}'><defs><linearGradient id='g' x1='0' y1='0' x2='0' y2='1'><stop offset='0' stop-color='%23${p[0]}'/><stop offset='0.55' stop-color='%23${p[1]}'/><stop offset='1' stop-color='%23${p[2]}'/></linearGradient></defs><rect width='${w}' height='${h}' fill='url(%23g)'/><circle cx='${w*0.26}' cy='${h*0.2}' r='${Math.min(w,h)*0.13}' fill='%23ffe9b0' opacity='0.5'/><rect x='${w*0.6}' y='${h*0.62}' width='${w*0.05}' height='${h*0.3}' rx='6' fill='%23f4ead2' opacity='0.85'/></svg>`;
+  return "data:image/svg+xml;utf8,"+s;
+}
+function pickSource(){
+  // Mock the "tap a render above → use as source" OR upload affordance.
+  const slot=$('srcSlot');
+  slot.classList.add('filled');
+  slot.innerHTML=`<img src="${svgURI(400,400,'dusk')}" alt="source"><span class="x" onclick="event.stopPropagation();clearSource()">✕</span>`;
+  $('srcLabel').textContent='source set';
+  $('srcHint').textContent='from this session · qwen render';
+}
+function clearSource(){
+  const slot=$('srcSlot');slot.classList.remove('filled');
+  slot.innerHTML=`<svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>`;
+  $('srcLabel').textContent='add a source';
+  $('srcHint').textContent='tap a render above → "use as source", or upload';
+}
+function addRef(){
+  if(refCount>=2)return;
+  refCount++;
+  const refs=document.querySelector('#srcrow .refs');
+  const r=document.createElement('div');r.className='slot ref filled';
+  r.innerHTML=`<img src="${svgURI(200,200,'fresh')}" alt="reference"><span class="x" onclick="rmRef(this)">✕</span>`;
+  refs.insertBefore(r,$('addRef'));
+  if(refCount>=2)$('addRef').disabled=true;
+}
+function rmRef(x){x.parentElement.remove();refCount--;$('addRef').disabled=false;}
+
+/* ── tap a board render to use it as a source (edit affordance) ───────── */
+function useAsSource(tone){
+  if(S.mode!=='edit')setMode('edit');
+  const slot=$('srcSlot');slot.classList.add('filled');
+  slot.innerHTML=`<img src="${svgURI(400,400,tone)}" alt="source"><span class="x" onclick="event.stopPropagation();clearSource()">✕</span>`;
+  $('srcLabel').textContent='source set';
+  $('srcHint').textContent='from this session render';
+  $('prompt').focus();
+}
+
+/* ── run a mock render ────────────────────────────────────────────────── */
+let busy=false, idSeq=7000;
+function run(){
+  if(busy)return;
+  const prompt=$('prompt').value.trim();
+  if(!prompt)return;
+  if(S.mode==='edit' && !$('srcSlot').classList.contains('filled')){
+    flashSource();return;
+  }
+  busy=true;$('send').disabled=true;
+  $('empty')?.classList.add('hidden');
+
+  const board=$('board');
+  const [w,h]=DIMS[S.aspectRatio][S.res];
+  const model=MODELS[S.mode][S.speed];
+  const seed = S.seed || String(Math.floor(Math.random()*9_000_000)+1_000_000);
+  const tone = S.mode==='edit' ? 'storm' : (S.speed==='dreamshaper'?'lab':'dusk');
+  const isEdit=S.mode==='edit';
+  const capturedPrompt=prompt;
+
+  // render-state card
+  const rid='r'+(idSeq++);
+  const rs=document.createElement('div');rs.className='rstate';rs.id=rid;
+  rs.innerHTML=`<div class="shim"></div><div class="lab">
+      <span class="s"><span class="pulse"></span>queued</span>
+      <span class="m">${model} · ${w}×${h}</span></div>`;
+  board.appendChild(rs);board.scrollTop=board.scrollHeight;
+
+  // queued → rendering → done. ComfyUI serializes one at a time; honest phases,
+  // no fake progress bar (speed sets a rough duration).
+  const dur = S.speed==='quality'?2600 : S.speed==='fast'?1300 : 800;
+  setTimeout(()=>{
+    rs.querySelector('.s').innerHTML=`<span class="pulse"></span>rendering…`;
+    rs.querySelector('.m').textContent = isEdit
+      ? `${model} · applying edit` : `${model} · ${S.speed==='quality'?S.steps+' steps':'fixed-step'}`;
+  }, 500);
+  setTimeout(()=>{
+    reveal(rid, {isEdit,prompt:capturedPrompt,w,h,model,seed,tone});
+    busy=false;$('send').disabled=false;
+  }, 500+dur);
+
+  $('prompt').value='';autoGrow($('prompt'));
+}
+
+function reveal(rid,o){
+  const rs=$(rid);
+  const card=document.createElement('div');card.className='card';
+  const metaPrompt=o.prompt.replace(/</g,'&lt;');
+  const capInner=`<b>${o.w} × ${o.h}</b><span class="d"></span>${o.model}<span class="d"></span>seed ${o.seed}<span class="pr">"${metaPrompt}"</span>`;
+
+  if(o.isEdit){
+    // before→after swipe-compare (reused genimage-c paradigm). before=source.
+    card.innerHTML=`
+      <div class="cmp" style="aspect-ratio:${o.w}/${o.h}">
+        <img class="before" alt="before edit" src="${svgURI(o.w,o.h,'dusk')}">
+        <div class="after"><img alt="after edit" src="${svgURI(o.w,o.h,'storm')}"></div>
+        <span class="kindtag k-edit"><svg viewBox="0 0 24 24"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>edited</span>
+        <span class="lbl b">BEFORE</span><span class="lbl a">AFTER</span>
+        <div class="handle"></div>
+        <div class="grip"><svg viewBox="0 0 24 24"><path d="M8 7l-4 5 4 5M16 7l4 5-4 5"/></svg></div>
+      </div>
+      <div class="cap">${capInner}</div>
+      <div class="acts">
+        <button class="minibtn v" onclick="useAsSource('storm')">edit this</button>
+        <button class="minibtn" onclick="alert('saved to images — owner-only, served by id')">save</button>
+      </div>`;
+    rs.replaceWith(card);
+    bindCmp(card.querySelector('.cmp'));
+  } else {
+    card.innerHTML=`
+      <div class="frame" style="aspect-ratio:${o.w}/${o.h}">
+        <img alt="${metaPrompt}" src="${svgURI(o.w,o.h,o.tone)}">
+        <span class="kindtag k-gen"><svg viewBox="0 0 24 24"><path d="M12 3v18M3 12h18"/></svg>generated</span>
+      </div>
+      <div class="cap">${capInner}</div>
+      <div class="acts">
+        <button class="minibtn v" onclick="useAsSource('${o.tone}')">use as source</button>
+        <button class="minibtn" onclick="alert('saved to images — owner-only, served by id')">save</button>
+      </div>`;
+    rs.replaceWith(card);
+  }
+  $('board').scrollTop=$('board').scrollHeight;
+}
+
+/* swipe-compare drag */
+function bindCmp(cmp){
+  const setPos=x=>{const r=cmp.getBoundingClientRect();
+    let p=(x-r.left)/r.width*100;p=Math.max(0,Math.min(100,p));cmp.style.setProperty('--pos',p+'%');};
+  let drag=false;
+  cmp.addEventListener('pointerdown',e=>{drag=true;cmp.setPointerCapture(e.pointerId);setPos(e.clientX);});
+  cmp.addEventListener('pointermove',e=>{if(drag)setPos(e.clientX);});
+  cmp.addEventListener('pointerup',()=>drag=false);
+  cmp.addEventListener('pointercancel',()=>drag=false);
+}
+
+/* ── small helpers ────────────────────────────────────────────────────── */
+function flashSource(){
+  const slot=$('srcSlot');slot.style.borderColor='var(--rose)';
+  $('srcLabel').textContent='pick a source first';$('srcLabel').style.color='var(--rose)';
+  setTimeout(()=>{slot.style.borderColor='';$('srcLabel').style.color='';
+    if(!slot.classList.contains('filled'))$('srcLabel').textContent='add a source';},1400);
+}
+function askJerv(){alert('Opens a Full-Brain chat with this prompt — that wakes the language model.\n\nThis screen keeps the LLM unloaded; the chat path is for when you want jerv to reason about the image too.');}
+function autoGrow(el){el.style.height='auto';el.style.height=Math.min(el.scrollHeight,120)+'px';}
+
+const pf=$('prompt');
+pf.addEventListener('input',()=>autoGrow(pf));
+pf.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();run();}});
+document.addEventListener('keydown',e=>{if(e.key==='Escape')closeSheet();});
+
+syncChips();
+</script>
+</body>
+</html>
