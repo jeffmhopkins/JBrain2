@@ -14,6 +14,9 @@ import {
   type AutomationStep,
   type CatalogAction,
   type RunStatus,
+  type ScheduleFreq,
+  type ScheduleInput,
+  type ScheduleSpecKind,
   api,
 } from "../api/client";
 import {
@@ -21,11 +24,16 @@ import {
   ChevronLeftIcon,
   ChevronRightIcon,
   ListIcon,
+  PencilIcon,
   PlayIcon,
   RefreshIcon,
   XIcon,
   ZapIcon,
 } from "../components/icons";
+
+// Sunday=0 … Saturday=6 — the chip row + the spec's day convention (matches Tasks).
+const DAY_LABELS = ["S", "M", "T", "W", "T", "F", "S"];
+const DAY_KEYS = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
 
 /** The mock's three sections, in order; an automation's `group` buckets it. */
 const GROUPS: { key: Automation["group"]; label: string }[] = [
@@ -83,8 +91,43 @@ function statusDotClass(status: RunStatus): string {
   return status === "error" ? "failed" : status === "running" ? "running" : "ok";
 }
 
+/** "07:00" → "7:00" (drop the hour's leading zero for the headline). */
+function fmtClock(hhmm: string): string {
+  const [h, m] = hhmm.split(":");
+  return `${Number(h)}:${m ?? "00"}`;
+}
+
+/** A schedule-bound automation's cadence phrase. The task-style spec kinds read like
+ * a task's schedule label; `interval` (the legacy reconciler cadence) falls back to
+ * the fixed-interval phrasing. */
+function schedulePhrase(a: Automation): string {
+  switch (a.schedule_kind) {
+    case "repeat": {
+      const time = a.schedule_time ? ` · ${fmtClock(a.schedule_time)}` : "";
+      if (a.schedule_freq === "weekly") {
+        const days = a.schedule_days.map((d) => DAY_LABELS[d]).join("");
+        return `Weekly ${days}${time}`;
+      }
+      return `${a.schedule_freq === "weekdays" ? "Weekdays" : "Daily"}${time}`;
+    }
+    case "once":
+      return a.run_at
+        ? `Once · ${new Date(a.run_at).toLocaleString([], {
+            month: "short",
+            day: "numeric",
+            hour: "numeric",
+            minute: "2-digit",
+          })}`
+        : "Once";
+    case "on_demand":
+      return "On demand";
+    default:
+      return a.interval_seconds !== null ? fmtInterval(a.interval_seconds) : "scheduled";
+  }
+}
+
 /** The when -> do headline. Event: "When <ev> → run <pipeline>"; schedule:
- * "<Interval> → run <pipeline>". */
+ * "<cadence> → run <pipeline>". */
 function whenLine(a: Automation) {
   if (a.kind === "on_event") {
     return (
@@ -94,13 +137,20 @@ function whenLine(a: Automation) {
       </>
     );
   }
-  const interval = a.interval_seconds !== null ? fmtInterval(a.interval_seconds) : "scheduled";
-  const cap = interval.charAt(0).toUpperCase() + interval.slice(1);
+  const phrase = schedulePhrase(a);
+  const cap = phrase.charAt(0).toUpperCase() + phrase.slice(1);
   return (
     <>
       {cap} → run <span className="auto-pl">{a.pipeline}</span>
     </>
   );
+}
+
+/** Whether a card offers the day/time/repeat editor. Only the periodic/nightly
+ * sweeps (a schedule-bound, manually-fireable trigger) — sub-day reconcilers keep
+ * their interval cadence, and event triggers are not scheduled. */
+function isEditableSchedule(a: Automation): boolean {
+  return a.kind === "schedule" && a.schedule_id !== null && a.group === "nightly";
 }
 
 /** The dim status + next/last meta line under the headline. */
@@ -152,6 +202,203 @@ function RunRow({ run }: { run: AutomationRun }) {
   );
 }
 
+// --- the schedule editor (the task-style day/time/repeat surface, reused) --------
+
+/** The editor's local draft — the schedule-spec subset of a task's Draft. The card's
+ * `interval`/legacy state is mapped onto `repeat` so opening a never-edited nightly
+ * sweep lands on a sensible day/time the owner can adjust. */
+interface SchedDraft {
+  kind: "on_demand" | "once" | "repeat";
+  freq: ScheduleFreq;
+  days: number[];
+  time: string;
+  date: string;
+}
+
+function tomorrowISODate(): string {
+  const d = new Date(Date.now() + 86400000);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+/** The next-fire instant as a local HH:MM — the natural default time when promoting a
+ * legacy interval sweep to a wall-clock repeat (a nightly 02:00 UTC sweep shows the
+ * owner's local equivalent). */
+function localClockOf(iso: string | null): string {
+  if (iso === null) return "02:00";
+  const d = new Date(iso);
+  return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+}
+
+function draftFromAuto(a: Automation): SchedDraft {
+  const base: SchedDraft = {
+    kind: "repeat",
+    freq: "daily",
+    days: [1, 2, 3, 4, 5],
+    time: localClockOf(a.next_run_at),
+    date: tomorrowISODate(),
+  };
+  if (a.schedule_kind === "repeat") {
+    return {
+      kind: "repeat",
+      freq: a.schedule_freq ?? "daily",
+      days: a.schedule_days.length ? a.schedule_days : [1, 2, 3, 4, 5],
+      time: a.schedule_time ?? base.time,
+      date: tomorrowISODate(),
+    };
+  }
+  if (a.schedule_kind === "once") {
+    return {
+      ...base,
+      kind: "once",
+      time: a.run_at ? localClockOf(a.run_at) : base.time,
+      date: a.run_at ? a.run_at.slice(0, 10) : tomorrowISODate(),
+    };
+  }
+  if (a.schedule_kind === "on_demand") return { ...base, kind: "on_demand" };
+  // interval (legacy) or null: default to a daily repeat at the current fire time.
+  return base;
+}
+
+function draftToScheduleInput(d: SchedDraft): ScheduleInput {
+  const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+  const base: ScheduleInput = {
+    schedule_kind: d.kind as ScheduleSpecKind,
+    interval_seconds: null,
+    schedule_freq: null,
+    schedule_days: [],
+    schedule_time: null,
+    run_at: null,
+    timezone,
+  };
+  if (d.kind === "repeat") {
+    base.schedule_freq = d.freq;
+    base.schedule_time = d.time;
+    base.schedule_days = d.freq === "weekly" ? d.days : [];
+  } else if (d.kind === "once") {
+    base.run_at = new Date(`${d.date}T${d.time}`).toISOString();
+  }
+  return base;
+}
+
+interface ScheduleEditorProps {
+  auto: Automation;
+  saving: boolean;
+  onClose: () => void;
+  onSave: (input: ScheduleInput) => void;
+}
+
+function ScheduleEditor({ auto, saving, onClose, onSave }: ScheduleEditorProps) {
+  const [draft, setDraft] = useState<SchedDraft>(() => draftFromAuto(auto));
+  const set = (patch: Partial<SchedDraft>) => setDraft((d) => ({ ...d, ...patch }));
+  function toggleDay(day: number): void {
+    setDraft((d) => ({
+      ...d,
+      days: d.days.includes(day) ? d.days.filter((x) => x !== day) : [...d.days, day].sort(),
+    }));
+  }
+  const canSave =
+    !saving && !(draft.kind === "repeat" && draft.freq === "weekly" && !draft.days.length);
+
+  return (
+    <section className="ted">
+      <header className="runs-bar">
+        <button type="button" className="icon-btn" onClick={onClose} aria-label="Cancel">
+          <ChevronLeftIcon size={22} />
+        </button>
+        <h2 className="runs-bar-title">Edit schedule</h2>
+      </header>
+      <div className="ted-body">
+        <div className="ted-field">
+          <span className="ted-lab">When it runs · {auto.pipeline}</span>
+          <div className="ted-seg" role="tablist">
+            {(["on_demand", "once", "repeat"] as SchedDraft["kind"][]).map((k) => (
+              <button
+                type="button"
+                key={k}
+                role="tab"
+                aria-selected={draft.kind === k}
+                className={`ted-segbtn${draft.kind === k ? " on" : ""}`}
+                onClick={() => set({ kind: k })}
+              >
+                {k === "on_demand" ? "On demand" : k === "once" ? "Once" : "Repeats"}
+              </button>
+            ))}
+          </div>
+          {draft.kind === "on_demand" && (
+            <p className="ted-hint">No schedule — fire it yourself with Run now.</p>
+          )}
+          {draft.kind === "once" && (
+            <div className="ted-row2">
+              <input
+                className="ted-input"
+                type="date"
+                value={draft.date}
+                onChange={(e) => set({ date: e.target.value })}
+              />
+              <input
+                className="ted-input"
+                type="time"
+                value={draft.time}
+                onChange={(e) => set({ time: e.target.value })}
+              />
+            </div>
+          )}
+          {draft.kind === "repeat" && (
+            <>
+              <div className="ted-seg" style={{ marginTop: 10 }}>
+                {(["daily", "weekdays", "weekly"] as ScheduleFreq[]).map((f) => (
+                  <button
+                    type="button"
+                    key={f}
+                    className={`ted-segbtn${draft.freq === f ? " on" : ""}`}
+                    aria-pressed={draft.freq === f}
+                    onClick={() => set({ freq: f })}
+                  >
+                    {f === "daily" ? "Daily" : f === "weekdays" ? "Weekdays" : "Weekly"}
+                  </button>
+                ))}
+              </div>
+              {draft.freq === "weekly" && (
+                <div className="ted-days">
+                  {DAY_KEYS.map((dayKey, i) => (
+                    <button
+                      type="button"
+                      key={dayKey}
+                      className={`ted-day${draft.days.includes(i) ? " on" : ""}`}
+                      aria-pressed={draft.days.includes(i)}
+                      aria-label={dayKey}
+                      onClick={() => toggleDay(i)}
+                    >
+                      {DAY_LABELS[i]}
+                    </button>
+                  ))}
+                </div>
+              )}
+              <input
+                className="ted-input"
+                style={{ marginTop: 10 }}
+                type="time"
+                value={draft.time}
+                onChange={(e) => set({ time: e.target.value })}
+              />
+            </>
+          )}
+        </div>
+      </div>
+      <div className="ted-foot">
+        <button
+          type="button"
+          className="ted-save"
+          disabled={!canSave}
+          onClick={() => onSave(draftToScheduleInput(draft))}
+        >
+          {saving ? "Saving…" : "Save schedule"}
+        </button>
+      </div>
+    </section>
+  );
+}
+
 interface CardProps {
   auto: Automation;
   open: boolean;
@@ -160,6 +407,7 @@ interface CardProps {
   onFlip: () => void;
   onRun: () => void;
   onAllRuns: () => void;
+  onEdit: () => void;
 }
 
 function AutomationCard({
@@ -170,6 +418,7 @@ function AutomationCard({
   onFlip,
   onRun,
   onAllRuns,
+  onEdit,
 }: CardProps) {
   const dot = auto.enabled ? statusDotClass(auto.recent_runs[0]?.status ?? "done") : "idle";
   const stepWord = auto.steps.length === 1 ? "step" : "steps";
@@ -216,6 +465,12 @@ function AutomationCard({
               <ListIcon size={14} />
               All runs
             </button>
+            {isEditableSchedule(auto) && (
+              <button type="button" onClick={onEdit}>
+                <PencilIcon size={14} />
+                Edit schedule
+              </button>
+            )}
             <button
               type="button"
               className={`auto-runbtn${running ? " running" : ""}`}
@@ -273,6 +528,8 @@ export function AutomationsScreen({ onClose, onOpenRuns }: AutomationsScreenProp
   const [openId, setOpenId] = useState<string | null>(null);
   const [running, setRunning] = useState<Set<string>>(new Set());
   const [toast, setToast] = useState<string | null>(null);
+  const [editing, setEditing] = useState<Automation | null>(null);
+  const [savingSchedule, setSavingSchedule] = useState(false);
 
   const refresh = useCallback(async () => {
     setError(null);
@@ -315,6 +572,21 @@ export function AutomationsScreen({ onClose, onOpenRuns }: AutomationsScreenProp
     }
   }
 
+  async function saveSchedule(auto: Automation, input: ScheduleInput) {
+    if (auto.schedule_id === null) return;
+    setSavingSchedule(true);
+    try {
+      await api.updateSchedule(auto.schedule_id, input);
+      setEditing(null);
+      setToast(`${auto.pipeline} schedule updated.`);
+      await refresh();
+    } catch (err) {
+      setToast(errorMessage(err));
+    } finally {
+      setSavingSchedule(false);
+    }
+  }
+
   async function runNow(auto: Automation) {
     if (!auto.manual || !auto.enabled) return;
     setRunning((s) => new Set(s).add(auto.trigger_id));
@@ -331,6 +603,17 @@ export function AutomationsScreen({ onClose, onOpenRuns }: AutomationsScreenProp
         return next;
       });
     }
+  }
+
+  if (editing !== null) {
+    return (
+      <ScheduleEditor
+        auto={editing}
+        saving={savingSchedule}
+        onClose={() => setEditing(null)}
+        onSave={(input) => void saveSchedule(editing, input)}
+      />
+    );
   }
 
   return (
@@ -404,6 +687,7 @@ export function AutomationsScreen({ onClose, onOpenRuns }: AutomationsScreenProp
                       onFlip={() => void flip(auto)}
                       onRun={() => void runNow(auto)}
                       onAllRuns={onOpenRuns}
+                      onEdit={() => setEditing(auto)}
                     />
                   ))}
                 </div>

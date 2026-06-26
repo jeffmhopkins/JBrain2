@@ -35,6 +35,12 @@ const EVENT: Automation = {
   interval_seconds: null,
   next_run_at: null,
   last_run_at: null,
+  schedule_kind: null,
+  schedule_freq: null,
+  schedule_days: [],
+  schedule_time: null,
+  run_at: null,
+  timezone: null,
 };
 
 const RECONCILER: Automation = {
@@ -58,6 +64,43 @@ const RECONCILER: Automation = {
   interval_seconds: 300,
   next_run_at: SOON,
   last_run_at: NOW,
+  schedule_kind: "interval",
+  schedule_freq: null,
+  schedule_days: [],
+  schedule_time: null,
+  run_at: null,
+  timezone: "UTC",
+};
+
+// A nightly sweep set to a task-style weekly repeat — the editable cadence the owner
+// can change (the reconciler above keeps its interval mode and offers no editor).
+const NIGHTLY: Automation = {
+  trigger_id: "n1",
+  kind: "schedule",
+  group: "nightly",
+  pipeline: "nightly_purge_deleted_artifacts",
+  enabled: true,
+  manual: true,
+  steps: [
+    {
+      action: "purge_deleted_artifacts",
+      cost_class: "cheap",
+      description: "Reap deleted-note artifacts.",
+      known: true,
+    },
+  ],
+  recent_runs: [],
+  on_event: null,
+  schedule_id: "sched-n1",
+  interval_seconds: null,
+  next_run_at: SOON,
+  last_run_at: NOW,
+  schedule_kind: "repeat",
+  schedule_freq: "weekly",
+  schedule_days: [0, 6],
+  schedule_time: "02:00",
+  run_at: null,
+  timezone: "UTC",
 };
 
 const ACTIONS: CatalogAction[] = [
@@ -162,5 +205,33 @@ describe("AutomationsScreen", () => {
     await screen.findByText("note.ingested");
     fireEvent.click(screen.getByLabelText("Back to launcher"));
     expect(onClose).toHaveBeenCalled();
+  });
+
+  it("edits a nightly sweep's schedule like a task and PUTs the new spec", async () => {
+    const update = vi.spyOn(api, "updateSchedule").mockResolvedValue();
+    mount({ automations: [NIGHTLY] });
+    // Expand the nightly sweep and open its schedule editor.
+    fireEvent.click(await screen.findByText("nightly_purge_deleted_artifacts"));
+    fireEvent.click(await screen.findByRole("button", { name: /Edit schedule/ }));
+    // Switch from weekly repeat to a plain daily repeat and save.
+    fireEvent.click(await screen.findByRole("button", { name: "Daily" }));
+    fireEvent.click(screen.getByRole("button", { name: /Save schedule/ }));
+    await waitFor(() => expect(update).toHaveBeenCalledTimes(1));
+    expect(update).toHaveBeenCalledWith(
+      "sched-n1",
+      expect.objectContaining({
+        schedule_kind: "repeat",
+        schedule_freq: "daily",
+        interval_seconds: null,
+        // A daily repeat carries no explicit day list.
+        schedule_days: [],
+      }),
+    );
+  });
+
+  it("offers no schedule editor for an interval reconciler", async () => {
+    mount({ automations: [RECONCILER] });
+    fireEvent.click(await screen.findByText("reconcile_pending_notes"));
+    expect(screen.queryByRole("button", { name: /Edit schedule/ })).not.toBeInTheDocument();
   });
 });

@@ -111,6 +111,60 @@ async def _seed_schedule(
     return ids
 
 
+async def _seed_spec_schedule(
+    maker: async_sessionmaker,
+    *,
+    action: str,
+    schedule_kind: str,
+    next_run_at: datetime | None,
+    schedule_freq: str | None = None,
+    schedule_days: list[int] | None = None,
+    schedule_time: str | None = None,
+    run_at: datetime | None = None,
+    timezone: str = "UTC",
+) -> dict[str, str]:
+    """A schedule carrying the task-style spec (migration 0099) + its bound trigger +
+    a one-action pipeline. Mirrors _seed_schedule but exercises the non-interval
+    kinds the owner's editor writes."""
+    ids = {k: str(uuid.uuid4()) for k in ("schedule", "trigger")}
+    pipeline = f"test_spec_pipeline_{ids['schedule'][:8]}"
+    ids["pipeline"] = pipeline
+    steps = f'[{{"action": "{action}", "action_version": 1, "params": {{}}}}]'
+    async with scoped_session(maker, queue.SYSTEM_CTX) as s:
+        await s.execute(
+            text(
+                "INSERT INTO app.pipelines (name, version, steps)"
+                " VALUES (:n, 1, cast(:st AS jsonb))"
+            ),
+            {"n": pipeline, "st": steps},
+        )
+        await s.execute(
+            text(
+                "INSERT INTO app.schedules (id, schedule_kind, schedule_freq,"
+                " schedule_days, schedule_time, run_at, timezone, next_run_at)"
+                " VALUES (:id, :kind, :freq, :days, :time, :run_at, :tz, :nr)"
+            ),
+            {
+                "id": ids["schedule"],
+                "kind": schedule_kind,
+                "freq": schedule_freq,
+                "days": schedule_days or [],
+                "time": schedule_time,
+                "run_at": run_at,
+                "tz": timezone,
+                "nr": next_run_at,
+            },
+        )
+        await s.execute(
+            text(
+                "INSERT INTO app.triggers (id, on_schedule_id, pipeline, manual)"
+                " VALUES (:id, :sid, :p, true)"
+            ),
+            {"id": ids["trigger"], "sid": ids["schedule"], "p": pipeline},
+        )
+    return ids
+
+
 async def _jobs_of_kind(maker: async_sessionmaker, kind: str) -> int:
     async with scoped_session(maker, queue.SYSTEM_CTX) as s:
         return (
@@ -207,6 +261,64 @@ async def test_due_schedule_enqueues_its_action_and_advances_next_run_at(
     assert row is not None
     assert row.last_run_at == NOW
     assert row.next_run_at == NOW + timedelta(days=1)
+
+
+async def test_due_repeat_schedule_advances_to_next_wall_clock_time(
+    maker: async_sessionmaker,
+) -> None:
+    # A task-style daily repeat at 02:00 UTC, due now (NOW is exactly 02:00): the tick
+    # fires it and advances next_run_at to the NEXT day's 02:00 via the task schedule
+    # logic — NOT a fixed interval step — proving spec schedules ride the same tick.
+    ids = await _seed_spec_schedule(
+        maker,
+        action="sync_predicates",
+        schedule_kind="repeat",
+        schedule_freq="daily",
+        schedule_time="02:00",
+        next_run_at=NOW - timedelta(minutes=1),
+    )
+    before = await _jobs_of_kind(maker, "sync_predicates")
+    fired = await scheduler_tick(maker, _registry(), now=NOW)
+    assert [f.pipeline for f in fired] == [ids["pipeline"]]
+    assert await _jobs_of_kind(maker, "sync_predicates") == before + 1
+
+    async with scoped_session(maker, queue.SYSTEM_CTX) as s:
+        row = (
+            await s.execute(
+                text("SELECT next_run_at, last_run_at FROM app.schedules WHERE id = :id"),
+                {"id": ids["schedule"]},
+            )
+        ).first()
+    assert row is not None
+    assert row.last_run_at == NOW
+    assert row.next_run_at == NOW + timedelta(days=1)
+
+
+async def test_due_once_schedule_fires_then_clears_next_run_at(
+    maker: async_sessionmaker,
+) -> None:
+    # A one-off due now fires and then has no next fire: next_run_at goes NULL, so it
+    # leaves the due set (a spent one-off never re-fires).
+    ids = await _seed_spec_schedule(
+        maker,
+        action="consolidate_predicates",
+        schedule_kind="once",
+        run_at=NOW - timedelta(minutes=1),
+        next_run_at=NOW - timedelta(minutes=1),
+    )
+    before = await _jobs_of_kind(maker, "consolidate_predicates")
+    fired = await scheduler_tick(maker, _registry(), now=NOW)
+    assert [f.pipeline for f in fired] == [ids["pipeline"]]
+    assert await _jobs_of_kind(maker, "consolidate_predicates") == before + 1
+
+    async with scoped_session(maker, queue.SYSTEM_CTX) as s:
+        next_run = (
+            await s.execute(
+                text("SELECT next_run_at FROM app.schedules WHERE id = :id"),
+                {"id": ids["schedule"]},
+            )
+        ).scalar()
+    assert next_run is None
 
 
 async def test_tick_skips_a_not_yet_due_schedule(maker: async_sessionmaker) -> None:

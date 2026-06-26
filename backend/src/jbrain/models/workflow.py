@@ -21,7 +21,7 @@ from sqlalchemy import (
     Text,
     func,
 )
-from sqlalchemy.dialects.postgresql import JSONB, UUID
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from jbrain.models.core import Base
@@ -44,16 +44,30 @@ class Pipeline(Base):
 
 
 class Schedule(Base):
-    """A scheduler claim target: an interval + explicit next_run_at advanced
-    app-side so a fake clock controls it (N3). Owner/system config."""
+    """A scheduler claim target: an explicit next_run_at advanced app-side so a fake
+    clock controls it (N3). Owner/system config.
+
+    `schedule_kind` selects how the next fire is computed: `interval` is the legacy
+    fixed forward step (the reconcilers' sub-day cadences); `on_demand` / `once` /
+    `repeat` mirror `app.tasks` (migration 0093) so a sweep can be scheduled on a
+    wall-clock day/time, reusing `jbrain.tasks.schedule.next_run_after`."""
 
     __tablename__ = "schedules"
     __table_args__ = {"schema": "app"}
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    interval_seconds: Mapped[int] = mapped_column(Integer)
+    # Only set for the 'interval' kind; a spec-driven schedule leaves it NULL.
+    interval_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
     timezone: Mapped[str] = mapped_column(Text, default="UTC", server_default="UTC")
-    next_run_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    schedule_kind: Mapped[str] = mapped_column(Text, default="interval", server_default="interval")
+    schedule_freq: Mapped[str | None] = mapped_column(Text, nullable=True)
+    schedule_days: Mapped[list[int]] = mapped_column(
+        ARRAY(Integer), default=list, server_default="{}"
+    )
+    schedule_time: Mapped[str | None] = mapped_column(Text, nullable=True)
+    run_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # NULL when the schedule has no upcoming fire (on_demand, or a spent once).
+    next_run_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_run_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
