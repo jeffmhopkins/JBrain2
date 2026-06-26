@@ -145,6 +145,46 @@ describe("ImageScreen", () => {
     );
   });
 
+  it("surfaces the backend error on a failed render, then retries", async () => {
+    // First generate fails with an actionable 400 (uninstalled tier); the retry
+    // succeeds. Without the catch the spinner would hang forever.
+    let calls = 0;
+    const m = vi.fn<typeof fetch>(async (input, init) => {
+      const path = String(input instanceof Request ? input.url : input);
+      const method = (init?.method ?? "GET").toUpperCase();
+      if (path.endsWith("/api/images/generated") && method === "GET") {
+        return new Response("[]", { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+      if (path.endsWith("/api/images/generate")) {
+        calls += 1;
+        if (calls === 1) {
+          return new Response(
+            JSON.stringify({
+              detail: "The dreamshaper image model isn't installed on this box yet.",
+            }),
+            { status: 400, headers: { "Content-Type": "application/json" } },
+          );
+        }
+        return new Response(JSON.stringify(img({ id: "ok", seed: 999 })), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      throw new Error(`Unexpected fetch: ${method} ${path}`);
+    });
+    vi.stubGlobal("fetch", m);
+
+    render(<ImageScreen onClose={noop} />);
+    fireEvent.click(screen.getByRole("button", { name: "Generate" }));
+    // The actionable detail is shown (not a stuck spinner) with a retry.
+    await waitFor(() =>
+      expect(screen.getByText(/dreamshaper image model isn't installed/)).toBeInTheDocument(),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "try again" }));
+    // The retry resolves and the result meta appears.
+    await waitFor(() => expect(screen.getByText(/seed 999/)).toBeInTheDocument());
+  });
+
   it("opens a gallery tile in the lightbox with its meta", async () => {
     stubFetch([img({ id: "seed-1", model: "dreamshaper", seed: 12009654 })]);
     render(<ImageScreen onClose={noop} />);

@@ -1254,9 +1254,22 @@ async function request(path: string, init?: RequestInit): Promise<Response> {
     throw new ApiError(401, "Not authenticated");
   }
   if (!response.ok) {
-    throw new ApiError(response.status, `Request failed: ${response.status}`);
+    // Surface the backend's actionable message (FastAPI's `{detail}`) instead of a
+    // bare status — e.g. "the dreamshaper image model isn't installed…". Falls back
+    // to the status when the body isn't a JSON detail.
+    throw new ApiError(response.status, await errorDetail(response));
   }
   return response;
+}
+
+async function errorDetail(response: Response): Promise<string> {
+  try {
+    const body = (await response.clone().json()) as { detail?: unknown };
+    if (typeof body.detail === "string" && body.detail.trim()) return body.detail;
+  } catch {
+    // not a JSON body — fall through to the status line
+  }
+  return `Request failed: ${response.status}`;
 }
 
 function jsonInit(method: string, body: unknown): RequestInit {
