@@ -386,11 +386,13 @@ services:
       # What the Claude Agent SDK + its `claude` CLI read to reach the model. The SDK
       # speaks the Anthropic Messages API (/v1/messages); llama.cpp/llama-swap speak
       # OpenAI, so jcode points at the `claude-shim` (LiteLLM) translator by default —
-      # on-box-confirmed the gateway has no native /v1/messages. ANTHROPIC_AUTH_TOKEN
-      # is the shim's master key (Bearer auth); ANTHROPIC_API_KEY is set too since the
-      # SDK requires it. Override JCODE_ANTHROPIC_BASE_URL to bypass the shim.
+      # on-box-confirmed the gateway has no native /v1/messages. Auth is the shim's
+      # master key sent as a Bearer token via ANTHROPIC_AUTH_TOKEN — the documented way
+      # to point Claude Code at a gateway base URL. ANTHROPIC_API_KEY is deliberately
+      # NOT set: with both present the CLI warns "auth may not work as expected" and the
+      # x-api-key path can win, breaking the turn. Override JCODE_ANTHROPIC_BASE_URL to
+      # bypass the shim.
       ANTHROPIC_BASE_URL: ${JCODE_ANTHROPIC_BASE_URL:-http://claude-shim:4000}
-      ANTHROPIC_API_KEY: ${JCODE_GATEWAY_TOKEN:-sk-jcode-local}
       ANTHROPIC_AUTH_TOKEN: ${JCODE_GATEWAY_TOKEN:-sk-jcode-local}
       # Headless-sandbox hardening for the bundled Claude Code CLI the Agent SDK spawns:
       # a writable config dir (it persists onboarding/ToS state there — a non-writable
