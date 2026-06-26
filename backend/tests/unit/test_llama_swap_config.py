@@ -1,11 +1,12 @@
 """llama-swap config generation: filename resolution, the `-c` window (default +
 override), the resident group, and atomic write."""
 
+from dataclasses import asdict
 from pathlib import Path
 
 import pytest
 
-from jbrain.llm import llama_swap_config
+from jbrain.llm import llama_swap_config, local_catalog
 
 
 def _manifest() -> list[dict[str, object]]:
@@ -50,6 +51,42 @@ def test_render_stamps_default_windows_and_resolves_files(tmp_path: Path) -> Non
     assert "--mmproj /models/qwen3-vl-30b/mmproj-f16.gguf" in text
     # No resident group unless asked.
     assert "groups:" not in text
+
+
+def test_render_adds_reasoning_format_only_for_thinking_models(tmp_path: Path) -> None:
+    _lay_down(tmp_path)
+    (tmp_path / "qwen3-next-80b-a3b-thinking").mkdir()
+    (tmp_path / "qwen3-next-80b-a3b-thinking" / "model-UD-Q4_K_XL.gguf").write_bytes(b"\0")
+    manifest = [
+        *_manifest(),
+        {
+            "id": "qwen3-next-80b-a3b-thinking",
+            "served_model": "qwen3-next-80b-a3b-thinking",
+            "gguf_include": "*UD-Q4_K_XL*.gguf",
+            "mmproj_include": None,
+            "context_window": 32768,
+            "recommended": False,
+            "reasoning_format": "deepseek",
+        },
+    ]
+    text = llama_swap_config.render(manifest, str(tmp_path))
+    # The thinking model gets --reasoning-format deepseek; the two non-thinking models
+    # (no reasoning_format) don't — they keep llama.cpp's default.
+    assert "--reasoning-format deepseek" in text
+    assert text.count("--reasoning-format") == 1
+
+
+def test_render_reads_reasoning_format_off_the_real_catalog_manifest(tmp_path: Path) -> None:
+    # Guards the field-name contract end to end: the renderer reads `reasoning_format`
+    # off the asdict(LocalModel) manifest, so feed the REAL catalog entry (not a
+    # hand-built dict) through asdict → render. Renaming the dataclass field would break
+    # production silently; this test would catch it where the literal-key tests can't.
+    thinking = local_catalog.get("qwen3-next-80b-a3b-thinking")
+    assert thinking is not None
+    (tmp_path / thinking.id).mkdir()
+    (tmp_path / thinking.id / "model-UD-Q4_K_XL.gguf").write_bytes(b"\0")
+    text = llama_swap_config.render([asdict(thinking)], str(tmp_path))
+    assert "--reasoning-format deepseek" in text
 
 
 def test_render_applies_a_per_model_window_override(tmp_path: Path) -> None:

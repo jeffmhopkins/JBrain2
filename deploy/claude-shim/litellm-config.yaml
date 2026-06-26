@@ -7,6 +7,17 @@
 # whatever JCODE_MODEL names, the shim routes it. The model name after `openai/` is
 # what's sent to llama-swap, so it must match the gateway's route (the catalog
 # served_model). api_key is a placeholder — llama-swap needs no auth.
+#
+# Reasoning models (e.g. qwen3-next-80b-a3b-thinking) ride the wildcard too: the gateway
+# is rendered with `--reasoning-format deepseek` for those, so it splits `<think>` traces
+# onto the OpenAI `reasoning_content` field instead of leaking them into the answer. They
+# need no per-model entry here. Whether LiteLLM's /v1/messages adapter then reconstructs
+# Anthropic `thinking` blocks from `reasoning_content` on the OpenAI→Anthropic response
+# path is UNVERIFIED against this backend (LiteLLM's documented mapping is the request
+# direction + Anthropic-native models; this reverse path has open upstream bugs). And
+# `drop_params: true` below may strip reasoning params the local backend rejects. Treat
+# thinking-block surfacing as best-effort until exercised end to end on the box — at worst
+# the traces are merely hidden, not leaked.
 model_list:
   - model_name: qwen3-coder-next
     litellm_params:
