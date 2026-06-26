@@ -814,7 +814,7 @@ const IMG_GRADIENT = "linear-gradient(90deg, hsl(265 35% 64%), hsl(284 35% 64%))
 const IMG_ACTIVE_GB = 4;
 
 // The size picker's choices, capped per model at its catalog window.
-const WINDOW_CHOICES = [16384, 32768, 65536, 131072];
+const WINDOW_CHOICES = [16384, 32768, 65536, 131072, 196608, 262144];
 const fmtTokens = (n: number) => (n % 1024 === 0 ? `${n / 1024}k` : `${Math.round(n / 1000)}k`);
 const barName = (m: LocalModelInfo) => m.label.split(" ")[0];
 const residentGbOf = (m: LocalModelInfo) => (m.disk_gb ?? m.size_gb) + m.kv_gb;
@@ -1284,8 +1284,16 @@ function LlmModelRow({
   const state = m.loaded ? "loaded" : m.staged ? "staged" : "idle";
   const editable = !m.loaded; // idle or staged — no live process to disrupt
   const effWindow = m.context_window_override ?? m.context_window;
+  // Choices run up to the model's native ceiling (not the conservative served
+  // default), so the operator can opt into a bigger window the weights support.
+  // Always keep the served default and the current value selectable.
   const windowOpts = Array.from(
-    new Set([...WINDOW_CHOICES.filter((w) => w <= m.context_window), m.context_window]),
+    new Set([
+      ...WINDOW_CHOICES.filter((w) => w <= m.max_context_window),
+      m.context_window,
+      m.max_context_window,
+      effWindow,
+    ]),
   ).sort((a, b) => a - b);
   return (
     <div className={`llm-local-row on ${state}`}>
