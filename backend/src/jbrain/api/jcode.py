@@ -231,6 +231,10 @@ class CreateSessionBody(BaseModel):
     work_branch: str = ""
 
 
+class RenameBody(BaseModel):
+    title: str = ""
+
+
 class TurnBody(BaseModel):
     prompt: str = Field(min_length=1)
 
@@ -328,6 +332,32 @@ async def delete_session(sid: str, owner: OwnerDep, request: Request) -> None:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     async with scoped_session(_maker(request), _owner_ctx(owner.id)) as db:
         await _REPO.delete(db, sid)
+
+
+@router.patch("/jcode/sessions/{sid}", status_code=204)
+async def rename_session(sid: str, body: RenameBody, owner: OwnerDep, request: Request) -> None:
+    # Launcher-only metadata: rename/archive touch the owner's index, never the control
+    # server (the sandbox doesn't care about the label). 204 even for an unknown sid —
+    # the UPDATE is a no-op, mirroring the agent-sessions manager.
+    _valid_sid(sid)
+    async with scoped_session(_maker(request), _owner_ctx(owner.id)) as db:
+        await _REPO.rename(db, sid, body.title)
+
+
+@router.post("/jcode/sessions/{sid}/archive", status_code=204)
+async def archive_session(sid: str, owner: OwnerDep, request: Request) -> None:
+    """Tidy a session out of the live list without deleting it (archived → true)."""
+    _valid_sid(sid)
+    async with scoped_session(_maker(request), _owner_ctx(owner.id)) as db:
+        await _REPO.set_archived(db, sid, True)
+
+
+@router.post("/jcode/sessions/{sid}/unarchive", status_code=204)
+async def unarchive_session(sid: str, owner: OwnerDep, request: Request) -> None:
+    """Restore an archived session to the live list (archived → false)."""
+    _valid_sid(sid)
+    async with scoped_session(_maker(request), _owner_ctx(owner.id)) as db:
+        await _REPO.set_archived(db, sid, False)
 
 
 @router.post("/jcode/sessions/{sid}/reset")

@@ -16,7 +16,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 
-from sqlalchemy import DateTime, Text, delete, func, select
+from sqlalchemy import Boolean, DateTime, Text, delete, func, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Mapped, mapped_column
@@ -35,6 +35,11 @@ class JcodeSession(Base):
     branch: Mapped[str] = mapped_column(Text, default="main")
     work_branch: Mapped[str] = mapped_column(Text, default="")
     status: Mapped[str] = mapped_column(Text, default="ready")
+    # The owner's optional label (the launcher shows the repo when blank). `archived`
+    # tidies a session out of the live list without deleting it — a separate flag from
+    # `status`, which a turn rewrites (ready/running) and would otherwise clobber.
+    title: Mapped[str] = mapped_column(Text, default="")
+    archived: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     last_active_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
@@ -50,6 +55,8 @@ class JcodeSessionRow:
     branch: str
     work_branch: str
     status: str
+    title: str
+    archived: bool
     created_at: str
     last_active_at: str
 
@@ -61,6 +68,8 @@ class JcodeSessionRow:
             branch=row.branch,
             work_branch=row.work_branch,
             status=row.status,
+            title=row.title,
+            archived=row.archived,
             created_at=row.created_at.isoformat(),
             last_active_at=row.last_active_at.isoformat(),
         )
@@ -116,6 +125,18 @@ class JcodeSessionRepo:
             )
         )
         await session.execute(stmt)
+
+    async def rename(self, session: AsyncSession, sid: str, title: str) -> None:
+        await session.execute(
+            update(JcodeSession).where(JcodeSession.id == sid).values(title=title)
+        )
+
+    async def set_archived(self, session: AsyncSession, sid: str, archived: bool) -> None:
+        """Flip a session in/out of the live list. Separate from `status` (ready/running),
+        which a turn writes back — archiving must survive the next turn untouched."""
+        await session.execute(
+            update(JcodeSession).where(JcodeSession.id == sid).values(archived=archived)
+        )
 
     async def delete(self, session: AsyncSession, sid: str) -> None:
         await session.execute(delete(JcodeSession).where(JcodeSession.id == sid))

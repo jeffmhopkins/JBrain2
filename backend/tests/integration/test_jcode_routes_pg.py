@@ -87,6 +87,18 @@ async def test_full_session_lifecycle_through_the_routes(maker: async_sessionmak
         # After the turn, the index status settled back to ready.
         assert (await client.get(f"/api/jcode/sessions/{sid}")).json()["status"] == "ready"
 
+        # Launcher session management (mirrors the agent-sessions manager): rename,
+        # archive, unarchive — owner-only metadata that never touches the control server.
+        assert (
+            await client.patch(f"/api/jcode/sessions/{sid}", json={"title": "todo spike"})
+        ).status_code == 204
+        assert (await client.get(f"/api/jcode/sessions/{sid}")).json()["title"] == "todo spike"
+
+        assert (await client.post(f"/api/jcode/sessions/{sid}/archive")).status_code == 204
+        assert (await client.get(f"/api/jcode/sessions/{sid}")).json()["archived"] is True
+        assert (await client.post(f"/api/jcode/sessions/{sid}/unarchive")).status_code == 204
+        assert (await client.get(f"/api/jcode/sessions/{sid}")).json()["archived"] is False
+
         assert (await client.post(f"/api/jcode/sessions/{sid}/reset")).status_code == 200
         assert (await client.delete(f"/api/jcode/sessions/{sid}")).status_code == 204
         assert (await client.get(f"/api/jcode/sessions/{sid}")).status_code == 404

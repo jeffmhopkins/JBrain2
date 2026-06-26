@@ -4,11 +4,18 @@
 // stacks over itself (its own back returns to the list). A self-contained full-screen
 // overlay like Tasks/Automations.
 
-import { useEffect, useState } from "react";
+import { type ReactNode, type TouchEvent, useEffect, useRef, useState } from "react";
 import { ApiError, api } from "../api/client";
 import { Sheet } from "../components/Sheet";
-import { ChevronLeftIcon, ChevronRightIcon, PlusIcon } from "../components/icons";
+import {
+  ChevronLeftIcon,
+  ChevronRightIcon,
+  PencilIcon,
+  PlusIcon,
+  TrashIcon,
+} from "../components/icons";
 import type { JcodeSession, NewSessionInput } from "../jcode/types";
+import { type Drag, RAIL_WIDTH, beginDrag, endDrag, moveDrag } from "../notes/swipe";
 import { JcodeSessionScreen } from "./JcodeSessionScreen";
 
 type LoadState =
@@ -37,11 +44,15 @@ function relative(iso: string): string {
   return new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
 
+type Bucket = "today" | "older" | "archived";
+
 export function JcodeScreen({ onClose }: { onClose: () => void }) {
   const [state, setState] = useState<LoadState>({ kind: "loading" });
-  const [bucket, setBucket] = useState<"today" | "older">("today");
+  const [bucket, setBucket] = useState<Bucket>("today");
   const [newOpen, setNewOpen] = useState(false);
   const [open, setOpen] = useState<JcodeSession | null>(null);
+  // One swipe rail open at a time (like the agent-sessions manager).
+  const [railId, setRailId] = useState<string | null>(null);
 
   async function refresh() {
     try {
@@ -71,15 +82,41 @@ export function JcodeScreen({ onClose }: { onClose: () => void }) {
     );
   }
 
+  // Archived sessions live in their own bucket; the live list splits by last-active.
   const sessions = state.kind === "ready" ? state.sessions : [];
-  const today = sessions.filter((s) => isToday(s.last_active_at));
-  const older = sessions.filter((s) => !isToday(s.last_active_at));
-  const rows = bucket === "today" ? today : older;
+  const live = sessions.filter((s) => !s.archived);
+  const today = live.filter((s) => isToday(s.last_active_at));
+  const older = live.filter((s) => !isToday(s.last_active_at));
+  const archived = sessions.filter((s) => s.archived);
+  const counts: Record<Bucket, number> = {
+    today: today.length,
+    older: older.length,
+    archived: archived.length,
+  };
+  const rows = bucket === "today" ? today : bucket === "older" ? older : archived;
 
   async function start(input: NewSessionInput) {
     const session = await api.jcodeCreateSession(input);
     setNewOpen(false);
     setOpen(session);
+  }
+
+  // Rail actions optimistically refresh the index so the row moves/leaves at once.
+  async function rename(id: string, title: string) {
+    await api.jcodeRenameSession(id, title);
+    await refresh();
+  }
+  async function archive(id: string) {
+    await api.jcodeArchiveSession(id);
+    await refresh();
+  }
+  async function unarchive(id: string) {
+    await api.jcodeUnarchiveSession(id);
+    await refresh();
+  }
+  async function remove(id: string) {
+    await api.jcodeDeleteSession(id);
+    await refresh();
   }
 
   return (
@@ -109,11 +146,10 @@ export function JcodeScreen({ onClose }: { onClose: () => void }) {
             </span>
           </button>
 
-          {/* Today/Older only: the chosen mock's Archived bucket and per-row turn
-              count are deferred — the J2 backend exposes neither (no archive state,
-              no turn count on JcodeSession). Add them when the api does. */}
+          {/* Today · Older · Archived — swipe a row left for rename/archive/delete,
+              mirroring the agent-sessions manager. */}
           <div className="jcode-buckets" role="tablist" aria-label="Sessions">
-            {(["today", "older"] as const).map((b) => (
+            {(["today", "older", "archived"] as const).map((b) => (
               <button
                 key={b}
                 type="button"
@@ -122,8 +158,8 @@ export function JcodeScreen({ onClose }: { onClose: () => void }) {
                 className={`jcode-bk${bucket === b ? " on" : ""}`}
                 onClick={() => setBucket(b)}
               >
-                {b === "today" ? "Today" : "Older"}
-                <span className="jcode-bkpill">{b === "today" ? today.length : older.length}</span>
+                {b === "today" ? "Today" : b === "older" ? "Older" : "Archived"}
+                <span className="jcode-bkpill">{counts[b]}</span>
               </button>
             ))}
           </div>
@@ -131,28 +167,25 @@ export function JcodeScreen({ onClose }: { onClose: () => void }) {
           {state.kind === "loading" ? (
             <p className="jcode-empty">Loading…</p>
           ) : rows.length === 0 ? (
-            <p className="jcode-empty">No {bucket} sessions — tap New session to start.</p>
+            <p className="jcode-empty">
+              {bucket === "archived"
+                ? "No archived sessions."
+                : `No ${bucket} sessions — tap New session to start.`}
+            </p>
           ) : (
             <div className="jcode-rows">
               {rows.map((s) => (
-                <button key={s.id} type="button" className="jcode-row" onClick={() => setOpen(s)}>
-                  <span
-                    className={`jcode-sd${s.status === "running" ? " live" : ""}`}
-                    title={s.status}
-                  />
-                  <span className="jcode-main">
-                    <span className="jcode-repo">{s.repo || "scratch"}</span>
-                    <span className="jcode-sub">
-                      @ {s.work_branch || s.branch} · {relative(s.last_active_at)}
-                    </span>
-                  </span>
-                  {s.status === "running" ? (
-                    <span className="jcode-running">running…</span>
-                  ) : (
-                    <span className="jcode-status">{s.status}</span>
-                  )}
-                  <ChevronRightIcon size={16} />
-                </button>
+                <JcodeSessionRow
+                  key={s.id}
+                  session={s}
+                  onOpen={setOpen}
+                  onRename={rename}
+                  onArchive={archive}
+                  onUnarchive={unarchive}
+                  onDelete={remove}
+                  railOpen={railId === s.id}
+                  onRailChange={(o) => setRailId(o ? s.id : null)}
+                />
               ))}
             </div>
           )}
@@ -161,6 +194,217 @@ export function JcodeScreen({ onClose }: { onClose: () => void }) {
 
       {newOpen && <NewSessionSheet onClose={() => setNewOpen(false)} onStart={start} />}
     </section>
+  );
+}
+
+// A session row with the same swipe-left rail the agent-sessions manager uses
+// (reusing notes/swipe): swipe reveals Rename (inline edit), Archive/Unarchive, and
+// Delete (tap-again confirm). Tapping the row opens the session.
+function JcodeSessionRow({
+  session,
+  onOpen,
+  onRename,
+  onArchive,
+  onUnarchive,
+  onDelete,
+  railOpen,
+  onRailChange,
+}: {
+  session: JcodeSession;
+  onOpen: (s: JcodeSession) => void;
+  onRename: (id: string, title: string) => void;
+  onArchive: (id: string) => void;
+  onUnarchive: (id: string) => void;
+  onDelete: (id: string) => void;
+  railOpen: boolean;
+  onRailChange: (open: boolean) => void;
+}): ReactNode {
+  const [drag, setDrag] = useState<Drag | null>(null);
+  const dragged = useRef(false);
+  const renameRef = useRef<HTMLInputElement>(null);
+  const [confirming, setConfirming] = useState(false);
+  const [renaming, setRenaming] = useState(false);
+  const [draft, setDraft] = useState(session.title);
+
+  useEffect(() => {
+    if (!railOpen) setConfirming(false);
+  }, [railOpen]);
+
+  // Land focus in the rename field without `autoFocus` (a11y).
+  useEffect(() => {
+    if (renaming) renameRef.current?.focus();
+  }, [renaming]);
+
+  const dragging = drag !== null && drag.axis === "h";
+  const offset = renaming ? 0 : dragging ? drag.offset : railOpen ? -RAIL_WIDTH : 0;
+
+  function onTouchStart(event: TouchEvent): void {
+    if (renaming) return;
+    dragged.current = false;
+    const t = event.touches[0];
+    if (t) setDrag(beginDrag(t.clientX, t.clientY, railOpen));
+  }
+  function onTouchMove(event: TouchEvent): void {
+    if (drag === null) return;
+    const t = event.touches[0];
+    if (!t) return;
+    const next = moveDrag(drag, t.clientX, t.clientY);
+    if (next.axis === "v") {
+      setDrag(null);
+      return;
+    }
+    setDrag(next);
+  }
+  function onTouchEnd(): void {
+    if (drag === null) return;
+    if (drag.axis === "h") {
+      dragged.current = true;
+      onRailChange(endDrag(drag));
+    }
+    setDrag(null);
+  }
+
+  function onTap(): void {
+    if (dragged.current) {
+      dragged.current = false;
+      return;
+    }
+    if (railOpen) {
+      onRailChange(false);
+      return;
+    }
+    onOpen(session);
+  }
+
+  function submitRename(): void {
+    const title = draft.trim();
+    setRenaming(false);
+    onRailChange(false);
+    if (title !== session.title) onRename(session.id, title);
+  }
+
+  return (
+    <div className="jcode-rowwrap">
+      {!renaming && offset < 0 && (
+        <div className="jcode-rail rail-3">
+          <button
+            type="button"
+            className="rail-btn rail-edit"
+            onClick={() => {
+              setDraft(session.title);
+              setRenaming(true);
+            }}
+          >
+            <PencilIcon size={16} />
+            rename
+          </button>
+          <button
+            type="button"
+            className="rail-btn rail-archive"
+            onClick={() => {
+              onRailChange(false);
+              if (session.archived) {
+                onUnarchive(session.id);
+              } else {
+                onArchive(session.id);
+              }
+            }}
+          >
+            <JcodeArchiveGlyph />
+            {session.archived ? "unarchive" : "archive"}
+          </button>
+          <button
+            type="button"
+            className={`rail-btn rail-delete${confirming ? " rail-armed" : ""}`}
+            onClick={() => {
+              if (!confirming) {
+                setConfirming(true);
+                return;
+              }
+              onRailChange(false);
+              onDelete(session.id);
+            }}
+          >
+            {confirming ? (
+              "tap again"
+            ) : (
+              <>
+                <TrashIcon size={16} />
+                delete
+              </>
+            )}
+          </button>
+        </div>
+      )}
+      <div
+        className="jcode-slide"
+        style={{ transform: `translateX(${offset}px)` }}
+        onTouchStart={onTouchStart}
+        onTouchMove={onTouchMove}
+        onTouchEnd={onTouchEnd}
+      >
+        {renaming ? (
+          <input
+            ref={renameRef}
+            className="jcode-rename"
+            aria-label="Session title"
+            placeholder={session.repo || "scratch"}
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onBlur={submitRename}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                submitRename();
+              } else if (e.key === "Escape") {
+                setRenaming(false);
+              }
+            }}
+          />
+        ) : (
+          <button type="button" className="jcode-row" onClick={onTap}>
+            <span
+              className={`jcode-sd${session.status === "running" ? " live" : ""}`}
+              title={session.status}
+            />
+            <span className="jcode-main">
+              <span className="jcode-repo">{session.title || session.repo || "scratch"}</span>
+              <span className="jcode-sub">
+                @ {session.work_branch || session.branch} · {relative(session.last_active_at)}
+              </span>
+            </span>
+            {session.status === "running" ? (
+              <span className="jcode-running">running…</span>
+            ) : (
+              <span className="jcode-status">{session.status}</span>
+            )}
+            <ChevronRightIcon size={16} />
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// A small archive-box glyph for the rail (icons.tsx has no archive icon); sized to
+// match the 16px PencilIcon/TrashIcon beside it.
+function JcodeArchiveGlyph(): ReactNode {
+  return (
+    <svg
+      width="16"
+      height="16"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.6"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <rect x="3" y="4" width="18" height="4" rx="1" />
+      <path d="M5 8v11a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8" />
+      <path d="M10 12h4" />
+    </svg>
   );
 }
 

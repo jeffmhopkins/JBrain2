@@ -29,6 +29,10 @@ def test_non_owner_is_forbidden() -> None:
     client = TestClient(_app(NON_OWNER, jcode_client=FakeJcodeClient()))
     assert client.post("/api/jcode/sessions", json={}).status_code == 403
     assert client.get("/api/jcode/sessions").status_code == 403
+    # The launcher management routes are owner-only too.
+    assert client.patch("/api/jcode/sessions/s1", json={"title": "x"}).status_code == 403
+    assert client.post("/api/jcode/sessions/s1/archive").status_code == 403
+    assert client.post("/api/jcode/sessions/s1/unarchive").status_code == 403
 
 
 def test_owner_but_unconfigured_is_404() -> None:
