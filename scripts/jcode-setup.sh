@@ -40,6 +40,13 @@ if ! grep -q '^JCODE_TOKEN=.\+' .env; then
   say "minted a new JCODE_TOKEN"
 fi
 
+# The Anthropic<->OpenAI shim's master key, shared with the sandbox (it presents it
+# as ANTHROPIC_AUTH_TOKEN). LiteLLM wants an sk- key. Mint once; don't rotate on re-run.
+if ! grep -q '^JCODE_GATEWAY_TOKEN=.\+' .env; then
+  set_env JCODE_GATEWAY_TOKEN "sk-$(head -c 24 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+  say "minted a new JCODE_GATEWAY_TOKEN (shim master key)"
+fi
+
 # The served model id jcode asks the gateway for — also the catalog id whose GGUF
 # the gateway provisions (see backend/src/jbrain/llm/local_catalog.py). Resolved
 # once here so the .env key and the provisioning below can never drift.
@@ -70,9 +77,11 @@ else
   say "         to provision the coder model, then re-run this script."
 fi
 
-say "building the jcode image and starting the profile"
-docker compose --profile jcode build jcode
-docker compose --profile jcode up -d jcode
+say "building the jcode + shim images and starting the profile"
+# Build/start BOTH the sandbox and its Anthropic<->OpenAI shim — jcode points its
+# ANTHROPIC_BASE_URL at claude-shim, so the shim must be up or the first turn fails.
+docker compose --profile jcode build jcode claude-shim
+docker compose --profile jcode up -d jcode claude-shim
 
 # The api must be recreated to pick up the new JBRAIN_JCODE_* env (a restart reuses
 # the old environment) — same caveat as the debug-access flag.
