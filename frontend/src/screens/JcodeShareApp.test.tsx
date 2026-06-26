@@ -42,4 +42,14 @@ describe("JcodeShareApp", () => {
     expect(await screen.findByText(/invalid or has expired/i)).toBeInTheDocument();
     expect(screen.queryByTestId("session")).not.toBeInTheDocument();
   });
+
+  it("strips the secret from the URL up front", async () => {
+    const replace = vi.spyOn(window.history, "replaceState");
+    vi.spyOn(api, "jcodeRedeemShare").mockResolvedValue({ session_id: "sess-a" });
+    vi.spyOn(api, "jcodeGetSession").mockResolvedValue(SESSION);
+    render(<JcodeShareApp />);
+    // The token is removed from the address bar before any await — never left to linger.
+    expect(replace).toHaveBeenCalledWith(null, "", "/jcode/s/sess-a");
+    expect(String(replace.mock.calls[0]?.[2])).not.toContain("tok");
+  });
 });

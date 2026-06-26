@@ -205,6 +205,9 @@ export function JcodeSessionScreen({
   // whose model was since evicted (no fresh warm fires there). Keep polling until settled
   // (hosting off, or resident and no warm in flight). A failed poll just retries.
   useEffect(() => {
+    // /jcode/model is owner-only; a share recipient would 403 it forever. Skip the
+    // warm poll entirely in shared mode (the model chip's default label covers it).
+    if (shared) return;
     let stale = false;
     let timer: ReturnType<typeof setTimeout>;
     const poll = async () => {
@@ -223,7 +226,7 @@ export function JcodeSessionScreen({
       stale = true;
       clearTimeout(timer);
     };
-  }, []);
+  }, [shared]);
 
   const loading = model?.hosting === true && (model.warming === true || !model.loaded);
   // Tick the estimate while loading so the bar advances between polls, and anchor the
@@ -389,6 +392,13 @@ export function JcodeSessionScreen({
 
   async function copyShareLink() {
     if (shareState === "busy") return;
+    // Guard the clipboard BEFORE minting: in an insecure context it's absent, and a
+    // failed copy would otherwise burn a share token for nothing.
+    if (!navigator.clipboard) {
+      setShareState("error");
+      setTimeout(() => setShareState("idle"), 2500);
+      return;
+    }
     setShareState("busy");
     try {
       const minted = await api.jcodeMintShare(session.id);

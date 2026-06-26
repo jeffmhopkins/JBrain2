@@ -277,5 +277,7 @@ describe("JcodeSessionScreen", () => {
     expect(screen.queryByText("Copy link")).not.toBeInTheDocument();
     expect(screen.queryByText("Reset")).not.toBeInTheDocument();
     expect(screen.queryByText("Delete")).not.toBeInTheDocument();
+    // The owner-only model-status poll is skipped — a share principal would 403 it.
+    expect(api.jcodeModelStatus).not.toHaveBeenCalled();
   });
 });
