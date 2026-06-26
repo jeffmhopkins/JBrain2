@@ -7,7 +7,9 @@ launcher needs (the api mirrors that metadata into its owner-only
 
 from __future__ import annotations
 
+import contextlib
 import logging
+import os
 import secrets
 from collections.abc import AsyncIterator, Callable
 from dataclasses import asdict, dataclass
@@ -20,6 +22,8 @@ from jcode_ctl.workspace import Workspace
 
 Status = Literal["ready", "running", "error"]
 
+_BYTES_PER_MB = 1024 * 1024
+
 _log = logging.getLogger("jcode_ctl.sessions")
 
 
@@ -29,6 +33,19 @@ class SessionError(RuntimeError):
 
 def _utcnow() -> datetime:
     return datetime.now(UTC)
+
+
+def directory_size_mb(path: Path) -> int:
+    """Total size of the regular files under ``path``, in whole MB. Symlinks are counted
+    as their own (tiny) entry and never followed — a link can't inflate the checkout's
+    measured size or let it escape the session dir. A missing path is 0 (a not-yet-
+    cloned or already-removed checkout doesn't read as over quota)."""
+    total = 0
+    for root, _dirs, files in os.walk(path, followlinks=False):
+        for name in files:
+            with contextlib.suppress(OSError):
+                total += os.lstat(os.path.join(root, name)).st_size
+    return total // _BYTES_PER_MB
 
 
 @dataclass
@@ -44,6 +61,9 @@ class Session:
     # The served-model id the agent runs for this session (empty = the agent's
     # configured default). Fixed at create so a turn never swaps model mid-session.
     model: str = ""
+    # True once the checkout exceeded the disk ceiling and turns are refused until it's
+    # reset/deleted. Surfaced to the api/UI so the owner sees WHY a turn won't start.
+    over_quota: bool = False
 
     def public(self) -> dict[str, object]:
         return asdict(self)
@@ -57,6 +77,8 @@ class SessionManager:
         workspace_root: str,
         *,
         max_sessions: int = 8,
+        max_concurrent_turns: int = 0,
+        session_disk_limit_mb: int = 0,
         now: Callable[[], datetime] = _utcnow,
         new_id: Callable[[], str] = lambda: secrets.token_hex(4),
     ) -> None:
@@ -64,9 +86,14 @@ class SessionManager:
         self._workspace = workspace
         self._root = Path(workspace_root)
         self._max = max_sessions
+        self._max_turns = max_concurrent_turns
+        self._disk_limit_mb = session_disk_limit_mb
         self._now = now
         self._new_id = new_id
         self._sessions: dict[str, Session] = {}
+        # Count of turns currently streaming, across all sessions — gated by
+        # _max_turns so a burst can't thrash the aggregate CPU/mem caps.
+        self._active_turns = 0
         # sid -> count of open interactive terminals. A live terminal is activity:
         # the reaper must never remove a checkout out from under an open shell.
         self._terminals: dict[str, int] = {}
@@ -124,13 +151,30 @@ class SessionManager:
 
     async def run_turn(self, sid: str, prompt: str) -> AsyncIterator[TurnEvent]:
         session = self.get(sid)
+        # Refuse BEFORE marking running / incrementing the counter, so a rejected turn
+        # leaves the session untouched. Capacity first (cheap), then the disk sweep.
+        if self._max_turns > 0 and self._active_turns >= self._max_turns:
+            raise SessionError(
+                f"at turn capacity ({self._max_turns} turns running) — "
+                "wait for one to finish"
+            )
+        if self._disk_limit_mb > 0:
+            used_mb = directory_size_mb(Path(session.workspace))
+            session.over_quota = used_mb > self._disk_limit_mb
+            if session.over_quota:
+                raise SessionError(
+                    f"session over disk quota ({used_mb} MB > "
+                    f"{self._disk_limit_mb} MB) — reset or delete it to free space"
+                )
         session.status = "running"
         session.last_active_at = self._stamp()
+        self._active_turns += 1
         _log.info(
-            "turn start sid=%s model=%s prompt_chars=%d",
+            "turn start sid=%s model=%s prompt_chars=%d active_turns=%d",
             sid,
             session.model or "<default>",
             len(prompt),
+            self._active_turns,
         )
         events = 0
         try:
@@ -148,6 +192,7 @@ class SessionManager:
                         _log.error("turn error sid=%s: %s", sid, ev.text)
                 yield ev
         finally:
+            self._active_turns -= 1
             if session.status == "running":
                 session.status = "ready"
             session.last_active_at = self._stamp()
@@ -181,6 +226,9 @@ class SessionManager:
         session = self.get(sid)
         await self._workspace.reset(Path(session.workspace))
         session.status = "ready"
+        # A hard reset/clean drops the bloat that tripped the ceiling, so clear the
+        # flag — the next turn re-measures and re-trips it only if it's still over.
+        session.over_quota = False
         session.last_active_at = self._stamp()
         return session
 

@@ -26,6 +26,8 @@ sessions = SessionManager(
     GitWorkspace(settings.egress_allowlist),
     settings.workspace_root,
     max_sessions=settings.max_sessions,
+    max_concurrent_turns=settings.max_concurrent_turns,
+    session_disk_limit_mb=settings.session_disk_limit_mb,
 )
 preview = PreviewManager(
     CloudflaredTunnel,

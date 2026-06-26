@@ -20,3 +20,12 @@ def test_defaults_are_local_and_fail_closed() -> None:
     assert "github.com" in s.egress_allowlist
     # No cloud host in the default egress allowlist — local-only, no LLM egress.
     assert not any("anthropic" in h for h in s.egress_allowlist)
+
+
+def test_per_session_ceilings_default_on() -> None:
+    # A stock box is bounded out of the box: the concurrency + disk ceilings ship
+    # enabled (non-zero), so the aggregate compose caps aren't the only thing standing
+    # between a runaway session and the whole box.
+    s = Settings(token="x")
+    assert s.max_concurrent_turns > 0
+    assert s.session_disk_limit_mb > 0
