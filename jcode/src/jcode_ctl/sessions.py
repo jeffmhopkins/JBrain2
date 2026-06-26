@@ -7,6 +7,7 @@ launcher needs (the api mirrors that metadata into its owner-only
 
 from __future__ import annotations
 
+import logging
 import secrets
 from collections.abc import AsyncIterator, Callable
 from dataclasses import asdict, dataclass
@@ -18,6 +19,8 @@ from jcode_ctl.agent import CodingAgent, TurnEvent
 from jcode_ctl.workspace import Workspace
 
 Status = Literal["ready", "running", "error"]
+
+_log = logging.getLogger("jcode_ctl.sessions")
 
 
 class SessionError(RuntimeError):
@@ -90,6 +93,14 @@ class SessionManager:
             model=model,
         )
         self._sessions[sid] = session
+        _log.info(
+            "session create sid=%s repo=%s branch=%s work_branch=%s model=%s",
+            sid,
+            repo,
+            branch,
+            work_branch,
+            model or "<default>",
+        )
         return session
 
     def list(self) -> list[Session]:
@@ -112,17 +123,29 @@ class SessionManager:
         session = self.get(sid)
         session.status = "running"
         session.last_active_at = self._stamp()
+        _log.info(
+            "turn start sid=%s model=%s prompt_chars=%d",
+            sid,
+            session.model or "<default>",
+            len(prompt),
+        )
+        events = 0
         try:
             async for ev in self._agent.run_turn(
                 sid, prompt, session.workspace, model=session.model
             ):
+                events += 1
                 if ev.type == "error":
                     session.status = "error"
+                    _log.error("turn error sid=%s: %s", sid, ev.text)
                 yield ev
         finally:
             if session.status == "running":
                 session.status = "ready"
             session.last_active_at = self._stamp()
+            _log.info(
+                "turn end sid=%s status=%s events=%d", sid, session.status, events
+            )
 
     async def cancel(self, sid: str) -> None:
         self.get(sid)
@@ -142,6 +165,7 @@ class SessionManager:
         # Drop the agent's per-session state (resume id, cancel flag) so it can't
         # outlive the session.
         self._agent.forget(sid)
+        _log.info("session delete sid=%s", sid)
 
     def idle_sessions(
         self, *, ttl_seconds: int, now: datetime | None = None

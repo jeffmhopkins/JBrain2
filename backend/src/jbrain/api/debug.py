@@ -468,6 +468,36 @@ async def logs(
     return PlainTextResponse(resp.text)
 
 
+# The code-mode (jcode) services, in the order most useful for debugging a turn: the
+# control server, then its Anthropic<->OpenAI shim, then the model gateway.
+_JCODE_LOG_SERVICES = ("jcode", "claude-shim", "local-llm")
+
+
+@router.get("/jcode/logs", response_class=PlainTextResponse)
+async def jcode_logs(
+    request: Request,
+    settings: SettingsDep,
+    _p: DebugDep,
+    tail: Annotated[int, Query(ge=1, le=2000)] = 200,
+) -> PlainTextResponse:
+    """All code-mode logs in one pull — the control server, the shim, and the model
+    gateway, each tailed and labeled. A not-running service is noted, not fatal, so this
+    works mid-bring-up. Saves three round-trips when chasing a jcode turn failure."""
+    request.state.debug_detail = f"jcode-system (tail {tail})"
+    client = _supervisor(request)
+    headers = {"Authorization": f"Bearer {settings.supervisor_token}"}
+    sections: list[str] = []
+    for service in _JCODE_LOG_SERVICES:
+        resp = await client.get(f"/logs/{service}", params={"tail": tail}, headers=headers)
+        if resp.status_code == 404:
+            body = "(service not running)"
+        else:
+            resp.raise_for_status()
+            body = resp.text
+        sections.append(f"===== {service} =====\n{body}")
+    return PlainTextResponse("\n\n".join(sections))
+
+
 @router.get("/update/status")
 async def update_status(
     request: Request,

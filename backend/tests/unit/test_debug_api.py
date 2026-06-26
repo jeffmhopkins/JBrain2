@@ -447,6 +447,19 @@ def test_logs_unknown_service_404s(debug_client: tuple[TestClient, str]) -> None
     assert client.get("/api/debug/logs/nope", headers=_auth(key)).status_code == 404
 
 
+def test_jcode_logs_aggregates_the_system(debug_client: tuple[TestClient, str]) -> None:
+    # One pull returns the whole code-mode system — control server + shim + gateway —
+    # labeled, so debugging a turn doesn't need three round-trips.
+    client, key = debug_client
+    resp = client.get("/api/debug/jcode/logs", headers=_auth(key), params={"tail": 100})
+    assert resp.status_code == 200
+    for svc in ("jcode", "claude-shim", "local-llm"):
+        assert f"===== {svc} =====" in resp.text
+    assert "log line one" in resp.text
+    calls = [u for u, _ in _state(client).supervisor_client.calls]
+    assert calls == ["/logs/jcode", "/logs/claude-shim", "/logs/local-llm"]
+
+
 def test_update_status_proxies_to_supervisor(debug_client: tuple[TestClient, str]) -> None:
     # The updater one-shot runs outside the compose project, so /debug/logs can't see
     # it — /debug/update/status proxies the supervisor for the read-only console.

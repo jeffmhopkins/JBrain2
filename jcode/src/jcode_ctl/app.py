@@ -57,6 +57,8 @@ async def reap_idle(
             continue
         sessions.delete(sid)
         reaped.append(sid)
+    if reaped:
+        _log.info("reaped %d idle session(s): %s", len(reaped), reaped)
     return reaped
 
 
@@ -102,6 +104,16 @@ def create_app(
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         # The session GC reaper runs for the life of the server.
         reaper = asyncio.create_task(_reaper_loop(sessions, preview, settings))
+        _log.info(
+            "jcode control server up: model=%s model_base_url=%s workspace=%s "
+            "preview=%s ttl=%ds log_level=%s",
+            settings.model,
+            settings.model_base_url,
+            settings.workspace_root,
+            settings.preview_enabled,
+            settings.session_ttl_seconds,
+            settings.log_level,
+        )
         try:
             yield
         finally:

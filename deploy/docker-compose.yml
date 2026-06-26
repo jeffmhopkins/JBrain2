@@ -398,6 +398,10 @@ services:
       # seconds (default 24h; 0 disables). A running turn is never reaped.
       JCODE_SESSION_TTL_SECONDS: ${JCODE_SESSION_TTL_SECONDS:-86400}
       JCODE_REAP_INTERVAL_SECONDS: ${JCODE_REAP_INTERVAL_SECONDS:-600}
+      # Control-server log verbosity: INFO (turn lifecycle, tool calls, errors) or
+      # DEBUG (adds every SDK message). Pull the logs via the owner debug console
+      # (/debug/logs/jcode or /debug/jcode/logs). Flip to DEBUG to chase a turn failure.
+      JCODE_LOG_LEVEL: ${JCODE_LOG_LEVEL:-INFO}
       # OPT-IN strict egress (Wave J5): point these at an allowlisting forward proxy to
       # confine the sandbox's outbound to git/npm (and Cloudflare, when preview is on).
       # Empty = direct NAT (the default today). git/npm/the SDK honor these; cloudflared
@@ -438,6 +442,10 @@ services:
       # secret on an internal network — scripts/jcode-setup.sh mints a real one; the
       # default keeps the matched pair working if it's unset. LiteLLM wants an sk- key.
       LITELLM_MASTER_KEY: ${JCODE_GATEWAY_TOKEN:-sk-jcode-local}
+      # Shim log verbosity: INFO, or DEBUG for the full Anthropic<->OpenAI request/
+      # response trace (pull via /debug/logs/claude-shim). DEBUG is loud — turn it on
+      # only while diagnosing the translation.
+      LITELLM_LOG: ${JCODE_SHIM_LOG_LEVEL:-INFO}
     networks: [jcode]
     # A translator, not a model host — a small cap is plenty and bounds a runaway.
     mem_limit: ${JCODE_SHIM_MEM_LIMIT:-1g}

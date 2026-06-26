@@ -57,3 +57,9 @@ class Settings(BaseSettings):
     session_ttl_seconds: int = 86_400
     # How often the reaper sweeps for idle sessions.
     reap_interval_seconds: int = 600
+
+    # Log verbosity for the control server (standard level names). INFO logs the turn
+    # lifecycle, tool calls, errors, and lifecycle events; DEBUG adds every SDK message
+    # — flip to DEBUG (JCODE_LOG_LEVEL=DEBUG) when chasing an on-box turn failure, then
+    # pull the logs via the owner debug console (/debug/logs/jcode).
+    log_level: str = "INFO"

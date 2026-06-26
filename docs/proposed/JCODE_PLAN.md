@@ -276,6 +276,13 @@ prompt ("create hello.txt with 'hi'"), and confirm the stream shows text + a too
 output (the mapping is defensive but unverified) and harden cancellation if the cooperative
 (between-messages) interrupt isn't tight enough.
 
+**Logs / debugging.** The control server logs the turn lifecycle, tool calls, and errors
+(with the model + `ANTHROPIC_BASE_URL` and a full traceback) at `INFO`; set
+`JCODE_LOG_LEVEL=DEBUG` (and `JCODE_SHIM_LOG_LEVEL=DEBUG` for the shim's full
+request/response trace) to chase a failure. Pull them through the owner debug console
+(`docs/DEBUG_ACCESS.md`): `/debug/logs/jcode`, `/debug/logs/claude-shim`,
+`/debug/logs/local-llm`, or **`/debug/jcode/logs`** for all three in one labeled response.
+
 ## Promotion checklist (out of the icebox)
 
 1. Owner accepts the reconciliation (the asterisks) and the local-only trade.
