@@ -240,7 +240,9 @@ async def create_session(
 @router.get("/jcode/model")
 async def model_status(owner: OwnerDep, request: Request) -> dict[str, object]:
     """Whether the code-mode coder is resident in the gateway — the session screen's
-    loading-bar poll. Owner-gated; `hosting` is false when local hosting is off."""
+    loading-bar poll. Owner-gated; `hosting` is false when local hosting is off. Unlike
+    the session routes it does NOT 404 when code mode is disabled — it reports residency
+    of the configured model regardless, and the poll only runs from the session screen."""
     settings = cast("Settings", request.app.state.settings)
     model_id = await _resolve_model(request, owner.id)
     served = _served_model(model_id)

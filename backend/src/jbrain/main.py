@@ -486,6 +486,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 await asyncio.wait_for(
                     asyncio.gather(*jcode_tasks, return_exceptions=True), timeout=10.0
                 )
+        # And any background coder-warm tasks (jcode_warm_on_create): a warm sits inside
+        # gateway.load() up to ~120s, so cancel + drain it rather than leave a pending
+        # task to be destroyed at loop close.
+        warm_tasks = list(getattr(app.state, "jcode_warm_tasks", set()))
+        for wt in warm_tasks:
+            wt.cancel()
+        if warm_tasks:
+            with suppress(asyncio.TimeoutError):
+                await asyncio.wait_for(
+                    asyncio.gather(*warm_tasks, return_exceptions=True), timeout=5.0
+                )
         await app.state.supervisor_client.aclose()
         if image_gen_client is not None:
             await image_gen_client.aclose()
