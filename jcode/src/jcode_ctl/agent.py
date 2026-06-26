@@ -9,9 +9,13 @@ image, not in dev/CI — and is exercised only on-box.
 
 from __future__ import annotations
 
+import logging
+import os
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from typing import Any, Literal, Protocol, runtime_checkable
+
+_log = logging.getLogger("jcode_ctl.agent")
 
 # The turn-event vocabulary mirrors the /chat SSE frames (docs/ASSISTANT.md
 # "Streaming to the phone") so the api can map jcode turns onto the SAME
@@ -131,11 +135,22 @@ class ClaudeCodeAgent:
         # other services), so the agent runs fully autonomous — there is no
         # interactive approver to prompt in this headless service. `resume` continues
         # the SDK session so multi-turn keeps context.
+        active_model = model or self._model
+        base_url = os.environ.get("ANTHROPIC_BASE_URL", "<unset>")
+        resume = self._sdk_sessions.get(session_id)
+        _log.info(
+            "agent turn sid=%s model=%s base=%s cwd=%s resume=%s",
+            session_id,
+            active_model,
+            base_url,
+            cwd,
+            bool(resume),
+        )
         options = sdk.ClaudeAgentOptions(
             cwd=cwd,
-            model=model or self._model,
+            model=active_model,
             permission_mode="bypassPermissions",
-            resume=self._sdk_sessions.get(session_id),
+            resume=resume,
             include_partial_messages=False,
         )
         result: dict[str, object] = {}
@@ -145,6 +160,10 @@ class ClaudeCodeAgent:
         tool_names: dict[str, str] = {}
         try:
             async for message in sdk.query(prompt=prompt, options=options):
+                # DEBUG traces every SDK message (JCODE_LOG_LEVEL=DEBUG).
+                _log.debug(
+                    "sdk message sid=%s type=%s", session_id, type(message).__name__
+                )
                 for ev in self._to_events(sdk, message, tool_names):
                     yield ev
                 if isinstance(message, sdk.ResultMessage):
@@ -159,6 +178,14 @@ class ClaudeCodeAgent:
                     yield TurnEvent("error", text="cancelled")
                     break
         except Exception as exc:  # a turn must always end with a terminal frame
+            # Log the full traceback + the request context — the on-box signal for a
+            # shim 401, a "no router" model mismatch, or a gateway connection refusal.
+            _log.exception(
+                "agent turn failed sid=%s model=%s base=%s",
+                session_id,
+                active_model,
+                base_url,
+            )
             yield TurnEvent("error", text=str(exc))
         finally:
             self._cancelled.discard(session_id)

@@ -77,6 +77,18 @@ async def test_cancel_delegates_to_agent() -> None:
     assert agent.cancelled == [s.id]
 
 
+async def test_turn_logs_start_and_end(caplog) -> None:
+    # The turn lifecycle is logged at INFO so a pulled /debug/logs/jcode is useful.
+    import logging
+
+    mgr = _mgr()
+    s = await mgr.create("r", model="m1")
+    with caplog.at_level(logging.INFO, logger="jcode_ctl.sessions"):
+        _ = [ev async for ev in mgr.run_turn(s.id, "do it")]
+    msgs = " ".join(r.message for r in caplog.records)
+    assert "turn start" in msgs and "turn end" in msgs
+
+
 async def test_delete_forgets_agent_state() -> None:
     # Deleting a session drops the agent's per-session state so it can't outlive it.
     agent = FakeCodingAgent()
