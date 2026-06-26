@@ -178,6 +178,24 @@ class HostMemory(BaseModel):
     used_gb: float
 
 
+class JcodeModelChoice(BaseModel):
+    id: str
+    label: str
+
+
+class JcodeModelInfo(BaseModel):
+    """The code-mode (jcode) agent's model selector. The card is shown only when
+    code mode is enabled; the dropdown offers installed, tool-capable local models
+    (jcode is a tool-using agent on the on-box gateway)."""
+
+    enabled: bool
+    # The effective served-model id the agent runs: the stored override, else default.
+    model: str
+    # The JBRAIN_JCODE_MODEL config default — the value when no override is stored.
+    default: str
+    options: list[JcodeModelChoice]
+
+
 class LlmSettingsOut(BaseModel):
     providers: list[ProviderInfo]
     reasoning_efforts: list[str]
@@ -189,6 +207,9 @@ class LlmSettingsOut(BaseModel):
     local_models: list[LocalModelInfo]
     # Live host memory for the drawer meter; None when hosting is off or off-Linux.
     host_memory: HostMemory | None = None
+    # Code mode's model selector (the dropdown card). Always present; `enabled`
+    # gates whether the screen renders it.
+    jcode: JcodeModelInfo
 
 
 class TaskOverrideIn(BaseModel):
@@ -275,6 +296,31 @@ async def _snapshot(
             for m in local_catalog.CATALOG
         ],
         host_memory=_host_memory(settings),
+        jcode=await _jcode_info(settings, store, ctx),
+    )
+
+
+def _jcode_options(settings: Settings) -> list[JcodeModelChoice]:
+    """Installed, tool-capable local models the jcode dropdown offers — jcode is a
+    tool-using agent on the on-box gateway, so non-tool or uninstalled models are
+    excluded. Empty when local hosting is off (nothing is installed to serve)."""
+    return [
+        JcodeModelChoice(id=m.id, label=m.label)
+        for m in local_catalog.CATALOG
+        if settings.local_llm_enabled and m.id in settings.local_models and m.supports_tools
+    ]
+
+
+async def _jcode_info(
+    settings: Settings, store: SqlSettingsStore, ctx: SessionContext
+) -> JcodeModelInfo:
+    stored = await store.jcode_model(ctx)
+    return JcodeModelInfo(
+        enabled=settings.jcode_enabled,
+        # The stored override wins; "" falls back to the config default.
+        model=stored or settings.jcode_model,
+        default=settings.jcode_model,
+        options=_jcode_options(settings),
     )
 
 
@@ -431,6 +477,36 @@ async def read_llm_settings(
     gateway: LocalGatewayDep,
 ) -> LlmSettingsOut:
     return await _snapshot(settings, store, ctx_for(principal), gateway)
+
+
+class JcodeModelIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    # "" reverts to the JBRAIN_JCODE_MODEL default; any other value must be an
+    # installed, tool-capable local model id (validated server-side below).
+    model: str
+
+
+@router.put("/settings/llm/jcode-model")
+async def set_jcode_model(
+    body: JcodeModelIn,
+    principal: PrincipalDep,
+    settings: SettingsDep,
+    store: SettingsStoreDep,
+    gateway: LocalGatewayDep,
+) -> LlmSettingsOut:
+    """Choose the model the code-mode (jcode) agent runs. "" reverts to the config
+    default; any other value must be an installed, tool-capable local model (422
+    otherwise) — the same set the dropdown shows. New jcode sessions pick up the
+    change; an in-flight session keeps the model it started with."""
+    valid = {c.id for c in _jcode_options(settings)}
+    if body.model and body.model not in valid:
+        raise HTTPException(
+            status_code=422, detail="model must be an installed, tool-capable local model"
+        )
+    ctx = ctx_for(principal)
+    await store.set_jcode_model(ctx, body.model)
+    return await _snapshot(settings, store, ctx, gateway)
 
 
 @router.post("/settings/llm/local-models/{model_id}/unload")

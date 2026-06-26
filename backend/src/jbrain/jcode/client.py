@@ -25,7 +25,9 @@ class JcodeError(RuntimeError):
 class JcodeApi(Protocol):
     """What the api routes depend on — satisfied by the real client and the fake."""
 
-    async def create_session(self, repo: str, branch: str, work_branch: str) -> dict[str, Any]: ...
+    async def create_session(
+        self, repo: str, branch: str, work_branch: str, model: str = ""
+    ) -> dict[str, Any]: ...
 
     async def list_sessions(self) -> list[dict[str, Any]]: ...
 
@@ -77,9 +79,13 @@ class JcodeClient:
         except httpx.HTTPError as exc:
             raise JcodeError(f"jcode control server error: {exc}") from exc
 
-    async def create_session(self, repo: str, branch: str, work_branch: str) -> dict[str, Any]:
+    async def create_session(
+        self, repo: str, branch: str, work_branch: str, model: str = ""
+    ) -> dict[str, Any]:
         return await self._json(
-            "POST", "/sessions", json={"repo": repo, "branch": branch, "work_branch": work_branch}
+            "POST",
+            "/sessions",
+            json={"repo": repo, "branch": branch, "work_branch": work_branch, "model": model},
         )
 
     async def list_sessions(self) -> list[dict[str, Any]]:
@@ -129,17 +135,24 @@ class FakeJcodeClient:
         self._sessions: dict[str, dict[str, Any]] = {}
         self._n = 0
         self.cancelled: list[str] = []
+        # The model passed to each create_session, in order — tests assert the api
+        # resolved + forwarded the owner's selection.
+        self.created_models: list[str] = []
         self._preview_enabled = preview_enabled
         self._previews: dict[str, str] = {}
 
-    async def create_session(self, repo: str, branch: str, work_branch: str) -> dict[str, Any]:
+    async def create_session(
+        self, repo: str, branch: str, work_branch: str, model: str = ""
+    ) -> dict[str, Any]:
         self._n += 1
         sid = f"sess{self._n}"
+        self.created_models.append(model)
         s = {
             "id": sid,
             "repo": repo,
             "branch": branch,
             "work_branch": work_branch or f"jcode/{sid}",
+            "model": model,
             "status": "ready",
             "created_at": "2026-06-25T00:00:00+00:00",
             "last_active_at": "2026-06-25T00:00:00+00:00",

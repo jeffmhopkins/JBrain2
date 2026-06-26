@@ -75,3 +75,24 @@ async def test_cancel_delegates_to_agent() -> None:
     s = await mgr.create("r")
     await mgr.cancel(s.id)
     assert agent.cancelled == [s.id]
+
+
+async def test_session_model_reaches_the_agent() -> None:
+    # The model chosen at create (the owner's Settings → LLM selection) must be the
+    # model every turn of that session runs against.
+    agent = FakeCodingAgent()
+    mgr = _mgr(agent=agent)
+    s = await mgr.create("r", model="qwen3-coder-next")
+    assert s.model == "qwen3-coder-next"
+    _ = [ev async for ev in mgr.run_turn(s.id, "do it")]
+    assert agent.models == ["qwen3-coder-next"]
+
+
+async def test_model_defaults_to_empty_when_unset() -> None:
+    # No selection → empty model; the agent falls back to its configured default.
+    agent = FakeCodingAgent()
+    mgr = _mgr(agent=agent)
+    s = await mgr.create("r")
+    assert s.model == ""
+    _ = [ev async for ev in mgr.run_turn(s.id, "x")]
+    assert agent.models == [""]

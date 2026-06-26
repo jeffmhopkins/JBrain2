@@ -259,6 +259,14 @@ class FakeSettingsStore:
         mode = self.values.get("image_analysis_mode", "full")
         return mode if mode in ("full", "ocr") else "full"
 
+    async def jcode_model(self, ctx: object) -> str:
+        raw = self.values.get("jcode_model", "")
+        return raw if isinstance(raw, str) else ""
+
+    async def set_jcode_model(self, ctx: object, model_id: str) -> str:
+        self.values["jcode_model"] = model_id
+        return model_id
+
     async def workflow_dispatch_mode(self, ctx: object) -> str:
         mode = self.values.get("workflow_dispatch_mode", "shadow")
         return mode if mode in ("shadow", "live", "off") else "shadow"

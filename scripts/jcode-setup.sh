@@ -40,14 +40,34 @@ if ! grep -q '^JCODE_TOKEN=.\+' .env; then
   say "minted a new JCODE_TOKEN"
 fi
 
+# The served model id jcode asks the gateway for — also the catalog id whose GGUF
+# the gateway provisions (see backend/src/jbrain/llm/local_catalog.py). Resolved
+# once here so the .env key and the provisioning below can never drift.
+JCODE_MODEL="${JCODE_MODEL:-qwen3-coder-next}"
+
 set_env JCODE_ENABLED true
 set_env JCODE_URL "http://jcode:9100"
-set_env JCODE_MODEL "${JCODE_MODEL:-qwen3-coder-next}"
+set_env JCODE_MODEL "$JCODE_MODEL"
 set_env JCODE_MODEL_URL "${JCODE_MODEL_URL:-http://local-llm:8080}"
 
-if ! grep -q '^LOCAL_LLM_ENABLED=true' .env; then
+if grep -q '^LOCAL_LLM_ENABLED=true' .env; then
+  # Provision the on-box coder model jcode talks to (catalog id == JCODE_MODEL ==
+  # served name "qwen3-coder-next") and put it in LOCAL_MODELS so the gateway serves
+  # it AND every future update's model sync (deploy/local-models-sync.sh) keeps it.
+  # local-llm-setup REPLACES LOCAL_MODELS with exactly its args, so pass the UNION of
+  # the current selection + the coder id — never just the coder, or a re-run would
+  # drop the operator's other local models. hf skips files already present, so
+  # re-provisioning the existing set is a cheap no-op. This downloads ~50 GB on first
+  # enable. Parse mirrors local-models-sync.sh (ids carry no spaces/quotes).
+  CURRENT_IDS="$(grep '^LOCAL_MODELS=' .env | sed 's/^LOCAL_MODELS=//' | tr -d '[]" ' | tr ',' ' ' || true)"
+  UNION_IDS="$(printf '%s\n%s\n' "$CURRENT_IDS" "$JCODE_MODEL" \
+    | grep -v '^[[:space:]]*$' | sort -u | tr '\n' ' ')"
+  say "provisioning the on-box coder model ($JCODE_MODEL) + keeping current local models"
+  JBRAIN_INSTALL_DIR="$INSTALL_DIR" bash "$INSTALL_DIR/src/scripts/local-llm-setup.sh" $UNION_IDS
+else
   say "WARNING: the local-llm gateway isn't enabled — jcode has no model to talk to."
-  say "         run scripts/local-llm-setup.sh and provision a coder model first."
+  say "         run 'jbrain enable-local-models qwen3-coder-next' (or scripts/local-llm-setup.sh)"
+  say "         to provision the coder model, then re-run this script."
 fi
 
 say "building the jcode image and starting the profile"

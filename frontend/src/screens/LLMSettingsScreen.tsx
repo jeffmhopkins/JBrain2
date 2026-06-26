@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type {
   ImageModelInfo,
   ImageSettings,
+  JcodeModelInfo,
   LlmProviderId,
   LlmSettings,
   LlmTask,
@@ -310,6 +311,20 @@ export function LLMSettingsScreen() {
       .finally(() => unmark(id));
   }
 
+  // Choose the model the code-mode (jcode) agent runs; "" reverts to the default.
+  // Returns the full snapshot (guarded reconcile, like stage/context-window).
+  function setJcodeModel(model: string) {
+    mark("jcode-model");
+    const seq = ++putSeq.current;
+    api
+      .setJcodeModel(model)
+      .then((s) => {
+        if (seq === putSeq.current) setSettings(s);
+      })
+      .catch(() => {})
+      .finally(() => unmark("jcode-model"));
+  }
+
   // Queue / unqueue an un-provisioned model for install; the snapshot reflects the
   // queued flag at once (the download itself happens during the next update).
   function queueInstall(id: string, on: boolean) {
@@ -534,6 +549,14 @@ export function LLMSettingsScreen() {
         onStopImageService={stopImageService}
       />
 
+      {settings.jcode.enabled && (
+        <JcodeModelCard
+          jcode={settings.jcode}
+          busy={busy.has("jcode-model")}
+          onChange={setJcodeModel}
+        />
+      )}
+
       {groups.map((group) => {
         const provider = sharedProvider(group.tasks);
         const reasoning = sharedReasoning(group.tasks, reasonOn);
@@ -690,6 +713,61 @@ export function LLMSettingsScreen() {
 
       <AiUsageCard />
     </main>
+  );
+}
+
+// The code-mode (jcode) agent's model selector. Rendered only when code mode is
+// enabled; the dropdown lists installed, tool-capable local models (the API's
+// `jcode.options`). Picking one persists it as the model new jcode sessions run.
+function JcodeModelCard({
+  jcode,
+  busy,
+  onChange,
+}: {
+  jcode: JcodeModelInfo;
+  busy: boolean;
+  onChange: (model: string) => void;
+}) {
+  // The effective model may not be among the installed options (e.g. the config
+  // default before its weights are installed) — surface it as a disabled option so
+  // the select shows the truth instead of silently snapping to another model.
+  const missing = !!jcode.model && !jcode.options.some((o) => o.id === jcode.model);
+  const hasChoices = jcode.options.length > 0 || missing;
+  return (
+    <section className="onbox-card jcode-model-card" aria-label="Code mode model card">
+      <div className="onbox-head">
+        <span className="onbox-title">Code mode model</span>
+      </div>
+      <p className="settings-meta">
+        The local model the jcode coding agent runs. New sessions use the current choice; an
+        in-flight session keeps the model it started with.
+      </p>
+      {hasChoices ? (
+        <select
+          className="llm-select"
+          aria-label="Code mode model"
+          value={jcode.model}
+          disabled={busy}
+          onChange={(e) => onChange(e.target.value)}
+        >
+          {missing && (
+            <option value={jcode.model} disabled>
+              {jcode.model} (not installed)
+            </option>
+          )}
+          {jcode.options.map((o) => (
+            <option key={o.id} value={o.id}>
+              {o.label}
+              {o.id === jcode.default ? " · default" : ""}
+            </option>
+          ))}
+        </select>
+      ) : (
+        <p className="llm-na-note">
+          Install a tool-capable local model (above) to choose one for code mode.
+        </p>
+      )}
+    </section>
   );
 }
 

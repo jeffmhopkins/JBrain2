@@ -97,6 +97,14 @@ GMAIL_CLIENT_SECRET_KEY = "gmail_client_secret"
 GMAIL_REFRESH_TOKEN_KEY = "gmail_refresh_token"
 
 
+# The served-model id code mode (jcode) runs its coding agent against — the live
+# control surface for "which model does the jcode agent use". Absent/non-string =
+# "" (unset): the api falls back to the JBRAIN_JCODE_MODEL config default. The
+# /settings/llm/jcode-model PUT validates the id against the live installed +
+# tool-capable choices before storing, so a junk/unprovisioned id can't land here.
+JCODE_MODEL_KEY = "jcode_model"
+
+
 def is_valid_timezone(tz: str) -> bool:
     """Whether `tz` names a known IANA zone — the gate for storing/trusting one."""
     try:
@@ -362,6 +370,19 @@ class SqlSettingsStore:
             if sane:
                 clean[task] = sane
         return clean
+
+    async def jcode_model(self, ctx: SessionContext) -> str:
+        """The selected served-model id for the code-mode (jcode) agent, or "" when
+        unset (the api then falls back to the JBRAIN_JCODE_MODEL config default). A
+        non-string store reads as unset — junk never reads as a model id."""
+        raw = await self.get(ctx, JCODE_MODEL_KEY, "")
+        return raw if isinstance(raw, str) else ""
+
+    async def set_jcode_model(self, ctx: SessionContext, model_id: str) -> str:
+        """Store the code-mode model id (the API validates it against the live
+        installed + tool-capable choices first); "" clears it back to the default."""
+        await self.upsert(ctx, JCODE_MODEL_KEY, model_id)
+        return model_id
 
     async def llm_local_context_windows(self, ctx: SessionContext) -> dict[str, int]:
         """Per-model context-window overrides, keyed by catalog id, sanitized.

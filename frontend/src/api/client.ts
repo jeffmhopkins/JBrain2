@@ -415,6 +415,24 @@ export interface LoadedLocalModels {
   reachable: boolean;
 }
 
+/** One option in the code-mode (jcode) model dropdown. */
+export interface JcodeModelChoice {
+  id: string;
+  label: string;
+}
+
+/** The code-mode agent's model selector (a card on the LLM screen). */
+export interface JcodeModelInfo {
+  /** Code mode is enabled — the screen renders the card only when true. */
+  enabled: boolean;
+  /** The effective model id the agent runs (stored override, else `default`). */
+  model: string;
+  /** The config default (JBRAIN_JCODE_MODEL) — the value when no override is set. */
+  default: string;
+  /** Installed, tool-capable local models the dropdown offers. */
+  options: JcodeModelChoice[];
+}
+
 export interface LlmSettings {
   providers: LlmProvider[];
   reasoning_efforts: ReasoningEffort[];
@@ -424,6 +442,8 @@ export interface LlmSettings {
   local_models: LocalModelInfo[];
   /** Live unified-memory gauge for the drawer meter; null when hosting is off / off-Linux. */
   host_memory: { total_gb: number; used_gb: number } | null;
+  /** Code mode's model selector. Always present; `enabled` gates the card. */
+  jcode: JcodeModelInfo;
 }
 
 /** One task's desired routing; reasoning_effort applies only to a reasoning-capable
@@ -1549,6 +1569,13 @@ export const api = {
       `/api/settings/llm/local-models/${encodeURIComponent(id)}/context-window`,
       jsonInit("PUT", { context_window: window }),
     );
+    return (await response.json()) as LlmSettings;
+  },
+
+  /** Choose the model the code-mode (jcode) agent runs; "" reverts to the default.
+   * Returns the full settings snapshot. */
+  async setJcodeModel(model: string): Promise<LlmSettings> {
+    const response = await request("/api/settings/llm/jcode-model", jsonInit("PUT", { model }));
     return (await response.json()) as LlmSettings;
   },
 
