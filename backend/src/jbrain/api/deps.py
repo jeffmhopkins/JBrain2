@@ -44,6 +44,26 @@ async def owner_only(principal: PrincipalDep) -> PrincipalInfo:
 OwnerDep = Annotated[PrincipalInfo, Depends(owner_only)]
 
 
+async def jcode_session_access(request: Request, principal: PrincipalDep) -> PrincipalInfo:
+    """The owner, OR a jcode share-link scoped to THIS session (the `sid` path param).
+
+    Gates the session-OPERATIONAL jcode routes (view / turn / preview / terminal);
+    management (create / list / delete / reset / mint-share) stays owner-only via
+    OwnerDep. A share principal for a DIFFERENT session — or any other kind — 403s, so
+    a redeemed share cookie reaches only the one session it was minted for, and never
+    an owner or member surface."""
+    if principal.kind == "owner":
+        return principal
+    sid = request.path_params.get("sid", "")
+    if principal.kind == "jcode_share_link" and sid and principal.jcode_session_id == sid:
+        return principal
+    raise HTTPException(status_code=403, detail="not authorized for this session")
+
+
+# Owner, or a session-scoped share link: the operational jcode routes accept either.
+JcodeAccessDep = Annotated[PrincipalInfo, Depends(jcode_session_access)]
+
+
 async def member_only(principal: PrincipalDep) -> PrincipalInfo:
     """A member dashboard session: a device-kind cookie minted by /session/mint.
 

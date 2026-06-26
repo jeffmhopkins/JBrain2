@@ -190,18 +190,23 @@ async def mint_jcode_share(
     return key, record
 
 
-async def redeem_jcode_share(repo: AuthRepo, key: str) -> PrincipalInfo | None:
-    """Exchange a share-link secret for the bound share principal, or None.
+async def redeem_jcode_share(repo: AuthRepo, key: str) -> tuple[str, str] | None:
+    """Exchange a share-link secret for ``(session_cookie_token, session_id)``, or None.
 
-    Kind-filtered + revocation/expiry-enforced in SQL (a revoked, lapsed, or
-    wrong-kind key returns None). The caller mints a session cookie bound to this
+    Validates the secret in SQL (kind-filtered + revocation/expiry-enforced — a revoked,
+    lapsed, or wrong-kind key returns None), then mints a session bound to the share
     principal so the browser carries the share's scope on every subsequent request —
-    exactly as `mint_dashboard_session` does for a device key, but the resulting
-    cookie reaches ONLY this one session's operational routes (the jcode access gate),
-    never owner or member surfaces."""
-    if not key:
+    exactly as `mint_dashboard_session` does for a device key, but the resulting cookie
+    reaches ONLY this one session's operational routes (the jcode access gate), never
+    owner or member surfaces."""
+    principal = (
+        await repo.find_active_jcode_share_by_key_hash(keys.hash_token(key)) if key else None
+    )
+    if principal is None:
         return None
-    return await repo.find_active_jcode_share_by_key_hash(keys.hash_token(key))
+    token = keys.generate_session_token()
+    await repo.create_session(principal.id, keys.hash_token(token), principal.label)
+    return token, principal.jcode_session_id
 
 
 async def rotate_owner_key(repo: AuthRepo) -> str:

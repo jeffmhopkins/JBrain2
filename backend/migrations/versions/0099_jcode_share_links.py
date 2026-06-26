@@ -19,7 +19,18 @@ depends_on = None
 
 def upgrade() -> None:
     op.execute("ALTER TABLE app.principals ADD COLUMN jcode_session_id text")
+    # Widen the kind CHECK (from 0001) to admit the share-link kind.
+    op.execute("ALTER TABLE app.principals DROP CONSTRAINT principals_kind_check")
+    op.execute(
+        "ALTER TABLE app.principals ADD CONSTRAINT principals_kind_check "
+        "CHECK (kind IN ('owner', 'capability_token', 'device_key', 'jcode_share_link'))"
+    )
 
 
 def downgrade() -> None:
+    op.execute("ALTER TABLE app.principals DROP CONSTRAINT principals_kind_check")
+    op.execute(
+        "ALTER TABLE app.principals ADD CONSTRAINT principals_kind_check "
+        "CHECK (kind IN ('owner', 'capability_token', 'device_key'))"
+    )
     op.execute("ALTER TABLE app.principals DROP COLUMN jcode_session_id")

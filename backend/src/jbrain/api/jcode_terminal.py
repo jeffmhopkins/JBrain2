@@ -21,11 +21,14 @@ import structlog
 import websockets
 from fastapi import APIRouter, WebSocket
 
-from jbrain.api.live import authenticated_viewer, origin_allowed
+from jbrain.api.live import origin_allowed
+from jbrain.auth import service
 from jbrain.config import Settings
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterable
+
+    from jbrain.auth.service import AuthRepo, PrincipalInfo
 
 
 class _BrowserWS(Protocol):
@@ -43,6 +46,23 @@ log = structlog.get_logger()
 # Session ids are the control server's hex tokens; mirror the REST surface's gate so a
 # malformed id can never be interpolated into the upstream URL.
 _SID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+
+
+async def _cookie_principal(websocket: WebSocket) -> PrincipalInfo | None:
+    """The principal from the session cookie on the WS handshake (owner OR a redeemed
+    share link), or None. Unlike the location feed's `authenticated_viewer` this keeps
+    ALL kinds — the per-session scope check (`_may_access`) decides, not a kind allow-list."""
+    repo = cast("AuthRepo", websocket.app.state.auth_repo)
+    settings = cast(Settings, websocket.app.state.settings)
+    token = websocket.cookies.get(settings.session_cookie, "")
+    return await service.authenticate(repo, token)
+
+
+def _may_access(principal: PrincipalInfo, sid: str) -> bool:
+    """The owner reaches any session's shell; a share link only the one it's scoped to."""
+    return principal.kind == "owner" or (
+        principal.kind == "jcode_share_link" and principal.jcode_session_id == sid
+    )
 
 
 def ws_url(base_url: str, sid: str) -> str:
@@ -121,8 +141,8 @@ async def jcode_terminal(websocket: WebSocket, sid: str) -> None:
     if not origin_allowed(websocket, settings):
         await websocket.close(code=4403)
         return
-    principal = await authenticated_viewer(websocket)
-    if principal is None or principal.kind != "owner":
+    principal = await _cookie_principal(websocket)
+    if principal is None or not _may_access(principal, sid):
         await websocket.close(code=4401)
         return
     if not settings.jcode_url or not _SID_RE.match(sid):

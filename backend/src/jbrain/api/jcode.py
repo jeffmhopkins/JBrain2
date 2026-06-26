@@ -24,7 +24,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from jbrain.api.deps import OwnerDep
+from jbrain.api.deps import JcodeAccessDep, OwnerDep, PrincipalDep
 from jbrain.db import SessionContext, scoped_session
 from jbrain.jcode import JcodeApi, JcodeError
 from jbrain.llm import local_catalog
@@ -35,6 +35,7 @@ from jbrain.settings_store import SqlSettingsStore
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+    from jbrain.auth.service import PrincipalInfo
     from jbrain.config import Settings
     from jbrain.llm.local_gateway import LocalGateway
 
@@ -302,13 +303,20 @@ async def list_sessions(owner: OwnerDep, request: Request) -> list[dict[str, obj
 
 
 @router.get("/jcode/sessions/{sid}")
-async def get_session(sid: str, owner: OwnerDep, request: Request) -> dict[str, object]:
+async def get_session(sid: str, principal: JcodeAccessDep, request: Request) -> dict[str, object]:
     _valid_sid(sid)
-    async with scoped_session(_maker(request), _owner_ctx(owner.id)) as db:
-        row = await _REPO.get(db, sid)
-    if row is None:
-        raise HTTPException(status_code=404, detail="unknown session")
-    return row.__dict__
+    # The owner reads its launcher mirror; a share principal (no owner-RLS access to that
+    # table) gets the same session straight from the control server, the source of truth.
+    if principal.kind == "owner":
+        async with scoped_session(_maker(request), _owner_ctx(principal.id)) as db:
+            row = await _REPO.get(db, sid)
+        if row is None:
+            raise HTTPException(status_code=404, detail="unknown session")
+        return row.__dict__
+    try:
+        return await _client(request).get_session(sid)
+    except JcodeError as exc:
+        raise HTTPException(status_code=404, detail="unknown session") from exc
 
 
 @router.delete("/jcode/sessions/{sid}", status_code=204)
@@ -337,6 +345,11 @@ async def reset_session(sid: str, owner: OwnerDep, request: Request) -> dict[str
 async def _set_status(
     maker: async_sessionmaker[AsyncSession], owner_id: str, sid: str, status: str
 ) -> None:
+    # A share-driven turn (owner_id="") doesn't touch the owner's launcher mirror — that
+    # table is owner-RLS only, and the control server already tracks the real session
+    # state. The owner's own turns keep the mirror's status honest as before.
+    if not owner_id:
+        return
     async with scoped_session(maker, _owner_ctx(owner_id)) as db:
         await _REPO.touch(db, sid, status=status)
 
@@ -377,7 +390,7 @@ async def _drive(
 
 @router.post("/jcode/sessions/{sid}/turn")
 async def run_turn(
-    sid: str, body: TurnBody, owner: OwnerDep, request: Request
+    sid: str, body: TurnBody, principal: JcodeAccessDep, request: Request
 ) -> StreamingResponse:
     _valid_sid(sid)
     client = _client(request)
@@ -385,8 +398,11 @@ async def run_turn(
     run_id = uuid.uuid4().hex
     turn = _JcodeTurn(sid)
     turns[run_id] = turn
+    # Only the owner's turns update its launcher mirror; a share turn drives the same
+    # control-server session but leaves the owner-only index untouched (owner_id="").
+    owner_id = principal.id if principal.kind == "owner" else ""
     turn.task = asyncio.create_task(
-        _drive(turn, client, sid, body.prompt, _maker(request), owner.id)
+        _drive(turn, client, sid, body.prompt, _maker(request), owner_id)
     )
 
     # Guarantee the run leaves the registry however the task ends (done/error/cancel),
@@ -401,23 +417,32 @@ async def run_turn(
     return StreamingResponse(turn.stream(), media_type="text/event-stream", headers=headers)
 
 
-@router.get("/jcode/runs/{run_id}/stream")
-async def reconnect(
-    run_id: str, owner: OwnerDep, request: Request, after: int = 0
-) -> StreamingResponse:
+def _run_or_403(request: Request, principal: PrincipalInfo, run_id: str) -> _JcodeTurn:
+    """The live turn for run_id, scope-checked: the owner reaches any run; a share
+    principal only a run for ITS session. 404 unknown, 403 cross-session."""
     turn = _turns(request).get(run_id)
     if turn is None:
         raise HTTPException(status_code=404, detail="run is no longer live")
+    if principal.kind == "owner" or (
+        principal.kind == "jcode_share_link" and principal.jcode_session_id == turn.session_id
+    ):
+        return turn
+    raise HTTPException(status_code=403, detail="not authorized for this run")
+
+
+@router.get("/jcode/runs/{run_id}/stream")
+async def reconnect(
+    run_id: str, principal: PrincipalDep, request: Request, after: int = 0
+) -> StreamingResponse:
+    turn = _run_or_403(request, principal, run_id)
     return StreamingResponse(
         turn.stream(after), media_type="text/event-stream", headers=_SSE_HEADERS
     )
 
 
 @router.post("/jcode/runs/{run_id}/cancel", status_code=202)
-async def cancel_turn(run_id: str, owner: OwnerDep, request: Request) -> dict[str, str]:
-    turn = _turns(request).get(run_id)
-    if turn is None:
-        raise HTTPException(status_code=404, detail="run is no longer live")
+async def cancel_turn(run_id: str, principal: PrincipalDep, request: Request) -> dict[str, str]:
+    turn = _run_or_403(request, principal, run_id)
     turn.cancel()
     # The control server may have already finished; cancel is best-effort.
     with contextlib.suppress(JcodeError):
@@ -429,7 +454,7 @@ async def cancel_turn(run_id: str, owner: OwnerDep, request: Request) -> dict[st
 
 
 @router.get("/jcode/sessions/{sid}/preview")
-async def preview_status(sid: str, owner: OwnerDep, request: Request) -> dict[str, object]:
+async def preview_status(sid: str, _access: JcodeAccessDep, request: Request) -> dict[str, object]:
     _valid_sid(sid)
     try:
         return await _client(request).preview_status(sid)
@@ -439,7 +464,7 @@ async def preview_status(sid: str, owner: OwnerDep, request: Request) -> dict[st
 
 @router.post("/jcode/sessions/{sid}/preview")
 async def preview_open(
-    sid: str, body: PreviewBody, owner: OwnerDep, request: Request
+    sid: str, body: PreviewBody, _access: JcodeAccessDep, request: Request
 ) -> dict[str, object]:
     _valid_sid(sid)
     try:
@@ -449,7 +474,7 @@ async def preview_open(
 
 
 @router.delete("/jcode/sessions/{sid}/preview", status_code=204)
-async def preview_close(sid: str, owner: OwnerDep, request: Request) -> None:
+async def preview_close(sid: str, _access: JcodeAccessDep, request: Request) -> None:
     _valid_sid(sid)
     with contextlib.suppress(JcodeError):
         await _client(request).preview_close(sid)

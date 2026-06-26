@@ -62,10 +62,12 @@ class FakeAuthRepo:
         self.sessions.append(FakeSession(principal_id, token_hash, label))
 
     async def find_principal_by_session_token_hash(self, token_hash: str) -> PrincipalInfo | None:
+        now = datetime.now(UTC)
         for s in self.sessions:
             if s.token_hash == token_hash and not s.revoked:
                 for p in self.principals:
-                    if p.id == s.principal_id and not p.revoked:
+                    live = p.expires_at is None or p.expires_at > now
+                    if p.id == s.principal_id and not p.revoked and live:
                         return _info(p)
         return None
 
@@ -162,12 +164,7 @@ class FakeAuthRepo:
         now = datetime.now(UTC)
         for p in self.principals:
             live = p.expires_at is None or p.expires_at > now
-            if (
-                p.key_hash == key_hash
-                and p.kind == "jcode_share_link"
-                and not p.revoked
-                and live
-            ):
+            if p.key_hash == key_hash and p.kind == "jcode_share_link" and not p.revoked and live:
                 p.last_used_at = now
                 return _info(p)
         return None
@@ -176,9 +173,7 @@ class FakeAuthRepo:
         return [
             _capability(p)
             for p in self.principals
-            if p.kind == "jcode_share_link"
-            and p.jcode_session_id == session_id
-            and not p.revoked
+            if p.kind == "jcode_share_link" and p.jcode_session_id == session_id and not p.revoked
         ]
 
     async def revoke_jcode_share(self, share_id: str, session_id: str) -> bool:

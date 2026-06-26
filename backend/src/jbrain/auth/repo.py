@@ -93,6 +93,10 @@ class SqlAuthRepo:
                         DeviceSession.token_hash == token_hash,
                         DeviceSession.revoked_at.is_(None),
                         Principal.revoked_at.is_(None),
+                        # A time-boxed principal (a jcode share link) stops authenticating
+                        # the moment it lapses — the cookie can't outlive the share's
+                        # expiry. Owner/device principals have NULL expiry, so unaffected.
+                        or_(Principal.expires_at.is_(None), Principal.expires_at > func.now()),
                     )
                 )
             ).scalar_one_or_none()
