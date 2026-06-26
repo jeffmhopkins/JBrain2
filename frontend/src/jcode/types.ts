@@ -41,3 +41,14 @@ export interface JcodePreview {
   enabled: boolean;
   url: string | null;
 }
+
+// Whether the coder model is resident in the on-box gateway — drives the session
+// screen's "loading model" bar. `loaded` flips true once the (cold ~tens-of-GB) load
+// finishes; `size_gb` lets the bar estimate progress; `hosting` is false off-box.
+export interface JcodeModelStatus {
+  model: string;
+  served: string;
+  loaded: boolean;
+  hosting: boolean;
+  size_gb: number;
+}

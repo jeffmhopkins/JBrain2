@@ -2606,6 +2606,7 @@ const jcodeSessions: MockJcodeSession[] = [
   },
 ];
 let jcodeN = 2;
+let jcodeModelPolls = 0;
 const jcodePreview = new Map<string, string>();
 
 function jcodeTurnStream(): Response {
@@ -2643,6 +2644,18 @@ export const mockFetch: typeof fetch = async (input, init) => {
   if (path === "/api/auth/me") return json(PRINCIPAL);
 
   // --- Code mode (jcode) ---
+  // Model status: report "loading" for the first couple of polls, then resident — so
+  // the dev:mock session screen shows the loading bar advancing, then complete.
+  if (path === "/api/jcode/model" && method === "GET") {
+    jcodeModelPolls += 1;
+    return json({
+      model: "qwen3-coder-next",
+      served: "qwen3-coder-next",
+      loaded: jcodeModelPolls > 2,
+      hosting: true,
+      size_gb: 49.6,
+    });
+  }
   if (path === "/api/jcode/sessions" && method === "GET") return json(jcodeSessions);
   if (path === "/api/jcode/sessions" && method === "POST") {
     const body = JSON.parse(String(init?.body)) as {

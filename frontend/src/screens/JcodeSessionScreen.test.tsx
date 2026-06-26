@@ -1,8 +1,22 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { api } from "../api/client";
-import type { JcodeEvent, JcodeSession } from "../jcode/types";
+import type { JcodeEvent, JcodeModelStatus, JcodeSession } from "../jcode/types";
 import { JcodeSessionScreen } from "./JcodeSessionScreen";
+
+const MODEL_STATUS: JcodeModelStatus = {
+  model: "qwen3-coder-next",
+  served: "qwen3-coder-next",
+  loaded: true,
+  hosting: true,
+  size_gb: 49.6,
+};
+
+// The screen polls model residency on mount; default to "loaded" so the bar is hidden
+// (each test overrides for its own case).
+beforeEach(() => {
+  vi.spyOn(api, "jcodeModelStatus").mockResolvedValue(MODEL_STATUS);
+});
 
 const SESSION: JcodeSession = {
   id: "j1",
@@ -24,6 +38,12 @@ async function* turn(): AsyncGenerator<JcodeEvent> {
 }
 
 describe("JcodeSessionScreen", () => {
+  it("shows the loading bar while the coder warms onto the box", async () => {
+    vi.spyOn(api, "jcodeModelStatus").mockResolvedValue({ ...MODEL_STATUS, loaded: false });
+    render(<JcodeSessionScreen session={SESSION} onClose={vi.fn()} />);
+    expect(await screen.findByText(/Loading qwen3-coder-next onto the box/i)).toBeInTheDocument();
+  });
+
   it("streams a turn into the chat transcript", async () => {
     vi.spyOn(api, "jcodeTurn").mockImplementation(() => turn());
     render(<JcodeSessionScreen session={SESSION} onClose={vi.fn()} />);

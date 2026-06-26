@@ -16,7 +16,11 @@ import {
   StopIcon,
   TerminalIcon,
 } from "../components/icons";
-import type { JcodeEvent, JcodePreview, JcodeSession } from "../jcode/types";
+import type { JcodeEvent, JcodeModelStatus, JcodePreview, JcodeSession } from "../jcode/types";
+
+// Rough cold-load read rate (s/GB) for the loading-bar estimate — the bar caps at 96%
+// until the gateway confirms the model resident, then completes.
+const LOAD_SEC_PER_GB = 1.2;
 
 type Tab = "chat" | "diff" | "term" | "prev";
 
@@ -49,8 +53,47 @@ export function JcodeSessionScreen({
   const [confirm, setConfirm] = useState<"reset" | "delete" | null>(null);
   const [preview, setPreview] = useState<JcodePreview | null>(null);
   const [pvBusy, setPvBusy] = useState(false);
+  const [model, setModel] = useState<JcodeModelStatus | null>(null);
+  const [now, setNow] = useState(() => Date.now());
+  const loadStart = useRef(Date.now());
   const runId = useRef<string | null>(null);
   const abort = useRef<AbortController | null>(null);
+
+  // Poll the coder's residency so the loading bar shows progress while it warms onto
+  // the box (the api warms it when the session opens). Stop once it's loaded or hosting
+  // is off; a failed poll just retries. The bar caps at 96% until `loaded` confirms.
+  useEffect(() => {
+    let stale = false;
+    let timer: ReturnType<typeof setTimeout>;
+    const poll = async () => {
+      try {
+        const s = await api.jcodeModelStatus();
+        if (stale) return;
+        setModel(s);
+        if (!s.hosting || s.loaded) return;
+      } catch {
+        if (stale) return;
+      }
+      timer = setTimeout(poll, 2000);
+    };
+    poll();
+    return () => {
+      stale = true;
+      clearTimeout(timer);
+    };
+  }, []);
+
+  const loading = model?.hosting === true && !model.loaded;
+  // Tick the estimate while loading so the bar advances between polls.
+  useEffect(() => {
+    if (!loading) return;
+    const t = setInterval(() => setNow(Date.now()), 500);
+    return () => clearInterval(t);
+  }, [loading]);
+  const sizeGb = model?.size_gb ?? 0;
+  const elapsedSec = (now - loadStart.current) / 1000;
+  const loadPct =
+    sizeGb > 0 ? Math.min(96, Math.round((elapsedSec / (sizeGb * LOAD_SEC_PER_GB)) * 100)) : 0;
 
   // Fetch the preview status the first time the Preview tab is opened (the feature
   // flag + any already-live tunnel). Failures leave it null → a neutral empty state.
@@ -247,6 +290,17 @@ export function JcodeSessionScreen({
 
       {tab === "chat" && (
         <div className="jcode-panel">
+          {loading && model && (
+            <div className="jcode-modelload" aria-label="Loading model">
+              <div className="jcode-modelload-row">
+                <span>Loading {model.model} onto the box…</span>
+                <span className="jcode-modelload-pct">{loadPct}%</span>
+              </div>
+              <div className="jcode-modelload-track">
+                <div className="jcode-modelload-fill" style={{ width: `${loadPct}%` }} />
+              </div>
+            </div>
+          )}
           {items.length === 0 ? (
             <p className="jcode-empty">
               Tell jcode what to build — it works on the box, in the sandbox.
