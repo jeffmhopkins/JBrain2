@@ -26,6 +26,12 @@ fi
 if [ -f .env ] && grep -q '^TUNNEL_ENABLED=true' .env; then
   PROFILE+=(--profile tunnel)
 fi
+# The opt-in code-mode sandbox lives behind the `jcode` profile. Keep it in routine
+# commands when enabled so it is built, started, restarted, and rebuilt by `update`
+# alongside the rest of the stack — host parity with the PWA update path.
+if [ -f .env ] && grep -q '^JCODE_ENABLED=true' .env; then
+  PROFILE+=(--profile jcode)
+fi
 
 usage() {
   cat <<EOF
@@ -84,6 +90,18 @@ case "${1:-}" in
     cp src/deploy/searxng/settings.yml searxng/settings.yml
     if ! grep -q '^SEARXNG_SECRET=' .env; then
       printf 'SEARXNG_SECRET=%s\n' "$(openssl rand -hex 32)" >> .env
+    fi
+    # Code mode (jcode): self-heal its .env keys when enabled so the host update
+    # keeps it turnkey too — mint the api<->jcode bearer + fail-closed defaults
+    # (compose maps these to the api as JBRAIN_JCODE_* and to the sandbox as
+    # JCODE_*). The jcode profile is already active above, so build/up include it.
+    if grep -q '^JCODE_ENABLED=true' .env; then
+      if ! grep -q '^JCODE_TOKEN=..*' .env; then
+        printf 'JCODE_TOKEN=%s\n' "$(openssl rand -hex 32)" >> .env
+      fi
+      grep -q '^JCODE_URL=' .env || printf 'JCODE_URL=%s\n' 'http://jcode:9100' >> .env
+      grep -q '^JCODE_MODEL=' .env || printf 'JCODE_MODEL=%s\n' 'qwen3-coder-next' >> .env
+      grep -q '^JCODE_MODEL_URL=' .env || printf 'JCODE_MODEL_URL=%s\n' 'http://local-llm:8080' >> .env
     fi
     # Turn LAN access on for installs that predate it, then (re)provision the
     # host mDNS + alias from the freshly pulled source. Best-effort: a setup
