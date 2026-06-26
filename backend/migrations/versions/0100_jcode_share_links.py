@@ -11,8 +11,8 @@ visibility is already owner-or-self under the existing policies).
 
 from alembic import op
 
-revision = "0099"
-down_revision = "0098"
+revision = "0100"
+down_revision = "0099"
 branch_labels = None
 depends_on = None
 
