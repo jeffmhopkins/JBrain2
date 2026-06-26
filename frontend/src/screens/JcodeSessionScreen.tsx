@@ -241,7 +241,9 @@ function JcodeCli({ sid }: { sid: string }) {
       ]);
       if (disposed || !host.current) return;
       const term = new Terminal({
-        fontSize: 13,
+        // 60% of the former 13px — denser output fits more of a coding session on a
+        // phone screen without horizontal scroll.
+        fontSize: 8,
         fontFamily: "ui-monospace, Menlo, Consolas, monospace",
         cursorBlink: true,
         theme: { background: "#0b0b0c", foreground: "#e6e6e6" },
