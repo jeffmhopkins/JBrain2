@@ -191,11 +191,12 @@ CATALOG: tuple[LocalModel, ...] = (
         size_gb=46.1,
         # A separate checkpoint from the Instruct above (Qwen3-Next split thinking out of
         # the hybrid toggle): it ALWAYS emits `<think>` reasoning. `--reasoning-format
-        # deepseek` parses that onto the reasoning channel (→ shim → Anthropic thinking
-        # blocks) instead of leaking into the answer. Selectable for jcode; the coder
-        # stays the default. Caveat: agentic multi-turn tool loops feed unsigned thinking
-        # back, which Anthropic-format clients may reject — try it on reasoning-heavy
-        # sessions, not as a tool-heavy daily driver.
+        # deepseek` parses that onto the OpenAI reasoning channel instead of leaking into
+        # the answer; whether the shim then resurfaces it as Anthropic thinking blocks is
+        # best-effort (see deploy/claude-shim/litellm-config.yaml). Selectable for jcode;
+        # the coder stays the default. Caveat: agentic multi-turn tool loops feed unsigned
+        # thinking back, which Anthropic-format clients may reject — try it on
+        # reasoning-heavy sessions, not as a tool-heavy daily driver.
         supports_reasoning=True,
         reasoning_format="deepseek",
         note="80B MoE, 3B active — the Thinking checkpoint (emits <think> traces); "
