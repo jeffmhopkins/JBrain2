@@ -43,6 +43,22 @@ class Settings(BaseSettings):
     # resource caps and idle-TTL GC (Wave J5). Zero or negative disables the cap.
     max_sessions: int = 8
 
+    # Ceiling on concurrent in-flight turns across ALL sessions. Each turn drives a
+    # model + tool loop — the real CPU/mem load — so this bounds load independently of
+    # the live-session cap above: 8 idle sandboxes are cheap, 8 simultaneous turns are
+    # not. Over the cap a new turn is refused (the client sees a clean "at turn
+    # capacity" error) until one finishes. The aggregate compose CPU/mem caps stay the
+    # hard ceiling; this keeps a burst of turns from thrashing them. Zero/neg disables.
+    max_concurrent_turns: int = 4
+
+    # Per-session checkout disk ceiling (MB), checked at each turn start: a session that
+    # exceeds it refuses new turns (reset or delete to recover) so a runaway
+    # build or log can't fill the shared sandbox volume and take every session down with
+    # it. This is du-style/after-the-fact — it stops the NEXT turn, not the write in
+    # flight (real-time would need a filesystem quota, out of the aggregate-caps lane).
+    # Zero disables.
+    session_disk_limit_mb: int = 2048
+
     # Per-session web preview (Wave J4): an ephemeral Cloudflare quick-tunnel to the
     # sandbox's dev server. OFF by default — it exposes the running app to anyone with
     # the (unguessable) URL, so the owner opts in. Zero Cloudflare config needed

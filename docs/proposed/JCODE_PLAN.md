@@ -213,6 +213,16 @@ Any GUI surface goes through the **three-interactive-mock gate** before implemen
   + index row), and an assertion sweep that the container holds no socket/DB/blob/notes
   access. Tests: lifecycle + the hardening assertions.
 
+  *Status — shipping incrementally.* Session TTL/GC + purge-on-delete + aggregate
+  CPU/mem/PID caps landed with the earlier waves. **J5a** adds the per-session **concurrency
+  ceiling** (in-flight turns) + per-session **disk ceiling** (du-style, refuses the next
+  turn over the limit) + the **dataless-sandbox assertion sweep** on the compose file (no
+  Docker socket, scratch-volume-only mounts, caps declared). Deferred to follow-ups: the
+  **cross-session filesystem guard** (a shared-session shell reading sibling checkouts —
+  newly live with share links; the per-session-CPU/mem-vs-aggregate and capability/privilege
+  trade-offs make it its own red-team-gated PR), and **J5b** = the Settings→jcode panel + Ops
+  health/status + image re-sync.
+
 **Scope of this plan = J1–J5: the sidecar, its control plane, the GUI, the preview path,
 and operability/hardening.** Operating jcode on JBrain's own source, and any non-isolated
 workspace, are explicitly deferred (open decision 4).

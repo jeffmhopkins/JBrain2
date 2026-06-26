@@ -99,8 +99,13 @@ class GitWorkspace:
             await self._git("init", "-b", work_branch or "main", cwd=path)
 
     async def reset(self, path: Path) -> None:
+        # -x as well as -fd: also remove IGNORED files (node_modules, dist/, build and
+        # log caches). Those are the usual cause of a checkout blowing the disk ceiling,
+        # and a plain `clean -fd` leaves them — so without -x "reset to recover space"
+        # wouldn't actually recover it. A reset is a throwaway sandbox going pristine;
+        # the cost is the next build re-installs deps, which is the point of a reset.
         await self._git("reset", "--hard", cwd=path)
-        await self._git("clean", "-fd", cwd=path)
+        await self._git("clean", "-fdx", cwd=path)
 
     def remove(self, path: Path) -> None:
         shutil.rmtree(path, ignore_errors=True)
