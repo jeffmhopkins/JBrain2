@@ -77,6 +77,15 @@ async def test_cancel_delegates_to_agent() -> None:
     assert agent.cancelled == [s.id]
 
 
+async def test_delete_forgets_agent_state() -> None:
+    # Deleting a session drops the agent's per-session state so it can't outlive it.
+    agent = FakeCodingAgent()
+    mgr = _mgr(agent=agent)
+    s = await mgr.create("r")
+    mgr.delete(s.id)
+    assert agent.forgotten == [s.id]
+
+
 async def test_session_model_reaches_the_agent() -> None:
     # The model chosen at create (the owner's Settings → LLM selection) must be the
     # model every turn of that session runs against.

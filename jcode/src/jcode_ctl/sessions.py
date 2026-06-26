@@ -139,6 +139,9 @@ class SessionManager:
         session = self.get(sid)
         self._workspace.remove(Path(session.workspace))
         del self._sessions[sid]
+        # Drop the agent's per-session state (resume id, cancel flag) so it can't
+        # outlive the session.
+        self._agent.forget(sid)
 
     def idle_sessions(
         self, *, ttl_seconds: int, now: datetime | None = None

@@ -229,6 +229,50 @@ workspace, are explicitly deferred (open decision 4).
 - **No `curator`/agent surface change** — jcode is not a persona; `agents.py` is untouched.
 - **No RAG ingestion of code or transcripts** — sessions are coding scratch, never notes.
 
+## On-box bring-up (open decision 1 — the last mile)
+
+The full path is shipped except the on-box validation of the **model bridge** and the
+**SDK→event mapping**. `ClaudeCodeAgent.run_turn` now drives `claude_agent_sdk.query()`
+(bypass-permissions in the isolated checkout, `resume` for multi-turn) and maps the
+message stream → `TurnEvent`s; it runs only on the box (the SDK is image-only). Bring it
+up in this order on the Strix Halo box, once a coder GGUF is provisioned and the stack is
+up:
+
+**1. Probe the gateway's API surface** (from a peer on the jcode network):
+
+```bash
+docker compose exec api curl -s http://local-llm:8080/v1/models                 # served name?
+docker compose exec api curl -s http://local-llm:8080/v1/chat/completions \
+  -H 'content-type: application/json' \
+  -d '{"model":"qwen3-coder-next","messages":[{"role":"user","content":"hi in 3 words"}]}'
+docker compose exec api curl -s -o /dev/null -w '%{http_code}\n' \
+  -X POST http://local-llm:8080/v1/messages \
+  -H 'content-type: application/json' \
+  -d '{"model":"qwen3-coder-next","max_tokens":16,"messages":[{"role":"user","content":"hi"}]}'
+```
+
+- `/v1/models` confirms the served-model name matches `JCODE_MODEL` and that the dropdown
+  resolves it; the chat call confirms the model answers **and emits tool calls** (the agent
+  is useless without them).
+- `/v1/messages` is the fork: **`404` ⇒ shim needed** (the expected case — llama.cpp serves
+  OpenAI, not Anthropic). `200` ⇒ the gateway is Anthropic-native and jcode points straight
+  at it.
+
+**2. If a shim is needed** (likely): run an Anthropic↔OpenAI translator as an opt-in service
+on the `jcode` network (claude-code-router or LiteLLM, exposing `/v1/messages` over the
+gateway's OpenAI API), and set `JCODE_ANTHROPIC_BASE_URL` in `.env` to the shim's URL. The
+compose `ANTHROPIC_BASE_URL` reads that var (default = the gateway), so switching is a
+`.env` change + `jbrain up jcode` — no code change. (The shim service itself is added once
+the curls confirm the gateway's exact request/response shape, to avoid shipping unverified
+plumbing.)
+
+**3. Smoke-test a real turn** end-to-end: open a jcode session in the PWA, send a one-line
+prompt ("create hello.txt with 'hi'"), and confirm the stream shows text + a tool_use
+(Write) + done, and the file lands in the session checkout. Then finalize the
+`_to_events` block-shape mapping in `jcode/src/jcode_ctl/agent.py` against the real SDK
+output (the mapping is defensive but unverified) and harden cancellation if the cooperative
+(between-messages) interrupt isn't tight enough.
+
 ## Promotion checklist (out of the icebox)
 
 1. Owner accepts the reconciliation (the asterisks) and the local-only trade.
