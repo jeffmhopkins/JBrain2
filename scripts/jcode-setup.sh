@@ -77,9 +77,11 @@ else
   say "         to provision the coder model, then re-run this script."
 fi
 
-say "building the jcode image and starting the profile"
-docker compose --profile jcode build jcode
-docker compose --profile jcode up -d jcode
+say "building the jcode + shim images and starting the profile"
+# Build/start BOTH the sandbox and its Anthropic<->OpenAI shim — jcode points its
+# ANTHROPIC_BASE_URL at claude-shim, so the shim must be up or the first turn fails.
+docker compose --profile jcode build jcode claude-shim
+docker compose --profile jcode up -d jcode claude-shim
 
 # The api must be recreated to pick up the new JBRAIN_JCODE_* env (a restart reuses
 # the old environment) — same caveat as the debug-access flag.

@@ -410,6 +410,12 @@ services:
       # The per-session git checkouts — sandbox scratch, NEVER a JBrain blob/note.
       - jcode_work:/work
     networks: [jcode]
+    # Start the shim first so the first turn doesn't race a not-yet-listening proxy
+    # (the SDK also retries, but this closes the window). Also pulls claude-shim into
+    # any `up -d jcode`, so the two always come up together.
+    depends_on:
+      claude-shim:
+        condition: service_started
     # Resource caps (Wave J5): an arbitrary-code sandbox must not be able to starve the
     # box. Tunable; sane ceilings for a coding session. pids_limit blunts fork bombs.
     mem_limit: ${JCODE_MEM_LIMIT:-4g}
