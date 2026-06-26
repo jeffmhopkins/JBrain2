@@ -95,12 +95,13 @@ def test_archivist_is_a_sandboxed_gmail_organizer() -> None:
 
 
 def test_archivist_earns_a_4x_turn_budget() -> None:
-    """The archivist runs a long, many-tool, date-by-date mailbox cleanup, so it gets
-    a 4x budget_multiplier (the loop scales both the step cap and the cost-token
-    budget by it); every other persona keeps the shared 1x default."""
+    """The archivist and jerv each run a long, many-tool ReAct chain (a date-by-date
+    mailbox cleanup; a multi-source web thread), so each gets a 4x budget_multiplier
+    (the loop scales both the step cap and the cost-token budget by it); the curator
+    and teacher keep the shared 1x default."""
     assert AGENTS["archivist"].budget_multiplier == 4
+    assert AGENTS["jerv"].budget_multiplier == 4
     assert AGENTS["curator"].budget_multiplier == 1
-    assert AGENTS["jerv"].budget_multiplier == 1
     assert AGENTS["teacher"].budget_multiplier == 1
 
 

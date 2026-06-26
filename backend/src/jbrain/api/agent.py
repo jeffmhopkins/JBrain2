@@ -427,7 +427,8 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
     # Size the tool budget to how hard the agent.turn model is set to think: a high/
     # medium reasoning effort earns a deeper ReAct chain before the step cap stops it.
     # The persona's budget_multiplier then scales both caps — the archivist's long
-    # mailbox cleanups run at 4 so a sweep isn't cut off mid-chain.
+    # mailbox cleanups and jerv's multi-source web threads run at 4 so a sweep isn't
+    # cut off mid-chain.
     router = get_llm_router(request)
     effort = await router.effective_reasoning_effort("agent.turn")
     # The resolved model's total context window — the denominator for the PWA's live
