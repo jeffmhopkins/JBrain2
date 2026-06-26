@@ -1,5 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
-import { type SocketLike, type TermLike, attachTerminal, terminalWsUrl } from "./terminal";
+import {
+  KEY_SEQ,
+  type SocketLike,
+  type TermLike,
+  applyModifier,
+  attachTerminal,
+  terminalWsUrl,
+} from "./terminal";
 
 describe("terminalWsUrl", () => {
   it("builds the owner's terminal endpoint from the page origin", () => {
@@ -84,9 +91,56 @@ describe("attachTerminal", () => {
 
   it("detaches its listeners on dispose", () => {
     const term = new FakeTerm();
-    const dispose = attachTerminal(term, fakeSocket());
-    dispose();
+    const { detach } = attachTerminal(term, fakeSocket());
+    detach();
     expect(term.disposed).toBe(2); // onData + onResize
     vi.clearAllMocks();
+  });
+
+  it("sends a control sequence verbatim via sendKey", () => {
+    const term = new FakeTerm();
+    const ws = fakeSocket();
+    const { sendKey } = attachTerminal(term, ws);
+    sendKey(KEY_SEQ.up);
+    expect(ws.sent[0]).toEqual(new TextEncoder().encode("\x1b[A"));
+  });
+
+  it("folds the next keystroke under an armed Ctrl, then auto-clears", () => {
+    const term = new FakeTerm();
+    const ws = fakeSocket();
+    const changes: (string | null)[] = [];
+    const { setModifier } = attachTerminal(term, ws, (m) => changes.push(m));
+
+    setModifier("ctrl");
+    term.dataCb?.("c"); // Ctrl+C → ETX
+    expect(ws.sent[0]).toEqual(new TextEncoder().encode("\x03"));
+
+    term.dataCb?.("c"); // modifier consumed — next key is literal
+    expect(ws.sent[1]).toEqual(new TextEncoder().encode("c"));
+    // Reported armed, then auto-cleared once the key was folded.
+    expect(changes).toEqual(["ctrl", null]);
+  });
+
+  it("prefixes the next keystroke with ESC under an armed Alt", () => {
+    const term = new FakeTerm();
+    const ws = fakeSocket();
+    const { setModifier } = attachTerminal(term, ws);
+    setModifier("alt");
+    term.dataCb?.("b"); // Alt+B → ESC b (word-back in readline)
+    expect(ws.sent[0]).toEqual(new TextEncoder().encode("\x1bb"));
+  });
+});
+
+describe("applyModifier", () => {
+  it("folds letters to their control code", () => {
+    expect(applyModifier("ctrl", "a")).toBe("\x01");
+    expect(applyModifier("ctrl", "z")).toBe("\x1a");
+  });
+  it("folds Ctrl+Space to NUL and leaves digits untouched", () => {
+    expect(applyModifier("ctrl", " ")).toBe("\x00");
+    expect(applyModifier("ctrl", "5")).toBe("5");
+  });
+  it("prefixes ESC for Alt", () => {
+    expect(applyModifier("alt", "x")).toBe("\x1bx");
   });
 });

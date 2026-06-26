@@ -196,6 +196,57 @@ describe("JcodeSessionScreen", () => {
     }
   });
 
+  it("sends arrow sequences from the mobile key row in the CLI tab", async () => {
+    const sent: Uint8Array[] = [];
+    class FakeWS {
+      binaryType = "blob";
+      readyState = 1;
+      onmessage: ((ev: MessageEvent) => void) | null = null;
+      onclose: (() => void) | null = null;
+      send(data: Uint8Array) {
+        sent.push(data);
+      }
+      close() {}
+    }
+    vi.stubGlobal("WebSocket", FakeWS);
+    try {
+      render(<JcodeSessionScreen session={SESSION} onClose={vi.fn()} />);
+      fireEvent.click(screen.getByLabelText("CLI"));
+      // The Up key sends the cursor-up sequence straight to the shell once the terminal
+      // has mounted (dynamic import) and the socket is attached.
+      const up = await screen.findByLabelText("Up");
+      fireEvent.click(up);
+      await waitFor(() => expect(sent.length).toBeGreaterThan(0));
+      expect(sent[0]).toEqual(new TextEncoder().encode("\x1b[A"));
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("arms and disarms the Ctrl modifier on the mobile key row", async () => {
+    class FakeWS {
+      binaryType = "blob";
+      readyState = 1;
+      onmessage: ((ev: MessageEvent) => void) | null = null;
+      onclose: (() => void) | null = null;
+      send() {}
+      close() {}
+    }
+    vi.stubGlobal("WebSocket", FakeWS);
+    try {
+      render(<JcodeSessionScreen session={SESSION} onClose={vi.fn()} />);
+      fireEvent.click(screen.getByLabelText("CLI"));
+      const ctrl = await screen.findByText("ctrl");
+      expect(ctrl).toHaveAttribute("aria-pressed", "false");
+      fireEvent.click(ctrl);
+      await waitFor(() => expect(ctrl).toHaveAttribute("aria-pressed", "true"));
+      fireEvent.click(ctrl); // tap again disarms
+      await waitFor(() => expect(ctrl).toHaveAttribute("aria-pressed", "false"));
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("cancels the detached server turn when you leave mid-stream (B1)", async () => {
     let release: () => void = () => {};
     const gate = new Promise<void>((r) => {

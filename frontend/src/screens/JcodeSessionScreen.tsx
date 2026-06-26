@@ -6,7 +6,7 @@
 // api.jcodeTurn frames.
 
 import "@xterm/xterm/css/xterm.css";
-import { useEffect, useRef, useState } from "react";
+import { type MouseEvent, useEffect, useRef, useState } from "react";
 import { AgentStatusLine } from "../agent/FullBrainSurface";
 import { Markdown } from "../agent/markdown";
 import type { AgentStatus } from "../agent/status";
@@ -23,7 +23,13 @@ import {
   TerminalIcon,
 } from "../components/icons";
 import { shareUrl } from "../jcode/share";
-import { attachTerminal, terminalWsUrl } from "../jcode/terminal";
+import {
+  KEY_SEQ,
+  type Modifier,
+  type TerminalHandle,
+  attachTerminal,
+  terminalWsUrl,
+} from "../jcode/terminal";
 import type { JcodeEvent, JcodeModelStatus, JcodePreview, JcodeSession } from "../jcode/types";
 
 // Rough cold-load read rate (s/GB) for the loading-bar estimate — the bar caps at 96%
@@ -120,12 +126,109 @@ function JcodeBubble({
   );
 }
 
+// The bottom helper row for the interactive CLI: keys a soft keyboard can't send on its
+// own (Esc, Tab, arrows) plus sticky Ctrl/Alt that fold the next typed character. Shown
+// only on touch devices (a physical keyboard sends these directly) via CSS. The keys use
+// onMouseDown→preventDefault so tapping never blurs the terminal — the soft keyboard stays
+// up and the modifier applies to the very next keystroke.
+function JcodeKeys({
+  mod,
+  onKey,
+  onMod,
+}: {
+  mod: Modifier | null;
+  onKey: (seq: string) => void;
+  onMod: (mod: Modifier) => void;
+}) {
+  const keep = (e: MouseEvent) => e.preventDefault();
+  return (
+    <div className="jcode-keys" role="toolbar" aria-label="Terminal keys">
+      <button
+        type="button"
+        className="jcode-key"
+        onMouseDown={keep}
+        onClick={() => onKey(KEY_SEQ.esc)}
+      >
+        esc
+      </button>
+      <button
+        type="button"
+        className="jcode-key"
+        onMouseDown={keep}
+        onClick={() => onKey(KEY_SEQ.tab)}
+      >
+        tab
+      </button>
+      <button
+        type="button"
+        className={`jcode-key${mod === "ctrl" ? " on" : ""}`}
+        aria-pressed={mod === "ctrl"}
+        onMouseDown={keep}
+        onClick={() => onMod("ctrl")}
+      >
+        ctrl
+      </button>
+      <button
+        type="button"
+        className={`jcode-key${mod === "alt" ? " on" : ""}`}
+        aria-pressed={mod === "alt"}
+        onMouseDown={keep}
+        onClick={() => onMod("alt")}
+      >
+        alt
+      </button>
+      <button
+        type="button"
+        className="jcode-key"
+        aria-label="Left"
+        onMouseDown={keep}
+        onClick={() => onKey(KEY_SEQ.left)}
+      >
+        ←
+      </button>
+      <button
+        type="button"
+        className="jcode-key"
+        aria-label="Up"
+        onMouseDown={keep}
+        onClick={() => onKey(KEY_SEQ.up)}
+      >
+        ↑
+      </button>
+      <button
+        type="button"
+        className="jcode-key"
+        aria-label="Down"
+        onMouseDown={keep}
+        onClick={() => onKey(KEY_SEQ.down)}
+      >
+        ↓
+      </button>
+      <button
+        type="button"
+        className="jcode-key"
+        aria-label="Right"
+        onMouseDown={keep}
+        onClick={() => onKey(KEY_SEQ.right)}
+      >
+        →
+      </button>
+    </div>
+  );
+}
+
 // The interactive CLI: a real shell in the sandbox via xterm.js over the terminal WS.
 // xterm is dynamically imported so it (and its CSS) only load when the tab is opened,
 // and so tests can mock it without the canvas renderer touching jsdom. The WS pump +
-// resize wiring lives in jcode/terminal.ts; this just owns the xterm lifecycle.
+// resize wiring lives in jcode/terminal.ts; this just owns the xterm lifecycle and the
+// mobile key row beneath it.
 function JcodeCli({ sid }: { sid: string }) {
   const host = useRef<HTMLDivElement>(null);
+  const handle = useRef<TerminalHandle | null>(null);
+  // The armed soft-keyboard modifier, mirrored into state so the key row can highlight it
+  // (the handle owns the source of truth and reports changes — including auto-clear after
+  // a key is folded — back through onModifierChange).
+  const [mod, setMod] = useState<Modifier | null>(null);
   useEffect(() => {
     const el = host.current;
     if (!el) return;
@@ -148,7 +251,8 @@ function JcodeCli({ sid }: { sid: string }) {
       term.open(el);
       fit.fit();
       const ws = new WebSocket(terminalWsUrl(sid));
-      const detach = attachTerminal(term, ws);
+      const h = attachTerminal(term, ws, setMod);
+      handle.current = h;
       ws.onclose = () => {
         if (!disposed) term.write("\r\n\x1b[2m— shell closed —\x1b[0m\r\n");
       };
@@ -157,7 +261,8 @@ function JcodeCli({ sid }: { sid: string }) {
       term.focus();
       cleanup = () => {
         window.removeEventListener("resize", onWindowResize);
-        detach();
+        h.detach();
+        handle.current = null;
         ws.close();
         term.dispose();
       };
@@ -167,7 +272,17 @@ function JcodeCli({ sid }: { sid: string }) {
       cleanup();
     };
   }, [sid]);
-  return <div className="jcode-cli" ref={host} />;
+
+  // Tapping a modifier toggles it (tap again to disarm); a control key sends straight through.
+  const toggleMod = (m: Modifier) => handle.current?.setModifier(mod === m ? null : m);
+  const sendKey = (seq: string) => handle.current?.sendKey(seq);
+
+  return (
+    <>
+      <div className="jcode-cli" ref={host} />
+      <JcodeKeys mod={mod} onKey={sendKey} onMod={toggleMod} />
+    </>
+  );
 }
 
 export function JcodeSessionScreen({
