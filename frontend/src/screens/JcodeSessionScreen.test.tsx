@@ -89,6 +89,52 @@ describe("JcodeSessionScreen", () => {
     expect(screen.getByText("edit src/app.ts")).toBeInTheDocument();
   });
 
+  it("renders the agent's reply as markdown, not raw text", async () => {
+    async function* md(): AsyncGenerator<JcodeEvent> {
+      yield { type: "text", text: "Added the **submit** button." };
+      yield { type: "done" };
+    }
+    vi.spyOn(api, "jcodeTurn").mockImplementation(() => md());
+    render(<JcodeSessionScreen session={SESSION} onClose={vi.fn()} />);
+    fireEvent.change(screen.getByPlaceholderText(/Tell jcode/i), { target: { value: "go" } });
+    fireEvent.click(screen.getByLabelText("Send"));
+
+    // The bold word renders as its own element (markdown parsed) — the literal `**`
+    // syntax is gone, proving we don't dump raw text.
+    const strong = await screen.findByText("submit");
+    expect(strong.tagName).toBe("STRONG");
+    expect(screen.queryByText(/\*\*submit\*\*/)).not.toBeInTheDocument();
+  });
+
+  it("shows a live 'using a tool' status line while a turn runs", async () => {
+    let release: () => void = () => {};
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
+    async function* held(): AsyncGenerator<JcodeEvent> {
+      yield { type: "run", run_id: "run-7" };
+      yield { type: "tool_use", tool: "Edit", data: { command: "edit src/app.ts" } };
+      await gate; // hold the turn open with the Edit tool in flight
+      yield { type: "tool_result", tool: "Edit", data: { ok: true } };
+      yield { type: "done" };
+    }
+    vi.spyOn(api, "jcodeTurn").mockImplementation(() => held());
+    render(<JcodeSessionScreen session={SESSION} onClose={vi.fn()} />);
+    fireEvent.change(screen.getByPlaceholderText(/Tell jcode/i), { target: { value: "go" } });
+    fireEvent.click(screen.getByLabelText("Send"));
+    // While the Edit tool is in flight, the reused AgentStatusLine names what it's doing.
+    expect(await screen.findByText(/Editing/)).toBeInTheDocument();
+    release();
+  });
+
+  it("shows the model and work-branch in the composer context bar", async () => {
+    render(<JcodeSessionScreen session={SESSION} onClose={vi.fn()} />);
+    // The context bar names what the agent works against: the resolved model + the
+    // sandbox work-branch.
+    expect(await screen.findByText("qwen3-coder-next")).toBeInTheDocument();
+    expect(screen.getByText("jcode/spike")).toBeInTheDocument();
+  });
+
   it("shows the tool command in the Terminal tab", async () => {
     vi.spyOn(api, "jcodeTurn").mockImplementation(() => turn());
     render(<JcodeSessionScreen session={SESSION} onClose={vi.fn()} />);
