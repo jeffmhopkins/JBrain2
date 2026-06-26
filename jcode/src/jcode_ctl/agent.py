@@ -146,19 +146,29 @@ class ClaudeCodeAgent:
             cwd,
             bool(resume),
         )
-        options = sdk.ClaudeAgentOptions(
-            cwd=cwd,
-            model=active_model,
-            permission_mode="bypassPermissions",
-            resume=resume,
-            include_partial_messages=False,
-        )
+
+        # Capture the bundled CLI's stderr into the log — without this the SDK only
+        # says "Command failed with exit code 1 (Check stderr output for details)" and
+        # the real cause (onboarding, config dir, auth) is invisible.
+        def _on_stderr(line: str) -> None:
+            _log.warning("claude cli stderr sid=%s: %s", session_id, line)
+
         result: dict[str, object] = {}
         # tool_use id -> tool name, within THIS turn: a ToolResultBlock carries only
         # tool_use_id, so we resolve the name from the tool_use that opened it. Scoped
         # to the turn (not the agent) so it never grows unbounded.
         tool_names: dict[str, str] = {}
         try:
+            # Built inside the try: an older SDK that rejects `stderr=` (or any other
+            # kwarg) surfaces as a logged, terminal error frame, not an opaque crash.
+            options = sdk.ClaudeAgentOptions(
+                cwd=cwd,
+                model=active_model,
+                permission_mode="bypassPermissions",
+                resume=resume,
+                include_partial_messages=False,
+                stderr=_on_stderr,
+            )
             async for message in sdk.query(prompt=prompt, options=options):
                 # DEBUG traces every SDK message (JCODE_LOG_LEVEL=DEBUG).
                 _log.debug(
