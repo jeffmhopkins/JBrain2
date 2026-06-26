@@ -41,6 +41,7 @@ from jbrain.api import (
     images,
     images_render,
     jcode,
+    jcode_terminal,
     live,
     locations,
     member,
@@ -565,6 +566,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # Code mode (docs/proposed/JCODE_PLAN.md). Always mounted, but every route is
     # owner-gated and 404s when jcode isn't configured (app.state.jcode_client is None).
     app.include_router(jcode.router, prefix="/api")
+    app.include_router(jcode_terminal.router, prefix="/api")
     app.include_router(lists_api.router, prefix="/api")
     app.include_router(llm_settings_api.router, prefix="/api")
     app.include_router(locations.router, prefix="/api")
