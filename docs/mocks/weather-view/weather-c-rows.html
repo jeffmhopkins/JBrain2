@@ -1,0 +1,176 @@
+<!doctype html>
+<!--
+  weather tool-view mock · VARIANT C — "Compact dossier rows"
+  ============================================================================
+  The direct, honest replacement for the giant markdown table in the screenshots:
+  a tight vertical list, one row per hour — time · condition glyph · temp (with a
+  faint inline temp bar) · feels-like · wind. A compact current-conditions header
+  sits on top. This is the `data_table` paradigm in weather clothing: every number
+  the table had, but tokenized, iconified, and scannable. No horizontal scrolling.
+
+  Data-only slots (#9): { view:"weather_card", place, as_of, now:{…}, hi_f, lo_f,
+    summary, hours:[{label,temp_f,feels_f,cond,pop,wind_mph,wind_dir}] }. `cond`
+    is an enum → glyph + token; feels-like ≥ 100° reads amber (the heat/warn tone).
+
+  Tokens-only; card frame matches the live `.tool-view`.
+-->
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Weather — C — compact rows</title>
+<style>
+  :root{
+    --bg:#0e0f11;--surface:#17181b;--surface-2:#1e2024;--border:#26282c;
+    --text:#e6e7e9;--text-2:#9a9da3;--text-3:#5c5f66;--surface-composer:#141518;
+    --steel:#7fa7c9;--steel-tint:rgba(127,167,201,.13);
+    --green:#8fbc9a;--amber:#c9a36a;--amber-tint:rgba(201,163,106,.13);
+    --rose:#cf8a8f;--accent:var(--steel);--r-card:16px;--r-input:12px;--r-pill:999px;
+  }
+  [data-theme="light"]{
+    --bg:#f7f7f5;--surface:#fff;--surface-2:#f0f0ee;--border:#e2e2df;
+    --text:#1a1b1e;--text-2:#5c5f66;--text-3:#9a9da3;--surface-composer:#fff;
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  body{margin:0;background:#000;color:var(--text);
+    font:15px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+    display:flex;flex-wrap:wrap;gap:28px;justify-content:center;padding:28px}
+  .phone{width:390px;height:820px;background:var(--bg);border-radius:34px;overflow:hidden;
+    border:1px solid var(--border);display:flex;flex-direction:column}
+  .topbar{flex:0 0 auto;height:56px;display:flex;align-items:center;gap:10px;padding:0 14px;
+    border-bottom:1px solid var(--border);background:var(--surface)}
+  .topbar .t{font-size:17px;font-weight:600;flex:1}
+  .topbar .t small{display:block;font-size:11px;font-weight:400;color:var(--text-3)}
+  .icon-btn{width:36px;height:36px;display:grid;place-items:center;border-radius:9px;
+    color:var(--text-2);background:transparent;border:0;cursor:pointer}
+  .icon-btn:hover{background:var(--surface-2);color:var(--text)}
+  svg{stroke-linecap:round;stroke-linejoin:round;fill:none;stroke:currentColor}
+  .ic{width:20px;height:20px;stroke-width:1.7}
+  .chat{flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:14px}
+  .bubble{max-width:82%;padding:11px 13px;border-radius:15px;font-size:14px;line-height:1.45}
+  .me{align-self:flex-end;background:var(--steel-tint);border:1px solid color-mix(in srgb,var(--steel) 30%,transparent);border-bottom-right-radius:5px}
+  .ai{align-self:flex-start;background:var(--surface-2);border:1px solid var(--border);border-bottom-left-radius:5px}
+
+  .wx{align-self:flex-start;max-width:92%;width:100%;border:1px solid var(--border);
+    border-radius:var(--r-card);background:var(--surface);overflow:hidden}
+  .wx-cap{display:flex;align-items:center;gap:7px;padding:9px 13px 0;font-size:10.5px;
+    color:var(--text-3);text-transform:uppercase;letter-spacing:.06em}
+  .wx-cap .vi{color:var(--steel);display:flex}
+  /* header */
+  .wx-head{display:flex;align-items:center;gap:12px;padding:9px 14px 12px;border-bottom:1px solid var(--border)}
+  .wx-head .glyph{color:var(--steel)}.wx-head .glyph svg{width:38px;height:38px;stroke-width:1.5}
+  .wx-temp{font-size:32px;font-weight:600;letter-spacing:-.02em;line-height:1}
+  .wx-temp .deg{font-size:16px;color:var(--text-2);vertical-align:top}
+  .wx-head .meta{flex:1;font-size:12px;color:var(--text-2);line-height:1.4}
+  .wx-head .meta b{color:var(--text)}
+  .wx-head .meta .feels{color:var(--amber)}
+  .wx-head .hilo{text-align:right;font-size:12.5px;color:var(--text-2);line-height:1.5}
+  .wx-head .hilo b{color:var(--text)}
+  /* column header */
+  .colh{display:grid;grid-template-columns:38px 26px 1fr 50px 56px;align-items:center;
+    gap:8px;padding:7px 14px;font-size:10px;text-transform:uppercase;letter-spacing:.05em;
+    color:var(--text-3);background:var(--surface-2)}
+  .colh .r{text-align:right}
+  /* rows */
+  .row{display:grid;grid-template-columns:38px 26px 1fr 50px 56px;align-items:center;
+    gap:8px;padding:9px 14px;border-bottom:1px solid var(--border);font-size:14px}
+  .row:last-child{border-bottom:0}
+  .row.now{background:var(--steel-tint)}
+  .row .time{color:var(--text-2);font-size:13px}
+  .row.now .time{color:var(--steel);font-weight:600}
+  .row .g{color:var(--text-2)}.row .g svg{width:20px;height:20px;stroke-width:1.6}
+  .tbar{display:flex;align-items:center;gap:8px}
+  .tbar .tv{font-weight:600;min-width:34px}
+  .tbar .track{flex:1;height:5px;border-radius:999px;background:var(--surface-2);overflow:hidden;max-width:120px}
+  .tbar .fill{height:100%;border-radius:999px;background:color-mix(in srgb,var(--steel) 55%,var(--surface-2))}
+  .row .feels{text-align:right;color:var(--text-2);font-size:13px}
+  .row .feels.hot{color:var(--amber)}
+  .row .wind{text-align:right;color:var(--text-2);font-size:12.5px}
+  .row .wind .pop{color:var(--steel);font-size:11px;display:block}
+
+  .composer{flex:0 0 auto;display:flex;gap:8px;align-items:center;
+    padding:10px 12px calc(10px + env(safe-area-inset-bottom));
+    border-top:1px solid var(--border);background:var(--surface-composer)}
+  .composer input{flex:1;background:var(--surface-2);border:1px solid var(--border);
+    border-radius:var(--r-pill);padding:10px 14px;color:var(--text);font-size:14px;outline:none}
+  .composer .send{width:40px;height:40px;border-radius:50%;border:0;background:var(--accent);
+    color:#10141a;display:grid;place-items:center;cursor:pointer;flex:0 0 40px}
+  .composer .send svg{stroke:#10141a}
+  .label{text-align:center;color:var(--text-2);font-size:12px;max-width:390px;line-height:1.45;margin:4px auto}
+  .label b{color:var(--text)}
+</style>
+</head>
+<body>
+<div>
+  <div class="phone">
+    <div class="topbar">
+      <button class="icon-btn"><svg class="ic" viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6"/></svg></button>
+      <div class="t">jerv<small>research</small></div>
+      <button class="icon-btn" id="theme" title="Toggle theme">
+        <svg class="ic" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4.5"/><path d="M12 2v2M12 20v2M4 12H2M22 12h-2M5 5l1.5 1.5M17.5 17.5L19 19M19 5l-1.5 1.5M6.5 17.5L5 19"/></svg>
+      </button>
+    </div>
+
+    <div class="chat" id="chat">
+      <div class="bubble me">What's today's weather from now until midnight?</div>
+      <div class="bubble ai">Every hour, top to bottom — same data as before, just readable.</div>
+
+      <div class="wx">
+        <div class="wx-cap"><span class="vi"><svg class="ic" viewBox="0 0 24 24" style="width:13px;height:13px"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18M9 9v11"/></svg></span> weather · cocoa, fl · now → midnight</div>
+        <div class="wx-head">
+          <div class="glyph"><svg viewBox="0 0 24 24"><path d="M7 15h9a3.2 3.2 0 0 0 .3-6.4 4.3 4.3 0 0 0-8.2-1.1A3.4 3.4 0 0 0 7 15z"/><path d="M12 16l-2 3.5h3L11 23"/></svg></div>
+          <div class="wx-temp">90<span class="deg">°F</span></div>
+          <div class="meta"><b>Cocoa, FL</b> · scattered storms<br><span class="feels">feels 102°</span> · SE 8 mph · 1:14 PM EDT</div>
+          <div class="hilo"><b>92°</b><br>80°</div>
+        </div>
+        <div class="colh"><span>Time</span><span></span><span>Temp</span><span class="r">Feels</span><span class="r">Wind</span></div>
+        <div id="rows"></div>
+      </div>
+
+      <div class="bubble me">This is the one — way better than the table.</div>
+    </div>
+
+    <div class="composer">
+      <input id="inp" placeholder="Ask the web, or work a problem…" />
+      <button class="send"><svg viewBox="0 0 24 24"><path d="M22 2L11 13M22 2l-7 20-4-9-9-4z"/></svg></button>
+    </div>
+  </div>
+  <p class="label">C · <b>Compact dossier rows.</b> The honest one-to-one upgrade of the markdown table: a tight row per hour with glyph, inline temp bar, feels-like, and wind/precip. Most precise and complete; least "designed". Tall for a 12-hour span.</p>
+</div>
+<script>
+  const G={
+    clear:'<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4.4"/><path d="M12 3v1.5M12 19.5V21M4.5 12H3M21 12h-1.5M6.4 6.4l-1-1M18.6 18.6l-1-1M17.6 6.4l1-1M5.4 18.6l1-1"/></svg>',
+    partly:'<svg viewBox="0 0 24 24"><path d="M8 6a3 3 0 0 1 5.4 1"/><path d="M12 3.5v1M5.6 6.4l-.7-.7M17.5 6l.7-.7"/><path d="M7 18h9a3.2 3.2 0 0 0 .2-6.4 4.3 4.3 0 0 0-8-1.2A3.4 3.4 0 0 0 7 18z"/></svg>',
+    rain:'<svg viewBox="0 0 24 24"><path d="M7 14h9a3.2 3.2 0 0 0 .3-6.4 4.3 4.3 0 0 0-8.2-1.1A3.4 3.4 0 0 0 7 14z"/><path d="M8 18l-1 2.5M12 18l-1 2.5M16 18l-1 2.5"/></svg>',
+    storm:'<svg viewBox="0 0 24 24"><path d="M7 14h9a3.2 3.2 0 0 0 .3-6.4 4.3 4.3 0 0 0-8.2-1.1A3.4 3.4 0 0 0 7 14z"/><path d="M12 15l-2 3.5h3L11 22"/></svg>',
+    night:'<svg viewBox="0 0 24 24"><path d="M20 14.5A8 8 0 1 1 9.5 4 6.3 6.3 0 0 0 20 14.5z"/></svg>'
+  };
+  const lo=78,hi=94;
+  const hours=[
+    {t:'Now',c:'storm',temp:90,feels:102,wind:8,dir:'SE',pop:20,now:1},
+    {t:'2 PM',c:'storm',temp:91,feels:103,wind:9,dir:'SE',pop:25},
+    {t:'3 PM',c:'storm',temp:91,feels:103,wind:10,dir:'SE',pop:35},
+    {t:'4 PM',c:'storm',temp:92,feels:105,wind:10,dir:'SE',pop:40},
+    {t:'5 PM',c:'rain',temp:90,feels:102,wind:10,dir:'SE',pop:45},
+    {t:'6 PM',c:'rain',temp:88,feels:99,wind:10,dir:'SE',pop:40},
+    {t:'7 PM',c:'partly',temp:87,feels:98,wind:9,dir:'SE',pop:30},
+    {t:'8 PM',c:'partly',temp:83,feels:91,wind:8,dir:'SE',pop:20},
+    {t:'9 PM',c:'night',temp:82,feels:89,wind:6,dir:'SE',pop:10},
+    {t:'10 PM',c:'night',temp:81,feels:87,wind:5,dir:'SSE',pop:5},
+    {t:'11 PM',c:'night',temp:81,feels:87,wind:3,dir:'S',pop:0},
+    {t:'12 AM',c:'night',temp:80,feels:86,wind:3,dir:'S',pop:0}
+  ];
+  document.getElementById('rows').innerHTML=hours.map(h=>{
+    const pct=Math.round((h.temp-lo)/(hi-lo)*100);
+    return `<div class="row ${h.now?'now':''}">
+      <div class="time">${h.t}</div>
+      <div class="g">${G[h.c]||G.clear}</div>
+      <div class="tbar"><span class="tv">${h.temp}°</span><span class="track"><span class="fill" style="width:${pct}%"></span></span></div>
+      <div class="feels ${h.feels>=100?'hot':''}">${h.feels}°</div>
+      <div class="wind">${h.dir} ${h.wind}<span class="pop">${h.pop?h.pop+'%':'—'}</span></div>
+    </div>`;}).join('');
+  document.getElementById('theme').onclick=()=>{const h=document.documentElement;
+    h.dataset.theme=h.dataset.theme==='light'?'dark':'light'};
+</script>
+</body>
+</html>

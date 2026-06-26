@@ -237,6 +237,54 @@ describe("ToolView registry", () => {
     expect(screen.getByRole("tab", { name: "Transcript" })).toBeInTheDocument();
   });
 
+  it("renders a weather_card from data-only slots (hero + hourly strip)", () => {
+    const { container } = render(
+      <ToolView
+        payload={payload({
+          view: "weather_card",
+          data: {
+            place: "Cocoa, Florida, United States",
+            as_of: "1:14 PM",
+            tz: "EDT",
+            now: {
+              temp_f: 90,
+              feels_f: 102,
+              cond: "storm",
+              is_day: true,
+              label: "Thunderstorms",
+              wind_mph: 8,
+              wind_dir: "SE",
+            },
+            hi_f: 92,
+            lo_f: 80,
+            hours: [
+              { label: "1p", temp_f: 90, feels_f: 102, cond: "storm", is_day: true, pop: 20 },
+              { label: "12a", temp_f: 80, feels_f: 86, cond: "clear", is_day: false, pop: 0 },
+            ],
+          },
+        })}
+      />,
+    );
+    expect(container.querySelector(".tv-wx")).not.toBeNull();
+    expect(container.querySelector(".tv-wx-cap")?.textContent).toContain(
+      "Cocoa, Florida, United States",
+    );
+    expect(container.querySelector(".tv-wx-temp")?.textContent).toBe("90°F");
+    expect(screen.getByText("feels 102°")).toBeInTheDocument();
+    expect(screen.getByText("H 92°")).toBeInTheDocument();
+    // The first hour is relabeled "Now"; later hours keep their clock label.
+    expect(screen.getByText("Now")).toBeInTheDocument();
+    expect(screen.getByText("12a")).toBeInTheDocument();
+    // A zero precip-chance cell is hidden, not shown as "0%".
+    const pops = container.querySelectorAll(".tv-wx-pop");
+    expect(pops).toHaveLength(2);
+    expect(String(pops[0]?.className)).not.toContain("none");
+    expect(String(pops[1]?.className)).toContain("none");
+    // No URL/markup rides the payload (#9) — glyphs are inline SVG.
+    expect(container.querySelector("img")).toBeNull();
+    expect(container.querySelectorAll(".tv-wx-svg").length).toBeGreaterThan(0);
+  });
+
   it("shows the seed on the card so the owner can reuse it", () => {
     const withSeed = render(
       <ToolView

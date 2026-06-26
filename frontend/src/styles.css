@@ -8942,6 +8942,150 @@ button.small {
   margin-top: 8px;
 }
 
+/* weather_card — jerv's forecast tool-view (docs/mocks/weather-view, variant A —
+   hero + hourly strip). Tokens only; weather is non-personal jerv info, so the card
+   rides the steel info accent and a high heat index reads amber (the warn tone). The
+   condition glyphs are inline SVG (no fetched icons, #9). */
+.fb-shell .tv-wx {
+  width: 100%;
+}
+.fb-shell .tv-wx-cap {
+  padding: 9px 13px 0;
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-3);
+}
+.fb-shell .tv-wx-hero {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 10px 15px 13px;
+}
+.fb-shell .tv-wx-glyph {
+  flex: 0 0 auto;
+  color: var(--steel);
+}
+.fb-shell .tv-wx-glyph .tv-wx-svg {
+  width: 52px;
+  height: 52px;
+}
+.fb-shell .tv-wx-svg {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.fb-shell .tv-wx-main {
+  flex: 1;
+  min-width: 0;
+}
+.fb-shell .tv-wx-when {
+  font-size: 12.5px;
+  color: var(--text-2);
+}
+.fb-shell .tv-wx-temp {
+  font-size: 44px;
+  font-weight: 600;
+  line-height: 1.05;
+  letter-spacing: -0.02em;
+}
+.fb-shell .tv-wx-deg {
+  font-size: 21px;
+  font-weight: 500;
+  color: var(--text-2);
+  vertical-align: top;
+}
+.fb-shell .tv-wx-sub {
+  font-size: 13px;
+  color: var(--text-2);
+  margin-top: 1px;
+}
+.fb-shell .tv-wx-feels {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 7px;
+  border-radius: var(--r-pill);
+  font-weight: 500;
+  background: var(--amber-tint);
+  color: var(--amber);
+}
+.fb-shell .tv-wx-hilo {
+  flex: 0 0 auto;
+  text-align: right;
+  font-size: 13px;
+  color: var(--text-2);
+  line-height: 1.5;
+}
+.fb-shell .tv-wx-hilo b {
+  color: var(--text);
+  font-weight: 600;
+}
+.fb-shell .tv-wx-wind {
+  color: var(--text-3);
+}
+.fb-shell .tv-wx-strip {
+  display: flex;
+  overflow-x: auto;
+  border-top: 1px solid var(--border);
+  padding: 11px 8px;
+  scrollbar-width: none;
+}
+.fb-shell .tv-wx-strip::-webkit-scrollbar {
+  display: none;
+}
+.fb-shell .tv-wx-hr {
+  flex: 0 0 auto;
+  width: 54px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 0;
+  border-radius: 10px;
+  color: var(--text-2);
+}
+.fb-shell .tv-wx-hr.now {
+  background: var(--steel-tint);
+}
+.fb-shell .tv-wx-hr .tv-wx-svg {
+  width: 22px;
+  height: 22px;
+}
+.fb-shell .tv-wx-ht {
+  font-size: 11.5px;
+}
+.fb-shell .tv-wx-hr.now .tv-wx-ht {
+  color: var(--steel);
+  font-weight: 600;
+}
+.fb-shell .tv-wx-htemp {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+}
+.fb-shell .tv-wx-pop {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  font-size: 10px;
+  color: var(--steel);
+  min-height: 13px;
+}
+.fb-shell .tv-wx-pop.none {
+  visibility: hidden;
+}
+.fb-shell .tv-wx-drop {
+  width: 9px;
+  height: 9px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
 /* generated_image — the image-gen tool-view (docs/mocks/genimage-c-edit-aware).
    A generate renders a single sized image; an edit renders a swipe before/after
    plus a Compare/Before/After toggle. Tokens only; the frame's aspect-ratio is

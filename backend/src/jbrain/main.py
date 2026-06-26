@@ -21,6 +21,7 @@ from jbrain.agent.session import AgentSessionRepo
 from jbrain.agent.transcribetools import build_transcribe_handlers
 from jbrain.agent.transcript_store import AgentTranscript
 from jbrain.agent.videotools import build_video_handlers
+from jbrain.agent.weathertools import build_weather_handlers
 from jbrain.agent.webtools import build_web_handlers
 from jbrain.agent.wikiwritetools import build_wiki_write_handlers
 from jbrain.analysis.hygiene import ENTITY_HYGIENE_SPEC
@@ -113,7 +114,7 @@ from jbrain.tasks.scheduler import run_tasks_loop
 from jbrain.tiles import FsTileCache, HttpTileFetcher, TileService, TileSet, tile_cache_namespace
 from jbrain.transcribe import WhisperCppClient
 from jbrain.usage import SqlUsageRecorder
-from jbrain.web import SearxngClient, WebFetcher
+from jbrain.web import SearxngClient, WeatherClient, WebFetcher
 from jbrain.wiki.actions import WIKI_SPECS
 from jbrain.wiki.readstore import WikiReadStore
 from jbrain.wiki.talkstore import WikiTalkStore
@@ -275,6 +276,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # The jerv chatbot's on-box internet tools — direct, sandboxed web access
         # (no owner data in context; docs/ASSISTANT.md "Agent selection").
         web_handlers = build_web_handlers(SearxngClient(settings.searxng_url), WebFetcher())
+        # jerv's weather lookup (docs/DESIGN.md "weather_card tool-view") — a direct,
+        # pinned Open-Meteo upstream, the same sandboxed-web posture as search. Merged
+        # into the web handlers so it rides the existing `web` permission gate; the
+        # offline city geocoder (set below) keeps the owner's precise fix on-box.
+        weather_client = WeatherClient(
+            settings.open_meteo_forecast_url, settings.open_meteo_geocode_url
+        )
         # The archivist persona's Gmail tools. Always wired over a provider that reads
         # the OAuth credentials live from the settings panel (env fallback), so a saved
         # change takes effect with no restart; until a refresh token exists the tools
@@ -292,6 +300,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # owner-configured external geocoder is the direct street-address fallback for
         # jerv (default off when external_geocoder_url is unset).
         app.state.city_geocoder = CityGeocoder()
+        web_handlers.update(build_weather_handlers(weather_client, app.state.city_geocoder))
         external_reverse = NominatimReverseClient(settings.external_geocoder_url)
         # Built before the registry: edit_image resolves a chat attachment's bytes
         # through the same TurnAttachmentRepo, so it must exist first.

@@ -873,6 +873,180 @@ function ServerMetrics({ data }: ViewProps): ReactNode {
   );
 }
 
+// --- weather_card ----------------------------------------------------------
+// jerv's in-chat forecast (docs/DESIGN.md "weather_card tool-view", variant A —
+// hero + hourly strip). Data-only slots, no URLs (#9); `cond` is a closed enum and
+// `is_day` a flag the component maps to an inline glyph — the model never sends a
+// glyph, an icon URL, or a color.
+
+type WxCond = "clear" | "partly" | "cloudy" | "rain" | "storm" | "snow" | "fog";
+const WX_CONDS = new Set<WxCond>(["clear", "partly", "cloudy", "rain", "storm", "snow", "fog"]);
+function wxCond(value: unknown): WxCond {
+  return typeof value === "string" && WX_CONDS.has(value as WxCond) ? (value as WxCond) : "cloudy";
+}
+function wxNum(value: unknown): number {
+  const n = Number(value);
+  return Number.isFinite(n) ? Math.round(n) : 0;
+}
+
+/** A condition glyph drawn inline (no fetched icons, #9). `day` picks the night
+ * variant for clear/partly skies; the other conditions read the same day or night. */
+function WeatherGlyph({ cond, day }: { cond: WxCond; day: boolean }): ReactNode {
+  if (!day && cond === "clear") {
+    return (
+      <svg viewBox="0 0 24 24" className="tv-wx-svg" aria-hidden="true">
+        <path d="M20 14.5A8 8 0 1 1 9.5 4 6.3 6.3 0 0 0 20 14.5z" />
+      </svg>
+    );
+  }
+  if (!day && cond === "partly") {
+    return (
+      <svg viewBox="0 0 24 24" className="tv-wx-svg" aria-hidden="true">
+        <path d="M15.5 5.2A5 5 0 0 0 9 8.5" />
+        <path d="M7 18h9a3.2 3.2 0 0 0 .2-6.4 4.3 4.3 0 0 0-8-1.2A3.4 3.4 0 0 0 7 18z" />
+      </svg>
+    );
+  }
+  const paths: Record<WxCond, ReactNode> = {
+    clear: (
+      <>
+        <circle cx="12" cy="12" r="4.4" />
+        <path d="M12 3v1.5M12 19.5V21M4.5 12H3M21 12h-1.5M6.4 6.4l-1-1M18.6 18.6l-1-1M17.6 6.4l1-1M5.4 18.6l1-1" />
+      </>
+    ),
+    partly: (
+      <>
+        <path d="M8 6a3 3 0 0 1 5.4 1" />
+        <path d="M12 3.5v1M5.6 6.4l-.7-.7M17.5 6l.7-.7" />
+        <path d="M7 18h9a3.2 3.2 0 0 0 .2-6.4 4.3 4.3 0 0 0-8-1.2A3.4 3.4 0 0 0 7 18z" />
+      </>
+    ),
+    cloudy: <path d="M7 18h10a3.4 3.4 0 0 0 .3-6.8 4.6 4.6 0 0 0-8.8-1.2A3.6 3.6 0 0 0 7 18z" />,
+    rain: (
+      <>
+        <path d="M7 15h9a3.2 3.2 0 0 0 .3-6.4 4.3 4.3 0 0 0-8.2-1.1A3.4 3.4 0 0 0 7 15z" />
+        <path d="M8 18l-1 2.5M12 18l-1 2.5M16 18l-1 2.5" />
+      </>
+    ),
+    storm: (
+      <>
+        <path d="M7 15h9a3.2 3.2 0 0 0 .3-6.4 4.3 4.3 0 0 0-8.2-1.1A3.4 3.4 0 0 0 7 15z" />
+        <path d="M12 16l-2 3.5h3L11 23" />
+      </>
+    ),
+    snow: (
+      <>
+        <path d="M7 15h9a3.2 3.2 0 0 0 .3-6.4 4.3 4.3 0 0 0-8.2-1.1A3.4 3.4 0 0 0 7 15z" />
+        <path d="M9 19h.01M12 20.5h.01M15 19h.01" />
+      </>
+    ),
+    fog: (
+      <>
+        <path d="M7 13h10a3.4 3.4 0 0 0 .3-6.8 4.6 4.6 0 0 0-8.8-1.2A3.6 3.6 0 0 0 7 13z" />
+        <path d="M5 17h14M7 20h10" />
+      </>
+    ),
+  };
+  return (
+    <svg viewBox="0 0 24 24" className="tv-wx-svg" aria-hidden="true">
+      {paths[cond]}
+    </svg>
+  );
+}
+
+/** A drop glyph for the precip-chance line under an hour. */
+function DropGlyph(): ReactNode {
+  return (
+    <svg viewBox="0 0 24 24" className="tv-wx-drop" aria-hidden="true">
+      <path d="M12 3s5 6 5 10a5 5 0 0 1-10 0c0-4 5-10 5-10z" />
+    </svg>
+  );
+}
+
+interface WxHour {
+  label: string;
+  temp_f: number;
+  cond: WxCond;
+  is_day: boolean;
+  pop: number;
+}
+
+function WeatherCard({ data }: ViewProps): ReactNode {
+  const place = String(data.place ?? "");
+  const asOf = typeof data.as_of === "string" ? data.as_of : "";
+  const tz = typeof data.tz === "string" ? data.tz : "";
+  const now = (data.now ?? {}) as Record<string, unknown>;
+  const cond = wxCond(now.cond);
+  const day = now.is_day !== false;
+  const label = typeof now.label === "string" ? now.label : "";
+  const hi = wxNum(data.hi_f);
+  const lo = wxNum(data.lo_f);
+  const wind = wxNum(now.wind_mph);
+  const windDir = typeof now.wind_dir === "string" ? now.wind_dir : "";
+  const hours: WxHour[] = (Array.isArray(data.hours) ? data.hours : []).map((h, i) => {
+    const row = (h ?? {}) as Record<string, unknown>;
+    return {
+      label: i === 0 ? "Now" : String(row.label ?? ""),
+      temp_f: wxNum(row.temp_f),
+      cond: wxCond(row.cond),
+      is_day: row.is_day !== false,
+      pop: wxNum(row.pop),
+    };
+  });
+  const when = [asOf, tz].filter(Boolean).join(" ");
+
+  return (
+    <div className="tv-wx">
+      <div className="tv-wx-cap">weather{place ? ` · ${place}` : ""}</div>
+      <div className="tv-wx-hero">
+        <div className="tv-wx-glyph">
+          <WeatherGlyph cond={cond} day={day} />
+        </div>
+        <div className="tv-wx-main">
+          {when && <div className="tv-wx-when">{when}</div>}
+          <div className="tv-wx-temp">
+            {wxNum(now.temp_f)}
+            <span className="tv-wx-deg">°F</span>
+          </div>
+          <div className="tv-wx-sub">
+            {label}
+            {label && " · "}
+            <span className="tv-wx-feels">feels {wxNum(now.feels_f)}°</span>
+          </div>
+        </div>
+        <div className="tv-wx-hilo">
+          <b>H {hi}°</b>
+          <br />L {lo}°
+          {wind > 0 && (
+            <>
+              <br />
+              <span className="tv-wx-wind">
+                {windDir} {wind} mph
+              </span>
+            </>
+          )}
+        </div>
+      </div>
+      {hours.length > 0 && (
+        <div className="tv-wx-strip">
+          {hours.map((h, i) => (
+            // Positional forecast rows have no stable id; the hour label + index key it.
+            <div className={`tv-wx-hr${i === 0 ? " now" : ""}`} key={`${h.label}-${i}`}>
+              <div className="tv-wx-ht">{h.label}</div>
+              <WeatherGlyph cond={h.cond} day={h.is_day} />
+              <div className="tv-wx-htemp">{h.temp_f}°</div>
+              <div className={`tv-wx-pop${h.pop > 0 ? "" : " none"}`}>
+                <DropGlyph />
+                {h.pop}%
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 const REGISTRY: Record<string, (props: ViewProps) => ReactNode> = {
   stat_block: StatBlock,
   data_table: DataTable,
@@ -885,6 +1059,7 @@ const REGISTRY: Record<string, (props: ViewProps) => ReactNode> = {
   transcript: Transcript,
   video_analysis: VideoAnalysisView,
   server_metrics: ServerMetrics,
+  weather_card: WeatherCard,
 };
 
 export function isKnownView(name: string): boolean {
