@@ -98,7 +98,17 @@ class JcodeClient:
         return await self._json("POST", f"/sessions/{sid}/reset")
 
     async def delete(self, sid: str) -> None:
-        await self._json("DELETE", f"/sessions/{sid}")
+        # Idempotent: a 404 means the control server already dropped this session
+        # (idle reaper, or a restart that lost its in-memory index), which is the
+        # delete's desired end state. Swallow it so the route still removes the
+        # durable launcher row instead of 502-ing and stranding it forever.
+        try:
+            async with self._client() as client:
+                resp = await client.request("DELETE", f"/sessions/{sid}")
+                if resp.status_code != httpx.codes.NOT_FOUND:
+                    resp.raise_for_status()
+        except httpx.HTTPError as exc:
+            raise JcodeError(f"jcode control server error: {exc}") from exc
 
     async def cancel(self, sid: str) -> None:
         await self._json("POST", f"/sessions/{sid}/cancel")
