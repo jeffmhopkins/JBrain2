@@ -45,6 +45,10 @@ class CodingAgent(Protocol):
 
     async def cancel(self, session_id: str) -> None: ...
 
+    def forget(self, session_id: str) -> None:
+        """Drop any per-session adapter state — called when a session is deleted."""
+        ...
+
 
 class FakeCodingAgent:
     """A scripted agent for tests: deterministic events, no SDK, no network."""
@@ -52,6 +56,7 @@ class FakeCodingAgent:
     def __init__(self, script: list[TurnEvent] | None = None) -> None:
         self._script = script
         self.cancelled: list[str] = []
+        self.forgotten: list[str] = []
         # The model passed to each run_turn, in order — tests assert the session's
         # selected model reaches the agent.
         self.models: list[str] = []
@@ -72,6 +77,9 @@ class FakeCodingAgent:
 
     async def cancel(self, session_id: str) -> None:
         self.cancelled.append(session_id)
+
+    def forget(self, session_id: str) -> None:
+        self.forgotten.append(session_id)
 
 
 class ClaudeCodeAgent:
@@ -131,9 +139,13 @@ class ClaudeCodeAgent:
             include_partial_messages=False,
         )
         result: dict[str, object] = {}
+        # tool_use id -> tool name, within THIS turn: a ToolResultBlock carries only
+        # tool_use_id, so we resolve the name from the tool_use that opened it. Scoped
+        # to the turn (not the agent) so it never grows unbounded.
+        tool_names: dict[str, str] = {}
         try:
             async for message in sdk.query(prompt=prompt, options=options):
-                for ev in self._to_events(sdk, message):
+                for ev in self._to_events(sdk, message, tool_names):
                     yield ev
                 if isinstance(message, sdk.ResultMessage):
                     sid = getattr(message, "session_id", "")
@@ -153,17 +165,19 @@ class ClaudeCodeAgent:
         yield TurnEvent("done", data=result)
 
     def _to_events(  # pragma: no cover - exercised only on-box
-        self, sdk: Any, message: Any
+        self, sdk: Any, message: Any, tool_names: dict[str, str]
     ) -> list[TurnEvent]:
         """Map one SDK message to zero or more TurnEvents. Defensive (the SDK's block
         shapes vary by version); finalized against real output in the on-box smoke
-        test (JCODE_PLAN.md open decision 1)."""
+        test (JCODE_PLAN.md open decision 1). ``tool_names`` carries tool_use id ->
+        name across this turn so a tool_result can name the tool it answers."""
         out: list[TurnEvent] = []
         if isinstance(message, sdk.AssistantMessage):
             for block in message.content:
                 if isinstance(block, sdk.TextBlock):
                     out.append(TurnEvent("text", text=block.text))
                 elif isinstance(block, sdk.ToolUseBlock):
+                    tool_names[block.id] = block.name
                     out.append(
                         TurnEvent(
                             "tool_use",
@@ -172,16 +186,15 @@ class ClaudeCodeAgent:
                         )
                     )
         elif isinstance(message, sdk.UserMessage):
-            # A UserMessage carries tool results back to the model.
+            # A UserMessage carries tool results back to the model. A ToolResultBlock
+            # has only tool_use_id (no name) — resolve the name from this turn's map.
             for block in getattr(message, "content", []):
-                is_result = getattr(block, "type", "") == "tool_result" or hasattr(
-                    block, "content"
-                )
-                if is_result:
+                tool_use_id = getattr(block, "tool_use_id", "")
+                if tool_use_id or getattr(block, "type", "") == "tool_result":
                     out.append(
                         TurnEvent(
                             "tool_result",
-                            tool=getattr(block, "name", "") or "",
+                            tool=tool_names.get(tool_use_id, ""),
                             data={"ok": not getattr(block, "is_error", False)},
                         )
                     )
@@ -195,3 +208,9 @@ class ClaudeCodeAgent:
         # Cooperative interrupt: the run loop stops at the next message boundary. A
         # hard mid-tool interrupt would need ClaudeSDKClient.interrupt — a follow-up.
         self._cancelled.add(session_id)
+
+    def forget(self, session_id: str) -> None:  # pragma: no cover - on-box
+        # Drop the session's resume id + any cancel flag when it's deleted, so neither
+        # map grows over the life of the server.
+        self._sdk_sessions.pop(session_id, None)
+        self._cancelled.discard(session_id)
