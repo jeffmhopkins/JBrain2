@@ -4,10 +4,11 @@
 // models stay UNLOADED (the honest residency line). Not a chat surface: only a
 // one-line "ask jerv in chat" note, never a chat affordance. Violet image accent.
 //
-// Mock-mode only here (Wave L1): renders go through api.generateImage/editImage,
-// backed by api/mock.ts fixtures; the by-id <img> srcs come from the client URL
-// builders (invariant #9: never a hand-authored URL). The L3 wave wires the real
-// direct-render API behind the same client methods.
+// Renders go through api.generateImage/editImage — the L3 direct-render API in
+// production, api/mock.ts fixtures under dev:mock. The by-id <img> srcs come from
+// the client URL builders (invariant #9: never a hand-authored URL). A failed
+// render (uninstalled speed tier, ComfyUI down) surfaces the backend's message
+// with a retry rather than spinning forever.
 
 import {
   type ChangeEvent,
@@ -20,6 +21,7 @@ import {
 import { Lightbox } from "../agent/views/Lightbox";
 import { EditCompare, ImageFrame } from "../agent/views/registry";
 import {
+  ApiError,
   type EditImageRequest,
   type GenerateImageRequest,
   type GeneratedImageOut,
@@ -104,10 +106,19 @@ const PHASES = [
 ];
 const PHASE_MS = 700;
 
+// The owner-facing reason a render failed. The API carries an actionable detail
+// (e.g. an uninstalled speed tier names `comfyui-setup.sh …`); anything else is a
+// reachability problem, stated plainly.
+function renderErrorMessage(err: unknown): string {
+  if (err instanceof ApiError) return err.message;
+  return "the render didn't complete — is ComfyUI running?";
+}
+
 type RenderState =
   | { phase: "idle" }
   | { phase: "queued" | "rendering"; step: number }
-  | { phase: "done"; result: GeneratedImageOut; beforeSrc: string | null };
+  | { phase: "done"; result: GeneratedImageOut; beforeSrc: string | null }
+  | { phase: "error"; message: string };
 
 function effSteps(speed: ImageSpeed, steps: number): number {
   return speed === "quality" ? steps : SPEED[speed].steps;
@@ -284,9 +295,16 @@ export function ImageScreen({ onClose }: { onClose: () => void }): ReactNode {
       setRender({ phase: "rendering", step: 1 });
       await new Promise((r) => setTimeout(r, PHASE_MS));
     }
-    const result = await request;
-    setGallery((prev) => [result, ...prev]);
-    setRender({ phase: "done", result, beforeSrc });
+    try {
+      const result = await request;
+      setGallery((prev) => [result, ...prev]);
+      setRender({ phase: "done", result, beforeSrc });
+    } catch (err) {
+      // A swallowed rejection would leave the spinner up forever (e.g. an
+      // uninstalled speed tier → 400, or ComfyUI down → 502). Surface the
+      // backend's message and let the owner retry.
+      setRender({ phase: "error", message: renderErrorMessage(err) });
+    }
   }
 
   function copySeed(seed: number | null): void {
@@ -453,6 +471,7 @@ export function ImageScreen({ onClose }: { onClose: () => void }): ReactNode {
               onUseAsSource={useRenderAsSource}
               onCopySeed={copySeed}
               onZoom={setZoom}
+              onRetry={() => void runRender("generate")}
               seedCopied={seedCopied}
             />
           </section>
@@ -599,6 +618,7 @@ export function ImageScreen({ onClose }: { onClose: () => void }): ReactNode {
               onUseAsSource={useRenderAsSource}
               onCopySeed={copySeed}
               onZoom={setZoom}
+              onRetry={() => void runRender("edit")}
               seedCopied={seedCopied}
             />
           </section>
@@ -794,15 +814,30 @@ function RenderResult({
   onUseAsSource,
   onCopySeed,
   onZoom,
+  onRetry,
   seedCopied,
 }: {
   state: RenderState;
   onUseAsSource: (g: GeneratedImageOut) => void;
   onCopySeed: (seed: number | null) => void;
   onZoom: (src: string) => void;
+  onRetry: () => void;
   seedCopied: boolean;
 }): ReactNode {
   if (state.phase === "idle") return null;
+
+  if (state.phase === "error") {
+    return (
+      <div className="imgresult" aria-live="polite">
+        <div className="imgstage imgstage-error">
+          <p className="imgerror">{state.message}</p>
+          <button type="button" className="imgchip" onClick={onRetry}>
+            try again
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   if (state.phase !== "done") {
     return (

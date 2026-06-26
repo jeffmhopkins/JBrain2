@@ -15714,6 +15714,25 @@ input.ld-title {
   font-size: var(--fs-secondary);
   color: var(--text-2);
 }
+.imgstage-error {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  min-height: 160px;
+  border-radius: var(--r-card);
+  background: var(--rose-tint);
+  border: 1px solid var(--border);
+  padding: 20px;
+  text-align: center;
+}
+.imgerror {
+  margin: 0;
+  font-size: var(--fs-secondary);
+  color: var(--rose);
+  line-height: 1.5;
+}
 .imgmeta {
   display: flex;
   align-items: center;
