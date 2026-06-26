@@ -120,9 +120,9 @@ class AgentProfile:
 
     `budget_multiplier` scales the loop's per-turn guardrails (the ReAct step cap and
     the cost-token budget) for this persona — 1 keeps the shared defaults; the
-    archivist runs at 4 because a date-by-date mailbox cleanup is a long, many-tool
-    ReAct chain that the default 10-step / 200k-token budget cut off mid-sweep
-    (docs/EMAIL_ARCHIVIST_PLAN.md)."""
+    archivist and jerv both run at 4 because their work is a long, many-tool ReAct
+    chain (a date-by-date mailbox cleanup; a multi-source web/research thread) that the
+    default 10-step / 200k-token budget cut off mid-sweep (docs/EMAIL_ARCHIVIST_PLAN.md)."""
 
     name: str
     prompt: str
@@ -159,7 +159,13 @@ def _profile(
 AGENTS: dict[str, AgentProfile] = {
     "curator": _profile("curator", "system.prompt", tools=None, reads_knowledge_base=True),
     "teacher": _profile("teacher", "teacher.prompt", tools=frozenset(), reads_knowledge_base=False),
-    "jerv": _profile("jerv", "jerv.prompt", tools=JERV_TOOLS, reads_knowledge_base=False),
+    "jerv": _profile(
+        "jerv",
+        "jerv.prompt",
+        tools=JERV_TOOLS,
+        reads_knowledge_base=False,
+        budget_multiplier=4,
+    ),
     "archivist": _profile(
         "archivist",
         "archivist.prompt",
