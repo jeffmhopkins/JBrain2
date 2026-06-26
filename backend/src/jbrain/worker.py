@@ -10,7 +10,7 @@ line keeps the service honest in `docker compose ps` and the Ops screen.
 import asyncio
 import inspect
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from typing import Any, cast
 
 import httpx
@@ -45,6 +45,7 @@ from jbrain.usage import SqlUsageRecorder, TokenScope
 from jbrain.wiki.actions import WIKI_SPECS, wiki_handlers
 from jbrain.wiki.rewriter import LlmRewriter
 from jbrain.workflow import dispatcher, scheduler
+from jbrain.workflow.preconditions import RETRY_AFTER, Precondition, model_already_loaded
 from jbrain.workflow.registry import ACTION_SPECS, ActionRegistry, build_registry
 from jbrain.workflow.runlog import PipelineRunLog, finalize_job_step, set_run_progress
 
@@ -114,9 +115,19 @@ async def _invoke(
 
 
 async def process_one(
-    maker: async_sessionmaker[AsyncSession], handlers: dict[str, Handler]
+    maker: async_sessionmaker[AsyncSession],
+    handlers: dict[str, Handler],
+    *,
+    registry: ActionRegistry | None = None,
+    preconditions: Mapping[str, Precondition] | None = None,
 ) -> bool:
-    """Claim and run a single job; returns False when the queue is idle."""
+    """Claim and run a single job; returns False when the queue is idle.
+
+    `registry` + `preconditions` enable the engine's precondition gate: an action that
+    declares a `precondition` is checked before it runs, and a job whose precondition
+    isn't met is DEFERRED (a fixed retry, no attempt burned) rather than run. Both
+    default None — without them (every existing test, and any caller that doesn't wire
+    a registry) a job runs exactly as before."""
     job = await queue.claim(maker, queue.SYSTEM_CTX)
     if job is None:
         return False
@@ -147,6 +158,13 @@ async def process_one(
         except Exception:  # noqa: BLE001 — progress is an annotation, never the job's gate
             log.warning("worker.progress_write_failed", job_id=job.id)
 
+    # The precondition gate (engine feature): if this action declares a precondition
+    # and it isn't met, defer the job (fixed retry, no attempt burned) instead of
+    # running it — so e.g. inbox triage waits for its local model to be resident rather
+    # than forcing a swap. Skipped entirely when no registry/preconditions are wired.
+    if await _deferred_on_precondition(maker, job, registry, preconditions, report_progress):
+        return True
+
     # Tally the LLM tokens AND capture the structured-log trace this job emits, so its
     # run-log step shows the real cost + duration + a reviewable "full logs" view —
     # not the 0-token placeholder. logs.events is the tap; toks.total the token sum.
@@ -174,6 +192,38 @@ async def process_one(
             # an owner-system run is visible as such, not a smuggled escalation.
             log.info("worker.job_done", job_id=job.id, kind=job.kind, ran_as=ran_as)
             await _finalize_run_step(maker, job.id, ok=True, toks=toks, logs=logs)
+    return True
+
+
+async def _deferred_on_precondition(
+    maker: async_sessionmaker[AsyncSession],
+    job: queue.Job,
+    registry: ActionRegistry | None,
+    preconditions: Mapping[str, Precondition] | None,
+    report_progress: ProgressFn,
+) -> bool:
+    """Evaluate the action's precondition (if any) and defer the job when it isn't met.
+
+    Returns True when the job was deferred (the caller should stop and move on), False
+    when it should run — including the common cases of no registry/map wired, an action
+    with no precondition, or an unmet name with no registered check. A deferred job is
+    rescheduled a fixed `RETRY_AFTER` out without burning an attempt, so it can wait
+    indefinitely for the condition; its run step is left open (not finalized), exactly
+    like a re-queued retry."""
+    if registry is None or not preconditions:
+        return False
+    spec = registry.spec_for_handler(job.kind)
+    if spec is None or spec.precondition is None:
+        return False
+    check = preconditions.get(spec.precondition)
+    if check is None:
+        return False
+    result = await check()
+    if result.met:
+        return False
+    await report_progress(f"deferred: {result.reason}")
+    await queue.defer(maker, queue.SYSTEM_CTX, job.id, RETRY_AFTER, reason=result.reason)
+    log.info("worker.job_deferred", job_id=job.id, kind=job.kind, reason=result.reason)
     return True
 
 
@@ -246,6 +296,7 @@ async def run_loop(
     registry: ActionRegistry | None = None,
     settings: SqlSettingsStore | None = None,
     *,
+    preconditions: Mapping[str, Precondition] | None = None,
     supervisor_client: httpx.AsyncClient | None = None,
     supervisor_token: str = "",
 ) -> None:
@@ -320,7 +371,9 @@ async def run_loop(
                     consolidate_jobs=consolidations,
                     predicate_sync_jobs=predicate_syncs,
                 )
-            if await process_one(maker, handlers):
+            if await process_one(
+                maker, handlers, registry=registry, preconditions=preconditions
+            ):
                 continue
         except asyncio.CancelledError:
             raise
@@ -499,6 +552,18 @@ async def run() -> None:
         )
     )
     handlers = registry.dispatch_table(impls)
+    # Action preconditions (workflow.preconditions): named gates the worker evaluates
+    # before running a job. `reasoning_model_loaded` keeps the inbox-triage sweep from
+    # forcing a local model swap — it runs only when the model `triage.classify`
+    # resolves to is already resident (a cloud route, or local hosting off, is always
+    # met). The route is resolved the same way the triage handler resolves it (the task
+    # route + live override, no strength tier), so the gate matches what would actually
+    # run. The gateway admin client points at the LLM gateway (not whisper's).
+    preconditions: dict[str, Precondition] = {
+        "reasoning_model_loaded": model_already_loaded(
+            router, LocalGatewayClient(settings.local_llm_url), task="triage.classify"
+        ),
+    }
     # The host-metrics sampler reads the supervisor (the only container with the
     # host's /proc + /sys mounted) over the internal network. Gated on a token so
     # an unconfigured dev worker doesn't spin on 401s; the worker shares the api's
@@ -517,6 +582,7 @@ async def run() -> None:
             handlers,
             registry,
             settings=worker_settings_store,
+            preconditions=preconditions,
             supervisor_client=supervisor_client,
             supervisor_token=settings.supervisor_token,
         )

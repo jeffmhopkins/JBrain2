@@ -57,6 +57,16 @@ class ActionSpec:
     mutating: bool = True
     cost_class: CostClass = "standard"
     dedup_key_expr: str | None = None
+    # An optional gate the worker evaluates BEFORE running the action: the name of a
+    # registered precondition (jbrain.workflow.preconditions). When the precondition
+    # isn't met the job is DEFERRED (a fixed retry, no attempt burned) instead of run —
+    # e.g. inbox triage waits for its local model to already be resident rather than
+    # forcing a swap. In-code metadata only (no `app.actions` column, like
+    # `description`); the seed-lockstep test ignores it. A preconditioned action is
+    # also a coalescing singleton on the scheduler: a re-fire while one is still
+    # waiting enqueues nothing (workflow.scheduler._enqueue_pipeline), so deferred
+    # runs never pile up across ticks.
+    precondition: str | None = None
     # A one-line operator-facing summary of what the action does — the Catalog
     # surface renders it. In-code metadata only (the `app.actions` projection has
     # no description column), so the seed-lockstep test (which asserts the eight
@@ -94,6 +104,13 @@ class ActionRegistry:
             return self._by_name[name]
         except KeyError:
             raise ActionRegistryError(f"unknown action: {name!r}") from None
+
+    def spec_for_handler(self, handler_key: str) -> ActionSpec | None:
+        """The spec whose `handler` dispatch key is `handler_key` (a claimed job's
+        `kind`), or None when nothing registers it. `validate` enforces a bijection
+        between handler keys and specs, so at most one matches. The worker uses this
+        to recover an action's engine metadata (its `precondition`) from a job kind."""
+        return next((s for s in self._by_name.values() if s.handler == handler_key), None)
 
     def validate(self, handlers: Mapping[str, Handler]) -> None:
         """Prove the registry and the handler dispatch match exactly.

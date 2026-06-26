@@ -114,6 +114,38 @@ async def test_failure_requeues_with_backoff(maker: async_sessionmaker[AsyncSess
     await queue.complete(maker, OWNER, job_id)
 
 
+async def test_defer_reschedules_without_burning_an_attempt(
+    maker: async_sessionmaker[AsyncSession],
+) -> None:
+    from datetime import timedelta
+
+    job_id = await queue.enqueue(maker, OWNER, "triage_inbox", {})
+    job = await queue.claim(maker, OWNER)
+    assert job is not None and job.id == job_id and job.attempts == 0
+
+    await queue.defer(maker, OWNER, job_id, timedelta(minutes=5), reason="model 'x' not loaded")
+    row = await job_row(maker, job_id)
+    # Back in the queue, deferred into the future, but NOT a failure: attempts intact,
+    # never status='failed', reason recorded with the 'deferred:' prefix.
+    assert row["status"] == "queued"
+    assert row["attempts"] == 0
+    assert row["deferred"]
+    assert row["finished_at"] is None
+    assert row["last_error"] == "deferred: model 'x' not loaded"
+
+    # Not claimable until the delay elapses; deferring is unbounded (no attempt cost),
+    # so a job can wait across many retries for its precondition.
+    assert await queue.claim(maker, OWNER) is None
+    async with scoped_session(maker, OWNER) as session:
+        await session.execute(
+            text("UPDATE app.jobs SET run_after = now() WHERE id = :id"), {"id": job_id}
+        )
+    again = await queue.claim(maker, OWNER)
+    assert again is not None and again.id == job_id and again.attempts == 0
+    await queue.defer(maker, OWNER, job_id, timedelta(minutes=5), reason="still cold")
+    assert (await job_row(maker, job_id))["attempts"] == 0  # second defer, still no burn
+
+
 async def test_exhausted_attempts_fail_permanently(
     maker: async_sessionmaker[AsyncSession],
 ) -> None:

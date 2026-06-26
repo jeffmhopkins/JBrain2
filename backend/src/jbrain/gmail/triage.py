@@ -94,6 +94,12 @@ TRIAGE_INBOX_SPEC = ActionSpec(
     cost_class="expensive",  # one LLM classification call per email
     dedup_key_expr=None,
     description="Classify untriaged inbox mail into triaged/* labels; archive all but high.",
+    # Run only when the model triage routes to is already resident: classification
+    # makes one local LLM call per email, so firing while that model is cold would
+    # swap out whatever the owner is actively using (a code model, an image session).
+    # When unmet the run defers (5m, no attempt burned); the scheduler coalesces
+    # re-fires so deferred runs never pile up. Inert on a cloud route (always met).
+    precondition="reasoning_model_loaded",
 )
 
 # The provider hands back a configured client; the handler holds the bound

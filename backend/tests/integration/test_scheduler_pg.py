@@ -355,6 +355,25 @@ async def test_fire_trigger_enqueues_immediately(maker: async_sessionmaker) -> N
     assert await _jobs_of_kind(maker, "consolidate_predicates") == before + 1
 
 
+async def test_preconditioned_action_coalesces_a_refire(maker: async_sessionmaker) -> None:
+    # A preconditioned action can sit DEFERRED in the queue (waiting on its model to
+    # load), so re-firing its schedule must NOT stack a second waiting job. The first
+    # fire enqueues one triage_inbox job; while it is still active, the second fire
+    # coalesces and enqueues nothing — deferred runs never pile up across ticks.
+    from jbrain.gmail.triage import TRIAGE_INBOX_SPEC
+
+    registry = build_registry((*ACTION_SPECS, TRIAGE_INBOX_SPEC))
+    ids = await _seed_schedule(maker, action="triage_inbox", next_run_at=NOW)
+
+    first = await fire_trigger(maker, registry, ids["trigger"])
+    assert len(first.job_ids) == 1
+    assert await _jobs_of_kind(maker, "triage_inbox") == 1
+
+    second = await fire_trigger(maker, registry, ids["trigger"])
+    assert second.job_ids == []  # coalesced: the still-queued job absorbs this fire
+    assert await _jobs_of_kind(maker, "triage_inbox") == 1
+
+
 async def test_fire_trigger_records_a_running_run_on_the_run_log(
     maker: async_sessionmaker,
 ) -> None:
