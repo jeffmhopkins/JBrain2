@@ -35,12 +35,12 @@ class Settings(BaseSettings):
     model: str = "qwen3-coder-next"
 
     # Outbound hosts the sandbox may reach for git/package work (no LLM egress —
-    # the model is on-box). Enforcement of this allowlist is a Wave J5 hardening
-    # item (an egress proxy / firewall); J1 carries the declared intent.
+    # the model is on-box). The declared intent; full enforcement is the opt-in
+    # egress-proxy seam in compose (Wave J5), left opt-in pending on-box verification.
     egress_allowlist: list[str] = ["github.com", "registry.npmjs.org"]
 
-    # Ceiling on concurrent live sandboxes (full governance — CPU/mem/disk, TTL —
-    # is Wave J5). Zero or negative disables the cap.
+    # Ceiling on concurrent live sandboxes. CPU/mem/PID governance ships as compose
+    # resource caps and idle-TTL GC (Wave J5). Zero or negative disables the cap.
     max_sessions: int = 8
 
     # Per-session web preview (Wave J4): an ephemeral Cloudflare quick-tunnel to the

@@ -99,6 +99,11 @@ class SessionManager:
         except KeyError as exc:
             raise SessionError(f"unknown session: {sid}") from exc
 
+    def get_or_none(self, sid: str) -> Session | None:
+        """Like ``get`` but returns None for an unknown id — lets the reaper re-check a
+        session right before deleting it without racing on a SessionError."""
+        return self._sessions.get(sid)
+
     async def run_turn(self, sid: str, prompt: str) -> AsyncIterator[TurnEvent]:
         session = self.get(sid)
         session.status = "running"
@@ -136,6 +141,8 @@ class SessionManager:
         turn keeps a session fresh, so an in-flight session is never reaped."""
         if ttl_seconds <= 0:
             return []
+        # Stamps are always tz-aware UTC (``_utcnow``/the injected clock), so this
+        # compares against a tz-aware cutoff without raising on naive/aware mismatch.
         cutoff = (now or self._now()) - timedelta(seconds=ttl_seconds)
         return [
             s.id
