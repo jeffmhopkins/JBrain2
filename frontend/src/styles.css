@@ -15354,19 +15354,67 @@ input.ld-title {
   margin: 0;
 }
 /* The interactive CLI fills its panel; xterm paints into .jcode-cli (it manages its own
-   scrollback). The panel drops its padding so the terminal goes edge to edge. */
+   scrollback). The panel drops its padding so the terminal goes edge to edge, and stacks
+   the terminal above the mobile key row. */
 .jcode-clipanel {
   padding: 0;
   overflow: hidden;
+  display: flex;
+  flex-direction: column;
 }
 .jcode-cli {
+  flex: 1;
+  min-height: 0;
   width: 100%;
-  height: 100%;
   background: #0b0b0c;
 }
 .jcode-cli .xterm {
   height: 100%;
   padding: 8px 10px;
+}
+
+/* The mobile helper row: keys a soft keyboard can't send (Esc, Tab, arrows) plus sticky
+   Ctrl/Alt. Hidden by default — a physical keyboard sends these directly — and revealed
+   only on touch devices (no hover, coarse pointer). Sits above the home-bar inset. */
+.jcode-keys {
+  display: none;
+  gap: 6px;
+  flex: none;
+  padding: 7px 8px calc(7px + env(safe-area-inset-bottom));
+  background: #161617;
+  border-top: 1px solid var(--border);
+  overflow-x: auto;
+}
+@media (hover: none) and (pointer: coarse) {
+  .jcode-keys {
+    display: flex;
+  }
+}
+.jcode-key {
+  flex: 1 0 auto;
+  min-width: 42px;
+  height: 36px;
+  border-radius: 9px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-size: 14px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  -webkit-user-select: none;
+  user-select: none;
+}
+.jcode-key:active {
+  background: var(--surface-2);
+}
+/* An armed modifier (Ctrl/Alt) — folds the next typed character. */
+.jcode-key.on {
+  background: var(--amber-tint);
+  border-color: var(--amber);
+  color: var(--amber);
 }
 
 /* composer */
