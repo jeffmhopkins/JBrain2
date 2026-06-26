@@ -190,18 +190,26 @@ async def mint_jcode_share(
     return key, record
 
 
+async def validate_jcode_share(repo: AuthRepo, key: str) -> PrincipalInfo | None:
+    """Resolve a share-link secret to its principal — kind-filtered, revocation- and
+    expiry-enforced in SQL — WITHOUT minting a session. The redeem route uses this to
+    decide whether to issue a scoped cookie (it skips that when an owner session is
+    already present, so an owner opening their own link isn't downgraded). A revoked /
+    lapsed / wrong-kind / empty key returns None."""
+    if not key:
+        return None
+    return await repo.find_active_jcode_share_by_key_hash(keys.hash_token(key))
+
+
 async def redeem_jcode_share(repo: AuthRepo, key: str) -> tuple[str, str] | None:
     """Exchange a share-link secret for ``(session_cookie_token, session_id)``, or None.
 
-    Validates the secret in SQL (kind-filtered + revocation/expiry-enforced — a revoked,
-    lapsed, or wrong-kind key returns None), then mints a session bound to the share
-    principal so the browser carries the share's scope on every subsequent request —
-    exactly as `mint_dashboard_session` does for a device key, but the resulting cookie
+    Validates the secret (`validate_jcode_share`), then mints a session bound to the
+    share principal so the browser carries the share's scope on every subsequent request
+    — exactly as `mint_dashboard_session` does for a device key, but the resulting cookie
     reaches ONLY this one session's operational routes (the jcode access gate), never
     owner or member surfaces."""
-    principal = (
-        await repo.find_active_jcode_share_by_key_hash(keys.hash_token(key)) if key else None
-    )
+    principal = await validate_jcode_share(repo, key)
     if principal is None:
         return None
     token = keys.generate_session_token()

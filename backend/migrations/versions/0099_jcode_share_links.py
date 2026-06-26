@@ -28,6 +28,8 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    # Drop any share-link rows first, or the narrowed CHECK below would reject them.
+    op.execute("DELETE FROM app.principals WHERE kind = 'jcode_share_link'")
     op.execute("ALTER TABLE app.principals DROP CONSTRAINT principals_kind_check")
     op.execute(
         "ALTER TABLE app.principals ADD CONSTRAINT principals_kind_check "

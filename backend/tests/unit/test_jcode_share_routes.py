@@ -94,3 +94,17 @@ def test_redeem_rejects_a_bad_secret_without_a_cookie(
     r = guest.post("/api/jcode/share/redeem", json={"token": "nope"})
     assert r.status_code == 401
     assert _COOKIE not in guest.cookies
+
+
+def test_owner_redeeming_their_own_link_is_not_downgraded(
+    app_repo: tuple[FastAPI, FakeAuthRepo],
+) -> None:
+    app, repo = app_repo
+    owner = _owner(app, repo)
+    token = owner.post("/api/jcode/sessions/sess-a/share", json={}).json()["token"]
+    # The owner opens their OWN link: redeem succeeds but must NOT clobber the owner
+    # cookie (no scoped-cookie downgrade) — the owner keeps full access.
+    redeemed = owner.post("/api/jcode/share/redeem", json={"token": token})
+    assert redeemed.status_code == 200 and redeemed.json()["session_id"] == "sess-a"
+    # Still owner: an owner-only route (mint another share) still works.
+    assert owner.post("/api/jcode/sessions/sess-a/share", json={}).status_code == 201

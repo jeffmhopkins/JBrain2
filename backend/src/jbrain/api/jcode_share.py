@@ -109,9 +109,21 @@ async def redeem_share(
 ) -> RedeemOut:
     """Exchange a share secret for a session cookie scoped to that one session. 401 on an
     invalid / revoked / lapsed secret, writing no cookie. Unauthenticated by design — the
-    secret is the credential — and Origin is irrelevant (no ambient cookie is used here)."""
+    secret is the credential.
+
+    An OWNER opening their own share link is NOT downgraded: if the request already
+    carries a live owner session, we return the session id WITHOUT clobbering that cookie
+    (the owner already has full access). Only a non-owner browser gets the scoped cookie —
+    so the worst a forced redeem can do to a victim is a downgrade to a single sandbox,
+    never a privilege change."""
+    share = await service.validate_jcode_share(repo, body.token)
+    if share is None:
+        raise HTTPException(status_code=401, detail="invalid or expired share link")
+    existing = await service.authenticate(repo, request.cookies.get(settings.session_cookie, ""))
+    if existing is not None and existing.kind == "owner":
+        return RedeemOut(session_id=share.jcode_session_id)
     redeemed = await service.redeem_jcode_share(repo, body.token)
-    if redeemed is None:
+    if redeemed is None:  # the secret was just validated; this satisfies the type checker
         raise HTTPException(status_code=401, detail="invalid or expired share link")
     token, session_id = redeemed
     response.set_cookie(
