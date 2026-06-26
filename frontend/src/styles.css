@@ -15018,6 +15018,52 @@ input.ld-title {
   flex: none;
 }
 
+/* Swipe rail on a launcher row (rename · archive · delete), mirroring the
+   agent-sessions manager. The slide sits over an absolutely-positioned rail and
+   follows the finger; release snaps open/closed (notes/swipe). */
+.jcode-rowwrap {
+  position: relative;
+  overflow: hidden;
+}
+.jcode-rowwrap + .jcode-rowwrap {
+  border-top: 1px solid var(--border);
+}
+.jcode-rowwrap .jcode-row {
+  border-top: none;
+}
+.jcode-rail {
+  position: absolute;
+  inset: 0 0 0 auto;
+  display: flex;
+  overflow: hidden;
+}
+/* Three actions split the same RAIL_WIDTH (192px) as the chats rail. */
+.jcode-rail.rail-3 .rail-btn {
+  width: 64px;
+}
+.jcode-rail .rail-archive {
+  background: var(--steel-tint);
+  color: var(--steel);
+}
+.jcode-slide {
+  position: relative;
+  transition: transform 150ms ease-out;
+  background: var(--surface);
+}
+.jcode-rename {
+  width: 100%;
+  padding: 12px 13px;
+  border: none;
+  background: var(--surface);
+  color: var(--text);
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-size: 13px;
+}
+.jcode-rename:focus {
+  outline: 2px solid var(--steel);
+  outline-offset: -2px;
+}
+
 /* new-session sheet content */
 .jcode-seg,
 .jcode-tabs {

@@ -22,6 +22,8 @@ const SESSION = {
   branch: "main",
   work_branch: "",
   status: "ready",
+  title: "",
+  archived: false,
   created_at: "",
   last_active_at: "",
 };

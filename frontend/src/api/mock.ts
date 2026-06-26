@@ -2585,6 +2585,8 @@ interface MockJcodeSession {
   branch: string;
   work_branch: string;
   status: string;
+  title: string;
+  archived: boolean;
   created_at: string;
   last_active_at: string;
 }
@@ -2595,6 +2597,8 @@ const jcodeSessions: MockJcodeSession[] = [
     branch: "main",
     work_branch: "jcode/spike",
     status: "ready",
+    title: "",
+    archived: false,
     created_at: "2026-06-25T12:00:00Z",
     last_active_at: new Date().toISOString(),
   },
@@ -2604,6 +2608,8 @@ const jcodeSessions: MockJcodeSession[] = [
     branch: "main",
     work_branch: "jcode/local-mode",
     status: "ready",
+    title: "",
+    archived: false,
     created_at: "2026-06-20T09:00:00Z",
     last_active_at: "2026-06-20T09:00:00Z",
   },
@@ -2675,11 +2681,30 @@ export const mockFetch: typeof fetch = async (input, init) => {
       branch: body.branch || "main",
       work_branch: body.work_branch || `jcode/${id}`,
       status: "ready",
+      title: "",
+      archived: false,
       created_at: now,
       last_active_at: now,
     };
     jcodeSessions.unshift(s);
     return json(s, 201);
+  }
+  // Rename / archive / unarchive — the launcher's swipe-rail actions (owner-only).
+  if (path.startsWith("/api/jcode/sessions/") && path.endsWith("/archive") && method === "POST") {
+    const s = jcodeSessions.find((x) => x.id === path.split("/")[4]);
+    if (s) s.archived = true;
+    return new Response(null, { status: 204 });
+  }
+  if (path.startsWith("/api/jcode/sessions/") && path.endsWith("/unarchive") && method === "POST") {
+    const s = jcodeSessions.find((x) => x.id === path.split("/")[4]);
+    if (s) s.archived = false;
+    return new Response(null, { status: 204 });
+  }
+  if (path.startsWith("/api/jcode/sessions/") && method === "PATCH") {
+    const s = jcodeSessions.find((x) => x.id === path.split("/")[4]);
+    const body = JSON.parse(String(init?.body)) as { title?: string };
+    if (s) s.title = body.title ?? "";
+    return new Response(null, { status: 204 });
   }
   if (path.startsWith("/api/jcode/sessions/") && path.endsWith("/turn") && method === "POST") {
     return jcodeTurnStream();

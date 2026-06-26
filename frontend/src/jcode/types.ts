@@ -9,6 +9,11 @@ export interface JcodeSession {
   branch: string;
   work_branch: string;
   status: string;
+  // The owner's optional label (the launcher shows the repo when blank); `archived`
+  // tidies a session out of the live list without deleting it. Both managed from the
+  // launcher's swipe rail, mirroring the agent-sessions manager.
+  title: string;
+  archived: boolean;
   created_at: string;
   last_active_at: string;
 }

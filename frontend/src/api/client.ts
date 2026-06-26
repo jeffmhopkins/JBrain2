@@ -2308,6 +2308,21 @@ export const api = {
     await request(`/api/jcode/sessions/${encodeURIComponent(id)}`, { method: "DELETE" });
   },
 
+  /** Rename a session (the launcher's swipe rail). "" clears the label back to the repo. */
+  async jcodeRenameSession(id: string, title: string): Promise<void> {
+    await request(`/api/jcode/sessions/${encodeURIComponent(id)}`, jsonInit("PATCH", { title }));
+  },
+
+  /** Tidy a session out of the live list without deleting it (launcher rail). */
+  async jcodeArchiveSession(id: string): Promise<void> {
+    await request(`/api/jcode/sessions/${encodeURIComponent(id)}/archive`, { method: "POST" });
+  },
+
+  /** Restore an archived session to the live list (launcher rail). */
+  async jcodeUnarchiveSession(id: string): Promise<void> {
+    await request(`/api/jcode/sessions/${encodeURIComponent(id)}/unarchive`, { method: "POST" });
+  },
+
   /** Stream a coding turn. Mirrors `chat`: yields a synthetic `run` event (from the
    * X-Jcode-Run-Id header) so Stop can cancel server-side, then the parsed frames. */
   async *jcodeTurn(id: string, prompt: string, signal?: AbortSignal): AsyncGenerator<JcodeEvent> {

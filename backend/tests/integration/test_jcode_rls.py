@@ -66,10 +66,28 @@ async def test_owner_crud_roundtrips(maker: async_sessionmaker) -> None:
         rows = await repo.list(session)
         assert [r.id for r in rows] == ["s1"]
         assert rows[0].repo == "github.com/me/r"
+        assert rows[0].title == ""  # the launcher label defaults empty
+        assert rows[0].archived is False
         await repo.touch(session, "s1", status="running")
+        await repo.rename(session, "s1", "todo spike")
+        await repo.set_archived(session, "s1", True)
 
     async with scoped_session(maker, owner) as session:
-        assert (await repo.get(session, "s1")).status == "running"  # type: ignore[union-attr]
+        row = await repo.get(session, "s1")
+        assert row is not None
+        assert row.status == "running"  # the turn status survives rename/archive
+        assert row.title == "todo spike"
+        assert row.archived is True
+        # A turn writing status back must NOT clear the archive flag (separate columns).
+        await repo.touch(session, "s1", status="ready")
+
+    async with scoped_session(maker, owner) as session:
+        row = await repo.get(session, "s1")
+        assert row is not None
+        assert row.archived is True
+        assert row.status == "ready"
+        await repo.set_archived(session, "s1", False)
+        assert (await repo.get(session, "s1")).archived is False  # type: ignore[union-attr]
         await repo.delete(session, "s1")
 
     async with scoped_session(maker, owner) as session:

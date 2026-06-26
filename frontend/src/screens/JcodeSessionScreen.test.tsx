@@ -49,6 +49,8 @@ const SESSION: JcodeSession = {
   branch: "main",
   work_branch: "jcode/spike",
   status: "ready",
+  title: "",
+  archived: false,
   created_at: "2026-06-25T00:00:00Z",
   last_active_at: "2026-06-25T00:00:00Z",
 };
