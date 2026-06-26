@@ -115,6 +115,13 @@ def render(
             "-ngl",
             "999",
         ]
+        # A thinking model emits its reasoning inline as `<think>…</think>`;
+        # `--reasoning-format deepseek` (paired with --jinja above) makes llama.cpp parse
+        # those tags out of `content` into the `reasoning_content` channel the shim maps to
+        # Anthropic thinking blocks. Empty (the common case) leaves llama.cpp's `auto`.
+        reasoning_format = str(m.get("reasoning_format") or "")
+        if reasoning_format:
+            cmd += ["--reasoning-format", reasoning_format]
         mmproj = m.get("mmproj_include")
         if mmproj:
             cmd += ["--mmproj", f"/models/{model_id}/{resolve_weight(root, model_id, str(mmproj))}"]

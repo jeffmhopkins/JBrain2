@@ -52,6 +52,29 @@ def test_render_stamps_default_windows_and_resolves_files(tmp_path: Path) -> Non
     assert "groups:" not in text
 
 
+def test_render_adds_reasoning_format_only_for_thinking_models(tmp_path: Path) -> None:
+    _lay_down(tmp_path)
+    (tmp_path / "qwen3-next-80b-a3b-thinking").mkdir()
+    (tmp_path / "qwen3-next-80b-a3b-thinking" / "model-UD-Q4_K_XL.gguf").write_bytes(b"\0")
+    manifest = [
+        *_manifest(),
+        {
+            "id": "qwen3-next-80b-a3b-thinking",
+            "served_model": "qwen3-next-80b-a3b-thinking",
+            "gguf_include": "*UD-Q4_K_XL*.gguf",
+            "mmproj_include": None,
+            "context_window": 32768,
+            "recommended": False,
+            "reasoning_format": "deepseek",
+        },
+    ]
+    text = llama_swap_config.render(manifest, str(tmp_path))
+    # The thinking model gets --reasoning-format deepseek; the two non-thinking models
+    # (no reasoning_format) don't — they keep llama.cpp's default.
+    assert "--reasoning-format deepseek" in text
+    assert text.count("--reasoning-format") == 1
+
+
 def test_render_applies_a_per_model_window_override(tmp_path: Path) -> None:
     _lay_down(tmp_path)
     text = llama_swap_config.render(_manifest(), str(tmp_path), windows={"gpt-oss-120b": 65536})

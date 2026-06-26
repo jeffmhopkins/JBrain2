@@ -112,6 +112,24 @@ def test_qwen3_next_is_a_text_only_alt_high_tier() -> None:
     assert m.spec == "local:qwen3-next-80b-a3b"
 
 
+def test_qwen3_next_thinking_is_a_reasoning_deepseek_format_alt() -> None:
+    # The Thinking checkpoint is a separate model from the Instruct sibling: same size,
+    # but a reasoning model that emits <think> and needs --reasoning-format deepseek
+    # wired (the only catalog entry that sets reasoning_format).
+    m = local_catalog.get("qwen3-next-80b-a3b-thinking")
+    assert m is not None
+    assert m.tiers == ("high",)
+    assert not m.supports_vision and m.mmproj_include is None
+    assert m.supports_reasoning and m.reasoning_format == "deepseek"
+    assert m.supports_tools
+    assert m.served_model in local_catalog.REASONING_SERVED_MODELS
+    assert "Thinking" in m.hf_repo
+    # Alternate, not part of the default resident set the install prompt offers.
+    assert m.id not in local_catalog.recommended_ids()
+    # The only entry that pins a reasoning_format; everything else keeps llama.cpp's auto.
+    assert [x.id for x in local_catalog.CATALOG if x.reasoning_format] == [m.id]
+
+
 def _settings(**kw: Any) -> Settings:
     # Both cloud keys present — provider_choices hides a keyless cloud provider, so
     # tests that expect grok/claude to be offered must supply the keys.

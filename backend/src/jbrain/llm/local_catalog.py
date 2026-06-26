@@ -54,6 +54,12 @@ class LocalModel:
     # the router send an effort to this model; default False (the Qwen Instruct
     # variants and Llama here are non-thinking).
     supports_reasoning: bool = False
+    # llama-server `--reasoning-format` for a model that emits its thinking inline as
+    # `<think>…</think>` (DeepSeek-R1 / Qwen3-Thinking): "deepseek" makes llama.cpp parse
+    # those tags OUT of `content` into a separate `reasoning_content` channel, which the
+    # claude-shim then maps to Anthropic `thinking` blocks. Empty = leave llama.cpp's
+    # default (`auto`) — correct for harmony/GLM reasoners, whose template `auto` handles.
+    reasoning_format: str = ""
     # The context window the gateway serves this model with (llama-server's `-c`)
     # ABSENT an operator override. The single source of truth: scripts/local-llm-setup.sh
     # stamps this into the llama-swap config, and the router reports it to the PWA's
@@ -167,6 +173,34 @@ CATALOG: tuple[LocalModel, ...] = (
         note="80B MoE, 3B active — ~59 t/s, fits resident beside gpt-oss-120b. "
         "Hybrid-attention arch: confirm the gateway's llama.cpp build supports it.",
         # Native 256k; serves the gateway default — its light KV makes a big -c cheap.
+        native_context_window=262144,
+        kv_gb_per_128k=5.0,
+    ),
+    LocalModel(
+        id="qwen3-next-80b-a3b-thinking",
+        label="Qwen3-Next 80B · thinking",
+        served_model="qwen3-next-80b-a3b-thinking",
+        tiers=("high",),
+        supports_vision=False,
+        supports_tools=True,
+        recommended=False,
+        hf_repo="unsloth/Qwen3-Next-80B-A3B-Thinking-GGUF",
+        gguf_include="*UD-Q4_K_XL*.gguf",
+        mmproj_include=None,
+        quant="UD-Q4_K_XL",
+        size_gb=46.1,
+        # A separate checkpoint from the Instruct above (Qwen3-Next split thinking out of
+        # the hybrid toggle): it ALWAYS emits `<think>` reasoning. `--reasoning-format
+        # deepseek` parses that onto the reasoning channel (→ shim → Anthropic thinking
+        # blocks) instead of leaking into the answer. Selectable for jcode; the coder
+        # stays the default. Caveat: agentic multi-turn tool loops feed unsigned thinking
+        # back, which Anthropic-format clients may reject — try it on reasoning-heavy
+        # sessions, not as a tool-heavy daily driver.
+        supports_reasoning=True,
+        reasoning_format="deepseek",
+        note="80B MoE, 3B active — the Thinking checkpoint (emits <think> traces); "
+        "general reasoner, not coder-tuned. ~46 GB at UD-Q4_K_XL, co-resides like the "
+        "Instruct sibling. Needs a llama.cpp build with --reasoning-format support.",
         native_context_window=262144,
         kv_gb_per_128k=5.0,
     ),
