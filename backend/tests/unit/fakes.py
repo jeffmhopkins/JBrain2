@@ -24,6 +24,7 @@ class FakePrincipal:
     expires_at: datetime | None = None
     last_used_at: datetime | None = None
     suspended_at: datetime | None = None
+    jcode_session_id: str = ""
 
 
 @dataclass
@@ -143,9 +144,64 @@ class FakeAuthRepo:
                 return True
         return False
 
+    async def create_jcode_share(
+        self, key_hash: str, label: str, session_id: str, expires_at: datetime
+    ) -> CapabilityToken:
+        p = FakePrincipal(
+            str(uuid.uuid4()),
+            "jcode_share_link",
+            key_hash,
+            label,
+            expires_at=expires_at,
+            jcode_session_id=session_id,
+        )
+        self.principals.append(p)
+        return _capability(p)
+
+    async def find_active_jcode_share_by_key_hash(self, key_hash: str) -> PrincipalInfo | None:
+        now = datetime.now(UTC)
+        for p in self.principals:
+            live = p.expires_at is None or p.expires_at > now
+            if (
+                p.key_hash == key_hash
+                and p.kind == "jcode_share_link"
+                and not p.revoked
+                and live
+            ):
+                p.last_used_at = now
+                return _info(p)
+        return None
+
+    async def list_jcode_shares(self, session_id: str) -> list[CapabilityToken]:
+        return [
+            _capability(p)
+            for p in self.principals
+            if p.kind == "jcode_share_link"
+            and p.jcode_session_id == session_id
+            and not p.revoked
+        ]
+
+    async def revoke_jcode_share(self, share_id: str, session_id: str) -> bool:
+        for p in self.principals:
+            if (
+                p.id == share_id
+                and p.kind == "jcode_share_link"
+                and p.jcode_session_id == session_id
+                and not p.revoked
+            ):
+                p.revoked = True
+                return True
+        return False
+
 
 def _info(p: FakePrincipal) -> PrincipalInfo:
-    return PrincipalInfo(id=p.id, kind=p.kind, label=p.label, subject_id=p.subject_id)
+    return PrincipalInfo(
+        id=p.id,
+        kind=p.kind,
+        label=p.label,
+        subject_id=p.subject_id,
+        jcode_session_id=p.jcode_session_id,
+    )
 
 
 def _capability(p: FakePrincipal) -> CapabilityToken:
