@@ -50,13 +50,25 @@ describe("JcodeSessionScreen", () => {
     expect(await screen.findByText(/Loading qwen3-coder-next onto the box/i)).toBeInTheDocument();
   });
 
-  it("hides the loading bar when the model is resident but a stale load still shows", async () => {
+  it("shows the loading bar mid-race when the model is listed but still warming", async () => {
     // The race the fix targets: gateway lists the model (loaded:true) before the warm
     // task finishes. The bar must follow `warming`, so loaded:true + warming:true → shown.
     vi.spyOn(api, "jcodeModelStatus").mockResolvedValue({
       ...MODEL_STATUS,
       loaded: true,
       warming: true,
+    });
+    render(<JcodeSessionScreen session={SESSION} onClose={vi.fn()} />);
+    expect(await screen.findByText(/Loading qwen3-coder-next onto the box/i)).toBeInTheDocument();
+  });
+
+  it("shows the loading bar when an existing session opens with the model evicted", async () => {
+    // No fresh warm fires on opening an existing session, so `warming` is false. The
+    // `hosting && !loaded` fallback still surfaces the bar when the model isn't resident.
+    vi.spyOn(api, "jcodeModelStatus").mockResolvedValue({
+      ...MODEL_STATUS,
+      loaded: false,
+      warming: false,
     });
     render(<JcodeSessionScreen session={SESSION} onClose={vi.fn()} />);
     expect(await screen.findByText(/Loading qwen3-coder-next onto the box/i)).toBeInTheDocument();

@@ -16,6 +16,7 @@ import json
 import logging
 import re
 import uuid
+from collections import Counter
 from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING, cast
 
@@ -155,16 +156,18 @@ def _served_model(model_id: str) -> str:
     return m.served_model if m else model_id
 
 
-def _warming_models(request: Request) -> set[str]:
-    """Served-model names with an in-flight warm task — the readiness signal the loading
-    bar polls. Tied to the warm task's lifecycle (not gateway `running()`, which lists a
-    model as soon as a load is *requested*, before its weights finish reading in)."""
+def _warming_models(request: Request) -> Counter[str]:
+    """In-flight warm tasks per served-model name — the readiness signal the loading bar
+    polls. Tied to the warm task's lifecycle (not gateway `running()`, which lists a model
+    as soon as a load is *requested*, before its weights finish reading in). A Counter, not
+    a set: concurrent creates warm the SAME coder, so the flag must stay up until the LAST
+    of them finishes (a set would let the first done-callback clear it early)."""
     state = request.app.state
     warming = getattr(state, "jcode_warming", None)
     if warming is None:
-        warming = set()
+        warming = Counter()
         state.jcode_warming = warming
-    return cast("set[str]", warming)
+    return cast("Counter[str]", warming)
 
 
 def _warm_tasks(request: Request) -> set[asyncio.Task[None]]:
@@ -200,17 +203,20 @@ def _maybe_warm_coder(request: Request, model_id: str) -> None:
         return
     served = _served_model(model_id)
     # Mark warming BEFORE the task starts so the very first status poll (which can race
-    # the task) already sees it — and keep it set until the task finishes (the blocking
-    # health-gated load is the true readiness window the bar should span).
+    # the task) already sees it — and keep it up until the task finishes (the blocking
+    # health-gated load is the true readiness window the bar should span). Refcounted so
+    # overlapping creates of the same coder don't clear each other early.
     warming = _warming_models(request)
-    warming.add(served)
+    warming[served] += 1
     task = asyncio.create_task(_warm_model(gateway, served))
     tasks = _warm_tasks(request)
     tasks.add(task)
 
     def _done(t: asyncio.Task[None]) -> None:
         tasks.discard(t)
-        warming.discard(served)
+        warming[served] -= 1
+        if warming[served] <= 0:
+            del warming[served]
 
     task.add_done_callback(_done)
 
@@ -277,7 +283,7 @@ async def model_status(owner: OwnerDep, request: Request) -> dict[str, object]:
     # `warming` is the bar's primary signal: true while the warm task runs (eviction +
     # the up-to-2-min health-gated load). `loaded` alone races true early, so the bar
     # keys off `warming` to stay up for the whole real load.
-    warming = served in _warming_models(request)
+    warming = _warming_models(request)[served] > 0
     return {
         "model": model_id,
         "served": served,

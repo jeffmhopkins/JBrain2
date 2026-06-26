@@ -60,11 +60,12 @@ export function JcodeSessionScreen({
   const abort = useRef<AbortController | null>(null);
 
   // Poll the coder's warm state so the loading bar tracks the real load while it comes
-  // onto the box (the api warms it when the session opens). We key off `warming` — the
-  // backend's warm-task signal — NOT `loaded`: the gateway lists a model as resident the
-  // moment a load is *requested*, so `loaded` races true before the weights finish and
-  // would hide the bar mid-load. Keep polling while warming; stop once it settles (hosting
-  // off, or the warm task is done). A failed poll just retries.
+  // onto the box. We key the bar off `warming` — the backend's warm-task signal — NOT
+  // `loaded`: the gateway lists a model as resident the moment a load is *requested*, so
+  // `loaded` races true before the weights finish and would hide the bar mid-load. The
+  // `hosting && !loaded` fallback keeps the bar honest when opening an EXISTING session
+  // whose model was since evicted (no fresh warm fires there). Keep polling until settled
+  // (hosting off, or resident and no warm in flight). A failed poll just retries.
   useEffect(() => {
     let stale = false;
     let timer: ReturnType<typeof setTimeout>;
@@ -73,7 +74,7 @@ export function JcodeSessionScreen({
         const s = await api.jcodeModelStatus();
         if (stale) return;
         setModel(s);
-        if (!s.hosting || !s.warming) return;
+        if (!s.hosting || (s.loaded && !s.warming)) return;
       } catch {
         if (stale) return;
       }
@@ -86,7 +87,7 @@ export function JcodeSessionScreen({
     };
   }, []);
 
-  const loading = model?.warming === true;
+  const loading = model?.hosting === true && (model.warming === true || !model.loaded);
   // Tick the estimate while loading so the bar advances between polls, and anchor the
   // estimate to when warming actually began (not screen mount).
   useEffect(() => {

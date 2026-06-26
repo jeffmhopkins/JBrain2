@@ -179,6 +179,51 @@ async def test_status_reports_warming_while_the_load_is_in_flight(
         assert done["warming"] is False
 
 
+class _PerCallBlockingGateway(_FakeGateway):
+    """Each load() blocks on its OWN gate, so overlapping warms can be released one at a
+    time — exercising the warming refcount (the flag must hold until the LAST finishes)."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.gates: list[asyncio.Event] = []
+
+    async def load(self, served_model: str) -> None:
+        self.resident = {served_model}
+        self.loaded.append(served_model)
+        gate = asyncio.Event()
+        self.gates.append(gate)
+        await gate.wait()
+
+
+async def test_warming_holds_until_the_last_overlapping_warm_finishes(
+    maker: async_sessionmaker,
+) -> None:
+    # Two sessions opened back-to-back both warm the same coder. `warming` must stay true
+    # until BOTH warm tasks finish — a set keyed on the model name would let the first
+    # completion clear it while the second is still loading (the bar would vanish early).
+    owner_id = await _owner_id(maker)
+    app = _app(maker, owner_id)
+    app.state.settings = Settings(secure_cookies=False, local_llm_enabled=True)
+    gw = _PerCallBlockingGateway()
+    app.state.local_gateway = gw
+    transport = ASGITransport(app=app)
+
+    async with AsyncClient(transport=transport, base_url="http://t") as client:
+        assert (await client.post("/api/jcode/sessions", json={"repo": "a"})).status_code == 201
+        assert (await client.post("/api/jcode/sessions", json={"repo": "b"})).status_code == 201
+        await asyncio.sleep(0.05)  # both warm tasks reach their blocked load()
+        assert len(gw.gates) == 2
+        assert (await client.get("/api/jcode/model")).json()["warming"] is True
+
+        gw.gates[0].set()  # first warm finishes...
+        await asyncio.sleep(0.05)
+        assert (await client.get("/api/jcode/model")).json()["warming"] is True  # ...flag holds
+
+        gw.gates[1].set()  # last warm finishes
+        await asyncio.sleep(0.05)
+        assert (await client.get("/api/jcode/model")).json()["warming"] is False
+
+
 async def test_create_forwards_the_selected_model(maker: async_sessionmaker) -> None:
     # No stored selection → the config default reaches the control server; after the
     # owner picks a model (settings store), the next create forwards THAT id.
