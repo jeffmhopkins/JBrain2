@@ -194,10 +194,13 @@ async def _warm_model(gateway: LocalGateway, served: str) -> None:
         await gateway.load(served)
 
 
-def _maybe_warm_coder(request: Request, model_id: str) -> None:
-    """Fire-and-forget warm of the coder when a session opens (jcode_warm_on_create)."""
+def _warm_coder(request: Request, model_id: str) -> None:
+    """Fire-and-forget warm of the coder: evict the other resident models and load it.
+    Triggered ONLY by the explicit warm route, after the session screen has confirmed the
+    swap with the owner — never automatically on session create, so we never evict a model
+    the owner is using (and didn't ask to replace) just by opening code mode."""
     settings = cast("Settings", request.app.state.settings)
-    if not settings.jcode_warm_on_create or not settings.local_llm_enabled:
+    if not settings.local_llm_enabled:
         return
     gateway = getattr(request.app.state, "local_gateway", None)
     if gateway is None:
@@ -265,26 +268,24 @@ async def create_session(
             work_branch=session.get("work_branch", ""),
             status=session.get("status", "ready"),
         )
-    # Warm the coder onto the gateway in the background so it's loading by the time the
-    # first prompt arrives (and gets the whole box). Best-effort; never blocks create.
-    _maybe_warm_coder(request, model)
+    # The coder is NOT warmed here: a session opening must not silently evict whatever
+    # model is resident. The session screen polls /jcode/model, and — when the coder isn't
+    # already loaded — asks the owner before POSTing /jcode/model/warm to do the swap.
     return session
 
 
-@router.get("/jcode/model")
-async def model_status(owner: OwnerDep, request: Request) -> dict[str, object]:
-    """Whether the code-mode coder is resident in the gateway — the session screen's
-    loading-bar poll. Owner-gated; `hosting` is false when local hosting is off. Unlike
-    the session routes it does NOT 404 when code mode is disabled — it reports residency
-    of the configured model regardless, and the poll only runs from the session screen."""
+async def _model_payload(request: Request, owner_id: str) -> dict[str, object]:
+    """The code-mode model status: the configured coder, whether it's resident, whether a
+    warm is in flight, and what else is currently on the box (so the screen can tell the
+    owner which model a swap would evict)."""
     settings = cast("Settings", request.app.state.settings)
-    model_id = await _resolve_model(request, owner.id)
+    model_id = await _resolve_model(request, owner_id)
     served = _served_model(model_id)
     cat = local_catalog.get(model_id)
-    loaded = False
+    running: set[str] = set()
     gateway = getattr(request.app.state, "local_gateway", None)
     if settings.local_llm_enabled and gateway is not None:
-        loaded = served in await cast("LocalGateway", gateway).running()
+        running = await cast("LocalGateway", gateway).running()
     # `warming` is the bar's primary signal: true while the warm task runs (eviction +
     # the up-to-2-min health-gated load). `loaded` alone races true early, so the bar
     # keys off `warming` to stay up for the whole real load.
@@ -292,11 +293,32 @@ async def model_status(owner: OwnerDep, request: Request) -> dict[str, object]:
     return {
         "model": model_id,
         "served": served,
-        "loaded": loaded,
+        "loaded": served in running,
         "warming": warming,
         "hosting": settings.local_llm_enabled,
         "size_gb": cat.size_gb if cat else 0.0,
+        "resident": sorted(running),
     }
+
+
+@router.get("/jcode/model")
+async def model_status(owner: OwnerDep, request: Request) -> dict[str, object]:
+    """Whether the code-mode coder is resident in the gateway — the session screen's
+    load prompt + loading-bar poll. Owner-gated; `hosting` is false when local hosting is
+    off. Unlike the session routes it does NOT 404 when code mode is disabled — it reports
+    residency of the configured model regardless, and the poll only runs from the session
+    screen."""
+    return await _model_payload(request, owner.id)
+
+
+@router.post("/jcode/model/warm")
+async def warm_model(owner: OwnerDep, request: Request) -> dict[str, object]:
+    """Explicitly warm the coder onto the box (evict the other resident models, then load
+    it), and report the fresh status. The session screen calls this only after the owner
+    confirms the swap — so the eviction is never a surprise."""
+    model_id = await _resolve_model(request, owner.id)
+    _warm_coder(request, model_id)
+    return await _model_payload(request, owner.id)
 
 
 @router.get("/jcode/sessions")

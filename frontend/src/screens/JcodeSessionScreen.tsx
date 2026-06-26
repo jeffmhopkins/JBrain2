@@ -307,6 +307,9 @@ export function JcodeSessionScreen({
   const [preview, setPreview] = useState<JcodePreview | null>(null);
   const [pvBusy, setPvBusy] = useState(false);
   const [model, setModel] = useState<JcodeModelStatus | null>(null);
+  // Set when the owner confirms the swap (or a warm is already in flight): it re-arms the
+  // poll to track the load and flips the load prompt over to the progress bar.
+  const [warmRequested, setWarmRequested] = useState(false);
   const [now, setNow] = useState(() => Date.now());
   const loadStart = useRef(Date.now());
   const runId = useRef<string | null>(null);
@@ -315,10 +318,11 @@ export function JcodeSessionScreen({
   // Poll the coder's warm state so the loading bar tracks the real load while it comes
   // onto the box. We key the bar off `warming` — the backend's warm-task signal — NOT
   // `loaded`: the gateway lists a model as resident the moment a load is *requested*, so
-  // `loaded` races true before the weights finish and would hide the bar mid-load. The
-  // `hosting && !loaded` fallback keeps the bar honest when opening an EXISTING session
-  // whose model was since evicted (no fresh warm fires there). Keep polling until settled
-  // (hosting off, or resident and no warm in flight). A failed poll just retries.
+  // `loaded` races true before the weights finish and would hide the bar mid-load. Keep
+  // polling until settled: hosting off, resident with no warm in flight, OR the coder
+  // isn't loaded and no warm is in flight or requested — that last case is the load prompt
+  // awaiting the owner's tap, so we stop and wait rather than spin. Re-armed once the owner
+  // requests the warm. A failed poll just retries.
   useEffect(() => {
     // /jcode/model is owner-only; a share recipient would 403 it forever. Skip the
     // warm poll entirely in shared mode (the model chip's default label covers it).
@@ -330,7 +334,8 @@ export function JcodeSessionScreen({
         const s = await api.jcodeModelStatus();
         if (stale) return;
         setModel(s);
-        if (!s.hosting || (s.loaded && !s.warming)) return;
+        const idle = !s.loaded && !s.warming && !warmRequested;
+        if (!s.hosting || (s.loaded && !s.warming) || idle) return;
       } catch {
         if (stale) return;
       }
@@ -341,9 +346,27 @@ export function JcodeSessionScreen({
       stale = true;
       clearTimeout(timer);
     };
-  }, [shared]);
+  }, [shared, warmRequested]);
 
-  const loading = model?.hosting === true && (model.warming === true || !model.loaded);
+  // The load prompt: hosting on, the coder not on the box, and no warm yet — ask before
+  // evicting whatever's resident. Once the owner confirms (warmRequested) the bar takes over.
+  const needsLoad =
+    !shared && model?.hosting === true && !model.loaded && !model.warming && !warmRequested;
+  const loading =
+    model?.hosting === true && (model.warming === true || (warmRequested && !model.loaded));
+
+  // The owner confirmed the swap: kick the explicit warm, optimistically show the bar, and
+  // let the re-armed poll track it to completion. On failure, fall back to the prompt so
+  // they can retry rather than stare at a stuck bar.
+  async function warmModel() {
+    setWarmRequested(true);
+    setModel((m) => (m ? { ...m, warming: true } : m));
+    try {
+      setModel(await api.jcodeWarmModel());
+    } catch {
+      setWarmRequested(false);
+    }
+  }
   // Tick the estimate while loading so the bar advances between polls, and anchor the
   // estimate to when warming actually began (not screen mount).
   useEffect(() => {
@@ -603,6 +626,25 @@ export function JcodeSessionScreen({
 
       {tab === "chat" && (
         <div className="jcode-panel">
+          {/* The coder isn't on the box — ask before swapping, so we never evict a model
+              the owner is using just by opening code mode. Names what gets unloaded. */}
+          {needsLoad && model && (
+            <div className="jcode-modelask" aria-label="Load model">
+              <div className="jcode-modelask-head">Load {model.model} onto the box?</div>
+              <p className="jcode-modelask-body">
+                Code mode runs the coder on-box (~{Math.round(model.size_gb)} GB, about a minute to
+                load). {(() => {
+                  const evicts = model.resident.filter((r) => r !== model.served);
+                  return evicts.length > 0
+                    ? `Loading it will unload ${evicts.join(", ")}.`
+                    : "Nothing else is loaded right now.";
+                })()}
+              </p>
+              <button type="button" className="jcode-act teal" onClick={warmModel}>
+                Load model
+              </button>
+            </div>
+          )}
           {loading && model && (
             <div className="jcode-modelload" aria-label="Loading model">
               <div className="jcode-modelload-row">

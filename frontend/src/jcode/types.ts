@@ -67,4 +67,6 @@ export interface JcodeModelStatus {
   warming: boolean;
   hosting: boolean;
   size_gb: number;
+  /** Served-model names currently on the box — what a swap to the coder would evict. */
+  resident: string[];
 }

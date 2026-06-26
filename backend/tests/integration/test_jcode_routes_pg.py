@@ -124,11 +124,12 @@ class _FakeGateway:
         self.resident.discard(served_model)
 
 
-async def test_create_warms_the_coder_and_status_reports_loaded(
+async def test_create_does_not_warm_and_warm_endpoint_swaps(
     maker: async_sessionmaker,
 ) -> None:
-    # Opening a session evicts the other resident model and warms the coder (it gets the
-    # whole box); the model-status poll then reports it loaded.
+    # Opening a session must NOT touch the gateway — code mode never silently evicts a
+    # resident model. Status reports the coder absent with the other model resident; the
+    # explicit warm endpoint (owner-confirmed) then evicts it and loads the coder.
     owner_id = await _owner_id(maker)
     app = _app(maker, owner_id)
     app.state.settings = Settings(secure_cookies=False, local_llm_enabled=True)
@@ -138,16 +139,24 @@ async def test_create_warms_the_coder_and_status_reports_loaded(
 
     async with AsyncClient(transport=transport, base_url="http://t") as client:
         assert (await client.post("/api/jcode/sessions", json={"repo": "r"})).status_code == 201
+        await asyncio.sleep(0.05)  # nothing should have run in the background
+        assert gw.unloaded == [] and gw.loaded == []  # no surprise swap on create
+
+        status = (await client.get("/api/jcode/model")).json()
+        assert status["model"] == "qwen3-coder-next"
+        assert status["loaded"] is False
+        assert status["resident"] == ["gpt-oss-120b"]  # names what a swap would evict
+
+        assert (await client.post("/api/jcode/model/warm")).status_code == 200
         await asyncio.sleep(0.1)  # let the background warm task run
         assert gw.unloaded == ["gpt-oss-120b"]  # the other model was evicted
         assert gw.loaded == ["qwen3-coder-next"]  # the coder was warmed
 
-        status = (await client.get("/api/jcode/model")).json()
-        assert status["model"] == "qwen3-coder-next"
-        assert status["loaded"] is True
-        assert status["hosting"] is True
+        done = (await client.get("/api/jcode/model")).json()
+        assert done["loaded"] is True
+        assert done["hosting"] is True
         # The warm task has finished, so the bar's signal is back down.
-        assert status["warming"] is False
+        assert done["warming"] is False
 
 
 class _BlockingGateway(_FakeGateway):
@@ -178,7 +187,7 @@ async def test_status_reports_warming_while_the_load_is_in_flight(
     transport = ASGITransport(app=app)
 
     async with AsyncClient(transport=transport, base_url="http://t") as client:
-        assert (await client.post("/api/jcode/sessions", json={"repo": "r"})).status_code == 201
+        assert (await client.post("/api/jcode/model/warm")).status_code == 200
         await asyncio.sleep(0.05)  # let the warm task reach the blocked load()
 
         mid = (await client.get("/api/jcode/model")).json()
@@ -210,7 +219,7 @@ class _PerCallBlockingGateway(_FakeGateway):
 async def test_warming_holds_until_the_last_overlapping_warm_finishes(
     maker: async_sessionmaker,
 ) -> None:
-    # Two sessions opened back-to-back both warm the same coder. `warming` must stay true
+    # Two warm requests back-to-back both warm the same coder. `warming` must stay true
     # until BOTH warm tasks finish — a set keyed on the model name would let the first
     # completion clear it while the second is still loading (the bar would vanish early).
     owner_id = await _owner_id(maker)
@@ -221,8 +230,8 @@ async def test_warming_holds_until_the_last_overlapping_warm_finishes(
     transport = ASGITransport(app=app)
 
     async with AsyncClient(transport=transport, base_url="http://t") as client:
-        assert (await client.post("/api/jcode/sessions", json={"repo": "a"})).status_code == 201
-        assert (await client.post("/api/jcode/sessions", json={"repo": "b"})).status_code == 201
+        assert (await client.post("/api/jcode/model/warm")).status_code == 200
+        assert (await client.post("/api/jcode/model/warm")).status_code == 200
         await asyncio.sleep(0.05)  # both warm tasks reach their blocked load()
         assert len(gw.gates) == 2
         assert (await client.get("/api/jcode/model")).json()["warming"] is True
