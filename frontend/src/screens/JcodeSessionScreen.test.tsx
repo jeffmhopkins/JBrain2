@@ -41,9 +41,7 @@ describe("JcodeSessionScreen", () => {
   it("shows the loading bar while the coder warms onto the box", async () => {
     vi.spyOn(api, "jcodeModelStatus").mockResolvedValue({ ...MODEL_STATUS, loaded: false });
     render(<JcodeSessionScreen session={SESSION} onClose={vi.fn()} />);
-    expect(
-      await screen.findByText(/Loading qwen3-coder-next onto the box/i),
-    ).toBeInTheDocument();
+    expect(await screen.findByText(/Loading qwen3-coder-next onto the box/i)).toBeInTheDocument();
   });
 
   it("streams a turn into the chat transcript", async () => {
