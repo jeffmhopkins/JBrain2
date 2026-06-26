@@ -6,6 +6,10 @@
 // api.jcodeTurn frames.
 
 import { useEffect, useRef, useState } from "react";
+import { AgentStatusLine } from "../agent/FullBrainSurface";
+import { Markdown } from "../agent/markdown";
+import type { AgentStatus } from "../agent/status";
+import { usePacedText } from "../agent/usePacedText";
 import { api } from "../api/client";
 import {
   ChevronLeftIcon,
@@ -37,6 +41,79 @@ const TABS: { id: Tab; label: string; icon: typeof MessageIcon }[] = [
   { id: "term", label: "Terminal", icon: TerminalIcon },
   { id: "prev", label: "Preview", icon: GlobeIcon },
 ];
+
+// Friendly verb + object per CLI tool the coding agent uses, for the "what's it doing
+// now" status line (mirrors agent/status.ts but for jcode's Claude Code toolset). An
+// unmapped tool still reads sensibly via the generic "Using <name>" fallback.
+const TOOL_VERBS: Record<string, { label: string; emphasis?: string }> = {
+  Read: { label: "Reading", emphasis: "a file" },
+  Write: { label: "Writing", emphasis: "a file" },
+  Edit: { label: "Editing", emphasis: "a file" },
+  MultiEdit: { label: "Editing", emphasis: "files" },
+  Bash: { label: "Running", emphasis: "a command" },
+  Glob: { label: "Finding", emphasis: "files" },
+  Grep: { label: "Searching", emphasis: "the code" },
+  WebFetch: { label: "Fetching", emphasis: "a page" },
+  WebSearch: { label: "Searching", emphasis: "the web" },
+  TodoWrite: { label: "Planning", emphasis: "the work" },
+  Task: { label: "Delegating", emphasis: "a subtask" },
+};
+
+// Derive the live "Thinking… / Editing a file" status for the line above the composer,
+// from the last jcode turn. Returns null when idle. Reuses the chat's AgentStatusLine
+// view (it takes a plain AgentStatus), so jcode reads the same as Full Brain.
+function jcodeStatus(
+  item: Extract<Item, { kind: "jcode" }> | null,
+  busy: boolean,
+): AgentStatus | null {
+  if (!item) return null;
+  if (busy) {
+    const running = item.tools.find((t) => !t.done);
+    if (running) {
+      const v = TOOL_VERBS[running.tool];
+      if (v)
+        return { kind: "tool", label: v.label, ...(v.emphasis ? { emphasis: v.emphasis } : {}) };
+      return { kind: "tool", label: "Using", emphasis: running.tool };
+    }
+    if (item.text) return { kind: "answering", label: "Writing the answer" };
+    return { kind: "thinking", label: "Thinking it through" };
+  }
+  const used = item.tools.length;
+  return {
+    kind: "done",
+    label: used ? `Done · ${used} tool${used > 1 ? "s" : ""} used` : "Done",
+  };
+}
+
+// One assistant turn: markdown-rendered prose (paced into view so a fast local model's
+// block-paste reads as steady typing) plus the CLI tool steps it ran. A sub-component so
+// usePacedText — a hook — runs per item rather than in a map callback.
+function JcodeBubble({
+  item,
+  streaming,
+}: {
+  item: Extract<Item, { kind: "jcode" }>;
+  streaming: boolean;
+}) {
+  const shown = usePacedText(item.text, streaming);
+  return (
+    <div className="jcode-bubble">
+      {shown && <Markdown text={shown} streaming={streaming} />}
+      {item.tools.length > 0 && (
+        <div className="jcode-tools">
+          {item.tools.map((tool, j) => (
+            // biome-ignore lint/suspicious/noArrayIndexKey: append-only tool list
+            <div className={`jcode-tool${tool.done ? " done" : ""}`} key={j}>
+              <span className="jcode-tool-name">{tool.tool}</span>
+              <span className="jcode-tool-label">{tool.label}</span>
+              <span className="jcode-tool-state">{tool.done ? "✓" : "…"}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
 export function JcodeSessionScreen({
   session,
@@ -100,6 +177,17 @@ export function JcodeSessionScreen({
   const elapsedSec = (now - loadStart.current) / 1000;
   const loadPct =
     sizeGb > 0 ? Math.min(96, Math.round((elapsedSec / (sizeGb * LOAD_SEC_PER_GB)) * 100)) : 0;
+
+  // The live coding turn drives the status line above the composer ("Editing a file…").
+  let lastJcode: Extract<Item, { kind: "jcode" }> | null = null;
+  for (let i = items.length - 1; i >= 0; i--) {
+    const it = items[i];
+    if (it && it.kind === "jcode") {
+      lastJcode = it;
+      break;
+    }
+  }
+  const status = jcodeStatus(lastJcode, busy);
 
   // Fetch the preview status the first time the Preview tab is opened (the feature
   // flag + any already-live tunnel). Failures leave it null → a neutral empty state.
@@ -321,19 +409,7 @@ export function JcodeSessionScreen({
               ) : (
                 // biome-ignore lint/suspicious/noArrayIndexKey: append-only transcript, stable order
                 <div className="jcode-msg" key={i}>
-                  <div className="jcode-bubble">
-                    {it.text}
-                    {it.tools.map((tool, j) => (
-                      // biome-ignore lint/suspicious/noArrayIndexKey: append-only tool list
-                      <span className="jcode-tool" key={j}>
-                        <span className="jcode-tool-name">{tool.tool}</span>
-                        <span className="jcode-tool-label">{tool.label}</span>
-                        <span className={`jcode-tool-state${tool.done ? " ok" : ""}`}>
-                          {tool.done ? "✓" : "…"}
-                        </span>
-                      </span>
-                    ))}
-                  </div>
+                  <JcodeBubble item={it} streaming={busy && i === items.length - 1} />
                 </div>
               ),
             )
@@ -414,6 +490,7 @@ export function JcodeSessionScreen({
 
       {tab === "chat" && (
         <div className="jcode-composer">
+          <AgentStatusLine status={status} />
           <div className="jcode-cbox">
             <textarea
               rows={1}
@@ -443,8 +520,16 @@ export function JcodeSessionScreen({
               </button>
             )}
           </div>
+          {/* Context bar: what the agent is working against — the model, the sandbox
+              work-branch, and where it runs. (A live context-window meter lands once the
+              turn stream carries token usage.) */}
           <div className="jcode-cfoot">
-            <span className="jcode-cdot" /> Qwen3-Coder-Next 80B-A3B · on-box
+            <span className="jcode-cdot" />
+            <span className="jcode-cmodel">{model?.model ?? "Qwen3-Coder-Next"}</span>
+            <span className="jcode-csep">·</span>
+            <span className="jcode-cbranch">{session.work_branch || session.branch}</span>
+            <span className="jcode-csep">·</span>
+            <span>on-box</span>
           </div>
         </div>
       )}
