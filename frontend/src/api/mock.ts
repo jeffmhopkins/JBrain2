@@ -2620,6 +2620,20 @@ let jcodeModelPolls = 0;
 // before that the screen shows the load prompt naming what gets evicted.
 let jcodeWarmStarted = false;
 const jcodePreview = new Map<string, string>();
+// Per-session share links the owner has minted (dev:mock), so the share manager UI has
+// something to list and revoke.
+const jcodeShares: Record<
+  string,
+  {
+    id: string;
+    label: string;
+    created_at: string;
+    expires_at: string | null;
+    last_used_at: string | null;
+    redeemed_at: string | null;
+  }[]
+> = {};
+let jcodeShareN = 1;
 
 function jcodeTurnStream(): Response {
   const frames = [
@@ -2744,6 +2758,41 @@ export const mockFetch: typeof fetch = async (input, init) => {
   if (path.startsWith("/api/jcode/sessions/") && path.endsWith("/reset") && method === "POST") {
     const s = jcodeSessions.find((x) => x.id === path.split("/")[4]);
     return s ? json(s) : json({ detail: "unknown session" }, 404);
+  }
+  // Share-link routes (owner mint/list/revoke) — before the session DELETE so the
+  // revoke DELETE on /shares/{id} doesn't get swallowed by the session DELETE below.
+  if (path.startsWith("/api/jcode/sessions/") && path.endsWith("/share") && method === "POST") {
+    const sid = path.split("/")[4] ?? "";
+    const body = JSON.parse(String(init?.body)) as { label?: string; ttl_hours?: number };
+    const id = `share-${jcodeShareN++}`;
+    const expires_at = new Date(Date.now() + (body.ttl_hours ?? 24) * 3600_000).toISOString();
+    const share = {
+      id,
+      label: body.label || "shared link",
+      created_at: new Date().toISOString(),
+      expires_at,
+      last_used_at: null,
+      redeemed_at: null,
+    };
+    jcodeShares[sid] = jcodeShares[sid] ?? [];
+    jcodeShares[sid].unshift(share);
+    return json({ id, label: share.label, expires_at, token: `mock-share-secret-${id}` }, 201);
+  }
+  if (path.startsWith("/api/jcode/sessions/") && path.endsWith("/shares") && method === "GET") {
+    return json(jcodeShares[path.split("/")[4] ?? ""] ?? []);
+  }
+  if (path.includes("/shares/") && method === "DELETE") {
+    const parts = path.split("/");
+    const sid = parts[4] ?? "";
+    const shareId = parts[6] ?? "";
+    const list = jcodeShares[sid] ?? [];
+    const i = list.findIndex((s) => s.id === shareId);
+    if (i < 0) return json({ detail: "unknown share link" }, 404);
+    list.splice(i, 1);
+    return new Response(null, { status: 204 });
+  }
+  if (path === "/api/jcode/share/redeem" && method === "POST") {
+    return json({ session_id: jcodeSessions[0]?.id ?? "j1" });
   }
   // Preview routes first — the DELETE here would otherwise match the session DELETE.
   if (path.startsWith("/api/jcode/sessions/") && path.endsWith("/preview")) {

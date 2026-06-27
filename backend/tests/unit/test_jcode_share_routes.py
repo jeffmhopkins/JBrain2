@@ -86,6 +86,43 @@ def test_redeem_scopes_a_cookie_that_cannot_escalate(
     assert guest.delete("/api/jcode/sessions/sess-a").status_code == 403
 
 
+def test_redeem_is_single_use_second_browser_is_rejected(
+    app_repo: tuple[FastAPI, FakeAuthRepo],
+) -> None:
+    app, repo = app_repo
+    owner = _owner(app, repo)
+    token = owner.post("/api/jcode/sessions/sess-a/share", json={"ttl_hours": 6}).json()["token"]
+
+    # First browser claims the link → bound.
+    first = TestClient(app)
+    assert first.post("/api/jcode/share/redeem", json={"token": token}).status_code == 200
+
+    # A different browser with the same link is too late — single use.
+    second = TestClient(app)
+    rejected = second.post("/api/jcode/share/redeem", json={"token": token})
+    assert rejected.status_code == 401
+    assert _COOKIE not in second.cookies
+
+    # The already-bound browser reopening the link is idempotent (its cookie already
+    # grants the session) — it must NOT be locked out by the single-use gate.
+    again = first.post("/api/jcode/share/redeem", json={"token": token})
+    assert again.status_code == 200 and again.json()["session_id"] == "sess-a"
+
+
+def test_owner_open_does_not_consume_the_link(
+    app_repo: tuple[FastAPI, FakeAuthRepo],
+) -> None:
+    # The owner previewing their own link must not burn the single use — a guest can
+    # still claim it afterward.
+    app, repo = app_repo
+    owner = _owner(app, repo)
+    token = owner.post("/api/jcode/sessions/sess-a/share", json={}).json()["token"]
+    assert owner.post("/api/jcode/share/redeem", json={"token": token}).status_code == 200
+    guest = TestClient(app)
+    claimed = guest.post("/api/jcode/share/redeem", json={"token": token})
+    assert claimed.status_code == 200 and _COOKIE in guest.cookies
+
+
 def test_redeem_rejects_a_bad_secret_without_a_cookie(
     app_repo: tuple[FastAPI, FakeAuthRepo],
 ) -> None:

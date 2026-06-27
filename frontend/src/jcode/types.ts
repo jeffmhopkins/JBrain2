@@ -26,6 +26,18 @@ export interface JcodeShareToken {
   token: string;
 }
 
+// A live share link as the owner's management list sees it — metadata only, no secret.
+// `redeemed_at` is set once the link has been claimed (single-use), so the UI can show
+// "opened" vs "unused".
+export interface JcodeShare {
+  id: string;
+  label: string;
+  created_at: string;
+  expires_at: string | null;
+  last_used_at: string | null;
+  redeemed_at: string | null;
+}
+
 export type JcodeEventType = "text" | "tool_use" | "tool_result" | "done" | "error";
 
 // `data` is an opportunistic, optional hint bag the renderer reads when present:

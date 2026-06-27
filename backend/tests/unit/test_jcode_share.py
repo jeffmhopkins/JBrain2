@@ -55,6 +55,23 @@ async def test_redeem_live_secret_mints_a_scoped_session_cookie() -> None:
 
 
 @pytest.mark.asyncio
+async def test_redeem_is_single_use_first_browser_wins() -> None:
+    # The link binds to the FIRST browser that opens it: the first redeem succeeds and
+    # consumes the secret; a second redeem (a forwarded copy, another device) gets None.
+    repo = FakeAuthRepo()
+    key, _ = await auth_service.mint_jcode_share(repo, "sess-a", "s", ttl_hours=24)
+    first = await auth_service.redeem_jcode_share(repo, key)
+    assert first is not None
+    assert await auth_service.redeem_jcode_share(repo, key) is None
+    # The first browser's minted cookie keeps working — consuming the link doesn't
+    # revoke the principal, only blocks further redemptions.
+    cookie_token, _ = first
+    assert await auth_service.authenticate(repo, cookie_token) is not None
+    # The owner's list shows the link as claimed (redeemed_at set).
+    assert repo.principals[0].redeemed_at is not None
+
+
+@pytest.mark.asyncio
 async def test_redeem_rejects_empty_unknown_expired_revoked_and_wrong_kind() -> None:
     repo = FakeAuthRepo()
     assert await auth_service.redeem_jcode_share(repo, "") is None

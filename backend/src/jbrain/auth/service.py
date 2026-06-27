@@ -45,6 +45,9 @@ class CapabilityToken:
     # Set while the token is paused (reversible); None when active. A suspended
     # token fails auth but the owner can resume it.
     suspended_at: datetime | None = None
+    # Set only for jcode_share_link records: when the link was first claimed (single
+    # use). None = still claimable. Lets the owner's list show "used" vs "open".
+    redeemed_at: datetime | None = None
 
 
 class AuthRepo(Protocol):
@@ -91,6 +94,8 @@ class AuthRepo(Protocol):
     ) -> CapabilityToken: ...
 
     async def find_active_jcode_share_by_key_hash(self, key_hash: str) -> PrincipalInfo | None: ...
+
+    async def consume_jcode_share(self, key_hash: str) -> PrincipalInfo | None: ...
 
     async def list_jcode_shares(self, session_id: str) -> list[CapabilityToken]: ...
 
@@ -204,12 +209,15 @@ async def validate_jcode_share(repo: AuthRepo, key: str) -> PrincipalInfo | None
 async def redeem_jcode_share(repo: AuthRepo, key: str) -> tuple[str, str] | None:
     """Exchange a share-link secret for ``(session_cookie_token, session_id)``, or None.
 
-    Validates the secret (`validate_jcode_share`), then mints a session bound to the
-    share principal so the browser carries the share's scope on every subsequent request
-    — exactly as `mint_dashboard_session` does for a device key, but the resulting cookie
-    reaches ONLY this one session's operational routes (the jcode access gate), never
-    owner or member surfaces."""
-    principal = await validate_jcode_share(repo, key)
+    SINGLE USE: the secret is *consumed* atomically (`consume_jcode_share` stamps
+    ``redeemed_at`` in one conditional UPDATE) so the FIRST browser to open the link
+    wins and every later redemption — including a copy forwarded to someone else, or a
+    concurrent double-submit — gets None. The won principal is then bound a session
+    cookie (like `mint_dashboard_session` for a device key) that reaches ONLY this one
+    session's operational routes, never owner or member surfaces. Consuming the link
+    does not revoke the principal, so the bound cookie keeps authenticating until the
+    share's own expiry/revocation."""
+    principal = await repo.consume_jcode_share(keys.hash_token(key))
     if principal is None:
         return None
     token = keys.generate_session_token()

@@ -287,6 +287,33 @@ class SqlAuthRepo:
             )
         return info
 
+    async def consume_jcode_share(self, key_hash: str) -> PrincipalInfo | None:
+        """Atomically claim a share link for single use: stamp ``redeemed_at`` in ONE
+        conditional UPDATE that only matches an active, not-yet-redeemed link, and return
+        its principal — or None if it was unknown / revoked / lapsed / already claimed.
+
+        The ``redeemed_at IS NULL`` guard in the WHERE clause is the single-use gate: two
+        concurrent redeems both pass an earlier read, but only the first UPDATE matches a
+        row, so exactly one browser binds the link and the loser gets None. Runs under
+        bootstrap (the principals UPDATE policy admits only owner/bootstrap), the same
+        context that mints/revokes a share."""
+        async with scoped_session(self._maker, _BOOTSTRAP) as session:
+            row = (
+                await session.execute(
+                    update(Principal)
+                    .where(
+                        Principal.key_hash == key_hash,
+                        Principal.kind == "jcode_share_link",
+                        Principal.revoked_at.is_(None),
+                        Principal.redeemed_at.is_(None),
+                        or_(Principal.expires_at.is_(None), Principal.expires_at > func.now()),
+                    )
+                    .values(redeemed_at=text("now()"))
+                    .returning(Principal)
+                )
+            ).scalar_one_or_none()
+            return _principal_info(row) if row is not None else None
+
     async def list_jcode_shares(self, session_id: str) -> list[CapabilityToken]:
         """The non-revoked share links for one session, newest first (owner's list)."""
         async with scoped_session(self._maker, _LOGIN) as session:
@@ -334,6 +361,7 @@ def _capability_token(row: Principal) -> CapabilityToken:
         last_used_at=row.last_used_at,
         revoked_at=row.revoked_at,
         suspended_at=row.suspended_at,
+        redeemed_at=row.redeemed_at,
     )
 
 

@@ -3,7 +3,7 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { App } from "./App";
 import { initFontScale } from "./fontScale";
-import { parseShareLink } from "./jcode/share";
+import { parseSharePath } from "./jcode/share";
 import { initLocationCapture } from "./location";
 import { JcodeShareApp } from "./screens/JcodeShareApp";
 import { initTheme } from "./theme";
@@ -37,8 +37,11 @@ registerSW({
 const container = document.getElementById("root");
 if (!container) throw new Error("Missing #root element");
 
-// A share link (/jcode/s/{sid}#t=token) mounts the scoped share app instead of the
-// full owner app — the recipient sees only that one session.
+// A share-link PATH (/jcode/s/{sid}, with or without the #t=token secret) mounts the
+// scoped share app instead of the full owner app — the recipient sees only that one
+// session. Matching on the path alone (not the secret) means a reload after the secret
+// is stripped from the URL still opens the session via the redeemed cookie, rather than
+// dropping to the owner login.
 createRoot(container).render(
-  <StrictMode>{parseShareLink() ? <JcodeShareApp /> : <App />}</StrictMode>,
+  <StrictMode>{parseSharePath() ? <JcodeShareApp /> : <App />}</StrictMode>,
 );

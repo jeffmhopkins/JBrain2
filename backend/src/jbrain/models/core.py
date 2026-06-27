@@ -63,6 +63,11 @@ class Principal(Base):
     # grant is scoped to (the control-server session id — a hex token, NOT a UUID).
     # NULL for every other kind. Redeem + every operational jcode route checks it.
     jcode_session_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Set only for jcode_share_link principals: stamped the first time the link is
+    # redeemed, making it single-use — once set, the secret can never mint another
+    # session, so the link binds to the one browser that claimed it. NULL = unredeemed
+    # (and NULL for every other kind).
+    redeemed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class DeviceSession(Base):
