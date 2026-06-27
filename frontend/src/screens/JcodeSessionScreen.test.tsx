@@ -58,6 +58,7 @@ const MODEL_STATUS: JcodeModelStatus = {
   served: "qwen3-coder-next",
   loaded: true,
   warming: false,
+  progress: null,
   hosting: true,
   size_gb: 49.6,
   context_window: 262144,
@@ -114,6 +115,19 @@ describe("JcodeSessionScreen", () => {
     });
     render(<JcodeSessionScreen session={SESSION} onClose={vi.fn()} />);
     expect(await screen.findByText(/Loading qwen3-coder-next onto the box/i)).toBeInTheDocument();
+  });
+
+  it("drives the loading bar off the gateway's real load fraction when reported", async () => {
+    // A real progress signal (42% of weights read in) is shown verbatim, not the time guess.
+    vi.spyOn(api, "jcodeModelStatus").mockResolvedValue({
+      ...MODEL_STATUS,
+      loaded: false,
+      warming: true,
+      progress: 0.42,
+    });
+    render(<JcodeSessionScreen session={SESSION} onClose={vi.fn()} />);
+    expect(await screen.findByText(/Loading qwen3-coder-next onto the box/i)).toBeInTheDocument();
+    expect(await screen.findByText("42%")).toBeInTheDocument();
   });
 
   it("prompts before swapping when the coder isn't on the box, naming what gets evicted", async () => {

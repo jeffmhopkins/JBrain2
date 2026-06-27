@@ -26,8 +26,9 @@ import {
 } from "../jcode/terminal";
 import type { JcodeModelStatus, JcodePreview, JcodeSession, JcodeShare } from "../jcode/types";
 
-// Rough cold-load read rate (s/GB) for the loading-bar estimate — the bar caps at 96%
-// until the gateway confirms the model resident, then completes.
+// Rough cold-load read rate (s/GB) for the loading-bar's FALLBACK time estimate, used only
+// when the gateway reports no real load fraction. Either way the bar caps short of 100% and
+// completes only when the gateway confirms the model resident.
 const LOAD_SEC_PER_GB = 1.2;
 
 type Tab = "term" | "prev";
@@ -386,6 +387,9 @@ export function JcodeSessionScreen({
   const [warmRequested, setWarmRequested] = useState(false);
   const [now, setNow] = useState(() => Date.now());
   const loadStart = useRef(Date.now());
+  // Highest percent shown so far this load — the bar must never slide backwards (the real
+  // log fraction can briefly lag the time estimate, or a poll can report a lower number).
+  const shownPct = useRef(0);
 
   // Poll the coder's warm state so the loading bar tracks the real load while it comes onto
   // the box. We key the bar off `warming` — the backend's warm-task signal — NOT `loaded`:
@@ -439,10 +443,19 @@ export function JcodeSessionScreen({
     const t = setInterval(() => setNow(Date.now()), 500);
     return () => clearInterval(t);
   }, [loading]);
+  // Prefer the gateway's real load fraction (weights actually read in) when it reports one;
+  // fall back to the time estimate while it doesn't. The real signal is capped at 99 and the
+  // estimate at 96 — neither completes the bar on its own. Completion is the load going
+  // resident (`loading` → false), which drops the overlay; the bar never has to reach 100.
   const sizeGb = model?.size_gb ?? 0;
   const elapsedSec = (now - loadStart.current) / 1000;
-  const loadPct =
+  const estPct =
     sizeGb > 0 ? Math.min(96, Math.round((elapsedSec / (sizeGb * LOAD_SEC_PER_GB)) * 100)) : 0;
+  const realPct =
+    model?.progress != null ? Math.min(99, Math.max(0, Math.round(model.progress * 100))) : null;
+  if (!loading) shownPct.current = 0;
+  else shownPct.current = Math.max(shownPct.current, realPct ?? estPct);
+  const loadPct = shownPct.current;
   // A friendly served-context label for the model chip ("256k" for the coder's full window).
   const ctxLabel = model?.context_window ? `${Math.round(model.context_window / 1024)}k` : null;
 
