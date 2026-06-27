@@ -135,6 +135,23 @@ export function JcodeScreen({ onClose }: { onClose: () => void }) {
     setOpen(session);
   }
 
+  // Open a session from the list. A paused (stopped) session is restarted first so it
+  // opens live — "restart from the session manager". If the restart fails we open it
+  // STILL stopped, so the session screen shows its own Restart prompt rather than mounting
+  // a terminal against a sandbox that's still down.
+  async function openSession(session: JcodeSession) {
+    if (session.status === "stopped") {
+      try {
+        await api.jcodeRestartSession(session.id);
+        setOpen({ ...session, status: "ready" });
+      } catch {
+        setOpen(session); // still stopped → the screen offers Restart
+      }
+      return;
+    }
+    setOpen(session);
+  }
+
   // External endpoint: mint, then open its screen with the one-time secret + URL.
   async function startExternal(label: string) {
     const m = await api.externalMint(label);
@@ -233,7 +250,7 @@ export function JcodeScreen({ onClose }: { onClose: () => void }) {
                 <JcodeSessionRow
                   key={s.id}
                   session={s}
-                  onOpen={setOpen}
+                  onOpen={openSession}
                   onRename={rename}
                   onArchive={archive}
                   onUnarchive={unarchive}
@@ -455,7 +472,7 @@ function JcodeSessionRow({
         ) : (
           <button type="button" className="jcode-row" onClick={onTap}>
             <span
-              className={`jcode-sd${session.status === "running" ? " live" : ""}`}
+              className={`jcode-sd${session.status === "stopped" ? "" : " live"}`}
               title={session.status}
             />
             <span className="jcode-main">
@@ -464,11 +481,9 @@ function JcodeSessionRow({
                 @ {session.work_branch || session.branch} · {relative(session.last_active_at)}
               </span>
             </span>
-            {session.status === "running" ? (
-              <span className="jcode-running">running…</span>
-            ) : (
-              <span className="jcode-status">{session.status}</span>
-            )}
+            <span className="jcode-status">
+              {session.status === "stopped" ? "stopped" : "ready"}
+            </span>
             <ChevronRightIcon size={16} />
           </button>
         )}

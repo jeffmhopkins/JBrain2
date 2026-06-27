@@ -4,6 +4,12 @@ import { ApiError, api } from "../api/client";
 import type { JcodeSession } from "../jcode/types";
 import { JcodeScreen } from "./JcodeScreen";
 
+// The launcher stacks the session screen over itself; stub it so this launcher unit test
+// doesn't drag in the terminal's xterm/WebSocket machinery (covered in its own test).
+vi.mock("./JcodeSessionScreen", () => ({
+  JcodeSessionScreen: ({ session }: { session: JcodeSession }) => <div>opened {session.repo}</div>,
+}));
+
 function session(over: Partial<JcodeSession> = {}): JcodeSession {
   return {
     id: "j1",
@@ -59,8 +65,8 @@ describe("JcodeScreen (launcher)", () => {
         work_branch: "",
       }),
     );
-    // The session screen is now stacked over the list (its composer prompt shows).
-    expect(await screen.findByText(/Tell jcode what to build/i)).toBeInTheDocument();
+    // The session screen is now stacked over the list (the stubbed screen shows the repo).
+    expect(await screen.findByText(/opened github.com\/me\/new/)).toBeInTheDocument();
   });
 
   it("mints an external endpoint and opens its screen with the one-time secret", async () => {

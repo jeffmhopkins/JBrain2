@@ -223,8 +223,12 @@ CATALOG: tuple[LocalModel, ...] = (
         note="80B MoE, 3B active — agentic coder (~70% SWE-Bench Verified); the model "
         "behind code mode (jcode). Co-resides beside another large model. Same "
         "hybrid-attention arch as qwen3-next-80b — confirm the gateway's llama.cpp "
-        "build supports it (a recent build fixed a Qwen looping bug). Native 256k "
-        "window; serves the gateway default — raise -c toward native when it fits.",
+        "build supports it (a recent build fixed a Qwen looping bug). Served at its full "
+        "native 256k window: jcode's terminal `claude` wants the whole context, and the "
+        "light hybrid-attention KV (~10 GB at 256k) fits beside the weights here.",
+        # Code mode wants the whole window — serve the full native 256k (not the small
+        # memory-bound default) so the coder gets full context.
+        context_window=262144,
         native_context_window=262144,
         kv_gb_per_128k=5.0,
     ),
@@ -252,8 +256,10 @@ CATALOG: tuple[LocalModel, ...] = (
         size_gb=85.0,
         note="80B MoE, 3B active — agentic coder at 8-bit (near-lossless) for jcode "
         "pinned to one model. Standalone only on a 128 GB box; cold-loads on switch. "
-        "Same hybrid-attention arch — confirm the llama.cpp build serves Q8 on gfx1151.",
-        # Native 256k; standalone here, so the full window has the most room to grow.
+        "Same hybrid-attention arch — confirm the llama.cpp build serves Q8 on gfx1151. "
+        "Served at full native 256k (standalone, so the window has the most room).",
+        # Code mode wants the whole window — serve the full native 256k.
+        context_window=262144,
         native_context_window=262144,
         kv_gb_per_128k=5.0,
     ),

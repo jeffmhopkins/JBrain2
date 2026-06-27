@@ -1,8 +1,9 @@
 # The jcode control server: a Python service (mirroring the supervisor) that
-# drives the Claude Agent SDK (the Claude Code engine, headless) against an
-# on-box coder model. Unlike the supervisor it needs Node + the `claude` CLI the
-# SDK shells to, and `git` for the per-session checkouts. The model is reached
-# over ANTHROPIC_BASE_URL (set by compose to the local gateway) — no cloud.
+# manages sandboxed coding sessions driven through an interactive terminal. Each
+# session is a git checkout with a shell; the owner runs the `claude` CLI (the
+# Claude Code engine) against an on-box coder model. It needs Node + the `claude`
+# CLI and `git` for the per-session checkouts. The model is reached over
+# ANTHROPIC_BASE_URL (set by compose to the local gateway) — no cloud.
 FROM python:3.12-slim
 
 COPY --from=ghcr.io/astral-sh/uv:0.8.17 /uv /uvx /usr/local/bin/
@@ -34,10 +35,6 @@ RUN uv sync --frozen --no-dev --no-install-project
 
 COPY src ./src
 RUN uv sync --frozen --no-dev
-
-# The Claude Agent SDK is a box-only runtime dep (not in pyproject — see the note
-# there): install it into the synced venv for the real adapter.
-RUN uv pip install "claude-agent-sdk>=0.1"
 
 # The per-session git checkouts live here (the `jcode_work` volume mounts over it).
 RUN mkdir -p /work

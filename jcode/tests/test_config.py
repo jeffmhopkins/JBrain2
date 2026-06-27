@@ -22,10 +22,8 @@ def test_defaults_are_local_and_fail_closed() -> None:
     assert not any("anthropic" in h for h in s.egress_allowlist)
 
 
-def test_per_session_ceilings_default_on() -> None:
-    # A stock box is bounded out of the box: the concurrency + disk ceilings ship
-    # enabled (non-zero), so the aggregate compose caps aren't the only thing standing
-    # between a runaway session and the whole box.
+def test_session_cap_defaults_on() -> None:
+    # A stock box is bounded out of the box: the live-session cap ships enabled
+    # (non-zero), alongside idle-TTL GC and the aggregate compose caps.
     s = Settings(token="x")
-    assert s.max_concurrent_turns > 0
-    assert s.session_disk_limit_mb > 0
+    assert s.max_sessions > 0

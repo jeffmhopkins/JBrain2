@@ -5,11 +5,11 @@ session's workspace and bridges it to the WebSocket — keystrokes/paste in, raw
 terminal bytes out, plus a resize control message. The api proxies this to the
 owner's browser (xterm.js); this server stays internal + token-authed.
 
-Safe by construction the same way the headless agent is: the sandbox is an
-isolated, throwaway per-session checkout on its own network (no host, no notes,
-no other services), so a shell in it can do no more than the agent already can
-with ``bypassPermissions``. The child inherits the process env (so ``claude``,
-git, etc. resolve the same gateway the agent uses) plus a real ``TERM``.
+Safe by construction: the sandbox is an isolated, throwaway per-session checkout
+on its own network (no host, no notes, no other services), so a shell in it — and
+the ``claude`` CLI the owner runs inside it — can do no more than that isolated
+checkout allows. The child inherits the process env (so ``claude``, git, etc.
+resolve the on-box gateway) plus a real ``TERM``.
 """
 
 from __future__ import annotations
@@ -44,8 +44,8 @@ def model_env(model: str) -> dict[str, str]:
     (``claude-opus-4-…``) the local gateway has no route for, and every session errors
     "the selected model may not exist". The CLI resolves its ``/model`` aliases
     (opus/sonnet/haiku/fable) and its background summariser through these vars, so on a
-    single-model gateway they must ALL map to the one served route. The headless agent
-    passes the model explicitly; this is the interactive shell's equivalent."""
+    single-model gateway they must ALL map to the one served route. This pins the model
+    for the interactive shell's ``claude`` CLI."""
     return {
         "ANTHROPIC_MODEL": model,
         "ANTHROPIC_DEFAULT_OPUS_MODEL": model,
@@ -103,10 +103,11 @@ def kill_process_group(pid: int) -> None:
 
 def kill_processes_in_dir(path: str) -> list[int]:
     """SIGKILL every process whose working directory is inside ``path`` — the guaranteed
-    hard-kill backstop on session delete. It catches the agent's spawned ``claude`` CLI
-    and ANY tool subprocess it started (a build, a script) even while blocked mid-tool,
+    hard-kill backstop on session delete/stop. It catches the shell's ``claude`` CLI and
+    ANY tool subprocess it started (a build, a script) even while blocked mid-tool,
     because they all run with cwd inside the session's checkout. Run just before the
-    checkout is removed so nothing keeps executing in (or writing to) a deleted sandbox.
+    checkout is removed (delete) so nothing keeps executing in (or writing to) a deleted
+    sandbox, and on stop so a paused session leaves nothing running.
 
     Linux-only (reads ``/proc/<pid>/cwd``); returns the pids signalled. Each match is
     SIGKILLed INDIVIDUALLY (not via killpg) — a matched process may share this server's
@@ -171,6 +172,7 @@ async def serve_terminal(  # pragma: no cover - the PTY pump is exercised at dep
     model: str = "",
     on_open: Callable[[int], None] | None = None,
     on_close: Callable[[int], None] | None = None,
+    on_shell_exit: Callable[[int], None] | None = None,
 ) -> None:
     """Bridge ``websocket`` to a shell PTY in ``cwd`` until either side closes.
 
@@ -181,6 +183,12 @@ async def serve_terminal(  # pragma: no cover - the PTY pump is exercised at dep
     it doesn't default to a cloud model the on-box gateway can't serve. ``on_open`` /
     ``on_close`` register the PTY pid with the session manager so an open shell counts
     as activity and delete can kill it.
+
+    ``on_shell_exit`` fires ONLY when the shell process itself ended (the PTY child
+    EOF'd — the user typed ``exit`` / Ctrl-D), NOT when the browser merely dropped the
+    socket (a tab switch or backgrounding). The terminal route wires it to pause the
+    session: a deliberate exit shuts the session down, a transient disconnect leaves it
+    running.
     """
     from fastapi import WebSocketDisconnect
 
@@ -190,15 +198,22 @@ async def serve_terminal(  # pragma: no cover - the PTY pump is exercised at dep
     os.set_blocking(fd, False)
     loop = asyncio.get_running_loop()
     out: asyncio.Queue[bytes | None] = asyncio.Queue()
+    # Set when ``os.read`` hits EOF (the shell closed the slave by exiting). The finally
+    # uses it to tell a real exit apart from a socket drop before calling on_shell_exit.
+    shell_exited = False
 
     def _on_readable() -> None:
+        nonlocal shell_exited
         try:
             data = os.read(fd, _READ_BYTES)
         except (BlockingIOError, InterruptedError):
             return
         except OSError:  # the shell exited and closed the slave
+            shell_exited = True
             out.put_nowait(None)
             return
+        if not data:  # empty read == EOF == the shell exited
+            shell_exited = True
         out.put_nowait(data or None)
 
     loop.add_reader(fd, _on_readable)
@@ -241,4 +256,9 @@ async def serve_terminal(  # pragma: no cover - the PTY pump is exercised at dep
         _close_child(pid, fd)
         if on_close is not None:
             on_close(pid)
-        _log.info("terminal close cwd=%s pid=%d", cwd, pid)
+        # A deliberate shell exit (not a transient socket drop) pauses the session.
+        if shell_exited and on_shell_exit is not None:
+            on_shell_exit(pid)
+        _log.info(
+            "terminal close cwd=%s pid=%d shell_exited=%s", cwd, pid, shell_exited
+        )

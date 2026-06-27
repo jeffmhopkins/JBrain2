@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>JBrain · jcode session — 2-tab B: tabs-in-header (mock)</title>
+<style>
+  :root{
+    --bg:#0E0F11; --surface:#17181B; --surface-2:#1E2024; --border:#26282C;
+    --text:#E6E7E9; --text-2:#9A9DA3; --text-3:#5C5F66;
+    --steel:#7FA7C9; --green:#8FBC9A; --amber:#C9A36A; --rose:#CF8A8F; --teal:#6FB6B1;
+    --steel-tint:rgba(127,167,201,.14); --green-tint:rgba(143,188,154,.14);
+    --teal-tint:rgba(111,182,177,.14); --rose-tint:rgba(207,138,143,.14); --amber-tint:rgba(201,163,106,.14);
+    --term-bg:#0b0b0c;
+    --font:-apple-system,system-ui,"Segoe UI",Roboto,sans-serif; --mono:ui-monospace,Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:#000;color:var(--text);font-family:var(--font);font-size:15px;line-height:1.4}
+  .phone{max-width:420px;margin:0 auto;background:var(--bg);display:flex;flex-direction:column;height:100vh}
+  .note{max-width:420px;margin:0 auto;padding:10px 14px;color:var(--text-2);font-size:12.5px;line-height:1.5;background:#000}
+  .note b{color:var(--text)}
+
+  /* one combined bar: back · [Term|Prev] segmented · overflow.  repo/model on a 2nd thin sub-line. */
+  .bar{display:flex;align-items:center;gap:8px;padding:8px 9px;background:var(--surface);border-bottom:1px solid var(--border);flex:none}
+  .ic-btn{width:32px;height:32px;border-radius:9px;border:0;background:transparent;color:var(--text-2);display:flex;align-items:center;justify-content:center;cursor:pointer;flex:none}
+  .ic-btn svg{width:20px;height:20px}.ic-btn:hover{background:var(--surface-2);color:var(--text)}
+  /* segmented tabs live IN the bar */
+  .seg{display:flex;flex:1;border:1px solid var(--border);border-radius:10px;overflow:hidden;height:34px}
+  .seg button{flex:1;display:flex;align-items:center;justify-content:center;gap:6px;background:transparent;border:0;color:var(--text-2);font:inherit;font-size:12.5px;font-weight:500;cursor:pointer}
+  .seg button + button{border-left:1px solid var(--border)}
+  .seg button svg{width:15px;height:15px}
+  .seg button.on.term{background:var(--surface-2);color:var(--text)}
+  .seg button.on.prev{background:var(--teal-tint);color:var(--teal)}
+
+  .menuwrap{position:relative;flex:none}
+  .menu{position:absolute;right:0;top:36px;background:var(--surface-2);border:1px solid var(--border);border-radius:11px;padding:5px;min-width:172px;box-shadow:0 12px 30px rgba(0,0,0,.5);z-index:20;display:none}
+  .menu.on{display:block}
+  .mi{display:flex;align-items:center;gap:9px;width:100%;text-align:left;background:transparent;border:0;color:var(--text);font:inherit;font-size:13.5px;padding:9px 10px;border-radius:8px;cursor:pointer}
+  .mi:hover{background:var(--surface)}.mi.danger{color:var(--rose)}
+  .mi svg{width:16px;height:16px;color:var(--text-2)}.mi.danger svg{color:var(--rose)}
+  .mi-sep{height:1px;background:var(--border);margin:4px 6px}
+
+  /* thin context sub-line under the bar */
+  .sub{display:flex;align-items:center;gap:7px;padding:5px 12px;background:var(--bg);border-bottom:1px solid var(--border);font-family:var(--mono);font-size:10.5px;color:var(--text-3);flex:none}
+  .dot{width:7px;height:7px;border-radius:999px;background:var(--green);box-shadow:0 0 0 3px var(--green-tint);flex:none}
+  .dot.stopped{background:var(--text-3);box-shadow:0 0 0 3px rgba(92,95,102,.18)}
+  .sub .repo{color:var(--text-2)}.sub .sep{color:var(--text-3)}.sub .mdl{color:var(--amber);margin-left:auto}
+
+  .body{flex:1;position:relative;min-height:0;display:flex;flex-direction:column}
+  .panel{flex:1;min-height:0;display:none;flex-direction:column}.panel.on{display:flex}
+
+  .term{flex:1;min-height:0;background:var(--term-bg);font-family:var(--mono);font-size:11.5px;line-height:1.55;color:#e6e6e6;padding:10px 11px;overflow:auto;white-space:pre-wrap}
+  .term .pr{color:var(--green)}.term .dim{color:#7c7f86}.term .cur{background:#e6e6e6;color:var(--term-bg)}
+  .keys{display:flex;gap:6px;padding:7px 9px calc(7px + env(safe-area-inset-bottom));background:var(--surface);border-top:1px solid var(--border);flex:none;overflow-x:auto}
+  .key{font-family:var(--mono);font-size:12px;min-width:38px;height:34px;border:1px solid var(--border);border-radius:8px;background:var(--surface-2);color:var(--text-2);cursor:pointer;flex:none}
+  .key.on{background:var(--steel-tint);color:var(--steel);border-color:var(--steel)}
+
+  .ov{position:absolute;inset:0;background:rgba(14,15,17,.93);display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:26px;z-index:6}
+  .ov h3{font-size:15px;font-weight:600;margin:0 0 8px}
+  .ov p{color:var(--text-2);font-size:12.5px;line-height:1.55;margin:0 0 16px;max-width:300px}
+  .ov .big{width:46px;height:46px;margin-bottom:12px;color:var(--text-3)}
+  .btn{font:inherit;font-size:13px;font-weight:600;cursor:pointer;border-radius:10px;padding:10px 18px;border:1px solid color-mix(in srgb,var(--teal) 40%,var(--border));background:var(--teal-tint);color:var(--teal)}
+  .btn.neutral{background:var(--surface-2);color:var(--text);border-color:var(--border)}
+  .track{width:230px;height:6px;border-radius:999px;background:var(--surface-2);overflow:hidden;margin-top:4px}
+  .fill{height:100%;width:38%;background:var(--teal);border-radius:999px;transition:width .4s}
+
+  .prev{flex:1;min-height:0;overflow:auto;padding:14px}
+  .urlrow{display:flex;gap:8px;align-items:center;margin-bottom:10px}
+  .urlpill{flex:1;font-family:var(--mono);font-size:11.5px;color:var(--teal);background:var(--surface);border:1px solid var(--border);border-radius:9px;padding:9px 11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .pbtn{font:inherit;font-size:12px;font-weight:500;cursor:pointer;border-radius:999px;padding:7px 13px;border:1px solid var(--border);background:var(--surface-2);color:var(--text-2)}
+  .pbtn.danger{border-color:color-mix(in srgb,var(--rose) 40%,var(--border));background:var(--rose-tint);color:var(--rose)}
+  .frame{background:var(--surface);border:1px solid var(--border);border-radius:12px;height:230px;display:flex;align-items:center;justify-content:center;color:var(--text-3);font-size:12.5px}
+  .hint{font-size:11.5px;color:var(--text-2);margin:10px 2px 0;line-height:1.5}
+
+  .demobar{max-width:420px;margin:8px auto;padding:8px 14px;display:flex;gap:8px;flex-wrap:wrap}
+  .demobar button{font:inherit;font-size:11.5px;border:1px dashed var(--border);background:var(--surface);color:var(--text-2);border-radius:8px;padding:6px 10px;cursor:pointer}
+</style>
+</head>
+<body>
+<p class="note"><b>2-tab · Variant B — tabs in the header.</b> The two tabs live <b>inside the top bar</b> as a segmented control, so there's no separate tab row — only a 1-line bar + a hair-thin context sub-line (repo · branch · model) above the terminal. Densest vertically; the terminal gets the most height short of going edge-to-edge.</p>
+
+<div class="phone">
+  <div class="bar">
+    <button class="ic-btn" title="Back"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg></button>
+    <div class="seg">
+      <button class="term on" id="t-term" onclick="setTab('term')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 17l6-6-6-6"/><path d="M12 19h8"/></svg> Terminal</button>
+      <button class="prev" id="t-prev" onclick="setTab('prev')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a15 15 0 0 1 0 18M12 3a15 15 0 0 0 0 18"/></svg> Preview</button>
+    </div>
+    <span class="menuwrap">
+      <button class="ic-btn" title="More" onclick="toggleMenu(event)"><svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg></button>
+      <div class="menu" id="menu">
+        <button class="mi" onclick="closeMenu()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/></svg> Reset sandbox</button>
+        <button class="mi" onclick="closeMenu()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a15 15 0 0 1 0 18M12 3a15 15 0 0 0 0 18"/></svg> Share link…</button>
+        <div class="mi-sep"></div>
+        <button class="mi" onclick="stopSession()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="6" y="6" width="12" height="12" rx="2"/></svg> Stop session</button>
+        <button class="mi danger" onclick="closeMenu()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M4 7h16M9 7V5h6v2M6 7l1 13h10l1-13"/></svg> Delete</button>
+      </div>
+    </span>
+  </div>
+
+  <div class="sub">
+    <span class="dot" id="dot"></span>
+    <span class="repo">scratch-todo</span><span class="sep">@ jcode/spike</span>
+    <span class="mdl">qwen3-coder · 256k · on-box</span>
+  </div>
+
+  <div class="body">
+    <div class="panel on" id="p-term">
+      <div class="term"><span class="dim">jcode sandbox · coder pinned · full 256k context</span>
+<span class="pr">user@sandbox</span>:<span style="color:#7FA7C9">~/scratch-todo</span>$ ls
+README.md  package.json  src  tests
+<span class="pr">user@sandbox</span>:<span style="color:#7FA7C9">~/scratch-todo</span>$ claude "add a clear-completed button"
+<span class="dim">● Working… (Esc to interrupt)</span>
+<span class="pr">user@sandbox</span>:<span style="color:#7FA7C9">~/scratch-todo</span>$ <span class="cur">&nbsp;</span></div>
+
+      <div class="ov" id="ov-load" style="display:none">
+        <h3>Load qwen3-coder-next onto the box?</h3>
+        <p>The terminal's <code>claude</code> runs the coder on-box (~50&nbsp;GB, ~a minute, served at its full 256k context). Loading it will unload gpt-oss-120b.</p>
+        <button class="btn" onclick="startLoad()">Load model</button>
+      </div>
+      <div class="ov" id="ov-loading" style="display:none">
+        <h3>Loading qwen3-coder-next…</h3>
+        <p>Reading weights at full context. The terminal opens when it's resident.</p>
+        <div class="track"><div class="fill" id="fill"></div></div>
+      </div>
+      <div class="ov" id="ov-stopped" style="display:none">
+        <svg class="big" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
+        <h3>Session stopped</h3>
+        <p>Processes halted, checkout paused. Files preserved — restart to continue.</p>
+        <button class="btn neutral" onclick="restartSession()">Restart session</button>
+      </div>
+    </div>
+
+    <div class="panel" id="p-prev">
+      <div class="prev">
+        <div class="urlrow"><span class="urlpill">https://spike-7f3a2c.trycloudflare.com</span><button class="pbtn">Copy</button></div>
+        <div class="frame">live dev server (localhost:5173)</div>
+        <button class="pbtn danger" style="margin-top:12px">Stop preview</button>
+        <p class="hint">A temporary tunnel to the sandbox's dev server — dies with the session, never indexed.</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="keys" id="keys">
+    <button class="key">esc</button><button class="key">tab</button>
+    <button class="key" onclick="this.classList.toggle('on')">ctrl</button>
+    <button class="key" onclick="this.classList.toggle('on')">alt</button>
+    <button class="key">←</button><button class="key">↑</button><button class="key">↓</button><button class="key">→</button>
+  </div>
+</div>
+
+<div class="demobar">
+  <button onclick="showLoad()">▶ demo: show load prompt</button>
+  <button onclick="ready()">▶ demo: terminal ready</button>
+  <button onclick="stopSession()">▶ demo: stop</button>
+</div>
+
+<script>
+function setTab(t){
+  document.getElementById('t-term').classList.toggle('on',t==='term');
+  document.getElementById('t-prev').classList.toggle('on',t==='prev');
+  document.getElementById('p-term').classList.toggle('on',t==='term');
+  document.getElementById('p-prev').classList.toggle('on',t==='prev');
+  document.getElementById('keys').style.display = t==='term' ? 'flex':'none';
+}
+function toggleMenu(e){e.stopPropagation();document.getElementById('menu').classList.toggle('on')}
+function closeMenu(){document.getElementById('menu').classList.remove('on')}
+document.body.addEventListener('click',closeMenu);
+function hideOvs(){['ov-load','ov-loading','ov-stopped'].forEach(i=>document.getElementById(i).style.display='none')}
+function showLoad(){closeMenu();hideOvs();document.getElementById('ov-load').style.display='flex'}
+function startLoad(){hideOvs();document.getElementById('ov-loading').style.display='flex';let p=8;const f=document.getElementById('fill');f.style.width=p+'%';const t=setInterval(()=>{p+=11;f.style.width=Math.min(96,p)+'%';if(p>=96){clearInterval(t);setTimeout(ready,500)}},350)}
+function ready(){hideOvs();document.getElementById('dot').classList.remove('stopped')}
+function stopSession(){closeMenu();hideOvs();document.getElementById('ov-stopped').style.display='flex';document.getElementById('dot').classList.add('stopped')}
+function restartSession(){startLoad()}
+</script>
+</body>
+</html>

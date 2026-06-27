@@ -1,7 +1,7 @@
 [project]
 name = "jbrain-jcode"
 version = "0.1.0"
-description = "jcode control server: a sandboxed coding-session surface over the Claude Agent SDK, driving an on-box coder model."
+description = "jcode control server: sandboxed coding sessions driven through an interactive terminal against an on-box coder model."
 requires-python = ">=3.11"
 dependencies = [
     "fastapi>=0.115",
@@ -9,12 +9,11 @@ dependencies = [
     "uvicorn[standard]>=0.30",
 ]
 
-# The Claude Agent SDK (`claude-agent-sdk`) and the `@anthropic-ai/claude-code`
-# CLI it drives are installed in the IMAGE (jcode/Dockerfile), not declared here,
-# for the same reason the local-llm/comfyui weights live in their images: they are
-# box-only runtime, never bootstrapped into dev/CI (which have no model gateway).
-# The real adapter (jcode_ctl.agent.ClaudeCodeAgent) lazy-imports the SDK, so the
-# service builds and its unit tests run against the fake adapter without it.
+# The `@anthropic-ai/claude-code` CLI the session terminal runs is installed in the
+# IMAGE (jcode/Dockerfile), not declared here, for the same reason the
+# local-llm/comfyui weights live in their images: it is box-only runtime, never
+# bootstrapped into dev/CI (which have no model gateway). The control server itself
+# needs none of it — the CLI is launched inside the sandbox shell.
 
 [project.optional-dependencies]
 dev = [

@@ -2,11 +2,8 @@
 
 from __future__ import annotations
 
-import json
-
 from fastapi.testclient import TestClient
 
-from jcode_ctl.agent import FakeCodingAgent
 from jcode_ctl.app import create_app
 from jcode_ctl.config import Settings
 from jcode_ctl.preview import FakeTunnel, PreviewManager
@@ -21,7 +18,7 @@ def test_healthz_is_open(client: TestClient) -> None:
 def test_every_command_requires_the_token(client: TestClient) -> None:
     assert client.get("/sessions").status_code == 401
     assert client.post("/sessions", json={"repo": "r"}).status_code == 401
-    assert client.post("/sessions/x/turn", json={"prompt": "hi"}).status_code == 401
+    assert client.post("/sessions/x/stop").status_code == 401
 
 
 def test_create_list_get(client: TestClient, auth: dict[str, str]) -> None:
@@ -40,20 +37,20 @@ def test_unknown_session_is_404(client: TestClient, auth: dict[str, str]) -> Non
     assert client.get("/sessions/nope", headers=auth).status_code == 404
 
 
-def test_turn_streams_sse_frames(client: TestClient, auth: dict[str, str]) -> None:
+def test_stop_and_restart(client: TestClient, auth: dict[str, str]) -> None:
     sid = client.post("/sessions", json={"repo": "r"}, headers=auth).json()["id"]
-    resp = client.post(
-        f"/sessions/{sid}/turn", json={"prompt": "add a button"}, headers=auth
-    )
-    assert resp.status_code == 200
-    assert resp.headers["content-type"].startswith("text/event-stream")
-    events = [
-        json.loads(line[len("data: ") :])
-        for line in resp.text.splitlines()
-        if line.startswith("data: ")
-    ]
-    assert events[-1]["type"] == "done"
-    assert any(e["type"] == "tool_use" for e in events)
+    stopped = client.post(f"/sessions/{sid}/stop", headers=auth)
+    assert stopped.status_code == 200
+    assert stopped.json()["status"] == "stopped"
+    # The checkout is kept, so a restart resumes the same session.
+    restarted = client.post(f"/sessions/{sid}/restart", headers=auth)
+    assert restarted.json()["status"] == "ready"
+
+
+def test_restart_unknown_session_is_404(
+    client: TestClient, auth: dict[str, str]
+) -> None:
+    assert client.post("/sessions/nope/restart", headers=auth).status_code == 404
 
 
 def test_reset_and_delete(client: TestClient, auth: dict[str, str]) -> None:
@@ -91,7 +88,7 @@ def test_deleting_a_session_closes_its_preview(
 
 
 def test_preview_disabled_is_409() -> None:
-    mgr = SessionManager(FakeCodingAgent(), FakeWorkspace(), "/work")
+    mgr = SessionManager(FakeWorkspace(), "/work")
     app = create_app(
         Settings(token="t"), mgr, PreviewManager(FakeTunnel, enabled=False)
     )

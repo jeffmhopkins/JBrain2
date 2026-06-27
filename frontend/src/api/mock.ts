@@ -2649,31 +2649,6 @@ const jcodeExternal: {
 }[] = [];
 let jcodeExternalN = 1;
 
-function jcodeTurnStream(): Response {
-  const frames = [
-    { type: "text", text: "On it — reading the file and planning the change.", tool: "", data: {} },
-    { type: "tool_use", text: "", tool: "Read", data: { command: "read src/store/todos.ts" } },
-    { type: "tool_result", text: "ok", tool: "Read", data: { ok: true } },
-    { type: "tool_use", text: "", tool: "Edit", data: { command: "edit src/store/todos.ts" } },
-    { type: "tool_result", text: "+4 −0", tool: "Edit", data: { ok: true } },
-    { type: "text", text: "\n\nDone — added clearCompleted; tests pass.", tool: "", data: {} },
-    { type: "done", text: "", tool: "", data: {} },
-  ];
-  const enc = new TextEncoder();
-  const stream = new ReadableStream<Uint8Array>({
-    async start(controller) {
-      for (const f of frames) {
-        controller.enqueue(enc.encode(`data: ${JSON.stringify(f)}\n\n`));
-        await sleep();
-      }
-      controller.close();
-    },
-  });
-  return new Response(stream, {
-    headers: { "Content-Type": "text/event-stream", "X-Jcode-Run-Id": `run-${jcodeN}` },
-  });
-}
-
 export const mockFetch: typeof fetch = async (input, init) => {
   await sleep();
   const url = new URL(String(input instanceof Request ? input.url : input), "http://mock");
@@ -2697,6 +2672,7 @@ export const mockFetch: typeof fetch = async (input, init) => {
         warming: false,
         hosting: true,
         size_gb: 49.6,
+        context_window: 262144,
         resident: ["gpt-oss-120b"],
       });
     }
@@ -2709,6 +2685,7 @@ export const mockFetch: typeof fetch = async (input, init) => {
       warming: !ready,
       hosting: true,
       size_gb: 49.6,
+      context_window: 262144,
       resident: ready ? ["qwen3-coder-next"] : [],
     });
   }
@@ -2722,6 +2699,7 @@ export const mockFetch: typeof fetch = async (input, init) => {
       warming: true,
       hosting: true,
       size_gb: 49.6,
+      context_window: 262144,
       resident: [],
     });
   }
@@ -2766,11 +2744,19 @@ export const mockFetch: typeof fetch = async (input, init) => {
     if (s) s.title = body.title ?? "";
     return new Response(null, { status: 204 });
   }
-  if (path.startsWith("/api/jcode/sessions/") && path.endsWith("/turn") && method === "POST") {
-    return jcodeTurnStream();
-  }
   if (path.startsWith("/api/jcode/sessions/") && path.endsWith("/reset") && method === "POST") {
     const s = jcodeSessions.find((x) => x.id === path.split("/")[4]);
+    return s ? json(s) : json({ detail: "unknown session" }, 404);
+  }
+  // Stop pauses (keeps the checkout); restart resumes — the terminal-exit lifecycle.
+  if (path.startsWith("/api/jcode/sessions/") && path.endsWith("/stop") && method === "POST") {
+    const s = jcodeSessions.find((x) => x.id === path.split("/")[4]);
+    if (s) s.status = "stopped";
+    return s ? json(s) : json({ detail: "unknown session" }, 404);
+  }
+  if (path.startsWith("/api/jcode/sessions/") && path.endsWith("/restart") && method === "POST") {
+    const s = jcodeSessions.find((x) => x.id === path.split("/")[4]);
+    if (s) s.status = "ready";
     return s ? json(s) : json({ detail: "unknown session" }, 404);
   }
   // Share-link routes (owner mint/list/revoke) — before the session DELETE so the

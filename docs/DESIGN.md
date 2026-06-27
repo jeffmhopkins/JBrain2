@@ -1171,19 +1171,25 @@ launcher → live session). The two surfaces went through the mock-first gate
   scratch, work branch, the pinned on-box model card, Start). Chosen over A
   (compose-first form always open) and C (a `New·Sessions` toggle) for consistency with
   the settled Chats picker — you resume far more than you start.
-- **Session — `jcode-session-c-tabbed.html` [chosen].** One session, four views behind a
-  **segmented control: Chat · Diff · Terminal · Preview** (the settled segmented paradigm,
-  per Data screen / calendar). The active view takes its accent (chat = steel, diff =
-  green, terminal = neutral, preview = teal). **The tabs are icon-only** [owner decision]
-  — the Lucide glyph carries the view (44px+ targets, `aria-label`/`title` for a11y),
-  no text labels or badges. A pinned model chip (`qwen 80B-A3B · on-box`) and the
-  sandbox status dot sit in the header; the composer docks at the bottom. Chosen over A
-  (chat-forward, most minimal) and B (split workspace+chat) because the **diff and the
-  preview tunnel are core to the coding loop** and earn first-class views — the one place
-  an IDE-like density is warranted.
+- **Session — `jcode-session-2tab-a-fullbleed.html` [chosen, supersedes the 4-view
+  `jcode-session-c-tabbed.html`].** Code mode was gutted to a **terminal-first** session
+  (owner decision, build plan `docs/proposed/JCODE_2TAB_PLAN.md`): the PWA chat, the diff
+  placeholder, and the read-only terminal-log view are gone. One session, **two views:
+  Terminal · Preview**. The Terminal is the workhorse — a real shell in the sandbox
+  (xterm.js) where the owner runs `claude` against the on-box coder; Preview is the
+  ephemeral tunnel. **Variant A — full-bleed** maximizes the terminal: a slim one-line
+  header (back · status dot · `repo @ branch` · model chip `qwen3-coder · 256k · on-box`),
+  owner actions (Reset / Share / **Stop** / Delete) in a `⋯` menu, two compact labelled
+  tabs, then the terminal fills everything to the bottom with the mobile key row docked
+  beneath it. The coder loads at its **full native 256k context**, and switching to an
+  already-resident coder never reloads it. **Exiting the shell pauses the session**
+  (processes killed, checkout kept); it shows a **Restart** prompt and can be restarted
+  from the launcher (a paused row reads `stopped`). Share recipients get both tabs.
+  Chosen over B (tabs-in-header) and C (bottom tab bar) for the cleanest, most
+  terminal-maximizing chrome; rivals retained under `docs/mocks/jcode-session-2tab-*`.
 
-Both reuse settled paradigms (Chats picker, segmented control, tool-use accordions, the
-preview tunnel), so J3 implements rather than re-litigates them.
+Both reuse settled paradigms (Chats picker, segmented control, the preview tunnel), so
+they implement rather than re-litigate them.
 
 ## Tasks — the result band (settled in a three-way review; reference mock `docs/mocks/task-session-nav/c-result-band.html`, rivals A "inline latest-run line" + B "unread-inbox reframe" retained under `docs/mocks/task-session-nav/`)
 

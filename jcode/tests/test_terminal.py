@@ -1,14 +1,15 @@
-"""Interactive terminal: PTY mechanics, the WS route's auth gate, and the reaper
-guard that keeps a session alive while a terminal is open.
+"""Interactive terminal: PTY mechanics, the WS route's auth gate, the reaper guard
+that keeps a session alive while a terminal is open, and the shell-exit-vs-socket-drop
+distinction that decides whether a session is paused.
 
-The PTY itself is exercised here (a real shell in a tmp cwd); the WebSocket *pump*
-(serve_terminal) is deploy-only (pragma: no cover), so these cover everything around
-it — that the shell runs in the right cwd, that resize reaches the PTY, that the
-upgrade is token-gated, and that an open terminal is treated as activity.
+The PTY itself is exercised here (a real shell in a tmp cwd); the WebSocket pump
+(serve_terminal) is deploy-only (pragma: no cover) but the exit/drop branch is driven
+end-to-end below with a fake socket + a real shell, since it's the subtle bit.
 """
 
 from __future__ import annotations
 
+import asyncio
 import fcntl
 import os
 import select
@@ -21,16 +22,71 @@ import pytest
 from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
-from jcode_ctl.agent import FakeCodingAgent
 from jcode_ctl.sessions import SessionManager
 from jcode_ctl.terminal import (
     _close_child,
     _set_winsize,
     kill_processes_in_dir,
     model_env,
+    serve_terminal,
     spawn_shell,
 )
 from jcode_ctl.workspace import FakeWorkspace
+
+
+class _FakeWS:
+    """A minimal stand-in for the Starlette WebSocket serve_terminal drives: it plays a
+    scripted set of inbound messages, then blocks `receive()` until `close()` is called
+    (mirroring a socket that disconnects once the server closes it)."""
+
+    def __init__(self, script: list[dict[str, object]]) -> None:
+        self._script = list(script)
+        self._closed = asyncio.Event()
+        self.sent: list[bytes] = []
+
+    async def receive(self) -> dict[str, object]:
+        if self._script:
+            return self._script.pop(0)
+        await self._closed.wait()
+        return {"type": "websocket.disconnect"}
+
+    async def send_bytes(self, data: bytes) -> None:
+        self.sent.append(data)
+
+    async def close(self) -> None:
+        self._closed.set()
+
+
+async def test_serve_terminal_pauses_on_shell_exit(tmp_path) -> None:
+    # The headline distinction: a real shell exit (the user types `exit` / Ctrl-D) EOFs
+    # the PTY, so on_shell_exit fires → the route pauses the session.
+    exited: list[int] = []
+    ws = _FakeWS([{"type": "websocket.receive", "bytes": b"exit\n"}])
+    await asyncio.wait_for(
+        serve_terminal(
+            ws,  # type: ignore[arg-type]
+            str(tmp_path),
+            on_shell_exit=lambda pid: exited.append(pid),
+        ),
+        timeout=10,
+    )
+    assert exited  # the shell exit was detected and would pause the session
+
+
+async def test_serve_terminal_socket_drop_does_not_pause(tmp_path) -> None:
+    # A browser socket drop (tab switch / background) must NOT pause the session — the
+    # shell never exited, so on_shell_exit must not fire.
+    exited: list[int] = []
+    ws = _FakeWS([{"type": "websocket.disconnect"}])
+    await asyncio.wait_for(
+        serve_terminal(
+            ws,  # type: ignore[arg-type]
+            str(tmp_path),
+            on_shell_exit=lambda pid: exited.append(pid),
+        ),
+        timeout=10,
+    )
+    assert exited == []
 
 
 def _read_until(fd: int, needle: bytes, timeout: float = 5.0) -> bytes:
@@ -126,7 +182,6 @@ def test_terminal_rejects_an_unknown_session(
 async def test_open_terminal_is_activity_and_blocks_reaping() -> None:
     clock = {"t": datetime(2026, 6, 26, 12, 0, 0, tzinfo=UTC)}
     mgr = SessionManager(
-        FakeCodingAgent(),
         FakeWorkspace(),
         "/work",
         now=lambda: clock["t"],
@@ -168,14 +223,13 @@ def test_kill_processes_in_dir_hard_kills_a_running_process(tmp_path) -> None:
         outside.wait(timeout=5)
 
 
-async def test_delete_kills_open_terminals_and_cancels_the_turn() -> None:
-    # Delete must stop everything in the sandbox before the checkout is removed: the
-    # agent's run loop is cancelled and every open shell's process group is killed.
+async def test_delete_kills_open_terminals() -> None:
+    # Delete must stop everything in the sandbox before the checkout is removed: every
+    # open shell's process group is killed.
     killed: list[int] = []
     import jcode_ctl.sessions as sessions_mod
 
-    agent = FakeCodingAgent()
-    mgr = SessionManager(agent, FakeWorkspace(), "/work", new_id=lambda: "s1")
+    mgr = SessionManager(FakeWorkspace(), "/work", new_id=lambda: "s1")
     s = await mgr.create("r")
     mgr.terminal_opened(s.id, 9991)
     mgr.terminal_opened(s.id, 9992)
@@ -188,4 +242,25 @@ async def test_delete_kills_open_terminals_and_cancels_the_turn() -> None:
         sessions_mod.kill_process_group = orig
 
     assert sorted(killed) == [9991, 9992]  # both shells' groups killed
-    assert agent.cancelled == [s.id]  # the running turn was signalled to stop
+
+
+async def test_stop_kills_open_terminals() -> None:
+    # Stop (the shell-exit pause) also kills open shells' process groups, but keeps the
+    # checkout — only the processes are halted.
+    killed: list[int] = []
+    import jcode_ctl.sessions as sessions_mod
+
+    ws = FakeWorkspace()
+    mgr = SessionManager(ws, "/work", new_id=lambda: "s1")
+    s = await mgr.create("r")
+    mgr.terminal_opened(s.id, 7001)
+
+    orig = sessions_mod.kill_process_group
+    sessions_mod.kill_process_group = killed.append  # type: ignore[assignment]
+    try:
+        mgr.stop(s.id)
+    finally:
+        sessions_mod.kill_process_group = orig
+
+    assert killed == [7001]
+    assert ws.removed == []  # the checkout is kept on a stop

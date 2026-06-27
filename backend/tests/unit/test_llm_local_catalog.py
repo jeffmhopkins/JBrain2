@@ -62,11 +62,11 @@ def test_max_context_window_is_native_when_known_else_the_served_default() -> No
             assert m.max_context_window == m.native_context_window
         else:
             assert m.max_context_window == m.context_window
-    # The Qwen 2507/VL/Coder line is natively 256k; the coder serves a small default
-    # but its ceiling opens up the full window.
+    # The coder serves its FULL native 256k window — code mode wants the whole context,
+    # so its served default and native ceiling coincide.
     coder = local_catalog.get("qwen3-coder-next")
     assert coder is not None
-    assert coder.context_window == 32768 and coder.max_context_window == 262144
+    assert coder.context_window == 262144 and coder.max_context_window == 262144
     # gpt-oss already serves its full native window, so default and ceiling coincide.
     gpt_oss = local_catalog.get("gpt-oss-120b")
     assert gpt_oss is not None and gpt_oss.max_context_window == 131072

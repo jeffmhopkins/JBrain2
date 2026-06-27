@@ -1,5 +1,5 @@
-"""The jcode control-server client: SSE frame parsing, JSON calls, error mapping,
-and the in-memory fake used by the route tests."""
+"""The jcode control-server client: JSON calls, stop/restart, error mapping, and the
+in-memory fake used by the route tests."""
 
 from __future__ import annotations
 
@@ -16,26 +16,29 @@ async def test_fake_create_list_get_delete() -> None:
     assert s["work_branch"] == "jcode/sess1"
     assert [x["id"] for x in await fake.list_sessions()] == ["sess1"]
     assert (await fake.get_session("sess1"))["repo"] == "github.com/me/r"
-    await fake.cancel("sess1")
-    assert fake.cancelled == ["sess1"]
     await fake.delete("sess1")
     with pytest.raises(JcodeError):
         await fake.get_session("sess1")
 
 
-async def test_client_stream_turn_yields_one_frame_per_event() -> None:
-    body = b'data: {"type": "text", "text": "hi"}\n\ndata: {"type": "done"}\n\n'
+async def test_fake_stop_and_restart() -> None:
+    fake = FakeJcodeClient()
+    s = await fake.create_session("r", "main", "")
+    assert (await fake.stop(s["id"]))["status"] == "stopped"
+    assert (await fake.restart(s["id"]))["status"] == "ready"
+
+
+async def test_client_stop_and_restart_post_to_the_control_server() -> None:
+    seen: list[str] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
-        assert request.headers["authorization"] == "Bearer tok"
-        return httpx.Response(200, content=body, headers={"content-type": "text/event-stream"})
+        seen.append(f"{request.method} {request.url.path}")
+        return httpx.Response(200, json={"id": "s1", "status": "stopped"})
 
     client = JcodeClient("http://jcode:9100", "tok", transport=httpx.MockTransport(handler))
-    frames = [f async for f in client.stream_turn("s1", "do it")]
-    assert frames == [
-        b'data: {"type": "text", "text": "hi"}\n\n',
-        b'data: {"type": "done"}\n\n',
-    ]
+    await client.stop("s1")
+    await client.restart("s1")
+    assert seen == ["POST /sessions/s1/stop", "POST /sessions/s1/restart"]
 
 
 async def test_client_create_session_posts_typed_body() -> None:

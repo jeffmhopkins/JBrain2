@@ -1,8 +1,11 @@
-"""The jcode api surface: the in-flight turn buffer + reconnect, and owner-gating
-of the routes (no DB — the gating decisions land before any query)."""
+"""The jcode api surface: owner-gating of the routes and the stop/restart proxy
+(no DB — the gating decisions land before any query; DB writes are neutralized)."""
 
 from __future__ import annotations
 
+import contextlib
+
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -19,10 +22,25 @@ def _app(principal: PrincipalInfo, *, jcode_client: object) -> FastAPI:
     app = FastAPI()
     app.include_router(jcode.router, prefix="/api")
     app.state.jcode_client = jcode_client
-    app.state.jcode_turns = {}
     app.state.session_maker = None  # not reached by the gating tests below
     app.dependency_overrides[current_principal] = lambda: principal
     return app
+
+
+@pytest.fixture
+def _no_db(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Neutralize the owner-index DB write so a route's happy path runs without a pool."""
+
+    @contextlib.asynccontextmanager
+    async def _fake_scoped(*_a: object, **_k: object):
+        yield None
+
+    async def _noop(*_a: object, **_k: object) -> None:
+        return None
+
+    monkeypatch.setattr(jcode, "scoped_session", _fake_scoped)
+    monkeypatch.setattr(jcode._REPO, "touch", _noop)
+    monkeypatch.setattr(jcode._REPO, "delete", _noop)
 
 
 def test_non_owner_is_forbidden() -> None:
@@ -33,6 +51,8 @@ def test_non_owner_is_forbidden() -> None:
     assert client.patch("/api/jcode/sessions/s1", json={"title": "x"}).status_code == 403
     assert client.post("/api/jcode/sessions/s1/archive").status_code == 403
     assert client.post("/api/jcode/sessions/s1/unarchive").status_code == 403
+    assert client.post("/api/jcode/sessions/s1/stop").status_code == 403
+    assert client.post("/api/jcode/sessions/s1/restart").status_code == 403
 
 
 def test_owner_but_unconfigured_is_404() -> None:
@@ -40,6 +60,23 @@ def test_owner_but_unconfigured_is_404() -> None:
     r = client.post("/api/jcode/sessions", json={"repo": "r"})
     assert r.status_code == 404
     assert "not enabled" in r.json()["detail"]
+
+
+def test_stop_and_restart_proxy_the_control_server(_no_db: None) -> None:
+    import asyncio
+
+    fake = FakeJcodeClient()
+    asyncio.run(fake.create_session("r", "main", ""))  # mints sess1 in the fake
+    client = TestClient(_app(OWNER, jcode_client=fake))
+    # stop/restart flip the control-server status through the proxy (DB write neutralized).
+    assert client.post("/api/jcode/sessions/sess1/stop").json()["status"] == "stopped"
+    assert client.post("/api/jcode/sessions/sess1/restart").json()["status"] == "ready"
+
+
+def test_stop_restart_are_owner_gated() -> None:
+    client = TestClient(_app(NON_OWNER, jcode_client=FakeJcodeClient()))
+    assert client.post("/api/jcode/sessions/sess1/stop").status_code == 403
+    assert client.post("/api/jcode/sessions/sess1/restart").status_code == 403
 
 
 def test_preview_open_status_close() -> None:
@@ -71,76 +108,5 @@ def test_malformed_sid_is_404_before_any_db_or_control_call() -> None:
     client = TestClient(_app(OWNER, jcode_client=FakeJcodeClient()))
     assert client.get("/api/jcode/sessions/bad.id").status_code == 404
     assert client.post("/api/jcode/sessions/bad.id/reset").status_code == 404
-    assert client.post("/api/jcode/sessions/bad.id/turn", json={"prompt": "x"}).status_code == 404
-
-
-def test_reconnect_unknown_run_is_404() -> None:
-    client = TestClient(_app(OWNER, jcode_client=FakeJcodeClient()))
-    assert client.get("/api/jcode/runs/nope/stream").status_code == 404
-    assert client.post("/api/jcode/runs/nope/cancel").status_code == 404
-
-
-async def test_turn_buffer_replays_and_finishes() -> None:
-    turn = jcode._JcodeTurn("s1")
-    turn.emit(b"data: a\n\n")
-    turn.emit(b"data: b\n\n")
-    turn.emit(b"data: c\n\n")
-    turn.finish()
-
-    # A full replay from the start.
-    assert [f async for f in turn.stream()] == [b"data: a\n\n", b"data: b\n\n", b"data: c\n\n"]
-    # A reconnect with an offset replays only the unseen frames.
-    assert [f async for f in turn.stream(after=2)] == [b"data: c\n\n"]
-
-
-async def test_turn_follows_live_frames_until_done() -> None:
-    turn = jcode._JcodeTurn("s1")
-
-    collected: list[bytes] = []
-
-    async def consume() -> None:
-        async for f in turn.stream():
-            collected.append(f)
-
-    import asyncio
-
-    task = asyncio.create_task(consume())
-    await asyncio.sleep(0)  # let the subscriber register
-    turn.emit(b"data: live\n\n")
-    turn.finish()
-    await task
-    assert collected == [b"data: live\n\n"]
-
-
-def test_delete_cancels_in_flight_turns_for_that_session(monkeypatch) -> None:
-    # Deleting a session cancels its in-flight turn(s) — dropping the SSE drive task tears
-    # down the control server's spawned subprocess — and leaves other sessions' turns alone.
-    import contextlib
-
-    class _FakeTask:
-        def __init__(self) -> None:
-            self.cancelled = False
-
-        def cancel(self) -> None:
-            self.cancelled = True
-
-    app = _app(OWNER, jcode_client=FakeJcodeClient())
-    mine_a, mine_b, other = jcode._JcodeTurn("s1"), jcode._JcodeTurn("s1"), jcode._JcodeTurn("s2")
-    for t in (mine_a, mine_b, other):
-        t.task = _FakeTask()  # type: ignore[assignment]
-    app.state.jcode_turns = {"r1": mine_a, "r2": mine_b, "r3": other}
-
-    # Neutralize the owner-index DB write (no DB in this unit test).
-    @contextlib.asynccontextmanager
-    async def _fake_scoped(*_a: object, **_k: object):
-        yield None
-
-    async def _noop_delete(_db: object, _sid: str) -> None:
-        return None
-
-    monkeypatch.setattr(jcode, "scoped_session", _fake_scoped)
-    monkeypatch.setattr(jcode._REPO, "delete", _noop_delete)
-
-    assert TestClient(app).delete("/api/jcode/sessions/s1").status_code == 204
-    assert mine_a.task.cancelled and mine_b.task.cancelled  # type: ignore[union-attr]
-    assert not other.task.cancelled  # type: ignore[union-attr]
+    assert client.post("/api/jcode/sessions/bad.id/stop").status_code == 404
+    assert client.post("/api/jcode/sessions/bad.id/restart").status_code == 404

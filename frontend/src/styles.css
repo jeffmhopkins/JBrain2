@@ -15171,17 +15171,11 @@ button.task-band:active {
   margin-top: 2px;
   display: block;
 }
-.jcode-status,
-.jcode-running {
+.jcode-status {
   font-size: 11px;
   font-family: ui-monospace, Menlo, Consolas, monospace;
   flex: none;
-}
-.jcode-status {
   color: var(--text-3);
-}
-.jcode-running {
-  color: var(--steel);
 }
 .jcode-row > svg {
   color: var(--text-3);
@@ -15235,14 +15229,11 @@ button.task-band:active {
 }
 
 /* new-session sheet content */
-.jcode-seg,
-.jcode-tabs {
+.jcode-seg {
   display: flex;
   border: 1px solid var(--border);
   border-radius: var(--r-seg);
   overflow: hidden;
-}
-.jcode-seg {
   margin-bottom: 11px;
 }
 .jcode-segbtn {
@@ -15353,6 +15344,135 @@ button.task-band:active {
   padding: 2px 8px;
   font-family: ui-monospace, Menlo, Consolas, monospace;
   flex: none;
+}
+
+/* 2-tab session (Variant A): the slim header lets the session info take the row, the ⋯
+   actions menu holds Reset/Share/Stop/Delete, and the terminal stage gets everything
+   below the two-tab bar. */
+.jcode-bar .jcode-sesshead {
+  flex: 1;
+  overflow: hidden;
+}
+.jcode-menuwrap {
+  position: relative;
+  flex: none;
+}
+.jcode-menu {
+  position: absolute;
+  right: 0;
+  top: 40px;
+  z-index: 20;
+  min-width: 184px;
+  padding: 5px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.45);
+}
+.jcode-menu-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  color: var(--text);
+  font: inherit;
+  font-size: 14px;
+  padding: 10px 11px;
+  border-radius: 8px;
+}
+.jcode-menu-item:hover {
+  background: var(--surface);
+}
+.jcode-menu-item.danger {
+  color: var(--rose);
+}
+.jcode-menu-sep {
+  height: 1px;
+  background: var(--border);
+  margin: 4px 6px;
+}
+
+.jcode-tabs2 {
+  flex: none;
+  display: flex;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+}
+.jcode-tab2 {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  height: 38px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--text-2);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+}
+.jcode-tab2.term.on {
+  background: var(--surface-2);
+  color: var(--text);
+}
+.jcode-tab2.prev.on {
+  background: var(--location-tint);
+  color: var(--teal);
+  border-color: color-mix(in srgb, var(--teal) 40%, var(--border));
+}
+
+/* The terminal stage: fills the screen below the tabs and hosts either the live terminal
+   or a load / loading / stopped overlay in its place. */
+.jcode-stage {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.jcode-stage > .jcode-clipanel,
+.jcode-stage > .jcode-panel {
+  flex: 1;
+  min-height: 0;
+}
+.jcode-overlay {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 26px;
+  color: var(--text-2);
+  background: #0b0b0c;
+}
+.jcode-overlay > svg {
+  color: var(--text-3);
+}
+.jcode-overlay h3 {
+  margin: 10px 0 4px;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+}
+.jcode-overlay p {
+  margin: 0 0 16px;
+  font-size: 13px;
+  line-height: 1.55;
+  max-width: 300px;
+}
+.jcode-overlay .jcode-modelask,
+.jcode-overlay .jcode-modelload {
+  width: 100%;
+  max-width: 320px;
+  margin: 0;
+  text-align: left;
 }
 
 /* session actions row */
@@ -15571,45 +15691,6 @@ button.task-band:active {
   transform: translateX(18px);
 }
 
-/* icon-only tabs */
-.jcode-tabs {
-  flex: none;
-  margin: 12px 14px 0;
-}
-.jcode-tab {
-  flex: 1;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  height: 46px;
-  color: var(--text-2);
-  background: transparent;
-  border: none;
-  cursor: pointer;
-}
-.jcode-tab + .jcode-tab {
-  border-left: 1px solid var(--border);
-}
-.jcode-tab.on {
-  color: var(--text);
-}
-.jcode-tab.chat.on {
-  background: var(--steel-tint);
-  color: var(--steel);
-}
-.jcode-tab.diff.on {
-  background: var(--green-tint);
-  color: var(--green);
-}
-.jcode-tab.term.on {
-  background: var(--surface-2);
-  color: var(--text);
-}
-.jcode-tab.prev.on {
-  background: var(--location-tint);
-  color: var(--teal);
-}
-
 .jcode-panel {
   flex: 1;
   overflow-y: auto;
@@ -15670,69 +15751,6 @@ button.task-band:active {
   margin: 0 0 10px;
 }
 
-/* chat transcript */
-.jcode-msg {
-  margin-bottom: 10px;
-}
-.jcode-bubble {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 13px;
-  padding: 10px 12px;
-  font-size: 14.5px;
-  line-height: 1.5;
-}
-/* The user's own message is raw text — keep its newlines; the agent bubble renders
-   markdown (block elements), so pre-wrap there would double its spacing. */
-.jcode-bubble.you {
-  background: var(--surface-2);
-  white-space: pre-wrap;
-}
-.jcode-tools {
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
-  margin-top: 9px;
-}
-.jcode-tool {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-family: ui-monospace, Menlo, Consolas, monospace;
-  font-size: 11.5px;
-  color: var(--text-2);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 5px 9px;
-  background: var(--bg);
-}
-.jcode-tool-name {
-  font-weight: 600;
-  color: var(--text);
-}
-.jcode-tool-label {
-  flex: 1;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--text-3);
-}
-.jcode-tool-state {
-  flex: none;
-  color: var(--text-3);
-}
-.jcode-tool.done .jcode-tool-state {
-  color: var(--green);
-}
-.jcode-term {
-  font-family: ui-monospace, Menlo, Consolas, monospace;
-  font-size: 12px;
-  line-height: 1.65;
-  color: var(--text-2);
-  white-space: pre-wrap;
-  word-break: break-word;
-  margin: 0;
-}
 /* The interactive CLI fills its panel; xterm paints into .jcode-cli (it manages its own
    scrollback). The panel drops its padding so the terminal goes edge to edge, and stacks
    the terminal above the mobile key row. */
@@ -15795,147 +15813,6 @@ button.task-band:active {
   background: var(--amber-tint);
   border-color: var(--amber);
   color: var(--amber);
-}
-
-/* composer */
-.jcode-composer {
-  flex: none;
-  border-top: 1px solid var(--border);
-  padding: 10px 14px calc(10px + env(safe-area-inset-bottom));
-}
-.jcode-cbox {
-  display: flex;
-  align-items: flex-end;
-  gap: 9px;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 14px;
-  padding: 9px 11px;
-}
-.jcode-cbox textarea {
-  flex: 1;
-  background: transparent;
-  border: none;
-  resize: none;
-  color: var(--text);
-  font: inherit;
-  font-size: 15px;
-  line-height: 1.4;
-  max-height: 88px;
-  outline: none;
-}
-.jcode-send {
-  width: 38px;
-  height: 38px;
-  border-radius: 11px;
-  border: none;
-  flex: none;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: var(--amber-tint);
-  color: var(--amber);
-}
-.jcode-send:disabled {
-  opacity: 0.4;
-  cursor: default;
-}
-.jcode-send.stop {
-  background: var(--rose-tint);
-  color: var(--rose);
-}
-.jcode-cfoot {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  margin-top: 7px;
-  padding: 0 2px;
-  font-size: 11px;
-  color: var(--text-3);
-}
-.jcode-cdot {
-  width: 6px;
-  height: 6px;
-  flex: none;
-  border-radius: var(--r-pill);
-  background: var(--green);
-}
-.jcode-cmodel {
-  color: var(--text-2);
-  font-weight: 600;
-}
-.jcode-cbranch {
-  font-family: ui-monospace, Menlo, Consolas, monospace;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  max-width: 40%;
-}
-.jcode-csep {
-  opacity: 0.55;
-}
-
-/* The "Thinking… / Editing a file" status line above the composer reuses the chat's
-   AgentStatusLine view, whose styles are scoped to .fb-shell — re-scope the same rules
-   to the jcode composer (the fb-breathe / fb-sweep keyframes are global). */
-.jcode-composer .fb-status {
-  align-self: flex-start;
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  padding: 2px 6px 8px;
-  font-size: 12.5px;
-  font-weight: 500;
-  color: var(--text-2);
-}
-.jcode-composer .fb-status-mark {
-  width: 7px;
-  height: 7px;
-  flex: none;
-  border-radius: 999px;
-  background: var(--steel);
-}
-.jcode-composer .fb-status.live .fb-status-mark {
-  animation: fb-breathe 1.5s ease-in-out infinite;
-}
-.jcode-composer .fb-status.done {
-  color: var(--green);
-}
-.jcode-composer .fb-status.done .fb-status-mark {
-  background: var(--green);
-}
-.jcode-composer .fb-status.err {
-  color: var(--rose);
-}
-.jcode-composer .fb-status.err .fb-status-mark {
-  background: var(--rose);
-}
-.jcode-composer .fb-status-lab {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.jcode-composer .fb-status-lab .tool {
-  color: var(--text);
-  font-weight: 600;
-}
-.jcode-composer .fb-status.live .fb-status-lab {
-  background: linear-gradient(100deg, var(--text-3) 30%, var(--steel) 50%, var(--text-3) 70%);
-  background-size: 200% 100%;
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
-  animation: fb-sweep 1.9s linear infinite;
-}
-@media (prefers-reduced-motion: reduce) {
-  .jcode-composer .fb-status.live .fb-status-mark {
-    animation: none;
-  }
-  .jcode-composer .fb-status.live .fb-status-lab {
-    animation: none;
-    color: var(--steel);
-  }
 }
 
 /* jcode preview tab (Wave J4) */
