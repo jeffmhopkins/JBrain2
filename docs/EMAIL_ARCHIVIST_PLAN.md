@@ -123,6 +123,17 @@ egress Proposal instead of acting directly (noted in Wave E3).
   state. The firewall keeping it archivist-only is the **tool allowlist** (the `web`
   gate), not RLS — jerv runs as the owner too, so RLS wouldn't exclude it; the memory
   tools simply aren't in any other persona's allowlist.
+  - **Triage-corrections coupling.** The memory is also the channel by which the owner
+    corrects the unattended hourly triage sweep. The persona keeps a delimited
+    `=== TRIAGE CLARIFICATIONS ===` … `=== END TRIAGE CLARIFICATIONS ===` section in the
+    scratchpad (system prompt instructs it to record a concrete bucket correction there
+    whenever Jeff flags a misclassification). At the start of each sweep, `triage_inbox`
+    reads the owner's memory under `SYSTEM_CTX` (resolving the owner principal — the
+    interactive sessions write under it, not `worker`), extracts ONLY that section, and
+    injects it into every per-email `triage.classify` system prompt as owner overrides of
+    the general bucket rules. Best-effort: a missing section or a memory read failure
+    falls back to no overrides, so the sweep degrades to its prior behavior rather than
+    breaking. This is the one place the triage engine touches `archivist_memory`.
 
 **Scope of this plan = E1 + E2 + E2.5 + E3: the persona and the tool primitives.** The
 organizing *tasks* built on top of the persona — nightly/batch runs, how the label

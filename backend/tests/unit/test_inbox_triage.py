@@ -10,7 +10,12 @@ from collections.abc import Awaitable, Callable
 
 from jbrain.gmail.client import GmailApi, GmailLabel, GmailMessage
 from jbrain.gmail.fake import FakeGmail
-from jbrain.gmail.triage import _PROMPT, InboxTriage
+from jbrain.gmail.triage import (
+    _PROMPT,
+    InboxTriage,
+    _clarifications_block,
+    _extract_clarifications,
+)
 from jbrain.llm.fake import FakeLlmClient
 from jbrain.llm.router import LlmRouter
 
@@ -158,12 +163,75 @@ def test_classify_prompt_routes_retail_order_confirmations_to_medium() -> None:
     # test — so guard the instruction itself against silent regression. Order
     # confirmations / receipts / shipping updates are transactional, but informational:
     # they must not be pulled up to "high" by the transactional/time-sensitive wording.
-    rendered = _PROMPT.render().lower()
+    rendered = _PROMPT.render(clarifications="").lower()
     assert "order confirmation" in rendered
     assert "purchase receipt" in rendered
     # "high" is reserved for transactional mail that demands a response, not every
     # transactional message — the order email is explicitly excluded from it.
     assert 'never "high"' in rendered
+
+
+def test_extract_clarifications_pulls_only_the_marked_section() -> None:
+    # A realistic archivist scratchpad: taxonomy/progress notes around a marked
+    # corrections block. Only the block's bullets come back — the rest is ignored.
+    memory = (
+        "Taxonomy: Finance/Chase, Travel/Flights. Triaged through 2018.\n\n"
+        "=== TRIAGE CLARIFICATIONS (read by the hourly sweep) ===\n"
+        "- newsletters from acme.com are spam\n"
+        "- anything from my accountant (cpa@books.com) is high\n"
+        "=== END TRIAGE CLARIFICATIONS ===\n\n"
+        "Resume: keep working backwards through 2017.\n"
+    )
+    extracted = _extract_clarifications(memory)
+    assert "newsletters from acme.com are spam" in extracted
+    assert "cpa@books.com) is high" in extracted
+    assert "Taxonomy" not in extracted  # outside-the-markers noise is excluded
+    assert "Resume" not in extracted
+
+
+def test_extract_clarifications_empty_when_absent_or_blank() -> None:
+    assert _extract_clarifications("just taxonomy notes, no markers here") == ""
+    assert (
+        _extract_clarifications(
+            "=== TRIAGE CLARIFICATIONS ===\n\n=== END TRIAGE CLARIFICATIONS ==="
+        )
+        == ""
+    )
+
+
+def test_clarifications_block_is_empty_or_owner_framed() -> None:
+    assert _clarifications_block("") == ""
+    block = _clarifications_block("- newsletters from acme.com are spam")
+    assert "Owner corrections" in block
+    assert "priority over the general rules" in block
+    assert "newsletters from acme.com are spam" in block
+
+
+async def test_corrections_are_injected_into_every_classification() -> None:
+    # An owner correction reaches the model's system prompt on each per-email call.
+    # InboxTriage is fed the corrections through a stub _load_corrections (no DB here;
+    # the memory→corrections roundtrip is covered by the RLS integration test).
+    fake = FakeGmail(messages=[_msg("m1", date="Wed, 25 Jun 2026 09:00:00 +0000")])
+    router, llm = _router([{"bucket": "spam", "confidence": 0.9}])
+    triage = InboxTriage(_factory(fake), router)
+
+    async def _stub() -> str:
+        return "- newsletters from acme.com are spam"
+
+    triage._load_corrections = _stub  # type: ignore[method-assign]
+    await triage.run({})
+
+    assert "Owner corrections" in llm.calls[0]["system"]
+    assert "newsletters from acme.com are spam" in llm.calls[0]["system"]
+
+
+async def test_no_corrections_leaves_the_system_prompt_clean() -> None:
+    # With no maker (and so no memory), the injected block is empty — the base prompt
+    # is unchanged from its pre-corrections form.
+    fake = FakeGmail(messages=[_msg("m1", date="Wed, 25 Jun 2026 09:00:00 +0000")])
+    router, llm = _router([{"bucket": "spam", "confidence": 0.9}])
+    await InboxTriage(_factory(fake), router).run({})
+    assert "Owner corrections" not in llm.calls[0]["system"]
 
 
 async def test_archived_mail_drops_out_of_inbox_on_rerun() -> None:
