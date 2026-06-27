@@ -224,6 +224,7 @@ def create_app(
             websocket,
             session.workspace,
             model=session.model or settings.model,
+            preview_port=settings.preview_default_port,
             on_open=lambda pid: sessions.terminal_opened(sid, pid),
             on_close=lambda pid: sessions.terminal_closed(sid, pid),
             on_shell_exit=_on_shell_exit,
