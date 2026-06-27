@@ -9,7 +9,7 @@ subject restriction.
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, SmallInteger, Text, func
+from sqlalchemy import BigInteger, DateTime, ForeignKey, SmallInteger, Text, func, text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -68,6 +68,12 @@ class Principal(Base):
     # session, so the link binds to the one browser that claimed it. NULL = unredeemed
     # (and NULL for every other kind).
     redeemed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Cumulative usage for external_llm principals (0 for every other kind): input and
+    # output tokens proxied to the on-box coder plus the request count, stamped by the
+    # public LLM proxy after each call so the owner's session screen shows consumption.
+    ext_in_tokens: Mapped[int] = mapped_column(BigInteger, server_default=text("0"))
+    ext_out_tokens: Mapped[int] = mapped_column(BigInteger, server_default=text("0"))
+    ext_requests: Mapped[int] = mapped_column(BigInteger, server_default=text("0"))
 
 
 class DeviceSession(Base):

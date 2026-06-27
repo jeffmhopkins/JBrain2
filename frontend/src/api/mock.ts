@@ -2634,6 +2634,20 @@ const jcodeShares: Record<
   }[]
 > = {};
 let jcodeShareN = 1;
+// External-LLM endpoints the owner has minted (dev:mock), so the launcher's external
+// section + the external screen have something to list, toggle, and revoke.
+const jcodeExternal: {
+  id: string;
+  label: string;
+  enabled: boolean;
+  created_at: string;
+  expires_at: string | null;
+  last_used_at: string | null;
+  in_tokens: number;
+  out_tokens: number;
+  requests: number;
+}[] = [];
+let jcodeExternalN = 1;
 
 function jcodeTurnStream(): Response {
   const frames = [
@@ -2793,6 +2807,50 @@ export const mockFetch: typeof fetch = async (input, init) => {
   }
   if (path === "/api/jcode/share/redeem" && method === "POST") {
     return json({ session_id: jcodeSessions[0]?.id ?? "j1" });
+  }
+
+  // External-LLM sessions (owner): mint/list/toggle/revoke a public coder endpoint.
+  if (path === "/api/jcode/external" && method === "GET") return json(jcodeExternal);
+  if (path === "/api/jcode/external" && method === "POST") {
+    const body = JSON.parse(String(init?.body)) as { label?: string; ttl_hours?: number };
+    const id = `ext-${jcodeExternalN++}`;
+    const expires_at = body.ttl_hours
+      ? new Date(Date.now() + body.ttl_hours * 3600_000).toISOString()
+      : null;
+    jcodeExternal.unshift({
+      id,
+      label: body.label || "external session",
+      enabled: true,
+      created_at: new Date().toISOString(),
+      expires_at,
+      last_used_at: null,
+      in_tokens: 0,
+      out_tokens: 0,
+      requests: 0,
+    });
+    return json(
+      {
+        id,
+        label: body.label || "external session",
+        expires_at,
+        token: `mock-ext-secret-${id}`,
+        url: `${window.location.origin}/api/ext/llm/${id}`,
+      },
+      201,
+    );
+  }
+  if (path.startsWith("/api/jcode/external/") && path.endsWith("/enabled") && method === "POST") {
+    const id = path.split("/")[4] ?? "";
+    const body = JSON.parse(String(init?.body)) as { enabled: boolean };
+    const s = jcodeExternal.find((x) => x.id === id);
+    if (s) s.enabled = body.enabled;
+    return json({ enabled: body.enabled });
+  }
+  if (path.startsWith("/api/jcode/external/") && method === "DELETE") {
+    const id = path.split("/")[4] ?? "";
+    const i = jcodeExternal.findIndex((x) => x.id === id);
+    if (i >= 0) jcodeExternal.splice(i, 1);
+    return new Response(null, { status: 204 });
   }
   // Preview routes first — the DELETE here would otherwise match the session DELETE.
   if (path.startsWith("/api/jcode/sessions/") && path.endsWith("/preview")) {

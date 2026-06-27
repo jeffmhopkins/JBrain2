@@ -15369,6 +15369,104 @@ input.ld-title {
   color: var(--teal);
 }
 
+/* External LLM endpoints — launcher list section + the endpoint screen. */
+.jcode-extlist {
+  margin-top: 18px;
+}
+.jcode-extlist-head {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-2);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 0 4px 6px;
+}
+.jcode-extbody {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px;
+}
+.jcode-extrow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.jcode-extcard {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg, 14px);
+}
+.jcode-extsecret {
+  border-color: color-mix(in srgb, var(--teal) 45%, var(--border));
+}
+.jcode-extlabel {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+.jcode-extstats {
+  display: flex;
+  gap: 10px;
+}
+.jcode-extstat {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 10px 6px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+.jcode-extnum {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text);
+}
+.jcode-extcap {
+  font-size: 11px;
+  color: var(--text-2);
+}
+.jcode-extdelete {
+  align-self: flex-start;
+}
+/* The on/off switch on the endpoint screen. */
+.jcode-toggle {
+  flex: none;
+  width: 46px;
+  height: 28px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  position: relative;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.jcode-toggle.on {
+  background: var(--teal);
+  border-color: var(--teal);
+}
+.jcode-toggle-knob {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--surface);
+  transition: transform 0.15s;
+}
+.jcode-toggle.on .jcode-toggle-knob {
+  transform: translateX(18px);
+}
+
 /* icon-only tabs */
 .jcode-tabs {
   flex: none;

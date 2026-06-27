@@ -24,6 +24,8 @@ import type {
 } from "../agent/types";
 import { parseJcodeStream } from "../jcode/stream";
 import type {
+  ExternalMint,
+  ExternalSession,
   JcodeEvent,
   JcodeModelStatus,
   JcodePreview,
@@ -2307,6 +2309,32 @@ export const api = {
    * already-claimed link (share links are single-use — first browser binds it). */
   async jcodeRedeemShare(token: string): Promise<{ session_id: string }> {
     return (await request("/api/jcode/share/redeem", jsonInit("POST", { token }))).json();
+  },
+
+  /** External-LLM sessions (owner only): a token-gated public endpoint exposing the
+   * on-box coder to a remote Claude. List metadata + cumulative usage. */
+  async externalSessions(): Promise<ExternalSession[]> {
+    return (await request("/api/jcode/external")).json();
+  },
+
+  /** Mint an external session; returns the bearer secret + endpoint URL ONCE. */
+  async externalMint(label: string, ttlHours?: number): Promise<ExternalMint> {
+    const body: { label: string; ttl_hours?: number } = { label };
+    if (ttlHours) body.ttl_hours = ttlHours;
+    return (await request("/api/jcode/external", jsonInit("POST", body))).json();
+  },
+
+  /** Flip an external session's on/off toggle. */
+  async externalSetEnabled(id: string, enabled: boolean): Promise<void> {
+    await request(
+      `/api/jcode/external/${encodeURIComponent(id)}/enabled`,
+      jsonInit("POST", { enabled }),
+    );
+  },
+
+  /** Revoke (delete) an external session. */
+  async externalRevoke(id: string): Promise<void> {
+    await request(`/api/jcode/external/${encodeURIComponent(id)}`, { method: "DELETE" });
   },
 
   /** Spin a new sandboxed session (clone a repo or scratch). */

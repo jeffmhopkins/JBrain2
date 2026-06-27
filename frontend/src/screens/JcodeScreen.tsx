@@ -14,9 +14,15 @@ import {
   PlusIcon,
   TrashIcon,
 } from "../components/icons";
-import type { JcodeSession, NewSessionInput } from "../jcode/types";
+import type { ExternalSession, JcodeSession, NewSessionInput } from "../jcode/types";
 import { type Drag, RAIL_WIDTH, beginDrag, endDrag, moveDrag } from "../notes/swipe";
+import { ExternalSessionScreen } from "./ExternalSessionScreen";
 import { JcodeSessionScreen } from "./JcodeSessionScreen";
+
+// An open external endpoint: the session row plus, right after minting, its one-time
+// secret and the URL the remote points at (reconstructed from the origin for existing
+// ones, since the list carries no secret/url).
+type OpenExternal = { session: ExternalSession; secret: string | null; url: string };
 
 type LoadState =
   | { kind: "loading" }
@@ -51,6 +57,8 @@ export function JcodeScreen({ onClose }: { onClose: () => void }) {
   const [bucket, setBucket] = useState<Bucket>("today");
   const [newOpen, setNewOpen] = useState(false);
   const [open, setOpen] = useState<JcodeSession | null>(null);
+  const [openExt, setOpenExt] = useState<OpenExternal | null>(null);
+  const [external, setExternal] = useState<ExternalSession[]>([]);
   // One swipe rail open at a time (like the agent-sessions manager).
   const [railId, setRailId] = useState<string | null>(null);
 
@@ -61,6 +69,17 @@ export function JcodeScreen({ onClose }: { onClose: () => void }) {
       if (err instanceof ApiError && err.status === 404) setState({ kind: "disabled" });
       else setState({ kind: "error" });
     }
+    // External endpoints live alongside coding sessions; a failure here just leaves the
+    // section empty (it never blocks the main list).
+    try {
+      setExternal(await api.externalSessions());
+    } catch {
+      setExternal([]);
+    }
+  }
+
+  function endpointUrl(id: string): string {
+    return `${window.location.origin}/api/ext/llm/${id}`;
   }
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: load the index once on mount; refresh is also invoked on session-close.
@@ -76,6 +95,21 @@ export function JcodeScreen({ onClose }: { onClose: () => void }) {
         session={open}
         onClose={() => {
           setOpen(null);
+          void refresh();
+        }}
+      />
+    );
+  }
+
+  if (openExt) {
+    return (
+      <ExternalSessionScreen
+        session={openExt.session}
+        secret={openExt.secret}
+        url={openExt.url}
+        onChanged={() => void refresh()}
+        onClose={() => {
+          setOpenExt(null);
           void refresh();
         }}
       />
@@ -99,6 +133,27 @@ export function JcodeScreen({ onClose }: { onClose: () => void }) {
     const session = await api.jcodeCreateSession(input);
     setNewOpen(false);
     setOpen(session);
+  }
+
+  // External endpoint: mint, then open its screen with the one-time secret + URL.
+  async function startExternal(label: string) {
+    const m = await api.externalMint(label);
+    setNewOpen(false);
+    setOpenExt({
+      session: {
+        id: m.id,
+        label: m.label,
+        enabled: true,
+        created_at: new Date().toISOString(),
+        expires_at: m.expires_at,
+        last_used_at: null,
+        in_tokens: 0,
+        out_tokens: 0,
+        requests: 0,
+      },
+      secret: m.token,
+      url: m.url,
+    });
   }
 
   // Rail actions optimistically refresh the index so the row moves/leaves at once.
@@ -189,10 +244,46 @@ export function JcodeScreen({ onClose }: { onClose: () => void }) {
               ))}
             </div>
           )}
+
+          {/* External LLM endpoints — token-gated public access to the on-box coder.
+              Listed here (not in the Today/Older buckets) since they're not coding
+              sessions; tap to see usage + the on/off toggle. */}
+          {external.length > 0 && (
+            <div className="jcode-extlist">
+              <div className="jcode-extlist-head">External LLM endpoints</div>
+              {external.map((e) => (
+                <button
+                  type="button"
+                  key={e.id}
+                  className="jcode-row"
+                  onClick={() => setOpenExt({ session: e, secret: null, url: endpointUrl(e.id) })}
+                >
+                  <span
+                    className={`jcode-sd${e.enabled ? " live" : ""}`}
+                    title={e.enabled ? "on" : "off"}
+                  />
+                  <span className="jcode-main">
+                    <span className="jcode-repo">{e.label || "external session"}</span>
+                    <span className="jcode-sub">
+                      {e.enabled ? "on" : "off"} · {e.requests.toLocaleString()} req ·{" "}
+                      {(e.in_tokens + e.out_tokens).toLocaleString()} tok
+                    </span>
+                  </span>
+                  <ChevronRightIcon size={16} />
+                </button>
+              ))}
+            </div>
+          )}
         </div>
       )}
 
-      {newOpen && <NewSessionSheet onClose={() => setNewOpen(false)} onStart={start} />}
+      {newOpen && (
+        <NewSessionSheet
+          onClose={() => setNewOpen(false)}
+          onStart={start}
+          onStartExternal={startExternal}
+        />
+      )}
     </section>
   );
 }
@@ -411,13 +502,16 @@ function JcodeArchiveGlyph(): ReactNode {
 function NewSessionSheet({
   onClose,
   onStart,
+  onStartExternal,
 }: {
   onClose: () => void;
   onStart: (input: NewSessionInput) => Promise<void>;
+  onStartExternal: (label: string) => Promise<void>;
 }) {
-  const [mode, setMode] = useState<"clone" | "scratch">("clone");
+  const [mode, setMode] = useState<"clone" | "scratch" | "external">("clone");
   const [repo, setRepo] = useState("");
   const [workBranch, setWorkBranch] = useState("");
+  const [extLabel, setExtLabel] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -425,13 +519,19 @@ function NewSessionSheet({
     setBusy(true);
     setError(null);
     try {
-      await onStart({
-        repo: mode === "clone" ? repo.trim() : "",
-        branch: "main",
-        work_branch: workBranch.trim(),
-      });
+      if (mode === "external") {
+        await onStartExternal(extLabel.trim() || "external session");
+      } else {
+        await onStart({
+          repo: mode === "clone" ? repo.trim() : "",
+          branch: "main",
+          work_branch: workBranch.trim(),
+        });
+      }
     } catch {
-      setError("Couldn't start the session.");
+      setError(
+        mode === "external" ? "Couldn't create the endpoint." : "Couldn't start the session.",
+      );
       setBusy(false);
     }
   }
@@ -439,7 +539,7 @@ function NewSessionSheet({
   return (
     <Sheet title="New session" onClose={onClose}>
       <div className="jcode-seg" role="tablist" aria-label="Workspace">
-        {(["clone", "scratch"] as const).map((m) => (
+        {(["clone", "scratch", "external"] as const).map((m) => (
           <button
             key={m}
             type="button"
@@ -448,31 +548,54 @@ function NewSessionSheet({
             className={`jcode-segbtn${mode === m ? " on" : ""}`}
             onClick={() => setMode(m)}
           >
-            {m === "clone" ? "Clone repo" : "Scratch"}
+            {m === "clone" ? "Clone repo" : m === "scratch" ? "Scratch" : "External"}
           </button>
         ))}
       </div>
-      {mode === "clone" && (
-        <input
-          className="jcode-inp"
-          placeholder="https://github.com/you/repo"
-          value={repo}
-          onChange={(e) => setRepo(e.target.value)}
-        />
+
+      {mode === "external" ? (
+        <>
+          <input
+            className="jcode-inp"
+            placeholder="label (e.g. Claude on my laptop)"
+            value={extLabel}
+            onChange={(e) => setExtLabel(e.target.value)}
+          />
+          <div className="jcode-modelcard">
+            <span className="jcode-mcname">Qwen3-Coder-Next 80B-A3B</span>
+            <span className="jcode-mcbadge">on-box</span>
+          </div>
+          <p className="jcode-mcnote">
+            A token-gated public endpoint exposing your loaded coder over the Anthropic API. Off
+            until you switch it on; refuses when the coder isn't loaded. Revoke anytime.
+          </p>
+        </>
+      ) : (
+        <>
+          {mode === "clone" && (
+            <input
+              className="jcode-inp"
+              placeholder="https://github.com/you/repo"
+              value={repo}
+              onChange={(e) => setRepo(e.target.value)}
+            />
+          )}
+          <input
+            className="jcode-inp"
+            placeholder="work branch (default: jcode/<id>)"
+            value={workBranch}
+            onChange={(e) => setWorkBranch(e.target.value)}
+          />
+          <div className="jcode-modelcard">
+            <span className="jcode-mcname">Qwen3-Coder-Next 80B-A3B</span>
+            <span className="jcode-mcbadge">on-box</span>
+          </div>
+          <p className="jcode-mcnote">
+            Fresh isolated checkout · no host access · reads no notes · completions on-box.
+          </p>
+        </>
       )}
-      <input
-        className="jcode-inp"
-        placeholder="work branch (default: jcode/<id>)"
-        value={workBranch}
-        onChange={(e) => setWorkBranch(e.target.value)}
-      />
-      <div className="jcode-modelcard">
-        <span className="jcode-mcname">Qwen3-Coder-Next 80B-A3B</span>
-        <span className="jcode-mcbadge">on-box</span>
-      </div>
-      <p className="jcode-mcnote">
-        Fresh isolated checkout · no host access · reads no notes · completions on-box.
-      </p>
+
       {error && <p className="jcode-err">{error}</p>}
       <button
         type="button"
@@ -480,7 +603,7 @@ function NewSessionSheet({
         disabled={busy || (mode === "clone" && !repo.trim())}
         onClick={go}
       >
-        {busy ? "Starting…" : "Start session →"}
+        {busy ? (mode === "external" ? "Creating…" : "Starting…") : "Start session →"}
       </button>
     </Sheet>
   );

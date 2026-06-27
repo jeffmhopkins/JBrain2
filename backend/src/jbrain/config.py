@@ -238,6 +238,13 @@ class Settings(BaseSettings):
     jcode_enabled: bool = False
     jcode_token: str = ""
     jcode_model: str = "qwen3-coder-next"
+    # The Anthropic<->OpenAI shim (LiteLLM) the external-LLM proxy forwards to, and its
+    # master key (the same JCODE_GATEWAY_TOKEN the jcode sandbox presents). Used ONLY by
+    # the token-gated external-LLM endpoint that exposes the on-box coder to a remote
+    # Claude — reachable on the `jcode` network the api already joins. An empty token
+    # fail-closes the proxy (external sessions can't reach the model).
+    jcode_shim_url: str = "http://claude-shim:4000"
+    jcode_gateway_token: str = ""
 
     # JSON object of per-task "provider:model" overrides, merged over the
     # adapter defaults — see jbrain.llm.router.TASK_DEFAULTS.

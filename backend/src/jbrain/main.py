@@ -36,6 +36,7 @@ from jbrain.api import (
     debug,
     debug_tokens,
     devices,
+    external_llm,
     family,
     feed,
     health,
@@ -578,6 +579,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(jcode.router, prefix="/api")
     app.include_router(jcode_share.router, prefix="/api")
     app.include_router(jcode_terminal.router, prefix="/api")
+    app.include_router(external_llm.router, prefix="/api")
     app.include_router(lists_api.router, prefix="/api")
     app.include_router(llm_settings_api.router, prefix="/api")
     app.include_router(locations.router, prefix="/api")

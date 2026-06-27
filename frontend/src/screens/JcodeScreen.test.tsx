@@ -63,6 +63,52 @@ describe("JcodeScreen (launcher)", () => {
     expect(await screen.findByText(/Tell jcode what to build/i)).toBeInTheDocument();
   });
 
+  it("mints an external endpoint and opens its screen with the one-time secret", async () => {
+    vi.spyOn(api, "jcodeSessions").mockResolvedValue([]);
+    vi.spyOn(api, "externalSessions").mockResolvedValue([]);
+    const mint = vi.spyOn(api, "externalMint").mockResolvedValue({
+      id: "ext-9",
+      label: "Laptop",
+      expires_at: null,
+      token: "sk-ext-secret",
+      url: "https://box.example/api/ext/llm/ext-9",
+    });
+    render(<JcodeScreen onClose={vi.fn()} />);
+
+    fireEvent.click(await screen.findByText("New session"));
+    fireEvent.click(screen.getByRole("tab", { name: "External" }));
+    fireEvent.change(screen.getByPlaceholderText(/label/i), { target: { value: "Laptop" } });
+    fireEvent.click(screen.getByText("Start session →"));
+
+    await waitFor(() => expect(mint).toHaveBeenCalledWith("Laptop"));
+    // The endpoint screen shows, with the secret revealed exactly once.
+    expect(await screen.findByDisplayValue("sk-ext-secret")).toBeInTheDocument();
+    expect(screen.getByDisplayValue("https://box.example/api/ext/llm/ext-9")).toBeInTheDocument();
+  });
+
+  it("lists existing external endpoints and opens one (no secret)", async () => {
+    vi.spyOn(api, "jcodeSessions").mockResolvedValue([]);
+    vi.spyOn(api, "externalSessions").mockResolvedValue([
+      {
+        id: "ext-1",
+        label: "Remote",
+        enabled: true,
+        created_at: new Date().toISOString(),
+        expires_at: null,
+        last_used_at: null,
+        in_tokens: 5,
+        out_tokens: 7,
+        requests: 1,
+      },
+    ]);
+    render(<JcodeScreen onClose={vi.fn()} />);
+
+    fireEvent.click(await screen.findByText("Remote"));
+    // The endpoint screen shows usage but no secret (it's never re-readable).
+    expect(await screen.findByText("Token usage")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Access token")).not.toBeInTheDocument();
+  });
+
   it("swipe-left → tap-again delete fires jcodeDeleteSession", async () => {
     vi.spyOn(api, "jcodeSessions").mockResolvedValue([session()]);
     const del = vi.spyOn(api, "jcodeDeleteSession").mockResolvedValue();
