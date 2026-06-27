@@ -126,6 +126,15 @@ class JcodeSessionRepo:
         )
         await session.execute(stmt)
 
+    async def set_status(self, session: AsyncSession, sid: str, *, status: str) -> None:
+        """Update only `status`, leaving `last_active_at` untouched. Used to reconcile
+        the mirror with the control server (the source of truth for status) on list —
+        a shell exit pauses a session there without touching this table, and bumping
+        activity would lie about when the session was last used."""
+        await session.execute(
+            update(JcodeSession).where(JcodeSession.id == sid).values(status=status)
+        )
+
     async def rename(self, session: AsyncSession, sid: str, title: str) -> None:
         await session.execute(
             update(JcodeSession).where(JcodeSession.id == sid).values(title=title)

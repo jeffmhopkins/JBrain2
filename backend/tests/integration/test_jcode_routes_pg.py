@@ -99,6 +99,55 @@ async def test_full_session_lifecycle_through_the_routes(maker: async_sessionmak
         assert (await client.get(f"/api/jcode/sessions/{sid}")).status_code == 404
 
 
+async def test_list_reconciles_a_shell_exit_pause_into_the_mirror(
+    maker: async_sessionmaker,
+) -> None:
+    # A shell exit (Ctrl-D / `exit`) pauses a session on the control server WITHOUT
+    # going through the /stop route, so the durable mirror keeps `ready` and the
+    # launcher dot would show a paused session as live. Listing reconciles the mirror
+    # against the control server's live status, so the dot reflects reality — and the
+    # change is persisted (a later get reads `stopped` too).
+    owner_id = await _owner_id(maker)
+    app = _app(maker, owner_id)
+    control = app.state.jcode_client  # the fake control server backing this app
+    transport = ASGITransport(app=app)
+
+    async with AsyncClient(transport=transport, base_url="http://t") as client:
+        sid = (await client.post("/api/jcode/sessions", json={"repo": "r"})).json()["id"]
+
+        # Simulate the shell-exit pause: flip the control server's status straight,
+        # bypassing the /stop route the mirror listens to.
+        await control.stop(sid)
+        assert (await client.get(f"/api/jcode/sessions/{sid}")).json()["status"] == "ready"
+
+        listed = (await client.get("/api/jcode/sessions")).json()
+        assert [(s["id"], s["status"]) for s in listed] == [(sid, "stopped")]
+        # Persisted: a direct get now reads the reconciled status too.
+        assert (await client.get(f"/api/jcode/sessions/{sid}")).json()["status"] == "stopped"
+
+
+async def test_list_falls_back_to_the_mirror_when_the_control_server_is_unreachable(
+    maker: async_sessionmaker,
+) -> None:
+    # The durable mirror is the launcher's offline answer: if the control server can't
+    # be reached for the live status, listing still returns the last-known rows.
+    owner_id = await _owner_id(maker)
+    app = _app(maker, owner_id)
+    transport = ASGITransport(app=app)
+
+    async with AsyncClient(transport=transport, base_url="http://t") as client:
+        sid = (await client.post("/api/jcode/sessions", json={"repo": "r"})).json()["id"]
+
+        async def _boom() -> list[dict[str, object]]:
+            from jbrain.jcode import JcodeError
+
+            raise JcodeError("control server down")
+
+        app.state.jcode_client.list_sessions = _boom  # type: ignore[method-assign]
+        listed = (await client.get("/api/jcode/sessions")).json()
+        assert [s["id"] for s in listed] == [sid]
+
+
 class _FakeGateway:
     """Records load/unload + reports residency for the warm + status tests."""
 

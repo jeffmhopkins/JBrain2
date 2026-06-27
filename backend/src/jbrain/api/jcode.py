@@ -14,6 +14,7 @@ import contextlib
 import logging
 import re
 from collections import Counter
+from dataclasses import replace
 from typing import TYPE_CHECKING, cast
 
 from fastapi import APIRouter, HTTPException, Request
@@ -24,7 +25,7 @@ from jbrain.db import SessionContext, scoped_session
 from jbrain.jcode import JcodeApi, JcodeError
 from jbrain.llm import local_catalog
 from jbrain.llm.local_gateway import LocalGatewayError
-from jbrain.models.jcode import JcodeSessionRepo
+from jbrain.models.jcode import JcodeSessionRepo, JcodeSessionRow
 from jbrain.settings_store import SqlSettingsStore
 
 if TYPE_CHECKING:
@@ -261,11 +262,43 @@ async def warm_model(owner: OwnerDep, request: Request) -> dict[str, object]:
     return await _model_payload(request, owner.id)
 
 
+async def _live_statuses(request: Request) -> dict[str, str]:
+    """Session id → the control server's current status (the source of truth). Empty
+    when code mode is off or the control server is unreachable, so the caller falls
+    back to the durable mirror."""
+    client = getattr(request.app.state, "jcode_client", None)
+    if client is None:
+        return {}
+    try:
+        sessions = await cast(JcodeApi, client).list_sessions()
+    except JcodeError:
+        return {}
+    return {
+        str(s["id"]): str(s.get("status", "ready"))
+        for s in sessions
+        if isinstance(s, dict) and "id" in s
+    }
+
+
 @router.get("/jcode/sessions")
 async def list_sessions(owner: OwnerDep, request: Request) -> list[dict[str, object]]:
+    # Reconcile the durable mirror against the control server's live status: a shell
+    # exit (Ctrl-D / `exit`) pauses a session there without going through the /stop
+    # route, so the mirror's status would otherwise stay `ready` and the launcher dot
+    # show a paused session as live. Persist any drift (status only — never bump
+    # last_active_at) so subsequent get reads stay consistent. Best-effort: if the
+    # control server is down the durable mirror still answers.
+    live = await _live_statuses(request)
     async with scoped_session(_maker(request), _owner_ctx(owner.id)) as db:
         rows = await _REPO.list(db)
-    return [row.__dict__ for row in rows]
+        out: list[JcodeSessionRow] = []
+        for row in rows:
+            fresh = live.get(row.id)
+            if fresh is not None and fresh != row.status:
+                await _REPO.set_status(db, row.id, status=fresh)
+                row = replace(row, status=fresh)
+            out.append(row)
+    return [row.__dict__ for row in out]
 
 
 @router.get("/jcode/sessions/{sid}")
