@@ -8,7 +8,11 @@ change: `PUT /api/ops/schedules/{id}` with `schedule_kind:"interval"` and a
 positive `interval_seconds` (`ScheduleBody`, `api/ops.py`). This is the missing
 **front end** for editing a reconciler's minute/hourly cadence.
 
-These three mocks explore **how the owner enters a sub-day interval**. All three:
+**Decision (owner, GUI gate): B · Number + unit is the binding spec.** The
+unchosen mocks (A stepper, C preset chips) were removed per mock-first
+discipline; `interval-b-number-unit.html` is the spec implementation follows.
+
+These mocks explored **how the owner enters a sub-day interval**. All shared:
 
 - Add an **Interval** mode to the editor and ungate the "Edit schedule" button
   for reconcilers (`isEditableSchedule`).
@@ -20,22 +24,22 @@ These three mocks explore **how the owner enters a sub-day interval**. All three
   hour or more (new items wait that long to be processed).
 - Save as `{ schedule_kind:"interval", interval_seconds }`.
 
-## The three options
+## The chosen option
 
-- **A · Stepper** (`interval-a-stepper.html`) — a big −/＋ stepper over a
-  curated ladder of intervals (1/2/3/5/10/15/20/30/45 min, 1/2/3/4/6/8/12 h)
-  with a Minutes/Hours unit toggle. One-thumb, no keyboard, hard to enter a
-  nonsense value; least precise for an arbitrary number.
-- **B · Number + unit** (`interval-b-number-unit.html`) — a numeric field +
-  a unit select ("Every [5] [minutes]"), with quick chips and inline
+- **B · Number + unit** (`interval-b-number-unit.html`, chosen) — a numeric
+  field + a unit select ("Every [5] [minutes]"), with quick chips and inline
   validation. Most precise/flexible; needs the keyboard and a validity guard.
-- **C · Preset chips** (`interval-c-preset-chips.html`) — a grid of common
-  cadences (5/15/30 min, 1/6/12 h) plus a **Custom…** row that reveals a
-  number+unit. Fastest for the common case, still allows arbitrary values;
-  takes the most vertical space.
 
-## Decision
+Considered and rejected: A · Stepper (curated −/＋ ladder; least precise for an
+arbitrary value) and C · Preset chips (grid + Custom…; most vertical space).
 
-The chosen mock becomes the binding spec and the others are removed (mock-first
-discipline, `docs/DESIGN.md`). Implementation then follows the wave process
-(`docs/PROCESS.md`).
+## Implementation notes (binding)
+
+- Ungate `isEditableSchedule` so reconcilers (`group === "reconcile"`) get the
+  "Edit schedule" button, alongside the existing nightly sweeps.
+- The reconciler editor offers **Interval** and **On demand** only — never the
+  daily/weekly wall-clock repeat (that would downgrade a sub-day sweep). Nightly
+  sweeps keep their existing on_demand/once/repeat editor unchanged.
+- Interval saves as `{ schedule_kind:"interval", interval_seconds }` (minutes×60
+  or hours×3600); reject a non-positive / non-integer value before save.
+- Implementation follows the wave process (`docs/PROCESS.md`).
