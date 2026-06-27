@@ -209,7 +209,8 @@ class PtyTerminal:
         self._closed = False  # teardown ran (guards it to once)
         self._new = asyncio.Event()  # poked on new output / exit so stream_to wakes
         # The client socket currently driving, or None when detached (takeover state).
-        self.attached: object | None = None
+        # Typed loosely (the WS shape varies: Starlette in prod, a fake in tests).
+        self.attached: Any = None
         # Fired once when the SHELL exits on its own (Ctrl-D / ``exit``) — NOT on an
         # external kill. The route wires it to deregister the pid + pause the session.
         self.on_exit: Callable[[], None] | None = None

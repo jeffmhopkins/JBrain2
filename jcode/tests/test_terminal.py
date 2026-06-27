@@ -144,7 +144,7 @@ async def test_shell_persists_across_reconnect_and_replays_scrollback(tmp_path) 
     )
     t1 = asyncio.ensure_future(
         serve_terminal(
-            ws1,
+            ws1,  # type: ignore[arg-type]
             "s1",
             registry,
             str(tmp_path),
@@ -165,7 +165,11 @@ async def test_shell_persists_across_reconnect_and_replays_scrollback(tmp_path) 
         ws2 = _FakeWS([])  # reconnect: a fresh xterm with no history of its own
         t2 = asyncio.ensure_future(
             serve_terminal(
-                ws2, "s1", registry, str(tmp_path), on_open=lambda p: pids.append(p)
+                ws2,  # type: ignore[arg-type]
+                "s1",
+                registry,
+                str(tmp_path),
+                on_open=lambda p: pids.append(p),
             )
         )
         await _wait_sent(ws2, b"PERSIST_MARKER")  # the earlier output is replayed
@@ -181,12 +185,16 @@ async def test_second_client_takes_over_and_closes_the_first(tmp_path) -> None:
     # socket, so two browsers can't fight over one PTY.
     registry = TerminalRegistry()
     ws1 = _FakeWS([])  # connect and stay attached (no scripted disconnect)
-    t1 = asyncio.ensure_future(serve_terminal(ws1, "s1", registry, str(tmp_path)))
+    t1 = asyncio.ensure_future(
+        serve_terminal(ws1, "s1", registry, str(tmp_path))  # type: ignore[arg-type]
+    )
     try:
         await _wait_until(lambda: getattr(registry.get("s1"), "attached", None) is ws1)
 
         ws2 = _FakeWS([])
-        t2 = asyncio.ensure_future(serve_terminal(ws2, "s1", registry, str(tmp_path)))
+        t2 = asyncio.ensure_future(
+            serve_terminal(ws2, "s1", registry, str(tmp_path))  # type: ignore[arg-type]
+        )
         await asyncio.wait_for(t1, timeout=10)  # the takeover closed ws1 → t1 returns
 
         assert ws1.closed  # the first socket was closed by the takeover
