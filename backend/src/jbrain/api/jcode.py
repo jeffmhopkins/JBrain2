@@ -213,8 +213,8 @@ async def create_session(
 
 async def _model_payload(request: Request, owner_id: str) -> dict[str, object]:
     """The code-mode model status: the configured coder, whether it's resident, whether a
-    warm is in flight, and what else is currently on the box (so the screen can tell the
-    owner which model a swap would evict)."""
+    warm is in flight (plus a real load fraction while it is), and what else is currently on
+    the box (so the screen can tell the owner which model a swap would evict)."""
     settings = cast("Settings", request.app.state.settings)
     model_id = await _resolve_model(request, owner_id)
     served = _served_model(model_id)
@@ -227,11 +227,23 @@ async def _model_payload(request: Request, owner_id: str) -> dict[str, object]:
     # the up-to-2-min health-gated load). `loaded` alone races true early, so the bar
     # keys off `warming` to stay up for the whole real load.
     warming = _warming_models(request)[served] > 0
+    # The real load fraction (weights actually read in), parsed from the gateway logs —
+    # only worth probing during the load window. None means "no parseable signal"; the bar
+    # falls back to a time estimate. Best-effort: a gateway hiccup must not break status.
+    progress: float | None = None
+    if warming and gateway is not None:
+        probe = getattr(gateway, "load_progress", None)
+        if probe is not None:
+            try:
+                progress = await probe()
+            except Exception:  # noqa: BLE001 — a log hiccup just drops to the time estimate
+                progress = None
     return {
         "model": model_id,
         "served": served,
         "loaded": served in running,
         "warming": warming,
+        "progress": progress,
         "hosting": settings.local_llm_enabled,
         "size_gb": cat.size_gb if cat else 0.0,
         # The served context window the coder runs with — full native (262144) for the

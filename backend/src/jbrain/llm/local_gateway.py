@@ -8,9 +8,13 @@ models are resident in memory:
   - GET  /upstream/{model}/health      → proxy a request, which makes the gateway
                                          load the model (llama-swap has no explicit
                                          load endpoint; loading is request-driven)
-  - POST /upstream/{model}/v1/chat/completions (1 token, discarded) → force the
-                                         first forward pass so the mmap'd weights
-                                         fault into RAM up front (see `load`)
+  - POST /upstream/{model}/v1/chat/completions (1 token, discarded) → warm the
+                                         inference path after load so the first real
+                                         turn isn't the slow one (see `load`)
+  - GET  /logs                         → recent gateway + upstream stdout, which the
+                                         loading bar mines for the llama.cpp model-load
+                                         percentage (a real "weights read in" signal,
+                                         since we run --no-mmap)
 
 Best-effort by design. The settings screen must render even when the gateway is
 down, still cold, or too old to expose these endpoints, so `running()` swallows
@@ -23,6 +27,7 @@ strip that suffix once here.
 
 from __future__ import annotations
 
+import re
 from typing import Protocol
 
 import httpx
@@ -45,6 +50,11 @@ class LocalGateway(Protocol):
     async def unload(self, served_model: str) -> None: ...
 
     async def load(self, served_model: str) -> None: ...
+
+    # NOTE: load_progress() is deliberately NOT on this protocol. It's an optional,
+    # best-effort extension only the jcode status probes (via getattr), so keeping it off
+    # the protocol lets the many structural test fakes satisfy LocalGateway without each
+    # having to stub it. Add it here only if a typed caller must depend on it.
 
 
 class LocalGatewayClient:
@@ -85,16 +95,18 @@ class LocalGatewayClient:
             raise LocalGatewayError(str(exc)) from exc
 
     async def load(self, served_model: str) -> None:
-        """Load `served_model` into memory AND warm it for inference. A health probe
-        starts the model server (llama-swap loads on first request), but llama.cpp mmaps
-        the weights — "up" doesn't mean the pages are resident; they fault in lazily on
-        the first forward pass. Without warming, that ~minute of fault-in lands on the
-        user's first real turn, so the model feels like it reloads. So after the probe we
-        force a single-token generation whose output is discarded — a readiness probe, the
-        inference-path analog of the health GET, not a functional LLM call. Raises
-        LocalGatewayError if the model can't load; the warm-up itself is best-effort (the
-        model is resident regardless — a failed warm-up just defers fault-in to first use,
-        the prior behaviour). Generous timeout: a cold 80B reads tens of GB of weights."""
+        """Load `served_model` into memory AND warm it for inference. The health probe
+        makes llama-swap load the model (request-driven; with --no-mmap the weights are
+        read into RAM before it returns). But "weights resident" isn't "inference-ready":
+        the first forward pass still pays the inference path — KV-cache allocation for the
+        full context, CUDA graph capture, kernel warm-up — which otherwise lands on the
+        user's first real turn (it feels like the model reloads: slow first token, fast
+        after). So after the probe we force a single-token generation whose output is
+        discarded — a readiness probe, the inference-path analog of the health GET, not a
+        functional LLM call. Raises LocalGatewayError if the model can't load; the warm-up
+        itself is best-effort (the model is resident regardless — a failed warm-up just
+        leaves that cost on first use, the prior behaviour). Generous timeout: a cold 80B
+        reads tens of GB of weights."""
         load_timeout = max(self._timeout, 120.0)
         try:
             async with httpx.AsyncClient(timeout=load_timeout, transport=self._transport) as client:
@@ -105,9 +117,9 @@ class LocalGatewayClient:
         await self._warm(served_model)
 
     async def _warm(self, served_model: str) -> None:
-        """Pre-fault the weights with one discarded token. Best-effort: the model is
+        """Exercise the inference path with one discarded token. Best-effort: the model is
         already loaded, so a warm-up failure is logged, not raised — it only means the
-        first real turn pays the fault-in (no worse than before this warm-up existed)."""
+        first real turn pays the warm-up cost (no worse than before this warm-up existed)."""
         body = {
             "model": served_model,
             "messages": [{"role": "user", "content": "warmup"}],
@@ -124,6 +136,46 @@ class LocalGatewayClient:
                 resp.raise_for_status()
         except httpx.HTTPError as exc:
             log.info("local_gateway.warm_skipped", model=served_model, error=str(exc))
+
+    async def load_progress(self) -> float | None:
+        """A real load fraction (0..1) for the model currently coming onto the box, parsed
+        best-effort from the gateway's recent logs — or None when it can't be determined
+        (gateway down, no /logs endpoint, or the build emits no parseable progress). The
+        loading bar follows this when present and falls back to a time estimate otherwise,
+        so None is a soft miss, never an error. Only one model loads at a time (we evict
+        the others first), so the latest progress line in the log is unambiguous."""
+        try:
+            async with httpx.AsyncClient(
+                timeout=self._timeout, transport=self._transport
+            ) as client:
+                resp = await client.get(f"{self._root}/logs")
+                resp.raise_for_status()
+                return _parse_load_progress(resp.text)
+        except (httpx.HTTPError, ValueError) as exc:
+            log.info("local_gateway.logs_unavailable", error=str(exc))
+            return None
+
+
+# llama.cpp surfaces model-load progress on its stderr (captured by llama-swap's /logs).
+# The exact wording shifts across builds, so match tolerantly: a recent log line that pairs
+# a load/tensor/weight keyword with a percentage. We take the LAST such line — progress
+# only climbs, and the freshest line is the truest read of how far the load has gotten.
+_LOAD_KEYWORD_RE = re.compile(r"(?i)load|tensor|weight")
+_PERCENT_RE = re.compile(r"(\d{1,3}(?:\.\d+)?)\s*%")
+
+
+def _parse_load_progress(text: str) -> float | None:
+    last: float | None = None
+    for line in text.splitlines():
+        if not _LOAD_KEYWORD_RE.search(line):
+            continue
+        m = _PERCENT_RE.search(line)
+        if m is None:
+            continue
+        pct = float(m.group(1))
+        if 0.0 <= pct <= 100.0:
+            last = pct / 100.0
+    return last
 
 
 def _parse_running(payload: object) -> set[str]:
