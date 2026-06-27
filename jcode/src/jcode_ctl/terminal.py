@@ -101,6 +101,46 @@ def kill_process_group(pid: int) -> None:
         os.kill(pid, signal.SIGKILL)  # fallback if getpgid raced the exit
 
 
+def kill_processes_in_dir(path: str) -> list[int]:
+    """SIGKILL every process whose working directory is inside ``path`` — the guaranteed
+    hard-kill backstop on session delete. It catches the agent's spawned ``claude`` CLI
+    and ANY tool subprocess it started (a build, a script) even while blocked mid-tool,
+    because they all run with cwd inside the session's checkout. Run just before the
+    checkout is removed so nothing keeps executing in (or writing to) a deleted sandbox.
+
+    Linux-only (reads ``/proc/<pid>/cwd``); returns the pids signalled. Each match is
+    SIGKILLed INDIVIDUALLY (not via killpg) — a matched process may share this server's
+    process group, and killing the group would take the server (or the test runner) down
+    with it. Tool children that stayed in the checkout are matched on their own cwd; one
+    that cd'd away is left to the cooperative cancel. Never targets this process; an
+    unreadable/exited pid is skipped."""
+    root = os.path.realpath(path)
+    self_pid = os.getpid()
+    killed: list[int] = []
+    try:
+        entries = os.listdir("/proc")
+    except OSError:
+        return killed
+    for entry in entries:
+        if not entry.isdigit():
+            continue
+        pid = int(entry)
+        if pid == self_pid:
+            continue
+        try:
+            cwd = os.path.realpath(os.readlink(f"/proc/{pid}/cwd"))
+        except OSError:
+            continue  # the process exited or its cwd isn't readable
+        if cwd != root and not cwd.startswith(root + os.sep):
+            continue
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except OSError:
+            continue
+        killed.append(pid)
+    return killed
+
+
 def _close_child(pid: int, fd: int) -> None:
     """Best-effort teardown: kill the shell's process group, reap it, close the master.
     Called when the socket drops or the shell exits, so no PTY/zombie leaks."""

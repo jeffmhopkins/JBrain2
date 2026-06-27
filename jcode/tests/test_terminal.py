@@ -23,7 +23,13 @@ from starlette.websockets import WebSocketDisconnect
 
 from jcode_ctl.agent import FakeCodingAgent
 from jcode_ctl.sessions import SessionManager
-from jcode_ctl.terminal import _close_child, _set_winsize, model_env, spawn_shell
+from jcode_ctl.terminal import (
+    _close_child,
+    _set_winsize,
+    kill_processes_in_dir,
+    model_env,
+    spawn_shell,
+)
 from jcode_ctl.workspace import FakeWorkspace
 
 
@@ -136,6 +142,30 @@ async def test_open_terminal_is_activity_and_blocks_reaping() -> None:
     mgr.terminal_closed(s.id, 4242)
     clock["t"] += timedelta(hours=48)  # idle again once no terminal is open
     assert mgr.idle_sessions(ttl_seconds=3600) == [s.id]
+
+
+def test_kill_processes_in_dir_hard_kills_a_running_process(tmp_path) -> None:
+    # The guaranteed hard-kill: a process running with its cwd inside the checkout is
+    # SIGKILLed (the mid-tool turn / its tool subprocess case), and a process OUTSIDE is
+    # left untouched.
+    import subprocess
+
+    inside = subprocess.Popen(["sleep", "300"], cwd=str(tmp_path))
+    outside = subprocess.Popen(
+        ["sleep", "300"]
+    )  # cwd = the test's cwd, not the checkout
+    try:
+        # Give the children a moment to exist in /proc with their cwd set.
+        deadline = time.monotonic() + 5
+        while inside.pid not in kill_processes_in_dir(str(tmp_path)):
+            if time.monotonic() > deadline:
+                raise AssertionError("inside process was not killed")
+            time.sleep(0.05)
+        assert inside.wait(timeout=5) is not None  # reaped → dead
+        assert outside.poll() is None  # the outside process is untouched
+    finally:
+        outside.kill()
+        outside.wait(timeout=5)
 
 
 async def test_delete_kills_open_terminals_and_cancels_the_turn() -> None:

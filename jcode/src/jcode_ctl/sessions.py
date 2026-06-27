@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Literal
 
 from jcode_ctl.agent import CodingAgent, TurnEvent
-from jcode_ctl.terminal import kill_process_group
+from jcode_ctl.terminal import kill_process_group, kill_processes_in_dir
 from jcode_ctl.workspace import Workspace
 
 Status = Literal["ready", "running", "error"]
@@ -271,6 +271,11 @@ class SessionManager:
         await self._agent.cancel(sid)
         for pid in self._terminals.pop(sid, set()):
             kill_process_group(pid)
+        # Hard backstop: SIGKILL anything still running in the checkout — the agent's
+        # `claude` CLI and any tool subprocess it spawned (even blocked mid-tool) — so a
+        # deleted sandbox has nothing left executing when the cooperative cancel can't
+        # land at a message boundary in time.
+        kill_processes_in_dir(session.workspace)
         self._workspace.remove(Path(session.workspace))
         del self._sessions[sid]
         # Drop the agent's per-session state (resume id, cancel flag) so it can't
