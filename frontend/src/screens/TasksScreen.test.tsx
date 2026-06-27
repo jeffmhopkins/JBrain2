@@ -1,4 +1,5 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { useState } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { type Task, type TaskRun, api } from "../api/client";
 import { TasksScreen } from "./TasksScreen";
@@ -119,6 +120,32 @@ describe("TasksScreen", () => {
     expect(screen.getByText("NEW")).toBeInTheDocument();
     fireEvent.click(band);
     await waitFor(() => expect(screen.queryByText("NEW")).not.toBeInTheDocument());
+  });
+
+  it("persists the viewed marker so the NEW flag stays cleared after a remount", async () => {
+    // The user's actual flow: opening a session unmounts this screen (the handoff
+    // drops the Tasks card to reveal the chat), then reopening Tasks must show the
+    // band relaxed. The marker has to reach localStorage — not just component state —
+    // for that to survive the remount. A wrapper that unmounts TasksScreen on open
+    // mirrors the live handoff so this guards the persistence end-to-end.
+    vi.spyOn(api, "tasks").mockResolvedValue([SCHEDULED, MANUAL]);
+    vi.spyOn(api, "taskRuns").mockResolvedValue([RUN]);
+    function Harness() {
+      const [open, setOpen] = useState(true);
+      return open ? (
+        <TasksScreen onClose={vi.fn()} onOpenSession={() => setOpen(false)} />
+      ) : (
+        <span>chat</span>
+      );
+    }
+    const { unmount } = render(<Harness />);
+    fireEvent.click(await screen.findByRole("button", { name: /Open latest session/ }));
+    await screen.findByText("chat"); // the screen unmounted, just like the live handoff
+    unmount();
+
+    render(<TasksScreen onClose={vi.fn()} onOpenSession={vi.fn()} />);
+    await screen.findByRole("button", { name: /Open latest session/ });
+    expect(screen.queryByText("NEW")).not.toBeInTheDocument();
   });
 
   it("shows an inert placeholder band for a task that has never run", async () => {

@@ -97,6 +97,10 @@ export function App() {
   // persona to HomeScreen, which flips to the right tab and opens it.
   const [openSession, setOpenSession] = useState<{ id: string; agent: string } | null>(null);
   const clearOpenSession = useCallback(() => setOpenSession(null), []);
+  // A session opened from a self-contained card (Tasks) drops that card to reveal
+  // the chat on home — leaving nothing in the layer stack to pop. Remember the card
+  // so the back gesture climbs back to it instead of exiting the app.
+  const [sessionBackTo, setSessionBackTo] = useState<Card | null>(null);
   // The note view is its own tree layer above home AND above search results.
   const [noteView, setNoteView] = useState<NoteViewSource | null>(null);
   const [noteClosing, setNoteClosing] = useState(false);
@@ -183,6 +187,8 @@ export function App() {
   }
 
   function navigate(target: LauncherTarget) {
+    // Picking a new card abandons any "return to the session's source card" intent.
+    setSessionBackTo(null);
     setCard(target);
   }
 
@@ -381,7 +387,8 @@ export function App() {
     (listView !== null ? 1 : 0) +
     (runsOpen ? 1 : 0) +
     (card !== null ? 1 : 0) +
-    (launcherOpen ? 1 : 0);
+    (launcherOpen ? 1 : 0) +
+    (sessionBackTo !== null ? 1 : 0);
 
   function closeTopLayer() {
     if (actions.editing !== null) return actions.cancelEdit();
@@ -408,6 +415,13 @@ export function App() {
     if (card !== null) return closeCardToLauncher();
     // Drops the depth immediately; the launcher plays its retreat off `open`.
     if (launcherOpen) return setLauncherOpen(false);
+    // A session opened from Tasks dropped its card to reveal the chat — climb back
+    // to that card rather than letting the platform back gesture exit the app.
+    if (sessionBackTo !== null) {
+      const back = sessionBackTo;
+      setSessionBackTo(null);
+      return setCard(back);
+    }
   }
 
   useBackGesture(overlayDepth, closeTopLayer);
@@ -528,8 +542,10 @@ export function App() {
           onOpenSession={(sessionId, agent) => {
             // Drop both the Tasks card AND the launcher beneath it, so home/Full
             // Brain is revealed (not the launcher) to receive the session handoff.
+            // Leave a return marker so the back gesture climbs back to Tasks.
             setCard(null);
             setLauncherOpen(false);
+            setSessionBackTo("tasks");
             setOpenSession({ id: sessionId, agent });
           }}
         />
