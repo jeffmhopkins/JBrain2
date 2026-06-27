@@ -413,7 +413,7 @@ services:
       ANTHROPIC_DEFAULT_SONNET_MODEL: ${JCODE_MODEL:-qwen3-coder-next}
       ANTHROPIC_DEFAULT_HAIKU_MODEL: ${JCODE_MODEL:-qwen3-coder-next}
       ANTHROPIC_DEFAULT_FABLE_MODEL: ${JCODE_MODEL:-qwen3-coder-next}
-      # The Grok CLI (`grok-dev`) the owner can run in the session shell alongside
+      # The Grok CLI (`@vibe-kit/grok-cli`) the owner can run in the session shell alongside
       # `claude`. It's OpenAI-compatible and the on-box gateway is OpenAI-native, so it
       # points STRAIGHT at the gateway's /v1 — NO claude-shim translation (the shim exists
       # only because Claude Code speaks Anthropic /v1/messages). Same gateway URL as
