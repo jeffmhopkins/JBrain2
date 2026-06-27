@@ -4,7 +4,12 @@ from __future__ import annotations
 
 import pytest
 
-from jcode_ctl.preview import FakeTunnel, PreviewError, PreviewManager
+from jcode_ctl.preview import (
+    CloudflaredTunnel,
+    FakeTunnel,
+    PreviewError,
+    PreviewManager,
+)
 
 
 def _mgr(enabled: bool = True, **kw) -> tuple[PreviewManager, list[FakeTunnel]]:
@@ -62,6 +67,16 @@ async def test_disabled_manager_refuses() -> None:
     assert mgr.enabled is False
     with pytest.raises(PreviewError, match="not enabled"):
         await mgr.open("s1")
+
+
+def test_tunnel_rewrites_origin_host_header_to_localhost() -> None:
+    # Without this, cloudflared passes the public trycloudflare Host to the dev
+    # server and host-pinning frameworks (Vite 6+) reject it — the tunnel opens
+    # but the app stays blank.
+    args = CloudflaredTunnel._args(5173)
+    assert "--url" in args
+    assert args[args.index("--url") + 1] == "http://localhost:5173"
+    assert args[args.index("--http-host-header") + 1] == "localhost:5173"
 
 
 async def test_failed_open_tears_down_the_tunnel() -> None:
