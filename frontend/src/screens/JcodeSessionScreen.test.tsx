@@ -238,7 +238,7 @@ describe("JcodeSessionScreen", () => {
     expect(await screen.findByText("Session stopped")).toBeInTheDocument();
   });
 
-  it("opens a web preview tunnel from the Preview tab", async () => {
+  it("opens a web preview tunnel and embeds it as an iframe in the Preview tab", async () => {
     vi.spyOn(api, "jcodePreviewStatus").mockResolvedValue({ enabled: true, url: null });
     vi.spyOn(api, "jcodePreviewOpen").mockResolvedValue({
       enabled: true,
@@ -248,7 +248,42 @@ describe("JcodeSessionScreen", () => {
 
     fireEvent.click(screen.getByRole("tab", { name: "Preview" }));
     fireEvent.click(await screen.findByText("Open preview tunnel"));
-    expect(await screen.findByText("https://demo-x.trycloudflare.com")).toBeInTheDocument();
+    const frame = await screen.findByTitle("Dev server preview");
+    expect(frame).toHaveAttribute("src", "https://demo-x.trycloudflare.com");
+  });
+
+  it("copies the preview address from the actions menu once a tunnel is live", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+    vi.spyOn(api, "jcodePreviewStatus").mockResolvedValue({
+      enabled: true,
+      url: "https://demo-x.trycloudflare.com",
+    });
+    render(<JcodeSessionScreen session={SESSION} onClose={vi.fn()} />);
+
+    // The menu only offers preview actions after the Preview tab has loaded a live tunnel.
+    fireEvent.click(screen.getByRole("tab", { name: "Preview" }));
+    await screen.findByTitle("Dev server preview");
+    fireEvent.click(screen.getByLabelText("Session actions"));
+    fireEvent.click(screen.getByText("Copy preview address"));
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith("https://demo-x.trycloudflare.com"));
+  });
+
+  it("stops the preview from the actions menu", async () => {
+    vi.spyOn(api, "jcodePreviewStatus").mockResolvedValue({
+      enabled: true,
+      url: "https://demo-x.trycloudflare.com",
+    });
+    const close = vi.spyOn(api, "jcodePreviewClose").mockResolvedValue();
+    render(<JcodeSessionScreen session={SESSION} onClose={vi.fn()} />);
+
+    fireEvent.click(screen.getByRole("tab", { name: "Preview" }));
+    await screen.findByTitle("Dev server preview");
+    fireEvent.click(screen.getByLabelText("Session actions"));
+    fireEvent.click(screen.getByText("Stop preview"));
+    await waitFor(() => expect(close).toHaveBeenCalledWith("j1"));
+    // The tunnel is gone → the iframe is replaced by the start-a-tunnel empty state.
+    expect(await screen.findByText(/Start your dev server/i)).toBeInTheDocument();
   });
 
   it("shows a disabled state when preview is off", async () => {
