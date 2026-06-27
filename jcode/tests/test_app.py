@@ -87,6 +87,27 @@ def test_deleting_a_session_closes_its_preview(
     assert client.get(f"/sessions/{sid}/preview", headers=auth).status_code == 404
 
 
+def test_stopping_a_session_closes_its_preview(
+    client: TestClient, auth: dict[str, str]
+) -> None:
+    # A paused session must not keep a live tunnel: cloudflared isn't a sandbox process,
+    # so leaked tunnels stack up and TryCloudflare rate-limits new ones into oblivion.
+    sid = client.post("/sessions", json={"repo": "r"}, headers=auth).json()["id"]
+    client.post(f"/sessions/{sid}/preview", json={}, headers=auth)
+    assert client.post(f"/sessions/{sid}/stop", headers=auth).status_code == 200
+    # The session lives on (it's only paused), but its tunnel is gone.
+    assert client.get(f"/sessions/{sid}/preview", headers=auth).json()["url"] is None
+
+
+def test_resetting_a_session_closes_its_preview(
+    client: TestClient, auth: dict[str, str]
+) -> None:
+    sid = client.post("/sessions", json={"repo": "r"}, headers=auth).json()["id"]
+    client.post(f"/sessions/{sid}/preview", json={}, headers=auth)
+    assert client.post(f"/sessions/{sid}/reset", headers=auth).status_code == 200
+    assert client.get(f"/sessions/{sid}/preview", headers=auth).json()["url"] is None
+
+
 def test_preview_disabled_is_409() -> None:
     mgr = SessionManager(FakeWorkspace(), "/work")
     app = create_app(
