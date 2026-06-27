@@ -49,7 +49,10 @@ class LocalGateway(Protocol):
 
     async def load(self, served_model: str) -> None: ...
 
-    async def load_progress(self) -> float | None: ...
+    # NOTE: load_progress() is deliberately NOT on this protocol. It's an optional,
+    # best-effort extension only the jcode status probes (via getattr), so keeping it off
+    # the protocol lets the many structural test fakes satisfy LocalGateway without each
+    # having to stub it. Add it here only if a typed caller must depend on it.
 
 
 class LocalGatewayClient:
