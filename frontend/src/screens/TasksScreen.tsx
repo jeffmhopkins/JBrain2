@@ -699,18 +699,23 @@ export function TasksScreen({ onClose, onOpenSession }: TasksScreenProps) {
   const [viewed, setViewed] = useState<Record<string, string>>(loadViewed);
 
   // Opening the newest run's session clears that task's "new" band on this device.
+  // Persist OUTSIDE the state updater: opening a session unmounts this screen (the
+  // handoff drops the Tasks card to reveal the chat), and React never runs a queued
+  // updater for an unmounting component — so a write inside it would be lost and the
+  // band would re-show "new". Writing synchronously here lands before the unmount.
   const markViewed = useCallback((task: Task) => {
     const latest = task.latest_run;
     if (latest === null) return;
-    setViewed((m) => {
-      const next = { ...m, [task.id]: latest.started_at };
-      try {
-        localStorage.setItem(TASKS_VIEWED_KEY, JSON.stringify(next));
-      } catch {
-        // best-effort; a dropped marker just re-shows the band as "new"
-      }
-      return next;
-    });
+    const startedAt = latest.started_at;
+    setViewed((m) => ({ ...m, [task.id]: startedAt }));
+    try {
+      localStorage.setItem(
+        TASKS_VIEWED_KEY,
+        JSON.stringify({ ...loadViewed(), [task.id]: startedAt }),
+      );
+    } catch {
+      // best-effort; a dropped marker just re-shows the band as "new"
+    }
   }, []);
 
   // Open the agent session a run produced; opening the latest run also marks the
