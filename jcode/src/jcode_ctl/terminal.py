@@ -36,6 +36,23 @@ _SHELL: tuple[str, ...] = ("/bin/bash", "-l")
 _READ_BYTES = 65536
 
 
+def model_env(model: str) -> dict[str, str]:
+    """Env that pins every model tier the interactive ``claude`` CLI might pick to the
+    session's on-box model. Without it the CLI defaults to a cloud model
+    (``claude-opus-4-…``) the local gateway has no route for, and every session errors
+    "the selected model may not exist". The CLI resolves its ``/model`` aliases
+    (opus/sonnet/haiku/fable) and its background summariser through these vars, so on a
+    single-model gateway they must ALL map to the one served route. The headless agent
+    passes the model explicitly; this is the interactive shell's equivalent."""
+    return {
+        "ANTHROPIC_MODEL": model,
+        "ANTHROPIC_DEFAULT_OPUS_MODEL": model,
+        "ANTHROPIC_DEFAULT_SONNET_MODEL": model,
+        "ANTHROPIC_DEFAULT_HAIKU_MODEL": model,
+        "ANTHROPIC_DEFAULT_FABLE_MODEL": model,
+    }
+
+
 def _set_winsize(fd: int, rows: int, cols: int) -> None:
     """Push the browser terminal's size onto the PTY so full-screen TUIs (vim, and
     the ``claude`` CLI itself) lay out correctly. Clamped to sane bounds."""
@@ -44,12 +61,18 @@ def _set_winsize(fd: int, rows: int, cols: int) -> None:
     fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
 
 
-def spawn_shell(cwd: str, argv: tuple[str, ...] = _SHELL) -> tuple[int, int]:
+def spawn_shell(
+    cwd: str,
+    argv: tuple[str, ...] = _SHELL,
+    *,
+    env_overrides: dict[str, str] | None = None,
+) -> tuple[int, int]:
     """Fork ``argv`` under a new PTY in ``cwd`` and return ``(pid, master_fd)``.
 
     The child becomes its own session leader with the slave as its controlling
     terminal (``pty.fork`` does this), chdirs into the checkout, and execs the
-    shell with the inherited env plus ``TERM``. The parent drives the master fd.
+    shell with the inherited env plus ``TERM`` and any ``env_overrides`` (the
+    session's model pins). The parent drives the master fd.
     """
     pid, master_fd = pty.fork()
     if pid == 0:  # child — replace ourselves with the shell  # pragma: no cover
@@ -57,6 +80,8 @@ def spawn_shell(cwd: str, argv: tuple[str, ...] = _SHELL) -> tuple[int, int]:
             os.chdir(cwd)
             env = dict(os.environ)
             env.setdefault("TERM", "xterm-256color")
+            if env_overrides:
+                env.update(env_overrides)
             os.execvpe(argv[0], list(argv), env)
         except Exception:  # exec failed — never fall back into Python in the child
             os._exit(127)
@@ -92,17 +117,19 @@ async def _write_all(fd: int, data: bytes) -> None:  # pragma: no cover - deploy
 
 
 async def serve_terminal(  # pragma: no cover - the PTY pump is exercised at deploy
-    websocket: WebSocket, cwd: str
+    websocket: WebSocket, cwd: str, *, model: str = ""
 ) -> None:
     """Bridge ``websocket`` to a shell PTY in ``cwd`` until either side closes.
 
     Output is pumped through a queue drained by a single sender task so byte order
     is preserved (vs. a task-per-chunk race). Browser → shell: binary frames are
     written to the PTY verbatim; a text frame is a JSON control (``{"resize":...}``).
+    ``model`` (the session's served model) pins the ``claude`` CLI's model tiers so
+    it doesn't default to a cloud model the on-box gateway can't serve.
     """
     from fastapi import WebSocketDisconnect
 
-    pid, fd = spawn_shell(cwd)
+    pid, fd = spawn_shell(cwd, env_overrides=model_env(model) if model else None)
     os.set_blocking(fd, False)
     loop = asyncio.get_running_loop()
     out: asyncio.Queue[bytes | None] = asyncio.Queue()

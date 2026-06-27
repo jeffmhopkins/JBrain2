@@ -394,6 +394,18 @@ services:
       # bypass the shim.
       ANTHROPIC_BASE_URL: ${JCODE_ANTHROPIC_BASE_URL:-http://claude-shim:4000}
       ANTHROPIC_AUTH_TOKEN: ${JCODE_GATEWAY_TOKEN:-sk-jcode-local}
+      # Pin every model tier to the on-box coder. Without this the bundled `claude`
+      # CLI (and the Agent SDK's background summariser) default to a cloud model
+      # (claude-opus-4-…) the local gateway has no route for, so every interactive CLI
+      # session errored "the selected model may not exist". The headless agent passes
+      # the model explicitly; the interactive terminal further overrides ANTHROPIC_MODEL
+      # per session with the owner's selected model (which may be a different quant than
+      # JCODE_MODEL). These are the baseline so no path ever requests a cloud model.
+      ANTHROPIC_MODEL: ${JCODE_MODEL:-qwen3-coder-next}
+      ANTHROPIC_DEFAULT_OPUS_MODEL: ${JCODE_MODEL:-qwen3-coder-next}
+      ANTHROPIC_DEFAULT_SONNET_MODEL: ${JCODE_MODEL:-qwen3-coder-next}
+      ANTHROPIC_DEFAULT_HAIKU_MODEL: ${JCODE_MODEL:-qwen3-coder-next}
+      ANTHROPIC_DEFAULT_FABLE_MODEL: ${JCODE_MODEL:-qwen3-coder-next}
       # Headless-sandbox hardening for the bundled Claude Code CLI the Agent SDK spawns:
       # a writable config dir (it persists onboarding/ToS state there — a non-writable
       # ~/.claude exits 1), suppress first-run/update/telemetry traffic that fails
