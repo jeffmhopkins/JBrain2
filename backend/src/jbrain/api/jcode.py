@@ -348,6 +348,13 @@ async def get_session(sid: str, principal: JcodeAccessDep, request: Request) -> 
 @router.delete("/jcode/sessions/{sid}", status_code=204)
 async def delete_session(sid: str, owner: OwnerDep, request: Request) -> None:
     _valid_sid(sid)
+    # Cancel any in-flight turn for this session first: cancelling its detached drive
+    # task drops the SSE connection to the control server, which tears down the spawned
+    # `claude` subprocess — so the turn stops before the control server removes the
+    # checkout (delete there also cooperatively cancels the agent and kills open shells).
+    for turn in list(_turns(request).values()):
+        if turn.session_id == sid:
+            turn.cancel()
     try:
         await _client(request).delete(sid)
     except JcodeError as exc:
