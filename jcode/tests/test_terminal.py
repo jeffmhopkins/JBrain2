@@ -59,9 +59,7 @@ def test_spawn_shell_runs_in_the_session_cwd(tmp_path) -> None:
 def test_spawn_shell_applies_model_env_overrides(tmp_path) -> None:
     # The session's model is pinned into the child env so the interactive `claude` CLI
     # never defaults to a cloud model the on-box gateway can't serve.
-    pid, fd = spawn_shell(
-        str(tmp_path), env_overrides=model_env("qwen3-coder-next-q8")
-    )
+    pid, fd = spawn_shell(str(tmp_path), env_overrides=model_env("qwen3-coder-next-q8"))
     try:
         os.write(fd, b"echo M=$ANTHROPIC_MODEL H=$ANTHROPIC_DEFAULT_HAIKU_MODEL\n")
         out = _read_until(fd, b"M=qwen3-coder-next-q8")
