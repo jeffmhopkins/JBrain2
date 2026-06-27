@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseShareLink, shareUrl } from "./share";
+import { parseShareLink, parseSharePath, shareUrl } from "./share";
 
 describe("shareUrl", () => {
   it("builds an origin-rooted link with the secret in the fragment", () => {
@@ -24,5 +24,17 @@ describe("parseShareLink", () => {
   it("returns null on any other path", () => {
     expect(parseShareLink("/home", "#t=s3cret")).toBeNull();
     expect(parseShareLink("/jcode/s/", "#t=s3cret")).toBeNull();
+  });
+});
+
+describe("parseSharePath", () => {
+  it("reads the sid from a share path even without a secret", () => {
+    // The bug fix hinges on this: a reload after the secret is stripped (no #t=) still
+    // resolves the sid, so the scoped share app mounts instead of the owner login.
+    expect(parseSharePath("/jcode/s/abc123")).toBe("abc123");
+  });
+  it("returns null on a non-share path", () => {
+    expect(parseSharePath("/home")).toBeNull();
+    expect(parseSharePath("/jcode/s/")).toBeNull();
   });
 });

@@ -54,6 +54,9 @@ class ShareOut(BaseModel):
     created_at: datetime
     expires_at: datetime | None
     last_used_at: datetime | None
+    # When the link was claimed (single-use); None = still open. Lets the owner's list
+    # show "opened" vs "unused" so a stale, never-claimed link is easy to spot.
+    redeemed_at: datetime | None
 
 
 class RedeemRequest(BaseModel):
@@ -94,6 +97,7 @@ async def list_shares(sid: str, _owner: OwnerDep, repo: AuthRepoDep) -> list[Sha
             created_at=s.created_at,
             expires_at=s.expires_at,
             last_used_at=s.last_used_at,
+            redeemed_at=s.redeemed_at,
         )
         for s in shares
     ]
@@ -116,23 +120,30 @@ async def redeem_share(
     settings: SettingsDep,
 ) -> RedeemOut:
     """Exchange a share secret for a session cookie scoped to that one session. 401 on an
-    invalid / revoked / lapsed secret, writing no cookie. Unauthenticated by design — the
-    secret is the credential.
+    invalid / revoked / lapsed / already-claimed secret, writing no cookie. Unauthenticated
+    by design — the secret is the credential.
 
-    An OWNER opening their own share link is NOT downgraded: if the request already
-    carries a live owner session, we return the session id WITHOUT clobbering that cookie
-    (the owner already has full access). Only a non-owner browser gets the scoped cookie —
-    so the worst a forced redeem can do to a victim is a downgrade to a single sandbox,
-    never a privilege change."""
+    SINGLE USE: the first browser to redeem CONSUMES the link and binds it; a later
+    redeem (a forwarded copy, a second device) 401s. Two requests are idempotent and do
+    NOT consume the link, so they never lock anyone out of access they already have:
+    - an OWNER opening their own link (they have full access anyway), and
+    - the already-bound browser reopening it (its cookie already grants this session).
+    Both just get the session id back, no new cookie. So the worst a forced redeem can do
+    to a victim is a downgrade to a single sandbox, never a privilege change."""
     share = await service.validate_jcode_share(repo, body.token)
     if share is None:
         raise HTTPException(status_code=401, detail="invalid or expired share link")
     existing = await service.authenticate(repo, request.cookies.get(settings.session_cookie, ""))
-    if existing is not None and existing.kind == "owner":
+    bound_here = (
+        existing is not None
+        and existing.kind == "jcode_share_link"
+        and existing.jcode_session_id == share.jcode_session_id
+    )
+    if existing is not None and (existing.kind == "owner" or bound_here):
         return RedeemOut(session_id=share.jcode_session_id)
     redeemed = await service.redeem_jcode_share(repo, body.token)
-    if redeemed is None:  # the secret was just validated; this satisfies the type checker
-        raise HTTPException(status_code=401, detail="invalid or expired share link")
+    if redeemed is None:  # validated above, so None here means another browser just claimed it
+        raise HTTPException(status_code=401, detail="this share link has already been opened")
     token, session_id = redeemed
     response.set_cookie(
         settings.session_cookie,

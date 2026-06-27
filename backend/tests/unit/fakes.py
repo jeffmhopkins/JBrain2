@@ -25,6 +25,7 @@ class FakePrincipal:
     last_used_at: datetime | None = None
     suspended_at: datetime | None = None
     jcode_session_id: str = ""
+    redeemed_at: datetime | None = None
 
 
 @dataclass
@@ -169,6 +170,21 @@ class FakeAuthRepo:
                 return _info(p)
         return None
 
+    async def consume_jcode_share(self, key_hash: str) -> PrincipalInfo | None:
+        now = datetime.now(UTC)
+        for p in self.principals:
+            live = p.expires_at is None or p.expires_at > now
+            if (
+                p.key_hash == key_hash
+                and p.kind == "jcode_share_link"
+                and not p.revoked
+                and p.redeemed_at is None
+                and live
+            ):
+                p.redeemed_at = now  # single-use: claimed, never claimable again
+                return _info(p)
+        return None
+
     async def list_jcode_shares(self, session_id: str) -> list[CapabilityToken]:
         return [
             _capability(p)
@@ -208,6 +224,7 @@ def _capability(p: FakePrincipal) -> CapabilityToken:
         last_used_at=p.last_used_at,
         revoked_at=p.created_at if p.revoked else None,
         suspended_at=p.suspended_at,
+        redeemed_at=p.redeemed_at,
     )
 
 

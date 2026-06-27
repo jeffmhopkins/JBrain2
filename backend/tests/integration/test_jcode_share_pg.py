@@ -89,6 +89,22 @@ async def test_redeemed_cookie_dies_when_the_share_lapses(maker: async_sessionma
     assert await auth_service.authenticate(repo, cookie_token) is None
 
 
+async def test_redeem_is_single_use_against_real_sql(maker: async_sessionmaker) -> None:
+    # The atomic `consume_jcode_share` UPDATE is the single-use gate: the first redeem
+    # claims the row (stamps redeemed_at), the second matches no row and returns None.
+    repo = SqlAuthRepo(maker)
+    key, record = await auth_service.mint_jcode_share(repo, "scope-once", "x", ttl_hours=24)
+    first = await auth_service.redeem_jcode_share(repo, key)
+    assert first is not None
+    assert await auth_service.redeem_jcode_share(repo, key) is None
+    # Consuming doesn't revoke the principal, so the first cookie still authenticates.
+    cookie_token, _ = first
+    assert await auth_service.authenticate(repo, cookie_token) is not None
+    # The owner's list reflects the claim (redeemed_at set).
+    claimed = {t.id: t for t in await repo.list_jcode_shares("scope-once")}[record.id]
+    assert claimed.redeemed_at is not None
+
+
 async def test_list_and_revoke_are_session_scoped(maker: async_sessionmaker) -> None:
     # Distinct session ids per run so the assertion doesn't depend on a clean DB.
     repo = SqlAuthRepo(maker)

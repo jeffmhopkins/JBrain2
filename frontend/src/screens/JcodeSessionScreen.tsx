@@ -30,7 +30,13 @@ import {
   attachTerminal,
   terminalWsUrl,
 } from "../jcode/terminal";
-import type { JcodeEvent, JcodeModelStatus, JcodePreview, JcodeSession } from "../jcode/types";
+import type {
+  JcodeEvent,
+  JcodeModelStatus,
+  JcodePreview,
+  JcodeSession,
+  JcodeShare,
+} from "../jcode/types";
 
 // Rough cold-load read rate (s/GB) for the loading-bar estimate — the bar caps at 96%
 // until the gateway confirms the model resident, then completes.
@@ -287,6 +293,160 @@ function JcodeCli({ sid }: { sid: string }) {
   );
 }
 
+const SHARE_TTL_OPTIONS: { hours: number; label: string }[] = [
+  { hours: 1, label: "1h" },
+  { hours: 24, label: "24h" },
+  { hours: 24 * 7, label: "7d" },
+  { hours: 24 * 30, label: "30d" },
+];
+
+// The owner's share-link manager (a modal over the session), modelled on the debug-token
+// minting UX: create a single-use, time-boxed link, copy the secret once, and see / revoke
+// the live links. "Single-use" = the link binds to the FIRST browser that opens it; the
+// list flags each as opened or still unused so a stale link is easy to spot and revoke.
+function JcodeShareManager({ sid, onClose }: { sid: string; onClose: () => void }) {
+  const [shares, setShares] = useState<JcodeShare[] | null>(null);
+  const [label, setLabel] = useState("");
+  const [ttl, setTtl] = useState(24);
+  const [minted, setMinted] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [revoking, setRevoking] = useState<string | null>(null);
+
+  const reload = () => {
+    api
+      .jcodeListShares(sid)
+      .then(setShares)
+      .catch(() => setShares([]));
+  };
+  // biome-ignore lint/correctness/useExhaustiveDependencies: reload reads sid only
+  useEffect(reload, [sid]);
+
+  async function mint() {
+    setBusy(true);
+    setError(null);
+    try {
+      const t = await api.jcodeMintShare(sid, ttl);
+      setMinted(shareUrl(sid, t.token));
+      setCopied(false);
+      setLabel("");
+      reload();
+    } catch {
+      setError("Couldn't create a link.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function revoke(id: string) {
+    try {
+      await api.jcodeRevokeShare(sid, id);
+    } finally {
+      reload();
+    }
+  }
+
+  return (
+    // biome-ignore lint/a11y/useSemanticElements: a lightweight overlay panel, not a native <dialog>
+    <div className="jcode-modal" role="dialog" aria-modal="true" aria-label="Share links">
+      <div className="jcode-modal-card">
+        <div className="jcode-modal-head">
+          <span>Share this session</span>
+          <button type="button" className="icon-btn" aria-label="Close" onClick={onClose}>
+            ✕
+          </button>
+        </div>
+        <p className="jcode-empty">
+          A link opens this one session on any browser — no owner key needed. It's single-use: the
+          first person to open it binds it to their browser, and the link is dead for anyone else.
+          Time-boxed and revocable.
+        </p>
+        <div className="jcode-share-mint">
+          <input
+            className="jcode-share-input"
+            value={label}
+            placeholder="Label (e.g. Sarah's laptop)"
+            aria-label="Link label"
+            onChange={(e) => setLabel(e.currentTarget.value)}
+          />
+          <div className="jcode-share-ttl" aria-label="Link lifetime">
+            {SHARE_TTL_OPTIONS.map((o) => (
+              <button
+                key={o.hours}
+                type="button"
+                aria-pressed={ttl === o.hours}
+                className={`jcode-act${ttl === o.hours ? " armed" : ""}`}
+                onClick={() => setTtl(o.hours)}
+              >
+                {o.label}
+              </button>
+            ))}
+          </div>
+          <button type="button" className="jcode-act teal" disabled={busy} onClick={mint}>
+            {busy ? "Creating…" : "Create link"}
+          </button>
+        </div>
+        {error && <p className="jcode-empty jcode-share-error">{error}</p>}
+        {minted && (
+          <div className="jcode-share-minted">
+            <p className="jcode-empty">Copy it now — the secret is shown once.</p>
+            <input
+              className="jcode-share-input"
+              readOnly
+              value={minted}
+              aria-label="Share link"
+              onFocus={(e) => e.currentTarget.select()}
+            />
+            <div className="jcode-actions">
+              <button
+                type="button"
+                className="jcode-act"
+                onClick={() => {
+                  void navigator.clipboard?.writeText(minted);
+                  setCopied(true);
+                }}
+              >
+                {copied ? "Copied ✓" : "Copy link"}
+              </button>
+              <button type="button" className="jcode-act" onClick={() => setMinted(null)}>
+                Done
+              </button>
+            </div>
+          </div>
+        )}
+        {shares && shares.length > 0 && (
+          <ul className="jcode-share-list" aria-label="Active links">
+            {shares.map((s) => (
+              <li key={s.id} className="jcode-share-row">
+                <div>
+                  <span className="jcode-share-name">{s.label}</span>
+                  <span className={`jcode-share-state${s.redeemed_at ? " used" : ""}`}>
+                    {s.redeemed_at ? "opened" : "unused"}
+                  </span>
+                  <p className="jcode-empty">
+                    {s.expires_at
+                      ? `expires ${new Date(s.expires_at).toLocaleString()}`
+                      : "no expiry"}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  className="jcode-act danger"
+                  onClick={() => (revoking === s.id ? revoke(s.id) : setRevoking(s.id))}
+                  onBlur={() => setRevoking(null)}
+                >
+                  {revoking === s.id ? "Tap to confirm" : "Revoke"}
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export function JcodeSessionScreen({
   session,
   onClose,
@@ -304,8 +464,8 @@ export function JcodeSessionScreen({
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [confirm, setConfirm] = useState<"reset" | "delete" | null>(null);
-  // The copy-link affordance: idle → "Copy link" → minting → "Copied!" (2s) or an error.
-  const [shareState, setShareState] = useState<"idle" | "busy" | "copied" | "error">("idle");
+  // Whether the share-link manager modal is open (owner mints/lists/revokes links there).
+  const [shareOpen, setShareOpen] = useState(false);
   const [preview, setPreview] = useState<JcodePreview | null>(null);
   const [pvBusy, setPvBusy] = useState(false);
   const [model, setModel] = useState<JcodeModelStatus | null>(null);
@@ -530,27 +690,6 @@ export function JcodeSessionScreen({
     setConfirm(null);
   }
 
-  async function copyShareLink() {
-    if (shareState === "busy") return;
-    // Guard the clipboard BEFORE minting: in an insecure context it's absent, and a
-    // failed copy would otherwise burn a share token for nothing.
-    if (!navigator.clipboard) {
-      setShareState("error");
-      setTimeout(() => setShareState("idle"), 2500);
-      return;
-    }
-    setShareState("busy");
-    try {
-      const minted = await api.jcodeMintShare(session.id);
-      await navigator.clipboard.writeText(shareUrl(session.id, minted.token));
-      setShareState("copied");
-      setTimeout(() => setShareState("idle"), 2000);
-    } catch {
-      setShareState("error");
-      setTimeout(() => setShareState("idle"), 2500);
-    }
-  }
-
   return (
     <section className="jcode-screen">
       <header className="jcode-bar">
@@ -591,19 +730,16 @@ export function JcodeSessionScreen({
           <button
             type="button"
             className="jcode-act"
-            onClick={copyShareLink}
-            disabled={shareState === "busy"}
-            title="Copy a link that opens this session on any browser (expires in 24h, revocable)"
+            onClick={() => setShareOpen(true)}
+            title="Create a single-use link that opens this session on any browser (time-boxed, revocable)"
           >
-            {shareState === "busy"
-              ? "Minting…"
-              : shareState === "copied"
-                ? "Link copied ✓"
-                : shareState === "error"
-                  ? "Couldn't copy"
-                  : "Copy link"}
+            Share
           </button>
         </div>
+      )}
+
+      {shareOpen && !shared && (
+        <JcodeShareManager sid={session.id} onClose={() => setShareOpen(false)} />
       )}
 
       <div className="jcode-tabs" role="tablist" aria-label="Session views">

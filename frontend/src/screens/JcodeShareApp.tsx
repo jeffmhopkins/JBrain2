@@ -6,7 +6,7 @@
 
 import { useEffect, useState } from "react";
 import { api } from "../api/client";
-import { parseShareLink } from "../jcode/share";
+import { parseShareLink, parseSharePath } from "../jcode/share";
 import type { JcodeSession } from "../jcode/types";
 import { JcodeSessionScreen } from "./JcodeSessionScreen";
 
@@ -20,19 +20,30 @@ export function JcodeShareApp() {
   const [state, setState] = useState<State>({ status: "loading" });
 
   useEffect(() => {
-    const link = parseShareLink();
-    if (!link) {
+    const sid = parseSharePath();
+    if (!sid) {
       setState({ status: "error" });
       return;
     }
+    const link = parseShareLink();
     // Strip the secret from the address bar at once — it shouldn't linger in history
     // or get re-shared by copying the URL after it's been redeemed.
-    window.history.replaceState(null, "", `/jcode/s/${link.sid}`);
+    if (link) window.history.replaceState(null, "", `/jcode/s/${sid}`);
     let stale = false;
     void (async () => {
       try {
-        await api.jcodeRedeemShare(link.token);
-        const session = await api.jcodeGetSession(link.sid);
+        // Redeem only when a secret is present (the first open). On a reload — or a
+        // re-open of an already-claimed link — there's no secret (or the redeem 401s
+        // because it's single-use); either way we fall through to the existing scoped
+        // cookie, so a bound browser keeps its access instead of erroring.
+        if (link) {
+          try {
+            await api.jcodeRedeemShare(link.token);
+          } catch {
+            // Already claimed by this browser (single-use): the cookie below still works.
+          }
+        }
+        const session = await api.jcodeGetSession(sid);
         if (!stale) setState({ status: "ready", session });
       } catch {
         if (!stale) setState({ status: "error" });

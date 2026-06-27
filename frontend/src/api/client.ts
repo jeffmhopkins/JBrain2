@@ -28,6 +28,7 @@ import type {
   JcodeModelStatus,
   JcodePreview,
   JcodeSession,
+  JcodeShare,
   JcodeShareToken,
   NewSessionInput,
 } from "../jcode/types";
@@ -2287,8 +2288,23 @@ export const api = {
     ).json();
   },
 
+  /** The live (non-revoked) share links for a session (owner only) — metadata only. */
+  async jcodeListShares(id: string): Promise<JcodeShare[]> {
+    return (await request(`/api/jcode/sessions/${encodeURIComponent(id)}/shares`)).json();
+  },
+
+  /** Revoke a share link (owner only). Idempotent from the UI's view — a 404 (already
+   * gone) is swallowed by the caller's reload. */
+  async jcodeRevokeShare(id: string, shareId: string): Promise<void> {
+    await request(
+      `/api/jcode/sessions/${encodeURIComponent(id)}/shares/${encodeURIComponent(shareId)}`,
+      { method: "DELETE" },
+    );
+  },
+
   /** Redeem a share secret on any browser: sets a session cookie scoped to that one
-   * session and returns its id. 401 (ApiError) on an invalid / expired / revoked link. */
+   * session and returns its id. 401 (ApiError) on an invalid / expired / revoked /
+   * already-claimed link (share links are single-use — first browser binds it). */
   async jcodeRedeemShare(token: string): Promise<{ session_id: string }> {
     return (await request("/api/jcode/share/redeem", jsonInit("POST", { token }))).json();
   },

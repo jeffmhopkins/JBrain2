@@ -328,9 +328,10 @@ describe("JcodeSessionScreen", () => {
     expect(onClose).toHaveBeenCalled();
   });
 
-  it("mints + copies a share link from the Copy link button", async () => {
+  it("mints + copies a single-use link from the share manager", async () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+    vi.spyOn(api, "jcodeListShares").mockResolvedValue([]);
     vi.spyOn(api, "jcodeMintShare").mockResolvedValue({
       id: "p1",
       label: "shared link",
@@ -338,16 +339,20 @@ describe("JcodeSessionScreen", () => {
       token: "sekret",
     });
     render(<JcodeSessionScreen session={SESSION} onClose={vi.fn()} />);
+    fireEvent.click(screen.getByText("Share")); // open the manager
+    fireEvent.click(await screen.findByText("Create link"));
+    // The minted URL is shown once; copying it writes the /jcode/s/{sid}#t=token link.
+    expect(await screen.findByText("Copy link")).toBeInTheDocument();
     fireEvent.click(screen.getByText("Copy link"));
     await waitFor(() =>
       expect(writeText).toHaveBeenCalledWith(expect.stringContaining("/jcode/s/j1#t=sekret")),
     );
-    expect(await screen.findByText("Link copied ✓")).toBeInTheDocument();
+    expect(api.jcodeMintShare).toHaveBeenCalledWith("j1", 24);
   });
 
-  it("hides the owner controls (Reset / Delete / Copy link) in shared mode", () => {
+  it("hides the owner controls (Reset / Delete / Share) in shared mode", () => {
     render(<JcodeSessionScreen session={SESSION} onClose={vi.fn()} shared />);
-    expect(screen.queryByText("Copy link")).not.toBeInTheDocument();
+    expect(screen.queryByText("Share")).not.toBeInTheDocument();
     expect(screen.queryByText("Reset")).not.toBeInTheDocument();
     expect(screen.queryByText("Delete")).not.toBeInTheDocument();
     // The owner-only model-status poll is skipped — a share principal would 403 it.
