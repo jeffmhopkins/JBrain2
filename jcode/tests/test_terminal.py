@@ -1,14 +1,15 @@
-"""Interactive terminal: PTY mechanics, the WS route's auth gate, and the reaper
-guard that keeps a session alive while a terminal is open.
+"""Interactive terminal: PTY mechanics, the WS route's auth gate, the reaper guard
+that keeps a session alive while a terminal is open, and the shell-exit-vs-socket-drop
+distinction that decides whether a session is paused.
 
-The PTY itself is exercised here (a real shell in a tmp cwd); the WebSocket *pump*
-(serve_terminal) is deploy-only (pragma: no cover), so these cover everything around
-it — that the shell runs in the right cwd, that resize reaches the PTY, that the
-upgrade is token-gated, and that an open terminal is treated as activity.
+The PTY itself is exercised here (a real shell in a tmp cwd); the WebSocket pump
+(serve_terminal) is deploy-only (pragma: no cover) but the exit/drop branch is driven
+end-to-end below with a fake socket + a real shell, since it's the subtle bit.
 """
 
 from __future__ import annotations
 
+import asyncio
 import fcntl
 import os
 import select
@@ -27,9 +28,65 @@ from jcode_ctl.terminal import (
     _set_winsize,
     kill_processes_in_dir,
     model_env,
+    serve_terminal,
     spawn_shell,
 )
 from jcode_ctl.workspace import FakeWorkspace
+
+
+class _FakeWS:
+    """A minimal stand-in for the Starlette WebSocket serve_terminal drives: it plays a
+    scripted set of inbound messages, then blocks `receive()` until `close()` is called
+    (mirroring a socket that disconnects once the server closes it)."""
+
+    def __init__(self, script: list[dict[str, object]]) -> None:
+        self._script = list(script)
+        self._closed = asyncio.Event()
+        self.sent: list[bytes] = []
+
+    async def receive(self) -> dict[str, object]:
+        if self._script:
+            return self._script.pop(0)
+        await self._closed.wait()
+        return {"type": "websocket.disconnect"}
+
+    async def send_bytes(self, data: bytes) -> None:
+        self.sent.append(data)
+
+    async def close(self) -> None:
+        self._closed.set()
+
+
+async def test_serve_terminal_pauses_on_shell_exit(tmp_path) -> None:
+    # The headline distinction: a real shell exit (the user types `exit` / Ctrl-D) EOFs
+    # the PTY, so on_shell_exit fires → the route pauses the session.
+    exited: list[int] = []
+    ws = _FakeWS([{"type": "websocket.receive", "bytes": b"exit\n"}])
+    await asyncio.wait_for(
+        serve_terminal(
+            ws,  # type: ignore[arg-type]
+            str(tmp_path),
+            on_shell_exit=lambda pid: exited.append(pid),
+        ),
+        timeout=10,
+    )
+    assert exited  # the shell exit was detected and would pause the session
+
+
+async def test_serve_terminal_socket_drop_does_not_pause(tmp_path) -> None:
+    # A browser socket drop (tab switch / background) must NOT pause the session — the
+    # shell never exited, so on_shell_exit must not fire.
+    exited: list[int] = []
+    ws = _FakeWS([{"type": "websocket.disconnect"}])
+    await asyncio.wait_for(
+        serve_terminal(
+            ws,  # type: ignore[arg-type]
+            str(tmp_path),
+            on_shell_exit=lambda pid: exited.append(pid),
+        ),
+        timeout=10,
+    )
+    assert exited == []
 
 
 def _read_until(fd: int, needle: bytes, timeout: float = 5.0) -> bytes:

@@ -114,11 +114,12 @@ def _warm_tasks(request: Request) -> set[asyncio.Task[None]]:
 
 
 async def _warm_model(gateway: LocalGateway, served: str) -> None:
-    # Give the coder the whole box: evict every OTHER resident model, then load it. A
-    # cold 80B load reads tens of GB (blocks up to ~2 min), so this runs in the
-    # background — never blocking session creation. NOT unloaded later: the coder stays
-    # resident until another JBrain task loads a different model (the gateway swaps it
-    # then). All best-effort: a gateway hiccup must never break a session.
+    # Give the coder the whole box: if it's NOT already resident, evict every OTHER model
+    # then load it; if it IS already resident, do nothing (no evict, no reload). A cold
+    # 80B load reads tens of GB (blocks up to ~2 min), so this runs in the background —
+    # never blocking session creation. NOT unloaded later: the coder stays resident until
+    # another JBrain task loads a different model (the gateway swaps it then). All
+    # best-effort: a gateway hiccup must never break a session.
     with contextlib.suppress(Exception):
         resident = await gateway.running()
         # Already loaded → no-op: don't evict anything and don't re-probe a load (which
@@ -133,7 +134,8 @@ async def _warm_model(gateway: LocalGateway, served: str) -> None:
 
 
 def _warm_coder(request: Request, model_id: str) -> None:
-    """Fire-and-forget warm of the coder: evict the other resident models and load it.
+    """Fire-and-forget warm of the coder: if it isn't already resident, evict the other
+    models and load it (a no-op when it's already on the box — no eviction, no reload).
     Triggered ONLY by the explicit warm route, after the session screen has confirmed the
     swap with the owner — never automatically on session create, so we never evict a model
     the owner is using (and didn't ask to replace) just by opening code mode."""
