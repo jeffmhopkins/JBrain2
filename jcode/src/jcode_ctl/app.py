@@ -210,6 +210,7 @@ def create_app(
             await websocket.close(code=4404)
             return
         await websocket.accept()
+
         # Pin the shell's `claude` CLI to this session's model (falling back to the
         # server default) so it doesn't default to a cloud model the on-box gateway has
         # no route for. on_open/on_close register the PTY pid so an open shell counts as
