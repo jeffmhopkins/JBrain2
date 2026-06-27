@@ -97,22 +97,6 @@ describe("GraphScreen", () => {
     expect(load).toHaveBeenCalledWith("me", 2);
   });
 
-  it("the depth toggle drops the 2-hop ring", async () => {
-    setup();
-    await loaded();
-    expect(graphNode("Headquarters")).toBeTruthy(); // 2-hop present at default depth 2
-    fireEvent.click(screen.getByRole("button", { name: "1 hop" }));
-    await waitFor(() =>
-      expect(
-        screen
-          .queryAllByRole("button", { name: "Headquarters" })
-          .find((b) => b.classList.contains("graph-node")),
-      ).toBeUndefined(),
-    );
-    // 1-hop neighbours stay.
-    expect(graphNode("Wife")).toBeTruthy();
-  });
-
   it("labels every connection, not just the focal's own edges", async () => {
     setup();
     await loaded();

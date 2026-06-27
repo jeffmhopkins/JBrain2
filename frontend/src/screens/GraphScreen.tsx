@@ -185,7 +185,7 @@ const DISC = { 0: 60, 1: 44, 2: 32 } as const;
 const radiusOf = (hop: number) => (hop === 0 ? 30 : hop === 1 ? 22 : 16);
 // First-ring fan: how many neighbours a node shows on the inner ring, and how
 // many of each of theirs reach the outer ring — capped so the phone stays legible.
-const FIRST_CAP = { 1: 12, 2: 8 } as const;
+const FIRST_CAP = 8;
 const SECOND_CAP = 4;
 
 interface Pos {
@@ -332,7 +332,6 @@ export function GraphScreen({
   const [phase, setPhase] = useState<Phase>("loading");
   const [graph, setGraph] = useState<EgoGraph | null>(null);
   const [focal, setFocal] = useState<string | null>(null);
-  const [depth, setDepth] = useState<1 | 2>(2);
   const [trail, setTrail] = useState<string[]>([]);
   const [query, setQuery] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
@@ -409,35 +408,32 @@ export function GraphScreen({
     return { adjacency: adj, relOf: rel, degree: deg };
   }, [graph]);
 
-  // The local layout for the current focal + depth + type filter, in world
-  // coordinates with the focal pinned at the origin. We select the same capped
-  // 1–2 hop neighbourhood (so it never becomes a hairball), excluding any
-  // filtered-out types, then settle it with a small force pass so the map reads
-  // organically rather than as fixed rings.
+  // The local layout for the current focal + type filter, in world coordinates
+  // with the focal pinned at the origin. We select a capped 1–2 hop
+  // neighbourhood (so it never becomes a hairball), excluding any filtered-out
+  // types, then settle it with a small force pass so the map reads organically.
   const layout = useMemo(() => {
     if (!focal || !nodeById.has(focal)) return new Map<string, Pos>();
     const allowed = (id: string) =>
       id === focal || !typeOff.has(resolveEntityKind(nodeById.get(id)?.kind ?? "Thing"));
-    const first = (adjacency.get(focal) ?? []).filter(allowed).slice(0, FIRST_CAP[depth]);
+    const first = (adjacency.get(focal) ?? []).filter(allowed).slice(0, FIRST_CAP);
     const placed = new Set<string>([focal, ...first]);
     const hop = new Map<string, number>([[focal, 0]]);
     for (const id of first) hop.set(id, 1);
-    if (depth === 2) {
-      for (const fid of first) {
-        let n = 0;
-        for (const sid of adjacency.get(fid) ?? []) {
-          if (n >= SECOND_CAP) break;
-          if (placed.has(sid) || !allowed(sid)) continue;
-          placed.add(sid);
-          hop.set(sid, 2);
-          n++;
-        }
+    for (const fid of first) {
+      let n = 0;
+      for (const sid of adjacency.get(fid) ?? []) {
+        if (n >= SECOND_CAP) break;
+        if (placed.has(sid) || !allowed(sid)) continue;
+        placed.add(sid);
+        hop.set(sid, 2);
+        n++;
       }
     }
     const ids = [...placed];
     const links = (graph?.edges ?? []).filter((e) => placed.has(e.source) && placed.has(e.target));
     return settleLocal(ids, links, hop, focal);
-  }, [focal, depth, adjacency, nodeById, graph, typeOff]);
+  }, [focal, adjacency, nodeById, graph, typeOff]);
 
   // Visible edges (both endpoints placed) with reciprocal-merge + geometry.
   const edges = useMemo(() => {
@@ -560,8 +556,8 @@ export function GraphScreen({
     updateLabels();
   }, [updateLabels]);
 
-  // Centre the fresh local layout whenever the focal, depth, or panel size
-  // changes — the focal (world origin) sits at the middle of the stage.
+  // Centre the fresh local layout whenever the focal or panel size changes —
+  // the focal (world origin) sits at the middle of the stage.
   // biome-ignore lint/correctness/useExhaustiveDependencies: panelH is read via the stage size at apply time; it must retrigger centring.
   useEffect(() => {
     const stage = stageRef.current;
@@ -571,7 +567,7 @@ export function GraphScreen({
       ty: (stage?.clientHeight || 560) / 2,
     };
     applyView();
-  }, [focal, depth, panelH, applyView]);
+  }, [focal, panelH, applyView]);
 
   useEffect(() => {
     const onResize = () => applyView();
@@ -622,7 +618,7 @@ export function GraphScreen({
   };
   function onPointerDown(e: PointerEvent<HTMLDivElement>) {
     if (searchOpen) setSearchOpen(false);
-    if ((e.target as HTMLElement).closest(".graph-node, .graph-depth")) return;
+    if ((e.target as HTMLElement).closest(".graph-node")) return;
     e.currentTarget.setPointerCapture?.(e.pointerId);
     ptrs.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
     const g = gesture.current;
@@ -684,7 +680,6 @@ export function GraphScreen({
     const stage = stageRef.current;
     if (!stage) return;
     const handler = (e: WheelEvent) => {
-      if ((e.target as HTMLElement).closest(".graph-depth")) return;
       e.preventDefault();
       const r = stage.getBoundingClientRect();
       const next = focalZoom(
@@ -870,25 +865,6 @@ export function GraphScreen({
             );
           })}
         </div>
-
-        <fieldset className="graph-depth" aria-label="Depth">
-          <button
-            type="button"
-            className={depth === 1 ? "is-on" : ""}
-            aria-pressed={depth === 1}
-            onClick={() => setDepth(1)}
-          >
-            1 hop
-          </button>
-          <button
-            type="button"
-            className={depth === 2 ? "is-on" : ""}
-            aria-pressed={depth === 2}
-            onClick={() => setDepth(2)}
-          >
-            2 hops
-          </button>
-        </fieldset>
 
         {rels.length === 0 && (
           <p className="graph-empty-note">
