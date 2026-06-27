@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Workflow interval editor — B · Number + unit</title>
+<style>
+  :root{
+    --bg:#0e0f11;--surface:#17181b;--surface-2:#1e2024;--border:#26282c;
+    --text:#e6e7e9;--text-2:#9a9da3;--text-3:#5c5f66;
+    --steel:#7fa7c9;--steel-tint:rgba(127,167,201,.13);
+    --amber:#c9a36a;--amber-tint:rgba(201,163,106,.13);
+    --rose:#cf8a8f;--rose-tint:rgba(207,138,143,.13);
+    --r-input:12px;--r-seg:14px;--r-card:16px;--r-pill:999px;
+    --fs-micro:13px;--fs-secondary:14px;--fs-note:15px;--fs-body:16px;--fs-title:18px;--fs-screen:22px;
+    font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:#000;color:var(--text);display:flex;justify-content:center;padding:24px 0;-webkit-font-smoothing:antialiased}
+  .phone{width:390px;min-height:760px;background:var(--bg);border:1px solid var(--border);border-radius:28px;overflow:hidden;display:flex;flex-direction:column;position:relative}
+  .bar{display:flex;align-items:center;gap:8px;height:56px;padding:0 8px;border-bottom:1px solid var(--border);flex:none}
+  .icon-btn{width:40px;height:40px;border:none;background:none;color:var(--text);font-size:22px;cursor:pointer;border-radius:10px}
+  .bar h2{font-size:var(--fs-title);font-weight:500;margin:0}
+  .body{flex:1;overflow-y:auto;padding:6px 16px 96px}
+  .ctx{margin-top:14px;background:var(--surface);border:1px solid var(--border);border-radius:var(--r-card);padding:13px 14px}
+  .ctx .when{font-size:var(--fs-note);font-weight:500}
+  .ctx .when b{color:var(--steel);font-weight:600}
+  .ctx .sub{font-size:var(--fs-micro);color:var(--text-2);margin-top:4px}
+  .pill{display:inline-block;font-size:11px;padding:2px 8px;border-radius:var(--r-pill);background:var(--amber-tint);color:var(--amber);margin-right:6px;vertical-align:middle}
+  .field{display:block;margin-top:20px}
+  .lab{display:block;font-size:var(--fs-micro);letter-spacing:.06em;text-transform:uppercase;color:var(--text-3);margin-bottom:8px}
+  .seg{display:flex;border:1px solid var(--border);border-radius:var(--r-seg);overflow:hidden}
+  .segbtn{flex:1;border:none;border-left:1px solid var(--border);background:transparent;color:var(--text-2);font:inherit;font-size:var(--fs-secondary);font-weight:500;padding:11px 6px;cursor:pointer}
+  .segbtn:first-child{border-left:none}
+  .segbtn.on{background:var(--steel-tint);color:var(--steel);font-weight:600}
+  .hint{font-size:var(--fs-secondary);color:var(--text-2);margin-top:10px}
+  /* === number + unit control === */
+  .row2{display:flex;gap:9px;margin-top:6px}
+  .every{align-self:center;font-size:var(--fs-body);color:var(--text-2);flex:none}
+  .numinput{width:96px;flex:none;font:inherit;color:var(--text);background:var(--surface-2);border:1px solid var(--border);border-radius:var(--r-input);padding:12px 13px;font-size:24px;font-weight:600;text-align:center;font-variant-numeric:tabular-nums}
+  .numinput:focus-visible{outline:2px solid var(--steel);outline-offset:0}
+  .unitsel{flex:1;font:inherit;color:var(--text);background:var(--surface-2);border:1px solid var(--border);border-radius:var(--r-input);padding:12px 13px;font-size:var(--fs-body)}
+  .unitsel:focus-visible{outline:2px solid var(--steel);outline-offset:0}
+  .quick{display:flex;gap:7px;flex-wrap:wrap;margin-top:12px}
+  .qchip{border:1px solid var(--border);background:var(--surface-2);color:var(--text-2);font:inherit;font-size:var(--fs-secondary);padding:7px 13px;border-radius:var(--r-pill);cursor:pointer}
+  .qchip.on{border-color:var(--steel);background:var(--steel-tint);color:var(--steel);font-weight:600}
+  .preview{margin-top:18px;background:var(--surface);border:1px solid var(--border);border-radius:var(--r-input);padding:12px 13px;font-size:var(--fs-secondary)}
+  .preview b{color:var(--steel)}
+  .guard{margin-top:12px;display:none;background:var(--amber-tint);border:1px solid color-mix(in srgb,var(--amber) 40%,transparent);border-radius:var(--r-input);padding:11px 13px;font-size:var(--fs-secondary);color:var(--text)}
+  .guard.show{display:block}
+  .guard b{color:var(--amber)}
+  .err{margin-top:10px;display:none;color:var(--rose);font-size:var(--fs-secondary)}
+  .err.show{display:block}
+  .foot{flex:none;padding:12px 16px 18px;border-top:1px solid var(--border)}
+  .save{width:100%;border:none;border-radius:var(--r-seg);background:var(--steel);color:var(--bg);font:inherit;font-size:var(--fs-note);font-weight:600;padding:14px;cursor:pointer}
+  .save:disabled{opacity:.5;cursor:default}
+  .tag{position:absolute;top:10px;right:14px;font-size:11px;color:var(--text-3);letter-spacing:.08em}
+</style>
+</head>
+<body>
+<div class="phone">
+  <span class="tag">MOCK B · NUMBER + UNIT</span>
+  <div class="bar">
+    <button class="icon-btn" aria-label="Cancel">‹</button>
+    <h2>Edit schedule</h2>
+  </div>
+  <div class="body">
+    <div class="ctx">
+      <div class="when"><span class="pill">reconciler</span>Run <b>embed-unembedded-chunks</b></div>
+      <div class="sub">Currently every 5 minutes · last run 2m ago</div>
+    </div>
+
+    <div class="field">
+      <span class="lab">How it runs</span>
+      <div class="seg" role="tablist">
+        <button class="segbtn on" data-mode="interval">Interval</button>
+        <button class="segbtn" data-mode="on_demand">On demand</button>
+      </div>
+      <p class="hint" id="hint">A reconciler runs on a fixed cadence — set the gap between sweeps.</p>
+    </div>
+
+    <div class="field" id="intervalBlock">
+      <span class="lab">Run every</span>
+      <div class="row2">
+        <span class="every">Every</span>
+        <input class="numinput" id="num" type="number" min="1" max="999" value="5" inputmode="numeric" />
+        <select class="unitsel" id="unit">
+          <option value="min">minutes</option>
+          <option value="hr">hours</option>
+        </select>
+      </div>
+      <div class="quick" id="quick">
+        <button class="qchip on" data-min="5">5 min</button>
+        <button class="qchip" data-min="15">15 min</button>
+        <button class="qchip" data-min="30">30 min</button>
+        <button class="qchip" data-min="60">Hourly</button>
+        <button class="qchip" data-min="360">6 h</button>
+      </div>
+      <div class="err" id="err">Enter a whole number of 1 or more.</div>
+      <div class="preview" id="preview">Sweeps <b>every 5 minutes</b> · next run in ~3m</div>
+      <div class="guard" id="guard"><b>Heads up:</b> an hour or longer between sweeps means new items wait that long to be processed.</div>
+    </div>
+  </div>
+  <div class="foot">
+    <button class="save" id="save">Save schedule</button>
+  </div>
+</div>
+<script>
+  const numEl=document.getElementById("num"), unitEl=document.getElementById("unit");
+  const preview=document.getElementById("preview"), guard=document.getElementById("guard"), err=document.getElementById("err");
+  const save=document.getElementById("save"), quick=document.getElementById("quick");
+  const intervalBlock=document.getElementById("intervalBlock"), hint=document.getElementById("hint");
+  function seconds(){const n=parseInt(numEl.value,10);return unitEl.value==="min"?n*60:n*3600}
+  function render(){
+    const n=parseInt(numEl.value,10);
+    const valid=Number.isInteger(n)&&n>=1;
+    err.classList.toggle("show",!valid);
+    save.disabled=!valid;
+    if(!valid){preview.innerHTML="—";guard.classList.remove("show");return}
+    const uname=unitEl.value==="min"?(n===1?"minute":"minutes"):(n===1?"hour":"hours");
+    preview.innerHTML=`Sweeps <b>every ${n} ${uname}</b> · next run in ~${unitEl.value==="min"?Math.max(1,n-2)+"m":n+"h"}`;
+    guard.classList.toggle("show", seconds()>=3600);
+    // sync quick chips
+    const mins=unitEl.value==="min"?n:n*60;
+    document.querySelectorAll(".qchip").forEach(c=>c.classList.toggle("on",parseInt(c.dataset.min,10)===mins));
+  }
+  numEl.oninput=render; unitEl.onchange=render;
+  quick.querySelectorAll(".qchip").forEach(c=>c.onclick=()=>{
+    const m=parseInt(c.dataset.min,10);
+    if(m%60===0&&m>=60){unitEl.value="hr";numEl.value=m/60}else{unitEl.value="min";numEl.value=m}
+    render();
+  });
+  document.querySelectorAll(".segbtn").forEach(b=>b.onclick=()=>{
+    document.querySelectorAll(".segbtn").forEach(x=>x.classList.remove("on"));
+    b.classList.add("on");
+    const onDemand=b.dataset.mode==="on_demand";
+    intervalBlock.style.display=onDemand?"none":"block";
+    save.disabled=false;
+    hint.textContent=onDemand?"Paused — it only runs when you tap Run now.":"A reconciler runs on a fixed cadence — set the gap between sweeps.";
+  });
+  save.onclick=()=>{if(!save.disabled)alert("PUT /api/ops/schedules/{id}\n{ schedule_kind:\"interval\", interval_seconds:"+seconds()+" }")};
+  render();
+</script>
+</body>
+</html>
