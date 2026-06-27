@@ -1,8 +1,9 @@
 ---
 name: triage.classify
-version: triage-classify-v4
+version: triage-classify-v5
 description: Classify a single inbox email into a priority bucket for the archivist's triage sweep.
 strength: low
+input: [clarifications]
 config:
   # The classifier returns a tiny JSON verdict, but the `low` tier resolves to a
   # reasoning model whose thinking trace bills against this same cap before the
@@ -25,5 +26,6 @@ Feature and product enhancement announcements, release notes, and non-transactio
 
 An order confirmation, purchase receipt, or shipping/delivery update from a retailer (for example an Amazon "Ordered:" or "Shipped:" message) is "medium", never "high" — it is informational and needs no action even though it is transactional and mentions a delivery date. Reserve "high" for transactional mail that genuinely demands a response or decision: a bill or payment due, a financial statement, or a security or account alert. When torn between the actionable buckets, choose the safer, more visible one (high over medium, medium over low) and lower your confidence to reflect the doubt.
 
+{{ clarifications }}
 Return JSON only:
 {"bucket": "high|medium|low|spam", "confidence": <float between 0 and 1>}

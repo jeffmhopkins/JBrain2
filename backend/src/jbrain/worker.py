@@ -512,7 +512,7 @@ async def run() -> None:
         # per-message classification is an LLM call (the `triage.classify` route). In-code
         # only (not in the app.actions seed); a migration seeds the schedule. Dormant until
         # Gmail is connected — the handler fails recoverably and retries until then.
-        "triage_inbox": triage_inbox_handler(gmail_provider.client, router),
+        "triage_inbox": triage_inbox_handler(gmail_provider.client, router, maker),
         # The wiki builder (Phase-6 Wave C2): dirty-bit-driven article build + reindex + prune.
         # In-code only (not in the app.actions seed); a migration seeds the schedules. The live
         # LLM rewriter (C2b) drives router.complete behind the grounding gate + wiki-build budget;
