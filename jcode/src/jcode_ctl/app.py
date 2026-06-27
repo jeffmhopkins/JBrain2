@@ -36,7 +36,7 @@ from pydantic import BaseModel, Field
 from jcode_ctl.config import Settings
 from jcode_ctl.preview import PreviewError, PreviewManager
 from jcode_ctl.sessions import SessionError, SessionManager
-from jcode_ctl.terminal import serve_terminal
+from jcode_ctl.terminal import TerminalRegistry, serve_terminal
 
 _log = logging.getLogger("jcode_ctl")
 
@@ -113,10 +113,17 @@ def create_app(
             reaper.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await reaper
-            # Tear down every live tunnel so no preview outlives the server.
+            # Kill every persistent shell so none outlives the server, then tear down
+            # every live tunnel so no preview does either.
+            terminals.close_all()
             await preview.close_all()
 
     app = FastAPI(title="jcode control server", lifespan=lifespan)
+
+    # The live persistent shells, keyed by session id. A shell outlives any one terminal
+    # socket (you leave the app, it keeps running) and is reattached on reconnect; the
+    # registry is torn down with the server.
+    terminals = TerminalRegistry()
 
     expected_header = f"Bearer {settings.token}"
 
@@ -213,15 +220,20 @@ def create_app(
 
         # Pin the shell's `claude` CLI to this session's model (falling back to the
         # server default) so it doesn't default to a cloud model the on-box gateway has
-        # no route for. on_open/on_close register the PTY pid so an open shell counts as
-        # activity (the reaper won't reap under it) and delete can kill it.
-        # on_shell_exit pauses the session when the user exits the shell (not a socket
-        # drop).
+        # no route for. The shell is persistent — it outlives this socket (leaving the
+        # app keeps it running) and is reattached on reconnect; on_open registers its
+        # pid once so an open shell counts as activity (the reaper won't reap it) and
+        # stop/delete can kill it. on_shell_exit pauses the session when the user exits
+        # the shell itself (not a socket drop). It can race a delete (the session's
+        # already gone), so the pause is best-effort.
         def _on_shell_exit(_pid: int) -> None:
-            sessions.stop(sid)
+            with contextlib.suppress(SessionError):
+                sessions.stop(sid)
 
         await serve_terminal(
             websocket,
+            sid,
+            terminals,
             session.workspace,
             model=session.model or settings.model,
             preview_port=settings.preview_default_port,

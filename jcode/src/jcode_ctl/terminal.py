@@ -24,7 +24,7 @@ import pty
 import signal
 import struct
 import termios
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -175,8 +175,181 @@ async def _write_all(fd: int, data: bytes) -> None:  # pragma: no cover - deploy
             await asyncio.sleep(0)  # let the shell drain the PTY, then retry the rest
 
 
-async def serve_terminal(  # pragma: no cover - the PTY pump is exercised at deploy
+# Recent raw PTY output retained per terminal so a reconnecting client can be replayed
+# the current screen (it lands on a fresh xterm with no history). Bounded — a couple of
+# screens of scrollback restores context without unbounded growth while away.
+_SCROLLBACK_BYTES = 256 * 1024
+
+
+class PtyTerminal:
+    """A persistent shell PTY bound to a jcode session, decoupled from any one socket.
+
+    The shell keeps running while no client is attached — you leave the app and your
+    build / ``claude`` run keeps going — and a reconnecting client reattaches and is
+    replayed the recent scrollback so it sees the current screen. A loop reader drains
+    the PTY continuously (independent of any socket) so output is never lost and the
+    shell never blocks on a full PTY buffer while detached. Torn down only when the
+    shell itself exits (EOF) or an external kill (stop / delete / shutdown) ends it.
+    """
+
+    def __init__(
+        self,
+        cwd: str,
+        *,
+        env_overrides: dict[str, str] | None = None,
+        scrollback: int = _SCROLLBACK_BYTES,
+    ) -> None:
+        self.pid, self.fd = spawn_shell(cwd, env_overrides=env_overrides)
+        os.set_blocking(self.fd, False)
+        self._loop = asyncio.get_running_loop()
+        self._limit = scrollback
+        self._buf = bytearray()  # retained tail of raw output, for replay on reattach
+        self._produced = 0  # total bytes ever read from the PTY (absolute offset base)
+        self._exited = False  # the shell EOF'd, or we tore it down
+        self._closed = False  # teardown ran (guards it to once)
+        self._new = asyncio.Event()  # poked on new output / exit so stream_to wakes
+        # The client socket currently driving, or None when detached (takeover state).
+        self.attached: object | None = None
+        # Fired once when the SHELL exits on its own (Ctrl-D / ``exit``) — NOT on an
+        # external kill. The route wires it to deregister the pid + pause the session.
+        self.on_exit: Callable[[], None] | None = None
+        self._loop.add_reader(self.fd, self._on_readable)
+
+    @property
+    def alive(self) -> bool:
+        return not self._closed
+
+    @property
+    def _origin(self) -> int:
+        # Absolute offset of the first retained byte (earlier bytes were trimmed off).
+        return self._produced - len(self._buf)
+
+    def _on_readable(self) -> None:
+        try:
+            data = os.read(self.fd, _READ_BYTES)
+        except (BlockingIOError, InterruptedError):
+            return
+        except OSError:  # the shell exited and closed the slave
+            data = b""
+        if not data:  # empty read == EOF == the shell exited
+            self._teardown(shell_exit=True)
+            return
+        self._buf += data
+        self._produced += len(data)
+        if len(self._buf) > self._limit:  # keep only the tail
+            del self._buf[: len(self._buf) - self._limit]
+        self._new.set()
+
+    async def write(self, data: bytes) -> None:
+        if not self._closed:
+            await _write_all(self.fd, data)
+
+    def resize(self, rows: int, cols: int) -> None:
+        if not self._closed:
+            with contextlib.suppress(OSError):
+                _set_winsize(self.fd, rows, cols)
+
+    async def stream_to(self, websocket: Any) -> bool:
+        """Replay the retained scrollback, then forward live output to ``websocket``
+        until the shell exits or this coroutine is cancelled (the client detached).
+        Returns True if it stopped because the shell exited, so the caller closes it."""
+        sent = self._origin  # start by replaying everything we still retain
+        while True:
+            while sent < self._produced:
+                origin = self._origin
+                sent = max(sent, origin)  # fell behind the ring? resync past the gap
+                chunk = bytes(self._buf[sent - origin :])
+                sent = self._produced
+                await websocket.send_bytes(chunk)
+            if self._exited:
+                return True
+            self._new.clear()
+            if sent < self._produced or self._exited:
+                continue  # raced new output / exit between the check and the clear
+            await self._new.wait()
+
+    def close(self) -> None:
+        """External teardown (server shutdown): kill the shell, do NOT fire on_exit."""
+        self._teardown(shell_exit=False)
+
+    def _teardown(self, *, shell_exit: bool) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        self._exited = True
+        with contextlib.suppress(ValueError, OSError):
+            self._loop.remove_reader(self.fd)
+        _close_child(self.pid, self.fd)  # kill the group, reap, close the master fd
+        self._new.set()  # wake any stream_to so it returns
+        if shell_exit and self.on_exit is not None:
+            self.on_exit()
+
+
+class TerminalRegistry:
+    """The live persistent terminals, keyed by session id. One shell per session; a
+    reconnect reattaches to the existing one. Stale (exited) entries are forgotten."""
+
+    def __init__(self) -> None:
+        self._terms: dict[str, PtyTerminal] = {}
+
+    def get(self, sid: str) -> PtyTerminal | None:
+        term = self._terms.get(sid)
+        if term is not None and not term.alive:  # exited but not yet swept — forget it
+            self._terms.pop(sid, None)
+            return None
+        return term
+
+    def get_or_create(
+        self, sid: str, cwd: str, *, env_overrides: dict[str, str] | None
+    ) -> tuple[PtyTerminal, bool]:
+        term = self.get(sid)
+        if term is not None:
+            return term, False
+        term = PtyTerminal(cwd, env_overrides=env_overrides)
+        self._terms[sid] = term
+        return term, True
+
+    def remove(self, sid: str, term: PtyTerminal | None = None) -> None:
+        current = self._terms.get(sid)
+        if current is not None and (term is None or current is term):
+            self._terms.pop(sid, None)
+
+    def close_all(self) -> None:
+        for term in list(self._terms.values()):
+            term.close()
+        self._terms.clear()
+
+
+async def _recv_loop(websocket: WebSocket, term: PtyTerminal) -> None:
+    """Browser → shell until the socket drops: binary frames to the PTY verbatim, a text
+    frame is a JSON resize control. Returns on disconnect (the client detached)."""
+    from fastapi import WebSocketDisconnect
+
+    try:
+        while True:
+            message = await websocket.receive()
+            if message.get("type") == "websocket.disconnect":
+                return
+            data = message.get("bytes")
+            if data is not None:
+                await term.write(data)
+                continue
+            text = message.get("text")
+            if text:
+                with contextlib.suppress(json.JSONDecodeError, KeyError, TypeError):
+                    ctl = json.loads(text)
+                    if "resize" in ctl:
+                        term.resize(
+                            int(ctl["resize"]["rows"]), int(ctl["resize"]["cols"])
+                        )
+    except WebSocketDisconnect:
+        return
+
+
+async def serve_terminal(
     websocket: WebSocket,
+    sid: str,
+    registry: TerminalRegistry,
     cwd: str,
     *,
     model: str = "",
@@ -185,97 +358,71 @@ async def serve_terminal(  # pragma: no cover - the PTY pump is exercised at dep
     on_close: Callable[[int], None] | None = None,
     on_shell_exit: Callable[[int], None] | None = None,
 ) -> None:
-    """Bridge ``websocket`` to a shell PTY in ``cwd`` until either side closes.
+    """Attach ``websocket`` to the session's persistent shell PTY, creating it on the
+    first connect and reattaching (with a scrollback replay) on later ones.
 
-    Output is pumped through a queue drained by a single sender task so byte order
-    is preserved (vs. a task-per-chunk race). Browser → shell: binary frames are
-    written to the PTY verbatim; a text frame is a JSON control (``{"resize":...}``).
-    ``model`` (the session's served model) pins the ``claude`` CLI's model tiers so
-    it doesn't default to a cloud model the on-box gateway can't serve. ``preview_port``
-    (when set) exports ``PORT`` so a ``$PORT``-aware dev server binds the preview port.
-    ``on_open`` / ``on_close`` register the PTY pid with the session manager so an open
-    shell counts as activity and delete can kill it.
-
-    ``on_shell_exit`` fires ONLY when the shell process itself ended (the PTY child
-    EOF'd — the user typed ``exit`` / Ctrl-D), NOT when the browser merely dropped the
-    socket (a tab switch or backgrounding). The terminal route wires it to pause the
-    session: a deliberate exit shuts the session down, a transient disconnect leaves it
-    running.
+    The shell outlives the socket: a browser disconnect (tab close, leaving the app)
+    detaches but leaves the PTY running, so work in progress keeps going and the session
+    is NOT paused. A second connect takes over — the previous socket is closed so a
+    single client drives at a time. ``model`` pins the ``claude`` CLI's model tiers (no
+    cloud default the on-box gateway can't serve); ``preview_port`` exports ``PORT`` so
+    a ``$PORT``-aware dev server binds the preview port. ``on_open`` registers the pid
+    the first time the shell is created (an open shell counts as activity and
+    stop/delete can kill it); ``on_close`` / ``on_shell_exit`` fire only when the SHELL
+    exits (EOF — the user typed ``exit`` / Ctrl-D), pausing it. An external kill
+    (stop / delete) ends the shell without firing them — that path already removed it.
     """
-    from fastapi import WebSocketDisconnect
-
     overrides: dict[str, str] = {}
     if model:
         overrides.update(model_env(model))
     if preview_port:
         overrides.update(preview_env(preview_port))
-    pid, fd = spawn_shell(cwd, env_overrides=overrides or None)
-    if on_open is not None:
-        on_open(pid)
-    os.set_blocking(fd, False)
-    loop = asyncio.get_running_loop()
-    out: asyncio.Queue[bytes | None] = asyncio.Queue()
-    # Set when ``os.read`` hits EOF (the shell closed the slave by exiting). The finally
-    # uses it to tell a real exit apart from a socket drop before calling on_shell_exit.
-    shell_exited = False
 
-    def _on_readable() -> None:
-        nonlocal shell_exited
-        try:
-            data = os.read(fd, _READ_BYTES)
-        except (BlockingIOError, InterruptedError):
-            return
-        except OSError:  # the shell exited and closed the slave
-            shell_exited = True
-            out.put_nowait(None)
-            return
-        if not data:  # empty read == EOF == the shell exited
-            shell_exited = True
-        out.put_nowait(data or None)
+    term, created = registry.get_or_create(sid, cwd, env_overrides=overrides or None)
+    if created:
+        if on_open is not None:
+            on_open(term.pid)
 
-    loop.add_reader(fd, _on_readable)
+        def _on_exit() -> None:
+            registry.remove(sid, term)
+            if on_close is not None:
+                on_close(term.pid)
+            if on_shell_exit is not None:
+                on_shell_exit(term.pid)
 
-    async def _pump_out() -> None:
-        while True:
-            chunk = await out.get()
-            if chunk is None:  # shell EOF — close the socket so the tab settles
-                with contextlib.suppress(Exception):
-                    await websocket.close()
-                return
-            await websocket.send_bytes(chunk)
+        term.on_exit = _on_exit
+        _log.info("terminal open cwd=%s pid=%d", cwd, term.pid)
+    else:
+        _log.info("terminal reattach cwd=%s pid=%d", cwd, term.pid)
 
-    sender = asyncio.create_task(_pump_out())
-    _log.info("terminal open cwd=%s pid=%d", cwd, pid)
+    # Takeover: a new client closes whatever socket was attached, so one drives at once.
+    # Claim the slot BEFORE closing the old socket, so the departing attach's detach
+    # guard (``term.attached is websocket``) sees the new owner and can't clear it.
+    previous = term.attached
+    term.attached = websocket
+    if previous is not None and previous is not websocket:
+        with contextlib.suppress(Exception):
+            await previous.close()
+
+    recv = asyncio.ensure_future(_recv_loop(websocket, term))
+    send = asyncio.ensure_future(term.stream_to(websocket))
     try:
-        while True:
-            message = await websocket.receive()
-            if message.get("type") == "websocket.disconnect":
-                break
-            data = message.get("bytes")
-            if data is not None:
-                await _write_all(fd, data)
-                continue
-            text = message.get("text")
-            if text:
-                with contextlib.suppress(json.JSONDecodeError, KeyError, TypeError):
-                    ctl = json.loads(text)
-                    if "resize" in ctl:
-                        _set_winsize(
-                            fd, int(ctl["resize"]["rows"]), int(ctl["resize"]["cols"])
-                        )
-    except WebSocketDisconnect:
-        pass
+        done, pending = await asyncio.wait(
+            {recv, send}, return_when=asyncio.FIRST_COMPLETED
+        )
+        for task in pending:
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+        # The shell exited (stream_to returned True) → close the tab so it settles. A
+        # send that errored (a broken socket) just ends the attach like a disconnect.
+        if send in done and send.exception() is None and send.result():
+            with contextlib.suppress(Exception):
+                await websocket.close()
     finally:
-        loop.remove_reader(fd)
-        sender.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await sender
-        _close_child(pid, fd)
-        if on_close is not None:
-            on_close(pid)
-        # A deliberate shell exit (not a transient socket drop) pauses the session.
-        if shell_exited and on_shell_exit is not None:
-            on_shell_exit(pid)
+        # Detach without killing — unless another client already took over this slot.
+        if term.attached is websocket:
+            term.attached = None
         _log.info(
-            "terminal close cwd=%s pid=%d shell_exited=%s", cwd, pid, shell_exited
+            "terminal detach cwd=%s pid=%d exited=%s", cwd, term.pid, not term.alive
         )
