@@ -120,6 +120,40 @@ switches depth; pinch-zoom and a draggable sheet handle the extra density. The
 sheet still lists the *centred* entity's direct relationships. ("Me" shows ~11
 nodes at 1 hop, ~19 at 2 hops.)
 
+## V1 parity round — Force Map (`graph-v1-forcemap.html`)
+
+A direct port of **JBrain v1's** graph geometry, built to answer "I don't like
+the current 1-hop traversal display." v1's `web/src/pages/GraphPage.tsx` renders
+the *whole* knowledge graph with `react-force-graph-2d`: a free force layout
+(charge `-180`, `forceCollide`, link spring), **degree-scaled dots**
+(`r = √deg · NODE_REL`), kind-coloured nodes, a **click-to-focus** that rings the
+node and filters to its **N-hop neighbourhood** via a `1 / 2 / 3 / All hops`
+selector, a second click to open, a kind filter, and `zoomToFit` on settle.
+
+This mock reproduces that feel in JBrain2's design tokens + phone frame:
+
+- **Whole-graph force layout, no anchored root** — every node is placed by the
+  sim, exactly as v1's react-force-graph does. "Me" lands central only because
+  it is the biggest hub. This is the key departure from today's
+  `GraphScreen.tsx`, which re-lays a deterministic focal/1-hop/2-hop ring on
+  every re-centre.
+- **Degree-scaled dots** — hubs are visibly bigger; type = colour.
+- **Tap-to-focus = hop-depth filter (the fix).** Tapping a node rings it, lights
+  its neighbourhood, and dims everything else **in place** — the map never
+  re-lays-out. The `1 · 2 · 3 · All` segmented control expands/contracts the lit
+  neighbourhood by BFS depth, so "going a hop deeper" is a *highlight* change on
+  a stable map, not a fresh ring. A second tap (or **Open entity →**) enters it;
+  **Isolate neighbourhood** frames just the focus's hop set.
+- Shared wins from A–F carry over: labels fade in with zoom and cull on overlap
+  (focus + neighbours always labelled), draggable nodes, focal-point zoom, the
+  legend doubles as a kind filter, **fit** frames the whole graph.
+
+*Best for:* the familiar v1 "one organic map of everything" reading, where
+exploration is re-focusing on a stable layout rather than rebuilding a local
+ring. *Trade-off:* a true whole-graph render needs the dot+zoom-label discipline
+(no big icon discs at overview) and a settled/frozen sim on a phone — both
+applied here.
+
 ## Notes for implementation
 
 - All three are reachable from the current `GraphScreen` data contract
