@@ -304,13 +304,14 @@ class TaskRunRepo:
             )
 
     async def count_since(self, ctx: SessionContext, since: datetime) -> int:
-        """How many runs started after `since` — the launcher's "new since you last
-        opened Tasks" badge."""
+        """How many runs FINISHED after `since` — the launcher's "new since you last
+        opened Tasks" badge. A run surfaces as a result only once its turn completes,
+        so an in-flight run (NULL `ended_at`) never ticks the badge on start."""
         async with scoped_session(self._maker, ctx) as session:
             return int(
                 (
                     await session.execute(
-                        select(func.count()).select_from(TaskRun).where(TaskRun.started_at > since)
+                        select(func.count()).select_from(TaskRun).where(TaskRun.ended_at > since)
                     )
                 ).scalar()
                 or 0
@@ -319,10 +320,12 @@ class TaskRunRepo:
     async def latest_per_task(
         self, ctx: SessionContext, task_ids: Sequence[str]
     ) -> dict[str, TaskRunInfo]:
-        """The most recent run for each of `task_ids` (by `started_at`), keyed by
-        task id. Tasks that have never run are absent. Backs the Tasks card's
-        always-visible "latest result" band, so the newest session is one tap away
-        without expanding the card."""
+        """The most recent FINISHED run for each of `task_ids` (by `started_at`),
+        keyed by task id. Tasks that have never run — or whose only run is still in
+        flight — are absent. Backs the Tasks card's always-visible "latest result"
+        band, so the newest session is one tap away without expanding the card. An
+        in-flight run (NULL `ended_at`) is excluded, so the band keeps showing the
+        last completed result until the new run's turn finishes (not on start)."""
         if not task_ids:
             return {}
         ids = [uuid.UUID(t) for t in task_ids]
@@ -331,7 +334,7 @@ class TaskRunRepo:
                 (
                     await session.execute(
                         select(TaskRun)
-                        .where(TaskRun.task_id.in_(ids))
+                        .where(TaskRun.task_id.in_(ids), TaskRun.ended_at.isnot(None))
                         .order_by(TaskRun.task_id, TaskRun.started_at.desc())
                         .distinct(TaskRun.task_id)
                     )
