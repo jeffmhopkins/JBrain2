@@ -106,9 +106,14 @@ class _FakeGateway:
         self.resident: set[str] = set(resident or ())
         self.loaded: list[str] = []
         self.unloaded: list[str] = []
+        # The real load fraction the status would surface while warming (None = no signal).
+        self.progress: float | None = None
 
     async def running(self) -> set[str]:
         return set(self.resident)
+
+    async def load_progress(self) -> float | None:
+        return self.progress
 
     async def load(self, served_model: str) -> None:
         self.loaded.append(served_model)
@@ -178,6 +183,7 @@ async def test_status_reports_warming_while_the_load_is_in_flight(
     app = _app(maker, owner_id)
     app.state.settings = Settings(secure_cookies=False, local_llm_enabled=True)
     gw = _BlockingGateway()
+    gw.progress = 0.5  # the gateway reports the load half done while it blocks
     app.state.local_gateway = gw
     transport = ASGITransport(app=app)
 
@@ -188,11 +194,13 @@ async def test_status_reports_warming_while_the_load_is_in_flight(
         mid = (await client.get("/api/jcode/model")).json()
         assert mid["loaded"] is True  # the gateway already lists it...
         assert mid["warming"] is True  # ...but the warm task is still loading
+        assert mid["progress"] == 0.5  # ...and the real load fraction is surfaced
 
         gw.gate.set()  # release the load
         await asyncio.sleep(0.05)  # let the warm task finish + the done-callback fire
         done = (await client.get("/api/jcode/model")).json()
         assert done["warming"] is False
+        assert done["progress"] is None  # not warming → no progress probe
 
 
 async def test_warm_is_a_noop_when_the_coder_is_already_resident(

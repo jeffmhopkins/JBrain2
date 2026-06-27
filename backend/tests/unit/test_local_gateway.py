@@ -4,7 +4,12 @@ on running(), and a surfaced error on unload(). All via httpx.MockTransport."""
 import httpx
 import pytest
 
-from jbrain.llm.local_gateway import LocalGatewayClient, LocalGatewayError, _parse_running
+from jbrain.llm.local_gateway import (
+    LocalGatewayClient,
+    LocalGatewayError,
+    _parse_load_progress,
+    _parse_running,
+)
 
 
 def _client(handler: object) -> LocalGatewayClient:
@@ -76,3 +81,34 @@ def test_parse_running_tolerates_messy_shapes() -> None:
     assert _parse_running("garbage") == set()
     assert _parse_running({"unexpected": 1}) == set()
     assert _parse_running([]) == set()
+
+
+async def test_load_progress_parses_the_latest_percent_from_the_logs() -> None:
+    logs = (
+        "srv  load_model: loading model from /models/coder.gguf\n"
+        "load_tensors: loading model tensors 25 %\n"
+        "load_tensors: loading model tensors 80%\n"
+        "srv  update_slots: all slots are idle\n"  # a non-load line is ignored
+    )
+    # The freshest load line wins (80%), reported as a 0..1 fraction.
+    assert await _client(lambda r: httpx.Response(200, text=logs)).load_progress() == 0.8
+
+
+async def test_load_progress_is_none_without_a_parseable_line() -> None:
+    # No load-keyword line carrying a percent → soft miss, not an error (bar uses the
+    # time estimate). A stray "100% idle" lacks a load keyword and must be ignored.
+    logs = "server listening\nupdate_slots: 100% idle\n"
+    assert await _client(lambda r: httpx.Response(200, text=logs)).load_progress() is None
+
+
+async def test_load_progress_is_none_when_logs_are_unavailable() -> None:
+    # Old build without /logs (or gateway down) is a soft miss, never raised.
+    assert await _client(lambda r: httpx.Response(404)).load_progress() is None
+
+
+def test_parse_load_progress_tolerates_floats_and_ignores_out_of_range() -> None:
+    assert _parse_load_progress("load weights 12.5%") == 0.125
+    assert _parse_load_progress("loading tensors 0%") == 0.0
+    # A bogus >100 percent on a load line is rejected, leaving no signal.
+    assert _parse_load_progress("load tensors 250%") is None
+    assert _parse_load_progress("") is None
