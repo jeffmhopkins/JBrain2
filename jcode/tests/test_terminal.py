@@ -28,6 +28,7 @@ from jcode_ctl.terminal import (
     _set_winsize,
     kill_processes_in_dir,
     model_env,
+    preview_env,
     serve_terminal,
     spawn_shell,
 )
@@ -143,6 +144,26 @@ def test_model_env_pins_every_tier() -> None:
         "ANTHROPIC_DEFAULT_FABLE_MODEL",
     }
     assert all(v == "qwen3-coder-next" for v in env.values())
+
+
+def test_preview_env_exports_the_port() -> None:
+    # A $PORT-aware dev server (Next/CRA/Express…) binds the web-preview port, so a
+    # server the owner or agent starts lands where the tunnel forwards.
+    assert preview_env(5173) == {"PORT": "5173"}
+
+
+def test_spawn_shell_applies_preview_env(tmp_path) -> None:
+    # serve_terminal merges model_env + preview_env; a shell started with both sees PORT
+    # alongside the model pins.
+    overrides = {**model_env("qwen3-coder-next-q8"), **preview_env(5173)}
+    pid, fd = spawn_shell(str(tmp_path), env_overrides=overrides)
+    try:
+        os.write(fd, b"echo P=$PORT M=$ANTHROPIC_MODEL\n")
+        out = _read_until(fd, b"P=5173")
+        assert b"P=5173" in out
+        assert b"M=qwen3-coder-next-q8" in out
+    finally:
+        _close_child(pid, fd)
 
 
 def test_set_winsize_reaches_the_pty(tmp_path) -> None:

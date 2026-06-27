@@ -55,6 +55,16 @@ def model_env(model: str) -> dict[str, str]:
     }
 
 
+def preview_env(port: int) -> dict[str, str]:
+    """Point ``$PORT``-respecting dev servers (Next.js, CRA, Astro, ``process.env.PORT``
+    Express apps, …) at the web-preview port, so a server the owner or agent starts
+    lands where the preview tunnel forwards (``cloudflared … localhost:<port>``). The
+    tunnel and this var are fed the SAME ``preview_default_port`` so they can't drift; a
+    framework that ignores ``$PORT`` (e.g. Vite, already on 5173) is unaffected.
+    Loopback-only is fine — the tunnel runs in this same container."""
+    return {"PORT": str(port)}
+
+
 def _set_winsize(fd: int, rows: int, cols: int) -> None:
     """Push the browser terminal's size onto the PTY so full-screen TUIs (vim, and
     the ``claude`` CLI itself) lay out correctly. Clamped to sane bounds."""
@@ -170,6 +180,7 @@ async def serve_terminal(  # pragma: no cover - the PTY pump is exercised at dep
     cwd: str,
     *,
     model: str = "",
+    preview_port: int = 0,
     on_open: Callable[[int], None] | None = None,
     on_close: Callable[[int], None] | None = None,
     on_shell_exit: Callable[[int], None] | None = None,
@@ -180,9 +191,10 @@ async def serve_terminal(  # pragma: no cover - the PTY pump is exercised at dep
     is preserved (vs. a task-per-chunk race). Browser → shell: binary frames are
     written to the PTY verbatim; a text frame is a JSON control (``{"resize":...}``).
     ``model`` (the session's served model) pins the ``claude`` CLI's model tiers so
-    it doesn't default to a cloud model the on-box gateway can't serve. ``on_open`` /
-    ``on_close`` register the PTY pid with the session manager so an open shell counts
-    as activity and delete can kill it.
+    it doesn't default to a cloud model the on-box gateway can't serve. ``preview_port``
+    (when set) exports ``PORT`` so a ``$PORT``-aware dev server binds the preview port.
+    ``on_open`` / ``on_close`` register the PTY pid with the session manager so an open
+    shell counts as activity and delete can kill it.
 
     ``on_shell_exit`` fires ONLY when the shell process itself ended (the PTY child
     EOF'd — the user typed ``exit`` / Ctrl-D), NOT when the browser merely dropped the
@@ -192,7 +204,12 @@ async def serve_terminal(  # pragma: no cover - the PTY pump is exercised at dep
     """
     from fastapi import WebSocketDisconnect
 
-    pid, fd = spawn_shell(cwd, env_overrides=model_env(model) if model else None)
+    overrides: dict[str, str] = {}
+    if model:
+        overrides.update(model_env(model))
+    if preview_port:
+        overrides.update(preview_env(preview_port))
+    pid, fd = spawn_shell(cwd, env_overrides=overrides or None)
     if on_open is not None:
         on_open(pid)
     os.set_blocking(fd, False)
