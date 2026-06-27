@@ -113,10 +113,13 @@ sudo jbrain enable-local-models
 Builds the gateway (the community-maintained gfx1151 llama.cpp image +
 llama-swap), downloads the recommended set — **Qwen3-VL-30B-A3B Q8 (~32 GB)** +
 **gpt-oss-120b MXFP4 (~59 GB)**, ~91 GB total — generates the llama-swap config,
-and starts the gateway. Models are **swappable** (loaded on demand, one at a
-time) by default while co-residency is still under test; to keep the recommended
-set hot concurrently, re-run with `LOCAL_LLM_RESIDENT_GROUP=1 sudo jbrain
-enable-local-models` (a non-swapping group; needs the memory headroom).
+and starts the gateway. The recommended set runs **co-resident by default** (~91
+GB, a llama-swap `matrix` set — 120b + vl stay hot together so the agent's text
+and vision models never swap each other out mid-turn). A switch to a state that
+needs the whole box (an image render, the coder) is the only thing that displaces
+them, and the agent re-warms the set at end of turn. On a memory-tight box, opt
+out with `LOCAL_LLM_RESIDENT_GROUP=0 sudo jbrain enable-local-models` (the
+recommended set then loads on demand, one at a time).
 
 ✅ **Checkpoint:** `jbrain status` shows `local-llm` running; `jbrain logs
 local-llm` shows llama-swap listening and the resident models loaded.
@@ -230,9 +233,9 @@ comfyui`) for the submitted graph.
 ---
 
 ## Expected performance
-~31 tok/s on gpt-oss-120b, ~30–45 tok/s on Qwen3-VL. By default each loads on
-demand (one at a time); with `LOCAL_LLM_RESIDENT_GROUP=1` the recommended set
-stays resident (~91 GB) with headroom for context.
+~31 tok/s on gpt-oss-120b, ~30–45 tok/s on Qwen3-VL. By default the recommended
+set stays co-resident (~91 GB) with headroom for context; with
+`LOCAL_LLM_RESIDENT_GROUP=0` each loads on demand, one at a time.
 
 ## Switching to ROCm (optional, faster)
 The ROCm/rocWMMA path is often faster on gfx1151 and is the better route for

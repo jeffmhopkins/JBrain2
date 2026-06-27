@@ -180,11 +180,16 @@ class Settings(BaseSettings):
     # here — host/infra files, not application blobs, so the read sits outside the
     # storage abstraction (same rationale as host_metrics' /proc read).
     local_models_dir: str = "/data/local-models"
-    # Whether the gateway keeps the recommended models co-resident (a non-swapping
-    # llama-swap group) rather than swapping one at a time. Mirrors the install-time
-    # LOCAL_LLM_RESIDENT_GROUP so a runtime config regeneration (after a
-    # context-window edit) reproduces the same group the setup script wrote.
-    local_llm_resident_group: bool = False
+    # Whether the gateway keeps the recommended models co-resident (a llama-swap
+    # `matrix` set — 120b + vl loaded together) rather than swapping one at a time.
+    # Defaults ON: co-residency is the box's intended steady state, so a switch to the
+    # coder or an image render is the only thing that displaces the hot set, and the
+    # agent re-warms it at end of turn (jbrain.llm.residency). Mirrors the install-time
+    # LOCAL_LLM_RESIDENT_GROUP so a runtime config regeneration (after a context-window
+    # edit) reproduces the same set the setup script wrote. An operator on a memory-tight
+    # box turns it off (the recommended set then swaps one at a time; staged models still
+    # pin).
+    local_llm_resident_group: bool = True
     # OPT-IN on-box speech-to-text: whisper.cpp served by the same llama-swap
     # gateway the local-llm profile runs (docs/WHISPER_TRANSCRIPTION_PLAN.md), so
     # it loads on first request and the gateway frees it when idle — and the

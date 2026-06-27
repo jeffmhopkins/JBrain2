@@ -95,6 +95,7 @@ from jbrain.jcode import JcodeClient
 from jbrain.lists.repo import SqlListsRepo
 from jbrain.llm import build_router
 from jbrain.llm.local_gateway import LocalGatewayClient
+from jbrain.llm.residency import ResidencyCoordinator, default_resident_served
 from jbrain.locations import SqlLocationRepo
 from jbrain.locations.live import LiveBroadcaster, live_feeder
 from jbrain.locations.pairing import SqlPairingRepo
@@ -249,6 +250,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # Admin client for the local-model gateway (runtime loaded-state + unload).
         # Best-effort; the settings screen tolerates it being unreachable.
         app.state.local_gateway = LocalGatewayClient(settings.local_llm_url)
+        # Re-warms the hot LLM set (gpt-oss-120b + qwen3-vl) at end of turn after an image
+        # render or a code session displaced it, so the box returns to its co-resident
+        # steady state instead of cold-loading the missing model on the next turn. Empty
+        # hot set (cloud-only / opted-out box) makes it a no-op.
+        app.state.residency = ResidencyCoordinator(
+            app.state.local_gateway, default_resident_served(settings)
+        )
         # Any API-side LLM call must flow through this router so its tokens
         # land in app.llm_usage like the worker's do. The overrides loader reads
         # the live per-task routing/reasoning settings (SYSTEM_CTX owner session)
