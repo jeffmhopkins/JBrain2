@@ -124,8 +124,10 @@ def test_spawn_shell_applies_model_env_overrides(tmp_path) -> None:
     # never defaults to a cloud model the on-box gateway can't serve.
     pid, fd = spawn_shell(str(tmp_path), env_overrides=model_env("qwen3-coder-next-q8"))
     try:
-        os.write(fd, b"echo M=$ANTHROPIC_MODEL H=$ANTHROPIC_DEFAULT_HAIKU_MODEL"
-                     b" G=$GROK_MODEL\n")
+        os.write(
+            fd,
+            b"echo M=$ANTHROPIC_MODEL H=$ANTHROPIC_DEFAULT_HAIKU_MODEL G=$GROK_MODEL\n",
+        )
         out = _read_until(fd, b"M=qwen3-coder-next-q8")
         assert b"M=qwen3-coder-next-q8" in out
         assert b"H=qwen3-coder-next-q8" in out
