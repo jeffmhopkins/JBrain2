@@ -27,6 +27,8 @@ import termios
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from fastapi import WebSocket
 
 _log = logging.getLogger("jcode_ctl.terminal")
@@ -88,15 +90,21 @@ def spawn_shell(
     return pid, master_fd
 
 
-def _close_child(pid: int, fd: int) -> None:
-    """Best-effort teardown: kill the shell's whole process group and reap it, close the
-    master. Called when the socket drops or the shell exits, so no PTY/zombie leaks. The
+def kill_process_group(pid: int) -> None:
+    """SIGKILL a PTY shell's whole process group (the shell + anything it runs). The
     group (not the bare pid) matters: pty.fork makes the shell a session leader, so a
-    running ``claude``/``vim``/bg job is in its group and would otherwise orphan."""
+    running ``claude``/``vim``/bg job is in its group and would otherwise survive.
+    Called on session delete to stop the sandbox's shells before the checkout goes."""
     with contextlib.suppress(OSError):
         os.killpg(os.getpgid(pid), signal.SIGKILL)
     with contextlib.suppress(OSError):
         os.kill(pid, signal.SIGKILL)  # fallback if getpgid raced the exit
+
+
+def _close_child(pid: int, fd: int) -> None:
+    """Best-effort teardown: kill the shell's process group, reap it, close the master.
+    Called when the socket drops or the shell exits, so no PTY/zombie leaks."""
+    kill_process_group(pid)
     with contextlib.suppress(OSError):
         os.waitpid(pid, 0)
     with contextlib.suppress(OSError):
@@ -117,7 +125,12 @@ async def _write_all(fd: int, data: bytes) -> None:  # pragma: no cover - deploy
 
 
 async def serve_terminal(  # pragma: no cover - the PTY pump is exercised at deploy
-    websocket: WebSocket, cwd: str, *, model: str = ""
+    websocket: WebSocket,
+    cwd: str,
+    *,
+    model: str = "",
+    on_open: Callable[[int], None] | None = None,
+    on_close: Callable[[int], None] | None = None,
 ) -> None:
     """Bridge ``websocket`` to a shell PTY in ``cwd`` until either side closes.
 
@@ -125,11 +138,15 @@ async def serve_terminal(  # pragma: no cover - the PTY pump is exercised at dep
     is preserved (vs. a task-per-chunk race). Browser → shell: binary frames are
     written to the PTY verbatim; a text frame is a JSON control (``{"resize":...}``).
     ``model`` (the session's served model) pins the ``claude`` CLI's model tiers so
-    it doesn't default to a cloud model the on-box gateway can't serve.
+    it doesn't default to a cloud model the on-box gateway can't serve. ``on_open`` /
+    ``on_close`` register the PTY pid with the session manager so an open shell counts
+    as activity and delete can kill it.
     """
     from fastapi import WebSocketDisconnect
 
     pid, fd = spawn_shell(cwd, env_overrides=model_env(model) if model else None)
+    if on_open is not None:
+        on_open(pid)
     os.set_blocking(fd, False)
     loop = asyncio.get_running_loop()
     out: asyncio.Queue[bytes | None] = asyncio.Queue()
@@ -182,4 +199,6 @@ async def serve_terminal(  # pragma: no cover - the PTY pump is exercised at dep
         with contextlib.suppress(asyncio.CancelledError):
             await sender
         _close_child(pid, fd)
+        if on_close is not None:
+            on_close(pid)
         _log.info("terminal close cwd=%s pid=%d", cwd, pid)

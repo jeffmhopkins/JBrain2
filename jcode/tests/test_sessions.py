@@ -69,7 +69,7 @@ async def test_reset_and_delete() -> None:
     s = await mgr.create("r")
     await mgr.reset(s.id)
     assert ws.reset_paths and str(ws.reset_paths[0]) == "/work/s1"
-    mgr.delete(s.id)
+    await mgr.delete(s.id)
     assert ws.removed and str(ws.removed[0]) == "/work/s1"
     with pytest.raises(SessionError, match="unknown"):
         mgr.get(s.id)
@@ -100,8 +100,10 @@ async def test_delete_forgets_agent_state() -> None:
     agent = FakeCodingAgent()
     mgr = _mgr(agent=agent)
     s = await mgr.create("r")
-    mgr.delete(s.id)
+    await mgr.delete(s.id)
     assert agent.forgotten == [s.id]
+    # Delete also signals the running turn to stop before pulling the checkout.
+    assert agent.cancelled == [s.id]
 
 
 async def test_session_model_reaches_the_agent() -> None:

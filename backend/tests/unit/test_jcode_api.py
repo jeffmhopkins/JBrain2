@@ -110,3 +110,37 @@ async def test_turn_follows_live_frames_until_done() -> None:
     turn.finish()
     await task
     assert collected == [b"data: live\n\n"]
+
+
+def test_delete_cancels_in_flight_turns_for_that_session(monkeypatch) -> None:
+    # Deleting a session cancels its in-flight turn(s) — dropping the SSE drive task tears
+    # down the control server's spawned subprocess — and leaves other sessions' turns alone.
+    import contextlib
+
+    class _FakeTask:
+        def __init__(self) -> None:
+            self.cancelled = False
+
+        def cancel(self) -> None:
+            self.cancelled = True
+
+    app = _app(OWNER, jcode_client=FakeJcodeClient())
+    mine_a, mine_b, other = jcode._JcodeTurn("s1"), jcode._JcodeTurn("s1"), jcode._JcodeTurn("s2")
+    for t in (mine_a, mine_b, other):
+        t.task = _FakeTask()  # type: ignore[assignment]
+    app.state.jcode_turns = {"r1": mine_a, "r2": mine_b, "r3": other}
+
+    # Neutralize the owner-index DB write (no DB in this unit test).
+    @contextlib.asynccontextmanager
+    async def _fake_scoped(*_a: object, **_k: object):
+        yield None
+
+    async def _noop_delete(_db: object, _sid: str) -> None:
+        return None
+
+    monkeypatch.setattr(jcode, "scoped_session", _fake_scoped)
+    monkeypatch.setattr(jcode._REPO, "delete", _noop_delete)
+
+    assert TestClient(app).delete("/api/jcode/sessions/s1").status_code == 204
+    assert mine_a.task.cancelled and mine_b.task.cancelled  # type: ignore[union-attr]
+    assert not other.task.cancelled  # type: ignore[union-attr]

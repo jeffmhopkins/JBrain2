@@ -64,7 +64,7 @@ async def reap_idle(
         current = sessions.get_or_none(sid)
         if current is None or current.status == "running":
             continue
-        sessions.delete(sid)
+        await sessions.delete(sid)
         reaped.append(sid)
     if reaped:
         _log.info("reaped %d idle session(s): %s", len(reaped), reaped)
@@ -204,9 +204,10 @@ def create_app(
     @authed.delete("/sessions/{sid}", status_code=204)
     async def delete(sid: str) -> None:
         # Close the tunnel FIRST, so it's torn down even if the delete below raises
-        # (review N3) — a deleted session must keep no live tunnel.
+        # (review N3) — a deleted session keeps no live tunnel. delete() then cancels
+        # any running turn and kills open shells before removing the checkout.
         await preview.close(sid)
-        sessions.delete(sid)
+        await sessions.delete(sid)
 
     # --- Web preview (Wave J4): an ephemeral tunnel to the sandbox's dev server ---
 
@@ -239,17 +240,17 @@ def create_app(
             await websocket.close(code=4404)
             return
         await websocket.accept()
-        # Count the open terminal so the GC reaper won't remove the checkout under it.
-        sessions.terminal_opened(sid)
-        try:
-            # Pin the shell's `claude` CLI to this session's model (falling back to the
-            # server default) so it doesn't default to a cloud model the on-box gateway
-            # has no route for — matches the model the headless agent already uses.
-            await serve_terminal(
-                websocket, session.workspace, model=session.model or settings.model
-            )
-        finally:
-            sessions.terminal_closed(sid)
+        # Pin the shell's `claude` CLI to this session's model (falling back to the
+        # server default) so it doesn't default to a cloud model the on-box gateway has
+        # no route for. on_open/on_close register the PTY pid so an open shell counts as
+        # activity (the reaper won't reap under it) and delete can kill it.
+        await serve_terminal(
+            websocket,
+            session.workspace,
+            model=session.model or settings.model,
+            on_open=lambda pid: sessions.terminal_opened(sid, pid),
+            on_close=lambda pid: sessions.terminal_closed(sid, pid),
+        )
 
     app.include_router(authed)
     return app

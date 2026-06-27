@@ -130,9 +130,32 @@ async def test_open_terminal_is_activity_and_blocks_reaping() -> None:
     clock["t"] += timedelta(hours=48)
     assert mgr.idle_sessions(ttl_seconds=3600) == [s.id]  # idle now
 
-    mgr.terminal_opened(s.id)
+    mgr.terminal_opened(s.id, 4242)
     assert mgr.idle_sessions(ttl_seconds=3600) == []  # an open terminal is kept alive
 
-    mgr.terminal_closed(s.id)
+    mgr.terminal_closed(s.id, 4242)
     clock["t"] += timedelta(hours=48)  # idle again once no terminal is open
     assert mgr.idle_sessions(ttl_seconds=3600) == [s.id]
+
+
+async def test_delete_kills_open_terminals_and_cancels_the_turn() -> None:
+    # Delete must stop everything in the sandbox before the checkout is removed: the
+    # agent's run loop is cancelled and every open shell's process group is killed.
+    killed: list[int] = []
+    import jcode_ctl.sessions as sessions_mod
+
+    agent = FakeCodingAgent()
+    mgr = SessionManager(agent, FakeWorkspace(), "/work", new_id=lambda: "s1")
+    s = await mgr.create("r")
+    mgr.terminal_opened(s.id, 9991)
+    mgr.terminal_opened(s.id, 9992)
+
+    orig = sessions_mod.kill_process_group
+    sessions_mod.kill_process_group = killed.append  # type: ignore[assignment]
+    try:
+        await mgr.delete(s.id)
+    finally:
+        sessions_mod.kill_process_group = orig
+
+    assert sorted(killed) == [9991, 9992]  # both shells' groups killed
+    assert agent.cancelled == [s.id]  # the running turn was signalled to stop

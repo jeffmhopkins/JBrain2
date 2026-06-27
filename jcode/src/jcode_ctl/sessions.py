@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Literal
 
 from jcode_ctl.agent import CodingAgent, TurnEvent
+from jcode_ctl.terminal import kill_process_group
 from jcode_ctl.workspace import Workspace
 
 Status = Literal["ready", "running", "error"]
@@ -97,9 +98,11 @@ class SessionManager:
         # Count of turns currently streaming, across all sessions — gated by
         # _max_turns so a burst can't thrash the aggregate CPU/mem caps.
         self._active_turns = 0
-        # sid -> count of open interactive terminals. A live terminal is activity:
-        # the reaper must never remove a checkout out from under an open shell.
-        self._terminals: dict[str, int] = {}
+        # sid -> the pids of its open interactive-terminal PTYs (the shell session
+        # leaders). A live terminal is activity (the reaper must never remove a checkout
+        # out from under an open shell), and on delete these groups are killed so the
+        # shell + anything it's running stop before the checkout is torn down.
+        self._terminals: dict[str, set[int]] = {}
 
     @property
     def active_turns(self) -> int:
@@ -226,21 +229,22 @@ class SessionManager:
                 "turn end sid=%s status=%s events=%d", sid, session.status, events
             )
 
-    def terminal_opened(self, sid: str) -> None:
-        """Note an interactive terminal opening on a session (the WS route). Counts so
-        concurrent terminals nest, and stamps activity so an open shell stays fresh."""
+    def terminal_opened(self, sid: str, pid: int) -> None:
+        """Register an interactive terminal's PTY pid for a session (the WS route).
+        Tracking the pid lets concurrent terminals nest, keeps the session fresh against
+        the reaper, AND lets delete kill the shell's process group."""
         self.get(sid)
-        self._terminals[sid] = self._terminals.get(sid, 0) + 1
+        self._terminals.setdefault(sid, set()).add(pid)
         self._sessions[sid].last_active_at = self._stamp()
 
-    def terminal_closed(self, sid: str) -> None:
-        """Note an interactive terminal closing. Drops the session's entry at zero so
-        ``idle_sessions`` can reap it again once no terminal is open."""
-        remaining = self._terminals.get(sid, 0) - 1
-        if remaining <= 0:
-            self._terminals.pop(sid, None)
-        else:
-            self._terminals[sid] = remaining
+    def terminal_closed(self, sid: str, pid: int) -> None:
+        """Drop a closed terminal's pid; remove the session's entry once none remain so
+        ``idle_sessions`` can reap it again."""
+        pids = self._terminals.get(sid)
+        if pids is not None:
+            pids.discard(pid)
+            if not pids:
+                self._terminals.pop(sid, None)
         if sid in self._sessions:
             self._sessions[sid].last_active_at = self._stamp()
 
@@ -258,8 +262,15 @@ class SessionManager:
         session.last_active_at = self._stamp()
         return session
 
-    def delete(self, sid: str) -> None:
+    async def delete(self, sid: str) -> None:
         session = self.get(sid)
+        # Stop everything running in the sandbox BEFORE the checkout is pulled out from
+        # under it, so a live turn or shell is cleanly halted rather than orphaned to
+        # fail on a vanished cwd: signal the agent's run loop to stop, then SIGKILL each
+        # open terminal's process group (the shell + whatever it's running).
+        await self._agent.cancel(sid)
+        for pid in self._terminals.pop(sid, set()):
+            kill_process_group(pid)
         self._workspace.remove(Path(session.workspace))
         del self._sessions[sid]
         # Drop the agent's per-session state (resume id, cancel flag) so it can't
