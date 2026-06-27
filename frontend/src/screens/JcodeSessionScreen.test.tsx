@@ -46,7 +46,11 @@ class FakeWS {
   send(data: Uint8Array) {
     wsSent.push(data);
   }
-  close() {}
+  // Real browsers fire `close` when the socket is closed (including on our own unmount);
+  // mimic that so the component's `disposed` guard is genuinely exercised.
+  close() {
+    this.onclose?.();
+  }
 }
 
 const MODEL_STATUS: JcodeModelStatus = {
@@ -179,6 +183,17 @@ describe("JcodeSessionScreen", () => {
     const ws = wsInstances[wsInstances.length - 1];
     ws?.onclose?.();
     expect(await screen.findByText("Session stopped")).toBeInTheDocument();
+  });
+
+  it("does not show the stopped state when switching tabs (the disposed guard)", async () => {
+    vi.spyOn(api, "jcodePreviewStatus").mockResolvedValue({ enabled: true, url: null });
+    render(<JcodeSessionScreen session={SESSION} onClose={vi.fn()} />);
+    await waitFor(() => expect(wsInstances.length).toBeGreaterThan(0));
+    // Switching to Preview unmounts the terminal — which closes its socket. The `disposed`
+    // guard must suppress that close so it does NOT read as a shell exit / session pause.
+    fireEvent.click(screen.getByRole("tab", { name: "Preview" }));
+    expect(await screen.findByText(/Start your dev server/i)).toBeInTheDocument();
+    expect(screen.queryByText("Session stopped")).not.toBeInTheDocument();
   });
 
   it("stops the session from the actions menu", async () => {

@@ -136,17 +136,20 @@ export function JcodeScreen({ onClose }: { onClose: () => void }) {
   }
 
   // Open a session from the list. A paused (stopped) session is restarted first so it
-  // opens live — "restart from the session manager"; if the restart fails the session
-  // screen still opens and offers its own Restart.
+  // opens live — "restart from the session manager". If the restart fails we open it
+  // STILL stopped, so the session screen shows its own Restart prompt rather than mounting
+  // a terminal against a sandbox that's still down.
   async function openSession(session: JcodeSession) {
     if (session.status === "stopped") {
       try {
         await api.jcodeRestartSession(session.id);
+        setOpen({ ...session, status: "ready" });
       } catch {
-        // fall through — the session screen surfaces the stopped state + Restart
+        setOpen(session); // still stopped → the screen offers Restart
       }
+      return;
     }
-    setOpen({ ...session, status: "ready" });
+    setOpen(session);
   }
 
   // External endpoint: mint, then open its screen with the one-time secret + URL.

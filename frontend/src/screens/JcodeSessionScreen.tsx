@@ -546,7 +546,12 @@ export function JcodeSessionScreen({
               aria-label="Session actions"
               aria-haspopup="menu"
               aria-expanded={menuOpen}
-              onClick={() => setMenuOpen((o) => !o)}
+              onClick={() => {
+                // Closing the menu disarms any tap-again confirm, so a stale "Tap
+                // again — deletes" can't carry over to the next time it's opened.
+                setConfirm(null);
+                setMenuOpen((o) => !o);
+              }}
             >
               <MoreIcon size={20} />
             </button>
