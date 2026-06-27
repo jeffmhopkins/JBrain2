@@ -4,7 +4,6 @@
 // a hardcoded set. Tapping a row opens the existing entity-page layer.
 
 import { useEffect, useRef, useState } from "react";
-import { fmtTemporal } from "../analysis/format";
 import { type EntityList, type EntityListItem, api } from "../api/client";
 import { EntityTypeIcon } from "../entities/kinds";
 
@@ -22,12 +21,20 @@ interface EntityListScreenProps {
 const DEBOUNCE_MS = 250;
 
 /** "3 facts · last seen Jun 10, 2026" — facts only when never reported.
- * last_seen is an instant (max reported_at), so it renders as a LOCAL
- * calendar day: fmtTemporal's instant branch, not the UTC day branch. */
+ * last_seen is an instant (max reported_at); a browse row only cares about the
+ * calendar DAY it was last seen, so render the instant's LOCAL day (no clock
+ * time). fmtTemporal's non-instant branches format UTC components, which would
+ * shift a negative-offset user back a day — hence the local toLocaleDateString
+ * here rather than passing a day precision. */
 function rowMeta(item: EntityListItem): string {
   const facts = `${item.fact_count} ${item.fact_count === 1 ? "fact" : "facts"}`;
   if (item.last_seen === null) return facts;
-  return `${facts} · last seen ${fmtTemporal(item.last_seen, "instant")}`;
+  const day = new Date(item.last_seen).toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
+  return `${facts} · last seen ${day}`;
 }
 
 export function EntityListScreen({ onOpenEntity, list }: EntityListScreenProps) {
@@ -126,14 +133,17 @@ export function EntityListScreen({ onOpenEntity, list }: EntityListScreenProps) 
               <EntityTypeIcon kind={item.kind} size={34} />
               <span className="entity-row-main">
                 <span className="entity-row-name">
-                  {item.canonical_name}
+                  <span className="entity-row-name-text">{item.canonical_name}</span>
                   {item.status === "provisional" && (
                     <span className="fact-chip fact-chip-muted">provisional</span>
                   )}
                 </span>
-                <span className="entity-row-kind">{item.kind.toLowerCase()}</span>
+                {/* Kind + facts + last-seen on one muted line, so the name keeps
+                    the full row width and truncates instead of crowding. */}
+                <span className="entity-row-sub">
+                  {item.kind.toLowerCase()} · {rowMeta(item)}
+                </span>
               </span>
-              <span className="entity-row-meta">{rowMeta(item)}</span>
             </button>
           ))}
         </div>

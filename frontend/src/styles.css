@@ -4449,6 +4449,14 @@ button.small {
   gap: 12px;
 }
 
+/* Keep the list at its natural height so it OVERFLOWS into .screen-body's
+   scroller. Without this the card (a default flex-shrink:1 item) shrinks to
+   fit the column, cascading the shrink onto the rows — which collapse under
+   their content, overlap their neighbors, and leave nothing to scroll. */
+.entity-list-screen > * {
+  flex: none;
+}
+
 .entity-row {
   display: flex;
   align-items: center;
@@ -4473,7 +4481,8 @@ button.small {
   flex-direction: column;
   gap: 2px;
   min-width: 0;
-  /* Grow so the leading type disc and trailing meta stay pinned to the edges. */
+  /* Fill the row beside the leading type disc so the name has the full width
+     to truncate against (its content never competes with a trailing column). */
   flex: 1;
 }
 
@@ -4489,22 +4498,32 @@ button.small {
 }
 
 .entity-row-name {
-  display: inline-flex;
+  display: flex;
   align-items: center;
   gap: 8px;
+  min-width: 0;
   font-weight: 500;
 }
 
-.entity-row-kind {
-  font-size: var(--fs-micro);
-  color: var(--text-3);
+/* The name truncates; the provisional chip stays pinned and intact beside it. */
+.entity-row-name-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.entity-row-meta {
-  flex-shrink: 0;
+.entity-row-name .fact-chip {
+  flex: none;
+}
+
+/* Kind · facts · last-seen — one muted, single-line subtitle under the name. */
+.entity-row-sub {
   font-size: var(--fs-micro);
   color: var(--text-3);
-  text-align: right;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-variant-numeric: tabular-nums;
 }
 
