@@ -37,7 +37,6 @@
   .node-lbl.focal{fill:var(--text);font-weight:600;font-size:12px}
   /* on-edge predicate labels */
   .edge-lbl{fill:var(--text-2);text-anchor:middle;paint-order:stroke;stroke:var(--bg);stroke-width:3px;pointer-events:none;font-weight:500;font-size:9.5px;transition:opacity .3s}
-  .edge-lbl.focal{fill:var(--text);font-weight:600}
 
   /* search front door */
   .toprail{position:absolute;top:10px;left:10px;right:10px;display:flex;flex-direction:column;gap:8px;z-index:4}
@@ -105,7 +104,7 @@
 </style>
 </head>
 <body>
-<div class="cap"><b>N1 Labeled + Zoom.</b> The M1 local-force base plus three production-leaning additions: <b>real anchor-invariant zoom</b> (wheel, pinch, double-tap, +/fit/− cluster), <b>predicate labels riding along each edge</b> (focal edges always shown, others fade in as you zoom), and a <b>type-filter chip rail</b> that adds/removes whole entity types from the local neighbourhood.</div>
+<div class="cap"><b>N1 Labeled + Zoom.</b> The M1 local-force base plus three production-leaning additions: <b>real anchor-invariant zoom</b> (wheel, pinch, double-tap, +/fit/− cluster), <b>predicate labels riding along every edge</b> (all connections styled identically, shown wherever the line has room), and a <b>type-filter chip rail</b> that adds/removes whole entity types from the local neighbourhood.</div>
 <div class="phone">
   <div class="topbar">
     <button class="chev"><svg class="i" viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6"/></svg></button>
@@ -263,8 +262,6 @@ let local=null, alpha=1, focalId='me';
 let drag=null,dragMoved=false,panning=null;
 let scale=1,tx=0,ty=0;
 const MINS=0.5,MAXS=3;                        // zoom clamp
-// labels fade in for non-focal edges once zoomed past this threshold
-const LBL_ZOOM_IN=1.35;
 
 // element pools keyed by id; created lazily, removed when fully faded out
 const discEls={},icEls={},hitEls={},lblEls={},edgeEls={},edgeLblEls={};
@@ -391,7 +388,6 @@ function tick(){
 function render(){
   view.setAttribute('transform',`translate(${tx},${ty}) scale(${scale})`);
   const invK=1/scale;                          // counter-scale keeps edge labels screen-constant
-  const showOthers=scale>=LBL_ZOOM_IN;          // non-focal edge labels fade in past threshold
   // edges
   for(const key in edgeEls){
     const[a,b]=key.split('>');const sa=sim[a],sb=sim[b],el=edgeEls[key],tl=edgeLblEls[key];
@@ -399,19 +395,17 @@ function render(){
     if(!live){el.style.opacity=0;if(tl)tl.style.opacity=0;
       if(!local.ids.has(a)||!local.ids.has(b)){el.remove();delete edgeEls[key];if(tl){tl.remove();delete edgeLblEls[key];}} continue;}
     el.setAttribute('x1',sa.x);el.setAttribute('y1',sa.y);el.setAttribute('x2',sb.x);el.setAttribute('y2',sb.y);
-    const touchesFocal=(a===focalId||b===focalId);
-    el.style.opacity=touchesFocal?0.85:0.4;
-    el.style.stroke=touchesFocal?`color-mix(in srgb, var(${TYPE[byId[focalId].kind]}) 55%, var(--border))`:'var(--border)';
+    // every connection renders identically — no focal-vs-rest distinction
+    el.style.opacity=0.5;
+    el.style.stroke='var(--text-3)';
     // ---- on-edge predicate label: ride along the edge, kept upright & screen-constant ----
     if(tl){
       const mx=(sa.x+sb.x)/2,my=(sa.y+sb.y)/2;
       let ang=Math.atan2(sb.y-sa.y,sb.x-sa.x)*180/Math.PI;
       if(ang>90)ang-=180;else if(ang<-90)ang+=180;   // keep text upright
       const segLen=Math.hypot(sb.x-sa.x,sb.y-sa.y)*scale;  // screen-space length
-      // visible if: focal's own edge (always), OR zoomed in, OR this edge involves focal
-      const want=touchesFocal||showOthers;
-      tl.style.opacity=(want&&segLen>34)?(touchesFocal?0.95:0.7):0;
-      tl.classList.toggle('focal',touchesFocal);
+      // same treatment for all edges: shown wherever the segment has room to read
+      tl.style.opacity=segLen>34?0.85:0;
       tl.setAttribute('transform',`translate(${mx},${my}) rotate(${ang}) scale(${invK}) translate(0,-3)`);
     }
   }
