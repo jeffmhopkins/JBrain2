@@ -165,9 +165,9 @@ fi
 # --- Code mode / jcode (Python deps synced above; SDK + model are opt-in) ---
 # The jcode control server (jcode/) is a normal Python service whose deps `uv sync`
 # installs above, so its unit tests run in dev/CI against a fake agent — no model,
-# no SDK, no network. The box-only runtime — the Claude Agent SDK, the
-# `@anthropic-ai/claude-code` CLI it drives, and the on-box coder model — is provided
-# by the jcode IMAGE (jcode/Dockerfile) and enabled SEPARATELY by
+# no SDK, no network. The box-only runtime — the coding CLIs the owner runs in the
+# session shell (`@anthropic-ai/claude-code` and `grok-dev`) and the on-box coder
+# model — is provided by the jcode IMAGE (jcode/Dockerfile) and enabled SEPARATELY by
 # scripts/jcode-setup.sh (it builds the image and starts the `jcode` profile). Empty
 # JBRAIN_JCODE_URL (the default) disables the feature, so this is a no-op in dev/CI.
 # Mentioned here per the dev-setup single-source-of-truth rule (CLAUDE.md rule #8);

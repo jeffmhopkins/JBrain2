@@ -39,19 +39,21 @@ _READ_BYTES = 65536
 
 
 def model_env(model: str) -> dict[str, str]:
-    """Env that pins every model tier the interactive ``claude`` CLI might pick to the
-    session's on-box model. Without it the CLI defaults to a cloud model
+    """Env that pins every model tier the interactive coding CLIs might pick to the
+    session's on-box model. Without it ``claude`` defaults to a cloud model
     (``claude-opus-4-…``) the local gateway has no route for, and every session errors
-    "the selected model may not exist". The CLI resolves its ``/model`` aliases
-    (opus/sonnet/haiku/fable) and its background summariser through these vars, so on a
-    single-model gateway they must ALL map to the one served route. This pins the model
-    for the interactive shell's ``claude`` CLI."""
+    "the selected model may not exist". ``claude`` resolves its ``/model`` aliases
+    (opus/sonnet/haiku/fable) and its background summariser through the ANTHROPIC_*
+    vars, so on a single-model gateway they must ALL map to the one served route;
+    ``GROK_MODEL`` does the same for the Grok CLI (``grok``). This pins the model for
+    the shell's CLIs so the per-session quant the owner picked is what each requests."""
     return {
         "ANTHROPIC_MODEL": model,
         "ANTHROPIC_DEFAULT_OPUS_MODEL": model,
         "ANTHROPIC_DEFAULT_SONNET_MODEL": model,
         "ANTHROPIC_DEFAULT_HAIKU_MODEL": model,
         "ANTHROPIC_DEFAULT_FABLE_MODEL": model,
+        "GROK_MODEL": model,
     }
 
 
