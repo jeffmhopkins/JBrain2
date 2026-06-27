@@ -239,7 +239,7 @@ describe("JcodeSessionScreen", () => {
     vi.spyOn(api, "jcodePreviewStatus").mockResolvedValue({ enabled: false, url: null });
     render(<JcodeSessionScreen session={SESSION} onClose={vi.fn()} />);
     fireEvent.click(screen.getByRole("tab", { name: "Preview" }));
-    expect(await screen.findByText(/isn't enabled/i)).toBeInTheDocument();
+    expect(await screen.findByText(/turned off/i)).toBeInTheDocument();
   });
 
   it("arms a tap-again confirm before deleting (from the actions menu)", async () => {

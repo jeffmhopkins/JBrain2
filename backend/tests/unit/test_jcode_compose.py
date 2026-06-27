@@ -70,6 +70,17 @@ def test_jcode_mounts_only_its_own_scratch_volume() -> None:
     )
 
 
+def test_jcode_preview_defaults_on() -> None:
+    # Preview rides the opt-in jcode profile: enabling code mode already enables preview,
+    # with no second env var to set. Guard that a compose edit can't silently flip the
+    # default back to off and reintroduce the extra opt-in step.
+    env = _spec()["services"]["jcode"]["environment"]
+    assert env.get("JCODE_PREVIEW_ENABLED") == "${JCODE_PREVIEW_ENABLED:-true}", (
+        "preview must default ON with code mode — the profile is already opt-in; an "
+        "owner shouldn't need a second env var to open a per-session preview"
+    )
+
+
 def test_jcode_declares_its_aggregate_resource_ceilings() -> None:
     # The aggregate caps are the hard ceiling on the shared sandbox container; the in-
     # server concurrency + disk limits govern per session. Guard that a compose edit can't

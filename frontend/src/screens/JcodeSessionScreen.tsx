@@ -704,9 +704,9 @@ export function JcodeSessionScreen({
               <p className="jcode-empty">Loading…</p>
             ) : !preview.enabled ? (
               <p className="jcode-empty">
-                Web preview isn't enabled on this server. Turn it on with
-                <code> jcode-setup.sh</code> — it opens a temporary tunnel to the sandbox's dev
-                server.
+                Web preview is turned off on this server. It's on by default with code mode —
+                restore it by removing <code>JCODE_PREVIEW_ENABLED=false</code> from
+                <code> .env</code> and re-running <code>jcode-setup.sh</code>.
               </p>
             ) : preview.url ? (
               <div className="jcode-preview">

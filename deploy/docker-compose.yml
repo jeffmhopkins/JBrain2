@@ -428,11 +428,13 @@ services:
       # before any model call (confirmed on-box via the captured CLI stderr).
       IS_SANDBOX: "1"
       # Per-session web preview (Wave J4): an ephemeral Cloudflare quick-tunnel
-      # (cloudflared, bundled in the image) to the sandbox's dev server. OFF by
-      # default — it exposes the running app to anyone with the random URL — and
-      # enabled via scripts/jcode-setup.sh. The tunnel dials OUT (no inbound), so the
-      # container's default egress covers it; no compose network change.
-      JCODE_PREVIEW_ENABLED: ${JCODE_PREVIEW_ENABLED:-false}
+      # (cloudflared, bundled in the image) to the sandbox's dev server. ON whenever
+      # code mode is — this whole profile is opt-in, so enabling jcode already opts into
+      # preview; no second env var to set. The flag only gates the capability; nothing is
+      # exposed until the owner opens a preview on a session. Set JCODE_PREVIEW_ENABLED=false
+      # to withhold it. The tunnel dials OUT (no inbound), so the container's default
+      # egress covers it; no compose network change.
+      JCODE_PREVIEW_ENABLED: ${JCODE_PREVIEW_ENABLED:-true}
       # Session GC (Wave J5): reap a session (checkout + tunnel) after this many idle
       # seconds (default 24h; 0 disables). An open terminal keeps a session fresh; a
       # deliberately-paused (stopped) session is never reaped.
