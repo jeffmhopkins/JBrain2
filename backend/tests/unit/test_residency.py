@@ -60,6 +60,44 @@ async def test_restore_loads_only_the_missing_hot_member() -> None:
 
 
 @pytest.mark.asyncio
+async def test_restore_re_warms_the_staged_set_even_with_no_recommended() -> None:
+    # The owner pinned the pair by STAGING (not the env flag), so the recommended set is
+    # empty but the staged ids still define the hot set — restore must honor them.
+    gw = FakeLocalGateway(running=set())
+
+    async def staged() -> list[str]:
+        return ["qwen3-vl-30b", "gpt-oss-120b"]  # catalog ids → served names via the catalog
+
+    coord = ResidencyCoordinator(gw, [], staged_loader=staged)
+    await coord._restore()  # noqa: SLF001
+    assert set(gw.loaded) == {"qwen3-vl-30b-a3b", "gpt-oss-120b"}
+
+
+@pytest.mark.asyncio
+async def test_restore_unions_recommended_and_staged_without_dupes() -> None:
+    gw = FakeLocalGateway(running=set())
+
+    async def staged() -> list[str]:
+        return ["gpt-oss-120b", "qwen3-coder-next"]  # 120b overlaps the recommended set
+
+    coord = ResidencyCoordinator(gw, ["qwen3-vl-30b-a3b", "gpt-oss-120b"], staged_loader=staged)
+    await coord._restore()  # noqa: SLF001
+    assert sorted(gw.loaded) == ["gpt-oss-120b", "qwen3-coder-next", "qwen3-vl-30b-a3b"]
+
+
+@pytest.mark.asyncio
+async def test_restore_degrades_to_recommended_when_staged_load_fails() -> None:
+    gw = FakeLocalGateway(running=set())
+
+    async def staged() -> list[str]:
+        raise RuntimeError("settings store unreachable")
+
+    coord = ResidencyCoordinator(gw, ["gpt-oss-120b"], staged_loader=staged)
+    await coord._restore()  # noqa: SLF001 — a staged-load failure must not break housekeeping
+    assert gw.loaded == ["gpt-oss-120b"]
+
+
+@pytest.mark.asyncio
 async def test_restore_is_a_noop_when_set_already_hot() -> None:
     gw = FakeLocalGateway(running={"qwen3-vl-30b-a3b", "gpt-oss-120b"})
     coord = ResidencyCoordinator(gw, ["qwen3-vl-30b-a3b", "gpt-oss-120b"])
