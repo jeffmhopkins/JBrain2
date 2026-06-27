@@ -146,11 +146,15 @@ function whenLine(a: Automation) {
   );
 }
 
-/** Whether a card offers the day/time/repeat editor. Only the periodic/nightly
- * sweeps (a schedule-bound, manually-fireable trigger) — sub-day reconcilers keep
- * their interval cadence, and event triggers are not scheduled. */
+/** Whether a card offers a schedule editor. Nightly sweeps get the day/time/repeat
+ * editor; reconcilers get the interval (number+unit) editor. Event triggers are not
+ * scheduled. */
 function isEditableSchedule(a: Automation): boolean {
-  return a.kind === "schedule" && a.schedule_id !== null && a.group === "nightly";
+  return (
+    a.kind === "schedule" &&
+    a.schedule_id !== null &&
+    (a.group === "nightly" || a.group === "reconcile")
+  );
 }
 
 /** The dim status + next/last meta line under the headline. */
@@ -204,15 +208,19 @@ function RunRow({ run }: { run: AutomationRun }) {
 
 // --- the schedule editor (the task-style day/time/repeat surface, reused) --------
 
-/** The editor's local draft — the schedule-spec subset of a task's Draft. The card's
- * `interval`/legacy state is mapped onto `repeat` so opening a never-edited nightly
- * sweep lands on a sensible day/time the owner can adjust. */
+/** The editor's local draft — the schedule-spec subset of a task's Draft, plus an
+ * `interval` kind for the reconciler's sub-day cadence. A nightly sweep's `interval`/
+ * legacy state is mapped onto `repeat` so opening a never-edited one lands on a sensible
+ * day/time; a reconciler instead opens on its number+unit `interval` cadence. */
 interface SchedDraft {
-  kind: "on_demand" | "once" | "repeat";
+  kind: "on_demand" | "once" | "repeat" | "interval";
   freq: ScheduleFreq;
   days: number[];
   time: string;
   date: string;
+  /** Sub-day cadence for `interval` mode — a positive integer count of `intervalUnit`. */
+  intervalValue: number;
+  intervalUnit: "min" | "hr";
 }
 
 function tomorrowISODate(): string {
@@ -229,21 +237,38 @@ function localClockOf(iso: string | null): string {
   return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
 }
 
+/** A reconciler's seeded interval as a number+unit pair — prefer whole hours (>= 1h)
+ * for a tidy "every 6 hours" over "every 360 minutes", else minutes. */
+function intervalParts(seconds: number | null): { value: number; unit: "min" | "hr" } {
+  if (seconds !== null && seconds >= 3600 && seconds % 3600 === 0) {
+    return { value: seconds / 3600, unit: "hr" };
+  }
+  return { value: seconds !== null ? Math.max(1, Math.round(seconds / 60)) : 5, unit: "min" };
+}
+
 function draftFromAuto(a: Automation): SchedDraft {
+  const { value: intervalValue, unit: intervalUnit } = intervalParts(a.interval_seconds);
   const base: SchedDraft = {
     kind: "repeat",
     freq: "daily",
     days: [1, 2, 3, 4, 5],
     time: localClockOf(a.next_run_at),
     date: tomorrowISODate(),
+    intervalValue,
+    intervalUnit,
   };
+  // A reconciler edits its sub-day cadence: open on Interval (or On demand if paused),
+  // never the wall-clock repeat that would downgrade a minute-level sweep to once a day.
+  if (a.group === "reconcile") {
+    return { ...base, kind: a.schedule_kind === "on_demand" ? "on_demand" : "interval" };
+  }
   if (a.schedule_kind === "repeat") {
     return {
+      ...base,
       kind: "repeat",
       freq: a.schedule_freq ?? "daily",
       days: a.schedule_days.length ? a.schedule_days : [1, 2, 3, 4, 5],
       time: a.schedule_time ?? base.time,
-      date: tomorrowISODate(),
     };
   }
   if (a.schedule_kind === "once") {
@@ -259,6 +284,10 @@ function draftFromAuto(a: Automation): SchedDraft {
   return base;
 }
 
+function intervalSeconds(d: SchedDraft): number {
+  return d.intervalValue * (d.intervalUnit === "hr" ? 3600 : 60);
+}
+
 function draftToScheduleInput(d: SchedDraft): ScheduleInput {
   const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
   const base: ScheduleInput = {
@@ -270,7 +299,9 @@ function draftToScheduleInput(d: SchedDraft): ScheduleInput {
     run_at: null,
     timezone,
   };
-  if (d.kind === "repeat") {
+  if (d.kind === "interval") {
+    base.interval_seconds = intervalSeconds(d);
+  } else if (d.kind === "repeat") {
     base.schedule_freq = d.freq;
     base.schedule_time = d.time;
     base.schedule_days = d.freq === "weekly" ? d.days : [];
@@ -287,6 +318,21 @@ interface ScheduleEditorProps {
   onSave: (input: ScheduleInput) => void;
 }
 
+/** The reconciler's quick-pick chips — minute counts; hour multiples render as a tidy
+ * "every N hours". Mirrors the binding mock (5 min / 15 min / 30 min / Hourly / 6 h). */
+const INTERVAL_CHIPS: { mins: number; label: string }[] = [
+  { mins: 5, label: "5 min" },
+  { mins: 15, label: "15 min" },
+  { mins: 30, label: "30 min" },
+  { mins: 60, label: "Hourly" },
+  { mins: 360, label: "6 h" },
+];
+
+/** Whether the draft's interval is a positive integer — the only saveable interval. */
+function validInterval(d: SchedDraft): boolean {
+  return Number.isInteger(d.intervalValue) && d.intervalValue >= 1;
+}
+
 function ScheduleEditor({ auto, saving, onClose, onSave }: ScheduleEditorProps) {
   const [draft, setDraft] = useState<SchedDraft>(() => draftFromAuto(auto));
   const set = (patch: Partial<SchedDraft>) => setDraft((d) => ({ ...d, ...patch }));
@@ -296,8 +342,23 @@ function ScheduleEditor({ auto, saving, onClose, onSave }: ScheduleEditorProps) 
       days: d.days.includes(day) ? d.days.filter((x) => x !== day) : [...d.days, day].sort(),
     }));
   }
+  // Reconcilers edit a sub-day interval; everything else uses the task-style day/time editor.
+  const isReconcile = auto.group === "reconcile";
+  const modes: SchedDraft["kind"][] = isReconcile
+    ? ["interval", "on_demand"]
+    : ["on_demand", "once", "repeat"];
+  const intervalOk = validInterval(draft);
   const canSave =
-    !saving && !(draft.kind === "repeat" && draft.freq === "weekly" && !draft.days.length);
+    !saving &&
+    !(draft.kind === "repeat" && draft.freq === "weekly" && !draft.days.length) &&
+    !(draft.kind === "interval" && !intervalOk);
+
+  // A chip selects a minute count, mapping whole-hour multiples onto the Hours unit.
+  function pickChip(mins: number): void {
+    if (mins % 60 === 0) set({ intervalValue: mins / 60, intervalUnit: "hr" });
+    else set({ intervalValue: mins, intervalUnit: "min" });
+  }
+  const chipMins = draft.intervalUnit === "hr" ? draft.intervalValue * 60 : draft.intervalValue;
 
   return (
     <section className="ted">
@@ -309,9 +370,11 @@ function ScheduleEditor({ auto, saving, onClose, onSave }: ScheduleEditorProps) 
       </header>
       <div className="ted-body">
         <div className="ted-field">
-          <span className="ted-lab">When it runs · {auto.pipeline}</span>
+          <span className="ted-lab">
+            {isReconcile ? "How it runs" : "When it runs"} · {auto.pipeline}
+          </span>
           <div className="ted-seg" role="tablist">
-            {(["on_demand", "once", "repeat"] as SchedDraft["kind"][]).map((k) => (
+            {modes.map((k) => (
               <button
                 type="button"
                 key={k}
@@ -320,12 +383,78 @@ function ScheduleEditor({ auto, saving, onClose, onSave }: ScheduleEditorProps) 
                 className={`ted-segbtn${draft.kind === k ? " on" : ""}`}
                 onClick={() => set({ kind: k })}
               >
-                {k === "on_demand" ? "On demand" : k === "once" ? "Once" : "Repeats"}
+                {k === "on_demand"
+                  ? "On demand"
+                  : k === "once"
+                    ? "Once"
+                    : k === "interval"
+                      ? "Interval"
+                      : "Repeats"}
               </button>
             ))}
           </div>
           {draft.kind === "on_demand" && (
-            <p className="ted-hint">No schedule — fire it yourself with Run now.</p>
+            <p className="ted-hint">
+              {isReconcile
+                ? "Paused — it only runs when you tap Run now."
+                : "No schedule — fire it yourself with Run now."}
+            </p>
+          )}
+          {draft.kind === "interval" && (
+            <>
+              <p className="ted-hint">
+                A reconciler runs on a fixed cadence — set the gap between sweeps.
+              </p>
+              <span className="ted-lab ted-ivlab">Run every</span>
+              <div className="ted-ivrow">
+                <span className="ted-ivevery">Every</span>
+                <input
+                  className="ted-ivnum"
+                  type="number"
+                  min={1}
+                  max={999}
+                  inputMode="numeric"
+                  aria-label="Interval value"
+                  value={Number.isNaN(draft.intervalValue) ? "" : draft.intervalValue}
+                  onChange={(e) => set({ intervalValue: e.target.valueAsNumber })}
+                />
+                <select
+                  className="ted-ivunit"
+                  aria-label="Interval unit"
+                  value={draft.intervalUnit}
+                  onChange={(e) => set({ intervalUnit: e.target.value as "min" | "hr" })}
+                >
+                  <option value="min">minutes</option>
+                  <option value="hr">hours</option>
+                </select>
+              </div>
+              <div className="ted-ivchips">
+                {INTERVAL_CHIPS.map((c) => (
+                  <button
+                    type="button"
+                    key={c.mins}
+                    className={`ted-ivchip${chipMins === c.mins ? " on" : ""}`}
+                    aria-pressed={chipMins === c.mins}
+                    onClick={() => pickChip(c.mins)}
+                  >
+                    {c.label}
+                  </button>
+                ))}
+              </div>
+              {!intervalOk ? (
+                <p className="ted-iverr">Enter a whole number of 1 or more.</p>
+              ) : (
+                <p className="ted-ivpreview">
+                  Sweeps <b>{fmtInterval(intervalSeconds(draft))}</b>
+                </p>
+              )}
+              {intervalOk && intervalSeconds(draft) >= 3600 && (
+                <p className="ted-ivguard">
+                  <b>Heads up:</b> an hour or longer between sweeps means new items wait that long
+                  to be processed.
+                </p>
+              )}
+            </>
           )}
           {draft.kind === "once" && (
             <div className="ted-row2">

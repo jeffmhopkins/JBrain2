@@ -229,9 +229,39 @@ describe("AutomationsScreen", () => {
     );
   });
 
-  it("offers no schedule editor for an interval reconciler", async () => {
+  it("offers the interval editor for a reconciler", async () => {
     mount({ automations: [RECONCILER] });
     fireEvent.click(await screen.findByText("reconcile_pending_notes"));
-    expect(screen.queryByRole("button", { name: /Edit schedule/ })).not.toBeInTheDocument();
+    fireEvent.click(await screen.findByRole("button", { name: /Edit schedule/ }));
+    // The reconciler opens on the number+unit interval control (Minutes/Hours unit).
+    expect(await screen.findByLabelText("Interval value")).toBeInTheDocument();
+    const unit = screen.getByLabelText("Interval unit") as HTMLSelectElement;
+    expect(within(unit).getByText("minutes")).toBeInTheDocument();
+    expect(within(unit).getByText("hours")).toBeInTheDocument();
+    // It must NOT offer the wall-clock repeat that would downgrade a sub-day sweep.
+    expect(screen.queryByRole("tab", { name: "Repeats" })).not.toBeInTheDocument();
+  });
+
+  it("edits a reconciler's interval and PUTs interval_seconds", async () => {
+    const update = vi.spyOn(api, "updateSchedule").mockResolvedValue();
+    mount({ automations: [RECONCILER] });
+    fireEvent.click(await screen.findByText("reconcile_pending_notes"));
+    fireEvent.click(await screen.findByRole("button", { name: /Edit schedule/ }));
+    // Change 5 -> 15 minutes and save.
+    fireEvent.change(await screen.findByLabelText("Interval value"), { target: { value: "15" } });
+    fireEvent.click(screen.getByRole("button", { name: /Save schedule/ }));
+    await waitFor(() => expect(update).toHaveBeenCalledTimes(1));
+    expect(update).toHaveBeenCalledWith(
+      "sched-1",
+      expect.objectContaining({
+        schedule_kind: "interval",
+        interval_seconds: 900,
+        // The wall-clock fields stay empty for an interval cadence.
+        schedule_freq: null,
+        schedule_time: null,
+        schedule_days: [],
+        run_at: null,
+      }),
+    );
   });
 });
