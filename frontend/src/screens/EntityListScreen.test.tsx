@@ -1,8 +1,11 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import { fmtTemporal } from "../analysis/format";
 import type { EntityListItem } from "../api/client";
 import { EntityListScreen } from "./EntityListScreen";
+
+/** The name truncates against the full row, so it lives in its own span; a
+ * confirmed entity's name and its wrapper share text, so disambiguate by it. */
+const NAME = ".entity-row-name-text";
 
 let seq = 0;
 function item(overrides: Partial<EntityListItem> = {}): EntityListItem {
@@ -45,22 +48,27 @@ async function loaded() {
 }
 
 describe("EntityListScreen", () => {
-  it("renders rows: name, provisional chip, muted kind, facts + last-seen meta", async () => {
+  it("renders rows: name, provisional chip, and a kind · facts · last-seen subtitle", async () => {
     setup();
     await loaded();
-    expect(screen.getByText("Sarah Hopkins")).toBeInTheDocument();
+    expect(screen.getByText("Sarah Hopkins", { selector: NAME })).toBeInTheDocument();
     expect(screen.getByText("provisional")).toHaveClass("fact-chip", "fact-chip-muted");
-    expect(screen.getByText("person")).toHaveClass("entity-row-kind");
     // Each row leads with a type-tinted icon disc; the appointment folds to Event.
     const discs = document.querySelectorAll(".etype-disc");
     expect(discs.length).toBe(2);
     expect(discs[0]).toHaveAttribute("data-entity-kind", "Person");
     expect(discs[1]).toHaveAttribute("data-entity-kind", "Event");
-    // last_seen is an instant — the meta shows the local calendar day.
-    const day = fmtTemporal(SARAH.last_seen, "instant");
-    expect(screen.getByText(`3 facts · last seen ${day}`)).toBeInTheDocument();
+    // The subtitle is one muted line: lowercased kind, facts, then the last-seen
+    // LOCAL calendar day (last_seen is an instant — the day is what a row shows).
+    const day = new Date(SARAH.last_seen as string).toLocaleDateString(undefined, {
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+    });
+    const sub = screen.getByText(`person · 3 facts · last seen ${day}`);
+    expect(sub).toHaveClass("entity-row-sub");
     // Null last_seen and a singular count stay null-safe and grammatical.
-    expect(screen.getByText("1 fact")).toBeInTheDocument();
+    expect(screen.getByText("appointment · 1 fact")).toBeInTheDocument();
   });
 
   it("filters as you type after the debounce, not per keystroke", async () => {
@@ -79,7 +87,7 @@ describe("EntityListScreen", () => {
       });
       expect(list).toHaveBeenCalledTimes(2);
       expect(list).toHaveBeenLastCalledWith("sarah", undefined);
-      expect(screen.getByText("Sarah Hopkins")).toBeInTheDocument();
+      expect(screen.getByText("Sarah Hopkins", { selector: NAME })).toBeInTheDocument();
       expect(screen.queryByText("Dr. Patel follow-up")).not.toBeInTheDocument();
     } finally {
       vi.useRealTimers();
@@ -99,13 +107,17 @@ describe("EntityListScreen", () => {
     // The chip row survives the narrowed load, so you can switch back.
     expect(screen.getByRole("button", { name: "Person" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "All" }));
-    await waitFor(() => expect(screen.getByText("Sarah Hopkins")).toBeInTheDocument());
+    await waitFor(() =>
+      expect(screen.getByText("Sarah Hopkins", { selector: NAME })).toBeInTheDocument(),
+    );
   });
 
   it("opens the entity layer for a tapped row", async () => {
     const { onOpenEntity } = setup();
     await loaded();
-    fireEvent.click(screen.getByText("Sarah Hopkins").closest("button") as HTMLElement);
+    fireEvent.click(
+      screen.getByText("Sarah Hopkins", { selector: NAME }).closest("button") as HTMLElement,
+    );
     expect(onOpenEntity).toHaveBeenCalledWith("ent-sarah");
   });
 
