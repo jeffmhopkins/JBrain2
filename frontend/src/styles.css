@@ -15176,6 +15176,12 @@ button.task-band:active {
   margin: 0 auto;
   animation: launcher-in 150ms ease-out;
 }
+/* A shared session (share-link recipient, often on desktop) is a standalone app with no
+   phone chrome around it, so the terminal fills the whole window instead of a centered
+   430px mobile column. The xterm fit addon refits to the wider panel on mount/resize. */
+.jcode-screen--wide {
+  max-width: none;
+}
 @media (prefers-reduced-motion: reduce) {
   .jcode-screen {
     animation: none;

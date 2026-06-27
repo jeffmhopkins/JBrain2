@@ -300,4 +300,20 @@ describe("JcodeSessionScreen", () => {
     // The owner-only model-status poll is skipped — a share principal would 403 it.
     expect(api.jcodeModelStatus).not.toHaveBeenCalled();
   });
+
+  it("fills the window in shared mode (no 430px mobile cap) but not for the owner", async () => {
+    const wsUrl = `ws://${window.location.host}/api/jcode/sessions/j1/terminal`;
+    // A share-link recipient (often on desktop) gets the full-width terminal; the owner's
+    // phone-first screen keeps the centered mobile column.
+    const shared = render(<JcodeSessionScreen session={SESSION} onClose={vi.fn()} shared />);
+    expect(shared.container.querySelector(".jcode-screen")).toHaveClass("jcode-screen--wide");
+    // Let the terminal's dynamic import settle before unmount: an import resolving after
+    // teardown bypasses the mock and loads the real addon-fit (ReferenceError: self).
+    await waitFor(() => expect(wsUrls).toContain(wsUrl));
+    shared.unmount();
+
+    const owner = render(<JcodeSessionScreen session={SESSION} onClose={vi.fn()} />);
+    expect(owner.container.querySelector(".jcode-screen")).not.toHaveClass("jcode-screen--wide");
+    await waitFor(() => expect(wsUrls.length).toBeGreaterThan(1));
+  });
 });
