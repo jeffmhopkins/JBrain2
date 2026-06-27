@@ -242,7 +242,12 @@ def create_app(
         # Count the open terminal so the GC reaper won't remove the checkout under it.
         sessions.terminal_opened(sid)
         try:
-            await serve_terminal(websocket, session.workspace)
+            # Pin the shell's `claude` CLI to this session's model (falling back to the
+            # server default) so it doesn't default to a cloud model the on-box gateway
+            # has no route for — matches the model the headless agent already uses.
+            await serve_terminal(
+                websocket, session.workspace, model=session.model or settings.model
+            )
         finally:
             sessions.terminal_closed(sid)
 
