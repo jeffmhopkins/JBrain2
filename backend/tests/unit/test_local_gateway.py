@@ -1,6 +1,8 @@
 """The llama-swap admin client: tolerant /running parsing, best-effort failure
 on running(), and a surfaced error on unload(). All via httpx.MockTransport."""
 
+import json
+
 import httpx
 import pytest
 
@@ -59,21 +61,40 @@ async def test_unload_raises_on_gateway_failure() -> None:
         await _client(lambda r: httpx.Response(500)).unload("a")
 
 
-async def test_load_probes_the_upstream_health_path() -> None:
+async def test_load_probes_health_then_warms_with_one_token() -> None:
     seen: list[tuple[str, str]] = []
+    body: dict[str, object] = {}
 
     def handle(req: httpx.Request) -> httpx.Response:
         seen.append((req.method, req.url.path))
-        return httpx.Response(200)
+        if req.method == "POST":
+            body.update(json.loads(req.content))
+        return httpx.Response(200, json={"choices": [{"message": {"content": ""}}]})
 
     await _client(handle).load("qwen3-vl-30b-a3b")
-    # A GET to the upstream proxy makes llama-swap load the model (no completion).
-    assert seen == [("GET", "/upstream/qwen3-vl-30b-a3b/health")]
+    # Health GET loads the model; the 1-token POST faults the mmap'd weights in so the
+    # user's first real turn isn't the cold load.
+    assert seen == [
+        ("GET", "/upstream/qwen3-vl-30b-a3b/health"),
+        ("POST", "/upstream/qwen3-vl-30b-a3b/v1/chat/completions"),
+    ]
+    assert body["model"] == "qwen3-vl-30b-a3b"
+    assert body["max_tokens"] == 1
 
 
-async def test_load_raises_on_gateway_failure() -> None:
+async def test_load_raises_when_the_model_cannot_load() -> None:
+    # The health probe is the hard gate: a model that won't load surfaces an error.
     with pytest.raises(LocalGatewayError):
         await _client(lambda r: httpx.Response(503)).load("a")
+
+
+async def test_load_warm_up_is_best_effort() -> None:
+    # Health succeeds (model loaded) but the warm-up generation fails — load() must NOT
+    # raise: the model is resident, the warm-up only pre-faults it.
+    def handle(req: httpx.Request) -> httpx.Response:
+        return httpx.Response(200 if req.url.path.endswith("/health") else 500)
+
+    await _client(handle).load("a")  # no raise
 
 
 def test_parse_running_tolerates_messy_shapes() -> None:

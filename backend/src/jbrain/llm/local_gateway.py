@@ -1,14 +1,16 @@
 """Management client for the llama-swap local gateway — runtime model state.
 
-This is NOT an LLM call (no completion), so it lives outside the LLM adapter: it
-speaks llama-swap's admin HTTP API to report and control which models are
-resident in memory:
+This is runtime-state management, not a functional LLM call, so it lives outside
+the LLM adapter: it speaks llama-swap's admin HTTP API to report and control which
+models are resident in memory:
   - GET  /running                      → models currently loaded
   - POST /api/models/unload/{model}    → unload one model
   - GET  /upstream/{model}/health      → proxy a request, which makes the gateway
                                          load the model (llama-swap has no explicit
-                                         load endpoint; loading is request-driven,
-                                         so a cheap health probe is the warm-up)
+                                         load endpoint; loading is request-driven)
+  - POST /upstream/{model}/v1/chat/completions (1 token, discarded) → warm the
+                                         inference path after load so the first real
+                                         turn isn't the slow one (see `load`)
   - GET  /logs                         → recent gateway + upstream stdout, which the
                                          loading bar mines for the llama.cpp model-load
                                          percentage (a real "weights read in" signal,
@@ -93,18 +95,47 @@ class LocalGatewayClient:
             raise LocalGatewayError(str(exc)) from exc
 
     async def load(self, served_model: str) -> None:
-        """Make the gateway load `served_model` into memory by proxying a cheap
-        health probe to its upstream (llama-swap loads a model on first request).
-        Raises LocalGatewayError on any failure. Uses a generous timeout because a
-        cold load reads tens of GB of weights before the probe returns."""
+        """Load `served_model` into memory AND warm it for inference. The health probe
+        makes llama-swap load the model (request-driven; with --no-mmap the weights are
+        read into RAM before it returns). But "weights resident" isn't "inference-ready":
+        the first forward pass still pays the inference path — KV-cache allocation for the
+        full context, CUDA graph capture, kernel warm-up — which otherwise lands on the
+        user's first real turn (it feels like the model reloads: slow first token, fast
+        after). So after the probe we force a single-token generation whose output is
+        discarded — a readiness probe, the inference-path analog of the health GET, not a
+        functional LLM call. Raises LocalGatewayError if the model can't load; the warm-up
+        itself is best-effort (the model is resident regardless — a failed warm-up just
+        leaves that cost on first use, the prior behaviour). Generous timeout: a cold 80B
+        reads tens of GB of weights."""
+        load_timeout = max(self._timeout, 120.0)
         try:
-            async with httpx.AsyncClient(
-                timeout=max(self._timeout, 120.0), transport=self._transport
-            ) as client:
+            async with httpx.AsyncClient(timeout=load_timeout, transport=self._transport) as client:
                 resp = await client.get(f"{self._root}/upstream/{served_model}/health")
                 resp.raise_for_status()
         except httpx.HTTPError as exc:
             raise LocalGatewayError(str(exc)) from exc
+        await self._warm(served_model)
+
+    async def _warm(self, served_model: str) -> None:
+        """Exercise the inference path with one discarded token. Best-effort: the model is
+        already loaded, so a warm-up failure is logged, not raised — it only means the
+        first real turn pays the warm-up cost (no worse than before this warm-up existed)."""
+        body = {
+            "model": served_model,
+            "messages": [{"role": "user", "content": "warmup"}],
+            "max_tokens": 1,
+            "stream": False,
+        }
+        try:
+            async with httpx.AsyncClient(
+                timeout=max(self._timeout, 120.0), transport=self._transport
+            ) as client:
+                resp = await client.post(
+                    f"{self._root}/upstream/{served_model}/v1/chat/completions", json=body
+                )
+                resp.raise_for_status()
+        except httpx.HTTPError as exc:
+            log.info("local_gateway.warm_skipped", model=served_model, error=str(exc))
 
     async def load_progress(self) -> float | None:
         """A real load fraction (0..1) for the model currently coming onto the box, parsed
