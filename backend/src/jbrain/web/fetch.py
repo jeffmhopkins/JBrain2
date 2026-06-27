@@ -136,22 +136,31 @@ class WebFetcher:
         raise WebFetchError("that URL redirected too many times")
 
     def _guard_host(self, url: str) -> None:
-        """Refuse a non-http(s) URL, or one whose host resolves to a private,
-        loopback, link-local, or otherwise non-public address (the SSRF guard).
-        Skipped under an injected transport (tests have no real network)."""
-        parsed = urlparse(url)
-        if parsed.scheme not in ("http", "https") or not parsed.hostname:
-            raise WebFetchError("only http(s) URLs can be fetched")
-        if self._transport is not None:
-            return
-        try:
-            infos = socket.getaddrinfo(parsed.hostname, parsed.port or 0, proto=socket.IPPROTO_TCP)
-        except socket.gaierror as exc:
-            raise WebFetchError("that host could not be resolved") from exc
-        for info in infos:
-            ip = ipaddress.ip_address(info[4][0])
-            if not _is_public(ip):
-                raise WebFetchError("that URL points at a non-public address")
+        """Refuse a non-http(s) URL, or one whose host resolves to a non-public
+        address (the SSRF guard). Skipped under an injected transport (tests have no
+        real network). Delegates to the shared `guard_public_host`."""
+        guard_public_host(url, skip_dns=self._transport is not None)
+
+
+def guard_public_host(url: str, *, skip_dns: bool = False) -> None:
+    """Refuse a non-http(s) URL, or one whose host resolves to a private, loopback,
+    link-local, or otherwise non-public address — the shared SSRF guard, reused by
+    `WebFetcher` and the favicon fetcher (both GET a host derived from untrusted
+    content). `skip_dns` bypasses the resolution check for tests with an injected
+    transport (no real network to reach). Raises `WebFetchError` on a refused host."""
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https") or not parsed.hostname:
+        raise WebFetchError("only http(s) URLs can be fetched")
+    if skip_dns:
+        return
+    try:
+        infos = socket.getaddrinfo(parsed.hostname, parsed.port or 0, proto=socket.IPPROTO_TCP)
+    except socket.gaierror as exc:
+        raise WebFetchError("that host could not be resolved") from exc
+    for info in infos:
+        ip = ipaddress.ip_address(info[4][0])
+        if not _is_public(ip):
+            raise WebFetchError("that URL points at a non-public address")
 
 
 def _is_public(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:

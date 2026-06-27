@@ -15,6 +15,7 @@ never copied note bodies.
 
 import asyncio
 import contextlib
+import time
 import uuid
 from collections.abc import AsyncIterator, Sequence
 from datetime import datetime
@@ -22,7 +23,7 @@ from typing import Annotated, Literal, cast
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, Field
 
 from jbrain.agent.agents import agent_for
@@ -46,6 +47,8 @@ from jbrain.llm import AssistantMessage, LlmImage, LlmMessage, LlmRouter, UserMe
 from jbrain.locations import LocationToolRefusal, SqlLocationRepo
 from jbrain.locations.presence import presence_block, read_owner_presence
 from jbrain.storage import BlobStore
+from jbrain.web import FaviconFetcher, FaviconResult
+from jbrain.web.favicon import normalize_host
 
 log = structlog.get_logger()
 
@@ -580,6 +583,10 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
                             step["proposal"] = event.proposal.model_dump()
                         if event.entities:
                             step["entities"] = [e.model_dump() for e in event.entities]
+                        # Web citation sources (jerv) — persisted so the favicon
+                        # chips and their [^n] targets replay on reopen.
+                        if event.web_sources:
+                            step["web_sources"] = [s.model_dump() for s in event.web_sources]
                 elif event.type == "tool_view":
                     # Persist the rich view (e.g. a list_card) on its tool step so
                     # the bubble's tool-result views replay on reopen.
@@ -734,4 +741,73 @@ async def resume_chat_run(request: Request, run_id: str, after: int = 0) -> Stre
         live.stream(after),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no", "X-Run-Id": run_id},
+    )
+
+
+# A web citation chip shows the source site's favicon. The PWA asks us for it by
+# host (`/api/agent/favicon?host=…`) and we fetch it ON-BOX — the client never
+# touches the third-party host, so the agent's answer triggers no render-time
+# external load (invariant #9). A small in-process TTL cache keeps repeat asks off
+# the network (the browser caches too, via the response's Cache-Control). The
+# negative result is cached as well, so a site with no usable favicon isn't
+# re-fetched on every render.
+_FAVICON_TTL_SECONDS = 24 * 3600
+_FAVICON_CACHE_MAX = 512
+
+
+class _FaviconCache:
+    """A tiny TTL map of host → fetched favicon (or None for a known miss). Bounded
+    by simple FIFO eviction; monotonic-clock TTL. Per-process, ephemeral — a perf
+    cache, never a source of truth, so losing it on restart only costs a re-fetch."""
+
+    def __init__(self, ttl: float, maxsize: int):
+        self._ttl = ttl
+        self._maxsize = maxsize
+        self._entries: dict[str, tuple[float, FaviconResult | None]] = {}
+
+    def get(self, host: str) -> tuple[bool, FaviconResult | None]:
+        """(found, result): found=False means uncached/expired (caller should fetch);
+        found=True with result=None is a cached miss (caller should 404 without a fetch)."""
+        entry = self._entries.get(host)
+        if entry is None:
+            return False, None
+        expires_at, result = entry
+        if time.monotonic() >= expires_at:
+            self._entries.pop(host, None)
+            return False, None
+        return True, result
+
+    def put(self, host: str, result: FaviconResult | None) -> None:
+        if len(self._entries) >= self._maxsize and host not in self._entries:
+            # FIFO: drop the oldest-inserted entry. Personal scale — no LRU needed.
+            self._entries.pop(next(iter(self._entries)), None)
+        self._entries[host] = (time.monotonic() + self._ttl, result)
+
+
+_favicon_cache = _FaviconCache(_FAVICON_TTL_SECONDS, _FAVICON_CACHE_MAX)
+
+
+@router.get("/agent/favicon")
+async def agent_favicon(host: str, owner: OwnerDep, request: Request) -> Response:
+    """Serve a source site's favicon for a web citation chip. Owner-gated; the host
+    is normalized and the bytes are fetched/validated server-side (raster image only,
+    SSRF-guarded, size-capped — see `FaviconFetcher`). A site without a usable favicon
+    is a clean 404 the PWA falls back from (a plain initial), never an error."""
+    normalized = normalize_host(host)
+    if not normalized:
+        raise HTTPException(status_code=404, detail="no favicon")
+    found, result = _favicon_cache.get(normalized)
+    if not found:
+        fetcher = cast(FaviconFetcher, request.app.state.favicon_fetcher)
+        result = await fetcher.fetch(normalized)
+        _favicon_cache.put(normalized, result)
+    if result is None:
+        raise HTTPException(status_code=404, detail="no favicon")
+    return Response(
+        content=result.data,
+        media_type=result.content_type,
+        headers={
+            "Cache-Control": f"public, max-age={_FAVICON_TTL_SECONDS}",
+            "X-Content-Type-Options": "nosniff",
+        },
     )

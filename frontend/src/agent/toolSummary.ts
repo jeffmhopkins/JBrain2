@@ -5,7 +5,7 @@
 // just get a friendly label.
 
 import type { SourceRef, ToolActivity } from "./transcript";
-import type { EntityRef } from "./types";
+import type { EntityRef, WebSource } from "./types";
 
 export type { SourceRef };
 
@@ -15,6 +15,9 @@ export interface ToolStep {
   ok: boolean | undefined;
   label: string;
   sources: SourceRef[];
+  /** Web pages a jerv internet tool reached — favicon link cards in the expanded
+   * step, and the targets a `[^n]` web citation resolves to. */
+  webSources: WebSource[];
   /** Entities the tool resolved — rendered as tappable links in the expanded
    * step, so a name reaches its page without exposing the raw id. */
   entities: EntityRef[];
@@ -35,6 +38,8 @@ const STEP_LABELS: Record<string, string> = {
   memory_edit: "Updated its scratchpad",
   remember: "Staged a memory change",
   propose_correction: "Staged a proposal",
+  web_search: "Searched the web",
+  web_fetch: "Read a web page",
   queued: "Queued a job",
 };
 
@@ -86,6 +91,7 @@ export function toolStep(t: ToolActivity): ToolStep {
     ok: t.ok,
     label: stepLabel(t.name),
     sources,
+    webSources: t.webSources ?? [],
     entities: t.entities ?? [],
     args: t.args,
     summary: t.summary,

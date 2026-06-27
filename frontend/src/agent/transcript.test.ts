@@ -120,6 +120,19 @@ describe("applyEvent reducer", () => {
     ]);
   });
 
+  it("attaches web sources (favicon citation chips) from a tool result to its tool", () => {
+    let ms: TranscriptMessage[] = [streaming()];
+    ms = applyEvent(ms, { type: "tool_call", id: "c1", name: "web_search", arguments: {} });
+    ms = applyEvent(ms, {
+      type: "tool_result",
+      tool_call_id: "c1",
+      ok: true,
+      summary: "Web results:\n- A page\n  https://x.example/a",
+      web_sources: [{ url: "https://x.example/a", title: "A page" }],
+    });
+    expect(ms[0]?.tools[0]?.webSources).toEqual([{ url: "https://x.example/a", title: "A page" }]);
+  });
+
   it("attaches a reflexion verdict (ungrounded claims) to the settled turn", () => {
     let ms: TranscriptMessage[] = [streaming()];
     ms = applyEvent(ms, { type: "text_delta", text: "The roof needs replacing." });

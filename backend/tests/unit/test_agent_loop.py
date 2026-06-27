@@ -23,6 +23,7 @@ from jbrain.agent.contracts import (
     UsageEvent,
     VerdictEvent,
     ViewPayload,
+    WebSource,
 )
 from jbrain.agent.loop import (
     SYSTEM_PROMPT,
@@ -75,6 +76,13 @@ async def boom(arguments: dict, ctx: ToolContext) -> str:
 
 async def search_sourced(arguments: dict, ctx: ToolContext) -> ToolOutput:
     return ToolOutput("found 1", (NoteSource(note_id="n1", domain="general", snippet="hi"),))
+
+
+async def web_sourced(arguments: dict, ctx: ToolContext) -> ToolOutput:
+    return ToolOutput(
+        "web results",
+        web_sources=(WebSource(url="https://x.example/a", title="A page"),),
+    )
 
 
 async def propose_sourced(arguments: dict, ctx: ToolContext) -> ToolOutput:
@@ -447,6 +455,17 @@ async def test_run_stream_tool_result_carries_structured_sources() -> None:
     result = next(e for e in events if isinstance(e, ToolResultEvent))
     assert result.summary == "found 1"
     assert result.sources == [NoteSource(note_id="n1", domain="general", snippet="hi")]
+
+
+async def test_run_stream_tool_result_carries_web_sources() -> None:
+    turns = [
+        LlmTurn("", (ToolCall("c1", "web_search", {}),), "tool_use", LlmUsage(1, 1)),
+        LlmTurn("done", (), "end_turn", LlmUsage(1, 1)),
+    ]
+    router, _ = stream_router_with(turns)
+    events = await collect(AgentLoop(router, registry_with(make_tool("web_search", web_sourced))))
+    result = next(e for e in events if isinstance(e, ToolResultEvent))
+    assert result.web_sources == [WebSource(url="https://x.example/a", title="A page")]
 
 
 async def test_run_stream_tool_result_carries_a_staged_proposal() -> None:

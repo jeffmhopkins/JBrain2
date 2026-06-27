@@ -4,7 +4,14 @@
 // tool calls/results become activity rows and tool_view payloads collect for the
 // component registry.
 
-import type { ChatAttachment, ChatEvent, EntityRef, ProposalRef, ViewPayload } from "./types";
+import type {
+  ChatAttachment,
+  ChatEvent,
+  EntityRef,
+  ProposalRef,
+  ViewPayload,
+  WebSource,
+} from "./types";
 
 /** A source note a tool surfaced, ready for a card: id to open, domain for the
  * dot, text for the line. */
@@ -25,6 +32,8 @@ export interface ToolActivity {
   summary?: string;
   /** Structured notes the tool surfaced, sent with the result event. */
   sources?: SourceRef[];
+  /** Web pages a jerv internet tool reached — favicon citation chips. */
+  webSources?: WebSource[];
   /** A Proposal this tool staged (a "Review proposal" chip). */
   proposal?: ProposalRef;
   /** Entities this tool resolved (tappable chips). */
@@ -161,6 +170,7 @@ export function applyEvent(messages: TranscriptMessage[], event: ChatEvent): Tra
       const extra = {
         ...(event.proposal ? { proposal: event.proposal } : {}),
         ...(event.entities?.length ? { entities: event.entities } : {}),
+        ...(event.web_sources?.length ? { webSources: event.web_sources } : {}),
       };
       next.tools = next.tools.map((t) => {
         if (t.id !== event.tool_call_id) return t;

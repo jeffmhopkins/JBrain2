@@ -154,6 +154,7 @@ function fromTurn(t: TranscriptTurn): TranscriptMessage {
       ...(tool.args ? { args: tool.args } : {}),
       ...(tool.summary ? { summary: tool.summary } : {}),
       sources: tool.sources.map((s) => ({ noteId: s.note_id, domain: s.domain, text: s.snippet })),
+      ...(tool.web_sources?.length ? { webSources: tool.web_sources } : {}),
       ...(tool.proposal ? { proposal: tool.proposal } : {}),
       ...(tool.entities?.length ? { entities: tool.entities } : {}),
       ...(tool.text_offset !== undefined ? { textOffset: tool.text_offset } : {}),

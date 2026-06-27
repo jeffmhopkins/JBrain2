@@ -33,6 +33,7 @@ from jbrain.agent.contracts import (
     UsageEvent,
     VerdictEvent,
     ViewPayload,
+    WebSource,
 )
 from jbrain.agent.reflexion import (
     MAX_RETRIES,
@@ -175,13 +176,15 @@ class JobRef:
 
 class ToolOutput(str):
     """A tool observation that also carries what the tool surfaced for the UI —
-    note sources (source cards), a staged proposal (a "Review proposal" chip),
-    resolved entities, a rich `view` (a registered component the PWA renders, e.g.
-    a checklist), and/or a `job` it deferred to the queue. It *is* the model-facing
-    text (a str subclass), so handlers keep their `-> str` contract and existing
-    call sites are untouched; `_dispatch` pulls the extras off when present."""
+    note sources (source cards), web sources (favicon citation chips), a staged
+    proposal (a "Review proposal" chip), resolved entities, a rich `view` (a
+    registered component the PWA renders, e.g. a checklist), and/or a `job` it
+    deferred to the queue. It *is* the model-facing text (a str subclass), so
+    handlers keep their `-> str` contract and existing call sites are untouched;
+    `_dispatch` pulls the extras off when present."""
 
     sources: tuple[NoteSource, ...]
+    web_sources: tuple[WebSource, ...]
     proposal: ProposalRef | None
     entities: tuple[EntityRef, ...]
     view: ViewPayload | None
@@ -195,9 +198,11 @@ class ToolOutput(str):
         entities: tuple[EntityRef, ...] = (),
         view: ViewPayload | None = None,
         job: JobRef | None = None,
+        web_sources: tuple[WebSource, ...] = (),
     ) -> "ToolOutput":
         out = super().__new__(cls, content)
         out.sources = sources
+        out.web_sources = web_sources
         out.proposal = proposal
         out.entities = entities
         out.view = view
@@ -239,6 +244,7 @@ class _Dispatched:
     entities: tuple[EntityRef, ...]
     view: ViewPayload | None
     job: JobRef | None
+    web_sources: tuple[WebSource, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -553,6 +559,7 @@ class AgentLoop:
                     ok=not dispatched.result.is_error,
                     summary=dispatched.result.content,
                     sources=list(dispatched.sources),
+                    web_sources=list(dispatched.web_sources),
                     proposal=dispatched.proposal,
                     entities=list(dispatched.entities),
                 )
@@ -786,6 +793,7 @@ class AgentLoop:
                         ok=not dispatched.result.is_error,
                         summary=dispatched.result.content,
                         sources=list(dispatched.sources),
+                        web_sources=list(dispatched.web_sources),
                         proposal=dispatched.proposal,
                         entities=list(dispatched.entities),
                     )
@@ -915,6 +923,7 @@ class AgentLoop:
             out.entities if out else (),
             out.view if out else None,
             out.job if out else None,
+            out.web_sources if out else (),
         )
 
     async def _record(self, idx: int, kind: str, name: str, *, ok: bool, cost_tokens: int) -> None:

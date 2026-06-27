@@ -1401,6 +1401,14 @@ export function generatedImageUrl(id: string): string {
   return `/api/images/generated/${encodeURIComponent(id)}`;
 }
 
+/** Source URL for a web citation's favicon — fetched and cached ON-BOX from the
+ * site's host, so the chat shows a source logo without the client ever touching the
+ * third-party host (invariant #9). A miss 404s and the chip falls back to a plain
+ * initial. `host` is a bare hostname (the component derives it from the source URL). */
+export function faviconUrl(host: string): string {
+  return `/api/agent/favicon?host=${encodeURIComponent(host)}`;
+}
+
 /** Source ("before") URL for an edit: the original bytes the edit started from,
  * resolved by the same id on the backend. */
 export function generatedImageSourceUrl(id: string): string {

@@ -10,7 +10,8 @@ the on-box SearXNG client and the URL fetcher; they surface no NoteSources (a we
 result is not an owner note).
 """
 
-from jbrain.agent.loop import ToolContext, ToolHandler
+from jbrain.agent.contracts import WebSource
+from jbrain.agent.loop import ToolContext, ToolHandler, ToolOutput
 from jbrain.web.fetch import WebFetcher, WebFetchError
 from jbrain.web.search import SearxngClient, WebSearchError
 
@@ -30,7 +31,11 @@ def build_web_handlers(search: SearxngClient, fetcher: WebFetcher) -> dict[str, 
         if not hits:
             return f"No web results for '{query}'."
         lines = [f"- {h.title}\n  {h.url}\n  {h.snippet}" for h in hits]
-        return "Web results:\n" + "\n".join(lines)
+        # The structured twin of the text: one citation source per hit, in the same
+        # order the model reads them, so a `[^n]` marker resolves to a real URL the
+        # search reached (and a favicon chip), never to a string the model invents.
+        web_sources = tuple(WebSource(url=h.url, title=h.title) for h in hits)
+        return ToolOutput("Web results:\n" + "\n".join(lines), web_sources=web_sources)
 
     async def web_fetch_tool(arguments: dict, ctx: ToolContext) -> str:
         url = str(arguments.get("url", "")).strip()
@@ -49,6 +54,9 @@ def build_web_handlers(search: SearxngClient, fetcher: WebFetcher) -> dict[str, 
             # rather than stopping at this page (web_fetch any of them to follow it).
             links = "\n".join(f"- {u}" for u in result.links)
             body += f"\n\nLinks on this page (web_fetch any of these to follow it):\n{links}"
-        return body
+        # The fetched page is itself a citable source — title from the page, url the
+        # FINAL url after redirects (what the favicon + link should point at).
+        source = WebSource(url=result.url, title=result.title or result.url)
+        return ToolOutput(body, web_sources=(source,))
 
     return {"web_search": web_search_tool, "web_fetch": web_fetch_tool}
