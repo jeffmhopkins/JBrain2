@@ -27,3 +27,11 @@ def test_session_cap_defaults_on() -> None:
     # (non-zero), alongside idle-TTL GC and the aggregate compose caps.
     s = Settings(token="x")
     assert s.max_sessions > 0
+
+
+def test_preview_defaults_on() -> None:
+    # This control server only runs under the opt-in `jcode` profile, so code mode
+    # being on already means preview is available — no second env var. The flag only
+    # gates the capability; a preview is still opened deliberately, per session.
+    s = Settings(token="x")
+    assert s.preview_enabled is True

@@ -44,10 +44,14 @@ class Settings(BaseSettings):
     max_sessions: int = 8
 
     # Per-session web preview (Wave J4): an ephemeral Cloudflare quick-tunnel to the
-    # sandbox's dev server. OFF by default — it exposes the running app to anyone with
-    # the (unguessable) URL, so the owner opts in. Zero Cloudflare config needed
-    # (TryCloudflare: no account/token/DNS); the URL dies with the session.
-    preview_enabled: bool = False
+    # sandbox's dev server. ON whenever code mode is — this control server only runs
+    # under the opt-in `jcode` profile, so "jcode enabled" already means "preview
+    # available", with no second env var to set. The flag here only GATES whether a
+    # preview may be opened; nothing is exposed until the owner deliberately opens one
+    # on a specific session. Zero Cloudflare config needed (TryCloudflare: no
+    # account/token/DNS); the URL dies with the session. Set JCODE_PREVIEW_ENABLED=false
+    # to withhold the capability entirely.
+    preview_enabled: bool = True
     preview_default_port: int = 5173
 
     # Session GC (Wave J5): reap a session (its checkout + any tunnel) after this many
