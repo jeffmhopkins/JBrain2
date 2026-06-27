@@ -5,7 +5,7 @@ connector and LLM adapters."""
 import httpx
 import pytest
 
-from jbrain.agent.loop import ToolContext
+from jbrain.agent.loop import ToolContext, ToolOutput
 from jbrain.agent.webtools import build_web_handlers
 from jbrain.db.session import SessionContext
 from jbrain.web.fetch import WebFetcher, WebFetchError
@@ -158,6 +158,44 @@ async def test_web_fetch_tool_lists_links_for_navigation() -> None:
     out = await handlers["web_fetch"]({"url": "https://x.example/repo"}, CTX)
     assert "Links on this page" in out
     assert "https://x.example/docs" in out
+
+
+# --- web sources (favicon citation chips) ----------------------------------
+
+
+async def test_web_search_surfaces_web_sources_in_hit_order() -> None:
+    handlers = build_web_handlers(
+        _searx(lambda r: httpx.Response(200, json=_SEARX_OK)), WebFetcher()
+    )
+    out = await handlers["web_search"]({"query": "python"}, CTX)
+    # The structured twin rides alongside the model text, in the order the model
+    # reads the hits — so a [^1]/[^2] marker resolves to a real reached URL.
+    assert isinstance(out, ToolOutput)
+    assert [(s.url, s.title) for s in out.web_sources] == [
+        ("https://a.example/1", "Result one"),
+        ("https://b.example/2", "Result two"),
+    ]
+
+
+async def test_web_fetch_surfaces_the_fetched_page_as_a_web_source() -> None:
+    def handle(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=_HTML, headers={"content-type": "text/html"})
+
+    handlers = build_web_handlers(
+        SearxngClient(""), WebFetcher(transport=httpx.MockTransport(handle))
+    )
+    out = await handlers["web_fetch"]({"url": "https://x.example/p"}, CTX)
+    assert isinstance(out, ToolOutput)
+    assert len(out.web_sources) == 1
+    assert out.web_sources[0].url == "https://x.example/p"
+    assert out.web_sources[0].title == "Hi There"
+
+
+async def test_web_search_error_carries_no_web_sources() -> None:
+    # A recoverable error is plain text, never a citable source.
+    handlers = build_web_handlers(_searx(lambda r: httpx.Response(502)), WebFetcher())
+    out = await handlers["web_search"]({"query": "q"}, CTX)
+    assert not isinstance(out, ToolOutput) or not out.web_sources
 
 
 async def test_fetch_rejects_non_http_scheme() -> None:

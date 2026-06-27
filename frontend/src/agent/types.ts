@@ -60,6 +60,14 @@ export interface NoteSource {
   domain: string;
   snippet: string;
 }
+/** A web page a jerv internet tool reached this turn — the real URL it surfaced
+ * (a search hit / the fetched page), rendered as a tappable favicon citation chip.
+ * The favicon is served on-box from `/api/agent/favicon` (the client never touches
+ * the third-party host). */
+export interface WebSource {
+  url: string;
+  title: string;
+}
 /** A Proposal a tool staged this turn — surfaced as a "Review proposal" chip. */
 export interface ProposalRef {
   proposal_id: string;
@@ -71,6 +79,7 @@ export interface ToolResultEvent {
   ok: boolean;
   summary: string;
   sources?: NoteSource[];
+  web_sources?: WebSource[];
   proposal?: ProposalRef | null;
   entities?: EntityRef[];
 }
@@ -169,6 +178,9 @@ export interface TranscriptTurn {
      * reopen — the only content a sourceless tool (the web tools) can show. */
     summary?: string;
     sources: NoteSource[];
+    /** Web pages a jerv internet tool reached (favicon citation chips), persisted
+     * so the chips and their [^n] targets replay on reopen. */
+    web_sources?: WebSource[];
     /** A staged proposal / resolved entities the step surfaced, persisted so the
      * bubble's chips and inline links replay on reopen (not just note sources). */
     proposal?: ProposalRef | null;

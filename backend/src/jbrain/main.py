@@ -116,7 +116,7 @@ from jbrain.tasks.scheduler import run_tasks_loop
 from jbrain.tiles import FsTileCache, HttpTileFetcher, TileService, TileSet, tile_cache_namespace
 from jbrain.transcribe import WhisperCppClient
 from jbrain.usage import SqlUsageRecorder
-from jbrain.web import SearxngClient, WeatherClient, WebFetcher
+from jbrain.web import FaviconFetcher, SearxngClient, WeatherClient, WebFetcher
 from jbrain.wiki.actions import WIKI_SPECS
 from jbrain.wiki.readstore import WikiReadStore
 from jbrain.wiki.talkstore import WikiTalkStore
@@ -293,6 +293,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # The jerv chatbot's on-box internet tools — direct, sandboxed web access
         # (no owner data in context; docs/ASSISTANT.md "Agent selection").
         web_handlers = build_web_handlers(SearxngClient(settings.searxng_url), WebFetcher())
+        # Fetches a source site's favicon on-box for web citation chips, so the PWA
+        # renders a tappable logo without ever touching the third-party host (#9).
+        app.state.favicon_fetcher = FaviconFetcher()
         # jerv's weather lookup (docs/DESIGN.md "weather_card tool-view") — a direct,
         # pinned Open-Meteo upstream, the same sandboxed-web posture as search. Merged
         # into the web handlers so it rides the existing `web` permission gate; the

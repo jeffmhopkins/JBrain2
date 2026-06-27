@@ -10,18 +10,18 @@
 // result, and raw payload (docs/research/brain-tooluse-ux).
 
 import { type ReactNode, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { api, chatAttachmentUrl } from "../api/client";
+import { api, chatAttachmentUrl, faviconUrl } from "../api/client";
 import { FileIcon, ImageIcon } from "../components/icons";
 import { DOMAIN_COLOR } from "../notes/modes";
 import { ProposalTree } from "./ProposalTree";
 import { ProposalsPanel } from "./ProposalsPanel";
 import { SessionsPanel } from "./SessionsPanel";
 import { attachmentKind } from "./attachmentKind";
-import { Markdown, type MdFlag, stripModelCitations } from "./markdown";
+import { type CiteTarget, Markdown, type MdFlag, stripModelCitations } from "./markdown";
 import { type AgentStatus, agentStatus } from "./status";
 import { type SourceRef, type ToolStep, toolStep } from "./toolSummary";
 import type { ToolActivity, TranscriptMessage } from "./transcript";
-import type { ChatAttachment, ProposalRef } from "./types";
+import type { ChatAttachment, ProposalRef, WebSource } from "./types";
 import type { FullBrain } from "./useFullBrain";
 import { usePacedText } from "./usePacedText";
 import { ToolView } from "./views/registry";
@@ -355,13 +355,17 @@ function Bubble({
   ) {
     return null;
   }
-  // `[^n]` in the answer maps to the n-th source the turn surfaced (flattened
-  // across this turn's tools, in order) — tap opens that note.
-  const flatSources = message.tools.flatMap((t) => t.sources ?? []);
+  // `[^n]` in the answer maps to the n-th source the turn surfaced, flattened across
+  // this turn's tools in order. A note source taps open its card (onCite); a web
+  // source (jerv) renders as a favicon that opens the page (handled in Markdown).
+  const citeTargets: CiteTarget[] = message.tools.flatMap((t) => [
+    ...(t.sources ?? []).map((s): CiteTarget => ({ kind: "note", noteId: s.noteId })),
+    ...(t.webSources ?? []).map((w): CiteTarget => ({ kind: "web", url: w.url, title: w.title })),
+  ]);
   const onCite = onOpenNote
     ? (n: number) => {
-        const src = flatSources[n - 1];
-        if (src) onOpenNote(src.noteId);
+        const target = citeTargets[n - 1];
+        if (target?.kind === "note") onOpenNote(target.noteId);
       }
     : undefined;
   // Entities the turn resolved, deduped. Those whose name appears in the answer
@@ -403,6 +407,7 @@ function Bubble({
         <Markdown
           text={shownText}
           onCite={onCite}
+          cites={citeTargets}
           entities={entities}
           onEntity={onOpenEntity}
           flags={flags}
@@ -497,6 +502,7 @@ function Bubble({
               <Markdown
                 text={postText}
                 onCite={onCite}
+                cites={citeTargets}
                 entities={entities}
                 onEntity={onOpenEntity}
                 streaming={message.streaming}
@@ -931,13 +937,14 @@ function StepRow({
   }, [isErr]);
   const hasSources = step.sources.length > 0;
   const hasEntities = step.entities.length > 0;
+  const hasWebSources = step.webSources.length > 0;
   const hasArgs = step.args != null && Object.keys(step.args).length > 0;
   const summary = step.summary?.trim();
   // The verbatim raw payload is worth a rung only when a friendly result (source
-  // cards or entity links) stands in for it; otherwise the text already is the
-  // summary. Entity steps especially: the raw text carries bare ids we'd rather
-  // not parade, so the links are the result and the ids hide behind "raw".
-  const rawText = hasSources || hasEntities ? summary : undefined;
+  // cards, entity links, or web source cards) stands in for it; otherwise the text
+  // already is the summary. Entity steps especially: the raw text carries bare ids
+  // we'd rather not parade, so the links are the result and the ids hide behind "raw".
+  const rawText = hasSources || hasEntities || hasWebSources ? summary : undefined;
   const mark = isErr ? "bad" : step.ok === undefined ? "live" : "";
   // The web tools carry their target inline on the row — the fetched url, the
   // searched query — so the call reads at a glance without expanding it. It
@@ -963,6 +970,11 @@ function StepRow({
         {step.name === "search" && (
           <span className="fb-step-cnt">
             {step.sources.length} result{step.sources.length === 1 ? "" : "s"}
+          </span>
+        )}
+        {step.name === "web_search" && hasWebSources && (
+          <span className="fb-step-cnt">
+            {step.webSources.length} result{step.webSources.length === 1 ? "" : "s"}
           </span>
         )}
         <ChevronGlyph className="fb-step-caret" />
@@ -1002,6 +1014,16 @@ function StepRow({
                     />
                     {e.label}
                   </button>
+                ))}
+              </div>
+              {rawText && <RawBlock text={rawText} />}
+            </>
+          ) : hasWebSources ? (
+            <>
+              <div className="fb-res-lab">sources</div>
+              <div className="toolwork-srcs">
+                {step.webSources.map((w) => (
+                  <WebSourceCard key={w.url} src={w} />
                 ))}
               </div>
               {rawText && <RawBlock text={rawText} />}
@@ -1109,6 +1131,48 @@ function SourceCard({
       {dot}
       <span className="tw-text">{src.text}</span>
     </div>
+  );
+}
+
+// A web source in the expanded "Worked" step: a favicon + the page title, opening
+// the page in a new tab. The favicon is served on-box (faviconUrl); on load failure
+// it falls back to the host's initial so the card never shows a broken image.
+function WebSourceCard({ src }: { src: WebSource }): ReactNode {
+  const host = (() => {
+    try {
+      return new URL(src.url).hostname.replace(/^www\./, "");
+    } catch {
+      return "";
+    }
+  })();
+  const [failed, setFailed] = useState(false);
+  return (
+    <a
+      className="toolwork-card tw-web"
+      href={src.url}
+      target="_blank"
+      rel="noreferrer noopener"
+      title={src.url}
+    >
+      {host && !failed ? (
+        <img
+          className="tw-favicon"
+          src={faviconUrl(host)}
+          alt=""
+          aria-hidden="true"
+          onError={() => setFailed(true)}
+        />
+      ) : (
+        <span className="tw-favicon tw-favicon-ph" aria-hidden="true">
+          {host.slice(0, 1).toUpperCase() || "·"}
+        </span>
+      )}
+      <span className="tw-text">
+        <span className="tw-web-title">{src.title || host || src.url}</span>
+        {host && <span className="tw-web-host">{host}</span>}
+      </span>
+      <ChevronGlyph className="tw-chev" />
+    </a>
   );
 }
 

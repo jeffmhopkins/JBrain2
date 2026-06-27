@@ -1453,7 +1453,7 @@ def test_chat_runs_the_selected_agents_prompt_and_only_its_tools(
     assert call["system"] == AGENTS["jerv"].prompt
     assert {t.name for t in call["tools"]} == {"web_search", "web_fetch"}
     # The run carries its version.
-    assert ("sess-j", "agent-jerv-v15") in client.app.state.agent_runlog.started  # type: ignore[attr-defined]
+    assert ("sess-j", "agent-jerv-v16") in client.app.state.agent_runlog.started  # type: ignore[attr-defined]
 
 
 def test_chat_curator_is_offered_no_web_tools(
@@ -1648,3 +1648,52 @@ def test_chat_datetime_block_honours_owner_timezone(
     client.post("/api/chat", json={"session_id": "sess-tz", "message": "hi"})
     joined = "\n".join(getattr(m, "text", "") for m in fake.stream_calls[0]["messages"])
     assert "(Asia/Tokyo)" in joined
+
+
+# --- GET /api/agent/favicon (web citation chip logos) ----------------------
+
+_FAV_PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 24
+_FAV_HOME = b'<html><head><link rel="icon" href="/icon.png"></head><body>x</body></html>'
+
+
+def _favicon_transport(found: bool) -> "object":
+    import httpx
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/":
+            return httpx.Response(200, content=_FAV_HOME, headers={"content-type": "text/html"})
+        if found and request.url.path == "/icon.png":
+            return httpx.Response(200, content=_FAV_PNG)
+        return httpx.Response(404)
+
+    return httpx.MockTransport(handle)
+
+
+def test_favicon_requires_owner(client: TestClient) -> None:
+    assert client.get("/api/agent/favicon?host=example.com").status_code == 401
+
+
+def test_favicon_serves_on_box_fetched_image(client: TestClient, repo: FakeAuthRepo) -> None:
+    from jbrain.web import FaviconFetcher
+
+    login(client, repo)
+    client.app.state.favicon_fetcher = FaviconFetcher(  # type: ignore[attr-defined]
+        transport=_favicon_transport(found=True)  # type: ignore[arg-type]
+    )
+    resp = client.get("/api/agent/favicon?host=https://example.com/games")
+    assert resp.status_code == 200
+    assert resp.headers["content-type"] == "image/png"
+    assert resp.content == _FAV_PNG
+    # Cached at the browser, and not re-fetched server-side (the on-box TTL cache).
+    assert "max-age" in resp.headers.get("cache-control", "")
+    assert resp.headers["x-content-type-options"] == "nosniff"
+
+
+def test_favicon_missing_is_404(client: TestClient, repo: FakeAuthRepo) -> None:
+    from jbrain.web import FaviconFetcher
+
+    login(client, repo)
+    client.app.state.favicon_fetcher = FaviconFetcher(  # type: ignore[attr-defined]
+        transport=_favicon_transport(found=False)  # type: ignore[arg-type]
+    )
+    assert client.get("/api/agent/favicon?host=nofavicon.example").status_code == 404

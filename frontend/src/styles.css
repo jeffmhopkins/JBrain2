@@ -7080,6 +7080,33 @@ button.small {
   color: var(--steel);
   cursor: pointer;
 }
+/* a web citation: a source-site favicon that opens the page. The favicon is served
+   on-box (no third-party load); a load failure falls back to the citation number
+   (the bare <a> text), so the link is never lost. */
+:is(.fb-shell, .jcode-bubble) .md-webcite {
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1;
+}
+:is(.fb-shell, .jcode-bubble) .md-webcite a {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 15px;
+  height: 15px;
+  padding: 0 2px;
+  border-radius: 5px;
+  background: var(--steel-tint);
+  color: var(--steel);
+  text-decoration: none;
+}
+:is(.fb-shell, .jcode-bubble) .md-favicon {
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+  object-fit: contain;
+  display: block;
+}
 /* a place pin trailing a detected address / GPS pair — taps through to Google
    Maps; the glyph follows the steel link color and nudges down to sit on the
    text baseline */
@@ -7732,6 +7759,46 @@ button.small {
   height: 14px;
   flex: none;
   color: var(--text-2);
+}
+/* a web source card (jerv) — a favicon + page title + host, opening the page. The
+   anchor reuses the toolwork-card shell but is a hover target like the button form. */
+.fb-shell a.toolwork-card.tw-web {
+  text-decoration: none;
+  cursor: pointer;
+  transition: border-color 0.12s ease-out;
+}
+.fb-shell a.toolwork-card.tw-web:hover {
+  border-color: var(--steel);
+}
+.fb-shell .toolwork-card .tw-favicon {
+  width: 16px;
+  height: 16px;
+  border-radius: 4px;
+  object-fit: contain;
+  flex: none;
+}
+.fb-shell .toolwork-card .tw-favicon-ph {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--steel-tint);
+  color: var(--steel);
+  font-size: 10px;
+  font-weight: 700;
+}
+.fb-shell .toolwork-card .tw-web-title {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fb-shell .toolwork-card .tw-web-host {
+  display: block;
+  font-size: 10px;
+  color: var(--text-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* live AI status line — sits at the surface's bottom edge, above the omnibox.

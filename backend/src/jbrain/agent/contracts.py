@@ -125,6 +125,24 @@ class NoteSource(BaseModel):
     snippet: str
 
 
+class WebSource(BaseModel):
+    """A web page a jerv internet tool reached this turn (a `web_search` hit or a
+    `web_fetch` target), for the response's citation chips. The `url` is captured
+    from the actual tool call — SearXNG's result row, or the page's final URL after
+    redirects — NEVER parsed from the model's prose, so a chip points at a source
+    the tool genuinely reached, not a string the model typed (which is how the old
+    `【source: …】` prose leaked: a citation with no followable link).
+
+    The PWA renders each as a tappable favicon that opens the page. The favicon is
+    fetched and cached ON-BOX and served from a same-origin route (`/agent/favicon`)
+    — agent output triggers no render-time external resource load (invariant #9):
+    the client only ever talks to our own API, which does the controlled,
+    SSRF-guarded, cached fetch from the source host server-side."""
+
+    url: str
+    title: str
+
+
 class ProposalRef(BaseModel):
     """A Proposal a tool staged this turn, for a tappable "Review proposal" chip —
     so the model never has to paste the id into its prose (it surfaces as a
@@ -183,6 +201,11 @@ class ToolResultEvent(BaseModel):
     # Structured notes the tool surfaced (search hits, the note read), for the
     # response's source cards; empty for tools that cite nothing.
     sources: list[NoteSource] = Field(default_factory=list)
+    # Web pages a jerv internet tool reached this turn, for the response's favicon
+    # citation chips; empty for every non-web tool. Kept separate from `sources`:
+    # a web page is not an owner note, and it never feeds the notes-grounding
+    # reflexion verifier (jerv is a sandbox with no notes to ground against).
+    web_sources: list[WebSource] = Field(default_factory=list)
     # A Proposal the tool staged this turn, surfaced as a "Review proposal" chip.
     proposal: ProposalRef | None = None
     # Entities a tool resolved this turn (find_entity), surfaced as tappable chips.

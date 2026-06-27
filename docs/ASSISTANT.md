@@ -338,6 +338,18 @@ the knowledge base** at all. The set is closed and code-defined
   chat attachment by id under the session scope, runs an on-box model, and is dropped
   from the registry when its backend is unconfigured (graceful degrade).
 
+  **Web citations.** jerv cites a web claim with an inline `[^n]` footnote marker
+  (the same convention the curator uses for notes), numbered in the order the
+  sources appeared across its `web_search` / `web_fetch` calls. Each call surfaces a
+  structured **`WebSource`** (the real URL it reached — a search hit's URL or the
+  fetched page's final URL — never a string parsed from the model's prose), carried
+  on the tool-result event beside the model text. The PWA renders each `[^n]` as a
+  tappable **favicon** that opens the page. The favicon is fetched and cached
+  **on-box** (`/api/agent/favicon` → `web/favicon.py`, behind the same SSRF guard as
+  `web_fetch`, raster-image-only) and served from a same-origin route, so the answer
+  triggers **no render-time external load** (invariant #9): the client only ever
+  talks to our API, which does the controlled fetch from the source host.
+
 Tool gating layers on top of read-scope: the registry offers a tool only if the
 agent's allowlist admits it *and* the session holds its domain. The internet tools
 are a new **`web` permission class** that is **opt-in** — never offered to the

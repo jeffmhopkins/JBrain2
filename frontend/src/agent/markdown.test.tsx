@@ -167,6 +167,52 @@ describe("Markdown", () => {
     expect(out).not.toContain("【");
   });
 
+  it("renders [^n] as a tappable favicon link when the cite target is a web source", () => {
+    // jerv cites a web claim with [^n]; the target resolves to the source URL, so
+    // the marker becomes a favicon that opens the page (served on-box, not the host).
+    const { container } = render(
+      <Markdown
+        text="Bluey: The Videogame released in 2023.[^1]"
+        cites={[{ kind: "web", url: "https://www.xbox.com/games/store/bluey/9N2", title: "Xbox" }]}
+      />,
+    );
+    const link = container.querySelector("a.md-link, .md-webcite a") as HTMLAnchorElement;
+    expect(link?.getAttribute("href")).toBe("https://www.xbox.com/games/store/bluey/9N2");
+    expect(link?.getAttribute("target")).toBe("_blank");
+    const img = link?.querySelector("img.md-favicon") as HTMLImageElement;
+    // The favicon is fetched from our own API by the source host — never the host itself.
+    expect(img?.getAttribute("src")).toBe("/api/agent/favicon?host=www.xbox.com");
+  });
+
+  it("keeps the numbered chip (onCite) when the cite target is a note", () => {
+    const onCite = vi.fn();
+    render(
+      <Markdown
+        text="From your note.[^1]"
+        onCite={onCite}
+        cites={[{ kind: "note", noteId: "note-7" }]}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "1" }));
+    expect(onCite).toHaveBeenCalledWith(1);
+  });
+
+  it("strips a browsing model's 【source: …】 prose citation (no URL, not tappable)", () => {
+    // The old leak: a narrated source with no followable link. We now ask jerv for
+    // [^n] markers, but strip this stray form so it never shows as raw brackets.
+    const out = html("Bluey: The Videogame released in 2023 【source: Wikipedia page for Bluey】.");
+    expect(out).toContain("Bluey: The Videogame released in 2023.");
+    expect(out).not.toContain("【");
+    expect(out).not.toContain("source:");
+  });
+
+  it("leaves legitimate 【…】 brackets that aren't source citations untouched", () => {
+    // The strip is keyed to the "source" keyword, so it never eats fullwidth brackets
+    // used for ordinary content (e.g. a CJK heading).
+    const out = html("見出し: 【重要】 のお知らせ。");
+    expect(out).toContain("【重要】");
+  });
+
   it("does not touch a real [^n] source citation (no dagger)", () => {
     const onCite = vi.fn();
     render(<Markdown text="You were born then.[^1]" onCite={onCite} />);

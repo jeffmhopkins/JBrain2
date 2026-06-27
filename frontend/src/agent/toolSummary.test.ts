@@ -87,4 +87,14 @@ describe("toolStep", () => {
     expect(toolStep(t).ok).toBeUndefined();
     expect(toolStep(tool({ name: "search", ok: false })).ok).toBe(false);
   });
+
+  it("labels the web tools and carries their web sources through", () => {
+    expect(toolStep(tool({ name: "web_search" })).label).toBe("Searched the web");
+    expect(toolStep(tool({ name: "web_fetch" })).label).toBe("Read a web page");
+    const webSources = [{ url: "https://x.example/a", title: "A page" }];
+    const step = toolStep(tool({ name: "web_search", webSources }));
+    expect(step.webSources).toEqual(webSources);
+    // A tool that surfaced none gets an empty list, never undefined.
+    expect(toolStep(tool({ name: "search" })).webSources).toEqual([]);
+  });
 });

@@ -19,9 +19,17 @@
 
 import katex from "katex";
 import "katex/dist/katex.min.css";
-import { type ReactNode, useMemo } from "react";
+import { type ReactNode, useMemo, useState } from "react";
+import { faviconUrl } from "../api/client";
 import { PlaceIcon } from "../components/icons";
 import { DOMAIN_COLOR } from "../notes/modes";
+
+/** What a `[^n]` citation marker resolves to: an owner note (tap opens it, via
+ * `onCite`) or a web page (a tappable favicon that opens the URL). Built by the
+ * surface from the turn's tool sources, positional with the `[^n]` numbering. */
+export type CiteTarget =
+  | { kind: "note"; noteId: string }
+  | { kind: "web"; url: string; title: string };
 
 const MONTHS =
   "Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?";
@@ -49,8 +57,14 @@ const isIsoDate = (s: string): boolean => /^\d{4}-\d{2}-\d{2}$/.test(s);
 // sources, so they can't become tappable chips — strip them (with one leading space
 // if present) so the prose reads clean rather than leaking the raw token.
 const MODEL_CITATION = /[ \t]?(?:【[^】\n]*†[^】\n]*】|\[[^\]\n]*†[^\]\n]*\])/g;
+// A browsing model also sometimes narrates a source in prose — 【source: Wikipedia
+// page for …】 — with no dagger and no URL, so it can't become a tappable chip. We
+// now ask jerv to cite with [^n] markers instead (jerv.prompt), but strip this stray
+// form as a fallback so a disobedient/legacy turn reads clean. Targeted to the
+// "source" keyword so it never eats legitimate 【…】 brackets (e.g. CJK headings).
+const SOURCE_PROSE = /[ \t]?【\s*source\b[^】\n]*】/gi;
 export function stripModelCitations(text: string): string {
-  return text.replace(MODEL_CITATION, "");
+  return text.replace(MODEL_CITATION, "").replace(SOURCE_PROSE, "");
 }
 
 // Typeset a LaTeX fragment to KaTeX's own span markup, or null when it isn't valid
@@ -272,6 +286,9 @@ interface FlagIndex {
 
 interface Ctx {
   onCite?: ((n: number) => void) | undefined;
+  /** The turn's citation targets, positional with the `[^n]` numbering — a web
+   * target renders as a favicon link, a note (or absent) as the numbered chip. */
+  cites?: CiteTarget[] | undefined;
   onEntity?: ((entityId: string) => void) | undefined;
   onFlag?: ((flagId: string) => void) | undefined;
   openFlag?: string | null | undefined;
@@ -465,6 +482,37 @@ function scanEntities(text: string, key: string, ctx: Ctx): ReactNode[] {
   return out;
 }
 
+/** A web source citation: a superscript favicon that opens the page in a new tab.
+ * The favicon is served on-box (`faviconUrl`); if it 404s or fails to load, the
+ * chip falls back to the citation number so the link is never lost. */
+function WebCite({ n, url, title }: { n: number; url: string; title: string }): ReactNode {
+  const host = useMemo(() => {
+    try {
+      return new URL(url).hostname;
+    } catch {
+      return "";
+    }
+  }, [url]);
+  const [failed, setFailed] = useState(false);
+  return (
+    <sup className="md-cite md-webcite">
+      <a href={url} target="_blank" rel="noreferrer noopener" title={title || url}>
+        {host && !failed ? (
+          <img
+            className="md-favicon"
+            src={faviconUrl(host)}
+            alt=""
+            aria-hidden="true"
+            onError={() => setFailed(true)}
+          />
+        ) : (
+          n
+        )}
+      </a>
+    </sup>
+  );
+}
+
 function inline(text: string, key: string, ctx: Ctx): ReactNode[] {
   const out: ReactNode[] = [];
   let rest = text;
@@ -495,15 +543,22 @@ function inline(text: string, key: string, ctx: Ctx): ReactNode[] {
     } else if (tok.startsWith("*")) {
       out.push(<em key={k}>{inline(tok.slice(1, -1), k, ctx)}</em>);
     } else if (tok.startsWith("[^")) {
-      // A source citation — render the number as a tappable superscript.
+      // A source citation. A web source renders as a tappable favicon that opens the
+      // page; a note (or no resolved target) keeps the numbered superscript that taps
+      // through to the note card via onCite.
       const num = Number(tok.slice(2, -1));
-      out.push(
-        <sup key={k} className="md-cite">
-          <button type="button" onClick={() => ctx.onCite?.(num)}>
-            {num}
-          </button>
-        </sup>,
-      );
+      const target = ctx.cites?.[num - 1];
+      if (target?.kind === "web") {
+        out.push(<WebCite key={k} n={num} url={target.url} title={target.title} />);
+      } else {
+        out.push(
+          <sup key={k} className="md-cite">
+            <button type="button" onClick={() => ctx.onCite?.(num)}>
+              {num}
+            </button>
+          </sup>,
+        );
+      }
     } else if (tok.startsWith("【")) {
       // A browsing model wraps a bare source URL in its fullwidth citation
       // brackets (【https://…】) with no dagger. The dagger form (【N†…】) is its
@@ -822,6 +877,7 @@ function renderBlock(b: Block, key: string, ctx: Ctx): ReactNode {
 export function Markdown({
   text,
   onCite,
+  cites,
   entities = [],
   onEntity,
   flags = [],
@@ -832,6 +888,9 @@ export function Markdown({
   text: string;
   /** Tap handler for a `[^n]` source citation. */
   onCite?: ((n: number) => void) | undefined;
+  /** The turn's citation targets, positional with `[^n]` — a web target renders as
+   * a favicon link; a note (or absent) renders as the numbered chip. */
+  cites?: CiteTarget[] | undefined;
   /** Entities the turn surfaced — linkified where their label appears in text. */
   entities?: MdEntity[];
   /** Tap handler for an inline entity link. */
@@ -852,7 +911,16 @@ export function Markdown({
   // Fresh per render: `placed` is mutated as the blocks scan, then read below to
   // decide which flags need an end-of-bubble fallback.
   const flagIndex = useMemo(() => buildFlagIndex(flags), [flags]);
-  const ctx: Ctx = { onCite, onEntity, onFlag, openFlag, index, flags: flagIndex, streaming };
+  const ctx: Ctx = {
+    onCite,
+    cites,
+    onEntity,
+    onFlag,
+    openFlag,
+    index,
+    flags: flagIndex,
+    streaming,
+  };
   const rendered = blocks.map((b, i) => renderBlock(b, `b${i}`, ctx));
   // Graceful fallback: any flagged claim the scanner couldn't anchor in the prose
   // (a markdown split, a reworded sentence) degrades to a single end-of-bubble
