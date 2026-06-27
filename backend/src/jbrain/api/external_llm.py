@@ -18,6 +18,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+from datetime import datetime
 from typing import TYPE_CHECKING
 
 import httpx
@@ -74,8 +75,8 @@ class EnabledRequest(BaseModel):
     enabled: bool
 
 
-def _iso(dt: object) -> str | None:
-    return dt.isoformat() if dt is not None and hasattr(dt, "isoformat") else None
+def _iso(dt: datetime | None) -> str | None:
+    return dt.isoformat() if dt is not None else None
 
 
 def _public_base(request: Request, settings: object) -> str:
