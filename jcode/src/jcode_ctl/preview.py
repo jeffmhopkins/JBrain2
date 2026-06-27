@@ -25,6 +25,10 @@ class PreviewError(RuntimeError):
 
 
 _URL_RE = re.compile(r"https://[a-z0-9-]+\.trycloudflare\.com")
+# cloudflared logs one of these per edge connection once the tunnel is actually live.
+# The URL is printed earlier, in a banner that itself warns "it may take some time to be
+# reachable" — so the hostname doesn't resolve until a connection registers.
+_REGISTERED_RE = re.compile(r"[Rr]egistered tunnel connection")
 
 
 class Tunnel(Protocol):
@@ -57,6 +61,34 @@ class CloudflaredTunnel:
             f"localhost:{port}",
         ]
 
+    @staticmethod
+    def _scan(lines: list[str]) -> tuple[str | None, bool]:
+        """Pull the tunnel URL and whether an edge connection has registered out of
+        cloudflared's log so far. Returns ``(url, ready)``; only ready URLs resolve."""
+        url: str | None = None
+        ready = False
+        for text in lines:
+            if url is None:
+                match = _URL_RE.search(text)
+                if match:
+                    url = match.group(0)
+            if _REGISTERED_RE.search(text):
+                ready = True
+        return url, ready
+
+    @staticmethod
+    def _failure(log: list[str]) -> str:
+        """Diagnostic for a tunnel that never came up — names the failure and quotes
+        cloudflared's output tail so a dead tunnel says why, not just 'no URL'."""
+        url, _ = CloudflaredTunnel._scan(log)
+        tail = "\n".join(log[-12:])
+        reason = (
+            f"cloudflared reported {url} but no edge connection registered"
+            if url is not None
+            else "cloudflared did not report a tunnel URL"
+        )
+        return f"{reason}\n{tail}" if tail else reason
+
     async def open(self, port: int) -> str:  # pragma: no cover - exercised on-box
         self._proc = await asyncio.create_subprocess_exec(
             *self._args(port),
@@ -64,18 +96,22 @@ class CloudflaredTunnel:
             stderr=asyncio.subprocess.STDOUT,
         )
         assert self._proc.stdout is not None
-        for _ in range(200):
+        log: list[str] = []
+        for _ in range(400):
             try:
                 line = await asyncio.wait_for(self._proc.stdout.readline(), timeout=30)
             except TimeoutError:
                 break
             if not line:
                 break
-            match = _URL_RE.search(line.decode(errors="replace"))
-            if match:
-                return match.group(0)
+            log.append(line.decode(errors="replace").rstrip())
+            # Don't return on the printed URL alone — wait until an edge connection
+            # registers, or the hostname won't resolve and the caller gets a dead link.
+            url, ready = self._scan(log)
+            if url is not None and ready:
+                return url
         await self.close()
-        raise PreviewError("cloudflared did not report a tunnel URL")
+        raise PreviewError(self._failure(log))
 
     async def close(self) -> None:  # pragma: no cover - exercised on-box
         proc = self._proc
