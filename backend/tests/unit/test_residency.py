@@ -35,9 +35,7 @@ def test_default_resident_served_empty_when_opted_out_or_disabled() -> None:
     )
     assert default_resident_served(opted_out) == []
     # Local hosting off (cloud-only box) → nothing to keep resident.
-    cloud = _settings(
-        local_llm_enabled=False, local_llm_resident_group=True, local_models=models
-    )
+    cloud = _settings(local_llm_enabled=False, local_llm_resident_group=True, local_models=models)
     assert default_resident_served(cloud) == []
 
 
