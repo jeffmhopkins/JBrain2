@@ -1,0 +1,403 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Task → session nav · A — inline latest-run line</title>
+<!--
+  DIRECTION A — Minimal inline latest-run line.
+  Thesis: smallest possible additive change. Keep the existing collapsed card shape and
+  add one always-visible, tappable "latest run" row at its bottom — status dot, summary,
+  N turns · ago, chevron — so the newest session is one tap away with no expand. An unread
+  task wears a steel pip on its name + a steel hairline on that line; opening clears both.
+-->
+<style>
+  :root{
+    --bg:#0E0F11; --surface:#17181B; --surface-2:#1E2024; --border:#26282C;
+    --text:#E6E7E9; --text-2:#9A9DA3; --text-3:#5C5F66;
+    --steel:#7FA7C9; --green:#8FBC9A; --amber:#C9A36A; --rose:#CF8A8F; --violet:#A493C9;
+    --steel-tint:rgba(127,167,201,.13); --green-tint:rgba(143,188,154,.13);
+    --violet-tint:rgba(164,147,201,.13);
+    font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  }
+  [data-theme="dark"]{ color-scheme:dark; }
+  *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
+  body{background:#000;color:var(--text);display:flex;flex-direction:column;align-items:center;
+       gap:14px;padding:18px 0 40px;min-height:100vh;}
+  svg{fill:none;stroke:currentColor;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round;}
+
+  .caption{max-width:420px;padding:0 18px;color:var(--text-2);font-size:13px;line-height:1.55;}
+  .caption b{color:var(--text);font-weight:500;}
+  .caption .tag{display:inline-block;background:var(--steel-tint);color:var(--steel);font-size:11px;
+                padding:2px 8px;border-radius:999px;margin-bottom:6px;}
+
+  /* ---- phone frame ---- */
+  .phone{width:420px;height:840px;background:var(--bg);border:1px solid #2a2c30;border-radius:34px;
+         overflow:hidden;position:relative;display:flex;flex-direction:column;}
+
+  /* ---- top bar ---- */
+  .bar{height:56px;display:flex;align-items:center;gap:8px;padding:0 12px;
+       border-bottom:1px solid var(--border);flex:none;}
+  .bar .icon-btn{color:var(--text-2);background:none;border:none;padding:8px;cursor:pointer;
+                 display:flex;border-radius:10px;}
+  .bar .icon-btn:active{background:var(--surface-2);}
+  .bar .ttl{font-size:18px;font-weight:600;margin-left:4px;}
+  .bar .spacer{flex:1;}
+
+  .body{flex:1;overflow-y:auto;padding:6px 14px 90px;}
+  .sect{font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--text-3);
+        margin:14px 2px 9px;display:flex;align-items:center;}
+  .sect .mark{margin-left:auto;text-transform:none;letter-spacing:0;font-size:12px;color:var(--text-3);
+              background:none;border:none;cursor:pointer;padding:4px 6px;border-radius:8px;}
+  .sect .mark:active{background:var(--surface-2);}
+  .sect .mark[hidden]{display:none;}
+
+  /* ---- task card ---- */
+  .task{background:var(--surface);border:1px solid var(--border);border-radius:16px;
+        margin-bottom:11px;overflow:hidden;}
+  .task.off{opacity:.6;}
+
+  .task-head{display:flex;align-items:stretch;}
+  .task-headbtn{flex:1;text-align:left;background:none;border:none;color:inherit;font:inherit;
+                padding:13px 12px 12px 14px;display:flex;gap:11px;align-items:flex-start;cursor:pointer;min-width:0;}
+  .task-headbtn:active{background:var(--surface-2);}
+  .hdot{width:9px;height:9px;border-radius:999px;flex:none;margin-top:5px;background:var(--green);}
+  .task-main{flex:1;min-width:0;display:flex;flex-direction:column;gap:3px;}
+
+  .task-name{font-size:16px;font-weight:600;color:var(--text);display:flex;align-items:center;gap:7px;}
+  .task-name .pip{width:7px;height:7px;border-radius:999px;background:var(--steel);flex:none;
+                  box-shadow:0 0 0 3px var(--steel-tint);}
+  .task-name .pip[hidden]{display:none;}
+
+  .task-when{font-size:13px;color:var(--text-2);display:flex;align-items:center;gap:7px;flex-wrap:wrap;}
+  .task-ag{color:var(--text-2);}
+  .task-ag.jerv{background:var(--violet-tint);color:var(--violet);font-size:11px;font-weight:600;
+                padding:1px 8px;border-radius:999px;}
+  .task-when .sep{color:var(--text-3);}
+  .task-meta{font-size:12px;color:var(--text-3);}
+
+  .task-headbtn .chev{color:var(--text-3);margin-top:3px;flex:none;
+                      transition:transform .18s ease;}
+  .task.open .task-headbtn .chev{transform:rotate(90deg);}
+
+  /* enable toggle */
+  .task-sw{align-self:center;margin:0 12px 0 4px;width:40px;height:24px;border-radius:999px;
+           background:var(--surface-2);border:1px solid var(--border);position:relative;cursor:pointer;
+           padding:0;flex:none;transition:background .16s ease,border-color .16s ease;}
+  .task-sw .knob{position:absolute;top:2px;left:2px;width:18px;height:18px;border-radius:999px;
+                 background:var(--text-2);transition:transform .16s ease,background .16s ease;}
+  .task-sw[aria-checked="true"]{background:var(--green-tint);border-color:rgba(143,188,154,.45);}
+  .task-sw[aria-checked="true"] .knob{transform:translateX(16px);background:var(--green);}
+
+  /* ---- the inline latest-run line (the whole point of direction A) ---- */
+  .latest{display:flex;align-items:center;gap:9px;width:100%;background:none;border:none;color:inherit;
+          font:inherit;text-align:left;cursor:pointer;padding:9px 12px 11px 14px;
+          border-top:1px solid var(--border);min-height:44px;position:relative;}
+  .latest:active{background:var(--surface-2);}
+  /* steel left hairline appears only while unread */
+  .latest::before{content:"";position:absolute;left:0;top:8px;bottom:8px;width:2px;border-radius:2px;
+                  background:var(--steel);opacity:0;transition:opacity .2s ease;}
+  .latest.unread::before{opacity:1;}
+
+  .latest .rd{width:7px;height:7px;border-radius:999px;flex:none;background:var(--green);}
+  .latest .rd.failed{background:var(--rose);}
+  .latest .sum{flex:1;min-width:0;font-size:13px;color:var(--text-2);
+               white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .latest.unread .sum{color:var(--text);}      /* unread emphasis: --text not --text-2 */
+  .latest .meta{font-size:12px;color:var(--text-3);flex:none;white-space:nowrap;}
+  .latest .chev{color:var(--text-3);flex:none;}
+
+  /* ---- expanded body ---- */
+  .task-body{padding:2px 14px 14px;border-top:1px solid var(--border);}
+  .blab{font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--text-3);
+        margin:13px 0 6px;}
+  .prompt{font-size:13.5px;line-height:1.55;color:var(--text-2);background:var(--surface-2);
+          border:1px solid var(--border);border-radius:12px;padding:11px 12px;}
+
+  .run{display:flex;align-items:center;gap:9px;width:100%;background:none;border:none;color:inherit;
+       font:inherit;text-align:left;cursor:pointer;padding:9px 4px;border-bottom:1px solid var(--border);min-height:44px;}
+  .run:last-of-type{border-bottom:none;}
+  .run:active{background:var(--surface-2);}
+  .run .rd{width:7px;height:7px;border-radius:999px;flex:none;background:var(--green);}
+  .run .rt{flex:1;min-width:0;font-size:13px;color:var(--text-2);
+           white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .run .rm{font-size:12px;color:var(--text-3);flex:none;white-space:nowrap;}
+  .run .chev{color:var(--text-3);flex:none;}
+
+  .acts{display:flex;gap:9px;margin-top:14px;}
+  .acts button{flex:1;display:flex;align-items:center;justify-content:center;gap:6px;
+               background:var(--surface-2);border:1px solid var(--border);color:var(--text);
+               font:inherit;font-size:13px;font-weight:500;padding:10px;border-radius:12px;cursor:pointer;}
+  .acts button:active{background:var(--border);}
+  .acts .runbtn{color:var(--green);border-color:rgba(143,188,154,.35);background:var(--green-tint);}
+
+  /* ---- session overlay ---- */
+  .session{position:absolute;inset:0;background:var(--bg);display:flex;flex-direction:column;
+           transform:translateY(100%);transition:transform .26s cubic-bezier(.32,.72,0,1);z-index:5;}
+  .session.in{transform:translateY(0);}
+  .session .sbar{height:56px;display:flex;align-items:center;gap:6px;padding:0 12px;
+                 border-bottom:1px solid var(--border);flex:none;}
+  .session .sbar .icon-btn{color:var(--text-2);background:none;border:none;padding:8px;cursor:pointer;
+                           display:flex;border-radius:10px;}
+  .session .sbar .stitle{font-size:14px;font-weight:600;color:var(--text);min-width:0;
+                         white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .session .sbody{flex:1;overflow-y:auto;padding:16px 14px 40px;display:flex;flex-direction:column;gap:12px;}
+  .sid{font-size:12px;color:var(--text-3);text-align:center;margin:2px 0 6px;}
+  .bub{max-width:84%;font-size:14px;line-height:1.5;padding:11px 13px;border-radius:14px;}
+  .bub.them{align-self:flex-start;background:var(--surface);border:1px solid var(--border);color:var(--text);}
+  .bub.me{align-self:flex-end;background:var(--steel-tint);border:1px solid rgba(127,167,201,.3);color:var(--text);}
+
+  /* ---- toast ---- */
+  .toast{position:absolute;left:14px;right:14px;bottom:18px;background:var(--surface);
+         border:1px solid var(--border);border-radius:12px;padding:11px 13px;display:flex;
+         align-items:center;gap:9px;font-size:13px;color:var(--text);z-index:6;
+         transform:translateY(140%);transition:transform .22s ease;}
+  .toast.in{transform:translateY(0);}
+  .toast .tk{color:var(--green);display:flex;flex:none;}
+
+  @media (prefers-reduced-motion:reduce){
+    .session,.toast,.task-sw .knob,.task-headbtn .chev,.latest::before{transition:none;}
+  }
+</style>
+</head>
+<body>
+  <p class="caption"><span class="tag">A · inline latest-run line</span><br>
+    The collapsed card gains one tappable row at its bottom — the <b>latest run</b>, one tap to its
+    session, no expand. A steel <b>pip</b> on the task name plus a steel hairline on that row mark an
+    <b>unviewed</b> result; opening it clears them. "Weekly finance sweep" is the already-viewed control.</p>
+
+  <div class="phone" id="phone">
+    <div class="bar">
+      <button class="icon-btn" aria-label="Back">
+        <svg width="22" height="22" viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6"/></svg>
+      </button>
+      <span class="ttl">Tasks</span>
+      <span class="spacer"></span>
+      <button class="icon-btn" aria-label="New task">
+        <svg width="22" height="22" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
+      </button>
+      <button class="icon-btn" aria-label="Refresh">
+        <svg width="20" height="20" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-2.64-6.36M21 3v6h-6"/></svg>
+      </button>
+    </div>
+
+    <div class="body">
+      <div class="sect">Scheduled
+        <button class="mark" id="markAll">Mark all read</button>
+      </div>
+      <div id="cards"></div>
+    </div>
+
+    <!-- session overlay -->
+    <div class="session" id="session" aria-hidden="true">
+      <div class="sbar">
+        <button class="icon-btn" id="sessBack" aria-label="Back to tasks">
+          <svg width="22" height="22" viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6"/></svg>
+        </button>
+        <span class="stitle" id="sessTitle">Session</span>
+      </div>
+      <div class="sbody" id="sessBody"></div>
+    </div>
+
+    <!-- toast -->
+    <div class="toast" id="toast">
+      <span class="tk"><svg width="16" height="16" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg></span>
+      <span id="toastMsg"></span>
+    </div>
+  </div>
+
+<script>
+(function(){
+  "use strict";
+
+  // ---- icons ----
+  const chevR = '<svg class="chev" width="15" height="15" viewBox="0 0 24 24"><path d="M9 18l6-6-6-6"/></svg>';
+  const chevSmall = '<svg class="chev" width="14" height="14" viewBox="0 0 24 24"><path d="M9 18l6-6-6-6"/></svg>';
+  const playIcon = '<svg width="14" height="14" viewBox="0 0 24 24"><path d="M6 4l14 8-14 8V4z"/></svg>';
+  const editIcon = '<svg width="14" height="14" viewBox="0 0 24 24"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/></svg>';
+
+  // ---- data ----
+  const PROMPT_EMAIL = "Look at all emails with the last 24 hours with the label triaged/high. " +
+    "Make a daily brief of emails that you consider needing action, or important. Do not include " +
+    "things like Amazon order updates, or routine emails. Present as a nice bulleted action item your list.";
+
+  const tasks = [
+    {
+      id:"email", name:"Email overview", agent:"Archivist", agentKind:"plain",
+      schedule:"Daily · 07:00", meta:"scheduled · next in 7h", enabled:true,
+      prompt:PROMPT_EMAIL,
+      runs:[
+        {id:"sess-101", summary:"Daily Action Brief — Jun 25–26 2026 (triaged/high): 3 items need a reply…",
+         turns:7, ago:"7m ago", status:"ok"},
+        {id:"sess-102", summary:"I'm unable to reach Gmail at the moment — the s…",
+         turns:2, ago:"11m ago", status:"ok"},
+      ],
+      viewed:false
+    },
+    {
+      id:"news", name:"News", agent:"Jerv", agentKind:"jerv",
+      schedule:"Daily · 07:00", meta:"scheduled · next in 7h", enabled:true,
+      prompt:"Scan the morning headlines across world, local, and finance. Surface only stories worth my time; one short follow-up if a thread continues.",
+      runs:[
+        {id:"sess-201", summary:"Top stories: rate decision held, two local items, one follow-up on the…",
+         turns:5, ago:"12m ago", status:"ok"},
+        {id:"sess-202", summary:"Quiet news day — nothing above the fold worth flagging.",
+         turns:3, ago:"1d ago", status:"ok"},
+      ],
+      viewed:false
+    },
+    {
+      id:"fin", name:"Weekly finance sweep", agent:"Curator · finance", agentKind:"plain",
+      schedule:"Mon · 08:00", meta:"scheduled · next in 3d", enabled:true,
+      prompt:"Reconcile last week's transactions against expected categories. Flag any subscription whose amount jumped, and note anything uncategorized.",
+      runs:[
+        {id:"sess-301", summary:"Reconciled 4 transactions, flagged 1 subscription up 20%.",
+         turns:4, ago:"2d ago", status:"ok"},
+        {id:"sess-302", summary:"Reconciled 6 transactions, all categories matched.",
+         turns:3, ago:"9d ago", status:"ok"},
+      ],
+      viewed:true
+    },
+  ];
+
+  const openState = {};   // taskId -> expanded?
+  const enabled   = {};   // taskId -> enabled?
+  const viewed    = {};   // taskId -> latest run viewed?
+  tasks.forEach(t => { openState[t.id]=false; enabled[t.id]=t.enabled; viewed[t.id]=t.viewed; });
+
+  const cardsEl  = document.getElementById("cards");
+  const markBtn  = document.getElementById("markAll");
+
+  function esc(s){ return s.replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
+
+  function agentMarkup(t){
+    if(t.agentKind==="jerv") return '<span class="task-ag jerv">Jerv</span>';
+    return '<span class="task-ag">'+esc(t.agent)+'</span>';
+  }
+
+  function render(){
+    cardsEl.innerHTML = "";
+    tasks.forEach(t => {
+      const on = enabled[t.id];
+      const isOpen = openState[t.id];
+      const unread = !viewed[t.id];
+      const latest = t.runs[0];
+
+      const card = document.createElement("div");
+      card.className = "task" + (on ? "" : " off") + (isOpen ? " open" : "");
+
+      // ----- header -----
+      let html = '<div class="task-head">';
+      html += '<button class="task-headbtn" data-act="toggle" data-id="'+t.id+'" aria-expanded="'+isOpen+'">';
+      html += '<span class="hdot"></span>';
+      html += '<span class="task-main">';
+      html += '<span class="task-name">'+esc(t.name)+'<span class="pip"'+(unread?'':' hidden')+'></span></span>';
+      html += '<span class="task-when">'+agentMarkup(t)+'<span class="sep">·</span><span>'+esc(t.schedule)+'</span></span>';
+      html += '<span class="task-meta">'+esc(t.meta)+'</span>';
+      html += '</span>';
+      html += chevR;
+      html += '</button>';
+      html += '<button class="task-sw" role="switch" aria-checked="'+on+'" aria-label="Enable '+esc(t.name)+'" data-act="flip" data-id="'+t.id+'"><span class="knob"></span></button>';
+      html += '</div>';
+
+      // ----- the inline latest-run line -----
+      html += '<button class="latest'+(unread?' unread':'')+'" data-act="open-latest" data-id="'+t.id+'">';
+      html += '<span class="rd'+(latest.status==="error"?" failed":"")+'"></span>';
+      html += '<span class="sum">'+esc(latest.summary)+'</span>';
+      html += '<span class="meta">'+latest.turns+' turns · '+esc(latest.ago)+'</span>';
+      html += chevSmall;
+      html += '</button>';
+
+      // ----- expanded body -----
+      if(isOpen){
+        html += '<div class="task-body">';
+        html += '<div class="blab">Prompt</div>';
+        html += '<div class="prompt">'+esc(t.prompt)+'</div>';
+        html += '<div class="blab">Recent runs → sessions</div>';
+        t.runs.forEach(r => {
+          html += '<button class="run" data-act="open-run" data-id="'+t.id+'" data-sess="'+r.id+'">';
+          html += '<span class="rd'+(r.status==="error"?" failed":"")+'"></span>';
+          html += '<span class="rt">'+esc(r.summary)+'</span>';
+          html += '<span class="rm">'+r.turns+' turns · '+esc(r.ago)+'</span>';
+          html += chevSmall;
+          html += '</button>';
+        });
+        html += '<div class="acts">';
+        html += '<button data-act="noop">'+editIcon+'Edit</button>';
+        html += '<button class="runbtn" data-act="noop">'+playIcon+'Run now</button>';
+        html += '</div>';
+        html += '</div>';
+      }
+
+      card.innerHTML = html;
+      cardsEl.appendChild(card);
+    });
+
+    markBtn.hidden = !tasks.some(t => !viewed[t.id]);
+  }
+
+  // ---- session overlay ----
+  const sessionEl = document.getElementById("session");
+  const sessTitle = document.getElementById("sessTitle");
+  const sessBody  = document.getElementById("sessBody");
+
+  function openSession(taskId, sessId){
+    const t = tasks.find(x => x.id===taskId);
+    const run = t.runs.find(r => r.id===sessId) || t.runs[0];
+
+    // Opening the LATEST run marks the task viewed.
+    if(run.id === t.runs[0].id){ viewed[taskId] = true; }
+
+    sessTitle.textContent = run.summary;
+    sessBody.innerHTML =
+      '<div class="sid">opened session '+esc(run.id)+' · '+run.turns+' turns</div>' +
+      '<div class="bub me">'+esc(t.prompt.length>120?t.prompt.slice(0,120)+'…':t.prompt)+'</div>' +
+      '<div class="bub them">'+esc(run.summary)+'</div>' +
+      '<div class="bub them">(transcript placeholder — full turn-by-turn would render here.)</div>';
+
+    sessionEl.classList.add("in");
+    sessionEl.setAttribute("aria-hidden","false");
+    render();   // reflect cleared pip behind the overlay
+  }
+
+  document.getElementById("sessBack").addEventListener("click", () => {
+    sessionEl.classList.remove("in");
+    sessionEl.setAttribute("aria-hidden","true");
+  });
+
+  // ---- toast ----
+  const toastEl = document.getElementById("toast");
+  const toastMsg = document.getElementById("toastMsg");
+  let toastTimer = null;
+  function toast(msg){
+    toastMsg.textContent = msg;
+    toastEl.classList.add("in");
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => toastEl.classList.remove("in"), 2200);
+  }
+
+  // ---- delegated interactions ----
+  cardsEl.addEventListener("click", e => {
+    const btn = e.target.closest("[data-act]");
+    if(!btn) return;
+    const act = btn.dataset.act;
+    const id  = btn.dataset.id;
+
+    if(act==="toggle"){ openState[id] = !openState[id]; render(); }
+    else if(act==="flip"){ enabled[id] = !enabled[id]; render(); }
+    else if(act==="open-latest"){ const t=tasks.find(x=>x.id===id); openSession(id, t.runs[0].id); }
+    else if(act==="open-run"){ openSession(id, btn.dataset.sess); }
+    else if(act==="noop"){ /* placeholder edit / run now */ }
+  });
+
+  markBtn.addEventListener("click", () => {
+    tasks.forEach(t => viewed[t.id] = true);
+    render();
+    toast("All caught up.");
+  });
+
+  render();
+})();
+</script>
+</body>
+</html>
