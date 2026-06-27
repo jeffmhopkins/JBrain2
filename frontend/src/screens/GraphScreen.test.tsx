@@ -8,6 +8,7 @@ import {
   edgeLabelText,
   focalZoom,
   planEdges,
+  settleLocal,
 } from "./GraphScreen";
 
 // A small whole-graph fixture with a genuine 2-hop reach from "me":
@@ -112,6 +113,37 @@ describe("GraphScreen", () => {
     expect(graphNode("Wife")).toBeTruthy();
   });
 
+  it("labels every connection, not just the focal's own edges", async () => {
+    setup();
+    await loaded();
+    // the acme→hq edge ("locatedAt") touches neither the focal nor its panel,
+    // yet its predicate still renders — connections are styled uniformly.
+    await waitFor(() => expect(screen.getByText("located at")).toBeInTheDocument());
+  });
+
+  it("a type filter chip drops that whole type from the map", async () => {
+    setup();
+    await loaded();
+    expect(graphNode("Portland")).toBeTruthy(); // a Place (1-hop)
+    expect(graphNode("Headquarters")).toBeTruthy(); // a Place (2-hop)
+    fireEvent.click(screen.getByRole("button", { name: /Place/ }));
+    await waitFor(() =>
+      expect(
+        screen
+          .queryAllByRole("button", { name: "Portland" })
+          .find((b) => b.classList.contains("graph-node")),
+      ).toBeUndefined(),
+    );
+    expect(
+      screen
+        .queryAllByRole("button", { name: "Headquarters" })
+        .find((b) => b.classList.contains("graph-node")),
+    ).toBeUndefined();
+    // non-Place neighbours stay, and the panel still lists every relationship.
+    expect(graphNode("Wife")).toBeTruthy();
+    expect(within(panel()).getByText("3 relationships")).toBeInTheDocument();
+  });
+
   it("tapping a neighbour node re-centres and pushes a breadcrumb", async () => {
     setup();
     await loaded();
@@ -194,6 +226,48 @@ describe("GraphScreen", () => {
     expect(
       screen.getByText("no connections yet — links appear as more notes are analyzed."),
     ).toBeInTheDocument();
+  });
+});
+
+describe("settleLocal", () => {
+  const hop = new Map([
+    ["me", 0],
+    ["a", 1],
+    ["b", 1],
+    ["c", 2],
+  ]);
+  const links = [
+    { source: "me", target: "a" },
+    { source: "me", target: "b" },
+    { source: "a", target: "c" },
+  ];
+
+  it("pins the focal at the origin and places every node", () => {
+    const pos = settleLocal(["me", "a", "b", "c"], links, hop, "me");
+    expect(pos.get("me")).toMatchObject({ x: 0, y: 0, hop: 0 });
+    expect(pos.size).toBe(4);
+    for (const id of ["a", "b", "c"]) {
+      const p = pos.get(id);
+      expect(p).toBeDefined();
+      expect(Number.isFinite(p?.x) && Number.isFinite(p?.y)).toBe(true);
+    }
+  });
+
+  it("is deterministic for a given focal and set (stable re-paints)", () => {
+    const a = settleLocal(["me", "a", "b", "c"], links, hop, "me");
+    const b = settleLocal(["me", "a", "b", "c"], links, hop, "me");
+    for (const id of ["a", "b", "c"]) {
+      expect(a.get(id)?.x).toBe(b.get(id)?.x);
+      expect(a.get(id)?.y).toBe(b.get(id)?.y);
+    }
+  });
+
+  it("separates neighbours so discs don't overlap", () => {
+    const pos = settleLocal(["me", "a", "b", "c"], links, hop, "me");
+    const pa = pos.get("a");
+    const pb = pos.get("b");
+    const d = Math.hypot((pa?.x ?? 0) - (pb?.x ?? 0), (pa?.y ?? 0) - (pb?.y ?? 0));
+    expect(d).toBeGreaterThan(30);
   });
 });
 

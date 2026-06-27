@@ -1,17 +1,24 @@
-// The entity graph "Map" — a mobile-first local view (docs/DESIGN.md "The graph
-// 'Map' — Focus + Sheet"; mock docs/mocks/entity-graph/graph-d-focus-sheet-2hop.html).
-// Approved direction D (2-hop): the screen centres on
-// one focal entity and lays its neighbourhood out deterministically — focal in
-// the middle, 1-hop on an inner ring, 2-hop clustered just outside each parent —
-// so it never becomes an unreadable hairball on a phone and never overlaps tap
-// targets. A persistent bottom panel lists the focal's relationships as fat
-// tappable rows; tapping a node or a row re-centres (the breadcrumb tracks the
-// walk). Search is the front door. Tap-only: hover is never the affordance.
+// The entity graph "Map" — a mobile-first local view (mock
+// docs/mocks/entity-graph/graph-n1-labeled-zoom.html). The screen centres on one
+// focal entity and lays its capped 1–2 hop neighbourhood out with a small force
+// pass — focal pinned at the middle, neighbours settled organically (charge +
+// collide + link springs), pre-settled synchronously with no perpetual
+// animation — so it never becomes an unreadable hairball on a phone and never
+// overlaps tap targets. Every connection renders identically and carries its
+// predicate label; a type-filter chip rail drops whole entity types from the
+// map. A persistent bottom panel lists the focal's relationships as fat tappable
+// rows; tapping a node or a row re-centres (the breadcrumb tracks the walk).
+// Search is the front door. Tap-only: hover is never the affordance.
 
 import { type PointerEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { type EgoGraph, api } from "../api/client";
 import { ChevronRightIcon, SearchIcon } from "../components/icons";
-import { EntityTypeIcon, type EntityTypeKey, resolveEntityKind } from "../entities/kinds";
+import {
+  ENTITY_TYPE_COLOR,
+  EntityTypeIcon,
+  type EntityTypeKey,
+  resolveEntityKind,
+} from "../entities/kinds";
 
 interface GraphScreenProps {
   onOpenEntity: (entityId: string) => void;
@@ -186,6 +193,128 @@ interface Pos {
   y: number;
   hop: number;
 }
+
+// Deterministic PRNG so a focal's layout is stable across renders (seeded from
+// the focal id) — no Math.random, which would jitter the map every paint.
+function mulberry32(seed: number): () => number {
+  let a = seed;
+  return () => {
+    a |= 0;
+    a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+function hashStr(s: string): number {
+  let h = 2166136261;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return h >>> 0;
+}
+
+/**
+ * Settle the local neighbourhood with a small force pass — charge repulsion,
+ * collide (so type discs never overlap) and link springs — pinning the focal at
+ * the origin. Runs to a fixed iteration count synchronously, so the map reads
+ * organically (not as fixed rings) without any perpetual animation. Positions
+ * are deterministic for a given focal/set, keeping re-paints stable.
+ */
+export function settleLocal(
+  ids: readonly string[],
+  links: readonly { source: string; target: string }[],
+  hop: ReadonlyMap<string, number>,
+  seed: string,
+): Map<string, Pos> {
+  const rng = mulberry32(hashStr(seed));
+  const focal = ids.find((id) => hop.get(id) === 0);
+  const P = new Map<string, { x: number; y: number; vx: number; vy: number }>();
+  for (const id of ids) {
+    if (id === focal) {
+      P.set(id, { x: 0, y: 0, vx: 0, vy: 0 });
+      continue;
+    }
+    const a = rng() * Math.PI * 2;
+    const r = 90 + rng() * 120;
+    P.set(id, { x: Math.cos(a) * r, y: Math.sin(a) * r, vx: 0, vy: 0 });
+  }
+  let alpha = 1;
+  for (let it = 0; it < 300; it++) {
+    alpha = Math.max(0.04, alpha * 0.985);
+    for (let i = 0; i < ids.length; i++) {
+      const idA = ids[i];
+      const a = idA === undefined ? undefined : P.get(idA);
+      if (!idA || !a) continue;
+      for (let j = i + 1; j < ids.length; j++) {
+        const idB = ids[j];
+        const b = idB === undefined ? undefined : P.get(idB);
+        if (!idB || !b) continue;
+        const dx = a.x - b.x;
+        const dy = a.y - b.y;
+        let d2 = dx * dx + dy * dy;
+        if (d2 < 1) d2 = 1;
+        const d = Math.sqrt(d2);
+        const rep = Math.min(80, 9000 / d2); // charge: capped inverse-square
+        a.vx += (dx / d) * rep;
+        a.vy += (dy / d) * rep;
+        b.vx -= (dx / d) * rep;
+        b.vy -= (dy / d) * rep;
+        const min = radiusOf(hop.get(idA) ?? 2) + radiusOf(hop.get(idB) ?? 2) + 22;
+        if (d < min) {
+          const push = ((min - d) / d) * 0.5; // collide
+          a.vx += dx * push;
+          a.vy += dy * push;
+          b.vx -= dx * push;
+          b.vy -= dy * push;
+        }
+      }
+    }
+    for (const e of links) {
+      const a = P.get(e.source);
+      const b = P.get(e.target);
+      if (!a || !b) continue;
+      const dx = b.x - a.x;
+      const dy = b.y - a.y;
+      const d = Math.hypot(dx, dy) || 1;
+      const rest = hop.get(e.source) === 0 || hop.get(e.target) === 0 ? 120 : 92;
+      const f = (d - rest) * 0.04;
+      a.vx += (dx / d) * f;
+      a.vy += (dy / d) * f;
+      b.vx -= (dx / d) * f;
+      b.vy -= (dy / d) * f;
+    }
+    for (const id of ids) {
+      const p = P.get(id);
+      if (!p) continue;
+      if (id === focal) {
+        p.x = 0;
+        p.y = 0;
+        p.vx = 0;
+        p.vy = 0;
+        continue;
+      }
+      p.vx += -p.x * 0.006; // gentle centring keeps the set framed
+      p.vy += -p.y * 0.006;
+      p.vx *= 0.84;
+      p.vy *= 0.84;
+      const sp = Math.hypot(p.vx, p.vy);
+      if (sp > 24) {
+        p.vx *= 24 / sp;
+        p.vy *= 24 / sp;
+      }
+      p.x += p.vx * alpha;
+      p.y += p.vy * alpha;
+    }
+  }
+  const out = new Map<string, Pos>();
+  for (const id of ids) {
+    const p = P.get(id);
+    if (p) out.set(id, { x: p.x, y: p.y, hop: hop.get(id) ?? 2 });
+  }
+  return out;
+}
 interface Rel {
   id: string;
   name: string;
@@ -208,6 +337,9 @@ export function GraphScreen({
   const [query, setQuery] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
   const [panelH, setPanelH] = useState(300);
+  // Entity types excluded from the on-graph neighbourhood (the focal is always
+  // shown). The panel still lists every relationship; only the map is filtered.
+  const [typeOff, setTypeOff] = useState<Set<EntityTypeKey>>(() => new Set());
 
   // The dataset both the map and the panel read: a named root's 2-hop ego when
   // given, else the whole graph (centred on "Me"). Re-centring explores within it.
@@ -277,39 +409,35 @@ export function GraphScreen({
     return { adjacency: adj, relOf: rel, degree: deg };
   }, [graph]);
 
-  // The local layout for the current focal + depth, in world coordinates with
-  // the focal at the origin. Two rings: 1-hop around the focal, 2-hop fanned
-  // just outside each parent so the second ring reads as "who connects to whom".
+  // The local layout for the current focal + depth + type filter, in world
+  // coordinates with the focal pinned at the origin. We select the same capped
+  // 1–2 hop neighbourhood (so it never becomes a hairball), excluding any
+  // filtered-out types, then settle it with a small force pass so the map reads
+  // organically rather than as fixed rings.
   const layout = useMemo(() => {
-    const pos = new Map<string, Pos>();
-    if (!focal || !nodeById.has(focal)) return pos;
-    pos.set(focal, { x: 0, y: 0, hop: 0 });
-    const first = (adjacency.get(focal) ?? []).slice(0, FIRST_CAP[depth]);
-    const R1 = depth === 1 ? 150 : 116;
+    if (!focal || !nodeById.has(focal)) return new Map<string, Pos>();
+    const allowed = (id: string) =>
+      id === focal || !typeOff.has(resolveEntityKind(nodeById.get(id)?.kind ?? "Thing"));
+    const first = (adjacency.get(focal) ?? []).filter(allowed).slice(0, FIRST_CAP[depth]);
     const placed = new Set<string>([focal, ...first]);
-    const ang = new Map<string, number>();
-    first.forEach((id, i) => {
-      const a = -Math.PI / 2 + (i * 2 * Math.PI) / Math.max(1, first.length);
-      ang.set(id, a);
-      pos.set(id, { x: Math.cos(a) * R1, y: Math.sin(a) * R1, hop: 1 });
-    });
+    const hop = new Map<string, number>([[focal, 0]]);
+    for (const id of first) hop.set(id, 1);
     if (depth === 2) {
-      const R2 = 236;
       for (const fid of first) {
-        const fa = ang.get(fid) ?? 0;
-        const seconds = (adjacency.get(fid) ?? [])
-          .filter((s) => !placed.has(s))
-          .slice(0, SECOND_CAP);
-        seconds.forEach((sid, j) => {
+        let n = 0;
+        for (const sid of adjacency.get(fid) ?? []) {
+          if (n >= SECOND_CAP) break;
+          if (placed.has(sid) || !allowed(sid)) continue;
           placed.add(sid);
-          const spread = 0.55;
-          const a = fa + (seconds.length === 1 ? 0 : (j / (seconds.length - 1) - 0.5) * spread);
-          pos.set(sid, { x: Math.cos(a) * R2, y: Math.sin(a) * R2, hop: 2 });
-        });
+          hop.set(sid, 2);
+          n++;
+        }
       }
     }
-    return pos;
-  }, [focal, depth, adjacency, nodeById]);
+    const ids = [...placed];
+    const links = (graph?.edges ?? []).filter((e) => placed.has(e.source) && placed.has(e.target));
+    return settleLocal(ids, links, hop, focal);
+  }, [focal, depth, adjacency, nodeById, graph, typeOff]);
 
   // Visible edges (both endpoints placed) with reciprocal-merge + geometry.
   const edges = useMemo(() => {
@@ -326,7 +454,7 @@ export function GraphScreen({
       label: string;
       arrowStart: boolean;
       arrowEnd: boolean;
-      lit: boolean;
+      showLabel: boolean;
     }[] = [];
     for (const e of vis) {
       const key = `${e.source}|${e.target}|${e.predicate}`;
@@ -351,11 +479,13 @@ export function GraphScreen({
         label: pl?.label ?? edgeLabelText(e.predicate),
         arrowStart: pl?.arrowStart ?? false,
         arrowEnd: pl?.arrowEnd ?? true,
-        lit: e.source === focal || e.target === focal,
+        // every connection is labelled the same way — show wherever the segment
+        // has room, so labels don't pile up on very short edges.
+        showLabel: len > 46,
       });
     }
     return out;
-  }, [graph, layout, focal]);
+  }, [graph, layout]);
 
   // The focal's direct relationships, for the panel rows (unique neighbours).
   const rels = useMemo<Rel[]>(() => {
@@ -374,6 +504,17 @@ export function GraphScreen({
     }
     return out;
   }, [focal, relOf, nodeById]);
+
+  // Entity types present in the whole graph, with counts — drives the filter
+  // chips. Ordered most-common-first so the busiest types lead.
+  const kinds = useMemo(() => {
+    const counts = new Map<EntityTypeKey, number>();
+    for (const n of graph?.nodes ?? []) {
+      const k = resolveEntityKind(n.kind);
+      counts.set(k, (counts.get(k) ?? 0) + 1);
+    }
+    return [...counts.entries()].sort((a, b) => b[1] - a[1]);
+  }, [graph]);
 
   const searchResults = useMemo(() => {
     const all = graph?.nodes ?? [];
@@ -453,6 +594,14 @@ export function GraphScreen({
     },
     [nodeById, onOpenEntity],
   );
+  const toggleType = useCallback((k: EntityTypeKey) => {
+    setTypeOff((prev) => {
+      const next = new Set(prev);
+      if (next.has(k)) next.delete(k);
+      else next.add(k);
+      return next;
+    });
+  }, []);
   const jumpCrumb = (i: number) => {
     setTrail((t) => t.slice(0, i + 1));
     setFocal(trail[i] ?? null);
@@ -632,6 +781,27 @@ export function GraphScreen({
         ))}
       </div>
 
+      {kinds.length > 1 && (
+        <fieldset className="graph-filters" aria-label="Filter by type">
+          {kinds.map(([k, count]) => {
+            const on = !typeOff.has(k);
+            return (
+              <button
+                type="button"
+                key={k}
+                className={`graph-filter${on ? "" : " is-off"}`}
+                aria-pressed={on}
+                onClick={() => toggleType(k)}
+              >
+                <span className="graph-filter-dot" style={{ background: ENTITY_TYPE_COLOR[k] }} />
+                {KIND_LABEL[k]}
+                <span className="graph-filter-count">{count}</span>
+              </button>
+            );
+          })}
+        </fieldset>
+      )}
+
       <div
         className="graph-stage"
         ref={stageRef}
@@ -665,11 +835,11 @@ export function GraphScreen({
                   y1={e.y1}
                   x2={e.x2}
                   y2={e.y2}
-                  className={e.lit ? "graph-edge lit" : "graph-edge"}
+                  className="graph-edge"
                   markerStart={e.arrowStart ? "url(#graph-arrow)" : undefined}
                   markerEnd={e.arrowEnd ? "url(#graph-arrow)" : undefined}
                 />
-                {e.lit && (
+                {e.showLabel && (
                   <text className="graph-edge-label" x={e.mx} y={e.my}>
                     {e.label}
                   </text>
