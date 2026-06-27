@@ -15608,7 +15608,8 @@ button.task-band:active {
   flex-direction: column;
 }
 .jcode-stage > .jcode-clipanel,
-.jcode-stage > .jcode-panel {
+.jcode-stage > .jcode-panel,
+.jcode-stage > .jcode-pvframe {
   flex: 1;
   min-height: 0;
 }
@@ -15987,26 +15988,17 @@ button.task-band:active {
   color: var(--amber);
 }
 
-/* jcode preview tab (Wave J4) */
-.jcode-pvurl {
+/* jcode preview tab (Wave J4) — a live tunnel renders full-bleed as an iframe; the
+   copy-address / stop controls live in the session ⋯ menu so the page gets the whole panel. */
+.jcode-pvframe {
   display: flex;
-  align-items: center;
-  gap: 8px;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  padding: 9px 11px;
-  margin-bottom: 10px;
+  background: #fff;
 }
-.jcode-pvurl a {
+.jcode-pviframe {
   flex: 1;
-  min-width: 0;
-  font-family: ui-monospace, Menlo, Consolas, monospace;
-  font-size: 12px;
-  color: var(--teal);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  width: 100%;
+  border: 0;
+  background: #fff;
 }
 .jcode-act.teal {
   color: var(--teal);

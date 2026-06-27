@@ -615,6 +615,34 @@ export function JcodeSessionScreen({
                 >
                   Share link…
                 </button>
+                {preview?.url && (
+                  <>
+                    <div className="jcode-menu-sep" />
+                    <button
+                      type="button"
+                      role="menuitem"
+                      className="jcode-menu-item"
+                      onClick={() => {
+                        void navigator.clipboard?.writeText(preview.url ?? "");
+                        setMenuOpen(false);
+                      }}
+                    >
+                      Copy preview address
+                    </button>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      className="jcode-menu-item"
+                      disabled={pvBusy}
+                      onClick={() => {
+                        setMenuOpen(false);
+                        void closePreview();
+                      }}
+                    >
+                      Stop preview
+                    </button>
+                  </>
+                )}
                 <div className="jcode-menu-sep" />
                 {!stopped && (
                   <button
@@ -727,61 +755,41 @@ export function JcodeSessionScreen({
           ) : null}
         </div>
 
-        {tab === "prev" && (
-          <div className="jcode-panel">
-            {preview === null ? (
-              <p className="jcode-empty">Loading…</p>
-            ) : !preview.enabled ? (
-              <p className="jcode-empty">
-                Web preview is turned off on this server. It's on by default with code mode —
-                restore it by removing <code>JCODE_PREVIEW_ENABLED=false</code> from
-                <code> .env</code> and re-running <code>jcode-setup.sh</code>.
-              </p>
-            ) : preview.url ? (
-              <div className="jcode-preview">
-                <div className="jcode-pvurl">
-                  <a href={preview.url} target="_blank" rel="noreferrer noopener">
-                    {preview.url}
-                  </a>
+        {tab === "prev" &&
+          (preview?.url ? (
+            // The live tunnel rendered inline as an iframe — the Preview tab *is* the dev page.
+            // Copy-the-address and Stop-preview live in the ⋯ menu so the page gets the full panel.
+            <div className="jcode-pvframe">
+              <iframe className="jcode-pviframe" title="Dev server preview" src={preview.url} />
+            </div>
+          ) : (
+            <div className="jcode-panel">
+              {preview === null ? (
+                <p className="jcode-empty">Loading…</p>
+              ) : !preview.enabled ? (
+                <p className="jcode-empty">
+                  Web preview is turned off on this server. It's on by default with code mode —
+                  restore it by removing <code>JCODE_PREVIEW_ENABLED=false</code> from
+                  <code> .env</code> and re-running <code>jcode-setup.sh</code>.
+                </p>
+              ) : (
+                <div className="jcode-preview">
+                  <p className="jcode-empty">
+                    Start your dev server in the sandbox (e.g. <code>npm run dev</code> on{" "}
+                    <code>:5173</code>), then open a temporary public URL to it.
+                  </p>
                   <button
                     type="button"
-                    className="jcode-act"
-                    onClick={() => navigator.clipboard?.writeText(preview.url ?? "")}
+                    className="jcode-act teal"
+                    disabled={pvBusy}
+                    onClick={openPreview}
                   >
-                    Copy
+                    {pvBusy ? "Opening…" : "Open preview tunnel"}
                   </button>
                 </div>
-                <p className="jcode-empty">
-                  A temporary tunnel to the sandbox's dev server — dies with the session, never
-                  indexed. Anyone with this URL can reach it while it's live.
-                </p>
-                <button
-                  type="button"
-                  className="jcode-act danger"
-                  disabled={pvBusy}
-                  onClick={closePreview}
-                >
-                  {pvBusy ? "Stopping…" : "Stop preview"}
-                </button>
-              </div>
-            ) : (
-              <div className="jcode-preview">
-                <p className="jcode-empty">
-                  Start your dev server in the sandbox (e.g. <code>npm run dev</code> on{" "}
-                  <code>:5173</code>), then open a temporary public URL to it.
-                </p>
-                <button
-                  type="button"
-                  className="jcode-act teal"
-                  disabled={pvBusy}
-                  onClick={openPreview}
-                >
-                  {pvBusy ? "Opening…" : "Open preview tunnel"}
-                </button>
-              </div>
-            )}
-          </div>
-        )}
+              )}
+            </div>
+          ))}
       </div>
 
       {shareOpen && !shared && (
