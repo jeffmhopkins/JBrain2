@@ -72,7 +72,7 @@ services:
       JBRAIN_LOCAL_MODELS: ${LOCAL_MODELS:-[]}
       # Mirrors the install-time resident-group choice so a runtime config
       # regeneration (after a context-window edit) reproduces the same llama-swap
-      # matrix set the setup script wrote. Defaults ON (the recommended set runs
+      # non-swapping group the setup script wrote. Defaults ON (the recommended set runs
       # co-resident); set LOCAL_LLM_RESIDENT_GROUP=0 to opt out on a tight box.
       JBRAIN_LOCAL_LLM_RESIDENT_GROUP: ${LOCAL_LLM_RESIDENT_GROUP:-true}
       # On-box image generation — OFF unless the operator opted in at install. When

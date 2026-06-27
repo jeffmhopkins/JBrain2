@@ -612,7 +612,7 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
                 persisted = True
                 # Return the box to its hot state (gpt-oss-120b + qwen3-vl). A turn that
                 # rendered an image freed every local LLM, and a turn after a code session
-                # left the coder resident — either way the matrix solver reloaded only the
+                # left the coder resident — either way the gateway reloaded only the
                 # model THIS turn named, so the other hot member is cold. Re-warm it now,
                 # in the background, so the next turn doesn't cold-load it mid-reply. A
                 # no-op on a cloud-only / opted-out box (empty hot set).

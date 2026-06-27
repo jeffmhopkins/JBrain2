@@ -114,12 +114,12 @@ Builds the gateway (the community-maintained gfx1151 llama.cpp image +
 llama-swap), downloads the recommended set — **Qwen3-VL-30B-A3B Q8 (~32 GB)** +
 **gpt-oss-120b MXFP4 (~59 GB)**, ~91 GB total — generates the llama-swap config,
 and starts the gateway. The recommended set runs **co-resident by default** (~91
-GB, a llama-swap `matrix` set — 120b + vl stay hot together so the agent's text
-and vision models never swap each other out mid-turn). A switch to a state that
-needs the whole box (an image render, the coder) is the only thing that displaces
-them, and the agent re-warms the set at end of turn. On a memory-tight box, opt
-out with `LOCAL_LLM_RESIDENT_GROUP=0 sudo jbrain enable-local-models` (the
-recommended set then loads on demand, one at a time).
+GB, a llama-swap non-swapping group — 120b + vl stay hot together so the agent's
+text and vision models never swap each other out mid-turn). A switch to a state
+that needs the whole box (an image render, the coder) is the only thing that
+displaces them, and the agent re-warms the set at end of turn. On a memory-tight
+box, opt out with `LOCAL_LLM_RESIDENT_GROUP=0 sudo jbrain enable-local-models`
+(the recommended set then loads on demand, one at a time).
 
 ✅ **Checkpoint:** `jbrain status` shows `local-llm` running; `jbrain logs
 local-llm` shows llama-swap listening and the resident models loaded.

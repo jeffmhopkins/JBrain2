@@ -1,12 +1,12 @@
 """End-of-turn residency: re-warm the box's hot LLM set after a transient swap.
 
 On a single unified-memory box a chosen set of models runs co-resident as a llama-swap
-`matrix` set — the box's steady state. Two things put a model in that set: the recommended
-pair (gpt-oss-120b + qwen3-vl) when co-residency is on (the default), and any model the
-operator has *staged* (an explicit "keep this hot" pin, independent of the flag). A switch
-to a state that needs the whole box (an image render frees every LLM; a code session
-evicts them to load the coder) is the only thing that displaces the set, and the matrix
-solver then loads back only the ONE model the next request names — so the OTHER hot member
+non-swapping group — the box's steady state. Two things put a model in that group: the
+recommended pair (gpt-oss-120b + qwen3-vl) when co-residency is on (the default), and any
+model the operator has *staged* (an explicit "keep this hot" pin, independent of the flag).
+A switch to a state that needs the whole box (an image render frees every LLM; a code
+session evicts them to load the coder) is the only thing that displaces the group, and the
+gateway then loads back only the ONE model the next request names — so the OTHER hot member
 would stay cold until some later turn happens to need it (the next vision read cold-loading
 qwen3-vl mid-turn is exactly the "swapping too often" the owner felt). This coordinator
 closes that gap: at the end of a turn it eagerly (re)loads any hot-set member that isn't
