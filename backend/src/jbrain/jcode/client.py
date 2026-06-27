@@ -8,14 +8,12 @@ internal `jcode` network; this is the only place the api contacts it.
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
 from typing import Any, Protocol
 
 import httpx
 
-# A turn streams for a while; cap connect/write but let the read run (SSE frames
-# arrive sporadically — a long blocking tool may be silent for seconds).
-_TIMEOUT = httpx.Timeout(30.0, read=None)
+# Control calls are quick request/response (no streaming surface); a modest timeout.
+_TIMEOUT = httpx.Timeout(30.0)
 
 
 class JcodeError(RuntimeError):
@@ -37,9 +35,9 @@ class JcodeApi(Protocol):
 
     async def delete(self, sid: str) -> None: ...
 
-    async def cancel(self, sid: str) -> None: ...
+    async def stop(self, sid: str) -> dict[str, Any]: ...
 
-    def stream_turn(self, sid: str, prompt: str) -> AsyncIterator[bytes]: ...
+    async def restart(self, sid: str) -> dict[str, Any]: ...
 
     async def preview_status(self, sid: str) -> dict[str, Any]: ...
 
@@ -110,8 +108,11 @@ class JcodeClient:
         except httpx.HTTPError as exc:
             raise JcodeError(f"jcode control server error: {exc}") from exc
 
-    async def cancel(self, sid: str) -> None:
-        await self._json("POST", f"/sessions/{sid}/cancel")
+    async def stop(self, sid: str) -> dict[str, Any]:
+        return await self._json("POST", f"/sessions/{sid}/stop")
+
+    async def restart(self, sid: str) -> dict[str, Any]:
+        return await self._json("POST", f"/sessions/{sid}/restart")
 
     async def preview_status(self, sid: str) -> dict[str, Any]:
         return await self._json("GET", f"/sessions/{sid}/preview")
@@ -122,21 +123,6 @@ class JcodeClient:
     async def preview_close(self, sid: str) -> None:
         await self._json("DELETE", f"/sessions/{sid}/preview")
 
-    async def stream_turn(self, sid: str, prompt: str) -> AsyncIterator[bytes]:
-        """Proxy the control server's SSE, yielding one complete `data:` frame per
-        event (so the caller's frame buffer / reconnect offset counts real events)."""
-        try:
-            async with (
-                self._client() as client,
-                client.stream("POST", f"/sessions/{sid}/turn", json={"prompt": prompt}) as resp,
-            ):
-                resp.raise_for_status()
-                async for line in resp.aiter_lines():
-                    if line.startswith("data:"):
-                        yield f"{line}\n\n".encode()
-        except httpx.HTTPError as exc:
-            raise JcodeError(f"jcode turn error: {exc}") from exc
-
 
 class FakeJcodeClient:
     """In-memory control server for tests: no httpx, no network."""
@@ -144,7 +130,6 @@ class FakeJcodeClient:
     def __init__(self, *, preview_enabled: bool = True) -> None:
         self._sessions: dict[str, dict[str, Any]] = {}
         self._n = 0
-        self.cancelled: list[str] = []
         # The model passed to each create_session, in order — tests assert the api
         # resolved + forwarded the owner's selection.
         self.created_models: list[str] = []
@@ -184,8 +169,15 @@ class FakeJcodeClient:
     async def delete(self, sid: str) -> None:
         self._sessions.pop(sid, None)
 
-    async def cancel(self, sid: str) -> None:
-        self.cancelled.append(sid)
+    async def stop(self, sid: str) -> dict[str, Any]:
+        s = await self.get_session(sid)
+        s["status"] = "stopped"
+        return s
+
+    async def restart(self, sid: str) -> dict[str, Any]:
+        s = await self.get_session(sid)
+        s["status"] = "ready"
+        return s
 
     async def preview_status(self, sid: str) -> dict[str, Any]:
         return {"enabled": self._preview_enabled, "url": self._previews.get(sid)}
@@ -199,11 +191,3 @@ class FakeJcodeClient:
 
     async def preview_close(self, sid: str) -> None:
         self._previews.pop(sid, None)
-
-    async def stream_turn(self, sid: str, prompt: str) -> AsyncIterator[bytes]:
-        for payload in (
-            '{"type": "text", "text": "On it.", "tool": "", "data": {}}',
-            '{"type": "tool_use", "text": "", "tool": "Edit", "data": {}}',
-            '{"type": "done", "text": "", "tool": "", "data": {}}',
-        ):
-            yield f"data: {payload}\n\n".encode()

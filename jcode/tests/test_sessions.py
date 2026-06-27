@@ -1,21 +1,14 @@
-"""Session-manager lifecycle: create / capacity / turn status / reset / delete."""
+"""Session-manager lifecycle: create / capacity / reset / delete / stop / restart."""
 
 from __future__ import annotations
 
-from collections.abc import AsyncGenerator
-from pathlib import Path
-from typing import cast
-
 import pytest
 
-from jcode_ctl.agent import FakeCodingAgent, TurnEvent
-from jcode_ctl.sessions import SessionError, SessionManager, directory_size_mb
+from jcode_ctl.sessions import SessionError, SessionManager
 from jcode_ctl.workspace import FakeWorkspace
 
-_MB = 1024 * 1024
 
-
-def _mgr(agent=None, workspace=None, **kw) -> SessionManager:
+def _mgr(workspace=None, **kw) -> SessionManager:
     counter = {"n": 0}
 
     def _id() -> str:
@@ -23,7 +16,6 @@ def _mgr(agent=None, workspace=None, **kw) -> SessionManager:
         return f"s{counter['n']}"
 
     return SessionManager(
-        agent or FakeCodingAgent(),
         workspace or FakeWorkspace(),
         "/work",
         new_id=_id,
@@ -47,22 +39,6 @@ async def test_capacity_is_enforced() -> None:
         await mgr.create("r2")
 
 
-async def test_run_turn_streams_and_returns_to_ready() -> None:
-    mgr = _mgr()
-    s = await mgr.create("r")
-    seen = [ev.type async for ev in mgr.run_turn(s.id, "do it")]
-    assert seen[-1] == "done"
-    assert mgr.get(s.id).status == "ready"
-
-
-async def test_run_turn_marks_error_on_error_event() -> None:
-    agent = FakeCodingAgent([TurnEvent("error", text="boom"), TurnEvent("done")])
-    mgr = _mgr(agent=agent)
-    s = await mgr.create("r")
-    _ = [ev async for ev in mgr.run_turn(s.id, "x")]
-    assert mgr.get(s.id).status == "error"
-
-
 async def test_reset_and_delete() -> None:
     ws = FakeWorkspace()
     mgr = _mgr(workspace=ws)
@@ -75,180 +51,87 @@ async def test_reset_and_delete() -> None:
         mgr.get(s.id)
 
 
-async def test_cancel_delegates_to_agent() -> None:
-    agent = FakeCodingAgent()
-    mgr = _mgr(agent=agent)
-    s = await mgr.create("r")
-    await mgr.cancel(s.id)
-    assert agent.cancelled == [s.id]
-
-
-async def test_turn_logs_start_and_end(caplog) -> None:
-    # The turn lifecycle is logged at INFO so a pulled /debug/logs/jcode is useful.
-    import logging
-
+async def test_session_model_is_recorded() -> None:
+    # The model chosen at create (the owner's Settings → LLM selection) is recorded on
+    # the session so the terminal can pin the `claude` CLI to it.
     mgr = _mgr()
-    s = await mgr.create("r", model="m1")
-    with caplog.at_level(logging.INFO, logger="jcode_ctl.sessions"):
-        _ = [ev async for ev in mgr.run_turn(s.id, "do it")]
-    msgs = " ".join(r.message for r in caplog.records)
-    assert "turn start" in msgs and "turn end" in msgs
-
-
-async def test_delete_forgets_agent_state() -> None:
-    # Deleting a session drops the agent's per-session state so it can't outlive it.
-    agent = FakeCodingAgent()
-    mgr = _mgr(agent=agent)
-    s = await mgr.create("r")
-    await mgr.delete(s.id)
-    assert agent.forgotten == [s.id]
-    # Delete also signals the running turn to stop before pulling the checkout.
-    assert agent.cancelled == [s.id]
-
-
-async def test_session_model_reaches_the_agent() -> None:
-    # The model chosen at create (the owner's Settings → LLM selection) must be the
-    # model every turn of that session runs against.
-    agent = FakeCodingAgent()
-    mgr = _mgr(agent=agent)
     s = await mgr.create("r", model="qwen3-coder-next")
     assert s.model == "qwen3-coder-next"
-    _ = [ev async for ev in mgr.run_turn(s.id, "do it")]
-    assert agent.models == ["qwen3-coder-next"]
 
 
 async def test_model_defaults_to_empty_when_unset() -> None:
-    # No selection → empty model; the agent falls back to its configured default.
-    agent = FakeCodingAgent()
-    mgr = _mgr(agent=agent)
+    mgr = _mgr()
     s = await mgr.create("r")
     assert s.model == ""
-    _ = [ev async for ev in mgr.run_turn(s.id, "x")]
-    assert agent.models == [""]
 
 
-# --- Wave J5: per-session ceilings -------------------------------------------------
+# --- Stop / restart (the terminal-exit pause) -------------------------------------
 
 
-async def test_concurrent_turn_capacity_is_enforced_then_freed() -> None:
-    # Two turns in flight saturate a cap of 2; a third is refused. Draining/closing a
-    # turn frees its slot so the next one runs — the counter is paired, not leaked.
-    mgr = _mgr(max_concurrent_turns=2)
-    s1 = await mgr.create("r")
-    s2 = await mgr.create("r")
-    s3 = await mgr.create("r")
-    g1 = mgr.run_turn(s1.id, "x")
-    g2 = mgr.run_turn(s2.id, "x")
-    await g1.__anext__()  # first event: this turn is now active (1)
-    await g2.__anext__()  # active (2) — at the cap
-    with pytest.raises(SessionError, match="turn capacity"):
-        await mgr.run_turn(s3.id, "x").__anext__()
-    # Drain both in-flight turns → both slots freed (the counter is paired in finally).
-    _ = [ev async for ev in g1]
-    _ = [ev async for ev in g2]
-    assert mgr.active_turns == 0
-    seen = [ev.type async for ev in mgr.run_turn(s3.id, "x")]
-    assert seen[-1] == "done"
-    assert mgr.active_turns == 0
-
-
-async def test_turn_slot_is_freed_when_the_client_disconnects_midstream() -> None:
-    # The real teardown: an SSE client dropping mid-stream throws GeneratorExit into the
-    # suspended run_turn. The `finally` must still release the slot — not just the clean
-    # drain path. Drive one event, then aclose() (what Starlette does on disconnect).
-    mgr = _mgr(max_concurrent_turns=1)
+async def test_stop_pauses_and_keeps_the_checkout() -> None:
+    # Stopping a session marks it `stopped` but does NOT remove the checkout — the work
+    # is preserved for a restart (the owner chose "keep checkout (pause)").
+    ws = FakeWorkspace()
+    mgr = _mgr(workspace=ws)
     s = await mgr.create("r")
-    gen = mgr.run_turn(s.id, "x")
-    await gen.__anext__()
-    assert mgr.active_turns == 1
-    await cast(AsyncGenerator[TurnEvent, None], gen).aclose()
-    assert mgr.active_turns == 0
-    # The freed slot lets the next turn run (the cap of 1 isn't permanently consumed).
-    seen = [ev.type async for ev in mgr.run_turn(s.id, "x")]
-    assert seen[-1] == "done"
+    stopped = mgr.stop(s.id)
+    assert stopped.status == "stopped"
+    assert ws.removed == []  # checkout kept on disk
+    assert mgr.get(s.id).status == "stopped"
 
 
-async def test_a_refused_turn_leaves_the_session_untouched() -> None:
-    # The capacity guard fires BEFORE the session is marked running / the counter moves,
-    # so a rejected turn doesn't strand the session in `running` or leak a slot.
-    mgr = _mgr(max_concurrent_turns=1)
-    s1 = await mgr.create("r")
-    s2 = await mgr.create("r")
-    g1 = mgr.run_turn(s1.id, "x")
-    await g1.__anext__()
-    with pytest.raises(SessionError, match="turn capacity"):
-        await mgr.run_turn(s2.id, "x").__anext__()
-    assert mgr.get(s2.id).status == "ready"
-    _ = [ev async for ev in g1]  # free the slot; s2 can run now
-    seen = [ev.type async for ev in mgr.run_turn(s2.id, "x")]
-    assert seen[-1] == "done"
-
-
-async def test_disk_quota_refuses_a_turn_over_the_ceiling(tmp_path: Path) -> None:
-    mgr = SessionManager(
-        FakeCodingAgent(),
-        FakeWorkspace(),
-        str(tmp_path),
-        session_disk_limit_mb=1,
-        new_id=lambda: "s1",
-    )
+async def test_stop_with_an_open_terminal_clears_it_and_pauses() -> None:
+    # Stop SIGKILLs each open terminal's process group (best-effort; a non-existent pid
+    # is suppressed) and drops the tracked terminal so the session reads paused, not
+    # falsely "fresh". The pid kill itself is OS-level — here we assert the bookkeeping.
+    mgr = _mgr()
     s = await mgr.create("r")
-    # FakeWorkspace clones nothing — materialize the checkout + a >1 MB file by hand.
-    checkout = tmp_path / "s1"
-    checkout.mkdir()
-    (checkout / "big.bin").write_bytes(b"\0" * (2 * _MB))
-    with pytest.raises(SessionError, match="over disk quota"):
-        await mgr.run_turn(s.id, "x").__anext__()
-    # Flagged for the UI, and the turn never started: status untouched and the slot the
-    # guard reserved before the disk sweep is released on the refusal path (not leaked).
-    assert mgr.get(s.id).over_quota is True
+    mgr.terminal_opened(s.id, 4242)
+    mgr.stop(s.id)
+    assert mgr.get(s.id).status == "stopped"
+
+
+async def test_stop_is_idempotent() -> None:
+    mgr = _mgr()
+    s = await mgr.create("r")
+    mgr.stop(s.id)
+    assert mgr.stop(s.id).status == "stopped"
+
+
+async def test_restart_resumes_a_paused_session() -> None:
+    mgr = _mgr()
+    s = await mgr.create("r")
+    mgr.stop(s.id)
+    resumed = mgr.restart(s.id)
+    assert resumed.status == "ready"
     assert mgr.get(s.id).status == "ready"
-    assert mgr.active_turns == 0
 
 
-async def test_disk_quota_allows_a_small_checkout(tmp_path: Path) -> None:
-    mgr = SessionManager(
-        FakeCodingAgent(),
-        FakeWorkspace(),
-        str(tmp_path),
-        session_disk_limit_mb=10,
-        new_id=lambda: "s1",
-    )
+async def test_restart_unknown_is_404() -> None:
+    mgr = _mgr()
+    with pytest.raises(SessionError, match="unknown"):
+        mgr.restart("nope")
+
+
+async def test_opening_a_terminal_resumes_a_paused_session() -> None:
+    # Attaching a terminal to a stopped session brings it back to ready (the shell-exit
+    # pause is undone the moment a new shell connects).
+    mgr = _mgr()
     s = await mgr.create("r")
-    checkout = tmp_path / "s1"
-    checkout.mkdir()
-    (checkout / "small.txt").write_text("ok")
-    seen = [ev.type async for ev in mgr.run_turn(s.id, "x")]
-    assert seen[-1] == "done"
-    assert mgr.get(s.id).over_quota is False
+    mgr.stop(s.id)
+    mgr.terminal_opened(s.id, 99)
+    assert mgr.get(s.id).status == "ready"
 
 
-async def test_reset_clears_the_over_quota_flag(tmp_path: Path) -> None:
-    # Unit-scope: reset clears the in-memory flag so the NEXT turn re-measures (with a
-    # Fake workspace that frees nothing, that's all it proves). The actual disk-freeing
-    # is GitWorkspace.reset's `git clean -fdx` — that it also removes ignored bloat like
-    # node_modules is the reason the quota message points at reset, not just delete.
-    mgr = SessionManager(
-        FakeCodingAgent(),
-        FakeWorkspace(),
-        str(tmp_path),
-        session_disk_limit_mb=1,
-        new_id=lambda: "s1",
-    )
-    s = await mgr.create("r")
-    checkout = tmp_path / "s1"
-    checkout.mkdir()
-    (checkout / "big.bin").write_bytes(b"\0" * (2 * _MB))
-    with pytest.raises(SessionError, match="over disk quota"):
-        await mgr.run_turn(s.id, "x").__anext__()
-    assert mgr.get(s.id).over_quota is True
-    await mgr.reset(s.id)
-    assert mgr.get(s.id).over_quota is False
+async def test_lifecycle_logs(caplog) -> None:
+    import logging
 
-
-def test_directory_size_mb_sums_files_and_tolerates_missing(tmp_path: Path) -> None:
-    assert directory_size_mb(tmp_path / "nope") == 0  # not-yet-cloned reads as empty
-    (tmp_path / "a.bin").write_bytes(b"\0" * (3 * _MB))
-    (tmp_path / "sub").mkdir()
-    (tmp_path / "sub" / "b.bin").write_bytes(b"\0" * _MB)
-    assert directory_size_mb(tmp_path) == 4  # recurses subdirs
+    mgr = _mgr()
+    with caplog.at_level(logging.INFO, logger="jcode_ctl.sessions"):
+        s = await mgr.create("r")
+        mgr.stop(s.id)
+        mgr.restart(s.id)
+    msgs = " ".join(r.message for r in caplog.records)
+    assert "session create" in msgs
+    assert "session stop" in msgs
+    assert "session restart" in msgs

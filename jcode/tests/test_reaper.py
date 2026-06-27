@@ -1,5 +1,5 @@
-"""Session GC (Wave J5): idle sessions (and their tunnels) are reaped; running and
-TTL=0 are never touched. Deterministic via an injected clock."""
+"""Session GC (Wave J5): idle sessions (and their tunnels) are reaped; paused
+(stopped) sessions and TTL=0 are never touched. Deterministic via an injected clock."""
 
 from __future__ import annotations
 
@@ -8,7 +8,6 @@ import contextlib
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from jcode_ctl.agent import FakeCodingAgent
 from jcode_ctl.app import create_app, reap_idle
 from jcode_ctl.config import Settings
 from jcode_ctl.preview import FakeTunnel, PreviewManager
@@ -31,9 +30,7 @@ def _mgr(clock: Clock) -> SessionManager:
         counter["n"] += 1
         return f"s{counter['n']}"
 
-    return SessionManager(
-        FakeCodingAgent(), FakeWorkspace(), "/work", now=clock, new_id=_id
-    )
+    return SessionManager(FakeWorkspace(), "/work", now=clock, new_id=_id)
 
 
 async def test_reap_idle_deletes_old_sessions_and_closes_previews() -> None:
@@ -61,33 +58,35 @@ async def test_ttl_zero_disables_reaping() -> None:
     assert mgr.idle_sessions(ttl_seconds=0) == []
 
 
-async def test_running_session_is_never_reaped() -> None:
+async def test_stopped_session_is_never_reaped() -> None:
+    # A deliberately-paused session keeps its checkout indefinitely (the owner chose
+    # "keep checkout"), so the idle reaper must skip it however long it sits.
     clock = Clock(datetime(2026, 6, 25, 12, 0, 0, tzinfo=UTC))
     mgr = _mgr(clock)
     s = await mgr.create("r")
-    mgr.get(s.id).status = "running"  # an in-flight turn
-    clock.t = clock.t + timedelta(days=2)
+    mgr.stop(s.id)
+    clock.t = clock.t + timedelta(days=30)
     assert mgr.idle_sessions(ttl_seconds=86_400) == []
 
 
-async def test_turn_that_starts_during_reap_is_not_deleted() -> None:
-    """B2 (TOCTOU): ``preview.close`` is a suspension point — a turn that flips the
-    session to ``running`` during it must NOT have its checkout removed mid-flight."""
+async def test_terminal_opening_during_reap_is_not_deleted() -> None:
+    """B2 (TOCTOU): ``preview.close`` is a suspension point — a terminal that attaches
+    during it makes the session active again, so its checkout must NOT be removed."""
     clock = Clock(datetime(2026, 6, 25, 12, 0, 0, tzinfo=UTC))
     mgr = _mgr(clock)
     s = await mgr.create("r")
     clock.t = clock.t + timedelta(hours=25)
 
-    class FlipOnClosePreview(PreviewManager):
+    class AttachOnClosePreview(PreviewManager):
         async def close(self, sid: str) -> None:
-            mgr.get(sid).status = "running"  # a queued turn starts mid-reap
+            mgr.terminal_opened(sid, 1234)  # a shell connects mid-reap
 
-    pv = FlipOnClosePreview(FakeTunnel, enabled=True)
+    pv = AttachOnClosePreview(FakeTunnel, enabled=True)
     reaped = await reap_idle(mgr, pv, ttl_seconds=86_400)
     assert reaped == []
     assert (
         mgr.get_or_none(s.id) is not None
-    )  # survived — not rmtree'd under a live turn
+    )  # survived — not rmtree'd under a live shell
 
 
 async def test_delete_failure_still_tears_down_the_tunnel() -> None:
@@ -105,9 +104,7 @@ async def test_delete_failure_still_tears_down_the_tunnel() -> None:
         counter["n"] += 1
         return f"s{counter['n']}"
 
-    mgr = SessionManager(
-        FakeCodingAgent(), BoomWorkspace(), "/work", now=clock, new_id=_id
-    )
+    mgr = SessionManager(BoomWorkspace(), "/work", now=clock, new_id=_id)
     pv = PreviewManager(FakeTunnel, enabled=True)
     s = await mgr.create("r")
     await pv.open(s.id)

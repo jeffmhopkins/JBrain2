@@ -1,6 +1,6 @@
 """The jcode proxy routes end to end against real Postgres, with a fake control
-server. Exercises create → list → get → turn(SSE) → reset → delete under the owner,
-so the session index stays honest and the detached turn streams to completion.
+server. Exercises create → list → get → stop → restart → reset → delete under the
+owner, so the session index stays honest across the terminal-driven lifecycle.
 """
 
 import asyncio
@@ -52,7 +52,6 @@ def _app(maker: async_sessionmaker, owner_id: str) -> FastAPI:
     app.include_router(jcode.router, prefix="/api")
     app.state.session_maker = maker
     app.state.jcode_client = FakeJcodeClient()
-    app.state.jcode_turns = {}
     app.state.settings = Settings(secure_cookies=False)
     app.state.settings_store = SqlSettingsStore(maker)
     app.dependency_overrides[current_principal] = lambda: PrincipalInfo(
@@ -76,15 +75,11 @@ async def test_full_session_lifecycle_through_the_routes(maker: async_sessionmak
         assert [s["id"] for s in listed.json()] == [sid]
         assert (await client.get(f"/api/jcode/sessions/{sid}")).json()["repo"] == "github.com/me/r"
 
-        # The turn streams the fake control server's frames to completion.
-        async with client.stream(
-            "POST", f"/api/jcode/sessions/{sid}/turn", json={"prompt": "add a button"}
-        ) as resp:
-            assert resp.status_code == 200
-            events = [line async for line in resp.aiter_lines() if line.startswith("data:")]
-        assert any('"done"' in e for e in events)
-
-        # After the turn, the index status settled back to ready.
+        # Stop pauses the session (kills processes, keeps the checkout); the index
+        # mirrors the new status. Restart resumes it.
+        assert (await client.post(f"/api/jcode/sessions/{sid}/stop")).status_code == 200
+        assert (await client.get(f"/api/jcode/sessions/{sid}")).json()["status"] == "stopped"
+        assert (await client.post(f"/api/jcode/sessions/{sid}/restart")).status_code == 200
         assert (await client.get(f"/api/jcode/sessions/{sid}")).json()["status"] == "ready"
 
         # Launcher session management (mirrors the agent-sessions manager): rename,
@@ -200,49 +195,29 @@ async def test_status_reports_warming_while_the_load_is_in_flight(
         assert done["warming"] is False
 
 
-class _PerCallBlockingGateway(_FakeGateway):
-    """Each load() blocks on its OWN gate, so overlapping warms can be released one at a
-    time — exercising the warming refcount (the flag must hold until the LAST finishes)."""
-
-    def __init__(self) -> None:
-        super().__init__()
-        self.gates: list[asyncio.Event] = []
-
-    async def load(self, served_model: str) -> None:
-        self.resident = {served_model}
-        self.loaded.append(served_model)
-        gate = asyncio.Event()
-        self.gates.append(gate)
-        await gate.wait()
-
-
-async def test_warming_holds_until_the_last_overlapping_warm_finishes(
+async def test_warm_is_a_noop_when_the_coder_is_already_resident(
     maker: async_sessionmaker,
 ) -> None:
-    # Two warm requests back-to-back both warm the same coder. `warming` must stay true
-    # until BOTH warm tasks finish — a set keyed on the model name would let the first
-    # completion clear it while the second is still loading (the bar would vanish early).
+    # Switching to the coder when it's already on the box must NOT evict anything or
+    # re-probe a load (which could force the gateway to re-read the weights) — it's
+    # instant. The owner's request to warm an already-resident coder is a no-op.
     owner_id = await _owner_id(maker)
     app = _app(maker, owner_id)
     app.state.settings = Settings(secure_cookies=False, local_llm_enabled=True)
-    gw = _PerCallBlockingGateway()
+    gw = _FakeGateway(resident={"qwen3-coder-next"})
     app.state.local_gateway = gw
     transport = ASGITransport(app=app)
 
     async with AsyncClient(transport=transport, base_url="http://t") as client:
         assert (await client.post("/api/jcode/model/warm")).status_code == 200
-        assert (await client.post("/api/jcode/model/warm")).status_code == 200
-        await asyncio.sleep(0.05)  # both warm tasks reach their blocked load()
-        assert len(gw.gates) == 2
-        assert (await client.get("/api/jcode/model")).json()["warming"] is True
+        await asyncio.sleep(0.1)  # let the (short-circuiting) warm task run
+        assert gw.loaded == []  # not reloaded — already resident
+        assert gw.unloaded == []  # nothing evicted
 
-        gw.gates[0].set()  # first warm finishes...
-        await asyncio.sleep(0.05)
-        assert (await client.get("/api/jcode/model")).json()["warming"] is True  # ...flag holds
-
-        gw.gates[1].set()  # last warm finishes
-        await asyncio.sleep(0.05)
-        assert (await client.get("/api/jcode/model")).json()["warming"] is False
+        status = (await client.get("/api/jcode/model")).json()
+        assert status["loaded"] is True
+        # The served context window is reported so the screen can show it ("256k").
+        assert status["context_window"] == 262144
 
 
 async def test_create_forwards_the_selected_model(maker: async_sessionmaker) -> None:

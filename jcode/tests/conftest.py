@@ -1,11 +1,10 @@
-"""Shared fixtures: a fake-driven control app, no SDK / git / network."""
+"""Shared fixtures: a fake-driven control app, no git / network."""
 
 from __future__ import annotations
 
 import pytest
 from fastapi.testclient import TestClient
 
-from jcode_ctl.agent import FakeCodingAgent
 from jcode_ctl.app import create_app
 from jcode_ctl.config import Settings
 from jcode_ctl.preview import FakeTunnel, PreviewManager
@@ -17,7 +16,7 @@ TOKEN = "test-token"
 
 @pytest.fixture
 def manager() -> SessionManager:
-    return SessionManager(FakeCodingAgent(), FakeWorkspace(), "/work", new_id=_ids())
+    return SessionManager(FakeWorkspace(), "/work", new_id=_ids())
 
 
 @pytest.fixture

@@ -2,29 +2,24 @@
 
 The api owns no coding agent — it proxies an owner's sandboxed session to the
 internal control server and keeps a durable owner-only index (`jcode_sessions`)
-for the launcher. The turn endpoint mirrors the `/chat` SSE contract: a detached
-drive task feeds an in-process frame buffer (`_JcodeTurn`) that both the original
-response and a reconnecting client follow to completion; an explicit cancel stops
-it. Every route is `owner_only` — non-owner principals never reach code mode.
+for the launcher. The session is driven through its interactive terminal (a
+WebSocket PTY, see `api.jcode_terminal`); there is no turn/SSE surface. Every
+route is `owner_only` — non-owner principals never reach code mode.
 """
 
 from __future__ import annotations
 
 import asyncio
 import contextlib
-import json
 import logging
 import re
-import uuid
 from collections import Counter
-from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING, cast
 
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from jbrain.api.deps import JcodeAccessDep, OwnerDep, PrincipalDep
+from jbrain.api.deps import JcodeAccessDep, OwnerDep
 from jbrain.db import SessionContext, scoped_session
 from jbrain.jcode import JcodeApi, JcodeError
 from jbrain.llm import local_catalog
@@ -35,67 +30,14 @@ from jbrain.settings_store import SqlSettingsStore
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-    from jbrain.auth.service import PrincipalInfo
     from jbrain.config import Settings
     from jbrain.llm.local_gateway import LocalGateway
 
 log = logging.getLogger(__name__)
 
-_SSE_HEARTBEAT_SECONDS = 20.0
-_SSE_HEADERS = {"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
-_TURN_DONE = object()
-
 # Every route declares `owner: OwnerDep`, which runs `owner_only` and 403s a
 # non-owner — so code mode is owner-only without a router-level dependency.
 router = APIRouter()
-
-
-class _JcodeTurn:
-    """In-flight turn frame buffer + live fan-out (adapted from the `/chat` `_LiveTurn`,
-    docs/ASSISTANT.md). Keyed by run_id; the detached drive task feeds it via emit/finish."""
-
-    def __init__(self, session_id: str) -> None:
-        self.session_id = session_id
-        self.frames: list[bytes] = []
-        self.done = False
-        self._subs: set[asyncio.Queue[bytes | object]] = set()
-        self.task: asyncio.Task[None] | None = None
-
-    def emit(self, frame: bytes) -> None:
-        self.frames.append(frame)
-        for q in self._subs:
-            q.put_nowait(frame)
-
-    def finish(self) -> None:
-        self.done = True
-        for q in self._subs:
-            q.put_nowait(_TURN_DONE)
-        self._subs.clear()
-
-    def cancel(self) -> None:
-        if self.task is not None:
-            self.task.cancel()
-
-    async def stream(self, after: int = 0) -> AsyncIterator[bytes]:
-        q: asyncio.Queue[bytes | object] = asyncio.Queue()
-        for frame in self.frames[max(after, 0) :]:
-            q.put_nowait(frame)
-        if self.done:
-            q.put_nowait(_TURN_DONE)
-        else:
-            self._subs.add(q)
-        try:
-            while True:
-                try:
-                    item = await asyncio.wait_for(q.get(), timeout=_SSE_HEARTBEAT_SECONDS)
-                except TimeoutError:
-                    yield b": keepalive\n\n"
-                    continue
-                if item is _TURN_DONE:
-                    return
-                yield cast(bytes, item)
-        finally:
-            self._subs.discard(q)
 
 
 # The control server mints opaque ids (hex / uuid). Validate the shape at the api
@@ -109,20 +51,11 @@ def _valid_sid(sid: str) -> None:
         raise HTTPException(status_code=404, detail="unknown session")
 
 
-def _frame(type_: str, *, text: str = "", tool: str = "") -> bytes:
-    payload = {"type": type_, "text": text, "tool": tool, "data": {}}
-    return f"data: {json.dumps(payload)}\n\n".encode()
-
-
 def _client(request: Request) -> JcodeApi:
     client = getattr(request.app.state, "jcode_client", None)
     if client is None:
         raise HTTPException(status_code=404, detail="code mode is not enabled")
     return cast(JcodeApi, client)
-
-
-def _turns(request: Request) -> dict[str, _JcodeTurn]:
-    return cast("dict[str, _JcodeTurn]", request.app.state.jcode_turns)
 
 
 def _owner_ctx(principal_id: str) -> SessionContext:
@@ -187,10 +120,15 @@ async def _warm_model(gateway: LocalGateway, served: str) -> None:
     # resident until another JBrain task loads a different model (the gateway swaps it
     # then). All best-effort: a gateway hiccup must never break a session.
     with contextlib.suppress(Exception):
-        for resident in await gateway.running():
-            if resident != served:
-                with contextlib.suppress(LocalGatewayError):
-                    await gateway.unload(resident)
+        resident = await gateway.running()
+        # Already loaded → no-op: don't evict anything and don't re-probe a load (which
+        # could force the gateway to re-read the weights). Switching to the coder when
+        # it's already on the box must be instant.
+        if served in resident:
+            return
+        for other in resident:
+            with contextlib.suppress(LocalGatewayError):
+                await gateway.unload(other)
         await gateway.load(served)
 
 
@@ -238,10 +176,6 @@ class RenameBody(BaseModel):
     title: str = ""
 
 
-class TurnBody(BaseModel):
-    prompt: str = Field(min_length=1)
-
-
 class PreviewBody(BaseModel):
     port: int | None = Field(default=None, ge=1, le=65535)
 
@@ -252,7 +186,7 @@ async def create_session(
 ) -> dict[str, object]:
     # 404 first when code mode is unconfigured, before any settings read. The model
     # is fixed at create (the owner's selection, else the default) so a mid-session
-    # settings change never re-points a live agent.
+    # settings change never re-points a live session.
     client = _client(request)
     model = await _resolve_model(request, owner.id)
     try:
@@ -297,6 +231,10 @@ async def _model_payload(request: Request, owner_id: str) -> dict[str, object]:
         "warming": warming,
         "hosting": settings.local_llm_enabled,
         "size_gb": cat.size_gb if cat else 0.0,
+        # The served context window the coder runs with — full native (262144) for the
+        # coder, so the terminal's `claude` gets the whole window. Surfaced so the screen
+        # can show it ("256k") next to the model.
+        "context_window": cat.context_window if cat else 0,
         "resident": sorted(running),
     }
 
@@ -348,13 +286,8 @@ async def get_session(sid: str, principal: JcodeAccessDep, request: Request) -> 
 @router.delete("/jcode/sessions/{sid}", status_code=204)
 async def delete_session(sid: str, owner: OwnerDep, request: Request) -> None:
     _valid_sid(sid)
-    # Cancel any in-flight turn for this session first: cancelling its detached drive
-    # task drops the SSE connection to the control server, which tears down the spawned
-    # `claude` subprocess — so the turn stops before the control server removes the
-    # checkout (delete there also cooperatively cancels the agent and kills open shells).
-    for turn in list(_turns(request).values()):
-        if turn.session_id == sid:
-            turn.cancel()
+    # The control server's delete kills open shells (and anything running in the
+    # checkout) before removing it, so nothing is stranded on a vanished cwd.
     try:
         await _client(request).delete(sid)
     except JcodeError as exc:
@@ -401,112 +334,31 @@ async def reset_session(sid: str, owner: OwnerDep, request: Request) -> dict[str
     return session
 
 
-async def _set_status(
-    maker: async_sessionmaker[AsyncSession], owner_id: str, sid: str, status: str
-) -> None:
-    # A share-driven turn (owner_id="") doesn't touch the owner's launcher mirror — that
-    # table is owner-RLS only, and the control server already tracks the real session
-    # state. The owner's own turns keep the mirror's status honest as before.
-    if not owner_id:
-        return
-    async with scoped_session(maker, _owner_ctx(owner_id)) as db:
-        await _REPO.touch(db, sid, status=status)
-
-
-async def _drive(
-    turn: _JcodeTurn,
-    client: JcodeApi,
-    sid: str,
-    prompt: str,
-    maker: async_sessionmaker[AsyncSession],
-    owner_id: str,
-) -> None:
-    """Detached: pump control-server frames into the buffer, keep the index status
-    honest, and ALWAYS emit a terminal frame + unblock the client — on success, error,
-    or cancel. Registry removal is the caller's add_done_callback, so it survives even a
-    crash here."""
-    try:
-        # Inside the try so a failed "running" write still reaches the finally below
-        # (else the client would hang and the run would leak — review B1).
-        await _set_status(maker, owner_id, sid, "running")
-        async for frame in client.stream_turn(sid, prompt):
-            turn.emit(frame)
-    except asyncio.CancelledError:
-        turn.emit(_frame("done"))
-        raise
-    except Exception as exc:  # JcodeError or anything unexpected → a terminal frame
-        turn.emit(_frame("error", text=str(exc)))
-        turn.emit(_frame("done"))
-    finally:
-        # Settle the index status BEFORE finish() unblocks the client's stream, so a read
-        # right after the stream ends sees "ready" — never a lingering "running". finish()
-        # still runs even if the status write fails, so the client never hangs.
-        try:
-            await _set_status(maker, owner_id, sid, "ready")
-        finally:
-            turn.finish()
-
-
-@router.post("/jcode/sessions/{sid}/turn")
-async def run_turn(
-    sid: str, body: TurnBody, principal: JcodeAccessDep, request: Request
-) -> StreamingResponse:
+@router.post("/jcode/sessions/{sid}/stop")
+async def stop_session(sid: str, owner: OwnerDep, request: Request) -> dict[str, object]:
+    """Pause a session: the control server kills its processes but keeps the checkout, so
+    it can be restarted. Mirrors the shell-exit pause for the launcher."""
     _valid_sid(sid)
-    client = _client(request)
-    turns = _turns(request)
-    run_id = uuid.uuid4().hex
-    turn = _JcodeTurn(sid)
-    turns[run_id] = turn
-    # Only the owner's turns update its launcher mirror; a share turn drives the same
-    # control-server session but leaves the owner-only index untouched (owner_id="").
-    owner_id = principal.id if principal.kind == "owner" else ""
-    turn.task = asyncio.create_task(
-        _drive(turn, client, sid, body.prompt, _maker(request), owner_id)
-    )
-
-    # Guarantee the run leaves the registry however the task ends (done/error/cancel),
-    # and retrieve any exception so it isn't logged as "never retrieved" (review B1).
-    def _cleanup(task: asyncio.Task[None]) -> None:
-        turns.pop(run_id, None)
-        with contextlib.suppress(asyncio.CancelledError, Exception):
-            task.exception()
-
-    turn.task.add_done_callback(_cleanup)
-    headers = {**_SSE_HEADERS, "X-Jcode-Run-Id": run_id}
-    return StreamingResponse(turn.stream(), media_type="text/event-stream", headers=headers)
+    try:
+        session = await _client(request).stop(sid)
+    except JcodeError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    async with scoped_session(_maker(request), _owner_ctx(owner.id)) as db:
+        await _REPO.touch(db, sid, status=str(session.get("status", "stopped")))
+    return session
 
 
-def _run_or_403(request: Request, principal: PrincipalInfo, run_id: str) -> _JcodeTurn:
-    """The live turn for run_id, scope-checked: the owner reaches any run; a share
-    principal only a run for ITS session. 404 unknown, 403 cross-session."""
-    turn = _turns(request).get(run_id)
-    if turn is None:
-        raise HTTPException(status_code=404, detail="run is no longer live")
-    if principal.kind == "owner" or (
-        principal.kind == "jcode_share_link" and principal.jcode_session_id == turn.session_id
-    ):
-        return turn
-    raise HTTPException(status_code=403, detail="not authorized for this run")
-
-
-@router.get("/jcode/runs/{run_id}/stream")
-async def reconnect(
-    run_id: str, principal: PrincipalDep, request: Request, after: int = 0
-) -> StreamingResponse:
-    turn = _run_or_403(request, principal, run_id)
-    return StreamingResponse(
-        turn.stream(after), media_type="text/event-stream", headers=_SSE_HEADERS
-    )
-
-
-@router.post("/jcode/runs/{run_id}/cancel", status_code=202)
-async def cancel_turn(run_id: str, principal: PrincipalDep, request: Request) -> dict[str, str]:
-    turn = _run_or_403(request, principal, run_id)
-    turn.cancel()
-    # The control server may have already finished; cancel is best-effort.
-    with contextlib.suppress(JcodeError):
-        await _client(request).cancel(turn.session_id)
-    return {"status": "cancelling"}
+@router.post("/jcode/sessions/{sid}/restart")
+async def restart_session(sid: str, owner: OwnerDep, request: Request) -> dict[str, object]:
+    """Resume a paused session (its checkout is still on disk)."""
+    _valid_sid(sid)
+    try:
+        session = await _client(request).restart(sid)
+    except JcodeError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    async with scoped_session(_maker(request), _owner_ctx(owner.id)) as db:
+        await _REPO.touch(db, sid, status=str(session.get("status", "ready")))
+    return session
 
 
 # --- Web preview (Wave J4): proxy the control server's ephemeral-tunnel surface ---
