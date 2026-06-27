@@ -10,7 +10,7 @@ from collections.abc import Awaitable, Callable
 
 from jbrain.gmail.client import GmailApi, GmailLabel, GmailMessage
 from jbrain.gmail.fake import FakeGmail
-from jbrain.gmail.triage import InboxTriage
+from jbrain.gmail.triage import _PROMPT, InboxTriage
 from jbrain.llm.fake import FakeLlmClient
 from jbrain.llm.router import LlmRouter
 
@@ -150,6 +150,20 @@ async def test_unclassified_message_stays_in_inbox() -> None:
     await InboxTriage(_factory(fake), router).run({})
     assert _names_on(fake, "m1") == {"triaged/medium"}
     assert _names_on(fake, "m2") == {"INBOX"}
+
+
+def test_classify_prompt_routes_retail_order_confirmations_to_medium() -> None:
+    # The classifier prompt is the only place the owner's rule lives ("an Amazon
+    # order confirmation is medium, not high"), and the LLM is faked in every other
+    # test — so guard the instruction itself against silent regression. Order
+    # confirmations / receipts / shipping updates are transactional, but informational:
+    # they must not be pulled up to "high" by the transactional/time-sensitive wording.
+    rendered = _PROMPT.render().lower()
+    assert "order confirmation" in rendered
+    assert "purchase receipt" in rendered
+    # "high" is reserved for transactional mail that demands a response, not every
+    # transactional message — the order email is explicitly excluded from it.
+    assert 'never "high"' in rendered
 
 
 async def test_archived_mail_drops_out_of_inbox_on_rerun() -> None:
