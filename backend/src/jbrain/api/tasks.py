@@ -114,46 +114,6 @@ class TaskBody(BaseModel):
         return self
 
 
-class TaskOut(BaseModel):
-    id: str
-    name: str
-    prompt: str
-    agent: str
-    domain_scopes: list[str]
-    schedule_kind: str
-    schedule_freq: str | None
-    schedule_days: list[int]
-    schedule_time: str | None
-    run_at: datetime | None
-    timezone: str
-    enabled: bool
-    notify_push: bool
-    home_card: bool
-    next_run_at: datetime | None
-    last_run_at: datetime | None
-
-    @classmethod
-    def of(cls, t: TaskInfo) -> "TaskOut":
-        return cls(
-            id=t.id,
-            name=t.name,
-            prompt=t.prompt,
-            agent=t.agent,
-            domain_scopes=list(t.domain_scopes),
-            schedule_kind=t.schedule_kind,
-            schedule_freq=t.schedule_freq,
-            schedule_days=list(t.schedule_days),
-            schedule_time=t.schedule_time,
-            run_at=t.run_at,
-            timezone=t.timezone,
-            enabled=t.enabled,
-            notify_push=t.notify_push,
-            home_card=t.home_card,
-            next_run_at=t.next_run_at,
-            last_run_at=t.last_run_at,
-        )
-
-
 class TaskRunOut(BaseModel):
     id: str
     task_id: str
@@ -184,6 +144,50 @@ class TaskRunOut(BaseModel):
         )
 
 
+class TaskOut(BaseModel):
+    id: str
+    name: str
+    prompt: str
+    agent: str
+    domain_scopes: list[str]
+    schedule_kind: str
+    schedule_freq: str | None
+    schedule_days: list[int]
+    schedule_time: str | None
+    run_at: datetime | None
+    timezone: str
+    enabled: bool
+    notify_push: bool
+    home_card: bool
+    next_run_at: datetime | None
+    last_run_at: datetime | None
+    # The most recent run, embedded so the card's "latest result" band renders (and
+    # opens its session) without a per-card fetch. None until the task has ever run.
+    latest_run: "TaskRunOut | None" = None
+
+    @classmethod
+    def of(cls, t: TaskInfo, latest_run: "TaskRunInfo | None" = None) -> "TaskOut":
+        return cls(
+            id=t.id,
+            name=t.name,
+            prompt=t.prompt,
+            agent=t.agent,
+            domain_scopes=list(t.domain_scopes),
+            schedule_kind=t.schedule_kind,
+            schedule_freq=t.schedule_freq,
+            schedule_days=list(t.schedule_days),
+            schedule_time=t.schedule_time,
+            run_at=t.run_at,
+            timezone=t.timezone,
+            enabled=t.enabled,
+            notify_push=t.notify_push,
+            home_card=t.home_card,
+            next_run_at=t.next_run_at,
+            last_run_at=t.last_run_at,
+            latest_run=TaskRunOut.of(latest_run) if latest_run is not None else None,
+        )
+
+
 class EnabledPatch(BaseModel):
     """The optimistic enable/disable toggle — a narrow PATCH the card uses."""
 
@@ -198,8 +202,10 @@ class RunActivity(BaseModel):
 
 @router.get("/tasks")
 async def list_tasks(request: Request, principal: OwnerDep) -> list[TaskOut]:
-    tasks = await get_task_repo(request).list(ctx_for(principal))
-    return [TaskOut.of(t) for t in tasks]
+    ctx = ctx_for(principal)
+    tasks = await get_task_repo(request).list(ctx)
+    latest = await get_task_runs(request).latest_per_task(ctx, [t.id for t in tasks])
+    return [TaskOut.of(t, latest.get(t.id)) for t in tasks]
 
 
 @router.get("/tasks/run-activity")
@@ -239,8 +245,9 @@ async def create_task(request: Request, principal: OwnerDep, body: TaskBody) -> 
 async def replace_task(
     request: Request, principal: OwnerDep, task_id: str, body: TaskBody
 ) -> TaskOut:
+    ctx = ctx_for(principal)
     updated = await get_task_repo(request).update(
-        ctx_for(principal),
+        ctx,
         task_id,
         name=body.name,
         prompt=body.prompt,
@@ -258,17 +265,20 @@ async def replace_task(
     )
     if updated is None:
         raise HTTPException(status_code=404, detail="no such task")
-    return TaskOut.of(updated)
+    latest = await get_task_runs(request).latest_per_task(ctx, [updated.id])
+    return TaskOut.of(updated, latest.get(updated.id))
 
 
 @router.patch("/tasks/{task_id}")
 async def set_enabled(
     request: Request, principal: OwnerDep, task_id: str, body: EnabledPatch
 ) -> TaskOut:
-    updated = await get_task_repo(request).update(ctx_for(principal), task_id, enabled=body.enabled)
+    ctx = ctx_for(principal)
+    updated = await get_task_repo(request).update(ctx, task_id, enabled=body.enabled)
     if updated is None:
         raise HTTPException(status_code=404, detail="no such task")
-    return TaskOut.of(updated)
+    latest = await get_task_runs(request).latest_per_task(ctx, [updated.id])
+    return TaskOut.of(updated, latest.get(updated.id))
 
 
 @router.delete("/tasks/{task_id}", status_code=204)

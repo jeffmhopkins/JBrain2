@@ -1009,6 +1009,9 @@ export interface Task {
   home_card: boolean;
   next_run_at: string | null;
   last_run_at: string | null;
+  /** The most recent run, embedded by the server so the card's "latest result" band
+   * renders (and opens its session) without a per-card fetch. Null until first run. */
+  latest_run: TaskRun | null;
 }
 
 /** The create/replace payload — the spec the editor authors (server computes the rest). */

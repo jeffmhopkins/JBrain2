@@ -1,0 +1,459 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Tasks — C: Two-zone card with a latest-result band</title>
+<!--
+  DIRECTION C — "Two-zone card with a latest-result band"
+  Each task card splits into a config header zone (dot, name, agent+schedule,
+  toggle, chevron) and a full-width tappable RESULT BAND docked at the bottom,
+  recessed on --surface-2. Thesis: make the latest result a first-class,
+  always-visible dock you tap once to read; unviewed bands carry a committed
+  steel accent (edge bar, NEW pill, full-text summary), viewed ones relax.
+-->
+<style>
+  :root {
+    --bg:#0E0F11; --surface:#17181B; --surface-2:#1E2024; --border:#26282C;
+    --text:#E6E7E9; --text-2:#9A9DA3; --text-3:#5C5F66;
+    --steel:#7FA7C9; --green:#8FBC9A; --amber:#C9A36A; --rose:#CF8A8F; --violet:#A493C9;
+    --steel-tint: rgba(127,167,201,0.13);
+    --violet-tint: rgba(164,147,201,0.13);
+    --green-tint: rgba(143,188,154,0.13);
+  }
+
+  * { box-sizing: border-box; margin:0; padding:0; -webkit-tap-highlight-color: transparent; }
+
+  html, body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  body {
+    display:flex; justify-content:center; align-items:flex-start;
+    min-height:100vh; padding:24px 12px;
+  }
+
+  /* ---------- phone frame ---------- */
+  .phone {
+    position:relative;
+    width:100%; max-width:420px;
+    background: var(--bg);
+    border:1px solid var(--border);
+    border-radius:28px;
+    overflow:hidden;
+    height:860px;
+    display:flex; flex-direction:column;
+    box-shadow: 0 0 0 1px rgba(0,0,0,0.4);
+  }
+
+  /* ---------- top bar ---------- */
+  .topbar {
+    height:56px; flex:0 0 56px;
+    display:flex; align-items:center; gap:8px;
+    padding:0 12px;
+    border-bottom:1px solid var(--border);
+    background: var(--bg);
+    z-index:5;
+  }
+  .topbar .title { font-size:22px; font-weight:600; letter-spacing:-0.01em; flex:1; }
+  .iconbtn {
+    width:40px; height:40px; border-radius:999px;
+    display:flex; align-items:center; justify-content:center;
+    color: var(--text-2); background:none; border:none; cursor:pointer;
+  }
+  .iconbtn:active { background: var(--surface-2); }
+  .topbar .back { color: var(--text); margin-left:-6px; }
+
+  svg { display:block; }
+  .ic { width:22px; height:22px; stroke:currentColor; stroke-width:1.5; fill:none;
+        stroke-linecap:round; stroke-linejoin:round; }
+  .ic-sm { width:18px; height:18px; }
+  .ic-xs { width:15px; height:15px; }
+
+  /* ---------- scroll body ---------- */
+  .scroll { flex:1; overflow-y:auto; overflow-x:hidden; padding:8px 14px 40px; }
+  .scroll::-webkit-scrollbar { width:0; }
+
+  .section-header {
+    font-size:12px; font-weight:600; letter-spacing:0.08em;
+    color: var(--text-3); text-transform:uppercase;
+    padding:16px 4px 10px;
+  }
+
+  /* ---------- card ---------- */
+  .card {
+    background: var(--surface);
+    border:1px solid var(--border);
+    border-radius:16px;
+    margin-bottom:14px;
+    overflow:hidden;
+  }
+
+  /* config header zone */
+  .config {
+    display:flex; align-items:center; gap:10px;
+    padding:13px 12px 13px 14px;
+  }
+  .dot { width:9px; height:9px; border-radius:999px; flex:0 0 9px; }
+  .dot.green { background: var(--green); }
+
+  .config-main { flex:1; min-width:0; }
+  .task-name { font-size:18px; font-weight:600; line-height:1.2; letter-spacing:-0.01em; }
+  .meta-row { display:flex; align-items:center; gap:6px; margin-top:4px; flex-wrap:wrap; }
+  .agent { font-size:13px; color: var(--text-2); }
+  .agent-pill {
+    font-size:12px; font-weight:600; padding:2px 8px; border-radius:999px;
+    background: var(--violet-tint); color: var(--violet);
+  }
+  .sep { color: var(--text-3); font-size:13px; }
+  .schedule { font-size:13px; color: var(--text-2); }
+  .domain {
+    font-size:11px; font-weight:600; padding:1px 7px; border-radius:999px;
+    background: var(--surface-2); color: var(--text-3); border:1px solid var(--border);
+  }
+
+  /* enable toggle */
+  .toggle {
+    position:relative; width:42px; height:25px; flex:0 0 42px;
+    border-radius:999px; background: var(--surface-2); border:1px solid var(--border);
+    cursor:pointer; transition: background .18s ease;
+  }
+  .toggle.on { background: var(--green-tint); border-color: rgba(143,188,154,0.5); }
+  .toggle .knob {
+    position:absolute; top:2px; left:2px; width:19px; height:19px;
+    border-radius:999px; background: var(--text-3);
+    transition: transform .18s ease, background .18s ease;
+  }
+  .toggle.on .knob { transform: translateX(17px); background: var(--green); }
+
+  .chev-btn {
+    width:36px; height:36px; flex:0 0 36px; margin-right:-4px;
+    display:flex; align-items:center; justify-content:center;
+    color: var(--text-3); border-radius:999px; cursor:pointer;
+  }
+  .chev-btn .ic { transition: transform .2s ease; }
+  .card.expanded .chev-btn .ic { transform: rotate(90deg); }
+
+  /* ---------- expanded config detail ---------- */
+  .detail {
+    display:none;
+    padding:0 14px 14px;
+    border-top:1px solid var(--border);
+  }
+  .card.expanded .detail { display:block; }
+  .detail-label {
+    font-size:11px; font-weight:600; letter-spacing:0.07em; text-transform:uppercase;
+    color: var(--text-3); padding:14px 0 7px;
+  }
+  .prompt-box {
+    background: var(--surface-2); border:1px solid var(--border); border-radius:12px;
+    padding:11px 12px; font-size:13.5px; line-height:1.5; color: var(--text-2);
+  }
+  .runs-list { display:flex; flex-direction:column; gap:6px; }
+  .run-row {
+    display:flex; align-items:center; gap:10px;
+    background: var(--surface-2); border:1px solid var(--border); border-radius:12px;
+    padding:10px 11px; cursor:pointer; min-height:48px;
+  }
+  .run-row:active { background:#222428; }
+  .run-row .rr-main { flex:1; min-width:0; }
+  .run-row .rr-summary {
+    font-size:13.5px; color: var(--text-2); line-height:1.35;
+    overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+  }
+  .run-row .rr-meta { font-size:12px; color: var(--text-3); margin-top:2px; }
+  .detail-actions { display:flex; gap:8px; padding-top:12px; }
+  .btn {
+    flex:1; height:42px; border-radius:12px; border:1px solid var(--border);
+    background: var(--surface-2); color: var(--text); font-size:14px; font-weight:600;
+    display:flex; align-items:center; justify-content:center; gap:7px; cursor:pointer;
+  }
+  .btn:active { background:#222428; }
+  .btn.primary { background: var(--steel-tint); border-color: rgba(127,167,201,0.4); color: var(--steel); }
+
+  /* ---------- RESULT BAND ---------- */
+  .band {
+    position:relative;
+    display:flex; align-items:center; gap:11px;
+    min-height:62px;
+    padding:11px 12px 11px 15px;
+    background: var(--surface-2);
+    border-top:1px solid var(--border);
+    cursor:pointer;
+  }
+  .band:active { background:#222428; }
+
+  /* steel left-edge accent (unviewed only) */
+  .band::before {
+    content:""; position:absolute; left:0; top:0; bottom:0; width:3px;
+    background: var(--steel); opacity:0; transition: opacity .2s ease;
+  }
+  .band.unviewed::before { opacity:1; }
+
+  .band-dot { width:9px; height:9px; border-radius:999px; flex:0 0 9px; align-self:flex-start; margin-top:4px; }
+  .band.unviewed .band-dot { background: var(--steel); }
+  .band.viewed  .band-dot { background: var(--text-3); }
+
+  .band-main { flex:1; min-width:0; }
+  .band-summary {
+    font-size:14px; line-height:1.4;
+    display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical;
+    overflow:hidden;
+  }
+  .band.unviewed .band-summary { color: var(--text); }
+  .band.viewed  .band-summary { color: var(--text-2); }
+
+  .new-pill {
+    display:inline-block; vertical-align:middle;
+    font-size:10px; font-weight:700; letter-spacing:0.05em;
+    padding:1px 6px; border-radius:999px; margin-right:7px;
+    background: var(--steel-tint); color: var(--steel);
+    position:relative; top:-1px;
+  }
+  .band.viewed .new-pill { display:none; }
+
+  .band-right { display:flex; align-items:center; gap:5px; flex:0 0 auto; align-self:flex-end; padding-bottom:1px; }
+  .band-meta { font-size:12px; color: var(--text-3); white-space:nowrap; }
+  .band-right .chev { color: var(--text-3); }
+
+  /* placeholder (never run) band */
+  .band.empty { cursor:default; }
+  .band.empty .band-dot { background: var(--text-3); }
+  .band.empty .band-summary { color: var(--text-3); font-size:14px; }
+  .runnow-link {
+    color: var(--steel); font-weight:600; font-size:13px;
+    border:1px solid rgba(127,167,201,0.4); background: var(--steel-tint);
+    border-radius:999px; padding:4px 11px; cursor:pointer; white-space:nowrap;
+  }
+
+  /* ---------- session full-screen overlay ---------- */
+  .session {
+    position:absolute; inset:0; z-index:20;
+    background: var(--bg);
+    display:flex; flex-direction:column;
+    transform: translateY(100%);
+    transition: transform .26s cubic-bezier(.32,.72,0,1);
+  }
+  .session.open { transform: translateY(0); }
+  .session .topbar { align-items:center; }
+  .session .s-title { flex:1; min-width:0; }
+  .session .s-title .s-name { font-size:15px; font-weight:600; line-height:1.25;
+    overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .session .s-title .s-sub { font-size:12px; color: var(--text-3); margin-top:1px; }
+  .transcript { flex:1; overflow-y:auto; padding:18px 16px; display:flex; flex-direction:column; gap:12px; }
+  .bubble { max-width:80%; padding:11px 13px; border-radius:14px; font-size:14px; line-height:1.45; }
+  .bubble.sys { align-self:center; background:none; color: var(--text-3); font-size:12px; max-width:100%; text-align:center; }
+  .bubble.agent { align-self:flex-start; background: var(--surface); border:1px solid var(--border); color: var(--text); }
+  .bubble.user { align-self:flex-end; background: var(--steel-tint); color: var(--text); }
+
+  @media (prefers-reduced-motion: reduce) {
+    .session, .toggle, .toggle .knob, .chev-btn .ic, .band::before { transition:none !important; }
+  }
+</style>
+</head>
+<body>
+<div class="phone" id="phone">
+
+  <!-- ===== top bar ===== -->
+  <div class="topbar">
+    <button class="iconbtn back" aria-label="Back">
+      <svg class="ic" viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6"/></svg>
+    </button>
+    <div class="title">Tasks</div>
+    <button class="iconbtn" aria-label="New task">
+      <svg class="ic" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
+    </button>
+    <button class="iconbtn" aria-label="Refresh">
+      <svg class="ic" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v5h-5"/></svg>
+    </button>
+  </div>
+
+  <!-- ===== scroll body ===== -->
+  <div class="scroll" id="cards"></div>
+
+  <!-- ===== session overlay ===== -->
+  <div class="session" id="session">
+    <div class="topbar">
+      <button class="iconbtn back" aria-label="Back" id="sessionBack">
+        <svg class="ic" viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6"/></svg>
+      </button>
+      <div class="s-title">
+        <div class="s-name" id="sName">Session</div>
+        <div class="s-sub" id="sSub">session</div>
+      </div>
+    </div>
+    <div class="transcript" id="transcript"></div>
+  </div>
+
+</div>
+
+<script>
+/* ---------- sample data ---------- */
+const TASKS = [
+  {
+    id:"t1", name:"Email overview", health:"green", enabled:true,
+    agent:{type:"archivist"}, schedule:"Daily · 07:00", status:"scheduled · next in 7h",
+    prompt:"Look at all emails with the last 24 hours with the label triaged/high. Make a daily brief of emails that you consider needing action, or important. Do not include things like Amazon order updates, or routine emails. Present as a nice bulleted action item your list.",
+    runs:[
+      { sess:"sess-101", summary:"Daily Action Brief — Jun 25–26 2026 (triaged/high): 3 items need a reply…", turns:7, ago:"7m ago", state:"ok", viewed:false },
+      { sess:"sess-102", summary:"I'm unable to reach Gmail at the moment — the s…", turns:2, ago:"11m ago", state:"ok", viewed:true }
+    ]
+  },
+  {
+    id:"t2", name:"News", health:"green", enabled:true,
+    agent:{type:"jerv"}, schedule:"Daily · 07:00", status:"scheduled · next in 7h",
+    prompt:"Scan trusted news sources and summarize the top stories of the day relevant to my interests.",
+    runs:[
+      { sess:"sess-201", summary:"Top stories: rate decision held, two local items, one follow-up on the…", turns:5, ago:"12m ago", state:"ok", viewed:false }
+    ]
+  },
+  {
+    id:"t3", name:"Weekly finance sweep", health:"green", enabled:true,
+    agent:{type:"curator", domain:"finance"}, schedule:"Mon · 08:00", status:"scheduled · next in 3d",
+    prompt:"Reconcile this week's transactions against expectations and flag anomalies or subscription increases.",
+    runs:[
+      { sess:"sess-301", summary:"Reconciled 4 transactions, flagged 1 subscription up 20%.", turns:4, ago:"2d ago", state:"ok", viewed:true }
+    ]
+  }
+];
+
+/* ---------- icon helpers ---------- */
+const chevRight = '<svg class="ic ic-sm chev" viewBox="0 0 24 24"><path d="M9 18l6-6-6-6"/></svg>';
+const chevDown  = '<svg class="ic ic-sm" viewBox="0 0 24 24"><path d="M9 18l6-6-6-6"/></svg>';
+const editIcon  = '<svg class="ic ic-xs" viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>';
+const playIcon  = '<svg class="ic ic-xs" viewBox="0 0 24 24"><path d="M6 4l14 8-14 8V4z"/></svg>';
+
+/* ---------- agent rendering ---------- */
+function agentNode(a){
+  if(a.type==="jerv") return '<span class="agent-pill">Jerv</span>';
+  if(a.type==="curator")
+    return '<span class="agent">Curator</span><span class="domain">'+a.domain+'</span>';
+  return '<span class="agent">Archivist</span>';
+}
+
+/* ---------- band rendering ---------- */
+function bandNode(task){
+  const latest = task.runs[0];
+  if(!latest){
+    return '<div class="band empty">'
+      + '<span class="band-dot"></span>'
+      + '<div class="band-main"><div class="band-summary">No runs yet</div></div>'
+      + '<button class="runnow-link" data-run="'+task.id+'">Run now</button>'
+      + '</div>';
+  }
+  const cls = latest.viewed ? "viewed" : "unviewed";
+  const metaPrefix = latest.viewed ? "opened · " : "";
+  const newPill = latest.viewed ? "" : '<span class="new-pill">NEW</span>';
+  return '<div class="band '+cls+'" data-open="'+task.id+'" data-sess="'+latest.sess+'">'
+    + '<span class="band-dot"></span>'
+    + '<div class="band-main"><div class="band-summary">'+newPill+latest.summary+'</div></div>'
+    + '<div class="band-right">'
+    +   '<span class="band-meta">'+metaPrefix+latest.turns+' turns · '+latest.ago+'</span>'
+    +   chevRight
+    + '</div>'
+    + '</div>';
+}
+
+/* ---------- card rendering ---------- */
+function cardNode(task){
+  const runsHtml = task.runs.map(r =>
+    '<div class="run-row" data-open="'+task.id+'" data-sess="'+r.sess+'">'
+    + '<span class="band-dot" style="background:'+(r.viewed?'var(--text-3)':'var(--steel)')+';margin-top:5px"></span>'
+    + '<div class="rr-main"><div class="rr-summary">'+r.summary+'</div>'
+    +   '<div class="rr-meta">'+r.sess+' · '+r.turns+' turns · '+r.ago+'</div></div>'
+    + chevRight + '</div>'
+  ).join("");
+
+  return '<div class="card" data-card="'+task.id+'">'
+    + '<div class="config">'
+    +   '<span class="dot green"></span>'
+    +   '<div class="config-main">'
+    +     '<div class="task-name">'+task.name+'</div>'
+    +     '<div class="meta-row">'+agentNode(task.agent)
+    +        '<span class="sep">·</span><span class="schedule">'+task.schedule+'</span></div>'
+    +   '</div>'
+    +   '<div class="toggle '+(task.enabled?'on':'')+'" data-toggle="'+task.id+'" role="switch" aria-checked="'+task.enabled+'"><span class="knob"></span></div>'
+    +   '<div class="chev-btn" data-chev="'+task.id+'">'+chevDown+'</div>'
+    + '</div>'
+    + '<div class="detail">'
+    +   '<div class="detail-label">Prompt</div>'
+    +   '<div class="prompt-box">'+task.prompt+'</div>'
+    +   '<div class="detail-label">Recent runs → sessions</div>'
+    +   '<div class="runs-list">'+runsHtml+'</div>'
+    +   '<div class="detail-actions">'
+    +     '<button class="btn">'+editIcon+'Edit</button>'
+    +     '<button class="btn primary" data-run="'+task.id+'">'+playIcon+'Run now</button>'
+    +   '</div>'
+    + '</div>'
+    + bandNode(task)
+    + '</div>';
+}
+
+/* ---------- mount ---------- */
+function render(){
+  const root = document.getElementById("cards");
+  root.innerHTML = '<div class="section-header">Scheduled</div>'
+    + TASKS.map(cardNode).join("");
+}
+render();
+
+/* ---------- interactions ---------- */
+const cardsEl = document.getElementById("cards");
+
+cardsEl.addEventListener("click", (e) => {
+  const toggle = e.target.closest("[data-toggle]");
+  if(toggle){
+    const t = TASKS.find(x=>x.id===toggle.dataset.toggle);
+    t.enabled = !t.enabled;
+    toggle.classList.toggle("on", t.enabled);
+    toggle.setAttribute("aria-checked", t.enabled);
+    return;
+  }
+  const chev = e.target.closest("[data-chev]");
+  if(chev){
+    chev.closest(".card").classList.toggle("expanded");
+    return;
+  }
+  const opener = e.target.closest("[data-open]");
+  if(opener){
+    openSession(opener.dataset.open, opener.dataset.sess);
+    return;
+  }
+  const run = e.target.closest("[data-run]");
+  if(run){ /* faux Run now — no-op stub */ return; }
+});
+
+/* ---------- session overlay ---------- */
+const sessionEl = document.getElementById("session");
+
+function openSession(taskId, sessId){
+  const task = TASKS.find(x=>x.id===taskId);
+  const run = task.runs.find(r=>r.sess===sessId);
+
+  document.getElementById("sName").textContent = run.summary;
+  document.getElementById("sSub").textContent = sessId + " · " + run.turns + " turns · " + run.ago;
+
+  document.getElementById("transcript").innerHTML =
+      '<div class="bubble sys">opened session '+sessId+'</div>'
+    + '<div class="bubble user">'+task.prompt.slice(0,72)+'…</div>'
+    + '<div class="bubble agent">'+run.summary+'</div>'
+    + '<div class="bubble agent">(transcript placeholder — '+run.turns+' turns)</div>';
+
+  sessionEl.classList.add("open");
+
+  // mark viewed → relax the band on return
+  if(!run.viewed){
+    run.viewed = true;
+    render();
+  }
+}
+
+document.getElementById("sessionBack").addEventListener("click", () => {
+  sessionEl.classList.remove("open");
+});
+</script>
+</body>
+</html>

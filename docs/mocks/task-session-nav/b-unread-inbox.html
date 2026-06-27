@@ -1,0 +1,533 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Tasks — B: Unread-inbox reframe</title>
+<!--
+  Direction B — "Unread-inbox reframe" (task-session-nav).
+  Thesis: the Tasks screen is an INBOX of fresh agent results; reading the new
+  one is the default gesture. A New·All segmented control surfaces only tasks
+  with an unviewed latest run — they sort to the top, wear a steel unread dot +
+  a one-line summary preview, and a single body-tap opens that run's session.
+-->
+<style>
+  :root {
+    --bg:#0E0F11; --surface:#17181B; --surface-2:#1E2024; --border:#26282C;
+    --text:#E6E7E9; --text-2:#9A9DA3; --text-3:#5C5F66;
+    --steel:#7FA7C9; --green:#8FBC9A; --amber:#C9A36A; --rose:#CF8A8F; --violet:#A493C9;
+    --steel-tint: rgba(127,167,201,.13);
+    --green-tint: rgba(143,188,154,.13);
+    --violet-tint: rgba(164,147,201,.13);
+    --dur:150ms;
+  }
+  * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  html,body { margin:0; height:100%; }
+  body {
+    background:var(--bg); color:var(--text);
+    font-family: system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+    font-size:16px; line-height:1.4;
+    display:flex; align-items:center; justify-content:center;
+    min-height:100dvh; padding:20px;
+  }
+  button { font:inherit; color:inherit; background:none; border:none; cursor:pointer; }
+
+  /* ---- phone frame ---- */
+  .phone {
+    position:relative; width:100%; max-width:420px; height:860px; max-height:92dvh;
+    background:var(--bg); border:1px solid var(--border); border-radius:28px;
+    overflow:hidden; display:flex; flex-direction:column;
+  }
+
+  /* ---- top bar ---- */
+  .topbar {
+    height:56px; flex:0 0 auto; display:flex; align-items:center; gap:4px;
+    padding:0 8px; border-bottom:1px solid var(--border);
+  }
+  .icon-btn {
+    width:44px; height:44px; display:flex; align-items:center; justify-content:center;
+    border-radius:12px; color:var(--text-2);
+  }
+  .icon-btn:active { background:var(--surface-2); }
+  .topbar-title { font-size:22px; font-weight:500; flex:1; margin:0 4px; }
+
+  /* ---- segmented control (New · All) ---- */
+  .seg-wrap { flex:0 0 auto; padding:12px 16px 8px; }
+  .seg-row {
+    display:flex; gap:4px; padding:4px; background:var(--surface-2);
+    border-radius:12px;
+  }
+  .seg {
+    flex:1; display:flex; align-items:center; justify-content:center; gap:7px;
+    height:38px; border-radius:9px; color:var(--text-2); font-size:14px; font-weight:500;
+    transition:background var(--dur) ease-out, color var(--dur) ease-out;
+  }
+  .seg.on { background:var(--steel-tint); color:var(--text); }
+  .seg-count {
+    min-width:20px; height:20px; padding:0 6px; border-radius:999px;
+    display:inline-flex; align-items:center; justify-content:center;
+    font-size:12px; font-weight:600; background:var(--surface);
+    color:var(--text-2);
+  }
+  .seg.on .seg-count { background:var(--steel-tint); color:var(--steel); }
+
+  /* New header strip: mark-all-read */
+  .new-head {
+    flex:0 0 auto; display:flex; align-items:center; justify-content:space-between;
+    padding:2px 18px 8px; min-height:30px;
+  }
+  .new-head-label { font-size:12px; letter-spacing:.06em; text-transform:uppercase; color:var(--text-3); }
+  .markall { font-size:14px; color:var(--steel); padding:6px 4px; }
+  .markall:active { opacity:.6; }
+
+  /* ---- list ---- */
+  .list { flex:1 1 auto; overflow-y:auto; padding:4px 16px 24px; }
+  .sect { font-size:12px; letter-spacing:.08em; text-transform:uppercase; color:var(--text-3);
+          margin:14px 4px 8px; }
+
+  /* ---- task card ---- */
+  .card {
+    background:var(--surface); border:1px solid var(--border); border-radius:16px;
+    margin-bottom:12px; overflow:hidden;
+    transition:border-color var(--dur) ease-out;
+  }
+  .card.unread { border-color:color-mix(in srgb, var(--steel) 32%, var(--border)); }
+
+  /* tappable card body (opens session when unread) */
+  .card-body {
+    display:flex; align-items:flex-start; gap:12px; padding:14px 14px 14px 16px; width:100%; text-align:left;
+  }
+  .card.unread .card-body { cursor:pointer; }
+  .card.unread .card-body:active { background:var(--surface-2); }
+
+  .lead { flex:0 0 auto; width:14px; display:flex; flex-direction:column; align-items:center; padding-top:5px; gap:7px; }
+  .health-dot { width:8px; height:8px; border-radius:999px; background:var(--green); }
+  .health-dot.off { background:var(--text-3); }
+  .unread-dot { width:8px; height:8px; border-radius:999px; background:var(--steel); }
+
+  .card-main { flex:1 1 auto; min-width:0; }
+  .name-row { display:flex; align-items:center; gap:8px; }
+  .name { font-size:18px; font-weight:500; color:var(--text); }
+  .card.unread .name { font-weight:600; }
+  .name.muted { color:var(--text-2); }
+
+  .meta-row { display:flex; align-items:center; gap:7px; flex-wrap:wrap; margin-top:3px; font-size:14px; color:var(--text-2); }
+  .agent-archivist { color:var(--text-2); }
+  .agent-jerv {
+    display:inline-flex; align-items:center; height:20px; padding:0 8px; border-radius:999px;
+    background:var(--violet-tint); color:var(--violet); font-size:12px; font-weight:500;
+  }
+  .agent-curator { color:var(--violet); }
+  .agent-curator .dom { color:var(--text-2); }
+  .dotsep { color:var(--text-3); }
+
+  .status-line { margin-top:4px; font-size:14px; color:var(--text-3); }
+
+  /* unread preview line */
+  .preview {
+    margin-top:8px; font-size:14px; line-height:1.45; color:var(--text-2);
+    display:-webkit-box; -webkit-line-clamp:1; -webkit-box-orient:vertical; overflow:hidden;
+  }
+  .preview-meta { color:var(--text-3); }
+
+  /* right controls */
+  .card-ctrls { flex:0 0 auto; display:flex; flex-direction:column; align-items:center; gap:6px; padding-top:2px; }
+  .sw {
+    width:42px; height:24px; border-radius:999px; background:var(--surface-2);
+    border:1px solid var(--border); position:relative; transition:background var(--dur) ease-out;
+    flex:0 0 auto;
+  }
+  .sw.on { background:color-mix(in srgb, var(--green) 32%, transparent); border-color:transparent; }
+  .knob {
+    position:absolute; top:2px; left:2px; width:18px; height:18px; border-radius:999px;
+    background:var(--text); transition:transform var(--dur) ease-out;
+  }
+  .sw.on .knob { transform:translateX(18px); background:var(--green); }
+
+  .chev {
+    width:44px; height:44px; margin:-10px -8px -10px 0;
+    display:flex; align-items:center; justify-content:center; color:var(--text-3);
+    transition:transform var(--dur) ease-out;
+  }
+  .chev:active { color:var(--text-2); }
+  .card.open .chev { transform:rotate(90deg); }
+
+  /* ---- expanded disclosure ---- */
+  .disclose { border-top:1px solid var(--border); padding:14px 16px; display:none; }
+  .card.open .disclose { display:block; }
+  .blab { font-size:12px; letter-spacing:.06em; text-transform:uppercase; color:var(--text-3); margin:0 0 6px; }
+  .prompt { font-size:14px; line-height:1.5; color:var(--text-2); margin:0 0 16px;
+            background:var(--surface-2); border-radius:12px; padding:11px 12px; }
+  .run-row {
+    display:flex; align-items:center; gap:10px; width:100%; text-align:left;
+    padding:10px 4px; border-radius:10px; min-height:44px;
+  }
+  .run-row:active { background:var(--surface-2); }
+  .run-row + .run-row { border-top:1px solid var(--border); }
+  .run-dot { width:7px; height:7px; border-radius:999px; background:var(--green); flex:0 0 auto; }
+  .run-text { flex:1 1 auto; min-width:0; font-size:14px; color:var(--text);
+              white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .run-meta { flex:0 0 auto; font-size:12px; color:var(--text-3); }
+  .run-chev { color:var(--text-3); flex:0 0 auto; }
+  .new-tag {
+    flex:0 0 auto; font-size:11px; font-weight:600; color:var(--steel);
+    background:var(--steel-tint); border-radius:999px; padding:1px 7px;
+  }
+  .disc-acts { display:flex; gap:8px; margin-top:14px; }
+  .disc-btn {
+    flex:1; height:44px; border-radius:12px; display:flex; align-items:center; justify-content:center; gap:7px;
+    font-size:14px; font-weight:500; background:var(--surface-2); border:1px solid var(--border); color:var(--text);
+  }
+  .disc-btn.run { background:var(--steel-tint); border-color:transparent; color:var(--steel); }
+  .disc-btn:active { opacity:.7; }
+
+  /* ---- empty state ---- */
+  .empty { padding:40px 24px; text-align:center; color:var(--text-2); font-size:15px; }
+
+  /* ---- session overlay ---- */
+  .session {
+    position:absolute; inset:0; background:var(--bg); display:flex; flex-direction:column;
+    transform:translateY(100%); transition:transform 180ms ease-out;
+    z-index:20;
+  }
+  .session.show { transform:translateY(0); }
+  .session-bar { height:56px; flex:0 0 auto; display:flex; align-items:center; gap:6px;
+                 padding:0 8px; border-bottom:1px solid var(--border); }
+  .session-title { font-size:16px; font-weight:500; flex:1; min-width:0;
+                   white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .session-body { flex:1 1 auto; overflow-y:auto; padding:18px 16px; display:flex; flex-direction:column; gap:14px; }
+  .bubble { max-width:84%; padding:11px 13px; border-radius:14px; font-size:15px; line-height:1.45; }
+  .bubble.sys { align-self:flex-start; background:var(--surface-2); color:var(--text-2);
+                border:1px solid var(--border); border-bottom-left-radius:5px; }
+  .bubble.agent { align-self:flex-start; background:var(--surface); color:var(--text);
+                  border:1px solid var(--border); border-bottom-left-radius:5px; }
+  .bubble-label { font-size:12px; color:var(--text-3); margin-bottom:3px; }
+
+  /* ---- toast ---- */
+  .toast {
+    position:absolute; left:16px; right:16px; bottom:20px; z-index:30;
+    background:var(--surface-2); border:1px solid var(--border); border-radius:12px;
+    padding:12px 14px; font-size:14px; color:var(--text); display:flex; align-items:center; gap:9px;
+    transform:translateY(140%); opacity:0; transition:transform var(--dur) ease-out, opacity var(--dur) ease-out;
+  }
+  .toast.show { transform:translateY(0); opacity:1; }
+  .toast svg { color:var(--steel); flex:0 0 auto; }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, .session, .toast { transition:none !important; }
+  }
+</style>
+</head>
+<body>
+<div class="phone" id="phone">
+  <!-- top bar -->
+  <div class="topbar">
+    <button class="icon-btn" aria-label="Back">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+    </button>
+    <h1 class="topbar-title">Tasks</h1>
+    <button class="icon-btn" aria-label="New task">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
+    </button>
+    <button class="icon-btn" aria-label="Refresh">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/></svg>
+    </button>
+  </div>
+
+  <!-- segmented New · All -->
+  <div class="seg-wrap">
+    <div class="seg-row" role="tablist" aria-label="Task filter">
+      <button class="seg on" id="seg-new" role="tab" aria-selected="true">
+        New <span class="seg-count" id="count-new">2</span>
+      </button>
+      <button class="seg" id="seg-all" role="tab" aria-selected="false">
+        All <span class="seg-count" id="count-all">3</span>
+      </button>
+    </div>
+  </div>
+
+  <!-- New segment header strip -->
+  <div class="new-head" id="new-head">
+    <span class="new-head-label">Fresh results</span>
+    <button class="markall" id="markall">Mark all read</button>
+  </div>
+
+  <!-- list -->
+  <div class="list" id="list"></div>
+
+  <!-- session overlay -->
+  <div class="session" id="session" aria-hidden="true">
+    <div class="session-bar">
+      <button class="icon-btn" id="session-back" aria-label="Back to tasks">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+      </button>
+      <h2 class="session-title" id="session-title">Session</h2>
+    </div>
+    <div class="session-body" id="session-body"></div>
+  </div>
+
+  <!-- toast -->
+  <div class="toast" id="toast">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>
+    <span id="toast-text"></span>
+  </div>
+</div>
+
+<script>
+(() => {
+  "use strict";
+
+  // ---- sample data (shared scenario across all three mockups) ----
+  const TASKS = [
+    {
+      id: "t-email", name: "Email overview", agent: "archivist",
+      schedule: "Daily · 07:00", status: "scheduled · next in 7h", enabled: true,
+      health: "ok", viewed: false,
+      prompt: "Look at all emails with the last 24 hours with the label triaged/high. Make a daily brief of emails that you consider needing action, or important. Do not include things like Amazon order updates, or routine emails. Present as a nice bulleted action item your list.",
+      runs: [
+        { session: "sess-101", summary: "Daily Action Brief — Jun 25–26 2026 (triaged/high): 3 items need a reply…", turns: 7, ago: "7m ago" },
+        { session: "sess-102", summary: "I'm unable to reach Gmail at the moment — the s…", turns: 2, ago: "11m ago" },
+      ],
+    },
+    {
+      id: "t-news", name: "News", agent: "jerv",
+      schedule: "Daily · 07:00", status: "scheduled · next in 7h", enabled: true,
+      health: "ok", viewed: false,
+      prompt: "Scan the day's headlines and give me the top stories, weighted toward what I follow. Note any local items and flag follow-ups from yesterday.",
+      runs: [
+        { session: "sess-201", summary: "Top stories: rate decision held, two local items, one follow-up on the…", turns: 5, ago: "12m ago" },
+      ],
+    },
+    {
+      id: "t-finance", name: "Weekly finance sweep", agent: "curator", domain: "finance",
+      schedule: "Mon · 08:00", status: "scheduled · next in 3d", enabled: true,
+      health: "ok", viewed: true,
+      prompt: "Reconcile the week's transactions against the budget. Flag anything unusual — duplicate charges, subscriptions that changed price, large outflows.",
+      runs: [
+        { session: "sess-301", summary: "Reconciled 4 transactions, flagged 1 subscription up 20%.", turns: 4, ago: "2d ago" },
+      ],
+    },
+  ];
+
+  let filter = "new"; // "new" | "all"
+  const openSet = new Set(); // expanded card ids
+
+  const els = {
+    list: document.getElementById("list"),
+    segNew: document.getElementById("seg-new"),
+    segAll: document.getElementById("seg-all"),
+    countNew: document.getElementById("count-new"),
+    countAll: document.getElementById("count-all"),
+    newHead: document.getElementById("new-head"),
+    markall: document.getElementById("markall"),
+    session: document.getElementById("session"),
+    sessionTitle: document.getElementById("session-title"),
+    sessionBody: document.getElementById("session-body"),
+    sessionBack: document.getElementById("session-back"),
+    toast: document.getElementById("toast"),
+    toastText: document.getElementById("toast-text"),
+  };
+
+  const unreadCount = () => TASKS.filter(t => !t.viewed).length;
+
+  function svgChevR() {
+    return '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>';
+  }
+
+  function agentMarkup(t) {
+    if (t.agent === "archivist") return '<span class="agent-archivist">Archivist</span>';
+    if (t.agent === "jerv") return '<span class="agent-jerv">Jerv</span>';
+    if (t.agent === "curator") return '<span class="agent-curator">Curator<span class="dom"> · ' + t.domain + '</span></span>';
+    return '<span class="agent-archivist">' + t.agent + '</span>';
+  }
+
+  function cardMarkup(t) {
+    const unread = !t.viewed;
+    const open = openSet.has(t.id);
+    const latest = t.runs[0];
+    const cls = ["card"];
+    if (unread) cls.push("unread");
+    if (open) cls.push("open");
+
+    const lead = unread
+      ? '<span class="health-dot' + (t.enabled ? "" : " off") + '"></span><span class="unread-dot" title="unviewed result"></span>'
+      : '<span class="health-dot' + (t.enabled ? "" : " off") + '"></span>';
+
+    const preview = unread
+      ? '<div class="preview">' + escapeHtml(latest.summary) +
+        ' <span class="preview-meta">· ' + latest.turns + ' turns · ' + latest.ago + '</span></div>'
+      : '';
+
+    const runRows = t.runs.map((r, i) =>
+      '<button class="run-row" data-session="' + r.session + '" data-task="' + t.id + '">' +
+        '<span class="run-dot"></span>' +
+        '<span class="run-text">' + escapeHtml(r.summary) + '</span>' +
+        (i === 0 && !t.viewed ? '<span class="new-tag">new</span>' : '') +
+        '<span class="run-meta">' + r.turns + ' turns · ' + r.ago + '</span>' +
+        '<span class="run-chev">' + svgChevR() + '</span>' +
+      '</button>'
+    ).join("");
+
+    return (
+      '<div class="' + cls.join(" ") + '" data-card="' + t.id + '">' +
+        '<div class="card-body" data-body="' + t.id + '">' +
+          '<div class="lead">' + lead + '</div>' +
+          '<div class="card-main">' +
+            '<div class="name-row"><span class="name' + (unread ? "" : " muted") + '">' + escapeHtml(t.name) + '</span></div>' +
+            '<div class="meta-row">' + agentMarkup(t) + '<span class="dotsep">·</span><span>' + t.schedule + '</span></div>' +
+            '<div class="status-line">' + t.status + '</div>' +
+            preview +
+          '</div>' +
+          '<div class="card-ctrls">' +
+            '<button class="sw' + (t.enabled ? " on" : "") + '" role="switch" aria-checked="' + t.enabled + '" data-toggle="' + t.id + '" aria-label="Enable ' + escapeHtml(t.name) + '"><span class="knob"></span></button>' +
+            '<button class="chev" data-chev="' + t.id + '" aria-label="' + (open ? "Collapse" : "Expand") + ' ' + escapeHtml(t.name) + '" aria-expanded="' + open + '">' +
+              '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>' +
+            '</button>' +
+          '</div>' +
+        '</div>' +
+        '<div class="disclose">' +
+          '<p class="blab">Prompt</p>' +
+          '<div class="prompt">' + escapeHtml(t.prompt) + '</div>' +
+          '<p class="blab">Recent runs → sessions</p>' +
+          runRows +
+          '<div class="disc-acts">' +
+            '<button class="disc-btn" data-edit="' + t.id + '">' +
+              '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>Edit</button>' +
+            '<button class="disc-btn run" data-runnow="' + t.id + '">' +
+              '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3l14 9-14 9V3Z"/></svg>Run now</button>' +
+          '</div>' +
+        '</div>' +
+      '</div>'
+    );
+  }
+
+  function escapeHtml(s) {
+    return s.replace(/[&<>"']/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[c]));
+  }
+
+  function visibleTasks() {
+    // unread sort to the top; viewed below (only matters for "All")
+    const sorted = TASKS.slice().sort((a, b) => (a.viewed === b.viewed) ? 0 : (a.viewed ? 1 : -1));
+    return filter === "new" ? sorted.filter(t => !t.viewed) : sorted;
+  }
+
+  function render() {
+    // counts
+    els.countNew.textContent = unreadCount();
+    els.countAll.textContent = TASKS.length;
+
+    // segment active state
+    const isNew = filter === "new";
+    els.segNew.classList.toggle("on", isNew);
+    els.segAll.classList.toggle("on", !isNew);
+    els.segNew.setAttribute("aria-selected", String(isNew));
+    els.segAll.setAttribute("aria-selected", String(!isNew));
+    els.newHead.style.display = (isNew && unreadCount() > 0) ? "flex" : "none";
+
+    const tasks = visibleTasks();
+    if (isNew && tasks.length === 0) {
+      els.list.innerHTML = '<div class="empty">No new results — every task is up to date.</div>';
+      return;
+    }
+
+    let html = "";
+    if (!isNew) {
+      const unread = tasks.filter(t => !t.viewed);
+      const read = tasks.filter(t => t.viewed);
+      if (unread.length) html += '<div class="sect">New</div>' + unread.map(cardMarkup).join("");
+      if (read.length) html += '<div class="sect">Up to date</div>' + read.map(cardMarkup).join("");
+    } else {
+      html = tasks.map(cardMarkup).join("");
+    }
+    els.list.innerHTML = html;
+  }
+
+  // ---- interactions ----
+  els.segNew.addEventListener("click", () => { filter = "new"; render(); });
+  els.segAll.addEventListener("click", () => { filter = "all"; render(); });
+
+  els.markall.addEventListener("click", () => {
+    TASKS.forEach(t => t.viewed = true);
+    filter = "all";
+    render();
+    showToast("All results marked read.");
+  });
+
+  els.list.addEventListener("click", (e) => {
+    const target = e.target;
+
+    // toggle enable switch
+    const sw = target.closest("[data-toggle]");
+    if (sw) {
+      const t = TASKS.find(x => x.id === sw.dataset.toggle);
+      t.enabled = !t.enabled;
+      render();
+      return;
+    }
+
+    // chevron expand/collapse (explicit, separate from body tap)
+    const chev = target.closest("[data-chev]");
+    if (chev) {
+      const id = chev.dataset.chev;
+      openSet.has(id) ? openSet.delete(id) : openSet.add(id);
+      render();
+      return;
+    }
+
+    // a run row inside the disclosure opens its session
+    const runRow = target.closest("[data-session]");
+    if (runRow) {
+      const t = TASKS.find(x => x.id === runRow.dataset.task);
+      openSession(t, runRow.dataset.session);
+      return;
+    }
+
+    // Edit / Run now (no-op feedback in the mock)
+    if (target.closest("[data-edit]")) { showToast("Opening editor…"); return; }
+    if (target.closest("[data-runnow]")) { showToast("Running now — a new session will appear."); return; }
+
+    // body tap on an unread card → open latest session in one tap
+    const body = target.closest("[data-body]");
+    if (body) {
+      const t = TASKS.find(x => x.id === body.dataset.body);
+      if (!t.viewed) openSession(t, t.runs[0].session);
+    }
+  });
+
+  function openSession(task, sessionId) {
+    const run = task.runs.find(r => r.session === sessionId) || task.runs[0];
+    els.sessionTitle.textContent = run.summary;
+    els.sessionBody.innerHTML =
+      '<div class="bubble sys">opened session ' + sessionId + '</div>' +
+      '<div class="bubble agent"><div class="bubble-label">' +
+        (task.agent.charAt(0).toUpperCase() + task.agent.slice(1)) + ' · ' + run.turns + ' turns</div>' +
+        escapeHtml(run.summary) + '</div>' +
+      '<div class="bubble agent">(transcript placeholder — the full agent run renders here.)</div>';
+    els.session.classList.add("show");
+    els.session.setAttribute("aria-hidden", "false");
+
+    // opening marks the task viewed → leaves New, count drops, style calms
+    if (!task.viewed) {
+      task.viewed = true;
+      render();
+    }
+  }
+
+  els.sessionBack.addEventListener("click", () => {
+    els.session.classList.remove("show");
+    els.session.setAttribute("aria-hidden", "true");
+  });
+
+  let toastTimer = null;
+  function showToast(msg) {
+    els.toastText.textContent = msg;
+    els.toast.classList.add("show");
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => els.toast.classList.remove("show"), 4000);
+  }
+
+  render();
+})();
+</script>
+</body>
+</html>
