@@ -14547,9 +14547,9 @@ input.ld-title {
   animation: spin 1.1s linear infinite;
 }
 
-/* The always-visible "latest result" band docked at the card's foot (Direction C):
-   a one-tap dock to the newest run's session. Recessed on --surface-2; an unviewed
-   result carries a steel left-edge accent + NEW pill, viewed relaxes. */
+/* The "latest result" band docked at the card's foot (Direction C): a one-tap dock
+   to the newest run's session, shown only while that result is unviewed (steel
+   left-edge accent + NEW pill). Recessed on --surface-2; it disappears once viewed. */
 .task-band {
   position: relative;
   display: flex;
@@ -14594,7 +14594,6 @@ button.task-band:active {
 .task-bd.new {
   background: var(--steel);
 }
-.task-bd.viewed,
 .task-bd.idle {
   background: var(--text-3);
 }
@@ -14618,7 +14617,6 @@ button.task-band:active {
 .task-band.unviewed .task-bt {
   color: var(--text);
 }
-.task-band.viewed .task-bt,
 .task-band.empty .task-bt {
   color: var(--text-2);
 }
