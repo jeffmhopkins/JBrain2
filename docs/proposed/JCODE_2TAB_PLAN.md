@@ -11,8 +11,11 @@ mocks were presented and **Variant A — full-bleed terminal**
    and the read-only terminal-log tab. The interactive shell becomes the single
    primary surface; Variant A maximizes its space (slim 1-line header, owner actions
    in a `⋯` menu, terminal fills the rest).
-2. **Terminal = plain login shell** in the checkout (run `claude` yourself), model
-   pinned as today.
+2. **Terminal = plain login shell** in the checkout (run a coding CLI yourself —
+   `claude` or `grok`), model pinned as today. Both CLIs are installed in the image and
+   pinned to the on-box coder: `claude` via the `claude-shim` Anthropic↔OpenAI
+   translator, `grok` (grok-dev) straight at the gateway's OpenAI `/v1` (no shim — it's
+   OpenAI-compatible and the gateway is OpenAI-native).
 3. **Terminal exit pauses the session.** Exiting the shell (Ctrl-D / `exit`) kills the
    session's processes and marks it **`stopped`**, but **keeps the on-disk checkout**
    (uncommitted work preserved). It can be **restarted from the session manager** (or

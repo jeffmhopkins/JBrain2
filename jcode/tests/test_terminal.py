@@ -124,17 +124,20 @@ def test_spawn_shell_applies_model_env_overrides(tmp_path) -> None:
     # never defaults to a cloud model the on-box gateway can't serve.
     pid, fd = spawn_shell(str(tmp_path), env_overrides=model_env("qwen3-coder-next-q8"))
     try:
-        os.write(fd, b"echo M=$ANTHROPIC_MODEL H=$ANTHROPIC_DEFAULT_HAIKU_MODEL\n")
+        os.write(fd, b"echo M=$ANTHROPIC_MODEL H=$ANTHROPIC_DEFAULT_HAIKU_MODEL"
+                     b" G=$GROK_MODEL\n")
         out = _read_until(fd, b"M=qwen3-coder-next-q8")
         assert b"M=qwen3-coder-next-q8" in out
         assert b"H=qwen3-coder-next-q8" in out
+        assert b"G=qwen3-coder-next-q8" in out
     finally:
         _close_child(pid, fd)
 
 
 def test_model_env_pins_every_tier() -> None:
-    # All four tier aliases (opus/sonnet/haiku/fable) plus the main model resolve to the
-    # one served route — the CLI must never request a tier the gateway doesn't have.
+    # All four Claude tier aliases (opus/sonnet/haiku/fable) + the main model, plus the
+    # Grok CLI's GROK_MODEL, resolve to the one served route — no CLI may ever request a
+    # tier/model the single-model gateway doesn't have.
     env = model_env("qwen3-coder-next")
     assert set(env) == {
         "ANTHROPIC_MODEL",
@@ -142,6 +145,7 @@ def test_model_env_pins_every_tier() -> None:
         "ANTHROPIC_DEFAULT_SONNET_MODEL",
         "ANTHROPIC_DEFAULT_HAIKU_MODEL",
         "ANTHROPIC_DEFAULT_FABLE_MODEL",
+        "GROK_MODEL",
     }
     assert all(v == "qwen3-coder-next" for v in env.values())
 
