@@ -197,6 +197,45 @@ into their own bubbles. Tapping a bubble drills into a **local member force sim*
 (capped, with a `+N more` sheet); a breadcrumb collapses back. *Best for:*
 global structure + seeing the domain firewalls as distinct communities.
 
+## M1 enhancement round (N1–N3) — zoom + edge predicates + type filter
+
+The user picked **M1 (Local Force)** as the favourite and asked for three
+additions: the graph must **zoom**, connections must carry **predicate labels**,
+and you must be able to **filter to entity types**. All three of these start from
+`graph-m1-local-force.html` verbatim — same local force sim over the capped 1–2
+hop neighbourhood (never a hairball), type-tinted icon discs with ≥44px hit
+halos, re-focus walk + breadcrumb, draggable sheet, search — and add the three
+features in a different style. All add anchor-invariant **zoom** (wheel / pinch /
+double-tap + a `+ / fit / −` cluster).
+
+### N1 — Labeled & Zoomable (`graph-n1-labeled-zoom.html`)
+The clean, production-leaning take. Predicate text **rides along each edge**
+(rotated upright, halo'd, humanized "worksFor" → "works for"), focal edges always
+labelled and the rest fading in as you zoom; labels counter-scale to stay
+screen-constant. Entity types live in a **horizontally-scrollable chip rail**
+(colour swatch + count) under the breadcrumb — tap a chip to add/remove that
+whole type from the local neighbourhood. *Best for:* the most direct, lowest-risk
+upgrade of the chosen design.
+
+### N2 — Predicate Edges (`graph-n2-predicate-edges.html`)
+Relationships as the hero — the graph reads like sentences. Every connection
+wears a **directional predicate pill** (Me —works for→ Globex) with an arrowhead;
+reciprocal pairs collapse. Zoom controls pill **density** (focal-only at overview
+→ all pills as you zoom in), pills counter-scale to stay readable. Entity types
+toggle from an **expandable filter panel** with per-type counts, an "only this
+type" quick action, and reset. Node cap is tuned down so the pills have room.
+*Best for:* when the *predicates* are the content you're reading, not just the
+nodes.
+
+### N3 — Type Lens (`graph-n3-type-lens.html`)
+Entity-type filtering as the spine. A persistent **Type Lens** chip cloud gives
+each type three states: **on**, **off** (tap to thin the neighbourhood), and
+**solo** (a dedicated ◎ target / long-press that ghosts every other type to
+spotlight how the focal connects to just People, or just Places). Predicates
+reveal **on demand** — tap an edge (fat invisible hit line) to pin its label, and
+all labels also auto-fade-in past a zoom threshold. *Best for:* exploring "how do
+I connect to X *kind* of thing" and de-noising a mixed neighbourhood.
+
 ## Notes for implementation
 
 - All three are reachable from the current `GraphScreen` data contract
