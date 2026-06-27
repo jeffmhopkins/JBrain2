@@ -1,38 +1,42 @@
 # The jcode control server: a Python service (mirroring the supervisor) that
 # manages sandboxed coding sessions driven through an interactive terminal. Each
 # session is a git checkout with a shell; the owner runs a coding CLI — `claude`
-# (Claude Code) or `grok` (grok-dev) — against an on-box coder model. It needs Node +
-# those CLIs and `git` for the per-session checkouts. `claude` reaches the model over
-# ANTHROPIC_BASE_URL (the claude-shim translator); `grok`, being OpenAI-compatible,
-# over GROK_BASE_URL straight at the gateway — both set by compose, no cloud.
+# (Claude Code) or `grok` (xAI's official Grok Build) — against an on-box coder model. It
+# needs Node (for `claude`) + `git` for the per-session checkouts; `grok` is a standalone
+# binary (no runtime). `claude` reaches the model over ANTHROPIC_BASE_URL (the claude-shim
+# translator); `grok` over an OpenAI-compatible base_url (~/.grok/config.toml, written from
+# env by /etc/profile.d/grok-config.sh) straight at the gateway — both local, no cloud.
 FROM python:3.12-slim
 
 COPY --from=ghcr.io/astral-sh/uv:0.8.17 /uv /uvx /usr/local/bin/
 
-# grok-dev's bin is `#!/usr/bin/env bun`, so the sandbox needs the Bun runtime. Install
-# bun's global packages into /usr/local (already on PATH) so both `bun` and the `grok`
-# shim land where the login shell finds them without a PATH edit.
-ENV BUN_INSTALL=/usr/local
-
-# git: per-session checkouts. nodejs/npm: `@anthropic-ai/claude-code` (`claude`) + `bun`,
-# the runtime the Grok CLI needs. bun: installs `grok-dev` (`grok`) the way its docs
-# prescribe (`bun add -g`), so its bun-native deps (@opentui) resolve correctly.
+# git: per-session checkouts. nodejs/npm: the `@anthropic-ai/claude-code` (`claude`) CLI.
+# Grok Build (`grok`) is xAI's official agent — a standalone precompiled binary (no Node
+# or Bun), installed below into /usr/local/bin (on PATH for the login shell).
 # cloudflared: the per-session web-preview quick-tunnel (Wave J4) — a single binary,
 # no Cloudflare account/config (TryCloudflare). The release name matches dpkg's arch.
 # PINNED to a fixed release (not `latest`) so the image is reproducible — this is the
 # one binary that opens an outbound public tunnel, so its provenance matters (review
 # SF3). Bump deliberately; verify the published checksum when you do.
 ARG CLOUDFLARED_VERSION=2024.12.2
+# Grok Build, pinned (provenance matters — a remote binary, like cloudflared). The latest
+# stable is the https://x.ai/cli/stable pointer; bump deliberately.
+ARG GROK_BUILD_VERSION=0.2.67
 RUN apt-get update \
     && apt-get install -y --no-install-recommends git ca-certificates curl gnupg \
     && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
     && apt-get install -y --no-install-recommends nodejs \
-    && npm install -g @anthropic-ai/claude-code bun \
-    && bun add -g grok-dev \
+    && npm install -g @anthropic-ai/claude-code \
+    && GROK_BIN_DIR=/usr/local/bin curl -fsSL https://x.ai/cli/install.sh | bash -s -- "${GROK_BUILD_VERSION}" \
     && curl -fsSL "https://github.com/cloudflare/cloudflared/releases/download/${CLOUDFLARED_VERSION}/cloudflared-linux-$(dpkg --print-architecture)" -o /usr/local/bin/cloudflared \
     && chmod +x /usr/local/bin/cloudflared \
     && apt-get purge -y gnupg && apt-get autoremove -y \
     && rm -rf /var/lib/apt/lists/*
+
+# Login-shell hook: write ~/.grok/config.toml from the GROK_* env so `grok` targets the
+# on-box coder model (and the per-session model pin), not xAI's cloud. /etc/profile.d is
+# sourced by the interactive `/bin/bash -l`.
+COPY grok-config.sh /etc/profile.d/grok-config.sh
 
 WORKDIR /app
 ENV UV_COMPILE_BYTECODE=1 \

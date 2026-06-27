@@ -413,15 +413,16 @@ services:
       ANTHROPIC_DEFAULT_SONNET_MODEL: ${JCODE_MODEL:-qwen3-coder-next}
       ANTHROPIC_DEFAULT_HAIKU_MODEL: ${JCODE_MODEL:-qwen3-coder-next}
       ANTHROPIC_DEFAULT_FABLE_MODEL: ${JCODE_MODEL:-qwen3-coder-next}
-      # The Grok CLI (`grok-dev`) the owner can run in the session shell alongside
-      # `claude`. It's OpenAI-compatible and the on-box gateway is OpenAI-native, so it
-      # points STRAIGHT at the gateway's /v1 — NO claude-shim translation (the shim exists
-      # only because Claude Code speaks Anthropic /v1/messages). Same gateway URL as
-      # JCODE_MODEL_BASE_URL above, with /v1, so the two can't drift. The gateway is
-      # keyless, but the CLI refuses to start without a key, so GROK_API_KEY is a non-empty
-      # placeholder. GROK_MODEL pins the on-box coder (the interactive terminal further
-      # pins it per session with the owner's selected quant, like the ANTHROPIC_* tiers).
-      GROK_BASE_URL: ${JCODE_MODEL_URL:-http://local-llm:8080}/v1
+      # Grok Build (`grok`, xAI's official CLI) the owner can run in the session shell
+      # alongside `claude`. A login-shell hook (/etc/profile.d/grok-config.sh) renders
+      # ~/.grok/config.toml from these vars so `grok` targets the on-box coder over an
+      # OpenAI-compatible base_url — NO claude-shim (that exists only for Claude Code's
+      # Anthropic API). Same gateway URL as JCODE_MODEL_BASE_URL above, with /v1, so the
+      # two can't drift. The gateway is keyless, but a custom base_url makes the CLI send
+      # Authorization: Bearer, so GROK_API_KEY (the config's env_key) is a non-empty
+      # placeholder. GROK_MODEL pins the on-box coder; the interactive terminal further
+      # pins it per session with the owner's selected quant, like the ANTHROPIC_* tiers.
+      GROK_MODELS_BASE_URL: ${JCODE_MODEL_URL:-http://local-llm:8080}/v1
       GROK_API_KEY: ${JCODE_GROK_API_KEY:-sk-local-noauth}
       GROK_MODEL: ${JCODE_MODEL:-qwen3-coder-next}
       # Headless-sandbox hardening for the bundled Claude Code CLI the Agent SDK spawns:
