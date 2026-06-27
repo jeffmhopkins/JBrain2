@@ -79,6 +79,35 @@ def test_tunnel_rewrites_origin_host_header_to_localhost() -> None:
     assert args[args.index("--http-host-header") + 1] == "localhost:5173"
 
 
+# A trimmed cloudflared quick-tunnel log: the URL banner, then a registered connection.
+_URL_LINE = "INF |  https://micro-quite-recorder-allen.trycloudflare.com  |"
+_REGISTERED_LINE = "INF Registered tunnel connection connIndex=0 connection=abc"
+
+
+def test_scan_waits_for_a_registered_connection_before_calling_a_url_ready() -> None:
+    # The URL alone isn't enough — cloudflared prints it before the edge connection
+    # is up, and the hostname won't resolve until then. _scan must not call it ready.
+    url, ready = CloudflaredTunnel._scan([_URL_LINE])
+    assert url == "https://micro-quite-recorder-allen.trycloudflare.com"
+    assert ready is False
+
+    url, ready = CloudflaredTunnel._scan([_URL_LINE, _REGISTERED_LINE])
+    assert url == "https://micro-quite-recorder-allen.trycloudflare.com"
+    assert ready is True
+
+
+def test_failure_message_quotes_cloudflared_output() -> None:
+    # URL printed but never registered → name that exact failure and quote the log tail.
+    msg = CloudflaredTunnel._failure([_URL_LINE, "ERR failed to dial to edge"])
+    assert "no edge connection registered" in msg
+    assert "failed to dial to edge" in msg
+
+    # No URL at all → the other failure mode, still with the tail for diagnosis.
+    msg = CloudflaredTunnel._failure(["ERR registration rate limited"])
+    assert "did not report a tunnel URL" in msg
+    assert "rate limited" in msg
+
+
 async def test_failed_open_tears_down_the_tunnel() -> None:
     """If open() fails after the process spawned, the tunnel is closed, not leaked."""
     closed: list[bool] = []
