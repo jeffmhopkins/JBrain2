@@ -97,6 +97,34 @@ describe("GraphScreen", () => {
     expect(load).toHaveBeenCalledWith("me", 2);
   });
 
+  it("draws every direct connection of the focal — no cap, even for a hub", async () => {
+    // 12 direct neighbours, well past the old cap of 8.
+    const hub: EgoGraph = {
+      root: "me",
+      depth: 0,
+      nodes: [
+        { id: "me", kind: "Person", canonical_name: "Me", status: "confirmed", domain: "general" },
+        ...Array.from({ length: 12 }, (_, i) => ({
+          id: `n${i}`,
+          kind: "Person" as const,
+          canonical_name: `Friend ${i}`,
+          status: "confirmed" as const,
+          domain: "general" as const,
+        })),
+      ],
+      edges: Array.from({ length: 12 }, (_, i) => ({
+        source: "me",
+        target: `n${i}`,
+        predicate: "friend",
+      })),
+    };
+    render(<GraphScreen onOpenEntity={vi.fn()} loadFull={async () => hub} />);
+    await loaded();
+    for (let i = 0; i < 12; i++) {
+      expect(graphNode(`Friend ${i}`)).toBeTruthy();
+    }
+  });
+
   it("labels every connection, not just the focal's own edges", async () => {
     setup();
     await loaded();

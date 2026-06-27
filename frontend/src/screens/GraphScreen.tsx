@@ -183,9 +183,8 @@ const REDUCED = (): boolean =>
 // drive where edges meet the circle.
 const DISC = { 0: 60, 1: 44, 2: 32 } as const;
 const radiusOf = (hop: number) => (hop === 0 ? 30 : hop === 1 ? 22 : 16);
-// First-ring fan: how many neighbours a node shows on the inner ring, and how
-// many of each of theirs reach the outer ring — capped so the phone stays legible.
-const FIRST_CAP = 8;
+// The inner ring shows every direct neighbour (all the focal's connections);
+// the outer ring brings a few of each neighbour's own links for context.
 const SECOND_CAP = 4;
 
 interface Pos {
@@ -409,14 +408,15 @@ export function GraphScreen({
   }, [graph]);
 
   // The local layout for the current focal + type filter, in world coordinates
-  // with the focal pinned at the origin. We select a capped 1–2 hop
-  // neighbourhood (so it never becomes a hairball), excluding any filtered-out
-  // types, then settle it with a small force pass so the map reads organically.
+  // with the focal pinned at the origin. Every direct connection is drawn (the
+  // inner ring is uncapped), plus a little 2-hop context, excluding any
+  // filtered-out types, then settled with a small force pass so it reads
+  // organically.
   const layout = useMemo(() => {
     if (!focal || !nodeById.has(focal)) return new Map<string, Pos>();
     const allowed = (id: string) =>
       id === focal || !typeOff.has(resolveEntityKind(nodeById.get(id)?.kind ?? "Thing"));
-    const first = (adjacency.get(focal) ?? []).filter(allowed).slice(0, FIRST_CAP);
+    const first = (adjacency.get(focal) ?? []).filter(allowed);
     const placed = new Set<string>([focal, ...first]);
     const hop = new Map<string, number>([[focal, 0]]);
     for (const id of first) hop.set(id, 1);
