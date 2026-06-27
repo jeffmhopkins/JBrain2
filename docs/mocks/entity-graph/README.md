@@ -154,6 +154,49 @@ ring. *Trade-off:* a true whole-graph render needs the dot+zoom-label discipline
 (no big icon discs at overview) and a settled/frozen sim on a phone — both
 applied here.
 
+## Mobile force round (M1–M4) — keep the force feel, fix the phone
+
+The V1 Force Map above nails v1's geometry but is a desktop-grade whole-graph
+render: on a 390px screen it's a hairball with overlapping tap targets. These
+four keep a **real force/spring/charge layout** (the explicit ask) but make it
+mobile-native — tap-only, ≥44px hit targets, bottom-sheet detail, and a
+pre-settled sim that **freezes** instead of jittering forever. Each is
+self-contained and shares the design tokens, phone frame, seeded ~158-node
+dataset, and the v1 force engine.
+
+### M1 — Local Force (`graph-m1-local-force.html`)
+Never paints the hairball. A real force sim runs over **only the focal's capped
+1–2 hop neighbourhood** (~20–30 nodes), as type-tinted icon discs with ≥44px
+invisible hit halos. Tapping any node, search result, or a fat relationship row
+in the persistent bottom sheet **re-focuses** — the local map springs/fades into
+the next neighbourhood while a breadcrumb tracks the walk. *Best for:* the force
+feel with zero hairball risk; the closest mobile analogue to today's screen but
+organic instead of a fixed ring.
+
+### M2 — Force + Sheet (`graph-m2-force-sheet.html`)
+The Google-Maps model. A **frozen whole-graph force map** fills the top ~58%
+(small degree-scaled dots, zoom-revealed labels, ≥44px halos); a **persistent
+draggable bottom sheet** below trades map height for list height. Tapping a node
+**flies the camera** to centre it, lights its neighbourhood, and syncs the sheet
+to that entity; tapping a sheet row flies to that neighbour. *Best default* —
+lowest-risk, map and list stay locked together.
+
+### M3 — Fisheye Force (`graph-m3-fisheye.html`)
+Keeps the whole organic map but solves density with a **focus+context lens**: a
+render-time Sarkar–Brown radial fisheye that **spreads + magnifies the cluster
+under your finger** so tight nodes become thumb-tappable, while the periphery
+compresses to stay in context (nothing scrolls off). The lens follows the
+finger (or locks to a node); labels reveal only under it; S/M/L strength.
+*Best for:* exploring a dense map without losing the global picture.
+
+### M4 — Cluster Force Drill (`graph-m4-cluster-force.html`)
+Force at **two tiers**, never the raw hairball. The overview is a force system of
+**community bubbles** (charge + collide, sized by member count); a **Type ⇄
+Domain** toggle splits the firewalled medical / financial / location communities
+into their own bubbles. Tapping a bubble drills into a **local member force sim**
+(capped, with a `+N more` sheet); a breadcrumb collapses back. *Best for:*
+global structure + seeing the domain firewalls as distinct communities.
+
 ## Notes for implementation
 
 - All three are reachable from the current `GraphScreen` data contract
