@@ -1,12 +1,12 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { api } from "../api/client";
-import type { JcodeEvent, JcodeModelStatus, JcodeSession } from "../jcode/types";
+import type { JcodeModelStatus, JcodeSession } from "../jcode/types";
 import { JcodeSessionScreen } from "./JcodeSessionScreen";
 
-// xterm paints to a canvas renderer jsdom lacks, so stub it — the CLI tab's job here is
-// to mount a terminal and open the session's shell socket; the byte wiring is unit-tested
-// in jcode/terminal.test.ts.
+// xterm paints to a canvas renderer jsdom lacks, so stub it — the terminal's job here is to
+// mount and open the session's shell socket; the byte wiring is unit-tested in
+// jcode/terminal.test.ts.
 vi.mock("@xterm/xterm", () => ({
   Terminal: class {
     loadAddon() {}
@@ -28,6 +28,27 @@ vi.mock("@xterm/addon-fit", () => ({
   },
 }));
 
+// The terminal opens a real WebSocket; jsdom has none. A fake records the URLs it dialed,
+// the bytes it sent, and the live instances (so a test can fire `onclose`).
+const wsInstances: FakeWS[] = [];
+const wsUrls: string[] = [];
+const wsSent: Uint8Array[] = [];
+class FakeWS {
+  binaryType = "blob";
+  readyState = 1;
+  onmessage: ((ev: MessageEvent) => void) | null = null;
+  onclose: (() => void) | null = null;
+  onopen: (() => void) | null = null;
+  constructor(url: string) {
+    wsUrls.push(url);
+    wsInstances.push(this);
+  }
+  send(data: Uint8Array) {
+    wsSent.push(data);
+  }
+  close() {}
+}
+
 const MODEL_STATUS: JcodeModelStatus = {
   model: "qwen3-coder-next",
   served: "qwen3-coder-next",
@@ -35,13 +56,22 @@ const MODEL_STATUS: JcodeModelStatus = {
   warming: false,
   hosting: true,
   size_gb: 49.6,
+  context_window: 262144,
   resident: ["qwen3-coder-next"],
 };
 
-// The screen polls model residency on mount; default to settled (not warming) so the bar
-// is hidden (each test overrides for its own case).
 beforeEach(() => {
+  wsInstances.length = 0;
+  wsUrls.length = 0;
+  wsSent.length = 0;
+  vi.stubGlobal("WebSocket", FakeWS);
+  // The screen polls model residency on mount; default to settled (loaded, not warming) so
+  // the terminal mounts straight away (each test overrides for its own case).
   vi.spyOn(api, "jcodeModelStatus").mockResolvedValue(MODEL_STATUS);
+});
+
+afterEach(() => {
+  vi.unstubAllGlobals();
 });
 
 const SESSION: JcodeSession = {
@@ -56,16 +86,21 @@ const SESSION: JcodeSession = {
   last_active_at: "2026-06-25T00:00:00Z",
 };
 
-async function* turn(): AsyncGenerator<JcodeEvent> {
-  yield { type: "run", run_id: "run-1" };
-  yield { type: "text", text: "On it." };
-  yield { type: "tool_use", tool: "Edit", data: { command: "edit src/app.ts" } };
-  yield { type: "tool_result", tool: "Edit", text: "+4 −0", data: { ok: true } };
-  yield { type: "text", text: " Done." };
-  yield { type: "done" };
-}
-
 describe("JcodeSessionScreen", () => {
+  it("opens the session's shell socket in the (default) Terminal tab", async () => {
+    render(<JcodeSessionScreen session={SESSION} onClose={vi.fn()} />);
+    // The terminal mounts via a dynamic import once the coder is resident, then dials the
+    // owner's terminal proxy.
+    await waitFor(() =>
+      expect(wsUrls).toContain(`ws://${window.location.host}/api/jcode/sessions/j1/terminal`),
+    );
+  });
+
+  it("shows the model chip with the full served context (256k)", async () => {
+    render(<JcodeSessionScreen session={SESSION} onClose={vi.fn()} />);
+    expect(await screen.findByText(/qwen3-coder-next · 256k · on-box/)).toBeInTheDocument();
+  });
+
   it("shows the loading bar while the coder warms onto the box", async () => {
     // `warming` drives the bar (not `loaded`, which races true mid-load).
     vi.spyOn(api, "jcodeModelStatus").mockResolvedValue({
@@ -77,21 +112,7 @@ describe("JcodeSessionScreen", () => {
     expect(await screen.findByText(/Loading qwen3-coder-next onto the box/i)).toBeInTheDocument();
   });
 
-  it("shows the loading bar mid-race when the model is listed but still warming", async () => {
-    // The race the fix targets: gateway lists the model (loaded:true) before the warm
-    // task finishes. The bar must follow `warming`, so loaded:true + warming:true → shown.
-    vi.spyOn(api, "jcodeModelStatus").mockResolvedValue({
-      ...MODEL_STATUS,
-      loaded: true,
-      warming: true,
-    });
-    render(<JcodeSessionScreen session={SESSION} onClose={vi.fn()} />);
-    expect(await screen.findByText(/Loading qwen3-coder-next onto the box/i)).toBeInTheDocument();
-  });
-
   it("prompts before swapping when the coder isn't on the box, naming what gets evicted", async () => {
-    // Coder absent + no warm in flight → the load prompt (not the bar), so opening code
-    // mode never silently evicts the resident model. It names what a swap would unload.
     vi.spyOn(api, "jcodeModelStatus").mockResolvedValue({
       ...MODEL_STATUS,
       loaded: false,
@@ -101,7 +122,6 @@ describe("JcodeSessionScreen", () => {
     render(<JcodeSessionScreen session={SESSION} onClose={vi.fn()} />);
     expect(await screen.findByText(/Load qwen3-coder-next onto the box\?/i)).toBeInTheDocument();
     expect(screen.getByText(/will unload gpt-oss-120b/i)).toBeInTheDocument();
-    // The bar is NOT shown yet — we're waiting on the owner's tap.
     expect(screen.queryByText(/Loading qwen3-coder-next onto the box/i)).not.toBeInTheDocument();
   });
 
@@ -116,183 +136,61 @@ describe("JcodeSessionScreen", () => {
 
     fireEvent.click(await screen.findByText("Load model"));
     await waitFor(() => expect(warm).toHaveBeenCalled());
-    // The prompt gives way to the progress bar once the warm is under way.
     expect(await screen.findByText(/Loading qwen3-coder-next onto the box/i)).toBeInTheDocument();
   });
 
-  it("streams a turn into the chat transcript", async () => {
-    vi.spyOn(api, "jcodeTurn").mockImplementation(() => turn());
+  it("sends arrow sequences from the mobile key row", async () => {
     render(<JcodeSessionScreen session={SESSION} onClose={vi.fn()} />);
-
-    fireEvent.change(screen.getByPlaceholderText(/Tell jcode/i), {
-      target: { value: "add a button" },
-    });
-    fireEvent.click(screen.getByLabelText("Send"));
-
-    expect(await screen.findByText("add a button")).toBeInTheDocument();
-    await waitFor(() => expect(screen.getByText(/On it\. Done\./)).toBeInTheDocument());
-    // The tool the turn used renders in the transcript.
-    expect(screen.getByText("edit src/app.ts")).toBeInTheDocument();
-  });
-
-  it("renders the agent's reply as markdown, not raw text", async () => {
-    async function* md(): AsyncGenerator<JcodeEvent> {
-      yield { type: "text", text: "Added the **submit** button." };
-      yield { type: "done" };
-    }
-    vi.spyOn(api, "jcodeTurn").mockImplementation(() => md());
-    render(<JcodeSessionScreen session={SESSION} onClose={vi.fn()} />);
-    fireEvent.change(screen.getByPlaceholderText(/Tell jcode/i), { target: { value: "go" } });
-    fireEvent.click(screen.getByLabelText("Send"));
-
-    // The bold word renders as its own element (markdown parsed) — the literal `**`
-    // syntax is gone, proving we don't dump raw text.
-    const strong = await screen.findByText("submit");
-    expect(strong.tagName).toBe("STRONG");
-    expect(screen.queryByText(/\*\*submit\*\*/)).not.toBeInTheDocument();
-  });
-
-  it("shows a live 'using a tool' status line while a turn runs", async () => {
-    let release: () => void = () => {};
-    const gate = new Promise<void>((r) => {
-      release = r;
-    });
-    async function* held(): AsyncGenerator<JcodeEvent> {
-      yield { type: "run", run_id: "run-7" };
-      yield { type: "tool_use", tool: "Edit", data: { command: "edit src/app.ts" } };
-      await gate; // hold the turn open with the Edit tool in flight
-      yield { type: "tool_result", tool: "Edit", data: { ok: true } };
-      yield { type: "done" };
-    }
-    vi.spyOn(api, "jcodeTurn").mockImplementation(() => held());
-    render(<JcodeSessionScreen session={SESSION} onClose={vi.fn()} />);
-    fireEvent.change(screen.getByPlaceholderText(/Tell jcode/i), { target: { value: "go" } });
-    fireEvent.click(screen.getByLabelText("Send"));
-    // While the Edit tool is in flight, the reused AgentStatusLine names what it's doing.
-    expect(await screen.findByText(/Editing/)).toBeInTheDocument();
-    release();
-  });
-
-  it("shows the model and work-branch in the composer context bar", async () => {
-    render(<JcodeSessionScreen session={SESSION} onClose={vi.fn()} />);
-    // The context bar names what the agent works against: the resolved model + the
-    // sandbox work-branch.
-    expect(await screen.findByText("qwen3-coder-next")).toBeInTheDocument();
-    expect(screen.getByText("jcode/spike")).toBeInTheDocument();
-  });
-
-  it("shows the tool command in the Terminal tab", async () => {
-    vi.spyOn(api, "jcodeTurn").mockImplementation(() => turn());
-    render(<JcodeSessionScreen session={SESSION} onClose={vi.fn()} />);
-    fireEvent.change(screen.getByPlaceholderText(/Tell jcode/i), { target: { value: "go" } });
-    fireEvent.click(screen.getByLabelText("Send"));
-    await screen.findByText(/Done\./);
-
-    fireEvent.click(screen.getByLabelText("Terminal"));
-    expect(screen.getByText(/\$ edit src\/app\.ts/)).toBeInTheDocument();
-  });
-
-  it("opens the session's shell socket when the CLI tab is selected", async () => {
-    const urls: string[] = [];
-    class FakeWS {
-      binaryType = "blob";
-      readyState = 1;
-      onmessage: ((ev: MessageEvent) => void) | null = null;
-      onclose: (() => void) | null = null;
-      constructor(url: string) {
-        urls.push(url);
-      }
-      send() {}
-      close() {}
-    }
-    vi.stubGlobal("WebSocket", FakeWS);
-    try {
-      render(<JcodeSessionScreen session={SESSION} onClose={vi.fn()} />);
-      fireEvent.click(screen.getByLabelText("CLI"));
-      // The terminal mounts via a dynamic import, then dials the owner's terminal proxy.
-      await waitFor(() =>
-        expect(urls).toContain(`ws://${window.location.host}/api/jcode/sessions/j1/terminal`),
-      );
-    } finally {
-      vi.unstubAllGlobals();
-    }
-  });
-
-  it("sends arrow sequences from the mobile key row in the CLI tab", async () => {
-    const sent: Uint8Array[] = [];
-    class FakeWS {
-      binaryType = "blob";
-      readyState = 1;
-      onmessage: ((ev: MessageEvent) => void) | null = null;
-      onclose: (() => void) | null = null;
-      send(data: Uint8Array) {
-        sent.push(data);
-      }
-      close() {}
-    }
-    vi.stubGlobal("WebSocket", FakeWS);
-    try {
-      render(<JcodeSessionScreen session={SESSION} onClose={vi.fn()} />);
-      fireEvent.click(screen.getByLabelText("CLI"));
-      // The Up key sends the cursor-up sequence straight to the shell once the terminal
-      // has mounted (dynamic import) and the socket is attached.
-      const up = await screen.findByLabelText("Up");
-      fireEvent.click(up);
-      await waitFor(() => expect(sent.length).toBeGreaterThan(0));
-      expect(sent[0]).toEqual(new TextEncoder().encode("\x1b[A"));
-    } finally {
-      vi.unstubAllGlobals();
-    }
+    const up = await screen.findByLabelText("Up");
+    fireEvent.click(up);
+    await waitFor(() => expect(wsSent.length).toBeGreaterThan(0));
+    expect(wsSent[0]).toEqual(new TextEncoder().encode("\x1b[A"));
   });
 
   it("arms and disarms the Ctrl modifier on the mobile key row", async () => {
-    class FakeWS {
-      binaryType = "blob";
-      readyState = 1;
-      onmessage: ((ev: MessageEvent) => void) | null = null;
-      onclose: (() => void) | null = null;
-      send() {}
-      close() {}
-    }
-    vi.stubGlobal("WebSocket", FakeWS);
-    try {
-      render(<JcodeSessionScreen session={SESSION} onClose={vi.fn()} />);
-      fireEvent.click(screen.getByLabelText("CLI"));
-      const ctrl = await screen.findByText("ctrl");
-      expect(ctrl).toHaveAttribute("aria-pressed", "false");
-      fireEvent.click(ctrl);
-      await waitFor(() => expect(ctrl).toHaveAttribute("aria-pressed", "true"));
-      fireEvent.click(ctrl); // tap again disarms
-      await waitFor(() => expect(ctrl).toHaveAttribute("aria-pressed", "false"));
-    } finally {
-      vi.unstubAllGlobals();
-    }
+    render(<JcodeSessionScreen session={SESSION} onClose={vi.fn()} />);
+    const ctrl = await screen.findByText("ctrl");
+    expect(ctrl).toHaveAttribute("aria-pressed", "false");
+    fireEvent.click(ctrl);
+    await waitFor(() => expect(ctrl).toHaveAttribute("aria-pressed", "true"));
+    fireEvent.click(ctrl); // tap again disarms
+    await waitFor(() => expect(ctrl).toHaveAttribute("aria-pressed", "false"));
   });
 
-  it("cancels the detached server turn when you leave mid-stream (B1)", async () => {
-    let release: () => void = () => {};
-    const gate = new Promise<void>((r) => {
-      release = r;
+  it("shows the stopped state with Restart when the session is paused", async () => {
+    const restart = vi.spyOn(api, "jcodeRestartSession").mockResolvedValue({
+      ...SESSION,
+      status: "ready",
     });
-    async function* slow(): AsyncGenerator<JcodeEvent> {
-      yield { type: "run", run_id: "run-9" };
-      await gate; // hold the turn open until the test releases it
-      yield { type: "done" };
-    }
-    vi.spyOn(api, "jcodeTurn").mockImplementation(() => slow());
-    const cancel = vi.spyOn(api, "cancelJcodeRun").mockResolvedValue();
-    const onClose = vi.fn();
-    render(<JcodeSessionScreen session={SESSION} onClose={onClose} />);
+    render(<JcodeSessionScreen session={{ ...SESSION, status: "stopped" }} onClose={vi.fn()} />);
+    expect(await screen.findByText("Session stopped")).toBeInTheDocument();
+    fireEvent.click(screen.getByText("Restart session"));
+    await waitFor(() => expect(restart).toHaveBeenCalledWith("j1"));
+    // After restart the terminal mounts and dials the shell socket.
+    await waitFor(() =>
+      expect(wsUrls).toContain(`ws://${window.location.host}/api/jcode/sessions/j1/terminal`),
+    );
+  });
 
-    fireEvent.change(screen.getByPlaceholderText(/Tell jcode/i), { target: { value: "go" } });
-    fireEvent.click(screen.getByLabelText("Send"));
-    // The run event flows first (Stop replaces Send while busy), capturing the run id.
-    await waitFor(() => expect(screen.getByLabelText("Stop")).toBeInTheDocument());
+  it("pauses the session when the shell exits (the socket closes while mounted)", async () => {
+    render(<JcodeSessionScreen session={SESSION} onClose={vi.fn()} />);
+    await waitFor(() => expect(wsInstances.length).toBeGreaterThan(0));
+    // The control server closes the socket when the shell exits → the screen shows stopped.
+    const ws = wsInstances[wsInstances.length - 1];
+    ws?.onclose?.();
+    expect(await screen.findByText("Session stopped")).toBeInTheDocument();
+  });
 
-    fireEvent.click(screen.getByLabelText("Back to sessions"));
-    expect(onClose).toHaveBeenCalled();
-    await waitFor(() => expect(cancel).toHaveBeenCalledWith("run-9"));
-    release();
+  it("stops the session from the actions menu", async () => {
+    const stop = vi.spyOn(api, "jcodeStopSession").mockResolvedValue({
+      ...SESSION,
+      status: "stopped",
+    });
+    render(<JcodeSessionScreen session={SESSION} onClose={vi.fn()} />);
+    fireEvent.click(screen.getByLabelText("Session actions"));
+    fireEvent.click(screen.getByText("Stop session"));
+    await waitFor(() => expect(stop).toHaveBeenCalledWith("j1"));
+    expect(await screen.findByText("Session stopped")).toBeInTheDocument();
   });
 
   it("opens a web preview tunnel from the Preview tab", async () => {
@@ -303,7 +201,7 @@ describe("JcodeSessionScreen", () => {
     });
     render(<JcodeSessionScreen session={SESSION} onClose={vi.fn()} />);
 
-    fireEvent.click(screen.getByLabelText("Preview"));
+    fireEvent.click(screen.getByRole("tab", { name: "Preview" }));
     fireEvent.click(await screen.findByText("Open preview tunnel"));
     expect(await screen.findByText("https://demo-x.trycloudflare.com")).toBeInTheDocument();
   });
@@ -311,15 +209,16 @@ describe("JcodeSessionScreen", () => {
   it("shows a disabled state when preview is off", async () => {
     vi.spyOn(api, "jcodePreviewStatus").mockResolvedValue({ enabled: false, url: null });
     render(<JcodeSessionScreen session={SESSION} onClose={vi.fn()} />);
-    fireEvent.click(screen.getByLabelText("Preview"));
+    fireEvent.click(screen.getByRole("tab", { name: "Preview" }));
     expect(await screen.findByText(/isn't enabled/i)).toBeInTheDocument();
   });
 
-  it("arms a tap-again confirm before deleting", async () => {
+  it("arms a tap-again confirm before deleting (from the actions menu)", async () => {
     const del = vi.spyOn(api, "jcodeDeleteSession").mockResolvedValue();
     const onClose = vi.fn();
     render(<JcodeSessionScreen session={SESSION} onClose={onClose} />);
 
+    fireEvent.click(screen.getByLabelText("Session actions"));
     fireEvent.click(screen.getByText("Delete"));
     expect(screen.getByText(/Tap again/)).toBeInTheDocument();
     expect(del).not.toHaveBeenCalled();
@@ -339,9 +238,9 @@ describe("JcodeSessionScreen", () => {
       token: "sekret",
     });
     render(<JcodeSessionScreen session={SESSION} onClose={vi.fn()} />);
-    fireEvent.click(screen.getByText("Share")); // open the manager
+    fireEvent.click(screen.getByLabelText("Session actions"));
+    fireEvent.click(screen.getByText("Share link…"));
     fireEvent.click(await screen.findByText("Create link"));
-    // The minted URL is shown once; copying it writes the /jcode/s/{sid}#t=token link.
     expect(await screen.findByText("Copy link")).toBeInTheDocument();
     fireEvent.click(screen.getByText("Copy link"));
     await waitFor(() =>
@@ -350,11 +249,9 @@ describe("JcodeSessionScreen", () => {
     expect(api.jcodeMintShare).toHaveBeenCalledWith("j1", 24);
   });
 
-  it("hides the owner controls (Reset / Delete / Share) in shared mode", () => {
+  it("hides the owner actions menu and skips the model poll in shared mode", () => {
     render(<JcodeSessionScreen session={SESSION} onClose={vi.fn()} shared />);
-    expect(screen.queryByText("Share")).not.toBeInTheDocument();
-    expect(screen.queryByText("Reset")).not.toBeInTheDocument();
-    expect(screen.queryByText("Delete")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Session actions")).not.toBeInTheDocument();
     // The owner-only model-status poll is skipped — a share principal would 403 it.
     expect(api.jcodeModelStatus).not.toHaveBeenCalled();
   });

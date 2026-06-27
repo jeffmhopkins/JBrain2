@@ -15355,6 +15355,135 @@ button.task-band:active {
   flex: none;
 }
 
+/* 2-tab session (Variant A): the slim header lets the session info take the row, the ⋯
+   actions menu holds Reset/Share/Stop/Delete, and the terminal stage gets everything
+   below the two-tab bar. */
+.jcode-bar .jcode-sesshead {
+  flex: 1;
+  overflow: hidden;
+}
+.jcode-menuwrap {
+  position: relative;
+  flex: none;
+}
+.jcode-menu {
+  position: absolute;
+  right: 0;
+  top: 40px;
+  z-index: 20;
+  min-width: 184px;
+  padding: 5px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.45);
+}
+.jcode-menu-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  color: var(--text);
+  font: inherit;
+  font-size: 14px;
+  padding: 10px 11px;
+  border-radius: 8px;
+}
+.jcode-menu-item:hover {
+  background: var(--surface);
+}
+.jcode-menu-item.danger {
+  color: var(--rose);
+}
+.jcode-menu-sep {
+  height: 1px;
+  background: var(--border);
+  margin: 4px 6px;
+}
+
+.jcode-tabs2 {
+  flex: none;
+  display: flex;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+}
+.jcode-tab2 {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  height: 38px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--text-2);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+}
+.jcode-tab2.term.on {
+  background: var(--surface-2);
+  color: var(--text);
+}
+.jcode-tab2.prev.on {
+  background: var(--location-tint);
+  color: var(--teal);
+  border-color: color-mix(in srgb, var(--teal) 40%, var(--border));
+}
+
+/* The terminal stage: fills the screen below the tabs and hosts either the live terminal
+   or a load / loading / stopped overlay in its place. */
+.jcode-stage {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.jcode-stage > .jcode-clipanel,
+.jcode-stage > .jcode-panel {
+  flex: 1;
+  min-height: 0;
+}
+.jcode-overlay {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 26px;
+  color: var(--text-2);
+  background: #0b0b0c;
+}
+.jcode-overlay > svg {
+  color: var(--text-3);
+}
+.jcode-overlay h3 {
+  margin: 10px 0 4px;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+}
+.jcode-overlay p {
+  margin: 0 0 16px;
+  font-size: 13px;
+  line-height: 1.55;
+  max-width: 300px;
+}
+.jcode-overlay .jcode-modelask,
+.jcode-overlay .jcode-modelload {
+  width: 100%;
+  max-width: 320px;
+  margin: 0;
+  text-align: left;
+}
+
 /* session actions row */
 .jcode-actions {
   flex: none;

@@ -22,11 +22,9 @@ import type {
   SessionCreate,
   TranscriptTurn,
 } from "../agent/types";
-import { parseJcodeStream } from "../jcode/stream";
 import type {
   ExternalMint,
   ExternalSession,
-  JcodeEvent,
   JcodeModelStatus,
   JcodePreview,
   JcodeSession,
@@ -2355,6 +2353,21 @@ export const api = {
     await request(`/api/jcode/sessions/${encodeURIComponent(id)}`, { method: "DELETE" });
   },
 
+  /** Pause a session: the sandbox kills its processes but keeps the checkout, so it can
+   * be restarted. The shell-exit path does this server-side; this is the explicit call. */
+  async jcodeStopSession(id: string): Promise<JcodeSession> {
+    return (
+      await request(`/api/jcode/sessions/${encodeURIComponent(id)}/stop`, { method: "POST" })
+    ).json();
+  },
+
+  /** Resume a paused session (its checkout is still on disk). */
+  async jcodeRestartSession(id: string): Promise<JcodeSession> {
+    return (
+      await request(`/api/jcode/sessions/${encodeURIComponent(id)}/restart`, { method: "POST" })
+    ).json();
+  },
+
   /** Rename a session (the launcher's swipe rail). "" clears the label back to the repo. */
   async jcodeRenameSession(id: string, title: string): Promise<void> {
     await request(`/api/jcode/sessions/${encodeURIComponent(id)}`, jsonInit("PATCH", { title }));
@@ -2368,39 +2381,6 @@ export const api = {
   /** Restore an archived session to the live list (launcher rail). */
   async jcodeUnarchiveSession(id: string): Promise<void> {
     await request(`/api/jcode/sessions/${encodeURIComponent(id)}/unarchive`, { method: "POST" });
-  },
-
-  /** Stream a coding turn. Mirrors `chat`: yields a synthetic `run` event (from the
-   * X-Jcode-Run-Id header) so Stop can cancel server-side, then the parsed frames. */
-  async *jcodeTurn(id: string, prompt: string, signal?: AbortSignal): AsyncGenerator<JcodeEvent> {
-    const response = await request(`/api/jcode/sessions/${encodeURIComponent(id)}/turn`, {
-      ...jsonInit("POST", { prompt }),
-      ...(signal ? { signal } : {}),
-    });
-    const runId = response.headers.get("X-Jcode-Run-Id");
-    if (runId) yield { type: "run", run_id: runId };
-    if (!response.body) return;
-    yield* parseJcodeStream(response.body);
-  },
-
-  /** Reconnect to an in-flight turn (a dropped socket), resuming from `after`. The
-   * backend supports it now; the session screen wires reconnect in a later wave, so
-   * this method is intentionally ahead of its caller. */
-  async *jcodeResume(
-    runId: string,
-    after: number,
-    signal?: AbortSignal,
-  ): AsyncGenerator<JcodeEvent> {
-    const response = await request(
-      `/api/jcode/runs/${encodeURIComponent(runId)}/stream?after=${after}`,
-      { ...(signal ? { signal } : {}) },
-    );
-    if (!response.body) return;
-    yield* parseJcodeStream(response.body);
-  },
-
-  async cancelJcodeRun(runId: string): Promise<void> {
-    await request(`/api/jcode/runs/${encodeURIComponent(runId)}/cancel`, { method: "POST" });
   },
 
   /** Per-session web preview (Wave J4): an ephemeral tunnel to the sandbox dev server. */

@@ -1,25 +1,19 @@
-// Code mode (jcode) — the tabbed session (docs/DESIGN.md "jcode", variant C, icon
-// tabs). One session, four views behind an icon-only segmented control: Chat (the
-// live coding turn over SSE), Terminal (the raw tool/command log derived from the
-// stream), Preview (an ephemeral tunnel to the sandbox dev server, Wave J4), and Diff
-// (a placeholder until the diff feed lands). The Chat tab is the workhorse; it streams
-// api.jcodeTurn frames.
+// Code mode (jcode) — the terminal-first session (docs/DESIGN.md "jcode", 2-tab
+// Variant A, docs/mocks/jcode-session-2tab-a-fullbleed.html). One session, two views:
+// Terminal (a real shell in the sandbox over xterm.js — the way you drive the coder) and
+// Preview (an ephemeral tunnel to the sandbox dev server). A slim header carries the
+// session + model chip; owner actions (Reset / Share / Stop / Delete) live in a ⋯ menu so
+// the terminal gets the whole screen. Exiting the shell pauses the session; Restart (here
+// or from the launcher) resumes it.
 
 import "@xterm/xterm/css/xterm.css";
 import { type MouseEvent, useEffect, useRef, useState } from "react";
-import { AgentStatusLine } from "../agent/FullBrainSurface";
-import { Markdown } from "../agent/markdown";
-import type { AgentStatus } from "../agent/status";
-import { usePacedText } from "../agent/usePacedText";
 import { api } from "../api/client";
 import {
   ChevronLeftIcon,
-  CodeIcon,
-  GitCompareIcon,
   GlobeIcon,
-  MessageIcon,
-  SendIcon,
-  StopIcon,
+  MoreIcon,
+  RefreshIcon,
   TerminalIcon,
 } from "../components/icons";
 import { shareUrl } from "../jcode/share";
@@ -30,113 +24,19 @@ import {
   attachTerminal,
   terminalWsUrl,
 } from "../jcode/terminal";
-import type {
-  JcodeEvent,
-  JcodeModelStatus,
-  JcodePreview,
-  JcodeSession,
-  JcodeShare,
-} from "../jcode/types";
+import type { JcodeModelStatus, JcodePreview, JcodeSession, JcodeShare } from "../jcode/types";
 
 // Rough cold-load read rate (s/GB) for the loading-bar estimate — the bar caps at 96%
 // until the gateway confirms the model resident, then completes.
 const LOAD_SEC_PER_GB = 1.2;
 
-type Tab = "chat" | "diff" | "term" | "cli" | "prev";
+type Tab = "term" | "prev";
 
-interface Tool {
-  tool: string;
-  label: string;
-  done: boolean;
-}
-type Item = { kind: "you"; text: string } | { kind: "jcode"; text: string; tools: Tool[] };
-
-const TABS: { id: Tab; label: string; icon: typeof MessageIcon }[] = [
-  { id: "chat", label: "Chat", icon: MessageIcon },
-  { id: "diff", label: "Diff", icon: GitCompareIcon },
-  { id: "term", label: "Terminal", icon: TerminalIcon },
-  { id: "cli", label: "CLI", icon: CodeIcon },
-  { id: "prev", label: "Preview", icon: GlobeIcon },
-];
-
-// Friendly verb + object per CLI tool the coding agent uses, for the "what's it doing
-// now" status line (mirrors agent/status.ts but for jcode's Claude Code toolset). An
-// unmapped tool still reads sensibly via the generic "Using <name>" fallback.
-const TOOL_VERBS: Record<string, { label: string; emphasis?: string }> = {
-  Read: { label: "Reading", emphasis: "a file" },
-  Write: { label: "Writing", emphasis: "a file" },
-  Edit: { label: "Editing", emphasis: "a file" },
-  MultiEdit: { label: "Editing", emphasis: "files" },
-  Bash: { label: "Running", emphasis: "a command" },
-  Glob: { label: "Finding", emphasis: "files" },
-  Grep: { label: "Searching", emphasis: "the code" },
-  WebFetch: { label: "Fetching", emphasis: "a page" },
-  WebSearch: { label: "Searching", emphasis: "the web" },
-  TodoWrite: { label: "Planning", emphasis: "the work" },
-  Task: { label: "Delegating", emphasis: "a subtask" },
-};
-
-// Derive the live "Thinking… / Editing a file" status for the line above the composer,
-// from the last jcode turn. Returns null when idle. Reuses the chat's AgentStatusLine
-// view (it takes a plain AgentStatus), so jcode reads the same as Full Brain.
-function jcodeStatus(
-  item: Extract<Item, { kind: "jcode" }> | null,
-  busy: boolean,
-): AgentStatus | null {
-  if (!item) return null;
-  if (busy) {
-    const running = item.tools.find((t) => !t.done);
-    if (running) {
-      const v = TOOL_VERBS[running.tool];
-      if (v)
-        return { kind: "tool", label: v.label, ...(v.emphasis ? { emphasis: v.emphasis } : {}) };
-      return { kind: "tool", label: "Using", emphasis: running.tool };
-    }
-    if (item.text) return { kind: "answering", label: "Writing the answer" };
-    return { kind: "thinking", label: "Thinking it through" };
-  }
-  const used = item.tools.length;
-  return {
-    kind: "done",
-    label: used ? `Done · ${used} tool${used > 1 ? "s" : ""} used` : "Done",
-  };
-}
-
-// One assistant turn: markdown-rendered prose (paced into view so a fast local model's
-// block-paste reads as steady typing) plus the CLI tool steps it ran. A sub-component so
-// usePacedText — a hook — runs per item rather than in a map callback.
-function JcodeBubble({
-  item,
-  streaming,
-}: {
-  item: Extract<Item, { kind: "jcode" }>;
-  streaming: boolean;
-}) {
-  const shown = usePacedText(item.text, streaming);
-  return (
-    <div className="jcode-bubble">
-      {shown && <Markdown text={shown} streaming={streaming} />}
-      {item.tools.length > 0 && (
-        <div className="jcode-tools">
-          {item.tools.map((tool, j) => (
-            // biome-ignore lint/suspicious/noArrayIndexKey: append-only tool list
-            <div className={`jcode-tool${tool.done ? " done" : ""}`} key={j}>
-              <span className="jcode-tool-name">{tool.tool}</span>
-              <span className="jcode-tool-label">{tool.label}</span>
-              <span className="jcode-tool-state">{tool.done ? "✓" : "…"}</span>
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-// The bottom helper row for the interactive CLI: keys a soft keyboard can't send on its
-// own (Esc, Tab, arrows) plus sticky Ctrl/Alt that fold the next typed character. Shown
-// only on touch devices (a physical keyboard sends these directly) via CSS. The keys use
-// onMouseDown→preventDefault so tapping never blurs the terminal — the soft keyboard stays
-// up and the modifier applies to the very next keystroke.
+// The bottom helper row for the interactive terminal: keys a soft keyboard can't send on
+// its own (Esc, Tab, arrows) plus sticky Ctrl/Alt that fold the next typed character.
+// Shown only on touch devices (a physical keyboard sends these directly) via CSS. The keys
+// use onMouseDown→preventDefault so tapping never blurs the terminal — the soft keyboard
+// stays up and the modifier applies to the very next keystroke.
 function JcodeKeys({
   mod,
   onKey,
@@ -223,17 +123,20 @@ function JcodeKeys({
   );
 }
 
-// The interactive CLI: a real shell in the sandbox via xterm.js over the terminal WS.
-// xterm is dynamically imported so it (and its CSS) only load when the tab is opened,
-// and so tests can mock it without the canvas renderer touching jsdom. The WS pump +
-// resize wiring lives in jcode/terminal.ts; this just owns the xterm lifecycle and the
-// mobile key row beneath it.
-function JcodeCli({ sid }: { sid: string }) {
+// The interactive terminal: a real shell in the sandbox via xterm.js over the terminal WS.
+// xterm is dynamically imported so it (and its CSS) only load when used, and so tests can
+// mock it without the canvas renderer touching jsdom. The WS pump + resize wiring lives in
+// jcode/terminal.ts; this owns the xterm lifecycle and the mobile key row. `onClosed` fires
+// when the socket closes while still mounted (a shell exit / server pause) — NOT on our own
+// unmount (a tab switch), which sets `disposed` first.
+function JcodeTerminal({ sid, onClosed }: { sid: string; onClosed?: () => void }) {
   const host = useRef<HTMLDivElement>(null);
   const handle = useRef<TerminalHandle | null>(null);
+  const onClosedRef = useRef(onClosed);
+  onClosedRef.current = onClosed;
   // The armed soft-keyboard modifier, mirrored into state so the key row can highlight it
-  // (the handle owns the source of truth and reports changes — including auto-clear after
-  // a key is folded — back through onModifierChange).
+  // (the handle owns the source of truth and reports changes — including auto-clear after a
+  // key is folded — back through onModifierChange).
   const [mod, setMod] = useState<Modifier | null>(null);
   useEffect(() => {
     const el = host.current;
@@ -247,8 +150,6 @@ function JcodeCli({ sid }: { sid: string }) {
       ]);
       if (disposed || !host.current) return;
       const term = new Terminal({
-        // 60% of the former 13px — denser output fits more of a coding session on a
-        // phone screen without horizontal scroll.
         fontSize: 8,
         fontFamily: "ui-monospace, Menlo, Consolas, monospace",
         cursorBlink: true,
@@ -262,7 +163,10 @@ function JcodeCli({ sid }: { sid: string }) {
       const h = attachTerminal(term, ws, setMod);
       handle.current = h;
       ws.onclose = () => {
-        if (!disposed) term.write("\r\n\x1b[2m— shell closed —\x1b[0m\r\n");
+        if (!disposed) {
+          term.write("\r\n\x1b[2m— session ended —\x1b[0m\r\n");
+          onClosedRef.current?.();
+        }
       };
       const onWindowResize = () => fit.fit();
       window.addEventListener("resize", onWindowResize);
@@ -447,6 +351,11 @@ function JcodeShareManager({ sid, onClose }: { sid: string; onClose: () => void 
   );
 }
 
+const TABS: { id: Tab; label: string; icon: typeof TerminalIcon }[] = [
+  { id: "term", label: "Terminal", icon: TerminalIcon },
+  { id: "prev", label: "Preview", icon: GlobeIcon },
+];
+
 export function JcodeSessionScreen({
   session,
   onClose,
@@ -455,17 +364,20 @@ export function JcodeSessionScreen({
   session: JcodeSession;
   onClose: () => void;
   // True when reached via a redeemed share link (not the owner's launcher): owner-only
-  // controls (Reset / Delete / Copy link) are hidden — those routes 403 a share anyway.
+  // controls (Reset / Stop / Delete / Share, the model poll) are hidden — those routes 403
+  // a share principal anyway. Share recipients still get both tabs (terminal + preview).
   shared?: boolean;
 }) {
-  const [tab, setTab] = useState<Tab>("chat");
-  const [items, setItems] = useState<Item[]>([]);
-  const [term, setTerm] = useState<string[]>([]);
-  const [input, setInput] = useState("");
-  const [busy, setBusy] = useState(false);
+  const [tab, setTab] = useState<Tab>("term");
+  const [menuOpen, setMenuOpen] = useState(false);
   const [confirm, setConfirm] = useState<"reset" | "delete" | null>(null);
-  // Whether the share-link manager modal is open (owner mints/lists/revokes links there).
   const [shareOpen, setShareOpen] = useState(false);
+  // Paused (terminal exited / explicit Stop). Seeded from the launcher's status so opening a
+  // stopped session lands on the Restart prompt rather than a dead terminal.
+  const [stopped, setStopped] = useState(session.status === "stopped");
+  const [restarting, setRestarting] = useState(false);
+  // Bumped on restart to force a fresh terminal mount (a new shell + socket).
+  const [mountNonce, setMountNonce] = useState(0);
   const [preview, setPreview] = useState<JcodePreview | null>(null);
   const [pvBusy, setPvBusy] = useState(false);
   const [model, setModel] = useState<JcodeModelStatus | null>(null);
@@ -474,20 +386,13 @@ export function JcodeSessionScreen({
   const [warmRequested, setWarmRequested] = useState(false);
   const [now, setNow] = useState(() => Date.now());
   const loadStart = useRef(Date.now());
-  const runId = useRef<string | null>(null);
-  const abort = useRef<AbortController | null>(null);
 
-  // Poll the coder's warm state so the loading bar tracks the real load while it comes
-  // onto the box. We key the bar off `warming` — the backend's warm-task signal — NOT
-  // `loaded`: the gateway lists a model as resident the moment a load is *requested*, so
-  // `loaded` races true before the weights finish and would hide the bar mid-load. Keep
-  // polling until settled: hosting off, resident with no warm in flight, OR the coder
-  // isn't loaded and no warm is in flight or requested — that last case is the load prompt
-  // awaiting the owner's tap, so we stop and wait rather than spin. Re-armed once the owner
-  // requests the warm. A failed poll just retries.
+  // Poll the coder's warm state so the loading bar tracks the real load while it comes onto
+  // the box. We key the bar off `warming` — the backend's warm-task signal — NOT `loaded`:
+  // the gateway lists a model resident the moment a load is *requested*, so `loaded` races
+  // true before the weights finish. Keep polling until settled. /jcode/model is owner-only,
+  // so a share recipient skips the poll entirely (the chip's default label covers it).
   useEffect(() => {
-    // /jcode/model is owner-only; a share recipient would 403 it forever. Skip the
-    // warm poll entirely in shared mode (the model chip's default label covers it).
     if (shared) return;
     let stale = false;
     let timer: ReturnType<typeof setTimeout>;
@@ -517,9 +422,6 @@ export function JcodeSessionScreen({
   const loading =
     model?.hosting === true && (model.warming === true || (warmRequested && !model.loaded));
 
-  // The owner confirmed the swap: kick the explicit warm, optimistically show the bar, and
-  // let the re-armed poll track it to completion. On failure, fall back to the prompt so
-  // they can retry rather than stare at a stuck bar.
   async function warmModel() {
     setWarmRequested(true);
     setModel((m) => (m ? { ...m, warming: true } : m));
@@ -529,8 +431,8 @@ export function JcodeSessionScreen({
       setWarmRequested(false);
     }
   }
-  // Tick the estimate while loading so the bar advances between polls, and anchor the
-  // estimate to when warming actually began (not screen mount).
+  // Tick the estimate while loading so the bar advances between polls, anchored to when
+  // warming actually began (not screen mount).
   useEffect(() => {
     if (!loading) return;
     loadStart.current = Date.now();
@@ -541,20 +443,11 @@ export function JcodeSessionScreen({
   const elapsedSec = (now - loadStart.current) / 1000;
   const loadPct =
     sizeGb > 0 ? Math.min(96, Math.round((elapsedSec / (sizeGb * LOAD_SEC_PER_GB)) * 100)) : 0;
+  // A friendly served-context label for the model chip ("256k" for the coder's full window).
+  const ctxLabel = model?.context_window ? `${Math.round(model.context_window / 1024)}k` : null;
 
-  // The live coding turn drives the status line above the composer ("Editing a file…").
-  let lastJcode: Extract<Item, { kind: "jcode" }> | null = null;
-  for (let i = items.length - 1; i >= 0; i--) {
-    const it = items[i];
-    if (it && it.kind === "jcode") {
-      lastJcode = it;
-      break;
-    }
-  }
-  const status = jcodeStatus(lastJcode, busy);
-
-  // Fetch the preview status the first time the Preview tab is opened (the feature
-  // flag + any already-live tunnel). Failures leave it null → a neutral empty state.
+  // Fetch the preview status the first time the Preview tab is opened (the feature flag +
+  // any already-live tunnel). Failures leave it null → a neutral empty state.
   useEffect(() => {
     if (tab !== "prev" || preview !== null) return;
     let stale = false;
@@ -590,159 +483,120 @@ export function JcodeSessionScreen({
     }
   }
 
-  function patchLastJcode(fn: (it: Extract<Item, { kind: "jcode" }>) => void) {
-    setItems((prev) => {
-      const next = [...prev];
-      for (let i = next.length - 1; i >= 0; i--) {
-        const it = next[i];
-        if (it && it.kind === "jcode") {
-          const copy = { ...it, tools: [...it.tools] };
-          fn(copy);
-          next[i] = copy;
-          break;
-        }
-      }
-      return next;
-    });
-  }
-
-  async function send() {
-    const prompt = input.trim();
-    if (!prompt || busy) return;
-    setInput("");
-    setBusy(true);
-    setItems((p) => [...p, { kind: "you", text: prompt }, { kind: "jcode", text: "", tools: [] }]);
-    const ctrl = new AbortController();
-    abort.current = ctrl;
+  async function stopSession() {
+    setMenuOpen(false);
+    setStopped(true); // unmounts the terminal (cleanly closing its socket) before/while we ask the server
     try {
-      for await (const ev of api.jcodeTurn(session.id, prompt, ctrl.signal)) {
-        applyEvent(ev);
-      }
+      await api.jcodeStopSession(session.id);
     } catch {
-      // A user-initiated Stop aborts the fetch — that's not a failure, so don't
-      // annotate the bubble; only a genuine drop reads as interrupted (review S3).
-      if (!ctrl.signal.aborted) {
-        patchLastJcode((it) => {
-          it.text += it.text ? "\n\n(stream interrupted)" : "(stream interrupted)";
-        });
-      }
+      // Best-effort: the terminal exit already pauses it server-side in the usual case.
+    }
+  }
+
+  async function restartSession() {
+    setRestarting(true);
+    try {
+      await api.jcodeRestartSession(session.id);
+      setStopped(false);
+      setMountNonce((n) => n + 1); // force a fresh terminal mount
+      setTab("term");
+    } catch {
+      // leave the stopped prompt up so the owner can retry
     } finally {
-      setBusy(false);
-      runId.current = null;
-      abort.current = null;
+      setRestarting(false);
     }
-  }
-
-  function applyEvent(ev: JcodeEvent) {
-    // `done` needs no case — the for-await loop ending IS the completion signal
-    // (finally clears `busy`); we only fold text/tool/error frames here.
-    if (ev.type === "run") {
-      runId.current = ev.run_id;
-      return;
-    }
-    if (ev.type === "text" && ev.text) {
-      patchLastJcode((it) => {
-        it.text += ev.text;
-      });
-    } else if (ev.type === "tool_use") {
-      const label = String(ev.data?.command ?? ev.tool ?? "tool");
-      patchLastJcode((it) => it.tools.push({ tool: ev.tool ?? "tool", label, done: false }));
-      setTerm((t) => [...t, `$ ${label}`]);
-    } else if (ev.type === "tool_result") {
-      patchLastJcode((it) => {
-        const last = it.tools[it.tools.length - 1];
-        if (last) last.done = true;
-      });
-      const out = ev.text || (ev.data?.ok ? "ok" : "");
-      if (out) setTerm((t) => [...t, out]);
-    } else if (ev.type === "error" && ev.text) {
-      patchLastJcode((it) => {
-        it.text += `\n\n⚠ ${ev.text}`;
-      });
-    }
-  }
-
-  function stop() {
-    abort.current?.abort();
-    if (runId.current) void api.cancelJcodeRun(runId.current);
-  }
-
-  // Tearing the screen down (Back/unmount) must not strand a live turn: the turn
-  // runs DETACHED server-side (like /chat), so aborting the fetch alone leaves the
-  // sandbox running it — stop() also fires cancelJcodeRun. The unmount effect aborts
-  // the fetch so the generator can't setState after we're gone (review B1).
-  useEffect(() => () => abort.current?.abort(), []);
-
-  function closeSession() {
-    if (busy) stop();
-    onClose();
   }
 
   async function doConfirm() {
     if (confirm === "reset") {
       await api.jcodeResetSession(session.id);
-      setTerm((t) => [...t, "— sandbox reset —"]);
     } else if (confirm === "delete") {
       await api.jcodeDeleteSession(session.id);
       onClose();
       return;
     }
     setConfirm(null);
+    setMenuOpen(false);
   }
+
+  // The terminal mounts only when the session is live and the coder is ready — otherwise the
+  // stage shows the load prompt / loading bar / stopped state in its place.
+  const showTerminal = tab === "term" && !stopped && !needsLoad && !loading;
 
   return (
     <section className="jcode-screen">
       <header className="jcode-bar">
-        <button
-          type="button"
-          className="icon-btn"
-          onClick={closeSession}
-          aria-label="Back to sessions"
-        >
+        <button type="button" className="icon-btn" onClick={onClose} aria-label="Back to sessions">
           <ChevronLeftIcon size={22} />
         </button>
         <span className="jcode-sesshead">
-          <span className="jcode-sd live" />
+          <span className={`jcode-sd${stopped ? "" : " live"}`} />
           <span className="jcode-repo">{session.repo || "scratch"}</span>
           <span className="jcode-branch">@ {session.work_branch || session.branch}</span>
         </span>
-        <span className="jcode-modelchip">{model?.model ?? "qwen3-coder-next"} · on-box</span>
+        <span className="jcode-modelchip">
+          {model?.model ?? "qwen3-coder-next"}
+          {ctxLabel ? ` · ${ctxLabel}` : ""} · on-box
+        </span>
+        {!shared && (
+          <span className="jcode-menuwrap">
+            <button
+              type="button"
+              className="icon-btn"
+              aria-label="Session actions"
+              aria-haspopup="menu"
+              aria-expanded={menuOpen}
+              onClick={() => setMenuOpen((o) => !o)}
+            >
+              <MoreIcon size={20} />
+            </button>
+            {menuOpen && (
+              <div className="jcode-menu" role="menu">
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="jcode-menu-item"
+                  onClick={() => (confirm === "reset" ? doConfirm() : setConfirm("reset"))}
+                >
+                  {confirm === "reset" ? "Tap again — wipes changes" : "Reset sandbox"}
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="jcode-menu-item"
+                  onClick={() => {
+                    setMenuOpen(false);
+                    setShareOpen(true);
+                  }}
+                >
+                  Share link…
+                </button>
+                <div className="jcode-menu-sep" />
+                {!stopped && (
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="jcode-menu-item"
+                    onClick={stopSession}
+                  >
+                    Stop session
+                  </button>
+                )}
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="jcode-menu-item danger"
+                  onClick={() => (confirm === "delete" ? doConfirm() : setConfirm("delete"))}
+                >
+                  {confirm === "delete" ? "Tap again — deletes session" : "Delete"}
+                </button>
+              </div>
+            )}
+          </span>
+        )}
       </header>
 
-      {/* Owner-only controls — hidden when reached via a share link (those routes 403
-          a share principal anyway). */}
-      {!shared && (
-        <div className="jcode-actions">
-          <button
-            type="button"
-            className={`jcode-act${confirm === "reset" ? " armed" : ""}`}
-            onClick={() => (confirm === "reset" ? doConfirm() : setConfirm("reset"))}
-          >
-            {confirm === "reset" ? "Tap again — wipes changes" : "Reset"}
-          </button>
-          <button
-            type="button"
-            className={`jcode-act danger${confirm === "delete" ? " armed" : ""}`}
-            onClick={() => (confirm === "delete" ? doConfirm() : setConfirm("delete"))}
-          >
-            {confirm === "delete" ? "Tap again — deletes session" : "Delete"}
-          </button>
-          <button
-            type="button"
-            className="jcode-act"
-            onClick={() => setShareOpen(true)}
-            title="Create a single-use link that opens this session on any browser (time-boxed, revocable)"
-          >
-            Share
-          </button>
-        </div>
-      )}
-
-      {shareOpen && !shared && (
-        <JcodeShareManager sid={session.id} onClose={() => setShareOpen(false)} />
-      )}
-
-      <div className="jcode-tabs" role="tablist" aria-label="Session views">
+      <div className="jcode-tabs2" role="tablist" aria-label="Session views">
         {TABS.map((t) => {
           const Glyph = t.icon;
           return (
@@ -751,195 +605,140 @@ export function JcodeSessionScreen({
               type="button"
               role="tab"
               aria-selected={tab === t.id}
-              aria-label={t.label}
-              title={t.label}
-              className={`jcode-tab ${t.id}${tab === t.id ? " on" : ""}`}
+              className={`jcode-tab2 ${t.id}${tab === t.id ? " on" : ""}`}
               onClick={() => setTab(t.id)}
             >
-              <Glyph size={20} />
+              <Glyph size={17} />
+              {t.label}
             </button>
           );
         })}
       </div>
 
-      {tab === "chat" && (
-        <div className="jcode-panel">
-          {/* The coder isn't on the box — ask before swapping, so we never evict a model
-              the owner is using just by opening code mode. Names what gets unloaded. */}
-          {needsLoad && model && (
-            <div className="jcode-modelask" aria-label="Load model">
-              <div className="jcode-modelask-head">Load {model.model} onto the box?</div>
-              <p className="jcode-modelask-body">
-                Code mode runs the coder on-box (~{Math.round(model.size_gb)} GB, about a minute to
-                load). {(() => {
-                  const evicts = model.resident.filter((r) => r !== model.served);
-                  return evicts.length > 0
-                    ? `Loading it will unload ${evicts.join(", ")}.`
-                    : "Nothing else is loaded right now.";
-                })()}
+      <div className="jcode-stage">
+        {tab === "term" && (
+          <div className="jcode-clipanel">
+            {showTerminal ? (
+              <JcodeTerminal
+                key={`${session.id}:${mountNonce}`}
+                sid={session.id}
+                onClosed={() => setStopped(true)}
+              />
+            ) : stopped ? (
+              <div className="jcode-overlay" aria-label="Session stopped">
+                <RefreshIcon size={40} />
+                <h3>Session stopped</h3>
+                <p>
+                  Processes were halted and the checkout paused — your files are preserved.
+                  {shared
+                    ? " Ask the owner to restart it."
+                    : " Restart to pick up where you left off (also from the session manager)."}
+                </p>
+                {!shared && (
+                  <button
+                    type="button"
+                    className="jcode-act teal"
+                    disabled={restarting}
+                    onClick={restartSession}
+                  >
+                    {restarting ? "Restarting…" : "Restart session"}
+                  </button>
+                )}
+              </div>
+            ) : needsLoad && model ? (
+              <div className="jcode-overlay" aria-label="Load model">
+                <div className="jcode-modelask">
+                  <div className="jcode-modelask-head">Load {model.model} onto the box?</div>
+                  <p className="jcode-modelask-body">
+                    The terminal's <code>claude</code> runs the coder on-box (~
+                    {Math.round(model.size_gb)} GB, about a minute, served at its full{" "}
+                    {ctxLabel ?? "native"} context). {(() => {
+                      const evicts = model.resident.filter((r) => r !== model.served);
+                      return evicts.length > 0
+                        ? `Loading it will unload ${evicts.join(", ")}.`
+                        : "Nothing else is loaded right now.";
+                    })()}
+                  </p>
+                  <button type="button" className="jcode-act teal" onClick={warmModel}>
+                    Load model
+                  </button>
+                </div>
+              </div>
+            ) : loading && model ? (
+              <div className="jcode-overlay" aria-label="Loading model">
+                <div className="jcode-modelload">
+                  <div className="jcode-modelload-row">
+                    <span>Loading {model.model} onto the box…</span>
+                    <span className="jcode-modelload-pct">{loadPct}%</span>
+                  </div>
+                  <div className="jcode-modelload-track">
+                    <div className="jcode-modelload-fill" style={{ width: `${loadPct}%` }} />
+                  </div>
+                </div>
+              </div>
+            ) : null}
+          </div>
+        )}
+
+        {tab === "prev" && (
+          <div className="jcode-panel">
+            {preview === null ? (
+              <p className="jcode-empty">Loading…</p>
+            ) : !preview.enabled ? (
+              <p className="jcode-empty">
+                Web preview isn't enabled on this server. Turn it on with
+                <code> jcode-setup.sh</code> — it opens a temporary tunnel to the sandbox's dev
+                server.
               </p>
-              <button type="button" className="jcode-act teal" onClick={warmModel}>
-                Load model
-              </button>
-            </div>
-          )}
-          {loading && model && (
-            <div className="jcode-modelload" aria-label="Loading model">
-              <div className="jcode-modelload-row">
-                <span>Loading {model.model} onto the box…</span>
-                <span className="jcode-modelload-pct">{loadPct}%</span>
-              </div>
-              <div className="jcode-modelload-track">
-                <div className="jcode-modelload-fill" style={{ width: `${loadPct}%` }} />
-              </div>
-            </div>
-          )}
-          {items.length === 0 ? (
-            <p className="jcode-empty">
-              Tell jcode what to build — it works on the box, in the sandbox.
-            </p>
-          ) : (
-            items.map((it, i) =>
-              it.kind === "you" ? (
-                // biome-ignore lint/suspicious/noArrayIndexKey: append-only transcript, stable order
-                <div className="jcode-msg you" key={i}>
-                  <div className="jcode-bubble you">{it.text}</div>
+            ) : preview.url ? (
+              <div className="jcode-preview">
+                <div className="jcode-pvurl">
+                  <a href={preview.url} target="_blank" rel="noreferrer noopener">
+                    {preview.url}
+                  </a>
+                  <button
+                    type="button"
+                    className="jcode-act"
+                    onClick={() => navigator.clipboard?.writeText(preview.url ?? "")}
+                  >
+                    Copy
+                  </button>
                 </div>
-              ) : (
-                // biome-ignore lint/suspicious/noArrayIndexKey: append-only transcript, stable order
-                <div className="jcode-msg" key={i}>
-                  <JcodeBubble item={it} streaming={busy && i === items.length - 1} />
-                </div>
-              ),
-            )
-          )}
-        </div>
-      )}
-
-      {tab === "term" && (
-        <div className="jcode-panel">
-          <pre className="jcode-term">{term.length === 0 ? "$ █" : `${term.join("\n")}\n$ █`}</pre>
-        </div>
-      )}
-
-      {/* The interactive CLI is mounted only while its tab is open (and remounts per
-          session id) so each session gets its own shell and the socket is torn down on
-          leave. */}
-      {tab === "cli" && (
-        <div className="jcode-panel jcode-clipanel">
-          <JcodeCli key={session.id} sid={session.id} />
-        </div>
-      )}
-
-      {tab === "diff" && (
-        <div className="jcode-panel">
-          <p className="jcode-empty">
-            File changes show here as jcode edits the checkout. (Structured diffs land in a later
-            update.)
-          </p>
-        </div>
-      )}
-
-      {tab === "prev" && (
-        <div className="jcode-panel">
-          {preview === null ? (
-            <p className="jcode-empty">Loading…</p>
-          ) : !preview.enabled ? (
-            <p className="jcode-empty">
-              Web preview isn't enabled on this server. Turn it on with
-              <code> jcode-setup.sh</code> — it opens a temporary tunnel to the sandbox's dev
-              server.
-            </p>
-          ) : preview.url ? (
-            <div className="jcode-preview">
-              <div className="jcode-pvurl">
-                <a href={preview.url} target="_blank" rel="noreferrer noopener">
-                  {preview.url}
-                </a>
+                <p className="jcode-empty">
+                  A temporary tunnel to the sandbox's dev server — dies with the session, never
+                  indexed. Anyone with this URL can reach it while it's live.
+                </p>
                 <button
                   type="button"
-                  className="jcode-act"
-                  onClick={() => navigator.clipboard?.writeText(preview.url ?? "")}
+                  className="jcode-act danger"
+                  disabled={pvBusy}
+                  onClick={closePreview}
                 >
-                  Copy
+                  {pvBusy ? "Stopping…" : "Stop preview"}
                 </button>
               </div>
-              <p className="jcode-empty">
-                A temporary tunnel to the sandbox's dev server — dies with the session, never
-                indexed. Anyone with this URL can reach it while it's live.
-              </p>
-              <button
-                type="button"
-                className="jcode-act danger"
-                disabled={pvBusy}
-                onClick={closePreview}
-              >
-                {pvBusy ? "Stopping…" : "Stop preview"}
-              </button>
-            </div>
-          ) : (
-            <div className="jcode-preview">
-              <p className="jcode-empty">
-                Start your dev server in the sandbox (e.g. <code>npm run dev</code> on{" "}
-                <code>:5173</code>), then open a temporary public URL to it.
-              </p>
-              <button
-                type="button"
-                className="jcode-act teal"
-                disabled={pvBusy}
-                onClick={openPreview}
-              >
-                {pvBusy ? "Opening…" : "Open preview tunnel"}
-              </button>
-            </div>
-          )}
-        </div>
-      )}
-
-      {tab === "chat" && (
-        <div className="jcode-composer">
-          <AgentStatusLine status={status} />
-          <div className="jcode-cbox">
-            <textarea
-              rows={1}
-              placeholder="Tell jcode what to build…"
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && !e.shiftKey) {
-                  e.preventDefault();
-                  void send();
-                }
-              }}
-            />
-            {busy ? (
-              <button type="button" className="jcode-send stop" onClick={stop} aria-label="Stop">
-                <StopIcon size={18} />
-              </button>
             ) : (
-              <button
-                type="button"
-                className="jcode-send"
-                onClick={send}
-                disabled={!input.trim()}
-                aria-label="Send"
-              >
-                <SendIcon size={18} />
-              </button>
+              <div className="jcode-preview">
+                <p className="jcode-empty">
+                  Start your dev server in the sandbox (e.g. <code>npm run dev</code> on{" "}
+                  <code>:5173</code>), then open a temporary public URL to it.
+                </p>
+                <button
+                  type="button"
+                  className="jcode-act teal"
+                  disabled={pvBusy}
+                  onClick={openPreview}
+                >
+                  {pvBusy ? "Opening…" : "Open preview tunnel"}
+                </button>
+              </div>
             )}
           </div>
-          {/* Context bar: what the agent is working against — the model, the sandbox
-              work-branch, and where it runs. (A live context-window meter lands once the
-              turn stream carries token usage.) */}
-          <div className="jcode-cfoot">
-            <span className="jcode-cdot" />
-            <span className="jcode-cmodel">{model?.model ?? "qwen3-coder-next"}</span>
-            <span className="jcode-csep">·</span>
-            <span className="jcode-cbranch">{session.work_branch || session.branch}</span>
-            <span className="jcode-csep">·</span>
-            <span>on-box</span>
-          </div>
-        </div>
+        )}
+      </div>
+
+      {shareOpen && !shared && (
+        <JcodeShareManager sid={session.id} onClose={() => setShareOpen(false)} />
       )}
     </section>
   );
