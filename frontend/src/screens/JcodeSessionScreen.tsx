@@ -563,7 +563,7 @@ export function JcodeSessionScreen({
   const terminalLive = !stopped && !needsLoad && !loading;
 
   return (
-    <section className="jcode-screen">
+    <section className={`jcode-screen${shared ? " jcode-screen--wide" : ""}`}>
       <header className="jcode-bar">
         <button type="button" className="icon-btn" onClick={onClose} aria-label="Back to sessions">
           <ChevronLeftIcon size={22} />
