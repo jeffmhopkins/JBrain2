@@ -96,6 +96,12 @@ services:
       JBRAIN_JCODE_ENABLED: ${JCODE_ENABLED:-false}
       JBRAIN_JCODE_TOKEN: ${JCODE_TOKEN:-}
       JBRAIN_JCODE_MODEL: ${JCODE_MODEL:-qwen3-coder-next}
+      # The external-LLM proxy (owner-minted public endpoints exposing the on-box coder)
+      # forwards to the same claude-shim the sandbox uses, with its master key. The api
+      # already joins the `jcode` network, so it reaches the shim directly. Both empty
+      # off the jcode profile → the proxy fail-closes (no external sessions can connect).
+      JBRAIN_JCODE_SHIM_URL: ${JCODE_ANTHROPIC_BASE_URL:-http://claude-shim:4000}
+      JBRAIN_JCODE_GATEWAY_TOKEN: ${JCODE_GATEWAY_TOKEN:-}
       # Shared secret for the MQTT ingest service identity (JBrain360 M1): the API
       # validates it in /internal/mqtt-auth and the consumer connects with it. Empty
       # disables the identity (fail-closed). Only meaningful with the `mqtt` profile.

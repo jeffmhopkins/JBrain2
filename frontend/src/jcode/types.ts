@@ -38,6 +38,29 @@ export interface JcodeShare {
   redeemed_at: string | null;
 }
 
+// An external-LLM session: a token-gated public endpoint exposing the on-box coder to a
+// remote Claude. `enabled` is the on/off toggle; the counters are cumulative usage.
+export interface ExternalSession {
+  id: string;
+  label: string;
+  enabled: boolean;
+  created_at: string;
+  expires_at: string | null;
+  last_used_at: string | null;
+  in_tokens: number;
+  out_tokens: number;
+  requests: number;
+}
+
+// The mint result — the bearer secret + endpoint URL, shown EXACTLY once.
+export interface ExternalMint {
+  id: string;
+  label: string;
+  expires_at: string | null;
+  token: string;
+  url: string;
+}
+
 export type JcodeEventType = "text" | "tool_use" | "tool_result" | "done" | "error";
 
 // `data` is an opportunistic, optional hint bag the renderer reads when present:

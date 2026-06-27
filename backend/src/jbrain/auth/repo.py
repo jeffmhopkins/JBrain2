@@ -12,7 +12,7 @@ from typing import Any, cast
 from sqlalchemy import CursorResult, func, or_, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from jbrain.auth.service import CapabilityToken, PrincipalInfo
+from jbrain.auth.service import CapabilityToken, ExternalSession, PrincipalInfo
 from jbrain.db.session import SessionContext, scoped_session
 from jbrain.models import DeviceSession, Principal
 
@@ -351,6 +351,109 @@ class SqlAuthRepo:
             )
             return (cast("CursorResult[Any]", result).rowcount or 0) > 0
 
+    async def create_external_llm(
+        self, key_hash: str, label: str, expires_at: datetime | None
+    ) -> ExternalSession:
+        async with scoped_session(self._maker, _BOOTSTRAP) as session:
+            row = Principal(
+                kind="external_llm", key_hash=key_hash, label=label, expires_at=expires_at
+            )
+            session.add(row)
+            await session.flush()
+            return _external_session(row)
+
+    async def find_active_external_llm_by_key_hash(self, key_hash: str) -> PrincipalInfo | None:
+        """Resolve an external-LLM bearer secret, kind-filtered so no other credential
+        authenticates here. Enforces revocation, the suspend (off) toggle, AND a live
+        expiry, and stamps last_used_at. Unknown / revoked / suspended / lapsed / wrong-
+        kind → None."""
+        async with scoped_session(self._maker, _LOGIN) as session:
+            row = (
+                await session.execute(
+                    select(Principal).where(
+                        Principal.key_hash == key_hash,
+                        Principal.kind == "external_llm",
+                        Principal.revoked_at.is_(None),
+                        Principal.suspended_at.is_(None),
+                        or_(Principal.expires_at.is_(None), Principal.expires_at > func.now()),
+                    )
+                )
+            ).scalar_one_or_none()
+            if row is None:
+                return None
+            info = _principal_info(row)
+        async with scoped_session(self._maker, _BOOTSTRAP) as session:
+            await session.execute(
+                update(Principal).where(Principal.id == row.id).values(last_used_at=text("now()"))
+            )
+        return info
+
+    async def list_external_llm(self) -> list[ExternalSession]:
+        async with scoped_session(self._maker, _LOGIN) as session:
+            rows = (
+                await session.execute(
+                    select(Principal)
+                    .where(Principal.kind == "external_llm", Principal.revoked_at.is_(None))
+                    .order_by(Principal.created_at.desc())
+                )
+            ).scalars()
+            return [_external_session(row) for row in rows]
+
+    async def set_external_llm_enabled(self, session_id: str, enabled: bool) -> bool:
+        """Flip the on/off toggle: enabled clears suspended_at, disabled sets it. No-op on
+        an unknown / revoked id (reports no row changed)."""
+        try:
+            pid = uuid.UUID(session_id)
+        except ValueError:
+            return False
+        async with scoped_session(self._maker, _BOOTSTRAP) as session:
+            result = await session.execute(
+                update(Principal)
+                .where(
+                    Principal.id == pid,
+                    Principal.kind == "external_llm",
+                    Principal.revoked_at.is_(None),
+                )
+                .values(suspended_at=None if enabled else text("now()"))
+            )
+            return (cast("CursorResult[Any]", result).rowcount or 0) > 0
+
+    async def revoke_external_llm(self, session_id: str) -> bool:
+        try:
+            pid = uuid.UUID(session_id)
+        except ValueError:
+            return False
+        async with scoped_session(self._maker, _BOOTSTRAP) as session:
+            result = await session.execute(
+                update(Principal)
+                .where(
+                    Principal.id == pid,
+                    Principal.kind == "external_llm",
+                    Principal.revoked_at.is_(None),
+                )
+                .values(revoked_at=text("now()"))
+            )
+            return (cast("CursorResult[Any]", result).rowcount or 0) > 0
+
+    async def add_external_usage(self, session_id: str, in_tokens: int, out_tokens: int) -> None:
+        """Add one call's token usage to the cumulative counters (and bump the request
+        count + last_used_at). Best-effort metering: a bad id simply matches no row."""
+        try:
+            pid = uuid.UUID(session_id)
+        except ValueError:
+            return
+        async with scoped_session(self._maker, _BOOTSTRAP) as session:
+            await session.execute(
+                update(Principal)
+                .where(Principal.id == pid, Principal.kind == "external_llm")
+                .values(
+                    ext_in_tokens=Principal.ext_in_tokens + in_tokens,
+                    ext_out_tokens=Principal.ext_out_tokens + out_tokens,
+                    ext_requests=Principal.ext_requests + 1,
+                    last_used_at=text("now()"),
+                )
+            )
+
 
 def _capability_token(row: Principal) -> CapabilityToken:
     return CapabilityToken(
@@ -362,6 +465,20 @@ def _capability_token(row: Principal) -> CapabilityToken:
         revoked_at=row.revoked_at,
         suspended_at=row.suspended_at,
         redeemed_at=row.redeemed_at,
+    )
+
+
+def _external_session(row: Principal) -> ExternalSession:
+    return ExternalSession(
+        id=str(row.id),
+        label=row.label,
+        enabled=row.suspended_at is None,
+        created_at=row.created_at,
+        expires_at=row.expires_at,
+        last_used_at=row.last_used_at,
+        in_tokens=row.ext_in_tokens,
+        out_tokens=row.ext_out_tokens,
+        requests=row.ext_requests,
     )
 
 

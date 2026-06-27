@@ -50,6 +50,23 @@ class CapabilityToken:
     redeemed_at: datetime | None = None
 
 
+@dataclass(frozen=True)
+class ExternalSession:
+    """An external-LLM session as the owner's management screen sees it. Carries no
+    secret (shown once at mint). `enabled` is the on/off toggle (the inverse of the
+    suspended flag); the counters are cumulative token usage through the public proxy."""
+
+    id: str
+    label: str
+    enabled: bool
+    created_at: datetime
+    expires_at: datetime | None
+    last_used_at: datetime | None
+    in_tokens: int
+    out_tokens: int
+    requests: int
+
+
 class AuthRepo(Protocol):
     async def find_active_principal_by_key_hash(self, key_hash: str) -> PrincipalInfo | None: ...
 
@@ -100,6 +117,22 @@ class AuthRepo(Protocol):
     async def list_jcode_shares(self, session_id: str) -> list[CapabilityToken]: ...
 
     async def revoke_jcode_share(self, share_id: str, session_id: str) -> bool: ...
+
+    async def create_external_llm(
+        self, key_hash: str, label: str, expires_at: datetime | None
+    ) -> ExternalSession: ...
+
+    async def find_active_external_llm_by_key_hash(self, key_hash: str) -> PrincipalInfo | None: ...
+
+    async def list_external_llm(self) -> list[ExternalSession]: ...
+
+    async def set_external_llm_enabled(self, session_id: str, enabled: bool) -> bool: ...
+
+    async def revoke_external_llm(self, session_id: str) -> bool: ...
+
+    async def add_external_usage(
+        self, session_id: str, in_tokens: int, out_tokens: int
+    ) -> None: ...
 
 
 async def login(repo: AuthRepo, owner_key: str, device_label: str) -> str:
@@ -235,3 +268,37 @@ async def rotate_owner_key(repo: AuthRepo) -> str:
     await repo.revoke_principals_of_kind("owner")
     await repo.create_principal("owner", keys.hash_key(key), "owner")
     return key
+
+
+async def mint_external_llm(
+    repo: AuthRepo, label: str, ttl_hours: float | None
+) -> tuple[str, ExternalSession]:
+    """Mint an external-LLM session; returns the bearer secret exactly once alongside
+    its management record. Same capability-token shape (256-bit key, SHA-256 hashed) but
+    kind-tagged ``external_llm``. ``ttl_hours`` is optional — an external endpoint is
+    long-lived, so None means no expiry (the owner controls it via the on/off toggle and
+    revoke instead)."""
+    key = keys.generate_capability_key()
+    expires_at = (
+        datetime.now(UTC) + timedelta(hours=ttl_hours) if ttl_hours and ttl_hours > 0 else None
+    )
+    record = await repo.create_external_llm(keys.hash_token(key), label, expires_at)
+    return key, record
+
+
+async def authenticate_external_llm(repo: AuthRepo, key: str) -> PrincipalInfo | None:
+    """Resolve an external-LLM bearer secret to its principal, or None. Kind-filtered so
+    an owner / device / debug / share key presented here never authenticates; the repo
+    also enforces ``revoked_at IS NULL`` (delete), ``suspended_at IS NULL`` (the off
+    toggle), and a live expiry, and stamps ``last_used_at``. A disabled / revoked /
+    lapsed / wrong-kind / empty key returns None — the proxy then refuses the call."""
+    if not key:
+        return None
+    return await repo.find_active_external_llm_by_key_hash(keys.hash_token(key))
+
+
+async def record_external_usage(
+    repo: AuthRepo, session_id: str, in_tokens: int, out_tokens: int
+) -> None:
+    """Add one proxied call's token usage to an external session's cumulative counters."""
+    await repo.add_external_usage(session_id, max(in_tokens, 0), max(out_tokens, 0))

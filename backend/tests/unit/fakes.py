@@ -6,7 +6,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 
-from jbrain.auth.service import CapabilityToken, PrincipalInfo
+from jbrain.auth.service import CapabilityToken, ExternalSession, PrincipalInfo
 from jbrain.db.session import SessionContext
 from jbrain.devices.repo import DeviceInfo
 from jbrain.locations.pairing import CODE_TTL, RedeemedDevice
@@ -26,6 +26,9 @@ class FakePrincipal:
     suspended_at: datetime | None = None
     jcode_session_id: str = ""
     redeemed_at: datetime | None = None
+    ext_in_tokens: int = 0
+    ext_out_tokens: int = 0
+    ext_requests: int = 0
 
 
 @dataclass
@@ -204,6 +207,53 @@ class FakeAuthRepo:
                 return True
         return False
 
+    async def create_external_llm(
+        self, key_hash: str, label: str, expires_at: datetime | None
+    ) -> ExternalSession:
+        p = FakePrincipal(str(uuid.uuid4()), "external_llm", key_hash, label, expires_at=expires_at)
+        self.principals.append(p)
+        return _external(p)
+
+    async def find_active_external_llm_by_key_hash(self, key_hash: str) -> PrincipalInfo | None:
+        now = datetime.now(UTC)
+        for p in self.principals:
+            live = p.expires_at is None or p.expires_at > now
+            if (
+                p.key_hash == key_hash
+                and p.kind == "external_llm"
+                and not p.revoked
+                and p.suspended_at is None
+                and live
+            ):
+                p.last_used_at = now
+                return _info(p)
+        return None
+
+    async def list_external_llm(self) -> list[ExternalSession]:
+        return [_external(p) for p in self.principals if p.kind == "external_llm" and not p.revoked]
+
+    async def set_external_llm_enabled(self, session_id: str, enabled: bool) -> bool:
+        for p in self.principals:
+            if p.id == session_id and p.kind == "external_llm" and not p.revoked:
+                p.suspended_at = None if enabled else datetime.now(UTC)
+                return True
+        return False
+
+    async def revoke_external_llm(self, session_id: str) -> bool:
+        for p in self.principals:
+            if p.id == session_id and p.kind == "external_llm" and not p.revoked:
+                p.revoked = True
+                return True
+        return False
+
+    async def add_external_usage(self, session_id: str, in_tokens: int, out_tokens: int) -> None:
+        for p in self.principals:
+            if p.id == session_id and p.kind == "external_llm":
+                p.ext_in_tokens += in_tokens
+                p.ext_out_tokens += out_tokens
+                p.ext_requests += 1
+                return
+
 
 def _info(p: FakePrincipal) -> PrincipalInfo:
     return PrincipalInfo(
@@ -225,6 +275,20 @@ def _capability(p: FakePrincipal) -> CapabilityToken:
         revoked_at=p.created_at if p.revoked else None,
         suspended_at=p.suspended_at,
         redeemed_at=p.redeemed_at,
+    )
+
+
+def _external(p: FakePrincipal) -> ExternalSession:
+    return ExternalSession(
+        id=p.id,
+        label=p.label,
+        enabled=p.suspended_at is None,
+        created_at=p.created_at,
+        expires_at=p.expires_at,
+        last_used_at=p.last_used_at,
+        in_tokens=p.ext_in_tokens,
+        out_tokens=p.ext_out_tokens,
+        requests=p.ext_requests,
     )
 
 
