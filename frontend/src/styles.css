@@ -14879,6 +14879,94 @@ button.task-band:active {
   color: var(--steel);
   font-weight: 600;
 }
+/* === reconciler interval (number + unit) editor — binding mock B === */
+.ted-ivlab {
+  margin-top: 16px;
+}
+.ted-ivrow {
+  display: flex;
+  gap: 9px;
+  align-items: center;
+}
+.ted-ivevery {
+  flex: none;
+  font-size: var(--fs-body);
+  color: var(--text-2);
+}
+.ted-ivnum {
+  width: 96px;
+  flex: none;
+  font: inherit;
+  color: var(--text);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-input);
+  padding: 12px 13px;
+  font-size: var(--fs-screen);
+  font-weight: 600;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+.ted-ivunit {
+  flex: 1;
+  font: inherit;
+  color: var(--text);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-input);
+  padding: 12px 13px;
+  font-size: var(--fs-body);
+}
+.ted-ivchips {
+  display: flex;
+  gap: 7px;
+  flex-wrap: wrap;
+  margin-top: 12px;
+}
+.ted-ivchip {
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text-2);
+  font: inherit;
+  font-size: var(--fs-secondary);
+  padding: 7px 13px;
+  border-radius: var(--r-pill);
+  cursor: pointer;
+}
+.ted-ivchip.on {
+  border-color: var(--steel);
+  background: var(--steel-tint);
+  color: var(--steel);
+  font-weight: 600;
+}
+.ted-ivpreview {
+  margin-top: 16px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-input);
+  padding: 12px 13px;
+  font-size: var(--fs-secondary);
+}
+.ted-ivpreview b {
+  color: var(--steel);
+}
+.ted-iverr {
+  margin-top: 10px;
+  color: var(--rose);
+  font-size: var(--fs-secondary);
+}
+.ted-ivguard {
+  margin-top: 12px;
+  background: var(--amber-tint);
+  border: 1px solid color-mix(in srgb, var(--amber) 40%, transparent);
+  border-radius: var(--r-input);
+  padding: 11px 13px;
+  font-size: var(--fs-secondary);
+  color: var(--text);
+}
+.ted-ivguard b {
+  color: var(--amber);
+}
 .ted-deliv {
   display: flex;
   flex-direction: column;
