@@ -145,9 +145,29 @@ class FakeRunner:
         )
 
 
+def _run(task_id: str) -> TaskRunInfo:
+    return TaskRunInfo(
+        id="lr",
+        task_id=task_id,
+        session_id="sess-latest",
+        run_id=None,
+        status="done",
+        trigger="schedule",
+        summary="latest",
+        error=None,
+        step_count=2,
+        cost_tokens=0,
+        started_at=NOW,
+        ended_at=NOW,
+    )
+
+
 class FakeRuns:
     async def list_for_task(self, ctx, task_id, *, limit=20):  # type: ignore[no-untyped-def]
         return []
+
+    async def latest_per_task(self, ctx, task_ids):  # type: ignore[no-untyped-def]
+        return {tid: _run(tid) for tid in task_ids}
 
     async def count_since(self, ctx, since):  # type: ignore[no-untyped-def]
         return 3
@@ -164,8 +184,11 @@ async def test_list_and_create() -> None:
     req = _request(repo)
     out = await tasks_api.list_tasks(req, PRINCIPAL)  # type: ignore[arg-type]
     assert out[0].id == "task-1"
+    # The latest run is embedded so the card's band renders without a per-card fetch.
+    assert out[0].latest_run is not None and out[0].latest_run.session_id == "sess-latest"
     created = await tasks_api.create_task(req, PRINCIPAL, TaskBody(prompt="hi", name="New"))  # type: ignore[arg-type]
     assert created.name == "New"
+    assert created.latest_run is None  # a brand-new task has never run
 
 
 @pytest.mark.asyncio
@@ -175,6 +198,7 @@ async def test_patch_enabled_and_404() -> None:
     patch = tasks_api.EnabledPatch(enabled=False)
     out = await tasks_api.set_enabled(req, PRINCIPAL, "task-1", patch)  # type: ignore[arg-type]
     assert out.enabled is False
+    assert out.latest_run is not None  # a toggle preserves the embedded latest run
     with pytest.raises(HTTPException):
         miss = tasks_api.EnabledPatch(enabled=True)
         await tasks_api.set_enabled(req, PRINCIPAL, "missing", miss)  # type: ignore[arg-type]

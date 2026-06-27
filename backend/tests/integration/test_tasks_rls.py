@@ -234,6 +234,48 @@ async def test_count_since_powers_the_badge(maker: async_sessionmaker) -> None:
     assert await runs.count_since(token, marker) == 0
 
 
+async def test_latest_per_task_returns_the_newest_run(maker: async_sessionmaker) -> None:
+    """The card-band query: one row per task — its most recent run — and nothing for
+    a task that has never run or for a non-owner principal (RLS)."""
+    owner = await _owner_ctx(maker)
+    repo, runs = TaskRepo(maker), TaskRunRepo(maker)
+    t1 = await _make_task(repo, owner, name="one")
+    t2 = await _make_task(repo, owner, name="two")  # never runs → absent from the result
+
+    older = await runs.start(
+        owner,
+        task_id=t1.id,
+        principal_id=owner.principal_id,
+        session_id=None,
+        run_id=None,
+        trigger="schedule",
+    )
+    newer = await runs.start(
+        owner,
+        task_id=t1.id,
+        principal_id=owner.principal_id,
+        session_id=None,
+        run_id=None,
+        trigger="manual",
+    )
+    await runs.finish(owner, newer, status="done", summary="fresh", step_count=3)
+    # Age the first run so DISTINCT ON unambiguously picks the newer one.
+    async with scoped_session(maker, owner) as session:
+        await session.execute(
+            text("UPDATE app.task_runs SET started_at = :t WHERE id = :id"),
+            {"t": datetime.now(UTC) - timedelta(hours=1), "id": older},
+        )
+
+    latest = await runs.latest_per_task(owner, [t1.id, t2.id])
+    assert set(latest) == {t1.id}  # t2 never ran
+    assert latest[t1.id].id == newer and latest[t1.id].summary == "fresh"
+
+    # Empty input short-circuits; a non-owner sees nothing (RLS).
+    assert await runs.latest_per_task(owner, []) == {}
+    token = SessionContext(principal_kind="capability_token", domain_scopes=("general",))
+    assert await runs.latest_per_task(token, [t1.id]) == {}
+
+
 async def test_full_run_lands_session_run_and_task_run(maker: async_sessionmaker) -> None:
     owner = await _owner_ctx(maker)
     repo = TaskRepo(maker)

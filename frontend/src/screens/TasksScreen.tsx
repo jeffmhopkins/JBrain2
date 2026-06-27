@@ -1,8 +1,10 @@
 // The Tasks surface — saved prompts that spawn an agent session on a schedule or on
 // demand (binding mock docs/mocks/tasks-launcher-a-list-editor.html, Direction A).
 // A self-contained full-screen overlay (its own back bar), like Automations. Cards
-// read "agent · schedule" with an enable toggle + next/last-run meta; expanding one
-// loads its recent runs (each links to the session it produced). "＋ New task" rises
+// read "agent · schedule" with an enable toggle + next/last-run meta and a docked
+// "latest result" band — one tap to the newest run's session, a steel NEW signal
+// until viewed (docs/DESIGN.md "Tasks — the result band"). Expanding a card loads
+// its full recent runs (each links to the session it produced). "＋ New task" rises
 // a full-screen editor: prompt, agent (Curator reveals a scope dial), schedule, and
 // delivery. Reflects live state — the cards come from /api/tasks.
 
@@ -91,28 +93,118 @@ function runDot(status: TaskRun["status"]): string {
   return status === "error" ? "failed" : status === "running" ? "running" : "ok";
 }
 
+// Per-task "have I opened the latest run's session?" markers, keyed task id →
+// the started_at of the newest run opened on this device. Device-local like the
+// launcher's TASKS_SEEN_KEY badge (and theme / text size): a task's band reads
+// "new" until its latest run's session has been opened here.
+const TASKS_VIEWED_KEY = "jb.tasks.viewedRunAt";
+
+function loadViewed(): Record<string, string> {
+  try {
+    const raw = localStorage.getItem(TASKS_VIEWED_KEY);
+    return raw ? (JSON.parse(raw) as Record<string, string>) : {};
+  } catch {
+    return {};
+  }
+}
+
+/** A task has an unviewed result when its latest run is newer than the last run
+ * whose session was opened on this device (or none has been). */
+function isUnviewed(task: Task, viewed: Record<string, string>): boolean {
+  const latest = task.latest_run;
+  if (latest === null) return false;
+  const seen = viewed[task.id];
+  return seen === undefined || new Date(seen) < new Date(latest.started_at);
+}
+
+/** The card's always-visible "latest result" band — a one-tap dock to the newest
+ * run's session (Direction C). Unviewed carries the steel left-edge accent + a NEW
+ * pill and full-strength summary; viewed relaxes to a calm "opened ·" line. A task
+ * that has never run shows an inert placeholder; a run without a session is inert. */
+function TaskBand({
+  task,
+  unviewed,
+  onOpenRun,
+}: {
+  task: Task;
+  unviewed: boolean;
+  onOpenRun: (run: TaskRun) => void;
+}) {
+  const latest = task.latest_run;
+  if (latest === null) {
+    return (
+      <div className="task-band empty">
+        <span className="task-bd idle" aria-hidden="true" />
+        <span className="task-bt">No runs yet</span>
+      </div>
+    );
+  }
+  const text =
+    latest.status === "error" ? (latest.error ?? "failed") : latest.summary || "(no output)";
+  const dot =
+    latest.status === "error"
+      ? "failed"
+      : latest.status === "running"
+        ? "running"
+        : unviewed
+          ? "new"
+          : "viewed";
+  const body = (
+    <>
+      <span className={`task-bd ${dot}`} aria-hidden="true" />
+      <span className="task-bt">
+        {unviewed && <span className="task-band-new">NEW</span>}
+        {text}
+      </span>
+      <span className="task-bm">
+        {unviewed ? "" : "opened · "}
+        {latest.step_count > 0
+          ? `${latest.step_count} turn${latest.step_count === 1 ? "" : "s"} · `
+          : ""}
+        {fmtAgo(latest.started_at)}
+      </span>
+    </>
+  );
+  if (latest.session_id === null) {
+    return <div className={`task-band inert ${unviewed ? "unviewed" : "viewed"}`}>{body}</div>;
+  }
+  return (
+    <button
+      type="button"
+      className={`task-band ${unviewed ? "unviewed" : "viewed"}`}
+      onClick={() => onOpenRun(latest)}
+      aria-label={`Open latest session: ${text}`}
+    >
+      {body}
+      <ChevronRightIcon size={15} />
+    </button>
+  );
+}
+
 interface CardProps {
   task: Task;
   open: boolean;
   running: boolean;
+  unviewed: boolean;
   runs: TaskRun[] | null;
   onToggleOpen: () => void;
   onFlip: () => void;
   onRun: () => void;
   onEdit: () => void;
-  onOpenSession: (sessionId: string) => void;
+  onOpenRun: (run: TaskRun) => void;
 }
 
 function TaskCard({
   task,
   open,
   running,
+  unviewed,
   runs,
   onToggleOpen,
   onFlip,
   onRun,
   onEdit,
-  onOpenSession,
+  onOpenRun,
 }: CardProps) {
   const dot = running ? "running" : !task.enabled ? "idle" : "ok";
   return (
@@ -162,7 +254,7 @@ function TaskCard({
                   type="button"
                   key={r.id}
                   className="task-run task-run-link"
-                  onClick={() => onOpenSession(r.session_id as string)}
+                  onClick={() => onOpenRun(r)}
                   aria-label={`Open session: ${r.summary || r.status}`}
                 >
                   <span className={`task-rd ${runDot(r.status)}`} aria-hidden="true" />
@@ -210,6 +302,7 @@ function TaskCard({
           </div>
         </div>
       )}
+      <TaskBand task={task} unviewed={unviewed} onOpenRun={onOpenRun} />
     </div>
   );
 }
@@ -603,6 +696,30 @@ export function TasksScreen({ onClose, onOpenSession }: TasksScreenProps) {
   const [toast, setToast] = useState<string | null>(null);
   const [draft, setDraft] = useState<Draft | null>(null);
   const [saving, setSaving] = useState(false);
+  const [viewed, setViewed] = useState<Record<string, string>>(loadViewed);
+
+  // Opening the newest run's session clears that task's "new" band on this device.
+  const markViewed = useCallback((task: Task) => {
+    const latest = task.latest_run;
+    if (latest === null) return;
+    setViewed((m) => {
+      const next = { ...m, [task.id]: latest.started_at };
+      try {
+        localStorage.setItem(TASKS_VIEWED_KEY, JSON.stringify(next));
+      } catch {
+        // best-effort; a dropped marker just re-shows the band as "new"
+      }
+      return next;
+    });
+  }, []);
+
+  // Open the agent session a run produced; opening the latest run also marks the
+  // task viewed (a run without a session — e.g. an early failure — isn't openable).
+  function openRun(task: Task, run: TaskRun): void {
+    if (run.session_id === null) return;
+    if (task.latest_run !== null && run.id === task.latest_run.id) markViewed(task);
+    onOpenSession(run.session_id, task.agent);
+  }
 
   const refresh = useCallback(async () => {
     setError(null);
@@ -719,12 +836,13 @@ export function TasksScreen({ onClose, onOpenSession }: TasksScreenProps) {
             task={task}
             open={openId === task.id}
             running={running.has(task.id)}
+            unviewed={isUnviewed(task, viewed)}
             runs={openId === task.id ? (runsByTask[task.id] ?? null) : null}
             onToggleOpen={() => toggleOpen(task.id)}
             onFlip={() => void flip(task)}
             onRun={() => void runNow(task)}
             onEdit={() => setDraft(draftFrom(task))}
-            onOpenSession={(sessionId) => onOpenSession(sessionId, task.agent)}
+            onOpenRun={(run) => openRun(task, run)}
           />
         ))}
       </div>

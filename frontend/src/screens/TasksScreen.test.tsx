@@ -1,9 +1,24 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { type Task, type TaskRun, api } from "../api/client";
 import { TasksScreen } from "./TasksScreen";
 
 const FUTURE = new Date(Date.now() + 3600_000).toISOString();
+
+// The latest run the server embeds on the task — drives the always-visible band.
+const LATEST_T1: TaskRun = {
+  id: "lr1",
+  task_id: "t1",
+  session_id: "sess-latest",
+  status: "done",
+  trigger: "schedule",
+  summary: "Daily Action Brief — 3 items need a reply",
+  error: null,
+  step_count: 7,
+  cost_tokens: 200,
+  started_at: new Date(Date.now() - 300_000).toISOString(),
+  ended_at: new Date(Date.now() - 240_000).toISOString(),
+};
 
 const SCHEDULED: Task = {
   id: "t1",
@@ -21,7 +36,8 @@ const SCHEDULED: Task = {
   notify_push: true,
   home_card: true,
   next_run_at: FUTURE,
-  last_run_at: null,
+  last_run_at: LATEST_T1.started_at,
+  latest_run: LATEST_T1,
 };
 
 const MANUAL: Task = {
@@ -31,8 +47,11 @@ const MANUAL: Task = {
   schedule_kind: "on_demand",
   schedule_freq: null,
   next_run_at: null,
+  last_run_at: null,
+  latest_run: null, // never run → inert placeholder band
 };
 
+// An older run, distinct from the embedded latest, returned when a card expands.
 const RUN: TaskRun = {
   id: "r1",
   task_id: "t1",
@@ -57,6 +76,8 @@ function mount(tasks: Task[] = [SCHEDULED, MANUAL]) {
 }
 
 describe("TasksScreen", () => {
+  beforeEach(() => localStorage.clear()); // per-task "viewed" markers are device-local
+
   it("renders the Scheduled and On demand groups", async () => {
     mount();
     expect(await screen.findByText("Morning brief")).toBeInTheDocument();
@@ -81,6 +102,29 @@ describe("TasksScreen", () => {
     fireEvent.click(await screen.findByText("Morning brief"));
     expect(await screen.findByText("Five bullets on overnight news.")).toBeInTheDocument();
     expect(api.taskRuns).toHaveBeenCalledWith("t1");
+  });
+
+  it("shows the latest result on the collapsed card and opens its session in one tap", async () => {
+    const { onOpenSession } = mount();
+    // The band summary is visible without expanding the card.
+    const band = await screen.findByRole("button", { name: /Open latest session/ });
+    expect(screen.getByText("Daily Action Brief — 3 items need a reply")).toBeInTheDocument();
+    fireEvent.click(band);
+    expect(onOpenSession).toHaveBeenCalledWith("sess-latest", "jerv");
+  });
+
+  it("marks a task viewed once its latest session is opened (the NEW flag clears)", async () => {
+    mount();
+    const band = await screen.findByRole("button", { name: /Open latest session/ });
+    expect(screen.getByText("NEW")).toBeInTheDocument();
+    fireEvent.click(band);
+    await waitFor(() => expect(screen.queryByText("NEW")).not.toBeInTheDocument());
+  });
+
+  it("shows an inert placeholder band for a task that has never run", async () => {
+    mount();
+    await screen.findByText("Ad hoc digest");
+    expect(screen.getByText("No runs yet")).toBeInTheDocument();
   });
 
   it("runs a task now", async () => {
@@ -118,10 +162,10 @@ describe("TasksScreen", () => {
     expect(createTask.mock.calls[0]?.[0].domain_scopes).toEqual([]); // a non-KB persona reads nothing
   });
 
-  it("opens the session a run produced", async () => {
+  it("opens the session an older run produced from the expanded history", async () => {
     const { onOpenSession } = mount();
     fireEvent.click(await screen.findByText("Morning brief")); // expand to reveal runs
-    fireEvent.click(await screen.findByRole("button", { name: /Open session/ }));
+    fireEvent.click(await screen.findByRole("button", { name: /^Open session/ }));
     expect(onOpenSession).toHaveBeenCalledWith("s1", "jerv");
   });
 

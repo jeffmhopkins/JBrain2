@@ -1185,6 +1185,44 @@ launcher → live session). The two surfaces went through the mock-first gate
 Both reuse settled paradigms (Chats picker, segmented control, tool-use accordions, the
 preview tunnel), so J3 implements rather than re-litigates them.
 
+## Tasks — the result band (settled in a three-way review; reference mock `docs/mocks/task-session-nav/c-result-band.html`, rivals A "inline latest-run line" + B "unread-inbox reframe" retained under `docs/mocks/task-session-nav/`)
+
+The Tasks screen (saved prompts that spawn an agent session on a schedule;
+authoring + history live in `docs/mocks/tasks-launcher-README.md`) had no way to
+reach a task's latest session, or to tell which task had a fresh one, without
+expanding a card and comparing run timestamps. The fix is a **two-zone card**:
+
+- **The card splits into a config header and a docked "result band".** The header
+  is unchanged (health dot, name, agent badge + schedule, enable toggle, expand
+  chevron). Below it, a **full-width tappable band** — recessed on `--surface-2`,
+  ≥56px — shows the **latest run** as a mini session row: a status dot, the run's
+  summary (2-line clamp), and `N turns · <ago> ›`. Tapping the band **opens that
+  session in one tap**; the band is the primary call-to-action. A task that has
+  never run shows an inert "No runs yet" placeholder; a run without a session
+  (an early failure) renders inert.
+- **Unviewed recognition rides `--steel`** (info/notification — distinct from the
+  green health dot). An unviewed result gets a **3px steel left-edge bar, a NEW
+  pill, and a full-`--text` summary**; once its session is opened the band relaxes
+  — bar and pill gone, summary to `--text-2`, an **"opened ·"** meta prefix.
+  Failures keep a rose dot regardless.
+- **Viewed-state is device-local**, mirroring the launcher's `TASKS_SEEN_KEY`
+  badge (and theme / text size): a `jb.tasks.viewedRunAt` map (task id → the
+  newest opened run's `started_at`). A task reads "new" until its latest run's
+  session is opened **on this device**; opening Tasks does not clear it (only
+  opening the session does). Cross-device read-sync would need a server column
+  and is deliberately deferred — the existing badge set the device-local
+  precedent.
+- **The latest run is embedded in the task payload** (`Task.latest_run`,
+  server-computed via one `DISTINCT ON (task_id)` query) so every band renders
+  from the single `GET /api/tasks` — no per-card fetch. Mutations that return a
+  task (PUT / PATCH) re-embed it so a toggle never blanks the band.
+
+Chosen over **A** (a subtle inline latest-run line — too easy to miss as the
+recognition signal) and **B** (an unread-inbox reframe with a `New · All`
+segmented sort — more screen surgery than the problem warranted, and it buried
+the config behind the disclosure). C keeps the per-card model while making the
+result a first-class, always-visible dock.
+
 ## Implementation rules
 
 1. Tokens live in one file (`frontend/src/styles/tokens.css`); components

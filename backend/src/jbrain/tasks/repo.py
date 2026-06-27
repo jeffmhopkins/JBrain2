@@ -316,6 +316,31 @@ class TaskRunRepo:
                 or 0
             )
 
+    async def latest_per_task(
+        self, ctx: SessionContext, task_ids: Sequence[str]
+    ) -> dict[str, TaskRunInfo]:
+        """The most recent run for each of `task_ids` (by `started_at`), keyed by
+        task id. Tasks that have never run are absent. Backs the Tasks card's
+        always-visible "latest result" band, so the newest session is one tap away
+        without expanding the card."""
+        if not task_ids:
+            return {}
+        ids = [uuid.UUID(t) for t in task_ids]
+        async with scoped_session(self._maker, ctx) as session:
+            rows = (
+                (
+                    await session.execute(
+                        select(TaskRun)
+                        .where(TaskRun.task_id.in_(ids))
+                        .order_by(TaskRun.task_id, TaskRun.started_at.desc())
+                        .distinct(TaskRun.task_id)
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            return {str(r.task_id): _run_info(r) for r in rows}
+
     async def list_for_task(
         self, ctx: SessionContext, task_id: str, *, limit: int = 20
     ) -> list[TaskRunInfo]:
