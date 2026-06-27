@@ -125,6 +125,10 @@ def create_app(
     # registry is torn down with the server.
     terminals = TerminalRegistry()
 
+    # Fire-and-forget tunnel teardowns from the (sync) shell-exit callback. A strong ref
+    # is held until each finishes so the loop can't GC a pending task mid-close.
+    bg_tasks: set[asyncio.Task[None]] = set()
+
     expected_header = f"Bearer {settings.token}"
 
     def require_token(authorization: Annotated[str | None, Header()] = None) -> None:
@@ -165,12 +169,20 @@ def create_app(
 
     @authed.post("/sessions/{sid}/reset")
     async def reset(sid: str) -> dict[str, object]:
+        # Reset wipes the checkout, so the dev server (and whatever the tunnel pointed
+        # at) is gone — drop the tunnel too rather than leave it serving nothing.
+        await preview.close(sid)
         return (await sessions.reset(sid)).public()
 
     @authed.post("/sessions/{sid}/stop")
-    def stop(sid: str) -> dict[str, object]:
+    async def stop(sid: str) -> dict[str, object]:
         """Pause a session: kill its processes, keep the checkout. Mirrors the
         shell-exit path so the launcher can stop a session explicitly."""
+        # cloudflared is a control-server child, not a sandbox process, so stop()'s
+        # process kill doesn't reach it. Closing the tunnel here keeps a paused session
+        # from holding a TryCloudflare quick-tunnel slot — leaked tunnels stack up and
+        # get rate-limited, so new previews never register (only the first resolved).
+        await preview.close(sid)
         return sessions.stop(sid).public()
 
     @authed.post("/sessions/{sid}/restart")
@@ -229,6 +241,12 @@ def create_app(
         def _on_shell_exit(_pid: int) -> None:
             with contextlib.suppress(SessionError):
                 sessions.stop(sid)
+            # Exiting the shell is the common pause path — drop the tunnel too, same as
+            # the /stop route, so a leaked cloudflared can't hold a quick-tunnel slot.
+            # This callback is sync but runs on the server loop, so schedule the close.
+            task = asyncio.create_task(preview.close(sid))
+            bg_tasks.add(task)
+            task.add_done_callback(bg_tasks.discard)
 
         await serve_terminal(
             websocket,
