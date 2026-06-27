@@ -1,5 +1,5 @@
 """llama-swap config generation: filename resolution, the `-c` window (default +
-override), the resident group, and atomic write."""
+override), the co-resident (non-swapping) group, and atomic write."""
 
 from dataclasses import asdict
 from pathlib import Path
@@ -49,7 +49,8 @@ def test_render_stamps_default_windows_and_resolves_files(tmp_path: Path) -> Non
     assert "--port 9100" in text and "--port 9101" in text
     assert "/models/qwen3-vl-30b/model-Q8_0.gguf" in text
     assert "--mmproj /models/qwen3-vl-30b/mmproj-f16.gguf" in text
-    # No resident group unless asked.
+    # No co-resident group unless asked (the render() param defaults off; the box's real
+    # default comes from config/env, exercised separately).
     assert "groups:" not in text
 
 
@@ -100,34 +101,37 @@ def test_render_applies_a_per_model_window_override(tmp_path: Path) -> None:
 def test_render_emits_resident_group_when_enabled(tmp_path: Path) -> None:
     _lay_down(tmp_path)
     text = llama_swap_config.render(_manifest(), str(tmp_path), resident_group=True)
-    assert "groups:" in text and "swap: false" in text
+    # A non-swapping group (validated on-box): both recommended models are members and
+    # co-reside (swap: false / exclusive: false).
+    assert "groups:" in text and "swap: false" in text and "exclusive: false" in text
     assert "- qwen3-vl-30b-a3b" in text and "- gpt-oss-120b" in text
 
 
 def test_render_pins_staged_models_into_the_swap_group(tmp_path: Path) -> None:
-    # Staging is what pins: with resident_group off (the box default), the staged
-    # set alone forms the non-swapping group so both models stay co-resident.
+    # Staging adds a model to the co-resident group: both stay loaded together even with
+    # resident_group off (the recommended set's own membership is what the flag gates).
     _lay_down(tmp_path)
     text = llama_swap_config.render(
-        _manifest(), str(tmp_path), pinned=["qwen3-vl-30b", "gpt-oss-120b"]
+        _manifest(), str(tmp_path), resident_group=False, pinned=["qwen3-vl-30b", "gpt-oss-120b"]
     )
     assert "groups:" in text and "swap: false" in text
     assert "- qwen3-vl-30b-a3b" in text and "- gpt-oss-120b" in text
 
 
 def test_render_pins_a_single_staged_model(tmp_path: Path) -> None:
-    # A lone staged model still pins itself — its served_model is the only member,
-    # and the other model is absent from the group (free to swap).
+    # A lone staged model is the only group member; the other model is absent (free to swap).
     _lay_down(tmp_path)
-    text = llama_swap_config.render(_manifest(), str(tmp_path), pinned=["gpt-oss-120b"])
+    text = llama_swap_config.render(
+        _manifest(), str(tmp_path), resident_group=False, pinned=["gpt-oss-120b"]
+    )
     assert "groups:" in text and "- gpt-oss-120b" in text
     assert "- qwen3-vl-30b-a3b" not in text
 
 
 def test_render_no_group_when_nothing_pinned_or_recommended(tmp_path: Path) -> None:
-    # The box default: resident_group off, nothing staged → no group, all swappable.
+    # resident_group off and nothing staged → no group, every model swaps alone.
     _lay_down(tmp_path)
-    text = llama_swap_config.render(_manifest(), str(tmp_path), pinned=[])
+    text = llama_swap_config.render(_manifest(), str(tmp_path), resident_group=False, pinned=[])
     assert "groups:" not in text
 
 

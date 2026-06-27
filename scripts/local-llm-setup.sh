@@ -94,6 +94,14 @@ MANIFEST="$(catalog -m jbrain.llm.local_catalog "${IDS[@]}")"
 [ -n "$MANIFEST" ] || { echo "[local-llm] empty manifest — aborting before download." >&2; exit 1; }
 
 mkdir -p "$MODELS_DIR"
+# Own the dir by the api container's appuser uid (pinned to 1000 in backend/Dockerfile)
+# so the NON-root api can re-stamp llama-swap.yaml at runtime — when the operator stages
+# a model or edits a context window in Settings, the api rewrites the config in place.
+# Without this the re-stamp fails with EACCES (the dir is root-owned from the sudo setup +
+# the root download/config containers) and staging silently never reaches the gateway.
+# Root (the --user 0 install/sync writes below) can still write into a uid-1000-owned dir;
+# only the top dir needs it (the api just replaces the top-level yaml, never the weights).
+chown 1000 "$MODELS_DIR"
 
 # Download weights with the official huggingface_hub CLI in a throwaway container;
 # only the --include globs from the manifest are pulled. Shared with the update
@@ -112,9 +120,10 @@ MANIFEST="$MANIFEST" DOWNLOAD_CONTAINER="$DOWNLOAD_CONTAINER" \
 # reports to the PWA's context meter). The gateway paths inside the cmd are the
 # gateway-container view (/models/...), which is the same host dir.
 say "Writing $MODELS_DIR/llama-swap.yaml"
-# --user 0: the weights dir is root-owned (this script + the root download
-# container), but the api image runs as non-root appuser and can't create the
-# config there. Write as root, matching the weights.
+# --user 0: the downloaded WEIGHTS are root-owned (this script + the root download
+# container), so the install write runs as root to read them when resolving globs.
+# The top dir itself is chowned to appuser (above), so the runtime re-stamp from the
+# non-root api still works — root writing the initial config into that dir is fine.
 docker compose run --rm --no-deps -T --user 0 \
   -e MANIFEST="$MANIFEST" \
   -e LOCAL_LLM_RESIDENT_GROUP="${LOCAL_LLM_RESIDENT_GROUP:-}" \

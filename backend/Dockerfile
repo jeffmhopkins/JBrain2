@@ -21,7 +21,11 @@ RUN uv sync --frozen --no-dev
 
 ENV PATH="/app/.venv/bin:$PATH"
 
-RUN useradd --create-home appuser
+# Pinned uid: the host bind-mounts the local-models dir into this container, and
+# scripts/local-llm-setup.sh chowns that host dir to this same uid so the non-root
+# app can re-stamp llama-swap.yaml on a settings change (staging, a context-window
+# edit). A drifting uid would silently re-break that write, so fix it here.
+RUN useradd --create-home --uid 1000 appuser
 # Pre-own the mount points so the named volumes inherit write access. Without
 # this the volume mounts as root and the non-root app can't write — the tile
 # cache in particular would fail every write, blanking the location basemap.
