@@ -24,6 +24,7 @@ from starlette.websockets import WebSocketDisconnect
 
 from jcode_ctl.sessions import SessionManager
 from jcode_ctl.terminal import (
+    TerminalRegistry,
     _close_child,
     _set_winsize,
     kill_processes_in_dir,
@@ -38,11 +39,13 @@ from jcode_ctl.workspace import FakeWorkspace
 class _FakeWS:
     """A minimal stand-in for the Starlette WebSocket serve_terminal drives: it plays a
     scripted set of inbound messages, then blocks `receive()` until `close()` is called
-    (mirroring a socket that disconnects once the server closes it)."""
+    (mirroring a socket that disconnects once the server closes it). Records the bytes
+    it was sent and whether it was closed (so a takeover is observable)."""
 
     def __init__(self, script: list[dict[str, object]]) -> None:
         self._script = list(script)
         self._closed = asyncio.Event()
+        self.closed = False
         self.sent: list[bytes] = []
 
     async def receive(self) -> dict[str, object]:
@@ -55,39 +58,152 @@ class _FakeWS:
         self.sent.append(data)
 
     async def close(self) -> None:
+        self.closed = True
         self._closed.set()
+
+
+async def _wait_sent(ws: _FakeWS, needle: bytes, timeout: float = 5.0) -> None:
+    """Spin until ``needle`` shows up in the bytes ``ws`` was sent (output is async)."""
+    end = asyncio.get_event_loop().time() + timeout
+    while asyncio.get_event_loop().time() < end:
+        if needle in b"".join(ws.sent):
+            return
+        await asyncio.sleep(0.02)
+    raise AssertionError(f"{needle!r} never sent; got {b''.join(ws.sent)!r}")
+
+
+async def _wait_until(predicate, timeout: float = 5.0) -> None:
+    end = asyncio.get_event_loop().time() + timeout
+    while asyncio.get_event_loop().time() < end:
+        if predicate():
+            return
+        await asyncio.sleep(0.02)
+    raise AssertionError("condition not met in time")
 
 
 async def test_serve_terminal_pauses_on_shell_exit(tmp_path) -> None:
     # The headline distinction: a real shell exit (the user types `exit` / Ctrl-D) EOFs
     # the PTY, so on_shell_exit fires → the route pauses the session.
+    registry = TerminalRegistry()
     exited: list[int] = []
     ws = _FakeWS([{"type": "websocket.receive", "bytes": b"exit\n"}])
-    await asyncio.wait_for(
-        serve_terminal(
-            ws,  # type: ignore[arg-type]
-            str(tmp_path),
-            on_shell_exit=lambda pid: exited.append(pid),
-        ),
-        timeout=10,
-    )
+    try:
+        await asyncio.wait_for(
+            serve_terminal(
+                ws,  # type: ignore[arg-type]
+                "s1",
+                registry,
+                str(tmp_path),
+                on_shell_exit=lambda pid: exited.append(pid),
+            ),
+            timeout=10,
+        )
+    finally:
+        registry.close_all()
     assert exited  # the shell exit was detected and would pause the session
+    assert registry.get("s1") is None  # an exited shell is dropped from the registry
 
 
-async def test_serve_terminal_socket_drop_does_not_pause(tmp_path) -> None:
-    # A browser socket drop (tab switch / background) must NOT pause the session — the
-    # shell never exited, so on_shell_exit must not fire.
+async def test_serve_terminal_socket_drop_keeps_the_shell_running(tmp_path) -> None:
+    # A browser socket drop (tab switch / leaving the app) must NOT pause the session —
+    # the shell never exited, so on_shell_exit must not fire AND the PTY stays alive,
+    # detached, in the registry so a reconnect reattaches to it.
+    registry = TerminalRegistry()
     exited: list[int] = []
     ws = _FakeWS([{"type": "websocket.disconnect"}])
-    await asyncio.wait_for(
-        serve_terminal(
-            ws,  # type: ignore[arg-type]
-            str(tmp_path),
-            on_shell_exit=lambda pid: exited.append(pid),
-        ),
-        timeout=10,
+    try:
+        await asyncio.wait_for(
+            serve_terminal(
+                ws,  # type: ignore[arg-type]
+                "s1",
+                registry,
+                str(tmp_path),
+                on_shell_exit=lambda pid: exited.append(pid),
+            ),
+            timeout=10,
+        )
+        assert exited == []
+        term = registry.get("s1")
+        assert term is not None and term.alive  # the detached shell is still running
+        assert term.attached is None  # ...but nobody is driving it
+    finally:
+        registry.close_all()
+
+
+async def test_shell_persists_across_reconnect_and_replays_scrollback(tmp_path) -> None:
+    # The detached-shell promise: leave (disconnect), the shell keeps running, and a
+    # reconnect reattaches to the SAME shell (no new pid) and replays the scrollback.
+    registry = TerminalRegistry()
+    pids: list[int] = []
+    resize = '{"resize": {"rows": 40, "cols": 80}}'
+    ws1 = _FakeWS(
+        [
+            {"type": "websocket.receive", "text": resize},
+            {"type": "websocket.receive", "bytes": b"echo PERSIST_MARKER\n"},
+        ]
     )
-    assert exited == []
+    t1 = asyncio.ensure_future(
+        serve_terminal(
+            ws1,  # type: ignore[arg-type]
+            "s1",
+            registry,
+            str(tmp_path),
+            model="qwen3-coder-next",
+            preview_port=5173,
+            on_open=lambda p: pids.append(p),
+        )
+    )
+    try:
+        await _wait_sent(ws1, b"PERSIST_MARKER")  # the command ran while attached
+        await ws1.close()  # leave the app — disconnect the socket
+        await asyncio.wait_for(t1, timeout=10)
+
+        term = registry.get("s1")
+        assert term is not None and term.alive  # shell survived the disconnect
+        assert pids == [term.pid]
+
+        ws2 = _FakeWS([])  # reconnect: a fresh xterm with no history of its own
+        t2 = asyncio.ensure_future(
+            serve_terminal(
+                ws2,  # type: ignore[arg-type]
+                "s1",
+                registry,
+                str(tmp_path),
+                on_open=lambda p: pids.append(p),
+            )
+        )
+        await _wait_sent(ws2, b"PERSIST_MARKER")  # the earlier output is replayed
+        assert pids == [term.pid]  # reattached to the same shell — on_open not re-fired
+        await ws2.close()
+        await asyncio.wait_for(t2, timeout=10)
+    finally:
+        registry.close_all()
+
+
+async def test_second_client_takes_over_and_closes_the_first(tmp_path) -> None:
+    # One driver at a time: a second connect takes over the shell and closes the first
+    # socket, so two browsers can't fight over one PTY.
+    registry = TerminalRegistry()
+    ws1 = _FakeWS([])  # connect and stay attached (no scripted disconnect)
+    t1 = asyncio.ensure_future(
+        serve_terminal(ws1, "s1", registry, str(tmp_path))  # type: ignore[arg-type]
+    )
+    try:
+        await _wait_until(lambda: getattr(registry.get("s1"), "attached", None) is ws1)
+
+        ws2 = _FakeWS([])
+        t2 = asyncio.ensure_future(
+            serve_terminal(ws2, "s1", registry, str(tmp_path))  # type: ignore[arg-type]
+        )
+        await asyncio.wait_for(t1, timeout=10)  # the takeover closed ws1 → t1 returns
+
+        assert ws1.closed  # the first socket was closed by the takeover
+        term = registry.get("s1")
+        assert term is not None and term.attached is ws2  # the new client drives now
+        await ws2.close()
+        await asyncio.wait_for(t2, timeout=10)
+    finally:
+        registry.close_all()
 
 
 def _read_until(fd: int, needle: bytes, timeout: float = 5.0) -> bytes:

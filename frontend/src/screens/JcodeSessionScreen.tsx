@@ -127,12 +127,20 @@ function JcodeKeys({
 // The interactive terminal: a real shell in the sandbox via xterm.js over the terminal WS.
 // xterm is dynamically imported so it (and its CSS) only load when used, and so tests can
 // mock it without the canvas renderer touching jsdom. The WS pump + resize wiring lives in
-// jcode/terminal.ts; this owns the xterm lifecycle and the mobile key row. `onClosed` fires
-// when the socket closes while still mounted (a shell exit / server pause) — NOT on our own
-// unmount (a tab switch), which sets `disposed` first.
-function JcodeTerminal({ sid, onClosed }: { sid: string; onClosed?: () => void }) {
+// jcode/terminal.ts; this owns the xterm lifecycle and the mobile key row. It stays mounted
+// across tab switches (the stage hides it with CSS, doesn't unmount it) so flipping to
+// Preview and back keeps the SAME shell — `visible` lets it re-fit when shown again. `onClosed`
+// fires when the socket closes while still mounted (a shell exit / server pause) — NOT on our
+// own unmount (stop / restart / leaving the screen), which sets `disposed` first.
+function JcodeTerminal({
+  sid,
+  visible,
+  onClosed,
+}: { sid: string; visible: boolean; onClosed?: () => void }) {
   const host = useRef<HTMLDivElement>(null);
   const handle = useRef<TerminalHandle | null>(null);
+  const fitRef = useRef<{ fit: () => void } | null>(null);
+  const termRef = useRef<{ focus: () => void } | null>(null);
   const onClosedRef = useRef(onClosed);
   onClosedRef.current = onClosed;
   // The armed soft-keyboard modifier, mirrored into state so the key row can highlight it
@@ -157,6 +165,8 @@ function JcodeTerminal({ sid, onClosed }: { sid: string; onClosed?: () => void }
         theme: { background: "#0b0b0c", foreground: "#e6e6e6" },
       });
       const fit = new FitAddon();
+      fitRef.current = fit;
+      termRef.current = term;
       term.loadAddon(fit);
       term.open(el);
       fit.fit();
@@ -176,6 +186,8 @@ function JcodeTerminal({ sid, onClosed }: { sid: string; onClosed?: () => void }
         window.removeEventListener("resize", onWindowResize);
         h.detach();
         handle.current = null;
+        fitRef.current = null;
+        termRef.current = null;
         ws.close();
         term.dispose();
       };
@@ -185,6 +197,16 @@ function JcodeTerminal({ sid, onClosed }: { sid: string; onClosed?: () => void }
       cleanup();
     };
   }, [sid]);
+
+  // Re-fit + refocus when the terminal becomes visible again (switching back from Preview).
+  // While hidden the host is display:none, so a window resize in the meantime couldn't lay
+  // the terminal out; refit on show so the PTY's winsize matches the panel again.
+  useEffect(() => {
+    if (visible) {
+      fitRef.current?.fit();
+      termRef.current?.focus();
+    }
+  }, [visible]);
 
   // Tapping a modifier toggles it (tap again to disarm); a control key sends straight through.
   const toggleMod = (m: Modifier) => handle.current?.setModifier(mod === m ? null : m);
@@ -532,9 +554,13 @@ export function JcodeSessionScreen({
     setMenuOpen(false);
   }
 
-  // The terminal mounts only when the session is live and the coder is ready — otherwise the
-  // stage shows the load prompt / loading bar / stopped state in its place.
-  const showTerminal = tab === "term" && !stopped && !needsLoad && !loading;
+  // The terminal mounts when the session is live and the coder is ready — otherwise the stage
+  // shows the load prompt / loading bar / stopped state in its place. It's independent of the
+  // active tab: once live the terminal stays mounted across a switch to Preview and back (the
+  // stage hides it with CSS, never unmounts it) so the SAME shell — and everything running in
+  // it — survives the round trip. Unmounting would drop the socket, and the control server
+  // kills the PTY when the socket drops, so reconnecting would hand back a fresh bash.
+  const terminalLive = !stopped && !needsLoad && !loading;
 
   return (
     <section className="jcode-screen">
@@ -634,15 +660,18 @@ export function JcodeSessionScreen({
       </div>
 
       <div className="jcode-stage">
-        {tab === "term" && (
-          <div className="jcode-clipanel">
-            {showTerminal ? (
-              <JcodeTerminal
-                key={`${session.id}:${mountNonce}`}
-                sid={session.id}
-                onClosed={() => setStopped(true)}
-              />
-            ) : stopped ? (
+        {/* The terminal panel stays in the tree across tab switches, hidden (not unmounted)
+            while Preview is active, so its shell socket — and the live shell — persist. */}
+        <div className="jcode-clipanel" style={{ display: tab === "term" ? undefined : "none" }}>
+          {terminalLive ? (
+            <JcodeTerminal
+              key={`${session.id}:${mountNonce}`}
+              sid={session.id}
+              visible={tab === "term"}
+              onClosed={() => setStopped(true)}
+            />
+          ) : tab === "term" ? (
+            stopped ? (
               <div className="jcode-overlay" aria-label="Session stopped">
                 <RefreshIcon size={40} />
                 <h3>Session stopped</h3>
@@ -694,9 +723,9 @@ export function JcodeSessionScreen({
                   </div>
                 </div>
               </div>
-            ) : null}
-          </div>
-        )}
+            ) : null
+          ) : null}
+        </div>
 
         {tab === "prev" && (
           <div className="jcode-panel">
