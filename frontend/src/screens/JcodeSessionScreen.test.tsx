@@ -199,15 +199,31 @@ describe("JcodeSessionScreen", () => {
     expect(await screen.findByText("Session stopped")).toBeInTheDocument();
   });
 
-  it("does not show the stopped state when switching tabs (the disposed guard)", async () => {
+  it("does not show the stopped state when switching tabs", async () => {
     vi.spyOn(api, "jcodePreviewStatus").mockResolvedValue({ enabled: true, url: null });
     render(<JcodeSessionScreen session={SESSION} onClose={vi.fn()} />);
     await waitFor(() => expect(wsInstances.length).toBeGreaterThan(0));
-    // Switching to Preview unmounts the terminal — which closes its socket. The `disposed`
-    // guard must suppress that close so it does NOT read as a shell exit / session pause.
+    // Switching to Preview hides the terminal but keeps it mounted, so its socket stays open
+    // and nothing reads as a shell exit / session pause.
     fireEvent.click(screen.getByRole("tab", { name: "Preview" }));
     expect(await screen.findByText(/Start your dev server/i)).toBeInTheDocument();
     expect(screen.queryByText("Session stopped")).not.toBeInTheDocument();
+  });
+
+  it("keeps the same shell when flipping to Preview and back (no new socket)", async () => {
+    vi.spyOn(api, "jcodePreviewStatus").mockResolvedValue({ enabled: true, url: null });
+    render(<JcodeSessionScreen session={SESSION} onClose={vi.fn()} />);
+    await waitFor(() => expect(wsInstances.length).toBe(1));
+    // Flip to Preview, then back to Terminal. The terminal panel is hidden (not unmounted), so
+    // its WebSocket — and the shell behind it — must persist; reconnecting would spawn a fresh
+    // bash and lose the session. So no second socket is dialed.
+    fireEvent.click(screen.getByRole("tab", { name: "Preview" }));
+    await screen.findByText(/Start your dev server/i);
+    fireEvent.click(screen.getByRole("tab", { name: "Terminal" }));
+    await waitFor(() =>
+      expect(screen.queryByText(/Start your dev server/i)).not.toBeInTheDocument(),
+    );
+    expect(wsInstances.length).toBe(1);
   });
 
   it("stops the session from the actions menu", async () => {
