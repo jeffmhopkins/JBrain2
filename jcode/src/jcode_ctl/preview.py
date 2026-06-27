@@ -40,13 +40,26 @@ class CloudflaredTunnel:
     def __init__(self) -> None:
         self._proc: asyncio.subprocess.Process | None = None
 
-    async def open(self, port: int) -> str:  # pragma: no cover - exercised on-box
-        self._proc = await asyncio.create_subprocess_exec(
+    @staticmethod
+    def _args(port: int) -> list[str]:
+        # cloudflared forwards the public *.trycloudflare.com Host to the origin by
+        # default. Dev servers that pin a host allowlist (Vite 6+, webpack-dev-server)
+        # reject a foreign Host and serve a blank/"blocked request" page — the tunnel
+        # resolves but the app never renders. Rewrite the origin Host to localhost (the
+        # value the dev server already trusts) so any framework works through it.
+        return [
             "cloudflared",
             "tunnel",
             "--no-autoupdate",
             "--url",
             f"http://localhost:{port}",
+            "--http-host-header",
+            f"localhost:{port}",
+        ]
+
+    async def open(self, port: int) -> str:  # pragma: no cover - exercised on-box
+        self._proc = await asyncio.create_subprocess_exec(
+            *self._args(port),
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
         )
