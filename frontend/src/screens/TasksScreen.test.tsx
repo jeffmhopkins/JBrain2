@@ -114,18 +114,23 @@ describe("TasksScreen", () => {
     expect(onOpenSession).toHaveBeenCalledWith("sess-latest", "jerv");
   });
 
-  it("marks a task viewed once its latest session is opened (the NEW flag clears)", async () => {
+  it("hides the band once its latest session is opened (no unviewed result left)", async () => {
     mount();
     const band = await screen.findByRole("button", { name: /Open latest session/ });
     expect(screen.getByText("NEW")).toBeInTheDocument();
     fireEvent.click(band);
-    await waitFor(() => expect(screen.queryByText("NEW")).not.toBeInTheDocument());
+    // Nothing new to surface anymore: the band disappears, leaving just the header.
+    await waitFor(() =>
+      expect(screen.queryByRole("button", { name: /Open latest session/ })).not.toBeInTheDocument(),
+    );
+    expect(screen.queryByText("NEW")).not.toBeInTheDocument();
+    expect(screen.queryByText("Daily Action Brief — 3 items need a reply")).not.toBeInTheDocument();
   });
 
-  it("persists the viewed marker so the NEW flag stays cleared after a remount", async () => {
+  it("persists the viewed marker so the band stays hidden after a remount", async () => {
     // The user's actual flow: opening a session unmounts this screen (the handoff
-    // drops the Tasks card to reveal the chat), then reopening Tasks must show the
-    // band relaxed. The marker has to reach localStorage — not just component state —
+    // drops the Tasks card to reveal the chat), then reopening Tasks must keep the
+    // band hidden. The marker has to reach localStorage — not just component state —
     // for that to survive the remount. A wrapper that unmounts TasksScreen on open
     // mirrors the live handoff so this guards the persistence end-to-end.
     vi.spyOn(api, "tasks").mockResolvedValue([SCHEDULED, MANUAL]);
@@ -144,7 +149,9 @@ describe("TasksScreen", () => {
     unmount();
 
     render(<TasksScreen onClose={vi.fn()} onOpenSession={vi.fn()} />);
-    await screen.findByRole("button", { name: /Open latest session/ });
+    await screen.findByText("Morning brief"); // the card is back…
+    // …but its viewed band is not — the marker survived in localStorage.
+    expect(screen.queryByRole("button", { name: /Open latest session/ })).not.toBeInTheDocument();
     expect(screen.queryByText("NEW")).not.toBeInTheDocument();
   });
 

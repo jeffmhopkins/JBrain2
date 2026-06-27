@@ -117,10 +117,12 @@ function isUnviewed(task: Task, viewed: Record<string, string>): boolean {
   return seen === undefined || new Date(seen) < new Date(latest.started_at);
 }
 
-/** The card's always-visible "latest result" band — a one-tap dock to the newest
- * run's session (Direction C). Unviewed carries the steel left-edge accent + a NEW
- * pill and full-strength summary; viewed relaxes to a calm "opened ·" line. A task
- * that has never run shows an inert placeholder; a run without a session is inert. */
+/** The card's "latest result" band — a one-tap dock to the newest run's session
+ * (Direction C), shown only while that result is unviewed: the steel left-edge
+ * accent + NEW pill + full-strength summary. Once its session has been opened on
+ * this device there is nothing new to surface, so the band disappears and the card
+ * collapses to its header; the full run history still lives in the expanded body.
+ * A task that has never run shows an inert "No runs yet" placeholder. */
 function TaskBand({
   task,
   unviewed,
@@ -139,25 +141,19 @@ function TaskBand({
       </div>
     );
   }
+  if (!unviewed) return null;
   const text =
     latest.status === "error" ? (latest.error ?? "failed") : latest.summary || "(no output)";
   const dot =
-    latest.status === "error"
-      ? "failed"
-      : latest.status === "running"
-        ? "running"
-        : unviewed
-          ? "new"
-          : "viewed";
+    latest.status === "error" ? "failed" : latest.status === "running" ? "running" : "new";
   const body = (
     <>
       <span className={`task-bd ${dot}`} aria-hidden="true" />
       <span className="task-bt">
-        {unviewed && <span className="task-band-new">NEW</span>}
+        <span className="task-band-new">NEW</span>
         {text}
       </span>
       <span className="task-bm">
-        {unviewed ? "" : "opened · "}
         {latest.step_count > 0
           ? `${latest.step_count} turn${latest.step_count === 1 ? "" : "s"} · `
           : ""}
@@ -166,12 +162,12 @@ function TaskBand({
     </>
   );
   if (latest.session_id === null) {
-    return <div className={`task-band inert ${unviewed ? "unviewed" : "viewed"}`}>{body}</div>;
+    return <div className="task-band inert unviewed">{body}</div>;
   }
   return (
     <button
       type="button"
-      className={`task-band ${unviewed ? "unviewed" : "viewed"}`}
+      className="task-band unviewed"
       onClick={() => onOpenRun(latest)}
       aria-label={`Open latest session: ${text}`}
     >
