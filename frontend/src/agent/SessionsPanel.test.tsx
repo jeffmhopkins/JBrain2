@@ -656,6 +656,37 @@ describe("SessionsPanel", () => {
     expect(screen.getByText("Child 0")).toBeInTheDocument();
   });
 
+  it("shows a failed child rose and rolls up the failed count on the header", () => {
+    render(
+      <SessionsPanel
+        sessions={[
+          session({ id: "p1", title: "Eval", agent: "jerv", subagent_count: 2 }),
+          session({
+            id: "k1",
+            title: "Pricing",
+            agent: "research",
+            parent_session_id: "p1",
+            last_run_status: "done",
+          }),
+          session({
+            id: "k2",
+            title: "Security",
+            agent: "research",
+            parent_session_id: "p1",
+            last_run_status: "error",
+          }),
+        ]}
+        onOpen={vi.fn()}
+        {...noop}
+      />,
+    );
+    // The errored child reads "failed"; the clean one reads "done".
+    expect(screen.getByText("failed")).toBeInTheDocument();
+    expect(screen.getByText("done")).toBeInTheDocument();
+    // The (settled) header rolls up the failed count, visible even collapsed.
+    expect(screen.getByText(/done · 2 ran · 1 failed/)).toBeInTheDocument();
+  });
+
   it("animates child rows live while the parent turn is the active turn", () => {
     render(
       <SessionsPanel

@@ -18,7 +18,7 @@ from sqlalchemy.orm import aliased
 
 from jbrain.agent.contracts import DEFAULT_OWNER_POLICY, PermissionClass, PolicyOutcome
 from jbrain.db.session import SessionContext, scoped_session
-from jbrain.models.agent import AgentSession, AgentTurn
+from jbrain.models.agent import AgentSession, AgentTurn, Run
 from jbrain.models.proposals import Proposal
 
 _PREVIEW_LEN = 140  # the resume hint on a chat card; longer is clamped in the UI too
@@ -50,6 +50,10 @@ class AgentSessionInfo:
     # How many direct sub-agent children this chat spawned (the nested-rail count,
     # docs/SUBAGENT_SPAWNING_PLAN.md Wave S4). 0 for a chat that never fanned out.
     subagent_count: int = 0
+    # The latest run's status (running | done | error) — lets the nested rail show a
+    # child's settled outcome (a failed child renders rose ✕) and the parent roll-up
+    # its failed count. None for a chat that has never run.
+    last_run_status: str | None = None
 
 
 def _info(
@@ -59,6 +63,7 @@ def _info(
     preview: str = "",
     staged_count: int = 0,
     subagent_count: int = 0,
+    last_run_status: str | None = None,
 ) -> AgentSessionInfo:
     return AgentSessionInfo(
         id=str(row.id),
@@ -76,6 +81,7 @@ def _info(
         preview=preview,
         staged_count=staged_count,
         subagent_count=subagent_count,
+        last_run_status=last_run_status,
     )
 
 
@@ -169,15 +175,31 @@ class AgentSessionRepo:
             .where(child.parent_session_id == AgentSession.id)
             .scalar_subquery()
         )
+        # The latest run's status, so the nested rail can show a child's settled
+        # outcome (done vs error) and the parent its failed roll-up.
+        last_run_status = (
+            select(Run.status)
+            .where(Run.session_id == AgentSession.id)
+            .order_by(Run.started_at.desc())
+            .limit(1)
+            .scalar_subquery()
+        )
         async with scoped_session(self._maker, ctx) as session:
             rows = await session.execute(
-                select(AgentSession, turn_count, preview, staged_count, subagent_count).order_by(
-                    AgentSession.last_active_at.desc()
-                )
+                select(
+                    AgentSession, turn_count, preview, staged_count, subagent_count, last_run_status
+                ).order_by(AgentSession.last_active_at.desc())
             )
             return [
-                _info(row, turn_count=tc, preview=pv or "", staged_count=sc, subagent_count=kc)
-                for row, tc, pv, sc, kc in rows
+                _info(
+                    row,
+                    turn_count=tc,
+                    preview=pv or "",
+                    staged_count=sc,
+                    subagent_count=kc,
+                    last_run_status=rs,
+                )
+                for row, tc, pv, sc, kc, rs in rows
             ]
 
     async def get(self, ctx: SessionContext, session_id: str) -> AgentSessionInfo | None:

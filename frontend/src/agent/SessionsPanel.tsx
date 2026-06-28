@@ -235,12 +235,19 @@ export function SessionsPanel({
       else childrenByParent.set(s.parent_session_id, [s]);
     }
   }
+  // A child is nested under its parent ONLY if that parent is itself in the list; a
+  // child whose parent is absent (a stale/transient mismatch — true orphans can't
+  // persist, parent_session_id is ON DELETE CASCADE) falls back to a top-level row
+  // rather than vanishing.
+  const ids = new Set(sessions.map((s) => s.id));
+  const isTopLevel = (s: AgentSession): boolean =>
+    !s.parent_session_id || !ids.has(s.parent_session_id);
 
   // Newest-active first, then split into the three segments — top-level chats only
-  // (children are excluded from bucketing; they nest under their parent below).
+  // (nested children are excluded from bucketing; they appear under their parent).
   const now = new Date();
   const ordered = [...sessions]
-    .filter((s) => !s.parent_session_id)
+    .filter(isTopLevel)
     .filter(matches)
     .sort((a, b) => Date.parse(b.last_active_at) - Date.parse(a.last_active_at));
   const groups: Record<TabId, AgentSession[]> = { today: [], older: [], archived: [] };
@@ -284,16 +291,11 @@ export function SessionsPanel({
       />
     );
     if (kids.length === 0) return <div key={s.id}>{sessionRow}</div>;
-    // A spawning chat is a small tree: the chat row, then its sub-agent rail. The
-    // whole fan animates live while the parent turn is the active turn (fan-in A —
-    // children are sub-state of that one turn), and settles with it.
+    // A spawning chat: the chat row, then its sub-agent rail (the rail itself is the
+    // tree, role="tree"). The whole fan animates live while the parent turn is the
+    // active turn (fan-in A — children are sub-state of that one turn).
     return (
-      <div
-        key={s.id}
-        className="sa-tree"
-        role="tree"
-        aria-label={`${s.title || "chat"} sub-agents`}
-      >
+      <div key={s.id} className="sa-tree">
         {sessionRow}
         <SubagentRail
           parentId={s.id}
@@ -705,21 +707,33 @@ function SubagentRail({
   onOpen: (s: AgentSession) => void;
 }): ReactNode {
   const kids = childrenByParent.get(parentId) ?? [];
-  const [open, setOpen] = useState(!collapsedDefault);
+  // The owner's explicit toggle wins; until they touch it, follow the prop so a
+  // refetch that flips the default (archived, or the fan grew past the threshold)
+  // re-applies — `useState` alone would go stale (the panel refetches per turn).
+  const [userOpen, setUserOpen] = useState<boolean | null>(null);
+  const open = userOpen ?? !collapsedDefault;
+  const groupId = `sa-rail-${parentId}`;
   if (kids.length === 0) return null;
+  // The roll-up shown on the (possibly collapsed) header, so a folded rail still says
+  // what ran: live → N running; settled → done · N ran · M failed.
+  const failed = kids.filter((k) => !live && k.last_run_status === "error").length;
+  const rollup = live
+    ? "running"
+    : `done · ${kids.length} ran${failed ? ` · ${failed} failed` : ""}`;
   return (
     <div className="sa-rail">
       <button
         type="button"
         className="sa-rail-toggle"
         aria-expanded={open}
-        onClick={() => setOpen((v) => !v)}
+        aria-controls={groupId}
+        onClick={() => setUserOpen(!open)}
       >
         <span aria-hidden="true">{open ? "▾" : "▸"}</span> sub-agents ({kids.length})
+        <span className={`sa-rail-rollup${failed ? " fail" : ""}`}>· {rollup}</span>
       </button>
       {open && (
-        // biome-ignore lint/a11y/useSemanticElements: a tree group is the right ARIA role here
-        <div className="sa-rail-kids" role="group">
+        <div id={groupId} className="sa-rail-kids" role="tree">
           {kids.map((k) => (
             <SubagentNode
               key={k.id}
@@ -736,9 +750,21 @@ function SubagentRail({
   );
 }
 
-// One child (or grandchild) node in the rail. Live glyph while the parent turn runs
-// (the whole fan is live together — fan-in A), settled ✓ otherwise; a neutral persona
-// tag, never a colour. Grandchildren nest one rail deeper.
+// A child is failed iff its latest run errored (the in-tree settled outcome); the
+// in-chat accordion carries the live/truncated detail. While the parent turn runs the
+// whole fan reads as live (fan-in A); a settled child is done ✓ or failed rose ✕.
+function childState(session: AgentSession, live: boolean): "running" | "failed" | "done" {
+  if (live) return "running";
+  return session.last_run_status === "error" ? "failed" : "done";
+}
+
+// The deepest the tree can nest (the depth<2 structural cap → child + grandchild).
+// A hard recursion bound so a cyclic/anomalous parent_session_id can never spin the
+// render, independent of the DB depth CHECK (which bounds the value, not cycles).
+const MAX_RAIL_LEVEL = 4;
+
+// One child (or grandchild) node in the rail. Neutral persona tag, never a colour;
+// grandchildren nest one rail deeper (up to the hard level cap).
 function SubagentNode({
   session,
   childrenByParent,
@@ -752,20 +778,21 @@ function SubagentNode({
   level: number;
   onOpen: (s: AgentSession) => void;
 }): ReactNode {
-  const grandkids = childrenByParent.get(session.id) ?? [];
+  const grandkids = level < MAX_RAIL_LEVEL ? (childrenByParent.get(session.id) ?? []) : [];
+  const state = childState(session, live);
   return (
     <div className="sa-node" role="treeitem" aria-level={level} aria-label={session.title}>
       <button type="button" className="sa-node-line" onClick={() => onOpen(session)}>
-        {live ? (
+        {state === "running" ? (
           <TurnGlyph kind="thinking" />
         ) : (
-          <span className="sa-node-glyph" aria-hidden="true">
-            ✓
+          <span className={`sa-node-glyph ${state}`} aria-hidden="true">
+            {state === "failed" ? "✕" : "✓"}
           </span>
         )}
         <span className="sa-node-lbl">{session.title || "sub-agent"}</span>
         <span className="sa-ptag">{PERSONA_LABEL[session.agent] ?? session.agent}</span>
-        <span className="sa-node-st">{live ? "running" : "done"}</span>
+        <span className={`sa-node-st${state === "failed" ? " fail" : ""}`}>{state}</span>
       </button>
       {grandkids.length > 0 && (
         // biome-ignore lint/a11y/useSemanticElements: nested tree group

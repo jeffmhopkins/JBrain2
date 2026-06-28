@@ -8445,6 +8445,18 @@ button.small {
   color: var(--green);
   font-size: 12px;
 }
+.fb-shell .sa-node-glyph.failed {
+  color: var(--rose);
+}
+.fb-shell .sa-node-st.fail {
+  color: var(--rose);
+}
+.fb-shell .sa-rail-rollup {
+  color: var(--text-3);
+}
+.fb-shell .sa-rail-rollup.fail {
+  color: var(--rose);
+}
 .fb-shell .sa-node-lbl {
   flex: 1;
   min-width: 0;

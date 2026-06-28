@@ -59,6 +59,9 @@ class SessionOut(BaseModel):
     # parent carries how many direct children it spawned (the rail count).
     parent_session_id: str | None = None
     subagent_count: int = 0
+    # The latest run's status (running | done | error) — drives the nested rail's
+    # per-child outcome glyph and the parent's failed roll-up.
+    last_run_status: str | None = None
 
 
 def session_out(info: AgentSessionInfo) -> SessionOut:
@@ -76,6 +79,7 @@ def session_out(info: AgentSessionInfo) -> SessionOut:
         staged_count=info.staged_count,
         parent_session_id=info.parent_session_id,
         subagent_count=info.subagent_count,
+        last_run_status=info.last_run_status,
     )
 
 

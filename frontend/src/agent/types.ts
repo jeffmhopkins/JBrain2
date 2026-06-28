@@ -259,6 +259,9 @@ export interface AgentSession {
    * how many direct children it spawned (the rail count). */
   parent_session_id?: string | null;
   subagent_count?: number;
+  /** The latest run's status (running | done | error) — the nested rail shows a
+   * child's settled outcome (error → rose ✕) and the parent's failed roll-up. */
+  last_run_status?: string | null;
 }
 
 export interface SessionCreate {
