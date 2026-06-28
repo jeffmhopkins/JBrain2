@@ -8394,6 +8394,80 @@ button.small {
   background: var(--green-tint);
 }
 /* the compact row: scope dot · title · turns/staged · chevron, ~44px tall */
+/* Sub-agent rail in the Chats panel (docs/DESIGN.md, layout B): children nested
+   under the chat that spawned them. Persona is a neutral tag; the live glyph is the
+   only steel/green accent. */
+.fb-shell .sa-tree {
+  display: flex;
+  flex-direction: column;
+}
+.fb-shell .sa-rail-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 2px 0 0 16px;
+  padding: 4px 2px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 11px;
+  color: var(--text-3);
+  text-align: left;
+}
+.fb-shell .sa-rail-kids,
+.fb-shell .sa-node-grail {
+  margin: 2px 0 4px 21px;
+  border-left: 1px solid var(--border);
+  padding-left: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.fb-shell .sa-node-grail {
+  margin-left: 8px;
+}
+.fb-shell .sa-node-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 4px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  text-align: left;
+  color: inherit;
+}
+.fb-shell .sa-node-glyph {
+  flex: none;
+  width: 14px;
+  text-align: center;
+  color: var(--green);
+  font-size: 12px;
+}
+.fb-shell .sa-node-lbl {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+}
+.fb-shell .sa-ptag {
+  flex: none;
+  font-size: 10px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-weight: 500;
+  background: var(--surface-2);
+  color: var(--text-2);
+  border: 1px solid var(--border);
+}
+.fb-shell .sa-node-st {
+  flex: none;
+  font-size: 10px;
+  color: var(--text-2);
+}
 .fb-shell .session-tap {
   display: flex;
   align-items: center;

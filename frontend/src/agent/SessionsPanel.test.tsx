@@ -596,4 +596,80 @@ describe("SessionsPanel", () => {
     fireEvent.keyDown(input, { key: "Enter" });
     expect(onRename).toHaveBeenCalledWith("s1", "Renamed");
   });
+
+  // --- sub-agent nested rail (Wave S4) --------------------------------------
+
+  const noop = {
+    onCreate: vi.fn(),
+    onClose: vi.fn(),
+    onRename: vi.fn(),
+    onDelete: vi.fn(),
+    onArchive: vi.fn(),
+    onUnarchive: vi.fn(),
+    onRescope: vi.fn(),
+  };
+
+  it("nests children under their parent and excludes them from top-level bucketing", () => {
+    const onOpen = vi.fn();
+    render(
+      <SessionsPanel
+        sessions={[
+          session({ id: "p1", title: "Acme vs Globex eval", agent: "jerv", subagent_count: 2 }),
+          session({ id: "k1", title: "Pricing", agent: "research", parent_session_id: "p1" }),
+          session({ id: "k2", title: "Security", agent: "research", parent_session_id: "p1" }),
+        ]}
+        onOpen={onOpen}
+        {...noop}
+      />,
+    );
+    // Parent is a top-level row; children appear only nested (in the tree group).
+    expect(screen.getByText("Acme vs Globex eval")).toBeInTheDocument();
+    const tree = screen.getByRole("tree");
+    expect(tree).toContainElement(screen.getByText("Pricing"));
+    expect(screen.getAllByRole("treeitem")).toHaveLength(2);
+    // The group toggle is a real button with aria-expanded.
+    const toggle = screen.getByRole("button", { name: /sub-agents \(2\)/ });
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+    // Tapping a child opens it.
+    fireEvent.click(screen.getByText("Pricing"));
+    expect(onOpen).toHaveBeenCalledWith(expect.objectContaining({ id: "k1" }));
+  });
+
+  it("collapses the rail by default once the fan passes the threshold", () => {
+    const kids = Array.from({ length: 4 }, (_, i) =>
+      session({ id: `k${i}`, title: `Child ${i}`, agent: "research", parent_session_id: "p1" }),
+    );
+    render(
+      <SessionsPanel
+        sessions={[
+          session({ id: "p1", title: "Big fan", agent: "jerv", subagent_count: 4 }),
+          ...kids,
+        ]}
+        onOpen={vi.fn()}
+        {...noop}
+      />,
+    );
+    const toggle = screen.getByRole("button", { name: /sub-agents \(4\)/ });
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByText("Child 0")).not.toBeInTheDocument();
+    fireEvent.click(toggle);
+    expect(screen.getByText("Child 0")).toBeInTheDocument();
+  });
+
+  it("animates child rows live while the parent turn is the active turn", () => {
+    render(
+      <SessionsPanel
+        sessions={[
+          session({ id: "p1", title: "Live eval", agent: "jerv", subagent_count: 1 }),
+          session({ id: "k1", title: "Pricing", agent: "research", parent_session_id: "p1" }),
+        ]}
+        activeTurn={{ sessionId: "p1", kind: "thinking" }}
+        onOpen={vi.fn()}
+        {...noop}
+      />,
+    );
+    // The child shows the live glyph + "running" while the fan's parent turn runs.
+    expect(document.querySelector(".sa-node .turn-glyph")).toBeInTheDocument();
+    expect(screen.getByText("running")).toBeInTheDocument();
+  });
 });
