@@ -239,12 +239,13 @@ mock gate** before implementation.
   without ever auto-enabling host mode (the Cloudflare wildcard is still the one manual
   step). No more hand-editing `/opt/jbrain2/.env`.
 
-- **Wave P5b — cutover & teardown** *(remove cloudflared; ops; on-box-gated).*
-  Flip `preview_mode` default to **host**, then remove the `CloudflaredTunnel`
-  adapter, the `cloudflared` binary from the jcode `Dockerfile`, and the dead
-  preview-tunnel env — once P1–P5a are live and **on-box-verified**. The logging
-  coverage review (above). Tests: the image no longer ships `cloudflared`;
-  end-to-end preview (HTTP + HMR + a **second concurrent** session) on-box.
+- **Wave P5b — cutover & teardown** *(landed, on-box-verified first).* Host preview is
+  now the **only** mode: the `preview_mode` config, the `CloudflaredTunnel`/`PreviewManager`
+  adapters (and `FakeTunnel`), the `cloudflared` binary in the jcode `Dockerfile`, and the
+  `JCODE_PREVIEW_MODE` compose env are all removed. `host_preview` is the sole, always-
+  constructed allocator (fail-closed `.enabled` with no base host); the control surface,
+  reaper, and lifespan dropped every tunnel branch. The host preview was verified
+  end-to-end on the box (DNS wildcard + tunnel ingress + HTTP) before the cutover.
 
 **Scope = P0–P5:** per-session port/hostname allocation, the api/control reverse-
 proxy, the edge wiring, the reworked Preview tab, and the cloudflared cutover.

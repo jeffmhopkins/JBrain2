@@ -12,15 +12,11 @@ COPY --from=ghcr.io/astral-sh/uv:0.8.17 /uv /uvx /usr/local/bin/
 
 # git: per-session checkouts. nodejs/npm: the `@anthropic-ai/claude-code` (`claude`) CLI.
 # Grok Build (`grok`) is xAI's official agent — a standalone precompiled binary (no Node
-# or Bun), installed below into /usr/local/bin (on PATH for the login shell).
-# cloudflared: the per-session web-preview quick-tunnel (Wave J4) — a single binary,
-# no Cloudflare account/config (TryCloudflare). The release name matches dpkg's arch.
-# PINNED to a fixed release (not `latest`) so the image is reproducible — this is the
-# one binary that opens an outbound public tunnel, so its provenance matters (review
-# SF3). Bump deliberately; verify the published checksum when you do.
-ARG CLOUDFLARED_VERSION=2024.12.2
-# Grok Build, pinned (provenance matters — a remote binary, like cloudflared). The latest
-# stable is the https://x.ai/cli/stable pointer; bump deliberately.
+# or Bun), installed below into /usr/local/bin (on PATH for the login shell). The
+# per-session web preview is host-served (no `cloudflared` in the image since the Wave P5b
+# cutover — docs/JCODE_PREVIEW_HOST_PLAN.md).
+# Grok Build, pinned (provenance matters — a remote binary). The latest stable is the
+# https://x.ai/cli/stable pointer; bump deliberately.
 ARG GROK_BUILD_VERSION=0.2.67
 RUN apt-get update \
     && apt-get install -y --no-install-recommends git ca-certificates curl gnupg \
@@ -28,8 +24,6 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends nodejs \
     && npm install -g @anthropic-ai/claude-code \
     && GROK_BIN_DIR=/usr/local/bin curl -fsSL https://x.ai/cli/install.sh | bash -s -- "${GROK_BUILD_VERSION}" \
-    && curl -fsSL "https://github.com/cloudflare/cloudflared/releases/download/${CLOUDFLARED_VERSION}/cloudflared-linux-$(dpkg --print-architecture)" -o /usr/local/bin/cloudflared \
-    && chmod +x /usr/local/bin/cloudflared \
     && apt-get purge -y gnupg && apt-get autoremove -y \
     && rm -rf /var/lib/apt/lists/*
 

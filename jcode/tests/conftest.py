@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 
 from jcode_ctl.app import create_app
 from jcode_ctl.config import Settings
-from jcode_ctl.preview import FakeTunnel, PreviewManager
+from jcode_ctl.host_preview import HostPreviewManager
 from jcode_ctl.sessions import SessionManager
 from jcode_ctl.workspace import FakeWorkspace
 
@@ -20,14 +20,15 @@ def manager() -> SessionManager:
 
 
 @pytest.fixture
-def preview() -> PreviewManager:
-    return PreviewManager(FakeTunnel, enabled=True)
+def host_preview() -> HostPreviewManager:
+    # Pure in-memory (no subprocess/network), so the real allocator IS the test double.
+    return HostPreviewManager(base_host="box.test", port_low=59000, port_high=59010)
 
 
 @pytest.fixture
-def client(manager: SessionManager, preview: PreviewManager) -> TestClient:
+def client(manager: SessionManager, host_preview: HostPreviewManager) -> TestClient:
     settings = Settings(token=TOKEN)
-    return TestClient(create_app(settings, manager, preview))
+    return TestClient(create_app(settings, manager, host_preview))
 
 
 @pytest.fixture

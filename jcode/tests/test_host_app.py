@@ -11,7 +11,6 @@ from starlette.websockets import WebSocketDisconnect
 from jcode_ctl.app import create_app
 from jcode_ctl.config import Settings
 from jcode_ctl.host_preview import HostPreviewManager
-from jcode_ctl.preview import FakeTunnel, PreviewManager
 from jcode_ctl.sessions import SessionManager
 from jcode_ctl.workspace import FakeWorkspace
 
@@ -23,8 +22,8 @@ def _host_app() -> TestClient:
     # A high, almost-certainly-closed port pool so the proxy's "no dev server" path hits
     # a real connection refusal (→ 502) without colliding with anything CI is running.
     host = HostPreviewManager(base_host="box.test", port_low=59000, port_high=59010)
-    settings = Settings(token="t", preview_mode="host", preview_base_host="box.test")
-    app = create_app(settings, sessions, PreviewManager(FakeTunnel, enabled=True), host)
+    settings = Settings(token="t", preview_base_host="box.test")
+    app = create_app(settings, sessions, host)
     return TestClient(app)
 
 
@@ -89,6 +88,8 @@ def test_proxy_running_session_without_a_dev_server_is_502() -> None:
 
 def test_preview_ws_rejects_a_bad_bearer() -> None:
     # The HMR WS handshake is bearer-authed (the api presents it), like the terminal.
+    # The slug here is UNKNOWN: a 4401 (not 4404) proves auth is checked BEFORE slug
+    # resolution — the order that keeps an unauthenticated caller from probing slugs.
     c = _host_app()
     with (
         pytest.raises(WebSocketDisconnect) as exc,

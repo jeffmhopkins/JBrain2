@@ -459,14 +459,13 @@ services:
       # code mode is — this whole profile is opt-in, so enabling jcode already opts into
       # preview; no second env var to set. The flag only gates the capability; nothing is
       # exposed until the owner opens a preview on a session. Set JCODE_PREVIEW_ENABLED=false
-      # to withhold it. The tunnel dials OUT (no inbound), so the container's default
-      # egress covers it; no compose network change.
+      # to withhold it.
       JCODE_PREVIEW_ENABLED: ${JCODE_PREVIEW_ENABLED:-true}
-      # Web-preview transport (docs/JCODE_PREVIEW_HOST_PLAN.md): "tunnel" (the legacy
-      # per-session quick-tunnel, default) or "host" (per-session hostname under the box's
-      # own tunnel; flips at the Wave P5 cutover). Host mode serves at
-      # <slug>-preview.<JCODE_PREVIEW_BASE_HOST>; empty base host fail-closes it.
-      JCODE_PREVIEW_MODE: ${JCODE_PREVIEW_MODE:-tunnel}
+      # Host-served per-session web preview (docs/JCODE_PREVIEW_HOST_PLAN.md): the zone
+      # previews hang under, served at <slug>-preview.<JCODE_PREVIEW_BASE_HOST> through the
+      # box's own tunnel + the api↔jcode proxy. Empty (the default) fail-closes preview;
+      # set it with `jbrain enable-jcode-preview`. (The legacy per-session cloudflared
+      # quick-tunnel was retired at the Wave P5b cutover.)
       JCODE_PREVIEW_BASE_HOST: ${JCODE_PREVIEW_BASE_HOST:-}
       # Session GC (Wave J5): reap a session (checkout + tunnel) after this many idle
       # seconds (default 24h; 0 disables). An open terminal keeps a session fresh; a

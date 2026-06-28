@@ -1,5 +1,6 @@
-"""Session GC (Wave J5): idle sessions (and their tunnels) are reaped; paused
-(stopped) sessions and TTL=0 are never touched. Deterministic via an injected clock."""
+"""Session GC (Wave J5): idle sessions (and their preview reservations) are reaped;
+paused (stopped) sessions and TTL=0 are never touched. Deterministic via an injected
+clock. The reservation is in-memory (host-served preview), freed as the session is."""
 
 from __future__ import annotations
 
@@ -11,7 +12,6 @@ from pathlib import Path
 from jcode_ctl.app import create_app, reap_idle
 from jcode_ctl.config import Settings
 from jcode_ctl.host_preview import HostPreviewManager
-from jcode_ctl.preview import FakeTunnel, PreviewManager
 from jcode_ctl.sessions import SessionManager
 from jcode_ctl.workspace import FakeWorkspace
 
@@ -24,30 +24,38 @@ class Clock:
         return self.t
 
 
-def _mgr(clock: Clock) -> SessionManager:
+def _ids():
     counter = {"n": 0}
 
     def _id() -> str:
         counter["n"] += 1
         return f"s{counter['n']}"
 
-    return SessionManager(FakeWorkspace(), "/work", now=clock, new_id=_id)
+    return _id
 
 
-async def test_reap_idle_deletes_old_sessions_and_closes_previews() -> None:
+def _mgr(clock: Clock) -> SessionManager:
+    return SessionManager(FakeWorkspace(), "/work", now=clock, new_id=_ids())
+
+
+def _host() -> HostPreviewManager:
+    return HostPreviewManager(base_host="box.test", port_low=59000, port_high=59010)
+
+
+async def test_reap_idle_deletes_old_sessions_and_frees_reservations() -> None:
     clock = Clock(datetime(2026, 6, 25, 12, 0, 0, tzinfo=UTC))
     mgr = _mgr(clock)
-    pv = PreviewManager(FakeTunnel, enabled=True)
+    host = _host()
 
     old = await mgr.create("r")
-    await pv.open(old.id)
+    host.ensure(old.id)
 
     clock.t = clock.t + timedelta(hours=25)  # 25h passes
     fresh = await mgr.create("r")  # created at the new time
 
-    reaped = await reap_idle(mgr, pv, ttl_seconds=86_400)
+    reaped = await reap_idle(mgr, 86_400, host)
     assert reaped == [old.id]
-    assert pv.url(old.id) is None  # the tunnel was torn down with the session
+    assert host.port_for(old.id) is None  # the reservation was freed with the session
     assert mgr.get(fresh.id).id == fresh.id  # the fresh one survives
 
 
@@ -70,56 +78,30 @@ async def test_stopped_session_is_never_reaped() -> None:
     assert mgr.idle_sessions(ttl_seconds=86_400) == []
 
 
-async def test_terminal_opening_during_reap_is_not_deleted() -> None:
-    """B2 (TOCTOU): ``preview.close`` is a suspension point — a terminal that attaches
-    during it makes the session active again, so its checkout must NOT be removed."""
-    clock = Clock(datetime(2026, 6, 25, 12, 0, 0, tzinfo=UTC))
-    mgr = _mgr(clock)
-    s = await mgr.create("r")
-    clock.t = clock.t + timedelta(hours=25)
-
-    class AttachOnClosePreview(PreviewManager):
-        async def close(self, sid: str) -> None:
-            mgr.terminal_opened(sid, 1234)  # a shell connects mid-reap
-
-    pv = AttachOnClosePreview(FakeTunnel, enabled=True)
-    reaped = await reap_idle(mgr, pv, ttl_seconds=86_400)
-    assert reaped == []
-    assert (
-        mgr.get_or_none(s.id) is not None
-    )  # survived — not rmtree'd under a live shell
-
-
-async def test_delete_failure_still_tears_down_the_tunnel() -> None:
-    """B1 (N3 invariant): the tunnel is closed BEFORE the delete, so a delete error
-    can't leave a live tunnel behind a reaped session."""
+async def test_delete_failure_still_frees_the_reservation() -> None:
+    """N3 invariant: the reservation is released BEFORE the delete, so a delete error
+    can't leave a reachable preview behind a reaped session."""
     clock = Clock(datetime(2026, 6, 25, 12, 0, 0, tzinfo=UTC))
 
     class BoomWorkspace(FakeWorkspace):
         def remove(self, path: Path) -> None:
             raise RuntimeError("rmtree failed")
 
-    counter = {"n": 0}
-
-    def _id() -> str:
-        counter["n"] += 1
-        return f"s{counter['n']}"
-
-    mgr = SessionManager(BoomWorkspace(), "/work", now=clock, new_id=_id)
-    pv = PreviewManager(FakeTunnel, enabled=True)
+    mgr = SessionManager(BoomWorkspace(), "/work", now=clock, new_id=_ids())
+    host = _host()
     s = await mgr.create("r")
-    await pv.open(s.id)
+    host.ensure(s.id)
     clock.t = clock.t + timedelta(hours=25)
 
     # The delete failure propagates out of reap_idle; the loop suppresses+logs it.
     with contextlib.suppress(RuntimeError):
-        await reap_idle(mgr, pv, ttl_seconds=86_400)
-    assert pv.url(s.id) is None  # tunnel torn down before the failing delete
+        await reap_idle(mgr, 86_400, host)
+    assert host.port_for(s.id) is None  # reservation released before the failing delete
 
 
-async def test_host_mode_reap_keeps_a_reservation_reactivated_mid_sweep() -> None:
-    """Host-mode race: releasing a reservation BEFORE re-confirming idle could free a
-    session that re-activated during the sweep, orphaning its live dev server. The
+async def test_reap_keeps_a_reservation_reactivated_mid_sweep() -> None:
+    """Re-confirm race: releasing a reservation BEFORE re-checking idle could free a
+    session that re-activated during the sweep (orphaning its live dev server). The
     release must happen only after the re-check passes."""
     clock = Clock(datetime(2026, 6, 25, 12, 0, 0, tzinfo=UTC))
 
@@ -132,14 +114,8 @@ async def test_host_mode_reap_keeps_a_reservation_reactivated_mid_sweep() -> Non
                 self.terminal_opened(self.reactivate, 1)
             await super().delete(sid)
 
-    counter = {"n": 0}
-
-    def _id() -> str:
-        counter["n"] += 1
-        return f"s{counter['n']}"
-
-    mgr = ReactivateOnDelete(FakeWorkspace(), "/work", now=clock, new_id=_id)
-    host = HostPreviewManager(base_host="box.test")
+    mgr = ReactivateOnDelete(FakeWorkspace(), "/work", now=clock, new_id=_ids())
+    host = _host()
     s1 = await mgr.create("r")
     s2 = await mgr.create("r")
     host.ensure(s1.id)
@@ -147,8 +123,7 @@ async def test_host_mode_reap_keeps_a_reservation_reactivated_mid_sweep() -> Non
     mgr.reactivate = s2.id
     clock.t = clock.t + timedelta(hours=25)
 
-    pv = PreviewManager(FakeTunnel, enabled=True)  # inert in host mode
-    reaped = await reap_idle(mgr, pv, ttl_seconds=86_400, host_preview=host)
+    reaped = await reap_idle(mgr, 86_400, host)
 
     assert reaped == [s1.id]  # only the session still idle at the re-check
     assert host.port_for(s1.id) is None  # its reservation was freed
@@ -162,12 +137,12 @@ async def test_lifespan_runs_reaper_and_shuts_down_cleanly() -> None:
     exiting it cancels the task without raising."""
     clock = Clock(datetime(2026, 6, 25, 12, 0, 0, tzinfo=UTC))
     mgr = _mgr(clock)
-    pv = PreviewManager(FakeTunnel, enabled=True)
+    host = _host()
     settings = Settings(token="t", session_ttl_seconds=86_400, reap_interval_seconds=0)
     s = await mgr.create("r")
     clock.t = clock.t + timedelta(hours=25)
 
-    app = create_app(settings, mgr, pv)
+    app = create_app(settings, mgr, host)
     async with app.router.lifespan_context(app):
         for _ in range(1000):  # let the GC task get a sweep in
             if mgr.get_or_none(s.id) is None:
