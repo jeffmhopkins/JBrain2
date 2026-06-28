@@ -258,6 +258,25 @@ describe("JcodeSessionScreen", () => {
     expect(frame).toHaveAttribute("src", "https://demo-x.trycloudflare.com");
   });
 
+  it("reloads the preview iframe past the cache when Reload is tapped", async () => {
+    vi.spyOn(api, "jcodePreviewStatus").mockResolvedValue({
+      enabled: true,
+      url: "https://abc123-preview.box.test",
+      mode: "host",
+    });
+    render(<JcodeSessionScreen session={SESSION} onClose={vi.fn()} />);
+
+    fireEvent.click(screen.getByRole("tab", { name: "Preview" }));
+    const frame = await screen.findByTitle("Dev server preview");
+    // First load keeps the clean address.
+    expect(frame).toHaveAttribute("src", "https://abc123-preview.box.test");
+
+    fireEvent.click(screen.getByLabelText("Reload preview"));
+    // A cache-buster is appended so the browser re-fetches instead of serving its copy.
+    const reloaded = await screen.findByTitle("Dev server preview");
+    expect(reloaded.getAttribute("src")).toMatch(/^https:\/\/abc123-preview\.box\.test\?_r=\d+$/);
+  });
+
   it("copies the preview address from the actions menu once a tunnel is live", async () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });

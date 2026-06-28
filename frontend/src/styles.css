@@ -16000,34 +16000,29 @@ button.task-band:active {
   margin: 4px 6px;
 }
 
-.jcode-tabs2 {
+/* Session views as compact icon-only tabs, inline in the top bar beside the coder pill. */
+.jcode-tabsinline {
   flex: none;
   display: flex;
-  gap: 8px;
-  padding: 8px 12px;
-  border-bottom: 1px solid var(--border);
+  gap: 4px;
 }
-.jcode-tab2 {
-  flex: 1;
+.jcode-tabin {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 7px;
-  height: 38px;
+  width: 34px;
+  height: 34px;
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: 9px;
   background: var(--surface);
   color: var(--text-2);
-  font: inherit;
-  font-size: 13px;
-  font-weight: 500;
   cursor: pointer;
 }
-.jcode-tab2.term.on {
+.jcode-tabin.term.on {
   background: var(--surface-2);
   color: var(--text);
 }
-.jcode-tab2.prev.on {
+.jcode-tabin.prev.on {
   background: var(--location-tint);
   color: var(--teal);
   border-color: color-mix(in srgb, var(--teal) 40%, var(--border));
@@ -16461,6 +16456,7 @@ button.task-band:active {
 /* jcode preview tab (Wave J4) — a live tunnel renders full-bleed as an iframe; the
    copy-address / stop controls live in the session ⋯ menu so the page gets the whole panel. */
 .jcode-pvframe {
+  position: relative;
   display: flex;
   background: #fff;
 }
@@ -16469,6 +16465,29 @@ button.task-band:active {
   width: 100%;
   border: 0;
   background: #fff;
+}
+/* Floating reload for the preview: a dev server with no HMR won't refresh the iframe on
+   its own, so this force-reloads it past the browser cache. Unobtrusive, top-right. */
+.jcode-pvrefresh {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--surface) 88%, transparent);
+  color: var(--text-dim);
+  cursor: pointer;
+  backdrop-filter: blur(4px);
+}
+.jcode-pvrefresh:hover {
+  color: var(--teal);
+  border-color: color-mix(in srgb, var(--teal) 40%, var(--border));
 }
 .jcode-act.teal {
   color: var(--teal);
