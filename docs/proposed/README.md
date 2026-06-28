@@ -31,4 +31,5 @@ given a roadmap slot in `../ROADMAP.md`, and promoted out of this folder.
   (ACE-Step 1.5 XL Turbo, AMD/gfx1151-validated): a new audio workflow + audio-aware
   driver output path, an owner-only `generated_audio` artifact table, a `generate_music`
   tool, and a MusicScreen — mirroring the shipped image stack. Backend (Waves M0–M3) +
-  frontend (M4), with M0 a blocking on-box host-validation spike.
+  frontend (M4), with M0 a blocking on-box host-validation spike. Interactive mock:
+  `../mocks/music-gen-live/live-music-tool-card.html`.

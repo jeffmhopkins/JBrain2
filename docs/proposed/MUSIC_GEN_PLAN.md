@@ -187,7 +187,10 @@ I cannot run gfx1151/ROCm here; this is the gating risk, exactly like the image 
 ## Wave M4 — the UI (GUI gate, then build)
 - **GUI gate (DESIGN.md / PROCESS.md):** static mocks of (a) the **MusicScreen** launcher and (b) the
   **inline `generated_audio` chat card** land in `docs/mocks/` for the owner to pick **before** code,
-  exactly as the image launcher/live work did.
+  exactly as the image launcher/live work did. A first interactive mock of the in-chat flow already
+  exists — `docs/mocks/music-gen-live/live-music-tool-card.html` (the `generate_music` tool card
+  morphing into a playable `generated_audio` player; the ambient pad is synthesised live in-browser
+  via Web Audio as a design stand-in) — with its open design questions in that folder's `README.md`.
 - **MusicScreen** (`screens/MusicScreen.tsx`, sibling of `ImageScreen.tsx`): a composer form — **tags/
   style** field, **lyrics** textarea (with `[verse]`/`[chorus]`/`[bridge]` hint), **duration**
   slider, optional **seed**, **negative tags** — a render state machine (`idle → queued → rendering
