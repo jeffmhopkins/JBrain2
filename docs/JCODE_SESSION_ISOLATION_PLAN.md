@@ -1,7 +1,41 @@
 # jcode session isolation — per-session network namespace (and the path to a real sandbox)
 
-**Status: Wave 0 (this plan). Open decisions await owner sign-off before Wave 1 —
-the gating one is a security tradeoff (below), so nothing is built yet.**
+**Status: PARKED after the Wave P1 spike (owner decision). The minimal-privilege path
+can _create_ per-session namespaces but cannot give them usable _networking_ without
+either broad privilege (`CAP_SYS_ADMIN`) or hand-rolled rootless-container networking —
+not worth it for the payoff. The Wave P0 seccomp substrate was reverted so jcode carries
+no dead privilege widening. See "Wave P1 outcome" below; the design is kept for a future
+revisit. Concurrent-Vite ergonomics are covered by `--port $PORT` (the Preview empty-state
+hints it) + the single-session loopback fix (#647).**
+
+## Wave P1 outcome — why this is parked
+
+Run on the box (kernel 6.18.35, unprivileged jcode container), the spike established:
+
+- **Namespace creation works.** With the P0 seccomp profile, `unshare -Urn` succeeds — a
+  session _can_ get its own user+net namespace, and two namespaces each bound `5173`
+  concurrently. The port-isolation half is solved.
+- **Outbound into that namespace does NOT work** with minimal privilege. A fresh netns has
+  only a down `lo`, so the session loses reach to the on-box model gateway + npm. `pasta`
+  (passt) — the rootless userspace network stack — failed **even under
+  `seccomp=unconfined` with `uidmap` installed**: `Could not open /proc/self/uid_map:
+  Permission denied`, `Couldn't mount /proc: Permission denied`, `Failed to join network
+  namespace: Permission denied`. The blocker is **capabilities, not seccomp** — the
+  unprivileged container lacks `CAP_SYS_ADMIN`, so the mount + uid-map + netns-join that
+  userspace networking needs are refused regardless of the syscall filter.
+- **Conclusion:** wiring outbound into an unprivileged netns is, fundamentally, rootless-
+  container networking — the machinery a runtime like Podman exists to provide. The only
+  paths to a working feature were (a) grant jcode `CAP_SYS_ADMIN` + `CAP_NET_ADMIN` and do
+  standard veth/NAT (broad privilege the owner declined), or (b) hand-roll slirp4netns
+  orchestration inside the userns (significant, fragile code for a personal box). The owner
+  chose to **park** rather than take on either for a concurrency-ergonomics win.
+
+If revisited, start from that fork — the architecture and spike data below still hold; only
+the privilege/effort tradeoff changed the answer.
+
+---
+
+**Original plan (Wave 0 — retained for the record):**
 
 Sessions today share one jcode container and one network namespace. This plan gives
 each session its **own** network namespace — its own `lo` — so every session can bind

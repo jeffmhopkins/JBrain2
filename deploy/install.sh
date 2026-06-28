@@ -47,7 +47,7 @@ if [ ! -d "$INSTALL_DIR/src/.git" ]; then
 fi
 
 cd "$INSTALL_DIR"
-for f in docker-compose.yml jbrain backup.sh restore.sh jcode-seccomp.json; do
+for f in docker-compose.yml jbrain backup.sh restore.sh; do
   cp "src/deploy/$f" "$f"
 done
 cp src/deploy/db-init/01-app-role.sh db-init/

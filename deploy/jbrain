@@ -77,10 +77,7 @@ case "${1:-}" in
     git -C src reset --hard "@{u}"
     # Refresh helpers from the updated tree; mv keeps this running script
     # reading its old inode safely.
-    # jcode-seccomp.json: the tailored profile the jcode service's security_opt points at
-    # (docs/JCODE_SESSION_ISOLATION_PLAN.md). Must be refreshed alongside compose so an
-    # updated security_opt path always finds it (a missing file fails jcode start).
-    for f in docker-compose.yml backup.sh restore.sh jbrain jcode-seccomp.json; do
+    for f in docker-compose.yml backup.sh restore.sh jbrain; do
       cp "src/deploy/$f" "$f.new" && mv "$f.new" "$f"
     done
     cp src/deploy/db-init/01-app-role.sh db-init/
