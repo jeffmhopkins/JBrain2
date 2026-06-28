@@ -37,13 +37,6 @@ def test_preview_defaults_on() -> None:
     assert s.preview_enabled is True
 
 
-def test_session_isolation_is_off_by_default() -> None:
-    # Wave P0 substrate: the deploy permits the namespace syscalls, but the control
-    # server must not USE them until the owner turns this on (and the lifecycle lands).
-    assert Settings(token="x").session_isolation is False
-    assert Settings(token="x", session_isolation=True).session_isolation is True
-
-
 def test_effective_log_level_defaults_to_configured_level() -> None:
     # Debug access off → the effective level is whatever JCODE_LOG_LEVEL set (INFO).
     s = Settings(token="x")

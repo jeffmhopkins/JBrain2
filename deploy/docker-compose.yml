@@ -490,12 +490,6 @@ services:
       HTTPS_PROXY: ${JCODE_EGRESS_PROXY:-}
       # Never proxy the on-box peers (the shim + the model gateway) on the jcode network.
       NO_PROXY: ${JCODE_NO_PROXY:-claude-shim,local-llm,localhost,127.0.0.1}
-      # Per-session network isolation (docs/JCODE_SESSION_ISOLATION_PLAN.md), OFF by
-      # default. When on, the control server runs each session's shell in its own
-      # network namespace so every session can bind the same dev port (its own :5173)
-      # and the preview proxy enters that namespace to reach it. The seccomp profile
-      # below permits the namespace syscalls; this flag gates whether they're USED.
-      JCODE_SESSION_ISOLATION: ${JCODE_SESSION_ISOLATION:-false}
     volumes:
       # The per-session git checkouts — sandbox scratch, NEVER a JBrain blob/note.
       - jcode_work:/work
@@ -506,16 +500,6 @@ services:
     depends_on:
       claude-shim:
         condition: service_started
-    # Tailored seccomp profile (docs/JCODE_SESSION_ISOLATION_PLAN.md): Docker's default
-    # plus a single rule allowing the namespace syscalls (clone/clone3/unshare/setns)
-    # WITHOUT CAP_SYS_ADMIN, so the control server can put each session's shell in its own
-    # user+net namespace. Every other default protection (incl. the rest of the SYS_ADMIN
-    # block — mount/bpf/perf_event_open) stays intact; this is far tighter than the
-    # seccomp=unconfined the GPU services use. The capability is dormant until
-    # JCODE_SESSION_ISOLATION is turned on. The path is relative to the compose dir, so
-    # install/update copy jcode-seccomp.json next to docker-compose.yml.
-    security_opt:
-      - seccomp=./jcode-seccomp.json
     # Resource caps (Wave J5): an arbitrary-code sandbox must not be able to starve the
     # box. Tunable; sane ceilings for a coding session. pids_limit blunts fork bombs.
     mem_limit: ${JCODE_MEM_LIMIT:-4g}

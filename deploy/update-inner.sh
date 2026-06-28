@@ -24,10 +24,7 @@ git -C src reset --hard "@{u}"
 
 # Refresh host helper scripts from the updated tree (mv keeps any running
 # reader on its old inode).
-# jcode-seccomp.json: the tailored profile the jcode service's security_opt points at
-# (docs/JCODE_SESSION_ISOLATION_PLAN.md); refresh it alongside compose so the security_opt
-# path always resolves (a missing profile fails jcode start).
-for f in docker-compose.yml backup.sh restore.sh jbrain jcode-seccomp.json; do
+for f in docker-compose.yml backup.sh restore.sh jbrain; do
   cp "src/deploy/$f" "$f.new" && mv "$f.new" "$f"
 done
 cp src/deploy/db-init/01-app-role.sh db-init/

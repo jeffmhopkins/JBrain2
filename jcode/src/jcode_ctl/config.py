@@ -105,14 +105,6 @@ class Settings(BaseSettings):
     # enables debug access (a recreate, not a restart).
     debug_access_enabled: bool = False
 
-    # Per-session network isolation (docs/JCODE_SESSION_ISOLATION_PLAN.md), OFF by
-    # default. When on, each session's shell runs in its own user+net namespace so every
-    # session can bind the same dev port (its own :5173) and the preview proxy enters
-    # that namespace to reach it. The deploy ships a tailored seccomp profile that
-    # PERMITS the namespace syscalls; this flag gates whether the control server USES
-    # them. Inert until the lifecycle lands (Wave P2) — present now as the substrate.
-    session_isolation: bool = False
-
     @property
     def effective_log_level(self) -> str:
         """DEBUG whenever debug access is on (the owner is debugging the box), else the
