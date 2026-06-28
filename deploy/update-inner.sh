@@ -67,11 +67,6 @@ if grep -q '^JCODE_ENABLED=true' .env; then
   grep -q '^JCODE_URL=' .env || printf 'JCODE_URL=%s\n' 'http://jcode:9100' >> .env
   grep -q '^JCODE_MODEL=' .env || printf 'JCODE_MODEL=%s\n' 'qwen3-coder-next' >> .env
   grep -q '^JCODE_MODEL_URL=' .env || printf 'JCODE_MODEL_URL=%s\n' 'http://local-llm:8080' >> .env
-  # Host-mode web preview: once enabled (jbrain enable-jcode-preview), keep the base host
-  # present across PWA updates too — default to the domain — so it stays turnkey like the
-  # keys above. The helper never auto-enables host mode (needs the one-time Cloudflare
-  # wildcard first) and is a no-op unless MODE=host is already set.
-  sh src/deploy/jcode-preview-backfill.sh .env || echo "[update] jcode preview backfill skipped"
 fi
 
 echo "[update] building images"

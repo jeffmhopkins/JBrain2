@@ -233,11 +233,10 @@ mock gate** before implementation.
   apex/SSL notes. Tests on the deploy config + the render script (set/unset). Caddy
   runtime is verified on the box (no caddy binary in CI). Enablement is a single
   **`jbrain enable-jcode-preview [apex]`** (`deploy/jcode-preview-setup.sh`) that writes
-  the two `.env` keys — base host defaulting to `JBRAIN_DOMAIN`, fail-closed when jcode/
-  tunnel are off or the host is malformed — and recreates the stack; both update paths
-  (`jbrain update` + `update-inner.sh`) backfill the base host so it stays turnkey,
-  without ever auto-enabling host mode (the Cloudflare wildcard is still the one manual
-  step). No more hand-editing `/opt/jbrain2/.env`.
+  `JCODE_PREVIEW_BASE_HOST` — defaulting to `JBRAIN_DOMAIN`, fail-closed when jcode/tunnel
+  are off or the host is malformed — and recreates the stack. A non-empty base host *is*
+  the switch (the Cloudflare wildcard is still the one manual step). No more hand-editing
+  `/opt/jbrain2/.env`.
 
 - **Wave P5b — cutover & teardown** *(landed, on-box-verified first).* Host preview is
   now the **only** mode: the `preview_mode` config, the `CloudflaredTunnel`/`PreviewManager`
@@ -245,7 +244,11 @@ mock gate** before implementation.
   `JCODE_PREVIEW_MODE` compose env are all removed. `host_preview` is the sole, always-
   constructed allocator (fail-closed `.enabled` with no base host); the control surface,
   reaper, and lifespan dropped every tunnel branch. The host preview was verified
-  end-to-end on the box (DNS wildcard + tunnel ingress + HTTP) before the cutover.
+  end-to-end on the box (DNS wildcard + tunnel ingress + HTTP) before the cutover. The
+  dead-config tail followed: the frontend's unreachable tunnel-mode UI, the setup
+  script's now-ignored `JCODE_PREVIEW_MODE=host` write, and the `jcode-preview-backfill.sh`
+  self-heal (whose only trigger was `MODE=host`) are gone — the operator's persisted
+  `JCODE_PREVIEW_BASE_HOST` is the single enable signal, so nothing needs backfilling.
 
 **Scope = P0–P5:** per-session port/hostname allocation, the api/control reverse-
 proxy, the edge wiring, the reworked Preview tab, and the cloudflared cutover.
@@ -272,9 +275,9 @@ Owner-gated, after P1–P4 land and before P5 removes the old path:
 1. **One-time:** in Cloudflare Zero Trust → Tunnels, add a wildcard **public
    hostname** `*.<host>` → `http://proxy:80` and the matching wildcard **DNS**
    (full-label wildcard; documented by P3 in `docs/CLOUDFLARE_TUNNEL.md`).
-2. Run **`sudo jbrain enable-jcode-preview`** — it writes `JCODE_PREVIEW_MODE=host`
-   + `JCODE_PREVIEW_BASE_HOST` (default `JBRAIN_DOMAIN`; pass an apex for a subdomain
-   deploy) and recreates the stack. No hand-editing `.env`; updates keep the keys.
+2. Run **`sudo jbrain enable-jcode-preview`** — it writes `JCODE_PREVIEW_BASE_HOST`
+   (default `JBRAIN_DOMAIN`; pass an apex for a subdomain deploy) and recreates the
+   stack. No hand-editing `.env`; the key persists across updates.
 3. **Smoke:** start a dev server in a session on `$PORT`, confirm its
    `<slug>-preview.<host>` serves it (HTTP **and** HMR), then open a **second**
    session concurrently and confirm both previews are live and independent.

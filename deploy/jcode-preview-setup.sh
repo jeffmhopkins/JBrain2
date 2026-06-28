@@ -1,10 +1,11 @@
 #!/bin/sh
-# Enable host-mode jcode web preview by writing the two .env keys that drive it
-# (docs/JCODE_PREVIEW_HOST_PLAN.md): JCODE_PREVIEW_MODE=host and
-# JCODE_PREVIEW_BASE_HOST. Compose maps the base host to the api + proxy and both
-# keys to the sandbox, so this is the whole switch — the operator never hand-edits
-# .env. Split out from the `jbrain` helper + the update paths so it can be
-# exercised against a throwaway .env (mirroring proxy-preview-conf.sh).
+# Enable host-mode jcode web preview by writing the .env key that drives it
+# (docs/JCODE_PREVIEW_HOST_PLAN.md): JCODE_PREVIEW_BASE_HOST. A non-empty base host
+# IS the switch — host is the only preview mode since the Wave P5b cutover, so the
+# api fail-closes when it's empty. Compose maps the base host to the api + proxy and
+# the sandbox, so this is the whole switch — the operator never hand-edits .env.
+# Split out from the `jbrain` helper so it can be exercised against a throwaway
+# .env (mirroring proxy-preview-conf.sh).
 #
 # Usage: jcode-preview-setup.sh <env-file> [base-host]
 #   base-host defaults to JBRAIN_DOMAIN from the env file.
@@ -61,7 +62,6 @@ set_key() {
 	fi
 }
 
-set_key JCODE_PREVIEW_MODE host
 set_key JCODE_PREVIEW_BASE_HOST "$base"
 
 cat >&2 <<EOF
