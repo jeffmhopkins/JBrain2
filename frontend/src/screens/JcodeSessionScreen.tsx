@@ -502,7 +502,8 @@ export function JcodeSessionScreen({
     try {
       setPreview(await api.jcodePreviewOpen(session.id));
     } catch {
-      setPreview({ enabled: true, url: null });
+      // Keep the prior mode/port (so the empty state shows the right copy) but clear the url.
+      setPreview((p) => ({ ...(p ?? { enabled: true }), enabled: true, url: null }));
     } finally {
       setPvBusy(false);
     }
@@ -629,18 +630,20 @@ export function JcodeSessionScreen({
                     >
                       Copy preview address
                     </button>
-                    <button
-                      type="button"
-                      role="menuitem"
-                      className="jcode-menu-item"
-                      disabled={pvBusy}
-                      onClick={() => {
-                        setMenuOpen(false);
-                        void closePreview();
-                      }}
-                    >
-                      Stop preview
-                    </button>
+                    {preview.mode !== "host" && (
+                      <button
+                        type="button"
+                        role="menuitem"
+                        className="jcode-menu-item"
+                        disabled={pvBusy}
+                        onClick={() => {
+                          setMenuOpen(false);
+                          void closePreview();
+                        }}
+                      >
+                        Stop preview
+                      </button>
+                    )}
                   </>
                 )}
                 <div className="jcode-menu-sep" />
@@ -757,8 +760,10 @@ export function JcodeSessionScreen({
 
         {tab === "prev" &&
           (preview?.url ? (
-            // The live tunnel rendered inline as an iframe — the Preview tab *is* the dev page.
-            // Copy-the-address and Stop-preview live in the ⋯ menu so the page gets the full panel.
+            // The live preview rendered inline as an iframe — the Preview tab *is* the dev
+            // page. Copy-the-address (and Stop, in tunnel mode) live in the ⋯ menu so the
+            // page gets the full panel; in host mode the iframe itself shows the proxy's
+            // "start your dev server" 502 until the server is up.
             <div className="jcode-pvframe">
               <iframe className="jcode-pviframe" title="Dev server preview" src={preview.url} />
             </div>
@@ -772,6 +777,27 @@ export function JcodeSessionScreen({
                   restore it by removing <code>JCODE_PREVIEW_ENABLED=false</code> from
                   <code> .env</code> and re-running <code>jcode-setup.sh</code>.
                 </p>
+              ) : preview.mode === "host" ? (
+                <div className="jcode-preview">
+                  <p className="jcode-empty">
+                    This session has its own preview address. Open it, then run your dev server
+                    {preview.port ? (
+                      <>
+                        {" "}
+                        on <code>:{preview.port}</code> (it's <code>$PORT</code> in the shell)
+                      </>
+                    ) : null}{" "}
+                    — it appears here once it's up.
+                  </p>
+                  <button
+                    type="button"
+                    className="jcode-act teal"
+                    disabled={pvBusy}
+                    onClick={openPreview}
+                  >
+                    {pvBusy ? "Opening…" : "Open preview"}
+                  </button>
+                </div>
               ) : (
                 <div className="jcode-preview">
                   <p className="jcode-empty">

@@ -36,10 +36,16 @@ def _slug(url: str) -> str:
 def test_open_reports_a_stable_per_session_hostname() -> None:
     c = _host_app()
     sid = c.post("/sessions", json={"repo": "r"}, headers=AUTH).json()["id"]
-    url = c.post(f"/sessions/{sid}/preview", json={}, headers=AUTH).json()["url"]
+    opened = c.post(f"/sessions/{sid}/preview", json={}, headers=AUTH).json()
+    url = opened["url"]
     assert url.startswith("https://") and url.endswith("-preview.box.test")
+    # The GUI keys off `mode` to reuse the one Preview tab; host reports the dev port.
+    assert opened["mode"] == "host"
+    assert opened["port"] == 59000  # first of the test pool
     # Idempotent + reported by status (the hostname is the session's for its life).
-    assert c.get(f"/sessions/{sid}/preview", headers=AUTH).json()["url"] == url
+    status = c.get(f"/sessions/{sid}/preview", headers=AUTH).json()
+    assert status["url"] == url
+    assert status["mode"] == "host" and status["port"] == 59000
     assert (
         c.post(f"/sessions/{sid}/preview", json={}, headers=AUTH).json()["url"] == url
     )

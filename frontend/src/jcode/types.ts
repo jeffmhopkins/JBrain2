@@ -72,6 +72,12 @@ export interface NewSessionInput {
 export interface JcodePreview {
   enabled: boolean;
   url: string | null;
+  // "host" = a per-session hostname under the box's own tunnel (the Preview tab shows
+  // the stable URL + the dev port, with no tunnel to open/stop); "tunnel" = the legacy
+  // per-session quick-tunnel (open/close flow). Absent on older servers → treated as tunnel.
+  mode?: "tunnel" | "host";
+  // Host mode only: the dev port the session's server should bind ($PORT in the shell).
+  port?: number | null;
 }
 
 // Whether the coder model is resident in the on-box gateway — drives the session
