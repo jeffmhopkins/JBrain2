@@ -32,6 +32,29 @@ describe("ExternalSessionScreen", () => {
     expect(screen.getByDisplayValue("https://box.example/api/ext/llm/ext-1")).toBeInTheDocument();
   });
 
+  it("offers Claude (Anthropic) and grok (OpenAI) wire-up recipes", () => {
+    render(
+      <ExternalSessionScreen
+        session={SESSION}
+        secret="sk-secret"
+        url="https://box.example/api/ext/llm/ext-1"
+        onClose={vi.fn()}
+        onChanged={vi.fn()}
+      />,
+    );
+    expect(screen.getByText("Spin up Claude")).toBeInTheDocument();
+    expect(screen.getByText("grok build (OpenAI)")).toBeInTheDocument();
+    // The Anthropic recipe uses the bare base URL; the OpenAI one appends /v1.
+    expect(
+      screen.getByText(/ANTHROPIC_BASE_URL=https:\/\/box\.example\/api\/ext\/llm\/ext-1/),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/OPENAI_BASE_URL=https:\/\/box\.example\/api\/ext\/llm\/ext-1\/v1/),
+    ).toBeInTheDocument();
+    // The freshly-minted secret is baked into the copyable command.
+    expect(screen.getAllByText(/sk-secret/).length).toBeGreaterThan(0);
+  });
+
   it("shows the secret only when freshly minted", () => {
     const { rerender } = render(
       <ExternalSessionScreen session={SESSION} url="u" onClose={vi.fn()} onChanged={vi.fn()} />,

@@ -1,12 +1,16 @@
 """External LLM sessions: a token-gated public proxy to the on-box coder.
 
 The owner mints an external session (owner-gated CRUD here) and hands its URL +
-secret to a remote Claude, which points ANTHROPIC_BASE_URL at
-``/api/ext/llm/<id>`` and sets ANTHROPIC_AUTH_TOKEN to the secret. The public
+secret to a remote coder. Two wire protocols are served off the same endpoint:
+a remote Claude points ANTHROPIC_BASE_URL at ``/api/ext/llm/<id>`` (the SDK then
+hits ``/v1/messages``); an OpenAI-compatible client (grok-cli, etc.) points
+OPENAI_BASE_URL at ``/api/ext/llm/<id>/v1`` (the client then hits
+``/v1/chat/completions``). Both set their auth token to the secret. The public
 proxy (no owner gate — the bearer IS the credential) authenticates the secret,
 refuses when the session is toggled off or the coder isn't resident on the box,
-pins every request to the on-box coder, forwards to the LiteLLM shim, and meters
-the token usage back onto the session so the owner's screen shows consumption.
+pins every request to the on-box coder, forwards to the LiteLLM shim (which
+serves both ``/v1/messages`` and ``/v1/chat/completions``), and meters the token
+usage back onto the session so the owner's screen shows consumption.
 
 The credential reuses the capability-token machinery (a `principals` row, kind
 ``external_llm``; the on/off toggle is the suspend flag). The model is the
@@ -155,10 +159,18 @@ def _bearer(request: Request) -> str:
     return request.headers.get("x-api-key", "").strip()
 
 
+def _tokens(usage: dict) -> tuple[int, int]:
+    """(input, output) from a usage object in either dialect: Anthropic names them
+    ``input_tokens``/``output_tokens``, OpenAI ``prompt_tokens``/``completion_tokens``."""
+    in_tok = int(usage.get("input_tokens") or usage.get("prompt_tokens") or 0)
+    out_tok = int(usage.get("output_tokens") or usage.get("completion_tokens") or 0)
+    return in_tok, out_tok
+
+
 def _usage_from_chunks(chunks: list[bytes]) -> tuple[int, int]:
-    """Best-effort (input, output) token counts from a buffered Anthropic response —
-    streaming (SSE) or whole JSON. Returns (0, 0) when usage can't be parsed; metering
-    must never break the proxy."""
+    """Best-effort (input, output) token counts from a buffered upstream response —
+    Anthropic or OpenAI, streaming (SSE) or whole JSON. Returns (0, 0) when usage can't
+    be parsed; metering must never break the proxy."""
     in_tok = out_tok = 0
     try:
         body = b"".join(chunks)
@@ -167,27 +179,28 @@ def _usage_from_chunks(chunks: list[bytes]) -> tuple[int, int]:
             obj = json.loads(body)
             usage = obj.get("usage") if isinstance(obj, dict) else None
             if isinstance(usage, dict):
-                return int(usage.get("input_tokens", 0)), int(usage.get("output_tokens", 0))
+                return _tokens(usage)
         except (json.JSONDecodeError, ValueError):
             pass
-        # Streaming: scan every `data:` line for a usage object. message_start carries
-        # input_tokens; message_delta carries the running output_tokens — take the max.
-        for line in body.split(b"\n"):
-            line = line.strip()
+        # Streaming: scan every `data:` line for a usage object. Anthropic carries input
+        # on message_start and a running output on message_delta; OpenAI carries the full
+        # usage on the final chunk (with stream_options.include_usage). Take the max
+        # across all of them, in either dialect.
+        for raw in body.split(b"\n"):
+            line = raw.strip()
             if not line.startswith(b"data:"):
                 continue
             try:
                 evt = json.loads(line[5:].strip())
             except (json.JSONDecodeError, ValueError):
                 continue
-            usage = evt.get("usage") if isinstance(evt, dict) else None
-            msg = evt.get("message") if isinstance(evt, dict) else None
-            if isinstance(msg, dict) and isinstance(msg.get("usage"), dict):
-                in_tok = max(in_tok, int(msg["usage"].get("input_tokens", 0)))
-                out_tok = max(out_tok, int(msg["usage"].get("output_tokens", 0)))
-            if isinstance(usage, dict):
-                in_tok = max(in_tok, int(usage.get("input_tokens", 0)))
-                out_tok = max(out_tok, int(usage.get("output_tokens", 0)))
+            if not isinstance(evt, dict):
+                continue
+            msg = evt.get("message")
+            for usage in (evt.get("usage"), msg.get("usage") if isinstance(msg, dict) else None):
+                if isinstance(usage, dict):
+                    i, o = _tokens(usage)
+                    in_tok, out_tok = max(in_tok, i), max(out_tok, o)
     except Exception:  # noqa: BLE001 - metering is best-effort, never fatal
         log.debug("external-llm usage parse failed", exc_info=True)
     return in_tok, out_tok
@@ -264,3 +277,31 @@ async def proxy_messages(sid: str, request: Request) -> Response:
 async def proxy_count_tokens(sid: str, request: Request) -> Response:
     """Proxy a token-count call (token-gated, not metered — it runs no completion)."""
     return await _proxy(request, sid, "/v1/messages/count_tokens", meter=False)
+
+
+@router.post("/ext/llm/{sid}/v1/chat/completions")
+async def proxy_chat_completions(sid: str, request: Request) -> Response:
+    """Proxy an OpenAI Chat Completions call to the on-box coder (token-gated, metered).
+
+    Lets an OpenAI-compatible client (grok-cli, etc.) target the coder the same way a
+    remote Claude targets ``/v1/messages`` — same auth, same model pin, same metering."""
+    return await _proxy(request, sid, "/v1/chat/completions", meter=True)
+
+
+@router.get("/ext/llm/{sid}/v1/models")
+async def proxy_models(sid: str, request: Request) -> dict[str, object]:
+    """List the served model (token-gated, not metered). OpenAI clients hit this to
+    discover/validate the model before a completion; we advertise only the pinned on-box
+    coder, since that's all the proxy will ever run."""
+    settings = request.app.state.settings
+    repo = request.app.state.auth_repo
+    if not _ID_RE.match(sid):
+        raise HTTPException(status_code=404, detail="unknown external session")
+    principal = await service.authenticate_external_llm(repo, _bearer(request))
+    if principal is None or principal.id != sid:
+        raise HTTPException(status_code=401, detail="invalid or disabled external session")
+    served = _served_model(getattr(settings, "jcode_model", ""))
+    return {
+        "object": "list",
+        "data": [{"id": served, "object": "model", "created": 0, "owned_by": "jbrain"}],
+    }

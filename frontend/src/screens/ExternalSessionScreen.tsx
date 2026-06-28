@@ -31,7 +31,14 @@ export function ExternalSessionScreen({
   const [enabled, setEnabled] = useState(session.enabled);
   const [busy, setBusy] = useState(false);
   const [confirmDel, setConfirmDel] = useState(false);
-  const [copied, setCopied] = useState<"url" | "secret" | null>(null);
+  const [copied, setCopied] = useState<string | null>(null);
+
+  // The bearer secret is shown only at mint; afterwards the recipes carry a placeholder
+  // the owner fills in. OpenAI clients want the `/v1` suffix on the base URL (the SDK
+  // appends `/chat/completions`); the Anthropic SDK appends `/v1/messages` to the bare url.
+  const tok = secret ?? "<token>";
+  const claudeCmd = `ANTHROPIC_BASE_URL=${url} \\\n  ANTHROPIC_AUTH_TOKEN=${tok} \\\n  claude`;
+  const grokCmd = `OPENAI_BASE_URL=${url}/v1 \\\n  OPENAI_API_KEY=${tok} \\\n  grok`;
 
   async function toggle() {
     const next = !enabled;
@@ -58,7 +65,7 @@ export function ExternalSessionScreen({
     }
   }
 
-  function copy(what: "url" | "secret", value: string) {
+  function copy(what: string, value: string) {
     void navigator.clipboard?.writeText(value);
     setCopied(what);
   }
@@ -132,9 +139,25 @@ export function ExternalSessionScreen({
             {copied === "url" ? "Copied ✓" : "Copy URL"}
           </button>
           <p className="jcode-empty">
-            Point a remote Claude at it: <code>ANTHROPIC_BASE_URL={url}</code> and{" "}
-            <code>ANTHROPIC_AUTH_TOKEN=&lt;token&gt;</code>. Requests run on your loaded coder.
+            Point a remote coder at it — expand a recipe and copy. Requests run on your loaded
+            coder, whatever model the client asks for.
           </p>
+
+          {/* Wire-up recipes — Anthropic (Claude) and OpenAI (grok build), each copyable. */}
+          <details className="jcode-extrecipe">
+            <summary>Spin up Claude</summary>
+            <pre className="jcode-extcode">{claudeCmd}</pre>
+            <button type="button" className="jcode-act" onClick={() => copy("claude", claudeCmd)}>
+              {copied === "claude" ? "Copied ✓" : "Copy"}
+            </button>
+          </details>
+          <details className="jcode-extrecipe">
+            <summary>grok build (OpenAI)</summary>
+            <pre className="jcode-extcode">{grokCmd}</pre>
+            <button type="button" className="jcode-act" onClick={() => copy("grok", grokCmd)}>
+              {copied === "grok" ? "Copied ✓" : "Copy"}
+            </button>
+          </details>
         </div>
 
         {/* Cumulative usage. */}
