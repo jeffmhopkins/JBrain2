@@ -128,9 +128,12 @@ the one thing you do by hand is the Cloudflare wildcard:
    app can only ever be served on its own subdomain. Defense in depth: the api also
    rejects in-process any request whose Host isn't `<slug>-preview.<base>`. Nothing to
    hand-edit; unset the var to tear the site back down.
-4. **Enable host mode.** Set `JCODE_PREVIEW_MODE=host` and
-   `JCODE_PREVIEW_BASE_HOST=<your-host>` in `/opt/jbrain2/.env`, then `sudo jbrain up`
-   (recreate — a `.env` change isn't picked up by `restart`). Turn on **debug access**
+4. **Enable host mode.** Run **`sudo jbrain enable-jcode-preview`** — it writes
+   `JCODE_PREVIEW_MODE=host` + `JCODE_PREVIEW_BASE_HOST` (defaulting to your
+   `JBRAIN_DOMAIN`; pass an apex explicitly — `sudo jbrain enable-jcode-preview <apex>`
+   — for a subdomain deploy) and recreates the stack so the change takes effect (a
+   `.env` change isn't picked up by `restart`). Updates keep the keys turnkey from then
+   on. Turn on **debug access**
    (`docs/DEBUG_ACCESS.md`) first so the control server's verbose logs (`/debug/logs/jcode`)
    show `preview proxy → :port` per request. Start a dev server in a session on `$PORT`,
    open its `<slug>-preview.<host>` → the page loads and HMR live-reloads; open a second

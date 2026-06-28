@@ -231,7 +231,13 @@ mock gate** before implementation.
   shared base-host env to the proxy. `docs/CLOUDFLARE_TUNNEL.md` corrected: the wildcard
   is the **full-label `*.<host>`** (Cloudflare has no partial-label wildcard) + the
   apex/SSL notes. Tests on the deploy config + the render script (set/unset). Caddy
-  runtime is verified on the box (no caddy binary in CI).
+  runtime is verified on the box (no caddy binary in CI). Enablement is a single
+  **`jbrain enable-jcode-preview [apex]`** (`deploy/jcode-preview-setup.sh`) that writes
+  the two `.env` keys — base host defaulting to `JBRAIN_DOMAIN`, fail-closed when jcode/
+  tunnel are off or the host is malformed — and recreates the stack; both update paths
+  (`jbrain update` + `update-inner.sh`) backfill the base host so it stays turnkey,
+  without ever auto-enabling host mode (the Cloudflare wildcard is still the one manual
+  step). No more hand-editing `/opt/jbrain2/.env`.
 
 - **Wave P5b — cutover & teardown** *(remove cloudflared; ops; on-box-gated).*
   Flip `preview_mode` default to **host**, then remove the `CloudflaredTunnel`
@@ -263,10 +269,11 @@ proxy, the edge wiring, the reworked Preview tab, and the cloudflared cutover.
 Owner-gated, after P1–P4 land and before P5 removes the old path:
 
 1. **One-time:** in Cloudflare Zero Trust → Tunnels, add a wildcard **public
-   hostname** `*-preview.<host>` → `http://proxy:80` and the matching wildcard
-   **DNS** (documented by P3 in `docs/CLOUDFLARE_TUNNEL.md`).
-2. Set `PREVIEW_BASE_HOST` in `/opt/jbrain2/.env`; `sudo jbrain up` (recreate, not
-   restart) to pick it up.
+   hostname** `*.<host>` → `http://proxy:80` and the matching wildcard **DNS**
+   (full-label wildcard; documented by P3 in `docs/CLOUDFLARE_TUNNEL.md`).
+2. Run **`sudo jbrain enable-jcode-preview`** — it writes `JCODE_PREVIEW_MODE=host`
+   + `JCODE_PREVIEW_BASE_HOST` (default `JBRAIN_DOMAIN`; pass an apex for a subdomain
+   deploy) and recreates the stack. No hand-editing `.env`; updates keep the keys.
 3. **Smoke:** start a dev server in a session on `$PORT`, confirm its
    `<slug>-preview.<host>` serves it (HTTP **and** HMR), then open a **second**
    session concurrently and confirm both previews are live and independent.
