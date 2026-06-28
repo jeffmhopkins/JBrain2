@@ -114,6 +114,27 @@ class BoundRecorder:
         )
 
 
+class StepTally:
+    """Wraps a `RunRecorder` to total a turn's steps and cost as it records them.
+
+    `run_stream` (loop.py) yields ChatEvents, not the step/cost tallies the run
+    summary needs, so both turn drivers — the /chat endpoint and the headless task
+    runner — count the steps as the loop records each one, then write the totals to
+    the run row. Forwards every `step` unchanged to the inner recorder."""
+
+    def __init__(self, inner: object) -> None:
+        self._inner = inner
+        self.steps = 0
+        self.cost = 0
+
+    async def step(self, *, idx: int, kind: str, name: str, ok: bool, cost_tokens: int) -> None:
+        self.steps += 1
+        self.cost += cost_tokens
+        await self._inner.step(  # type: ignore[attr-defined]
+            idx=idx, kind=kind, name=name, ok=ok, cost_tokens=cost_tokens
+        )
+
+
 def _duration_ms(started_at: datetime, ended_at: datetime | None) -> int | None:
     """ms a run spent; None while it is still running (no honest end yet)."""
     if ended_at is None:

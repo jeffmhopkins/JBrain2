@@ -32,10 +32,11 @@ from jbrain.agent.attachments import TurnAttachmentRepo, attachment_scopes
 from jbrain.agent.clock import now_block
 from jbrain.agent.loop import AgentLoop, guardrails_for_effort
 from jbrain.agent.memory import MemoryService
-from jbrain.agent.runlog import AgentRunLog
+from jbrain.agent.runlog import AgentRunLog, StepTally
 from jbrain.agent.session import AgentSessionInfo, AgentSessionRepo, read_context
 from jbrain.agent.titler import SessionTitler
 from jbrain.agent.toolregistry import ToolRegistry
+from jbrain.agent.transcript_accumulator import TranscriptAccumulator
 from jbrain.agent.transcript_store import AgentTranscript
 from jbrain.api.deps import owner_only
 from jbrain.api.notes import ctx_for
@@ -389,24 +390,6 @@ def _conversation(
     return messages
 
 
-class _RunTally:
-    """Wraps the run-log recorder to total steps and cost for the run summary —
-    run_stream yields ChatEvents, not the tallies, so the endpoint counts them as
-    the loop records each step."""
-
-    def __init__(self, inner: object) -> None:
-        self._inner = inner
-        self.steps = 0
-        self.cost = 0
-
-    async def step(self, *, idx: int, kind: str, name: str, ok: bool, cost_tokens: int) -> None:
-        self.steps += 1
-        self.cost += cost_tokens
-        await self._inner.step(  # type: ignore[attr-defined]
-            idx=idx, kind=kind, name=name, ok=ok, cost_tokens=cost_tokens
-        )
-
-
 @router.post("/chat")
 async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> StreamingResponse:
     owner_ctx = ctx_for(principal)
@@ -426,7 +409,7 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
     run_id = await runlog.start(owner_ctx, session_id=session.id, prompt_version=profile.version)
     await sessions.touch(owner_ctx, session.id)
 
-    tally = _RunTally(runlog.bound(owner_ctx, run_id))
+    tally = StepTally(runlog.bound(owner_ctx, run_id))
     # Size the tool budget to how hard the agent.turn model is set to think: a high/
     # medium reasoning effort earns a deeper ReAct chain before the step cap stops it.
     # The persona's budget_multiplier then scales both caps — the archivist's long
@@ -512,14 +495,11 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
     async def drive_turn(live: _LiveTurn) -> None:
         stop_reason = "error"
         status = "error"
-        answer: list[str] = []
-        # The model's reasoning trace (gpt-oss/GLM), accumulated for the transcript so
-        # the "thinking" disclosure replays collapsed on reopen.
-        reasoning: list[str] = []
-        # Tool steps in call order, each gaining its sources when the result lands —
-        # the assistant turn's "Worked" block, persisted with the transcript.
-        steps: dict[str, dict] = {}
-        order: list[str] = []
+        # One shaping site for the persisted record — the streamed answer, the model's
+        # reasoning trace (gpt-oss/GLM, replayed as a collapsed "thinking" disclosure),
+        # and the tool steps in call order (the "Worked" block). Shared with the headless
+        # task turn (agent/transcript_accumulator.py) so the two paths cannot drift.
+        acc = TranscriptAccumulator()
         # Whether the completed-turn record (the `done` path) already ran. A turn the
         # owner Stops — or one a dropped connection cuts — never reaches `done`, so this
         # stays False and the `finally` persists whatever partial answer streamed.
@@ -547,53 +527,8 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
             # longer reaches this detached task), so a plain loop suffices. Idle keepalives
             # are now each subscriber's job (`_LiveTurn.stream`), not buffered here.
             async for event in stream:
-                if event.type == "text_delta":
-                    answer.append(event.text)
-                elif event.type == "reasoning_delta":
-                    reasoning.append(event.text)
-                elif event.type == "tool_call":
-                    steps[event.id] = {
-                        "id": event.id,
-                        "name": event.name,
-                        "ok": None,
-                        "sources": [],
-                        # The length of the answer text streamed BEFORE this call — the
-                        # point the turn's prose splits around the tool. The PWA uses it
-                        # to render an image turn as preamble → image → reply (three
-                        # messages), and persisting it replays the same split on reopen.
-                        "text_offset": len("".join(answer)),
-                        # Persist the call's arguments so an expanded step replays what it
-                        # ran on reopen — the web tools' url/query especially, which carry
-                        # no NoteSource to stand in for them. Empty args stay omitted (noise).
-                        **({"args": event.arguments} if event.arguments else {}),
-                    }
-                    order.append(event.id)
-                elif event.type == "tool_result":
-                    step = steps.get(event.tool_call_id)
-                    if step is not None:
-                        step["ok"] = event.ok
-                        # The verbatim result text, so a step's result rung replays on
-                        # reopen — for a sourceless tool (the web tools) it is the only
-                        # content the bubble can show.
-                        step["summary"] = event.summary
-                        step["sources"] = [s.model_dump() for s in event.sources]
-                        # Persist the staged-proposal and resolved-entity chips too,
-                        # so the bubble replays in full on reopen (not just sources).
-                        if event.proposal is not None:
-                            step["proposal"] = event.proposal.model_dump()
-                        if event.entities:
-                            step["entities"] = [e.model_dump() for e in event.entities]
-                        # Web citation sources (jerv) — persisted so the favicon
-                        # chips and their [^n] targets replay on reopen.
-                        if event.web_sources:
-                            step["web_sources"] = [s.model_dump() for s in event.web_sources]
-                elif event.type == "tool_view":
-                    # Persist the rich view (e.g. a list_card) on its tool step so
-                    # the bubble's tool-result views replay on reopen.
-                    step = steps.get(event.tool_call_id)
-                    if step is not None:
-                        step["view"] = event.view.model_dump()
-                elif event.type == "done":
+                acc.feed(event)
+                if event.type == "done":
                     stop_reason, status = event.stop_reason, "done"
                 # A reflexion `verdict` rides after `done` (Loop 1's annotation of a
                 # critique-worthy turn). It is forwarded to the PWA but deliberately
@@ -602,7 +537,9 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
             if status == "done":
                 # Episodic memory is owner-data: only a knowledge-base agent appends one.
                 if profile.reads_knowledge_base:
-                    await _record_episode(request, read_ctx, session, run_id, body.message, answer)
+                    await _record_episode(
+                        request, read_ctx, session, run_id, body.message, acc.answer
+                    )
                 await _record_transcript(
                     request,
                     owner_ctx,
@@ -610,12 +547,14 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
                     session,
                     run_id,
                     body.message,
-                    answer,
-                    [steps[i] for i in order],
+                    acc.answer,
+                    acc.tool_steps(),
                     body.attachment_ids,
-                    "".join(reasoning),
+                    acc.reasoning_text,
                 )
-                await _maybe_autotitle(request, owner_ctx, sessions, session, body.message, answer)
+                await _maybe_autotitle(
+                    request, owner_ctx, sessions, session, body.message, acc.answer
+                )
                 persisted = True
                 # Return the box to its hot state (gpt-oss-120b + qwen3-vl). A turn that
                 # rendered an image freed every local LLM, and a turn after a code session
@@ -658,7 +597,7 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
                 if (
                     not persisted
                     and stop_reason in ("disconnected", "error")
-                    and ("".join(answer).strip() or order)
+                    and (acc.answer_text.strip() or acc.tool_steps())
                 ):
                     with contextlib.suppress(Exception):
                         await _record_transcript(
@@ -668,10 +607,10 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
                             session,
                             run_id,
                             body.message,
-                            answer,
-                            [steps[i] for i in order],
+                            acc.answer,
+                            acc.tool_steps(),
                             body.attachment_ids,
-                            "".join(reasoning),
+                            acc.reasoning_text,
                         )
                 with contextlib.suppress(Exception):
                     await runlog.finish(
