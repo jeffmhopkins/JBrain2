@@ -35,6 +35,11 @@ class AgentSessionInfo:
     # The selected agent persona (docs/ASSISTANT.md "Agent selection"). Defaulted so
     # existing callers/tests that predate agent selection resolve to the curator.
     agent: str = "curator"
+    # Sub-agent lineage (docs/SUBAGENT_SPAWNING_PLAN.md). A root chat leaves these at
+    # their defaults; a spawned child carries its parent + depth + sandbox flag.
+    parent_session_id: str | None = None
+    depth: int = 0
+    no_memory: bool = False
     # List-view metadata (the Chats cards). Populated by `list`; the single-row
     # `get`/`create` paths leave them at their resting defaults — the chat
     # endpoint doesn't need them.
@@ -55,6 +60,9 @@ def _info(
         title=row.title,
         status=row.status,
         agent=row.agent,
+        parent_session_id=str(row.parent_session_id) if row.parent_session_id else None,
+        depth=row.depth,
+        no_memory=row.no_memory,
         domain_scopes=tuple(row.domain_scopes),
         subject_ids=tuple(str(s) for s in row.subject_ids),
         created_at=row.created_at,
@@ -103,12 +111,18 @@ class AgentSessionRepo:
         subject_ids: Sequence[str] = (),
         title: str = "",
         agent: str = "curator",
+        parent_session_id: str | None = None,
+        depth: int = 0,
+        no_memory: bool = False,
     ) -> AgentSessionInfo:
         async with scoped_session(self._maker, ctx) as session:
             row = AgentSession(
                 principal_id=uuid.UUID(ctx.principal_id),
                 title=title,
                 agent=agent,
+                parent_session_id=uuid.UUID(parent_session_id) if parent_session_id else None,
+                depth=depth,
+                no_memory=no_memory,
                 domain_scopes=list(domain_scopes),
                 subject_ids=[uuid.UUID(s) for s in subject_ids],
             )
