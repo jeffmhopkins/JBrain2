@@ -12,6 +12,13 @@
 (app) {
 	encode zstd gzip
 
+	# The host-mode jcode preview is served ONLY on its own <slug>-preview.<host>
+	# subdomain (the preview site below). 404 the internal prefix on every app surface
+	# (public + LAN) so a sandbox-run dev app can never be served on the owner origin.
+	handle /__jcode_preview* {
+		respond 404
+	}
+
 	handle /api/* {
 		reverse_proxy api:8000 {
 			flush_interval -1
@@ -66,3 +73,9 @@
 # file is written, so this glob matches nothing and only the public site runs.
 # See docs/LOCAL_ACCESS.md.
 import /etc/caddy/lan/*.caddy
+
+# Optional host-mode jcode web preview: when JBRAIN_JCODE_PREVIEW_BASE_HOST is set the
+# entrypoint renders a wildcard site here that routes <slug>-preview.<host> to the api's
+# /__jcode_preview/<slug> (docs/JCODE_PREVIEW_HOST_PLAN.md). Unset -> the glob matches
+# nothing, so a stock deploy is unaffected.
+import /etc/caddy/preview/*.caddy

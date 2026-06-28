@@ -223,10 +223,20 @@ mock gate** before implementation.
   **Stop preview** menu item (host mode has no tunnel to close). Tunnel mode is
   untouched. Component tests in mock mode for both.
 
-- **Wave P5 — cutover & teardown** *(remove cloudflared; ops; on-box-gated).*
+- **Wave P5a — edge wiring** *(Caddy + compose + DNS docs; landed).* The proxy
+  entrypoint renders a `http://*.<host>` Caddy site from `JBRAIN_JCODE_PREVIEW_BASE_HOST`
+  (`deploy/proxy-preview-conf.sh`, mirroring the LAN-site renderer — env-gated, inert
+  when unset) that routes only `<slug>-preview.<host>` to the api's `/__jcode_preview/<slug>`
+  and 404s every other subdomain; the app sites 404 the prefix. The compose passes the
+  shared base-host env to the proxy. `docs/CLOUDFLARE_TUNNEL.md` corrected: the wildcard
+  is the **full-label `*.<host>`** (Cloudflare has no partial-label wildcard) + the
+  apex/SSL notes. Tests on the deploy config + the render script (set/unset). Caddy
+  runtime is verified on the box (no caddy binary in CI).
+
+- **Wave P5b — cutover & teardown** *(remove cloudflared; ops; on-box-gated).*
   Flip `preview_mode` default to **host**, then remove the `CloudflaredTunnel`
   adapter, the `cloudflared` binary from the jcode `Dockerfile`, and the dead
-  preview-tunnel env — once P1–P4 are live and **on-box-verified**. The logging
+  preview-tunnel env — once P1–P5a are live and **on-box-verified**. The logging
   coverage review (above). Tests: the image no longer ships `cloudflared`;
   end-to-end preview (HTTP + HMR + a **second concurrent** session) on-box.
 
