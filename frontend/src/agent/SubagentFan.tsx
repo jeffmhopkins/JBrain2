@@ -42,7 +42,11 @@ function childGlyph(status: SubagentChild["status"]): ReactNode {
 }
 
 function statusWord(c: SubagentChild): string {
-  if (c.status === "running") return c.phase || "working…";
+  if (c.status === "running") {
+    const word = c.phase || "working…";
+    // Live step count so a long-running child visibly moves ("researching · 4 steps").
+    return c.step ? `${word} · ${c.step} step${c.step === 1 ? "" : "s"}` : word;
+  }
   if (c.status === "failed") return c.stopReason === "cancelled" ? "cancelled" : "failed";
   if (c.stopReason === "budget" || c.stopReason === "tree_budget_exhausted") return "truncated";
   return "done";

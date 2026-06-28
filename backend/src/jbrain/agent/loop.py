@@ -334,6 +334,7 @@ class AgentLoop:
         depth: int = 0,
         tree: TreeState | None = None,
         run_id: str | None = None,
+        on_step: Callable[[int, int], None] | None = None,
     ) -> AgentResult:
         scopes = tuple(scopes)
         tools = self._registry.schemas_for(scopes, tools_allow)
@@ -379,6 +380,11 @@ class AgentLoop:
                 cost_tokens=spent_call,
             )
             idx += 1
+            # Per-step progress hook (Wave S2 follow-up): the spawn service uses it to
+            # stream a live subagent_progress per child step so the UI's budget meter
+            # and step count move while a child works (children run non-streaming).
+            if on_step is not None:
+                on_step(step + 1, cost)
 
             if turn.stop_reason != "tool_use" or not turn.tool_calls:
                 return AgentResult(turn.text, "end_turn", step + 1, cost)

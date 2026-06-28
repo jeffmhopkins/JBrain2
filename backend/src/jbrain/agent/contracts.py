@@ -289,6 +289,9 @@ class SubagentProgressEvent(BaseModel):
     tool_call_id: str = ""
     child_id: str
     phase: str
+    # The child's ReAct step so far (0 at launch); emitted every step so the row shows
+    # live movement ("researching · 4 steps") while a non-streaming child works.
+    step: int = 0
     tree_spent: int = 0
     tree_budget: int = 0
 

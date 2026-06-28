@@ -42,11 +42,19 @@ from jbrain.agent.contracts import (
     SubagentSpawnedEvent,
     ViewPayload,
 )
-from jbrain.agent.loop import AgentLoop, ToolContext, ToolOutput, guardrails_for_effort
+from jbrain.agent.loop import AgentLoop, Guardrails, ToolContext, ToolOutput
 from jbrain.agent.runlog import AgentRunLog, StepTally
 from jbrain.agent.session import AgentSessionRepo, read_context
 from jbrain.agent.toolregistry import ToolRegistry
-from jbrain.agent.tree import MAX_CHILDREN_PER_PARENT, MAX_DEPTH, MAX_PARALLEL, TreeState
+from jbrain.agent.tree import (
+    CHILD_MAX_COST_TOKENS,
+    CHILD_MAX_STEPS,
+    CHILD_WALL_CLOCK_S,
+    MAX_CHILDREN_PER_PARENT,
+    MAX_DEPTH,
+    MAX_PARALLEL,
+    TreeState,
+)
 from jbrain.db.session import SessionContext
 from jbrain.llm import LlmRouter, UserMessage
 
@@ -201,12 +209,11 @@ class SpawnService:
         max_parallel = min(max_parallel, MAX_PARALLEL)
 
         owner_ctx = SessionContext(principal_id=ctx.session.principal_id, principal_kind="owner")
-        effort = await self._router.effective_reasoning_effort("agent.turn")
         sem = asyncio.Semaphore(max_parallel)
 
         results = await asyncio.gather(
             *(
-                self._run_child(ctx, owner_ctx, tree, sem, effort, persona, label, brief_text)
+                self._run_child(ctx, owner_ctx, tree, sem, persona, label, brief_text)
                 for persona, label, brief_text in plans
             )
         )
@@ -221,7 +228,6 @@ class SpawnService:
         owner_ctx: SessionContext,
         tree: TreeState,
         sem: asyncio.Semaphore,
-        effort: str | None,
         persona: str,
         label: str,
         brief_text: str,
@@ -272,25 +278,48 @@ class SpawnService:
                 self._router,
                 self._registry,
                 recorder=tally,  # type: ignore[arg-type]
-                guardrails=guardrails_for_effort(effort, scale=profile.budget_multiplier),
+                # Explicit child caps bound RUNTIME (a small step cap + the wall-clock
+                # below), with a generous token backstop. The old effort×budget_multiplier
+                # scaling let a child grind to a 400k token budget for ~11 min on the box.
+                guardrails=Guardrails(
+                    max_steps=CHILD_MAX_STEPS, max_cost_tokens=CHILD_MAX_COST_TOKENS
+                ),
             )
             child_read_ctx = read_context(owner_ctx.principal_id, ())
             conversation = [
                 UserMessage(text=now_block(ctx.timezone)),
                 UserMessage(text=brief_text),
             ]
+            def _on_step(step: int, _cost: int) -> None:
+                # Live per-step progress so the UI's budget meter + step count move while
+                # this non-streaming child works (Wave S2 follow-up).
+                _emit(
+                    ctx,
+                    SubagentProgressEvent(
+                        child_id=child.id,
+                        phase=_PHASE.get(persona, "working"),
+                        step=step,
+                        tree_spent=tree.spent,
+                        tree_budget=tree.tree_budget,
+                    ),
+                )
+
             try:
-                result = await loop.run(
-                    session=child_read_ctx,
-                    scopes=(),
-                    conversation=conversation,
-                    timezone=ctx.timezone,
-                    system=profile.prompt,
-                    agent_session_id=child.id,
-                    tools_allow=child_tools,
-                    depth=child_depth,
-                    tree=tree,
-                    run_id=child_run,
+                result = await asyncio.wait_for(
+                    loop.run(
+                        session=child_read_ctx,
+                        scopes=(),
+                        conversation=conversation,
+                        timezone=ctx.timezone,
+                        system=profile.prompt,
+                        agent_session_id=child.id,
+                        tools_allow=child_tools,
+                        depth=child_depth,
+                        tree=tree,
+                        run_id=child_run,
+                        on_step=_on_step,
+                    ),
+                    timeout=CHILD_WALL_CLOCK_S,
                 )
             except asyncio.CancelledError:
                 # A parent cancel cascades into the fan; mark the run best-effort and
@@ -305,6 +334,33 @@ class SpawnService:
                         cost_tokens=tally.cost,
                     )
                 raise
+            except TimeoutError:
+                # The per-child wall-clock fired (wait_for cancelled the run). One slow
+                # child must not stall the fan — degrade it and move on.
+                secs = int(CHILD_WALL_CLOCK_S)
+                with contextlib.suppress(Exception):
+                    await self._runlog.finish(
+                        owner_ctx,
+                        child_run,
+                        status="error",
+                        stop_reason="timeout",
+                        step_count=tally.steps,
+                        cost_tokens=tally.cost,
+                    )
+                _emit(
+                    ctx,
+                    SubagentDoneEvent(
+                        child_id=child.id,
+                        ok=False,
+                        stop_reason="timeout",
+                        summary=f"(timed out after {secs}s — no answer)",
+                        tree_spent=tree.spent,
+                        tree_budget=tree.tree_budget,
+                    ),
+                )
+                return _ChildResult(
+                    label, persona, f"(timed out after {secs}s — no answer)", ok=False
+                )
             except Exception as exc:  # noqa: BLE001 — a child failure degrades, not crashes
                 log.warning("subagent.child_failed", persona=persona, label=label, error=repr(exc))
                 with contextlib.suppress(Exception):

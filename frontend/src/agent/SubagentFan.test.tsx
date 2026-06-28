@@ -70,6 +70,24 @@ describe("SubagentFan", () => {
     expect(screen.getByText("3 tiers")).toBeInTheDocument();
   });
 
+  it("shows a live step count on a running child", () => {
+    render(
+      <SubagentFan
+        running
+        fan={fan([
+          child({
+            childId: "k1",
+            label: "Pricing",
+            phase: "researching",
+            status: "running",
+            step: 4,
+          }),
+        ])}
+      />,
+    );
+    expect(screen.getByText("researching · 4 steps")).toBeInTheDocument();
+  });
+
   it("auto-expands a failed child's error without a click", () => {
     render(
       <SubagentFan
