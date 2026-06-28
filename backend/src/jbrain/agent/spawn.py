@@ -114,6 +114,15 @@ class SpawnService:
         self._runlog = runlog
 
     async def spawn_fan(self, ctx: ToolContext, args: dict) -> str:
+        # --- fail closed without an established tree pool ---------------------
+        # The tree counter is the load-bearing total-agents cap (decision #8); it
+        # exists only when a root turn seeded one (the interactive /chat turn does,
+        # api/agent.py). A caller that never threaded a tree — e.g. the scheduled
+        # task runner — must NOT be able to spawn an unbounded fan, so spawning is
+        # refused rather than counted against a throwaway counter. This also keeps
+        # spawn an owner-initiated-turn action (decision #10).
+        if ctx.tree is None:
+            return _refuse("sub-agent spawning is only available in an interactive owner turn.")
         # --- depth cap (structural, no model cooperation) ---------------------
         if ctx.depth >= MAX_DEPTH:
             return _refuse(
@@ -150,7 +159,7 @@ class SpawnService:
             plans.append((persona, label, brief_text))
 
         # --- tree-wide total cap ---------------------------------------------
-        tree = ctx.tree if ctx.tree is not None else TreeState()
+        tree = ctx.tree  # never None here (guarded above)
         if not tree.can_admit(len(plans)):
             return _refuse(
                 f"this fan of {len(plans)} would exceed the tree limit of "
@@ -270,7 +279,14 @@ class SpawnService:
                 step_count=tally.steps,
                 cost_tokens=tally.cost,
             )
-            return _ChildResult(label, persona, result.text, ok=result.stop_reason != "error")
+            # A child is a success only if it produced a substantive answer via a
+            # clean stop. max_steps / too_many_errors (or an empty answer) is a
+            # degraded child — surfaced as [FAILED] so the parent doesn't synthesize
+            # over an empty block as if it were a clean summary. (AgentResult never
+            # carries stop_reason="error"; an exception-failed child returns above.)
+            ok = bool(result.text.strip()) and result.stop_reason in ("end_turn", "budget")
+            summary = result.text.strip() or f"(no answer; stopped: {result.stop_reason})"
+            return _ChildResult(label, persona, summary, ok=ok)
 
 
 def _observation(results: list[_ChildResult]) -> str:

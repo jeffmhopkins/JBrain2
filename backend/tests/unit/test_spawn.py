@@ -178,6 +178,50 @@ async def test_depth1_free_text_brief_rejected(service: SpawnService) -> None:
     assert not _FakeLoop.calls
 
 
+async def test_spawn_refused_without_a_tree_pool(service: SpawnService) -> None:
+    """Fail closed: a caller that never seeded a tree (e.g. the scheduled task
+    runner) cannot spawn — the total-agents cap would otherwise be defeated by a
+    throwaway per-call counter. Only an interactive owner turn seeds a tree."""
+    ctx = ToolContext(
+        session=SessionContext(principal_id="p1", principal_kind="owner"),
+        scopes=(),
+        agent_session_id="s",
+        depth=0,
+        agent_tools=JERV_TOOLS,
+        tree=None,
+        run_id="r",
+    )
+    out = await service.spawn_fan(
+        ctx, {"tasks": [{"persona": "research", "brief": "x", "label": "L"}]}
+    )
+    assert "refused" in out.lower()
+    assert not _FakeLoop.calls
+
+
+async def test_degraded_child_is_flagged_failed(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A child that stops without a substantive answer (max_steps / empty text) is
+    surfaced as [FAILED], not folded in as a clean summary."""
+
+    class _EmptyLoop(_FakeLoop):
+        async def run(self, **kw):  # noqa: ANN003
+            _FakeLoop.calls.append(kw)
+            return AgentResult(text="", stop_reason="max_steps", steps=10, cost_tokens=5)
+
+    _FakeLoop.calls = []
+    monkeypatch.setattr(spawn_mod, "AgentLoop", _EmptyLoop)
+    svc = SpawnService(
+        router=_FakeRouter(),  # type: ignore[arg-type]
+        registry=object(),  # type: ignore[arg-type]
+        sessions=_FakeSessions(),  # type: ignore[arg-type]
+        runlog=_FakeRunLog(),  # type: ignore[arg-type]
+    )
+    out = await svc.spawn_fan(
+        _ctx(), {"tasks": [{"persona": "research", "brief": "x", "label": "L"}]}
+    )
+    assert "[FAILED]" in out
+    assert "1 failed" in out
+
+
 # --- success path: the wiring is structural --------------------------------
 
 

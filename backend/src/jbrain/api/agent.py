@@ -542,8 +542,11 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
                 # NOT recorded — Loop 1 is ephemeral and writes nothing durable.
                 live.emit(f"data: {event.model_dump_json()}\n\n".encode())
             if status == "done":
-                # Episodic memory is owner-data: only a knowledge-base agent appends one.
-                if profile.reads_knowledge_base:
+                # Episodic memory is owner-data: only a knowledge-base agent appends
+                # one, and never a `no_memory` sandbox session (the sub-agent flag —
+                # defense in depth so the structural no-memory guarantee holds even if
+                # a child session is ever driven through this path).
+                if profile.reads_knowledge_base and not session.no_memory:
                     await _record_episode(
                         request, read_ctx, session, run_id, body.message, acc.answer
                     )
