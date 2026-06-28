@@ -66,9 +66,11 @@ def test_jerv_is_a_sandboxed_web_chatbot() -> None:
             "transcribe",
             "analyze_video",
             "query_server_metrics",
+            "spawn_subagent",
         }
     )
     assert jerv.reads_knowledge_base is False
+    assert SPAWN_TOOL in jerv.tools  # jerv is the spawner
 
 
 def test_image_tools_are_jerv_only() -> None:

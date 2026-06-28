@@ -31,6 +31,7 @@ from jbrain.agent.attachment_content import MAX_ATTACHMENTS_PER_TURN, build_atta
 from jbrain.agent.attachments import TurnAttachmentRepo, attachment_scopes
 from jbrain.agent.clock import now_block
 from jbrain.agent.loop import AgentLoop, guardrails_for_effort
+from jbrain.agent.tree import TreeState
 from jbrain.agent.memory import MemoryService
 from jbrain.agent.runlog import AgentRunLog, StepTally
 from jbrain.agent.session import AgentSessionInfo, AgentSessionRepo, read_context
@@ -520,6 +521,12 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
             here=here,
             here_as_of=here_as_of,
             context_window=context_window,
+            # The root of this turn's sub-agent tree (depth 0): a fresh shared fan
+            # state owns the tree-wide caps, and the run_id stamps any child run's
+            # parent_run_id (docs/SUBAGENT_SPAWNING_PLAN.md). Harmless for personas
+            # that never spawn.
+            tree=TreeState(),
+            run_id=run_id,
         )
         try:
             # A long blocking tool may stream nothing for minutes; the pull is never

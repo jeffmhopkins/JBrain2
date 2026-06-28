@@ -43,6 +43,13 @@ _PROMPTS = Path(__file__).parent / "prompts"
 # agent opts in explicitly and the registry's web-tool gate has a single source.
 WEB_TOOLS = frozenset({"web_search", "web_fetch"})
 
+# The spawn primitive (docs/SUBAGENT_SPAWNING_PLAN.md): the single tool jerv — and,
+# for nesting, the research/review children — calls to launch a bounded fan of
+# web-sandboxed children. It is `web`-gated (it drives web-class egress through its
+# children) and is in the registry's NEVER_DEFAULT set, so curator's `tools=None`
+# wildcard can never absorb it (review B3).
+SPAWN_TOOL = "spawn_subagent"
+
 # jerv's full allowlist: the internet tools, the dataless clock read, the
 # owner-approved coarse location read, the weather lookup, the local image-generation
 # tools, the local audio transcription, the local video analysis, and the host-metrics
@@ -72,6 +79,8 @@ JERV_TOOLS = WEB_TOOLS | frozenset(
         "transcribe",
         "analyze_video",
         "query_server_metrics",
+        # The spawn primitive — jerv is the spawner (docs/SUBAGENT_SPAWNING_PLAN.md).
+        SPAWN_TOOL,
     }
 )
 
@@ -105,13 +114,6 @@ MEMORY_TOOLS = frozenset({"archivist_memory_read", "archivist_memory_write"})
 # date-by-date filing is the heart of the job. Every turn already prepends today's date
 # (now_block); the tool covers an explicit fresh / other-zone read.
 ARCHIVIST_TOOLS = GMAIL_TOOLS | MEMORY_TOOLS | frozenset({"current_time"})
-
-# The spawn primitive (docs/SUBAGENT_SPAWNING_PLAN.md): the single tool jerv — and,
-# for nesting, the research/review children — calls to launch a bounded fan of
-# web-sandboxed children. It is `web`-gated (it drives web-class egress through its
-# children) and must never be absorbed by curator's `tools=None` wildcard; the
-# registry's NEVER_DEFAULT set enforces that structurally.
-SPAWN_TOOL = "spawn_subagent"
 
 # The closed set of spawnable child personas. `spawn_subagent` validates a requested
 # persona against this set BEFORE calling `agent_for` — which falls back to the

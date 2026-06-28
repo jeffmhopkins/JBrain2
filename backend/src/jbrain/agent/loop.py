@@ -49,6 +49,7 @@ from jbrain.agent.reflexion import (
     verify_grounding,
 )
 from jbrain.agent.toolregistry import ToolRegistry
+from jbrain.agent.tree import TreeState
 from jbrain.db.session import SessionContext
 from jbrain.llm import (
     AssistantMessage,
@@ -157,6 +158,18 @@ class ToolContext:
     agent_session_id: str | None = None
     here: tuple[float, float] | None = None
     here_as_of: datetime | None = None
+    # Sub-agent spawning context (docs/SUBAGENT_SPAWNING_PLAN.md). `depth` is this
+    # turn's depth in the agent tree (root=0); spawn is refused unless depth < 2.
+    # `agent_tools` is THIS turn's effective allowed tool names — the ceiling the
+    # spawn handler clamps a child to (child effective tools ⊆ parent's, enforced at
+    # dispatch). `tree` is the per-root-turn shared fan state (the total-agents cap,
+    # and in Wave S2 the token budget); `run_id` is this turn's run for stamping a
+    # child run's parent_run_id. All default to the root/no-spawn case so every
+    # existing call site is unchanged.
+    depth: int = 0
+    agent_tools: frozenset[str] = frozenset()
+    tree: TreeState | None = None
+    run_id: str | None = None
     # Mid-execution progress sink, set only on the streaming path: a tool calls it with
     # (step, total, preview_data_uri | None, label | None) and the loop turns each call
     # into an ephemeral ToolProgressEvent on the turn's SSE. Image gen sends a step bar +
@@ -300,13 +313,25 @@ class AgentLoop:
         system: str | None = None,
         agent_session_id: str | None = None,
         tools_allow: frozenset[str] | None = None,
+        depth: int = 0,
+        tree: TreeState | None = None,
+        run_id: str | None = None,
     ) -> AgentResult:
         scopes = tuple(scopes)
         tools = self._registry.schemas_for(scopes, tools_allow)
         allowed = self._registry.allowed_names(scopes, tools_allow)
         messages: list[LlmMessage] = list(conversation)
+        # `agent_tools=allowed` is this turn's effective ceiling — a child this turn
+        # spawns is clamped to it (docs/SUBAGENT_SPAWNING_PLAN.md, the parent⊆child clamp).
         tool_ctx = ToolContext(
-            session=session, scopes=scopes, timezone=timezone, agent_session_id=agent_session_id
+            session=session,
+            scopes=scopes,
+            timezone=timezone,
+            agent_session_id=agent_session_id,
+            depth=depth,
+            agent_tools=allowed,
+            tree=tree,
+            run_id=run_id,
         )
         # A caller can swap the system prompt (the wiki Editor uses its own persona); existing
         # callers pass nothing and keep the Full Brain prompt — fully backward-compatible.
@@ -373,6 +398,9 @@ class AgentLoop:
         here: tuple[float, float] | None = None,
         here_as_of: datetime | None = None,
         context_window: int | None = None,
+        depth: int = 0,
+        tree: TreeState | None = None,
+        run_id: str | None = None,
     ) -> AsyncIterator[ChatEvent]:
         """The streaming twin of `run`: the same turn loop and guardrails, but it
         yields ChatEvents as they happen — `text_delta` per streamed chunk,
@@ -413,6 +441,9 @@ class AgentLoop:
                 here,
                 here_as_of,
                 context_window,
+                depth,
+                tree,
+                run_id,
             ):
                 yield ev
             return
@@ -435,6 +466,10 @@ class AgentLoop:
             agent_session_id=agent_session_id,
             here=here,
             here_as_of=here_as_of,
+            depth=depth,
+            agent_tools=allowed,
+            tree=tree,
+            run_id=run_id,
             emit_progress=lambda step, total, preview, label: progress_q.put_nowait(
                 (step, total, preview, label)
             ),
@@ -613,6 +648,9 @@ class AgentLoop:
         here: tuple[float, float] | None = None,
         here_as_of: datetime | None = None,
         context_window: int | None = None,
+        depth: int = 0,
+        tree: TreeState | None = None,
+        run_id: str | None = None,
     ) -> AsyncIterator[ChatEvent]:
         """Mode (a): produce the turn non-streaming, run `reflect` (strict
         improvement, N=2 cap), then replay the kept attempt's buffered events as the
@@ -645,6 +683,9 @@ class AgentLoop:
                 here,
                 here_as_of,
                 context_window,
+                depth,
+                tree,
+                run_id,
             )
             corpus = _grounding_corpus(turn.sources, turn.entities)
             # Empty corpus → grounding is unverifiable, not failed: hand back a clean
@@ -703,6 +744,9 @@ class AgentLoop:
         here: tuple[float, float] | None = None,
         here_as_of: datetime | None = None,
         context_window: int | None = None,
+        depth: int = 0,
+        tree: TreeState | None = None,
+        run_id: str | None = None,
     ) -> _BufferedTurn:
         """One full non-streaming produce-step for mode (a): run the turn loop to a
         terminal stop, buffering the ChatEvents it would have streamed (so a
@@ -719,6 +763,10 @@ class AgentLoop:
             agent_session_id=agent_session_id,
             here=here,
             here_as_of=here_as_of,
+            depth=depth,
+            agent_tools=allowed,
+            tree=tree,
+            run_id=run_id,
         )
         events: list[ChatEvent] = []
         answer_parts: list[str] = []
