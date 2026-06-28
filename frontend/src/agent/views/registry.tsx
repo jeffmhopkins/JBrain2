@@ -1113,13 +1113,25 @@ function WeatherCard({ data }: ViewProps): ReactNode {
  * roster card — a ran/failed roll-up plus one line per child (label, neutral persona
  * tag, ✓/✕, summary). Data: `{ran, failed, children: [{label, persona, ok, summary}]}`.
  * Standard tool-view frame, never a bespoke green panel; colour stays on the marks
- * (green=ok, rose=failed). */
+ * (green=ok, rose=failed). This is the persisted (reopened-transcript) stand-in for the
+ * live in-chat accordion; like it, each child's summary is COLLAPSED behind its row
+ * (tap to expand) so the card never dumps every full comment, and a failed child opens
+ * itself so the error is visible without a tap. */
 function SubagentSynthesis({ data }: ViewProps): ReactNode {
   const ran = typeof data.ran === "number" ? data.ran : 0;
   const failed = typeof data.failed === "number" ? data.failed : 0;
   const truncated = data.truncated === true;
   const children = Array.isArray(data.children) ? data.children : [];
   const clean = failed === 0 && !truncated;
+  const [open, setOpen] = useState<Set<number>>(new Set());
+  function toggle(i: number): void {
+    setOpen((cur) => {
+      const next = new Set(cur);
+      if (next.has(i)) next.delete(i);
+      else next.add(i);
+      return next;
+    });
+  }
   return (
     <div className={`tv-syn${clean ? "" : " has-fail"}`}>
       <div className="tv-syn-head">
@@ -1141,17 +1153,29 @@ function SubagentSynthesis({ data }: ViewProps): ReactNode {
         const c = raw as Record<string, unknown>;
         const cok = c.ok === true;
         const summary = typeof c.summary === "string" ? c.summary : "";
+        // A failed child auto-expands its error; a successful one stays collapsed.
+        const isOpen = open.has(i) || !cok;
         return (
           // biome-ignore lint/suspicious/noArrayIndexKey: roster renders in stable order
           <div className="tv-syn-child" key={i}>
-            <div className="tv-syn-row">
+            <button
+              type="button"
+              className="tv-syn-row"
+              onClick={() => toggle(i)}
+              aria-expanded={isOpen}
+            >
               <span className={`tv-syn-mark${cok ? "" : " bad"}`} aria-hidden="true">
                 {cok ? "✓" : "✕"}
               </span>
               <span className="tv-syn-clbl">{String(c.label ?? "")}</span>
               <span className="tv-syn-ptag">{String(c.persona ?? "")}</span>
-            </div>
-            {summary && <div className="tv-syn-sum">{summary}</div>}
+              {summary && (
+                <span className="tv-syn-car" aria-hidden="true">
+                  {isOpen ? "▾" : "▸"}
+                </span>
+              )}
+            </button>
+            {isOpen && summary && <div className="tv-syn-sum">{summary}</div>}
           </div>
         );
       })}

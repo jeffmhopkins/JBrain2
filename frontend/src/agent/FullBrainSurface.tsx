@@ -399,11 +399,19 @@ function Bubble({
     .filter((t) => IMAGE_TOOL_NAMES.has(t.name))
     .map((t) => t.preview);
   let nextImagePreview = 0;
-  const viewsToRender = message.views.map((v) => {
-    if (v.view !== "generated_image") return v;
-    const preview = imagePreviews[nextImagePreview++];
-    return preview ? { ...v, data: { ...v.data, placeholder_data_uri: preview } } : v;
-  });
+  // A live sub-agent fan (folded from this session's `subagent_*` events) is the
+  // in-chat surface — its accordion persists below the bubble showing the settled
+  // roster (collapsible per child). The persisted `subagent_synthesis` view is the
+  // reopen-only stand-in, so suppress it whenever a live fan is present or the two
+  // would stack the same roster twice on settle.
+  const hasLiveFan = message.tools.some((t) => t.fan);
+  const viewsToRender = message.views
+    .filter((v) => !(hasLiveFan && v.view === "subagent_synthesis"))
+    .map((v) => {
+      if (v.view !== "generated_image") return v;
+      const preview = imagePreviews[nextImagePreview++];
+      return preview ? { ...v, data: { ...v.data, placeholder_data_uri: preview } } : v;
+    });
 
   // The answer side: the prose, any tool-result views, and the proposal affordance.
   const answer = (
@@ -528,11 +536,12 @@ function Bubble({
 
   // A sub-agent fan renders as its own bordered block below the answer bubble (the
   // accordion reads the parent turn's `subagent_*` events folded onto the spawn call).
-  // It is the LIVE surface only — once the spawn tool's result lands (`ok` defined),
-  // the registered `subagent_synthesis` tool-view (in `views`) becomes the settled
-  // surface, so the two never show the roster at once. A cancelled fan never gets a
-  // result (`ok` stays undefined), so its accordion stays, showing the settled rows.
-  const fans = message.tools.filter((t) => t.fan && t.ok === undefined);
+  // It PERSISTS once settled — staying in the chat showing each child "done" with its
+  // summary a tap away — so the user keeps the live roster instead of it vanishing into
+  // a separate card. The `subagent_synthesis` view is suppressed while this fan is
+  // present (above), leaving it the sole roster surface for the session; a reopened
+  // transcript has no folded events, so the persisted synthesis view stands in instead.
+  const fans = message.tools.filter((t) => t.fan);
   return (
     <>
       <div className="bubble ai">

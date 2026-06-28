@@ -712,7 +712,7 @@ describe("ToolView registry", () => {
 
   it("renders a subagent_synthesis roster with a ran/failed roll-up", () => {
     expect(isKnownView("subagent_synthesis")).toBe(true);
-    const { getByText } = render(
+    const { getByText, queryByText } = render(
       <ToolView
         payload={payload({
           view: "subagent_synthesis",
@@ -729,7 +729,11 @@ describe("ToolView registry", () => {
     );
     expect(getByText(/Synthesized from 1 of 2 · 1 failed/)).toBeInTheDocument();
     expect(getByText("Pricing")).toBeInTheDocument();
+    // A successful child's summary is collapsed behind its row (no full-comment dump).
+    expect(queryByText("3 tiers")).not.toBeInTheDocument();
+    fireEvent.click(getByText("Pricing"));
     expect(getByText("3 tiers")).toBeInTheDocument();
+    // A failed child auto-expands its error without a tap.
     expect(getByText("ERROR: timed out")).toBeInTheDocument();
   });
 
