@@ -988,8 +988,10 @@ function DailyList({ days }: { days: WxDay[] }): ReactNode {
   return (
     <div className="tv-wx-days">
       {days.map((d, i) => {
-        const left = ((d.lo_f - min) / span) * 100;
-        const width = ((d.hi_f - d.lo_f) / span) * 100;
+        // Every bar shares the week's minimum as a common left baseline and runs
+        // out to that day's high, so a longer bar means a hotter day — daily
+        // differences read at a glance instead of floating at varied offsets.
+        const width = ((d.hi_f - min) / span) * 100;
         return (
           // Positional daily rows have no stable id; the day label + index key it.
           <div className="tv-wx-day" key={`${d.label}-${i}`}>
@@ -1002,7 +1004,7 @@ function DailyList({ days }: { days: WxDay[] }): ReactNode {
             <div className="tv-wx-drange">
               <span className="tv-wx-dlo">{d.lo_f}°</span>
               <span className="tv-wx-dtrack">
-                <span className="tv-wx-dfill" style={{ left: `${left}%`, width: `${width}%` }} />
+                <span className="tv-wx-dfill" style={{ left: 0, width: `${width}%` }} />
               </span>
               <span className="tv-wx-dhi">{d.hi_f}°</span>
             </div>
