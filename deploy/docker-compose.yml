@@ -512,10 +512,11 @@ services:
     # user+net namespace. Every other default protection (incl. the rest of the SYS_ADMIN
     # block — mount/bpf/perf_event_open) stays intact; this is far tighter than the
     # seccomp=unconfined the GPU services use. The capability is dormant until
-    # JCODE_SESSION_ISOLATION is turned on. The path is relative to the compose dir, so
-    # install/update copy jcode-seccomp.json next to docker-compose.yml.
+    # JCODE_SESSION_ISOLATION is turned on. Read straight from the source tree (like the
+    # build contexts) — `git reset --hard` always refreshes it on update, so it can't lag
+    # the compose file the way a copied-out file would (which would fail jcode start).
     security_opt:
-      - seccomp=./jcode-seccomp.json
+      - seccomp=./src/deploy/jcode-seccomp.json
     # Resource caps (Wave J5): an arbitrary-code sandbox must not be able to starve the
     # box. Tunable; sane ceilings for a coding session. pids_limit blunts fork bombs.
     mem_limit: ${JCODE_MEM_LIMIT:-4g}

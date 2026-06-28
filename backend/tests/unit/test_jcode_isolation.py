@@ -86,14 +86,18 @@ def _jcode() -> dict:
 
 def test_jcode_service_applies_the_profile_and_gates_use_behind_a_flag() -> None:
     svc = _jcode()
-    assert "seccomp=./jcode-seccomp.json" in svc["security_opt"]
+    # Read straight from the source tree (./src/deploy/...), NOT a copied-out file. git
+    # reset --hard refreshes src on every update, so the profile can never lag the compose
+    # that references it — a copied-out file would, and a stale/missing one fails jcode
+    # start (the bootstrap race that bit the first deploy).
+    assert "seccomp=./src/deploy/jcode-seccomp.json" in svc["security_opt"]
     # Off by default; the flag gates whether namespaces are actually used (later waves).
     assert svc["environment"]["JCODE_SESSION_ISOLATION"] == "${JCODE_SESSION_ISOLATION:-false}"
 
 
-def test_install_and_update_ship_the_profile_next_to_compose() -> None:
-    # The security_opt path resolves relative to the compose dir, so the profile must be
-    # copied alongside docker-compose.yml on install AND every update (host + PWA), or
-    # jcode fails to start after pulling the new compose.
-    for script in ("install.sh", "jbrain", "update-inner.sh"):
-        assert "jcode-seccomp.json" in (_DEPLOY / script).read_text()
+def test_profile_is_read_from_src_so_no_copy_bootstrap_is_needed() -> None:
+    # The profile lives only in the source tree; the deploy helpers must NOT try to copy it
+    # to the project root (that copy is gated by the NEW helper, which the running update
+    # is not — the race that failed jcode start). Referencing src sidesteps it entirely.
+    seccomp = next(o for o in _jcode()["security_opt"] if o.startswith("seccomp="))
+    assert seccomp.split("=", 1)[1].startswith("./src/deploy/")
