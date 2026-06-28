@@ -255,9 +255,17 @@ def create_app(
     @authed.get("/sessions/{sid}/preview")
     def preview_status(sid: str) -> dict[str, object]:
         sessions.get(sid)
+        # `mode` lets the GUI reuse the one Preview tab for both: host mode reports the
+        # reserved `port` (so it can show "run your dev server on :<port>") and has no
+        # tunnel to "open" or "stop"; tunnel mode keeps the open/close flow.
         if host_preview is not None:
-            return {"enabled": host_preview.enabled, "url": host_preview.url(sid)}
-        return {"enabled": preview.enabled, "url": preview.url(sid)}
+            return {
+                "enabled": host_preview.enabled,
+                "url": host_preview.url(sid),
+                "mode": "host",
+                "port": host_preview.port_for(sid),
+            }
+        return {"enabled": preview.enabled, "url": preview.url(sid), "mode": "tunnel"}
 
     @authed.post("/sessions/{sid}/preview")
     async def preview_open(sid: str, body: PreviewRequest) -> dict[str, object]:
@@ -265,9 +273,10 @@ def create_app(
         # Host mode has nothing to spin up — the hostname is reserved once and reported;
         # the session's dev server appears at it when it starts (the proxy probes live).
         if host_preview is not None:
-            return {"enabled": True, "url": host_preview.ensure(sid).url}
+            a = host_preview.ensure(sid)
+            return {"enabled": True, "url": a.url, "mode": "host", "port": a.port}
         url = await preview.open(sid, body.port)
-        return {"enabled": True, "url": url}
+        return {"enabled": True, "url": url, "mode": "tunnel"}
 
     @authed.delete("/sessions/{sid}/preview", status_code=204)
     async def preview_close(sid: str) -> None:

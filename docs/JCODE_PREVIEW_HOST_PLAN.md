@@ -212,13 +212,16 @@ mock gate** before implementation.
   4404 before any upstream connect) are unit-tested; the live byte pump is
   `# pragma: no cover` (deploy-verified, as the terminal pump is).
 
-- **Wave P4 — the Preview tab UX** *(GUI; **three-mock gate FIRST**).* Rework
-  `JcodeSessionScreen`'s Preview tab for per-session host previews: no "open
-  tunnel" step — the stable per-session URL + the **iframe** when the dev server is
-  up (building on #627's full-bleed iframe + ⋯-menu copy/stop), and the **assigned
-  port + "run your dev server on `$PORT`"** hint when it isn't. Three interactive
-  mocks → owner picks → the chosen mock lands in `docs/mocks/` as the binding spec.
-  DEBUG lives server-side (P2/P4); component tests in mock mode.
+- **Wave P4 — the Preview tab UX** *(GUI; **mock gate waived by the owner** — this
+  reuses the existing Preview tab + ⋯ menu (#627), not a new surface, so it's
+  reuse-and-plumb, not a redesign; landed).* The control server's `preview_status` /
+  `preview_open` now report **`mode`** (`host`/`tunnel`) and, in host mode, the reserved
+  **`port`** (the api passes both through verbatim). The Preview tab keys off `mode`:
+  host mode shows the stable per-session URL as the **iframe** (the proxy's
+  "start your dev server" 502 fills it until the server is up), a **port hint**
+  (`run your dev server on :<port>`) in the empty state, and drops the tunnel-only
+  **Stop preview** menu item (host mode has no tunnel to close). Tunnel mode is
+  untouched. Component tests in mock mode for both.
 
 - **Wave P5 — cutover & teardown** *(remove cloudflared; ops; on-box-gated).*
   Flip `preview_mode` default to **host**, then remove the `CloudflaredTunnel`

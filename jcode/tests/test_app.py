@@ -66,9 +66,11 @@ def test_preview_open_status_close(client: TestClient, auth: dict[str, str]) -> 
     assert client.get(f"/sessions/{sid}/preview", headers=auth).json() == {
         "enabled": True,
         "url": None,
+        "mode": "tunnel",
     }
     opened = client.post(f"/sessions/{sid}/preview", json={}, headers=auth).json()
     assert opened["url"].endswith(".trycloudflare.com")
+    assert opened["mode"] == "tunnel"
     assert (
         client.get(f"/sessions/{sid}/preview", headers=auth).json()["url"]
         == opened["url"]

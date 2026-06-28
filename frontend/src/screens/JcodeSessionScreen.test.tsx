@@ -286,6 +286,39 @@ describe("JcodeSessionScreen", () => {
     expect(await screen.findByText(/Start your dev server/i)).toBeInTheDocument();
   });
 
+  it("shows the host-mode preview address + port hint and no tunnel wording", async () => {
+    vi.spyOn(api, "jcodePreviewStatus").mockResolvedValue({
+      enabled: true,
+      url: null,
+      mode: "host",
+      port: 5174,
+    });
+    render(<JcodeSessionScreen session={SESSION} onClose={vi.fn()} />);
+    fireEvent.click(screen.getByRole("tab", { name: "Preview" }));
+    // Host mode reuses the tab but drops the "tunnel" framing: its own address, run the
+    // dev server on the reserved port — no "Open preview tunnel".
+    expect(await screen.findByText(/own preview address/i)).toBeInTheDocument();
+    expect(screen.getByText(":5174")).toBeInTheDocument();
+    expect(screen.getByText("Open preview")).toBeInTheDocument();
+    expect(screen.queryByText("Open preview tunnel")).not.toBeInTheDocument();
+  });
+
+  it("omits Stop preview from the menu in host mode (no tunnel to stop)", async () => {
+    vi.spyOn(api, "jcodePreviewStatus").mockResolvedValue({
+      enabled: true,
+      url: "https://abc123-preview.box.test",
+      mode: "host",
+      port: 5174,
+    });
+    render(<JcodeSessionScreen session={SESSION} onClose={vi.fn()} />);
+    fireEvent.click(screen.getByRole("tab", { name: "Preview" }));
+    await screen.findByTitle("Dev server preview");
+    fireEvent.click(screen.getByLabelText("Session actions"));
+    // Copy stays; Stop is tunnel-only.
+    expect(screen.getByText("Copy preview address")).toBeInTheDocument();
+    expect(screen.queryByText("Stop preview")).not.toBeInTheDocument();
+  });
+
   it("shows a disabled state when preview is off", async () => {
     vi.spyOn(api, "jcodePreviewStatus").mockResolvedValue({ enabled: false, url: null });
     render(<JcodeSessionScreen session={SESSION} onClose={vi.fn()} />);
