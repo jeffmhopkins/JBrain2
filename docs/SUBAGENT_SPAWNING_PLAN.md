@@ -540,14 +540,17 @@ budget. Re-checks **B1, M5, M6, M8**.
   min_viable_child_budget`); `per_child_cap` demoted to a **sanity ceiling**; a loop
   seeing the pool exhausted stops with `stop_reason="tree_budget_exhausted"`.
   Children run with **reflexion disabled** and `buffer_retry` forced off (M6).
-  **Wave decision (budget values — escalate to owner per `PROCESS.md`):** finalize
-  `spawn_multiplier`, `root_reserve`, `min_viable_child_budget`, `per_child_cap`,
-  `max_children_per_parent`, `max_total_agents_per_tree`, `max_parallel`, and a
-  per-child wall-clock — tuned against a real research sweep. *Recommended starting
-  point (from the spec's worked example):* `spawn_multiplier=3` → `tree_budget≈2.4M`,
-  `root_reserve=400k`, `children_pool=2.0M`, `min_viable_child_budget=100k`,
-  `per_child_cap=600k`, `max_parallel=4`, `max_children_per_parent=6`,
-  `max_total_agents_per_tree=12`, wall-clock≈120s/child. Tests: shared-counter
+  **Wave decision (budget values):** the owner has **locked the tree ceiling at
+  `spawn_multiplier = 1.5`** — i.e. a full fan may spend at most **1.5× the current
+  per-turn jerv limit** (`tree_budget = base_max_cost × jerv.budget_multiplier ×
+  1.5`). The remaining derived values are tuned against a real research sweep at
+  this wave; *starting point:* `root_reserve` ≈ 25% of `tree_budget` (the parent
+  always keeps enough to synthesize + say "research truncated"),
+  `min_viable_child_budget=100k`, `per_child_cap` ≈ `children_pool / 2` (sanity),
+  `max_parallel=4`, `max_children_per_parent=6`, `max_total_agents_per_tree=12`,
+  wall-clock≈120s/child. (Worked at 1.5×, with the spec's illustrative
+  `base × mult ≈ 800k`: `tree_budget≈1.2M`, `root_reserve≈300k`,
+  `children_pool≈900k`, `per_child_cap≈400k`.) Tests: shared-counter
   depletion, exhaustion `stop_reason`, root_reserve survival, admission-floor
   refusal — all deterministic with the adapter fake; reflexion/`buffer_retry`
   proven off for children. Depends on S2.2; the static-cap wiring extends S1.3.

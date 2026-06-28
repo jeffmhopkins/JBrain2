@@ -82,9 +82,9 @@ Phase-5 build record is `archive/PHASE5_COMPLETION_PLAN.md`.
   Decomposed into waves **S1–S4** (spawn core + structural enforcement → loop
   ChatEvent channel + tree budget → live chat surface → session-tree surface).
   Both GUI layouts owner-approved; survived a three-lens adversarial review
-  (record: `archive/SUBAGENT_SPAWNING_REVIEW.md`). Open wave-level decisions: the
-  concrete budget/cap numbers (escalated at S2) and the S3 non-happy-state mock
-  re-review.
+  (record: `archive/SUBAGENT_SPAWNING_REVIEW.md`). Tree budget locked at 1.5× the
+  per-turn jerv limit; remaining derived cap numbers tuned at S2. Open: the S3
+  non-happy-state mock re-review.
 
 ## Proposed (not scheduled)
 
