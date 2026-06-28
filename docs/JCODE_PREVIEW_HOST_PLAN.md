@@ -158,24 +158,30 @@ mock gate** before implementation.
   `claude/preview-tab-iframe-1hkqz9`. Every later wave extends it. *This is the
   "verbose logging innate to the job" foundation.*
 
-- **Wave P1 — per-session port + hostname allocation** *(control server; no GUI).*
-  Allocate a unique dev **port** per session from a bounded pool and a stable
-  per-session **slug/hostname**; export the port to the shell via the existing
-  `preview_env` (now per-session); release on stop/reset/delete/reap. Rewrite
-  `PreviewManager`: **drop `CloudflaredTunnel`**; `open`/`status` become "assign +
-  report the URL + probe the dev port." DEBUG: alloc/release/reuse/probe. Tests:
-  allocation + release + pool-exhaustion + reuse-on-reset + URL shape; lifecycle
-  release parity with #630; the dataless invariant untouched.
+- **Wave P1 — per-session port + hostname allocation** *(control server; no GUI;
+  **additive — landed**).* A new `HostPreviewManager` that reserves a unique dev
+  **port** per session from a bounded pool plus a stable, unguessable **slug** →
+  `https://<slug>-preview.<host>`, with `resolve(slug)→sid` for the Wave P2 proxy;
+  released on delete/reap (a pause keeps the reservation — the proxy makes a paused
+  session unreachable, Wave P2). Pure in-memory, **no subprocess**. Introduced
+  **alongside** the tunnel path behind a `preview_mode` setting (default `tunnel`),
+  so `main` keeps a working preview until the P5 cutover — `CloudflaredTunnel` is
+  **not** removed here. Logs: allocate at INFO (lifecycle parity with the tunnel
+  manager), reuse + release at DEBUG. Tests: allocation, idempotence, distinct
+  ports, `resolve`, release-and-reuse, partial-release routing, host sanitization,
+  pool exhaustion + inverted-pool rejection, fail-closed empty host.
 
-- **Wave P2 — api↔jcode preview reverse-proxy** *(api; security-touching, red-team
-  gated; open decision 1).* A host-routed reverse-proxy on the api:
-  `<slug>-preview.<host>/*` **and the HMR WebSocket** → control server →
-  `127.0.0.1:<session-port>`, Host rewritten to `localhost`, auth per open
-  decision 3. The control server gains the inner dev-port proxy. DEBUG: the
-  `Host→sid→port` trace + upstream connect + WS upgrade + dev-down. Tests:
-  host→session routing, Host rewrite, **WS upgrade pass-through**, auth gating,
-  unknown-host 404, dev-down 502, and the **isolation assertion** (the sandbox is
-  unreachable except via the api).
+- **Wave P2 — api↔jcode preview reverse-proxy + terminal port wiring** *(api +
+  control server; security-touching, red-team gated; open decision 1).* Wire the
+  allocator onto the serving path: the session's shell binds its reserved port via
+  the existing `preview_env`'s `$PORT` (now per-session, allocated at first terminal
+  open); a host-routed reverse-proxy on the api `<slug>-preview.<host>/*` **and the
+  HMR WebSocket** → control server → `127.0.0.1:<session-port>`, Host rewritten to
+  `localhost`, auth per open decision 3, and a **paused/unknown session 404/502s**.
+  DEBUG: the `Host→sid→port` trace + upstream connect + WS upgrade + dev-down.
+  Tests: host→session routing, Host rewrite, **WS upgrade pass-through**, auth
+  gating, unknown-host 404, dev-down/paused 502, and the **isolation assertion**
+  (the sandbox is unreachable except via the api).
 
 - **Wave P3 — edge wiring** *(Caddy + compose + tunnel/DNS docs; infra).* The Caddy
   matcher `*-preview.<host>` → api (one static rule; the dynamic map lives in the
@@ -195,8 +201,9 @@ mock gate** before implementation.
   DEBUG lives server-side (P2/P4); component tests in mock mode.
 
 - **Wave P5 — cutover & teardown** *(remove cloudflared; ops; on-box-gated).*
-  Remove the `cloudflared` binary from the jcode `Dockerfile` and the dead
-  preview-tunnel env once P1–P4 are live and **on-box-verified**. The logging
+  Flip `preview_mode` default to **host**, then remove the `CloudflaredTunnel`
+  adapter, the `cloudflared` binary from the jcode `Dockerfile`, and the dead
+  preview-tunnel env — once P1–P4 are live and **on-box-verified**. The logging
   coverage review (above). Tests: the image no longer ships `cloudflared`;
   end-to-end preview (HTTP + HMR + a **second concurrent** session) on-box.
 

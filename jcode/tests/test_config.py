@@ -45,6 +45,13 @@ def test_effective_log_level_defaults_to_configured_level() -> None:
     assert Settings(token="x", log_level="WARNING").effective_log_level == "WARNING"
 
 
+def test_inverted_preview_port_pool_is_rejected() -> None:
+    # A low>high pool would silently make every host-preview allocation "exhausted";
+    # the validator turns that config typo into a clear startup error.
+    with pytest.raises(ValidationError):
+        Settings(token="x", preview_port_low=5200, preview_port_high=5173)
+
+
 def test_debug_access_forces_debug_level() -> None:
     # With debug access on, jcode runs verbose regardless of the configured level — the
     # owner is investigating the box, so DEBUG wins (overriding even a quieter setting).

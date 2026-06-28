@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from typing import Literal
+
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -53,6 +56,30 @@ class Settings(BaseSettings):
     # to withhold the capability entirely.
     preview_enabled: bool = True
     preview_default_port: int = 5173
+
+    # Web-preview transport (docs/JCODE_PREVIEW_HOST_PLAN.md). "tunnel" = the legacy
+    # per-session TryCloudflare quick-tunnel (the default until the host path is on-box
+    # verified and cut over at Wave P5); "host" = a per-session hostname under the box's
+    # OWN named tunnel + Caddy, fronted through the api↔jcode proxy. Host mode is built
+    # additively — flipping this is the P5 cutover, not a mid-flight default.
+    preview_mode: Literal["tunnel", "host"] = "tunnel"
+    # Host mode only: the zone host previews hang under, reached at
+    # https://<slug>-preview.<preview_base_host>. Flattened to one label so the zone's
+    # *.<host> Universal SSL covers it (no Advanced Certificate Manager). Empty (the
+    # default) fail-closes host mode. Set with JCODE_PREVIEW_BASE_HOST.
+    preview_base_host: str = ""
+    # Host mode's per-session dev-port pool [low, high] — its size is the max
+    # concurrent previews. Each session reserves one for its life; the shell binds it.
+    preview_port_low: int = 5173
+    preview_port_high: int = 5199
+
+    @model_validator(mode="after")
+    def _check_preview_port_pool(self) -> Settings:
+        # An inverted range silently yields an empty pool (every allocation
+        # "exhausted"), so reject the typo at startup with a clear message instead.
+        if self.preview_port_low > self.preview_port_high:
+            raise ValueError("preview_port_low must be <= preview_port_high")
+        return self
 
     # Session GC (Wave J5): reap a session (its checkout + any tunnel) after this many
     # seconds with no activity — abandoned sandboxes don't pile up. An open terminal

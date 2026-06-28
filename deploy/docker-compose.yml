@@ -452,6 +452,12 @@ services:
       # to withhold it. The tunnel dials OUT (no inbound), so the container's default
       # egress covers it; no compose network change.
       JCODE_PREVIEW_ENABLED: ${JCODE_PREVIEW_ENABLED:-true}
+      # Web-preview transport (docs/JCODE_PREVIEW_HOST_PLAN.md): "tunnel" (the legacy
+      # per-session quick-tunnel, default) or "host" (per-session hostname under the box's
+      # own tunnel; flips at the Wave P5 cutover). Host mode serves at
+      # <slug>-preview.<JCODE_PREVIEW_BASE_HOST>; empty base host fail-closes it.
+      JCODE_PREVIEW_MODE: ${JCODE_PREVIEW_MODE:-tunnel}
+      JCODE_PREVIEW_BASE_HOST: ${JCODE_PREVIEW_BASE_HOST:-}
       # Session GC (Wave J5): reap a session (checkout + tunnel) after this many idle
       # seconds (default 24h; 0 disables). An open terminal keeps a session fresh; a
       # deliberately-paused (stopped) session is never reaped.
