@@ -28,7 +28,15 @@ from jbrain.connectors.medical import medical_connectors
 from jbrain.db.session import SessionContext
 from jbrain.notes.service import NoteInfo
 from jbrain.search.service import SearchResponse, SearchResult
-from jbrain.web import HurricaneClient, SearxngClient, WeatherClient, WebFetcher
+from jbrain.web import (
+    HurricaneClient,
+    NhcGisClient,
+    NhcSurgeClient,
+    NwsClient,
+    SearxngClient,
+    WeatherClient,
+    WebFetcher,
+)
 
 CTX = ToolContext(session=SessionContext(principal_kind="owner"), scopes=("general",))
 
@@ -475,7 +483,12 @@ def test_build_registry_binds_the_shipped_sidecars() -> None:
             **build_web_handlers(SearxngClient(""), WebFetcher()),
             **build_weather_handlers(WeatherClient("", ""), object()),  # type: ignore[arg-type]
             **build_hurricane_handlers(
-                HurricaneClient(""), WeatherClient("", ""), object()  # type: ignore[arg-type]
+                HurricaneClient(""),
+                WeatherClient("", ""),
+                object(),  # type: ignore[arg-type]
+                NhcGisClient(""),
+                NwsClient(""),
+                NhcSurgeClient(""),
             ),
         },
         object(),  # type: ignore[arg-type]  # city geocoder
@@ -807,8 +820,8 @@ def test_sidecars_pinned_to_their_versions() -> None:
         ),
         "hurricane.tool": (
             "hurricane",
-            1,
-            "da468aca8230ac2e045404d92ff8ff4988c159d03232f47165ba1398c233ab51",
+            2,
+            "78c94eaed4ca26f2d25891e0ec943758bb88b00a0ff5a88427c745f7dd9b0c15",
         ),
         "gmail_search.tool": (
             "gmail_search",

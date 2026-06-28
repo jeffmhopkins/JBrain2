@@ -28,7 +28,15 @@ from jbrain.llm.fake import FakeLlmClient
 from jbrain.llm.router import LlmRouter
 from jbrain.llm.types import LlmTurn, LlmUsage, ToolCall
 from jbrain.notes.repo import SqlNotesRepo
-from jbrain.web import HurricaneClient, SearxngClient, WeatherClient, WebFetcher
+from jbrain.web import (
+    HurricaneClient,
+    NhcGisClient,
+    NhcSurgeClient,
+    NwsClient,
+    SearxngClient,
+    WeatherClient,
+    WebFetcher,
+)
 from jbrain.wiki.builder import StubRewriter, WikiBuilder
 from jbrain.wiki.editor import run_editor_turn
 from jbrain.wiki.readstore import WikiReadStore
@@ -373,7 +381,14 @@ def _editor_registry(maker: async_sessionmaker, jobs: _FakeJobs) -> ToolRegistry
         {
             **build_web_handlers(SearxngClient(""), WebFetcher()),
             **build_weather_handlers(WeatherClient("", ""), stub),
-            **build_hurricane_handlers(HurricaneClient(""), WeatherClient("", ""), stub),
+            **build_hurricane_handlers(
+                HurricaneClient(""),
+                WeatherClient("", ""),
+                stub,
+                NhcGisClient(""),
+                NwsClient(""),
+                NhcSurgeClient(""),
+            ),
         },  # unused by the editor turn
         stub,  # city geocoder
         maker,  # sessionmaker for query_server_metrics

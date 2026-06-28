@@ -101,6 +101,19 @@ class Settings(BaseSettings):
     # active-storm list and takes no query, so the request carries no location at all
     # (the only place name that goes out is the shared weather geocoder).
     nhc_current_storms_url: str = "https://www.nhc.noaa.gov/CurrentStorms.json"
+    # The forecast-track / cone + impact feeds for the tabbed hurricane card
+    # (docs/HURRICANE_TABS_PLAN.md). All free, no API key, pinned with public defaults;
+    # empty disables that source (the card degrades gracefully). The NHC ArcGIS
+    # MapServers are queried by storm identity (no location); the NWS API is queried by
+    # the geocoded city centre (the same coarseness as the weather tool's Open-Meteo
+    # call — never the owner's precise fix).
+    nhc_tropical_mapserver_url: str = (
+        "https://mapservices.weather.noaa.gov/tropical/rest/services/tropical"
+    )
+    nhc_surge_mapserver_url: str = (
+        "https://mapservices.weather.noaa.gov/tropical/rest/services/tropical"
+    )
+    nws_api_url: str = "https://api.weather.gov"
     # The external reverse-geocoder fallback (Phase 7 Wave 4b), Nominatim-compatible.
     # DEFAULT OFF: empty means the connector is never registered, so there is no
     # off-box geocoding path at all. When set, a lookup still leaves the box only on

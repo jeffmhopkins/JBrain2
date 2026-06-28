@@ -1026,37 +1026,52 @@ reaches Open-Meteo is a city centre, the same coarseness as naming the city, nev
 precise fix. Coordinates never ride the data-only payload (#9). Owner-facing chat
 artifact; never a note, never RAG-indexed.
 
-### `hurricane_card` tool-view (reference mocks: `docs/mocks/hurricane-view/`)
+### `hurricane_card` tool-view (binding mock: `docs/mocks/hurricane-view/hurricane-combined-tabs.html`; build plan `docs/HURRICANE_TABS_PLAN.md`)
 
-The in-chat card jerv shows after a `hurricane` tool call — "is there a storm near me,
-how strong, how far, which way is it moving?" answered at a glance from NHC's live
-active-storm feed. A registered, data-only view like every other: the model fills
-`{place, as_of, active_count, storm:{name, kind, cat, sustained_mph, pressure_mb,
-moving}, distance_mi, bearing, proximity}` and **authors no markup, no URL, and no
-color**. `kind` is a closed enum (`hurricane|typhoon|tropical-storm|
-tropical-depression|subtropical-storm|subtropical-depression|post-tropical|potential|
-low|cyclone`) the component maps to a label, `cat` is the Saffir-Simpson number
-("1".."5", shown as the badge only when it applies — else the kind label), and
-`proximity` (`near|regional|distant`) is a **computed how-close tone**, mapped to a
-token by the component. A hurricane is a hazard, so the cyclone glyph rides the
-**rose** accent; the proximity note reads **amber** (caution) only when `near` and a
-threatening system, else neutral **steel** (info). Tokens-only `.tv-hu-*` classes; the
-card frame matches the live `.tool-view`.
+The in-chat **tabbed** card jerv shows after a `hurricane` tool call. A persistent
+storm hero + an official watch/warning banner sit above a tab bar: **Timeline** (the
+local hour-by-hour wind/gust/rain strip), **Track** (the forecast cone + path), and
+**Impact** (the hazard grid). A registered, data-only view like every other — the model
+**authors no markup, no URL, no color, and no raw latitude/longitude** (#9); every
+enum maps to a glyph + token in the component. The shape (full schema in
+`docs/HURRICANE_TABS_PLAN.md` §2):
+`{place, as_of, active_count, coverage, storm:{name, kind, cat, sustained_mph, gust_mph,
+pressure_mb, moving}, distance_mi, bearing, proximity, alert, track[], cone[], you,
+timeline[], arrival, impact}`.
 
-**Honesty boundary — position + strength only.** `proximity` is geometry (distance ×
-storm type), **never an official NWS watch/warning** — so the card never uses the rose
-danger tone and always carries the footer "Position & strength only — check NWS/NHC for
-watches, warnings & local impacts." The card deliberately omits watches/warnings,
-storm-surge heights, rainfall totals, and the local timing of wind/surge/rain; the
-`.tool` prose forbids the model inventing them. Those need the NHC GIS forecast
-track/cone (queryable GeoJSON) and `api.weather.gov` alerts + hourly gridpoint feeds —
-a follow-up the data shape already leaves room for (the `docs/mocks/hurricane-view/`
-combined mock previews the Timeline/Track/Impact tabs those feeds would populate).
+- `kind` is a closed enum (`hurricane|typhoon|tropical-storm|tropical-depression|
+  subtropical-storm|subtropical-depression|post-tropical|potential|low|cyclone`); `cat`
+  is the Saffir-Simpson number ("1".."5"), the badge when it applies, else the kind label.
+- `proximity` (`near|regional|distant`) is a **computed** how-close tone (amber caution
+  when `near` + threatening, else steel info).
+- `alert` is the **official NWS watch/warning** for the place (`{level: warning|watch,
+  kind, event, headline}`) or `null` — the **only** legitimate watch/warning surface. A
+  real `warning` is the one case the card shows the **rose danger** banner (a watch reads
+  amber); the headline renders as **escaped text content only**, never markup.
+- `track[]`/`cone[]`/`you` are geometry **projected to the unit square `[0,1]` on-box**
+  (storm-relative bbox, north-up), so no lat/lon rides the payload; the component draws
+  inline SVG from the slots.
+- `coverage` is `us` (NWS served the point → timeline/alert/impact present) or `global`
+  (the point is outside NWS coverage → hero + Track only; the component hides the empty
+  Timeline/Impact tabs). `timeline[]`, `arrival`, and `impact` are NWS-derived; `impact.surge`
+  is the NHC banded estimate. Tokens-only `.tv-hu-*` classes; the frame matches `.tool-view`.
 
-**The location firewall holds at the tool, not the view**, exactly as `weather_card`:
-the NHC feed is the global active-storm list and takes no query, so checking for storms
-sends no location at all; distance and bearing to a storm are computed **on-box** from
-the geocoded city centre, and coordinates never ride the data-only payload (#9).
+**Honesty boundary.** Official watches/warnings come only from the NWS `alert` slot
+(US & territories); the card never invents one and shows no banner when `alert` is null.
+Surge is a **banded** estimate, and arrival/impact **timing is approximate** (derived
+from the local forecast crossing TS/hurricane-force thresholds, not official onset
+grids). The `.tool` prose binds the model to those limits and to **never** issue an
+evacuation instruction from the card — evacuation follows official orders. (This
+supersedes the v1 "position + strength only / never rose" framing: the rose banner is
+now legitimate *because* it is NWS-sourced.)
+
+**The location firewall holds at the tool, not the view.** The NHC active-storm + GIS
+track/cone feeds carry **no** location (queried by storm identity). The two coordinate
+egresses — the NWS API (alerts + gridpoint) and the NHC surge MapServer — receive only
+the **geocoded city centre** (`hit`), the same coarseness `weather` already sends to
+Open-Meteo, never the owner's precise fix (`ctx.here`); the surge query fires only for
+an in-coverage US point. Map geometry is projected on-box, so the most an inversion of
+the `you` pin against the public track coordinates can recover is that city centre.
 Owner-facing chat artifact; never a note, never RAG-indexed.
 
 ## Wiki Talk board (settled in a three-way GUI review — reference mock: `docs/mocks/wiki-talk-b-topics.html`)

@@ -117,7 +117,16 @@ from jbrain.tasks.scheduler import run_tasks_loop
 from jbrain.tiles import FsTileCache, HttpTileFetcher, TileService, TileSet, tile_cache_namespace
 from jbrain.transcribe import WhisperCppClient
 from jbrain.usage import SqlUsageRecorder
-from jbrain.web import FaviconFetcher, HurricaneClient, SearxngClient, WeatherClient, WebFetcher
+from jbrain.web import (
+    FaviconFetcher,
+    HurricaneClient,
+    NhcGisClient,
+    NhcSurgeClient,
+    NwsClient,
+    SearxngClient,
+    WeatherClient,
+    WebFetcher,
+)
 from jbrain.wiki.actions import WIKI_SPECS
 from jbrain.wiki.readstore import WikiReadStore
 from jbrain.wiki.talkstore import WikiTalkStore
@@ -310,6 +319,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # offline city geocoder so the location firewall is identical; distance and
         # bearing to a storm are computed on-box.
         hurricane_client = HurricaneClient(settings.nhc_current_storms_url)
+        # The tabbed hurricane card's detail feeds (docs/HURRICANE_TABS_PLAN.md): the
+        # forecast track + cone (NHC GIS, queried by storm identity — no location), and
+        # the official alert + local timeline (NWS) + peak-surge band (NHC), queried by
+        # the geocoded city centre only. All free, no key; each degrades gracefully.
+        nhc_gis_client = NhcGisClient(settings.nhc_tropical_mapserver_url)
+        nws_client = NwsClient(settings.nws_api_url)
+        nhc_surge_client = NhcSurgeClient(settings.nhc_surge_mapserver_url)
         # The archivist persona's Gmail tools. Always wired over a provider that reads
         # the OAuth credentials live from the settings panel (env fallback), so a saved
         # change takes effect with no restart; until a refresh token exists the tools
@@ -329,7 +345,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.city_geocoder = CityGeocoder()
         web_handlers.update(build_weather_handlers(weather_client, app.state.city_geocoder))
         web_handlers.update(
-            build_hurricane_handlers(hurricane_client, weather_client, app.state.city_geocoder)
+            build_hurricane_handlers(
+                hurricane_client,
+                weather_client,
+                app.state.city_geocoder,
+                nhc_gis_client,
+                nws_client,
+                nhc_surge_client,
+            )
         )
         external_reverse = NominatimReverseClient(settings.external_geocoder_url)
         # Built before the registry: edit_image resolves a chat attachment's bytes
