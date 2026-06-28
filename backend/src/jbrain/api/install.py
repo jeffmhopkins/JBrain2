@@ -14,7 +14,7 @@ router = APIRouter()
 # The on-box coder is pinned server-side; the proxy overwrites the caller's
 # `model` (external_llm.py) and only advertises the real one via /v1/models.
 # So the script discovers the name at runtime rather than hard-coding it.
-_GROK_PS1 = r'''# =============================================
+_GROK_PS1 = r"""# =============================================
 # Grok Build CLI + Hopkins Brain Setup
 # Run in normal PowerShell (no admin needed):
 #   irm https://hopkinsbrain.com/api/install/grok.ps1 | iex
@@ -85,7 +85,7 @@ Write-Host "`nVerifying..." -ForegroundColor Cyan
 grok inspect
 Write-Host "`n=== Done. Launching Grok ===" -ForegroundColor Green
 grok
-'''
+"""
 
 
 @router.get("/install/grok.ps1")
