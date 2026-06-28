@@ -8,6 +8,7 @@ import httpx
 
 from jbrain.agent.hurricanetools import (
     _governing_alert,
+    _pressure_level,
     _project,
     _rain_level,
     _surge_level,
@@ -336,6 +337,10 @@ async def test_full_us_assembly_builds_every_tab() -> None:
     assert data["storm"]["cat"] == "3"
     assert data["storm"]["sustained_mph"] == 120
     assert data["storm"]["gust_mph"] == 150
+    # severity tiers track the real vitals (the card's Storm-stats gauges read these)
+    assert data["storm"]["sustained_level"] == "extreme"  # 120 mph
+    assert data["storm"]["gust_level"] == "extreme"  # 150 mph
+    assert data["storm"]["pressure_level"] == "high"  # 948 mb
     assert data["coverage"] == "us"
     # official alert (the non-tropical Flood Watch is dropped)
     assert data["alert"]["level"] == "warning" and data["alert"]["kind"] == "hurricane"
@@ -533,4 +538,8 @@ def test_level_helpers() -> None:
     assert _rain_level(4) == "moderate" and _rain_level(1) == "low"
     assert _surge_level("Above 12 ft") == "extreme" and _surge_level("Up to 9 ft") == "high"
     assert _surge_level("Up to 6 ft") == "high" and _surge_level("Up to 3 ft") == "moderate"
+    # pressure is inverse — lower is stronger; unknown (0) reads low
+    assert _pressure_level(915) == "extreme" and _pressure_level(940) == "high"
+    assert _pressure_level(970) == "moderate" and _pressure_level(1000) == "low"
+    assert _pressure_level(0) == "low"
     assert _surge_level("Up to 1 ft") == "low"

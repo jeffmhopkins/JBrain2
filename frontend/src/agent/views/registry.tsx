@@ -1316,22 +1316,34 @@ function HuTimeline({
   );
 }
 
-/** One Impact-grid cell with a value and a severity gauge toned by `level`. */
+/** One Impact-grid cell with a value and a severity gauge toned by `level`. A cell
+ * whose quantity has no hazard magnitude (e.g. movement) passes `gauge={false}` and
+ * reads the neutral `info` tone instead of a meaningless bar. */
 function HuImpactCell({
   label,
   value,
   sub,
   level,
   fill,
-}: { label: string; value: string; sub: string; level: HuLevel; fill: number }): ReactNode {
+  gauge = true,
+}: {
+  label: string;
+  value: string;
+  sub: string;
+  level: HuLevel | "info";
+  fill: number;
+  gauge?: boolean;
+}): ReactNode {
   return (
     <div className={`tv-hu-icell lv-${level}`}>
       <div className="tv-hu-ik">{label}</div>
       <div className="tv-hu-iv">{value}</div>
       {sub && <div className="tv-hu-iq">{sub}</div>}
-      <div className="tv-hu-gauge">
-        <i style={{ width: `${Math.max(0, Math.min(100, fill))}%` }} />
-      </div>
+      {gauge && (
+        <div className="tv-hu-gauge">
+          <i style={{ width: `${Math.max(0, Math.min(100, fill))}%` }} />
+        </div>
+      )}
     </div>
   );
 }
@@ -1413,38 +1425,47 @@ function HuImpact({
     );
   }
 
+  // Storm-stats gauges are toned + filled from the backend-computed severity tiers
+  // (sustained_level/gust_level/pressure_level), so the bar tracks the real storm;
+  // movement is a heading, not a hazard magnitude, so it shows no gauge.
+  const cat = typeof storm.cat === "string" ? storm.cat : "";
+  const sLv = huLevel(storm.sustained_level);
+  const gLv = huLevel(storm.gust_level);
+  const pLv = huLevel(storm.pressure_level);
+  const gust = wxNum(storm.gust_mph);
   const stormStats: ReactNode[] = [
     <HuImpactCell
       key="sus"
       label="Sustained"
       value={`${wxNum(storm.sustained_mph)} mph`}
-      sub={huKind(storm.kind) === "hurricane" ? "major" : ""}
-      level="high"
-      fill={80}
+      sub={cat ? `Category ${cat}` : HU_KIND_LABEL[huKind(storm.kind)]}
+      level={sLv}
+      fill={HU_FILL[sLv]}
     />,
     <HuImpactCell
       key="gust"
       label="Peak gust"
-      value={wxNum(storm.gust_mph) > 0 ? `${wxNum(storm.gust_mph)} mph` : "—"}
-      sub="near the core"
-      level="extreme"
-      fill={95}
+      value={gust > 0 ? `${gust} mph` : "—"}
+      sub={gust > 0 ? "near the core" : "no forecast"}
+      level={gust > 0 ? gLv : "low"}
+      fill={gust > 0 ? HU_FILL[gLv] : 0}
     />,
     <HuImpactCell
       key="pres"
       label="Pressure"
       value={`${wxNum(storm.pressure_mb)} mb`}
-      sub=""
-      level="low"
-      fill={55}
+      sub="central"
+      level={pLv}
+      fill={HU_FILL[pLv]}
     />,
     <HuImpactCell
       key="move"
       label="Movement"
-      value={String(storm.moving ?? "")}
+      value={String(storm.moving ?? "—")}
       sub=""
-      level="low"
-      fill={40}
+      level="info"
+      fill={0}
+      gauge={false}
     />,
   ];
 

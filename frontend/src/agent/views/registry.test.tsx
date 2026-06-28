@@ -295,8 +295,11 @@ describe("ToolView registry", () => {
       kind: "hurricane",
       cat: "3",
       sustained_mph: 120,
+      sustained_level: "extreme",
       gust_mph: 150,
+      gust_level: "extreme",
       pressure_mb: 948,
+      pressure_level: "high",
       moving: "NNE 14 mph",
     },
     distance_mi: 215,
@@ -373,10 +376,16 @@ describe("ToolView registry", () => {
     fireEvent.click(impactBtn as Element);
     expect(container.querySelector(".tv-hu-grid")).not.toBeNull();
     expect(screen.getByText("Up to 9 ft")).toBeInTheDocument();
-    // The Impact toggle flips to the storm's own stats.
+    // The Impact toggle flips to the storm's own stats, and the gauges are toned from
+    // the backend severity tiers (not fixed decoration): Sustained 120 mph reads
+    // extreme; Movement is a heading, so it carries no gauge bar.
     fireEvent.click(screen.getByText("Storm stats"));
-    expect(screen.getByText("Sustained")).toBeInTheDocument();
-    expect(screen.getByText("Peak gust")).toBeInTheDocument();
+    const sustained = screen.getByText("Sustained").closest(".tv-hu-icell");
+    expect(String(sustained?.className)).toContain("lv-extreme");
+    expect(sustained?.querySelector(".tv-hu-gauge")).not.toBeNull();
+    const movement = screen.getByText("Movement").closest(".tv-hu-icell");
+    expect(String(movement?.className)).toContain("lv-info");
+    expect(movement?.querySelector(".tv-hu-gauge")).toBeNull();
   });
 
   it("degrades a global (out-of-coverage) hurricane_card to hero + Track only", () => {

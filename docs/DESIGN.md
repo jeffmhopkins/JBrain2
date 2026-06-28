@@ -1035,13 +1035,18 @@ local hour-by-hour wind/gust/rain strip), **Track** (the forecast cone + path), 
 **authors no markup, no URL, no color, and no raw latitude/longitude** (#9); every
 enum maps to a glyph + token in the component. The shape (full schema in
 `docs/HURRICANE_TABS_PLAN.md` §2):
-`{place, as_of, active_count, coverage, storm:{name, kind, cat, sustained_mph, gust_mph,
-pressure_mb, moving}, distance_mi, bearing, proximity, alert, track[], cone[], you,
-timeline[], arrival, impact}`.
+`{place, as_of, active_count, coverage, storm:{name, kind, cat, sustained_mph,
+sustained_level, gust_mph, gust_level, pressure_mb, pressure_level, moving},
+distance_mi, bearing, proximity, alert, track[], cone[], you, timeline[], arrival,
+impact}`.
 
 - `kind` is a closed enum (`hurricane|typhoon|tropical-storm|tropical-depression|
   subtropical-storm|subtropical-depression|post-tropical|potential|low|cyclone`); `cat`
   is the Saffir-Simpson number ("1".."5"), the badge when it applies, else the kind label.
+- `sustained_level`/`gust_level`/`pressure_level` are **computed** severity tiers
+  (`low|moderate|high|extreme`, same enum as `impact.*.level`) so the Storm-stats
+  gauges track the real vitals rather than a fixed decoration; the component maps the
+  tier to a gauge fill + tone (movement is a heading, so it shows no gauge).
 - `proximity` (`near|regional|distant`) is a **computed** how-close tone (amber caution
   when `near` + threatening, else steel info).
 - `alert` is the **official NWS watch/warning** for the place (`{level: warning|watch,
