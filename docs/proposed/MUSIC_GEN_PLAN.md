@@ -30,13 +30,13 @@ fp8** (gfx1151 upcasts fp8 anyway: same RAM, less quality loss). Resident footpr
 ## Proposed decisions (to confirm with the owner before promotion)
 | Decision | Proposed choice |
 |---|---|
-| **Model** | **ACE-Step 1.5 XL Turbo** (4B DiT) + the largest compatible Qwen LM planner, **bf16**, split-file form (`diffusion_models` / `text_encoders` / `vae`) — the max-fidelity config the box affords |
+| **Model** | **ACE-Step 1.5 XL Turbo** (4B DiT) + the largest compatible Qwen LM planner, **bf16**, split-file form (`diffusion_models` / `text_encoders` / `vae`) — the max-fidelity config the box affords. Exact files + sizes are **UNCONFIRMED** (Wave M0), so this plan does NOT assert a disk/resident figure (cf. the `qwen-image-edit` "repo/path UNCONFIRMED" precedent); the 16.6 GB Qwen-2.5-VL encoder in `catalog.py` is the floor for the planner alone |
 | **Service shape** | **Reuse the existing `comfyui` compose profile** — no new service. Music models are new **catalog entries** the operator provisions |
 | **Setup** | **No new script** — `scripts/comfyui-setup.sh` is already catalog-driven (downloads whatever files the catalog names into the ComfyUI subdirs); add `music` ids to it |
 | **Driver** | **Extend `comfyui.py`** — add a `MusicSpec` + `generate_music()` and an **audio-aware output fetch** (scan the `audio` output key, not just `images`). The submit/poll/WebSocket plumbing is reused unchanged |
 | **Artifact** | A **new owner-only `generated_audio` table** (parallel to `generated_images`, not a generalization — audio has duration/format/tags/lyrics, not width/height) + migration + RLS isolation test |
 | **Output format** | **MP3** for the inline player (small, streams in the PWA over `<audio>`); FLAC optional later. ComfyUI's `SaveAudioMP3` node |
-| **Surfaces** | A `generate_music` agent tool **and** a direct owner **MusicScreen** (the non-agent launcher path), mirroring `generate_image` + `ImageScreen` |
+| **Surfaces** | A `generate_music` agent tool (with its **`.tool` sidecar** + a **`JERV_TOOLS` allowlist** entry — both are startup-blocking, below) **and** a direct owner **MusicScreen** (the non-agent launcher path), mirroring `generate_image` + `ImageScreen` |
 | **Memory** | **Reuse the proven time-share** (free LLM → render → free ComfyUI) initially; co-residency is a later optimization (Open Items) |
 | **Host line** | Unchanged: kernel ≥ 6.18.4, `/dev/kfd`+`/dev/dri`, `HSA_OVERRIDE_GFX_VERSION=11.5.1`, ROCm ComfyUI image. The one risk is whether the pinned image carries the audio nodes + torchaudio (Wave M0) |
 
@@ -85,8 +85,12 @@ I cannot run gfx1151/ROCm here; this is the gating risk, exactly like the image 
 - **Catalog** (`image_gen/catalog.py`): add `kind="music"` and an `ace-step-xl` `ImageModel` (rename
   the dataclass's doc to "media model" or keep `ImageModel` — it's already generic enough; the
   `kind` field carries the distinction). Files = the XL DiT (`diffusion_models`), the Qwen LM
-  planner (`text_encoders`), the ACE VAE (`vae`). `size_gb`/`vram_gb` ≈ 12 GB disk / ~22 GB resident
-  (confirm M0). `workflow="ace_step_music.json"`. `recommended:false` until M0 validates.
+  planner (`text_encoders`), the ACE VAE (`vae`). `size_gb`/`vram_gb` are **placeholders until M0
+  measures them** — a bf16 4B DiT is ~8 GB *for the DiT alone* and the largest Qwen planner adds
+  ~16 GB+, so disk is well past any "~12 GB" guess; do not assert a figure pre-M0.
+  `workflow="ace_step_music.json"`. `recommended:false` until M0 validates — which means a default
+  `comfyui-setup.sh` run (no ids) **skips it** (`recommended_ids()`); the operator names the music id
+  explicitly (`comfyui-setup.sh ace-step-xl`). State this in the provisioning UX.
   - `MODEL_SUBDIRS` is **unchanged** (all three subdirs already allowed). `scripts/comfyui-setup.sh`
     is **unchanged** (it downloads whatever the manifest names) — only its docs/recommended-set note
     gain the music ids.
@@ -105,8 +109,9 @@ I cannot run gfx1151/ROCm here; this is the gating risk, exactly like the image 
     (`SaveAudio*` emits `{filename, subfolder, type}` under `audio`); `_fetch_view` already serves
     any `/view` file, so it's reused. Keep it a small union (`images` or `audio`), returning the ref
     — no behavioral change to the image path.
-  - A `MusicGen` Protocol + the fake (`image_gen/fake.py`) gain `generate_music` so tests drive it
-    with no network (DEVELOPMENT.md "no network in tests").
+  - A `MusicGen` Protocol + a **`FakeMusicGen`** (the existing `FakeImageGen` returns a 1×1 PNG and
+    is image-shaped — a music fake must return **minimal valid MP3 bytes**, not a one-line add) so
+    tests drive it with no network (DEVELOPMENT.md "no network in tests").
 - **Config** (`config.py`): **no new var** — `comfyui_url`/`comfyui_enabled`/`comfyui_models` already
   gate and list provisioned ids; a music id in `comfyui_models` is the enable signal.
 - **Tests:** catalog unit (manifest shape, subdirs); driver music path against `MockTransport`
@@ -114,25 +119,37 @@ I cannot run gfx1151/ROCm here; this is the gating risk, exactly like the image 
   `bash -n` + dry-run of the setup script's music ids. **No live ComfyUI in CI** (host-validated seam).
 
 ## Wave M2 — artifact table + render core + agent tool
-- **Migration (new, e.g. 0xxx):** `app.generated_audio`, owner-only, **immutable** chat-artifact
-  table (mirrors `generated_images`): `id`, `blob_sha256`, `model`, `prompt_tags`, `lyrics`,
+- **Migration (next number — latest is `0104`, so `0105`):** `app.generated_audio`, owner-only,
+  **immutable** chat-artifact table copying the `0078_generated_images` RLS-policy + isolation-test
+  pattern: `id`, `blob_sha256`, `model`, `prompt_tags`, `lyrics`,
   `negative_tags`, `seconds`, `steps`, `seed bigint`, `format`, `created_at`. **RLS owner-only
   policy + the mandatory isolation test** (CLAUDE.md rule 3) — a non-owner session sees zero rows
   and cannot insert.
 - **Model/repo** (`models/audio.py`): `GeneratedAudio` + `GeneratedAudioRepo` (`insert`/`get`/
   `list`/`delete`), taking a caller-supplied RLS-scoped session — a verbatim parallel of
   `models/images.py`. (`delete` leaves the blob — content-addressed/keep-all, same rationale.)
-- **Render core** (`image_gen/render.py`): a `MusicRenderService` (or a `render_music()` method)
-  reusing `_free_local_llms` → `generate_music` → `_free_comfyui_model` → blob put → RLS insert.
-  Validation as typed exceptions (`RenderValidationError` for bad seconds/steps; reuse
-  `ModelNotInstalledError` gated on `provisioned_models`).
+- **Render core** (`image_gen/render.py`): a **new `MusicRenderService`** — be honest about reuse.
+  `ImageRenderService.generate` is hardwired to image semantics (aspect/resolution → width/height,
+  the `_GEN_SPEEDS` tier machine, width/height columns), none of which apply to audio; the music
+  service **shares only the two `_free_local_llms`/`_free_comfyui_model` helpers**, then runs
+  resolve → `generate_music` → blob put → RLS insert. Validation is **net-new** (a `seconds` clamp
+  and `steps` band — `RenderValidationError` is today raised only for aspect/resolution; the
+  max-duration band is an Open Item to tune on-box). `ModelNotInstalledError` gating on
+  `provisioned_models` is reused.
 - **Agent tool** (`agent/musicgentools.py`, sibling of `imagegentools.py`): `generate_music`
   (`web`-class, jerv-only, direct-exec; on-box, no egress). Args: `tags`/`prompt`, `lyrics`,
   `seconds`, optional `seed`, `negative_tags`. Resolves → drives the (faked-in-tests) service →
   stores the MP3 via the blob store → records one `generated_audio` row under the caller's RLS
-  scope → returns a `generated_audio` **data-only view** (id, tags, seconds, seed, model — **no URL**;
-  the app builds the `<audio>` src from the id, invariant #9). `_progress_callback` is reused.
-  Failure → clean tool-error string. Wired only when a music model is provisioned (graceful degrade).
+  scope → returns a `generated_audio` **data-only view** (`audio_id`, tags, seconds, seed, model —
+  **no URL**; the app builds the `<audio>` src from the id, invariant #9). `_progress_callback`
+  is reused. Failure → clean tool-error string.
+  - **Two startup-blocking registry requirements (don't skip):** (1) author the
+    **`tools/generate_music.tool` sidecar** (frontmatter `name`/`version`/`permission`/`params`
+    JSON-Schema + a model-facing description body) — the registry **fails at boot** on a
+    handler-without-sidecar (`ToolRegistryError`); (2) add `"generate_music"` to the **`JERV_TOOLS`
+    frozenset** in `agent/agents.py` — a `web`-class tool not in the allowlist is rejected. Also
+    give **`agent/prompts/jerv.prompt`** awareness of the new tool. Wired (handler built + view
+    enabled) only when a music model is provisioned (graceful degrade).
 - **Tests:** repo + RLS isolation (security-100%); render service (time-share order, install-gating,
   validation); tool handler (happy path emits the view; bad args / interrupt / gateway-down → clean
   strings). ComfyUI faked.
@@ -140,16 +157,24 @@ I cannot run gfx1151/ROCm here; this is the gating risk, exactly like the image 
 ## Wave M3 — direct owner API + settings surface
 - **Direct render API** (`api/music_render.py`, sibling of `images_render.py`): `OwnerDep` + RLS.
   - `GET /music/generated` (gallery, always mounted) ; `POST /music/generate` (JSON tags/lyrics/
-    seconds/seed) ; `DELETE /music/generated/{id}` ; `GET /music/generated/{id}` → **streams the
-    audio bytes** with the right `Content-Type`/`Accept-Ranges` for `<audio>` (the bytes-by-id
-    serve route, parallel to the image serve). Typed render errors → 400/409/502 exactly as images.
+    seconds/seed) ; `DELETE /music/generated/{id}` ; `GET /music/generated/{id}` → serve the audio
+    bytes. **Model the byte-serve on the real precedent:** the image bytes-by-id route lives in
+    **`api/images.py`** (`generated_router`, a `FileResponse` — which already emits `Accept-Ranges`
+    and handles `Range` for `<audio>`), **not** in `images_render.py` (which has only list/delete).
+    Typed render errors → 400/409/502 exactly as images.
   - `generate` mounts only when `comfyui_url` is set (main.py gate); the list/serve routes are
-    always available (a box keeps its past tracks).
-- **Settings** (`api/image_settings.py` → keep one drawer): the `_snapshot` already lists the **whole
-  catalog**; music models surface automatically once added to the catalog (their `kind` drives a
-  `music` capability chip). `free`/`interrupt`/`service start|stop` are **model-agnostic and reused**.
-  Decide cosmetic: one combined "On-box media" drawer vs. a music sub-section (DESIGN.md / Wave M4
-  GUI gate). No new supervisor work — it already start/stops the `comfyui` service.
+    always available (a box keeps its past tracks). Replicates the image split:
+    `list_router`/serve always-on, generate gated.
+- **Settings** (`api/image_settings.py` → keep one drawer): `_snapshot` already lists the **whole
+  catalog** and carries each model's `kind`, so music models surface automatically. **But the gate is
+  service-level, not per-capability:** `ImageSettingsOut.enabled` is just `bool(comfyui_url)`, and the
+  Launcher's image tile keys on that — so a *music-only* tile (shown only when a music model is
+  provisioned) **cannot reuse `enabled`**. Add a per-kind signal to the snapshot (e.g.
+  `music_provisioned: bool` derived from `comfyui_models` ∩ the catalog's music ids; there is no
+  existing "capability chip" abstraction — `kind` is a free string the frontend interprets).
+  `free`/`interrupt`/`service start|stop` are **model-agnostic and reused as-is** — and because music
+  reuses the **same `comfyui` service**, the supervisor needs **no change**. Decide cosmetic: one
+  combined "On-box media" drawer vs. a music sub-section (DESIGN.md / Wave M4 GUI gate).
 - **Wiring** (`main.py`): build `MusicGen`/`MusicRenderService`/`GeneratedAudioRepo` on the same
   `comfyui_url` gate; register the routers; pass the provisioned-model gate.
 - **Tests:** route auth (owner-only security-100%), validation 400s, gateway-down 502, byte-serve
@@ -173,17 +198,22 @@ I cannot run gfx1151/ROCm here; this is the gating risk, exactly like the image 
   **never hand-authored**, invariant #9). Types: `GenerateMusicRequest`, `GeneratedAudioOut`
   (id, tags, lyrics, seconds, model, seed, created_at). Mirror the camelCase wire (`negativeTags`).
   Mock-mode fixtures (`api/mock.ts`) so the screen renders offline with sample tracks.
-- **Inline view** (`agent/views/registry.tsx`): a `generated_audio` view → a small **`AudioCard`**
-  component (waveform/placeholder + `<audio controls>` built from `generatedAudioUrl(image_id-analog)`,
-  tags/seconds/seed meta, a copy-seed action). Registered in the view `REGISTRY`; unknown views still
-  render nothing. The live in-flight card shows the step bar (no preview frame for audio).
-- **Launcher** (`components/Launcher.tsx`): a config-gated **"Music"** tile (icon + `target:"music"`),
-  shown only when `getImageSettings()` reports a provisioned music model — same one-fetch gate the
-  Image tile uses, so it never flashes on a box without it.
+- **Inline view** (`agent/views/registry.tsx`): a net-new `generated_audio` view → a small
+  **`AudioCard`** component. The `REGISTRY` is a **closed map** (no `generated_audio` key today), so
+  this is a typed addition. Define the data-only `ViewPayload.data` shape explicitly:
+  `{ audio_id, tags, lyrics?, seconds, model, seed }` (use **`audio_id`**, the audio analog of
+  `image_id`); the card builds `<audio controls>` from `generatedAudioUrl(audio_id)` and shows
+  tags/seconds/seed meta + a copy-seed action. Unknown views still render nothing. The live in-flight
+  card shows the step bar (no preview frame for audio).
+- **Launcher** (`components/Launcher.tsx`): a config-gated **"Music"** tile. `LauncherTarget` is a
+  **typed union** — adding `"music"` is a type change. Gate it on the **new `music_provisioned`
+  signal** (Wave M3), **not** the service-level `enabled` the Image tile uses (`enabled` is true
+  whenever ComfyUI is configured, even with no music model), so the tile never appears on a box
+  without a music model.
 - **Settings drawer** (`LLMSettingsScreen.tsx`): the music models appear in the existing on-box
-  drawer from the snapshot; add a **`music` capability chip** (alongside generate/edit) and let the
-  shared memory meter show the music model's resident segment. No new fetch — the snapshot already
-  carries it.
+  drawer from the snapshot; render a **`music` kind badge** (the frontend already maps `kind` to a
+  badge for generate/edit — extend that, there is no separate "capability chip" type) and let the
+  shared memory meter show the music model's resident segment. No new fetch — the snapshot carries it.
 - **Tests:** component/render tests (form → request shape, state machine, gallery actions, audio
   card), mock-mode fixtures, the launcher gate.
 
