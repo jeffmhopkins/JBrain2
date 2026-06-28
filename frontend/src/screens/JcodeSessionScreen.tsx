@@ -179,11 +179,17 @@ function JcodeTerminal({
           onClosedRef.current?.();
         }
       };
-      const onWindowResize = () => fit.fit();
-      window.addEventListener("resize", onWindowResize);
+      // Refit on the panel's ACTUAL size, not just window resizes. A share-link recipient
+      // on desktop gets a full-width screen (.jcode-screen--wide), but the window never
+      // resizes after load — so a mount-time fit that measured before the wide layout
+      // settled would leave the terminal frozen at a narrow mobile column, the rest of the
+      // panel bare background. Observing the host refits the moment its real width lands
+      // (the observer fires on first observe) and on every later change, filling the panel.
+      const ro = new ResizeObserver(() => fit.fit());
+      ro.observe(el);
       term.focus();
       cleanup = () => {
-        window.removeEventListener("resize", onWindowResize);
+        ro.disconnect();
         h.detach();
         handle.current = null;
         fitRef.current = null;
