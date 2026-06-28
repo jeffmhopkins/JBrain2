@@ -290,6 +290,7 @@ class SpawnService:
                 UserMessage(text=now_block(ctx.timezone)),
                 UserMessage(text=brief_text),
             ]
+
             def _on_step(step: int, _cost: int) -> None:
                 # Live per-step progress so the UI's budget meter + step count move while
                 # this non-streaming child works (Wave S2 follow-up).
