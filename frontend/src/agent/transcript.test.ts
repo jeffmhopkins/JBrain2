@@ -251,4 +251,91 @@ describe("applyEvent reducer", () => {
     ms = applyEvent(ms, { type: "tool_progress", tool_call_id: "ghost", step: 1, total: 4 });
     expect(ms[0]?.tools).toEqual([]);
   });
+
+  it("folds a sub-agent fan onto its spawn tool call (spawned → progress → done)", () => {
+    let ms: TranscriptMessage[] = [streaming()];
+    ms = applyEvent(ms, { type: "tool_call", id: "c1", name: "spawn_subagent", arguments: {} });
+    ms = applyEvent(ms, {
+      type: "subagent_spawned",
+      tool_call_id: "c1",
+      child_id: "k1",
+      persona: "research",
+      label: "Pricing",
+      depth: 1,
+    });
+    ms = applyEvent(ms, {
+      type: "subagent_progress",
+      tool_call_id: "c1",
+      child_id: "k1",
+      phase: "researching",
+      tree_spent: 300,
+      tree_budget: 1200,
+    });
+    ms = applyEvent(ms, {
+      type: "subagent_done",
+      tool_call_id: "c1",
+      child_id: "k1",
+      ok: true,
+      stop_reason: "end_turn",
+      summary: "3 tiers",
+      tree_spent: 500,
+      tree_budget: 1200,
+    });
+    const fan = ms[0]?.tools[0]?.fan;
+    expect(fan?.treeSpent).toBe(500);
+    expect(fan?.treeBudget).toBe(1200);
+    expect(fan?.children).toEqual([
+      {
+        childId: "k1",
+        persona: "research",
+        label: "Pricing",
+        depth: 1,
+        phase: "end_turn",
+        status: "done",
+        stopReason: "end_turn",
+        summary: "3 tiers",
+      },
+    ]);
+  });
+
+  it("marks a failed child rose and is idempotent on a replayed spawn", () => {
+    let ms: TranscriptMessage[] = [streaming()];
+    ms = applyEvent(ms, { type: "tool_call", id: "c1", name: "spawn_subagent", arguments: {} });
+    const spawned = {
+      type: "subagent_spawned" as const,
+      tool_call_id: "c1",
+      child_id: "k1",
+      persona: "review",
+      label: "Cross-check",
+      depth: 1,
+    };
+    ms = applyEvent(ms, spawned);
+    ms = applyEvent(ms, spawned); // reconnect replay — must not duplicate
+    ms = applyEvent(ms, {
+      type: "subagent_done",
+      tool_call_id: "c1",
+      child_id: "k1",
+      ok: false,
+      stop_reason: "error",
+      summary: "ERROR: web_fetch timed out",
+      tree_spent: 200,
+      tree_budget: 1200,
+    });
+    const fan = ms[0]?.tools[0]?.fan;
+    expect(fan?.children).toHaveLength(1);
+    expect(fan?.children[0]?.status).toBe("failed");
+  });
+
+  it("ignores a subagent event for an unknown spawn call", () => {
+    let ms: TranscriptMessage[] = [streaming()];
+    ms = applyEvent(ms, {
+      type: "subagent_spawned",
+      tool_call_id: "ghost",
+      child_id: "k1",
+      persona: "research",
+      label: "x",
+      depth: 1,
+    });
+    expect(ms[0]?.tools).toEqual([]);
+  });
 });

@@ -248,7 +248,12 @@ class SpawnService:
             )
             _emit(
                 ctx,
-                SubagentProgressEvent(child_id=child.id, phase=_PHASE.get(persona, "working")),
+                SubagentProgressEvent(
+                    child_id=child.id,
+                    phase=_PHASE.get(persona, "working"),
+                    tree_spent=tree.spent,
+                    tree_budget=tree.tree_budget,
+                ),
             )
             child_run = await self._runlog.start(
                 owner_ctx,
@@ -306,7 +311,17 @@ class SpawnService:
                         step_count=tally.steps,
                         cost_tokens=tally.cost,
                     )
-                _emit(ctx, SubagentDoneEvent(child_id=child.id, ok=False, stop_reason="error"))
+                _emit(
+                    ctx,
+                    SubagentDoneEvent(
+                        child_id=child.id,
+                        ok=False,
+                        stop_reason="error",
+                        summary=f"ERROR: {exc}",
+                        tree_spent=tree.spent,
+                        tree_budget=tree.tree_budget,
+                    ),
+                )
                 return _ChildResult(label, persona, f"ERROR: {exc}", ok=False)
             await self._runlog.finish(
                 owner_ctx,
@@ -333,7 +348,17 @@ class SpawnService:
                 summary = f"{text}\n\n[truncated — hit the {result.stop_reason} limit]"
             else:
                 summary = text
-            _emit(ctx, SubagentDoneEvent(child_id=child.id, ok=ok, stop_reason=result.stop_reason))
+            _emit(
+                ctx,
+                SubagentDoneEvent(
+                    child_id=child.id,
+                    ok=ok,
+                    stop_reason=result.stop_reason,
+                    summary=summary,
+                    tree_spent=tree.spent,
+                    tree_budget=tree.tree_budget,
+                ),
+            )
             return _ChildResult(label, persona, summary, ok=ok)
 
 
