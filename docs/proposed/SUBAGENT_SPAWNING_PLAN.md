@@ -16,11 +16,11 @@ agent design, given a roadmap slot, and promoted out of `proposed/`.
 > needs a loop or schema change, this doc says so. The structural enforcement
 > *is the work*; until it ships, none of these guarantees hold.
 
-## Reconciliation with the reserved `ASSISTANT.md` hatch (owner sign-off needed)
+## Reconciliation with the reserved `ASSISTANT.md` hatch (owner-approved)
 
 `docs/ASSISTANT.md:170` reserves one hatch, and this spec **materially reinterprets
-three of its properties** — that reinterpretation needs explicit owner sign-off
-(this is the moment; the spec is proposed):
+three of its properties**. The owner has **approved** this reinterpretation (the
+fan + web-sandbox + live-streaming reading, below) over the literal one-shot hatch:
 
 > **No standing multi-agent orchestra.** … Keep exactly one narrow `spawn_subagent`
 > escape hatch … runs the **same loop with a fresh context and the same RLS-scoped
@@ -33,8 +33,8 @@ three of its properties** — that reinterpretation needs explicit owner sign-of
 | "returns only a summary" | summary return **plus live progress** streamed to the chat/tree | Progress frames are **read-only telemetry**; the only data that re-enters the parent's reasoning is the summary, still wrapped in the data boundary. No new write path. |
 | "one narrow hatch" | a **bounded fan** (≤ caps), **two sub-agent layers** deep | Ephemeral (one parent turn), owner-paced (only an owner turn can spawn), structurally capped (depth/fan/budget). Not a *standing* orchestra — nothing persists or runs between turns. |
 
-If the owner does not accept this reinterpretation, the fallback is the literal
-one-shot, summary-only, single-child hatch.
+(Recorded: approved. The literal one-shot, summary-only, single-child hatch was
+the rejected fallback.)
 
 ## The idea in one paragraph
 
@@ -342,11 +342,11 @@ the root keeps its 400k to synthesize. Final numbers are a build-plan task.
 
 ## GUI
 
-**Mock gate is PROVISIONAL.** The two reviewed mocks animate a single happy-path
-fan; per `DESIGN.md`'s binding mock-first process, the **error, cancel, long-fan,
-and budget-exhausted** states must be mocked and **re-reviewed before
-implementation**. The persona-as-color scheme was also rejected (below). The mocks
-have been revised toward these; a short re-confirm round is owed.
+**Mock gate cleared (owner-approved, incl. the non-happy states).** The revised
+mocks add the **error, cancel, long-fan, and budget-exhausted** states (scenario
+switchers) the first review missed, and the **persona-as-color scheme was rejected**
+in favor of a neutral tag (below). The owner re-confirmed the revised mocks; the
+layouts are settled (in-chat **A**, session-tree **B**).
 
 ### In-chat: live sub-agents — chosen **A, accordion step list** (revised)
 
