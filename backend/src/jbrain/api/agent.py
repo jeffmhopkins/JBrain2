@@ -31,7 +31,6 @@ from jbrain.agent.attachment_content import MAX_ATTACHMENTS_PER_TURN, build_atta
 from jbrain.agent.attachments import TurnAttachmentRepo, attachment_scopes
 from jbrain.agent.clock import now_block
 from jbrain.agent.loop import AgentLoop, guardrails_for_effort
-from jbrain.agent.tree import TreeState
 from jbrain.agent.memory import MemoryService
 from jbrain.agent.runlog import AgentRunLog, StepTally
 from jbrain.agent.session import AgentSessionInfo, AgentSessionRepo, read_context
@@ -39,6 +38,7 @@ from jbrain.agent.titler import SessionTitler
 from jbrain.agent.toolregistry import ToolRegistry
 from jbrain.agent.transcript_accumulator import TranscriptAccumulator
 from jbrain.agent.transcript_store import AgentTranscript
+from jbrain.agent.tree import TreeState
 from jbrain.api.deps import owner_only
 from jbrain.api.notes import ctx_for
 from jbrain.api.settings import get_settings_store
