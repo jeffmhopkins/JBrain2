@@ -4,6 +4,7 @@ import logging
 
 from jcode_ctl.app import create_app
 from jcode_ctl.config import Settings
+from jcode_ctl.host_preview import HostPreviewManager
 from jcode_ctl.preview import CloudflaredTunnel, PreviewManager
 from jcode_ctl.sessions import SessionManager
 from jcode_ctl.workspace import GitWorkspace
@@ -33,4 +34,15 @@ preview = PreviewManager(
     enabled=settings.preview_enabled,
     default_port=settings.preview_default_port,
 )
-app = create_app(settings, sessions, preview)
+# In host mode the per-session allocator (Wave P1) takes over the serving path and the
+# tunnel `preview` goes inert; tunnel mode (the default) leaves host_preview unset.
+host_preview = (
+    HostPreviewManager(
+        base_host=settings.preview_base_host,
+        port_low=settings.preview_port_low,
+        port_high=settings.preview_port_high,
+    )
+    if settings.preview_enabled and settings.preview_mode == "host"
+    else None
+)
+app = create_app(settings, sessions, preview, host_preview)

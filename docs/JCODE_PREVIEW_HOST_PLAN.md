@@ -171,26 +171,33 @@ mock gate** before implementation.
   ports, `resolve`, release-and-reuse, partial-release routing, host sanitization,
   pool exhaustion + inverted-pool rejection, fail-closed empty host.
 
-- **Wave P2 — api↔jcode preview reverse-proxy + terminal port wiring** *(api +
-  control server; security-touching, red-team gated; open decision 1).* Wire the
-  allocator onto the serving path: the session's shell binds its reserved port via
-  the existing `preview_env`'s `$PORT` (now per-session, allocated at first terminal
-  open); a host-routed reverse-proxy on the api `<slug>-preview.<host>/*` **and the
-  HMR WebSocket** → control server → `127.0.0.1:<session-port>`, Host rewritten to
-  `localhost`, auth per open decision 3, and a **paused/unknown session 404/502s**.
-  DEBUG: the `Host→sid→port` trace + upstream connect + WS upgrade + dev-down.
-  Tests: host→session routing, Host rewrite, **WS upgrade pass-through**, auth
-  gating, unknown-host 404, dev-down/paused 502, and the **isolation assertion**
-  (the sandbox is unreachable except via the api).
+- **Wave P2 — control-server serving path** *(control server; security-touching,
+  red-team gated; landed).* Wire the allocator onto the serving path inside jcode:
+  the session's shell binds its reserved port via the existing `preview_env`'s
+  `$PORT` (now per-session, allocated at first terminal open), and a control-server
+  reverse-proxy `/preview/{slug}/{path}` → `127.0.0.1:<session-port>` with the **Host
+  rewritten to `localhost`** (the #628 lesson), an **unknown slug 404** and a
+  **paused session 404 / dev-down 502**. The host-mode preview lifecycle: status/open
+  report the stable URL, a pause **keeps** the reservation (released on delete/reap).
+  HTTP via `httpx` (**one new runtime dep**, promoted from dev so the `--no-dev`
+  image ships it); body **buffered, not streamed** (a dev page's assets are modest);
+  the **HMR WebSocket moves to P3** with the api bridge it has to traverse. DEBUG: the
+  `proxy → :port /path` + dev-down trace. Tests: proxy forward + Host rewrite +
+  502-on-refused (mock transport), and route-level unknown-slug 404 / paused 404 /
+  no-dev-server 502 / hostname-survives-pause-not-delete. *On-box verification of the
+  real proxy (a live dev server) is the P5 bring-up.*
 
-- **Wave P3 — edge wiring** *(Caddy + compose + tunnel/DNS docs; infra).* The Caddy
-  matcher `*-preview.<host>` → api (one static rule; the dynamic map lives in the
-  api), the `PREVIEW_BASE_HOST` compose env, and the Cloudflare dashboard steps
-  (wildcard public hostname + DNS, the flattened-name/cert note) documented in
-  `docs/CLOUDFLARE_TUNNEL.md`. `dev-setup.sh` / `jcode-setup.sh` updated (#8).
-  DEBUG: Caddy access-log note. Tests: Caddy route test if feasible; the
-  **dataless-sandbox compose sweep still passes** (no new socket/DB; on the
-  recommended path Caddy does **not** join the `jcode` network).
+- **Wave P3 — api bridge + edge wiring + HMR** *(api + Caddy + compose + tunnel/DNS
+  docs; security-touching, red-team gated; open decision 1).* The backend api
+  host-routes `<slug>-preview.<host>/*` → the jcode control proxy (the public
+  exposure point; auth = the unguessable slug), **including the HMR WebSocket upgrade**
+  end-to-end. The Caddy matcher `*-preview.<host>` → api (one static rule; the dynamic
+  map lives in jcode), the `PREVIEW_BASE_HOST`/`JCODE_PREVIEW_BASE_HOST` envs, and the
+  Cloudflare dashboard steps (wildcard public hostname + DNS, the flattened-name/cert
+  note) in `docs/CLOUDFLARE_TUNNEL.md`. DEBUG: the api `Host→slug` trace + WS upgrade.
+  Tests: host→slug routing, WS upgrade pass-through, auth, unknown-host 404, and the
+  **dataless-sandbox compose sweep still passes** (Caddy does **not** join the `jcode`
+  network — only the api bridges).
 
 - **Wave P4 — the Preview tab UX** *(GUI; **three-mock gate FIRST**).* Rework
   `JcodeSessionScreen`'s Preview tab for per-session host previews: no "open
