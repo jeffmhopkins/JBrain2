@@ -72,6 +72,7 @@ class _ChildResult:
     persona: str
     summary: str
     ok: bool
+    truncated: bool = False
 
 
 def effective_child_tools(
@@ -363,7 +364,7 @@ class SpawnService:
                     tree_budget=tree.tree_budget,
                 ),
             )
-            return _ChildResult(label, persona, summary, ok=ok)
+            return _ChildResult(label, persona, summary, ok=ok, truncated=truncated)
 
 
 def _observation(results: list[_ChildResult]) -> str:
@@ -392,6 +393,9 @@ def _synthesis_view(results: list[_ChildResult]) -> ViewPayload:
         data={
             "ran": ran,
             "failed": failed,
+            # Any child cut off on budget makes the whole synthesis partial — the card
+            # renders the "research truncated" variant (M7).
+            "truncated": any(r.truncated for r in results),
             "children": [
                 {"label": r.label, "persona": r.persona, "ok": r.ok, "summary": r.summary}
                 for r in results

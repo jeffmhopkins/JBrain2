@@ -1117,17 +1117,24 @@ function WeatherCard({ data }: ViewProps): ReactNode {
 function SubagentSynthesis({ data }: ViewProps): ReactNode {
   const ran = typeof data.ran === "number" ? data.ran : 0;
   const failed = typeof data.failed === "number" ? data.failed : 0;
+  const truncated = data.truncated === true;
   const children = Array.isArray(data.children) ? data.children : [];
-  const allOk = failed === 0;
+  const clean = failed === 0 && !truncated;
   return (
-    <div className={`tv-syn${allOk ? "" : " has-fail"}`}>
+    <div className={`tv-syn${clean ? "" : " has-fail"}`}>
       <div className="tv-syn-head">
-        <span className={`tv-syn-ic${allOk ? "" : " bad"}`} aria-hidden="true">
-          {allOk ? "✓" : "✕"}
+        <span className={`tv-syn-ic${clean ? "" : " bad"}`} aria-hidden="true">
+          {clean ? "✓" : "✕"}
         </span>
         <span>
-          Synthesized from {ran - failed} of {ran}
-          {failed > 0 ? ` · ${failed} failed` : ""}
+          {truncated ? (
+            "Partial synthesis — research truncated (budget)"
+          ) : (
+            <>
+              Synthesized from {ran - failed} of {ran}
+              {failed > 0 ? ` · ${failed} failed` : ""}
+            </>
+          )}
         </span>
       </div>
       {children.map((raw, i) => {

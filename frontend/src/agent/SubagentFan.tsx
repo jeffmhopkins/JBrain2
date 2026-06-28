@@ -43,14 +43,15 @@ function childGlyph(status: SubagentChild["status"]): ReactNode {
 
 function statusWord(c: SubagentChild): string {
   if (c.status === "running") return c.phase || "working…";
-  if (c.status === "failed") return "failed";
+  if (c.status === "failed") return c.stopReason === "cancelled" ? "cancelled" : "failed";
   if (c.stopReason === "budget" || c.stopReason === "tree_budget_exhausted") return "truncated";
   return "done";
 }
 
 function fmtTokens(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-  if (n >= 1000) return `${Math.round(n / 1000)}k`;
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(2)}M`;
+  if (n >= 10_000) return `${Math.round(n / 1000)}k`;
+  if (n >= 1000) return `${(n / 1000).toFixed(1)}k`;
   return String(n);
 }
 
@@ -93,7 +94,7 @@ export function SubagentFan({
   const liveCount = children.filter((c) => c.status === "running").length;
   const failed = children.filter((c) => c.status === "failed").length;
   const settled = liveCount === 0;
-  const topLevel = children.filter((c) => c.depth <= 1).length;
+  const total = children.length;
 
   const shown = showAll ? children : children.slice(0, MAX_VISIBLE);
   const hidden = children.length - shown.length;
@@ -107,9 +108,14 @@ export function SubagentFan({
     });
   }
 
+  // One denominator for both states (all depths), so "· N agents" while live and
+  // "done · N ran" once settled never disagree.
   const count = settled
-    ? `· done · ${children.length} ran${failed ? ` · ${failed} failed` : ""}`
-    : `· ${topLevel} agent${topLevel === 1 ? "" : "s"}`;
+    ? `· done · ${total} ran${failed ? ` · ${failed} failed` : ""}`
+    : `· ${total} agent${total === 1 ? "" : "s"}`;
+  const liveLabel = settled
+    ? `sub-agents done — ${total} ran${failed ? `, ${failed} failed` : ""}`
+    : `${liveCount} sub-agent${liveCount === 1 ? "" : "s"} running`;
 
   return (
     <div className="fb-sa">
@@ -126,16 +132,15 @@ export function SubagentFan({
         )}
       </div>
       {fan.treeBudget > 0 && <BudgetMeter spent={fan.treeSpent} total={fan.treeBudget} />}
-      {/* One polite live-region line for the whole fan — not N rows (avoids the
-          announcement storm); the rows themselves are silent to assistive tech. */}
-      {!settled && (
-        <div aria-live="polite" className="fb-sr-only">
-          {liveCount} sub-agent{liveCount === 1 ? "" : "s"} running
-        </div>
-      )}
+      {/* One persistent polite live-region for the whole fan — not N rows (avoids the
+          announcement storm); it also announces the settle. The rows are silent to AT. */}
+      <div aria-live="polite" className="fb-sr-only">
+        {liveLabel}
+      </div>
       {shown.map((c) => {
-        const open = expanded.has(c.childId);
         const isFail = c.status === "failed";
+        // A failed row auto-expands its error (like StepRow) — visible without a tap.
+        const open = expanded.has(c.childId) || isFail;
         return (
           <div className={`fb-sa-row${c.depth >= 2 ? " sub" : ""}`} key={c.childId}>
             <button
@@ -152,6 +157,11 @@ export function SubagentFan({
                 {open ? "▾" : "▸"}
               </span>
             </button>
+            {/* A thin per-row bar: indeterminate sweep while running (children run
+                non-streaming — no true %), solid green/rose once settled. */}
+            <div className={`fb-sa-bar ${c.status}`} aria-hidden="true">
+              <i />
+            </div>
             {open && c.summary && (
               <div className={`fb-sa-detail${isFail ? " err" : ""}`}>{c.summary}</div>
             )}

@@ -326,6 +326,24 @@ describe("applyEvent reducer", () => {
     expect(fan?.children[0]?.status).toBe("failed");
   });
 
+  it("settles a still-running child to cancelled when the turn ends (Stop/cancel)", () => {
+    let ms: TranscriptMessage[] = [streaming()];
+    ms = applyEvent(ms, { type: "tool_call", id: "c1", name: "spawn_subagent", arguments: {} });
+    ms = applyEvent(ms, {
+      type: "subagent_spawned",
+      tool_call_id: "c1",
+      child_id: "k1",
+      persona: "research",
+      label: "Pricing",
+      depth: 1,
+    });
+    // The turn ends (a cancel cascades no per-child done) — the row must not stay "running".
+    ms = applyEvent(ms, { type: "done", stop_reason: "stopped" });
+    const c = ms[0]?.tools[0]?.fan?.children[0];
+    expect(c?.status).toBe("failed");
+    expect(c?.stopReason).toBe("cancelled");
+  });
+
   it("ignores a subagent event for an unknown spawn call", () => {
     let ms: TranscriptMessage[] = [streaming()];
     ms = applyEvent(ms, {

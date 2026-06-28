@@ -223,6 +223,24 @@ export function applyEvent(messages: TranscriptMessage[], event: ChatEvent): Tra
       next.stopReason = event.stop_reason;
       // The turn settled — a reasoning-only turn (no answer text) stops thinking now.
       next.thinking = false;
+      // Settle any sub-agent still shown as running. A turn that ended — especially a
+      // Stop/cancel, which cascades CancelledError into the fan and so emits no
+      // per-child `subagent_done` — must not leave a child bouncing "running" forever.
+      next.tools = next.tools.map((t) =>
+        t.fan?.children.some((c) => c.status === "running")
+          ? {
+              ...t,
+              fan: {
+                ...t.fan,
+                children: t.fan.children.map((c) =>
+                  c.status === "running"
+                    ? { ...c, status: "failed", phase: "cancelled", stopReason: "cancelled" }
+                    : c,
+                ),
+              },
+            }
+          : t,
+      );
       break;
     case "verdict":
       // Rides after `done` (Loop 1's annotation). Attach it to the just-settled

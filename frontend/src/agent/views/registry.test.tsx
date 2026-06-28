@@ -585,4 +585,23 @@ describe("ToolView registry", () => {
     expect(getByText("3 tiers")).toBeInTheDocument();
     expect(getByText("ERROR: timed out")).toBeInTheDocument();
   });
+
+  it("renders the partial-synthesis variant when the fan was truncated", () => {
+    const { getByText, container } = render(
+      <ToolView
+        payload={payload({
+          view: "subagent_synthesis",
+          data: {
+            ran: 2,
+            failed: 0,
+            truncated: true,
+            children: [{ label: "Pricing", persona: "research", ok: true, summary: "partial" }],
+          },
+        })}
+      />,
+    );
+    expect(getByText(/Partial synthesis — research truncated/)).toBeInTheDocument();
+    // The fail/truncated frame is signalled by the has-fail class (rose frame via CSS).
+    expect(container.querySelector(".tv-syn.has-fail")).not.toBeNull();
+  });
 });

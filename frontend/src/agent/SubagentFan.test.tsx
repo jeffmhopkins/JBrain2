@@ -70,6 +70,35 @@ describe("SubagentFan", () => {
     expect(screen.getByText("3 tiers")).toBeInTheDocument();
   });
 
+  it("auto-expands a failed child's error without a click", () => {
+    render(
+      <SubagentFan
+        running={false}
+        fan={fan([
+          child({
+            childId: "k1",
+            label: "Security",
+            status: "failed",
+            phase: "error",
+            summary: "ERROR: web_fetch timed out",
+          }),
+        ])}
+      />,
+    );
+    // Visible immediately — no tap needed.
+    expect(screen.getByText("ERROR: web_fetch timed out")).toBeInTheDocument();
+  });
+
+  it("labels a cancelled child 'cancelled'", () => {
+    render(
+      <SubagentFan
+        running={false}
+        fan={fan([child({ childId: "k1", status: "failed", stopReason: "cancelled" })])}
+      />,
+    );
+    expect(screen.getByText("cancelled")).toBeInTheDocument();
+  });
+
   it("shows a budget meter that goes danger at the ceiling", () => {
     render(
       <SubagentFan
