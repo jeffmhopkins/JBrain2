@@ -98,3 +98,49 @@ then `sudo jbrain restart` (the helper picks up the `tunnel` profile from
   on battery) takes the tunnel down with it. To keep signing in from devices on
   the same network during an outage, also enable LAN access — see
   `docs/LOCAL_ACCESS.md`.
+
+## Per-session web preview (jcode host mode)
+
+`docs/JCODE_PREVIEW_HOST_PLAN.md` serves each jcode session's dev server at its own
+**`<slug>-preview.<host>`** under *this same tunnel* — no per-session TryCloudflare
+quick-tunnel. The api proxies the preview by slug to the internal control server
+(`/__jcode_preview/{slug}` → jcode `/preview/{slug}`), so the sandbox stays isolated.
+One-time owner setup (it can't be auto-applied — it's your zone + edge):
+
+1. **DNS + tunnel ingress.** In **Zero Trust → Networks → Tunnels**, add a public
+   hostname **`*-preview.<your-host>`** → service **`http://proxy:80`** (the same
+   origin as the main site), and the matching **wildcard DNS** record. One rule
+   covers every session.
+2. **TLS — keep it one label deep.** The slug is the *first* label
+   (`<slug>-preview.<host>`) so Cloudflare's free **Universal SSL `*.<host>`** covers
+   it. A nested `*.preview.<host>` would be a two-level wildcard needing **Advanced
+   Certificate Manager** — avoid it (use the flattened `<slug>-preview` form, which is
+   what the control server mints).
+3. **Caddy — route the preview host to the api, and ONLY there.** The preview must be
+   served on the preview subdomain alone, never the main host (a sandbox-run dev app
+   on the owner origin could read the session cookie). Add, on the preview site,
+   a Host-regexp that extracts the slug and rewrites to the api's internal prefix:
+
+   ```caddyfile
+   # *.<host> site (matches <slug>-preview.<host>); the exact main host wins its own block.
+   @preview header_regexp slug Host ^([a-f0-9]{16})-preview\.
+   handle @preview {
+       rewrite * /__jcode_preview/{re.slug.1}{uri}
+       reverse_proxy api:8000 { flush_interval -1 }
+   }
+   ```
+
+   and on the **main** site block, 404 the prefix so it's unreachable there
+   (mirroring the debug-console gate): `handle /__jcode_preview* { respond 404 }`.
+   *(Belt and suspenders: the api also rejects in-process any request whose Host isn't
+   `<slug>-preview.<base>`, so a missed Caddy line can't expose a preview on the main
+   origin — but keep the 404 anyway to avoid serving the prefix at all.)*
+4. **Enable host mode.** Set `JCODE_PREVIEW_MODE=host` and
+   `JCODE_PREVIEW_BASE_HOST=<your-host>` in `/opt/jbrain2/.env`, then `sudo jbrain up`
+   (recreate — a `.env` change isn't picked up by `restart`). Start a dev server in a
+   session on `$PORT`, open its `<slug>-preview.<host>`, and confirm it loads. Turn on
+   **debug access** (`docs/DEBUG_ACCESS.md`) first and the control server's verbose
+   proxy logs (`/debug/logs/jcode`) will show `proxy → :port` per request.
+
+   *Caddy + DNS are edge config that can't be verified off-box — smoke-test on the box.
+   The HMR live-reload WebSocket is a follow-up (P3b); the page renders without it.*

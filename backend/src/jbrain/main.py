@@ -43,6 +43,7 @@ from jbrain.api import (
     images,
     images_render,
     jcode,
+    jcode_preview,
     jcode_share,
     jcode_terminal,
     live,
@@ -586,6 +587,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(jcode.router, prefix="/api")
     app.include_router(jcode_share.router, prefix="/api")
     app.include_router(jcode_terminal.router, prefix="/api")
+    # The host-mode web preview proxy (docs/JCODE_PREVIEW_HOST_PLAN.md). NOT under /api:
+    # Caddy host-routes <slug>-preview.<host> to /__jcode_preview/{slug} on the preview
+    # subdomain only (the main site 404s it), and the unguessable slug is the auth.
+    app.include_router(jcode_preview.router)
     app.include_router(external_llm.router, prefix="/api")
     app.include_router(lists_api.router, prefix="/api")
     app.include_router(llm_settings_api.router, prefix="/api")
