@@ -166,6 +166,9 @@ async def _gather_detail(
         nws.timeline(lat, lon),
         return_exceptions=True,
     )
+    # `return_exceptions=True` surfaces any raised error (incl. a BaseException like
+    # CancelledError) as the result value; a non-success result is intentionally treated
+    # as "that source was unavailable" → an empty slot, so one feed never fails the card.
     track = track_r if isinstance(track_r, tuple) else ()
     cone = cone_r if isinstance(cone_r, tuple) else ()
     alerts = alerts_r if isinstance(alerts_r, tuple) else ()

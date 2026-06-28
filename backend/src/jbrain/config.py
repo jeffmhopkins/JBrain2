@@ -106,7 +106,9 @@ class Settings(BaseSettings):
     # empty disables that source (the card degrades gracefully). The NHC ArcGIS
     # MapServers are queried by storm identity (no location); the NWS API is queried by
     # the geocoded city centre (the same coarseness as the weather tool's Open-Meteo
-    # call — never the owner's precise fix).
+    # call — never the owner's precise fix). The track/cone and surge MapServers share
+    # one base host today (both live under `.../tropical`) but stay independently
+    # env-overridable so either can be repointed without the other.
     nhc_tropical_mapserver_url: str = (
         "https://mapservices.weather.noaa.gov/tropical/rest/services/tropical"
     )

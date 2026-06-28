@@ -465,10 +465,13 @@ async def test_here_precise_fix_never_egresses_to_detail_feeds() -> None:
     ctx = ToolContext(
         session=SessionContext(principal_kind="owner"), scopes=(), here=(27.9999, -82.4999)
     )
-    await _tool(handle, geocoder)({}, ctx)
+    out = await _tool(handle, geocoder)({}, ctx)
     blob = " ".join(urls)
     assert "27.9999" not in blob and "82.4999" not in blob  # precise fix never leaves
     assert urls and "27.9475" in blob  # the city centre is what's sent
+    # The projection input is the city centre too: the precise fix never reaches the
+    # `you` pin / payload (it is consumed only by city_geocoder.nearest, on-box).
+    assert "27.9999" not in str(out.view.data) and "82.4999" not in str(out.view.data)  # type: ignore[union-attr]
 
 
 # --- projection + level helpers (pure) -------------------------------------
