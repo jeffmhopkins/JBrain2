@@ -39,6 +39,16 @@ export function ExternalSessionScreen({
   const tok = secret ?? "<token>";
   const claudeCmd = `ANTHROPIC_BASE_URL=${url} \\\n  ANTHROPIC_AUTH_TOKEN=${tok} \\\n  claude`;
   const grokCmd = `OPENAI_BASE_URL=${url}/v1 \\\n  OPENAI_API_KEY=${tok} \\\n  grok`;
+  // Windows has no easy inline env-var form, so we host a setup script (api/install.py)
+  // that installs the CLI and prompts for this URL + token. Derive the host from the
+  // endpoint so the one-liner is correct on any deployment.
+  let host = "";
+  try {
+    host = new URL(url).origin;
+  } catch {
+    // Tests pass a relative url; production always passes an absolute one.
+  }
+  const grokWinCmd = `irm ${host}/api/install/grok.ps1 | iex`;
 
   async function toggle() {
     const next = !enabled;
@@ -153,10 +163,19 @@ export function ExternalSessionScreen({
           </details>
           <details className="jcode-extrecipe">
             <summary>grok build (OpenAI)</summary>
+            <span className="jcode-extlabel">macOS / Linux</span>
             <pre className="jcode-extcode">{grokCmd}</pre>
             <button type="button" className="jcode-act" onClick={() => copy("grok", grokCmd)}>
               {copied === "grok" ? "Copied ✓" : "Copy"}
             </button>
+            <span className="jcode-extlabel">Windows (PowerShell)</span>
+            <pre className="jcode-extcode">{grokWinCmd}</pre>
+            <button type="button" className="jcode-act" onClick={() => copy("grokwin", grokWinCmd)}>
+              {copied === "grokwin" ? "Copied ✓" : "Copy"}
+            </button>
+            <p className="jcode-empty">
+              Installs the Grok Build CLI, then prompts for this URL and your token.
+            </p>
           </details>
         </div>
 

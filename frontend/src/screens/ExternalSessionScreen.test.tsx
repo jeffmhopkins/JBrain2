@@ -51,6 +51,11 @@ describe("ExternalSessionScreen", () => {
     expect(
       screen.getByText(/OPENAI_BASE_URL=https:\/\/box\.example\/api\/ext\/llm\/ext-1\/v1/),
     ).toBeInTheDocument();
+    // The Windows recipe is a one-liner that pulls the hosted setup script from the
+    // same host as the endpoint (no token in the URL — the script prompts for it).
+    expect(
+      screen.getByText("irm https://box.example/api/install/grok.ps1 | iex"),
+    ).toBeInTheDocument();
     // The freshly-minted secret is baked into the copyable command.
     expect(screen.getAllByText(/sk-secret/).length).toBeGreaterThan(0);
   });
