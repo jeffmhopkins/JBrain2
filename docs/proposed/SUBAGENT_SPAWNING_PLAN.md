@@ -21,16 +21,16 @@ property intact (**context isolation, never privilege escalation**).
 
 ## The idea in one paragraph
 
-The spawning agent (the `curator`, or a future orchestrator) reads a default
-**brief template** (research / review / summarize), tweaks it for the task at
-hand, and calls `spawn_subagent` to launch one or more child sessions. Each child
-runs the **same `AgentLoop`** with a **web-sandboxed persona** (no knowledge-base
-access, like `jerv`), a **read scope that can only narrow** relative to the
-parent, its **own guardrail budget drawn from a shared tree budget**, and a
-**depth counter** that refuses to spawn past 3 layers. Children run **detached
-and concurrent** (the Tasks-runner pattern), stream live progress up to the
-parent's chat and the session manager, and return **only a summary** as data.
-The parent reads the summaries, cites them, and composes the final answer.
+The web-sandboxed agent (`jerv`) reads a default **brief template** (research /
+review / summarize), tweaks it for the task at hand, and calls `spawn_subagent` to
+launch a **fan** of one or more child sessions. Each child runs the **same
+`AgentLoop`** with a web-sandboxed persona (no knowledge-base access), **tools and
+access that can only narrow** relative to the parent, its **own guardrail budget
+drawn from a shared tree budget**, and a **depth counter** that refuses to spawn
+past **two sub-agent layers (three including the main session)**. Children run
+**detached and concurrent** (the Tasks-runner pattern), stream live progress up to
+the parent's chat and the session tree, and return **only a summary** as data. The
+parent reads the summaries, cites them, and composes the final answer.
 
 ## Settled decisions (owner, 2026-06)
 
@@ -41,7 +41,16 @@ The parent reads the summaries, cites them, and composes the final answer.
    personas read **no knowledge base** — web tools + transform only, returning
    cited summaries. This is the cheapest, safest firewall story: almost no
    personal context can ride along off-box.
-3. **Nesting depth: 3 layers**, enforced structurally by the harness.
+3. **Nesting depth: 3 layers including the main session** — i.e. **two layers of
+   sub-agents** (root → sub-agent → sub-sub-agent). The root is depth 0; a session
+   at depth 2 is a leaf and **cannot** spawn. Enforced structurally by the harness.
+4. **The spawner is `jerv`,** not `curator`. This is what makes tool/access
+   inheritance (below) conflict-free: `curator` holds no web tools (web is
+   opt-in, jerv-only), so a web-research child could never inherit web access from
+   it. The web-sandboxed `jerv` is the natural — and only coherent — root.
+5. **Children never exceed the parent.** A child's tools and access are always
+   **⊆ its parent's** (intersected with the child persona's own allowlist). A
+   child can never gain a tool or a scope the parent lacked.
 
 ## Why this fits (the lean litmus)
 
@@ -69,38 +78,45 @@ variants, and the GUI surfaces. **Goal: zero new runtime dependencies.**
 
 ### The spawn primitive
 
-A single new tool, `spawn_subagent`, available only to spawn-capable personas
-(initially `curator`; `jerv` itself optional). Sketch of the `.tool` params:
+A single new tool, `spawn_subagent`, in **`jerv`'s** allowlist (and, for nesting,
+the research/review personas' allowlists too — gated by **depth**, not persona).
+`curator` is deliberately **not** a spawner (settled decision #4). The tool
+launches a **fan** of one or more children in a single atomic call:
 
 ```
-persona:   research | review | summarize     # closed set, code-defined
-brief:     string                            # the task + curated context (data)
-scopes:    [domain]                           # optional; MUST be ⊆ parent scope
-label:     string                             # short display name for the GUI row
+tasks:        [{ persona, brief, label }]    # the fan: 1..N children
+              #   persona ∈ research | review | summarize   (closed set, code-defined)
+              #   brief   = task + curated context           (data, not instruction)
+              #   label   = short display name for the GUI row
+max_parallel: integer                         # concurrency cap for this fan
+scopes:       [domain]                         # optional; clamped ⊆ parent (jerv ⇒ empty)
 ```
 
-The handler:
+A **single array call**, not N separate tool calls — see "Fan ergonomics" for
+why. The handler, per child:
 
 1. **Resolves the child persona** via `agent_for(persona)` — fixed, versioned
    system prompt + tool allowlist + `reads_knowledge_base=False`.
-2. **Computes the child scope** = `requested ∩ parent scope` (narrow-only; a
-   request to widen is clamped, never honored — non-negotiable #8).
-3. **Checks the harness caps** (depth, fan-out, tree budget — below). A refusal
-   returns a structured `is_error` observation the model can react to, never an
-   exception.
+2. **Clamps tools and scope to the parent** (settled #5): effective tools =
+   `persona allowlist ∩ parent's effective tools`; effective scope =
+   `requested ∩ parent scope` (narrow-only — non-negotiable #8). With `jerv` as
+   root the scope is empty all the way down (no KB anywhere in the tree).
+3. **Checks the harness caps** (depth ≤ 2, fan-out, tree budget — below). A spawn
+   from a depth-2 session, or one over a cap, returns a structured `is_error`
+   observation the model can react to, never an exception.
 4. **Mints a child `agent_session`** with `parent_session_id` set and `depth =
    parent.depth + 1`, reusing `AgentSessionRepo` (the Tasks-runner path).
 5. **Seeds the child conversation** with the brief as the **first user message
-   inside the data/instruction boundary** (non-negotiable #1) — see "the brief".
-6. **Launches the child detached** (background run, like a Task) and returns a
-   **handle** inline (the child `session_id`/`run_id`), not a blocking result.
-7. **Streams the child's progress** up as new `ChatEvent`s; the parent **collects
-   the summary** when the child reaches `done`.
+   inside the data/instruction boundary** (non-negotiable #1) — see "The brief".
+6. **Launches the child detached** (background run, like a Task), concurrently
+   across the fan, and returns the **handles** inline (child `session_id`/
+   `run_id`s), not a blocking result.
+7. **Streams each child's progress** up as new `ChatEvent`s; the parent
+   **collects** the summaries per "Fan ergonomics" below.
 
-The parent can spawn several children in one turn; each is an independent
-detached run. The parent turn does **not** block on them — it gets handles back,
-and a later parent step (or a `collect_subagents`-style read) folds in the
-summaries. (Exact fan-in ergonomics are an open question — see below.)
+A single call fans out several children; each is an independent detached run.
+How the parent **collects** their summaries and continues is the "Fan ergonomics"
+section below.
 
 ### The brief — "insight from the spawning session" without shared memory
 
@@ -137,13 +153,16 @@ Three new `AgentProfile`s added to the closed `AGENTS` set, each shaped like
 `jerv` (`agents.py`): `reads_knowledge_base=False`, empty default read scopes,
 **no KB tools**, writes no episodic memory. Allowlists:
 
-- **research**: `web_search`, `web_fetch`, `current_time` (the bounded jerv web
-  surface — SearXNG + SSRF-guarded fetch). No `spawn_subagent` at depth limit.
-- **review**: same web surface (optional), no mutate/KB tools.
-- **summarize**: no tools (like `teacher`).
+- **research**: `web_search`, `web_fetch`, `current_time`, **`spawn_subagent`**
+  (the bounded jerv web surface — SearXNG + SSRF-guarded fetch — plus the ability
+  to fan out one more layer).
+- **review**: same web surface + `spawn_subagent`; no mutate/KB tools.
+- **summarize**: no tools (like `teacher`); pure transform, cannot spawn.
 
-Whether research/review may themselves spawn (to nest) is gated purely by the
-depth counter, not by persona — see caps.
+research/review carry `spawn_subagent` so the tree can nest, but the **depth cap
+does the gating, not the persona**: a depth-2 (sub-sub-agent) call to spawn is
+refused structurally regardless of allowlist. Per settled #5 a child's tools are
+also clamped to the parent's, so a sub-agent never holds a tool jerv lacked.
 
 ### Lineage (the only schema change)
 
@@ -162,13 +181,14 @@ episode in the tree.
 
 ### Guardrails — structural, never prompt-trusted
 
-Nesting × fan-out is the #1 risk (3 deep, 3-wide ≈ 39 agents). All caps are
-enforced by the harness at spawn time, alongside the existing per-loop
-`Guardrails` (`loop.py:106`):
+Nesting × fan-out is the #1 risk — even at two sub-agent layers, a 4-wide fan is
+`1 + 4 + 16 = 21` agents. All caps are enforced by the harness at spawn time,
+alongside the existing per-loop `Guardrails` (`loop.py:106`):
 
-- **`max_depth = 3`** — the child's `depth` rides its `ToolContext`; a spawn that
-  would exceed it is refused structurally (same enforcement class as the
-  dispatch-time tool allowlist).
+- **`max_depth = 2`** (root is depth 0 → 3 layers including the main session) —
+  the child's `depth` rides its `ToolContext`; a spawn from a depth-2 session is
+  refused structurally (same enforcement class as the dispatch-time tool
+  allowlist), never a prompt suggestion.
 - **`max_children_per_parent`** and **`max_total_agents_per_tree`** — fan-out and
   tree-size caps; over-cap spawns refused with an actionable observation.
 - **Shared tree token budget.** Today guardrails are strictly per-loop. A tree
@@ -178,13 +198,66 @@ enforced by the harness at spawn time, alongside the existing per-loop
 - **Wall-clock + cancellation.** A parent `cancel` cascades to its subtree (the
   detached children are cancelable like any run; `POST /chat/runs/{id}/cancel`).
 
+### Fan ergonomics
+
+How the parent launches the fan and folds the results back is the load-bearing
+runtime decision. Three sub-questions:
+
+**Fan-out — how the model launches it.** `spawn_subagent` takes an **array of
+`tasks`** in one atomic call, **not** N separate tool calls. One call = one budget
+check, one GUI group, and — decisively — it sidesteps a real property of the live
+loop: tool calls in one assistant message are dispatched **serially**
+(`loop.py:531`), so N separate spawn calls would launch one-at-a-time. A single
+array call launches the whole fan, and the children then run concurrently in the
+background.
+
+**Concurrency.** Children run as concurrent detached runs (each its own
+`AgentLoop` with its own budget slice), bounded by the fan's `max_parallel` and
+the tree agent-cap. Each streams `subagent_progress` to the GUI independently.
+
+**Fan-in — how the parent collects and continues.** The real fork; three models,
+in order of cost:
+
+- **A. Blocking collect within the turn — recommended for v1.** The parent spawns
+  the fan and the loop **awaits it**, streaming every child's progress live the
+  whole time. The parent turn is already detached from the SSE socket (a dropped
+  phone never kills it — `ASSISTANT.md`), so "blocking" means *the loop waits*, not
+  *the user waits on a frozen socket*. When the children finish, their summaries
+  fold back as **tool results inside the data boundary** and the parent runs a
+  final synthesis step. One turn, one mental model, natural budget accounting, and
+  it fits the existing synchronous loop with **no new re-entry machinery**. Cost:
+  the turn lasts as long as the slowest child — bounded by the per-child
+  wall-clock cap, and made tolerable by the live progress UI.
+- **B. Fire-and-continue across turns — deferred.** The parent spawns, ends the
+  turn ("dispatched 3 researchers, I'll report back"), and child completion later
+  *pushes* results that trigger a synthesis turn. This needs a completion-callback
+  / loop re-entry path and careful framing against #10 (it is an owner-initiated
+  *continuation*, not an untrusted-origin trigger). Real machinery; not v1, but
+  the data model below doesn't preclude it.
+- **C. Streaming incremental join — later.** The parent is re-prompted as each
+  child lands, synthesizing incrementally. Most powerful, most complex.
+
+**Cross-cutting rules (all models):**
+
+- **Graceful degrade.** A child that errors or times out returns a **structured
+  error summary** (an observation, never a crash); the parent proceeds with the
+  rest of the fan (`.filter` out the failures), mirroring the loop's
+  "tool errors are observations" philosophy.
+- **Cancellation cascades.** A parent `cancel` cancels its whole subtree.
+- **Stable ordering.** Summaries are collected and presented in **label/index
+  order, not completion order**, so the synthesis step is reproducible.
+- **Budget gate.** A fan whose projected cost exceeds the remaining tree budget is
+  **refused at spawn** with an actionable observation, so the model can fan fewer
+  or narrower children rather than overrun the ceiling.
+
 ### Security / non-negotiables it must respect
 
 - **#1 data/instruction boundary** — the brief and every child summary are
   **data**, never instruction; a child cannot be steered by parent prose, nor the
   parent by a child's returned text.
-- **#8 least privilege, no confused deputy** — child scope ⊆ parent scope
-  (narrow-only); child tool allowlist ⊆ persona ∩ parent; no child runs at a
+- **#8 least privilege, no confused deputy** — a child's tools and scope are
+  always **⊆ the parent's** (settled #5): effective tools = `persona ∩ parent`,
+  effective scope = `requested ∩ parent` (narrow-only); no child runs at a
   scope the parent lacked.
 - **#9 controlled egress** — web research rides jerv's bounded surface only
   (SearXNG + SSRF-guarded `web_fetch`); no new raw-HTTP path. Web-sandboxed
@@ -260,18 +333,20 @@ tool-view component is a deliberate, versioned change like adding a tool.
 
 ## Open questions for the build plan
 
-- **Fan-in ergonomics.** Does the parent poll handles, get a push when each child
-  finishes (a `collect_subagents` read tool vs. auto-folded `subagent_done`
-  events), or block a later step until N children complete? Affects the loop and
-  the budget accounting.
+*Settled (see above): execution model (detached + live), sub-agent access
+(web-sandboxed), spawner (`jerv`), inheritance (child ⊆ parent), depth (2
+sub-agent layers), fan-in model (A — blocking collect within the turn, v1).*
+
 - **Tree budget mechanics.** One shared counter decremented across the tree, or a
   static per-child slice carved from the root? How is a child's spend attributed
-  back to the root turn's cost guardrail?
-- **Should `jerv` itself spawn, or only `curator`?** And may research/review
-  children spawn grandchildren, or is only the root allowed to fan out (depth
-  used only as a hard ceiling)?
+  back to the root turn's cost guardrail (`max_cost_tokens`)?
+- **Concrete caps.** Numbers for `max_children_per_parent`, `max_total_agents_per_
+  tree`, default `max_parallel`, and per-child wall-clock — tuned against jerv's
+  `budget_multiplier` and a real research sweep.
 - **Persistence of child transcripts.** Keep full child transcripts (audit,
   re-open in the tree) or only the returned summary + run-log? Note-deletion
   cascade (#11) implications if a child ever touched note-derived content.
-- **review/summarize web access.** Does `review` get the web surface for
-  fact-checking, or stay tool-less like `summarize`?
+- **`review` web access.** Confirm `review` gets the bounded web surface for
+  fact-checking (current draft says yes); `summarize` stays tool-less.
+- **Fan-in B/C later.** Whether to invest in fire-and-continue (B) or streaming
+  incremental join (C) after v1 ships model A.

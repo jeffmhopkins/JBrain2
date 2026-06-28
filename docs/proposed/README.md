@@ -29,8 +29,9 @@ given a roadmap slot in `../ROADMAP.md`, and promoted out of this folder.
   RAG-backed date/identity inference, browser viewer).
 - `SUBAGENT_SPAWNING_PLAN.md` — sub-agent spawning: expand the reserved
   `spawn_subagent` hatch into a small bounded fan-out tree of web-sandboxed
-  research/review/summarize personas. Parent-authored brief (data, not
-  instruction), detached+live children streamed into the chat and a collapsible
-  session tree, scope narrow-only, nesting capped at 3 layers. One tool, three
-  jerv-shaped personas, one lineage column; context isolation, never privilege
-  escalation.
+  research/review/summarize personas spawned by **`jerv`**. Parent-authored brief
+  (data, not instruction), detached+live children streamed into the chat and a
+  collapsible session tree, tools+access inherited ⊆ parent, nesting capped at 3
+  layers including the main session (two sub-agent layers). Covers fan ergonomics
+  (array fan-out, blocking-collect fan-in for v1). One tool, three jerv-shaped
+  personas, one lineage column; context isolation, never privilege escalation.
