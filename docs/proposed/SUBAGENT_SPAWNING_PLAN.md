@@ -191,12 +191,71 @@ alongside the existing per-loop `Guardrails` (`loop.py:106`):
   allowlist), never a prompt suggestion.
 - **`max_children_per_parent`** and **`max_total_agents_per_tree`** — fan-out and
   tree-size caps; over-cap spawns refused with an actionable observation.
-- **Shared tree token budget.** Today guardrails are strictly per-loop. A tree
-  needs a **root budget that children draw down from** so the whole fan-out can't
-  outspend a ceiling. Each child gets its own `max_cost_tokens` slice; the root
-  turn's interactive budget is never starved by descendants.
+- **Shared tree token budget.** One hard ceiling for the whole subtree, charged
+  to the root — see "Tree budget" below.
 - **Wall-clock + cancellation.** A parent `cancel` cascades to its subtree (the
   detached children are cancelable like any run; `POST /chat/runs/{id}/cancel`).
+
+### Tree budget — one ceiling, charged to the root
+
+Don't invent a free-floating budget concept: reuse the existing per-turn
+`max_cost_tokens` guardrail as the **single hard ceiling for the entire subtree**
+— root synthesis plus every descendant's model calls all charge against it. This
+keeps `ASSISTANT.md`'s rule intact ("a live interactive turn must never be starved
+by a background job"), because the tree can't outspend a number the harness
+already governs. A fan-out turn *is* a bigger unit of work than a chat turn, so
+the spawn-capable turn's ceiling is `base_max_cost × jerv.budget_multiplier ×
+spawn_multiplier` — one new small, configurable `spawn_multiplier`, still a fixed
+hard cap.
+
+Three enforcement points, all reusing the loop's existing usage accounting (which
+already sums against `max_cost_tokens`):
+
+1. **Shared atomic counter = the true ceiling.** Every model call anywhere in the
+   tree decrements one root-owned pool; any loop whose next accounting check sees
+   it exhausted stops fail-closed with `stop_reason="tree_budget_exhausted"`. This
+   is the only thing that truly bounds total cost, and it is **depth/fan-shape
+   agnostic** — a grandchild and a child draw from the same integer, so nesting
+   needs no per-level math.
+2. **Per-child reservation = anti-starvation.** Each child's own
+   `Guardrails.max_cost_tokens` is set to a carved slice (`per_child_cap`) at
+   spawn, so one greedy or runaway child can't drain the pool before its siblings
+   run. A child stops at the **smaller** of (its slice, the shared pool).
+3. **Root reserve = protect the live answer.** Carve a `root_reserve` off the top
+   **before** fanning out, so after the children spend, the root still has budget
+   to synthesize the final answer (and to note "research was truncated" if a child
+   ran out). So `tree_budget = root_reserve + children_pool`; children only ever
+   draw from `children_pool`.
+
+**Admission gate** (the spawn-time refusal in "Fan ergonomics"): admit a fan only
+if `remaining_children_pool ≥ n_children × min_viable_child_budget` — a *floor*,
+not the full per-child cap, so worst-case reservation never strands budget, yet a
+fan that can't give each child a viable minimum is refused (the model reacts by
+fanning fewer/narrower).
+
+**Attribution.** Each child records actual spend on its own `runs.cost_tokens`;
+the root's reported cost is the `parent_run_id` rollup over the subtree — and the
+Ops run-log tree gets per-node cost for free.
+
+**Concurrency / impl.** In v1 (fan-in model A) children are concurrent asyncio
+tasks inside the request; asyncio is cooperative (no true parallelism), so the
+shared counter is a guarded integer — no DB contention. **Upgrade path:** if
+children ever become cross-worker queue jobs (fan-in model B), the counter moves
+to a DB atomic (`UPDATE … RETURNING`); design the in-process counter so this swap
+is local. The counter + caps are pure integer arithmetic and the adapter fake
+reports per-call usage, so pool depletion, per-child capping, root_reserve
+survival, and the over-budget refusal are all deterministically unit-testable.
+
+**Strawman numbers (tunable — see "concrete caps" below):** `spawn_multiplier` 3
+(jerv 800k → tree ceiling ~2.4M), `root_reserve` 400k, `per_child_cap` 400k,
+`min_viable_child_budget` 100k, `max_parallel` 4.
+
+**Leaner fallback:** pure static carve (no shared counter — `n` children each
+capped at `children_pool / n`, admitted if that ≥ floor) is simplest and fully
+deterministic, but strands budget when children underspend and can't reallocate.
+The shared-counter hybrid is one atomic int more and meaningfully better for
+bursty, uneven research fans; the static carve is a clean upgradeable start if
+minimal surface area is preferred for v1.
 
 ### Fan ergonomics
 
@@ -335,14 +394,15 @@ tool-view component is a deliberate, versioned change like adding a tool.
 
 *Settled (see above): execution model (detached + live), sub-agent access
 (web-sandboxed), spawner (`jerv`), inheritance (child ⊆ parent), depth (2
-sub-agent layers), fan-in model (A — blocking collect within the turn, v1).*
+sub-agent layers), fan-in model (A — blocking collect within the turn, v1), tree
+budget (shared-counter ceiling + per-child reservation + root reserve, charged to
+the root).*
 
-- **Tree budget mechanics.** One shared counter decremented across the tree, or a
-  static per-child slice carved from the root? How is a child's spend attributed
-  back to the root turn's cost guardrail (`max_cost_tokens`)?
-- **Concrete caps.** Numbers for `max_children_per_parent`, `max_total_agents_per_
-  tree`, default `max_parallel`, and per-child wall-clock — tuned against jerv's
-  `budget_multiplier` and a real research sweep.
+- **Concrete caps.** Final numbers for `spawn_multiplier`, `root_reserve`,
+  `per_child_cap`, `min_viable_child_budget`, `max_children_per_parent`,
+  `max_total_agents_per_tree`, `max_parallel`, and per-child wall-clock — the
+  strawman in "Tree budget" tuned against jerv's `budget_multiplier` and a real
+  research sweep.
 - **Persistence of child transcripts.** Keep full child transcripts (audit,
   re-open in the tree) or only the returned summary + run-log? Note-deletion
   cascade (#11) implications if a child ever touched note-derived content.
