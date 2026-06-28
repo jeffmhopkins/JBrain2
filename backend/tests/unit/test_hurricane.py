@@ -159,15 +159,16 @@ _SURGE = {
 }
 
 
-def _handler(*, storms=_STORMS_OK, gis="ok", nws="ok", surge="ok"):  # type: ignore[no-untyped-def]
+def _handler(*, storms=_STORMS_OK, gis="ok", nws="ok", surge="ok", record=None):  # type: ignore[no-untyped-def]
     """A MockTransport handler routing every source by host/path. `gis`/`nws`/`surge`
     switch a source to a failure/absence to exercise graceful degrade; `nws="404"`
-    drives the out-of-coverage (global) path."""
-    paths: list[str] = []
+    drives the out-of-coverage (global) path. Pass `record` (a list) to capture every
+    requested path — used to assert which sources were (not) hit."""
 
     def handle(request: httpx.Request) -> httpx.Response:
         host, path = request.url.host, request.url.path
-        paths.append(path)
+        if record is not None:
+            record.append(path)
         if "geo." in host:
             return httpx.Response(200, json=_GEO_TAMPA)
         if "nhc.test" in host:  # CurrentStorms.json
@@ -200,7 +201,6 @@ def _handler(*, storms=_STORMS_OK, gis="ok", nws="ok", surge="ok"):  # type: ign
                 return httpx.Response(200, json=_NWS_GRID)
         return httpx.Response(200, json={})
 
-    handle.paths = paths  # type: ignore[attr-defined]
     return handle
 
 
@@ -358,8 +358,8 @@ async def test_full_us_assembly_builds_every_tab() -> None:
 
 
 async def test_non_us_degrades_to_global_and_skips_surge() -> None:
-    handler = _handler(nws="404")
-    out = await _tool(handler)({"location": "Tampa, FL"}, CTX)
+    paths: list[str] = []
+    out = await _tool(_handler(nws="404", record=paths))({"location": "Tampa, FL"}, CTX)
     assert isinstance(out, ToolOutput)
     data = out.view.data  # type: ignore[union-attr]
     assert data["coverage"] == "global"
@@ -369,7 +369,7 @@ async def test_non_us_degrades_to_global_and_skips_surge() -> None:
     # track still present (NHC GIS is global)
     assert data["track"]
     # the surge MapServer is NEVER queried for an out-of-coverage point (no egress)
-    assert not any("PeakStormSurge" in p for p in handler.paths)
+    assert not any("PeakStormSurge" in p for p in paths)
     assert "outside NWS coverage" in out
 
 
