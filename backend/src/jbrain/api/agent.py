@@ -26,7 +26,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, Field
 
-from jbrain.agent.agents import agent_for
+from jbrain.agent.agents import SPAWN_TOOL, agent_for
 from jbrain.agent.attachment_content import MAX_ATTACHMENTS_PER_TURN, build_attachment_content
 from jbrain.agent.attachments import TurnAttachmentRepo, attachment_scopes
 from jbrain.agent.clock import now_block
@@ -477,6 +477,13 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
     # Reflexion mode gate (Track R): default verify-and-annotate; this opts into
     # the buffer-then-retry path (off by default — a spinner-latency tradeoff).
     buffer_retry = await get_settings_store(request).reflexion_buffer_retry(owner_ctx)
+    # ...but never for a spawner (jerv): buffer-retry re-produces the turn, which would
+    # re-dispatch spawn_subagent and re-run the ENTIRE fan — new child sessions + token
+    # spend — on each retry. That is the "multiply model chains across the fan" failure
+    # the reflexion-off-for-children rule prevents (docs/SUBAGENT_SPAWNING_PLAN.md M6),
+    # just relocated to the parent layer. Post-hoc verify-and-annotate still applies.
+    if profile.tools is not None and SPAWN_TOOL in profile.tools:
+        buffer_retry = False
     # The PWA's live position for this turn (both coords or nothing), reused by the
     # location tool to answer from the phone's current spot. When a turn carries a
     # fix we cache it as the owner's last-known position; when it carries none we fall

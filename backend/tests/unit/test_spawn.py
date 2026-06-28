@@ -211,6 +211,36 @@ async def test_spawn_refused_without_a_tree_pool(service: SpawnService) -> None:
     assert not _FakeLoop.calls
 
 
+async def test_budget_truncated_child_is_ok_but_marked_truncated(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A child cut off on budget has a real but partial answer: it counts as ok (it
+    has content) yet the summary is tagged truncated so the parent doesn't treat it as
+    complete."""
+
+    class _TruncatedLoop(_FakeLoop):
+        async def run(self, **kw):  # noqa: ANN003
+            _FakeLoop.calls.append(kw)
+            return AgentResult(
+                text="partial findings", stop_reason="budget", steps=4, cost_tokens=9
+            )
+
+    _FakeLoop.calls = []
+    monkeypatch.setattr(spawn_mod, "AgentLoop", _TruncatedLoop)
+    svc = SpawnService(
+        router=_FakeRouter(),  # type: ignore[arg-type]
+        registry=object(),  # type: ignore[arg-type]
+        sessions=_FakeSessions(),  # type: ignore[arg-type]
+        runlog=_FakeRunLog(),  # type: ignore[arg-type]
+    )
+    out = await svc.spawn_fan(
+        _ctx(), {"tasks": [{"persona": "research", "brief": "x", "label": "L"}]}
+    )
+    assert "partial findings" in out
+    assert "truncated" in out.lower()
+    assert "[FAILED]" not in out  # it is ok (has content), just partial
+
+
 async def test_degraded_child_is_flagged_failed(monkeypatch: pytest.MonkeyPatch) -> None:
     """A child that stops without a substantive answer (max_steps / empty text) is
     surfaced as [FAILED], not folded in as a clean summary."""

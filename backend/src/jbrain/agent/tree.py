@@ -36,8 +36,21 @@ class TreeState:
     runs. `spent` is the running **incremental** token spend across the tree — every
     model call in any loop (root or child) charges it via `charge`. The budget is a
     single shared pool (the true ceiling); `root_reserve` is carved off the top so a
-    fan can never starve the root's synthesis, and the admission floor keeps a fan
-    from launching children too small to be useful."""
+    fan leaves the root room to synthesize, and the admission floor keeps a fan from
+    launching children too small to be useful.
+
+    **Concurrency note (the reserve is best-effort, the total is hard).** Loops charge
+    after each model call and check exhaustion after charging, so a fan running up to
+    `max_parallel` children can have that many calls already in flight when the
+    children's pool is crossed — `spent` overshoots `tree_budget - root_reserve` by at
+    most that bounded batch, eroding (not breaching) the reserve. What is HARD: total
+    tree spend is bounded (each loop stops at the first post-call check past its
+    ceiling, so the worst case is `tree_budget` + one bounded in-flight batch — no
+    runaway), and the root ALWAYS completes at least its synthesis call (the budget
+    check is post-call, so the root makes its final `converse` before stopping). The
+    reserve simply buys that synthesis comfortable multi-call room in the common case.
+    Sizing pre-reservation to make the reserve a hard floor was judged not worth the
+    complexity for a cost-bounded comfort cushion."""
 
     agents_spawned: int = 0
     max_total_agents: int = MAX_TOTAL_AGENTS_PER_TREE

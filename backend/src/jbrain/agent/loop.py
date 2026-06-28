@@ -629,10 +629,12 @@ class AgentLoop:
                         )
                     else:
                         # A whole ChatEvent the handler emitted (subagent_*); anchor it to
-                        # the dispatching call so the UI groups it under this tool.
+                        # the dispatching call so the UI groups it under this tool. Only an
+                        # un-anchored event (tool_call_id still the "" default) is stamped, so
+                        # a future handler that sets its own id is never clobbered.
                         yield (
                             item.model_copy(update={"tool_call_id": call.id})
-                            if hasattr(item, "tool_call_id")
+                            if getattr(item, "tool_call_id", None) == ""
                             else item
                         )
                 dispatched = await task

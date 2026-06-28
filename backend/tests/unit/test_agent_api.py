@@ -595,6 +595,27 @@ def test_chat_buffer_retry_gate_on_uses_the_buffered_path(
     assert sse_events(resp.text)[-1]["type"] == "verdict"
 
 
+def test_chat_buffer_retry_is_forced_off_for_a_spawner(
+    client: TestClient, repo: FakeAuthRepo, sessions_store: FakeAgentSessions
+) -> None:
+    # Even with the buffer-retry gate ON, a spawner (jerv) streams live: buffer-retry
+    # re-produces the turn, which would re-dispatch spawn_subagent and re-run the whole
+    # fan (new child sessions + spend) per retry — the M6 failure at the parent layer.
+    login(client, repo)
+    sessions_store.add(AgentSessionInfo("sess-j", "", "active", (), (), NOW, NOW, agent="jerv"))
+    client.app.state.settings_store.values["reflexion_buffer_retry"] = True  # type: ignore[attr-defined]
+    router = stream_router(
+        [LlmTurn("here you go", (), "end_turn", LlmUsage(1, 1))],
+        stream_chunks=[["here you go"]],
+    )
+    client.app.state.llm_router = router  # type: ignore[attr-defined]
+    resp = client.post("/api/chat", json={"session_id": "sess-j", "message": "hi"})
+    fake = cast(FakeLlmClient, router._clients["xai"])
+    # The streaming adapter ran; the non-streaming buffered produce path did not.
+    assert fake.stream_calls and fake.converse_calls == []
+    assert sse_events(resp.text)[-1]["type"] == "done"
+
+
 def test_chat_persists_proposal_and_entity_chips(
     client: TestClient,
     repo: FakeAuthRepo,

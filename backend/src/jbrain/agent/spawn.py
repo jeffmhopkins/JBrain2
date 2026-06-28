@@ -321,12 +321,18 @@ class SpawnService:
             # degraded child — surfaced as [FAILED] so the parent doesn't synthesize
             # over an empty block as if it were a clean summary. (AgentResult never
             # carries stop_reason="error"; an exception-failed child returns above.)
-            ok = bool(result.text.strip()) and result.stop_reason in (
-                "end_turn",
-                "budget",
-                "tree_budget_exhausted",
-            )
-            summary = result.text.strip() or f"(no answer; stopped: {result.stop_reason})"
+            text = result.text.strip()
+            _clean_stops = ("end_turn", "budget", "tree_budget_exhausted")
+            truncated = result.stop_reason in ("budget", "tree_budget_exhausted")
+            ok = bool(text) and result.stop_reason in _clean_stops
+            if not text:
+                summary = f"(no answer; stopped: {result.stop_reason})"
+            elif truncated:
+                # A budget-cut child has a real but PARTIAL answer — tell the parent so
+                # it doesn't synthesize over truncated work as if it were complete.
+                summary = f"{text}\n\n[truncated — hit the {result.stop_reason} limit]"
+            else:
+                summary = text
             _emit(ctx, SubagentDoneEvent(child_id=child.id, ok=ok, stop_reason=result.stop_reason))
             return _ChildResult(label, persona, summary, ok=ok)
 

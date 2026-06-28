@@ -561,6 +561,19 @@ incremental unit with a single load-bearing limiter + floor, not three
 contradictory ones (M5); reflexion is off in the tree (M6); the parent stays the
 single gated turn.
 
+**Resolved in the S2 review (two design clarifications the spec did not pin):**
+- **M6 at the parent layer:** `buffer_retry` reflexion re-produces a turn, which would
+  re-dispatch `spawn_subagent` and re-run the *entire fan* (new child sessions + spend)
+  per retry — the exact "multiply model chains across the fan" failure M6 names. So a
+  **spawner agent's turn forces `buffer_retry` off** (post-hoc verify-and-annotate still
+  applies). A spawner therefore always streams its fan live (no buffered-path gap).
+- **Root reserve is best-effort, the total is hard.** Loops charge after each model call,
+  so a fan of up to `max_parallel` children can have that many calls in flight when the
+  children's pool is crossed — `spent` overshoots the children's pool by a bounded batch,
+  *eroding* (not breaching) the reserve. What is hard: total tree spend is bounded (no
+  runaway) and the root **always completes its synthesis call** (the budget check is
+  post-call). A budget-cut child returns its partial answer tagged `[truncated]`.
+
 ### Wave S3 — Live chat surface + `subagent_synthesis` tool-view *(GUI; mock re-review gate)*
 
 Phase 3. Render the fan in the parent bubble. **Mock gate:** layout **A** is chosen
