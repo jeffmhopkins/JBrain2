@@ -15,6 +15,10 @@ agent design, given a roadmap slot, and promoted out of `proposed/`.
 > loop/registry/schema** — it is *not* present in `loop.py` today. Where the design
 > needs a loop or schema change, this doc says so. The structural enforcement
 > *is the work*; until it ships, none of these guarantees hold.
+>
+> The full adversarial-review findings (security + architecture + GUI) and their
+> resolutions are recorded in `docs/archive/SUBAGENT_SPAWNING_REVIEW.md` — the
+> per-wave adversarial reviews should re-check those same surfaces.
 
 ## Reconciliation with the reserved `ASSISTANT.md` hatch (owner-approved)
 

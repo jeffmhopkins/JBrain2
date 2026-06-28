@@ -81,6 +81,13 @@ Phase-5 build record is `archive/PHASE5_COMPLETION_PLAN.md`.
 `proposed/` is the icebox: forward-looking design specs kept for the record but
 **not on the roadmap** — nothing built, no phase committed. See `proposed/README.md`.
 
+- `proposed/SUBAGENT_SPAWNING_PLAN.md` — **sub-agent spawning** design spec
+  (design-complete, owner-approved, **not yet scheduled**): `jerv` fans out
+  web-sandboxed research/review/summarize sub-agents (parent-authored brief,
+  child ⊆ parent, depth ≤ 2, direct caps-bounded fan, shared tree budget, live
+  in-chat panel + nested session tree). GUI mock gate settled; survived a
+  three-lens adversarial review (record: `archive/SUBAGENT_SPAWNING_REVIEW.md`).
+  Next step is promotion + `PROCESS.md` wave decomposition.
 - `proposed/PHOTO_ARCHIVE_PLAN.md` — the **photo archive pipeline** design spec:
   a staged, idempotent map over a decade of phone dumps — hash-keyed dedup,
   deterministic EXIF/filename dating, a vision worker (VLM) that turns pixels into
