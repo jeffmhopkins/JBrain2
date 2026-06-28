@@ -3,28 +3,30 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-<title>Sub-agents · in-chat live panel — A/B/C</title>
+<title>Sub-agents · in-chat live panel — A/B/C (revised)</title>
 <style>
   :root{
     --bg:#0E0F11; --surface:#17181B; --surface-2:#1E2024; --border:#26282C;
     --text:#E6E7E9; --text-2:#9A9DA3; --text-3:#5C5F66;
     --steel:#7FA7C9; --green:#8FBC9A; --amber:#C9A36A; --rose:#CF8A8F; --violet:#A493C9;
     --steel-tint:rgba(127,167,201,.13); --green-tint:rgba(143,188,154,.13);
-    --amber-tint:rgba(201,163,106,.13); --rose-tint:rgba(207,138,143,.13); --violet-tint:rgba(164,147,201,.13);
+    --amber-tint:rgba(201,163,106,.13); --rose-tint:rgba(207,138,143,.13);
     font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
   }
   *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
-  body{background:#000;color:var(--text);display:flex;flex-direction:column;align-items:center;gap:16px;padding:20px 12px 56px;min-height:100vh;}
+  body{background:#000;color:var(--text);display:flex;flex-direction:column;align-items:center;gap:14px;padding:20px 12px 56px;min-height:100vh;}
   .caption{max-width:1120px;color:var(--text-2);font-size:13px;line-height:1.6;}
   .caption b{color:var(--text);font-weight:500;}
   .caption .tag{display:inline-block;background:var(--steel-tint);color:var(--steel);font-size:11px;padding:2px 8px;border-radius:999px;margin-bottom:6px;}
-  .controls{display:flex;gap:10px;align-items:center;}
-  .btn{background:var(--surface);border:1px solid var(--border);color:var(--text);border-radius:999px;padding:9px 18px;font-size:14px;font-weight:500;cursor:pointer;display:inline-flex;gap:7px;align-items:center;}
-  .btn.primary{background:var(--steel);border-color:var(--steel);color:#10141a;}
+  .controls{display:flex;gap:8px;align-items:center;flex-wrap:wrap;justify-content:center;}
+  .btn{background:var(--surface);border:1px solid var(--border);color:var(--text);border-radius:999px;padding:8px 15px;font-size:13px;font-weight:500;cursor:pointer;}
+  .btn.primary{background:var(--steel);border-color:var(--steel);color:var(--bg);}
+  .btn.on{border-color:var(--steel);color:var(--steel);}
   .btn:active{transform:translateY(1px);}
+  .seglab{font-size:11px;color:var(--text-3);margin-right:2px;}
   .row{display:flex;gap:18px;flex-wrap:wrap;justify-content:center;align-items:flex-start;}
 
-  .phone{width:352px;height:720px;background:var(--bg);border:1px solid #2a2c30;border-radius:30px;overflow:hidden;position:relative;display:flex;flex-direction:column;}
+  .phone{width:352px;height:720px;background:var(--bg);border:1px solid var(--border);border-radius:30px;overflow:hidden;position:relative;display:flex;flex-direction:column;}
   .vlabel{position:absolute;top:10px;left:50%;transform:translateX(-50%);font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--text-3);z-index:5;}
   .vname{position:absolute;top:24px;left:50%;transform:translateX(-50%);font-size:12px;color:var(--text-2);z-index:5;white-space:nowrap;}
   .topbar{height:48px;display:flex;align-items:center;gap:9px;padding:0 14px;border-bottom:1px solid var(--border);flex:none;margin-top:40px;}
@@ -34,12 +36,13 @@
   .chat{flex:1;overflow-y:auto;padding:14px 13px 18px;display:flex;flex-direction:column;gap:11px;}
 
   .bubble{max-width:88%;padding:10px 13px;border-radius:15px;font-size:14px;line-height:1.5;}
-  .bubble.me{align-self:flex-end;background:var(--steel-tint);border:1px solid rgba(127,167,201,.25);}
+  .bubble.me{align-self:flex-end;background:var(--steel-tint);border:1px solid var(--border);}
   .bubble.ai{align-self:flex-start;background:var(--surface);border:1px solid var(--border);}
   .bubble.ai .who{font-size:11px;color:var(--text-3);margin-bottom:3px;}
 
-  /* shared sub-agent bits */
-  .ptag{font-size:10px;padding:1px 7px;border-radius:999px;font-weight:500;flex:none;}
+  /* persona = NEUTRAL text tag (kind enum, never a color) */
+  .ptag{font-size:10px;padding:1px 7px;border-radius:999px;font-weight:500;flex:none;background:var(--surface-2);color:var(--text-2);border:1px solid var(--border);}
+  /* glyph: steel=live, green=done, rose=failed/truncated — the only semantic colors */
   .g{flex:none;display:inline-flex;align-items:center;justify-content:center;width:14px;height:14px;}
   .g.q{width:7px;height:7px;border-radius:50%;background:var(--text-3);}
   .g.run{gap:2px;}
@@ -47,244 +50,238 @@
   .g.run i:nth-child(2){animation-delay:.15s;} .g.run i:nth-child(3){animation-delay:.3s;}
   @keyframes bounce{0%,80%,100%{opacity:.3;transform:translateY(0);}40%{opacity:1;transform:translateY(-3px);}}
   .g.done{color:var(--green);font-size:13px;}
+  .g.fail{color:var(--rose);font-size:13px;}
+  @media (prefers-reduced-motion: reduce){
+    .g.run i{animation:none;opacity:.85;}
+    .miniprog i,.budget .track i{transition:none;}
+  }
   .miniprog{height:3px;border-radius:999px;background:var(--surface-2);overflow:hidden;margin-top:7px;}
-  .miniprog i{display:block;height:100%;transition:width .12s linear;}
+  .miniprog i{display:block;height:100%;background:var(--steel);transition:width .12s linear;}
+  .miniprog i.fail{background:var(--rose);}
 
-  /* budget meter */
   .budget{display:flex;align-items:center;gap:7px;font-size:10px;color:var(--text-3);}
   .budget .track{flex:1;height:4px;border-radius:999px;background:var(--surface-2);overflow:hidden;}
   .budget .track i{display:block;height:100%;background:var(--steel);transition:width .12s linear;}
   .budget.warn .track i{background:var(--amber);}
+  .budget.danger .track i{background:var(--rose);}
+  .budget.danger{color:var(--rose);}
 
-  /* ---- Variant A: accordion step list ---- */
+  /* Variant A: accordion */
   .saA{border:1px solid var(--border);border-radius:13px;background:var(--surface-2);margin-top:10px;overflow:hidden;}
   .saA .head{display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid var(--border);}
   .saA .head .spark{color:var(--steel);}
   .saA .head .h-t{font-size:13px;font-weight:500;}
   .saA .head .h-c{font-size:11px;color:var(--text-3);}
-  .saA .head .budget{margin-left:auto;width:96px;}
+  .saA .head .stop{margin-left:auto;font-size:11px;color:var(--rose);border:1px solid var(--border);border-radius:999px;padding:2px 9px;cursor:pointer;background:transparent;}
+  .saA .budgetrow{padding:8px 12px;border-bottom:1px solid var(--border);}
   .saA .rowi{border-bottom:1px solid var(--border);}
   .saA .rowi:last-child{border-bottom:none;}
   .saA .line{display:flex;align-items:center;gap:8px;padding:9px 12px;cursor:pointer;}
   .saA .line .lbl{font-size:13px;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
-  .saA .line .st{font-size:11px;color:var(--text-2);max-width:104px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:right;}
+  .saA .line .st{font-size:11px;color:var(--text-2);max-width:108px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:right;}
+  .saA .line .st.fail{color:var(--rose);}
   .saA .line .car{color:var(--text-3);font-size:11px;width:10px;}
   .saA .barwrap{padding:0 12px 9px;}
   .saA .detail{padding:0 12px 11px 34px;font-size:12px;color:var(--text-2);line-height:1.5;}
   .saA .detail .brief{color:var(--text-3);font-style:italic;}
   .saA .detail .sum{margin-top:5px;color:var(--text);}
+  .saA .detail .err{margin-top:5px;color:var(--rose);}
   .saA .sub{margin-left:18px;}
+  .morerow{padding:8px 12px;font-size:11px;color:var(--steel);cursor:pointer;border-bottom:1px solid var(--border);}
 
-  /* ---- Variant B: agent cards ---- */
+  /* Variant B: cards */
   .saB{margin-top:10px;}
   .saB .bhead{display:flex;align-items:center;gap:8px;margin-bottom:8px;}
   .saB .bhead .h-t{font-size:12px;color:var(--text-2);}
-  .saB .bhead .budget{margin-left:auto;width:120px;}
+  .saB .bhead .stop{margin-left:auto;font-size:11px;color:var(--rose);border:1px solid var(--border);border-radius:999px;padding:2px 9px;cursor:pointer;background:transparent;}
+  .saB .budgetrow{margin-bottom:8px;}
   .saB .cards{display:flex;gap:8px;overflow-x:auto;padding-bottom:4px;}
   .saB .card{flex:none;width:122px;background:var(--surface-2);border:1px solid var(--border);border-radius:12px;padding:10px;display:flex;flex-direction:column;gap:7px;cursor:pointer;}
-  .saB .card.done{border-color:rgba(143,188,154,.4);}
-  .saB .card .disc{width:24px;height:24px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:12px;}
+  .saB .card.done{border-color:var(--green);}
+  .saB .card.fail{border-color:var(--rose);}
+  .saB .card .disc{width:24px;height:24px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:12px;background:var(--surface);border:1px solid var(--border);color:var(--text-2);}
   .saB .card .clbl{font-size:12px;line-height:1.3;min-height:31px;}
   .saB .card .crow{display:flex;align-items:center;gap:6px;}
   .saB .card .cst{font-size:10px;color:var(--text-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 
-  /* ---- Variant C: live fan/tree ---- */
+  /* Variant C: tree */
   .saC{margin-top:10px;border:1px solid var(--border);border-radius:13px;background:var(--surface-2);padding:11px 12px;}
   .saC .chead{display:flex;align-items:center;gap:8px;margin-bottom:9px;}
   .saC .chead .h-t{font-size:12px;color:var(--text-2);}
-  .saC .chead .budget{margin-left:auto;width:110px;}
+  .saC .chead .stop{margin-left:auto;font-size:11px;color:var(--rose);border:1px solid var(--border);border-radius:999px;padding:2px 9px;cursor:pointer;background:transparent;}
+  .saC .budgetrow{margin-bottom:9px;}
   .saC .root{display:flex;align-items:center;gap:8px;font-size:13px;font-weight:500;margin-bottom:4px;}
-  .saC .root .rdisc{width:18px;height:18px;border-radius:6px;background:var(--surface);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;font-size:10px;color:var(--steel);}
+  .saC .root .rdisc{width:18px;height:18px;border-radius:6px;background:var(--surface);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;font-size:10px;color:var(--text-2);}
   .saC .kids{margin-left:9px;border-left:1px solid var(--border);padding-left:13px;display:flex;flex-direction:column;gap:9px;padding-top:6px;}
   .saC .node{position:relative;}
   .saC .node::before{content:"";position:absolute;left:-13px;top:9px;width:9px;height:1px;background:var(--border);}
   .saC .nline{display:flex;align-items:center;gap:7px;}
   .saC .nline .lbl{font-size:13px;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
-  .saC .nline .st{font-size:10px;color:var(--text-2);max-width:90px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .saC .nline .st{font-size:10px;color:var(--text-2);max-width:84px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .saC .nline .st.fail{color:var(--rose);}
   .saC .gkids{margin-left:7px;border-left:1px solid var(--border);padding-left:13px;margin-top:8px;display:flex;flex-direction:column;gap:8px;}
 
-  /* synthesis card (all variants) */
-  .synth{margin-top:10px;border:1px solid rgba(143,188,154,.35);background:var(--green-tint);border-radius:13px;padding:11px 12px;}
-  .synth .sh{display:flex;align-items:center;gap:7px;font-size:13px;font-weight:500;color:var(--green);margin-bottom:5px;}
+  /* synthesis card — standard tool-view frame, neutral (not bespoke green) */
+  .synth{margin-top:10px;border:1px solid var(--border);background:var(--surface);border-radius:13px;padding:11px 12px;}
+  .synth.trunc{border-color:var(--rose);}
+  .synth .sh{display:flex;align-items:center;gap:7px;font-size:13px;font-weight:500;margin-bottom:5px;}
+  .synth .sh .ic{color:var(--green);}
+  .synth.trunc .sh .ic{color:var(--rose);}
   .synth .sb{font-size:13px;line-height:1.55;color:var(--text);}
   .synth .fn{color:var(--steel);font-size:10px;vertical-align:super;}
-  .hidden{display:none;}
 </style>
 </head>
 <body>
   <div class="caption">
-    <span class="tag">Sub-agents · in-chat</span><br/>
-    <b>jerv</b> fans out web-sandboxed research/review sub-agents and shows them <b>live in the answer bubble</b> — each streams a
-    thinking glyph → progress → a one-line summary, all charged against one <b>tree budget</b> (the meter). When the fan finishes,
-    a single <b>synthesis</b> card lands. Three layouts below — <b>A accordion list</b>, <b>B agent cards</b>, <b>C live fan/tree</b>
-    (C also shows a depth-2 sub-sub-agent nesting in). Tap a row/card to expand. Hit <b>Play</b> to watch a fan run.
+    <span class="tag">Sub-agents · in-chat (revised)</span><br/>
+    <b>jerv</b> fans out web-sandboxed research/review sub-agents in the answer bubble. Persona is a <b>neutral text tag</b> (color stays
+    semantic: steel=live, green=done, rose=failed). Pick a <b>scenario</b> to review the non-happy states the spec now requires —
+    a <b>failed child</b>, a <b>cancelled fan</b> (Stop), and a <b>budget-exhausted / truncated</b> run. Three layouts: A accordion · B cards · C tree.
   </div>
 
   <div class="controls">
-    <button class="btn primary" id="play">▶ Play fan</button>
+    <span class="seglab">scenario:</span>
+    <button class="btn on" data-sc="happy">Happy path</button>
+    <button class="btn" data-sc="fail">A child fails</button>
+    <button class="btn" data-sc="exhaust">Budget exhausted</button>
+    <span style="width:14px"></span>
+    <button class="btn primary" id="play">▶ Play</button>
     <button class="btn" id="reset">↺ Reset</button>
   </div>
 
   <div class="row">
-    <!-- A -->
-    <div class="phone">
-      <div class="vlabel">Variant A</div><div class="vname">Accordion step list</div>
+    <div class="phone"><div class="vlabel">Variant A</div><div class="vname">Accordion step list</div>
       <div class="topbar"><span class="dot"></span><span class="ttl">jerv</span><span class="scope">web · no KB</span></div>
-      <div class="chat" id="chatA"></div>
-    </div>
-    <!-- B -->
-    <div class="phone">
-      <div class="vlabel">Variant B</div><div class="vname">Agent cards</div>
+      <div class="chat" id="chatA"></div></div>
+    <div class="phone"><div class="vlabel">Variant B</div><div class="vname">Agent cards</div>
       <div class="topbar"><span class="dot"></span><span class="ttl">jerv</span><span class="scope">web · no KB</span></div>
-      <div class="chat" id="chatB"></div>
-    </div>
-    <!-- C -->
-    <div class="phone">
-      <div class="vlabel">Variant C</div><div class="vname">Live fan / tree</div>
+      <div class="chat" id="chatB"></div></div>
+    <div class="phone"><div class="vlabel">Variant C</div><div class="vname">Live tree</div>
       <div class="topbar"><span class="dot"></span><span class="ttl">jerv</span><span class="scope">web · no KB</span></div>
-      <div class="chat" id="chatC"></div>
-    </div>
+      <div class="chat" id="chatC"></div></div>
   </div>
 
 <script>
-const PERSONA={
-  research:{label:'research',color:'var(--steel)',tint:'var(--steel-tint)',ico:'◎'},
-  review:{label:'review',color:'var(--violet)',tint:'var(--violet-tint)',ico:'⚖'},
-  summarize:{label:'summarize',color:'var(--green)',tint:'var(--green-tint)',ico:'≡'},
-};
-let agents,timer,expanded;
+const PERSONA={research:{label:'research',ico:'◎'},review:{label:'review',ico:'⚖'},summarize:{label:'summarize',ico:'≡'}};
+let agents,timer,expanded,scenario='happy',cancelled=false;
+const CAP={happy:2400,fail:2400,exhaust:900}; // exhaust ceiling is low so it trips mid-fan
 
 function reset(){
   agents=[
     {id:'a1',persona:'research',label:'Pricing & plans',depth:1,parent:'root',p:0,speed:0.9,state:'run',result:'3 tiers; usage-based add-ons.'},
-    {id:'a2',persona:'research',label:'Security & compliance',depth:1,parent:'root',p:0,speed:0.66,state:'run',result:'SOC2 II + ISO 27001; EU residency.'},
+    {id:'a2',persona:'research',label:'Security & compliance',depth:1,parent:'root',p:0,speed:0.66,state:'run',result:'SOC2 II + ISO 27001; EU residency.',err:'web_fetch timed out (3 retries) — no usable sources.'},
     {id:'a3',persona:'review',label:'Cross-check claims',depth:1,parent:'root',p:0,speed:0.42,state:'run',result:'2 of 7 claims need a stronger source.'},
     {id:'g1',persona:'research',label:'Enterprise tier',depth:2,parent:'a1',p:0,speed:1.0,state:'hidden',result:'Custom SSO + SLA above 250 seats.'},
   ];
-  expanded=new Set(['a1']);
+  expanded=new Set(['a1']); cancelled=false;
   if(timer){clearInterval(timer);timer=null;}
   render();
 }
 function visible(){return agents.filter(a=>a.state!=='hidden');}
-function allDone(){return visible().every(a=>a.state==='done') && !agents.some(a=>a.state==='hidden');}
+function settled(a){return a.state==='done'||a.state==='error'||a.state==='trunc';}
+function allDone(){return visible().every(settled)&&!agents.some(a=>a.state==='hidden');}
+function budget(){let used=150;for(const a of visible())used+=a.p/100*420;return {used:Math.round(used),cap:CAP[scenario]};}
 function tick(){
+  const b=budget();
   for(const a of agents){
     if(a.state==='hidden'){const par=agents.find(x=>x.id===a.parent);if(par&&par.p>35)a.state='run';continue;}
-    if(a.state==='run'){a.p=Math.min(100,a.p+a.speed);if(a.p>=100)a.state='done';}
+    if(a.state==='run'){
+      if(scenario==='exhaust'&&b.used>=b.cap){a.state='trunc';continue;}
+      a.p=Math.min(100,a.p+a.speed);
+      if(a.p>=100){a.state=(scenario==='fail'&&a.id==='a2')?'error':'done';}
+    }
   }
   render();
   if(allDone()){clearInterval(timer);timer=null;}
 }
-function play(){if(timer)return;if(allDone())reset();timer=setInterval(tick,90);}
+function play(){if(timer)return;if(allDone()||cancelled)reset();timer=setInterval(tick,90);}
+function stop(){cancelled=true;if(timer){clearInterval(timer);timer=null;}for(const a of agents){if(a.state==='run')a.state='trunc';}render();}
 
 function phase(a){
   if(a.state==='done')return a.result;
+  if(a.state==='error')return 'failed';
+  if(a.state==='trunc')return cancelled?'cancelled':'truncated';
   if(a.p<1)return 'queued';
   if(a.p<25)return 'searching the web…';
   if(a.p<60)return 'reading sources…';
   return 'summarizing…';
 }
-function glyph(a,color){
-  if(a.state==='done')return '<span class="g done">✓</span>';
-  if(a.p<1)return '<span class="g q"></span>';
-  const c=color||'var(--steel)';
-  return `<span class="g run"><i style="background:${c}"></i><i style="background:${c}"></i><i style="background:${c}"></i></span>`;
-}
-function budget(){
-  let used=150;for(const a of visible())used+=a.p/100*420;
-  return {used:Math.round(used),cap:2400,pct:Math.min(100,(used/2400)*100)};
+function glyph(a){
+  if(a.state==='done')return '<span class="g done" aria-hidden="true">✓</span>';
+  if(a.state==='error'||a.state==='trunc')return '<span class="g fail" aria-hidden="true">✕</span>';
+  if(a.p<1)return '<span class="g q" aria-hidden="true"></span>';
+  return '<span class="g run" aria-hidden="true"><i></i><i></i><i></i></span>';
 }
 function budgetBar(){
-  const b=budget();const warn=b.pct>70?'warn':'';
-  return `<div class="budget ${warn}"><span>${(b.used/1000).toFixed(2)}M</span><span class="track"><i style="width:${b.pct}%"></i></span><span>2.4M</span></div>`;
+  const b=budget();const pct=Math.min(100,(b.used/b.cap)*100);
+  const cls=pct>=99?'danger':pct>70?'warn':'';
+  const txt=cls==='danger'?'budget exhausted':((b.used/1000).toFixed(2)+'M / '+(b.cap/1000).toFixed(1)+'M');
+  return `<div class="budget ${cls}" role="meter" aria-label="tree budget">${txt}<span class="track"><i style="width:${pct}%"></i></span></div>`;
 }
-const USERMSG=`<div class="bubble me">Compare Acme vs Globex for us — pricing, security, and sanity-check the marketing claims.</div>`;
-const AIMSG=`<div class="bubble ai"><div class="who">jerv</div>Good question — I'll split this across a few researchers and review the claims, then pull it together.</div>`;
+const USERMSG=`<div class="bubble me">Compare Acme vs Globex — pricing, security, and sanity-check the marketing claims.</div>`;
+const AIMSG=`<div class="bubble ai"><div class="who">jerv</div>I'll split this across a few researchers and review the claims, then pull it together.</div>`;
 
+function liveSummary(){ // single polite live-region line for the whole fan (no per-row aria-live)
+  if(allDone())return '';
+  const r=visible().filter(a=>a.state==='run').length;
+  return `<div aria-live="polite" class="sr-only" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)">${r} researchers running</div>`;
+}
 function synthCard(){
   if(!allDone())return '';
-  return `<div class="synth"><div class="sh"><span>✓</span> Synthesized from 3 researchers</div>
-    <div class="sb">Acme lists 3 pricing tiers with usage add-ons<span class="fn">1</span>; security covers SOC 2 Type II and ISO 27001 with EU data residency<span class="fn">2</span>. Two of seven marketing claims need a stronger source<span class="fn">3</span> — flagged inline below.</div></div>`;
+  const fails=visible().filter(a=>a.state==='error').length;
+  const trunc=visible().some(a=>a.state==='trunc');
+  if(trunc)return `<div class="synth trunc"><div class="sh"><span class="ic">✕</span> Partial synthesis — ${cancelled?'fan cancelled':'budget exhausted, research truncated'}</div><div class="sb">Pricing has 3 tiers<span class="fn">1</span>. Remaining angles did not finish — re-run to complete.</div></div>`;
+  if(fails)return `<div class="synth"><div class="sh"><span class="ic">✓</span> Synthesized from 2 of 3 · <span style="color:var(--rose)">1 failed</span></div><div class="sb">Pricing has 3 tiers<span class="fn">1</span>; 2 of 7 claims need a stronger source<span class="fn">2</span>. Security research failed — not covered.</div></div>`;
+  return `<div class="synth"><div class="sh"><span class="ic">✓</span> Synthesized from 3 researchers</div><div class="sb">Acme lists 3 pricing tiers<span class="fn">1</span>; security covers SOC 2 / ISO 27001<span class="fn">2</span>; 2 of 7 claims need a stronger source<span class="fn">3</span>.</div></div>`;
 }
+function stopBtn(){return allDone()?'':'<button class="stop" data-act="stop">■ Stop</button>';}
 
-/* ---- A ---- */
 function renderA(){
   let rows='';
   for(const a of visible()){
-    const P=PERSONA[a.persona];const open=expanded.has(a.id);
+    const P=PERSONA[a.persona];const open=expanded.has(a.id);const fl=(a.state==='error'||a.state==='trunc')?'fail':'';
     rows+=`<div class="rowi ${a.depth===2?'sub':''}">
-      <div class="line" data-id="${a.id}">
-        ${glyph(a,P.color)}
-        <span class="lbl">${a.label}</span>
-        <span class="ptag" style="color:${P.color};background:${P.tint}">${P.label}</span>
-        <span class="st">${phase(a)}</span>
-        <span class="car">${open?'▾':'▸'}</span>
-      </div>
-      <div class="barwrap"><div class="miniprog"><i style="width:${a.p}%;background:${P.color}"></i></div></div>
-      ${open?`<div class="detail"><span class="brief">brief — ${a.label.toLowerCase()}: search, corroborate across sources, return a cited summary.</span>${a.state==='done'?`<div class="sum">↳ ${a.result}</div>`:''}</div>`:''}
+      <div class="line" data-id="${a.id}">${glyph(a)}<span class="lbl">${a.label}</span><span class="ptag">${P.label}</span><span class="st ${fl}">${phase(a)}</span><span class="car">${open?'▾':'▸'}</span></div>
+      <div class="barwrap"><div class="miniprog"><i class="${fl}" style="width:${a.p}%"></i></div></div>
+      ${open?`<div class="detail"><span class="brief">brief — ${a.label.toLowerCase()}: search, corroborate, summarize.</span>${a.state==='done'?`<div class="sum">↳ ${a.result}</div>`:''}${a.state==='error'?`<div class="err">✕ ${a.err}</div>`:''}</div>`:''}
     </div>`;
   }
   const n=visible().filter(a=>a.depth===1).length;
-  return USERMSG+AIMSG+`<div class="saA">
-    <div class="head"><span class="spark">✦</span><span class="h-t">Researching</span><span class="h-c">· ${n} agents${agents.some(a=>a.id==='g1'&&a.state!=='hidden')?' (+1 nested)':''}</span>${budgetBar()}</div>
-    ${rows}
+  return USERMSG+AIMSG+liveSummary()+`<div class="saA">
+    <div class="head"><span class="spark">✦</span><span class="h-t">Researching</span><span class="h-c">· ${n} agents</span>${stopBtn()}</div>
+    <div class="budgetrow">${budgetBar()}</div>${rows}
   </div>`+synthCard();
 }
-
-/* ---- B ---- */
 function renderB(){
   let cards='';
   for(const a of visible()){
-    const P=PERSONA[a.persona];
-    cards+=`<div class="card ${a.state}" data-id="${a.id}">
-      <div class="disc" style="background:${P.tint};color:${P.color}">${P.ico}</div>
-      <div class="clbl">${a.label}${a.depth===2?' <span style="color:var(--text-3);font-size:10px">· nested</span>':''}</div>
-      <div class="crow">${glyph(a,P.color)}<span class="cst">${a.state==='done'?'done':phase(a)}</span></div>
-      <div class="miniprog"><i style="width:${a.p}%;background:${P.color}"></i></div>
-    </div>`;
+    const P=PERSONA[a.persona];const cls=a.state==='done'?'done':(a.state==='error'||a.state==='trunc')?'fail':'';const fl=cls==='fail'?'fail':'';
+    cards+=`<div class="card ${cls}" data-id="${a.id}"><div class="disc">${P.ico}</div><div class="clbl">${a.label}${a.depth===2?' <span style="color:var(--text-3);font-size:10px">· nested</span>':''}</div><div class="crow">${glyph(a)}<span class="cst">${phase(a)}</span></div><div class="miniprog"><i class="${fl}" style="width:${a.p}%"></i></div><div style="font-size:10px;color:var(--text-3)">${P.label}</div></div>`;
   }
-  return USERMSG+AIMSG+`<div class="saB">
-    <div class="bhead"><span class="h-t">✦ Fan of researchers</span>${budgetBar()}</div>
-    <div class="cards">${cards}</div>
-  </div>`+synthCard();
+  return USERMSG+AIMSG+liveSummary()+`<div class="saB"><div class="bhead"><span class="h-t">✦ Fan of researchers</span>${stopBtn()}</div><div class="budgetrow">${budgetBar()}</div><div class="cards">${cards}</div></div>`+synthCard();
 }
-
-/* ---- C ---- */
 function nodeC(a){
-  const P=PERSONA[a.persona];
+  const P=PERSONA[a.persona];const fl=(a.state==='error'||a.state==='trunc')?'fail':'';
   const kids=agents.filter(x=>x.parent===a.id&&x.state!=='hidden');
-  let sub='';
-  if(kids.length){sub=`<div class="gkids">${kids.map(nodeC).join('')}</div>`;}
-  return `<div class="node">
-    <div class="nline">${glyph(a,P.color)}<span class="lbl">${a.label}</span><span class="ptag" style="color:${P.color};background:${P.tint}">${P.label}</span><span class="st">${a.state==='done'?'done':phase(a)}</span></div>
-    <div class="miniprog"><i style="width:${a.p}%;background:${P.color}"></i></div>
-    ${sub}
-  </div>`;
+  const sub=kids.length?`<div class="gkids">${kids.map(nodeC).join('')}</div>`:'';
+  return `<div class="node"><div class="nline">${glyph(a)}<span class="lbl">${a.label}</span><span class="ptag">${P.label}</span><span class="st ${fl}">${phase(a)}</span></div><div class="miniprog"><i class="${fl}" style="width:${a.p}%"></i></div>${sub}</div>`;
 }
 function renderC(){
   const top=agents.filter(a=>a.parent==='root'&&a.state!=='hidden');
-  return USERMSG+AIMSG+`<div class="saC">
-    <div class="chead"><span class="h-t">✦ fan-out</span>${budgetBar()}</div>
-    <div class="root"><span class="rdisc">J</span> jerv <span style="color:var(--text-3);font-weight:400;font-size:11px">→ ${top.length} sub-agents</span></div>
-    <div class="kids">${top.map(nodeC).join('')}</div>
-  </div>`+synthCard();
+  return USERMSG+AIMSG+liveSummary()+`<div class="saC"><div class="chead"><span class="h-t">✦ fan-out</span>${stopBtn()}</div><div class="budgetrow">${budgetBar()}</div><div class="root"><span class="rdisc">J</span> jerv <span style="color:var(--text-3);font-weight:400;font-size:11px">→ ${top.length} sub-agents</span></div><div class="kids">${top.map(nodeC).join('')}</div></div>`+synthCard();
 }
-
-function render(){
-  document.getElementById('chatA').innerHTML=renderA();
-  document.getElementById('chatB').innerHTML=renderB();
-  document.getElementById('chatC').innerHTML=renderC();
-}
+function render(){chatA.innerHTML=renderA();chatB.innerHTML=renderB();chatC.innerHTML=renderC();}
+const chatA=document.getElementById('chatA'),chatB=document.getElementById('chatB'),chatC=document.getElementById('chatC');
 
 document.addEventListener('click',e=>{
+  const sc=e.target.closest('[data-sc]');
+  if(sc){document.querySelectorAll('[data-sc]').forEach(b=>b.classList.remove('on'));sc.classList.add('on');scenario=sc.getAttribute('data-sc');reset();setTimeout(play,250);return;}
+  if(e.target.closest('[data-act="stop"]')){stop();return;}
   const line=e.target.closest('[data-id]');
-  if(!line)return;
-  const id=line.getAttribute('data-id');
-  if(expanded.has(id))expanded.delete(id);else expanded.add(id);
-  render();
+  if(line){const id=line.getAttribute('data-id');if(expanded.has(id))expanded.delete(id);else expanded.add(id);render();}
 });
 document.getElementById('play').onclick=play;
-document.getElementById('reset').onclick=reset;
+document.getElementById('reset').onclick=()=>{reset();};
 reset();setTimeout(play,500);
 </script>
 </body>

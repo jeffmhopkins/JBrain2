@@ -1229,46 +1229,61 @@ segmented sort — more screen surgery than the problem warranted, and it buried
 the config behind the disclosure). C keeps the per-card model while making the
 result a first-class, always-visible dock.
 
-## Sub-agent spawning surfaces (GUI gate settled; build plan `docs/proposed/SUBAGENT_SPAWNING_PLAN.md`)
+## Sub-agent spawning surfaces (layout chosen; **mock gate PROVISIONAL** — build plan `docs/proposed/SUBAGENT_SPAWNING_PLAN.md`)
 
 When `jerv` fans out web-sandboxed research/review/summarize sub-agents (the
-reserved `spawn_subagent` hatch, `docs/ASSISTANT.md`), two surfaces show them. Both
-were settled in a three-way mock review; the rivals are retained as the record.
+reserved `spawn_subagent` hatch, `docs/ASSISTANT.md`), two surfaces show them. The
+**layouts** were chosen in a three-way review (rivals retained as the record), but
+an adversarial review re-opened the gate as **provisional**: the failure / cancel /
+long-fan / budget-exhausted states (settled backend behaviors) were not in the
+reviewed happy-path mocks and must be **re-reviewed before implementation**. The
+revised reference mocks carry scenario switchers for those states.
+
+**Persona is a `kind` enum, rendered as a NEUTRAL text tag (or a per-persona glyph
+on a neutral disc) — never a color.** The earlier "research=steel / review=violet /
+summarize=green" scheme is **rejected**: it violates the registry rule (components
+express `tone`/`flag`/`kind` enums, never colors) and collided with three reserved
+meanings simultaneously — green=live/ok, violet=Financial domain, steel=agent/focus/
+live-glyph. Semantic color on these surfaces stays fixed: **steel=live, green=done,
+rose=failed**; persona never borrows an accent.
 
 **In-chat live panel — chosen A "accordion step list"** (rivals B "agent cards",
 C "live fan/tree"; reference mock `docs/mocks/subagent-chat-mock.html`). Below
 jerv's answer bubble, the running fan renders as a bordered group ("Researching ·
 N agents") of **collapsible step rows** — the same disclosure register as the
-existing `ActivityLine`/`StepRow` "Worked" foot strip, so it reads as continuous
-with today's tool-activity UI. Each row carries the **stateful glyph** (three
-bouncing dots while running → a `✓` when done; honors `prefers-reduced-motion`),
-the sub-agent **label**, its **persona tag** (`research` steel / `review` violet /
-`summarize` green — meaning via the accent, never a model-authored color), a live
-**status word** (`searching… / reading… / summarizing… / done`), and a thin
-progress bar; tapping a row expands its **brief** and final **one-line summary**.
-A depth-2 sub-sub-agent nests one indent deeper. The group header carries a
-**tree-budget meter** (used / ceiling; steel, ambering past ~70%). The eventual
-fan-out result lands as a separate registered **tool-view** synthesis card (the
-green "Synthesized from N researchers" card with `[^n]` footnote markers) — data
-only, per "Agent tool views". A won for density and continuity with the existing
-activity strip; B (a card dashboard) and C (an explicit indented fan/tree) are
-retained — C's hierarchy clarity is the fallback if nesting needs to be louder.
+existing `ActivityLine`/`StepRow` "Worked" foot strip. Each row carries the
+**stateful glyph** (steel bouncing dots while running → green `✓` done → **rose `✕`
+failed**; `aria-hidden`, the status word carries state, honors
+`prefers-reduced-motion`), the **label**, a neutral **persona tag**, a live
+**status word**, and a thin progress bar; tapping a row expands its **brief** and
+final **summary** (a failed row auto-expands its error like `StepRow`). A depth-2
+sub-sub-agent nests one indent deeper. **Required non-happy states:** a **Stop** on
+the group header (cascade-cancel, mirroring the image-render Stop); the
+**tree-budget meter** goes `--danger` at the ceiling (paired text value) with a
+**truncated** synthesis variant on `tree_budget_exhausted`; the header rolls up
+`done · N ran · M failed`; a **row cap + "show N more" + max-height scroll region**
+contains a long fan. **Accessibility:** one polite live-region summary for the whole
+fan (not N live rows — avoids the announcement storm). The fan-out result is a
+**registered `subagent_synthesis` tool-view** (added to the registry list in the
+same PR; composed from `stat_block`/`citation_card`, standard tool-view frame — no
+bespoke green panel). A won for density and continuity; B/C retained.
 
 **Session manager nesting — chosen B "always-nested rail"** (rivals A "caret
 disclosure", C "inline chips"; reference mock `docs/mocks/subagent-sessions-mock.
-html`). In the Chats picker, a spawning chat shows its sub-agents **always nested
-beneath it under a vertical connector rail** (tree lines, the parent's children
-indented; a depth-2 agent indents one rail deeper), with a **group-collapse**
-toggle (`sub-agents (N)`) for when the tree is in the way. Each child row reuses
-the settled **live-turn glyph** + persona tag + status word; the parent keeps its
-**green live dot** and a `N running` badge that resolves to `done · N ran`. B won
-because the tree structure is the point here (which agent spawned which, how deep)
-and the rail makes lineage legible at rest; A (tap-a-caret to reveal) hid the
-structure a beat too long, and C (a compact in-card chip panel) traded the
-hierarchy for list density. **This is the one place the "at most one chat shows
-the live glyph" rule (Live-turn activity glyph, above) is lifted** — concurrent
-sub-agents mean several rows animate at once, so `activeTurn` becomes a
-session-keyed set rather than a single in-flight turn.
+html`). A spawning chat shows its sub-agents **nested beneath it under a vertical
+connector rail** (a depth-2 agent indents one rail deeper). **Children are excluded
+from top-level bucketing** (filtered by `parent_session_id != null`) — they never
+appear as their own top-level rows; the rail **collapses by default once
+`subagent_count` exceeds a threshold** (and for any archived parent) so a large fan
+doesn't bury the dense Chats list. The **group toggle is a real `button`** with
+`aria-expanded`, and the tree uses `role="tree"/"treeitem"` + `aria-level`. Each
+child row reuses the live-turn glyph + neutral persona tag + status (incl. **failed
+rose**); the parent badge distinguishes `N running` / `done · N ran` / `… · M
+failed`. **This is the one place the "at most one chat shows the live glyph" rule is
+lifted** — `activeTurn` becomes a session-keyed **set for the row glyphs only** (it
+does **not** gate sends; the parent turn stays the single gated turn, and the
+in-chat accordion reads the parent turn's `subagent_*` events while the tree reads
+child session rows — see the build plan's "Execution model").
 
 ## Implementation rules
 
