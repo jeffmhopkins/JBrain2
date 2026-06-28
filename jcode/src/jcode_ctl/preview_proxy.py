@@ -48,6 +48,13 @@ _DROP_REQUEST = frozenset(
 # port with nothing listening fails fast to a 502.
 _TIMEOUT = httpx.Timeout(30.0, connect=2.0)
 
+# Reach the dev server on whichever loopback family it bound, IPv4 first then IPv6. Vite
+# (and other servers) default their host to `localhost`, which Node frequently binds to
+# `::1` ONLY — so a plain `npm run dev` (no `--host`) listens on [::1]:<port> and is
+# unreachable on 127.0.0.1. Trying both makes the common dev server work with no flags;
+# a refused connect on loopback returns instantly, so the fallback costs nothing.
+_DEV_HOSTS = ("127.0.0.1", "[::1]")
+
 
 def _default_client() -> httpx.AsyncClient:
     return httpx.AsyncClient(timeout=_TIMEOUT)
@@ -92,31 +99,41 @@ async def proxy_http(
     *,
     client_factory: Callable[[], httpx.AsyncClient] = _default_client,
 ) -> Response:
-    """Forward ``request`` to ``http://127.0.0.1:<port>/<path>`` and return the reply.
-    A 502 stands in when the dev server isn't reachable (not started, slow, or speaking
-    malformed HTTP). ``client_factory`` is injectable so tests can drive a mock
-    transport instead of a real socket."""
-    url = httpx.URL(f"http://127.0.0.1:{port}/{path}", query=request.url.query.encode())
+    """Forward ``request`` to the session's loopback dev server and return the reply,
+    trying both loopback families (IPv4 then IPv6) so a ``localhost``-bound server like
+    Vite is reached without ``--host``. A 502 stands in when nothing is reachable on
+    EITHER family, or the server errors once connected (slow / malformed).
+    ``client_factory`` is injectable so tests can drive a mock transport."""
     body = await request.body()
+    headers = _request_headers(request, port)
+    query = request.url.query.encode()
     _log.debug("preview proxy %s → :%d /%s", request.method, port, path)
     async with client_factory() as client:
-        try:
-            resp = await client.request(
-                request.method,
-                url,
-                headers=_request_headers(request, port),
-                content=body,
+        refused: httpx.ConnectError | None = None
+        for host in _DEV_HOSTS:
+            url = httpx.URL(f"http://{host}:{port}/{path}", query=query)
+            try:
+                resp = await client.request(
+                    request.method, url, headers=headers, content=body
+                )
+            except httpx.ConnectError as exc:
+                # Nothing on this family — try the other loopback before giving up.
+                refused = exc
+                continue
+            except httpx.TransportError as exc:
+                # Connected but failed mid-exchange (timeout / malformed): the server IS
+                # here, so don't retry the other family — report it.
+                _log.warning("preview: dev server errored on :%d (%s)", port, exc)
+                return Response("The dev server isn't reachable on this port.", 502)
+            _log.debug("preview proxy ← :%d %d", port, resp.status_code)
+            return Response(
+                content=resp.content,
+                status_code=resp.status_code,
+                headers=_response_headers(resp),
             )
-        except httpx.TransportError as exc:
-            # Refused / timed out / malformed — the dev server isn't (yet) serving here.
-            _log.warning("preview: dev server unreachable on :%d (%s)", port, exc)
-            return Response("The dev server isn't reachable on this port.", 502)
-    _log.debug("preview proxy ← :%d %d", port, resp.status_code)
-    return Response(
-        content=resp.content,
-        status_code=resp.status_code,
-        headers=_response_headers(resp),
-    )
+    # Refused on every loopback family — nothing is serving on this port.
+    _log.warning("preview: dev server unreachable on :%d (%s)", port, refused)
+    return Response("The dev server isn't reachable on this port.", 502)
 
 
 async def _pump_browser_to_dev(
@@ -169,23 +186,33 @@ async def proxy_ws(  # pragma: no cover - opens a live upstream socket, deploy-o
     path: str,
     query: str,
 ) -> None:
-    """Bridge an authenticated browser WebSocket to the dev server's WS at
-    ``ws://127.0.0.1:<port>/<path>`` — the HMR live-reload channel. Connect upstream
+    """Bridge an authenticated browser WebSocket to the dev server's HMR live-reload WS,
+    trying both loopback families (IPv4 then IPv6) like the HTTP proxy so a
+    ``localhost``/IPv6-bound dev server is reached without ``--host``. Connect upstream
     FIRST so the browser handshake can echo the negotiated subprotocol (Vite speaks
-    ``vite-hmr``); if the dev server has no WS there, close cleanly rather than hang."""
-    # Connect by loopback IP. Unlike the HTTP proxy (which forwards the incoming preview
-    # Host, so must rewrite it to localhost), websockets builds a fresh handshake with
-    # Host `127.0.0.1:<port>` — an IP literal a host-pinning dev server allows. So the
-    # preview host never reaches the dev WS and no Host rewrite is needed.
-    url = f"ws://127.0.0.1:{port}/{path}" + (f"?{query}" if query else "")
+    ``vite-hmr``); if no dev WS answers on either family, close cleanly, don't hang."""
+    # Connect by loopback IP literal (127.0.0.1 / [::1]). Unlike the HTTP proxy (which
+    # forwards the incoming preview Host, so must rewrite it to localhost), websockets
+    # builds a fresh handshake with that IP literal as Host — which a host-pinning dev
+    # server allows — so the preview host never reaches the dev WS; no rewrite needed.
+    suffix = f"?{query}" if query else ""
     requested = browser.scope.get("subprotocols") or []
     _log.debug("preview ws → :%d /%s (subprotocols=%s)", port, path, requested)
-    try:
-        dev = await websockets.connect(
-            url, subprotocols=requested or None, open_timeout=5, max_size=None
-        )
-    except Exception as exc:
-        _log.warning("preview ws: dev server WS unreachable on :%d (%s)", port, exc)
+    dev = None
+    last_exc: Exception | None = None
+    for host in _DEV_HOSTS:
+        try:
+            dev = await websockets.connect(
+                f"ws://{host}:{port}/{path}{suffix}",
+                subprotocols=requested or None,
+                open_timeout=5,
+                max_size=None,
+            )
+            break
+        except Exception as exc:
+            last_exc = exc
+    if dev is None:
+        _log.warning("preview ws: dev WS unreachable on :%d (%s)", port, last_exc)
         await browser.close(code=1011)
         return
     try:
