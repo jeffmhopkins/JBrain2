@@ -335,6 +335,7 @@ class AgentLoop:
         tree: TreeState | None = None,
         run_id: str | None = None,
         on_step: Callable[[int, int], None] | None = None,
+        reasoning_effort: str | None = None,
     ) -> AgentResult:
         scopes = tuple(scopes)
         tools = self._registry.schemas_for(scopes, tools_allow)
@@ -367,6 +368,9 @@ class AgentLoop:
                 tools=tools,
                 max_tokens=TURN_MAX_TOKENS,
                 strength=SYSTEM_STRENGTH,
+                # A caller (the sub-agent spawner) may steer this run's reasoning
+                # effort; dropped by the router for a non-reasoning model.
+                effort_override=reasoning_effort,
             )
             spent_call = turn.usage.input_tokens + turn.usage.output_tokens
             cost += spent_call

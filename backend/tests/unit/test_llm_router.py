@@ -421,6 +421,26 @@ async def test_reasoning_effort_dropped_for_a_non_reasoning_local_model() -> Non
     assert local.calls[0]["reasoning_effort"] is None
 
 
+async def test_converse_effort_override_wins_for_a_reasoning_model() -> None:
+    # The per-call override (the sub-agent spawner's per-child effort) beats the
+    # stored/default effort when the resolved model is reasoning-capable (xai Grok).
+    xai = FakeLlmClient(["x"])
+    router = _override_router({"xai": xai}, {"note.extract": {"reasoning_effort": "low"}})
+    await router.converse("note.extract", system="s", messages=[], effort_override="high")
+    assert xai.converse_calls[0]["reasoning_effort"] == "high"
+
+
+async def test_converse_effort_override_dropped_for_a_non_reasoning_model() -> None:
+    # An override aimed at a non-reasoning route (Claude has no effort channel) is
+    # dropped, exactly like a stored effort — the param never reaches the wire.
+    anthropic = FakeLlmClient(["a"])
+    router = _override_router(
+        {"anthropic": anthropic}, {"note.extract": {"spec": "anthropic:claude-x"}}
+    )
+    await router.converse("note.extract", system="s", messages=[], effort_override="high")
+    assert anthropic.converse_calls[0]["reasoning_effort"] is None
+
+
 async def test_bad_stored_spec_falls_back_without_crashing() -> None:
     xai = FakeLlmClient(["x"])
     router = _override_router({"xai": xai}, {"note.extract": {"spec": "garbage"}})

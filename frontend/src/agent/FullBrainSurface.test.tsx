@@ -272,6 +272,79 @@ describe("FullBrainSurface", () => {
     expect(worked).toHaveAttribute("aria-expanded", "false");
   });
 
+  it("keeps the sub-agent accordion in chat after settle and suppresses the duplicate synthesis card", async () => {
+    async function* answer(): AsyncGenerator<ChatEvent> {
+      yield { type: "text_delta", text: "Comparing two towns." };
+      yield { type: "tool_call", id: "sp1", name: "spawn_subagent", arguments: { tasks: [] } };
+      yield {
+        type: "subagent_spawned",
+        tool_call_id: "sp1",
+        child_id: "k1",
+        persona: "research",
+        label: "Troutdale News",
+        depth: 1,
+      };
+      yield {
+        type: "subagent_spawned",
+        tool_call_id: "sp1",
+        child_id: "k2",
+        persona: "research",
+        label: "Port Saint John News",
+        depth: 1,
+      };
+      yield {
+        type: "subagent_done",
+        tool_call_id: "sp1",
+        child_id: "k1",
+        ok: true,
+        stop_reason: "end_turn",
+        summary: "Troutdale: quiet week.",
+        tree_spent: 100,
+        tree_budget: 1000,
+      };
+      yield {
+        type: "subagent_done",
+        tool_call_id: "sp1",
+        child_id: "k2",
+        ok: true,
+        stop_reason: "end_turn",
+        summary: "Port Saint John: festival.",
+        tree_spent: 200,
+        tree_budget: 1000,
+      };
+      yield { type: "tool_result", tool_call_id: "sp1", ok: true, summary: "synthesized" };
+      yield {
+        type: "tool_view",
+        tool_call_id: "sp1",
+        view: {
+          view: "subagent_synthesis",
+          surface: "inline",
+          data: {
+            ran: 2,
+            failed: 0,
+            children: [
+              { label: "Troutdale News", persona: "research", ok: true, summary: "quiet" },
+              { label: "Port Saint John News", persona: "research", ok: true, summary: "festival" },
+            ],
+          },
+          refs: [],
+        },
+      };
+      yield { type: "text_delta", text: " Done." };
+      yield { type: "done", stop_reason: "end_turn" };
+    }
+    const { container } = render(<Harness d={deps({ chat: answer })} />);
+    await waitFor(() => screen.getByLabelText("Conversation"));
+    fireEvent.change(screen.getByLabelText("Composer"), { target: { value: "compare them" } });
+    fireEvent.click(screen.getByRole("button", { name: "send" }));
+
+    // The turn settles, yet the accordion persists in chat showing the done roll-up …
+    await waitFor(() => expect(screen.getByText(/done · 2 ran/)).toBeInTheDocument());
+    expect(container.querySelector(".fb-sa")).not.toBeNull();
+    // … and the persisted synthesis card is suppressed so the roster never shows twice.
+    expect(container.querySelector(".tv-syn")).toBeNull();
+  });
+
   it("follows the stream only while the reader is pinned to the bottom", async () => {
     async function* answer(): AsyncGenerator<ChatEvent> {
       yield { type: "text_delta", text: "reply" };

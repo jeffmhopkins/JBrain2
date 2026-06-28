@@ -9018,6 +9018,19 @@ button.small {
   display: flex;
   align-items: center;
   gap: 7px;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.fb-shell .tv-syn-car {
+  flex: none;
+  color: var(--text-3);
+  font-size: 10px;
 }
 .fb-shell .tv-syn-mark {
   flex: none;

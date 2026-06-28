@@ -1,6 +1,6 @@
 ---
 name: spawn_subagent
-version: 1
+version: 2
 permission: web
 cost_class: expensive
 params:
@@ -31,6 +31,14 @@ params:
           label:
             type: string
             description: A short display name for this child (e.g. "HNSW tuning").
+          effort:
+            type: string
+            enum: [none, low, medium, high]
+            description: >-
+              Optional. How hard this child should think, when its model is a
+              reasoning model. Use "high" for an open-ended or analytical brief, "low"
+              (the default) for a quick lookup, "none" to skip the thinking trace.
+              Ignored for a non-reasoning model. Omit to use the child's default.
         required: [persona, brief, label]
     max_parallel:
       type: integer
