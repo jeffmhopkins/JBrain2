@@ -11,6 +11,7 @@ import httpx
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from starlette.websockets import WebSocketDisconnect
 
 from jbrain.api import jcode_preview
 
@@ -90,3 +91,24 @@ def test_oversized_request_body_is_rejected(monkeypatch: pytest.MonkeyPatch) -> 
     monkeypatch.setattr(jcode_preview, "_MAX_BODY", 10)
     resp = _client().post(f"/__jcode_preview/{_SLUG}/upload", content=b"x" * 100)
     assert resp.status_code == 413
+
+
+def test_preview_ws_wrong_origin_closes_before_connecting() -> None:
+    # The HMR WS shares the HTTP route's origin gate: a valid slug on the wrong Host
+    # (or a malformed slug) closes 4404 before any upstream connect.
+    client = _client(host="jbrain.box.test")
+    with (
+        pytest.raises(WebSocketDisconnect) as exc,
+        client.websocket_connect(f"/__jcode_preview/{_SLUG}/"),
+    ):
+        pass
+    assert exc.value.code == 4404
+
+
+def test_preview_ws_malformed_slug_closes() -> None:
+    with (
+        pytest.raises(WebSocketDisconnect) as exc,
+        _client().websocket_connect("/__jcode_preview/NOTHEX/"),
+    ):
+        pass
+    assert exc.value.code == 4404

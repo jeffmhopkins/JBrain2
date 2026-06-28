@@ -37,7 +37,7 @@ from pydantic import BaseModel, Field
 from jcode_ctl.config import Settings
 from jcode_ctl.host_preview import HostPreviewManager
 from jcode_ctl.preview import PreviewError, PreviewManager
-from jcode_ctl.preview_proxy import proxy_http
+from jcode_ctl.preview_proxy import proxy_http, proxy_ws
 from jcode_ctl.sessions import SessionError, SessionManager
 from jcode_ctl.terminal import TerminalRegistry, serve_terminal
 
@@ -298,6 +298,28 @@ def create_app(
         if session is None or session.status == "stopped" or port is None:
             return Response("preview not available", status_code=404)
         return await proxy_http(port, path, request)
+
+    @app.websocket("/preview/{slug}/{path:path}")
+    @app.websocket("/preview/{slug}")
+    async def preview_ws_route(websocket: WebSocket, slug: str, path: str = "") -> None:
+        # The HMR live-reload channel: the api forwards the preview WS upgrade here by
+        # slug (bearer-authed on the handshake, like the terminal). Same guard as the
+        # HTTP proxy — unknown slug or a non-running session refuses before any upstream
+        # connect; proxy_ws accepts the browser socket only after the dev WS is reached.
+        header = websocket.headers.get("authorization", "")
+        if not hmac.compare_digest(header, expected_header):
+            await websocket.close(code=4401)
+            return
+        if host_preview is None:
+            await websocket.close(code=4404)
+            return
+        sid = host_preview.resolve(slug)
+        session = sessions.get_or_none(sid) if sid is not None else None
+        port = host_preview.port_for(sid) if sid is not None else None
+        if session is None or session.status == "stopped" or port is None:
+            await websocket.close(code=4404)
+            return
+        await proxy_ws(websocket, port, path, websocket.url.query)
 
     @app.websocket("/sessions/{sid}/terminal")
     async def terminal(websocket: WebSocket, sid: str) -> None:

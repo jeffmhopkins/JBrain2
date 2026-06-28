@@ -11,19 +11,22 @@ never executes on the owner origin. The owner's cookie + Authorization are strip
 here so they can never reach sandbox code; the api↔jcode bearer is added for that hop
 and dropped again by the control server before the dev server sees it.
 
-HTTP only; the HMR WebSocket is Wave P3b. The body is buffered, not streamed (a dev
-page's assets are modest), matching the control-server proxy.
+The HTTP body is buffered, not streamed (a dev page's assets are modest); the HMR
+live-reload WebSocket is bridged through the same slug + origin gate (Wave P3b).
 """
 
 from __future__ import annotations
 
+import contextlib
 import re
 from typing import cast
 
 import httpx
 import structlog
-from fastapi import APIRouter, Request, Response
+import websockets
+from fastapi import APIRouter, Request, Response, WebSocket
 
+from jbrain.api import jcode_terminal
 from jbrain.config import Settings
 
 router = APIRouter()
@@ -134,3 +137,63 @@ async def preview(request: Request, slug: str, path: str = "") -> Response:
         status_code=resp.status_code,
         headers=_response_headers(resp),
     )
+
+
+def _ws_url(base_url: str, slug: str, path: str, query: str) -> str:
+    scheme = base_url.replace("https://", "wss://", 1).replace("http://", "ws://", 1)
+    url = f"{scheme.rstrip('/')}/preview/{slug}/{path}"
+    return f"{url}?{query}" if query else url
+
+
+async def _proxy_ws(  # pragma: no cover - opens a live upstream socket, deploy-only
+    browser: WebSocket, settings: Settings, slug: str, path: str
+) -> None:
+    """Bridge the browser's HMR WebSocket to the control server's preview WS, carrying the
+    api↔jcode bearer and echoing the negotiated subprotocol (Vite speaks ``vite-hmr``).
+    Connect upstream FIRST so the browser handshake can mirror its subprotocol."""
+    requested = browser.scope.get("subprotocols") or []
+    headers = {"Authorization": f"Bearer {settings.jcode_token}"}
+    try:
+        upstream = await websockets.connect(
+            _ws_url(settings.jcode_url, slug, path, browser.url.query),
+            additional_headers=headers,
+            subprotocols=requested or None,
+            open_timeout=10,
+            max_size=None,
+        )
+    except Exception as exc:  # noqa: BLE001 - any upstream failure just ends the channel
+        log.warning("jcode.preview_ws_failed", slug=slug, error=repr(exc))
+        await browser.close(code=1011)
+        return
+    try:
+        await browser.accept(subprotocol=upstream.subprotocol)
+        await jcode_terminal._bridge(browser, upstream)
+    finally:
+        with contextlib.suppress(Exception):
+            await upstream.close()
+        with contextlib.suppress(Exception):
+            await browser.close()
+
+
+@router.websocket("/__jcode_preview/{slug}/{path:path}")
+@router.websocket("/__jcode_preview/{slug}")
+async def preview_ws(websocket: WebSocket, slug: str, path: str = "") -> None:
+    """The HMR live-reload channel. Same slug + origin gate as the HTTP route — the
+    unguessable slug is the auth, and the request Host must be the preview subdomain so a
+    sandbox dev app's WS can't be hijacked through the owner origin. Closes 4404 before
+    any upstream connect on a malformed slug / wrong Host / unconfigured jcode."""
+    # No Origin/CSWSH check here (unlike the terminal WS): that defense exists because the
+    # terminal rides the owner's ambient session cookie. This route carries NO ambient
+    # credential — it reads/forwards no cookie, and the capability is the unguessable slug.
+    # A cross-origin page that doesn't know the slug reaches nothing; one that does already
+    # has the full capability. The Host gate below is server-side origin defense in depth.
+    settings = cast(Settings, websocket.app.state.settings)
+    base_host = settings.jcode_preview_base_host
+    if not settings.jcode_url or not base_host or not _SLUG_RE.match(slug):
+        await websocket.close(code=4404)
+        return
+    host = websocket.headers.get("host", "").split(":")[0].lower()
+    if host != _preview_host(slug, base_host):
+        await websocket.close(code=4404)
+        return
+    await _proxy_ws(websocket, settings, slug, path)
