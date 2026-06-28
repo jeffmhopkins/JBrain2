@@ -75,19 +75,22 @@ Phase-5 build record is `archive/PHASE5_COMPLETION_PLAN.md`.
   bridge so the sandbox stays isolated. Concurrent previews via per-session ports;
   verbose debug logging is a per-wave deliverable. Wave P0 (verbose-logging substrate) is
   landed; the five open decisions await owner sign-off before Wave P1.
+- `SUBAGENT_SPAWNING_PLAN.md` — the **sub-agent spawning** build plan (scheduled,
+  design-complete): `jerv` fans out web-sandboxed research/review/summarize
+  sub-agents (parent-authored brief as data, child ⊆ parent, depth ≤ 2, direct
+  caps-bounded fan, shared tree budget, live in-chat panel + nested session tree).
+  Decomposed into waves **S1–S4** (spawn core + structural enforcement → loop
+  ChatEvent channel + tree budget → live chat surface → session-tree surface).
+  Both GUI layouts owner-approved; survived a three-lens adversarial review
+  (record: `archive/SUBAGENT_SPAWNING_REVIEW.md`). Open wave-level decisions: the
+  concrete budget/cap numbers (escalated at S2) and the S3 non-happy-state mock
+  re-review.
 
 ## Proposed (not scheduled)
 
 `proposed/` is the icebox: forward-looking design specs kept for the record but
 **not on the roadmap** — nothing built, no phase committed. See `proposed/README.md`.
 
-- `proposed/SUBAGENT_SPAWNING_PLAN.md` — **sub-agent spawning** design spec
-  (design-complete, owner-approved, **not yet scheduled**): `jerv` fans out
-  web-sandboxed research/review/summarize sub-agents (parent-authored brief,
-  child ⊆ parent, depth ≤ 2, direct caps-bounded fan, shared tree budget, live
-  in-chat panel + nested session tree). GUI mock gate settled; survived a
-  three-lens adversarial review (record: `archive/SUBAGENT_SPAWNING_REVIEW.md`).
-  Next step is promotion + `PROCESS.md` wave decomposition.
 - `proposed/PHOTO_ARCHIVE_PLAN.md` — the **photo archive pipeline** design spec:
   a staged, idempotent map over a decade of phone dumps — hash-keyed dedup,
   deterministic EXIF/filename dating, a vision worker (VLM) that turns pixels into

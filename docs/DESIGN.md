@@ -1229,7 +1229,7 @@ segmented sort — more screen surgery than the problem warranted, and it buried
 the config behind the disclosure). C keeps the per-card model while making the
 result a first-class, always-visible dock.
 
-## Sub-agent spawning surfaces (settled; build plan `docs/proposed/SUBAGENT_SPAWNING_PLAN.md`)
+## Sub-agent spawning surfaces (settled; build plan `docs/SUBAGENT_SPAWNING_PLAN.md`)
 
 When `jerv` fans out web-sandboxed research/review/summarize sub-agents (the
 reserved `spawn_subagent` hatch, `docs/ASSISTANT.md`), two surfaces show them. The

@@ -1,10 +1,14 @@
-# Sub-agent spawning — design spec (proposed)
+# Sub-agent spawning — build plan (scheduled)
 
-**Status: proposed, not scheduled.** This is the icebox design for letting the
-web-sandboxed agent (`jerv`) spawn web-sandboxed **research / review / summarize**
-sub-agents for context flexibility. Nothing here is built. When picked up it must
-be reconciled with the `CLAUDE.md` non-negotiables and the `docs/ASSISTANT.md`
-agent design, given a roadmap slot, and promoted out of `proposed/`.
+**Status: scheduled — design-complete, decomposed into waves S1–S4 (see "Wave
+split").** Lets the web-sandboxed agent (`jerv`) spawn web-sandboxed
+**research / review / summarize** sub-agents for context flexibility. Promoted out
+of `proposed/` and given a roadmap slot (`docs/ROADMAP.md`, Phase 6 follow-ons —
+agent-infrastructure, independent of the wiki spine). Reconciled with the
+`CLAUDE.md` non-negotiables and the `docs/ASSISTANT.md` agent design (see
+"Reconciliation"). Nothing is built yet; the waves below sequence the build under
+`docs/PROCESS.md` (parallel tasks, per-task + per-wave adversarial review, one PR
+per wave, the GUI mock gate).
 
 > **Read this first — honesty about what exists.** An adversarial review (security
 > + architecture + GUI) found the earlier draft asserted properties as
@@ -418,38 +422,213 @@ layouts are settled (in-chat **A**, session-tree **B**).
 - 80% backend coverage, security paths 100%, real Postgres via testcontainers, LLM
   faked (`CLAUDE.md` #5).
 
-## Proposed phasing (when scheduled)
+## Wave split
 
-1. **Spawn core + structural enforcement** — the tool + registry exclusion, the 3
-   personas + `.prompt` files, the parent⊆child clamp + `depth` in `ToolContext`,
-   persona validation, the `no_memory` flag + location nulling, the migrations, and
-   the depth/fan caps. Children run via the in-request gather helper; **visible only
-   in the Ops run-log** (no chat UI yet).
-2. **Loop event channel + tree budget** — generalize the progress sink into a
-   `ChatEvent` queue the loop drains; the incremental-spend accounting + shared
-   counter + root reserve + admission gate.
-3. **Live chat surface** — `subagent_*` events, the in-chat accordion + the
-   `subagent_synthesis` tool-view, the failure/cancel/exhausted/long-fan states
-   (after the provisional mock re-review).
-4. **Session-tree surface** — `parent_session_id` in the payload, the nested rail
-   with children excluded from bucketing, the `activeTurn`-set for row glyphs.
+Per `docs/PROCESS.md`: each wave runs its tasks in parallel worktrees off a
+`wave-Sn` integration branch, gets an independent **per-task** adversarial review
+(a *different* agent than the builder), then a **wave-level** adversarial review of
+the whole wave diff (security/red-team for any RLS/firewall/scope/data-boundary
+surface), and lands as **exactly one PR**, CI green before merge. The two GUI waves
+(S3, S4) go through the **mock gate**; both layouts are already chosen and
+owner-approved (in-chat **A**, session-tree **B** — `DESIGN.md` §"Sub-agent
+spawning surfaces", mocks `docs/mocks/subagent-{chat,sessions}-mock.html`), so the
+only remaining gate is the **non-happy-state mock re-review before S3** (M7).
 
-## Open questions for the build plan
+Every wave carries the `CLAUDE.md` #5 test bar: **80% backend coverage, security
+paths 100%, real Postgres via testcontainers, all LLM calls faked.** The structural
+caps (depth/fan/clamp/no-memory/location) get tests that need **zero model
+cooperation** (decision #8 makes them the only bound on a direct fan). Each new
+table/column ships its mandated RLS isolation test. Per-wave adversarial reviews
+**re-check the `SUBAGENT_SPAWNING_REVIEW.md` findings** on the surfaces that wave
+touches (cited per wave).
 
-*Settled above: execution model (in-request fan-in A), live-in-v1, web-sandbox,
-jerv-root, child⊆parent, depth `< 2`, template-bound depth≥1 briefs, direct
-caps-bounded fan, tree budget (single shared counter + root reserve + admission
-floor, on an incremental unit), reflexion-off for children.*
+The four design phases map 1:1 to waves **S1–S4**. S2 depends on S1 (the fan
+helper); S3 depends on S2 (the ChatEvent channel + budget events it renders); S4
+depends on S1 (lineage columns) and can overlap S3 (a different surface).
 
-- **Concrete cap numbers** — `spawn_multiplier`, `root_reserve`,
-  `min_viable_child_budget`, `per_child_cap` sanity ceiling, `max_children_per_
-  parent`, `max_total_agents_per_tree`, `max_parallel`, per-child wall-clock — tuned
-  against a real research sweep.
-- **`runs` discriminator** — new `kind='subagent'` value vs. a marker column +
-  keep `kind='agent'`.
-- **Child transcript persistence** — full child transcripts (audit / re-open) vs.
-  summary + run-log only.
-- **Mock re-review** — sign off the failure/cancel/exhausted/long-fan states before
-  the Phase-3 build.
-- **Fan-in B/C** — only if model A proves insufficient; B's re-entry must be a
-  fresh owner-visible turn.
+### Wave S1 — Spawn core + structural enforcement *(backend; security/red-team gated)*
+
+Phase 1. The tool, the personas, the clamp, the caps, the migrations, the
+in-request fan helper. **Children run end-to-end but are visible only in the Ops
+run-log — no chat UI, no live streaming, no shared budget yet** (those are S2/S3).
+Re-checks review findings **B2, B3, M1, M2, M3, M4, m2, m3, m4**.
+
+- **S1.1 — Schema & migrations (+ RLS isolation tests).** `agent_sessions`:
+  `parent_session_id UUID NULL REFERENCES agent_sessions(id)`, `depth SMALLINT NOT
+  NULL DEFAULT 0`, `no_memory BOOLEAN NOT NULL DEFAULT false` (roots default
+  cleanly). `runs`: `parent_run_id` (**required** for the cost rollup) + the `kind`
+  discriminator for subagent runs. Extend the `agent` CHECK on **both**
+  `agent_sessions` and `tasks` to add `research`/`review`/`summarize` (else a child
+  INSERT fails). **Wave decision — `runs` discriminator:** add a new
+  **`kind='subagent'`** value (extending the `IN ('agent','integration','pipeline')`
+  CHECK from migration 0037) rather than a marker column — it keeps run-log filters
+  one-dimensional and matches the existing `kind` pattern; *recommend, finalize in
+  this task.* **Wave decision — child transcript persistence:** persist the
+  **run-log row + the returned summary only** in v1; defer full re-openable child
+  transcripts to a follow-on (keeps storage lean; lineage + summary cover audit).
+  Tests: RLS isolation per new column (`agent_sessions` is `is_owner()`-only —
+  owner-only metadata, right-sized per m3); CHECK accepts the three personas; root
+  rows default `depth=0`/`parent=NULL`.
+- **S1.2 — Personas + `.prompt` files + brief templates.** Three `AgentProfile`s
+  added to `AGENTS`, shaped like `jerv`: `reads_knowledge_base=False`, empty read
+  scopes, **no KB tools**, `no_memory`. Allowlists: research/review =
+  `web_search`, `web_fetch`, `current_time`, `spawn_subagent` (**no
+  `current_location`**, M2); summarize = no tools (pure transform, cannot spawn).
+  Version-pinned + CI-guarded `.prompt` files (system prompt never model-edited).
+  The three default **brief templates** (research/review/summarize) with the
+  parameter slots model-filled at depth ≥ 1 (decision #7). Extend the `agent` CHECK
+  fixtures alongside S1.1.
+- **S1.3 — Spawn handler, structural enforcement & in-request fan.** The
+  `spawn_subagent` `.tool` sidecar + handler; the registry **never-default
+  exclusion** so `curator.tools=None` does not absorb it; **persona validated
+  against the closed `{research,review,summarize}` set before `agent_for`** (which
+  falls back to KB-capable `curator` on unknown, `agents.py:181`). The
+  **parent⊆child clamp**: `parent_effective_tools`/`parent_scopes` threaded into the
+  child `AgentLoop`, intersected, refused at `_dispatch`. `depth` added to
+  `ToolContext`; spawn refused unless `parent.depth < 2`. Structural **`no_memory`**
+  (disables the loop-driven episodic auto-append, not just an allowlist omission);
+  child `ToolContext.here = here_as_of = None` (M2). The **in-request gather fan
+  helper** that mints child `agent_session` + run-log rows via the building blocks
+  (`AgentSessionRepo`, `AgentRunLog`, `agent_for` — *not* the scheduler's
+  `TaskRunner`), seeds the brief inside the data/instruction boundary, runs the fan
+  with `asyncio.gather`, collects summaries in **stable label order**, and
+  degrades gracefully (a child error → structured error summary, surfaced not
+  swallowed; cancellation cascades). The **static** caps land here as harness
+  enforcement: `parent.depth < 2`, `max_children_per_parent`, `max_parallel`,
+  `max_total_agents_per_tree` (the *budget* admission floor is S2). **Structural
+  tests (no model cooperation):** depth-2 spawn refused; child tool outside
+  `persona ∩ parent` refused at dispatch; `curator` not offered `spawn_subagent`;
+  unknown persona never resolves to a KB agent; over-fan / over-tree-size refused;
+  child writes **no** `agent_episodes` row; child `ToolContext.here is None`; child
+  effective tools include **no non-web jerv tool** (m2); depth≥1 free-text brief
+  rejected (template-bound only). Depends on S1.1 + S1.2.
+
+**S1 wave-level review (security/red-team):** confirm the clamp is real at
+`_dispatch` (B2), persona validation + curator exclusion (B3), `no_memory`
+structural not persona-trusted (M3), location nulling (M2), the direct fan is
+genuinely bounded only by *enforced* caps (M4), no non-web jerv tool leaks (m2).
+
+### Wave S2 — Loop ChatEvent channel + tree budget *(backend; security/red-team gated; budget-value escalation)*
+
+Phase 2. The load-bearing loop refactor: a generalized event channel so children
+can stream, and the corrected shared-budget model. Still no chat *rendering* (S3)
+— this wave makes the backend emit `subagent_*` events and enforce the tree
+budget. Re-checks **B1, M5, M6, M8**.
+
+- **S2.1 — Loop ChatEvent channel.** Generalize the fixed
+  `(step,total,preview,label)` progress sink (`loop.py:430-548`) into a
+  **`ChatEvent` queue the loop drains concurrently with the awaited handler** and
+  `yield`s into the SSE stream; the spawn handler is handed an **event sink**
+  accepting arbitrary `subagent_*` `ChatEvent`s. Buffer frames so a **reconnect
+  replays the parent run** (`/chat/runs/{id}/stream?after=N`) — clients never
+  resume N child runs (B1, M8). The parent turn stays the **single gated turn**
+  (`busy`/`abortRef`/`runIdRef` singletons unchanged). Tests: events drain
+  concurrently with an awaited handler; reconnect replays buffered `subagent_*`
+  frames from an offset; a sibling chat is unaffected while the fan runs.
+- **S2.2 — Incremental-spend accounting.** Redefine the loop's cost unit as
+  **incremental spend** (delta input+output per model call) at all four accounting
+  sites (`run`, `run_stream`, `_run_stream_buffered`, `_produce_buffered`), fixing
+  the per-step re-sum over-count (`loop.py:327`). Prerequisite for any cross-tree
+  pool math (M5). Tests: incremental accounting is exact and monotone with the
+  adapter fake; a single loop no longer over-counts.
+- **S2.3 — Shared tree budget.** A **mutable shared-budget object** threaded
+  through `AgentLoop.__init__`/`Guardrails`, checked at the four sites:
+  `tree_budget = base_max_cost × jerv.budget_multiplier × spawn_multiplier`; a
+  **root reserve** carved off the top (`children_pool = tree_budget − root_reserve`)
+  so the parent can always synthesize and say "research truncated"; the
+  **admission floor** (`remaining_children_pool ≥ n_children ×
+  min_viable_child_budget`); `per_child_cap` demoted to a **sanity ceiling**; a loop
+  seeing the pool exhausted stops with `stop_reason="tree_budget_exhausted"`.
+  Children run with **reflexion disabled** and `buffer_retry` forced off (M6).
+  **Wave decision (budget values — escalate to owner per `PROCESS.md`):** finalize
+  `spawn_multiplier`, `root_reserve`, `min_viable_child_budget`, `per_child_cap`,
+  `max_children_per_parent`, `max_total_agents_per_tree`, `max_parallel`, and a
+  per-child wall-clock — tuned against a real research sweep. *Recommended starting
+  point (from the spec's worked example):* `spawn_multiplier=3` → `tree_budget≈2.4M`,
+  `root_reserve=400k`, `children_pool=2.0M`, `min_viable_child_budget=100k`,
+  `per_child_cap=600k`, `max_parallel=4`, `max_children_per_parent=6`,
+  `max_total_agents_per_tree=12`, wall-clock≈120s/child. Tests: shared-counter
+  depletion, exhaustion `stop_reason`, root_reserve survival, admission-floor
+  refusal — all deterministic with the adapter fake; reflexion/`buffer_retry`
+  proven off for children. Depends on S2.2; the static-cap wiring extends S1.3.
+
+**S2 wave-level review (architecture/runtime):** the streaming path is real and the
+reconnect replays the *parent* run not N children (B1, M8); the budget is on an
+incremental unit with a single load-bearing limiter + floor, not three
+contradictory ones (M5); reflexion is off in the tree (M6); the parent stays the
+single gated turn.
+
+### Wave S3 — Live chat surface + `subagent_synthesis` tool-view *(GUI; mock re-review gate)*
+
+Phase 3. Render the fan in the parent bubble. **Mock gate:** layout **A** is chosen
+and owner-approved; the remaining gate is a **re-review sign-off on the non-happy
+states** (failed / cancel / budget-exhausted-truncated / long-fan) before
+implementation begins (M7, open item). Re-checks **B4, M7, M10, m5, m6**.
+
+- **S3.1 — `subagent_*` reducer + in-chat accordion (variant A).** New `ChatEvent`
+  variants `subagent_spawned`/`subagent_progress`/`subagent_done` folded by
+  `applyEvent` (`transcript.ts`), rendered as a bordered collapsible step list in
+  the parent bubble (the `ActivityLine`/`StepRow` register, reusing
+  `LiveToolStatus` + `TurnGlyph`). **Persona = a neutral text tag, never a color**
+  (B4); semantic color stays `steel=live / green=done / rose=failed`. Required
+  states: a failed child (rose `✕`, error phase word, row auto-expands its error);
+  header roll-up `done · N ran · M failed`; a **Stop** on the fan header (cascade
+  cancel) + optional per-child cancel; the **budget meter** to `--danger` at the
+  ceiling with a paired text value and a **truncated** synthesis variant on
+  `tree_budget_exhausted`; a designed **refused/over-cap spawn** observation.
+  **Long-fan containment** (row cap + "show N more" + max-height scroll, M10).
+  **Accessibility:** `aria-hidden` glyph with the status word carrying state; **one
+  polite live-region summary** for the whole fan (not N rows); `prefers-reduced-
+  motion` disables the bounce. Tests: reducer tests for `subagent_*`; mock fixtures
+  default / empty / long / **error** / offline / **budget-exhausted**.
+- **S3.2 — `subagent_synthesis` tool-view + registry.** The fan-out result is a
+  **registered tool-view** composed from `stat_block`/`citation_card` primitives in
+  the standard tool-view frame (no bespoke green panel); **added to the `DESIGN.md`
+  registry list in the same PR** (the same-PR rule, m5).
+
+**S3 wave-level review (GUI/design-system):** persona is a neutral tag not a color
+(B4); every non-happy state is present and designed (M7); long fans are contained
+(M10); the synthesis card is registered, not bespoke (m5); token-bound classes,
+reduced-motion, `aria-hidden` glyphs, polite live region (m6).
+
+### Wave S4 — Session-tree surface *(GUI; mock gate already cleared — layout B)*
+
+Phase 4. Show the lineage in the session manager. Layout **B** (always-nested rail)
+is chosen and owner-approved; no further mock round needed. Re-checks **M8, M10,
+m6**. Can overlap S3 (different surface, shares only the lineage columns from S1).
+
+- **S4.1 — Payload + nested rail.** `AgentSession` payload gains
+  `parent_session_id?` / `subagent_count?`; **children excluded from top-level
+  bucketing** (filtered by `parent_session_id != null`) — nested only, never their
+  own top-level rows (M10). Rendered as a vertical connector rail under the parent;
+  the group **collapses by default once `subagent_count` exceeds a threshold** (and
+  for any archived parent). Child rows reuse the live-turn glyph + neutral persona
+  tag + status (incl. **failed**); the parent badge distinguishes `N running` /
+  `done · N ran` / `… · M failed`. Tree a11y: `role="tree"/"treeitem"`,
+  `aria-level`, `aria-expanded`; the group toggle is a real **`button`** (m6).
+- **S4.2 — `activeTurn` session-keyed set (row glyphs only).** `activeTurn` becomes
+  a session-keyed **set** that drives **row glyphs only — it does not gate sends**
+  (the parent turn stays the single gated turn, M8); a richer per-row state enum
+  (`spawning | researching | reviewing | summarizing | done | failed`) replaces the
+  two-value `TurnKind` for these rows. This is the sanctioned lift of the "at most
+  one chat shows the live glyph" rule.
+
+**S4 wave-level review (GUI + correctness):** the `activeTurn`-set drives glyphs
+only and does **not** regress the single-gated-turn invariant (M8); children stay
+out of top-level bucketing and the archived rail is collapsed (M10); tree roles and
+the real-`button` toggle (m6).
+
+## Deferred past v1 (not waves)
+
+*All v1 decisions are settled above: execution model (in-request fan-in A),
+live-in-v1, web-sandbox, jerv-root, child⊆parent, depth `< 2`, template-bound
+depth≥1 briefs, direct caps-bounded fan, the tree budget (single shared counter +
+root reserve + admission floor on an incremental unit), reflexion-off for children,
+both GUI layouts, the `runs` discriminator (S1.1), and child-transcript persistence
+(summary+run-log, S1.1).*
+
+- **Fan-in B/C** — only if model A proves insufficient. **B (fire-and-continue)**
+  must **not** auto-fire a synthesis turn on background completion (the #10
+  untrusted-pacing trigger); if built, re-entry is a **fresh owner-visible turn**.
+- **Full child transcript persistence** — re-openable child transcripts (beyond the
+  run-log + summary), if the audit/re-open need materializes.

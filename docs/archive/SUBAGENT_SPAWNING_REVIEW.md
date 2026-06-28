@@ -1,7 +1,7 @@
 # Sub-agent spawning — adversarial review record
 
 Audit trail for the three-reviewer adversarial pass over the sub-agent spawning
-design (`docs/proposed/SUBAGENT_SPAWNING_PLAN.md`), with resolutions. Three
+design (`docs/SUBAGENT_SPAWNING_PLAN.md`), with resolutions. Three
 independent lenses — **security/firewall**, **architecture/runtime**, **GUI/design
 system** — each told to break the design, not praise it. They converged on one
 theme: *the draft asserted "settled / structural / harness-enforced /
