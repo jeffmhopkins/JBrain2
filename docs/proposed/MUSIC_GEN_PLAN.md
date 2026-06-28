@@ -146,8 +146,10 @@ I cannot run gfx1151/ROCm here; this is the gating risk, exactly like the image 
   - **Two startup-blocking registry requirements (don't skip):** (1) author the
     **`tools/generate_music.tool` sidecar** (frontmatter `name`/`version`/`permission`/`params`
     JSON-Schema + a model-facing description body) — the registry **fails at boot** on a
-    handler-without-sidecar (`ToolRegistryError`); (2) add `"generate_music"` to the **`JERV_TOOLS`
-    frozenset** in `agent/agents.py` — a `web`-class tool not in the allowlist is rejected. Also
+    handler-without-sidecar (`ToolRegistryError`); its `version` + content **digest must be pinned**
+    (PROCESS.md's per-wave CI gate checks `.prompt`/`.tool` digest pins). (2) add `"generate_music"`
+    to the **`JERV_TOOLS` frozenset** in `agent/agents.py` — a `web`-class tool not in the allowlist
+    is rejected. Also
     give **`agent/prompts/jerv.prompt`** awareness of the new tool. Wired (handler built + view
     enabled) only when a music model is provisioned (graceful degrade).
 - **Tests:** repo + RLS isolation (security-100%); render service (time-share order, install-gating,
@@ -185,12 +187,16 @@ I cannot run gfx1151/ROCm here; this is the gating risk, exactly like the image 
 # Frontend plan
 
 ## Wave M4 — the UI (GUI gate, then build)
-- **GUI gate (DESIGN.md / PROCESS.md):** static mocks of (a) the **MusicScreen** launcher and (b) the
-  **inline `generated_audio` chat card** land in `docs/mocks/` for the owner to pick **before** code,
-  exactly as the image launcher/live work did. A first interactive mock of the in-chat flow already
-  exists — `docs/mocks/music-gen-live/live-music-tool-card.html` (the `generate_music` tool card
-  morphing into a playable `generated_audio` player; the ambient pad is synthesised live in-browser
-  via Web Audio as a design stand-in) — with its open design questions in that folder's `README.md`.
+- **GUI gate (PROCESS.md §GUI gate, DESIGN.md mock-first):** each new GUI surface needs **three
+  interactive (clickable) mock HTML artifacts** presented to the owner to **choose the path before
+  implementation begins**; the chosen one becomes the binding spec and lands in `docs/mocks/`. This is
+  a critical-decision interruption by design. Two surfaces here, so two gates:
+  - the **inline `generated_audio` chat card** (the in-turn `generate_music` result) — and
+  - the **MusicScreen** launcher (the direct, non-agent composer + gallery).
+  `docs/mocks/music-gen-live/live-music-tool-card.html` is **variant A of the chat-card gate** (the
+  tool card morphing into a playable player; the ambient pad is synthesised live in-browser via Web
+  Audio as a design stand-in); two more variants are owed before the owner picks. The MusicScreen
+  gate's three variants are not yet authored. Open questions live in that folder's `README.md`.
 - **MusicScreen** (`screens/MusicScreen.tsx`, sibling of `ImageScreen.tsx`): a composer form — **tags/
   style** field, **lyrics** textarea (with `[verse]`/`[chorus]`/`[bridge]` hint), **duration**
   slider, optional **seed**, **negative tags** — a render state machine (`idle → queued → rendering
@@ -240,7 +246,10 @@ I cannot run gfx1151/ROCm here; this is the gating risk, exactly like the image 
    all render/list/delete routes are `OwnerDep` + RLS-scoped; the supervisor still holds the Docker
    socket, the api never does.
 4–6. Comments why-not-what; tests land with code (80% backend / **security paths 100%**, real
-   Postgres via testcontainers, ComfyUI faked); Conventional Commits, branch + PR per wave, CI green.
+   Postgres via testcontainers, ComfyUI faked); Conventional Commits. Per **PROCESS.md**: each wave's
+   tasks run in parallel off a `wave-N` branch, each passes an **independent** adversarial per-task
+   review (reviewer ≠ builder), then a wave-level review, then **exactly one PR per wave** once both
+   gates are clean — CI green before merge.
 7. **Generated tracks are chat artifacts only** — never notes, never RAG-indexed (mirrors
    `generated_images`).
 8. `scripts/dev-setup.sh` stays host-managed; the music setup step rides the existing
