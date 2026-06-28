@@ -252,3 +252,41 @@ describe("useFullBrain — a turn stays attached to its own chat", () => {
     expect(result.current.messages.at(-1)?.text).toContain("the answer");
   });
 });
+
+describe("useFullBrain — sub-agent children survive the mode filter", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  // A spawned child carries its persona as its agent ("research"/…), not the tab's
+  // spawner agent, so a naive mode filter would drop it and the SessionsPanel rail
+  // would never see it. The exposed list must keep children whose parent is a
+  // mode-visible chat (so the panel can nest them) — and only those.
+  const jerv = (over: Partial<AgentSession> = {}): AgentSession =>
+    session({ id: "jerv1", agent: "jerv", title: "compare towns", ...over });
+  const child = (id: string, over: Partial<AgentSession> = {}): AgentSession =>
+    session({ id, agent: "research", parent_session_id: "jerv1", title: id, ...over });
+
+  it("keeps research-persona children under their jerv parent in research mode", async () => {
+    const d = deps({
+      listSessions: vi.fn(async () => [jerv(), child("k1"), child("k2", { agent: "summarize" })]),
+    });
+    const { result } = renderHook(() => useFullBrain("research", d));
+    await waitFor(() => expect(result.current.sessions.length).toBe(3));
+    const ids = result.current.sessions.map((s) => s.id).sort();
+    expect(ids).toEqual(["jerv1", "k1", "k2"]);
+  });
+
+  it("does not leak a research-mode child as an orphan into the fullbrain tab", async () => {
+    const d = deps({
+      // A curator chat for the fullbrain tab, plus a jerv chat and its child (research tab).
+      listSessions: vi.fn(async () => [
+        session({ id: "cur1", agent: "curator", title: "brain" }),
+        jerv(),
+        child("k1"),
+      ]),
+    });
+    const { result } = renderHook(() => useFullBrain("fullbrain", d));
+    await waitFor(() => expect(result.current.sessions.length).toBe(1));
+    // Only the curator chat — jerv and its orphan-parented child stay out of this tab.
+    expect(result.current.sessions.map((s) => s.id)).toEqual(["cur1"]);
+  });
+});

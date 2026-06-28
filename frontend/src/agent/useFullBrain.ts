@@ -340,8 +340,24 @@ export function useFullBrain(
 
   // Only this mode's agents belong on the tab; the picker creates under them too.
   const agentOptions = mode ? MODE_AGENTS[mode] : ["curator", "teacher", "jerv"];
+  // A spawned sub-agent child carries its PERSONA as its agent ("research"/"review"/
+  // "summarize"), not the tab's spawner agent, so a plain mode filter would drop every
+  // child and the SessionsPanel rail would never see them. Keep a child whenever its
+  // parent is a mode-visible top-level chat (so it nests under that chat) — and only
+  // then, so a research-mode child never leaks as an orphan row into the fullbrain tab.
+  const topLevelIds = new Set(
+    mode
+      ? sessions
+          .filter((s) => !s.parent_session_id && MODE_AGENTS[mode].includes(s.agent))
+          .map((s) => s.id)
+      : [],
+  );
   const visibleSessions = mode
-    ? sessions.filter((s) => MODE_AGENTS[mode].includes(s.agent))
+    ? sessions.filter((s) =>
+        s.parent_session_id
+          ? topLevelIds.has(s.parent_session_id)
+          : MODE_AGENTS[mode].includes(s.agent),
+      )
     : sessions;
 
   // Probe the agent model's vision capability once the surface comes on screen —
