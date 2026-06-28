@@ -1229,15 +1229,15 @@ segmented sort — more screen surgery than the problem warranted, and it buried
 the config behind the disclosure). C keeps the per-card model while making the
 result a first-class, always-visible dock.
 
-## Sub-agent spawning surfaces (layout chosen; **mock gate PROVISIONAL** — build plan `docs/proposed/SUBAGENT_SPAWNING_PLAN.md`)
+## Sub-agent spawning surfaces (settled; build plan `docs/proposed/SUBAGENT_SPAWNING_PLAN.md`)
 
 When `jerv` fans out web-sandboxed research/review/summarize sub-agents (the
 reserved `spawn_subagent` hatch, `docs/ASSISTANT.md`), two surfaces show them. The
-**layouts** were chosen in a three-way review (rivals retained as the record), but
-an adversarial review re-opened the gate as **provisional**: the failure / cancel /
-long-fan / budget-exhausted states (settled backend behaviors) were not in the
-reviewed happy-path mocks and must be **re-reviewed before implementation**. The
-revised reference mocks carry scenario switchers for those states.
+**layouts** were chosen in a three-way review (rivals retained as the record); an
+adversarial review then re-opened the gate, and the revised mocks added the
+failure / cancel / long-fan / budget-exhausted states (scenario switchers) and
+dropped the persona-as-color scheme. The owner **re-confirmed** the revised mocks —
+the gate is settled.
 
 **Persona is a `kind` enum, rendered as a NEUTRAL text tag (or a per-persona glyph
 on a neutral disc) — never a color.** The earlier "research=steel / review=violet /
