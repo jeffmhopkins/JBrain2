@@ -333,36 +333,42 @@ in order of cost:
 
 ## GUI
 
-Per `DESIGN.md`, both surfaces below are **mock-first**: 3–4 variants, owner
-review, fixtures in `frontend/src/api/mock.ts` (default / empty / long / error /
-offline), decision recorded back into `DESIGN.md` before backend wiring. A new
-tool-view component is a deliberate, versioned change like adding a tool.
+**Mock gate cleared (three-way review each).** The settled designs are recorded in
+`DESIGN.md` §"Sub-agent spawning surfaces"; reference mocks
+`docs/mocks/subagent-chat-mock.html` and `docs/mocks/subagent-sessions-mock.html`.
+Remaining frontend work owes `frontend/src/api/mock.ts` fixtures (default / empty /
+long / error / offline) per `DESIGN.md`'s definition of done.
 
-### In-chat: live sub-agents in the assistant bubble
+### In-chat: live sub-agents — chosen **A, accordion step list**
 
 - New `ChatEvent` variants — `subagent_spawned`, `subagent_progress`,
   `subagent_done` — added to the union (`frontend/src/agent/types.ts`) and folded
   in the `applyEvent` reducer (`transcript.ts`), the single extension point for
   streamed signals.
-- Rendered as a **live, collapsible list** in the assistant bubble's answer block
-  (`FullBrainSurface.tsx`), each sub-agent one expandable row reusing
-  `LiveToolStatus` (spinner + phase + progress bar) and `TurnGlyph`
-  (thinking/working animation). The eventual fan-out result lands as a registered
-  **tool-view** (`agent/views/registry.tsx`) — data-only, no model-authored
-  markup.
+- Rendered as a **bordered, collapsible step list** in the assistant bubble's
+  answer block (`FullBrainSurface.tsx`) — the same register as the existing
+  `ActivityLine`/`StepRow` "Worked" foot strip — each sub-agent one expandable row
+  reusing `LiveToolStatus` (phase + progress bar) and `TurnGlyph` (thinking glyph
+  → `✓`), with a persona tag, a tree-budget meter in the header, and a depth-2
+  agent nesting one indent deeper. The fan-out result lands as a registered
+  **tool-view** synthesis card (`agent/views/registry.tsx`) — data-only, no
+  model-authored markup. Rivals B (agent cards) / C (live fan/tree) retained.
 
-### Session manager: collapsible sub-agent tree
+### Session manager: nested sub-agents — chosen **B, always-nested rail**
 
 - `AgentSession` payload gains `parent_session_id?` / `subagent_count?`
   (`types.ts:204`).
 - `SessionsPanel` groups children under their parent during bucketing and renders
-  them with the **OpsCard collapsible disclosure pattern** (`DESIGN.md` §"Ops
-  screen") — caret + `aria-expanded`, child `SessionRow`s slide open beneath the
-  parent, each with its own live `TurnGlyph`. `ProposalTree` is the nearest
-  existing precedent for a parent→children hierarchy with per-node status.
-- **`activeTurn` must become a map** keyed by session id: today it's a single
-  nullable value (one in-flight turn, `useFullBrain.ts:322`), but concurrent
-  sub-agents mean several rows glyph at once.
+  them **always nested beneath the parent under a vertical connector rail** (tree
+  lines; a depth-2 agent indents one rail deeper), with a **group-collapse**
+  toggle. Each child row reuses the settled live-turn glyph + persona tag + status;
+  the parent keeps its green live dot and an `N running` → `done · N ran` badge.
+  `ProposalTree` is the nearest existing precedent for a parent→children hierarchy
+  with per-node status. Rivals A (caret disclosure) / C (inline chips) retained.
+- **`activeTurn` must become a session-keyed set** — today it's a single nullable
+  value (one in-flight turn, `useFullBrain.ts:322`); concurrent sub-agents mean
+  several rows glyph at once. This is the sanctioned lift of `DESIGN.md`'s
+  "at most one chat shows the live glyph" rule.
 
 ## Testing
 
