@@ -43,6 +43,7 @@ Usage: jbrain <command>
   reset-owner-key  revoke the owner key and print a new one
   update           pull latest source, rebuild, migrate, restart
   enable-lan       set up LAN access (mDNS + jbrain.local alias) on this host
+  enable-jcode-preview [host]   serve jcode previews at <slug>-preview.<host> (host mode)
   enable-local-models [ids...]  provision + enable self-hosted local models
   enable-whisper [model]        provision + enable on-box audio transcription
   strix-halo-host-setup [args]  one-time AMD Strix Halo host prep (kernel/udev)
@@ -102,6 +103,11 @@ case "${1:-}" in
       grep -q '^JCODE_URL=' .env || printf 'JCODE_URL=%s\n' 'http://jcode:9100' >> .env
       grep -q '^JCODE_MODEL=' .env || printf 'JCODE_MODEL=%s\n' 'qwen3-coder-next' >> .env
       grep -q '^JCODE_MODEL_URL=' .env || printf 'JCODE_MODEL_URL=%s\n' 'http://local-llm:8080' >> .env
+      # Host-mode web preview: once the operator enabled it (jbrain enable-jcode-preview),
+      # keep the base host present across updates — default to the domain — so it stays
+      # turnkey like the keys above. The helper NEVER auto-enables host mode (it needs the
+      # one-time Cloudflare wildcard first) and is a no-op unless MODE=host is already set.
+      sh /opt/jbrain2/src/deploy/jcode-preview-backfill.sh .env || true
     fi
     # Turn LAN access on for installs that predate it, then (re)provision the
     # host mDNS + alias from the freshly pulled source. Best-effort: a setup
@@ -149,6 +155,16 @@ case "${1:-}" in
     # JBRAIN_LAN_ADDR (jbrain.local). The Caddy HTTPS site is already on by
     # default in compose; this makes the name resolvable on the network.
     JBRAIN_INSTALL_DIR=/opt/jbrain2 bash /opt/jbrain2/src/deploy/lan-setup.sh
+    ;;
+  enable-jcode-preview)
+    shift
+    # Opt-in host-mode per-session web preview: write the .env keys (default base
+    # host = JBRAIN_DOMAIN; pass an apex explicitly for a subdomain deploy), then
+    # recreate the stack so the change is picked up — a .env edit isn't seen by
+    # `restart`. The Cloudflare wildcard published hostname is the one manual step
+    # the setup script prints; nothing is exposed until you add it.
+    sh /opt/jbrain2/src/deploy/jcode-preview-setup.sh /opt/jbrain2/.env "${1:-}"
+    docker compose "${PROFILE[@]}" up -d
     ;;
   enable-local-models)
     shift

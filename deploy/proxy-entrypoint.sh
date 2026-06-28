@@ -5,5 +5,6 @@
 set -eu
 
 /usr/local/bin/proxy-lan-conf.sh /etc/caddy/lan
+/usr/local/bin/proxy-preview-conf.sh /etc/caddy/preview
 
 exec caddy run --config /etc/caddy/Caddyfile --adapter caddyfile
