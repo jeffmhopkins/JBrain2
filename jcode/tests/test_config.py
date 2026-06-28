@@ -35,3 +35,18 @@ def test_preview_defaults_on() -> None:
     # gates the capability; a preview is still opened deliberately, per session.
     s = Settings(token="x")
     assert s.preview_enabled is True
+
+
+def test_effective_log_level_defaults_to_configured_level() -> None:
+    # Debug access off → the effective level is whatever JCODE_LOG_LEVEL set (INFO).
+    s = Settings(token="x")
+    assert s.debug_access_enabled is False
+    assert s.effective_log_level == "INFO"
+    assert Settings(token="x", log_level="WARNING").effective_log_level == "WARNING"
+
+
+def test_debug_access_forces_debug_level() -> None:
+    # With debug access on, jcode runs verbose regardless of the configured level — the
+    # owner is investigating the box, so DEBUG wins (overriding even a quieter setting).
+    s = Settings(token="x", debug_access_enabled=True, log_level="WARNING")
+    assert s.effective_log_level == "DEBUG"

@@ -19,7 +19,7 @@ import hmac
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import (
     APIRouter,
@@ -119,6 +119,20 @@ def create_app(
             await preview.close_all()
 
     app = FastAPI(title="jcode control server", lifespan=lifespan)
+
+    @app.middleware("http")
+    async def _log_requests(request: Request, call_next: Any) -> Any:
+        # Per-request trace at DEBUG — verbose only when debug access is on (the level
+        # is forced to DEBUG then), so the owner debug console shows every control call
+        # the api made. Cheap and global; nothing logged at the default INFO level.
+        if _log.isEnabledFor(logging.DEBUG):
+            _log.debug("→ %s %s", request.method, request.url.path)
+            response = await call_next(request)
+            _log.debug(
+                "← %s %s %d", request.method, request.url.path, response.status_code
+            )
+            return response
+        return await call_next(request)
 
     # The live persistent shells, keyed by session id. A shell outlives any one terminal
     # socket (you leave the app, it keeps running) and is reattached on reconnect; the

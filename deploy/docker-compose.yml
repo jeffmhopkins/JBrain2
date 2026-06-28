@@ -461,6 +461,11 @@ services:
       # DEBUG. Pull the logs via the owner debug console (/debug/logs/jcode or
       # /debug/jcode/logs). Flip to DEBUG to chase a failure.
       JCODE_LOG_LEVEL: ${JCODE_LOG_LEVEL:-INFO}
+      # Verbose by association: when debug access is on (the owner is investigating the
+      # box), jcode forces DEBUG so the per-request + cloudflared-tunnel detail is in the
+      # logs the debug console pulls — no separate switch. Shares the api's flag; takes
+      # effect on the same `jbrain up` that enables debug access.
+      JCODE_DEBUG_ACCESS_ENABLED: ${DEBUG_ACCESS_ENABLED:-false}
       # OPT-IN strict egress (Wave J5): point these at an allowlisting forward proxy to
       # confine the sandbox's outbound to git/npm (and Cloudflare, when preview is on).
       # Empty = direct NAT (the default today). git/npm/the SDK honor these; cloudflared

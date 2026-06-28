@@ -15,9 +15,12 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import logging
 import re
 from collections.abc import Callable
 from typing import Protocol
+
+_log = logging.getLogger("jcode_ctl.preview")
 
 
 class PreviewError(RuntimeError):
@@ -90,8 +93,11 @@ class CloudflaredTunnel:
         return f"{reason}\n{tail}" if tail else reason
 
     async def open(self, port: int) -> str:  # pragma: no cover - exercised on-box
+        args = self._args(port)
+        _log.info("cloudflared spawning for :%d", port)
+        _log.debug("cloudflared argv: %s", " ".join(args))
         self._proc = await asyncio.create_subprocess_exec(
-            *self._args(port),
+            *args,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
         )
@@ -104,26 +110,35 @@ class CloudflaredTunnel:
                 break
             if not line:
                 break
-            log.append(line.decode(errors="replace").rstrip())
+            text = line.decode(errors="replace").rstrip()
+            log.append(text)
+            # Every cloudflared line at DEBUG: with debug access on this is where a
+            # rate-limit / edge-dial failure shows up while a tunnel won't resolve.
+            _log.debug("cloudflared: %s", text)
             # Don't return on the printed URL alone — wait until an edge connection
             # registers, or the hostname won't resolve and the caller gets a dead link.
             url, ready = self._scan(log)
             if url is not None and ready:
+                _log.info("cloudflared tunnel up on :%d url=%s", port, url)
                 return url
         await self.close()
-        raise PreviewError(self._failure(log))
+        reason = self._failure(log)
+        _log.warning("cloudflared tunnel failed on :%d — %s", port, reason)
+        raise PreviewError(reason)
 
     async def close(self) -> None:  # pragma: no cover - exercised on-box
         proc = self._proc
         self._proc = None
         if proc is None or proc.returncode is not None:
             return
+        _log.info("cloudflared terminating pid=%s", proc.pid)
         proc.terminate()
         try:
             await asyncio.wait_for(proc.wait(), timeout=5)
         except TimeoutError:
             # cloudflared ignored SIGTERM — escalate to SIGKILL so an internet-facing
             # tunnel can never outlive its close() (review SF2).
+            _log.warning("cloudflared ignored SIGTERM, killing pid=%s", proc.pid)
             proc.kill()
             with contextlib.suppress(Exception):
                 await proc.wait()
@@ -168,10 +183,12 @@ class PreviewManager:
     async def open(self, sid: str, port: int | None = None) -> str:
         if not self._enabled:
             raise PreviewError("web preview is not enabled")
+        target = port or self._default_port
+        _log.info("preview open sid=%s port=%d", sid, target)
         await self.close(sid)  # one tunnel per session — replace any prior
         tunnel = self._make()
         try:
-            url = await tunnel.open(port or self._default_port)
+            url = await tunnel.open(target)
         except BaseException:
             # Cancelled or failed AFTER the process spawned — tear it down before it
             # leaks: an unregistered tunnel can never be reached by close()/close_all()
@@ -189,6 +206,7 @@ class PreviewManager:
         tunnel = self._tunnels.pop(sid, None)
         self._urls.pop(sid, None)
         if tunnel is not None:
+            _log.info("preview close sid=%s", sid)
             await tunnel.close()
 
     async def close_all(self) -> None:
