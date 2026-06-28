@@ -10,6 +10,7 @@ from pathlib import Path
 
 from jcode_ctl.app import create_app, reap_idle
 from jcode_ctl.config import Settings
+from jcode_ctl.host_preview import HostPreviewManager
 from jcode_ctl.preview import FakeTunnel, PreviewManager
 from jcode_ctl.sessions import SessionManager
 from jcode_ctl.workspace import FakeWorkspace
@@ -114,6 +115,46 @@ async def test_delete_failure_still_tears_down_the_tunnel() -> None:
     with contextlib.suppress(RuntimeError):
         await reap_idle(mgr, pv, ttl_seconds=86_400)
     assert pv.url(s.id) is None  # tunnel torn down before the failing delete
+
+
+async def test_host_mode_reap_keeps_a_reservation_reactivated_mid_sweep() -> None:
+    """Host-mode race: releasing a reservation BEFORE re-confirming idle could free a
+    session that re-activated during the sweep, orphaning its live dev server. The
+    release must happen only after the re-check passes."""
+    clock = Clock(datetime(2026, 6, 25, 12, 0, 0, tzinfo=UTC))
+
+    class ReactivateOnDelete(SessionManager):
+        reactivate: str | None = None
+
+        async def delete(self, sid: str) -> None:
+            # Deleting the first idle session makes the second active again mid-sweep.
+            if self.reactivate is not None and self.reactivate != sid:
+                self.terminal_opened(self.reactivate, 1)
+            await super().delete(sid)
+
+    counter = {"n": 0}
+
+    def _id() -> str:
+        counter["n"] += 1
+        return f"s{counter['n']}"
+
+    mgr = ReactivateOnDelete(FakeWorkspace(), "/work", now=clock, new_id=_id)
+    host = HostPreviewManager(base_host="box.test")
+    s1 = await mgr.create("r")
+    s2 = await mgr.create("r")
+    host.ensure(s1.id)
+    host.ensure(s2.id)
+    mgr.reactivate = s2.id
+    clock.t = clock.t + timedelta(hours=25)
+
+    pv = PreviewManager(FakeTunnel, enabled=True)  # inert in host mode
+    reaped = await reap_idle(mgr, pv, ttl_seconds=86_400, host_preview=host)
+
+    assert reaped == [s1.id]  # only the session still idle at the re-check
+    assert host.port_for(s1.id) is None  # its reservation was freed
+    # s2 re-activated mid-sweep — its reservation (and live dev server) must survive.
+    assert host.port_for(s2.id) is not None
+    assert mgr.get_or_none(s2.id) is not None
 
 
 async def test_lifespan_runs_reaper_and_shuts_down_cleanly() -> None:
