@@ -16018,6 +16018,16 @@ button.task-band:active {
   color: var(--text-2);
   cursor: pointer;
 }
+/* Pin the glyph's box: the SVG carries only width/height attributes, which mobile
+   WebKit/WebView collapse to ~0 for a flex item inside this fixed-size button (the
+   icon vanishes, leaving an empty tab). An explicit CSS size — the convention used
+   by the app's other icon buttons — keeps it laid out everywhere. */
+.jcode-tabin svg {
+  width: 18px;
+  height: 18px;
+  flex: none;
+  display: block;
+}
 .jcode-tabin.term.on {
   background: var(--surface-2);
   color: var(--text);
