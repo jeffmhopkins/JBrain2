@@ -108,6 +108,20 @@ def test_failure_message_quotes_cloudflared_output() -> None:
     assert "rate limited" in msg
 
 
+async def test_open_and_close_log_the_tunnel_lifecycle(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # Verbose-by-debug-access relies on these lines existing: opening and closing a
+    # preview each emit an INFO line the owner debug console can pull.
+    mgr, _ = _mgr()
+    with caplog.at_level("INFO", logger="jcode_ctl.preview"):
+        await mgr.open("s1")
+        await mgr.close("s1")
+    messages = [r.getMessage() for r in caplog.records]
+    assert any("preview open sid=s1" in m for m in messages)
+    assert any("preview close sid=s1" in m for m in messages)
+
+
 async def test_failed_open_tears_down_the_tunnel() -> None:
     """If open() fails after the process spawned, the tunnel is closed, not leaked."""
     closed: list[bool] = []

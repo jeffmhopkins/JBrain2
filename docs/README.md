@@ -68,6 +68,13 @@ Phase-5 build record is `archive/PHASE5_COMPLETION_PLAN.md`.
   plan: motion-adaptive sampling on the framework fused provider (no Play Services),
   an accuracy filter, and batched array upload, for Life360-grade member trails.
   Wave 0 (plan) is this doc; open decisions await owner sign-off before Wave 1.
+- `JCODE_PREVIEW_HOST_PLAN.md` — the **host-served, per-session jcode preview** build
+  plan: retire the per-session TryCloudflare quick-tunnel (rate-limited, public-DNS
+  dependent) in favour of each sandbox session getting its own stable hostname under the
+  box's **existing** named Cloudflare Tunnel + Caddy, fronted through the api↔jcode
+  bridge so the sandbox stays isolated. Concurrent previews via per-session ports;
+  verbose debug logging is a per-wave deliverable. Wave P0 (verbose-logging substrate) is
+  landed; the five open decisions await owner sign-off before Wave P1.
 
 ## Proposed (not scheduled)
 

@@ -139,6 +139,7 @@ class SessionManager:
         self._terminals.setdefault(sid, set()).add(pid)
         session.status = "ready"
         session.last_active_at = self._stamp()
+        _log.debug("terminal opened sid=%s pid=%d", sid, pid)
 
     def terminal_closed(self, sid: str, pid: int) -> None:
         """Drop a closed terminal's pid; remove the session's entry once none remain so
@@ -150,6 +151,7 @@ class SessionManager:
                 self._terminals.pop(sid, None)
         if sid in self._sessions:
             self._sessions[sid].last_active_at = self._stamp()
+        _log.debug("terminal closed sid=%s pid=%d", sid, pid)
 
     def stop(self, sid: str) -> Session:
         """Pause a session: SIGKILL its open terminals' process groups and anything
@@ -182,6 +184,7 @@ class SessionManager:
         await self._workspace.reset(Path(session.workspace))
         session.status = "ready"
         session.last_active_at = self._stamp()
+        _log.info("session reset sid=%s", sid)
         return session
 
     async def delete(self, sid: str) -> None:

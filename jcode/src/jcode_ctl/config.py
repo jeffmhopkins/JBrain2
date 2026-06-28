@@ -69,3 +69,17 @@ class Settings(BaseSettings):
     # debug console (/debug/jcode/logs for the whole system, or /debug/logs/jcode for
     # just this service).
     log_level: str = "INFO"
+
+    # When the owner turns on debug access (docs/DEBUG_ACCESS.md) the whole box is in
+    # "investigate a failure" mode, so jcode runs verbose with no second switch: this
+    # forces the effective level to DEBUG, surfacing the per-request / tunnel-line
+    # detail the owner debug console pulls. From the shared DEBUG_ACCESS_ENABLED flag
+    # via compose (JCODE_DEBUG_ACCESS_ENABLED), picked up on the same `jbrain up` that
+    # enables debug access (a recreate, not a restart).
+    debug_access_enabled: bool = False
+
+    @property
+    def effective_log_level(self) -> str:
+        """DEBUG whenever debug access is on (the owner is debugging the box), else the
+        configured level. Keeps the gating in one place for the entrypoint to read."""
+        return "DEBUG" if self.debug_access_enabled else self.log_level
