@@ -287,6 +287,30 @@ async def test_parent_delete_cascades_subagent_children(maker: async_sessionmake
     assert await repo.get(owner, child.id) is None
 
 
+async def test_list_reports_subagent_count_and_parent_link(maker: async_sessionmaker) -> None:
+    """The Wave-S4 nested-rail metadata: a parent's list row carries how many direct
+    children it spawned, and each child carries its parent_session_id (so the PWA can
+    nest it and drop it from top-level bucketing)."""
+    owner = await _owner_ctx(maker)
+    repo = AgentSessionRepo(maker)
+    root = await repo.create(owner, domain_scopes=[], title="parent", agent="jerv")
+    for label in ("a", "b"):
+        await repo.create(
+            owner,
+            domain_scopes=[],
+            title=label,
+            agent="research",
+            parent_session_id=root.id,
+            depth=1,
+        )
+    by_id = {s.id: s for s in await repo.list(owner)}
+    assert by_id[root.id].subagent_count == 2
+    assert by_id[root.id].parent_session_id is None
+    children = [s for s in by_id.values() if s.parent_session_id == root.id]
+    assert len(children) == 2
+    assert all(c.subagent_count == 0 for c in children)
+
+
 async def test_depth_check_rejects_out_of_range(maker: async_sessionmaker) -> None:
     """The depth CHECK (0..2) makes the two-sub-agent-layer cap structural at the
     table — a depth past the leaf can never be written, with no model cooperation."""

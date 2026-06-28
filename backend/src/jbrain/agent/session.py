@@ -14,6 +14,7 @@ from datetime import UTC, datetime
 
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy.orm import aliased
 
 from jbrain.agent.contracts import DEFAULT_OWNER_POLICY, PermissionClass, PolicyOutcome
 from jbrain.db.session import SessionContext, scoped_session
@@ -46,6 +47,9 @@ class AgentSessionInfo:
     turn_count: int = 0
     preview: str = ""
     staged_count: int = 0
+    # How many direct sub-agent children this chat spawned (the nested-rail count,
+    # docs/SUBAGENT_SPAWNING_PLAN.md Wave S4). 0 for a chat that never fanned out.
+    subagent_count: int = 0
 
 
 def _info(
@@ -54,6 +58,7 @@ def _info(
     turn_count: int = 0,
     preview: str = "",
     staged_count: int = 0,
+    subagent_count: int = 0,
 ) -> AgentSessionInfo:
     return AgentSessionInfo(
         id=str(row.id),
@@ -70,6 +75,7 @@ def _info(
         turn_count=turn_count,
         preview=preview,
         staged_count=staged_count,
+        subagent_count=subagent_count,
     )
 
 
@@ -154,15 +160,24 @@ class AgentSessionRepo:
             .where(Proposal.session_id == AgentSession.id, Proposal.status == "staged")
             .scalar_subquery()
         )
+        # Direct sub-agent children, for the nested-rail count (Wave S4). A self-join
+        # via an alias so the inner count correlates on the outer row's id.
+        child = aliased(AgentSession)
+        subagent_count = (
+            select(func.count())
+            .select_from(child)
+            .where(child.parent_session_id == AgentSession.id)
+            .scalar_subquery()
+        )
         async with scoped_session(self._maker, ctx) as session:
             rows = await session.execute(
-                select(AgentSession, turn_count, preview, staged_count).order_by(
+                select(AgentSession, turn_count, preview, staged_count, subagent_count).order_by(
                     AgentSession.last_active_at.desc()
                 )
             )
             return [
-                _info(row, turn_count=tc, preview=pv or "", staged_count=sc)
-                for row, tc, pv, sc in rows
+                _info(row, turn_count=tc, preview=pv or "", staged_count=sc, subagent_count=kc)
+                for row, tc, pv, sc, kc in rows
             ]
 
     async def get(self, ctx: SessionContext, session_id: str) -> AgentSessionInfo | None:
