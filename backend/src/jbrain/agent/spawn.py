@@ -57,6 +57,7 @@ from jbrain.agent.tree import (
 )
 from jbrain.db.session import SessionContext
 from jbrain.llm import LlmRouter, UserMessage
+from jbrain.llm.providers import REASONING_EFFORTS
 
 log = structlog.get_logger(__name__)
 
@@ -72,6 +73,16 @@ def _emit(ctx: ToolContext, event: ChatEvent) -> None:
     not, so a grandchild's events are not surfaced live in v1 — fan-in model A)."""
     if ctx.emit_event is not None:
         ctx.emit_event(event)
+
+
+@dataclass(frozen=True)
+class _ChildPlan:
+    persona: str
+    label: str
+    brief_text: str
+    # The spawner's chosen reasoning effort for this child (None → the child model's
+    # resolved default; ignored by the router for a non-reasoning model).
+    effort: str | None = None
 
 
 @dataclass(frozen=True)
@@ -165,9 +176,9 @@ class SpawnService:
                 f"{MAX_CHILDREN_PER_PARENT}."
             )
 
-        # --- validate every child up front (persona + brief), reject the fan on
-        #     the first bad one so a malformed/injected persona never resolves -----
-        plans: list[tuple[str, str, str]] = []  # (persona, label, brief_text)
+        # --- validate every child up front (persona + brief + effort), reject the
+        #     fan on the first bad one so a malformed/injected persona never resolves -
+        plans: list[_ChildPlan] = []
         for i, task in enumerate(tasks):
             if not isinstance(task, dict):
                 return _refuse(f"task {i} is not an object.")
@@ -183,7 +194,16 @@ class SpawnService:
                 brief_text = _resolve_brief(task.get("brief"), depth=ctx.depth)
             except BriefError as exc:
                 return _refuse(f"task {i} ({label}): {exc}")
-            plans.append((persona, label, brief_text))
+            # Optional per-child reasoning effort the spawner picks (how hard a
+            # reasoning-capable child model thinks; ignored for a non-reasoning model
+            # by the router). Absent → None, the child's resolved default.
+            effort = task.get("effort")
+            if effort is not None and effort not in REASONING_EFFORTS:
+                return _refuse(
+                    f"task {i} ({label}): unknown effort {effort!r}; "
+                    f"choose one of {sorted(REASONING_EFFORTS)}."
+                )
+            plans.append(_ChildPlan(persona, label, brief_text, effort))
 
         # --- tree-wide total cap ---------------------------------------------
         tree = ctx.tree  # never None here (guarded above)
@@ -212,10 +232,7 @@ class SpawnService:
         sem = asyncio.Semaphore(max_parallel)
 
         results = await asyncio.gather(
-            *(
-                self._run_child(ctx, owner_ctx, tree, sem, persona, label, brief_text)
-                for persona, label, brief_text in plans
-            )
+            *(self._run_child(ctx, owner_ctx, tree, sem, plan) for plan in plans)
         )
         # The text observation is what the parent synthesizes from; the view is the
         # UI's structured render of the same fan result (the registered
@@ -228,10 +245,9 @@ class SpawnService:
         owner_ctx: SessionContext,
         tree: TreeState,
         sem: asyncio.Semaphore,
-        persona: str,
-        label: str,
-        brief_text: str,
+        plan: _ChildPlan,
     ) -> _ChildResult:
+        persona, label, brief_text = plan.persona, plan.label, plan.brief_text
         # persona is validated ∈ SUBAGENT_PERSONAS, so agent_for never falls back to
         # the KB-capable curator here.
         profile = agent_for(persona)
@@ -319,6 +335,9 @@ class SpawnService:
                         tree=tree,
                         run_id=child_run,
                         on_step=_on_step,
+                        # The spawner's per-child reasoning effort (the router drops it
+                        # for a non-reasoning child model).
+                        reasoning_effort=plan.effort,
                     ),
                     timeout=CHILD_WALL_CLOCK_S,
                 )

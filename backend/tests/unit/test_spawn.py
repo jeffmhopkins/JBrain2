@@ -308,6 +308,36 @@ async def test_fan_mints_clamped_sandboxed_children_in_order(service: SpawnServi
     assert len(by_session) == 2
 
 
+async def test_child_effort_is_threaded_to_the_loop(service: SpawnService) -> None:
+    """The spawner's per-child `effort` reaches the child loop as `reasoning_effort`
+    (the router drops it for a non-reasoning child model); an omitted effort is None,
+    leaving the child model's resolved default."""
+    await service.spawn_fan(
+        _ctx(),
+        {
+            "tasks": [
+                {"persona": "research", "brief": "a", "label": "Hard", "effort": "high"},
+                {"persona": "research", "brief": "b", "label": "Plain"},
+            ]
+        },
+    )
+    by_label = {c["agent_session_id"]: c for c in _FakeLoop.calls}
+    calls = list(by_label.values())
+    hard = next(c for c in calls if c["conversation"][-1].text == "a")
+    plain = next(c for c in calls if c["conversation"][-1].text == "b")
+    assert hard["reasoning_effort"] == "high"
+    assert plain["reasoning_effort"] is None
+
+
+async def test_unknown_effort_refuses_the_fan(service: SpawnService) -> None:
+    out = await service.spawn_fan(
+        _ctx(),
+        {"tasks": [{"persona": "research", "brief": "x", "label": "L", "effort": "ludicrous"}]},
+    )
+    assert "refused" in out.lower() and "effort" in out.lower()
+    assert not _FakeLoop.calls
+
+
 async def test_fan_emits_subagent_lifecycle_events(service: SpawnService) -> None:
     """The fan streams spawned → progress → done per child onto the parent turn's
     event sink (Wave S2). These are the backend-authored frames the in-chat accordion

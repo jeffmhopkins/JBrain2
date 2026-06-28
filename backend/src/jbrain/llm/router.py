@@ -384,11 +384,19 @@ class LlmRouter:
         tools: Sequence[LlmTool] = (),
         max_tokens: int = DEFAULT_MAX_TOKENS,
         strength: str | None = None,
+        effort_override: str | None = None,
     ) -> LlmTurn:
         """One tool-aware turn for the agent loop. Unlike `complete` there is no
         JSON re-ask — tool calls are structured by the provider, and the loop
-        owns retry/continuation. Usage is recorded per call like everything else."""
+        owns retry/continuation. Usage is recorded per call like everything else.
+
+        `effort_override` lets a caller steer how hard the model thinks for THIS
+        turn (the sub-agent spawner sets it per child); it wins over the resolved
+        effort but is still dropped for a non-reasoning model — same gate as a
+        stored override, so a non-reasoning route never receives the param."""
         provider, model, reasoning_effort = await self._resolve_live(task, strength)
+        if effort_override is not None and _reasoning_capable(provider, model):
+            reasoning_effort = effort_override
         client = self._clients[provider]
         start = time.perf_counter()
         turn = await client.converse(
@@ -424,11 +432,16 @@ class LlmRouter:
         tools: Sequence[LlmTool] = (),
         max_tokens: int = DEFAULT_MAX_TOKENS,
         strength: str | None = None,
+        effort_override: str | None = None,
     ) -> AsyncIterator[StreamPart]:
         """Stream a tool-aware turn for the agent loop (StreamPart events). Usage
         is recorded once from the closing LlmTurn — the streamed text chunks
-        carry no usage, only the final turn does."""
+        carry no usage, only the final turn does. `effort_override` steers the
+        model's reasoning for this turn (gated to reasoning-capable models, like
+        `converse`)."""
         provider, model, reasoning_effort = await self._resolve_live(task, strength)
+        if effort_override is not None and _reasoning_capable(provider, model):
+            reasoning_effort = effort_override
         client = self._clients[provider]
         final: LlmTurn | None = None
         start = time.perf_counter()

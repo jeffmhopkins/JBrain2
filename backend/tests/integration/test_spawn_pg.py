@@ -47,7 +47,9 @@ class _FakeRouter:
     async def effective_reasoning_effort(self, task: str, strength: str | None = None) -> str:
         return "high"
 
-    async def converse(self, task: str, *, system, messages, tools, max_tokens, strength=None):  # noqa: ANN001, ANN003
+    async def converse(
+        self, task: str, *, system, messages, tools, max_tokens, strength=None, effort_override=None
+    ):  # noqa: ANN001, ANN003, E501
         return LlmTurn(
             text="child summary", tool_calls=(), stop_reason="end_turn", usage=LlmUsage(5, 5)
         )
