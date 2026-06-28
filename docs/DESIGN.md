@@ -1229,6 +1229,47 @@ segmented sort — more screen surgery than the problem warranted, and it buried
 the config behind the disclosure). C keeps the per-card model while making the
 result a first-class, always-visible dock.
 
+## Sub-agent spawning surfaces (GUI gate settled; build plan `docs/proposed/SUBAGENT_SPAWNING_PLAN.md`)
+
+When `jerv` fans out web-sandboxed research/review/summarize sub-agents (the
+reserved `spawn_subagent` hatch, `docs/ASSISTANT.md`), two surfaces show them. Both
+were settled in a three-way mock review; the rivals are retained as the record.
+
+**In-chat live panel — chosen A "accordion step list"** (rivals B "agent cards",
+C "live fan/tree"; reference mock `docs/mocks/subagent-chat-mock.html`). Below
+jerv's answer bubble, the running fan renders as a bordered group ("Researching ·
+N agents") of **collapsible step rows** — the same disclosure register as the
+existing `ActivityLine`/`StepRow` "Worked" foot strip, so it reads as continuous
+with today's tool-activity UI. Each row carries the **stateful glyph** (three
+bouncing dots while running → a `✓` when done; honors `prefers-reduced-motion`),
+the sub-agent **label**, its **persona tag** (`research` steel / `review` violet /
+`summarize` green — meaning via the accent, never a model-authored color), a live
+**status word** (`searching… / reading… / summarizing… / done`), and a thin
+progress bar; tapping a row expands its **brief** and final **one-line summary**.
+A depth-2 sub-sub-agent nests one indent deeper. The group header carries a
+**tree-budget meter** (used / ceiling; steel, ambering past ~70%). The eventual
+fan-out result lands as a separate registered **tool-view** synthesis card (the
+green "Synthesized from N researchers" card with `[^n]` footnote markers) — data
+only, per "Agent tool views". A won for density and continuity with the existing
+activity strip; B (a card dashboard) and C (an explicit indented fan/tree) are
+retained — C's hierarchy clarity is the fallback if nesting needs to be louder.
+
+**Session manager nesting — chosen B "always-nested rail"** (rivals A "caret
+disclosure", C "inline chips"; reference mock `docs/mocks/subagent-sessions-mock.
+html`). In the Chats picker, a spawning chat shows its sub-agents **always nested
+beneath it under a vertical connector rail** (tree lines, the parent's children
+indented; a depth-2 agent indents one rail deeper), with a **group-collapse**
+toggle (`sub-agents (N)`) for when the tree is in the way. Each child row reuses
+the settled **live-turn glyph** + persona tag + status word; the parent keeps its
+**green live dot** and a `N running` badge that resolves to `done · N ran`. B won
+because the tree structure is the point here (which agent spawned which, how deep)
+and the rail makes lineage legible at rest; A (tap-a-caret to reveal) hid the
+structure a beat too long, and C (a compact in-card chip panel) traded the
+hierarchy for list density. **This is the one place the "at most one chat shows
+the live glyph" rule (Live-turn activity glyph, above) is lifted** — concurrent
+sub-agents mean several rows animate at once, so `activeTurn` becomes a
+session-keyed set rather than a single in-flight turn.
+
 ## Implementation rules
 
 1. Tokens live in one file (`frontend/src/styles/tokens.css`); components
