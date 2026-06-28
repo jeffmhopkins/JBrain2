@@ -1109,6 +1109,493 @@ function WeatherCard({ data }: ViewProps): ReactNode {
   );
 }
 
+// --- hurricane_card --------------------------------------------------------
+// jerv's tabbed active-tropical-cyclone view (docs/DESIGN.md "hurricane_card
+// tool-view"; build plan docs/HURRICANE_TABS_PLAN.md). Data-only slots, no URLs, no
+// raw lat/lon (#9); `kind`/`cat`/`proximity`/`alert.level`/`level` are closed enums
+// the component maps to a glyph + tone — the model never sends a glyph, icon, or color.
+// The `alert` slot is the ONLY watch/warning surface (NWS-sourced); a real warning is
+// the one case the danger/rose banner shows. Map geometry arrives pre-projected to the
+// unit square `[0,1]`, drawn as inline SVG. Upstream text (alert headline) renders as
+// escaped text content only.
+
+type HuKind =
+  | "hurricane"
+  | "typhoon"
+  | "tropical-storm"
+  | "tropical-depression"
+  | "subtropical-storm"
+  | "subtropical-depression"
+  | "post-tropical"
+  | "potential"
+  | "low"
+  | "cyclone";
+const HU_KIND_LABEL: Record<HuKind, string> = {
+  hurricane: "Hurricane",
+  typhoon: "Typhoon",
+  "tropical-storm": "Tropical Storm",
+  "tropical-depression": "Tropical Depression",
+  "subtropical-storm": "Subtropical Storm",
+  "subtropical-depression": "Subtropical Depression",
+  "post-tropical": "Post-Tropical",
+  potential: "Potential Cyclone",
+  low: "Tropical Low",
+  cyclone: "Cyclone",
+};
+function huKind(value: unknown): HuKind {
+  return typeof value === "string" && value in HU_KIND_LABEL ? (value as HuKind) : "cyclone";
+}
+type HuLevel = "low" | "moderate" | "high" | "extreme";
+function huLevel(value: unknown): HuLevel {
+  return value === "moderate" || value === "high" || value === "extreme" ? value : "low";
+}
+
+interface HuPoint {
+  x: number;
+  y: number;
+}
+interface HuTrackPoint extends HuPoint {
+  label: string;
+  cat: string;
+  past: boolean;
+}
+interface HuTimelineCell {
+  label: string;
+  wind_mph: number;
+  gust_mph: number;
+  rain_in: number;
+  peak: boolean;
+}
+function huPoint(value: unknown): HuPoint | null {
+  const o = (value ?? {}) as Record<string, unknown>;
+  const x = Number(o.x);
+  const y = Number(o.y);
+  return Number.isFinite(x) && Number.isFinite(y) ? { x, y } : null;
+}
+/** Project a unit-square coordinate into the 100×100 SVG viewBox. */
+function huXY(p: HuPoint): { x: number; y: number } {
+  return { x: Math.max(0, Math.min(1, p.x)) * 100, y: Math.max(0, Math.min(1, p.y)) * 100 };
+}
+
+/** The cyclone spiral, drawn inline (no fetched icons, #9). */
+function HurricaneGlyph(): ReactNode {
+  return (
+    <svg viewBox="0 0 24 24" className="tv-hu-svg" aria-hidden="true">
+      <path d="M12 2a10 10 0 0 1 8 4c-3 0-5 1-6 3M12 22a10 10 0 0 1-8-4c3 0 5-1 6-3M22 12a10 10 0 0 1-4 8c0-3-1-5-3-6M2 12a10 10 0 0 1 4-8c0 3 1 5 3 6" />
+      <circle cx="12" cy="12" r="2.3" />
+    </svg>
+  );
+}
+
+/** The official NWS alert banner — the only watch/warning surface. A `warning` reads
+ * the rose danger tone; a `watch` reads amber. The event + headline are NWS strings
+ * rendered as escaped text content (never markup, #9). */
+function HuAlertBanner({ alert }: { alert: Record<string, unknown> }): ReactNode {
+  const level = alert.level === "warning" ? "warning" : "watch";
+  const event = String(alert.event ?? "");
+  const headline = String(alert.headline ?? "");
+  return (
+    <div className={`tv-hu-alert ${level}`}>
+      <svg viewBox="0 0 24 24" className="tv-hu-alert-svg" aria-hidden="true">
+        <path d="M10.3 3.3 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.3a2 2 0 0 0-3.4 0z" />
+        <path d="M12 9v4M12 17h.01" />
+      </svg>
+      <div>
+        <b>{event}</b>
+        {headline && <span className="tv-hu-alert-head"> — {headline}</span>}
+      </div>
+    </div>
+  );
+}
+
+/** The Track tab: the cone polygon, the forecast path, its points (toned by category),
+ * and the place pin — all drawn from pre-projected `[0,1]` slots (no map tiles, #9). */
+function HuTrackMap({
+  track,
+  cone,
+  you,
+}: { track: HuTrackPoint[]; cone: HuPoint[]; you: HuPoint | null }): ReactNode {
+  const path = track.map((p) => huXY(p));
+  const conePts = cone.map((p) => huXY(p));
+  const youXY = you ? huXY(you) : null;
+  const hasPast = track.some((p) => p.past);
+  return (
+    <div className="tv-hu-track">
+      <svg
+        viewBox="0 0 100 100"
+        className="tv-hu-map"
+        preserveAspectRatio="xMidYMid meet"
+        aria-hidden="true"
+      >
+        {conePts.length >= 3 && (
+          <polygon
+            className="tv-hu-map-cone"
+            points={conePts.map((p) => `${p.x},${p.y}`).join(" ")}
+          />
+        )}
+        {path.length >= 2 && (
+          <polyline
+            className="tv-hu-map-path"
+            points={path.map((p) => `${p.x},${p.y}`).join(" ")}
+          />
+        )}
+        {path.map((p, i) => (
+          // Positional forecast points have no stable id; index + label key them.
+          <circle
+            key={`${track[i]?.label}-${i}`}
+            className={`tv-hu-map-pt cat-${track[i]?.cat || "0"}${track[i]?.past ? " past" : ""}`}
+            cx={p.x}
+            cy={p.y}
+            r={track[i]?.past ? 1.4 : 2.1}
+          />
+        ))}
+        {youXY && <circle className="tv-hu-map-you" cx={youXY.x} cy={youXY.y} r={2.4} />}
+      </svg>
+      <div className="tv-hu-track-legend">
+        <span>
+          <i className="tv-hu-dot fc" /> forecast
+        </span>
+        {hasPast && (
+          <span>
+            <i className="tv-hu-dot past" /> past
+          </span>
+        )}
+        <span>
+          <i className="tv-hu-dot cone" /> cone
+        </span>
+        {you && (
+          <span>
+            <i className="tv-hu-dot you" /> you
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** The Timeline tab: a finger-scrollable strip of wind/gust/rain cells (peak flagged),
+ * plus the derived (approximate) tropical-storm/hurricane-force arrival labels. */
+function HuTimeline({
+  cells,
+  arrival,
+}: { cells: HuTimelineCell[]; arrival: Record<string, unknown> }): ReactNode {
+  const ts = typeof arrival.ts_force === "string" ? arrival.ts_force : "";
+  const hu = typeof arrival.hurricane_force === "string" ? arrival.hurricane_force : "";
+  return (
+    <div className="tv-hu-timeline">
+      <div className="tv-hu-strip">
+        {cells.map((c, i) => (
+          // Positional cells have no stable id; label + index key them.
+          <div className={`tv-hu-cell${c.peak ? " peak" : ""}`} key={`${c.label}-${i}`}>
+            <div className="tv-hu-ct">{c.label}</div>
+            <div className="tv-hu-cg">
+              {c.gust_mph}
+              <span> mph</span>
+            </div>
+            <div className="tv-hu-cw">{c.wind_mph} sust</div>
+            <div className={`tv-hu-cr${c.rain_in > 0 ? "" : " none"}`}>{c.rain_in}″</div>
+          </div>
+        ))}
+      </div>
+      {(ts || hu) && (
+        <div className="tv-hu-arrival">
+          {ts && (
+            <span>
+              TS-force <b>{ts}</b>
+            </span>
+          )}
+          {hu && (
+            <span>
+              Hurricane-force <b>{hu}</b>
+            </span>
+          )}
+          <span className="tv-hu-approx">approx.</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** One Impact-grid cell with a value and a severity gauge toned by `level`. */
+function HuImpactCell({
+  label,
+  value,
+  sub,
+  level,
+  fill,
+}: { label: string; value: string; sub: string; level: HuLevel; fill: number }): ReactNode {
+  return (
+    <div className={`tv-hu-icell lv-${level}`}>
+      <div className="tv-hu-ik">{label}</div>
+      <div className="tv-hu-iv">{value}</div>
+      {sub && <div className="tv-hu-iq">{sub}</div>}
+      <div className="tv-hu-gauge">
+        <i style={{ width: `${Math.max(0, Math.min(100, fill))}%` }} />
+      </div>
+    </div>
+  );
+}
+
+const HU_FILL: Record<HuLevel, number> = { low: 30, moderate: 55, high: 78, extreme: 95 };
+
+/** The Impact tab: a 2×2 hazard grid (wind/surge/rain/timing) with a My-impact ⇄
+ * Storm-stats toggle. "My impact" is the NWS-derived local forecast; "Storm stats" is
+ * the storm's own vitals. */
+function HuImpact({
+  impact,
+  storm,
+}: { impact: Record<string, unknown>; storm: Record<string, unknown> }): ReactNode {
+  const [view, setView] = useState<"impact" | "storm">("impact");
+  const wind = (impact.wind ?? null) as Record<string, unknown> | null;
+  const surge = (impact.surge ?? null) as Record<string, unknown> | null;
+  const rain = (impact.rain ?? null) as Record<string, unknown> | null;
+  const timing = (impact.timing ?? null) as Record<string, unknown> | null;
+
+  const myImpact: ReactNode[] = [];
+  if (wind) {
+    const lv = huLevel(wind.level);
+    myImpact.push(
+      <HuImpactCell
+        key="wind"
+        label="Wind"
+        value={`${wxNum(wind.mph)} mph`}
+        sub={`gusts ${wxNum(wind.gust)}`}
+        level={lv}
+        fill={HU_FILL[lv]}
+      />,
+    );
+  }
+  if (surge) {
+    const lv = huLevel(surge.level);
+    myImpact.push(
+      <HuImpactCell
+        key="surge"
+        label="Surge"
+        value={String(surge.band ?? "")}
+        sub="above ground"
+        level={lv}
+        fill={HU_FILL[lv]}
+      />,
+    );
+  }
+  if (rain) {
+    const lv = huLevel(rain.level);
+    myImpact.push(
+      <HuImpactCell
+        key="rain"
+        label="Rain"
+        value={`${wxNum(rain.in)}″`}
+        sub="storm total"
+        level={lv}
+        fill={HU_FILL[lv]}
+      />,
+    );
+  }
+  if (timing) {
+    const onset = typeof timing.onset === "string" ? timing.onset : "—";
+    const peak = typeof timing.peak === "string" ? timing.peak : "—";
+    const clear = typeof timing.clear === "string" ? timing.clear : "—";
+    myImpact.push(
+      <div className="tv-hu-icell lv-info tv-hu-timing" key="timing">
+        <div className="tv-hu-ik">Timing</div>
+        <div className="tv-hu-tsteps">
+          <span>
+            Onset<b>{onset}</b>
+          </span>
+          <span>
+            Peak<b>{peak}</b>
+          </span>
+          <span>
+            Eases<b>{clear}</b>
+          </span>
+        </div>
+      </div>,
+    );
+  }
+
+  const stormStats: ReactNode[] = [
+    <HuImpactCell
+      key="sus"
+      label="Sustained"
+      value={`${wxNum(storm.sustained_mph)} mph`}
+      sub={huKind(storm.kind) === "hurricane" ? "major" : ""}
+      level="high"
+      fill={80}
+    />,
+    <HuImpactCell
+      key="gust"
+      label="Peak gust"
+      value={wxNum(storm.gust_mph) > 0 ? `${wxNum(storm.gust_mph)} mph` : "—"}
+      sub="near the core"
+      level="extreme"
+      fill={95}
+    />,
+    <HuImpactCell
+      key="pres"
+      label="Pressure"
+      value={`${wxNum(storm.pressure_mb)} mb`}
+      sub=""
+      level="low"
+      fill={55}
+    />,
+    <HuImpactCell
+      key="move"
+      label="Movement"
+      value={String(storm.moving ?? "")}
+      sub=""
+      level="low"
+      fill={40}
+    />,
+  ];
+
+  return (
+    <div className="tv-hu-impact">
+      <div className="tv-hu-seg">
+        <button
+          type="button"
+          className={view === "impact" ? "on" : ""}
+          onClick={() => setView("impact")}
+        >
+          My impact
+        </button>
+        <button
+          type="button"
+          className={view === "storm" ? "on" : ""}
+          onClick={() => setView("storm")}
+        >
+          Storm stats
+        </button>
+      </div>
+      <div className="tv-hu-grid">{view === "impact" ? myImpact : stormStats}</div>
+    </div>
+  );
+}
+
+type HuTab = "timeline" | "track" | "impact";
+
+function HurricaneCard({ data }: ViewProps): ReactNode {
+  const place = String(data.place ?? "");
+  const asOf = typeof data.as_of === "string" ? data.as_of : "";
+  const activeCount = wxNum(data.active_count);
+  const storm = (data.storm ?? {}) as Record<string, unknown>;
+  const name = String(storm.name ?? "");
+  const kind = huKind(storm.kind);
+  const cat = typeof storm.cat === "string" ? storm.cat : "";
+  const sustained = wxNum(storm.sustained_mph);
+  const gust = wxNum(storm.gust_mph);
+  const pressure = wxNum(storm.pressure_mb);
+  const moving = typeof storm.moving === "string" ? storm.moving : "";
+  const distance = wxNum(data.distance_mi);
+  const bearing = typeof data.bearing === "string" ? data.bearing : "";
+  const alert = data.alert ? (data.alert as Record<string, unknown>) : null;
+  const track: HuTrackPoint[] = (Array.isArray(data.track) ? data.track : []).flatMap((p) => {
+    const pt = huPoint(p);
+    if (!pt) return [];
+    const row = (p ?? {}) as Record<string, unknown>;
+    return [
+      {
+        ...pt,
+        label: String(row.label ?? ""),
+        cat: String(row.cat ?? ""),
+        past: row.past === true,
+      },
+    ];
+  });
+  const cone: HuPoint[] = (Array.isArray(data.cone) ? data.cone : []).flatMap((p) => {
+    const pt = huPoint(p);
+    return pt ? [pt] : [];
+  });
+  const you = huPoint(data.you);
+  const timeline: HuTimelineCell[] = (Array.isArray(data.timeline) ? data.timeline : []).map(
+    (c) => {
+      const row = (c ?? {}) as Record<string, unknown>;
+      return {
+        label: String(row.label ?? ""),
+        wind_mph: wxNum(row.wind_mph),
+        gust_mph: wxNum(row.gust_mph),
+        rain_in: Number.isFinite(Number(row.rain_in)) ? Number(row.rain_in) : 0,
+        peak: row.peak === true,
+      };
+    },
+  );
+  const arrival = (data.arrival ?? {}) as Record<string, unknown>;
+  const impact = (data.impact ?? {}) as Record<string, unknown>;
+
+  const badge = cat ? `Cat ${cat}` : HU_KIND_LABEL[kind];
+  const where = [distance > 0 ? `${distance} mi${bearing ? ` ${bearing}` : ""}` : "", moving]
+    .filter(Boolean)
+    .join(" · ");
+
+  // Only offer a tab when its data is present (a `global`/out-of-coverage storm shows
+  // the hero + Track only). Default to the most actionable available tab.
+  const tabs: HuTab[] = [];
+  if (timeline.length > 0) tabs.push("timeline");
+  if (track.length > 0) tabs.push("track");
+  // Offer Impact only when a slot actually carries content (the tab's render predicate),
+  // so a keyed-but-empty `impact` never opens an empty grid.
+  if (impact.wind || impact.surge || impact.rain || impact.timing) tabs.push("impact");
+  const [tab, setTab] = useState<HuTab>(() => tabs[0] ?? "track");
+  const active = tabs.includes(tab) ? tab : (tabs[0] ?? "track");
+
+  return (
+    <div className="tv-hu">
+      <div className="tv-hu-cap">
+        hurricane{place ? ` · ${place}` : ""}
+        {activeCount > 1 ? ` · ${activeCount} active` : ""}
+      </div>
+      {alert && <HuAlertBanner alert={alert} />}
+      <div className="tv-hu-hero">
+        <div className="tv-hu-glyph">
+          <HurricaneGlyph />
+        </div>
+        <div className="tv-hu-main">
+          <div className="tv-hu-name">
+            {name}
+            <span className="tv-hu-badge">{badge}</span>
+          </div>
+          {where && <div className="tv-hu-where">{where}</div>}
+          {asOf && <div className="tv-hu-when">as of {asOf}</div>}
+        </div>
+        <div className="tv-hu-vitals">
+          {sustained > 0 && (
+            <>
+              <b>{sustained}</b> mph
+            </>
+          )}
+          {gust > 0 && <div className="tv-hu-pres">gusts {gust}</div>}
+          {pressure > 0 && <div className="tv-hu-pres">{pressure} mb</div>}
+        </div>
+      </div>
+
+      {tabs.length > 0 && (
+        <>
+          <div className="tv-hu-tabs">
+            {tabs.map((t) => (
+              <button
+                type="button"
+                key={t}
+                className={active === t ? "on" : ""}
+                onClick={() => setTab(t)}
+              >
+                {t === "timeline" ? "Timeline" : t === "track" ? "Track" : "Impact"}
+              </button>
+            ))}
+          </div>
+          {active === "timeline" && <HuTimeline cells={timeline} arrival={arrival} />}
+          {active === "track" && <HuTrackMap track={track} cone={cone} you={you} />}
+          {active === "impact" && <HuImpact impact={impact} storm={storm} />}
+        </>
+      )}
+
+      <div className="tv-hu-foot">
+        {alert
+          ? "Official NWS alert shown. Surge is a banded estimate and timing is approximate — follow official orders to evacuate."
+          : "Storm position & forecast track. For watches, warnings & evacuation, check NWS/NHC and local emergency management."}
+      </div>
+    </div>
+  );
+}
+
 const REGISTRY: Record<string, (props: ViewProps) => ReactNode> = {
   stat_block: StatBlock,
   data_table: DataTable,
@@ -1122,6 +1609,7 @@ const REGISTRY: Record<string, (props: ViewProps) => ReactNode> = {
   video_analysis: VideoAnalysisView,
   server_metrics: ServerMetrics,
   weather_card: WeatherCard,
+  hurricane_card: HurricaneCard,
 };
 
 export function isKnownView(name: string): boolean {
