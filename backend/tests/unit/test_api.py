@@ -108,6 +108,18 @@ def test_readyz_reports_database_down(client: TestClient) -> None:
     assert resp.status_code == 503
 
 
+def test_grok_install_script_is_public_plaintext(client: TestClient) -> None:
+    # No login() call: the script must be fetchable on a bare machine.
+    resp = client.get("/api/install/grok.ps1")
+    assert resp.status_code == 200
+    assert resp.headers["content-type"].startswith("text/plain")
+    body = resp.text
+    # It prompts for both the URL and token at runtime and bakes in neither.
+    assert body.count("Read-Host") >= 2  # endpoint URL + token
+    assert "OPENAI_API_KEY" in body
+    assert "ext/llm" not in body  # no per-session id is hard-coded
+
+
 def test_login_bad_key_rejected(client: TestClient) -> None:
     resp = client.post("/api/auth/session", json={"owner_key": "jb1-WRONG"})
     assert resp.status_code == 401

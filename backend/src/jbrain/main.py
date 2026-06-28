@@ -43,6 +43,7 @@ from jbrain.api import (
     health,
     images,
     images_render,
+    install,
     jcode,
     jcode_preview,
     jcode_share,
@@ -615,6 +616,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     if settings.comfyui_url:
         app.include_router(images_render.router, prefix="/api")
     app.include_router(image_settings_api.router, prefix="/api")
+    # Public, unauthenticated setup-script delivery (irm .../install/grok.ps1 | iex).
+    # Carries no secrets; the script prompts for the access token at runtime.
+    app.include_router(install.router, prefix="/api")
     # Code mode (docs/proposed/JCODE_PLAN.md). Always mounted, but every route is
     # owner-gated and 404s when jcode isn't configured (app.state.jcode_client is None).
     app.include_router(jcode.router, prefix="/api")
