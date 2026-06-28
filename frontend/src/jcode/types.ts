@@ -67,16 +67,13 @@ export interface NewSessionInput {
   work_branch: string;
 }
 
-// The per-session web preview (Wave J4): `enabled` is the server feature flag;
-// `url` is the live ephemeral tunnel URL (null when no preview is open).
+// The per-session web preview: `enabled` is the server feature flag; `url` is the live
+// host-served preview URL (`<slug>-preview.<host>`, null when no preview is open). The
+// per-session cloudflared quick-tunnel was retired — host-served preview is the only mode.
 export interface JcodePreview {
   enabled: boolean;
   url: string | null;
-  // "host" = a per-session hostname under the box's own tunnel (the Preview tab shows
-  // the stable URL + the dev port, with no tunnel to open/stop); "tunnel" = the legacy
-  // per-session quick-tunnel (open/close flow). Absent on older servers → treated as tunnel.
-  mode?: "tunnel" | "host";
-  // Host mode only: the dev port the session's server should bind ($PORT in the shell).
+  // The dev port the session's server should bind ($PORT in the shell).
   port?: number | null;
 }
 
