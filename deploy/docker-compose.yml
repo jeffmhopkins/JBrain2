@@ -97,6 +97,11 @@ services:
       JBRAIN_JCODE_ENABLED: ${JCODE_ENABLED:-false}
       JBRAIN_JCODE_TOKEN: ${JCODE_TOKEN:-}
       JBRAIN_JCODE_MODEL: ${JCODE_MODEL:-qwen3-coder-next}
+      # Host-mode web preview (docs/JCODE_PREVIEW_HOST_PLAN.md): the zone previews hang
+      # under. The api's preview proxy enforces the request Host is <slug>-preview.<this>
+      # before forwarding, so a sandbox dev app can't be served on the owner origin.
+      # Shares the .env var with the jcode service; empty fail-closes the proxy.
+      JBRAIN_JCODE_PREVIEW_BASE_HOST: ${JCODE_PREVIEW_BASE_HOST:-}
       # The external-LLM proxy (owner-minted public endpoints exposing the on-box coder)
       # forwards to the same claude-shim the sandbox uses, with its master key. The api
       # already joins the `jcode` network, so it reaches the shim directly. Both empty

@@ -243,6 +243,12 @@ class Settings(BaseSettings):
     jcode_enabled: bool = False
     jcode_token: str = ""
     jcode_model: str = "qwen3-coder-next"
+    # Host-mode web preview (docs/JCODE_PREVIEW_HOST_PLAN.md): the zone previews hang
+    # under, so a session is reachable at https://<slug>-preview.<jcode_preview_base_host>.
+    # The preview proxy enforces this in-process (the request Host must be exactly
+    # `<slug>-preview.<base>`) so a sandbox-run dev app can never be served on the owner
+    # origin even if the edge is misconfigured. Empty (the default) fail-closes the proxy.
+    jcode_preview_base_host: str = ""
     # The Anthropic<->OpenAI shim (LiteLLM) the external-LLM proxy forwards to, and its
     # master key (the same JCODE_GATEWAY_TOKEN the jcode sandbox presents). Used ONLY by
     # the token-gated external-LLM endpoint that exposes the on-box coder to a remote

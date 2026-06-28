@@ -187,17 +187,25 @@ mock gate** before implementation.
   no-dev-server 502 / hostname-survives-pause-not-delete. *On-box verification of the
   real proxy (a live dev server) is the P5 bring-up.*
 
-- **Wave P3 — api bridge + edge wiring + HMR** *(api + Caddy + compose + tunnel/DNS
-  docs; security-touching, red-team gated; open decision 1).* The backend api
-  host-routes `<slug>-preview.<host>/*` → the jcode control proxy (the public
-  exposure point; auth = the unguessable slug), **including the HMR WebSocket upgrade**
-  end-to-end. The Caddy matcher `*-preview.<host>` → api (one static rule; the dynamic
-  map lives in jcode), the `PREVIEW_BASE_HOST`/`JCODE_PREVIEW_BASE_HOST` envs, and the
-  Cloudflare dashboard steps (wildcard public hostname + DNS, the flattened-name/cert
-  note) in `docs/CLOUDFLARE_TUNNEL.md`. DEBUG: the api `Host→slug` trace + WS upgrade.
-  Tests: host→slug routing, WS upgrade pass-through, auth, unknown-host 404, and the
-  **dataless-sandbox compose sweep still passes** (Caddy does **not** join the `jcode`
-  network — only the api bridges).
+- **Wave P3a — api HTTP bridge + edge docs** *(api + docs; security-touching,
+  red-team gated; open decision 1; landed).* The backend api proxy
+  `/__jcode_preview/{slug}/{path}` → the control server's `/preview/{slug}` (the public
+  exposure point; auth = the unguessable slug, no owner cookie). It **adds** the
+  api↔jcode bearer for that hop and **strips the owner's Cookie + Authorization** so a
+  sandbox-run dev app never sees them; a malformed slug or unconfigured jcode 404s; an
+  unreachable control server 502s. The Caddy host-regexp (`<slug>-preview.<host>` →
+  `/__jcode_preview/{slug}`, served on the preview subdomain ONLY — the main site 404s
+  the prefix so a dev app never runs on the owner origin), the wildcard DNS, and the
+  flattened-name/cert note are **documented** in `docs/CLOUDFLARE_TUNNEL.md` rather than
+  auto-injected (edge config that can't be verified off-box — shipping it unverified
+  could break the live proxy). Tests: forward + bearer-add + credential-strip + query
+  preserve, malformed-slug 404, unconfigured 404, control-server-unreachable 502.
+
+- **Wave P3b — HMR live-reload WebSocket** *(jcode + api; on-box-verification-heavy).*
+  Add WS proxying both hops — the control server bridges `ws → 127.0.0.1:<port>` and the
+  api bridges `browser ws → control server` (mirroring the terminal WS proxy) — so Vite/
+  webpack live-reload works. Deferred from P3a because the page renders without it and a
+  WS handshake is the part most needing a real dev server to verify.
 
 - **Wave P4 — the Preview tab UX** *(GUI; **three-mock gate FIRST**).* Rework
   `JcodeSessionScreen`'s Preview tab for per-session host previews: no "open
