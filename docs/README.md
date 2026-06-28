@@ -75,6 +75,13 @@ Phase-5 build record is `archive/PHASE5_COMPLETION_PLAN.md`.
   bridge so the sandbox stays isolated. Concurrent previews via per-session ports;
   verbose debug logging is a per-wave deliverable. Wave P0 (verbose-logging substrate) is
   landed; the five open decisions await owner sign-off before Wave P1.
+- `JCODE_SESSION_ISOLATION_PLAN.md` — the **per-session network namespace** build plan:
+  give each jcode session its own `lo` so every session can bind the same port (its own
+  `5173`), fixing concurrent-Vite ergonomics and opening the path to closing the
+  cross-session filesystem-read residual (`proposed/JCODE_PLAN.md`). Spike-confirmed
+  feasible on the box — the only gate is a per-container seccomp relaxation (no host
+  change, no `SYS_ADMIN`). Wave 0 (this plan); the open decisions — the gating one being
+  the seccomp/userns tradeoff — await owner sign-off before Wave P0.
 
 ## Proposed (not scheduled)
 
