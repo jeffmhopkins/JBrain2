@@ -9420,6 +9420,10 @@ button.small {
 .fb-shell .tv-hu-map-pt.cat-2 {
   stroke: var(--amber);
 }
+/* observed (past) positions read muted, like the mock's gray past track. */
+.fb-shell .tv-hu-map-pt.past {
+  stroke: var(--text-3);
+}
 .fb-shell .tv-hu-map-you {
   fill: var(--steel);
   stroke: var(--bg);
@@ -9453,6 +9457,9 @@ button.small {
 .fb-shell .tv-hu-dot.you {
   background: var(--steel);
   border-radius: var(--r-pill);
+}
+.fb-shell .tv-hu-dot.past {
+  background: var(--text-3);
 }
 /* Timeline tab — the wind/gust/rain strip */
 .fb-shell .tv-hu-timeline {

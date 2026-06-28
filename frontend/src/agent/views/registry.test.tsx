@@ -412,11 +412,14 @@ describe("ToolView registry", () => {
     expect(container.querySelector(".tv-hu-alert")).toBeNull();
     expect(screen.getByText("Tropical Storm")).toBeInTheDocument();
     expect(screen.queryByText(/Cat /)).toBeNull();
-    // Only the Track tab is offered (Timeline/Impact are empty and hidden).
+    // Only the Track tab is offered (Timeline/Impact are empty and hidden), and the
+    // Track pane renders its inline SVG map by default (the §4 "hero + Track only" path).
     const tabs = Array.from(container.querySelectorAll(".tv-hu-tabs button")).map(
       (b) => b.textContent,
     );
     expect(tabs).toEqual(["Track"]);
+    expect(container.querySelector(".tv-hu-map")).not.toBeNull();
+    expect(container.querySelectorAll(".tv-hu-map-pt")).toHaveLength(1);
     expect(container.querySelector(".tv-hu-foot")?.textContent).toContain("NWS/NHC");
   });
 

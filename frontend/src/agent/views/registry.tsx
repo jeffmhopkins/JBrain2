@@ -1216,6 +1216,7 @@ function HuTrackMap({
   const path = track.map((p) => huXY(p));
   const conePts = cone.map((p) => huXY(p));
   const youXY = you ? huXY(you) : null;
+  const hasPast = track.some((p) => p.past);
   return (
     <div className="tv-hu-track">
       <svg
@@ -1240,7 +1241,7 @@ function HuTrackMap({
           // Positional forecast points have no stable id; index + label key them.
           <circle
             key={`${track[i]?.label}-${i}`}
-            className={`tv-hu-map-pt cat-${track[i]?.cat || "0"}`}
+            className={`tv-hu-map-pt cat-${track[i]?.cat || "0"}${track[i]?.past ? " past" : ""}`}
             cx={p.x}
             cy={p.y}
             r={track[i]?.past ? 1.4 : 2.1}
@@ -1252,12 +1253,19 @@ function HuTrackMap({
         <span>
           <i className="tv-hu-dot fc" /> forecast
         </span>
+        {hasPast && (
+          <span>
+            <i className="tv-hu-dot past" /> past
+          </span>
+        )}
         <span>
           <i className="tv-hu-dot cone" /> cone
         </span>
-        <span>
-          <i className="tv-hu-dot you" /> {String(you ? "you" : "")}
-        </span>
+        {you && (
+          <span>
+            <i className="tv-hu-dot you" /> you
+          </span>
+        )}
       </div>
     </div>
   );
@@ -1521,7 +1529,9 @@ function HurricaneCard({ data }: ViewProps): ReactNode {
   const tabs: HuTab[] = [];
   if (timeline.length > 0) tabs.push("timeline");
   if (track.length > 0) tabs.push("track");
-  if (Object.keys(impact).length > 0) tabs.push("impact");
+  // Offer Impact only when a slot actually carries content (the tab's render predicate),
+  // so a keyed-but-empty `impact` never opens an empty grid.
+  if (impact.wind || impact.surge || impact.rain || impact.timing) tabs.push("impact");
   const [tab, setTab] = useState<HuTab>(() => tabs[0] ?? "track");
   const active = tabs.includes(tab) ? tab : (tabs[0] ?? "track");
 
