@@ -60,9 +60,68 @@ async def test_passes_through_status_and_body() -> None:
     assert resp.body == b"nope"
 
 
-async def test_connect_refused_is_502() -> None:
+async def test_falls_back_to_ipv6_loopback_when_ipv4_refuses() -> None:
+    # Vite & friends default to `localhost`, which Node often binds to ::1 only — so the
+    # IPv4 dial refuses and we must retry [::1] before 502'ing.
+    seen: list[str] = []
+
     def handler(req: httpx.Request) -> httpx.Response:
+        seen.append(req.url.host)
+        if req.url.host == "127.0.0.1":
+            raise httpx.ConnectError("connection refused", request=req)
+        return httpx.Response(200, content=b"<html>vite</html>")
+
+    resp = await proxy_http(5187, "", _request(), client_factory=_factory(handler))
+    assert resp.status_code == 200
+    assert resp.body == b"<html>vite</html>"
+    # Tried IPv4 first, then fell back to the IPv6 loopback the dev server bound.
+    assert seen[0] == "127.0.0.1"
+    assert "::1" in seen[1]
+
+
+async def test_request_body_survives_the_ipv4_to_ipv6_retry() -> None:
+    # The body is read once and reused across attempts — a POST that falls back to ::1
+    # must still carry its bytes.
+    got: dict[str, bytes] = {}
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        if req.url.host == "127.0.0.1":
+            raise httpx.ConnectError("connection refused", request=req)
+        got["body"] = req.content
+        return httpx.Response(200, content=b"ok")
+
+    resp = await proxy_http(
+        5187,
+        "submit",
+        _request(method="POST", body=b"payload"),
+        client_factory=_factory(handler),
+    )
+    assert resp.status_code == 200
+    assert got["body"] == b"payload"
+
+
+async def test_connect_refused_on_both_families_is_502() -> None:
+    tried: list[str] = []
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        tried.append(req.url.host)
         raise httpx.ConnectError("connection refused", request=req)
 
     resp = await proxy_http(5187, "", _request(), client_factory=_factory(handler))
     assert resp.status_code == 502
+    # Both loopback families were attempted before giving up.
+    assert len(tried) == 2
+
+
+async def test_does_not_retry_the_other_family_on_a_read_error() -> None:
+    # A timeout/malformed reply means the server IS here (connected) — retrying the
+    # other family would be wrong; 502 directly.
+    tried: list[str] = []
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        tried.append(req.url.host)
+        raise httpx.ReadTimeout("slow", request=req)
+
+    resp = await proxy_http(5187, "", _request(), client_factory=_factory(handler))
+    assert resp.status_code == 502
+    assert tried == ["127.0.0.1"]
