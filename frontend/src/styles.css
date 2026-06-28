@@ -15857,6 +15857,42 @@ button.task-band:active {
 .jcode-extdelete {
   align-self: flex-start;
 }
+/* Copyable wire-up recipes (Claude / grok) — collapsed by default. */
+.jcode-extrecipe {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg);
+  padding: 8px 10px;
+}
+.jcode-extrecipe > summary {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+  cursor: pointer;
+  list-style: none;
+}
+.jcode-extrecipe > summary::-webkit-details-marker {
+  display: none;
+}
+.jcode-extrecipe > summary::before {
+  content: "▸ ";
+  color: var(--text-2);
+}
+.jcode-extrecipe[open] > summary::before {
+  content: "▾ ";
+}
+.jcode-extcode {
+  margin: 8px 0;
+  padding: 8px 10px;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-all;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
 /* The on/off switch on the endpoint screen. */
 .jcode-toggle {
   flex: none;
