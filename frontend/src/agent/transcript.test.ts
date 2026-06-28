@@ -268,6 +268,7 @@ describe("applyEvent reducer", () => {
       tool_call_id: "c1",
       child_id: "k1",
       phase: "researching",
+      step: 2,
       tree_spent: 300,
       tree_budget: 1200,
     });
@@ -292,6 +293,7 @@ describe("applyEvent reducer", () => {
         depth: 1,
         phase: "end_turn",
         status: "done",
+        step: 2,
         stopReason: "end_turn",
         summary: "3 tiers",
       },

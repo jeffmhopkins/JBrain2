@@ -168,6 +168,8 @@ export interface SubagentProgressEvent {
   tool_call_id: string;
   child_id: string;
   phase: string;
+  /** The child's ReAct step so far (0 at launch) — drives the live "· N steps" count. */
+  step: number;
   tree_spent: number;
   tree_budget: number;
 }

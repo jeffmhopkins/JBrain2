@@ -343,3 +343,68 @@ async def test_fan_without_a_sink_does_not_emit(service: SpawnService) -> None:
         _ctx(), {"tasks": [{"persona": "research", "brief": "x", "label": "L"}]}
     )
     assert "research" in out.lower()  # the fan still ran and folded its summary
+
+
+async def test_live_progress_streams_per_child_step(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Each child ReAct step fires on_step → a subagent_progress carrying the step and
+    the live tree snapshot, so the UI's meter + step count move while a (non-streaming)
+    child works."""
+
+    class _SteppingLoop(_FakeLoop):
+        async def run(self, **kw):  # noqa: ANN003
+            _FakeLoop.calls.append(kw)
+            on_step = kw.get("on_step")
+            assert on_step is not None
+            on_step(1, 1000)
+            on_step(2, 2000)
+            return AgentResult(text="done", stop_reason="end_turn", steps=2, cost_tokens=2000)
+
+    _FakeLoop.calls = []
+    monkeypatch.setattr(spawn_mod, "AgentLoop", _SteppingLoop)
+    svc = SpawnService(
+        router=_FakeRouter(),  # type: ignore[arg-type]
+        registry=object(),  # type: ignore[arg-type]
+        sessions=_FakeSessions(),  # type: ignore[arg-type]
+        runlog=_FakeRunLog(),  # type: ignore[arg-type]
+    )
+    captured: list = []
+    ctx = ToolContext(
+        session=SessionContext(principal_id="p1", principal_kind="owner"),
+        scopes=(),
+        agent_session_id="parent-sess",
+        depth=0,
+        agent_tools=JERV_TOOLS,
+        tree=TreeState(),
+        run_id="parent-run",
+        emit_event=captured.append,
+    )
+    await svc.spawn_fan(ctx, {"tasks": [{"persona": "research", "brief": "x", "label": "L"}]})
+    steps = sorted(e.step for e in captured if e.type == "subagent_progress")
+    assert steps == [0, 1, 2]  # the spawn-time tick (0) + one per ReAct step
+
+
+async def test_child_wall_clock_degrades_a_slow_child(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A child past its wall-clock is cancelled and degraded (timeout), so one slow
+    child can't stall the fan."""
+    import asyncio
+
+    class _SlowLoop(_FakeLoop):
+        async def run(self, **kw):  # noqa: ANN003
+            _FakeLoop.calls.append(kw)
+            await asyncio.sleep(1.0)  # longer than the patched wall-clock below
+            return AgentResult(text="late", stop_reason="end_turn", steps=1, cost_tokens=1)
+
+    _FakeLoop.calls = []
+    monkeypatch.setattr(spawn_mod, "CHILD_WALL_CLOCK_S", 0.05)
+    monkeypatch.setattr(spawn_mod, "AgentLoop", _SlowLoop)
+    svc = SpawnService(
+        router=_FakeRouter(),  # type: ignore[arg-type]
+        registry=object(),  # type: ignore[arg-type]
+        sessions=_FakeSessions(),  # type: ignore[arg-type]
+        runlog=_FakeRunLog(),  # type: ignore[arg-type]
+    )
+    out = await svc.spawn_fan(
+        _ctx(), {"tasks": [{"persona": "research", "brief": "x", "label": "L"}]}
+    )
+    assert "timed out" in out.lower()
+    assert "[FAILED]" in out

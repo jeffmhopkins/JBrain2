@@ -12,39 +12,39 @@ from jbrain.agent.tree import (
 
 def test_rooted_sizes_budget_and_reserve_off_the_root_cap() -> None:
     tree = TreeState.rooted(800_000)
-    assert tree.tree_budget == int(800_000 * SPAWN_MULTIPLIER)  # 1_200_000
-    assert tree.root_reserve == int(tree.tree_budget * ROOT_RESERVE_FRACTION)  # 300_000
+    assert tree.tree_budget == int(800_000 * SPAWN_MULTIPLIER)  # 2_000_000
+    assert tree.root_reserve == int(tree.tree_budget * ROOT_RESERVE_FRACTION)  # 500_000
     # The children's pool is the budget minus the reserve.
-    assert tree.children_remaining() == tree.tree_budget - tree.root_reserve  # 900_000
+    assert tree.children_remaining() == tree.tree_budget - tree.root_reserve  # 1_500_000
 
 
 def test_charge_draws_down_the_shared_pool() -> None:
-    tree = TreeState.rooted(800_000)
+    tree = TreeState.rooted(800_000)  # children pool 1.5M
     tree.charge(250_000)
     assert tree.spent == 250_000
-    assert tree.children_remaining() == 900_000 - 250_000
+    assert tree.children_remaining() == 1_500_000 - 250_000
 
 
 def test_admission_floor_refuses_a_fan_that_cannot_seat_each_child() -> None:
-    tree = TreeState.rooted(800_000)  # children pool 900_000
-    assert tree.can_admit_budget(6)  # 6 × 100k = 600k <= 900k
-    tree.charge(400_000)  # children pool now 500_000
-    assert not tree.can_admit_budget(6)  # 600k > 500k
-    assert tree.can_admit_budget(5)  # 500k <= 500k
+    tree = TreeState.rooted(800_000)  # children pool 1.5M
+    assert tree.can_admit_budget(6)  # 6 × 100k = 600k <= 1.5M
+    tree.charge(1_100_000)  # children pool now 400_000
+    assert not tree.can_admit_budget(5)  # 500k > 400k
+    assert tree.can_admit_budget(4)  # 400k <= 400k
     assert MIN_VIABLE_CHILD_BUDGET == 100_000  # the floor these numbers assume
 
 
 def test_children_stop_at_the_pool_but_the_root_reserve_survives() -> None:
-    tree = TreeState.rooted(800_000)  # budget 1.2M, reserve 300k, children pool 900k
-    tree.charge(900_000)  # children have eaten the whole children's pool
+    tree = TreeState.rooted(800_000)  # budget 2M, reserve 500k, children pool 1.5M
+    tree.charge(1_500_000)  # children have eaten the whole children's pool
     assert tree.children_exhausted()  # a child must stop here
-    assert not tree.root_exhausted()  # ...but the root still has its 300k reserve
+    assert not tree.root_exhausted()  # ...but the root still has its 500k reserve
     assert tree.tree_budget - tree.spent == tree.root_reserve
 
 
 def test_root_exhausts_only_at_the_whole_pool() -> None:
     tree = TreeState.rooted(800_000)
-    tree.charge(1_200_000)
+    tree.charge(2_000_000)
     assert tree.root_exhausted()
     assert tree.children_exhausted()
 

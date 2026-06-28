@@ -32,6 +32,8 @@ export interface SubagentChild {
   /** The live working word while running ("researching"), the stop reason once settled. */
   phase: string;
   status: "running" | "done" | "failed";
+  /** The child's ReAct step so far — shown as live movement ("· N steps") while running. */
+  step?: number;
   /** The child's answer (or its error / truncation note), shown on expand. */
   summary?: string;
   stopReason?: string;
@@ -291,7 +293,7 @@ export function applyEvent(messages: TranscriptMessage[], event: ChatEvent): Tra
               fan: {
                 children: t.fan.children.map((c) =>
                   c.childId === event.child_id
-                    ? { ...c, phase: event.phase, status: "running" }
+                    ? { ...c, phase: event.phase, status: "running", step: event.step }
                     : c,
                 ),
                 treeSpent: event.tree_spent,

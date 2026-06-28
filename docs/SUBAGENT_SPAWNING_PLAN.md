@@ -540,20 +540,30 @@ budget. Re-checks **B1, M5, M6, M8**.
   min_viable_child_budget`); `per_child_cap` demoted to a **sanity ceiling**; a loop
   seeing the pool exhausted stops with `stop_reason="tree_budget_exhausted"`.
   Children run with **reflexion disabled** and `buffer_retry` forced off (M6).
-  **Wave decision (budget values):** the owner has **locked the tree ceiling at
-  `spawn_multiplier = 1.5`** — i.e. a full fan may spend at most **1.5× the current
-  per-turn jerv limit** (`tree_budget = base_max_cost × jerv.budget_multiplier ×
-  1.5`). The remaining derived values are tuned against a real research sweep at
-  this wave; *starting point:* `root_reserve` ≈ 25% of `tree_budget` (the parent
-  always keeps enough to synthesize + say "research truncated"),
-  `min_viable_child_budget=100k`, `per_child_cap` ≈ `children_pool / 2` (sanity),
+  **Wave decision (budget values — RETUNED on-box, post-merge).** The first on-box run
+  exposed the real failure mode: on a single-GPU box (gpt-oss-120b at ~5 tok/s) a child
+  ground to its *token* budget — 31–49 steps, ~410k tokens, ~11 min each — while the UI
+  showed no movement, and the client turn errored before the fan finished. The fix
+  separates **runtime** bounds from the **token** ceiling:
+  - **Tree ceiling raised to `spawn_multiplier = 2.5`** (~2.0M with jerv's 800k root
+    cap; `root_reserve` 25% = 500k, `children_pool` = 1.5M) — generous headroom so
+    *budget exhaustion is the backstop, not the stopper*.
+  - **Per-child RUNTIME caps are the real bound:** `CHILD_MAX_STEPS = 10` +
+    `CHILD_WALL_CLOCK_S = 180` (a hard `asyncio.wait_for`; a child past it returns a
+    `timeout` degraded result so one slow child can't stall the fan), with
+    `CHILD_MAX_COST_TOKENS = 400k` as a backstop that should rarely bite. Each child
+    now finishes in ~2–3 min; the wall-clock bounds the whole (parallel) fan to ~one
+    child's time, so **serial was not needed** (it would only have doubled wall-clock).
+  - **Live per-step progress:** `AgentLoop.run` gained an `on_step` hook; the spawn
+    service emits a `subagent_progress` every child step carrying the step count and the
+    live `tree_spent`, so the in-chat budget meter and per-row step count move while a
+    (non-streaming) child works — the gap that made a working fan look frozen.
+
   `max_parallel=4`, `max_children_per_parent=6`, `max_total_agents_per_tree=12`,
-  wall-clock≈120s/child. (Worked at 1.5×, with the spec's illustrative
-  `base × mult ≈ 800k`: `tree_budget≈1.2M`, `root_reserve≈300k`,
-  `children_pool≈900k`, `per_child_cap≈400k`.) Tests: shared-counter
-  depletion, exhaustion `stop_reason`, root_reserve survival, admission-floor
-  refusal — all deterministic with the adapter fake; reflexion/`buffer_retry`
-  proven off for children. Depends on S2.2; the static-cap wiring extends S1.3.
+  `min_viable_child_budget=100k` unchanged. Tests: shared-counter depletion, exhaustion
+  `stop_reason`, root_reserve survival, admission-floor refusal, per-step progress
+  emission, and the wall-clock degrade — all deterministic with the adapter fake;
+  reflexion/`buffer_retry` proven off for children.
 
 **S2 wave-level review (architecture/runtime):** the streaming path is real and the
 reconnect replays the *parent* run not N children (B1, M8); the budget is on an
