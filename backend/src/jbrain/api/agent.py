@@ -423,11 +423,12 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
     # serves). Resolved once here and passed to the loop, which stamps it on each
     # UsageEvent so the meter never has to know the route.
     context_window = await router.context_window("agent.turn")
+    guardrails = guardrails_for_effort(effort, scale=profile.budget_multiplier)
     loop = AgentLoop(
         router,
         get_agent_registry(request),
         recorder=tally,
-        guardrails=guardrails_for_effort(effort, scale=profile.budget_multiplier),
+        guardrails=guardrails,
     )
     read_ctx = read_context(principal.id, read_scopes)
     # The turn's attachments are fetched under the SESSION's own scopes PLUS the domain
@@ -522,10 +523,11 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
             here_as_of=here_as_of,
             context_window=context_window,
             # The root of this turn's sub-agent tree (depth 0): a fresh shared fan
-            # state owns the tree-wide caps, and the run_id stamps any child run's
-            # parent_run_id (docs/SUBAGENT_SPAWNING_PLAN.md). Harmless for personas
-            # that never spawn.
-            tree=TreeState(),
+            # state owns the tree-wide caps AND the shared token budget (sized off the
+            # root's own per-turn cap × the locked spawn multiplier, with the root
+            # reserve carved off), and the run_id stamps any child run's parent_run_id
+            # (docs/SUBAGENT_SPAWNING_PLAN.md). Harmless for personas that never spawn.
+            tree=TreeState.rooted(guardrails.max_cost_tokens),
             run_id=run_id,
         )
         try:

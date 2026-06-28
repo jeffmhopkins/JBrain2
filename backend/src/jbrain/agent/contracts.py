@@ -261,6 +261,46 @@ class UsageEvent(BaseModel):
     context_window: int
 
 
+class SubagentSpawnedEvent(BaseModel):
+    """A sub-agent child launched inside a `spawn_subagent` fan (Wave S2). Emitted as
+    the child starts so the in-chat accordion (Wave S3) can render one row per child.
+    The BACKEND authors these (the model never does); they are read-only live
+    telemetry — EPHEMERAL, never persisted (the durable record is the child
+    `agent_session` + its run-log). `tool_call_id` is injected by the loop at emit so
+    the row anchors under the spawning tool call; `child_id` keys the row and the
+    session-tree surface; `persona` renders as a neutral tag, never a color."""
+
+    type: Literal["subagent_spawned"] = "subagent_spawned"
+    tool_call_id: str = ""
+    child_id: str
+    persona: str
+    label: str
+    depth: int
+
+
+class SubagentProgressEvent(BaseModel):
+    """A status tick for a running child (Wave S2). v1 children run non-streaming
+    (fan-in model A), so `phase` is a coarse working word ("researching") rather than
+    token deltas. Ephemeral, never persisted."""
+
+    type: Literal["subagent_progress"] = "subagent_progress"
+    tool_call_id: str = ""
+    child_id: str
+    phase: str
+
+
+class SubagentDoneEvent(BaseModel):
+    """A child finished (Wave S2): `ok` is a clean, substantive answer; otherwise it
+    errored or degraded (max_steps / empty). The accordion flips the row to green ✓ /
+    rose ✕. Ephemeral, never persisted."""
+
+    type: Literal["subagent_done"] = "subagent_done"
+    tool_call_id: str = ""
+    child_id: str
+    ok: bool
+    stop_reason: str = ""
+
+
 class DoneEvent(BaseModel):
     type: Literal["done"] = "done"
     stop_reason: str
@@ -313,6 +353,9 @@ ChatEvent = Annotated[
     | ToolProgressEvent
     | JobEnqueuedEvent
     | UsageEvent
+    | SubagentSpawnedEvent
+    | SubagentProgressEvent
+    | SubagentDoneEvent
     | DoneEvent
     | VerdictEvent
     | GeneralKnowledgeEvent,

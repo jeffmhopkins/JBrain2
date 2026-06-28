@@ -176,6 +176,13 @@ class ToolContext:
     # preview; a multi-phase tool (analyze_video) sends a `label` per phase. Sync +
     # fire-and-forget; None for the batch path and tools that don't report progress.
     emit_progress: Callable[[int, int, str | None, str | None], None] | None = None
+    # Generalized live-event sink (Wave S2), set only on the streaming path: a tool
+    # whose work is itself a stream of events (the spawn handler's `subagent_*` fan)
+    # pushes whole ChatEvents the loop forwards onto the turn's SSE — drained
+    # concurrently with the awaited tool, exactly like `emit_progress`. The loop
+    # injects the dispatching call's id so the events anchor under it. Sync +
+    # fire-and-forget; None for the batch path and tools that emit no events.
+    emit_event: Callable[[ChatEvent], None] | None = None
 
 
 @dataclass(frozen=True)
@@ -303,6 +310,17 @@ class AgentLoop:
         self._g = guardrails or Guardrails()
         self._task = task
 
+    @staticmethod
+    def _tree_exhausted(tree: TreeState | None, depth: int) -> bool:
+        """Whether this loop must stop on the shared tree budget (Wave S2). The root
+        (depth 0) may spend the whole pool; a child (depth >= 1) stops at the
+        children's pool so the root's reserve survives for synthesis. A turn with no
+        tree, or a tree with no seeded budget, is governed only by its own per-loop
+        Guardrails (returns False)."""
+        if tree is None:
+            return False
+        return tree.root_exhausted() if depth == 0 else tree.children_exhausted()
+
     async def run(
         self,
         *,
@@ -349,18 +367,23 @@ class AgentLoop:
                 max_tokens=TURN_MAX_TOKENS,
                 strength=SYSTEM_STRENGTH,
             )
-            cost += turn.usage.input_tokens + turn.usage.output_tokens
+            spent_call = turn.usage.input_tokens + turn.usage.output_tokens
+            cost += spent_call
+            if tree is not None:
+                tree.charge(spent_call)
             await self._record(
                 idx,
                 "model",
                 "converse",
                 ok=True,
-                cost_tokens=turn.usage.input_tokens + turn.usage.output_tokens,
+                cost_tokens=spent_call,
             )
             idx += 1
 
             if turn.stop_reason != "tool_use" or not turn.tool_calls:
                 return AgentResult(turn.text, "end_turn", step + 1, cost)
+            if self._tree_exhausted(tree, depth):
+                return AgentResult(turn.text, "tree_budget_exhausted", step + 1, cost)
             if cost >= self._g.max_cost_tokens:
                 return AgentResult(turn.text, "budget", step + 1, cost)
 
@@ -454,11 +477,14 @@ class AgentLoop:
         tools = self._registry.schemas_for(scopes, tools_allow)
         allowed = self._registry.allowed_names(scopes, tools_allow)
         messages: list[LlmMessage] = list(conversation)
-        # A tool may report progress mid-execution; the sink enqueues
-        # (step, total, preview, label) tuples that the per-call dispatch below drains
-        # into ToolProgressEvents. Tool calls run one at a time, so every enqueued tick
-        # belongs to the call currently dispatching.
-        progress_q: asyncio.Queue[tuple[int, int, str | None, str | None] | None] = asyncio.Queue()
+        # A tool may emit live items mid-execution onto one queue the per-call dispatch
+        # below drains: a (step, total, preview, label) tuple becomes a ToolProgressEvent
+        # (image gen / multi-phase tools), and a whole ChatEvent (the spawn handler's
+        # `subagent_*` fan) is forwarded as-is. Tool calls run one at a time, so every
+        # enqueued item belongs to the call currently dispatching.
+        live_q: asyncio.Queue[tuple[int, int, str | None, str | None] | ChatEvent | None] = (
+            asyncio.Queue()
+        )
         tool_ctx = ToolContext(
             session=session,
             scopes=scopes,
@@ -470,9 +496,10 @@ class AgentLoop:
             agent_tools=allowed,
             tree=tree,
             run_id=run_id,
-            emit_progress=lambda step, total, preview, label: progress_q.put_nowait(
+            emit_progress=lambda step, total, preview, label: live_q.put_nowait(
                 (step, total, preview, label)
             ),
+            emit_event=live_q.put_nowait,
         )
         cost = 0
         consecutive_errors = 0
@@ -518,13 +545,16 @@ class AgentLoop:
                 ):
                     yield ev
                 return
-            cost += turn.usage.input_tokens + turn.usage.output_tokens
+            spent_call = turn.usage.input_tokens + turn.usage.output_tokens
+            cost += spent_call
+            if tree is not None:
+                tree.charge(spent_call)
             await self._record(
                 idx,
                 "model",
                 "converse",
                 ok=True,
-                cost_tokens=turn.usage.input_tokens + turn.usage.output_tokens,
+                cost_tokens=spent_call,
             )
             idx += 1
             # Live context accounting: this step's prompt is the fullest the context
@@ -540,6 +570,17 @@ class AgentLoop:
             if turn.stop_reason != "tool_use" or not turn.tool_calls:
                 async for ev in self._finish(
                     "end_turn",
+                    answer_parts,
+                    surfaced_sources,
+                    surfaced_entities,
+                    mutated,
+                    general_knowledge_label,
+                ):
+                    yield ev
+                return
+            if self._tree_exhausted(tree, depth):
+                async for ev in self._finish(
+                    "tree_budget_exhausted",
                     answer_parts,
                     surfaced_sources,
                     surfaced_entities,
@@ -571,16 +612,29 @@ class AgentLoop:
                 # by the done-callback ends the drain once the tool returns; tools
                 # that report nothing just yield no progress (unchanged behaviour).
                 task = asyncio.ensure_future(self._dispatch(call, tool_ctx, allowed))
-                # A None sentinel (FIFO after every real tick) ends the drain.
-                task.add_done_callback(lambda _t: progress_q.put_nowait(None))
+                # A None sentinel (FIFO after every real item) ends the drain.
+                task.add_done_callback(lambda _t: live_q.put_nowait(None))
                 while True:
-                    tick = await progress_q.get()
-                    if tick is None:
+                    item = await live_q.get()
+                    if item is None:
                         break
-                    step, total, preview, label = tick
-                    yield ToolProgressEvent(
-                        tool_call_id=call.id, step=step, total=total, preview=preview, label=label
-                    )
+                    if isinstance(item, tuple):
+                        step, total, preview, label = item
+                        yield ToolProgressEvent(
+                            tool_call_id=call.id,
+                            step=step,
+                            total=total,
+                            preview=preview,
+                            label=label,
+                        )
+                    else:
+                        # A whole ChatEvent the handler emitted (subagent_*); anchor it to
+                        # the dispatching call so the UI groups it under this tool.
+                        yield (
+                            item.model_copy(update={"tool_call_id": call.id})
+                            if hasattr(item, "tool_call_id")
+                            else item
+                        )
                 dispatched = await task
                 results.append(dispatched.result)
                 any_error = any_error or dispatched.result.is_error
@@ -787,6 +841,8 @@ class AgentLoop:
             )
             spent = turn.usage.input_tokens + turn.usage.output_tokens
             budget[0] -= spent
+            if tree is not None:
+                tree.charge(spent)
             await self._record(idx, "model", "converse", ok=True, cost_tokens=spent)
             idx += 1
             if context_window is not None:
@@ -813,6 +869,15 @@ class AgentLoop:
                     tuple(entities),
                     mutated,
                     "end_turn",
+                )
+            if self._tree_exhausted(tree, depth):
+                return _BufferedTurn(
+                    tuple(events),
+                    "".join(answer_parts),
+                    tuple(sources),
+                    tuple(entities),
+                    mutated,
+                    "tree_budget_exhausted",
                 )
             if budget[0] <= 0:
                 return _BufferedTurn(

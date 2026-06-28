@@ -35,6 +35,12 @@ import structlog
 from jbrain.agent.agents import SUBAGENT_PERSONAS, agent_for
 from jbrain.agent.briefs import BriefError, render_brief
 from jbrain.agent.clock import now_block
+from jbrain.agent.contracts import (
+    ChatEvent,
+    SubagentDoneEvent,
+    SubagentProgressEvent,
+    SubagentSpawnedEvent,
+)
 from jbrain.agent.loop import AgentLoop, ToolContext, guardrails_for_effort
 from jbrain.agent.runlog import AgentRunLog, StepTally
 from jbrain.agent.session import AgentSessionRepo, read_context
@@ -46,6 +52,17 @@ from jbrain.llm import LlmRouter, UserMessage
 log = structlog.get_logger(__name__)
 
 _TITLE_LEN = 120  # a child session title is a short label; longer is clamped
+# The working word each persona shows while running (the live status word; a neutral
+# tag carries the persona itself — see DESIGN.md "Sub-agent spawning surfaces").
+_PHASE = {"research": "researching", "review": "reviewing", "summarize": "summarizing"}
+
+
+def _emit(ctx: ToolContext, event: ChatEvent) -> None:
+    """Push a live `subagent_*` event onto the parent turn's stream, if this turn has
+    an event sink (the streaming root turn does; a non-streaming child's own fan does
+    not, so a grandchild's events are not surfaced live in v1 — fan-in model A)."""
+    if ctx.emit_event is not None:
+        ctx.emit_event(event)
 
 
 @dataclass(frozen=True)
@@ -165,6 +182,15 @@ class SpawnService:
                 f"this fan of {len(plans)} would exceed the tree limit of "
                 f"{tree.max_total_agents} sub-agents ({tree.agents_spawned} already running)."
             )
+        # --- budget admission floor (Wave S2) --------------------------------
+        # Refuse rather than launch children too small to be useful: the children's
+        # pool (tree budget minus the root's synthesis reserve, minus all spend so
+        # far) must cover a minimum viable slice for each child in the fan.
+        if not tree.can_admit_budget(len(plans)):
+            return _refuse(
+                f"the remaining sub-agent budget (~{tree.children_remaining()} tokens) is too low "
+                f"to launch {len(plans)} children; narrow the fan or let the current work finish."
+            )
         tree.admit(len(plans))
 
         max_parallel = args.get("max_parallel")
@@ -213,6 +239,16 @@ class SpawnService:
                 parent_session_id=ctx.agent_session_id,
                 depth=child_depth,
                 no_memory=True,
+            )
+            _emit(
+                ctx,
+                SubagentSpawnedEvent(
+                    child_id=child.id, persona=persona, label=label, depth=child_depth
+                ),
+            )
+            _emit(
+                ctx,
+                SubagentProgressEvent(child_id=child.id, phase=_PHASE.get(persona, "working")),
             )
             child_run = await self._runlog.start(
                 owner_ctx,
@@ -270,6 +306,7 @@ class SpawnService:
                         step_count=tally.steps,
                         cost_tokens=tally.cost,
                     )
+                _emit(ctx, SubagentDoneEvent(child_id=child.id, ok=False, stop_reason="error"))
                 return _ChildResult(label, persona, f"ERROR: {exc}", ok=False)
             await self._runlog.finish(
                 owner_ctx,
@@ -284,8 +321,13 @@ class SpawnService:
             # degraded child — surfaced as [FAILED] so the parent doesn't synthesize
             # over an empty block as if it were a clean summary. (AgentResult never
             # carries stop_reason="error"; an exception-failed child returns above.)
-            ok = bool(result.text.strip()) and result.stop_reason in ("end_turn", "budget")
+            ok = bool(result.text.strip()) and result.stop_reason in (
+                "end_turn",
+                "budget",
+                "tree_budget_exhausted",
+            )
             summary = result.text.strip() or f"(no answer; stopped: {result.stop_reason})"
+            _emit(ctx, SubagentDoneEvent(child_id=child.id, ok=ok, stop_reason=result.stop_reason))
             return _ChildResult(label, persona, summary, ok=ok)
 
 

@@ -168,6 +168,19 @@ async def test_tree_total_cap_refused(service: SpawnService) -> None:
     assert tree.agents_spawned == 11  # not admitted
 
 
+async def test_budget_admission_floor_refuses_when_pool_too_low(service: SpawnService) -> None:
+    """Wave S2: a fan is refused when the children's pool can't seat a minimum viable
+    slice per child, even if the structural total-agents cap has room."""
+    tree = TreeState(tree_budget=200_000, root_reserve=50_000)  # children pool 150k
+    tree.charge(100_000)  # children_remaining now 50k < 100k floor
+    out = await service.spawn_fan(
+        _ctx(tree=tree), {"tasks": [{"persona": "research", "brief": "x", "label": "L"}]}
+    )
+    assert "refused" in out.lower() and "budget" in out.lower()
+    assert not _FakeLoop.calls
+    assert tree.agents_spawned == 0  # not admitted
+
+
 async def test_depth1_free_text_brief_rejected(service: SpawnService) -> None:
     """At depth>=1 a brief MUST be template-bound — a free-text string is refused
     (the re-spawn laundering hop, decision #7)."""
@@ -263,3 +276,40 @@ async def test_fan_mints_clamped_sandboxed_children_in_order(service: SpawnServi
     assert out.index("Alpha") < out.index("Beta")
     assert "2 ran" in out
     assert len(by_session) == 2
+
+
+async def test_fan_emits_subagent_lifecycle_events(service: SpawnService) -> None:
+    """The fan streams spawned → progress → done per child onto the parent turn's
+    event sink (Wave S2). These are the backend-authored frames the in-chat accordion
+    (Wave S3) will render; ephemeral, never persisted."""
+    captured: list = []
+    ctx = ToolContext(
+        session=SessionContext(principal_id="p1", principal_kind="owner"),
+        scopes=(),
+        agent_session_id="parent-sess",
+        depth=0,
+        agent_tools=JERV_TOOLS,
+        tree=TreeState(),
+        run_id="parent-run",
+        emit_event=captured.append,
+    )
+    await service.spawn_fan(ctx, {"tasks": [{"persona": "research", "brief": "x", "label": "L"}]})
+    assert [e.type for e in captured] == [
+        "subagent_spawned",
+        "subagent_progress",
+        "subagent_done",
+    ]
+    spawned, progress, done = captured
+    assert (spawned.persona, spawned.label, spawned.depth) == ("research", "L", 1)
+    assert spawned.child_id == "sess-1"
+    assert progress.phase == "researching"
+    assert done.ok is True and done.child_id == "sess-1"
+
+
+async def test_fan_without_a_sink_does_not_emit(service: SpawnService) -> None:
+    # A turn with no event sink (the non-streaming child path) simply skips emission —
+    # no crash, so a grandchild fan degrades to summary-only (documented v1 limit).
+    out = await service.spawn_fan(
+        _ctx(), {"tasks": [{"persona": "research", "brief": "x", "label": "L"}]}
+    )
+    assert "research" in out.lower()  # the fan still ran and folded its summary
