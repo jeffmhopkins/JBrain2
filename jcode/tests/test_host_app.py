@@ -4,7 +4,9 @@ lifecycle (survives a pause, freed on delete), and the reverse-proxy route's gua
 
 from __future__ import annotations
 
+import pytest
 from fastapi.testclient import TestClient
+from starlette.websockets import WebSocketDisconnect
 
 from jcode_ctl.app import create_app
 from jcode_ctl.config import Settings
@@ -77,3 +79,28 @@ def test_proxy_running_session_without_a_dev_server_is_502() -> None:
     # Slug resolves, session is running, but nothing is listening on the reserved port →
     # a bad-gateway, not a crash.
     assert c.get(f"/preview/{_slug(url)}/", headers=AUTH).status_code == 502
+
+
+def test_preview_ws_rejects_a_bad_bearer() -> None:
+    # The HMR WS handshake is bearer-authed (the api presents it), like the terminal.
+    c = _host_app()
+    with (
+        pytest.raises(WebSocketDisconnect) as exc,
+        c.websocket_connect(
+            "/preview/deadbeefdeadbeef/", headers={"authorization": "Bearer wrong"}
+        ),
+    ):
+        pass
+    assert exc.value.code == 4401
+
+
+def test_preview_ws_unknown_slug_closes_before_connecting() -> None:
+    c = _host_app()
+    with (
+        pytest.raises(WebSocketDisconnect) as exc,
+        c.websocket_connect(
+            "/preview/deadbeefdeadbeef/", headers={"authorization": "Bearer t"}
+        ),
+    ):
+        pass
+    assert exc.value.code == 4404

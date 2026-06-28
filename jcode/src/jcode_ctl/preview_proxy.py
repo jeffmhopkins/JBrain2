@@ -4,20 +4,24 @@
 The api fronts ``<slug>-preview.<host>`` and forwards here by slug; this resolves the
 slug to the session's reserved dev port and proxies the request, rewriting the Host
 header to ``localhost`` so a host-pinning dev server (Vite 6+, webpack-dev-server)
-accepts it — the same lesson as the cloudflared ``--http-host-header`` fix. HTTP only;
-the HMR WebSocket is Wave P3. The body is buffered rather than streamed — a dev page's
-assets are modest and it keeps the proxy simple and robust; SSE/large downloads are not
-a preview concern.
+accepts it — the cloudflared ``--http-host-header`` lesson. ``proxy_http`` buffers the
+body rather than streaming (a dev page's assets are modest); ``proxy_ws`` bridges the
+HMR live-reload WebSocket to the dev server (Wave P3b).
 """
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import logging
 from collections.abc import Callable
+from typing import Any
 
 import httpx
+import websockets
 from starlette.requests import Request
 from starlette.responses import Response
+from starlette.websockets import WebSocket
 
 _log = logging.getLogger("jcode_ctl.preview")
 
@@ -113,3 +117,82 @@ async def proxy_http(
         status_code=resp.status_code,
         headers=_response_headers(resp),
     )
+
+
+async def _pump_browser_to_dev(
+    browser: WebSocket, dev: Any
+) -> None:  # pragma: no cover - live pump, deploy-only
+    """Browser → dev server until the browser disconnects, preserving binary vs text."""
+    while True:
+        message = await browser.receive()
+        if message.get("type") == "websocket.disconnect":
+            return
+        data = message.get("bytes")
+        if data is not None:
+            await dev.send(data)
+            continue
+        text = message.get("text")
+        if text is not None:
+            await dev.send(text)
+
+
+async def _pump_dev_to_browser(
+    dev: Any, browser: WebSocket
+) -> None:  # pragma: no cover - live pump, deploy-only
+    """Dev server → browser, preserving binary vs text framing (HMR sends text JSON)."""
+    async for message in dev:
+        if isinstance(message, bytes):
+            await browser.send_bytes(message)
+        else:
+            await browser.send_text(message)
+
+
+async def _bridge_ws(
+    browser: WebSocket, dev: Any
+) -> None:  # pragma: no cover - live pump, deploy-only
+    pumps = {
+        asyncio.ensure_future(_pump_browser_to_dev(browser, dev)),
+        asyncio.ensure_future(_pump_dev_to_browser(dev, browser)),
+    }
+    done, pending = await asyncio.wait(pumps, return_when=asyncio.FIRST_COMPLETED)
+    for task in pending:
+        task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await asyncio.gather(*pending, return_exceptions=True)
+    for task in done:
+        task.result()  # surface a real error (not a normal disconnect)
+
+
+async def proxy_ws(  # pragma: no cover - opens a live upstream socket, deploy-only
+    browser: WebSocket,
+    port: int,
+    path: str,
+    query: str,
+) -> None:
+    """Bridge an authenticated browser WebSocket to the dev server's WS at
+    ``ws://127.0.0.1:<port>/<path>`` — the HMR live-reload channel. Connect upstream
+    FIRST so the browser handshake can echo the negotiated subprotocol (Vite speaks
+    ``vite-hmr``); if the dev server has no WS there, close cleanly rather than hang."""
+    # Connect by loopback IP. Unlike the HTTP proxy (which forwards the incoming preview
+    # Host, so must rewrite it to localhost), websockets builds a fresh handshake with
+    # Host `127.0.0.1:<port>` — an IP literal a host-pinning dev server allows. So the
+    # preview host never reaches the dev WS and no Host rewrite is needed.
+    url = f"ws://127.0.0.1:{port}/{path}" + (f"?{query}" if query else "")
+    requested = browser.scope.get("subprotocols") or []
+    _log.debug("preview ws → :%d /%s (subprotocols=%s)", port, path, requested)
+    try:
+        dev = await websockets.connect(
+            url, subprotocols=requested or None, open_timeout=5, max_size=None
+        )
+    except Exception as exc:
+        _log.warning("preview ws: dev server WS unreachable on :%d (%s)", port, exc)
+        await browser.close(code=1011)
+        return
+    try:
+        await browser.accept(subprotocol=dev.subprotocol)
+        await _bridge_ws(browser, dev)
+    finally:
+        with contextlib.suppress(Exception):
+            await dev.close()
+        with contextlib.suppress(Exception):
+            await browser.close()

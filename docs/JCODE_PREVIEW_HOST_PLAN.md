@@ -201,11 +201,16 @@ mock gate** before implementation.
   could break the live proxy). Tests: forward + bearer-add + credential-strip + query
   preserve, malformed-slug 404, unconfigured 404, control-server-unreachable 502.
 
-- **Wave P3b — HMR live-reload WebSocket** *(jcode + api; on-box-verification-heavy).*
-  Add WS proxying both hops — the control server bridges `ws → 127.0.0.1:<port>` and the
-  api bridges `browser ws → control server` (mirroring the terminal WS proxy) — so Vite/
-  webpack live-reload works. Deferred from P3a because the page renders without it and a
-  WS handshake is the part most needing a real dev server to verify.
+- **Wave P3b — HMR live-reload WebSocket** *(jcode + api; landed; live pump
+  on-box-verified).* WS proxying both hops, mirroring the terminal proxy: the control
+  server's `proxy_ws` bridges `browser ws → ws://127.0.0.1:<port>`, and the api's
+  `_proxy_ws` bridges `browser ws → control server` carrying the api↔jcode bearer. Both
+  connect upstream FIRST and echo the negotiated **subprotocol** (Vite speaks
+  `vite-hmr`); the api WS shares the HTTP route's **slug + origin gate** (Host must be
+  `<slug>-preview.<base>`), and the control-server WS is **bearer-authed** on the
+  handshake like the terminal. Guards (bad bearer / wrong origin / unknown slug → 4401/
+  4404 before any upstream connect) are unit-tested; the live byte pump is
+  `# pragma: no cover` (deploy-verified, as the terminal pump is).
 
 - **Wave P4 — the Preview tab UX** *(GUI; **three-mock gate FIRST**).* Rework
   `JcodeSessionScreen`'s Preview tab for per-session host previews: no "open
