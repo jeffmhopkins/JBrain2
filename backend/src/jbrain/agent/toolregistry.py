@@ -26,6 +26,14 @@ from jbrain.llm import LlmTool
 # is the loop's concern (P4.4).
 ToolHandler = Callable[..., Awaitable[Any]]
 
+# Tools that must NEVER be absorbed by the `allow=None` knowledge-agent wildcard,
+# independent of their permission class — the spawn primitive is opt-in per agent
+# (jerv + the research/review children) and must never fall to the curator
+# (docs/SUBAGENT_SPAWNING_PLAN.md, review B3). The name is the single source of
+# truth; `agents.SPAWN_TOOL` matches it (asserted in tests, kept here to avoid an
+# agents→toolregistry import cycle).
+NEVER_DEFAULT: frozenset[str] = frozenset({"spawn_subagent"})
+
 
 class ToolRegistryError(ValueError):
     """A sidecar lacks a handler, a handler lacks a sidecar, or a tool name is
@@ -106,6 +114,11 @@ class ToolRegistry:
             return False
         # The web class is opt-in: never admitted to the default knowledge agent.
         if allow is None and tool.spec.permission == "web":
+            return False
+        # Never-default tools (spawn_subagent) are excluded from the `allow=None`
+        # wildcard even were they not web-classed, so curator's tools=None can never
+        # absorb the spawn primitive (docs/SUBAGENT_SPAWNING_PLAN.md, review B3).
+        if allow is None and tool.name in NEVER_DEFAULT:
             return False
         return _visible(tool.spec.domains, scopes)
 

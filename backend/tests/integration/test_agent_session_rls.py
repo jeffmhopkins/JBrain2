@@ -242,6 +242,131 @@ async def test_set_status_archives_and_is_owner_only(maker: async_sessionmaker) 
     assert (await repo.get(owner, info.id)).status == "active"  # type: ignore[union-attr]
 
 
+async def test_subagent_lineage_round_trips_and_is_owner_only(maker: async_sessionmaker) -> None:
+    """Migration 0105: a spawned child carries parent_session_id/depth/no_memory,
+    which read back; a root defaults cleanly (parent=None, depth=0, no_memory=False).
+    The lineage columns are owner-only metadata (m3) — a non-owner sees no rows."""
+    owner = await _owner_ctx(maker)
+    repo = AgentSessionRepo(maker)
+
+    root = await repo.create(owner, domain_scopes=[], title="ask jerv", agent="jerv")
+    assert root.parent_session_id is None
+    assert root.depth == 0
+    assert root.no_memory is False
+
+    child = await repo.create(
+        owner,
+        domain_scopes=[],
+        title="researcher",
+        agent="research",
+        parent_session_id=root.id,
+        depth=1,
+        no_memory=True,
+    )
+    read = await repo.get(owner, child.id)
+    assert read is not None
+    assert read.parent_session_id == root.id
+    assert read.depth == 1
+    assert read.no_memory is True
+
+    # Owner-only: a non-owner sees neither the parent nor the child.
+    token = SessionContext(principal_kind="capability_token", domain_scopes=())
+    assert await repo.list(token) == []
+
+
+async def test_parent_delete_cascades_subagent_children(maker: async_sessionmaker) -> None:
+    """parent_session_id is ON DELETE CASCADE — deleting a parent takes its children
+    with it (children are sub-state of the parent turn, never orphaned top-level)."""
+    owner = await _owner_ctx(maker)
+    repo = AgentSessionRepo(maker)
+    root = await repo.create(owner, domain_scopes=[], title="parent", agent="jerv")
+    child = await repo.create(
+        owner, domain_scopes=[], title="child", agent="research", parent_session_id=root.id, depth=1
+    )
+    await repo.delete(owner, root.id)
+    assert await repo.get(owner, child.id) is None
+
+
+async def test_list_reports_subagent_count_and_parent_link(maker: async_sessionmaker) -> None:
+    """The Wave-S4 nested-rail metadata: a parent's list row carries how many direct
+    children it spawned, and each child carries its parent_session_id (so the PWA can
+    nest it and drop it from top-level bucketing)."""
+    owner = await _owner_ctx(maker)
+    repo = AgentSessionRepo(maker)
+    root = await repo.create(owner, domain_scopes=[], title="parent", agent="jerv")
+    for label in ("a", "b"):
+        await repo.create(
+            owner,
+            domain_scopes=[],
+            title=label,
+            agent="research",
+            parent_session_id=root.id,
+            depth=1,
+        )
+    by_id = {s.id: s for s in await repo.list(owner)}
+    assert by_id[root.id].subagent_count == 2
+    assert by_id[root.id].parent_session_id is None
+    children = [s for s in by_id.values() if s.parent_session_id == root.id]
+    assert len(children) == 2
+    assert all(c.subagent_count == 0 for c in children)
+
+
+async def test_depth_check_rejects_out_of_range(maker: async_sessionmaker) -> None:
+    """The depth CHECK (0..2) makes the two-sub-agent-layer cap structural at the
+    table — a depth past the leaf can never be written, with no model cooperation."""
+    owner = await _owner_ctx(maker)
+    with pytest.raises((ProgrammingError, IntegrityError)):
+        async with scoped_session(maker, owner) as session:
+            await session.execute(
+                text(
+                    "INSERT INTO app.agent_sessions (id, principal_id, domain_scopes, agent, depth)"
+                    " VALUES (gen_random_uuid(), :pid, '{}', 'research', 3)"
+                ),
+                {"pid": owner.principal_id},
+            )
+
+
+async def test_runs_kind_admits_subagent_with_parent(maker: async_sessionmaker) -> None:
+    """Migration 0105 widens the runs.kind CHECK to admit 'subagent'; a child run
+    persists with parent_run_id set for the tree cost rollup."""
+    owner = await _owner_ctx(maker)
+    repo = AgentSessionRepo(maker)
+    runlog = AgentRunLog(maker)
+    root = await repo.create(owner, domain_scopes=[], title="parent", agent="jerv")
+    root_run = await runlog.start(owner, session_id=root.id, prompt_version="jerv-v1")
+    child = await repo.create(
+        owner, domain_scopes=[], title="child", agent="research", parent_session_id=root.id, depth=1
+    )
+    child_run = await runlog.start(
+        owner,
+        session_id=child.id,
+        prompt_version="research-v1",
+        kind="subagent",
+        parent_run_id=root_run,
+    )
+    async with scoped_session(maker, owner) as session:
+        row = (
+            await session.execute(
+                text("SELECT kind, parent_run_id FROM app.runs WHERE id = :id"), {"id": child_run}
+            )
+        ).one()
+    assert row.kind == "subagent"
+    assert str(row.parent_run_id) == root_run
+
+
+async def test_runs_kind_rejects_unknown_value(maker: async_sessionmaker) -> None:
+    """The widened CHECK is still closed — a bogus kind is refused at the DB."""
+    owner = await _owner_ctx(maker)
+    with pytest.raises((ProgrammingError, IntegrityError)):
+        async with scoped_session(maker, owner) as session:
+            await session.execute(
+                text(
+                    "INSERT INTO app.runs (id, kind, ran_as) "
+                    "VALUES (gen_random_uuid(), 'rogue', 'scoped')"
+                )
+            )
+
+
 async def test_delete_cascades_runs_and_transcript_and_is_owner_only(
     maker: async_sessionmaker,
 ) -> None:

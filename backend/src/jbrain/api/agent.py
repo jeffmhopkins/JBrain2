@@ -26,7 +26,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, Field
 
-from jbrain.agent.agents import agent_for
+from jbrain.agent.agents import SPAWN_TOOL, agent_for
 from jbrain.agent.attachment_content import MAX_ATTACHMENTS_PER_TURN, build_attachment_content
 from jbrain.agent.attachments import TurnAttachmentRepo, attachment_scopes
 from jbrain.agent.clock import now_block
@@ -38,6 +38,7 @@ from jbrain.agent.titler import SessionTitler
 from jbrain.agent.toolregistry import ToolRegistry
 from jbrain.agent.transcript_accumulator import TranscriptAccumulator
 from jbrain.agent.transcript_store import AgentTranscript
+from jbrain.agent.tree import TreeState
 from jbrain.api.deps import owner_only
 from jbrain.api.notes import ctx_for
 from jbrain.api.settings import get_settings_store
@@ -422,11 +423,12 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
     # serves). Resolved once here and passed to the loop, which stamps it on each
     # UsageEvent so the meter never has to know the route.
     context_window = await router.context_window("agent.turn")
+    guardrails = guardrails_for_effort(effort, scale=profile.budget_multiplier)
     loop = AgentLoop(
         router,
         get_agent_registry(request),
         recorder=tally,
-        guardrails=guardrails_for_effort(effort, scale=profile.budget_multiplier),
+        guardrails=guardrails,
     )
     read_ctx = read_context(principal.id, read_scopes)
     # The turn's attachments are fetched under the SESSION's own scopes PLUS the domain
@@ -475,6 +477,13 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
     # Reflexion mode gate (Track R): default verify-and-annotate; this opts into
     # the buffer-then-retry path (off by default — a spinner-latency tradeoff).
     buffer_retry = await get_settings_store(request).reflexion_buffer_retry(owner_ctx)
+    # ...but never for a spawner (jerv): buffer-retry re-produces the turn, which would
+    # re-dispatch spawn_subagent and re-run the ENTIRE fan — new child sessions + token
+    # spend — on each retry. That is the "multiply model chains across the fan" failure
+    # the reflexion-off-for-children rule prevents (docs/SUBAGENT_SPAWNING_PLAN.md M6),
+    # just relocated to the parent layer. Post-hoc verify-and-annotate still applies.
+    if profile.tools is not None and SPAWN_TOOL in profile.tools:
+        buffer_retry = False
     # The PWA's live position for this turn (both coords or nothing), reused by the
     # location tool to answer from the phone's current spot. When a turn carries a
     # fix we cache it as the owner's last-known position; when it carries none we fall
@@ -520,6 +529,13 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
             here=here,
             here_as_of=here_as_of,
             context_window=context_window,
+            # The root of this turn's sub-agent tree (depth 0): a fresh shared fan
+            # state owns the tree-wide caps AND the shared token budget (sized off the
+            # root's own per-turn cap × the locked spawn multiplier, with the root
+            # reserve carved off), and the run_id stamps any child run's parent_run_id
+            # (docs/SUBAGENT_SPAWNING_PLAN.md). Harmless for personas that never spawn.
+            tree=TreeState.rooted(guardrails.max_cost_tokens),
+            run_id=run_id,
         )
         try:
             # A long blocking tool may stream nothing for minutes; the pull is never
@@ -535,8 +551,11 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
                 # NOT recorded — Loop 1 is ephemeral and writes nothing durable.
                 live.emit(f"data: {event.model_dump_json()}\n\n".encode())
             if status == "done":
-                # Episodic memory is owner-data: only a knowledge-base agent appends one.
-                if profile.reads_knowledge_base:
+                # Episodic memory is owner-data: only a knowledge-base agent appends
+                # one, and never a `no_memory` sandbox session (the sub-agent flag —
+                # defense in depth so the structural no-memory guarantee holds even if
+                # a child session is ever driven through this path).
+                if profile.reads_knowledge_base and not session.no_memory:
                     await _record_episode(
                         request, read_ctx, session, run_id, body.message, acc.answer
                     )

@@ -14,10 +14,11 @@ from datetime import UTC, datetime
 
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy.orm import aliased
 
 from jbrain.agent.contracts import DEFAULT_OWNER_POLICY, PermissionClass, PolicyOutcome
 from jbrain.db.session import SessionContext, scoped_session
-from jbrain.models.agent import AgentSession, AgentTurn
+from jbrain.models.agent import AgentSession, AgentTurn, Run
 from jbrain.models.proposals import Proposal
 
 _PREVIEW_LEN = 140  # the resume hint on a chat card; longer is clamped in the UI too
@@ -35,12 +36,24 @@ class AgentSessionInfo:
     # The selected agent persona (docs/ASSISTANT.md "Agent selection"). Defaulted so
     # existing callers/tests that predate agent selection resolve to the curator.
     agent: str = "curator"
+    # Sub-agent lineage (docs/SUBAGENT_SPAWNING_PLAN.md). A root chat leaves these at
+    # their defaults; a spawned child carries its parent + depth + sandbox flag.
+    parent_session_id: str | None = None
+    depth: int = 0
+    no_memory: bool = False
     # List-view metadata (the Chats cards). Populated by `list`; the single-row
     # `get`/`create` paths leave them at their resting defaults — the chat
     # endpoint doesn't need them.
     turn_count: int = 0
     preview: str = ""
     staged_count: int = 0
+    # How many direct sub-agent children this chat spawned (the nested-rail count,
+    # docs/SUBAGENT_SPAWNING_PLAN.md Wave S4). 0 for a chat that never fanned out.
+    subagent_count: int = 0
+    # The latest run's status (running | done | error) — lets the nested rail show a
+    # child's settled outcome (a failed child renders rose ✕) and the parent roll-up
+    # its failed count. None for a chat that has never run.
+    last_run_status: str | None = None
 
 
 def _info(
@@ -49,12 +62,17 @@ def _info(
     turn_count: int = 0,
     preview: str = "",
     staged_count: int = 0,
+    subagent_count: int = 0,
+    last_run_status: str | None = None,
 ) -> AgentSessionInfo:
     return AgentSessionInfo(
         id=str(row.id),
         title=row.title,
         status=row.status,
         agent=row.agent,
+        parent_session_id=str(row.parent_session_id) if row.parent_session_id else None,
+        depth=row.depth,
+        no_memory=row.no_memory,
         domain_scopes=tuple(row.domain_scopes),
         subject_ids=tuple(str(s) for s in row.subject_ids),
         created_at=row.created_at,
@@ -62,6 +80,8 @@ def _info(
         turn_count=turn_count,
         preview=preview,
         staged_count=staged_count,
+        subagent_count=subagent_count,
+        last_run_status=last_run_status,
     )
 
 
@@ -103,12 +123,18 @@ class AgentSessionRepo:
         subject_ids: Sequence[str] = (),
         title: str = "",
         agent: str = "curator",
+        parent_session_id: str | None = None,
+        depth: int = 0,
+        no_memory: bool = False,
     ) -> AgentSessionInfo:
         async with scoped_session(self._maker, ctx) as session:
             row = AgentSession(
                 principal_id=uuid.UUID(ctx.principal_id),
                 title=title,
                 agent=agent,
+                parent_session_id=uuid.UUID(parent_session_id) if parent_session_id else None,
+                depth=depth,
+                no_memory=no_memory,
                 domain_scopes=list(domain_scopes),
                 subject_ids=[uuid.UUID(s) for s in subject_ids],
             )
@@ -140,15 +166,40 @@ class AgentSessionRepo:
             .where(Proposal.session_id == AgentSession.id, Proposal.status == "staged")
             .scalar_subquery()
         )
+        # Direct sub-agent children, for the nested-rail count (Wave S4). A self-join
+        # via an alias so the inner count correlates on the outer row's id.
+        child = aliased(AgentSession)
+        subagent_count = (
+            select(func.count())
+            .select_from(child)
+            .where(child.parent_session_id == AgentSession.id)
+            .scalar_subquery()
+        )
+        # The latest run's status, so the nested rail can show a child's settled
+        # outcome (done vs error) and the parent its failed roll-up.
+        last_run_status = (
+            select(Run.status)
+            .where(Run.session_id == AgentSession.id)
+            .order_by(Run.started_at.desc())
+            .limit(1)
+            .scalar_subquery()
+        )
         async with scoped_session(self._maker, ctx) as session:
             rows = await session.execute(
-                select(AgentSession, turn_count, preview, staged_count).order_by(
-                    AgentSession.last_active_at.desc()
-                )
+                select(
+                    AgentSession, turn_count, preview, staged_count, subagent_count, last_run_status
+                ).order_by(AgentSession.last_active_at.desc())
             )
             return [
-                _info(row, turn_count=tc, preview=pv or "", staged_count=sc)
-                for row, tc, pv, sc in rows
+                _info(
+                    row,
+                    turn_count=tc,
+                    preview=pv or "",
+                    staged_count=sc,
+                    subagent_count=kc,
+                    last_run_status=rs,
+                )
+                for row, tc, pv, sc, kc, rs in rows
             ]
 
     async def get(self, ctx: SessionContext, session_id: str) -> AgentSessionInfo | None:

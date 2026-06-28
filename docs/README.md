@@ -75,6 +75,16 @@ Phase-5 build record is `archive/PHASE5_COMPLETION_PLAN.md`.
   bridge so the sandbox stays isolated. Concurrent previews via per-session ports;
   verbose debug logging is a per-wave deliverable. Wave P0 (verbose-logging substrate) is
   landed; the five open decisions await owner sign-off before Wave P1.
+- `SUBAGENT_SPAWNING_PLAN.md` — the **sub-agent spawning** build plan (scheduled,
+  design-complete): `jerv` fans out web-sandboxed research/review/summarize
+  sub-agents (parent-authored brief as data, child ⊆ parent, depth ≤ 2, direct
+  caps-bounded fan, shared tree budget, live in-chat panel + nested session tree).
+  Decomposed into waves **S1–S4** (spawn core + structural enforcement → loop
+  ChatEvent channel + tree budget → live chat surface → session-tree surface).
+  Both GUI layouts owner-approved; survived a three-lens adversarial review
+  (record: `archive/SUBAGENT_SPAWNING_REVIEW.md`). Tree budget locked at 1.5× the
+  per-turn jerv limit; remaining derived cap numbers tuned at S2. Open: the S3
+  non-happy-state mock re-review.
 - `JCODE_SESSION_ISOLATION_PLAN.md` — the **per-session network namespace** design
   (**PARKED** after the Wave P1 spike): give each jcode session its own `lo` so every
   session can bind the same port. The on-box spike confirmed namespace _creation_ works

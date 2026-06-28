@@ -33,3 +33,7 @@ given a roadmap slot in `../ROADMAP.md`, and promoted out of this folder.
   tool, and a MusicScreen — mirroring the shipped image stack. Backend (Waves M0–M3) +
   frontend (M4), with M0 a blocking on-box host-validation spike. Interactive mock:
   `../mocks/music-gen-live/live-music-tool-card.html`.
+
+_(`SUBAGENT_SPAWNING_PLAN.md` was promoted out of the icebox — it is now the
+scheduled build plan `../SUBAGENT_SPAWNING_PLAN.md`, listed under "Active plan" in
+`../README.md`.)_

@@ -33,14 +33,26 @@ class AgentRunLog:
     def __init__(self, maker: async_sessionmaker[AsyncSession]):
         self._maker = maker
 
-    async def start(self, ctx: SessionContext, *, session_id: str, prompt_version: str) -> str:
+    async def start(
+        self,
+        ctx: SessionContext,
+        *,
+        session_id: str,
+        prompt_version: str,
+        kind: str = "agent",
+        parent_run_id: str | None = None,
+    ) -> str:
         async with scoped_session(self._maker, ctx) as session:
             # kind='agent' is explicit so the shared run log's CHECK admits this row
-            # (it requires session_id + prompt_version for agent runs).
+            # (it requires session_id + prompt_version for agent runs). A spawned
+            # child run is kind='subagent' with parent_run_id set for the tree cost
+            # rollup (docs/SUBAGENT_SPAWNING_PLAN.md); it still carries its own
+            # session + prompt version.
             run = Run(
-                kind="agent",
+                kind=kind,
                 session_id=uuid.UUID(session_id),
                 prompt_version=prompt_version,
+                parent_run_id=uuid.UUID(parent_run_id) if parent_run_id else None,
             )
             session.add(run)
             await session.flush()

@@ -43,6 +43,13 @@ _PROMPTS = Path(__file__).parent / "prompts"
 # agent opts in explicitly and the registry's web-tool gate has a single source.
 WEB_TOOLS = frozenset({"web_search", "web_fetch"})
 
+# The spawn primitive (docs/SUBAGENT_SPAWNING_PLAN.md): the single tool jerv — and,
+# for nesting, the research/review children — calls to launch a bounded fan of
+# web-sandboxed children. It is `web`-gated (it drives web-class egress through its
+# children) and is in the registry's NEVER_DEFAULT set, so curator's `tools=None`
+# wildcard can never absorb it (review B3).
+SPAWN_TOOL = "spawn_subagent"
+
 # jerv's full allowlist: the internet tools, the dataless clock read, the
 # owner-approved coarse location read, the weather + hurricane lookups, the local
 # image-generation tools, the local audio transcription, the local video analysis,
@@ -74,6 +81,8 @@ JERV_TOOLS = WEB_TOOLS | frozenset(
         "transcribe",
         "analyze_video",
         "query_server_metrics",
+        # The spawn primitive — jerv is the spawner (docs/SUBAGENT_SPAWNING_PLAN.md).
+        SPAWN_TOOL,
     }
 )
 
@@ -107,6 +116,23 @@ MEMORY_TOOLS = frozenset({"archivist_memory_read", "archivist_memory_write"})
 # date-by-date filing is the heart of the job. Every turn already prepends today's date
 # (now_block); the tool covers an explicit fresh / other-zone read.
 ARCHIVIST_TOOLS = GMAIL_TOOLS | MEMORY_TOOLS | frozenset({"current_time"})
+
+# The closed set of spawnable child personas. `spawn_subagent` validates a requested
+# persona against this set BEFORE calling `agent_for` — which falls back to the
+# KB-capable curator on an unknown name — so a malformed or injected persona is
+# refused, never resolved to a knowledge agent.
+SUBAGENT_PERSONAS = frozenset({"research", "review", "summarize"})
+
+# research / review children: the internet tools, the dataless clock, and the spawn
+# primitive (so a child may itself fan a grandchild — template-bound at depth >= 1).
+# Deliberately NO `current_location` (M2): the location read is never in a child
+# persona even though the parent jerv holds it. This allowlist is a ceiling — a
+# child's effective tools are still clamped to the parent's at dispatch.
+RESEARCH_TOOLS = WEB_TOOLS | frozenset({"current_time", SPAWN_TOOL})
+REVIEW_TOOLS = RESEARCH_TOOLS
+# summarize: a pure transform — no tools at all, so it cannot reach the web and
+# cannot spawn.
+SUMMARIZE_TOOLS: frozenset[str] = frozenset()
 
 DEFAULT_AGENT = "curator"
 
@@ -174,6 +200,32 @@ AGENTS: dict[str, AgentProfile] = {
         tools=ARCHIVIST_TOOLS,
         reads_knowledge_base=False,
         budget_multiplier=4,
+    ),
+    # The three web-sandboxed sub-agent personas jerv spawns (no KB, no location, no
+    # memory; their turns are never episodically appended because reads_knowledge_base
+    # is False and the spawn helper never records an episode). The tree budget (Wave
+    # S2) governs the fan as a whole; each child's own loop runs a focused chain (2x
+    # for the web-reading research/review, 1x for the tool-less summarize transform).
+    "research": _profile(
+        "research",
+        "research.prompt",
+        tools=RESEARCH_TOOLS,
+        reads_knowledge_base=False,
+        budget_multiplier=2,
+    ),
+    "review": _profile(
+        "review",
+        "review.prompt",
+        tools=REVIEW_TOOLS,
+        reads_knowledge_base=False,
+        budget_multiplier=2,
+    ),
+    "summarize": _profile(
+        "summarize",
+        "summarize.prompt",
+        tools=SUMMARIZE_TOOLS,
+        reads_knowledge_base=False,
+        budget_multiplier=1,
     ),
 }
 

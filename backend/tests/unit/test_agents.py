@@ -11,14 +11,22 @@ from jbrain.agent.agents import (
     GMAIL_TOOLS,
     JERV_TOOLS,
     MEMORY_TOOLS,
+    RESEARCH_TOOLS,
+    REVIEW_TOOLS,
+    SPAWN_TOOL,
+    SUBAGENT_PERSONAS,
+    SUMMARIZE_TOOLS,
     WEB_TOOLS,
     agent_for,
     is_agent,
 )
 
 
-def test_four_agents_are_defined() -> None:
-    assert frozenset({"curator", "teacher", "jerv", "archivist"}) == AGENT_NAMES
+def test_seven_agents_are_defined() -> None:
+    assert (
+        frozenset({"curator", "teacher", "jerv", "archivist", "research", "review", "summarize"})
+        == AGENT_NAMES
+    )
     assert DEFAULT_AGENT == "curator"
 
 
@@ -59,9 +67,11 @@ def test_jerv_is_a_sandboxed_web_chatbot() -> None:
             "transcribe",
             "analyze_video",
             "query_server_metrics",
+            "spawn_subagent",
         }
     )
     assert jerv.reads_knowledge_base is False
+    assert jerv.tools is not None and SPAWN_TOOL in jerv.tools  # jerv is the spawner
 
 
 def test_image_tools_are_jerv_only() -> None:
@@ -119,6 +129,32 @@ def test_archivist_tools_are_archivist_only() -> None:
     assert AGENTS["teacher"].tools == frozenset()
 
 
+def test_subagent_personas_are_web_sandboxed_and_kb_less() -> None:
+    """research/review read the web + clock + may spawn (template-bound at depth>=1);
+    summarize is a pure transform with no tools; none reads the knowledge base, and
+    none holds `current_location` (M2 — the location read is never in a child)."""
+    research, review, summarize = (AGENTS["research"], AGENTS["review"], AGENTS["summarize"])
+    assert research.tools == RESEARCH_TOOLS == WEB_TOOLS | {"current_time", SPAWN_TOOL}
+    assert review.tools == REVIEW_TOOLS == RESEARCH_TOOLS
+    assert summarize.tools == SUMMARIZE_TOOLS == frozenset()
+    for p in (research, review, summarize):
+        assert p.reads_knowledge_base is False
+        assert "current_location" not in (p.tools or frozenset())
+    # summarize cannot spawn (it holds no tools at all).
+    assert SPAWN_TOOL not in (summarize.tools or frozenset())
+
+
+def test_spawn_set_matches_the_subagent_personas() -> None:
+    """The closed spawn set is exactly the three child personas — `spawn_subagent`
+    validates against it BEFORE agent_for (which would otherwise resolve an unknown
+    name to the KB-capable curator)."""
+    assert frozenset({"research", "review", "summarize"}) == SUBAGENT_PERSONAS
+    assert SUBAGENT_PERSONAS <= AGENT_NAMES
+    # The spawnable personas are all KB-less sandboxes — never the curator.
+    assert "curator" not in SUBAGENT_PERSONAS
+    assert all(AGENTS[p].reads_knowledge_base is False for p in SUBAGENT_PERSONAS)
+
+
 def test_agent_for_falls_back_to_curator() -> None:
     assert agent_for("jerv").name == "jerv"
     # An unknown/old/malformed stored value never breaks a turn — it runs as curator.
@@ -145,12 +181,24 @@ def test_persona_prompts_pinned_to_their_versions() -> None:
             "e457d7504be94746132de7cc0c7b50fa1567867b3573a64ddfe6030b45909b16",
         ),
         "jerv": (
-            "agent-jerv-v16",
-            "ccda18ba33b3df83522d415f41f36492ae7a187d760487e5be15d585587fe1c0",
+            "agent-jerv-v17",
+            "8bb00901d390d3ae277aa9a77aac1e129869018295773b610b625b9f117fd2e4",
         ),
         "archivist": (
             "agent-archivist-v6",
             "19b557040a985b4b1c13b9b3a38e2c6a8e0fd06611a84e7341e6497f8a14b9a0",
+        ),
+        "research": (
+            "agent-research-v1",
+            "245f9b884c3c8130c2a47ebc83c26730b88d1f42cd50b0cfe51aa84fa3cbe6a9",
+        ),
+        "review": (
+            "agent-review-v1",
+            "af8bab6af76414588fde6d1d14cd37ee4c7bbfb3bd6b395240bc1692a7dbdb27",
+        ),
+        "summarize": (
+            "agent-summarize-v1",
+            "fc169f821c8aa2031ca710f143c1307c8fc4803895eeef51e4a7426144ddbac0",
         ),
     }
     assert set(pins) == AGENT_NAMES

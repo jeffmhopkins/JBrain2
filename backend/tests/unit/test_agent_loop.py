@@ -14,6 +14,7 @@ from jbrain.agent.contracts import (
     NoteSource,
     ProposalRef,
     ReasoningDelta,
+    SubagentSpawnedEvent,
     TextDelta,
     ToolCallEvent,
     ToolProgressEvent,
@@ -37,6 +38,7 @@ from jbrain.agent.loop import (
 )
 from jbrain.agent.toolfile import ToolFile
 from jbrain.agent.toolregistry import RegisteredTool, ToolHandler, ToolRegistry
+from jbrain.agent.tree import TreeState
 from jbrain.db.session import SessionContext
 from jbrain.llm import (
     FakeLlmClient,
@@ -1072,3 +1074,134 @@ async def test_buffer_retry_graph_answer_grounds_against_entity_aliases() -> Non
     )
     assert not any(isinstance(e, VerdictEvent) for e in events)
     assert len(fake.converse_calls) == 2  # produced once, no retry
+
+
+# --- shared tree budget (Wave S2) -------------------------------------------
+
+
+async def test_run_charges_the_tree_and_a_child_stops_on_the_children_pool() -> None:
+    # A child (depth >= 1) stops when total tree spend reaches the children's pool,
+    # leaving the root reserve intact. Each model call here costs 20 tokens.
+    forever = [LlmTurn("", (ToolCall("c", "search", {}),), "tool_use", LlmUsage(10, 10))]
+    router, _ = router_with(forever)
+    loop = AgentLoop(router, registry_with(make_tool("search", search)))
+    tree = TreeState(tree_budget=100, root_reserve=25)  # children pool = 75
+    result = await loop.run(
+        session=OWNER,
+        scopes=(),
+        conversation=[UserMessage(text="hi")],
+        depth=1,
+        tree=tree,
+    )
+    assert result.stop_reason == "tree_budget_exhausted"
+    assert tree.spent >= 75  # the children's pool
+    assert tree.spent < 100  # but the child never touched the root's reserve
+
+
+async def test_root_spends_the_whole_pool_including_its_reserve() -> None:
+    # The root (depth 0) may spend the entire budget — only it can dip into the
+    # reserve, so it can always run far enough to synthesize.
+    forever = [LlmTurn("", (ToolCall("c", "search", {}),), "tool_use", LlmUsage(10, 10))]
+    router, _ = router_with(forever)
+    loop = AgentLoop(router, registry_with(make_tool("search", search)))
+    tree = TreeState(tree_budget=100, root_reserve=25)
+    result = await loop.run(
+        session=OWNER,
+        scopes=(),
+        conversation=[UserMessage(text="hi")],
+        depth=0,
+        tree=tree,
+    )
+    assert result.stop_reason == "tree_budget_exhausted"
+    assert tree.spent >= 100  # spent the reserve too
+
+
+async def test_a_clean_end_turn_still_charges_the_tree_but_does_not_trip_the_budget() -> None:
+    # end_turn is decided before the budget check, so a turn that finishes naturally
+    # returns end_turn even with a tiny pool — and its one call is still charged.
+    router, _ = router_with([LlmTurn("answer", (), "end_turn", LlmUsage(5, 5))])
+    loop = AgentLoop(router, registry_with(make_tool("search", search)))
+    tree = TreeState(tree_budget=4, root_reserve=1)
+    result = await loop.run(
+        session=OWNER,
+        scopes=(),
+        conversation=[UserMessage(text="hi")],
+        depth=1,
+        tree=tree,
+    )
+    assert result.stop_reason == "end_turn"
+    assert tree.spent == 10
+
+
+async def test_run_stream_charges_the_tree_and_stops_on_budget() -> None:
+    # The streaming (root) path shares the same accounting as run().
+    forever = [LlmTurn("", (ToolCall("c", "search", {}),), "tool_use", LlmUsage(10, 10))]
+    router, _ = stream_router_with(forever)
+    loop = AgentLoop(router, registry_with(make_tool("search", search)))
+    tree = TreeState(tree_budget=100, root_reserve=25)
+    events = [
+        event
+        async for event in loop.run_stream(
+            session=OWNER,
+            scopes=(),
+            conversation=[UserMessage(text="hi")],
+            depth=0,
+            tree=tree,
+        )
+    ]
+    done = [e for e in events if isinstance(e, DoneEvent)]
+    assert done and done[-1].stop_reason == "tree_budget_exhausted"
+    assert tree.spent >= 100
+
+
+# --- generalized live-event channel (Wave S2) -------------------------------
+
+
+async def _event_emitting_tool(arguments: dict, ctx: ToolContext) -> str:
+    # A tool whose work is itself a stream of events (the spawn handler's pattern)
+    # pushes whole ChatEvents onto the turn's live channel.
+    assert ctx.emit_event is not None
+    ctx.emit_event(SubagentSpawnedEvent(child_id="ch1", persona="research", label="L", depth=1))
+    return "fanned out"
+
+
+async def test_run_stream_forwards_handler_events_with_the_call_id_injected() -> None:
+    turns = [
+        LlmTurn("", (ToolCall("c1", "fan", {}),), "tool_use", LlmUsage(1, 1)),
+        LlmTurn("done", (), "end_turn", LlmUsage(1, 1)),
+    ]
+    router, _ = stream_router_with(turns)
+    loop = AgentLoop(router, registry_with(make_tool("fan", _event_emitting_tool)))
+    events = [
+        event
+        async for event in loop.run_stream(
+            session=OWNER, scopes=(), conversation=[UserMessage(text="go")]
+        )
+    ]
+    spawned = [e for e in events if isinstance(e, SubagentSpawnedEvent)]
+    assert len(spawned) == 1
+    assert spawned[0].child_id == "ch1"
+    assert spawned[0].tool_call_id == "c1"  # the loop anchored it to the dispatching call
+    # It streamed live — before the tool's own result event.
+    s_idx = next(i for i, e in enumerate(events) if isinstance(e, SubagentSpawnedEvent))
+    r_idx = next(i for i, e in enumerate(events) if isinstance(e, ToolResultEvent))
+    assert s_idx < r_idx
+
+
+async def test_batch_run_has_no_event_sink() -> None:
+    # The non-streaming path (children run on it) has no live channel — emit_event is
+    # None, so a grandchild's fan is not surfaced live (documented v1 limit).
+    captured: list[ToolContext] = []
+
+    async def _capture(arguments: dict, ctx: ToolContext) -> str:
+        captured.append(ctx)
+        return "ok"
+
+    turns = [
+        LlmTurn("", (ToolCall("c1", "probe", {}),), "tool_use", LlmUsage(1, 1)),
+        LlmTurn("done", (), "end_turn", LlmUsage(1, 1)),
+    ]
+    router, _ = router_with(turns)
+    loop = AgentLoop(router, registry_with(make_tool("probe", _capture)))
+    await loop.run(session=OWNER, scopes=(), conversation=[UserMessage(text="go")])
+    assert captured and captured[0].emit_event is None

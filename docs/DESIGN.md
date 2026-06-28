@@ -1282,6 +1282,62 @@ segmented sort — more screen surgery than the problem warranted, and it buried
 the config behind the disclosure). C keeps the per-card model while making the
 result a first-class, always-visible dock.
 
+## Sub-agent spawning surfaces (settled; build plan `docs/SUBAGENT_SPAWNING_PLAN.md`)
+
+When `jerv` fans out web-sandboxed research/review/summarize sub-agents (the
+reserved `spawn_subagent` hatch, `docs/ASSISTANT.md`), two surfaces show them. The
+**layouts** were chosen in a three-way review (rivals retained as the record); an
+adversarial review then re-opened the gate, and the revised mocks added the
+failure / cancel / long-fan / budget-exhausted states (scenario switchers) and
+dropped the persona-as-color scheme. The owner **re-confirmed** the revised mocks —
+the gate is settled.
+
+**Persona is a `kind` enum, rendered as a NEUTRAL text tag (or a per-persona glyph
+on a neutral disc) — never a color.** The earlier "research=steel / review=violet /
+summarize=green" scheme is **rejected**: it violates the registry rule (components
+express `tone`/`flag`/`kind` enums, never colors) and collided with three reserved
+meanings simultaneously — green=live/ok, violet=Financial domain, steel=agent/focus/
+live-glyph. Semantic color on these surfaces stays fixed: **steel=live, green=done,
+rose=failed**; persona never borrows an accent.
+
+**In-chat live panel — chosen A "accordion step list"** (rivals B "agent cards",
+C "live fan/tree"; reference mock `docs/mocks/subagent-chat-mock.html`). Below
+jerv's answer bubble, the running fan renders as a bordered group ("Researching ·
+N agents") of **collapsible step rows** — the same disclosure register as the
+existing `ActivityLine`/`StepRow` "Worked" foot strip. Each row carries the
+**stateful glyph** (steel bouncing dots while running → green `✓` done → **rose `✕`
+failed**; `aria-hidden`, the status word carries state, honors
+`prefers-reduced-motion`), the **label**, a neutral **persona tag**, a live
+**status word**, and a thin progress bar; tapping a row expands its **brief** and
+final **summary** (a failed row auto-expands its error like `StepRow`). A depth-2
+sub-sub-agent nests one indent deeper. **Required non-happy states:** a **Stop** on
+the group header (cascade-cancel, mirroring the image-render Stop); the
+**tree-budget meter** goes `--danger` at the ceiling (paired text value) with a
+**truncated** synthesis variant on `tree_budget_exhausted`; the header rolls up
+`done · N ran · M failed`; a **row cap + "show N more" + max-height scroll region**
+contains a long fan. **Accessibility:** one polite live-region summary for the whole
+fan (not N live rows — avoids the announcement storm). The fan-out result is a
+**registered `subagent_synthesis` tool-view** (added to the registry list in the
+same PR; composed from `stat_block`/`citation_card`, standard tool-view frame — no
+bespoke green panel). A won for density and continuity; B/C retained.
+
+**Session manager nesting — chosen B "always-nested rail"** (rivals A "caret
+disclosure", C "inline chips"; reference mock `docs/mocks/subagent-sessions-mock.
+html`). A spawning chat shows its sub-agents **nested beneath it under a vertical
+connector rail** (a depth-2 agent indents one rail deeper). **Children are excluded
+from top-level bucketing** (filtered by `parent_session_id != null`) — they never
+appear as their own top-level rows; the rail **collapses by default once
+`subagent_count` exceeds a threshold** (and for any archived parent) so a large fan
+doesn't bury the dense Chats list. The **group toggle is a real `button`** with
+`aria-expanded`, and the tree uses `role="tree"/"treeitem"` + `aria-level`. Each
+child row reuses the live-turn glyph + neutral persona tag + status (incl. **failed
+rose**); the parent badge distinguishes `N running` / `done · N ran` / `… · M
+failed`. **This is the one place the "at most one chat shows the live glyph" rule is
+lifted** — `activeTurn` becomes a session-keyed **set for the row glyphs only** (it
+does **not** gate sends; the parent turn stays the single gated turn, and the
+in-chat accordion reads the parent turn's `subagent_*` events while the tree reads
+child session rows — see the build plan's "Execution model").
+
 ## Implementation rules
 
 1. Tokens live in one file (`frontend/src/styles/tokens.css`); components

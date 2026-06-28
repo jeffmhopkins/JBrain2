@@ -507,6 +507,9 @@ def test_build_registry_binds_the_shipped_sidecars() -> None:
         "hurricane",
         "archivist_memory_read",
         "archivist_memory_write",
+        # The spawn primitive is `web`-classed + NEVER_DEFAULT: offered to jerv (and
+        # research/review children) by allowlist, never to the curator wildcard.
+        "spawn_subagent",
     }
     shipped = {
         "search",
@@ -877,6 +880,11 @@ def test_sidecars_pinned_to_their_versions() -> None:
             "archivist_memory_write",
             1,
             "29c46e596faccbd1779549d6b6d020d185fa38b2d3d8acf2c31e01c2462ccbb8",
+        ),
+        "spawn_subagent.tool": (
+            "spawn_subagent",
+            1,
+            "59b2eb93bd79dfe510ee0ab5f12fb84ac281f5d1a4172ad6494ef96d7f3b06ed",
         ),
     }
     # Every shipped sidecar must appear above — a new `.tool` cannot slip in

@@ -54,6 +54,14 @@ class SessionOut(BaseModel):
     turn_count: int = 0
     preview: str = ""
     staged_count: int = 0
+    # Sub-agent nesting (docs/SUBAGENT_SPAWNING_PLAN.md Wave S4): a child carries its
+    # parent's id (so the PWA nests it and drops it from top-level bucketing); a
+    # parent carries how many direct children it spawned (the rail count).
+    parent_session_id: str | None = None
+    subagent_count: int = 0
+    # The latest run's status (running | done | error) — drives the nested rail's
+    # per-child outcome glyph and the parent's failed roll-up.
+    last_run_status: str | None = None
 
 
 def session_out(info: AgentSessionInfo) -> SessionOut:
@@ -69,6 +77,9 @@ def session_out(info: AgentSessionInfo) -> SessionOut:
         turn_count=info.turn_count,
         preview=info.preview,
         staged_count=info.staged_count,
+        parent_session_id=info.parent_session_id,
+        subagent_count=info.subagent_count,
+        last_run_status=info.last_run_status,
     )
 
 

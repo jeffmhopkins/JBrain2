@@ -165,10 +165,11 @@ spec, the firewall design, and the cross-stream `PHASE6_WIKI_GRAPH_CONTRACT.md`.
 claim cites a note, and corrections happen by out-arguing the wiki with a
 correction note.
 
-## Phase 6 follow-ons — Planned (separate plans, unblocked *by* the wiki spine)
+## Phase 6 follow-ons — Planned (separate multi-wave plans)
 
-Relocated out of the Phase-6 wiki build (each is its own multi-wave plan; folding
-them into the wiki broke one-PR-per-wave and hid the true size). *(The
+Each is its own multi-wave plan — some unblocked *by* the wiki spine, some
+independent agent-infrastructure that can run alongside it (folding any of them
+into the wiki broke one-PR-per-wave and hid the true size). *(The
 self-improvement Loops 2–4 once listed here — skill learning, durable-knowledge +
 predicate-canon promotion, and prompt/tool self-edit — and their eval/promotion
 harness were removed, not deferred.)*
@@ -179,6 +180,15 @@ harness were removed, not deferred.)*
   consolidation (`tag_consolidate`: fold drift tag spellings) — built as engine actions
   on the Phase-5 sweep pattern, seeded disabled + Ops-fireable. Distinct from the wiki's
   own `wiki_reindex` (which only re-embeds wiki summaries).
+- **Sub-agent spawning** (build plan: `docs/SUBAGENT_SPAWNING_PLAN.md`) —
+  **agent-infrastructure, independent of the wiki spine** (parallel-safe; does not
+  wait on the entity-graph rebuild). Expands the reserved `spawn_subagent` hatch
+  (`docs/ASSISTANT.md`) into a bounded fan of web-sandboxed
+  research/review/summarize sub-agents spawned by `jerv`: parent-authored brief as
+  data, child tools/scope ⊆ parent, depth ≤ 2, a direct caps-bounded fan, a shared
+  tree budget, and live streaming into the chat + a nested session tree. Scheduled
+  as its own multi-wave plan (waves **S1–S4**); design-complete and through a
+  three-lens adversarial review.
 
 ## Phase 7 — Outer ring — Planned
 

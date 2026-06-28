@@ -148,6 +148,42 @@ export interface VerdictEvent {
 export interface GeneralKnowledgeEvent {
   type: "general_knowledge";
 }
+/** A web-sandboxed sub-agent child `jerv` launched inside a `spawn_subagent` fan
+ * (docs/SUBAGENT_SPAWNING_PLAN.md). `tool_call_id` anchors the row under the spawning
+ * tool call; `child_id` keys it; `persona` is a neutral text tag (never a color).
+ * Backend-authored live telemetry — ephemeral, never persisted. */
+export interface SubagentSpawnedEvent {
+  type: "subagent_spawned";
+  tool_call_id: string;
+  child_id: string;
+  persona: string;
+  label: string;
+  depth: number;
+}
+/** A status tick for a running child. `phase` is a coarse working word (children run
+ * non-streaming in v1). `tree_spent`/`tree_budget` snapshot the shared tree pool for
+ * the budget meter. Ephemeral. */
+export interface SubagentProgressEvent {
+  type: "subagent_progress";
+  tool_call_id: string;
+  child_id: string;
+  phase: string;
+  tree_spent: number;
+  tree_budget: number;
+}
+/** A child finished: `ok` (clean substantive answer) → green ✓, else → rose ✕.
+ * `summary` is its answer or error/truncation note (shown on expand); the budget
+ * snapshot refreshes the meter. Ephemeral. */
+export interface SubagentDoneEvent {
+  type: "subagent_done";
+  tool_call_id: string;
+  child_id: string;
+  ok: boolean;
+  stop_reason: string;
+  summary: string;
+  tree_spent: number;
+  tree_budget: number;
+}
 
 export type ChatEvent =
   | TextDelta
@@ -161,7 +197,10 @@ export type ChatEvent =
   | DoneEvent
   | RunEvent
   | VerdictEvent
-  | GeneralKnowledgeEvent;
+  | GeneralKnowledgeEvent
+  | SubagentSpawnedEvent
+  | SubagentProgressEvent
+  | SubagentDoneEvent;
 
 /** A persisted conversation turn (GET /api/sessions/{id}/transcript) — replays a
  * session on reopen. Assistant turns carry their tool steps + note sources. */
@@ -215,6 +254,14 @@ export interface AgentSession {
   turn_count?: number;
   preview?: string;
   staged_count?: number;
+  /** Sub-agent nesting (docs/SUBAGENT_SPAWNING_PLAN.md Wave S4): a child carries its
+   * parent's id (nested under it, excluded from top-level bucketing); a parent carries
+   * how many direct children it spawned (the rail count). */
+  parent_session_id?: string | null;
+  subagent_count?: number;
+  /** The latest run's status (running | done | error) — the nested rail shows a
+   * child's settled outcome (error → rose ✕) and the parent's failed roll-up. */
+  last_run_status?: string | null;
 }
 
 export interface SessionCreate {

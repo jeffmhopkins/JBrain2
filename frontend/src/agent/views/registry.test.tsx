@@ -709,4 +709,46 @@ describe("ToolView registry", () => {
       "512 / 512",
     );
   });
+
+  it("renders a subagent_synthesis roster with a ran/failed roll-up", () => {
+    expect(isKnownView("subagent_synthesis")).toBe(true);
+    const { getByText } = render(
+      <ToolView
+        payload={payload({
+          view: "subagent_synthesis",
+          data: {
+            ran: 2,
+            failed: 1,
+            children: [
+              { label: "Pricing", persona: "research", ok: true, summary: "3 tiers" },
+              { label: "Security", persona: "research", ok: false, summary: "ERROR: timed out" },
+            ],
+          },
+        })}
+      />,
+    );
+    expect(getByText(/Synthesized from 1 of 2 · 1 failed/)).toBeInTheDocument();
+    expect(getByText("Pricing")).toBeInTheDocument();
+    expect(getByText("3 tiers")).toBeInTheDocument();
+    expect(getByText("ERROR: timed out")).toBeInTheDocument();
+  });
+
+  it("renders the partial-synthesis variant when the fan was truncated", () => {
+    const { getByText, container } = render(
+      <ToolView
+        payload={payload({
+          view: "subagent_synthesis",
+          data: {
+            ran: 2,
+            failed: 0,
+            truncated: true,
+            children: [{ label: "Pricing", persona: "research", ok: true, summary: "partial" }],
+          },
+        })}
+      />,
+    );
+    expect(getByText(/Partial synthesis — research truncated/)).toBeInTheDocument();
+    // The fail/truncated frame is signalled by the has-fail class (rose frame via CSS).
+    expect(container.querySelector(".tv-syn.has-fail")).not.toBeNull();
+  });
 });

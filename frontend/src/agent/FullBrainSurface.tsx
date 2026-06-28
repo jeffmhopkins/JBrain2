@@ -16,6 +16,7 @@ import { DOMAIN_COLOR } from "../notes/modes";
 import { ProposalTree } from "./ProposalTree";
 import { ProposalsPanel } from "./ProposalsPanel";
 import { SessionsPanel } from "./SessionsPanel";
+import { SubagentFan } from "./SubagentFan";
 import { attachmentKind } from "./attachmentKind";
 import { type CiteTarget, Markdown, type MdFlag, stripModelCitations } from "./markdown";
 import { type AgentStatus, agentStatus } from "./status";
@@ -118,6 +119,7 @@ export function FullBrainSurface({
                   fb.setOpenProposal(id);
                   fb.setPanel("proposals");
                 }}
+                onStop={fb.stop}
               />
             ))}
             {fb.messages.length === 0 && (
@@ -288,11 +290,14 @@ function Bubble({
   onOpenNote,
   onOpenProposal,
   onOpenEntity,
+  onStop,
 }: {
   message: TranscriptMessage;
   onOpenNote?: ((noteId: string) => void) | undefined;
   onOpenProposal?: ((proposalId: string) => void) | undefined;
   onOpenEntity?: ((entityId: string) => void) | undefined;
+  /** Cascade-cancel the live turn (and its sub-agent fan) — the fan header Stop. */
+  onStop?: (() => void) | undefined;
 }): ReactNode {
   // Which ungrounded-claim flag's reason note is open (one at a time). Declared
   // before the early returns so the hook order is stable across renders.
@@ -521,12 +526,27 @@ function Bubble({
     );
   }
 
+  // A sub-agent fan renders as its own bordered block below the answer bubble (the
+  // accordion reads the parent turn's `subagent_*` events folded onto the spawn call).
+  // It is the LIVE surface only — once the spawn tool's result lands (`ok` defined),
+  // the registered `subagent_synthesis` tool-view (in `views`) becomes the settled
+  // surface, so the two never show the roster at once. A cancelled fan never gets a
+  // result (`ok` stays undefined), so its accordion stays, showing the settled rows.
+  const fans = message.tools.filter((t) => t.fan && t.ok === undefined);
   return (
-    <div className="bubble ai">
-      {answer}
-      {generalKnowledge && <GeneralKnowledgeNote />}
-      {activityLine}
-    </div>
+    <>
+      <div className="bubble ai">
+        {answer}
+        {generalKnowledge && <GeneralKnowledgeNote />}
+        {activityLine}
+      </div>
+      {fans.map(
+        (t) =>
+          t.fan && (
+            <SubagentFan key={t.id} fan={t.fan} running={message.streaming} onStop={onStop} />
+          ),
+      )}
+    </>
   );
 }
 

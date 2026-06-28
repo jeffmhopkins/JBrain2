@@ -21,11 +21,37 @@ export interface SourceRef {
   text: string;
 }
 
+/** One sub-agent child in a `spawn_subagent` fan, folded from the `subagent_*`
+ * events (docs/SUBAGENT_SPAWNING_PLAN.md, Wave S3). Persona is a neutral tag; the
+ * glyph colour comes from `status` (steel=running, green=done, rose=failed). */
+export interface SubagentChild {
+  childId: string;
+  persona: string;
+  label: string;
+  depth: number;
+  /** The live working word while running ("researching"), the stop reason once settled. */
+  phase: string;
+  status: "running" | "done" | "failed";
+  /** The child's answer (or its error / truncation note), shown on expand. */
+  summary?: string;
+  stopReason?: string;
+}
+
+/** The live fan under a `spawn_subagent` tool call: its children plus the shared
+ * tree-budget snapshot driving the in-chat meter. */
+export interface SubagentFan {
+  children: SubagentChild[];
+  treeSpent: number;
+  treeBudget: number;
+}
+
 export interface ToolActivity {
   id: string;
   name: string;
   /** undefined while the call is in flight; set when its result arrives. */
   ok?: boolean;
+  /** A sub-agent fan this call launched — present only on a `spawn_subagent` step. */
+  fan?: SubagentFan;
   /** The arguments the call went out with — kept so a step can show what it
    * actually searched/read when its detail is expanded. */
   args?: Record<string, unknown>;
@@ -197,6 +223,24 @@ export function applyEvent(messages: TranscriptMessage[], event: ChatEvent): Tra
       next.stopReason = event.stop_reason;
       // The turn settled — a reasoning-only turn (no answer text) stops thinking now.
       next.thinking = false;
+      // Settle any sub-agent still shown as running. A turn that ended — especially a
+      // Stop/cancel, which cascades CancelledError into the fan and so emits no
+      // per-child `subagent_done` — must not leave a child bouncing "running" forever.
+      next.tools = next.tools.map((t) =>
+        t.fan?.children.some((c) => c.status === "running")
+          ? {
+              ...t,
+              fan: {
+                ...t.fan,
+                children: t.fan.children.map((c) =>
+                  c.status === "running"
+                    ? { ...c, status: "failed", phase: "cancelled", stopReason: "cancelled" }
+                    : c,
+                ),
+              },
+            }
+          : t,
+      );
       break;
     case "verdict":
       // Rides after `done` (Loop 1's annotation). Attach it to the just-settled
@@ -212,6 +256,74 @@ export function applyEvent(messages: TranscriptMessage[], event: ChatEvent): Tra
       // Rides after `done`, like the verdict — but neutral. The backend guarantees
       // it never co-occurs with a verdict, so the bubble shows at most one footer.
       next.generalKnowledge = true;
+      break;
+    case "subagent_spawned":
+      // Attach a child row to its spawn_subagent tool call (the tool_call always
+      // precedes its fan). Idempotent on child_id so a reconnect replay can't double it.
+      next.tools = next.tools.map((t) => {
+        if (t.id !== event.tool_call_id) return t;
+        const fan = t.fan ?? { children: [], treeSpent: 0, treeBudget: 0 };
+        if (fan.children.some((c) => c.childId === event.child_id)) return t;
+        return {
+          ...t,
+          fan: {
+            ...fan,
+            children: [
+              ...fan.children,
+              {
+                childId: event.child_id,
+                persona: event.persona,
+                label: event.label,
+                depth: event.depth,
+                phase: "queued",
+                status: "running",
+              },
+            ],
+          },
+        };
+      });
+      break;
+    case "subagent_progress":
+      next.tools = next.tools.map((t) =>
+        t.id === event.tool_call_id && t.fan
+          ? {
+              ...t,
+              fan: {
+                children: t.fan.children.map((c) =>
+                  c.childId === event.child_id
+                    ? { ...c, phase: event.phase, status: "running" }
+                    : c,
+                ),
+                treeSpent: event.tree_spent,
+                treeBudget: event.tree_budget,
+              },
+            }
+          : t,
+      );
+      break;
+    case "subagent_done":
+      next.tools = next.tools.map((t) =>
+        t.id === event.tool_call_id && t.fan
+          ? {
+              ...t,
+              fan: {
+                children: t.fan.children.map((c) =>
+                  c.childId === event.child_id
+                    ? {
+                        ...c,
+                        status: event.ok ? "done" : "failed",
+                        phase: event.stop_reason,
+                        stopReason: event.stop_reason,
+                        summary: event.summary,
+                      }
+                    : c,
+                ),
+                treeSpent: event.tree_spent,
+                treeBudget: event.tree_budget,
+              },
+            }
+          : t,
+      );
       break;
   }
   return [...messages.slice(0, -1), next];

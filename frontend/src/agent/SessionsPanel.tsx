@@ -166,6 +166,9 @@ function isToday(iso: string, now: Date): boolean {
 
 // Above this many chats, the search field earns its place; below it, it's clutter.
 const SEARCH_THRESHOLD = 6;
+// A sub-agent rail collapses by default once a fan grows past this, so a big fan
+// doesn't bury the rest of the (now dense) Chats list (review M10).
+const RAIL_COLLAPSE_THRESHOLD = 3;
 
 interface Props {
   sessions: AgentSession[];
@@ -221,9 +224,30 @@ export function SessionsPanel({
   const matches = (s: AgentSession): boolean =>
     q === "" || (s.title || "untitled chat").toLowerCase().includes(q);
 
-  // Newest-active first, then split into the three segments.
+  // Sub-agent children are sub-state of the chat that spawned them: they appear ONLY
+  // nested under their parent (docs/SUBAGENT_SPAWNING_PLAN.md Wave S4), never as their
+  // own top-level rows. Index them by parent so a chat can render its rail.
+  const childrenByParent = new Map<string, AgentSession[]>();
+  for (const s of sessions) {
+    if (s.parent_session_id) {
+      const arr = childrenByParent.get(s.parent_session_id);
+      if (arr) arr.push(s);
+      else childrenByParent.set(s.parent_session_id, [s]);
+    }
+  }
+  // A child is nested under its parent ONLY if that parent is itself in the list; a
+  // child whose parent is absent (a stale/transient mismatch — true orphans can't
+  // persist, parent_session_id is ON DELETE CASCADE) falls back to a top-level row
+  // rather than vanishing.
+  const ids = new Set(sessions.map((s) => s.id));
+  const isTopLevel = (s: AgentSession): boolean =>
+    !s.parent_session_id || !ids.has(s.parent_session_id);
+
+  // Newest-active first, then split into the three segments — top-level chats only
+  // (nested children are excluded from bucketing; they appear under their parent).
   const now = new Date();
   const ordered = [...sessions]
+    .filter(isTopLevel)
     .filter(matches)
     .sort((a, b) => Date.parse(b.last_active_at) - Date.parse(a.last_active_at));
   const groups: Record<TabId, AgentSession[]> = { today: [], older: [], archived: [] };
@@ -249,22 +273,43 @@ export function SessionsPanel({
           : "today");
   const activeRows = groups[effective];
 
-  const row = (s: AgentSession): ReactNode => (
-    <SessionRow
-      key={s.id}
-      session={s}
-      active={s.id === activeId}
-      {...(activeTurn?.sessionId === s.id ? { turn: activeTurn.kind } : {})}
-      onOpen={onOpen}
-      onRename={onRename}
-      onDelete={onDelete}
-      onArchive={onArchive}
-      onUnarchive={onUnarchive}
-      onEditScope={setRescoping}
-      railOpen={railId === s.id}
-      onRailChange={(open) => setRailId(open ? s.id : null)}
-    />
-  );
+  const row = (s: AgentSession): ReactNode => {
+    const kids = childrenByParent.get(s.id) ?? [];
+    const sessionRow = (
+      <SessionRow
+        session={s}
+        active={s.id === activeId}
+        {...(activeTurn?.sessionId === s.id ? { turn: activeTurn.kind } : {})}
+        onOpen={onOpen}
+        onRename={onRename}
+        onDelete={onDelete}
+        onArchive={onArchive}
+        onUnarchive={onUnarchive}
+        onEditScope={setRescoping}
+        railOpen={railId === s.id}
+        onRailChange={(open) => setRailId(open ? s.id : null)}
+      />
+    );
+    if (kids.length === 0) return <div key={s.id}>{sessionRow}</div>;
+    // A spawning chat: the chat row, then its sub-agent rail (the rail itself is the
+    // tree, role="tree"). The whole fan animates live while the parent turn is the
+    // active turn (fan-in A — children are sub-state of that one turn).
+    return (
+      <div key={s.id} className="sa-tree">
+        {sessionRow}
+        <SubagentRail
+          parentId={s.id}
+          childrenByParent={childrenByParent}
+          live={activeTurn?.sessionId === s.id}
+          collapsedDefault={
+            (s.subagent_count ?? kids.length) > RAIL_COLLAPSE_THRESHOLD || s.status === "archived"
+          }
+          level={2}
+          onOpen={onOpen}
+        />
+      </div>
+    );
+  };
 
   return (
     <section className="panel-content" aria-label="Chats">
@@ -634,6 +679,137 @@ function TurnGlyph({ kind }: { kind: "thinking" | "rendering" }): ReactNode {
         </>
       )}
     </span>
+  );
+}
+
+const PERSONA_LABEL: Record<string, string> = {
+  research: "research",
+  review: "review",
+  summarize: "summarize",
+};
+
+// A spawning chat's sub-agent rail: the children nested under it, collapsed by
+// default once the fan is large (or the parent is archived). The toggle is a real
+// button with aria-expanded; the rail is a tree group of treeitem nodes.
+function SubagentRail({
+  parentId,
+  childrenByParent,
+  live,
+  collapsedDefault,
+  level,
+  onOpen,
+}: {
+  parentId: string;
+  childrenByParent: Map<string, AgentSession[]>;
+  live: boolean;
+  collapsedDefault: boolean;
+  level: number;
+  onOpen: (s: AgentSession) => void;
+}): ReactNode {
+  const kids = childrenByParent.get(parentId) ?? [];
+  // The owner's explicit toggle wins; until they touch it, follow the prop so a
+  // refetch that flips the default (archived, or the fan grew past the threshold)
+  // re-applies — `useState` alone would go stale (the panel refetches per turn).
+  const [userOpen, setUserOpen] = useState<boolean | null>(null);
+  const open = userOpen ?? !collapsedDefault;
+  const groupId = `sa-rail-${parentId}`;
+  if (kids.length === 0) return null;
+  // The roll-up shown on the (possibly collapsed) header, so a folded rail still says
+  // what ran: live → N running; settled → done · N ran · M failed.
+  const failed = kids.filter((k) => !live && k.last_run_status === "error").length;
+  const rollup = live
+    ? "running"
+    : `done · ${kids.length} ran${failed ? ` · ${failed} failed` : ""}`;
+  return (
+    <div className="sa-rail">
+      <button
+        type="button"
+        className="sa-rail-toggle"
+        aria-expanded={open}
+        aria-controls={groupId}
+        onClick={() => setUserOpen(!open)}
+      >
+        <span aria-hidden="true">{open ? "▾" : "▸"}</span> sub-agents ({kids.length})
+        <span className={`sa-rail-rollup${failed ? " fail" : ""}`}>· {rollup}</span>
+      </button>
+      {open && (
+        <div id={groupId} className="sa-rail-kids" role="tree">
+          {kids.map((k) => (
+            <SubagentNode
+              key={k.id}
+              session={k}
+              childrenByParent={childrenByParent}
+              live={live}
+              level={level}
+              onOpen={onOpen}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// A child is failed iff its latest run errored (the in-tree settled outcome); the
+// in-chat accordion carries the live/truncated detail. While the parent turn runs the
+// whole fan reads as live (fan-in A); a settled child is done ✓ or failed rose ✕.
+function childState(session: AgentSession, live: boolean): "running" | "failed" | "done" {
+  if (live) return "running";
+  return session.last_run_status === "error" ? "failed" : "done";
+}
+
+// The deepest the tree can nest (the depth<2 structural cap → child + grandchild).
+// A hard recursion bound so a cyclic/anomalous parent_session_id can never spin the
+// render, independent of the DB depth CHECK (which bounds the value, not cycles).
+const MAX_RAIL_LEVEL = 4;
+
+// One child (or grandchild) node in the rail. Neutral persona tag, never a colour;
+// grandchildren nest one rail deeper (up to the hard level cap).
+function SubagentNode({
+  session,
+  childrenByParent,
+  live,
+  level,
+  onOpen,
+}: {
+  session: AgentSession;
+  childrenByParent: Map<string, AgentSession[]>;
+  live: boolean;
+  level: number;
+  onOpen: (s: AgentSession) => void;
+}): ReactNode {
+  const grandkids = level < MAX_RAIL_LEVEL ? (childrenByParent.get(session.id) ?? []) : [];
+  const state = childState(session, live);
+  return (
+    <div className="sa-node" role="treeitem" aria-level={level} aria-label={session.title}>
+      <button type="button" className="sa-node-line" onClick={() => onOpen(session)}>
+        {state === "running" ? (
+          <TurnGlyph kind="thinking" />
+        ) : (
+          <span className={`sa-node-glyph ${state}`} aria-hidden="true">
+            {state === "failed" ? "✕" : "✓"}
+          </span>
+        )}
+        <span className="sa-node-lbl">{session.title || "sub-agent"}</span>
+        <span className="sa-ptag">{PERSONA_LABEL[session.agent] ?? session.agent}</span>
+        <span className={`sa-node-st${state === "failed" ? " fail" : ""}`}>{state}</span>
+      </button>
+      {grandkids.length > 0 && (
+        // biome-ignore lint/a11y/useSemanticElements: nested tree group
+        <div className="sa-node-grail" role="group">
+          {grandkids.map((g) => (
+            <SubagentNode
+              key={g.id}
+              session={g}
+              childrenByParent={childrenByParent}
+              live={live}
+              level={level + 1}
+              onOpen={onOpen}
+            />
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 

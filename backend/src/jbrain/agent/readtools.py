@@ -37,6 +37,9 @@ from jbrain.agent.metricstools import build_metrics_handlers
 from jbrain.agent.presencetools import build_presence_handlers
 from jbrain.agent.proposals import ProposalRepo
 from jbrain.agent.proposaltools import build_proposal_handlers
+from jbrain.agent.runlog import AgentRunLog
+from jbrain.agent.session import AgentSessionRepo
+from jbrain.agent.spawn import SpawnRef, SpawnService
 from jbrain.agent.toolregistry import ToolRegistry, load_registry
 from jbrain.analysis.relationships import predicate_candidates
 from jbrain.appointments.service import AppointmentsRepo
@@ -444,7 +447,8 @@ def build_registry(
     (graceful degrade, docs/IMAGE_GEN_PLAN.md).
     Fails at startup if a sidecar and handler don't match exactly, so a new .tool
     can never ship unwired."""
-    return load_registry(
+    spawn_ref = SpawnRef()
+    registry = load_registry(
         TOOLS_DIR,
         {
             **build_read_handlers(search, notes, entities),
@@ -489,6 +493,12 @@ def build_registry(
             # the owner-only `archivist_memory` table — always wired (the table always
             # exists); curator never sees it (the opt-in web class).
             **build_archivist_memory_handlers(maker),
+            # The sub-agent spawn primitive (docs/SUBAGENT_SPAWNING_PLAN.md). A
+            # late-bound handler: the service it forwards to needs the very registry
+            # being built (it launches children on it), so it is wired below once the
+            # registry exists. jerv (+ research/review children) reach it by
+            # allowlist; curator's tools=None never does (NEVER_DEFAULT).
+            "spawn_subagent": spawn_ref,
         },
         optional=(
             OPTIONAL_IMAGE_TOOLS
@@ -497,3 +507,14 @@ def build_registry(
             | OPTIONAL_GMAIL_TOOLS
         ),
     )
+    # Wire the spawn service now that the registry exists (children run on it). It
+    # needs the LLM router; when none is configured the ref stays unbound and a spawn
+    # call refuses cleanly rather than erroring.
+    if router is not None:
+        spawn_ref.service = SpawnService(
+            router=router,
+            registry=registry,
+            sessions=AgentSessionRepo(maker),
+            runlog=AgentRunLog(maker),
+        )
+    return registry

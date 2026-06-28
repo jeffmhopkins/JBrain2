@@ -37,6 +37,17 @@ class AgentSession(Base):
     # system prompt, tool allowlist, and knowledge-base access the session runs
     # under. Defaults to the Full Brain curator; constrained by a DB CHECK.
     agent: Mapped[str] = mapped_column(Text, default="curator", server_default="curator")
+    # Sub-agent lineage (docs/SUBAGENT_SPAWNING_PLAN.md, migration 0105). A root
+    # chat has parent_session_id=NULL/depth=0; a spawned child points at its parent
+    # and carries depth=parent.depth+1 (DB-CHECKed to 0..2 — the two-sub-agent-layer
+    # cap is structural). `no_memory` is the sandbox flag the spawn helper sets so a
+    # child turn is never episodically appended. Deleting a parent cascades to its
+    # children (they are sub-state of the parent turn, never orphaned top-level rows).
+    parent_session_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("app.agent_sessions.id", ondelete="CASCADE"), nullable=True
+    )
+    depth: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    no_memory: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     # Selected read scope: domain codes and subject ids the session may read.
     domain_scopes: Mapped[list[str]] = mapped_column(ARRAY(Text))
     subject_ids: Mapped[list[uuid.UUID]] = mapped_column(
@@ -75,6 +86,12 @@ class Run(Base):
         UUID(as_uuid=True), ForeignKey("app.agent_sessions.id", ondelete="CASCADE"), nullable=True
     )
     pipeline: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # The spawning parent's run, for the sub-agent tree cost rollup (migration
+    # 0105). NULL for a root run; SET NULL on parent deletion so a child's audit
+    # row survives. The kind CHECK admits 'subagent' for these child runs.
+    parent_run_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("app.runs.id", ondelete="SET NULL"), nullable=True
+    )
     trigger_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("app.triggers.id", ondelete="SET NULL"), nullable=True
     )
