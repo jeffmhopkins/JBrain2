@@ -202,6 +202,7 @@ def hurricane_view(
     the component maps to glyph + tone. Map geometry is projected to `[0,1]` on-box."""
     cat = category(storm.wind_kt, storm.kind)
     gust_mph = _kt_to_mph(detail.track[0].gust_kt) if detail.track else 0
+    sustained = sustained_mph(storm)
     track_xy, cone_xy, you_xy = _project(detail.track, detail.cone, hit)
     return ViewPayload(
         view="hurricane_card",
@@ -215,9 +216,15 @@ def hurricane_view(
                 "name": storm.name,
                 "kind": storm.kind,
                 "cat": cat,
-                "sustained_mph": sustained_mph(storm),
+                "sustained_mph": sustained,
+                # Severity tiers the card maps to a gauge fill + tone (DESIGN.md: the
+                # backend owns the enum, the component the palette), so the Storm-stats
+                # gauges track the real storm rather than a fixed decoration.
+                "sustained_level": _wind_level(sustained),
                 "gust_mph": gust_mph,
+                "gust_level": _wind_level(gust_mph),
                 "pressure_mb": storm.pressure_mb,
+                "pressure_level": _pressure_level(storm.pressure_mb),
                 "moving": movement(storm),
             },
             "distance_mi": distance_mi,
@@ -335,6 +342,21 @@ def _wind_level(mph: int) -> str:
     if mph >= 74:
         return "high"
     if mph >= 39:
+        return "moderate"
+    return "low"
+
+
+def _pressure_level(mb: int) -> str:
+    """Central pressure → severity tone (lower is stronger), banded to roughly track the
+    Saffir-Simpson pressure ranges: cat 5 / cat 3–4 / cat 1–2 / weaker. Unknown (0)
+    reads low."""
+    if mb <= 0:
+        return "low"
+    if mb <= 920:
+        return "extreme"
+    if mb <= 964:
+        return "high"
+    if mb <= 989:
         return "moderate"
     return "low"
 
