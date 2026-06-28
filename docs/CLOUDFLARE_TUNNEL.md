@@ -110,12 +110,25 @@ the one thing you do by hand is the Cloudflare wildcard:
 
 1. **One wildcard published hostname.** In **Networks → Connectors → your tunnel →
    Published application routes**, add **Subdomain `*`, Domain `<your-host>`**, Service
-   **`http://proxy:80`** (the same origin as the main app). That publishes
-   `*.<your-host>` and creates the wildcard DNS — one rule covers every session.
-   *Cloudflare wildcards are full-label only* (`*.<host>`), so a partial `*-preview.<host>`
-   is **not** valid — the full `*.<host>` wildcard catches the previews and Caddy (below)
-   filters out the `-preview` ones. If your main app is at the **apex** (`<host>`), the
-   wildcard sits cleanly beside it; if it's a subdomain, its exact route still wins.
+   **`http://proxy:80`** (the same origin as the main app), Path empty. That routes
+   `*.<your-host>` to the box — one rule covers every session. *Cloudflare wildcards are
+   full-label only* (`*.<host>`), so a partial `*-preview.<host>` is **not** valid — the
+   full `*.<host>` wildcard catches the previews and Caddy (below) filters out the
+   `-preview` ones. If your main app is at the **apex** (`<host>`), the wildcard sits
+   cleanly beside it; if it's a subdomain, its exact route still wins.
+
+   > **Two gotchas that cost real time** — both about *this* screen:
+   > - **A wildcard route does NOT auto-create its DNS record** (you'll see a yellow
+   >   "this domain contains a wildcard, so no DNS record will be created" warning — a
+   >   *specific* hostname auto-creates DNS, a wildcard doesn't). So add it by hand:
+   >   **DNS → Records → Add record → CNAME, Name `*`, Target `<tunnel-id>.cfargotunnel.com`
+   >   (copy it from your apex record), Proxied.** Until that exists, `*.<host>` is
+   >   NXDOMAIN and the preview never resolves. (Proxied wildcards are fine on the free
+   >   plan — that's not the blocker.)
+   > - **Keep `*` in the *Subdomain* field.** Re-saving this route can silently clear the
+   >   `*`, turning it into a second `<host>` (apex) route — then every preview falls
+   >   through to the connector's `http_status:404` catch-all (a `cf-ray` 404 that never
+   >   reaches the box). If previews 404 after an edit, check the Subdomain still reads `*`.
 2. **TLS — free, because the slug is one label deep.** `<slug>-preview.<host>` is a
    single label under the zone, so Cloudflare's free **Universal SSL `*.<host>`** already
    covers it — no Advanced Certificate Manager. (A nested `*.preview.<host>` would be a
@@ -128,12 +141,12 @@ the one thing you do by hand is the Cloudflare wildcard:
    app can only ever be served on its own subdomain. Defense in depth: the api also
    rejects in-process any request whose Host isn't `<slug>-preview.<base>`. Nothing to
    hand-edit; unset the var to tear the site back down.
-4. **Enable host mode.** Run **`sudo jbrain enable-jcode-preview`** — it writes
-   `JCODE_PREVIEW_MODE=host` + `JCODE_PREVIEW_BASE_HOST` (defaulting to your
-   `JBRAIN_DOMAIN`; pass an apex explicitly — `sudo jbrain enable-jcode-preview <apex>`
-   — for a subdomain deploy) and recreates the stack so the change takes effect (a
-   `.env` change isn't picked up by `restart`). Updates keep the keys turnkey from then
-   on. Turn on **debug access**
+4. **Enable preview.** Run **`sudo jbrain enable-jcode-preview`** — it sets
+   `JCODE_PREVIEW_BASE_HOST` (defaulting to your `JBRAIN_DOMAIN`; pass an apex explicitly
+   — `sudo jbrain enable-jcode-preview <apex>` — for a subdomain deploy) and recreates
+   the stack so the change takes effect (a `.env` change isn't picked up by `restart`).
+   Host-served preview is the only mode (the per-session cloudflared quick-tunnel was
+   retired); a base host is all it needs. Turn on **debug access**
    (`docs/DEBUG_ACCESS.md`) first so the control server's verbose logs (`/debug/logs/jcode`)
    show `preview proxy → :port` per request. Start a dev server in a session on `$PORT`,
    open its `<slug>-preview.<host>` → the page loads and HMR live-reloads; open a second

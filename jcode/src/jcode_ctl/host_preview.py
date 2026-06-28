@@ -6,10 +6,9 @@ Each session gets a dev **port** from a bounded pool and a stable, unguessable
 quick-tunnel, so no rate limit and no public-resolver DNS dependence. This module
 owns only the allocation + lookup; the api↔jcode reverse-proxy that fronts it is
 Wave P2 and the edge/DNS wiring is Wave P3. Pure in-memory — no subprocess, no
-network — the opposite of the ``CloudflaredTunnel`` adapter it replaces at the P5
-cutover. Until then it is additive: the control server still defaults to tunnel
-mode (``preview_mode``), so this allocator is built and tested but not yet on the
-serving path.
+network. This is the sole preview path since the Wave P5b cutover retired the
+per-session ``cloudflared`` quick-tunnel adapter; it fail-closes (``enabled`` is
+False) when no base host is configured.
 """
 
 from __future__ import annotations

@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from typing import Literal
-
 from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -57,13 +55,7 @@ class Settings(BaseSettings):
     preview_enabled: bool = True
     preview_default_port: int = 5173
 
-    # Web-preview transport (docs/JCODE_PREVIEW_HOST_PLAN.md). "tunnel" = the legacy
-    # per-session TryCloudflare quick-tunnel (the default until the host path is on-box
-    # verified and cut over at Wave P5); "host" = a per-session hostname under the box's
-    # OWN named tunnel + Caddy, fronted through the api↔jcode proxy. Host mode is built
-    # additively — flipping this is the P5 cutover, not a mid-flight default.
-    preview_mode: Literal["tunnel", "host"] = "tunnel"
-    # Host mode only: the zone host previews hang under, reached at
+    # The zone host previews hang under, reached at
     # https://<slug>-preview.<preview_base_host>. Flattened to one label so the zone's
     # *.<host> Universal SSL covers it (no Advanced Certificate Manager). Empty (the
     # default) fail-closes host mode. Set with JCODE_PREVIEW_BASE_HOST.
