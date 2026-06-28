@@ -285,6 +285,153 @@ describe("ToolView registry", () => {
     expect(container.querySelectorAll(".tv-wx-svg").length).toBeGreaterThan(0);
   });
 
+  const huUsData = {
+    place: "Tampa, Florida, United States",
+    as_of: "Sep 10, 3:00 PM UTC",
+    active_count: 2,
+    coverage: "us",
+    storm: {
+      name: "Elena",
+      kind: "hurricane",
+      cat: "3",
+      sustained_mph: 120,
+      sustained_level: "extreme",
+      gust_mph: 150,
+      gust_level: "extreme",
+      pressure_mb: 948,
+      pressure_level: "high",
+      moving: "NNE 14 mph",
+    },
+    distance_mi: 215,
+    bearing: "SSW",
+    proximity: "near",
+    alert: {
+      level: "warning",
+      kind: "hurricane",
+      event: "Hurricane Warning",
+      headline: "Hurricane Warning for Tampa Bay <b>now</b>",
+    },
+    track: [
+      { x: 0.3, y: 0.86, label: "Now", cat: "3", past: false },
+      { x: 0.5, y: 0.5, label: "+24h", cat: "2", past: false },
+    ],
+    cone: [
+      { x: 0.2, y: 0.9 },
+      { x: 0.6, y: 0.5 },
+      { x: 0.4, y: 0.3 },
+    ],
+    you: { x: 0.58, y: 0.42 },
+    timeline: [
+      { label: "9 PM", wind_mph: 35, gust_mph: 50, rain_in: 0.2, peak: false },
+      { label: "12 AM", wind_mph: 70, gust_mph: 100, rain_in: 0.4, peak: true },
+    ],
+    arrival: { ts_force: "Wed 9 PM", hurricane_force: "Thu 2 AM" },
+    impact: {
+      wind: { mph: 70, gust: 100, level: "high" },
+      surge: { band: "Up to 9 ft", level: "high" },
+      rain: { in: 8, level: "moderate" },
+      timing: { onset: "Wed 9 PM", peak: "Thu 4 AM", clear: "Thu 1 PM" },
+    },
+  };
+
+  it("renders a hurricane_card with the NWS warning banner, hero, and tabs", () => {
+    const { container } = render(
+      <ToolView payload={payload({ view: "hurricane_card", data: huUsData })} />,
+    );
+    expect(container.querySelector(".tv-hu-cap")?.textContent).toContain(
+      "Tampa, Florida, United States",
+    );
+    expect(container.querySelector(".tv-hu-cap")?.textContent).toContain("2 active");
+    expect(screen.getByText("Elena")).toBeInTheDocument();
+    expect(screen.getByText("Cat 3")).toBeInTheDocument();
+    // A real warning shows the rose danger banner (not amber watch).
+    const banner = container.querySelector(".tv-hu-alert");
+    expect(String(banner?.className)).toContain("warning");
+    expect(banner?.textContent).toContain("Hurricane Warning");
+    // The upstream headline renders as ESCAPED text — no injected <b> element (#9).
+    expect(banner?.querySelector("b")?.textContent).toBe("Hurricane Warning");
+    expect(banner?.innerHTML).toContain("&lt;b&gt;now&lt;/b&gt;");
+    // All three tabs are offered; Timeline is the default pane.
+    const tabs = Array.from(container.querySelectorAll(".tv-hu-tabs button")).map(
+      (b) => b.textContent,
+    );
+    expect(tabs).toEqual(["Timeline", "Track", "Impact"]);
+    expect(container.querySelector(".tv-hu-strip")).not.toBeNull();
+    expect(container.querySelector(".tv-hu-cell.peak")?.textContent).toContain("100");
+    // No URL/markup rides the payload (#9).
+    expect(container.querySelector("img")).toBeNull();
+  });
+
+  it("switches hurricane_card tabs to the Track map and Impact grid", () => {
+    const { container } = render(
+      <ToolView payload={payload({ view: "hurricane_card", data: huUsData })} />,
+    );
+    const [, trackBtn, impactBtn] = container.querySelectorAll(".tv-hu-tabs button");
+    fireEvent.click(trackBtn as Element);
+    // The Track tab draws the cone + path inline from the [0,1] slots — no <img>/tiles.
+    expect(container.querySelector(".tv-hu-map-cone")).not.toBeNull();
+    expect(container.querySelector(".tv-hu-map-path")).not.toBeNull();
+    expect(container.querySelectorAll(".tv-hu-map-pt")).toHaveLength(2);
+    expect(container.querySelector(".tv-hu-map-you")).not.toBeNull();
+    fireEvent.click(impactBtn as Element);
+    expect(container.querySelector(".tv-hu-grid")).not.toBeNull();
+    expect(screen.getByText("Up to 9 ft")).toBeInTheDocument();
+    // The Impact toggle flips to the storm's own stats, and the gauges are toned from
+    // the backend severity tiers (not fixed decoration): Sustained 120 mph reads
+    // extreme; Movement is a heading, so it carries no gauge bar.
+    fireEvent.click(screen.getByText("Storm stats"));
+    const sustained = screen.getByText("Sustained").closest(".tv-hu-icell");
+    expect(String(sustained?.className)).toContain("lv-extreme");
+    expect(sustained?.querySelector(".tv-hu-gauge")).not.toBeNull();
+    const movement = screen.getByText("Movement").closest(".tv-hu-icell");
+    expect(String(movement?.className)).toContain("lv-info");
+    expect(movement?.querySelector(".tv-hu-gauge")).toBeNull();
+  });
+
+  it("degrades a global (out-of-coverage) hurricane_card to hero + Track only", () => {
+    const { container } = render(
+      <ToolView
+        payload={payload({
+          view: "hurricane_card",
+          data: {
+            place: "San Andrés, Colombia",
+            coverage: "global",
+            storm: {
+              name: "Bret",
+              kind: "tropical-storm",
+              cat: "",
+              sustained_mph: 60,
+              moving: "W 12 mph",
+            },
+            distance_mi: 120,
+            bearing: "E",
+            proximity: "near",
+            alert: null,
+            track: [{ x: 0.3, y: 0.7, label: "Now", cat: "", past: false }],
+            cone: [],
+            you: { x: 0.6, y: 0.4 },
+            timeline: [],
+            arrival: { ts_force: null, hurricane_force: null },
+            impact: {},
+          },
+        })}
+      />,
+    );
+    // No alert banner; no category → the kind label is the badge.
+    expect(container.querySelector(".tv-hu-alert")).toBeNull();
+    expect(screen.getByText("Tropical Storm")).toBeInTheDocument();
+    expect(screen.queryByText(/Cat /)).toBeNull();
+    // Only the Track tab is offered (Timeline/Impact are empty and hidden), and the
+    // Track pane renders its inline SVG map by default (the §4 "hero + Track only" path).
+    const tabs = Array.from(container.querySelectorAll(".tv-hu-tabs button")).map(
+      (b) => b.textContent,
+    );
+    expect(tabs).toEqual(["Track"]);
+    expect(container.querySelector(".tv-hu-map")).not.toBeNull();
+    expect(container.querySelectorAll(".tv-hu-map-pt")).toHaveLength(1);
+    expect(container.querySelector(".tv-hu-foot")?.textContent).toContain("NWS/NHC");
+  });
+
   it("renders a weather_card week view as a daily list, not the hourly strip", () => {
     const { container } = render(
       <ToolView

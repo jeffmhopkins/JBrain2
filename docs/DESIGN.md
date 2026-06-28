@@ -1026,6 +1026,59 @@ reaches Open-Meteo is a city centre, the same coarseness as naming the city, nev
 precise fix. Coordinates never ride the data-only payload (#9). Owner-facing chat
 artifact; never a note, never RAG-indexed.
 
+### `hurricane_card` tool-view (binding mock: `docs/mocks/hurricane-view/hurricane-combined-tabs.html`; build plan `docs/HURRICANE_TABS_PLAN.md`)
+
+The in-chat **tabbed** card jerv shows after a `hurricane` tool call. A persistent
+storm hero + an official watch/warning banner sit above a tab bar: **Timeline** (the
+local hour-by-hour wind/gust/rain strip), **Track** (the forecast cone + path), and
+**Impact** (the hazard grid). A registered, data-only view like every other — the model
+**authors no markup, no URL, no color, and no raw latitude/longitude** (#9); every
+enum maps to a glyph + token in the component. The shape (full schema in
+`docs/HURRICANE_TABS_PLAN.md` §2):
+`{place, as_of, active_count, coverage, storm:{name, kind, cat, sustained_mph,
+sustained_level, gust_mph, gust_level, pressure_mb, pressure_level, moving},
+distance_mi, bearing, proximity, alert, track[], cone[], you, timeline[], arrival,
+impact}`.
+
+- `kind` is a closed enum (`hurricane|typhoon|tropical-storm|tropical-depression|
+  subtropical-storm|subtropical-depression|post-tropical|potential|low|cyclone`); `cat`
+  is the Saffir-Simpson number ("1".."5"), the badge when it applies, else the kind label.
+- `sustained_level`/`gust_level`/`pressure_level` are **computed** severity tiers
+  (`low|moderate|high|extreme`, same enum as `impact.*.level`) so the Storm-stats
+  gauges track the real vitals rather than a fixed decoration; the component maps the
+  tier to a gauge fill + tone (movement is a heading, so it shows no gauge).
+- `proximity` (`near|regional|distant`) is a **computed** how-close tone (amber caution
+  when `near` + threatening, else steel info).
+- `alert` is the **official NWS watch/warning** for the place (`{level: warning|watch,
+  kind, event, headline}`) or `null` — the **only** legitimate watch/warning surface. A
+  real `warning` is the one case the card shows the **rose danger** banner (a watch reads
+  amber); the headline renders as **escaped text content only**, never markup.
+- `track[]`/`cone[]`/`you` are geometry **projected to the unit square `[0,1]` on-box**
+  (storm-relative bbox, north-up), so no lat/lon rides the payload; the component draws
+  inline SVG from the slots.
+- `coverage` is `us` (NWS served the point → timeline/alert/impact present) or `global`
+  (the point is outside NWS coverage → hero + Track only; the component hides the empty
+  Timeline/Impact tabs). `timeline[]`, `arrival`, and `impact` are NWS-derived; `impact.surge`
+  is the NHC banded estimate. Tokens-only `.tv-hu-*` classes; the frame matches `.tool-view`.
+
+**Honesty boundary.** Official watches/warnings come only from the NWS `alert` slot
+(US & territories); the card never invents one and shows no banner when `alert` is null.
+Surge is a **banded** estimate, and arrival/impact **timing is approximate** (derived
+from the local forecast crossing TS/hurricane-force thresholds, not official onset
+grids). The `.tool` prose binds the model to those limits and to **never** issue an
+evacuation instruction from the card — evacuation follows official orders. (This
+supersedes the v1 "position + strength only / never rose" framing: the rose banner is
+now legitimate *because* it is NWS-sourced.)
+
+**The location firewall holds at the tool, not the view.** The NHC active-storm + GIS
+track/cone feeds carry **no** location (queried by storm identity). The two coordinate
+egresses — the NWS API (alerts + gridpoint) and the NHC surge MapServer — receive only
+the **geocoded city centre** (`hit`), the same coarseness `weather` already sends to
+Open-Meteo, never the owner's precise fix (`ctx.here`); the surge query fires only for
+an in-coverage US point. Map geometry is projected on-box, so the most an inversion of
+the `you` pin against the public track coordinates can recover is that city centre.
+Owner-facing chat artifact; never a note, never RAG-indexed.
+
 ## Wiki Talk board (settled in a three-way GUI review — reference mock: `docs/mocks/wiki-talk-b-topics.html`)
 
 The article's editorial board (Phase 6) — the wiki's second surface after the reader. Chosen

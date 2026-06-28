@@ -22,9 +22,14 @@ vi.mock("@xterm/xterm", () => ({
     }
   },
 }));
+// Records fit() calls so a test can assert the terminal refits on a panel resize (the
+// desktop share case, where the window never resizes after load).
+const fitCalls = vi.hoisted(() => ({ count: 0 }));
 vi.mock("@xterm/addon-fit", () => ({
   FitAddon: class {
-    fit() {}
+    fit() {
+      fitCalls.count++;
+    }
   },
 }));
 
@@ -69,6 +74,7 @@ beforeEach(() => {
   wsInstances.length = 0;
   wsUrls.length = 0;
   wsSent.length = 0;
+  fitCalls.count = 0;
   vi.stubGlobal("WebSocket", FakeWS);
   // The screen polls model residency on mount; default to settled (loaded, not warming) so
   // the terminal mounts straight away (each test overrides for its own case).
@@ -252,6 +258,25 @@ describe("JcodeSessionScreen", () => {
     expect(frame).toHaveAttribute("src", "https://demo-x.trycloudflare.com");
   });
 
+  it("reloads the preview iframe past the cache when Reload is tapped", async () => {
+    vi.spyOn(api, "jcodePreviewStatus").mockResolvedValue({
+      enabled: true,
+      url: "https://abc123-preview.box.test",
+      mode: "host",
+    });
+    render(<JcodeSessionScreen session={SESSION} onClose={vi.fn()} />);
+
+    fireEvent.click(screen.getByRole("tab", { name: "Preview" }));
+    const frame = await screen.findByTitle("Dev server preview");
+    // First load keeps the clean address.
+    expect(frame).toHaveAttribute("src", "https://abc123-preview.box.test");
+
+    fireEvent.click(screen.getByLabelText("Reload preview"));
+    // A cache-buster is appended so the browser re-fetches instead of serving its copy.
+    const reloaded = await screen.findByTitle("Dev server preview");
+    expect(reloaded.getAttribute("src")).toMatch(/^https:\/\/abc123-preview\.box\.test\?_r=\d+$/);
+  });
+
   it("copies the preview address from the actions menu once a tunnel is live", async () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
@@ -383,5 +408,23 @@ describe("JcodeSessionScreen", () => {
     const owner = render(<JcodeSessionScreen session={SESSION} onClose={vi.fn()} />);
     expect(owner.container.querySelector(".jcode-screen")).not.toHaveClass("jcode-screen--wide");
     await waitFor(() => expect(wsUrls.length).toBeGreaterThan(1));
+  });
+
+  it("refits the terminal when its panel resizes, not only on window resize", async () => {
+    // On desktop the window never resizes after load, so the terminal must refit off its
+    // host's actual size to fill the wide share panel. It observes the host with a
+    // ResizeObserver; firing that observer must re-run the fit.
+    render(<JcodeSessionScreen session={SESSION} onClose={vi.fn()} shared />);
+    await waitFor(() =>
+      expect(wsUrls).toContain(`ws://${window.location.host}/api/jcode/sessions/j1/terminal`),
+    );
+    const before = fitCalls.count;
+    // The MockResizeObserver (test/setup.ts) records instances and exposes trigger().
+    const observers = (globalThis.ResizeObserver as unknown as { instances: { trigger(): void }[] })
+      .instances;
+    const observer = observers.at(-1);
+    expect(observer).toBeDefined();
+    observer?.trigger();
+    expect(fitCalls.count).toBeGreaterThan(before);
   });
 });

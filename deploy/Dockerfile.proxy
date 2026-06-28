@@ -8,8 +8,10 @@ RUN npm run build
 
 FROM caddy:2
 COPY deploy/Caddyfile /etc/caddy/Caddyfile
-# Entrypoint renders the optional LAN site (JBRAIN_LAN_ADDR) before starting Caddy.
-COPY deploy/proxy-entrypoint.sh deploy/proxy-lan-conf.sh /usr/local/bin/
-RUN chmod +x /usr/local/bin/proxy-entrypoint.sh /usr/local/bin/proxy-lan-conf.sh
+# Entrypoint renders the optional LAN site (JBRAIN_LAN_ADDR) and host-preview wildcard
+# site (JBRAIN_JCODE_PREVIEW_BASE_HOST) before starting Caddy.
+COPY deploy/proxy-entrypoint.sh deploy/proxy-lan-conf.sh deploy/proxy-preview-conf.sh /usr/local/bin/
+RUN chmod +x /usr/local/bin/proxy-entrypoint.sh /usr/local/bin/proxy-lan-conf.sh \
+	/usr/local/bin/proxy-preview-conf.sh
 COPY --from=frontend /build/dist /srv/www
 ENTRYPOINT ["proxy-entrypoint.sh"]

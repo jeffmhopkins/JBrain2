@@ -1,0 +1,245 @@
+<!doctype html>
+<!--
+  hurricane tool-view mock · VARIANT B — "Forecast track + cone"
+  ============================================================================
+  Spatial-first. A compact SVG mini-map shows the storm's past track, its
+  forecast cone of uncertainty, and labelled forecast points (Cat at each
+  advisory time). Your location is pinned inside/near the cone so the
+  geometry answers "is it coming at me?" at a glance. A tight stat row
+  (closest approach, distance, peak local wind) sits beneath; an advisory
+  footer carries the watch/warning.
+
+  Data-only slots (no URLs, no markup — invariant #9): the model fills
+    { view:"hurricane_card", place, storm:{name,cat,kind},
+      you:{x,y}, track:[{x,y,label,cat,past}], cone:[{x,y}...polygon],
+      closest:{label,distance_mi}, peak_wind_mph, peak_gust_mph,
+      alert:{ level, text } }
+  Coordinates are unit-square (0..1) layout slots the component projects
+  onto the map box — no map tiles, no URLs. Category/alert are ENUMS.
+
+  Tokens-only; the cone reads steel (info geometry), the storm + warning
+  rose (hazard), forecast points scale rose→amber by category.
+-->
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Hurricane — B — forecast track + cone</title>
+<style>
+  :root{
+    --bg:#0e0f11;--surface:#17181b;--surface-2:#1e2024;--border:#26282c;
+    --text:#e6e7e9;--text-2:#9a9da3;--text-3:#5c5f66;--surface-composer:#141518;
+    --steel:#7fa7c9;--steel-tint:rgba(127,167,201,.13);
+    --green:#8fbc9a;--green-tint:rgba(143,188,154,.13);
+    --amber:#c9a36a;--amber-tint:rgba(201,163,106,.13);
+    --rose:#cf8a8f;--rose-tint:rgba(207,138,143,.14);--violet:#a493c9;
+    --accent:var(--steel);--r-card:16px;--r-input:12px;--r-pill:999px;
+  }
+  [data-theme="light"]{
+    --bg:#f7f7f5;--surface:#fff;--surface-2:#f0f0ee;--border:#e2e2df;
+    --text:#1a1b1e;--text-2:#5c5f66;--text-3:#9a9da3;--surface-composer:#fff;
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  body{margin:0;background:#000;color:var(--text);
+    font:15px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+    display:flex;flex-wrap:wrap;gap:28px;justify-content:center;padding:28px}
+  .phone{width:390px;height:820px;background:var(--bg);border-radius:34px;overflow:hidden;
+    border:1px solid var(--border);display:flex;flex-direction:column}
+  .topbar{flex:0 0 auto;height:56px;display:flex;align-items:center;gap:10px;padding:0 14px;
+    border-bottom:1px solid var(--border);background:var(--surface)}
+  .topbar .t{font-size:17px;font-weight:600;flex:1}
+  .topbar .t small{display:block;font-size:11px;font-weight:400;color:var(--text-3)}
+  .icon-btn{width:36px;height:36px;display:grid;place-items:center;border-radius:9px;
+    color:var(--text-2);background:transparent;border:0;cursor:pointer}
+  .icon-btn:hover{background:var(--surface-2);color:var(--text)}
+  svg{stroke:currentColor;fill:none;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
+  .topbar svg,.composer svg{width:20px;height:20px}
+  .chat{flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:14px}
+  .bubble{max-width:82%;padding:11px 13px;border-radius:15px;font-size:14px;line-height:1.45}
+  .me{align-self:flex-end;background:var(--steel-tint);border:1px solid color-mix(in srgb,var(--steel) 30%,transparent);border-bottom-right-radius:5px}
+  .ai{align-self:flex-start;background:var(--surface-2);border:1px solid var(--border);border-bottom-left-radius:5px}
+
+  /* ---- hurricane card ---- */
+  .hu{align-self:flex-start;max-width:92%;width:100%;border:1px solid var(--border);
+    border-radius:var(--r-card);background:var(--surface);overflow:hidden}
+  .hu-cap{display:flex;align-items:center;gap:7px;padding:9px 13px 0;font-size:10.5px;
+    color:var(--text-3);text-transform:uppercase;letter-spacing:.06em}
+  .hu-cap .vi{color:var(--rose);display:flex}
+  .hu-cap .vi svg{width:13px;height:13px}
+  .hu-head{display:flex;align-items:baseline;gap:8px;padding:8px 15px 9px}
+  .hu-name{font-size:18px;font-weight:600;letter-spacing:-.01em}
+  .hu-catbadge{font-size:11px;font-weight:600;padding:1px 7px;border-radius:var(--r-pill);
+    background:var(--rose-tint);color:var(--rose)}
+  .hu-move{margin-left:auto;font-size:12px;color:var(--text-2)}
+
+  /* map */
+  .map-wrap{position:relative;margin:0 13px;border:1px solid var(--border);border-radius:var(--r-input);
+    overflow:hidden;background:
+      linear-gradient(0deg,var(--surface-2),var(--surface-2)),
+      repeating-linear-gradient(0deg,transparent 0 23px,color-mix(in srgb,var(--border) 60%,transparent) 23px 24px),
+      repeating-linear-gradient(90deg,transparent 0 23px,color-mix(in srgb,var(--border) 60%,transparent) 23px 24px)}
+  .map{display:block;width:100%;height:auto}
+  .map .coast{stroke:var(--text-3);stroke-width:1;opacity:.5;fill:color-mix(in srgb,var(--green) 7%,transparent)}
+  .map .cone{fill:var(--steel-tint);stroke:var(--steel);stroke-width:1;stroke-dasharray:3 3;opacity:.9}
+  .map .path-past{stroke:var(--text-3);stroke-width:1.6;stroke-dasharray:2 3}
+  .map .path-fc{stroke:var(--rose);stroke-width:1.8}
+  .map .pt{fill:var(--surface);stroke:var(--rose);stroke-width:1.6}
+  .map .pt-past{stroke:var(--text-3)}
+  .map .ptlabel{fill:var(--text-2);stroke:none;font-size:7px;font-weight:600}
+  .map .you{fill:var(--steel);stroke:var(--bg);stroke-width:1.5}
+  .map .youlabel{fill:var(--steel);stroke:none;font-size:7.5px;font-weight:700}
+  .map .eye{fill:none;stroke:var(--rose);stroke-width:1.6}
+  /* legend chips over the map */
+  .map-legend{position:absolute;left:8px;bottom:8px;display:flex;gap:10px;font-size:9.5px;color:var(--text-2)}
+  .map-legend span{display:flex;align-items:center;gap:4px}
+  .map-legend i{width:9px;height:9px;border-radius:2px;display:inline-block}
+
+  /* stat row */
+  .hu-stats{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:var(--border);
+    margin:11px 13px 0;border:1px solid var(--border);border-radius:var(--r-input);overflow:hidden}
+  .stat{background:var(--surface);padding:9px 10px}
+  .stat .k{font-size:10px;color:var(--text-3);text-transform:uppercase;letter-spacing:.05em}
+  .stat .v{font-size:16px;font-weight:600;margin-top:2px}
+  .stat .v small{font-size:11px;font-weight:400;color:var(--text-2)}
+  .stat .v.danger{color:var(--rose)}
+
+  .hu-alert{display:flex;align-items:center;gap:8px;margin:11px 13px 13px;padding:7px 10px;
+    border-radius:var(--r-input);font-size:12px;font-weight:500;line-height:1.35}
+  .hu-alert.warning{background:var(--rose-tint);color:var(--rose);
+    border:1px solid color-mix(in srgb,var(--rose) 28%,transparent)}
+  .hu-alert svg{width:15px;height:15px;flex:0 0 auto}
+
+  .composer{flex:0 0 auto;display:flex;gap:8px;align-items:center;
+    padding:10px 12px calc(10px + env(safe-area-inset-bottom));
+    border-top:1px solid var(--border);background:var(--surface-composer)}
+  .composer input{flex:1;background:var(--surface-2);border:1px solid var(--border);
+    border-radius:var(--r-pill);padding:10px 14px;color:var(--text);font-size:14px;outline:none}
+  .composer .send{width:40px;height:40px;border-radius:50%;border:0;background:var(--accent);
+    color:#10141a;display:grid;place-items:center;cursor:pointer;flex:0 0 40px}
+  .composer .send svg{stroke:#10141a}
+  .label{text-align:center;color:var(--text-2);font-size:12px;max-width:390px;line-height:1.45;margin:4px auto}
+  .label b{color:var(--text)}
+</style>
+</head>
+<body>
+<div>
+  <div class="phone">
+    <div class="topbar">
+      <button class="icon-btn"><svg viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6"/></svg></button>
+      <div class="t">jerv<small>research</small></div>
+      <button class="icon-btn" id="theme" title="Toggle theme">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4.5"/><path d="M12 2v2M12 20v2M4 12H2M22 12h-2M5 5l1.5 1.5M17.5 17.5L19 19M19 5l-1.5 1.5M6.5 17.5L5 19"/></svg>
+      </button>
+    </div>
+
+    <div class="chat" id="chat">
+      <div class="bubble me">Where is Hurricane Elena headed relative to me in Tampa?</div>
+      <div class="bubble ai">Here's the latest forecast track. Tampa sits just inside the cone of uncertainty — the center is forecast to pass close to the bay early Thursday as a Category 3.</div>
+
+      <!-- hurricane_card -->
+      <div class="hu">
+        <div class="hu-cap"><span class="vi"><svg viewBox="0 0 24 24"><path d="M12 2a10 10 0 0 1 8 4c-3 0-5 1-6 3M12 22a10 10 0 0 1-8-4c3 0 5-1 6-3"/><circle cx="12" cy="12" r="2.4"/></svg></span> hurricane track · tampa, fl</div>
+
+        <div class="hu-head">
+          <span class="hu-name">Elena</span>
+          <span class="hu-catbadge">CAT 3</span>
+          <span class="hu-move">NNE · 14 mph</span>
+        </div>
+
+        <div class="map-wrap">
+          <svg class="map" viewBox="0 0 360 230" preserveAspectRatio="xMidYMid meet">
+            <!-- stylized coastline (layout only, not a real map) -->
+            <path class="coast" d="M250 0 C235 40 250 70 232 100 C214 130 232 165 210 200 L210 230 L360 230 L360 0 Z"/>
+            <!-- cone of uncertainty (widens into the future) -->
+            <path class="cone" id="cone"></path>
+            <!-- past + forecast track line -->
+            <path class="path-past" id="pastline"></path>
+            <path class="path-fc" id="fcline"></path>
+            <!-- forecast points + labels injected -->
+            <g id="points"></g>
+            <!-- your location -->
+            <circle class="you" id="youDot" cx="0" cy="0" r="4"/>
+            <text class="youlabel" id="youLbl">Tampa</text>
+          </svg>
+          <div class="map-legend">
+            <span><i style="background:var(--rose)"></i>forecast</span>
+            <span><i style="background:var(--steel);opacity:.5"></i>cone</span>
+            <span><i style="background:var(--text-3)"></i>past</span>
+          </div>
+        </div>
+
+        <div class="hu-stats">
+          <div class="stat"><div class="k">Closest pass</div><div class="v">Thu 4 AM</div></div>
+          <div class="stat"><div class="k">Distance</div><div class="v">~35 <small>mi W</small></div></div>
+          <div class="stat"><div class="k">Peak gust here</div><div class="v danger">100 <small>mph</small></div></div>
+        </div>
+
+        <div class="hu-alert warning">
+          <svg viewBox="0 0 24 24"><path d="M10.3 3.3 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.3a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/></svg>
+          Hurricane Warning — Pinellas & Hillsborough. Surge 5–8 ft on the bay.
+        </div>
+      </div>
+
+      <div class="bubble me">Tap a point — what's the category there?</div>
+    </div>
+
+    <div class="composer">
+      <input id="inp" placeholder="Ask the web, or work a problem…" />
+      <button class="send"><svg viewBox="0 0 24 24"><path d="M22 2L11 13M22 2l-7 20-4-9-9-4z"/></svg></button>
+    </div>
+  </div>
+  <p class="label">B · <b>Forecast track + cone.</b> Stylized mini-map: past track, cone of uncertainty, labelled forecast points, your location pinned inside. Answers "is it coming at me?" spatially. Tap a forecast point for its time + category.</p>
+</div>
+<script>
+  // Unit-ish layout slots projected onto the 360×230 map box — no map tiles, no URLs (#9).
+  const you={x:212,y:150};
+  // track: past (dashed) then forecast points up the coast; cat scales the dot
+  const track=[
+    {x:150,y:222,label:'Now-48h',cat:1,past:1},
+    {x:170,y:200,label:'Now-24h',cat:2,past:1},
+    {x:190,y:178,label:'Now',cat:3,past:1},
+    {x:206,y:150,label:'+12h',cat:3},
+    {x:218,y:120,label:'Thu 4a',cat:3},
+    {x:232,y:88,label:'+36h',cat:2},
+    {x:250,y:54,label:'+48h',cat:1},
+    {x:268,y:22,label:'+72h',cat:1}
+  ];
+  // cone: a polygon that hugs the track and flares toward the forecast end
+  document.getElementById('cone').setAttribute('d',
+    'M196 180 L200 150 L206 120 L212 86 L220 50 L232 18 '+
+    'L300 26 L286 60 L268 96 L250 128 L240 156 L226 184 Z');
+
+  const past=track.filter(p=>p.past), fc=track.filter(p=>!p.past);
+  const ln=pts=>'M'+pts.map(p=>p.x+' '+p.y).join(' L');
+  // forecast line continues from the last past point
+  document.getElementById('pastline').setAttribute('d',ln(past));
+  document.getElementById('fcline').setAttribute('d',ln([past[past.length-1],...fc]));
+
+  const catColor=c=>c>=3?'var(--rose)':c===2?'#d39580':'var(--amber)';
+  const g=document.getElementById('points');
+  g.innerHTML=track.map((p,i)=>{
+    const r=3+p.cat*0.7, eye=p.cat>=3&&!p.past;
+    return `<g class="ptg" data-i="${i}" style="cursor:pointer">
+      ${eye?`<circle class="eye" cx="${p.x}" cy="${p.y}" r="${r+3}"/>`:''}
+      <circle class="pt ${p.past?'pt-past':''}" cx="${p.x}" cy="${p.y}" r="${r}" style="stroke:${p.past?'var(--text-3)':catColor(p.cat)}"/>
+      <text class="ptlabel" x="${p.x+r+3}" y="${p.y+2}">${p.label}</text>
+    </g>`;
+  }).join('');
+  // place "you" pin + label
+  const yd=document.getElementById('youDot'); yd.setAttribute('cx',you.x); yd.setAttribute('cy',you.y);
+  const yl=document.getElementById('youLbl'); yl.setAttribute('x',you.x+7); yl.setAttribute('y',you.y+3);
+
+  // interactivity: tap a forecast point → reflect its category in the head badge
+  const badge=document.querySelector('.hu-catbadge');
+  g.querySelectorAll('.ptg').forEach(el=>el.onclick=()=>{
+    const p=track[+el.dataset.i];
+    badge.textContent=p.past?`WAS CAT ${p.cat}`:`CAT ${p.cat} @ ${p.label}`;
+    badge.style.background=p.cat>=3?'var(--rose-tint)':'var(--amber-tint)';
+    badge.style.color=p.cat>=3?'var(--rose)':'var(--amber)';
+  });
+
+  document.getElementById('theme').onclick=()=>{const h=document.documentElement;
+    h.dataset.theme=h.dataset.theme==='light'?'dark':'light'};
+</script>
+</body>
+</html>

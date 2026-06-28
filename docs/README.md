@@ -85,6 +85,13 @@ Phase-5 build record is `archive/PHASE5_COMPLETION_PLAN.md`.
   (record: `archive/SUBAGENT_SPAWNING_REVIEW.md`). Tree budget locked at 1.5× the
   per-turn jerv limit; remaining derived cap numbers tuned at S2. Open: the S3
   non-happy-state mock re-review.
+- `JCODE_SESSION_ISOLATION_PLAN.md` — the **per-session network namespace** design
+  (**PARKED** after the Wave P1 spike): give each jcode session its own `lo` so every
+  session can bind the same port. The on-box spike confirmed namespace _creation_ works
+  with a tailored seccomp profile, but giving an unprivileged netns _outbound_ needs broad
+  privilege (`CAP_SYS_ADMIN`) or hand-rolled rootless-container networking — not worth it
+  for the payoff, so the owner parked it and the Wave P0 substrate was reverted. Doc kept
+  for a future revisit. Concurrent-Vite is covered by `--port $PORT`.
 
 ## Proposed (not scheduled)
 

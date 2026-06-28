@@ -27,6 +27,11 @@ services:
       # deploy/lan-setup.sh. Blank JBRAIN_LAN_ADDR in .env to turn it off.
       # See docs/LOCAL_ACCESS.md.
       JBRAIN_LAN_ADDR: ${JBRAIN_LAN_ADDR:-https://jbrain.local}
+      # Host-mode jcode web preview (docs/JCODE_PREVIEW_HOST_PLAN.md): when set, the
+      # entrypoint renders a wildcard *.<host> Caddy site that routes <slug>-preview.<host>
+      # to the api's /__jcode_preview/<slug>. Shares the .env var with the api + jcode
+      # services; empty (the default) leaves the preview site unrendered.
+      JBRAIN_JCODE_PREVIEW_BASE_HOST: ${JCODE_PREVIEW_BASE_HOST:-}
     volumes:
       - caddy_data:/data
       - caddy_config:/config

@@ -1,0 +1,235 @@
+<!doctype html>
+<!--
+  hurricane tool-view mock · VARIANT C — "Impact dashboard"
+  ============================================================================
+  Data-dense. One row of identity (storm name, category, ETA), then a 2×2
+  grid of hazard panels — Wind, Surge, Rain, Timing — each with a value, a
+  short qualifier, and a small fill/gauge that encodes severity against a
+  threshold. A segmented control flips the whole card between MY IMPACT
+  (local forecast) and STORM (the storm's own stats). Watch/warning banner
+  at the foot. Best when the user wants the specifics at a glance, not the
+  hour-by-hour or the geography.
+
+  Data-only slots (no URLs, no markup — invariant #9): the model fills
+    { view:"hurricane_card", place, storm:{name,cat,kind,eta},
+      impact:{ wind:{mph,gust,level}, surge:{ft,level},
+               rain:{in,level}, timing:{onset,peak,clear} },
+      stormstats:{ sustained_mph, gust_mph, pressure_mb, movement },
+      alert:{ level, text } }
+  level is an ENUM (low|moderate|high|extreme) → tone token + gauge fill;
+  category is an ENUM. No colors/hex in the payload.
+
+  Tokens-only; gauges read green→amber→rose by level (low/moderate/high+),
+  the warning banner rose.
+-->
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Hurricane — C — impact dashboard</title>
+<style>
+  :root{
+    --bg:#0e0f11;--surface:#17181b;--surface-2:#1e2024;--border:#26282c;
+    --text:#e6e7e9;--text-2:#9a9da3;--text-3:#5c5f66;--surface-composer:#141518;
+    --steel:#7fa7c9;--steel-tint:rgba(127,167,201,.13);
+    --green:#8fbc9a;--green-tint:rgba(143,188,154,.13);
+    --amber:#c9a36a;--amber-tint:rgba(201,163,106,.13);
+    --rose:#cf8a8f;--rose-tint:rgba(207,138,143,.14);--violet:#a493c9;
+    --accent:var(--steel);--r-card:16px;--r-input:12px;--r-pill:999px;
+  }
+  [data-theme="light"]{
+    --bg:#f7f7f5;--surface:#fff;--surface-2:#f0f0ee;--border:#e2e2df;
+    --text:#1a1b1e;--text-2:#5c5f66;--text-3:#9a9da3;--surface-composer:#fff;
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  body{margin:0;background:#000;color:var(--text);
+    font:15px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+    display:flex;flex-wrap:wrap;gap:28px;justify-content:center;padding:28px}
+  .phone{width:390px;height:820px;background:var(--bg);border-radius:34px;overflow:hidden;
+    border:1px solid var(--border);display:flex;flex-direction:column}
+  .topbar{flex:0 0 auto;height:56px;display:flex;align-items:center;gap:10px;padding:0 14px;
+    border-bottom:1px solid var(--border);background:var(--surface)}
+  .topbar .t{font-size:17px;font-weight:600;flex:1}
+  .topbar .t small{display:block;font-size:11px;font-weight:400;color:var(--text-3)}
+  .icon-btn{width:36px;height:36px;display:grid;place-items:center;border-radius:9px;
+    color:var(--text-2);background:transparent;border:0;cursor:pointer}
+  .icon-btn:hover{background:var(--surface-2);color:var(--text)}
+  svg{stroke:currentColor;fill:none;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
+  .topbar svg,.composer svg{width:20px;height:20px}
+  .chat{flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:14px}
+  .bubble{max-width:82%;padding:11px 13px;border-radius:15px;font-size:14px;line-height:1.45}
+  .me{align-self:flex-end;background:var(--steel-tint);border:1px solid color-mix(in srgb,var(--steel) 30%,transparent);border-bottom-right-radius:5px}
+  .ai{align-self:flex-start;background:var(--surface-2);border:1px solid var(--border);border-bottom-left-radius:5px}
+
+  /* ---- hurricane card ---- */
+  .hu{align-self:flex-start;max-width:92%;width:100%;border:1px solid var(--border);
+    border-radius:var(--r-card);background:var(--surface);overflow:hidden}
+  .hu-cap{display:flex;align-items:center;gap:7px;padding:9px 13px 0;font-size:10.5px;
+    color:var(--text-3);text-transform:uppercase;letter-spacing:.06em}
+  .hu-cap .vi{color:var(--rose);display:flex}
+  .hu-cap .vi svg{width:13px;height:13px}
+  /* identity */
+  .hu-id{display:flex;align-items:center;gap:11px;padding:10px 15px 11px}
+  .hu-id .glyph{flex:0 0 auto;color:var(--rose);width:38px;height:38px}
+  .hu-id .glyph svg{width:38px;height:38px;stroke-width:1.5;animation:spin 9s linear infinite}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  .hu-id .main{flex:1;min-width:0}
+  .hu-name{font-size:18px;font-weight:600;letter-spacing:-.01em;display:flex;align-items:center;gap:7px}
+  .hu-catbadge{font-size:11px;font-weight:600;padding:1px 7px;border-radius:var(--r-pill);
+    background:var(--rose-tint);color:var(--rose)}
+  .hu-sub{font-size:12.5px;color:var(--text-2);margin-top:2px}
+  .hu-sub b{color:var(--rose);font-weight:600}
+
+  /* segmented toggle */
+  .seg{display:flex;gap:3px;margin:0 13px;padding:3px;background:var(--surface-2);
+    border:1px solid var(--border);border-radius:var(--r-input)}
+  .seg button{flex:1;border:0;background:transparent;color:var(--text-2);font-size:12.5px;
+    font-weight:500;padding:7px;border-radius:9px;cursor:pointer}
+  .seg button.on{background:var(--surface);color:var(--text);
+    box-shadow:0 1px 2px rgba(0,0,0,.18)}
+
+  /* hazard grid */
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:1px;background:var(--border);
+    margin:11px 13px 0;border:1px solid var(--border);border-radius:var(--r-input);overflow:hidden}
+  .cell{background:var(--surface);padding:11px 12px;display:flex;flex-direction:column;gap:7px;min-height:96px}
+  .cell .top{display:flex;align-items:center;gap:7px;color:var(--text-2)}
+  .cell .top svg{width:15px;height:15px}
+  .cell .top .k{font-size:11px;text-transform:uppercase;letter-spacing:.05em}
+  .cell .v{font-size:23px;font-weight:600;line-height:1;letter-spacing:-.01em}
+  .cell .v small{font-size:12px;font-weight:400;color:var(--text-2)}
+  .cell .q{font-size:11.5px;color:var(--text-2);line-height:1.3}
+  .cell .gauge{height:5px;border-radius:var(--r-pill);background:var(--surface-2);overflow:hidden;margin-top:auto}
+  .cell .gauge i{display:block;height:100%;border-radius:var(--r-pill)}
+  .lv-low .v{color:var(--green)} .lv-low .gauge i{background:var(--green)}
+  .lv-moderate .v{color:var(--amber)} .lv-moderate .gauge i{background:var(--amber)}
+  .lv-high .v{color:var(--rose)} .lv-high .gauge i{background:var(--rose)}
+  .lv-extreme .v{color:var(--rose)} .lv-extreme .gauge i{background:var(--rose)}
+  .lv-info .v{color:var(--text)} .lv-info .gauge i{background:var(--steel)}
+  /* timing cell uses a 3-stop mini track instead of a gauge */
+  .timing .steps{display:flex;justify-content:space-between;font-size:10.5px;color:var(--text-2);margin-top:auto}
+  .timing .steps b{display:block;color:var(--text);font-size:11.5px;font-weight:600}
+
+  .hu-alert{display:flex;align-items:center;gap:8px;margin:11px 13px 13px;padding:7px 10px;
+    border-radius:var(--r-input);font-size:12px;font-weight:500;line-height:1.35}
+  .hu-alert.warning{background:var(--rose-tint);color:var(--rose);
+    border:1px solid color-mix(in srgb,var(--rose) 28%,transparent)}
+  .hu-alert svg{width:15px;height:15px;flex:0 0 auto}
+
+  .composer{flex:0 0 auto;display:flex;gap:8px;align-items:center;
+    padding:10px 12px calc(10px + env(safe-area-inset-bottom));
+    border-top:1px solid var(--border);background:var(--surface-composer)}
+  .composer input{flex:1;background:var(--surface-2);border:1px solid var(--border);
+    border-radius:var(--r-pill);padding:10px 14px;color:var(--text);font-size:14px;outline:none}
+  .composer .send{width:40px;height:40px;border-radius:50%;border:0;background:var(--accent);
+    color:#10141a;display:grid;place-items:center;cursor:pointer;flex:0 0 40px}
+  .composer .send svg{stroke:#10141a}
+  .label{text-align:center;color:var(--text-2);font-size:12px;max-width:390px;line-height:1.45;margin:4px auto}
+  .label b{color:var(--text)}
+</style>
+</head>
+<body>
+<div>
+  <div class="phone">
+    <div class="topbar">
+      <button class="icon-btn"><svg viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6"/></svg></button>
+      <div class="t">jerv<small>research</small></div>
+      <button class="icon-btn" id="theme" title="Toggle theme">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4.5"/><path d="M12 2v2M12 20v2M4 12H2M22 12h-2M5 5l1.5 1.5M17.5 17.5L19 19M19 5l-1.5 1.5M6.5 17.5L5 19"/></svg>
+      </button>
+    </div>
+
+    <div class="chat" id="chat">
+      <div class="bubble me">Give me the hurricane specifics for Tampa.</div>
+      <div class="bubble ai">Here's the impact breakdown for Tampa from Hurricane Elena — wind, surge, rain, and timing. Flip to STORM for the system's own stats.</div>
+
+      <!-- hurricane_card -->
+      <div class="hu">
+        <div class="hu-cap"><span class="vi"><svg viewBox="0 0 24 24"><path d="M12 2a10 10 0 0 1 8 4c-3 0-5 1-6 3M12 22a10 10 0 0 1-8-4c3 0 5-1 6-3"/><circle cx="12" cy="12" r="2.4"/></svg></span> hurricane · tampa, fl</div>
+
+        <div class="hu-id">
+          <div class="glyph"><svg viewBox="0 0 24 24"><path d="M12 2a10 10 0 0 1 8 4c-3 0-5 1-6 3M12 22a10 10 0 0 1-8-4c3 0 5-1 6-3M22 12a10 10 0 0 1-4 8c0-3-1-5-3-6M2 12a10 10 0 0 1 4-8c0 3 1 5 3 6"/><circle cx="12" cy="12" r="2.4"/></svg></div>
+          <div class="main">
+            <div class="hu-name">Elena <span class="hu-catbadge">CAT 3</span></div>
+            <div class="hu-sub">Core nearest <b>Thu 4 AM</b> · 215 mi SSW, moving NNE 14 mph</div>
+          </div>
+        </div>
+
+        <div class="seg">
+          <button class="on" data-v="impact">My impact</button>
+          <button data-v="storm">Storm stats</button>
+        </div>
+
+        <div class="grid" id="grid"></div>
+
+        <div class="hu-alert warning">
+          <svg viewBox="0 0 24 24"><path d="M10.3 3.3 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.3a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/></svg>
+          Hurricane Warning — complete preparations by Wed evening.
+        </div>
+      </div>
+
+      <div class="bubble me">Switch it to the storm's own numbers.</div>
+    </div>
+
+    <div class="composer">
+      <input id="inp" placeholder="Ask the web, or work a problem…" />
+      <button class="send"><svg viewBox="0 0 24 24"><path d="M22 2L11 13M22 2l-7 20-4-9-9-4z"/></svg></button>
+    </div>
+  </div>
+  <p class="label">C · <b>Impact dashboard.</b> A 2×2 of hazard panels (wind · surge · rain · timing), each with a value and a severity gauge. Segmented toggle flips between your local impact and the storm's own stats. Most specifics per glance.</p>
+</div>
+<script>
+  const I={ // inline Lucide-style glyphs — no external icons (#9)
+    wind:'<svg viewBox="0 0 24 24"><path d="M4 8h11a2.5 2.5 0 1 0-2.5-2.5M4 16h7a2 2 0 1 1-2 2M4 12h15a2.5 2.5 0 1 1-2.5 2.5"/></svg>',
+    surge:'<svg viewBox="0 0 24 24"><path d="M2 14c2 0 2-2 4-2s2 2 4 2 2-2 4-2 2 2 4 2 2-2 4-2"/><path d="M2 19c2 0 2-2 4-2s2 2 4 2 2-2 4-2 2 2 4 2 2-2 4-2"/></svg>',
+    rain:'<svg viewBox="0 0 24 24"><path d="M7 14h9a3.2 3.2 0 0 0 .3-6.4 4.3 4.3 0 0 0-8.2-1.1A3.4 3.4 0 0 0 7 14z"/><path d="M8 18l-1 2M12 18l-1 2M16 18l-1 2"/></svg>',
+    clock:'<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>',
+    gauge:'<svg viewBox="0 0 24 24"><path d="M4 18a8 8 0 1 1 16 0"/><path d="M12 18l4-5"/></svg>',
+    pressure:'<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 12l4-4"/><circle cx="12" cy="12" r="1.6" fill="currentColor" stroke="none"/></svg>',
+    move:'<svg viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></svg>'
+  };
+
+  // MY IMPACT view: local forecast at Tampa
+  const impact=[
+    {ic:'wind',k:'Wind',v:'70',u:' mph',q:'Sustained · gusts to 100',lv:'high',fill:78},
+    {ic:'surge',k:'Surge',v:'5–8',u:' ft',q:'Above ground · Tampa Bay',lv:'high',fill:70},
+    {ic:'rain',k:'Rain',v:'6–10"',u:'',q:'Flash-flood risk inland',lv:'moderate',fill:55},
+    {ic:'clock',k:'Timing',v:'',u:'',timing:1}
+  ];
+  // STORM STATS view: the system's own numbers
+  const storm=[
+    {ic:'gauge',k:'Sustained',v:'120',u:' mph',q:'Category 3 · major',lv:'high',fill:80},
+    {ic:'wind',k:'Peak gust',v:'150',u:' mph',q:'Near the eyewall',lv:'extreme',fill:95},
+    {ic:'pressure',k:'Pressure',v:'948',u:' mb',q:'Deepening overnight',lv:'info',fill:60},
+    {ic:'move',k:'Movement',v:'NNE',u:'',q:'14 mph · steady',lv:'info',fill:40}
+  ];
+
+  function render(rows){
+    document.getElementById('grid').innerHTML=rows.map(c=>{
+      if(c.timing) return `<div class="cell timing lv-info">
+        <div class="top">${I.clock}<span class="k">Timing</span></div>
+        <div class="steps">
+          <span>Onset<b>Wed 9p</b></span>
+          <span style="text-align:center">Peak<b>Thu 4a</b></span>
+          <span style="text-align:right">Clears<b>Thu 1p</b></span>
+        </div></div>`;
+      return `<div class="cell lv-${c.lv}">
+        <div class="top">${I[c.ic]}<span class="k">${c.k}</span></div>
+        <div class="v">${c.v}<small>${c.u}</small></div>
+        <div class="q">${c.q}</div>
+        <div class="gauge"><i style="width:${c.fill}%"></i></div>
+      </div>`;
+    }).join('');
+  }
+  render(impact);
+
+  document.querySelectorAll('.seg button').forEach(b=>b.onclick=()=>{
+    document.querySelectorAll('.seg button').forEach(x=>x.classList.remove('on'));
+    b.classList.add('on');
+    render(b.dataset.v==='storm'?storm:impact);
+  });
+
+  document.getElementById('theme').onclick=()=>{const h=document.documentElement;
+    h.dataset.theme=h.dataset.theme==='light'?'dark':'light'};
+</script>
+</body>
+</html>

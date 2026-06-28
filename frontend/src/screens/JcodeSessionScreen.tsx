@@ -179,11 +179,17 @@ function JcodeTerminal({
           onClosedRef.current?.();
         }
       };
-      const onWindowResize = () => fit.fit();
-      window.addEventListener("resize", onWindowResize);
+      // Refit on the panel's ACTUAL size, not just window resizes. A share-link recipient
+      // on desktop gets a full-width screen (.jcode-screen--wide), but the window never
+      // resizes after load — so a mount-time fit that measured before the wide layout
+      // settled would leave the terminal frozen at a narrow mobile column, the rest of the
+      // panel bare background. Observing the host refits the moment its real width lands
+      // (the observer fires on first observe) and on every later change, filling the panel.
+      const ro = new ResizeObserver(() => fit.fit());
+      ro.observe(el);
       term.focus();
       cleanup = () => {
-        window.removeEventListener("resize", onWindowResize);
+        ro.disconnect();
         h.detach();
         handle.current = null;
         fitRef.current = null;
@@ -379,6 +385,13 @@ const TABS: { id: Tab; label: string; icon: typeof TerminalIcon }[] = [
   { id: "prev", label: "Preview", icon: GlobeIcon },
 ];
 
+// Append a changing cache-buster so a Refresh re-fetches the dev page instead of the
+// browser's cached copy. The dev server ignores the unknown param; we only add it once a
+// refresh has happened, so the first load keeps the clean address.
+function withReloadNonce(url: string, nonce: number): string {
+  return `${url}${url.includes("?") ? "&" : "?"}_r=${nonce}`;
+}
+
 export function JcodeSessionScreen({
   session,
   onClose,
@@ -403,6 +416,10 @@ export function JcodeSessionScreen({
   const [mountNonce, setMountNonce] = useState(0);
   const [preview, setPreview] = useState<JcodePreview | null>(null);
   const [pvBusy, setPvBusy] = useState(false);
+  // Bumped by the Refresh control to force-reload the preview iframe past the browser
+  // cache: a dev server with no HMR (e.g. a plain static server) never tells the iframe
+  // to reload, so the nonce changes the src's query AND remounts the iframe.
+  const [pvNonce, setPvNonce] = useState(0);
   const [model, setModel] = useState<JcodeModelStatus | null>(null);
   // Set when the owner confirms the swap (or a warm is already in flight): it re-arms the
   // poll to track the load and flips the load prompt over to the progress bar.
@@ -578,6 +595,26 @@ export function JcodeSessionScreen({
           {model?.model ?? "qwen3-coder-next"}
           {ctxLabel ? ` · ${ctxLabel}` : ""} · on-box
         </span>
+        <div className="jcode-tabsinline" role="tablist" aria-label="Session views">
+          {TABS.map((t) => {
+            const Glyph = t.icon;
+            return (
+              <button
+                key={t.id}
+                type="button"
+                role="tab"
+                // Icon-only in the bar — the label is the accessible name + tooltip.
+                aria-selected={tab === t.id}
+                aria-label={t.label}
+                title={t.label}
+                className={`jcode-tabin ${t.id}${tab === t.id ? " on" : ""}`}
+                onClick={() => setTab(t.id)}
+              >
+                <Glyph size={18} />
+              </button>
+            );
+          })}
+        </div>
         {!shared && (
           <span className="jcode-menuwrap">
             <button
@@ -671,25 +708,6 @@ export function JcodeSessionScreen({
         )}
       </header>
 
-      <div className="jcode-tabs2" role="tablist" aria-label="Session views">
-        {TABS.map((t) => {
-          const Glyph = t.icon;
-          return (
-            <button
-              key={t.id}
-              type="button"
-              role="tab"
-              aria-selected={tab === t.id}
-              className={`jcode-tab2 ${t.id}${tab === t.id ? " on" : ""}`}
-              onClick={() => setTab(t.id)}
-            >
-              <Glyph size={17} />
-              {t.label}
-            </button>
-          );
-        })}
-      </div>
-
       <div className="jcode-stage">
         {/* The terminal panel stays in the tree across tab switches, hidden (not unmounted)
             while Preview is active, so its shell socket — and the live shell — persist. */}
@@ -765,7 +783,23 @@ export function JcodeSessionScreen({
             // page gets the full panel; in host mode the iframe itself shows the proxy's
             // "start your dev server" 502 until the server is up.
             <div className="jcode-pvframe">
-              <iframe className="jcode-pviframe" title="Dev server preview" src={preview.url} />
+              <iframe
+                // key + the cache-busting query both force a full reload on refresh; a
+                // dev server with no HMR won't reload the iframe on its own.
+                key={pvNonce}
+                className="jcode-pviframe"
+                title="Dev server preview"
+                src={pvNonce === 0 ? preview.url : withReloadNonce(preview.url, pvNonce)}
+              />
+              <button
+                type="button"
+                className="jcode-pvrefresh"
+                title="Reload preview"
+                aria-label="Reload preview"
+                onClick={() => setPvNonce((n) => n + 1)}
+              >
+                <RefreshIcon size={18} />
+              </button>
             </div>
           ) : (
             <div className="jcode-panel">
