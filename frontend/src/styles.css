@@ -9238,11 +9238,11 @@ button.small {
   background: linear-gradient(90deg, var(--steel), var(--amber));
 }
 
-/* hurricane_card — jerv's active-tropical-cyclone tool-view (docs/mocks/hurricane-view).
-   Tokens only; the cyclone glyph rides the rose hazard accent. `proximity` is a
-   computed how-close tone (near = amber caution, regional/distant = steel info) — it
-   is NOT an official watch/warning, so it never uses the rose danger tone. The glyphs
-   are inline SVG (no fetched icons, #9). */
+/* hurricane_card — jerv's tabbed active-tropical-cyclone tool-view
+   (docs/mocks/hurricane-view/hurricane-combined-tabs.html). Tokens only; the cyclone
+   glyph rides the rose hazard accent. The `alert` banner is the only watch/warning
+   surface — a real warning reads rose (danger), a watch amber (caution). Map geometry
+   is inline SVG drawn from pre-projected [0,1] slots (no tiles, no fetched icons, #9). */
 .fb-shell .tv-hu {
   width: 100%;
 }
@@ -9321,29 +9321,325 @@ button.small {
 .fb-shell .tv-hu-pres {
   color: var(--text-3);
 }
-.fb-shell .tv-hu-note {
+/* official NWS alert banner — rose for a warning, amber for a watch */
+.fb-shell .tv-hu-alert {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 8px 13px 11px;
-  border-top: 1px solid var(--border);
-  font-size: 11.5px;
+  margin: 9px 13px 0;
+  padding: 7px 10px;
+  border-radius: var(--r-input);
+  font-size: 12px;
   line-height: 1.35;
-  color: var(--text-2);
 }
-.fb-shell .tv-hu-note-svg {
+.fb-shell .tv-hu-alert.warning {
+  background: var(--rose-tint);
+  color: var(--rose);
+  border: 1px solid color-mix(in srgb, var(--rose) 28%, transparent);
+}
+.fb-shell .tv-hu-alert.watch {
+  background: var(--amber-tint);
+  color: var(--amber);
+  border: 1px solid color-mix(in srgb, var(--amber) 28%, transparent);
+}
+.fb-shell .tv-hu-alert-svg {
   flex: 0 0 auto;
   width: 15px;
   height: 15px;
   fill: none;
-  stroke: var(--steel);
+  stroke: currentColor;
   stroke-width: 1.7;
   stroke-linecap: round;
   stroke-linejoin: round;
 }
-/* `near` reads the amber caution tone; regional/distant stay neutral steel info. */
-.fb-shell .tv-hu-note.near .tv-hu-note-svg {
+.fb-shell .tv-hu-alert-head {
+  color: var(--text-2);
+}
+/* tab bar */
+.fb-shell .tv-hu-tabs {
+  display: flex;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+}
+.fb-shell .tv-hu-tabs button {
+  flex: 1;
+  border: 0;
+  background: transparent;
+  color: var(--text-2);
+  font-size: 12.5px;
+  font-weight: 500;
+  padding: 9px 6px;
+  cursor: pointer;
+  position: relative;
+}
+.fb-shell .tv-hu-tabs button.on {
+  color: var(--text);
+}
+.fb-shell .tv-hu-tabs button.on::after {
+  content: "";
+  position: absolute;
+  left: 18%;
+  right: 18%;
+  bottom: -1px;
+  height: 2px;
+  background: var(--rose);
+  border-radius: 2px;
+}
+/* Track tab — the cone/path/points map */
+.fb-shell .tv-hu-track {
+  padding: 11px 13px 12px;
+}
+.fb-shell .tv-hu-map {
+  display: block;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 1 / 1;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-input);
+}
+.fb-shell .tv-hu-map-cone {
+  fill: var(--steel-tint);
+  stroke: var(--steel);
+  stroke-width: 0.6;
+  stroke-dasharray: 2 2;
+}
+.fb-shell .tv-hu-map-path {
+  fill: none;
+  stroke: var(--rose);
+  stroke-width: 1;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.fb-shell .tv-hu-map-pt {
+  fill: var(--surface);
+  stroke: var(--rose);
+  stroke-width: 0.8;
+}
+.fb-shell .tv-hu-map-pt.cat-1,
+.fb-shell .tv-hu-map-pt.cat-2 {
   stroke: var(--amber);
+}
+.fb-shell .tv-hu-map-you {
+  fill: var(--steel);
+  stroke: var(--bg);
+  stroke-width: 0.8;
+}
+.fb-shell .tv-hu-track-legend {
+  display: flex;
+  gap: 12px;
+  margin-top: 7px;
+  font-size: 10.5px;
+  color: var(--text-2);
+}
+.fb-shell .tv-hu-track-legend span {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.fb-shell .tv-hu-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 2px;
+  display: inline-block;
+}
+.fb-shell .tv-hu-dot.fc {
+  background: var(--rose);
+}
+.fb-shell .tv-hu-dot.cone {
+  background: var(--steel);
+  opacity: 0.5;
+}
+.fb-shell .tv-hu-dot.you {
+  background: var(--steel);
+  border-radius: var(--r-pill);
+}
+/* Timeline tab — the wind/gust/rain strip */
+.fb-shell .tv-hu-timeline {
+  padding: 4px 0 0;
+}
+.fb-shell .tv-hu-strip {
+  display: flex;
+  overflow-x: auto;
+  padding: 9px 8px 6px;
+  scrollbar-width: none;
+}
+.fb-shell .tv-hu-strip::-webkit-scrollbar {
+  display: none;
+}
+.fb-shell .tv-hu-cell {
+  flex: 0 0 auto;
+  width: 60px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 0;
+  border-radius: 10px;
+  color: var(--text-2);
+}
+.fb-shell .tv-hu-cell.peak {
+  background: var(--rose-tint);
+}
+.fb-shell .tv-hu-ct {
+  font-size: 11px;
+}
+.fb-shell .tv-hu-cell.peak .tv-hu-ct {
+  color: var(--rose);
+  font-weight: 600;
+}
+.fb-shell .tv-hu-cg {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+}
+.fb-shell .tv-hu-cg span {
+  font-size: 9.5px;
+  font-weight: 400;
+  color: var(--text-3);
+}
+.fb-shell .tv-hu-cw {
+  font-size: 10px;
+  color: var(--text-3);
+}
+.fb-shell .tv-hu-cr {
+  font-size: 10px;
+  color: var(--steel);
+}
+.fb-shell .tv-hu-cr.none {
+  visibility: hidden;
+}
+.fb-shell .tv-hu-arrival {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  padding: 6px 13px 11px;
+  font-size: 11.5px;
+  color: var(--text-2);
+}
+.fb-shell .tv-hu-arrival b {
+  color: var(--text);
+  font-weight: 600;
+}
+.fb-shell .tv-hu-approx {
+  color: var(--text-3);
+  font-style: italic;
+}
+/* Impact tab — the hazard grid + My-impact/Storm-stats toggle */
+.fb-shell .tv-hu-impact {
+  padding: 11px 13px 12px;
+}
+.fb-shell .tv-hu-seg {
+  display: flex;
+  gap: 3px;
+  padding: 3px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-input);
+}
+.fb-shell .tv-hu-seg button {
+  flex: 1;
+  border: 0;
+  background: transparent;
+  color: var(--text-2);
+  font-size: 12.5px;
+  font-weight: 500;
+  padding: 6px;
+  border-radius: 9px;
+  cursor: pointer;
+}
+.fb-shell .tv-hu-seg button.on {
+  background: var(--surface);
+  color: var(--text);
+}
+.fb-shell .tv-hu-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1px;
+  margin-top: 10px;
+  background: var(--border);
+  border: 1px solid var(--border);
+  border-radius: var(--r-input);
+  overflow: hidden;
+}
+.fb-shell .tv-hu-icell {
+  background: var(--surface);
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-height: 84px;
+}
+.fb-shell .tv-hu-ik {
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-3);
+}
+.fb-shell .tv-hu-iv {
+  font-size: 19px;
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: -0.01em;
+}
+.fb-shell .tv-hu-iq {
+  font-size: 11px;
+  color: var(--text-2);
+}
+.fb-shell .tv-hu-gauge {
+  height: 5px;
+  border-radius: var(--r-pill);
+  background: var(--surface-2);
+  overflow: hidden;
+  margin-top: auto;
+}
+.fb-shell .tv-hu-gauge i {
+  display: block;
+  height: 100%;
+  border-radius: var(--r-pill);
+}
+.fb-shell .tv-hu-icell.lv-low .tv-hu-iv {
+  color: var(--green);
+}
+.fb-shell .tv-hu-icell.lv-low .tv-hu-gauge i {
+  background: var(--green);
+}
+.fb-shell .tv-hu-icell.lv-moderate .tv-hu-iv {
+  color: var(--amber);
+}
+.fb-shell .tv-hu-icell.lv-moderate .tv-hu-gauge i {
+  background: var(--amber);
+}
+.fb-shell .tv-hu-icell.lv-high .tv-hu-iv,
+.fb-shell .tv-hu-icell.lv-extreme .tv-hu-iv {
+  color: var(--rose);
+}
+.fb-shell .tv-hu-icell.lv-high .tv-hu-gauge i,
+.fb-shell .tv-hu-icell.lv-extreme .tv-hu-gauge i {
+  background: var(--rose);
+}
+.fb-shell .tv-hu-icell.lv-info .tv-hu-iv {
+  color: var(--text);
+}
+.fb-shell .tv-hu-tsteps {
+  display: flex;
+  justify-content: space-between;
+  margin-top: auto;
+  font-size: 10.5px;
+  color: var(--text-2);
+}
+.fb-shell .tv-hu-tsteps b {
+  display: block;
+  color: var(--text);
+  font-size: 11.5px;
+  font-weight: 600;
+}
+.fb-shell .tv-hu-foot {
+  padding: 8px 13px 11px;
+  border-top: 1px solid var(--border);
+  font-size: 11px;
+  line-height: 1.35;
+  color: var(--text-3);
 }
 
 /* generated_image — the image-gen tool-view (docs/mocks/genimage-c-edit-aware).
