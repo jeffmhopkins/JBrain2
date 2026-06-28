@@ -10,7 +10,7 @@ from jbrain.agent.loop import AgentResult
 from jbrain.agent.session import AgentSessionInfo
 from jbrain.db.session import SessionContext
 from jbrain.tasks.repo import TaskInfo
-from jbrain.tasks.runner import TaskRunner
+from jbrain.tasks.runner import ExecutedTurn, TaskRunner
 
 NOW = datetime(2026, 6, 24, 12, tzinfo=UTC)
 OWNER = SessionContext(principal_id="11111111-1111-1111-1111-111111111111", principal_kind="owner")
@@ -82,8 +82,12 @@ class FakeTranscript:
     def __init__(self) -> None:
         self.recorded: list[dict] = []
 
-    async def record_exchange(self, ctx, *, session_id, run_id, user_text, assistant_text, tools):  # type: ignore[no-untyped-def]
-        self.recorded.append({"user": user_text, "assistant": assistant_text})
+    async def record_exchange(  # type: ignore[no-untyped-def]
+        self, ctx, *, session_id, run_id, user_text, assistant_text, tools, reasoning=""
+    ):
+        self.recorded.append(
+            {"user": user_text, "assistant": assistant_text, "tools": tools, "reasoning": reasoning}
+        )
         return "turn-1"
 
 
@@ -101,9 +105,13 @@ class FakeRuns:
 
 
 class FakeExecutor:
-    def __init__(self, result: AgentResult | None = None, boom: bool = False) -> None:
-        self._result = result or AgentResult(
-            text="Here is the news.", stop_reason="end_turn", steps=2, cost_tokens=10
+    def __init__(self, executed: ExecutedTurn | None = None, boom: bool = False) -> None:
+        self._executed = executed or ExecutedTurn(
+            result=AgentResult(
+                text="Here is the news.", stop_reason="end_turn", steps=2, cost_tokens=10
+            ),
+            tools=[{"id": "t1", "name": "web_search", "ok": True}],
+            reasoning="Let me check the headlines.",
         )
         self._boom = boom
         self.calls: list[dict] = []
@@ -112,7 +120,7 @@ class FakeExecutor:
         self.calls.append({"scopes": tuple(read_scopes), "session": agent_session_id})
         if self._boom:
             raise RuntimeError("model exploded")
-        return self._result
+        return self._executed
 
 
 class FakePush:
@@ -150,6 +158,11 @@ async def test_successful_run_records_session_transcript_and_run() -> None:
     assert runs.finished[0]["status"] == "done"
     assert runlog.finished[0] == {"status": "done", "steps": 2, "cost": 10}
     assert transcript.recorded[0]["assistant"] == "Here is the news."
+    # The turn's tool steps and reasoning trace are persisted, so the session a task
+    # produces replays its "Worked" / "Thought for Ns" disclosures on reopen — a
+    # scheduled task used to record neither (tools=[] and no reasoning).
+    assert transcript.recorded[0]["tools"] == [{"id": "t1", "name": "web_search", "ok": True}]
+    assert transcript.recorded[0]["reasoning"] == "Let me check the headlines."
     assert sessions.touched == ["sess-1"]
 
 

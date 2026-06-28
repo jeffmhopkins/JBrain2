@@ -22,7 +22,7 @@ from jbrain.auth import service
 from jbrain.auth.repo import SqlAuthRepo
 from jbrain.db.session import SessionContext, scoped_session
 from jbrain.tasks.repo import TaskRepo, TaskRunRepo
-from jbrain.tasks.runner import TaskRunner
+from jbrain.tasks.runner import ExecutedTurn, TaskRunner
 from tests.conftest import docker_available
 from tests.integration.test_rls import OWNER, database_url  # noqa: F401
 
@@ -292,8 +292,14 @@ async def test_full_run_lands_session_run_and_task_run(maker: async_sessionmaker
     task = await _make_task(repo, owner, name="brief", prompt="the news")
 
     class FakeExecutor:
-        async def run_turn(self, **_: object) -> AgentResult:
-            return AgentResult(text="here it is", stop_reason="end_turn", steps=1, cost_tokens=4)
+        async def run_turn(self, **_: object) -> ExecutedTurn:
+            return ExecutedTurn(
+                result=AgentResult(
+                    text="here it is", stop_reason="end_turn", steps=1, cost_tokens=4
+                ),
+                tools=[{"id": "t1", "name": "search", "ok": True}],
+                reasoning="thinking it through",
+            )
 
     runner = TaskRunner(
         sessions=AgentSessionRepo(maker),
@@ -319,6 +325,19 @@ async def test_full_run_lands_session_run_and_task_run(maker: async_sessionmaker
                 {"id": info.session_id},
             )
         ).scalar()
+        # The assistant turn persists the tool steps + reasoning, so reopening the
+        # session this task produced replays its "Worked" / "Thought for Ns" disclosures.
+        assistant = (
+            await session.execute(
+                text(
+                    "SELECT tools, reasoning FROM app.agent_turns"
+                    " WHERE session_id = :id AND role = 'assistant'"
+                ),
+                {"id": info.session_id},
+            )
+        ).one()
     assert sess == 1 and turns == 2  # user + assistant
+    assert assistant[0] == [{"id": "t1", "name": "search", "ok": True}]
+    assert assistant[1] == "thinking it through"
     stored = await TaskRunRepo(maker).list_for_task(owner, task.id)
     assert len(stored) == 1 and stored[0].summary == "here it is"

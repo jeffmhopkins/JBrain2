@@ -11,18 +11,19 @@ raises is recorded as an `error` run, never propagated to the scheduler tick.
 
 import contextlib
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Protocol
+from typing import Any, Protocol
 
 import structlog
 
 from jbrain.agent.agents import AgentProfile, agent_for
 from jbrain.agent.clock import now_block
 from jbrain.agent.loop import AgentLoop, AgentResult, guardrails_for_effort
-from jbrain.agent.runlog import AgentRunLog
+from jbrain.agent.runlog import AgentRunLog, StepTally
 from jbrain.agent.session import AgentSessionRepo, read_context
 from jbrain.agent.toolregistry import ToolRegistry
+from jbrain.agent.transcript_accumulator import TranscriptAccumulator
 from jbrain.agent.transcript_store import AgentTranscript
 from jbrain.db.session import SessionContext
 from jbrain.llm import LlmRouter, UserMessage
@@ -33,9 +34,22 @@ log = structlog.get_logger()
 _SUMMARY_LEN = 240
 
 
+@dataclass(frozen=True)
+class ExecutedTurn:
+    """One headless task turn's result: the loop outcome (text/stop_reason/steps/cost)
+    plus the durable transcript shape — the tool "Worked" steps and the reasoning trace.
+    A scheduled task records the SAME assistant-turn record /chat does, so reopening the
+    session it produced replays the thinking and tool use (it used to record neither)."""
+
+    result: AgentResult
+    tools: list[dict[str, Any]] = field(default_factory=list)
+    reasoning: str = ""
+
+
 class TurnExecutor(Protocol):
     """Runs one agent turn to completion and returns its result. The real impl drives
-    `AgentLoop.run`; tests inject a fake to avoid the LLM stack."""
+    `AgentLoop.run_stream` (the same path /chat takes) and folds the event stream into
+    the transcript shape; tests inject a fake to avoid the LLM stack."""
 
     async def run_turn(
         self,
@@ -47,7 +61,7 @@ class TurnExecutor(Protocol):
         timezone: str | None,
         recorder: object,
         agent_session_id: str,
-    ) -> AgentResult: ...
+    ) -> ExecutedTurn: ...
 
 
 class PushPoke(Protocol):
@@ -56,8 +70,11 @@ class PushPoke(Protocol):
 
 @dataclass
 class LoopTurnExecutor:
-    """The production `TurnExecutor`: one ReAct turn through `AgentLoop`, sized to the
-    agent.turn model's reasoning effort exactly as /chat does."""
+    """The production `TurnExecutor`: one ReAct turn through `AgentLoop.run_stream`,
+    sized to the agent.turn model's reasoning effort exactly as /chat does. It drives
+    the streaming path (not the simpler `run`) precisely so the turn's tool steps and
+    reasoning are captured for the transcript via the shared accumulator — the same
+    shaping the live /chat turn uses, so the two never drift."""
 
     router: LlmRouter
     registry: ToolRegistry
@@ -72,15 +89,19 @@ class LoopTurnExecutor:
         timezone: str | None,
         recorder: object,
         agent_session_id: str,
-    ) -> AgentResult:
+    ) -> ExecutedTurn:
         effort = await self.router.effective_reasoning_effort("agent.turn")
+        # The loop yields ChatEvents, not the step/cost tallies the run summary needs,
+        # so count them as the loop records each step (as /chat does).
+        tally = StepTally(recorder)
         loop = AgentLoop(
             self.router,
             self.registry,
-            recorder=recorder,  # type: ignore[arg-type]
+            recorder=tally,  # type: ignore[arg-type]
             guardrails=guardrails_for_effort(effort, scale=profile.budget_multiplier),
         )
-        return await loop.run(
+        acc = TranscriptAccumulator()
+        async for event in loop.run_stream(
             session=read_ctx,
             scopes=read_scopes,
             conversation=conversation,  # type: ignore[arg-type]
@@ -88,7 +109,19 @@ class LoopTurnExecutor:
             system=profile.prompt,
             agent_session_id=agent_session_id,
             tools_allow=profile.tools,
+            # The "from general knowledge — not your notes" label only makes sense for an
+            # agent that reads notes (mirrors /chat); a task has no live location, so
+            # `here`/`context_window` stay unset.
+            general_knowledge_label=profile.reads_knowledge_base,
+        ):
+            acc.feed(event)
+        result = AgentResult(
+            text=acc.answer_text,
+            stop_reason=acc.stop_reason,
+            steps=tally.steps,
+            cost_tokens=tally.cost,
         )
+        return ExecutedTurn(result=result, tools=acc.tool_steps(), reasoning=acc.reasoning_text)
 
 
 class TaskRunner:
@@ -150,7 +183,7 @@ class TaskRunner:
         cost = 0
         stop_reason = "error"
         try:
-            result = await self._executor.run_turn(
+            executed = await self._executor.run_turn(
                 profile=profile,
                 read_ctx=read_ctx,
                 read_scopes=read_scopes,
@@ -159,16 +192,21 @@ class TaskRunner:
                 recorder=recorder,
                 agent_session_id=session.id,
             )
+            result = executed.result
             status, summary, steps, cost = "done", result.text, result.steps, result.cost_tokens
             stop_reason = result.stop_reason
             with contextlib.suppress(Exception):
+                # Record the tool steps and reasoning trace the turn produced, so the
+                # session this task created replays its "Worked" / "Thought for Ns"
+                # disclosures on reopen exactly as an interactive turn does.
                 await self._transcript.record_exchange(
                     owner_ctx,
                     session_id=session.id,
                     run_id=run_id,
                     user_text=task.prompt,
                     assistant_text=result.text,
-                    tools=[],
+                    tools=executed.tools,
+                    reasoning=executed.reasoning,
                 )
         except Exception as exc:  # noqa: BLE001 — a task failure is a recorded run, not a crash
             log.warning("task.run_failed", task_id=task.id, error=repr(exc))
