@@ -40,8 +40,9 @@ from jbrain.agent.contracts import (
     SubagentDoneEvent,
     SubagentProgressEvent,
     SubagentSpawnedEvent,
+    ViewPayload,
 )
-from jbrain.agent.loop import AgentLoop, ToolContext, guardrails_for_effort
+from jbrain.agent.loop import AgentLoop, ToolContext, ToolOutput, guardrails_for_effort
 from jbrain.agent.runlog import AgentRunLog, StepTally
 from jbrain.agent.session import AgentSessionRepo, read_context
 from jbrain.agent.toolregistry import ToolRegistry
@@ -208,7 +209,10 @@ class SpawnService:
                 for persona, label, brief_text in plans
             )
         )
-        return _observation(results)
+        # The text observation is what the parent synthesizes from; the view is the
+        # UI's structured render of the same fan result (the registered
+        # `subagent_synthesis` tool-view, DESIGN.md). Both carry the same data.
+        return ToolOutput(_observation(results), view=_synthesis_view(results))
 
     async def _run_child(
         self,
@@ -374,6 +378,26 @@ def _observation(results: list[_ChildResult]) -> str:
         for r in results
     ]
     return header + "\n\n" + "\n\n".join(blocks)
+
+
+def _synthesis_view(results: list[_ChildResult]) -> ViewPayload:
+    """The registered `subagent_synthesis` tool-view (DESIGN.md): the fan result as a
+    neutral structured card — a per-child roster (label, persona, ok, summary) plus a
+    ran/failed roll-up — composed by the PWA from the standard primitives, never a
+    bespoke panel. Data-only (the model authors nothing here)."""
+    ran = len(results)
+    failed = sum(1 for r in results if not r.ok)
+    return ViewPayload(
+        view="subagent_synthesis",
+        data={
+            "ran": ran,
+            "failed": failed,
+            "children": [
+                {"label": r.label, "persona": r.persona, "ok": r.ok, "summary": r.summary}
+                for r in results
+            ],
+        },
+    )
 
 
 class SpawnRef:

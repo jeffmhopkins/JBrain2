@@ -7485,6 +7485,217 @@ button.small {
   padding-top: 4px;
 }
 
+/* Sub-agent fan — the in-chat accordion below jerv's bubble (docs/DESIGN.md
+   "Sub-agent spawning surfaces", layout A). Persona is a NEUTRAL tag; semantic
+   colour is confined to the glyph: steel=running, green=done, rose=failed. */
+.fb-shell .fb-sa {
+  margin: 8px 0 2px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-card);
+  background: var(--surface-2);
+  overflow: hidden;
+}
+.fb-shell .fb-sa-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--border);
+}
+.fb-shell .fb-sa-spark {
+  color: var(--steel);
+}
+.fb-shell .fb-sa-h-t {
+  font-size: var(--fs-secondary);
+  font-weight: 500;
+}
+.fb-shell .fb-sa-h-c {
+  font-size: 11px;
+  color: var(--text-3);
+}
+.fb-shell .fb-sa-stop {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--rose);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 2px 9px;
+  background: transparent;
+  cursor: pointer;
+}
+.fb-shell .fb-sa-budget {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 12px;
+  border-bottom: 1px solid var(--border);
+  font-size: 10px;
+  color: var(--text-3);
+}
+.fb-shell .fb-sa-budget-txt {
+  flex: none;
+}
+.fb-shell .fb-sa-track {
+  flex: 1;
+  height: 4px;
+  border-radius: 999px;
+  background: var(--surface);
+  overflow: hidden;
+}
+.fb-shell .fb-sa-track i {
+  display: block;
+  height: 100%;
+  background: var(--steel);
+  transition: width 0.15s linear;
+}
+.fb-shell .fb-sa-budget.warn .fb-sa-track i {
+  background: var(--amber);
+}
+.fb-shell .fb-sa-budget.danger {
+  color: var(--rose);
+}
+.fb-shell .fb-sa-budget.danger .fb-sa-track i {
+  background: var(--rose);
+}
+.fb-shell .fb-sa-row {
+  border-bottom: 1px solid var(--border);
+}
+.fb-shell .fb-sa-row:last-child {
+  border-bottom: none;
+}
+.fb-shell .fb-sa-row.sub {
+  margin-left: 18px;
+}
+.fb-shell .fb-sa-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 9px 12px;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  text-align: left;
+  color: inherit;
+}
+.fb-shell .fb-sa-lbl {
+  font-size: var(--fs-secondary);
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fb-shell .fb-sa-ptag {
+  flex: none;
+  font-size: 10px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-weight: 500;
+  background: var(--surface);
+  color: var(--text-2);
+  border: 1px solid var(--border);
+}
+.fb-shell .fb-sa-st {
+  font-size: 11px;
+  color: var(--text-2);
+  max-width: 108px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fb-shell .fb-sa-st.fail {
+  color: var(--rose);
+}
+.fb-shell .fb-sa-car {
+  color: var(--text-3);
+  font-size: 11px;
+  flex: none;
+}
+.fb-shell .fb-sa-detail {
+  padding: 0 12px 10px 34px;
+  font-size: 12px;
+  color: var(--text-2);
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+.fb-shell .fb-sa-detail.err {
+  color: var(--rose);
+}
+.fb-shell .fb-sa-more {
+  width: 100%;
+  padding: 8px 12px;
+  font-size: 11px;
+  color: var(--steel);
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+  text-align: left;
+}
+/* the running glyph: three bouncing steel dots (done=green ✓, failed=rose ✕) */
+.fb-shell .fb-sa-g {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  font-size: 13px;
+}
+.fb-shell .fb-sa-g.done {
+  color: var(--green);
+}
+.fb-shell .fb-sa-g.fail {
+  color: var(--rose);
+}
+.fb-shell .fb-sa-g.run {
+  gap: 2px;
+}
+.fb-shell .fb-sa-g.run i {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--steel);
+  animation: fb-sa-bounce 1s infinite;
+}
+.fb-shell .fb-sa-g.run i:nth-child(2) {
+  animation-delay: 0.15s;
+}
+.fb-shell .fb-sa-g.run i:nth-child(3) {
+  animation-delay: 0.3s;
+}
+@keyframes fb-sa-bounce {
+  0%,
+  80%,
+  100% {
+    opacity: 0.3;
+    transform: translateY(0);
+  }
+  40% {
+    opacity: 1;
+    transform: translateY(-3px);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .fb-shell .fb-sa-g.run i {
+    animation: none;
+    opacity: 0.85;
+  }
+  .fb-shell .fb-sa-track i {
+    transition: none;
+  }
+}
+/* visually-hidden live region (the polite fan summary) */
+.fb-shell .fb-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
 /* a single tool step — itself a pulldown (arguments in · result out · raw) */
 .fb-shell .fb-step {
   border-radius: 10px;
@@ -8650,6 +8861,64 @@ button.small {
   border: 0;
   padding: 0;
   background: none;
+}
+/* subagent_synthesis — the fan result roster (Wave S3.2). Neutral frame (the
+   wrapper supplies it); colour stays on the marks (green=ok, rose=failed). */
+.fb-shell .tv-syn-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: var(--fs-secondary);
+  font-weight: 500;
+  margin-bottom: 6px;
+}
+.fb-shell .tv-syn-ic {
+  color: var(--green);
+}
+.fb-shell .tv-syn-ic.bad {
+  color: var(--rose);
+}
+.fb-shell .tv-syn-child {
+  padding: 6px 0;
+  border-top: 1px solid var(--border);
+}
+.fb-shell .tv-syn-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.fb-shell .tv-syn-mark {
+  flex: none;
+  color: var(--green);
+  font-size: 12px;
+}
+.fb-shell .tv-syn-mark.bad {
+  color: var(--rose);
+}
+.fb-shell .tv-syn-clbl {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fs-secondary);
+}
+.fb-shell .tv-syn-ptag {
+  flex: none;
+  font-size: 10px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-weight: 500;
+  background: var(--surface);
+  color: var(--text-2);
+  border: 1px solid var(--border);
+}
+.fb-shell .tv-syn-sum {
+  margin: 4px 0 0 19px;
+  font-size: 12px;
+  color: var(--text-2);
+  line-height: 1.5;
+  white-space: pre-wrap;
 }
 .fb-shell .tv-stat .tv-stat-value {
   font-size: 22px;

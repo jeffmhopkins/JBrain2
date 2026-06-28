@@ -1109,6 +1109,49 @@ function WeatherCard({ data }: ViewProps): ReactNode {
   );
 }
 
+/** The sub-agent fan result (docs/SUBAGENT_SPAWNING_PLAN.md, Wave S3.2): a neutral
+ * roster card — a ran/failed roll-up plus one line per child (label, neutral persona
+ * tag, ✓/✕, summary). Data: `{ran, failed, children: [{label, persona, ok, summary}]}`.
+ * Standard tool-view frame, never a bespoke green panel; colour stays on the marks
+ * (green=ok, rose=failed). */
+function SubagentSynthesis({ data }: ViewProps): ReactNode {
+  const ran = typeof data.ran === "number" ? data.ran : 0;
+  const failed = typeof data.failed === "number" ? data.failed : 0;
+  const children = Array.isArray(data.children) ? data.children : [];
+  const allOk = failed === 0;
+  return (
+    <div className={`tv-syn${allOk ? "" : " has-fail"}`}>
+      <div className="tv-syn-head">
+        <span className={`tv-syn-ic${allOk ? "" : " bad"}`} aria-hidden="true">
+          {allOk ? "✓" : "✕"}
+        </span>
+        <span>
+          Synthesized from {ran - failed} of {ran}
+          {failed > 0 ? ` · ${failed} failed` : ""}
+        </span>
+      </div>
+      {children.map((raw, i) => {
+        const c = raw as Record<string, unknown>;
+        const cok = c.ok === true;
+        const summary = typeof c.summary === "string" ? c.summary : "";
+        return (
+          // biome-ignore lint/suspicious/noArrayIndexKey: roster renders in stable order
+          <div className="tv-syn-child" key={i}>
+            <div className="tv-syn-row">
+              <span className={`tv-syn-mark${cok ? "" : " bad"}`} aria-hidden="true">
+                {cok ? "✓" : "✕"}
+              </span>
+              <span className="tv-syn-clbl">{String(c.label ?? "")}</span>
+              <span className="tv-syn-ptag">{String(c.persona ?? "")}</span>
+            </div>
+            {summary && <div className="tv-syn-sum">{summary}</div>}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 const REGISTRY: Record<string, (props: ViewProps) => ReactNode> = {
   stat_block: StatBlock,
   data_table: DataTable,
@@ -1122,6 +1165,7 @@ const REGISTRY: Record<string, (props: ViewProps) => ReactNode> = {
   video_analysis: VideoAnalysisView,
   server_metrics: ServerMetrics,
   weather_card: WeatherCard,
+  subagent_synthesis: SubagentSynthesis,
 };
 
 export function isKnownView(name: string): boolean {
