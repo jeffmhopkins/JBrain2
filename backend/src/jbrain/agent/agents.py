@@ -44,11 +44,12 @@ _PROMPTS = Path(__file__).parent / "prompts"
 WEB_TOOLS = frozenset({"web_search", "web_fetch"})
 
 # jerv's full allowlist: the internet tools, the dataless clock read, the
-# owner-approved coarse location read, the weather lookup, the local image-generation
-# tools, the local audio transcription, the local video analysis, and the host-metrics
-# read.
+# owner-approved coarse location read, the weather + hurricane lookups, the local
+# image-generation tools, the local audio transcription, the local video analysis,
+# and the host-metrics read.
 # `current_time` is allowlisted explicitly (a default-knowledge tool jerv's closed
-# allowlist could not otherwise reach); `current_location`, `weather`, `generate_image`/
+# allowlist could not otherwise reach); `current_location`, `weather`, `hurricane`,
+# `generate_image`/
 # `edit_image`/`analyze_image`, `transcribe`, and `analyze_video` are `web`-gated
 # jerv-only tools. `weather` runs directly over the pinned Open-Meteo upstreams (it
 # sends only a public place name / city centre, never the owner's precise fix — the
@@ -66,6 +67,7 @@ JERV_TOOLS = WEB_TOOLS | frozenset(
         "current_time",
         "current_location",
         "weather",
+        "hurricane",
         "generate_image",
         "edit_image",
         "analyze_image",

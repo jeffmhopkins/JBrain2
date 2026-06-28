@@ -9238,6 +9238,114 @@ button.small {
   background: linear-gradient(90deg, var(--steel), var(--amber));
 }
 
+/* hurricane_card — jerv's active-tropical-cyclone tool-view (docs/mocks/hurricane-view).
+   Tokens only; the cyclone glyph rides the rose hazard accent. `proximity` is a
+   computed how-close tone (near = amber caution, regional/distant = steel info) — it
+   is NOT an official watch/warning, so it never uses the rose danger tone. The glyphs
+   are inline SVG (no fetched icons, #9). */
+.fb-shell .tv-hu {
+  width: 100%;
+}
+.fb-shell .tv-hu-cap {
+  padding: 9px 13px 0;
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-3);
+}
+.fb-shell .tv-hu-hero {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  padding: 10px 15px 12px;
+}
+.fb-shell .tv-hu-glyph {
+  flex: 0 0 auto;
+  color: var(--rose);
+}
+.fb-shell .tv-hu-glyph .tv-hu-svg {
+  width: 50px;
+  height: 50px;
+}
+.fb-shell .tv-hu-svg {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.fb-shell .tv-hu-main {
+  flex: 1;
+  min-width: 0;
+}
+.fb-shell .tv-hu-name {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex-wrap: wrap;
+  font-size: 19px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+.fb-shell .tv-hu-badge {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 1px 7px;
+  border-radius: var(--r-pill);
+  background: var(--rose-tint);
+  color: var(--rose);
+  letter-spacing: 0.02em;
+}
+.fb-shell .tv-hu-where {
+  font-size: 13px;
+  color: var(--text-2);
+  margin-top: 3px;
+}
+.fb-shell .tv-hu-when {
+  font-size: 11.5px;
+  color: var(--text-3);
+  margin-top: 2px;
+}
+.fb-shell .tv-hu-vitals {
+  flex: 0 0 auto;
+  text-align: right;
+  font-size: 12.5px;
+  color: var(--text-2);
+  line-height: 1.5;
+}
+.fb-shell .tv-hu-vitals b {
+  color: var(--text);
+  font-weight: 600;
+  font-size: 15px;
+}
+.fb-shell .tv-hu-pres {
+  color: var(--text-3);
+}
+.fb-shell .tv-hu-note {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 13px 11px;
+  border-top: 1px solid var(--border);
+  font-size: 11.5px;
+  line-height: 1.35;
+  color: var(--text-2);
+}
+.fb-shell .tv-hu-note-svg {
+  flex: 0 0 auto;
+  width: 15px;
+  height: 15px;
+  fill: none;
+  stroke: var(--steel);
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+/* `near` reads the amber caution tone; regional/distant stay neutral steel info. */
+.fb-shell .tv-hu-note.near .tv-hu-note-svg {
+  stroke: var(--amber);
+}
+
 /* generated_image — the image-gen tool-view (docs/mocks/genimage-c-edit-aware).
    A generate renders a single sized image; an edit renders a swipe before/after
    plus a Compare/Before/After toggle. Tokens only; the frame's aspect-ratio is

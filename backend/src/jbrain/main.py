@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from jbrain.agent.attachments import TurnAttachmentRepo
 from jbrain.agent.gmailtools import build_gmail_handlers
+from jbrain.agent.hurricanetools import build_hurricane_handlers
 from jbrain.agent.imagegentools import build_image_handlers
 from jbrain.agent.loop import ToolHandler
 from jbrain.agent.memory import MemoryRepo, MemoryService
@@ -116,7 +117,7 @@ from jbrain.tasks.scheduler import run_tasks_loop
 from jbrain.tiles import FsTileCache, HttpTileFetcher, TileService, TileSet, tile_cache_namespace
 from jbrain.transcribe import WhisperCppClient
 from jbrain.usage import SqlUsageRecorder
-from jbrain.web import FaviconFetcher, SearxngClient, WeatherClient, WebFetcher
+from jbrain.web import FaviconFetcher, HurricaneClient, SearxngClient, WeatherClient, WebFetcher
 from jbrain.wiki.actions import WIKI_SPECS
 from jbrain.wiki.readstore import WikiReadStore
 from jbrain.wiki.talkstore import WikiTalkStore
@@ -303,6 +304,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         weather_client = WeatherClient(
             settings.open_meteo_forecast_url, settings.open_meteo_geocode_url
         )
+        # jerv's hurricane lookup (DESIGN.md "hurricane_card tool-view") — a direct,
+        # pinned NHC upstream (the global active-storm list, no query), the same
+        # sandboxed-web posture as weather. It reuses the weather geocoder + the
+        # offline city geocoder so the location firewall is identical; distance and
+        # bearing to a storm are computed on-box.
+        hurricane_client = HurricaneClient(settings.nhc_current_storms_url)
         # The archivist persona's Gmail tools. Always wired over a provider that reads
         # the OAuth credentials live from the settings panel (env fallback), so a saved
         # change takes effect with no restart; until a refresh token exists the tools
@@ -321,6 +328,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # jerv (default off when external_geocoder_url is unset).
         app.state.city_geocoder = CityGeocoder()
         web_handlers.update(build_weather_handlers(weather_client, app.state.city_geocoder))
+        web_handlers.update(
+            build_hurricane_handlers(hurricane_client, weather_client, app.state.city_geocoder)
+        )
         external_reverse = NominatimReverseClient(settings.external_geocoder_url)
         # Built before the registry: edit_image resolves a chat attachment's bytes
         # through the same TurnAttachmentRepo, so it must exist first.

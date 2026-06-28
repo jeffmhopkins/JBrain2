@@ -94,6 +94,13 @@ class Settings(BaseSettings):
     # model-supplied; only a public place name + a city-centre coordinate go out.
     open_meteo_forecast_url: str = "https://api.open-meteo.com"
     open_meteo_geocode_url: str = "https://geocoding-api.open-meteo.com"
+    # The NHC feed backing jerv's `hurricane` tool (DESIGN.md "hurricane_card
+    # tool-view"). Free, no API key, so this defaults to the public endpoint; empty
+    # disables the tool (it reports "not configured") while the sidecar still loads.
+    # The base URL is pinned here and never model-supplied; it is the GLOBAL
+    # active-storm list and takes no query, so the request carries no location at all
+    # (the only place name that goes out is the shared weather geocoder).
+    nhc_current_storms_url: str = "https://www.nhc.noaa.gov/CurrentStorms.json"
     # The external reverse-geocoder fallback (Phase 7 Wave 4b), Nominatim-compatible.
     # DEFAULT OFF: empty means the connector is never registered, so there is no
     # off-box geocoding path at all. When set, a lookup still leaves the box only on

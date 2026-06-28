@@ -1026,6 +1026,39 @@ reaches Open-Meteo is a city centre, the same coarseness as naming the city, nev
 precise fix. Coordinates never ride the data-only payload (#9). Owner-facing chat
 artifact; never a note, never RAG-indexed.
 
+### `hurricane_card` tool-view (reference mocks: `docs/mocks/hurricane-view/`)
+
+The in-chat card jerv shows after a `hurricane` tool call — "is there a storm near me,
+how strong, how far, which way is it moving?" answered at a glance from NHC's live
+active-storm feed. A registered, data-only view like every other: the model fills
+`{place, as_of, active_count, storm:{name, kind, cat, sustained_mph, pressure_mb,
+moving}, distance_mi, bearing, proximity}` and **authors no markup, no URL, and no
+color**. `kind` is a closed enum (`hurricane|typhoon|tropical-storm|
+tropical-depression|subtropical-storm|subtropical-depression|post-tropical|potential|
+low|cyclone`) the component maps to a label, `cat` is the Saffir-Simpson number
+("1".."5", shown as the badge only when it applies — else the kind label), and
+`proximity` (`near|regional|distant`) is a **computed how-close tone**, mapped to a
+token by the component. A hurricane is a hazard, so the cyclone glyph rides the
+**rose** accent; the proximity note reads **amber** (caution) only when `near` and a
+threatening system, else neutral **steel** (info). Tokens-only `.tv-hu-*` classes; the
+card frame matches the live `.tool-view`.
+
+**Honesty boundary — position + strength only.** `proximity` is geometry (distance ×
+storm type), **never an official NWS watch/warning** — so the card never uses the rose
+danger tone and always carries the footer "Position & strength only — check NWS/NHC for
+watches, warnings & local impacts." The card deliberately omits watches/warnings,
+storm-surge heights, rainfall totals, and the local timing of wind/surge/rain; the
+`.tool` prose forbids the model inventing them. Those need the NHC GIS forecast
+track/cone (queryable GeoJSON) and `api.weather.gov` alerts + hourly gridpoint feeds —
+a follow-up the data shape already leaves room for (the `docs/mocks/hurricane-view/`
+combined mock previews the Timeline/Track/Impact tabs those feeds would populate).
+
+**The location firewall holds at the tool, not the view**, exactly as `weather_card`:
+the NHC feed is the global active-storm list and takes no query, so checking for storms
+sends no location at all; distance and bearing to a storm are computed **on-box** from
+the geocoded city centre, and coordinates never ride the data-only payload (#9).
+Owner-facing chat artifact; never a note, never RAG-indexed.
+
 ## Wiki Talk board (settled in a three-way GUI review — reference mock: `docs/mocks/wiki-talk-b-topics.html`)
 
 The article's editorial board (Phase 6) — the wiki's second surface after the reader. Chosen

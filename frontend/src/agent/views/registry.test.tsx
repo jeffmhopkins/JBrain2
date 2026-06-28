@@ -285,6 +285,75 @@ describe("ToolView registry", () => {
     expect(container.querySelectorAll(".tv-wx-svg").length).toBeGreaterThan(0);
   });
 
+  it("renders a hurricane_card from data-only slots (storm hero + proximity note)", () => {
+    const { container } = render(
+      <ToolView
+        payload={payload({
+          view: "hurricane_card",
+          data: {
+            place: "Tampa, Florida, United States",
+            as_of: "Sep 10, 3:00 PM UTC",
+            active_count: 2,
+            storm: {
+              name: "Elena",
+              kind: "hurricane",
+              cat: "3",
+              sustained_mph: 120,
+              pressure_mb: 948,
+              moving: "NNE 14 mph",
+            },
+            distance_mi: 215,
+            bearing: "SSW",
+            proximity: "near",
+          },
+        })}
+      />,
+    );
+    expect(container.querySelector(".tv-hu")).not.toBeNull();
+    expect(container.querySelector(".tv-hu-cap")?.textContent).toContain(
+      "Tampa, Florida, United States",
+    );
+    expect(container.querySelector(".tv-hu-cap")?.textContent).toContain("2 active");
+    expect(screen.getByText("Elena")).toBeInTheDocument();
+    // The Saffir-Simpson category drives the badge, not the kind label.
+    expect(screen.getByText("Cat 3")).toBeInTheDocument();
+    expect(container.querySelector(".tv-hu-where")?.textContent).toContain("215 mi SSW");
+    expect(container.querySelector(".tv-hu-where")?.textContent).toContain("NNE 14 mph");
+    // A near, threatening storm reads the amber caution tone — never an official warning.
+    expect(String(container.querySelector(".tv-hu-note")?.className)).toContain("near");
+    expect(container.querySelector(".tv-hu-note")?.textContent).toContain("NWS/NHC");
+    // No URL/markup rides the payload (#9) — the cyclone glyph is inline SVG.
+    expect(container.querySelector("img")).toBeNull();
+    expect(container.querySelector(".tv-hu-svg")).not.toBeNull();
+  });
+
+  it("falls back to the storm-type badge when no Saffir-Simpson category applies", () => {
+    render(
+      <ToolView
+        payload={payload({
+          view: "hurricane_card",
+          data: {
+            place: "Houston, Texas, United States",
+            storm: {
+              name: "Bret",
+              kind: "tropical-storm",
+              cat: "",
+              sustained_mph: 60,
+              pressure_mb: 1000,
+              moving: "stationary",
+            },
+            distance_mi: 540,
+            bearing: "SE",
+            proximity: "regional",
+          },
+        })}
+      />,
+    );
+    // No category → the kind label is the badge; a regional storm is not "near".
+    expect(screen.getByText("Tropical Storm")).toBeInTheDocument();
+    expect(screen.queryByText(/Cat /)).toBeNull();
+  });
+
   it("renders a weather_card week view as a daily list, not the hourly strip", () => {
     const { container } = render(
       <ToolView

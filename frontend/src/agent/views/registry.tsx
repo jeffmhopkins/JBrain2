@@ -1107,6 +1107,127 @@ function WeatherCard({ data }: ViewProps): ReactNode {
   );
 }
 
+// --- hurricane_card --------------------------------------------------------
+// jerv's active-tropical-cyclone view (docs/DESIGN.md "hurricane_card tool-view").
+// Data-only slots, no URLs (#9); `kind`/`cat`/`proximity` are closed enums the
+// component maps to a glyph + tone — the model never sends a glyph, an icon, or a
+// color. The card reports a storm's POSITION + STRENGTH only; `proximity` is a
+// computed how-close tone, NOT an official NWS watch/warning (so it never reads as
+// the danger/rose tone reserved for real warnings, which a later feed will supply).
+
+type HuKind =
+  | "hurricane"
+  | "typhoon"
+  | "tropical-storm"
+  | "tropical-depression"
+  | "subtropical-storm"
+  | "subtropical-depression"
+  | "post-tropical"
+  | "potential"
+  | "low"
+  | "cyclone";
+const HU_KIND_LABEL: Record<HuKind, string> = {
+  hurricane: "Hurricane",
+  typhoon: "Typhoon",
+  "tropical-storm": "Tropical Storm",
+  "tropical-depression": "Tropical Depression",
+  "subtropical-storm": "Subtropical Storm",
+  "subtropical-depression": "Subtropical Depression",
+  "post-tropical": "Post-Tropical",
+  potential: "Potential Cyclone",
+  low: "Tropical Low",
+  cyclone: "Cyclone",
+};
+function huKind(value: unknown): HuKind {
+  return typeof value === "string" && value in HU_KIND_LABEL ? (value as HuKind) : "cyclone";
+}
+type HuProximity = "near" | "regional" | "distant";
+function huProximity(value: unknown): HuProximity {
+  return value === "near" || value === "regional" ? value : "distant";
+}
+
+/** The cyclone spiral, drawn inline (no fetched icons, #9). */
+function HurricaneGlyph(): ReactNode {
+  return (
+    <svg viewBox="0 0 24 24" className="tv-hu-svg" aria-hidden="true">
+      <path d="M12 2a10 10 0 0 1 8 4c-3 0-5 1-6 3M12 22a10 10 0 0 1-8-4c3 0 5-1 6-3M22 12a10 10 0 0 1-4 8c0-3-1-5-3-6M2 12a10 10 0 0 1 4-8c0 3 1 5 3 6" />
+      <circle cx="12" cy="12" r="2.3" />
+    </svg>
+  );
+}
+
+function HurricaneCard({ data }: ViewProps): ReactNode {
+  const place = String(data.place ?? "");
+  const asOf = typeof data.as_of === "string" ? data.as_of : "";
+  const activeCount = wxNum(data.active_count);
+  const storm = (data.storm ?? {}) as Record<string, unknown>;
+  const name = String(storm.name ?? "");
+  const kind = huKind(storm.kind);
+  const cat = typeof storm.cat === "string" ? storm.cat : "";
+  const sustained = wxNum(storm.sustained_mph);
+  const pressure = wxNum(storm.pressure_mb);
+  const moving = typeof storm.moving === "string" ? storm.moving : "";
+  const distance = wxNum(data.distance_mi);
+  const bearing = typeof data.bearing === "string" ? data.bearing : "";
+  const proximity = huProximity(data.proximity);
+  // The badge shows the Saffir-Simpson category when it applies, else the storm type.
+  const badge = cat ? `Cat ${cat}` : HU_KIND_LABEL[kind];
+  const where = [distance > 0 ? `${distance} mi${bearing ? ` ${bearing}` : ""}` : "", moving]
+    .filter(Boolean)
+    .join(" · ");
+
+  return (
+    <div className="tv-hu">
+      <div className="tv-hu-cap">
+        hurricane{place ? ` · ${place}` : ""}
+        {activeCount > 1 ? ` · ${activeCount} active` : ""}
+      </div>
+      <div className="tv-hu-hero">
+        <div className="tv-hu-glyph">
+          <HurricaneGlyph />
+        </div>
+        <div className="tv-hu-main">
+          <div className="tv-hu-name">
+            {name}
+            <span className="tv-hu-badge">{badge}</span>
+          </div>
+          {where && <div className="tv-hu-where">{where}</div>}
+          {asOf && <div className="tv-hu-when">as of {asOf}</div>}
+        </div>
+        <div className="tv-hu-vitals">
+          {sustained > 0 && (
+            <>
+              <b>{sustained}</b> mph
+            </>
+          )}
+          {pressure > 0 && (
+            <>
+              <br />
+              <span className="tv-hu-pres">{pressure} mb</span>
+            </>
+          )}
+        </div>
+      </div>
+      <div className={`tv-hu-note ${proximity}`}>
+        <svg viewBox="0 0 24 24" className="tv-hu-note-svg" aria-hidden="true">
+          {proximity === "near" ? (
+            <>
+              <path d="M10.3 3.3 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.3a2 2 0 0 0-3.4 0z" />
+              <path d="M12 9v4M12 17h.01" />
+            </>
+          ) : (
+            <>
+              <circle cx="12" cy="12" r="9" />
+              <path d="M12 11v5M12 8h.01" />
+            </>
+          )}
+        </svg>
+        Position &amp; strength only — check NWS/NHC for watches, warnings &amp; local impacts.
+      </div>
+    </div>
+  );
+}
+
 const REGISTRY: Record<string, (props: ViewProps) => ReactNode> = {
   stat_block: StatBlock,
   data_table: DataTable,
@@ -1120,6 +1241,7 @@ const REGISTRY: Record<string, (props: ViewProps) => ReactNode> = {
   video_analysis: VideoAnalysisView,
   server_metrics: ServerMetrics,
   weather_card: WeatherCard,
+  hurricane_card: HurricaneCard,
 };
 
 export function isKnownView(name: string): boolean {

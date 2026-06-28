@@ -4,6 +4,7 @@ services, and the shipped sidecars bound + pinned to their versions."""
 from datetime import UTC, datetime
 
 from jbrain.agent.contracts import EntityRef, NoteSource
+from jbrain.agent.hurricanetools import build_hurricane_handlers
 from jbrain.agent.loop import ToolContext, ToolOutput
 from jbrain.agent.readtools import (
     TOOLS_DIR,
@@ -27,7 +28,7 @@ from jbrain.connectors.medical import medical_connectors
 from jbrain.db.session import SessionContext
 from jbrain.notes.service import NoteInfo
 from jbrain.search.service import SearchResponse, SearchResult
-from jbrain.web import SearxngClient, WeatherClient, WebFetcher
+from jbrain.web import HurricaneClient, SearxngClient, WeatherClient, WebFetcher
 
 CTX = ToolContext(session=SessionContext(principal_kind="owner"), scopes=("general",))
 
@@ -473,6 +474,9 @@ def test_build_registry_binds_the_shipped_sidecars() -> None:
         {
             **build_web_handlers(SearxngClient(""), WebFetcher()),
             **build_weather_handlers(WeatherClient("", ""), object()),  # type: ignore[arg-type]
+            **build_hurricane_handlers(
+                HurricaneClient(""), WeatherClient("", ""), object()  # type: ignore[arg-type]
+            ),
         },
         object(),  # type: ignore[arg-type]  # city geocoder
         object(),  # type: ignore[arg-type]  # sessionmaker (query_server_metrics)
@@ -487,6 +491,7 @@ def test_build_registry_binds_the_shipped_sidecars() -> None:
         "web_fetch",
         "current_location",
         "weather",
+        "hurricane",
         "archivist_memory_read",
         "archivist_memory_write",
     }
@@ -799,6 +804,11 @@ def test_sidecars_pinned_to_their_versions() -> None:
             "weather",
             3,
             "82727cb75c53aa71beb7fda415a918f18417cdc1192786d715f36290f8f99056",
+        ),
+        "hurricane.tool": (
+            "hurricane",
+            1,
+            "da468aca8230ac2e045404d92ff8ff4988c159d03232f47165ba1398c233ab51",
         ),
         "gmail_search.tool": (
             "gmail_search",

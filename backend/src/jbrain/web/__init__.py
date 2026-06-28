@@ -6,6 +6,7 @@ jerv agent may call.
 
 from jbrain.web.favicon import FaviconFetcher, FaviconResult
 from jbrain.web.fetch import FetchResult, WebFetcher, WebFetchError
+from jbrain.web.hurricane import HurricaneClient, HurricaneError
 from jbrain.web.search import SearchHit, SearxngClient, WebSearchError
 from jbrain.web.weather import Weather, WeatherClient, WeatherError
 
@@ -13,6 +14,8 @@ __all__ = [
     "FaviconFetcher",
     "FaviconResult",
     "FetchResult",
+    "HurricaneClient",
+    "HurricaneError",
     "SearchHit",
     "SearxngClient",
     "Weather",
