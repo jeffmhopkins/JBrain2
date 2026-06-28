@@ -10182,12 +10182,9 @@ input.ld-title {
 .graph-edges path,
 .graph-edge {
   fill: none;
-  stroke: var(--border);
+  /* every connection renders identically — one neutral, legible line */
+  stroke: color-mix(in srgb, var(--text-3) 45%, transparent);
   stroke-width: 1.4;
-}
-.graph-edge.lit {
-  stroke: color-mix(in srgb, var(--steel) 55%, var(--border));
-  stroke-width: 1.6;
 }
 .graph-edges marker path {
   fill: var(--border);
@@ -10298,38 +10295,58 @@ input.ld-title {
   color: var(--text);
 }
 
-/* depth toggle — floating, one-thumb, ≥44px targets */
-.graph-depth {
-  position: absolute;
-  left: 12px;
-  bottom: 12px;
+/* entity-type filter chips — scroll horizontally; tap to drop a type from the map */
+.graph-filters {
+  flex: none;
   display: flex;
-  gap: 3px;
+  gap: 6px;
+  align-items: center;
   margin: 0;
   min-inline-size: 0;
-  padding: 3px;
-  border: 1px solid var(--border);
-  border-radius: var(--r-input);
-  background: color-mix(in srgb, var(--surface) 90%, transparent);
-  backdrop-filter: blur(6px);
-  z-index: 3;
-}
-.graph-depth button {
-  min-width: 62px;
-  min-height: 38px;
+  padding: 6px 12px;
   border: 0;
-  border-radius: 9px;
-  background: none;
+  border-bottom: 1px solid var(--border);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.graph-filters::-webkit-scrollbar {
+  display: none;
+}
+.graph-filter {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 34px;
+  padding: 5px 11px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-pill);
+  background: var(--surface-2);
   color: var(--text-2);
   font: inherit;
   font-size: var(--fs-micro);
-  font-weight: 600;
+  white-space: nowrap;
   cursor: pointer;
 }
-.graph-depth button.is-on {
-  background: var(--accent);
-  color: var(--bg);
+.graph-filter-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  flex: none;
 }
+.graph-filter-count {
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+.graph-filter.is-off {
+  background: transparent;
+  color: var(--text-3);
+  opacity: 0.55;
+}
+.graph-filter.is-off .graph-filter-dot {
+  filter: grayscale(0.7);
+}
+
 .graph-empty-note {
   position: absolute;
   left: 50%;

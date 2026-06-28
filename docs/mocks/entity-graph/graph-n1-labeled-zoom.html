@@ -1,0 +1,652 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Entity graph — N1 Labeled + Zoom (zoom, on-edge predicates, type filter)</title>
+<style>
+  :root{
+    --bg:#0E0F11;--surface:#17181B;--surface-2:#1E2024;--border:#26282C;
+    --text:#E6E7E9;--text-2:#9A9DA3;--text-3:#5C5F66;--shadow:rgba(0,0,0,.45);
+    --steel:#7FA7C9;--green:#8FBC9A;--amber:#C9A36A;--rose:#CF8A8F;--violet:#A493C9;
+    --periwinkle:#8F9FD0;--sage:#A8BD7E;--terracotta:#D0917F;--teal:#6FB6B1;--orchid:#C98AB4;--slate:#9AA0A8;
+  }
+  [data-theme="light"]{
+    --bg:#F7F7F5;--surface:#FFFFFF;--surface-2:#F0F0EE;--border:#E2E2DF;
+    --text:#1A1B1E;--text-2:#5C5F66;--text-3:#9A9DA3;--shadow:rgba(20,30,50,.12);
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  body{margin:0;background:#05070a;font:15px/1.5 system-ui,-apple-system,sans-serif;display:grid;place-items:center;min-height:100vh;color:var(--text);gap:14px;padding:24px 0}
+  .cap{color:#8b9099;font-size:12.5px;max-width:390px;text-align:center;padding:0 12px}
+  .cap b{color:#cfd3d9;font-weight:600}
+  .phone{width:390px;height:800px;background:var(--bg);border-radius:30px;overflow:hidden;position:relative;box-shadow:0 20px 60px var(--shadow);display:flex;flex-direction:column}
+  .topbar{height:56px;flex:0 0 56px;display:flex;align-items:center;gap:9px;padding:0 14px;border-bottom:1px solid var(--border);background:var(--surface);z-index:5}
+  .topbar .chev{width:36px;height:36px;display:grid;place-items:center;border-radius:9px;color:var(--text-2);background:transparent;border:0;cursor:pointer}
+  .ttl{flex:1;font-size:17px;font-weight:600}
+  .icon-btn{width:36px;height:36px;display:grid;place-items:center;border-radius:9px;color:var(--text-2);background:transparent;border:0;cursor:pointer}
+  .icon-btn:hover{background:var(--surface-2);color:var(--text)}
+  svg.i{width:20px;height:20px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+  .stage{position:relative;flex:1;overflow:hidden;touch-action:none;cursor:grab}
+  .stage:active{cursor:grabbing}
+  #svg{width:100%;height:100%;display:block}
+  .edge{stroke:var(--border);stroke-width:1.4;fill:none;transition:opacity .35s}
+  .node-disc{cursor:pointer;transition:opacity .3s}
+  .node-ic{stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;pointer-events:none}
+  .hit{fill:transparent;cursor:pointer}
+  .node-lbl{font-size:11px;fill:var(--text-2);text-anchor:middle;paint-order:stroke;stroke:var(--bg);stroke-width:3.4px;pointer-events:none;font-weight:500;transition:opacity .3s}
+  .node-lbl.focal{fill:var(--text);font-weight:600;font-size:12px}
+  /* on-edge predicate labels */
+  .edge-lbl{fill:var(--text-2);text-anchor:middle;paint-order:stroke;stroke:var(--bg);stroke-width:3px;pointer-events:none;font-weight:500;font-size:9.5px;transition:opacity .3s}
+
+  /* search front door */
+  .toprail{position:absolute;top:10px;left:10px;right:10px;display:flex;flex-direction:column;gap:8px;z-index:4}
+  .searchbar{display:flex;align-items:center;gap:8px;background:color-mix(in srgb,var(--surface) 90%,transparent);backdrop-filter:blur(6px);border:1px solid var(--border);border-radius:12px;padding:0 12px;height:44px}
+  .searchbar svg{width:17px;height:17px;stroke:var(--text-3);fill:none;stroke-width:1.8;flex:0 0 17px}
+  .searchbar input{flex:1;border:0;background:transparent;color:var(--text);font-size:13.5px;outline:none}
+  .searchbar input::placeholder{color:var(--text-3)}
+  .sresults{background:color-mix(in srgb,var(--surface) 96%,transparent);backdrop-filter:blur(6px);border:1px solid var(--border);border-radius:12px;overflow:hidden;max-height:230px;overflow-y:auto;display:none}
+  .sresults.on{display:block}
+  .sresults .sr{display:flex;align-items:center;gap:9px;height:46px;padding:0 12px;border-bottom:1px solid var(--border);cursor:pointer}
+  .sresults .sr:last-child{border-bottom:0}
+  .sresults .sr:active{background:var(--surface-2)}
+  .sresults .sd{width:24px;height:24px;border-radius:50%;display:grid;place-items:center;flex:0 0 24px}
+  .sresults .sd svg{width:14px;height:14px;stroke:currentColor;fill:none;stroke-width:1.8}
+  .sresults .sn{flex:1;font-size:13.5px;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .sresults .st{font-size:10.5px;color:var(--text-3)}
+
+  /* breadcrumb walk */
+  .crumbs{position:absolute;top:64px;left:10px;right:10px;display:flex;align-items:center;gap:5px;z-index:3;overflow-x:auto;padding:2px 0;scrollbar-width:none}
+  .crumbs::-webkit-scrollbar{display:none}
+  .crumb{flex:0 0 auto;display:flex;align-items:center;gap:5px;background:color-mix(in srgb,var(--surface) 85%,transparent);backdrop-filter:blur(4px);border:1px solid var(--border);border-radius:999px;padding:4px 10px;font-size:11.5px;color:var(--text-2);cursor:pointer;max-width:130px}
+  .crumb.cur{color:var(--text);border-color:color-mix(in srgb,var(--steel) 45%,var(--border))}
+  .crumb .cdot{width:7px;height:7px;border-radius:50%;flex:0 0 7px}
+  .crumb .cn{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .csep{flex:0 0 auto;color:var(--text-3);font-size:11px}
+
+  /* entity-type filter chip rail (just under the breadcrumb) */
+  .filters{position:absolute;top:98px;left:0;right:0;display:flex;align-items:center;gap:6px;z-index:3;overflow-x:auto;padding:2px 10px;scrollbar-width:none}
+  .filters::-webkit-scrollbar{display:none}
+  .fchip{flex:0 0 auto;display:flex;align-items:center;gap:6px;min-height:32px;background:color-mix(in srgb,var(--surface) 88%,transparent);backdrop-filter:blur(4px);border:1px solid var(--border);border-radius:999px;padding:5px 11px 5px 9px;font-size:11.5px;color:var(--text);cursor:pointer;user-select:none;transition:opacity .18s,border-color .18s,background .18s}
+  .fchip .fdot{width:9px;height:9px;border-radius:50%;flex:0 0 9px}
+  .fchip .fct{font-size:10px;color:var(--text-3);font-variant-numeric:tabular-nums}
+  .fchip.off{opacity:.42;color:var(--text-3);background:transparent}
+  .fchip.off .fdot{filter:grayscale(.7);opacity:.6}
+  .fchip:active{transform:scale(.96)}
+
+  /* zoom control cluster (bottom-right) */
+  .zoomctl{position:absolute;right:12px;z-index:5;display:flex;flex-direction:column;gap:7px}
+  .zbtn{width:42px;height:42px;display:grid;place-items:center;border-radius:12px;background:color-mix(in srgb,var(--surface) 92%,transparent);backdrop-filter:blur(6px);border:1px solid var(--border);color:var(--text-2);cursor:pointer;box-shadow:0 4px 12px var(--shadow)}
+  .zbtn:active{background:var(--surface-2);color:var(--text)}
+  .zbtn svg{width:20px;height:20px;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+
+  /* sheet (persistent, draggable) */
+  .sheet{position:absolute;left:0;right:0;bottom:0;height:60%;max-height:480px;background:var(--surface);border-top:1px solid var(--border);border-radius:18px 18px 0 0;box-shadow:0 -10px 34px var(--shadow);z-index:6;display:flex;flex-direction:column;transition:transform .26s cubic-bezier(.2,.8,.2,1);will-change:transform;touch-action:none}
+  .sheet .grab{height:26px;flex:0 0 26px;display:grid;place-items:center;cursor:grab}
+  .sheet .grab::before{content:"";width:38px;height:4px;border-radius:999px;background:var(--border)}
+  .sheet .shead{display:flex;align-items:center;gap:10px;padding:0 16px 10px}
+  .sheet .pd{width:38px;height:38px;border-radius:50%;display:grid;place-items:center;flex:0 0 38px}
+  .sheet .pd svg{width:20px;height:20px;stroke:currentColor;fill:none;stroke-width:1.8}
+  .sheet .pt{font-weight:600;font-size:17px;line-height:1.2}
+  .sheet .pmeta{font-size:11.5px;color:var(--text-3)}
+  .sheet .scount{font-size:11px;color:var(--text-3);padding:0 16px 6px;text-transform:uppercase;letter-spacing:.04em}
+  .sheet .rels{flex:1;display:flex;flex-direction:column;overflow-y:auto;padding:0 8px calc(env(safe-area-inset-bottom,8px) + 8px)}
+  .sheet .rel{display:flex;align-items:center;gap:11px;min-height:52px;padding:7px 8px;border-radius:12px;cursor:pointer}
+  .sheet .rel:active{background:var(--surface-2)}
+  .sheet .rd{width:30px;height:30px;border-radius:50%;display:grid;place-items:center;flex:0 0 30px}
+  .sheet .rd svg{width:17px;height:17px;stroke:currentColor;fill:none;stroke-width:1.8}
+  .sheet .rmid{flex:1;min-width:0}
+  .sheet .robj{font-size:14px;color:var(--text);font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .sheet .rpred{font-family:ui-monospace,Menlo,monospace;font-size:11px;color:var(--text-3)}
+  .sheet .rchev{color:var(--text-3);flex:0 0 18px}
+  .sheet .rchev svg{width:18px;height:18px;stroke:currentColor;fill:none;stroke-width:1.8}
+
+  .countpill{position:absolute;left:12px;top:64px;font-size:11px;color:var(--text-3);background:color-mix(in srgb,var(--surface) 85%,transparent);backdrop-filter:blur(4px);border:1px solid var(--border);border-radius:999px;padding:4px 10px;z-index:3;display:none}
+</style>
+</head>
+<body>
+<div class="cap"><b>N1 Labeled + Zoom.</b> The M1 local-force base plus three production-leaning additions: <b>real anchor-invariant zoom</b> (wheel, pinch, double-tap, +/fit/− cluster), <b>predicate labels riding along every edge</b> (all connections styled identically, shown wherever the line has room), and a <b>type-filter chip rail</b> that adds/removes whole entity types from the local neighbourhood.</div>
+<div class="phone">
+  <div class="topbar">
+    <button class="chev"><svg class="i" viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6"/></svg></button>
+    <div class="ttl">Graph</div>
+    <button class="icon-btn" id="theme" title="Toggle theme"><svg class="i" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4.5"/><path d="M12 2v2M12 20v2M4 12H2M22 12h-2M5 5l1.5 1.5M17.5 17.5L19 19M19 5l-1.5 1.5M6.5 17.5L5 19"/></svg></button>
+  </div>
+  <div class="stage" id="stage">
+    <svg id="svg"><g id="view"><g id="edges"></g><g id="edgelbls"></g><g id="nodes"></g></g></svg>
+    <div class="toprail">
+      <div class="searchbar">
+        <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4-4"/></svg>
+        <input id="search" placeholder="Find an entity…" autocomplete="off" />
+      </div>
+      <div class="sresults" id="sresults"></div>
+    </div>
+    <div class="crumbs" id="crumbs"></div>
+    <div class="filters" id="filters"></div>
+    <div class="countpill" id="countpill"></div>
+    <div class="zoomctl" id="zoomctl">
+      <button class="zbtn" id="zin" title="Zoom in"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button>
+      <button class="zbtn" id="zfit" title="Fit neighbourhood"><svg viewBox="0 0 24 24"><path d="M4 9V5a1 1 0 011-1h4M20 9V5a1 1 0 00-1-1h-4M4 15v4a1 1 0 001 1h4M20 15v4a1 1 0 01-1 1h-4"/></svg></button>
+      <button class="zbtn" id="zout" title="Zoom out"><svg viewBox="0 0 24 24"><path d="M5 12h14"/></svg></button>
+    </div>
+    <div class="sheet" id="sheet">
+      <div class="grab" id="grab"></div>
+      <div class="shead">
+        <div class="pd" id="pd"></div>
+        <div style="flex:1;min-width:0"><div class="pt" id="pt"></div><div class="pmeta" id="pm"></div></div>
+      </div>
+      <div class="scount" id="scount"></div>
+      <div class="rels" id="rels"></div>
+    </div>
+  </div>
+</div>
+<script>
+const REDUCED=window.matchMedia&&window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+document.getElementById('theme').onclick=()=>{const h=document.documentElement;h.dataset.theme=h.dataset.theme==='dark'?'light':'dark'};
+const TYPE={Person:'--steel',Organization:'--violet',Place:'--green',Event:'--amber',Product:'--periwinkle',Animal:'--sage',MedicalCondition:'--terracotta',Drug:'--orchid',CreativeWork:'--rose',Thing:'--slate'};
+const ICON={Person:'<circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 3.6-7 8-7s8 3 8 7"/>',Organization:'<path d="M3 21h18M5 21V7l7-4 7 4v14M9 21v-5h6v5"/>',Place:'<path d="M12 21s-7-5.5-7-11a7 7 0 0114 0c0 5.5-7 11-7 11z"/><circle cx="12" cy="10" r="2.5"/>',Event:'<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 9h18M8 3v4M16 3v4"/>',Animal:'<path d="M4 11a3 3 0 116 0 5 5 0 005 5 3 3 0 11-6 0 5 5 0 00-5-5z"/>',MedicalCondition:'<path d="M12 21s-7-4.5-7-10a4 4 0 017-2 4 4 0 017 2c0 5.5-7 10-7 10z"/>',Drug:'<rect x="3" y="9" width="18" height="6" rx="3" transform="rotate(45 12 12)"/>',Product:'<path d="M3 7l9-4 9 4-9 4-9-4z"/><path d="M3 7v10l9 4 9-4V7"/>',CreativeWork:'<path d="M5 4a1 1 0 011-1h8l5 5v11a1 1 0 01-1 1H6a1 1 0 01-1-1z"/><path d="M14 3v5h5"/>',Thing:'<circle cx="12" cy="12" r="8"/>'};
+const LBL={Person:'People',Organization:'Orgs',Place:'Places',Event:'Events',Product:'Products',Animal:'Animals',MedicalCondition:'Conditions',Drug:'Drugs',CreativeWork:'Media',Thing:'Things'};
+// chip rail order (Person/Org/Place/Event/Product/Animal/Condition/Drug/Media/Thing)
+const FILTER_ORDER=['Person','Organization','Place','Event','Product','Animal','MedicalCondition','Drug','CreativeWork','Thing'];
+// humanize a camelCase predicate ("worksFor" -> "works for")
+function humanizePred(p){
+  if(!p)return'';
+  let s=p.replace(/([a-z0-9])([A-Z])/g,'$1 $2').replace(/[_\-]+/g,' ').toLowerCase();
+  return s.replace(/\s+/g,' ').trim();
+}
+
+// ---- seeded synthetic graph (same generator family as the other mocks) ----
+let _seed=20260627;
+function rnd(){_seed=(_seed*1664525+1013904223)>>>0;return _seed/4294967296;}
+function pk(a){return a[Math.floor(rnd()*a.length)];}
+function chance(p){return rnd()<p;}
+const FN=['Celine','Priya','Marcus','Elena','Tom','Nina','Raj','Sofia','Liam','Maya','Omar','Grace','Dmitri','Aisha','Ben','Clara','Hugo','Lena','Sam','Tara','Noah','Iris','Felix','Zoe','Arjun','Mira','Leo','Ava','Kai','Ruth','Dev','Nora','Eli','Jade','Cole','Vera','Ian','Suki','Paul','Gina'];
+const LN=['Hopkins','Nair','Vance','Ortiz','Reed','Cho','Mehta','Park','Frost','Quinn','Adler','Bose','Hale','Diaz','Yang','Kerr','Wolfe','Sato','Pike','Bauer'];
+const ORGN=['Globex','Initech','Umbra Labs','Northwind','Acme Co','Soylent','Hooli','Vandelay','Massive Dyn','Cyberdyne','Stark Mfg','Tyrell','Pied Piper','Wonka Ind'];
+const PLACEN=['Denver','Brookline','Boston','Cambridge','Austin','Portland','Seattle','Lincoln Park','Riverside','Oakwood','Hillcrest','Fairview','Midtown','Bayshore','Elm Street','Harbor Point','Cedar Falls','Glenwood','Ashbury','Kenmore'];
+const CONDN=['Hypertension','Asthma','Migraine','Type 2 Diabetes','Eczema','Insomnia','Anemia','GERD'];
+const DRUGN=['Lisinopril','Albuterol','Sumatriptan','Metformin','Omeprazole','Melatonin','Atorvastatin','Loratadine'];
+const EVTN=['Boston Marathon','Wedding','Reunion 2025','Q3 Offsite','Charity 10K','DevConf','Housewarming','Recital','Summer BBQ','Ski trip'];
+const PRODN=['Sea kayak','Trek bike','Espresso machine','Standing desk','DSLR','Mountain tent','Vinyl player','Drone','e-Reader','Smart watch'];
+const FINN=['Roth IRA','Brokerage','529 Plan','HSA','Index fund'];
+const WORKN=['Atlas paper','Onboarding doc','Design spec','Patent filing','Podcast ep','Photo series','Q3 deck','Field notes'];
+const ANIN=['Rex','Maple','Biscuit','Shadow','Pepper'];
+
+function genGraph(TARGET){
+  const N=[],E=[],byId={};let _id=0;
+  const add=(kind,name,dom)=>{const id=kind.slice(0,2).toLowerCase()+(_id++);const n={id,name,kind,dom};N.push(n);byId[id]=n;return n;};
+  const link=(a,b,p)=>{if(a&&b&&a.id!==b.id)E.push([a.id,b.id,p]);};
+  const me=add('Person','Me','general');delete byId[me.id];me.id='me';byId.me=me;
+  const fam=[];for(let i=0;i<10;i++){const f=add('Person',pk(FN)+' '+pk(LN),'general');fam.push(f);link(me,f,pk(['spouse','parent','sibling','child','in-law','cousin']));}
+  for(let i=0;i<8;i++)link(pk(fam),pk(fam),'relative');
+  const placePool=[];const place=dom=>{const p=add('Place',pk(PLACEN),dom||'location');placePool.push(p);return p;};
+  const orgs=[];
+  for(let k=0;k<6;k++){const o=add('Organization',pk(ORGN),'general');orgs.push(o);const hq=place('location');link(o,hq,'locatedAt');
+    const staff=[];const cnt=4+Math.floor(rnd()*7);for(let i=0;i<cnt;i++){const s=add('Person',pk(FN)+' '+pk(LN),'general');staff.push(s);link(s,o,'worksFor');}
+    for(let i=0;i<cnt;i++)link(pk(staff),pk(staff),'colleague');
+    for(let i=0;i<2;i++){const w=add('CreativeWork',pk(WORKN),'general');link(pk(staff),w,'authored');link(w,o,'forOrg');}}
+  link(me,orgs[0],'worksFor');
+  const friends=[];for(let i=0;i<12;i++){const fr=add('Person',pk(FN)+' '+pk(LN),'general');friends.push(fr);link(me,fr,'friend');if(chance(.5))link(fr,pk(orgs),'worksFor');if(chance(.4))link(fr,pk(placePool),'residence');}
+  for(let i=0;i<12;i++)link(pk(friends),pk(friends),'friend');
+  const hosp=add('Organization','Mass General','medical'),hosp2=add('Organization','City Clinic','medical');
+  const docs=[];for(let i=0;i<5;i++){const d=add('Person','Dr. '+pk(LN),'medical');docs.push(d);link(d,chance(.5)?hosp:hosp2,'worksAt');}
+  link(me,pk(docs),'physician');
+  const conds=CONDN.map(c=>add('MedicalCondition',c,'medical'));
+  const drugs=DRUGN.map(c=>add('Drug',c,'medical'));
+  conds.forEach((c,i)=>{link(me,c,'diagnosed');link(c,drugs[i],'treatedWith');link(pk(docs),c,'treats');});
+  const fin=add('Organization','Fidelity','financial');FINN.forEach(p=>{const a=add('Product',p,'financial');link(me,a,'holds');link(a,fin,'custodian');});
+  const adv=add('Person',pk(FN)+' '+pk(LN),'financial');link(me,adv,'advisor');link(adv,fin,'worksFor');
+  EVTN.forEach(e=>{const ev=add('Event',e,'general');link(me,ev,chance(.5)?'attended':'organized');link(ev,pk(placePool),'heldIn');for(let i=0;i<3;i++)link(pk(friends.concat(fam)),ev,'attended');});
+  PRODN.forEach(p=>{const pr=add('Product',p,'general');if(chance(.6))link(me,pr,'owns');else link(pk(friends),pr,'owns');});
+  ANIN.forEach(a=>{const an=add('Animal',a,'general');link(chance(.6)?me:pk(fam),an,'owns');});
+  for(let i=0;i<10;i++){const p=place('location');link(pk(friends.concat(fam)),p,'residence');if(chance(.3))link(p,pk(placePool),'near');}
+  const KINDS=[['Person','general'],['Place','location'],['Product','general'],['Organization','general'],['CreativeWork','general'],['Event','general']];
+  while(N.length<TARGET){const [k,d]=pk(KINDS);const nm=k==='Person'?pk(FN)+' '+pk(LN):k==='Place'?pk(PLACEN):k==='Organization'?pk(ORGN):k==='Event'?pk(EVTN):k==='CreativeWork'?pk(WORKN):pk(PRODN);
+    const n=add(k,nm,d);const host=N[1+Math.floor(rnd()*(N.length-2))];link(n,host,pk(['related','knows','near','refers to','member']));}
+  return {N,E,byId};
+}
+const {N,E,byId}=genGraph(150);
+const deg={};N.forEach(n=>deg[n.id]=0);E.forEach(([a,b])=>{deg[a]++;deg[b]++});
+// adjacency (carries predicate so the sheet can label every edge from the focal)
+const adj={};N.forEach(n=>adj[n.id]=[]);E.forEach(([a,b,p])=>{adj[a].push({id:b,pred:p,dir:'out'});adj[b].push({id:a,pred:p,dir:'in'});});
+document.getElementById('countpill').textContent=`${N.length} entities · ${E.length} links`;
+
+// ---- entity-type filter state -------------------------------------------
+// Set of types currently EXCLUDED from the on-graph local neighbourhood.
+const typeOff=new Set();
+const typeCount={};N.forEach(n=>{typeCount[n.kind]=(typeCount[n.kind]||0)+1;});
+
+// ====================================================================
+// LOCAL FORCE: build a capped 1–2 hop subgraph around a focal, run a real
+// force sim over just that set, and re-focus / animate on tap.
+// ====================================================================
+const W=390,H=620;                          // sim canvas (stage minus chrome)
+const CX=W/2,CY=H*0.46;                      // focal target (pinned gently)
+const RING1_CAP=12, RING2_CAP_PER=3;         // keep it ~20–30 nodes, never a hairball
+
+// type filter applies to non-focal nodes; focal is always shown
+function typeAllowed(id,focal){return id===focal||!typeOff.has(byId[id].kind);}
+
+// Build the local subgraph object: {ids:Set, nodes:[], links:[[a,b,pred]]}
+function buildLocal(focal){
+  const ids=new Set([focal]);
+  // dedupe 1-ring neighbours, prefer lower-degree (cleaner, less hub-y) then cap
+  const seen1=new Set();
+  let ring1=[];
+  for(const e of adj[focal]){if(e.id!==focal&&!seen1.has(e.id)&&typeAllowed(e.id,focal)){seen1.add(e.id);ring1.push(e.id);}}
+  ring1.sort((a,b)=>deg[a]-deg[b]);
+  ring1=ring1.slice(0,RING1_CAP);
+  ring1.forEach(id=>ids.add(id));
+  // 2-ring: a few fresh neighbours of each 1-ring node
+  const ring2=new Set();
+  for(const r of ring1){
+    let added=0;
+    const cands=adj[r].map(e=>e.id).filter(id=>!ids.has(id)&&id!==focal&&typeAllowed(id,focal));
+    cands.sort((a,b)=>deg[a]-deg[b]);
+    for(const id of cands){if(added>=RING2_CAP_PER)break;if(!ring2.has(id)){ring2.add(id);added++;}}
+  }
+  ring2.forEach(id=>ids.add(id));
+  // links wholly inside the set
+  const links=[];
+  for(const[a,b,p]of E){if(ids.has(a)&&ids.has(b))links.push([a,b,p]);}
+  const hop={};hop[focal]=0;ring1.forEach(id=>hop[id]=1);ring2.forEach(id=>{if(hop[id]==null)hop[id]=2;});
+  return {focal,ids,ring1,ring2:[...ring2],links,hop};
+}
+
+// per-node live sim state (positions persist across re-focus so transitions are smooth)
+const sim={};  // id -> {x,y,vx,vy,r0,r,present,enterT}
+const RAD={0:21,1:14,2:9};
+function targetR(id,local){return RAD[local.hop[id]] ?? 9;}
+
+const view=document.getElementById('view'),eG=document.getElementById('edges'),nG=document.getElementById('nodes'),elG=document.getElementById('edgelbls');
+let local=null, alpha=1, focalId='me';
+let drag=null,dragMoved=false,panning=null;
+let scale=1,tx=0,ty=0;
+const MINS=0.5,MAXS=3;                        // zoom clamp
+
+// element pools keyed by id; created lazily, removed when fully faded out
+const discEls={},icEls={},hitEls={},lblEls={},edgeEls={},edgeLblEls={};
+
+function ensureNodeEls(n){
+  if(discEls[n.id])return;
+  const g=document.createElementNS('http://www.w3.org/2000/svg','g');g.dataset.gid=n.id;
+  const disc=document.createElementNS('http://www.w3.org/2000/svg','circle');
+  disc.setAttribute('class','node-disc');
+  disc.setAttribute('fill',`color-mix(in srgb, var(${TYPE[n.kind]}) 26%, var(--surface))`);
+  disc.setAttribute('stroke',`var(${TYPE[n.kind]})`);disc.setAttribute('stroke-width',1.6);
+  g.appendChild(disc);
+  const ic=document.createElementNS('http://www.w3.org/2000/svg','g');
+  ic.setAttribute('class','node-ic');ic.style.color=`var(${TYPE[n.kind]})`;
+  ic.innerHTML=`<svg viewBox="0 0 24 24" width="1" height="1" style="overflow:visible">${ICON[n.kind]||ICON.Thing}</svg>`;
+  g.appendChild(ic);
+  const hit=document.createElementNS('http://www.w3.org/2000/svg','circle');
+  hit.setAttribute('class','hit');hit.setAttribute('r',24);hit.dataset.id=n.id;
+  g.appendChild(hit);
+  nG.appendChild(g);
+  const l=document.createElementNS('http://www.w3.org/2000/svg','text');
+  l.setAttribute('class','node-lbl');l.textContent=n.name;nG.appendChild(l);
+  discEls[n.id]=disc;icEls[n.id]=ic;hitEls[n.id]=hit;lblEls[n.id]=l;disc.parentGroup=g;g._lbl=l;
+}
+function ensureEdgeEl(key,pred){
+  if(edgeEls[key])return;
+  const el=document.createElementNS('http://www.w3.org/2000/svg','line');el.setAttribute('class','edge');
+  eG.appendChild(el);edgeEls[key]=el;
+  const t=document.createElementNS('http://www.w3.org/2000/svg','text');
+  t.setAttribute('class','edge-lbl');t.textContent=humanizePred(pred);
+  elG.appendChild(t);edgeLblEls[key]=t;
+}
+
+// ---- transition into a new local subgraph -------------------------------
+function setFocal(id,pushCrumb=true){
+  if(!byId[id])return;
+  focalId=id;
+  const prev=local;
+  local=buildLocal(id);
+  // seed positions: keep prior positions for nodes that persist; spring new ones in near focal
+  const fc=sim[id]||{x:CX,y:CY};
+  for(const nid of local.ids){
+    if(!sim[nid]){
+      // place new nodes in a ring around the focal so they spring outward
+      const a=rnd()*6.283, rr=40+rnd()*60;
+      sim[nid]={x:fc.x+Math.cos(a)*rr,y:fc.y+Math.sin(a)*rr,vx:0,vy:0,r:0,present:true};
+    }else{
+      sim[nid].present=true;
+    }
+    sim[nid].r0=targetR(nid,local);
+  }
+  // mark departing nodes (in prev but not in new) for fade-out
+  if(prev)for(const nid of prev.ids){if(!local.ids.has(nid)&&sim[nid])sim[nid].present=false;}
+  // pin focal toward centre
+  alpha=REDUCED?0:1;
+  rebuildScene();
+  if(pushCrumb)addCrumb(id);
+  renderSheet(id);
+  renderCrumbs();
+  renderFilters();
+  if(REDUCED){for(let i=0;i<260;i++){alpha=Math.max(.02,alpha*0.97);physics();}snapRadii();render();}
+}
+function snapRadii(){for(const nid in sim){const s=sim[nid];s.r=s.present?(s.r0||9):0;}}
+
+// (re)build the visible element set for current local + any still-fading nodes
+function rebuildScene(){
+  // ensure node els for everything present or still fading
+  for(const nid in sim){const s=sim[nid];if(s.present||s.r>0.5)ensureNodeEls(byId[nid]);}
+  // edges only within the current local set
+  for(const[a,b,p]of local.links)ensureEdgeEl(a+'>'+b,p);
+}
+
+// ---- physics over ONLY the local set (+ fading leftovers) ----------------
+function activeIds(){const out=[];for(const nid in sim){const s=sim[nid];if(s.present||s.r>0.5)out.push(nid);}return out;}
+function physics(){
+  const ids=local?[...local.ids]:[];
+  // charge repulsion among local nodes
+  for(let i=0;i<ids.length;i++)for(let j=i+1;j<ids.length;j++){
+    const a=sim[ids[i]],b=sim[ids[j]];let dx=a.x-b.x,dy=a.y-b.y,d2=dx*dx+dy*dy;if(d2<1)d2=1;
+    const d=Math.sqrt(d2);const rep=Math.min(60,5200/d2);
+    a.vx+=dx/d*rep;a.vy+=dy/d*rep;b.vx-=dx/d*rep;b.vy-=dy/d*rep;
+  }
+  // collide so the icon discs never overlap
+  for(let i=0;i<ids.length;i++)for(let j=i+1;j<ids.length;j++){
+    const a=sim[ids[i]],b=sim[ids[j]];let dx=a.x-b.x,dy=a.y-b.y,d=Math.sqrt(dx*dx+dy*dy)||1;
+    const min=(a.r0||9)+(b.r0||9)+18;if(d<min){const push=(min-d)/d*0.5;a.vx+=dx*push;a.vy+=dy*push;b.vx-=dx*push;b.vy-=dy*push;}
+  }
+  // link spring — focal↔ring1 short, ring1↔ring2 longer so rings read clearly
+  for(const[s,t]of local.links){
+    const a=sim[s],b=sim[t];if(!a||!b)continue;
+    let dx=b.x-a.x,dy=b.y-a.y,d=Math.sqrt(dx*dx+dy*dy)||1;
+    const rest=(local.hop[s]===0||local.hop[t]===0)?86:64;
+    const f=(d-rest)*0.04;a.vx+=dx/d*f;a.vy+=dy/d*f;b.vx-=dx/d*f;b.vy-=dy/d*f;
+  }
+  // integrate; pin focal gently near centre
+  for(const nid of ids){
+    const s=sim[nid];
+    if(nid===focalId){s.x+=(CX-s.x)*0.16;s.y+=(CY-s.y)*0.16;s.vx=0;s.vy=0;}
+    else{
+      s.vx+=(CX-s.x)*0.006;s.vy+=(CY-s.y)*0.006;   // soft centering keeps it framed
+      s.vx*=0.84;s.vy*=0.84;
+      const sp=Math.hypot(s.vx,s.vy);if(sp>22){s.vx*=22/sp;s.vy*=22/sp;}
+      if(s!==drag)
+      {s.x+=s.vx*alpha;s.y+=s.vy*alpha;}
+    }
+  }
+  // animate radii toward target (springy enter) / toward 0 (fade-out exit)
+  for(const nid in sim){const s=sim[nid];const tgt=s.present?(s.r0||9):0;s.r+=(tgt-s.r)*(REDUCED?1:0.18);}
+}
+// pre-settle the opening neighbourhood
+function preSettle(){alpha=1;for(let i=0;i<300;i++){alpha=Math.max(.04,alpha*0.97);physics();}alpha=0.1;}
+
+function tick(){
+  alpha=drag?0.5:Math.max(0.02,alpha*0.94+0.0008);
+  physics();render();
+  // prune fully-faded departed nodes
+  for(const nid in sim){const s=sim[nid];if(!s.present&&s.r<0.5&&discEls[nid]){
+    discEls[nid].parentGroup.remove();lblEls[nid].remove();
+    delete discEls[nid];delete icEls[nid];delete hitEls[nid];delete lblEls[nid];delete sim[nid];
+  }}
+  requestAnimationFrame(tick);
+}
+
+function render(){
+  view.setAttribute('transform',`translate(${tx},${ty}) scale(${scale})`);
+  const invK=1/scale;                          // counter-scale keeps edge labels screen-constant
+  // edges
+  for(const key in edgeEls){
+    const[a,b]=key.split('>');const sa=sim[a],sb=sim[b],el=edgeEls[key],tl=edgeLblEls[key];
+    const live=local.ids.has(a)&&local.ids.has(b)&&sa&&sb;
+    if(!live){el.style.opacity=0;if(tl)tl.style.opacity=0;
+      if(!local.ids.has(a)||!local.ids.has(b)){el.remove();delete edgeEls[key];if(tl){tl.remove();delete edgeLblEls[key];}} continue;}
+    el.setAttribute('x1',sa.x);el.setAttribute('y1',sa.y);el.setAttribute('x2',sb.x);el.setAttribute('y2',sb.y);
+    // every connection renders identically — no focal-vs-rest distinction
+    el.style.opacity=0.5;
+    el.style.stroke='var(--text-3)';
+    // ---- on-edge predicate label: ride along the edge, kept upright & screen-constant ----
+    if(tl){
+      const mx=(sa.x+sb.x)/2,my=(sa.y+sb.y)/2;
+      let ang=Math.atan2(sb.y-sa.y,sb.x-sa.x)*180/Math.PI;
+      if(ang>90)ang-=180;else if(ang<-90)ang+=180;   // keep text upright
+      const segLen=Math.hypot(sb.x-sa.x,sb.y-sa.y)*scale;  // screen-space length
+      // same treatment for all edges: shown wherever the segment has room to read
+      tl.style.opacity=segLen>34?0.85:0;
+      tl.setAttribute('transform',`translate(${mx},${my}) rotate(${ang}) scale(${invK}) translate(0,-3)`);
+    }
+  }
+  // nodes
+  for(const nid in sim){
+    const s=sim[nid],disc=discEls[nid];if(!disc)continue;
+    const g=disc.parentGroup,ic=icEls[nid],hit=hitEls[nid],l=lblEls[nid];
+    const r=Math.max(0.01,s.r);
+    g.setAttribute('transform',`translate(${s.x},${s.y})`);
+    disc.setAttribute('r',r);
+    const isFocal=nid===focalId;
+    disc.setAttribute('stroke-width',isFocal?2.6:1.6);
+    const op=Math.min(1,s.r/(s.r0||9));
+    g.style.opacity=op;
+    // scale the icon to ~1.15*r footprint
+    const k=(r*1.6)/24;ic.setAttribute('transform',`translate(${-r*0.8},${-r*0.8}) scale(${k})`);
+    ic.style.opacity=r>7?1:0;
+    hit.setAttribute('r',Math.max(24,r+12)*invK);   // keep >=44px screen hit halo at any zoom
+    l.setAttribute('x',s.x);l.setAttribute('y',s.y+r+13);l.textContent=byId[nid].name;
+    l.classList.toggle('focal',isFocal);
+    l.style.opacity=op;
+  }
+}
+
+// ---- zoom: anchor-point-invariant scaling ------------------------------
+function clampScale(v){return Math.max(MINS,Math.min(MAXS,v));}
+// zoom so that the world point under (sx,sy) screen coords stays fixed
+function zoomAt(sx,sy,factor){
+  const r=svg.getBoundingClientRect();
+  const px=sx-r.left,py=sy-r.top;
+  const ns=clampScale(scale*factor);
+  if(ns===scale)return;
+  // world point under cursor before: (px-tx)/scale ; keep it after
+  tx=px-((px-tx)/scale)*ns;
+  ty=py-((py-ty)/scale)*ns;
+  scale=ns;
+  render();
+}
+// frame the current local neighbourhood
+function fitLocal(){
+  let minx=1e9,miny=1e9,maxx=-1e9,maxy=-1e9,any=false;
+  for(const nid of local.ids){const s=sim[nid];if(!s)continue;any=true;
+    minx=Math.min(minx,s.x-s.r0);miny=Math.min(miny,s.y-s.r0);
+    maxx=Math.max(maxx,s.x+s.r0);maxy=Math.max(maxy,s.y+s.r0);}
+  if(!any)return;
+  const r=svg.getBoundingClientRect();
+  const pad=46,topUI=128,botUI=200;            // leave room for chrome + collapsed sheet
+  const availW=r.width-pad*2, availH=r.height-topUI-botUI;
+  const bw=Math.max(1,maxx-minx),bh=Math.max(1,maxy-miny);
+  const ns=clampScale(Math.min(availW/bw,availH/bh,2.2));
+  scale=ns;
+  const cx=(minx+maxx)/2,cy=(miny+maxy)/2;
+  tx=r.width/2-cx*scale;
+  ty=(topUI+(r.height-botUI))/2-cy*scale;
+  render();
+}
+
+// ---- breadcrumb walk -----------------------------------------------------
+let trail=[];
+function addCrumb(id){
+  const i=trail.indexOf(id);
+  if(i>=0){trail=trail.slice(0,i+1);}      // re-visiting an ancestor truncates forward
+  else trail.push(id);
+}
+function renderCrumbs(){
+  const c=document.getElementById('crumbs');c.innerHTML='';
+  trail.forEach((id,i)=>{
+    if(i>0){const s=document.createElement('span');s.className='csep';s.textContent='›';c.appendChild(s);}
+    const n=byId[id];const el=document.createElement('div');
+    el.className='crumb'+(i===trail.length-1?' cur':'');
+    el.innerHTML=`<span class="cdot" style="background:var(${TYPE[n.kind]})"></span><span class="cn">${n.name}</span>`;
+    el.onclick=()=>{if(id!==focalId)setFocal(id);};
+    c.appendChild(el);
+  });
+  c.scrollLeft=c.scrollWidth;
+}
+
+// ---- entity-type filter chip rail ---------------------------------------
+function renderFilters(){
+  const box=document.getElementById('filters');box.innerHTML='';
+  for(const kind of FILTER_ORDER){
+    const cnt=typeCount[kind]||0;
+    const chip=document.createElement('div');
+    chip.className='fchip'+(typeOff.has(kind)?' off':'');
+    chip.innerHTML=`<span class="fdot" style="background:var(${TYPE[kind]})"></span><span>${LBL[kind]}</span><span class="fct">${cnt}</span>`;
+    chip.onclick=()=>{
+      if(typeOff.has(kind))typeOff.delete(kind);else typeOff.add(kind);
+      // rebuild the neighbourhood honoring the new filter (focal stays put)
+      setFocal(focalId,false);
+    };
+    box.appendChild(chip);
+  }
+}
+
+// ---- bottom sheet: focal's direct relationships --------------------------
+function renderSheet(id){
+  const n=byId[id];
+  document.getElementById('pt').textContent=n.name;
+  document.getElementById('pm').textContent=`${n.kind} · ${deg[id]} links · ${n.dom}`;
+  const pd=document.getElementById('pd');
+  pd.style.background=`color-mix(in srgb,var(${TYPE[n.kind]}) 18%,transparent)`;
+  pd.style.color=`var(${TYPE[n.kind]})`;
+  pd.innerHTML=`<svg viewBox="0 0 24 24">${ICON[n.kind]||ICON.Thing}</svg>`;
+  // direct relationships (dedupe identical predicate+target)
+  const rels=[];const seen=new Set();
+  for(const e of adj[id]){const key=e.pred+'|'+e.id;if(seen.has(key))continue;seen.add(key);rels.push(e);}
+  document.getElementById('scount').textContent=`${rels.length} relationship${rels.length===1?'':'s'}`;
+  const box=document.getElementById('rels');box.innerHTML='';
+  for(const e of rels){
+    const o=byId[e.id];
+    const row=document.createElement('div');row.className='rel';row.dataset.id=e.id;
+    row.innerHTML=`
+      <div class="rd" style="background:color-mix(in srgb,var(${TYPE[o.kind]}) 16%,transparent);color:var(${TYPE[o.kind]})"><svg viewBox="0 0 24 24">${ICON[o.kind]||ICON.Thing}</svg></div>
+      <div class="rmid"><div class="robj">${o.name}</div><div class="rpred">${e.dir==='out'?humanizePred(e.pred):'← '+humanizePred(e.pred)}</div></div>
+      <div class="rchev"><svg viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg></div>`;
+    row.onclick=()=>setFocal(e.id);
+    box.appendChild(row);
+  }
+  box.scrollTop=0;
+}
+
+// ---- draggable sheet -----------------------------------------------------
+const sheet=document.getElementById('sheet');
+let sheetExpanded=false, sheetH=0, peekH=178;
+function layoutSheet(){
+  sheetH=sheet.offsetHeight;
+  // collapsed shows the header strip (~peekH); expanded shows ~58% of phone
+  sheet.style.transition=REDUCED?'none':'';
+  applySheet();
+}
+function applySheet(){
+  const collapsed=sheetH-peekH;
+  sheet.style.transform=`translateY(${sheetExpanded?0:collapsed}px)`;
+}
+(function sheetDrag(){
+  const grab=document.getElementById('grab');
+  let startY=0,startT=0,dragging=false,moved=false;
+  const cur=()=>{const m=/translateY\(([-\d.]+)px\)/.exec(sheet.style.transform);return m?parseFloat(m[1]):0;};
+  const down=e=>{dragging=true;moved=false;startY=(e.touches?e.touches[0]:e).clientY;startT=cur();sheet.style.transition='none';e.preventDefault();};
+  const move=e=>{if(!dragging)return;const y=(e.touches?e.touches[0]:e).clientY;let t=startT+(y-startY);const max=sheetH-peekH;t=Math.max(0,Math.min(max,t));if(Math.abs(y-startY)>4)moved=true;sheet.style.transform=`translateY(${t}px)`;};
+  const up=()=>{if(!dragging)return;dragging=false;sheet.style.transition='';const t=cur();sheetExpanded=t<(sheetH-peekH)/2;applySheet();};
+  grab.addEventListener('mousedown',down);grab.addEventListener('touchstart',down,{passive:false});
+  window.addEventListener('mousemove',move);window.addEventListener('touchmove',move,{passive:false});
+  window.addEventListener('mouseup',up);window.addEventListener('touchend',up);
+  grab.addEventListener('click',()=>{if(!moved){sheetExpanded=!sheetExpanded;applySheet();}});
+})();
+
+// ---- search front door ---------------------------------------------------
+const search=document.getElementById('search'),sresults=document.getElementById('sresults');
+search.addEventListener('input',()=>{
+  const q=search.value.trim().toLowerCase();
+  if(!q){sresults.classList.remove('on');sresults.innerHTML='';return;}
+  const hits=N.filter(n=>n.name.toLowerCase().includes(q)).slice(0,8);
+  sresults.innerHTML=hits.map(n=>`<div class="sr" data-id="${n.id}"><div class="sd" style="background:color-mix(in srgb,var(${TYPE[n.kind]}) 16%,transparent);color:var(${TYPE[n.kind]})"><svg viewBox="0 0 24 24">${ICON[n.kind]||ICON.Thing}</svg></div><div class="sn">${n.name}</div><div class="st">${n.kind}</div></div>`).join('')||`<div class="sr"><div class="sn" style="color:var(--text-3)">No matches</div></div>`;
+  sresults.classList.add('on');
+});
+sresults.addEventListener('click',e=>{const sr=e.target.closest('.sr');if(!sr||!sr.dataset.id)return;setFocal(sr.dataset.id);search.value='';sresults.classList.remove('on');search.blur();});
+
+// ---- stage interaction: drag nodes, pan, tap-to-refocus, zoom -----------
+const stage=document.getElementById('stage'),svg=document.getElementById('svg');
+const toWorld=e=>{const r=svg.getBoundingClientRect();return{x:(e.clientX-r.left-tx)/scale,y:(e.clientY-r.top-ty)/scale};};
+nG.addEventListener('pointerdown',e=>{const id=e.target.dataset.id;if(!id)return;e.stopPropagation();drag=sim[id];drag._id=id;dragMoved=false;});
+stage.addEventListener('pointerdown',e=>{if(drag)return;if(e.target.closest('.sheet')||e.target.closest('.toprail')||e.target.closest('.crumbs')||e.target.closest('.filters')||e.target.closest('.zoomctl'))return;panning={x:e.clientX,y:e.clientY,tx,ty};});
+window.addEventListener('pointermove',e=>{
+  if(drag){const w=toWorld(e);drag.x=w.x;drag.y=w.y;drag.vx=0;drag.vy=0;dragMoved=true;}
+  else if(panning){tx=panning.tx+(e.clientX-panning.x);ty=panning.ty+(e.clientY-panning.y);render();}
+});
+window.addEventListener('pointerup',()=>{if(drag&&!dragMoved&&drag._id&&drag._id!==focalId)setFocal(drag._id);drag=null;panning=null;});
+
+// wheel / trackpad zoom, anchored under the cursor
+stage.addEventListener('wheel',e=>{
+  e.preventDefault();
+  const factor=Math.exp(-e.deltaY*0.0016);
+  zoomAt(e.clientX,e.clientY,factor);
+},{passive:false});
+
+// double-tap / double-click to zoom in, anchored at the tap point
+let lastTap=0,lastTapXY=null;
+function doubleZoom(x,y){zoomAt(x,y,1.7);}
+stage.addEventListener('dblclick',e=>{
+  if(e.target.closest('.sheet')||e.target.closest('.toprail')||e.target.closest('.crumbs')||e.target.closest('.filters')||e.target.closest('.zoomctl'))return;
+  doubleZoom(e.clientX,e.clientY);
+});
+
+// two-finger pinch (touch), anchored at the midpoint between the fingers
+let pinch=null;
+stage.addEventListener('touchstart',e=>{
+  if(e.touches.length===2){
+    panning=null;drag=null;
+    const[a,b]=e.touches;
+    pinch={d:Math.hypot(a.clientX-b.clientX,a.clientY-b.clientY),
+           cx:(a.clientX+b.clientX)/2,cy:(a.clientY+b.clientY)/2};
+    e.preventDefault();
+  }else if(e.touches.length===1){
+    // double-tap detection for touch
+    const now=Date.now(),t=e.touches[0];
+    if(now-lastTap<300&&lastTapXY&&Math.hypot(t.clientX-lastTapXY.x,t.clientY-lastTapXY.y)<30){
+      if(!(e.target.closest('.sheet')||e.target.closest('.toprail')||e.target.closest('.crumbs')||e.target.closest('.filters')||e.target.closest('.zoomctl'))){
+        doubleZoom(t.clientX,t.clientY);e.preventDefault();
+      }
+      lastTap=0;
+    }else{lastTap=now;lastTapXY={x:t.clientX,y:t.clientY};}
+  }
+},{passive:false});
+stage.addEventListener('touchmove',e=>{
+  if(pinch&&e.touches.length===2){
+    const[a,b]=e.touches;
+    const nd=Math.hypot(a.clientX-b.clientX,a.clientY-b.clientY);
+    const cx=(a.clientX+b.clientX)/2,cy=(a.clientY+b.clientY)/2;
+    if(pinch.d>0)zoomAt(cx,cy,nd/pinch.d);
+    pinch.d=nd;pinch.cx=cx;pinch.cy=cy;
+    e.preventDefault();
+  }
+},{passive:false});
+stage.addEventListener('touchend',e=>{if(e.touches.length<2)pinch=null;});
+
+// zoom control cluster
+const zc=document.getElementById('zoomctl');
+function centreXY(){const r=svg.getBoundingClientRect();return[r.left+r.width/2,r.top+r.height*0.42];}
+document.getElementById('zin').onclick=()=>{const[x,y]=centreXY();zoomAt(x,y,1.3);};
+document.getElementById('zout').onclick=()=>{const[x,y]=centreXY();zoomAt(x,y,1/1.3);};
+document.getElementById('zfit').onclick=()=>fitLocal();
+
+// ---- boot ----------------------------------------------------------------
+local=buildLocal('me');
+const fc={x:CX,y:CY};
+for(const nid of local.ids){const a=rnd()*6.283,rr=nid==='me'?0:50+rnd()*70;sim[nid]={x:CX+Math.cos(a)*rr,y:CY+Math.sin(a)*rr,vx:0,vy:0,r:0,present:true};sim[nid].r0=targetR(nid,local);}
+sim.me.x=CX;sim.me.y=CY;
+rebuildScene();
+preSettle();
+snapRadii();
+trail=['me'];
+renderSheet('me');renderCrumbs();renderFilters();
+layoutSheet();
+// position the zoom cluster just above the collapsed sheet peek
+function placeZoomCtl(){zc.style.bottom=(peekH+16)+'px';}
+placeZoomCtl();
+render();
+if(!REDUCED)requestAnimationFrame(tick);else render();
+window.addEventListener('resize',()=>{layoutSheet();placeZoomCtl();});
+setTimeout(()=>{layoutSheet();placeZoomCtl();},60);
+</script>
+</body>
+</html>

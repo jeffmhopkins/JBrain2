@@ -120,6 +120,122 @@ switches depth; pinch-zoom and a draggable sheet handle the extra density. The
 sheet still lists the *centred* entity's direct relationships. ("Me" shows ~11
 nodes at 1 hop, ~19 at 2 hops.)
 
+## V1 parity round — Force Map (`graph-v1-forcemap.html`)
+
+A direct port of **JBrain v1's** graph geometry, built to answer "I don't like
+the current 1-hop traversal display." v1's `web/src/pages/GraphPage.tsx` renders
+the *whole* knowledge graph with `react-force-graph-2d`: a free force layout
+(charge `-180`, `forceCollide`, link spring), **degree-scaled dots**
+(`r = √deg · NODE_REL`), kind-coloured nodes, a **click-to-focus** that rings the
+node and filters to its **N-hop neighbourhood** via a `1 / 2 / 3 / All hops`
+selector, a second click to open, a kind filter, and `zoomToFit` on settle.
+
+This mock reproduces that feel in JBrain2's design tokens + phone frame:
+
+- **Whole-graph force layout, no anchored root** — every node is placed by the
+  sim, exactly as v1's react-force-graph does. "Me" lands central only because
+  it is the biggest hub. This is the key departure from today's
+  `GraphScreen.tsx`, which re-lays a deterministic focal/1-hop/2-hop ring on
+  every re-centre.
+- **Degree-scaled dots** — hubs are visibly bigger; type = colour.
+- **Tap-to-focus = hop-depth filter (the fix).** Tapping a node rings it, lights
+  its neighbourhood, and dims everything else **in place** — the map never
+  re-lays-out. The `1 · 2 · 3 · All` segmented control expands/contracts the lit
+  neighbourhood by BFS depth, so "going a hop deeper" is a *highlight* change on
+  a stable map, not a fresh ring. A second tap (or **Open entity →**) enters it;
+  **Isolate neighbourhood** frames just the focus's hop set.
+- Shared wins from A–F carry over: labels fade in with zoom and cull on overlap
+  (focus + neighbours always labelled), draggable nodes, focal-point zoom, the
+  legend doubles as a kind filter, **fit** frames the whole graph.
+
+*Best for:* the familiar v1 "one organic map of everything" reading, where
+exploration is re-focusing on a stable layout rather than rebuilding a local
+ring. *Trade-off:* a true whole-graph render needs the dot+zoom-label discipline
+(no big icon discs at overview) and a settled/frozen sim on a phone — both
+applied here.
+
+## Mobile force round (M1–M4) — keep the force feel, fix the phone
+
+The V1 Force Map above nails v1's geometry but is a desktop-grade whole-graph
+render: on a 390px screen it's a hairball with overlapping tap targets. These
+four keep a **real force/spring/charge layout** (the explicit ask) but make it
+mobile-native — tap-only, ≥44px hit targets, bottom-sheet detail, and a
+pre-settled sim that **freezes** instead of jittering forever. Each is
+self-contained and shares the design tokens, phone frame, seeded ~158-node
+dataset, and the v1 force engine.
+
+### M1 — Local Force (`graph-m1-local-force.html`)
+Never paints the hairball. A real force sim runs over **only the focal's capped
+1–2 hop neighbourhood** (~20–30 nodes), as type-tinted icon discs with ≥44px
+invisible hit halos. Tapping any node, search result, or a fat relationship row
+in the persistent bottom sheet **re-focuses** — the local map springs/fades into
+the next neighbourhood while a breadcrumb tracks the walk. *Best for:* the force
+feel with zero hairball risk; the closest mobile analogue to today's screen but
+organic instead of a fixed ring.
+
+### M2 — Force + Sheet (`graph-m2-force-sheet.html`)
+The Google-Maps model. A **frozen whole-graph force map** fills the top ~58%
+(small degree-scaled dots, zoom-revealed labels, ≥44px halos); a **persistent
+draggable bottom sheet** below trades map height for list height. Tapping a node
+**flies the camera** to centre it, lights its neighbourhood, and syncs the sheet
+to that entity; tapping a sheet row flies to that neighbour. *Best default* —
+lowest-risk, map and list stay locked together.
+
+### M3 — Fisheye Force (`graph-m3-fisheye.html`)
+Keeps the whole organic map but solves density with a **focus+context lens**: a
+render-time Sarkar–Brown radial fisheye that **spreads + magnifies the cluster
+under your finger** so tight nodes become thumb-tappable, while the periphery
+compresses to stay in context (nothing scrolls off). The lens follows the
+finger (or locks to a node); labels reveal only under it; S/M/L strength.
+*Best for:* exploring a dense map without losing the global picture.
+
+### M4 — Cluster Force Drill (`graph-m4-cluster-force.html`)
+Force at **two tiers**, never the raw hairball. The overview is a force system of
+**community bubbles** (charge + collide, sized by member count); a **Type ⇄
+Domain** toggle splits the firewalled medical / financial / location communities
+into their own bubbles. Tapping a bubble drills into a **local member force sim**
+(capped, with a `+N more` sheet); a breadcrumb collapses back. *Best for:*
+global structure + seeing the domain firewalls as distinct communities.
+
+## M1 enhancement round (N1–N3) — zoom + edge predicates + type filter
+
+The user picked **M1 (Local Force)** as the favourite and asked for three
+additions: the graph must **zoom**, connections must carry **predicate labels**,
+and you must be able to **filter to entity types**. All three of these start from
+`graph-m1-local-force.html` verbatim — same local force sim over the capped 1–2
+hop neighbourhood (never a hairball), type-tinted icon discs with ≥44px hit
+halos, re-focus walk + breadcrumb, draggable sheet, search — and add the three
+features in a different style. All add anchor-invariant **zoom** (wheel / pinch /
+double-tap + a `+ / fit / −` cluster).
+
+### N1 — Labeled & Zoomable (`graph-n1-labeled-zoom.html`)
+The clean, production-leaning take. Predicate text **rides along each edge**
+(rotated upright, halo'd, humanized "worksFor" → "works for"), focal edges always
+labelled and the rest fading in as you zoom; labels counter-scale to stay
+screen-constant. Entity types live in a **horizontally-scrollable chip rail**
+(colour swatch + count) under the breadcrumb — tap a chip to add/remove that
+whole type from the local neighbourhood. *Best for:* the most direct, lowest-risk
+upgrade of the chosen design.
+
+### N2 — Predicate Edges (`graph-n2-predicate-edges.html`)
+Relationships as the hero — the graph reads like sentences. Every connection
+wears a **directional predicate pill** (Me —works for→ Globex) with an arrowhead;
+reciprocal pairs collapse. Zoom controls pill **density** (focal-only at overview
+→ all pills as you zoom in), pills counter-scale to stay readable. Entity types
+toggle from an **expandable filter panel** with per-type counts, an "only this
+type" quick action, and reset. Node cap is tuned down so the pills have room.
+*Best for:* when the *predicates* are the content you're reading, not just the
+nodes.
+
+### N3 — Type Lens (`graph-n3-type-lens.html`)
+Entity-type filtering as the spine. A persistent **Type Lens** chip cloud gives
+each type three states: **on**, **off** (tap to thin the neighbourhood), and
+**solo** (a dedicated ◎ target / long-press that ghosts every other type to
+spotlight how the focal connects to just People, or just Places). Predicates
+reveal **on demand** — tap an edge (fat invisible hit line) to pin its label, and
+all labels also auto-fade-in past a zoom threshold. *Best for:* exploring "how do
+I connect to X *kind* of thing" and de-noising a mixed neighbourhood.
+
 ## Notes for implementation
 
 - All three are reachable from the current `GraphScreen` data contract
