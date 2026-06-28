@@ -1,0 +1,273 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Live music gen — tool card → playable audio</title>
+<style>
+  :root{
+    --bg:#0e0f11; --surface:#17181b; --surface-2:#1e2024; --border:#26282c;
+    --text:#e6e7e9; --text-2:#9a9da3; --text-3:#5c5f66;
+    --steel:#7fa7c9; --steel-tint:rgba(127,167,201,.13);
+    --green:#8fbc9a; --amber:#c9a36a; --rose:#cf8a8f;
+    --violet:#a493c9; --violet-tint:rgba(164,147,201,.14);
+    --r-card:16px; --r-input:12px;
+    font-size:15px;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+    display:flex;justify-content:center;padding:32px 16px}
+  .col{width:100%;max-width:440px}
+  .variant{font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--text-3);margin:0 0 4px}
+  h1{font-size:18px;margin:0 0 2px}
+  .sub{color:var(--text-2);font-size:13px;margin:0 0 22px;line-height:1.5}
+  .turn{margin-bottom:18px}
+  .who{font-size:12px;color:var(--text-3);margin:0 0 6px}
+  .bubble{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:11px 13px;font-size:14px;line-height:1.45}
+  .bubble.me{background:var(--surface-2)}
+
+  /* tool-activity card — music generation framed as visible "tool work" (mirrors generate_image) */
+  .tool{border:1px solid var(--border);border-radius:var(--r-card);background:var(--surface);overflow:hidden}
+  .tool-head{display:flex;align-items:center;gap:9px;padding:10px 12px;border-bottom:1px solid var(--border)}
+  /* music rides the violet "media" accent in the tool chrome (audio is not image-domain) */
+  .spark{width:18px;height:18px;border-radius:5px;background:var(--violet-tint);
+    display:grid;place-items:center;color:var(--violet);font-size:11px;flex:none}
+  .spark.spin{animation:pulse 1.1s infinite}
+  @keyframes pulse{50%{opacity:.4}}
+  .tname{font-size:13px;font-weight:600}
+  .tname .muted{color:var(--text-3);font-weight:400}
+  .tstate{margin-left:auto;font-size:11px;color:var(--steel);font-variant-numeric:tabular-nums}
+  .tool.done .tstate{color:var(--green)}
+  .tool.stopped .tstate{color:var(--rose)}
+
+  .tbody{padding:12px}
+  .meta-row{display:flex;gap:10px;align-items:flex-start;margin-bottom:10px}
+  .tmeta{flex:1;min-width:0}
+  .prompt{font-size:13px;line-height:1.4;color:var(--text);margin:0 0 3px}
+  .tags{display:flex;flex-wrap:wrap;gap:5px;margin:0 0 4px}
+  .tag{font-size:10.5px;color:var(--violet);background:var(--violet-tint);border-radius:999px;padding:2px 8px;letter-spacing:.02em}
+  .sub2{font-size:11px;color:var(--text-3);font-variant-numeric:tabular-nums}
+
+  /* the waveform canvas — "builds up" during render, becomes the live visualiser when playing */
+  .wave{width:100%;height:62px;border-radius:10px;background:#0a0b0d;border:1px solid var(--border);display:block}
+
+  /* progress track (render phase only) */
+  .progress{margin-top:11px}
+  .ptop{display:flex;justify-content:space-between;font-size:11px;color:var(--text-2);margin-bottom:5px;font-variant-numeric:tabular-nums}
+  .track{height:6px;border-radius:3px;background:var(--surface-2);overflow:hidden}
+  .track i{display:block;height:100%;width:0;background:var(--amber);transition:width .45s ease}
+  .ticks{display:flex;justify-content:space-between;margin-top:4px}
+  .ticks span{font-size:9px;color:var(--text-3)}
+
+  .tfoot{display:flex;padding:0 12px 12px}
+  .stop{margin-left:auto;display:flex;align-items:center;gap:6px;background:var(--surface-2);
+    border:1px solid var(--border);color:var(--text-2);border-radius:999px;padding:5px 13px;font-size:12px;cursor:pointer}
+  .stop:hover{background:var(--rose);color:#1a1112;border-color:transparent}
+  .stop .sq{width:8px;height:8px;border-radius:2px;background:currentColor}
+  .tool.done .tfoot,.tool.stopped .tfoot{display:none}
+
+  /* the player transport — revealed when the render completes (the generated_audio view) */
+  .player{display:none;margin-top:11px;align-items:center;gap:11px}
+  .tool.done .player{display:flex}
+  .tool.done .progress{display:none}
+  .play{width:42px;height:42px;border-radius:999px;flex:none;border:1px solid var(--border);
+    background:var(--violet-tint);color:var(--violet);display:grid;place-items:center;cursor:pointer;font-size:15px}
+  .play:hover{border-color:var(--violet)}
+  .transport{flex:1;min-width:0}
+  .seek{height:6px;border-radius:3px;background:var(--surface-2);position:relative;cursor:pointer}
+  .seek i{position:absolute;left:0;top:0;bottom:0;width:0;background:var(--violet);border-radius:3px}
+  .seek .knob{position:absolute;top:50%;width:11px;height:11px;border-radius:999px;background:var(--text);transform:translate(-50%,-50%);left:0}
+  .times{display:flex;justify-content:space-between;font-size:10.5px;color:var(--text-3);margin-top:5px;font-variant-numeric:tabular-nums}
+
+  .doneline{padding:0 12px 11px;font-size:12px;color:var(--text-2);display:flex;align-items:center;gap:10px}
+  .doneline.stop{color:var(--rose)}
+  .mini{margin-left:auto;display:flex;gap:7px}
+  .chip{font-size:11px;color:var(--text-2);background:var(--surface-2);border:1px solid var(--border);
+    border-radius:999px;padding:3px 10px;cursor:pointer}
+  .chip:hover{border-color:var(--steel);color:var(--text)}
+  .tool:not(.done) .doneline{display:none}
+
+  .controls{display:flex;gap:8px;margin-top:26px;border-top:1px solid var(--border);padding-top:16px}
+  button.demo{background:var(--surface-2);border:1px solid var(--border);color:var(--text);border-radius:var(--r-input);padding:8px 14px;font-size:13px;cursor:pointer}
+  button.demo:hover{border-color:var(--steel)}
+  .note{font-size:12px;color:var(--text-3);margin-top:14px;line-height:1.55}
+  code{background:var(--surface-2);padding:1px 5px;border-radius:5px;font-size:11.5px}
+</style>
+</head>
+<body>
+<div class="col">
+  <p class="variant">Music gen · live tool card</p>
+  <h1>generate_music → playable</h1>
+  <p class="sub">The agent tool reads as visible “tool work” (like <code>generate_image</code>): a building waveform + a labelled step track during the render, then it morphs into the inline <code>generated_audio</code> player. <strong>The pad is synthesised live in the browser</strong> — press play to actually hear it.</p>
+
+  <div class="turn"><p class="who">you</p><div class="bubble me">generate me a 4m ambient pad soundscape</div></div>
+  <div class="turn"><p class="who">jerv</p><div class="bubble">On it — composing a 4-minute ambient pad now.</div></div>
+
+  <div class="tool" id="tool">
+    <div class="tool-head">
+      <span class="spark spin" id="spark">♪</span>
+      <span class="tname">generate_music <span class="muted">· ACE-Step 1.5 XL</span></span>
+      <span class="tstate" id="tstate">starting…</span>
+    </div>
+    <div class="tbody">
+      <div class="meta-row">
+        <div class="tmeta">
+          <p class="prompt">ambient pad soundscape — warm, slow-evolving, weightless</p>
+          <div class="tags"><span class="tag">ambient</span><span class="tag">pad</span><span class="tag">soundscape</span><span class="tag">drone</span></div>
+          <p class="sub2" id="sub2">instrumental · 4:00 · seed 71042288</p>
+        </div>
+      </div>
+      <canvas class="wave" id="wave"></canvas>
+      <div class="progress">
+        <div class="ptop"><span>generating…</span><span id="ptopr">0 / 10 steps</span></div>
+        <div class="track"><i id="fill"></i></div>
+        <div class="ticks"><span>25</span><span>50</span><span>75</span><span>100</span></div>
+      </div>
+      <div class="player">
+        <button class="play" id="playBtn" aria-label="Play">▶</button>
+        <div class="transport">
+          <div class="seek" id="seek"><i id="seekFill"></i><span class="knob" id="knob"></span></div>
+          <div class="times"><span id="cur">0:00</span><span id="dur">4:00</span></div>
+        </div>
+      </div>
+    </div>
+    <div class="tfoot"><button class="stop" id="stopBtn"><span class="sq"></span>Stop render</button></div>
+    <div class="doneline" id="doneline"></div>
+  </div>
+
+  <div class="controls">
+    <button class="demo" onclick="run()">▶ Simulate render</button>
+    <button class="demo" onclick="resetCard()">↺ Reset</button>
+  </div>
+  <p class="note">Render: step counts stream over the chat SSE as <code>tool_progress</code> (no preview frame for audio — the waveform is a placeholder that fills, the step bar is the real signal). Done: the tool returns a data-only <code>generated_audio</code> view (<code>audio_id</code>, tags, seconds, seed); the player builds its source from <code>generatedAudioUrl(audio_id)</code> → <code>/api/music/generated/{id}</code> (invariant #9, no model-authored URL). Stop calls ComfyUI <code>/interrupt</code>.</p>
+</div>
+
+<script>
+/* ---------- card state machine (mirrors the image live mock) ---------- */
+const tool=document.getElementById('tool'),fill=document.getElementById('fill');
+const tstate=document.getElementById('tstate'),ptopr=document.getElementById('ptopr'),spark=document.getElementById('spark');
+const doneline=document.getElementById('doneline');
+const STEPS=10; let timer=null,stopped=false;
+
+function resetCard(){
+  clearTimeout(timer);stopped=false;tool.className='tool';
+  fill.style.width='0';tstate.textContent='starting…';ptopr.textContent='0 / '+STEPS+' steps';
+  spark.classList.add('spin');spark.textContent='♪';doneline.textContent='';
+  pauseAudio(); seekTo(0); drawIdle();
+}
+function run(){
+  resetCard();let s=0;
+  const tick=()=>{
+    if(stopped)return;
+    s++;const p=Math.round(s/STEPS*100);
+    fill.style.width=p+'%';tstate.textContent=p+'% · step '+s+'/'+STEPS;ptopr.textContent=s+' / '+STEPS+' steps';
+    drawBuild(s/STEPS);
+    if(s>=STEPS){finish();return;}
+    timer=setTimeout(tick,420);
+  };
+  timer=setTimeout(tick,420);
+}
+function finish(){
+  tool.classList.add('done');spark.classList.remove('spin');spark.textContent='✓';tstate.textContent='done';
+  doneline.innerHTML='<span>Generated a 4:00 ambient pad — playable above.</span>'
+    +'<span class="mini"><span class="chip" onclick="copySeed()">⧉ seed 71042288</span><span class="chip">↧ save</span></span>';
+  buildGraph(); drawIdle();
+}
+document.getElementById('stopBtn').onclick=()=>{
+  stopped=true;clearTimeout(timer);tool.classList.add('stopped');
+  spark.classList.remove('spin');spark.textContent='✕';tstate.textContent='stopped';
+  doneline.className='doneline stop';doneline.textContent='Render stopped — nothing saved.';
+};
+function copySeed(){navigator.clipboard&&navigator.clipboard.writeText('71042288');}
+
+/* ---------- the waveform canvas: build-up bars, then live analyser ---------- */
+const wave=document.getElementById('wave'),wctx=wave.getContext('2d');
+function sizeCanvas(){const r=wave.getBoundingClientRect();wave.width=r.width*devicePixelRatio;wave.height=r.height*devicePixelRatio;wctx.setTransform(devicePixelRatio,0,0,devicePixelRatio,0,0);}
+addEventListener('resize',()=>{sizeCanvas();drawIdle();});
+function clearWave(){const r=wave.getBoundingClientRect();wctx.clearRect(0,0,r.width,r.height);return r;}
+function drawIdle(){const r=clearWave();const n=64,mid=r.height/2;wctx.fillStyle='#2a2d33';
+  for(let i=0;i<n;i++){const x=i/n*r.width,h=2;wctx.fillRect(x+1,mid-h/2,(r.width/n)-2,h);}}
+function drawBuild(frac){const r=clearWave();const n=64,mid=r.height/2;
+  for(let i=0;i<n;i++){const x=i/n*r.width;const seed=Math.sin(i*12.9898)*43758.5;const rnd=seed-Math.floor(seed);
+    const on=(i/n)<frac;const h=on?(4+rnd*(r.height-10)):2;
+    wctx.fillStyle=on?'#a493c9':'#2a2d33';
+    wctx.fillRect(x+1,mid-h/2,(r.width/n)-2,h);}}
+
+/* ---------- the actual ambient-pad synth (Web Audio) ---------- */
+const DUR=240; // 4:00 nominal track length
+let ctx,master,filter,analyser,freqData,playing=false,raf=null,startT=0,elapsed=0,built=false;
+
+function makeIR(ac,dur,decay){const rate=ac.sampleRate,len=Math.floor(rate*dur),b=ac.createBuffer(2,len,rate);
+  for(let c=0;c<2;c++){const d=b.getChannelData(c);for(let i=0;i<len;i++)d[i]=(Math.random()*2-1)*Math.pow(1-i/len,decay);}return b;}
+
+function buildGraph(){
+  if(built)return;built=true;
+  ctx=new (window.AudioContext||window.webkitAudioContext)();
+  master=ctx.createGain();master.gain.value=0.0001;
+  const dry=ctx.createGain();dry.gain.value=0.78;
+  const conv=ctx.createConvolver();conv.buffer=makeIR(ctx,3.6,2.4);
+  const wet=ctx.createGain();wet.gain.value=0.55;
+  master.connect(dry).connect(ctx.destination);
+  master.connect(conv);conv.connect(wet).connect(ctx.destination);
+  filter=ctx.createBiquadFilter();filter.type='lowpass';filter.frequency.value=620;filter.Q.value=3;
+  filter.connect(master);
+  analyser=ctx.createAnalyser();analyser.fftSize=128;freqData=new Uint8Array(analyser.frequencyBinCount);
+  filter.connect(analyser);
+  // a warm, slightly-detuned pad chord (A minor add9-ish): A2 E3 A3 C4 E4
+  const chord=[110.00,164.81,220.00,261.63,329.63];
+  chord.forEach((f,i)=>{
+    const o=ctx.createOscillator();o.type=i===0?'sine':'sawtooth';o.frequency.value=f;o.detune.value=(i-2)*5;
+    const g=ctx.createGain();g.gain.value=i===0?0.42:0.15;
+    const pan=ctx.createStereoPanner();pan.pan.value=(i-2)/3.2;
+    o.connect(g).connect(pan).connect(filter);o.start();
+    // gentle per-voice vibrato so the pad never sits perfectly still
+    const v=ctx.createOscillator();v.frequency.value=0.05+i*0.013;const vg=ctx.createGain();vg.gain.value=2.5;
+    v.connect(vg).connect(o.detune);v.start();
+  });
+  // slow filter "breathing" sweep — the soundscape's main motion
+  const lfo=ctx.createOscillator();lfo.frequency.value=0.055;const lg=ctx.createGain();lg.gain.value=420;
+  lfo.connect(lg).connect(filter.frequency);lfo.start();
+  // slow amplitude swell
+  const alfo=ctx.createOscillator();alfo.frequency.value=0.085;const ag=ctx.createGain();ag.gain.value=0.07;
+  alfo.connect(ag).connect(master.gain);alfo.start();
+}
+
+const playBtn=document.getElementById('playBtn');
+playBtn.onclick=()=>playing?pauseAudio():playAudio();
+function playAudio(){
+  if(!tool.classList.contains('done'))return;buildGraph();ctx.resume();
+  playing=true;playBtn.textContent='⏸';startT=ctx.currentTime-elapsed;
+  master.gain.cancelScheduledValues(ctx.currentTime);
+  master.gain.setTargetAtTime(0.5,ctx.currentTime,1.4);
+  loop();
+}
+function pauseAudio(){
+  playing=false;playBtn&&(playBtn.textContent='▶');if(raf)cancelAnimationFrame(raf);
+  if(ctx&&master){master.gain.cancelScheduledValues(ctx.currentTime);master.gain.setTargetAtTime(0.0001,ctx.currentTime,0.35);}
+}
+function loop(){
+  elapsed=ctx.currentTime-startT;
+  if(elapsed>=DUR){elapsed=DUR;updateTransport();pauseAudio();elapsed=0;updateTransport();return;}
+  updateTransport();drawLive();raf=requestAnimationFrame(loop);
+}
+
+/* ---------- transport (seek bar + times) ---------- */
+const seek=document.getElementById('seek'),seekFill=document.getElementById('seekFill'),knob=document.getElementById('knob'),cur=document.getElementById('cur');
+function fmt(s){s=Math.max(0,Math.floor(s));return Math.floor(s/60)+':'+String(s%60).padStart(2,'0');}
+function updateTransport(){const f=Math.min(1,elapsed/DUR);seekFill.style.width=(f*100)+'%';knob.style.left=(f*100)+'%';cur.textContent=fmt(elapsed);}
+function seekTo(t){elapsed=Math.max(0,Math.min(DUR,t));if(playing&&ctx)startT=ctx.currentTime-elapsed;updateTransport();}
+seek.onclick=(e)=>{const r=seek.getBoundingClientRect();seekTo(((e.clientX-r.left)/r.width)*DUR);};
+
+function drawLive(){const r=clearWave();analyser.getByteFrequencyData(freqData);
+  const n=freqData.length,mid=r.height/2;
+  for(let i=0;i<n;i++){const x=i/n*r.width;const a=freqData[i]/255;const h=Math.max(2,a*(r.height-6));
+    const t=i/n;wctx.fillStyle=`rgb(${127+t*37},${147+(1-t)*20},201)`; // steel→violet gradient
+    wctx.fillRect(x+1,mid-h/2,(r.width/n)-2,h);}}
+
+sizeCanvas();drawIdle();
+/* auto-play the render once on load so the design lands immediately */
+run();
+</script>
+</body>
+</html>
