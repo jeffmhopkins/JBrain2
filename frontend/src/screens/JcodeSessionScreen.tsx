@@ -1,7 +1,7 @@
 // Code mode (jcode) — the terminal-first session (docs/DESIGN.md "jcode", 2-tab
 // Variant A, docs/mocks/jcode-session-2tab-a-fullbleed.html). One session, two views:
 // Terminal (a real shell in the sandbox over xterm.js — the way you drive the coder) and
-// Preview (an ephemeral tunnel to the sandbox dev server). A slim header carries the
+// Preview (the sandbox dev server at the session's own host address). A slim header carries the
 // session + model chip; owner actions (Reset / Share / Stop / Delete) live in a ⋯ menu so
 // the terminal gets the whole screen. Exiting the shell pauses the session; Restart (here
 // or from the launcher) resumes it.
@@ -499,7 +499,7 @@ export function JcodeSessionScreen({
   const ctxLabel = model?.context_window ? `${Math.round(model.context_window / 1024)}k` : null;
 
   // Fetch the preview status the first time the Preview tab is opened (the feature flag +
-  // any already-live tunnel). Failures leave it null → a neutral empty state.
+  // any already-open preview). Failures leave it null → a neutral empty state.
   useEffect(() => {
     if (tab !== "prev" || preview !== null) return;
     let stale = false;
@@ -519,18 +519,8 @@ export function JcodeSessionScreen({
     try {
       setPreview(await api.jcodePreviewOpen(session.id));
     } catch {
-      // Keep the prior mode/port (so the empty state shows the right copy) but clear the url.
+      // Keep the prior port (so the empty state shows the right copy) but clear the url.
       setPreview((p) => ({ ...(p ?? { enabled: true }), enabled: true, url: null }));
-    } finally {
-      setPvBusy(false);
-    }
-  }
-
-  async function closePreview() {
-    setPvBusy(true);
-    try {
-      await api.jcodePreviewClose(session.id);
-      setPreview({ enabled: true, url: null });
     } finally {
       setPvBusy(false);
     }
@@ -667,20 +657,6 @@ export function JcodeSessionScreen({
                     >
                       Copy preview address
                     </button>
-                    {preview.mode !== "host" && (
-                      <button
-                        type="button"
-                        role="menuitem"
-                        className="jcode-menu-item"
-                        disabled={pvBusy}
-                        onClick={() => {
-                          setMenuOpen(false);
-                          void closePreview();
-                        }}
-                      >
-                        Stop preview
-                      </button>
-                    )}
                   </>
                 )}
                 <div className="jcode-menu-sep" />
@@ -779,9 +755,8 @@ export function JcodeSessionScreen({
         {tab === "prev" &&
           (preview?.url ? (
             // The live preview rendered inline as an iframe — the Preview tab *is* the dev
-            // page. Copy-the-address (and Stop, in tunnel mode) live in the ⋯ menu so the
-            // page gets the full panel; in host mode the iframe itself shows the proxy's
-            // "start your dev server" 502 until the server is up.
+            // page. Copy-the-address lives in the ⋯ menu so the page gets the full panel;
+            // the iframe itself shows the proxy's "start your dev server" 502 until it's up.
             <div className="jcode-pvframe">
               <iframe
                 // key + the cache-busting query both force a full reload on refresh; a
@@ -811,7 +786,7 @@ export function JcodeSessionScreen({
                   restore it by removing <code>JCODE_PREVIEW_ENABLED=false</code> from
                   <code> .env</code> and re-running <code>jcode-setup.sh</code>.
                 </p>
-              ) : preview.mode === "host" ? (
+              ) : (
                 <div className="jcode-preview">
                   <p className="jcode-empty">
                     This session has its own preview address. Open it, then run your dev server
@@ -830,21 +805,6 @@ export function JcodeSessionScreen({
                     onClick={openPreview}
                   >
                     {pvBusy ? "Opening…" : "Open preview"}
-                  </button>
-                </div>
-              ) : (
-                <div className="jcode-preview">
-                  <p className="jcode-empty">
-                    Start your dev server in the sandbox (e.g. <code>npm run dev</code> on{" "}
-                    <code>:5173</code>), then open a temporary public URL to it.
-                  </p>
-                  <button
-                    type="button"
-                    className="jcode-act teal"
-                    disabled={pvBusy}
-                    onClick={openPreview}
-                  >
-                    {pvBusy ? "Opening…" : "Open preview tunnel"}
                   </button>
                 </div>
               )}

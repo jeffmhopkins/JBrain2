@@ -2405,10 +2405,6 @@ export const api = {
     ).json();
   },
 
-  async jcodePreviewClose(id: string): Promise<void> {
-    await request(`/api/jcode/sessions/${encodeURIComponent(id)}/preview`, { method: "DELETE" });
-  },
-
   /** Whether the coder model is resident in the gateway — polled by the loading bar. */
   async jcodeModelStatus(): Promise<JcodeModelStatus> {
     return (await request("/api/jcode/model")).json();
