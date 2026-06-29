@@ -23,7 +23,7 @@ from jbrain.agent.session import AgentSessionRepo
 from jbrain.api.deps import PrincipalDep, SettingsDep, owner_only
 from jbrain.api.notes import MAX_ATTACHMENT_BYTES, ctx_for
 from jbrain.llm.providers import supports_vision_for_spec
-from jbrain.llm.router import TASK_DEFAULTS
+from jbrain.llm.router import TASK_DEFAULTS, context_window_for_spec
 from jbrain.settings_store import SqlSettingsStore
 from jbrain.storage import BlobStore
 
@@ -169,6 +169,11 @@ class ChatCapabilities(BaseModel):
     # analyze_image (read it via the vision model) or edit_image it BY id — so the PWA
     # still offers attach in that mode rather than hiding it behind vision.
     can_edit_images: bool
+    # The agent.turn model's total context window — the meter's denominator. Sent here
+    # so the composer can show the (near-empty) meter in a fresh session, before the
+    # first turn's usage event reports the live figure. A model capability, not
+    # per-session; a live local `-c` override only lands once a turn streams.
+    context_window: int
 
 
 capabilities_router = APIRouter(prefix="/chat", dependencies=[Depends(owner_only)])
@@ -185,4 +190,5 @@ async def chat_capabilities(
     return ChatCapabilities(
         supports_vision=supports_vision_for_spec(settings, spec),
         can_edit_images=bool(settings.comfyui_url),
+        context_window=context_window_for_spec(spec),
     )

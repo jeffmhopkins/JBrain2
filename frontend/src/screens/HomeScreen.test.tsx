@@ -47,7 +47,11 @@ function fbDeps(): FullBrainDeps {
       media_type: file.type,
       size_bytes: file.size,
     })),
-    getChatCapabilities: vi.fn(async () => ({ supports_vision: true, can_edit_images: false })),
+    getChatCapabilities: vi.fn(async () => ({
+      supports_vision: true,
+      can_edit_images: false,
+      context_window: 262144,
+    })),
   };
 }
 
@@ -385,7 +389,11 @@ describe("HomeScreen mode scoping", () => {
     // Vision off: the conversation composer hides the paperclip (no stand-in hint).
     const offDeps = {
       ...fbDeps(),
-      getChatCapabilities: vi.fn(async () => ({ supports_vision: false, can_edit_images: false })),
+      getChatCapabilities: vi.fn(async () => ({
+        supports_vision: false,
+        can_edit_images: false,
+        context_window: 262144,
+      })),
     };
     const { unmount } = render(
       <HomeScreen
@@ -408,7 +416,11 @@ describe("HomeScreen mode scoping", () => {
     // Vision on: the paperclip is offered.
     const onDeps = {
       ...fbDeps(),
-      getChatCapabilities: vi.fn(async () => ({ supports_vision: true, can_edit_images: false })),
+      getChatCapabilities: vi.fn(async () => ({
+        supports_vision: true,
+        can_edit_images: false,
+        context_window: 262144,
+      })),
     };
     render(
       <HomeScreen
@@ -432,7 +444,11 @@ describe("HomeScreen mode scoping", () => {
     // because jerv can analyze_image / edit_image an attachment by id.
     const deps = {
       ...fbDeps(),
-      getChatCapabilities: vi.fn(async () => ({ supports_vision: false, can_edit_images: true })),
+      getChatCapabilities: vi.fn(async () => ({
+        supports_vision: false,
+        can_edit_images: true,
+        context_window: 262144,
+      })),
     };
     render(
       <HomeScreen

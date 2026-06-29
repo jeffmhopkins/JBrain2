@@ -118,6 +118,21 @@ JSON_NUDGE = (
 )
 
 
+def context_window_for_spec(spec: str) -> int:
+    """The total context window for a raw "provider:model" spec, WITHOUT resolving
+    live overrides — the spec-based twin of LlmRouter.context_window. The capabilities
+    endpoint uses it to seed the composer's context meter before the first turn, so the
+    window reads consistently with the vision flag (both off the same resolved spec).
+    A local window comes from the catalog default; a live per-model `-c` override only
+    takes effect once a turn actually streams (the meter corrects itself then). Cloud
+    windows come from CONTEXT_WINDOWS, with the conservative default for an unlisted
+    model so the meter degrades gracefully rather than misreports."""
+    provider, _, model = spec.partition(":")
+    if provider == "local":
+        return local_catalog.context_window(model)
+    return CONTEXT_WINDOWS.get(model, DEFAULT_CONTEXT_WINDOW)
+
+
 def _split_spec(label: str, spec: str) -> tuple[str, str]:
     provider, sep, model = spec.partition(":")
     if not sep or not provider or not model:

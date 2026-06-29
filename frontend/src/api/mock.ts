@@ -2658,6 +2658,12 @@ export const mockFetch: typeof fetch = async (input, init) => {
   if (path === "/api/auth/session") return new Response(null, { status: 204 });
   if (path === "/api/auth/me") return json(PRINCIPAL);
 
+  // Chat composer capabilities: vision gate + the agent.turn window, so the context
+  // meter can seed a fresh chat before the first turn reports live usage.
+  if (path === "/api/chat/capabilities" && method === "GET") {
+    return json({ supports_vision: true, can_edit_images: false, context_window: 262144 });
+  }
+
   // --- Code mode (jcode) ---
   // Model status: until the owner confirms the swap, report the coder absent with another
   // model resident (the screen shows the load prompt). After the warm POST, report

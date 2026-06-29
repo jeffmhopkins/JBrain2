@@ -120,7 +120,11 @@ export interface FullBrainDeps {
   unarchiveSession: (id: string) => Promise<void>;
   rescopeSession: (id: string, domainScopes: string[]) => Promise<void>;
   uploadChatAttachment: (sessionId: string, file: File) => Promise<ChatAttachment>;
-  getChatCapabilities: () => Promise<{ supports_vision: boolean; can_edit_images: boolean }>;
+  getChatCapabilities: () => Promise<{
+    supports_vision: boolean;
+    can_edit_images: boolean;
+    context_window: number;
+  }>;
 }
 
 const LIVE: FullBrainDeps = {
@@ -297,6 +301,10 @@ export function useFullBrain(
   // Live context-window fill from the stream's `usage` events; cleared when the
   // open chat changes (a different session has its own context).
   const [usage, setUsage] = useState<ContextUsage | null>(null);
+  // The agent.turn model's total window, learned from the capabilities probe (and
+  // refreshed by each live usage event). It lets the meter render a near-empty bar in
+  // a fresh chat — the window is known before the first turn even though the fill isn't.
+  const [windowHint, setWindowHint] = useState<number | null>(null);
   // The in-flight turn's abort handle — the Stop button calls `.abort()`, which
   // closes the SSE fetch and unwinds the run server-side. Null when idle.
   const abortRef = useRef<AbortController | null>(null);
@@ -371,6 +379,7 @@ export function useFullBrain(
         if (stale) return;
         setSupportsVision(c.supports_vision);
         setCanEditImages(c.can_edit_images);
+        setWindowHint(c.context_window);
       })
       .catch(() => {});
     return () => {
@@ -588,6 +597,9 @@ export function useFullBrain(
           base: turnBase,
           window: event.context_window,
         });
+        // Keep the seed window current with what the model actually ran against, so a
+        // later fresh chat meters against the live figure rather than the probe's.
+        setWindowHint(event.context_window);
       } else {
         setSessionMessages(turnSessionId, (ms) => applyEvent(ms, event));
         // A child was just minted server-side (children persist eagerly) — refresh the
@@ -794,6 +806,17 @@ export function useFullBrain(
     if (active?.id === id) setActive({ ...active, domain_scopes: domainScopes });
   }
 
+  // The meter's source. A live turn's usage wins; otherwise — only for an EMPTY chat
+  // (a fresh session, before its first turn) — seed a near-empty bar from the known
+  // window, so the composer shows the context capacity from the start. A reopened
+  // session with history is left null: its true fill isn't in the stored transcript,
+  // and a 0% bar there would under-report rather than inform.
+  const displayUsage: ContextUsage | null =
+    usage ??
+    (windowHint !== null && messages.length === 0
+      ? { used: 0, base: 0, window: windowHint }
+      : null);
+
   return {
     active,
     sessions: visibleSessions,
@@ -807,7 +830,7 @@ export function useFullBrain(
     busy,
     activeTurn,
     canSend: !busy && active !== null,
-    usage,
+    usage: displayUsage,
     stop,
     supportsVision,
     canEditImages,

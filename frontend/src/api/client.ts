@@ -2206,9 +2206,17 @@ export const api = {
 
   // Whether the model serving agent.turn can accept images — gates the chat
   // attach affordance (hidden, with a hint, when vision is off).
-  async getChatCapabilities(): Promise<{ supports_vision: boolean; can_edit_images: boolean }> {
+  async getChatCapabilities(): Promise<{
+    supports_vision: boolean;
+    can_edit_images: boolean;
+    context_window: number;
+  }> {
     const response = await request("/api/chat/capabilities");
-    return (await response.json()) as { supports_vision: boolean; can_edit_images: boolean };
+    return (await response.json()) as {
+      supports_vision: boolean;
+      can_edit_images: boolean;
+      context_window: number;
+    };
   },
 
   async getTranscript(sessionId: string): Promise<TranscriptTurn[]> {
