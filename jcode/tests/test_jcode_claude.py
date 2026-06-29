@@ -14,10 +14,8 @@ _HELPER = Path(__file__).resolve().parents[1] / "jcode-claude"
 def _fake_npm(bin_dir: Path, *, fail: bool, log: Path) -> None:
     """Drop a fake `npm` that records its args (so the package@version is observable)
     and succeeds or fails on demand."""
-    body = (
-        "#!/usr/bin/env bash\n"
-        f'echo "args:$*" >> "{log}"\n'
-        + ("exit 1\n" if fail else "exit 0\n")
+    body = f'#!/usr/bin/env bash\necho "args:$*" >> "{log}"\n' + (
+        "exit 1\n" if fail else "exit 0\n"
     )
     npm = bin_dir / "npm"
     npm.write_text(body)

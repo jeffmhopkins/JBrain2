@@ -15,17 +15,21 @@ _HELPER = Path(__file__).resolve().parents[1] / "jcode-grok"
 def _fake_curl(bin_dir: Path, *, fail: bool, install_log: Path) -> None:
     """Drop a fake `curl` that, unless FAIL, writes a stub installer to curl's -o path.
     The stub records its args and plants a fake grok in $GROK_BIN_DIR."""
-    body = "#!/usr/bin/env bash\nexit 1\n" if fail else (
-        "#!/usr/bin/env bash\n"
-        'out=""; prev=""\n'
-        'for a in "$@"; do [ "$prev" = "-o" ] && out="$a"; prev="$a"; done\n'
-        'cat > "$out" <<\'STUB\'\n'
-        "#!/usr/bin/env bash\n"
-        'echo "args:$*" >> "$FAKE_INSTALL_LOG"\n'
-        'mkdir -p "$GROK_BIN_DIR"\n'
-        "printf '#!/bin/sh\\necho grok 9.9.9\\n' > \"$GROK_BIN_DIR/grok\"\n"
-        'chmod +x "$GROK_BIN_DIR/grok"\n'
-        "STUB\n"
+    body = (
+        "#!/usr/bin/env bash\nexit 1\n"
+        if fail
+        else (
+            "#!/usr/bin/env bash\n"
+            'out=""; prev=""\n'
+            'for a in "$@"; do [ "$prev" = "-o" ] && out="$a"; prev="$a"; done\n'
+            "cat > \"$out\" <<'STUB'\n"
+            "#!/usr/bin/env bash\n"
+            'echo "args:$*" >> "$FAKE_INSTALL_LOG"\n'
+            'mkdir -p "$GROK_BIN_DIR"\n'
+            "printf '#!/bin/sh\\necho grok 9.9.9\\n' > \"$GROK_BIN_DIR/grok\"\n"
+            'chmod +x "$GROK_BIN_DIR/grok"\n'
+            "STUB\n"
+        )
     )
     curl = bin_dir / "curl"
     curl.write_text(body)

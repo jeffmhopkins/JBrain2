@@ -340,7 +340,7 @@ def test_jcode_path_profile_snippet_leads_path_with_the_session_bin() -> None:
     # home_env sets and confirm the session bin (then the npm bin) lead PATH.
     snippet = Path(__file__).resolve().parents[1] / "jcode-path.sh"
     script = (
-        f'JCODE_TOOLS_BIN=/t HOME=/h; PATH=/usr/local/bin:/bin; '
+        f"JCODE_TOOLS_BIN=/t HOME=/h; PATH=/usr/local/bin:/bin; "
         f'. "{snippet}"; echo "$PATH"'
     )
     out = subprocess.run(
