@@ -3,11 +3,23 @@ incremental-spend pool, the root reserve, and the admission floor — all pure, 
 adapter, no model cooperation."""
 
 from jbrain.agent.tree import (
+    CHILD_MAX_STEPS,
     MIN_VIABLE_CHILD_BUDGET,
     ROOT_RESERVE_FRACTION,
     SPAWN_MULTIPLIER,
     TreeState,
+    child_steps_for,
 )
+
+
+def test_child_steps_scale_with_effort() -> None:
+    """A higher-effort child earns a longer ReAct chain; unknown/absent effort falls
+    back to the base cap."""
+    assert child_steps_for("high") == 30
+    assert child_steps_for("medium") == 20
+    assert child_steps_for("low") == CHILD_MAX_STEPS
+    assert child_steps_for("none") == CHILD_MAX_STEPS
+    assert child_steps_for(None) == CHILD_MAX_STEPS
 
 
 def test_rooted_sizes_budget_and_reserve_off_the_root_cap() -> None:
