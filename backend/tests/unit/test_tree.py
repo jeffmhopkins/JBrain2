@@ -15,8 +15,8 @@ from jbrain.agent.tree import (
 def test_child_steps_scale_with_effort() -> None:
     """A higher-effort child earns a longer ReAct chain; unknown/absent effort falls
     back to the base cap."""
-    assert child_steps_for("high") == 30
-    assert child_steps_for("medium") == 20
+    assert child_steps_for("high") == 24
+    assert child_steps_for("medium") == 16
     assert child_steps_for("low") == CHILD_MAX_STEPS
     assert child_steps_for("none") == CHILD_MAX_STEPS
     assert child_steps_for(None) == CHILD_MAX_STEPS

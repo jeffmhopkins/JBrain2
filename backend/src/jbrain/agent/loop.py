@@ -119,6 +119,12 @@ class Guardrails:
 # searches/reads) before the step cap stops it. low/none/non-reasoning keep the default.
 STEPS_BY_EFFORT: dict[str, int] = {"high": 20, "medium": 15}
 
+# The forced-final synthesis (force_final_answer, on step exhaustion) writes an answer
+# from already-gathered material — a mechanical step that needs no deep thinking. Run it
+# at LOW effort regardless of the run's effort: at high effort it generated a huge hidden
+# reasoning trace (~74s at ~4 tok/s on the local box) that looked like a stall.
+FINAL_ANSWER_EFFORT = "low"
+
 
 def guardrails_for_effort(effort: str | None, *, scale: int = 1) -> Guardrails:
     """The loop's budget sized to the task's effective reasoning effort, then scaled
@@ -461,7 +467,7 @@ class AgentLoop:
             # already gathered — a research child otherwise reports nothing the moment it
             # hits the cap. Still flagged `max_steps` so the caller knows it's step-limited.
             final = await self._converse_turn(
-                system_prompt, messages, (), reasoning_effort, on_text, on_reasoning
+                system_prompt, messages, (), FINAL_ANSWER_EFFORT, on_text, on_reasoning
             )
             spent_final = final.usage.input_tokens + final.usage.output_tokens
             cost += spent_final

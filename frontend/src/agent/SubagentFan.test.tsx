@@ -120,6 +120,29 @@ describe("SubagentFan", () => {
     expect(screen.getByText("found 3 tiers")).toBeInTheDocument();
   });
 
+  it("lets the live thinking trace collapse", () => {
+    render(
+      <SubagentFan
+        running
+        fan={fan([
+          child({
+            childId: "k1",
+            label: "Pricing",
+            phase: "researching",
+            status: "running",
+            liveReasoning: "deep thoughts",
+            liveText: "partial",
+          }),
+        ])}
+      />,
+    );
+    // Open by default while streaming…
+    expect(screen.getByText("deep thoughts")).toBeInTheDocument();
+    // …and collapsible via the Thinking toggle.
+    fireEvent.click(screen.getByText(/Thinking/));
+    expect(screen.queryByText("deep thoughts")).not.toBeInTheDocument();
+  });
+
   it("does not offer 'Open session' for a still-running child (would be blank)", () => {
     const onOpen = vi.fn();
     render(
@@ -127,10 +150,18 @@ describe("SubagentFan", () => {
         running
         onOpen={onOpen}
         fan={fan([
-          child({ childId: "k1", label: "Pricing", status: "running", liveText: "working" }),
+          child({
+            childId: "k1",
+            label: "Pricing",
+            phase: "researching",
+            status: "running",
+            liveText: "working",
+          }),
         ])}
       />,
     );
+    // The row is expanded (streaming) and shows live text, but no open-session link yet.
+    expect(screen.getByText("working")).toBeInTheDocument();
     expect(screen.queryByText(/Open sub-agent session/)).not.toBeInTheDocument();
   });
 

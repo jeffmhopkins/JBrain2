@@ -1,6 +1,6 @@
 ---
 name: spawn_subagent
-version: 2
+version: 3
 permission: web
 cost_class: expensive
 params:
@@ -36,9 +36,11 @@ params:
             enum: [none, low, medium, high]
             description: >-
               Optional. How hard this child should think, when its model is a
-              reasoning model. Use "high" for an open-ended or analytical brief, "low"
-              (the default) for a quick lookup, "none" to skip the thinking trace.
-              Ignored for a non-reasoning model. Omit to use the child's default.
+              reasoning model. "high" is SLOW and expensive on local hardware (a
+              high-effort child can run several minutes) — reserve it for a genuinely
+              deep or analytical brief. Prefer "low" for a quick lookup or "medium" for
+              ordinary gathering. "none" skips the thinking trace. Ignored for a
+              non-reasoning model. Omit to use the child's default.
         required: [persona, brief, label]
     max_parallel:
       type: integer

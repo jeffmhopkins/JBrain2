@@ -247,8 +247,10 @@ async def test_force_final_answer_synthesizes_on_step_exhaustion() -> None:
     )
     assert result.stop_reason == "max_steps"
     assert result.text == "here is what I found"
-    # The forced final turn was made with NO tools offered.
+    # The forced final turn was made with NO tools offered, and at LOW effort (the
+    # synthesis is mechanical — high effort there caused a long apparent stall on box).
     assert fake.converse_calls[-1]["tools"] == []
+    assert fake.converse_calls[-1]["reasoning_effort"] == "low"
 
 
 async def test_consecutive_tool_errors_guardrail() -> None:
