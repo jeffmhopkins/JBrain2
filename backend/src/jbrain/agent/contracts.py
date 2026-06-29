@@ -296,6 +296,20 @@ class SubagentProgressEvent(BaseModel):
     tree_budget: int = 0
 
 
+class SubagentUsageEvent(BaseModel):
+    """A running child's context fill (Wave S3 follow-up): the child loop's per-call usage
+    forwarded — tagged by `child_id` — so the fan row shows a live context meter, the
+    non-streaming twin of the parent turn's UsageEvent. `used` is the latest model call's
+    prompt + output (the fullest the child's context has been); `context_window` is the
+    child model's total window. Ephemeral, never persisted."""
+
+    type: Literal["subagent_usage"] = "subagent_usage"
+    tool_call_id: str = ""
+    child_id: str
+    used: int
+    context_window: int
+
+
 class SubagentDeltaEvent(BaseModel):
     """A live token slice from a running child (Wave S3 follow-up): the child's loop
     streams its turns, and each answer/reasoning chunk is forwarded — tagged by
@@ -397,6 +411,7 @@ ChatEvent = Annotated[
     | UsageEvent
     | SubagentSpawnedEvent
     | SubagentProgressEvent
+    | SubagentUsageEvent
     | SubagentDeltaEvent
     | SubagentToolEvent
     | SubagentDoneEvent

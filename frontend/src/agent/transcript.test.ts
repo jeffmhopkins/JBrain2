@@ -326,6 +326,31 @@ describe("applyEvent reducer", () => {
     ]);
   });
 
+  it("folds a sub-agent's live context fill onto its child (the per-row meter)", () => {
+    let ms: TranscriptMessage[] = [streaming()];
+    ms = applyEvent(ms, { type: "tool_call", id: "c1", name: "spawn_subagent", arguments: {} });
+    ms = applyEvent(ms, {
+      type: "subagent_spawned",
+      tool_call_id: "c1",
+      child_id: "k1",
+      persona: "research",
+      label: "Pricing",
+      depth: 1,
+    });
+    ms = applyEvent(ms, {
+      type: "subagent_usage",
+      tool_call_id: "c1",
+      child_id: "k1",
+      used: 18_000,
+      context_window: 131_072,
+    });
+    const child = ms[0]?.tools[0]?.fan?.children[0];
+    expect(child?.usedTokens).toBe(18_000);
+    expect(child?.contextWindow).toBe(131_072);
+    // It updates context only — a usage tick must not disturb the child's phase/status.
+    expect(child?.phase).toBe("queued");
+  });
+
   it("accumulates a child's live answer and reasoning deltas onto its row", () => {
     let ms: TranscriptMessage[] = [streaming()];
     ms = applyEvent(ms, { type: "tool_call", id: "c1", name: "spawn_subagent", arguments: {} });

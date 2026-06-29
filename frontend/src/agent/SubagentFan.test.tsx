@@ -45,6 +45,28 @@ describe("SubagentFan", () => {
     expect(screen.getByText(/3 agents/)).toBeInTheDocument();
   });
 
+  it("shows a child's live context fill as a per-row meter", () => {
+    render(
+      <SubagentFan
+        running
+        fan={fan([
+          child({
+            childId: "k1",
+            label: "Pricing",
+            phase: "researching",
+            status: "running",
+            usedTokens: 18_000,
+            contextWindow: 131_072,
+          }),
+          // A child with no usage yet shows no meter (nothing to read).
+          child({ childId: "k2", label: "Security", phase: "queued", status: "running" }),
+        ])}
+      />,
+    );
+    expect(screen.getByText("18k/131k")).toBeInTheDocument();
+    expect(screen.getAllByText(/\/131k/)).toHaveLength(1);
+  });
+
   it("rolls up done · ran · failed when all children have settled", () => {
     render(
       <SubagentFan

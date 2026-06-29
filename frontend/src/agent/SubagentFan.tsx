@@ -155,6 +155,29 @@ function BudgetMeter({ spent, total }: { spent: number; total: number }): ReactN
   );
 }
 
+// A child's live context-window fill, the per-row twin of the composer's context meter
+// (docs/SUBAGENT_SPAWNING_PLAN.md): the latest model call's prompt+output over the child
+// model's window, so you can watch a research child's context climb as it reads. Tints
+// toward the warning hue as it fills — calm until it actually matters.
+function ChildContextMeter({ used, window }: { used: number; window: number }): ReactNode {
+  const frac = window > 0 ? Math.min(used / window, 1) : 0;
+  const pct = Math.round(frac * 100);
+  const cls = frac >= 0.9 ? "high" : frac >= 0.7 ? "mid" : "";
+  return (
+    <span
+      className={`fb-sa-ctx${cls ? ` ${cls}` : ""}`}
+      title={`context: ${used.toLocaleString()} / ${window.toLocaleString()} tokens (${pct}%)`}
+    >
+      <span className="fb-sa-ctx-bar" aria-hidden="true">
+        <i style={{ width: `${pct}%` }} />
+      </span>
+      <span className="fb-sa-ctx-txt">
+        {fmtTokens(used)}/{fmtTokens(window)}
+      </span>
+    </span>
+  );
+}
+
 // A child that's minted but not yet started (serial fan): it shows as "queued" until
 // its first progress event flips it to a working phase.
 function isQueued(c: SubagentChild): boolean {
@@ -273,6 +296,11 @@ export function SubagentFan({
               <span className={`fb-sa-st${isFail ? " fail" : ""}${isQueued(c) ? " queued" : ""}`}>
                 {statusWord(c)}
               </span>
+              {/* The child's live context fill, shown once its first model call reports
+                  usage — the per-row twin of the composer's context meter. */}
+              {c.usedTokens != null && c.contextWindow != null && c.contextWindow > 0 && (
+                <ChildContextMeter used={c.usedTokens} window={c.contextWindow} />
+              )}
               <span className="fb-sa-car" aria-hidden="true">
                 {open ? "▾" : "▸"}
               </span>

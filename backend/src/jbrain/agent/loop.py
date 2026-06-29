@@ -419,6 +419,10 @@ class AgentLoop:
         on_text: Callable[[str], None] | None = None,
         on_reasoning: Callable[[str], None] | None = None,
         on_tool: Callable[[str, dict, bool], None] | None = None,
+        # Per-model-call usage (input_tokens, output_tokens) — the fullest the context
+        # has been this call. The spawn service forwards it as a child context-fill meter,
+        # the non-streaming twin of run_stream's UsageEvent.
+        on_usage: Callable[[int, int], None] | None = None,
     ) -> AgentResult:
         scopes = tuple(scopes)
         tools = self._registry.schemas_for(scopes, tools_allow)
@@ -457,6 +461,8 @@ class AgentLoop:
             cost += spent_call
             if tree is not None:
                 tree.charge(spent_call)
+            if on_usage is not None:
+                on_usage(turn.usage.input_tokens, turn.usage.output_tokens)
             await self._record(
                 idx,
                 "model",
@@ -514,6 +520,8 @@ class AgentLoop:
             cost += spent_final
             if tree is not None:
                 tree.charge(spent_final)
+            if on_usage is not None:
+                on_usage(final.usage.input_tokens, final.usage.output_tokens)
             await self._record(idx, "model", "converse", ok=True, cost_tokens=spent_final)
             return AgentResult(final.text, "max_steps", self._g.max_steps, cost)
         return AgentResult("", "max_steps", self._g.max_steps, cost)

@@ -44,6 +44,11 @@ export interface SubagentChild {
    * the fan can render a tool call where it happened inside the thinking (heavy tool use
    * folds away with the collapsible trace instead of piling into a separate flat list). */
   liveTrace?: SubagentTraceItem[];
+  /** The child's live context fill (latest model call's prompt+output) and its model's
+   * window — drives the per-row context meter. Set from `subagent_usage`; absent until
+   * the child's first model call reports usage. */
+  usedTokens?: number;
+  contextWindow?: number;
 }
 
 /** One tool step a child took (web_search/web_fetch), shown in the child's frame. */
@@ -366,6 +371,25 @@ export function applyEvent(messages: TranscriptMessage[], event: ChatEvent): Tra
         event.child_id,
         (c) => ({ ...c, phase: event.phase, status: "running", step: event.step }),
         { treeSpent: event.tree_spent, treeBudget: event.tree_budget },
+      );
+      break;
+    case "subagent_usage":
+      // The child's live context fill — drives its per-row context meter. Folds onto the
+      // matching child without touching its phase/step (a separate tick from progress).
+      next.tools = next.tools.map((t) =>
+        t.id === event.tool_call_id && t.fan
+          ? {
+              ...t,
+              fan: {
+                ...t.fan,
+                children: t.fan.children.map((c) =>
+                  c.childId === event.child_id
+                    ? { ...c, usedTokens: event.used, contextWindow: event.context_window }
+                    : c,
+                ),
+              },
+            }
+          : t,
       );
       break;
     case "subagent_delta":

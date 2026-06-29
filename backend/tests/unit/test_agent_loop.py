@@ -160,6 +160,24 @@ async def test_runs_a_tool_then_answers() -> None:
     assert fake.converse_calls[1]["messages"][-1].results[0].content == "found: x"
 
 
+async def test_on_usage_reports_each_model_calls_fill() -> None:
+    # Two model calls (a tool turn, then the answer): on_usage fires per call with that
+    # call's prompt + output — the per-step context fill the sub-agent fan's meter reads.
+    turns = [
+        LlmTurn("", (ToolCall("c1", "search", {"q": "x"}),), "tool_use", LlmUsage(10, 5)),
+        LlmTurn("the answer", (), "end_turn", LlmUsage(8, 3)),
+    ]
+    router, _ = router_with(turns)
+    seen: list[tuple[int, int]] = []
+    await AgentLoop(router, registry_with(make_tool("search", search))).run(
+        session=OWNER,
+        scopes=("general",),
+        conversation=[UserMessage(text="hi")],
+        on_usage=lambda inp, out: seen.append((inp, out)),
+    )
+    assert seen == [(10, 5), (8, 3)]
+
+
 async def test_only_in_scope_tools_are_offered() -> None:
     health = make_tool("read_lab", search)
     object.__setattr__(health.toolfile.spec, "domains", ["health"])  # health-only

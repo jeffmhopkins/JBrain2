@@ -89,6 +89,10 @@ class _FakeRouter:
     async def effective_spec(self, task, strength=None):  # noqa: ANN001
         return (self.provider, "model-x")
 
+    async def context_window(self, task):  # noqa: ANN001
+        # The child's meter denominator — a fixed window for the fake.
+        return 131_072
+
 
 class _FakeLoop:
     """Records the kwargs each child run is launched with, so the service's wiring
@@ -662,6 +666,43 @@ async def test_child_streams_live_deltas_to_the_fan(monkeypatch: pytest.MonkeyPa
     assert any(d.channel == "reasoning" and d.text == "let me search…" for d in deltas)
     assert any(d.channel == "answer" and d.text == "Port St. John summary" for d in deltas)
     assert all(d.child_id == "sess-1" for d in deltas)
+
+
+async def test_child_usage_forwarded_as_context_meter(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A child's per-call usage (on_usage) is forwarded as a subagent_usage event — its
+    fill over the child model's window — so the fan row shows a live context meter."""
+
+    class _UsageLoop(_FakeLoop):
+        async def run(self, **kw):  # noqa: ANN003
+            _FakeLoop.calls.append(kw)
+            kw["on_usage"](12_000, 800)  # the latest model call's prompt + output
+            return AgentResult(text="ok", stop_reason="end_turn", steps=1, cost_tokens=5)
+
+    _FakeLoop.calls = []
+    monkeypatch.setattr(spawn_mod, "AgentLoop", _UsageLoop)
+    captured: list = []
+    ctx = ToolContext(
+        session=SessionContext(principal_id="p1", principal_kind="owner"),
+        scopes=(),
+        agent_session_id="parent-sess",
+        depth=0,
+        agent_tools=JERV_TOOLS,
+        tree=TreeState(),
+        run_id="parent-run",
+        emit_event=captured.append,
+    )
+    svc = SpawnService(
+        router=_FakeRouter(),  # type: ignore[arg-type]
+        registry=object(),  # type: ignore[arg-type]
+        sessions=_FakeSessions(),  # type: ignore[arg-type]
+        runlog=_FakeRunLog(),  # type: ignore[arg-type]
+    )
+    await svc.spawn_fan(ctx, {"tasks": [{"persona": "research", "brief": "x", "label": "L"}]})
+    usage = [e for e in captured if e.type == "subagent_usage"]
+    assert len(usage) == 1
+    assert usage[0].child_id == "sess-1"
+    assert usage[0].used == 12_800  # prompt + output
+    assert usage[0].context_window == 131_072  # from the (fake) router
 
 
 async def test_child_tool_steps_forwarded_to_the_fan(monkeypatch: pytest.MonkeyPatch) -> None:
