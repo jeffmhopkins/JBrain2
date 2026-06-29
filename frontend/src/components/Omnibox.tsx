@@ -250,125 +250,129 @@ export function Omnibox({
           })}
         </div>
 
-        {meta.dest && (
-          <div className="dest-row">
-            <span className="dest-ic">
-              <ModeIcon size={18} />
-            </span>
-            <span className="dest-path">{meta.dest.path}</span>
-            <select
-              aria-label="Destination"
-              value={destination ?? ""}
-              onChange={(e) => setDestinations((prev) => ({ ...prev, [seg.mode]: e.target.value }))}
-            >
-              {meta.dest.options.map((opt) => (
-                <option key={opt}>{opt}</option>
-              ))}
-            </select>
-            {/* Custom destinations land with the wiki tree; placeholder for parity with the approved mock. */}
-            <button type="button" className="dest-new" disabled>
-              + New
-            </button>
-          </div>
-        )}
-
-        <textarea
-          ref={inputRef}
-          className="composer-input"
-          placeholder={meta.placeholder}
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          aria-label="Composer"
-        />
-
-        {apptRef && (
-          <div className="staged-files">
-            <button
-              type="button"
-              className="chip chip-staged chip-appt"
-              onClick={onClearApptRef}
-              aria-label={`Remove appointment ${apptRef.title}`}
-            >
-              <svg viewBox="0 0 24 24" aria-hidden="true">
-                <path d="M8 2v4M16 2v4M3 9h18M5 5h14a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1z" />
-              </svg>
-              {apptRef.title} ×
-            </button>
-          </div>
-        )}
-
-        {files.length > 0 && (
-          <div className="staged-files">
-            {files.map((file, index) => {
-              const kind = attachmentKind(file.type);
-              const FileGlyph = kind === "img" ? ImageIcon : FileIcon;
-              return (
-                <button
-                  key={`${file.name}-${index}`}
-                  type="button"
-                  className={`chip chip-staged att-${kind}`}
-                  onClick={() => setFiles((prev) => prev.filter((_, i) => i !== index))}
-                  aria-label={`Remove ${file.name}`}
-                >
-                  <FileGlyph size={12} /> {file.name} ×
-                </button>
-              );
-            })}
-          </div>
-        )}
-
-        {/* Vision off on a conversation mode just hides the paperclip — no stand-in
-            line (capture modes always keep their attach). */}
-        <div className="composer-foot">
-          {contextUsage && <ContextMeter usage={contextUsage} />}
-          <div className="foot-icons">
-            {attachEnabled && (
-              <button
-                type="button"
-                className="icon-btn"
-                aria-label="Attach files"
-                onClick={() => fileInputRef.current?.click()}
-              >
-                <ClipIcon size={24} />
-              </button>
-            )}
-            {busy && onStop ? (
-              // While a turn streams the send button becomes Stop — one tap aborts
-              // the run (the partial answer above stays put, settled as "Stopped").
-              <button
-                type="button"
-                className="icon-btn stop-btn"
-                aria-label="Stop generating"
-                onClick={onStop}
-              >
-                <StopIcon size={24} />
-              </button>
-            ) : (
-              <button
-                type="button"
-                className="icon-btn send-btn"
-                aria-label="Send"
-                onClick={send}
-                disabled={
-                  busy || (text.trim() === "" && !(meta.domain === null && files.length > 0))
+        <div className="omnibox-body">
+          {meta.dest && (
+            <div className="dest-row">
+              <span className="dest-ic">
+                <ModeIcon size={18} />
+              </span>
+              <span className="dest-path">{meta.dest.path}</span>
+              <select
+                aria-label="Destination"
+                value={destination ?? ""}
+                onChange={(e) =>
+                  setDestinations((prev) => ({ ...prev, [seg.mode]: e.target.value }))
                 }
               >
-                <SendIcon size={24} />
+                {meta.dest.options.map((opt) => (
+                  <option key={opt}>{opt}</option>
+                ))}
+              </select>
+              {/* Custom destinations land with the wiki tree; placeholder for parity with the approved mock. */}
+              <button type="button" className="dest-new" disabled>
+                + New
               </button>
-            )}
-          </div>
-        </div>
+            </div>
+          )}
 
-        <input
-          ref={fileInputRef}
-          type="file"
-          multiple
-          hidden
-          onChange={(e) => {
-            stageFiles(e.target.files);
-            e.target.value = "";
-          }}
-        />
+          <textarea
+            ref={inputRef}
+            className="composer-input"
+            placeholder={meta.placeholder}
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            aria-label="Composer"
+          />
+
+          {apptRef && (
+            <div className="staged-files">
+              <button
+                type="button"
+                className="chip chip-staged chip-appt"
+                onClick={onClearApptRef}
+                aria-label={`Remove appointment ${apptRef.title}`}
+              >
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M8 2v4M16 2v4M3 9h18M5 5h14a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1z" />
+                </svg>
+                {apptRef.title} ×
+              </button>
+            </div>
+          )}
+
+          {files.length > 0 && (
+            <div className="staged-files">
+              {files.map((file, index) => {
+                const kind = attachmentKind(file.type);
+                const FileGlyph = kind === "img" ? ImageIcon : FileIcon;
+                return (
+                  <button
+                    key={`${file.name}-${index}`}
+                    type="button"
+                    className={`chip chip-staged att-${kind}`}
+                    onClick={() => setFiles((prev) => prev.filter((_, i) => i !== index))}
+                    aria-label={`Remove ${file.name}`}
+                  >
+                    <FileGlyph size={12} /> {file.name} ×
+                  </button>
+                );
+              })}
+            </div>
+          )}
+
+          {/* Vision off on a conversation mode just hides the paperclip — no stand-in
+            line (capture modes always keep their attach). */}
+          <div className="composer-foot">
+            {contextUsage && <ContextMeter usage={contextUsage} />}
+            <div className="foot-icons">
+              {attachEnabled && (
+                <button
+                  type="button"
+                  className="icon-btn"
+                  aria-label="Attach files"
+                  onClick={() => fileInputRef.current?.click()}
+                >
+                  <ClipIcon size={24} />
+                </button>
+              )}
+              {busy && onStop ? (
+                // While a turn streams the send button becomes Stop — one tap aborts
+                // the run (the partial answer above stays put, settled as "Stopped").
+                <button
+                  type="button"
+                  className="icon-btn stop-btn"
+                  aria-label="Stop generating"
+                  onClick={onStop}
+                >
+                  <StopIcon size={24} />
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  className="icon-btn send-btn"
+                  aria-label="Send"
+                  onClick={send}
+                  disabled={
+                    busy || (text.trim() === "" && !(meta.domain === null && files.length > 0))
+                  }
+                >
+                  <SendIcon size={24} />
+                </button>
+              )}
+            </div>
+          </div>
+
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            hidden
+            onChange={(e) => {
+              stageFiles(e.target.files);
+              e.target.value = "";
+            }}
+          />
+        </div>
       </div>
     </div>
   );
