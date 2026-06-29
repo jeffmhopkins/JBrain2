@@ -940,6 +940,37 @@ def test_chat_turn_wall_clock_force_ends_a_runaway_turn(
     assert runlog.finished[-1]["stop_reason"] == "turn_timeout"
 
 
+def test_chat_turn_timeout_persists_the_partial_turn(
+    client: TestClient,
+    repo: FakeAuthRepo,
+    sessions_store: FakeAgentSessions,
+    runlog: FakeRunLog,
+    transcript: FakeTranscript,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A turn force-ended by the hard wall-clock must PERSIST whatever streamed (the
+    partial answer + tools), not drop the whole exchange. The `finally` guard now
+    includes `turn_timeout` alongside disconnected/error — without it a timed-out fan
+    would vanish on reload (no assistant turn, no user turn). The HangStreamClient
+    streams "working " before hanging; that partial is the durable artifact."""
+    import jbrain.api.agent as agent_mod
+
+    monkeypatch.setattr(agent_mod, "_MAX_TURN_WALL_CLOCK_S", 0.1)
+    login(client, repo)
+    sessions_store.add(AgentSessionInfo("sess-1", "", "active", ("general",), (), NOW, NOW))
+    client.app.state.llm_router = LlmRouter(  # type: ignore[attr-defined]
+        {"xai": cast(LlmClient, HangStreamClient())}, {"agent.turn": ("xai", "grok-4.3")}
+    )
+    resp = client.post("/api/chat", json={"session_id": "sess-1", "message": "how far?"})
+    assert resp.status_code == 200
+    # The exchange WAS recorded — both the user turn (record_exchange writes both) and
+    # the partial assistant answer streamed before the wall-clock fired.
+    assert transcript.recorded, "a timed-out turn must persist its partial, not drop it"
+    assert transcript.recorded[-1]["user"] == "how far?"
+    assert transcript.recorded[-1]["assistant"] == "working "
+    assert runlog.finished[-1]["stop_reason"] == "turn_timeout"
+
+
 def test_chat_persists_a_partial_answer_when_the_owner_stops(
     client: TestClient,
     repo: FakeAuthRepo,
@@ -1039,6 +1070,90 @@ async def test_live_turn_stream_clamps_out_of_range_offsets() -> None:
 
     assert [frame async for frame in live.stream(after=-5)] == [b"data: 1\n\n", b"data: 2\n\n"]
     assert [frame async for frame in live.stream(after=99)] == []
+
+
+def test_live_turn_evicts_oldest_frames_past_the_cap() -> None:
+    # The memory backstop (fix #4): a runaway turn that streams past _MAX_BUFFERED_FRAMES
+    # evicts the OLDEST frames off the front rather than growing unbounded, and advances
+    # `_base` (the absolute index of frames[0]) by the count evicted.
+    import jbrain.api.agent as agent_mod
+    from jbrain.api.agent import _LiveTurn
+
+    cap = agent_mod._MAX_BUFFERED_FRAMES
+    live = _LiveTurn()
+    for i in range(cap + 5):
+        live.emit(f"data: {i}\n\n".encode())
+    # The buffer is bounded at the cap; the first 5 frames were evicted, so `_base` is 5
+    # and frames[0] is now logical frame #5.
+    assert len(live.frames) == cap
+    assert live._base == 5
+    assert live.frames[0] == b"data: 5\n\n"
+    assert live.frames[-1] == f"data: {cap + 4}\n\n".encode()
+
+
+async def test_live_turn_replay_after_offset_translates_across_eviction() -> None:
+    # `after` stays an ABSOLUTE event index even after eviction: a reconnect at an offset
+    # that lands inside the surviving window replays from exactly that frame (translated
+    # past `_base`), and a reconnect before the evicted point clamps to the oldest survivor
+    # (degrades, never breaks — fix #3 re-creates a child whose spawn frame is gone).
+    import jbrain.api.agent as agent_mod
+    from jbrain.api.agent import _LiveTurn
+
+    cap = agent_mod._MAX_BUFFERED_FRAMES
+    live = _LiveTurn()
+    for i in range(cap + 5):  # evicts frames 0..4; survivors are 5..cap+4
+        live.emit(f"data: {i}\n\n".encode())
+    live.finish()
+
+    # An absolute offset inside the surviving window resumes at exactly that frame.
+    got = [frame async for frame in live.stream(after=cap + 2)]
+    assert got == [
+        f"data: {cap + 2}\n\n".encode(),
+        f"data: {cap + 3}\n\n".encode(),
+        f"data: {cap + 4}\n\n".encode(),
+    ]
+    # An offset BEFORE the evicted boundary (the client missed the gap) clamps to the
+    # oldest survivor — it replays from frame #5 on, never re-delivering an evicted frame.
+    head = [frame async for frame in live.stream(after=0)]
+    assert head[0] == b"data: 5\n\n"
+    assert len(head) == cap
+
+
+async def test_live_turn_evicted_reconnect_follows_live_across_the_boundary() -> None:
+    # A reconnect that lands at an absolute offset PAST the buffered tail (frames it hasn't
+    # caught up to yet are still coming) backfills the surviving window and then follows the
+    # live frames in order — the eviction/`_base` accounting holds across the snapshot→live
+    # seam, and the keepalive offset bookkeeping (data frames only) is unchanged.
+    import jbrain.api.agent as agent_mod
+    from jbrain.api.agent import _LiveTurn
+
+    cap = agent_mod._MAX_BUFFERED_FRAMES
+    live = _LiveTurn()
+    for i in range(cap + 3):  # evicts 0..2; survivors 3..cap+2, `_base` == 3
+        live.emit(f"data: {i}\n\n".encode())
+    assert live._base == 3
+
+    got: list[bytes] = []
+
+    async def consume() -> None:
+        # Resume from an absolute index mid-window; must backfill that tail then go live.
+        async for frame in live.stream(after=cap + 1):
+            got.append(frame)
+
+    task = asyncio.create_task(consume())
+    await asyncio.sleep(0)  # let it backfill + register as a live subscriber
+    live.emit(f"data: {cap + 3}\n\n".encode())  # a NEW live frame after the reconnect
+    await asyncio.sleep(0)
+    live.finish()
+    await asyncio.wait_for(task, timeout=1.0)
+
+    # Backfilled cap+1, cap+2 (the surviving tail from the offset) then the live cap+3 —
+    # in order, no gap, no re-delivery of an evicted frame.
+    assert got == [
+        f"data: {cap + 1}\n\n".encode(),
+        f"data: {cap + 2}\n\n".encode(),
+        f"data: {cap + 3}\n\n".encode(),
+    ]
 
 
 def test_chat_resume_requires_owner(client: TestClient) -> None:

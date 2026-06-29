@@ -174,6 +174,43 @@ function appendReasoning(
   return [...items, { kind: "reasoning", text }];
 }
 
+/** A child referenced by a `subagent_*` event before (or without) its `subagent_spawned`
+ * frame — a reconnect that resumed mid-fan, or a frame evicted from the live buffer.
+ * Rather than drop the row, materialize a minimal placeholder; `subagent_spawned` upserts
+ * the real persona/label by child_id if/when it arrives. */
+function placeholderChild(childId: string): SubagentChild {
+  return {
+    childId,
+    persona: "research",
+    label: "sub-agent",
+    depth: 1,
+    phase: "working…",
+    status: "running",
+  };
+}
+
+/** Apply `fn` to child `childId` under the `toolCallId` spawn step, LAZILY creating the
+ * fan and a placeholder child if missing — so a `subagent_*` event whose `subagent_spawned`
+ * never arrived (reconnect / evicted frame) updates a real row instead of silently
+ * no-op'ing (the old handlers gated on `t.fan` && an existing child and dropped it). */
+function withFanChild(
+  tools: ToolActivity[],
+  toolCallId: string,
+  childId: string,
+  fn: (c: SubagentChild) => SubagentChild,
+  fanPatch?: Partial<Pick<SubagentFan, "treeSpent" | "treeBudget">>,
+): ToolActivity[] {
+  return tools.map((t) => {
+    if (t.id !== toolCallId) return t;
+    const fan = t.fan ?? { children: [], treeSpent: 0, treeBudget: 0 };
+    const has = fan.children.some((c) => c.childId === childId);
+    const children = has
+      ? fan.children.map((c) => (c.childId === childId ? fn(c) : c))
+      : [...fan.children, fn(placeholderChild(childId))];
+    return { ...t, fan: { ...fan, ...fanPatch, children } };
+  });
+}
+
 /** Fold one ChatEvent into the transcript, updating the live assistant turn (the
  * last message). */
 export function applyEvent(messages: TranscriptMessage[], event: ChatEvent): TranscriptMessage[] {
@@ -295,118 +332,61 @@ export function applyEvent(messages: TranscriptMessage[], event: ChatEvent): Tra
       next.generalKnowledge = true;
       break;
     case "subagent_spawned":
-      // Attach a child row to its spawn_subagent tool call (the tool_call always
-      // precedes its fan). Idempotent on child_id so a reconnect replay can't double it.
-      next.tools = next.tools.map((t) => {
-        if (t.id !== event.tool_call_id) return t;
-        const fan = t.fan ?? { children: [], treeSpent: 0, treeBudget: 0 };
-        if (fan.children.some((c) => c.childId === event.child_id)) return t;
-        return {
-          ...t,
-          fan: {
-            ...fan,
-            children: [
-              ...fan.children,
-              {
-                childId: event.child_id,
-                persona: event.persona,
-                label: event.label,
-                depth: event.depth,
-                phase: "queued",
-                status: "running",
-              },
-            ],
-          },
-        };
-      });
+      // Attach (or upgrade) a child row on its spawn_subagent tool call. Upsert by
+      // child_id: a reconnect replay can't double it, and a placeholder a stray
+      // progress/delta already created gets its real persona/label filled in here. Only a
+      // never-progressed row resets to "queued" (don't drag a working child back).
+      next.tools = withFanChild(next.tools, event.tool_call_id, event.child_id, (c) => ({
+        ...c,
+        persona: event.persona,
+        label: event.label,
+        depth: event.depth,
+        phase: c.step ? c.phase : "queued",
+      }));
       break;
     case "subagent_progress":
-      next.tools = next.tools.map((t) =>
-        t.id === event.tool_call_id && t.fan
-          ? {
-              ...t,
-              fan: {
-                children: t.fan.children.map((c) =>
-                  c.childId === event.child_id
-                    ? { ...c, phase: event.phase, status: "running", step: event.step }
-                    : c,
-                ),
-                treeSpent: event.tree_spent,
-                treeBudget: event.tree_budget,
-              },
-            }
-          : t,
+      next.tools = withFanChild(
+        next.tools,
+        event.tool_call_id,
+        event.child_id,
+        (c) => ({ ...c, phase: event.phase, status: "running", step: event.step }),
+        { treeSpent: event.tree_spent, treeBudget: event.tree_budget },
       );
       break;
     case "subagent_delta":
       // The child's live tokens — reasoning folds into the interleaved trace (so a tool
       // call lands where it happened), the answer accumulates separately. It runs
       // non-streaming from the parent's await but forwards its tokens through the sink.
-      next.tools = next.tools.map((t) =>
-        t.id === event.tool_call_id && t.fan
-          ? {
-              ...t,
-              fan: {
-                ...t.fan,
-                children: t.fan.children.map((c) =>
-                  c.childId === event.child_id
-                    ? event.channel === "reasoning"
-                      ? { ...c, liveTrace: appendReasoning(c.liveTrace, event.text) }
-                      : { ...c, liveText: (c.liveText ?? "") + event.text }
-                    : c,
-                ),
-              },
-            }
-          : t,
+      next.tools = withFanChild(next.tools, event.tool_call_id, event.child_id, (c) =>
+        event.channel === "reasoning"
+          ? { ...c, liveTrace: appendReasoning(c.liveTrace, event.text) }
+          : { ...c, liveText: (c.liveText ?? "") + event.text },
       );
       break;
     case "subagent_tool":
       // Inject the tool call into the trace at the point it occurred — interleaved with
       // the reasoning, not a separate flat list (a 20-search child stays readable).
-      next.tools = next.tools.map((t) =>
-        t.id === event.tool_call_id && t.fan
-          ? {
-              ...t,
-              fan: {
-                ...t.fan,
-                children: t.fan.children.map((c) =>
-                  c.childId === event.child_id
-                    ? {
-                        ...c,
-                        liveTrace: [
-                          ...(c.liveTrace ?? []),
-                          { kind: "tool", name: event.name, arg: event.arg, ok: event.ok },
-                        ],
-                      }
-                    : c,
-                ),
-              },
-            }
-          : t,
-      );
+      next.tools = withFanChild(next.tools, event.tool_call_id, event.child_id, (c) => ({
+        ...c,
+        liveTrace: [
+          ...(c.liveTrace ?? []),
+          { kind: "tool", name: event.name, arg: event.arg, ok: event.ok },
+        ],
+      }));
       break;
     case "subagent_done":
-      next.tools = next.tools.map((t) =>
-        t.id === event.tool_call_id && t.fan
-          ? {
-              ...t,
-              fan: {
-                children: t.fan.children.map((c) =>
-                  c.childId === event.child_id
-                    ? {
-                        ...c,
-                        status: event.ok ? "done" : "failed",
-                        phase: event.stop_reason,
-                        stopReason: event.stop_reason,
-                        summary: event.summary,
-                      }
-                    : c,
-                ),
-                treeSpent: event.tree_spent,
-                treeBudget: event.tree_budget,
-              },
-            }
-          : t,
+      next.tools = withFanChild(
+        next.tools,
+        event.tool_call_id,
+        event.child_id,
+        (c) => ({
+          ...c,
+          status: event.ok ? "done" : "failed",
+          phase: event.stop_reason,
+          stopReason: event.stop_reason,
+          summary: event.summary,
+        }),
+        { treeSpent: event.tree_spent, treeBudget: event.tree_budget },
       );
       break;
   }

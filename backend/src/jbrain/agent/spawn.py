@@ -42,6 +42,7 @@ from jbrain.agent.contracts import (
     SubagentProgressEvent,
     SubagentSpawnedEvent,
     SubagentToolEvent,
+    ToolViewEvent,
     ViewPayload,
 )
 from jbrain.agent.loop import AgentLoop, Guardrails, ToolContext, ToolOutput
@@ -97,6 +98,9 @@ class _ChildResult:
     persona: str
     summary: str
     ok: bool
+    # The child's own session id (childId) — carried into the synthesis view so the
+    # roster card can deep-link each row to the sub-agent's session on reopen.
+    session_id: str
     truncated: bool = False
 
 
@@ -277,8 +281,26 @@ class SpawnService:
             )
             minted.append((plan, child))
 
+        # Collect results in PLAN order as each child settles, and re-emit the
+        # roster-so-far as the spawn step's view at every settle. A fan cut short (Stop,
+        # error, or turn_timeout) never reaches the final `ToolOutput` view below — so
+        # without this, the spawn step persists with NO view and the whole research
+        # surface vanishes on reload. The loop stamps the spawn call id (tool_call_id="");
+        # the live UI suppresses this view under the live fan, so it only ever surfaces on
+        # a reopened transcript — the children that had finished when the turn was cut.
+        collected: list[_ChildResult | None] = [None] * len(minted)
+
+        async def _run_and_collect(
+            i: int, plan: _ChildPlan, child: AgentSessionInfo
+        ) -> _ChildResult:
+            res = await self._run_child(ctx, owner_ctx, tree, sem, plan, child)
+            collected[i] = res
+            settled = [r for r in collected if r is not None]
+            _emit(ctx, ToolViewEvent(tool_call_id="", view=_synthesis_view(settled)))
+            return res
+
         results = await asyncio.gather(
-            *(self._run_child(ctx, owner_ctx, tree, sem, plan, child) for plan, child in minted)
+            *(_run_and_collect(i, plan, child) for i, (plan, child) in enumerate(minted))
         )
         # The text observation is what the parent synthesizes from; the view is the
         # UI's structured render of the same fan result (the registered
@@ -453,7 +475,7 @@ class SpawnService:
                 await self._persist_child(
                     owner_ctx, child.id, child_run, brief_text, timeout_summary
                 )
-                return _ChildResult(label, persona, timeout_summary, ok=False)
+                return _ChildResult(label, persona, timeout_summary, ok=False, session_id=child.id)
             except Exception as exc:  # noqa: BLE001 — a child failure degrades, not crashes
                 log.warning("subagent.child_failed", persona=persona, label=label, error=repr(exc))
                 with contextlib.suppress(Exception):
@@ -479,7 +501,7 @@ class SpawnService:
                 await self._persist_child(
                     owner_ctx, child.id, child_run, brief_text, f"ERROR: {exc}"
                 )
-                return _ChildResult(label, persona, f"ERROR: {exc}", ok=False)
+                return _ChildResult(label, persona, f"ERROR: {exc}", ok=False, session_id=child.id)
             await self._runlog.finish(
                 owner_ctx,
                 child_run,
@@ -518,7 +540,9 @@ class SpawnService:
                 ),
             )
             await self._persist_child(owner_ctx, child.id, child_run, brief_text, summary)
-            return _ChildResult(label, persona, summary, ok=ok, truncated=truncated)
+            return _ChildResult(
+                label, persona, summary, ok=ok, session_id=child.id, truncated=truncated
+            )
 
     async def _persist_child(
         self, owner_ctx: SessionContext, child_id: str, run_id: str, brief: str, answer: str
@@ -571,7 +595,15 @@ def _synthesis_view(results: list[_ChildResult]) -> ViewPayload:
             # renders the "research truncated" variant (M7).
             "truncated": any(r.truncated for r in results),
             "children": [
-                {"label": r.label, "persona": r.persona, "ok": r.ok, "summary": r.summary}
+                {
+                    "label": r.label,
+                    "persona": r.persona,
+                    "ok": r.ok,
+                    "summary": r.summary,
+                    # The child's session id, so the card row can open the sub-agent's
+                    # own session (its full transcript) on tap.
+                    "session_id": r.session_id,
+                }
                 for r in results
             ],
         },

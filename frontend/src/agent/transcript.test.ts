@@ -447,4 +447,110 @@ describe("applyEvent reducer", () => {
     });
     expect(ms[0]?.tools).toEqual([]);
   });
+
+  it("lazily materializes a child whose subagent_spawned never arrived (reconnect/evicted)", () => {
+    // Fix #3: a subagent_progress whose subagent_spawned was missed (a reconnect that
+    // resumed mid-fan, or a frame evicted from the live buffer) must NOT be dropped — it
+    // creates a placeholder child under the spawn step instead of silently no-op'ing.
+    let ms: TranscriptMessage[] = [streaming()];
+    ms = applyEvent(ms, { type: "tool_call", id: "c1", name: "spawn_subagent", arguments: {} });
+    ms = applyEvent(ms, {
+      type: "subagent_progress",
+      tool_call_id: "c1",
+      child_id: "k1",
+      phase: "reading",
+      step: 4,
+      tree_spent: 40,
+      tree_budget: 100,
+    });
+    const child = ms[0]?.tools[0]?.fan?.children[0];
+    // The placeholder carries the live progress; its persona/label are the stand-in until
+    // a later subagent_spawned fills them in.
+    expect(child?.childId).toBe("k1");
+    expect(child?.status).toBe("running");
+    expect(child?.phase).toBe("reading");
+    expect(child?.step).toBe(4);
+    expect(ms[0]?.tools[0]?.fan?.treeSpent).toBe(40);
+  });
+
+  it("materializes a child from a subagent_delta, then a late spawned upserts it", () => {
+    // A delta arrives before the spawn frame (the evicted/reconnect case) — it creates the
+    // placeholder and accumulates the live text; the LATE subagent_spawned then upserts the
+    // real persona/label by child_id WITHOUT dropping the progress that already folded.
+    let ms: TranscriptMessage[] = [streaming()];
+    ms = applyEvent(ms, { type: "tool_call", id: "c1", name: "spawn_subagent", arguments: {} });
+    ms = applyEvent(ms, {
+      type: "subagent_delta",
+      tool_call_id: "c1",
+      child_id: "k1",
+      channel: "answer",
+      text: "partial child answer",
+    });
+    // Placeholder created, live text accumulated.
+    expect(ms[0]?.tools[0]?.fan?.children).toHaveLength(1);
+    expect(ms[0]?.tools[0]?.fan?.children[0]?.liveText).toBe("partial child answer");
+
+    ms = applyEvent(ms, {
+      type: "subagent_spawned",
+      tool_call_id: "c1",
+      child_id: "k1",
+      persona: "review",
+      label: "Cross-check",
+      depth: 1,
+    });
+    const child = ms[0]?.tools[0]?.fan?.children[0];
+    // The same single row, now with its real persona/label — and its earlier liveText kept.
+    expect(ms[0]?.tools[0]?.fan?.children).toHaveLength(1);
+    expect(child?.persona).toBe("review");
+    expect(child?.label).toBe("Cross-check");
+    expect(child?.liveText).toBe("partial child answer");
+  });
+
+  it("does not reset a progressed child back to queued on a late spawned upsert", () => {
+    // The upsert only resets phase→"queued" for a never-progressed row. A child that
+    // already has a `step` (it's working) must not be dragged back to queued when its
+    // (replayed/late) subagent_spawned lands.
+    let ms: TranscriptMessage[] = [streaming()];
+    ms = applyEvent(ms, { type: "tool_call", id: "c1", name: "spawn_subagent", arguments: {} });
+    ms = applyEvent(ms, {
+      type: "subagent_progress",
+      tool_call_id: "c1",
+      child_id: "k1",
+      phase: "researching",
+      step: 2,
+      tree_spent: 10,
+      tree_budget: 100,
+    });
+    ms = applyEvent(ms, {
+      type: "subagent_spawned",
+      tool_call_id: "c1",
+      child_id: "k1",
+      persona: "research",
+      label: "Pricing",
+      depth: 1,
+    });
+    const child = ms[0]?.tools[0]?.fan?.children[0];
+    expect(child?.phase).toBe("researching"); // not dragged back to "queued"
+    expect(child?.step).toBe(2);
+    expect(child?.label).toBe("Pricing"); // but its real label did fill in
+  });
+
+  it("upserts a normal spawned-first child without duplicating it (idempotent reconnect)", () => {
+    // The common case still holds: a child whose subagent_spawned arrives first, then a
+    // replayed spawned (a stale-offset reconnect), upserts by child_id — one row, queued.
+    let ms: TranscriptMessage[] = [streaming()];
+    ms = applyEvent(ms, { type: "tool_call", id: "c1", name: "spawn_subagent", arguments: {} });
+    const spawned = {
+      type: "subagent_spawned" as const,
+      tool_call_id: "c1",
+      child_id: "k1",
+      persona: "research",
+      label: "Pricing",
+      depth: 1,
+    };
+    ms = applyEvent(ms, spawned);
+    ms = applyEvent(ms, spawned); // reconnect replay
+    expect(ms[0]?.tools[0]?.fan?.children).toHaveLength(1);
+    expect(ms[0]?.tools[0]?.fan?.children[0]?.phase).toBe("queued");
+  });
 });

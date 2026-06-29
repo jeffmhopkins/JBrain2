@@ -76,6 +76,11 @@ _MAX_TURN_WALL_CLOCK_S = 3600.0
 
 _TURN_DONE = object()  # per-subscriber sentinel: the turn finished, no more frames
 
+# A memory backstop on one turn's live frame buffer. Set far above any real turn (a
+# heavy fan streams dozens-to-low-thousands of frames); it only bounds a pathological
+# runaway that streams for the whole wall-clock. Past it the oldest frames are evicted.
+_MAX_BUFFERED_FRAMES = 20000
+
 
 class _LiveTurn:
     """An in-flight turn's frame buffer + live fan-out, so the original SSE response AND
@@ -87,6 +92,11 @@ class _LiveTurn:
 
     def __init__(self) -> None:
         self.frames: list[bytes] = []
+        # Absolute index of frames[0]: count evicted off the front once the buffer hits
+        # its cap, so a reconnect's `after` stays an ABSOLUTE event index (frames[0] is
+        # logical frame `_base`). Without this, a runaway turn that streams tens of
+        # thousands of token frames over the (up-to-1h) wall-clock grows memory unbounded.
+        self._base = 0
         self.done = False
         self._subs: set[asyncio.Queue[bytes | object]] = set()
         # The driving task — held so the cancel endpoint and shutdown can stop it.
@@ -99,8 +109,15 @@ class _LiveTurn:
         skip (a comment, a multi-event blob) would desync it. The buffer grows for one
         turn only and is freed when the run leaves `live_turns`. No `await` between the
         append and the fan-out, so a subscriber's snapshot can never miss an interleaved
-        frame."""
+        frame. Past `_MAX_BUFFERED_FRAMES` the OLDEST frames are evicted (a memory
+        backstop on a runaway fan) — a reconnect that lands before the evicted point
+        rebuilds the fan from later frames (the fold lazily re-creates a child whose
+        `subagent_spawned` frame is gone), so eviction degrades, never breaks, replay."""
         self.frames.append(frame)
+        overflow = len(self.frames) - _MAX_BUFFERED_FRAMES
+        if overflow > 0:
+            del self.frames[:overflow]
+            self._base += overflow
         for q in self._subs:
             q.put_nowait(frame)
 
@@ -122,7 +139,8 @@ class _LiveTurn:
         Backfill is synchronous (no await before the subscription is registered) so no
         frame can slip in between the snapshot and going live."""
         q: asyncio.Queue[bytes | object] = asyncio.Queue()
-        for frame in self.frames[max(after, 0) :]:
+        # `after` is an absolute event index; translate it past any front-evicted frames.
+        for frame in self.frames[max(after - self._base, 0) :]:
             q.put_nowait(frame)
         if self.done:
             q.put_nowait(_TURN_DONE)
@@ -637,7 +655,7 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
             try:
                 if (
                     not persisted
-                    and stop_reason in ("disconnected", "error")
+                    and stop_reason in ("disconnected", "error", "turn_timeout")
                     and (acc.answer_text.strip() or acc.tool_steps())
                 ):
                     with contextlib.suppress(Exception):

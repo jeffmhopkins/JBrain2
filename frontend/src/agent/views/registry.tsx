@@ -33,6 +33,9 @@ import { type InlineMapHandle, type TrailLegData, renderPlace, renderTrail } fro
 export interface ViewProps {
   data: Record<string, unknown>;
   refs: CitationRef[];
+  /** Open an agent session by id — used by the sub-agent synthesis card to deep-link
+   * each child row to its own session. Most views ignore it. */
+  onOpenSession?: ((sessionId: string) => void) | undefined;
 }
 
 // Tone/flag is an enum, never a color (DESIGN.md): the component maps it to a
@@ -1117,7 +1120,19 @@ function WeatherCard({ data }: ViewProps): ReactNode {
  * live in-chat accordion; like it, each child's summary is COLLAPSED behind its row
  * (tap to expand) so the card never dumps every full comment, and a failed child opens
  * itself so the error is visible without a tap. */
-function SubagentSynthesis({ data }: ViewProps): ReactNode {
+// The "open in its own session" glyph on each synthesis row — an arrow leaving a frame,
+// the conventional "open elsewhere" mark. Neutral stroke; the theme owns the color.
+function OpenSessionIcon(): ReactNode {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
+      <path d="M14 4h6v6" />
+      <path d="M20 4l-8 8" />
+      <path d="M19 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h5" />
+    </svg>
+  );
+}
+
+function SubagentSynthesis({ data, onOpenSession }: ViewProps): ReactNode {
   const ran = typeof data.ran === "number" ? data.ran : 0;
   const failed = typeof data.failed === "number" ? data.failed : 0;
   const truncated = data.truncated === true;
@@ -1156,28 +1171,46 @@ function SubagentSynthesis({ data }: ViewProps): ReactNode {
         const c = raw as Record<string, unknown>;
         const cok = c.ok === true;
         const summary = typeof c.summary === "string" ? c.summary : "";
+        const sessionId = typeof c.session_id === "string" ? c.session_id : "";
         // A failed child auto-expands its error; a successful one stays collapsed.
         const isOpen = open.has(i) || !cok;
         return (
           // biome-ignore lint/suspicious/noArrayIndexKey: roster renders in stable order
           <div className="tv-syn-child" key={i}>
-            <button
-              type="button"
-              className="tv-syn-row"
-              onClick={() => toggle(i)}
-              aria-expanded={isOpen}
-            >
-              <span className={`tv-syn-mark${cok ? "" : " bad"}`} aria-hidden="true">
-                {cok ? "✓" : "✕"}
-              </span>
-              <span className="tv-syn-clbl">{String(c.label ?? "")}</span>
-              <span className="tv-syn-ptag">{String(c.persona ?? "")}</span>
-              {summary && (
-                <span className="tv-syn-car" aria-hidden="true">
-                  {isOpen ? "▾" : "▸"}
+            {/* The toggle and the open-session link are SIBLING buttons in a flex row
+                (never a button-in-button), so each is its own tap target. */}
+            <div className="tv-syn-rowwrap">
+              <button
+                type="button"
+                className="tv-syn-row"
+                onClick={() => toggle(i)}
+                aria-expanded={isOpen}
+              >
+                <span className={`tv-syn-mark${cok ? "" : " bad"}`} aria-hidden="true">
+                  {cok ? "✓" : "✕"}
                 </span>
+                <span className="tv-syn-clbl">{String(c.label ?? "")}</span>
+                <span className="tv-syn-ptag">{String(c.persona ?? "")}</span>
+                {summary && (
+                  <span className="tv-syn-car" aria-hidden="true">
+                    {isOpen ? "▾" : "▸"}
+                  </span>
+                )}
+              </button>
+              {/* Deep-link this row to the sub-agent's own session (its full transcript),
+                  only when both a handler and a session id are present. */}
+              {onOpenSession && sessionId && (
+                <button
+                  type="button"
+                  className="tv-syn-open"
+                  title="Open sub-agent session"
+                  aria-label={`Open ${String(c.label ?? "sub-agent")} session`}
+                  onClick={() => onOpenSession(sessionId)}
+                >
+                  <OpenSessionIcon />
+                </button>
               )}
-            </button>
+            </div>
             {isOpen && summary && <div className="tv-syn-sum">{summary}</div>}
           </div>
         );
@@ -1717,12 +1750,18 @@ export function isKnownView(name: string): boolean {
 
 /** Render a tool-result view from its payload, or nothing if the named component
  * is not registered (an unknown `view` is rejected, never rendered). */
-export function ToolView({ payload }: { payload: ViewPayload }): ReactNode {
+export function ToolView({
+  payload,
+  onOpenSession,
+}: {
+  payload: ViewPayload;
+  onOpenSession?: ((sessionId: string) => void) | undefined;
+}): ReactNode {
   const Component = REGISTRY[payload.view];
   if (!Component) return null;
   return (
     <div className={`tool-view surface-${payload.surface}`}>
-      <Component data={payload.data} refs={payload.refs} />
+      <Component data={payload.data} refs={payload.refs} onOpenSession={onOpenSession} />
     </div>
   );
 }

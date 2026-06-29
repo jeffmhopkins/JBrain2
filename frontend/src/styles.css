@@ -9377,11 +9377,18 @@ button.small {
   padding: 6px 0;
   border-top: 1px solid var(--border);
 }
+/* The row + its open-session link sit side by side; the row flexes, the icon is fixed. */
+.fb-shell .tv-syn-rowwrap {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
 .fb-shell .tv-syn-row {
   display: flex;
   align-items: center;
   gap: 7px;
-  width: 100%;
+  flex: 1;
+  min-width: 0;
   padding: 0;
   border: 0;
   background: none;
@@ -9389,6 +9396,29 @@ button.small {
   font: inherit;
   text-align: left;
   cursor: pointer;
+}
+/* The deep-link to a child's own session — a quiet icon button that warms on hover. */
+.fb-shell .tv-syn-open {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 7px;
+  background: none;
+  color: var(--text-3);
+  cursor: pointer;
+}
+.fb-shell .tv-syn-open:hover {
+  background: var(--surface);
+  color: var(--text-1);
+}
+.fb-shell .tv-syn-open svg {
+  width: 14px;
+  height: 14px;
 }
 .fb-shell .tv-syn-car {
   flex: none;
