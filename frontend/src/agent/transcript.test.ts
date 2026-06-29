@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { type TranscriptMessage, applyEvent } from "./transcript";
+import type { ChatEvent } from "./types";
 
 function streaming(): TranscriptMessage {
   return {
@@ -75,6 +76,31 @@ describe("applyEvent reducer", () => {
       view: { view: "stat_block", surface: "inline", data: { value: "1" }, refs: [] },
     });
     expect(ms[0]?.views).toHaveLength(1);
+  });
+
+  it("supersedes the subagent_synthesis roster instead of stacking each update", () => {
+    let ms: TranscriptMessage[] = [streaming()];
+    const syn = (ran: number, tool_call_id = "sp1"): ChatEvent => ({
+      type: "tool_view",
+      tool_call_id,
+      view: {
+        view: "subagent_synthesis",
+        surface: "inline",
+        data: { ran, failed: 0, truncated: false, children: [] },
+        refs: [],
+      },
+    });
+    // The fan re-emits the roster as each child settles (ran 1 → 2), then once more as
+    // the final result — three tool_view events for one fan.
+    ms = applyEvent(ms, syn(1));
+    ms = applyEvent(ms, syn(2));
+    ms = applyEvent(ms, syn(2));
+    // Only the latest survives — ONE card, not three (the bug was "1 of 1 / 2 of 2 / 2 of 2").
+    expect(ms[0]?.views).toHaveLength(1);
+    expect(ms[0]?.views[0]?.data.ran).toBe(2);
+    // A second, distinct fan keeps its own card (keyed by tool_call_id).
+    ms = applyEvent(ms, syn(1, "sp2"));
+    expect(ms[0]?.views).toHaveLength(2);
   });
 
   it("ignores events when there is no live assistant turn", () => {

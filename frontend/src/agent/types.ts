@@ -34,6 +34,11 @@ export interface ViewPayload {
   surface: Surface;
   data: Record<string, unknown>;
   refs: CitationRef[];
+  /** The originating tool call, stamped onto the view as the live reducer folds it.
+   * Only used to SUPERSEDE a re-emitted view (the subagent_synthesis roster the fan
+   * re-sends as each child settles) so updates replace rather than stack. Absent on a
+   * reopened transcript (persisted views need no dedup — one per spawn step). */
+  tool_call_id?: string;
 }
 
 // --- Streaming chat events (the /chat SSE union, discriminated on `type`) ---
