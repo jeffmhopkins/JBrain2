@@ -17,14 +17,26 @@ MAX_CHILDREN_PER_PARENT = 6  # the largest fan a single spawn call may launch
 MAX_PARALLEL = 4  # the most children that run concurrently within a fan
 MAX_TOTAL_AGENTS_PER_TREE = 12  # every child across the whole root turn, all depths
 
-# Per-child RUNTIME bound (the real stopper, tuned on-box). On a slow single-GPU box
-# a child that ran until its token budget ground for ~11 min; bounding *steps* and
-# *wall-clock* keeps each child to ~2-3 min instead, with the token budget left as a
-# generous backstop (below) that should rarely bite. Wall-clock bounds the WHOLE fan
-# too: parallel children all stop by it, so the fan finishes in ~one child's time.
-CHILD_MAX_STEPS = 10  # ReAct iterations a child may take (vs. the effort×multiplier default)
-CHILD_WALL_CLOCK_S = 180.0  # hard per-child time limit; a child past it returns truncated
-CHILD_MAX_COST_TOKENS = 400_000  # per-child token backstop (steps/wall-clock bite first)
+# Per-child RUNTIME bounds. The original tight caps (10 steps / 180s) were sized for a
+# PARALLEL fan on a slow single-GPU box; now the fan runs SERIALLY on a local route
+# (each child gets the whole device), so a child can afford to actually research —
+# search, read several sources, and synthesize — before a cap bites. The step cap is
+# the primary bound and SCALES WITH EFFORT (a "high" research child needs many more
+# ReAct turns than a quick lookup); the wall-clock is a generous backstop kept above
+# the step budget's expected runtime so a child reaches its step cap (→ a forced final
+# answer) rather than a bare timeout; the token cap is the last backstop.
+CHILD_MAX_STEPS = 12  # default/low-effort ReAct iterations a child may take
+# Effort lifts the step cap: a high-effort child gets the room to do thorough research.
+CHILD_STEPS_BY_EFFORT = {"high": 30, "medium": 20}
+CHILD_WALL_CLOCK_S = 600.0  # hard per-child time limit; past it the child returns truncated
+CHILD_MAX_COST_TOKENS = 800_000  # per-child token backstop (steps/wall-clock bite first)
+
+
+def child_steps_for(effort: str | None) -> int:
+    """The ReAct step cap for a child of the given reasoning effort — higher effort
+    earns a longer chain (more searches/reads) before the cap stops it."""
+    return CHILD_STEPS_BY_EFFORT.get(effort or "", CHILD_MAX_STEPS)
+
 
 # Token-budget shape (docs/SUBAGENT_SPAWNING_PLAN.md, Wave S2). The tree may spend at
 # most SPAWN_MULTIPLIER × the root's own per-turn token cap; a fraction is reserved off

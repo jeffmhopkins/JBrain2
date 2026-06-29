@@ -10,7 +10,13 @@ from jbrain.agent import spawn as spawn_mod
 from jbrain.agent.agents import AGENTS, JERV_TOOLS
 from jbrain.agent.loop import AgentResult, ToolContext
 from jbrain.agent.spawn import SpawnService, effective_child_tools
-from jbrain.agent.tree import MAX_CHILDREN_PER_PARENT, MAX_DEPTH, MAX_PARALLEL, TreeState
+from jbrain.agent.tree import (
+    MAX_CHILDREN_PER_PARENT,
+    MAX_DEPTH,
+    MAX_PARALLEL,
+    TreeState,
+    child_steps_for,
+)
 from jbrain.db.session import SessionContext
 
 # --- the clamp, as a pure function (parent⊆child) --------------------------
@@ -89,9 +95,10 @@ class _FakeLoop:
     is observable without a real loop, DB, or model."""
 
     calls: list[dict] = []
+    last_guardrails: object = None
 
     def __init__(self, *_a, **_k) -> None:
-        pass
+        _FakeLoop.last_guardrails = _k.get("guardrails")
 
     async def run(self, **kw):  # noqa: ANN003
         _FakeLoop.calls.append(kw)
@@ -420,6 +427,22 @@ async def test_child_brief_and_answer_persisted_to_its_own_transcript(
     assert ex["session_id"] == "sess-1"  # the child session, not "parent-sess"
     assert ex["user_text"] == "what is HNSW?"
     assert ex["assistant_text"] == "summary for sess-1"
+
+
+async def test_high_effort_child_gets_a_larger_step_cap(service: SpawnService) -> None:
+    """A high-effort child is launched with the effort-scaled step cap so it can do
+    thorough research before the cap bites; a default child gets the base cap."""
+    await service.spawn_fan(
+        _ctx(),
+        {"tasks": [{"persona": "research", "brief": "x", "label": "L", "effort": "high"}]},
+    )
+    assert _FakeLoop.last_guardrails is not None
+    assert _FakeLoop.last_guardrails.max_steps == child_steps_for("high")  # type: ignore[attr-defined]
+
+    await service.spawn_fan(
+        _ctx(), {"tasks": [{"persona": "research", "brief": "y", "label": "M"}]}
+    )
+    assert _FakeLoop.last_guardrails.max_steps == child_steps_for(None)  # type: ignore[attr-defined]
 
 
 async def test_unknown_effort_refuses_the_fan(service: SpawnService) -> None:

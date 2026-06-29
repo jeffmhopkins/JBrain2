@@ -49,12 +49,12 @@ from jbrain.agent.toolregistry import ToolRegistry
 from jbrain.agent.transcript_store import AgentTranscript
 from jbrain.agent.tree import (
     CHILD_MAX_COST_TOKENS,
-    CHILD_MAX_STEPS,
     CHILD_WALL_CLOCK_S,
     MAX_CHILDREN_PER_PARENT,
     MAX_DEPTH,
     MAX_PARALLEL,
     TreeState,
+    child_steps_for,
 )
 from jbrain.db.session import SessionContext
 from jbrain.llm import LlmRouter, UserMessage
@@ -322,11 +322,12 @@ class SpawnService:
                 self._router,
                 self._registry,
                 recorder=tally,  # type: ignore[arg-type]
-                # Explicit child caps bound RUNTIME (a small step cap + the wall-clock
-                # below), with a generous token backstop. The old effort×budget_multiplier
-                # scaling let a child grind to a 400k token budget for ~11 min on the box.
+                # The step cap scales with the child's effort (a high-effort research
+                # child gets a long chain to search/read/synthesize); the wall-clock and
+                # token caps are generous backstops above it.
                 guardrails=Guardrails(
-                    max_steps=CHILD_MAX_STEPS, max_cost_tokens=CHILD_MAX_COST_TOKENS
+                    max_steps=child_steps_for(plan.effort),
+                    max_cost_tokens=CHILD_MAX_COST_TOKENS,
                 ),
             )
             child_read_ctx = read_context(owner_ctx.principal_id, ())
