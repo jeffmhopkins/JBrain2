@@ -345,6 +345,38 @@ describe("FullBrainSurface", () => {
     expect(container.querySelector(".tv-syn")).toBeNull();
   });
 
+  it("shows the live fan mid-stream even with no answer or reasoning yet (non-reasoning model)", async () => {
+    // A non-reasoning model streams neither prose nor a thinking trace during the spawn,
+    // so the only thing the turn has to show is the fan. The bubble must not be held back
+    // (the streaming-hold guard) or the research roster is invisible for the whole run.
+    let resolve: () => void = () => {};
+    const gate = new Promise<void>((r) => {
+      resolve = r;
+    });
+    async function* answer(): AsyncGenerator<ChatEvent> {
+      yield { type: "tool_call", id: "sp1", name: "spawn_subagent", arguments: { tasks: [] } };
+      yield {
+        type: "subagent_spawned",
+        tool_call_id: "sp1",
+        child_id: "k1",
+        persona: "research",
+        label: "Troutdale News",
+        depth: 1,
+      };
+      await gate; // hold the turn open mid-fan — no text_delta, no reasoning_delta, no done
+      yield { type: "done", stop_reason: "end_turn" };
+    }
+    const { container } = render(<Harness d={deps({ chat: answer })} />);
+    await waitFor(() => screen.getByLabelText("Conversation"));
+    fireEvent.change(screen.getByLabelText("Composer"), { target: { value: "compare them" } });
+    fireEvent.click(screen.getByRole("button", { name: "send" }));
+
+    // The fan renders while still streaming, before any answer text exists.
+    await waitFor(() => expect(container.querySelector(".fb-sa")).not.toBeNull());
+    expect(screen.getByText("Troutdale News")).toBeInTheDocument();
+    act(() => resolve());
+  });
+
   it("follows the stream only while the reader is pinned to the bottom", async () => {
     async function* answer(): AsyncGenerator<ChatEvent> {
       yield { type: "text_delta", text: "reply" };
