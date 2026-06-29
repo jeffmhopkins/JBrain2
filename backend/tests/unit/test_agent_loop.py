@@ -251,6 +251,11 @@ async def test_force_final_answer_synthesizes_on_step_exhaustion() -> None:
     # synthesis is mechanical — any thinking there caused a long apparent stall on box).
     assert fake.converse_calls[-1]["tools"] == []
     assert fake.converse_calls[-1]["reasoning_effort"] == "none"
+    # …and it carries an explicit "synthesize as prose, no tool calls" directive as the
+    # last user turn, so gpt-oss writes an answer instead of emitting its next search as
+    # text (which surfaced as a raw {"query": …} child answer on the box).
+    last_msg = fake.converse_calls[-1]["messages"][-1]
+    assert isinstance(last_msg, UserMessage) and "no more tools" in last_msg.text.lower()
 
 
 async def test_consecutive_tool_errors_guardrail() -> None:
