@@ -42,6 +42,7 @@ from jbrain.agent.contracts import (
     SubagentProgressEvent,
     SubagentSpawnedEvent,
     SubagentToolEvent,
+    SubagentUsageEvent,
     ToolViewEvent,
     ViewPayload,
 )
@@ -397,6 +398,21 @@ class SpawnService:
             def _on_reasoning(text: str) -> None:
                 _emit(ctx, SubagentDeltaEvent(child_id=child.id, channel="reasoning", text=text))
 
+            # The child model's context window — the meter's denominator. Resolved once
+            # per child (cheap, cached in the router) so its fill bar reads against the
+            # same window the child actually runs with.
+            child_window = await self._router.context_window("agent.turn")
+
+            def _on_usage(inp: int, out: int) -> None:
+                # The child's live context fill, forwarded as the fan row's context meter
+                # (the non-streaming twin of the parent turn's usage event).
+                _emit(
+                    ctx,
+                    SubagentUsageEvent(
+                        child_id=child.id, used=inp + out, context_window=child_window
+                    ),
+                )
+
             def _on_tool(name: str, args: dict, ok: bool) -> None:
                 # Forward the child's tool step so the fan frame shows its work as a live
                 # "Worked" list (the query / url it used, like the main step rows).
@@ -425,6 +441,7 @@ class SpawnService:
                         on_text=_on_text,
                         on_reasoning=_on_reasoning,
                         on_tool=_on_tool,
+                        on_usage=_on_usage,
                         # The spawner's per-child reasoning effort (the router drops it
                         # for a non-reasoning child model).
                         reasoning_effort=plan.effort,

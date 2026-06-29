@@ -178,6 +178,17 @@ export interface SubagentProgressEvent {
   tree_spent: number;
   tree_budget: number;
 }
+/** A running child's live context fill (its loop's per-call usage, forwarded by
+ * child_id) so the fan row shows a context meter — the non-streaming twin of the
+ * parent turn's UsageEvent. `used` is the latest call's prompt+output; `context_window`
+ * is the child model's total window. Ephemeral. */
+export interface SubagentUsageEvent {
+  type: "subagent_usage";
+  tool_call_id: string;
+  child_id: string;
+  used: number;
+  context_window: number;
+}
 /** A live token slice from a running child: its loop streams turns, and each
  * answer/reasoning chunk is forwarded (tagged by child_id) so the fan shows the child
  * working — a live mini-transcript. Ephemeral. */
@@ -227,6 +238,7 @@ export type ChatEvent =
   | GeneralKnowledgeEvent
   | SubagentSpawnedEvent
   | SubagentProgressEvent
+  | SubagentUsageEvent
   | SubagentDeltaEvent
   | SubagentToolEvent
   | SubagentDoneEvent;
