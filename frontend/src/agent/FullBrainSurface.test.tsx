@@ -43,7 +43,11 @@ function deps(over: Partial<FullBrainDeps> = {}): FullBrainDeps {
       media_type: file.type,
       size_bytes: file.size,
     })),
-    getChatCapabilities: vi.fn(async () => ({ supports_vision: true, can_edit_images: false })),
+    getChatCapabilities: vi.fn(async () => ({
+      supports_vision: true,
+      can_edit_images: false,
+      context_window: 262144,
+    })),
     ...over,
   };
 }
@@ -1368,12 +1372,16 @@ describe("FullBrainSurface", () => {
     }
     render(<Harness d={deps({ chat: answer })} />);
     await waitFor(() => screen.getByLabelText("Conversation"));
-    expect(screen.getByTestId("usage").textContent).toBe("none");
+    // A fresh (empty) session seeds a near-empty meter from the capabilities window
+    // (262144) before any turn — the context capacity shows from the start.
+    await waitFor(() => expect(screen.getByTestId("usage").textContent).toBe("0/262144"));
+    expect(screen.getByTestId("usage-base").textContent).toBe("0");
 
     fireEvent.change(screen.getByLabelText("Composer"), { target: { value: "go" } });
     fireEvent.click(screen.getByRole("button", { name: "send" }));
 
-    // The latest usage event wins (4000 + 96), against the model's window.
+    // Once the turn streams, the live usage takes over: the latest event wins
+    // (4000 + 96), against the model's actual window.
     await waitFor(() => expect(screen.getByTestId("usage").textContent).toBe("4096/32768"));
     // ...but the carried-forward floor stays pinned to the turn's FIRST step's prompt
     // (1000), so the meter can shade it apart from the later tool growth.
@@ -1396,10 +1404,12 @@ describe("FullBrainSurface", () => {
     fireEvent.click(screen.getByRole("button", { name: "send" }));
     await waitFor(() => expect(screen.getByTestId("usage").textContent).toBe("510/32768"));
 
-    // Switching to another chat drops the prior chat's meter (its context is its own).
+    // Switching to another chat drops the prior chat's live fill (its context is its
+    // own); the now-open empty session re-seeds the near-empty meter against the most
+    // recent known window — the live turn's 32768, now preferred over the probe value.
     fireEvent.click(screen.getByText("open-sessions"));
     fireEvent.click(screen.getByText("Second"));
-    await waitFor(() => expect(screen.getByTestId("usage").textContent).toBe("none"));
+    await waitFor(() => expect(screen.getByTestId("usage").textContent).toBe("0/32768"));
   });
 
   it("Stop aborts the live turn and settles the partial answer calmly", async () => {
