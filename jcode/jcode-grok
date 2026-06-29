@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+# Per-session grok version management (docs/proposed/JCODE_SESSION_TOOLS_PLAN.md).
+#
+# Installs the Grok Build CLI into the session's PRIVATE bin ($JCODE_TOOLS_BIN, set by the
+# terminal), which leads PATH via /etc/profile.d/jcode-path.sh — so the installed grok
+# shadows the image's pinned /usr/local/bin copy for THIS session only. Other sessions, and
+# the image default (GROK_BUILD_VERSION), are untouched. This is the deliberate, opt-in
+# upgrade path: the image keeps a pinned binary (provenance); a session pulls a newer one
+# only when the owner asks here.
+#
+#   jcode-grok upgrade [version]   install grok into the session (default: installer's
+#                                  latest; pass a version to pin, e.g. 0.2.70)
+#   jcode-grok version             show the session's grok vs the image default
+set -euo pipefail
+
+_die() { echo "jcode-grok: $1" >&2; exit "${2:-1}"; }
+
+case "${1:-}" in
+upgrade)
+  version="${2:-}"
+  [ -n "${JCODE_TOOLS_BIN:-}" ] || _die "not in a jcode session shell (JCODE_TOOLS_BIN unset)" 1
+  mkdir -p "$JCODE_TOOLS_BIN"
+  # Fetch the installer first, as its own step, so an egress/network failure gives a clear
+  # message instead of a confusing pipe error. x.ai is NOT on the git/npm egress allowlist,
+  # so under strict egress (JCODE_EGRESS_PROXY) this is the expected failure point.
+  installer="$(mktemp)"
+  trap 'rm -f "$installer"' EXIT
+  curl -fsSL https://x.ai/cli/install.sh -o "$installer" \
+    || _die "cannot reach x.ai to fetch the installer (egress locked? JCODE_EGRESS_PROXY)" 1
+  # The installer drops the binary into $GROK_BIN_DIR (same contract the image build uses).
+  if [ -n "$version" ]; then
+    GROK_BIN_DIR="$JCODE_TOOLS_BIN" bash "$installer" "$version"
+  else
+    GROK_BIN_DIR="$JCODE_TOOLS_BIN" bash "$installer"
+  fi
+  hash -r 2>/dev/null || true  # drop bash's cached /usr/local/bin/grok path
+  echo "jcode-grok: grok is now $(grok --version 2>/dev/null || echo '?') at $(command -v grok)"
+  ;;
+version)
+  echo "session: $(command -v grok 2>/dev/null || echo none) -> $(grok --version 2>/dev/null || echo none)"
+  echo "image:   /usr/local/bin/grok -> $(/usr/local/bin/grok --version 2>/dev/null || echo none)"
+  ;;
+*)
+  _die "usage: jcode-grok {upgrade [version]|version}" 2
+  ;;
+esac

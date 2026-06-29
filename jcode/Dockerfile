@@ -38,6 +38,12 @@ COPY grok-config.sh /etc/profile.d/grok-config.sh
 # docs/proposed/JCODE_SESSION_TOOLS_PLAN.md.
 COPY jcode-path.sh /etc/profile.d/jcode-path.sh
 
+# Per-session grok version management: `jcode-grok upgrade` installs grok into the session's
+# private $JCODE_TOOLS_BIN (shadowing the pinned image copy for that session only); the image
+# default stays pinned at GROK_BUILD_VERSION. On the shared PATH so every session shell has it.
+COPY jcode-grok /usr/local/bin/jcode-grok
+RUN chmod +x /usr/local/bin/jcode-grok
+
 WORKDIR /app
 ENV UV_COMPILE_BYTECODE=1 \
     UV_LINK_MODE=copy

@@ -73,12 +73,14 @@ T4 then shrinks to "npm prefix + a `claude` path." Same end state, no throwaway 
   per-session HOME also makes `~/.grok` (via `grok-config.sh`), `~/.claude`, and shell history
   per-session for free. *Tests:* HOME set + bin ahead of `/usr/local/bin`; create provisions /
   delete purges the home; `home_for` deterministic; real `prepare_home` makes the bin dirs.
-- **Wave T2 — `jcode-grok` helper + image/setup.** Ship `jcode-grok` (upgrade/version) in the
-  image on the shared `PATH`; it installs grok into `$JCODE_TOOLS_BIN` (default = the
-  `x.ai/cli/stable` pointer, or a pinned arg), shadowing the image's copy for that session.
-  Wire `dev-setup.sh`; keep `GROK_BUILD_VERSION` as the default/floor. Errors cleanly when
-  egress is locked. *Tests:* helper resolves target dir + version, errors without egress
-  (installer faked — no network in tests).
+- **Wave T2 — `jcode-grok` helper + image. [DONE]** `jcode-grok upgrade [version]` installs
+  grok into `$JCODE_TOOLS_BIN` (installer's latest, or a pinned arg), shadowing the image's
+  copy for that session; `jcode-grok version` shows session-vs-image. Shipped on the shared
+  `PATH` via the Dockerfile; `GROK_BUILD_VERSION` stays the pinned default/floor. Fetches the
+  installer as its own step so a locked-egress failure is a clear message, not a pipe error.
+  `dev-setup.sh` unchanged — the helper is image-provided (built by `jcode-setup.sh`), not a
+  dev dependency. *Tests:* fake `curl` (no network) covers install-into-session-bin, version
+  pass-through, clean egress-failure, refuse-outside-session, and usage.
 - **Wave T4 — generalise to `claude`/`node`.** With the per-session npm prefix from T1, a
   per-session `npm i -g @anthropic-ai/claude-code@<v>` lands in `$HOME/.npm-global/bin` and
   shadows the image's `claude`; add a `jcode-claude` helper mirroring `jcode-grok`. Document
