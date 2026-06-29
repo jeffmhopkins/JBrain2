@@ -71,7 +71,8 @@ _SSE_HEARTBEAT_SECONDS = 20.0
 # every in-flight LLM call (parent AND its sub-agents, via the gather cascade) and the
 # partial answer is persisted. Generous — above a legitimate multi-child serial fan —
 # so it only ever catches the pathological case, never a real turn.
-_MAX_TURN_WALL_CLOCK_S = 1800.0
+# Sized at 3x the per-child wall-clock so a 2-3 child serial fan plus synthesis fits.
+_MAX_TURN_WALL_CLOCK_S = 3600.0
 
 _TURN_DONE = object()  # per-subscriber sentinel: the turn finished, no more frames
 

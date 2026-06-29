@@ -40,10 +40,10 @@ export interface SubagentChild {
   /** Live-streamed answer tokens while the child works (cleared/superseded by
    * `summary` once it settles) — the fan's live mini-transcript. */
   liveText?: string;
-  /** Live-streamed reasoning tokens (the child's thinking trace) while it works. */
-  liveReasoning?: string;
-  /** The child's tool steps as it works — a live "Worked" list in its frame. */
-  liveTools?: SubagentToolStep[];
+  /** The child's reasoning AND tool calls in arrival order — one interleaved stream so
+   * the fan can render a tool call where it happened inside the thinking (heavy tool use
+   * folds away with the collapsible trace instead of piling into a separate flat list). */
+  liveTrace?: SubagentTraceItem[];
 }
 
 /** One tool step a child took (web_search/web_fetch), shown in the child's frame. */
@@ -52,6 +52,12 @@ export interface SubagentToolStep {
   arg: string;
   ok: boolean;
 }
+
+/** One item in a child's interleaved live trace: a run of reasoning text, or a tool
+ * call injected at the point it occurred. */
+export type SubagentTraceItem =
+  | { kind: "reasoning"; text: string }
+  | ({ kind: "tool" } & SubagentToolStep);
 
 /** The live fan under a `spawn_subagent` tool call: its children plus the shared
  * tree-budget snapshot driving the in-chat meter. */
@@ -151,6 +157,21 @@ export function streamingAssistant(): TranscriptMessage {
     reasoning: "",
     thinking: false,
   };
+}
+
+/** Append a run of reasoning text to a child's interleaved trace, coalescing into the
+ * trailing reasoning item so consecutive deltas read as one paragraph (a tool call
+ * between them is what starts a fresh reasoning run). */
+function appendReasoning(
+  trace: SubagentTraceItem[] | undefined,
+  text: string,
+): SubagentTraceItem[] {
+  const items = trace ?? [];
+  const last = items[items.length - 1];
+  if (last && last.kind === "reasoning") {
+    return [...items.slice(0, -1), { kind: "reasoning", text: last.text + text }];
+  }
+  return [...items, { kind: "reasoning", text }];
 }
 
 /** Fold one ChatEvent into the transcript, updating the live assistant turn (the
@@ -318,9 +339,9 @@ export function applyEvent(messages: TranscriptMessage[], event: ChatEvent): Tra
       );
       break;
     case "subagent_delta":
-      // Append the child's live answer/reasoning tokens — the fan row renders them as a
-      // growing mini-transcript so you watch the child work (it runs non-streaming from
-      // the parent's await, but forwards its tokens through the turn's event sink).
+      // The child's live tokens — reasoning folds into the interleaved trace (so a tool
+      // call lands where it happened), the answer accumulates separately. It runs
+      // non-streaming from the parent's await but forwards its tokens through the sink.
       next.tools = next.tools.map((t) =>
         t.id === event.tool_call_id && t.fan
           ? {
@@ -330,7 +351,7 @@ export function applyEvent(messages: TranscriptMessage[], event: ChatEvent): Tra
                 children: t.fan.children.map((c) =>
                   c.childId === event.child_id
                     ? event.channel === "reasoning"
-                      ? { ...c, liveReasoning: (c.liveReasoning ?? "") + event.text }
+                      ? { ...c, liveTrace: appendReasoning(c.liveTrace, event.text) }
                       : { ...c, liveText: (c.liveText ?? "") + event.text }
                     : c,
                 ),
@@ -340,7 +361,8 @@ export function applyEvent(messages: TranscriptMessage[], event: ChatEvent): Tra
       );
       break;
     case "subagent_tool":
-      // Append a tool step to the child's live "Worked" list (its frame-in-frame view).
+      // Inject the tool call into the trace at the point it occurred — interleaved with
+      // the reasoning, not a separate flat list (a 20-search child stays readable).
       next.tools = next.tools.map((t) =>
         t.id === event.tool_call_id && t.fan
           ? {
@@ -351,9 +373,9 @@ export function applyEvent(messages: TranscriptMessage[], event: ChatEvent): Tra
                   c.childId === event.child_id
                     ? {
                         ...c,
-                        liveTools: [
-                          ...(c.liveTools ?? []),
-                          { name: event.name, arg: event.arg, ok: event.ok },
+                        liveTrace: [
+                          ...(c.liveTrace ?? []),
+                          { kind: "tool", name: event.name, arg: event.arg, ok: event.ok },
                         ],
                       }
                     : c,

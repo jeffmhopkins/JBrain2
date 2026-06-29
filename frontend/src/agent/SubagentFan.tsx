@@ -6,65 +6,75 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
-import type { SubagentFan as Fan, SubagentChild, SubagentToolStep } from "./transcript";
+import { BrainGlyph } from "./glyphs";
+import type { SubagentFan as Fan, SubagentChild, SubagentTraceItem } from "./transcript";
 
-// A friendlier label for the web tools a child runs (the fan's Worked list).
+// A friendlier label for the web tools a child runs (shown inline in its trace).
 const TOOL_LABEL: Record<string, string> = {
   web_search: "search",
   web_fetch: "fetch",
   current_time: "clock",
 };
 
-// The child's tool steps as a compact live "Worked" list — one row per tool with its
-// inline arg (the query / url) and a ✓/✕ mark, so the frame reads like a real session.
-function ChildSteps({ steps }: { steps: SubagentToolStep[] }): ReactNode {
-  return (
-    <div className="fb-sa-steps">
-      {steps.map((s, i) => (
-        // biome-ignore lint/suspicious/noArrayIndexKey: steps append in stable order
-        <div className={`fb-sa-step${s.ok ? "" : " bad"}`} key={i}>
-          <span className="fb-sa-step-mark" aria-hidden="true">
-            {s.ok ? "✓" : "✕"}
-          </span>
-          <span className="fb-sa-step-name">{TOOL_LABEL[s.name] ?? s.name}</span>
-          {s.arg && (
-            <span className="fb-sa-step-arg" title={s.arg}>
-              {s.arg}
-            </span>
-          )}
-        </div>
-      ))}
-    </div>
-  );
-}
-
-// A child's live thinking trace: a collapsible disclosure (default open while the child
-// works so you watch it) that auto-scrolls to the newest line as tokens stream in —
-// the same behaviour as the main answer's "Thinking" trace, scoped to the fan row.
-function ChildThinking({ text, live }: { text: string; live: boolean }): ReactNode {
+// A child's live trace: its reasoning AND tool calls interleaved in ONE collapsible
+// disclosure that reads like the main answer's "Thinking" (same BrainGlyph + violet
+// register), default open while the child works and auto-scrolling to the newest line.
+// Folding everything behind one toggle keeps a heavy-tool-use child (20+ searches) from
+// turning the fan into a wall — the tools live inside the thinking, not a flat list.
+function ChildTrace({ items, live }: { items: SubagentTraceItem[]; live: boolean }): ReactNode {
   const [open, setOpen] = useState(true);
   const ref = useRef<HTMLDivElement | null>(null);
-  // Follow the newest reasoning while it streams (only while open + live).
-  // biome-ignore lint/correctness/useExhaustiveDependencies: `text` drives the re-scroll
+  // Follow the newest line while it streams (only while open + live). `items` is the
+  // intentional trigger — each appended chunk re-runs the scroll-to-bottom.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `items` drives the re-scroll
   useEffect(() => {
     if (open && live && ref.current) ref.current.scrollTop = ref.current.scrollHeight;
-  }, [text, open, live]);
+  }, [items, open, live]);
+  const toolCount = items.reduce((n, it) => n + (it.kind === "tool" ? 1 : 0), 0);
   return (
-    <div className="fb-sa-think-wrap">
+    <div className="fb-sa-trace-wrap">
       <button
         type="button"
-        className="fb-sa-think-tog"
+        className="fb-sa-trace-tog"
         aria-expanded={open}
         onClick={() => setOpen((o) => !o)}
       >
-        <span className="fb-sa-think-car" aria-hidden="true">
+        <span className="fb-sa-trace-car" aria-hidden="true">
           {open ? "▾" : "▸"}
         </span>
+        <BrainGlyph className="fb-sa-trace-ic" />
         Thinking{live ? "…" : ""}
+        {toolCount > 0 && (
+          <span className="fb-sa-trace-c">
+            {" · "}
+            {toolCount} tool{toolCount === 1 ? "" : "s"}
+          </span>
+        )}
       </button>
       {open && (
-        <div className="fb-sa-think" ref={ref}>
-          {text}
+        <div className="fb-sa-trace" ref={ref}>
+          {items.map((it, i) =>
+            it.kind === "reasoning" ? (
+              // biome-ignore lint/suspicious/noArrayIndexKey: trace items append in order
+              <span key={i}>{it.text}</span>
+            ) : (
+              <span
+                // biome-ignore lint/suspicious/noArrayIndexKey: trace items append in order
+                key={i}
+                className={`fb-sa-trace-tool${it.ok ? "" : " bad"}`}
+              >
+                <span className="fb-sa-trace-mark" aria-hidden="true">
+                  {it.ok ? "✓" : "✕"}
+                </span>
+                <span className="fb-sa-trace-name">{TOOL_LABEL[it.name] ?? it.name}</span>
+                {it.arg && (
+                  <span className="fb-sa-trace-arg" title={it.arg}>
+                    {it.arg}
+                  </span>
+                )}
+              </span>
+            ),
+          )}
         </div>
       )}
     </div>
@@ -219,16 +229,15 @@ export function SubagentFan({
         // The child is actively streaming tokens — auto-expand it so you watch it work
         // (with a serial local fan only one streams at a time). A failed row also
         // auto-expands its error.
-        const hasTools = Boolean(c.liveTools && c.liveTools.length > 0);
-        const streaming =
-          !settled && !isQueued(c) && Boolean(c.liveText || c.liveReasoning || hasTools);
+        const hasTrace = Boolean(c.liveTrace && c.liveTrace.length > 0);
+        const streaming = !settled && !isQueued(c) && Boolean(c.liveText || hasTrace);
         const open = expanded.has(c.childId) || isFail || streaming;
         // The "Open session" link is gated to a SETTLED child — a still-running child
         // has nothing persisted yet, so opening it would land on a blank conversation.
         const showOpen = Boolean(onOpen) && settled;
         const hasBody = settled
-          ? Boolean(c.summary) || showOpen || hasTools
-          : streaming || hasTools;
+          ? Boolean(c.summary) || showOpen || hasTrace
+          : streaming || hasTrace;
         return (
           <div className={`fb-sa-row${c.depth >= 2 ? " sub" : ""}`} key={c.childId}>
             <button
@@ -254,11 +263,10 @@ export function SubagentFan({
             </div>
             {open && hasBody && (
               <div className={`fb-sa-detail${isFail ? " err" : ""}`}>
-                {/* The frame-in-frame view of the child's session: its thinking (dim,
-                    collapsible), the tools it ran (a live "Worked" list), then its
-                    answer. While running these stream; once settled the summary stands. */}
-                {c.liveReasoning && <ChildThinking text={c.liveReasoning} live={!settled} />}
-                {hasTools && c.liveTools && <ChildSteps steps={c.liveTools} />}
+                {/* The frame-in-frame view of the child's session: its thinking and tool
+                    calls interleaved in one collapsible trace, then its answer. While
+                    running these stream; once settled the summary stands below. */}
+                {hasTrace && c.liveTrace && <ChildTrace items={c.liveTrace} live={!settled} />}
                 {settled
                   ? c.summary && <div className="fb-sa-sum">{c.summary}</div>
                   : c.liveText && <div className="fb-sa-sum">{c.liveText}</div>}

@@ -333,11 +333,12 @@ describe("applyEvent reducer", () => {
       text: "3 tiers",
     });
     const child = ms[0]?.tools[0]?.fan?.children[0];
-    expect(child?.liveReasoning).toBe("let me search");
+    // Consecutive reasoning deltas coalesce into one trace run; the answer stays separate.
+    expect(child?.liveTrace).toEqual([{ kind: "reasoning", text: "let me search" }]);
     expect(child?.liveText).toBe("3 tiers");
   });
 
-  it("appends a child's tool steps onto its row (the frame-in-frame worked list)", () => {
+  it("interleaves a child's tool calls into its trace at the point they occurred", () => {
     let ms: TranscriptMessage[] = [streaming()];
     ms = applyEvent(ms, { type: "tool_call", id: "c1", name: "spawn_subagent", arguments: {} });
     ms = applyEvent(ms, {
@@ -348,6 +349,15 @@ describe("applyEvent reducer", () => {
       label: "Pricing",
       depth: 1,
     });
+    // A reasoning run, then a search, then more reasoning, then a fetch — the trace keeps
+    // them in arrival order so a tool call renders where it actually happened.
+    ms = applyEvent(ms, {
+      type: "subagent_delta",
+      tool_call_id: "c1",
+      child_id: "k1",
+      channel: "reasoning",
+      text: "let me look",
+    });
     ms = applyEvent(ms, {
       type: "subagent_tool",
       tool_call_id: "c1",
@@ -357,6 +367,13 @@ describe("applyEvent reducer", () => {
       ok: true,
     });
     ms = applyEvent(ms, {
+      type: "subagent_delta",
+      tool_call_id: "c1",
+      child_id: "k1",
+      channel: "reasoning",
+      text: "now the source",
+    });
+    ms = applyEvent(ms, {
       type: "subagent_tool",
       tool_call_id: "c1",
       child_id: "k1",
@@ -364,9 +381,11 @@ describe("applyEvent reducer", () => {
       arg: "https://x.test",
       ok: false,
     });
-    expect(ms[0]?.tools[0]?.fan?.children[0]?.liveTools).toEqual([
-      { name: "web_search", arg: "pricing tiers", ok: true },
-      { name: "web_fetch", arg: "https://x.test", ok: false },
+    expect(ms[0]?.tools[0]?.fan?.children[0]?.liveTrace).toEqual([
+      { kind: "reasoning", text: "let me look" },
+      { kind: "tool", name: "web_search", arg: "pricing tiers", ok: true },
+      { kind: "reasoning", text: "now the source" },
+      { kind: "tool", name: "web_fetch", arg: "https://x.test", ok: false },
     ]);
   });
 
