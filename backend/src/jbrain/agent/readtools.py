@@ -39,9 +39,9 @@ from jbrain.agent.proposals import ProposalRepo
 from jbrain.agent.proposaltools import build_proposal_handlers
 from jbrain.agent.runlog import AgentRunLog
 from jbrain.agent.session import AgentSessionRepo
-from jbrain.agent.transcript_store import AgentTranscript
 from jbrain.agent.spawn import SpawnRef, SpawnService
 from jbrain.agent.toolregistry import ToolRegistry, load_registry
+from jbrain.agent.transcript_store import AgentTranscript
 from jbrain.analysis.relationships import predicate_candidates
 from jbrain.appointments.service import AppointmentsRepo
 from jbrain.connectors.base import ConnectorRegistry
