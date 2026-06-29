@@ -42,7 +42,10 @@ COPY jcode-path.sh /etc/profile.d/jcode-path.sh
 # private $JCODE_TOOLS_BIN (shadowing the pinned image copy for that session only); the image
 # default stays pinned at GROK_BUILD_VERSION. On the shared PATH so every session shell has it.
 COPY jcode-grok /usr/local/bin/jcode-grok
-RUN chmod +x /usr/local/bin/jcode-grok
+# Same, for claude — installs into the session's npm prefix ($NPM_CONFIG_PREFIX), so a
+# session can pin its own claude without touching the image default.
+COPY jcode-claude /usr/local/bin/jcode-claude
+RUN chmod +x /usr/local/bin/jcode-grok /usr/local/bin/jcode-claude
 
 WORKDIR /app
 ENV UV_COMPILE_BYTECODE=1 \

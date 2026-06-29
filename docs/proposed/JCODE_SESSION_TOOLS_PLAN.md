@@ -81,10 +81,16 @@ T4 then shrinks to "npm prefix + a `claude` path." Same end state, no throwaway 
   `dev-setup.sh` unchanged — the helper is image-provided (built by `jcode-setup.sh`), not a
   dev dependency. *Tests:* fake `curl` (no network) covers install-into-session-bin, version
   pass-through, clean egress-failure, refuse-outside-session, and usage.
-- **Wave T4 — generalise to `claude`/`node`.** With the per-session npm prefix from T1, a
-  per-session `npm i -g @anthropic-ai/claude-code@<v>` lands in `$HOME/.npm-global/bin` and
-  shadows the image's `claude`; add a `jcode-claude` helper mirroring `jcode-grok`. Document
-  that per-session CLI config (`~/.grok`, `~/.claude`) already follows from the per-session HOME.
+- **Wave T4 — generalise to `claude`/`node`. [DONE]** With the per-session npm prefix from T1
+  (`NPM_CONFIG_PREFIX=$HOME/.npm-global`, its bin led by `jcode-path.sh`), `jcode-claude
+  upgrade [version]` runs `npm i -g @anthropic-ai/claude-code@<v>` into the session prefix,
+  shadowing the image's `claude` for that session only; `jcode-claude version` shows
+  session-vs-image. Shipped on the shared `PATH` via the Dockerfile. Note the egress contrast:
+  claude pulls from `registry.npmjs.org` (on the allowlist), so it upgrades even under strict
+  egress — unlike `jcode-grok` (x.ai). Per-session CLI **config** (`~/.grok`, `~/.claude`,
+  shell history) already follows from the per-session HOME (T1), no extra work.
+  *Tests:* fake `npm` (no network) covers package+version pass-through, default `latest`,
+  npm-failure, refuse-outside-session, usage.
 
 Each wave follows `docs/PROCESS.md`: independent adversarial review (reviewer ≠ author) and
 tests in the same change. (Wave branches/PRs per the process; this work is on the session's

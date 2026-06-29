@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+# Per-session claude version management (docs/proposed/JCODE_SESSION_TOOLS_PLAN.md).
+#
+# Installs the `claude` CLI into the session's PRIVATE npm prefix ($NPM_CONFIG_PREFIX, set by
+# the terminal to $HOME/.npm-global), whose bin leads PATH via /etc/profile.d/jcode-path.sh —
+# so the installed claude shadows the image's /usr/local/bin copy for THIS session only.
+# Other sessions and the image default are untouched. Unlike `jcode-grok` (which pulls from
+# x.ai), this hits registry.npmjs.org, which IS on the git/npm egress allowlist — so it
+# works even under strict egress (JCODE_EGRESS_PROXY).
+#
+#   jcode-claude upgrade [version]   install claude into the session (default: latest;
+#                                    pass a version/tag to pin, e.g. 1.2.3)
+#   jcode-claude version             show the session's claude vs the image default
+set -euo pipefail
+
+_die() { echo "jcode-claude: $1" >&2; exit "${2:-1}"; }
+
+case "${1:-}" in
+upgrade)
+  version="${2:-latest}"
+  [ -n "${JCODE_TOOLS_BIN:-}" ] || _die "not in a jcode session shell (JCODE_TOOLS_BIN unset)" 1
+  # npm honors $NPM_CONFIG_PREFIX (set per session by the terminal) → installs into the
+  # session's ~/.npm-global, whose bin leads PATH, shadowing the image's claude.
+  npm install -g "@anthropic-ai/claude-code@${version}" \
+    || _die "npm install failed (see npm errors above)" 1
+  hash -r 2>/dev/null || true  # drop bash's cached /usr/local/bin/claude path
+  echo "jcode-claude: claude is now $(claude --version 2>/dev/null || echo '?') at $(command -v claude)"
+  ;;
+version)
+  echo "session: $(command -v claude 2>/dev/null || echo none) -> $(claude --version 2>/dev/null || echo none)"
+  echo "image:   /usr/local/bin/claude -> $(/usr/local/bin/claude --version 2>/dev/null || echo none)"
+  ;;
+*)
+  _die "usage: jcode-claude {upgrade [version]|version}" 2
+  ;;
+esac
