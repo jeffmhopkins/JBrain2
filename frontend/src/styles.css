@@ -7667,10 +7667,29 @@ button.small {
 .fb-shell .fb-sa-detail.err {
   color: var(--rose);
 }
-/* The child's live thinking trace, streamed while it works — dimmed + monospace like
+/* The child's live thinking trace, streamed while it works — a collapsible disclosure
+   (the toggle) over a dimmed + monospace box that auto-scrolls as tokens arrive, like
    the main "Thinking" disclosure, set apart from its answer below it. */
-.fb-shell .fb-sa-think {
+.fb-shell .fb-sa-think-wrap {
   margin-bottom: 6px;
+}
+.fb-shell .fb-sa-think-tog {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 0;
+  border: 0;
+  background: none;
+  color: var(--text-3);
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+}
+.fb-shell .fb-sa-think-car {
+  font-size: 9px;
+}
+.fb-shell .fb-sa-think {
+  margin-top: 4px;
   padding: 7px 9px;
   border-radius: 8px;
   background: var(--violet-tint);

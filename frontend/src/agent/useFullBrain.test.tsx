@@ -176,6 +176,34 @@ describe("useFullBrain — a turn stays attached to its own chat", () => {
     expect(chatResume).toHaveBeenCalledWith("r1", 1, expect.anything());
   });
 
+  it("refreshes the sessions list when a sub-agent spawns (live rail)", async () => {
+    async function* chat(): AsyncGenerator<ChatEvent> {
+      yield { type: "run", run_id: "r1" };
+      yield { type: "tool_call", id: "c1", name: "spawn_subagent", arguments: {} };
+      yield {
+        type: "subagent_spawned",
+        tool_call_id: "c1",
+        child_id: "k1",
+        persona: "research",
+        label: "L",
+        depth: 1,
+      };
+      yield { type: "text_delta", text: "done" };
+      yield { type: "done", stop_reason: "end_turn" };
+    }
+    const listSessions = vi.fn(async () => [session({ id: "A" })]);
+    const d = deps({ chat, listSessions });
+    const { result } = renderHook(() => useFullBrain("fullbrain", d));
+    await waitFor(() => expect(result.current.active?.id).toBe("A"));
+    const before = listSessions.mock.calls.length;
+    await act(async () => {
+      await result.current.send("go");
+    });
+    // The spawn-triggered reload fires on top of the settle reload, so the list is
+    // refetched at least twice during the turn (spawn + settle).
+    expect(listSessions.mock.calls.length - before).toBeGreaterThanOrEqual(2);
+  });
+
   it("reports a non-image tool as kind 'thinking', not rendering", async () => {
     let release: () => void = () => {};
     const gate = new Promise<void>((r) => {

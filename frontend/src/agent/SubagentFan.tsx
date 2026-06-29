@@ -4,9 +4,42 @@
 // from the parent turn's `subagent_*` events (transcript.ts). Persona is a NEUTRAL tag;
 // the only semantic colours are the glyph's steel=running / green=done / rose=failed.
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import type { SubagentFan as Fan, SubagentChild } from "./transcript";
+
+// A child's live thinking trace: a collapsible disclosure (default open while the child
+// works so you watch it) that auto-scrolls to the newest line as tokens stream in —
+// the same behaviour as the main answer's "Thinking" trace, scoped to the fan row.
+function ChildThinking({ text, live }: { text: string; live: boolean }): ReactNode {
+  const [open, setOpen] = useState(true);
+  const ref = useRef<HTMLDivElement | null>(null);
+  // Follow the newest reasoning while it streams (only while open + live).
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `text` drives the re-scroll
+  useEffect(() => {
+    if (open && live && ref.current) ref.current.scrollTop = ref.current.scrollHeight;
+  }, [text, open, live]);
+  return (
+    <div className="fb-sa-think-wrap">
+      <button
+        type="button"
+        className="fb-sa-think-tog"
+        aria-expanded={open}
+        onClick={() => setOpen((o) => !o)}
+      >
+        <span className="fb-sa-think-car" aria-hidden="true">
+          {open ? "▾" : "▸"}
+        </span>
+        Thinking{live ? "…" : ""}
+      </button>
+      {open && (
+        <div className="fb-sa-think" ref={ref}>
+          {text}
+        </div>
+      )}
+    </div>
+  );
+}
 
 // A long fan collapses to this many rows + a "show N more" so a 16-leaf sweep doesn't
 // turn the bubble into a wall (review M10).
@@ -193,7 +226,7 @@ export function SubagentFan({
                   // Live mini-transcript while the child works: its thinking (dim) then
                   // its answer, both streaming in.
                   <>
-                    {c.liveReasoning && <div className="fb-sa-think">{c.liveReasoning}</div>}
+                    {c.liveReasoning && <ChildThinking text={c.liveReasoning} live={!settled} />}
                     {c.liveText && <div className="fb-sa-sum">{c.liveText}</div>}
                   </>
                 )}

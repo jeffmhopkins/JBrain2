@@ -590,6 +590,10 @@ export function useFullBrain(
         });
       } else {
         setSessionMessages(turnSessionId, (ms) => applyEvent(ms, event));
+        // A child was just minted server-side (children persist eagerly) — refresh the
+        // sessions list so the manager's rail shows the sub-agent nested under this chat
+        // WHILE it runs, not only after the turn settles.
+        if (event.type === "subagent_spawned") reloadSessions();
       }
     };
     // Reconnect to the still-running turn and resume folding its live events from where
