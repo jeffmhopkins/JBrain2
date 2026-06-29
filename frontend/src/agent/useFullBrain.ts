@@ -819,8 +819,15 @@ export function useFullBrain(
     active?.context_tokens != null && active?.context_window != null
       ? { used: active.context_tokens, base: active.context_tokens, window: active.context_window }
       : null;
+  // Shown for an empty chat AND while a turn is in flight (`busy`) — once you hit send,
+  // the optimistic bubbles make `messages` non-empty, but the first usage event hasn't
+  // landed yet, so without the `busy` arm the bar would blink out from send until the
+  // agent's first reply. The seed holds the capacity bar steady across that gap; the
+  // real fill takes over the moment usage arrives.
   const freshSeed: ContextUsage | null =
-    windowHint !== null && messages.length === 0 ? { used: 0, base: 0, window: windowHint } : null;
+    windowHint !== null && (messages.length === 0 || busy)
+      ? { used: 0, base: 0, window: windowHint }
+      : null;
   // `restored` (a populated chat's persisted fill) is preferred over the empty seed so
   // it doesn't depend on the transcript finishing its async load; only a session with
   // no stored fill falls through to the near-empty fresh-chat bar.

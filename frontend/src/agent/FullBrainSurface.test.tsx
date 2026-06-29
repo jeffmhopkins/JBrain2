@@ -1429,6 +1429,34 @@ describe("FullBrainSurface", () => {
     expect(screen.getByTestId("usage-base").textContent).toBe("9000");
   });
 
+  it("keeps the context meter present through a new session's first turn", async () => {
+    // A turn that streams a partial answer then hangs — this is the window between
+    // hitting send and the first usage event, where the meter must NOT blink out.
+    async function* answer(_b: ChatRequest, signal?: AbortSignal): AsyncGenerator<ChatEvent> {
+      yield { type: "text_delta", text: "thinking…" };
+      await new Promise<void>((_resolve, reject) => {
+        signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")));
+      });
+    }
+    render(<Harness d={deps({ chat: answer })} />);
+    await waitFor(() => screen.getByLabelText("Conversation"));
+    // Fresh session before send: the capabilities window seeds a near-empty bar.
+    await waitFor(() => expect(screen.getByTestId("usage").textContent).toBe("0/262144"));
+
+    fireEvent.change(screen.getByLabelText("Composer"), { target: { value: "go" } });
+    fireEvent.click(screen.getByRole("button", { name: "send" }));
+
+    // Mid-turn (busy, no usage event yet): the optimistic bubbles make `messages`
+    // non-empty, but the meter must STAY present (the regression this guards).
+    await waitFor(() => expect(screen.getByText("thinking…")).toBeInTheDocument());
+    expect(screen.getByTestId("busy").textContent).toBe("true");
+    expect(screen.getByTestId("usage").textContent).toBe("0/262144");
+
+    // Unwind the hanging turn so the test exits cleanly.
+    fireEvent.click(screen.getByRole("button", { name: "stop" }));
+    await waitFor(() => expect(screen.getByTestId("busy").textContent).toBe("false"));
+  });
+
   it("Stop aborts the live turn and settles the partial answer calmly", async () => {
     let aborted = false;
     // A turn that streams a partial answer then hangs until its signal aborts —
