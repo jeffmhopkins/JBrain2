@@ -3,6 +3,7 @@
 #
 #   sudo bash scripts/comfyui-setup.sh                  # recommended set
 #   sudo bash scripts/comfyui-setup.sh qwen-image       # explicit ids
+#   sudo bash scripts/comfyui-setup.sh ace-step-xl      # opt-in music (ACE-Step 1.5 XL Turbo)
 #
 # The sibling of scripts/local-llm-setup.sh, tuned for an AMD Strix Halo box
 # (gfx1151). NEVER run by the default install or dev-setup.sh — it downloads tens

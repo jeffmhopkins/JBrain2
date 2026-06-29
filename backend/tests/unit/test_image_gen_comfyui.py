@@ -16,12 +16,14 @@ from jbrain.image_gen.comfyui import (
     ImageGenError,
     ImageGenInterrupted,
     ImageGenTimeout,
+    MusicSpec,
     _parse_preview,
 )
-from jbrain.image_gen.fake import FakeImageGen
+from jbrain.image_gen.fake import FakeImageGen, FakeMusicGen
 
 BASE = "http://comfyui:8188"
 PNG = b"\x89PNG\r\n\x1a\n" + b"the-rendered-bytes"
+MP3 = b"\xff\xfb\x90\x00" + b"the-rendered-song"
 
 GEN = GenSpec(prompt="a cat", width=768, height=512, steps=12, seed=42, model="qwen-image-2512")
 EDIT = EditSpec(
@@ -34,8 +36,19 @@ EDIT = EditSpec(
     megapixels=1.6,
 )
 
+MUSIC = MusicSpec(
+    tags="lofi hip hop, 90 bpm",
+    lyrics="[verse]\nbuilding the graph tonight",
+    seconds=30,
+    steps=8,
+    seed=11,
+    model="ace-step-xl",
+)
+
 _OUT_IMAGE = {"filename": "out.png", "subfolder": "", "type": "output"}
 _HISTORY_DONE = {"abc123": {"outputs": {"7": {"images": [_OUT_IMAGE]}}}}
+_OUT_AUDIO = {"filename": "song.mp3", "subfolder": "audio", "type": "output"}
+_HISTORY_DONE_AUDIO = {"abc123": {"outputs": {"107": {"audio": [_OUT_AUDIO]}}}}
 
 
 def _client(handler, **kwargs) -> ComfyUiImageGen:  # type: ignore[no-untyped-def]
@@ -281,6 +294,82 @@ async def test_edit_with_reference_images_uploads_and_wires_each_encoder() -> No
         assert graph[graph[scale3]["inputs"]["image"][0]]["inputs"]["image"] == "in3.png"
 
 
+# --- the music path (audio output) ---------------------------------------------
+
+
+async def test_generate_music_submit_poll_view_happy_path() -> None:
+    calls: list[str] = []
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        calls.append(f"{request.method} {request.url.path}")
+        if request.url.path == "/prompt":
+            return httpx.Response(200, json={"prompt_id": "abc123"})
+        if request.url.path == "/history/abc123":
+            return httpx.Response(200, json=_HISTORY_DONE_AUDIO)
+        if request.url.path == "/view":
+            # The audio output ref's filename/subfolder/type drive the /view fetch.
+            assert request.url.params["filename"] == "song.mp3"
+            assert request.url.params["subfolder"] == "audio"
+            return httpx.Response(200, content=MP3)
+        return httpx.Response(404)
+
+    out = await _client(handle).generate_music(MUSIC)
+    assert out == MP3
+    assert calls == ["POST /prompt", "GET /history/abc123", "GET /view"]
+
+
+async def test_generate_music_fills_tags_lyrics_seconds_steps_and_seed() -> None:
+    seen: dict = {}
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/prompt":
+            seen["wf"] = json.loads(request.content)["prompt"]
+            return httpx.Response(200, json={"prompt_id": "abc123"})
+        if request.url.path == "/history/abc123":
+            return httpx.Response(200, json=_HISTORY_DONE_AUDIO)
+        return httpx.Response(200, content=MP3)
+
+    await _client(handle).generate_music(MUSIC)
+    wf = seen["wf"]
+    # Node ids match the on-box-validated ACE-Step 1.5 XL Turbo graph (see comfyui.py binding).
+    assert wf["94"]["inputs"]["tags"] == "lofi hip hop, 90 bpm"
+    assert wf["94"]["inputs"]["lyrics"] == "[verse]\nbuilding the graph tonight"
+    assert wf["94"]["inputs"]["duration"] == 30  # the encoder's duration hint tracks seconds
+    assert wf["98"]["inputs"]["seconds"] == 30  # the latent-audio node holds the length
+    assert wf["3"]["inputs"]["steps"] == 8
+    # The shared PrimitiveInt carries the seed; the encoder + sampler reference it (not literals).
+    assert wf["109"]["inputs"]["value"] == 11
+    assert wf["94"]["inputs"]["seed"] == ["109", 0]
+    assert wf["3"]["inputs"]["seed"] == ["109", 0]
+
+
+async def test_generate_music_unknown_model_raises_rather_than_running_the_wrong_graph() -> None:
+    import dataclasses
+
+    gen = _client(lambda r: httpx.Response(404))
+    with pytest.raises(ImageGenError):
+        await gen.generate_music(dataclasses.replace(MUSIC, model="not-a-real-music-model"))
+
+
+async def test_generate_music_does_not_match_an_image_only_output() -> None:
+    # A graph that emits ONLY `images` must not satisfy a music run — the scan keys on `audio`,
+    # so this polls until the (audio-less) history times out rather than returning a PNG.
+    clock = {"t": 0.0}
+
+    def tick() -> float:
+        clock["t"] += 1.0
+        return clock["t"]
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/prompt":
+            return httpx.Response(200, json={"prompt_id": "abc123"})
+        return httpx.Response(200, json=_HISTORY_DONE)  # images-only output, no `audio`
+
+    gen = _client(handle, timeout=2.5, monotonic=tick)
+    with pytest.raises(ImageGenTimeout):
+        await gen.generate_music(MUSIC)
+
+
 async def test_await_polls_until_outputs_appear() -> None:
     polls = {"n": 0}
 
@@ -502,3 +591,13 @@ async def test_fake_image_gen_returns_valid_png_and_records_specs() -> None:
     edit_bytes = await fake.edit(EDIT, source)
     assert edit_bytes.startswith(b"\x89PNG\r\n\x1a\n")
     assert fake.last_edit == EDIT and fake.last_source == source
+
+
+async def test_fake_music_gen_returns_valid_mp3_and_records_spec() -> None:
+    fake = FakeMusicGen()
+    ticks: list[tuple[int, int, bytes | None]] = []
+    out = await fake.generate_music(MUSIC, on_progress=lambda s, t, p: ticks.append((s, t, p)))
+    assert out.startswith(b"\xff\xfb")  # MP3 frame sync
+    assert fake.last_spec == MUSIC
+    # Audio has no preview frames, so every tick's preview is None (not a fake JPEG).
+    assert ticks == [(4, 8, None), (8, 8, None)]

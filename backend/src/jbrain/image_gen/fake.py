@@ -1,21 +1,26 @@
-"""In-memory ImageGen for tests — the only image-gen tests may call.
+"""In-memory ImageGen/MusicGen for tests — the only image/music-gen tests may call.
 
-Returns a tiny but VALID 1x1 PNG (real magic bytes) so the blob store + serving
-sniff path exercise the real code, and records the last spec for assertions. No
-network, no ComfyUI (rule #5)."""
+Returns a tiny but VALID 1x1 PNG (image) or minimal MP3 (music) — real magic bytes — so the
+blob store + serving sniff path exercise the real code, and records the last spec for
+assertions. No network, no ComfyUI (rule #5)."""
 
 from __future__ import annotations
 
 import base64
 from collections.abc import Sequence
 
-from jbrain.image_gen.comfyui import EditSpec, GenSpec, OnProgress
+from jbrain.image_gen.comfyui import EditSpec, GenSpec, MusicSpec, OnProgress
 
 # A known-good 1x1 truecolor PNG — real \x89PNG\r\n\x1a\n magic + IHDR/IDAT/IEND.
 _PNG_1X1 = base64.b64decode(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4//8/AAX+Av4N70a4AAAAAElFTkSuQmCC"
 )
 _PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
+
+# One MPEG-1 Layer III frame: sync 0xFFFB, 128 kbps, 44.1 kHz → a 417-byte frame. The 4-byte
+# header then a zero-filled payload — a valid (silent) frame a sniffer/<audio> element accepts,
+# the audio analogue of the 1x1 PNG above.
+_MP3_SILENT = b"\xff\xfb\x90\x00" + b"\x00" * 413
 
 
 def _png_with_dims(width: int, height: int) -> bytes:
@@ -75,3 +80,26 @@ class FakeImageGen:
         self.last_sources = [source, *extra_sources]
         self._emit(on_progress, spec.steps)
         return _png_with_dims(*(self.out_dims or (spec.width, spec.height)))
+
+
+class FakeMusicGen:
+    """Records the last music call and returns minimal valid MP3 bytes. Audio sampling emits
+    no preview frames, so the simulated ticks carry `None` (not a fake JPEG) — matching the
+    real driver's audio path."""
+
+    def __init__(self) -> None:
+        self.last_spec: MusicSpec | None = None
+        # (step, total, preview) ticks the last call emitted — preview is always None for audio.
+        self.progress: list[tuple[int, int, bytes | None]] = []
+
+    def _emit(self, on_progress: OnProgress | None, steps: int) -> None:
+        if on_progress is None:
+            return
+        for step in (max(steps // 2, 1), steps):
+            self.progress.append((step, steps, None))
+            on_progress(step, steps, None)
+
+    async def generate_music(self, spec: MusicSpec, on_progress: OnProgress | None = None) -> bytes:
+        self.last_spec = spec
+        self._emit(on_progress, spec.steps)
+        return _MP3_SILENT

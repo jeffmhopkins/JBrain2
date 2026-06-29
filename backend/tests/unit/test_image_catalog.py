@@ -10,7 +10,7 @@ def test_catalog_entries_are_well_formed() -> None:
     ids = [m.id for m in catalog.CATALOG]
     assert len(ids) == len(set(ids)), "catalog ids must be unique"
     for m in catalog.CATALOG:
-        assert m.kind in {"generate", "edit"}
+        assert m.kind in {"generate", "edit", "music"}
         assert m.files, "a model must download at least one file"
         assert 0 < m.fast_steps <= m.quality_steps
         # Every file lands in a ComfyUI subdir the server actually reads.
@@ -72,6 +72,28 @@ def test_dreamshaper_is_a_single_all_in_one_checkpoint() -> None:
     assert m.fast_steps == 4 and m.quality_steps == 8
     # Opt-in, so a quality-only box stays lean.
     assert not m.recommended
+
+
+def test_music_model_is_the_ace_step_split_file_set() -> None:
+    # The opt-in music entry (docs/proposed/MUSIC_GEN_PLAN.md): kind "music", the ACE-Step 1.5
+    # XL Turbo split files (DiT + Qwen planner + VAE), non-recommended so a default provision
+    # skips it. The exact repo paths are the M0-confirmed values.
+    m = catalog.get("ace-step-xl")
+    assert m is not None
+    assert m.kind == "music" and m.workflow == "ace_step_music.json"
+    assert not m.recommended  # opt-in: provision with `comfyui-setup.sh ace-step-xl`
+    subdirs = {f.dest_subdir for f in m.files}
+    assert subdirs == {"diffusion_models", "text_encoders", "vae"}
+    assert all(f.hf_repo == "Comfy-Org/ace_step_1.5_ComfyUI_files" for f in m.files)
+    dit = next(f for f in m.files if f.dest_subdir == "diffusion_models")
+    assert dit.repo_path.endswith("acestep_v1.5_xl_turbo_bf16.safetensors")
+    # The turbo schedule's validated band is a single fixed step count (not a fast/quality split).
+    assert m.fast_steps == 8 and m.quality_steps == 8
+
+
+def test_music_model_is_excluded_from_the_recommended_set() -> None:
+    # A default `comfyui-setup.sh` run (no ids) must NOT pull the ~19 GB music weights.
+    assert "ace-step-xl" not in catalog.recommended_ids()
 
 
 def test_generate_and_edit_share_the_text_encoder_and_vae() -> None:

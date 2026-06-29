@@ -128,6 +128,16 @@ Run on the owner's box against `docker.io/kyuz0/amd-strix-halo-comfyui:latest`. 
   - Turbo at **8 steps / cfg 1** is the validated fast band; an sft "quality" entry would run more steps.
 
 ## Wave M1 — catalog + workflow + audio-aware driver
+> **Status: IMPLEMENTED** on `claude/comfy-music-generator-o6q046` (backend only). Built against
+> the M0 findings, with three deviations from the original text below, all driven by the exported
+> graph: (1) the binding targets the **1.5** nodes (`TextEncodeAceStepAudio1.5`,
+> `EmptyAceStep1.5LatentAudio`, `DualCLIPLoader` type `ace`, a shared `PrimitiveInt` seed), not the
+> v1 names; (2) `MusicSpec` fields are `tags`/`negative_tags` (matching the workflow node keys); (3)
+> the turbo graph has **no negative-tags node** (it derives the negative via `ConditioningZeroOut`),
+> so `negative_tags` is accepted-but-unwired (the binding's `negative` is `None`) until a graph
+> variant carries one. The audio-output fetch is a threaded `output_key` (`images`|`audio`) through
+> `_run`/`_run_ws`/`_await`/`_poll_once` — no behavioral change to the image path.
+
 - **Catalog** (`image_gen/catalog.py`): add `kind="music"` and an `ace-step-xl` `ImageModel` (rename
   the dataclass's doc to "media model" or keep `ImageModel` — it's already generic enough; the
   `kind` field carries the distinction). Files = the XL DiT (`diffusion_models`), the Qwen LM

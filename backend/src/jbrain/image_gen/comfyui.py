@@ -1,8 +1,10 @@
-"""ComfyUI HTTP client for local Qwen-Image generation (docs/IMAGE_GEN_PLAN.md).
+"""ComfyUI HTTP client for local Qwen-Image generation + ACE-Step music (docs/IMAGE_GEN_PLAN.md,
+docs/proposed/MUSIC_GEN_PLAN.md).
 
 The graph SHAPE lives in the JSON workflow templates, not here: this client is a
 generic ComfyUI driver that loads a template, fills a fixed set of well-known
-node slots, submits, polls for completion, and fetches the result PNG. The
+node slots, submits, polls for completion, and fetches the result file (PNG for
+image graphs, MP3 for the music graph — the only difference is the output key). The
 workflow JSON + the node-id/key constants below are the host-validated
 integration seam — they cannot be checked against a live ComfyUI from CI, so they
 are deliberately small and owner-tuned on the Strix Halo box. Keeping the driver
@@ -120,6 +122,50 @@ _EDIT_GRAPHS: dict[str, tuple[str, _Binding]] = {
     "qwen-image-edit-lightning": (_EDIT_LIGHTNING_TEMPLATE, _EDIT_BINDING),
 }
 
+# The music graph (ACE-Step 1.5 XL Turbo), exported from the box in the M0 spike
+# (docs/proposed/MUSIC_GEN_PLAN.md). Same generic driver, a different output key: audio
+# instead of images. The submit/poll/WebSocket plumbing is reused unchanged (audio sampling
+# emits the same `progress` frames, just no `b_preview` image frames — `preview` stays None).
+_MUSIC_TEMPLATE = "ace_step_music.json"
+
+
+@dataclass(frozen=True)
+class _MusicBinding:
+    """Which node ids in the music template hold the slots the driver overwrites.
+
+    Mirrors `_Binding` for audio. The seed is a shared `PrimitiveInt` feeding BOTH the encoder
+    and the sampler, so the driver sets one node's `value`, not two. The turbo graph has no
+    negative-tags node (it derives the negative via ConditioningZeroOut), so `negative` is None
+    and a spec's `negative_tags` is accepted-but-unwired until a graph variant carries one."""
+
+    tags: str  # TextEncodeAceStepAudio1.5 — the style/tags + lyrics encoder
+    latent: str  # EmptyAceStep1.5LatentAudio — holds `seconds` (the track length)
+    sampler: str  # KSampler — holds `steps`
+    seed: str  # PrimitiveInt — its `value` is the shared seed (encoder + sampler reference it)
+    duration_key: str | None = None  # the encoder also echoes a `duration` hint, if present
+    negative: str | None = None  # a negative-tags encoder, if the graph has one (turbo: none)
+    tags_key: str = "tags"
+    lyrics_key: str = "lyrics"
+
+
+# ACE-Step 1.5 XL Turbo, validated on-box (M0): encoder=94 (TextEncodeAceStepAudio1.5), the
+# latent-audio node=98 (EmptyAceStep1.5LatentAudio.seconds), KSampler=3, and a shared
+# PrimitiveInt=109 feeding the seed. The encoder also carries a `duration` hint kept in sync
+# with the latent's seconds. The loaders + ModelSamplingAuraFlow/ConditioningZeroOut are authored.
+_MUSIC_BINDING = _MusicBinding(
+    tags="94", latent="98", sampler="3", seed="109", duration_key="duration"
+)
+# A music model id -> its (template, binding), mirroring _GEN_GRAPHS/_EDIT_GRAPHS. An unknown
+# id raises (below) — we never run the wrong graph against whatever weights ComfyUI has loaded.
+_MUSIC_GRAPHS: dict[str, tuple[str, _MusicBinding]] = {
+    "ace-step-xl": (_MUSIC_TEMPLATE, _MUSIC_BINDING),
+}
+
+# ComfyUI output keys the driver scans /history for. Image graphs emit `images`; the audio
+# graph's SaveAudio* emits `audio` (same {filename, subfolder, type} shape, so /view is reused).
+_IMAGE_OUTPUT_KEY = "images"
+_AUDIO_OUTPUT_KEY = "audio"
+
 _INPUT_IMAGE_KEY = "image"
 
 # Qwen-Image-Edit-2511's multi-image text encoder: it carries image1..image3 slots, so a
@@ -173,6 +219,23 @@ class EditSpec:
     negative_prompt: str = ""  # what to avoid; empty leaves the graph's authored default
 
 
+@dataclass(frozen=True)
+class MusicSpec:
+    """A text(+lyrics)→song request. `tags` is the style/genre prompt; `lyrics` carries the
+    words with structure tags (lowercase `[verse]`/`[chorus]` — M0: capitalized tags render an
+    instrumental). `seconds` is the requested length (a HINT — the model may end a song early,
+    M0). `seed` is the resolved seed (random seeds chosen upstream and recorded, so a result is
+    repeatable). `negative_tags` is accepted for API symmetry but unwired in the turbo graph."""
+
+    tags: str
+    lyrics: str
+    seconds: float
+    steps: int
+    seed: int
+    model: str
+    negative_tags: str = ""
+
+
 class ImageGen(Protocol):
     async def generate(
         self, spec: GenSpec, on_progress: OnProgress | None = None
@@ -186,6 +249,12 @@ class ImageGen(Protocol):
         *,
         extra_sources: Sequence[bytes] = (),
     ) -> bytes: ...  # PNG bytes — `source` is primary; `extra_sources` are references
+
+
+class MusicGen(Protocol):
+    async def generate_music(
+        self, spec: MusicSpec, on_progress: OnProgress | None = None
+    ) -> bytes: ...  # audio bytes (MP3)
 
 
 def _load_template(name: str) -> dict[str, Any]:
@@ -250,6 +319,41 @@ class ComfyUiImageGen:
             raise ImageGenError(f"no edit graph for model {model!r}")
         return graph
 
+    async def generate_music(self, spec: MusicSpec, on_progress: OnProgress | None = None) -> bytes:
+        """Text(+lyrics)→song: load the music template, fill the tags/lyrics/seconds/steps/seed
+        slots, and run it — fetching the `audio` output, not `images`. Mirrors `generate()`; the
+        submit/poll/WebSocket plumbing is reused unchanged."""
+        template, binding = self._music_graph(spec.model)
+        workflow = _load_template(template)
+        self._fill_music(workflow, spec, binding)
+        return await self._run(workflow, on_progress, output_key=_AUDIO_OUTPUT_KEY)
+
+    @staticmethod
+    def _music_graph(model: str) -> tuple[str, _MusicBinding]:
+        """The (template, binding) for a music model. Unknown id -> ImageGenError, the same
+        guard as _gen_graph/_edit_graph: a misrouted model fails cleanly, never the wrong graph."""
+        graph = _MUSIC_GRAPHS.get(model)
+        if graph is None:
+            raise ImageGenError(f"no music graph for model {model!r}")
+        return graph
+
+    @staticmethod
+    def _fill_music(workflow: dict[str, Any], spec: MusicSpec, binding: _MusicBinding) -> None:
+        """Fill the music slots: tags + lyrics on the encoder, the length on the latent node
+        (echoed into the encoder's `duration` hint), steps on the sampler, and the shared seed
+        on the PrimitiveInt both reference. A negative-tags node is filled only when the graph
+        has one and a negative was given (the turbo graph has neither)."""
+        encoder = workflow[binding.tags]["inputs"]
+        encoder[binding.tags_key] = spec.tags
+        encoder[binding.lyrics_key] = spec.lyrics
+        if binding.duration_key is not None:
+            encoder[binding.duration_key] = spec.seconds
+        workflow[binding.latent]["inputs"]["seconds"] = spec.seconds
+        workflow[binding.sampler]["inputs"]["steps"] = spec.steps
+        workflow[binding.seed]["inputs"]["value"] = spec.seed
+        if binding.negative is not None and spec.negative_tags:
+            workflow[binding.negative]["inputs"][binding.tags_key] = spec.negative_tags
+
     async def edit(
         self,
         spec: EditSpec,
@@ -298,16 +402,24 @@ class ComfyUiImageGen:
             if node.get("class_type") == _EDIT_ENCODER_CLASS:
                 node["inputs"][f"image{index}"] = [scale_id, 0]
 
-    async def _run(self, workflow: dict[str, Any], on_progress: OnProgress | None) -> bytes:
-        """Submit + await the final image. With `on_progress` we drive ComfyUI's
+    async def _run(
+        self,
+        workflow: dict[str, Any],
+        on_progress: OnProgress | None,
+        output_key: str = _IMAGE_OUTPUT_KEY,
+    ) -> bytes:
+        """Submit + await the final output. With `on_progress` we drive ComfyUI's
         WebSocket for live step/preview ticks; without one we use the plain
-        submit→poll path (the fake + every existing caller)."""
+        submit→poll path (the fake + every existing caller). `output_key` is the
+        /history outputs array to fetch — `images` for image graphs, `audio` for music."""
         if on_progress is None:
             prompt_id = await self._submit(workflow)
-            return await self._await(prompt_id)
-        return await self._run_ws(workflow, on_progress)
+            return await self._await(prompt_id, output_key)
+        return await self._run_ws(workflow, on_progress, output_key)
 
-    async def _run_ws(self, workflow: dict[str, Any], on_progress: OnProgress) -> bytes:
+    async def _run_ws(
+        self, workflow: dict[str, Any], on_progress: OnProgress, output_key: str = _IMAGE_OUTPUT_KEY
+    ) -> bytes:
         """Connect ComfyUI's /ws FIRST (so no early frames are missed), submit under
         the same client_id, drive `on_progress` from the progress + preview frames
         until the run ends, then fetch the final image over HTTP (already complete)."""
@@ -326,7 +438,7 @@ class ComfyUiImageGen:
         except (OSError, InvalidURI, WebSocketException) as exc:
             raise ImageGenError(f"ComfyUI websocket failed: {exc}") from exc
         assert prompt_id is not None  # set before any normal exit from the `with`
-        return await self._await(prompt_id)
+        return await self._await(prompt_id, output_key)
 
     async def _drive_ws(
         self, ws: AsyncIterable[str | bytes], prompt_id: str, on_progress: OnProgress
@@ -423,21 +535,25 @@ class ComfyUiImageGen:
             raise ImageGenError(f"ComfyUI rejected the workflow: {body!r}")
         return str(prompt_id)
 
-    async def _await(self, prompt_id: str) -> bytes:
-        """Poll /history until the run's outputs carry an image, then fetch it.
+    async def _await(self, prompt_id: str, output_key: str = _IMAGE_OUTPUT_KEY) -> bytes:
+        """Poll /history until the run's outputs carry an `output_key` file, then fetch it.
 
         Bounded by the overall timeout; each empty poll sleeps `poll_interval`."""
         deadline = self._monotonic() + self._timeout
         while True:
-            image_ref = await self._poll_once(prompt_id)
-            if image_ref is not None:
-                return await self._fetch_view(image_ref)
+            ref = await self._poll_once(prompt_id, output_key)
+            if ref is not None:
+                return await self._fetch_view(ref)
             if self._monotonic() >= deadline:
                 raise ImageGenTimeout(f"ComfyUI did not finish within {self._timeout:g}s")
             await self._sleep(self._poll_interval)
 
-    async def _poll_once(self, prompt_id: str) -> dict[str, Any] | None:
-        """Return the first output image ref once present, else None (keep polling)."""
+    async def _poll_once(
+        self, prompt_id: str, output_key: str = _IMAGE_OUTPUT_KEY
+    ) -> dict[str, Any] | None:
+        """Return the first output ref under `output_key` once present, else None (keep polling).
+        `output_key` is `images` for image graphs, `audio` for music — both carry the same
+        {filename, subfolder, type} shape, so the fetch downstream is identical."""
         try:
             resp = await self._client.get(f"{self._base}/history/{prompt_id}")
             resp.raise_for_status()
@@ -456,27 +572,27 @@ class ComfyUiImageGen:
         if not isinstance(outputs, dict):
             return None
         for node_output in outputs.values():
-            images = node_output.get("images") if isinstance(node_output, dict) else None
-            if isinstance(images, list) and images:
-                first = images[0]
+            items = node_output.get(output_key) if isinstance(node_output, dict) else None
+            if isinstance(items, list) and items:
+                first = items[0]
                 if isinstance(first, dict) and first.get("filename"):
                     return first
         return None
 
-    async def _fetch_view(self, image_ref: dict[str, Any]) -> bytes:
-        """GET the rendered PNG bytes for an output image ref."""
+    async def _fetch_view(self, output_ref: dict[str, Any]) -> bytes:
+        """GET the rendered bytes for an output ref (PNG for images, MP3 for music)."""
         params = {
-            "filename": image_ref.get("filename", ""),
-            "subfolder": image_ref.get("subfolder", ""),
-            "type": image_ref.get("type", "output"),
+            "filename": output_ref.get("filename", ""),
+            "subfolder": output_ref.get("subfolder", ""),
+            "type": output_ref.get("type", "output"),
         }
         try:
             resp = await self._client.get(f"{self._base}/view", params=params)
             resp.raise_for_status()
         except httpx.HTTPError as exc:
-            raise ImageGenError("could not fetch the generated image from ComfyUI") from exc
+            raise ImageGenError("could not fetch the generated output from ComfyUI") from exc
         if not resp.content:
-            raise ImageGenError("ComfyUI returned an empty image body")
+            raise ImageGenError("ComfyUI returned an empty output body")
         return resp.content
 
 

@@ -26,6 +26,11 @@ so a default provision downloads everything the `fast` and `quality` paths of bo
 (the Lightning LoRA is shared, ~0.85 GB on top of the base weights). The `dreamshaper` entry
 is a tiny standalone SDXL checkpoint kept as a lightweight option; it ships non-recommended
 and is no longer wired to the `speed` knob.
+
+The `ace-step-xl` entry (kind="music") extends the same catalog/setup seam to music generation
+(ACE-Step 1.5 XL Turbo) on the SAME comfyui service — validated on-box in the M0 spike
+(docs/proposed/MUSIC_GEN_PLAN.md). It ships non-recommended (opt-in: `comfyui-setup.sh
+ace-step-xl`) while that plan is still in docs/proposed/.
 """
 
 import json
@@ -62,7 +67,7 @@ class ImageModel:
 
     id: str  # stable settings-choice id
     label: str  # human label for the settings screen
-    kind: str  # "generate" (text->image) or "edit" (image->image)
+    kind: str  # "generate" (text->image), "edit" (image->image), or "music" (text+lyrics->song)
     workflow: str  # the workflows/ template filename the driver fills for it
     files: tuple[ImageFile, ...]  # everything ComfyUI needs to run it
     size_gb: float  # total on-disk download
@@ -130,6 +135,28 @@ _DREAMSHAPER_CHECKPOINT = ImageFile(
     hf_repo="Lykon/dreamshaper-xl-lightning",
     repo_path="DreamShaperXL_Lightning.safetensors",
     dest_subdir="checkpoints",
+)
+
+# ACE-Step 1.5 XL Turbo — the OPT-IN music capability on the SAME comfyui service
+# (docs/proposed/MUSIC_GEN_PLAN.md), validated on-box in the M0 spike. Split-file form
+# like Qwen: the XL turbo DiT (diffusion_models), the largest Qwen LM planner used as the
+# text encoder (loaded into a DualCLIPLoader with type "ace"), and the ACE VAE. Repo paths
+# + sizes are the M0-confirmed values read off the HF repo.
+_ACE_REPO = "Comfy-Org/ace_step_1.5_ComfyUI_files"
+_ACE_DIFFUSION = ImageFile(
+    hf_repo=_ACE_REPO,
+    repo_path="split_files/diffusion_models/acestep_v1.5_xl_turbo_bf16.safetensors",
+    dest_subdir="diffusion_models",
+)
+_ACE_TEXT_ENCODER = ImageFile(
+    hf_repo=_ACE_REPO,
+    repo_path="split_files/text_encoders/qwen_4b_ace15.safetensors",
+    dest_subdir="text_encoders",
+)
+_ACE_VAE = ImageFile(
+    hf_repo=_ACE_REPO,
+    repo_path="split_files/vae/ace_1.5_vae.safetensors",
+    dest_subdir="vae",
 )
 
 
@@ -237,6 +264,33 @@ CATALOG: tuple[ImageModel, ...] = (
         "renders in seconds on the iGPU at 4-8 steps. Lower fidelity than Qwen; kept as a "
         "lightweight standalone (the agent's fast path is qwen-image-lightning). Install with "
         "`comfyui-setup.sh dreamshaper`.",
+    ),
+    ImageModel(
+        id="ace-step-xl",
+        label="ACE-Step 1.5 XL Turbo · music",
+        kind="music",
+        workflow="ace_step_music.json",
+        # Split-file form: the XL turbo DiT (~10 GB) + the largest Qwen LM planner (~8.4 GB,
+        # the text encoder) + the ACE VAE (~0.3 GB). ~18.7 GB on disk; round up.
+        files=(_ACE_DIFFUSION, _ACE_TEXT_ENCODER, _ACE_VAE),
+        size_gb=19.0,
+        # M0-measured: the VAE-decode stage peaks ~48 GB of unified memory — well above the
+        # ~19 GB resident weights. That peak is what the time-share must budget (and is why
+        # music can't co-reside with the full ~91 GB local-LLM set under the ~124 GB pool).
+        vram_gb=48.0,
+        # The distilled turbo schedule's M0-validated band: 8 steps at CFG 1 (authored into the
+        # workflow). Not a fast/quality split — an sft variant would be a separate quality entry.
+        fast_steps=8,
+        quality_steps=8,
+        # Opt-in: a default comfyui-setup.sh run SKIPS it (recommended_ids()); the operator
+        # provisions it explicitly with `comfyui-setup.sh ace-step-xl`. Stays non-recommended
+        # while the plan lives in docs/proposed/ (not yet on the roadmap).
+        recommended=False,
+        note="ACE-Step 1.5 XL Turbo (4B DiT, native bf16) — text tags + lyrics → a full song, "
+        "served by the same opt-in comfyui service as image gen. ~19 GB on disk, ~48 GB "
+        "unified-memory peak at VAE decode (time-shared with the LLMs, never co-resident). "
+        "Opt-in: install with `comfyui-setup.sh ace-step-xl`. Lyrics want lowercase "
+        "[verse]/[chorus] structure tags or the model renders an instrumental.",
     ),
 )
 
