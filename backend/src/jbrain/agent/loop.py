@@ -56,6 +56,7 @@ from jbrain.llm import (
     LlmMessage,
     LlmRouter,
     LlmTurn,
+    LlmUsage,
     ReasoningChunk,
     TextChunk,
     ToolCall,
@@ -321,6 +322,51 @@ class AgentLoop:
             return False
         return tree.root_exhausted() if depth == 0 else tree.children_exhausted()
 
+    async def _converse_turn(
+        self,
+        system_prompt: str,
+        messages: Sequence[LlmMessage],
+        tools: Sequence[object],
+        reasoning_effort: str | None,
+        on_text: Callable[[str], None] | None,
+        on_reasoning: Callable[[str], None] | None,
+    ) -> LlmTurn:
+        """One model turn for `run`. With no streaming callbacks it's a plain
+        `converse` (the existing non-streaming path, unchanged). With `on_text`/
+        `on_reasoning` it streams via `converse_stream` and forwards each chunk to the
+        callback as it arrives — the sub-agent spawner uses this to surface a child's
+        live tokens — while still returning the closing turn so the loop is identical."""
+        if on_text is None and on_reasoning is None:
+            return await self._router.converse(
+                self._task,
+                system=system_prompt,
+                messages=messages,
+                tools=tools,  # type: ignore[arg-type]
+                max_tokens=TURN_MAX_TOKENS,
+                strength=SYSTEM_STRENGTH,
+                effort_override=reasoning_effort,
+            )
+        turn: LlmTurn | None = None
+        async for part in self._router.converse_stream(
+            self._task,
+            system=system_prompt,
+            messages=messages,
+            tools=tools,  # type: ignore[arg-type]
+            max_tokens=TURN_MAX_TOKENS,
+            strength=SYSTEM_STRENGTH,
+            effort_override=reasoning_effort,
+        ):
+            if isinstance(part, TextChunk):
+                if part.text and on_text is not None:
+                    on_text(part.text)
+            elif isinstance(part, ReasoningChunk):
+                if part.text and on_reasoning is not None:
+                    on_reasoning(part.text)
+            else:
+                turn = part
+        # The adapter always closes a stream with an LlmTurn; guard the contract.
+        return turn or LlmTurn(text="", tool_calls=(), stop_reason="end_turn", usage=LlmUsage(0, 0))
+
     async def run(
         self,
         *,
@@ -337,6 +383,8 @@ class AgentLoop:
         on_step: Callable[[int, int], None] | None = None,
         reasoning_effort: str | None = None,
         force_final_answer: bool = False,
+        on_text: Callable[[str], None] | None = None,
+        on_reasoning: Callable[[str], None] | None = None,
     ) -> AgentResult:
         scopes = tuple(scopes)
         tools = self._registry.schemas_for(scopes, tools_allow)
@@ -362,16 +410,8 @@ class AgentLoop:
         idx = 0
 
         for step in range(self._g.max_steps):
-            turn = await self._router.converse(
-                self._task,
-                system=system_prompt,
-                messages=messages,
-                tools=tools,
-                max_tokens=TURN_MAX_TOKENS,
-                strength=SYSTEM_STRENGTH,
-                # A caller (the sub-agent spawner) may steer this run's reasoning
-                # effort; dropped by the router for a non-reasoning model.
-                effort_override=reasoning_effort,
+            turn = await self._converse_turn(
+                system_prompt, messages, tools, reasoning_effort, on_text, on_reasoning
             )
             spent_call = turn.usage.input_tokens + turn.usage.output_tokens
             cost += spent_call
@@ -420,14 +460,8 @@ class AgentLoop:
             # final turn with NO tools so the model must synthesize an answer from what it
             # already gathered — a research child otherwise reports nothing the moment it
             # hits the cap. Still flagged `max_steps` so the caller knows it's step-limited.
-            final = await self._router.converse(
-                self._task,
-                system=system_prompt,
-                messages=messages,
-                tools=(),
-                max_tokens=TURN_MAX_TOKENS,
-                strength=SYSTEM_STRENGTH,
-                effort_override=reasoning_effort,
+            final = await self._converse_turn(
+                system_prompt, messages, (), reasoning_effort, on_text, on_reasoning
             )
             spent_final = final.usage.input_tokens + final.usage.output_tokens
             cost += spent_final

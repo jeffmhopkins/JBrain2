@@ -296,6 +296,21 @@ class SubagentProgressEvent(BaseModel):
     tree_budget: int = 0
 
 
+class SubagentDeltaEvent(BaseModel):
+    """A live token slice from a running child (Wave S3 follow-up): the child's loop
+    streams its turns, and each answer/reasoning chunk is forwarded — tagged by
+    `child_id` — onto the parent turn's stream, so the in-chat fan can show the child
+    *working* (a live mini-transcript) rather than only a step counter. `channel` is
+    "answer" (the child's prose) or "reasoning" (its thinking trace). Ephemeral, never
+    persisted — the durable record is the child's own transcript + run-log."""
+
+    type: Literal["subagent_delta"] = "subagent_delta"
+    tool_call_id: str = ""
+    child_id: str
+    channel: Literal["answer", "reasoning"] = "answer"
+    text: str = ""
+
+
 class SubagentDoneEvent(BaseModel):
     """A child finished (Wave S2): `ok` is a clean, substantive answer; otherwise it
     errored or degraded (max_steps / empty). The accordion flips the row to green ✓ /
@@ -367,6 +382,7 @@ ChatEvent = Annotated[
     | UsageEvent
     | SubagentSpawnedEvent
     | SubagentProgressEvent
+    | SubagentDeltaEvent
     | SubagentDoneEvent
     | DoneEvent
     | VerdictEvent

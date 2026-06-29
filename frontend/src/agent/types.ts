@@ -173,6 +173,16 @@ export interface SubagentProgressEvent {
   tree_spent: number;
   tree_budget: number;
 }
+/** A live token slice from a running child: its loop streams turns, and each
+ * answer/reasoning chunk is forwarded (tagged by child_id) so the fan shows the child
+ * working — a live mini-transcript. Ephemeral. */
+export interface SubagentDeltaEvent {
+  type: "subagent_delta";
+  tool_call_id: string;
+  child_id: string;
+  channel: "answer" | "reasoning";
+  text: string;
+}
 /** A child finished: `ok` (clean substantive answer) → green ✓, else → rose ✕.
  * `summary` is its answer or error/truncation note (shown on expand); the budget
  * snapshot refreshes the meter. Ephemeral. */
@@ -202,6 +212,7 @@ export type ChatEvent =
   | GeneralKnowledgeEvent
   | SubagentSpawnedEvent
   | SubagentProgressEvent
+  | SubagentDeltaEvent
   | SubagentDoneEvent;
 
 /** A persisted conversation turn (GET /api/sessions/{id}/transcript) — replays a

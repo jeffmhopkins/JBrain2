@@ -152,8 +152,16 @@ export function SubagentFan({
       </div>
       {shown.map((c) => {
         const isFail = c.status === "failed";
-        // A failed row auto-expands its error (like StepRow) — visible without a tap.
-        const open = expanded.has(c.childId) || isFail;
+        const settled = c.status !== "running";
+        // The child is actively streaming tokens — auto-expand it so you watch it work
+        // (with a serial local fan only one streams at a time). A failed row also
+        // auto-expands its error.
+        const streaming = !settled && !isQueued(c) && Boolean(c.liveText || c.liveReasoning);
+        const open = expanded.has(c.childId) || isFail || streaming;
+        // The "Open session" link is gated to a SETTLED child — a still-running child
+        // has nothing persisted yet, so opening it would land on a blank conversation.
+        const showOpen = Boolean(onOpen) && settled;
+        const hasBody = settled ? Boolean(c.summary) || showOpen : streaming;
         return (
           <div className={`fb-sa-row${c.depth >= 2 ? " sub" : ""}`} key={c.childId}>
             <button
@@ -172,17 +180,26 @@ export function SubagentFan({
                 {open ? "▾" : "▸"}
               </span>
             </button>
-            {/* A thin per-row bar: indeterminate sweep while running (children run
-                non-streaming — no true %), solid green/rose once settled. */}
+            {/* A thin per-row bar: indeterminate sweep while running (no true %),
+                solid green/rose once settled. */}
             <div className={`fb-sa-bar ${c.status}`} aria-hidden="true">
               <i />
             </div>
-            {open && (c.summary || onOpen) && (
+            {open && hasBody && (
               <div className={`fb-sa-detail${isFail ? " err" : ""}`}>
-                {c.summary && <div className="fb-sa-sum">{c.summary}</div>}
+                {settled ? (
+                  c.summary && <div className="fb-sa-sum">{c.summary}</div>
+                ) : (
+                  // Live mini-transcript while the child works: its thinking (dim) then
+                  // its answer, both streaming in.
+                  <>
+                    {c.liveReasoning && <div className="fb-sa-think">{c.liveReasoning}</div>}
+                    {c.liveText && <div className="fb-sa-sum">{c.liveText}</div>}
+                  </>
+                )}
                 {/* The child IS its own session (childId = session id); open it to read
                     the full transcript its run persisted. */}
-                {onOpen && (
+                {showOpen && onOpen && (
                   <button type="button" className="fb-sa-open" onClick={() => onOpen(c.childId)}>
                     Open sub-agent session →
                   </button>

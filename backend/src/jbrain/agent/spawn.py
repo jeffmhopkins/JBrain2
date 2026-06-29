@@ -37,6 +37,7 @@ from jbrain.agent.briefs import BriefError, render_brief
 from jbrain.agent.clock import now_block
 from jbrain.agent.contracts import (
     ChatEvent,
+    SubagentDeltaEvent,
     SubagentDoneEvent,
     SubagentProgressEvent,
     SubagentSpawnedEvent,
@@ -338,7 +339,7 @@ class SpawnService:
 
             def _on_step(step: int, _cost: int) -> None:
                 # Live per-step progress so the UI's budget meter + step count move while
-                # this non-streaming child works (Wave S2 follow-up).
+                # the child works (Wave S2 follow-up).
                 _emit(
                     ctx,
                     SubagentProgressEvent(
@@ -349,6 +350,14 @@ class SpawnService:
                         tree_budget=tree.tree_budget,
                     ),
                 )
+
+            def _on_text(text: str) -> None:
+                # Forward the child's live answer tokens onto the parent stream so the fan
+                # row shows it writing in real time (Wave S3 follow-up).
+                _emit(ctx, SubagentDeltaEvent(child_id=child.id, channel="answer", text=text))
+
+            def _on_reasoning(text: str) -> None:
+                _emit(ctx, SubagentDeltaEvent(child_id=child.id, channel="reasoning", text=text))
 
             try:
                 result = await asyncio.wait_for(
@@ -364,6 +373,9 @@ class SpawnService:
                         tree=tree,
                         run_id=child_run,
                         on_step=_on_step,
+                        # Stream the child's live answer/reasoning tokens to the fan.
+                        on_text=_on_text,
+                        on_reasoning=_on_reasoning,
                         # The spawner's per-child reasoning effort (the router drops it
                         # for a non-reasoning child model).
                         reasoning_effort=plan.effort,

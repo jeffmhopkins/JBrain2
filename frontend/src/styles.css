@@ -7667,6 +7667,19 @@ button.small {
 .fb-shell .fb-sa-detail.err {
   color: var(--rose);
 }
+/* The child's live thinking trace, streamed while it works — dimmed + monospace like
+   the main "Thinking" disclosure, set apart from its answer below it. */
+.fb-shell .fb-sa-think {
+  margin-bottom: 6px;
+  padding: 7px 9px;
+  border-radius: 8px;
+  background: var(--violet-tint);
+  font: 11.5px / 1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--text-3);
+  white-space: pre-wrap;
+  max-height: 160px;
+  overflow: auto;
+}
 /* The "open sub-agent session" link inside an expanded child — its run persisted a
    transcript, so this opens the child's own conversation. */
 .fb-shell .fb-sa-open {

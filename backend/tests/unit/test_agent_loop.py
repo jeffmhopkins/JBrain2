@@ -209,6 +209,24 @@ async def test_max_steps_guardrail_stops_a_tool_loop() -> None:
     assert result.steps == 3
 
 
+async def test_run_streams_text_and_reasoning_to_callbacks() -> None:
+    # With on_text/on_reasoning, run() drives the streaming model path and forwards each
+    # chunk live (the sub-agent fan uses this to show a child working), while still
+    # returning the same settled answer.
+    turns = [LlmTurn("the answer", (), "end_turn", LlmUsage(1, 1))]
+    router, _ = router_with(turns)
+    loop = AgentLoop(router, registry_with())
+    text: list[str] = []
+    result = await loop.run(
+        session=OWNER,
+        scopes=("general",),
+        conversation=[UserMessage(text="q")],
+        on_text=text.append,
+    )
+    assert "".join(text) == "the answer"
+    assert result.text == "the answer"
+
+
 async def test_force_final_answer_synthesizes_on_step_exhaustion() -> None:
     # A child that keeps tool-calling hits max_steps; with force_final_answer the loop
     # makes one final no-tools turn so the caller gets a real answer, not an empty one.

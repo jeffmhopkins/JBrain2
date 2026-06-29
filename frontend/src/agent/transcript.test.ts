@@ -300,6 +300,43 @@ describe("applyEvent reducer", () => {
     ]);
   });
 
+  it("accumulates a child's live answer and reasoning deltas onto its row", () => {
+    let ms: TranscriptMessage[] = [streaming()];
+    ms = applyEvent(ms, { type: "tool_call", id: "c1", name: "spawn_subagent", arguments: {} });
+    ms = applyEvent(ms, {
+      type: "subagent_spawned",
+      tool_call_id: "c1",
+      child_id: "k1",
+      persona: "research",
+      label: "Pricing",
+      depth: 1,
+    });
+    ms = applyEvent(ms, {
+      type: "subagent_delta",
+      tool_call_id: "c1",
+      child_id: "k1",
+      channel: "reasoning",
+      text: "let me ",
+    });
+    ms = applyEvent(ms, {
+      type: "subagent_delta",
+      tool_call_id: "c1",
+      child_id: "k1",
+      channel: "reasoning",
+      text: "search",
+    });
+    ms = applyEvent(ms, {
+      type: "subagent_delta",
+      tool_call_id: "c1",
+      child_id: "k1",
+      channel: "answer",
+      text: "3 tiers",
+    });
+    const child = ms[0]?.tools[0]?.fan?.children[0];
+    expect(child?.liveReasoning).toBe("let me search");
+    expect(child?.liveText).toBe("3 tiers");
+  });
+
   it("marks a failed child rose and is idempotent on a replayed spawn", () => {
     let ms: TranscriptMessage[] = [streaming()];
     ms = applyEvent(ms, { type: "tool_call", id: "c1", name: "spawn_subagent", arguments: {} });
