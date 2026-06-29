@@ -1140,7 +1140,10 @@ function SubagentSynthesis({ data }: ViewProps): ReactNode {
         </span>
         <span>
           {truncated ? (
-            "Partial synthesis — research truncated (budget)"
+            // A child can be cut off by its step cap, wall-clock, or token budget — the
+            // exact reason rides in each child's own summary, so the header stays generic
+            // rather than claiming one cause (it used to always say "budget").
+            "Partial synthesis — research truncated"
           ) : (
             <>
               Synthesized from {ran - failed} of {ran}

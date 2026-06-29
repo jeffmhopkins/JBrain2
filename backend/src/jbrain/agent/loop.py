@@ -62,6 +62,7 @@ from jbrain.llm import (
     ToolCall,
     ToolResult,
     ToolResultMessage,
+    UserMessage,
 )
 from jbrain.llm.promptfile import load_prompt
 
@@ -125,6 +126,17 @@ STEPS_BY_EFFORT: dict[str, int] = {"high": 20, "medium": 15}
 # huge hidden reasoning trace (~74s at ~3 tok/s on the local box) that looked like a
 # stall — "none" skips the trace so the synthesis is fast.
 FINAL_ANSWER_EFFORT = "none"
+
+# The forced-final turn carries NO tools, but gpt-oss (trained to reach for a tool) will
+# still emit its NEXT intended search as plain text when merely asked to continue — so a
+# step-capped child's "answer" comes back as a raw tool-call JSON ({"query": ...}) instead
+# of prose. An explicit directive turns it back into a synthesis: use what's gathered, no
+# tool calls, no JSON. Appended as a final user turn so it's the model's last instruction.
+FINAL_ANSWER_DIRECTIVE = (
+    "You are out of research budget and can call no more tools. Using ONLY what you have "
+    "already gathered above, write your final answer now as prose. Do not emit a tool "
+    "call, a search query, or JSON — just the synthesized answer."
+)
 
 
 def guardrails_for_effort(effort: str | None, *, scale: int = 1) -> Guardrails:
@@ -472,8 +484,11 @@ class AgentLoop:
             # final turn with NO tools so the model must synthesize an answer from what it
             # already gathered — a research child otherwise reports nothing the moment it
             # hits the cap. Still flagged `max_steps` so the caller knows it's step-limited.
+            # The directive (a final user turn) keeps gpt-oss from emitting its next search
+            # as text instead of synthesizing — see FINAL_ANSWER_DIRECTIVE.
+            final_messages = [*messages, UserMessage(text=FINAL_ANSWER_DIRECTIVE)]
             final = await self._converse_turn(
-                system_prompt, messages, (), FINAL_ANSWER_EFFORT, on_text, on_reasoning
+                system_prompt, final_messages, (), FINAL_ANSWER_EFFORT, on_text, on_reasoning
             )
             spent_final = final.usage.input_tokens + final.usage.output_tokens
             cost += spent_final
