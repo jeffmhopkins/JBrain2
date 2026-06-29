@@ -15,6 +15,8 @@
 #   scripts/debug-connect.sh vision <attachment_id> --task vision.caption --system "..."
 #   scripts/debug-connect.sh sql "select code, name from app.domains"
 #   scripts/debug-connect.sh logs api --tail 100
+#   scripts/debug-connect.sh gateway-logs --tail 200   # model engine's own slot lifecycle
+#   scripts/debug-connect.sh metrics                   # host telemetry: GPU busy %, power, load
 #   scripts/debug-connect.sh llm                       # show live routing
 #   scripts/debug-connect.sh llm-set agent.turn local:gpt-oss-120b high
 #   scripts/debug-connect.sh load gpt-oss-120b
@@ -24,7 +26,7 @@ set -euo pipefail
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 
 usage() {
-  sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '2,23p' "$0" | sed 's/^# \{0,1\}//'
   exit "${1:-0}"
 }
 
@@ -149,6 +151,14 @@ PY
     [ "${1:-}" = "--tail" ] && { tail="$2"; shift 2; }
     _call GET "/api/debug/logs/$svc?tail=$tail"
     ;;
+
+  gateway-logs) # [--tail N] — the model engine's OWN stdout (slot lifecycle), not the container log
+    tail=200
+    [ "${1:-}" = "--tail" ] && { tail="$2"; shift 2; }
+    _call GET "/api/debug/llm/gateway-logs?tail=$tail"
+    ;;
+
+  metrics | gpu) _call GET /api/debug/host/metrics | _pp ;;  # host telemetry: GPU busy %, power, load
 
   llm) _call GET /api/debug/llm | _pp ;;
 

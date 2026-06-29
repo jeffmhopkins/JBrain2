@@ -554,10 +554,14 @@ class FakeLocalGateway:
         *,
         fail_unload: bool = False,
         fail_load: bool = False,
+        fail_logs: bool = False,
+        logs_text: str = "",
     ) -> None:
         self._running = set(running or ())
         self.fail_unload = fail_unload
         self.fail_load = fail_load
+        self.fail_logs = fail_logs
+        self.logs_text = logs_text
         self.unloaded: list[str] = []
         self.loaded: list[str] = []
 
@@ -579,6 +583,13 @@ class FakeLocalGateway:
             raise LocalGatewayError("simulated gateway failure")
         self.loaded.append(served_model)
         self._running.add(served_model)
+
+    async def tail_logs(self) -> str:
+        from jbrain.llm.local_gateway import LocalGatewayError
+
+        if self.fail_logs:
+            raise LocalGatewayError("simulated gateway failure")
+        return self.logs_text
 
 
 class FakeComfyUiGateway:

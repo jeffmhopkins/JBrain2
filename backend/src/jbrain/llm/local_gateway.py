@@ -137,6 +137,25 @@ class LocalGatewayClient:
         except httpx.HTTPError as exc:
             log.info("local_gateway.warm_skipped", model=served_model, error=str(exc))
 
+    async def tail_logs(self) -> str:
+        """The gateway's own recent stdout — the llama-swap wrapper plus the upstream
+        llama-server, interleaved exactly as the engine emits them. This is the inference
+        engine's account of a turn (the slot acquired when a request starts, the slot
+        RELEASED when its generation ends), so a debug session can see whether a client
+        disconnect — a Stop — actually halts decoding or the engine keeps running to its
+        own limit. Distinct from the container-log proxy: same source as `load_progress`
+        but returned raw. Raises LocalGatewayError on any failure — the operator asked for
+        this, so a miss is surfaced, not swallowed (unlike best-effort load_progress)."""
+        try:
+            async with httpx.AsyncClient(
+                timeout=self._timeout, transport=self._transport
+            ) as client:
+                resp = await client.get(f"{self._root}/logs")
+                resp.raise_for_status()
+                return resp.text
+        except httpx.HTTPError as exc:
+            raise LocalGatewayError(str(exc)) from exc
+
     async def load_progress(self) -> float | None:
         """A real load fraction (0..1) for the model currently coming onto the box, parsed
         best-effort from the gateway's recent logs — or None when it can't be determined
