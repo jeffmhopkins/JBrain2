@@ -448,11 +448,7 @@ class AgentLoop:
             # model to wrap up so it lands on end_turn rather than being force-cut at the
             # cap. Fired once; the forced-final answer below still catches a model that
             # ignores it.
-            if (
-                force_final_answer
-                and step > 0
-                and step == self._g.max_steps - _BUDGET_WARNING_LEAD
-            ):
+            if force_final_answer and step > 0 and step == self._g.max_steps - _BUDGET_WARNING_LEAD:
                 messages.append(UserMessage(text=BUDGET_WARNING_DIRECTIVE))
             turn = await self._converse_turn(
                 system_prompt, messages, tools, reasoning_effort, on_text, on_reasoning
