@@ -47,6 +47,9 @@ class _FakeRouter:
     async def effective_reasoning_effort(self, task: str, strength: str | None = None) -> str:
         return "high"
 
+    async def effective_spec(self, task: str, strength: str | None = None) -> tuple[str, str]:
+        return ("xai", "grok-4.3")  # non-local → the fan stays parallel
+
     async def converse(
         self, task: str, *, system, messages, tools, max_tokens, strength=None, effort_override=None
     ):  # noqa: ANN001, ANN003, E501
