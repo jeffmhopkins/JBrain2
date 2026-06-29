@@ -577,6 +577,7 @@ async def test_stop_cascades_cancellation_into_the_fan(monkeypatch: pytest.Monke
             _FakeLoop.calls.append(kw)
             started.set()
             await asyncio.sleep(3600)  # block until the parent cancel cascades in
+            return AgentResult(text="", stop_reason="end_turn", steps=0, cost_tokens=0)  # unreached
 
     _FakeLoop.calls = []
     monkeypatch.setattr(spawn_mod, "AgentLoop", _BlockingLoop)
