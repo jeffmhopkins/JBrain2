@@ -1,8 +1,17 @@
 # jcode container-per-session — independent containers, nested Docker, broker-orchestrated
 
-**Status: PROPOSED (high-level draft for independent red team). Supersedes the parked
-per-session *namespace* plan (`docs/JCODE_SESSION_ISOLATION_PLAN.md`) — the owner has
-chosen the heavier, stronger isolation boundary it set aside.**
+**Status: RED-TEAMED — NOT VIABLE AS SCOPED. Three independent reviewers (security/
+privilege, operability/lifecycle, requirement/feasibility) converged on the same verdict:
+do not build full-nested-Docker-per-session as written. The architecture direction is
+sound, but the locked requirement (full nested Docker) forces the maximum-privilege answer,
+the security/firewall claims break under nested Docker, the lifecycle/state model is
+incomplete, and the whole thing contradicts the owner's own decision to park the *cheaper*
+netns isolation. See "Red-team verdict" at the bottom. Decision back to the owner before any
+build.**
+
+**Original framing (retained): Supersedes the parked per-session *namespace* plan
+(`docs/JCODE_SESSION_ISOLATION_PLAN.md`) — the owner chose the heavier isolation boundary it
+set aside. The red team flags this reversal as itself needing justification.**
 
 ## Goal
 
@@ -168,3 +177,102 @@ Each wave: per-task + per-wave adversarial review (reviewer ≠ author), securit
 7. **Is extending `supervisor` the right home** for the broker, or does that over-couple the
    box's one privileged service to the untrusted-shell feature?
 8. **Migration** — how do existing shared-container sessions cut over without data loss?
+
+---
+
+## Red-team verdict (3 independent reviewers)
+
+All three converged: **not viable as scoped.** The direction (real per-session isolation)
+is sound; the specific decision that breaks it is **locking "full nested Docker."**
+
+### Blockers (must resolve before any build)
+
+- **B1 — The requirement is the heaviest fix for a partly-already-solved need.** The
+  motivation chain (grok-rebuild → per-session tool versions → own services → full nested
+  Docker) is an escalation of non-sequiturs. Per-session *tool versions* = per-session
+  image/volume under the existing single runtime (no nesting). "Own dev server" already
+  works. The **only** use case that truly needs an in-session Docker daemon is "the session
+  runs `docker compose up` for a containerized app it's developing" — and no concrete,
+  current such project has been named. *Decision gate: name that project, or the requirement
+  collapses to the cheaper variants below.*
+- **B2 — It contradicts the owner's own recent decision.** `JCODE_SESSION_ISOLATION_PLAN.md`
+  parked the *cheaper* netns isolation as "not worth the privilege/effort," and its rejected-
+  approaches list names **container-per-session/Podman** explicitly. This plan takes on
+  *strictly more* privilege (a host-socket broker + a host runtime like Sysbox, which itself
+  re-enables the unprivileged-userns widening that doc flagged). The reversal must be
+  justified to the owner, not assumed.
+- **B3 — The broker is a host-root surface with no validation contract.** Whoever shapes a
+  `docker create` to the socket *is* host root (`--privileged`, `-v /:/host`, `--network=host`,
+  `runtime` override, socket-in-socket = DooD). "Treat input as hostile" is a slogan, not a
+  design. Required contract: the broker's **only** input is an opaque session id; it builds
+  the *entire* spec server-side from a pinned-by-digest template — no session-supplied image,
+  mount, network, runtime, cap, device, or privileged flag, ever. This contract IS the
+  security boundary and must be written + 100%-tested before C1.
+- **B4 — State model + persistence are missing (operability).** Today `Status` is only
+  `ready|stopped` — there is **no `archived` state**, no archive/unarchive methods/routes. And
+  every map (session→container, preview slug) is **in-memory**, rebuilt empty on restart — so
+  a broker restart *orphans the running containers the "keep-running" decision intends to
+  preserve*. Need a real state enum + durable session↔container mapping (label containers with
+  the sid) + boot-time reconciliation.
+
+### Majors
+
+- **M1 — Sysbox is an unverified, kernel-coupled host dependency.** Box is **kernel 6.18.5 /
+  Ubuntu 24.04**; Sysbox support on a kernel this new is unproven, and it adds a standing
+  maintenance tail (every kernel/Docker bump can break the feature). Honest C0-fail probability
+  ~40–60% (the prior netns spike on this same box already failed on related capability walls).
+- **M2 — Sysbox's boundary is shared-kernel.** For *arbitrary agent shell*, one kernel LPE or
+  Sysbox emulation bug = host. That is materially **weaker** than today's single unprivileged
+  container (default seccomp, no userns, no nested daemon, no socket nearby). If kernel-LPE→host
+  is unacceptable, the answer is a **microVM (Kata/Firecracker), not Sysbox** — and the plan
+  should say so up front, not as "break-glass."
+- **M3 — "Stronger" is dishonest about the host.** Only *cross-session* isolation improves;
+  the *host-compromise* surface is net **wider** (userns amplifier + emulated /proc//sys +
+  agent-controlled nested dockerd + new host-root broker). The data-firewall non-negotiables now
+  rest on **new, unproven** broker-validation + runtime-netns machinery, not the old simple
+  "it's just not on that network" fact.
+- **M4 — Per-session network does NOT preserve the firewall, and egress stops composing.**
+  Inner containers / `docker build` don't inherit the outer `HTTP(S)_PROXY` env, so
+  `JCODE_EGRESS_PROXY` is bypassed. Egress confinement must move to a **network-layer
+  default-deny** (only model gateway + proxy reachable), with an isolation test that runs
+  *inside a nested container* proving it can't reach `db`/host.
+- **M5 — Don't extend `supervisor`.** Its gateway is a deliberately *fixed* surface (act only
+  on pre-labeled compose containers; no `docker create`). Bolting a general session-broker on
+  gives a single RCE control of the whole stack (start/stop, and the reset/import/update
+  one-shots that already bind-mount the socket + `PROJECT_DIR` rw — DB-reset/data-loss reach).
+  The broker must be a **separate, minimal, single-purpose** privileged service with its own
+  token and no stack-control surface.
+- **M6 — Host-pid kill machinery breaks across the container boundary.** `stop()/delete()` use
+  `os.killpg` + `/proc/<pid>/cwd` scans on the broker host; once shells run *inside* the
+  container those pids are in another PID namespace and the hard-kill backstop silently no-ops.
+  Stop = `docker stop`, delete = `docker rm -f` + label-purge of volumes/network.
+- **M7 — "Shell-EOF = pause" inverts.** A `docker exec` stream EOFs on user-exit, exec death,
+  *and* container stop — collapsed today into one "pause." The router must inspect exec exit
+  code + container state; only a clean shell-exit over a live container = pause.
+- **M8 — Idle reap currently *deletes* (would nuke a running stack); no GC for archived nested-
+  docker storage.** Per-session inner images/volumes preserved across archive grow unbounded
+  with no GC tier. Need: idle→archive (not delete), a disk budget, and an archived-session GC.
+- **M9 — Preview transport.** Proxy hardcodes loopback; container IP changes on every restart →
+  address the dev server by **container name over docker DNS**, resolved per request, not cached.
+  Stable preview slug must be persisted/derived, or URLs 404 after a restart.
+- **M10 — Migration unsolved.** Existing checkouts live inside the shared container; a naive
+  cutover loses uncommitted work. Need per-session copy-out or an explicit push-or-lose.
+
+### Cheaper variants the red team says likely meet the *actual* need
+
+1. **Per-session image + volume, one shared runtime (no nesting, no broker).** Gives
+   independent grok/claude/node per session + cheap purge-on-delete — the literal originating
+   complaint — at near-zero cost. Gives up: nested `docker compose`, strong process isolation.
+2. **Broker-managed *declared* sidecars (the rejected middle).** Session declares "postgres +
+   redis"; a constrained, allowlisted broker starts them as sibling containers on the session
+   net. Covers the common multi-service dev case with **no nested dockerd, no userns widening**.
+3. **Keep shared container + per-session tool dirs now; revisit the parked mount-ns wave later
+   if cross-session-read ever actually matters.** Near-zero new cost, no host runtime dep.
+
+### The one question to put back to the owner
+
+**Name the specific, current project you want to run `docker compose up` for *inside* the
+sandbox.** If there is one, the conversation is microVM-vs-Sysbox and the broker contract
+(B3/M5). If there isn't, variant 1 or 3 gives you per-session tool versions and your own dev
+server today — without a host runtime dependency, a privileged broker, or reversing the netns
+decision.
