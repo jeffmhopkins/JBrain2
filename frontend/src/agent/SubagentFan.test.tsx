@@ -109,6 +109,10 @@ describe("SubagentFan", () => {
     const bar = container.querySelector(".fb-sa-bar");
     expect(bar?.className).toContain("queued");
     expect(bar?.className.split(/\s+/)).not.toContain("running");
+    // …and the glyph dots are `queued` (static), not `run` (the animated bounce).
+    const glyph = container.querySelector(".fb-sa-g");
+    expect(glyph?.className).toContain("queued");
+    expect(glyph?.className.split(/\s+/)).not.toContain("run");
   });
 
   it("auto-collapses a child on settle, even if it was expanded while running", () => {

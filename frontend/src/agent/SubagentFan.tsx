@@ -91,7 +91,7 @@ const PERSONA_LABEL: Record<string, string> = {
   summarize: "summarize",
 };
 
-function childGlyph(status: SubagentChild["status"]): ReactNode {
+function childGlyph(status: SubagentChild["status"], queued: boolean): ReactNode {
   // aria-hidden — the status word carries the state for assistive tech.
   if (status === "done")
     return (
@@ -105,8 +105,10 @@ function childGlyph(status: SubagentChild["status"]): ReactNode {
         ✕
       </span>
     );
+  // Running and queued share the three-dot glyph, but ONLY a running child bounces — a
+  // queued child (not yet started) shows the dots STATIC so it doesn't read as active.
   return (
-    <span className="fb-sa-g run" aria-hidden="true">
+    <span className={`fb-sa-g ${queued ? "queued" : "run"}`} aria-hidden="true">
       <i />
       <i />
       <i />
@@ -265,7 +267,7 @@ export function SubagentFan({
               onClick={() => toggle(c.childId)}
               aria-expanded={open}
             >
-              {childGlyph(c.status)}
+              {childGlyph(c.status, isQueued(c))}
               <span className="fb-sa-lbl">{c.label}</span>
               <span className="fb-sa-ptag">{PERSONA_LABEL[c.persona] ?? c.persona}</span>
               <span className={`fb-sa-st${isFail ? " fail" : ""}${isQueued(c) ? " queued" : ""}`}>

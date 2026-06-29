@@ -8055,7 +8055,8 @@ button.small {
 .fb-shell .fb-sa-g.fail {
   color: var(--rose);
 }
-.fb-shell .fb-sa-g.run {
+.fb-shell .fb-sa-g.run,
+.fb-shell .fb-sa-g.queued {
   gap: 2px;
 }
 .fb-shell .fb-sa-g.run i {
@@ -8064,6 +8065,14 @@ button.small {
   border-radius: 50%;
   background: var(--steel);
   animation: fb-sa-bounce 1s infinite;
+}
+/* Queued: the same dots, STATIC and dim — a waiting child reads as idle, not active. */
+.fb-shell .fb-sa-g.queued i {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--steel);
+  opacity: 0.3;
 }
 .fb-shell .fb-sa-g.run i:nth-child(2) {
   animation-delay: 0.15s;
