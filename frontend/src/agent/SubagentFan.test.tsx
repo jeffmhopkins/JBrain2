@@ -98,6 +98,61 @@ describe("SubagentFan", () => {
     expect(screen.getByText("queued")).toHaveClass("queued");
   });
 
+  it("shows a STATIC (non-animated) progress bar for a queued child", () => {
+    const { container } = render(
+      <SubagentFan
+        running
+        fan={fan([child({ childId: "k1", label: "Pending", phase: "queued", status: "running" })])}
+      />,
+    );
+    // The bar carries `queued` (static fill), not `running` (the animated sweep).
+    const bar = container.querySelector(".fb-sa-bar");
+    expect(bar?.className).toContain("queued");
+    expect(bar?.className.split(/\s+/)).not.toContain("running");
+    // …and the glyph dots are `queued` (static), not `run` (the animated bounce).
+    const glyph = container.querySelector(".fb-sa-g");
+    expect(glyph?.className).toContain("queued");
+    expect(glyph?.className.split(/\s+/)).not.toContain("run");
+  });
+
+  it("auto-collapses a child on settle, even if it was expanded while running", () => {
+    const { rerender } = render(
+      <SubagentFan
+        running
+        fan={fan([
+          child({
+            childId: "k1",
+            label: "Pricing",
+            phase: "researching",
+            status: "running",
+            liveTrace: [{ kind: "reasoning", text: "digging in" }],
+          }),
+        ])}
+      />,
+    );
+    // Tap to mark it manually expanded while it streams; its trace is visible.
+    fireEvent.click(screen.getByText("Pricing"));
+    expect(screen.getByText("digging in")).toBeInTheDocument();
+    // It settles → the row folds back on its own, despite the manual expand.
+    rerender(
+      <SubagentFan
+        running={false}
+        fan={fan([
+          child({
+            childId: "k1",
+            label: "Pricing",
+            status: "done",
+            stopReason: "end_turn",
+            summary: "final answer",
+            liveTrace: [{ kind: "reasoning", text: "digging in" }],
+          }),
+        ])}
+      />,
+    );
+    expect(screen.queryByText("digging in")).not.toBeInTheDocument();
+    expect(screen.queryByText("final answer")).not.toBeInTheDocument();
+  });
+
   it("auto-expands a streaming child and shows its live answer + reasoning", () => {
     render(
       <SubagentFan

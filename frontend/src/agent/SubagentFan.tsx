@@ -91,7 +91,7 @@ const PERSONA_LABEL: Record<string, string> = {
   summarize: "summarize",
 };
 
-function childGlyph(status: SubagentChild["status"]): ReactNode {
+function childGlyph(status: SubagentChild["status"], queued: boolean): ReactNode {
   // aria-hidden — the status word carries the state for assistive tech.
   if (status === "done")
     return (
@@ -105,8 +105,10 @@ function childGlyph(status: SubagentChild["status"]): ReactNode {
         ✕
       </span>
     );
+  // Running and queued share the three-dot glyph, but ONLY a running child bounces — a
+  // queued child (not yet started) shows the dots STATIC so it doesn't read as active.
   return (
-    <span className="fb-sa-g run" aria-hidden="true">
+    <span className={`fb-sa-g ${queued ? "queued" : "run"}`} aria-hidden="true">
       <i />
       <i />
       <i />
@@ -174,6 +176,25 @@ export function SubagentFan({
 }): ReactNode {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [showAll, setShowAll] = useState(false);
+  // Auto-collapse a child the moment it SETTLES: while it streams it auto-expands so you
+  // watch it work, but a finished child folds back to a one-line row so a long fan of done
+  // children isn't a wall of transcripts. Done once per child (a ref, not a re-trigger) so
+  // re-opening a settled child by hand sticks. A FAILED child still shows its error via the
+  // isFail auto-open in the row — this only drops it from the manual-expand set.
+  const autoCollapsed = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    const newlySettled = fan.children.filter(
+      (c) => c.status !== "running" && !autoCollapsed.current.has(c.childId),
+    );
+    if (newlySettled.length === 0) return;
+    for (const c of newlySettled) autoCollapsed.current.add(c.childId);
+    setExpanded((cur) => {
+      if (!newlySettled.some((c) => cur.has(c.childId))) return cur;
+      const next = new Set(cur);
+      for (const c of newlySettled) next.delete(c.childId);
+      return next;
+    });
+  }, [fan.children]);
 
   const children = fan.children;
   if (children.length === 0) return null;
@@ -246,7 +267,7 @@ export function SubagentFan({
               onClick={() => toggle(c.childId)}
               aria-expanded={open}
             >
-              {childGlyph(c.status)}
+              {childGlyph(c.status, isQueued(c))}
               <span className="fb-sa-lbl">{c.label}</span>
               <span className="fb-sa-ptag">{PERSONA_LABEL[c.persona] ?? c.persona}</span>
               <span className={`fb-sa-st${isFail ? " fail" : ""}${isQueued(c) ? " queued" : ""}`}>
@@ -256,9 +277,9 @@ export function SubagentFan({
                 {open ? "▾" : "▸"}
               </span>
             </button>
-            {/* A thin per-row bar: indeterminate sweep while running (no true %),
-                solid green/rose once settled. */}
-            <div className={`fb-sa-bar ${c.status}`} aria-hidden="true">
+            {/* A thin per-row bar: a STATIC idle fill while queued (not yet active), an
+                indeterminate sweep once running (no true %), solid green/rose on settle. */}
+            <div className={`fb-sa-bar ${isQueued(c) ? "queued" : c.status}`} aria-hidden="true">
               <i />
             </div>
             {open && hasBody && (
