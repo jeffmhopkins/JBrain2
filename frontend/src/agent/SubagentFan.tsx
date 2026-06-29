@@ -6,7 +6,37 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
-import type { SubagentFan as Fan, SubagentChild } from "./transcript";
+import type { SubagentFan as Fan, SubagentChild, SubagentToolStep } from "./transcript";
+
+// A friendlier label for the web tools a child runs (the fan's Worked list).
+const TOOL_LABEL: Record<string, string> = {
+  web_search: "search",
+  web_fetch: "fetch",
+  current_time: "clock",
+};
+
+// The child's tool steps as a compact live "Worked" list — one row per tool with its
+// inline arg (the query / url) and a ✓/✕ mark, so the frame reads like a real session.
+function ChildSteps({ steps }: { steps: SubagentToolStep[] }): ReactNode {
+  return (
+    <div className="fb-sa-steps">
+      {steps.map((s, i) => (
+        // biome-ignore lint/suspicious/noArrayIndexKey: steps append in stable order
+        <div className={`fb-sa-step${s.ok ? "" : " bad"}`} key={i}>
+          <span className="fb-sa-step-mark" aria-hidden="true">
+            {s.ok ? "✓" : "✕"}
+          </span>
+          <span className="fb-sa-step-name">{TOOL_LABEL[s.name] ?? s.name}</span>
+          {s.arg && (
+            <span className="fb-sa-step-arg" title={s.arg}>
+              {s.arg}
+            </span>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
 
 // A child's live thinking trace: a collapsible disclosure (default open while the child
 // works so you watch it) that auto-scrolls to the newest line as tokens stream in —
@@ -189,12 +219,16 @@ export function SubagentFan({
         // The child is actively streaming tokens — auto-expand it so you watch it work
         // (with a serial local fan only one streams at a time). A failed row also
         // auto-expands its error.
-        const streaming = !settled && !isQueued(c) && Boolean(c.liveText || c.liveReasoning);
+        const hasTools = Boolean(c.liveTools && c.liveTools.length > 0);
+        const streaming =
+          !settled && !isQueued(c) && Boolean(c.liveText || c.liveReasoning || hasTools);
         const open = expanded.has(c.childId) || isFail || streaming;
         // The "Open session" link is gated to a SETTLED child — a still-running child
         // has nothing persisted yet, so opening it would land on a blank conversation.
         const showOpen = Boolean(onOpen) && settled;
-        const hasBody = settled ? Boolean(c.summary) || showOpen : streaming;
+        const hasBody = settled
+          ? Boolean(c.summary) || showOpen || hasTools
+          : streaming || hasTools;
         return (
           <div className={`fb-sa-row${c.depth >= 2 ? " sub" : ""}`} key={c.childId}>
             <button
@@ -220,16 +254,14 @@ export function SubagentFan({
             </div>
             {open && hasBody && (
               <div className={`fb-sa-detail${isFail ? " err" : ""}`}>
-                {settled ? (
-                  c.summary && <div className="fb-sa-sum">{c.summary}</div>
-                ) : (
-                  // Live mini-transcript while the child works: its thinking (dim) then
-                  // its answer, both streaming in.
-                  <>
-                    {c.liveReasoning && <ChildThinking text={c.liveReasoning} live={!settled} />}
-                    {c.liveText && <div className="fb-sa-sum">{c.liveText}</div>}
-                  </>
-                )}
+                {/* The frame-in-frame view of the child's session: its thinking (dim,
+                    collapsible), the tools it ran (a live "Worked" list), then its
+                    answer. While running these stream; once settled the summary stands. */}
+                {c.liveReasoning && <ChildThinking text={c.liveReasoning} live={!settled} />}
+                {hasTools && c.liveTools && <ChildSteps steps={c.liveTools} />}
+                {settled
+                  ? c.summary && <div className="fb-sa-sum">{c.summary}</div>
+                  : c.liveText && <div className="fb-sa-sum">{c.liveText}</div>}
                 {/* The child IS its own session (childId = session id); open it to read
                     the full transcript its run persisted. */}
                 {showOpen && onOpen && (

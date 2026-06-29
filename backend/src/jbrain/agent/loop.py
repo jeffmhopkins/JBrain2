@@ -120,10 +120,11 @@ class Guardrails:
 STEPS_BY_EFFORT: dict[str, int] = {"high": 20, "medium": 15}
 
 # The forced-final synthesis (force_final_answer, on step exhaustion) writes an answer
-# from already-gathered material — a mechanical step that needs no deep thinking. Run it
-# at LOW effort regardless of the run's effort: at high effort it generated a huge hidden
-# reasoning trace (~74s at ~4 tok/s on the local box) that looked like a stall.
-FINAL_ANSWER_EFFORT = "low"
+# from already-gathered material — a mechanical step that needs no thinking. Run it at
+# NONE effort regardless of the run's effort: even "low" still let gpt-oss generate a
+# huge hidden reasoning trace (~74s at ~3 tok/s on the local box) that looked like a
+# stall — "none" skips the trace so the synthesis is fast.
+FINAL_ANSWER_EFFORT = "none"
 
 
 def guardrails_for_effort(effort: str | None, *, scale: int = 1) -> Guardrails:
@@ -391,6 +392,7 @@ class AgentLoop:
         force_final_answer: bool = False,
         on_text: Callable[[str], None] | None = None,
         on_reasoning: Callable[[str], None] | None = None,
+        on_tool: Callable[[str, dict, bool], None] | None = None,
     ) -> AgentResult:
         scopes = tuple(scopes)
         tools = self._registry.schemas_for(scopes, tools_allow)
@@ -454,6 +456,10 @@ class AgentLoop:
                 await self._record(
                     idx, "tool", call.name, ok=not dispatched.result.is_error, cost_tokens=0
                 )
+                # Surface the tool step to a caller streaming the run (the sub-agent fan's
+                # live "Worked" list); the args go too so it can show what was searched.
+                if on_tool is not None:
+                    on_tool(call.name, call.arguments, not dispatched.result.is_error)
                 idx += 1
             messages.append(ToolResultMessage(results=results))
 

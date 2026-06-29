@@ -25,13 +25,13 @@ MAX_TOTAL_AGENTS_PER_TREE = 12  # every child across the whole root turn, all de
 # ReAct turns than a quick lookup); the wall-clock is a generous backstop kept above
 # the step budget's expected runtime so a child reaches its step cap (→ a forced final
 # answer) rather than a bare timeout; the token cap is the last backstop.
-CHILD_MAX_STEPS = 10  # default/low-effort ReAct iterations a child may take
-# Effort lifts the step cap: a high-effort child gets more room to research. Tuned on a
-# single-GPU local box where high=30 ran ~7 min / 600k tokens per child (serial fan →
-# 12-20 min) — too long; these middle values keep a high child to ~3-4 min.
-CHILD_STEPS_BY_EFFORT = {"high": 24, "medium": 16}
-CHILD_WALL_CLOCK_S = 480.0  # hard per-child time limit; past it the child returns truncated
-CHILD_MAX_COST_TOKENS = 650_000  # per-child token backstop (steps/wall-clock bite first)
+CHILD_MAX_STEPS = 12  # default/low-effort ReAct iterations a child may take
+# Effort lifts the step cap: a high-effort child gets the room to do thorough research.
+# The runaway risk was a RETRY LOOP (jerv re-spawning fans), now closed by the prompt —
+# so a single fan can afford generous per-child budgets without pegging the box forever.
+CHILD_STEPS_BY_EFFORT = {"high": 32, "medium": 22}
+CHILD_WALL_CLOCK_S = 600.0  # hard per-child time limit; past it the child returns truncated
+CHILD_MAX_COST_TOKENS = 900_000  # per-child token backstop (steps/wall-clock bite first)
 
 
 def child_steps_for(effort: str | None) -> int:
@@ -46,7 +46,7 @@ def child_steps_for(effort: str | None) -> int:
 # pool; and a fan is admitted only if each child could get a viable slice of what's
 # left. Sized generously (~2M with jerv's 800k root cap) so the runtime caps above —
 # not budget exhaustion — are what stop a child.
-SPAWN_MULTIPLIER = 2.5  # tree_budget = base_max_cost_tokens × this (~2M for jerv)
+SPAWN_MULTIPLIER = 3.5  # tree_budget = base_max_cost_tokens × this (~2.8M for jerv)
 ROOT_RESERVE_FRACTION = 0.25  # share of tree_budget the root keeps for synthesis
 MIN_VIABLE_CHILD_BUDGET = 100_000  # admission floor: tokens each child must be able to get
 

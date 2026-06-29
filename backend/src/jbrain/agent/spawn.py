@@ -41,6 +41,7 @@ from jbrain.agent.contracts import (
     SubagentDoneEvent,
     SubagentProgressEvent,
     SubagentSpawnedEvent,
+    SubagentToolEvent,
     ViewPayload,
 )
 from jbrain.agent.loop import AgentLoop, Guardrails, ToolContext, ToolOutput
@@ -107,6 +108,21 @@ def effective_child_tools(
     if the persona lists a tool the parent lacks. Passed as the child loop's
     `tools_allow` and re-enforced at dispatch."""
     return (persona_tools or frozenset()) & parent_tools
+
+
+_TOOL_ARG_KEY = {"web_search": "query", "web_fetch": "url"}
+_TOOL_ARG_LEN = 200  # a child tool step's inline preview is short; longer is clamped
+
+
+def _tool_arg(name: str, args: object) -> str:
+    """A short inline preview of a child tool call for the fan's Worked list — the
+    searched query or fetched url, like the main step rows. Empty for other tools."""
+    key = _TOOL_ARG_KEY.get(name)
+    if key and isinstance(args, dict):
+        raw = args.get(key)
+        if isinstance(raw, str):
+            return raw.strip()[:_TOOL_ARG_LEN]
+    return ""
 
 
 def _refuse(reason: str) -> str:
@@ -359,6 +375,16 @@ class SpawnService:
             def _on_reasoning(text: str) -> None:
                 _emit(ctx, SubagentDeltaEvent(child_id=child.id, channel="reasoning", text=text))
 
+            def _on_tool(name: str, args: dict, ok: bool) -> None:
+                # Forward the child's tool step so the fan frame shows its work as a live
+                # "Worked" list (the query / url it used, like the main step rows).
+                _emit(
+                    ctx,
+                    SubagentToolEvent(
+                        child_id=child.id, name=name, arg=_tool_arg(name, args), ok=ok
+                    ),
+                )
+
             try:
                 result = await asyncio.wait_for(
                     loop.run(
@@ -373,9 +399,10 @@ class SpawnService:
                         tree=tree,
                         run_id=child_run,
                         on_step=_on_step,
-                        # Stream the child's live answer/reasoning tokens to the fan.
+                        # Stream the child's live answer/reasoning/tool steps to the fan.
                         on_text=_on_text,
                         on_reasoning=_on_reasoning,
+                        on_tool=_on_tool,
                         # The spawner's per-child reasoning effort (the router drops it
                         # for a non-reasoning child model).
                         reasoning_effort=plan.effort,

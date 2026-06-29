@@ -311,6 +311,21 @@ class SubagentDeltaEvent(BaseModel):
     text: str = ""
 
 
+class SubagentToolEvent(BaseModel):
+    """A tool step a running child took (Wave S3 follow-up): forwarded — tagged by
+    `child_id` — onto the parent turn's stream so the fan's child frame shows its work
+    like a real session (a live "Worked" list: web_search, web_fetch, …). `arg` is a
+    short inline preview (the query / url), `ok` its success. Ephemeral, never
+    persisted — the durable record is the child's own run-log."""
+
+    type: Literal["subagent_tool"] = "subagent_tool"
+    tool_call_id: str = ""
+    child_id: str
+    name: str
+    arg: str = ""
+    ok: bool = True
+
+
 class SubagentDoneEvent(BaseModel):
     """A child finished (Wave S2): `ok` is a clean, substantive answer; otherwise it
     errored or degraded (max_steps / empty). The accordion flips the row to green ✓ /
@@ -383,6 +398,7 @@ ChatEvent = Annotated[
     | SubagentSpawnedEvent
     | SubagentProgressEvent
     | SubagentDeltaEvent
+    | SubagentToolEvent
     | SubagentDoneEvent
     | DoneEvent
     | VerdictEvent

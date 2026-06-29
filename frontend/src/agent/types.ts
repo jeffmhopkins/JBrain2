@@ -183,6 +183,16 @@ export interface SubagentDeltaEvent {
   channel: "answer" | "reasoning";
   text: string;
 }
+/** A tool step a running child took — forwarded so the fan's child frame shows its
+ * work as a live "Worked" list (`arg` is the query/url it used). Ephemeral. */
+export interface SubagentToolEvent {
+  type: "subagent_tool";
+  tool_call_id: string;
+  child_id: string;
+  name: string;
+  arg: string;
+  ok: boolean;
+}
 /** A child finished: `ok` (clean substantive answer) → green ✓, else → rose ✕.
  * `summary` is its answer or error/truncation note (shown on expand); the budget
  * snapshot refreshes the meter. Ephemeral. */
@@ -213,6 +223,7 @@ export type ChatEvent =
   | SubagentSpawnedEvent
   | SubagentProgressEvent
   | SubagentDeltaEvent
+  | SubagentToolEvent
   | SubagentDoneEvent;
 
 /** A persisted conversation turn (GET /api/sessions/{id}/transcript) — replays a
