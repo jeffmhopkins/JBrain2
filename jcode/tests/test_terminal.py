@@ -133,6 +133,34 @@ async def test_serve_terminal_socket_drop_keeps_the_shell_running(tmp_path) -> N
         registry.close_all()
 
 
+async def test_serve_terminal_applies_the_session_home(tmp_path) -> None:
+    # The app→serve_terminal seam: passing home= must put the session's own $HOME into
+    # the shell (HOME survives /etc/profile, unlike PATH), so per-session ~/.grok and
+    # tools resolve under it. app.py drives this with sessions.home_for(sid).
+    registry = TerminalRegistry()
+    home = str(tmp_path / "h")
+    ws = _FakeWS(
+        [
+            {"type": "websocket.receive", "bytes": b"echo HID=$HOME\n"},
+            {"type": "websocket.receive", "bytes": b"exit\n"},
+        ]
+    )
+    try:
+        await asyncio.wait_for(
+            serve_terminal(
+                ws,  # type: ignore[arg-type]
+                "s1",
+                registry,
+                str(tmp_path),
+                home=home,
+            ),
+            timeout=10,
+        )
+    finally:
+        registry.close_all()
+    assert f"HID={home}".encode() in b"".join(ws.sent)
+
+
 async def test_shell_persists_across_reconnect_and_replays_scrollback(tmp_path) -> None:
     # The detached-shell promise: leave (disconnect), the shell keeps running, and a
     # reconnect reattaches to the SAME shell (no new pid) and replays the scrollback.

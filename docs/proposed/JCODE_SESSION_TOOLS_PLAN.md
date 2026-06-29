@@ -88,6 +88,16 @@ Each wave follows `docs/PROCESS.md`: independent adversarial review (reviewer �
 tests in the same change. (Wave branches/PRs per the process; this work is on the session's
 designated branch and opens a PR only when the owner asks.)
 
+## Known residuals
+
+- **Orphaned per-session dirs on container restart.** Sessions are in-memory, so a jcode
+  container restart loses the session objects and `delete` never runs for them — leaving
+  `/work/.home/<sid>` (and, identically, the existing `/work/<sid>` checkouts) on the
+  volume. T1 inherits and doubles this pre-existing checkout-orphan posture rather than
+  introducing a new class. No disk janitor exists today; if one is ever added for orphaned
+  checkouts it must sweep `/work/.home/<sid>` too. Acceptable for a personal box (same
+  volume, inside the egress/firewall boundary). [Independent review, Wave T1, finding 3.]
+
 ## Dropped
 
 - **T3 — launcher "Tools" UI.** Not wanted now; the shell helpers (`jcode-grok` / `jcode-claude`)
