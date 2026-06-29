@@ -24,9 +24,18 @@ describe("applyEvent reducer", () => {
     ms = applyEvent(ms, { type: "done", stop_reason: "end_turn" });
     const turn = ms[0];
     expect(turn?.text).toBe("let me check");
-    // textOffset 12 = the prose length ("let me check") when the call was made.
+    // textOffset 12 = the prose length ("let me check") when the call was made;
+    // reasoningOffset 0 = no reasoning had streamed before it.
     expect(turn?.tools).toEqual([
-      { id: "c1", name: "search", ok: true, summary: "found 3", sources: [], textOffset: 12 },
+      {
+        id: "c1",
+        name: "search",
+        ok: true,
+        summary: "found 3",
+        sources: [],
+        textOffset: 12,
+        reasoningOffset: 0,
+      },
     ]);
     expect(turn?.streaming).toBe(false);
     expect(turn?.stopReason).toBe("end_turn");
@@ -45,6 +54,18 @@ describe("applyEvent reducer", () => {
     expect(ms[0]?.reasoning).toBe("let me think");
     // Reasoning is never folded into the answer text.
     expect(ms[0]?.text).toBe("the answer");
+  });
+
+  it("records each tool's reasoning offset so it interleaves into the thinking trace", () => {
+    let ms: TranscriptMessage[] = [streaming()];
+    ms = applyEvent(ms, { type: "reasoning_delta", text: "first" });
+    ms = applyEvent(ms, { type: "tool_call", id: "c1", name: "search", arguments: {} });
+    ms = applyEvent(ms, { type: "reasoning_delta", text: " then more" });
+    ms = applyEvent(ms, { type: "tool_call", id: "c2", name: "read_note", arguments: {} });
+    // Each call's offset is the reasoning length at the moment it ran — the split point
+    // the "Thinking" disclosure weaves the tool into.
+    expect(ms[0]?.tools[0]?.reasoningOffset).toBe("first".length);
+    expect(ms[0]?.tools[1]?.reasoningOffset).toBe("first then more".length);
   });
 
   it("stops thinking when a reasoning-only turn settles", () => {

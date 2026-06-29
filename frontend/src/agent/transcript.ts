@@ -98,6 +98,10 @@ export interface ToolActivity {
    * splits around it. An image turn uses it to render preamble → image → reply as
    * three messages; set live and persisted so reopen splits the same way. */
   textOffset?: number;
+  /** The reasoning-trace length when this tool was called — the point it falls inside
+   * the thinking. The "Thinking" disclosure interleaves the call there (like a
+   * sub-agent's trace); set live and persisted so reopen interleaves the same way. */
+  reasoningOffset?: number;
 }
 
 /** Reflexion's verdict on this turn — present only when the verifiers flagged
@@ -238,6 +242,9 @@ export function applyEvent(messages: TranscriptMessage[], event: ChatEvent): Tra
           // The prose streamed so far is this call's preamble; record where it ends so
           // an image turn can split into preamble → image → reply (see FullBrainSurface).
           textOffset: next.text.length,
+          // The reasoning streamed so far is where this call falls in the thinking; record
+          // it so the "Thinking" disclosure interleaves the tool there (see ActivityLine).
+          reasoningOffset: next.reasoning.length,
           // Keep the arguments only when there are some — an empty object is noise
           // in the expanded detail.
           ...(Object.keys(event.arguments).length ? { args: event.arguments } : {}),

@@ -47,6 +47,11 @@ class TranscriptAccumulator:
                 # image turn as preamble → image → reply, and persisting it replays the
                 # same split on reopen.
                 "text_offset": len("".join(self.answer)),
+                # The length of the reasoning trace streamed BEFORE this call — the point
+                # the tool falls inside the thinking. The PWA interleaves tool calls into
+                # the "Thinking" disclosure where they happened (like a sub-agent's trace);
+                # persisting it replays the same interleave on reopen.
+                "reasoning_offset": len("".join(self.reasoning)),
                 # The call's arguments, so an expanded step replays what it ran on
                 # reopen — the web tools' url/query especially, which carry no
                 # NoteSource to stand in for them. Empty args stay omitted (noise).

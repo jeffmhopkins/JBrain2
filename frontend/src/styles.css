@@ -7750,6 +7750,40 @@ button.small {
   color: var(--text-2);
   white-space: pre-wrap;
 }
+/* A tool call interleaved into the thinking trace where it happened (mirrors a
+   sub-agent's ChildTrace): a ✓/✕/· mark, the step label, and the web tool's
+   url/query, on its own flowing line within the reasoning. */
+.fb-shell .fb-think-tool {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 4px 0;
+  min-width: 0;
+}
+.fb-shell .fb-think-mark {
+  flex: none;
+  color: var(--green);
+  font-size: 11px;
+}
+.fb-shell .fb-think-tool.bad .fb-think-mark {
+  color: var(--rose);
+}
+.fb-shell .fb-think-tool.live .fb-think-mark {
+  color: var(--violet);
+}
+.fb-shell .fb-think-name {
+  flex: none;
+  font-weight: 600;
+  color: var(--text-2);
+}
+.fb-shell .fb-think-arg {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-3);
+}
 .fb-shell .fb-steps {
   display: flex;
   flex-direction: column;
