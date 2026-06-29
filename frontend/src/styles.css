@@ -447,12 +447,24 @@ h3 {
   background: var(--surface-composer);
   border: 1px solid var(--border);
   border-radius: var(--r-box);
-  padding: 14px;
+  /* No padding on the box itself: the segment row is the box's header, flush to
+     the top border and sharing its rounded corners (overflow clips them). The
+     .omnibox-body below carries the gutter for the composer and foot. */
+  padding: 0;
+  overflow: hidden;
   display: flex;
   flex-direction: column;
   /* No fixed height: the box is sized by its content, floored at two lines of
      typing room (see .composer-input) and growing from there. */
   box-shadow: var(--shadow-card);
+}
+
+/* The composer proper lives below the header tabs and carries the side/bottom
+   gutter the box itself no longer has. */
+.omnibox-body {
+  display: flex;
+  flex-direction: column;
+  padding: 0 14px 14px;
 }
 
 .edit-banner {
@@ -500,6 +512,33 @@ h3 {
   border-radius: var(--r-seg);
   overflow: hidden;
   flex: none;
+}
+
+/* In the omnibox the segment row IS the box header: it sheds its own pill border
+   and radius (the box clips the top corners to --r-box) and keeps only a divider
+   beneath it. Elsewhere — .onbox-tabs, note tabs, the location screen — the
+   standalone .seg-row pill stands unchanged. */
+.omnibox > .seg-row {
+  border: none;
+  border-bottom: 1px solid var(--border);
+  border-radius: 0;
+  /* visible so the active tab's merge strip can paint over the divider below it */
+  overflow: visible;
+}
+
+/* The active tab merges into the composer: a 1px strip in the tab's own tint
+   paints out the header divider beneath it, so the tab reads as one continuous
+   surface with the body. */
+.omnibox > .seg-row .seg-on {
+  position: relative;
+}
+
+.omnibox > .seg-row .seg-on::after {
+  content: "";
+  position: absolute;
+  inset: auto 0 -1px;
+  height: 1px;
+  background: var(--mode-tint);
 }
 
 .seg {
@@ -616,10 +655,14 @@ h3 {
   color: var(--text-2);
   font-size: var(--fs-secondary);
   flex: none;
+  /* Keeps the action icons hard right when nothing sits to their left (capture
+     modes have no context meter). With a meter present its flex:1 fills the row,
+     so this is a no-op there. The meter can't lean on a foot-icons auto-margin —
+     an auto margin would swallow the free space before the meter's grow could. */
+  justify-content: flex-end;
 }
 
 .foot-icons {
-  margin-left: auto;
   display: flex;
   gap: 14px;
   align-items: center;
@@ -637,13 +680,17 @@ h3 {
 
 /* The live context-usage meter in the composer foot: a thin two-tone fill bar + a
    terse "used/window · %%". The solid segment is the carried-forward floor; the
-   dimmer segment over it is the turn's transient tool I/O. Sits at the foot's
-   left, muted until the window actually fills; the action icons take the right. */
+   dimmer segment over it is the turn's transient tool I/O. It spans the foot's
+   free width — the bar stretches, the label stays a single line at its right —
+   muted until the window actually fills; the action icons take the far right. */
 .ctx-meter {
   display: flex;
   align-items: center;
-  gap: 6px;
-  flex: none;
+  gap: 8px;
+  /* grow into the foot's free space; min-width:0 lets it shrink rather than push
+     the label onto a second line on a narrow box */
+  flex: 1;
+  min-width: 0;
   font-size: var(--fs-micro);
   color: var(--text-3);
   font-variant-numeric: tabular-nums;
@@ -653,12 +700,14 @@ h3 {
 
 .ctx-bar {
   position: relative;
-  width: 40px;
+  /* stretch across the meter; the label beside it is flex:none, so the bar takes
+     whatever width is left */
+  flex: 1;
+  min-width: 24px;
   height: 4px;
   border-radius: var(--r-pill);
   background: var(--surface-2);
   overflow: hidden;
-  flex: none;
 }
 
 /* Both segments are absolute so they stack from the left; the base (painted last in
@@ -685,6 +734,7 @@ h3 {
 
 .ctx-text {
   white-space: nowrap;
+  flex: none;
 }
 
 /* Past ~70% the meter warms to amber; past ~90% it goes full warning, so a context
