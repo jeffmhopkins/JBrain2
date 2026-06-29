@@ -48,6 +48,13 @@ class AgentSession(Base):
     )
     depth: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     no_memory: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    # The last completed turn's context fill (its fullest step's prompt + output) and
+    # the window it ran against — persisted so reopening the chat restores the
+    # context-usage meter at once (token counts aren't in the stored transcript). Null
+    # until a turn reports usage; a pre-feature chat stays null and the meter waits for
+    # the next turn rather than showing a wrong figure.
+    context_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    context_window: Mapped[int | None] = mapped_column(Integer, nullable=True)
     # Selected read scope: domain codes and subject ids the session may read.
     domain_scopes: Mapped[list[str]] = mapped_column(ARRAY(Text))
     subject_ids: Mapped[list[uuid.UUID]] = mapped_column(

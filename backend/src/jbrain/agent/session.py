@@ -54,6 +54,11 @@ class AgentSessionInfo:
     # child's settled outcome (a failed child renders rose ✕) and the parent roll-up
     # its failed count. None for a chat that has never run.
     last_run_status: str | None = None
+    # The last completed turn's context fill + the window it ran against, so reopening
+    # the chat restores the context-usage meter at once (token counts aren't in the
+    # stored transcript). None until a turn reports usage, or for a pre-feature chat.
+    context_tokens: int | None = None
+    context_window: int | None = None
 
 
 def _info(
@@ -82,6 +87,8 @@ def _info(
         staged_count=staged_count,
         subagent_count=subagent_count,
         last_run_status=last_run_status,
+        context_tokens=row.context_tokens,
+        context_window=row.context_window,
     )
 
 
@@ -253,6 +260,20 @@ class AgentSessionRepo:
                 update(AgentSession)
                 .where(AgentSession.id == uuid.UUID(session_id))
                 .values(title=title)
+            )
+
+    async def record_context(
+        self, ctx: SessionContext, session_id: str, tokens: int, window: int
+    ) -> None:
+        """Persist the just-finished turn's context fill (`tokens` = its fullest step's
+        prompt + output) and the `window` it ran against, so the meter restores when the
+        chat is reopened. Best-effort at the call site — it must never block settling a
+        turn (the transcript is the source of truth; this is only the meter's seed)."""
+        async with scoped_session(self._maker, ctx) as session:
+            await session.execute(
+                update(AgentSession)
+                .where(AgentSession.id == uuid.UUID(session_id))
+                .values(context_tokens=tokens, context_window=window)
             )
 
     async def delete(self, ctx: SessionContext, session_id: str) -> None:

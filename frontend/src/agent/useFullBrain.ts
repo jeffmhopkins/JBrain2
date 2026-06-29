@@ -806,16 +806,25 @@ export function useFullBrain(
     if (active?.id === id) setActive({ ...active, domain_scopes: domainScopes });
   }
 
-  // The meter's source. A live turn's usage wins; otherwise — only for an EMPTY chat
-  // (a fresh session, before its first turn) — seed a near-empty bar from the known
-  // window, so the composer shows the context capacity from the start. A reopened
-  // session with history is left null: its true fill isn't in the stored transcript,
-  // and a 0% bar there would under-report rather than inform.
-  const displayUsage: ContextUsage | null =
-    usage ??
-    (windowHint !== null && messages.length === 0
-      ? { used: 0, base: 0, window: windowHint }
-      : null);
+  // The meter's source, in priority order:
+  //   1. a live turn's usage (the freshest truth);
+  //   2. an EMPTY chat → a near-empty bar from the known window, so the composer shows
+  //      the context capacity from the start;
+  //   3. a reopened chat WITH history → its last turn's persisted fill (context_tokens
+  //      over context_window), so the meter restores immediately instead of waiting for
+  //      the next turn. The transcript doesn't carry token counts, so this stored pair
+  //      is the only way to know a past chat's fill; absent it (a pre-feature chat), the
+  //      meter stays hidden rather than show a wrong figure.
+  const restored: ContextUsage | null =
+    active?.context_tokens != null && active?.context_window != null
+      ? { used: active.context_tokens, base: active.context_tokens, window: active.context_window }
+      : null;
+  const freshSeed: ContextUsage | null =
+    windowHint !== null && messages.length === 0 ? { used: 0, base: 0, window: windowHint } : null;
+  // `restored` (a populated chat's persisted fill) is preferred over the empty seed so
+  // it doesn't depend on the transcript finishing its async load; only a session with
+  // no stored fill falls through to the near-empty fresh-chat bar.
+  const displayUsage: ContextUsage | null = usage ?? restored ?? freshSeed;
 
   return {
     active,
