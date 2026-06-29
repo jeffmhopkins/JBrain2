@@ -775,7 +775,7 @@ function MemoryCard({
         <span
           className="ops-mem-seg g-kernel"
           style={{ width: `${(kernel / total) * 100}%` }}
-          title="kernel & cache"
+          title="GPU, kernel & cache — includes model weights offloaded to the iGPU (no per-process RSS)"
         />
       </div>
 
@@ -898,9 +898,15 @@ function MemoryCard({
 
       <p className="ops-mem-foot">
         <b>{fmtBytes(accounted)}</b> across {items.length}{" "}
-        {metrics.processes.length > 0 ? "processes" : "containers"} · <b>{fmtBytes(kernel)}</b>{" "}
-        kernel &amp; cache · <b>{fmtBytes(free)}</b> free
+        {metrics.processes.length > 0 ? "processes" : "containers"} · <b>{fmtBytes(kernel)}</b> GPU
+        + kernel &amp; cache · <b>{fmtBytes(free)}</b> free
       </p>
+      {metrics.processes.length > 0 && (
+        <p className="ops-mem-note">
+          Models run on the iGPU — their weights live in GPU memory that per-process RSS can&apos;t
+          see, so they fall into “GPU + kernel &amp; cache,” not the rows above.
+        </p>
+      )}
     </OpsCard>
   );
 }
