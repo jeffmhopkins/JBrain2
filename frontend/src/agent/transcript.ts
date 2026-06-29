@@ -283,9 +283,24 @@ export function applyEvent(messages: TranscriptMessage[], event: ChatEvent): Tra
       });
       break;
     }
-    case "tool_view":
-      next.views = [...next.views, event.view];
+    case "tool_view": {
+      // A subagent_synthesis view is a SUPERSEDING roster: the fan re-emits it as each
+      // child settles, then once more as the final result — all stamped with the same
+      // spawn tool_call_id. Replace the prior roster for that call instead of stacking
+      // every update as its own card (which showed "1 of 1", "2 of 2", "2 of 2" live; the
+      // backend accumulator already supersedes, which is why a reopened session shows
+      // one). Keyed by tool_call_id so a turn with two separate fans still shows two cards.
+      if (event.view.view === "subagent_synthesis") {
+        const tagged = { ...event.view, tool_call_id: event.tool_call_id };
+        const kept = next.views.filter(
+          (v) => !(v.view === "subagent_synthesis" && v.tool_call_id === event.tool_call_id),
+        );
+        next.views = [...kept, tagged];
+      } else {
+        next.views = [...next.views, event.view];
+      }
       break;
+    }
     case "job_enqueued":
       next.tools = [
         ...next.tools,

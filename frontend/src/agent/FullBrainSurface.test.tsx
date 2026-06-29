@@ -276,7 +276,24 @@ describe("FullBrainSurface", () => {
     expect(worked).toHaveAttribute("aria-expanded", "false");
   });
 
-  it("swaps the live fan for the synthesis card on settle (one consistent surface)", async () => {
+  it("swaps the live fan for ONE synthesis card on settle (supersedes incremental rosters)", async () => {
+    // The fan re-emits the roster as each child settles, then once more as the final
+    // result — three subagent_synthesis tool_views for one fan. They must SUPERSEDE (one
+    // card), not stack ("1 of 1 / 2 of 2 / 2 of 2", the reported bug).
+    const roster = (
+      children: { label: string; persona: string; ok: boolean; summary: string }[],
+    ): ChatEvent => ({
+      type: "tool_view",
+      tool_call_id: "sp1",
+      view: {
+        view: "subagent_synthesis",
+        surface: "inline",
+        data: { ran: children.length, failed: 0, truncated: false, children },
+        refs: [],
+      },
+    });
+    const c1 = { label: "Troutdale News", persona: "research", ok: true, summary: "quiet" };
+    const c2 = { label: "Port Saint John News", persona: "research", ok: true, summary: "fest" };
     async function* answer(): AsyncGenerator<ChatEvent> {
       yield { type: "text_delta", text: "Comparing two towns." };
       yield { type: "tool_call", id: "sp1", name: "spawn_subagent", arguments: { tasks: [] } };
@@ -306,6 +323,7 @@ describe("FullBrainSurface", () => {
         tree_spent: 100,
         tree_budget: 1000,
       };
+      yield roster([c1]); // incremental: 1 of 1
       yield {
         type: "subagent_done",
         tool_call_id: "sp1",
@@ -316,24 +334,9 @@ describe("FullBrainSurface", () => {
         tree_spent: 200,
         tree_budget: 1000,
       };
+      yield roster([c1, c2]); // incremental: 2 of 2
       yield { type: "tool_result", tool_call_id: "sp1", ok: true, summary: "synthesized" };
-      yield {
-        type: "tool_view",
-        tool_call_id: "sp1",
-        view: {
-          view: "subagent_synthesis",
-          surface: "inline",
-          data: {
-            ran: 2,
-            failed: 0,
-            children: [
-              { label: "Troutdale News", persona: "research", ok: true, summary: "quiet" },
-              { label: "Port Saint John News", persona: "research", ok: true, summary: "festival" },
-            ],
-          },
-          refs: [],
-        },
-      };
+      yield roster([c1, c2]); // final: 2 of 2 (duplicate of the last incremental)
       yield { type: "text_delta", text: " Done." };
       yield { type: "done", stop_reason: "end_turn" };
     }
@@ -342,9 +345,10 @@ describe("FullBrainSurface", () => {
     fireEvent.change(screen.getByLabelText("Composer"), { target: { value: "compare them" } });
     fireEvent.click(screen.getByRole("button", { name: "send" }));
 
-    // On settle the live accordion stands down and the synthesis roster card takes over —
-    // so live-finished looks the same as a reopen, never both at once.
+    // On settle the live accordion stands down and EXACTLY ONE synthesis card takes over —
+    // the three rosters superseded, not stacked.
     await waitFor(() => expect(container.querySelector(".tv-syn")).not.toBeNull());
+    expect(container.querySelectorAll(".tv-syn")).toHaveLength(1);
     expect(container.querySelector(".fb-sa")).toBeNull();
     expect(screen.getByText("Troutdale News")).toBeInTheDocument();
   });
