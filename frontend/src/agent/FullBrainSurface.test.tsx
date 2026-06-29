@@ -272,7 +272,7 @@ describe("FullBrainSurface", () => {
     expect(worked).toHaveAttribute("aria-expanded", "false");
   });
 
-  it("keeps the sub-agent accordion in chat after settle and suppresses the duplicate synthesis card", async () => {
+  it("swaps the live fan for the synthesis card on settle (one consistent surface)", async () => {
     async function* answer(): AsyncGenerator<ChatEvent> {
       yield { type: "text_delta", text: "Comparing two towns." };
       yield { type: "tool_call", id: "sp1", name: "spawn_subagent", arguments: { tasks: [] } };
@@ -338,11 +338,11 @@ describe("FullBrainSurface", () => {
     fireEvent.change(screen.getByLabelText("Composer"), { target: { value: "compare them" } });
     fireEvent.click(screen.getByRole("button", { name: "send" }));
 
-    // The turn settles, yet the accordion persists in chat showing the done roll-up …
-    await waitFor(() => expect(screen.getByText(/done · 2 ran/)).toBeInTheDocument());
-    expect(container.querySelector(".fb-sa")).not.toBeNull();
-    // … and the persisted synthesis card is suppressed so the roster never shows twice.
-    expect(container.querySelector(".tv-syn")).toBeNull();
+    // On settle the live accordion stands down and the synthesis roster card takes over —
+    // so live-finished looks the same as a reopen, never both at once.
+    await waitFor(() => expect(container.querySelector(".tv-syn")).not.toBeNull());
+    expect(container.querySelector(".fb-sa")).toBeNull();
+    expect(screen.getByText("Troutdale News")).toBeInTheDocument();
   });
 
   it("shows the live fan mid-stream even with no answer or reasoning yet (non-reasoning model)", async () => {

@@ -755,4 +755,58 @@ describe("ToolView registry", () => {
     // The fail/truncated frame is signalled by the has-fail class (rose frame via CSS).
     expect(container.querySelector(".tv-syn.has-fail")).not.toBeNull();
   });
+
+  it("deep-links each synthesis row to its sub-agent session when a handler is given", () => {
+    const onOpenSession = vi.fn();
+    const { getByLabelText, queryByLabelText } = render(
+      <ToolView
+        onOpenSession={onOpenSession}
+        payload={payload({
+          view: "subagent_synthesis",
+          data: {
+            ran: 2,
+            failed: 0,
+            children: [
+              {
+                label: "Pricing",
+                persona: "research",
+                ok: true,
+                summary: "x",
+                session_id: "sess-k1",
+              },
+              // No session_id → no link for this row (nothing to open).
+              { label: "Security", persona: "research", ok: true, summary: "y" },
+            ],
+          },
+        })}
+      />,
+    );
+    fireEvent.click(getByLabelText("Open Pricing session"));
+    expect(onOpenSession).toHaveBeenCalledWith("sess-k1");
+    expect(queryByLabelText("Open Security session")).toBeNull();
+  });
+
+  it("renders no session links when no onOpenSession handler is provided", () => {
+    const { queryByLabelText } = render(
+      <ToolView
+        payload={payload({
+          view: "subagent_synthesis",
+          data: {
+            ran: 1,
+            failed: 0,
+            children: [
+              {
+                label: "Pricing",
+                persona: "research",
+                ok: true,
+                summary: "x",
+                session_id: "sess-k1",
+              },
+            ],
+          },
+        })}
+      />,
+    );
+    expect(queryByLabelText("Open Pricing session")).toBeNull();
+  });
 });

@@ -344,6 +344,10 @@ function Bubble({
   // A live sub-agent fan attaches to its spawn_subagent call; the bubble must stay up
   // to host it (computed here so the streaming guard below can honour it too).
   const hasLiveFan = message.tools.some((t) => t.fan);
+  // The rich live accordion shows only WHILE the turn streams. On settle it gives way
+  // to the persisted `subagent_synthesis` roster card (the same surface a reopen shows),
+  // so live-finished and reloaded look identical — one consistent research surface.
+  const liveFanActive = hasLiveFan && message.streaming;
   // While the turn is still streaming, hold the whole bubble until the answer
   // text begins — tool calls alone shouldn't pop an empty Worked block ahead of
   // any prose. EXCEPT a reasoning model (show the live "Thinking…" disclosure), a
@@ -410,18 +414,33 @@ function Bubble({
     .filter((t) => IMAGE_TOOL_NAMES.has(t.name))
     .map((t) => t.preview);
   let nextImagePreview = 0;
-  // A live sub-agent fan (folded from this session's `subagent_*` events) is the
-  // in-chat surface — its accordion persists below the bubble showing the settled
-  // roster (collapsible per child). The persisted `subagent_synthesis` view is the
-  // reopen-only stand-in, so suppress it whenever a live fan is present or the two
-  // would stack the same roster twice on settle.
+  // The live `subagent_*` fan is the surface WHILE the turn streams; the persisted
+  // `subagent_synthesis` view takes over on settle (and on reopen). Suppress the view
+  // only while the live fan is actually showing, so the two never stack — then let the
+  // view through once the fan stands down.
   const viewsToRender = message.views
-    .filter((v) => !(hasLiveFan && v.view === "subagent_synthesis"))
+    .filter((v) => !(liveFanActive && v.view === "subagent_synthesis"))
     .map((v) => {
       if (v.view !== "generated_image") return v;
       const preview = imagePreviews[nextImagePreview++];
       return preview ? { ...v, data: { ...v.data, placeholder_data_uri: preview } } : v;
     });
+
+  // The live sub-agent fan blocks (one per spawn step), shown only while streaming —
+  // computed once so BOTH the normal and the image-split render paths show them (an
+  // image+research turn used to drop the fan when it took the image-split early return).
+  const fanBlocks = (liveFanActive ? message.tools.filter((t) => t.fan) : []).map(
+    (t) =>
+      t.fan && (
+        <SubagentFan
+          key={t.id}
+          fan={t.fan}
+          running={message.streaming}
+          onStop={onStop}
+          onOpen={onOpenSession}
+        />
+      ),
+  );
 
   // The answer side: the prose, any tool-result views, and the proposal affordance.
   const answer = (
@@ -447,7 +466,7 @@ function Bubble({
       ))}
       {viewsToRender.map((v, i) => (
         // biome-ignore lint/suspicious/noArrayIndexKey: views append in order
-        <ToolView key={i} payload={v} />
+        <ToolView key={i} payload={v} onOpenSession={onOpenSession} />
       ))}
       {staged && <ProposalChip proposal={staged} onOpen={onOpenProposal} />}
     </>
@@ -516,7 +535,7 @@ function Bubble({
         {imageViews.map((v, i) => (
           // biome-ignore lint/suspicious/noArrayIndexKey: views append in order
           <div className="bubble ai bubble-media" key={`v-${i}`}>
-            <ToolView payload={v} />
+            <ToolView payload={v} onOpenSession={onOpenSession} />
           </div>
         ))}
         {hasReply && (
@@ -533,25 +552,23 @@ function Bubble({
             )}
             {otherViews.map((v, i) => (
               // biome-ignore lint/suspicious/noArrayIndexKey: views append in order
-              <ToolView key={i} payload={v} />
+              <ToolView key={i} payload={v} onOpenSession={onOpenSession} />
             ))}
             {staged && <ProposalChip proposal={staged} onOpen={onOpenProposal} />}
             {generalKnowledge && <GeneralKnowledgeNote />}
             {activityLine}
           </div>
         )}
+        {fanBlocks}
       </>
     );
   }
 
-  // A sub-agent fan renders as its own bordered block below the answer bubble (the
-  // accordion reads the parent turn's `subagent_*` events folded onto the spawn call).
-  // It PERSISTS once settled — staying in the chat showing each child "done" with its
-  // summary a tap away — so the user keeps the live roster instead of it vanishing into
-  // a separate card. The `subagent_synthesis` view is suppressed while this fan is
-  // present (above), leaving it the sole roster surface for the session; a reopened
-  // transcript has no folded events, so the persisted synthesis view stands in instead.
-  const fans = message.tools.filter((t) => t.fan);
+  // The live sub-agent fan renders as its own bordered block below the answer bubble
+  // (the accordion reads the parent turn's `subagent_*` events folded onto the spawn
+  // call) ONLY while the turn streams (`fanBlocks`, computed above). On settle it stands
+  // down and the persisted `subagent_synthesis` roster card (rendered with the answer's
+  // views) takes its place — so a finished fan looks the same live as it does on reopen.
   return (
     <>
       <div className="bubble ai">
@@ -559,18 +576,7 @@ function Bubble({
         {generalKnowledge && <GeneralKnowledgeNote />}
         {activityLine}
       </div>
-      {fans.map(
-        (t) =>
-          t.fan && (
-            <SubagentFan
-              key={t.id}
-              fan={t.fan}
-              running={message.streaming}
-              onStop={onStop}
-              onOpen={onOpenSession}
-            />
-          ),
-      )}
+      {fanBlocks}
     </>
   );
 }

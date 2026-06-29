@@ -470,16 +470,109 @@ async def test_fan_emits_subagent_lifecycle_events(service: SpawnService) -> Non
         emit_event=captured.append,
     )
     await service.spawn_fan(ctx, {"tasks": [{"persona": "research", "brief": "x", "label": "L"}]})
+    # spawned → progress → done per child, then the incremental roster-so-far view emitted
+    # as the child settles (so a fan cut short still persists what finished — the loop
+    # stamps the spawn call id and the live UI suppresses it under the live fan).
     assert [e.type for e in captured] == [
         "subagent_spawned",
         "subagent_progress",
         "subagent_done",
+        "tool_view",
     ]
-    spawned, progress, done = captured
+    spawned, progress, done, view = captured
     assert (spawned.persona, spawned.label, spawned.depth) == ("research", "L", 1)
     assert spawned.child_id == "sess-1"
     assert progress.phase == "researching"
     assert done.ok is True and done.child_id == "sess-1"
+    assert view.view.view == "subagent_synthesis" and view.tool_call_id == ""
+
+
+async def test_fan_emits_incremental_synthesis_view_as_each_child_settles(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """As EACH child settles, the fan re-emits the roster-so-far as a `tool_view` (the
+    incremental synthesis). So a two-child fan emits TWO views — the first carrying one
+    child, the second carrying both — and the loop stamps the spawn call id (the event
+    rides tool_call_id=""). This is what lets a fan cut short persist the children that
+    had finished: the last view folded onto the spawn step is the durable roster."""
+    _FakeLoop.calls = []
+    monkeypatch.setattr(spawn_mod, "AgentLoop", _FakeLoop)
+    captured: list = []
+    ctx = ToolContext(
+        session=SessionContext(principal_id="p1", principal_kind="owner"),
+        scopes=(),
+        agent_session_id="parent-sess",
+        depth=0,
+        agent_tools=JERV_TOOLS,
+        tree=TreeState(),
+        run_id="parent-run",
+        emit_event=captured.append,
+    )
+    svc = SpawnService(
+        router=_FakeRouter(),  # type: ignore[arg-type]
+        registry=object(),  # type: ignore[arg-type]
+        sessions=_FakeSessions(),  # type: ignore[arg-type]
+        runlog=_FakeRunLog(),  # type: ignore[arg-type]
+    )
+    await svc.spawn_fan(
+        ctx,
+        {
+            "tasks": [
+                {"persona": "research", "brief": "a", "label": "A"},
+                {"persona": "research", "brief": "b", "label": "B"},
+            ]
+        },
+    )
+    views = [e for e in captured if e.type == "tool_view"]
+    # One incremental view per settled child — the roster grows 1 → 2.
+    assert len(views) == 2
+    assert all(v.tool_call_id == "" for v in views)  # the loop stamps the spawn call id
+    assert all(v.view.view == "subagent_synthesis" for v in views)
+    assert views[0].view.data["ran"] == 1
+    assert views[-1].view.data["ran"] == 2
+    assert {c["label"] for c in views[-1].view.data["children"]} == {"A", "B"}
+
+
+async def test_cut_short_fan_persists_the_children_that_finished(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Fix #2: a fan cancelled (Stop / error / turn_timeout) AFTER k children settle still
+    leaves a partial `subagent_synthesis` roster of those k — so a reopened transcript
+    shows the research surface instead of a bare spawn row. We model the parent turn's fold
+    exactly: feed the spawn tool_call + the incremental view the fan emitted for the one
+    child that finished (the loop stamps it with the spawn call id), then the synthetic
+    terminal `done` a cut-short turn settles with. The accumulator must carry that view on
+    the spawn step (no `tool_result` ever arrives), and `tool_steps()` is what gets
+    persisted."""
+    from jbrain.agent.contracts import DoneEvent, TextDelta, ToolCallEvent, ToolViewEvent
+    from jbrain.agent.spawn import _ChildResult, _synthesis_view
+    from jbrain.agent.transcript_accumulator import TranscriptAccumulator
+
+    # The first child finished before the Stop; the fan emitted its roster-so-far view.
+    settled_view = _synthesis_view(
+        [
+            _ChildResult(
+                label="A", persona="research", summary="found x", ok=True, session_id="sess-A"
+            )
+        ]
+    )
+
+    acc = TranscriptAccumulator()
+    acc.feed(TextDelta(text="Spinning up researchers…"))
+    acc.feed(ToolCallEvent(id="call-1", name="spawn_subagent", arguments={"tasks": []}))
+    # The incremental view, loop-stamped with the spawn call id — folds onto the step
+    # even though no tool_result followed (the fan never reached its final ToolOutput).
+    acc.feed(ToolViewEvent(tool_call_id="call-1", view=settled_view))
+    acc.feed(DoneEvent(stop_reason="turn_timeout"))  # the synthetic terminal of a cut turn
+
+    spawn_step = next(s for s in acc.tool_steps() if s["name"] == "spawn_subagent")
+    # The partial roster survives on the spawn step — the reopened transcript shows it.
+    assert spawn_step["view"]["view"] == "subagent_synthesis"
+    assert spawn_step["view"]["data"]["ran"] == 1
+    children = spawn_step["view"]["data"]["children"]
+    assert [c["label"] for c in children] == ["A"]
+    # The child's session id rides the view so the card row can deep-link to it on reopen.
+    assert children[0]["session_id"] == "sess-A"
 
 
 async def test_all_children_announced_up_front_as_queued(service: SpawnService) -> None:
