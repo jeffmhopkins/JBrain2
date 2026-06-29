@@ -336,6 +336,7 @@ class AgentLoop:
         run_id: str | None = None,
         on_step: Callable[[int, int], None] | None = None,
         reasoning_effort: str | None = None,
+        force_final_answer: bool = False,
     ) -> AgentResult:
         scopes = tuple(scopes)
         tools = self._registry.schemas_for(scopes, tools_allow)
@@ -414,6 +415,26 @@ class AgentLoop:
             if consecutive_errors >= self._g.max_consecutive_tool_errors:
                 return AgentResult(turn.text, "too_many_errors", step + 1, cost)
 
+        if force_final_answer:
+            # Out of steps mid-chain. Rather than return an empty "(no answer)", make one
+            # final turn with NO tools so the model must synthesize an answer from what it
+            # already gathered — a research child otherwise reports nothing the moment it
+            # hits the cap. Still flagged `max_steps` so the caller knows it's step-limited.
+            final = await self._router.converse(
+                self._task,
+                system=system_prompt,
+                messages=messages,
+                tools=(),
+                max_tokens=TURN_MAX_TOKENS,
+                strength=SYSTEM_STRENGTH,
+                effort_override=reasoning_effort,
+            )
+            spent_final = final.usage.input_tokens + final.usage.output_tokens
+            cost += spent_final
+            if tree is not None:
+                tree.charge(spent_final)
+            await self._record(idx, "model", "converse", ok=True, cost_tokens=spent_final)
+            return AgentResult(final.text, "max_steps", self._g.max_steps, cost)
         return AgentResult("", "max_steps", self._g.max_steps, cost)
 
     async def run_stream(

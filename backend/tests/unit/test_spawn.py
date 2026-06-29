@@ -267,6 +267,37 @@ async def test_budget_truncated_child_is_ok_but_marked_truncated(
     assert "[FAILED]" not in out  # it is ok (has content), just partial
 
 
+async def test_step_limited_child_with_a_forced_answer_is_ok_but_truncated(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A child that hits max_steps but synthesized a final answer (force_final_answer)
+    counts as ok — it has real content — and is tagged truncated, not [FAILED]. The
+    child loop is launched with force_final_answer set."""
+
+    class _StepLimitedLoop(_FakeLoop):
+        async def run(self, **kw):  # noqa: ANN003
+            _FakeLoop.calls.append(kw)
+            return AgentResult(
+                text="best-effort findings", stop_reason="max_steps", steps=10, cost_tokens=9
+            )
+
+    _FakeLoop.calls = []
+    monkeypatch.setattr(spawn_mod, "AgentLoop", _StepLimitedLoop)
+    svc = SpawnService(
+        router=_FakeRouter(),  # type: ignore[arg-type]
+        registry=object(),  # type: ignore[arg-type]
+        sessions=_FakeSessions(),  # type: ignore[arg-type]
+        runlog=_FakeRunLog(),  # type: ignore[arg-type]
+    )
+    out = await svc.spawn_fan(
+        _ctx(), {"tasks": [{"persona": "research", "brief": "x", "label": "L"}]}
+    )
+    assert "best-effort findings" in out
+    assert "truncated" in out.lower()
+    assert "[FAILED]" not in out
+    assert _FakeLoop.calls[0]["force_final_answer"] is True
+
+
 async def test_degraded_child_is_flagged_failed(monkeypatch: pytest.MonkeyPatch) -> None:
     """A child that stops without a substantive answer (max_steps / empty text) is
     surfaced as [FAILED], not folded in as a clean summary."""

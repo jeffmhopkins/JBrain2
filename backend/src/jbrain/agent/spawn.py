@@ -356,6 +356,9 @@ class SpawnService:
                         # The spawner's per-child reasoning effort (the router drops it
                         # for a non-reasoning child model).
                         reasoning_effort=plan.effort,
+                        # On step exhaustion, synthesize a final answer from what was
+                        # gathered rather than returning an empty "(no answer)".
+                        force_final_answer=True,
                     ),
                     timeout=CHILD_WALL_CLOCK_S,
                 )
@@ -435,14 +438,15 @@ class SpawnService:
                 step_count=tally.steps,
                 cost_tokens=tally.cost,
             )
-            # A child is a success only if it produced a substantive answer via a
-            # clean stop. max_steps / too_many_errors (or an empty answer) is a
-            # degraded child — surfaced as [FAILED] so the parent doesn't synthesize
-            # over an empty block as if it were a clean summary. (AgentResult never
-            # carries stop_reason="error"; an exception-failed child returns above.)
+            # A child is a success only if it produced a substantive answer. A clean
+            # `end_turn`, or a step/budget-limited stop that still SYNTHESIZED an answer
+            # (force_final_answer / a budget-cut partial), counts — it's real, just
+            # partial. An empty answer or too_many_errors is degraded, surfaced as
+            # [FAILED] so the parent doesn't synthesize over an empty block. (AgentResult
+            # never carries stop_reason="error"; an exception-failed child returns above.)
             text = result.text.strip()
-            _clean_stops = ("end_turn", "budget", "tree_budget_exhausted")
-            truncated = result.stop_reason in ("budget", "tree_budget_exhausted")
+            _clean_stops = ("end_turn", "budget", "tree_budget_exhausted", "max_steps")
+            truncated = result.stop_reason in ("budget", "tree_budget_exhausted", "max_steps")
             ok = bool(text) and result.stop_reason in _clean_stops
             if not text:
                 summary = f"(no answer; stopped: {result.stop_reason})"
