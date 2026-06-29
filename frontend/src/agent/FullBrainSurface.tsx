@@ -340,17 +340,23 @@ function Bubble({
   const liveStatuses = message.tools.filter(
     (t) => !IMAGE_TOOL_NAMES.has(t.name) && t.ok === undefined && t.progress?.label,
   );
+  // A live sub-agent fan attaches to its spawn_subagent call; the bubble must stay up
+  // to host it (computed here so the streaming guard below can honour it too).
+  const hasLiveFan = message.tools.some((t) => t.fan);
   // While the turn is still streaming, hold the whole bubble until the answer
   // text begins — tool calls alone shouldn't pop an empty Worked block ahead of
-  // any prose. EXCEPT a reasoning model (show the live "Thinking…" disclosure) or a
-  // running image render (show its live preview). The status line above the omnibox
-  // still carries "what it's doing" until the typed answer lands.
+  // any prose. EXCEPT a reasoning model (show the live "Thinking…" disclosure), a
+  // running image render (show its live preview), or a live sub-agent fan (its
+  // accordion IS the surface — without this exception a non-reasoning model, which
+  // streams neither answer nor reasoning during the spawn, would show nothing for the
+  // whole fan run). The status line above the omnibox still carries "what it's doing".
   if (
     message.streaming &&
     !message.text &&
     !message.reasoning &&
     livePreviews.length === 0 &&
-    liveStatuses.length === 0
+    liveStatuses.length === 0 &&
+    !hasLiveFan
   ) {
     return null;
   }
@@ -408,7 +414,6 @@ function Bubble({
   // roster (collapsible per child). The persisted `subagent_synthesis` view is the
   // reopen-only stand-in, so suppress it whenever a live fan is present or the two
   // would stack the same roster twice on settle.
-  const hasLiveFan = message.tools.some((t) => t.fan);
   const viewsToRender = message.views
     .filter((v) => !(hasLiveFan && v.view === "subagent_synthesis"))
     .map((v) => {
