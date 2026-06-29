@@ -7908,6 +7908,12 @@ button.small {
   height: 100%;
   background: var(--steel);
 }
+/* Queued (minted, not yet started): a static, faint fill — NOT the running sweep, so a
+   waiting child reads as idle rather than active. */
+.fb-shell .fb-sa-bar.queued i {
+  width: 100%;
+  opacity: 0.22;
+}
 .fb-shell .fb-sa-bar.running i {
   width: 40%;
   border-radius: 999px;
