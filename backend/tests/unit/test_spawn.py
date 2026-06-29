@@ -244,14 +244,28 @@ async def test_spawn_refused_without_a_tree_pool(service: SpawnService) -> None:
     assert not _FakeLoop.calls
 
 
-async def test_budget_truncated_child_is_ok_but_marked_truncated(
+def _capturing_ctx(captured: list) -> ToolContext:
+    return ToolContext(
+        session=SessionContext(principal_id="p1", principal_kind="owner"),
+        scopes=(),
+        agent_session_id="parent-sess",
+        depth=0,
+        agent_tools=JERV_TOOLS,
+        tree=TreeState(),
+        run_id="parent-run",
+        emit_event=captured.append,
+    )
+
+
+async def test_capped_child_with_a_synthesized_answer_is_not_truncated(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A child cut off on budget has a real but partial answer: it counts as ok (it
-    has content) yet the summary is tagged truncated so the parent doesn't treat it as
-    complete."""
+    """A child cut off on budget/steps that STILL synthesized a real answer is complete-
+    but-deep, NOT truncated: it counts as ok, its summary is the answer (no '[truncated]'
+    tag), and the synthesis card carries truncated=False. Truncation is now reserved for a
+    capped child that produced nothing (see test_degraded_child_is_flagged_failed)."""
 
-    class _TruncatedLoop(_FakeLoop):
+    class _CappedLoop(_FakeLoop):
         async def run(self, **kw):  # noqa: ANN003
             _FakeLoop.calls.append(kw)
             return AgentResult(
@@ -259,27 +273,30 @@ async def test_budget_truncated_child_is_ok_but_marked_truncated(
             )
 
     _FakeLoop.calls = []
-    monkeypatch.setattr(spawn_mod, "AgentLoop", _TruncatedLoop)
+    monkeypatch.setattr(spawn_mod, "AgentLoop", _CappedLoop)
     svc = SpawnService(
         router=_FakeRouter(),  # type: ignore[arg-type]
         registry=object(),  # type: ignore[arg-type]
         sessions=_FakeSessions(),  # type: ignore[arg-type]
         runlog=_FakeRunLog(),  # type: ignore[arg-type]
     )
+    captured: list = []
     out = await svc.spawn_fan(
-        _ctx(), {"tasks": [{"persona": "research", "brief": "x", "label": "L"}]}
+        _capturing_ctx(captured), {"tasks": [{"persona": "research", "brief": "x", "label": "L"}]}
     )
     assert "partial findings" in out
-    assert "truncated" in out.lower()
-    assert "[FAILED]" not in out  # it is ok (has content), just partial
+    assert "[FAILED]" not in out  # it is ok (has content)
+    assert "truncated" not in out.lower()  # no alarming suffix in the parent observation
+    view = [e for e in captured if e.type == "tool_view"][-1]
+    assert view.view.data["truncated"] is False  # complete-but-deep, not a red ✕
 
 
-async def test_step_limited_child_with_a_forced_answer_is_ok_but_truncated(
+async def test_step_limited_child_with_a_forced_answer_is_ok_and_not_truncated(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A child that hits max_steps but synthesized a final answer (force_final_answer)
-    counts as ok — it has real content — and is tagged truncated, not [FAILED]. The
-    child loop is launched with force_final_answer set."""
+    counts as ok and is NOT flagged truncated — it has real content. The child loop is
+    launched with force_final_answer set."""
 
     class _StepLimitedLoop(_FakeLoop):
         async def run(self, **kw):  # noqa: ANN003
@@ -296,13 +313,15 @@ async def test_step_limited_child_with_a_forced_answer_is_ok_but_truncated(
         sessions=_FakeSessions(),  # type: ignore[arg-type]
         runlog=_FakeRunLog(),  # type: ignore[arg-type]
     )
+    captured: list = []
     out = await svc.spawn_fan(
-        _ctx(), {"tasks": [{"persona": "research", "brief": "x", "label": "L"}]}
+        _capturing_ctx(captured), {"tasks": [{"persona": "research", "brief": "x", "label": "L"}]}
     )
     assert "best-effort findings" in out
-    assert "truncated" in out.lower()
     assert "[FAILED]" not in out
     assert _FakeLoop.calls[0]["force_final_answer"] is True
+    view = [e for e in captured if e.type == "tool_view"][-1]
+    assert view.view.data["truncated"] is False
 
 
 async def test_degraded_child_is_flagged_failed(monkeypatch: pytest.MonkeyPatch) -> None:

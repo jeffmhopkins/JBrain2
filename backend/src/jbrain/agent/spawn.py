@@ -518,16 +518,15 @@ class SpawnService:
             # never carries stop_reason="error"; an exception-failed child returns above.)
             text = result.text.strip()
             _clean_stops = ("end_turn", "budget", "tree_budget_exhausted", "max_steps")
-            truncated = result.stop_reason in ("budget", "tree_budget_exhausted", "max_steps")
+            hit_cap = result.stop_reason in ("budget", "tree_budget_exhausted", "max_steps")
             ok = bool(text) and result.stop_reason in _clean_stops
-            if not text:
-                summary = f"(no answer; stopped: {result.stop_reason})"
-            elif truncated:
-                # A budget-cut child has a real but PARTIAL answer — tell the parent so
-                # it doesn't synthesize over truncated work as if it were complete.
-                summary = f"{text}\n\n[truncated — hit the {result.stop_reason} limit]"
-            else:
-                summary = text
+            # "Truncated" (the synthesis card's red ✕) is reserved for a child a cap cut
+            # off WITHOUT a usable answer. A capped child that still synthesized a real
+            # forced-final answer is complete-but-deep, not truncated — so the card stops
+            # crying wolf over good research (the common case now the loop soft-lands
+            # before the cap). The parent reads the answer as complete.
+            truncated = hit_cap and not text
+            summary = text if text else f"(no answer; stopped: {result.stop_reason})"
             _emit(
                 ctx,
                 SubagentDoneEvent(

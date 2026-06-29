@@ -258,6 +258,39 @@ async def test_force_final_answer_synthesizes_on_step_exhaustion() -> None:
     assert isinstance(last_msg, UserMessage) and "no more tools" in last_msg.text.lower()
 
 
+async def test_soft_landing_nudges_a_child_to_finish_before_the_cap() -> None:
+    # A few steps before the hard cap, a force-final-eligible run (a sub-agent) is asked
+    # to wrap up — so it can land on end_turn instead of being force-cut at max_steps.
+    # With max_steps=5 the warning fires at step 5-3=2 (3rd converse); the model then
+    # stops calling tools and answers, so the run ends clean rather than truncated.
+    turns = [
+        LlmTurn("", (ToolCall("c", "search", {}),), "tool_use", LlmUsage(1, 1)),
+        LlmTurn("", (ToolCall("c", "search", {}),), "tool_use", LlmUsage(1, 1)),
+        LlmTurn("here is my answer", (), "end_turn", LlmUsage(1, 1)),  # complies with the nudge
+    ]
+    router, fake = router_with(turns)
+    loop = AgentLoop(
+        router, registry_with(make_tool("search", search)), guardrails=Guardrails(max_steps=5)
+    )
+    result = await loop.run(
+        session=OWNER,
+        scopes=("general",),
+        conversation=[UserMessage(text="q")],
+        force_final_answer=True,
+    )
+    # It ended cleanly on its own (end_turn), NOT force-cut at the cap (max_steps).
+    assert result.stop_reason == "end_turn"
+    assert result.text == "here is my answer"
+    # The 3rd converse (index 2, where the nudge fires) carried the budget warning as its
+    # last user turn; the earlier converses did not.
+    assert isinstance(fake.converse_calls[2]["messages"][-1], UserMessage)
+    assert "out of tool-call budget" in fake.converse_calls[2]["messages"][-1].text.lower()
+    assert all(
+        not (isinstance(m, UserMessage) and "budget" in m.text.lower())
+        for m in fake.converse_calls[0]["messages"]
+    )
+
+
 async def test_consecutive_tool_errors_guardrail() -> None:
     forever = [LlmTurn("", (ToolCall("c", "boom", {}),), "tool_use", LlmUsage(1, 1))]
     router, _ = router_with(forever)

@@ -140,6 +140,18 @@ FINAL_ANSWER_DIRECTIVE = (
     "call, a search query, or JSON — just the synthesized answer."
 )
 
+# Soft landing: a few steps before the HARD step cap, a force-final-eligible run (a
+# sub-agent) is nudged to stop searching and synthesize, so it ends cleanly on its own
+# (end_turn) instead of being force-cut at max_steps (which reads as "truncated"). The
+# forced-final turn above is the fallback if it ignores the nudge. An ordinary turn (no
+# force_final_answer) is never budget-warned.
+_BUDGET_WARNING_LEAD = 3  # ReAct steps before the cap to issue the warning
+BUDGET_WARNING_DIRECTIVE = (
+    "You are almost out of tool-call budget. Make at most one more essential tool call "
+    "if truly necessary, then STOP using tools and write your complete final answer now "
+    "from what you have already gathered."
+)
+
 
 def guardrails_for_effort(effort: str | None, *, scale: int = 1) -> Guardrails:
     """The loop's budget sized to the task's effective reasoning effort, then scaled
@@ -432,6 +444,12 @@ class AgentLoop:
         idx = 0
 
         for step in range(self._g.max_steps):
+            # Soft landing (sub-agents only): a few steps before the hard cap, ask the
+            # model to wrap up so it lands on end_turn rather than being force-cut at the
+            # cap. Fired once; the forced-final answer below still catches a model that
+            # ignores it.
+            if force_final_answer and step > 0 and step == self._g.max_steps - _BUDGET_WARNING_LEAD:
+                messages.append(UserMessage(text=BUDGET_WARNING_DIRECTIVE))
             turn = await self._converse_turn(
                 system_prompt, messages, tools, reasoning_effort, on_text, on_reasoning
             )
