@@ -204,6 +204,34 @@ describe("useFullBrain — a turn stays attached to its own chat", () => {
     expect(listSessions.mock.calls.length - before).toBeGreaterThanOrEqual(2);
   });
 
+  it("force-stops the detached run when the turn fails unrecoverably", async () => {
+    // The stream drops, the reconnect also fails, and nothing is recoverable from the
+    // transcript — the UI shows error AND cancels the run so a detached server turn (and
+    // its sub-agents' LLM calls) don't keep grinding the GPU.
+    async function* chat(): AsyncGenerator<ChatEvent> {
+      yield { type: "run", run_id: "r1" };
+      yield { type: "text_delta", text: "partial " };
+      throw new Error("network drop");
+    }
+    const chatResume = vi.fn(async function* (): AsyncGenerator<ChatEvent> {
+      throw new Error("reconnect failed");
+    });
+    const cancelChatRun = vi.fn(async () => {});
+    // Empty on open (no prior transcript), then a recovered partial so reconcile resolves
+    // promptly after the cancel rather than polling out the window.
+    let nth = 0;
+    const getTranscript = vi.fn(async (): Promise<TranscriptTurn[]> =>
+      nth++ === 0 ? [] : [{ role: "assistant", content: "partial", tools: [] }],
+    );
+    const d = deps({ chat, chatResume, cancelChatRun, getTranscript });
+    const { result } = renderHook(() => useFullBrain("fullbrain", d));
+    await waitFor(() => expect(result.current.active?.id).toBe("A"));
+    await act(async () => {
+      await result.current.send("go");
+    });
+    expect(cancelChatRun).toHaveBeenCalledWith("r1");
+  });
+
   it("reports a non-image tool as kind 'thinking', not rendering", async () => {
     let release: () => void = () => {};
     const gate = new Promise<void>((r) => {

@@ -25,11 +25,13 @@ MAX_TOTAL_AGENTS_PER_TREE = 12  # every child across the whole root turn, all de
 # ReAct turns than a quick lookup); the wall-clock is a generous backstop kept above
 # the step budget's expected runtime so a child reaches its step cap (→ a forced final
 # answer) rather than a bare timeout; the token cap is the last backstop.
-CHILD_MAX_STEPS = 12  # default/low-effort ReAct iterations a child may take
-# Effort lifts the step cap: a high-effort child gets the room to do thorough research.
-CHILD_STEPS_BY_EFFORT = {"high": 30, "medium": 20}
-CHILD_WALL_CLOCK_S = 600.0  # hard per-child time limit; past it the child returns truncated
-CHILD_MAX_COST_TOKENS = 800_000  # per-child token backstop (steps/wall-clock bite first)
+CHILD_MAX_STEPS = 10  # default/low-effort ReAct iterations a child may take
+# Effort lifts the step cap: a high-effort child gets more room to research. Tuned on a
+# single-GPU local box where high=30 ran ~7 min / 600k tokens per child (serial fan →
+# 12-20 min) — too long; these middle values keep a high child to ~3-4 min.
+CHILD_STEPS_BY_EFFORT = {"high": 24, "medium": 16}
+CHILD_WALL_CLOCK_S = 480.0  # hard per-child time limit; past it the child returns truncated
+CHILD_MAX_COST_TOKENS = 650_000  # per-child token backstop (steps/wall-clock bite first)
 
 
 def child_steps_for(effort: str | None) -> int:

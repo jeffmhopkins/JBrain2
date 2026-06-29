@@ -643,6 +643,13 @@ export function useFullBrain(
         // chat is open.
         const resumed = await resumeLive();
         if (!resumed) {
+          // The live stream dropped AND the reconnect failed — the turn is unreachable
+          // from here. Force-stop the detached server turn now so it (and its sub-agents'
+          // in-flight LLM calls) don't keep grinding the GPU for the whole reconcile
+          // window after the UI has given up. Idempotent: a no-op if the run already
+          // finished. Then recover whatever partial it persisted, else settle to error.
+          const rid = runIdRef.current;
+          if (rid) void cancelChatRun(rid).catch(() => {});
           const recovered = await reconcile(turnSessionId, baseline);
           if (recovered) setSessionMessages(turnSessionId, () => recovered.map(fromTurn));
           else setSessionMessages(turnSessionId, (ms) => endStream(ms, "error"));
