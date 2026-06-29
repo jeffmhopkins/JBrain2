@@ -1,0 +1,188 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>JBrain — Omnibox compact (tabs-as-header)</title>
+<style>
+:root{
+  --bg:#0e0f11; --surface:#17181b; --surface-2:#1e2024; --border:#26282c;
+  --surface-composer:#141518;
+  --text:#e6e7e9; --text-2:#9a9da3; --text-3:#5c5f66;
+  --steel:#7fa7c9; --steel-tint:rgba(127,167,201,.13);
+  --green:#8fbc9a; --green-tint:rgba(143,188,154,.13);
+  --amber:#c9a36a; --amber-tint:rgba(201,163,106,.13);
+  --rose:#cf8a8f;  --rose-tint:rgba(207,138,143,.13);
+  --violet:#a493c9;--violet-tint:rgba(164,147,201,.13);
+  --r-input:12px; --r-seg:14px; --r-card:16px; --r-box:24px; --r-pill:999px;
+  --fs-micro:12px; --fs-secondary:14px; --fs-note:15px; --fs-composer:17px;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{
+  background:var(--bg);color:var(--text);
+  font:400 16px/1.4 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  min-height:100dvh;display:flex;flex-direction:column;align-items:center;
+}
+svg{fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
+
+.head{width:100%;max-width:560px;padding:22px 18px 6px;text-align:center}
+.head h1{font-size:18px;font-weight:600}
+.head p{font-size:13px;color:var(--text-2);margin-top:6px;line-height:1.5}
+
+.bar{display:flex;gap:8px;justify-content:center;flex-wrap:wrap;padding:14px 18px}
+.bar button{
+  background:var(--surface-2);border:1px solid var(--border);border-radius:var(--r-pill);
+  color:var(--text-2);font-size:13px;font-weight:500;padding:8px 16px;cursor:pointer;
+  transition:.15s;
+}
+.bar button.on{background:var(--steel-tint);border-color:var(--steel);color:var(--text)}
+
+.stage{width:100%;max-width:430px;padding:0 12px 28px;margin-top:auto}
+.caption{font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--text-3);
+  text-align:center;margin:18px 0 10px}
+
+/* ============================================================
+   COMPACT — tabs are the box header (share its top border)
+   ============================================================ */
+.omnibox{
+  background:var(--surface-composer);border:1px solid var(--border);
+  border-radius:var(--r-box);display:flex;flex-direction:column;overflow:hidden;
+}
+/* the tab row IS the top edge of the box — no inner pill, no padding above it */
+.tabs{display:flex;border-bottom:1px solid var(--border)}
+.tab{
+  flex:1;display:flex;align-items:center;justify-content:center;gap:8px;
+  padding:.85em 0;font-size:var(--fs-note);font-weight:500;color:var(--text-2);
+  background:transparent;border:none;cursor:pointer;transition:background-color .15s;
+  position:relative;
+}
+.tab + .tab{border-left:1px solid var(--border)}
+.tab .ic{display:inline-flex}
+.tab.on{color:var(--text);font-weight:600;background:var(--mode-tint)}
+.tab.on .ic{color:var(--mode)}
+/* the active tab merges with the body: paint over the row's bottom border so it
+   reads as one continuous surface from tab into composer */
+.tab.on::after{content:"";position:absolute;left:0;right:0;bottom:-1px;height:1px;background:var(--surface-composer)}
+.tab.on.on-tint::after{background:var(--mode-tint)}
+
+.body{padding:6px 14px 14px;display:flex;flex-direction:column}
+.composer{
+  width:100%;background:none;border:none;outline:none;resize:none;color:var(--text);
+  font-family:inherit;font-size:var(--fs-composer);line-height:1.4;padding:14px 6px 0;
+  min-height:calc(2 * 1.4em + 52px);
+}
+.composer::placeholder{color:var(--text-3)}
+.foot{display:flex;align-items:center;gap:10px;padding:8px 6px 0;color:var(--text-2);justify-content:flex-end}
+.meter{display:flex;align-items:center;gap:8px;flex:1;min-width:0;font-size:var(--fs-micro);color:var(--text-3);font-variant-numeric:tabular-nums;white-space:nowrap}
+.meter .track{position:relative;flex:1;min-width:24px;height:4px;border-radius:var(--r-pill);background:var(--surface-2);overflow:hidden}
+.meter .fill{position:absolute;left:0;top:0;height:100%;border-radius:var(--r-pill);background:var(--steel)}
+.icons{display:flex;gap:14px;align-items:center;color:var(--text-2)}
+.icons button{background:none;border:none;color:inherit;cursor:pointer;display:inline-flex;padding:2px}
+.icons .send{color:var(--mode)}
+
+/* ============================================================
+   CURRENT — separate inner pill (for the comparison view)
+   ============================================================ */
+.omnibox.legacy{padding:14px;overflow:visible}
+.omnibox.legacy .tabs{
+  border:1px solid var(--border);border-radius:var(--r-seg);overflow:hidden;
+}
+.omnibox.legacy .tab.on::after{display:none}
+.omnibox.legacy .body{padding:0}
+.omnibox.legacy .composer{min-height:calc(2 * 1.4em + 52px)}
+
+.measure{text-align:center;font-size:12px;color:var(--text-3);margin-top:10px}
+.measure b{color:var(--steel);font-weight:600}
+.compareWrap{display:none;gap:14px}
+.compareWrap.show{display:flex;flex-direction:column}
+.single.hide{display:none}
+</style>
+</head>
+<body>
+  <div class="head">
+    <h1>Omnibox — compact tabs-as-header</h1>
+    <p>The Entry / Research / Brain tabs move up to <i>become</i> the box's top
+       edge, sharing its border &amp; rounded corners. The active tab merges into
+       the composer below. Tap the tabs to switch modes; toggle the comparison to
+       see the height it reclaims.</p>
+  </div>
+
+  <div class="bar">
+    <button id="b-single" class="on" onclick="setView('single')">Concept only</button>
+    <button id="b-compare" onclick="setView('compare')">Compare with current</button>
+  </div>
+
+  <div class="stage">
+    <!-- single concept -->
+    <div class="single" id="single"></div>
+
+    <!-- comparison -->
+    <div class="compareWrap" id="compare">
+      <div>
+        <div class="caption">Current — tabs as an inner pill</div>
+        <div id="legacy-host"></div>
+      </div>
+      <div>
+        <div class="caption">Proposed — tabs as the box header</div>
+        <div id="compact-host"></div>
+      </div>
+      <div class="measure">Proposed reclaims <b>~24px</b> of vertical height
+        (the pill's own border-box + the padding above it).</div>
+    </div>
+  </div>
+
+<script>
+const IC={
+ plus:'<svg width="18" height="18" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>',
+ search:'<svg width="18" height="18" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m21 21-4-4"/></svg>',
+ bot:'<svg width="18" height="18" viewBox="0 0 24 24"><rect x="4" y="8" width="16" height="12" rx="2"/><path d="M12 8V4M8 4h8"/><circle cx="9" cy="13" r="1"/><circle cx="15" cy="13" r="1"/></svg>',
+ clip:'<svg width="24" height="24" viewBox="0 0 24 24"><path d="m21.4 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>',
+ send:'<svg width="24" height="24" viewBox="0 0 24 24"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg>'
+};
+const MODES={
+ entry:    {label:"Entry",   ic:IC.plus,  color:"var(--green)", tint:"var(--green-tint)", ph:"Write an entry…"},
+ research: {label:"Research",ic:IC.search,color:"var(--amber)", tint:"var(--amber-tint)", ph:"Ask the web, or work a problem…"},
+ brain:    {label:"Brain",   ic:IC.bot,   color:"var(--steel)", tint:"var(--steel-tint)", ph:"Talk it out — full tool access…"}
+};
+const ORDER=["entry","research","brain"];
+let cur="research";
+
+function boxHtml(legacy){
+  const tabs=ORDER.map(m=>{
+    const M=MODES[m],on=m===cur;
+    return `<button class="tab${on?" on on-tint":""}" style="${on?`--mode:${M.color};--mode-tint:${M.tint}`:""}" onclick="pick('${m}')">
+      <span class="ic">${M.ic}</span>${M.label}</button>`;
+  }).join("");
+  const M=MODES[cur];
+  return `<div class="omnibox${legacy?" legacy":""}" style="--mode:${M.color};--mode-tint:${M.tint}">
+    <div class="tabs">${tabs}</div>
+    <div class="body">
+      <textarea class="composer" placeholder="${M.ph}"></textarea>
+      <div class="foot">
+        <div class="meter"><span class="track"><span class="fill" style="width:3%"></span></span>8.6k/262k · 3%</div>
+        <div class="icons">
+          <button aria-label="Attach">${IC.clip}</button>
+          <button class="send" aria-label="Send">${IC.send}</button>
+        </div>
+      </div>
+    </div>
+  </div>`;
+}
+
+function render(){
+  document.getElementById("single").innerHTML=boxHtml(false);
+  document.getElementById("compact-host").innerHTML=boxHtml(false);
+  document.getElementById("legacy-host").innerHTML=boxHtml(true);
+}
+function pick(m){cur=m;render()}
+function setView(v){
+  const single=document.getElementById("single"),cmp=document.getElementById("compare");
+  document.getElementById("b-single").classList.toggle("on",v==="single");
+  document.getElementById("b-compare").classList.toggle("on",v==="compare");
+  single.classList.toggle("hide",v!=="single");
+  cmp.classList.toggle("show",v==="compare");
+}
+render();
+</script>
+</body>
+</html>
