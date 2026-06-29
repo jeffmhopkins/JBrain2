@@ -355,7 +355,28 @@ async def metrics(
     except Exception:  # noqa: BLE001
         merged["blobs"] = None
 
+    # Per-process RSS (via the supervisor's `docker top`) for the memory-breakdown
+    # card — biggest first, argv clipped. Best-effort: an older supervisor without
+    # /processes (or a hiccup) just leaves the list empty and the card falls back
+    # to the per-container `containers` it already has.
+    try:
+        procs_resp = await _client(request).get("/processes", headers=_headers(settings))
+        procs_resp.raise_for_status()
+        procs = cast(list[dict[str, object]], procs_resp.json().get("processes", []))
+        for p in procs:
+            p["command"] = str(p.get("command", ""))[:_PROCESS_CMD_MAX]
+        merged["processes"] = sorted(
+            procs, key=lambda p: cast(int, p.get("rss_bytes", 0)), reverse=True
+        )
+    except Exception:  # noqa: BLE001
+        merged["processes"] = []
+
     return merged
+
+
+# A llama-server argv is long; the model path that distinguishes the co-resident
+# models sits near the front, so a generous head is enough for the card's row.
+_PROCESS_CMD_MAX = 200
 
 
 # The history ranges the Ops graph offers. Spans up to RAW_QUERY_MAX read raw

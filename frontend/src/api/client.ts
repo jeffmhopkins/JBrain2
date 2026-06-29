@@ -219,6 +219,10 @@ export interface OpsMetrics {
   /** APU/SoC package power in watts (amdgpu power1_average), or null when absent. */
   apu_power_w: number | null;
   containers: { service: string; mem_bytes: number }[];
+  /** Per-process RSS (via the supervisor's `docker top`), biggest first — the raw
+   * breakdown behind each container, e.g. the local-llm container's separate
+   * llama-server per loaded model. Empty when the supervisor predates /processes. */
+  processes: { service: string; pid: number; rss_bytes: number; command: string }[];
   db: {
     db_size_bytes: number;
     note_count: number;

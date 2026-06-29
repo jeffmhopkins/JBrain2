@@ -3619,6 +3619,29 @@ export const mockFetch: typeof fetch = async (input, init) => {
         service: c.service,
         mem_bytes: (i + 1) * 90 * 2 ** 20,
       })),
+      processes: [
+        {
+          service: "local-llm",
+          pid: 101,
+          rss_bytes: 1.9 * 2 ** 30,
+          command: "llama-server --model /models/gpt-oss-120b/x.gguf",
+        },
+        {
+          service: "local-llm",
+          pid: 102,
+          rss_bytes: 1.1 * 2 ** 30,
+          command: "llama-server --model /models/qwen3-vl-30b/x.gguf",
+        },
+        {
+          service: "comfyui",
+          pid: 201,
+          rss_bytes: 320 * 2 ** 20,
+          command: "python /opt/ComfyUI/main.py",
+        },
+        { service: "embed", pid: 301, rss_bytes: 180 * 2 ** 20, command: "text-embeddings-router" },
+        { service: "api", pid: 401, rss_bytes: 140 * 2 ** 20, command: "uvicorn jbrain.main:app" },
+        { service: "db", pid: 501, rss_bytes: 96 * 2 ** 20, command: "postgres" },
+      ],
       db: {
         db_size_bytes: 38 * 2 ** 20,
         note_count: 47,

@@ -659,6 +659,252 @@ function HistoryCard() {
   );
 }
 
+// ===== Memory card — per-process RAM breakdown (stacked bar + sortable table) =====
+// Driven by /ops/metrics `processes` (the supervisor's `docker top`), this is the
+// only view that splits the local-llm container into its per-model llama-server
+// processes — the whole reason the 120B's footprint is legible here.
+
+type MemItem = { service: string; rss_bytes: number; command: string };
+
+const MEM_GROUPS: { services: string[]; cls: string }[] = [
+  { services: ["local-llm", "embed", "comfyui", "whisper"], cls: "ai" },
+  { services: ["jcode", "claude-shim"], cls: "code" },
+  { services: ["api", "worker", "supervisor", "db", "postgres", "web"], cls: "core" },
+];
+function memGroup(service: string): string {
+  return MEM_GROUPS.find((g) => g.services.includes(service))?.cls ?? "infra";
+}
+// A llama-server argv carries the model path; surface just that as the row's detail.
+function procLabel(p: MemItem): { name: string; detail: string } {
+  const model = /([\w.-]+)\.gguf/.exec(p.command);
+  if (model) {
+    const dir = p.command.split("/").slice(-2, -1)[0];
+    return { name: "llama-server", detail: dir || model[1] || p.service };
+  }
+  const head = p.command.split(/\s+/)[0]?.split("/").pop();
+  return { name: head || p.service, detail: p.service };
+}
+
+function MemoryCard({
+  metrics,
+  onRefresh,
+  busy,
+}: {
+  metrics: OpsMetrics | null;
+  onRefresh: () => void;
+  busy: boolean;
+}) {
+  const [sort, setSort] = useState<"rss" | "name">("rss");
+  const [view, setView] = useState<"table" | "donut">("table");
+
+  if (!metrics) {
+    return (
+      <OpsCard
+        title="System memory"
+        summaryCollapsed={<span className="ops-card-summary">unavailable</span>}
+      >
+        <p className="muted ops-vrow-empty">metrics unavailable.</p>
+      </OpsCard>
+    );
+  }
+
+  const total = metrics.mem_total_bytes;
+  const used = total - metrics.mem_available_bytes;
+  const pct = total > 0 ? Math.round((used / total) * 100) : 0;
+  // Per-process when the supervisor offers it; else fall back to per-container.
+  const items: MemItem[] =
+    metrics.processes.length > 0
+      ? metrics.processes.map((p) => ({
+          service: p.service,
+          rss_bytes: p.rss_bytes,
+          command: p.command,
+        }))
+      : metrics.containers.map((c) => ({
+          service: c.service,
+          rss_bytes: c.mem_bytes,
+          command: "",
+        }));
+  const accounted = items.reduce((s, p) => s + p.rss_bytes, 0);
+  const kernel = Math.max(0, used - accounted);
+  const free = Math.max(0, total - used);
+
+  const byRss = [...items].sort((a, b) => b.rss_bytes - a.rss_bytes);
+  const rows =
+    sort === "rss"
+      ? byRss
+      : [...items].sort((a, b) => (a.service + a.command).localeCompare(b.service + b.command));
+  const maxRss = byRss[0]?.rss_bytes ?? 1;
+
+  // Donut composition by group (+ kernel slice), as cumulative dash offsets.
+  const groupTotals = new Map<string, number>();
+  for (const p of items)
+    groupTotals.set(memGroup(p.service), (groupTotals.get(memGroup(p.service)) ?? 0) + p.rss_bytes);
+  if (kernel > 0) groupTotals.set("kernel", kernel);
+  let offset = 0;
+  const arcs = [...groupTotals.entries()].map(([cls, v]) => {
+    const len = used > 0 ? (v / used) * 100 : 0;
+    const arc = { cls, dash: `${len} ${100 - len}`, off: -offset };
+    offset += len;
+    return arc;
+  });
+
+  return (
+    <OpsCard
+      title="System memory"
+      summaryCollapsed={
+        <span className="ops-card-summary">
+          {pct}% · {fmtBytes(used)} / {fmtBytes(total)}
+        </span>
+      }
+    >
+      <div className="ops-mem-head">
+        <span className="ops-mem-pct">{pct}%</span>
+        <span className="ops-mem-cap">
+          {fmtBytes(used)} used <small>/ {fmtBytes(total)}</small>
+        </span>
+      </div>
+      <div className="ops-mem-stack">
+        {byRss.map((p, i) => (
+          <span
+            key={`${p.service}-${i}`}
+            className={`ops-mem-seg g-${memGroup(p.service)}`}
+            style={{ width: `${(p.rss_bytes / total) * 100}%` }}
+            title={`${procLabel(p).name} · ${fmtBytes(p.rss_bytes)}`}
+          />
+        ))}
+        <span
+          className="ops-mem-seg g-kernel"
+          style={{ width: `${(kernel / total) * 100}%` }}
+          title="kernel & cache"
+        />
+      </div>
+
+      <div className="ops-mem-tools">
+        <div className="ops-seg" role="tablist">
+          <button
+            type="button"
+            className={view === "table" ? "on" : ""}
+            onClick={() => setView("table")}
+          >
+            Table
+          </button>
+          <button
+            type="button"
+            className={view === "donut" ? "on" : ""}
+            onClick={() => setView("donut")}
+          >
+            Donut
+          </button>
+        </div>
+        <button type="button" className="ops-mem-refresh" onClick={onRefresh} disabled={busy}>
+          {busy ? "Refreshing…" : "↻ Refresh"}
+        </button>
+      </div>
+
+      {view === "donut" ? (
+        <div className="ops-mem-donutwrap">
+          <svg
+            className="ops-mem-donut"
+            viewBox="0 0 42 42"
+            role="img"
+            aria-label="Memory by group"
+          >
+            <title>Memory by group</title>
+            <circle className="ring-bg" cx="21" cy="21" r="15.915" />
+            {arcs.map((a) => (
+              <circle
+                key={a.cls}
+                className={`ring g-${a.cls}`}
+                cx="21"
+                cy="21"
+                r="15.915"
+                strokeDasharray={a.dash}
+                strokeDashoffset={a.off}
+              />
+            ))}
+            <text className="ops-mem-donut-cap" x="21" y="20.5" textAnchor="middle">
+              {fmtBytes(used)}
+            </text>
+            <text className="ops-mem-donut-cap2" x="21" y="26" textAnchor="middle">
+              of {fmtBytes(total)}
+            </text>
+          </svg>
+        </div>
+      ) : (
+        <table className="ops-mem-table">
+          <thead>
+            <tr>
+              <th>
+                <button
+                  type="button"
+                  className="ops-mem-sort"
+                  onClick={() => setSort("name")}
+                  aria-pressed={sort === "name"}
+                >
+                  Process
+                </button>
+              </th>
+              <th className="r">
+                <button
+                  type="button"
+                  className="ops-mem-sort"
+                  onClick={() => setSort("rss")}
+                  aria-pressed={sort === "rss"}
+                >
+                  RSS {sort === "rss" ? "▾" : ""}
+                </button>
+              </th>
+              <th className="r">Share</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((p, i) => {
+              const { name, detail } = procLabel(p);
+              return (
+                <tr key={`${p.service}-${i}`}>
+                  <td>
+                    <span className="ops-mem-pname">
+                      <span className={`ops-mem-sw g-${memGroup(p.service)}`} />
+                      <span>
+                        <span className="ops-mem-nm">{name}</span>
+                        <span className="ops-mem-svc">
+                          {p.service}
+                          {detail && detail !== p.service ? ` · ${detail}` : ""}
+                        </span>
+                      </span>
+                    </span>
+                  </td>
+                  <td className="r">
+                    <span className="ops-mem-spark">
+                      <i
+                        className={`g-${memGroup(p.service)}`}
+                        style={{ width: `${(p.rss_bytes / maxRss) * 100}%` }}
+                      />
+                    </span>
+                    {fmtBytes(p.rss_bytes)}
+                  </td>
+                  <td className="r ops-mem-share">
+                    {used > 0
+                      ? ((p.rss_bytes / used) * 100).toFixed(p.rss_bytes / used < 0.01 ? 1 : 0)
+                      : 0}
+                    %
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      )}
+
+      <p className="ops-mem-foot">
+        <b>{fmtBytes(accounted)}</b> across {items.length}{" "}
+        {metrics.processes.length > 0 ? "processes" : "containers"} · <b>{fmtBytes(kernel)}</b>{" "}
+        kernel &amp; cache · <b>{fmtBytes(free)}</b> free
+      </p>
+    </OpsCard>
+  );
+}
+
 export function OpsScreen() {
   const [containers, setContainers] = useState<ContainerStatus[] | null>(null);
   const [metrics, setMetrics] = useState<OpsMetrics | null>(null);
@@ -732,6 +978,8 @@ export function OpsScreen() {
       )}
 
       <SystemCard metrics={metrics} />
+
+      <MemoryCard metrics={metrics} onRefresh={refresh} busy={busy} />
 
       <HistoryCard />
 
