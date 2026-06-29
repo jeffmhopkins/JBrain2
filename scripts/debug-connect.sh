@@ -15,6 +15,7 @@
 #   scripts/debug-connect.sh vision <attachment_id> --task vision.caption --system "..."
 #   scripts/debug-connect.sh sql "select code, name from app.domains"
 #   scripts/debug-connect.sh logs api --tail 100
+#   scripts/debug-connect.sh host                      # host RAM + per-container RSS
 #   scripts/debug-connect.sh llm                       # show live routing
 #   scripts/debug-connect.sh llm-set agent.turn local:gpt-oss-120b high
 #   scripts/debug-connect.sh load gpt-oss-120b
@@ -149,6 +150,8 @@ PY
     [ "${1:-}" = "--tail" ] && { tail="$2"; shift 2; }
     _call GET "/api/debug/logs/$svc?tail=$tail"
     ;;
+
+  host) _call GET /api/debug/host | _pp ;;   # host memory/swap/disk/load + per-container RSS
 
   llm) _call GET /api/debug/llm | _pp ;;
 

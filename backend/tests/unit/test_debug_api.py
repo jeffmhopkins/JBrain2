@@ -83,6 +83,32 @@ class _FakeSupervisor:
                     "log_tail": "[update] syncing local models",
                 },
             )
+        if url == "/metrics":
+            return _FakeResp(
+                200,
+                "",
+                json_body={
+                    "mem_total_bytes": 130_000_000_000,
+                    "mem_available_bytes": 8_000_000_000,
+                    "swap_total_bytes": 2_000_000_000,
+                    "swap_free_bytes": 1_500_000_000,
+                    "disk_total_bytes": 2_000_000_000_000,
+                    "disk_free_bytes": 1_200_000_000_000,
+                    "load_1m": 0.5,
+                    "load_5m": 0.7,
+                    "load_15m": 0.8,
+                    "uptime_seconds": 86400,
+                    "gpu_busy_percent": 1.0,
+                    "fan_rpm": None,
+                    "apu_power_w": 13.0,
+                    # Deliberately NOT sorted, so the route's sort is what's asserted.
+                    "containers": [
+                        {"service": "comfyui", "mem_bytes": 2_000_000_000},
+                        {"service": "local-llm", "mem_bytes": 100_000_000_000},
+                        {"service": "db", "mem_bytes": 300_000_000},
+                    ],
+                },
+            )
         return _FakeResp(200, "log line one\nlog line two")
 
     async def aclose(self) -> None:
@@ -488,6 +514,35 @@ def test_update_status_proxies_to_supervisor(debug_client: tuple[TestClient, str
 def test_update_status_requires_the_debug_token(debug_client: tuple[TestClient, str]) -> None:
     client, _ = debug_client
     assert client.get("/api/debug/update/status").status_code == 401
+
+
+# --- host metrics -----------------------------------------------------------
+
+
+def test_host_metrics_proxies_and_sorts_containers(debug_client: tuple[TestClient, str]) -> None:
+    # /debug/host proxies the supervisor's /metrics and returns per-container RSS
+    # biggest-first, so the console can attribute the unified-memory total.
+    client, key = debug_client
+    resp = client.get("/api/debug/host", headers=_auth(key))
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["mem_total_bytes"] == 130_000_000_000
+    assert body["apu_power_w"] == 13.0
+    # Sorted descending by mem_bytes, regardless of the supervisor's order.
+    services = [c["service"] for c in body["containers"]]
+    assert services == ["local-llm", "comfyui", "db"]
+    assert ("/metrics", {}) in _state(client).supervisor_client.calls
+
+
+def test_host_metrics_requires_the_debug_token(debug_client: tuple[TestClient, str]) -> None:
+    client, _ = debug_client
+    assert client.get("/api/debug/host").status_code == 401
+
+
+def test_whoami_reports_host_scope(debug_client: tuple[TestClient, str]) -> None:
+    client, key = debug_client
+    body = client.get("/api/debug/whoami", headers=_auth(key)).json()
+    assert "host.read" in body["scopes"]
 
 
 # --- live routing -----------------------------------------------------------

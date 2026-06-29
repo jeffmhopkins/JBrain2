@@ -98,7 +98,7 @@ async def whoami(principal: DebugDep) -> WhoamiOut:
         id=principal.id,
         label=principal.label,
         kind=principal.kind,
-        scopes=["llm.complete", "sql.read", "logs.read", "llm.routing"],
+        scopes=["llm.complete", "sql.read", "logs.read", "llm.routing", "host.read"],
     )
 
 
@@ -518,6 +518,58 @@ async def update_status(
     )
     resp.raise_for_status()
     return cast(dict[str, object], resp.json())
+
+
+# --- Host metrics (proxied to the supervisor) -------------------------------
+# "What is using the box's RAM?" The read-only meter (host_metrics) only knows
+# MemTotal/MemAvailable — the unified-memory TOTAL, with no breakdown. The
+# supervisor owns the docker socket, so it can attribute usage per container
+# (the local-llm container's number includes the loaded model RSS, since the
+# gateway runs --no-mmap). This proxies that, the same way /logs and
+# /update/status do, so the console can answer the breakdown question directly.
+
+
+class ContainerMem(BaseModel):
+    service: str
+    mem_bytes: int
+
+
+class HostMetricsOut(BaseModel):
+    mem_total_bytes: int
+    mem_available_bytes: int
+    swap_total_bytes: int
+    swap_free_bytes: int
+    disk_total_bytes: int
+    disk_free_bytes: int
+    load_1m: float
+    load_5m: float
+    load_15m: float
+    uptime_seconds: int
+    gpu_busy_percent: float | None
+    fan_rpm: dict[str, int] | None
+    apu_power_w: float | None
+    # Per-compose-container RSS, biggest first — the breakdown the unified-memory
+    # total can't show on its own.
+    containers: list[ContainerMem]
+
+
+@router.get("/host")
+async def host(request: Request, settings: SettingsDep, _p: DebugDep) -> HostMetricsOut:
+    """Live host memory/swap/disk/load + per-container RSS, proxied from the
+    supervisor (the single owner of docker access + /proc), biggest container
+    first. Mirrors the owner ops surface; lets the read-only console attribute the
+    unified-memory total to specific services instead of guessing."""
+    request.state.debug_detail = "host metrics"
+    resp = await _supervisor(request).get(
+        "/metrics",
+        headers={"Authorization": f"Bearer {settings.supervisor_token}"},
+    )
+    resp.raise_for_status()
+    data = cast(dict[str, Any], resp.json())
+    data["containers"] = sorted(
+        data.get("containers", []), key=lambda c: c["mem_bytes"], reverse=True
+    )
+    return HostMetricsOut(**data)
 
 
 # --- Live LLM routing (read / switch / load / unload) -----------------------
