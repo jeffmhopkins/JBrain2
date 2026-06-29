@@ -80,15 +80,24 @@ function BudgetMeter({ spent, total }: { spent: number; total: number }): ReactN
   );
 }
 
+// A child that's minted but not yet started (serial fan): it shows as "queued" until
+// its first progress event flips it to a working phase.
+function isQueued(c: SubagentChild): boolean {
+  return c.status === "running" && (!c.phase || c.phase === "queued") && !c.step;
+}
+
 export function SubagentFan({
   fan,
   running,
   onStop,
+  onOpen,
 }: {
   fan: Fan;
   /** The parent turn is still streaming — the header shows a cascade Stop. */
   running: boolean;
   onStop?: (() => void) | undefined;
+  /** Open a child's own session by id (its `childId` IS the session id). */
+  onOpen?: ((sessionId: string) => void) | undefined;
 }): ReactNode {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [showAll, setShowAll] = useState(false);
@@ -156,7 +165,9 @@ export function SubagentFan({
               {childGlyph(c.status)}
               <span className="fb-sa-lbl">{c.label}</span>
               <span className="fb-sa-ptag">{PERSONA_LABEL[c.persona] ?? c.persona}</span>
-              <span className={`fb-sa-st${isFail ? " fail" : ""}`}>{statusWord(c)}</span>
+              <span className={`fb-sa-st${isFail ? " fail" : ""}${isQueued(c) ? " queued" : ""}`}>
+                {statusWord(c)}
+              </span>
               <span className="fb-sa-car" aria-hidden="true">
                 {open ? "▾" : "▸"}
               </span>
@@ -166,8 +177,17 @@ export function SubagentFan({
             <div className={`fb-sa-bar ${c.status}`} aria-hidden="true">
               <i />
             </div>
-            {open && c.summary && (
-              <div className={`fb-sa-detail${isFail ? " err" : ""}`}>{c.summary}</div>
+            {open && (c.summary || onOpen) && (
+              <div className={`fb-sa-detail${isFail ? " err" : ""}`}>
+                {c.summary && <div className="fb-sa-sum">{c.summary}</div>}
+                {/* The child IS its own session (childId = session id); open it to read
+                    the full transcript its run persisted. */}
+                {onOpen && (
+                  <button type="button" className="fb-sa-open" onClick={() => onOpen(c.childId)}>
+                    Open sub-agent session →
+                  </button>
+                )}
+              </div>
             )}
           </div>
         );

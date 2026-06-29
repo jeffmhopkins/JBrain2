@@ -209,6 +209,30 @@ async def test_max_steps_guardrail_stops_a_tool_loop() -> None:
     assert result.steps == 3
 
 
+async def test_force_final_answer_synthesizes_on_step_exhaustion() -> None:
+    # A child that keeps tool-calling hits max_steps; with force_final_answer the loop
+    # makes one final no-tools turn so the caller gets a real answer, not an empty one.
+    turns = [
+        LlmTurn("", (ToolCall("c", "search", {}),), "tool_use", LlmUsage(1, 1)),
+        LlmTurn("", (ToolCall("c", "search", {}),), "tool_use", LlmUsage(1, 1)),
+        LlmTurn("here is what I found", (), "end_turn", LlmUsage(1, 1)),  # the forced final
+    ]
+    router, fake = router_with(turns)
+    loop = AgentLoop(
+        router, registry_with(make_tool("search", search)), guardrails=Guardrails(max_steps=2)
+    )
+    result = await loop.run(
+        session=OWNER,
+        scopes=("general",),
+        conversation=[UserMessage(text="q")],
+        force_final_answer=True,
+    )
+    assert result.stop_reason == "max_steps"
+    assert result.text == "here is what I found"
+    # The forced final turn was made with NO tools offered.
+    assert fake.converse_calls[-1]["tools"] == []
+
+
 async def test_consecutive_tool_errors_guardrail() -> None:
     forever = [LlmTurn("", (ToolCall("c", "boom", {}),), "tool_use", LlmUsage(1, 1))]
     router, _ = router_with(forever)

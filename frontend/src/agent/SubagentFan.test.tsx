@@ -88,6 +88,30 @@ describe("SubagentFan", () => {
     expect(screen.getByText("researching · 4 steps")).toBeInTheDocument();
   });
 
+  it("marks a minted-but-unstarted child as italic 'queued'", () => {
+    render(
+      <SubagentFan
+        running
+        fan={fan([child({ childId: "k1", label: "Pending", phase: "queued", status: "running" })])}
+      />,
+    );
+    expect(screen.getByText("queued")).toHaveClass("queued");
+  });
+
+  it("opens a child's own session from its expanded row", () => {
+    const onOpen = vi.fn();
+    render(
+      <SubagentFan
+        running={false}
+        onOpen={onOpen}
+        fan={fan([child({ childId: "k1", label: "Pricing", status: "done", summary: "3 tiers" })])}
+      />,
+    );
+    fireEvent.click(screen.getByText("Pricing"));
+    fireEvent.click(screen.getByText(/Open sub-agent session/));
+    expect(onOpen).toHaveBeenCalledWith("k1");
+  });
+
   it("auto-expands a failed child's error without a click", () => {
     render(
       <SubagentFan

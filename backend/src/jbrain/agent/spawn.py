@@ -44,7 +44,7 @@ from jbrain.agent.contracts import (
 )
 from jbrain.agent.loop import AgentLoop, Guardrails, ToolContext, ToolOutput
 from jbrain.agent.runlog import AgentRunLog, StepTally
-from jbrain.agent.session import AgentSessionRepo, read_context
+from jbrain.agent.session import AgentSessionInfo, AgentSessionRepo, read_context
 from jbrain.agent.toolregistry import ToolRegistry
 from jbrain.agent.transcript_store import AgentTranscript
 from jbrain.agent.tree import (
@@ -237,8 +237,31 @@ class SpawnService:
         owner_ctx = SessionContext(principal_id=ctx.session.principal_id, principal_kind="owner")
         sem = asyncio.Semaphore(max_parallel)
 
+        # Mint and announce EVERY child up front (before the semaphore gates execution),
+        # so the whole roster shows immediately — the not-yet-started ones as "queued" —
+        # even when the fan runs serially. Each child flips to its working phase only when
+        # it actually starts (inside _run_child's semaphore block).
+        minted: list[tuple[_ChildPlan, AgentSessionInfo]] = []
+        for plan in plans:
+            child = await self._sessions.create(
+                owner_ctx,
+                domain_scopes=[],
+                title=plan.label[:_TITLE_LEN],
+                agent=plan.persona,
+                parent_session_id=ctx.agent_session_id,
+                depth=ctx.depth + 1,
+                no_memory=True,
+            )
+            _emit(
+                ctx,
+                SubagentSpawnedEvent(
+                    child_id=child.id, persona=plan.persona, label=plan.label, depth=ctx.depth + 1
+                ),
+            )
+            minted.append((plan, child))
+
         results = await asyncio.gather(
-            *(self._run_child(ctx, owner_ctx, tree, sem, plan) for plan in plans)
+            *(self._run_child(ctx, owner_ctx, tree, sem, plan, child) for plan, child in minted)
         )
         # The text observation is what the parent synthesizes from; the view is the
         # UI's structured render of the same fan result (the registered
@@ -264,6 +287,7 @@ class SpawnService:
         tree: TreeState,
         sem: asyncio.Semaphore,
         plan: _ChildPlan,
+        child: AgentSessionInfo,  # pre-minted; its spawned-event was already emitted
     ) -> _ChildResult:
         persona, label, brief_text = plan.persona, plan.label, plan.brief_text
         # persona is validated ∈ SUBAGENT_PERSONAS, so agent_for never falls back to
@@ -275,22 +299,8 @@ class SpawnService:
         child_tools = effective_child_tools(profile.tools, ctx.agent_tools)
         child_depth = ctx.depth + 1
         async with sem:
-            # Session + run are owner-only; reads run under empty scope (web-sandbox).
-            child = await self._sessions.create(
-                owner_ctx,
-                domain_scopes=[],
-                title=label[:_TITLE_LEN],
-                agent=persona,
-                parent_session_id=ctx.agent_session_id,
-                depth=child_depth,
-                no_memory=True,
-            )
-            _emit(
-                ctx,
-                SubagentSpawnedEvent(
-                    child_id=child.id, persona=persona, label=label, depth=child_depth
-                ),
-            )
+            # Now actually running (the session was minted + announced up front): flip
+            # this child from "queued" to its working phase.
             _emit(
                 ctx,
                 SubagentProgressEvent(
@@ -356,6 +366,9 @@ class SpawnService:
                         # The spawner's per-child reasoning effort (the router drops it
                         # for a non-reasoning child model).
                         reasoning_effort=plan.effort,
+                        # On step exhaustion, synthesize a final answer from what was
+                        # gathered rather than returning an empty "(no answer)".
+                        force_final_answer=True,
                     ),
                     timeout=CHILD_WALL_CLOCK_S,
                 )
@@ -435,14 +448,15 @@ class SpawnService:
                 step_count=tally.steps,
                 cost_tokens=tally.cost,
             )
-            # A child is a success only if it produced a substantive answer via a
-            # clean stop. max_steps / too_many_errors (or an empty answer) is a
-            # degraded child — surfaced as [FAILED] so the parent doesn't synthesize
-            # over an empty block as if it were a clean summary. (AgentResult never
-            # carries stop_reason="error"; an exception-failed child returns above.)
+            # A child is a success only if it produced a substantive answer. A clean
+            # `end_turn`, or a step/budget-limited stop that still SYNTHESIZED an answer
+            # (force_final_answer / a budget-cut partial), counts — it's real, just
+            # partial. An empty answer or too_many_errors is degraded, surfaced as
+            # [FAILED] so the parent doesn't synthesize over an empty block. (AgentResult
+            # never carries stop_reason="error"; an exception-failed child returns above.)
             text = result.text.strip()
-            _clean_stops = ("end_turn", "budget", "tree_budget_exhausted")
-            truncated = result.stop_reason in ("budget", "tree_budget_exhausted")
+            _clean_stops = ("end_turn", "budget", "tree_budget_exhausted", "max_steps")
+            truncated = result.stop_reason in ("budget", "tree_budget_exhausted", "max_steps")
             ok = bool(text) and result.stop_reason in _clean_stops
             if not text:
                 summary = f"(no answer; stopped: {result.stop_reason})"
