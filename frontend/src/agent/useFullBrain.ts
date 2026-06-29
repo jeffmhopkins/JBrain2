@@ -223,8 +223,10 @@ export interface FullBrain {
   /** A turn can be sent only once a session (read scope) is chosen and no stream
    * is in flight. */
   canSend: boolean;
-  /** Live context-window fill for the open chat, or null before the first usage
-   * event — drives the composer's context-usage meter. */
+  /** Live context-window fill for the open chat — drives the composer's context-usage
+   * meter. A new or just-submitted chat shows a 0/window floor (carried window) rather
+   * than null, so the meter stays put between submit and the first usage event; null
+   * only on a populated chat whose stored fill is unknown, or before any window is seen. */
   usage: ContextUsage | null;
   /** Abort the in-flight turn (the composer's Stop button). A no-op when idle; the
    * partial answer streamed so far stays on screen, settled as "Stopped". */
@@ -307,6 +309,12 @@ export function useFullBrain(
   // this session's buffer alone (its live turn isn't in the stored transcript yet), and
   // a chat switch preserves it — so returning to the chat still shows the running turn.
   const turnSessionRef = useRef<string | null>(null);
+  // The last context window any turn reported, carried across sessions so the meter
+  // can show a 0/window floor on a brand-new or just-submitted chat instead of
+  // vanishing until the first usage event arrives (the window rarely changes between
+  // conversational turns; the next usage event corrects it if it does). Null only
+  // before this surface has ever seen a usage event.
+  const lastWindowRef = useRef<number | null>(null);
   // The agent model's vision capability, false until the check answers — the safe
   // default keeps the chat attach affordance hidden rather than offering one the
   // model would 415. It only ever flips true, so the paperclip appears once
@@ -583,6 +591,7 @@ export function useFullBrain(
     const fold = (event: ChatEvent): void => {
       if (event.type === "usage") {
         if (turnBase === null) turnBase = event.input_tokens;
+        lastWindowRef.current = event.context_window;
         setUsage({
           used: event.input_tokens + event.output_tokens,
           base: turnBase,
@@ -794,6 +803,19 @@ export function useFullBrain(
     if (active?.id === id) setActive({ ...active, domain_scopes: domainScopes });
   }
 
+  // Keep the context meter visible even before a turn reports usage: on a brand-new
+  // or just-submitted chat show a 0/window floor (carried window), so the meter
+  // doesn't blink out between submit and the first usage event — it should read as
+  // "fresh context," not "no context." A reopened chat that already has stored turns
+  // stays hidden when idle: token counts aren't in the transcript, so we can't know
+  // its true fill and won't fabricate one.
+  const emptyChat = active != null && messages.length === 0 && (active.turn_count ?? 0) === 0;
+  const displayUsage: ContextUsage | null =
+    usage ??
+    (lastWindowRef.current != null && (busy || emptyChat)
+      ? { used: 0, base: 0, window: lastWindowRef.current }
+      : null);
+
   return {
     active,
     sessions: visibleSessions,
@@ -807,7 +829,7 @@ export function useFullBrain(
     busy,
     activeTurn,
     canSend: !busy && active !== null,
-    usage,
+    usage: displayUsage,
     stop,
     supportsVision,
     canEditImages,

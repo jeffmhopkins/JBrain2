@@ -1380,7 +1380,7 @@ describe("FullBrainSurface", () => {
     expect(screen.getByTestId("usage-base").textContent).toBe("1000");
   });
 
-  it("clears the context meter when the open chat changes", async () => {
+  it("hides the context meter when reopening a populated chat (unknown fill)", async () => {
     async function* answer(): AsyncGenerator<ChatEvent> {
       yield { type: "usage", input_tokens: 500, output_tokens: 10, context_window: 32768 };
       yield { type: "text_delta", text: "ok" };
@@ -1388,7 +1388,9 @@ describe("FullBrainSurface", () => {
     }
     const sessions = [
       session({ id: "s1", title: "First" }),
-      session({ id: "s2", title: "Second" }),
+      // A chat with stored turns but no live token counts (counts aren't in the
+      // transcript), so its true fill is unknown — the meter must not fabricate one.
+      session({ id: "s2", title: "Second", turn_count: 4 }),
     ];
     render(<Harness d={deps({ listSessions: vi.fn(async () => sessions), chat: answer })} />);
     await waitFor(() => screen.getByLabelText("Conversation"));
@@ -1396,10 +1398,34 @@ describe("FullBrainSurface", () => {
     fireEvent.click(screen.getByRole("button", { name: "send" }));
     await waitFor(() => expect(screen.getByTestId("usage").textContent).toBe("510/32768"));
 
-    // Switching to another chat drops the prior chat's meter (its context is its own).
+    // Switching to the populated chat drops the prior chat's meter — its fill is its own.
     fireEvent.click(screen.getByText("open-sessions"));
     fireEvent.click(screen.getByText("Second"));
     await waitFor(() => expect(screen.getByTestId("usage").textContent).toBe("none"));
+  });
+
+  it("keeps a fresh 0/window meter on an empty chat once the window is known", async () => {
+    async function* answer(): AsyncGenerator<ChatEvent> {
+      yield { type: "usage", input_tokens: 500, output_tokens: 10, context_window: 32768 };
+      yield { type: "text_delta", text: "ok" };
+      yield { type: "done", stop_reason: "end_turn" };
+    }
+    const sessions = [
+      session({ id: "s1", title: "First" }),
+      // A brand-new, empty chat (no stored turns): its context IS ~empty, so the
+      // meter should read 0/window — not blink out — so it's there all the time.
+      session({ id: "s2", title: "Second" }),
+    ];
+    render(<Harness d={deps({ listSessions: vi.fn(async () => sessions), chat: answer })} />);
+    await waitFor(() => screen.getByLabelText("Conversation"));
+    fireEvent.change(screen.getByLabelText("Composer"), { target: { value: "go" } });
+    fireEvent.click(screen.getByRole("button", { name: "send" }));
+    // The turn establishes the window the surface carries forward.
+    await waitFor(() => expect(screen.getByTestId("usage").textContent).toBe("510/32768"));
+
+    fireEvent.click(screen.getByText("open-sessions"));
+    fireEvent.click(screen.getByText("Second"));
+    await waitFor(() => expect(screen.getByTestId("usage").textContent).toBe("0/32768"));
   });
 
   it("Stop aborts the live turn and settles the partial answer calmly", async () => {
