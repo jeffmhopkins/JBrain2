@@ -81,6 +81,52 @@ I cannot run gfx1151/ROCm here; this is the gating risk, exactly like the image 
 - **Output:** working image ref (digest), the confirmed file manifest, and the workflow JSON.
   Until these land, every music catalog entry ships `recommended: false`.
 
+### M0 results — VALIDATED on-box (gfx1151, Ryzen AI Max+ 395 / 128 GB)
+Run on the owner's box against `docker.io/kyuz0/amd-strix-halo-comfyui:latest`. All three gates clear.
+- **Audio path present in the pinned image.** `torchaudio 2.11.0+rocm7.14` is built in, and the live
+  server's `/object_info` lists every node we need: `TextEncodeAceStepAudio1.5`,
+  `EmptyAceStep1.5LatentAudio`, `VAEDecodeAudio`, `SaveAudioMP3` (plus `SaveAudio`/`SaveAudioOpus` for
+  a later FLAC/Opus path). The image also carries the **1.5-specific** nodes the plan didn't assume —
+  bind to those, not the v1 `TextEncodeAceStepAudio`/`EmptyAceStepLatentAudio`. **No image bump
+  needed.** (Pin the digest in `.env` as `COMFYUI_IMAGE=...@sha256:<digest>` — DIGEST PENDING.)
+- **Confirmed file manifest** (repo `Comfy-Org/ace_step_1.5_ComfyUI_files`, split-file form, ~18.7 GB
+  total on disk — *under* the plan's ~22 GB guess, so co-residency (M5) is roomier than expected):
+
+  | Role | repo_path | dest_subdir | size |
+  |---|---|---|---|
+  | XL DiT (turbo) | `split_files/diffusion_models/acestep_v1.5_xl_turbo_bf16.safetensors` | `diffusion_models` | 9.97 GB |
+  | Qwen LM planner (largest) | `split_files/text_encoders/qwen_4b_ace15.safetensors` | `text_encoders` | 8.38 GB |
+  | ACE VAE | `split_files/vae/ace_1.5_vae.safetensors` | `vae` | 0.34 GB |
+
+  The repo also holds non-XL (`acestep_v1.5_base/turbo`, ~4.79 GB), the other XL variants
+  (`xl_base`/`xl_sft`, same ~9.97 GB — `sft` is the candidate "quality" sibling to turbo's "fast"),
+  smaller planners (`qwen_0.6b`/`qwen_1.7b`), and an AIO checkpoint (`ace_step_1.5_turbo_aio`, 10 GB)
+  we skip in favor of split files. So `size_gb ≈ 19`.
+- **GPU render confirmed + workflow exported.** A ~67 s track rendered on the iGPU. Measured GPU
+  memory climbed from **~28 GB to ~48 GB at the final (VAE-decode) stage** — so `vram_gb ≈ 48` (the
+  decode peak, not the ~19 GB resident weight footprint, is the number the gateway must budget). The
+  API-format graph is committed as `backend/src/jbrain/image_gen/workflows/ace_step_music.json`
+  (tags/lyrics cleared to driver-filled slots, runtime `audioUI` URL stripped). **Node binding (for
+  the M1 driver):**
+  - `UNETLoader`(104) `unet_name` ← DiT file; `weight_dtype:"default"`.
+  - `DualCLIPLoader`(105) — **both** `clip_name1`/`clip_name2` = the **same** Qwen file, **`type:"ace"`**
+    (the planner-load answer: a *dual* loader, not the single `CLIPLoader` the image path uses).
+  - `VAELoader`(106) `vae_name` ← VAE file.
+  - `TextEncodeAceStepAudio1.5`(94) carries `tags` + `lyrics` + `bpm`/`duration`/`keyscale`/`cfg_scale`/
+    sampling knobs; `clip` ← 105.
+  - `ModelSamplingAuraFlow`(78, shift 3) → `KSampler`(3: steps 8, cfg 1, euler/simple) →
+    `VAEDecodeAudio`(18) → `SaveAudioMP3`(107, quality `V0`).
+  - Seed is a shared `PrimitiveInt`(109) feeding **both** the text-encode (94) and the sampler (3) —
+    the driver fills one node, unlike the image graph's inline `KSampler.seed`.
+- **Tuning open items surfaced by the spike** (feed into the M1 workflow defaults + the seconds clamp):
+  - **Lyrics came out instrumental.** Cause is almost certainly capitalized/numbered structure tags
+    (`[Verse 1]`/`[Chorus]`); ACE-Step wants lowercase `[verse]`/`[chorus]`. Document this in the
+    `generate_music` tool/`MusicScreen` lyric guidance, or normalize in the handler.
+  - **`duration`/`seconds` is a hint, not a hard length** — a 120 s request produced ~67 s. The
+    seconds clamp must treat it as an upper bound, and the artifact's stored `duration` must come from
+    the decoded file, not the request.
+  - Turbo at **8 steps / cfg 1** is the validated fast band; an sft "quality" entry would run more steps.
+
 ## Wave M1 — catalog + workflow + audio-aware driver
 - **Catalog** (`image_gen/catalog.py`): add `kind="music"` and an `ace-step-xl` `ImageModel` (rename
   the dataclass's doc to "media model" or keep `ImageModel` — it's already generic enough; the
