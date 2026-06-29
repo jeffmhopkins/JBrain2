@@ -5,7 +5,23 @@ from __future__ import annotations
 
 import pytest
 
-from jcode_ctl.workspace import WorkspaceError, validate_ref, validate_repo
+from jcode_ctl.workspace import (
+    GitWorkspace,
+    WorkspaceError,
+    validate_ref,
+    validate_repo,
+)
+
+
+def test_prepare_home_creates_the_per_session_bin_and_npm_dirs(tmp_path) -> None:
+    # prepare_home lays down the per-session HOME skeleton (no git/network): the bin dir
+    # that leads PATH and the npm prefix. Idempotent so a restart re-provisions safely.
+    home = tmp_path / "home" / "s1"
+    ws = GitWorkspace(allowlist=[])
+    ws.prepare_home(home)
+    ws.prepare_home(home)  # second call must not raise
+    assert (home / ".local" / "bin").is_dir()
+    assert (home / ".npm-global").is_dir()
 
 
 def test_empty_repo_is_a_scratch_workspace() -> None:

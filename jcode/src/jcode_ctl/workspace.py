@@ -54,6 +54,8 @@ class Workspace(Protocol):
 
     def remove(self, path: Path) -> None: ...
 
+    def prepare_home(self, home_dir: Path) -> None: ...
+
 
 class GitWorkspace:
     """Real workspace: ``git clone`` + a fresh work branch, in the sandbox volume."""
@@ -110,6 +112,15 @@ class GitWorkspace:
     def remove(self, path: Path) -> None:
         shutil.rmtree(path, ignore_errors=True)
 
+    def prepare_home(self, home_dir: Path) -> None:
+        # The session's private $HOME: a per-session bin dir that leads PATH (where
+        # `jcode-grok upgrade` and other per-session tools install, shadowing the
+        # image's /usr/local/bin copy for this session only) and an npm prefix so a
+        # per-session `npm i -g` lands here too. Created empty; the login shell +
+        # grok-config.sh populate ~/.grok etc. on first use. Idempotent across restarts.
+        for sub in ("", ".local/bin", ".npm-global"):
+            (home_dir / sub).mkdir(parents=True, exist_ok=True)
+
 
 class FakeWorkspace:
     """In-memory workspace for tests: records lifecycle calls, touches no disk."""
@@ -118,6 +129,7 @@ class FakeWorkspace:
         self.cloned: list[tuple[str, str, str]] = []
         self.reset_paths: list[Path] = []
         self.removed: list[Path] = []
+        self.prepared_homes: list[Path] = []
 
     async def clone(self, path: Path, repo: str, branch: str, work_branch: str) -> None:
         self.cloned.append((repo, branch, work_branch))
@@ -127,3 +139,6 @@ class FakeWorkspace:
 
     def remove(self, path: Path) -> None:
         self.removed.append(path)
+
+    def prepare_home(self, home_dir: Path) -> None:
+        self.prepared_homes.append(home_dir)

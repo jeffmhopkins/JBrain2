@@ -57,6 +57,31 @@ def model_env(model: str) -> dict[str, str]:
     }
 
 
+def home_env(home: str) -> dict[str, str]:
+    """Give the session its OWN ``$HOME`` and a private, PATH-leading bin dir.
+
+    A per-session HOME gives per-session ``~/.grok`` (via ``grok-config.sh``),
+    ``~/.claude``, and shell history; ``NPM_CONFIG_PREFIX`` sends a per-session
+    ``npm i -g`` to ``$HOME/.npm-global`` too. A binary in ``$HOME/.local/bin``
+    shadows the image's ``/usr/local/bin`` copy for THIS session only — that
+    shadowing IS the per-session tool-version mechanism (see JCODE_SESSION_TOOLS_PLAN).
+
+    The PATH set here is the base for non-login execs; the interactive ``bash -l``
+    re-prepends these dirs via ``/etc/profile.d/jcode-path.sh``, because Debian's
+    ``/etc/profile`` resets root's PATH and would otherwise drop them. ``$HOME`` and
+    the two markers below survive that reset, which is what the snippet reads."""
+    tools_bin = f"{home}/.local/bin"
+    npm_bin = f"{home}/.npm-global/bin"
+    base = os.environ.get("PATH", "")
+    path = f"{tools_bin}:{npm_bin}:{base}" if base else f"{tools_bin}:{npm_bin}"
+    return {
+        "HOME": home,
+        "PATH": path,
+        "JCODE_TOOLS_BIN": tools_bin,
+        "NPM_CONFIG_PREFIX": f"{home}/.npm-global",
+    }
+
+
 def preview_env(port: int) -> dict[str, str]:
     """Point ``$PORT``-respecting dev servers (Next.js, CRA, Astro, ``process.env.PORT``
     Express apps, …) at the web-preview port, so a server the owner or agent starts
@@ -357,6 +382,7 @@ async def serve_terminal(
     *,
     model: str = "",
     preview_port: int = 0,
+    home: str = "",
     on_open: Callable[[int], None] | None = None,
     on_close: Callable[[int], None] | None = None,
     on_shell_exit: Callable[[int], None] | None = None,
@@ -376,6 +402,8 @@ async def serve_terminal(
     (stop / delete) ends the shell without firing them — that path already removed it.
     """
     overrides: dict[str, str] = {}
+    if home:
+        overrides.update(home_env(home))
     if model:
         overrides.update(model_env(model))
     if preview_port:

@@ -26,6 +26,7 @@ if settings.debug_access_enabled:
 sessions = SessionManager(
     GitWorkspace(settings.egress_allowlist),
     settings.workspace_root,
+    home_root=settings.home_root,
     max_sessions=settings.max_sessions,
 )
 # Host-served per-session preview (docs/JCODE_PREVIEW_HOST_PLAN.md) — the sole preview

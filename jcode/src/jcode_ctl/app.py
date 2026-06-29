@@ -328,6 +328,7 @@ def create_app(
             session.workspace,
             model=session.model or settings.model,
             preview_port=preview_port,
+            home=str(sessions.home_for(sid)),
             on_open=lambda pid: sessions.terminal_opened(sid, pid),
             on_close=lambda pid: sessions.terminal_closed(sid, pid),
             on_shell_exit=_on_shell_exit,

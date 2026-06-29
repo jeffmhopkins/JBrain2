@@ -32,6 +32,21 @@ RUN apt-get update \
 # sourced by the interactive `/bin/bash -l`.
 COPY grok-config.sh /etc/profile.d/grok-config.sh
 
+# Login-shell hook: re-prepend the session's private tool dirs ($JCODE_TOOLS_BIN, set per
+# session by the terminal) to PATH after /etc/profile resets root's PATH, so a per-session
+# tool install (`jcode-grok upgrade`) shadows the image's copy. See
+# docs/proposed/JCODE_SESSION_TOOLS_PLAN.md.
+COPY jcode-path.sh /etc/profile.d/jcode-path.sh
+
+# Per-session grok version management: `jcode-grok upgrade` installs grok into the session's
+# private $JCODE_TOOLS_BIN (shadowing the pinned image copy for that session only); the image
+# default stays pinned at GROK_BUILD_VERSION. On the shared PATH so every session shell has it.
+COPY jcode-grok /usr/local/bin/jcode-grok
+# Same, for claude — installs into the session's npm prefix ($NPM_CONFIG_PREFIX), so a
+# session can pin its own claude without touching the image default.
+COPY jcode-claude /usr/local/bin/jcode-claude
+RUN chmod +x /usr/local/bin/jcode-grok /usr/local/bin/jcode-claude
+
 WORKDIR /app
 ENV UV_COMPILE_BYTECODE=1 \
     UV_LINK_MODE=copy
