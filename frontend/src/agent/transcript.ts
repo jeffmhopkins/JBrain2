@@ -42,6 +42,15 @@ export interface SubagentChild {
   liveText?: string;
   /** Live-streamed reasoning tokens (the child's thinking trace) while it works. */
   liveReasoning?: string;
+  /** The child's tool steps as it works — a live "Worked" list in its frame. */
+  liveTools?: SubagentToolStep[];
+}
+
+/** One tool step a child took (web_search/web_fetch), shown in the child's frame. */
+export interface SubagentToolStep {
+  name: string;
+  arg: string;
+  ok: boolean;
 }
 
 /** The live fan under a `spawn_subagent` tool call: its children plus the shared
@@ -323,6 +332,30 @@ export function applyEvent(messages: TranscriptMessage[], event: ChatEvent): Tra
                     ? event.channel === "reasoning"
                       ? { ...c, liveReasoning: (c.liveReasoning ?? "") + event.text }
                       : { ...c, liveText: (c.liveText ?? "") + event.text }
+                    : c,
+                ),
+              },
+            }
+          : t,
+      );
+      break;
+    case "subagent_tool":
+      // Append a tool step to the child's live "Worked" list (its frame-in-frame view).
+      next.tools = next.tools.map((t) =>
+        t.id === event.tool_call_id && t.fan
+          ? {
+              ...t,
+              fan: {
+                ...t.fan,
+                children: t.fan.children.map((c) =>
+                  c.childId === event.child_id
+                    ? {
+                        ...c,
+                        liveTools: [
+                          ...(c.liveTools ?? []),
+                          { name: event.name, arg: event.arg, ok: event.ok },
+                        ],
+                      }
                     : c,
                 ),
               },

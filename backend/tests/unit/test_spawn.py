@@ -552,6 +552,44 @@ async def test_child_streams_live_deltas_to_the_fan(monkeypatch: pytest.MonkeyPa
     assert all(d.child_id == "sess-1" for d in deltas)
 
 
+async def test_child_tool_steps_forwarded_to_the_fan(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A child's tool calls are forwarded as subagent_tool events with a short inline arg
+    (the query/url), so the fan frame shows its work like a real session."""
+
+    class _ToolingLoop(_FakeLoop):
+        async def run(self, **kw):  # noqa: ANN003
+            _FakeLoop.calls.append(kw)
+            kw["on_tool"]("web_search", {"query": "port saint john news"}, True)
+            kw["on_tool"]("web_fetch", {"url": "https://floridatoday.test/x"}, False)
+            return AgentResult(text="ok", stop_reason="end_turn", steps=2, cost_tokens=5)
+
+    _FakeLoop.calls = []
+    monkeypatch.setattr(spawn_mod, "AgentLoop", _ToolingLoop)
+    captured: list = []
+    ctx = ToolContext(
+        session=SessionContext(principal_id="p1", principal_kind="owner"),
+        scopes=(),
+        agent_session_id="parent-sess",
+        depth=0,
+        agent_tools=JERV_TOOLS,
+        tree=TreeState(),
+        run_id="parent-run",
+        emit_event=captured.append,
+    )
+    svc = SpawnService(
+        router=_FakeRouter(),  # type: ignore[arg-type]
+        registry=object(),  # type: ignore[arg-type]
+        sessions=_FakeSessions(),  # type: ignore[arg-type]
+        runlog=_FakeRunLog(),  # type: ignore[arg-type]
+    )
+    await svc.spawn_fan(ctx, {"tasks": [{"persona": "research", "brief": "x", "label": "L"}]})
+    tools = [e for e in captured if e.type == "subagent_tool"]
+    assert any(t.name == "web_search" and t.arg == "port saint john news" and t.ok for t in tools)
+    assert any(
+        t.name == "web_fetch" and t.arg == "https://floridatoday.test/x" and not t.ok for t in tools
+    )
+
+
 async def test_fan_without_a_sink_does_not_emit(service: SpawnService) -> None:
     # A turn with no event sink (the non-streaming child path) simply skips emission —
     # no crash, so a grandchild fan degrades to summary-only (documented v1 limit).

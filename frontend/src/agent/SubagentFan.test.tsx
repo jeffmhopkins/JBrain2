@@ -120,6 +120,29 @@ describe("SubagentFan", () => {
     expect(screen.getByText("found 3 tiers")).toBeInTheDocument();
   });
 
+  it("shows the child's tool steps as a live worked list (frame-in-frame)", () => {
+    render(
+      <SubagentFan
+        running
+        fan={fan([
+          child({
+            childId: "k1",
+            label: "Pricing",
+            phase: "researching",
+            status: "running",
+            liveTools: [
+              { name: "web_search", arg: "port saint john news", ok: true },
+              { name: "web_fetch", arg: "https://floridatoday.test", ok: false },
+            ],
+          }),
+        ])}
+      />,
+    );
+    expect(screen.getByText("search")).toBeInTheDocument();
+    expect(screen.getByText("port saint john news")).toBeInTheDocument();
+    expect(screen.getByText("fetch")).toBeInTheDocument();
+  });
+
   it("lets the live thinking trace collapse", () => {
     render(
       <SubagentFan

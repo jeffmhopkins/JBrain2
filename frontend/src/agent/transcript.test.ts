@@ -337,6 +337,39 @@ describe("applyEvent reducer", () => {
     expect(child?.liveText).toBe("3 tiers");
   });
 
+  it("appends a child's tool steps onto its row (the frame-in-frame worked list)", () => {
+    let ms: TranscriptMessage[] = [streaming()];
+    ms = applyEvent(ms, { type: "tool_call", id: "c1", name: "spawn_subagent", arguments: {} });
+    ms = applyEvent(ms, {
+      type: "subagent_spawned",
+      tool_call_id: "c1",
+      child_id: "k1",
+      persona: "research",
+      label: "Pricing",
+      depth: 1,
+    });
+    ms = applyEvent(ms, {
+      type: "subagent_tool",
+      tool_call_id: "c1",
+      child_id: "k1",
+      name: "web_search",
+      arg: "pricing tiers",
+      ok: true,
+    });
+    ms = applyEvent(ms, {
+      type: "subagent_tool",
+      tool_call_id: "c1",
+      child_id: "k1",
+      name: "web_fetch",
+      arg: "https://x.test",
+      ok: false,
+    });
+    expect(ms[0]?.tools[0]?.fan?.children[0]?.liveTools).toEqual([
+      { name: "web_search", arg: "pricing tiers", ok: true },
+      { name: "web_fetch", arg: "https://x.test", ok: false },
+    ]);
+  });
+
   it("marks a failed child rose and is idempotent on a replayed spawn", () => {
     let ms: TranscriptMessage[] = [streaming()];
     ms = applyEvent(ms, { type: "tool_call", id: "c1", name: "spawn_subagent", arguments: {} });

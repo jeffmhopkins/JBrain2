@@ -7699,6 +7699,43 @@ button.small {
   max-height: 160px;
   overflow: auto;
 }
+/* The child's tool steps — a compact "Worked" list in its frame: a ✓/✕ mark, the
+   tool name, and its inline arg (query/url), each row clipped to one line. */
+.fb-shell .fb-sa-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-bottom: 6px;
+}
+.fb-shell .fb-sa-step {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-2);
+  min-width: 0;
+}
+.fb-shell .fb-sa-step-mark {
+  flex: none;
+  color: var(--green);
+  font-size: 11px;
+}
+.fb-shell .fb-sa-step.bad .fb-sa-step-mark {
+  color: var(--rose);
+}
+.fb-shell .fb-sa-step-name {
+  flex: none;
+  font-weight: 500;
+}
+.fb-shell .fb-sa-step-arg {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-3);
+  font: 11px / 1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+}
 /* The "open sub-agent session" link inside an expanded child — its run persisted a
    transcript, so this opens the child's own conversation. */
 .fb-shell .fb-sa-open {
