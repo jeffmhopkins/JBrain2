@@ -55,30 +55,40 @@ this plan is the recommended cheaper variant (its "Variant 1").
 - Tests land with the code: 80% backend gate; the delete/purge path (a teardown guarantee)
   covered.
 
+## Scope (owner-confirmed)
+
+**Build T1 + T2 + T4. Skip T3 (no launcher UI).** Because T4 (per-session `$HOME`) is in
+scope, **T1 establishes the per-session HOME as the foundation** and the tool dir lives under
+it (`$HOME/.local/bin`) — rather than building a standalone `tools_root` that T4 would rework.
+T4 then shrinks to "npm prefix + a `claude` path." Same end state, no throwaway work.
+
 ## Waves
 
-- **Wave T1 — per-session tool dir + PATH.** `SessionManager` gains a `tools_root`; `create`
-  makes `<tools_root>/<sid>/bin`, `delete` removes it; `Session` carries `tools_dir`. New
-  `tools_env(tools_dir)` in `terminal.py` prepends the bin to `PATH` and exports
-  `$JCODE_TOOLS_BIN`; `serve_terminal` merges it alongside `model_env`/`preview_env`.
-  *Tests:* bin is on `PATH` ahead of `/usr/local/bin`; two sessions stay independent; the dir
-  is gone after `delete`. Per-task adversarial review.
-- **Wave T2 — `jcode-grok` helper + image/setup.** Ship `jcode-grok` (install/upgrade/version)
-  in the image on the shared `PATH`; wire `dev-setup.sh` to install it; keep `GROK_BUILD_VERSION`
-  as the default. *Tests:* helper resolves target dir + version, errors cleanly without egress
-  (installer faked — no network in tests). Per-task adversarial review.
-- **Wave T3 — (optional) launcher surface.** A per-session "Tools" control in the launcher
-  showing the grok version with an Upgrade action, via a small control-server endpoint that
-  runs `jcode-grok` in the session. Gated on owner wanting UI now vs CLI-only.
-- **Wave T4 — (optional) generalise to a per-session HOME.** Give each session its own `$HOME`
-  (own `~/.grok`, `~/.claude`, npm prefix, shell history) so per-session versioning extends to
-  `claude`/`node` and per-session CLI config, not just `grok`. Larger; only if wanted.
+- **Wave T1 — per-session `$HOME` + tool dir + PATH (the foundation).** `SessionManager` gains a
+  `home_root`; `create` provisions `<home_root>/<sid>` with `.local/bin` + `.npm-global`,
+  `delete` removes it; a `home_for(sid)` accessor (HOME is derived, not added to the serialized
+  session, so the api contract is untouched). New `home_env(home)` in `terminal.py` sets `HOME`,
+  prepends `$HOME/.local/bin` + the npm-global bin to `PATH`, and exports `$JCODE_TOOLS_BIN` +
+  `NPM_CONFIG_PREFIX`; `serve_terminal` merges it alongside `model_env`/`preview_env`. The
+  per-session HOME also makes `~/.grok` (via `grok-config.sh`), `~/.claude`, and shell history
+  per-session for free. *Tests:* HOME set + bin ahead of `/usr/local/bin`; create provisions /
+  delete purges the home; `home_for` deterministic; real `prepare_home` makes the bin dirs.
+- **Wave T2 — `jcode-grok` helper + image/setup.** Ship `jcode-grok` (upgrade/version) in the
+  image on the shared `PATH`; it installs grok into `$JCODE_TOOLS_BIN` (default = the
+  `x.ai/cli/stable` pointer, or a pinned arg), shadowing the image's copy for that session.
+  Wire `dev-setup.sh`; keep `GROK_BUILD_VERSION` as the default/floor. Errors cleanly when
+  egress is locked. *Tests:* helper resolves target dir + version, errors without egress
+  (installer faked — no network in tests).
+- **Wave T4 — generalise to `claude`/`node`.** With the per-session npm prefix from T1, a
+  per-session `npm i -g @anthropic-ai/claude-code@<v>` lands in `$HOME/.npm-global/bin` and
+  shadows the image's `claude`; add a `jcode-claude` helper mirroring `jcode-grok`. Document
+  that per-session CLI config (`~/.grok`, `~/.claude`) already follows from the per-session HOME.
 
-Each wave follows `docs/PROCESS.md`: parallel tasks off a `wave-N` branch, per-task + per-wave
-independent adversarial review (reviewer ≠ author), one PR per wave, CI green before merge.
+Each wave follows `docs/PROCESS.md`: independent adversarial review (reviewer ≠ author) and
+tests in the same change. (Wave branches/PRs per the process; this work is on the session's
+designated branch and opens a PR only when the owner asks.)
 
-## Open question for the owner
+## Dropped
 
-How far in the first pass: **T1+T2 only** (per-session `grok` upgrade via the shell — smallest,
-ships the originating need), or also **T3** (launcher button) and/or **T4** (per-session HOME so
-it covers `claude`/`node` too)?
+- **T3 — launcher "Tools" UI.** Not wanted now; the shell helpers (`jcode-grok` / `jcode-claude`)
+  are the interface. Can be added later as a thin control-server endpoint over the same helpers.

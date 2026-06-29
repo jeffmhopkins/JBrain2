@@ -25,6 +25,13 @@ class Settings(BaseSettings):
     # gets its own subdirectory; nothing here is a JBrain blob or note.
     workspace_root: str = "/work"
 
+    # Root of per-session $HOME dirs, on the SAME volume as the checkouts so they
+    # persist across a pause and are purged with the session on delete. Each session
+    # gets its own $HOME — own ~/.grok, ~/.claude, history, npm prefix, a private bin
+    # on the front of PATH — so per-session tool versions never collide (see
+    # JCODE_SESSION_TOOLS_PLAN). Dotted so it's not a checkout sibling a lister sees.
+    home_root: str = "/work/.home"
+
     # The Anthropic-compatible base URL the terminal's ``claude`` CLI is pointed at —
     # the on-box gateway's /v1/messages (or a thin shim in front of it). Informational
     # here; the CLI reads ANTHROPIC_BASE_URL from the process environment (set by the

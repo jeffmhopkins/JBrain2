@@ -14,9 +14,11 @@ import fcntl
 import os
 import select
 import struct
+import subprocess
 import termios
 import time
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -27,6 +29,7 @@ from jcode_ctl.terminal import (
     TerminalRegistry,
     _close_child,
     _set_winsize,
+    home_env,
     kill_processes_in_dir,
     model_env,
     preview_env,
@@ -266,6 +269,67 @@ def test_model_env_pins_every_tier() -> None:
         "GROK_MODEL",
     }
     assert all(v == "qwen3-coder-next" for v in env.values())
+
+
+def test_home_env_sets_home_and_a_path_leading_tool_bin() -> None:
+    # The per-session HOME + its private bin lead PATH, so a tool installed there
+    # shadows the image's /usr/local/bin copy for this session only.
+    env = home_env("/work/.home/s1")
+    assert env["HOME"] == "/work/.home/s1"
+    assert env["JCODE_TOOLS_BIN"] == "/work/.home/s1/.local/bin"
+    assert env["NPM_CONFIG_PREFIX"] == "/work/.home/s1/.npm-global"
+    # The tool bin and the npm-global bin come FIRST, ahead of the inherited PATH.
+    assert env["PATH"].startswith(
+        "/work/.home/s1/.local/bin:/work/.home/s1/.npm-global/bin:"
+    )
+    # The image's tools stay reachable as a fallback, but AFTER the session's bin.
+    assert "/usr/local/bin" in env["PATH"]
+    parts = env["PATH"].split(":")
+    assert parts.index("/work/.home/s1/.local/bin") < parts.index("/usr/local/bin")
+
+
+def test_spawn_shell_applies_home_env(tmp_path) -> None:
+    # A shell started with home_env sees its own HOME and the tool-bin marker. (PATH
+    # ORDERING isn't asserted here: `bash -l` runs /etc/profile, which on Debian resets
+    # root's PATH — the per-session bin is re-prepended by the profile.d snippet in the
+    # image, absent from the test env. That snippet is covered separately below.)
+    home = str(tmp_path / "home" / "s1")
+    pid, fd = spawn_shell(str(tmp_path), env_overrides=home_env(home))
+    try:
+        # Read to the LAST token's expanded value: the command line is echoed first
+        # (with literal $HOME), so reading to TB's resolved path captures the output.
+        os.write(fd, b"echo OUT HOME=$HOME TB=$JCODE_TOOLS_BIN END\n")
+        out = _read_until(fd, f"TB={home}/.local/bin END".encode())
+        assert f"HOME={home}".encode() in out
+        assert f"TB={home}/.local/bin".encode() in out
+    finally:
+        _close_child(pid, fd)
+
+
+def test_jcode_path_profile_snippet_leads_path_with_the_session_bin() -> None:
+    # The actual PATH-leading guarantee: /etc/profile.d/jcode-path.sh re-prepends the
+    # per-session dirs AFTER /etc/profile resets root's PATH. Source it with the markers
+    # home_env sets and confirm the session bin (then the npm bin) lead PATH.
+    snippet = Path(__file__).resolve().parents[1] / "jcode-path.sh"
+    script = (
+        f'JCODE_TOOLS_BIN=/t HOME=/h; PATH=/usr/local/bin:/bin; '
+        f'. "{snippet}"; echo "$PATH"'
+    )
+    out = subprocess.run(
+        ["bash", "-c", script], capture_output=True, text=True, check=True
+    ).stdout.strip()
+    assert out == "/t:/h/.npm-global/bin:/usr/local/bin:/bin"
+
+
+def test_jcode_path_profile_snippet_is_a_noop_without_the_marker() -> None:
+    # Image-wide safety: in a non-session shell ($JCODE_TOOLS_BIN unset) the snippet
+    # must not touch PATH.
+    snippet = Path(__file__).resolve().parents[1] / "jcode-path.sh"
+    script = f'unset JCODE_TOOLS_BIN; PATH=/usr/bin; . "{snippet}"; echo "$PATH"'
+    out = subprocess.run(
+        ["bash", "-c", script], capture_output=True, text=True, check=True
+    ).stdout.strip()
+    assert out == "/usr/bin"
 
 
 def test_preview_env_exports_the_port() -> None:

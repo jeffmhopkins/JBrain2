@@ -32,6 +32,27 @@ async def test_create_clones_into_a_per_session_path() -> None:
     assert ws.cloned == [("github.com/me/repo", "main", "jcode/s1")]
 
 
+async def test_create_provisions_a_per_session_home() -> None:
+    # Each session gets its own $HOME (its tool bin on PATH, ~/.grok, npm prefix), under
+    # the home_root sibling of the checkouts — not the checkout itself.
+    ws = FakeWorkspace()
+    mgr = _mgr(workspace=ws)
+    await mgr.create("r")
+    assert ws.prepared_homes == [mgr.home_for("s1")]
+    assert str(mgr.home_for("s1")) == "/work/.home/s1"
+
+
+async def test_delete_purges_home_alongside_the_checkout() -> None:
+    # A deleted session leaves nothing on the volume: both the checkout and its private
+    # HOME (installed tools, ~/.grok, npm cache) are removed.
+    ws = FakeWorkspace()
+    mgr = _mgr(workspace=ws)
+    s = await mgr.create("r")
+    await mgr.delete(s.id)
+    removed = {str(p) for p in ws.removed}
+    assert removed == {"/work/s1", "/work/.home/s1"}
+
+
 async def test_capacity_is_enforced() -> None:
     mgr = _mgr(max_sessions=1)
     await mgr.create("r")

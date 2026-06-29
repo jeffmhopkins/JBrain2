@@ -63,12 +63,14 @@ class SessionManager:
         workspace: Workspace,
         workspace_root: str,
         *,
+        home_root: str = "/work/.home",
         max_sessions: int = 8,
         now: Callable[[], datetime] = _utcnow,
         new_id: Callable[[], str] = lambda: secrets.token_hex(4),
     ) -> None:
         self._workspace = workspace
         self._root = Path(workspace_root)
+        self._home_root = Path(home_root)
         self._max = max_sessions
         self._now = now
         self._new_id = new_id
@@ -82,6 +84,12 @@ class SessionManager:
     def _stamp(self) -> str:
         return self._now().isoformat()
 
+    def home_for(self, sid: str) -> Path:
+        """The session's private $HOME dir. Derived (not stored on the session) so the
+        api's mirrored session shape is untouched; the terminal sets HOME to this and a
+        per-session bin under it leads PATH (see JCODE_SESSION_TOOLS_PLAN)."""
+        return self._home_root / sid
+
     async def create(
         self, repo: str, branch: str = "main", work_branch: str = "", *, model: str = ""
     ) -> Session:
@@ -91,6 +99,8 @@ class SessionManager:
         work_branch = work_branch or f"jcode/{sid}"
         path = self._root / sid
         await self._workspace.clone(path, repo, branch, work_branch)
+        # The session's private $HOME (its own tool bin on PATH, ~/.grok, npm prefix).
+        self._workspace.prepare_home(self.home_for(sid))
         now = self._stamp()
         session = Session(
             id=sid,
@@ -196,6 +206,9 @@ class SessionManager:
             kill_process_group(pid)
         kill_processes_in_dir(session.workspace)
         self._workspace.remove(Path(session.workspace))
+        # Purge the session's private $HOME alongside the checkout (its installed tools,
+        # ~/.grok, npm cache) so a deleted session leaves nothing on the volume.
+        self._workspace.remove(self.home_for(sid))
         del self._sessions[sid]
         _log.info("session delete sid=%s", sid)
 
