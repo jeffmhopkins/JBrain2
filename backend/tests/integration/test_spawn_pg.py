@@ -24,7 +24,7 @@ from jbrain.agent.tree import TreeState
 from jbrain.auth import service
 from jbrain.auth.repo import SqlAuthRepo
 from jbrain.db.session import SessionContext, scoped_session
-from jbrain.llm.types import LlmTurn, LlmUsage
+from jbrain.llm.types import LlmTurn, LlmUsage, TextChunk
 from tests.conftest import docker_available
 from tests.integration.test_rls import OWNER, database_url  # noqa: F401
 
@@ -43,7 +43,8 @@ async def maker(database_url: str) -> AsyncIterator[async_sessionmaker]:  # noqa
 
 class _FakeRouter:
     """The minimal router surface the loop + spawn service use: an effort read and a
-    `converse` that answers immediately (no tools, no LLM)."""
+    streaming/non-streaming turn that answers immediately (no tools, no LLM). A child
+    streams (on_text set), so the loop calls `converse_stream`."""
 
     async def effective_reasoning_effort(self, task: str, strength: str | None = None) -> str:
         return "high"
@@ -55,6 +56,14 @@ class _FakeRouter:
         self, task: str, *, system, messages, tools, max_tokens, strength=None, effort_override=None
     ):  # noqa: ANN001, ANN003, E501
         return LlmTurn(
+            text="child summary", tool_calls=(), stop_reason="end_turn", usage=LlmUsage(5, 5)
+        )
+
+    async def converse_stream(
+        self, task: str, *, system, messages, tools, max_tokens, strength=None, effort_override=None
+    ):  # noqa: ANN001, ANN003, E501
+        yield TextChunk(text="child summary")
+        yield LlmTurn(
             text="child summary", tool_calls=(), stop_reason="end_turn", usage=LlmUsage(5, 5)
         )
 
