@@ -72,9 +72,7 @@ class FakeAgentSessions:
         self.recorded_context = (session_id, tokens, window)
         info = self._by_id.get(session_id)
         if info is not None:
-            self._by_id[session_id] = replace(
-                info, context_tokens=tokens, context_window=window
-            )
+            self._by_id[session_id] = replace(info, context_tokens=tokens, context_window=window)
 
     async def set_status(self, ctx, session_id, status):  # type: ignore[no-untyped-def]
         info = self._by_id.get(session_id)
