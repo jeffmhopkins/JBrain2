@@ -3165,11 +3165,13 @@ button.small {
   color: var(--text-3);
 }
 
+/* The card body has no padding of its own; each row supplies the Ops-standard
+ * 14px horizontal inset so the memory card aligns with the System/service rows. */
 .ops-mem-head {
   display: flex;
   align-items: baseline;
   gap: 10px;
-  padding: 2px 2px 10px;
+  padding: 12px 14px 10px;
 }
 .ops-mem-pct {
   font-size: var(--fs-title);
@@ -3186,6 +3188,7 @@ button.small {
 .ops-mem-stack {
   display: flex;
   height: 20px;
+  margin: 0 14px;
   border-radius: 10px;
   overflow: hidden;
   background: var(--surface-2);
@@ -3204,7 +3207,7 @@ button.small {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 12px 0 4px;
+  padding: 12px 14px 4px;
 }
 .ops-seg {
   display: flex;
@@ -3236,7 +3239,7 @@ button.small {
 .ops-mem-donutwrap {
   display: flex;
   justify-content: center;
-  padding: 14px 0 6px;
+  padding: 14px 14px 6px;
 }
 .ops-mem-donut {
   width: 150px;
@@ -3296,6 +3299,16 @@ button.small {
   vertical-align: middle;
   font-variant-numeric: tabular-nums;
 }
+/* Inset only the edge cells so the text aligns at 14px while the row dividers
+ * still span the full card width. */
+.ops-mem-table th:first-child,
+.ops-mem-table td:first-child {
+  padding-left: 14px;
+}
+.ops-mem-table th:last-child,
+.ops-mem-table td:last-child {
+  padding-right: 14px;
+}
 .ops-mem-pname {
   display: flex;
   align-items: center;
@@ -3343,9 +3356,17 @@ button.small {
   color: var(--text-3);
   line-height: 1.5;
   margin: 12px 0 0;
+  padding: 0 14px;
 }
 .ops-mem-foot b {
   color: var(--text-2);
+}
+.ops-mem-note {
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+  line-height: 1.5;
+  margin: 6px 0 0;
+  padding: 0 14px 4px;
 }
 
 .ops-scaret {

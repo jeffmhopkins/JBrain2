@@ -252,7 +252,12 @@ def test_capabilities_default_model_supports_vision(
     # Default agent.turn is xai:grok-4.3 — a vision-capable model; no ComfyUI configured.
     resp = c.get("/api/chat/capabilities")
     assert resp.status_code == 200
-    assert resp.json() == {"supports_vision": True, "can_edit_images": False}
+    # grok-4.3's window (CONTEXT_WINDOWS) rides along so the meter can seed a fresh chat.
+    assert resp.json() == {
+        "supports_vision": True,
+        "can_edit_images": False,
+        "context_window": 256_000,
+    }
 
 
 def test_capabilities_reflects_text_only_override(
@@ -261,9 +266,11 @@ def test_capabilities_reflects_text_only_override(
     c, _, _, store = client
     # A stored override to a text-only local model flips the flag off.
     store.values["llm_task_overrides"] = {"agent.turn": {"spec": "local:text-only-model"}}
+    # An off-catalog local model falls back to the conservative local default window.
     assert c.get("/api/chat/capabilities").json() == {
         "supports_vision": False,
         "can_edit_images": False,
+        "context_window": 32_768,
     }
 
 
@@ -280,6 +287,7 @@ def test_capabilities_reports_image_tools_when_comfyui_configured(
     assert c.get("/api/chat/capabilities").json() == {
         "supports_vision": False,
         "can_edit_images": True,
+        "context_window": 32_768,
     }
 
 
