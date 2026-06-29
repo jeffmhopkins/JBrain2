@@ -44,7 +44,7 @@ from jbrain.agent.contracts import (
 )
 from jbrain.agent.loop import AgentLoop, Guardrails, ToolContext, ToolOutput
 from jbrain.agent.runlog import AgentRunLog, StepTally
-from jbrain.agent.session import AgentSessionRepo, read_context
+from jbrain.agent.session import AgentSessionInfo, AgentSessionRepo, read_context
 from jbrain.agent.toolregistry import ToolRegistry
 from jbrain.agent.transcript_store import AgentTranscript
 from jbrain.agent.tree import (
@@ -237,8 +237,31 @@ class SpawnService:
         owner_ctx = SessionContext(principal_id=ctx.session.principal_id, principal_kind="owner")
         sem = asyncio.Semaphore(max_parallel)
 
+        # Mint and announce EVERY child up front (before the semaphore gates execution),
+        # so the whole roster shows immediately — the not-yet-started ones as "queued" —
+        # even when the fan runs serially. Each child flips to its working phase only when
+        # it actually starts (inside _run_child's semaphore block).
+        minted: list[tuple[_ChildPlan, AgentSessionInfo]] = []
+        for plan in plans:
+            child = await self._sessions.create(
+                owner_ctx,
+                domain_scopes=[],
+                title=plan.label[:_TITLE_LEN],
+                agent=plan.persona,
+                parent_session_id=ctx.agent_session_id,
+                depth=ctx.depth + 1,
+                no_memory=True,
+            )
+            _emit(
+                ctx,
+                SubagentSpawnedEvent(
+                    child_id=child.id, persona=plan.persona, label=plan.label, depth=ctx.depth + 1
+                ),
+            )
+            minted.append((plan, child))
+
         results = await asyncio.gather(
-            *(self._run_child(ctx, owner_ctx, tree, sem, plan) for plan in plans)
+            *(self._run_child(ctx, owner_ctx, tree, sem, plan, child) for plan, child in minted)
         )
         # The text observation is what the parent synthesizes from; the view is the
         # UI's structured render of the same fan result (the registered
@@ -264,6 +287,7 @@ class SpawnService:
         tree: TreeState,
         sem: asyncio.Semaphore,
         plan: _ChildPlan,
+        child: AgentSessionInfo,  # pre-minted; its spawned-event was already emitted
     ) -> _ChildResult:
         persona, label, brief_text = plan.persona, plan.label, plan.brief_text
         # persona is validated ∈ SUBAGENT_PERSONAS, so agent_for never falls back to
@@ -275,22 +299,8 @@ class SpawnService:
         child_tools = effective_child_tools(profile.tools, ctx.agent_tools)
         child_depth = ctx.depth + 1
         async with sem:
-            # Session + run are owner-only; reads run under empty scope (web-sandbox).
-            child = await self._sessions.create(
-                owner_ctx,
-                domain_scopes=[],
-                title=label[:_TITLE_LEN],
-                agent=persona,
-                parent_session_id=ctx.agent_session_id,
-                depth=child_depth,
-                no_memory=True,
-            )
-            _emit(
-                ctx,
-                SubagentSpawnedEvent(
-                    child_id=child.id, persona=persona, label=label, depth=child_depth
-                ),
-            )
+            # Now actually running (the session was minted + announced up front): flip
+            # this child from "queued" to its working phase.
             _emit(
                 ctx,
                 SubagentProgressEvent(

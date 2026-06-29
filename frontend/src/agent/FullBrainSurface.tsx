@@ -120,6 +120,7 @@ export function FullBrainSurface({
                   fb.setPanel("proposals");
                 }}
                 onStop={fb.stop}
+                onOpenSession={fb.requestOpen}
               />
             ))}
             {fb.messages.length === 0 && (
@@ -291,6 +292,7 @@ function Bubble({
   onOpenProposal,
   onOpenEntity,
   onStop,
+  onOpenSession,
 }: {
   message: TranscriptMessage;
   onOpenNote?: ((noteId: string) => void) | undefined;
@@ -298,6 +300,8 @@ function Bubble({
   onOpenEntity?: ((entityId: string) => void) | undefined;
   /** Cascade-cancel the live turn (and its sub-agent fan) — the fan header Stop. */
   onStop?: (() => void) | undefined;
+  /** Open a sub-agent child's own session by id (from the fan's row). */
+  onOpenSession?: ((sessionId: string) => void) | undefined;
 }): ReactNode {
   // Which ungrounded-claim flag's reason note is open (one at a time). Declared
   // before the early returns so the hook order is stable across renders.
@@ -552,7 +556,13 @@ function Bubble({
       {fans.map(
         (t) =>
           t.fan && (
-            <SubagentFan key={t.id} fan={t.fan} running={message.streaming} onStop={onStop} />
+            <SubagentFan
+              key={t.id}
+              fan={t.fan}
+              running={message.streaming}
+              onStop={onStop}
+              onOpen={onOpenSession}
+            />
           ),
       )}
     </>

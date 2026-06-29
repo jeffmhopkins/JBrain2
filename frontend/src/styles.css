@@ -7497,6 +7497,9 @@ button.small {
      so a 16-leaf fan with expanded summaries never becomes a wall (review M10). */
   overflow: hidden auto;
   max-height: 60vh;
+  /* The chat is a flex column; without this the fan gets shrunk to nothing when the
+     bubble above it (e.g. an expanded "Thinking" trace) is tall. Keep its own size. */
+  flex: none;
 }
 .fb-shell .fb-sa-head {
   display: flex;
@@ -7610,6 +7613,11 @@ button.small {
 .fb-shell .fb-sa-st.fail {
   color: var(--rose);
 }
+/* A minted-but-not-yet-started child (serial fan): reads as a quiet italic "queued". */
+.fb-shell .fb-sa-st.queued {
+  font-style: italic;
+  color: var(--text-3);
+}
 .fb-shell .fb-sa-car {
   color: var(--text-3);
   font-size: 11px;
@@ -7658,6 +7666,18 @@ button.small {
 }
 .fb-shell .fb-sa-detail.err {
   color: var(--rose);
+}
+/* The "open sub-agent session" link inside an expanded child — its run persisted a
+   transcript, so this opens the child's own conversation. */
+.fb-shell .fb-sa-open {
+  margin-top: 6px;
+  padding: 4px 0;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--steel);
+  background: transparent;
+  border: 0;
+  cursor: pointer;
 }
 .fb-shell .fb-sa-more {
   width: 100%;

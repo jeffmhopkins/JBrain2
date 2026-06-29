@@ -459,6 +459,37 @@ async def test_fan_emits_subagent_lifecycle_events(service: SpawnService) -> Non
     assert done.ok is True and done.child_id == "sess-1"
 
 
+async def test_all_children_announced_up_front_as_queued(service: SpawnService) -> None:
+    """Every child is minted + announced (subagent_spawned) BEFORE any starts running,
+    so the whole roster shows at once — the not-yet-started ones as "queued" — even when
+    the fan is serialized. Each flips to its working phase via a later progress event."""
+    captured: list = []
+    ctx = ToolContext(
+        session=SessionContext(principal_id="p1", principal_kind="owner"),
+        scopes=(),
+        agent_session_id="parent-sess",
+        depth=0,
+        agent_tools=JERV_TOOLS,
+        tree=TreeState(),
+        run_id="parent-run",
+        emit_event=captured.append,
+    )
+    await service.spawn_fan(
+        ctx,
+        {
+            "tasks": [
+                {"persona": "research", "brief": "a", "label": "A"},
+                {"persona": "research", "brief": "b", "label": "B"},
+            ]
+        },
+    )
+    # Both spawned events lead, before any progress (the roster, all queued).
+    assert [e.type for e in captured[:2]] == ["subagent_spawned", "subagent_spawned"]
+    assert {e.label for e in captured[:2]} == {"A", "B"}
+    # Working phases follow, once each child actually starts.
+    assert "subagent_progress" in [e.type for e in captured[2:]]
+
+
 async def test_fan_without_a_sink_does_not_emit(service: SpawnService) -> None:
     # A turn with no event sink (the non-streaming child path) simply skips emission —
     # no crash, so a grandchild fan degrades to summary-only (documented v1 limit).
@@ -531,3 +562,37 @@ async def test_child_wall_clock_degrades_a_slow_child(monkeypatch: pytest.Monkey
     )
     assert "timed out" in out.lower()
     assert "[FAILED]" in out
+
+
+async def test_stop_cascades_cancellation_into_the_fan(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The composer Stop cancels the parent turn; that CancelledError propagates into
+    spawn_fan's gather and cancels every in-flight child — the whole tree halts and the
+    child's run is marked cancelled, not left running."""
+    import asyncio
+
+    started = asyncio.Event()
+
+    class _BlockingLoop(_FakeLoop):
+        async def run(self, **kw):  # noqa: ANN003
+            _FakeLoop.calls.append(kw)
+            started.set()
+            await asyncio.sleep(3600)  # block until the parent cancel cascades in
+
+    _FakeLoop.calls = []
+    monkeypatch.setattr(spawn_mod, "AgentLoop", _BlockingLoop)
+    runlog = _FakeRunLog()
+    svc = SpawnService(
+        router=_FakeRouter(),  # type: ignore[arg-type]
+        registry=object(),  # type: ignore[arg-type]
+        sessions=_FakeSessions(),  # type: ignore[arg-type]
+        runlog=runlog,  # type: ignore[arg-type]
+    )
+    task = asyncio.create_task(
+        svc.spawn_fan(_ctx(), {"tasks": [{"persona": "research", "brief": "x", "label": "L"}]})
+    )
+    await started.wait()  # the child is mid-run
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    # The child didn't keep running — its run was finished as cancelled.
+    assert any(f["stop_reason"] == "cancelled" for f in runlog.finished)
