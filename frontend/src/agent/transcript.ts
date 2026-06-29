@@ -37,6 +37,11 @@ export interface SubagentChild {
   /** The child's answer (or its error / truncation note), shown on expand. */
   summary?: string;
   stopReason?: string;
+  /** Live-streamed answer tokens while the child works (cleared/superseded by
+   * `summary` once it settles) — the fan's live mini-transcript. */
+  liveText?: string;
+  /** Live-streamed reasoning tokens (the child's thinking trace) while it works. */
+  liveReasoning?: string;
 }
 
 /** The live fan under a `spawn_subagent` tool call: its children plus the shared
@@ -298,6 +303,28 @@ export function applyEvent(messages: TranscriptMessage[], event: ChatEvent): Tra
                 ),
                 treeSpent: event.tree_spent,
                 treeBudget: event.tree_budget,
+              },
+            }
+          : t,
+      );
+      break;
+    case "subagent_delta":
+      // Append the child's live answer/reasoning tokens — the fan row renders them as a
+      // growing mini-transcript so you watch the child work (it runs non-streaming from
+      // the parent's await, but forwards its tokens through the turn's event sink).
+      next.tools = next.tools.map((t) =>
+        t.id === event.tool_call_id && t.fan
+          ? {
+              ...t,
+              fan: {
+                ...t.fan,
+                children: t.fan.children.map((c) =>
+                  c.childId === event.child_id
+                    ? event.channel === "reasoning"
+                      ? { ...c, liveReasoning: (c.liveReasoning ?? "") + event.text }
+                      : { ...c, liveText: (c.liveText ?? "") + event.text }
+                    : c,
+                ),
               },
             }
           : t,

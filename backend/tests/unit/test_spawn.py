@@ -513,6 +513,45 @@ async def test_all_children_announced_up_front_as_queued(service: SpawnService) 
     assert "subagent_progress" in [e.type for e in captured[2:]]
 
 
+async def test_child_streams_live_deltas_to_the_fan(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A child's loop streams its tokens via on_text/on_reasoning; the service forwards
+    them as subagent_delta events (tagged by child_id) so the fan shows it working."""
+
+    class _StreamingLoop(_FakeLoop):
+        async def run(self, **kw):  # noqa: ANN003
+            _FakeLoop.calls.append(kw)
+            kw["on_reasoning"]("let me search…")
+            kw["on_text"]("Port St. John summary")
+            return AgentResult(
+                text="Port St. John summary", stop_reason="end_turn", steps=1, cost_tokens=5
+            )
+
+    _FakeLoop.calls = []
+    monkeypatch.setattr(spawn_mod, "AgentLoop", _StreamingLoop)
+    captured: list = []
+    ctx = ToolContext(
+        session=SessionContext(principal_id="p1", principal_kind="owner"),
+        scopes=(),
+        agent_session_id="parent-sess",
+        depth=0,
+        agent_tools=JERV_TOOLS,
+        tree=TreeState(),
+        run_id="parent-run",
+        emit_event=captured.append,
+    )
+    svc = SpawnService(
+        router=_FakeRouter(),  # type: ignore[arg-type]
+        registry=object(),  # type: ignore[arg-type]
+        sessions=_FakeSessions(),  # type: ignore[arg-type]
+        runlog=_FakeRunLog(),  # type: ignore[arg-type]
+    )
+    await svc.spawn_fan(ctx, {"tasks": [{"persona": "research", "brief": "x", "label": "L"}]})
+    deltas = [e for e in captured if e.type == "subagent_delta"]
+    assert any(d.channel == "reasoning" and d.text == "let me search…" for d in deltas)
+    assert any(d.channel == "answer" and d.text == "Port St. John summary" for d in deltas)
+    assert all(d.child_id == "sess-1" for d in deltas)
+
+
 async def test_fan_without_a_sink_does_not_emit(service: SpawnService) -> None:
     # A turn with no event sink (the non-streaming child path) simply skips emission —
     # no crash, so a grandchild fan degrades to summary-only (documented v1 limit).

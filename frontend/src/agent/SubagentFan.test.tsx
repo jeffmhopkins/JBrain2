@@ -98,6 +98,42 @@ describe("SubagentFan", () => {
     expect(screen.getByText("queued")).toHaveClass("queued");
   });
 
+  it("auto-expands a streaming child and shows its live answer + reasoning", () => {
+    render(
+      <SubagentFan
+        running
+        fan={fan([
+          child({
+            childId: "k1",
+            label: "Pricing",
+            phase: "researching",
+            status: "running",
+            step: 3,
+            liveReasoning: "let me search",
+            liveText: "found 3 tiers",
+          }),
+        ])}
+      />,
+    );
+    // Visible without a tap — the active child auto-expands so you watch it work.
+    expect(screen.getByText("let me search")).toBeInTheDocument();
+    expect(screen.getByText("found 3 tiers")).toBeInTheDocument();
+  });
+
+  it("does not offer 'Open session' for a still-running child (would be blank)", () => {
+    const onOpen = vi.fn();
+    render(
+      <SubagentFan
+        running
+        onOpen={onOpen}
+        fan={fan([
+          child({ childId: "k1", label: "Pricing", status: "running", liveText: "working" }),
+        ])}
+      />,
+    );
+    expect(screen.queryByText(/Open sub-agent session/)).not.toBeInTheDocument();
+  });
+
   it("opens a child's own session from its expanded row", () => {
     const onOpen = vi.fn();
     render(
