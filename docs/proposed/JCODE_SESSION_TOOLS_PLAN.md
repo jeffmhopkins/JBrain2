@@ -96,6 +96,16 @@ Each wave follows `docs/PROCESS.md`: independent adversarial review (reviewer â‰
 tests in the same change. (Wave branches/PRs per the process; this work is on the session's
 designated branch and opens a PR only when the owner asks.)
 
+## Provenance note
+
+The image keeps a pinned `grok` (`GROK_BUILD_VERSION`) for provenance. A per-session
+`jcode-grok upgrade` trusts x.ai's TLS endpoint with **no** checksum/signature pinning (the
+same posture the image build already uses), and a bare `upgrade` (no version arg) pulls the
+installer's *latest* â€” i.e. less pinned than the image default. Pass an explicit version to
+pin. This is acceptable under the threat model (TLS + the egress allowlist excludes x.ai, so
+strict-egress sessions can't reach it at all), but it is a deliberate trust choice, not a
+verified supply chain. [Independent review, Waves T2+T4, finding 2.]
+
 ## Known residuals
 
 - **Orphaned per-session dirs on container restart.** Sessions are in-memory, so a jcode

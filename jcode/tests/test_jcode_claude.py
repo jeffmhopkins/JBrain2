@@ -42,8 +42,11 @@ def test_upgrade_installs_the_pinned_version_via_npm(tmp_path) -> None:
     }
     res = _run(["upgrade", "1.2.3"], env=env)
     assert res.returncode == 0, res.stderr
-    # The package and pinned version are forwarded to npm (session prefix targets it).
-    assert "args:install -g @anthropic-ai/claude-code@1.2.3" in log.read_text()
+    # The package + pinned version are forwarded, and --prefix explicitly targets the
+    # session's npm prefix (so the env alone can't redirect the install elsewhere).
+    logged = log.read_text()
+    assert "@anthropic-ai/claude-code@1.2.3" in logged
+    assert f"--prefix {tmp_path / 'npm-global'}" in logged
 
 
 def test_upgrade_defaults_to_latest(tmp_path) -> None:
@@ -75,10 +78,24 @@ def test_upgrade_reports_a_clean_error_on_npm_failure(tmp_path) -> None:
     assert "npm install failed" in res.stderr
 
 
-def test_upgrade_refuses_outside_a_session_shell(tmp_path) -> None:
-    res = _run(["upgrade"], env={"PATH": "/usr/bin:/bin"})
+def test_upgrade_refuses_when_the_npm_prefix_is_unset(tmp_path) -> None:
+    # The guard is on NPM_CONFIG_PREFIX (the actual install target), not just the
+    # session marker — so a clobbered prefix can't silently install into the image.
+    res = _run(["upgrade"], env={"PATH": "/usr/bin:/bin", "JCODE_TOOLS_BIN": "/x"})
     assert res.returncode == 1
-    assert "JCODE_TOOLS_BIN" in res.stderr
+    assert "NPM_CONFIG_PREFIX" in res.stderr
+
+
+def test_version_reports_session_and_image(tmp_path) -> None:
+    fakebin = tmp_path / "fakebin"
+    fakebin.mkdir()
+    claude = fakebin / "claude"
+    claude.write_text("#!/bin/sh\necho 1.0.0\n")
+    claude.chmod(0o755)
+    res = _run(["version"], env={"PATH": f"{fakebin}:/usr/bin:/bin"})
+    assert res.returncode == 0, res.stderr
+    assert "session:" in res.stdout and "1.0.0" in res.stdout
+    assert "image:" in res.stdout  # no /usr/local/bin/claude here → reported as none
 
 
 def test_unknown_command_prints_usage(tmp_path) -> None:
