@@ -62,6 +62,9 @@ from jbrain.llm.providers import REASONING_EFFORTS
 log = structlog.get_logger(__name__)
 
 _TITLE_LEN = 120  # a child session title is a short label; longer is clamped
+# The LLM task a child loop runs on (mirrors AgentLoop's default) — consulted to
+# detect a local route, which serializes the fan (see _effective_max_parallel).
+_CHILD_TASK = "agent.turn"
 # The working word each persona shows while running (the live status word; a neutral
 # tag carries the persona itself — see DESIGN.md "Sub-agent spawning surfaces").
 _PHASE = {"research": "researching", "review": "reviewing", "summarize": "summarizing"}
@@ -223,10 +226,7 @@ class SpawnService:
             )
         tree.admit(len(plans))
 
-        max_parallel = args.get("max_parallel")
-        if not isinstance(max_parallel, int) or max_parallel < 1:
-            max_parallel = MAX_PARALLEL
-        max_parallel = min(max_parallel, MAX_PARALLEL)
+        max_parallel = await self._effective_max_parallel(args.get("max_parallel"))
 
         owner_ctx = SessionContext(principal_id=ctx.session.principal_id, principal_kind="owner")
         sem = asyncio.Semaphore(max_parallel)
@@ -238,6 +238,18 @@ class SpawnService:
         # UI's structured render of the same fan result (the registered
         # `subagent_synthesis` tool-view, DESIGN.md). Both carry the same data.
         return ToolOutput(_observation(results), view=_synthesis_view(results))
+
+    async def _effective_max_parallel(self, requested: object) -> int:
+        """How many children may run at once. The model-requested value is clamped to
+        MAX_PARALLEL — but on a LOCAL route it is forced to 1. A single-GPU local model
+        serializes every call, so a "parallel" fan just splits the device N ways: each
+        child runs at ~1/N throughput and is far likelier to hit its wall-clock. Serial
+        gives each child the whole device (so it finishes in time) at ~the same total
+        wall-clock, since generation serializes either way."""
+        n = requested if isinstance(requested, int) and requested >= 1 else MAX_PARALLEL
+        n = min(n, MAX_PARALLEL)
+        provider, _model = await self._router.effective_spec(_CHILD_TASK)
+        return 1 if provider == "local" else n
 
     async def _run_child(
         self,

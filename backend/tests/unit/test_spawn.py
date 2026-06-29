@@ -10,7 +10,7 @@ from jbrain.agent import spawn as spawn_mod
 from jbrain.agent.agents import AGENTS, JERV_TOOLS
 from jbrain.agent.loop import AgentResult, ToolContext
 from jbrain.agent.spawn import SpawnService, effective_child_tools
-from jbrain.agent.tree import MAX_CHILDREN_PER_PARENT, MAX_DEPTH, TreeState
+from jbrain.agent.tree import MAX_CHILDREN_PER_PARENT, MAX_DEPTH, MAX_PARALLEL, TreeState
 from jbrain.db.session import SessionContext
 
 # --- the clamp, as a pure function (parent⊆child) --------------------------
@@ -71,8 +71,17 @@ class _FakeRunLog:
 
 
 class _FakeRouter:
+    """A non-local route by default, so the fan stays parallel; a test that wants the
+    serial-on-local path sets `provider`."""
+
+    def __init__(self, provider: str = "xai") -> None:
+        self.provider = provider
+
     async def effective_reasoning_effort(self, task):  # noqa: ANN001
         return "high"
+
+    async def effective_spec(self, task, strength=None):  # noqa: ANN001
+        return (self.provider, "model-x")
 
 
 class _FakeLoop:
@@ -327,6 +336,26 @@ async def test_child_effort_is_threaded_to_the_loop(service: SpawnService) -> No
     plain = next(c for c in calls if c["conversation"][-1].text == "b")
     assert hard["reasoning_effort"] == "high"
     assert plain["reasoning_effort"] is None
+
+
+async def test_local_route_serializes_the_fan() -> None:
+    """A single-GPU local route forces concurrency to 1 (serial) — a parallel fan
+    would split the one device and push each child past its wall-clock. A non-local
+    route keeps the model-requested concurrency (clamped)."""
+
+    def _svc(provider: str) -> SpawnService:
+        return SpawnService(
+            router=_FakeRouter(provider),  # type: ignore[arg-type]
+            registry=object(),  # type: ignore[arg-type]
+            sessions=_FakeSessions(),  # type: ignore[arg-type]
+            runlog=_FakeRunLog(),  # type: ignore[arg-type]
+        )
+
+    assert await _svc("local")._effective_max_parallel(4) == 1
+    assert await _svc("local")._effective_max_parallel(None) == 1
+    # A cloud route keeps the requested concurrency, still clamped to MAX_PARALLEL.
+    assert await _svc("xai")._effective_max_parallel(2) == 2
+    assert await _svc("xai")._effective_max_parallel(99) == MAX_PARALLEL
 
 
 async def test_unknown_effort_refuses_the_fan(service: SpawnService) -> None:
