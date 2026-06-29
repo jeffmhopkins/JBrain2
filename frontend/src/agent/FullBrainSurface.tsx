@@ -18,6 +18,7 @@ import { ProposalsPanel } from "./ProposalsPanel";
 import { SessionsPanel } from "./SessionsPanel";
 import { SubagentFan } from "./SubagentFan";
 import { attachmentKind } from "./attachmentKind";
+import { BrainGlyph } from "./glyphs";
 import { type CiteTarget, Markdown, type MdFlag, stripModelCitations } from "./markdown";
 import { type AgentStatus, agentStatus } from "./status";
 import { type SourceRef, type ToolStep, toolStep } from "./toolSummary";
@@ -776,23 +777,6 @@ function CopyGlyph({ className }: { className?: string }): ReactNode {
 }
 
 // A small "brain" glyph for the thinking disclosure (icons.tsx has none).
-function BrainGlyph({ className }: { className?: string }): ReactNode {
-  return (
-    <svg
-      className={className}
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.7"
-      aria-hidden="true"
-    >
-      <path d="M9 3a4 4 0 0 0-3.9 5 3.5 3.5 0 0 0 .4 6.5V17a2 2 0 0 0 2 2h1" />
-      <path d="M15 3a4 4 0 0 1 3.9 5 3.5 3.5 0 0 1-.4 6.5V17a2 2 0 0 1-2 2h-1" />
-      <path d="M12 4v16" />
-    </svg>
-  );
-}
-
 // A calm, neutral footer note under an answer the agent gave from its own general
 // knowledge (no retrieval). Deliberately NOT the amber "unverified" flag (DESIGN.md:
 // warning=amber, info=steel) — a quiet ⓘ glyph + a muted one-liner, not an alarm.
