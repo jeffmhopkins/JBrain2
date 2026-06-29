@@ -52,6 +52,9 @@ class _FakeRouter:
     async def effective_spec(self, task: str, strength: str | None = None) -> tuple[str, str]:
         return ("xai", "grok-4.3")  # non-local → the fan stays parallel
 
+    async def context_window(self, task: str) -> int:
+        return 131_072  # the child meter's denominator
+
     async def converse(
         self, task: str, *, system, messages, tools, max_tokens, strength=None, effort_override=None
     ):  # noqa: ANN001, ANN003, E501
