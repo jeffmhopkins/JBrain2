@@ -1412,6 +1412,23 @@ describe("FullBrainSurface", () => {
     await waitFor(() => expect(screen.getByTestId("usage").textContent).toBe("0/32768"));
   });
 
+  it("restores a reopened chat's meter from its persisted context fill", async () => {
+    const sessions = [
+      session({ id: "s1", title: "First" }),
+      // A populated chat carrying its last turn's persisted fill — the meter should
+      // restore to it on reopen, not wait for the next turn (no live usage yet).
+      session({ id: "s2", title: "Second", context_tokens: 9000, context_window: 32768 }),
+    ];
+    render(<Harness d={deps({ listSessions: vi.fn(async () => sessions) })} />);
+    await waitFor(() => screen.getByLabelText("Conversation"));
+
+    fireEvent.click(screen.getByText("open-sessions"));
+    fireEvent.click(screen.getByText("Second"));
+    await waitFor(() => expect(screen.getByTestId("usage").textContent).toBe("9000/32768"));
+    // The restored fill is the carried floor too (no transient yet, idle).
+    expect(screen.getByTestId("usage-base").textContent).toBe("9000");
+  });
+
   it("Stop aborts the live turn and settles the partial answer calmly", async () => {
     let aborted = false;
     // A turn that streams a partial answer then hangs until its signal aborts —

@@ -174,6 +174,25 @@ async def test_rename_updates_the_title(maker: async_sessionmaker) -> None:
     assert (await repo.get(owner, info.id)).title == "new name"  # type: ignore[union-attr]
 
 
+async def test_record_context_round_trips(maker: async_sessionmaker) -> None:
+    # A fresh session carries no fill; recording a turn's context persists it so get/list
+    # restore the meter on reopen.
+    owner = await _owner_ctx(maker)
+    repo = AgentSessionRepo(maker)
+    info = await repo.create(owner, domain_scopes=["general"], title="chat")
+    fresh = await repo.get(owner, info.id)
+    assert fresh is not None
+    assert fresh.context_tokens is None and fresh.context_window is None
+
+    await repo.record_context(owner, info.id, 9000, 131072)
+    got = await repo.get(owner, info.id)
+    assert got is not None
+    assert got.context_tokens == 9000 and got.context_window == 131072
+    # It also rides the list view (the Chats cards), so a reopen reads it without a turn.
+    listed = next(s for s in await repo.list(owner) if s.id == info.id)
+    assert listed.context_tokens == 9000 and listed.context_window == 131072
+
+
 async def test_set_scopes_rescopes_and_is_owner_only(maker: async_sessionmaker) -> None:
     owner = await _owner_ctx(maker)
     repo = AgentSessionRepo(maker)

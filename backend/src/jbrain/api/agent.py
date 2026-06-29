@@ -541,6 +541,9 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
         # owner Stops — or one a dropped connection cuts — never reaches `done`, so this
         # stays False and the `finally` persists whatever partial answer streamed.
         persisted = False
+        # The fullest context the turn reached (last usage event's prompt + output),
+        # persisted on the session at settle so reopening the chat restores the meter.
+        last_context_used: int | None = None
         stream = loop.run_stream(
             session=read_ctx,
             scopes=read_scopes,
@@ -577,6 +580,9 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
             async with asyncio.timeout(_MAX_TURN_WALL_CLOCK_S):
                 async for event in stream:
                     acc.feed(event)
+                    if event.type == "usage":
+                        # The latest usage event is the fullest the context has been.
+                        last_context_used = event.input_tokens + event.output_tokens
                     if event.type == "done":
                         stop_reason, status = event.stop_reason, "done"
                     # A reflexion `verdict` rides after `done` (Loop 1's annotation of a
@@ -607,6 +613,14 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
                 await _maybe_autotitle(
                     request, owner_ctx, sessions, session, body.message, acc.answer
                 )
+                # Persist the turn's context fill so the meter restores on reopen
+                # (best-effort — the transcript above is the record of the turn; this
+                # is only the meter's seed, and must never fail settling the turn).
+                if last_context_used is not None:
+                    with contextlib.suppress(Exception):
+                        await sessions.record_context(
+                            owner_ctx, session.id, last_context_used, context_window
+                        )
                 persisted = True
                 # Return the box to its hot state (gpt-oss-120b + qwen3-vl). A turn that
                 # rendered an image freed every local LLM, and a turn after a code session

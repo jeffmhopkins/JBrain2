@@ -34,6 +34,8 @@ class FakeAgentSessions:
     def __init__(self) -> None:
         self.touched: list[str] = []
         self._by_id: dict[str, AgentSessionInfo] = {}
+        # The last (session_id, tokens, window) the chat handler persisted at settle.
+        self.recorded_context: tuple[str, int, int] | None = None
 
     def add(self, info: AgentSessionInfo) -> None:
         self._by_id[info.id] = info
@@ -65,6 +67,12 @@ class FakeAgentSessions:
         info = self._by_id.get(session_id)
         if info is not None:
             self._by_id[session_id] = replace(info, title=title)
+
+    async def record_context(self, ctx, session_id, tokens, window):  # type: ignore[no-untyped-def]
+        self.recorded_context = (session_id, tokens, window)
+        info = self._by_id.get(session_id)
+        if info is not None:
+            self._by_id[session_id] = replace(info, context_tokens=tokens, context_window=window)
 
     async def set_status(self, ctx, session_id, status):  # type: ignore[no-untyped-def]
         info = self._by_id.get(session_id)
@@ -319,6 +327,21 @@ def test_chat_streams_text_then_done(
     assert runlog.finished == [
         {"status": "done", "stop_reason": "end_turn", "step_count": 1, "cost_tokens": 10}
     ]
+
+
+def test_chat_persists_the_turns_context_fill(
+    client: TestClient,
+    repo: FakeAuthRepo,
+    sessions_store: FakeAgentSessions,
+) -> None:
+    # At settle, the turn's context fill (last usage event's prompt+output = 7+3) and
+    # the model's window ride onto the session, so reopening it restores the meter.
+    login(client, repo)
+    sessions_store.add(AgentSessionInfo("sess-1", "", "active", ("general",), (), NOW, NOW))
+    resp = client.post("/api/chat", json={"session_id": "sess-1", "message": "hi"})
+    assert resp.status_code == 200
+    _ = resp.text  # drain the stream so the detached turn settles
+    assert sessions_store.recorded_context == ("sess-1", 10, 256_000)
 
 
 def test_chat_persists_the_exchange_to_the_transcript(

@@ -62,6 +62,10 @@ class SessionOut(BaseModel):
     # The latest run's status (running | done | error) — drives the nested rail's
     # per-child outcome glyph and the parent's failed roll-up.
     last_run_status: str | None = None
+    # The last completed turn's context fill + window, so the composer's context-usage
+    # meter restores when the owner reopens a chat (null until a turn reports usage).
+    context_tokens: int | None = None
+    context_window: int | None = None
 
 
 def session_out(info: AgentSessionInfo) -> SessionOut:
@@ -80,6 +84,8 @@ def session_out(info: AgentSessionInfo) -> SessionOut:
         parent_session_id=info.parent_session_id,
         subagent_count=info.subagent_count,
         last_run_status=info.last_run_status,
+        context_tokens=info.context_tokens,
+        context_window=info.context_window,
     )
 
 

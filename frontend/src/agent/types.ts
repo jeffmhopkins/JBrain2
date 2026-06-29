@@ -286,6 +286,11 @@ export interface AgentSession {
   /** The latest run's status (running | done | error) — the nested rail shows a
    * child's settled outcome (error → rose ✕) and the parent's failed roll-up. */
   last_run_status?: string | null;
+  /** The last completed turn's context fill + the window it ran against, so the
+   * composer's context-usage meter restores when this chat is reopened (null/absent
+   * until a turn reports usage). */
+  context_tokens?: number | null;
+  context_window?: number | null;
 }
 
 export interface SessionCreate {
