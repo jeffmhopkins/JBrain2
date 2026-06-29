@@ -230,6 +230,15 @@ class BoomAfterTextClient:
         raise RuntimeError("model exploded")
 
 
+class HangStreamClient:
+    """Streams a partial answer, then hangs forever — a runaway turn that would peg the
+    GPU. The hard turn wall-clock must force-end it (cancelling the hung call)."""
+
+    async def converse_stream(self, **_kw):  # type: ignore[no-untyped-def]
+        yield TextChunk(text="working ")
+        await asyncio.sleep(60)  # cancelled by the (patched-tiny) turn wall-clock
+
+
 @pytest.fixture
 def client(
     repo: FakeAuthRepo,
@@ -904,6 +913,31 @@ def test_chat_model_failure_emits_error_done_and_marks_run_failed(
     assert sse_events(resp.text)[-1] == {"type": "done", "stop_reason": "error"}
     assert runlog.finished[-1]["status"] == "error"
     assert runlog.finished[-1]["stop_reason"] == "error"
+
+
+def test_chat_turn_wall_clock_force_ends_a_runaway_turn(
+    client: TestClient,
+    repo: FakeAuthRepo,
+    sessions_store: FakeAgentSessions,
+    runlog: FakeRunLog,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A turn that runs past the hard wall-clock is force-ended — the timeout cancels the
+    in-flight LLM call (and would cascade into any sub-agents) and the run closes
+    `turn_timeout` rather than pegging the GPU."""
+    import jbrain.api.agent as agent_mod
+
+    monkeypatch.setattr(agent_mod, "_MAX_TURN_WALL_CLOCK_S", 0.1)
+    login(client, repo)
+    sessions_store.add(AgentSessionInfo("sess-1", "", "active", ("general",), (), NOW, NOW))
+    client.app.state.llm_router = LlmRouter(  # type: ignore[attr-defined]
+        {"xai": cast(LlmClient, HangStreamClient())}, {"agent.turn": ("xai", "grok-4.3")}
+    )
+    resp = client.post("/api/chat", json={"session_id": "sess-1", "message": "hi"})
+    assert resp.status_code == 200
+    assert sse_events(resp.text)[-1] == {"type": "done", "stop_reason": "turn_timeout"}
+    assert runlog.finished[-1]["status"] == "error"
+    assert runlog.finished[-1]["stop_reason"] == "turn_timeout"
 
 
 def test_chat_persists_a_partial_answer_when_the_owner_stops(
