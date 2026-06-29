@@ -213,15 +213,16 @@ describe("useFullBrain — a turn stays attached to its own chat", () => {
       yield { type: "text_delta", text: "partial " };
       throw new Error("network drop");
     }
-    const chatResume = vi.fn(async function* (): AsyncGenerator<ChatEvent> {
+    const chatResume = vi.fn((): AsyncGenerator<ChatEvent> => {
       throw new Error("reconnect failed");
     });
     const cancelChatRun = vi.fn(async () => {});
     // Empty on open (no prior transcript), then a recovered partial so reconcile resolves
     // promptly after the cancel rather than polling out the window.
     let nth = 0;
-    const getTranscript = vi.fn(async (): Promise<TranscriptTurn[]> =>
-      nth++ === 0 ? [] : [{ role: "assistant", content: "partial", tools: [] }],
+    const getTranscript = vi.fn(
+      async (): Promise<TranscriptTurn[]> =>
+        nth++ === 0 ? [] : [{ role: "assistant", content: "partial", tools: [] }],
     );
     const d = deps({ chat, chatResume, cancelChatRun, getTranscript });
     const { result } = renderHook(() => useFullBrain("fullbrain", d));
