@@ -208,10 +208,12 @@ describe("useFullBrain — a turn stays attached to its own chat", () => {
     expect(listSessions.mock.calls.length - before).toBeGreaterThanOrEqual(2);
   });
 
-  it("force-stops the detached run when the turn fails unrecoverably", async () => {
-    // The stream drops, the reconnect also fails, and nothing is recoverable from the
-    // transcript — the UI shows error AND cancels the run so a detached server turn (and
-    // its sub-agents' LLM calls) don't keep grinding the GPU.
+  it("recovers a dropped turn from the transcript WITHOUT cancelling the detached run", async () => {
+    // A flaky network drops both the stream and the reconnect, but the turn runs detached
+    // server-side and finishes on its own. We must NOT force-cancel it: an implicit cancel
+    // once orphaned a healthy long sub-agent fan — it killed the parent (persisting a blank
+    // spawn step) while the child ran on. Instead, recover the COMPLETED exchange from the
+    // transcript once it lands. Only the explicit Stop may cancel.
     async function* chat(): AsyncGenerator<ChatEvent> {
       yield { type: "run", run_id: "r1" };
       yield { type: "text_delta", text: "partial " };
@@ -221,12 +223,12 @@ describe("useFullBrain — a turn stays attached to its own chat", () => {
       throw new Error("reconnect failed");
     });
     const cancelChatRun = vi.fn(async () => {});
-    // Empty on open (no prior transcript), then a recovered partial so reconcile resolves
-    // promptly after the cancel rather than polling out the window.
+    // Empty on open, then the detached run lands its COMPLETE turn (the finished review),
+    // which the recovery loop picks up on its next transcript poll.
     let nth = 0;
     const getTranscript = vi.fn(
       async (): Promise<TranscriptTurn[]> =>
-        nth++ === 0 ? [] : [{ role: "assistant", content: "partial", tools: [] }],
+        nth++ === 0 ? [] : [{ role: "assistant", content: "the full answer", tools: [] }],
     );
     const d = deps({ chat, chatResume, cancelChatRun, getTranscript });
     const { result } = renderHook(() => useFullBrain("fullbrain", d));
@@ -234,7 +236,9 @@ describe("useFullBrain — a turn stays attached to its own chat", () => {
     await act(async () => {
       await result.current.send("go");
     });
-    expect(cancelChatRun).toHaveBeenCalledWith("r1");
+    // The completed turn is recovered and rendered; the healthy run is never cancelled.
+    await waitFor(() => expect(result.current.messages.at(-1)?.text).toBe("the full answer"));
+    expect(cancelChatRun).not.toHaveBeenCalled();
   });
 
   it("reports a non-image tool as kind 'thinking', not rendering", async () => {
