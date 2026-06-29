@@ -46,6 +46,7 @@ from jbrain.agent.loop import AgentLoop, Guardrails, ToolContext, ToolOutput
 from jbrain.agent.runlog import AgentRunLog, StepTally
 from jbrain.agent.session import AgentSessionRepo, read_context
 from jbrain.agent.toolregistry import ToolRegistry
+from jbrain.agent.transcript_store import AgentTranscript
 from jbrain.agent.tree import (
     CHILD_MAX_COST_TOKENS,
     CHILD_MAX_STEPS,
@@ -148,11 +149,16 @@ class SpawnService:
         registry: ToolRegistry,
         sessions: AgentSessionRepo,
         runlog: AgentRunLog,
+        transcript: AgentTranscript | None = None,
     ) -> None:
         self._router = router
         self._registry = registry
         self._sessions = sessions
         self._runlog = runlog
+        # Optional: when present, each child's brief→result is persisted to its own
+        # session transcript so opening the child in the sessions rail replays its work
+        # (separate from episodic memory — `no_memory` gates recall, not this display).
+        self._transcript = transcript
 
     async def spawn_fan(self, ctx: ToolContext, args: dict) -> str:
         # --- fail closed without an established tree pool ---------------------
@@ -390,9 +396,11 @@ class SpawnService:
                         tree_budget=tree.tree_budget,
                     ),
                 )
-                return _ChildResult(
-                    label, persona, f"(timed out after {secs}s — no answer)", ok=False
+                timeout_summary = f"(timed out after {secs}s — no answer)"
+                await self._persist_child(
+                    owner_ctx, child.id, child_run, brief_text, timeout_summary
                 )
+                return _ChildResult(label, persona, timeout_summary, ok=False)
             except Exception as exc:  # noqa: BLE001 — a child failure degrades, not crashes
                 log.warning("subagent.child_failed", persona=persona, label=label, error=repr(exc))
                 with contextlib.suppress(Exception):
@@ -414,6 +422,9 @@ class SpawnService:
                         tree_spent=tree.spent,
                         tree_budget=tree.tree_budget,
                     ),
+                )
+                await self._persist_child(
+                    owner_ctx, child.id, child_run, brief_text, f"ERROR: {exc}"
                 )
                 return _ChildResult(label, persona, f"ERROR: {exc}", ok=False)
             await self._runlog.finish(
@@ -452,7 +463,28 @@ class SpawnService:
                     tree_budget=tree.tree_budget,
                 ),
             )
+            await self._persist_child(owner_ctx, child.id, child_run, brief_text, summary)
             return _ChildResult(label, persona, summary, ok=ok, truncated=truncated)
+
+    async def _persist_child(
+        self, owner_ctx: SessionContext, child_id: str, run_id: str, brief: str, answer: str
+    ) -> None:
+        """Record the child's brief→answer to its own transcript so opening the child
+        in the sessions rail replays its work instead of an empty conversation. Gated
+        on a configured store (headless/test callers may omit it) and best-effort — a
+        write failure never breaks the fan. Tool steps aren't replayed (the
+        non-streaming child loop doesn't surface them); the brief and answer are."""
+        if self._transcript is None:
+            return
+        with contextlib.suppress(Exception):
+            await self._transcript.record_exchange(
+                owner_ctx,
+                session_id=child_id,
+                run_id=run_id,
+                user_text=brief,
+                assistant_text=answer,
+                tools=[],
+            )
 
 
 def _observation(results: list[_ChildResult]) -> str:

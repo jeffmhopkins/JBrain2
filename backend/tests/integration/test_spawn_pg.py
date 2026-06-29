@@ -19,6 +19,7 @@ from jbrain.agent.runlog import AgentRunLog
 from jbrain.agent.session import AgentSessionRepo
 from jbrain.agent.spawn import SpawnService
 from jbrain.agent.toolregistry import ToolRegistry
+from jbrain.agent.transcript_store import AgentTranscript
 from jbrain.agent.tree import TreeState
 from jbrain.auth import service
 from jbrain.auth.repo import SqlAuthRepo
@@ -73,11 +74,13 @@ async def test_fan_persists_sandboxed_lineage_and_writes_no_episode(
     owner = await _owner(maker)
     sessions = AgentSessionRepo(maker)
     runlog = AgentRunLog(maker)
+    transcript = AgentTranscript(maker)
     svc = SpawnService(
         router=_FakeRouter(),  # type: ignore[arg-type]
         registry=ToolRegistry([]),
         sessions=sessions,
         runlog=runlog,
+        transcript=transcript,
     )
 
     parent = await sessions.create(owner, domain_scopes=[], title="root", agent="jerv")
@@ -117,6 +120,13 @@ async def test_fan_persists_sandboxed_lineage_and_writes_no_episode(
     # The load-bearing sandbox invariant: a child turn appends no episodic memory.
     assert episodes == 0
 
+    # …but the child's brief→answer IS in its own transcript, so opening the
+    # sub-agent in the sessions rail replays its work instead of an empty chat.
+    turns = await transcript.load(owner, child.id)
+    assert [t.role for t in turns] == ["user", "assistant"]
+    assert turns[0].content == "what is HNSW?"
+    assert turns[1].content == "child summary"
+
 
 async def test_depth1_child_may_spawn_but_a_depth2_leaf_cannot(maker: async_sessionmaker) -> None:
     """A depth-1 child is below the cap and may fan a grandchild (template-bound); a
@@ -124,11 +134,13 @@ async def test_depth1_child_may_spawn_but_a_depth2_leaf_cannot(maker: async_sess
     owner = await _owner(maker)
     sessions = AgentSessionRepo(maker)
     runlog = AgentRunLog(maker)
+    transcript = AgentTranscript(maker)
     svc = SpawnService(
         router=_FakeRouter(),  # type: ignore[arg-type]
         registry=ToolRegistry([]),
         sessions=sessions,
         runlog=runlog,
+        transcript=transcript,
     )
     parent = await sessions.create(owner, domain_scopes=[], title="root", agent="jerv")
     tree = TreeState()
