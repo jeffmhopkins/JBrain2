@@ -83,6 +83,12 @@ class _FakeSupervisor:
                     "log_tail": "[update] syncing local models",
                 },
             )
+        if url == "/metrics":
+            return _FakeResp(
+                200,
+                "",
+                json_body={"gpu_busy_percent": 97.0, "apu_power_w": 88.5, "load_1m": 4.2},
+            )
         return _FakeResp(200, "log line one\nlog line two")
 
     async def aclose(self) -> None:
@@ -153,7 +159,7 @@ def test_whoami_reports_scopes(debug_client: tuple[TestClient, str]) -> None:
     client, key = debug_client
     body = client.get("/api/debug/whoami", headers=_auth(key)).json()
     assert body["kind"] == "capability_token" and body["label"] == "claude"
-    assert "sql.read" in body["scopes"]
+    assert "sql.read" in body["scopes"] and "host.metrics" in body["scopes"]
 
 
 # --- self-service token lifecycle (console kill switch) ---------------------
@@ -488,6 +494,46 @@ def test_update_status_proxies_to_supervisor(debug_client: tuple[TestClient, str
 def test_update_status_requires_the_debug_token(debug_client: tuple[TestClient, str]) -> None:
     client, _ = debug_client
     assert client.get("/api/debug/update/status").status_code == 401
+
+
+# --- gateway logs + host metrics (the gateway-abort verification reads) ------
+
+
+def test_gateway_logs_tails_the_engine_stdout(debug_client: tuple[TestClient, str]) -> None:
+    # The gateway's OWN /logs (llama-server slot lifecycle), tailed to the last N lines —
+    # the read that shows whether a Stop releases a slot or the engine keeps generating.
+    client, key = debug_client
+    _state(client).local_gateway.logs_text = "slot launch\nrelease 1\nrelease 2\nrelease 3"
+    resp = client.get("/api/debug/llm/gateway-logs", headers=_auth(key), params={"tail": 2})
+    assert resp.status_code == 200
+    assert resp.text == "release 2\nrelease 3"  # only the last 2 lines
+
+
+def test_gateway_logs_502_when_gateway_unreachable(debug_client: tuple[TestClient, str]) -> None:
+    client, key = debug_client
+    _state(client).local_gateway.fail_logs = True
+    assert client.get("/api/debug/llm/gateway-logs", headers=_auth(key)).status_code == 502
+
+
+def test_gateway_logs_requires_a_valid_bearer(debug_client: tuple[TestClient, str]) -> None:
+    client, _ = debug_client
+    assert client.get("/api/debug/llm/gateway-logs").status_code == 401
+
+
+def test_host_metrics_proxies_supervisor(debug_client: tuple[TestClient, str]) -> None:
+    # The one physical read: GPU busy %, APU power, load — proxied from the supervisor so a
+    # debug session can watch the device across a Stop.
+    client, key = debug_client
+    resp = client.get("/api/debug/host/metrics", headers=_auth(key))
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["gpu_busy_percent"] == 97.0 and body["apu_power_w"] == 88.5
+    assert ("/metrics", {}) in _state(client).supervisor_client.calls
+
+
+def test_host_metrics_requires_a_valid_bearer(debug_client: tuple[TestClient, str]) -> None:
+    client, _ = debug_client
+    assert client.get("/api/debug/host/metrics").status_code == 401
 
 
 # --- live routing -----------------------------------------------------------

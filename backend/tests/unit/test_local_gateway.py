@@ -127,6 +127,27 @@ async def test_load_progress_is_none_when_logs_are_unavailable() -> None:
     assert await _client(lambda r: httpx.Response(404)).load_progress() is None
 
 
+async def test_tail_logs_returns_the_gateway_stdout_verbatim() -> None:
+    # The raw /logs text, returned as-is (the debug route tails it). It targets the
+    # admin endpoint at the root, not under /v1.
+    seen: dict[str, str] = {}
+
+    def handle(req: httpx.Request) -> httpx.Response:
+        seen["path"] = req.url.path
+        return httpx.Response(200, text="slot 0 launch\nslot 0 released\n")
+
+    out = await _client(handle).tail_logs()
+    assert out == "slot 0 launch\nslot 0 released\n"
+    assert seen["path"] == "/logs"
+
+
+async def test_tail_logs_raises_when_the_gateway_is_unreachable() -> None:
+    # Unlike load_progress (a soft miss), tail_logs surfaces the failure — the operator
+    # asked for the logs, so an empty success would mislead.
+    with pytest.raises(LocalGatewayError):
+        await _client(lambda r: httpx.Response(503)).tail_logs()
+
+
 def test_parse_load_progress_tolerates_floats_and_ignores_out_of_range() -> None:
     assert _parse_load_progress("load weights 12.5%") == 0.125
     assert _parse_load_progress("loading tensors 0%") == 0.0

@@ -41,6 +41,7 @@ from jbrain.ingest.ocr import (
 )
 from jbrain.llm import LlmImage
 from jbrain.llm.errors import LlmError
+from jbrain.llm.local_gateway import LocalGatewayError
 from jbrain.llm.router import LlmRouter
 from jbrain.llm.types import DEFAULT_MAX_TOKENS
 from jbrain.models.notes import Attachment
@@ -98,7 +99,7 @@ async def whoami(principal: DebugDep) -> WhoamiOut:
         id=principal.id,
         label=principal.label,
         kind=principal.kind,
-        scopes=["llm.complete", "sql.read", "logs.read", "llm.routing"],
+        scopes=["llm.complete", "sql.read", "logs.read", "llm.routing", "host.metrics"],
     )
 
 
@@ -496,6 +497,44 @@ async def jcode_logs(
             body = resp.text
         sections.append(f"===== {service} =====\n{body}")
     return PlainTextResponse("\n\n".join(sections))
+
+
+@router.get("/llm/gateway-logs", response_class=PlainTextResponse)
+async def gateway_logs(
+    request: Request,
+    _p: DebugDep,
+    tail: Annotated[int, Query(ge=1, le=2000)] = 200,
+) -> PlainTextResponse:
+    """Tail the local model gateway's OWN recent stdout — the llama-swap wrapper plus the
+    upstream llama-server, interleaved. This is the inference engine's account of a turn
+    (slot acquired on a request, slot RELEASED when its generation ends), the read that
+    answers whether a Stop/disconnect actually halts decoding or the engine runs on. Sits
+    beside /logs/{service} (the container's stdout via the supervisor): the same bytes in
+    the common case, but sourced straight from the gateway so it's right even if the
+    container-log plumbing isn't carrying the upstream output. 502 if the gateway can't be
+    reached (the operator asked, so a miss is surfaced, not an empty success)."""
+    request.state.debug_detail = f"gateway (tail {tail})"
+    try:
+        full = await _gateway(request).tail_logs()
+    except LocalGatewayError as exc:
+        raise HTTPException(status_code=502, detail=f"gateway logs unavailable: {exc}") from exc
+    return PlainTextResponse("\n".join(full.splitlines()[-tail:]))
+
+
+@router.get("/host/metrics")
+async def host_metrics(request: Request, settings: SettingsDep, _p: DebugDep) -> dict[str, object]:
+    """The host's live hardware telemetry, proxied from the supervisor (the only container
+    that reads /sys): GPU busy %, APU package power, load average, memory/swap/disk, fan
+    RPM, and per-container memory. The console's one physical read — pair it with a turn to
+    watch the GPU gauge climb as the model decodes and, the question this answers, whether
+    it FALLS when the turn is Stopped (a clean device release) or stays pegged (the gateway
+    kept generating past the client disconnect). Mirrors the owner ops surface."""
+    request.state.debug_detail = "host metrics"
+    resp = await _supervisor(request).get(
+        "/metrics", headers={"Authorization": f"Bearer {settings.supervisor_token}"}
+    )
+    resp.raise_for_status()
+    return cast(dict[str, object], resp.json())
 
 
 @router.get("/update/status")

@@ -75,6 +75,12 @@ scripts/debug-connect.sh sql "select code, name from app.domains order by code"
 # Container logs (proxied to the supervisor).
 scripts/debug-connect.sh logs api --tail 200
 
+# The model engine's OWN stdout (slot acquired/released) — does a Stop free the GPU?
+scripts/debug-connect.sh gateway-logs --tail 200
+
+# Host hardware telemetry: GPU busy %, APU power, load — watch the device across a Stop.
+scripts/debug-connect.sh metrics
+
 # See the live LLM routing, then switch which model serves a task — no restart.
 scripts/debug-connect.sh llm
 scripts/debug-connect.sh llm-set agent.turn local:gpt-oss-120b high
