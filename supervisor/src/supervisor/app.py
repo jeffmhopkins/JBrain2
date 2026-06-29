@@ -87,6 +87,17 @@ class MetricsResponse(BaseModel):
     containers: list[ContainerMemoryOut]
 
 
+class ProcessMemoryOut(BaseModel):
+    service: str
+    pid: int
+    rss_bytes: int
+    command: str
+
+
+class ProcessesResponse(BaseModel):
+    processes: list[ProcessMemoryOut]
+
+
 class UpdateStartResponse(BaseModel):
     updater: str
 
@@ -212,6 +223,22 @@ def create_app(settings: Settings, gateway: DockerGateway) -> FastAPI:
                 ContainerMemoryOut(service=c.service, mem_bytes=c.mem_bytes)
                 for c in gateway.container_memory()
             ],
+        )
+
+    @authed.get("/processes")
+    def processes() -> ProcessesResponse:
+        # Per-process RSS via `docker top` — the breakdown /metrics' per-container
+        # total can't show (one container can run several heavy processes).
+        return ProcessesResponse(
+            processes=[
+                ProcessMemoryOut(
+                    service=p.service,
+                    pid=p.pid,
+                    rss_bytes=p.rss_bytes,
+                    command=p.command,
+                )
+                for p in gateway.container_processes()
+            ]
         )
 
     @authed.post("/update", status_code=202)

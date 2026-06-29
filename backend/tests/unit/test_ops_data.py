@@ -56,6 +56,46 @@ class FakeSupervisor:
             return httpx.Response(202, json={"oneshot": "jbrain-reset-1"})
         if path == "/reset/status":
             return httpx.Response(200, json=self.reset_state)
+        if path == "/metrics":
+            return httpx.Response(
+                200,
+                json={
+                    "mem_total_bytes": 130_000_000_000,
+                    "mem_available_bytes": 8_000_000_000,
+                    "swap_total_bytes": 0,
+                    "swap_free_bytes": 0,
+                    "disk_total_bytes": 2_000_000_000_000,
+                    "disk_free_bytes": 1_200_000_000_000,
+                    "load_1m": 0.5,
+                    "load_5m": 0.7,
+                    "load_15m": 0.8,
+                    "uptime_seconds": 86400,
+                    "gpu_busy_percent": 1.0,
+                    "fan_rpm": None,
+                    "apu_power_w": 13.0,
+                    "containers": [{"service": "local-llm", "mem_bytes": 100_000_000_000}],
+                },
+            )
+        if path == "/processes":
+            return httpx.Response(
+                200,
+                json={
+                    "processes": [
+                        {
+                            "service": "comfyui",
+                            "pid": 201,
+                            "rss_bytes": 2_000_000_000,
+                            "command": "x",
+                        },
+                        {
+                            "service": "local-llm",
+                            "pid": 101,
+                            "rss_bytes": 64_000_000_000,
+                            "command": "llama-server --model gpt-oss-120b " + "y" * 400,
+                        },
+                    ]
+                },
+            )
         return httpx.Response(404)
 
 
@@ -120,6 +160,17 @@ def test_data_endpoints_require_owner(
         assert anon.post("/api/ops/import/upload").status_code == 401
         assert anon.post("/api/ops/reset").status_code == 401
         assert anon.get("/api/ops/reset/status").status_code == 401
+
+
+def test_metrics_merges_per_process_breakdown(client: TestClient) -> None:
+    # /ops/metrics folds the supervisor's /processes into the host metrics, biggest
+    # first, with the argv clipped — the data the memory-breakdown card reads.
+    body = client.get("/api/ops/metrics").json()
+    assert body["mem_total_bytes"] == 130_000_000_000
+    assert [p["service"] for p in body["processes"]] == ["local-llm", "comfyui"]
+    assert len(body["processes"][0]["command"]) <= 200
+    # db/blobs are best-effort and unwired in this fake → null, never a 500.
+    assert body["db"] is None
 
 
 def test_export_start_and_busy_conflict(client: TestClient, supervisor: FakeSupervisor) -> None:

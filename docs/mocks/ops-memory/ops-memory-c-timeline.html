@@ -1,0 +1,255 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Ops memory — C · timeline area + table</title>
+<style>
+  :root{
+    --bg:#0e0f11; --surface:#17181b; --surface-2:#1e2024; --border:#26282c;
+    --text:#e6e7e9; --text-2:#9a9da3; --text-3:#5c5f66;
+    --steel:#7fa7c9; --green:#8fbc9a; --amber:#c9a36a; --rose:#cf8a8f; --violet:#a493c9; --teal:#79c2c2;
+    --r-input:12px; --r-card:16px; --r-pill:999px;
+    --fs-micro:12px; --fs-secondary:14px; --fs-body:16px; --fs-screen:22px;
+    --mono:ui-monospace,"SF Mono","Cascadia Mono",Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;background:#000;color:var(--text);
+    font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;-webkit-font-smoothing:antialiased}
+  .phone{max-width:430px;margin:0 auto;min-height:100vh;background:var(--bg);border-left:1px solid #000;border-right:1px solid #000}
+  .statusbar{display:flex;justify-content:space-between;align-items:center;padding:10px 18px 4px;font-size:13px;font-weight:600}
+  .nav{display:flex;align-items:center;gap:10px;padding:8px 16px 4px}
+  .nav .glyph{color:var(--text-2);font-size:20px}.nav .title{font-size:var(--fs-screen);font-weight:600}
+  .nav .sp{margin-left:auto}.nav .dot{width:9px;height:9px;border-radius:50%;background:var(--green);box-shadow:0 0 0 4px rgba(143,188,154,.13)}
+  .body{padding:10px 14px 56px}
+
+  .card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-card);overflow:hidden}
+  .chead{display:flex;align-items:center;gap:12px;padding:14px 15px 8px;cursor:pointer}
+  .chead .vk{font-size:var(--fs-body);font-weight:600}
+  .chead .vk small{color:var(--text-2);font-weight:400;font-size:var(--fs-micro);display:block;margin-top:2px}
+  .chead .pct{margin-left:auto;font-size:var(--fs-screen);font-weight:600}
+  .chead .chev{color:var(--text-3);transition:transform .2s;font-size:18px}.card.open .chev{transform:rotate(90deg)}
+  .sparkwrap{padding:0 15px 12px}
+  svg.spark{width:100%;height:34px;display:block}
+
+  .drawer{display:none;border-top:1px solid var(--border)}.card.open .drawer{display:block}
+  .tools{display:flex;align-items:center;gap:8px;padding:12px 15px 4px}
+  .tools .rng{display:flex;background:var(--surface-2);border:1px solid var(--border);border-radius:var(--r-pill);padding:3px}
+  .tools .rng button{font:inherit;font-size:var(--fs-micro);font-weight:600;border:none;background:none;color:var(--text-2);
+    padding:6px 11px;border-radius:var(--r-pill);cursor:pointer}
+  .tools .rng button.on{background:rgba(127,167,201,.13);color:var(--steel)}
+  .tools .sp{margin-left:auto}
+  .refresh{font:inherit;font-size:var(--fs-micro);font-weight:600;cursor:pointer;border-radius:var(--r-pill);
+    padding:7px 13px;border:1px solid var(--border);background:var(--surface-2);color:var(--text-2);display:flex;gap:6px;align-items:center}
+  .refresh:hover{color:var(--text)}.refresh .ic{transition:transform .6s}.refresh.spin .ic{transform:rotate(360deg)}
+
+  .chartwrap{padding:6px 15px 2px;position:relative}
+  svg.area{width:100%;height:170px;display:block;overflow:visible}
+  .area .grid{stroke:var(--border);stroke-width:.5}
+  .area .axlbl{fill:var(--text-3);font-size:9px}
+  .cursor{stroke:var(--text-3);stroke-width:.5;stroke-dasharray:2 2;opacity:0}
+  .tip{position:absolute;pointer-events:none;background:var(--surface-2);border:1px solid var(--border);border-radius:8px;
+    padding:7px 9px;font-size:11px;opacity:0;transition:opacity .12s;min-width:120px;z-index:5}
+  .tip .tt{color:var(--text-3);margin-bottom:4px} .tip .tr{display:flex;justify-content:space-between;gap:10px}
+  .tip .tr i{width:8px;height:8px;border-radius:2px;display:inline-block;margin-right:5px}
+
+  .legendrow{display:flex;flex-wrap:wrap;gap:8px 8px;padding:10px 15px 2px}
+  .legendrow .chip{display:flex;align-items:center;gap:6px;font-size:var(--fs-micro);color:var(--text-2);
+    background:var(--surface-2);border:1px solid var(--border);border-radius:var(--r-pill);padding:5px 10px;cursor:pointer;user-select:none}
+  .legendrow .chip.off{opacity:.4} .legendrow .chip i{width:9px;height:9px;border-radius:3px}
+
+  .seclabel{font-size:var(--fs-micro);text-transform:uppercase;letter-spacing:.07em;color:var(--text-3);padding:10px 15px 4px}
+  table{width:100%;border-collapse:collapse;font-size:var(--fs-micro)}
+  thead th{text-align:left;color:var(--text-3);font-weight:500;padding:6px 15px}thead th.r{text-align:right}
+  tbody td{padding:8px 15px;border-top:1px solid var(--border)}tbody td.r{text-align:right;font-variant-numeric:tabular-nums}
+  .pname{display:flex;align-items:center;gap:8px}.pname .sw{width:9px;height:9px;border-radius:3px;flex:none}
+  .pname .nm{font-weight:600}.pname .svc{color:var(--text-3);font-size:10px;text-transform:uppercase;letter-spacing:.04em}
+  .trend{font-variant-numeric:tabular-nums;font-size:11px}.trend.up{color:var(--rose)}.trend.dn{color:var(--green)}
+  .foot{padding:11px 15px;font-size:var(--fs-micro);color:var(--text-3);line-height:1.5;border-top:1px solid var(--border)}.foot b{color:var(--text-2)}
+  .legend{margin:18px 6px 0;font-size:var(--fs-micro);color:var(--text-3);line-height:1.6}.legend b{color:var(--text-2)}
+  #toast{position:fixed;left:50%;bottom:26px;transform:translateX(-50%) translateY(20px);
+    background:var(--surface-2);border:1px solid var(--border);border-radius:var(--r-pill);
+    padding:10px 18px;font-size:var(--fs-micro);color:var(--text);opacity:0;pointer-events:none;transition:.25s;z-index:9}
+  #toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+</style>
+</head>
+<body>
+<div class="phone">
+  <div class="statusbar"><span>12:44</span><span>📶 🔋 52%</span></div>
+  <div class="nav"><span class="glyph">‹</span><span class="title">Ops</span>
+    <span class="sp"></span><span class="dot"></span><span class="glyph">⚡</span></div>
+
+  <div class="body">
+    <div class="card open" id="card">
+      <div class="chead" onclick="toggle()">
+        <div class="vk">System memory<small id="subhead">94% · trending flat · 15 processes</small></div>
+        <div class="pct" id="pct">94%</div><span class="chev">›</span>
+      </div>
+      <div class="sparkwrap"><svg class="spark" id="spark" viewBox="0 0 300 34" preserveAspectRatio="none"></svg></div>
+
+      <div class="drawer">
+        <div class="tools">
+          <div class="rng">
+            <button class="on" onclick="setRange(this,30)">30m</button>
+            <button onclick="setRange(this,60)">6h</button>
+            <button onclick="setRange(this,90)">24h</button>
+          </div>
+          <span class="sp"></span>
+          <button class="refresh" id="rbtn" onclick="refresh()"><span class="ic">↻</span> Refresh</button>
+        </div>
+
+        <div class="chartwrap">
+          <svg class="area" id="area" viewBox="0 0 320 170" preserveAspectRatio="none"
+               onmousemove="hover(event)" onmouseleave="leave()"></svg>
+          <div class="tip" id="tip"></div>
+        </div>
+        <div class="legendrow" id="legendrow"></div>
+
+        <div class="seclabel">Top processes · now vs 30m ago</div>
+        <table><thead><tr><th>Process</th><th class="r">RSS</th><th class="r">Δ30m</th></tr></thead>
+          <tbody id="rows"></tbody></table>
+        <div class="foot" id="foot"></div>
+      </div>
+    </div>
+
+    <p class="legend"><b>Direction C — timeline.</b> Memory is a moving target (a ComfyUI render spikes it,
+      a model swap drops it), so this card leads with <b>history</b>: a stacked area of the top consumers over
+      time, sampled from <code>GET&nbsp;/api/debug/host</code>. Scrub the chart for a per-bucket breakdown,
+      tap a <b>legend chip</b> to mute a series, switch range, <b>Refresh</b> to append a live sample. The table
+      shows each process now vs. 30m ago so a creeping leak stands out. Grey = kernel &amp; cache.</p>
+  </div>
+</div>
+<div id="toast"></div>
+
+<script>
+const PROCS=[
+ {name:"llama-server gpt-oss-120b", svc:"local-llm", grp:"ai", base:63600},
+ {name:"llama-server qwen3-vl-30b", svc:"local-llm", grp:"ai", base:38100},
+ {name:"ComfyUI", svc:"comfyui", grp:"comfyui", base:2480, spiky:true},
+ {name:"embed", svc:"embed", grp:"rest", base:610},
+ {name:"api", svc:"api", grp:"rest", base:540},
+ {name:"claude-shim", svc:"claude-shim", grp:"rest", base:480},
+ {name:"worker", svc:"worker", grp:"rest", base:430},
+ {name:"postgres", svc:"db", grp:"rest", base:350},
+ {name:"jcode", svc:"jcode", grp:"rest", base:300},
+ {name:"searxng", svc:"searxng", grp:"rest", base:300},
+ {name:"whisper", svc:"whisper", grp:"rest", base:150},
+ {name:"supervisor", svc:"supervisor", grp:"rest", base:55},
+ {name:"proxy", svc:"proxy", grp:"rest", base:48},
+ {name:"cloudflared", svc:"cloudflared", grp:"rest", base:46},
+];
+const TOTAL=121.2*1024;
+// Stacked SERIES (top movers split out; everything small folded into "rest" + kernel).
+const SERIES=[
+ {key:"gpt",   label:"gpt-oss-120b", col:"#a493c9"},
+ {key:"vl",    label:"qwen3-vl",     col:"#8d7fb8"},
+ {key:"comfy", label:"ComfyUI",      col:"#79c2c2"},
+ {key:"rest",  label:"other svcs",   col:"#7fa7c9"},
+ {key:"kernel",label:"kernel & cache",col:"#3a3d42"},
+];
+const off={}; SERIES.forEach(s=>off[s.key]=true);
+let N=30, hist=[];
+const gb=mb=> mb>=1024? (mb/1024).toFixed(mb<10240?1:0)+" GB" : Math.round(mb)+" MB";
+
+function sample(t){
+  // t: bucket index (for gentle drift); returns {gpt,vl,comfy,rest,kernel} in MB
+  const comfy=PROCS[2].base*(1+ (Math.sin(t/4)>.6? .9:0) + (Math.random()-.5)*.1); // periodic render spikes
+  const rest=PROCS.slice(3).reduce((s,p)=>s+p.base*(1+(Math.random()-.5)*.06),0);
+  const gpt=PROCS[0].base*(1+(Math.random()-.5)*.01);
+  const vl=PROCS[1].base*(1+(Math.random()-.5)*.01);
+  const acc=gpt+vl+comfy+rest;
+  const used=Math.min(TOTAL*0.985, acc+8800*(1+(Math.random()-.5)*.05)); // +kernel/cache
+  return {gpt,vl,comfy,rest,kernel:used-acc};
+}
+function seed(){ hist=[]; for(let i=0;i<N;i++) hist.push(sample(i)); }
+const stackTotal=d=> SERIES.reduce((s,k)=> s + (off[k.key]? d[k.key]:0), 0);
+
+function buildArea(){
+  const svg=document.getElementById('area'); const W=320,H=170, PADB=14;
+  const peak=Math.max(...hist.map(stackTotal))*1.06;
+  const xs=i=> i/(hist.length-1)*W;
+  const ys=v=> H-PADB - v/peak*(H-PADB-4);
+  let layers="";
+  // build cumulative stacks bottom->top
+  const order=SERIES.filter(s=>off[s.key]);
+  const cum=hist.map(()=>0);
+  for(const s of order){
+    let up="",down="";
+    hist.forEach((d,i)=>{ const y0=ys(cum[i]); cum[i]+=d[s.key]; const y1=ys(cum[i]);
+      up+=`${i?"L":"M"}${xs(i).toFixed(1)} ${y1.toFixed(1)} `; });
+    for(let i=hist.length-1;i>=0;i--){ down+=`L${xs(i).toFixed(1)} ${ys(cum[i]-hist[i][s.key]).toFixed(1)} `; }
+    layers+=`<path d="${up}${down}Z" fill="${s.col}" fill-opacity=".85"></path>`;
+  }
+  // gridlines + labels at 0/50/100 GB
+  let grid="";
+  for(const g of [0,50,100]){ const y=ys(g*1024); grid+=`<line class="grid" x1="0" y1="${y}" x2="${W}" y2="${y}"></line>
+    <text class="axlbl" x="2" y="${y-2}">${g} GB</text>`; }
+  svg.innerHTML=grid+layers+`<line class="cursor" id="cur" x1="0" y1="0" x2="0" y2="${H-PADB}"></line>`;
+}
+function spark(){
+  const svg=document.getElementById('spark'); const W=300,H=34;
+  const vals=hist.map(stackTotal); const peak=Math.max(...vals)*1.05, min=Math.min(...vals)*.96;
+  const xs=i=>i/(vals.length-1)*W, ys=v=>H-2-(v-min)/(peak-min)*(H-6);
+  let d="",a=""; vals.forEach((v,i)=>{ d+=`${i?"L":"M"}${xs(i).toFixed(1)} ${ys(v).toFixed(1)} `; });
+  a=`M0 ${H} `+vals.map((v,i)=>`L${xs(i).toFixed(1)} ${ys(v).toFixed(1)}`).join(" ")+` L${W} ${H} Z`;
+  svg.innerHTML=`<path d="${a}" fill="rgba(164,147,201,.16)"></path><path d="${d}" fill="none" stroke="#a493c9" stroke-width="1.5"></path>`;
+  const last=vals[vals.length-1], prev=vals[0];
+  document.getElementById('pct').textContent=Math.round(last/TOTAL*100)+"%";
+  const dir= last>prev*1.01?"rising": last<prev*0.99?"falling":"flat";
+  document.getElementById('subhead').textContent=`${Math.round(last/TOTAL*100)}% · trending ${dir} · ${PROCS.length} processes`;
+}
+function legend(){
+  document.getElementById('legendrow').innerHTML=SERIES.map(s=>
+    `<span class="chip ${off[s.key]?"":"off"}" onclick="toggleSeries('${s.key}')"><i style="background:${s.col}"></i>${s.label}</span>`).join("");
+}
+function rows(){
+  const now=hist[hist.length-1], ago=hist[0];
+  // expand series back to per-process-ish rows for the table (gpt/vl/comfy explicit; rest itemized from base)
+  const nowProcs=PROCS.map(p=>{
+    let v=p.base; if(p.name.includes("gpt-oss")) v=now.gpt; else if(p.name.includes("qwen3-vl")) v=now.vl;
+    else if(p.svc==="comfyui") v=now.comfy; return {...p, rss:v};
+  }).sort((a,b)=>b.rss-a.rss);
+  const agoComfy=ago.comfy;
+  document.getElementById('rows').innerHTML=nowProcs.map(p=>{
+    let prev=p.base; if(p.name.includes("gpt-oss"))prev=ago.gpt; else if(p.name.includes("qwen3-vl"))prev=ago.vl; else if(p.svc==="comfyui")prev=agoComfy;
+    const d=p.rss-prev; const cls= d>40?"up": d<-40?"dn":"";
+    const grp= p.name.includes("gpt-oss")?"#a493c9":p.name.includes("qwen3-vl")?"#8d7fb8":p.svc==="comfyui"?"#79c2c2":"#7fa7c9";
+    return `<tr><td><div class="pname"><span class="sw" style="background:${grp}"></span>
+      <div><div class="nm">${p.name}</div><div class="svc">${p.svc}</div></div></div></td>
+      <td class="r">${gb(p.rss)}</td>
+      <td class="r"><span class="trend ${cls}">${d>0?"+":""}${Math.abs(d)>=10?gb(Math.abs(d)).replace(/^/,d<0?"-":"+"):"~0"}</span></td></tr>`;
+  }).join("");
+}
+function foot(){
+  const now=hist[hist.length-1]; const used=stackTotal(now);
+  document.getElementById('foot').innerHTML=
+    `now <b>${gb(used)}</b> of ${gb(TOTAL)} · peak this window <b>${gb(Math.max(...hist.map(stackTotal)))}</b> · `+
+    `the periodic bump is a <b>ComfyUI render</b> co-resident with the two models`;
+}
+function render(){ spark(); buildArea(); legend(); rows(); foot(); }
+
+function hover(e){
+  const svg=document.getElementById('area'); const r=svg.getBoundingClientRect();
+  const i=Math.round((e.clientX-r.left)/r.width*(hist.length-1)); if(i<0||i>=hist.length)return;
+  const cur=document.getElementById('cur'); const x=i/(hist.length-1)*320; cur.setAttribute('x1',x);cur.setAttribute('x2',x);cur.style.opacity=1;
+  const d=hist[i]; const tip=document.getElementById('tip');
+  tip.innerHTML=`<div class="tt">${(hist.length-1-i)} buckets ago · ${gb(stackTotal(d))}</div>`+
+    SERIES.filter(s=>off[s.key]).map(s=>`<div class="tr"><span><i style="background:${s.col}"></i>${s.label}</span><span>${gb(d[s.key])}</span></div>`).join("");
+  tip.style.opacity=1; const tx=Math.min(r.width-130, Math.max(4,(e.clientX-r.left)+10)); tip.style.left=tx+"px"; tip.style.top="6px";
+}
+function leave(){ document.getElementById('tip').style.opacity=0; const c=document.getElementById('cur'); if(c)c.style.opacity=0; }
+function toggleSeries(k){ off[k]=!off[k]; render(); }
+function setRange(btn,n){ document.querySelectorAll('.rng button').forEach(b=>b.classList.remove('on')); btn.classList.add('on');
+  N=n; seed(); render(); toast('Range → '+btn.textContent); }
+function toggle(){ document.getElementById('card').classList.toggle('open'); }
+function refresh(){
+  const b=document.getElementById('rbtn'); b.classList.add('spin');
+  hist.push(sample(hist.length)); if(hist.length>N) hist.shift();
+  render(); toast('Sampled /api/debug/host'); setTimeout(()=>b.classList.remove('spin'),650);
+}
+function toast(m){const t=document.getElementById('toast');t.textContent=m;t.classList.add('show');
+  clearTimeout(t._t);t._t=setTimeout(()=>t.classList.remove('show'),1900);}
+seed(); render();
+</script>
+</body>
+</html>

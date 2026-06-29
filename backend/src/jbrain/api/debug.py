@@ -99,7 +99,14 @@ async def whoami(principal: DebugDep) -> WhoamiOut:
         id=principal.id,
         label=principal.label,
         kind=principal.kind,
-        scopes=["llm.complete", "sql.read", "logs.read", "llm.routing", "host.metrics"],
+        scopes=[
+            "llm.complete",
+            "sql.read",
+            "logs.read",
+            "llm.routing",
+            "host.read",
+            "host.metrics",
+        ],
     )
 
 
@@ -557,6 +564,80 @@ async def update_status(
     )
     resp.raise_for_status()
     return cast(dict[str, object], resp.json())
+
+
+# --- Host metrics (proxied to the supervisor) -------------------------------
+# "What is using the box's RAM?" The read-only meter (host_metrics) only knows
+# MemTotal/MemAvailable — the unified-memory TOTAL, with no breakdown. The
+# supervisor owns the docker socket, so it can attribute usage per container
+# (the local-llm container's number includes the loaded model RSS, since the
+# gateway runs --no-mmap). This proxies that, the same way /logs and
+# /update/status do, so the console can answer the breakdown question directly.
+
+
+class ContainerMem(BaseModel):
+    service: str
+    mem_bytes: int
+
+
+class ProcessMem(BaseModel):
+    service: str
+    pid: int
+    rss_bytes: int
+    command: str
+
+
+class HostMetricsOut(BaseModel):
+    mem_total_bytes: int
+    mem_available_bytes: int
+    swap_total_bytes: int
+    swap_free_bytes: int
+    disk_total_bytes: int
+    disk_free_bytes: int
+    load_1m: float
+    load_5m: float
+    load_15m: float
+    uptime_seconds: int
+    gpu_busy_percent: float | None
+    fan_rpm: dict[str, int] | None
+    apu_power_w: float | None
+    # Per-compose-container RSS, biggest first — the breakdown the unified-memory
+    # total can't show on its own.
+    containers: list[ContainerMem]
+    # Raw per-process RSS across all containers (via `docker top`), biggest first
+    # — the actual processes behind each container's total, e.g. the local-llm
+    # container's separate llama-server per loaded model.
+    processes: list[ProcessMem]
+
+
+# A long argv (a llama-server command line) would bloat the readout; the model
+# path that distinguishes processes is near the front, so a generous head is enough.
+_CMD_MAX = 200
+
+
+@router.get("/host")
+async def host(request: Request, settings: SettingsDep, _p: DebugDep) -> HostMetricsOut:
+    """Live host memory/swap/disk/load + per-container RSS AND raw per-process RSS,
+    proxied from the supervisor (the single owner of docker access + /proc),
+    biggest first. Mirrors the owner ops surface; lets the read-only console
+    attribute the unified-memory total down to individual processes instead of
+    guessing — the per-process list is what tells the 120B from the vision model."""
+    request.state.debug_detail = "host metrics"
+    client = _supervisor(request)
+    headers = {"Authorization": f"Bearer {settings.supervisor_token}"}
+    metrics = await client.get("/metrics", headers=headers)
+    metrics.raise_for_status()
+    data = cast(dict[str, Any], metrics.json())
+    data["containers"] = sorted(
+        data.get("containers", []), key=lambda c: c["mem_bytes"], reverse=True
+    )
+    procs_resp = await client.get("/processes", headers=headers)
+    procs_resp.raise_for_status()
+    procs = cast(dict[str, Any], procs_resp.json()).get("processes", [])
+    for p in procs:
+        p["command"] = str(p.get("command", ""))[:_CMD_MAX]
+    data["processes"] = sorted(procs, key=lambda p: p["rss_bytes"], reverse=True)
+    return HostMetricsOut(**data)
 
 
 # --- Live LLM routing (read / switch / load / unload) -----------------------

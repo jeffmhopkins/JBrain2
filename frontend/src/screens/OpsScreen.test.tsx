@@ -44,6 +44,15 @@ const METRICS: OpsMetrics = {
   apu_power_w: 28.5,
   fan_rpm: { "CPU fan": 2100, "System fan": 1850 },
   containers: [{ service: "api", mem_bytes: 87 * 2 ** 20 }],
+  processes: [
+    {
+      service: "local-llm",
+      pid: 101,
+      rss_bytes: 60 * 2 ** 30,
+      command: "llama-server --model /models/gpt-oss-120b/x.gguf",
+    },
+    { service: "api", pid: 401, rss_bytes: 87 * 2 ** 20, command: "uvicorn jbrain.main:app" },
+  ],
   db: {
     db_size_bytes: 23 * 2 ** 20,
     note_count: 2,

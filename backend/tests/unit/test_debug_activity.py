@@ -8,6 +8,7 @@ def test_classify_maps_each_route_to_a_label() -> None:
     assert classify("POST", "/api/debug/complete") == "complete"
     assert classify("POST", "/api/debug/sql") == "sql"
     assert classify("GET", "/api/debug/logs/api") == "logs"
+    assert classify("GET", "/api/debug/host") == "host"
     assert classify("GET", "/api/debug/llm") == "routing"
     assert classify("PUT", "/api/debug/llm") == "switch"
     assert classify("POST", "/api/debug/llm/local-models/x/load") == "load"

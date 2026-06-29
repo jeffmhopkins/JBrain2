@@ -3097,6 +3097,207 @@ button.small {
   font-variant-numeric: tabular-nums;
 }
 
+/* ===== Memory breakdown card (per-process RSS) ===== */
+/* Group → color, shared by stack segments, donut arcs, table swatches/sparks. */
+.g-ai {
+  color: var(--violet);
+}
+.g-core {
+  color: var(--steel);
+}
+.g-code {
+  color: var(--teal);
+}
+.g-infra {
+  color: var(--amber);
+}
+.g-kernel {
+  color: var(--text-3);
+}
+
+.ops-mem-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 2px 2px 10px;
+}
+.ops-mem-pct {
+  font-size: var(--fs-title);
+  font-weight: 600;
+}
+.ops-mem-cap {
+  font-size: var(--fs-secondary);
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+}
+.ops-mem-cap small {
+  color: var(--text-3);
+}
+.ops-mem-stack {
+  display: flex;
+  height: 20px;
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--surface-2);
+}
+.ops-mem-seg {
+  height: 100%;
+  display: block;
+  background: currentColor;
+  transition: width 0.45s ease;
+}
+.ops-mem-seg + .ops-mem-seg {
+  box-shadow: inset 1px 0 0 var(--surface);
+}
+
+.ops-mem-tools {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 0 4px;
+}
+.ops-seg {
+  display: flex;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-pill);
+  padding: 3px;
+}
+.ops-seg button {
+  font: inherit;
+  font-size: var(--fs-micro);
+  font-weight: 600;
+  border: none;
+  background: none;
+  color: var(--text-2);
+  padding: 5px 12px;
+  border-radius: var(--r-pill);
+  cursor: pointer;
+}
+.ops-seg button.on {
+  background: var(--steel-tint);
+  color: var(--steel);
+}
+.ops-mem-refresh {
+  margin-left: auto;
+  font-size: var(--fs-micro);
+}
+
+.ops-mem-donutwrap {
+  display: flex;
+  justify-content: center;
+  padding: 14px 0 6px;
+}
+.ops-mem-donut {
+  width: 150px;
+  height: 150px;
+}
+.ops-mem-donut .ring-bg {
+  fill: none;
+  stroke: var(--surface-2);
+  stroke-width: 5;
+}
+.ops-mem-donut .ring {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 5;
+  transition: stroke-dasharray 0.45s ease, stroke-dashoffset 0.45s ease;
+}
+.ops-mem-donut-cap {
+  fill: var(--text);
+  font-size: 5px;
+  font-weight: 600;
+}
+.ops-mem-donut-cap2 {
+  fill: var(--text-3);
+  font-size: 3px;
+}
+
+.ops-mem-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--fs-micro);
+  margin-top: 6px;
+}
+.ops-mem-table th {
+  text-align: left;
+  color: var(--text-3);
+  font-weight: 500;
+  padding: 4px 0;
+}
+.ops-mem-table th.r,
+.ops-mem-table td.r {
+  text-align: right;
+}
+.ops-mem-sort {
+  font: inherit;
+  color: var(--text-3);
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+}
+.ops-mem-sort[aria-pressed="true"] {
+  color: var(--text-2);
+}
+.ops-mem-table td {
+  padding: 8px 0;
+  border-top: 1px solid var(--border);
+  vertical-align: middle;
+  font-variant-numeric: tabular-nums;
+}
+.ops-mem-pname {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.ops-mem-sw {
+  width: 9px;
+  height: 9px;
+  border-radius: 3px;
+  flex: none;
+  background: currentColor;
+}
+.ops-mem-nm {
+  font-weight: 600;
+  display: block;
+}
+.ops-mem-svc {
+  color: var(--text-3);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  display: block;
+  margin-top: 1px;
+}
+.ops-mem-spark {
+  display: inline-block;
+  width: 42px;
+  height: 4px;
+  border-radius: var(--r-pill);
+  background: var(--surface-2);
+  overflow: hidden;
+  vertical-align: middle;
+  margin-right: 7px;
+}
+.ops-mem-spark i {
+  display: block;
+  height: 100%;
+  background: currentColor;
+}
+.ops-mem-share {
+  color: var(--text-2);
+}
+.ops-mem-foot {
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+  line-height: 1.5;
+  margin: 12px 0 0;
+}
+.ops-mem-foot b {
+  color: var(--text-2);
+}
+
 .ops-scaret {
   flex: none;
   color: var(--text-3);

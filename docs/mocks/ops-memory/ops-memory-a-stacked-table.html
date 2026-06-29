@@ -1,0 +1,235 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Ops memory — A · stacked bar + table</title>
+<style>
+  :root{
+    --bg:#0e0f11; --surface:#17181b; --surface-2:#1e2024; --border:#26282c;
+    --text:#e6e7e9; --text-2:#9a9da3; --text-3:#5c5f66;
+    --steel:#7fa7c9; --green:#8fbc9a; --amber:#c9a36a; --rose:#cf8a8f; --violet:#a493c9; --teal:#79c2c2;
+    --steel-tint:rgba(127,167,201,.13); --violet-tint:rgba(164,147,201,.13);
+    --r-input:12px; --r-card:16px; --r-pill:999px;
+    --fs-micro:12px; --fs-secondary:14px; --fs-body:16px; --fs-screen:22px;
+    --mono:ui-monospace,"SF Mono","Cascadia Mono",Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;background:#000;color:var(--text);
+    font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;-webkit-font-smoothing:antialiased}
+  .phone{max-width:430px;margin:0 auto;min-height:100vh;background:var(--bg);
+    border-left:1px solid #000;border-right:1px solid #000}
+  .statusbar{display:flex;justify-content:space-between;align-items:center;
+    padding:10px 18px 4px;font-size:13px;color:var(--text);font-weight:600}
+  .nav{display:flex;align-items:center;gap:10px;padding:8px 16px 4px}
+  .nav .glyph{color:var(--text-2);font-size:20px}
+  .nav .title{font-size:var(--fs-screen);font-weight:600}
+  .nav .sp{margin-left:auto}
+  .nav .dot{width:9px;height:9px;border-radius:50%;background:var(--green);box-shadow:0 0 0 4px rgba(143,188,154,.13)}
+  .body{padding:10px 14px 56px}
+
+  .card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-card);overflow:hidden}
+  .chead{display:flex;align-items:center;gap:12px;padding:14px 15px;cursor:pointer}
+  .chead .vk{font-size:var(--fs-body);font-weight:600}
+  .chead .vk small{color:var(--text-2);font-weight:400;font-size:var(--fs-micro);display:block;margin-top:2px}
+  .chead .pct{margin-left:auto;font-size:var(--fs-screen);font-weight:600}
+  .chead .chev{color:var(--text-3);transition:transform .2s;font-size:18px}
+  .card.open .chev{transform:rotate(90deg)}
+  .barwrap{padding:0 15px 14px}
+  .stack{height:14px;border-radius:var(--r-pill);background:var(--surface-2);overflow:hidden;display:flex}
+  .stack > i{height:100%;display:block;transition:width .5s ease}
+  .stack.big{height:22px;border-radius:10px}
+  .scap{display:flex;justify-content:space-between;font-size:var(--fs-micro);color:var(--text-3);margin-top:6px}
+
+  .drawer{display:none;border-top:1px solid var(--border)}
+  .card.open .drawer{display:block}
+  .tools{display:flex;align-items:center;gap:8px;padding:12px 15px 6px}
+  .tools .seg{display:flex;background:var(--surface-2);border:1px solid var(--border);border-radius:var(--r-pill);padding:3px}
+  .tools .seg button{font:inherit;font-size:var(--fs-micro);font-weight:600;border:none;background:none;color:var(--text-2);
+    padding:6px 12px;border-radius:var(--r-pill);cursor:pointer}
+  .tools .seg button.on{background:var(--steel-tint);color:var(--steel)}
+  .tools .sp{margin-left:auto}
+  .refresh{font:inherit;font-size:var(--fs-micro);font-weight:600;cursor:pointer;border-radius:var(--r-pill);
+    padding:7px 13px;border:1px solid var(--border);background:var(--surface-2);color:var(--text-2);display:flex;gap:6px;align-items:center}
+  .refresh:hover{color:var(--text)} .refresh .ic{transition:transform .6s} .refresh.spin .ic{transform:rotate(360deg)}
+
+  /* donut */
+  .donutwrap{display:none;justify-content:center;padding:8px 0 2px}
+  .legendwrap.donut .donutwrap{display:flex}
+  svg.donut{width:150px;height:150px}
+  .donut .cap{font-size:13px;font-weight:600;fill:var(--text)}
+  .donut .cap2{font-size:9px;fill:var(--text-3)}
+
+  /* legend / table */
+  .seclabel{font-size:var(--fs-micro);text-transform:uppercase;letter-spacing:.07em;color:var(--text-3);padding:10px 15px 4px}
+  table{width:100%;border-collapse:collapse;font-size:var(--fs-micro)}
+  thead th{text-align:left;color:var(--text-3);font-weight:500;padding:6px 15px;cursor:pointer;white-space:nowrap;user-select:none}
+  thead th.r{text-align:right}
+  thead th .ar{opacity:.5;font-size:9px}
+  tbody td{padding:8px 15px;border-top:1px solid var(--border);vertical-align:middle}
+  tbody td.r{text-align:right;font-variant-numeric:tabular-nums}
+  .pname{display:flex;align-items:center;gap:8px}
+  .pname .sw{width:9px;height:9px;border-radius:3px;flex:none}
+  .pname .nm{font-weight:600}
+  .pname .svc{color:var(--text-3);font-size:10px;text-transform:uppercase;letter-spacing:.04em}
+  .pcell{color:var(--text-2)}
+  .spark{height:4px;width:46px;border-radius:var(--r-pill);background:var(--surface-2);overflow:hidden;display:inline-block;vertical-align:middle}
+  .spark>i{display:block;height:100%}
+  tbody tr.grp td{background:var(--surface-2);color:var(--text-2);font-weight:600;border-top:1px solid var(--border)}
+  tbody tr.grp .gr{float:right;color:var(--text-3);font-weight:500}
+  .foot{padding:11px 15px;font-size:var(--fs-micro);color:var(--text-3);line-height:1.5;border-top:1px solid var(--border)}
+  .foot b{color:var(--text-2)}
+  .legend{margin:18px 6px 0;font-size:var(--fs-micro);color:var(--text-3);line-height:1.6}
+  .legend b{color:var(--text-2)}
+  #toast{position:fixed;left:50%;bottom:26px;transform:translateX(-50%) translateY(20px);
+    background:var(--surface-2);border:1px solid var(--border);border-radius:var(--r-pill);
+    padding:10px 18px;font-size:var(--fs-micro);color:var(--text);opacity:0;pointer-events:none;transition:.25s;z-index:9}
+  #toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+</style>
+</head>
+<body>
+<div class="phone">
+  <div class="statusbar"><span>12:44</span><span>📶 🔋 52%</span></div>
+  <div class="nav"><span class="glyph">‹</span><span class="title">Ops</span>
+    <span class="sp"></span><span class="dot"></span><span class="glyph">⚡</span></div>
+
+  <div class="body">
+    <div class="card open" id="card">
+      <div class="chead" onclick="toggle()">
+        <div class="vk">System memory<small id="subhead">15 processes · updated just now</small></div>
+        <div class="pct" id="pct">94%</div>
+        <span class="chev">›</span>
+      </div>
+      <div class="barwrap"><div class="stack big" id="headBar"></div>
+        <div class="scap"><span id="usedCap">113.8 GB used</span><span>121.2 GB total</span></div></div>
+
+      <div class="drawer">
+        <div class="tools">
+          <div class="seg">
+            <button id="vTable" class="on" onclick="setView('table')">Table</button>
+            <button id="vDonut" onclick="setView('donut')">Donut</button>
+          </div>
+          <span class="sp"></span>
+          <button class="refresh" id="rbtn" onclick="refresh()"><span class="ic">↻</span> Refresh</button>
+        </div>
+
+        <div class="legendwrap" id="legendwrap">
+          <div class="donutwrap"><svg class="donut" id="donut" viewBox="0 0 42 42"></svg></div>
+
+          <div class="seclabel">Processes by RSS</div>
+          <table>
+            <thead><tr>
+              <th onclick="sortBy('name')">Process</th>
+              <th class="r" onclick="sortBy('rss')">RSS <span class="ar" id="ar-rss">▾</span></th>
+              <th class="r" onclick="sortBy('rss')">Share</th>
+            </tr></thead>
+            <tbody id="rows"></tbody>
+          </table>
+          <div class="foot" id="foot"></div>
+        </div>
+      </div>
+    </div>
+
+    <p class="legend"><b>Direction A — stacked bar + table.</b> The collapsed card is a one-line glance
+      (94% · a thin stacked bar colored by top consumer). Expand for a sortable per-process table built from
+      <code>GET&nbsp;/api/debug/host</code> — every process grouped under its container, with the two
+      <code>llama-server</code> models broken out. Tap a column header to re-sort; toggle to a
+      <b>Donut</b> for composition; <b>Refresh</b> re-polls. Honest footer: the kernel/page-cache slice
+      docker can't attribute to a container.</p>
+  </div>
+</div>
+<div id="toast"></div>
+
+<script>
+// One shared dataset — RSS in MB — pulled to mirror the real box (debug /host).
+const PROCS=[
+ {name:"llama-server", arg:"--model gpt-oss-120b", svc:"local-llm", grp:"ai", rss:63600},
+ {name:"llama-server", arg:"--model qwen3-vl-30b", svc:"local-llm", grp:"ai", rss:38100},
+ {name:"python ComfyUI", arg:"main.py", svc:"comfyui", grp:"ai", rss:2480},
+ {name:"text-embeddings", arg:"bge-small", svc:"embed", grp:"ai", rss:610},
+ {name:"litellm", arg:"claude-shim", svc:"claude-shim", grp:"code", rss:480},
+ {name:"uvicorn", arg:"jbrain.api", svc:"api", grp:"core", rss:540},
+ {name:"python worker", arg:"jbrain.worker", svc:"worker", grp:"core", rss:430},
+ {name:"postgres", arg:"13 backends", svc:"db", grp:"core", rss:350},
+ {name:"node ctl", arg:"jcode", svc:"jcode", grp:"code", rss:300},
+ {name:"granian", arg:"searxng", svc:"searxng", grp:"infra", rss:300},
+ {name:"llama-swap", arg:"whisper idle", svc:"whisper", grp:"ai", rss:150},
+ {name:"llama-swap", arg:"gateway", svc:"local-llm", grp:"ai", rss:60},
+ {name:"supervisor", arg:"", svc:"supervisor", grp:"core", rss:55},
+ {name:"caddy", arg:"proxy", svc:"proxy", grp:"infra", rss:48},
+ {name:"cloudflared", arg:"tunnel", svc:"cloudflared", grp:"infra", rss:46},
+];
+const TOTAL=121.2*1024, USED=113.8*1024;       // MB
+const GRPCOL={ai:"var(--violet)", core:"var(--steel)", code:"var(--teal)", infra:"var(--amber)"};
+const GRPHEX={ai:"#a493c9", core:"#7fa7c9", code:"#79c2c2", infra:"#c9a36a", other:"#3a3d42"};
+let sort="rss", view="table", data=PROCS.map(p=>({...p}));
+
+const gb=mb=> mb>=1024? (mb/1024).toFixed(mb<10240?1:0)+" GB" : Math.round(mb)+" MB";
+const accounted=()=> data.reduce((s,p)=>s+p.rss,0);
+
+function headBar(){
+  const top=[...data].sort((a,b)=>b.rss-a.rss);
+  const segs=top.map(p=>`<i style="width:${p.rss/TOTAL*100}%;background:${GRPCOL[p.grp]}"></i>`).join("");
+  const kernel=USED-accounted();
+  document.getElementById('headBar').innerHTML=segs+
+    `<i style="width:${kernel/TOTAL*100}%;background:#33363b" title="kernel & cache"></i>`;
+  document.getElementById('pct').textContent=Math.round(USED/TOTAL*100)+"%";
+  document.getElementById('usedCap').textContent=gb(USED)+" used";
+}
+
+function rows(){
+  const sorted=[...data].sort((a,b)=> sort==="rss"? b.rss-a.rss : (a.svc+a.name).localeCompare(b.svc+b.name));
+  const max=Math.max(...data.map(p=>p.rss));
+  let html="", lastSvc=null;
+  for(const p of sorted){
+    if(sort!=="rss" && p.svc!==lastSvc){
+      const tot=data.filter(x=>x.svc===p.svc).reduce((s,x)=>s+x.rss,0);
+      html+=`<tr class="grp"><td colspan="3">${p.svc}<span class="gr">${gb(tot)}</span></td></tr>`; lastSvc=p.svc;
+    }
+    html+=`<tr>
+      <td><div class="pname"><span class="sw" style="background:${GRPCOL[p.grp]}"></span>
+        <div><div class="nm">${p.name}</div><div class="svc">${p.svc}${p.arg?" · "+p.arg:""}</div></div></div></td>
+      <td class="r"><span class="spark"><i style="width:${p.rss/max*100}%;background:${GRPCOL[p.grp]}"></i></span>
+        &nbsp;${gb(p.rss)}</td>
+      <td class="r pcell">${(p.rss/USED*100).toFixed(p.rss/USED*100<1?1:0)}%</td></tr>`;
+  }
+  document.getElementById('rows').innerHTML=html;
+  document.getElementById('ar-rss').style.opacity= sort==="rss"?1:0;
+  const kernel=USED-accounted();
+  document.getElementById('foot').innerHTML=
+    `<b>${gb(accounted())}</b> across ${data.length} processes · <b>${gb(kernel)}</b> kernel &amp; page cache `+
+    `(not attributable to a container) · <b>${gb(TOTAL-USED)}</b> free`;
+  document.getElementById('subhead').textContent=`${data.length} processes · updated just now`;
+}
+
+function donut(){
+  const byGrp={}; data.forEach(p=>byGrp[p.grp]=(byGrp[p.grp]||0)+p.rss);
+  byGrp.other=(USED-accounted());
+  const svg=document.getElementById('donut'); const C=2*Math.PI*15.915; let off=0; let parts="";
+  for(const[g,v]of Object.entries(byGrp)){
+    const frac=v/USED, len=frac*C;
+    parts+=`<circle cx="21" cy="21" r="15.915" fill="none" stroke="${GRPHEX[g]||'#3a3d42'}" stroke-width="6"
+      stroke-dasharray="${len} ${C-len}" stroke-dashoffset="${-off}"></circle>`; off+=len;
+  }
+  svg.innerHTML=`<circle cx="21" cy="21" r="15.915" fill="none" stroke="#1e2024" stroke-width="6"></circle>${parts}
+    <text class="cap" x="21" y="20" text-anchor="middle">${Math.round(USED/1024)} GB</text>
+    <text class="cap2" x="21" y="27" text-anchor="middle">of ${Math.round(TOTAL/1024)} GB</text>`;
+}
+
+function render(){ headBar(); rows(); donut(); }
+function setView(v){ view=v; document.getElementById('vTable').classList.toggle('on',v==="table");
+  document.getElementById('vDonut').classList.toggle('on',v==="donut");
+  document.getElementById('legendwrap').classList.toggle('donut',v==="donut"); }
+function sortBy(s){ sort=s; rows(); }
+function toggle(){ document.getElementById('card').classList.toggle('open'); }
+function refresh(){
+  const b=document.getElementById('rbtn'); b.classList.add('spin');
+  data=PROCS.map(p=>({...p, rss: Math.max(20, Math.round(p.rss*(1+(Math.random()-.5)*(p.rss>2000?.04:.25))))}));
+  render(); toast('Re-polled /api/debug/host'); setTimeout(()=>b.classList.remove('spin'),650);
+}
+function toast(m){const t=document.getElementById('toast');t.textContent=m;t.classList.add('show');
+  clearTimeout(t._t);t._t=setTimeout(()=>t.classList.remove('show'),1900);}
+render();
+</script>
+</body>
+</html>

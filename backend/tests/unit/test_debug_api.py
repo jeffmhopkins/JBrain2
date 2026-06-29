@@ -87,7 +87,56 @@ class _FakeSupervisor:
             return _FakeResp(
                 200,
                 "",
-                json_body={"gpu_busy_percent": 97.0, "apu_power_w": 88.5, "load_1m": 4.2},
+                json_body={
+                    "mem_total_bytes": 130_000_000_000,
+                    "mem_available_bytes": 8_000_000_000,
+                    "swap_total_bytes": 2_000_000_000,
+                    "swap_free_bytes": 1_500_000_000,
+                    "disk_total_bytes": 2_000_000_000_000,
+                    "disk_free_bytes": 1_200_000_000_000,
+                    # gpu/power/load carry the values main's /host/metrics test asserts.
+                    "load_1m": 4.2,
+                    "load_5m": 0.7,
+                    "load_15m": 0.8,
+                    "uptime_seconds": 86400,
+                    "gpu_busy_percent": 97.0,
+                    "fan_rpm": None,
+                    "apu_power_w": 88.5,
+                    # Deliberately NOT sorted, so the route's sort is what's asserted.
+                    "containers": [
+                        {"service": "comfyui", "mem_bytes": 2_000_000_000},
+                        {"service": "local-llm", "mem_bytes": 100_000_000_000},
+                        {"service": "db", "mem_bytes": 300_000_000},
+                    ],
+                },
+            )
+        if url == "/processes":
+            return _FakeResp(
+                200,
+                "",
+                json_body={
+                    # Out of order on purpose; the route sorts by rss_bytes desc.
+                    "processes": [
+                        {
+                            "service": "comfyui",
+                            "pid": 201,
+                            "rss_bytes": 2_000_000_000,
+                            "command": "python /opt/ComfyUI/main.py",
+                        },
+                        {
+                            "service": "local-llm",
+                            "pid": 102,
+                            "rss_bytes": 38_000_000_000,
+                            "command": "llama-server --model /models/qwen3-vl-30b/x.gguf",
+                        },
+                        {
+                            "service": "local-llm",
+                            "pid": 101,
+                            "rss_bytes": 64_000_000_000,
+                            "command": "llama-server --model /models/gpt-oss-120b/x.gguf",
+                        },
+                    ]
+                },
             )
         return _FakeResp(200, "log line one\nlog line two")
 
@@ -496,7 +545,40 @@ def test_update_status_requires_the_debug_token(debug_client: tuple[TestClient, 
     assert client.get("/api/debug/update/status").status_code == 401
 
 
-# --- gateway logs + host metrics (the gateway-abort verification reads) ------
+# --- host breakdown (/host) + gateway logs + host telemetry (/host/metrics) --
+
+
+def test_host_proxies_and_sorts_processes(debug_client: tuple[TestClient, str]) -> None:
+    # /debug/host merges /metrics + /processes and returns per-container AND raw
+    # per-process RSS biggest-first, so the console can attribute the total.
+    client, key = debug_client
+    resp = client.get("/api/debug/host", headers=_auth(key))
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["mem_total_bytes"] == 130_000_000_000
+    assert body["apu_power_w"] == 88.5
+    # Sorted descending by mem_bytes, regardless of the supervisor's order.
+    services = [c["service"] for c in body["containers"]]
+    assert services == ["local-llm", "comfyui", "db"]
+    # Raw per-process RSS, biggest first — the two llama-server PIDs are told apart
+    # by their --model path, so the 120B (101) outranks the vision model (102).
+    pids = [p["pid"] for p in body["processes"]]
+    assert pids == [101, 102, 201]
+    assert "gpt-oss-120b" in body["processes"][0]["command"]
+    calls = [u for u, _ in _state(client).supervisor_client.calls]
+    assert "/metrics" in calls and "/processes" in calls
+
+
+def test_host_requires_the_debug_token(debug_client: tuple[TestClient, str]) -> None:
+    client, _ = debug_client
+    assert client.get("/api/debug/host").status_code == 401
+
+
+def test_whoami_reports_host_scope(debug_client: tuple[TestClient, str]) -> None:
+    client, key = debug_client
+    body = client.get("/api/debug/whoami", headers=_auth(key)).json()
+    assert "host.read" in body["scopes"]
+    assert "host.metrics" in body["scopes"]
 
 
 def test_gateway_logs_tails_the_engine_stdout(debug_client: tuple[TestClient, str]) -> None:

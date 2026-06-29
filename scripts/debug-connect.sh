@@ -15,6 +15,7 @@
 #   scripts/debug-connect.sh vision <attachment_id> --task vision.caption --system "..."
 #   scripts/debug-connect.sh sql "select code, name from app.domains"
 #   scripts/debug-connect.sh logs api --tail 100
+#   scripts/debug-connect.sh host                      # host RAM + per-container + per-process RSS
 #   scripts/debug-connect.sh gateway-logs --tail 200   # model engine's own slot lifecycle
 #   scripts/debug-connect.sh metrics                   # host telemetry: GPU busy %, power, load
 #   scripts/debug-connect.sh llm                       # show live routing
@@ -26,7 +27,7 @@ set -euo pipefail
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 
 usage() {
-  sed -n '2,23p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '2,24p' "$0" | sed 's/^# \{0,1\}//'
   exit "${1:-0}"
 }
 
@@ -151,6 +152,8 @@ PY
     [ "${1:-}" = "--tail" ] && { tail="$2"; shift 2; }
     _call GET "/api/debug/logs/$svc?tail=$tail"
     ;;
+
+  host) _call GET /api/debug/host | _pp ;;   # host memory/swap/disk/load + per-container + per-process RSS
 
   gateway-logs) # [--tail N] — the model engine's OWN stdout (slot lifecycle), not the container log
     tail=200
