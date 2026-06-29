@@ -64,6 +64,15 @@ OwnerDep = Annotated[PrincipalInfo, Depends(owner_only)]
 # especially, now that we free ComfyUI between renders.
 _SSE_HEARTBEAT_SECONDS = 20.0
 
+# A HARD ceiling on a whole agent turn. Children have their own wall-clock and the tree
+# caps bound tokens/agents, but nothing bounded the PARENT turn's wall time — a runaway
+# loop (e.g. a model that ignores the no-retry guidance and keeps spawning fans) could
+# peg the GPU for a long time. Past this the turn is force-ended: the timeout cancels
+# every in-flight LLM call (parent AND its sub-agents, via the gather cascade) and the
+# partial answer is persisted. Generous — above a legitimate multi-child serial fan —
+# so it only ever catches the pathological case, never a real turn.
+_MAX_TURN_WALL_CLOCK_S = 1800.0
+
 _TURN_DONE = object()  # per-subscriber sentinel: the turn finished, no more frames
 
 
@@ -542,14 +551,19 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
             # cancelled here (only a client disconnect cancelled the old wrapper, which no
             # longer reaches this detached task), so a plain loop suffices. Idle keepalives
             # are now each subscriber's job (`_LiveTurn.stream`), not buffered here.
-            async for event in stream:
-                acc.feed(event)
-                if event.type == "done":
-                    stop_reason, status = event.stop_reason, "done"
-                # A reflexion `verdict` rides after `done` (Loop 1's annotation of a
-                # critique-worthy turn). It is forwarded to the PWA but deliberately
-                # NOT recorded — Loop 1 is ephemeral and writes nothing durable.
-                live.emit(f"data: {event.model_dump_json()}\n\n".encode())
+            # The whole turn runs under a hard wall-clock (_MAX_TURN_WALL_CLOCK_S): if it
+            # fires, asyncio cancels the in-flight await deep in the stream — cascading
+            # through spawn_fan's gather into every sub-agent — so NO LLM call outlives the
+            # turn, then surfaces as TimeoutError below.
+            async with asyncio.timeout(_MAX_TURN_WALL_CLOCK_S):
+                async for event in stream:
+                    acc.feed(event)
+                    if event.type == "done":
+                        stop_reason, status = event.stop_reason, "done"
+                    # A reflexion `verdict` rides after `done` (Loop 1's annotation of a
+                    # critique-worthy turn). It is forwarded to the PWA but deliberately
+                    # NOT recorded — Loop 1 is ephemeral and writes nothing durable.
+                    live.emit(f"data: {event.model_dump_json()}\n\n".encode())
             if status == "done":
                 # Episodic memory is owner-data: only a knowledge-base agent appends
                 # one, and never a `no_memory` sandbox session (the sub-agent flag —
@@ -584,6 +598,13 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
                 residency = getattr(request.app.state, "residency", None)
                 if residency is not None:
                     residency.schedule_restore()
+        except TimeoutError:
+            # The hard turn wall-clock fired. asyncio.timeout already cancelled every
+            # in-flight LLM call (parent + sub-agents) on its way out, so the GPU is freed;
+            # settle the partial answer as a terminal `done` rather than let it hang.
+            log.warning("agent.turn_timeout", run_id=run_id, limit_s=_MAX_TURN_WALL_CLOCK_S)
+            status, stop_reason = "error", "turn_timeout"
+            live.emit(b'data: {"type": "done", "stop_reason": "turn_timeout"}\n\n')
         except asyncio.CancelledError:
             # The turn task itself was cancelled — an explicit Stop via the cancel endpoint
             # or app shutdown, NOT a client disconnect (the turn now runs detached, so closing

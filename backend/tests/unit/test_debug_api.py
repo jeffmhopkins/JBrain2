@@ -94,13 +94,14 @@ class _FakeSupervisor:
                     "swap_free_bytes": 1_500_000_000,
                     "disk_total_bytes": 2_000_000_000_000,
                     "disk_free_bytes": 1_200_000_000_000,
-                    "load_1m": 0.5,
+                    # gpu/power/load carry the values main's /host/metrics test asserts.
+                    "load_1m": 4.2,
                     "load_5m": 0.7,
                     "load_15m": 0.8,
                     "uptime_seconds": 86400,
-                    "gpu_busy_percent": 1.0,
+                    "gpu_busy_percent": 97.0,
                     "fan_rpm": None,
-                    "apu_power_w": 13.0,
+                    "apu_power_w": 88.5,
                     # Deliberately NOT sorted, so the route's sort is what's asserted.
                     "containers": [
                         {"service": "comfyui", "mem_bytes": 2_000_000_000},
@@ -207,7 +208,7 @@ def test_whoami_reports_scopes(debug_client: tuple[TestClient, str]) -> None:
     client, key = debug_client
     body = client.get("/api/debug/whoami", headers=_auth(key)).json()
     assert body["kind"] == "capability_token" and body["label"] == "claude"
-    assert "sql.read" in body["scopes"]
+    assert "sql.read" in body["scopes"] and "host.metrics" in body["scopes"]
 
 
 # --- self-service token lifecycle (console kill switch) ---------------------
@@ -544,18 +545,18 @@ def test_update_status_requires_the_debug_token(debug_client: tuple[TestClient, 
     assert client.get("/api/debug/update/status").status_code == 401
 
 
-# --- host metrics -----------------------------------------------------------
+# --- host breakdown (/host) + gateway logs + host telemetry (/host/metrics) --
 
 
-def test_host_metrics_proxies_and_sorts_containers(debug_client: tuple[TestClient, str]) -> None:
-    # /debug/host proxies the supervisor's /metrics and returns per-container RSS
-    # biggest-first, so the console can attribute the unified-memory total.
+def test_host_proxies_and_sorts_processes(debug_client: tuple[TestClient, str]) -> None:
+    # /debug/host merges /metrics + /processes and returns per-container AND raw
+    # per-process RSS biggest-first, so the console can attribute the total.
     client, key = debug_client
     resp = client.get("/api/debug/host", headers=_auth(key))
     assert resp.status_code == 200
     body = resp.json()
     assert body["mem_total_bytes"] == 130_000_000_000
-    assert body["apu_power_w"] == 13.0
+    assert body["apu_power_w"] == 88.5
     # Sorted descending by mem_bytes, regardless of the supervisor's order.
     services = [c["service"] for c in body["containers"]]
     assert services == ["local-llm", "comfyui", "db"]
@@ -568,7 +569,7 @@ def test_host_metrics_proxies_and_sorts_containers(debug_client: tuple[TestClien
     assert "/metrics" in calls and "/processes" in calls
 
 
-def test_host_metrics_requires_the_debug_token(debug_client: tuple[TestClient, str]) -> None:
+def test_host_requires_the_debug_token(debug_client: tuple[TestClient, str]) -> None:
     client, _ = debug_client
     assert client.get("/api/debug/host").status_code == 401
 
@@ -577,6 +578,44 @@ def test_whoami_reports_host_scope(debug_client: tuple[TestClient, str]) -> None
     client, key = debug_client
     body = client.get("/api/debug/whoami", headers=_auth(key)).json()
     assert "host.read" in body["scopes"]
+    assert "host.metrics" in body["scopes"]
+
+
+def test_gateway_logs_tails_the_engine_stdout(debug_client: tuple[TestClient, str]) -> None:
+    # The gateway's OWN /logs (llama-server slot lifecycle), tailed to the last N lines —
+    # the read that shows whether a Stop releases a slot or the engine keeps generating.
+    client, key = debug_client
+    _state(client).local_gateway.logs_text = "slot launch\nrelease 1\nrelease 2\nrelease 3"
+    resp = client.get("/api/debug/llm/gateway-logs", headers=_auth(key), params={"tail": 2})
+    assert resp.status_code == 200
+    assert resp.text == "release 2\nrelease 3"  # only the last 2 lines
+
+
+def test_gateway_logs_502_when_gateway_unreachable(debug_client: tuple[TestClient, str]) -> None:
+    client, key = debug_client
+    _state(client).local_gateway.fail_logs = True
+    assert client.get("/api/debug/llm/gateway-logs", headers=_auth(key)).status_code == 502
+
+
+def test_gateway_logs_requires_a_valid_bearer(debug_client: tuple[TestClient, str]) -> None:
+    client, _ = debug_client
+    assert client.get("/api/debug/llm/gateway-logs").status_code == 401
+
+
+def test_host_metrics_proxies_supervisor(debug_client: tuple[TestClient, str]) -> None:
+    # The one physical read: GPU busy %, APU power, load — proxied from the supervisor so a
+    # debug session can watch the device across a Stop.
+    client, key = debug_client
+    resp = client.get("/api/debug/host/metrics", headers=_auth(key))
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["gpu_busy_percent"] == 97.0 and body["apu_power_w"] == 88.5
+    assert ("/metrics", {}) in _state(client).supervisor_client.calls
+
+
+def test_host_metrics_requires_a_valid_bearer(debug_client: tuple[TestClient, str]) -> None:
+    client, _ = debug_client
+    assert client.get("/api/debug/host/metrics").status_code == 401
 
 
 # --- live routing -----------------------------------------------------------
