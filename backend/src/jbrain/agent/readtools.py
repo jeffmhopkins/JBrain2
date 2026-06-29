@@ -39,6 +39,7 @@ from jbrain.agent.proposals import ProposalRepo
 from jbrain.agent.proposaltools import build_proposal_handlers
 from jbrain.agent.runlog import AgentRunLog
 from jbrain.agent.session import AgentSessionRepo
+from jbrain.agent.transcript_store import AgentTranscript
 from jbrain.agent.spawn import SpawnRef, SpawnService
 from jbrain.agent.toolregistry import ToolRegistry, load_registry
 from jbrain.analysis.relationships import predicate_candidates
@@ -516,5 +517,6 @@ def build_registry(
             registry=registry,
             sessions=AgentSessionRepo(maker),
             runlog=AgentRunLog(maker),
+            transcript=AgentTranscript(maker),
         )
     return registry

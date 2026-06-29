@@ -103,6 +103,22 @@ class _FakeLoop:
         )
 
 
+class _FakeTranscript:
+    """Records each child exchange the service persists, so the rail-replay wiring is
+    observable without a DB."""
+
+    def __init__(self) -> None:
+        self.exchanges: list[dict] = []
+
+    async def record_exchange(
+        self, ctx, *, session_id, run_id, user_text, assistant_text, tools, reasoning=""
+    ):  # noqa: ANN001, ANN003, E501
+        self.exchanges.append(
+            {"session_id": session_id, "user_text": user_text, "assistant_text": assistant_text}
+        )
+        return "turn-1"
+
+
 @pytest.fixture
 def service(monkeypatch: pytest.MonkeyPatch) -> SpawnService:
     _FakeLoop.calls = []
@@ -112,6 +128,7 @@ def service(monkeypatch: pytest.MonkeyPatch) -> SpawnService:
         registry=object(),  # type: ignore[arg-type]
         sessions=_FakeSessions(),  # type: ignore[arg-type]
         runlog=_FakeRunLog(),  # type: ignore[arg-type]
+        transcript=_FakeTranscript(),  # type: ignore[arg-type]
     )
 
 
@@ -356,6 +373,22 @@ async def test_local_route_serializes_the_fan() -> None:
     # A cloud route keeps the requested concurrency, still clamped to MAX_PARALLEL.
     assert await _svc("xai")._effective_max_parallel(2) == 2
     assert await _svc("xai")._effective_max_parallel(99) == MAX_PARALLEL
+
+
+async def test_child_brief_and_answer_persisted_to_its_own_transcript(
+    service: SpawnService,
+) -> None:
+    """Opening a sub-agent in the sessions rail must replay its work, not an empty
+    chat — so each child's brief→answer is recorded to the CHILD's own transcript."""
+    await service.spawn_fan(
+        _ctx(), {"tasks": [{"persona": "research", "brief": "what is HNSW?", "label": "HNSW"}]}
+    )
+    tx: _FakeTranscript = service._transcript  # type: ignore[assignment]
+    assert len(tx.exchanges) == 1
+    ex = tx.exchanges[0]
+    assert ex["session_id"] == "sess-1"  # the child session, not "parent-sess"
+    assert ex["user_text"] == "what is HNSW?"
+    assert ex["assistant_text"] == "summary for sess-1"
 
 
 async def test_unknown_effort_refuses_the_fan(service: SpawnService) -> None:
