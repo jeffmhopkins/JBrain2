@@ -69,6 +69,22 @@ class ContainerMemory:
 
 
 @dataclass(frozen=True, slots=True)
+class ProcessMemory:
+    """RSS of one process running inside a compose container.
+
+    From `docker top`: the daemon runs ps on the HOST against the container's
+    PIDs, so the RSS is the real host figure and it works even for an image with
+    no ps binary. The breakdown a per-container total can't show — e.g. the
+    local-llm container runs llama-swap plus a separate llama-server per loaded
+    model, so 'what is the 120B vs the vision model' only resolves here."""
+
+    service: str
+    pid: int
+    rss_bytes: int
+    command: str
+
+
+@dataclass(frozen=True, slots=True)
 class UpdateStatus:
     """State of the most recent updater run ('none' when never run)."""
 
@@ -104,6 +120,8 @@ class DockerGateway(Protocol):
     def stream_logs(self, service: str) -> Iterator[str]: ...
 
     def container_memory(self) -> list[ContainerMemory]: ...
+
+    def container_processes(self) -> list[ProcessMemory]: ...
 
     def start_update(self) -> str: ...
 
@@ -186,6 +204,48 @@ class ComposeDockerGateway:
             usage = mem.get("usage", 0) - mem.get("stats", {}).get("inactive_file", 0)
             usages.append(ContainerMemory(service=service, mem_bytes=max(usage, 0)))
         return usages
+
+    def container_processes(self) -> list[ProcessMemory]:
+        procs: list[ProcessMemory] = []
+        for container in self._client.containers.list(
+            filters={"label": f"{COMPOSE_PROJECT_LABEL}={self._project}"}
+        ):
+            service = (container.labels or {}).get(COMPOSE_SERVICE_LABEL)
+            if not service:
+                continue
+            try:
+                # `args` carries the full command line, so two llama-server PIDs
+                # are told apart by their --model path. The daemon runs ps on the
+                # host; RSS is in KiB. A just-exited container (or a daemon that
+                # rejects the ps_args) must not sink the whole readout.
+                top = cast("dict", container.top(ps_args="-eo pid,rss,args"))
+            except Exception:
+                continue
+            titles = top.get("Titles") or []
+            try:
+                pid_i, rss_i, cmd_i = (
+                    titles.index("PID"),
+                    titles.index("RSS"),
+                    titles.index("COMMAND"),
+                )
+            except ValueError:
+                continue
+            for row in top.get("Processes") or []:
+                if max(pid_i, rss_i, cmd_i) >= len(row):
+                    continue
+                try:
+                    pid, rss_kib = int(row[pid_i]), int(row[rss_i])
+                except ValueError:
+                    continue
+                procs.append(
+                    ProcessMemory(
+                        service=service,
+                        pid=pid,
+                        rss_bytes=rss_kib * 1024,
+                        command=row[cmd_i],
+                    )
+                )
+        return procs
 
     def start_update(self) -> str:
         return self._run_oneshot("jbrain-updater", {UPDATER_LABEL: "1"}, UPDATE_COMMAND)

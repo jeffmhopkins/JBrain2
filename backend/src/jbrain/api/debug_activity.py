@@ -30,7 +30,7 @@ def classify(method: str, path: str) -> str:
         return "unload" if tail.endswith("/unload") else "load"
     if tail == "llm":
         return "switch" if method == "PUT" else "routing"
-    if tail in {"whoami", "complete", "sql", "suspend-self", "revoke-self"}:
+    if tail in {"whoami", "complete", "sql", "host", "suspend-self", "revoke-self"}:
         return {"suspend-self": "suspend", "revoke-self": "revoke"}.get(tail, tail)
     return tail or "debug"
 

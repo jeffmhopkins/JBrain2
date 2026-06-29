@@ -171,3 +171,14 @@ def test_metrics_route(client: TestClient, monkeypatch) -> None:  # type: ignore
     assert body["apu_power_w"] == 14.0
     assert body["containers"]
     assert body["containers"][0]["mem_bytes"] == 100 << 20
+
+
+def test_processes_route(client: TestClient) -> None:
+    assert client.get("/processes").status_code == 401
+
+    body = client.get("/processes", headers=AUTH).json()
+    assert body["processes"]
+    first = body["processes"][0]
+    assert first["rss_bytes"] == 50 << 20
+    assert first["pid"] == 1000
+    assert "--serve" in first["command"]

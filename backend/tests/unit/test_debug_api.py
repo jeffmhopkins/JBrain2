@@ -109,6 +109,34 @@ class _FakeSupervisor:
                     ],
                 },
             )
+        if url == "/processes":
+            return _FakeResp(
+                200,
+                "",
+                json_body={
+                    # Out of order on purpose; the route sorts by rss_bytes desc.
+                    "processes": [
+                        {
+                            "service": "comfyui",
+                            "pid": 201,
+                            "rss_bytes": 2_000_000_000,
+                            "command": "python /opt/ComfyUI/main.py",
+                        },
+                        {
+                            "service": "local-llm",
+                            "pid": 102,
+                            "rss_bytes": 38_000_000_000,
+                            "command": "llama-server --model /models/qwen3-vl-30b/x.gguf",
+                        },
+                        {
+                            "service": "local-llm",
+                            "pid": 101,
+                            "rss_bytes": 64_000_000_000,
+                            "command": "llama-server --model /models/gpt-oss-120b/x.gguf",
+                        },
+                    ]
+                },
+            )
         return _FakeResp(200, "log line one\nlog line two")
 
     async def aclose(self) -> None:
@@ -531,7 +559,13 @@ def test_host_metrics_proxies_and_sorts_containers(debug_client: tuple[TestClien
     # Sorted descending by mem_bytes, regardless of the supervisor's order.
     services = [c["service"] for c in body["containers"]]
     assert services == ["local-llm", "comfyui", "db"]
-    assert ("/metrics", {}) in _state(client).supervisor_client.calls
+    # Raw per-process RSS, biggest first — the two llama-server PIDs are told apart
+    # by their --model path, so the 120B (101) outranks the vision model (102).
+    pids = [p["pid"] for p in body["processes"]]
+    assert pids == [101, 102, 201]
+    assert "gpt-oss-120b" in body["processes"][0]["command"]
+    calls = [u for u, _ in _state(client).supervisor_client.calls]
+    assert "/metrics" in calls and "/processes" in calls
 
 
 def test_host_metrics_requires_the_debug_token(debug_client: tuple[TestClient, str]) -> None:

@@ -534,6 +534,13 @@ class ContainerMem(BaseModel):
     mem_bytes: int
 
 
+class ProcessMem(BaseModel):
+    service: str
+    pid: int
+    rss_bytes: int
+    command: str
+
+
 class HostMetricsOut(BaseModel):
     mem_total_bytes: int
     mem_available_bytes: int
@@ -551,24 +558,39 @@ class HostMetricsOut(BaseModel):
     # Per-compose-container RSS, biggest first — the breakdown the unified-memory
     # total can't show on its own.
     containers: list[ContainerMem]
+    # Raw per-process RSS across all containers (via `docker top`), biggest first
+    # — the actual processes behind each container's total, e.g. the local-llm
+    # container's separate llama-server per loaded model.
+    processes: list[ProcessMem]
+
+
+# A long argv (a llama-server command line) would bloat the readout; the model
+# path that distinguishes processes is near the front, so a generous head is enough.
+_CMD_MAX = 200
 
 
 @router.get("/host")
 async def host(request: Request, settings: SettingsDep, _p: DebugDep) -> HostMetricsOut:
-    """Live host memory/swap/disk/load + per-container RSS, proxied from the
-    supervisor (the single owner of docker access + /proc), biggest container
-    first. Mirrors the owner ops surface; lets the read-only console attribute the
-    unified-memory total to specific services instead of guessing."""
+    """Live host memory/swap/disk/load + per-container RSS AND raw per-process RSS,
+    proxied from the supervisor (the single owner of docker access + /proc),
+    biggest first. Mirrors the owner ops surface; lets the read-only console
+    attribute the unified-memory total down to individual processes instead of
+    guessing — the per-process list is what tells the 120B from the vision model."""
     request.state.debug_detail = "host metrics"
-    resp = await _supervisor(request).get(
-        "/metrics",
-        headers={"Authorization": f"Bearer {settings.supervisor_token}"},
-    )
-    resp.raise_for_status()
-    data = cast(dict[str, Any], resp.json())
+    client = _supervisor(request)
+    headers = {"Authorization": f"Bearer {settings.supervisor_token}"}
+    metrics = await client.get("/metrics", headers=headers)
+    metrics.raise_for_status()
+    data = cast(dict[str, Any], metrics.json())
     data["containers"] = sorted(
         data.get("containers", []), key=lambda c: c["mem_bytes"], reverse=True
     )
+    procs_resp = await client.get("/processes", headers=headers)
+    procs_resp.raise_for_status()
+    procs = cast(dict[str, Any], procs_resp.json()).get("processes", [])
+    for p in procs:
+        p["command"] = str(p.get("command", ""))[:_CMD_MAX]
+    data["processes"] = sorted(procs, key=lambda p: p["rss_bytes"], reverse=True)
     return HostMetricsOut(**data)
 
 

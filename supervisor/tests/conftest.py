@@ -12,6 +12,7 @@ from supervisor.config import Settings
 from supervisor.gateway import (
     ContainerInfo,
     ContainerMemory,
+    ProcessMemory,
     UnknownServiceError,
     UpdateInProgressError,
     UpdateStatus,
@@ -72,6 +73,17 @@ class FakeGateway:
         return [
             ContainerMemory(service=c.service, mem_bytes=100 << 20)
             for c in self.containers
+        ]
+
+    def container_processes(self) -> list[ProcessMemory]:
+        return [
+            ProcessMemory(
+                service=c.service,
+                pid=1000 + i,
+                rss_bytes=50 << 20,
+                command=f"/usr/bin/{c.service} --serve",
+            )
+            for i, c in enumerate(self.containers)
         ]
 
     def start_update(self) -> str:

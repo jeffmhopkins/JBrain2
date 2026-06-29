@@ -1,0 +1,211 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Ops memory — B · treemap</title>
+<style>
+  :root{
+    --bg:#0e0f11; --surface:#17181b; --surface-2:#1e2024; --border:#26282c;
+    --text:#e6e7e9; --text-2:#9a9da3; --text-3:#5c5f66;
+    --steel:#7fa7c9; --green:#8fbc9a; --amber:#c9a36a; --rose:#cf8a8f; --violet:#a493c9; --teal:#79c2c2;
+    --r-input:12px; --r-card:16px; --r-pill:999px;
+    --fs-micro:12px; --fs-secondary:14px; --fs-body:16px; --fs-screen:22px;
+    --mono:ui-monospace,"SF Mono","Cascadia Mono",Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;background:#000;color:var(--text);
+    font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;-webkit-font-smoothing:antialiased}
+  .phone{max-width:430px;margin:0 auto;min-height:100vh;background:var(--bg);border-left:1px solid #000;border-right:1px solid #000}
+  .statusbar{display:flex;justify-content:space-between;align-items:center;padding:10px 18px 4px;font-size:13px;font-weight:600}
+  .nav{display:flex;align-items:center;gap:10px;padding:8px 16px 4px}
+  .nav .glyph{color:var(--text-2);font-size:20px} .nav .title{font-size:var(--fs-screen);font-weight:600}
+  .nav .sp{margin-left:auto} .nav .dot{width:9px;height:9px;border-radius:50%;background:var(--green);box-shadow:0 0 0 4px rgba(143,188,154,.13)}
+  .body{padding:10px 14px 56px}
+
+  .card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-card);overflow:hidden}
+  .chead{display:flex;align-items:center;gap:12px;padding:14px 15px;cursor:pointer}
+  .chead .vk{font-size:var(--fs-body);font-weight:600}
+  .chead .vk small{color:var(--text-2);font-weight:400;font-size:var(--fs-micro);display:block;margin-top:2px}
+  .chead .pct{margin-left:auto;font-size:var(--fs-screen);font-weight:600}
+  .chead .chev{color:var(--text-3);transition:transform .2s;font-size:18px} .card.open .chev{transform:rotate(90deg)}
+  .miniwrap{padding:0 15px 14px}
+  .mini{height:10px;border-radius:var(--r-pill);background:var(--surface-2);overflow:hidden;display:flex}
+  .mini>i{height:100%;display:block;transition:width .5s}
+
+  .drawer{display:none;border-top:1px solid var(--border)} .card.open .drawer{display:block}
+  .tools{display:flex;align-items:center;gap:8px;padding:12px 15px 8px}
+  .tools .seg{display:flex;background:var(--surface-2);border:1px solid var(--border);border-radius:var(--r-pill);padding:3px}
+  .tools .seg button{font:inherit;font-size:var(--fs-micro);font-weight:600;border:none;background:none;color:var(--text-2);
+    padding:6px 12px;border-radius:var(--r-pill);cursor:pointer}
+  .tools .seg button.on{background:rgba(127,167,201,.13);color:var(--steel)}
+  .tools .sp{margin-left:auto}
+  .refresh{font:inherit;font-size:var(--fs-micro);font-weight:600;cursor:pointer;border-radius:var(--r-pill);
+    padding:7px 13px;border:1px solid var(--border);background:var(--surface-2);color:var(--text-2);display:flex;gap:6px;align-items:center}
+  .refresh:hover{color:var(--text)} .refresh .ic{transition:transform .6s} .refresh.spin .ic{transform:rotate(360deg)}
+
+  /* treemap */
+  .treewrap{padding:2px 15px 6px}
+  .tree{position:relative;width:100%;height:260px;border-radius:var(--r-input);overflow:hidden;background:var(--surface-2)}
+  .blk{position:absolute;border:1.5px solid var(--bg);border-radius:7px;overflow:hidden;cursor:pointer;
+    transition:left .5s,top .5s,width .5s,height .5s,background .3s;padding:6px 8px}
+  .blk .bn{font-size:11px;font-weight:700;line-height:1.15;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:#0e0f11}
+  .blk .bv{font-size:10px;font-weight:600;color:rgba(14,15,17,.72);margin-top:1px}
+  .blk.sm .bv{display:none} .blk.xs .bn{font-size:9px} .blk.xs .bv{display:none}
+  .blk:hover{filter:brightness(1.08)}
+  .legendrow{display:flex;flex-wrap:wrap;gap:10px 14px;padding:8px 15px 2px}
+  .legendrow span{display:flex;align-items:center;gap:6px;font-size:var(--fs-micro);color:var(--text-2)}
+  .legendrow i{width:10px;height:10px;border-radius:3px}
+
+  /* table */
+  .tableview{display:none} .card.table .treewrap, .card.table .legendrow{display:none}
+  .card.table .tableview{display:block}
+  table{width:100%;border-collapse:collapse;font-size:var(--fs-micro)}
+  thead th{text-align:left;color:var(--text-3);font-weight:500;padding:6px 15px}
+  thead th.r{text-align:right}
+  tbody td{padding:8px 15px;border-top:1px solid var(--border)}
+  tbody td.r{text-align:right;font-variant-numeric:tabular-nums}
+  .pname{display:flex;align-items:center;gap:8px}.pname .sw{width:9px;height:9px;border-radius:3px;flex:none}
+  .pname .nm{font-weight:600}.pname .svc{color:var(--text-3);font-size:10px;text-transform:uppercase;letter-spacing:.04em}
+  .foot{padding:11px 15px;font-size:var(--fs-micro);color:var(--text-3);line-height:1.5;border-top:1px solid var(--border)}
+  .foot b{color:var(--text-2)}
+  .legend{margin:18px 6px 0;font-size:var(--fs-micro);color:var(--text-3);line-height:1.6}.legend b{color:var(--text-2)}
+  #toast{position:fixed;left:50%;bottom:26px;transform:translateX(-50%) translateY(20px);
+    background:var(--surface-2);border:1px solid var(--border);border-radius:var(--r-pill);
+    padding:10px 18px;font-size:var(--fs-micro);color:var(--text);opacity:0;pointer-events:none;transition:.25s;z-index:9}
+  #toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+</style>
+</head>
+<body>
+<div class="phone">
+  <div class="statusbar"><span>12:44</span><span>📶 🔋 52%</span></div>
+  <div class="nav"><span class="glyph">‹</span><span class="title">Ops</span>
+    <span class="sp"></span><span class="dot"></span><span class="glyph">⚡</span></div>
+
+  <div class="body">
+    <div class="card open" id="card">
+      <div class="chead" onclick="toggle()">
+        <div class="vk">System memory<small id="subhead">15 processes</small></div>
+        <div class="pct" id="pct">94%</div><span class="chev">›</span>
+      </div>
+      <div class="miniwrap"><div class="mini" id="mini"></div></div>
+
+      <div class="drawer">
+        <div class="tools">
+          <div class="seg">
+            <button id="vMap" class="on" onclick="setView('map')">Treemap</button>
+            <button id="vTbl" onclick="setView('table')">Table</button>
+          </div>
+          <span class="sp"></span>
+          <button class="refresh" id="rbtn" onclick="refresh()"><span class="ic">↻</span> Refresh</button>
+        </div>
+
+        <div class="treewrap"><div class="tree" id="tree"></div></div>
+        <div class="legendrow" id="legendrow"></div>
+
+        <div class="tableview">
+          <table><thead><tr><th>Process</th><th class="r">RSS</th><th class="r">Share</th></tr></thead>
+            <tbody id="rows"></tbody></table>
+        </div>
+        <div class="foot" id="foot"></div>
+      </div>
+    </div>
+
+    <p class="legend"><b>Direction B — treemap.</b> The expanded card renders every process as a block
+      <b>sized by RSS</b>, colored by service group — so the two <code>llama-server</code> models visually
+      dominate the box at a glance, exactly as they dominate RAM. Built from <code>GET&nbsp;/api/debug/host</code>;
+      tap a block for detail, toggle to <b>Table</b> for exact figures, <b>Refresh</b> re-lays-out with the
+      live numbers. The grey block is kernel &amp; page cache docker can't attribute.</p>
+  </div>
+</div>
+<div id="toast"></div>
+
+<script>
+const PROCS=[
+ {name:"llama-server", arg:"gpt-oss-120b", svc:"local-llm", grp:"ai", rss:63600},
+ {name:"llama-server", arg:"qwen3-vl-30b", svc:"local-llm", grp:"ai", rss:38100},
+ {name:"ComfyUI", arg:"python main.py", svc:"comfyui", grp:"ai", rss:2480},
+ {name:"embed", arg:"bge-small", svc:"embed", grp:"ai", rss:610},
+ {name:"api", arg:"uvicorn", svc:"api", grp:"core", rss:540},
+ {name:"claude-shim", arg:"litellm", svc:"claude-shim", grp:"code", rss:480},
+ {name:"worker", arg:"jbrain.worker", svc:"worker", grp:"core", rss:430},
+ {name:"postgres", arg:"13 backends", svc:"db", grp:"core", rss:350},
+ {name:"jcode", arg:"node ctl", svc:"jcode", grp:"code", rss:300},
+ {name:"searxng", arg:"granian", svc:"searxng", grp:"infra", rss:300},
+ {name:"whisper", arg:"idle", svc:"whisper", grp:"ai", rss:150},
+ {name:"supervisor", arg:"", svc:"supervisor", grp:"core", rss:55},
+ {name:"proxy", arg:"caddy", svc:"proxy", grp:"infra", rss:48},
+ {name:"cloudflared", arg:"tunnel", svc:"cloudflared", grp:"infra", rss:46},
+];
+const TOTAL=121.2*1024, USED=113.8*1024;
+const GRP={ai:"#a493c9", core:"#7fa7c9", code:"#79c2c2", infra:"#c9a36a", kernel:"#3a3d42"};
+const GRPNAME={ai:"AI / models", core:"core", code:"code mode", infra:"infra", kernel:"kernel & cache"};
+let view="map", data=PROCS.map(p=>({...p}));
+const gb=mb=> mb>=1024? (mb/1024).toFixed(mb<10240?1:0)+" GB" : Math.round(mb)+" MB";
+const accounted=()=> data.reduce((s,p)=>s+p.rss,0);
+
+// squarified-ish treemap: slice the largest remaining run into the shorter axis.
+function layout(items,x,y,w,h){
+  const out=[]; let rest=items.slice(); let cx=x,cy=y,cw=w,ch=h;
+  while(rest.length){
+    const tot=rest.reduce((s,i)=>s+i.v,0);
+    const horiz=cw>=ch;
+    const first=rest[0]; const frac=first.v/tot;
+    if(horiz){ const bw=cw*frac; out.push({...first,x:cx,y:cy,w:bw,h:ch}); cx+=bw; cw-=bw; }
+    else { const bh=ch*frac; out.push({...first,x:cx,y:cy,w:cw,h:bh}); cy+=bh; ch-=bh; }
+    rest=rest.slice(1);
+  }
+  return out;
+}
+function tree(){
+  const blocks=[...data.map(p=>({...p,v:p.rss})),{name:"kernel & cache",arg:"unattributed",svc:"—",grp:"kernel",v:USED-accounted()}]
+    .sort((a,b)=>b.v-a.v);
+  const el=document.getElementById('tree'); const W=el.clientWidth||400, H=el.clientHeight||260;
+  const laid=layout(blocks,0,0,W,H);
+  el.innerHTML=laid.map(b=>{
+    const area=b.w*b.h, cls= area<2600?"xs": area<7000?"sm":"";
+    return `<div class="blk ${cls}" style="left:${b.x}px;top:${b.y}px;width:${b.w}px;height:${b.h}px;background:${GRP[b.grp]}"
+      onclick="toast('${b.name} · ${gb(b.v)} · ${b.svc}')">
+      <div class="bn">${b.name}</div><div class="bv">${gb(b.v)}</div></div>`;
+  }).join("");
+  const used=Object.keys(GRP).filter(g=>g!=="kernel"&&data.some(p=>p.grp===g)).concat("kernel");
+  document.getElementById('legendrow').innerHTML=used.map(g=>
+    `<span><i style="background:${GRP[g]}"></i>${GRPNAME[g]}</span>`).join("");
+}
+function mini(){
+  const top=[...data].sort((a,b)=>b.rss-a.rss);
+  document.getElementById('mini').innerHTML=
+    top.map(p=>`<i style="width:${p.rss/TOTAL*100}%;background:${GRP[p.grp]}"></i>`).join("")+
+    `<i style="width:${(USED-accounted())/TOTAL*100}%;background:${GRP.kernel}"></i>`;
+  document.getElementById('pct').textContent=Math.round(USED/TOTAL*100)+"%";
+}
+function rows(){
+  const s=[...data].sort((a,b)=>b.rss-a.rss);
+  document.getElementById('rows').innerHTML=s.map(p=>`<tr>
+    <td><div class="pname"><span class="sw" style="background:${GRP[p.grp]}"></span>
+      <div><div class="nm">${p.name}</div><div class="svc">${p.svc}${p.arg?" · "+p.arg:""}</div></div></div></td>
+    <td class="r">${gb(p.rss)}</td><td class="r">${(p.rss/USED*100).toFixed(p.rss/USED*100<1?1:0)}%</td></tr>`).join("");
+}
+function foot(){
+  document.getElementById('foot').innerHTML=
+    `<b>${gb(accounted())}</b> across ${data.length} processes · <b>${gb(USED-accounted())}</b> kernel &amp; cache · `+
+    `<b>${gb(TOTAL-USED)}</b> free of ${gb(TOTAL)}`;
+  document.getElementById('subhead').textContent=`${data.length} processes`;
+}
+function render(){ mini(); tree(); rows(); foot(); }
+function setView(v){ view=v; document.getElementById('vMap').classList.toggle('on',v==="map");
+  document.getElementById('vTbl').classList.toggle('on',v==="table");
+  document.getElementById('card').classList.toggle('table',v==="table"); if(v==="map") setTimeout(tree,10); }
+function toggle(){ const c=document.getElementById('card'); c.classList.toggle('open');
+  if(c.classList.contains('open')) setTimeout(tree,260); }
+function refresh(){
+  const b=document.getElementById('rbtn'); b.classList.add('spin');
+  data=PROCS.map(p=>({...p, rss:Math.max(20,Math.round(p.rss*(1+(Math.random()-.5)*(p.rss>2000?.05:.3))))}));
+  render(); toast('Re-polled /api/debug/host'); setTimeout(()=>b.classList.remove('spin'),650);
+}
+function toast(m){const t=document.getElementById('toast');t.textContent=m;t.classList.add('show');
+  clearTimeout(t._t);t._t=setTimeout(()=>t.classList.remove('show'),1900);}
+window.addEventListener('load',()=>setTimeout(render,30)); render();
+</script>
+</body>
+</html>
