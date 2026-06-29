@@ -25,12 +25,16 @@ MAX_TOTAL_AGENTS_PER_TREE = 12  # every child across the whole root turn, all de
 # ReAct turns than a quick lookup); the wall-clock is a generous backstop kept above
 # the step budget's expected runtime so a child reaches its step cap (→ a forced final
 # answer) rather than a bare timeout; the token cap is the last backstop.
-CHILD_MAX_STEPS = 12  # default/low-effort ReAct iterations a child may take
+CHILD_MAX_STEPS = 24  # default/low-effort ReAct iterations a child may take
 # Effort lifts the step cap: a high-effort child gets the room to do thorough research.
 # The runaway risk was a RETRY LOOP (jerv re-spawning fans), now closed by the prompt —
 # so a single fan can afford generous per-child budgets without pegging the box forever.
-CHILD_STEPS_BY_EFFORT = {"high": 32, "medium": 22}
-CHILD_WALL_CLOCK_S = 600.0  # hard per-child time limit; past it the child returns truncated
+# (Doubled from the original 12/22/32 so a research child rarely truncates mid-chain; on a
+# slow local box the per-child wall-clock below becomes the practical binding limit.)
+CHILD_STEPS_BY_EFFORT = {"high": 64, "medium": 44}
+CHILD_WALL_CLOCK_S = 1200.0  # hard per-child time limit; past it the child returns truncated
+# (Doubled from 600s with the step caps so a medium/high child can actually reach its
+# larger step budget on the slow local box before the clock — not the steps — stops it.)
 CHILD_MAX_COST_TOKENS = 900_000  # per-child token backstop (steps/wall-clock bite first)
 
 

@@ -109,7 +109,7 @@ describe("SubagentFan", () => {
             phase: "researching",
             status: "running",
             step: 3,
-            liveReasoning: "let me search",
+            liveTrace: [{ kind: "reasoning", text: "let me search" }],
             liveText: "found 3 tiers",
           }),
         ])}
@@ -120,7 +120,7 @@ describe("SubagentFan", () => {
     expect(screen.getByText("found 3 tiers")).toBeInTheDocument();
   });
 
-  it("shows the child's tool steps as a live worked list (frame-in-frame)", () => {
+  it("injects the child's tool calls inline in its trace, interleaved with reasoning", () => {
     render(
       <SubagentFan
         running
@@ -130,20 +130,25 @@ describe("SubagentFan", () => {
             label: "Pricing",
             phase: "researching",
             status: "running",
-            liveTools: [
-              { name: "web_search", arg: "port saint john news", ok: true },
-              { name: "web_fetch", arg: "https://floridatoday.test", ok: false },
+            liveTrace: [
+              { kind: "reasoning", text: "checking the local paper" },
+              { kind: "tool", name: "web_search", arg: "port saint john news", ok: true },
+              { kind: "tool", name: "web_fetch", arg: "https://floridatoday.test", ok: false },
             ],
           }),
         ])}
       />,
     );
+    // The reasoning and both tool calls render together in the one trace.
+    expect(screen.getByText("checking the local paper")).toBeInTheDocument();
     expect(screen.getByText("search")).toBeInTheDocument();
     expect(screen.getByText("port saint john news")).toBeInTheDocument();
     expect(screen.getByText("fetch")).toBeInTheDocument();
+    // The toggle summarises how many tools are folded inside.
+    expect(screen.getByText(/2 tools/)).toBeInTheDocument();
   });
 
-  it("lets the live thinking trace collapse", () => {
+  it("lets the live trace collapse (folding away heavy tool use)", () => {
     render(
       <SubagentFan
         running
@@ -153,17 +158,22 @@ describe("SubagentFan", () => {
             label: "Pricing",
             phase: "researching",
             status: "running",
-            liveReasoning: "deep thoughts",
+            liveTrace: [
+              { kind: "reasoning", text: "deep thoughts" },
+              { kind: "tool", name: "web_search", arg: "q", ok: true },
+            ],
             liveText: "partial",
           }),
         ])}
       />,
     );
-    // Open by default while streaming…
+    // Open by default while streaming — both the reasoning and the tool show…
     expect(screen.getByText("deep thoughts")).toBeInTheDocument();
-    // …and collapsible via the Thinking toggle.
+    expect(screen.getByText("q")).toBeInTheDocument();
+    // …and one toggle collapses the whole trace, tools and all.
     fireEvent.click(screen.getByText(/Thinking/));
     expect(screen.queryByText("deep thoughts")).not.toBeInTheDocument();
+    expect(screen.queryByText("q")).not.toBeInTheDocument();
   });
 
   it("does not offer 'Open session' for a still-running child (would be blank)", () => {

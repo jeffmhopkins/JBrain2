@@ -173,12 +173,12 @@ async def test_only_in_scope_tools_are_offered() -> None:
 
 def test_guardrails_for_effort_widens_the_step_cap() -> None:
     # A model set to think harder earns a deeper tool budget; low/none/non-reasoning
-    # keep the default 10.
-    assert guardrails_for_effort("high").max_steps == 20
-    assert guardrails_for_effort("medium").max_steps == 15
-    assert guardrails_for_effort("low").max_steps == 10
-    assert guardrails_for_effort("none").max_steps == 10
-    assert guardrails_for_effort(None).max_steps == 10
+    # keep the default 20.
+    assert guardrails_for_effort("high").max_steps == 40
+    assert guardrails_for_effort("medium").max_steps == 30
+    assert guardrails_for_effort("low").max_steps == 20
+    assert guardrails_for_effort("none").max_steps == 20
+    assert guardrails_for_effort(None).max_steps == 20
     # Default scale=1 leaves the cost/error caps at the shared defaults.
     assert guardrails_for_effort("high").max_cost_tokens == Guardrails().max_cost_tokens
     assert guardrails_for_effort("high").max_consecutive_tool_errors == 3
@@ -189,12 +189,12 @@ def test_guardrails_for_effort_scales_both_caps_per_agent() -> None:
     # together (the archivist runs at 4), so a long mailbox cleanup isn't cut off
     # mid-chain. The error cap stays fixed — a wedged chain still bails fast.
     g = guardrails_for_effort("high", scale=4)
-    assert g.max_steps == 80
+    assert g.max_steps == 160
     assert g.max_cost_tokens == Guardrails().max_cost_tokens * 4
     assert g.max_consecutive_tool_errors == 3
     # The scale applies to the default step cap too, not only the effort tiers.
-    assert guardrails_for_effort(None, scale=4).max_steps == 40
-    assert guardrails_for_effort("medium", scale=4).max_steps == 60
+    assert guardrails_for_effort(None, scale=4).max_steps == 80
+    assert guardrails_for_effort("medium", scale=4).max_steps == 120
 
 
 async def test_max_steps_guardrail_stops_a_tool_loop() -> None:
