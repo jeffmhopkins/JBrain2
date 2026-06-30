@@ -12,6 +12,12 @@ the member dashboard SPA (served at `/dash`) in a locked-down WebView.
 - **M5b** — native Keystore key-gen + `/session/mint` → inject the session cookie.
 - **M5c** — the pairing screen (redeem a pairing code → provision the device).
 - **M5d** — WebView lockdown hardening + the OwnTracks location-publishing engine.
+- **M5e** — background-survival hardening for the location engine: a self-perpetuating
+  doze-piercing watchdog alarm (`WatchdogScheduler`/`WatchdogReceiver`) plus a boot
+  restart and a task-removal restart revive the foreground service after an OEM/doze
+  kill; the setup walk requests "Allow all the time", notifications, and a
+  battery-optimization exemption; the foreground notification shows the last-fix age so
+  a stall is visible.
 
 ## Build & test
 

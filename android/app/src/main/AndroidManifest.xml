@@ -9,6 +9,14 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- Background survival: restart tracking after a reboot, run a doze-piercing
+         watchdog alarm, and ask to be exempt from battery optimization so the OS
+         doesn't suspend the service (the JBrain360 "failing in the background" fix). -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM"
+        android:maxSdkVersion="32" />
+    <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
     <application
         android:allowBackup="false"
@@ -31,6 +39,16 @@
             android:name=".LocationService"
             android:exported="false"
             android:foregroundServiceType="location" />
+        <!-- Revival point for the watchdog alarm and the boot broadcast. Exported so
+             the system can deliver BOOT_COMPLETED; the alarm targets it by explicit
+             component, needing no extra intent-filter. -->
+        <receiver
+            android:name=".WatchdogReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+            </intent-filter>
+        </receiver>
     </application>
 
 </manifest>
