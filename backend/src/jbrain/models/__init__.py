@@ -12,6 +12,7 @@ from jbrain.models.analysis import (
 from jbrain.models.archivist import ArchivistMemory
 from jbrain.models.core import Base, DeviceSession, Domain, Principal, Subject
 from jbrain.models.images import GeneratedImage
+from jbrain.models.intake import IntakeLink, IntakeSession, IntakeSubmission
 from jbrain.models.jcode import JcodeSession
 from jbrain.models.location import GeofenceState, LocationFix, PlaceGeofence
 from jbrain.models.telemetry import HostMetric, HostMetricHourly, LlmUsage
@@ -48,6 +49,9 @@ __all__ = [
     "GeofenceState",
     "HostMetric",
     "HostMetricHourly",
+    "IntakeLink",
+    "IntakeSession",
+    "IntakeSubmission",
     "JcodeSession",
     "LlmUsage",
     "LocationFix",

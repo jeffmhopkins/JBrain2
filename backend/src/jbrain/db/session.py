@@ -100,6 +100,24 @@ def device_context(principal_id: str, subject_id: str) -> SessionContext:
     )
 
 
+def intake_context(principal_id: str) -> SessionContext:
+    """The session a guided-intake recipient (a non-owner stranger) runs under.
+
+    Maximally locked down — the principal model the agent loop runs a scoped
+    interviewer under (GUIDED_INTAKE_PLAN.md §5). Like `device_context` it is
+    deliberately NOT `narrowed_context` (which launders any stamp into owner
+    identity), so `is_owner()` and `is_full_owner()` are both FALSE and the
+    owner-bypass trap is shut: every `USING(app.is_owner())` table denies it.
+
+    Unlike a device, it carries NO `subject_id` and NO `domain_scopes`, so
+    `app.has_domain_scope()` is false for every domain and it can read zero
+    notes/chunks/locations (#8, empty read scope). Its `principal_id` is the only
+    pin that matters: the intake tables grant a recipient access to its own
+    session/submission rows by `principal_id`, nothing else.
+    """
+    return SessionContext(principal_id=principal_id, principal_kind="intake_link")
+
+
 @asynccontextmanager
 async def scoped_session(
     maker: async_sessionmaker[AsyncSession], ctx: SessionContext
