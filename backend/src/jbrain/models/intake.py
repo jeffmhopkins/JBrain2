@@ -11,7 +11,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, Text, func
+from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Integer, Text, func
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -61,6 +61,15 @@ class IntakeSession(Base):
     opened_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     config_snapshot: Mapped[dict] = mapped_column(JSONB, default=dict)
     status: Mapped[str] = mapped_column(Text, default="drafting")
+    # The running interview (W3): a list of {role, text}. Copied onto the submission at
+    # capture; the owner browses it for in-progress/abandoned sessions (#15).
+    transcript: Mapped[list] = mapped_column(JSONB, default=list)
+    # Per-session cumulative backstops (§5): the loop's guardrails are per-turn only.
+    turns_used: Mapped[int] = mapped_column(Integer, default=0)
+    cost_tokens_used: Mapped[int] = mapped_column(BigInteger, default=0)
+    last_turn_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
 
 class IntakeSubmission(Base):
@@ -83,9 +92,10 @@ class IntakeSubmission(Base):
     transcript: Mapped[list] = mapped_column(JSONB, default=list)
     draft: Mapped[dict] = mapped_column(JSONB, default=dict)
     status: Mapped[str] = mapped_column(Text, default="submitted")
-    proposal_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("app.proposals.id"), nullable=True
-    )
+    # The materialized owner Proposal (W4). The DB FK to app.proposals lives in the
+    # migration; the ORM column omits it so this model needn't pull the proposals table
+    # into the metadata just to INSERT a submission (proposal_id is set later, owner-side).
+    proposal_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
     note_ids: Mapped[list[uuid.UUID]] = mapped_column(ARRAY(UUID(as_uuid=True)), default=list)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

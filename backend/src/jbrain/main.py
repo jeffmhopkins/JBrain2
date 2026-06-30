@@ -187,6 +187,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.live_turns = {}
         app.state.auth_repo = SqlAuthRepo(maker)
         app.state.intake_repo = SqlIntakeRepo(maker)
+        # The guided-intake concurrency cap: session ids with a turn in flight (§5).
+        app.state.intake_inflight = set()
         app.state.device_repo = SqlDeviceRepo(maker)
         app.state.location_repo = SqlLocationRepo(maker)
         app.state.view_scope_repo = SqlViewScopeRepo(maker)

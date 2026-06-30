@@ -98,6 +98,19 @@ class _FakeIntakeRepo:
         self.claim_calls += 1
         return self.claim_result
 
+    # Chat-path methods (W3) — unused by the mint/redeem/revoke flows under test here.
+    async def session_state(self, principal_id):  # type: ignore[no-untyped-def]
+        return None
+
+    async def record_turn(self, principal_id, session_id, *, recipient, assistant, cost_tokens):  # type: ignore[no-untyped-def]
+        return None
+
+    async def capture(self, principal_id, session_id, link_id, *, enterer_name, draft, transcript):  # type: ignore[no-untyped-def]
+        return None
+
+    async def reap_abandoned(self, ctx, older_than_seconds):  # type: ignore[no-untyped-def]
+        return 0
+
 
 async def test_mint_returns_secret_once_and_stores_only_its_hash() -> None:
     repo = _FakeIntakeRepo(claim_result=None)

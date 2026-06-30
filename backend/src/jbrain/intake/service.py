@@ -95,6 +95,20 @@ class IntakeSubmissionRecord:
 
 
 @dataclass(frozen=True)
+class IntakeSessionState:
+    """The live state of one intake session, as the recipient's chat turn reads it."""
+
+    id: str
+    link_id: str
+    principal_id: str
+    status: str
+    config_snapshot: dict
+    transcript: list
+    turns_used: int
+    cost_tokens_used: int
+
+
+@dataclass(frozen=True)
 class ClaimResult:
     """The output of the atomic redeem claim: a freshly bound per-session principal,
     its session row, and the link's box (the cookie cannot outlive `expires_at`)."""
@@ -144,6 +158,31 @@ class IntakeRepo(Protocol):
     async def claim(
         self, *, secret_hash: str, principal_key_hash: str, label: str
     ) -> ClaimResult | None: ...
+
+    async def session_state(self, principal_id: str) -> IntakeSessionState | None: ...
+
+    async def record_turn(
+        self,
+        principal_id: str,
+        session_id: str,
+        *,
+        recipient: str,
+        assistant: str,
+        cost_tokens: int,
+    ) -> None: ...
+
+    async def capture(
+        self,
+        principal_id: str,
+        session_id: str,
+        link_id: str,
+        *,
+        enterer_name: str,
+        draft: dict,
+        transcript: list,
+    ) -> str | None: ...
+
+    async def reap_abandoned(self, ctx: SessionContext, older_than_seconds: int) -> int: ...
 
 
 async def mint_intake_link(

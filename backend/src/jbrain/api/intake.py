@@ -9,17 +9,26 @@ in W3). The show-once secret is returned only at mint (#14); to re-send, re-mint
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
+from contextlib import suppress
 from datetime import UTC, datetime  # noqa: TC003 - Pydantic needs the runtime symbol
 from typing import Annotated, cast
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.exc import IntegrityError
 
-from jbrain.api.deps import AuthRepoDep, OwnerDep, SettingsDep
-from jbrain.db.session import SessionContext
-from jbrain.intake import service
-from jbrain.intake.service import IntakeLinkConfig, IntakeRepo
+from jbrain.agent.agents import agent_for_intake
+from jbrain.agent.contracts import TextDelta, UsageEvent
+from jbrain.agent.loop import AgentLoop, guardrails_for_effort
+from jbrain.agent.toolregistry import ToolRegistry
+from jbrain.api.deps import AuthRepoDep, OwnerDep, PrincipalDep, SettingsDep
+from jbrain.db.session import SessionContext, intake_context
+from jbrain.intake import service, turn
+from jbrain.intake.persona import brief_from_snapshot, build_intake_system_prompt
+from jbrain.intake.service import IntakeLinkConfig, IntakeRepo, IntakeSessionState
+from jbrain.llm import LlmRouter
 
 router = APIRouter()
 
@@ -29,6 +38,24 @@ def get_intake_repo(request: Request) -> IntakeRepo:
 
 
 IntakeRepoDep = Annotated[IntakeRepo, Depends(get_intake_repo)]
+
+
+def _inflight(request: Request) -> set[str]:
+    """The process-local set of intake sessions with a turn in flight — the concurrency
+    cap (§5). Single web process, so an in-memory guard is sufficient; a turn that crashes
+    still clears its entry via the generator's finally."""
+    return cast("set[str]", request.app.state.intake_inflight)
+
+
+async def _intake_session(principal: PrincipalDep, repo: IntakeRepoDep) -> IntakeSessionState:
+    """Resolve the calling intake cookie to its own session, or 403. The principal is
+    per-session, so the principal IS the session identity — no path param to match."""
+    if principal.kind != "intake_link":
+        raise HTTPException(status_code=403, detail="not an intake session")
+    state = await repo.session_state(principal.id)
+    if state is None:
+        raise HTTPException(status_code=403, detail="no intake session")
+    return state
 
 
 def _owner_ctx(principal_id: str) -> SessionContext:
@@ -276,3 +303,119 @@ async def redeem(
         capture_enterer_name=bool(snap.get("capture_enterer_name", True)),
         disclose_owner_identity=bool(snap.get("disclose_owner_identity", False)),
     )
+
+
+class ChatTurnRequest(BaseModel):
+    message: str = Field(min_length=1, max_length=8000)
+
+
+class ConfirmRequest(BaseModel):
+    enterer_name: str = Field(default="", max_length=200)
+
+
+class ConfirmOut(BaseModel):
+    submission_id: str
+
+
+def _draft_from_transcript(transcript: list) -> dict:
+    """The draft the recipient confirms is the interviewer's latest summary turn."""
+    for entry in reversed(transcript):
+        if isinstance(entry, dict) and entry.get("role") != "recipient" and entry.get("text"):
+            return {"summary": str(entry["text"])}
+    return {"summary": ""}
+
+
+@router.post("/intake/chat")
+async def intake_chat(
+    body: ChatTurnRequest,
+    request: Request,
+    principal: PrincipalDep,
+    repo: IntakeRepoDep,
+) -> StreamingResponse:
+    """One interview turn for a redeemed link, streamed as SSE. Runs the agent loop under
+    the EMPTY-scope intake principal (reads nothing of the owner's brain) with the closed
+    intake persona (no tools), the recipient's message fenced as untrusted DATA. Refuses
+    when the session is closed (409), the per-session caps are hit (429), or a turn is
+    already in flight (409, the concurrency cap)."""
+    state = await _intake_session(principal, repo)
+    if state.status != "drafting":
+        raise HTTPException(status_code=409, detail="this intake session is closed")
+    if turn.caps_exceeded(state.turns_used, state.cost_tokens_used):
+        raise HTTPException(status_code=429, detail="this interview has reached its limit")
+    inflight = _inflight(request)
+    if state.id in inflight:
+        raise HTTPException(status_code=409, detail="a turn is already in progress")
+    inflight.add(state.id)
+
+    router_llm = cast(LlmRouter, request.app.state.llm_router)
+    registry = cast(ToolRegistry, request.app.state.agent_registry)
+    profile = agent_for_intake("intake")  # fail-closed: only ever the intake persona
+    system = build_intake_system_prompt(brief_from_snapshot(state.config_snapshot))
+    effort = await router_llm.effective_reasoning_effort("agent.turn")
+    context_window = await router_llm.context_window("agent.turn")
+    guardrails = guardrails_for_effort(effort, scale=profile.budget_multiplier)
+    loop = AgentLoop(router_llm, registry, guardrails=guardrails)
+    conversation = turn.conversation_from_transcript(state.transcript, body.message)
+
+    async def gen() -> AsyncIterator[bytes]:
+        answer: list[str] = []
+        cost = 0
+        try:
+            async for ev in loop.run_stream(
+                session=intake_context(principal.id),  # empty read scope (#8)
+                scopes=(),
+                conversation=conversation,
+                system=system,
+                tools_allow=profile.tools,  # frozenset() — dispatch refuses every tool
+                general_knowledge_label=False,
+                context_window=context_window,
+            ):
+                if isinstance(ev, TextDelta):
+                    answer.append(ev.text)
+                elif isinstance(ev, UsageEvent):
+                    cost += ev.input_tokens + ev.output_tokens
+                yield f"data: {ev.model_dump_json()}\n\n".encode()
+        finally:
+            inflight.discard(state.id)
+            # Record the turn + cost even on a mid-stream disconnect, so a recipient can't
+            # bypass the per-session ceiling by dropping turns (best-effort).
+            with suppress(Exception):
+                await repo.record_turn(
+                    principal.id,
+                    state.id,
+                    recipient=body.message,
+                    assistant="".join(answer),
+                    cost_tokens=cost,
+                )
+
+    return StreamingResponse(
+        gen(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+@router.post("/intake/confirm", status_code=201)
+async def intake_confirm(
+    body: ConfirmRequest, principal: PrincipalDep, repo: IntakeRepoDep
+) -> ConfirmOut:
+    """The recipient confirms the draft → the capture-only write. Burns one run on the
+    link and materializes the submission (#4/#10: stages no Proposal, triggers no job —
+    the owner materializes it later). 409 if the session is closed or the link's runs are
+    exhausted."""
+    state = await _intake_session(principal, repo)
+    if state.status != "drafting":
+        raise HTTPException(status_code=409, detail="this intake session is closed")
+    capture_name = bool(state.config_snapshot.get("capture_enterer_name", True))
+    enterer = body.enterer_name.strip() if capture_name else ""
+    submission_id = await repo.capture(
+        principal.id,
+        state.id,
+        state.link_id,
+        enterer_name=enterer,
+        draft=_draft_from_transcript(state.transcript),
+        transcript=state.transcript,
+    )
+    if submission_id is None:
+        raise HTTPException(status_code=409, detail="this link can accept no more submissions")
+    return ConfirmOut(submission_id=submission_id)

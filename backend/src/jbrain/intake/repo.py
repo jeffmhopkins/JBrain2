@@ -9,6 +9,7 @@ principal context exists.
 
 from __future__ import annotations
 
+import json
 import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any, cast
@@ -16,12 +17,13 @@ from typing import Any, cast
 from sqlalchemy import CursorResult, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from jbrain.db.session import SessionContext, scoped_session
+from jbrain.db.session import SessionContext, intake_context, scoped_session
 from jbrain.intake.service import (
     ClaimResult,
     IntakeLinkConfig,
     IntakeLinkRecord,
     IntakeSessionRecord,
+    IntakeSessionState,
     IntakeSubmissionRecord,
 )
 from jbrain.models import IntakeLink, IntakeSession, IntakeSubmission, Principal
@@ -217,6 +219,135 @@ class SqlIntakeRepo:
                 config_snapshot=snapshot,
                 expires_at=link["expires_at"],
             )
+
+    async def session_state(self, principal_id: str) -> IntakeSessionState | None:
+        """The recipient's own session, read under its per-session principal (the RLS pin
+        returns only its own row). None if the principal has no session."""
+        try:
+            pid = uuid.UUID(principal_id)
+        except ValueError:
+            return None
+        async with scoped_session(self._maker, intake_context(principal_id)) as session:
+            row = (
+                await session.execute(
+                    select(IntakeSession).where(IntakeSession.principal_id == pid)
+                )
+            ).scalar_one_or_none()
+            if row is None:
+                return None
+            return IntakeSessionState(
+                id=str(row.id),
+                link_id=str(row.link_id),
+                principal_id=str(row.principal_id),
+                status=row.status,
+                config_snapshot=dict(row.config_snapshot or {}),
+                transcript=list(row.transcript or []),
+                turns_used=row.turns_used,
+                cost_tokens_used=row.cost_tokens_used,
+            )
+
+    async def record_turn(
+        self,
+        principal_id: str,
+        session_id: str,
+        *,
+        recipient: str,
+        assistant: str,
+        cost_tokens: int,
+    ) -> None:
+        """Append one exchange to the running transcript and bump the per-session
+        cumulative counters — under the recipient's own principal (the pin restricts the
+        UPDATE to its own session)."""
+        entries = json.dumps(
+            [{"role": "recipient", "text": recipient}, {"role": "interviewer", "text": assistant}]
+        )
+        async with scoped_session(self._maker, intake_context(principal_id)) as session:
+            await session.execute(
+                text(
+                    "UPDATE app.intake_sessions"
+                    " SET transcript = transcript || CAST(:entries AS jsonb),"
+                    "     turns_used = turns_used + 1,"
+                    "     cost_tokens_used = cost_tokens_used + :cost,"
+                    "     last_turn_at = now()"
+                    " WHERE id = :sid AND principal_id = :pid"
+                ),
+                {
+                    "entries": entries,
+                    "cost": max(cost_tokens, 0),
+                    "sid": session_id,
+                    "pid": principal_id,
+                },
+            )
+
+    async def capture(
+        self,
+        principal_id: str,
+        session_id: str,
+        link_id: str,
+        *,
+        enterer_name: str,
+        draft: dict,
+        transcript: list,
+    ) -> str | None:
+        """The capture-only write (#4/#10): burn one RUN on the link (the submission
+        ceiling), then materialize the recipient's submission under its own principal.
+
+        The run burn is an atomic gate under bootstrap (runs_used < max_runs); a miss
+        (runs exhausted / link closed) returns None and writes nothing. On a win the
+        recipient writes its OWN submission row (principal_id pin) and flips its session to
+        `submitted`. This stages NO Proposal and triggers NO job — the owner materializes
+        the Proposal separately (W4). The (rare) burn-succeeds / insert-fails residual is
+        an over-count of one run, never an over-issue of a submission."""
+        async with scoped_session(self._maker, _BOOTSTRAP) as session:
+            burned = (
+                await session.execute(
+                    text(
+                        "UPDATE app.intake_links SET runs_used = runs_used + 1"
+                        " WHERE id = :lid AND status = 'active' AND runs_used < max_runs"
+                        " RETURNING id"
+                    ),
+                    {"lid": link_id},
+                )
+            ).scalar_one_or_none()
+        if burned is None:
+            return None
+        async with scoped_session(self._maker, intake_context(principal_id)) as session:
+            submission = IntakeSubmission(
+                link_id=uuid.UUID(link_id),
+                session_id=uuid.UUID(session_id),
+                principal_id=uuid.UUID(principal_id),
+                enterer_name=enterer_name,
+                transcript=transcript,
+                draft=draft,
+                status="submitted",
+            )
+            session.add(submission)
+            await session.execute(
+                text(
+                    "UPDATE app.intake_sessions SET status = 'submitted'"
+                    " WHERE id = :sid AND principal_id = :pid"
+                ),
+                {"sid": session_id, "pid": principal_id},
+            )
+            await session.flush()
+            return str(submission.id)
+
+    async def reap_abandoned(self, ctx: SessionContext, older_than_seconds: int) -> int:
+        """Transition stale `drafting` sessions to `abandoned` (the reaper, §6). A session
+        is stale if its last turn (or its open, if it never had one) is older than the
+        window. An abandoned open KEEPS its opens_used slot (not reclaimed). Runs under a
+        full-owner maintenance context; returns how many were reaped."""
+        async with scoped_session(self._maker, ctx) as session:
+            result = await session.execute(
+                text(
+                    "UPDATE app.intake_sessions SET status = 'abandoned'"
+                    " WHERE status = 'drafting'"
+                    "   AND coalesce(last_turn_at, opened_at)"
+                    "       < now() - make_interval(secs => :secs)"
+                ),
+                {"secs": older_than_seconds},
+            )
+            return cast("CursorResult[Any]", result).rowcount or 0
 
 
 def _link_record(row: IntakeLink) -> IntakeLinkRecord:
