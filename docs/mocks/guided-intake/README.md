@@ -43,14 +43,18 @@ intake link" → the stage sheet; copy/revoke fire toasts).
 
 | Variant | File | Direction |
 |---|---|---|
-| **A — List-first** | `manage-a-list.html` | One clean list of link cards (Active / Closed); per-row status badge + counters + an "awaiting review" flag. Closest to the existing jcode-launcher / credential lists. |
-| **B — Grouped by state** | `manage-b-grouped.html` | Sectioned **Needs review → Active → Closed**; the top section surfaces links with submissions waiting in the review inbox, each with a prominent "Review →" jump. Action-forward. |
-| **C — Dashboard** | `manage-c-dashboard.html` | A summary strip (Active · Awaiting review · Opens today) + a review CTA banner, over rows with **runs/opens progress bars**. Most at-a-glance. |
+| **B — Grouped by state ✅ chosen** | `manage-b-grouped.html` | Sectioned **Needs review → Active → Closed**; the top section surfaces links with submissions waiting, each with a prominent "Review →" jump. Action-forward. Finalized: modal dropped; submissions open a read-only conversation view. |
+| **A — List-first** | `manage-a-list.html` | One clean list of link cards (Active / Closed); per-row status badge + counters + an "awaiting review" flag. Closest to the existing jcode-launcher / credential lists. (Still carries the old modal mint-sheet — superseded by B.) |
+| **C — Dashboard** | `manage-c-dashboard.html` | A summary strip (Active · Awaiting review · Opens today) + a review CTA banner, over rows with **runs/opens progress bars**. Most at-a-glance. (Still carries the old modal mint-sheet — superseded by B.) |
 
-Two faithful details baked into all three: **(1)** "+ New intake link" **stages a Proposal**
-(creation routes through the agent → Proposal → approval), it does not mint directly; **(2)**
-**Copy link is always available** with no one-time warning, reflecting the
-re-copyable-encrypted-at-rest decision (the one documented divergence from show-once).
+Faithful details baked into the chosen B: **(1)** "+ New intake link" does **not** mint or open
+a modal — creation routes through the agent → editable Proposal → approval; **(2)** **Copy link
+is always available** (no one-time warning), reflecting the re-copyable-encrypted-at-rest
+decision (the one documented divergence from show-once); **(3)** each submission opens a
+**read-only conversation view** — the full verbatim recipient↔agent transcript + the draft the
+recipient confirmed — explicitly **kept separate from the owner's own chats** (intake sessions
+are non-owner principals, never folded into the Full Brain chat list); abandoned/in-progress
+sessions are visible too, tagged by status.
 
 ## Editable intake-link Proposal (round 3)
 
