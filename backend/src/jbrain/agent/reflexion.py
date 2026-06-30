@@ -71,6 +71,7 @@ def cited_indices(claim: str) -> list[int]:
     the claim attributes nothing — then grounding falls back to token overlap."""
     return [int(m.group(1)) for m in _CITATION.finditer(claim)]
 
+
 _STOPWORDS = frozenset(
     [
         "a",
@@ -302,9 +303,7 @@ def verify_citations(
     return VerificationResult((len(cited) - len(invalid)) / len(cited), issues)
 
 
-def _is_grounded(
-    claim: str, sources: set[str], threshold: float, cited_source_count: int
-) -> bool:
+def _is_grounded(claim: str, sources: set[str], threshold: float, cited_source_count: int) -> bool:
     """Whether one claim is grounded. Two deterministic routes, citation first:
 
     1. **Citation.** If the claim carries a citation marker (`[^1]`) whose index
