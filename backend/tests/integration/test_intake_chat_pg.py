@@ -217,12 +217,39 @@ async def test_concurrency_cap_refuses_overlapping_turn(maker: async_sessionmake
     app = _app(maker, fake)
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as client:
         await _redeem(maker, ctx, client)
-        # Mark THIS client's session as already having a turn in flight.
-        state = await SqlIntakeRepo(maker).session_state(await _client_principal(client, maker))
-        assert state is not None
-        app.state.intake_inflight.add(state.id)
+        pid = await _client_principal(client, maker)
+        # Mark THIS client's session as having a fresh turn in flight (the DB lock).
+        async with scoped_session(maker, SessionContext(auth_context="bootstrap")) as session:
+            await session.execute(
+                text(
+                    "UPDATE app.intake_sessions SET in_flight = true, last_turn_at = now()"
+                    " WHERE principal_id = :p"
+                ),
+                {"p": pid},
+            )
         busy = await client.post("/api/intake/chat", json={"message": "hello?"})
-        assert busy.status_code == 409
+        assert busy.status_code == 409  # a turn is already in flight
+
+
+async def test_double_confirm_burns_one_run_only(maker: async_sessionmaker) -> None:
+    """L1: two confirms on the same session can't double-burn or double-submit — the
+    session-status flip serializes them, so the second loses (409)."""
+    ctx = await _owner_ctx(maker)
+    fake = FakeLlmClient(turns=[_turn("Summary: phone 555-1234. Confirm?")])
+    app = _app(maker, fake)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as client:
+        link_id, _ = await _redeem(maker, ctx, client)
+        await client.post("/api/intake/chat", json={"message": "555-1234"})
+        first = await client.post("/api/intake/confirm", json={"enterer_name": "Dana"})
+        assert first.status_code == 201
+        second = await client.post("/api/intake/confirm", json={"enterer_name": "Dana"})
+        assert second.status_code == 409
+    async with scoped_session(maker, ctx) as session:
+        assert (
+            await session.execute(
+                text("SELECT runs_used FROM app.intake_links WHERE id = :i"), {"i": link_id}
+            )
+        ).scalar() == 1  # exactly one run burned, not two
 
 
 async def test_reaper_abandons_stale_drafting_sessions(maker: async_sessionmaker) -> None:

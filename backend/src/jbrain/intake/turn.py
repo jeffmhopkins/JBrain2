@@ -19,6 +19,11 @@ from jbrain.llm import AssistantMessage, LlmMessage, UserMessage
 MAX_TURNS_PER_SESSION = 40
 MAX_COST_TOKENS_PER_SESSION = 400_000
 
+# How long a claimed turn lock (`in_flight`) may stand before a new claim reclaims it.
+# A real turn finishes in well under this; a lock older than this is a crashed turn, so
+# reclaiming it keeps a single failure from locking the session forever.
+TURN_LOCK_STALE_SECONDS = 300
+
 # Wraps the recipient's message as DATA, never instructions — the per-turn half of the
 # boundary (the persona frame carries the standing rule). A stranger's "ignore your
 # instructions" is thus framed content the model is told to treat as an answer, not a
@@ -52,8 +57,3 @@ def conversation_from_transcript(transcript: Sequence[dict], new_message: str) -
             messages.append(AssistantMessage(text=text))
     messages.append(framed_recipient_message(new_message))
     return messages
-
-
-def caps_exceeded(turns_used: int, cost_tokens_used: int) -> bool:
-    """Whether this session has hit either cumulative ceiling — the next turn is refused."""
-    return turns_used >= MAX_TURNS_PER_SESSION or cost_tokens_used >= MAX_COST_TOKENS_PER_SESSION

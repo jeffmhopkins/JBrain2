@@ -40,13 +40,6 @@ def get_intake_repo(request: Request) -> IntakeRepo:
 IntakeRepoDep = Annotated[IntakeRepo, Depends(get_intake_repo)]
 
 
-def _inflight(request: Request) -> set[str]:
-    """The process-local set of intake sessions with a turn in flight — the concurrency
-    cap (§5). Single web process, so an in-memory guard is sufficient; a turn that crashes
-    still clears its entry via the generator's finally."""
-    return cast("set[str]", request.app.state.intake_inflight)
-
-
 async def _intake_session(principal: PrincipalDep, repo: IntakeRepoDep) -> IntakeSessionState:
     """Resolve the calling intake cookie to its own session, or 403. The principal is
     per-session, so the principal IS the session identity — no path param to match."""
@@ -338,14 +331,15 @@ async def intake_chat(
     when the session is closed (409), the per-session caps are hit (429), or a turn is
     already in flight (409, the concurrency cap)."""
     state = await _intake_session(principal, repo)
-    if state.status != "drafting":
+    # Atomically claim the session's single turn slot: this one check is the concurrency
+    # cap AND the cumulative turn/cost caps (§5), DB-enforced so it holds across workers.
+    claim = await repo.claim_turn(principal.id, state.id)
+    if claim == "closed":
         raise HTTPException(status_code=409, detail="this intake session is closed")
-    if turn.caps_exceeded(state.turns_used, state.cost_tokens_used):
-        raise HTTPException(status_code=429, detail="this interview has reached its limit")
-    inflight = _inflight(request)
-    if state.id in inflight:
+    if claim == "busy":
         raise HTTPException(status_code=409, detail="a turn is already in progress")
-    inflight.add(state.id)
+    if claim == "capped":
+        raise HTTPException(status_code=429, detail="this interview has reached its limit")
 
     router_llm = cast(LlmRouter, request.app.state.llm_router)
     registry = cast(ToolRegistry, request.app.state.agent_registry)
@@ -376,11 +370,11 @@ async def intake_chat(
                     cost += ev.input_tokens + ev.output_tokens
                 yield f"data: {ev.model_dump_json()}\n\n".encode()
         finally:
-            inflight.discard(state.id)
-            # Record the turn + cost even on a mid-stream disconnect, so a recipient can't
-            # bypass the per-session ceiling by dropping turns (best-effort).
+            # Always release the turn lock and record the result — even on a mid-stream
+            # disconnect. The turn was already COUNTED at claim, so a dropped turn can't
+            # bypass the per-session ceiling; this just records its cost + frees the lock.
             with suppress(Exception):
-                await repo.record_turn(
+                await repo.release_turn(
                     principal.id,
                     state.id,
                     recipient=body.message,

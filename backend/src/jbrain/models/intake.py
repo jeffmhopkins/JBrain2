@@ -70,6 +70,9 @@ class IntakeSession(Base):
     last_turn_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    # The per-session turn lock (the concurrency cap, migration 0110): claimed atomically
+    # before a turn streams, released after; a stale lock self-heals on the next claim.
+    in_flight: Mapped[bool] = mapped_column(Boolean, default=False)
 
 
 class IntakeSubmission(Base):

@@ -102,7 +102,10 @@ class _FakeIntakeRepo:
     async def session_state(self, principal_id):  # type: ignore[no-untyped-def]
         return None
 
-    async def record_turn(self, principal_id, session_id, *, recipient, assistant, cost_tokens):  # type: ignore[no-untyped-def]
+    async def claim_turn(self, principal_id, session_id):  # type: ignore[no-untyped-def]
+        return "ok"
+
+    async def release_turn(self, principal_id, session_id, *, recipient, assistant, cost_tokens):  # type: ignore[no-untyped-def]
         return None
 
     async def capture(self, principal_id, session_id, link_id, *, enterer_name, draft, transcript):  # type: ignore[no-untyped-def]

@@ -18,6 +18,7 @@ from sqlalchemy import CursorResult, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from jbrain.db.session import SessionContext, intake_context, scoped_session
+from jbrain.intake import turn
 from jbrain.intake.service import (
     ClaimResult,
     IntakeLinkConfig,
@@ -29,6 +30,11 @@ from jbrain.intake.service import (
 from jbrain.models import IntakeLink, IntakeSession, IntakeSubmission, Principal
 
 _BOOTSTRAP = SessionContext(auth_context="bootstrap")
+
+
+class _CaptureRefused(Exception):
+    """Internal: rolls back the capture transaction on a lost confirm race or exhausted
+    runs, so a refused capture writes nothing (no orphan submitted session / burned run)."""
 
 
 class SqlIntakeRepo:
@@ -246,7 +252,61 @@ class SqlIntakeRepo:
                 cost_tokens_used=row.cost_tokens_used,
             )
 
-    async def record_turn(
+    async def claim_turn(self, principal_id: str, session_id: str) -> str:
+        """Atomically claim the session's single turn slot before streaming, or refuse.
+
+        One conditional UPDATE is BOTH the concurrency cap (one in-flight turn) and the
+        cumulative turn/cost caps (§5) — DB-enforced, so it holds across web workers, not
+        an in-process set. A lock whose turn started longer ago than the stale window is
+        reclaimed (a crashed turn never locks the session forever). `last_turn_at` is
+        stamped at claim (turn START), so it is also the staleness clock.
+
+        Returns 'ok' on a claim, else why it was refused: 'busy' (a turn is in flight),
+        'capped' (a cumulative ceiling hit), or 'closed' (not a drafting session)."""
+        async with scoped_session(self._maker, intake_context(principal_id)) as session:
+            claimed = (
+                await session.execute(
+                    text(
+                        "UPDATE app.intake_sessions"
+                        " SET turns_used = turns_used + 1, in_flight = true, last_turn_at = now()"
+                        " WHERE id = :sid AND principal_id = :pid AND status = 'drafting'"
+                        "   AND turns_used < :max_turns AND cost_tokens_used < :max_cost"
+                        "   AND (NOT in_flight"
+                        "        OR last_turn_at < now() - make_interval(secs => :stale))"
+                        " RETURNING id"
+                    ),
+                    {
+                        "sid": session_id,
+                        "pid": principal_id,
+                        "max_turns": turn.MAX_TURNS_PER_SESSION,
+                        "max_cost": turn.MAX_COST_TOKENS_PER_SESSION,
+                        "stale": turn.TURN_LOCK_STALE_SECONDS,
+                    },
+                )
+            ).scalar_one_or_none()
+            if claimed is not None:
+                return "ok"
+            # Classify the refusal for the caller's status code (a fresh read, no race).
+            row = (
+                (
+                    await session.execute(
+                        text(
+                            "SELECT status, in_flight, turns_used, cost_tokens_used"
+                            " FROM app.intake_sessions WHERE id = :sid AND principal_id = :pid"
+                        ),
+                        {"sid": session_id, "pid": principal_id},
+                    )
+                )
+                .mappings()
+                .one_or_none()
+            )
+        if row is None or row["status"] != "drafting":
+            return "closed"
+        if row["in_flight"]:
+            return "busy"
+        return "capped"
+
+    async def release_turn(
         self,
         principal_id: str,
         session_id: str,
@@ -255,9 +315,10 @@ class SqlIntakeRepo:
         assistant: str,
         cost_tokens: int,
     ) -> None:
-        """Append one exchange to the running transcript and bump the per-session
-        cumulative counters — under the recipient's own principal (the pin restricts the
-        UPDATE to its own session)."""
+        """Close out a claimed turn: append the exchange, add its cost, and RELEASE the
+        lock. The turn was already counted at claim, so this never increments `turns_used`
+        — it only records the result and clears `in_flight` (always, so a session is never
+        left locked)."""
         entries = json.dumps(
             [{"role": "recipient", "text": recipient}, {"role": "interviewer", "text": assistant}]
         )
@@ -266,9 +327,8 @@ class SqlIntakeRepo:
                 text(
                     "UPDATE app.intake_sessions"
                     " SET transcript = transcript || CAST(:entries AS jsonb),"
-                    "     turns_used = turns_used + 1,"
                     "     cost_tokens_used = cost_tokens_used + :cost,"
-                    "     last_turn_at = now()"
+                    "     in_flight = false"
                     " WHERE id = :sid AND principal_id = :pid"
                 ),
                 {
@@ -289,48 +349,69 @@ class SqlIntakeRepo:
         draft: dict,
         transcript: list,
     ) -> str | None:
-        """The capture-only write (#4/#10): burn one RUN on the link (the submission
-        ceiling), then materialize the recipient's submission under its own principal.
+        """The capture-only write (#4/#10), all in ONE bootstrap transaction so two
+        concurrent confirms can't double-burn or double-submit.
 
-        The run burn is an atomic gate under bootstrap (runs_used < max_runs); a miss
-        (runs exhausted / link closed) returns None and writes nothing. On a win the
-        recipient writes its OWN submission row (principal_id pin) and flips its session to
-        `submitted`. This stages NO Proposal and triggers NO job — the owner materializes
-        the Proposal separately (W4). The (rare) burn-succeeds / insert-fails residual is
-        an over-count of one run, never an over-issue of a submission."""
-        async with scoped_session(self._maker, _BOOTSTRAP) as session:
-            burned = (
+        Order is the serializer: the session-status flip (`… WHERE status='drafting'
+        RETURNING`) claims the session — only the FIRST confirm matches a row. Then the
+        run burn (`runs_used < max_runs`) gates the submission ceiling; a miss raises and
+        rolls the whole transaction back (no orphan `submitted` session, no burned run).
+        On success the recipient's own submission is written (principal pinned) and the
+        session is `submitted`. Stages NO Proposal, triggers NO job — the owner
+        materializes the Proposal later (W4). Returns the submission id, or None when the
+        session was already closed (a lost confirm race) or the link's runs are exhausted."""
+        try:
+            async with scoped_session(self._maker, _BOOTSTRAP) as session:
+                flipped = (
+                    await session.execute(
+                        text(
+                            "UPDATE app.intake_sessions SET status = 'submitted'"
+                            " WHERE id = :sid AND principal_id = :pid AND status = 'drafting'"
+                            " RETURNING id"
+                        ),
+                        {"sid": session_id, "pid": principal_id},
+                    )
+                ).scalar_one_or_none()
+                if flipped is None:
+                    raise _CaptureRefused
+                burned = (
+                    await session.execute(
+                        text(
+                            "UPDATE app.intake_links SET runs_used = runs_used + 1"
+                            " WHERE id = :lid AND status = 'active' AND runs_used < max_runs"
+                            " RETURNING id"
+                        ),
+                        {"lid": link_id},
+                    )
+                ).scalar_one_or_none()
+                if burned is None:
+                    raise _CaptureRefused
+                # Raw INSERT with a client-generated id and NO RETURNING: under bootstrap
+                # the row is not visible through the SELECT policy (intentional — the
+                # server captures but does not read back as bootstrap), and a RETURNING
+                # would be checked against that policy and fail. WITH CHECK alone admits it.
+                submission_id = str(uuid.uuid4())
                 await session.execute(
                     text(
-                        "UPDATE app.intake_links SET runs_used = runs_used + 1"
-                        " WHERE id = :lid AND status = 'active' AND runs_used < max_runs"
-                        " RETURNING id"
+                        "INSERT INTO app.intake_submissions"
+                        " (id, link_id, session_id, principal_id, enterer_name,"
+                        "  transcript, draft, status)"
+                        " VALUES (:id, :lid, :sid, :pid, :name,"
+                        "  CAST(:transcript AS jsonb), CAST(:draft AS jsonb), 'submitted')"
                     ),
-                    {"lid": link_id},
+                    {
+                        "id": submission_id,
+                        "lid": link_id,
+                        "sid": session_id,
+                        "pid": principal_id,
+                        "name": enterer_name,
+                        "transcript": json.dumps(transcript),
+                        "draft": json.dumps(draft),
+                    },
                 )
-            ).scalar_one_or_none()
-        if burned is None:
+        except _CaptureRefused:
             return None
-        async with scoped_session(self._maker, intake_context(principal_id)) as session:
-            submission = IntakeSubmission(
-                link_id=uuid.UUID(link_id),
-                session_id=uuid.UUID(session_id),
-                principal_id=uuid.UUID(principal_id),
-                enterer_name=enterer_name,
-                transcript=transcript,
-                draft=draft,
-                status="submitted",
-            )
-            session.add(submission)
-            await session.execute(
-                text(
-                    "UPDATE app.intake_sessions SET status = 'submitted'"
-                    " WHERE id = :sid AND principal_id = :pid"
-                ),
-                {"sid": session_id, "pid": principal_id},
-            )
-            await session.flush()
-            return str(submission.id)
+        return submission_id
 
     async def reap_abandoned(self, ctx: SessionContext, older_than_seconds: int) -> int:
         """Transition stale `drafting` sessions to `abandoned` (the reaper, §6). A session

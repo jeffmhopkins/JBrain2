@@ -161,7 +161,9 @@ class IntakeRepo(Protocol):
 
     async def session_state(self, principal_id: str) -> IntakeSessionState | None: ...
 
-    async def record_turn(
+    async def claim_turn(self, principal_id: str, session_id: str) -> str: ...
+
+    async def release_turn(
         self,
         principal_id: str,
         session_id: str,
