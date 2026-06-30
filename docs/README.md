@@ -85,6 +85,16 @@ Phase-5 build record is `archive/PHASE5_COMPLETION_PLAN.md`.
   (record: `archive/SUBAGENT_SPAWNING_REVIEW.md`). Tree budget locked at 1.5× the
   per-turn jerv limit; remaining derived cap numbers tuned at S2. Open: the S3
   non-happy-state mock re-review.
+- `GUIDED_INTAKE_PLAN.md` — the **guided-intake share links** build plan (Phase 7;
+  promoted from the icebox): the owner mints a time-boxed, run-capped link giving a
+  recipient a chat interface to a scoped AI interviewer that drafts a summary the
+  recipient confirms; the captured submission surfaces to the owner as an editable,
+  approvable Proposal that becomes attributed notes. Reuses the jcode share-link auth,
+  the Proposal primitive, the agent loop, and notes→facts ingestion. Net-new: one
+  closed `intake` persona, two owner-RLS tables, the editable intake-link Proposal, a
+  public recipient PWA, and a read-only conversation view kept separate from the owner's
+  chats. **Five waves (W1–W5)**, GUI mock gate cleared (chosen mocks in
+  `mocks/guided-intake/`); W1–W2 are the security-critical (red-team) waves.
 - `JCODE_SESSION_ISOLATION_PLAN.md` — the **per-session network namespace** design
   (**PARKED** after the Wave P1 spike): give each jcode session its own `lo` so every
   session can bind the same port. The on-box spike confirmed namespace _creation_ works

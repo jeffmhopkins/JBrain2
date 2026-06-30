@@ -1,11 +1,10 @@
-# Guided Intake Share Links — design spec (proposed)
+# Guided Intake Share Links — build plan
 
-> **Status: icebox / not scheduled.** A forward-looking spec kept for the record. It
-> realizes the **Phase 7** roadmap line "guided-intake share links" (`../ROADMAP.md`) and the
-> non-owner-principal design already sketched in `../ASSISTANT.md` (an intake link is "a
-> session whose read scope is fixed to its capability token (one subject × one domain) and
-> whose policy is capture-only / everything-else-denied"). Nothing here is built. When picked
-> up, reconcile with the `CLAUDE.md` non-negotiables (see §10) and give it a roadmap slot.
+> **Status: scheduled build plan** (promoted from the icebox `proposed/` spec). Realizes the
+> **Phase 7** roadmap line "guided-intake share links" (`ROADMAP.md`). The GUI mock gate
+> (`PROCESS.md`) is **cleared** — chosen mocks in `mocks/guided-intake/` are binding. Decomposed
+> into five waves below; one PR per wave, per-task + per-wave adversarial review, CI green before
+> merge. Reconcile every wave with the `CLAUDE.md` non-negotiables (§10).
 
 ## 1. What it is
 
@@ -20,7 +19,7 @@ Two surfaces, both composed from existing machinery:
 - **Owner side** — an agent tool that *generates* an editable Proposal to mint a link, plus a
   card-launcher **management screen** ("Intake Links") for live links and their conversations.
 - **Recipient side** — a public, link-scoped PWA running the agent loop as a **non-owner
-  principal** (empty read scope, capture-only), exactly the principal model in `../ASSISTANT.md`.
+  principal** (empty read scope, capture-only), exactly the principal model in `ASSISTANT.md`.
 
 The marquee fit: ~80% of this already exists. The link auth is the jcode share-link
 machinery; the approval gate is the Proposal primitive; the interviewer is the agent loop with
@@ -158,17 +157,17 @@ or a submission already queued).
 - **Mint-time (intake-link Proposal).** `kind = intake-link`, single owner node whose preview is
   the **editable config form** (agent prompt + settings). The editable-preview affordance is new
   and scoped to this kind only; every other kind stays read-only (the anti-fatigue control in
-  `../ASSISTANT.md` still binds for machine-authored effects). Approve → mint secret from the
+  `ASSISTANT.md` still binds for machine-authored effects). Approve → mint secret from the
   edited config.
 - **Submit-time (intake-submission Proposal).** A **tree**: root "Intake from <link> about
   <subject>", a **summary-note leaf** (provenance-only, flagged no-extract) + one **per-claim
   leaf** (each → an atomic attributed note). Approvable in whole or in part, reusing the tree's
   existing partial-approval machinery. Materialized owner-side from the captured submission.
 
-## 8. GUI surfaces (mock-first gate — chosen variants binding)
+## 8. GUI surfaces (mock gate cleared — chosen variants binding)
 
-Three mock rounds ran per `../PROCESS.md`'s GUI gate; chosen artifacts in
-`../mocks/guided-intake/` (with A/C rivals retained):
+Three mock rounds ran per `PROCESS.md`'s GUI gate; chosen artifacts in `mocks/guided-intake/`
+(with A/C rivals retained):
 
 - **Recipient surface → `intake-b-stepper.html`** (B, Guided stepper): a persistent
   Welcome → Interview → Review → Done progress header, the draft on its own Review screen,
@@ -190,7 +189,7 @@ Every other JBrain2 credential is shown once and stored only as a hash. The owne
 links **re-copyable anytime** (re-send without re-minting). That requires the secret recoverable
 at rest, which the show-once invariant exists to prevent. Resolution: **store the secret
 encrypted** with the box's keystore / owner-derived key (the encryption-at-rest control in
-`../OPERATIONS.md`); `copy` decrypts on demand. So re-copy works, but no plaintext bearer secret
+`OPERATIONS.md`); `copy` decrypts on demand. So re-copy works, but no plaintext bearer secret
 sits in a `pg_dump`, backup, or the debug SQL console. This is the **single deliberate,
 documented divergence** from show-once and must be called out at implementation review.
 
@@ -215,7 +214,78 @@ and the encrypted-secret column. **Reuses:** capability-token machinery, the Pro
 the agent loop + `/chat` SSE, the review inbox, notes→facts ingestion, the card launcher. **Goal:
 zero new runtime dependencies.**
 
-## 12. Open items (resolve at pickup)
+## 12. Build plan — waves
+
+Per `PROCESS.md`: a wave is a set of mostly-parallel tasks on one `wave-N` integration branch;
+each task gets an independent adversarial review before it merges to the wave branch; each wave
+gets a second wave-level review (security/red-team for any RLS/scope wave); **one PR per wave**,
+CI green before merge, then the next wave begins. The GUI mock gate is already cleared (§8), so
+waves W4–W5 build directly from the chosen mocks.
+
+### W1 — Capability + data foundation (backend, security-critical)
+
+- `intake_links` + `intake_submissions` tables + Alembic migration; RLS policies + **per-table
+  isolation tests** (owner-only management; the link's own session writes only its submission row;
+  a single-scope session cannot read another domain's link/submission/transcript).
+- Extend `auth.service` with the `intake_link` principal kind (mirroring `mint/validate/redeem_
+  jcode_share`): mint, validate, redeem with the **bind-on-first vs. open** branch; `runs_used` /
+  `opens_used` counters with their caps; TTL + revoke; **encrypted-at-rest secret** via the
+  keystore control (§9), with re-copy (decrypt-on-demand).
+- Owner management services + routes: list / get / revoke links, list submissions, get transcript.
+- **Exit:** links mint / redeem / revoke through the API; counters and both caps enforced; secret
+  round-trips through encryption; RLS proven. No UI. *(Red-team review: this wave is the auth +
+  firewall surface.)*
+
+### W2 — The `intake` persona + interview + capture (backend, security-critical)
+
+- New **closed `intake` agent** (`jbrain.agent.agents`): empty read scope, **no** KB/web/memory
+  tools, capture-only allowlist enforced **at dispatch**; prompt assembled per-link from the brief
+  (config **snapshot at open**). Data/instruction boundary wraps every recipient turn.
+- Recipient chat endpoint: redeem → scoped session → agent loop as the intake principal → SSE
+  stream; per-session guardrails (turn cap, `max_cost`, `wall_clock`).
+- Capture path: model emits the draft as a **data-only view**; recipient confirm → **capture-only
+  write** to `intake_submissions` (`runs_used++`), full transcript retained; model-judged "done".
+- Tests: adapter fake drives a scripted interview + capture; **scope/allowlist enforced at dispatch**
+  (a named-but-ungranted tool is refused); injection test (no owner data reachable); RLS.
+- **Exit:** a redeemed link runs a scoped interview and captures a submission with full transcript;
+  the persona cannot reach owner data even when prompted. *(Red-team review.)*
+
+### W3 — The two Proposals (backend)
+
+- `make_intake_link.tool` sidecar (owner-only, `sensitive`, version-guarded) → stages the editable
+  **intake-link Proposal**; a "patch staged config" endpoint for the editable preview; approve →
+  mint (W1) → secret shown/encrypted.
+- Submission → **owner-side materialization** of the **intake-submission Proposal tree** (summary-
+  note leaf flagged no-extract + per-claim leaves); approval enacts → attributed, normal-weight,
+  provenance-flagged notes through ingestion.
+- Tests: sidecar validity + version-bump CI guard; stage / edit / approve; submission → notes;
+  **#10 assertion** (untrusted submission never auto-stages / never triggers a job).
+- **Exit:** end-to-end backend — agent stages link Proposal → approve → mint → recipient submits →
+  owner approves → notes appear with correct attribution.
+
+### W4 — Recipient public surface (frontend)
+
+- `IntakeShareApp` public PWA (redeem-and-strip the secret, scoped cookie, no nav, owner routes
+  403) implementing the chosen **`intake-b-stepper`**: welcome form (blurb + name + consent) → chat
+  (SSE) → draft-confirm (fix → back to chat) → done; dead-link states; generic/named disclosure.
+- API types generated from OpenAPI; self-contained, no external loads; mobile-first; reduced-motion.
+- **Exit:** a real link opened in a browser walks the full flow against the W2/W3 backend.
+
+### W5 — Owner surfaces (frontend)
+
+- The editable **intake-link Proposal editor** (chosen **`proposal-b-preview`**, Edit ⇄ Preview) in
+  the Proposals page.
+- The **"Intake Links"** card-launcher destination (chosen **`manage-b-grouped`**) + the
+  **read-only conversation view** (separate from owner chats) + revoke / re-copy; the
+  intake-submission Proposal renders in the review inbox.
+- **Exit:** the owner mints via the agent, edits/approves the Proposal, manages live links, reviews
+  submissions + full transcripts, and approves into the brain — all from the phone. Feature complete.
+
+**Dependency order:** W1 → W2 → W3 (backend spine), then W4 (needs W2/W3) and W5 (needs W3) — W4
+and W5 can overlap once W3 lands. W1 and W2 are the security-critical waves (mandatory red-team
+gate). On promotion, give this a Phase 7 slot in `ROADMAP.md`.
+
+## 13. Open items (resolve during build)
 
 - **Concurrency cap shape** — "cap total opens too" is settled; the exact `max_opens` default
   (4 × `max_runs`?) and any per-link live-session cap are tuning values.
@@ -225,4 +295,3 @@ zero new runtime dependencies.**
   never triggers a background job" (the notify is a metadata signal only).
 - **Transcript retention window** — kept until link/submission deletion; whether an explicit
   retention/auto-purge policy is wanted is open.
-- **A wave-by-wave build plan** (per `../PROCESS.md`) is written at promotion, not here.

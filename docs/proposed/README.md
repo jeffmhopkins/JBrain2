@@ -27,14 +27,6 @@ given a roadmap slot in `../ROADMAP.md`, and promoted out of this folder.
   a decade of phone dumps (hash-keyed dedup, deterministic dating, a vision worker
   bridging pixels to the text-only 120B, CLIP search, InsightFace faces, residual
   RAG-backed date/identity inference, browser viewer).
-- `GUIDED_INTAKE_PLAN.md` — **guided-intake share links** (realizes the Phase 7 roadmap line):
-  the owner mints a time-boxed, run-capped link that gives a recipient a chat interface to a
-  scoped AI interviewer; the interviewer drafts a summary, the recipient confirms it, and the
-  captured submission surfaces to the owner as an editable/approvable Proposal that becomes
-  attributed notes. Reuses the jcode share-link auth, the Proposal primitive, the agent loop,
-  and notes→facts ingestion; one closed `intake` persona, two owner-RLS tables, an editable
-  intake-link Proposal, and a read-only conversation view kept separate from the owner's chats.
-  Chosen mocks in `../mocks/guided-intake/` (recipient, Proposal editor, management screen).
 - `MUSIC_GEN_PLAN.md` — music generation on the existing opt-in `comfyui` service
   (ACE-Step 1.5 XL Turbo, AMD/gfx1151-validated): a new audio workflow + audio-aware
   driver output path, an owner-only `generated_audio` artifact table, a `generate_music`
@@ -45,3 +37,7 @@ given a roadmap slot in `../ROADMAP.md`, and promoted out of this folder.
 _(`SUBAGENT_SPAWNING_PLAN.md` was promoted out of the icebox — it is now the
 scheduled build plan `../SUBAGENT_SPAWNING_PLAN.md`, listed under "Active plan" in
 `../README.md`.)_
+
+_(`GUIDED_INTAKE_PLAN.md` was promoted out of the icebox — it is now the scheduled
+build plan `../GUIDED_INTAKE_PLAN.md` (five waves, GUI mock gate cleared), listed
+under "Active plan" in `../README.md`.)_
