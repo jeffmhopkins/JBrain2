@@ -300,6 +300,7 @@ for (let i = 0; i < NEURONS; i++) {
 // Per-neuron flood-ping activation (0..~1.5), updated on the CPU each frame and
 // fed to the neuron + synapse shaders so light propagates node-by-node.
 const nodeAct = new Float32Array(NEURONS);
+const nodeFreq = new Float32Array(NEURONS); // recent firing frequency -> lit-node size (1/3 base .. ~5x)
 
 // Neuron material: additive glowing sprites, brightness driven by firing rate.
 const neuronGeo = new THREE.BufferGeometry();
@@ -308,6 +309,7 @@ neuronGeo.setAttribute('aSeed', new THREE.BufferAttribute(neuronSeed, 1));
 neuronGeo.setAttribute('aRadial', new THREE.BufferAttribute(neuronRadial, 1));
 neuronGeo.setAttribute('aAct', new THREE.BufferAttribute(nodeAct, 1));
 neuronGeo.setAttribute('aRank', new THREE.BufferAttribute(neuronRank, 1));
+neuronGeo.setAttribute('aFreq', new THREE.BufferAttribute(nodeFreq, 1));
 
 const neuronUniforms = {
   uTime:    { value: 0 },
@@ -329,7 +331,7 @@ const neuronMat = new THREE.ShaderMaterial({
   blending: THREE.AdditiveBlending,
   vertexShader: `
     uniform float uTime, uFire, uThink, uDensity;
-    attribute float aSeed, aRadial, aAct, aRank;
+    attribute float aSeed, aRadial, aAct, aRank, aFreq;
     varying float vGlow;
     varying float vRadial;
     void main() {
@@ -356,7 +358,10 @@ const neuronMat = new THREE.ShaderMaterial({
       glow *= gate;
       vGlow = glow;
 
-      float size = (1.2 + glow * 2.8);
+      // lit size starts at ~1/3 the old pop; a frequently-firing neuron grows up
+      // to ~5x over ~10s as aFreq accumulates
+      float litSize = aAct * (0.33 + aFreq * 1.33) * 2.8;
+      float size = (1.0 + uFire * 0.25) + litSize;
       gl_PointSize = size * (300.0 / -mv.z);
       gl_Position = projectionMatrix * mv;
     }
@@ -692,7 +697,11 @@ function updateFloods(dt) {
     if (!f.active) continue;
     f.front += dt * f.speed;
     // front pointer: neurons the wavefront has now reached
-    while (f.ptr < f.n && f.dist[f.order[f.ptr]] <= f.front) f.ptr++;
+    while (f.ptr < f.n && f.dist[f.order[f.ptr]] <= f.front) {
+      const fn = f.order[f.ptr];
+      if (nodeFreq[fn] < 1) nodeFreq[fn] = Math.min(nodeFreq[fn] + 0.085, 1); // each pass bumps firing frequency
+      f.ptr++;
+    }
     // tail pointer: neurons that have fallen behind the lit band
     const backEdge = f.front - FLOOD_TAIL;
     while (f.tptr < f.ptr && f.dist[f.order[f.tptr]] < backEdge) f.tptr++;
@@ -709,7 +718,7 @@ function updateFloods(dt) {
 // kept name for existing call sites: a burst/manual trigger = one strong, fast
 // flood from a random neuron
 function launchWave(speedHint) {
-  spawnFlood((Math.random() * NEURONS) | 0, 13, 1.2, 8, 16, clamp(eased.vram, 0.1, 1));
+  spawnFlood((Math.random() * NEURONS) | 0, 6.5, 1.2, 8, 16, clamp(eased.vram, 0.1, 1));
 }
 
 /* ============================================================================
@@ -964,12 +973,13 @@ function frame() {
     let tries = 0;
     while (neuronRank[seed] >= densityActive && tries++ < 12) seed = (Math.random() * NEURONS) | 0;
     if (neuronRank[seed] >= densityActive) continue;
-    const speed = 8 + clamp(eased.tok / 120, 0, 1) * 8 + drive * 4;  // euclidean units/sec (slower node-to-node)
+    const speed = 4 + clamp(eased.tok / 120, 0, 1) * 4 + drive * 2;  // euclidean units/sec (slow node-to-node flow)
     const strength = 0.22 + drive * 0.7;                    // much dimmer cascades at low load
     spawnFlood(seed, speed, strength, branchK, maxHops, densityActive);
   }
   const decay = Math.pow(0.04, dt);                          // trailing afterglow
-  for (let i = 0; i < NEURONS; i++) nodeAct[i] *= decay;
+  const freqDecay = Math.pow(0.5, dt / 5.0);                 // firing frequency fades over ~10s
+  for (let i = 0; i < NEURONS; i++) { nodeAct[i] *= decay; nodeFreq[i] *= freqDecay; }
   updateFloods(dt);
   // mirror node activation onto each synapse's two endpoints
   for (let l = 0; l < LINKS; l++) {
@@ -977,6 +987,7 @@ function frame() {
     linkAct[l*2+1] = nodeAct[linkB[l]];
   }
   neuronGeo.attributes.aAct.needsUpdate = true;
+  neuronGeo.attributes.aFreq.needsUpdate = true;
   linkGeo.attributes.aAct.needsUpdate = true;
 
   // --- inbound API sparks: spawn at rate ~ req/sec ---
