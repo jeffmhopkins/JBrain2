@@ -25,10 +25,12 @@ import { PlaceIcon } from "../components/icons";
 import { DOMAIN_COLOR } from "../notes/modes";
 
 /** What a `[^n]` citation marker resolves to: an owner note (tap opens it, via
- * `onCite`) or a web page (a tappable favicon that opens the URL). Built by the
- * surface from the turn's tool sources, positional with the `[^n]` numbering. */
+ * `onCite`), a graph entity (tap opens the entity, via `onCite`), or a web page (a
+ * tappable favicon that opens the URL). Built by the surface from the turn's tool
+ * sources, positional with the `[^n]` numbering. */
 export type CiteTarget =
   | { kind: "note"; noteId: string }
+  | { kind: "entity"; entityId: string }
   | { kind: "web"; url: string; title: string };
 
 const MONTHS =
@@ -46,8 +48,12 @@ const DATE = new RegExp(
 // (guarded so it doesn't fire on currency — not adjacent to a digit, and content
 // can't open/close on a space) and `\(…\)`; `$$…$$` is display math that happened to
 // land mid-line.
+// `[^n]` is the ASCII footnote the prompt asks for; `【^n】` / `【n】` is the
+// fullwidth form a browsing model (gpt-oss) emits instead — recognized here (digits
+// only, so CJK content like 【重要】 is untouched) so a disobedient turn's citation
+// still becomes a tappable chip rather than leaking the raw token as prose.
 const INLINE =
-  /(`[^`]+`)|(\$\$(?! )[^\n]+?(?<! )\$\$)|((?<!\d)\$(?![ $])[^$\n]+?(?<! )\$(?!\d))|(\\\([^\n]+?\\\))|(\*\*(?! )[^*\n]+(?<! )\*\*)|(\*(?! )[^*\n]+(?<! )\*)|(\[[^\]\n]+\]\([^)\n]+\))|(\[\^\d+\])|(【\s*https?:\/\/[^】\n]+】)/;
+  /(`[^`]+`)|(\$\$(?! )[^\n]+?(?<! )\$\$)|((?<!\d)\$(?![ $])[^$\n]+?(?<! )\$(?!\d))|(\\\([^\n]+?\\\))|(\*\*(?! )[^*\n]+(?<! )\*\*)|(\*(?! )[^*\n]+(?<! )\*)|(\[[^\]\n]+\]\([^)\n]+\))|(\[\^\d+\])|(【\^?\d+】)|(【\s*https?:\/\/[^】\n]+】)/;
 
 const isIsoDate = (s: string): boolean => /^\d{4}-\d{2}-\d{2}$/.test(s);
 
@@ -542,11 +548,12 @@ function inline(text: string, key: string, ctx: Ctx): ReactNode[] {
       out.push(<strong key={k}>{inline(tok.slice(2, -2), k, ctx)}</strong>);
     } else if (tok.startsWith("*")) {
       out.push(<em key={k}>{inline(tok.slice(1, -1), k, ctx)}</em>);
-    } else if (tok.startsWith("[^")) {
-      // A source citation. A web source renders as a tappable favicon that opens the
-      // page; a note (or no resolved target) keeps the numbered superscript that taps
-      // through to the note card via onCite.
-      const num = Number(tok.slice(2, -1));
+    } else if (tok.startsWith("[^") || /^【\^?\d+】$/.test(tok)) {
+      // A source citation, ASCII [^n] or the fullwidth 【^n】/【n】 a browsing model
+      // emits. A web source renders as a tappable favicon that opens the page; a note
+      // or entity (or no resolved target) keeps the numbered superscript that taps
+      // through via onCite.
+      const num = Number(tok.replace(/[[\]【】^]/g, ""));
       const target = ctx.cites?.[num - 1];
       if (target?.kind === "web") {
         out.push(<WebCite key={k} n={num} url={target.url} title={target.title} />);

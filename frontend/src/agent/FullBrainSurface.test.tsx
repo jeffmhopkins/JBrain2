@@ -1073,6 +1073,40 @@ describe("FullBrainSurface", () => {
     expect(onOpenNote).toHaveBeenCalledWith("n7");
   });
 
+  it("a [^1] citation resolving to a surfaced entity opens that entity", async () => {
+    // The screenshot case: a fact-graph answer (read_entity → entity, zero notes)
+    // cites its source with [^n]. The entity is a citable target now, so the marker
+    // taps through to the entity rather than rendering as a dead superscript.
+    const onOpenEntity = vi.fn();
+    async function* answer(): AsyncGenerator<ChatEvent> {
+      yield { type: "tool_call", id: "c1", name: "read_entity", arguments: { entity_id: "me" } };
+      yield {
+        type: "tool_result",
+        tool_call_id: "c1",
+        ok: true,
+        summary: "Me",
+        entities: [
+          {
+            kind: "entity",
+            entity_id: "me",
+            label: "Me",
+            domain: "general",
+            facts: ["Jeff's birth date is 1986-03-19"],
+          },
+        ],
+      };
+      yield { type: "text_delta", text: "You were born in 1986.[^1]" };
+      yield { type: "done", stop_reason: "end_turn" };
+    }
+    render(<Harness d={deps({ chat: answer })} onOpenEntity={onOpenEntity} />);
+    await waitFor(() => screen.getByLabelText("Conversation"));
+    fireEvent.change(screen.getByLabelText("Composer"), { target: { value: "when born?" } });
+    fireEvent.click(screen.getByRole("button", { name: "send" }));
+
+    fireEvent.click(await screen.findByRole("button", { name: "1" }));
+    expect(onOpenEntity).toHaveBeenCalledWith("me");
+  });
+
   it("linkifies a named entity inline and opens it on tap", async () => {
     const onOpenEntity = vi.fn();
     async function* answer(): AsyncGenerator<ChatEvent> {

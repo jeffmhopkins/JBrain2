@@ -220,6 +220,23 @@ describe("Markdown", () => {
     expect(onCite).toHaveBeenCalledWith(1);
   });
 
+  it("renders a fullwidth 【^n】 citation as a tappable chip (a browsing model's form)", () => {
+    // gpt-oss sometimes emits 【^1】 instead of [^1]; it must still become a tappable
+    // citation, not leak as the raw bracketed token.
+    const onCite = vi.fn();
+    render(<Markdown text="You were born in 1986 【^1】." onCite={onCite} />);
+    const out = document.body.textContent ?? "";
+    expect(out).not.toContain("【");
+    fireEvent.click(screen.getByRole("button", { name: "1" }));
+    expect(onCite).toHaveBeenCalledWith(1);
+  });
+
+  it("leaves a fullwidth bracketed non-number (CJK content) as text", () => {
+    // Only digit-only fullwidth brackets are citations — 【重要】 stays content.
+    const out = html("見出し: 【重要】 のお知らせ。");
+    expect(out).toContain("【重要】");
+  });
+
   it("places a Google Maps pin after a US postal address", () => {
     const out = html("The farm's address is P.O. Box 2782, Clanton, Alabama 35046, USA today.");
     const pin = document.querySelector("a.md-place");

@@ -376,18 +376,24 @@ function Bubble({
     return null;
   }
   // `[^n]` in the answer maps to the n-th source the turn surfaced, flattened across
-  // this turn's tools in order. A note source taps open its card (onCite); a web
-  // source (jerv) renders as a favicon that opens the page (handled in Markdown).
+  // this turn's tools in order. A note source taps open its card; an entity taps open
+  // the entity (a graph answer — read_entity/find_entity/relate — is citable too, not
+  // just notes); a web source (jerv) renders as a favicon that opens the page (handled
+  // in Markdown). Within a tool, notes precede web precede entities, so a note-only
+  // turn keeps its original numbering.
   const citeTargets: CiteTarget[] = message.tools.flatMap((t) => [
     ...(t.sources ?? []).map((s): CiteTarget => ({ kind: "note", noteId: s.noteId })),
     ...(t.webSources ?? []).map((w): CiteTarget => ({ kind: "web", url: w.url, title: w.title })),
+    ...(t.entities ?? []).map((e): CiteTarget => ({ kind: "entity", entityId: e.entity_id })),
   ]);
-  const onCite = onOpenNote
-    ? (n: number) => {
-        const target = citeTargets[n - 1];
-        if (target?.kind === "note") onOpenNote(target.noteId);
-      }
-    : undefined;
+  const onCite =
+    onOpenNote || onOpenEntity
+      ? (n: number) => {
+          const target = citeTargets[n - 1];
+          if (target?.kind === "note") onOpenNote?.(target.noteId);
+          else if (target?.kind === "entity") onOpenEntity?.(target.entityId);
+        }
+      : undefined;
   // Entities the turn resolved, deduped. Those whose name appears in the answer
   // are linkified inline (Markdown). The rest aren't chipped under the prose —
   // they stay reachable as tappable links inside the Worked step that surfaced
