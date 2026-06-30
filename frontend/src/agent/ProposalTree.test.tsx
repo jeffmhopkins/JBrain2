@@ -147,6 +147,48 @@ describe("ProposalTree", () => {
     expect(await screen.findByText("Enacted 1 · held 0")).toBeInTheDocument();
   });
 
+  it("renders the bespoke editor (not the node list) for an intake-link proposal", async () => {
+    const intake = detail({
+      kind: "intake-link",
+      title: "Dad's history",
+      nodes: [
+        {
+          id: "mint",
+          parent_id: null,
+          type: "leaf",
+          op: "mint_intake_link",
+          label: "Dad's history",
+          preview: {
+            subject_id: "dad",
+            domain: "health",
+            opening_blurb: "Please share.",
+            max_runs: 5,
+            max_opens: 20,
+            bind_on_first: true,
+            ttl_hours: 24,
+            capture_enterer_name: true,
+            disclose_owner_identity: false,
+          },
+          deps: [],
+          status: "pending",
+        },
+      ],
+    });
+    render(
+      <ProposalTree
+        proposalId="p1"
+        onClose={vi.fn()}
+        getProposal={vi.fn(async () => intake)}
+        decideNode={vi.fn()}
+        enactProposal={vi.fn()}
+      />,
+    );
+    // The editor's tabs + mint action — and crucially NOT the generic "Enact approved".
+    expect(await screen.findByRole("tab", { name: "Preview" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Approve & mint/ })).toBeInTheDocument();
+    expect(screen.queryByText("Enact approved")).not.toBeInTheDocument();
+  });
+
   it("fires onEnacted after a successful enact so the stream can refresh", async () => {
     const onEnacted = vi.fn();
     render(

@@ -14,6 +14,7 @@ import {
   DatabaseIcon,
   FlaskIcon,
   GaugeIcon,
+  GlobeIcon,
   GraphIcon,
   ImageIcon,
   ListIcon,
@@ -40,6 +41,7 @@ export type LauncherTarget =
   | "location"
   | "wiki"
   | "image"
+  | "intake"
   | "tasks"
   | "jcode";
 
@@ -76,6 +78,7 @@ const SECTIONS: Section[] = [
     // mode), not a launcher tile.
     tiles: [
       { title: "Review", icon: <CheckSquareIcon size={24} />, target: "review" },
+      { title: "Intake", icon: <GlobeIcon size={24} />, target: "intake" },
       { title: "Image", icon: <ImageIcon size={24} />, target: "image" },
       { title: "Code", icon: <CodeIcon size={24} />, target: "jcode" },
     ],
