@@ -10,6 +10,7 @@ from fastapi import FastAPI, Request
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from jbrain.agent.attachments import TurnAttachmentRepo
+from jbrain.agent.brainevents import build_event_emitter
 from jbrain.agent.gmailtools import build_gmail_handlers
 from jbrain.agent.hurricanetools import build_hurricane_handlers
 from jbrain.agent.imagegentools import build_image_handlers
@@ -304,7 +305,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.connector_service = ConnectorService(connector_registry, SqlConnectorCache(maker))
         # The jerv chatbot's on-box internet tools — direct, sandboxed web access
         # (no owner data in context; docs/ASSISTANT.md "Agent selection").
-        web_handlers = build_web_handlers(SearxngClient(settings.searxng_url), WebFetcher())
+        web_handlers = build_web_handlers(
+            SearxngClient(settings.searxng_url),
+            WebFetcher(),
+            emit=build_event_emitter(settings.brain_events_url),
+        )
         # Fetches a source site's favicon on-box for web citation chips, so the PWA
         # renders a tappable logo without ever touching the third-party host (#9).
         app.state.favicon_fetcher = FaviconFetcher()

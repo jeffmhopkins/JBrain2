@@ -41,6 +41,9 @@ Open the box's monitor (or any LAN browser) full-screen / kiosk at
 | --- | --- | --- |
 | `BRAIN_HOST_BIND` | `0.0.0.0` | Host bind for the published port. Set `127.0.0.1` to serve only the box's own monitor. |
 | `BRAIN_POWER_MAX_W` | `90` | APU TDP ceiling, used to normalise power → heat. |
+| `BRAIN_NET_MAX_BPS` | `12500000` | Network throughput ceiling (bytes/s, ~100 Mbit) for the net-in/out rim aura. |
+| `BRAIN_DISK_MAX_BPS` | `500000000` | Disk-read throughput ceiling (bytes/s, ~500 MB) for the disk-read rim aura. |
+| `BRAIN_EVENTS_FILE` | unset | Path to a JSONL file the agent appends web-tool events to (see below) → reach-out tendrils. |
 
 ## Security
 
@@ -81,10 +84,30 @@ badge, so the display is never a dead black screen.
 The `python3 serve.py` commands above are for **local dev / preview**; on the
 deployed box the compose service (above) runs it for you.
 
-## Extending to finer signals
+## Signals wired
 
 `serve.py`'s `snapshot()` returns the full `ServerBrain` contract (see
-`frontend/demos/server-status-brain/CONTRACT.md`). The `llm`, `api`, and `db`
-blocks are currently zeros (quiet). To light those up, fill them in `snapshot()`
-— e.g. tokens/sec from your inference server, qps from `pg_stat_database` — and
-the existing visualization reacts with no page changes.
+`frontend/demos/server-status-brain/CONTRACT.md`). Wired to real host data:
+
+- **GPU util** (`gpu_busy_percent`) → neural activity / cascade routing
+- **RAM + VRAM** (`/proc/meminfo` + amdgpu `mem_info_vram_used`) → active density
+- **APU power** (`power1_average`) → bloom heat
+- **Net in / out** (`/proc/net/dev` rx/tx deltas) → blue / coral rim aura
+- **Disk read** (`/proc/diskstats` sector deltas) → violet rim aura
+
+Still quiet (zeros): `llm`, `api`, `db` — fill them in `snapshot()` when you want
+them (tokens/sec from the inference server, qps from `pg_stat_database`), no page
+changes needed.
+
+### Web search / fetch tendrils
+
+Wired and **active by default**: the JBrain2 agent (`jbrain.agent.brainevents`)
+POSTs a tiny `{"kind": "web_search"|"web_fetch"}` to **`POST /event`** here each
+time jerv runs a web tool — compose points `JBRAIN_BRAIN_EVENTS_URL` at this
+service on the internal network. `serve.py` queues it and drains it into `/stats`
+`events`, and the page fires a cyan (search) or amber (fetch) tendril per event.
+Best-effort, on-box, no owner data; a failure never touches the agent's turn.
+
+Alternative source: set `BRAIN_EVENTS_FILE` to a JSONL path and append one event
+object per line (`{"kind": "web_search"}`); the reader tails it and re-syncs if it
+is truncated/rotated.

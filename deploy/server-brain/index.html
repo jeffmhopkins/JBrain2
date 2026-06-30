@@ -178,8 +178,12 @@
   <div id="legend" class="panel">
     <div class="hd">Visual → Signal</div>
     <div class="leg"><span class="sw dot" style="background:var(--steel);box-shadow:0 0 8px var(--steel)"></span><span><b>Neural activity</b> — GPU utilisation (cascade reach + rate)</span></div>
-    <div class="leg"><span class="sw" style="background:linear-gradient(90deg,var(--steel),transparent)"></span><span><b>Active density</b> — RAM in use (neurons switched on)</span></div>
+    <div class="leg"><span class="sw" style="background:linear-gradient(90deg,var(--steel),transparent)"></span><span><b>Active density</b> — RAM + VRAM in use</span></div>
     <div class="leg"><span class="sw dot" style="background:var(--amber);box-shadow:0 0 8px var(--amber)"></span><span><b>Bloom / heat</b> — APU power draw</span></div>
+    <div class="leg"><span class="sw" style="background:linear-gradient(90deg,transparent,#5fe6ff)"></span><span><b>Cyan tendril</b> — web search (reach-out)</span></div>
+    <div class="leg"><span class="sw" style="background:linear-gradient(90deg,transparent,#ffc66e)"></span><span><b>Amber tendril</b> — web fetch (reach-out)</span></div>
+    <div class="leg"><span class="sw" style="background:linear-gradient(90deg,#6699ff,#ff8c66)"></span><span><b>Rim aura</b> — net in (blue) / out (coral)</span></div>
+    <div class="leg"><span class="sw dot" style="background:#a98cf9;box-shadow:0 0 8px #a98cf9"></span><span><b>Violet rim</b> — disk read</span></div>
   </div>
 
   <div id="controls" class="panel" style="display:none">
@@ -188,6 +192,9 @@
     <button id="btnGpu" class="spike">⚡ Spike GPU</button>
     <button id="btnLlm" class="spike">≈ Burst LLM</button>
     <button id="btnErr" class="err">✦ Inject error</button>
+    <span class="sep"></span>
+    <button id="btnSearch">🔎 Web search</button>
+    <button id="btnFetch">⇩ Web fetch</button>
   </div>
 
   <div id="fps">—</div>
@@ -216,12 +223,14 @@ let stats = {
   llm: { active: false, model: 'qwen3-30b', tokensPerSec: 0, queue: 0, ctxUsed: 0.1 },
   api: { reqPerSec: 3, p95Ms: 40, errorRate: 0, inflight: 2 },
   db:  { qps: 22, poolUsed: 0.2, slowQueries: 0 },
+  net: { inRate: 0.08, outRate: 0.04 },
+  disk: { readRate: 0.05 },
 };
 
 // Eased visual values (smoothly chase `stats`).
 const eased = {
   fire: 0.12, bloom: 0.12, tok: 0, req: 3, qps: 22, temp: 41,
-  vram: 0.3, power: 0.15,
+  vram: 0.3, power: 0.15, netIn: 0.08, netOut: 0.04, diskRead: 0.05,
   thinking: 0, errFlash: 0, healthMix: 0 /*0 ok→1 warn→2 crit handled via colors*/,
 };
 
@@ -314,6 +323,9 @@ const neuronUniforms = {
   uThink:   { value: 0 },      // active model core pulse
   uDensity: { value: 1 },      // RAM -> fraction of neurons active (gate)
   uHeat:    { value: 0 },      // APU power -> bloom heat
+  uNetIn:   { value: 0 },      // net ingress -> blue rim aura
+  uNetOut:  { value: 0 },      // net egress  -> coral rim aura
+  uDiskRead:{ value: 0 },      // disk read   -> violet rim aura
   uColorCore: { value: PALETTE.steel.clone() },
   uColorEdge: { value: PALETTE.violet.clone() },
   uHealth:  { value: PALETTE.green.clone() },
@@ -327,10 +339,11 @@ const neuronMat = new THREE.ShaderMaterial({
   depthWrite: false,
   blending: THREE.AdditiveBlending,
   vertexShader: `
-    uniform float uTime, uFire, uThink, uDensity;
+    uniform float uTime, uFire, uThink, uDensity, uNetIn, uNetOut, uDiskRead;
     attribute float aSeed, aRadial, aAct, aRank, aFreq;
     varying float vGlow;
     varying float vRadial;
+    varying float vRim;
     void main() {
       vRadial = aRadial;
       vec3 pos = position;
@@ -355,10 +368,15 @@ const neuronMat = new THREE.ShaderMaterial({
       glow *= gate;
       vGlow = glow;
 
+      // rim/edge aura: only the outer-shell neurons carry net + disk traffic
+      float aura = clamp(uNetIn + uNetOut + uDiskRead, 0.0, 1.0);
+      float rim = smoothstep(0.72, 0.98, aRadial) * gate;
+      vRim = rim;
+
       // lit size starts at ~1/3 the old pop; a frequently-firing neuron grows up
       // to ~5x over ~10s as aFreq accumulates
       float litSize = aAct * (0.33 + aFreq * 1.33) * 2.8;
-      float size = (1.0 + uFire * 0.25) + litSize;
+      float size = (1.0 + uFire * 0.25) + litSize + rim * aura * 2.2;
       gl_PointSize = size * (300.0 / -mv.z);
       gl_Position = projectionMatrix * mv;
     }
@@ -366,9 +384,10 @@ const neuronMat = new THREE.ShaderMaterial({
   fragmentShader: `
     precision highp float;
     uniform vec3 uColorCore, uColorEdge, uHealth;
-    uniform float uHeat;
+    uniform float uHeat, uNetIn, uNetOut, uDiskRead;
     varying float vGlow;
     varying float vRadial;
+    varying float vRim;
     void main() {
       vec2 uv = gl_PointCoord - 0.5;
       float d = length(uv);
@@ -381,7 +400,13 @@ const neuronMat = new THREE.ShaderMaterial({
       // hot center burns toward white; APU power drives the bloom heat
       col = mix(col, vec3(1.0), hot * clamp(vGlow,0.0,1.0) * (0.42 + uHeat*0.5));
       float alpha = a * clamp(vGlow * 1.1, 0.0, 1.0);
-      gl_FragColor = vec4(col * (0.55 + vGlow), alpha);
+      vec3 outc = col * (0.55 + vGlow);
+      // subtle rim aura: net ingress = blue, egress = coral, disk read = violet
+      vec3 aura = vec3(0.40,0.60,1.00)*uNetIn + vec3(1.00,0.55,0.38)*uNetOut + vec3(0.66,0.52,0.98)*uDiskRead;
+      float auraAmt = vRim * a * 0.85;
+      outc += aura * auraAmt;
+      alpha = max(alpha, auraAmt * 0.6);
+      gl_FragColor = vec4(outc, alpha);
     }
   `,
 });
@@ -591,23 +616,121 @@ const sparkMat = new THREE.ShaderMaterial({
 const sparks = new THREE.Points(sparkGeo, sparkMat);
 cortex.add(sparks);
 
-function spawnSpark(isError) {
+// net I/O + web packets share the spark pool. mode: 'in' (ingress, teal) flies
+// from a far shell INTO a neuron; 'out' (egress, steel) flies from a neuron OUT
+// to the shell; 'err' (rose) is an error blip.
+function spawnPacket(mode) {
   for (let i = 0; i < MAX_SPARKS; i++) {
-    if (sparkLife[i] <= 0) {
-      // random point on a sphere shell, fly inward toward a random neuron
-      const a = Math.random()*Math.PI*2, b = Math.acos(2*Math.random()-1);
-      const R = 40;
-      const sx = Math.sin(b)*Math.cos(a)*R, sy = Math.cos(b)*R*0.6, sz = Math.sin(b)*Math.sin(a)*R;
-      sparkPos[i*3+0]=sx; sparkPos[i*3+1]=sy; sparkPos[i*3+2]=sz;
-      const tIdx = (Math.random()*NEURONS)|0;
-      sparkTarget[i].set(neuronPos[tIdx*3], neuronPos[tIdx*3+1], neuronPos[tIdx*3+2]);
-      sparkVel[i].set(0,0,0);
-      sparkLife[i] = 1.0;
-      const c = isError ? PALETTE.rose : PALETTE.teal;
-      sparkColorAttr[i*3+0]=c.r; sparkColorAttr[i*3+1]=c.g; sparkColorAttr[i*3+2]=c.b;
-      return;
+    if (sparkLife[i] > 0) continue;
+    const a = Math.random()*Math.PI*2, b = Math.acos(2*Math.random()-1), R = 40;
+    const shx = Math.sin(b)*Math.cos(a)*R, shy = Math.cos(b)*R*0.6, shz = Math.sin(b)*Math.sin(a)*R;
+    const nIdx = (Math.random()*NEURONS)|0;
+    const nx = neuronPos[nIdx*3], ny = neuronPos[nIdx*3+1], nz = neuronPos[nIdx*3+2];
+    let c;
+    if (mode === 'out') {
+      sparkPos[i*3]=nx; sparkPos[i*3+1]=ny; sparkPos[i*3+2]=nz;
+      sparkTarget[i].set(shx, shy, shz); c = PALETTE.steel;
+    } else {
+      sparkPos[i*3]=shx; sparkPos[i*3+1]=shy; sparkPos[i*3+2]=shz;
+      sparkTarget[i].set(nx, ny, nz); c = (mode === 'err') ? PALETTE.rose : PALETTE.teal;
+    }
+    sparkVel[i].set(0,0,0); sparkLife[i] = 1.0;
+    sparkColorAttr[i*3]=c.r; sparkColorAttr[i*3+1]=c.g; sparkColorAttr[i*3+2]=c.b;
+    return;
+  }
+}
+function spawnSpark(isError) { spawnPacket(isError ? 'err' : 'in'); }
+let netInAcc = 0, netOutAcc = 0;
+
+/* ============================================================================
+   WEB REACH-OUT TENDRILS — external tool calls reach from OUTSIDE the cloud
+   inward: a glowing curved filament grows from a peripheral neuron out to a
+   distant point, a packet travels it, and on arrival inward it seeds a cascade.
+   Web search = a cyan fan of probes (one returns a result); web fetch = a single
+   amber filament with a sustained inward stream.
+   ========================================================================== */
+const TPAL = { cyan: new THREE.Color('#5fe6ff'), amber: new THREE.Color('#ffc66e') };
+const MAX_TENDRILS = 14, TSEG = 18;
+const tendrils = [];
+for (let i = 0; i < MAX_TENDRILS; i++) tendrils.push({ active: false, ext: new THREE.Vector3(), ctrl: new THREE.Vector3() });
+const TVERTS = MAX_TENDRILS * (TSEG - 1) * 2;
+const tendrilPos = new Float32Array(TVERTS * 3);
+const tendrilCol = new Float32Array(TVERTS * 3);
+const tendrilGeo = new THREE.BufferGeometry();
+tendrilGeo.setAttribute('position', new THREE.BufferAttribute(tendrilPos, 3));
+tendrilGeo.setAttribute('color', new THREE.BufferAttribute(tendrilCol, 3));
+const tendrilLines = new THREE.LineSegments(tendrilGeo,
+  new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending }));
+cortex.add(tendrilLines);
+
+function curDensity() { return clamp(0.1 + eased.vram * 0.9, 0.1, 1); }
+function pickPeriphery() {
+  const d = curDensity();
+  for (let k = 0; k < 16; k++) { const i = (Math.random()*NEURONS)|0; if (neuronRadial[i] > 0.62 && neuronRank[i] < d) return i; }
+  return (Math.random()*NEURONS)|0;
+}
+function spawnTendril(kind) {
+  let td = null; for (const x of tendrils) if (!x.active) { td = x; break; }
+  if (!td) return;
+  const anchor = pickPeriphery();
+  const ax = neuronPos[anchor*3], ay = neuronPos[anchor*3+1], az = neuronPos[anchor*3+2];
+  const len = Math.hypot(ax, ay, az) || 1, ox = ax/len, oy = ay/len, oz = az/len;
+  const OUT = 26 + Math.random()*16;
+  td.ext.set(ox*OUT + (Math.random()-0.5)*14, oy*OUT*0.7 + (Math.random()-0.5)*12, oz*OUT + (Math.random()-0.5)*14);
+  td.ctrl.set((ax+td.ext.x)/2 + (Math.random()-0.5)*18, (ay+td.ext.y)/2 + (Math.random()-0.5)*18, (az+td.ext.z)/2 + (Math.random()-0.5)*18);
+  td.anchor = anchor; td.kind = kind; td.age = 0; td.seeded = false; td._lastPhase = null; td.active = true;
+  td.life = kind === 'fetch' ? (2.4 + Math.random()*1.4) : (1.5 + Math.random()*0.5);
+}
+function webSearch() { const n = 3 + ((Math.random()*3)|0); for (let i = 0; i < n; i++) spawnTendril('search'); }
+function webFetch() { spawnTendril('fetch'); }
+
+function seedCascadeAt(anchor, strength) {
+  const branchK = Math.max(4, clamp(Math.round(eased.fire*10), 1, 10));
+  const maxHops = Math.max(8, clamp(Math.round(eased.fire*20), 2, 20));
+  spawnFlood(anchor, 5, strength, branchK, maxHops, curDensity());
+}
+
+function updateTendrils(dt) {
+  for (let ti = 0; ti < MAX_TENDRILS; ti++) {
+    const td = tendrils[ti], baseV = ti*(TSEG-1)*2*3;
+    if (!td.active) {
+      for (let s = 0; s < (TSEG-1)*2*3; s++) { tendrilPos[baseV+s] = 0; tendrilCol[baseV+s] = 0; }
+      continue;
+    }
+    td.age += dt;
+    const p = td.age / td.life;
+    if (p >= 1) td.active = false;
+    const col = td.kind === 'fetch' ? TPAL.amber : TPAL.cyan;
+    let packetU, baseGlow, peak, envel;
+    if (td.kind === 'fetch') {
+      const ph = (td.age * 1.1) % 1; packetU = 1 - ph;
+      baseGlow = 0.14; peak = 1.1; envel = Math.min(1, p*4) * Math.min(1, (1-p)*4);
+      if (td._lastPhase != null && ph < td._lastPhase) seedCascadeAt(td.anchor, 0.85);
+      td._lastPhase = ph;
+    } else {
+      if (p < 0.45) { packetU = p/0.45; baseGlow = 0.05; }
+      else { packetU = 1 - (p-0.45)/0.55; baseGlow = 0.04; if (!td.seeded && packetU < 0.12) { td.seeded = true; seedCascadeAt(td.anchor, 1.05); } }
+      peak = 1.0; envel = Math.sin(Math.PI * Math.min(p, 1));
+    }
+    const ax = neuronPos[td.anchor*3], ay = neuronPos[td.anchor*3+1], az = neuronPos[td.anchor*3+2];
+    let pxP = ax, pyP = ay, pzP = az, uP = 0;
+    for (let s = 1; s < TSEG; s++) {
+      const u = s/(TSEG-1), mu = 1-u;
+      const px = mu*mu*ax + 2*mu*u*td.ctrl.x + u*u*td.ext.x;
+      const py = mu*mu*ay + 2*mu*u*td.ctrl.y + u*u*td.ext.y;
+      const pz = mu*mu*az + 2*mu*u*td.ctrl.z + u*u*td.ext.z;
+      const gA = (baseGlow + peak*Math.exp(-((uP-packetU)*(uP-packetU))/0.004)) * envel;
+      const gB = (baseGlow + peak*Math.exp(-((u -packetU)*(u -packetU))/0.004)) * envel;
+      const idx = baseV + (s-1)*6;
+      tendrilPos[idx]=pxP; tendrilPos[idx+1]=pyP; tendrilPos[idx+2]=pzP;
+      tendrilCol[idx]=col.r*gA; tendrilCol[idx+1]=col.g*gA; tendrilCol[idx+2]=col.b*gA;
+      tendrilPos[idx+3]=px; tendrilPos[idx+4]=py; tendrilPos[idx+5]=pz;
+      tendrilCol[idx+3]=col.r*gB; tendrilCol[idx+4]=col.g*gB; tendrilCol[idx+5]=col.b*gB;
+      pxP=px; pyP=py; pzP=pz; uP=u;
     }
   }
+  tendrilGeo.attributes.position.needsUpdate = true;
+  tendrilGeo.attributes.color.needsUpdate = true;
 }
 
 /* ============================================================================
@@ -756,6 +879,8 @@ const ServerBrain = {
       llm: { ...stats.llm, ...(s.llm||{}) },
       api: { ...stats.api, ...(s.api||{}) },
       db:  { ...stats.db,  ...(s.db ||{}) },
+      net: { ...stats.net, ...(s.net||{}) },
+      disk: { ...stats.disk, ...(s.disk||{}) },
     };
     applyHealthColors();
     // an error rate spike flashes rose + spawns rose sparks
@@ -804,6 +929,12 @@ const ServerBrain = {
       if (temp > 84 || util > 0.95) health = 'crit';
       else if (temp > 74 || util > 0.8 || p95 > 1200) health = 'warn';
 
+      const netIn = clamp(0.06 + 0.5*Math.abs(Math.sin(phase*0.3)) + reqPerSec/50*0.4 + Math.max(0,n()*0.3), 0, 1);
+      const netOut = clamp(0.04 + 0.32*Math.abs(Math.sin(phase*0.47)) + Math.max(0,n()*0.2), 0, 1);
+      const diskRead = clamp(0.05 + 0.4*Math.abs(Math.sin(phase*0.6)) + (llmActive?0.2:0) + Math.max(0,n()*0.3), 0, 1);
+      // occasional external tool calls drive the reach-out tendrils
+      if (Math.random() < 0.02) ServerBrain.webSearch();
+      if (Math.random() < 0.012) ServerBrain.webFetch();
       ServerBrain.update({
         ts: Date.now(), health,
         gpu: { util, vram, tempC: temp, powerW, powerMaxW: 600 },
@@ -812,6 +943,8 @@ const ServerBrain = {
                ctxUsed: clamp(0.2 + llmBurstEnv*0.6, 0, 1) },
         api: { reqPerSec, p95Ms: p95, errorRate: 0, inflight },
         db:  { qps, poolUsed, slowQueries: clamp(Math.round((p95>1000?1:0)+Math.abs(n()*2)),0,20) },
+        net: { inRate: netIn, outRate: netOut },
+        disk: { readRate: diskRead },
       });
     }, 250);
   },
@@ -850,6 +983,9 @@ const ServerBrain = {
     // errorRate auto-clears on next sim tick; if paused, clear shortly.
     setTimeout(() => ServerBrain.update({ api: { ...stats.api, errorRate: 0 } }), 900);
   },
+  // external tool calls reaching in from the web (see CONTRACT extension)
+  webSearch() { webSearch(); },
+  webFetch() { webFetch(); },
 };
 window.ServerBrain = ServerBrain;
 
@@ -875,6 +1011,8 @@ btnPause.onclick = () => simOn ? ServerBrain.stopSimulator() : ServerBrain.start
 document.getElementById('btnGpu').onclick = () => ServerBrain.spikeGPU();
 document.getElementById('btnLlm').onclick = () => ServerBrain.burstLLM();
 document.getElementById('btnErr').onclick = () => ServerBrain.injectError();
+document.getElementById('btnSearch').onclick = () => ServerBrain.webSearch();
+document.getElementById('btnFetch').onclick = () => ServerBrain.webFetch();
 
 const HEALTH_COLOR = { ok: '#8FBC9A', warn: '#C9A36A', crit: '#CF8A8F' };
 const HEALTH_LABEL = { ok: 'healthy', warn: 'degraded', crit: 'critical' };
@@ -925,6 +1063,9 @@ function frame() {
   eased.req    += (stats.api.reqPerSec - eased.req) * k;
   eased.qps    += (stats.db.qps - eased.qps) * k;
   eased.temp   += (stats.gpu.tempC - eased.temp) * k;
+  eased.netIn  += (((stats.net && stats.net.inRate)  || 0) - eased.netIn) * k;
+  eased.netOut += (((stats.net && stats.net.outRate) || 0) - eased.netOut) * k;
+  eased.diskRead += (((stats.disk && stats.disk.readRate) || 0) - eased.diskRead) * k;
   const thinkTarget = stats.llm.active ? (0.4 + Math.min(stats.llm.tokensPerSec/120,1)*0.6) : 0;
   eased.thinking += (thinkTarget - eased.thinking) * k;
   eased.errFlash *= Math.pow(0.06, dt); // fast decay
@@ -940,6 +1081,9 @@ function frame() {
   const densityActive = clamp(0.1 + eased.vram * 0.9, 0.1, 1);
   neuronUniforms.uDensity.value = densityActive;
   neuronUniforms.uHeat.value = clamp(eased.power, 0, 1);
+  neuronUniforms.uNetIn.value = clamp(eased.netIn, 0, 1);
+  neuronUniforms.uNetOut.value = clamp(eased.netOut, 0, 1);
+  neuronUniforms.uDiskRead.value = clamp(eased.diskRead, 0, 1);
   linkUniforms.uTime.value = t;
   linkUniforms.uFire.value = eased.fire;
   linkUniforms.uDensity.value = densityActive;
@@ -998,8 +1142,7 @@ function frame() {
   linkGeo.attributes.aAct.needsUpdate = true;
 
   // --- inbound API sparks: spawn at rate ~ req/sec ---
-  // inbound API "sparks" removed — no random camera->net particles on the display
-  // advance sparks (ease toward target then fade at core)
+  // advance error sparks (ease toward target then fade at arrival)
   for (let i = 0; i < MAX_SPARKS; i++) {
     if (sparkLife[i] <= 0) continue;
     const px = sparkPos[i*3], py = sparkPos[i*3+1], pz = sparkPos[i*3+2];
@@ -1014,6 +1157,8 @@ function frame() {
   }
   sparkGeo.attributes.position.needsUpdate = true;
   sparkGeo.attributes.aLife.needsUpdate = true;
+  sparkGeo.attributes.aColor.needsUpdate = true;
+  updateTendrils(dt);
 
   // --- orientation: smooth random walk on pitch/yaw/roll (~half the old speed) ---
   angRetarget -= dt;
@@ -1097,6 +1242,10 @@ async function pollStats() {
     if (!liveOk) { liveOk = true; if (modelTag) modelTag.textContent = '— live —'; }
     failCount = 0;
     ServerBrain.update(s);
+    if (s.events) for (const ev of s.events) {
+      if (ev.kind === 'web_search') ServerBrain.webSearch();
+      else if (ev.kind === 'web_fetch') ServerBrain.webFetch();
+    }
   } catch (e) {
     // No telemetry reachable (opened standalone, or the service is down): fall back
     // to the built-in simulator so the wall is never a dead black screen.

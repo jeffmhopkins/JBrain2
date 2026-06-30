@@ -315,3 +315,36 @@ async def test_web_fetch_tool_returns_page_text() -> None:
 async def test_web_fetch_tool_needs_a_url() -> None:
     handlers = build_web_handlers(SearxngClient(""), WebFetcher())
     assert "needs a url" in await handlers["web_fetch"]({}, CTX)
+
+
+# --- wall-display tendril events -------------------------------------------
+
+
+async def test_web_search_emits_a_tendril_event() -> None:
+    fired: list[str] = []
+    handlers = build_web_handlers(
+        _searx(lambda r: httpx.Response(200, json=_SEARX_OK)), WebFetcher(), emit=fired.append
+    )
+    await handlers["web_search"]({"query": "python"}, CTX)
+    assert fired == ["web_search"]
+
+
+async def test_web_fetch_emits_a_tendril_event() -> None:
+    def handle(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=_HTML, headers={"content-type": "text/html"})
+
+    fired: list[str] = []
+    handlers = build_web_handlers(
+        SearxngClient(""), WebFetcher(transport=httpx.MockTransport(handle)), emit=fired.append
+    )
+    await handlers["web_fetch"]({"url": "https://x.example/p"}, CTX)
+    assert fired == ["web_fetch"]
+
+
+async def test_invalid_web_calls_do_not_emit() -> None:
+    # An empty query / missing url never reaches out, so it fires no tendril.
+    fired: list[str] = []
+    handlers = build_web_handlers(SearxngClient(""), WebFetcher(), emit=fired.append)
+    await handlers["web_search"]({"query": "  "}, CTX)
+    await handlers["web_fetch"]({}, CTX)
+    assert fired == []
