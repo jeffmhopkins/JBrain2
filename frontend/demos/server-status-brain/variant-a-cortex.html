@@ -330,9 +330,9 @@ const neuronMat = new THREE.ShaderMaterial({
       pos += normalize(pos + 0.001) * breathe;
       vec4 mv = modelViewMatrix * vec4(pos, 1.0);
 
-      // dim ambient floor (lifts a touch with GPU util) + idle twinkle
+      // very dim ambient floor (mostly dark when idle) + faint idle twinkle
       float tw = 0.5 + 0.5*sin(uTime*2.2 + aSeed*1.3);
-      float glow = (0.08 + uFire*0.10) * (0.55 + 0.45*tw);
+      float glow = (0.02 + uFire*0.05) * (0.55 + 0.45*tw);
 
       // flood-ping activation sweeping through the graph is the main driver
       glow += aAct * 1.25;
@@ -593,7 +593,7 @@ function spawnSpark(isError) {
    rather than all at once. GPU util drives how often floods spawn; LLM
    tokens/sec drive how fast each front propagates.
    ========================================================================== */
-const MAX_FLOODS = 12;
+const MAX_FLOODS = 16;
 const floodPool = [];
 for (let i = 0; i < MAX_FLOODS; i++) {
   floodPool.push({ active: false, order: new Int32Array(NEURONS),
@@ -603,7 +603,7 @@ for (let i = 0; i < MAX_FLOODS; i++) {
 const bfsQueue = new Int32Array(NEURONS);
 const bfsVisited = new Int32Array(NEURONS); // generation stamps avoid re-clearing
 let bfsGen = 0;
-let floodAcc = 0;
+let idleAcc = 0;
 
 function spawnFlood(seed, speed, strength) {
   // grab a free slot, else recycle whichever flood is furthest along
@@ -632,7 +632,7 @@ function spawnFlood(seed, speed, strength) {
 // A flood is a travelling SHELL, not a fill: only neurons within TAIL hops behind
 // the advancing wavefront glow (brightest right at the front, ramping to dark
 // behind it), so each cascade reads as a ring of fire sweeping through the graph.
-const FLOOD_TAIL = 2.6;
+const FLOOD_TAIL = 3.4;
 function updateFloods(dt) {
   for (const f of floodPool) {
     if (!f.active) continue;
@@ -879,16 +879,25 @@ function frame() {
     linkUniforms.uWaveColor.value.copy(PALETTE.violet);
   }
 
-  // --- flood-ping: ignite new cascades (rate ~ GPU util), advance, decay ---
-  floodAcc += dt * (0.4 + clamp(eased.fire, 0, 1) * 3.0);    // GPU util -> cascade frequency
-  while (floodAcc >= 1) {
-    floodAcc -= 1;
+  // --- flood-ping: hold a steady POPULATION of cascades scaled to load, so the
+  //     brain flows continuously instead of pulsing; near-silent when idle ---
+  const drive = clamp(Math.max(eased.fire, eased.tok / 120 * 0.8), 0, 1);
+  let activeCount = 0;
+  for (const f of floodPool) if (f.active) activeCount++;
+  // squared response keeps low activation very calm, then ramps up smoothly
+  const desired = drive * drive * MAX_FLOODS;
+  let toSpawn = Math.max(0, Math.round(desired) - activeCount);
+  // a rare lone ripple when essentially idle, so it never looks fully dead
+  idleAcc += dt * 0.18;
+  if (idleAcc >= 1) { idleAcc -= 1; if (desired < 1) toSpawn = Math.max(toSpawn, 1); }
+  toSpawn = Math.min(toSpawn, 2);                            // cap/frame -> no visible burst
+  for (let s = 0; s < toSpawn; s++) {
     const thinking = stats.llm.active && coreNodes.length;
     const seed = (thinking && Math.random() < 0.6)
       ? coreNodes[(Math.random() * coreNodes.length) | 0]   // seed the core while "thinking"
       : (Math.random() * NEURONS) | 0;
-    const speed = 5 + clamp(eased.tok / 120, 0, 1) * 12;     // tokens/sec -> front speed
-    const strength = 0.85 + clamp(eased.fire, 0, 1) * 0.4;
+    const speed = 4 + clamp(eased.tok / 120, 0, 1) * 10 + drive * 3;  // tokens/sec -> front speed
+    const strength = 0.45 + drive * 0.6;                    // dimmer cascades at low load
     spawnFlood(seed, speed, strength);
   }
   const decay = Math.pow(0.04, dt);                          // trailing afterglow
