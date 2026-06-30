@@ -899,6 +899,15 @@ function refreshReadout() {
    ========================================================================== */
 const clock = new THREE.Clock();
 let running = true;
+// Orientation + camera pan wander as a smooth random walk (no fixed spin): each
+// axis's angular velocity eases toward a fresh random heading every few seconds,
+// at ~half the old steady-rotation speed, across pitch (x), yaw (y), roll (z).
+const angVel = { x: 0, y: 0, z: 0 };
+const angTarget = { x: 0, y: 0, z: 0 };
+let angRetarget = 0;
+const camPan = { x: 0, y: 4 };
+const panTarget = { x: 0, y: 0 };
+let panRetarget = 0;
 let sparkAccumulator = 0;
 let frames = 0, fpsTime = 0;
 const fpsEl = document.getElementById('fps');
@@ -1006,15 +1015,36 @@ function frame() {
   sparkGeo.attributes.position.needsUpdate = true;
   sparkGeo.attributes.aLife.needsUpdate = true;
 
-  // --- auto-rotation: speed gently lifts with firing rate ---
-  cortex.rotation.y += dt * (0.06 + eased.fire * 0.10);
-  cortex.rotation.x = Math.sin(t*0.13) * 0.07;
-  // DB ring spins independently, speed ~ qps
-  dbRing.rotation.z += dt * (0.15 + clamp(eased.qps/300,0,1) * 0.9);
+  // --- orientation: smooth random walk on pitch/yaw/roll (~half the old speed) ---
+  angRetarget -= dt;
+  if (angRetarget <= 0) {
+    angRetarget = 2 + Math.random() * 3;          // new heading every 2-5s
+    const V = 0.045;                              // peak angular speed (~half the old spin)
+    angTarget.x = (Math.random() - 0.5) * 2 * V;
+    angTarget.y = (Math.random() - 0.5) * 2 * V;
+    angTarget.z = (Math.random() - 0.5) * 2 * V;
+  }
+  const angEase = 1 - Math.pow(0.2, dt);
+  angVel.x += (angTarget.x - angVel.x) * angEase;
+  angVel.y += (angTarget.y - angVel.y) * angEase;
+  angVel.z += (angTarget.z - angVel.z) * angEase;
+  cortex.rotation.x += angVel.x * dt;             // pitch
+  cortex.rotation.y += angVel.y * dt;             // yaw
+  cortex.rotation.z += angVel.z * dt;             // roll
 
-  // subtle camera drift (parallax / DOF feel)
-  camera.position.x = Math.sin(t*0.09) * 5.0;
-  camera.position.y = 4 + Math.sin(t*0.12) * 2.0;
+  // --- camera: gentle random-walk pan/tilt, always looking at the cortex ---
+  panRetarget -= dt;
+  if (panRetarget <= 0) {
+    panRetarget = 3 + Math.random() * 4;
+    const P = 3.0;
+    panTarget.x = (Math.random() - 0.5) * 2 * P;
+    panTarget.y = (Math.random() - 0.5) * 2 * P;
+  }
+  const panEase = 1 - Math.pow(0.5, dt);
+  camPan.x += (panTarget.x - camPan.x) * panEase;
+  camPan.y += ((4 + panTarget.y) - camPan.y) * panEase;
+  camera.position.x = camPan.x;
+  camera.position.y = camPan.y;
   camera.lookAt(0, 0, 0);
 
   renderer.render(scene, camera);
