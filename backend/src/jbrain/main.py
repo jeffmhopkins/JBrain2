@@ -10,6 +10,7 @@ from fastapi import FastAPI, Request
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from jbrain.agent.attachments import TurnAttachmentRepo
+from jbrain.agent.brainevents import build_event_emitter
 from jbrain.agent.gmailtools import build_gmail_handlers
 from jbrain.agent.hurricanetools import build_hurricane_handlers
 from jbrain.agent.imagegentools import build_image_handlers
@@ -23,7 +24,6 @@ from jbrain.agent.transcribetools import build_transcribe_handlers
 from jbrain.agent.transcript_store import AgentTranscript
 from jbrain.agent.videotools import build_video_handlers
 from jbrain.agent.weathertools import build_weather_handlers
-from jbrain.agent.brainevents import build_event_emitter
 from jbrain.agent.webtools import build_web_handlers
 from jbrain.agent.wikiwritetools import build_wiki_write_handlers
 from jbrain.analysis.hygiene import ENTITY_HYGIENE_SPEC
