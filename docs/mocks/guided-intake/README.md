@@ -48,9 +48,10 @@ intake link" → the stage sheet; copy/revoke fire toasts).
 | **C — Dashboard** | `manage-c-dashboard.html` | A summary strip (Active · Awaiting review · Opens today) + a review CTA banner, over rows with **runs/opens progress bars**. Most at-a-glance. (Still carries the old modal mint-sheet — superseded by B.) |
 
 Faithful details baked into the chosen B: **(1)** "+ New intake link" does **not** mint or open
-a modal — creation routes through the agent → editable Proposal → approval; **(2)** **Copy link
-is always available** (no one-time warning), reflecting the re-copyable-encrypted-at-rest
-decision (the one documented divergence from show-once); **(3)** each submission opens a
+a modal — creation routes through the agent → editable Proposal → approval; **(2)** the secret is
+**show-once** (the standard JBrain2 invariant — the re-copyable-encrypted idea was dropped after
+adversarial review, since no app-level encryption exists); a live link offers **Re-mint & copy**
+(re-minting invalidates the old secret) to re-send; **(3)** each submission opens a
 **read-only conversation view** — the full verbatim recipient↔agent transcript + the draft the
 recipient confirmed — explicitly **kept separate from the owner's own chats** (intake sessions
 are non-owner principals, never folded into the Full Brain chat list); abandoned/in-progress
