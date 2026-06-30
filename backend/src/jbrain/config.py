@@ -87,6 +87,16 @@ class Settings(BaseSettings):
     # (the tool returns "not configured") but the sidecars still load so jerv always
     # has its handlers.
     searxng_url: str = "http://searxng:8080"
+    # Optional, OFF by default: a pinned reader endpoint web_fetch falls back to when a
+    # direct fetch is blocked (bot-walled 403/429) or comes back empty (a JS-rendered
+    # shell our static extractor can't see). A reader renders the page with a real
+    # browser and returns clean markdown — the sanctioned, owner-controlled replacement
+    # for the model smuggling `r.jina.ai/<url>` through web_fetch on its own (which
+    # leaks the target URL off-box unmonitored). Local-first when pointed at a
+    # self-hosted reader on the box (e.g. http://reader:3000, jinaai/reader); the base
+    # URL is pinned here and never model-supplied — only the public target URL rides in
+    # the path. Empty disables the fallback (a blocked/empty fetch just reports so).
+    reader_url: str = ""
     # The neural wall display (deploy/server-brain) draws a reach-out tendril when
     # jerv runs a web tool. We POST a tiny {"kind": "web_search"|"web_fetch"} marker
     # to the on-box display service — best-effort, no owner data, failures ignored.

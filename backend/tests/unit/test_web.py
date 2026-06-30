@@ -239,6 +239,137 @@ async def test_fetch_refuses_a_redirect_loop() -> None:
         await WebFetcher(transport=httpx.MockTransport(handle)).fetch("https://x.example/again")
 
 
+# --- browser headers (stop bot-wall 403s that push the model to a reader) -----
+
+
+async def test_fetch_presents_as_a_browser() -> None:
+    seen: list[httpx.Request] = []
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(200, content=_HTML, headers={"content-type": "text/html"})
+
+    await WebFetcher(transport=httpx.MockTransport(handle)).fetch("https://x.example/p")
+    ua = seen[0].headers.get("user-agent", "")
+    # A real browser UA, not "JBrain2 jerv/1.0" — the bare custom UA is what gets 403'd.
+    assert "Mozilla/5.0" in ua and "jerv" not in ua
+    assert seen[0].headers.get("accept-language", "").startswith("en")
+
+
+# --- PDF text layer (a linked PDF is content, not a dead end) -----------------
+
+
+def _make_pdf(text: str) -> bytes:
+    import pymupdf
+
+    doc = pymupdf.open()
+    page = doc.new_page()
+    page.insert_text((72, 72), text)
+    data = doc.tobytes()
+    doc.close()
+    return data
+
+
+async def test_fetch_extracts_pdf_text_layer() -> None:
+    pdf = _make_pdf("Quarterly report: revenue rose twelve percent.")
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=pdf, headers={"content-type": "application/pdf"})
+
+    result = await WebFetcher(transport=httpx.MockTransport(handle)).fetch(
+        "https://x.example/r.pdf"
+    )
+    assert "revenue rose twelve percent" in result.text
+
+
+async def test_fetch_still_refuses_non_pdf_binary() -> None:
+    def handle(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=b"\x89PNG\r\n", headers={"content-type": "image/png"})
+
+    with pytest.raises(WebFetchError):
+        await WebFetcher(transport=httpx.MockTransport(handle)).fetch("https://x.example/i.png")
+
+
+# --- trafilatura main-content extraction (clean article, drop chrome) ---------
+
+_ARTICLE = (
+    b"<html><head><title>Feature</title></head><body>"
+    b"<nav><a href='/home'>Home</a> <a href='/about'>About</a> SITEWIDE-NAV-JUNK</nav>"
+    b"<article><h1>The Long Read</h1>"
+    + b"<p>The committee weighed the proposal at length and the debate ran for hours. </p>" * 12
+    + b"</article><footer>COPYRIGHT-FOOTER-JUNK 2026</footer></body></html>"
+)
+
+
+async def test_fetch_prefers_trafilatura_for_a_real_article() -> None:
+    def handle(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=_ARTICLE, headers={"content-type": "text/html"})
+
+    result = await WebFetcher(transport=httpx.MockTransport(handle)).fetch("https://x.example/a")
+    # The article body survives; the nav/footer chrome trafilatura strips does not.
+    assert "the debate ran for hours" in result.text
+    assert "SITEWIDE-NAV-JUNK" not in result.text and "COPYRIGHT-FOOTER-JUNK" not in result.text
+
+
+# --- reader fallback (sanctioned replacement for the model's r.jina.ai trick) -
+
+
+_READER_MD = b"Rendered by the reader: the content the static HTML never carried."
+
+
+def _reader_handler(direct: httpx.Response):  # type: ignore[no-untyped-def]
+    """A transport that answers the reader host with markdown and every other host
+    with `direct` — so one MockTransport serves both legs of the fetch."""
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        if request.url.host == "reader":
+            return httpx.Response(
+                200, content=_READER_MD, headers={"content-type": "text/markdown"}
+            )
+        return direct
+
+    return handle
+
+
+async def test_reader_fallback_recovers_a_blocked_page() -> None:
+    blocked = httpx.Response(403, headers={"content-type": "text/html"})
+    fetcher = WebFetcher(
+        transport=httpx.MockTransport(_reader_handler(blocked)),
+        reader_url="http://reader:3000",
+    )
+    result = await fetcher.fetch("https://x.example/walled")
+    assert "Rendered by the reader" in result.text
+    assert result.url == "https://x.example/walled"  # the public URL, not the reader's
+
+
+async def test_reader_fallback_recovers_an_empty_js_shell() -> None:
+    shell = httpx.Response(
+        200, content=b"<html><body></body></html>", headers={"content-type": "text/html"}
+    )
+    fetcher = WebFetcher(
+        transport=httpx.MockTransport(_reader_handler(shell)),
+        reader_url="http://reader:3000",
+    )
+    result = await fetcher.fetch("https://x.example/spa")
+    assert "Rendered by the reader" in result.text
+
+
+async def test_no_reader_configured_surfaces_the_block() -> None:
+    def handle(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(403, headers={"content-type": "text/html"})
+
+    with pytest.raises(WebFetchError):
+        await WebFetcher(transport=httpx.MockTransport(handle)).fetch("https://x.example/walled")
+
+
+async def test_reader_still_refuses_a_non_public_target() -> None:
+    # The reader path guards the TARGET host the same way: a model-supplied private URL
+    # can't be laundered off-box through the reader. (Real DNS — no transport.)
+    fetcher = WebFetcher(reader_url="http://reader:3000")
+    with pytest.raises(WebFetchError):
+        await fetcher.fetch("http://169.254.169.254/latest/meta-data")
+
+
 # --- SSRF guard (the real-network host check, no transport) ----------------
 
 

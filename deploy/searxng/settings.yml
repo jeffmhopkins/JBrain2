@@ -18,3 +18,17 @@ search:
   formats:
     - html
     - json
+  # jerv asks in English and wants substance over breadth — bias results to English
+  # and skip the SafeSearch filtering that drops legitimate results.
+  default_lang: en
+  safe_search: 0
+
+outgoing:
+  # The stock 3s per-engine timeout is the main reason a self-hosted instance returns
+  # thin results: upstreams (Google/Bing/DDG) are slower to a non-browser caller, time
+  # out, and get dropped — which is what pushes the model toward a third-party search.
+  # A more patient timeout + a real connection pool lets more engines actually answer.
+  request_timeout: 6.0
+  max_request_timeout: 10.0
+  pool_connections: 100
+  pool_maxsize: 20

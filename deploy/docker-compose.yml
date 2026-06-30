@@ -604,6 +604,19 @@ services:
       - ./searxng:/etc/searxng
     networks: [internal]
 
+  # OPTIONAL reader fallback for jerv's web_fetch (docs/ASSISTANT.md "Agent
+  # selection"). web_fetch falls back to this endpoint when a direct fetch is bot-walled
+  # or comes back empty (a JS-rendered page) — the sanctioned, owner-controlled stand-in
+  # for the model routing a URL through r.jina.ai itself. OFF by default: the api's
+  # JBRAIN_READER_URL is empty unless you set it. To enable it on-box (local-first —
+  # only the target URL leaves the box, via a reader you run), add a reader service on
+  # `internal` and point the api at it:
+  #   reader:
+  #     image: ghcr.io/intergalacticalvariable/reader:latest  # or any r.jina.ai-compatible reader
+  #     restart: unless-stopped
+  #     networks: [internal]
+  # then set JBRAIN_READER_URL=http://reader:3000 in the api/worker environment.
+
   # OPT-IN MQTT broker (JBrain360 M0 secure spine): Mosquitto + mosquitto-go-auth
   # in HTTP-backend mode, delegating every connect/publish/subscribe to the API's
   # /internal/mqtt-* endpoints (it reuses the shipped device_key model; the plugin
