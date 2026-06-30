@@ -15,6 +15,33 @@ flood-ping cascades driven by real host vitals:
 `serve.py` reads the vitals from `/proc` and `/sys` and serves both the page and
 its telemetry. Stdlib only, no dependencies, no build step.
 
+## Deployment (auto-started, auto-updated)
+
+It runs as the `server-brain` service in `deploy/docker-compose.yml` — a default
+profile service on a stock `python:3.12-slim` image, so the standard deploy flow
+owns its lifecycle:
+
+- **`jbrain update`** brings it up and keeps it current via `docker compose up
+  -d`. No rebuild: `serve.py` re-reads `index.html` from the bind mount on every
+  request, so a git reset of `src/` serves the new page immediately. (A change to
+  `serve.py` itself takes effect on the container's next restart.)
+- It needs **no GPU device and no extra mounts** — Docker already exposes the
+  host's `/sys` (read-only) and non-namespaced `/proc` to every container, which
+  is exactly where the amdgpu and meminfo vitals live.
+- It is published on **its own LAN port (`8800`)**, deliberately *not* behind
+  Caddy, so the unauthenticated surface never shares the authed app's origin or
+  session cookie.
+
+Open the box's monitor (or any LAN browser) full-screen / kiosk at
+**`http://<host>.local:8800/`**.
+
+### Deploy config (compose `.env`, all optional)
+
+| Var | Default | Meaning |
+| --- | --- | --- |
+| `BRAIN_HOST_BIND` | `0.0.0.0` | Host bind for the published port. Set `127.0.0.1` to serve only the box's own monitor. |
+| `BRAIN_POWER_MAX_W` | `90` | APU TDP ceiling, used to normalise power → heat. |
+
 ## Security
 
 **There is no authentication.** It exposes only non-sensitive host vitals (GPU
@@ -51,14 +78,8 @@ badge, so the display is never a dead black screen.
 | `BRAIN_POWER_MAX_W` | `90` | APU TDP ceiling, used to normalise power → heat |
 | `BRAIN_DEMO` | unset | `1` = synthetic values (no amdgpu needed) |
 
-## Run on boot (systemd)
-
-A unit is provided. Adjust `WorkingDirectory`/`User` to your checkout, then:
-
-```bash
-sudo cp deploy/server-brain/server-brain.service /etc/systemd/system/
-sudo systemctl enable --now server-brain
-```
+The `python3 serve.py` commands above are for **local dev / preview**; on the
+deployed box the compose service (above) runs it for you.
 
 ## Extending to finer signals
 

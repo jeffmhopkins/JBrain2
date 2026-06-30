@@ -243,6 +243,31 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
     networks: [internal]
 
+  # Neural wall display for the host's own (otherwise-blank) monitor or a LAN
+  # kiosk — see deploy/server-brain. UNAUTHENTICATED by design: it serves ONLY
+  # host vitals (GPU busy %, RAM, APU power, load) read from the /proc and /sys
+  # that Docker exposes read-only to every container — the same sources as the
+  # supervisor's host metrics. It touches no database and nothing behind the RLS
+  # firewalls, and it is published on its own LAN port rather than behind Caddy,
+  # so it never shares the authed app's origin or session cookie. Reachable at
+  # http://<host>.local:8800/. Keep it on the LAN — do not forward 8800 past the
+  # network edge; set BRAIN_HOST_BIND=127.0.0.1 to pin it to the box's own monitor.
+  # Stdlib-only, no build: serve.py reads index.html from the bind mount each
+  # request, so a `jbrain update` (git reset of src) serves the new page with no
+  # rebuild. Default profile -> started and kept current by `docker compose up -d`.
+  server-brain:
+    image: python:3.12-slim
+    restart: unless-stopped
+    command: ["python3", "/app/serve.py"]
+    environment:
+      BRAIN_PORT: "8800"
+      BRAIN_POWER_MAX_W: ${BRAIN_POWER_MAX_W:-90}
+    volumes:
+      - ./src/deploy/server-brain:/app:ro
+    ports:
+      - "${BRAIN_HOST_BIND:-0.0.0.0}:8800:8800"
+    networks: [internal]
+
   # OPT-IN local model gateway: llama-swap fronting llama.cpp (Vulkan) so several
   # GGUF models share one OpenAI-compatible endpoint, loaded/swapped on demand.
   # Guarded by the `local-llm` compose profile so it NEVER starts on a stock
