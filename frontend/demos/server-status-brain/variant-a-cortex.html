@@ -344,7 +344,7 @@ const neuronMat = new THREE.ShaderMaterial({
 
       // very dim ambient floor (mostly dark when idle) + faint idle twinkle
       float tw = 0.5 + 0.5*sin(uTime*2.2 + aSeed*1.3);
-      float glow = (0.03 + uFire*0.05) * (0.55 + 0.45*tw);
+      float glow = (0.0375 + uFire*0.0625) * (0.55 + 0.45*tw);
 
       // flood-ping activation sweeping through the graph is the main driver
       glow += aAct * 1.15;
@@ -485,7 +485,7 @@ const linkMat = new THREE.ShaderMaterial({
     attribute float aRadial, aSeed, aAct, aRank;
     varying float vI;
     void main() {
-      float base = 0.022 + uFire * 0.07;
+      float base = 0.0275 + uFire * 0.0875;
       float flick = 0.5 + 0.5*sin(uTime*3.0 + aSeed);
       // aAct is this endpoint's flood activation, so the segment lights from the
       // firing neuron toward its neighbour — the ping travelling down the edge
