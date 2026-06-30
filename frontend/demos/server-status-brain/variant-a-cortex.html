@@ -146,6 +146,10 @@
     #readout { min-width: 150px; padding: 10px 12px; }
     #controls button { padding: 7px 9px; font-size: 9px; }
   }
+  /* Ambient mode: the metric/legend panels fade out after 60s of no mouse or
+     keyboard activity, and return on the next movement. */
+  .panel, #fps { transition: opacity 1.4s ease; }
+  body.ui-idle .panel, body.ui-idle #fps { opacity: 0; pointer-events: none; }
 </style>
 </head>
 <body>
@@ -239,7 +243,7 @@ const scene = new THREE.Scene();
 scene.fog = new THREE.FogExp2(0x0a0b0d, 0.018);
 
 const camera = new THREE.PerspectiveCamera(52, window.innerWidth / window.innerHeight, 0.1, 400);
-camera.position.set(0, 4, 64);
+camera.position.set(0, 4, 46);   // closer in -> the cortex fills more of the screen
 
 // Container we slowly auto-rotate (the whole cortex).
 const cortex = new THREE.Group();
@@ -248,7 +252,7 @@ scene.add(cortex);
 /* ----------------------------------------------------------------------------
    1) NEURON POINT CLOUD — organic two-lobe ellipsoidal "brain" volume
    -------------------------------------------------------------------------- */
-const NEURONS = 3600;
+const NEURONS = 7200;
 const neuronPos = new Float32Array(NEURONS * 3);
 const neuronSeed = new Float32Array(NEURONS);     // per-neuron phase
 const neuronRadial = new Float32Array(NEURONS);   // 0(core)..1(periphery)
@@ -386,7 +390,7 @@ cortex.add(neuronPoints);
    2) SYNAPSE LINES — connect each neuron to a few nearest neighbours
    -------------------------------------------------------------------------- */
 // Build neighbour links with a coarse spatial hash for speed.
-const MAX_LINKS = 10000;
+const MAX_LINKS = 20000;
 const linkA = [];          // index of endpoint a
 const linkB = [];
 {
@@ -544,7 +548,7 @@ const ringMat = new THREE.ShaderMaterial({
 const dbRing = new THREE.Points(ringGeo, ringMat);
 dbRing.rotation.x = Math.PI * 0.5; // lay flat-ish, then tilt
 dbRing.rotation.z = 0.15;
-cortex.add(dbRing);
+// DB-throughput halo removed — no slow revolving ring around the neurons.
 
 /* ----------------------------------------------------------------------------
    4) INBOUND API SPARKS — short-lived particles flying from periphery to core
@@ -705,7 +709,7 @@ function updateFloods(dt) {
 // kept name for existing call sites: a burst/manual trigger = one strong, fast
 // flood from a random neuron
 function launchWave(speedHint) {
-  spawnFlood((Math.random() * NEURONS) | 0, 26, 1.2, 8, 16, clamp(eased.vram, 0.1, 1));
+  spawnFlood((Math.random() * NEURONS) | 0, 13, 1.2, 8, 16, clamp(eased.vram, 0.1, 1));
 }
 
 /* ============================================================================
@@ -960,7 +964,7 @@ function frame() {
     let tries = 0;
     while (neuronRank[seed] >= densityActive && tries++ < 12) seed = (Math.random() * NEURONS) | 0;
     if (neuronRank[seed] >= densityActive) continue;
-    const speed = 16 + clamp(eased.tok / 120, 0, 1) * 16 + drive * 8;  // euclidean units/sec
+    const speed = 8 + clamp(eased.tok / 120, 0, 1) * 8 + drive * 4;  // euclidean units/sec (slower node-to-node)
     const strength = 0.22 + drive * 0.7;                    // much dimmer cascades at low load
     spawnFlood(seed, speed, strength, branchK, maxHops, densityActive);
   }
@@ -1039,6 +1043,23 @@ applyHealthColors();
 refreshReadout();
 ServerBrain.startSimulator();   // ON by default — alive on open
 frame();
+</script>
+<script>
+// Ambient mode: fade the metric/legend panels out after 60s with no mouse or
+// keyboard activity, and bring them back on the next movement. On a kiosk with
+// no input they simply fade, leaving only the brain.
+(function () {
+  let t = null;
+  function nudge() {
+    document.body.classList.remove('ui-idle');
+    clearTimeout(t);
+    t = setTimeout(function () { document.body.classList.add('ui-idle'); }, 60000);
+  }
+  ['mousemove', 'mousedown', 'keydown', 'touchstart', 'wheel'].forEach(function (e) {
+    window.addEventListener(e, nudge, { passive: true });
+  });
+  nudge();
+})();
 </script>
 </body>
 </html>
