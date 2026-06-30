@@ -790,6 +790,31 @@ describe("FullBrainSurface", () => {
     expect(html.indexOf("Searched your notes")).toBeLessThan(html.indexOf("then more"));
   });
 
+  it("shows an interrupted note for a settled spawn turn with no synthesis roster", async () => {
+    // A spawn turn cut before any child settled persists a failed spawn step and no
+    // subagent_synthesis view. On reopen the bubble must read as interrupted (not a blank
+    // foot strip), with the friendly step label instead of the raw tool name.
+    const getTranscript = vi.fn(async () => [
+      { role: "user" as const, content: "spawn a review", tools: [], reasoning: "" },
+      {
+        role: "assistant" as const,
+        content: "",
+        reasoning: "spawning the review child",
+        tools: [
+          { id: "c1", name: "spawn_subagent", ok: false, sources: [], summary: "(interrupted)" },
+        ],
+      },
+    ]);
+    render(<Harness d={deps({ getTranscript })} />);
+    await waitFor(() => screen.getByLabelText("Conversation"));
+    // The calm interrupted note stands in for the missing roster.
+    await screen.findByText(/Sub-agent run interrupted/);
+    // The step reads with the friendly label (inline in the thinking trace AND in the
+    // Worked step), not the raw "spawn_subagent".
+    expect(screen.getAllByText("Spawned sub-agents").length).toBeGreaterThan(0);
+    expect(screen.queryByText("spawn_subagent")).not.toBeInTheDocument();
+  });
+
   it("replays a stored turn's reasoning as a collapsed Thinking disclosure", async () => {
     const getTranscript = vi.fn(async () => [
       { role: "user" as const, content: "why?", tools: [], reasoning: "" },

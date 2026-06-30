@@ -30,6 +30,32 @@ def test_records_text_and_reasoning_offsets_at_the_tool_call() -> None:
     assert step["reasoning_offset"] == len("let me think")
 
 
+def test_unsettled_tool_persists_as_interrupted_not_null() -> None:
+    # A turn cut before a tool returned (a Stop / disconnect / timeout mid-spawn) leaves
+    # the step's `ok` null. Persisting it that way replays as a perpetual in-flight
+    # spinner on reopen, so it settles to a failed/interrupted step instead.
+    acc = TranscriptAccumulator()
+    acc.feed(ToolCallEvent(id="c1", name="spawn_subagent", arguments={"tasks": []}))
+    # No tool_result arrives — the turn is cut here.
+    acc.feed(DoneEvent(stop_reason="disconnected"))
+
+    step = acc.tool_steps()[0]
+    assert step["ok"] is False
+    assert step["summary"] == "(interrupted)"
+
+
+def test_settled_tool_keeps_its_real_result() -> None:
+    # A tool that DID return is untouched — the interrupted coercion only fires on a null.
+    acc = TranscriptAccumulator()
+    acc.feed(ToolCallEvent(id="c1", name="search", arguments={}))
+    acc.feed(ToolResultEvent(tool_call_id="c1", ok=True, summary="found 3"))
+    acc.feed(DoneEvent(stop_reason="end_turn"))
+
+    step = acc.tool_steps()[0]
+    assert step["ok"] is True
+    assert step["summary"] == "found 3"
+
+
 def test_reasoning_offset_tracks_interleaved_steps() -> None:
     # Reasoning accumulates across ReAct steps; each tool's reasoning_offset is the
     # reasoning length at its own call, so two tools split the trace where each ran.

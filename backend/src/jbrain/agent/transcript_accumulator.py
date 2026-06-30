@@ -95,5 +95,17 @@ class TranscriptAccumulator:
         return "".join(self.reasoning)
 
     def tool_steps(self) -> list[dict[str, Any]]:
-        """The assistant turn's ordered "Worked" steps, ready for the transcript."""
-        return [self._steps[i] for i in self._order]
+        """The assistant turn's ordered "Worked" steps, ready for the transcript.
+
+        A step still unsettled (`ok is None`) means the turn was cut before the tool
+        returned — a Stop, a dropped connection, or a wall-clock timeout interrupted it
+        (a clean turn pairs every tool_call with its result, so none are left null).
+        Record it as a failed/interrupted step rather than a null the PWA would replay as
+        a perpetual in-flight spinner on reopen (e.g. a cancelled spawn_subagent fan whose
+        result never landed). Idempotent."""
+        steps = [self._steps[i] for i in self._order]
+        for s in steps:
+            if s.get("ok") is None:
+                s["ok"] = False
+                s.setdefault("summary", "(interrupted)")
+        return steps

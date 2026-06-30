@@ -478,6 +478,16 @@ function Bubble({
   // verdict too and the bubble renders at most one of the two.
   const generalKnowledge = message.generalKnowledge === true && flags.length === 0;
 
+  // A settled spawn turn whose fan was interrupted before it produced a roster (a Stop,
+  // a dropped connection, a timeout: the spawn step persisted failed with no
+  // subagent_synthesis view). Without a note the bubble is just a foot strip — no answer,
+  // no roster — reading as blank. Show a calm "interrupted" line so the turn is coherent
+  // on reopen; the sub-agents that were minted are reachable from the chats panel.
+  const interruptedSpawn =
+    !message.streaming &&
+    message.tools.some((t) => t.name === "spawn_subagent" && t.ok === false) &&
+    !message.views.some((v) => v.view === "subagent_synthesis");
+
   // The answer leads the bubble; the model's reasoning trace and tool steps share a
   // single disclosure line at the foot ("Thinking · Worked"), each expanding in place
   // (docs/research/brain-tooluse-ux/A-disclosure-patterns.md). While thinking — before
@@ -573,6 +583,7 @@ function Bubble({
     <>
       <div className="bubble ai">
         {answer}
+        {interruptedSpawn && <InterruptedSubagentsNote />}
         {generalKnowledge && <GeneralKnowledgeNote />}
         {activityLine}
       </div>
@@ -851,6 +862,23 @@ function GeneralKnowledgeNote(): ReactNode {
         <path d="M12 8h.01" />
       </svg>
       From general knowledge — not your notes
+    </p>
+  );
+}
+
+// A settled spawn turn whose sub-agent fan was cut before it produced a roster (a Stop,
+// a dropped connection, a timeout). A calm steel ⓘ note — NOT the amber warning flag
+// (DESIGN.md: warning=amber, info=steel) — so the turn reads as interrupted, not broken;
+// the children that were minted are reachable from the chats panel's nested rail.
+function InterruptedSubagentsNote(): ReactNode {
+  return (
+    <p className="fb-genknow" role="note">
+      <svg className="fb-genknow-ic" viewBox="0 0 24 24" aria-hidden="true">
+        <circle cx="12" cy="12" r="9" />
+        <path d="M12 11v5" />
+        <path d="M12 8h.01" />
+      </svg>
+      Sub-agent run interrupted — any sub-agents that started are in the chats panel
     </p>
   );
 }
