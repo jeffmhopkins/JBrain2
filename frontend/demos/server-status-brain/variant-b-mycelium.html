@@ -1,0 +1,706 @@
+<!DOCTYPE html>
+<!--
+  JBrain2 — Server-Status "Bioluminescent Mycelium"
+  Variant B. Pure HTML5 Canvas 2D. ZERO dependencies. Fully offline.
+  Implements the shared CONTRACT.md public API on window.ServerBrain.
+
+  Render tech: parallax faux-3D node layers + perspective scaling, soft bloom
+  via layered radial gradients under 'lighter' composite blending, motion
+  trails via low-alpha frame fade. Data flows as glowing pulses along edges
+  through a concentric pipeline: API ingress (periphery) -> DB throughput band
+  -> LLM core -> GPU hot core.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>JBrain2 · Server Brain</title>
+<style>
+  :root{
+    --bg:#0E0F11; --surface:#17181B;
+    --steel:#7FA7C9; --green:#8FBC9A; --amber:#C9A36A; --rose:#CF8A8F;
+    --teal:#6FB6B1; --violet:#A493C9; --text:#E6E7E9; --text-2:#9A9DA3;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;background:var(--bg);overflow:hidden;
+    font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:var(--text)}
+  #stage{position:fixed;inset:0;display:block}
+
+  .panel{
+    position:fixed;z-index:10;background:rgba(20,22,26,.62);
+    border:1px solid rgba(127,167,201,.16);border-radius:12px;
+    backdrop-filter:blur(9px) saturate(120%);-webkit-backdrop-filter:blur(9px) saturate(120%);
+    box-shadow:0 6px 26px rgba(0,0,0,.5);
+  }
+
+  /* readout — top left */
+  #readout{top:14px;left:14px;padding:11px 13px;min-width:190px}
+  #readout .title{font-size:11px;letter-spacing:.18em;color:var(--text-2);
+    text-transform:uppercase;margin-bottom:9px;display:flex;align-items:center;gap:7px}
+  #dot{width:8px;height:8px;border-radius:50%;background:var(--green);
+    box-shadow:0 0 10px var(--green);transition:background .4s,box-shadow .4s}
+  .row{display:flex;justify-content:space-between;gap:18px;font-size:12px;line-height:1.85}
+  .row .k{color:var(--text-2)} .row .v{color:var(--text);font-variant-numeric:tabular-nums}
+  .v.hi{color:var(--teal)}
+
+  /* legend — bottom left */
+  #legend{bottom:14px;left:14px;padding:10px 13px;font-size:11px;max-width:230px}
+  #legend .h{color:var(--text-2);letter-spacing:.14em;text-transform:uppercase;margin-bottom:7px;font-size:10px}
+  #legend .li{display:flex;align-items:center;gap:8px;line-height:1.95;color:var(--text-2)}
+  #legend .sw{width:16px;height:6px;border-radius:3px;flex:none}
+
+  /* controls — bottom right */
+  #controls{bottom:14px;right:14px;padding:9px;display:flex;gap:7px;flex-wrap:wrap;max-width:280px}
+  #controls button{
+    font:inherit;font-size:11px;color:var(--text);cursor:pointer;
+    background:rgba(127,167,201,.08);border:1px solid rgba(127,167,201,.22);
+    border-radius:8px;padding:7px 11px;transition:.18s}
+  #controls button:hover{background:rgba(127,167,201,.2);border-color:rgba(127,167,201,.5)}
+  #controls button:active{transform:translateY(1px)}
+  #controls button.warn{border-color:rgba(207,138,143,.4);color:var(--rose)}
+  #controls button.warn:hover{background:rgba(207,138,143,.18)}
+  #controls button.on{background:rgba(143,188,154,.16);border-color:rgba(143,188,154,.45);color:var(--green)}
+
+  .hint{position:fixed;top:14px;right:16px;z-index:10;font-size:10px;color:var(--text-2);
+    letter-spacing:.2em;text-transform:uppercase;opacity:.5}
+</style>
+</head>
+<body>
+<canvas id="stage"></canvas>
+
+<div id="readout" class="panel">
+  <div class="title"><span id="dot"></span><span id="health-label">JBrain2 · OK</span></div>
+  <div class="row"><span class="k">GPU util</span><span class="v hi" id="r-gpu">—</span></div>
+  <div class="row"><span class="k">tokens/s</span><span class="v" id="r-tok">—</span></div>
+  <div class="row"><span class="k">API req/s</span><span class="v" id="r-req">—</span></div>
+  <div class="row"><span class="k">DB qps</span><span class="v" id="r-qps">—</span></div>
+  <div class="row"><span class="k">GPU temp</span><span class="v" id="r-temp">—</span></div>
+  <div class="row"><span class="k">model</span><span class="v" id="r-model">—</span></div>
+</div>
+
+<div id="legend" class="panel">
+  <div class="h">Signals → Visuals</div>
+  <div class="li"><span class="sw" style="background:#FFD27A;box-shadow:0 0 8px #FFD27A"></span>GPU util · core flare + energy</div>
+  <div class="li"><span class="sw" style="background:#A493C9;box-shadow:0 0 8px #A493C9"></span>LLM core · pulse speed / glow</div>
+  <div class="li"><span class="sw" style="background:#7FA7C9;box-shadow:0 0 8px #7FA7C9"></span>API · ingress pulses (rim)</div>
+  <div class="li"><span class="sw" style="background:#6FB6B1;box-shadow:0 0 8px #6FB6B1"></span>DB qps · mid-band density</div>
+  <div class="li"><span class="sw" style="background:#CF8A8F;box-shadow:0 0 8px #CF8A8F"></span>Errors · rose shockwave</div>
+</div>
+
+<div id="controls" class="panel">
+  <button id="btn-sim" class="on">⏸ Pause sim</button>
+  <button id="btn-gpu">⚡ Spike GPU</button>
+  <button id="btn-llm">🌊 Burst LLM</button>
+  <button id="btn-err" class="warn">✕ Inject error</button>
+</div>
+
+<div class="hint">bioluminescent mycelium</div>
+
+<script>
+"use strict";
+(function(){
+  /* ---------------------------------------------------------------------- *
+   * Palette helpers
+   * ---------------------------------------------------------------------- */
+  const HUE = {
+    steel:[127,167,201], green:[143,188,154], amber:[201,163,106],
+    rose:[207,138,143], teal:[111,182,177], violet:[164,147,201],
+    gold:[255,210,122], hot:[255,236,170],
+  };
+  const rgba = (c,a)=>`rgba(${c[0]},${c[1]},${c[2]},${a})`;
+  const lerp = (a,b,t)=>a+(b-a)*t;
+  const clamp=(v,lo,hi)=>v<lo?lo:v>hi?hi:v;
+  const mixC=(a,b,t)=>[lerp(a[0],b[0],t),lerp(a[1],b[1],t),lerp(a[2],b[2],t)];
+
+  /* ---------------------------------------------------------------------- *
+   * Canvas / DPR
+   * ---------------------------------------------------------------------- */
+  const canvas = document.getElementById('stage');
+  const ctx = canvas.getContext('2d',{alpha:false});
+  let W=0,H=0,DPR=1,CX=0,CY=0,R=0;
+  function resize(){
+    DPR = Math.min(window.devicePixelRatio||1, 2);
+    W = window.innerWidth; H = window.innerHeight;
+    canvas.width = Math.floor(W*DPR); canvas.height = Math.floor(H*DPR);
+    canvas.style.width=W+'px'; canvas.style.height=H+'px';
+    ctx.setTransform(DPR,0,0,DPR,0,0);
+    CX=W/2; CY=H/2; R=Math.min(W,H)*0.46;
+    buildNetwork();
+  }
+  window.addEventListener('resize', resize);
+
+  /* ---------------------------------------------------------------------- *
+   * Network topology — concentric pipeline regions
+   *   ring 0: GPU hot core (center)
+   *   ring 1: LLM "thinking" core
+   *   ring 2: DB throughput band
+   *   ring 3: API ingress (periphery)
+   * Each node carries a faux-3D depth (z) for parallax + perspective scale.
+   * ---------------------------------------------------------------------- */
+  const RING = { GPU:0, LLM:1, DB:2, API:3 };
+  let nodes=[];          // {x,y,z,bx,by,r,ring,hue,phase,fire,seed}
+  let edges=[];          // {a,b,ring,len,base}
+  const RING_RADIUS = [0.0,0.20,0.52,0.92]; // fraction of R
+  const RING_COUNT  = [1, 9, 18, 26];
+
+  function buildNetwork(){
+    nodes.length=0; edges.length=0;
+    const hueFor=[HUE.gold,HUE.violet,HUE.teal,HUE.steel];
+    // build per ring
+    const ringNodes=[[],[],[],[]];
+    for(let ring=0;ring<4;ring++){
+      const n=RING_COUNT[ring];
+      const baseR=RING_RADIUS[ring]*R;
+      for(let i=0;i<n;i++){
+        const ang = (i/n)*Math.PI*2 + ring*0.6;
+        // band thickness scatter
+        const jitter = ring===0?0:(Math.random()*0.5-0.25)*R*0.18;
+        const rr = baseR + jitter;
+        const z = ring===0?1 : 0.35+Math.random()*0.65; // depth 0..1, core nearest
+        const node={
+          bx:Math.cos(ang)*rr, by:Math.sin(ang)*rr*0.9, // squash for faux perspective
+          x:0,y:0, z, ring,
+          ang, baseR:rr,
+          r: ring===0? 26 : lerp(7,3.2,ring/3),
+          hue: hueFor[ring].slice(),
+          phase: Math.random()*Math.PI*2,
+          breath: 0.6+Math.random()*0.8,
+          fire: 0, seed:Math.random()*1000,
+        };
+        nodes.push(node); ringNodes[ring].push(node);
+      }
+    }
+    // edges: connect each node to nearest neighbours in same ring + inward links
+    function link(a,b,ring){
+      const len=Math.hypot(a.bx-b.bx,a.by-b.by);
+      edges.push({a,b,ring,len,glow:0});
+    }
+    for(let ring=1;ring<4;ring++){
+      const arr=ringNodes[ring];
+      // ring-tangential web
+      for(let i=0;i<arr.length;i++){
+        link(arr[i],arr[(i+1)%arr.length],ring);
+        if(arr.length>6) link(arr[i],arr[(i+2)%arr.length],ring);
+      }
+      // inward links to a couple of nearest nodes in the next inner ring
+      const inner=ringNodes[ring-1];
+      for(const a of arr){
+        let best=null,bd=1e9,second=null,sd=1e9;
+        for(const b of inner){
+          const d=Math.hypot(a.bx-b.bx,a.by-b.by);
+          if(d<bd){second=best;sd=bd;best=b;bd=d;}
+          else if(d<sd){second=b;sd=d;}
+        }
+        if(best) link(a,best,ring);
+        if(second && Math.random()<0.45) link(a,second,ring);
+      }
+    }
+  }
+
+  /* ---------------------------------------------------------------------- *
+   * Pulses — glowing data travelling along edges (object pool, no GC churn)
+   * ---------------------------------------------------------------------- */
+  const POOL_MAX = 520;
+  const pulses = [];            // active
+  const free = [];              // recycled
+  function spawnPulse(edge, dir, hue, speed, size, life){
+    if(pulses.length>=POOL_MAX) return;
+    let p = free.pop();
+    if(!p) p={};
+    p.edge=edge; p.t = dir>0?0:1; p.dir=dir; p.hue=hue;
+    p.speed=speed; p.size=size; p.life=life; p.age=0; p.dead=false;
+    pulses.push(p);
+  }
+  function killPulse(i){
+    const p=pulses[i];
+    p.dead=true; free.push(p);
+    pulses[i]=pulses[pulses.length-1]; pulses.pop();
+  }
+
+  /* Shockwaves (errors) — small fixed array */
+  const shocks=[];
+  function spawnShock(){ shocks.push({r:R*0.1, a:1}); }
+
+  /* ---------------------------------------------------------------------- *
+   * State — eased toward incoming stats
+   * ---------------------------------------------------------------------- */
+  const S = { // smoothed display state
+    gpu:0.25, vram:0.3, temp:42, power:120,
+    tokens:0, active:1, model:'qwen3-30b', queue:0, ctx:0.2,
+    req:6, p95:60, err:0, inflight:4,
+    qps:30, pool:0.25, slow:0,
+    healthMix:[...HUE.green], // current bloom tint
+    energy:0.25,
+  };
+  let target = null;     // latest ServerStats
+  let coreFlash=0;       // transient extra core brightness
+  let burstFlow=0;       // transient flow-speed multiplier
+
+  function applyTarget(){
+    if(!target) return;
+    const g=target.gpu||{}, l=target.llm||{}, a=target.api||{}, d=target.db||{};
+    const k=0.06; // ease
+    S.gpu  = lerp(S.gpu,  clamp(g.util??S.gpu,0,1), k);
+    S.vram = lerp(S.vram, clamp(g.vram??S.vram,0,1), k);
+    S.temp = lerp(S.temp, clamp(g.tempC??S.temp,30,95), k);
+    S.power= lerp(S.power,clamp(g.powerW??S.power,0,600), k);
+    S.tokens=lerp(S.tokens,clamp(l.tokensPerSec??S.tokens,0,120), k);
+    S.active=lerp(S.active, l.active?1:0, k);
+    S.queue =lerp(S.queue, clamp(l.queue??S.queue,0,32), k);
+    S.ctx   =lerp(S.ctx,   clamp(l.ctxUsed??S.ctx,0,1), k);
+    if(l.model) S.model=l.model;
+    S.req   =lerp(S.req,   clamp(a.reqPerSec??S.req,0,50), k);
+    S.p95   =lerp(S.p95,   clamp(a.p95Ms??S.p95,5,2000), k);
+    S.err   =lerp(S.err,   clamp(a.errorRate??S.err,0,1), 0.12);
+    S.inflight=lerp(S.inflight,clamp(a.inflight??S.inflight,0,64), k);
+    S.qps   =lerp(S.qps,   clamp(d.qps??S.qps,0,300), k);
+    S.pool  =lerp(S.pool,  clamp(d.poolUsed??S.pool,0,1), k);
+    S.slow  =lerp(S.slow,  clamp(d.slowQueries??S.slow,0,20), k);
+
+    // health -> bloom tint
+    const h=target.health||'ok';
+    const want = h==='crit'?HUE.rose : h==='warn'?HUE.amber : mixC(HUE.green,HUE.teal,0.4);
+    S.healthMix[0]=lerp(S.healthMix[0],want[0],0.05);
+    S.healthMix[1]=lerp(S.healthMix[1],want[1],0.05);
+    S.healthMix[2]=lerp(S.healthMix[2],want[2],0.05);
+
+    // global energy headline = gpu util dominant
+    S.energy = lerp(S.energy, clamp(S.gpu*0.7 + S.tokens/120*0.3,0,1), 0.06);
+  }
+
+  /* ---------------------------------------------------------------------- *
+   * Pulse emission cadence driven by signals
+   * ---------------------------------------------------------------------- */
+  let accApi=0, accDb=0, accLlm=0;
+  function emit(dt){
+    const flow = (0.55 + S.tokens/120*1.6) * (1+burstFlow);
+
+    // API ingress -> pulses spawn at periphery, travel inward
+    accApi += dt * (S.req/50) * 9 * (1+S.inflight/64);
+    while(accApi>=1){ accApi-=1;
+      // pick an outer (API) edge that links inward
+      const e = pickEdge(RING.API);
+      if(e){
+        const dir = inwardDir(e);
+        spawnPulse(e, dir, HUE.steel, flow*(0.9+Math.random()*0.4), 2.2+Math.random()*1.5, 1);
+      }
+    }
+    // DB band throughput — dense mid-band pulses, mostly tangential
+    accDb += dt * (S.qps/300) * 22;
+    while(accDb>=1){ accDb-=1;
+      const e = pickEdge(RING.DB);
+      if(e){
+        const dir = Math.random()<0.6 ? inwardDir(e) : (Math.random()<0.5?1:-1);
+        const hue = mixC(HUE.teal, HUE.green, S.pool); // band fullness shifts hue
+        spawnPulse(e, dir, hue, flow*(0.8+Math.random()*0.5), 1.8+Math.random()*1.4, 1);
+      }
+    }
+    // LLM cascade — when active, waves toward GPU core
+    accLlm += dt * (0.2 + S.active* (0.4 + S.tokens/120*1.4)) * 14;
+    while(accLlm>=1){ accLlm-=1;
+      const e = pickEdge(RING.LLM);
+      if(e){
+        spawnPulse(e, inwardDir(e), HUE.violet, flow*(1.1+Math.random()*0.6), 2.4+Math.random()*1.6, 1);
+      }
+    }
+  }
+  // pick a random edge in/around a ring
+  function pickEdge(ring){
+    // edges store the outer node's ring; choose among those
+    for(let tries=0;tries<6;tries++){
+      const e=edges[(Math.random()*edges.length)|0];
+      if(e.ring===ring) return e;
+    }
+    return edges[(Math.random()*edges.length)|0];
+  }
+  // direction so pulse travels toward center (inward) — t goes a->b
+  function inwardDir(e){
+    const da=e.a.baseR, db=e.b.baseR;
+    return db<da ? 1 : -1; // 1 = a->b ; choose toward smaller radius
+  }
+
+  /* ---------------------------------------------------------------------- *
+   * Render
+   * ---------------------------------------------------------------------- */
+  let t0=performance.now(), time=0, running=true;
+  function frame(now){
+    if(!running){ raf=requestAnimationFrame(frame); return; }
+    let dt=(now-t0)/1000; t0=now;
+    if(dt>0.05) dt=0.05; // clamp after stalls
+    time+=dt;
+
+    applyTarget();
+    coreFlash*=Math.pow(0.06,dt); // decay
+    burstFlow*=Math.pow(0.18,dt);
+    emit(dt);
+
+    /* ---- trail fade (instead of clear) -> motion smear ---- */
+    ctx.globalCompositeOperation='source-over';
+    ctx.fillStyle='rgba(14,15,17,0.22)';
+    ctx.fillRect(0,0,W,H);
+
+    /* ---- update faux-3D node positions: slow drift + breathing ---- */
+    const drift = Math.sin(time*0.18);
+    const tilt = Math.cos(time*0.13);
+    for(let i=0;i<nodes.length;i++){
+      const n=nodes[i];
+      const breath = 1 + Math.sin(time*0.7*n.breath + n.phase)*0.05*(1+S.energy*0.6);
+      // parallax: deeper(z small) nodes move less; perspective scale by z
+      const persp = 0.6 + n.z*0.8;
+      const px = n.bx*breath + drift*22*(0.4+n.z);
+      const py = n.by*breath + tilt*16*(0.4+n.z);
+      n.x = CX + px*persp;
+      n.y = CY + py*persp;
+      n._persp=persp;
+      // firing decays
+      n.fire*=Math.pow(0.02,dt);
+    }
+
+    ctx.globalCompositeOperation='lighter';
+
+    /* ---- edges: faint mycelial filaments ---- */
+    drawEdges();
+
+    /* ---- pulses travel + deposit fire at endpoints ---- */
+    drawPulses(dt);
+
+    /* ---- nodes glow ---- */
+    drawNodes();
+
+    /* ---- GPU hot core flare ---- */
+    drawCore();
+
+    /* ---- error shockwaves ---- */
+    drawShocks(dt);
+
+    /* ---- global bloom vignette tint by health ---- */
+    drawGlobalBloom();
+
+    raf=requestAnimationFrame(frame);
+  }
+
+  function drawEdges(){
+    const tint=S.healthMix;
+    const baseA = 0.05 + S.energy*0.10;
+    for(let i=0;i<edges.length;i++){
+      const e=edges[i];
+      const a = baseA + e.glow*0.5;
+      if(a<0.012){ e.glow*=0.9; continue; }
+      e.glow*=0.86;
+      ctx.strokeStyle=rgba(mixC(tint,HUE.teal,0.3), a);
+      ctx.lineWidth = 0.6 + e.glow*1.4;
+      ctx.beginPath();
+      ctx.moveTo(e.a.x,e.a.y);
+      ctx.lineTo(e.b.x,e.b.y);
+      ctx.stroke();
+    }
+  }
+
+  function drawPulses(dt){
+    for(let i=pulses.length-1;i>=0;i--){
+      const p=pulses[i];
+      const e=p.edge;
+      const v = p.speed*dt / Math.max(e.len,1) * 120;
+      p.t += p.dir*v;
+      if(p.t<=0 || p.t>=1){
+        // arrived — light the destination node + edge, recycle
+        const dest = p.dir>0?e.b:e.a;
+        dest.fire = Math.min(1, dest.fire + 0.5);
+        e.glow = Math.min(1, e.glow + 0.6);
+        // chain inward: if dest is core-ward, occasionally relay
+        killPulse(i);
+        continue;
+      }
+      const x = lerp(e.a.x,e.b.x,p.t), y=lerp(e.a.y,e.b.y,p.t);
+      const persp=lerp(e.a._persp||1, e.b._persp||1, p.t);
+      const sz=p.size*persp;
+      // soft glow blob
+      const g=ctx.createRadialGradient(x,y,0,x,y,sz*4.5);
+      g.addColorStop(0, rgba(p.hue,0.9));
+      g.addColorStop(0.4, rgba(p.hue,0.32));
+      g.addColorStop(1, rgba(p.hue,0));
+      ctx.fillStyle=g;
+      ctx.beginPath(); ctx.arc(x,y,sz*4.5,0,6.283); ctx.fill();
+      // bright core dot
+      ctx.fillStyle=rgba(HUE.hot, 0.85);
+      ctx.beginPath(); ctx.arc(x,y,sz*0.7,0,6.283); ctx.fill();
+    }
+  }
+
+  function drawNodes(){
+    const tint=S.healthMix;
+    for(let i=0;i<nodes.length;i++){
+      const n=nodes[i];
+      if(n.ring===RING.GPU) continue; // core drawn separately
+      const persp=n._persp;
+      const pulse = 0.4 + 0.6*Math.abs(Math.sin(time*0.9*n.breath+n.phase));
+      const fire=n.fire;
+      const baseGlow = (0.15 + S.energy*0.35)*persp;
+      const intensity = baseGlow + fire*0.9;
+      const hue = mixC(n.hue, tint, 0.25);
+      const rr = n.r*persp*(1+fire*0.5);
+      // bloom halo
+      const g=ctx.createRadialGradient(n.x,n.y,0,n.x,n.y,rr*5);
+      g.addColorStop(0, rgba(hue, 0.55*intensity*pulse));
+      g.addColorStop(0.35, rgba(hue, 0.18*intensity));
+      g.addColorStop(1, rgba(hue,0));
+      ctx.fillStyle=g;
+      ctx.beginPath(); ctx.arc(n.x,n.y,rr*5,0,6.283); ctx.fill();
+      // crisp center
+      ctx.fillStyle=rgba(mixC(hue,HUE.hot,0.4+fire*0.4), 0.7*pulse+fire*0.3);
+      ctx.beginPath(); ctx.arc(n.x,n.y,rr*0.9,0,6.283); ctx.fill();
+    }
+  }
+
+  function drawCore(){
+    const core=nodes[0];
+    const x=core.x,y=core.y;
+    // GPU util drives flare brightness & size; tokens add a pulsing throb
+    const throb = 0.5 + 0.5*Math.sin(time*(2+S.tokens/30));
+    const flare = clamp(S.gpu,0,1);
+    const energy = clamp(S.energy + coreFlash, 0, 1.6);
+    const hotMix = mixC(HUE.gold, HUE.hot, flare);
+    const tint = S.healthMix;
+    const radius = R*(0.16 + 0.13*energy) * (1 + 0.06*throb);
+
+    // outer aura (huge, soft) — global energy
+    let g=ctx.createRadialGradient(x,y,0,x,y,radius*3.2);
+    g.addColorStop(0, rgba(hotMix, 0.5+0.4*energy));
+    g.addColorStop(0.25, rgba(mixC(hotMix,tint,0.3), 0.28*energy));
+    g.addColorStop(0.6, rgba(mixC(HUE.violet,tint,0.4), 0.10*energy));
+    g.addColorStop(1, rgba(tint,0));
+    ctx.fillStyle=g;
+    ctx.beginPath(); ctx.arc(x,y,radius*3.2,0,6.283); ctx.fill();
+
+    // "thinking" ring — sustained LLM core glow (active model)
+    const llmGlow = S.active*(0.4+S.tokens/120*0.6);
+    if(llmGlow>0.02){
+      ctx.strokeStyle=rgba(HUE.violet, 0.10+0.25*llmGlow);
+      ctx.lineWidth=2+4*llmGlow;
+      const rr=R*0.20*(1+0.03*Math.sin(time*1.7));
+      ctx.beginPath();
+      for(let a=0;a<6.283;a+=0.18){
+        const wob=1+0.04*Math.sin(a*5+time*2);
+        const px=x+Math.cos(a)*rr*wob, py=y+Math.sin(a)*rr*0.9*wob;
+        a===0?ctx.moveTo(px,py):ctx.lineTo(px,py);
+      }
+      ctx.closePath(); ctx.stroke();
+    }
+
+    // hot bright nucleus
+    g=ctx.createRadialGradient(x,y,0,x,y,radius);
+    g.addColorStop(0, rgba(HUE.hot, 0.95));
+    g.addColorStop(0.3, rgba(hotMix, 0.8+0.2*flare));
+    g.addColorStop(0.7, rgba(mixC(hotMix,HUE.violet,0.5), 0.25));
+    g.addColorStop(1, rgba(hotMix,0));
+    ctx.fillStyle=g;
+    ctx.beginPath(); ctx.arc(x,y,radius,0,6.283); ctx.fill();
+
+    // flare spikes when GPU hot
+    if(flare>0.55 || coreFlash>0.1){
+      const spikes=10, len=radius*(1.4+1.4*flare+coreFlash);
+      ctx.strokeStyle=rgba(HUE.hot, 0.12+0.3*(flare-0.4));
+      ctx.lineWidth=1.5;
+      for(let s=0;s<spikes;s++){
+        const a=time*0.6 + s/spikes*6.283;
+        const wob=len*(0.7+0.6*Math.abs(Math.sin(time*3+s)));
+        ctx.beginPath(); ctx.moveTo(x,y);
+        ctx.lineTo(x+Math.cos(a)*wob, y+Math.sin(a)*wob*0.9); ctx.stroke();
+      }
+    }
+  }
+
+  function drawShocks(dt){
+    for(let i=shocks.length-1;i>=0;i--){
+      const s=shocks[i];
+      s.r += dt*R*1.6; s.a -= dt*0.9;
+      if(s.a<=0){ shocks.splice(i,1); continue; }
+      ctx.strokeStyle=rgba(HUE.rose, s.a*0.5);
+      ctx.lineWidth=2+ (1-s.a)*3;
+      ctx.beginPath(); ctx.arc(CX,CY,s.r,0,6.283); ctx.stroke();
+      // inner soft fill
+      const g=ctx.createRadialGradient(CX,CY,s.r*0.8,CX,CY,s.r);
+      g.addColorStop(0,rgba(HUE.rose,0));
+      g.addColorStop(1,rgba(HUE.rose,s.a*0.12));
+      ctx.fillStyle=g;
+      ctx.beginPath(); ctx.arc(CX,CY,s.r,0,6.283); ctx.fill();
+    }
+  }
+
+  function drawGlobalBloom(){
+    const tint=S.healthMix;
+    const a=0.04 + S.energy*0.06 + (S.err>0.05?S.err*0.12:0);
+    const g=ctx.createRadialGradient(CX,CY,R*0.2,CX,CY,Math.max(W,H)*0.75);
+    g.addColorStop(0, rgba(tint,0));
+    g.addColorStop(0.7, rgba(tint, a*0.5));
+    g.addColorStop(1, rgba(tint, a));
+    ctx.fillStyle=g;
+    ctx.fillRect(0,0,W,H);
+  }
+
+  /* ---------------------------------------------------------------------- *
+   * HUD readout
+   * ---------------------------------------------------------------------- */
+  const el = id=>document.getElementById(id);
+  let hudAcc=0;
+  function updateHUD(dt){
+    hudAcc+=dt; if(hudAcc<0.12) return; hudAcc=0;
+    el('r-gpu').textContent=(S.gpu*100).toFixed(0)+'%';
+    el('r-tok').textContent=S.tokens.toFixed(0);
+    el('r-req').textContent=S.req.toFixed(0);
+    el('r-qps').textContent=S.qps.toFixed(0);
+    el('r-temp').textContent=S.temp.toFixed(0)+'°C';
+    el('r-model').textContent=S.active>0.5?S.model:'idle';
+    // health dot/label
+    const h = target?(target.health||'ok'):'ok';
+    const dot=el('dot'), lbl=el('health-label');
+    const col = h==='crit'?'var(--rose)':h==='warn'?'var(--amber)':'var(--green)';
+    dot.style.background=col; dot.style.boxShadow='0 0 10px '+col;
+    lbl.textContent='JBrain2 · '+h.toUpperCase();
+  }
+  // piggyback HUD on rAF via a light timer hook
+  (function hudLoop(){ updateHUD(0.13); setTimeout(hudLoop,130); })();
+
+  /* ---------------------------------------------------------------------- *
+   * Simulator — wandering + correlated bursts
+   * ---------------------------------------------------------------------- */
+  const sim = {
+    on:false, timer:null,
+    g:{util:0.25,vram:0.35,tempC:44,powerW:130,powerMaxW:600},
+    l:{active:true,model:'qwen3-30b',tokensPerSec:18,queue:1,ctxUsed:0.22},
+    a:{reqPerSec:6,p95Ms:55,errorRate:0,inflight:4},
+    d:{qps:34,poolUsed:0.28,slowQueries:0},
+    burst:0, gpuKick:0,
+  };
+  function wander(v,lo,hi,amt){ return clamp(v + (Math.random()-0.5)*amt, lo, hi); }
+  function tickSim(){
+    const m=sim;
+    // decay transient burst drivers
+    m.burst*=0.90; m.gpuKick*=0.88;
+    // base wander
+    m.l.tokensPerSec = wander(m.l.tokensPerSec, 2, 120, 7) + m.burst*40;
+    m.l.tokensPerSec = clamp(m.l.tokensPerSec,0,120);
+    m.l.active = m.l.tokensPerSec>3;
+    m.l.queue = clamp(wander(m.l.queue,0,32, 2)+m.burst*8,0,32);
+    m.l.ctxUsed = wander(m.l.ctxUsed,0.05,0.98,0.03);
+
+    // GPU correlated with LLM tokens (+ direct kick)
+    const llmLoad = m.l.tokensPerSec/120;
+    m.g.util = clamp(lerp(m.g.util, 0.15 + llmLoad*0.7 + m.gpuKick, 0.25)
+                     + (Math.random()-0.5)*0.04, 0.02, 1);
+    m.g.vram = clamp(lerp(m.g.vram, 0.3+llmLoad*0.5,0.1),0,1);
+    m.g.tempC = clamp(lerp(m.g.tempC, 40 + m.g.util*48, 0.08),30,95);
+    m.g.powerW = clamp(lerp(m.g.powerW, 80 + m.g.util*460, 0.15),0,600);
+
+    // API + DB wander
+    m.a.reqPerSec = clamp(wander(m.a.reqPerSec,0,50,5)+m.burst*6,0,50);
+    m.a.inflight = clamp(wander(m.a.inflight,0,64,5),0,64);
+    m.a.p95Ms = clamp(wander(m.a.p95Ms,5,2000, 40)+m.g.util*120,5,2000);
+    m.a.errorRate = clamp(m.a.errorRate*0.7 + (Math.random()<0.01?Math.random()*0.2:0),0,1);
+    m.d.qps = clamp(wander(m.d.qps,0,300,25)+m.a.reqPerSec*2,0,300);
+    m.d.poolUsed = clamp(lerp(m.d.poolUsed, 0.2+m.a.inflight/64*0.6,0.1),0,1);
+    m.d.slowQueries = clamp(Math.round(wander(m.d.slowQueries,0,20,2)),0,20);
+
+    // health derive
+    let health='ok';
+    if(m.g.tempC>82 || m.a.errorRate>0.12 || m.d.poolUsed>0.92) health='crit';
+    else if(m.g.tempC>72 || m.g.util>0.85 || m.a.errorRate>0.03 || m.d.poolUsed>0.8) health='warn';
+
+    pushStats({
+      ts:Date.now(), health,
+      gpu:{...m.g}, llm:{...m.l}, api:{...m.a}, db:{...m.d}
+    });
+  }
+
+  function pushStats(stats){
+    target = stats;
+    // map error blips into shockwaves
+    if(stats.api && stats.api.errorRate>0.06 && Math.random()<0.4) spawnShock();
+  }
+
+  /* ---------------------------------------------------------------------- *
+   * Public API — window.ServerBrain  (matches CONTRACT.md exactly)
+   * ---------------------------------------------------------------------- */
+  const API = {
+    update(stats){
+      pushStats(stats);
+      if(stats && stats.api && stats.api.errorRate>0.3) { for(let i=0;i<2;i++) spawnShock(); }
+    },
+    startSimulator(){
+      if(sim.on) return; sim.on=true;
+      tickSim();
+      sim.timer=setInterval(tickSim, 600);
+      setBtn(true);
+    },
+    stopSimulator(){
+      sim.on=false; if(sim.timer){clearInterval(sim.timer); sim.timer=null;}
+      setBtn(false);
+    },
+    spikeGPU(){
+      sim.gpuKick = 0.85; sim.g.util=clamp(sim.g.util+0.6,0,1);
+      sim.g.tempC=clamp(sim.g.tempC+8,30,95); sim.g.powerW=clamp(sim.g.powerW+220,0,600);
+      coreFlash = 1.1; burstFlow=1.2;
+      if(!sim.on){ // still react if sim off
+        pushStats({ts:Date.now(),health:'warn',
+          gpu:{util:clamp(S.gpu+0.6,0,1),vram:S.vram,tempC:clamp(S.temp+8,30,95),powerW:clamp(S.power+220,0,600),powerMaxW:600},
+          llm:{active:S.active>0.5,model:S.model,tokensPerSec:S.tokens,queue:S.queue,ctxUsed:S.ctx},
+          api:{reqPerSec:S.req,p95Ms:S.p95,errorRate:S.err,inflight:S.inflight},
+          db:{qps:S.qps,poolUsed:S.pool,slowQueries:S.slow}});
+      }
+    },
+    burstLLM(){
+      sim.burst = 1.0; sim.l.active=true;
+      coreFlash = 0.7; burstFlow=1.6;
+      // correlated GPU rise handled in tickSim via burst; nudge immediately too
+      sim.gpuKick=Math.max(sim.gpuKick,0.5);
+      if(!sim.on){
+        pushStats({ts:Date.now(),health:'ok',
+          gpu:{util:clamp(S.gpu+0.4,0,1),vram:S.vram,tempC:clamp(S.temp+5,30,95),powerW:clamp(S.power+150,0,600),powerMaxW:600},
+          llm:{active:true,model:S.model,tokensPerSec:110,queue:clamp(S.queue+6,0,32),ctxUsed:S.ctx},
+          api:{reqPerSec:S.req,p95Ms:S.p95,errorRate:S.err,inflight:S.inflight},
+          db:{qps:S.qps,poolUsed:S.pool,slowQueries:S.slow}});
+      }
+    },
+    injectError(){
+      spawnShock(); spawnShock();
+      sim.a.errorRate = clamp(sim.a.errorRate+0.35,0,1);
+      if(!sim.on){
+        pushStats({ts:Date.now(),health:'crit',
+          gpu:{util:S.gpu,vram:S.vram,tempC:S.temp,powerW:S.power,powerMaxW:600},
+          llm:{active:S.active>0.5,model:S.model,tokensPerSec:S.tokens,queue:S.queue,ctxUsed:S.ctx},
+          api:{reqPerSec:S.req,p95Ms:clamp(S.p95+300,5,2000),errorRate:0.4,inflight:S.inflight},
+          db:{qps:S.qps,poolUsed:S.pool,slowQueries:S.slow}});
+      }
+    },
+  };
+  window.ServerBrain = API;
+
+  /* ---------------------------------------------------------------------- *
+   * Controls wiring
+   * ---------------------------------------------------------------------- */
+  function setBtn(on){
+    const b=el('btn-sim');
+    b.textContent = on?'⏸ Pause sim':'▶ Resume sim';
+    b.classList.toggle('on',on);
+  }
+  el('btn-sim').addEventListener('click',()=> sim.on?API.stopSimulator():API.startSimulator());
+  el('btn-gpu').addEventListener('click',()=>API.spikeGPU());
+  el('btn-llm').addEventListener('click',()=>API.burstLLM());
+  el('btn-err').addEventListener('click',()=>API.injectError());
+
+  /* ---------------------------------------------------------------------- *
+   * Visibility pause + main loop boot
+   * ---------------------------------------------------------------------- */
+  let raf=0;
+  document.addEventListener('visibilitychange',()=>{
+    running = !document.hidden;
+    if(running){ t0=performance.now(); }
+  });
+
+  resize();
+  API.startSimulator();
+  raf=requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
