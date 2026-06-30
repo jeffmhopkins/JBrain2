@@ -18,6 +18,12 @@ the member dashboard SPA (served at `/dash`) in a locked-down WebView.
   kill; the setup walk requests "Allow all the time", notifications, and a
   battery-optimization exemption; the foreground notification shows the last-fix age so
   a stall is visible.
+- **M5f** — offline tolerance for the field (remote, no signal): capture starts even
+  when the session mint fails, so fixes queue on-device and backfill in order when
+  signal returns; an offline cold-start renders the cached dashboard (cached tiles +
+  the live self-pin) instead of an error wall, with an "Offline · caching fixes" badge.
+  The on-disk backfill buffer (`FixBufferConfig`, default ~5000 fixes) is runtime-tunable
+  via a `tracker`/`fix_buffer_cap` pref for longer off-grid trips.
 
 ## Build & test
 

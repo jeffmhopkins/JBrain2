@@ -46,7 +46,9 @@ class LocationService : Service(), LocationListener {
     private val publisher = LocationPublisher()
     private lateinit var store: CredentialStore
     private lateinit var uploader: LocationUploader
-    private val queue: FixQueue by lazy { FileFixQueue(File(filesDir, "fixes.ndjson")) }
+    private val queue: FixQueue by lazy {
+        FileFixQueue(File(filesDir, "fixes.ndjson"), FixBufferConfig.resolve(bufferCapOverride()))
+    }
     // One worker thread owns all queue + network I/O, so drains never overlap or
     // touch the main thread.
     private val io = Executors.newSingleThreadExecutor()
@@ -278,6 +280,12 @@ class LocationService : Service(), LocationListener {
     private fun subtitle(): String =
         if (lastFixAtMs == 0L) FixAgeLabel.acquiring()
         else FixAgeLabel.forAge(SystemClock.elapsedRealtime() - lastFixAtMs)
+
+    /** An optional owner-set override for the offline buffer size (0/absent = use the
+     * default). Stored as a plain pref so a settings screen or `adb` can tune the
+     * off-grid backfill window without a rebuild. */
+    private fun bufferCapOverride(): Int =
+        getSharedPreferences("tracker", MODE_PRIVATE).getInt("fix_buffer_cap", 0)
 
     private fun startInForeground() {
         getSystemService<NotificationManager>()?.createNotificationChannel(

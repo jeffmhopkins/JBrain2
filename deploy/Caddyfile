@@ -44,8 +44,11 @@
 
 		# The PWA's update entrypoints must always revalidate, while Vite's
 		# hash-named assets are immutable — this pair is what makes every
-		# launch pick up a new deploy.
-		@entry path / /index.html /debug-console.html /sw.js /manifest.webmanifest /registerSW.js
+		# launch pick up a new deploy. /dash(.html) — the JBrain360 entry — gets the
+		# same no-cache treatment: always fresh online, yet still stored in the
+		# WebView's HTTP cache, which is what lets the app fall back to the cached
+		# dashboard (and its already-cached tiles) offline instead of an error wall.
+		@entry path / /index.html /dash /dash.html /debug-console.html /sw.js /manifest.webmanifest /registerSW.js
 		header @entry Cache-Control "no-cache"
 		@hashed path /assets/* /workbox-*.js
 		header @hashed Cache-Control "public, max-age=31536000, immutable"

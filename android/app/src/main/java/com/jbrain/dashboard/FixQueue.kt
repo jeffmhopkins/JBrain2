@@ -26,7 +26,10 @@ interface FixQueue {
 /** Newline-delimited JSON on disk; survives process death. The whole (bounded) file
  * is rewritten on each mutation — cheap at this size and good enough for a
  * best-effort tracker. */
-class FileFixQueue(private val file: File, private val capacity: Int = CAP) : FixQueue {
+class FileFixQueue(
+    private val file: File,
+    private val capacity: Int = FixBufferConfig.DEFAULT,
+) : FixQueue {
     private val lines = ArrayDeque<String>()
 
     init {
@@ -85,10 +88,4 @@ class FileFixQueue(private val file: File, private val capacity: Int = CAP) : Fi
     }
 
     private fun persist() = file.writeText(lines.joinToString("\n"))
-
-    private companion object {
-        // ~7 h of dense moving fixes (5 s cadence) or weeks of stationary
-        // heartbeats — the offline backfill buffer before the oldest are dropped.
-        const val CAP = 5000
-    }
 }
