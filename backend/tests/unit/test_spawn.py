@@ -809,3 +809,49 @@ async def test_stop_cascades_cancellation_into_the_fan(monkeypatch: pytest.Monke
         await task
     # The child didn't keep running — its run was finished as cancelled.
     assert any(f["stop_reason"] == "cancelled" for f in runlog.finished)
+
+
+async def test_cancelled_child_runlog_settles_inline_not_detached(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A cancelled fan settles each child's run-log to 'cancelled' (never stranded
+    'running') even when finish is a real DB round-trip that YIELDS mid-cleanup —
+    asyncio.gather awaits the children's cancellation cleanup before propagating, so the
+    write lands inline. Guards against a regression to fire-and-forget children (e.g. a
+    bare create_task) that would abandon the close. The yielding finish is the teeth: a
+    detached cleanup wouldn't complete before the fan task unwinds."""
+    import asyncio
+
+    started = asyncio.Event()
+
+    class _BlockingLoop(_FakeLoop):
+        async def run(self, **kw):  # noqa: ANN003
+            _FakeLoop.calls.append(kw)
+            started.set()
+            await asyncio.sleep(3600)  # block until the parent cancel cascades in
+            return AgentResult(text="", stop_reason="end_turn", steps=0, cost_tokens=0)  # unreached
+
+    class _YieldingRunLog(_FakeRunLog):
+        async def finish(self, ctx, run_id, **kw):  # noqa: ANN001, ANN003
+            await asyncio.sleep(0)  # a real finish yields mid-cleanup (a DB round-trip)
+            self.finished.append({"run_id": run_id, **kw})
+
+    _FakeLoop.calls = []
+    monkeypatch.setattr(spawn_mod, "AgentLoop", _BlockingLoop)
+    runlog = _YieldingRunLog()
+    svc = SpawnService(
+        router=_FakeRouter(),  # type: ignore[arg-type]
+        registry=object(),  # type: ignore[arg-type]
+        sessions=_FakeSessions(),  # type: ignore[arg-type]
+        runlog=runlog,  # type: ignore[arg-type]
+    )
+    task = asyncio.create_task(
+        svc.spawn_fan(_ctx(), {"tasks": [{"persona": "research", "brief": "x", "label": "L"}]})
+    )
+    await started.wait()  # the child is mid-run
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    # The child's cancelled run-log close completed INLINE (awaited by the fan), not
+    # abandoned mid-yield — so the row settles 'cancelled' instead of stranding 'running'.
+    assert any(f["stop_reason"] == "cancelled" for f in runlog.finished)

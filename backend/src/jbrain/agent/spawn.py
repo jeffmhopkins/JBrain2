@@ -299,6 +299,12 @@ class SpawnService:
             _emit(ctx, ToolViewEvent(tool_call_id="", view=_synthesis_view(settled)))
             return res
 
+        # asyncio.gather, when this task is cancelled (a Stop / shutdown), cancels every
+        # child AND awaits its cancellation cleanup before propagating — the
+        # `_GatheringFuture` resolves only once all children are done — so each child's
+        # run-log close (status=cancelled) lands inline, not stranded "running". Paired
+        # with the loop cancelling this dispatched fan (loop.py), a Stop tears the whole
+        # tree down cleanly (test_cancelled_child_runlog_settles_inline_not_detached).
         results = await asyncio.gather(
             *(_run_and_collect(i, plan, child) for i, (plan, child) in enumerate(minted))
         )
