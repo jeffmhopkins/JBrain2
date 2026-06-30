@@ -429,6 +429,9 @@ function PhoneRow({
             <span className="loc-phone-name">
               {device.label}
               {device.revoked && <span className="loc-badge">revoked</span>}
+              {!device.revoked && device.silent && (
+                <span className="loc-badge loc-badge-silent">silent</span>
+              )}
             </span>
             <span className="loc-phone-meta">{deviceStatus(device)}</span>
           </button>

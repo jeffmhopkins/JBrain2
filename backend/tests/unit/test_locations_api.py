@@ -5,7 +5,7 @@ window passthrough."""
 
 import asyncio
 from collections.abc import Iterator
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from fastapi.testclient import TestClient
@@ -166,11 +166,49 @@ def test_devices_merge_identity_with_activity(
     assert active["last_seen"] == NOW.isoformat() and active["battery_pct"] == 72
     assert active["connection"] == "wifi" and active["fix_count"] == 140
     assert active["velocity_mps"] == 10.0
-    # A device with no fixes yet still appears, with null activity + zero count.
+    # A device with no fixes yet still appears, with null activity + zero count, and is
+    # "not set up" rather than silent (never reported).
     quiet = next(d for d in data if d["id"] == "d-quiet")
     assert quiet["revoked"] is True and quiet["last_seen"] is None
     assert quiet["battery_pct"] is None and quiet["connection"] is None and quiet["fix_count"] == 0
     assert quiet["velocity_mps"] is None
+    assert quiet["age_seconds"] is None and quiet["silent"] is False
+
+
+def test_devices_flag_silent_when_dark(
+    client: TestClient, repo: FakeAuthRepo, devices: FakeDeviceRepo, locs: FakeLocationRepo
+) -> None:
+    # `silent` is computed against the real clock, so use now-relative fix times: a
+    # fresh device is live, one quiet for hours has gone dark.
+    now = datetime.now(UTC)
+    login(client, repo)
+    devices.devices = [
+        DeviceInfo(id="d-live", label="Phone", created_at=NOW, revoked=False),
+        DeviceInfo(id="d-dark", label="Watch", created_at=NOW, revoked=False),
+    ]
+    locs.activity = {
+        "d-live": DeviceActivity(
+            subject_id="d-live",
+            last_seen=now - timedelta(minutes=2),
+            battery_pct=80,
+            connection="wifi",
+            velocity_mps=None,
+            fix_count=10,
+        ),
+        "d-dark": DeviceActivity(
+            subject_id="d-dark",
+            last_seen=now - timedelta(hours=3),
+            battery_pct=15,
+            connection="cell",
+            velocity_mps=None,
+            fix_count=10,
+        ),
+    }
+    data = client.get("/api/locations/devices").json()
+    live = next(d for d in data if d["id"] == "d-live")
+    dark = next(d for d in data if d["id"] == "d-dark")
+    assert live["silent"] is False and live["age_seconds"] < 600
+    assert dark["silent"] is True and dark["age_seconds"] > 3600
 
 
 def test_fixes_passes_subject_and_window(

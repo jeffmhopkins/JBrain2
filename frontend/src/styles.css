@@ -13718,6 +13718,11 @@ input.ld-title {
   border-radius: var(--r-pill);
   padding: 2px 8px;
 }
+/* A device that has gone dark (not revoked) — amber, a caution rather than a failure. */
+.loc-badge-silent {
+  color: var(--amber);
+  background: var(--amber-tint);
+}
 .loc-card-meta {
   margin-top: 4px;
   font-size: var(--fs-micro);

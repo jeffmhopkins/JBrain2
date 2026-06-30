@@ -35,6 +35,7 @@ from jbrain.locations import (
     PlaceGeofence,
     SqlLocationRepo,
     TimelineEntry,
+    devicehealth,
 )
 from jbrain.locations.digest import DayTrack, Digest, PlaceSeen, PlaceSegment, Trip, compute_digest
 from jbrain.locations.presence import Presence, read_owner_presence
@@ -88,26 +89,33 @@ def _parse(ts: str | None) -> datetime | None:
 class DeviceSummaryOut(BaseModel):
     """A provisioned device for the Devices tab: stable identity + its current
     activity. `revoked` means it has no active key; `last_seen` is None until the
-    device's first fix lands."""
+    device's first fix lands. `age_seconds` is the time since that fix and `silent`
+    flags an active device that has gone dark past the liveness horizon — the owner's
+    cue that its tracker may have been killed in the background."""
 
     id: str
     label: str
     created_at: str
     revoked: bool
     last_seen: str | None
+    age_seconds: float | None
+    silent: bool
     battery_pct: int | None
     connection: str | None
     velocity_mps: float | None
     fix_count: int
 
     @classmethod
-    def of(cls, d: DeviceInfo, a: DeviceActivity | None) -> "DeviceSummaryOut":
+    def of(cls, d: DeviceInfo, a: DeviceActivity | None, now: datetime) -> "DeviceSummaryOut":
+        last_seen = a.last_seen if a else None
         return cls(
             id=d.id,
             label=d.label,
             created_at=d.created_at.isoformat(),
             revoked=d.revoked,
-            last_seen=a.last_seen.isoformat() if a and a.last_seen else None,
+            last_seen=last_seen.isoformat() if last_seen else None,
+            age_seconds=devicehealth.fix_age_seconds(last_seen, now),
+            silent=devicehealth.is_silent(last_seen, now, revoked=d.revoked),
             battery_pct=a.battery_pct if a else None,
             connection=a.connection if a else None,
             velocity_mps=a.velocity_mps if a else None,
@@ -194,9 +202,10 @@ async def list_devices(request: Request, principal: PrincipalDep) -> list[Device
     count. Identity comes from the device repo (so a freshly provisioned device with
     no fixes still appears); activity is merged in per subject id."""
     ctx = ctx_for(principal)
+    now = datetime.now(UTC)
     devices = await get_device_repo(request).list(ctx)
     activity = await get_location_repo(request).device_activity(ctx)
-    return [DeviceSummaryOut.of(d, activity.get(d.id)) for d in devices]
+    return [DeviceSummaryOut.of(d, activity.get(d.id), now) for d in devices]
 
 
 @router.get("/fixes")
