@@ -381,11 +381,13 @@ the fallback, and supplies the title + navigation links), and reads a linked **P
 text layer (PyMuPDF) rather than refusing it. The point is to make the on-box fetch good
 enough that the model stops smuggling blocked URLs through a third-party reader like
 `r.jina.ai`. For the residual case it can't handle alone — a hard bot-wall, or a
-JS-rendered shell with no served content — there is an **optional, off-by-default reader
-fallback** (`JBRAIN_READER_URL`): a pinned reader endpoint, ideally one self-hosted on
-the box, that web_fetch retries through. It is the sanctioned, owner-controlled version
-of what the model was doing on its own — only the public target URL travels off-box, and
-through an endpoint the owner pins (never one the model builds). The egress-Proposal
+JS-rendered shell with no served content — there is a **reader fallback**
+(`JBRAIN_READER_URL`): a pinned reader endpoint that web_fetch retries through. It ships
+as part of the stock compose stack (an on-box, r.jina.ai-compatible renderer, like the
+self-hosted SearXNG), so the default points at the on-box instance and it is on for a
+stock deploy; set `JBRAIN_READER_URL` empty to turn it off. It is the sanctioned,
+owner-controlled version of what the model was doing on its own — only the public target
+URL travels off-box, and through an endpoint the owner pins (never one the model builds). The egress-Proposal
 connectors (below) remain the rule for every *other* agent and every off-box call that
 could carry owner data.
 

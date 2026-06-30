@@ -17,10 +17,11 @@ text bodies pass through.
 Two things keep the agent from routing a blocked URL through a third-party reader on
 its own: the request presents as an ordinary browser (BROWSER_HEADERS), so a bot-wall
 is far less likely to 403 it; and when a direct fetch IS blocked or comes back empty (a
-JS-rendered shell), an optional owner-configured reader endpoint (`reader_url`, off by
-default, ideally a self-hosted reader on the box) is used as a sanctioned fallback —
-the target URL is the only thing that travels off-box, and it does so through a pinned
-endpoint the owner controls rather than an unmonitored `r.jina.ai/<url>` the model built.
+JS-rendered shell), an owner-configured reader endpoint (`reader_url`, an on-box reader
+shipped with the stock stack by default) is used as a sanctioned fallback — the target
+URL is the only thing that travels off-box, and it does so through a pinned endpoint the
+owner controls rather than an unmonitored `r.jina.ai/<url>` the model built. Empty
+`reader_url` disables the fallback.
 
 SSRF guard: the URL is model-supplied, and api/worker share an internal Docker
 network with Postgres, the embedder, SearXNG, and the MQTT auth endpoints — so a
