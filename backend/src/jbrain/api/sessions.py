@@ -13,7 +13,7 @@ from typing import Any, cast
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 
-from jbrain.agent.agents import AGENT_NAMES, DEFAULT_AGENT, is_agent
+from jbrain.agent.agents import DEFAULT_AGENT, OWNER_AGENTS, is_owner_agent
 from jbrain.agent.session import AgentSessionInfo, AgentSessionRepo
 from jbrain.agent.transcript_store import AgentTranscript
 from jbrain.api.deps import PrincipalDep, owner_only
@@ -93,9 +93,9 @@ def session_out(info: AgentSessionInfo) -> SessionOut:
 async def create_session(
     request: Request, principal: PrincipalDep, body: SessionCreate
 ) -> SessionOut:
-    if not is_agent(body.agent):
+    if not is_owner_agent(body.agent):
         raise HTTPException(
-            status_code=422, detail=f"unknown agent: {body.agent!r} (one of {sorted(AGENT_NAMES)})"
+            status_code=422, detail=f"unknown agent: {body.agent!r} (one of {sorted(OWNER_AGENTS)})"
         )
     repo = get_agent_sessions(request)
     info = await repo.create(
