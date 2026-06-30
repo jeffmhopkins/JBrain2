@@ -113,7 +113,10 @@ async def test_owner_bypass_audit(maker: async_sessionmaker) -> None:
     sid = await _subject(maker, owner_ctx, "Dana")
     _, pid, _ = await _link_and_session(maker, owner_ctx, sid)
 
-    # Plant an OWNER row in agent_sessions so the audit proves isolation, not emptiness.
+    # Plant OWNER rows so the audit proves isolation, not emptiness: an owner-only
+    # agent_session AND a real domain note in the SAME domain the link is attributed to
+    # (general) — the latter proves empty read scope holds across the domain firewall, not
+    # just for is_owner() tables.
     async with scoped_session(maker, owner_ctx) as session:
         await session.execute(
             text(
@@ -121,6 +124,13 @@ async def test_owner_bypass_audit(maker: async_sessionmaker) -> None:
                 " VALUES (:i, :p, '{}')"
             ),
             {"i": str(uuid.uuid4()), "p": owner_pid},
+        )
+        await session.execute(
+            text(
+                "INSERT INTO app.notes (id, client_id, domain_code, body)"
+                " VALUES (:i, :c, 'general', 'a private owner note')"
+            ),
+            {"i": str(uuid.uuid4()), "c": "audit-" + uuid.uuid4().hex},
         )
         # Every table whose READ (the SELECT/ALL USING clause) keys on is_owner() — not
         # is_full_owner (a different function), and not a is_owner()-on-WRITE table that
@@ -148,7 +158,8 @@ async def test_owner_bypass_audit(maker: async_sessionmaker) -> None:
                 await session.execute(text(f"SELECT count(*) FROM app.{table}"))  # noqa: S608
             ).scalar()
             assert count == 0, f"intake principal saw {count} rows of owner-only app.{table}"
-        # Empty read scope (#8): zero domain content even though a link exists.
+        # Empty read scope (#8): zero domain content (a planted general-domain owner
+        # note) even though the link is attributed to the general domain.
         assert (await session.execute(text("SELECT count(*) FROM app.notes"))).scalar() == 0
         # It sees its OWN principal row (every principal does) but NOT the owner's.
         assert (
@@ -160,16 +171,24 @@ async def test_owner_bypass_audit(maker: async_sessionmaker) -> None:
             )
         ).scalar() == 1
 
-    # Not storable in the owner-only agent_sessions table (its WITH CHECK is is_owner()).
-    with pytest.raises(ProgrammingError):
-        async with scoped_session(maker, intake_context(pid)) as session:
-            await session.execute(
-                text(
-                    "INSERT INTO app.agent_sessions (id, principal_id, domain_scopes)"
-                    " VALUES (:i, :p, '{}')"
-                ),
-                {"i": str(uuid.uuid4()), "p": pid},
-            )
+    # Write-denial too, not just read-denial: the intake principal's INSERT is rejected by
+    # the WITH CHECK of owner-only tables (a valid-but-unauthorized row, so the failure is
+    # the RLS policy, not a NOT NULL/FK). agent_sessions is the §5-named table; tasks is a
+    # second, independent is_owner() table proving the denial isn't agent_sessions-specific.
+    for stmt, params in (
+        (
+            "INSERT INTO app.agent_sessions (id, principal_id, domain_scopes)"
+            " VALUES (:i, :p, '{}')",
+            {"i": str(uuid.uuid4()), "p": pid},
+        ),
+        (
+            "INSERT INTO app.tasks (principal_id, prompt) VALUES (:p, 'x')",
+            {"p": pid},
+        ),
+    ):
+        with pytest.raises(ProgrammingError):
+            async with scoped_session(maker, intake_context(pid)) as session:
+                await session.execute(text(stmt), params)
 
 
 async def test_recipients_isolated_by_principal_pin(maker: async_sessionmaker) -> None:

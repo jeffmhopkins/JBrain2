@@ -255,6 +255,11 @@ async def redeem(
     if result is None:
         raise HTTPException(status_code=401, detail="invalid, expired, or exhausted link")
     remaining = int((result.expires_at - datetime.now(UTC)).total_seconds())
+    # samesite=lax (reviewed per §5): the recipient reaches the link via a top-level
+    # navigation to the PWA's own origin from an out-of-band channel, so the cookie is
+    # first-party to that origin and `lax` both permits that navigation and the subsequent
+    # same-origin XHR while still refusing cross-site POSTs (CSRF). `strict` would drop the
+    # cookie on the very top-level navigation that opens the link. httponly keeps it off JS.
     response.set_cookie(
         settings.session_cookie,
         result.cookie_token,

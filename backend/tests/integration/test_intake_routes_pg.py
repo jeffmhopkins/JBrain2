@@ -138,6 +138,24 @@ async def test_redeemed_intake_cookie_is_non_owner_and_403s_owner_routes(
         )
         assert who is not None and who.kind == "intake_link"
 
+        # Revoking the link kills the in-flight cookie at the ROUTE layer too: the next
+        # request no longer authenticates, so current_principal 401s (cascade, end-to-end).
+        from jbrain.intake import service as _svc
+
+        assert await _svc.revoke_intake_link(SqlIntakeRepo(maker), ctx, record.id) is True
+        assert (await client.get("/api/intake/links")).status_code == 401
+
+
+async def test_redeem_rejects_bad_secret_with_no_cookie(maker: async_sessionmaker) -> None:
+    """The security-path 401 branch: an invalid/expired/exhausted secret 401s and writes
+    NO Set-Cookie header (CLAUDE.md 100% on the redeem path)."""
+    app = _app(maker)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as client:
+        resp = await client.post("/api/intake/redeem", json={"secret": "not-a-real-secret"})
+        assert resp.status_code == 401
+        assert "set-cookie" not in {k.lower() for k in resp.headers}
+        assert client.cookies.get("jbrain_session") is None
+
 
 def _redeem_config(subject_id: str) -> dict:
     return dict(

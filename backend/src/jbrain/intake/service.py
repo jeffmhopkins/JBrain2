@@ -179,6 +179,9 @@ async def redeem_intake_link(
     )
     if claim is None:
         return None
+    # The cookie is minted in a SECOND transaction (DeviceSession is the auth domain's).
+    # If it failed, the open is already burned and an unbound session row exists — an
+    # acceptable held slot (§5 abandoned-session handling), never an over-issue or a leak.
     await auth_repo.create_session(claim.principal_id, keys.hash_token(cookie), "intake")
     return RedeemResult(
         session_id=claim.session_id,
