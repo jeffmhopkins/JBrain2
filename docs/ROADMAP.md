@@ -194,7 +194,8 @@ harness were removed, not deferred.)*
 
 Scoped capability tokens; guided-intake share links (interview agent gathers
 e.g. medical history or recipes, sessions become notes attributed to the
-right subject and domain). OwnTracks ingestion endpoint with per-device keys;
+right subject and domain) — **build plan: `docs/GUIDED_INTAKE_PLAN.md`** (five
+waves, GUI mock gate cleared). OwnTracks ingestion endpoint with per-device keys;
 location hypertable; PostGIS geofence events into the workflow engine.
 Lab-report extraction into typed `lab_results`.
 

@@ -1,0 +1,319 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>JBrain · Guided Intake — A · Conversational (mock)</title>
+<style>
+  :root {
+    --bg: #0e0f11; --surface: #17181b; --surface-2: #1e2024; --border: #26282c;
+    --text: #e6e7e9; --text-2: #9a9da3; --text-3: #5c5f66; --surface-composer: #141518;
+    --steel: #7fa7c9; --steel-tint: rgba(127,167,201,.13);
+    --green: #8fbc9a; --green-tint: rgba(143,188,154,.13);
+    --amber: #c9a36a; --amber-tint: rgba(201,163,106,.13);
+    --rose: #cf8a8f; --rose-tint: rgba(207,138,143,.13);
+    --r-input: 12px; --r-seg: 14px; --r-card: 16px; --r-pill: 999px;
+    --font-scale: 1;
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  [data-theme="light"] {
+    --bg: #f7f7f5; --surface: #fff; --surface-2: #f0f0ee; --border: #e2e2df;
+    --text: #1a1b1e; --text-2: #5c5f66; --text-3: #9a9da3; --surface-composer: #fff;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    background: #060708; color: var(--text);
+    display: flex; flex-direction: column; align-items: center; min-height: 100%;
+    -webkit-font-smoothing: antialiased;
+  }
+  /* mock-only chrome (not part of the product) */
+  .mockbar {
+    width: 100%; max-width: 430px; display: flex; align-items: center; justify-content: space-between;
+    padding: 10px 14px; color: #8b8e95; font-size: 12px; letter-spacing: .03em;
+  }
+  .mockbar b { color: #cfd2d6; font-weight: 600; }
+  .mockbar button {
+    background: #1c1d20; border: 1px solid #2a2c30; color: #cfd2d6; border-radius: 999px;
+    padding: 5px 11px; font-size: 12px; cursor: pointer;
+  }
+  /* phone */
+  .phone {
+    width: 100%; max-width: 430px; height: min(880px, calc(100vh - 56px));
+    background: var(--bg); border: 1px solid #23252a; border-radius: 28px; overflow: hidden;
+    display: flex; flex-direction: column; position: relative; box-shadow: 0 24px 60px rgba(0,0,0,.5);
+  }
+
+  .app { display: flex; flex-direction: column; height: 100%; }
+  .screen { display: none; flex-direction: column; height: 100%; min-height: 0; }
+  .screen.active { display: flex; }
+
+  /* slim brand header — generic by default (owner identity is a per-link toggle) */
+  .brand {
+    flex: none; display: flex; align-items: center; gap: 10px; height: 54px; padding: 0 16px;
+    border-bottom: 1px solid var(--border); background: var(--bg);
+  }
+  .brand .mark {
+    width: 26px; height: 26px; border-radius: 8px; background: var(--steel-tint); color: var(--steel);
+    display: grid; place-items: center; flex: none;
+  }
+  .brand .ttl { font-size: 14px; font-weight: 600; }
+  .brand .sub { font-size: 11.5px; color: var(--text-3); }
+  .brand .exit { margin-left: auto; }
+  .icon-btn {
+    width: 36px; height: 36px; border-radius: 10px; border: 1px solid transparent; background: transparent;
+    color: var(--text-2); display: grid; place-items: center; cursor: pointer;
+  }
+  .icon-btn:hover { background: var(--surface-2); }
+  svg { display: block; }
+
+  /* WELCOME */
+  .welcome-body { flex: 1; overflow-y: auto; padding: 22px 18px 18px; }
+  .hero-mark {
+    width: 52px; height: 52px; border-radius: 15px; background: var(--steel-tint); color: var(--steel);
+    display: grid; place-items: center; margin-bottom: 16px;
+  }
+  .welcome-body h1 { font-size: 22px; font-weight: 600; margin: 0 0 8px; line-height: 1.25; }
+  .blurb { font-size: 15px; line-height: 1.5; color: var(--text-2); margin: 0 0 18px; }
+  .field { margin-bottom: 14px; }
+  .field label { display: block; font-size: 12px; font-weight: 500; color: var(--text-3);
+    text-transform: uppercase; letter-spacing: .07em; margin-bottom: 7px; }
+  input[type=text] {
+    width: 100%; background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--r-input);
+    color: var(--text); font: inherit; font-size: 16px; padding: 12px 14px;
+  }
+  input::placeholder { color: var(--text-3); }
+  input:focus-visible { outline: 2px solid var(--steel); outline-offset: 1px; }
+  .consent {
+    display: flex; gap: 10px; align-items: flex-start; background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--r-card); padding: 13px 14px; font-size: 13px; line-height: 1.45; color: var(--text-2);
+  }
+  .consent svg { color: var(--steel); flex: none; margin-top: 1px; }
+  .welcome-foot { flex: none; padding: 14px 16px calc(16px + env(safe-area-inset-bottom)); }
+
+  .btn {
+    width: 100%; font: 500 16px/1.4 inherit; color: var(--text); background: var(--surface-2);
+    border: 1px solid var(--border); border-radius: var(--r-input); padding: 13px 16px; min-height: 50px;
+    cursor: pointer; transition: .15s;
+  }
+  .btn.primary { color: var(--steel); background: var(--steel-tint); border-color: color-mix(in srgb, var(--steel) 38%, var(--border)); }
+  .btn.primary:hover { border-color: var(--steel); }
+  .btn.go { color: var(--green); background: var(--green-tint); border-color: color-mix(in srgb, var(--green) 38%, var(--border)); }
+  .btn:disabled { opacity: .45; cursor: default; }
+
+  /* CHAT */
+  .stream { flex: 1; overflow-y: auto; padding: 18px 16px 8px; }
+  .msg { margin-bottom: 14px; max-width: 88%; }
+  .msg.you { margin-left: auto; }
+  .who { font-size: 11px; text-transform: uppercase; letter-spacing: .07em; color: var(--text-3); margin: 0 0 5px 2px; }
+  .msg.you .who { text-align: right; }
+  .bubble {
+    border-radius: 14px; padding: 11px 14px; font-size: 15px; line-height: 1.5; word-wrap: break-word;
+    background: var(--surface); border: 1px solid var(--border);
+  }
+  .msg.you .bubble { background: var(--surface-2); }
+  .typing { display: inline-flex; gap: 4px; padding: 13px 14px; }
+  .typing i { width: 6px; height: 6px; border-radius: 50%; background: var(--text-3); animation: blink 1.2s infinite; }
+  .typing i:nth-child(2){ animation-delay: .2s } .typing i:nth-child(3){ animation-delay: .4s }
+  @keyframes blink { 0%,60%,100%{ opacity:.25 } 30%{ opacity:1 } }
+
+  /* inline draft card (Variant A keeps the review IN the chat stream) */
+  .draftcard {
+    background: var(--surface); border: 1px solid color-mix(in srgb, var(--steel) 30%, var(--border));
+    border-radius: var(--r-card); overflow: hidden; margin: 2px 0 6px;
+  }
+  .draftcard .dc-head { padding: 12px 14px 10px; border-bottom: 1px solid var(--border); }
+  .draftcard .dc-head .lbl { font-size: 11px; text-transform: uppercase; letter-spacing: .07em; color: var(--steel); }
+  .draftcard .dc-head .t { font-size: 15px; font-weight: 600; margin-top: 3px; }
+  .draftcard .dc-head .meta { font-size: 12px; color: var(--text-3); margin-top: 2px; }
+  .claims { list-style: none; margin: 0; padding: 8px 6px; }
+  .claims li { display: flex; gap: 9px; padding: 8px 8px; font-size: 14px; line-height: 1.45; }
+  .claims li svg { color: var(--green); flex: none; margin-top: 2px; }
+  .dc-foot { display: flex; gap: 9px; padding: 10px 12px 12px; }
+  .dc-foot .btn { min-height: 44px; font-size: 14px; padding: 10px 12px; }
+
+  /* composer */
+  .dock { flex: none; padding: 8px 12px calc(12px + env(safe-area-inset-bottom)); background: var(--bg); }
+  .omnibox { background: var(--surface-composer); border: 1px solid var(--border); border-radius: var(--r-card);
+    display: flex; align-items: flex-end; gap: 8px; padding: 8px 8px 8px 14px; }
+  .composer-input { flex: 1; background: none; border: none; outline: none; resize: none; color: var(--text);
+    font: inherit; font-size: 16px; line-height: 1.4; max-height: 120px; padding: 8px 0; }
+  .send-btn { width: 40px; height: 40px; border-radius: 12px; border: 0; flex: none; cursor: pointer;
+    display: grid; place-items: center; background: var(--steel-tint); color: var(--steel); transition: .15s; }
+  .send-btn:disabled { opacity: .4; cursor: default; }
+
+  /* DONE */
+  .done-wrap { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
+    text-align: center; padding: 32px 26px; gap: 8px; }
+  .done-mark { width: 64px; height: 64px; border-radius: 20px; background: var(--green-tint); color: var(--green);
+    display: grid; place-items: center; margin-bottom: 10px; }
+  .done-wrap h2 { font-size: 21px; margin: 0; }
+  .done-wrap p { font-size: 15px; line-height: 1.5; color: var(--text-2); margin: 0; max-width: 300px; }
+
+  @media (prefers-reduced-motion: reduce) { *{ animation: none !important; transition: none !important; } }
+</style>
+</head>
+<body>
+  <div class="mockbar">
+    <span>Variant <b>A — Conversational</b> · recipient surface</span>
+    <button onclick="toggleTheme()" id="themebtn">☾ dark</button>
+  </div>
+
+  <div class="phone">
+    <div class="app">
+
+      <!-- ============ WELCOME ============ -->
+      <section class="screen active" id="s-welcome">
+        <header class="brand">
+          <span class="mark"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v18M5 8l7-5 7 5"/></svg></span>
+          <div><div class="ttl">Guided intake</div><div class="sub">A private collection link</div></div>
+          <span class="exit"></span>
+        </header>
+        <div class="welcome-body">
+          <div class="hero-mark"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></div>
+          <h1>Share a little family medical history</h1>
+          <p class="blurb">You've been asked to add some family medical history. I'll ask a few questions — answer in your own words, it takes about five minutes. You'll review everything before it's sent.</p>
+          <div class="field">
+            <label for="nm">Your name</label>
+            <input id="nm" type="text" placeholder="e.g. Carol Hopkins" oninput="checkStart()" />
+          </div>
+          <div class="consent">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+            <span>What you share is sent to the link's owner for their personal records, and reviewed by them before anything is kept. Nothing is published.</span>
+          </div>
+        </div>
+        <div class="welcome-foot">
+          <button class="btn primary" id="startbtn" disabled onclick="go('s-chat'); startInterview()">Start →</button>
+        </div>
+      </section>
+
+      <!-- ============ CHAT ============ -->
+      <section class="screen" id="s-chat">
+        <header class="brand">
+          <span class="mark"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v18M5 8l7-5 7 5"/></svg></span>
+          <div><div class="ttl">Family medical history</div><div class="sub" id="chatsub">for the owner's records</div></div>
+          <button class="icon-btn exit" title="Leave" onclick="go('s-welcome')"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+        </header>
+        <div class="stream" id="stream"></div>
+        <div class="dock">
+          <div class="omnibox">
+            <textarea class="composer-input" id="ci" rows="1" placeholder="Type your answer…" oninput="growIn(this)"></textarea>
+            <button class="send-btn" id="sendbtn" onclick="sendMsg()"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 2 11 13M22 2l-7 20-4-9-9-4z"/></svg></button>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============ DONE ============ -->
+      <section class="screen" id="s-done">
+        <header class="brand">
+          <span class="mark"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v18M5 8l7-5 7 5"/></svg></span>
+          <div><div class="ttl">Guided intake</div><div class="sub">complete</div></div>
+        </header>
+        <div class="done-wrap">
+          <div class="done-mark"><svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 6 9 17l-5-5"/></svg></div>
+          <h2>Sent for review</h2>
+          <p>Thank you. Your answers have been sent to the owner, who'll review them before adding anything to their records. You can close this page.</p>
+        </div>
+      </section>
+
+    </div>
+  </div>
+
+<script>
+  function toggleTheme(){
+    const h = document.documentElement;
+    const light = h.getAttribute('data-theme') === 'light';
+    h.setAttribute('data-theme', light ? 'dark' : 'light');
+    document.getElementById('themebtn').textContent = light ? '☾ dark' : '☀ light';
+  }
+  function go(id){
+    document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));
+    document.getElementById(id).classList.add('active');
+  }
+  function checkStart(){
+    document.getElementById('startbtn').disabled = document.getElementById('nm').value.trim().length < 2;
+  }
+  function growIn(el){ el.style.height='auto'; el.style.height=Math.min(el.scrollHeight,120)+'px'; }
+
+  const stream = document.getElementById('stream');
+  function bubble(who, html, you){
+    const m = document.createElement('div'); m.className = 'msg' + (you?' you':'');
+    m.innerHTML = '<div class="who">'+who+'</div><div class="bubble">'+html+'</div>';
+    stream.appendChild(m); stream.scrollTop = stream.scrollHeight; return m;
+  }
+  function typing(){
+    const m = document.createElement('div'); m.className='msg'; m.id='typing';
+    m.innerHTML = '<div class="who">Guide</div><div class="bubble" style="padding:0"><span class="typing"><i></i><i></i><i></i></span></div>';
+    stream.appendChild(m); stream.scrollTop = stream.scrollHeight;
+  }
+  function clearTyping(){ const t=document.getElementById('typing'); if(t) t.remove(); }
+
+  // scripted interview — clicking Send advances regardless of text
+  const script = [
+    "Thanks. To start — does anyone in your immediate family have a long-term health condition I should note?",
+    "Good to know. Are any of them on regular medication for it?",
+    "Last one — any known drug allergies in the family I should flag?"
+  ];
+  let step = 0;
+
+  function startInterview(){
+    stream.innerHTML='';
+    const name = document.getElementById('nm').value.trim().split(' ')[0] || 'there';
+    typing();
+    setTimeout(()=>{ clearTyping();
+      bubble('Guide', "Hi "+name+" — I'm a guided-intake assistant. I'll keep this short and you'll get to check everything at the end. Ready when you are.");
+      setTimeout(()=>{ typing(); setTimeout(()=>{ clearTyping(); bubble('Guide', script[0]); }, 700); }, 400);
+    }, 650);
+  }
+
+  function sendMsg(){
+    const ci = document.getElementById('ci');
+    let txt = ci.value.trim();
+    if(!txt){ // demo affordance: prefill a plausible answer so the mock flows
+      txt = ['My dad has type 2 diabetes.','Yes, he takes metformin daily.','Penicillin — he comes out in a rash.'][step] || 'No, nothing else.';
+    }
+    bubble('You', txt.replace(/</g,'&lt;'), true);
+    ci.value=''; growIn(ci);
+    step++;
+    typing();
+    setTimeout(()=>{
+      clearTyping();
+      if(step < script.length){
+        bubble('Guide', script[step]);
+      } else {
+        bubble('Guide', "That's everything I need — thank you. Here's what I'll send for review. Have a look and tell me if anything's off.");
+        setTimeout(showDraft, 450);
+      }
+    }, 850);
+  }
+
+  function showDraft(){
+    const card = document.createElement('div'); card.className='msg'; card.style.maxWidth='100%';
+    card.innerHTML = `
+      <div class="draftcard">
+        <div class="dc-head">
+          <div class="lbl">Draft summary</div>
+          <div class="t">Family medical history</div>
+          <div class="meta">About: Dad · entered by Carol · 3 items</div>
+        </div>
+        <ul class="claims">
+          <li><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 6 9 17l-5-5"/></svg><span>Dad has type 2 diabetes.</span></li>
+          <li><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 6 9 17l-5-5"/></svg><span>Dad takes metformin daily for it.</span></li>
+          <li><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 6 9 17l-5-5"/></svg><span>Dad is allergic to penicillin (rash).</span></li>
+        </ul>
+        <div class="dc-foot">
+          <button class="btn" onclick="fixIt()">Fix something</button>
+          <button class="btn go" onclick="go('s-done')">Looks right → send</button>
+        </div>
+      </div>`;
+    stream.appendChild(card); stream.scrollTop = stream.scrollHeight;
+  }
+
+  function fixIt(){
+    bubble('You', "Actually, change one thing.", true);
+    typing();
+    setTimeout(()=>{ clearTyping(); bubble('Guide', "No problem — what should I correct? Tell me and I'll redo the summary."); }, 700);
+  }
+</script>
+</body>
+</html>

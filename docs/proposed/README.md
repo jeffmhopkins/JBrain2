@@ -37,3 +37,7 @@ given a roadmap slot in `../ROADMAP.md`, and promoted out of this folder.
 _(`SUBAGENT_SPAWNING_PLAN.md` was promoted out of the icebox — it is now the
 scheduled build plan `../SUBAGENT_SPAWNING_PLAN.md`, listed under "Active plan" in
 `../README.md`.)_
+
+_(`GUIDED_INTAKE_PLAN.md` was promoted out of the icebox — it is now the scheduled
+build plan `../GUIDED_INTAKE_PLAN.md` (five waves, GUI mock gate cleared), listed
+under "Active plan" in `../README.md`.)_
