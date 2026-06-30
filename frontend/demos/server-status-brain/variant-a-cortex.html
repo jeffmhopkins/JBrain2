@@ -290,11 +290,16 @@ for (let i = 0; i < NEURONS; i++) {
   tmpPositions.push(new THREE.Vector3(p.x, p.y, p.z));
 }
 
+// Per-neuron flood-ping activation (0..~1.5), updated on the CPU each frame and
+// fed to the neuron + synapse shaders so light propagates node-by-node.
+const nodeAct = new Float32Array(NEURONS);
+
 // Neuron material: additive glowing sprites, brightness driven by firing rate.
 const neuronGeo = new THREE.BufferGeometry();
 neuronGeo.setAttribute('position', new THREE.BufferAttribute(neuronPos, 3));
 neuronGeo.setAttribute('aSeed', new THREE.BufferAttribute(neuronSeed, 1));
 neuronGeo.setAttribute('aRadial', new THREE.BufferAttribute(neuronRadial, 1));
+neuronGeo.setAttribute('aAct', new THREE.BufferAttribute(nodeAct, 1));
 
 const neuronUniforms = {
   uTime:    { value: 0 },
@@ -313,8 +318,8 @@ const neuronMat = new THREE.ShaderMaterial({
   depthWrite: false,
   blending: THREE.AdditiveBlending,
   vertexShader: `
-    uniform float uTime, uFire, uThink, uWaveT, uWaveSpeed;
-    attribute float aSeed, aRadial;
+    uniform float uTime, uFire, uThink;
+    attribute float aSeed, aRadial, aAct;
     varying float vGlow;
     varying float vRadial;
     void main() {
@@ -325,24 +330,19 @@ const neuronMat = new THREE.ShaderMaterial({
       pos += normalize(pos + 0.001) * breathe;
       vec4 mv = modelViewMatrix * vec4(pos, 1.0);
 
-      // base twinkle, lifted by firing rate
+      // dim ambient floor (lifts a touch with GPU util) + idle twinkle
       float tw = 0.5 + 0.5*sin(uTime*2.2 + aSeed*1.3);
-      float fire = uFire;
-      float glow = mix(0.18, 1.0, fire) * (0.45 + 0.55*tw);
+      float glow = (0.08 + uFire*0.10) * (0.55 + 0.45*tw);
+
+      // flood-ping activation sweeping through the graph is the main driver
+      glow += aAct * 1.25;
 
       // core "thinking" pulse pushes inner neurons brighter
       float coreness = 1.0 - smoothstep(0.0, 0.55, aRadial);
       glow += uThink * coreness * (0.6 + 0.4*sin(uTime*5.0 + aSeed));
-
-      // travelling LLM wave: a bright shell sweeping outward by radius
-      if (uWaveT > 0.0) {
-        float d = abs(aRadial - uWaveT);
-        float w = smoothstep(0.16, 0.0, d);
-        glow += w * 1.6;
-      }
       vGlow = glow;
 
-      float size = (1.6 + glow * 5.5);
+      float size = (1.4 + glow * 3.4);
       gl_PointSize = size * (300.0 / -mv.z);
       gl_Position = projectionMatrix * mv;
     }
@@ -413,9 +413,18 @@ const linkB = [];
   }
 }
 const LINKS = linkA.length;
+
+// Undirected adjacency for flood-ping propagation along the synapses.
+const adj = Array.from({ length: NEURONS }, () => []);
+for (let l = 0; l < LINKS; l++) { adj[linkA[l]].push(linkB[l]); adj[linkB[l]].push(linkA[l]); }
+// inner-core neurons, preferred as flood seeds while the model is "thinking"
+const coreNodes = [];
+for (let i = 0; i < NEURONS; i++) if (neuronRadial[i] < 0.42) coreNodes.push(i);
+
 const linkPos = new Float32Array(LINKS * 2 * 3);
 const linkRadial = new Float32Array(LINKS * 2);   // for wave propagation
 const linkSeed = new Float32Array(LINKS * 2);
+const linkAct = new Float32Array(LINKS * 2);      // endpoint flood activation
 for (let l = 0; l < LINKS; l++) {
   const i = linkA[l], j = linkB[l];
   linkPos[l*6+0] = neuronPos[i*3+0];
@@ -433,6 +442,7 @@ const linkGeo = new THREE.BufferGeometry();
 linkGeo.setAttribute('position', new THREE.BufferAttribute(linkPos, 3));
 linkGeo.setAttribute('aRadial', new THREE.BufferAttribute(linkRadial, 1));
 linkGeo.setAttribute('aSeed', new THREE.BufferAttribute(linkSeed, 1));
+linkGeo.setAttribute('aAct', new THREE.BufferAttribute(linkAct, 1));
 
 const linkUniforms = {
   uTime:   { value: 0 },
@@ -447,17 +457,15 @@ const linkMat = new THREE.ShaderMaterial({
   depthWrite: false,
   blending: THREE.AdditiveBlending,
   vertexShader: `
-    uniform float uTime, uFire, uWaveT;
-    attribute float aRadial, aSeed;
+    uniform float uTime, uFire;
+    attribute float aRadial, aSeed, aAct;
     varying float vI;
     void main() {
-      float base = 0.05 + uFire * 0.20;
+      float base = 0.04 + uFire * 0.10;
       float flick = 0.5 + 0.5*sin(uTime*3.0 + aSeed);
-      float intensity = base * (0.5 + 0.5*flick);
-      if (uWaveT > 0.0) {
-        float d = abs(aRadial - uWaveT);
-        intensity += smoothstep(0.18, 0.0, d) * 0.9;
-      }
+      // aAct is this endpoint's flood activation, so the segment lights from the
+      // firing neuron toward its neighbour — the ping travelling down the edge
+      float intensity = base * (0.5 + 0.5*flick) + aAct * 1.15;
       vI = intensity;
       gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
     }
@@ -580,10 +588,75 @@ function spawnSpark(isError) {
 }
 
 /* ============================================================================
-   LLM WAVES — radial activation fronts sweeping outward through synapses
+   FLOOD-PING — activation ignites at a random neuron and floods hop-by-hop
+   through the synapse graph (BFS), so the brain fires in travelling cascades
+   rather than all at once. GPU util drives how often floods spawn; LLM
+   tokens/sec drive how fast each front propagates.
    ========================================================================== */
-const waves = []; // {t: 0..1 radius, speed}
-function launchWave(speed) { waves.push({ t: 0, speed }); if (waves.length > 6) waves.shift(); }
+const MAX_FLOODS = 12;
+const floodPool = [];
+for (let i = 0; i < MAX_FLOODS; i++) {
+  floodPool.push({ active: false, order: new Int32Array(NEURONS),
+                   dist: new Float32Array(NEURONS), n: 0, ptr: 0,
+                   front: 0, speed: 8, strength: 1 });
+}
+const bfsQueue = new Int32Array(NEURONS);
+const bfsVisited = new Int32Array(NEURONS); // generation stamps avoid re-clearing
+let bfsGen = 0;
+let floodAcc = 0;
+
+function spawnFlood(seed, speed, strength) {
+  // grab a free slot, else recycle whichever flood is furthest along
+  let slot = null;
+  for (const f of floodPool) if (!f.active) { slot = f; break; }
+  if (!slot) slot = floodPool.reduce((a, b) =>
+    (a.ptr / (a.n || 1)) >= (b.ptr / (b.n || 1)) ? a : b);
+
+  // BFS from the seed; dequeue order is non-decreasing in hop distance
+  bfsGen++;
+  let head = 0, tail = 0, oi = 0;
+  bfsQueue[tail++] = seed; bfsVisited[seed] = bfsGen; slot.dist[seed] = 0;
+  while (head < tail) {
+    const u = bfsQueue[head++];
+    slot.order[oi++] = u;
+    const du = slot.dist[u], nb = adj[u];
+    for (let k = 0; k < nb.length; k++) {
+      const v = nb[k];
+      if (bfsVisited[v] !== bfsGen) { bfsVisited[v] = bfsGen; slot.dist[v] = du + 1; bfsQueue[tail++] = v; }
+    }
+  }
+  slot.n = oi; slot.ptr = 0; slot.tptr = 0; slot.front = 0;
+  slot.speed = speed; slot.strength = strength; slot.active = true;
+}
+
+// A flood is a travelling SHELL, not a fill: only neurons within TAIL hops behind
+// the advancing wavefront glow (brightest right at the front, ramping to dark
+// behind it), so each cascade reads as a ring of fire sweeping through the graph.
+const FLOOD_TAIL = 2.6;
+function updateFloods(dt) {
+  for (const f of floodPool) {
+    if (!f.active) continue;
+    f.front += dt * f.speed;
+    // front pointer: neurons the wavefront has now reached
+    while (f.ptr < f.n && f.dist[f.order[f.ptr]] <= f.front) f.ptr++;
+    // tail pointer: neurons that have fallen behind the lit band
+    const backEdge = f.front - FLOOD_TAIL;
+    while (f.tptr < f.ptr && f.dist[f.order[f.tptr]] < backEdge) f.tptr++;
+    // light the band [front - TAIL, front]
+    for (let q = f.tptr; q < f.ptr; q++) {
+      const node = f.order[q];
+      const a = f.strength * (1.0 - (f.front - f.dist[node]) / FLOOD_TAIL);
+      if (a > nodeAct[node]) nodeAct[node] = a;
+    }
+    if (f.tptr >= f.n) f.active = false;   // whole graph has passed through the band
+  }
+}
+
+// kept name for existing call sites: a burst/manual trigger = one strong, fast
+// flood from a random neuron
+function launchWave(speedHint) {
+  spawnFlood((Math.random() * NEURONS) | 0, 7 + (speedHint || 1) * 5, 1.15);
+}
 
 /* ============================================================================
    PUBLIC API  (window.ServerBrain)  — exact contract
@@ -806,16 +879,28 @@ function frame() {
     linkUniforms.uWaveColor.value.copy(PALETTE.violet);
   }
 
-  // --- LLM waves advance (speed ~ tokens/sec via burst) ---
-  let strongestWave = -1;
-  for (let i = waves.length-1; i >= 0; i--) {
-    const speedScale = 0.35 + clamp(eased.tok/120, 0, 1) * 0.9;
-    waves[i].t += dt * waves[i].speed * speedScale;
-    if (waves[i].t > 1.25) { waves.splice(i,1); continue; }
-    if (waves[i].t <= 1.05) strongestWave = Math.max(strongestWave, waves[i].t);
+  // --- flood-ping: ignite new cascades (rate ~ GPU util), advance, decay ---
+  floodAcc += dt * (0.4 + clamp(eased.fire, 0, 1) * 3.0);    // GPU util -> cascade frequency
+  while (floodAcc >= 1) {
+    floodAcc -= 1;
+    const thinking = stats.llm.active && coreNodes.length;
+    const seed = (thinking && Math.random() < 0.6)
+      ? coreNodes[(Math.random() * coreNodes.length) | 0]   // seed the core while "thinking"
+      : (Math.random() * NEURONS) | 0;
+    const speed = 5 + clamp(eased.tok / 120, 0, 1) * 12;     // tokens/sec -> front speed
+    const strength = 0.85 + clamp(eased.fire, 0, 1) * 0.4;
+    spawnFlood(seed, speed, strength);
   }
-  neuronUniforms.uWaveT.value = strongestWave;
-  linkUniforms.uWaveT.value = strongestWave;
+  const decay = Math.pow(0.04, dt);                          // trailing afterglow
+  for (let i = 0; i < NEURONS; i++) nodeAct[i] *= decay;
+  updateFloods(dt);
+  // mirror node activation onto each synapse's two endpoints
+  for (let l = 0; l < LINKS; l++) {
+    linkAct[l*2]   = nodeAct[linkA[l]];
+    linkAct[l*2+1] = nodeAct[linkB[l]];
+  }
+  neuronGeo.attributes.aAct.needsUpdate = true;
+  linkGeo.attributes.aAct.needsUpdate = true;
 
   // --- inbound API sparks: spawn at rate ~ req/sec ---
   sparkAccumulator += dt * (eased.req * 0.5 + 0.3);
