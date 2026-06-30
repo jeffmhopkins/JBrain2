@@ -1,0 +1,886 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>JBrain2 · Synaptic Cortex</title>
+<!--
+  JBrain2 server-status visualization — VARIANT A: "SYNAPTIC CORTEX" (true 3D)
+  Dependency: three.js r160 (ES module via unpkg CDN). This is the ONLY network
+  need; everything else is inline and self-contained. No build step — open the
+  file directly. UnrealBloom is intentionally avoided to dodge addon path churn;
+  glow is real additive-blending bloom done in-shader + a multi-pass additive
+  feedback halo, which stays GPU-cheap and 60fps-friendly.
+
+  Implements the shared contract: window.ServerBrain.{update, startSimulator,
+  stopSimulator, spikeGPU, burstLLM, injectError}. Simulator ON by default.
+-->
+<style>
+  :root {
+    --bg: #0E0F11;
+    --surface: #17181B;
+    --steel: #7FA7C9;
+    --green: #8FBC9A;
+    --amber: #C9A36A;
+    --rose: #CF8A8F;
+    --teal: #6FB6B1;
+    --violet: #A493C9;
+    --text: #E6E7E9;
+    --text-2: #9A9DA3;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0; height: 100%; width: 100%;
+    background: var(--bg);
+    color: var(--text);
+    font-family: "SF Mono", "JetBrains Mono", ui-monospace, "Cascadia Code", Menlo, monospace;
+    overflow: hidden;
+  }
+  #scene { position: fixed; inset: 0; z-index: 0; }
+  /* radial vignette for depth/cinematic feel */
+  #vignette {
+    position: fixed; inset: 0; z-index: 1; pointer-events: none;
+    background: radial-gradient(ellipse 70% 65% at 50% 48%,
+      rgba(0,0,0,0) 38%, rgba(7,8,9,0.55) 78%, rgba(5,6,7,0.92) 100%);
+  }
+
+  .panel {
+    position: fixed; z-index: 3;
+    background: rgba(20,21,24,0.62);
+    backdrop-filter: blur(14px) saturate(120%);
+    -webkit-backdrop-filter: blur(14px) saturate(120%);
+    border: 1px solid rgba(127,167,201,0.14);
+    border-radius: 12px;
+    box-shadow: 0 8px 40px rgba(0,0,0,0.45);
+  }
+
+  /* ---------- Title ---------- */
+  #title {
+    top: 20px; left: 22px; padding: 12px 16px;
+    line-height: 1.25;
+  }
+  #title .brand {
+    font-size: 15px; letter-spacing: 0.42em; font-weight: 600;
+    color: var(--text); text-transform: uppercase;
+  }
+  #title .sub {
+    font-size: 10px; letter-spacing: 0.28em; color: var(--text-2);
+    margin-top: 4px; text-transform: uppercase;
+  }
+  #healthRow {
+    display: flex; align-items: center; gap: 8px; margin-top: 9px;
+    font-size: 10.5px; letter-spacing: 0.16em; text-transform: uppercase;
+  }
+  #healthDot {
+    width: 9px; height: 9px; border-radius: 50%;
+    background: var(--green);
+    box-shadow: 0 0 10px 2px currentColor; color: var(--green);
+    transition: all .5s ease;
+  }
+  #healthText { color: var(--text-2); }
+  #modelTag {
+    margin-left: auto; font-size: 9.5px; color: var(--steel);
+    letter-spacing: 0.1em; opacity: 0.85;
+  }
+
+  /* ---------- Readout (top-right) ---------- */
+  #readout {
+    top: 20px; right: 22px; padding: 13px 16px;
+    min-width: 184px;
+  }
+  .stat { display: flex; align-items: baseline; justify-content: space-between; margin: 5px 0; }
+  .stat .k { font-size: 9.5px; letter-spacing: 0.18em; color: var(--text-2); text-transform: uppercase; }
+  .stat .v { font-size: 14px; font-variant-numeric: tabular-nums; font-weight: 600; }
+  .stat .v .u { font-size: 9px; color: var(--text-2); margin-left: 2px; font-weight: 400; }
+  #r_gpu .v { color: var(--steel); }
+  #r_tok .v { color: var(--violet); }
+  #r_req .v { color: var(--teal); }
+  #r_qps .v { color: var(--green); }
+  #r_temp .v { color: var(--amber); }
+  /* GPU headline bar */
+  #gpuBarWrap { margin-top: 9px; height: 4px; border-radius: 3px;
+    background: rgba(127,167,201,0.13); overflow: hidden; }
+  #gpuBar { height: 100%; width: 0%;
+    background: linear-gradient(90deg, var(--steel), var(--violet));
+    box-shadow: 0 0 8px rgba(164,147,201,0.7);
+    transition: width .35s ease, background .6s ease; }
+
+  /* ---------- Legend (bottom-left) ---------- */
+  #legend {
+    bottom: 20px; left: 22px; padding: 12px 14px; max-width: 270px;
+  }
+  #legend .hd { font-size: 9px; letter-spacing: 0.26em; color: var(--text-2);
+    text-transform: uppercase; margin-bottom: 9px; }
+  .leg { display: flex; align-items: center; gap: 9px; margin: 6px 0; font-size: 10px; color: var(--text-2); }
+  .leg .sw { width: 16px; height: 4px; border-radius: 3px; flex: 0 0 16px; }
+  .leg .sw.dot { width: 9px; height: 9px; border-radius: 50%; flex: 0 0 9px; }
+  .leg b { color: var(--text); font-weight: 600; }
+
+  /* ---------- Controls (bottom-center) ---------- */
+  #controls {
+    bottom: 22px; left: 50%; transform: translateX(-50%);
+    padding: 8px; display: flex; gap: 7px; align-items: center;
+  }
+  #controls button {
+    font-family: inherit; font-size: 10px; letter-spacing: 0.1em;
+    text-transform: uppercase; cursor: pointer;
+    color: var(--text); background: rgba(127,167,201,0.07);
+    border: 1px solid rgba(127,167,201,0.22);
+    border-radius: 8px; padding: 8px 13px;
+    transition: all .18s ease;
+  }
+  #controls button:hover { background: rgba(127,167,201,0.18);
+    border-color: rgba(127,167,201,0.45); transform: translateY(-1px); }
+  #controls button:active { transform: translateY(0); }
+  #controls button.spike { border-color: rgba(164,147,201,0.4); color: var(--violet); }
+  #controls button.err   { border-color: rgba(207,138,143,0.4); color: var(--rose); }
+  #controls button.paused { background: rgba(201,163,106,0.18); color: var(--amber);
+    border-color: rgba(201,163,106,0.5); }
+  #controls .sep { width: 1px; height: 18px; background: rgba(127,167,201,0.18); margin: 0 2px; }
+
+  #fps { position: fixed; bottom: 6px; right: 10px; z-index: 3;
+    font-size: 9px; color: rgba(154,157,163,0.5); letter-spacing: 0.1em; }
+
+  @media (max-width: 640px) {
+    #legend { display: none; }
+    #readout { min-width: 150px; padding: 10px 12px; }
+    #controls button { padding: 7px 9px; font-size: 9px; }
+  }
+</style>
+</head>
+<body>
+  <div id="scene"></div>
+  <div id="vignette"></div>
+
+  <div id="title" class="panel">
+    <div class="brand">JBrain<span style="color:var(--steel)">2</span></div>
+    <div class="sub">Synaptic Cortex · Live</div>
+    <div id="healthRow">
+      <span id="healthDot"></span>
+      <span id="healthText">healthy</span>
+      <span id="modelTag">— idle —</span>
+    </div>
+  </div>
+
+  <div id="readout" class="panel">
+    <div class="stat" id="r_gpu"><span class="k">GPU util</span><span class="v">0<span class="u">%</span></span></div>
+    <div class="stat" id="r_tok"><span class="k">Tokens/s</span><span class="v">0</span></div>
+    <div class="stat" id="r_req"><span class="k">Req/s</span><span class="v">0</span></div>
+    <div class="stat" id="r_qps"><span class="k">DB qps</span><span class="v">0</span></div>
+    <div class="stat" id="r_temp"><span class="k">Temp</span><span class="v">0<span class="u">°C</span></span></div>
+    <div id="gpuBarWrap"><div id="gpuBar"></div></div>
+  </div>
+
+  <div id="legend" class="panel">
+    <div class="hd">Visual → Signal</div>
+    <div class="leg"><span class="sw dot" style="background:var(--steel);box-shadow:0 0 8px var(--steel)"></span><span><b>Firing rate / bloom</b> — GPU util</span></div>
+    <div class="leg"><span class="sw" style="background:linear-gradient(90deg,var(--violet),transparent)"></span><span><b>Cascading waves</b> — LLM inference (tok/s = speed)</span></div>
+    <div class="leg"><span class="sw dot" style="background:var(--violet);box-shadow:0 0 8px var(--violet)"></span><span><b>Core pulse</b> — active model "thinking"</span></div>
+    <div class="leg"><span class="sw dot" style="background:var(--teal);box-shadow:0 0 8px var(--teal)"></span><span><b>Inbound sparks</b> — API req/sec</span></div>
+    <div class="leg"><span class="sw" style="background:var(--green)"></span><span><b>Rotating halo</b> — DB qps throughput</span></div>
+    <div class="leg"><span class="sw dot" style="background:var(--rose);box-shadow:0 0 8px var(--rose)"></span><span><b>Rose flash</b> — API errors</span></div>
+  </div>
+
+  <div id="controls" class="panel">
+    <button id="btnPause">⏸ Pause sim</button>
+    <span class="sep"></span>
+    <button id="btnGpu" class="spike">⚡ Spike GPU</button>
+    <button id="btnLlm" class="spike">≈ Burst LLM</button>
+    <button id="btnErr" class="err">✦ Inject error</button>
+  </div>
+
+  <div id="fps">—</div>
+
+<script type="module">
+import * as THREE from 'https://unpkg.com/three@0.160.0/build/three.module.js';
+
+/* ============================================================================
+   STATE — current + animated/eased model state the renderer reads each frame
+   ========================================================================== */
+const PALETTE = {
+  bg:    new THREE.Color('#0E0F11'),
+  steel: new THREE.Color('#7FA7C9'),
+  green: new THREE.Color('#8FBC9A'),
+  amber: new THREE.Color('#C9A36A'),
+  rose:  new THREE.Color('#CF8A8F'),
+  teal:  new THREE.Color('#6FB6B1'),
+  violet:new THREE.Color('#A493C9'),
+};
+
+// Latest pushed snapshot (defaults are a quiet, healthy idle).
+let stats = {
+  ts: Date.now(), health: 'ok',
+  gpu: { util: 0.12, vram: 0.3, tempC: 41, powerW: 90, powerMaxW: 600 },
+  llm: { active: false, model: 'qwen3-30b', tokensPerSec: 0, queue: 0, ctxUsed: 0.1 },
+  api: { reqPerSec: 3, p95Ms: 40, errorRate: 0, inflight: 2 },
+  db:  { qps: 22, poolUsed: 0.2, slowQueries: 0 },
+};
+
+// Eased visual values (smoothly chase `stats`).
+const eased = {
+  fire: 0.12, bloom: 0.12, tok: 0, req: 3, qps: 22, temp: 41,
+  thinking: 0, errFlash: 0, healthMix: 0 /*0 ok→1 warn→2 crit handled via colors*/,
+};
+
+/* ============================================================================
+   THREE SETUP
+   ========================================================================== */
+const sceneEl = document.getElementById('scene');
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, powerPreference: 'high-performance' });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.setClearColor(PALETTE.bg, 1);
+renderer.autoClear = true;
+sceneEl.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.fog = new THREE.FogExp2(0x0a0b0d, 0.018);
+
+const camera = new THREE.PerspectiveCamera(52, window.innerWidth / window.innerHeight, 0.1, 400);
+camera.position.set(0, 4, 64);
+
+// Container we slowly auto-rotate (the whole cortex).
+const cortex = new THREE.Group();
+scene.add(cortex);
+
+/* ----------------------------------------------------------------------------
+   1) NEURON POINT CLOUD — organic two-lobe ellipsoidal "brain" volume
+   -------------------------------------------------------------------------- */
+const NEURONS = 1600;
+const neuronPos = new Float32Array(NEURONS * 3);
+const neuronSeed = new Float32Array(NEURONS);     // per-neuron phase
+const neuronRadial = new Float32Array(NEURONS);   // 0(core)..1(periphery)
+const neuronType = new Float32Array(NEURONS);     // 0 normal, 1 peripheral spark site
+
+// sample a point in an ellipsoid, denser toward center; two lobes offset on X.
+function sampleLobe(sign) {
+  // gaussian-ish radius for density toward core
+  let r = 0;
+  for (let i = 0; i < 3; i++) r += Math.random();
+  r = (r / 3); // 0..1 biased to mid; we'll cube-root-ish for volume fill
+  r = Math.pow(r, 0.8);
+  const u = Math.random() * Math.PI * 2;
+  const v = Math.acos(2 * Math.random() - 1);
+  const rx = 17, ry = 13, rz = 15;
+  let x = Math.sin(v) * Math.cos(u) * rx * r;
+  let y = Math.cos(v) * ry * r;
+  let z = Math.sin(v) * Math.sin(u) * rz * r;
+  // squash top to feel slightly brain-like, push lobes apart, add wobble
+  x += sign * 8.5;
+  y += Math.sin(x * 0.18) * 1.6 - r * 1.0;
+  // gyrus-like surface noise on the outer shell
+  const shell = Math.pow(r, 3);
+  x += (Math.random() - 0.5) * 2.4 * shell;
+  y += (Math.random() - 0.5) * 2.4 * shell;
+  z += (Math.random() - 0.5) * 2.4 * shell;
+  return { x, y, z, r };
+}
+
+const tmpPositions = [];
+for (let i = 0; i < NEURONS; i++) {
+  const sign = i % 2 === 0 ? 1 : -1;
+  const p = sampleLobe(sign);
+  neuronPos[i*3+0] = p.x;
+  neuronPos[i*3+1] = p.y;
+  neuronPos[i*3+2] = p.z;
+  neuronSeed[i] = Math.random() * 1000;
+  neuronRadial[i] = p.r;
+  neuronType[i] = p.r > 0.78 ? 1 : 0;
+  tmpPositions.push(new THREE.Vector3(p.x, p.y, p.z));
+}
+
+// Neuron material: additive glowing sprites, brightness driven by firing rate.
+const neuronGeo = new THREE.BufferGeometry();
+neuronGeo.setAttribute('position', new THREE.BufferAttribute(neuronPos, 3));
+neuronGeo.setAttribute('aSeed', new THREE.BufferAttribute(neuronSeed, 1));
+neuronGeo.setAttribute('aRadial', new THREE.BufferAttribute(neuronRadial, 1));
+
+const neuronUniforms = {
+  uTime:    { value: 0 },
+  uFire:    { value: 0.12 },   // GPU util -> overall firing rate
+  uThink:   { value: 0 },      // active model core pulse
+  uColorCore: { value: PALETTE.steel.clone() },
+  uColorEdge: { value: PALETTE.violet.clone() },
+  uHealth:  { value: PALETTE.green.clone() },
+  uWaveT:   { value: -1.0 },   // LLM wave front radius (-1 = inactive)
+  uWaveSpeed: { value: 0.0 },
+};
+
+const neuronMat = new THREE.ShaderMaterial({
+  uniforms: neuronUniforms,
+  transparent: true,
+  depthWrite: false,
+  blending: THREE.AdditiveBlending,
+  vertexShader: `
+    uniform float uTime, uFire, uThink, uWaveT, uWaveSpeed;
+    attribute float aSeed, aRadial;
+    varying float vGlow;
+    varying float vRadial;
+    void main() {
+      vRadial = aRadial;
+      vec3 pos = position;
+      // gentle organic breathing
+      float breathe = sin(uTime*0.6 + aSeed) * 0.25;
+      pos += normalize(pos + 0.001) * breathe;
+      vec4 mv = modelViewMatrix * vec4(pos, 1.0);
+
+      // base twinkle, lifted by firing rate
+      float tw = 0.5 + 0.5*sin(uTime*2.2 + aSeed*1.3);
+      float fire = uFire;
+      float glow = mix(0.18, 1.0, fire) * (0.45 + 0.55*tw);
+
+      // core "thinking" pulse pushes inner neurons brighter
+      float coreness = 1.0 - smoothstep(0.0, 0.55, aRadial);
+      glow += uThink * coreness * (0.6 + 0.4*sin(uTime*5.0 + aSeed));
+
+      // travelling LLM wave: a bright shell sweeping outward by radius
+      if (uWaveT > 0.0) {
+        float d = abs(aRadial - uWaveT);
+        float w = smoothstep(0.16, 0.0, d);
+        glow += w * 1.6;
+      }
+      vGlow = glow;
+
+      float size = (1.6 + glow * 5.5);
+      gl_PointSize = size * (300.0 / -mv.z);
+      gl_Position = projectionMatrix * mv;
+    }
+  `,
+  fragmentShader: `
+    precision highp float;
+    uniform vec3 uColorCore, uColorEdge, uHealth;
+    varying float vGlow;
+    varying float vRadial;
+    void main() {
+      vec2 uv = gl_PointCoord - 0.5;
+      float d = length(uv);
+      // soft round glow falloff (fake bloom core)
+      float a = smoothstep(0.5, 0.0, d);
+      float hot = pow(a, 2.2);
+      vec3 col = mix(uColorCore, uColorEdge, vRadial);
+      // health tint bias toward bloom
+      col = mix(col, uHealth, 0.28);
+      // hot center burns toward white for additive bloom punch
+      col = mix(col, vec3(1.0), hot * clamp(vGlow,0.0,1.0) * 0.55);
+      float alpha = a * (0.10 + vGlow * 0.9);
+      gl_FragColor = vec4(col * (0.6 + vGlow), alpha);
+    }
+  `,
+});
+const neuronPoints = new THREE.Points(neuronGeo, neuronMat);
+cortex.add(neuronPoints);
+
+/* ----------------------------------------------------------------------------
+   2) SYNAPSE LINES — connect each neuron to a few nearest neighbours
+   -------------------------------------------------------------------------- */
+// Build neighbour links with a coarse spatial hash for speed.
+const MAX_LINKS = 4200;
+const linkA = [];          // index of endpoint a
+const linkB = [];
+{
+  const cell = 6.0;
+  const grid = new Map();
+  const key = (x,y,z) => `${Math.floor(x/cell)},${Math.floor(y/cell)},${Math.floor(z/cell)}`;
+  for (let i = 0; i < NEURONS; i++) {
+    const k = key(tmpPositions[i].x, tmpPositions[i].y, tmpPositions[i].z);
+    if (!grid.has(k)) grid.set(k, []);
+    grid.get(k).push(i);
+  }
+  const seen = new Set();
+  outer:
+  for (let i = 0; i < NEURONS; i++) {
+    const pi = tmpPositions[i];
+    const cx = Math.floor(pi.x/cell), cy = Math.floor(pi.y/cell), cz = Math.floor(pi.z/cell);
+    const cands = [];
+    for (let dx=-1; dx<=1; dx++) for (let dy=-1; dy<=1; dy++) for (let dz=-1; dz<=1; dz++) {
+      const arr = grid.get(`${cx+dx},${cy+dy},${cz+dz}`);
+      if (arr) for (const j of arr) if (j !== i) cands.push(j);
+    }
+    cands.sort((a,b) => pi.distanceToSquared(tmpPositions[a]) - pi.distanceToSquared(tmpPositions[b]));
+    let made = 0;
+    for (const j of cands) {
+      if (made >= 3) break;
+      const a = Math.min(i,j), b = Math.max(i,j);
+      const ek = a*NEURONS + b;
+      if (seen.has(ek)) continue;
+      if (pi.distanceTo(tmpPositions[j]) > 9.5) continue;
+      seen.add(ek);
+      linkA.push(i); linkB.push(j);
+      made++;
+      if (linkA.length >= MAX_LINKS) break outer;
+    }
+  }
+}
+const LINKS = linkA.length;
+const linkPos = new Float32Array(LINKS * 2 * 3);
+const linkRadial = new Float32Array(LINKS * 2);   // for wave propagation
+const linkSeed = new Float32Array(LINKS * 2);
+for (let l = 0; l < LINKS; l++) {
+  const i = linkA[l], j = linkB[l];
+  linkPos[l*6+0] = neuronPos[i*3+0];
+  linkPos[l*6+1] = neuronPos[i*3+1];
+  linkPos[l*6+2] = neuronPos[i*3+2];
+  linkPos[l*6+3] = neuronPos[j*3+0];
+  linkPos[l*6+4] = neuronPos[j*3+1];
+  linkPos[l*6+5] = neuronPos[j*3+2];
+  linkRadial[l*2+0] = neuronRadial[i];
+  linkRadial[l*2+1] = neuronRadial[j];
+  const s = Math.random()*1000;
+  linkSeed[l*2+0] = s; linkSeed[l*2+1] = s;
+}
+const linkGeo = new THREE.BufferGeometry();
+linkGeo.setAttribute('position', new THREE.BufferAttribute(linkPos, 3));
+linkGeo.setAttribute('aRadial', new THREE.BufferAttribute(linkRadial, 1));
+linkGeo.setAttribute('aSeed', new THREE.BufferAttribute(linkSeed, 1));
+
+const linkUniforms = {
+  uTime:   { value: 0 },
+  uFire:   { value: 0.12 },
+  uWaveT:  { value: -1.0 },
+  uColor:  { value: PALETTE.steel.clone() },
+  uWaveColor: { value: PALETTE.violet.clone() },
+};
+const linkMat = new THREE.ShaderMaterial({
+  uniforms: linkUniforms,
+  transparent: true,
+  depthWrite: false,
+  blending: THREE.AdditiveBlending,
+  vertexShader: `
+    uniform float uTime, uFire, uWaveT;
+    attribute float aRadial, aSeed;
+    varying float vI;
+    void main() {
+      float base = 0.05 + uFire * 0.20;
+      float flick = 0.5 + 0.5*sin(uTime*3.0 + aSeed);
+      float intensity = base * (0.5 + 0.5*flick);
+      if (uWaveT > 0.0) {
+        float d = abs(aRadial - uWaveT);
+        intensity += smoothstep(0.18, 0.0, d) * 0.9;
+      }
+      vI = intensity;
+      gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+    }
+  `,
+  fragmentShader: `
+    precision highp float;
+    uniform vec3 uColor, uWaveColor;
+    varying float vI;
+    void main() {
+      vec3 c = mix(uColor, uWaveColor, clamp(vI*0.6,0.0,1.0));
+      gl_FragColor = vec4(c * (0.5 + vI), clamp(vI, 0.0, 0.85));
+    }
+  `,
+});
+const synapses = new THREE.LineSegments(linkGeo, linkMat);
+cortex.add(synapses);
+
+/* ----------------------------------------------------------------------------
+   3) DB THROUGHPUT HALO — rotating ring of points around the cortex
+   -------------------------------------------------------------------------- */
+const RING_N = 320;
+const ringPos = new Float32Array(RING_N * 3);
+const ringSeed = new Float32Array(RING_N);
+for (let i = 0; i < RING_N; i++) {
+  const a = (i / RING_N) * Math.PI * 2;
+  const rad = 30 + Math.random()*1.5;
+  ringPos[i*3+0] = Math.cos(a) * rad;
+  ringPos[i*3+1] = (Math.random()-0.5) * 3.0;
+  ringPos[i*3+2] = Math.sin(a) * rad;
+  ringSeed[i] = a;
+}
+const ringGeo = new THREE.BufferGeometry();
+ringGeo.setAttribute('position', new THREE.BufferAttribute(ringPos, 3));
+ringGeo.setAttribute('aSeed', new THREE.BufferAttribute(ringSeed, 1));
+const ringUniforms = {
+  uTime: { value: 0 }, uQps: { value: 0.1 }, uColor: { value: PALETTE.green.clone() },
+};
+const ringMat = new THREE.ShaderMaterial({
+  uniforms: ringUniforms, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+  vertexShader: `
+    uniform float uTime, uQps; attribute float aSeed; varying float vG;
+    void main() {
+      // brightness sweeps around the ring; speed/density ~ qps
+      float sweep = 0.5 + 0.5*sin(aSeed*3.0 - uTime*(1.0+uQps*5.0));
+      vG = (0.15 + uQps*0.85) * (0.4 + 0.6*sweep);
+      vec4 mv = modelViewMatrix * vec4(position,1.0);
+      gl_PointSize = (2.0 + vG*4.0) * (300.0/-mv.z);
+      gl_Position = projectionMatrix * mv;
+    }
+  `,
+  fragmentShader: `
+    precision highp float; uniform vec3 uColor; varying float vG;
+    void main() {
+      vec2 uv = gl_PointCoord-0.5; float a = smoothstep(0.5,0.0,length(uv));
+      gl_FragColor = vec4(uColor*(0.6+vG), a*vG);
+    }
+  `,
+});
+const dbRing = new THREE.Points(ringGeo, ringMat);
+dbRing.rotation.x = Math.PI * 0.5; // lay flat-ish, then tilt
+dbRing.rotation.z = 0.15;
+cortex.add(dbRing);
+
+/* ----------------------------------------------------------------------------
+   4) INBOUND API SPARKS — short-lived particles flying from periphery to core
+   -------------------------------------------------------------------------- */
+const MAX_SPARKS = 220;
+const sparkPos = new Float32Array(MAX_SPARKS * 3);
+const sparkLife = new Float32Array(MAX_SPARKS);   // 0 = dead
+const sparkVel = [];
+const sparkTarget = [];
+for (let i = 0; i < MAX_SPARKS; i++) { sparkVel.push(new THREE.Vector3()); sparkTarget.push(new THREE.Vector3()); }
+const sparkColorAttr = new Float32Array(MAX_SPARKS * 3);
+const sparkGeo = new THREE.BufferGeometry();
+sparkGeo.setAttribute('position', new THREE.BufferAttribute(sparkPos, 3));
+sparkGeo.setAttribute('aColor', new THREE.BufferAttribute(sparkColorAttr, 3));
+sparkGeo.setAttribute('aLife', new THREE.BufferAttribute(sparkLife, 1));
+const sparkMat = new THREE.ShaderMaterial({
+  transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+  uniforms: {},
+  vertexShader: `
+    attribute vec3 aColor; attribute float aLife; varying vec3 vC; varying float vL;
+    void main() {
+      vC = aColor; vL = aLife;
+      vec4 mv = modelViewMatrix * vec4(position,1.0);
+      gl_PointSize = (3.0 + aLife*7.0) * (300.0/-mv.z);
+      gl_Position = projectionMatrix * mv;
+    }
+  `,
+  fragmentShader: `
+    precision highp float; varying vec3 vC; varying float vL;
+    void main() {
+      if (vL <= 0.0) discard;
+      vec2 uv = gl_PointCoord-0.5; float a = smoothstep(0.5,0.0,length(uv));
+      vec3 c = mix(vC, vec3(1.0), a*0.5);
+      gl_FragColor = vec4(c*(0.7+vL), a*vL);
+    }
+  `,
+});
+const sparks = new THREE.Points(sparkGeo, sparkMat);
+cortex.add(sparks);
+
+function spawnSpark(isError) {
+  for (let i = 0; i < MAX_SPARKS; i++) {
+    if (sparkLife[i] <= 0) {
+      // random point on a sphere shell, fly inward toward a random neuron
+      const a = Math.random()*Math.PI*2, b = Math.acos(2*Math.random()-1);
+      const R = 40;
+      const sx = Math.sin(b)*Math.cos(a)*R, sy = Math.cos(b)*R*0.6, sz = Math.sin(b)*Math.sin(a)*R;
+      sparkPos[i*3+0]=sx; sparkPos[i*3+1]=sy; sparkPos[i*3+2]=sz;
+      const tIdx = (Math.random()*NEURONS)|0;
+      sparkTarget[i].set(neuronPos[tIdx*3], neuronPos[tIdx*3+1], neuronPos[tIdx*3+2]);
+      sparkVel[i].set(0,0,0);
+      sparkLife[i] = 1.0;
+      const c = isError ? PALETTE.rose : PALETTE.teal;
+      sparkColorAttr[i*3+0]=c.r; sparkColorAttr[i*3+1]=c.g; sparkColorAttr[i*3+2]=c.b;
+      return;
+    }
+  }
+}
+
+/* ============================================================================
+   LLM WAVES — radial activation fronts sweeping outward through synapses
+   ========================================================================== */
+const waves = []; // {t: 0..1 radius, speed}
+function launchWave(speed) { waves.push({ t: 0, speed }); if (waves.length > 6) waves.shift(); }
+
+/* ============================================================================
+   PUBLIC API  (window.ServerBrain)  — exact contract
+   ========================================================================== */
+let simTimer = null;
+let simOn = false;
+// burst envelopes (decay over frames), used by sim + manual triggers
+let gpuSpikeEnv = 0;     // adds to gpu util
+let llmBurstEnv = 0;     // sustains tokens/active
+
+function clamp(v,a,b){ return Math.max(a, Math.min(b, v)); }
+
+function applyHealthColors() {
+  let core, edge, health, ringC;
+  if (stats.health === 'crit') {
+    core = PALETTE.rose; edge = PALETTE.amber; health = PALETTE.rose; ringC = PALETTE.rose;
+  } else if (stats.health === 'warn') {
+    core = PALETTE.amber; edge = PALETTE.steel; health = PALETTE.amber; ringC = PALETTE.amber;
+  } else {
+    core = PALETTE.steel; edge = PALETTE.violet; health = PALETTE.green; ringC = PALETTE.green;
+  }
+  neuronUniforms.uColorCore.value.copy(core);
+  neuronUniforms.uColorEdge.value.copy(edge);
+  neuronUniforms.uHealth.value.copy(health);
+  linkUniforms.uColor.value.copy(core);
+  ringUniforms.uColor.value.copy(ringC);
+}
+
+const ServerBrain = {
+  update(s) {
+    if (!s) return;
+    // shallow-merge so partial pushes still work
+    stats = {
+      ts: s.ts ?? Date.now(),
+      health: s.health ?? stats.health,
+      gpu: { ...stats.gpu, ...(s.gpu||{}) },
+      llm: { ...stats.llm, ...(s.llm||{}) },
+      api: { ...stats.api, ...(s.api||{}) },
+      db:  { ...stats.db,  ...(s.db ||{}) },
+    };
+    applyHealthColors();
+    // an error rate spike flashes rose + spawns rose sparks
+    if (stats.api.errorRate > 0.05) {
+      eased.errFlash = Math.max(eased.errFlash, clamp(stats.api.errorRate*4, 0, 1));
+      for (let k=0;k<3;k++) spawnSpark(true);
+    }
+  },
+  startSimulator() {
+    if (simOn) return;
+    simOn = true;
+    updatePauseBtn();
+    let phase = 0;
+    simTimer = setInterval(() => {
+      phase += 0.05;
+      // wandering baselines via layered sines + noise
+      const n = () => (Math.random()-0.5);
+      gpuSpikeEnv *= 0.92;
+      llmBurstEnv *= 0.94;
+
+      // occasionally kick off a correlated LLM burst
+      if (Math.random() < 0.018 && llmBurstEnv < 0.2) {
+        llmBurstEnv = 0.8 + Math.random()*0.2;
+        launchWave(0.7 + Math.random()*0.6);
+      }
+      // occasional pure GPU spike
+      if (Math.random() < 0.012) gpuSpikeEnv = Math.min(1, gpuSpikeEnv + 0.5 + Math.random()*0.4);
+
+      const llmActive = llmBurstEnv > 0.15;
+      const baseUtil = 0.14 + 0.08*Math.sin(phase*0.7) + 0.05*Math.sin(phase*2.3);
+      // CORRELATION: LLM burst raises GPU util/temp/power
+      const util = clamp(baseUtil + gpuSpikeEnv*0.8 + llmBurstEnv*0.55 + n()*0.03, 0.02, 1);
+      const tok  = llmActive ? clamp(40 + llmBurstEnv*70 + n()*15, 0, 120) : clamp(llmBurstEnv*30, 0, 120);
+      const temp = clamp(40 + util*42 + gpuSpikeEnv*6 + n()*1.5, 30, 95);
+      const powerW = clamp(80 + util*470 + n()*20, 0, 600);
+      const vram = clamp(0.28 + (llmActive?0.4:0.0) + util*0.2 + n()*0.02, 0, 1);
+
+      const reqPerSec = clamp(4 + 6*Math.abs(Math.sin(phase*0.4)) + (llmActive?6:0) + Math.max(0,n()*9), 0, 50);
+      const inflight  = clamp(reqPerSec*0.8 + n()*3, 0, 64);
+      const p95 = clamp(35 + util*300 + (llmActive?180:0) + Math.abs(n())*120, 5, 2000);
+      const qps = clamp(18 + 30*Math.abs(Math.sin(phase*0.55)) + reqPerSec*1.4 + n()*8, 0, 300);
+      const poolUsed = clamp(0.18 + qps/300*0.6 + n()*0.03, 0, 1);
+
+      // wandering health: mostly ok, occasional warn, rare crit (sustained spike)
+      let health = 'ok';
+      if (temp > 84 || util > 0.95) health = 'crit';
+      else if (temp > 74 || util > 0.8 || p95 > 1200) health = 'warn';
+
+      ServerBrain.update({
+        ts: Date.now(), health,
+        gpu: { util, vram, tempC: temp, powerW, powerMaxW: 600 },
+        llm: { active: llmActive, model: 'qwen3-30b',
+               tokensPerSec: tok, queue: clamp(Math.round(llmBurstEnv*20+Math.abs(n()*4)),0,32),
+               ctxUsed: clamp(0.2 + llmBurstEnv*0.6, 0, 1) },
+        api: { reqPerSec, p95Ms: p95, errorRate: 0, inflight },
+        db:  { qps, poolUsed, slowQueries: clamp(Math.round((p95>1000?1:0)+Math.abs(n()*2)),0,20) },
+      });
+    }, 250);
+  },
+  stopSimulator() {
+    simOn = false;
+    if (simTimer) clearInterval(simTimer);
+    simTimer = null;
+    updatePauseBtn();
+  },
+  spikeGPU() {
+    gpuSpikeEnv = 1.0;
+    // immediate visible push even if sim is paused
+    const util = 0.98;
+    ServerBrain.update({
+      health: 'crit',
+      gpu: { util, vram: clamp(stats.gpu.vram+0.2,0,1), tempC: 90, powerW: 560, powerMaxW: 600 },
+    });
+  },
+  burstLLM() {
+    llmBurstEnv = 1.0;
+    launchWave(1.1);
+    launchWave(0.8);
+    ServerBrain.update({
+      llm: { active: true, model: stats.llm.model, tokensPerSec: 110, queue: 14, ctxUsed: 0.85 },
+      gpu: { util: clamp(stats.gpu.util+0.4,0,1), tempC: clamp(stats.gpu.tempC+8,30,95),
+             powerW: clamp(stats.gpu.powerW+150,0,600), vram: clamp(stats.gpu.vram+0.15,0,1), powerMaxW:600 },
+    });
+  },
+  injectError() {
+    eased.errFlash = 1.0;
+    for (let k=0;k<14;k++) spawnSpark(true);
+    ServerBrain.update({
+      api: { reqPerSec: stats.api.reqPerSec, p95Ms: 1500, errorRate: 0.4, inflight: stats.api.inflight },
+      health: 'warn',
+    });
+    // errorRate auto-clears on next sim tick; if paused, clear shortly.
+    setTimeout(() => ServerBrain.update({ api: { ...stats.api, errorRate: 0 } }), 900);
+  },
+};
+window.ServerBrain = ServerBrain;
+
+/* ============================================================================
+   UI WIRING
+   ========================================================================== */
+const elHealthDot = document.getElementById('healthDot');
+const elHealthText = document.getElementById('healthText');
+const elModelTag = document.getElementById('modelTag');
+const elGpu = document.querySelector('#r_gpu .v');
+const elTok = document.querySelector('#r_tok .v');
+const elReq = document.querySelector('#r_req .v');
+const elQps = document.querySelector('#r_qps .v');
+const elTemp = document.querySelector('#r_temp .v');
+const elGpuBar = document.getElementById('gpuBar');
+const btnPause = document.getElementById('btnPause');
+
+function updatePauseBtn() {
+  if (simOn) { btnPause.textContent = '⏸ Pause sim'; btnPause.classList.remove('paused'); }
+  else       { btnPause.textContent = '▶ Resume sim'; btnPause.classList.add('paused'); }
+}
+btnPause.onclick = () => simOn ? ServerBrain.stopSimulator() : ServerBrain.startSimulator();
+document.getElementById('btnGpu').onclick = () => ServerBrain.spikeGPU();
+document.getElementById('btnLlm').onclick = () => ServerBrain.burstLLM();
+document.getElementById('btnErr').onclick = () => ServerBrain.injectError();
+
+const HEALTH_COLOR = { ok: '#8FBC9A', warn: '#C9A36A', crit: '#CF8A8F' };
+const HEALTH_LABEL = { ok: 'healthy', warn: 'degraded', crit: 'critical' };
+
+function refreshReadout() {
+  elGpu.innerHTML = Math.round(stats.gpu.util*100) + '<span class="u">%</span>';
+  elTok.textContent = Math.round(stats.llm.tokensPerSec);
+  elReq.textContent = stats.api.reqPerSec.toFixed(1);
+  elQps.textContent = Math.round(stats.db.qps);
+  elTemp.innerHTML = Math.round(stats.gpu.tempC) + '<span class="u">°C</span>';
+  elGpuBar.style.width = (stats.gpu.util*100).toFixed(0) + '%';
+  elHealthDot.style.color = HEALTH_COLOR[stats.health];
+  elHealthDot.style.background = HEALTH_COLOR[stats.health];
+  elHealthText.textContent = HEALTH_LABEL[stats.health];
+  elModelTag.textContent = stats.llm.active ? ('▮ ' + stats.llm.model) : '— idle —';
+  elModelTag.style.color = stats.llm.active ? '#A493C9' : '#9A9DA3';
+}
+
+/* ============================================================================
+   RENDER LOOP
+   ========================================================================== */
+const clock = new THREE.Clock();
+let running = true;
+let sparkAccumulator = 0;
+let frames = 0, fpsTime = 0;
+const fpsEl = document.getElementById('fps');
+
+function frame() {
+  if (!running) return;
+  requestAnimationFrame(frame);
+  const dt = Math.min(clock.getDelta(), 0.05);
+  const t = clock.elapsedTime;
+
+  // --- ease visual state toward stats ---
+  const k = 1 - Math.pow(0.001, dt); // smoothing
+  eased.fire   += (stats.gpu.util - eased.fire) * k;
+  eased.tok    += (stats.llm.tokensPerSec - eased.tok) * k;
+  eased.req    += (stats.api.reqPerSec - eased.req) * k;
+  eased.qps    += (stats.db.qps - eased.qps) * k;
+  eased.temp   += (stats.gpu.tempC - eased.temp) * k;
+  const thinkTarget = stats.llm.active ? (0.4 + Math.min(stats.llm.tokensPerSec/120,1)*0.6) : 0;
+  eased.thinking += (thinkTarget - eased.thinking) * k;
+  eased.errFlash *= Math.pow(0.06, dt); // fast decay
+
+  // --- push uniforms ---
+  neuronUniforms.uTime.value = t;
+  neuronUniforms.uFire.value = eased.fire;
+  // core thinking pulse + error overlay color punch
+  neuronUniforms.uThink.value = eased.thinking * (0.7 + 0.3*Math.sin(t*4.0));
+  linkUniforms.uTime.value = t;
+  linkUniforms.uFire.value = eased.fire;
+  ringUniforms.uTime.value = t;
+  ringUniforms.uQps.value = clamp(eased.qps/300, 0, 1);
+
+  // error flash: tint health uniform toward rose, brighten edges
+  if (eased.errFlash > 0.01) {
+    const f = eased.errFlash;
+    const mixCol = PALETTE.green.clone().lerp(PALETTE.rose, f);
+    neuronUniforms.uHealth.value.copy(stats.health==='ok' ? mixCol : neuronUniforms.uHealth.value);
+    linkUniforms.uWaveColor.value.copy(PALETTE.violet.clone().lerp(PALETTE.rose, f));
+  } else {
+    linkUniforms.uWaveColor.value.copy(PALETTE.violet);
+  }
+
+  // --- LLM waves advance (speed ~ tokens/sec via burst) ---
+  let strongestWave = -1;
+  for (let i = waves.length-1; i >= 0; i--) {
+    const speedScale = 0.35 + clamp(eased.tok/120, 0, 1) * 0.9;
+    waves[i].t += dt * waves[i].speed * speedScale;
+    if (waves[i].t > 1.25) { waves.splice(i,1); continue; }
+    if (waves[i].t <= 1.05) strongestWave = Math.max(strongestWave, waves[i].t);
+  }
+  neuronUniforms.uWaveT.value = strongestWave;
+  linkUniforms.uWaveT.value = strongestWave;
+
+  // --- inbound API sparks: spawn at rate ~ req/sec ---
+  sparkAccumulator += dt * (eased.req * 0.5 + 0.3);
+  while (sparkAccumulator >= 1) { spawnSpark(false); sparkAccumulator -= 1; }
+  // advance sparks (ease toward target then fade at core)
+  for (let i = 0; i < MAX_SPARKS; i++) {
+    if (sparkLife[i] <= 0) continue;
+    const px = sparkPos[i*3], py = sparkPos[i*3+1], pz = sparkPos[i*3+2];
+    const tgt = sparkTarget[i];
+    sparkPos[i*3]   = px + (tgt.x - px) * dt * 1.8;
+    sparkPos[i*3+1] = py + (tgt.y - py) * dt * 1.8;
+    sparkPos[i*3+2] = pz + (tgt.z - pz) * dt * 1.8;
+    const dx = tgt.x - sparkPos[i*3], dy = tgt.y - sparkPos[i*3+1], dz = tgt.z - sparkPos[i*3+2];
+    const dist2 = dx*dx+dy*dy+dz*dz;
+    sparkLife[i] -= dt * 0.5;
+    if (dist2 < 4) sparkLife[i] -= dt * 2.5; // burn out on arrival
+  }
+  sparkGeo.attributes.position.needsUpdate = true;
+  sparkGeo.attributes.aLife.needsUpdate = true;
+
+  // --- auto-rotation: speed gently lifts with firing rate ---
+  cortex.rotation.y += dt * (0.06 + eased.fire * 0.10);
+  cortex.rotation.x = Math.sin(t*0.13) * 0.07;
+  // DB ring spins independently, speed ~ qps
+  dbRing.rotation.z += dt * (0.15 + clamp(eased.qps/300,0,1) * 0.9);
+
+  // subtle camera drift (parallax / DOF feel)
+  camera.position.x = Math.sin(t*0.09) * 5.0;
+  camera.position.y = 4 + Math.sin(t*0.12) * 2.0;
+  camera.lookAt(0, 0, 0);
+
+  renderer.render(scene, camera);
+
+  // fps + readout (throttled)
+  frames++; fpsTime += dt;
+  if (fpsTime >= 0.5) {
+    fpsEl.textContent = Math.round(frames / fpsTime) + ' fps · ' + NEURONS + ' neurons · ' + LINKS + ' synapses';
+    frames = 0; fpsTime = 0;
+    refreshReadout();
+  }
+}
+
+/* ============================================================================
+   LIFECYCLE
+   ========================================================================== */
+function resize() {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+}
+window.addEventListener('resize', resize);
+
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) {
+    running = false;            // pause render loop (saves GPU)
+  } else if (!running) {
+    running = true;
+    clock.getDelta();           // discard the gap so dt stays small
+    frame();
+  }
+});
+
+applyHealthColors();
+refreshReadout();
+ServerBrain.startSimulator();   // ON by default — alive on open
+frame();
+</script>
+</body>
+</html>
