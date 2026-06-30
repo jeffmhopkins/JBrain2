@@ -13,7 +13,7 @@ from sqlalchemy.exc import IntegrityError, ProgrammingError
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
-from jbrain.agent.agents import AGENT_NAMES
+from jbrain.agent.agents import NON_OWNER_PERSONAS, OWNER_AGENTS
 from jbrain.agent.loop import AgentResult
 from jbrain.agent.runlog import AgentRunLog
 from jbrain.agent.session import AgentSessionRepo
@@ -99,16 +99,29 @@ async def test_check_constraints_pin_the_sets(maker: async_sessionmaker) -> None
                 )
 
 
-async def test_every_code_defined_persona_is_a_valid_task_agent(
+async def test_every_owner_persona_is_a_valid_task_agent(
     maker: async_sessionmaker,
 ) -> None:
-    """The tasks.agent CHECK (0093, widened in 0095) must admit every persona the code
-    offers, so the task launcher can schedule any of them — the archivist included."""
+    """The tasks.agent CHECK (0093, widened in 0095) must admit every OWNER-selectable
+    persona, so the task launcher can schedule any of them — the archivist included. The
+    non-owner intake persona is excluded by design (proven rejected below)."""
     owner = await _owner_ctx(maker)
     repo = TaskRepo(maker)
-    for name in sorted(AGENT_NAMES):
+    for name in sorted(OWNER_AGENTS):
         task = await _make_task(repo, owner, name=name, agent=name)
         assert task.agent == name
+
+
+async def test_non_owner_persona_is_rejected_as_a_task_agent(
+    maker: async_sessionmaker,
+) -> None:
+    """The intake persona can never be scheduled as a task: the tasks.agent CHECK excludes
+    it, failing closed at the DB even if the API's OWNER_AGENTS gate were bypassed (§5)."""
+    owner = await _owner_ctx(maker)
+    repo = TaskRepo(maker)
+    for name in sorted(NON_OWNER_PERSONAS):
+        with pytest.raises((ProgrammingError, IntegrityError)):
+            await _make_task(repo, owner, name=name, agent=name)
 
 
 async def test_repeat_schedule_computes_next_run(maker: async_sessionmaker) -> None:
