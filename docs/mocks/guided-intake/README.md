@@ -34,6 +34,24 @@ canned script; Send advances even with the field empty).
   A and B show the **generic** treatment (default). The chosen variant should handle both,
   but they differ in how prominent that band is.
 
+## Owner management screen (round 2)
+
+The owner-side **"Intake Links"** card-launcher destination — where live links are managed.
+Self-contained, real tokens, 56px destination top bar, `tap-again-to-confirm` revoke, drill-in
+to a link's submissions, and a mint sheet. Each is clickable (tap a row → detail; tap "New
+intake link" → the stage sheet; copy/revoke fire toasts).
+
+| Variant | File | Direction |
+|---|---|---|
+| **A — List-first** | `manage-a-list.html` | One clean list of link cards (Active / Closed); per-row status badge + counters + an "awaiting review" flag. Closest to the existing jcode-launcher / credential lists. |
+| **B — Grouped by state** | `manage-b-grouped.html` | Sectioned **Needs review → Active → Closed**; the top section surfaces links with submissions waiting in the review inbox, each with a prominent "Review →" jump. Action-forward. |
+| **C — Dashboard** | `manage-c-dashboard.html` | A summary strip (Active · Awaiting review · Opens today) + a review CTA banner, over rows with **runs/opens progress bars**. Most at-a-glance. |
+
+Two faithful details baked into all three: **(1)** "+ New intake link" **stages a Proposal**
+(creation routes through the agent → Proposal → approval), it does not mint directly; **(2)**
+**Copy link is always available** with no one-time warning, reflecting the
+re-copyable-encrypted-at-rest decision (the one documented divergence from show-once).
+
 ## Decisions these mocks already encode (from the design exploration)
 
 - Welcome captures the recipient's **name** (the untrusted `enterer_name`) + an explicit
