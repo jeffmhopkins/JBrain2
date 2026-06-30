@@ -220,6 +220,7 @@ let stats = {
 // Eased visual values (smoothly chase `stats`).
 const eased = {
   fire: 0.12, bloom: 0.12, tok: 0, req: 3, qps: 22, temp: 41,
+  vram: 0.3, power: 0.15,
   thinking: 0, errFlash: 0, healthMix: 0 /*0 ok→1 warn→2 crit handled via colors*/,
 };
 
@@ -247,7 +248,7 @@ scene.add(cortex);
 /* ----------------------------------------------------------------------------
    1) NEURON POINT CLOUD — organic two-lobe ellipsoidal "brain" volume
    -------------------------------------------------------------------------- */
-const NEURONS = 1600;
+const NEURONS = 3600;
 const neuronPos = new Float32Array(NEURONS * 3);
 const neuronSeed = new Float32Array(NEURONS);     // per-neuron phase
 const neuronRadial = new Float32Array(NEURONS);   // 0(core)..1(periphery)
@@ -277,6 +278,7 @@ function sampleLobe(sign) {
   return { x, y, z, r };
 }
 
+const neuronRank = new Float32Array(NEURONS); // RAM-density gate: active when aRank < density
 const tmpPositions = [];
 for (let i = 0; i < NEURONS; i++) {
   const sign = i % 2 === 0 ? 1 : -1;
@@ -285,6 +287,7 @@ for (let i = 0; i < NEURONS; i++) {
   neuronPos[i*3+1] = p.y;
   neuronPos[i*3+2] = p.z;
   neuronSeed[i] = Math.random() * 1000;
+  neuronRank[i] = Math.random();
   neuronRadial[i] = p.r;
   neuronType[i] = p.r > 0.78 ? 1 : 0;
   tmpPositions.push(new THREE.Vector3(p.x, p.y, p.z));
@@ -300,11 +303,14 @@ neuronGeo.setAttribute('position', new THREE.BufferAttribute(neuronPos, 3));
 neuronGeo.setAttribute('aSeed', new THREE.BufferAttribute(neuronSeed, 1));
 neuronGeo.setAttribute('aRadial', new THREE.BufferAttribute(neuronRadial, 1));
 neuronGeo.setAttribute('aAct', new THREE.BufferAttribute(nodeAct, 1));
+neuronGeo.setAttribute('aRank', new THREE.BufferAttribute(neuronRank, 1));
 
 const neuronUniforms = {
   uTime:    { value: 0 },
   uFire:    { value: 0.12 },   // GPU util -> overall firing rate
   uThink:   { value: 0 },      // active model core pulse
+  uDensity: { value: 1 },      // RAM -> fraction of neurons active (gate)
+  uHeat:    { value: 0 },      // APU power -> bloom heat
   uColorCore: { value: PALETTE.steel.clone() },
   uColorEdge: { value: PALETTE.violet.clone() },
   uHealth:  { value: PALETTE.green.clone() },
@@ -318,8 +324,8 @@ const neuronMat = new THREE.ShaderMaterial({
   depthWrite: false,
   blending: THREE.AdditiveBlending,
   vertexShader: `
-    uniform float uTime, uFire, uThink;
-    attribute float aSeed, aRadial, aAct;
+    uniform float uTime, uFire, uThink, uDensity;
+    attribute float aSeed, aRadial, aAct, aRank;
     varying float vGlow;
     varying float vRadial;
     void main() {
@@ -332,17 +338,21 @@ const neuronMat = new THREE.ShaderMaterial({
 
       // very dim ambient floor (mostly dark when idle) + faint idle twinkle
       float tw = 0.5 + 0.5*sin(uTime*2.2 + aSeed*1.3);
-      float glow = (0.02 + uFire*0.05) * (0.55 + 0.45*tw);
+      float glow = (0.03 + uFire*0.05) * (0.55 + 0.45*tw);
 
       // flood-ping activation sweeping through the graph is the main driver
-      glow += aAct * 1.25;
+      glow += aAct * 1.15;
 
       // core "thinking" pulse pushes inner neurons brighter
       float coreness = 1.0 - smoothstep(0.0, 0.55, aRadial);
       glow += uThink * coreness * (0.6 + 0.4*sin(uTime*5.0 + aSeed));
+
+      // RAM density literally deactivates neurons above the active fraction
+      float gate = 1.0 - smoothstep(uDensity - 0.02, uDensity + 0.02, aRank);
+      glow *= gate;
       vGlow = glow;
 
-      float size = (1.4 + glow * 3.4);
+      float size = (1.2 + glow * 2.8);
       gl_PointSize = size * (300.0 / -mv.z);
       gl_Position = projectionMatrix * mv;
     }
@@ -350,6 +360,7 @@ const neuronMat = new THREE.ShaderMaterial({
   fragmentShader: `
     precision highp float;
     uniform vec3 uColorCore, uColorEdge, uHealth;
+    uniform float uHeat;
     varying float vGlow;
     varying float vRadial;
     void main() {
@@ -361,10 +372,10 @@ const neuronMat = new THREE.ShaderMaterial({
       vec3 col = mix(uColorCore, uColorEdge, vRadial);
       // health tint bias toward bloom
       col = mix(col, uHealth, 0.28);
-      // hot center burns toward white for additive bloom punch
-      col = mix(col, vec3(1.0), hot * clamp(vGlow,0.0,1.0) * 0.55);
-      float alpha = a * (0.10 + vGlow * 0.9);
-      gl_FragColor = vec4(col * (0.6 + vGlow), alpha);
+      // hot center burns toward white; APU power drives the bloom heat
+      col = mix(col, vec3(1.0), hot * clamp(vGlow,0.0,1.0) * (0.42 + uHeat*0.5));
+      float alpha = a * clamp(vGlow * 1.1, 0.0, 1.0);
+      gl_FragColor = vec4(col * (0.55 + vGlow), alpha);
     }
   `,
 });
@@ -375,7 +386,7 @@ cortex.add(neuronPoints);
    2) SYNAPSE LINES — connect each neuron to a few nearest neighbours
    -------------------------------------------------------------------------- */
 // Build neighbour links with a coarse spatial hash for speed.
-const MAX_LINKS = 4200;
+const MAX_LINKS = 10000;
 const linkA = [];          // index of endpoint a
 const linkB = [];
 {
@@ -425,6 +436,7 @@ const linkPos = new Float32Array(LINKS * 2 * 3);
 const linkRadial = new Float32Array(LINKS * 2);   // for wave propagation
 const linkSeed = new Float32Array(LINKS * 2);
 const linkAct = new Float32Array(LINKS * 2);      // endpoint flood activation
+const linkRank = new Float32Array(LINKS * 2);     // RAM-density gate per endpoint
 for (let l = 0; l < LINKS; l++) {
   const i = linkA[l], j = linkB[l];
   linkPos[l*6+0] = neuronPos[i*3+0];
@@ -437,16 +449,19 @@ for (let l = 0; l < LINKS; l++) {
   linkRadial[l*2+1] = neuronRadial[j];
   const s = Math.random()*1000;
   linkSeed[l*2+0] = s; linkSeed[l*2+1] = s;
+  linkRank[l*2+0] = neuronRank[i]; linkRank[l*2+1] = neuronRank[j];
 }
 const linkGeo = new THREE.BufferGeometry();
 linkGeo.setAttribute('position', new THREE.BufferAttribute(linkPos, 3));
 linkGeo.setAttribute('aRadial', new THREE.BufferAttribute(linkRadial, 1));
 linkGeo.setAttribute('aSeed', new THREE.BufferAttribute(linkSeed, 1));
 linkGeo.setAttribute('aAct', new THREE.BufferAttribute(linkAct, 1));
+linkGeo.setAttribute('aRank', new THREE.BufferAttribute(linkRank, 1));
 
 const linkUniforms = {
   uTime:   { value: 0 },
   uFire:   { value: 0.12 },
+  uDensity:{ value: 1 },
   uWaveT:  { value: -1.0 },
   uColor:  { value: PALETTE.steel.clone() },
   uWaveColor: { value: PALETTE.violet.clone() },
@@ -457,15 +472,17 @@ const linkMat = new THREE.ShaderMaterial({
   depthWrite: false,
   blending: THREE.AdditiveBlending,
   vertexShader: `
-    uniform float uTime, uFire;
-    attribute float aRadial, aSeed, aAct;
+    uniform float uTime, uFire, uDensity;
+    attribute float aRadial, aSeed, aAct, aRank;
     varying float vI;
     void main() {
-      float base = 0.04 + uFire * 0.10;
+      float base = 0.022 + uFire * 0.07;
       float flick = 0.5 + 0.5*sin(uTime*3.0 + aSeed);
       // aAct is this endpoint's flood activation, so the segment lights from the
       // firing neuron toward its neighbour — the ping travelling down the edge
-      float intensity = base * (0.5 + 0.5*flick) + aAct * 1.15;
+      float intensity = base * (0.5 + 0.5*flick) + aAct * 1.1;
+      // RAM density deactivates synapses to switched-off neurons
+      intensity *= 1.0 - smoothstep(uDensity - 0.02, uDensity + 0.02, aRank);
       vI = intensity;
       gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
     }
@@ -605,26 +622,59 @@ const bfsVisited = new Int32Array(NEURONS); // generation stamps avoid re-cleari
 let bfsGen = 0;
 let idleAcc = 0;
 
-function spawnFlood(seed, speed, strength) {
+function edgeLen(a, b) {
+  const dx = neuronPos[a*3]   - neuronPos[b*3];
+  const dy = neuronPos[a*3+1] - neuronPos[b*3+1];
+  const dz = neuronPos[a*3+2] - neuronPos[b*3+2];
+  return Math.sqrt(dx*dx + dy*dy + dz*dz);
+}
+
+function spawnFlood(seed, speed, strength, branchK, maxHops, density) {
   // grab a free slot, else recycle whichever flood is furthest along
   let slot = null;
   for (const f of floodPool) if (!f.active) { slot = f; break; }
   if (!slot) slot = floodPool.reduce((a, b) =>
     (a.ptr / (a.n || 1)) >= (b.ptr / (b.n || 1)) ? a : b);
 
-  // BFS from the seed; dequeue order is non-decreasing in hop distance
+  // Generation BFS with two GPU-driven caps: at most `branchK` neurons advance per
+  // step (wavefront width 1..10) and at most `maxHops` steps deep (2..20). Arrival
+  // "distance" accumulates EUCLIDEAN edge length, so a long synapse takes
+  // proportionally longer to cross. Neurons switched off by RAM density are skipped.
   bfsGen++;
-  let head = 0, tail = 0, oi = 0;
-  bfsQueue[tail++] = seed; bfsVisited[seed] = bfsGen; slot.dist[seed] = 0;
-  while (head < tail) {
-    const u = bfsQueue[head++];
-    slot.order[oi++] = u;
-    const du = slot.dist[u], nb = adj[u];
-    for (let k = 0; k < nb.length; k++) {
-      const v = nb[k];
-      if (bfsVisited[v] !== bfsGen) { bfsVisited[v] = bfsGen; slot.dist[v] = du + 1; bfsQueue[tail++] = v; }
+  bfsVisited[seed] = bfsGen; slot.dist[seed] = 0;
+  let oi = 0; slot.order[oi++] = seed;
+  let frontier = [seed];
+  const cap = slot.order.length;
+  for (let hop = 0; hop < maxHops && frontier.length && oi < cap; hop++) {
+    // gather every unvisited, ACTIVE neighbour of the current frontier (v, arrival)
+    const cand = [];
+    for (let fi = 0; fi < frontier.length; fi++) {
+      const u = frontier[fi], nb = adj[u], du = slot.dist[u];
+      for (let k = 0; k < nb.length; k++) {
+        const v = nb[k];
+        if (bfsVisited[v] === bfsGen || neuronRank[v] >= density) continue;
+        cand.push(v, du + edgeLen(u, v));
+      }
     }
+    if (!cand.length) break;
+    // keep the branchK nearest-arriving of them as the next wavefront
+    const idx = [];
+    for (let c = 0; c < cand.length; c += 2) idx.push(c);
+    idx.sort((p, q) => cand[p + 1] - cand[q + 1]);
+    const next = [];
+    for (let ii = 0; ii < idx.length && next.length < branchK; ii++) {
+      const v = cand[idx[ii]];
+      if (bfsVisited[v] === bfsGen) continue;
+      bfsVisited[v] = bfsGen; slot.dist[v] = cand[idx[ii] + 1];
+      if (oi < cap) slot.order[oi++] = v;
+      next.push(v);
+    }
+    frontier = next;
   }
+  // the shell sweeps by distance, so order must be sorted by arrival distance
+  const ord = Array.prototype.slice.call(slot.order.subarray(0, oi));
+  ord.sort((a, b) => slot.dist[a] - slot.dist[b]);
+  for (let i = 0; i < oi; i++) slot.order[i] = ord[i];
   slot.n = oi; slot.ptr = 0; slot.tptr = 0; slot.front = 0;
   slot.speed = speed; slot.strength = strength; slot.active = true;
 }
@@ -632,7 +682,7 @@ function spawnFlood(seed, speed, strength) {
 // A flood is a travelling SHELL, not a fill: only neurons within TAIL hops behind
 // the advancing wavefront glow (brightest right at the front, ramping to dark
 // behind it), so each cascade reads as a ring of fire sweeping through the graph.
-const FLOOD_TAIL = 3.4;
+const FLOOD_TAIL = 8.0;
 function updateFloods(dt) {
   for (const f of floodPool) {
     if (!f.active) continue;
@@ -655,7 +705,7 @@ function updateFloods(dt) {
 // kept name for existing call sites: a burst/manual trigger = one strong, fast
 // flood from a random neuron
 function launchWave(speedHint) {
-  spawnFlood((Math.random() * NEURONS) | 0, 7 + (speedHint || 1) * 5, 1.15);
+  spawnFlood((Math.random() * NEURONS) | 0, 26, 1.2, 8, 16, clamp(eased.vram, 0.1, 1));
 }
 
 /* ============================================================================
@@ -858,14 +908,21 @@ function frame() {
   const thinkTarget = stats.llm.active ? (0.4 + Math.min(stats.llm.tokensPerSec/120,1)*0.6) : 0;
   eased.thinking += (thinkTarget - eased.thinking) * k;
   eased.errFlash *= Math.pow(0.06, dt); // fast decay
+  eased.vram  += ((stats.gpu.vram || 0) - eased.vram) * k;
+  eased.power += (((stats.gpu.powerW / (stats.gpu.powerMaxW || 90)) || 0) - eased.power) * k;
 
   // --- push uniforms ---
   neuronUniforms.uTime.value = t;
   neuronUniforms.uFire.value = eased.fire;
   // core thinking pulse + error overlay color punch
   neuronUniforms.uThink.value = eased.thinking * (0.7 + 0.3*Math.sin(t*4.0));
+  // RAM density -> fraction of neurons active; APU power -> bloom heat
+  const densityActive = clamp(0.1 + eased.vram * 0.9, 0.1, 1);
+  neuronUniforms.uDensity.value = densityActive;
+  neuronUniforms.uHeat.value = clamp(eased.power, 0, 1);
   linkUniforms.uTime.value = t;
   linkUniforms.uFire.value = eased.fire;
+  linkUniforms.uDensity.value = densityActive;
   ringUniforms.uTime.value = t;
   ringUniforms.uQps.value = clamp(eased.qps/300, 0, 1);
 
@@ -891,14 +948,21 @@ function frame() {
   idleAcc += dt * 0.18;
   if (idleAcc >= 1) { idleAcc -= 1; if (desired < 1) toSpawn = Math.max(toSpawn, 1); }
   toSpawn = Math.min(toSpawn, 2);                            // cap/frame -> no visible burst
+  // GPU util sets how each cascade ROUTES: wavefront width 1..10 and depth 2..20 hops
+  const branchK = clamp(Math.round(eased.fire * 10), 1, 10);
+  const maxHops = clamp(Math.round(eased.fire * 20), 2, 20);
   for (let s = 0; s < toSpawn; s++) {
     const thinking = stats.llm.active && coreNodes.length;
-    const seed = (thinking && Math.random() < 0.6)
+    let seed = (thinking && Math.random() < 0.6)
       ? coreNodes[(Math.random() * coreNodes.length) | 0]   // seed the core while "thinking"
       : (Math.random() * NEURONS) | 0;
-    const speed = 4 + clamp(eased.tok / 120, 0, 1) * 10 + drive * 3;  // tokens/sec -> front speed
-    const strength = 0.45 + drive * 0.6;                    // dimmer cascades at low load
-    spawnFlood(seed, speed, strength);
+    // never seed on a neuron switched off by RAM density
+    let tries = 0;
+    while (neuronRank[seed] >= densityActive && tries++ < 12) seed = (Math.random() * NEURONS) | 0;
+    if (neuronRank[seed] >= densityActive) continue;
+    const speed = 16 + clamp(eased.tok / 120, 0, 1) * 16 + drive * 8;  // euclidean units/sec
+    const strength = 0.22 + drive * 0.7;                    // much dimmer cascades at low load
+    spawnFlood(seed, speed, strength, branchK, maxHops, densityActive);
   }
   const decay = Math.pow(0.04, dt);                          // trailing afterglow
   for (let i = 0; i < NEURONS; i++) nodeAct[i] *= decay;
@@ -912,8 +976,7 @@ function frame() {
   linkGeo.attributes.aAct.needsUpdate = true;
 
   // --- inbound API sparks: spawn at rate ~ req/sec ---
-  sparkAccumulator += dt * (eased.req * 0.5 + 0.3);
-  while (sparkAccumulator >= 1) { spawnSpark(false); sparkAccumulator -= 1; }
+  // inbound API "sparks" removed — no random camera->net particles on the display
   // advance sparks (ease toward target then fade at core)
   for (let i = 0; i < MAX_SPARKS; i++) {
     if (sparkLife[i] <= 0) continue;

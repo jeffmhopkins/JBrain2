@@ -93,18 +93,45 @@ def gpu_temp_c() -> float | None:
     return round(millideg / 1000, 1) if millideg is not None else None
 
 
-def mem_used_fraction() -> float:
+def sys_mem_bytes() -> tuple[int, int]:
+    """(used, total) system RAM in bytes from /proc/meminfo."""
     total = avail = 0
     try:
-        for line in (Path("/proc/meminfo")).read_text().splitlines():
+        for line in Path("/proc/meminfo").read_text().splitlines():
             parts = line.split()
             if len(parts) >= 2 and parts[0] == "MemTotal:":
-                total = int(parts[1])
+                total = int(parts[1]) * 1024
             elif len(parts) >= 2 and parts[0] == "MemAvailable:":
-                avail = int(parts[1])
+                avail = int(parts[1]) * 1024
     except OSError:
-        return 0.0
-    return round(1 - avail / total, 4) if total else 0.0
+        return 0, 0
+    return (total - avail, total)
+
+
+def vram_bytes() -> tuple[int, int]:
+    """(used, total) amdgpu VRAM in bytes — the LLM's model footprint on the iGPU,
+    or (0, 0) when absent. Folded into the memory signal so 'density' reflects
+    RAM + the VRAM the local model is holding."""
+    used = total = 0
+    try:
+        cards = sorted(Path("/sys/class/drm").glob("card*/device"))
+    except OSError:
+        return 0, 0
+    for dev in cards:
+        u = _read_first_float(dev / "mem_info_vram_used")
+        t = _read_first_float(dev / "mem_info_vram_total")
+        if u is not None and t:
+            used += int(u)
+            total += int(t)
+    return used, total
+
+
+def mem_used_fraction() -> float:
+    """Combined RAM + GPU VRAM usage fraction (the 'neural density' signal)."""
+    su, st = sys_mem_bytes()
+    vu, vt = vram_bytes()
+    denom = st + vt
+    return round((su + vu) / denom, 4) if denom else 0.0
 
 
 def load_1m() -> float:
