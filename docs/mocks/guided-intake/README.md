@@ -52,6 +52,25 @@ Two faithful details baked into all three: **(1)** "+ New intake link" **stages 
 **Copy link is always available** with no one-time warning, reflecting the
 re-copyable-encrypted-at-rest decision (the one documented divergence from show-once).
 
+## Editable intake-link Proposal (round 3)
+
+The full-screen **editable Proposal** the intake tool generates — the owner edits the agent
+prompt + all link settings, then approves to mint. It lives in the **Proposals page** shell
+(56px `panel-bar`, scrolling `panel-body`, footer action bar) but is a **first-class
+departure**: every other Proposal kind is a read-only "judge the preview" surface, whereas
+this one is editable owner-config (no firewall/truth implication). Footer action is
+**Approve & mint** (not "Enact"). No modal — the whole thing is the surface. Each is
+clickable (edit fields, toggles, segmented pickers, ± steppers; Reject is tap-again).
+
+| Variant | File | Direction |
+|---|---|---|
+| **A — Form** | `proposal-a-form.html` | One scrolling form of stacked `settings-card`s (Agent prompt / Blurb / Who & where / Limits / Recipient). Most direct, settings-screen feel. |
+| **B — Edit + Preview** | `proposal-b-preview.html` | The same form with an **Edit ⇄ Preview** tab — Preview renders the live recipient view (chosen surface B) from the current blurb/disclosure so you see the effect of edits before minting. |
+| **C — Proposal-tree** | `proposal-c-tree.html` | Rendered as a real **Proposal tree** (root + collapsible editable nodes: Persona / Interview / Limits / Access, each with an op badge), most native to the Proposals page's existing tree rendering. |
+
+All three reflect: creation = agent-generated Proposal; editable before approval; the
+"nothing secret in the prompt" caveat; binding/runs/opens/TTL/disclosure as editable knobs.
+
 ## Decisions these mocks already encode (from the design exploration)
 
 - Welcome captures the recipient's **name** (the untrusted `enterer_name`) + an explicit
