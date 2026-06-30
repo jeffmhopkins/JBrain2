@@ -65,7 +65,7 @@ clickable (edit fields, toggles, segmented pickers, ± steppers; Reject is tap-a
 | Variant | File | Direction |
 |---|---|---|
 | **A — Form** | `proposal-a-form.html` | One scrolling form of stacked `settings-card`s (Agent prompt / Blurb / Who & where / Limits / Recipient). Most direct, settings-screen feel. |
-| **B — Edit + Preview** | `proposal-b-preview.html` | The same form with an **Edit ⇄ Preview** tab — Preview renders the live recipient view (chosen surface B) from the current blurb/disclosure so you see the effect of edits before minting. |
+| **B — Edit + Preview ✅ chosen** | `proposal-b-preview.html` | The same form with an **Edit ⇄ Preview** tab — Preview renders the live recipient view (chosen surface B) from the current blurb/disclosure so you see the effect of edits before minting. Chosen: the live preview means you approve a *shown effect*, matching the Proposal anti-fatigue principle. |
 | **C — Proposal-tree** | `proposal-c-tree.html` | Rendered as a real **Proposal tree** (root + collapsible editable nodes: Persona / Interview / Limits / Access, each with an op badge), most native to the Proposals page's existing tree rendering. |
 
 All three reflect: creation = agent-generated Proposal; editable before approval; the
