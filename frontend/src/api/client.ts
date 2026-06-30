@@ -22,6 +22,7 @@ import type {
   SessionCreate,
   TranscriptTurn,
 } from "../agent/types";
+import type { IntakeConfig, IntakeConfirmOut } from "../intake/types";
 import type {
   ExternalMint,
   ExternalSession,
@@ -2335,6 +2336,31 @@ export const api = {
    * already-claimed link (share links are single-use — first browser binds it). */
   async jcodeRedeemShare(token: string): Promise<{ session_id: string }> {
     return (await request("/api/jcode/share/redeem", jsonInit("POST", { token }))).json();
+  },
+
+  /** Guided intake (recipient). Redeem a share secret for a session-scoped cookie + the
+   * link's config. A 401 means an invalid / expired / exhausted link. */
+  async intakeRedeem(secret: string): Promise<IntakeConfig> {
+    return (await request("/api/intake/redeem", jsonInit("POST", { secret }))).json();
+  },
+
+  /** One interview turn, streamed as SSE (same framing as `chat`). The intake persona
+   * has no tools, so the stream is text_delta + usage + done only. The cookie scopes it
+   * to the recipient's own session — no session id in the body. */
+  async *intakeChat(message: string, signal?: AbortSignal): AsyncGenerator<ChatEvent> {
+    const response = await request("/api/intake/chat", {
+      ...jsonInit("POST", { message }),
+      ...(signal ? { signal } : {}),
+    });
+    if (!response.body) return;
+    yield* parseChatStream(response.body);
+  },
+
+  /** Confirm the draft → capture the submission for the owner to review. */
+  async intakeConfirm(entererName: string): Promise<IntakeConfirmOut> {
+    return (
+      await request("/api/intake/confirm", jsonInit("POST", { enterer_name: entererName }))
+    ).json();
   },
 
   /** External-LLM sessions (owner only): a token-gated public endpoint exposing the

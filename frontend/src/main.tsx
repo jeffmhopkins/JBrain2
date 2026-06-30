@@ -3,6 +3,8 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { App } from "./App";
 import { initFontScale } from "./fontScale";
+import { GuidedIntakeApp } from "./intake/GuidedIntakeApp";
+import { parseIntakePath } from "./intake/share";
 import { parseSharePath } from "./jcode/share";
 import { initLocationCapture } from "./location";
 import { JcodeShareApp } from "./screens/JcodeShareApp";
@@ -42,6 +44,13 @@ if (!container) throw new Error("Missing #root element");
 // session. Matching on the path alone (not the secret) means a reload after the secret
 // is stripped from the URL still opens the session via the redeemed cookie, rather than
 // dropping to the owner login.
-createRoot(container).render(
-  <StrictMode>{parseSharePath() ? <JcodeShareApp /> : <App />}</StrictMode>,
-);
+// A /jcode/s/{sid} path mounts the scoped code-share app; an /intake path mounts the
+// guided-intake recipient stepper (it redeems the #t= fragment secret). Neither is the
+// owner app — a recipient sees only that one scoped surface.
+function pickRoot(): JSX.Element {
+  if (parseSharePath()) return <JcodeShareApp />;
+  if (parseIntakePath()) return <GuidedIntakeApp />;
+  return <App />;
+}
+
+createRoot(container).render(<StrictMode>{pickRoot()}</StrictMode>);
