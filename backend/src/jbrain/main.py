@@ -307,7 +307,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # (no owner data in context; docs/ASSISTANT.md "Agent selection").
         web_handlers = build_web_handlers(
             SearxngClient(settings.searxng_url),
-            WebFetcher(),
+            WebFetcher(reader_url=settings.reader_url),
             emit=build_event_emitter(settings.brain_events_url),
         )
         # Fetches a source site's favicon on-box for web citation chips, so the PWA

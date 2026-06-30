@@ -604,6 +604,25 @@ services:
       - ./searxng:/etc/searxng
     networks: [internal]
 
+  # Reader fallback for jerv's web_fetch (docs/ASSISTANT.md "Agent selection"): an
+  # on-box, r.jina.ai-compatible renderer web_fetch retries through when a direct fetch
+  # is bot-walled or comes back empty (a JS-rendered page). It is the sanctioned,
+  # owner-controlled stand-in for the model routing a URL through the public r.jina.ai
+  # itself — only the public target URL travels in the path, to a reader the owner runs.
+  # Part of the stock stack (no profile) like searxng, so it comes up with every deploy
+  # and the api's JBRAIN_READER_URL points here by default; only jerv (no knowledge-base
+  # tools, no owner data) reaches it. It renders with a headless browser, so it carries a
+  # real memory cost and needs its own /dev/shm — heavier than searxng. To turn it off,
+  # set JBRAIN_READER_URL empty in the api/worker environment (web_fetch then just
+  # reports a blocked/empty page, as before). It needs egress to fetch the target, so it
+  # sits on `internal` alongside searxng.
+  reader:
+    image: ${READER_IMAGE:-ghcr.io/intergalacticalvariable/reader:latest}
+    restart: unless-stopped
+    mem_limit: 1g
+    shm_size: 1gb  # headless Chromium crashes on the default 64m /dev/shm
+    networks: [internal]
+
   # OPT-IN MQTT broker (JBrain360 M0 secure spine): Mosquitto + mosquitto-go-auth
   # in HTTP-backend mode, delegating every connect/publish/subscribe to the API's
   # /internal/mqtt-* endpoints (it reuses the shipped device_key model; the plugin

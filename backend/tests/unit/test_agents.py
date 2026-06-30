@@ -181,16 +181,16 @@ def test_persona_prompts_pinned_to_their_versions() -> None:
             "e457d7504be94746132de7cc0c7b50fa1567867b3573a64ddfe6030b45909b16",
         ),
         "jerv": (
-            "agent-jerv-v21",
-            "1b8162f54130657b9bc0bd52631d2381490b398c477f30ac1e3229192892dc86",
+            "agent-jerv-v22",
+            "1c2eaf8dc0902340c5a103c74ef3bb8a53d9d0266e6e0268b0747360f5811377",
         ),
         "archivist": (
             "agent-archivist-v6",
             "19b557040a985b4b1c13b9b3a38e2c6a8e0fd06611a84e7341e6497f8a14b9a0",
         ),
         "research": (
-            "agent-research-v2",
-            "e18af8e8b3c2268ab5bde4c8fd8092f40f0b9f860df6801fb982f31bf0f45c02",
+            "agent-research-v3",
+            "1638ab8a756ab7b8e3a3f7dff24f827cc2a8a7e1be44b5b0ee5907e1d70d6b98",
         ),
         "review": (
             "agent-review-v1",

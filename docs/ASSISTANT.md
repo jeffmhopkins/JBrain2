@@ -371,12 +371,25 @@ accepted this narrow location-into-jerv flow when enabling it. The ambient date/
 is non-personal. Search still goes through a **self-hosted SearXNG**
 instance (pinned base URL from config, query text only) — local-first like the
 on-box geocoder, so a search leaves the box only as far as SearXNG's own upstreams;
-`web_fetch` is the one genuinely outbound leg, size-capped and HTML-stripped, with
-an **SSRF guard** — it resolves the host and refuses any private/loopback/link-local
-target (and re-checks every redirect hop), so a model-supplied URL can't read the
-box's own internal services or the cloud metadata endpoint. The egress-Proposal
-connectors (below) remain the rule for every *other* agent and every off-box call
-that could carry owner data.
+`web_fetch` is the one genuinely outbound leg, size-capped, with an **SSRF guard** —
+it resolves the host and refuses any private/loopback/link-local target (and re-checks
+every redirect hop), so a model-supplied URL can't read the box's own internal services
+or the cloud metadata endpoint. Extraction is **on-box**: it presents as an ordinary
+browser (so a bot-wall is far less likely to 403 it), runs the page through
+**trafilatura** for clean main-content markdown (the dependency-free `htmltext` pass is
+the fallback, and supplies the title + navigation links), and reads a linked **PDF**'s
+text layer (PyMuPDF) rather than refusing it. The point is to make the on-box fetch good
+enough that the model stops smuggling blocked URLs through a third-party reader like
+`r.jina.ai`. For the residual case it can't handle alone — a hard bot-wall, or a
+JS-rendered shell with no served content — there is a **reader fallback**
+(`JBRAIN_READER_URL`): a pinned reader endpoint that web_fetch retries through. It ships
+as part of the stock compose stack (an on-box, r.jina.ai-compatible renderer, like the
+self-hosted SearXNG), so the default points at the on-box instance and it is on for a
+stock deploy; set `JBRAIN_READER_URL` empty to turn it off. It is the sanctioned,
+owner-controlled version of what the model was doing on its own — only the public target
+URL travels off-box, and through an endpoint the owner pins (never one the model builds). The egress-Proposal
+connectors (below) remain the rule for every *other* agent and every off-box call that
+could carry owner data.
 
 ### External connectors (the egress chokepoint)
 

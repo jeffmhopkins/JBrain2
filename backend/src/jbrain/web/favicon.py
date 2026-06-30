@@ -25,7 +25,7 @@ from urllib.parse import urljoin, urlparse
 import httpx
 import structlog
 
-from jbrain.web.fetch import WebFetchError, guard_public_host
+from jbrain.web.fetch import BROWSER_HEADERS, WebFetchError, guard_public_host
 
 log = structlog.get_logger()
 
@@ -134,7 +134,7 @@ class FaviconFetcher:
         readable homepage still gets the `/favicon.ico` fallback from an empty parse."""
         try:
             guard_public_host(origin, skip_dns=self._transport is not None)
-            resp = await client.get(origin, headers={"User-Agent": "JBrain2 jerv/1.0"})
+            resp = await client.get(origin, headers=BROWSER_HEADERS)
             if resp.is_error or "html" not in resp.headers.get("content-type", "").lower():
                 return ""
             return resp.text[:_MAX_HTML_BYTES]
@@ -147,7 +147,7 @@ class FaviconFetcher:
         Re-guards the host: a candidate may live on a different (CDN) host."""
         try:
             guard_public_host(url, skip_dns=self._transport is not None)
-            resp = await client.get(url, headers={"User-Agent": "JBrain2 jerv/1.0"})
+            resp = await client.get(url, headers=BROWSER_HEADERS)
         except (httpx.HTTPError, WebFetchError):
             return None
         if resp.is_error:
