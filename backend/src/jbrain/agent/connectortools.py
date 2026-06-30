@@ -136,6 +136,12 @@ def build_leaf_executor(
             await predicate_resolve(ctx, proposal, node)
         elif node.op == "add_intake_note":
             await intake_note(ctx, proposal, node)
+        elif node.op == "mint_intake_link":
+            # No-op here: an intake-link Proposal is minted via the dedicated
+            # mint-from-proposal endpoint (it surfaces the show-once secret, which a
+            # leaf executor can't return). The generic enact must NOT fall through to
+            # the note executor and turn the config into a note.
+            return
         else:
             await note_executor(ctx, proposal, node)
 

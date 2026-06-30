@@ -95,6 +95,25 @@ def enactment_plan(nodes: Sequence[Node]) -> EnactmentPlan:
     return EnactmentPlan(tuple(enactable), tuple(held))
 
 
+# The intake-link config fields the owner MAY edit on a staged Proposal (§7). subject_id
+# and domain are deliberately absent — they are fixed by the agent's scope-checked staging
+# and re-validated at mint, so an edit can never cross a firewall.
+_EDITABLE_INTAKE_FIELDS = frozenset(
+    {
+        "opening_blurb",
+        "label",
+        "persona_brief",
+        "fields_brief",
+        "max_runs",
+        "max_opens",
+        "bind_on_first",
+        "ttl_hours",
+        "capture_enterer_name",
+        "disclose_owner_identity",
+    }
+)
+
+
 # --- Staging shapes --------------------------------------------------------
 
 
@@ -337,6 +356,54 @@ class ProposalRepo:
                     {"id": proposal_id},
                 )
         return plan
+
+    async def patch_intake_config(
+        self, ctx: SessionContext, node_id: str, fields: dict
+    ) -> bool:
+        """Edit the constrained config of a STAGED intake-link mint node — the net-new
+        editable-Proposal surface (§7). Only the soft fields are patchable; subject and
+        domain are NOT (they are re-validated at mint, so the owner can't edit the config
+        to cross a firewall the agent's staged config couldn't). Owner-only RLS; no-op on
+        an unknown id, a non-intake node, or an already-decided proposal."""
+        allowed = {k: v for k, v in fields.items() if k in _EDITABLE_INTAKE_FIELDS}
+        if not allowed:
+            return False
+        async with scoped_session(self._maker, ctx) as session:
+            preview = (
+                await session.execute(
+                    text(
+                        "SELECT n.preview FROM app.proposal_nodes n"
+                        " JOIN app.proposals p ON p.id = n.proposal_id"
+                        " WHERE n.id = :nid AND n.op = 'mint_intake_link' AND p.status = 'staged'"
+                    ),
+                    {"nid": node_id},
+                )
+            ).scalar_one_or_none()
+            if preview is None:
+                return False
+            merged = {**dict(preview), **allowed}
+            await session.execute(
+                text("UPDATE app.proposal_nodes SET preview = cast(:p AS jsonb) WHERE id = :nid"),
+                {"p": _json(merged), "nid": node_id},
+            )
+            return True
+
+    async def mark_enacted(self, ctx: SessionContext, proposal_id: str) -> None:
+        """Mark a proposal (and its nodes) enacted without running a leaf executor — the
+        intake-link mint path enacts via its own endpoint (which surfaces the show-once
+        secret a leaf executor can't return)."""
+        async with scoped_session(self._maker, ctx) as session:
+            await session.execute(
+                text(
+                    "UPDATE app.proposals SET status = 'enacted', updated_at = now()"
+                    " WHERE id = :id"
+                ),
+                {"id": proposal_id},
+            )
+            await session.execute(
+                text("UPDATE app.proposal_nodes SET status = 'enacted' WHERE proposal_id = :id"),
+                {"id": proposal_id},
+            )
 
     async def _nodes(self, session: AsyncSession, proposal_id: str) -> list[Node]:
         rows = (

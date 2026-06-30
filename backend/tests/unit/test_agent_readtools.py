@@ -562,6 +562,7 @@ def test_build_registry_binds_the_shipped_sidecars() -> None:
         "memory_edit",
         "remember",
         "propose_correction",
+        "make_intake_link",
         "propose_merge",
         "lookup_medication",
         "lookup_condition",
@@ -685,6 +686,11 @@ def test_sidecars_pinned_to_their_versions() -> None:
             "propose_correction",
             2,
             "978041c1ab636277dc626cdf996544eb0464116db0699065a0b3a2b08f8c4ee9",
+        ),
+        "make_intake_link.tool": (
+            "make_intake_link",
+            1,
+            "3e60241f4b4d94a41863314670db80afd2f26d65a6f2f02623a300e24ebaa391",
         ),
         "propose_merge.tool": (
             "propose_merge",

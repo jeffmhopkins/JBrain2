@@ -430,6 +430,43 @@ class SqlIntakeRepo:
             )
             return (cast("CursorResult[Any]", result).rowcount or 0) > 0
 
+    async def purge_intake_link(self, ctx: SessionContext, link_id: str) -> int:
+        """Purge a link and everything derived from it (§5/W4). Deleting the link cascades
+        (ON DELETE CASCADE) to its sessions, submissions, and their retained transcripts;
+        the approved-and-ingested derived NOTES carry no FK back, so they are soft-deleted
+        by their `source_ref` here — which hands their facts/mentions/analysis to the
+        standard deleted-note artifact purge. Returns the count of derived notes retired.
+        Full-owner/system context."""
+        try:
+            lid = uuid.UUID(link_id)
+        except ValueError:
+            return 0
+        async with scoped_session(self._maker, ctx) as session:
+            sub_ids = (
+                (
+                    await session.execute(
+                        text("SELECT id FROM app.intake_submissions WHERE link_id = :l"),
+                        {"l": str(lid)},
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            retired = 0
+            for sub_id in sub_ids:
+                result = await session.execute(
+                    text(
+                        "UPDATE app.notes SET deleted_at = now()"
+                        " WHERE source_ref = :r AND deleted_at IS NULL"
+                    ),
+                    {"r": f"intake-submission:{sub_id}"},
+                )
+                retired += cast("CursorResult[Any]", result).rowcount or 0
+            await session.execute(
+                text("DELETE FROM app.intake_links WHERE id = :l"), {"l": str(lid)}
+            )
+            return retired
+
     async def reap_abandoned(self, ctx: SessionContext, older_than_seconds: int) -> int:
         """Transition stale `drafting` sessions to `abandoned` (the reaper, §6). A session
         is stale if its last turn (or its open, if it never had one) is older than the

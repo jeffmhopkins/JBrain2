@@ -85,6 +85,83 @@ def build_proposal_handlers(proposals: ProposalRepo) -> dict[str, ToolHandler]:
     return {"propose_correction": propose_correction_tool}
 
 
+def build_intake_link_handlers(proposals: ProposalRepo) -> dict[str, ToolHandler]:
+    """`make_intake_link` (docs/GUIDED_INTAKE_PLAN.md): stages an EDITABLE intake-link
+    Proposal, never mints. The owner edits the config and approves; minting (and the
+    show-once secret) happens then, via the dedicated mint-from-proposal endpoint — not
+    the generic enact, so the secret never has to ride through a leaf executor."""
+
+    async def make_intake_link_tool(arguments: dict, ctx: ToolContext) -> str | ToolOutput:
+        subject_id = str(arguments.get("subject_id", "")).strip()
+        fields_brief = str(arguments.get("fields_brief", "")).strip()
+        domain = str(arguments.get("domain", "")).strip() or (
+            ctx.scopes[0] if ctx.scopes else "general"
+        )
+        if not subject_id:
+            return "make_intake_link needs the subject_id it collects information about."
+        if not fields_brief:
+            return "make_intake_link needs fields_brief — what the interviewer should collect."
+        # You cannot stage a link attributed to a domain this session cannot read.
+        if ctx.scopes and domain not in ctx.scopes:
+            return f"can't stage an intake link in '{domain}' — this session isn't scoped to it."
+        if not ctx.session.principal_id:
+            return "can't stage an intake link without an owner principal."
+        try:
+            max_runs = int(arguments.get("max_runs") or 0)
+        except (TypeError, ValueError):
+            max_runs = 0
+        if max_runs < 1:
+            return "make_intake_link needs max_runs >= 1 (how many submissions the link accepts)."
+        try:
+            max_opens = int(arguments.get("max_opens") or 0) or max_runs * 4
+        except (TypeError, ValueError):
+            max_opens = max_runs * 4
+        try:
+            ttl_hours = float(arguments.get("ttl_hours") or 0) or 24.0
+        except (TypeError, ValueError):
+            ttl_hours = 24.0
+        config = {
+            "subject_id": subject_id,
+            "domain": domain,
+            "fields_brief": fields_brief,
+            "persona_brief": str(arguments.get("persona_brief", "")).strip(),
+            "opening_blurb": str(arguments.get("opening_blurb", "")).strip(),
+            "label": str(arguments.get("label", "")).strip(),
+            "max_runs": max_runs,
+            "max_opens": max_opens,
+            "bind_on_first": bool(arguments.get("bind_on_first", False)),
+            "ttl_hours": ttl_hours,
+            "capture_enterer_name": bool(arguments.get("capture_enterer_name", True)),
+            "disclose_owner_identity": bool(arguments.get("disclose_owner_identity", False)),
+        }
+        node = NodeSpec(
+            id=str(uuid.uuid4()),
+            type="leaf",
+            op="mint_intake_link",
+            label=_label(fields_brief),
+            preview=config,
+        )
+        spec = ProposalSpec(
+            kind="intake-link",
+            domain=domain,
+            subject_id=subject_id,
+            title=_label(fields_brief),
+            nodes=[node],
+            provenance={"source": "chat"},
+            session_id=ctx.agent_session_id,
+        )
+        prop_id = await proposals.stage(
+            ctx.session, principal_id=ctx.session.principal_id, spec=spec
+        )
+        return ToolOutput(
+            "Staged an intake link for your approval. Edit the details if you like, then"
+            " approve to mint it — I'll show you the link once, right after.",
+            proposal=ProposalRef(proposal_id=prop_id, kind="intake-link"),
+        )
+
+    return {"make_intake_link": make_intake_link_tool}
+
+
 def agent_note_executor(notes: SqlNotesRepo, jobs: JobEnqueuer) -> LeafExecutor:
     """Enact a correction/knowledge leaf as an agent-authored note re-entering the
     ingestion pipeline (#7). Idempotent on the node id, so a re-enact never

@@ -127,3 +127,66 @@ async def test_executor_skips_an_empty_body() -> None:
     node = NodeRow("n", None, "leaf", "add_note", "", {"body": "  "}, (), "approved")
     await agent_note_executor(notes, jobs)(CTX.session, proposal, node)  # type: ignore[arg-type]
     assert notes.created == [] and jobs.enqueued == []
+
+
+# --- make_intake_link: stages an editable intake-link Proposal, never mints --------
+
+
+def _intake_handler(repo: "FakeProposalRepo"):
+    from jbrain.agent.proposaltools import build_intake_link_handlers
+
+    return build_intake_link_handlers(repo)["make_intake_link"]  # type: ignore[arg-type]
+
+
+async def test_make_intake_link_stages_an_editable_intake_link_proposal() -> None:
+    repo = FakeProposalRepo()
+    out = await _intake_handler(repo)(
+        {
+            "subject_id": "subj-1",
+            "domain": "health",
+            "fields_brief": "their current medications",
+            "opening_blurb": "hi there",
+            "max_runs": 3,
+            "bind_on_first": True,
+        },
+        CTX,
+    )
+    assert isinstance(out, ToolOutput)
+    assert out.proposal == ProposalRef(proposal_id="prop-1", kind="intake-link")
+    principal_id, spec = repo.staged[0]
+    assert principal_id == "p1"
+    assert spec.kind == "intake-link" and spec.domain == "health" and spec.subject_id == "subj-1"
+    leaf = spec.nodes[0]
+    assert leaf.op == "mint_intake_link"  # never an add_note — it must not enact as a note
+    assert leaf.preview["fields_brief"] == "their current medications"
+    assert leaf.preview["max_runs"] == 3 and leaf.preview["bind_on_first"] is True
+    # max_opens defaults to 4x max_runs; ttl defaults to 24h.
+    assert leaf.preview["max_opens"] == 12 and leaf.preview["ttl_hours"] == 24.0
+
+
+async def test_make_intake_link_refuses_out_of_scope_domain_and_missing_fields() -> None:
+    repo = FakeProposalRepo()
+    assert "isn't scoped" in await _intake_handler(repo)(
+        {
+            "subject_id": "s",
+            "domain": "finance",
+            "fields_brief": "x",
+            "max_runs": 1,
+            "bind_on_first": False,
+        },
+        CTX,
+    )
+    assert "subject_id" in await _intake_handler(repo)(
+        {"domain": "health", "fields_brief": "x", "max_runs": 1, "bind_on_first": False}, CTX
+    )
+    assert "max_runs" in await _intake_handler(repo)(
+        {
+            "subject_id": "s",
+            "domain": "health",
+            "fields_brief": "x",
+            "max_runs": 0,
+            "bind_on_first": False,
+        },
+        CTX,
+    )
+    assert repo.staged == []  # nothing staged on any refusal

@@ -283,6 +283,82 @@ async def materialize(
     return MaterializeOut(proposal_id=proposal_id)
 
 
+class PatchIntakeConfigRequest(BaseModel):
+    """The constrained, owner-editable fields of a staged intake-link Proposal (§7).
+    subject/domain are NOT here — they are fixed at staging and re-validated at mint."""
+
+    opening_blurb: str | None = Field(default=None, max_length=8000)
+    label: str | None = Field(default=None, max_length=128)
+    persona_brief: str | None = Field(default=None, max_length=8000)
+    fields_brief: str | None = Field(default=None, min_length=1, max_length=8000)
+    max_runs: int | None = Field(default=None, ge=1, le=1000)
+    max_opens: int | None = Field(default=None, ge=1, le=10000)
+    bind_on_first: bool | None = None
+    ttl_hours: float | None = Field(default=None, ge=0.25, le=24 * 30)
+    capture_enterer_name: bool | None = None
+    disclose_owner_identity: bool | None = None
+
+
+@router.patch("/intake/proposals/nodes/{node_id}/config", status_code=204)
+async def patch_intake_config(
+    node_id: str, body: PatchIntakeConfigRequest, owner: OwnerDep, request: Request
+) -> None:
+    """Edit a staged intake-link Proposal's config before approval (the editable-Proposal
+    surface, §7). Owner-only; 404 on an unknown/non-intake/already-decided node."""
+    proposals = cast(ProposalRepo, request.app.state.agent_proposals)
+    fields = body.model_dump(exclude_none=True)
+    if not await proposals.patch_intake_config(_owner_ctx(owner.id), node_id, fields):
+        raise HTTPException(status_code=404, detail="no editable intake-link config with that id")
+
+
+@router.post("/intake/links/from-proposal/{proposal_id}", status_code=201)
+async def mint_from_proposal(
+    proposal_id: str, owner: OwnerDep, request: Request, repo: IntakeRepoDep
+) -> MintLinkOut:
+    """Mint the link from an approved intake-link Proposal (the §3 "secret minted" step):
+    reads the owner's edited config, RE-VALIDATES subject/domain at mint (the FK), mints
+    show-once, and marks the Proposal enacted. Returns the secret exactly once."""
+    proposals = cast(ProposalRepo, request.app.state.agent_proposals)
+    ctx = _owner_ctx(owner.id)
+    try:
+        proposal, nodes = await proposals.load(ctx, proposal_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail="unknown proposal") from exc
+    if proposal.kind != "intake-link":
+        raise HTTPException(status_code=400, detail="not an intake-link proposal")
+    if proposal.status not in ("staged", "approved"):
+        raise HTTPException(status_code=409, detail="this proposal is no longer mintable")
+    leaf = next((n for n in nodes if n.op == "mint_intake_link"), None)
+    if leaf is None:
+        raise HTTPException(status_code=400, detail="proposal has no intake-link config")
+    cfg = leaf.preview
+    runs = int(cfg.get("max_runs", 1))
+    config = IntakeLinkConfig(
+        subject_id=str(cfg.get("subject_id", "")),
+        domain_code=str(cfg.get("domain", "")),
+        label=str(cfg.get("label", "")),
+        persona_brief=str(cfg.get("persona_brief", "")),
+        fields_brief=str(cfg.get("fields_brief", "")),
+        opening_blurb=str(cfg.get("opening_blurb", "")),
+        max_runs=runs,
+        max_opens=int(cfg.get("max_opens", runs * 4)),
+        bind_on_first=bool(cfg.get("bind_on_first", False)),
+        ttl_hours=float(cfg.get("ttl_hours", 24.0)),
+        capture_enterer_name=bool(cfg.get("capture_enterer_name", True)),
+        disclose_owner_identity=bool(cfg.get("disclose_owner_identity", False)),
+    )
+    try:
+        secret, record = await service.mint_intake_link(repo, ctx, config)
+    except IntegrityError as exc:
+        raise HTTPException(
+            status_code=400, detail="the proposal's subject or domain is no longer valid"
+        ) from exc
+    await proposals.mark_enacted(ctx, proposal_id)
+    return MintLinkOut(
+        id=record.id, label=record.label, expires_at=record.expires_at, secret=secret
+    )
+
+
 @router.post("/intake/redeem")
 async def redeem(
     body: RedeemRequest,

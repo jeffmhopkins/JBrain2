@@ -117,6 +117,9 @@ class _FakeIntakeRepo:
     async def set_submission_proposal(self, ctx, submission_id, proposal_id):  # type: ignore[no-untyped-def]
         return True
 
+    async def purge_intake_link(self, ctx, link_id):  # type: ignore[no-untyped-def]
+        return 0
+
 
 async def test_mint_returns_secret_once_and_stores_only_its_hash() -> None:
     repo = _FakeIntakeRepo(claim_result=None)

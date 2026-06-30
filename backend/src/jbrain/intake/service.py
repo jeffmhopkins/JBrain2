@@ -190,6 +190,8 @@ class IntakeRepo(Protocol):
         self, ctx: SessionContext, submission_id: str, proposal_id: str
     ) -> bool: ...
 
+    async def purge_intake_link(self, ctx: SessionContext, link_id: str) -> int: ...
+
 
 async def mint_intake_link(
     repo: IntakeRepo, ctx: SessionContext, config: IntakeLinkConfig
