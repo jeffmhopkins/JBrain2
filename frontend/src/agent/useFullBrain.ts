@@ -162,6 +162,7 @@ function fromTurn(t: TranscriptTurn): TranscriptMessage {
       ...(tool.proposal ? { proposal: tool.proposal } : {}),
       ...(tool.entities?.length ? { entities: tool.entities } : {}),
       ...(tool.text_offset !== undefined ? { textOffset: tool.text_offset } : {}),
+      ...(tool.reasoning_offset !== undefined ? { reasoningOffset: tool.reasoning_offset } : {}),
     })),
     // Rebuild the rich tool-result views (e.g. a list_card) so they replay too.
     views: t.tools.flatMap((tool) => (tool.view ? [tool.view] : [])),
@@ -535,7 +536,7 @@ export function useFullBrain(
     const attachmentIds = attachments.map((a) => a.id);
     const history = messages.map((m) => ({ role: m.role, content: historyContent(m) }));
     // Snapshot before the optimistic append so a dropped-stream recovery knows how
-    // many turns predate this exchange (reconcile waits for the transcript to grow).
+    // many turns predate this exchange (the recovery loop waits for the transcript to grow).
     const baseline = messages.length;
     const turnSessionId = active.id;
     // Mark which chat this turn streams into, so its buffer survives a switch away and
@@ -647,29 +648,39 @@ export function useFullBrain(
       if (controller.signal.aborted) {
         setSessionMessages(turnSessionId, (ms) => endStream(ms, "stopped"));
       } else {
-        // The connection dropped (the PWA was backgrounded and the OS closed the socket).
-        // The turn runs on detached server-side — RECONNECT and resume its live stream so
-        // thinking/render progress picks up where it left off. Only if the run is already
-        // gone (or the reconnect drops again) do we recover the finished exchange from the
-        // transcript. Both target the turn's own buffer, so they land whether or not that
-        // chat is open.
-        const resumed = await resumeLive();
-        if (!resumed) {
-          // The live stream dropped AND the reconnect failed — the turn is unreachable
-          // from here. Force-stop the detached server turn now so it (and its sub-agents'
-          // in-flight LLM calls) don't keep grinding the GPU for the whole reconcile
-          // window after the UI has given up. Idempotent: a no-op if the run already
-          // finished. Then recover whatever partial it persisted, else settle to error.
-          const rid = runIdRef.current;
-          if (rid) void cancelChatRun(rid).catch(() => {});
-          const recovered = await reconcile(turnSessionId, baseline);
-          if (recovered) setSessionMessages(turnSessionId, () => recovered.map(fromTurn));
-          else setSessionMessages(turnSessionId, (ms) => endStream(ms, "error"));
+        // The live stream dropped (the PWA backgrounded, a flaky socket, an idle-proxy
+        // cut). The turn runs DETACHED server-side — a closed socket never cancels it, so
+        // it finishes and persists on its own. Reconnect to ride its live progress; if the
+        // reconnect also drops, recover the finished exchange from the transcript once it
+        // lands. Keep retrying until it settles live, the turn persists, or the recovery
+        // window closes — and NEVER implicitly cancel here. A force-cancel on a flaky
+        // network used to orphan a long sub-agent fan: it killed the healthy parent turn
+        // (persisting a blank spawn step with no result and no synthesis view) while the
+        // child ran on to completion. Only the composer's explicit Stop cancels a turn.
+        const deadline = Date.now() + RECONCILE_TIMEOUT_MS;
+        let recovered = false;
+        while (!recovered && Date.now() < deadline && !controller.signal.aborted) {
+          // Ride the live stream to settlement whenever the socket is up.
+          if (await resumeLive()) return;
+          // The reconnect failed — the run finished and left the live registry, or the
+          // socket dropped again on a still-live run. If the finished turn has persisted,
+          // show it; otherwise wait and reconnect again (the detached turn keeps going).
+          if (isForeground()) {
+            try {
+              const turns = await getTranscript(turnSessionId);
+              if (turns.length > baseline) {
+                setSessionMessages(turnSessionId, () => turns.map(fromTurn));
+                recovered = true;
+              }
+            } catch {}
+          }
+          if (!recovered) await new Promise((r) => setTimeout(r, RECONCILE_INTERVAL_MS));
         }
+        if (!recovered) setSessionMessages(turnSessionId, (ms) => endStream(ms, "error"));
       }
     } finally {
       abortRef.current = null;
-      // Cleared only now (not before reconcile) so a Stop during the multi-minute
+      // Cleared only now (not before the recovery loop) so a Stop during the multi-minute
       // recovery still cancels the detached turn by id; a stale id can't linger into
       // the next turn.
       runIdRef.current = null;
@@ -686,24 +697,6 @@ export function useFullBrain(
       // (turn count, preview, staged count).
       reloadSessions();
     }
-  }
-
-  // Poll the transcript after a dropped stream until the detached turn's finished
-  // exchange lands (the turn count grows past the pre-send baseline), or the ceiling
-  // gives up. Keyed on the turn's own session (not the active one), so recovery lands
-  // even if the owner is viewing another chat. Skips polling while backgrounded.
-  async function reconcile(sessionId: string, baseline: number): Promise<TranscriptTurn[] | null> {
-    const deadline = Date.now() + RECONCILE_TIMEOUT_MS;
-    while (Date.now() < deadline) {
-      if (isForeground()) {
-        try {
-          const turns = await getTranscript(sessionId);
-          if (turns.length > baseline) return turns;
-        } catch {}
-      }
-      await new Promise((r) => setTimeout(r, RECONCILE_INTERVAL_MS));
-    }
-    return null;
   }
 
   // The composer's Stop. The turn runs detached server-side, so cancel it by run id;

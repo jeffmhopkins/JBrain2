@@ -41,6 +41,7 @@ const STEP_LABELS: Record<string, string> = {
   web_search: "Searched the web",
   web_fetch: "Read a web page",
   queued: "Queued a job",
+  spawn_subagent: "Spawned sub-agents",
 };
 
 function stepLabel(name: string): string {

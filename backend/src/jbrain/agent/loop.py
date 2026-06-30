@@ -8,6 +8,7 @@ the loop's concern; what a tool *does* is the handler's.
 """
 
 import asyncio
+import contextlib
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from datetime import datetime
@@ -734,30 +735,42 @@ class AgentLoop:
                 task = asyncio.ensure_future(self._dispatch(call, tool_ctx, allowed))
                 # A None sentinel (FIFO after every real item) ends the drain.
                 task.add_done_callback(lambda _t: live_q.put_nowait(None))
-                while True:
-                    item = await live_q.get()
-                    if item is None:
-                        break
-                    if isinstance(item, tuple):
-                        step, total, preview, label = item
-                        yield ToolProgressEvent(
-                            tool_call_id=call.id,
-                            step=step,
-                            total=total,
-                            preview=preview,
-                            label=label,
-                        )
-                    else:
-                        # A whole ChatEvent the handler emitted (subagent_*); anchor it to
-                        # the dispatching call so the UI groups it under this tool. Only an
-                        # un-anchored event (tool_call_id still the "" default) is stamped, so
-                        # a future handler that sets its own id is never clobbered.
-                        yield (
-                            item.model_copy(update={"tool_call_id": call.id})
-                            if getattr(item, "tool_call_id", None) == ""
-                            else item
-                        )
-                dispatched = await task
+                try:
+                    while True:
+                        item = await live_q.get()
+                        if item is None:
+                            break
+                        if isinstance(item, tuple):
+                            step, total, preview, label = item
+                            yield ToolProgressEvent(
+                                tool_call_id=call.id,
+                                step=step,
+                                total=total,
+                                preview=preview,
+                                label=label,
+                            )
+                        else:
+                            # A whole ChatEvent the handler emitted (subagent_*); anchor it to
+                            # the dispatching call so the UI groups it under this tool. Only an
+                            # un-anchored event (tool_call_id still the "" default) is stamped,
+                            # so a future handler that sets its own id is never clobbered.
+                            yield (
+                                item.model_copy(update={"tool_call_id": call.id})
+                                if getattr(item, "tool_call_id", None) == ""
+                                else item
+                            )
+                    dispatched = await task
+                except asyncio.CancelledError:
+                    # The turn was cancelled mid-tool (an explicit Stop, or shutdown).
+                    # `_dispatch` runs as its OWN task, so the cancellation hitting our await
+                    # here does NOT reach it — propagate it explicitly and await the unwind,
+                    # so a spawn_subagent fan's children (an inner gather) stop too. Without
+                    # this they keep grinding the GPU for minutes after the parent turn ended
+                    # — the very runaway a Stop is meant to halt.
+                    task.cancel()
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await task
+                    raise
                 results.append(dispatched.result)
                 any_error = any_error or dispatched.result.is_error
                 surfaced_sources.extend(dispatched.sources)

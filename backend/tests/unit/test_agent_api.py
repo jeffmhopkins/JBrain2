@@ -420,6 +420,9 @@ def test_chat_persists_tool_steps_with_sources(
             # No prose streamed before the call (stream_chunks[0] == ""), so the split
             # point is 0 — the whole answer is the tool's "reply".
             "text_offset": 0,
+            # No reasoning streamed before the call either, so it interleaves at the head
+            # of the (empty) thinking trace.
+            "reasoning_offset": 0,
         }
     ]
 

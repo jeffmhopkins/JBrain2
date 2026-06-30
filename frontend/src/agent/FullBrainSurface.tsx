@@ -478,6 +478,16 @@ function Bubble({
   // verdict too and the bubble renders at most one of the two.
   const generalKnowledge = message.generalKnowledge === true && flags.length === 0;
 
+  // A settled spawn turn whose fan was interrupted before it produced a roster (a Stop,
+  // a dropped connection, a timeout: the spawn step persisted failed with no
+  // subagent_synthesis view). Without a note the bubble is just a foot strip — no answer,
+  // no roster — reading as blank. Show a calm "interrupted" line so the turn is coherent
+  // on reopen; the sub-agents that were minted are reachable from the chats panel.
+  const interruptedSpawn =
+    !message.streaming &&
+    message.tools.some((t) => t.name === "spawn_subagent" && t.ok === false) &&
+    !message.views.some((v) => v.view === "subagent_synthesis");
+
   // The answer leads the bubble; the model's reasoning trace and tool steps share a
   // single disclosure line at the foot ("Thinking · Worked"), each expanding in place
   // (docs/research/brain-tooluse-ux/A-disclosure-patterns.md). While thinking — before
@@ -573,11 +583,60 @@ function Bubble({
     <>
       <div className="bubble ai">
         {answer}
+        {interruptedSpawn && <InterruptedSubagentsNote />}
         {generalKnowledge && <GeneralKnowledgeNote />}
         {activityLine}
       </div>
       {fanBlocks}
     </>
+  );
+}
+
+// One item in the interleaved "Thinking" trace: a run of reasoning text, or a tool
+// call dropped in at the point it happened (mirrors a sub-agent's ChildTrace).
+type ThinkItem = { kind: "text"; text: string } | { kind: "tool"; step: ToolStep };
+
+// Weave the flat reasoning string and the flat tools list back into one ordered trace
+// using each tool's reasoning-offset (the reasoning length when it was called). Offsets
+// only grow, so call order already IS trace order; a tool with no offset (an older
+// persisted turn) lands at the end rather than being dropped. Pure, so it's testable
+// and the render stays declarative.
+function thinkingTrace(reasoning: string, tools: ToolActivity[]): ThinkItem[] {
+  const placed = tools
+    .map((t) => ({ t, off: Math.min(t.reasoningOffset ?? reasoning.length, reasoning.length) }))
+    .sort((a, b) => a.off - b.off);
+  const items: ThinkItem[] = [];
+  let cursor = 0;
+  for (const { t, off } of placed) {
+    const at = Math.max(cursor, off);
+    if (at > cursor) items.push({ kind: "text", text: reasoning.slice(cursor, at) });
+    items.push({ kind: "tool", step: toolStep(t) });
+    cursor = at;
+  }
+  if (cursor < reasoning.length) items.push({ kind: "text", text: reasoning.slice(cursor) });
+  return items;
+}
+
+// A tool call shown inline inside the "Thinking" trace: a ✓/✕/· mark, the friendly
+// step label, and (for the web tools) the url/query it ran — the compact register a
+// sub-agent's trace uses, so a heavy-tool-use turn reads as one flowing thought rather
+// than a wall. The full args/sources/raw stay a tap away in the "Worked" segment.
+function ThinkTool({ step }: { step: ToolStep }): ReactNode {
+  const mark = step.ok === false ? "✕" : step.ok === undefined ? "·" : "✓";
+  const cls = step.ok === false ? " bad" : step.ok === undefined ? " live" : "";
+  const arg = inlineArg(step);
+  return (
+    <span className={`fb-think-tool${cls}`}>
+      <span className="fb-think-mark" aria-hidden="true">
+        {mark}
+      </span>
+      <span className="fb-think-name">{step.label}</span>
+      {arg && (
+        <span className="fb-think-arg" title={arg}>
+          {arg}
+        </span>
+      )}
+    </span>
   );
 }
 
@@ -628,16 +687,16 @@ function ActivityLine({
     }
   }, [thinking, ms]);
 
-  // Follow the newest reasoning while it streams, so a long trace stays readable
-  // without the owner chasing the scrollbar (only while live and open). `reasoning`
-  // is the intentional trigger — each new slice re-runs the scroll-to-bottom, even
-  // though the body reads the ref's height, not the string itself.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: reasoning drives the re-scroll
+  // Follow the newest line while it streams, so a long trace stays readable without
+  // the owner chasing the scrollbar (only while live and open). `reasoning` and the
+  // tool count are the intentional triggers — a new reasoning slice OR an interleaved
+  // tool re-runs the scroll-to-bottom, even though the body reads the ref's height.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: reasoning + tool count drive the re-scroll
   useEffect(() => {
     if (thinking && open === "think" && traceRef.current) {
       traceRef.current.scrollTop = traceRef.current.scrollHeight;
     }
-  }, [reasoning, thinking, open]);
+  }, [reasoning, tools.length, thinking, open]);
 
   const hasReasoning = reasoning !== "";
   const steps = tools.map(toolStep);
@@ -699,7 +758,15 @@ function ActivityLine({
             {hasReasoning && (
               <div className={`fb-act-view${open === "think" ? " show" : ""}`}>
                 <div className="fb-thinking-trace" ref={traceRef}>
-                  {reasoning}
+                  {thinkingTrace(reasoning, tools).map((it, i) =>
+                    it.kind === "text" ? (
+                      // biome-ignore lint/suspicious/noArrayIndexKey: trace items append in order
+                      <span key={i}>{it.text}</span>
+                    ) : (
+                      // biome-ignore lint/suspicious/noArrayIndexKey: trace items append in order
+                      <ThinkTool key={i} step={it.step} />
+                    ),
+                  )}
                 </div>
               </div>
             )}
@@ -795,6 +862,23 @@ function GeneralKnowledgeNote(): ReactNode {
         <path d="M12 8h.01" />
       </svg>
       From general knowledge — not your notes
+    </p>
+  );
+}
+
+// A settled spawn turn whose sub-agent fan was cut before it produced a roster (a Stop,
+// a dropped connection, a timeout). A calm steel ⓘ note — NOT the amber warning flag
+// (DESIGN.md: warning=amber, info=steel) — so the turn reads as interrupted, not broken;
+// the children that were minted are reachable from the chats panel's nested rail.
+function InterruptedSubagentsNote(): ReactNode {
+  return (
+    <p className="fb-genknow" role="note">
+      <svg className="fb-genknow-ic" viewBox="0 0 24 24" aria-hidden="true">
+        <circle cx="12" cy="12" r="9" />
+        <path d="M12 11v5" />
+        <path d="M12 8h.01" />
+      </svg>
+      Sub-agent run interrupted — any sub-agents that started are in the chats panel
     </p>
   );
 }

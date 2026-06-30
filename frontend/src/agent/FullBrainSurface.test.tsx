@@ -730,6 +730,91 @@ describe("FullBrainSurface", () => {
     expect(thinking).toHaveAttribute("aria-expanded", "false");
   });
 
+  it("interleaves a tool call into the Thinking trace where it happened", async () => {
+    // A turn that reasons, runs a tool, then reasons again before answering: the
+    // "Thinking" disclosure weaves the tool in between the two reasoning runs (like a
+    // sub-agent's trace), so heavy tool use reads as one flowing thought.
+    async function* answer(): AsyncGenerator<ChatEvent> {
+      yield { type: "reasoning_delta", text: "let me search. " };
+      yield { type: "tool_call", id: "c1", name: "web_search", arguments: { query: "rust" } };
+      yield { type: "tool_result", tool_call_id: "c1", ok: true, summary: "ok" };
+      yield { type: "reasoning_delta", text: "now I know." };
+      yield { type: "text_delta", text: "the answer" };
+      yield { type: "done", stop_reason: "end_turn" };
+    }
+    render(<Harness d={deps({ chat: answer })} />);
+    await waitFor(() => screen.getByLabelText("Conversation"));
+    fireEvent.change(screen.getByLabelText("Composer"), { target: { value: "rust?" } });
+    fireEvent.click(screen.getByRole("button", { name: "send" }));
+
+    const thinking = await screen.findByRole("button", { name: /Thought/ });
+    fireEvent.click(thinking);
+    // The tool sits inline between the two reasoning runs, carrying its label + query.
+    const tool = document.querySelector(".fb-think-tool");
+    expect(tool).not.toBeNull();
+    expect(tool?.textContent).toContain("Searched the web");
+    expect(tool?.textContent).toContain("rust");
+    // The reasoning either side of the call is preserved, in order.
+    const trace = document.querySelector(".fb-thinking-trace");
+    expect(trace?.textContent).toContain("let me search.");
+    expect(trace?.textContent).toContain("now I know.");
+  });
+
+  it("interleaves a reopened turn's tool by its persisted reasoning offset", async () => {
+    // A persisted tool step carries reasoning_offset, so a reopened turn weaves the tool
+    // into the same point in the thinking trace it streamed at.
+    const getTranscript = vi.fn(async () => [
+      { role: "user" as const, content: "why?", tools: [], reasoning: "" },
+      {
+        role: "assistant" as const,
+        content: "the answer",
+        reasoning: "first then more",
+        tools: [
+          {
+            id: "c1",
+            name: "search",
+            ok: true,
+            sources: [],
+            reasoning_offset: "first".length,
+          },
+        ],
+      },
+    ]);
+    render(<Harness d={deps({ getTranscript })} />);
+    const thinking = await screen.findByRole("button", { name: /Thought/ });
+    fireEvent.click(thinking);
+    const trace = document.querySelector(".fb-thinking-trace");
+    // The tool lands after "first" and before " then more".
+    const html = trace?.textContent ?? "";
+    expect(html.indexOf("first")).toBeLessThan(html.indexOf("Searched your notes"));
+    expect(html.indexOf("Searched your notes")).toBeLessThan(html.indexOf("then more"));
+  });
+
+  it("shows an interrupted note for a settled spawn turn with no synthesis roster", async () => {
+    // A spawn turn cut before any child settled persists a failed spawn step and no
+    // subagent_synthesis view. On reopen the bubble must read as interrupted (not a blank
+    // foot strip), with the friendly step label instead of the raw tool name.
+    const getTranscript = vi.fn(async () => [
+      { role: "user" as const, content: "spawn a review", tools: [], reasoning: "" },
+      {
+        role: "assistant" as const,
+        content: "",
+        reasoning: "spawning the review child",
+        tools: [
+          { id: "c1", name: "spawn_subagent", ok: false, sources: [], summary: "(interrupted)" },
+        ],
+      },
+    ]);
+    render(<Harness d={deps({ getTranscript })} />);
+    await waitFor(() => screen.getByLabelText("Conversation"));
+    // The calm interrupted note stands in for the missing roster.
+    await screen.findByText(/Sub-agent run interrupted/);
+    // The step reads with the friendly label (inline in the thinking trace AND in the
+    // Worked step), not the raw "spawn_subagent".
+    expect(screen.getAllByText("Spawned sub-agents").length).toBeGreaterThan(0);
+    expect(screen.queryByText("spawn_subagent")).not.toBeInTheDocument();
+  });
+
   it("replays a stored turn's reasoning as a collapsed Thinking disclosure", async () => {
     const getTranscript = vi.fn(async () => [
       { role: "user" as const, content: "why?", tools: [], reasoning: "" },

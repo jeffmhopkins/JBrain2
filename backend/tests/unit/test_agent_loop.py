@@ -2,6 +2,8 @@
 (step / cost / consecutive-error caps), driven by the fake adapter and fake
 tools — no real model, no database."""
 
+import asyncio
+import contextlib
 import hashlib
 from typing import Any
 
@@ -444,6 +446,43 @@ async def test_run_stream_interleaves_tool_progress_before_the_result() -> None:
     last_progress = max(i for i, e in enumerate(events) if isinstance(e, ToolProgressEvent))
     first_result = next(i for i, e in enumerate(events) if isinstance(e, ToolResultEvent))
     assert last_progress < first_result
+
+
+async def test_run_stream_cancels_an_in_flight_tool_when_the_turn_is_cancelled() -> None:
+    # The tool dispatch runs as its own task while the loop drains its live events. A
+    # turn cancelled mid-tool (an explicit Stop) must propagate INTO that task — else a
+    # spawn_subagent fan's children keep grinding the GPU long after the parent ended.
+    started = asyncio.Event()
+    cancelled = asyncio.Event()
+
+    async def blocks(arguments: dict, ctx: ToolContext) -> str:
+        started.set()
+        try:
+            await asyncio.sleep(3600)
+        except asyncio.CancelledError:
+            cancelled.set()
+            raise
+        return "never"
+
+    turns = [LlmTurn("", (ToolCall("c1", "blocks", {}),), "tool_use", LlmUsage(1, 1))]
+    router, _ = stream_router_with(turns)
+    loop = AgentLoop(router, registry_with(make_tool("blocks", blocks)))
+
+    async def drive() -> None:
+        async for _event in loop.run_stream(
+            session=OWNER, scopes=("general",), conversation=[UserMessage(text="go")]
+        ):
+            pass
+
+    task = asyncio.ensure_future(drive())
+    await asyncio.wait_for(started.wait(), timeout=1)
+    task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await task
+    # The in-flight tool saw the cancellation (its own task was cancelled, not just the
+    # loop's await) — so a sub-agent fan dispatched here would tear down its children.
+    await asyncio.wait_for(cancelled.wait(), timeout=1)
+    assert cancelled.is_set()
 
 
 async def test_run_stream_emits_no_progress_for_a_silent_tool() -> None:
