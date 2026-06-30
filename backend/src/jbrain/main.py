@@ -23,6 +23,7 @@ from jbrain.agent.transcribetools import build_transcribe_handlers
 from jbrain.agent.transcript_store import AgentTranscript
 from jbrain.agent.videotools import build_video_handlers
 from jbrain.agent.weathertools import build_weather_handlers
+from jbrain.agent.brainevents import build_event_emitter
 from jbrain.agent.webtools import build_web_handlers
 from jbrain.agent.wikiwritetools import build_wiki_write_handlers
 from jbrain.analysis.hygiene import ENTITY_HYGIENE_SPEC
@@ -304,7 +305,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.connector_service = ConnectorService(connector_registry, SqlConnectorCache(maker))
         # The jerv chatbot's on-box internet tools — direct, sandboxed web access
         # (no owner data in context; docs/ASSISTANT.md "Agent selection").
-        web_handlers = build_web_handlers(SearxngClient(settings.searxng_url), WebFetcher())
+        web_handlers = build_web_handlers(
+            SearxngClient(settings.searxng_url),
+            WebFetcher(),
+            emit=build_event_emitter(settings.brain_events_url),
+        )
         # Fetches a source site's favicon on-box for web citation chips, so the PWA
         # renders a tappable logo without ever touching the third-party host (#9).
         app.state.favicon_fetcher = FaviconFetcher()

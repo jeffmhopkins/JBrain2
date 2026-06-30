@@ -3,10 +3,12 @@
 
 Serves the neural-brain page at `/` and its telemetry at `GET /stats`, reading
 host vitals straight from /proc and /sys — the same amdgpu/meminfo sources as
-supervisor/src/supervisor/host_metrics.py. It is deliberately decoupled from the
-authenticated api: it touches NO database and NO user data, only non-sensitive
-host vitals (GPU busy %, RAM, APU power, load), so it is safe to expose without
-auth *on a trusted LAN*.
+supervisor/src/supervisor/host_metrics.py. `POST /event` accepts a tiny
+`{"kind": "web_search"|"web_fetch"}` marker from the JBrain2 agent (-> a reach-out
+tendril). It is deliberately decoupled from the authenticated api: it touches NO
+database and NO user data, only non-sensitive host vitals (GPU/RAM/power/load,
+net + disk throughput) and content-free web-tool markers, so it is safe to expose
+without auth *on a trusted LAN*.
 
 SECURITY: there is no authentication. Bind it to your LAN only and never
 port-forward it to the public internet. Defaults to 0.0.0.0 so it answers at
@@ -23,7 +25,9 @@ from __future__ import annotations
 import json
 import math
 import os
+import threading
 import time
+from collections import deque
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -41,6 +45,18 @@ DISK_MAX_BPS = float(os.environ.get("BRAIN_DISK_MAX_BPS", str(500_000_000)))  # 
 # one object per line, e.g. {"kind": "web_search"} or {"kind": "web_fetch"}. Each
 # new line is drained once and fires a reach-out tendril. Empty -> no web tendrils.
 EVENTS_PATH = os.environ.get("BRAIN_EVENTS_FILE", "")
+
+# Web-tool events POSTed by the JBrain2 agent to `/event` (the primary live path;
+# BRAIN_EVENTS_FILE is an alternative). Drained into /stats on each poll.
+_posted: "deque" = deque(maxlen=64)
+_posted_lock = threading.Lock()
+
+
+def _drain_posted() -> list:
+    with _posted_lock:
+        out = list(_posted)
+        _posted.clear()
+    return out
 
 
 # --- host vitals (mirrors supervisor/host_metrics.py, trimmed to what we need) ---
@@ -281,7 +297,8 @@ def _demo_snapshot() -> dict:
         _demo_state["fetch"] = t
         events.append({"kind": "web_fetch", "ts": int(t * 1000)})
     return _shape(util, mem, power, temp, load=util * 6, uptime_h=72.0,
-                  net_in=net_in, net_out=net_out, disk_read=disk_read, events=events)
+                  net_in=net_in, net_out=net_out, disk_read=disk_read,
+                  events=events + _drain_posted())
 
 
 def _shape(util, mem, power, temp, load, uptime_h,
@@ -332,7 +349,7 @@ def snapshot() -> dict:
         load=load_1m(),
         uptime_h=uptime_hours(),
         net_in=net_in, net_out=net_out, disk_read=disk_read,
-        events=drain_events(),
+        events=drain_events() + _drain_posted(),
     )
 
 
@@ -360,6 +377,26 @@ class Handler(BaseHTTPRequestHandler):
             self._send(200, b"ok", "text/plain")
         else:
             self._send(404, b"not found", "text/plain")
+
+    def do_POST(self) -> None:  # noqa: N802
+        # The JBrain2 agent POSTs {"kind": "web_search"|"web_fetch"} here when it
+        # runs a web tool; we queue it for the next /stats drain (-> a tendril).
+        if self.path.split("?", 1)[0] != "/event":
+            self._send(404, b"not found", "text/plain")
+            return
+        try:
+            n = min(int(self.headers.get("Content-Length", 0)), 4096)
+            ev = json.loads(self.rfile.read(n) if n > 0 else b"{}")
+        except (ValueError, OSError):
+            self._send(400, b"bad request", "text/plain")
+            return
+        kind = ev.get("kind") if isinstance(ev, dict) else None
+        if kind in ("web_search", "web_fetch"):
+            with _posted_lock:
+                _posted.append({"kind": kind, "ts": int(time.time() * 1000)})
+            self._send(204, b"", "text/plain")
+        else:
+            self._send(400, b"unknown kind", "text/plain")
 
     def log_message(self, *args) -> None:  # quiet; this runs as a background display
         pass

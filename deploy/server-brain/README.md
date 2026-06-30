@@ -101,16 +101,13 @@ changes needed.
 
 ### Web search / fetch tendrils
 
-The agent/tool layer knows when it runs a web tool; `serve.py` does not. To drive
-the reach-out tendrils, point `BRAIN_EVENTS_FILE` at a JSONL file and have the
-JBrain2 agent **append one line per web-tool call**:
+Wired and **active by default**: the JBrain2 agent (`jbrain.agent.brainevents`)
+POSTs a tiny `{"kind": "web_search"|"web_fetch"}` to **`POST /event`** here each
+time jerv runs a web tool — compose points `JBRAIN_BRAIN_EVENTS_URL` at this
+service on the internal network. `serve.py` queues it and drains it into `/stats`
+`events`, and the page fires a cyan (search) or amber (fetch) tendril per event.
+Best-effort, on-box, no owner data; a failure never touches the agent's turn.
 
-```jsonl
-{"kind": "web_search"}
-{"kind": "web_fetch"}
-```
-
-`serve.py` drains new lines each poll into `/stats` `events`, and the page fires a
-cyan (search) or amber (fetch) tendril per event. Until something writes to that
-file, the tendrils simply stay dormant. (The file can be truncated/rotated freely
-— the reader re-syncs.)
+Alternative source: set `BRAIN_EVENTS_FILE` to a JSONL path and append one event
+object per line (`{"kind": "web_search"}`); the reader tails it and re-syncs if it
+is truncated/rotated.

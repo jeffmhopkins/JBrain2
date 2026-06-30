@@ -69,6 +69,10 @@ services:
       JBRAIN_BLOB_DIR: /data/blobs
       JBRAIN_BACKUPS_DIR: /data/backups
       JBRAIN_EMBED_URL: http://embed:80
+      # Neural wall display (deploy/server-brain): jerv POSTs a web-tool event here
+      # so the display draws a reach-out tendril. On-box (internal network),
+      # best-effort, no owner data; empty disables it. Worker inherits via *api_env.
+      JBRAIN_BRAIN_EVENTS_URL: ${BRAIN_EVENTS_URL:-http://server-brain:8800/event}
       # Self-hosted local models — OFF unless the operator opted in at install.
       # When enabled, points at the local-llm gateway (below) and lists the
       # provisioned catalog ids the settings screen may route to.

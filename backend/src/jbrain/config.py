@@ -87,6 +87,11 @@ class Settings(BaseSettings):
     # (the tool returns "not configured") but the sidecars still load so jerv always
     # has its handlers.
     searxng_url: str = "http://searxng:8080"
+    # The neural wall display (deploy/server-brain) draws a reach-out tendril when
+    # jerv runs a web tool. We POST a tiny {"kind": "web_search"|"web_fetch"} marker
+    # to the on-box display service — best-effort, no owner data, failures ignored.
+    # Empty disables the emit (the display just shows no web tendrils).
+    brain_events_url: str = ""
     # The Open-Meteo upstreams backing jerv's `weather` tool (docs/ASSISTANT.md,
     # DESIGN.md "weather_card tool-view"). Free, no API key, so these default to the
     # public endpoints; empty disables the tool (it reports "not configured") while the

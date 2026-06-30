@@ -10,6 +10,8 @@ the on-box SearXNG client and the URL fetcher; they surface no NoteSources (a we
 result is not an owner note).
 """
 
+from collections.abc import Callable
+
 from jbrain.agent.contracts import WebSource
 from jbrain.agent.loop import ToolContext, ToolHandler, ToolOutput
 from jbrain.web.fetch import WebFetcher, WebFetchError
@@ -18,12 +20,21 @@ from jbrain.web.search import SearxngClient, WebSearchError
 _MAX_LIMIT = 10
 
 
-def build_web_handlers(search: SearxngClient, fetcher: WebFetcher) -> dict[str, ToolHandler]:
+def build_web_handlers(
+    search: SearxngClient,
+    fetcher: WebFetcher,
+    emit: Callable[[str], None] | None = None,
+) -> dict[str, ToolHandler]:
+    """`emit(kind)`, if given, fires a best-effort wall-display tendril event the
+    moment jerv reaches out to the web (see jbrain.agent.brainevents)."""
+
     async def web_search_tool(arguments: dict, ctx: ToolContext) -> str:
         query = str(arguments.get("query", "")).strip()
         if not query:
             return "web_search needs a non-empty query."
         limit = max(1, min(int(arguments.get("limit", 6) or 6), _MAX_LIMIT))
+        if emit:
+            emit("web_search")
         try:
             hits = await search.search(query, limit)
         except WebSearchError as exc:
@@ -41,6 +52,8 @@ def build_web_handlers(search: SearxngClient, fetcher: WebFetcher) -> dict[str, 
         url = str(arguments.get("url", "")).strip()
         if not url:
             return "web_fetch needs a url."
+        if emit:
+            emit("web_fetch")
         try:
             result = await fetcher.fetch(url)
         except WebFetchError as exc:
