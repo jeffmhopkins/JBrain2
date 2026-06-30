@@ -124,8 +124,8 @@ def test_system_prompt_pinned_to_its_version() -> None:
     editing it must be a deliberate version bump, like every .prompt file."""
     digest = hashlib.sha256(SYSTEM_PROMPT.encode()).hexdigest()
     assert (SYSTEM_VERSION, digest) == (
-        "agent-system-v5",
-        "b054afdb6cff884bfce5c6c161500aeb2254a08a6dfde16bb2c9ef83f33f8906",
+        "agent-system-v6",
+        "5d3056298e2fb0afb311f85970acecc5d2ee92bf50118d532b1268e054e875cc",
     )
 
 
@@ -999,6 +999,64 @@ async def test_graph_answered_turn_grounds_against_entity_aliases() -> None:
         stream_chunks=[[""], ["Your name is Jeffrey Mark Hopkins (Jeff)."]],
     )
     events = await collect(AgentLoop(router, registry_with(make_tool("find_entity", find_me))))
+    assert isinstance(events[-1], DoneEvent)
+    assert not any(isinstance(e, VerdictEvent) for e in events)
+
+
+async def read_birthdate(arguments: dict, ctx: ToolContext) -> ToolOutput:
+    """read_entity surfacing the owner subject with a current fact whose VALUE the
+    answer quotes (a birth date) — the screenshot bug: the fact text must be in the
+    grounding corpus or "born in 1986" falsely flags "not in your notes"."""
+    return ToolOutput(
+        "Me [Person] (general)\nfacts:\n- birthDate: Jeff's birth date is 1986-03-19",
+        entities=(
+            EntityRef(
+                entity_id="e1",
+                label="Me",
+                domain="general",
+                aliases=["Jeff"],
+                facts=["Jeff's birth date is 1986-03-19"],
+            ),
+        ),
+    )
+
+
+async def test_graph_answer_citing_a_surfaced_entity_grounds() -> None:
+    # The screenshot case verbatim: "What year was I born?" answered from the read
+    # entity's birthDate fact, with a 【^1】 marker citing that surfaced entity. The
+    # rephrased date ("March 19, 1986" vs the fact's ISO "1986-03-19") can't reach the
+    # token-overlap bar, but the citation resolves to source #1 — so it grounds by
+    # attribution and NO VerdictEvent / GeneralKnowledgeEvent is emitted (it was being
+    # falsely flagged "not in your notes").
+    router, _ = stream_router_with(
+        [
+            LlmTurn("", (ToolCall("c1", "read_entity", {}),), "tool_use", LlmUsage(1, 1)),
+            LlmTurn("answer", (), "end_turn", LlmUsage(1, 1)),
+        ],
+        stream_chunks=[[""], ["You were born in 1986 — specifically on March 19, 1986 【^1】."]],
+    )
+    events = await collect(
+        AgentLoop(router, registry_with(make_tool("read_entity", read_birthdate)))
+    )
+    assert isinstance(events[-1], DoneEvent)
+    assert not any(isinstance(e, VerdictEvent) for e in events)
+    assert not any(isinstance(e, GeneralKnowledgeEvent) for e in events)
+
+
+async def test_graph_answer_reusing_fact_tokens_grounds_without_a_citation() -> None:
+    # Even uncited, a fact-value answer grounds when it reuses the fact's tokens: the
+    # read entity's fact statement is now in the corpus, so "Your birth date is
+    # 1986-03-19" overlaps it. (Before the fix the corpus held only name + aliases.)
+    router, _ = stream_router_with(
+        [
+            LlmTurn("", (ToolCall("c1", "read_entity", {}),), "tool_use", LlmUsage(1, 1)),
+            LlmTurn("answer", (), "end_turn", LlmUsage(1, 1)),
+        ],
+        stream_chunks=[[""], ["Your birth date is 1986-03-19."]],
+    )
+    events = await collect(
+        AgentLoop(router, registry_with(make_tool("read_entity", read_birthdate)))
+    )
     assert isinstance(events[-1], DoneEvent)
     assert not any(isinstance(e, VerdictEvent) for e in events)
 

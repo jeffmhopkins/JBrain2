@@ -103,6 +103,14 @@ class EntityRef(BaseModel):
     # Other surface forms (aka) so the PWA can linkify a name in prose that isn't
     # the canonical label — e.g. "Jeff Hopkins" for an entity canonically "Me".
     aliases: list[str] = Field(default_factory=list)
+    # The entity's current-fact statements *as read* (read_entity only) — e.g.
+    # "Jeff's birth date is 1986-03-19". Carried so the reflexion grounding verifier
+    # can match a claim answered from a fact VALUE ("born in 1986") against the fact
+    # text, not just the name/aliases — otherwise an entity-graph answer is falsely
+    # flagged "not in your notes". Empty for a find_entity/relate ref (those surface a
+    # name only) and for the related-object chips read_entity also returns; the same
+    # prose is already in the tool result the PWA shows, so this copies nothing new.
+    facts: list[str] = Field(default_factory=list)
 
 
 class NoteRef(BaseModel):

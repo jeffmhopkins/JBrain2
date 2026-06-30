@@ -59,6 +59,19 @@ def critique_worthy(
 # appear in the retrieved sources — a deterministic proxy for "grounds in chunks".
 _GROUNDING_THRESHOLD = 0.5
 
+# A citation marker the agent placed on a claim to attribute it to the n-th source
+# the turn surfaced — the ASCII [^1] the prompt asks for, plus the fullwidth 【^1】 /
+# 【1】 a browsing model (gpt-oss) emits instead. Recognizing both means a cited claim
+# is judged the same whichever form the model used. The capture group is the index.
+_CITATION = re.compile(r"[\[【]\^?(\d+)[\]】]")
+
+
+def cited_indices(claim: str) -> list[int]:
+    """The 1-based source indices a claim cites (`[^1]` / 【^1】 / 【1】). Empty when
+    the claim attributes nothing — then grounding falls back to token overlap."""
+    return [int(m.group(1)) for m in _CITATION.finditer(claim)]
+
+
 _STOPWORDS = frozenset(
     [
         "a",
@@ -290,38 +303,62 @@ def verify_citations(
     return VerificationResult((len(cited) - len(invalid)) / len(cited), issues)
 
 
-def _is_grounded(claim: str, sources: set[str], threshold: float) -> bool:
-    """Whether one claim's significant tokens overlap the sources enough to count
-    as grounded. A claim with no significant tokens (a greeting, a hedge) can't be
-    ungrounded, so it grounds vacuously."""
+def _is_grounded(claim: str, sources: set[str], threshold: float, cited_source_count: int) -> bool:
+    """Whether one claim is grounded. Two deterministic routes, citation first:
+
+    1. **Citation.** If the claim carries a citation marker (`[^1]`) whose index
+       resolves to a real surfaced source (1 ≤ n ≤ `cited_source_count`), it is
+       grounded by attribution — the model pointed at a source it actually retrieved
+       this turn. This is what lets a fact-graph answer that rephrases its source
+       ("born in 1986, on March 19" cited to the entity's ISO birthDate) stand
+       instead of being falsely flagged "not in your notes" — the brittle case
+       token overlap can't catch when the answer reformats the value. A marker
+       pointing past the surfaced sources (n too large, or none surfaced) does NOT
+       ground — the citation must resolve, the same deterministic "resolves or it
+       doesn't" check the citation verifier uses on fact ids.
+    2. **Token overlap.** An uncited claim grounds when enough of its significant
+       tokens appear in the sources. A claim with no significant tokens (a greeting,
+       a hedge) grounds vacuously."""
+    if any(1 <= n <= cited_source_count for n in cited_indices(claim)):
+        return True
     toks = significant_tokens(claim)
     return not toks or len(toks & sources) / len(toks) >= threshold
 
 
 def ungrounded_claims(
-    claims: Sequence[str], source_texts: Sequence[str], threshold: float = _GROUNDING_THRESHOLD
+    claims: Sequence[str],
+    source_texts: Sequence[str],
+    threshold: float = _GROUNDING_THRESHOLD,
+    *,
+    cited_source_count: int = 0,
 ) -> list[str]:
     """The verbatim claim sentences that failed grounding — the structured twin of
     `verify_grounding`'s prose issues, so the PWA can anchor a flag against the
     exact answer sentence (docs/ASSISTANT.md "Self-improvement loops") instead of
     re-parsing the `"claim not grounded…: <sentence>"` issue prefix."""
     sources = significant_tokens(" ".join(source_texts))
-    return [c for c in claims if not _is_grounded(c, sources, threshold)]
+    return [c for c in claims if not _is_grounded(c, sources, threshold, cited_source_count)]
 
 
 def verify_grounding(
-    claims: Sequence[str], source_texts: Sequence[str], threshold: float = _GROUNDING_THRESHOLD
+    claims: Sequence[str],
+    source_texts: Sequence[str],
+    threshold: float = _GROUNDING_THRESHOLD,
+    *,
+    cited_source_count: int = 0,
 ) -> VerificationResult:
-    """Each claim should ground in the retrieved sources: a deterministic token-
-    overlap proxy. A claim with no significant tokens (a greeting, a hedge) can't
-    be ungrounded, so it passes."""
+    """Each claim should ground in the retrieved sources: a deterministic check that
+    accepts a resolvable citation OR sufficient token overlap (see `_is_grounded`).
+    A claim with no significant tokens (a greeting, a hedge) can't be ungrounded, so
+    it passes. `cited_source_count` is how many sources the turn surfaced (notes +
+    entities), the index space a `[^n]` marker may resolve into."""
     if not claims:
         return VerificationResult(PASS_SCORE, ())
     sources = significant_tokens(" ".join(source_texts))
     grounded = 0
     issues: list[str] = []
     for claim in claims:
-        if _is_grounded(claim, sources, threshold):
+        if _is_grounded(claim, sources, threshold, cited_source_count):
             grounded += 1
         else:
             issues.append(f"claim not grounded in retrieved sources: {claim}")

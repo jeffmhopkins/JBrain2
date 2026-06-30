@@ -19,6 +19,10 @@ export interface EntityRef {
   /** Other surface forms (aka) — used to linkify a prose name that isn't the
    * canonical label (e.g. "Jeff Hopkins" for an entity canonically "Me"). */
   aliases?: string[];
+  /** The entity's current-fact statements as read (read_entity only) — backend uses
+   * them to ground a fact-value answer; the UI doesn't render them (the same prose is
+   * already in the Worked step). Empty for find_entity/relate and related-object chips. */
+  facts?: string[];
 }
 export interface NoteRef {
   kind: "note";

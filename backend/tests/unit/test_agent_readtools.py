@@ -12,6 +12,7 @@ from jbrain.agent.readtools import (
     build_read_handlers,
     build_registry,
     entity_view_objects,
+    entity_view_ref,
     format_currency,
     format_entity,
     format_note,
@@ -357,13 +358,37 @@ def test_entity_view_objects_are_chips_for_relationship_edges() -> None:
     assert objects == (EntityRef(entity_id="e2", label="Jeff", domain="general"),)
 
 
+def test_entity_view_ref_carries_the_subjects_facts_for_grounding() -> None:
+    # The read subject itself, with its current-fact statements — so a claim answered
+    # from one of those facts grounds against the fact text, not just the name.
+    ref = entity_view_ref(entity_view("abc"))
+    assert ref == EntityRef(
+        entity_id="abc",
+        label="Celine Hopkins",
+        domain="general",
+        aliases=["Celine"],
+        facts=["married to Jeff"],
+    )
+
+
 async def test_read_entity_found_and_missing() -> None:
     tools = build_entity_handlers(FakeEntities(entity_view("abc")))  # type: ignore[arg-type]
     found = await tools["read_entity"]({"entity_id": "abc"}, CTX)
     assert isinstance(found, ToolOutput)
     assert "Celine Hopkins" in found
-    # The spouse edge's target rides along as a chip the PWA can linkify.
-    assert found.entities == (EntityRef(entity_id="e2", label="Jeff", domain="general"),)
+    # The subject leads — carrying its current-fact statements so an answer from one
+    # of its facts grounds (not just its name/aliases) — then the spouse edge's
+    # target rides along as a chip the PWA can linkify.
+    assert found.entities == (
+        EntityRef(
+            entity_id="abc",
+            label="Celine Hopkins",
+            domain="general",
+            aliases=["Celine"],
+            facts=["married to Jeff"],
+        ),
+        EntityRef(entity_id="e2", label="Jeff", domain="general"),
+    )
     assert "in scope" in await tools["read_entity"]({"entity_id": "other"}, CTX)
 
 

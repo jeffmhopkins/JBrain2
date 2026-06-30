@@ -262,6 +262,23 @@ def entity_view_objects(view: dict[str, Any]) -> tuple[EntityRef, ...]:
     )
 
 
+def entity_view_ref(view: dict[str, Any]) -> EntityRef:
+    """The entity that was READ, as a citable ref carrying its current-fact
+    statements. read_entity only surfaced the entities this one *points at*
+    (`entity_view_objects`), never the subject itself — so an answer drawn from one
+    of the subject's own facts ("born in 1986", read off Me's birthDate edge) had no
+    matching text in the grounding corpus and was falsely flagged "not in your
+    notes". Surfacing the subject with its fact statements gives the verifier the
+    text the answer actually grounds in, and the PWA a chip to open the entity."""
+    return EntityRef(
+        entity_id=str(view.get("id") or ""),
+        label=str(view["canonical_name"]),
+        domain=view.get("domain", "general"),
+        aliases=[str(a) for a in view.get("aliases", [])],
+        facts=[str(f["statement"]) for f in _current_facts(view) if f.get("statement")],
+    )
+
+
 def build_read_handlers(
     search: SearchService, notes: NotesRepo, entities: EntityReader
 ) -> dict[str, ToolHandler]:
@@ -335,7 +352,12 @@ def build_entity_handlers(entities: EntityReader) -> dict[str, ToolHandler]:
         view = await entities.entity_view(ctx.session, entity_id)
         if view is None:
             return ToolOutput("No entity with that id is in scope.")
-        return ToolOutput(format_entity(view), entities=entity_view_objects(view))
+        # The subject (with its facts) leads, then the entities it points at — so a
+        # claim from the subject's own fact grounds, and related names still linkify.
+        return ToolOutput(
+            format_entity(view),
+            entities=(entity_view_ref(view), *entity_view_objects(view)),
+        )
 
     async def find_entity_tool(arguments: dict, ctx: ToolContext) -> ToolOutput:
         name = str(arguments.get("name", "")).strip()

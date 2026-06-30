@@ -84,15 +84,18 @@ TURN_MAX_TOKENS: int = 16384
 
 def _grounding_corpus(sources: Sequence[NoteSource], entities: Sequence[EntityRef]) -> list[str]:
     """The texts a claim may ground against: note snippets PLUS each retrieved
-    entity's canonical label and every alias. A turn answered from the entity graph
-    (find_entity/read_entity → EntityRefs, zero NoteSources) would otherwise verify
-    against an empty corpus and every claim would score 0 — so "What is my name?"
-    answered "Jeffrey Mark Hopkins (Jeff)" grounds against those aliases instead of
-    being falsely flagged "not in your notes"."""
+    entity's canonical label, every alias, and its current-fact statements. A turn
+    answered from the entity graph (find_entity/read_entity → EntityRefs, zero
+    NoteSources) would otherwise verify against an empty corpus and every claim would
+    score 0 — so "What is my name?" answered "Jeffrey Mark Hopkins (Jeff)" grounds
+    against those aliases, and "what year was I born?" answered "1986" grounds against
+    the read entity's birthDate fact, instead of being falsely flagged "not in your
+    notes"."""
     corpus = [s.snippet for s in sources]
     for entity in entities:
         corpus.append(entity.label)
         corpus.extend(entity.aliases)
+        corpus.extend(entity.facts)
     return corpus
 
 
@@ -877,10 +880,13 @@ class AgentLoop:
                 run_id,
             )
             corpus = _grounding_corpus(turn.sources, turn.entities)
+            cited = len(turn.sources) + len(turn.entities)
             # Empty corpus → grounding is unverifiable, not failed: hand back a clean
             # pass so reflexion neither retries nor flags a turn it cannot judge.
             verdict = (
-                aggregate([verify_grounding(claims_from(turn.answer), corpus)])
+                aggregate(
+                    [verify_grounding(claims_from(turn.answer), corpus, cited_source_count=cited)]
+                )
                 if corpus
                 else VerificationResult(PASS_SCORE, ())
             )
@@ -913,11 +919,14 @@ class AgentLoop:
             if general_knowledge_label and has_substantive_claim(kept.answer):
                 yield GeneralKnowledgeEvent()
         elif not kept_verdict.passed and _buffered_critique_worthy(kept):
+            cited = len(kept.sources) + len(kept.entities)
             yield VerdictEvent(
                 passed=False,
                 score=kept_verdict.score,
                 issues=list(kept_verdict.issues),
-                ungrounded_claims=ungrounded_claims(claims_from(kept.answer), corpus),
+                ungrounded_claims=ungrounded_claims(
+                    claims_from(kept.answer), corpus, cited_source_count=cited
+                ),
             )
 
     async def _produce_buffered(
@@ -1132,13 +1141,16 @@ class AgentLoop:
         ):
             return
         claims = claims_from("".join(answer_parts))
-        verdict = aggregate([verify_grounding(claims, corpus)])
+        # The index space a `[^n]` marker may resolve into: the sources the turn
+        # surfaced (notes + entities), in the same order the PWA numbers them.
+        cited = len(sources) + len(entities)
+        verdict = aggregate([verify_grounding(claims, corpus, cited_source_count=cited)])
         if not verdict.passed:
             yield VerdictEvent(
                 passed=False,
                 score=verdict.score,
                 issues=list(verdict.issues),
-                ungrounded_claims=ungrounded_claims(claims, corpus),
+                ungrounded_claims=ungrounded_claims(claims, corpus, cited_source_count=cited),
             )
 
     async def _dispatch(

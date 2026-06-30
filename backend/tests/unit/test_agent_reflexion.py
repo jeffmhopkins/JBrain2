@@ -7,6 +7,7 @@ from jbrain.agent.reflexion import (
     Reflection,
     VerificationResult,
     aggregate,
+    cited_indices,
     claims_from,
     critique_worthy,
     has_substantive_claim,
@@ -185,6 +186,46 @@ class TestUngroundedClaims:
 
     def test_a_contentless_claim_is_never_ungrounded(self) -> None:
         assert ungrounded_claims(["of the"], ["unrelated"]) == []
+
+
+class TestCitedIndices:
+    def test_parses_ascii_and_fullwidth_markers(self) -> None:
+        # The ASCII form the prompt asks for, plus the fullwidth 【^1】 / 【1】 a
+        # browsing model emits instead — both yield the same 1-based index.
+        assert cited_indices("born in 1986 [^1].") == [1]
+        assert cited_indices("born in 1986 【^2】.") == [2]
+        assert cited_indices("born in 1986 【3】.") == [3]
+
+    def test_no_marker_is_empty(self) -> None:
+        assert cited_indices("just prose, no citation") == []
+
+
+class TestCitationGrounding:
+    """A claim that cites a source the turn actually surfaced is grounded by that
+    attribution — the route that fixes a rephrased fact-graph answer the token
+    overlap can't catch (e.g. "March 19, 1986" cited to an ISO birthDate fact)."""
+
+    def test_resolvable_citation_grounds_a_token_mismatched_claim(self) -> None:
+        # Zero token overlap with the source, but the [^1] resolves to surfaced
+        # source #1 → grounded by attribution.
+        r = verify_grounding(
+            ["born in 1986 on March 19 [^1]"], ["birth date is 1986-03-19"], cited_source_count=1
+        )
+        assert r.passed
+
+    def test_citation_past_the_surfaced_sources_does_not_ground(self) -> None:
+        # [^2] but only one source was surfaced → the marker doesn't resolve, so it
+        # falls back to token overlap (which here fails) and still flags.
+        r = verify_grounding(
+            ["the roof needs replacing [^2]"], ["birth date is 1986-03-19"], cited_source_count=1
+        )
+        assert not r.passed
+
+    def test_citation_with_no_surfaced_sources_does_not_ground(self) -> None:
+        # A bare marker on a turn that surfaced nothing citable can't resolve.
+        assert ungrounded_claims(["the roof needs replacing [^1]"], ["unrelated"]) == [
+            "the roof needs replacing [^1]"
+        ]
 
 
 class TestGroundingThresholdCalibration:
