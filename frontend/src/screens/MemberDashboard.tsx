@@ -59,6 +59,38 @@ interface MemberDashboardProps {
   deps?: MemberDeps;
 }
 
+/** Live online/offline state from the browser, kept in sync via the window events.
+ * Exported for testing. */
+export function useOnline(): boolean {
+  const [online, setOnline] = useState(() =>
+    typeof navigator === "undefined" ? true : navigator.onLine,
+  );
+  useEffect(() => {
+    const up = () => setOnline(true);
+    const down = () => setOnline(false);
+    window.addEventListener("online", up);
+    window.addEventListener("offline", down);
+    return () => {
+      window.removeEventListener("online", up);
+      window.removeEventListener("offline", down);
+    };
+  }, []);
+  return online;
+}
+
+/** A corner badge shown while the phone is offline, reassuring the member that fixes
+ * are still being captured and queued on-device for upload when signal returns. */
+function OfflineBadge() {
+  const online = useOnline();
+  if (online) return null;
+  return (
+    <output className="dash-offline">
+      <span className="dash-offline-dot" aria-hidden="true" />
+      Offline · caching fixes
+    </output>
+  );
+}
+
 export function MemberDashboard({ deps }: MemberDashboardProps) {
   const probe = deps?.probe ?? api.me;
   const [gate, setGate] = useState<Gate>({ phase: "probing" });
@@ -73,7 +105,12 @@ export function MemberDashboard({ deps }: MemberDashboardProps) {
         setGate(p.kind === "device_key" ? { phase: "ready" } : { phase: "locked" });
       })
       .catch(() => {
-        if (!stale) setGate({ phase: "locked" });
+        if (stale) return;
+        // Offline (e.g. cold-started out of signal): we can't probe, but a paired
+        // device still has a member session and the phone is busy caching fixes — so
+        // show the cached map rather than the "not signed in" wall. A real auth
+        // failure only locks when we're actually online to see it.
+        setGate(navigator.onLine ? { phase: "locked" } : { phase: "ready" });
       });
     return () => {
       stale = true;
@@ -505,6 +542,7 @@ function LiveMap({ deps }: { deps: MemberDeps | undefined }) {
   return (
     <div className="livemap">
       <div className="livemap-canvas" ref={canvas} data-testid="map-canvas" />
+      <OfflineBadge />
       <PeopleSwitcher roster={roster} sel={sel} colorOf={colorOf} failed={failed} onPick={setSel} />
       <TileToggle scheme={tileScheme} onPick={pickScheme} />
       {sel !== "all" && mode === "trail" && (

@@ -14612,6 +14612,32 @@ input.ld-title {
   font: inherit;
 }
 
+/* Offline indicator: a small amber pill floating top-centre over the map, above the
+   Leaflet panes but clear of the switcher. Reassures the member that fixes are still
+   being cached on-device while out of signal. */
+.dash-offline {
+  position: absolute;
+  top: calc(env(safe-area-inset-top, 0px) + 10px);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 12px;
+  border-radius: var(--r-pill);
+  font-size: var(--fs-micro);
+  color: var(--amber);
+  background: var(--amber-tint);
+  backdrop-filter: blur(8px);
+}
+.dash-offline-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--amber);
+}
+
 /* Person palette — tokens only; --pc is shared by the avatar and the map pin. */
 .loc-pin-c0 {
   --pc: var(--steel);
