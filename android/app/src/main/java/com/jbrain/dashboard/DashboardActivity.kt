@@ -5,7 +5,10 @@ import android.annotation.SuppressLint
 import android.app.Activity
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
+import android.os.Build
 import android.os.Bundle
+import android.provider.Settings
 import android.webkit.CookieManager
 import android.webkit.WebSettings
 import android.webkit.WebView
@@ -118,11 +121,12 @@ class DashboardActivity : Activity() {
     }
 
     /** Start the location-publishing service once we have foreground-location
-     * permission; otherwise request it and start on grant. Background-location +
-     * the doze/OEM hardening are a later pass. */
+     * permission; otherwise request it and start on grant. Once running, walk the
+     * background-survival grants (notifications, "Allow all the time", battery-opt
+     * exemption) so tracking keeps reporting after the app is backgrounded. */
     private fun ensureLocationSharing() {
         if (hasFineLocation()) {
-            startService(Intent(this, LocationService::class.java))
+            startSharing()
         } else {
             // Request fine + coarse together so Android 12+ shows the precise/approximate
             // toggle; we only start once *fine* (precise) is actually granted.
@@ -136,6 +140,65 @@ class DashboardActivity : Activity() {
         }
     }
 
+    /** Foreground location is granted: start the service, arm the revival watchdog, and
+     * begin the one-time walk through the remaining background-survival grants. */
+    private fun startSharing() {
+        startService(Intent(this, LocationService::class.java))
+        WatchdogScheduler.armPeriodic(this)
+        requestNotificationsThenBackground()
+    }
+
+    /** Android 13+ needs a runtime grant for the foreground-service notification; ask,
+     * then move on to background location either way (the service runs regardless). */
+    private fun requestNotificationsThenBackground() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) !=
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), REQ_NOTIF)
+        } else {
+            requestBackgroundLocation()
+        }
+    }
+
+    /** "Allow all the time" — required for the boot/watchdog restart paths to read
+     * location while backgrounded. A separate prompt by OS rule (can't be bundled with
+     * the foreground grant); on Android 11+ it routes the user to settings. */
+    private fun requestBackgroundLocation() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q &&
+            ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_BACKGROUND_LOCATION) !=
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            requestPermissions(arrayOf(Manifest.permission.ACCESS_BACKGROUND_LOCATION), REQ_BACKGROUND)
+        } else {
+            promptBatteryExemption()
+        }
+    }
+
+    /** Ask to be exempted from battery optimization: it keeps doze from suspending the
+     * service AND is itself a foreground-service background-start exemption, so the
+     * watchdog can revive the service. Best-effort — a declined prompt just leaves the
+     * app subject to OEM throttling. */
+    private fun promptBatteryExemption() {
+        if (LocationServiceControl.isBatteryUnrestricted(this)) return
+        // Ask once: the system dialog can't be permanently dismissed like a runtime
+        // permission, so without this flag a declined prompt would re-open every launch.
+        val prefs = getSharedPreferences("survival", MODE_PRIVATE)
+        if (prefs.getBoolean("battery_asked", false)) return
+        prefs.edit().putBoolean("battery_asked", true).apply()
+        try {
+            startActivity(
+                Intent(
+                    Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                    Uri.parse("package:$packageName"),
+                ),
+            )
+        } catch (e: Exception) {
+            // Some OEMs don't expose the direct intent; the user can still allowlist
+            // the app manually from system battery settings.
+        }
+    }
+
     private fun hasFineLocation(): Boolean =
         ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) ==
             PackageManager.PERMISSION_GRANTED
@@ -146,10 +209,13 @@ class DashboardActivity : Activity() {
         grantResults: IntArray,
     ) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        // Start only on *precise* (fine): if the user picked "Approximate", don't
-        // run on coarse — the map needs precise fixes.
-        if (requestCode == REQ_LOCATION && hasFineLocation()) {
-            startService(Intent(this, LocationService::class.java))
+        when (requestCode) {
+            // Start only on *precise* (fine): if the user picked "Approximate", don't
+            // run on coarse — the map needs precise fixes.
+            REQ_LOCATION -> if (hasFineLocation()) startSharing()
+            // Each later grant just advances the walk; the service is already running.
+            REQ_NOTIF -> requestBackgroundLocation()
+            REQ_BACKGROUND -> promptBatteryExemption()
         }
     }
 
@@ -160,5 +226,7 @@ class DashboardActivity : Activity() {
     private companion object {
         const val REQ_PAIR = 1
         const val REQ_LOCATION = 2
+        const val REQ_NOTIF = 3
+        const val REQ_BACKGROUND = 4
     }
 }

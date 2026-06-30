@@ -28,6 +28,8 @@ function device(over: Partial<DeviceSummary> = {}): DeviceSummary {
     created_at: "2026-06-01T00:00:00+00:00",
     revoked: false,
     last_seen: new Date(Date.now() - 5 * 60_000).toISOString(),
+    age_seconds: 300,
+    silent: false,
     battery_pct: 72,
     connection: "wifi",
     velocity_mps: null,
@@ -348,6 +350,22 @@ describe("LocationScreen", () => {
     fireEvent.click(screen.getByRole("button", { name: /Old phone/ }));
     expect(screen.getByRole("button", { name: "restore" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "revoke" })).toBeNull();
+  });
+
+  it("badges a silent device so a dark tracker is visible", async () => {
+    const d = deps({
+      listDevices: vi.fn(async () => [
+        device({ id: "d1", label: "Live phone" }),
+        device({ id: "d2", label: "Dark phone", silent: true, age_seconds: 3 * 3600 }),
+      ]),
+    });
+    render(<LocationScreen deps={d} />);
+    fireEvent.click(screen.getByRole("tab", { name: "Phones" }));
+    await screen.findByText("Dark phone");
+    // Exactly the dark device carries the badge; a live one does not.
+    expect(screen.getByText("silent")).toBeInTheDocument();
+    const live = screen.getByRole("button", { name: /Live phone/ });
+    expect(live.textContent).not.toContain("silent");
   });
 });
 

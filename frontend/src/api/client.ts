@@ -47,6 +47,11 @@ export interface DeviceSummary {
   created_at: string;
   revoked: boolean;
   last_seen: string | null;
+  /** Seconds since the latest fix; null until the device reports one. */
+  age_seconds: number | null;
+  /** True when an active device has gone dark past the liveness horizon — its
+   * tracker may have been killed in the background. */
+  silent: boolean;
   battery_pct: number | null;
   connection: string | null;
   /** Speed (m/s) of the device's latest fix; null until it reports one. */

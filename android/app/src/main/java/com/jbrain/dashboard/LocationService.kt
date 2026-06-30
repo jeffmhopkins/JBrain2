@@ -17,6 +17,7 @@ import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.os.SystemClock
 import androidx.core.content.getSystemService
 import java.io.File
 import java.util.concurrent.Executors
@@ -35,8 +36,11 @@ import java.util.concurrent.Executors
  * backfills (in order, with real capture times) on the next fix or when connectivity
  * returns rather than dropping points. It reads the device key from the Keystore
  * store, stops cleanly if unpaired, and clears the key + stops if the server reports
- * it revoked. Reliability across aggressive OEMs (doze, battery killing) is a
- * deliberate later hardening pass.
+ * it revoked. Reliability across aggressive OEMs (doze, battery killing, swipe-away)
+ * is handled by the revival watchdog: this service arms a self-perpetuating
+ * doze-piercing alarm (`WatchdogScheduler`) and re-arms it on task removal, so a kill
+ * is recovered on the next tick; the foreground notification's subtitle carries the
+ * last-fix age so a stall is visible at a glance.
  */
 class LocationService : Service(), LocationListener {
     private val publisher = LocationPublisher()
@@ -58,6 +62,11 @@ class LocationService : Service(), LocationListener {
     private lateinit var accel: AccelerationMeter
     // When the queue was last flushed (io thread only) — the batched-upload cadence.
     private var lastFlushMs = 0L
+    // elapsedRealtime of the last KEPT fix (0 = none yet this run), driving the
+    // notification's liveness subtitle; refreshed on a minute timer so it ages and
+    // flips to the stale warning even when no new fix arrives.
+    private var lastFixAtMs = 0L
+    private val notifTick = Runnable { refreshNotification() }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -69,6 +78,10 @@ class LocationService : Service(), LocationListener {
         accel.start()
         registerConnectivity()
         startInForeground()
+        // Keep the revival watchdog armed while we run, so a doze/OEM kill is recovered
+        // on the next tick even though the service itself is gone by then.
+        WatchdogScheduler.armPeriodic(this)
+        armNotifTick()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -96,6 +109,9 @@ class LocationService : Service(), LocationListener {
         // Drop jittery wide-radius fixes before they reach the trail (the star-burst
         // fix); the heartbeat is still re-armed above so a bad-fix streak retries.
         if (!FixGate.accept(accuracyM)) return
+        // A good fix landed — mark liveness so the notification reads fresh.
+        lastFixAtMs = SystemClock.elapsedRealtime()
+        refreshNotification()
         // Adapt the cadence to motion: a transition (moving <-> stationary) returns
         // new params, so re-request updates; otherwise leave the provider as-is.
         val next = policy.onFix(location.latitude, location.longitude, location.time)
@@ -225,8 +241,17 @@ class LocationService : Service(), LocationListener {
         return if (pct in 0..100) pct else null
     }
 
+    /** The user swiped the app from recents — on aggressive OEMs that also kills this
+     * service. Schedule a near-term restart so tracking resumes in seconds rather than
+     * silently stopping until the app is reopened. */
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        if (store.deviceKey() != null) WatchdogScheduler.armSoon(this)
+        super.onTaskRemoved(rootIntent)
+    }
+
     override fun onDestroy() {
         heartbeat.removeCallbacks(forceFix)
+        heartbeat.removeCallbacks(notifTick)
         accel.stop()
         connectivity?.let { getSystemService<ConnectivityManager>()?.unregisterNetworkCallback(it) }
         io.shutdown()
@@ -238,15 +263,27 @@ class LocationService : Service(), LocationListener {
         super.onDestroy()
     }
 
+    /** Re-post the minute timer that ages the notification subtitle, so liveness keeps
+     * counting up (and trips the stale warning) between fixes. */
+    private fun armNotifTick() {
+        heartbeat.removeCallbacks(notifTick)
+        heartbeat.postDelayed(notifTick, NOTIF_REFRESH_MS)
+    }
+
+    private fun refreshNotification() {
+        getSystemService<NotificationManager>()?.notify(NOTIF_ID, buildNotification(subtitle()))
+        armNotifTick()
+    }
+
+    private fun subtitle(): String =
+        if (lastFixAtMs == 0L) FixAgeLabel.acquiring()
+        else FixAgeLabel.forAge(SystemClock.elapsedRealtime() - lastFixAtMs)
+
     private fun startInForeground() {
         getSystemService<NotificationManager>()?.createNotificationChannel(
             NotificationChannel(CHANNEL, "Location sharing", NotificationManager.IMPORTANCE_LOW),
         )
-        val notification: Notification = Notification.Builder(this, CHANNEL)
-            .setContentTitle("JBrain360")
-            .setContentText("Sharing your location with your family")
-            .setSmallIcon(android.R.drawable.ic_menu_mylocation)
-            .build()
+        val notification = buildNotification(subtitle())
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             startForeground(NOTIF_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION)
         } else {
@@ -254,12 +291,23 @@ class LocationService : Service(), LocationListener {
         }
     }
 
+    /** The ongoing notification, whose subtitle carries the liveness cue. */
+    private fun buildNotification(text: String): Notification =
+        Notification.Builder(this, CHANNEL)
+            .setContentTitle("JBrain360")
+            .setContentText(text)
+            .setSmallIcon(android.R.drawable.ic_menu_mylocation)
+            .setOngoing(true)
+            .build()
+
     private companion object {
         const val CHANNEL = "location"
         const val NOTIF_ID = 1
         // Stationary heartbeat: at least one fix every 15 min even when parked.
         // (Moving/stationary cadence lives in SamplingPolicy.)
         const val HEARTBEAT_MS = 15 * 60 * 1000L
+        // Age the notification's liveness subtitle once a minute between fixes.
+        const val NOTIF_REFRESH_MS = 60_000L
         // Batched upload cadence: flush once ~12 points accumulate (≈1 min moving at
         // 5 s) or at least every 30 s, so a sparse/stationary fix still uploads
         // promptly while a dense stream is coalesced into few requests.

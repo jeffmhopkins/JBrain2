@@ -7,6 +7,7 @@ import type {
   AttachmentExtract,
   AttachmentOut,
   ContainerStatus,
+  DeviceSummary,
   EgoGraph,
   EntityListItem,
   EntityOut,
@@ -2490,6 +2491,20 @@ const MOCK_DEVICES: MockDevice[] = [
 ];
 let mockDeviceSeq = 4;
 
+// Mirror the backend's liveness judgment on read: an active device quiet past the
+// horizon (1h) is "silent". Derived here rather than stored so the mock ages like the
+// real read — Celine's 9h-old phone shows the silent badge.
+const SILENT_AFTER_MS = 60 * 60_000;
+function deviceSummary(d: MockDevice): DeviceSummary {
+  const ageMs =
+    d.last_seen === null ? null : Math.max(0, Date.now() - new Date(d.last_seen).getTime());
+  return {
+    ...d,
+    age_seconds: ageMs === null ? null : ageMs / 1000,
+    silent: !d.revoked && ageMs !== null && ageMs > SILENT_AFTER_MS,
+  };
+}
+
 // Phase 7 location (Timeline tab): geofence crossings, newest first, keyed to the
 // mock device subjects so the feed resolves "<device> left/arrived at <place>".
 const MOCK_TIMELINE = [
@@ -3683,7 +3698,9 @@ export const mockFetch: typeof fetch = async (input, init) => {
   }
 
   // Phase 7 location: the owner's Devices tab read + key management.
-  if (path === "/api/locations/devices" && method === "GET") return json(MOCK_DEVICES);
+  if (path === "/api/locations/devices" && method === "GET") {
+    return json(MOCK_DEVICES.map(deviceSummary));
+  }
   if (path === "/api/locations/timeline" && method === "GET") return json(MOCK_TIMELINE);
   if (path === "/api/locations/places" && method === "GET") return json(MOCK_PLACES);
   if (path === "/api/locations/fixes" && method === "GET") return json(mockTrail());
