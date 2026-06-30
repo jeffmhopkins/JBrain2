@@ -330,6 +330,25 @@ class SqlAnalysisRepo:
             for e in entities
         ]
 
+    async def owner_entity_id(self, ctx: SessionContext) -> str | None:
+        """The id of the canonical "Me" entity — the owner at the center of the
+        graph — or None when it doesn't exist yet (a brand-new graph with no notes
+        ingested). Read-only and RLS-scoped: it never creates the entity (that is
+        the ingestion path's job via `get_or_create_me`), so a turn that resolves it
+        for the ambient owner-self line stays a pure read. Mirrors `_find_me`'s
+        match (subject-linked, canonical name 'me', not merged)."""
+        async with scoped_session(self._maker, ctx) as session:
+            row = (
+                await session.execute(
+                    text(
+                        "SELECT id::text FROM app.entities"
+                        " WHERE subject_id IS NOT NULL AND lower(canonical_name) = 'me'"
+                        " AND status <> 'merged' LIMIT 1"
+                    )
+                )
+            ).first()
+        return row.id if row is not None else None
+
     async def relate(
         self,
         ctx: SessionContext,

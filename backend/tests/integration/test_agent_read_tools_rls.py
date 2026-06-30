@@ -225,3 +225,34 @@ async def test_relate_anchors_on_me_and_respects_the_firewall(maker: async_sessi
     )
     blocked = await tools["relate"]({"relationship": "wife"}, general)
     assert "Renata" not in blocked and "No 'wife' relationship" in blocked
+
+
+async def test_owner_entity_id_resolves_me_and_is_none_without_it(
+    maker: async_sessionmaker,
+) -> None:
+    """The ambient owner-self anchor: owner_entity_id finds the subject-linked "Me"
+    entity (so the turn can hand the agent its id), and is None on a fresh graph —
+    a pure read that never creates the entity."""
+    owner = await _owner(maker)
+    repo = SqlAnalysisRepo(maker)
+    full = read_context(owner.principal_id, ("general",))
+
+    # No Me entity yet → no anchor, and the read must not have minted one.
+    assert await repo.owner_entity_id(full) is None
+
+    me, subject = str(uuid.uuid4()), str(uuid.uuid4())
+    async with scoped_session(maker, owner) as session:
+        await session.execute(
+            text("INSERT INTO app.subjects (id, display_name, kind) VALUES (:id, 'Me', 'person')"),
+            {"id": subject},
+        )
+        await session.execute(
+            text(
+                "INSERT INTO app.entities"
+                " (id, kind, canonical_name, status, subject_id, domain_code)"
+                " VALUES (:id, 'Person', 'Me', 'confirmed', :sub, 'general')"
+            ),
+            {"id": me, "sub": subject},
+        )
+
+    assert await repo.owner_entity_id(full) == me

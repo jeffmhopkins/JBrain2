@@ -124,8 +124,8 @@ def test_system_prompt_pinned_to_its_version() -> None:
     editing it must be a deliberate version bump, like every .prompt file."""
     digest = hashlib.sha256(SYSTEM_PROMPT.encode()).hexdigest()
     assert (SYSTEM_VERSION, digest) == (
-        "agent-system-v6",
-        "5d3056298e2fb0afb311f85970acecc5d2ee92bf50118d532b1268e054e875cc",
+        "agent-system-v7",
+        "525d694e9c6505b2de6917934f74ccd75b4d24e2167736b7f917f33a60355993",
     )
 
 
@@ -136,6 +136,14 @@ def test_system_prompt_states_current_truth_arbitration() -> None:
     assert "arbiter of what is true today" in SYSTEM_PROMPT
     assert "read_entity to confirm" in SYSTEM_PROMPT
     assert "a superseded or retracted claim as if it were current" in SYSTEM_PROMPT
+
+
+def test_system_prompt_routes_owner_attributes_straight_to_me() -> None:
+    """v7: an owner self-attribute ("my birthday") is one read_entity on the Me
+    entity whose id is handed to the turn — not a note search, not relate."""
+    assert "scalar edges on Me" in SYSTEM_PROMPT
+    assert "Don't search notes for an owner attribute first" in SYSTEM_PROMPT
+    assert "ambient reference fact" in SYSTEM_PROMPT
 
 
 async def test_answers_immediately_without_tools() -> None:

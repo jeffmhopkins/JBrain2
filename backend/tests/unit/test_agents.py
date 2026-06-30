@@ -36,7 +36,7 @@ def test_curator_is_the_full_brain_default() -> None:
     curator = AGENTS["curator"]
     assert curator.tools is None
     assert curator.reads_knowledge_base is True
-    assert curator.version == "agent-system-v6"
+    assert curator.version == "agent-system-v7"
 
 
 def test_teacher_is_a_tool_less_socratic_tutor() -> None:
@@ -173,8 +173,8 @@ def test_persona_prompts_pinned_to_their_versions() -> None:
     version bump, like every .prompt file (DEVELOPMENT.md)."""
     pins = {
         "curator": (
-            "agent-system-v6",
-            "5d3056298e2fb0afb311f85970acecc5d2ee92bf50118d532b1268e054e875cc",
+            "agent-system-v7",
+            "525d694e9c6505b2de6917934f74ccd75b4d24e2167736b7f917f33a60355993",
         ),
         "teacher": (
             "agent-teacher-v1",
