@@ -186,6 +186,10 @@ class IntakeRepo(Protocol):
 
     async def reap_abandoned(self, ctx: SessionContext, older_than_seconds: int) -> int: ...
 
+    async def set_submission_proposal(
+        self, ctx: SessionContext, submission_id: str, proposal_id: str
+    ) -> bool: ...
+
 
 async def mint_intake_link(
     repo: IntakeRepo, ctx: SessionContext, config: IntakeLinkConfig

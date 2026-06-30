@@ -114,6 +114,9 @@ class _FakeIntakeRepo:
     async def reap_abandoned(self, ctx, older_than_seconds):  # type: ignore[no-untyped-def]
         return 0
 
+    async def set_submission_proposal(self, ctx, submission_id, proposal_id):  # type: ignore[no-untyped-def]
+        return True
+
 
 async def test_mint_returns_secret_once_and_stores_only_its_hash() -> None:
     repo = _FakeIntakeRepo(claim_result=None)

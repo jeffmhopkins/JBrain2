@@ -24,6 +24,7 @@ from jbrain.agent.proposals import (
 )
 from jbrain.agent.proposaltools import (
     agent_note_executor,
+    intake_note_executor,
     predicate_resolution_executor,
 )
 from jbrain.analysis.repo import SqlAnalysisRepo
@@ -124,6 +125,7 @@ def build_leaf_executor(
     egress = egress_executor(connectors)
     merge = entity_merge_executor(analysis)
     predicate_resolve = predicate_resolution_executor(analysis)
+    intake_note = intake_note_executor(notes, jobs)
 
     async def execute(ctx: SessionContext, proposal: ProposalRow, node: NodeRow) -> None:
         if node.op == "egress_call":
@@ -132,6 +134,8 @@ def build_leaf_executor(
             await merge(ctx, proposal, node)
         elif node.op == "predicate_resolve":
             await predicate_resolve(ctx, proposal, node)
+        elif node.op == "add_intake_note":
+            await intake_note(ctx, proposal, node)
         else:
             await note_executor(ctx, proposal, node)
 

@@ -413,6 +413,23 @@ class SqlIntakeRepo:
             return None
         return submission_id
 
+    async def set_submission_proposal(
+        self, ctx: SessionContext, submission_id: str, proposal_id: str
+    ) -> bool:
+        """Attach the materialized Proposal to a submission and mark it `proposed` (owner
+        context). No-op (False) on an unknown id or a submission already materialized."""
+        try:
+            sid, pid = uuid.UUID(submission_id), uuid.UUID(proposal_id)
+        except ValueError:
+            return False
+        async with scoped_session(self._maker, ctx) as session:
+            result = await session.execute(
+                update(IntakeSubmission)
+                .where(IntakeSubmission.id == sid, IntakeSubmission.status == "submitted")
+                .values(proposal_id=pid, status="proposed", updated_at=text("now()"))
+            )
+            return (cast("CursorResult[Any]", result).rowcount or 0) > 0
+
     async def reap_abandoned(self, ctx: SessionContext, older_than_seconds: int) -> int:
         """Transition stale `drafting` sessions to `abandoned` (the reaper, §6). A session
         is stale if its last turn (or its open, if it never had one) is older than the

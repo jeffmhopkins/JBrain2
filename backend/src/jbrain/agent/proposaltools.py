@@ -112,6 +112,33 @@ def agent_note_executor(notes: SqlNotesRepo, jobs: JobEnqueuer) -> LeafExecutor:
     return execute
 
 
+def intake_note_executor(notes: SqlNotesRepo, jobs: JobEnqueuer) -> LeafExecutor:
+    """Enact an approved intake-submission leaf as an `untrusted_origin` attributed note
+    (W4, §5). Same re-entry as an agent note — idempotent on the node id, normal-weight
+    ingestion via `ingest_note` — but provenance-tagged as stranger-authored so the
+    integration backfill drains it behind owner notes. The owner gate is the trust
+    boundary; the content is still verbatim stranger text (a documented acceptance)."""
+
+    async def execute(ctx: SessionContext, proposal: ProposalRow, node: NodeRow) -> None:
+        body = str(node.preview.get("body", "")).strip()
+        if not body:
+            return
+        submission_id = str(node.preview.get("submission_id", ""))
+        note, created = await notes.create_note(
+            ctx,
+            client_id=f"intake-{node.id}",
+            domain=str(node.preview.get("domain") or proposal.domain),
+            destination=None,
+            body=body,
+            provenance="untrusted_origin",
+            source_ref=f"intake-submission:{submission_id}",
+        )
+        if created:
+            await jobs.enqueue(ctx, "ingest_note", {"note_id": note.id})
+
+    return execute
+
+
 def predicate_resolution_executor(analysis: SqlAnalysisRepo) -> LeafExecutor:
     """Enact a predicate-canon leaf (Loop 3a, Wave 2): apply the owner-approved resolution of a
     `new_predicate` card via the SHIPPED `resolve_review` (map_to_existing / accept_as_new),

@@ -22,10 +22,12 @@ from sqlalchemy.exc import IntegrityError
 from jbrain.agent.agents import agent_for_intake
 from jbrain.agent.contracts import TextDelta, UsageEvent
 from jbrain.agent.loop import AgentLoop, guardrails_for_effort
+from jbrain.agent.proposals import ProposalRepo
 from jbrain.agent.toolregistry import ToolRegistry
 from jbrain.api.deps import AuthRepoDep, OwnerDep, PrincipalDep, SettingsDep
 from jbrain.db.session import SessionContext, intake_context
 from jbrain.intake import service, turn
+from jbrain.intake.materialize import materialize_submission
 from jbrain.intake.persona import brief_from_snapshot, build_intake_system_prompt
 from jbrain.intake.service import IntakeLinkConfig, IntakeRepo, IntakeSessionState
 from jbrain.llm import LlmRouter
@@ -255,6 +257,30 @@ async def get_submission(
         raise HTTPException(status_code=404, detail="unknown submission")
     base = _submission_out(record)
     return SubmissionDetailOut(**base.model_dump(), transcript=record.transcript or [])
+
+
+class MaterializeOut(BaseModel):
+    proposal_id: str
+
+
+@router.post("/intake/submissions/{submission_id}/materialize", status_code=201)
+async def materialize(
+    submission_id: str, owner: OwnerDep, request: Request, repo: IntakeRepoDep
+) -> MaterializeOut:
+    """Materialize a captured submission into an owner Proposal (#4/#10 — the OWNER step,
+    separate from the stranger's capture). The transcript is read behind the materializer's
+    data/instruction boundary; attribution is set from the link, not the transcript. 404 on
+    an unknown / already-materialized submission."""
+    proposal_id = await materialize_submission(
+        intake=repo,
+        proposals=cast(ProposalRepo, request.app.state.agent_proposals),
+        router=cast(LlmRouter, request.app.state.llm_router),
+        ctx=_owner_ctx(owner.id),
+        submission_id=submission_id,
+    )
+    if proposal_id is None:
+        raise HTTPException(status_code=404, detail="unknown or already-materialized submission")
+    return MaterializeOut(proposal_id=proposal_id)
 
 
 @router.post("/intake/redeem")
