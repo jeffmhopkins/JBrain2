@@ -117,12 +117,17 @@ export function IntakeLinksScreen({ deps }: Props) {
     void reload();
   }, [reload]);
 
+  // If the open detail's link drops out of the list (revoked + reloaded, or a
+  // re-mint replaced it), fall back to the list — in an effect, never mid-render.
+  useEffect(() => {
+    if (view.kind === "detail" && links !== null && !links.some((l) => l.id === view.linkId)) {
+      setView({ kind: "list" });
+    }
+  }, [view, links]);
+
   if (view.kind === "detail") {
     const link = links?.find((l) => l.id === view.linkId);
-    if (!link) {
-      setView({ kind: "list" });
-      return null;
-    }
+    if (!link) return null;
     return (
       <LinkDetail
         link={link}
@@ -286,8 +291,13 @@ function Disc({ domain }: { domain: string }) {
 
 function LinkRow({ link, now, onOpen }: { link: IntakeLink; now: number; onOpen: () => void }) {
   const badge = statusBadge(link);
+  const expired = new Date(link.expires_at).getTime() <= now;
   const expiry =
-    link.status === "active" ? ` · ${relTime(link.expires_at, now)} left`.replace("in ", "") : "";
+    link.status !== "active"
+      ? ""
+      : expired
+        ? " · expired"
+        : ` · ${relTime(link.expires_at, now).replace("in ", "")} left`;
   return (
     <button type="button" className="intake-row" onClick={onOpen}>
       <Disc domain={link.domain_code} />
@@ -372,9 +382,14 @@ function LinkDetail({
     setBusy(true);
     setError("");
     try {
-      const ttlHours = Math.max(
-        0.25,
-        (new Date(link.expires_at).getTime() - new Date(link.created_at).getTime()) / HOUR,
+      // Re-grant the link's original TTL window, clamped to the backend's bounds
+      // (0.25h..720h) so float drift on a 30-day link can't trip the 422.
+      const ttlHours = Math.min(
+        720,
+        Math.max(
+          0.25,
+          (new Date(link.expires_at).getTime() - new Date(link.created_at).getTime()) / HOUR,
+        ),
       );
       const body: IntakeMintRequest = {
         subject_id: link.subject_id,

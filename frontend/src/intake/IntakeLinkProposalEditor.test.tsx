@@ -98,6 +98,24 @@ describe("IntakeLinkProposalEditor", () => {
     expect(onClose).toHaveBeenCalled();
   });
 
+  it("blocks minting until the collection brief is non-empty", () => {
+    const d = deps();
+    render(
+      <IntakeLinkProposalEditor
+        proposalId="p1"
+        node={node({ fields_brief: "  " })}
+        onClose={vi.fn()}
+        deps={d}
+      />,
+    );
+    expect(screen.getByRole("button", { name: /Approve & mint/ })).toBeDisabled();
+    expect(screen.getByText(/should collect before minting/)).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("What to collect"), {
+      target: { value: "phone number" },
+    });
+    expect(screen.getByRole("button", { name: /Approve & mint/ })).toBeEnabled();
+  });
+
   it("blocks minting an already-rejected proposal", () => {
     render(
       <IntakeLinkProposalEditor

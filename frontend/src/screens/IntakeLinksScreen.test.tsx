@@ -130,6 +130,25 @@ describe("IntakeLinksScreen", () => {
     expect(screen.getByText(/\/intake#t=fresh/)).toBeInTheDocument();
   });
 
+  it("clamps a re-minted link's TTL to the backend's 720h ceiling", async () => {
+    const d = deps({
+      // A span just past 30 days — float drift would otherwise trip the backend's le=720.
+      listLinks: vi.fn(async () => [
+        link({ created_at: "2026-01-01T00:00:00Z", expires_at: "2026-01-31T00:00:30Z" }),
+      ]),
+    });
+    render(<IntakeLinksScreen deps={d} />);
+    fireEvent.click(await screen.findByText(/3\/5 submitted/));
+    fireEvent.click(await screen.findByRole("button", { name: /Re-mint & copy link/ }));
+
+    await waitFor(() => expect(d.mintLink).toHaveBeenCalled());
+    expect(d.mintLink).toHaveBeenCalledWith(
+      expect.objectContaining({ ttl_hours: expect.any(Number) }),
+    );
+    const body = (d.mintLink as ReturnType<typeof vi.fn>).mock.calls.at(0)?.at(0);
+    expect(body.ttl_hours).toBeLessThanOrEqual(720);
+  });
+
   it("revokes a link only after a confirming second tap", async () => {
     const d = deps();
     render(<IntakeLinksScreen deps={d} />);

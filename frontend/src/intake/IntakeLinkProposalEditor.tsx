@@ -88,7 +88,7 @@ export function IntakeLinkProposalEditor({ proposalId, node, onClose, onMinted, 
       // Persist every editable field, then mint from the (now-current) staged config.
       await patchConfig(node.id, {
         persona_brief: personaBrief,
-        fields_brief: fieldsBrief.trim() || " ",
+        fields_brief: fieldsBrief.trim(),
         opening_blurb: openingBlurb,
         label,
         max_runs: maxRuns,
@@ -358,6 +358,9 @@ export function IntakeLinkProposalEditor({ proposalId, node, onClose, onMinted, 
 
       {error && <p className="intake-prop-error">{error}</p>}
       {rejected && <p className="intake-prop-error">This proposal was rejected.</p>}
+      {!fieldsBrief.trim() && !rejected && (
+        <p className="intake-prop-error">Add what the interviewer should collect before minting.</p>
+      )}
 
       <div className="intake-prop-actions">
         <button
@@ -371,7 +374,7 @@ export function IntakeLinkProposalEditor({ proposalId, node, onClose, onMinted, 
         <button
           type="button"
           className="intake-mint"
-          disabled={busy || rejected}
+          disabled={busy || rejected || !fieldsBrief.trim()}
           onClick={() => void mint()}
         >
           Approve &amp; mint

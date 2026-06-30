@@ -214,6 +214,9 @@ export interface FullBrain {
    * (Research offers Jerv + Teacher; Full Brain only Curator). */
   agentOptions: readonly string[];
   proposals: ProposalSummary[];
+  /** Refetch the staged-proposals list (it drops anything no longer open) — fired
+   * after a proposal is enacted/minted so the panel never shows a stale row. */
+  reloadProposals: () => void;
   panel: Panel;
   setPanel: (p: Panel) => void;
   openProposal: string | null;
@@ -831,6 +834,7 @@ export function useFullBrain(
     sessions: visibleSessions,
     agentOptions,
     proposals,
+    reloadProposals,
     panel,
     setPanel,
     openProposal,
