@@ -5,6 +5,8 @@ import android.annotation.SuppressLint
 import android.app.Activity
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -13,13 +15,15 @@ import android.webkit.CookieManager
 import android.webkit.WebSettings
 import android.webkit.WebView
 import androidx.core.content.ContextCompat
+import androidx.core.content.getSystemService
 
 /** Hosts the member dashboard SPA (served at /dash) in a locked-down WebView.
  *
  * On launch the app reads the Keystore device key, mints a session cookie
  * natively (the key never reaches page JavaScript), injects it into the WebView
  * jar, and loads /dash. A missing/revoked key opens the pairing screen and
- * re-launches once paired; a transient failure shows a retry. No JavaScript
+ * re-launches once paired; offline, it falls back to the cached dashboard (cached
+ * tiles + the live self-pin) and keeps capturing fixes, else shows a retry. No JavaScript
  * interface is registered, so page script can never reach native APIs; the only
  * native->page channel is a one-way `evaluateJavascript` loopback that injects this
  * phone's own fixes for an instant self-pin (see registerLoopback).
@@ -27,6 +31,7 @@ import androidx.core.content.ContextCompat
 class DashboardActivity : Activity() {
     private lateinit var web: WebView
     private lateinit var launcher: SessionLauncher
+    private lateinit var store: CredentialStore
 
     // True once /dash is loaded, so a loopback fix is only injected into a live page.
     private var dashboardReady = false
@@ -49,7 +54,8 @@ class DashboardActivity : Activity() {
         // native APIs. The navigation-origin lock is pinned per load (the paired
         // server isn't known until launch).
         setContentView(web)
-        launcher = SessionLauncher(KeystoreCredentialStore(this), SessionMinter())
+        store = KeystoreCredentialStore(this)
+        launcher = SessionLauncher(store, SessionMinter())
         relaunch()
     }
 
@@ -64,23 +70,61 @@ class DashboardActivity : Activity() {
     private fun apply(decision: LaunchDecision) {
         when (decision) {
             is LaunchDecision.Load -> {
-                // Pin navigation to the paired dashboard's own origin before loading.
-                web.webViewClient = LockedWebViewClient(decision.url)
                 CookieManager.getInstance().apply {
                     setAcceptCookie(true)
                     setCookie(decision.url, decision.setCookie)
                 }
-                web.loadUrl(decision.url)
-                dashboardReady = true
-                registerLoopback()
+                loadDashboard(decision.url, useCache = false)
                 // Paired + authenticated: begin sharing this phone's location.
                 ensureLocationSharing()
             }
             LaunchDecision.NeedsPairing ->
                 startActivityForResult(Intent(this, PairingActivity::class.java), REQ_PAIR)
-            is LaunchDecision.Retry ->
-                web.loadDataMessage("Couldn't reach the server — reopen to retry.")
+            is LaunchDecision.Retry -> {
+                // Paired, but the session mint failed (usually offline). Capture anyway —
+                // fixes queue on-device and backfill when signal returns — and, offline,
+                // render the cached dashboard (cached tiles + the live self-pin) instead
+                // of an error wall. The dashboard's gate tolerates the failed session
+                // probe while offline and shows its "caching fixes" badge.
+                ensureLocationSharing()
+                val base = store.serverBase()
+                if (base != null && !isOnline()) {
+                    loadDashboard(DashboardConfig.dashboardUrl(base), useCache = true)
+                } else {
+                    web.loadDataMessage("Couldn't reach the server — reopen to retry.")
+                }
+            }
         }
+    }
+
+    /** Load the dashboard at [url] with navigation pinned to its origin. With
+     * [useCache] (the offline path) the WebView serves from its HTTP cache, so a
+     * dashboard and the map tiles visited before still render out of signal; a
+     * main-document cache miss falls back to the offline message rather than a broken
+     * page. Online loads always go to the network so the SPA is never stale. */
+    private fun loadDashboard(url: String, useCache: Boolean) {
+        web.webViewClient = LockedWebViewClient(url) { onDashboardUnavailable() }
+        web.settings.cacheMode =
+            if (useCache) WebSettings.LOAD_CACHE_ELSE_NETWORK else WebSettings.LOAD_DEFAULT
+        web.loadUrl(url)
+        dashboardReady = true
+        registerLoopback()
+    }
+
+    /** The cached dashboard couldn't load (nothing cached yet) — show a plain offline
+     * note instead of the browser's broken-page chrome. Capture is already running. */
+    private fun onDashboardUnavailable() {
+        dashboardReady = false
+        web.loadDataMessage("Offline — no cached map yet. Reconnect once to load it; your location is still being recorded.")
+    }
+
+    /** Whether the device currently has a validated internet route — drives the
+     * WebView cache mode and the offline-dashboard fallback. */
+    private fun isOnline(): Boolean {
+        val cm = getSystemService<ConnectivityManager>() ?: return false
+        val caps = cm.getNetworkCapabilities(cm.activeNetwork ?: return false) ?: return false
+        return caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
+            caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
     }
 
     /** Forward this phone's own fixes from the location service into the page so the

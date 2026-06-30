@@ -518,4 +518,38 @@ describe("MemberDashboard", () => {
     expect(await screen.findByRole("tab", { name: /Pat/ })).toBeInTheDocument();
     await waitFor(() => expect(lastState?.pins?.map((p) => p.subjectId)).toEqual(["s-me"]));
   });
+
+  it("shows the cached map (not the lock wall) when the probe fails offline", async () => {
+    const onLine = vi.spyOn(navigator, "onLine", "get").mockReturnValue(false);
+    const probe = vi.fn(async (): Promise<Principal> => {
+      throw new Error("network");
+    });
+    render(<MemberDashboard deps={deps({ probe })} />);
+    // The map mounts despite the failed probe; the "not signed in" wall never shows.
+    expect(await screen.findByTestId("map-canvas")).toBeInTheDocument();
+    expect(screen.queryByText(/not signed in/i)).toBeNull();
+    // And the offline badge reassures that fixes are still being captured.
+    expect(screen.getByText(/caching fixes/i)).toBeInTheDocument();
+    onLine.mockRestore();
+  });
+
+  it("still locks a failed probe when actually online", async () => {
+    const onLine = vi.spyOn(navigator, "onLine", "get").mockReturnValue(true);
+    const probe = vi.fn(async (): Promise<Principal> => {
+      throw new Error("401");
+    });
+    render(<MemberDashboard deps={deps({ probe })} />);
+    expect(await screen.findByText(/not signed in/i)).toBeInTheDocument();
+    onLine.mockRestore();
+  });
+
+  it("drops the offline badge when connectivity returns", async () => {
+    const onLine = vi.spyOn(navigator, "onLine", "get").mockReturnValue(false);
+    render(<MemberDashboard deps={deps()} />);
+    expect(await screen.findByText(/caching fixes/i)).toBeInTheDocument();
+    onLine.mockReturnValue(true);
+    act(() => window.dispatchEvent(new Event("online")));
+    await waitFor(() => expect(screen.queryByText(/caching fixes/i)).toBeNull());
+    onLine.mockRestore();
+  });
 });
