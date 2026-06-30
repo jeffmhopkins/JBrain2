@@ -34,6 +34,13 @@ PAGE = HERE / "index.html"
 # power reading into the 0..1 "heat" the visual expects. Override per box.
 POWER_MAX_W = float(os.environ.get("BRAIN_POWER_MAX_W", "90"))
 DEMO = os.environ.get("BRAIN_DEMO") == "1"
+# Throughput ceilings used to normalise byte-rates into the 0..1 the visual wants.
+NET_MAX_BPS = float(os.environ.get("BRAIN_NET_MAX_BPS", str(12_500_000)))    # ~100 Mbit/s
+DISK_MAX_BPS = float(os.environ.get("BRAIN_DISK_MAX_BPS", str(500_000_000)))  # ~500 MB/s
+# Optional JSONL file the JBrain2 agent/tool layer appends web-tool events to —
+# one object per line, e.g. {"kind": "web_search"} or {"kind": "web_fetch"}. Each
+# new line is drained once and fires a reach-out tendril. Empty -> no web tendrils.
+EVENTS_PATH = os.environ.get("BRAIN_EVENTS_FILE", "")
 
 
 # --- host vitals (mirrors supervisor/host_metrics.py, trimmed to what we need) ---
@@ -149,6 +156,113 @@ def uptime_hours() -> float:
         return 0.0
 
 
+def read_net_bytes() -> tuple[int, int]:
+    """(rx, tx) total bytes across real interfaces (lo / virtual excluded)."""
+    rx = tx = 0
+    try:
+        lines = Path("/proc/net/dev").read_text().splitlines()
+    except OSError:
+        return 0, 0
+    for line in lines:
+        if ":" not in line:
+            continue
+        name, _, rest = line.partition(":")
+        name = name.strip()
+        if name == "lo" or name.startswith(("docker", "veth", "br-", "virbr", "tap")):
+            continue
+        f = rest.split()
+        if len(f) >= 9:
+            try:
+                rx += int(f[0])
+                tx += int(f[8])
+            except ValueError:
+                continue
+    return rx, tx
+
+
+def _is_whole_disk(name: str) -> bool:
+    if name.startswith(("loop", "ram", "dm-", "sr", "fd", "zram", "md")):
+        return False
+    if name.startswith(("nvme", "mmcblk")):
+        return "p" not in name            # nvme0n1 yes, nvme0n1p1 no
+    if name.startswith(("sd", "vd", "xvd", "hd")):
+        return not name[-1].isdigit()     # sda yes, sda1 no
+    return False
+
+
+def read_disk_read_bytes() -> int:
+    """Total bytes READ across whole disks from /proc/diskstats (sectors x 512)."""
+    total = 0
+    try:
+        lines = Path("/proc/diskstats").read_text().splitlines()
+    except OSError:
+        return 0
+    for line in lines:
+        f = line.split()
+        if len(f) < 6 or not _is_whole_disk(f[2]):
+            continue
+        try:
+            total += int(f[5]) * 512      # field[5] = sectors read
+        except ValueError:
+            continue
+    return total
+
+
+_rate_state = {"t": None, "rx": 0, "tx": 0, "disk": 0}
+
+
+def net_disk_rates() -> tuple[float, float, float]:
+    """(net_in, net_out, disk_read) as 0..1 fractions of the configured ceilings,
+    from byte-counter deltas since the previous call."""
+    now = time.time()
+    rx, tx = read_net_bytes()
+    dsk = read_disk_read_bytes()
+    prev = _rate_state
+    if prev["t"] is None:
+        prev.update(t=now, rx=rx, tx=tx, disk=dsk)
+        return 0.0, 0.0, 0.0
+    dt = max(0.05, now - prev["t"])
+    in_bps = max(0, rx - prev["rx"]) / dt
+    out_bps = max(0, tx - prev["tx"]) / dt
+    dsk_bps = max(0, dsk - prev["disk"]) / dt
+    prev.update(t=now, rx=rx, tx=tx, disk=dsk)
+    cl = lambda x: max(0.0, min(1.0, x))  # noqa: E731
+    return cl(in_bps / NET_MAX_BPS), cl(out_bps / NET_MAX_BPS), cl(dsk_bps / DISK_MAX_BPS)
+
+
+_events_pos = [0]
+
+
+def drain_events() -> list:
+    """New web-tool events appended to EVENTS_PATH since the last drain — each a
+    JSON object like {"kind": "web_search"}; returns [{"kind", "ts"}, ...]."""
+    if not EVENTS_PATH:
+        return []
+    out = []
+    try:
+        if os.path.getsize(EVENTS_PATH) < _events_pos[0]:
+            _events_pos[0] = 0   # file rotated/truncated -> re-read from the start
+        with open(EVENTS_PATH) as f:
+            f.seek(_events_pos[0])
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    ev = json.loads(line)
+                except ValueError:
+                    continue
+                if ev.get("kind") in ("web_search", "web_fetch"):
+                    out.append({"kind": ev["kind"], "ts": ev.get("ts")})
+            _events_pos[0] = f.tell()
+    except OSError:
+        return []
+    return out[-20:]   # never flood the page with a huge backlog
+
+
+_demo_state = {"search": 0.0, "fetch": 0.0}
+
+
 def _demo_snapshot() -> dict:
     """Synthetic wandering values so the wall is alive without amdgpu present."""
     t = time.time()
@@ -156,10 +270,22 @@ def _demo_snapshot() -> dict:
     mem = max(0.1, min(0.98, 0.55 + 0.25 * math.sin(t / 23)))
     power = 25 + util * (POWER_MAX_W - 25)
     temp = 45 + util * 38
-    return _shape(util, mem, power, temp, load=util * 6, uptime_h=72.0)
+    net_in = max(0.0, 0.30 + 0.5 * math.sin(t / 5))
+    net_out = max(0.0, 0.18 + 0.3 * math.sin(t / 8 + 1))
+    disk_read = max(0.0, 0.20 + 0.4 * math.sin(t / 4 + 2))
+    events = []
+    if t - _demo_state["search"] > 8:
+        _demo_state["search"] = t
+        events.append({"kind": "web_search", "ts": int(t * 1000)})
+    if t - _demo_state["fetch"] > 14:
+        _demo_state["fetch"] = t
+        events.append({"kind": "web_fetch", "ts": int(t * 1000)})
+    return _shape(util, mem, power, temp, load=util * 6, uptime_h=72.0,
+                  net_in=net_in, net_out=net_out, disk_read=disk_read, events=events)
 
 
-def _shape(util, mem, power, temp, load, uptime_h) -> dict:
+def _shape(util, mem, power, temp, load, uptime_h,
+           net_in=0.0, net_out=0.0, disk_read=0.0, events=None) -> dict:
     """Assemble the ServerBrain contract shape from raw host vitals."""
     util = max(0.0, min(1.0, util))
     mem = max(0.0, min(1.0, mem))
@@ -184,6 +310,11 @@ def _shape(util, mem, power, temp, load, uptime_h) -> dict:
         "llm": {"active": util > 0.5, "model": "", "tokensPerSec": 0, "queue": 0, "ctxUsed": 0},
         "api": {"reqPerSec": 0, "p95Ms": 0, "errorRate": 0, "inflight": 0},
         "db": {"qps": 0, "poolUsed": 0, "slowQueries": 0},
+        # net in -> blue rim aura, net out -> coral rim, disk read -> violet rim.
+        "net": {"inRate": round(net_in, 4), "outRate": round(net_out, 4)},
+        "disk": {"readRate": round(disk_read, 4)},
+        # web-tool calls -> reach-out tendrils (drained by the page each poll).
+        "events": events or [],
         "host": {"load_1m": round(load, 2), "uptime_h": uptime_h},
     }
 
@@ -192,6 +323,7 @@ def snapshot() -> dict:
     if DEMO:
         return _demo_snapshot()
     busy = gpu_busy_percent()
+    net_in, net_out, disk_read = net_disk_rates()
     return _shape(
         util=(busy or 0) / 100,
         mem=mem_used_fraction(),
@@ -199,6 +331,8 @@ def snapshot() -> dict:
         temp=gpu_temp_c() or 0,
         load=load_1m(),
         uptime_h=uptime_hours(),
+        net_in=net_in, net_out=net_out, disk_read=disk_read,
+        events=drain_events(),
     )
 
 

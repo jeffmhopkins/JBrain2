@@ -14,6 +14,10 @@ window.ServerBrain.update(stats: ServerStats): void
 window.ServerBrain.startSimulator(): void
 window.ServerBrain.stopSimulator(): void
 
+// External tool calls reaching IN from the web -> reach-out tendrils.
+window.ServerBrain.webSearch(): void     // cyan probe fan, one returns a result
+window.ServerBrain.webFetch(): void      // amber filament, sustained inward stream
+
 // Demo helpers the on-screen controls call (so reactivity is visible):
 window.ServerBrain.spikeGPU(): void     // force a GPU saturation burst
 window.ServerBrain.burstLLM(): void      // force an LLM inference burst
@@ -50,7 +54,18 @@ window.ServerBrain.injectError(): void   // force an API error blip
     qps:       0..300,        // queries/sec
     poolUsed:  0.0..1.0,      // connection pool saturation
     slowQueries: 0..20
-  }
+  },
+  net: {                      // box network throughput -> rim/edge aura
+    inRate:  0.0..1.0,        // ingress (download) -> BLUE rim
+    outRate: 0.0..1.0         // egress  (upload)   -> CORAL rim
+  },
+  disk: {
+    readRate: 0.0..1.0        // disk read throughput -> VIOLET rim
+  },
+  events: [                   // external tool calls since the last push; drained
+    { kind: 'web_search', ts: 1719772800000 },  // -> ServerBrain.webSearch()
+    { kind: 'web_fetch',  ts: 1719772800000 }   // -> ServerBrain.webFetch()
+  ]
 }
 ```
 
@@ -62,6 +77,11 @@ window.ServerBrain.injectError(): void   // force an API error blip
   ~ flow speed; an active model should feel "thinking."
 - **API + DB** are the I/O periphery: request rate = inbound pulses; DB qps =
   steady background throughput; errors flash a warning accent (rose `#CF8A8F`).
+- **net + disk** glow the outer-shell **rim aura** (subtle): net in = blue, net
+  out = coral, disk read = violet, intensity ~ throughput.
+- **web search / fetch** events draw **reach-out tendrils** from a peripheral
+  neuron out to a distant point, then a packet returns inward and seeds a cascade
+  (search = cyan fan of probes; fetch = single amber sustained inward stream).
 - **health** tints the global bloom: ok = cool/steel-green, warn = amber, crit = rose.
 - Correlated bursts are realistic: an LLM burst raises GPU util, temp, power.
 
