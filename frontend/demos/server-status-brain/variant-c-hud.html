@@ -1,0 +1,722 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>JBrain2 // Holographic HUD Brain</title>
+<!--
+  Variant C — "HOLOGRAPHIC HUD BRAIN"
+  Render tech: inline SVG (nodes + curved synapse paths) + CSS animations/filters.
+  Bloom = feGaussianBlur; synapse pulses = animated stroke-dashoffset.
+  JS only maps ServerStats -> CSS custom properties / SVG attributes. No libs, no CDN.
+-->
+<style>
+  :root {
+    /* JBrain2 palette */
+    --bg:      #0E0F11;
+    --surface: #17181B;
+    --steel:   #7FA7C9;
+    --green:   #8FBC9A;
+    --amber:   #C9A36A;
+    --rose:    #CF8A8F;
+    --teal:    #6FB6B1;
+    --violet:  #A493C9;
+    --text:    #E6E7E9;
+    --text-2:  #9A9DA3;
+
+    /* live signal vars (driven by JS) */
+    --accent:        var(--green);      /* health accent */
+    --accent-rgb:    143,188,154;
+    --gpu:           0.4;                /* 0..1 headline */
+    --gpu-glow:      0.4;
+    --pulse-dur:     1.6s;              /* synapse flow speed (llm tps) */
+    --core-scale:    1;
+    --bloom:         4;                  /* feGaussianBlur stdDeviation */
+    --grid-tint:     rgba(127,167,201,0.06);
+    --scan-op:       0.05;
+    --inference-op:  0;
+    --err-flash:     0;
+  }
+
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background:
+      radial-gradient(1200px 800px at 50% 30%, rgba(var(--accent-rgb), 0.07), transparent 60%),
+      radial-gradient(900px 600px at 50% 110%, rgba(127,167,201,0.05), transparent 70%),
+      var(--bg);
+    color: var(--text);
+    font-family: ui-monospace, "SFMono-Regular", "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+    overflow: hidden;
+    letter-spacing: 0.02em;
+  }
+
+  /* ---------- ambient grid + scanlines ---------- */
+  .fx-grid, .fx-scan {
+    position: fixed; inset: 0; pointer-events: none; z-index: 0;
+  }
+  .fx-grid {
+    background-image:
+      linear-gradient(var(--grid-tint) 1px, transparent 1px),
+      linear-gradient(90deg, var(--grid-tint) 1px, transparent 1px);
+    background-size: 44px 44px;
+    mask-image: radial-gradient(circle at 50% 45%, #000 30%, transparent 80%);
+    animation: gridDrift 28s linear infinite;
+  }
+  @keyframes gridDrift { to { background-position: 44px 44px, 44px 44px; } }
+  .fx-scan {
+    background: repeating-linear-gradient(
+      to bottom, rgba(255,255,255,var(--scan-op)) 0 1px, transparent 1px 3px);
+    mix-blend-mode: overlay;
+    animation: scanMove 8s linear infinite;
+    opacity: 0.7;
+  }
+  @keyframes scanMove { to { background-position: 0 3px; } }
+
+  /* ---------- layout ---------- */
+  .stage {
+    position: relative; z-index: 1;
+    height: 100vh; display: grid;
+    grid-template-columns: 300px 1fr 300px;
+    grid-template-rows: auto 1fr auto;
+    gap: 14px; padding: 16px;
+    perspective: 1400px;
+  }
+
+  .titlebar {
+    grid-column: 1 / -1; grid-row: 1;
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 4px 6px;
+  }
+  .titlebar .brand { display: flex; align-items: baseline; gap: 12px; }
+  .brand h1 {
+    font-size: 15px; margin: 0; font-weight: 600; letter-spacing: 0.18em;
+    color: var(--text);
+  }
+  .brand h1 .b2 { color: var(--accent); text-shadow: 0 0 14px rgba(var(--accent-rgb),0.7); }
+  .brand .sub { font-size: 10px; color: var(--text-2); letter-spacing: 0.28em; }
+  .titlebar .status {
+    display: flex; align-items: center; gap: 16px;
+    font-size: 10px; letter-spacing: 0.18em; color: var(--text-2);
+  }
+  .health-pill {
+    display: inline-flex; align-items: center; gap: 7px;
+    padding: 5px 11px; border-radius: 2px;
+    border: 1px solid rgba(var(--accent-rgb), 0.45);
+    background: rgba(var(--accent-rgb), 0.08);
+    color: var(--accent); font-weight: 600; letter-spacing: 0.2em;
+    box-shadow: 0 0 18px rgba(var(--accent-rgb), 0.18) inset;
+  }
+  .health-pill .dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: var(--accent); box-shadow: 0 0 10px var(--accent);
+    animation: blink 2.4s ease-in-out infinite;
+  }
+  @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.35} }
+
+  /* ---------- glass panels ---------- */
+  .panel {
+    position: relative;
+    background: linear-gradient(180deg, rgba(23,24,27,0.78), rgba(14,15,17,0.62));
+    border: 1px solid rgba(127,167,201,0.14);
+    border-radius: 6px;
+    backdrop-filter: blur(7px) saturate(120%);
+    -webkit-backdrop-filter: blur(7px) saturate(120%);
+    box-shadow: 0 12px 40px rgba(0,0,0,0.45), 0 0 0 1px rgba(255,255,255,0.02) inset;
+    padding: 14px 14px 12px;
+    overflow: hidden;
+  }
+  /* corner brackets */
+  .panel::before, .panel::after {
+    content: ""; position: absolute; width: 14px; height: 14px; pointer-events: none;
+    border-color: rgba(var(--accent-rgb), 0.55); border-style: solid; border-width: 0;
+  }
+  .panel::before { top: 6px; left: 6px; border-top-width: 1.5px; border-left-width: 1.5px; }
+  .panel::after  { bottom: 6px; right: 6px; border-bottom-width: 1.5px; border-right-width: 1.5px; }
+  .panel > .bracket-tr, .panel > .bracket-bl {
+    content: ""; position: absolute; width: 14px; height: 14px; pointer-events: none;
+    border-color: rgba(var(--accent-rgb), 0.35); border-style: solid; border-width: 0;
+  }
+  .panel > .bracket-tr { top: 6px; right: 6px; border-top-width: 1.5px; border-right-width: 1.5px; }
+  .panel > .bracket-bl { bottom: 6px; left: 6px; border-bottom-width: 1.5px; border-left-width: 1.5px; }
+
+  .panel h2 {
+    margin: 0 0 12px; font-size: 10px; letter-spacing: 0.26em;
+    color: var(--text-2); font-weight: 600; display: flex; justify-content: space-between;
+    text-transform: uppercase;
+  }
+  .panel h2 .tag { color: var(--accent); opacity: 0.8; }
+
+  .col-left  { grid-column: 1; grid-row: 2; display: flex; flex-direction: column; gap: 14px; }
+  .col-right { grid-column: 3; grid-row: 2; display: flex; flex-direction: column; gap: 14px; }
+  .col-center{ grid-column: 2; grid-row: 2; position: relative; display: flex; align-items: center; justify-content: center; }
+
+  /* ---------- readout rows ---------- */
+  .row { display: flex; align-items: center; justify-content: space-between; margin: 9px 0; font-size: 11px; }
+  .row .k { color: var(--text-2); letter-spacing: 0.14em; }
+  .row .v { color: var(--text); font-variant-numeric: tabular-nums; font-weight: 600; }
+  .row .v small { color: var(--text-2); font-weight: 400; font-size: 9px; margin-left: 3px; }
+
+  .bar { position: relative; height: 5px; border-radius: 3px; background: rgba(255,255,255,0.06); overflow: hidden; margin-top: 5px; }
+  .bar > i {
+    position: absolute; inset: 0 100% 0 0; display: block; border-radius: 3px;
+    background: linear-gradient(90deg, rgba(var(--accent-rgb),0.5), var(--accent));
+    box-shadow: 0 0 10px rgba(var(--accent-rgb), 0.6);
+    transition: right 0.5s cubic-bezier(.2,.8,.2,1);
+  }
+  .bar.c-steel  > i { background: linear-gradient(90deg, rgba(127,167,201,0.45), var(--steel)); box-shadow: 0 0 10px rgba(127,167,201,0.5); }
+  .bar.c-teal   > i { background: linear-gradient(90deg, rgba(111,182,177,0.45), var(--teal)); box-shadow: 0 0 10px rgba(111,182,177,0.5); }
+  .bar.c-violet > i { background: linear-gradient(90deg, rgba(164,147,201,0.45), var(--violet)); box-shadow: 0 0 10px rgba(164,147,201,0.5); }
+  .bar.c-amber  > i { background: linear-gradient(90deg, rgba(201,163,106,0.45), var(--amber)); box-shadow: 0 0 10px rgba(201,163,106,0.5); }
+
+  /* INFERENCE indicator */
+  .infer {
+    margin-top: 10px; display: flex; align-items: center; gap: 9px;
+    font-size: 10px; letter-spacing: 0.22em; color: var(--text-2);
+    border: 1px solid rgba(164,147,201,0.18); border-radius: 4px; padding: 7px 9px;
+    transition: all 0.3s ease;
+  }
+  .infer .led {
+    width: 9px; height: 9px; border-radius: 50%; background: rgba(255,255,255,0.12);
+    transition: all 0.3s ease;
+  }
+  .infer.on {
+    color: var(--violet); border-color: rgba(164,147,201,0.5);
+    background: rgba(164,147,201,0.08); box-shadow: 0 0 18px rgba(164,147,201,0.2) inset;
+  }
+  .infer.on .led {
+    background: var(--violet); box-shadow: 0 0 12px var(--violet);
+    animation: inferPulse 0.9s ease-in-out infinite;
+  }
+  @keyframes inferPulse { 0%,100%{opacity:1; transform:scale(1)} 50%{opacity:0.4; transform:scale(0.7)} }
+
+  /* GPU radial gauge (headline) */
+  .gauge-wrap { display: flex; align-items: center; gap: 14px; }
+  .gauge { position: relative; width: 96px; height: 96px; flex: 0 0 auto; }
+  .gauge svg { width: 100%; height: 100%; transform: rotate(-90deg); }
+  .gauge .ring-bg { stroke: rgba(255,255,255,0.07); }
+  .gauge .ring-fg {
+    stroke: var(--accent); stroke-linecap: round;
+    filter: drop-shadow(0 0 6px rgba(var(--accent-rgb), 0.8));
+    transition: stroke-dashoffset 0.5s cubic-bezier(.2,.8,.2,1), stroke 0.6s;
+  }
+  .gauge .center {
+    position: absolute; inset: 0; display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+  }
+  .gauge .center b { font-size: 22px; line-height: 1; color: var(--text); font-variant-numeric: tabular-nums; }
+  .gauge .center span { font-size: 8px; letter-spacing: 0.24em; color: var(--text-2); margin-top: 3px; }
+  .gauge-meta { flex: 1; }
+
+  /* ---------- center brain ---------- */
+  #brainSvg { width: min(620px, 100%); height: auto; display: block;
+    transform: rotateX(8deg) rotateZ(0.5deg);
+    filter: drop-shadow(0 30px 60px rgba(0,0,0,0.6));
+  }
+  .core-halo {
+    position: absolute; left: 50%; top: 50%;
+    width: 360px; height: 360px; transform: translate(-50%,-50%) scale(var(--core-scale));
+    border-radius: 50%;
+    background: radial-gradient(circle, rgba(var(--accent-rgb), calc(0.28 * var(--gpu-glow))), transparent 62%);
+    filter: blur(18px); pointer-events: none;
+    transition: transform 0.6s ease;
+  }
+  .center-readout {
+    position: absolute; bottom: 4px; left: 50%; transform: translateX(-50%);
+    text-align: center; font-size: 9px; letter-spacing: 0.3em; color: var(--text-2);
+  }
+  .center-readout b { color: var(--accent); }
+
+  /* ---------- bottom: controls + legend ---------- */
+  .footer { grid-column: 1 / -1; grid-row: 3; display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+  .controls { display: flex; gap: 8px; flex-wrap: wrap; }
+  .btn {
+    font-family: inherit; font-size: 10px; letter-spacing: 0.16em;
+    color: var(--text); background: rgba(127,167,201,0.07);
+    border: 1px solid rgba(127,167,201,0.22); border-radius: 4px;
+    padding: 8px 13px; cursor: pointer; text-transform: uppercase;
+    transition: all 0.18s ease; backdrop-filter: blur(4px);
+  }
+  .btn:hover { border-color: rgba(var(--accent-rgb),0.6); background: rgba(var(--accent-rgb),0.12); box-shadow: 0 0 16px rgba(var(--accent-rgb),0.18); }
+  .btn:active { transform: translateY(1px); }
+  .btn.warn { border-color: rgba(207,138,143,0.35); color: var(--rose); }
+  .btn.warn:hover { background: rgba(207,138,143,0.14); box-shadow: 0 0 16px rgba(207,138,143,0.2); }
+
+  .legend { display: flex; gap: 18px; flex-wrap: wrap; font-size: 9px; color: var(--text-2); letter-spacing: 0.1em; }
+  .legend .item { display: flex; align-items: center; gap: 6px; }
+  .legend .swatch { width: 18px; height: 8px; border-radius: 2px; }
+  .legend .sw-gpu    { background: linear-gradient(90deg,transparent,var(--green)); box-shadow:0 0 8px var(--green); }
+  .legend .sw-syn    { background: linear-gradient(90deg,transparent,var(--violet)); box-shadow:0 0 8px var(--violet); }
+  .legend .sw-io     { background: linear-gradient(90deg,transparent,var(--steel)); box-shadow:0 0 8px var(--steel); }
+  .legend .sw-db     { background: linear-gradient(90deg,transparent,var(--teal)); box-shadow:0 0 8px var(--teal); }
+  .legend .sw-err    { background: var(--rose); box-shadow:0 0 8px var(--rose); }
+
+  /* error warning bracket flash on I/O panel */
+  .panel.io.err {
+    border-color: rgba(207,138,143, calc(0.25 + 0.6*var(--err-flash)));
+    box-shadow: 0 0 calc(8px + 30px*var(--err-flash)) rgba(207,138,143, calc(0.3*var(--err-flash))),
+                0 12px 40px rgba(0,0,0,0.45);
+  }
+  .err-badge {
+    position: absolute; top: 10px; right: 30px; font-size: 9px; letter-spacing: 0.2em;
+    color: var(--rose); opacity: var(--err-flash); transition: opacity 0.3s;
+    text-shadow: 0 0 10px var(--rose);
+  }
+
+  /* synapse + node animation tied to vars */
+  .synapse {
+    stroke-dasharray: 6 14;
+    animation: flow var(--pulse-dur) linear infinite;
+  }
+  @keyframes flow { to { stroke-dashoffset: -200; } }
+  .node-core { animation: corePulse calc(var(--pulse-dur) * 1.4) ease-in-out infinite; }
+  @keyframes corePulse { 0%,100%{ r: 9; } 50%{ r: 13; } }
+  .node { transition: opacity 0.5s, fill 0.6s; }
+
+  @media (prefers-reduced-motion: reduce) {
+    .synapse { animation-duration: 6s; }
+    .fx-grid, .fx-scan { animation: none; }
+    .node-core { animation: none; }
+    .infer.on .led { animation: none; }
+    .health-pill .dot { animation: none; }
+  }
+  body.hidden-tab * { animation-play-state: paused !important; }
+</style>
+</head>
+<body>
+  <div class="fx-grid"></div>
+  <div class="fx-scan"></div>
+
+  <div class="stage">
+    <!-- TITLE -->
+    <header class="titlebar">
+      <div class="brand">
+        <h1>JBRAIN<span class="b2">2</span></h1>
+        <span class="sub">NEURAL DIAGNOSTIC CONSOLE // HUD</span>
+      </div>
+      <div class="status">
+        <span id="clock">--:--:--</span>
+        <span id="modelTag">MODEL —</span>
+        <span class="health-pill"><span class="dot"></span><span id="healthLabel">OK</span></span>
+      </div>
+    </header>
+
+    <!-- LEFT: GPU + LLM -->
+    <div class="col-left">
+      <section class="panel" id="gpuPanel">
+        <span class="bracket-tr"></span><span class="bracket-bl"></span>
+        <h2>GPU CORE <span class="tag">HEADLINE</span></h2>
+        <div class="gauge-wrap">
+          <div class="gauge">
+            <svg viewBox="0 0 100 100">
+              <circle class="ring-bg" cx="50" cy="50" r="42" fill="none" stroke-width="7"/>
+              <circle id="gpuRing" class="ring-fg" cx="50" cy="50" r="42" fill="none" stroke-width="7"
+                      stroke-dasharray="263.9" stroke-dashoffset="158"/>
+            </svg>
+            <div class="center"><b id="gpuUtil">40</b><span>% UTIL</span></div>
+          </div>
+          <div class="gauge-meta">
+            <div class="row"><span class="k">VRAM</span><span class="v" id="vramV">0%</span></div>
+            <div class="bar c-steel"><i id="vramBar"></i></div>
+            <div class="row"><span class="k">TEMP</span><span class="v" id="tempV">0<small>°C</small></span></div>
+            <div class="row"><span class="k">POWER</span><span class="v" id="powerV">0<small>W</small></span></div>
+            <div class="bar c-amber"><i id="powerBar"></i></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel" id="llmPanel">
+        <span class="bracket-tr"></span><span class="bracket-bl"></span>
+        <h2>LLM INFERENCE <span class="tag" id="llmModel">—</span></h2>
+        <div class="row"><span class="k">TOKENS / SEC</span><span class="v" id="tpsV">0</span></div>
+        <div class="bar c-violet"><i id="tpsBar"></i></div>
+        <div class="row"><span class="k">QUEUE</span><span class="v" id="queueV">0<small>req</small></span></div>
+        <div class="bar c-amber"><i id="queueBar"></i></div>
+        <div class="row"><span class="k">CTX USED</span><span class="v" id="ctxV">0%</span></div>
+        <div class="bar c-violet"><i id="ctxBar"></i></div>
+        <div class="infer" id="inferBox"><span class="led"></span><span id="inferLabel">IDLE</span></div>
+      </section>
+    </div>
+
+    <!-- CENTER: BRAIN -->
+    <div class="col-center">
+      <div class="core-halo"></div>
+      <svg id="brainSvg" viewBox="0 0 600 460" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+          <filter id="bloom" x="-50%" y="-50%" width="200%" height="200%">
+            <feGaussianBlur id="bloomBlur" stdDeviation="4" result="b"/>
+            <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+          </filter>
+          <radialGradient id="nodeGrad" cx="50%" cy="50%" r="50%">
+            <stop offset="0%" stop-color="var(--accent)" stop-opacity="1"/>
+            <stop offset="100%" stop-color="var(--accent)" stop-opacity="0.2"/>
+          </radialGradient>
+          <linearGradient id="synGrad" x1="0" y1="0" x2="1" y2="0">
+            <stop offset="0%" stop-color="var(--accent)" stop-opacity="0.15"/>
+            <stop offset="50%" stop-color="var(--violet)" stop-opacity="0.85"/>
+            <stop offset="100%" stop-color="var(--accent)" stop-opacity="0.15"/>
+          </linearGradient>
+        </defs>
+
+        <!-- synapse paths + nodes injected here -->
+        <g id="synLayer" filter="url(#bloom)" stroke="url(#synGrad)" fill="none" stroke-width="1.4"></g>
+        <g id="nodeLayer" filter="url(#bloom)"></g>
+      </svg>
+      <div class="center-readout">CORTEX FLUX <b id="fluxV">— Hz</b> · <span id="nodeCountV">0</span> NODES ONLINE</div>
+    </div>
+
+    <!-- RIGHT: API + DB -->
+    <div class="col-right">
+      <section class="panel io" id="ioPanel">
+        <span class="bracket-tr"></span><span class="bracket-bl"></span>
+        <span class="err-badge">⚠ API ERROR</span>
+        <h2>API I/O <span class="tag">EDGE</span></h2>
+        <div class="row"><span class="k">REQ / SEC</span><span class="v" id="reqV">0</span></div>
+        <div class="bar c-steel"><i id="reqBar"></i></div>
+        <div class="row"><span class="k">P95 LATENCY</span><span class="v" id="p95V">0<small>ms</small></span></div>
+        <div class="bar c-amber"><i id="p95Bar"></i></div>
+        <div class="row"><span class="k">ERROR RATE</span><span class="v" id="errV">0%</span></div>
+        <div class="bar"><i id="errBar" style="background:var(--rose);box-shadow:0 0 10px var(--rose)"></i></div>
+        <div class="row"><span class="k">INFLIGHT</span><span class="v" id="inflightV">0</span></div>
+      </section>
+
+      <section class="panel" id="dbPanel">
+        <span class="bracket-tr"></span><span class="bracket-bl"></span>
+        <h2>DB THROUGHPUT <span class="tag">CORE</span></h2>
+        <div class="row"><span class="k">QUERIES / SEC</span><span class="v" id="qpsV">0</span></div>
+        <div class="bar c-teal"><i id="qpsBar"></i></div>
+        <div class="row"><span class="k">POOL USED</span><span class="v" id="poolV">0%</span></div>
+        <div class="bar c-teal"><i id="poolBar"></i></div>
+        <div class="row"><span class="k">SLOW QUERIES</span><span class="v" id="slowV">0</span></div>
+      </section>
+    </div>
+
+    <!-- FOOTER -->
+    <footer class="footer">
+      <div class="controls">
+        <button class="btn" id="btnPause">⏸ PAUSE SIM</button>
+        <button class="btn" id="btnGpu">⚡ SPIKE GPU</button>
+        <button class="btn" id="btnLlm">🧠 BURST LLM</button>
+        <button class="btn warn" id="btnErr">⚠ INJECT ERROR</button>
+      </div>
+      <div class="legend">
+        <div class="item"><span class="swatch sw-gpu"></span>GPU → CORE GLOW + GAUGE</div>
+        <div class="item"><span class="swatch sw-syn"></span>LLM TPS → SYNAPSE FLOW</div>
+        <div class="item"><span class="swatch sw-io"></span>API → EDGE PULSES</div>
+        <div class="item"><span class="swatch sw-db"></span>DB → THROUGHPUT</div>
+        <div class="item"><span class="swatch sw-err"></span>ERROR FLASH</div>
+      </div>
+    </footer>
+  </div>
+
+<script>
+(() => {
+  "use strict";
+  const $ = id => document.getElementById(id);
+  const root = document.documentElement.style;
+  const clamp = (v,a=0,b=1) => Math.max(a, Math.min(b, v));
+  const lerp = (a,b,t) => a + (b-a)*t;
+
+  /* ---------------- build the brain glyph (symmetric SVG network) ---------------- */
+  // Layout: layered, mirror-symmetric node field shaped like a brain hemisphere pair.
+  const synLayer = $("synLayer"), nodeLayer = $("nodeLayer");
+  const NS = "http://www.w3.org/2000/svg";
+  const CX = 300, CY = 220;
+
+  // Generate nodes in concentric rings, mirrored for symmetry.
+  const nodes = [];
+  const rings = [
+    { r: 0,   n: 1,  core: true },
+    { r: 52,  n: 6 },
+    { r: 100, n: 10 },
+    { r: 150, n: 14 },
+    { r: 196, n: 16 },
+  ];
+  rings.forEach((ring, ri) => {
+    for (let i = 0; i < ring.n; i++) {
+      const a = ring.n === 1 ? 0 : (i / ring.n) * Math.PI * 2 - Math.PI/2;
+      // squash vertically a touch for a brain-ish silhouette
+      const x = CX + Math.cos(a) * ring.r * 1.18;
+      const y = CY + Math.sin(a) * ring.r * 0.86;
+      nodes.push({ x, y, ring: ri, core: !!ring.core, base: Math.random()*0.4+0.4 });
+    }
+  });
+
+  // Connect: each node to a couple in adjacent inner ring -> organic synapses.
+  const synapses = [];
+  nodes.forEach((n, i) => {
+    if (n.ring === 0) return;
+    const inner = nodes.filter(m => m.ring === n.ring - 1);
+    inner.sort((a,b) => dist(a,n) - dist(b,n));
+    const links = n.ring <= 2 ? 2 : 1;
+    for (let k = 0; k < links && k < inner.length; k++) {
+      synapses.push({ a: n, b: inner[k] });
+    }
+    // a few same-ring lateral links
+    if (Math.random() < 0.35) {
+      const same = nodes.filter(m => m.ring === n.ring && m !== n);
+      same.sort((a,b)=>dist(a,n)-dist(b,n));
+      if (same[0]) synapses.push({ a: n, b: same[0], lateral:true });
+    }
+  });
+  function dist(a,b){ return Math.hypot(a.x-b.x, a.y-b.y); }
+
+  // Render synapses as quadratic curves.
+  synapses.forEach(s => {
+    const mx = (s.a.x + s.b.x)/2, my = (s.a.y + s.b.y)/2;
+    // bow the curve outward from center
+    const dx = mx - CX, dy = my - CY;
+    const cx = mx + dx*0.18, cy = my + dy*0.18;
+    const p = document.createElementNS(NS, "path");
+    p.setAttribute("d", `M${s.a.x.toFixed(1)} ${s.a.y.toFixed(1)} Q${cx.toFixed(1)} ${cy.toFixed(1)} ${s.b.x.toFixed(1)} ${s.b.y.toFixed(1)}`);
+    p.setAttribute("class", "synapse");
+    p.style.animationDelay = (-Math.random()*2) + "s";
+    p.style.opacity = s.lateral ? 0.4 : 0.75;
+    synLayer.appendChild(p);
+    s.el = p;
+  });
+
+  // Render nodes.
+  nodes.forEach(n => {
+    const c = document.createElementNS(NS, "circle");
+    c.setAttribute("cx", n.x.toFixed(1));
+    c.setAttribute("cy", n.y.toFixed(1));
+    c.setAttribute("fill", "url(#nodeGrad)");
+    if (n.core) {
+      c.setAttribute("r", 9);
+      c.setAttribute("class", "node node-core");
+    } else {
+      c.setAttribute("r", (3.2 - n.ring*0.25).toFixed(1));
+      c.setAttribute("class", "node");
+      c.style.opacity = n.base;
+    }
+    nodeLayer.appendChild(c);
+    n.el = c;
+  });
+  $("nodeCountV").textContent = nodes.length;
+
+  /* ---------------- health accents ---------------- */
+  const ACCENTS = {
+    ok:   { var: "--green", rgb: "143,188,154" },
+    warn: { var: "--amber", rgb: "201,163,106" },
+    crit: { var: "--rose",  rgb: "207,138,143" },
+  };
+
+  /* ---------------- GPU gauge geometry ---------------- */
+  const RING_LEN = 2 * Math.PI * 42; // 263.9
+  $("gpuRing").setAttribute("stroke-dasharray", RING_LEN.toFixed(1));
+
+  /* ---------------- apply a stats snapshot to the HUD ---------------- */
+  let cur = null;       // smoothed display state
+  let errFlash = 0;     // decays over time
+
+  function setBar(id, frac){ $(id).style.right = (100 - clamp(frac)*100).toFixed(1) + "%"; }
+
+  function render(s) {
+    // ---- health accent ----
+    const acc = ACCENTS[s.health] || ACCENTS.ok;
+    root.setProperty("--accent", `var(${acc.var})`);
+    root.setProperty("--accent-rgb", acc.rgb);
+    $("healthLabel").textContent = s.health.toUpperCase();
+
+    // ---- GPU (headline) ----
+    const util = clamp(s.gpu.util);
+    $("gpuUtil").textContent = Math.round(util*100);
+    $("gpuRing").setAttribute("stroke-dashoffset", (RING_LEN * (1 - util)).toFixed(1));
+    setBar("vramBar", s.gpu.vram);   $("vramV").textContent = Math.round(s.gpu.vram*100) + "%";
+    $("tempV").innerHTML = Math.round(s.gpu.tempC) + "<small>°C</small>";
+    $("powerV").innerHTML = Math.round(s.gpu.powerW) + "<small>W</small>";
+    setBar("powerBar", s.gpu.powerW / (s.gpu.powerMaxW||600));
+
+    // GPU drives bloom + core glow + node firing.
+    root.setProperty("--gpu", util.toFixed(3));
+    root.setProperty("--gpu-glow", (0.35 + util*0.9).toFixed(3));
+    root.setProperty("--core-scale", (0.85 + util*0.5).toFixed(3));
+    $("bloomBlur").setAttribute("stdDeviation", (2.5 + util*5.5).toFixed(2));
+    // node firing rate: brighten outer nodes proportional to util
+    nodes.forEach(n => {
+      if (n.core) return;
+      const fire = clamp(n.base * (0.5 + util)) ;
+      n.el.style.opacity = (0.18 + fire*0.82).toFixed(2);
+    });
+
+    // ---- LLM ----
+    $("llmModel").textContent = s.llm.model || "—";
+    $("modelTag").textContent = "MODEL " + (s.llm.model || "—").toUpperCase();
+    $("tpsV").textContent = Math.round(s.llm.tokensPerSec);
+    setBar("tpsBar", s.llm.tokensPerSec/120);
+    $("queueV").innerHTML = Math.round(s.llm.queue) + "<small>req</small>";
+    setBar("queueBar", s.llm.queue/32);
+    $("ctxV").textContent = Math.round(s.llm.ctxUsed*100) + "%";
+    setBar("ctxBar", s.llm.ctxUsed);
+    // tokens/sec -> synapse flow speed (faster flow = shorter duration)
+    const tps = clamp(s.llm.tokensPerSec/120);
+    const dur = lerp(3.2, 0.45, tps);
+    root.setProperty("--pulse-dur", dur.toFixed(2) + "s");
+    $("fluxV").textContent = (s.llm.tokensPerSec*0.8 + s.api.reqPerSec*1.2).toFixed(0) + " Hz";
+    const inferBox = $("inferBox");
+    inferBox.classList.toggle("on", !!s.llm.active);
+    $("inferLabel").textContent = s.llm.active ? "INFERENCE ACTIVE" : "IDLE";
+
+    // ---- API I/O ----
+    $("reqV").textContent = s.api.reqPerSec.toFixed(1);
+    setBar("reqBar", s.api.reqPerSec/50);
+    $("p95V").innerHTML = Math.round(s.api.p95Ms) + "<small>ms</small>";
+    setBar("p95Bar", clamp(s.api.p95Ms/1000));
+    $("errV").textContent = (s.api.errorRate*100).toFixed(1) + "%";
+    setBar("errBar", clamp(s.api.errorRate*6));
+    $("inflightV").textContent = Math.round(s.api.inflight);
+
+    // ---- DB ----
+    $("qpsV").textContent = Math.round(s.db.qps);
+    setBar("qpsBar", s.db.qps/300);
+    $("poolV").textContent = Math.round(s.db.poolUsed*100) + "%";
+    setBar("poolBar", s.db.poolUsed);
+    $("slowV").textContent = Math.round(s.db.slowQueries);
+  }
+
+  /* ---------------- error flash loop (decays) ---------------- */
+  function tickFlash(){
+    errFlash *= 0.92;
+    if (cur) {
+      const base = clamp((cur.api.errorRate-0.02)*4);
+      const f = clamp(Math.max(errFlash, base));
+      root.setProperty("--err-flash", f.toFixed(3));
+      $("ioPanel").classList.toggle("err", f > 0.05);
+    }
+    requestAnimationFrame(tickFlash);
+  }
+  requestAnimationFrame(tickFlash);
+
+  /* ---------------- clock ---------------- */
+  setInterval(() => {
+    $("clock").textContent = new Date().toLocaleTimeString('en-GB');
+  }, 1000);
+
+  /* ===========================================================
+     SIMULATOR — wandering data + correlated bursts
+     =========================================================== */
+  let simTimer = null;
+  let simOn = false;
+
+  // base wandering state (fractions / values), nudged each tick
+  const st = {
+    health: 'ok',
+    gpuUtil: 0.42, vram: 0.55, temp: 52, power: 220,
+    active: true, tps: 60, queue: 3, ctx: 0.4,
+    req: 12, p95: 90, err: 0.004, inflight: 6,
+    qps: 80, pool: 0.35, slow: 0,
+  };
+  // transient burst envelopes (0..1, decay)
+  const burst = { gpu: 0, llm: 0 };
+  let errBurst = 0;
+
+  function wander(v, lo, hi, step){
+    v += (Math.random()-0.5)*step;
+    // gentle mean-reversion toward midpoint
+    v += ((lo+hi)/2 - v) * 0.02;
+    return clamp(v, lo, hi);
+  }
+
+  function simTick(){
+    // decay bursts
+    burst.gpu *= 0.90;
+    burst.llm *= 0.93;
+
+    // wander baselines
+    st.gpuUtil = wander(st.gpuUtil, 0.18, 0.7, 0.06);
+    st.vram    = wander(st.vram, 0.4, 0.85, 0.03);
+    st.tps     = wander(st.tps, 20, 80, 8);
+    st.queue   = wander(st.queue, 0, 8, 1.2);
+    st.ctx     = wander(st.ctx, 0.25, 0.7, 0.04);
+    st.req     = wander(st.req, 4, 26, 3);
+    st.p95     = wander(st.p95, 40, 260, 30);
+    st.err     = wander(st.err, 0.001, 0.02, 0.006);
+    st.inflight= wander(st.inflight, 2, 18, 2.5);
+    st.qps     = wander(st.qps, 40, 160, 18);
+    st.pool    = wander(st.pool, 0.2, 0.6, 0.04);
+    st.slow    = Math.random() < 0.1 ? Math.round(Math.random()*3) : Math.max(0, st.slow-1);
+
+    // CORRELATED: LLM burst raises GPU util/temp/power + tps + queue + ctx
+    const llmB = burst.llm, gpuB = burst.gpu;
+    const utilEff  = clamp(st.gpuUtil + llmB*0.45 + gpuB*0.55);
+    const tpsEff   = clamp(st.tps + llmB*55, 0, 120);
+    const queueEff = clamp(st.queue + llmB*18, 0, 32);
+    const ctxEff   = clamp(st.ctx + llmB*0.3);
+    const tempEff  = clamp(st.temp + (utilEff-0.4)*60, 30, 95);
+    // drift temp toward util-driven target
+    st.temp += (tempEff - st.temp) * 0.15;
+    const powerEff = clamp(60 + utilEff*520 + llmB*60, 0, 600);
+    const activeEff = st.active && (llmB > 0.05 || st.tps > 25 || Math.random() < 0.9);
+
+    // health from saturation / errors
+    let health = 'ok';
+    if (utilEff > 0.9 || tempEff > 88) health = 'warn';
+    if (utilEff > 0.96 || tempEff > 92) health = 'crit';
+    if (errBurst > 0.4) health = 'crit';
+    else if (errBurst > 0.12) health = 'warn';
+
+    const p95Eff = clamp(st.p95 + errBurst*900, 5, 2000);
+    const errRateEff = clamp(st.err + errBurst*0.5, 0, 1);
+    const reqEff = clamp(st.req + gpuB*4, 0, 50);
+
+    errBurst *= 0.88;
+
+    const snap = {
+      ts: Date.now(),
+      health,
+      gpu: { util: utilEff, vram: st.vram, tempC: st.temp, powerW: powerEff, powerMaxW: 600 },
+      llm: { active: activeEff, model: 'qwen3-30b', tokensPerSec: tpsEff, queue: queueEff, ctxUsed: ctxEff },
+      api: { reqPerSec: reqEff, p95Ms: p95Eff, errorRate: errRateEff, inflight: st.inflight },
+      db:  { qps: clamp(st.qps + reqEff*1.5, 0, 300), poolUsed: st.pool, slowQueries: st.slow },
+    };
+    cur = snap;
+    render(snap);
+  }
+
+  /* ===========================================================
+     PUBLIC API  (window.ServerBrain)
+     =========================================================== */
+  const API = {
+    update(stats){
+      // normalize/guard then render directly (external source path)
+      cur = stats; render(stats);
+    },
+    startSimulator(){
+      if (simOn) return;
+      simOn = true;
+      simTick();
+      simTimer = setInterval(simTick, 700);
+      $("btnPause").textContent = "⏸ PAUSE SIM";
+    },
+    stopSimulator(){
+      simOn = false;
+      if (simTimer) clearInterval(simTimer);
+      simTimer = null;
+      $("btnPause").textContent = "▶ RESUME SIM";
+    },
+    spikeGPU(){ burst.gpu = 1; if (!simOn) simTick(); },
+    burstLLM(){ burst.llm = 1; st.active = true; if (!simOn) simTick(); },
+    injectError(){ errBurst = 1; errFlash = 1; if (!simOn) simTick(); },
+  };
+  window.ServerBrain = API;
+
+  /* ---------------- wire controls ---------------- */
+  $("btnPause").addEventListener("click", () => simOn ? API.stopSimulator() : API.startSimulator());
+  $("btnGpu").addEventListener("click", API.spikeGPU);
+  $("btnLlm").addEventListener("click", API.burstLLM);
+  $("btnErr").addEventListener("click", API.injectError);
+
+  /* ---------------- pause animations when tab hidden ---------------- */
+  document.addEventListener("visibilitychange", () => {
+    document.body.classList.toggle("hidden-tab", document.hidden);
+    if (document.hidden) { if (simTimer){clearInterval(simTimer); simTimer=null;} }
+    else if (simOn && !simTimer) { simTimer = setInterval(simTick, 700); }
+  });
+
+  // boot
+  API.startSimulator();
+})();
+</script>
+</body>
+</html>
