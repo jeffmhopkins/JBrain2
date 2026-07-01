@@ -151,7 +151,10 @@ def test_digest_response_is_coordinate_free(
 ) -> None:
     login(client, repo)
     devices.subs = ["sub-1"]
-    locs.place_rows = [PlaceGeofence("e-home", "Home", True, (40.0, -74.0), 100.0, None)]
+    # Distinctive high-precision coordinates (like the presence coordinate-free
+    # test): a round value such as 40.0 collides with timestamp seconds (":40.0…")
+    # and would false-positive the substring check below.
+    locs.place_rows = [PlaceGeofence("e-home", "Home", True, (40.123456, -74.654321), 100.0, None)]
     now = datetime.now(UTC)
     locs.dwell_rows = [
         _dwell("Office", now - timedelta(hours=20), now - timedelta(hours=12)),
@@ -161,7 +164,7 @@ def test_digest_response_is_coordinate_free(
     # The serialized payload exposes no coordinate field and no fence coordinate value.
     blob = client.get("/api/locations/digest").text
     assert "latitude" not in blob and "longitude" not in blob
-    assert "40.0" not in blob and "-74.0" not in blob
+    assert "40.123456" not in blob and "-74.654321" not in blob
     assert body["places_visited"] == 1  # Office; Home is not a visit
 
 
