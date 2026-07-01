@@ -14,7 +14,7 @@ import { BookIcon, CheckIcon, ChevronRightIcon, PlusIcon } from "../components/i
 import type { SyncStatus } from "../notes/useNotes";
 import { talkTime } from "./wiki/talkTime";
 
-const SWIPE_DOWN_PX = 56;
+const SWIPE_DOWN_PX = 112;
 
 type TalkState = { phase: "loading" } | { phase: "error" } | { phase: "done"; board: WikiTalkOut };
 

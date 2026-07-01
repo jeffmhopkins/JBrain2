@@ -91,7 +91,7 @@ function BodyParagraphs({ body }: { body: string }) {
   );
 }
 
-const SWIPE_DOWN_PX = 56;
+const SWIPE_DOWN_PX = 112;
 
 /** Pipeline status, derived client-side: PDFs/text are searchable once the
  * note is indexed; images become searchable once the async OCR job has
