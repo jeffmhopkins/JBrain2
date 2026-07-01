@@ -16,7 +16,7 @@ import { TopBar } from "../components/TopBar";
 import { DOMAIN_COLOR } from "../notes/modes";
 import type { SyncStatus } from "../notes/useNotes";
 
-const SWIPE_DOWN_PX = 56;
+const SWIPE_DOWN_PX = 112;
 
 type State = { phase: "loading" } | { phase: "error" } | { phase: "done" };
 

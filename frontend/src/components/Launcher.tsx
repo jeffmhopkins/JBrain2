@@ -96,7 +96,7 @@ const SECTIONS: Section[] = [
   },
 ];
 
-const SWIPE_DOWN_PX = 48;
+const SWIPE_DOWN_PX = 96;
 const EXIT_MS = 150;
 
 // The Image tile is configuration-gated, mirroring the provider-hidden-when-unkeyed

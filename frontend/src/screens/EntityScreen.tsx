@@ -17,7 +17,7 @@ import { DOMAIN_COLOR, DOMAIN_TITLE } from "../notes/modes";
 import type { SyncStatus } from "../notes/useNotes";
 import { EntityHistorySheet } from "./EntityHistorySheet";
 
-const SWIPE_DOWN_PX = 56;
+const SWIPE_DOWN_PX = 112;
 
 type EntityState = { phase: "loading" } | { phase: "error" } | { phase: "done"; entity: EntityOut };
 

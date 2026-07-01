@@ -142,7 +142,7 @@ function reducedMotion(): boolean {
   );
 }
 
-const SWIPE_DOWN_PX = 56;
+const SWIPE_DOWN_PX = 112;
 
 export function ImageScreen({ onClose }: { onClose: () => void }): ReactNode {
   const [tab, setTab] = useState<"generate" | "edit">("generate");

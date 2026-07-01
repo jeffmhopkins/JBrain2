@@ -23,7 +23,7 @@ import { ReferencesList, refDomId } from "./wiki/ReferencesList";
 import { withCitations } from "./wiki/citations";
 import { wikiDomainColor } from "./wiki/domain";
 
-const SWIPE_DOWN_PX = 56;
+const SWIPE_DOWN_PX = 112;
 // How long a jumped-to reference stays flashed (mirrors the mock's 2.2s).
 const HIGHLIGHT_MS = 2200;
 

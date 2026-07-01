@@ -5,7 +5,7 @@
 
 import { type ReactNode, type TouchEvent, useEffect, useRef } from "react";
 
-const SWIPE_DOWN_PX = 48;
+const SWIPE_DOWN_PX = 96;
 
 interface SheetProps {
   title: string;
