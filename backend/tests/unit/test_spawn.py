@@ -8,16 +8,32 @@ import pytest
 
 from jbrain.agent import spawn as spawn_mod
 from jbrain.agent.agents import AGENTS, JERV_TOOLS
+from jbrain.agent.briefs import FEED_OPEN
 from jbrain.agent.loop import AgentResult, ToolContext
 from jbrain.agent.spawn import SpawnService, effective_child_tools
 from jbrain.agent.tree import (
     MAX_CHILDREN_PER_PARENT,
     MAX_DEPTH,
     MAX_PARALLEL,
+    MAX_WAVES,
     TreeState,
     child_steps_for,
 )
 from jbrain.db.session import SessionContext
+
+
+def _review_brief(artifact: str = "the material") -> dict:
+    """A minimal template-bound review brief — what a fed consumer must supply."""
+    return {
+        "template_id": "review",
+        "params": {"artifact": artifact, "standard": "accuracy", "deliverable": "a table"},
+    }
+
+
+def _brief_text(call: dict) -> str:
+    """The brief a recorded child run was launched with (2nd conversation message)."""
+    return call["conversation"][1].text
+
 
 # --- the clamp, as a pure function (parent⊆child) --------------------------
 
@@ -896,3 +912,402 @@ async def test_cancelled_child_runlog_settles_inline_not_detached(
     # The child's cancelled run-log close completed INLINE (awaited by the fan), not
     # abandoned mid-yield — so the row settles 'cancelled' instead of stranding 'running'.
     assert any(f["stop_reason"] == "cancelled" for f in runlog.finished)
+
+
+# --- feeding waves: the staged pipeline (docs/SUBAGENT_FEEDING_WAVES_PLAN.md) ---
+
+
+async def test_waves_feed_producer_summary_into_consumer(service: SpawnService) -> None:
+    """A wave-2 consumer's brief carries the wave-1 producer's summary, wrapped in the
+    data boundary — and the producer, being un-fed, does not."""
+    out = await service.spawn_fan(
+        _ctx(),
+        {
+            "waves": [
+                [{"persona": "research", "brief": "fetch the commit history", "label": "prod"}],
+                [
+                    {
+                        "persona": "review",
+                        "label": "cons",
+                        "feed": ["prod"],
+                        "brief": _review_brief(),
+                    }
+                ],
+            ]
+        },
+    )
+    assert len(_FakeLoop.calls) == 2  # producer, then consumer (barrier between waves)
+    prod_brief, cons_brief = _brief_text(_FakeLoop.calls[0]), _brief_text(_FakeLoop.calls[1])
+    assert FEED_OPEN not in prod_brief  # producer is un-fed
+    assert FEED_OPEN in cons_brief  # consumer got the boundary-wrapped feed …
+    assert "summary for sess-1" in cons_brief  # … containing the producer's summary
+    assert "2 ran" in out
+    # The synthesis view groups by wave and carries the feed edge for F3's surface.
+    children = {c["label"]: c for c in out.view.data["children"]}  # type: ignore[attr-defined]
+    assert children["prod"]["wave"] == 0 and children["prod"]["fed_from"] == []
+    assert children["cons"]["wave"] == 1 and children["cons"]["fed_from"] == ["prod"]
+
+
+async def test_waves_skip_consumer_when_producer_fails(
+    service: SpawnService, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Fail-closed cascade: a producer that returns no usable answer (ok=False) leaves
+    its consumer SKIPPED — never run over an empty/error block — surfaced distinctly."""
+
+    class _EmptyProducer(_FakeLoop):
+        async def run(self, **kw):  # noqa: ANN003
+            _FakeLoop.calls.append(kw)
+            # The producer's free-text brief mentions "fetch"; it returns empty (a
+            # failure). The consumer, if it ran, would have a template brief instead.
+            text = "" if "fetch" in kw["conversation"][1].text else "review done"
+            return AgentResult(text=text, stop_reason="end_turn", steps=1, cost_tokens=10)
+
+    monkeypatch.setattr(spawn_mod, "AgentLoop", _EmptyProducer)
+    out = await service.spawn_fan(
+        _ctx(),
+        {
+            "waves": [
+                [{"persona": "research", "brief": "fetch history", "label": "prod"}],
+                [
+                    {
+                        "persona": "review",
+                        "label": "cons",
+                        "feed": ["prod"],
+                        "brief": _review_brief(),
+                    }
+                ],
+            ]
+        },
+    )
+    assert len(_FakeLoop.calls) == 1  # only the producer ran; the consumer was skipped
+    assert "[SKIPPED" in out and "cons" in out
+    assert "1 skipped" in out
+
+
+async def test_waves_fed_consumer_must_be_template_bound(service: SpawnService) -> None:
+    """A fed consumer with a free-text brief is refused — the fed data must land in a
+    data-framed template slot (the review's depth-0 concern)."""
+    out = await service.spawn_fan(
+        _ctx(),
+        {
+            "waves": [
+                [{"persona": "research", "brief": "fetch", "label": "p"}],
+                [{"persona": "review", "label": "c", "feed": ["p"], "brief": "free text"}],
+            ]
+        },
+    )
+    assert "refused" in out.lower() and "template-bound" in out.lower()
+    assert not _FakeLoop.calls
+
+
+async def test_waves_feed_must_reference_an_earlier_wave(service: SpawnService) -> None:
+    """A consumer may only feed from a strictly earlier wave — a same-wave feed edge is
+    refused (no intra-wave ordering, no cycles)."""
+    out = await service.spawn_fan(
+        _ctx(),
+        {
+            "waves": [
+                [
+                    {"persona": "research", "brief": "a", "label": "a"},
+                    {"persona": "review", "label": "b", "feed": ["a"], "brief": _review_brief()},
+                ]
+            ]
+        },
+    )
+    assert "refused" in out.lower() and "earlier wave" in out.lower()
+    assert not _FakeLoop.calls
+
+
+async def test_waves_sibling_reference_without_feed_refused(service: SpawnService) -> None:
+    """The primary structural fix: a brief that refers to data it never received (a
+    guard phrase) is refused instead of running empty."""
+    out = await service.spawn_fan(
+        _ctx(),
+        {"waves": [[{"persona": "research", "brief": "use the same commit list", "label": "p"}]]},
+    )
+    assert "refused" in out.lower() and "feed" in out.lower()
+    assert not _FakeLoop.calls
+
+
+async def test_waves_reference_to_unfed_sibling_label_refused(service: SpawnService) -> None:
+    """Naming another task's label without a `feed` edge is caught too (word-boundary)."""
+    out = await service.spawn_fan(
+        _ctx(),
+        {
+            "waves": [
+                [{"persona": "research", "brief": "gather commits", "label": "history"}],
+                [
+                    {
+                        "persona": "review",
+                        "label": "c",
+                        "brief": "assess the history output",  # names 'history', no feed
+                    }
+                ],
+            ]
+        },
+    )
+    assert "refused" in out.lower()
+    assert not _FakeLoop.calls
+
+
+async def test_waves_refused_when_nested(service: SpawnService) -> None:
+    """Staged waves are a top-level capability (D4): a depth>=1 child spawns a flat fan."""
+    out = await service.spawn_fan(
+        _ctx(depth=1),
+        {"waves": [[{"persona": "research", "brief": "x", "label": "p"}]]},
+    )
+    assert "refused" in out.lower() and "top-level" in out.lower()
+    assert not _FakeLoop.calls
+
+
+async def test_waves_over_max_refused(service: SpawnService) -> None:
+    waves = [
+        [{"persona": "research", "brief": f"q{i}", "label": f"L{i}"}] for i in range(MAX_WAVES + 1)
+    ]
+    out = await service.spawn_fan(_ctx(), {"waves": waves})
+    assert "refused" in out.lower()
+    assert not _FakeLoop.calls
+
+
+async def test_waves_total_children_cap(service: SpawnService) -> None:
+    """The whole staged call still obeys the per-fan child cap across all waves."""
+    wave1 = [
+        {"persona": "research", "brief": f"q{i}", "label": f"A{i}"}
+        for i in range(MAX_CHILDREN_PER_PARENT)
+    ]
+    wave2 = [{"persona": "research", "brief": "one more", "label": "B0"}]
+    out = await service.spawn_fan(_ctx(), {"waves": [wave1, wave2]})
+    assert "refused" in out.lower()
+    assert not _FakeLoop.calls
+
+
+async def test_waves_duplicate_label_refused(service: SpawnService) -> None:
+    out = await service.spawn_fan(
+        _ctx(),
+        {
+            "waves": [
+                [{"persona": "research", "brief": "a", "label": "dup"}],
+                [{"persona": "review", "label": "dup", "feed": [], "brief": "b"}],
+            ]
+        },
+    )
+    assert "refused" in out.lower() and "unique" in out.lower()
+    assert not _FakeLoop.calls
+
+
+async def test_waves_fed_consumer_referencing_unfed_sibling_refused(service: SpawnService) -> None:
+    """F1 review fix: the sibling guard must NOT be bypassed for a fed consumer. A
+    consumer that feeds `alpha` but whose brief also names the un-fed `beta` is refused
+    — otherwise it runs empty against beta (the exact foot-gun the guard exists for)."""
+    out = await service.spawn_fan(
+        _ctx(),
+        {
+            "waves": [
+                [
+                    {"persona": "research", "brief": "get alpha", "label": "alpha"},
+                    {"persona": "research", "brief": "get beta", "label": "beta"},
+                ],
+                [
+                    {
+                        "persona": "review",
+                        "label": "cons",
+                        "feed": ["alpha"],
+                        "brief": _review_brief("combine alpha with the beta findings"),
+                    }
+                ],
+            ]
+        },
+    )
+    assert "refused" in out.lower() and "beta" in out.lower()
+    assert not _FakeLoop.calls
+
+
+async def test_waves_guard_ignores_template_scaffolding_words(service: SpawnService) -> None:
+    """F2 review fix: the sibling guard scans model-supplied param VALUES, not the fixed
+    template scaffolding — so a producer labelled a common template word ("summary")
+    must not spuriously refuse an unrelated fed consumer."""
+    out = await service.spawn_fan(
+        _ctx(),
+        {
+            "waves": [
+                [
+                    {"persona": "research", "brief": "get commits", "label": "summary"},
+                    {"persona": "research", "brief": "get trends", "label": "trends"},
+                ],
+                [
+                    {
+                        "persona": "review",
+                        "label": "cons",
+                        "feed": ["trends"],
+                        "brief": _review_brief("the trend data"),  # does not name 'summary'
+                    }
+                ],
+            ]
+        },
+    )
+    # 'summary' is a wave-1 label AND a word in the rendered review template, but the
+    # consumer's own params never mention it → it runs, not refused.
+    assert "refused" not in out.lower()
+    assert len(_FakeLoop.calls) == 3
+
+
+async def test_waves_same_wave_reference_gets_move_guidance(service: SpawnService) -> None:
+    """F2 review fix: a brief naming a SAME-wave sibling (which cannot be fed) is refused
+    with actionable 'move to an earlier wave' guidance, never a dead-end 'add a feed
+    edge' (a same-wave feed is itself refused)."""
+    out = await service.spawn_fan(
+        _ctx(),
+        {
+            "waves": [
+                [
+                    {"persona": "research", "brief": "get the history", "label": "history"},
+                    {"persona": "review", "brief": "assess the history data", "label": "auditor"},
+                ]
+            ]
+        },
+    )
+    assert "refused" in out.lower() and "move" in out.lower() and "earlier wave" in out.lower()
+    assert not _FakeLoop.calls
+
+
+async def test_both_tasks_and_waves_refused(service: SpawnService) -> None:
+    out = await service.spawn_fan(
+        _ctx(),
+        {
+            "tasks": [{"persona": "research", "brief": "x", "label": "L"}],
+            "waves": [[{"persona": "research", "brief": "y", "label": "M"}]],
+        },
+    )
+    assert "refused" in out.lower() and "both" in out.lower()
+    assert not _FakeLoop.calls
+
+
+async def test_waves_deadline_skips_loud(service: SpawnService) -> None:
+    """F2: a staged call past its tree wall-clock deadline skips every wave loudly,
+    running nothing."""
+    import time
+
+    tree = TreeState(deadline=time.monotonic() - 1)  # already past
+    out = await service.spawn_fan(
+        _ctx(tree=tree),
+        {
+            "waves": [
+                [{"persona": "research", "brief": "fetch", "label": "p"}],
+                [{"persona": "review", "label": "c", "feed": ["p"], "brief": _review_brief()}],
+            ]
+        },
+    )
+    assert not _FakeLoop.calls
+    assert "deadline" in out.lower()
+
+
+async def test_waves_budget_skip_of_final_wave(
+    service: SpawnService, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """F2: when an earlier wave drains the shared pool, the final wave is budget-skipped
+    loud (never silently dropped) — the producer ran, the consumer did not."""
+
+    class _Spender(_FakeLoop):
+        async def run(self, **kw):  # noqa: ANN003
+            _FakeLoop.calls.append(kw)
+            kw["tree"].charge(450_000)  # the producer burns most of the pool
+            return AgentResult(
+                text=f"summary for {kw['agent_session_id']}",
+                stop_reason="end_turn",
+                steps=1,
+                cost_tokens=10,
+            )
+
+    monkeypatch.setattr(spawn_mod, "AgentLoop", _Spender)
+    tree = TreeState(tree_budget=500_000, root_reserve=0)  # children pool 500k, no deadline
+    out = await service.spawn_fan(
+        _ctx(tree=tree),
+        {
+            "waves": [
+                [{"persona": "research", "brief": "fetch", "label": "p"}],
+                [{"persona": "review", "label": "c", "feed": ["p"], "brief": _review_brief()}],
+            ]
+        },
+    )
+    assert len(_FakeLoop.calls) == 1  # producer ran; consumer budget-skipped
+    assert "budget" in out.lower() and "[SKIPPED" in out
+
+
+async def test_barrier_cancel_settles_wave1_and_wave2_inline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A Stop during wave 2 must leave wave 1 settled (done, not stranded 'running') and
+    wave 2's in-flight child settled 'cancelled' inline — the barrier composes with the
+    per-wave gather's cancel-and-await cleanup."""
+    import asyncio
+
+    started = asyncio.Event()
+
+    class _Block2(_FakeLoop):
+        async def run(self, **kw):  # noqa: ANN003
+            _FakeLoop.calls.append(kw)
+            if "fetch" in kw["conversation"][1].text:  # wave-1 producer → succeed
+                return AgentResult(
+                    text=f"summary for {kw['agent_session_id']}",
+                    stop_reason="end_turn",
+                    steps=1,
+                    cost_tokens=10,
+                )
+            started.set()  # wave-2 consumer → block until the cancel cascades
+            await asyncio.sleep(3600)
+            return AgentResult(text="", stop_reason="end_turn", steps=0, cost_tokens=0)
+
+    class _YieldingRunLog(_FakeRunLog):
+        async def finish(self, ctx, run_id, **kw):  # noqa: ANN001, ANN003
+            await asyncio.sleep(0)
+            self.finished.append({"run_id": run_id, **kw})
+
+    _FakeLoop.calls = []
+    monkeypatch.setattr(spawn_mod, "AgentLoop", _Block2)
+    runlog = _YieldingRunLog()
+    svc = SpawnService(
+        router=_FakeRouter(),  # type: ignore[arg-type]
+        registry=object(),  # type: ignore[arg-type]
+        sessions=_FakeSessions(),  # type: ignore[arg-type]
+        runlog=runlog,  # type: ignore[arg-type]
+    )
+    task = asyncio.create_task(
+        svc.spawn_fan(
+            _ctx(),
+            {
+                "waves": [
+                    [{"persona": "research", "brief": "fetch", "label": "p"}],
+                    [{"persona": "review", "label": "c", "feed": ["p"], "brief": _review_brief()}],
+                ]
+            },
+        )
+    )
+    await started.wait()  # wave 1 done, wave-2 consumer mid-run
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert any(f["stop_reason"] == "end_turn" for f in runlog.finished)  # wave 1 settled done
+    assert any(f["stop_reason"] == "cancelled" for f in runlog.finished)  # wave 2 settled inline
+
+
+def test_synthesis_view_separates_skipped_from_ran_and_failed() -> None:
+    """F1 review fix: a skipped consumer must not inflate `ran` or count as `failed`."""
+    from jbrain.agent.spawn import _ChildResult, _synthesis_view
+
+    results = [
+        _ChildResult("a", "research", "ok", ok=True, session_id="s1"),
+        _ChildResult(
+            "b",
+            "review",
+            "(skipped — upstream a unavailable)",
+            ok=False,
+            session_id="",
+            skipped="upstream a unavailable",
+        ),
+    ]
+    view = _synthesis_view(results)
+    assert view.data["ran"] == 1
+    assert view.data["failed"] == 0
+    assert view.data["skipped"] == 1
+    child_b = view.data["children"][1]
+    assert child_b["skipped"] is True and child_b["skip_reason"] == "upstream a unavailable"

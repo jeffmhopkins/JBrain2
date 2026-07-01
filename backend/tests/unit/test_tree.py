@@ -72,3 +72,33 @@ def test_unseeded_budget_is_inert() -> None:
     assert tree.can_admit_budget(6)  # structural caps only
     assert not tree.root_exhausted()
     assert not tree.children_exhausted()
+
+
+def test_out_of_time_tracks_the_staged_deadline() -> None:
+    """F2: the staged wall-clock deadline is the structural bound the per-child clock
+    never provided; an unbounded (None) deadline never fires."""
+    import time
+
+    assert TreeState(deadline=time.monotonic() - 1).out_of_time()
+    assert not TreeState(deadline=time.monotonic() + 100).out_of_time()
+    assert not TreeState().out_of_time()  # no deadline → never
+
+
+def test_children_remaining_honors_the_final_wave_reserve() -> None:
+    """F2: the staged final-wave reserve is carved off the children's pool so an
+    over-spending earlier wave cannot starve the deliverable wave. 0 for a flat fan."""
+    tree = TreeState(tree_budget=500_000, root_reserve=100_000)
+    assert tree.children_remaining() == 400_000  # no stage reserve by default
+    tree.stage_reserve = 150_000
+    assert tree.children_remaining() == 250_000
+    assert not tree.can_admit_budget(3)  # 250k < 3 × 100k floor
+    tree.stage_reserve = 0  # released to the final wave
+    assert tree.children_remaining() == 400_000
+
+
+def test_rooted_stamps_a_wall_clock_deadline() -> None:
+    """A rooted tree carries the staged deadline (a flat fan ignores it)."""
+    tree = TreeState.rooted(800_000)
+    assert tree.deadline is not None
+    assert not tree.out_of_time()
+    assert tree.stage_reserve == 0

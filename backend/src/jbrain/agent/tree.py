@@ -8,6 +8,7 @@ admission floor). It lives in its own module — importing nothing from the loop
 spawn service — so both can reference it without an import cycle.
 """
 
+import time
 from dataclasses import dataclass
 
 # Structural fan caps (docs/SUBAGENT_SPAWNING_PLAN.md, Wave S1). These shape caps
@@ -16,6 +17,11 @@ MAX_DEPTH = 2  # spawn allowed iff parent.depth < MAX_DEPTH (root=0; depth-2 is 
 MAX_CHILDREN_PER_PARENT = 6  # the largest fan a single spawn call may launch
 MAX_PARALLEL = 4  # the most children that run concurrently within a fan
 MAX_TOTAL_AGENTS_PER_TREE = 12  # every child across the whole root turn, all depths
+# Feeding waves (docs/SUBAGENT_FEEDING_WAVES_PLAN.md): a single staged spawn call may
+# chain at most this many ordered waves (a producer wave → a consumer wave). Kept at 2
+# so the serial local wall-clock stays under the parent turn cap and the surface stays
+# legible; the total children across all waves still obey MAX_CHILDREN_PER_PARENT.
+MAX_WAVES = 2
 
 # Per-child RUNTIME bounds. The original tight caps (10 steps / 180s) were sized for a
 # PARALLEL fan on a slow single-GPU box; now the fan runs SERIALLY on a local route
@@ -54,6 +60,13 @@ SPAWN_MULTIPLIER = 3.5  # tree_budget = base_max_cost_tokens × this (~2.8M for 
 ROOT_RESERVE_FRACTION = 0.25  # share of tree_budget the root keeps for synthesis
 MIN_VIABLE_CHILD_BUDGET = 100_000  # admission floor: tokens each child must be able to get
 
+# Feeding waves runtime bound (docs/SUBAGENT_FEEDING_WAVES_PLAN.md, F2). A whole staged
+# (feeding) spawn call must finish inside this cumulative wall-clock, sized to sit under
+# the parent turn cap (_MAX_TURN_WALL_CLOCK_S=3600s) with ~600s of synthesis headroom.
+# Checked at each wave barrier; a wave that can't start before it is skipped, loud. Only
+# the staged scheduler consults it — a flat fan is unchanged.
+TREE_WALL_CLOCK_S = 3000.0
+
 
 @dataclass
 class TreeState:
@@ -88,13 +101,35 @@ class TreeState:
     tree_budget: int = 0
     root_reserve: int = 0
     spent: int = 0
+    # A monotonic deadline for a whole staged (feeding) call, or None when unbounded
+    # (a flat fan never consults it). `rooted` stamps it TREE_WALL_CLOCK_S out.
+    deadline: float | None = None
+    # A reserve carved for a not-yet-run FINAL wave of a staged call (F2): set to
+    # `len(final_wave) × MIN_VIABLE_CHILD_BUDGET` while earlier waves run so an
+    # over-spending producer cannot starve the deliverable wave, then released to 0
+    # when the final wave itself starts. 0 for a flat fan (no effect).
+    stage_reserve: int = 0
 
     @classmethod
     def rooted(cls, base_max_cost_tokens: int) -> "TreeState":
         """The tree state for a root turn, with the budget sized off the root's own
-        per-turn cap (the locked spawn multiplier) and the root reserve carved off."""
+        per-turn cap (the locked spawn multiplier), the root reserve carved off, and the
+        staged-call wall-clock deadline stamped (a flat fan ignores it)."""
         tree_budget = int(base_max_cost_tokens * SPAWN_MULTIPLIER)
-        return cls(tree_budget=tree_budget, root_reserve=int(tree_budget * ROOT_RESERVE_FRACTION))
+        return cls(
+            tree_budget=tree_budget,
+            root_reserve=int(tree_budget * ROOT_RESERVE_FRACTION),
+            deadline=time.monotonic() + TREE_WALL_CLOCK_S,
+        )
+
+    def out_of_time(self) -> bool:
+        """True once a staged call's cumulative wall-clock deadline has passed — the
+        structural bound the per-child clock never provided. None deadline → never."""
+        return self.deadline is not None and time.monotonic() >= self.deadline
+
+    def seconds_left(self) -> float | None:
+        """Wall-clock remaining before the staged deadline, or None if unbounded."""
+        return None if self.deadline is None else max(0.0, self.deadline - time.monotonic())
 
     def can_admit(self, n: int) -> bool:
         """Whether this fan of `n` children fits under the tree-wide total cap."""
@@ -111,11 +146,13 @@ class TreeState:
         self.spent += tokens
 
     def children_remaining(self) -> int:
-        """Tokens a fan may still draw — the pool minus the root reserve and all
-        spend so far (root's own calls included; the pool is genuinely shared)."""
+        """Tokens a fan may still draw — the pool minus the root reserve, the (staged)
+        final-wave reserve, and all spend so far (root's own calls included; the pool is
+        genuinely shared). `stage_reserve` is 0 for a flat fan, so its behaviour is
+        unchanged."""
         if self.tree_budget <= 0:
             return 0
-        return max(0, self.tree_budget - self.root_reserve - self.spent)
+        return max(0, self.tree_budget - self.root_reserve - self.stage_reserve - self.spent)
 
     def can_admit_budget(self, n: int) -> bool:
         """The admission floor: a fan of `n` is admitted only if what's left in the

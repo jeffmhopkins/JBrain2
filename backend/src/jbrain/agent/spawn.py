@@ -28,12 +28,13 @@ gathered children.
 
 import asyncio
 import contextlib
-from dataclasses import dataclass
+import re
+from dataclasses import dataclass, replace
 
 import structlog
 
 from jbrain.agent.agents import SUBAGENT_PERSONAS, agent_for
-from jbrain.agent.briefs import BriefError, render_brief
+from jbrain.agent.briefs import BriefError, compose_feed_block, prepend_feed, render_brief
 from jbrain.agent.clock import now_block
 from jbrain.agent.contracts import (
     ChatEvent,
@@ -57,6 +58,8 @@ from jbrain.agent.tree import (
     MAX_CHILDREN_PER_PARENT,
     MAX_DEPTH,
     MAX_PARALLEL,
+    MAX_WAVES,
+    MIN_VIABLE_CHILD_BUDGET,
     TreeState,
     child_steps_for,
 )
@@ -100,9 +103,21 @@ class _ChildResult:
     summary: str
     ok: bool
     # The child's own session id (childId) — carried into the synthesis view so the
-    # roster card can deep-link each row to the sub-agent's session on reopen.
+    # roster card can deep-link each row to the sub-agent's session on reopen. Empty
+    # for a skipped consumer (it never ran, so no session was minted — the review's
+    # anti-orphan requirement, docs/SUBAGENT_FEEDING_WAVES_PLAN.md).
     session_id: str
     truncated: bool = False
+    # A consumer that never ran because its fed producer was unavailable: the reason
+    # ("upstream <label> failed"). Empty for a child that actually ran. A skipped child
+    # is never `ok` and is surfaced distinctly from a failure (it is a cascade, not a
+    # crash) — so the parent never synthesizes over an empty block.
+    skipped: str = ""
+    # Staged-fan placement (feeding waves): the child's wave (0-based; 0 for a flat fan)
+    # and the earlier-wave producer labels fed into it — so the synthesis card can group
+    # by wave and draw the "← fed by …" edge (F3). Empty/0 for a flat fan.
+    wave: int = 0
+    fed_from: tuple[str, ...] = ()
 
 
 def effective_child_tools(
@@ -136,27 +151,200 @@ def _refuse(reason: str) -> str:
     return f"Spawn refused: {reason}"
 
 
-def _resolve_brief(brief: object, *, depth: int) -> str:
-    """The brief a child receives, by the spawner's depth (decision #7). At depth 0
-    a free-text string is allowed; at depth >= 1 it MUST be a template-bound
-    `{template_id, params}` mapping (fail closed otherwise) so attacker-controlled
-    fetched content cannot be laundered into a grandchild's steering instructions."""
-    if depth == 0:
-        if not isinstance(brief, str):
-            raise BriefError("a depth-0 brief must be free text (a string)")
-        if not brief.strip():
-            raise BriefError("the brief is empty")
-        return brief
-    # depth >= 1: template-bound only.
+def _free_text_brief(brief: object) -> str:
+    """A free-text (string) brief — the depth-0 / un-fed form. Fail closed on a
+    non-string or empty brief."""
+    if not isinstance(brief, str):
+        raise BriefError("this brief must be free text (a string)")
+    if not brief.strip():
+        raise BriefError("the brief is empty")
+    return brief
+
+
+def _template_brief(brief: object) -> str:
+    """A template-bound `{template_id, params}` brief — the depth>=1 / fed form, whose
+    slots frame every value as data so untrusted content cannot become instruction.
+    Fail closed on any other shape."""
     if not isinstance(brief, dict):
-        raise BriefError(
-            "a depth>=1 brief must be template-bound ({template_id, params}), not free text"
-        )
+        raise BriefError("this brief must be template-bound ({template_id, params}), not free text")
     template_id = brief.get("template_id")
     params = brief.get("params")
     if not isinstance(template_id, str) or not isinstance(params, dict):
-        raise BriefError("a template-bound brief needs a string template_id and a params object")
+        raise BriefError("a template-bound brief needs template_id (str) and params (object)")
     return render_brief(template_id, params)
+
+
+def _resolve_brief(brief: object, *, depth: int) -> str:
+    """The brief a child receives, by the spawner's depth (decision #7). At depth 0 a
+    free-text string is allowed; at depth >= 1 it MUST be template-bound (fail closed)
+    so attacker-controlled fetched content cannot be laundered into a grandchild's
+    steering instructions."""
+    return _free_text_brief(brief) if depth == 0 else _template_brief(brief)
+
+
+# --- Feeding waves: plan validation (docs/SUBAGENT_FEEDING_WAVES_PLAN.md) ----
+
+
+@dataclass(frozen=True)
+class _WavePlan:
+    """One validated consumer/producer in a staged fan: its persona, label, resolved
+    base brief (before the feed block is prepended at run time), the labels it feeds
+    from (all in strictly earlier waves), and its reasoning effort."""
+
+    persona: str
+    label: str
+    base_brief: str
+    feed: tuple[str, ...]
+    effort: str | None = None
+
+
+# Generic cross-task references a brief must not make without a `feed` edge — the
+# observed foot-gun (a consumer that says "the same commit list" but never received
+# it). Matched case-insensitively as substrings; a brief that names another task's
+# label is caught separately by a word-boundary check.
+_GUARD_PHRASES = (
+    "the same list",
+    "the same commit list",
+    "provided below",
+    "provided above",
+    "the earlier findings",
+    "per the first agent",
+    "from the previous",
+    "results from wave",
+    "the above output",
+    "the output of task",
+    "given the json",
+    "given the commit list",
+)
+
+
+def _names_unfed_sibling(
+    brief: str, self_label: str, all_labels: frozenset[str], feed: frozenset[str]
+) -> str | None:
+    """Return another task's label if this brief names it but does not `feed` from it —
+    the reference is to data the child will never receive. Applies to EVERY task, fed or
+    not: a fed consumer that pulls `alpha` but whose brief also says "combine with beta"
+    would otherwise run empty against beta (the guard's fed-consumer bypass, caught in
+    the F1 review). Labels are matched on word boundaries and regex-escaped."""
+    for label in all_labels:
+        if label == self_label or label in feed:
+            continue
+        if re.search(rf"\b{re.escape(label)}\b", brief, re.IGNORECASE):
+            return label
+    return None
+
+
+def _references_missing_data(brief: str) -> str | None:
+    """Return a guard phrase if an UN-FED brief refers to data it never received ("the
+    same commit list", "provided above"). Only meaningful for an un-fed task — a fed
+    consumer legitimately refers to the feed block prepended to its brief, so running
+    these phrase checks on it would false-positive on the normal case."""
+    low = brief.lower()
+    for phrase in _GUARD_PHRASES:
+        if phrase in low:
+            return phrase
+    return None
+
+
+def _resolve_wave_brief(brief: object, *, fed: bool) -> str:
+    """The brief a staged child receives. A **fed** consumer MUST be template-bound
+    EVEN at depth 0 — an explicit branch, because a fed brief carries untrusted upstream
+    output and the template form frames every slot as data (the review's depth-0
+    concern). An **un-fed** producer may be free text."""
+    return _template_brief(brief) if fed else _free_text_brief(brief)
+
+
+def plan_waves(waves: list) -> tuple[list[list[_WavePlan]], str | None]:
+    """Validate a staged `waves` array up front and build per-wave plans, or return a
+    refusal string on the first problem (fail-closed, like the flat fan). Enforces:
+    unique labels; `feed` references only strictly-earlier-wave labels; fed ⇒
+    template-bound; and the un-fed sibling-reference guard. Returns `([], reason)` on
+    refusal, `(plans, None)` on success."""
+    if not all(isinstance(w, list) and w for w in waves):
+        return [], "each wave must be a non-empty list of children."
+    # Pass 1: collect every label (with its wave) and reject duplicates — feed
+    # references must be unambiguous across the whole call.
+    label_wave: dict[str, int] = {}
+    for w_idx, wave in enumerate(waves):
+        for task in wave:
+            if not isinstance(task, dict):
+                return [], f"wave {w_idx}: every child must be an object."
+            label = task.get("label")
+            if not isinstance(label, str) or not label.strip():
+                return [], f"wave {w_idx}: every child needs a non-empty `label`."
+            if label in label_wave:
+                return [], f"duplicate label {label!r}; labels must be unique across all waves."
+            label_wave[label] = w_idx
+    all_labels = frozenset(label_wave)
+    # Pass 2: validate persona, feed edges, brief, effort, and the guard.
+    plans: list[list[_WavePlan]] = []
+    for w_idx, wave in enumerate(waves):
+        wave_plans: list[_WavePlan] = []
+        for task in wave:
+            label = task["label"]
+            persona = task.get("persona")
+            if persona not in SUBAGENT_PERSONAS:
+                return [], (
+                    f"{label}: unknown persona {persona!r}; "
+                    f"choose one of {sorted(SUBAGENT_PERSONAS)}."
+                )
+            feed_raw = task.get("feed", [])
+            if not isinstance(feed_raw, list) or not all(isinstance(f, str) for f in feed_raw):
+                return [], f"{label}: `feed` must be a list of labels."
+            feed = tuple(feed_raw)
+            for f in feed:
+                if f not in label_wave:
+                    return [], f"{label}: feed references unknown label {f!r}."
+                if label_wave[f] >= w_idx:
+                    return [], (
+                        f"{label}: feed references {f!r}, which is not in an earlier wave "
+                        "(a consumer may only feed from a strictly earlier wave)."
+                    )
+            raw_brief = task.get("brief")
+            try:
+                base_brief = _resolve_wave_brief(raw_brief, fed=bool(feed))
+            except BriefError as exc:
+                return [], f"{label}: {exc}"
+            # The guard scans only MODEL-SUPPLIED text — a fed consumer's template
+            # PARAM VALUES, or an un-fed task's free-text brief — never the fixed
+            # template scaffolding (whose words like "summary"/"artifact" would collide
+            # with a producer that happens to share that label). F2 review fix.
+            if feed and isinstance(raw_brief, dict) and isinstance(raw_brief.get("params"), dict):
+                guard_text = " ".join(str(v) for v in raw_brief["params"].values())
+            else:
+                guard_text = base_brief
+            # Naming another task's label without feeding it is a problem for ANY task
+            # (a fed consumer can still reference a second, un-fed sibling). The guidance
+            # is wave-aware: a same/later-wave sibling cannot be fed, so it must move.
+            named = _names_unfed_sibling(guard_text, label, all_labels, frozenset(feed))
+            if named is not None:
+                if label_wave[named] < w_idx:
+                    return [], (
+                        f"{label}: the brief refers to {named!r} but does not `feed` from it — "
+                        "add a `feed` edge to that producer (or inline the data) so it is received."
+                    )
+                return [], (
+                    f"{label}: the brief refers to {named!r}, which is in the same or a later wave "
+                    f"and cannot be fed — move {named!r} to an earlier wave and `feed` from it."
+                )
+            # Generic "the data provided above" phrasing only refuses an UN-FED task (a
+            # fed consumer legitimately refers to its prepended feed block).
+            if not feed:
+                phrase = _references_missing_data(base_brief)
+                if phrase is not None:
+                    return [], (
+                        f"{label}: the brief refers to {phrase!r} but declares no `feed` — add a "
+                        "`feed` edge to the producer (or inline the data) so the child receives it."
+                    )
+            effort = task.get("effort")
+            if effort is not None and effort not in REASONING_EFFORTS:
+                return [], (
+                    f"{label}: unknown effort {effort!r}; "
+                    f"choose one of {sorted(REASONING_EFFORTS)}."
+                )
+            wave_plans.append(_WavePlan(persona, label, base_brief, feed, effort))
+        plans.append(wave_plans)
+    return plans, None
 
 
 class SpawnService:
@@ -183,6 +371,15 @@ class SpawnService:
         self._transcript = transcript
 
     async def spawn_fan(self, ctx: ToolContext, args: dict) -> str:
+        """Dispatch a spawn call to the flat fan (an ordinary `tasks` array) or the
+        staged wave scheduler (an ordered `waves` array that feeds each wave forward).
+        A call with no `waves` takes the byte-identical flat path — the feeding feature
+        is purely additive (docs/SUBAGENT_FEEDING_WAVES_PLAN.md)."""
+        if args.get("waves") is not None:
+            return await self._spawn_waves(ctx, args)
+        return await self._spawn_flat(ctx, args)
+
+    async def _spawn_flat(self, ctx: ToolContext, args: dict) -> str:
         # --- fail closed without an established tree pool ---------------------
         # The tree counter is the load-bearing total-agents cap (decision #8); it
         # exists only when a root turn seeded one (the interactive /chat turn does,
@@ -313,6 +510,234 @@ class SpawnService:
         # UI's structured render of the same fan result (the registered
         # `subagent_synthesis` tool-view, DESIGN.md). Both carry the same data.
         return ToolOutput(_observation(results), view=_synthesis_view(results))
+
+    async def _spawn_waves(self, ctx: ToolContext, args: dict) -> str:
+        """Run an ordered sequence of disconnected waves, feeding each wave's summaries
+        forward into the next wave's briefs (docs/SUBAGENT_FEEDING_WAVES_PLAN.md). Each
+        wave is a flat fan; a hard barrier (the awaited gather) separates them. Children
+        are minted/admitted per wave, so a skipped or never-reached wave orphans nothing.
+        A consumer whose fed producer failed is skipped, never run over empty data."""
+        if ctx.tree is None:
+            return _refuse("sub-agent spawning is only available in an interactive owner turn.")
+        # No nesting (decision D4): staged waves are a top-level capability; a nested
+        # child spawns a flat fan. Keeps the feed hop single and the surface bounded.
+        if ctx.depth != 0:
+            return _refuse(
+                "staged `waves` are a top-level capability; a nested sub-agent spawns a flat fan."
+            )
+
+        if args.get("tasks") is not None:
+            return _refuse(
+                "provide either `tasks` (a flat fan) or `waves` (a staged pipeline), not both."
+            )
+
+        waves = args.get("waves")
+        if not isinstance(waves, list) or not waves:
+            return _refuse("provide a non-empty `waves` array (each wave a list of children).")
+        if len(waves) > MAX_WAVES:
+            return _refuse(
+                f"{len(waves)} waves requested; a staged fan may chain at most {MAX_WAVES}."
+            )
+
+        wave_plans, refusal = plan_waves(waves)
+        if refusal is not None:
+            return _refuse(refusal)
+        total = sum(len(w) for w in wave_plans)
+        if total > MAX_CHILDREN_PER_PARENT:
+            return _refuse(
+                f"{total} children across all waves; a single fan may launch at most "
+                f"{MAX_CHILDREN_PER_PARENT}."
+            )
+
+        tree = ctx.tree
+        if not tree.can_admit(total):
+            return _refuse(
+                f"this staged fan of {total} would exceed the tree limit of "
+                f"{tree.max_total_agents} sub-agents ({tree.agents_spawned} already running)."
+            )
+        if not tree.can_admit_budget(total):
+            return _refuse(
+                f"the remaining sub-agent budget (~{tree.children_remaining()} tokens) is too low "
+                f"to launch {total} children; narrow the fan or let the current work finish."
+            )
+
+        max_parallel = await self._effective_max_parallel(args.get("max_parallel"))
+        owner_ctx = SessionContext(principal_id=ctx.session.principal_id, principal_kind="owner")
+        sem = asyncio.Semaphore(max_parallel)
+
+        results_by_label: dict[str, _ChildResult] = {}
+        all_results: list[_ChildResult] = []
+
+        def record_skip(wp: _WavePlan, reason: str, w_idx: int) -> None:
+            res = _ChildResult(
+                wp.label,
+                wp.persona,
+                f"(skipped — {reason})",
+                ok=False,
+                session_id="",
+                skipped=reason,
+                wave=w_idx,
+                fed_from=tuple(wp.feed),
+            )
+            results_by_label[wp.label] = res
+            all_results.append(res)
+            # Surface the skip live too, so the fan shows a distinct skipped row rather
+            # than a silently-missing child (no session is minted for a skip, so the id
+            # is synthetic and its row is not tappable).
+            sid = f"skip:{wp.label}"
+            _emit(
+                ctx,
+                SubagentSpawnedEvent(
+                    child_id=sid,
+                    persona=wp.persona,
+                    label=wp.label,
+                    depth=ctx.depth + 1,
+                    wave=w_idx,
+                    fed_from=list(wp.feed),
+                ),
+            )
+            _emit(
+                ctx,
+                SubagentDoneEvent(
+                    child_id=sid,
+                    ok=False,
+                    stop_reason="skipped",
+                    summary=res.summary,
+                    skip_reason=reason,
+                    tree_spent=tree.spent,
+                    tree_budget=tree.tree_budget,
+                ),
+            )
+
+        def emit_view() -> None:
+            _emit(ctx, ToolViewEvent(tool_call_id="", view=_synthesis_view(all_results)))
+
+        # Final-wave reserve (F2): carve a viable slice for the LAST wave's consumers off
+        # the top before any producer runs, so an over-spending earlier wave cannot
+        # starve the deliverable wave. Released when the final wave itself starts. Reset
+        # in `finally` so a shared tree never leaks the reserve to a later fan.
+        tree.stage_reserve = len(wave_plans[-1]) * MIN_VIABLE_CHILD_BUDGET
+        try:
+            for w_idx, plans in enumerate(wave_plans):
+                if w_idx == len(wave_plans) - 1:
+                    tree.stage_reserve = 0  # release the reserve to the final wave
+
+                # Barrier check — wall-clock deadline (F2): a wave that cannot start in
+                # time is skipped loud, never silently dropped.
+                if tree.out_of_time():
+                    for wp in plans:
+                        record_skip(wp, "tree wall-clock deadline reached", w_idx)
+                    emit_view()
+                    continue
+
+                # Fail-closed skip-cascade: a consumer whose fed producer is not a clean
+                # success (keyed on `ok`, never on summary text) is skipped, not run.
+                runnable: list[_WavePlan] = []
+                for wp in plans:
+                    missing = [
+                        f
+                        for f in wp.feed
+                        if not (results_by_label.get(f) and results_by_label[f].ok)
+                    ]
+                    if missing:
+                        record_skip(wp, f"upstream {', '.join(missing)} unavailable", w_idx)
+                        emit_view()
+                        continue
+                    runnable.append(wp)
+                if not runnable:
+                    continue
+
+                # Barrier check — budget re-admission (F2): reflects earlier waves'
+                # actual spend; if the pool can no longer seat this wave, skip it loud.
+                if not tree.can_admit_budget(len(runnable)):
+                    for wp in runnable:
+                        record_skip(wp, "sub-agent budget spent by earlier waves", w_idx)
+                    emit_view()
+                    continue
+
+                # Admit + mint only this wave's runnable children (per-wave: a skipped or
+                # never-reached wave never orphans a session or burns a tree slot).
+                tree.admit(len(runnable))
+                minted: list[tuple[_ChildPlan, AgentSessionInfo]] = []
+                for wp in runnable:
+                    feed_block = compose_feed_block(
+                        [
+                            (
+                                results_by_label[f].label,
+                                results_by_label[f].persona,
+                                results_by_label[f].summary,
+                            )
+                            for f in wp.feed
+                        ]
+                    )
+                    plan = _ChildPlan(
+                        wp.persona, wp.label, prepend_feed(feed_block, wp.base_brief), wp.effort
+                    )
+                    child = await self._sessions.create(
+                        owner_ctx,
+                        domain_scopes=[],
+                        title=wp.label[:_TITLE_LEN],
+                        agent=wp.persona,
+                        parent_session_id=ctx.agent_session_id,
+                        depth=ctx.depth + 1,
+                        no_memory=True,
+                    )
+                    _emit(
+                        ctx,
+                        SubagentSpawnedEvent(
+                            child_id=child.id,
+                            persona=wp.persona,
+                            label=wp.label,
+                            depth=ctx.depth + 1,
+                            wave=w_idx,
+                            fed_from=list(wp.feed),
+                        ),
+                    )
+                    minted.append((plan, child))
+
+                wave_results = await self._run_wave(
+                    ctx, owner_ctx, tree, sem, minted, list(all_results)
+                )
+                # Stamp wave placement + feed edges onto each result (the runner doesn't
+                # know them); order matches `runnable` (gather preserves mint order).
+                for res, wp in zip(wave_results, runnable, strict=True):
+                    stamped = replace(res, wave=w_idx, fed_from=tuple(wp.feed))
+                    results_by_label[stamped.label] = stamped
+                    all_results.append(stamped)
+        finally:
+            tree.stage_reserve = 0
+
+        return ToolOutput(_observation(all_results), view=_synthesis_view(all_results))
+
+    async def _run_wave(
+        self,
+        ctx: ToolContext,
+        owner_ctx: SessionContext,
+        tree: TreeState,
+        sem: asyncio.Semaphore,
+        minted: list[tuple[_ChildPlan, "AgentSessionInfo"]],
+        prior_results: list[_ChildResult],
+    ) -> list[_ChildResult]:
+        """Run one wave's minted children concurrently and await them all — the barrier
+        before the next wave. Re-emits the whole-run synthesis view (prior waves +
+        this wave's settled-so-far) at each settle, so a cut-short turn still persists a
+        view (mirrors the flat path)."""
+        collected: list[_ChildResult | None] = [None] * len(minted)
+
+        async def _run_and_collect(
+            i: int, plan: _ChildPlan, child: AgentSessionInfo
+        ) -> _ChildResult:
+            res = await self._run_child(ctx, owner_ctx, tree, sem, plan, child)
+            collected[i] = res
+            settled = prior_results + [r for r in collected if r is not None]
+            _emit(ctx, ToolViewEvent(tool_call_id="", view=_synthesis_view(settled)))
+            return res
+
+        return list(
+            await asyncio.gather(
+                *(_run_and_collect(i, plan, child) for i, (plan, child) in enumerate(minted))
+            )
+        )
 
     async def _effective_max_parallel(self, requested: object) -> int:
         """How many children may run at once. The model-requested value is clamped to
@@ -589,15 +1014,21 @@ class SpawnService:
 
 def _observation(results: list[_ChildResult]) -> str:
     """Fold the fan's summaries into one observation for the parent to synthesize —
-    stable label order, each child framed as data (a failure is surfaced, not
-    swallowed)."""
-    ran = len(results)
-    failed = sum(1 for r in results if not r.ok)
-    header = f"Sub-agent results — {ran} ran" + (f", {failed} failed" if failed else "")
-    blocks = [
-        f"## {r.label} ({r.persona}){'' if r.ok else ' [FAILED]'}\n{r.summary}".rstrip()
-        for r in results
-    ]
+    stable label order, each child framed as data. A failure is surfaced ([FAILED]);
+    a fed consumer that never ran is surfaced distinctly ([SKIPPED: …]) so the parent
+    reads it as a cascade, not a crash, and never synthesizes over an empty block."""
+    ran = sum(1 for r in results if not r.skipped)
+    failed = sum(1 for r in results if not r.ok and not r.skipped)
+    skipped = sum(1 for r in results if r.skipped)
+    header = (
+        f"Sub-agent results — {ran} ran"
+        + (f", {failed} failed" if failed else "")
+        + (f", {skipped} skipped" if skipped else "")
+    )
+    blocks = []
+    for r in results:
+        tag = f" [SKIPPED: {r.skipped}]" if r.skipped else ("" if r.ok else " [FAILED]")
+        blocks.append(f"## {r.label} ({r.persona}){tag}\n{r.summary}".rstrip())
     return header + "\n\n" + "\n\n".join(blocks)
 
 
@@ -606,13 +1037,17 @@ def _synthesis_view(results: list[_ChildResult]) -> ViewPayload:
     neutral structured card — a per-child roster (label, persona, ok, summary) plus a
     ran/failed roll-up — composed by the PWA from the standard primitives, never a
     bespoke panel. Data-only (the model authors nothing here)."""
-    ran = len(results)
-    failed = sum(1 for r in results if not r.ok)
+    # A skipped consumer never RAN — it must not inflate `ran` or count as `failed`
+    # (a cascade/resource skip is distinct from a crash). F1 review fix.
+    ran = sum(1 for r in results if not r.skipped)
+    failed = sum(1 for r in results if not r.ok and not r.skipped)
+    skipped = sum(1 for r in results if r.skipped)
     return ViewPayload(
         view="subagent_synthesis",
         data={
             "ran": ran,
             "failed": failed,
+            "skipped": skipped,
             # Any child cut off on budget makes the whole synthesis partial — the card
             # renders the "research truncated" variant (M7).
             "truncated": any(r.truncated for r in results),
@@ -623,8 +1058,16 @@ def _synthesis_view(results: list[_ChildResult]) -> ViewPayload:
                     "ok": r.ok,
                     "summary": r.summary,
                     # The child's session id, so the card row can open the sub-agent's
-                    # own session (its full transcript) on tap.
+                    # own session (its full transcript) on tap. Empty for a skip.
                     "session_id": r.session_id,
+                    # A staged consumer that never ran, and why — rendered distinctly
+                    # from a failure by the grouped-by-wave surface (F3).
+                    "skipped": bool(r.skipped),
+                    "skip_reason": r.skipped,
+                    # Staged placement: which wave the row sits in, and the producers
+                    # fed into it (the "← fed by …" edge). 0/[] for a flat fan.
+                    "wave": r.wave,
+                    "fed_from": list(r.fed_from),
                 }
                 for r in results
             ],

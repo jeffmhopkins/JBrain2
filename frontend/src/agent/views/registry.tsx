@@ -1135,9 +1135,10 @@ function OpenSessionIcon(): ReactNode {
 function SubagentSynthesis({ data, onOpenSession }: ViewProps): ReactNode {
   const ran = typeof data.ran === "number" ? data.ran : 0;
   const failed = typeof data.failed === "number" ? data.failed : 0;
+  const skipped = typeof data.skipped === "number" ? data.skipped : 0;
   const truncated = data.truncated === true;
-  const children = Array.isArray(data.children) ? data.children : [];
-  const clean = failed === 0 && !truncated;
+  const rawChildren = Array.isArray(data.children) ? data.children : [];
+  const clean = failed === 0 && skipped === 0 && !truncated;
   const [open, setOpen] = useState<Set<number>>(new Set());
   function toggle(i: number): void {
     setOpen((cur) => {
@@ -1147,6 +1148,81 @@ function SubagentSynthesis({ data, onOpenSession }: ViewProps): ReactNode {
       return next;
     });
   }
+  const rows = rawChildren.map((raw, i) => {
+    const c = raw as Record<string, unknown>;
+    return {
+      i,
+      ok: c.ok === true,
+      label: String(c.label ?? ""),
+      persona: String(c.persona ?? ""),
+      summary: typeof c.summary === "string" ? c.summary : "",
+      sessionId: typeof c.session_id === "string" ? c.session_id : "",
+      skipped: c.skipped === true,
+      skipReason: typeof c.skip_reason === "string" ? c.skip_reason : "",
+      wave: typeof c.wave === "number" ? c.wave : 0,
+      fedFrom: Array.isArray(c.fed_from)
+        ? c.fed_from.filter((x): x is string => typeof x === "string")
+        : [],
+    };
+  });
+  // A staged (feeding-waves) fan groups its roster by wave and shows feed edges; a
+  // flat fan (no wave/feed data) renders as a single ungrouped list, unchanged.
+  const staged = rows.some((r) => r.wave > 0 || r.fedFrom.length > 0);
+  const maxWave = rows.reduce((m, r) => Math.max(m, r.wave), 0);
+
+  const renderRow = (r: (typeof rows)[number]): ReactNode => {
+    const mark = r.skipped ? "⊘" : r.ok ? "✓" : "✕";
+    const markCls = r.skipped ? " skip" : r.ok ? "" : " bad";
+    // A failure auto-expands its error; a skip shows its reason inline; a success stays
+    // collapsed behind its row.
+    const isOpen = open.has(r.i) || (!r.ok && !r.skipped);
+    return (
+      <div className="tv-syn-child" key={r.i}>
+        {/* The toggle and the open-session link are SIBLING buttons in a flex row
+            (never a button-in-button), so each is its own tap target. */}
+        <div className="tv-syn-rowwrap">
+          <button
+            type="button"
+            className="tv-syn-row"
+            onClick={() => toggle(r.i)}
+            aria-expanded={isOpen}
+          >
+            <span className={`tv-syn-mark${markCls}`} aria-hidden="true">
+              {mark}
+            </span>
+            <span className="tv-syn-clbl">{r.label}</span>
+            <span className="tv-syn-ptag">{r.persona}</span>
+            {r.summary && !r.skipped && (
+              <span className="tv-syn-car" aria-hidden="true">
+                {isOpen ? "▾" : "▸"}
+              </span>
+            )}
+          </button>
+          {/* Deep-link this row to the sub-agent's own session (its full transcript),
+              only when both a handler and a session id are present. A skip has none. */}
+          {onOpenSession && r.sessionId && (
+            <button
+              type="button"
+              className="tv-syn-open"
+              title="Open sub-agent session"
+              aria-label={`Open ${r.label || "sub-agent"} session`}
+              onClick={() => onOpenSession(r.sessionId)}
+            >
+              <OpenSessionIcon />
+            </button>
+          )}
+        </div>
+        {/* The feed edge, as text (never a drawn cross-group connector) — Direction 1. */}
+        {r.fedFrom.length > 0 && <div className="tv-syn-fed">← fed by {r.fedFrom.join(", ")}</div>}
+        {r.skipped ? (
+          <div className="tv-syn-skip">skipped — {r.skipReason}</div>
+        ) : (
+          isOpen && r.summary && <div className="tv-syn-sum">{r.summary}</div>
+        )}
+      </div>
+    );
+  };
+
   return (
     <div className={`tv-syn${clean ? "" : " has-fail"}`}>
       <div className="tv-syn-head">
@@ -1163,58 +1239,28 @@ function SubagentSynthesis({ data, onOpenSession }: ViewProps): ReactNode {
             <>
               Synthesized from {ran - failed} of {ran}
               {failed > 0 ? ` · ${failed} failed` : ""}
+              {skipped > 0 ? ` · ${skipped} skipped` : ""}
             </>
           )}
         </span>
       </div>
-      {children.map((raw, i) => {
-        const c = raw as Record<string, unknown>;
-        const cok = c.ok === true;
-        const summary = typeof c.summary === "string" ? c.summary : "";
-        const sessionId = typeof c.session_id === "string" ? c.session_id : "";
-        // A failed child auto-expands its error; a successful one stays collapsed.
-        const isOpen = open.has(i) || !cok;
-        return (
-          // biome-ignore lint/suspicious/noArrayIndexKey: roster renders in stable order
-          <div className="tv-syn-child" key={i}>
-            {/* The toggle and the open-session link are SIBLING buttons in a flex row
-                (never a button-in-button), so each is its own tap target. */}
-            <div className="tv-syn-rowwrap">
-              <button
-                type="button"
-                className="tv-syn-row"
-                onClick={() => toggle(i)}
-                aria-expanded={isOpen}
-              >
-                <span className={`tv-syn-mark${cok ? "" : " bad"}`} aria-hidden="true">
-                  {cok ? "✓" : "✕"}
-                </span>
-                <span className="tv-syn-clbl">{String(c.label ?? "")}</span>
-                <span className="tv-syn-ptag">{String(c.persona ?? "")}</span>
-                {summary && (
-                  <span className="tv-syn-car" aria-hidden="true">
-                    {isOpen ? "▾" : "▸"}
-                  </span>
-                )}
-              </button>
-              {/* Deep-link this row to the sub-agent's own session (its full transcript),
-                  only when both a handler and a session id are present. */}
-              {onOpenSession && sessionId && (
-                <button
-                  type="button"
-                  className="tv-syn-open"
-                  title="Open sub-agent session"
-                  aria-label={`Open ${String(c.label ?? "sub-agent")} session`}
-                  onClick={() => onOpenSession(sessionId)}
-                >
-                  <OpenSessionIcon />
-                </button>
-              )}
-            </div>
-            {isOpen && summary && <div className="tv-syn-sum">{summary}</div>}
-          </div>
-        );
-      })}
+      {staged
+        ? Array.from({ length: maxWave + 1 }, (_unused, w) => {
+            const wrows = rows.filter((r) => r.wave === w);
+            if (wrows.length === 0) return null;
+            const personas = [...new Set(wrows.map((r) => r.persona))].join(", ");
+            return (
+              // biome-ignore lint/suspicious/noArrayIndexKey: waves render in stable order
+              <div className="tv-syn-wave" key={w}>
+                <div className="tv-syn-wh">
+                  Wave {w + 1} · {personas}
+                  {w > 0 ? ` — fed by wave ${w}` : ""}
+                </div>
+                {wrows.map(renderRow)}
+              </div>
+            );
+          })
+        : rows.map(renderRow)}
     </div>
   );
 }

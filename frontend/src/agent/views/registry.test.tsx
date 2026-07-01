@@ -809,4 +809,55 @@ describe("ToolView registry", () => {
     );
     expect(queryByLabelText("Open Pricing session")).toBeNull();
   });
+
+  it("groups a staged feeding-waves roster by wave, with feed edges and a distinct skip", () => {
+    const { getByText, getAllByText } = render(
+      <ToolView
+        payload={payload({
+          view: "subagent_synthesis",
+          data: {
+            ran: 2,
+            failed: 0,
+            skipped: 1,
+            children: [
+              {
+                label: "fetch-history",
+                persona: "research",
+                ok: true,
+                summary: "commits",
+                wave: 0,
+                fed_from: [],
+              },
+              {
+                label: "feature-timeline",
+                persona: "review",
+                ok: true,
+                summary: "table",
+                wave: 1,
+                fed_from: ["fetch-history"],
+              },
+              {
+                label: "process-audit",
+                persona: "review",
+                ok: false,
+                summary: "(skipped — sub-agent budget spent by earlier waves)",
+                skipped: true,
+                skip_reason: "sub-agent budget spent by earlier waves",
+                wave: 1,
+                fed_from: ["fetch-history"],
+              },
+            ],
+          },
+        })}
+      />,
+    );
+    // Wave dividers, the second naming its feed source (Direction 1).
+    expect(getByText(/Wave 1 · research/)).toBeInTheDocument();
+    expect(getByText(/Wave 2 · review — fed by wave 1/)).toBeInTheDocument();
+    // The feed edge renders as text on each fed consumer (both wave-2 children).
+    expect(getAllByText(/← fed by fetch-history/)).toHaveLength(2);
+    // A budget-skip is surfaced distinctly (reason inline) and counted in the roll-up.
+    expect(getByText(/skipped — sub-agent budget spent by earlier waves/)).toBeInTheDocument();
+    expect(getByText(/1 skipped/)).toBeInTheDocument();
+  });
 });
