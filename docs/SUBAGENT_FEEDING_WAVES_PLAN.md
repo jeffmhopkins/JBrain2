@@ -223,12 +223,15 @@ attempt in **N of N** trials (no manual re-spawn) — verified in F3, not assume
   barrier-cancel test). *Still open for a later pass:* run-log `wave`/`fed_from`
   **persistence** (a migration — needs testcontainers) and live wave-progress SSE, both
   deferred to land with F3's surface.
-- **Wave F3 — Synthesis surface + jerv steering** *(GUI; mock gate CLEARED —
-  Direction 1, stacked wave sections).* Implement the chosen mock: grouped-by-wave
-  synthesis with wave-header dividers, collapse-settled, the text feed affordance,
-  and the three named skip states (upstream / budget / deadline, distinct from
-  failed); update DESIGN.md's sub-agent section; `jerv.prompt` bump; **verified
-  against a live re-run of the misfired timeline task to the acceptance bar.**
+- **Wave F3 — Synthesis surface + jerv steering — LANDED** *(GUI; mock gate cleared —
+  Direction 1).* Grouped-by-wave synthesis card (wave-header dividers, text feed edge
+  "← fed by …", distinct amber skip rows vs. rose failures; a flat fan renders
+  unchanged); `jerv.prompt` v22→v23 steering jerv to staged `waves` for dependent
+  producer→consumer work; backend view carries `wave`/`fed_from`. Frontend + backend
+  green (288 agent frontend tests; biome/tsc clean). *Blocked, post-deploy:* the
+  **live re-run of the misfired timeline task to the acceptance bar** can only run once
+  this branch is deployed (the box runs the old code today) — a merge-gated
+  verification, not a pre-merge one.
 
 ## Decisions
 
