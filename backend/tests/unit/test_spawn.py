@@ -8,16 +8,31 @@ import pytest
 
 from jbrain.agent import spawn as spawn_mod
 from jbrain.agent.agents import AGENTS, JERV_TOOLS
+from jbrain.agent.briefs import FEED_OPEN
 from jbrain.agent.loop import AgentResult, ToolContext
 from jbrain.agent.spawn import SpawnService, effective_child_tools
 from jbrain.agent.tree import (
     MAX_CHILDREN_PER_PARENT,
     MAX_DEPTH,
     MAX_PARALLEL,
+    MAX_WAVES,
     TreeState,
     child_steps_for,
 )
 from jbrain.db.session import SessionContext
+
+
+def _review_brief(artifact: str = "the material") -> dict:
+    """A minimal template-bound review brief — what a fed consumer must supply."""
+    return {
+        "template_id": "review",
+        "params": {"artifact": artifact, "standard": "accuracy", "deliverable": "a table"},
+    }
+
+
+def _brief_text(call: dict) -> str:
+    """The brief a recorded child run was launched with (2nd conversation message)."""
+    return call["conversation"][1].text
 
 # --- the clamp, as a pure function (parent⊆child) --------------------------
 
@@ -896,3 +911,173 @@ async def test_cancelled_child_runlog_settles_inline_not_detached(
     # The child's cancelled run-log close completed INLINE (awaited by the fan), not
     # abandoned mid-yield — so the row settles 'cancelled' instead of stranding 'running'.
     assert any(f["stop_reason"] == "cancelled" for f in runlog.finished)
+
+
+# --- feeding waves: the staged pipeline (docs/SUBAGENT_FEEDING_WAVES_PLAN.md) ---
+
+
+async def test_waves_feed_producer_summary_into_consumer(service: SpawnService) -> None:
+    """A wave-2 consumer's brief carries the wave-1 producer's summary, wrapped in the
+    data boundary — and the producer, being un-fed, does not."""
+    out = await service.spawn_fan(
+        _ctx(),
+        {
+            "waves": [
+                [{"persona": "research", "brief": "fetch the commit history", "label": "prod"}],
+                [
+                    {"persona": "review", "label": "cons", "feed": ["prod"],
+                     "brief": _review_brief()}
+                ],
+            ]
+        },
+    )
+    assert len(_FakeLoop.calls) == 2  # producer, then consumer (barrier between waves)
+    prod_brief, cons_brief = _brief_text(_FakeLoop.calls[0]), _brief_text(_FakeLoop.calls[1])
+    assert FEED_OPEN not in prod_brief  # producer is un-fed
+    assert FEED_OPEN in cons_brief  # consumer got the boundary-wrapped feed …
+    assert "summary for sess-1" in cons_brief  # … containing the producer's summary
+    assert "2 ran" in out
+
+
+async def test_waves_skip_consumer_when_producer_fails(
+    service: SpawnService, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Fail-closed cascade: a producer that returns no usable answer (ok=False) leaves
+    its consumer SKIPPED — never run over an empty/error block — surfaced distinctly."""
+
+    class _EmptyProducer(_FakeLoop):
+        async def run(self, **kw):  # noqa: ANN003
+            _FakeLoop.calls.append(kw)
+            # The producer's free-text brief mentions "fetch"; it returns empty (a
+            # failure). The consumer, if it ran, would have a template brief instead.
+            text = "" if "fetch" in kw["conversation"][1].text else "review done"
+            return AgentResult(text=text, stop_reason="end_turn", steps=1, cost_tokens=10)
+
+    monkeypatch.setattr(spawn_mod, "AgentLoop", _EmptyProducer)
+    out = await service.spawn_fan(
+        _ctx(),
+        {
+            "waves": [
+                [{"persona": "research", "brief": "fetch history", "label": "prod"}],
+                [
+                    {"persona": "review", "label": "cons", "feed": ["prod"],
+                     "brief": _review_brief()}
+                ],
+            ]
+        },
+    )
+    assert len(_FakeLoop.calls) == 1  # only the producer ran; the consumer was skipped
+    assert "[SKIPPED" in out and "cons" in out
+    assert "1 skipped" in out
+
+
+async def test_waves_fed_consumer_must_be_template_bound(service: SpawnService) -> None:
+    """A fed consumer with a free-text brief is refused — the fed data must land in a
+    data-framed template slot (the review's depth-0 concern)."""
+    out = await service.spawn_fan(
+        _ctx(),
+        {
+            "waves": [
+                [{"persona": "research", "brief": "fetch", "label": "p"}],
+                [{"persona": "review", "label": "c", "feed": ["p"], "brief": "free text"}],
+            ]
+        },
+    )
+    assert "refused" in out.lower() and "template-bound" in out.lower()
+    assert not _FakeLoop.calls
+
+
+async def test_waves_feed_must_reference_an_earlier_wave(service: SpawnService) -> None:
+    """A consumer may only feed from a strictly earlier wave — a same-wave feed edge is
+    refused (no intra-wave ordering, no cycles)."""
+    out = await service.spawn_fan(
+        _ctx(),
+        {
+            "waves": [
+                [
+                    {"persona": "research", "brief": "a", "label": "a"},
+                    {"persona": "review", "label": "b", "feed": ["a"], "brief": _review_brief()},
+                ]
+            ]
+        },
+    )
+    assert "refused" in out.lower() and "earlier wave" in out.lower()
+    assert not _FakeLoop.calls
+
+
+async def test_waves_sibling_reference_without_feed_refused(service: SpawnService) -> None:
+    """The primary structural fix: a brief that refers to data it never received (a
+    guard phrase) is refused instead of running empty."""
+    out = await service.spawn_fan(
+        _ctx(),
+        {"waves": [[{"persona": "research", "brief": "use the same commit list", "label": "p"}]]},
+    )
+    assert "refused" in out.lower() and "feed" in out.lower()
+    assert not _FakeLoop.calls
+
+
+async def test_waves_reference_to_unfed_sibling_label_refused(service: SpawnService) -> None:
+    """Naming another task's label without a `feed` edge is caught too (word-boundary)."""
+    out = await service.spawn_fan(
+        _ctx(),
+        {
+            "waves": [
+                [{"persona": "research", "brief": "gather commits", "label": "history"}],
+                [
+                    {
+                        "persona": "review",
+                        "label": "c",
+                        "brief": "assess the history output",  # names 'history', no feed
+                    }
+                ],
+            ]
+        },
+    )
+    assert "refused" in out.lower()
+    assert not _FakeLoop.calls
+
+
+async def test_waves_refused_when_nested(service: SpawnService) -> None:
+    """Staged waves are a top-level capability (D4): a depth>=1 child spawns a flat fan."""
+    out = await service.spawn_fan(
+        _ctx(depth=1),
+        {"waves": [[{"persona": "research", "brief": "x", "label": "p"}]]},
+    )
+    assert "refused" in out.lower() and "top-level" in out.lower()
+    assert not _FakeLoop.calls
+
+
+async def test_waves_over_max_refused(service: SpawnService) -> None:
+    waves = [
+        [{"persona": "research", "brief": f"q{i}", "label": f"L{i}"}]
+        for i in range(MAX_WAVES + 1)
+    ]
+    out = await service.spawn_fan(_ctx(), {"waves": waves})
+    assert "refused" in out.lower()
+    assert not _FakeLoop.calls
+
+
+async def test_waves_total_children_cap(service: SpawnService) -> None:
+    """The whole staged call still obeys the per-fan child cap across all waves."""
+    wave1 = [
+        {"persona": "research", "brief": f"q{i}", "label": f"A{i}"}
+        for i in range(MAX_CHILDREN_PER_PARENT)
+    ]
+    wave2 = [{"persona": "research", "brief": "one more", "label": "B0"}]
+    out = await service.spawn_fan(_ctx(), {"waves": [wave1, wave2]})
+    assert "refused" in out.lower()
+    assert not _FakeLoop.calls
+
+
+async def test_waves_duplicate_label_refused(service: SpawnService) -> None:
+    out = await service.spawn_fan(
+        _ctx(),
+        {
+            "waves": [
+                [{"persona": "research", "brief": "a", "label": "dup"}],
+                [{"persona": "review", "label": "dup", "feed": [], "brief": "b"}],
+            ]
+        },
+    )
+    assert "refused" in out.lower() and "unique" in out.lower()
+    assert not _FakeLoop.calls

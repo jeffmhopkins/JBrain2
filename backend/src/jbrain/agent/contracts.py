@@ -284,6 +284,10 @@ class SubagentSpawnedEvent(BaseModel):
     persona: str
     label: str
     depth: int
+    # Which wave of a staged (feeding) fan this child belongs to (0-based; 0 for an
+    # ordinary flat fan). Lets the grouped-by-wave surface (F3) bucket rows; the flat
+    # fan ignores it (docs/SUBAGENT_FEEDING_WAVES_PLAN.md).
+    wave: int = 0
 
 
 class SubagentProgressEvent(BaseModel):

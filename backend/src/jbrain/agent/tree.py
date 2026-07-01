@@ -16,6 +16,11 @@ MAX_DEPTH = 2  # spawn allowed iff parent.depth < MAX_DEPTH (root=0; depth-2 is 
 MAX_CHILDREN_PER_PARENT = 6  # the largest fan a single spawn call may launch
 MAX_PARALLEL = 4  # the most children that run concurrently within a fan
 MAX_TOTAL_AGENTS_PER_TREE = 12  # every child across the whole root turn, all depths
+# Feeding waves (docs/SUBAGENT_FEEDING_WAVES_PLAN.md): a single staged spawn call may
+# chain at most this many ordered waves (a producer wave → a consumer wave). Kept at 2
+# so the serial local wall-clock stays under the parent turn cap and the surface stays
+# legible; the total children across all waves still obey MAX_CHILDREN_PER_PARENT.
+MAX_WAVES = 2
 
 # Per-child RUNTIME bounds. The original tight caps (10 steps / 180s) were sized for a
 # PARALLEL fan on a slow single-GPU box; now the fan runs SERIALLY on a local route
