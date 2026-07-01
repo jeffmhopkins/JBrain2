@@ -234,9 +234,7 @@ def test_power_off_stops_services_in_reverse_order() -> None:
 def test_power_on_skips_unprovisioned_service() -> None:
     # A box without the jcode profile (only the coder gateway): starting the missing
     # services 404s and is skipped, not fatal.
-    sup = _FakeSupervisor(
-        {"local-llm": "exited"}, start_404=("claude-shim", "jcode")
-    )
+    sup = _FakeSupervisor({"local-llm": "exited"}, start_404=("claude-shim", "jcode"))
     client = TestClient(_power_app(OWNER, sup))
     assert client.post("/api/jcode/power", json={"on": True}).status_code == 200
     assert ("start", "local-llm") in sup.calls
