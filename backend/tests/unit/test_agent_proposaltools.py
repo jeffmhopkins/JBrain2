@@ -145,6 +145,7 @@ async def test_make_intake_link_stages_an_editable_intake_link_proposal() -> Non
             "subject_id": "subj-1",
             "domain": "health",
             "fields_brief": "their current medications",
+            "persona_brief": "warm and patient",
             "opening_blurb": "hi there",
             "max_runs": 3,
             "bind_on_first": True,
@@ -159,6 +160,8 @@ async def test_make_intake_link_stages_an_editable_intake_link_proposal() -> Non
     leaf = spec.nodes[0]
     assert leaf.op == "mint_intake_link"  # never an add_note — it must not enact as a note
     assert leaf.preview["fields_brief"] == "their current medications"
+    # The assistant-drafted interviewer persona flows into the editable preview (v2).
+    assert leaf.preview["persona_brief"] == "warm and patient"
     assert leaf.preview["max_runs"] == 3 and leaf.preview["bind_on_first"] is True
     # max_opens defaults to 4x max_runs; ttl defaults to 24h.
     assert leaf.preview["max_opens"] == 12 and leaf.preview["ttl_hours"] == 24.0

@@ -1,6 +1,6 @@
 ---
 name: make_intake_link
-version: 1
+version: 2
 permission: sensitive
 params:
   type: object
@@ -21,6 +21,15 @@ params:
         specific, bounded set of information (e.g. "their current mailing address and a
         phone number"). This is the interview's goal, templated in as data; it can never
         grant the interviewer tools or access.
+    persona_brief:
+      type: string
+      description: >-
+        Extra framing for the interviewer's tone and manner (e.g. "warm and patient;
+        reassure them their answers stay private and are reviewed before anything is
+        kept"). Draft a short one that fits the subject and audience — the owner edits it.
+        The interviewer's fixed identity and security rules always apply; this only tunes
+        the voice, it can never grant a tool or widen scope. Not secret — a visitor could
+        read it back.
     opening_blurb:
       type: string
       description: A short, friendly welcome message the recipient sees first. You draft it; the owner edits it.
@@ -57,5 +66,6 @@ Use it when the owner wants to collect a specific, bounded set of information fr
 else (a relative's medical history, a contractor's quote, a new contact's details). Fill
 the brief by interviewing the owner: which subject the information is about, which domain,
 exactly what to collect, and whether it's for one person or several. Draft a warm opening
-blurb. Everything you pass is a proposed DEFAULT the owner edits before approving — so
-propose sensible values and tell them you've staged it for review.
+blurb AND a short interviewer persona (persona_brief) that sets the tone. Everything you
+pass is a proposed DEFAULT the owner edits before approving — so propose sensible values
+and tell them you've staged it for review.

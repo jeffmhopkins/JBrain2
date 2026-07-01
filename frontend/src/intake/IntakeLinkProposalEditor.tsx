@@ -214,10 +214,12 @@ export function IntakeLinkProposalEditor({ proposalId, node, onClose, onMinted, 
               aria-label="Agent prompt"
               rows={4}
               value={personaBrief}
+              placeholder="Optional — tone and manner (e.g. “warm and patient”). The interviewer already has a professional voice; this just tunes it."
               onChange={(e) => setPersonaBrief(e.target.value)}
             />
             <span className="ic-note">
-              The interviewer's instructions. Nothing secret — a visitor could read it back.
+              Optional framing for the interviewer's tone — it already knows what to collect (below)
+              and follows fixed rules. Nothing secret; a visitor could read it back.
             </span>
           </label>
 
