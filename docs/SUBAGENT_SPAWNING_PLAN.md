@@ -1,5 +1,17 @@
 # Sub-agent spawning — build plan (scheduled)
 
+> **Superseded in part — child-initiated nesting was removed.** This plan built a
+> two-layer tree (jerv → child → grandchild). In practice the model would not
+> reliably spawn *as a child* even when instructed, and the depth≥1 machinery
+> (decision #6 depth cap at 2, decision #7 template-bound grandchild briefs) was an
+> unused security surface. So **children are now always leaves** (`MAX_DEPTH = 1`;
+> `spawn_subagent` dropped from the research/review personas). Structured
+> orchestrator-declared work is expressed by **feeding waves**
+> (`docs/SUBAGENT_FEEDING_WAVES_PLAN.md`) instead — and the brief templates that
+> decision #7 introduced live on there, now guarding *fed-consumer* briefs rather
+> than a grandchild-spawn hop. References below to depth≥1, grandchildren, and "two
+> sub-agent layers" are retained as the historical record.
+
 **Status: scheduled — design-complete, decomposed into waves S1–S4 (see "Wave
 split").** Lets the web-sandboxed agent (`jerv`) spawn web-sandboxed
 **research / review / summarize** sub-agents for context flexibility. Promoted out

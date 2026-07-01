@@ -149,18 +149,19 @@ def test_archivist_tools_are_archivist_only() -> None:
 
 
 def test_subagent_personas_are_web_sandboxed_and_kb_less() -> None:
-    """research/review read the web + clock + may spawn (template-bound at depth>=1);
-    summarize is a pure transform with no tools; none reads the knowledge base, and
-    none holds `current_location` (M2 — the location read is never in a child)."""
+    """research/review read the web + clock; summarize is a pure transform with no tools;
+    none reads the knowledge base, none holds `current_location` (M2), and — since
+    child-initiated nesting was removed — NONE holds `spawn_subagent`: children are
+    always leaves."""
     research, review, summarize = (AGENTS["research"], AGENTS["review"], AGENTS["summarize"])
-    assert research.tools == RESEARCH_TOOLS == WEB_TOOLS | {"current_time", SPAWN_TOOL}
+    assert research.tools == RESEARCH_TOOLS == WEB_TOOLS | {"current_time"}
     assert review.tools == REVIEW_TOOLS == RESEARCH_TOOLS
     assert summarize.tools == SUMMARIZE_TOOLS == frozenset()
     for p in (research, review, summarize):
         assert p.reads_knowledge_base is False
         assert "current_location" not in (p.tools or frozenset())
-    # summarize cannot spawn (it holds no tools at all).
-    assert SPAWN_TOOL not in (summarize.tools or frozenset())
+        # No child persona can spawn — the tree is exactly two levels (jerv → leaves).
+        assert SPAWN_TOOL not in (p.tools or frozenset())
 
 
 def test_spawn_set_matches_the_subagent_personas() -> None:
@@ -241,12 +242,12 @@ def test_persona_prompts_pinned_to_their_versions() -> None:
             "19b557040a985b4b1c13b9b3a38e2c6a8e0fd06611a84e7341e6497f8a14b9a0",
         ),
         "research": (
-            "agent-research-v5",
-            "9f574fbc19df84e6905fd52cf9e46ed1bf50a9d15615bc08cbe6e2aa856a926f",
+            "agent-research-v6",
+            "c5c92b3d5ae00429f38dd8ef36d94693bbf70e96b7d74bc7f054000960f982b4",
         ),
         "review": (
-            "agent-review-v3",
-            "16bd3f511dc140db898d59d27805c0dabe11f70974f13c1e5c1d160cac484b67",
+            "agent-review-v4",
+            "bed91b4c6972340df9ff264ddd4416d1397f8408ac7aa9312ffc5cfeb38680bb",
         ),
         "summarize": (
             "agent-summarize-v2",

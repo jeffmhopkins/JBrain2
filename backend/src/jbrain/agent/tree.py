@@ -13,7 +13,11 @@ from dataclasses import dataclass
 
 # Structural fan caps (docs/SUBAGENT_SPAWNING_PLAN.md, Wave S1). These shape caps
 # bound the tree on their own — no model cooperation.
-MAX_DEPTH = 2  # spawn allowed iff parent.depth < MAX_DEPTH (root=0; depth-2 is a leaf)
+# spawn allowed iff parent.depth < MAX_DEPTH. At 1, only the root (jerv, depth 0) may
+# spawn — a child (depth 1) is always a leaf and cannot spawn further. Child-initiated
+# nesting was removed (the model wouldn't use it reliably and it carried the depth>=1
+# brief-laundering surface); `waves` covers structured orchestrator-declared work.
+MAX_DEPTH = 1
 MAX_CHILDREN_PER_PARENT = 6  # the largest fan a single spawn call may launch
 MAX_PARALLEL = 4  # the most children that run concurrently within a fan
 MAX_TOTAL_AGENTS_PER_TREE = 12  # every child across the whole root turn, all depths

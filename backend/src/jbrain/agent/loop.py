@@ -197,7 +197,8 @@ class ToolContext:
     here: tuple[float, float] | None = None
     here_as_of: datetime | None = None
     # Sub-agent spawning context (docs/SUBAGENT_SPAWNING_PLAN.md). `depth` is this
-    # turn's depth in the agent tree (root=0); spawn is refused unless depth < 2.
+    # turn's depth in the agent tree (root=0); spawn is refused unless depth == 0 —
+    # only the root jerv fans out, and its children are leaves (nesting removed).
     # `agent_tools` is THIS turn's effective allowed tool names — the ceiling the
     # spawn handler clamps a child to (child effective tools ⊆ parent's, enforced at
     # dispatch). `tree` is the per-root-turn shared fan state (the total-agents cap,

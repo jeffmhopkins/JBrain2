@@ -1,22 +1,22 @@
-"""Sub-agent brief templates (docs/SUBAGENT_SPAWNING_PLAN.md, decision #7).
+"""Sub-agent brief templates (docs/SUBAGENT_FEEDING_WAVES_PLAN.md).
 
 The "insight from the spawning session" a child receives is an explicit *brief* —
 data wrapped in the data/instruction boundary, never shared memory or live parent
-access. The brief's form depends on the spawner's depth:
+access. Two forms:
 
-- **At depth 0** (the owner's jerv turn) the brief may be **free-text** — it is
-  composed in an owner-paced turn from owner-trusted context.
-- **At depth >= 1** the brief is **template-bound**: a child that has already run
-  `web_fetch` (untrusted content) may only spawn a grandchild with a
-  `{template_id, params}` brief — named fields filled into a fixed, versioned
-  template, never free-text prose. This closes the re-spawn laundering hop: an
-  attacker-controlled fetched page cannot become a grandchild's steering
-  instructions, only the value of a declared, data-framed slot.
+- **A flat-fan child** (jerv's ordinary `tasks` fan) gets a **free-text** brief — it
+  is composed in an owner-paced turn from owner-trusted context.
+- **A fed consumer** in a staged **feeding-waves** call gets a **template-bound**
+  brief: named fields filled into a fixed, versioned template, never free-text prose.
+  This is what lets an earlier wave's summary (possibly attacker-influenced web
+  content) be fed forward only as the value of a declared, data-framed slot — it can
+  never become the consumer's steering instructions.
 
-The template set mirrors the three personas; only the parameter slots are
-model-filled. `render_brief` is strict — an unknown template, a missing slot, or an
-extra key all fail closed, so the structured form cannot smuggle prose in via an
-undeclared field.
+(Child-initiated nesting was removed, so these templates no longer guard a
+grandchild-spawn hop; they now serve feeding.) The template set mirrors the three
+personas; only the parameter slots are model-filled. `render_brief` is strict — an
+unknown template, a missing slot, or an extra key all fail closed, so the structured
+form cannot smuggle prose in via an undeclared field.
 """
 
 import re

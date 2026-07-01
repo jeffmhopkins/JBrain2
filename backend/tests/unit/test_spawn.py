@@ -176,7 +176,9 @@ def _ctx(
 # --- refusal paths (return before any mint; no model cooperation) -----------
 
 
-async def test_depth_cap_refuses_at_leaf(service: SpawnService) -> None:
+async def test_a_child_cannot_spawn_children(service: SpawnService) -> None:
+    """Nesting removed: only jerv (depth 0) may spawn — a child (depth == MAX_DEPTH == 1)
+    is refused, so the tree is exactly two levels."""
     out = await service.spawn_fan(
         _ctx(depth=MAX_DEPTH), {"tasks": [{"persona": "research", "brief": "x", "label": "L"}]}
     )
@@ -232,16 +234,6 @@ async def test_budget_admission_floor_refuses_when_pool_too_low(service: SpawnSe
     assert "refused" in out.lower() and "budget" in out.lower()
     assert not _FakeLoop.calls
     assert tree.agents_spawned == 0  # not admitted
-
-
-async def test_depth1_free_text_brief_rejected(service: SpawnService) -> None:
-    """At depth>=1 a brief MUST be template-bound — a free-text string is refused
-    (the re-spawn laundering hop, decision #7)."""
-    out = await service.spawn_fan(
-        _ctx(depth=1), {"tasks": [{"persona": "research", "brief": "free text", "label": "L"}]}
-    )
-    assert "refused" in out.lower()
-    assert not _FakeLoop.calls
 
 
 async def test_spawn_refused_without_a_tree_pool(service: SpawnService) -> None:
@@ -760,8 +752,8 @@ async def test_child_tool_steps_forwarded_to_the_fan(monkeypatch: pytest.MonkeyP
 
 
 async def test_fan_without_a_sink_does_not_emit(service: SpawnService) -> None:
-    # A turn with no event sink (the non-streaming child path) simply skips emission —
-    # no crash, so a grandchild fan degrades to summary-only (documented v1 limit).
+    # A turn with no event sink simply skips live emission — no crash; the fan still
+    # runs and folds its summary.
     out = await service.spawn_fan(
         _ctx(), {"tasks": [{"persona": "research", "brief": "x", "label": "L"}]}
     )
@@ -1051,7 +1043,8 @@ async def test_waves_reference_to_unfed_sibling_label_refused(service: SpawnServ
 
 
 async def test_waves_refused_when_nested(service: SpawnService) -> None:
-    """Staged waves are a top-level capability (D4): a depth>=1 child spawns a flat fan."""
+    """Staged waves are a top-level (depth-0) capability; a depth>=1 caller is refused
+    (and a child cannot spawn at all now — belt and suspenders)."""
     out = await service.spawn_fan(
         _ctx(depth=1),
         {"waves": [[{"persona": "research", "brief": "x", "label": "p"}]]},
