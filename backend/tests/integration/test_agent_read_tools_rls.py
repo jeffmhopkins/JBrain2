@@ -225,3 +225,41 @@ async def test_relate_anchors_on_me_and_respects_the_firewall(maker: async_sessi
     )
     blocked = await tools["relate"]({"relationship": "wife"}, general)
     assert "Renata" not in blocked and "No 'wife' relationship" in blocked
+
+
+async def test_owner_entity_id_resolves_the_subject_linked_me(
+    maker: async_sessionmaker,
+) -> None:
+    """The ambient owner-self anchor: owner_entity_id resolves the subject-linked,
+    non-merged "Me" entity — the owner at the centre — so the turn can hand the agent
+    its id. A pure read (a SELECT that never mints the entity), RLS-scoped like every
+    read tool; the module DB is shared, so this asserts the contract, not a specific
+    id."""
+    owner = await _owner(maker)
+    repo = SqlAnalysisRepo(maker)
+    subject = str(uuid.uuid4())
+    async with scoped_session(maker, owner) as session:
+        await session.execute(
+            text("INSERT INTO app.subjects (id, display_name, kind) VALUES (:id, 'Me', 'person')"),
+            {"id": subject},
+        )
+        await session.execute(
+            text(
+                "INSERT INTO app.entities"
+                " (id, kind, canonical_name, status, subject_id, domain_code)"
+                " VALUES (gen_random_uuid(), 'Person', 'Me', 'confirmed', :sub, 'general')"
+            ),
+            {"sub": subject},
+        )
+
+    resolved = await repo.owner_entity_id(read_context(owner.principal_id, ("general",)))
+    assert resolved is not None
+    # It points at a real subject-linked, non-merged "Me", never at some other entity.
+    async with scoped_session(maker, owner) as session:
+        row = (
+            await session.execute(
+                text("SELECT canonical_name, subject_id, status FROM app.entities WHERE id = :id"),
+                {"id": resolved},
+            )
+        ).one()
+    assert row.canonical_name == "Me" and row.subject_id is not None and row.status != "merged"

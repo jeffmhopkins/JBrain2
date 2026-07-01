@@ -1,6 +1,6 @@
 ---
 name: read_entity
-version: 2
+version: 3
 permission: read
 params:
   type: object
@@ -14,6 +14,11 @@ Read one of the owner's entities by its id and get the structured GRAPH view: it
 type, names and aliases, its current facts as edges (predicate → value), which
 other entities point at it, and how many notes mention it. Use this for the
 structured view of who or what something is.
+
+To read the OWNER'S OWN entity ("Me" — the centre of the graph, where their own
+birthday, name, age, email, and the like live), pass entity_id "me". That is the
+one-call way to answer a first-person attribute question; you don't need to look
+its id up first.
 
 The edges are how you traverse relationships. A relationship edge (spouse,
 employer, parent, manages, …) names another entity and prints its id — read THAT

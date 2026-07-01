@@ -100,6 +100,8 @@ class EntityReader(Protocol):
 
     async def entity_view(self, ctx: SessionContext, entity_id: str) -> dict[str, Any] | None: ...
 
+    async def owner_entity_id(self, ctx: SessionContext) -> str | None: ...
+
     async def list_entities(
         self,
         ctx: SessionContext,
@@ -313,6 +315,13 @@ def build_read_handlers(
 
 _ENTITY_LIMIT = 8
 
+# The owner's own entity is "Me". The model's natural reach for it is read_entity
+# with a literal "me"/"owner"/"myself" rather than the uuid — so resolve those
+# sentinels to the owner entity and make that instinct one successful call, instead
+# of a failed guess ("No entity with that id is in scope") that falls back to a noisy
+# find_entity("Me") (whose substring match also returns every "appointMEnt").
+_OWNER_SENTINELS = frozenset({"me", "owner", "myself"})
+
 
 def entity_refs(rows: list[dict[str, Any]]) -> tuple[EntityRef, ...]:
     """Map entity rows to refs for the response's tappable entity chips —
@@ -349,6 +358,11 @@ def build_entity_handlers(entities: EntityReader) -> dict[str, ToolHandler]:
         entity_id = str(arguments.get("entity_id", "")).strip()
         if not entity_id:
             return ToolOutput("read_entity needs an entity_id.")
+        if entity_id.lower() in _OWNER_SENTINELS:
+            owner_id = await entities.owner_entity_id(ctx.session)
+            if owner_id is None:
+                return ToolOutput("No entity with that id is in scope.")
+            entity_id = owner_id
         view = await entities.entity_view(ctx.session, entity_id)
         if view is None:
             return ToolOutput("No entity with that id is in scope.")

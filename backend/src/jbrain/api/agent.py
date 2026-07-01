@@ -30,6 +30,7 @@ from jbrain.agent.agents import SPAWN_TOOL, agent_for
 from jbrain.agent.attachment_content import MAX_ATTACHMENTS_PER_TURN, build_attachment_content
 from jbrain.agent.attachments import TurnAttachmentRepo, attachment_scopes
 from jbrain.agent.clock import now_block
+from jbrain.agent.identity import me_block
 from jbrain.agent.loop import AgentLoop, guardrails_for_effort
 from jbrain.agent.memory import MemoryService
 from jbrain.agent.runlog import AgentRunLog, StepTally
@@ -39,6 +40,7 @@ from jbrain.agent.toolregistry import ToolRegistry
 from jbrain.agent.transcript_accumulator import TranscriptAccumulator
 from jbrain.agent.transcript_store import AgentTranscript
 from jbrain.agent.tree import TreeState
+from jbrain.analysis.repo import SqlAnalysisRepo
 from jbrain.api.deps import owner_only
 from jbrain.api.notes import ctx_for
 from jbrain.api.settings import get_settings_store
@@ -217,6 +219,10 @@ def get_turn_attachments(request: Request) -> TurnAttachmentRepo:
     return cast(TurnAttachmentRepo, request.app.state.turn_attachments)
 
 
+def get_analysis_repo(request: Request) -> SqlAnalysisRepo:
+    return cast(SqlAnalysisRepo, request.app.state.analysis_repo)
+
+
 def get_blob_store(request: Request) -> BlobStore:
     return cast(BlobStore, request.app.state.blob_store)
 
@@ -258,6 +264,21 @@ async def _presence_block(
         log.warning("agent.presence_failed", error=repr(exc))
         return ""
     return presence_block(presence)
+
+
+async def _me_block(request: Request, owner_ctx: SessionContext) -> str:
+    """The data-framed owner-self line to prepend to a knowledge-base turn (the
+    "Me" entity id), or "" when it can't be resolved. Read-only and best-effort:
+    `owner_entity_id` never creates the entity, and any read hiccup (or a graph
+    with no Me yet) just injects no line rather than breaking the turn. The caller
+    gates this to knowledge-base agents; the read runs under the full owner ctx so
+    a narrowed session still anchors on the owner's own entity."""
+    try:
+        entity_id = await get_analysis_repo(request).owner_entity_id(owner_ctx)
+    except Exception as exc:  # noqa: BLE001 - a Me lookup hiccup must not break the turn
+        log.warning("agent.me_block_failed", error=repr(exc))
+        return ""
+    return me_block(entity_id) if entity_id else ""
 
 
 # A cached warm fix older than this is not resurfaced as the owner's location: past a
@@ -493,6 +514,17 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
     presence = await _presence_block(request, owner_ctx, session)
     if presence:
         conversation = [UserMessage(text=presence), *conversation]
+    # Hand a knowledge-base turn the owner's own ("Me") entity id up front, so a
+    # first-person attribute question ("what's my birthday", "my name", "where I
+    # live") is a single read_entity — not a find_entity("Me") hop preceded by a
+    # flail through note search. Same conversation-channel DATA framing as presence,
+    # and gated the same way: owner-self data, so knowledge-base agents only (never
+    # jerv/teacher) and resolved under the FULL owner ctx. Best-effort — a resolve
+    # miss (or a graph with no Me yet) simply injects no line.
+    if profile.reads_knowledge_base:
+        me_line = await _me_block(request, owner_ctx)
+        if me_line:
+            conversation = [UserMessage(text=me_line), *conversation]
     # The owner's display zone so the agent's time prose matches the cards (which
     # the client localizes); None = UTC. Read on the owner ctx, not the narrowed
     # read ctx — a preference, not domain data.

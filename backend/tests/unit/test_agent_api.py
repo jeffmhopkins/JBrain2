@@ -16,6 +16,7 @@ from fastapi.testclient import TestClient
 from jbrain.agent.attachments import AttachmentInfo
 from jbrain.agent.clock import _CLOCK_FRAME
 from jbrain.agent.contracts import EntityRef, NoteSource, ProposalRef, ToolSpec, ViewPayload
+from jbrain.agent.identity import _ME_FRAME
 from jbrain.agent.loop import ToolOutput
 from jbrain.agent.session import AgentSessionInfo
 from jbrain.agent.toolfile import ToolFile
@@ -322,7 +323,7 @@ def test_chat_streams_text_then_done(
         {"type": "done", "stop_reason": "end_turn"},
     ]
     # The run was opened, the session touched, and the run closed with its summary.
-    assert runlog.started == [("sess-1", "agent-system-v6")]
+    assert runlog.started == [("sess-1", "agent-system-v7")]
     assert sessions_store.touched == ["sess-1"]
     assert runlog.finished == [
         {"status": "done", "stop_reason": "end_turn", "step_count": 1, "cost_tokens": 10}
@@ -786,6 +787,49 @@ def test_chat_history_is_replayed_into_the_turn(
         "UserMessage",
     ]
     assert sent[-1].text == "and the second?"
+
+
+class _FakeAnalysisRepo:
+    """Just the owner_entity_id slice the ambient owner-self block reads."""
+
+    def __init__(self, entity_id: str | None) -> None:
+        self._id = entity_id
+
+    async def owner_entity_id(self, ctx) -> str | None:  # type: ignore[no-untyped-def]
+        return self._id
+
+
+def test_chat_injects_the_owner_self_block_for_a_kb_agent(
+    client: TestClient, repo: FakeAuthRepo, sessions_store: FakeAgentSessions
+) -> None:
+    # A knowledge-base turn is handed the owner's "Me" entity id up front, so an
+    # owner self-attribute ("my birthday") is one read_entity — no find_entity hop.
+    login(client, repo)
+    sessions_store.add(AgentSessionInfo("sess-1", "", "active", ("general",), (), NOW, NOW))
+    client.app.state.analysis_repo = _FakeAnalysisRepo("me-123")  # type: ignore[attr-defined]
+    router: LlmRouter = client.app.state.llm_router  # type: ignore[attr-defined]
+    fake = cast(FakeLlmClient, router._clients["xai"])
+
+    resp = client.post("/api/chat", json={"session_id": "sess-1", "message": "what's my birthday"})
+    assert resp.status_code == 200
+    me_lines = [m for m in fake.stream_calls[0]["messages"] if _ME_FRAME in getattr(m, "text", "")]
+    assert len(me_lines) == 1 and "me-123" in me_lines[0].text
+
+
+def test_chat_omits_the_owner_self_block_for_jerv(
+    client: TestClient, repo: FakeAuthRepo, sessions_store: FakeAgentSessions
+) -> None:
+    # jerv reads no owner data (reads_knowledge_base False) — the owner's entity id
+    # must never ride into its sandboxed context, even if the repo could resolve it.
+    login(client, repo)
+    sessions_store.add(AgentSessionInfo("sess-j", "", "active", (), (), NOW, NOW, agent="jerv"))
+    client.app.state.analysis_repo = _FakeAnalysisRepo("me-123")  # type: ignore[attr-defined]
+    router: LlmRouter = client.app.state.llm_router  # type: ignore[attr-defined]
+    fake = cast(FakeLlmClient, router._clients["xai"])
+
+    resp = client.post("/api/chat", json={"session_id": "sess-j", "message": "tallest mountain?"})
+    assert resp.status_code == 200
+    assert not any(_ME_FRAME in getattr(m, "text", "") for m in fake.stream_calls[0]["messages"])
 
 
 def test_chat_attachments_ride_the_final_user_message(
