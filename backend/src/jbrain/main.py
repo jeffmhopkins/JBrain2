@@ -45,6 +45,7 @@ from jbrain.api import (
     images,
     images_render,
     install,
+    intake,
     jcode,
     jcode_preview,
     jcode_share,
@@ -95,6 +96,8 @@ from jbrain.gmail.triage import TRIAGE_INBOX_SPEC
 from jbrain.image_gen.comfyui import ComfyUiImageGen
 from jbrain.image_gen.gateway import ComfyUiGatewayClient
 from jbrain.image_gen.render import ImageRenderService
+from jbrain.intake.repo import SqlIntakeRepo
+from jbrain.intake.sweep import intake_reaper_loop
 from jbrain.jcode import JcodeClient
 from jbrain.lists.repo import SqlListsRepo
 from jbrain.llm import build_router
@@ -184,6 +187,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # can't kill them; keyed by run_id for the Stop endpoint and shutdown cleanup.
         app.state.live_turns = {}
         app.state.auth_repo = SqlAuthRepo(maker)
+        app.state.intake_repo = SqlIntakeRepo(maker)
         app.state.device_repo = SqlDeviceRepo(maker)
         app.state.location_repo = SqlLocationRepo(maker)
         app.state.view_scope_repo = SqlViewScopeRepo(maker)
@@ -523,6 +527,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         tasks_loop_task = asyncio.create_task(
             run_tasks_loop(maker, app.state.task_repo, app.state.task_runner)
         )
+        # The guided-intake reaper: abandons stale drafting intake sessions (§6), under the
+        # full-owner system context so it can sweep every link's sessions.
+        intake_reaper_task = asyncio.create_task(
+            intake_reaper_loop(app.state.intake_repo, SYSTEM_CTX)
+        )
         # Stopping a service is a synchronous `docker stop` on the supervisor — up to
         # the container's SIGTERM grace (ComfyUI's ~10 s) before it returns — so the
         # default 5 s httpx timeout would spuriously fail a stop that actually succeeds.
@@ -533,6 +542,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if live_task is not None:
             live_task.cancel()
         tasks_loop_task.cancel()
+        intake_reaper_task.cancel()
         # Stop any chat turns still running detached from a (now-gone) SSE response, so
         # shutdown doesn't strand them; each closes via its own CancelledError path. AWAIT
         # their tasks (bounded) before disposing the engine: their cancel-cleanup runs the
@@ -624,6 +634,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # Public, unauthenticated setup-script delivery (irm .../install/grok.ps1 | iex).
     # Carries no secrets; the script prompts for the access token at runtime.
     app.include_router(install.router, prefix="/api")
+    # Guided-intake share links (docs/GUIDED_INTAKE_PLAN.md). Owner management is
+    # owner-gated; /intake/redeem is public (the secret is the credential).
+    app.include_router(intake.router, prefix="/api")
     # Code mode (docs/proposed/JCODE_PLAN.md). Always mounted, but every route is
     # owner-gated and 404s when jcode isn't configured (app.state.jcode_client is None).
     app.include_router(jcode.router, prefix="/api")

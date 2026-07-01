@@ -15,7 +15,7 @@ from sqlalchemy.exc import IntegrityError, ProgrammingError
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
-from jbrain.agent.agents import AGENT_NAMES
+from jbrain.agent.agents import NON_OWNER_PERSONAS, OWNER_AGENTS
 from jbrain.agent.runlog import AgentRunLog
 from jbrain.agent.session import AgentSessionRepo, read_context
 from jbrain.agent.transcript_store import AgentTranscript
@@ -140,15 +140,29 @@ async def test_agent_persona_round_trips_and_defaults_to_curator(
     assert (await repo.get(owner, chatbot.id)).agent == "jerv"  # type: ignore[union-attr]
 
 
-async def test_every_code_defined_persona_satisfies_the_check(maker: async_sessionmaker) -> None:
-    """The DB CHECK (0070, widened in 0095) must admit every persona the code offers —
-    a name in AGENT_NAMES but not the constraint fails session create with a CHECK
-    violation (the archivist regression). Guards the two from drifting apart."""
+async def test_every_owner_persona_satisfies_the_check(maker: async_sessionmaker) -> None:
+    """The DB CHECK (0070, widened in 0095) must admit every OWNER-selectable persona —
+    a name in OWNER_AGENTS but not the constraint fails session create with a CHECK
+    violation (the archivist regression). Guards the two from drifting apart.
+
+    The NON-owner intake persona is deliberately NOT in this set: it must never reach
+    app.agent_sessions (§5), proven by the rejection below."""
     owner = await _owner_ctx(maker)
     repo = AgentSessionRepo(maker)
-    for name in sorted(AGENT_NAMES):
+    for name in sorted(OWNER_AGENTS):
         info = await repo.create(owner, domain_scopes=[], title=name, agent=name)
         assert (await repo.get(owner, info.id)).agent == name  # type: ignore[union-attr]
+
+
+async def test_non_owner_persona_is_rejected_by_the_agent_check(maker: async_sessionmaker) -> None:
+    """The DB-level proof of §5: the intake persona can NEVER be stored owner-side — the
+    agent_sessions CHECK excludes it, so even a bypass of the API's is_owner_agent gate
+    fails closed at the database."""
+    owner = await _owner_ctx(maker)
+    repo = AgentSessionRepo(maker)
+    for name in sorted(NON_OWNER_PERSONAS):
+        with pytest.raises((ProgrammingError, IntegrityError)):
+            await repo.create(owner, domain_scopes=[], title=name, agent=name)
 
 
 async def test_agent_check_constraint_rejects_unknown_persona(maker: async_sessionmaker) -> None:

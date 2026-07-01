@@ -36,7 +36,7 @@ from jbrain.agent.mergetools import build_merge_handlers
 from jbrain.agent.metricstools import build_metrics_handlers
 from jbrain.agent.presencetools import build_presence_handlers
 from jbrain.agent.proposals import ProposalRepo
-from jbrain.agent.proposaltools import build_proposal_handlers
+from jbrain.agent.proposaltools import build_intake_link_handlers, build_proposal_handlers
 from jbrain.agent.runlog import AgentRunLog
 from jbrain.agent.session import AgentSessionRepo
 from jbrain.agent.spawn import SpawnRef, SpawnService
@@ -484,6 +484,7 @@ def build_registry(
             **build_appointment_write_handlers(proposals, appointments),
             **build_memory_handlers(memory),
             **build_proposal_handlers(proposals),
+            **build_intake_link_handlers(proposals),
             **build_merge_handlers(proposals, entities),
             **build_connector_handlers(connectors, proposals),
             **build_geocode_handlers(city_geocoder),

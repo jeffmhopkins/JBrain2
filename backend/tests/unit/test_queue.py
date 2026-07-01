@@ -52,13 +52,10 @@ def test_system_context_is_owner_kind() -> None:
     assert SYSTEM_CTX.principal_kind == "owner"
 
 
-def test_integration_backfill_order_is_inert_owner_ahead_hook() -> None:
-    # N14 is a no-op this phase: the leading rank term must be a constant so
-    # every row sorts equal on it, leaving created_at (oldest-first) as the
-    # sole effective key — i.e. no behavior change until Phase 7 swaps the
-    # constant for a real untrusted-origin predicate.
+def test_integration_backfill_order_ranks_untrusted_origin_last() -> None:
+    # N14 is LIVE since Phase 7 (guided intake): the leading rank term is the
+    # untrusted-origin predicate, so owner/agent notes (false ⇒ sort 0) drain ahead
+    # of stranger-authored intake notes (true ⇒ sort 1), with created_at the tiebreak.
     rank, tiebreak = (part.strip() for part in INTEGRATION_BACKFILL_ORDER_BY.split(","))
-    # An always-false EXPRESSION (not a bare constant, which Postgres rejects in
-    # ORDER BY) ⇒ every row sorts equal on it ⇒ inert hook.
-    assert rank == "(1 = 0)"
-    assert tiebreak == "n.created_at"  # the only term that orders rows today
+    assert rank == "(n.provenance = 'untrusted_origin')"
+    assert tiebreak == "n.created_at"  # oldest-first within each trust tier

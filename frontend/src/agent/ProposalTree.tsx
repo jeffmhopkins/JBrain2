@@ -6,6 +6,7 @@
 import { type ReactNode, useCallback, useEffect, useState } from "react";
 import { api } from "../api/client";
 import { EntityTypeIcon } from "../entities/kinds";
+import { IntakeLinkProposalEditor } from "../intake/IntakeLinkProposalEditor";
 import type { Decision, EnactResult, ProposalDetail, ProposalNode } from "./types";
 
 // A leaf's op turned into a short human descriptor for its row head — so a node
@@ -14,6 +15,7 @@ const OP_LABEL: Record<string, string> = {
   add_note: "New note",
   egress_call: "External call",
   merge_entities: "Merge entities",
+  add_intake_note: "Captured fact",
 };
 
 interface Props {
@@ -65,6 +67,22 @@ export function ProposalTree({
       onEnacted?.();
     } finally {
       setBusy(false);
+    }
+  }
+
+  // An intake-link Proposal is editable and mints SHOW-ONCE — it takes a bespoke
+  // editor (form + recipient preview + Approve&mint) instead of the generic node list.
+  if (detail?.kind === "intake-link") {
+    const mintNode = detail.nodes.find((n) => n.op === "mint_intake_link") ?? detail.nodes[0];
+    if (mintNode) {
+      return (
+        <IntakeLinkProposalEditor
+          proposalId={detail.id}
+          node={mintNode}
+          onClose={onClose}
+          onMinted={onEnacted}
+        />
+      );
     }
   }
 

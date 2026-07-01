@@ -15,6 +15,7 @@ import { EntityScreen } from "./screens/EntityScreen";
 import { GraphScreen } from "./screens/GraphScreen";
 import { type ComposeHandoff, HomeScreen } from "./screens/HomeScreen";
 import { ImageScreen } from "./screens/ImageScreen";
+import { IntakeLinksScreen } from "./screens/IntakeLinksScreen";
 import { JcodeScreen } from "./screens/JcodeScreen";
 import { LLMSettingsScreen } from "./screens/LLMSettingsScreen";
 import { ListDetailScreen } from "./screens/ListDetailScreen";
@@ -59,6 +60,7 @@ type Card =
   | "location"
   | "wiki"
   | "image"
+  | "intake"
   | "jcode";
 
 // Automations, Tasks, Image and jcode bring their own full-screen overlay (own back
@@ -77,6 +79,7 @@ const SCREEN_TITLES: Record<Exclude<Card, "automations" | "tasks" | "image" | "j
   graph: "Map",
   location: "Location",
   wiki: "Wiki",
+  intake: "Intake Links",
 };
 
 const CARD_EXIT_MS = 150;
@@ -511,6 +514,7 @@ export function App() {
               />
             )}
             {card === "review" && <ReviewScreen />}
+            {card === "intake" && <IntakeLinksScreen />}
             {/* Rows open the same entity layer the analysis chips use. */}
             {card === "entities" && <EntityListScreen onOpenEntity={setEntityView} />}
             {/* The graph Map drills into focus in place; the sheet opens the entity layer. */}

@@ -23,6 +23,17 @@ import type {
   TranscriptTurn,
 } from "../agent/types";
 import type {
+  IntakeConfig,
+  IntakeConfigPatch,
+  IntakeConfirmOut,
+  IntakeLink,
+  IntakeMintRequest,
+  IntakeMintResult,
+  IntakeSessionRow,
+  IntakeSubmission,
+  IntakeSubmissionDetail,
+} from "../intake/types";
+import type {
   ExternalMint,
   ExternalSession,
   JcodeModelStatus,
@@ -2335,6 +2346,97 @@ export const api = {
    * already-claimed link (share links are single-use — first browser binds it). */
   async jcodeRedeemShare(token: string): Promise<{ session_id: string }> {
     return (await request("/api/jcode/share/redeem", jsonInit("POST", { token }))).json();
+  },
+
+  /** Guided intake (recipient). Redeem a share secret for a session-scoped cookie + the
+   * link's config. A 401 means an invalid / expired / exhausted link. */
+  async intakeRedeem(secret: string): Promise<IntakeConfig> {
+    return (await request("/api/intake/redeem", jsonInit("POST", { secret }))).json();
+  },
+
+  /** One interview turn, streamed as SSE (same framing as `chat`). The intake persona
+   * has no tools, so the stream is text_delta + usage + done only. The cookie scopes it
+   * to the recipient's own session — no session id in the body. */
+  async *intakeChat(message: string, signal?: AbortSignal): AsyncGenerator<ChatEvent> {
+    const response = await request("/api/intake/chat", {
+      ...jsonInit("POST", { message }),
+      ...(signal ? { signal } : {}),
+    });
+    if (!response.body) return;
+    yield* parseChatStream(response.body);
+  },
+
+  /** Confirm the draft → capture the submission for the owner to review. */
+  async intakeConfirm(entererName: string): Promise<IntakeConfirmOut> {
+    return (
+      await request("/api/intake/confirm", jsonInit("POST", { enterer_name: entererName }))
+    ).json();
+  },
+
+  // --- Guided intake (owner management, W6) — every route is owner-gated. ---
+
+  /** Every minted link, newest first — metadata only, never a secret. */
+  async listIntakeLinks(): Promise<IntakeLink[]> {
+    return (await request("/api/intake/links")).json();
+  },
+
+  async getIntakeLink(id: string): Promise<IntakeLink> {
+    return (await request(`/api/intake/links/${encodeURIComponent(id)}`)).json();
+  },
+
+  /** Revoke a link — it and its open sessions stop working. */
+  async revokeIntakeLink(id: string): Promise<void> {
+    await request(`/api/intake/links/${encodeURIComponent(id)}`, { method: "DELETE" });
+  },
+
+  /** Mint a link directly (the re-mint path clones an existing link's config to a
+   * fresh show-once secret). Returns the secret exactly once. */
+  async mintIntakeLink(body: IntakeMintRequest): Promise<IntakeMintResult> {
+    return (await request("/api/intake/links", jsonInit("POST", body))).json();
+  },
+
+  /** The link's opened sessions (the owner's conversation browse). */
+  async listIntakeSessions(linkId: string): Promise<IntakeSessionRow[]> {
+    return (await request(`/api/intake/links/${encodeURIComponent(linkId)}/sessions`)).json();
+  },
+
+  /** The link's captured submissions, newest first (transcripts read separately). */
+  async listIntakeSubmissions(linkId: string): Promise<IntakeSubmission[]> {
+    return (await request(`/api/intake/links/${encodeURIComponent(linkId)}/submissions`)).json();
+  },
+
+  /** One submission with its full transcript (the read-only conversation view). */
+  async getIntakeSubmission(submissionId: string): Promise<IntakeSubmissionDetail> {
+    return (await request(`/api/intake/submissions/${encodeURIComponent(submissionId)}`)).json();
+  },
+
+  /** Materialize a captured submission into an owner Proposal for the review inbox.
+   * Returns the staged proposal's id. */
+  async materializeIntakeSubmission(submissionId: string): Promise<{ proposal_id: string }> {
+    return (
+      await request(`/api/intake/submissions/${encodeURIComponent(submissionId)}/materialize`, {
+        method: "POST",
+      })
+    ).json();
+  },
+
+  /** Edit a staged intake-link Proposal's config before approval (the editable-Proposal
+   * surface). Only the soft fields — subject/domain are fixed and re-validated at mint. */
+  async patchIntakeProposalConfig(nodeId: string, patch: IntakeConfigPatch): Promise<void> {
+    await request(
+      `/api/intake/proposals/nodes/${encodeURIComponent(nodeId)}/config`,
+      jsonInit("PATCH", patch),
+    );
+  },
+
+  /** Approve → mint the link from a staged intake-link Proposal: re-validates the
+   * subject/domain, mints show-once, marks the Proposal enacted. Secret shown once. */
+  async mintIntakeLinkFromProposal(proposalId: string): Promise<IntakeMintResult> {
+    return (
+      await request(`/api/intake/links/from-proposal/${encodeURIComponent(proposalId)}`, {
+        method: "POST",
+      })
+    ).json();
   },
 
   /** External-LLM sessions (owner only): a token-gated public endpoint exposing the

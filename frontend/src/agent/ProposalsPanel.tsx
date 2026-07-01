@@ -13,6 +13,8 @@ const BADGE: Record<ProposalKind, string> = {
   correction: "✎",
   appointment: "◷",
   egress: "↗",
+  "intake-link": "🔗",
+  "intake-submission": "📥",
 };
 
 function subtitle(p: ProposalSummary): string {

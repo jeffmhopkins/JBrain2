@@ -134,6 +134,19 @@ REVIEW_TOOLS = RESEARCH_TOOLS
 # cannot spawn.
 SUMMARIZE_TOOLS: frozenset[str] = frozenset()
 
+# The guided-intake interviewer's allowlist: EMPTY. A non-owner stranger drives this
+# persona, so it reads no knowledge base and may call no tool at all — capture is the
+# endpoint's job (the recipient confirms a draft; the server writes it), never a tool the
+# model invokes. Empty allowlist → `ToolRegistry.allowed_names` is empty → dispatch refuses
+# every tool, so a brief or an injected message can never widen what it may call
+# (docs/GUIDED_INTAKE_PLAN.md §5, W2).
+INTAKE_TOOLS: frozenset[str] = frozenset()
+
+# The closed set of personas a NON-owner principal (an intake_link) may run. Resolution
+# for those principals goes through `agent_for_intake`, which fails closed against this
+# set — never `agent_for`, whose curator fallback would be catastrophic for a stranger.
+NON_OWNER_PERSONAS = frozenset({"intake"})
+
 DEFAULT_AGENT = "curator"
 
 
@@ -227,16 +240,67 @@ AGENTS: dict[str, AgentProfile] = {
         reads_knowledge_base=False,
         budget_multiplier=1,
     ),
+    # The guided-intake interviewer (docs/GUIDED_INTAKE_PLAN.md). A closed, capture-only
+    # persona a non-owner stranger runs: empty tool allowlist, no knowledge base, and a 1x
+    # budget — a short bounded interview, NOT the 4x many-tool chain jerv/archivist run
+    # (§5: per-session caps are the backstop, and the persona must not be a cost lever).
+    # Its `.prompt` is the FIXED frame; the per-link brief is assembled in as data at
+    # session start (jbrain.intake.persona), never baked into this static, pinned prompt.
+    "intake": _profile(
+        "intake",
+        "intake.prompt",
+        tools=INTAKE_TOOLS,
+        reads_knowledge_base=False,
+        budget_multiplier=1,
+    ),
 }
 
 AGENT_NAMES = frozenset(AGENTS)
+
+# The personas an OWNER may select for a Full Brain session or task. `intake` lives in
+# AGENTS (so it is resolvable + version-pinned) but is a NON-owner persona — it belongs to
+# an intake_link principal, is resolved via `agent_for_intake`, and must never be stored in
+# app.agent_sessions/app.tasks (whose `agent` CHECK excludes it anyway). Owner-facing
+# validation gates on THIS set, not AGENT_NAMES, so an owner can't open an intake session.
+OWNER_AGENTS = AGENT_NAMES - NON_OWNER_PERSONAS
+
+
+def is_owner_agent(name: str) -> bool:
+    """Whether an OWNER may run this persona (excludes the non-owner intake persona)."""
+    return name in OWNER_AGENTS
 
 
 def agent_for(name: str) -> AgentProfile:
     """The profile for a stored agent name, falling back to the default for an
     unknown value — a defensive default so an old or malformed row still runs as
-    the Full Brain curator rather than failing the turn."""
+    the Full Brain curator rather than failing the turn.
+
+    OWNER sessions only. A non-owner principal must NEVER resolve through this: its
+    curator fallback would hand a stranger the Full Brain knowledge agent. Non-owner
+    principals use `agent_for_intake`, which fails closed."""
     return AGENTS.get(name, AGENTS[DEFAULT_AGENT])
+
+
+class PersonaResolutionError(ValueError):
+    """A non-owner (intake_link) session resolved to a persona that is not `intake`.
+    Raised so the turn FAILS CLOSED — the opposite of `agent_for`'s curator fallback,
+    which for a stranger would be catastrophic (GUIDED_INTAKE_PLAN.md §5/§11)."""
+
+
+def agent_for_intake(name: str) -> AgentProfile:
+    """The profile for a NON-owner intake session, resolved fail-closed.
+
+    Unlike `agent_for`, an unknown / tampered / empty name does NOT fall back to a
+    knowledge agent — it raises. The only persona a stranger may ever run is `intake`
+    (empty scope, no tools), so anything else refuses the turn rather than risk handing
+    out the curator. The check is on the closed `NON_OWNER_PERSONAS` set, not a string
+    compare, so adding a future non-owner persona stays a deliberate, audited change."""
+    if name not in NON_OWNER_PERSONAS:
+        raise PersonaResolutionError(
+            f"non-owner intake session refuses persona {name!r}: only {sorted(NON_OWNER_PERSONAS)}"
+            " may run under a non-owner principal"
+        )
+    return AGENTS[name]
 
 
 def is_agent(name: str) -> bool:

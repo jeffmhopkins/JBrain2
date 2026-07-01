@@ -15,7 +15,7 @@ from typing import Annotated, cast
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-from jbrain.agent.agents import AGENT_NAMES
+from jbrain.agent.agents import OWNER_AGENTS
 from jbrain.api.deps import owner_only
 from jbrain.api.notes import ctx_for
 from jbrain.auth.service import PrincipalInfo
@@ -64,7 +64,7 @@ class TaskBody(BaseModel):
     @field_validator("agent")
     @classmethod
     def _agent(cls, v: str) -> str:
-        if v not in AGENT_NAMES:
+        if v not in OWNER_AGENTS:
             raise ValueError("unknown agent")
         return v
 

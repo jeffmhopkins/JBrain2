@@ -3,28 +3,47 @@ allowlist, and knowledge-base access (docs/ASSISTANT.md "Agent selection")."""
 
 import hashlib
 
+import pytest
+
 from jbrain.agent.agents import (
     AGENT_NAMES,
     AGENTS,
     ARCHIVIST_TOOLS,
     DEFAULT_AGENT,
     GMAIL_TOOLS,
+    INTAKE_TOOLS,
     JERV_TOOLS,
     MEMORY_TOOLS,
+    NON_OWNER_PERSONAS,
+    OWNER_AGENTS,
     RESEARCH_TOOLS,
     REVIEW_TOOLS,
     SPAWN_TOOL,
     SUBAGENT_PERSONAS,
     SUMMARIZE_TOOLS,
     WEB_TOOLS,
+    PersonaResolutionError,
     agent_for,
+    agent_for_intake,
     is_agent,
+    is_owner_agent,
 )
 
 
-def test_seven_agents_are_defined() -> None:
+def test_eight_agents_are_defined() -> None:
     assert (
-        frozenset({"curator", "teacher", "jerv", "archivist", "research", "review", "summarize"})
+        frozenset(
+            {
+                "curator",
+                "teacher",
+                "jerv",
+                "archivist",
+                "research",
+                "review",
+                "summarize",
+                "intake",
+            }
+        )
         == AGENT_NAMES
     )
     assert DEFAULT_AGENT == "curator"
@@ -155,6 +174,39 @@ def test_spawn_set_matches_the_subagent_personas() -> None:
     assert all(AGENTS[p].reads_knowledge_base is False for p in SUBAGENT_PERSONAS)
 
 
+def test_intake_is_a_capture_only_non_owner_persona() -> None:
+    """The intake interviewer a stranger runs: EMPTY tool allowlist (so dispatch refuses
+    every tool), no knowledge base, and a 1x budget — not jerv/archivist's 4x cost lever
+    (docs/GUIDED_INTAKE_PLAN.md §5)."""
+    intake = AGENTS["intake"]
+    assert intake.tools == INTAKE_TOOLS == frozenset()
+    assert intake.reads_knowledge_base is False
+    assert intake.budget_multiplier == 1
+    # It shares no tool with any owner/jerv/archivist persona — it holds none.
+    assert not ((intake.tools or frozenset()) & (JERV_TOOLS | ARCHIVIST_TOOLS))
+
+
+def test_intake_is_not_owner_selectable() -> None:
+    """intake is a NON-owner persona: resolvable + pinned, but excluded from the set an
+    owner may open a session/task as (it must never land in app.agent_sessions, whose
+    agent CHECK excludes it). is_owner_agent gates the owner session/task routes."""
+    assert AGENT_NAMES - frozenset({"intake"}) == OWNER_AGENTS
+    assert "intake" not in OWNER_AGENTS
+    assert is_owner_agent("curator") and is_owner_agent("jerv")
+    assert not is_owner_agent("intake")
+
+
+def test_agent_for_intake_fails_closed_never_curator() -> None:
+    """A non-owner intake session resolves ONLY to intake; an unknown/tampered/empty
+    persona raises rather than falling back to the KB-capable curator (the §5/§11
+    fail-closed requirement — the opposite of agent_for)."""
+    assert agent_for_intake("intake").name == "intake"
+    assert frozenset({"intake"}) == NON_OWNER_PERSONAS
+    for bad in ("curator", "jerv", "archivist", "research", "nonesuch", ""):
+        with pytest.raises(PersonaResolutionError):
+            agent_for_intake(bad)
+
+
 def test_agent_for_falls_back_to_curator() -> None:
     assert agent_for("jerv").name == "jerv"
     # An unknown/old/malformed stored value never breaks a turn — it runs as curator.
@@ -199,6 +251,10 @@ def test_persona_prompts_pinned_to_their_versions() -> None:
         "summarize": (
             "agent-summarize-v1",
             "fc169f821c8aa2031ca710f143c1307c8fc4803895eeef51e4a7426144ddbac0",
+        ),
+        "intake": (
+            "agent-intake-v1",
+            "fb03cdd6ff8198855e006cf0ee22de93d2384457cd23fe4f25607ef207f31c38",
         ),
     }
     assert set(pins) == AGENT_NAMES

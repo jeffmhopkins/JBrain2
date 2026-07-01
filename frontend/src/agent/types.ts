@@ -371,7 +371,11 @@ export type ProposalKind =
   | "merge"
   | "appointment"
   | "wiki-restructure"
-  | "egress";
+  | "egress"
+  // Guided intake (W6): an editable mint-a-link draft, and a captured submission
+  // materialized into per-claim notes for review.
+  | "intake-link"
+  | "intake-submission";
 
 export interface ProposalSummary {
   id: string;

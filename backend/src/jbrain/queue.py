@@ -513,19 +513,14 @@ async def backfill_pending_notes(
 
 INTEGRATION_BACKFILL_LIMIT = 100
 
-# Owner-ahead ordering hook (N14). The backfill drains oldest-first, but the
-# leading rank term is the Phase-7 seam: once an untrusted-origin producer
-# exists (guided-intake / OwnTracks), trusted owner notes must drain ahead of
-# it. INERT in Phase 5 — `notes.provenance` is only 'human' vs 'agent', both
-# owner-trusted, so there is nothing untrusted to rank behind: the rank is the
-# always-false expression `(1 = 0)` for every row, leaving the ORDER BY equal to
-# the existing created_at ordering (no behavior change). It must be an
-# EXPRESSION, not a bare constant: Postgres reads a bare integer in ORDER BY as
-# an (invalid) ordinal position, and rejects a bare non-integer constant outright
-# — only an expression sorts all rows equal. Phase 7 swaps `(1 = 0)` for the real
-# untrusted-origin predicate (e.g. `n.provenance = 'untrusted_origin'`, untrusted
-# sorts last); nothing else here moves.
-INTEGRATION_BACKFILL_ORDER_BY = "(1 = 0), n.created_at"
+# Owner-ahead ordering hook (N14). The backfill drains oldest-first, but the leading
+# rank term keeps trusted owner notes ahead of untrusted-origin ones. Now LIVE (Phase 7,
+# guided intake): `n.provenance = 'untrusted_origin'` evaluates false (sorts first) for
+# every owner/agent note and true (sorts last) for a stranger-authored intake note, so a
+# flood of approved intake notes can never starve the owner's own notes of integration.
+# It is an EXPRESSION, not a bare constant: Postgres reads a bare integer in ORDER BY as
+# an (invalid) ordinal position; only an expression sorts all matching rows together.
+INTEGRATION_BACKFILL_ORDER_BY = "(n.provenance = 'untrusted_origin'), n.created_at"
 
 
 async def backfill_pending_integration(

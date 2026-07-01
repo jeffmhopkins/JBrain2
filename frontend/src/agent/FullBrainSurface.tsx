@@ -171,7 +171,13 @@ export function FullBrainSurface({
           <ProposalTree
             proposalId={fb.openProposal}
             onClose={() => fb.setOpenProposal(null)}
-            onEnacted={onProposalEnacted}
+            onEnacted={() => {
+              // Refresh the dependent views (the stream) AND the staged-proposals
+              // list, so an enacted/minted proposal stops showing as still-staged
+              // (an intake-link mints to `enacted` and must drop from the panel).
+              onProposalEnacted?.();
+              fb.reloadProposals();
+            }}
           />
         )}
       </aside>

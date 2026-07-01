@@ -18,6 +18,7 @@ EXPECTED_TASKS = {
     "video.summarize",
     "session.title",
     "integrate.note",
+    "intake.materialize",
     "wiki.rewrite",
     "wiki.ground",
     "triage.classify",
