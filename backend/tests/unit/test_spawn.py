@@ -1081,3 +1081,167 @@ async def test_waves_duplicate_label_refused(service: SpawnService) -> None:
     )
     assert "refused" in out.lower() and "unique" in out.lower()
     assert not _FakeLoop.calls
+
+
+async def test_waves_fed_consumer_referencing_unfed_sibling_refused(service: SpawnService) -> None:
+    """F1 review fix: the sibling guard must NOT be bypassed for a fed consumer. A
+    consumer that feeds `alpha` but whose brief also names the un-fed `beta` is refused
+    — otherwise it runs empty against beta (the exact foot-gun the guard exists for)."""
+    out = await service.spawn_fan(
+        _ctx(),
+        {
+            "waves": [
+                [
+                    {"persona": "research", "brief": "get alpha", "label": "alpha"},
+                    {"persona": "research", "brief": "get beta", "label": "beta"},
+                ],
+                [
+                    {
+                        "persona": "review",
+                        "label": "cons",
+                        "feed": ["alpha"],
+                        "brief": _review_brief("combine alpha with the beta findings"),
+                    }
+                ],
+            ]
+        },
+    )
+    assert "refused" in out.lower() and "beta" in out.lower()
+    assert not _FakeLoop.calls
+
+
+async def test_both_tasks_and_waves_refused(service: SpawnService) -> None:
+    out = await service.spawn_fan(
+        _ctx(),
+        {
+            "tasks": [{"persona": "research", "brief": "x", "label": "L"}],
+            "waves": [[{"persona": "research", "brief": "y", "label": "M"}]],
+        },
+    )
+    assert "refused" in out.lower() and "both" in out.lower()
+    assert not _FakeLoop.calls
+
+
+async def test_waves_deadline_skips_loud(service: SpawnService) -> None:
+    """F2: a staged call past its tree wall-clock deadline skips every wave loudly,
+    running nothing."""
+    import time
+
+    tree = TreeState(deadline=time.monotonic() - 1)  # already past
+    out = await service.spawn_fan(
+        _ctx(tree=tree),
+        {
+            "waves": [
+                [{"persona": "research", "brief": "fetch", "label": "p"}],
+                [{"persona": "review", "label": "c", "feed": ["p"], "brief": _review_brief()}],
+            ]
+        },
+    )
+    assert not _FakeLoop.calls
+    assert "deadline" in out.lower()
+
+
+async def test_waves_budget_skip_of_final_wave(
+    service: SpawnService, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """F2: when an earlier wave drains the shared pool, the final wave is budget-skipped
+    loud (never silently dropped) — the producer ran, the consumer did not."""
+
+    class _Spender(_FakeLoop):
+        async def run(self, **kw):  # noqa: ANN003
+            _FakeLoop.calls.append(kw)
+            kw["tree"].charge(450_000)  # the producer burns most of the pool
+            return AgentResult(
+                text=f"summary for {kw['agent_session_id']}",
+                stop_reason="end_turn",
+                steps=1,
+                cost_tokens=10,
+            )
+
+    monkeypatch.setattr(spawn_mod, "AgentLoop", _Spender)
+    tree = TreeState(tree_budget=500_000, root_reserve=0)  # children pool 500k, no deadline
+    out = await service.spawn_fan(
+        _ctx(tree=tree),
+        {
+            "waves": [
+                [{"persona": "research", "brief": "fetch", "label": "p"}],
+                [{"persona": "review", "label": "c", "feed": ["p"], "brief": _review_brief()}],
+            ]
+        },
+    )
+    assert len(_FakeLoop.calls) == 1  # producer ran; consumer budget-skipped
+    assert "budget" in out.lower() and "[SKIPPED" in out
+
+
+async def test_barrier_cancel_settles_wave1_and_wave2_inline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A Stop during wave 2 must leave wave 1 settled (done, not stranded 'running') and
+    wave 2's in-flight child settled 'cancelled' inline — the barrier composes with the
+    per-wave gather's cancel-and-await cleanup."""
+    import asyncio
+
+    started = asyncio.Event()
+
+    class _Block2(_FakeLoop):
+        async def run(self, **kw):  # noqa: ANN003
+            _FakeLoop.calls.append(kw)
+            if "fetch" in kw["conversation"][1].text:  # wave-1 producer → succeed
+                return AgentResult(
+                    text=f"summary for {kw['agent_session_id']}",
+                    stop_reason="end_turn",
+                    steps=1,
+                    cost_tokens=10,
+                )
+            started.set()  # wave-2 consumer → block until the cancel cascades
+            await asyncio.sleep(3600)
+            return AgentResult(text="", stop_reason="end_turn", steps=0, cost_tokens=0)
+
+    class _YieldingRunLog(_FakeRunLog):
+        async def finish(self, ctx, run_id, **kw):  # noqa: ANN001, ANN003
+            await asyncio.sleep(0)
+            self.finished.append({"run_id": run_id, **kw})
+
+    _FakeLoop.calls = []
+    monkeypatch.setattr(spawn_mod, "AgentLoop", _Block2)
+    runlog = _YieldingRunLog()
+    svc = SpawnService(
+        router=_FakeRouter(),  # type: ignore[arg-type]
+        registry=object(),  # type: ignore[arg-type]
+        sessions=_FakeSessions(),  # type: ignore[arg-type]
+        runlog=runlog,  # type: ignore[arg-type]
+    )
+    task = asyncio.create_task(
+        svc.spawn_fan(
+            _ctx(),
+            {
+                "waves": [
+                    [{"persona": "research", "brief": "fetch", "label": "p"}],
+                    [{"persona": "review", "label": "c", "feed": ["p"], "brief": _review_brief()}],
+                ]
+            },
+        )
+    )
+    await started.wait()  # wave 1 done, wave-2 consumer mid-run
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert any(f["stop_reason"] == "end_turn" for f in runlog.finished)  # wave 1 settled done
+    assert any(f["stop_reason"] == "cancelled" for f in runlog.finished)  # wave 2 settled inline
+
+
+def test_synthesis_view_separates_skipped_from_ran_and_failed() -> None:
+    """F1 review fix: a skipped consumer must not inflate `ran` or count as `failed`."""
+    from jbrain.agent.spawn import _ChildResult, _synthesis_view
+
+    results = [
+        _ChildResult("a", "research", "ok", ok=True, session_id="s1"),
+        _ChildResult("b", "review", "(skipped — upstream a unavailable)", ok=False,
+                     session_id="", skipped="upstream a unavailable"),
+    ]
+    view = _synthesis_view(results)
+    assert view.data["ran"] == 1
+    assert view.data["failed"] == 0
+    assert view.data["skipped"] == 1
+    child_b = view.data["children"][1]
+    assert child_b["skipped"] is True and child_b["skip_reason"] == "upstream a unavailable"

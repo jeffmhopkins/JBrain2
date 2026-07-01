@@ -288,6 +288,9 @@ class SubagentSpawnedEvent(BaseModel):
     # ordinary flat fan). Lets the grouped-by-wave surface (F3) bucket rows; the flat
     # fan ignores it (docs/SUBAGENT_FEEDING_WAVES_PLAN.md).
     wave: int = 0
+    # For a wave-2 consumer, the labels of the earlier-wave producers whose summaries
+    # were fed into its brief — renders the "← fed by …" edge. Empty for a producer.
+    fed_from: list[str] = Field(default_factory=list)
 
 
 class SubagentProgressEvent(BaseModel):
@@ -367,6 +370,11 @@ class SubagentDoneEvent(BaseModel):
     summary: str = ""
     tree_spent: int = 0
     tree_budget: int = 0
+    # Why a staged consumer never ran, when applicable (feeding waves, F2): an upstream
+    # failure ("upstream … unavailable"), a drained pool ("… budget spent by earlier
+    # waves"), or the wall-clock deadline. Empty for a child that actually ran — a skip
+    # is a cascade/resource event, rendered distinctly from a failure.
+    skip_reason: str = ""
 
 
 class DoneEvent(BaseModel):
