@@ -357,9 +357,7 @@ class ProposalRepo:
                 )
         return plan
 
-    async def patch_intake_config(
-        self, ctx: SessionContext, node_id: str, fields: dict
-    ) -> bool:
+    async def patch_intake_config(self, ctx: SessionContext, node_id: str, fields: dict) -> bool:
         """Edit the constrained config of a STAGED intake-link mint node — the net-new
         editable-Proposal surface (§7). Only the soft fields are patchable; subject and
         domain are NOT (they are re-validated at mint, so the owner can't edit the config
@@ -395,8 +393,7 @@ class ProposalRepo:
         async with scoped_session(self._maker, ctx) as session:
             await session.execute(
                 text(
-                    "UPDATE app.proposals SET status = 'enacted', updated_at = now()"
-                    " WHERE id = :id"
+                    "UPDATE app.proposals SET status = 'enacted', updated_at = now() WHERE id = :id"
                 ),
                 {"id": proposal_id},
             )

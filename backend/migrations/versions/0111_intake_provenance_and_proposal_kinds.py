@@ -41,8 +41,7 @@ def _set_provenance(values: str) -> None:
 def _set_kind(values: str) -> None:
     op.execute("ALTER TABLE app.proposals DROP CONSTRAINT proposals_kind_check")
     op.execute(
-        "ALTER TABLE app.proposals ADD CONSTRAINT proposals_kind_check"
-        f" CHECK (kind IN {values})"
+        f"ALTER TABLE app.proposals ADD CONSTRAINT proposals_kind_check CHECK (kind IN {values})"
     )
 
 

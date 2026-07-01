@@ -26,8 +26,7 @@ depends_on = None
 
 def upgrade() -> None:
     op.execute(
-        "ALTER TABLE app.intake_sessions"
-        " ADD COLUMN in_flight boolean NOT NULL DEFAULT false"
+        "ALTER TABLE app.intake_sessions ADD COLUMN in_flight boolean NOT NULL DEFAULT false"
     )
     op.execute("DROP POLICY intake_submissions_insert ON app.intake_submissions")
     op.execute(

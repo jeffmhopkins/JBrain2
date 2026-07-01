@@ -67,9 +67,7 @@ class IntakeSession(Base):
     # Per-session cumulative backstops (§5): the loop's guardrails are per-turn only.
     turns_used: Mapped[int] = mapped_column(Integer, default=0)
     cost_tokens_used: Mapped[int] = mapped_column(BigInteger, default=0)
-    last_turn_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
+    last_turn_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     # The per-session turn lock (the concurrency cap, migration 0110): claimed atomically
     # before a turn streams, released after; a stale lock self-heals on the next claim.
     in_flight: Mapped[bool] = mapped_column(Boolean, default=False)
