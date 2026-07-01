@@ -1043,7 +1043,8 @@ async def test_waves_reference_to_unfed_sibling_label_refused(service: SpawnServ
 
 
 async def test_waves_refused_when_nested(service: SpawnService) -> None:
-    """Staged waves are a top-level capability (D4): a depth>=1 child spawns a flat fan."""
+    """Staged waves are a top-level (depth-0) capability; a depth>=1 caller is refused
+    (and a child cannot spawn at all now — belt and suspenders)."""
     out = await service.spawn_fan(
         _ctx(depth=1),
         {"waves": [[{"persona": "research", "brief": "x", "label": "p"}]]},
