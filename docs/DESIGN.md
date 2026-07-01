@@ -29,7 +29,10 @@ Dual theme, dark-first. Implementation:
 - All colors are CSS custom properties on `:root`, overridden by
   `[data-theme="light"]`. Components reference tokens only.
 - Default follows `prefers-color-scheme`; a Settings option overrides it
-  (`system | dark | light`), persisted locally and (later) as a user setting.
+  (`system | dark | dark-bright | light`), persisted locally and (later) as a
+  user setting.
+- `dark-bright` ("Dark+") is a dark variant that inherits every dark neutral
+  and only lifts `--border` to `#464A52` for stronger, brighter hairlines.
 - The PWA `theme-color` meta updates with the active theme.
 - **Text size**: every type token is `calc(px × var(--font-scale))`; a
   Settings "Text size" control (65 / 75 / 90 / 100%) sets the scale,

@@ -1,21 +1,23 @@
-// Theme manager: system | dark | light, default system, persisted in
-// localStorage. Applies [data-theme] on <html> and keeps the PWA
+// Theme manager: system | dark | light | dark-bright, default system,
+// persisted in localStorage. Applies [data-theme] on <html> and keeps the PWA
 // theme-color meta in step so the browser chrome matches the app.
+// "dark-bright" is a dark variant that only lifts --border for stronger edges.
 
-export type ThemePref = "system" | "dark" | "light";
-export type ResolvedTheme = "dark" | "light";
+export type ThemePref = "system" | "dark" | "light" | "dark-bright";
+export type ResolvedTheme = "dark" | "light" | "dark-bright";
 
 const STORAGE_KEY = "jbrain.theme";
 
-// Must match --bg in tokens.css for each theme.
+// Must match --bg in tokens.css for each theme. dark-bright shares the dark bg.
 const THEME_BG: Record<ResolvedTheme, string> = {
   dark: "#0e0f11",
   light: "#f7f7f5",
+  "dark-bright": "#0e0f11",
 };
 
 export function getThemePref(): ThemePref {
   const stored = localStorage.getItem(STORAGE_KEY);
-  return stored === "dark" || stored === "light" ? stored : "system";
+  return stored === "dark" || stored === "light" || stored === "dark-bright" ? stored : "system";
 }
 
 export function resolveTheme(pref: ThemePref, systemDark: boolean): ResolvedTheme {

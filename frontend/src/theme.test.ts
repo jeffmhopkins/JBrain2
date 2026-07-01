@@ -34,6 +34,7 @@ describe("theme manager", () => {
     expect(resolveTheme("system", false)).toBe("light");
     expect(resolveTheme("dark", false)).toBe("dark");
     expect(resolveTheme("light", true)).toBe("light");
+    expect(resolveTheme("dark-bright", false)).toBe("dark-bright");
   });
 
   it("defaults to system and persists explicit picks", () => {
@@ -59,6 +60,12 @@ describe("theme manager", () => {
     setThemePref("dark");
     expect(document.documentElement.dataset.theme).toBe("dark");
     expect(meta?.content).toBe("#0e0f11");
+
+    // Dark+ shares the dark background but is its own data-theme.
+    setThemePref("dark-bright");
+    expect(document.documentElement.dataset.theme).toBe("dark-bright");
+    expect(meta?.content).toBe("#0e0f11");
+    expect(localStorage.getItem("jbrain.theme")).toBe("dark-bright");
   });
 
   it("follows OS changes only while the pref is system", () => {

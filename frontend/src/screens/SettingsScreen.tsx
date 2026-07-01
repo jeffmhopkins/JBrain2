@@ -15,6 +15,7 @@ import { TOKEN_RATES, type TokenRate, getTokenRate, setTokenRate } from "../toke
 const THEME_OPTIONS: { value: ThemePref; label: string }[] = [
   { value: "system", label: "System" },
   { value: "dark", label: "Dark" },
+  { value: "dark-bright", label: "Dark+" },
   { value: "light", label: "Light" },
 ];
 
