@@ -1,9 +1,12 @@
 // The shared bottom sheet (docs/DESIGN.md "Modal system"): scrim, body-scroll
 // lock, Escape + swipe-down + scrim-tap dismiss, drag handle, one title.
 // Every bottom-sheet flow composes this shell — bespoke modals are a
-// design-doc violation.
+// design-doc violation. It also self-registers in the back-layer stack so the
+// platform Back gesture closes the sheet (not the screen beneath it), matching
+// swipe-down; see backLayers.ts.
 
 import { type ReactNode, type TouchEvent, useEffect, useRef } from "react";
+import { useBackLayer } from "../backLayers";
 
 const SWIPE_DOWN_PX = 96;
 
@@ -16,6 +19,9 @@ interface SheetProps {
 export function Sheet({ title, onClose, children }: SheetProps) {
   const panelRef = useRef<HTMLDialogElement>(null);
   const touchStartY = useRef<number | null>(null);
+
+  // Back gesture pops this sheet before the screen under it (App reads the stack).
+  useBackLayer(onClose);
 
   useEffect(() => {
     panelRef.current?.focus();

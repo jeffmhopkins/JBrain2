@@ -1,5 +1,6 @@
 import { type TouchEvent, useCallback, useEffect, useRef, useState } from "react";
 import { type Principal, type SearchResult, api, setUnauthorizedHandler } from "./api/client";
+import { closeTopModalLayer, useModalLayerCount } from "./backLayers";
 import { EditLayer } from "./components/EditLayer";
 import { Launcher, type LauncherTarget } from "./components/Launcher";
 import { MoveDomainSheet } from "./components/MoveDomainSheet";
@@ -378,11 +379,15 @@ export function App() {
   }
 
   // The platform back gesture climbs one level, exactly like swipe-down: close
-  // the topmost open layer, in the same z-order the overlays render. The edit
-  // layer and move sheet run their own dismissal, so they sit on top here too.
+  // the topmost open layer, in the same z-order the overlays render. Sheets
+  // (and any future <Dialog>) self-register in the shared back-layer stack and
+  // render above every screen, so they count via `modalDepth` and close first;
+  // the move sheet is one of them. The edit layer is a full screen, so it stays
+  // an explicit term here.
+  const modalDepth = useModalLayerCount();
   const overlayDepth =
+    modalDepth +
     (actions.editing !== null ? 1 : 0) +
-    (actions.moveTarget !== null ? 1 : 0) +
     (talkArticle !== null ? 1 : 0) +
     (wikiArticle !== null ? 1 : 0) +
     (entityView !== null ? 1 : 0) +
@@ -394,8 +399,10 @@ export function App() {
     (sessionBackTo !== null ? 1 : 0);
 
   function closeTopLayer() {
+    // Sheets/dialogs render above every screen, so pop the topmost one first;
+    // its own onClose (e.g. cancelMove) clears the owning state as it unmounts.
+    if (closeTopModalLayer()) return;
     if (actions.editing !== null) return actions.cancelEdit();
-    if (actions.moveTarget !== null) return actions.cancelMove();
     // The Talk board stacks above the reader (opened from it), so it climbs off first.
     if (talkArticle !== null) return setTalkArticle(null);
     // The wiki reader is the topmost reading layer (opened from the landing or a
