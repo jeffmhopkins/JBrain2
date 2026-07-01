@@ -37,6 +37,7 @@ import type {
   ExternalMint,
   ExternalSession,
   JcodeModelStatus,
+  JcodePowerStatus,
   JcodePreview,
   JcodeSession,
   JcodeShare,
@@ -2533,6 +2534,17 @@ export const api = {
    * after the owner confirms the swap; returns the fresh status. */
   async jcodeWarmModel(): Promise<JcodeModelStatus> {
     return (await request("/api/jcode/model/warm", { method: "POST" })).json();
+  },
+
+  /** The master on/off state for code mode (services up + coder), for the launcher switch. */
+  async jcodePower(): Promise<JcodePowerStatus> {
+    return (await request("/api/jcode/power")).json();
+  },
+
+  /** Bring the jcode-only services up (on) or down (off); returns the fresh power state.
+   * Powering on only starts the services — the caller then warms the coder separately. */
+  async jcodeSetPower(on: boolean): Promise<JcodePowerStatus> {
+    return (await request("/api/jcode/power", jsonInit("POST", { on }))).json();
   },
 
   // `sessionId` scopes the review inbox to a Full Brain chat: its own staged

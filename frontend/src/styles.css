@@ -16607,6 +16607,110 @@ button.task-band:active {
 .jcode-dot {
   color: var(--steel);
 }
+/* Master power switch in the launcher bar — a labelled pill toggle, pushed to the right. */
+.jcode-power {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: transparent;
+  border: 0;
+  padding: 6px 4px 6px 8px;
+  font: inherit;
+  color: var(--text-2);
+  cursor: pointer;
+}
+.jcode-power:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+.jcode-power-label {
+  font-size: var(--fs-micro);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+.jcode-power-track {
+  width: 38px;
+  height: 22px;
+  border-radius: var(--r-pill);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  position: relative;
+  transition: background 0.2s ease;
+}
+.jcode-power-track.on {
+  background: var(--green);
+  border-color: var(--green);
+}
+.jcode-power-knob {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: var(--r-pill);
+  background: #fff;
+  transition: transform 0.2s ease;
+}
+.jcode-power-track.on .jcode-power-knob {
+  transform: translateX(16px);
+}
+/* Powered-off body: the switch is the way back up, so this explains the state, not an error. */
+.jcode-poweroff {
+  text-align: center;
+  padding: 40px 20px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+}
+.jcode-poweroff h3 {
+  margin: 0;
+  font-size: var(--fs-title);
+  font-weight: 600;
+}
+.jcode-poweroff p {
+  margin: 0;
+  max-width: 340px;
+  color: var(--text-2);
+  font-size: 13px;
+  line-height: 1.5;
+}
+/* Bring-up / shut-down modal: the jcode-only services as a checklist. */
+.jcode-power-steps {
+  list-style: none;
+  margin: 2px 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.jcode-power-step {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font-size: 13px;
+  color: var(--text-2);
+}
+.jcode-power-step.done {
+  color: var(--text);
+}
+.jcode-power-stepdot {
+  width: 9px;
+  height: 9px;
+  border-radius: var(--r-pill);
+  background: var(--text-3);
+  flex: none;
+}
+.jcode-power-step.done .jcode-power-stepdot {
+  background: var(--green);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--green) 18%, transparent);
+}
+.jcode-power-stepstate {
+  margin-left: auto;
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+}
 .jcode-body {
   flex: 1;
   overflow-y: auto;

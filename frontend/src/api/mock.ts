@@ -2634,6 +2634,9 @@ let jcodeModelPolls = 0;
 // The coder isn't on the box until the owner confirms the swap (POST /jcode/model/warm);
 // before that the screen shows the load prompt naming what gets evicted.
 let jcodeWarmStarted = false;
+// The master power switch (dev:mock): on by default; toggling it flips the service states
+// the launcher's switch + modal read back.
+let jcodePowerOn = true;
 const jcodePreview = new Map<string, string>();
 // Per-session share links the owner has minted (dev:mock), so the share manager UI has
 // something to list and revoke.
@@ -2726,6 +2729,29 @@ export const mockFetch: typeof fetch = async (input, init) => {
       size_gb: 49.6,
       context_window: 262144,
       resident: [],
+    });
+  }
+  // Master power switch: report/toggle the jcode-only services + coder residency.
+  if (path === "/api/jcode/power" && (method === "GET" || method === "POST")) {
+    if (method === "POST") {
+      const pbody = JSON.parse(String(init?.body)) as { on?: boolean };
+      jcodePowerOn = pbody.on ?? jcodePowerOn;
+      if (!jcodePowerOn) jcodeWarmStarted = false; // powering off unloads the coder
+    }
+    const services = ["local-llm", "claude-shim", "jcode"].map((name) => ({
+      name,
+      running: jcodePowerOn,
+    }));
+    return json({
+      on: jcodePowerOn,
+      provisioned: true,
+      services,
+      coder_loaded: jcodePowerOn && jcodeWarmStarted && jcodeModelPolls > 2,
+      warming: jcodePowerOn && jcodeWarmStarted && jcodeModelPolls <= 2,
+      model: "qwen3-coder-next",
+      size_gb: 49.6,
+      hosting: true,
+      live_sessions: jcodePowerOn ? jcodeSessions.filter((s) => s.status !== "stopped").length : 0,
     });
   }
   if (path === "/api/jcode/sessions" && method === "GET") return json(jcodeSessions);

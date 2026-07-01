@@ -1,8 +1,27 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { ApiError, api } from "../api/client";
-import type { JcodeSession } from "../jcode/types";
+import type { JcodePowerStatus, JcodeSession } from "../jcode/types";
 import { JcodeScreen } from "./JcodeScreen";
+
+function powerStatus(over: Partial<JcodePowerStatus> = {}): JcodePowerStatus {
+  return {
+    on: true,
+    provisioned: true,
+    services: [
+      { name: "local-llm", running: true },
+      { name: "claude-shim", running: true },
+      { name: "jcode", running: true },
+    ],
+    coder_loaded: true,
+    warming: false,
+    model: "qwen3-coder-next",
+    size_gb: 49.6,
+    hosting: true,
+    live_sessions: 0,
+    ...over,
+  };
+}
 
 // The launcher stacks the session screen over itself; stub it so this launcher unit test
 // doesn't drag in the terminal's xterm/WebSocket machinery (covered in its own test).
@@ -171,5 +190,73 @@ describe("JcodeScreen (launcher)", () => {
     fireEvent.change(input, { target: { value: "todo spike" } });
     fireEvent.keyDown(input, { key: "Enter" });
     expect(rename).toHaveBeenCalledWith("j1", "todo spike");
+  });
+
+  it("shows the power switch reflecting the on state", async () => {
+    vi.spyOn(api, "jcodeSessions").mockResolvedValue([session()]);
+    vi.spyOn(api, "externalSessions").mockResolvedValue([]);
+    vi.spyOn(api, "jcodePower").mockResolvedValue(powerStatus({ on: true }));
+    render(<JcodeScreen onClose={vi.fn()} />);
+    const sw = await screen.findByRole("switch", { name: /code mode power/i });
+    expect(sw).toHaveAttribute("aria-checked", "true");
+  });
+
+  it("renders the powered-off panel (not an error) when the services are down", async () => {
+    // Off → the control server is down, so the session list can't load (non-404 error).
+    vi.spyOn(api, "jcodeSessions").mockRejectedValue(new ApiError(502, "down"));
+    vi.spyOn(api, "externalSessions").mockResolvedValue([]);
+    vi.spyOn(api, "jcodePower").mockResolvedValue(powerStatus({ on: false }));
+    render(<JcodeScreen onClose={vi.fn()} />);
+    expect(await screen.findByText(/Code mode is off/i)).toBeInTheDocument();
+    expect(screen.queryByText(/Couldn't reach code mode/i)).not.toBeInTheDocument();
+  });
+
+  it("toggling on opens the bring-up modal and starts the services", async () => {
+    vi.spyOn(api, "jcodeSessions").mockRejectedValue(new ApiError(502, "down"));
+    vi.spyOn(api, "externalSessions").mockResolvedValue([]);
+    vi.spyOn(api, "jcodePower").mockResolvedValue(powerStatus({ on: false }));
+    const set = vi.spyOn(api, "jcodeSetPower").mockResolvedValue(powerStatus({ on: true }));
+    vi.spyOn(api, "jcodeWarmModel").mockResolvedValue({
+      model: "qwen3-coder-next",
+      served: "qwen3-coder-next",
+      loaded: false,
+      warming: true,
+      progress: 0,
+      hosting: true,
+      size_gb: 49.6,
+      context_window: 262144,
+      resident: [],
+    });
+    vi.spyOn(api, "jcodeModelStatus").mockResolvedValue({
+      model: "qwen3-coder-next",
+      served: "qwen3-coder-next",
+      loaded: true,
+      warming: false,
+      progress: 1,
+      hosting: true,
+      size_gb: 49.6,
+      context_window: 262144,
+      resident: ["qwen3-coder-next"],
+    });
+    render(<JcodeScreen onClose={vi.fn()} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /power on/i }));
+    expect(await screen.findByRole("dialog", { name: /powering on/i })).toBeInTheDocument();
+    await waitFor(() => expect(set).toHaveBeenCalledWith(true));
+  });
+
+  it("powering off with live sessions asks to confirm before stopping", async () => {
+    vi.spyOn(api, "jcodeSessions").mockResolvedValue([session()]);
+    vi.spyOn(api, "externalSessions").mockResolvedValue([]);
+    vi.spyOn(api, "jcodePower").mockResolvedValue(powerStatus({ on: true, live_sessions: 2 }));
+    const set = vi.spyOn(api, "jcodeSetPower").mockResolvedValue(powerStatus({ on: false }));
+    render(<JcodeScreen onClose={vi.fn()} />);
+
+    fireEvent.click(await screen.findByRole("switch", { name: /code mode power/i }));
+    // The confirm gate holds before anything is stopped.
+    expect(await screen.findByText(/2 sessions still running/i)).toBeInTheDocument();
+    expect(set).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: /^power off/i }));
+    await waitFor(() => expect(set).toHaveBeenCalledWith(false));
   });
 });

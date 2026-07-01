@@ -98,3 +98,25 @@ export interface JcodeModelStatus {
   /** Served-model names currently on the box — what a swap to the coder would evict. */
   resident: string[];
 }
+
+// One jcode-only service in the master power switch — is its container up right now.
+export interface JcodePowerService {
+  name: string;
+  running: boolean;
+}
+
+// The launcher's master on/off state. `on` is true only when every jcode-only service is
+// up; `provisioned` whether they exist as containers to toggle at all. `live_sessions`
+// lets a power-off warn before it halts running shells. Powering on starts the services;
+// the screen then warms the coder over the existing /jcode/model path.
+export interface JcodePowerStatus {
+  on: boolean;
+  provisioned: boolean;
+  services: JcodePowerService[];
+  coder_loaded: boolean;
+  warming: boolean;
+  model: string;
+  size_gb: number;
+  hosting: boolean;
+  live_sessions: number;
+}

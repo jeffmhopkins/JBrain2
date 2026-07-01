@@ -14,9 +14,11 @@ import contextlib
 import logging
 import re
 from collections import Counter
+from collections.abc import Sequence
 from dataclasses import replace
 from typing import TYPE_CHECKING, cast
 
+import httpx
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
@@ -272,6 +274,114 @@ async def warm_model(owner: OwnerDep, request: Request) -> dict[str, object]:
     model_id = await _resolve_model(request, owner.id)
     _warm_coder(request, model_id)
     return await _model_payload(request, owner.id)
+
+
+# --- Master power switch (the launcher's on/off) -----------------------------------
+# Code mode's jcode-only services and the coder's residency, toggled together. OFF frees
+# the box — it stops the containers, and stopping the local-llm gateway is what unloads
+# the coder — and takes down the whole on-box LLM stack (the deliberate "free the box"
+# the owner asked for; local-llm is shared with chat/vision). ON starts them back; the
+# screen then warms the coder via the existing /jcode/model/warm path and watches the
+# load bar. A LIVE control — it reflects the actual container + model state and stores no
+# flag, mirroring the ComfyUI image-service toggle. Service control is the supervisor's
+# (the only holder of the Docker socket); we proxy start/stop exactly as api/image_settings
+# does for comfyui.
+
+# Start order: the gateway hosting the coder first, then the shim that translates for it,
+# then the control server that drives sandboxes. OFF stops them in reverse.
+_POWER_SERVICES: tuple[str, ...] = ("local-llm", "claude-shim", "jcode")
+
+
+def _supervisor(request: Request) -> httpx.AsyncClient:
+    return cast("httpx.AsyncClient", request.app.state.supervisor_client)
+
+
+def _sup_headers(settings: Settings) -> dict[str, str]:
+    return {"Authorization": f"Bearer {settings.supervisor_token}"}
+
+
+async def _service_states(request: Request) -> dict[str, str]:
+    """Service name → container state (``running`` / ``exited`` / …), from the supervisor's
+    /status. Empty on ANY failure — the supervisor being unreachable is itself a "can't run
+    jcode" state, so the toggle then reads as off/unprovisioned rather than erroring."""
+    settings = cast("Settings", request.app.state.settings)
+    try:
+        resp = await _supervisor(request).get("/status", headers=_sup_headers(settings))
+        resp.raise_for_status()
+        payload = resp.json()
+    except (httpx.HTTPError, ValueError):
+        return {}
+    containers = payload.get("containers", []) if isinstance(payload, dict) else []
+    return {
+        c["service"]: str(c.get("state", ""))
+        for c in containers
+        if isinstance(c, dict) and isinstance(c.get("service"), str)
+    }
+
+
+async def _power_payload(request: Request, owner_id: str) -> dict[str, object]:
+    """The master on/off state: whether every jcode-only service is up, the coder's
+    residency, and how many sessions are live (so a power-off can warn before it halts
+    running shells)."""
+    states = await _service_states(request)
+    services = [{"name": s, "running": states.get(s) == "running"} for s in _POWER_SERVICES]
+    model = await _model_payload(request, owner_id)
+    live = await _live_statuses(request)
+    return {
+        # `on` only when EVERY required service is running; `provisioned` when they all
+        # exist as containers at all (else there's nothing to toggle on this box).
+        "on": all(sv["running"] for sv in services),
+        "provisioned": all(s in states for s in _POWER_SERVICES),
+        "services": services,
+        "coder_loaded": model["loaded"],
+        "warming": model["warming"],
+        "model": model["model"],
+        "size_gb": model["size_gb"],
+        "hosting": model["hosting"],
+        "live_sessions": sum(1 for status in live.values() if status != "stopped"),
+    }
+
+
+class PowerBody(BaseModel):
+    on: bool
+
+
+@router.get("/jcode/power")
+async def power_status(owner: OwnerDep, request: Request) -> dict[str, object]:
+    """Whether code mode is powered on (services up + coder), for the launcher's switch and
+    its bring-up/shut-down modal. Owner-gated; never 404s — it reports state even when code
+    mode is down (that's exactly when the owner needs to switch it back on)."""
+    return await _power_payload(request, owner.id)
+
+
+async def _toggle_services(request: Request, action: str, services: Sequence[str]) -> None:
+    """Start/stop each service via the supervisor, in order. A service that was never
+    provisioned (404) is skipped, not fatal — a box can run the coder gateway without the
+    jcode profile, or vice versa. Any other error is surfaced so the owner learns the
+    toggle didn't take."""
+    settings = cast("Settings", request.app.state.settings)
+    for service in services:
+        resp = await _supervisor(request).post(
+            f"/{action}", json={"service": service}, headers=_sup_headers(settings)
+        )
+        if resp.status_code == 404:
+            continue
+        resp.raise_for_status()
+
+
+@router.post("/jcode/power")
+async def set_power(body: PowerBody, owner: OwnerDep, request: Request) -> dict[str, object]:
+    """Bring the jcode-only services up (on) or down (off), and report the fresh state.
+
+    ON only STARTS the containers — the caller then warms the coder via /jcode/model/warm
+    and watches the load bar (so this returns promptly, before the ~1-minute weight read).
+    OFF stops them in reverse order; stopping the gateway is what unloads the coder and
+    frees the box. Best-effort per service; an unprovisioned service is skipped."""
+    if body.on:
+        await _toggle_services(request, "start", _POWER_SERVICES)
+    else:
+        await _toggle_services(request, "stop", tuple(reversed(_POWER_SERVICES)))
+    return await _power_payload(request, owner.id)
 
 
 async def _live_statuses(request: Request) -> dict[str, str]:
