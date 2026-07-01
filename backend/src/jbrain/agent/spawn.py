@@ -29,7 +29,7 @@ gathered children.
 import asyncio
 import contextlib
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import structlog
 
@@ -113,6 +113,11 @@ class _ChildResult:
     # is never `ok` and is surfaced distinctly from a failure (it is a cascade, not a
     # crash) — so the parent never synthesizes over an empty block.
     skipped: str = ""
+    # Staged-fan placement (feeding waves): the child's wave (0-based; 0 for a flat fan)
+    # and the earlier-wave producer labels fed into it — so the synthesis card can group
+    # by wave and draw the "← fed by …" edge (F3). Empty/0 for a flat fan.
+    wave: int = 0
+    fed_from: tuple[str, ...] = ()
 
 
 def effective_child_tools(
@@ -553,7 +558,7 @@ class SpawnService:
         def record_skip(wp: _WavePlan, reason: str, w_idx: int) -> None:
             res = _ChildResult(
                 wp.label, wp.persona, f"(skipped — {reason})", ok=False,
-                session_id="", skipped=reason,
+                session_id="", skipped=reason, wave=w_idx, fed_from=tuple(wp.feed),
             )
             results_by_label[wp.label] = res
             all_results.append(res)
@@ -658,9 +663,12 @@ class SpawnService:
                 wave_results = await self._run_wave(
                     ctx, owner_ctx, tree, sem, minted, list(all_results)
                 )
-                for res in wave_results:
-                    results_by_label[res.label] = res
-                    all_results.append(res)
+                # Stamp wave placement + feed edges onto each result (the runner doesn't
+                # know them); order matches `runnable` (gather preserves mint order).
+                for res, wp in zip(wave_results, runnable, strict=True):
+                    stamped = replace(res, wave=w_idx, fed_from=tuple(wp.feed))
+                    results_by_label[stamped.label] = stamped
+                    all_results.append(stamped)
         finally:
             tree.stage_reserve = 0
 
@@ -1021,6 +1029,10 @@ def _synthesis_view(results: list[_ChildResult]) -> ViewPayload:
                     # from a failure by the grouped-by-wave surface (F3).
                     "skipped": bool(r.skipped),
                     "skip_reason": r.skipped,
+                    # Staged placement: which wave the row sits in, and the producers
+                    # fed into it (the "← fed by …" edge). 0/[] for a flat fan.
+                    "wave": r.wave,
+                    "fed_from": list(r.fed_from),
                 }
                 for r in results
             ],

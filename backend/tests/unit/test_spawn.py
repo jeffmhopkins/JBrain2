@@ -937,6 +937,10 @@ async def test_waves_feed_producer_summary_into_consumer(service: SpawnService) 
     assert FEED_OPEN in cons_brief  # consumer got the boundary-wrapped feed …
     assert "summary for sess-1" in cons_brief  # … containing the producer's summary
     assert "2 ran" in out
+    # The synthesis view groups by wave and carries the feed edge for F3's surface.
+    children = {c["label"]: c for c in out.view.data["children"]}  # type: ignore[attr-defined]
+    assert children["prod"]["wave"] == 0 and children["prod"]["fed_from"] == []
+    assert children["cons"]["wave"] == 1 and children["cons"]["fed_from"] == ["prod"]
 
 
 async def test_waves_skip_consumer_when_producer_fails(
