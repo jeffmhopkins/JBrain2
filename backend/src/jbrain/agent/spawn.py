@@ -130,13 +130,35 @@ def effective_child_tools(
     return (persona_tools or frozenset()) & parent_tools
 
 
-_TOOL_ARG_KEY = {"web_search": "query", "web_fetch": "url"}
+# Mirrors the frontend's INLINE_ARG_KEY (FullBrainSurface.tsx): the one arg worth
+# previewing per tool — a query/url/name/place/subject, never an opaque id.
+_TOOL_ARG_KEY = {
+    "search": "query",
+    "recall": "query",
+    "web_search": "query",
+    "web_fetch": "url",
+    "gmail_search": "query",
+    "gmail_count": "query",
+    "gmail_bulk_label": "query",
+    "gmail_sender_breakdown": "query",
+    "find_entity": "name",
+    "lookup_medication": "name",
+    "lookup_condition": "name",
+    "relate": "relationship",
+    "find_when_at": "place",
+    "time_at_place": "place",
+    "location_query": "place",
+    "where_is": "subject",
+    "weather": "location",
+    "hurricane": "location",
+}
 _TOOL_ARG_LEN = 200  # a child tool step's inline preview is short; longer is clamped
 
 
 def _tool_arg(name: str, args: object) -> str:
     """A short inline preview of a child tool call for the fan's Worked list — the
-    searched query or fetched url, like the main step rows. Empty for other tools."""
+    searched query, fetched url, or looked-up target, like the main step rows.
+    Empty for tools whose only args are opaque ids."""
     key = _TOOL_ARG_KEY.get(name)
     if key and isinstance(args, dict):
         raw = args.get(key)

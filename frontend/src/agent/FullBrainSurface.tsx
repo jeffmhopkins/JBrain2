@@ -630,7 +630,7 @@ function thinkingTrace(reasoning: string, tools: ToolActivity[]): ThinkItem[] {
 }
 
 // A tool call shown inline inside the "Thinking" trace: a ✓/✕/· mark, the friendly
-// step label, and (for the web tools) the url/query it ran — the compact register a
+// step label, and (when it has one) the query/url/target it ran — the compact register a
 // sub-agent's trace uses, so a heavy-tool-use turn reads as one flowing thought rather
 // than a wall. The full args/sources/raw stay a tap away in the "Worked" segment.
 function ThinkTool({ step }: { step: ToolStep }): ReactNode {
@@ -1033,15 +1033,36 @@ function ProposalChip({
   );
 }
 
-// The one argument worth showing on a web-tool's collapsed row: the url it
-// fetched, the query it searched. Other tools carry their detail in the
-// expanded step (or a source card), so the row stays a clean label.
+// The one argument worth showing on a tool's collapsed row: the "what" a generic
+// label ("Searched Gmail", "Searched the web") leaves implicit — the query it ran,
+// the url it fetched, the name/place/subject it looked up. Keyed by the arg that
+// carries that human-readable target; opaque ids (message_id, note_id, entity_id…)
+// stay in the expanded step, so the row reads as a clean label + a legible target.
+const INLINE_ARG_KEY: Record<string, string> = {
+  search: "query",
+  recall: "query",
+  web_search: "query",
+  web_fetch: "url",
+  gmail_search: "query",
+  gmail_count: "query",
+  gmail_bulk_label: "query",
+  gmail_sender_breakdown: "query",
+  find_entity: "name",
+  lookup_medication: "name",
+  lookup_condition: "name",
+  relate: "relationship",
+  find_when_at: "place",
+  time_at_place: "place",
+  location_query: "place",
+  where_is: "subject",
+  weather: "location",
+  hurricane: "location",
+};
+
 function inlineArg(step: ToolStep): string | undefined {
-  const args = step.args;
-  if (!args) return undefined;
-  const key = step.name === "web_fetch" ? "url" : step.name === "web_search" ? "query" : undefined;
-  if (!key) return undefined;
-  const v = args[key];
+  const key = INLINE_ARG_KEY[step.name];
+  if (!key || !step.args) return undefined;
+  const v = step.args[key];
   return typeof v === "string" && v.trim() ? v.trim() : undefined;
 }
 
@@ -1076,9 +1097,9 @@ function StepRow({
   // we'd rather not parade, so the links are the result and the ids hide behind "raw".
   const rawText = hasSources || hasEntities || hasWebSources ? summary : undefined;
   const mark = isErr ? "bad" : step.ok === undefined ? "live" : "";
-  // The web tools carry their target inline on the row — the fetched url, the
-  // searched query — so the call reads at a glance without expanding it. It
-  // truncates with an ellipsis rather than wrapping (no overflow on a phone).
+  // Search/lookup tools carry their target inline on the row — the searched query,
+  // the fetched url, the looked-up name — so the call reads at a glance without
+  // expanding it. It truncates with an ellipsis rather than wrapping (no phone overflow).
   const inline = inlineArg(step);
 
   return (
