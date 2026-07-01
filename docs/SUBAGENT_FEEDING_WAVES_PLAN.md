@@ -1,7 +1,7 @@
 # Sub-agent feeding waves — build plan (proposed)
 
-**Status: proposed — design-complete, awaiting owner sign-off on the open decisions
-(§ Open decisions) before decomposition into build waves.** Extends the shipped
+**Status: proposed — design-complete; all open decisions D1–D5 resolved by the owner
+(§ Open decisions), ready to decompose into build waves F1–F3.** Extends the shipped
 `spawn_subagent` fan (`docs/SUBAGENT_SPAWNING_PLAN.md`, Waves S1–S4) so a single
 spawn call can run an **ordered sequence of disconnected waves**, feeding each
 wave's summaries forward into the next wave's briefs. This closes the
@@ -236,24 +236,29 @@ before merge, then proceed.
   `feed` labels reference an earlier wave; the barrier is self-documenting. The
   rejected alternatives were (B) flat `tasks` with per-task `needs: [labels]` and
   waves *derived* by topological leveling, and (C) per-task `wave: int` + `feed`.
-- **D2 — Injection target.** (A, recommended) a dedicated boundary-wrapped feed
-  section prepended to the rendered brief. (B) bind the feed block into an existing
-  template slot (`context`/`artifact`/`material`). A affects readability; both are
-  equally safe.
-- **D3 — `MAX_WAVES`.** Recommend **3** (research → analyze → synthesize covers the
-  observed and most real cases; bounds cumulative latency and complexity). 2 is
-  tighter; >3 drifts toward a DAG engine.
-- **D4 — Nesting.** v1 restricts feeding-waves to the **depth-0 owner turn** (a
-  depth≥1 child spawns a single flat fan as today). Extending waves to nested fans
-  is deferred — depth≥1 briefs are already template-bound, so it is safe but adds
-  surface. Confirm the v1 restriction.
-- **D5 — Budget admission.** Whole staged set up front vs. per-wave re-admission
-  (recommended: total-agents up front, budget re-checked per wave with explicit
-  skip). Confirm the value of `MIN_VIABLE_CHILD_BUDGET` still applies per wave.
+- **D2 — Injection target. [DECIDED: A — dedicated prepended section.]** The tool
+  prepends a boundary-wrapped `<untrusted_external_data source="upstream-subagents">`
+  block above the rendered template brief, keeping the fed data visibly separate from
+  the task instructions. (Rejected: binding into an existing `context`/`artifact`/
+  `material` slot.)
+- **D3 — `MAX_WAVES`. [DECIDED: 4.]** One spawn call may chain up to **4** sequential
+  waves (e.g. gather → analyze → cross-check → synthesize). The cap applies **per
+  spawn call at any depth**; the existing `MAX_DEPTH`, `MAX_CHILDREN_PER_PARENT`, and
+  `MAX_TOTAL_AGENTS_PER_TREE` caps still bound the whole tree, and cumulative
+  wall-clock stays governed by the per-child clock × the wave count.
+- **D4 — Nesting. [DECIDED: allow nested waves.]** A depth≥1 child may **also** stage
+  feeding-waves, not just the depth-0 owner turn. This is safe because depth≥1 briefs
+  are **already** template-bound (decision #7), so a fed block is data-framed there by
+  construction; the wave scheduler is depth-agnostic. The compounding of `MAX_WAVES`
+  with nesting is bounded by `MAX_DEPTH=2` and `MAX_TOTAL_AGENTS_PER_TREE=12`.
+- **D5 — Budget admission. [DECIDED: per-wave re-admission.]** Total-agents are
+  reserved up front; the token pool is **re-checked at each wave start** against
+  `MIN_VIABLE_CHILD_BUDGET` per child, and a wave whose pool is drained is **skipped
+  with an explicit note** (never silently truncated). A heavy early wave may thus draw
+  from what a cheap later wave would have used, and the later wave skips loudly.
 
 ## Deferred past v1
 
-- Waves inside a nested (depth≥1) fan (D4).
 - Conditional/branching waves (run wave *k+1* only if a predicate over wave *k*
   holds) — that is the DAG engine the lean litmus refuses; if ever needed it belongs
   in the workflow engine, not the chat hatch.
