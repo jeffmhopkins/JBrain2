@@ -241,16 +241,16 @@ def test_persona_prompts_pinned_to_their_versions() -> None:
             "19b557040a985b4b1c13b9b3a38e2c6a8e0fd06611a84e7341e6497f8a14b9a0",
         ),
         "research": (
-            "agent-research-v3",
-            "1638ab8a756ab7b8e3a3f7dff24f827cc2a8a7e1be44b5b0ee5907e1d70d6b98",
+            "agent-research-v4",
+            "7e4c0049451d4aefab0ed41b18511fa08e730b8e2e1f15c21a996d1dd885aa56",
         ),
         "review": (
-            "agent-review-v1",
-            "af8bab6af76414588fde6d1d14cd37ee4c7bbfb3bd6b395240bc1692a7dbdb27",
+            "agent-review-v2",
+            "f8359c2cfe93cff281f54235d0fdd9bc4650d7160437752f2e307ffd71b1b1bf",
         ),
         "summarize": (
-            "agent-summarize-v1",
-            "fc169f821c8aa2031ca710f143c1307c8fc4803895eeef51e4a7426144ddbac0",
+            "agent-summarize-v2",
+            "eff59feeb739f1bd48546f06e2e8768cdf6158703d69ae4140c096e04e49672e",
         ),
         "intake": (
             "agent-intake-v1",
