@@ -1,0 +1,355 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Sub-agent feeding waves — 3 directions (352px)</title>
+<style>
+  :root{
+    --bg:#0E0F11; --surface:#17181B; --surface-2:#1E2024; --border:#26282C;
+    --text:#E6E7E9; --text-2:#9A9DA3; --text-3:#5C5F66;
+    --steel:#7FA7C9; --green:#8FBC9A; --amber:#C9A36A; --rose:#CF8A8F; --violet:#A493C9;
+    --steel-tint:rgba(127,167,201,.13); --green-tint:rgba(143,188,154,.13);
+    --amber-tint:rgba(201,163,106,.13); --rose-tint:rgba(207,138,143,.13);
+    font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
+  body{background:#000;color:var(--text);display:flex;flex-direction:column;align-items:center;gap:14px;padding:20px 12px 56px;min-height:100vh;}
+  .caption{max-width:1120px;color:var(--text-2);font-size:13px;line-height:1.6;}
+  .caption b{color:var(--text);font-weight:500;}
+  .caption .tag{display:inline-block;background:var(--steel-tint);color:var(--steel);font-size:11px;padding:2px 8px;border-radius:999px;margin-bottom:6px;}
+  .controls{display:flex;gap:8px;align-items:center;flex-wrap:wrap;justify-content:center;}
+  .btn{background:var(--surface);border:1px solid var(--border);color:var(--text);border-radius:999px;padding:8px 15px;font-size:13px;font-weight:500;cursor:pointer;}
+  .btn.primary{background:var(--steel);border-color:var(--steel);color:var(--bg);}
+  .btn.on{border-color:var(--steel);color:var(--steel);}
+  .btn:active{transform:translateY(1px);}
+  .seglab{font-size:11px;color:var(--text-3);margin-right:2px;}
+  .row{display:flex;gap:18px;flex-wrap:wrap;justify-content:center;align-items:flex-start;}
+
+  .phone{width:352px;height:760px;background:var(--bg);border:1px solid var(--border);border-radius:30px;overflow:hidden;position:relative;display:flex;flex-direction:column;}
+  .vlabel{position:absolute;top:10px;left:50%;transform:translateX(-50%);font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--text-3);z-index:5;}
+  .vname{position:absolute;top:24px;left:50%;transform:translateX(-50%);font-size:12px;color:var(--text-2);z-index:5;white-space:nowrap;}
+  .topbar{height:48px;display:flex;align-items:center;gap:9px;padding:0 14px;border-bottom:1px solid var(--border);flex:none;margin-top:40px;}
+  .topbar .dot{width:7px;height:7px;border-radius:999px;background:var(--steel);}
+  .topbar .ttl{font-size:15px;font-weight:600;}
+  .topbar .scope{margin-left:auto;font-size:11px;color:var(--text-3);background:var(--surface-2);padding:3px 8px;border-radius:999px;}
+  .chat{flex:1;overflow-y:auto;padding:14px 13px 18px;display:flex;flex-direction:column;gap:11px;}
+
+  .bubble{max-width:90%;padding:10px 13px;border-radius:15px;font-size:14px;line-height:1.5;}
+  .bubble.me{align-self:flex-end;background:var(--steel-tint);border:1px solid var(--border);}
+  .bubble.ai{align-self:flex-start;background:var(--surface);border:1px solid var(--border);}
+  .bubble.ai .who{font-size:11px;color:var(--text-3);margin-bottom:3px;}
+
+  .ptag{font-size:10px;padding:1px 7px;border-radius:999px;font-weight:500;flex:none;background:var(--surface-2);color:var(--text-2);border:1px solid var(--border);}
+  .fedtag{font-size:10px;color:var(--violet);white-space:nowrap;}
+  /* glyph semantics: steel=live, green=done, rose=failed, amber=budget-skip, muted=upstream-skip/queued */
+  .g{flex:none;display:inline-flex;align-items:center;justify-content:center;width:14px;height:14px;}
+  .g.q{width:7px;height:7px;border-radius:50%;background:var(--text-3);}
+  .g.run{gap:2px;}
+  .g.run i{width:4px;height:4px;border-radius:50%;background:var(--steel);animation:bounce 1s infinite;}
+  .g.run i:nth-child(2){animation-delay:.15s;} .g.run i:nth-child(3){animation-delay:.3s;}
+  @keyframes bounce{0%,80%,100%{opacity:.3;transform:translateY(0);}40%{opacity:1;transform:translateY(-3px);}}
+  .g.done{color:var(--green);font-size:13px;}
+  .g.fail{color:var(--rose);font-size:13px;}
+  .g.skipU{color:var(--rose);font-size:12px;opacity:.75;}
+  .g.skipB{color:var(--amber);font-size:12px;}
+  @media (prefers-reduced-motion: reduce){ .g.run i{animation:none;opacity:.85;} .miniprog i,.budget .track i{transition:none;} }
+  .miniprog{height:3px;border-radius:999px;background:var(--surface-2);overflow:hidden;margin-top:7px;}
+  .miniprog i{display:block;height:100%;background:var(--steel);transition:width .12s linear;}
+  .miniprog i.fail{background:var(--rose);}
+
+  .budget{display:flex;align-items:center;gap:7px;font-size:10px;color:var(--text-3);}
+  .budget .track{flex:1;height:4px;border-radius:999px;background:var(--surface-2);overflow:hidden;}
+  .budget .track i{display:block;height:100%;background:var(--steel);transition:width .12s linear;}
+  .budget.warn .track i{background:var(--amber);} .budget.warn{color:var(--amber);}
+  .budget.danger .track i{background:var(--rose);} .budget.danger{color:var(--rose);}
+
+  /* fan frame shared */
+  .fan{margin-top:10px;border:1px solid var(--border);border-radius:13px;background:var(--surface-2);overflow:hidden;}
+  .fan .head{display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid var(--border);}
+  .fan .head .spark{color:var(--steel);}
+  .fan .head .h-t{font-size:13px;font-weight:500;}
+  .fan .head .h-el{margin-left:auto;font-size:11px;color:var(--text-3);font-variant-numeric:tabular-nums;}
+  .fan .head .stop{font-size:11px;color:var(--rose);border:1px solid var(--border);border-radius:999px;padding:2px 9px;cursor:pointer;background:transparent;margin-left:8px;}
+  .fan .wprog{padding:7px 12px;border-bottom:1px solid var(--border);font-size:11px;color:var(--text-2);display:flex;align-items:center;gap:7px;}
+  .fan .wprog .pips{display:flex;gap:4px;margin-left:auto;}
+  .fan .wprog .pip{width:16px;height:4px;border-radius:999px;background:var(--surface);}
+  .fan .wprog .pip.on{background:var(--steel);} .fan .wprog .pip.done{background:var(--green);}
+  .fan .budgetrow{padding:8px 12px;border-bottom:1px solid var(--border);}
+
+  /* wave section (Variant 1: stacked) */
+  .wsec{border-bottom:1px solid var(--border);}
+  .wsec:last-child{border-bottom:none;}
+  .wsec .wh{display:flex;align-items:center;gap:7px;padding:8px 12px;font-size:11px;color:var(--text-3);background:var(--bg);cursor:pointer;}
+  .wsec .wh .wn{color:var(--text-2);font-weight:500;text-transform:uppercase;letter-spacing:.06em;font-size:10px;}
+  .wsec .wh .wsum{margin-left:auto;color:var(--text-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .wsec .wh .car{color:var(--text-3);width:10px;text-align:center;}
+  .crow{display:flex;align-items:center;gap:8px;padding:9px 12px;}
+  .crow .lbl{font-size:13px;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .crow .st{font-size:11px;color:var(--text-2);max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:right;}
+  .crow .st.fail{color:var(--rose);} .crow .st.skipB{color:var(--amber);} .crow .st.skipU{color:var(--rose);opacity:.8;}
+  .cbar{padding:0 12px 8px;}
+  .cfed{padding:0 12px 8px 34px;font-size:10px;color:var(--violet);margin-top:-2px;}
+  .rerun{display:inline-block;margin-left:6px;color:var(--steel);border:1px solid var(--border);border-radius:999px;padding:0 7px;font-size:10px;cursor:pointer;}
+
+  /* Variant 2: pipeline rail */
+  .rail{padding:11px 12px;}
+  .rnode{position:relative;padding-left:22px;}
+  .rnode::before{content:"";position:absolute;left:6px;top:0;bottom:0;width:1px;background:var(--border);}
+  .rnode:first-child::before{top:11px;}
+  .rnode:last-child::before{bottom:auto;height:11px;}
+  .rdot{position:absolute;left:1px;top:8px;width:11px;height:11px;border-radius:50%;background:var(--surface);border:1px solid var(--border);}
+  .rdot.done{background:var(--green);border-color:var(--green);} .rdot.run{border-color:var(--steel);}
+  .rdot.fail{background:var(--rose);border-color:var(--rose);} .rdot.skipB{border-color:var(--amber);} .rdot.skipU{border-color:var(--rose);}
+  .rwlab{font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--text-3);padding:3px 0 5px 22px;}
+  .rjunc{position:relative;padding:4px 0 6px 22px;font-size:10px;color:var(--violet);}
+  .rjunc::before{content:"";position:absolute;left:6px;top:0;bottom:0;width:1px;background:linear-gradient(var(--border),var(--violet));}
+  .rline{display:flex;align-items:center;gap:7px;padding:2px 0;}
+  .rline .lbl{font-size:13px;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .rline .st{font-size:10px;color:var(--text-2);max-width:96px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .rline .st.fail{color:var(--rose);} .rline .st.skipB{color:var(--amber);} .rline .st.skipU{color:var(--rose);opacity:.8;}
+  .rbar{margin:3px 0 8px;}
+
+  /* Variant 3: active-wave accordion */
+  .wchip{display:flex;align-items:center;gap:8px;padding:9px 12px;border-bottom:1px solid var(--border);cursor:pointer;background:var(--bg);}
+  .wchip .wn{font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--text-2);font-weight:500;}
+  .wchip .csum{margin-left:auto;font-size:11px;color:var(--text-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:150px;}
+  .wchip .car{color:var(--text-3);width:10px;text-align:center;font-size:11px;}
+  .wopen{border-bottom:1px solid var(--border);}
+  .wopen:last-child{border-bottom:none;}
+  .wopen .wtitle{display:flex;align-items:center;gap:7px;padding:8px 12px 4px;font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--steel);}
+
+  /* synthesis card */
+  .synth{margin-top:10px;border:1px solid var(--border);background:var(--surface);border-radius:13px;padding:11px 12px;}
+  .synth.trunc{border-color:var(--amber);} .synth.dead{border-color:var(--rose);}
+  .synth .sh{display:flex;align-items:center;gap:7px;font-size:13px;font-weight:500;margin-bottom:5px;}
+  .synth .sh .ic{color:var(--green);}
+  .synth.trunc .sh .ic{color:var(--amber);} .synth.dead .sh .ic{color:var(--rose);}
+  .synth .sb{font-size:13px;line-height:1.55;color:var(--text);}
+  .synth .fn{color:var(--steel);font-size:10px;vertical-align:super;}
+  .synth .redo{margin-top:8px;font-size:11px;color:var(--steel);border:1px solid var(--border);border-radius:999px;padding:3px 10px;cursor:pointer;display:inline-block;}
+</style>
+</head>
+<body>
+  <div class="caption">
+    <span class="tag">Sub-agent feeding waves · 3 directions</span><br/>
+    A single <b>spawn_subagent</b> call runs <b>2 ordered waves</b> — a <b>producer</b> wave feeding its summaries into a <b>consumer</b> wave (single hop, depth-0, no nesting). Real task: <b>fetch-history</b> (research) → <b>feature-timeline</b> + <b>process-audit</b> (review, fed by fetch-history).
+    Pick a <b>scenario</b> to see the states the spec requires: <b>cascade skip</b> (producer fails → consumers skip), <b>budget skip</b> (pool drained → last consumer skips loud, re-run offered), and the <b>settled/collapsed</b> resting view.
+    Persona is a neutral tag; color stays semantic — <span style="color:var(--steel)">steel live</span>, <span style="color:var(--green)">green done</span>, <span style="color:var(--rose)">rose failed / upstream-skip</span>, <span style="color:var(--amber)">amber budget-skip</span>, <span style="color:var(--violet)">violet feed edge</span>.
+    Three directions: <b>1 Stacked waves</b> · <b>2 Pipeline rail</b> · <b>3 Active-wave accordion</b>.
+  </div>
+
+  <div class="controls">
+    <span class="seglab">scenario:</span>
+    <button class="btn on" data-sc="happy">Happy path</button>
+    <button class="btn" data-sc="cascade">Cascade skip</button>
+    <button class="btn" data-sc="budget">Budget skip</button>
+    <button class="btn" data-sc="settled">Settled (collapsed)</button>
+    <span style="width:14px"></span>
+    <button class="btn primary" id="play">▶ Play</button>
+    <button class="btn" id="reset">↺ Reset</button>
+  </div>
+
+  <div class="row">
+    <div class="phone"><div class="vlabel">Direction 1</div><div class="vname">Stacked wave sections</div>
+      <div class="topbar"><span class="dot"></span><span class="ttl">jerv</span><span class="scope">web · no KB</span></div>
+      <div class="chat" id="chat1"></div></div>
+    <div class="phone"><div class="vlabel">Direction 2</div><div class="vname">Pipeline rail</div>
+      <div class="topbar"><span class="dot"></span><span class="ttl">jerv</span><span class="scope">web · no KB</span></div>
+      <div class="chat" id="chat2"></div></div>
+    <div class="phone"><div class="vlabel">Direction 3</div><div class="vname">Active-wave accordion</div>
+      <div class="topbar"><span class="dot"></span><span class="ttl">jerv</span><span class="scope">web · no KB</span></div>
+      <div class="chat" id="chat3"></div></div>
+  </div>
+
+<script>
+const PERSONA={research:{label:'research'},review:{label:'review'},summarize:{label:'summarize'}};
+// cost in "k tokens"; tree budget ~2.8M as in the live surface.
+const TREE_BUDGET=2800;
+const CAPS={happy:2800,cascade:2800,budget:1300,settled:2800};
+let agents,timer,scenario='happy',cancelled=false,elapsed=0,collapsedW1=false,openW=2;
+
+function baseAgents(){
+  return [
+    {id:'fh',persona:'research',label:'fetch-history',wave:1,feed:[],cost:800,speed:0.9,p:0,state:'run',
+      result:'14 commits + 2 tags (chronological JSON).'},
+    {id:'ft',persona:'review',label:'feature-timeline',wave:2,feed:['fetch-history'],cost:300,speed:1.1,p:0,state:'queued',
+      result:'8 feature milestones extracted into a table.'},
+    {id:'pa',persona:'review',label:'process-audit',wave:2,feed:['fetch-history'],cost:300,speed:1.1,p:0,state:'queued',
+      result:'3 process risks: 11-day window, revert churn, dup fix.'},
+  ];
+}
+function reset(){
+  agents=baseAgents(); cancelled=false; elapsed=0; collapsedW1=false; openW=1;
+  if(scenario==='settled'){ // jump to resting state, no animation
+    agents.forEach(a=>{a.state='done';a.p=100;}); collapsedW1=true; openW=2;
+  }
+  if(timer){clearInterval(timer);timer=null;} render();
+}
+const settledSt=s=>['done','error','skipU','skipB','dead'].includes(s);
+function waveDone(w){return agents.filter(a=>a.wave===w).every(a=>settledSt(a.state));}
+function allDone(){return agents.every(a=>settledSt(a.state));}
+function usedTokens(){let u=150;for(const a of agents)u+=a.p/100*a.cost;return Math.round(u);}
+function runningWave(){const w1=agents.filter(a=>a.wave===1);return w1.every(a=>settledSt(a.state))?2:1;}
+
+function tick(){
+  elapsed++;
+  const cap=CAPS[scenario];
+  // one running agent at a time (serial local route), lowest wave first, barrier between waves.
+  let cur=agents.find(a=>a.state==='run');
+  if(!cur){
+    // pick next runnable: wave 1 first; wave 2 only after wave 1 settled.
+    const w1open=agents.filter(a=>a.wave===1&&!settledSt(a.state));
+    const pool=w1open.length?w1open:(waveDone(1)?agents.filter(a=>a.wave===2&&a.state==='queued'):[]);
+    const next=pool[0];
+    if(next){
+      // wave-2 admission checks at serial launch: feed available? budget left?
+      if(next.wave===2){
+        const fedOk=next.feed.every(f=>{const src=agents.find(x=>x.label===f);return src&&src.state==='done';});
+        if(!fedOk){next.state='skipU';render();return;}
+        if(usedTokens()+next.cost*0.5>cap){next.state='skipB';render();if(allDone()){stopTimer();}return;}
+      }
+      next.state='run'; if(next.wave===2)openW=2;
+      cur=next;
+    }
+  }
+  if(cur){
+    cur.p=Math.min(100,cur.p+cur.speed);
+    if(cur.p>=100){ cur.state=(scenario==='cascade'&&cur.id==='fh')?'error':'done';
+      if(cur.state==='error'){ // cascade: skip all fed consumers immediately
+        agents.filter(a=>a.wave===2).forEach(a=>a.state='skipU'); }
+    }
+  }
+  render();
+  if(allDone()){stopTimer();}
+}
+function stopTimer(){if(timer){clearInterval(timer);timer=null;}}
+function play(){if(timer)return;if(scenario==='settled')return;if(allDone()||cancelled)reset();timer=setInterval(tick,90);}
+function stop(){cancelled=true;stopTimer();agents.forEach(a=>{if(a.state==='run'||a.state==='queued')a.state='dead';});render();}
+
+function clock(){const m=Math.floor(elapsed*0.09/60),s=Math.floor(elapsed*0.09)%60;return m+':'+String(s).padStart(2,'0');}
+function phase(a){
+  switch(a.state){
+    case 'done':return a.result;
+    case 'error':return 'web_fetch failed — no data';
+    case 'skipU':return 'skipped — input failed';
+    case 'skipB':return 'skipped — budget spent';
+    case 'dead':return cancelled?'stopped':'—';
+    case 'queued':return a.wave===2?('queued · wave 2'+(a.feed.length?' (needs '+a.feed.join(', ')+')':'')):'queued';
+  }
+  if(a.p<25)return 'searching…'; if(a.p<60)return 'reading…'; return 'summarizing…';
+}
+function glyph(a){
+  switch(a.state){
+    case 'done':return '<span class="g done">✓</span>';
+    case 'error':case 'dead':return '<span class="g fail">✕</span>';
+    case 'skipU':return '<span class="g skipU">⊘</span>';
+    case 'skipB':return '<span class="g skipB">⊘</span>';
+    case 'queued':return '<span class="g q"></span>';
+  }
+  return '<span class="g run"><i></i><i></i><i></i></span>';
+}
+function stCls(a){return a.state==='error'||a.state==='dead'?'fail':a.state==='skipU'?'skipU':a.state==='skipB'?'skipB':'';}
+function budgetBar(){
+  const cap=CAPS[scenario],used=usedTokens(),pct=Math.min(100,used/cap*100);
+  const cls=pct>=99?'danger':pct>75?'warn':'';
+  const txt=(used/1000).toFixed(2)+'M / '+(cap/1000).toFixed(2)+'M';
+  return `<div class="budget ${cls}" role="meter">${txt}<span class="track"><i style="width:${pct}%"></i></span></div>`;
+}
+function wprog(){
+  const rw=runningWave(),done=allDone();
+  let label;
+  if(done) label = cancelled?'Stopped':(agents.some(a=>a.state==='skipB')?'Partial · budget spent':(agents.some(a=>a.state==='skipU')?'Stopped · producer failed':'Done · 2 waves'));
+  else label = rw===1?'Wave 1 of 2 · researching':'Wave 2 of 2 · feeding wave 1 forward';
+  const p1=waveDone(1)?'done':(rw===1?'on':''), p2=allDone()?'done':(rw===2?'on':'');
+  return `<div class="wprog">${label}<span class="pips"><span class="pip ${p1}"></span><span class="pip ${p2}"></span></span></div>`;
+}
+function stopBtn(){return allDone()||scenario==='settled'?'':'<button class="stop" data-act="stop">■ Stop</button>';}
+
+const USERMSG=`<div class="bubble me">Build a JBrain2 development timeline — research the history, then extract features and audit the process.</div>`;
+const AIMSG=`<div class="bubble ai"><div class="who">jerv</div>I'll fetch the history first, then feed it into a feature timeline and a process audit.</div>`;
+
+function synthCard(){
+  if(!allDone())return '';
+  if(cancelled)return `<div class="synth dead"><div class="sh"><span class="ic">✕</span> Stopped</div><div class="sb">You stopped the fan — nothing to synthesize.</div></div>`;
+  if(agents.some(a=>a.state==='skipU'))return `<div class="synth dead"><div class="sh"><span class="ic">✕</span> Couldn't build the timeline</div><div class="sb"><b>fetch-history failed</b>, so both reviews were skipped (no commit data to work from). Nothing was run over empty input.</div><span class="redo" data-act="redo">↺ Retry fetch-history</span></div>`;
+  if(agents.some(a=>a.state==='skipB'))return `<div class="synth trunc"><div class="sh"><span class="ic">◑</span> Partial — 1 of 2 reviews</div><div class="sb">Feature timeline done<span class="fn">1</span>. <b>process-audit was skipped — sub-agent budget spent by earlier waves.</b> Re-run to complete it.</div><span class="redo" data-act="redo">↺ Re-run process-audit</span></div>`;
+  return `<div class="synth"><div class="sh"><span class="ic">✓</span> Timeline synthesized · 2 waves</div><div class="sb">14 commits + 2 tags<span class="fn">1</span> → 8 feature milestones<span class="fn">2</span> and 3 process risks<span class="fn">3</span>, all traced to the commit history.</div></div>`;
+}
+
+/* ---- Direction 1: stacked wave sections ---- */
+function crowHTML(a){
+  const fed=a.feed.length&&['run','done','skipB'].includes(a.state)?`<div class="cfed">← fed by ${a.feed.join(', ')}${a.state==='skipB'?' <span class="rerun" data-act="redo">re-run</span>':''}</div>`:'';
+  return `<div class="crow">${glyph(a)}<span class="lbl">${a.label}</span><span class="ptag">${PERSONA[a.persona].label}</span><span class="st ${stCls(a)}">${phase(a)}</span></div>
+    <div class="cbar"><div class="miniprog"><i class="${stCls(a)==='fail'?'fail':''}" style="width:${a.p}%"></i></div></div>${fed}`;
+}
+function waveSummary(w){
+  const as=agents.filter(a=>a.wave===w);const done=as.filter(a=>a.state==='done').length;
+  const bad=as.filter(a=>['error','skipU','skipB','dead'].includes(a.state)).length;
+  return `${done}/${as.length} ok${bad?` · ${bad} skipped`:''} · ${as.map(a=>a.label).join(', ')}`;
+}
+function render1(){
+  let secs='';
+  for(const w of [1,2]){
+    const as=agents.filter(a=>a.wave===w);
+    const collapsed=(w===1&&(collapsedW1||(waveDone(1)&&runningWave()===2&&scenario!=='cascade')));
+    const label=w===1?'Wave 1 · research':'Wave 2 · review — fed by wave 1';
+    if(collapsed){
+      secs+=`<div class="wsec"><div class="wh" data-w="1"><span class="g done" style="width:12px">✓</span><span class="wn">${label}</span><span class="wsum">${waveSummary(1)}</span><span class="car">▸</span></div></div>`;
+    }else{
+      secs+=`<div class="wsec"><div class="wh" data-w="${w}"><span class="wn">${label}</span><span class="wsum"></span><span class="car">▾</span></div>${as.map(crowHTML).join('')}</div>`;
+    }
+  }
+  return USERMSG+AIMSG+`<div class="fan"><div class="head"><span class="spark">✦</span><span class="h-t">Feeding waves</span><span class="h-el">${clock()}</span>${stopBtn()}</div>${wprog()}<div class="budgetrow">${budgetBar()}</div>${secs}</div>`+synthCard();
+}
+
+/* ---- Direction 2: pipeline rail ---- */
+function rlineHTML(a){
+  return `<div class="rnode"><span class="rdot ${a.state==='done'?'done':a.state==='run'?'run':stCls(a)}"></span>
+    <div class="rline">${glyph(a)}<span class="lbl">${a.label}</span><span class="ptag">${PERSONA[a.persona].label}</span><span class="st ${stCls(a)}">${phase(a)}</span></div>
+    <div class="rbar"><div class="miniprog"><i class="${stCls(a)==='fail'?'fail':''}" style="width:${a.p}%"></i></div></div></div>`;
+}
+function render2(){
+  const w1=agents.filter(a=>a.wave===1),w2=agents.filter(a=>a.wave===2);
+  const junc=scenario==='cascade'&&w1.some(a=>a.state==='error')?'✕ producer failed — nothing to feed':'feeds ↓ '+w1.map(a=>a.label).join(', ');
+  return USERMSG+AIMSG+`<div class="fan"><div class="head"><span class="spark">✦</span><span class="h-t">Feeding waves</span><span class="h-el">${clock()}</span>${stopBtn()}</div>${wprog()}<div class="budgetrow">${budgetBar()}</div>
+    <div class="rail"><div class="rwlab">Wave 1 · research</div>${w1.map(rlineHTML).join('')}
+      <div class="rjunc">${junc}</div>
+      <div class="rwlab">Wave 2 · review</div>${w2.map(rlineHTML).join('')}</div></div>`+synthCard();
+}
+
+/* ---- Direction 3: active-wave accordion ---- */
+function render3(){
+  const rw=runningWave();let body='';
+  for(const w of [1,2]){
+    const as=agents.filter(a=>a.wave===w);
+    const isOpen=(openW===w)||(!allDone()&&rw===w)||(w===2&&allDone());
+    const label=w===1?'Wave 1 · research':'Wave 2 · review';
+    if(!isOpen){
+      const g=waveDone(w)?'<span class="g done" style="width:12px">✓</span>':'<span class="g q"></span>';
+      body+=`<div class="wchip" data-w="${w}">${g}<span class="wn">${label}</span><span class="csum">${waveSummary(w)}</span><span class="car">▸</span></div>`;
+    }else{
+      const fedNote=w===2?' <span class="fedtag">← fed by wave 1</span>':'';
+      body+=`<div class="wopen"><div class="wtitle" data-w="${w}">${label}${fedNote}<span style="margin-left:auto;color:var(--text-3)">▾</span></div>${as.map(crowHTML).join('')}</div>`;
+    }
+  }
+  return USERMSG+AIMSG+`<div class="fan"><div class="head"><span class="spark">✦</span><span class="h-t">Feeding waves</span><span class="h-el">${clock()}</span>${stopBtn()}</div>${wprog()}<div class="budgetrow">${budgetBar()}</div>${body}</div>`+synthCard();
+}
+
+function render(){chat1.innerHTML=render1();chat2.innerHTML=render2();chat3.innerHTML=render3();}
+const chat1=document.getElementById('chat1'),chat2=document.getElementById('chat2'),chat3=document.getElementById('chat3');
+
+document.addEventListener('click',e=>{
+  const sc=e.target.closest('[data-sc]');
+  if(sc){document.querySelectorAll('[data-sc]').forEach(b=>b.classList.remove('on'));sc.classList.add('on');scenario=sc.getAttribute('data-sc');reset();if(scenario!=='settled')setTimeout(play,250);return;}
+  if(e.target.closest('[data-act="stop"]')){stop();return;}
+  if(e.target.closest('[data-act="redo"]')){scenario='happy';document.querySelectorAll('[data-sc]').forEach(b=>b.classList.toggle('on',b.getAttribute('data-sc')==='happy'));reset();setTimeout(play,200);return;}
+  const w=e.target.closest('[data-w]');
+  if(w){const wn=+w.getAttribute('data-w');if(wn===1)collapsedW1=!collapsedW1;openW=(openW===wn?0:wn);render();return;}
+});
+document.getElementById('play').onclick=play;
+document.getElementById('reset').onclick=reset;
+reset();setTimeout(play,500);
+</script>
+</body>
+</html>
