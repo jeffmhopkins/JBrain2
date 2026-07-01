@@ -158,13 +158,17 @@ attempt in **N of N** trials (no manual re-spawn) — verified in F3, not assume
   the ephemeral event) so the session tree can reconstruct the feed relationship
   after the fact — the feed edge is the whole point of the feature and must be
   queryable a day later.
-- **GUI mock gate (F3).** DESIGN.md's sub-agent section is **re-opened** (it is
-  currently "settled" for the flat fan). Three interactive mocks at **352px**, each
-  with a scenario switcher covering the concrete states: (a) happy 2-wave pipeline
-  with wave dividers + a **text** feed affordance ("← fed by fetch-history", not a
-  drawn cross-group edge), (b) upstream-fail **cascade-skip**, (c) **budget/deadline
-  skip** of a consumer with a "re-run remaining" affordance, (d) settled waves
-  collapsed to one line. Owner picks before build.
+- **GUI mock gate (F3) — CLEARED.** Three interactive 352px mocks were built
+  (`docs/mocks/subagent-waves-mock.html`: stacked wave sections · pipeline rail ·
+  active-wave accordion), each with a scenario switcher over the real timeline task
+  covering happy / cascade-skip / budget-skip / settled-collapsed. **Owner chose
+  Direction 1 — stacked wave sections** as the binding spec: wave-header dividers
+  ("Wave 2 · review — fed by wave 1"), children under each wave, settled waves
+  collapse to a one-line summary, a **text** feed affordance ("← fed by
+  fetch-history"), and distinct skip colours (rose = upstream-skip, amber =
+  budget-skip, separate from failed/truncated). F3 implements this mock;
+  DESIGN.md's sub-agent section is updated (re-opened from its flat-fan "settled"
+  state) in the same wave.
 
 ## Non-negotiables it must respect (red-team surface, every wave)
 
@@ -211,10 +215,12 @@ attempt in **N of N** trials (no manual re-spawn) — verified in F3, not assume
 - **Wave F2 — Runtime bounds + auditability** *(backend; budget/clock-value
   escalation).* `TREE_WALL_CLOCK_S`, per-child budget re-admission, final-wave
   reserve, run-log `wave`/`fed_from` persistence, live wave-progress events.
-- **Wave F3 — Synthesis surface + jerv steering** *(GUI; re-opened mock gate).*
-  Three 352px mocks → owner picks; grouped-by-wave synthesis with text feed
-  affordance and the three named skip states; `jerv.prompt` bump; **verified against
-  a live re-run of the misfired timeline task to the acceptance bar.**
+- **Wave F3 — Synthesis surface + jerv steering** *(GUI; mock gate CLEARED —
+  Direction 1, stacked wave sections).* Implement the chosen mock: grouped-by-wave
+  synthesis with wave-header dividers, collapse-settled, the text feed affordance,
+  and the three named skip states (upstream / budget / deadline, distinct from
+  failed); update DESIGN.md's sub-agent section; `jerv.prompt` bump; **verified
+  against a live re-run of the misfired timeline task to the acceptance bar.**
 
 ## Decisions
 
