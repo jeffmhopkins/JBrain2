@@ -207,8 +207,8 @@ attempt in **N of N** trials (no manual re-spawn) — verified in F3, not assume
 
 ## Wave split (per PROCESS.md)
 
-- **Wave F1 — Enforced-envelope feed core + sibling guard** *(backend;
-  security/red-team gated — the load-bearing wave).* The 2-wave scheduler with
+- **Wave F1 — Enforced-envelope feed core + sibling guard — LANDED** *(backend;
+  security/red-team gated — the load-bearing wave; independent review gate pending).* The 2-wave scheduler with
   per-wave mint/admit and barrier-safe cancellation; `compose_feed_block` with
   delimiter neutralization + size cap; the pinned prompt-clause additions to
   research/review/summarize; the `fed ⇒ template-bound` branch; the
