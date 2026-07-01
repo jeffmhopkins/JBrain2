@@ -343,6 +343,8 @@ describe("applyEvent reducer", () => {
         step: 2,
         stopReason: "end_turn",
         summary: "3 tiers",
+        wave: 0,
+        fedFrom: [],
       },
     ]);
   });

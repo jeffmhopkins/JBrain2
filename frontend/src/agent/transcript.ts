@@ -49,6 +49,11 @@ export interface SubagentChild {
    * the child's first model call reports usage. */
   usedTokens?: number;
   contextWindow?: number;
+  /** Staged-fan placement (feeding waves): the child's wave (0-based; 0/undefined for a
+   * flat fan) and the earlier-wave producers fed into it — so the live fan groups rows by
+   * wave and draws the "← fed by …" edge as it runs, not only in the final synthesis card. */
+  wave?: number;
+  fedFrom?: string[];
 }
 
 /** One tool step a child took (web_search/web_fetch), shown in the child's frame. */
@@ -369,6 +374,8 @@ export function applyEvent(messages: TranscriptMessage[], event: ChatEvent): Tra
         label: event.label,
         depth: event.depth,
         phase: c.step ? c.phase : "queued",
+        wave: event.wave ?? 0,
+        fedFrom: event.fed_from ?? [],
       }));
       break;
     case "subagent_progress":
