@@ -1114,6 +1114,54 @@ async def test_waves_fed_consumer_referencing_unfed_sibling_refused(service: Spa
     assert not _FakeLoop.calls
 
 
+async def test_waves_guard_ignores_template_scaffolding_words(service: SpawnService) -> None:
+    """F2 review fix: the sibling guard scans model-supplied param VALUES, not the fixed
+    template scaffolding — so a producer labelled a common template word ("summary")
+    must not spuriously refuse an unrelated fed consumer."""
+    out = await service.spawn_fan(
+        _ctx(),
+        {
+            "waves": [
+                [
+                    {"persona": "research", "brief": "get commits", "label": "summary"},
+                    {"persona": "research", "brief": "get trends", "label": "trends"},
+                ],
+                [
+                    {
+                        "persona": "review",
+                        "label": "cons",
+                        "feed": ["trends"],
+                        "brief": _review_brief("the trend data"),  # does not name 'summary'
+                    }
+                ],
+            ]
+        },
+    )
+    # 'summary' is a wave-1 label AND a word in the rendered review template, but the
+    # consumer's own params never mention it → it runs, not refused.
+    assert "refused" not in out.lower()
+    assert len(_FakeLoop.calls) == 3
+
+
+async def test_waves_same_wave_reference_gets_move_guidance(service: SpawnService) -> None:
+    """F2 review fix: a brief naming a SAME-wave sibling (which cannot be fed) is refused
+    with actionable 'move to an earlier wave' guidance, never a dead-end 'add a feed
+    edge' (a same-wave feed is itself refused)."""
+    out = await service.spawn_fan(
+        _ctx(),
+        {
+            "waves": [
+                [
+                    {"persona": "research", "brief": "get the history", "label": "history"},
+                    {"persona": "review", "brief": "assess the history data", "label": "auditor"},
+                ]
+            ]
+        },
+    )
+    assert "refused" in out.lower() and "move" in out.lower() and "earlier wave" in out.lower()
+    assert not _FakeLoop.calls
+
+
 async def test_both_tasks_and_waves_refused(service: SpawnService) -> None:
     out = await service.spawn_fan(
         _ctx(),

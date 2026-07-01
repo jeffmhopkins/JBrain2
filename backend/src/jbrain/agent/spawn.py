@@ -300,18 +300,32 @@ def plan_waves(waves: list) -> tuple[list[list[_WavePlan]], str | None]:
                         f"{label}: feed references {f!r}, which is not in an earlier wave "
                         "(a consumer may only feed from a strictly earlier wave)."
                     )
+            raw_brief = task.get("brief")
             try:
-                base_brief = _resolve_wave_brief(task.get("brief"), fed=bool(feed))
+                base_brief = _resolve_wave_brief(raw_brief, fed=bool(feed))
             except BriefError as exc:
                 return [], f"{label}: {exc}"
+            # The guard scans only MODEL-SUPPLIED text — a fed consumer's template
+            # PARAM VALUES, or an un-fed task's free-text brief — never the fixed
+            # template scaffolding (whose words like "summary"/"artifact" would collide
+            # with a producer that happens to share that label). F2 review fix.
+            if feed and isinstance(raw_brief, dict) and isinstance(raw_brief.get("params"), dict):
+                guard_text = " ".join(str(v) for v in raw_brief["params"].values())
+            else:
+                guard_text = base_brief
             # Naming another task's label without feeding it is a problem for ANY task
-            # (a fed consumer can still reference a second, un-fed sibling).
-            named = _names_unfed_sibling(base_brief, label, all_labels, frozenset(feed))
+            # (a fed consumer can still reference a second, un-fed sibling). The guidance
+            # is wave-aware: a same/later-wave sibling cannot be fed, so it must move.
+            named = _names_unfed_sibling(guard_text, label, all_labels, frozenset(feed))
             if named is not None:
+                if label_wave[named] < w_idx:
+                    return [], (
+                        f"{label}: the brief refers to {named!r} but does not `feed` from it — "
+                        "add a `feed` edge to that producer (or inline the data) so it is received."
+                    )
                 return [], (
-                    f"{label}: the brief refers to {named!r} but does not `feed` from it — add a "
-                    "`feed` edge to that producer (or inline the data), so the child actually "
-                    "receives it instead of running empty."
+                    f"{label}: the brief refers to {named!r}, which is in the same or a later wave "
+                    f"and cannot be fed — move {named!r} to an earlier wave and `feed` from it."
                 )
             # Generic "the data provided above" phrasing only refuses an UN-FED task (a
             # fed consumer legitimately refers to its prepended feed block).
