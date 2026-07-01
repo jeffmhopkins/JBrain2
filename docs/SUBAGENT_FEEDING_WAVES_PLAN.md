@@ -24,7 +24,7 @@ on findings that three reviewers hit **independently**:
 | "Cumulative wall-clock governed by per-child clock × wave count" | No tree-wide clock exists; serial local execution × 1200s/child **exceeds the 3600s turn cap** with as few as 3 children | New **tree-wide wall-clock deadline** checked at every child launch + barrier; over it → skip-loud (§ Runtime bounds) |
 | Mint every child up front | Skipped later-wave children orphan session + run-log rows and permanently burn the 12-agent cap (`admit` has no release) | **Per-wave mint/admit**; a wave is minted only when it starts (§ Scheduler) |
 | Per-wave budget re-check | Coarser than serial execution; starves the final (deliverable) wave | **Per-child** re-admission at serial launch + a **reserved floor for the last wave** |
-| Nested feeding-waves (D4) "safe by construction" | Multiplies the envelope hole across depths and makes the phone surface unreadable | **No nesting** — a depth≥1 child gets a flat fan only (D4 reverted) |
+| Nested feeding-waves (D4) "safe by construction" | Multiplies the envelope hole across depths and makes the phone surface unreadable | **No nesting** (D4 reverted); child-initiated spawning was later removed entirely — children are leaves |
 | `MAX_WAVES=4` | 4 serial waves don't fit the turn cap and the live surface can't render them | **`MAX_WAVES=2`** — one producer wave → one consumer wave (D3 revised) |
 | The prompt bump "retires the re-spawn pattern" | A soft nudge + brittle regex guard doesn't *force* waves | The **guard is the primary structural fix** with a measurable acceptance bar; waves are the ergonomic path, not the safety mechanism (§ The behavioural fix) |
 
@@ -240,8 +240,9 @@ attempt in **N of N** trials (no manual re-spawn) — verified in F3, not assume
   `<untrusted_external_data>` block — now backed by a real pinned prompt clause.]**
 - **D3 — `MAX_WAVES`. [REVISED: 2]** (was 4) — single producer→consumer hop; keeps
   the wall-clock under the turn cap and the surface legible.
-- **D4 — Nesting. [REVERTED: no nesting]** — feeding-waves are depth-0 only; a
-  depth≥1 child spawns a flat fan as today.
+- **D4 — Nesting. [REVERTED: no nesting]** — feeding-waves are depth-0 only.
+  (Superseded further: child-initiated spawning was later removed entirely — a child
+  holds no `spawn_subagent` and is a leaf, so there is no nested flat fan either.)
 - **D5 — Budget. [REVISED + valued: per-child re-admission + dynamic final-wave
   floor (`n × 100k`) + tree-wide wall-clock deadline `TREE_WALL_CLOCK_S=3000s`]**
   (was per-wave) — matches serial execution, guarantees each consumer its viable

@@ -1,10 +1,12 @@
 """The sub-agent spawn service (docs/SUBAGENT_SPAWNING_PLAN.md, Wave S1).
 
-`jerv` (and, for nesting, a research/review child) calls the `spawn_subagent` tool;
-its handler is a `SpawnRef` that forwards to `SpawnService.spawn_fan`. The service
-launches a **fan** of web-sandboxed children as in-request `asyncio.gather` tasks
-the parent turn awaits (fan-in model A), collects their summaries in stable label
-order, and returns them as a single observation the parent then synthesizes.
+Only `jerv` (the root turn, depth 0) calls the `spawn_subagent` tool; its handler is a
+`SpawnRef` that forwards to `SpawnService.spawn_fan`. The service launches a **fan** of
+web-sandboxed children as in-request `asyncio.gather` tasks the parent turn awaits
+(fan-in model A), collects their summaries in stable label order, and returns them as a
+single observation the parent then synthesizes. Children are always **leaves** —
+child-initiated nesting was removed; `waves` (feeding waves) is the orchestrator-declared
+way to make one child build on another.
 
 Every safety property here is structural — enforced with no model cooperation:
 
@@ -13,12 +15,13 @@ Every safety property here is structural — enforced with no model cooperation:
 - **Parent⊆child clamp:** a child's effective tools = `persona.tools ∩
   parent.agent_tools`, passed as the child loop's `tools_allow` and refused at
   dispatch. Child read scope is empty (jerv-only-root → no domain data, ever).
-- **Depth cap:** spawn refused unless `parent.depth < MAX_DEPTH`.
+- **Leaf children:** a child holds no `spawn_subagent` (persona allowlists) and is
+  refused by the depth cap anyway — the tree is exactly two levels.
 - **Fan/tree caps:** per-fan size, the tree-wide total, and concurrency.
 - **Sandbox:** each child session is `no_memory` (and the helper never records an
   episode), and its `ToolContext.here`/`here_as_of` are None (no location).
-- **Brief boundary:** free-text only at depth 0; depth>=1 is template-bound
-  (closes the re-spawn laundering hop, decision #7).
+- **Feed boundary:** a fed consumer's brief is template-bound and its upstream data is
+  wrapped in the data/instruction boundary (feeding waves) — never free-text prose.
 
 A refused or failed spawn is a structured observation (never an exception) so the
 model self-corrects; a child that errors degrades to an error summary and the rest
@@ -80,8 +83,8 @@ _PHASE = {"research": "researching", "review": "reviewing", "summarize": "summar
 
 def _emit(ctx: ToolContext, event: ChatEvent) -> None:
     """Push a live `subagent_*` event onto the parent turn's stream, if this turn has
-    an event sink (the streaming root turn does; a non-streaming child's own fan does
-    not, so a grandchild's events are not surfaced live in v1 — fan-in model A)."""
+    an event sink (only the streaming root turn does — children are leaves and never
+    spawn, so there is no nested fan to surface; fan-in model A)."""
     if ctx.emit_event is not None:
         ctx.emit_event(event)
 
@@ -184,9 +187,9 @@ def _free_text_brief(brief: object) -> str:
 
 
 def _template_brief(brief: object) -> str:
-    """A template-bound `{template_id, params}` brief — the depth>=1 / fed form, whose
-    slots frame every value as data so untrusted content cannot become instruction.
-    Fail closed on any other shape."""
+    """A template-bound `{template_id, params}` brief — the form a FED consumer must use
+    (feeding waves), whose slots frame every value as data so untrusted upstream output
+    cannot become instruction. Fail closed on any other shape."""
     if not isinstance(brief, dict):
         raise BriefError("this brief must be template-bound ({template_id, params}), not free text")
     template_id = brief.get("template_id")
@@ -194,14 +197,6 @@ def _template_brief(brief: object) -> str:
     if not isinstance(template_id, str) or not isinstance(params, dict):
         raise BriefError("a template-bound brief needs template_id (str) and params (object)")
     return render_brief(template_id, params)
-
-
-def _resolve_brief(brief: object, *, depth: int) -> str:
-    """The brief a child receives, by the spawner's depth (decision #7). At depth 0 a
-    free-text string is allowed; at depth >= 1 it MUST be template-bound (fail closed)
-    so attacker-controlled fetched content cannot be laundered into a grandchild's
-    steering instructions."""
-    return _free_text_brief(brief) if depth == 0 else _template_brief(brief)
 
 
 # --- Feeding waves: plan validation (docs/SUBAGENT_FEEDING_WAVES_PLAN.md) ----
@@ -412,10 +407,11 @@ class SpawnService:
         if ctx.tree is None:
             return _refuse("sub-agent spawning is only available in an interactive owner turn.")
         # --- depth cap (structural, no model cooperation) ---------------------
+        # Only the root turn (jerv, depth 0) may spawn; a child is always a leaf. Belt
+        # and suspenders with the persona allowlists, which no longer offer a child the
+        # spawn tool at all.
         if ctx.depth >= MAX_DEPTH:
-            return _refuse(
-                f"already at depth {ctx.depth}; a sub-agent may nest at most {MAX_DEPTH} layers."
-            )
+            return _refuse("a sub-agent cannot spawn its own sub-agents; only jerv fans out.")
 
         tasks = args.get("tasks")
         if not isinstance(tasks, list) or not tasks:
@@ -441,7 +437,9 @@ class SpawnService:
             if not isinstance(label, str) or not label.strip():
                 return _refuse(f"task {i} needs a non-empty `label`.")
             try:
-                brief_text = _resolve_brief(task.get("brief"), depth=ctx.depth)
+                # Only jerv (depth 0) reaches here, so a flat-fan brief is always free
+                # text (children are leaves; feeding waves handle the template form).
+                brief_text = _free_text_brief(task.get("brief"))
             except BriefError as exc:
                 return _refuse(f"task {i} ({label}): {exc}")
             # Optional per-child reasoning effort the spawner picks (how hard a

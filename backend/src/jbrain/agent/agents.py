@@ -123,12 +123,14 @@ ARCHIVIST_TOOLS = GMAIL_TOOLS | MEMORY_TOOLS | frozenset({"current_time"})
 # refused, never resolved to a knowledge agent.
 SUBAGENT_PERSONAS = frozenset({"research", "review", "summarize"})
 
-# research / review children: the internet tools, the dataless clock, and the spawn
-# primitive (so a child may itself fan a grandchild — template-bound at depth >= 1).
-# Deliberately NO `current_location` (M2): the location read is never in a child
-# persona even though the parent jerv holds it. This allowlist is a ceiling — a
-# child's effective tools are still clamped to the parent's at dispatch.
-RESEARCH_TOOLS = WEB_TOOLS | frozenset({"current_time", SPAWN_TOOL})
+# research / review children: the internet tools and the dataless clock — and NO
+# `spawn_subagent`. A child is always a leaf: child-initiated nesting was removed
+# (the model wouldn't use it reliably and it carried the depth>=1 brief-laundering
+# surface); `waves` gives jerv orchestrator-declared structure instead. Deliberately
+# NO `current_location` (M2) either: the location read is never in a child persona.
+# This allowlist is a ceiling — a child's effective tools are still clamped to the
+# parent's at dispatch.
+RESEARCH_TOOLS = WEB_TOOLS | frozenset({"current_time"})
 REVIEW_TOOLS = RESEARCH_TOOLS
 # summarize: a pure transform — no tools at all, so it cannot reach the web and
 # cannot spawn.

@@ -140,9 +140,9 @@ async def test_fan_persists_sandboxed_lineage_and_writes_no_episode(
     assert turns[1].content == "child summary"
 
 
-async def test_depth1_child_may_spawn_but_a_depth2_leaf_cannot(maker: async_sessionmaker) -> None:
-    """A depth-1 child is below the cap and may fan a grandchild (template-bound); a
-    depth-2 leaf is refused — the two-sub-agent-layer cap, with no model cooperation."""
+async def test_only_the_root_may_spawn_children_are_leaves(maker: async_sessionmaker) -> None:
+    """Nesting removed: only jerv (depth 0) may spawn; a depth-1 child is refused
+    outright — the tree is exactly two levels, enforced with no model cooperation."""
     owner = await _owner(maker)
     sessions = AgentSessionRepo(maker)
     runlog = AgentRunLog(maker)
@@ -157,7 +157,21 @@ async def test_depth1_child_may_spawn_but_a_depth2_leaf_cannot(maker: async_sess
     parent = await sessions.create(owner, domain_scopes=[], title="root", agent="jerv")
     tree = TreeState()
 
-    # A depth-1 spawner with a template-bound brief is admitted.
+    # A depth-0 root fan is admitted (jerv spawning its leaves).
+    ctx0 = ToolContext(
+        session=owner,
+        scopes=(),
+        agent_session_id=parent.id,
+        depth=0,
+        agent_tools=JERV_TOOLS,
+        tree=tree,
+    )
+    ok = await svc.spawn_fan(
+        ctx0, {"tasks": [{"persona": "research", "brief": "x", "label": "leaf"}]}
+    )
+    assert "child summary" in ok
+
+    # A depth-1 child cannot spawn its own children — refused outright.
     ctx1 = ToolContext(
         session=owner,
         scopes=(),
@@ -166,33 +180,7 @@ async def test_depth1_child_may_spawn_but_a_depth2_leaf_cannot(maker: async_sess
         agent_tools=JERV_TOOLS,
         tree=tree,
     )
-    ok = await svc.spawn_fan(
-        ctx1,
-        {
-            "tasks": [
-                {
-                    "persona": "research",
-                    "label": "grandchild",
-                    "brief": {
-                        "template_id": "research",
-                        "params": {"question": "q", "context": "c", "deliverable": "d"},
-                    },
-                }
-            ]
-        },
-    )
-    assert "child summary" in ok
-
-    # A depth-2 leaf is refused outright.
-    ctx2 = ToolContext(
-        session=owner,
-        scopes=(),
-        agent_session_id=parent.id,
-        depth=2,
-        agent_tools=JERV_TOOLS,
-        tree=tree,
-    )
     refused = await svc.spawn_fan(
-        ctx2, {"tasks": [{"persona": "research", "brief": "x", "label": "L"}]}
+        ctx1, {"tasks": [{"persona": "research", "brief": "x", "label": "L"}]}
     )
     assert "refused" in refused.lower()
