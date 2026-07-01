@@ -936,8 +936,8 @@ def test_sidecars_pinned_to_their_versions() -> None:
         ),
         "spawn_subagent.tool": (
             "spawn_subagent",
-            3,
-            "455a51e58ab6069f09e9021f954500dfde46c9d22cd5af539f047ad509c752ee",
+            4,
+            "5005cc796bca7c54a9ce22343c7a413cdac0e3efc0638a3bff000f2fd7a853c6",
         ),
     }
     # Every shipped sidecar must appear above — a new `.tool` cannot slip in

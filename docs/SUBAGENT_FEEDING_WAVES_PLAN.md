@@ -215,9 +215,14 @@ attempt in **N of N** trials (no manual re-spawn) — verified in F3, not assume
   sibling-reference guard; `ok`-based skip state with reasons; `MAX_WAVES=2` /
   no-nesting refusals; the minimal `wave`/`fed_from`/`skip_reason` telemetry; tool
   v4 bump; the full unit + red-team + fail-closed + backwards-compat test set.
-- **Wave F2 — Runtime bounds + auditability** *(backend; budget/clock-value
-  escalation).* `TREE_WALL_CLOCK_S`, per-child budget re-admission, final-wave
-  reserve, run-log `wave`/`fed_from` persistence, live wave-progress events.
+- **Wave F2 — Runtime bounds — LANDED** *(backend).* `TREE_WALL_CLOCK_S=3000s`
+  deadline (skip-loud at each barrier), the dynamic final-wave reserve
+  (`TreeState.stage_reserve`), and per-wave budget re-admission are in. Shipped
+  alongside the F1 independent-review fixes (fed-consumer guard bypass, `_synthesis_view`
+  skip counts, `fed_from`/`skip_reason` telemetry, both-`tasks`+`waves` refusal,
+  barrier-cancel test). *Still open for a later pass:* run-log `wave`/`fed_from`
+  **persistence** (a migration — needs testcontainers) and live wave-progress SSE, both
+  deferred to land with F3's surface.
 - **Wave F3 — Synthesis surface + jerv steering** *(GUI; mock gate CLEARED —
   Direction 1, stacked wave sections).* Implement the chosen mock: grouped-by-wave
   synthesis with wave-header dividers, collapse-settled, the text feed affordance,
