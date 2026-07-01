@@ -125,8 +125,10 @@ class FakeEntities:
         matches: list[dict] | None = None,
         related: list[dict] | None = None,
         currency: dict[str, list[dict]] | None = None,
+        owner_id: str | None = None,
     ):
         self.view = view
+        self.owner_id = owner_id
         self.matches = matches or []
         self.related = related or []
         self.currency = currency or {}
@@ -136,6 +138,9 @@ class FakeEntities:
 
     async def entity_view(self, ctx, entity_id):  # noqa: ANN001
         return self.view if self.view is not None and entity_id == self.view["id"] else None
+
+    async def owner_entity_id(self, ctx):  # noqa: ANN001
+        return self.owner_id
 
     async def list_entities(self, ctx, q=None, kind=None, limit=200):  # noqa: ANN001
         self.searched.append((q, kind, limit))
@@ -397,6 +402,23 @@ async def test_read_entity_needs_an_id() -> None:
     assert "needs an entity_id" in await tools["read_entity"]({}, CTX)
 
 
+async def test_read_entity_resolves_the_owner_sentinel() -> None:
+    # The model's natural reach for the owner is read_entity "me" — resolve the
+    # sentinel to the owner entity so it is one successful call, not a failed guess.
+    fake = FakeEntities(entity_view("abc"), owner_id="abc")
+    tools = build_entity_handlers(fake)  # type: ignore[arg-type]
+    for sentinel in ("me", "Me", "owner", "myself"):
+        out = await tools["read_entity"]({"entity_id": sentinel}, CTX)
+        assert "Celine Hopkins" in out, sentinel
+
+
+async def test_read_entity_sentinel_without_a_me_entity_reports_absent() -> None:
+    # No owner entity yet (a graph with no Me) → the sentinel resolves to nothing,
+    # and the tool says so rather than reading a bogus id.
+    tools = build_entity_handlers(FakeEntities(None, owner_id=None))  # type: ignore[arg-type]
+    assert "in scope" in await tools["read_entity"]({"entity_id": "me"}, CTX)
+
+
 async def test_find_entity_surfaces_refs_and_passes_the_query() -> None:
     matches = [
         {
@@ -618,8 +640,8 @@ def test_sidecars_pinned_to_their_versions() -> None:
         ),
         "read_entity.tool": (
             "read_entity",
-            2,
-            "74a50fc08a725755a7b54bcf0e0ed00cc4ae23ba67ce5d3a394ebc16f698ff6f",
+            3,
+            "5b1c6003e4ab455791cffd0bd8bc29fd83cbeae759c480f07e156901b0002af8",
         ),
         "find_entity.tool": (
             "find_entity",
