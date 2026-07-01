@@ -21,9 +21,29 @@ const TOOL_LABEL: Record<string, string> = {
 // register), default open while the child works and auto-scrolling to the newest line.
 // Folding everything behind one toggle keeps a heavy-tool-use child (20+ searches) from
 // turning the fan into a wall — the tools live inside the thinking, not a flat list.
-function ChildTrace({ items, live }: { items: SubagentTraceItem[]; live: boolean }): ReactNode {
+function ChildTrace({
+  items,
+  live,
+  answering,
+}: {
+  items: SubagentTraceItem[];
+  live: boolean;
+  /** The child has begun emitting its answer — thinking is done, so fold the trace and
+   * let the streaming answer below take over (matches the main answer's "Thought for Ns"). */
+  answering: boolean;
+}): ReactNode {
   const [open, setOpen] = useState(true);
   const ref = useRef<HTMLDivElement | null>(null);
+  // Auto-collapse ONCE the moment the child starts answering: thinking is done, so the
+  // trace folds and the answer streams below it. A ref (not a re-trigger) so a manual
+  // re-open after that sticks.
+  const didFold = useRef(false);
+  useEffect(() => {
+    if (answering && !didFold.current) {
+      didFold.current = true;
+      setOpen(false);
+    }
+  }, [answering]);
   // Follow the newest line while it streams (only while open + live). `items` is the
   // intentional trigger — each appended chunk re-runs the scroll-to-bottom.
   // biome-ignore lint/correctness/useExhaustiveDependencies: `items` drives the re-scroll
@@ -31,6 +51,7 @@ function ChildTrace({ items, live }: { items: SubagentTraceItem[]; live: boolean
     if (open && live && ref.current) ref.current.scrollTop = ref.current.scrollHeight;
   }, [items, open, live]);
   const toolCount = items.reduce((n, it) => n + (it.kind === "tool" ? 1 : 0), 0);
+  const thinking = live && !answering;
   return (
     <div className="fb-sa-trace-wrap">
       <button
@@ -43,7 +64,7 @@ function ChildTrace({ items, live }: { items: SubagentTraceItem[]; live: boolean
           {open ? "▾" : "▸"}
         </span>
         <BrainGlyph className="fb-sa-trace-ic" />
-        Thinking{live ? "…" : ""}
+        {thinking ? "Thinking…" : "Thought"}
         {toolCount > 0 && (
           <span className="fb-sa-trace-c">
             {" · "}
@@ -238,6 +259,77 @@ export function SubagentFan({
     });
   }
 
+  // A staged (feeding-waves) fan groups its rows by wave and draws feed edges live; a
+  // flat fan (no wave/feed data) renders as one ungrouped, MAX_VISIBLE-capped list.
+  const staged = children.some((c) => (c.wave ?? 0) > 0 || (c.fedFrom?.length ?? 0) > 0);
+  const maxWave = children.reduce((m, c) => Math.max(m, c.wave ?? 0), 0);
+
+  function renderChild(c: SubagentChild): ReactNode {
+    const isFail = c.status === "failed";
+    const rowSettled = c.status !== "running";
+    // The child is actively streaming — auto-expand it so you watch it work (a serial
+    // local fan streams one at a time). A failed row also auto-expands its error.
+    const hasTrace = Boolean(c.liveTrace && c.liveTrace.length > 0);
+    // Answer tokens have begun → thinking is done (folds the trace, streams the answer).
+    const answering = Boolean(c.liveText);
+    const streaming = !rowSettled && !isQueued(c) && (answering || hasTrace);
+    const open = expanded.has(c.childId) || isFail || streaming;
+    // "Open session" is gated to a SETTLED child — a still-running one has nothing
+    // persisted yet, so opening it would land on a blank conversation.
+    const showOpen = Boolean(onOpen) && rowSettled;
+    const hasBody = rowSettled ? Boolean(c.summary) || showOpen || hasTrace : streaming || hasTrace;
+    return (
+      <div className={`fb-sa-row${c.depth >= 2 ? " sub" : ""}`} key={c.childId}>
+        <button
+          type="button"
+          className="fb-sa-line"
+          onClick={() => toggle(c.childId)}
+          aria-expanded={open}
+        >
+          {childGlyph(c.status, isQueued(c))}
+          <span className="fb-sa-lbl">{c.label}</span>
+          <span className="fb-sa-ptag">{PERSONA_LABEL[c.persona] ?? c.persona}</span>
+          <span className={`fb-sa-st${isFail ? " fail" : ""}${isQueued(c) ? " queued" : ""}`}>
+            {statusWord(c)}
+          </span>
+          {c.usedTokens != null && c.contextWindow != null && c.contextWindow > 0 && (
+            <ChildContextMeter used={c.usedTokens} window={c.contextWindow} />
+          )}
+          <span className="fb-sa-car" aria-hidden="true">
+            {open ? "▾" : "▸"}
+          </span>
+        </button>
+        {/* A thin per-row bar: STATIC while queued, an indeterminate sweep once running,
+            solid green/rose on settle. */}
+        <div className={`fb-sa-bar ${isQueued(c) ? "queued" : c.status}`} aria-hidden="true">
+          <i />
+        </div>
+        {/* The feed edge as text (Direction 1) — visible even while the row is collapsed. */}
+        {c.fedFrom && c.fedFrom.length > 0 && (
+          <div className="fb-sa-fed">← fed by {c.fedFrom.join(", ")}</div>
+        )}
+        {open && hasBody && (
+          <div className={`fb-sa-detail${isFail ? " err" : ""}`}>
+            {/* The child's session-in-miniature: its thinking + tool calls in one
+                collapsible trace that folds once the answer begins, then the answer
+                streaming below it. */}
+            {hasTrace && c.liveTrace && (
+              <ChildTrace items={c.liveTrace} live={!rowSettled} answering={answering} />
+            )}
+            {rowSettled
+              ? c.summary && <div className="fb-sa-sum">{c.summary}</div>
+              : c.liveText && <div className="fb-sa-sum">{c.liveText}</div>}
+            {showOpen && onOpen && (
+              <button type="button" className="fb-sa-open" onClick={() => onOpen(c.childId)}>
+                Open sub-agent session →
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+    );
+  }
+
   // One denominator for both states (all depths), so "· N agents" while live and
   // "done · N ran" once settled never disagree.
   const count = settled
@@ -267,71 +359,26 @@ export function SubagentFan({
       <div aria-live="polite" className="fb-sr-only">
         {liveLabel}
       </div>
-      {shown.map((c) => {
-        const isFail = c.status === "failed";
-        const settled = c.status !== "running";
-        // The child is actively streaming tokens — auto-expand it so you watch it work
-        // (with a serial local fan only one streams at a time). A failed row also
-        // auto-expands its error.
-        const hasTrace = Boolean(c.liveTrace && c.liveTrace.length > 0);
-        const streaming = !settled && !isQueued(c) && Boolean(c.liveText || hasTrace);
-        const open = expanded.has(c.childId) || isFail || streaming;
-        // The "Open session" link is gated to a SETTLED child — a still-running child
-        // has nothing persisted yet, so opening it would land on a blank conversation.
-        const showOpen = Boolean(onOpen) && settled;
-        const hasBody = settled
-          ? Boolean(c.summary) || showOpen || hasTrace
-          : streaming || hasTrace;
-        return (
-          <div className={`fb-sa-row${c.depth >= 2 ? " sub" : ""}`} key={c.childId}>
-            <button
-              type="button"
-              className="fb-sa-line"
-              onClick={() => toggle(c.childId)}
-              aria-expanded={open}
-            >
-              {childGlyph(c.status, isQueued(c))}
-              <span className="fb-sa-lbl">{c.label}</span>
-              <span className="fb-sa-ptag">{PERSONA_LABEL[c.persona] ?? c.persona}</span>
-              <span className={`fb-sa-st${isFail ? " fail" : ""}${isQueued(c) ? " queued" : ""}`}>
-                {statusWord(c)}
-              </span>
-              {/* The child's live context fill, shown once its first model call reports
-                  usage — the per-row twin of the composer's context meter. */}
-              {c.usedTokens != null && c.contextWindow != null && c.contextWindow > 0 && (
-                <ChildContextMeter used={c.usedTokens} window={c.contextWindow} />
-              )}
-              <span className="fb-sa-car" aria-hidden="true">
-                {open ? "▾" : "▸"}
-              </span>
-            </button>
-            {/* A thin per-row bar: a STATIC idle fill while queued (not yet active), an
-                indeterminate sweep once running (no true %), solid green/rose on settle. */}
-            <div className={`fb-sa-bar ${isQueued(c) ? "queued" : c.status}`} aria-hidden="true">
-              <i />
-            </div>
-            {open && hasBody && (
-              <div className={`fb-sa-detail${isFail ? " err" : ""}`}>
-                {/* The frame-in-frame view of the child's session: its thinking and tool
-                    calls interleaved in one collapsible trace, then its answer. While
-                    running these stream; once settled the summary stands below. */}
-                {hasTrace && c.liveTrace && <ChildTrace items={c.liveTrace} live={!settled} />}
-                {settled
-                  ? c.summary && <div className="fb-sa-sum">{c.summary}</div>
-                  : c.liveText && <div className="fb-sa-sum">{c.liveText}</div>}
-                {/* The child IS its own session (childId = session id); open it to read
-                    the full transcript its run persisted. */}
-                {showOpen && onOpen && (
-                  <button type="button" className="fb-sa-open" onClick={() => onOpen(c.childId)}>
-                    Open sub-agent session →
-                  </button>
-                )}
+      {staged
+        ? Array.from({ length: maxWave + 1 }, (_unused, w) => {
+            const wchildren = children.filter((c) => (c.wave ?? 0) === w);
+            if (wchildren.length === 0) return null;
+            const personas = [
+              ...new Set(wchildren.map((c) => PERSONA_LABEL[c.persona] ?? c.persona)),
+            ].join(", ");
+            return (
+              // biome-ignore lint/suspicious/noArrayIndexKey: waves render in stable order
+              <div className="fb-sa-wave" key={w}>
+                <div className="fb-sa-wh">
+                  Wave {w + 1} · {personas}
+                  {w > 0 ? ` — fed by wave ${w}` : ""}
+                </div>
+                {wchildren.map(renderChild)}
               </div>
-            )}
-          </div>
-        );
-      })}
-      {hidden > 0 && (
+            );
+          })
+        : shown.map(renderChild)}
+      {!staged && hidden > 0 && (
         <button type="button" className="fb-sa-more" onClick={() => setShowAll(true)}>
           show {hidden} more
         </button>

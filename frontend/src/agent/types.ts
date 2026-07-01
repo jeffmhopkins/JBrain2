@@ -168,6 +168,10 @@ export interface SubagentSpawnedEvent {
   persona: string;
   label: string;
   depth: number;
+  /** Which wave of a staged (feeding) fan this child is in (0-based; 0 for a flat fan). */
+  wave?: number;
+  /** For a wave-2 consumer, the earlier-wave producer labels fed into it ("← fed by …"). */
+  fed_from?: string[];
 }
 /** A status tick for a running child. `phase` is a coarse working word (children run
  * non-streaming in v1). `tree_spent`/`tree_budget` snapshot the shared tree pool for

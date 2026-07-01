@@ -45,6 +45,44 @@ describe("SubagentFan", () => {
     expect(screen.getByText(/3 agents/)).toBeInTheDocument();
   });
 
+  it("groups a staged (feeding-waves) fan by wave with live feed edges", () => {
+    render(
+      <SubagentFan
+        running
+        fan={fan([
+          child({
+            childId: "p",
+            label: "research",
+            persona: "research",
+            status: "done",
+            stopReason: "end_turn",
+            wave: 0,
+            fedFrom: [],
+          }),
+          child({
+            childId: "c1",
+            label: "checklist",
+            persona: "summarize",
+            wave: 1,
+            fedFrom: ["research"],
+          }),
+          child({
+            childId: "c2",
+            label: "critique",
+            persona: "review",
+            wave: 1,
+            fedFrom: ["research"],
+          }),
+        ])}
+      />,
+    );
+    // Wave dividers, the second naming its feed source — live, not only in the final card.
+    expect(screen.getByText(/Wave 1 · research/)).toBeInTheDocument();
+    expect(screen.getByText(/Wave 2 · summarize, review — fed by wave 1/)).toBeInTheDocument();
+    // The feed edge renders as text on each fed consumer (both wave-2 children).
+    expect(screen.getAllByText(/← fed by research/)).toHaveLength(2);
+  });
+
   it("shows a child's live context fill as a per-row meter", () => {
     render(
       <SubagentFan
@@ -175,7 +213,7 @@ describe("SubagentFan", () => {
     expect(screen.queryByText("final answer")).not.toBeInTheDocument();
   });
 
-  it("auto-expands a streaming child and shows its live answer + reasoning", () => {
+  it("folds a child's thinking once it starts answering, streaming the answer below", () => {
     render(
       <SubagentFan
         running
@@ -192,9 +230,15 @@ describe("SubagentFan", () => {
         ])}
       />,
     );
-    // Visible without a tap — the active child auto-expands so you watch it work.
-    expect(screen.getByText("let me search")).toBeInTheDocument();
+    // The answer streams, visible without a tap.
     expect(screen.getByText("found 3 tiers")).toBeInTheDocument();
+    // Thinking is done → the trace folded to past-tense "Thought" and the reasoning is
+    // hidden (the answer took its place)…
+    expect(screen.getByText(/Thought/)).toBeInTheDocument();
+    expect(screen.queryByText("let me search")).not.toBeInTheDocument();
+    // …but the folded thinking is still there to re-open by hand.
+    fireEvent.click(screen.getByText(/Thought/));
+    expect(screen.getByText("let me search")).toBeInTheDocument();
   });
 
   it("injects the child's tool calls inline in its trace, interleaved with reasoning", () => {
@@ -239,12 +283,12 @@ describe("SubagentFan", () => {
               { kind: "reasoning", text: "deep thoughts" },
               { kind: "tool", name: "web_search", arg: "q", ok: true },
             ],
-            liveText: "partial",
+            // No answer yet — still thinking, so the trace stays open by default.
           }),
         ])}
       />,
     );
-    // Open by default while streaming — both the reasoning and the tool show…
+    // Open by default while still thinking — both the reasoning and the tool show…
     expect(screen.getByText("deep thoughts")).toBeInTheDocument();
     expect(screen.getByText("q")).toBeInTheDocument();
     // …and one toggle collapses the whole trace, tools and all.

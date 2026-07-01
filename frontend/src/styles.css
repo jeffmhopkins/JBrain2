@@ -7882,6 +7882,31 @@ button.small {
 .fb-shell .fb-sa-row.sub {
   margin-left: 18px;
 }
+/* Feeding-waves live grouping: a wave-header divider and the text feed edge, matching
+   the final synthesis card's Direction-1 language (docs/SUBAGENT_FEEDING_WAVES_PLAN.md). */
+.fb-shell .fb-sa-wave {
+  border-bottom: 1px solid var(--border);
+}
+.fb-shell .fb-sa-wave:last-child {
+  border-bottom: none;
+}
+.fb-shell .fb-sa-wave .fb-sa-row:last-child {
+  border-bottom: none;
+}
+.fb-shell .fb-sa-wh {
+  padding: 6px 12px 4px;
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-3);
+  background: var(--bg);
+}
+.fb-shell .fb-sa-fed {
+  padding: 0 12px 6px 30px;
+  margin-top: -2px;
+  font-size: 10px;
+  color: var(--violet, #a493c9);
+}
 .fb-shell .fb-sa-line {
   display: flex;
   align-items: center;
