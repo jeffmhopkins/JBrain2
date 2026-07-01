@@ -523,8 +523,7 @@ class SpawnService:
         # child spawns a flat fan. Keeps the feed hop single and the surface bounded.
         if ctx.depth != 0:
             return _refuse(
-                "staged `waves` are a top-level capability; "
-                "a nested sub-agent spawns a flat fan."
+                "staged `waves` are a top-level capability; a nested sub-agent spawns a flat fan."
             )
 
         if args.get("tasks") is not None:
@@ -571,8 +570,14 @@ class SpawnService:
 
         def record_skip(wp: _WavePlan, reason: str, w_idx: int) -> None:
             res = _ChildResult(
-                wp.label, wp.persona, f"(skipped — {reason})", ok=False,
-                session_id="", skipped=reason, wave=w_idx, fed_from=tuple(wp.feed),
+                wp.label,
+                wp.persona,
+                f"(skipped — {reason})",
+                ok=False,
+                session_id="",
+                skipped=reason,
+                wave=w_idx,
+                fed_from=tuple(wp.feed),
             )
             results_by_label[wp.label] = res
             all_results.append(res)
@@ -583,15 +588,24 @@ class SpawnService:
             _emit(
                 ctx,
                 SubagentSpawnedEvent(
-                    child_id=sid, persona=wp.persona, label=wp.label,
-                    depth=ctx.depth + 1, wave=w_idx, fed_from=list(wp.feed),
+                    child_id=sid,
+                    persona=wp.persona,
+                    label=wp.label,
+                    depth=ctx.depth + 1,
+                    wave=w_idx,
+                    fed_from=list(wp.feed),
                 ),
             )
             _emit(
                 ctx,
                 SubagentDoneEvent(
-                    child_id=sid, ok=False, stop_reason="skipped", summary=res.summary,
-                    skip_reason=reason, tree_spent=tree.spent, tree_budget=tree.tree_budget,
+                    child_id=sid,
+                    ok=False,
+                    stop_reason="skipped",
+                    summary=res.summary,
+                    skip_reason=reason,
+                    tree_spent=tree.spent,
+                    tree_budget=tree.tree_budget,
                 ),
             )
 
@@ -648,8 +662,11 @@ class SpawnService:
                 for wp in runnable:
                     feed_block = compose_feed_block(
                         [
-                            (results_by_label[f].label, results_by_label[f].persona,
-                             results_by_label[f].summary)
+                            (
+                                results_by_label[f].label,
+                                results_by_label[f].persona,
+                                results_by_label[f].summary,
+                            )
                             for f in wp.feed
                         ]
                     )
@@ -668,8 +685,12 @@ class SpawnService:
                     _emit(
                         ctx,
                         SubagentSpawnedEvent(
-                            child_id=child.id, persona=wp.persona, label=wp.label,
-                            depth=ctx.depth + 1, wave=w_idx, fed_from=list(wp.feed),
+                            child_id=child.id,
+                            persona=wp.persona,
+                            label=wp.label,
+                            depth=ctx.depth + 1,
+                            wave=w_idx,
+                            fed_from=list(wp.feed),
                         ),
                     )
                     minted.append((plan, child))

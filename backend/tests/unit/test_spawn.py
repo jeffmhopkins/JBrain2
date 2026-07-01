@@ -34,6 +34,7 @@ def _brief_text(call: dict) -> str:
     """The brief a recorded child run was launched with (2nd conversation message)."""
     return call["conversation"][1].text
 
+
 # --- the clamp, as a pure function (parent⊆child) --------------------------
 
 
@@ -925,8 +926,12 @@ async def test_waves_feed_producer_summary_into_consumer(service: SpawnService) 
             "waves": [
                 [{"persona": "research", "brief": "fetch the commit history", "label": "prod"}],
                 [
-                    {"persona": "review", "label": "cons", "feed": ["prod"],
-                     "brief": _review_brief()}
+                    {
+                        "persona": "review",
+                        "label": "cons",
+                        "feed": ["prod"],
+                        "brief": _review_brief(),
+                    }
                 ],
             ]
         },
@@ -964,8 +969,12 @@ async def test_waves_skip_consumer_when_producer_fails(
             "waves": [
                 [{"persona": "research", "brief": "fetch history", "label": "prod"}],
                 [
-                    {"persona": "review", "label": "cons", "feed": ["prod"],
-                     "brief": _review_brief()}
+                    {
+                        "persona": "review",
+                        "label": "cons",
+                        "feed": ["prod"],
+                        "brief": _review_brief(),
+                    }
                 ],
             ]
         },
@@ -1053,8 +1062,7 @@ async def test_waves_refused_when_nested(service: SpawnService) -> None:
 
 async def test_waves_over_max_refused(service: SpawnService) -> None:
     waves = [
-        [{"persona": "research", "brief": f"q{i}", "label": f"L{i}"}]
-        for i in range(MAX_WAVES + 1)
+        [{"persona": "research", "brief": f"q{i}", "label": f"L{i}"}] for i in range(MAX_WAVES + 1)
     ]
     out = await service.spawn_fan(_ctx(), {"waves": waves})
     assert "refused" in out.lower()
@@ -1288,8 +1296,14 @@ def test_synthesis_view_separates_skipped_from_ran_and_failed() -> None:
 
     results = [
         _ChildResult("a", "research", "ok", ok=True, session_id="s1"),
-        _ChildResult("b", "review", "(skipped — upstream a unavailable)", ok=False,
-                     session_id="", skipped="upstream a unavailable"),
+        _ChildResult(
+            "b",
+            "review",
+            "(skipped — upstream a unavailable)",
+            ok=False,
+            session_id="",
+            skipped="upstream a unavailable",
+        ),
     ]
     view = _synthesis_view(results)
     assert view.data["ran"] == 1
