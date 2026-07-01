@@ -118,16 +118,19 @@ run-log sequence is unchanged.
 
 ## Runtime bounds (the numbers must close)
 
-- **Tree-wide wall-clock deadline.** A new `TREE_WALL_CLOCK_S`, sized to sit under
-  the parent turn cap (`_MAX_TURN_WALL_CLOCK_S=3600s`), is checked **at each serial
-  child launch and at the barrier**. A child that can't start before the deadline is
-  `skipped(deadline)`, loud. This is the structural bound the per-child clock never
-  provided.
+- **Tree-wide wall-clock deadline. `TREE_WALL_CLOCK_S = 3000s`** — sits under the
+  parent turn cap (`_MAX_TURN_WALL_CLOCK_S=3600s`), leaving ~600s for the parent's
+  own synthesis. Checked **at each serial child launch and at the barrier**; a child
+  that can't start before the deadline is `skipped(deadline)`, loud. This is the
+  structural bound the per-child 1200s clock never provided.
 - **Per-child budget re-admission** at serial launch (matches how children actually
   run on the local route), not per-wave — so a wave isn't over-skipped as a unit.
-- **Final-wave reserve.** A floor is reserved for wave 2 up front (mirroring the
-  root synthesis reserve), so the deliverable wave can't be starved by an
-  over-spending producer.
+- **Final-wave reserve — dynamic floor.** Before wave 1 runs, reserve
+  `len(wave2_children) × MIN_VIABLE_CHILD_BUDGET` (100k each) off the top of the
+  children's pool, so every consumer is guaranteed at least its viable slice and an
+  over-spending producer cannot starve the deliverable wave. Self-sizing (no fixed
+  fraction), least waste — wave 1 draws everything above that floor. This reserve is
+  distinct from, and stacks under, the existing 25% root synthesis reserve.
 - **Fed-block size cap.** `compose_feed_block` truncates a fed summary to a per-block
   token budget with a `[truncated]` marker, so a consumer's first call can't blow its
   own context window.
@@ -231,9 +234,10 @@ attempt in **N of N** trials (no manual re-spawn) — verified in F3, not assume
   the wall-clock under the turn cap and the surface legible.
 - **D4 — Nesting. [REVERTED: no nesting]** — feeding-waves are depth-0 only; a
   depth≥1 child spawns a flat fan as today.
-- **D5 — Budget. [REVISED: per-child re-admission + reserved final-wave floor + a
-  tree-wide wall-clock deadline]** (was per-wave) — matches serial execution and
-  protects the deliverable wave.
+- **D5 — Budget. [REVISED + valued: per-child re-admission + dynamic final-wave
+  floor (`n × 100k`) + tree-wide wall-clock deadline `TREE_WALL_CLOCK_S=3000s`]**
+  (was per-wave) — matches serial execution, guarantees each consumer its viable
+  slice, and keeps a staged run under the 3600s turn cap.
 
 ## Deferred past v1
 
