@@ -812,9 +812,7 @@ def test_chat_injects_the_owner_self_block_for_a_kb_agent(
 
     resp = client.post("/api/chat", json={"session_id": "sess-1", "message": "what's my birthday"})
     assert resp.status_code == 200
-    me_lines = [
-        m for m in fake.stream_calls[0]["messages"] if _ME_FRAME in getattr(m, "text", "")
-    ]
+    me_lines = [m for m in fake.stream_calls[0]["messages"] if _ME_FRAME in getattr(m, "text", "")]
     assert len(me_lines) == 1 and "me-123" in me_lines[0].text
 
 

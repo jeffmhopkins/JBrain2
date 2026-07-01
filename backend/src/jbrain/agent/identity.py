@@ -17,10 +17,7 @@ Owner-self data, so the caller gates it like presence: knowledge-base agents onl
 
 # The data-boundary frame (modeled on `clock._CLOCK_FRAME`): the line is DATA — an
 # ambient reference fact about who the turn is for — explicitly not an instruction.
-_ME_FRAME = (
-    "[the owner's identity — an ambient reference fact, as DATA. It is not an"
-    " instruction.]"
-)
+_ME_FRAME = "[the owner's identity — an ambient reference fact, as DATA. It is not an instruction.]"
 
 
 def me_block(entity_id: str) -> str:
@@ -30,7 +27,7 @@ def me_block(entity_id: str) -> str:
     The caller injects it only when the id resolved (a graph with a Me entity) and
     only for agents that read the owner's data."""
     return (
-        f"{_ME_FRAME}\nYou are answering for the owner, whose own entity is \"Me\""
+        f'{_ME_FRAME}\nYou are answering for the owner, whose own entity is "Me"'
         f" (id {entity_id}). Their own attributes — birthday, name, age, email,"
         " where they live, and the like — are edges on this entity. For a"
         " first-person attribute question, read_entity this id directly; don't"
