@@ -594,6 +594,32 @@ describe("FullBrainSurface", () => {
     expect(arg).toHaveAttribute("title", "https://example.com/a/very/long/path");
   });
 
+  it("shows a Gmail search's query inline on its step row, like the web tools", async () => {
+    async function* answer(): AsyncGenerator<ChatEvent> {
+      yield { type: "text_delta", text: "checking" };
+      yield {
+        type: "tool_call",
+        id: "c1",
+        name: "gmail_search",
+        arguments: { query: "from:wellsfargo card reissue", limit: 20 },
+      };
+      yield { type: "tool_result", tool_call_id: "c1", ok: true, summary: "3 messages" };
+      yield { type: "done", stop_reason: "end_turn" };
+    }
+    render(<Harness d={deps({ chat: answer })} />);
+    await waitFor(() => screen.getByLabelText("Conversation"));
+    fireEvent.change(screen.getByLabelText("Composer"), { target: { value: "search gmail" } });
+    fireEvent.click(screen.getByRole("button", { name: "send" }));
+
+    fireEvent.click(await screen.findByRole("button", { name: /Worked/ }));
+    // The friendly label stands in for the raw tool name, and the searched query
+    // rides the row inline (kept whole under the hover title even if clipped).
+    expect(screen.getByText("Searched Gmail")).toBeInTheDocument();
+    const arg = document.querySelector(".fb-step-arg");
+    expect(arg?.textContent).toBe("from:wellsfargo card reissue");
+    expect(arg).toHaveAttribute("title", "from:wellsfargo card reissue");
+  });
+
   it("streams reasoning into a Thinking disclosure, then collapses to a duration", async () => {
     async function* answer(): AsyncGenerator<ChatEvent> {
       yield { type: "reasoning_delta", text: "let me think about this" };
@@ -917,9 +943,10 @@ describe("FullBrainSurface", () => {
     fireEvent.click(await screen.findByRole("button", { name: /Worked/ }));
     fireEvent.click(screen.getByText("Searched your notes"));
     // The arguments the call went out with are now shown (threaded through the
-    // reducer), one level deep.
+    // reducer), one level deep. The query also rides the collapsed row inline, so
+    // scope the args-list assertion to the <dd> value rather than the whole tree.
     expect(screen.getByText("query")).toBeInTheDocument();
-    expect(screen.getByText("born")).toBeInTheDocument();
+    expect(document.querySelector(".fb-args-row dd")?.textContent).toBe("born");
     expect(screen.getByText("limit")).toBeInTheDocument();
 
     // The raw rung reveals the verbatim backend text, mark tags stripped, and copies.

@@ -88,6 +88,15 @@ describe("toolStep", () => {
     expect(toolStep(tool({ name: "search", ok: false })).ok).toBe(false);
   });
 
+  it("gives the Gmail family friendly labels instead of raw snake_case", () => {
+    expect(toolStep(tool({ name: "gmail_search" })).label).toBe("Searched Gmail");
+    expect(toolStep(tool({ name: "gmail_read" })).label).toBe("Read an email");
+    expect(toolStep(tool({ name: "gmail_count" })).label).toBe("Counted emails");
+    expect(toolStep(tool({ name: "gmail_bulk_label" })).label).toBe("Relabeled emails");
+    expect(toolStep(tool({ name: "gmail_sender_breakdown" })).label).toBe("Broke down senders");
+    expect(toolStep(tool({ name: "archivist_memory_read" })).label).toBe("Read memory");
+  });
+
   it("labels the web tools and carries their web sources through", () => {
     expect(toolStep(tool({ name: "web_search" })).label).toBe("Searched the web");
     expect(toolStep(tool({ name: "web_fetch" })).label).toBe("Read a web page");

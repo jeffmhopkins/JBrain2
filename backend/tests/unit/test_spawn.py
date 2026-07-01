@@ -1311,3 +1311,23 @@ def test_synthesis_view_separates_skipped_from_ran_and_failed() -> None:
     assert view.data["skipped"] == 1
     child_b = view.data["children"][1]
     assert child_b["skipped"] is True and child_b["skip_reason"] == "upstream a unavailable"
+
+
+def test_tool_arg_previews_the_human_readable_target_not_opaque_ids():
+    """A child tool step's inline preview surfaces the query/url/name/place it ran —
+    matching the frontend INLINE_ARG_KEY — and stays empty for id-only tools."""
+    from jbrain.agent.spawn import _TOOL_ARG_LEN, _tool_arg
+
+    assert _tool_arg("web_search", {"query": "rust"}) == "rust"
+    assert _tool_arg("web_fetch", {"url": " https://x.example/a "}) == "https://x.example/a"
+    assert _tool_arg("gmail_search", {"query": "from:wellsfargo", "limit": 20}) == "from:wellsfargo"
+    assert _tool_arg("find_entity", {"name": "Celine"}) == "Celine"
+    assert _tool_arg("where_is", {"subject": "Jeff"}) == "Jeff"
+    # Opaque-id tools (message_id, note_id, …) carry no legible preview.
+    assert _tool_arg("gmail_read", {"message_id": "abc123"}) == ""
+    assert _tool_arg("read_note", {"note_id": "n1"}) == ""
+    # A non-string arg or a non-dict payload degrades to empty, never raises.
+    assert _tool_arg("web_search", {"query": 7}) == ""
+    assert _tool_arg("web_search", "not-a-dict") == ""
+    # Long previews are clamped so one call can't blow out the fan row.
+    assert len(_tool_arg("web_search", {"query": "x" * 500})) == _TOOL_ARG_LEN
