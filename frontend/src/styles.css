@@ -9515,6 +9515,32 @@ button.small {
 .fb-shell .tv-syn-mark.bad {
   color: var(--rose);
 }
+/* A staged consumer that never ran — a cascade/resource skip, muted amber, distinct
+   from a failure's rose (docs/SUBAGENT_FEEDING_WAVES_PLAN.md, Direction 1). */
+.fb-shell .tv-syn-mark.skip {
+  color: var(--amber, #c9a36a);
+}
+/* Feeding-waves grouping: a wave header divider, and the text feed edge. */
+.fb-shell .tv-syn-wave + .tv-syn-wave {
+  margin-top: 4px;
+}
+.fb-shell .tv-syn-wh {
+  margin: 8px 0 4px;
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+.fb-shell .tv-syn-fed {
+  margin: 2px 0 0 19px;
+  font-size: 10px;
+  color: var(--violet, #a493c9);
+}
+.fb-shell .tv-syn-skip {
+  margin: 3px 0 0 19px;
+  font-size: 12px;
+  color: var(--amber, #c9a36a);
+}
 .fb-shell .tv-syn-clbl {
   flex: 1;
   min-width: 0;
