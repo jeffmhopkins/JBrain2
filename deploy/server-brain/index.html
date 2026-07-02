@@ -763,7 +763,9 @@ function updateTendrils(dt) {
       // the stream reaches the cortex — the brain "receiving" the query / emitting.
       const inward = td.kind === 'llm_in';
       packetU = inward ? (1 - p) : p;
-      baseGlow = 0.16; peak = 1.15; envel = Math.min(1, p*6) * Math.min(1, (1-p)*5);
+      // A clearly-lit thread along the WHOLE length (high baseGlow) so the streaming
+      // glyphs visibly ride a glowing line, with the packet a brighter travelling node.
+      baseGlow = 0.42; peak = 1.0; envel = Math.min(1, p*6) * Math.min(1, (1-p)*5);
       if (!td.seeded) {
         if (inward && p > 0.82) { td.seeded = true; seedCascadeAt(td.anchor, 1.15); }
         else if (!inward && p > 0.06) { td.seeded = true; seedCascadeAt(td.anchor, 0.7); }
@@ -843,10 +845,17 @@ function updateStreamText() {
       const eX = _bezierAt(td, 1, _wp).applyMatrix4(cortex.matrixWorld).project(camera).x;
       td._flip = eX < aX;
     }
+    // Lay the glyphs on the OUTER stretch of the tendril [U0..U1] — the anchor end (u→0)
+    // is buried in the dense cortex where text reads as off-path, and the very tip (u→1)
+    // stretches thin under perspective; the band between is a clean glowing thread.
+    // Emission order still reveals left-to-right (slot `k`).
+    const U0 = 0.2, U1 = 0.9;
     for (let i = 0; i < L && idx < CHAR_POOL.length; i++) {
-      const f = L === 1 ? 1 : i/(L-1);   // 0 = first char emitted, 1 = last
+      const f = L === 1 ? 1 : i/(L-1);   // 0 = first char emitted, 1 = last (reveal order)
       if (p < f) continue;               // wavefront hasn't reached this glyph yet
-      const u = td._flip ? (1 - f) : f;  // place emission order left->right on screen
+      const k = td._flip ? (L - 1 - i) : i;             // screen slot, left->right
+      const slot = L === 1 ? 1 : k / (L - 1);
+      const u = U0 + slot * (U1 - U0);                  // sit on the outer glowing thread
       _bezierAt(td, u, _wp).applyMatrix4(cortex.matrixWorld).project(camera);
       const s = CHAR_POOL[idx++];
       if (_wp.z > 1) { s.style.display = 'none'; continue; }  // behind the camera
