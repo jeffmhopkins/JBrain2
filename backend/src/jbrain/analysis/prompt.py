@@ -28,15 +28,16 @@ NOTE_EXTRACT_STRENGTH: str = _PROMPT.strength
 # long journal entry should not share a 12-fact ceiling — the static cap silently
 # truncated the tail of long, fact-dense notes. MAX_FACTS is the absolute hard
 # ceiling (server-side abuse/runaway bound, rendered into the system prompt);
-# MIN_FACTS the floor that keeps short notes at today's generous budget. The
-# per-note value (fact_cap) is communicated in the user prompt AND enforced in
-# extraction.parse_extraction — the two MUST agree, so the pipeline computes it
-# once and threads it to both.
+# MIN_FACTS floors the CAP, not the output — it keeps a dense short note (a
+# 40-word family roster) from clipping its tier-1 kinship edges under the
+# salience contract. The per-note value (fact_cap) is communicated in the user
+# prompt AND enforced in extraction.parse_extraction — the two MUST agree, so
+# the pipeline computes it once and threads it to both.
 MAX_FACTS: int = int(_PROMPT.config["max_facts"])
 MIN_FACTS: int = int(_PROMPT.config["min_facts"])
-# Roughly one durable fact per this many words: a generous CEILING (the model is
-# still told "extract less, not more"), not a target. Tuned so a ~90-word note
-# lands on the floor and a long entry climbs toward the ceiling.
+# Roughly one durable fact per this many words: a generous CEILING (the prompt
+# holds the model to navigation edges + root facts), not a target. A ~40-word
+# note lands on the floor; a long entry climbs toward the ceiling.
 _WORDS_PER_FACT = 8
 
 
@@ -133,7 +134,7 @@ def build_user_prompt(
         f"Capture anchor (note creation time): {anchor.isoformat()}\n"
         f"Note capture domain: {domain}\n"
         f"Fact budget for this note: at most {max_facts} facts "
-        f"(a ceiling, not a target — capture every real fact the note states, but do "
-        f"not pad).\n{block}\n"
+        f"(a ceiling, not a target — emit only the note's navigation edges and root "
+        f"facts; everything else stays in the prose, and never pad).\n{block}\n"
         f"Note content:\n{content}"
     )

@@ -375,6 +375,23 @@ def test_domain_floor_count_missing_is_caught() -> None:
     assert any("domain floor" in f and "health" in f for f in fails)
 
 
+def test_max_facts_advisory_reports_with_advisory_prefix_on_committed_rows() -> None:
+    # The tightened uncalibrated bound reports as an "advisory:"-prefixed miss
+    # (never a hard fail) against COMMITTED facts, while the calibrated hard
+    # bound stays authoritative.
+    case = case_from_dict(
+        {
+            "id": "c",
+            "note_text": "x",
+            "expect": {"max_facts": 5, "max_facts_advisory": 1},
+        }
+    )
+    commit = _commit((_cf(OWNER, "Me", "a", id="f1"), _cf(OWNER, "Me", "b", id="f2")))
+    fails = check_case_db(case, commit)
+    assert fails and all(f.startswith("advisory:") for f in fails)
+    assert check_case_db(case, _commit((_cf(OWNER, "Me", "a"),))) == []
+
+
 def test_absent_fact_committed_is_caught() -> None:
     case = case_from_dict(
         {
@@ -418,6 +435,49 @@ def test_review_card_missing_is_caught() -> None:
     )
     fails = check_case_db(case, _commit(()))  # no cards filed
     assert any("expected review card" in f for f in fails)
+
+
+def test_absent_review_card_clean_commit_passes() -> None:
+    case = case_from_dict(
+        {
+            "id": "c",
+            "note_text": "x",
+            "expect": {"absent_review_cards": [{"kind": "new_predicate"}]},
+        }
+    )
+    # Long-tail predicate committed raw; no card filed → the negative gate passes.
+    commit = _commit((_cf(OWNER, "Me", "favoriteColor", value_json={"value": "teal"}),))
+    assert check_case_db(case, commit) == []
+
+
+def test_absent_review_card_filed_is_caught() -> None:
+    case = case_from_dict(
+        {
+            "id": "c",
+            "note_text": "x",
+            "expect": {"absent_review_cards": [{"kind": "new_predicate"}]},
+        }
+    )
+    card = ReviewCard(kind="new_predicate", predicate="favoriteColor", suggestions=())
+    fails = check_case_db(case, _commit((), review_cards=(card,)))
+    assert any("forbidden review card filed" in f for f in fails)
+
+
+def test_absent_review_card_predicate_scoped_ignores_other_predicates() -> None:
+    case = case_from_dict(
+        {
+            "id": "c",
+            "note_text": "x",
+            "expect": {
+                "absent_review_cards": [{"kind": "new_predicate", "predicate": "favoriteColor"}]
+            },
+        }
+    )
+    # A card for a DIFFERENT predicate doesn't trip a predicate-scoped spec.
+    commit = _commit(
+        (), review_cards=(ReviewCard(kind="new_predicate", predicate="earWiggle", suggestions=()),)
+    )
+    assert check_case_db(case, commit) == []
 
 
 def test_review_card_too_few_suggestions_is_caught() -> None:

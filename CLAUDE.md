@@ -6,12 +6,15 @@ design, `docs/ROADMAP.md` for phases, `docs/DEVELOPMENT.md` for binding
 standards, `docs/PROCESS.md` for the binding multi-wave execution process,
 `docs/DESIGN.md` for the binding GUI design system,
 `docs/ANALYSIS.md` for the note-analysis pipeline (Phases 2-3),
-`docs/ASSISTANT.md` for the agent design, and
+`docs/ASSISTANT.md` for the agent design,
 `docs/PREDICATE_CANONICALIZATION.md` for the embedding-assisted predicate
-registry + typed value shapes (core shipped; the self-improvement loop on top of
-it was removed). Phases 0–5 are shipped — the Phase 5 workflow engine (engine +
-scheduler + run-log + the ingest/integration cutover; migrations through 0044) is
-complete. The next frontier is Phase 6 (the wiki); see `docs/ROADMAP.md`. Completed build plans and design
+registry + typed value shapes (largely superseded by the refocus plan), and
+`docs/ENTITY_GRAPH_REFOCUS_PLAN.md` for the two-tier predicate model and the
+entity-graph refocus (spine, not encyclopedia): the registry is tier-1,
+long-tail predicates commit raw with no review card. Phases 0–5 are shipped —
+the Phase 5 workflow engine (engine + scheduler + run-log + the
+ingest/integration cutover) is complete; the migration head is 0114. The next
+frontier is Phase 6 (the wiki); see `docs/ROADMAP.md`. Completed build plans and design
 research live under `docs/archive/` (see `docs/README.md` for the full map).
 
 ## Non-negotiables for all code in this repo

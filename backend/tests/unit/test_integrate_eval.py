@@ -159,6 +159,55 @@ async def test_sentence_in_value_json_trips_the_safety_guard() -> None:
     assert not r.passed
 
 
+async def test_max_facts_gold_bounds_intent_inflation() -> None:
+    # The v11 no-inflation bound: an intent that adds facts beyond the cap fails
+    # the judgment check even when every added fact is individually plausible.
+    case = _case("no_inflate", {"max_facts": 1})
+    inflated = _intent(
+        [{"mention_ref": "Me", "mode": "existing", "entity_id": "ent-owner"}],
+        [
+            {
+                "entity_ref": "Me",
+                "predicate": "worksFor",
+                "kind": "relationship",
+                "assertion": "asserted",
+                "statement": "I work for Atlas.",
+                "object_entity_ref": "Atlas",
+            },
+            {
+                "entity_ref": "Me",
+                "predicate": "hobby",
+                "kind": "state",
+                "assertion": "asserted",
+                "statement": "I bake sourdough.",
+                "value_json": {"value": "baking"},
+            },
+        ],
+        [],
+    )
+    results, _ = await score_integrate_cases(_router([inflated]), [case])
+    r = results[0]
+    assert not r.passed
+    assert any(label == "max_facts<=1" and not ok for label, ok, _ in r.checks)
+
+    lean = _intent(
+        [{"mention_ref": "Me", "mode": "existing", "entity_id": "ent-owner"}],
+        [
+            {
+                "entity_ref": "Me",
+                "predicate": "worksFor",
+                "kind": "relationship",
+                "assertion": "asserted",
+                "statement": "I work for Atlas.",
+                "object_entity_ref": "Atlas",
+            }
+        ],
+        [],
+    )
+    results, _ = await score_integrate_cases(_router([lean]), [case])
+    assert results[0].passed
+
+
 async def test_eval_run_splits_task_and_safety() -> None:
     good = _case("good", {"supersede": {"worksFor": "supersede"}})
     good_intent = _intent(

@@ -22,6 +22,7 @@ from jbrain.analysis import purge
 from jbrain.analysis.consolidation import Consolidator
 from jbrain.analysis.hygiene import ENTITY_HYGIENE_SPEC, entity_hygiene_handler
 from jbrain.analysis.pipeline import AnalysisPipeline
+from jbrain.analysis.predicates import retire_open_new_predicate_cards
 from jbrain.analysis.reembed import REEMBED_SPEC, reembed_handler
 from jbrain.analysis.tagconsolidate import TAG_CONSOLIDATE_SPEC, tag_consolidate_handler
 from jbrain.config import get_settings
@@ -359,6 +360,11 @@ async def run_loop(
                 purged = await purge.backfill_deleted_note_artifacts(maker)
                 # Normalize predicate drift left by older prompt versions.
                 consolidations = await queue.backfill_consolidate(maker, queue.SYSTEM_CTX)
+                # Retire the open new_predicate backlog the two-tier cutover
+                # orphaned. Genuinely one-shot per database (a persisted
+                # app.settings marker): reopen_review returns cards to 'open',
+                # so a per-boot re-run would delete owner-reopened cards.
+                retired_cards = await retire_open_new_predicate_cards(maker)
                 # Seed/refresh the canonical_predicates index from the registry.
                 predicate_syncs = await queue.backfill_sync_predicates(maker, queue.SYSTEM_CTX)
                 backfilled = True
@@ -369,6 +375,7 @@ async def run_loop(
                     analyze_jobs=analyses,
                     purged_notes=purged,
                     consolidate_jobs=consolidations,
+                    retired_predicate_cards=retired_cards,
                     predicate_sync_jobs=predicate_syncs,
                 )
             if await process_one(maker, handlers, registry=registry, preconditions=preconditions):
@@ -417,8 +424,8 @@ async def run() -> None:
         router,
         embedder=TeiEmbedClient(settings.embed_url),
         embed_model=settings.embed_model,
-        # Reads the predicate_canonicalization + value_shape_enforce toggles
-        # (Phase 3/4); both default ON, flip off live via a settings upsert.
+        # Reads the value_shape_enforce toggle and the predicate-suggestion
+        # picker toggle; both default ON, flip off live via a settings upsert.
         settings=SqlSettingsStore(maker),
     )
     # The archivist's Gmail provider, reading OAuth credentials live from the same

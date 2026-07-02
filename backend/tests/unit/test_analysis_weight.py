@@ -16,24 +16,22 @@ from jbrain.analysis.weight import (
 )
 
 
-def _sig(surface_attested=True, predicate_known=True, is_supersede=False):
+def _sig(surface_attested=True, is_supersede=False):
     return ConfidenceSignals(
         surface_attested=surface_attested,
-        predicate_known=predicate_known,
         is_supersede=is_supersede,
     )
 
 
-def test_surface_attested_known_predicate_ceils_at_one():
+def test_surface_attested_ceils_at_one():
+    # Whether the predicate is registry-declared is irrelevant here: the
+    # two-tier model (docs/ENTITY_GRAPH_REFOCUS_PLAN.md §1) carries no
+    # unknown-predicate penalty, so attestation alone sets the ceiling.
     assert ceiling(_sig()) == 1.0
 
 
 def test_inferred_is_capped():
     assert ceiling(_sig(surface_attested=False)) == INFERRED_CEILING
-
-
-def test_unknown_predicate_penalty_applies():
-    assert ceiling(_sig(predicate_known=False)) == 1.0 - 0.1
 
 
 def test_inferred_overwrite_is_capped_hardest():
@@ -64,12 +62,6 @@ def test_surface_attested_ignores_low_self_confidence():
     # A literally-stated fact gets its full ceiling even if the model under-rates
     # itself (the note is the authority; self-report is noisy run-to-run).
     assert effective_weight(0.3, _sig()) == 1.0
-
-
-def test_ceiling_clamped_to_zero_floor():
-    # Defensive: even stacked penalties never go below 0.
-    c = ceiling(_sig(surface_attested=False, predicate_known=False, is_supersede=True))
-    assert 0.0 <= c <= 1.0
 
 
 def test_commit_status_uses_per_kind_threshold():

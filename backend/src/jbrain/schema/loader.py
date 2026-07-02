@@ -282,7 +282,6 @@ def _load_types(types_dir: Path, meta: Meta, facets: dict[str, Facet]) -> dict[s
             name=str(data.get("name", tid)),
             vehicle=str(data.get("vehicle", "graph")),
             default_fact_kind=str(default_kind or "attribute"),
-            allow_open_predicates=bool(data.get("allow_open_predicates", True)),
             facets=tuple(str(f) for f in (data.get("facets") or [])),
             extends=str(extends) if extends else None,
             own_predicates=own,

@@ -63,16 +63,16 @@ def test_person_residence_is_homelocation_not_generic_location(registry: SchemaR
     assert registry.normalize_predicate("location") == "location"  # untouched
 
 
-def test_person_registers_body_and_misc_coined_predicates(registry: SchemaRegistry) -> None:
-    # The previously-coined long-tail predicates are now first-class on Person.
-    for canonical, shape, kind in (
-        ("weight", "quantity", "measurement"),
-        ("height", "quantity", "measurement"),
-        ("goal", "text", "preference"),
-        ("siblingCount", "scalar", "state"),
-    ):
-        p = registry.predicate_for_kind("Person", canonical)
-        assert p is not None and p.value_shape == shape and p.kind == kind
+def test_person_long_tail_predicates_are_tier_2(registry: SchemaRegistry) -> None:
+    # The entity-graph refocus demoted Person's long-tail predicates: undeclared
+    # (tier-2) means stored raw with no registry treatment — never a rejection.
+    for demoted in ("weight", "height", "goal", "siblingCount", "knowsLanguage", "nationality"):
+        assert registry.predicate_for_kind("Person", demoted) is None
+        assert not registry.declares_predicate(demoted)
+    # Demotion lapses the renamed_from attractors too: drift spellings pass through.
+    assert registry.normalize_predicate("speaksLanguage") == "speaksLanguage"
+    assert registry.normalize_predicate("bodyHeight") == "bodyHeight"
+    # The tier-1 survivors next to them keep full treatment.
     birth = registry.predicate_for_kind("Person", "birthPlace")
     assert birth is not None and birth.value_shape == "ref" and birth.range_type == "place"
     assert registry.normalize_predicate("bornIn") == "birthPlace"
@@ -90,13 +90,26 @@ def test_person_carries_family_kinship_edges(registry: SchemaRegistry) -> None:
     assert registry.normalize_predicate("mother") == "parent"
     assert registry.normalize_predicate("son") == "children"  # schema.org plural canonical
     assert registry.normalize_predicate("brother") == "sibling"
-    assert registry.normalize_predicate("speaksLanguage") == "knowsLanguage"
     # Social / work / ownership synonyms collapse to one canonical edge (the
     # persona-run predicate sprawl: buddy/coworker/possesses minted five ways).
     assert registry.normalize_predicate("buddy") == "friend"
     assert registry.normalize_predicate("worksWith") == "colleague"
     assert registry.normalize_predicate("coworker") == "colleague"
     assert registry.normalize_predicate("possesses") == "owns"
+
+
+def test_person_treatedby_is_a_declared_care_edge(registry: SchemaRegistry) -> None:
+    # Promoted by the entity-graph refocus: the prompt-MANDATED patient->provider
+    # edge was registry-unknown, so every treatedBy fact ate the unknown-predicate
+    # treatment. Accumulating (many providers), so NOT functional; drift spellings
+    # fold; the inverse hasTreated stays reciprocity-map-only (not declared).
+    treated = registry.predicate_for_kind("Person", "treatedBy")
+    assert treated is not None and treated.value_shape == "ref"
+    assert treated.range_type == "person" and treated.kind == "relationship"
+    assert not treated.functional
+    for drift in ("treated_by", "seenBy", "caredForBy"):
+        assert registry.normalize_predicate(drift) == "treatedBy"
+    assert not registry.declares_predicate("hasTreated")
 
 
 def test_priority_is_a_shared_facet_so_members_agree(registry: SchemaRegistry) -> None:
@@ -294,8 +307,8 @@ def test_decompose_leaves_well_formed_and_novel_predicates_untouched(
     assert registry.decompose_predicate("name.nickname", "kids") == ("name.nickname", "kids")
     # A dotted CANONICAL is declared, so it is never torn apart.
     assert registry.decompose_predicate("name.full", "") == ("name.full", "")
-    # A genuine novel a.b whose base takes no qualifier stays whole (-> the
-    # canonicalizer's new_predicate path, unchanged).
+    # A genuine novel a.b whose base takes no qualifier stays whole (-> commits
+    # raw as tier-2 long-tail, unchanged).
     assert registry.decompose_predicate("worksFor.contractor", "") == ("worksFor.contractor", "")
     # Never overwrite an explicit qualifier, even on a folded-looking predicate.
     assert registry.decompose_predicate("name.nickname.kids", "work") == (

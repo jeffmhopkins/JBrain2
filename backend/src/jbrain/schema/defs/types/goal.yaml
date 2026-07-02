@@ -7,12 +7,9 @@ description: An objective; projects/tasks/habits contribute to it. Progress is a
 vehicle: graph
 facets: [Named, Temporal, Lifecycle, Prioritized, Related]
 default_fact_kind: state
-allow_open_predicates: true
 
+# description is tier-2 (the note's prose IS the description).
 predicates:
-  - canonical_name: description
-    value_shape: text
-    kind: state
   - canonical_name: targetDate          # the horizon / deadline
     value_shape: date
     kind: state

@@ -42,6 +42,12 @@ from jbrain.agent.session import AgentSessionRepo
 from jbrain.agent.spawn import SpawnRef, SpawnService
 from jbrain.agent.toolregistry import ToolRegistry, load_registry
 from jbrain.agent.transcript_store import AgentTranscript
+from jbrain.analysis.neighborhood import (
+    DEFAULT_DEPTH,
+    DEFAULT_TOTAL_CAP,
+    MAX_DEPTH,
+    EdgeKinds,
+)
 from jbrain.analysis.relationships import predicate_candidates
 from jbrain.appointments.service import AppointmentsRepo
 from jbrain.connectors.base import ConnectorRegistry
@@ -95,8 +101,9 @@ OPTIONAL_GMAIL_TOOLS = frozenset(
 class EntityReader(Protocol):
     """The slice of the analysis repo the read/entity tools need — the entity-page
     view behind read_entity, the name/alias search behind find_entity, the
-    relationship traversal behind relate, and the note-currency overlay that tells
-    the retrieval tools which of a note's facts are no longer live."""
+    relationship traversal behind relate, the n-hop vicinity walk behind
+    neighborhood, and the note-currency overlay that tells the retrieval tools
+    which of a note's facts are no longer live."""
 
     async def entity_view(self, ctx: SessionContext, entity_id: str) -> dict[str, Any] | None: ...
 
@@ -117,6 +124,16 @@ class EntityReader(Protocol):
         predicates: Any,
         limit: int = 8,
     ) -> list[dict[str, Any]]: ...
+
+    async def neighborhood(
+        self,
+        ctx: SessionContext,
+        entity_id: str,
+        *,
+        depth: int = DEFAULT_DEPTH,
+        kinds: EdgeKinds = "both",
+        total_cap: int = DEFAULT_TOTAL_CAP,
+    ) -> dict[str, Any] | None: ...
 
     async def note_currency(
         self, ctx: SessionContext, note_ids: list[str]
@@ -353,6 +370,62 @@ def format_relations(rows: list[dict[str, Any]]) -> str:
     )
 
 
+def format_neighborhood(result: dict[str, Any]) -> str:
+    """The model-facing vicinity map: neighbors grouped per hop (format_relations'
+    line idiom — ids to chain into read_entity — plus the single connecting path
+    the traversal kept), then the notes tying the set together with ids the model
+    can read_note."""
+    entities = result["entities"]
+    anchor, neighbors = entities[0], entities[1:]
+    lines = [
+        f"{anchor['name']} [{anchor['kind']}] ({anchor['domain']}) id={anchor['id']}"
+        f" — neighborhood within {result['depth']} hop(s):"
+    ]
+    if not neighbors:
+        lines.append("no connected entities in scope.")
+    hop = 0
+    for e in neighbors:  # hop-then-rank order, so the group headers are sequential
+        if e["hop"] != hop:
+            hop = e["hop"]
+            lines.append(f"hop {hop}:")
+        lines.append(f"- {e['name']} [{e['kind']}] ({e['domain']}) id={e['id']} — {e['path']}")
+    if notes := result["notes"]:
+        lines.append("connecting notes:")
+        lines += [
+            f"- note {n['note_id']} (hop {n['hop']}) — {', '.join(n['connects'])}" for n in notes
+        ]
+    return "\n".join(lines)
+
+
+def neighborhood_entities(result: dict[str, Any]) -> tuple[EntityRef, ...]:
+    """Every traversed entity (anchor first) as a tappable chip, the structured
+    twin of the ids `format_neighborhood` prints."""
+    return tuple(
+        EntityRef(entity_id=str(e["id"]), label=str(e["name"]), domain=e["domain"])
+        for e in result["entities"]
+    )
+
+
+def neighborhood_sources(result: dict[str, Any]) -> tuple[NoteSource, ...]:
+    """A source card per connecting note. The snippet names WHO the note connects
+    (the traversal's reason for surfacing it) — the body was never fetched."""
+    return tuple(
+        NoteSource(
+            note_id=n["note_id"], domain=n["domain"], snippet="connects " + ", ".join(n["connects"])
+        )
+        for n in result["notes"]
+    )
+
+
+# The neighborhood tool's kinds argument mapped onto the typed traversal
+# vocabulary — one lookup both validates the model's string and narrows it.
+_EDGE_KINDS: dict[str, EdgeKinds] = {
+    "relationships": "relationships",
+    "co-mentions": "co-mentions",
+    "both": "both",
+}
+
+
 def build_entity_handlers(entities: EntityReader) -> dict[str, ToolHandler]:
     async def read_entity_tool(arguments: dict, ctx: ToolContext) -> ToolOutput:
         entity_id = str(arguments.get("entity_id", "")).strip()
@@ -398,10 +471,37 @@ def build_entity_handlers(entities: EntityReader) -> dict[str, ToolHandler]:
             return ToolOutput(f"No '{relationship}' relationship for {whose} in scope.")
         return ToolOutput(format_relations(rows), entities=entity_refs(rows))
 
+    async def neighborhood_tool(arguments: dict, ctx: ToolContext) -> ToolOutput:
+        anchor = str(arguments.get("anchor", "")).strip()
+        if not anchor or anchor.lower() in _OWNER_SENTINELS:
+            resolved = await entities.owner_entity_id(ctx.session)
+            if resolved is None:
+                return ToolOutput("No entity with that id is in scope.")
+            anchor = resolved
+        kinds = _EDGE_KINDS.get(str(arguments.get("kinds", "both")).strip() or "both")
+        if kinds is None:
+            return ToolOutput(
+                "neighborhood kinds must be 'relationships', 'co-mentions', or 'both'."
+            )
+        hops = max(1, min(int(arguments.get("hops", DEFAULT_DEPTH)), MAX_DEPTH))
+        # The model may narrow the entity budget, never widen past the ratified cap.
+        limit = max(1, min(int(arguments.get("limit", DEFAULT_TOTAL_CAP)), DEFAULT_TOTAL_CAP))
+        result = await entities.neighborhood(
+            ctx.session, anchor, depth=hops, kinds=kinds, total_cap=limit
+        )
+        if result is None:
+            return ToolOutput("No entity with that id is in scope.")
+        return ToolOutput(
+            format_neighborhood(result),
+            neighborhood_sources(result),
+            entities=neighborhood_entities(result),
+        )
+
     return {
         "read_entity": read_entity_tool,
         "find_entity": find_entity_tool,
         "relate": relate_tool,
+        "neighborhood": neighborhood_tool,
     }
 
 

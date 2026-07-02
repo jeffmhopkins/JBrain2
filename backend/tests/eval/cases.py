@@ -14,6 +14,10 @@ typed loader so the schema is one source of truth.
   absent_facts      - facts that must NOT appear
   supersede         - supersession proposals that must be present
   max_facts         - upper bound on total facts (over-extraction guard)
+  max_facts_advisory - tightened fact bound that reports but never fails, even
+                      on a hard-gated case (uncalibrated bounds land here first
+                      and harden into max_facts after >=3 Grok runs)
+  absent_review_cards - review cards that must NOT be filed (DB-mode)
 A case marked `advisory: true` is reported but never fails the gate (the
 "correct" answer is genuinely debatable).
 """
@@ -65,6 +69,11 @@ class Expect:
     absent_facts: tuple[dict[str, Any], ...] = ()
     supersede: tuple[dict[str, Any], ...] = ()
     max_facts: int | None = None
+    # A TIGHTENED bound landing advisory-first (docs/ENTITY_GRAPH_REFOCUS_PLAN.md
+    # §4 T2.3): a miss reports as an "advisory:" failure that never hard-fails,
+    # even when the case itself is a hard gate. Hardened into max_facts only
+    # after the >=3-run Grok calibration.
+    max_facts_advisory: int | None = None
     max_entities: int | None = None  # non-owner resolutions (the no-duplicate gate)
     # DB-mode firewall floor: min committed facts per domain_code, independent of
     # the (Grok-variable) predicate spelling — e.g. {"health": 1} proves a health
@@ -73,6 +82,10 @@ class Expect:
     # DB-mode review cards a case must file — each spec {kind, predicate?,
     # min_suggestions?} (the new_predicate canonicalization card, Phase 4).
     review_cards: tuple[dict[str, Any], ...] = ()
+    # DB-mode NEGATIVE gate: each spec {kind, predicate?} must match ZERO filed
+    # cards — e.g. {"kind": "new_predicate"} proves a long-tail predicate
+    # committed raw, card-free (docs/ENTITY_GRAPH_REFOCUS_PLAN.md §1).
+    absent_review_cards: tuple[dict[str, Any], ...] = ()
     rationale: str = ""
 
 
@@ -168,8 +181,8 @@ class SeededFactState:
 
 @dataclass(frozen=True)
 class ReviewCard:
-    """A review-inbox card committed by a case (Phase 4: the new_predicate card a
-    WEAK/cold canonicalization files)."""
+    """A review-inbox card committed by a case. new_predicate cards no longer
+    file (two-tier model) — read back so absent_review_cards can prove it."""
 
     kind: str
     predicate: str | None
@@ -201,9 +214,11 @@ def _expect(raw: dict[str, Any]) -> Expect:
         absent_facts=tuple(raw.get("absent_facts", [])),
         supersede=tuple(raw.get("supersede", [])),
         max_facts=raw.get("max_facts"),
+        max_facts_advisory=raw.get("max_facts_advisory"),
         max_entities=raw.get("max_entities"),
         committed_domains=raw.get("committed_domains", {}),
         review_cards=tuple(raw.get("review_cards", [])),
+        absent_review_cards=tuple(raw.get("absent_review_cards", [])),
         rationale=raw.get("rationale", ""),
     )
 

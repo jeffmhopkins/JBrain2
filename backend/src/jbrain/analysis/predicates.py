@@ -1,11 +1,15 @@
 """The canonical-predicate index: descriptor synthesis, registry → seed rows,
-and the cosine nearest-neighbour query (predicate canonicalization Phase 2,
-docs/PREDICATE_CANONICALIZATION.md §3).
+the cosine nearest-neighbour query behind the held-fact predicate-suggestion
+picker, and the one-shot boot sweep that retires the open new_predicate card
+backlog the two-tier cutover orphaned.
 
-Pure registry/SQL helpers — no embedding-canonicalization DECISION here (the
-STRONG/WEAK bands are Phase 3). The descriptor is the quality lever: a bare
-predicate token embeds poorly (worksFor vs worksWith), so we embed a synthesized
-definition + shape hint, not the token.
+Suggestions only — the embed-band DECISION (STRONG auto-merge / WEAK card) was
+retired with the two-tier cutover (docs/ENTITY_GRAPH_REFOCUS_PLAN.md): the
+Phase-4 calibration showed no cosine threshold separates drift spellings from
+genuinely novel predicates, so an unknown predicate now commits raw and the
+index's one job is ranking picker suggestions. The descriptor is the quality
+lever: a bare predicate token embeds poorly (worksFor vs worksWith), so we
+embed a synthesized definition + shape hint, not the token.
 """
 
 from __future__ import annotations
@@ -13,30 +17,21 @@ from __future__ import annotations
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Literal
 
+import structlog
 from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from jbrain.db.session import scoped_session
 from jbrain.embed import EmbedClient, vector_literal
+from jbrain.queue import SYSTEM_CTX
 from jbrain.schema import get_registry
 from jbrain.schema.models import Predicate, SchemaRegistry, _norm_key
 
+log = structlog.get_logger()
+
 _CAMEL = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
 
-# Canonicalization bands (predicate canonicalization, docs §3.1/§5). Calibrated
-# against bge-small embeddings of the descriptors (Phase 4): true drifts that
-# should merge land only at ~0.57-0.72 (marriedTo->spouse 0.71) and OVERLAP with
-# genuine novels (favoriteColor->color 0.66) — no threshold cleanly separates
-# them, and nearest-neighbours are sometimes wrong (allergicTo->prescriber). So:
-# - STRONG stays high (0.90): auto-merge effectively never fires, which is the
-#   safe default — auto-merging onto a WRONG canonical is worse than minting.
-# - WEAK is low (0.55): unknown predicates file a review card that CARRIES the
-#   top suggestions (which are right for the clean drifts), so the feature acts as
-#   a suggestion-led review assistant, not an auto-merger. A richer descriptor
-#   (docs §7) is the lever to make reliable auto-merge possible later.
-_PRED_STRONG = 0.90  # >= this: canonicalize to the match automatically (rare by design)
-_PRED_WEAK = 0.55  # [WEAK, STRONG): card WITH suggestions; below: cold (no suggestion)
 _PRED_TOPK = 5
 
 
@@ -108,25 +103,6 @@ def raw_descriptor(predicate: str, statement: str, kind: str | None = None) -> s
     return " ".join(p for p in parts if p)
 
 
-@dataclass(frozen=True)
-class PredicateDecision:
-    """The canonicalization verdict for one unknown predicate (Phase 3 §3.1)."""
-
-    band: Literal["strong", "weak", "cold"]
-    canonical: str | None  # the STRONG match to rewrite to; None for weak/cold
-    suggestions: tuple[tuple[str, float], ...]  # top-k (canonical_name, similarity)
-
-
-def band_for(neighbors: tuple[tuple[str, float], ...]) -> PredicateDecision:
-    """The band verdict for a predicate's nearest canonicals: STRONG (top
-    >= _PRED_STRONG) canonicalizes; WEAK proposes the neighbours for review; cold
-    (no/distant neighbour) is a mint proposal."""
-    top = neighbors[0][1] if neighbors else 0.0
-    if top >= _PRED_STRONG:
-        return PredicateDecision("strong", neighbors[0][0], neighbors)
-    return PredicateDecision("weak" if top >= _PRED_WEAK else "cold", None, neighbors)
-
-
 async def alias_canonicals(session: AsyncSession, raws: Sequence[str]) -> dict[str, str]:
     """The durable raw->canonical aliases (Loop 3a, Wave 1) for a batch of raw predicates, keyed by
     `_norm_key(raw)`. A confirmed `map_to_existing`/rename wrote these so a resolved drift spelling
@@ -180,27 +156,28 @@ async def decide_predicates(
     *,
     embedder: EmbedClient,
     k: int = _PRED_TOPK,
-) -> list[PredicateDecision]:
-    """Decide a batch of unknown predicates (each item is (predicate, statement, kind)). A durable
-    alias short-circuits to STRONG with no embed and no card (Wave 1); the rest cosine-match against
-    the canonical index in ONE embed call. The storage invariant holds for every band — the
-    predicate name is never rejected."""
+) -> list[tuple[tuple[str, float], ...]]:
+    """Ranked canonical suggestions, top-k (canonical_name, similarity) per item
+    (each item is (predicate, statement, kind)), for the held-fact predicate
+    picker. A durable alias short-circuits to its owner-confirmed canonical
+    (similarity 1.0 — a resolution, not a guess) with no embed; the rest
+    cosine-match against the canonical index in ONE embed call."""
     if not items:
         return []
     aliases = await alias_canonicals(session, [p for p, _, _ in items])
-    out: list[PredicateDecision] = []
+    out: list[tuple[tuple[str, float], ...]] = []
     pending: list[tuple[int, str, str, str | None]] = []
     for idx, (p, s, kd) in enumerate(items):
         canonical = aliases.get(_norm_key(p))
         if canonical is not None:
-            out.append(PredicateDecision("strong", canonical, ()))
+            out.append(((canonical, 1.0),))
         else:
-            out.append(PredicateDecision("cold", None, ()))  # placeholder, filled after the embed
+            out.append(())  # placeholder, filled after the embed
             pending.append((idx, p, s, kd))
     if pending:
         vectors = await embedder.embed([raw_descriptor(p, s, kd) for _, p, s, kd in pending])
         for (idx, _p, _s, _kd), v in zip(pending, vectors, strict=True):
-            out[idx] = band_for(tuple(await nearest_predicates(session, v, k)))
+            out[idx] = tuple(await nearest_predicates(session, v, k))
     return out
 
 
@@ -212,18 +189,95 @@ async def decide_predicate(
     kind: str | None,
     embedder: EmbedClient,
     k: int = _PRED_TOPK,
-) -> PredicateDecision:
+) -> tuple[tuple[str, float], ...]:
     """Single-predicate convenience over decide_predicates."""
     out = await decide_predicates(session, [(predicate, statement, kind)], embedder=embedder, k=k)
     return out[0]
+
+
+# One-shot marker for the retirement sweep: an app.settings row (the
+# constant-not-a-migration store) written in the SAME transaction as the
+# sweep's DELETE. The worker calls the sweep at every boot, but it may only
+# ever fire once per database: reopen_review returns a surviving card to
+# status='open' (a deferred reopen even clears `resolution`, leaving the row
+# indistinguishable from legacy backlog), so a second pass would silently
+# destroy owner-touched cards.
+_RETIRE_SWEEP_MARKER_KEY = "new_predicate_retire_swept"
+
+
+async def retire_open_new_predicate_cards(maker: async_sessionmaker[AsyncSession]) -> int:
+    """Boot sweep, one-shot per database: delete every OPEN `new_predicate`
+    review card (docs/ENTITY_GRAPH_REFOCUS_PLAN.md §3 T1.3). The two-tier
+    cutover stopped filing these — an unknown predicate now commits raw — so
+    the open backlog is standing noise for a vocabulary that no longer grows.
+    Open-only and kind-scoped: resolved/dismissed cards are human history and
+    deferred cards were parked by the owner, so all survive (the re-extraction
+    sweep's `statuses=('open',)` precedent).
+
+    One-shot is enforced with a persisted app.settings marker, not by the
+    backlog draining: the worker calls this every boot, and a card the owner
+    reopens (resolved or un-parked deferred) returns to status='open' — a
+    re-run of the DELETE would destroy it before the owner could act. The
+    marker commits atomically with the DELETE; later boots skip. Runs on an
+    RLS-scoped SYSTEM_CTX session like the pipeline; returns the count
+    retired."""
+    async with scoped_session(maker, SYSTEM_CTX) as session:
+        already = (
+            await session.execute(
+                text("SELECT 1 FROM app.settings WHERE key = :k AND value = 'true'::jsonb"),
+                {"k": _RETIRE_SWEEP_MARKER_KEY},
+            )
+        ).scalar_one_or_none()
+        if already is not None:
+            return 0
+        # Pre-flight count = distinct unregistered spellings, exact by the old
+        # filing rule (one open card per raw predicate).
+        count = (
+            await session.execute(
+                text(
+                    "SELECT count(*) FROM app.review_items"
+                    " WHERE kind = 'new_predicate' AND status = 'open'"
+                )
+            )
+        ).scalar_one()
+        retired: Sequence[str] = ()
+        if count:
+            log.info("predicates.retire_sweep", open_cards=count)
+            retired = (
+                (
+                    await session.execute(
+                        text(
+                            "DELETE FROM app.review_items"
+                            " WHERE kind = 'new_predicate' AND status = 'open'"
+                            " RETURNING payload->>'predicate'"
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            for spelling in retired:
+                log.info("predicate.card_retired", predicate=spelling)
+        # An empty backlog still counts as the one run — mark regardless, in
+        # the delete's transaction (upsert: app.settings grants no DELETE, so
+        # tests reset the marker by writing 'false').
+        await session.execute(
+            text(
+                "INSERT INTO app.settings (key, value) VALUES (:k, 'true'::jsonb)"
+                " ON CONFLICT (key) DO UPDATE"
+                " SET value = excluded.value, updated_at = now()"
+            ),
+            {"k": _RETIRE_SWEEP_MARKER_KEY},
+        )
+        return len(retired)
 
 
 async def nearest_predicates(
     session: AsyncSession, query_embedding: Sequence[float], k: int
 ) -> list[tuple[str, float]]:
     """The k canonical predicates closest to `query_embedding` by cosine
-    similarity, strongest first. No band filtering — Phase 3's STRONG/WEAK
-    decision reads this. Global (predicates are not domain-scoped)."""
+    similarity, strongest first — the suggestion ranking reads this. Global
+    (predicates are not domain-scoped)."""
     rows = (
         await session.execute(
             text(

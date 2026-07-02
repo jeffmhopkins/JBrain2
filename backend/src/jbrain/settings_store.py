@@ -25,13 +25,13 @@ IMAGE_ANALYSIS_KEY = "image_analysis_mode"
 # (disabled); rotating it instantly invalidates the old subscribe URL.
 FEED_TOKEN_KEY = "appointments_feed_token"
 
-# Embedding-assisted predicate canonicalization (docs/PREDICATE_CANONICALIZATION.md
-# Phase 3): when on, the integrate pipeline cosine-matches an unknown predicate
-# against the canonical index and either rewrites it (STRONG) or files a
-# new_predicate review card. DB-backed; default ON now that the Phase-4 eval has
-# calibrated the bands — flip off live (a settings upsert) to disable without a
-# redeploy. Inert anyway unless the integrate pipeline is the active path and an
-# embedder is configured (the worker seeds the index at boot).
+# Embedding-assisted predicate suggestions: when on, a held fact's review card
+# carries the canonicals nearest its predicate so the picker offers a ranked
+# swap list (suggestion UX only — never vocabulary policing; unknown predicates
+# commit raw regardless, docs/ENTITY_GRAPH_REFOCUS_PLAN.md §1). DB-backed;
+# default ON; flip off live (a settings upsert) to disable without a redeploy.
+# Inert anyway without a configured embedder (the worker seeds the canonical
+# index at boot).
 PREDICATE_CANON_KEY = "predicate_canonicalization"
 PREDICATE_CANON_DEFAULT = True
 
@@ -242,8 +242,9 @@ class SqlSettingsStore:
         )
 
     async def predicate_canonicalization(self, ctx: SessionContext) -> bool:
-        """Whether embedding-assisted predicate canonicalization is on (Phase 3).
-        Defaults ON; an explicit `false` (or any non-true value) disables it."""
+        """Whether the held-fact predicate-suggestion picker is on (the only
+        surface this key still gates). Defaults ON; an explicit `false` (or any
+        non-true value) disables it."""
         return await self.get(ctx, PREDICATE_CANON_KEY, PREDICATE_CANON_DEFAULT) is True
 
     async def value_shape_enforce(self, ctx: SessionContext) -> bool:

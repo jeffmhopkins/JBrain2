@@ -154,8 +154,8 @@ _DOMAIN_BY_PREDICATE: dict[str, str] = {
             "ldlcholesterol", "ldl", "hdl", "cholesterol", "triglycerides", "troponin",
             "inr", "tsh", "heartrate", "restingheartrate", "oxygensaturation", "o2sat",
             "respiratoryrate", "medication", "medicationregimen", "takesmedication",
-            "prescribes", "diagnosis", "medicalcondition", "healthcondition", "allergy",
-            "immunization", "vaccination",
+            "prescribes", "treatedby", "diagnosis", "medicalcondition", "healthcondition",
+            "allergy", "immunization", "vaccination",
         )
     },
     **{

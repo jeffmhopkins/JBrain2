@@ -15,10 +15,13 @@ from jbrain.agent.readtools import (
     entity_view_ref,
     format_currency,
     format_entity,
+    format_neighborhood,
     format_note,
     format_relations,
     format_search,
     format_wiki_article,
+    neighborhood_entities,
+    neighborhood_sources,
 )
 from jbrain.agent.toolfile import load_tool
 from jbrain.agent.weathertools import build_weather_handlers
@@ -126,14 +129,17 @@ class FakeEntities:
         related: list[dict] | None = None,
         currency: dict[str, list[dict]] | None = None,
         owner_id: str | None = None,
+        vicinity: dict | None = None,
     ):
         self.view = view
         self.owner_id = owner_id
         self.matches = matches or []
         self.related = related or []
         self.currency = currency or {}
+        self.vicinity = vicinity
         self.searched: list[tuple] = []
         self.traversed: list[tuple] = []
+        self.walked: list[tuple] = []
         self.currency_calls: list[list[str]] = []
 
     async def entity_view(self, ctx, entity_id):  # noqa: ANN001
@@ -149,6 +155,12 @@ class FakeEntities:
     async def relate(self, ctx, anchor_id, predicates, limit=8):  # noqa: ANN001
         self.traversed.append((anchor_id, tuple(predicates), limit))
         return self.related
+
+    async def neighborhood(self, ctx, entity_id, *, depth=2, kinds="both", total_cap=75):  # noqa: ANN001
+        self.walked.append((entity_id, depth, kinds, total_cap))
+        if self.vicinity is not None and entity_id == self.vicinity["anchor"]:
+            return self.vicinity
+        return None
 
     async def note_currency(self, ctx, note_ids):  # noqa: ANN001
         self.currency_calls.append(list(note_ids))
@@ -507,6 +519,116 @@ def test_format_relations_shows_the_edge_and_ids() -> None:
     assert out == "- spouse → Celine [Person] (general) id=e9"
 
 
+# --- neighborhood (the n-hop vicinity tool) --------------------------------
+
+
+def vicinity(anchor_id: str = "e0") -> dict:
+    """A canned SqlAnalysisRepo.neighborhood result: anchor + one neighbor per
+    hop (mixed edge kinds along the hop-2 path) and one connecting note."""
+    return {
+        "anchor": anchor_id,
+        "depth": 2,
+        "entities": [
+            {
+                "id": anchor_id,
+                "name": "Me",
+                "kind": "person",
+                "domain": "general",
+                "hop": 0,
+                "path": "Me",
+            },
+            {
+                "id": "e2",
+                "name": "Celine",
+                "kind": "person",
+                "domain": "general",
+                "hop": 1,
+                "path": "Me -spouse-> Celine",
+            },
+            {
+                "id": "e3",
+                "name": "Dr. Patel",
+                "kind": "person",
+                "domain": "health",
+                "hop": 2,
+                "path": "Me -spouse-> Celine -co-mention(note n7)-> Dr. Patel",
+            },
+        ],
+        "notes": [
+            {"note_id": "n7", "domain": "health", "hop": 1, "connects": ["Celine", "Dr. Patel"]},
+        ],
+    }
+
+
+def test_format_neighborhood_groups_hops_and_lists_connecting_notes() -> None:
+    lines = format_neighborhood(vicinity()).splitlines()
+    assert lines[0] == "Me [person] (general) id=e0 — neighborhood within 2 hop(s):"
+    assert "hop 1:" in lines and "hop 2:" in lines
+    # format_relations' line idiom: name, kind, domain, a chainable id — plus
+    # the one connecting path the traversal kept.
+    assert "- Celine [person] (general) id=e2 — Me -spouse-> Celine" in lines
+    assert (
+        "- Dr. Patel [person] (health) id=e3 — Me -spouse-> Celine -co-mention(note n7)-> Dr. Patel"
+    ) in lines
+    # The connecting note carries a read_note-able id and WHO it ties together.
+    assert "connecting notes:" in lines
+    assert "- note n7 (hop 1) — Celine, Dr. Patel" in lines
+
+
+def test_format_neighborhood_lonely_anchor() -> None:
+    lonely = {"anchor": "e0", "depth": 2, "entities": vicinity()["entities"][:1], "notes": []}
+    out = format_neighborhood(lonely)
+    assert "no connected entities in scope." in out
+    assert "connecting notes:" not in out
+
+
+def test_neighborhood_chips_are_entities_and_note_sources() -> None:
+    assert neighborhood_entities(vicinity()) == (
+        EntityRef(entity_id="e0", label="Me", domain="general"),
+        EntityRef(entity_id="e2", label="Celine", domain="general"),
+        EntityRef(entity_id="e3", label="Dr. Patel", domain="health"),
+    )
+    # The snippet names why the note surfaced — the body was never fetched.
+    assert neighborhood_sources(vicinity()) == (
+        NoteSource(note_id="n7", domain="health", snippet="connects Celine, Dr. Patel"),
+    )
+
+
+async def test_neighborhood_defaults_anchor_to_owner_and_forwards_args() -> None:
+    fake = FakeEntities(None, owner_id="e0", vicinity=vicinity())
+    out = await build_entity_handlers(fake)["neighborhood"]({}, CTX)  # type: ignore[arg-type]
+    assert isinstance(out, ToolOutput)
+    assert "neighborhood within 2 hop(s)" in out
+    # No anchor → the owner's entity, with the ratified defaults.
+    assert fake.walked == [("e0", 2, "both", 75)]
+    assert out.entities == neighborhood_entities(vicinity())
+    assert out.sources == neighborhood_sources(vicinity())
+
+
+async def test_neighborhood_resolves_sentinels_clamps_and_validates() -> None:
+    fake = FakeEntities(None, owner_id="e0", vicinity=vicinity())
+    tools = build_entity_handlers(fake)  # type: ignore[arg-type]
+    # A sentinel anchor resolves to the owner; hops/limit clamp to the caps.
+    await tools["neighborhood"]({"anchor": "Me", "hops": 9, "limit": 900}, CTX)
+    assert fake.walked[-1] == ("e0", 3, "both", 75)
+    await tools["neighborhood"](
+        {"anchor": "e0", "hops": 0, "kinds": "co-mentions", "limit": 5}, CTX
+    )
+    assert fake.walked[-1] == ("e0", 1, "co-mentions", 5)
+    bad = await tools["neighborhood"]({"anchor": "e0", "kinds": "webs"}, CTX)
+    assert "kinds must be" in bad
+    assert len(fake.walked) == 2  # the invalid call never reached the repo
+
+
+async def test_neighborhood_misses_quietly() -> None:
+    # No Me entity yet → the owner default resolves to nothing.
+    no_me = build_entity_handlers(FakeEntities(None, owner_id=None))  # type: ignore[arg-type]
+    assert "in scope" in await no_me["neighborhood"]({}, CTX)
+    # An unknown/out-of-scope anchor is a quiet miss (RLS makes them one thing).
+    tools = build_entity_handlers(FakeEntities(None, vicinity=vicinity()))  # type: ignore[arg-type]
+    assert "in scope" in await tools["neighborhood"]({"anchor": "ghost"}, CTX)
+
+
 # --- registry + version guard --------------------------------------------
 
 
@@ -569,6 +691,7 @@ def test_build_registry_binds_the_shipped_sidecars() -> None:
         "read_entity",
         "find_entity",
         "relate",
+        "neighborhood",
         "query_server_metrics",
         "read_lists",
         "read_list",
@@ -651,8 +774,13 @@ def test_sidecars_pinned_to_their_versions() -> None:
         ),
         "relate.tool": (
             "relate",
+            2,
+            "826d35a411f61531c903ef6033ae8cb7a4a43e72443e473447afe22bd1aad40a",
+        ),
+        "neighborhood.tool": (
+            "neighborhood",
             1,
-            "f709cb46df3116817f8ee611eca38289b47b7b00b23dbedccb5f74bc0f6ca4ae",
+            "2467a92dbe6f5d6737dbb036ead5900dedd41fc5077d6346e15d4f7859a9f288",
         ),
         "read_lists.tool": (
             "read_lists",

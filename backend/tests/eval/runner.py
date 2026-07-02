@@ -152,8 +152,8 @@ async def run_case_db(
     [canonicalize] → plan_intent → apply_intent → COMMIT — against real Postgres,
     then read the committed graph back into a DbCommit for check_case_db. Reuses
     the SAME two Grok calls as run_case (token-neutral); only the testcontainer is
-    new. With `canonicalize`, an embedder + the predicate_canonicalization setting
-    must be live so unknown predicates are matched against the canonical index."""
+    new. With `canonicalize`, the durable predicate-alias collapse runs before
+    the arbiter (alias-collapse/drift coverage — no embeds, no cards)."""
     from sqlalchemy import select
 
     from jbrain.analysis.entities import get_or_create_me
@@ -218,10 +218,10 @@ async def run_case_db(
         schema_version=1,
         note_text="\n\n".join(texts),
     )
-    # Canonicalize unknown predicates before the arbiter keys facts (Phase 3 §3.1);
-    # self-gates on the setting + embedder, so it's inert unless --canon armed both.
+    # Collapse durably-aliased predicates before the arbiter keys facts; an
+    # unaliased long-tail predicate commits raw (two-tier model, no card).
     if canonicalize:
-        await pipeline.canonicalize_intent(intent, note_domain=case.domain)
+        await pipeline.canonicalize_intent(intent)
     plan = plan_intent(intent, compute_signals(intent, texts))
 
     async with scoped_session(maker, SYSTEM_CTX) as session:
@@ -333,6 +333,10 @@ async def _read_commit(
     seeded_facts = tuple(
         _state(sym, name, pred, watched_rows[wid]) for sym, name, pred, wid in watched
     )
+    # All kinds, not just new_predicate: absent_review_cards is generic over kind,
+    # so a {"kind": "fact_conflict"} spec must be able to SEE those cards — a
+    # narrower read-back would pass it vacuously. Kinds without predicate/
+    # suggestions payload keys read back as None/() and match on kind alone.
     review_cards = tuple(
         ReviewCard(
             kind=c.kind,
@@ -340,7 +344,6 @@ async def _read_commit(
             suggestions=tuple((s["name"], s["score"]) for s in c.payload.get("suggestions", [])),
         )
         for c in cards
-        if c.kind == "new_predicate"
     )
     return DbCommit(
         owner_id=owner_id,

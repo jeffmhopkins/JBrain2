@@ -6,8 +6,9 @@ description: A vehicle. VIN is the strong resolution signal; owner is a Role edg
 vehicle: graph
 facets: [Named, ExternalIdentified, Related, Lifecycle]
 default_fact_kind: attribute
-allow_open_predicates: true
 
+# fuelType/bodyType/color/mileage are tier-2: resolution hints live in prose +
+# mentions; only the display-composition trio + the 🔒 plate stay declared.
 predicates:
   - canonical_name: manufacturer       # make
     value_shape: text
@@ -25,30 +26,10 @@ predicates:
     functional: true
     schema_org_ref: schema:vehicleModelDate
     renamed_from: [vehicleModelDate, modelYear, year]
-  - canonical_name: fuelType
-    value_shape: enum
-    enum_values: [gasoline, diesel, electric, hybrid, plugin_hybrid, hydrogen, other]
-    kind: attribute
-    functional: true
-    schema_org_ref: schema:fuelType
-  - canonical_name: bodyType           # SUV | sedan | hatchback | truck | ...
-    value_shape: text
-    kind: attribute
-    functional: true
-    schema_org_ref: schema:bodyType
-  - canonical_name: color              # "the blue Subaru" — a disambiguation signal
-    value_shape: text
-    kind: attribute
-    functional: true
-    schema_org_ref: schema:color
   - canonical_name: licensePlate       # 🔒 not stable (transfers/renewals)
     value_shape: structured
     shape: license_plate
     kind: state
-  - canonical_name: mileage            # accumulating odometer readings
-    value_shape: quantity
-    kind: measurement
-    schema_org_ref: schema:mileageFromOdometer
 
 # identifier.vin (🔒) from ExternalIdentified — globally unique, the resolution key signal.
 # owner is a Role edge (Related).

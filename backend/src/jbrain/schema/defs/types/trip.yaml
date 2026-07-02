@@ -7,12 +7,9 @@ description: A journey; destinations/accommodation are Place refs, travelers are
 vehicle: graph
 facets: [Named, Temporal, Lifecycle, Related]
 default_fact_kind: state
-allow_open_predicates: true
 
+# transport/purpose/description are tier-2; the Place/Person refs are the spine.
 predicates:
-  - canonical_name: description
-    value_shape: text
-    kind: state
   - canonical_name: destination          # may be several; accumulating Place refs 🔒 location
     value_shape: ref
     range_type: place
@@ -30,14 +27,6 @@ predicates:
     value_shape: ref
     range_type: place
     kind: relationship
-  - canonical_name: transport            # primary mode of travel
-    value_shape: enum
-    enum_values: [flight, train, car, bus, ship, other]
-    kind: state
-  - canonical_name: purpose
-    value_shape: enum
-    enum_values: [leisure, business, family, medical, other]
-    kind: attribute
 
 # Temporal.startDate/endDate carry the date interval. Domain: location-adjacent —
 # the itinerary reveals presence; sensitive detail lives on the referenced Places.

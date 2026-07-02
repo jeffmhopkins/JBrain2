@@ -9,7 +9,6 @@ description: A clinical lab observation; FHIR/LOINC/UCUM-shaped typed record.
 vehicle: typed_record(P7)
 facets: [Named, ExternalIdentified, Temporal, Related, Lifecycle]   # Named -> display; Lifecycle.status carries status_values
 default_fact_kind: measurement
-allow_open_predicates: false
 
 predicates:
   - canonical_name: identifier     # identifier.loinc — the LOINC code (CodeableConcept)

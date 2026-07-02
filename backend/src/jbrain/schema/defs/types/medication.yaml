@@ -8,7 +8,6 @@ description: A medication regimen as an interval state; prescriber is a Role edg
 vehicle: graph                     # 🔒🔒 health-scoped
 facets: [Named, ExternalIdentified, Temporal, Related, Lifecycle]   # Named -> the display projection
 default_fact_kind: state
-allow_open_predicates: false
 
 predicates:
   - canonical_name: identifier     # identifier.rxnorm — the RxNorm code

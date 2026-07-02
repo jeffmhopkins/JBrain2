@@ -10,7 +10,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
-from jbrain.agent.loop import ToolContext
+from jbrain.agent.loop import ToolContext, ToolOutput
 from jbrain.agent.readtools import build_entity_handlers, build_read_handlers
 from jbrain.agent.session import read_context
 from jbrain.analysis.repo import SqlAnalysisRepo
@@ -225,6 +225,88 @@ async def test_relate_anchors_on_me_and_respects_the_firewall(maker: async_sessi
     )
     blocked = await tools["relate"]({"relationship": "wife"}, general)
     assert "Renata" not in blocked and "No 'wife' relationship" in blocked
+
+
+async def test_neighborhood_handler_walks_real_edges_in_session_scope(
+    maker: async_sessionmaker,
+) -> None:
+    """The n-hop vicinity tool end to end on real rows: a ref edge and a
+    co-mention both surface with chips (entities + the connecting note), and a
+    session without the notes' domain loses the co-mention arm — RLS, not the
+    tool."""
+    owner = await _owner(maker)
+    run = uuid.uuid4().hex[:8]
+    me, wife, doctor, note, chunk = (str(uuid.uuid4()) for _ in range(5))
+    async with scoped_session(maker, owner) as session:
+        for eid, name, domain in (
+            (me, f"Me {run}", "general"),
+            (wife, f"Renata {run}", "general"),
+            (doctor, f"Dr. Patel {run}", "health"),
+        ):
+            await session.execute(
+                text(
+                    "INSERT INTO app.entities (id, kind, canonical_name, status, domain_code)"
+                    " VALUES (:id, 'Person', :name, 'confirmed', :domain)"
+                ),
+                {"id": eid, "name": name, "domain": domain},
+            )
+        await session.execute(
+            text(
+                "INSERT INTO app.notes (id, client_id, domain_code, body)"
+                " VALUES (:id, :cid, 'health', 'Renata saw Dr. Patel')"
+            ),
+            {"id": note, "cid": f"{run}-n"},
+        )
+        await session.execute(
+            text(
+                "INSERT INTO app.chunks (id, note_id, domain_code, granularity, seq, text)"
+                " VALUES (:id, :note, 'health', 'paragraph', 0, 'Renata saw Dr. Patel')"
+            ),
+            {"id": chunk, "note": note},
+        )
+        await session.execute(
+            text(
+                "INSERT INTO app.facts"
+                " (id, entity_id, predicate, kind, statement, assertion, object_entity_id,"
+                "  reported_at, note_id, extractor, prompt_version, domain_code, status)"
+                " VALUES (gen_random_uuid(), :me, 'spouse', 'relationship', 'married',"
+                "  'asserted', :wife, now(), :note, 'test', 'v1', 'general', 'active')"
+            ),
+            {"me": me, "wife": wife, "note": note},
+        )
+        for eid in (wife, doctor):
+            await session.execute(
+                text(
+                    "INSERT INTO app.entity_mentions"
+                    " (id, entity_id, chunk_id, note_id, surface_text, char_start, char_end,"
+                    "  link_method, domain_code)"
+                    " VALUES (gen_random_uuid(), :eid, :chunk, :note, 'x', 0, 1,"
+                    "  'human', 'health')"
+                ),
+                {"eid": eid, "chunk": chunk, "note": note},
+            )
+
+    tools = build_entity_handlers(SqlAnalysisRepo(maker))
+    full = ToolContext(
+        session=read_context(owner.principal_id, ("general", "health")),
+        scopes=("general", "health"),
+    )
+    out = await tools["neighborhood"]({"anchor": me, "hops": 2}, full)
+    assert isinstance(out, ToolOutput)
+    # Hop 1 via the spouse ref, hop 2 via the shared health note.
+    assert f"Renata {run}" in out and f"Dr. Patel {run}" in out
+    assert {e.entity_id for e in out.entities} == {me, wife, doctor}
+    assert [s.note_id for s in out.sources] == [note]
+    assert out.sources[0].domain == "health"
+
+    # Without health, the co-mention arm (its note and the doctor) vanishes.
+    general = ToolContext(
+        session=read_context(owner.principal_id, ("general",)), scopes=("general",)
+    )
+    blocked = await tools["neighborhood"]({"anchor": me, "hops": 2}, general)
+    assert isinstance(blocked, ToolOutput)
+    assert f"Renata {run}" in blocked and "Patel" not in blocked
+    assert blocked.sources == ()
 
 
 async def test_owner_entity_id_resolves_the_subject_linked_me(

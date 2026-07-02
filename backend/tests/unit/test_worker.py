@@ -57,6 +57,7 @@ class FakeQueue:
         self.consolidate_backfills = 0
         self.predicate_sync_backfills = 0
         self.purge_backfills = 0
+        self.retire_sweeps = 0
         self.backfill_error: Exception | None = None
         # Whether a non-permanent fail() burned the last attempt.
         self.fail_exhausts = False
@@ -125,6 +126,14 @@ def install(monkeypatch: pytest.MonkeyPatch, fake: FakeQueue) -> None:
         return 0
 
     monkeypatch.setattr(worker.purge, "backfill_deleted_note_artifacts", fake_purge_backfill)
+
+    # The open new_predicate card retirement rides the same startup pass; SQL
+    # behavior is integration-tested (test_predicate_retire_pg).
+    async def fake_retire_sweep(maker):  # noqa: ANN001, ANN202
+        fake.retire_sweeps += 1
+        return 0
+
+    monkeypatch.setattr(worker, "retire_open_new_predicate_cards", fake_retire_sweep)
 
 
 def job(
@@ -435,6 +444,7 @@ async def test_run_loop_backfills_once_then_polls(monkeypatch: pytest.MonkeyPatc
     assert fake.integration_backfills == 1
     assert fake.purge_backfills == 1
     assert fake.consolidate_backfills == 1
+    assert fake.retire_sweeps == 1
     assert fake.predicate_sync_backfills == 1
 
 

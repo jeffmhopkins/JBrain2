@@ -6,8 +6,8 @@ description: An org. Locations are Place refs, never inlined onto the org.
 vehicle: graph
 facets: [Named, Contactable, ExternalIdentified, Related]
 default_fact_kind: state
-allow_open_predicates: true
 
+# foundingDate/numberOfEmployees are tier-2: encyclopedia trivia, not spine.
 predicates:
   - canonical_name: parentOrganization
     value_shape: ref
@@ -19,16 +19,6 @@ predicates:
     range_type: place
     kind: relationship
     schema_org_ref: schema:location
-  - canonical_name: foundingDate
-    value_shape: date
-    kind: event
-    functional: true
-    schema_org_ref: schema:foundingDate
-    renamed_from: [founded, dateFounded, established]
-  - canonical_name: numberOfEmployees # headcount over time, accumulating
-    value_shape: quantity
-    kind: measurement
-    schema_org_ref: schema:numberOfEmployees
 
 # identifier.ein / identifier.duns / identifier.lei / identifier.vatid come from
 # ExternalIdentified. legalName folds to name.full via the Named facet (not redeclared).

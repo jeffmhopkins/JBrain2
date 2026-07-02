@@ -194,7 +194,6 @@ def _planned_brief(pf: Any, sig: Any) -> dict[str, Any]:
     }
     if sig is not None:
         brief["surface_attested"] = sig.surface_attested
-        brief["predicate_known"] = sig.predicate_known
     return brief
 
 

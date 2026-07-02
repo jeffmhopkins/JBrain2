@@ -8,35 +8,11 @@ description: A possession/asset. Owner is a Role edge; price/value via Monetary 
 vehicle: graph
 facets: [Named, ExternalIdentified, Temporal, Related, Lifecycle, Monetary]
 default_fact_kind: attribute
-allow_open_predicates: true
 
+# Only `location` stays tier-1 (presence-revealing — firewall + ref-edge
+# traversal). brand/manufacturer/model/category/purchaseDate/warrantyExpiration
+# are tier-2, consistent with the vehicle/device rows.
 predicates:
-  - canonical_name: brand
-    value_shape: text
-    kind: attribute
-    functional: true
-    schema_org_ref: schema:brand
-  - canonical_name: manufacturer
-    value_shape: text
-    kind: attribute
-    functional: true
-    schema_org_ref: schema:manufacturer
-  - canonical_name: model
-    value_shape: text
-    kind: attribute
-    functional: true
-    schema_org_ref: schema:model
-  - canonical_name: category             # appliance | furniture | jewelry | tool | ...
-    value_shape: text
-    kind: attribute
-  - canonical_name: purchaseDate
-    value_shape: date
-    kind: event
-    renamed_from: [boughtOn, dateAcquired]
-  - canonical_name: warrantyExpiration
-    value_shape: date
-    kind: state
-    functional: true
   - canonical_name: location             # 🔒 where it is kept — presence-revealing
     value_shape: ref
     range_type: place

@@ -128,7 +128,6 @@ def build_trace(
         ),
         "rows": [
             ["surface_attested", _bool(signals.surface_attested)],
-            ["predicate_known", _bool(signals.predicate_known)],
             ["is_supersede", _bool(signals.is_supersede)],
             ["ceiling", f"{cap:.2f}"],
             ["weight", weight_expr],

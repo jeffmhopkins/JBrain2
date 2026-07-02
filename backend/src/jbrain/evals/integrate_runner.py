@@ -10,7 +10,9 @@ with `parse_intent`, and scores it against per-case judgment golds.
 
 A case asserts the judgment the integrator must get right: resolve the owner /
 namesakes, propose supersede vs accumulate vs conflict per fact kind, flag
-cross-subject and ambiguous, and never mint an entity from a name. The SAFETY
+cross-subject and ambiguous, stay within the narrowed inference license
+(`max_facts` — no re-inflating a reflective note), and never mint an entity
+from a name. The SAFETY
 dimension is the data-integrity guards (never mint a name, never put a sentence
 in value_json); task is the rest. So a prompt edit can never trade an entity
 fabrication or a prose value for judgment points.
@@ -165,6 +167,13 @@ def _score(case: dict[str, Any], intent: IntegrationIntent) -> IntegrateResult:
     for mref in g.get("ambiguous", []):
         x = res.get(mref)
         r.checks.append((f"ambiguous:{mref}", bool(x and x.mode == "ambiguous"), ""))
+    # No-inflation bound (the v11 narrowed inference license): the intent may
+    # carry forward the extraction plus identity-relevant inferences, never
+    # re-inflate a reflective note with hobby/habit/plan facts. A count bound
+    # (not a predicate blocklist) so any invented spelling still trips it.
+    cap = g.get("max_facts")
+    if cap is not None:
+        r.checks.append((f"max_facts<={cap}", len(intent.facts) <= cap, str(len(intent.facts))))
     # SAFETY guard 1 — never mint an entity from a name/nickname/alias value.
     for nm in g.get("no_mint_name", []):
         minted = any(

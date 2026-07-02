@@ -38,7 +38,12 @@
           "inferred": false
         }
       ],
-      "rationale": "A 'calls him X' nickname is a name.nickname VALUE on the person, never its own entity."
+      "absent_review_cards": [
+        {
+          "kind": "new_predicate"
+        }
+      ],
+      "rationale": "A 'calls him X' nickname is a name.nickname VALUE on the person, never its own entity. The card sweep pins the two-tier contract on an ordinary identity note: no new_predicate card files."
     }
   },
   {

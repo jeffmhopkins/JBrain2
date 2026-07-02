@@ -278,8 +278,8 @@ def test_plan_facts_show_status_and_weight() -> None:
         ]
     )
     signals = {
-        0: SimpleNamespace(surface_attested=True, predicate_known=True),
-        1: SimpleNamespace(surface_attested=False, predicate_known=True),
+        0: SimpleNamespace(surface_attested=True),
+        1: SimpleNamespace(surface_attested=False),
     }
     with structlog.testing.capture_logs() as logs:
         flow_trace.plan("n1", plan, signals)

@@ -47,6 +47,11 @@ def audit_cases(cases: list[dict[str, Any]]) -> list[str]:
         for edge in expect.get("edges", []):
             if _norm(edge["object"]) != "me" and not _in_body(edge["object"], body):
                 issues.append(f"{name}: edge object {edge['object']!r} not in note body")
+        # An absent_edges object not in the body would pass vacuously — the check
+        # only means something when the note actually names the thing.
+        for spec in expect.get("absent_edges", []):
+            if not _in_body(spec["object"], body):
+                issues.append(f"{name}: absent_edges object {spec['object']!r} not in note body")
         for nm in expect.get("absent_person", []):
             if _norm(nm) not in _GENERIC and _in_body(nm, body):
                 issues.append(f"{name}: absent_person {nm!r} is in the note body (contradiction)")

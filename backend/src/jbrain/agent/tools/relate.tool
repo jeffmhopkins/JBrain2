@@ -1,6 +1,6 @@
 ---
 name: relate
-version: 1
+version: 2
 permission: read
 params:
   type: object
@@ -29,4 +29,6 @@ the name, or just report the name it returns. Pass `from` to hop off someone
 else ("her doctor": find_entity that person, then relate from their id). Returns
 the matching entities (predicate → entity, with ids to read_entity), as tappable
 chips; nothing if the owner has no such relationship in this session's scope. Use
-find_entity instead when the user names the person directly.
+find_entity instead when the user names the person directly, and neighborhood
+instead when you want everything AROUND an entity (all connections at every hop,
+plus the notes linking them) rather than the other end of one named relationship.

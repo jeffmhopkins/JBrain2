@@ -8,8 +8,9 @@ description: A work consumed or referenced; author/publisher are refs, subject v
 vehicle: graph
 facets: [Named, Temporal, ExternalIdentified, Related]
 default_fact_kind: attribute
-allow_open_predicates: true
 
+# datePublished/url/rating are tier-2: citation metadata lives in the note's
+# prose; the refs (author/publisher/about) are the traversal spine.
 predicates:
   - canonical_name: workType
     value_shape: enum
@@ -28,22 +29,10 @@ predicates:
     range_type: organization
     kind: relationship
     schema_org_ref: schema:publisher
-  - canonical_name: datePublished
-    value_shape: date
-    kind: attribute
-    schema_org_ref: schema:datePublished
   - canonical_name: about                # subject matter; accumulating refs
     value_shape: ref
     kind: relationship
     schema_org_ref: schema:about
-  - canonical_name: url
-    value_shape: scalar
-    kind: attribute
-    schema_org_ref: schema:url
-  - canonical_name: rating               # my rating on a 1-5 scale; an opinion, newest wins
-    value_shape: scalar
-    kind: preference
-    functional: true
   - canonical_name: consumptionStatus    # wishlist / reading / done
     value_shape: enum
     enum_values: [wishlist, in_progress, completed, abandoned, reference]

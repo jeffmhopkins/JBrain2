@@ -6,8 +6,8 @@ description: An account or payment method. Store last4 only — never PAN/CVV/cr
 vehicle: graph                          # 🔒🔒 finance-scoped; typed projection possible later
 facets: [Named, ExternalIdentified, Related, Lifecycle]
 default_fact_kind: state
-allow_open_predicates: false
 
+# currency is tier-2 (prose-grade detail; no floor/projection consumes it).
 predicates:
   - canonical_name: institution
     value_shape: ref
@@ -16,10 +16,6 @@ predicates:
   - canonical_name: accountType
     value_shape: enum
     enum_values: [checking, savings, credit_card, loan, brokerage, other]
-    kind: attribute
-    functional: true
-  - canonical_name: currency               # ISO-4217 code; open (150+ codes), so scalar not enum
-    value_shape: scalar
     kind: attribute
     functional: true
 

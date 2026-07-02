@@ -10,7 +10,7 @@ import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Literal
 
 from sqlalchemy import bindparam, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -18,6 +18,22 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from jbrain.analysis.consolidation import rewrite_predicate
 from jbrain.analysis.display import mark_snippet
 from jbrain.analysis.entities import are_distinct, merge_entity_pair, plan_merge
+from jbrain.analysis.neighborhood import (
+    DEFAULT_DEPTH,
+    DEFAULT_HUB_CAP,
+    DEFAULT_NOTE_CAP,
+    DEFAULT_PER_HOP_LIMIT,
+    DEFAULT_TOTAL_CAP,
+    MAX_DEPTH,
+    CoMentionEdge,
+    EdgeBatch,
+    EdgeKinds,
+    EntityRef,
+    NoteMention,
+    RefEdge,
+    assemble_notes,
+    traverse,
+)
 from jbrain.analysis.predicates import (
     decide_predicate,
     delete_predicate_alias,
@@ -570,6 +586,206 @@ class SqlAnalysisRepo:
             "edges": list(edges.values()),
         }
 
+    async def neighborhood(
+        self,
+        ctx: SessionContext,
+        entity_id: str,
+        *,
+        depth: int = DEFAULT_DEPTH,
+        kinds: EdgeKinds = "both",
+        per_hop_limit: int = DEFAULT_PER_HOP_LIMIT,
+        total_cap: int = DEFAULT_TOTAL_CAP,
+        hub_cap: int = DEFAULT_HUB_CAP,
+        note_cap: int = DEFAULT_NOTE_CAP,
+    ) -> dict[str, Any] | None:
+        """The agent's n-hop neighborhood around an anchor entity: everything
+        within `depth` hops (clamped 1..3) over typed relationship edges AND
+        shared-note co-mentions (`kinds` narrows to one arm — the skipped arm
+        simply fetches nothing, so notes are still collected from mentions of
+        whatever entity set the walk reaches), plus the notes connecting the
+        final entity set — "pull all notes within 3 connections". BFS policy
+        (ranking, hub damping, caps, one connecting path per node) lives in
+        `analysis.neighborhood`; this layer runs the per-hop edge queries in
+        one transaction, the shipped ego_graph pattern (recursive CTEs are
+        deliberately rejected — see that module's docstring).
+
+        RLS-RELIANT — owner/agent-session-only, NEVER under SYSTEM_CTX. There
+        is no explicit domain filter here (unlike graph_context's retrieval,
+        whose hazard comment explains the SYSTEM_CTX trap): the session's
+        row-level security is what drops firewalled entities, facts, mentions,
+        and notes, so an out-of-scope branch transitively vanishes
+        mid-traversal. An all-seeing session would walk straight through the
+        firewall.
+
+        Ref edges are ego_graph's out/in queries (active, asserted, non-merged)
+        with `entity_view`'s derived-reciprocal dedup on the inbound arm; the
+        auto-materialized inverse of a frontier entity's own outbound fact is
+        the same bond, not a second edge. Co-mention edges INNER-join entities
+        and notes — never LEFT, which would leak an out-of-scope entity's bare
+        uuid as an edge endpoint where RLS must drop the whole edge. Returns
+        None when the anchor id is malformed, unknown, merged, or out of scope
+        (RLS makes unknown and invisible indistinguishable).
+        """
+        eid = _as_uuid(entity_id)
+        if eid is None:
+            return None
+        hops = max(1, min(depth, MAX_DEPTH))
+        out_sql = text(
+            """
+            SELECT f.entity_id::text AS src, oe.id::text AS dst,
+                   oe.canonical_name AS name, oe.kind, oe.domain_code,
+                   f.predicate, f.reported_at
+            FROM app.facts f JOIN app.entities oe ON oe.id = f.object_entity_id
+            WHERE f.entity_id IN :ids AND f.object_entity_id IS NOT NULL
+              AND f.status = 'active' AND f.assertion = 'asserted'
+              AND oe.status <> 'merged'
+            """
+        ).bindparams(bindparam("ids", expanding=True))
+        # The inbound arm drops the derived reciprocal shadow of a frontier
+        # entity's own fact (either side of the pair may be the derived one) —
+        # entity_view's rule, correlated per row on f.object_entity_id.
+        in_sql = text(
+            """
+            SELECT f.object_entity_id::text AS src, se.id::text AS dst,
+                   se.canonical_name AS name, se.kind, se.domain_code,
+                   f.predicate, f.reported_at
+            FROM app.facts f JOIN app.entities se ON se.id = f.entity_id
+            WHERE f.object_entity_id IN :ids
+              AND f.status = 'active' AND f.assertion = 'asserted'
+              AND se.status <> 'merged'
+              AND NOT EXISTS (
+                  SELECT 1 FROM app.facts mine
+                  WHERE mine.entity_id = f.object_entity_id
+                    AND (mine.id = f.derived_from_fact_id
+                         OR mine.derived_from_fact_id = f.id)
+              )
+            """
+        ).bindparams(bindparam("ids", expanding=True))
+        # DISTINCT collapses repeated spans of the same entity in one note to
+        # one edge. The hub count is computed over the session-visible,
+        # non-merged mention set — damping sees the same world RLS shows.
+        co_sql = text(
+            """
+            SELECT DISTINCT m1.entity_id::text AS src, e.id::text AS dst,
+                   e.canonical_name AS name, e.kind, e.domain_code,
+                   m1.note_id::text AS note_id, n.created_at AS noted_at,
+                   (SELECT count(DISTINCT m3.entity_id)
+                    FROM app.entity_mentions m3
+                    JOIN app.entities e3
+                      ON e3.id = m3.entity_id AND e3.status <> 'merged'
+                    WHERE m3.note_id = m1.note_id) AS entity_count
+            FROM app.entity_mentions m1
+            JOIN app.entity_mentions m2
+              ON m2.note_id = m1.note_id AND m2.entity_id <> m1.entity_id
+            JOIN app.entities e ON e.id = m2.entity_id AND e.status <> 'merged'
+            JOIN app.notes n ON n.id = m1.note_id AND n.deleted_at IS NULL
+            WHERE m1.entity_id IN :ids
+            """
+        ).bindparams(bindparam("ids", expanding=True))
+        mention_sql = text(
+            """
+            SELECT DISTINCT m.note_id::text AS note_id,
+                   m.entity_id::text AS entity_id, n.created_at AS noted_at,
+                   n.domain_code AS domain
+            FROM app.entity_mentions m
+            JOIN app.notes n ON n.id = m.note_id AND n.deleted_at IS NULL
+            WHERE m.entity_id IN :ids
+            """
+        ).bindparams(bindparam("ids", expanding=True))
+
+        def ref_edge(r: Any, direction: Literal["out", "in"]) -> RefEdge:
+            return RefEdge(
+                src_id=r.src,
+                dst=EntityRef(id=r.dst, name=r.name, kind=r.kind, domain=r.domain_code),
+                predicate=r.predicate,
+                direction=direction,
+                recency=r.reported_at,
+            )
+
+        async with scoped_session(self._maker, ctx) as session:
+            root = (
+                await session.execute(
+                    text(
+                        "SELECT id::text, canonical_name, kind, domain_code"
+                        " FROM app.entities WHERE id = :id AND status <> 'merged'"
+                    ),
+                    {"id": str(eid)},
+                )
+            ).first()
+            if root is None:
+                return None
+
+            async def fetch(frontier: Sequence[str], hop: int) -> EdgeBatch:
+                params = {"ids": sorted(frontier)}
+                refs: tuple[RefEdge, ...] = ()
+                if kinds != "co-mentions":
+                    out_rows = (await session.execute(out_sql, params)).all()
+                    in_rows = (await session.execute(in_sql, params)).all()
+                    refs = tuple(ref_edge(r, "out") for r in out_rows) + tuple(
+                        ref_edge(r, "in") for r in in_rows
+                    )
+                co_mentions: tuple[CoMentionEdge, ...] = ()
+                if kinds != "relationships":
+                    co_rows = (await session.execute(co_sql, params)).all()
+                    co_mentions = tuple(
+                        CoMentionEdge(
+                            src_id=r.src,
+                            dst=EntityRef(id=r.dst, name=r.name, kind=r.kind, domain=r.domain_code),
+                            note_id=r.note_id,
+                            note_entity_count=r.entity_count,
+                            noted_at=r.noted_at,
+                        )
+                        for r in co_rows
+                    )
+                return EdgeBatch(refs=refs, co_mentions=co_mentions)
+
+            anchor = EntityRef(
+                id=root.id, name=root.canonical_name, kind=root.kind, domain=root.domain_code
+            )
+            entities = await traverse(
+                anchor,
+                fetch,
+                depth=hops,
+                per_hop_limit=per_hop_limit,
+                total_cap=total_cap,
+                hub_cap=hub_cap,
+            )
+            mention_rows = (
+                await session.execute(mention_sql, {"ids": sorted(e.id for e in entities)})
+            ).all()
+        notes = assemble_notes(
+            entities,
+            (NoteMention(r.note_id, r.entity_id, noted_at=r.noted_at) for r in mention_rows),
+            note_cap=note_cap,
+        )
+        # The note's domain rides along for the agent tool's source chips (the
+        # RLS-visible mention rows already carry it — no extra query).
+        note_domains = {r.note_id: r.domain for r in mention_rows}
+        return {
+            "anchor": root.id,
+            "depth": hops,
+            "entities": [
+                {
+                    "id": e.id,
+                    "name": e.name,
+                    "kind": e.kind,
+                    "domain": e.domain,
+                    "hop": e.hop,
+                    "path": e.path,
+                }
+                for e in entities
+            ],
+            "notes": [
+                {
+                    "note_id": n.note_id,
+                    "domain": note_domains[n.note_id],
+                    "hop": n.hop,
+                    "connects": list(n.connects),
+                }
+                for n in notes
+            ],
+        }
+
     async def entity_view(self, ctx: SessionContext, entity_id: str) -> dict[str, Any] | None:
         eid = _as_uuid(entity_id)
         if eid is None:
@@ -930,7 +1146,7 @@ class SqlAnalysisRepo:
                 return []
             statement = payload.get("statement")
             kind = payload.get("fact_kind")
-            decision = await decide_predicate(
+            suggestions = await decide_predicate(
                 session,
                 predicate=predicate,
                 statement=statement if isinstance(statement, str) else "",
@@ -938,7 +1154,7 @@ class SqlAnalysisRepo:
                 embedder=embedder,
                 k=k,
             )
-        return [{"name": n, "score": s} for n, s in decision.suggestions]
+        return [{"name": n, "score": s} for n, s in suggestions]
 
     async def resolve_review(
         self, ctx: SessionContext, item_id: str, action: str, payload: dict[str, Any]

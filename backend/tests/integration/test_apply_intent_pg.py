@@ -39,7 +39,7 @@ pytestmark = [
     pytest.mark.skipif(not docker_available(), reason="requires a Docker daemon"),
 ]
 
-_SURFACE = ConfidenceSignals(surface_attested=True, predicate_known=True, is_supersede=False)
+_SURFACE = ConfidenceSignals(surface_attested=True, is_supersede=False)
 
 
 def _pipeline(maker) -> AnalysisPipeline:  # noqa: F811
@@ -354,7 +354,7 @@ async def test_apply_intent_holds_below_threshold_fact_decide_would_commit(maker
     )
     # Inferred + low self-confidence + no surface signal → weight under the commit
     # threshold → held (below_threshold), not active.
-    plan = plan_intent(intent, signals={0: ConfidenceSignals(False, True, False)})
+    plan = plan_intent(intent, signals={0: ConfidenceSignals(False, False)})
     assert plan.to_review and not plan.to_commit
     await _run(maker, note_id, intent, plan, tmp_path=tmp_path)
 
@@ -552,7 +552,7 @@ async def test_reanalysis_promotes_a_held_edge_to_active_and_mints_reciprocal(ma
 
     # Run 1: below threshold → held, and a held edge mints no reciprocal.
     held_plan = plan_intent(
-        _intent(note_id, resolutions, facts), signals={0: ConfidenceSignals(False, True, False)}
+        _intent(note_id, resolutions, facts), signals={0: ConfidenceSignals(False, False)}
     )
     assert held_plan.to_review and not held_plan.to_commit
     await _run(maker, note_id, _intent(note_id, resolutions, facts), held_plan, tmp_path=tmp_path)
@@ -753,7 +753,7 @@ async def test_inference_card_renders_the_committed_coerced_value(maker, tmp_pat
     )
     # Inferred (not surface-attested): weight is capped to 0.6 < the 0.7 state
     # threshold, so the fact is held and an inference card is filed.
-    plan = plan_intent(intent, signals={0: ConfidenceSignals(False, True, False)})
+    plan = plan_intent(intent, signals={0: ConfidenceSignals(False, False)})
     await _run(maker, note_id, intent, plan, tmp_path=tmp_path)
 
     async with scoped_session(maker, SYSTEM_CTX) as session:

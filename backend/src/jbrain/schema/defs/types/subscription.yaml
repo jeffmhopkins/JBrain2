@@ -6,16 +6,13 @@ description: A recurring service agreement. Renewal is a recurrence token, not r
 vehicle: graph                          # 🔒 finance-scoped
 facets: [Named, Monetary, Temporal, Recurrence, Related, Lifecycle]
 default_fact_kind: state
-allow_open_predicates: false
 
+# plan/serviceType are tier-2 (prose-grade labels).
 predicates:
   - canonical_name: provider
     value_shape: ref
     range_type: organization
     kind: relationship
-  - canonical_name: plan
-    value_shape: text                   # "Family Premium"
-    kind: state
   - canonical_name: renewalDate
     value_shape: date
     kind: state
@@ -24,10 +21,6 @@ predicates:
     value_shape: ref
     range_type: financial_account
     kind: relationship
-  - canonical_name: serviceType         # "streaming", "gym", "news" — the kind of service
-    value_shape: scalar
-    kind: state
-    schema_org_ref: schema:serviceType
   - canonical_name: billingCycle        # the period unit; the RRULE freq in plain terms
     value_shape: enum
     enum_values: [daily, weekly, monthly, quarterly, semiannual, annual]
@@ -37,4 +30,4 @@ predicates:
 
 # Monetary.amount (🔒) is the price; Recurrence.recurrence carries the billing cycle.
 status_values: [active, paused, cancelled]
-display_name: [name]                    # else "<provider> <plan>"
+display_name: [name]                    # else "<provider>"

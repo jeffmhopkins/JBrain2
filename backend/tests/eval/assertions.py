@@ -11,6 +11,10 @@ regression hides:
 - predicates match after registry normalization (synonyms collapse).
 - a fact's `value` is checked against its value_json BARE datum, and value_json
   being None when a value was expected is the sentence-regression — a hard fail.
+
+A failure string prefixed "advisory:" is an ADVISORY-ONLY miss (the tightened
+`max_facts_advisory` bound landing uncalibrated): the runner reports it but
+never hard-fails the case on it, even when the case is otherwise a hard gate.
 """
 
 from __future__ import annotations
@@ -181,6 +185,11 @@ def check_case(case: Case, intent: IntegrationIntent, plan: ArbiterPlan) -> list
     # --- over-extraction bound ---
     if ex.max_facts is not None and len(intent.facts) > ex.max_facts:
         fails.append(f"too many facts: {len(intent.facts)} > max {ex.max_facts}")
+    if ex.max_facts_advisory is not None and len(intent.facts) > ex.max_facts_advisory:
+        fails.append(
+            f"advisory: facts {len(intent.facts)} > tightened bound {ex.max_facts_advisory}"
+            " (uncalibrated — reports only)"
+        )
 
     return fails
 
@@ -359,8 +368,25 @@ def check_case_db(case: Case, commit: DbCommit) -> list[str]:
                 f"expected review card {kind!r} for {pred!r} (>= {need} suggestions) missing"
             )
 
+    # --- review cards that must NOT be filed (tier-2 commits raw, card-free) ---
+    for spec in ex.absent_review_cards:
+        kind = spec.get("kind")
+        pred = spec.get("predicate")
+        hits = [
+            c
+            for c in commit.review_cards
+            if (kind is None or c.kind == kind) and (pred is None or _name_match(pred, c.predicate))
+        ]
+        if hits:
+            fails.append(f"forbidden review card filed: {spec} ({len(hits)} matched)")
+
     # --- over-extraction bound (committed facts this note wrote) ---
     if ex.max_facts is not None and len(commit.facts) > ex.max_facts:
         fails.append(f"too many committed facts: {len(commit.facts)} > max {ex.max_facts}")
+    if ex.max_facts_advisory is not None and len(commit.facts) > ex.max_facts_advisory:
+        fails.append(
+            f"advisory: committed facts {len(commit.facts)} > tightened bound"
+            f" {ex.max_facts_advisory} (uncalibrated — reports only)"
+        )
 
     return fails

@@ -6,12 +6,13 @@
 # an SSN, store last4 ONLY (same PCI discipline as financial_account).
 id: insurance_policy
 name: insurance_policy             # snake_case: no schema.org Coverage equivalent
-description: An insurance coverage; carrier, type, what it covers, premium, period.
+description: An insurance coverage; carrier, type, what it covers, who holds it.
 vehicle: graph                     # 🔒 finance-scoped
 facets: [Named, Monetary, ExternalIdentified, Temporal, Related, Lifecycle]
 default_fact_kind: state
-allow_open_predicates: false
 
+# premium/renewalDate are tier-2 (Monetary.amount is the declared money axis;
+# subscription keeps ITS renewalDate — the union declaration survives there).
 predicates:
   - canonical_name: insurer            # the carrier (Org ref)
     value_shape: ref
@@ -31,13 +32,6 @@ predicates:
     value_shape: ref
     range_type: person
     kind: relationship
-    functional: true
-  - canonical_name: premium            # 🔒 the recurring cost (Monetary.amount is the same money axis)
-    value_shape: quantity
-    kind: measurement
-  - canonical_name: renewalDate
-    value_shape: date
-    kind: state
     functional: true
 
 # identifier.policy_number from ExternalIdentified. Temporal.start/endDate = coverage interval.

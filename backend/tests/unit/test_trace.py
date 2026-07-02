@@ -64,7 +64,7 @@ def _rows(stage: dict) -> dict[str, str]:
 
 def test_trace_has_the_three_named_stages_in_order() -> None:
     fact = _fact()
-    sig = ConfidenceSignals(surface_attested=False, predicate_known=True, is_supersede=False)
+    sig = ConfidenceSignals(surface_attested=False, is_supersede=False)
     stages = _trace(fact, sig)["stages"]
     assert [s["key"] for s in stages] == ["extraction", "integration", "arbiter"]
     assert [s["name"] for s in stages] == ["Extraction", "Integration", "Arbiter"]
@@ -77,7 +77,7 @@ def test_inferred_below_threshold_shows_the_ceiling_arithmetic() -> None:
     # The screenshot case: an inferred attribute (self 0.85) capped at the 0.60
     # inferred ceiling, held because 0.60 < the 0.80 attribute threshold.
     fact = _fact(kind="attribute")
-    sig = ConfidenceSignals(surface_attested=False, predicate_known=True, is_supersede=False)
+    sig = ConfidenceSignals(surface_attested=False, is_supersede=False)
     arb = _rows([s for s in _trace(fact, sig)["stages"] if s["key"] == "arbiter"][0])
     assert arb["surface_attested"] == "false"
     assert arb["ceiling"] == "0.60"
@@ -88,7 +88,7 @@ def test_inferred_below_threshold_shows_the_ceiling_arithmetic() -> None:
 
 def test_surface_attested_fact_takes_the_full_ceiling() -> None:
     fact = _fact(kind="attribute", inferred=False)
-    sig = ConfidenceSignals(surface_attested=True, predicate_known=True, is_supersede=False)
+    sig = ConfidenceSignals(surface_attested=True, is_supersede=False)
     arb = _rows([s for s in _trace(fact, sig)["stages"] if s["key"] == "arbiter"][0])
     assert arb["ceiling"] == "1.00"
     assert arb["weight"] == "1.00 (surface-attested → full ceiling)"
@@ -96,7 +96,7 @@ def test_surface_attested_fact_takes_the_full_ceiling() -> None:
 
 def test_integration_stage_carries_resolution_and_supersession() -> None:
     fact = _fact()
-    sig = ConfidenceSignals(surface_attested=False, predicate_known=True, is_supersede=True)
+    sig = ConfidenceSignals(surface_attested=False, is_supersede=True)
     integ = _rows(
         [
             s
@@ -117,14 +117,14 @@ def test_integration_stage_carries_resolution_and_supersession() -> None:
 
 def test_qualifier_is_shown_on_the_predicate_edge() -> None:
     fact = _fact(predicate="name.nickname", qualifier="kids", value_json={"value": "Dad"})
-    sig = ConfidenceSignals(surface_attested=True, predicate_known=True, is_supersede=False)
+    sig = ConfidenceSignals(surface_attested=True, is_supersede=False)
     integ = _rows([s for s in _trace(fact, sig)["stages"] if s["key"] == "integration"][0])
     assert integ["predicate"] == "name.nickname.kids"
 
 
 def test_missing_resolution_reads_unresolved() -> None:
     fact = _fact()
-    sig = ConfidenceSignals(surface_attested=False, predicate_known=False, is_supersede=False)
+    sig = ConfidenceSignals(surface_attested=False, is_supersede=False)
     integ = _rows(
         [s for s in _trace(fact, sig, resolution=None)["stages"] if s["key"] == "integration"][0]
     )

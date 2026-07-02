@@ -92,5 +92,16 @@
                  "facts": [{ "predicate": "jobTitle", "qualifier": "", "kind": "state", "assertion": "asserted", "value": "cardiologist", "valid_from": null }] },
                 { "id": "ent-smith-dent", "name": "Dr. Amy Smith", "kind": "Person", "aliases": ["Dr. Smith"],
                  "facts": [{ "predicate": "jobTitle", "qualifier": "", "kind": "state", "assertion": "asserted", "value": "dentist", "valid_from": null }] }],
-    "gold": { "ambiguous": ["Dr. Smith"] } }
+    "gold": { "ambiguous": ["Dr. Smith"] } },
+
+  { "name": "reflective_note_is_not_inflated",
+    "note_text": "Quiet Sunday. Made dinner with my wife Celine, then spent the evening baking sourdough again — I keep telling myself to make it a weekly ritual, and to finally plan that Portland trip for the fall. Felt calmer than I have in weeks.",
+    "mentions": [{ "name": "Me", "kind": "Person", "surface": "I" },
+                 { "name": "Celine", "kind": "Person", "surface": "my wife Celine" }],
+    "facts": [{ "entity_ref": "Me", "predicate": "spouse", "qualifier": "", "kind": "relationship",
+                "statement": "Celine is my wife.", "value_json": null, "assertion": "asserted",
+                "object_entity_ref": "Celine" }],
+    "owner": { "id": "ent-owner", "name": "Jeff Hopkins", "kind": "Person", "facts": [] },
+    "others": [{ "id": "ent-celine", "name": "Celine Hopkins", "kind": "Person", "aliases": ["Celine"], "facts": [] }],
+    "gold": { "resolve_existing": { "Me": "ent-owner", "Celine": "ent-celine" }, "max_facts": 3 } }
 ]

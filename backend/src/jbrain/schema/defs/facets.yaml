@@ -144,6 +144,8 @@ facets:
         schema_org_ref: schema:status
 
   Contactable:
+    # `url` is tier-2 (a webpage link is prose-grade; appointment.onlineUrl and
+    # document.contentUrl stay declared as their own spellings).
     description: Contact points. 🔒 general; accumulate.
     predicates:
       - canonical_name: email
@@ -154,10 +156,6 @@ facets:
         value_shape: scalar
         kind: state
         schema_org_ref: schema:telephone
-      - canonical_name: url
-        value_shape: scalar
-        kind: attribute
-        schema_org_ref: schema:url
 
   Related:
     description: >-

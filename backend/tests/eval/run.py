@@ -11,11 +11,11 @@ testcontainer and asserts on the COMMITTED graph (dispositions, supersession
 closure, resolve-to-existing, domain floors) — same two Grok calls, more gate.
 Needs Docker. The graph is reset between cases so they don't contaminate.
 
-`--canon` (implies --db) additionally turns predicate canonicalization ON: it
-seeds + embeds the canonical_predicates index (the real bootstrap job) and runs
-the requires_canon cases (drift→STRONG rewrite, novel→cold card, near-miss→WEAK
-card). Needs the TEI embed container up as well as Docker + Grok — the Phase-4
-band-calibration run.
+`--canon` (implies --db) additionally seeds + embeds the canonical_predicates
+index (the real bootstrap job) and runs the durable predicate-alias collapse
+before the arbiter, plus any requires_canon cases (alias-collapse/drift
+coverage — cards never file; long-tail commits raw either way). Needs the TEI
+embed container up as well as Docker + Grok.
 """
 
 from __future__ import annotations
@@ -56,11 +56,15 @@ async def _evaluate(
         except Exception as exc:  # noqa: BLE001 - the eval surfaces whatever happens
             fails = [f"RAISED {type(exc).__name__}: {exc}"]
         advisory = case.advisory_for(db=db)
-        tag = "ADVISORY" if advisory else ("FAIL" if fails else "PASS")
-        if fails and advisory:
-            advisory_failed.append(case.id)
-        elif fails:
+        # "advisory:"-prefixed failures are uncalibrated tightened bounds
+        # (max_facts_advisory): they report and count as advisory misses even
+        # when the case itself is a hard gate.
+        hard = [] if advisory else [f for f in fails if not f.startswith("advisory:")]
+        tag = "FAIL" if hard else ("ADVISORY" if (advisory or fails) else "PASS")
+        if hard:
             failed.append(case.id)
+        elif fails:
+            advisory_failed.append(case.id)
         marker = "ok " if not fails else "XX "
         print(f"{marker}[{tag:8}] {case.id} ({case.category})")
         for f in fails:
@@ -98,8 +102,9 @@ async def _db_loop(cases: list[Case], app_url: str, tmp: str, reset, *, canon: b
     embedder = None
     embed_model = ""
     if canon:
-        # Real embeddings + the predicate_canonicalization setting ON, and seed the
-        # canonical index once via the real bootstrap job (needs the TEI container).
+        # Real embeddings + the canonical index seeded once via the real bootstrap
+        # job (needs the TEI container). The setting now gates only the held-fact
+        # suggestion picker; --canon exercises the alias collapse + that picker.
         from jbrain.embed import PredicateEmbedder, TeiEmbedClient
         from jbrain.queue import SYSTEM_CTX
         from jbrain.settings_store import PREDICATE_CANON_KEY, SqlSettingsStore
@@ -110,8 +115,10 @@ async def _db_loop(cases: list[Case], app_url: str, tmp: str, reset, *, canon: b
         await PredicateEmbedder(maker, embedder, embed_model).sync_predicates({})
 
     debug = bool(os.environ.get("JBRAIN_EVAL_DEBUG"))
+    facts_total = 0  # corpus-total committed facts — the "leaner" before/after metric
 
     async def run_one(case: Case) -> list[str]:
+        nonlocal facts_total
         reset()
         commit = await run_case_db(
             router,
@@ -122,6 +129,7 @@ async def _db_loop(cases: list[Case], app_url: str, tmp: str, reset, *, canon: b
             embed_model=embed_model,
             canonicalize=canon,
         )
+        facts_total += len(commit.facts)
         if debug:
             for f in commit.facts:
                 obj = f" -> {f.object_name}" if f.object_name else ""
@@ -133,6 +141,9 @@ async def _db_loop(cases: list[Case], app_url: str, tmp: str, reset, *, canon: b
 
     try:
         code = await _evaluate(cases, run_one, db=True)
+        # The fact-volume comparison for the refocus plan's acceptance criterion 3:
+        # run before/after a prompt change and compare this line.
+        print(f"corpus-total committed facts: {facts_total}")
         _print_cost(tally, db=True)
         return code
     finally:
@@ -163,8 +174,8 @@ def run_db_mode(args: list[str]) -> int:
     canon = "--canon" in args
     cases = _selected(args)
     if not canon:
-        # canon-only cases (drift/novel/near-miss) need predicate canonicalization
-        # live; they never file their cards without it, so skip them otherwise.
+        # requires_canon cases assert alias-collapse behavior that only runs
+        # with the collapse enabled, so skip them otherwise.
         cases = [c for c in cases if not c.requires_canon]
     with pgvector_container() as pg, tempfile.TemporaryDirectory() as tmp:
         admin = sqlalchemy.create_engine(
@@ -214,12 +225,16 @@ async def main() -> int:
     cases = [c for c in _selected(sys.argv[1:]) if not c.requires_canon]
     tally = _Tally()
     router = build_router(settings, recorder=tally)
+    facts_total = 0  # corpus-total proposed facts — the intent-mode leaner metric
 
     async def run_one_intent(case: Case) -> list[str]:
+        nonlocal facts_total
         intent, plan = await run_case(router, case)
+        facts_total += len(intent.facts)
         return check_case(case, intent, plan)
 
     code = await _evaluate(cases, run_one_intent)
+    print(f"corpus-total intent facts: {facts_total}")
     _print_cost(tally, db=False)
     return code
 
