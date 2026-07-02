@@ -797,9 +797,13 @@ for (let i = 0; i < 220; i++) {
 const STREAM_COL = { in: '#c2d6ea', out: '#c9e6cf' };      // glyph tint (steel / green)
 const LLM_FIL = { in: new THREE.Color('#7FA7C9'), out: new THREE.Color('#8FBC9A') };
 const LLM_BR = 15;        // world radius at the brain edge where a stream connects
-const LLM_REACH = 24;     // fixed world length of the tendril the text FLOWS across
+const LLM_REACH = 22;     // world length of the visible filament (brain edge -> screen edge)
 const LLM_STEP = 0.9;     // world units between glyphs — fixed, so short text stays tight
 const LLM_CAP = 34;       // glyphs carried on the tendril (the popup holds the full answer)
+// Flow endpoints (world dist from centre): an answer emerges from the net and runs OFF the
+// right edge (FAR_OUT, well past the ~36 visible half-width); a prompt enters from off the
+// left edge (FAR_IN) and travels deep INTO the net (DEEP, near the core) before dissolving.
+const LLM_FAR_OUT = 50, LLM_FAR_IN = 40, LLM_DEEP = 2;
 const LLM_MAX = 6, LLM_SEG = 26;
 const llmStreams = [];
 for (let i = 0; i < LLM_MAX; i++) llmStreams.push({ active: false });
@@ -824,8 +828,9 @@ function spawnLlmStream(dir, text) {         // dir: 'in' (prompt) | 'out' (answ
   st.yb = (Math.random() - 0.5) * 20;               // vertical lane (kept on-screen)
   st.zb = (Math.random() - 0.5) * 6;
   st.bow = (2 + Math.random() * 3) * (Math.random() < 0.5 ? -1 : 1);  // gentle arc
-  // life sized so the whole message flows across the fixed tendril at a readable pace
-  st.life = 3.0 + (LLM_REACH + st.L * LLM_STEP) * 0.12;
+  // life sized so the whole message flows across (net edge -> off screen / into the core)
+  // at a readable pace
+  st.life = 2.6 + (LLM_REACH + st.L * LLM_STEP) * 0.10;
 }
 
 // World point at distance `d` from centre along a stream (a gentle sine bow in y).
@@ -835,13 +840,19 @@ function llmPointAt(st, d, out) {
   return out.set(s * d, st.yb + Math.sin(Math.PI * t) * st.bow, st.zb);
 }
 // Distance-from-centre for glyph `i` at progress `p`. The whole legible block FLOWS
-// along the tendril (order preserved: char 0 always reads leftmost). A prompt flows
-// from the far left INTO the brain; an answer flows OUT of the brain to the right.
+// (order preserved: char 0 always reads leftmost). An answer emerges from the net edge
+// and its leading edge runs out to FAR_OUT (off the right); a prompt enters from FAR_IN
+// (off the left) and its leading edge travels in to DEEP (the core), both fully clearing.
 function llmGlyphDist(st, i, p) {
-  const L = st.L, block = (L - 1) * LLM_STEP, total = LLM_REACH + block;
-  return st.dir === 'out'
-    ? (LLM_BR - block) + p * total + i * LLM_STEP
-    : (LLM_BR - block) + (1 - p) * total + (L - 1 - i) * LLM_STEP;
+  const L = st.L, block = (L - 1) * LLM_STEP;
+  if (st.dir === 'out') {
+    // char 0 (trailing) runs from just inside the net edge out to FAR_OUT
+    const d0 = (LLM_BR - block) + p * (LLM_FAR_OUT - (LLM_BR - block));
+    return d0 + i * LLM_STEP;
+  }
+  // char L-1 (leading, nearest the net) runs from FAR_IN in to DEEP; char 0 trails it
+  const dLead = LLM_FAR_IN + p * ((LLM_DEEP - block) - LLM_FAR_IN);
+  return dLead + (L - 1 - i) * LLM_STEP;
 }
 
 function updateLlmStreams(dt) {               // filament geometry — runs before render
@@ -880,7 +891,6 @@ function updateLlmStreams(dt) {               // filament geometry — runs befo
 
 function updateStreamText() {                 // project + flow glyphs — runs after render
   const W = window.innerWidth, H = window.innerHeight;
-  const A0 = LLM_BR, A1 = LLM_BR + LLM_REACH;
   let idx = 0;
   for (const st of llmStreams) {
     if (!st.active || !st.text) continue;
@@ -890,7 +900,14 @@ function updateStreamText() {                 // project + flow glyphs — runs 
     const col = STREAM_COL[st.dir];
     for (let i = 0; i < L && idx < CHAR_POOL.length; i++) {
       const d = llmGlyphDist(st, i, p);
-      if (d < A0 - 1 || d > A1 + 1) continue;                 // off the tendril -> not shown
+      if (d < LLM_DEEP - 3 || d > LLM_FAR_OUT + 2) continue;   // fully past either end
+      // Dissolve near whichever end the flow terminates at: an answer fades in as it
+      // clears the net edge and off at the far right; a prompt fades in as it enters
+      // from the left and dissolves as it reaches deep into the core.
+      const fade = st.dir === 'out'
+        ? Math.min(1, (d - (LLM_BR - 4)) / 5) * Math.min(1, (LLM_FAR_OUT - d) / 7)
+        : Math.min(1, (LLM_FAR_IN - d) / 7) * Math.min(1, (d - LLM_DEEP) / 5);
+      if (fade <= 0) continue;
       llmPointAt(st, d, _lp).project(camera);
       if (_lp.z > 1) continue;                                // behind the camera
       llmPointAt(st, d + 0.7, _lp2).project(camera);          // a nearby point -> screen tangent
@@ -898,12 +915,11 @@ function updateStreamText() {                 // project + flow glyphs — runs 
       const tx = (_lp2.x*0.5 + 0.5) * W, ty = (-_lp2.y*0.5 + 0.5) * H;
       let ang = Math.atan2(ty - sy, tx - sx);                 // tangent runs along +d
       if (st.dir === 'in') ang += Math.PI;                    // ...but a prompt reads toward -d
-      const edge = Math.min(1, (d - A0) / 2.5) * Math.min(1, (A1 - d) / 2.5);   // fade at the ends
       const s = CHAR_POOL[idx++];
       const ch = text[i];
       s.textContent = ch === ' ' ? ' ' : ch;
       s.style.color = col;
-      s.style.opacity = (Math.max(0, genv) * clamp(edge, 0, 1)).toFixed(3);
+      s.style.opacity = (Math.max(0, genv) * clamp(fade, 0, 1)).toFixed(3);
       s.style.transform = `translate(-50%,-50%) translate(${sx.toFixed(1)}px,${sy.toFixed(1)}px) rotate(${ang.toFixed(3)}rad)`;
       s.style.display = '';
     }
