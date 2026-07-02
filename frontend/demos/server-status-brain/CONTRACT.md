@@ -18,6 +18,12 @@ window.ServerBrain.stopSimulator(): void
 window.ServerBrain.webSearch(): void     // cyan probe fan, one returns a result
 window.ServerBrain.webFetch(): void      // amber filament, sustained inward stream
 
+// LLM turn (opt-in real-text streaming; gated server-side on the brain_llm_stream
+// setting). The prompt streams IN along a steel tendril; the answer streams OUT along a
+// green one, then blooms a fade-out popup so the finished answer is legible for a beat.
+window.ServerBrain.llmInput(text: string): void
+window.ServerBrain.llmOutput(text: string): void
+
 // Demo helpers the on-screen controls call (so reactivity is visible):
 window.ServerBrain.spikeGPU(): void     // force a GPU saturation burst
 window.ServerBrain.burstLLM(): void      // force an LLM inference burst
@@ -64,7 +70,11 @@ window.ServerBrain.injectError(): void   // force an API error blip
   },
   events: [                   // external tool calls since the last push; drained
     { kind: 'web_search', ts: 1719772800000 },  // -> ServerBrain.webSearch()
-    { kind: 'web_fetch',  ts: 1719772800000 }   // -> ServerBrain.webFetch()
+    { kind: 'web_fetch',  ts: 1719772800000 },  // -> ServerBrain.webFetch()
+    // opt-in LLM text (present only when brain_llm_stream is on) — `text` is the real
+    // prompt / answer, truncated to a display excerpt:
+    { kind: 'llm_input',  text: '…', ts: 1719772800000 },  // -> ServerBrain.llmInput(text)
+    { kind: 'llm_output', text: '…', ts: 1719772800000 }   // -> ServerBrain.llmOutput(text)
   ]
 }
 ```

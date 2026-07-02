@@ -330,6 +330,42 @@ def test_chat_streams_text_then_done(
     ]
 
 
+def test_chat_streams_llm_text_to_the_wall_display_when_enabled(
+    client: TestClient,
+    repo: FakeAuthRepo,
+    sessions_store: FakeAgentSessions,
+) -> None:
+    # With the brain_llm_stream setting ON, the turn fires the real prompt IN at start
+    # and the real answer OUT at settle to the on-box display emitter (opt-in owner text).
+    login(client, repo)
+    sessions_store.add(AgentSessionInfo("sess-1", "", "active", ("general",), (), NOW, NOW))
+    client.app.state.settings_store.values["brain_llm_stream"] = True  # type: ignore[attr-defined]
+    calls: list[tuple[str, str | None]] = []
+    client.app.state.brain_emit = lambda kind, text=None: calls.append((kind, text))  # type: ignore[attr-defined]
+
+    resp = client.post("/api/chat", json={"session_id": "sess-1", "message": "what do I know?"})
+    assert resp.status_code == 200
+    _ = resp.text  # drain the stream so the detached turn settles
+    assert calls == [("llm_input", "what do I know?"), ("llm_output", "hi there")]
+
+
+def test_chat_does_not_stream_llm_text_when_disabled(
+    client: TestClient,
+    repo: FakeAuthRepo,
+    sessions_store: FakeAgentSessions,
+) -> None:
+    # Default OFF: no owner text ever reaches the unauthenticated display.
+    login(client, repo)
+    sessions_store.add(AgentSessionInfo("sess-1", "", "active", ("general",), (), NOW, NOW))
+    calls: list[tuple[str, str | None]] = []
+    client.app.state.brain_emit = lambda kind, text=None: calls.append((kind, text))  # type: ignore[attr-defined]
+
+    resp = client.post("/api/chat", json={"session_id": "sess-1", "message": "hi"})
+    assert resp.status_code == 200
+    _ = resp.text
+    assert calls == []
+
+
 def test_chat_persists_the_turns_context_fill(
     client: TestClient,
     repo: FakeAuthRepo,

@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { isLocationCaptureEnabled } from "../location";
 import { SettingsScreen } from "./SettingsScreen";
@@ -10,7 +10,7 @@ function setup() {
 // The screen loads the server-synced settings on mount; a stateful stub
 // makes GET/PUT round-trip like the real /api/settings.
 function stubSettingsFetch(initial: "full" | "ocr" = "full") {
-  const state = { mode: initial };
+  const state = { mode: initial, brainStream: false };
   const puts: unknown[] = [];
   const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
     const path = String(input);
@@ -44,14 +44,18 @@ function stubSettingsFetch(initial: "full" | "ocr" = "full") {
       throw new Error(`Unexpected fetch: ${path}`);
     }
     if ((init?.method ?? "GET").toUpperCase() === "PUT") {
-      const body = JSON.parse(String(init?.body)) as { image_analysis_mode?: "full" | "ocr" };
+      const body = JSON.parse(String(init?.body)) as {
+        image_analysis_mode?: "full" | "ocr";
+        brain_llm_stream?: boolean;
+      };
       puts.push(body);
       if (body.image_analysis_mode) state.mode = body.image_analysis_mode;
+      if (typeof body.brain_llm_stream === "boolean") state.brainStream = body.brain_llm_stream;
     }
-    return new Response(JSON.stringify({ image_analysis_mode: state.mode }), {
-      status: 200,
-      headers: { "Content-Type": "application/json" },
-    });
+    return new Response(
+      JSON.stringify({ image_analysis_mode: state.mode, brain_llm_stream: state.brainStream }),
+      { status: 200, headers: { "Content-Type": "application/json" } },
+    );
   });
   vi.stubGlobal("fetch", fetchMock);
   return { puts, state };
@@ -76,7 +80,8 @@ describe("SettingsScreen capture location", () => {
 
   it("persists off across remounts via localStorage", () => {
     setup();
-    fireEvent.click(screen.getByRole("button", { name: "Off" }));
+    const group = within(screen.getByLabelText("Capture location"));
+    fireEvent.click(group.getByRole("button", { name: "Off" }));
     expect(localStorage.getItem("jbrain.captureLocation")).toBe("off");
     expect(isLocationCaptureEnabled()).toBe(false);
   });
@@ -84,9 +89,24 @@ describe("SettingsScreen capture location", () => {
   it("persists turning it back on", () => {
     localStorage.setItem("jbrain.captureLocation", "off");
     setup();
-    fireEvent.click(screen.getByRole("button", { name: "On" }));
+    const group = within(screen.getByLabelText("Capture location"));
+    fireEvent.click(group.getByRole("button", { name: "On" }));
     expect(localStorage.getItem("jbrain.captureLocation")).toBe("on");
     expect(isLocationCaptureEnabled()).toBe(true);
+  });
+});
+
+describe("SettingsScreen stream-LLM-to-wall-display toggle", () => {
+  it("defaults to Off and enables on tap (PUTs brain_llm_stream: true)", async () => {
+    const { puts } = stubSettingsFetch();
+    setup();
+    const group = within(screen.getByLabelText("Stream LLM to wall display"));
+    // Server answered Off (owner text stays off the unauthenticated display by default).
+    await waitFor(() =>
+      expect(group.getByRole("button", { name: "Off" })).toHaveAttribute("aria-pressed", "true"),
+    );
+    fireEvent.click(group.getByRole("button", { name: "On" }));
+    await waitFor(() => expect(puts).toContainEqual({ brain_llm_stream: true }));
   });
 });
 

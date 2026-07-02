@@ -321,6 +321,10 @@ export interface AppSettings {
   // unset. Server-rendered times (the agent's appointment prose) localize to it
   // so they match the cards the client localizes to the browser zone.
   owner_timezone: string | null;
+  // Stream real prompt/answer text to the on-box wall display (:8800). OFF by
+  // default — it puts owner text on the unauthenticated display, so only turn it on
+  // for a display bound to the box's own monitor / localhost.
+  brain_llm_stream: boolean;
 }
 
 /** The read-only appointments ICS feed: enabled state + the URL token (owner-only). */

@@ -48,21 +48,35 @@ def test_get_settings_defaults_to_full_analysis(
     client: tuple[TestClient, FakeSettingsStore],
 ) -> None:
     c, _ = client
-    # No row yet: the default is full analysis [decided]; timezone is unset (UTC).
-    assert c.get("/api/settings").json() == {"image_analysis_mode": "full", "owner_timezone": None}
+    # No row yet: the default is full analysis [decided]; timezone is unset (UTC);
+    # LLM wall-display streaming is off (owner text stays off the display by default).
+    assert c.get("/api/settings").json() == {
+        "image_analysis_mode": "full",
+        "owner_timezone": None,
+        "brain_llm_stream": False,
+    }
 
 
 def test_put_settings_round_trips_the_mode(client: tuple[TestClient, FakeSettingsStore]) -> None:
     c, store = client
     resp = c.put("/api/settings", json={"image_analysis_mode": "ocr"})
     assert resp.status_code == 200
-    assert resp.json() == {"image_analysis_mode": "ocr", "owner_timezone": None}
+    assert resp.json() == {
+        "image_analysis_mode": "ocr",
+        "owner_timezone": None,
+        "brain_llm_stream": False,
+    }
     assert store.values["image_analysis_mode"] == "ocr"
-    assert c.get("/api/settings").json() == {"image_analysis_mode": "ocr", "owner_timezone": None}
+    assert c.get("/api/settings").json() == {
+        "image_analysis_mode": "ocr",
+        "owner_timezone": None,
+        "brain_llm_stream": False,
+    }
 
     assert c.put("/api/settings", json={"image_analysis_mode": "full"}).json() == {
         "image_analysis_mode": "full",
         "owner_timezone": None,
+        "brain_llm_stream": False,
     }
 
 
@@ -72,8 +86,37 @@ def test_put_settings_round_trips_the_timezone(
     c, store = client
     resp = c.put("/api/settings", json={"owner_timezone": "America/New_York"})
     assert resp.status_code == 200
-    assert resp.json() == {"image_analysis_mode": "full", "owner_timezone": "America/New_York"}
+    assert resp.json() == {
+        "image_analysis_mode": "full",
+        "owner_timezone": "America/New_York",
+        "brain_llm_stream": False,
+    }
     assert store.values["owner_timezone"] == "America/New_York"
+
+
+def test_put_settings_round_trips_brain_llm_stream(
+    client: tuple[TestClient, FakeSettingsStore],
+) -> None:
+    c, store = client
+    # Off by default; an explicit enable persists and round-trips true, then off again.
+    resp = c.put("/api/settings", json={"brain_llm_stream": True})
+    assert resp.status_code == 200
+    assert resp.json()["brain_llm_stream"] is True
+    assert store.values["brain_llm_stream"] is True
+    assert c.get("/api/settings").json()["brain_llm_stream"] is True
+    off = c.put("/api/settings", json={"brain_llm_stream": False})
+    assert off.json()["brain_llm_stream"] is False
+
+
+def test_put_settings_rejects_non_bool_brain_llm_stream(
+    client: tuple[TestClient, FakeSettingsStore],
+) -> None:
+    c, store = client
+    # A non-boolean that pydantic can't coerce to a bool is a 422 — a junk value must
+    # never land as an enable (the display carries owner text only on a real `true`).
+    assert c.put("/api/settings", json={"brain_llm_stream": "maybe"}).status_code == 422
+    assert c.put("/api/settings", json={"brain_llm_stream": [1]}).status_code == 422
+    assert "brain_llm_stream" not in store.values
 
 
 def test_put_settings_rejects_an_unknown_timezone(
@@ -101,4 +144,5 @@ def test_put_settings_with_empty_patch_changes_nothing(
     assert c.put("/api/settings", json={}).json() == {
         "image_analysis_mode": "ocr",
         "owner_timezone": None,
+        "brain_llm_stream": False,
     }

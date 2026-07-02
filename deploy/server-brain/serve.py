@@ -276,7 +276,21 @@ def drain_events() -> list:
     return out[-20:]   # never flood the page with a huge backlog
 
 
-_demo_state = {"search": 0.0, "fetch": 0.0}
+_demo_state = {"search": 0.0, "fetch": 0.0, "llm_in": 0.0, "llm_out": 0.0}
+# Content-free synthetic text for the demo LLM tendrils (no owner data — this path
+# never sees a real turn), so `BRAIN_DEMO=1` shows the streaming-text + popup effect.
+_DEMO_PROMPTS = (
+    "what did I note about the roof warranty last spring?",
+    "summarize this week's running mileage and how it trended",
+    "when is my next dentist appointment and who is it with?",
+    "draft a reply to the landlord about the lease renewal",
+)
+_DEMO_ANSWERS = (
+    "The warranty runs 20 years from the March install and covers workmanship.",
+    "You logged 24.6 miles across four runs — up ~15% on last week.",
+    "Next up: Dr. Alvarez, Thursday 9:40am, for a routine cleaning.",
+    "Confirmed you'll renew at the current rate; asked to fix the porch light first.",
+)
 
 
 def _demo_snapshot() -> dict:
@@ -296,6 +310,15 @@ def _demo_snapshot() -> dict:
     if t - _demo_state["fetch"] > 14:
         _demo_state["fetch"] = t
         events.append({"kind": "web_fetch", "ts": int(t * 1000)})
+    # A synthetic turn: the prompt streams in, then ~5s later the answer streams out.
+    if t - _demo_state["llm_in"] > 11:
+        _demo_state["llm_in"] = t
+        i = int(t / 11) % len(_DEMO_PROMPTS)
+        events.append({"kind": "llm_input", "text": _DEMO_PROMPTS[i], "ts": int(t * 1000)})
+    if _demo_state["llm_in"] and 5 < t - _demo_state["llm_in"] < 6.5 and t - _demo_state["llm_out"] > 4:
+        _demo_state["llm_out"] = t
+        i = int(_demo_state["llm_in"] / 11) % len(_DEMO_ANSWERS)
+        events.append({"kind": "llm_output", "text": _DEMO_ANSWERS[i], "ts": int(t * 1000)})
     return _shape(util, mem, power, temp, load=util * 6, uptime_h=72.0,
                   net_in=net_in, net_out=net_out, disk_read=disk_read,
                   events=events + _drain_posted())
@@ -379,13 +402,16 @@ class Handler(BaseHTTPRequestHandler):
             self._send(404, b"not found", "text/plain")
 
     def do_POST(self) -> None:  # noqa: N802
-        # The JBrain2 agent POSTs {"kind": "web_search"|"web_fetch"} here when it
-        # runs a web tool; we queue it for the next /stats drain (-> a tendril).
+        # The JBrain2 agent POSTs here when it runs a web tool
+        # ({"kind": "web_search"|"web_fetch"} — content-free) or, when the owner has
+        # opted in, an LLM turn ({"kind": "llm_input"|"llm_output", "text": ...} —
+        # the real prompt/answer text). We queue it for the next /stats drain (-> a
+        # tendril; the llm kinds stream their text along it + fade an answer popup).
         if self.path.split("?", 1)[0] != "/event":
             self._send(404, b"not found", "text/plain")
             return
         try:
-            n = min(int(self.headers.get("Content-Length", 0)), 4096)
+            n = min(int(self.headers.get("Content-Length", 0)), 8192)
             ev = json.loads(self.rfile.read(n) if n > 0 else b"{}")
         except (ValueError, OSError):
             self._send(400, b"bad request", "text/plain")
@@ -394,6 +420,13 @@ class Handler(BaseHTTPRequestHandler):
         if kind in ("web_search", "web_fetch"):
             with _posted_lock:
                 _posted.append({"kind": kind, "ts": int(time.time() * 1000)})
+            self._send(204, b"", "text/plain")
+        elif kind in ("llm_input", "llm_output"):
+            # Bound the text on our side too — a truncated excerpt is all the wall shows.
+            text = ev.get("text")
+            text = text[:600] if isinstance(text, str) else ""
+            with _posted_lock:
+                _posted.append({"kind": kind, "text": text, "ts": int(time.time() * 1000)})
             self._send(204, b"", "text/plain")
         else:
             self._send(400, b"unknown kind", "text/plain")

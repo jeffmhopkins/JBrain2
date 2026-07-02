@@ -10,8 +10,7 @@ the on-box SearXNG client and the URL fetcher; they surface no NoteSources (a we
 result is not an owner note).
 """
 
-from collections.abc import Callable
-
+from jbrain.agent.brainevents import BrainEmit
 from jbrain.agent.contracts import WebSource
 from jbrain.agent.loop import ToolContext, ToolHandler, ToolOutput
 from jbrain.web.fetch import WebFetcher, WebFetchError
@@ -23,7 +22,7 @@ _MAX_LIMIT = 10
 def build_web_handlers(
     search: SearxngClient,
     fetcher: WebFetcher,
-    emit: Callable[[str], None] | None = None,
+    emit: BrainEmit | None = None,
 ) -> dict[str, ToolHandler]:
     """`emit(kind)`, if given, fires a best-effort wall-display tendril event the
     moment jerv reaches out to the web (see jbrain.agent.brainevents)."""

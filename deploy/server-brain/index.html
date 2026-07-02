@@ -44,6 +44,41 @@
       rgba(0,0,0,0) 38%, rgba(7,8,9,0.55) 78%, rgba(5,6,7,0.92) 100%);
   }
 
+  /* LLM tendril text — individual glyphs projected onto the tendril path each frame.
+     Absolutely positioned by transform (translate) in updateStreamText(); above the
+     canvas/vignette, below the panels. */
+  #stream { position: fixed; inset: 0; z-index: 2; pointer-events: none; }
+  #stream .ch {
+    position: absolute; left: 0; top: 0; will-change: transform, opacity;
+    font: 600 12px/1 ui-monospace, "SF Mono", Menlo, monospace;
+    letter-spacing: 0.02em; white-space: pre;
+    text-shadow: 0 0 6px currentColor, 0 0 12px currentColor;
+  }
+
+  /* Final-answer popups — appear at a random spot, breathe in, hold, fade out. */
+  #popups { position: fixed; inset: 0; z-index: 4; pointer-events: none; }
+  #popups .popup {
+    position: absolute; max-width: min(30ch, 34vw);
+    padding: 9px 13px; border-radius: 11px;
+    background: rgba(20,22,26,0.78); border: 1px solid rgba(143,188,154,0.32);
+    box-shadow: 0 6px 26px rgba(0,0,0,0.5), 0 0 22px rgba(143,188,154,0.16);
+    color: #E6E7E9; font-size: 13px; line-height: 1.34; letter-spacing: 0.01em;
+    backdrop-filter: blur(3px); opacity: 0; transform: translateY(6px) scale(0.96);
+    animation: popupLife 7.5s ease-in-out forwards;
+  }
+  #popups .popup::before {
+    content: "↳ answer"; display: block; margin-bottom: 3px;
+    font-size: 9px; letter-spacing: 0.16em; text-transform: uppercase;
+    color: #8FBC9A; opacity: 0.75;
+  }
+  @keyframes popupLife {
+    0%   { opacity: 0; transform: translateY(6px) scale(0.96); }
+    9%   { opacity: 1; transform: translateY(0) scale(1); }
+    74%  { opacity: 1; transform: translateY(0) scale(1); }
+    100% { opacity: 0; transform: translateY(-10px) scale(0.99); }
+  }
+  body.ui-idle #popups .popup { /* keep answers visible even when panels fade */ }
+
   .panel {
     position: fixed; z-index: 3;
     background: rgba(20,21,24,0.62);
@@ -155,6 +190,8 @@
 <body>
   <div id="scene"></div>
   <div id="vignette"></div>
+  <div id="stream"></div>
+  <div id="popups"></div>
 
   <div id="title" class="panel">
     <div class="brand">JBrain<span style="color:var(--steel)">2</span></div>
@@ -182,6 +219,8 @@
     <div class="leg"><span class="sw dot" style="background:var(--amber);box-shadow:0 0 8px var(--amber)"></span><span><b>Bloom / heat</b> — APU power draw</span></div>
     <div class="leg"><span class="sw" style="background:linear-gradient(90deg,transparent,#5fe6ff)"></span><span><b>Cyan tendril</b> — web search (reach-out)</span></div>
     <div class="leg"><span class="sw" style="background:linear-gradient(90deg,transparent,#ffc66e)"></span><span><b>Amber tendril</b> — web fetch (reach-out)</span></div>
+    <div class="leg"><span class="sw" style="background:linear-gradient(90deg,transparent,#7FA7C9)"></span><span><b>Steel stream</b> — LLM prompt in (text along the path)</span></div>
+    <div class="leg"><span class="sw" style="background:linear-gradient(90deg,#8FBC9A,transparent)"></span><span><b>Green stream</b> — LLM answer out (+ fade-out popup)</span></div>
     <div class="leg"><span class="sw" style="background:linear-gradient(90deg,#6699ff,#ff8c66)"></span><span><b>Rim aura</b> — net in (blue) / out (coral)</span></div>
     <div class="leg"><span class="sw dot" style="background:#a98cf9;box-shadow:0 0 8px #a98cf9"></span><span><b>Violet rim</b> — disk read</span></div>
   </div>
@@ -195,6 +234,7 @@
     <span class="sep"></span>
     <button id="btnSearch">🔎 Web search</button>
     <button id="btnFetch">⇩ Web fetch</button>
+    <button id="btnLlmStream">🧠 LLM stream</button>
   </div>
 
   <div id="fps">—</div>
@@ -649,7 +689,15 @@ let netInAcc = 0, netOutAcc = 0;
    Web search = a cyan fan of probes (one returns a result); web fetch = a single
    amber filament with a sustained inward stream.
    ========================================================================== */
-const TPAL = { cyan: new THREE.Color('#5fe6ff'), amber: new THREE.Color('#ffc66e') };
+// Tendril filament colour by kind. web search/fetch reach OUT; the LLM kinds carry the
+// turn's real text streaming along the path — steel for the prompt in, green for the
+// answer out (JBrain2 brand accents).
+const TPAL = {
+  search:  new THREE.Color('#5fe6ff'),
+  fetch:   new THREE.Color('#ffc66e'),
+  llm_in:  new THREE.Color('#7FA7C9'),
+  llm_out: new THREE.Color('#8FBC9A'),
+};
 const MAX_TENDRILS = 14, TSEG = 18;
 const tendrils = [];
 for (let i = 0; i < MAX_TENDRILS; i++) tendrils.push({ active: false, ext: new THREE.Vector3(), ctrl: new THREE.Vector3() });
@@ -669,17 +717,24 @@ function pickPeriphery() {
   for (let k = 0; k < 16; k++) { const i = (Math.random()*NEURONS)|0; if (neuronRadial[i] > 0.62 && neuronRank[i] < d) return i; }
   return (Math.random()*NEURONS)|0;
 }
-function spawnTendril(kind) {
+// LLM streams carry text and live longer so the excerpt can be read; they also reach a
+// little farther out so the text spreads across more of the screen.
+const LLM_TEXT_MAX = 72;
+function spawnTendril(kind, text) {
   let td = null; for (const x of tendrils) if (!x.active) { td = x; break; }
   if (!td) return;
+  const isLlm = kind === 'llm_in' || kind === 'llm_out';
   const anchor = pickPeriphery();
   const ax = neuronPos[anchor*3], ay = neuronPos[anchor*3+1], az = neuronPos[anchor*3+2];
   const len = Math.hypot(ax, ay, az) || 1, ox = ax/len, oy = ay/len, oz = az/len;
-  const OUT = 26 + Math.random()*16;
-  td.ext.set(ox*OUT + (Math.random()-0.5)*14, oy*OUT*0.7 + (Math.random()-0.5)*12, oz*OUT + (Math.random()-0.5)*14);
+  const OUT = isLlm ? (40 + Math.random()*16) : (26 + Math.random()*16);
+  const j = isLlm ? 18 : 14;
+  td.ext.set(ox*OUT + (Math.random()-0.5)*j, oy*OUT*0.7 + (Math.random()-0.5)*(j-2), oz*OUT + (Math.random()-0.5)*j);
   td.ctrl.set((ax+td.ext.x)/2 + (Math.random()-0.5)*18, (ay+td.ext.y)/2 + (Math.random()-0.5)*18, (az+td.ext.z)/2 + (Math.random()-0.5)*18);
   td.anchor = anchor; td.kind = kind; td.age = 0; td.seeded = false; td._lastPhase = null; td.active = true;
-  td.life = kind === 'fetch' ? (2.4 + Math.random()*1.4) : (1.5 + Math.random()*0.5);
+  td._flip = undefined;  // reading direction, decided once on first render (see updateStreamText)
+  td.text = isLlm ? String(text || '').replace(/\s+/g, ' ').trim().slice(0, LLM_TEXT_MAX) : '';
+  td.life = isLlm ? (4.5 + Math.random()*2.5) : kind === 'fetch' ? (2.4 + Math.random()*1.4) : (1.5 + Math.random()*0.5);
 }
 function webSearch() { const n = 3 + ((Math.random()*3)|0); for (let i = 0; i < n; i++) spawnTendril('search'); }
 function webFetch() { spawnTendril('fetch'); }
@@ -700,9 +755,20 @@ function updateTendrils(dt) {
     td.age += dt;
     const p = td.age / td.life;
     if (p >= 1) td.active = false;
-    const col = td.kind === 'fetch' ? TPAL.amber : TPAL.cyan;
+    const col = TPAL[td.kind] || TPAL.search;
     let packetU, baseGlow, peak, envel;
-    if (td.kind === 'fetch') {
+    if (td.kind === 'llm_in' || td.kind === 'llm_out') {
+      // A steady bright filament while the text streams along it. The prompt travels
+      // ext->anchor (inward); the answer anchor->ext (outward). One cascade fires when
+      // the stream reaches the cortex — the brain "receiving" the query / emitting.
+      const inward = td.kind === 'llm_in';
+      packetU = inward ? (1 - p) : p;
+      baseGlow = 0.16; peak = 1.15; envel = Math.min(1, p*6) * Math.min(1, (1-p)*5);
+      if (!td.seeded) {
+        if (inward && p > 0.82) { td.seeded = true; seedCascadeAt(td.anchor, 1.15); }
+        else if (!inward && p > 0.06) { td.seeded = true; seedCascadeAt(td.anchor, 0.7); }
+      }
+    } else if (td.kind === 'fetch') {
       const ph = (td.age * 1.1) % 1; packetU = 1 - ph;
       baseGlow = 0.14; peak = 1.1; envel = Math.min(1, p*4) * Math.min(1, (1-p)*4);
       if (td._lastPhase != null && ph < td._lastPhase) seedCascadeAt(td.anchor, 0.85);
@@ -731,6 +797,85 @@ function updateTendrils(dt) {
   }
   tendrilGeo.attributes.position.needsUpdate = true;
   tendrilGeo.attributes.color.needsUpdate = true;
+}
+
+/* ============================================================================
+   LLM STREAM TEXT — the turn's real text streamed as glyphs riding the tendril
+   path. Each frame (after render, so the matrices are current) we walk each active
+   llm_in/llm_out tendril, project points along its bezier to screen space, and lay
+   the characters out: a glyph is "born" as the stream wavefront passes its spot, then
+   stays lit along the path until the tendril fades. A fixed DOM pool is reused so we
+   never thrash nodes. A completed answer also blooms a fade-out popup at a random spot.
+   ========================================================================== */
+const streamEl = document.getElementById('stream');
+const CHAR_POOL = [];
+for (let i = 0; i < 280; i++) {
+  const s = document.createElement('span');
+  s.className = 'ch'; s.style.display = 'none';
+  streamEl.appendChild(s); CHAR_POOL.push(s);
+}
+const STREAM_COL = { llm_in: '#c2d6ea', llm_out: '#c9e6cf' };
+const _wp = new THREE.Vector3();
+function _bezierAt(td, u, out) {
+  const ax = neuronPos[td.anchor*3], ay = neuronPos[td.anchor*3+1], az = neuronPos[td.anchor*3+2];
+  const mu = 1 - u;
+  return out.set(
+    mu*mu*ax + 2*mu*u*td.ctrl.x + u*u*td.ext.x,
+    mu*mu*ay + 2*mu*u*td.ctrl.y + u*u*td.ext.y,
+    mu*mu*az + 2*mu*u*td.ctrl.z + u*u*td.ext.z,
+  );
+}
+function updateStreamText() {
+  const W = window.innerWidth, H = window.innerHeight;
+  let idx = 0;
+  for (const td of tendrils) {
+    if (!td.active || !td.text) continue;
+    if (td.kind !== 'llm_in' && td.kind !== 'llm_out') continue;
+    const text = td.text, L = text.length; if (!L) continue;
+    const p = td.age / td.life;
+    const envel = Math.min(1, p*6) * Math.min(1, (1-p)*5);
+    const col = STREAM_COL[td.kind];
+    // Decide reading direction once (cached), so glyphs always write left->right on
+    // screen regardless of which way the tendril points — and don't flip mid-stream as
+    // the cortex slowly rotates. `_flip` true when the far end projects left of the anchor.
+    if (td._flip === undefined) {
+      const aX = _bezierAt(td, 0, _wp).applyMatrix4(cortex.matrixWorld).project(camera).x;
+      const eX = _bezierAt(td, 1, _wp).applyMatrix4(cortex.matrixWorld).project(camera).x;
+      td._flip = eX < aX;
+    }
+    for (let i = 0; i < L && idx < CHAR_POOL.length; i++) {
+      const f = L === 1 ? 1 : i/(L-1);   // 0 = first char emitted, 1 = last
+      if (p < f) continue;               // wavefront hasn't reached this glyph yet
+      const u = td._flip ? (1 - f) : f;  // place emission order left->right on screen
+      _bezierAt(td, u, _wp).applyMatrix4(cortex.matrixWorld).project(camera);
+      const s = CHAR_POOL[idx++];
+      if (_wp.z > 1) { s.style.display = 'none'; continue; }  // behind the camera
+      const sx = (_wp.x*0.5 + 0.5) * W, sy = (-_wp.y*0.5 + 0.5) * H;
+      const born = Math.min(1, (p - f) * 22);                 // fade each glyph in
+      const ch = text[i];
+      s.textContent = ch === ' ' ? ' ' : ch;
+      s.style.color = col;
+      s.style.opacity = (Math.max(0, envel) * (0.35 + 0.65*born)).toFixed(3);
+      s.style.transform = `translate(-50%,-50%) translate(${sx.toFixed(1)}px,${sy.toFixed(1)}px)`;
+      s.style.display = '';
+    }
+  }
+  for (let j = idx; j < CHAR_POOL.length; j++) {
+    if (CHAR_POOL[j].style.display !== 'none') CHAR_POOL[j].style.display = 'none';
+  }
+}
+
+const popupsEl = document.getElementById('popups');
+function spawnPopup(text) {
+  const t = String(text || '').replace(/\s+/g, ' ').trim();
+  if (!t) return;
+  const d = document.createElement('div');
+  d.className = 'popup';
+  d.textContent = t.slice(0, 320);
+  d.style.left = (13 + Math.random()*60).toFixed(1) + 'vw';   // safe margins
+  d.style.top  = (15 + Math.random()*56).toFixed(1) + 'vh';
+  d.addEventListener('animationend', () => d.remove());
+  popupsEl.appendChild(d);
 }
 
 /* ============================================================================
@@ -868,6 +1013,28 @@ function applyHealthColors() {
   ringUniforms.uColor.value.copy(ringC);
 }
 
+// Content-free synthetic turns for the demo/standalone path (never a real turn's data),
+// so the streaming-text + popup effect is alive without the backend. A prompt streams in,
+// then a few seconds later the paired answer streams out and pops up.
+const DEMO_PROMPTS = [
+  'what did I note about the roof warranty last spring?',
+  "summarize this week's running mileage and how it trended",
+  'when is my next dentist appointment and who is it with?',
+  'draft a reply to the landlord about the lease renewal',
+];
+const DEMO_ANSWERS = [
+  'Warranty runs 20 years from the March install; covers workmanship.',
+  'Logged 24.6 miles over four runs — up ~15% on last week.',
+  'Next: Dr. Alvarez, Thursday 9:40am, routine cleaning.',
+  "Confirmed you'll renew at the current rate; asked to fix the porch light first.",
+];
+let demoTurnI = 0;
+function demoLlmTurn() {
+  const i = demoTurnI++ % DEMO_PROMPTS.length;
+  ServerBrain.llmInput(DEMO_PROMPTS[i]);
+  setTimeout(() => ServerBrain.llmOutput(DEMO_ANSWERS[i]), 3200);
+}
+
 const ServerBrain = {
   update(s) {
     if (!s) return;
@@ -935,6 +1102,8 @@ const ServerBrain = {
       // occasional external tool calls drive the reach-out tendrils
       if (Math.random() < 0.02) ServerBrain.webSearch();
       if (Math.random() < 0.012) ServerBrain.webFetch();
+      // occasional synthetic LLM turn -> streaming-text tendrils + a fade-out popup
+      if (Math.random() < 0.01) demoLlmTurn();
       ServerBrain.update({
         ts: Date.now(), health,
         gpu: { util, vram, tempC: temp, powerW, powerMaxW: 600 },
@@ -986,6 +1155,11 @@ const ServerBrain = {
   // external tool calls reaching in from the web (see CONTRACT extension)
   webSearch() { webSearch(); },
   webFetch() { webFetch(); },
+  // LLM turn (opt-in real-text streaming): the prompt streams IN along a steel tendril,
+  // the answer streams OUT along a green one and then blooms a fade-out popup so the
+  // finished answer is legible for a beat after the stream passes.
+  llmInput(text) { spawnTendril('llm_in', text); },
+  llmOutput(text) { spawnTendril('llm_out', text); if (text) setTimeout(() => spawnPopup(text), 1400); },
 };
 window.ServerBrain = ServerBrain;
 
@@ -1013,6 +1187,7 @@ document.getElementById('btnLlm').onclick = () => ServerBrain.burstLLM();
 document.getElementById('btnErr').onclick = () => ServerBrain.injectError();
 document.getElementById('btnSearch').onclick = () => ServerBrain.webSearch();
 document.getElementById('btnFetch').onclick = () => ServerBrain.webFetch();
+document.getElementById('btnLlmStream').onclick = () => demoLlmTurn();
 
 const HEALTH_COLOR = { ok: '#8FBC9A', warn: '#C9A36A', crit: '#CF8A8F' };
 const HEALTH_LABEL = { ok: 'healthy', warn: 'degraded', crit: 'critical' };
@@ -1193,6 +1368,8 @@ function frame() {
   camera.lookAt(0, 0, 0);
 
   renderer.render(scene, camera);
+  // After render so cortex.matrixWorld + the camera matrices are current for projection.
+  updateStreamText();
 
   // fps + readout (throttled)
   frames++; fpsTime += dt;
@@ -1245,6 +1422,8 @@ async function pollStats() {
     if (s.events) for (const ev of s.events) {
       if (ev.kind === 'web_search') ServerBrain.webSearch();
       else if (ev.kind === 'web_fetch') ServerBrain.webFetch();
+      else if (ev.kind === 'llm_input') ServerBrain.llmInput(ev.text);
+      else if (ev.kind === 'llm_output') ServerBrain.llmOutput(ev.text);
     }
   } catch (e) {
     // No telemetry reachable (opened standalone, or the service is down): fall back

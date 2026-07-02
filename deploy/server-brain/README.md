@@ -111,3 +111,19 @@ Best-effort, on-box, no owner data; a failure never touches the agent's turn.
 Alternative source: set `BRAIN_EVENTS_FILE` to a JSONL path and append one event
 object per line (`{"kind": "web_search"}`); the reader tails it and re-syncs if it
 is truncated/rotated.
+
+### LLM prompt / answer tendrils (opt-in — carries owner text)
+
+When the owner turns on **Settings → Stream LLM to wall display** (the
+`brain_llm_stream` app setting, **off by default**), each jerv chat turn POSTs its real
+text to `POST /event`: `{"kind": "llm_input", "text": …}` when the turn starts and
+`{"kind": "llm_output", "text": …}` when the answer settles (each excerpt-truncated).
+The page streams the prompt IN along a steel tendril and the answer OUT along a green
+one — the characters ride the tendril path — then blooms a fade-out popup of the answer.
+
+**This is the one place the display carries owner data.** Everything else here is host
+vitals + content-free markers, which is why it's safe unauthenticated on a trusted LAN.
+Turning this on puts your prompt and answer text on that unauthenticated surface, so
+enable it **only when the display is the box's own monitor** — bind it to the box with
+`BRAIN_HOST_BIND=127.0.0.1` (compose) so nothing on the LAN can read it. The switch is
+read live per turn, so flipping it off stops the text immediately (no redeploy).
