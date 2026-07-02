@@ -833,8 +833,10 @@ const LLM_STEP = 0.9;     // world units between glyphs — fixed, so short text
 const LLM_CAP = 34;       // glyphs carried on the tendril (the popup holds the full answer)
 // Flow endpoints (world dist from centre): an answer emerges from the net and runs OFF the
 // right edge (FAR_OUT, well past the ~36 visible half-width); a prompt enters from off the
-// left edge (FAR_IN) and travels deep INTO the net (DEEP, near the core) before dissolving.
-const LLM_FAR_OUT = 50, LLM_FAR_IN = 40, LLM_DEEP = 2;
+// left edge (FAR_IN) and, after crossing the net edge, keeps the tendril's exit vector as a
+// straight line INTO the net, fully faded by FADE_END — 3/4 of the way across (net edge at
+// +LLM_BR to the far edge at -LLM_BR), rather than scrolling flat across to the far side.
+const LLM_FAR_OUT = 50, LLM_FAR_IN = 40, LLM_FADE_END = -0.5 * 15;
 const LLM_MAX = 6, LLM_SEG = 26;
 const llmStreams = [];
 for (let i = 0; i < LLM_MAX; i++) llmStreams.push({ active: false });
@@ -866,16 +868,24 @@ function spawnStream(kind, text) {           // kind: prompt | answer | search |
   st.life = (2.6 + (LLM_REACH + st.L * LLM_STEP) * 0.10) / spec.speed;
 }
 
-// World point at distance `d` from centre along a stream (a gentle sine bow in y).
+// World point at distance `d` from centre along a stream. A gentle sine bow in y over the
+// tendril span [0,1]; OUTSIDE that span (inside the net at t<0, or past the tip at t>1) the
+// curve continues as a STRAIGHT LINE along the boundary tangent — so text keeps the tendril's
+// last vector instead of snapping flat/horizontal.
 function llmPointAt(st, d, out) {
   const s = st.dir === 'in' ? -1 : 1;               // left for a prompt, right for an answer
-  const t = clamp((d - LLM_BR) / LLM_REACH, 0, 1);
-  return out.set(s * d, st.yb + Math.sin(Math.PI * t) * st.bow, st.zb);
+  const t = (d - LLM_BR) / LLM_REACH;               // raw (may be <0 inside the net or >1 past the tip)
+  let yoff;
+  if (t < 0)      yoff = t * Math.PI * st.bow;               // extend the t=0 tangent into the net
+  else if (t > 1) yoff = -(t - 1) * Math.PI * st.bow;        // extend the t=1 tangent past the tip
+  else            yoff = Math.sin(Math.PI * t) * st.bow;     // the bow itself
+  return out.set(s * d, st.yb + yoff, st.zb);
 }
 // Distance-from-centre for glyph `i` at progress `p`. The whole legible block FLOWS
-// (order preserved: char 0 always reads leftmost). An answer emerges from the net edge
-// and its leading edge runs out to FAR_OUT (off the right); a prompt enters from FAR_IN
-// (off the left) and its leading edge travels in to DEEP (the core), both fully clearing.
+// (order preserved: char 0 always reads leftmost). An answer emerges from the net edge and
+// its leading edge runs out to FAR_OUT (off the right); a prompt enters from FAR_IN (off the
+// left), char 0 leading in, and the block flows until its LAST char reaches FADE_END (3/4
+// across the net) — where it has fully dissolved — so it never scrolls to the far side.
 function llmGlyphDist(st, i, p) {
   const L = st.L, block = (L - 1) * LLM_STEP;
   if (st.dir === 'out') {
@@ -883,8 +893,8 @@ function llmGlyphDist(st, i, p) {
     const d0 = (LLM_BR - block) + p * (LLM_FAR_OUT - (LLM_BR - block));
     return d0 + i * LLM_STEP;
   }
-  // char 0 leads into the net (first character first) from FAR_IN in to DEEP; the rest trail
-  const dLead = LLM_FAR_IN + p * ((LLM_DEEP - block) - LLM_FAR_IN);
+  // char 0 leads into the net (first character first); the block ends with char L-1 at FADE_END
+  const dLead = LLM_FAR_IN + p * ((LLM_FADE_END - block) - LLM_FAR_IN);
   return dLead + i * LLM_STEP;
 }
 
@@ -933,13 +943,13 @@ function updateStreamText() {                 // project + flow glyphs — runs 
     const col = st.g;
     for (let i = 0; i < L && idx < CHAR_POOL.length; i++) {
       const d = llmGlyphDist(st, i, p);
-      if (d < LLM_DEEP - 3 || d > LLM_FAR_OUT + 2) continue;   // fully past either end
-      // Dissolve near whichever end the flow terminates at: an answer fades in as it
-      // clears the net edge and off at the far right; a prompt fades in as it enters
-      // from the left and dissolves as it reaches deep into the core.
+      if (d < LLM_FADE_END - 2 || d > LLM_FAR_OUT + 2) continue;   // fully past either end
+      // Dissolve near whichever end the flow terminates at: an answer fades in as it clears
+      // the net edge and off at the far right; a prompt stays full on the tendril and up to
+      // the net edge, then fades across the net — fully gone by FADE_END (3/4 across).
       const fade = st.dir === 'out'
         ? Math.min(1, (d - (LLM_BR - 4)) / 5) * Math.min(1, (LLM_FAR_OUT - d) / 7)
-        : Math.min(1, (LLM_FAR_IN - d) / 7) * Math.min(1, (d - LLM_DEEP) / 5);
+        : Math.min(1, (LLM_FAR_IN - d) / 7) * Math.min(1, (d - LLM_FADE_END) / (LLM_BR - LLM_FADE_END));
       if (fade <= 0) continue;
       llmPointAt(st, d, _lp).project(camera);
       if (_lp.z > 1) continue;                                // behind the camera
