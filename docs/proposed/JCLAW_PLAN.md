@@ -78,6 +78,45 @@ looser: jcode edits files, jclaw touches nothing on disk.
 `scope` mirrors OpenClaw's `session` vs `agent`: default **one sandbox per channel
 thread**; a future multi-persona mode could go per-persona.
 
+### 2a. Recommended realization: OpenClaw *resident in* a jcode session — no sub-Docker
+
+The lowest-effort, lowest-surface way to get OpenClaw on the box is not a new
+gateway at all: **install OpenClaw as a package inside an existing jcode scratch
+session and turn its own sandbox off.** A jcode session is already an isolated
+container (own volume + per-session git checkout, **no Docker socket, no DB, no
+blob store, no knowledge base**, egress on a git/package allowlist — see
+`JCODE_PLAN.md`), so:
+
+- **`sandbox: { mode: "off" }`** in OpenClaw. Its native Docker-per-agent
+  sandboxing is what would force Docker-in-Docker; off means **the jcode container
+  is the single isolation boundary**. This deliberately avoids the unprivileged
+  netns/DinD privilege problem that parked `JCODE_SESSION_ISOLATION_PLAN` — one
+  layer, no nesting.
+- **Model wiring = the same on-box gateway jcode already uses.** jcode points
+  Claude Code at the gateway's **Anthropic** route (`ANTHROPIC_BASE_URL →
+  /v1/messages`) → Qwen3-Coder-Next. OpenClaw speaks **OpenAI**, so point its base
+  URL at the **same gateway's OpenAI route** (`/v1/chat/completions`) → same model,
+  same box, **still zero LLM egress**. Identical pattern, OpenAI dialect instead of
+  Anthropic. (llama-swap generally serves both; the "native vs shim, verify on box"
+  open decision in `JCODE_PLAN.md` applies here too.)
+
+**What this reframes.** Done this way it is **not** the KB-blind *channel gateway*
+of §1 — it is **OpenClaw as an alternate coder engine inside jcode's scratch
+sandbox** (the §3a engine picker, realized the cheapest way). Consequences, stated
+plainly:
+
+- It **inherits jcode's access, no more, no less**: the checkout filesystem, shell,
+  and jcode's (currently not-default-deny) egress. KB-blindness holds *for free*
+  because jcode has no DB/KB socket. Isolation guarantee = exactly jcode's.
+- You are trusting **OpenClaw's loop with jcode-session-level access** — but since
+  jcode already runs arbitrary code in that sandbox by design, it is the *same*
+  trust level, no new bright line crossed.
+
+This path trades the §2 per-thread channel sandbox and the two-harness
+reconciliation for "drop the binary in, `sandbox: off`, base-URL → on-box gateway."
+The channel-gateway design (§1, §5, §6) remains the answer if the goal is
+*messaging surfaces*, not an in-session coder engine.
+
 ---
 
 ## 3. Non-negotiable alignment
@@ -124,13 +163,18 @@ option is one click:
 2. the KB-blind tool allowlist (§4), and
 3. the sandbox settings (§2).
 
-**Non-negotiable catch (NN-1).** OpenClaw connects to models through its own
-provider connectors. It must be pointed at the **JBrain2 LLM adapter's
-OpenAI-compatible endpoint** — which *routes* to Qwen-Coder — **not** directly at
-the Qwen server or any cloud provider. The adapter keeps ownership of routing,
-policy, and logging; OpenClaw sees only an OpenAI-shaped base URL that happens to
-resolve to the local coder model. Point it straight at the model and jclaw has
-bypassed the adapter firewall.
+**Non-negotiable catch (NN-1), and the sidecar exception.** OpenClaw connects to
+models through its own provider connectors. The bright line is **no cloud provider
+SDK and no cloud LLM egress**. Note that jcode already establishes the sidecar
+exception to "all LLM calls go through the *app* adapter": because it *borrows* an
+external harness (Claude Code's loop) and there is **no LLM egress** (the model is
+on-box), it points `ANTHROPIC_BASE_URL` straight at the **on-box gateway**
+(llama-swap) rather than through the `/chat` adapter. A jcode-resident OpenClaw
+(§2a) inherits exactly that posture: point its OpenAI base URL at the **same on-box
+gateway** → Qwen-Coder, on-box, zero egress. If OpenClaw is ever run as a
+first-class engine *outside* a jcode session, it must instead route through the app
+LLM adapter's OpenAI-compatible endpoint so routing/policy/logging still own it —
+never a raw cloud provider.
 
 **Cost of the option.** Offering OpenClaw means running **two agent harnesses**
 (Claude Code's loop *and* OpenClaw's loop), each with its own tool + sandbox model
