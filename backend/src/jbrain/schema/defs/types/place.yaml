@@ -6,7 +6,6 @@ description: A location. The place is timeless; who is tied to it is a Role inte
 vehicle: graph
 facets: [Named, Located, ExternalIdentified]
 default_fact_kind: state
-allow_open_predicates: true
 
 predicates:
   - canonical_name: geofence            # 🔒 not in Located; place-specific

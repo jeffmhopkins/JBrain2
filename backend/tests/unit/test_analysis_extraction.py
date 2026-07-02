@@ -1116,6 +1116,7 @@ def test_domain_floor_raises_general_to_restricted_only() -> None:
 
     assert domain_floor("bloodPressure") == "health"
     assert domain_floor("medication") == "health"
+    assert domain_floor("treatedBy") == "health"  # the declared care edge floors too
     assert domain_floor("mortgage") == "finance"
     assert domain_floor("latitude") == "location"  # precise geo only
     assert domain_floor("ate") is None  # unknown -> model decides

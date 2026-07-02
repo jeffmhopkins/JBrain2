@@ -113,7 +113,6 @@ def _type(tid: str, preds: tuple[Predicate, ...]) -> EntityType:
         name=tid.title(),
         vehicle="thing",
         default_fact_kind="attribute",
-        allow_open_predicates=True,
         facets=(),
         extends=None,
         own_predicates=preds,

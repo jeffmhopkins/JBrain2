@@ -67,7 +67,6 @@ class EntityType:
     name: str
     vehicle: str
     default_fact_kind: str
-    allow_open_predicates: bool
     facets: tuple[str, ...]
     extends: str | None
     own_predicates: tuple[Predicate, ...]

@@ -6,20 +6,13 @@ description: A device; lastLocation is among the most sensitive fields in the gr
 vehicle: graph
 facets: [Named, ExternalIdentified, Related, Lifecycle]
 default_fact_kind: attribute
-allow_open_predicates: true
 
+# manufacturer/model are tier-2 here (prose-grade); the firewall-sensitive
+# location binding and the operator edge are the spine.
 predicates:
   - canonical_name: deviceType
     value_shape: enum
     enum_values: [phone, tracker, gps, watch, car_unit, tablet, laptop, other]
-    kind: attribute
-    functional: true
-  - canonical_name: manufacturer
-    value_shape: text
-    kind: attribute
-    functional: true
-  - canonical_name: model
-    value_shape: text
     kind: attribute
     functional: true
   - canonical_name: lastLocation        # 🔒🔒 live location
@@ -36,5 +29,5 @@ predicates:
 # identifier.imei / .serial / .mac / .uuid (🔒) from ExternalIdentified — strong key.
 # owner is a Role edge (Related).
 status_values: [active, lost, retired]
-display_name: [name]                    # "Jeff's iPhone" else "<manufacturer> <model>"
+display_name: [name]                    # "Jeff's iPhone"
 # Domain: location 🔒🔒 for tracking devices.

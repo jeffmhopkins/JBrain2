@@ -8,20 +8,13 @@ description: A recurring practice; cadence is a Recurrence token, adherence a me
 vehicle: graph
 facets: [Named, Temporal, Recurrence, Lifecycle, Related]
 default_fact_kind: state
-allow_open_predicates: true
 
+# description/cadence are tier-2 (the schedule itself is the Recurrence token).
 predicates:
-  - canonical_name: description
-    value_shape: text
-    kind: state
   - canonical_name: contributesTo        # a goal this habit serves
     value_shape: ref
     range_type: goal
     kind: relationship
-  - canonical_name: cadence              # human cadence label; the schedule is Recurrence
-    value_shape: text
-    kind: state
-    renamed_from: [frequency]
   - canonical_name: lastPerformed
     value_shape: date
     kind: event

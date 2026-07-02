@@ -8,7 +8,6 @@ description: A scheduled event; reschedule supersedes the time binding.
 vehicle: typed_record(P4)          # catalog now; typed table + ICS feed in Phase 4
 facets: [Named, Temporal, Recurrence, Located, Lifecycle, Related]
 default_fact_kind: state
-allow_open_predicates: false
 
 predicates:
   - canonical_name: scheduledTime  # schedule supersession: newest instruction wins (ANALYSIS)

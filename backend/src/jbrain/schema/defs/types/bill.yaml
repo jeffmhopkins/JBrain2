@@ -6,8 +6,9 @@ description: A bill/invoice. Recurring bills carry a recurrence token, not rows.
 vehicle: graph                     # 🔒 finance-scoped graph entity; typed projection possible later
 facets: [Named, Monetary, Temporal, Recurrence, Related, Lifecycle]
 default_fact_kind: state
-allow_open_predicates: false       # a bill is authoritative; don't let the LLM coin bill predicates
 
+# billingPeriod/paidOn/minimumPaymentDue/confirmationNumber are tier-2:
+# Lifecycle.status carries payment state; the rest is prose-grade detail.
 predicates:
   - canonical_name: payee          # who billed me
     value_shape: ref
@@ -17,35 +18,21 @@ predicates:
     value_shape: date
     kind: attribute
     schema_org_ref: schema:paymentDueDate
-  - canonical_name: billingPeriod
-    value_shape: date              # a range temporal token
-    kind: attribute
-  - canonical_name: paidOn
-    value_shape: date
-    kind: event                    # payment is an event, overriding default state
   - canonical_name: account
     value_shape: ref
     range_type: financial_account  # 🔒
     kind: relationship
-  - canonical_name: minimumPaymentDue  # 🔒 the minimum due now, vs amount = total due
-    value_shape: quantity              # {value, unit: ISO-4217}
-    kind: measurement
-    schema_org_ref: schema:minimumPaymentDue
   - canonical_name: invoiceNumber      # 🔒 the biller's invoice/statement id (resolution signal)
     value_shape: scalar
     kind: attribute
     functional: true
     schema_org_ref: schema:confirmationNumber
     renamed_from: [statementNumber, billNumber]
-  - canonical_name: confirmationNumber # 🔒 payment confirmation/receipt id
-    value_shape: scalar
-    kind: attribute
-    schema_org_ref: schema:confirmationNumber
 
 # Monetary.amount (🔒) + Lifecycle.status carry the money and payment state.
 status_values: [PaymentDue, PaymentComplete, PaymentPastDue, PaymentDeclined, PaymentAutomaticallyApplied]
 
-# Display is composed: "<payee> — <billingPeriod> — <amount>".
+# Display is composed: "<payee> — <amount>".
 display_name: [name]
-# Resolution hint (composite): (payee, account, billingPeriod). Recurring template
+# Resolution hint (composite): (payee, account, dueDate). Recurring template
 # keyed (payee, account, recurrence). Neither is a stored identity key.
