@@ -417,7 +417,7 @@ class Handler(BaseHTTPRequestHandler):
             self._send(400, b"bad request", "text/plain")
             return
         kind = ev.get("kind") if isinstance(ev, dict) else None
-        if kind in ("web_search", "web_fetch", "llm_input", "llm_output"):
+        if kind in ("web_search", "web_fetch", "llm_input", "llm_thinking", "llm_output"):
             # Optional text (the LLM prompt/answer, or — when the owner enabled it — the
             # web query / URL). Bound it on our side too; a truncated excerpt is all the
             # wall shows. Absent/blank text just fires a content-free tendril.

@@ -657,9 +657,13 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
                         # NOT recorded — Loop 1 is ephemeral and writes nothing durable.
                         live.emit(f"data: {event.model_dump_json()}\n\n".encode())
             if status == "done":
-                # Stream the finished answer OUT to the wall display (opt-in; see above).
-                if brain_stream and brain_emit is not None and acc.answer_text:
-                    brain_emit("llm_output", acc.answer_text)
+                # Stream the reasoning trace (fast) then the finished answer OUT to the
+                # wall display (opt-in; see above).
+                if brain_stream and brain_emit is not None:
+                    if acc.reasoning_text:
+                        brain_emit("llm_thinking", acc.reasoning_text)
+                    if acc.answer_text:
+                        brain_emit("llm_output", acc.answer_text)
                 # Episodic memory is owner-data: only a knowledge-base agent appends
                 # one, and never a `no_memory` sandbox session (the sub-agent flag —
                 # defense in depth so the structural no-memory guarantee holds even if

@@ -366,6 +366,33 @@ def test_chat_does_not_stream_llm_text_when_disabled(
     assert calls == []
 
 
+def test_chat_streams_reasoning_then_answer_to_the_wall_display(
+    client: TestClient,
+    repo: FakeAuthRepo,
+    sessions_store: FakeAgentSessions,
+) -> None:
+    # With text streaming on, a reasoning turn ships the thinking trace (fast lane) ahead
+    # of the answer: prompt in, then thinking, then answer out.
+    login(client, repo)
+    sessions_store.add(AgentSessionInfo("sess-1", "", "active", ("general",), (), NOW, NOW))
+    client.app.state.settings_store.values["brain_llm_stream"] = True  # type: ignore[attr-defined]
+    client.app.state.llm_router = stream_router(  # type: ignore[attr-defined]
+        [LlmTurn("the answer", (), "end_turn", LlmUsage(1, 1), reasoning="let me think")],
+        stream_chunks=[["the answer"]],
+    )
+    calls: list[tuple[str, str | None]] = []
+    client.app.state.brain_emit = lambda kind, text=None: calls.append((kind, text))  # type: ignore[attr-defined]
+
+    resp = client.post("/api/chat", json={"session_id": "sess-1", "message": "why?"})
+    assert resp.status_code == 200
+    _ = resp.text
+    assert calls == [
+        ("llm_input", "why?"),
+        ("llm_thinking", "let me think"),
+        ("llm_output", "the answer"),
+    ]
+
+
 def test_chat_persists_the_turns_context_fill(
     client: TestClient,
     repo: FakeAuthRepo,
