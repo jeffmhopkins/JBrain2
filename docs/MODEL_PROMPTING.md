@@ -17,38 +17,45 @@ in `backend/src/jbrain/llm/router.py` and the owner's live per-task overrides
 
 - **Per-task routing (authoritative, owner-configurable).** Every LLM call runs
   under a named *task* (`agent.turn`, `integrate.note`, `vision.ocr`, …). Each task
-  is individually routed to a provider **and** a reasoning effort, stored per-task
-  (`settings_store.py`) and edited in Settings → LLM Settings. This is what
-  actually runs.
+  is routed to a provider **and** a reasoning effort. The effort has a **codified
+  default** — the task's reasoning bucket (`TASK_REASONING_BUCKET` in `router.py`) —
+  so a fresh box is right without any hand-tuning; a stored per-task effort
+  (`settings_store.py`, edited in Settings → LLM Settings) is a deliberate override.
 - **Prompt `strength:` frontmatter (a default hint).** A prompt names a capability
   tier (`high`/`low`/`vision`) so it never hard-codes a model. It seeds a default,
   but the per-task config wins — e.g. `video_summary.prompt` declares
-  `strength: low`, yet its task `video.summarize` is owner-placed in the
-  High-stakes bucket for a richer summary.
+  `strength: low`, yet its task `video.summarize` sits in the Medium reasoning
+  bucket for a richer summary.
 
-The Settings screen groups *tasks* into three role buckets (defined in the
-frontend, `LLMSettingsScreen.tsx`), each with a provider + effort and per-task
-overrides. Live configuration:
+The Settings screen groups *tasks* into **reasoning-level buckets** (defined in the
+frontend `LLMSettingsScreen.tsx`, mirroring the backend map), so each bucket's
+default effort is correct for every task in it — right by default, and an override
+reads as a deviation (the card shows "mixed"):
 
-| Bucket (role) | Model | Tasks · live effort |
+| Bucket · default effort | Model | Tasks |
 |---|---|---|
-| **High-stakes reasoning** | gpt-oss-120b | `agent.turn` M · `integrate.note` **H** · `note.extract` M · `correction_note.extract` M · `video.summarize` M · `wiki.rewrite` M · `wiki.ground` M |
-| **Lightweight** | gpt-oss-120b | `entity.disambiguate` L · `fact.adjudicate` **H** · `session.title` L · `triage.classify` L |
-| **Vision** | Qwen3-VL-30B-A3B | `vision.ocr` · `vision.caption` · `agent.vision` (no reasoning level) |
+| **High reasoning** · high | gpt-oss-120b | `integrate.note`, `fact.adjudicate`, `wiki.ground` |
+| **Medium reasoning** · medium | gpt-oss-120b | `agent.turn`, `note.extract`, `correction_note.extract`, `video.summarize`, `wiki.rewrite`, `intake.materialize` |
+| **Low reasoning** · low | gpt-oss-120b | `entity.disambiguate`, `session.title`, `triage.classify` |
+| **Vision** · none | Qwen3-VL-30B-A3B | `vision.ocr`, `vision.caption`, `agent.vision` |
 
-**gpt-oss-120b serves both text buckets** — High-stakes and Lightweight are the
-*same model* at different effort, so the gpt-oss guidance below governs every text
-task. Qwen3-VL serves **only the three Vision tasks**. (The catalog lists Qwen
-with a `"low"` tier as a capable cheap text *fallback*, but live routing sends all
-text to gpt-oss.)
+The high/low buckets put their default effort on the wire; **Medium sends no
+explicit effort** (the model's own default is medium) — which also preserves the
+sub-agent spawner's contract that a child with no chosen effort reaches the model
+with `reasoning_effort=None`.
+
+**gpt-oss-120b serves all three text buckets** — one model at three efforts, so the
+gpt-oss guidance below governs every text task. Qwen3-VL serves **only the three
+Vision tasks**. (The catalog lists Qwen with a `"low"` tier as a capable cheap text
+*fallback*, but live routing sends all text to gpt-oss.)
 
 Prompt → task, for reference: `agent.turn` runs the interactive personas (jerv,
 curator/`system`, archivist, teacher) and the spawned sub-agents (research, review,
 summarize); the rest map name-for-name (`note.extract`→note_extract,
 `integrate.note`→integrate_note, `correction_note.extract`→correction_mine,
 `wiki.rewrite`/`wiki.ground`→wiki_editor, `video.summarize`→video_summary,
-`intake.materialize`→intake_materialize, the four Lightweight tasks→their
-same-named prompts, and the Vision tasks→vision_ocr/vision_caption/video_frame).
+`intake.materialize`→intake_materialize, the Low-bucket tasks→their same-named
+prompts, and the Vision tasks→vision_ocr/vision_caption/video_frame).
 
 > These route to the local models on a self-hosted box. If a deployment routes a
 > task to a cloud model instead, the gpt-oss/Qwen notes stop applying to it — but
@@ -57,7 +64,7 @@ same-named prompts, and the Vision tasks→vision_ocr/vision_caption/video_frame
 
 ---
 
-## gpt-oss-120b (the High-stakes & Lightweight text buckets)
+## gpt-oss-120b (the High / Medium / Low text buckets)
 
 An OpenAI open-weight reasoning MoE served here at MXFP4. It uses the **Harmony**
 response format and emits a hidden chain-of-thought before its answer.
@@ -115,22 +122,23 @@ response format and emits a hidden chain-of-thought before its answer.
 
 High effort is *slow* and over-reasons before acting, so it only pays off for a
 task that is **all three of**: async (latency-tolerant), reasoning-bound (not
-tool-bound), and correctness-critical. Set it per task (Settings → LLM Settings →
-per-task override), never by raising a whole bucket — that would drag the
-interactive/tool-driven tasks up with it.
+tool-bound), and correctness-critical. That is exactly why those tasks live in the
+**High** bucket by default and everything else in Medium/Low — the bucket a task
+sits in *is* this decision. The rationale, task by task:
 
-| Task | Effort | Why |
+| Task | Bucket | Why |
 |---|---|---|
 | `integrate.note` (Integrator) | **High** | Graph coreference/relationship/supersession calls that *write* the knowledge graph; runs in async ingestion, so latency is free. The best place to spend it. |
 | `fact.adjudicate` (arbiter) | **High** | Hard conflict/supersession judgment the deterministic core then validates; async. |
-| `wiki.ground` (Phase 6) | **High** when it ships | Strict "graph wins on conflict" grounding verification; correctness-critical, batch. |
-| `wiki.rewrite` (Phase 6) | Med (try High) | Generative drafting, not judgment; raise only if grounding rejects too much. |
-| `agent.turn` (chat) | **Med** — keep | Interactive (owner on phone) *and* tool-driven → High buys runaway-before-tools + slow UX. Deep research depth is already tunable per *sub-agent* at spawn time. |
-| `note.extract`, `correction_note.extract`, `video.summarize`, `intake.materialize` | Med | Structured/bounded work; Med is the right cost. |
-| Lightweight one-shots | Low | Deterministic; Low is correct. |
+| `wiki.ground` (Phase 6) | **High** | Strict "graph wins on conflict" grounding verification; correctness-critical, batch. |
+| `wiki.rewrite` (Phase 6) | Medium | Generative drafting, not judgment; override to High only if grounding rejects too much. |
+| `agent.turn` (chat) | Medium | Interactive (owner on phone) *and* tool-driven → High would buy runaway-before-tools + slow UX. Deep research depth is already tunable per *sub-agent* at spawn time. |
+| `note.extract`, `correction_note.extract`, `video.summarize`, `intake.materialize` | Medium | Structured/bounded work; Medium is the right cost. |
+| One-shots (`entity.disambiguate`, `session.title`, `triage.classify`) | Low | Deterministic; Low is correct. |
 
 The test in one line: *async + reasoning-bound + correctness-critical → High;
-interactive or tool-driven → never High.*
+interactive or tool-driven → never High.* A per-task override exists for the rare
+exception, but with the buckets set up this way you should rarely need one.
 
 Sources: [OpenAI gpt-oss model card (HF)](https://huggingface.co/openai/gpt-oss-120b) ·
 [IBM watsonx — gpt-oss model behaviour & instruction guidelines](https://www.ibm.com/docs/en/watsonx/watson-orchestrate/base?topic=models-gpt-oss-model-behavior-instruction-guidelines) ·

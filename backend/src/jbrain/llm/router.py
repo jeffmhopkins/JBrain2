@@ -89,6 +89,39 @@ TASK_DEFAULTS: dict[str, str] = {
     "triage.classify": "xai:grok-4.3",
 }
 
+# Each task's DEFAULT reasoning effort — the Settings bucket it sits in, so a fresh
+# box is "right by default" and a stored per-task effort is a deliberate override.
+# One source of truth for both the router (what it sends) and the settings screen
+# (what it shows). Buckets: high = async, reasoning-bound, correctness-critical work
+# (the knowledge-graph arbiters); low = deterministic one-shots; medium = everything
+# else that thinks. Vision tasks carry no effort (their model has no thinking channel).
+TASK_REASONING_BUCKET: dict[str, str] = {
+    # High reasoning
+    "integrate.note": "high",
+    "fact.adjudicate": "high",
+    "wiki.ground": "high",
+    # Medium reasoning
+    "agent.turn": "medium",
+    "note.extract": "medium",
+    "correction_note.extract": "medium",
+    "video.summarize": "medium",
+    "wiki.rewrite": "medium",
+    "intake.materialize": "medium",
+    # Low reasoning
+    "entity.disambiguate": "low",
+    "session.title": "low",
+    "triage.classify": "low",
+}
+
+# The deviations the router must ACTIVELY put on the wire. Medium is omitted on
+# purpose: it is the reasoning model's own built-in default, and pinning it would
+# override the sub-agent spawner's contract that "no chosen effort → the child
+# model's default" (a plain child must reach the client with reasoning_effort=None).
+# So a medium-bucket task resolves to None and lets the model use its native medium.
+TASK_REASONING_DEFAULTS: dict[str, str] = {
+    task: effort for task, effort in TASK_REASONING_BUCKET.items() if effort != "medium"
+}
+
 # Capability tiers (a prompt's `strength:`) → "provider:model". A prompt names a
 # tier, never a model, so swapping the model behind a tier is config, not a
 # prompt edit (docs/ANALYSIS.md "Privacy routing"). Today every tier resolves to
@@ -249,7 +282,9 @@ class LlmRouter:
         model like gpt-oss/GLM); for anything else it is dropped. Malformed stored
         entries are ignored: a bad saved setting must never break a call."""
         provider, model = self._resolve(task, strength)
-        reasoning_effort: str | None = None
+        # The task's bucket default (high/low deviations only) unless a stored
+        # override replaces it below — so a fresh box runs at the right effort.
+        reasoning_effort: str | None = TASK_REASONING_DEFAULTS.get(task)
         if self._overrides_loader is not None:
             overrides = await self._overrides_loader()
             entry = overrides.get(task) or {}
@@ -265,7 +300,9 @@ class LlmRouter:
                         log.warning("llm.local_override_ignored", task=task, spec=spec)
                     else:
                         provider, model = sp, sm
-            reasoning_effort = entry.get("reasoning_effort")
+            stored_effort = entry.get("reasoning_effort")
+            if stored_effort:
+                reasoning_effort = stored_effort
         if not _reasoning_capable(provider, model):
             reasoning_effort = None
         return provider, model, reasoning_effort

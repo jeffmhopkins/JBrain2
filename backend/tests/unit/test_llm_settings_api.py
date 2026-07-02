@@ -69,11 +69,25 @@ def test_get_defaults_grok_and_low_for_empty_store(
     assert {p["id"] for p in body["providers"]} == {"grok", "claude"}
     grok = next(p for p in body["providers"] if p["id"] == "grok")
     assert grok["supports_reasoning"] is True
-    # Every routed task lists with the grok default + the default effort.
+    # Every routed task lists with the grok default. Effort now follows the task's
+    # reasoning bucket (right-by-default), not a single global level: the arbiters
+    # default high, the one-shots low, everything else medium; a vision task on a
+    # reasoning-capable cloud provider falls back to the global default.
     assert {t["id"] for t in body["tasks"]} == set(TASK_DEFAULTS)
-    for task in body["tasks"]:
-        assert task["provider"] == "grok"
-        assert task["reasoning_effort"] == "low"
+    effort = {t["id"]: t["reasoning_effort"] for t in body["tasks"]}
+    assert all(t["provider"] == "grok" for t in body["tasks"])
+    assert effort["integrate.note"] == "high"
+    assert effort["fact.adjudicate"] == "high"
+    assert effort["wiki.ground"] == "high"
+    assert effort["agent.turn"] == "medium"
+    assert effort["note.extract"] == "medium"
+    assert effort["video.summarize"] == "medium"
+    assert effort["entity.disambiguate"] == "low"
+    assert effort["session.title"] == "low"
+    assert effort["triage.classify"] == "low"
+    # Vision tasks have no bucket effort; on grok (reasoning-capable) they show the
+    # global fallback default.
+    assert effort["vision.ocr"] == "low"
 
 
 def test_jcode_section_defaults_disabled(
