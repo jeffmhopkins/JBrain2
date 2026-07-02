@@ -144,12 +144,16 @@ when it is occupied. It runs as a boot self-heal today; recurring and on-demand
 ("emergency") triggering lands with the Phase-5 workflow engine
 (docs/ROADMAP.md "Scheduled-task migration").
 
-`allow_open_predicates` (default `true` for Person/Organization/Place; `false`
-for tightly-structured records) only changes the *prompt digest's tone* —
-"prefer these exact names" vs. "these names are the schema; coin schema.org-style
-`snake_case` only if truly needed" — never what storage accepts. A predicate the
-registry has never seen is still stored; consolidation may later promote a
-frequently-seen open predicate into the declared set in a new `schema_version`.
+Under the two-tier model (docs/ENTITY_GRAPH_REFOCUS_PLAN.md §1),
+**declared-in-registry IS tier-1**: a declared predicate gets the full
+treatment (canonicalization attractors, functional supersession, shape checks,
+projections); an undeclared one is long-tail — stored raw, searchable, no
+review card, no embed round-trip — never rejected. A predicate the registry
+has never seen is still stored; consolidation may later promote a
+frequently-seen open predicate into the declared set in a new
+`schema_version`. (An earlier per-type `allow_open_predicates` field that only
+tuned prompt-digest tone was removed as dead — declaration itself now carries
+the tier signal.)
 
 ## The meta-schema **[proposed]**
 
@@ -166,9 +170,8 @@ schema_org_ref:      # advisory, e.g. "schema:Person"
 description:         # why this type exists; can seed the prompt
 vehicle:             # graph | typed_record(phase N)   — see §Vehicles
 default_fact_kind:   # maps to the fixed fact-kind enum; per-predicate kind overrides it
-allow_open_predicates: true|false      # tone of the prompt digest only (never a gate)
 
-predicates:
+predicates:          # declared = tier-1 (docs/ENTITY_GRAPH_REFOCUS_PLAN.md §1); undeclared = long-tail, stored raw
   - canonical_name:  # the predicate string (preferred spelling)
     qualifier_vocab: # 0..1 named vocab for predicate families (e.g. name.<kind>.<audience>)
     value_shape:     # scalar | text | enum | quantity | date | ref(<type>) | structured(<shape>)
@@ -481,7 +484,7 @@ These extend the catalog beyond the original fourteen. They reuse the shared
 facets (a new **Prioritized** facet supplies a single `priority` enum so
 goal/project/task agree structurally) and the soft-registry discipline — only
 high-traffic, standards-anchored, or projection-driving predicates; long-tail
-rides `allow_open_predicates`.
+rides undeclared (tier-2: stored raw, card-free).
 
 - **Goal** *(graph; custom)* — facets: Named, Temporal, Lifecycle, Prioritized,
   Related. Core: `targetDate` (← `deadline`), `parentGoal` (self-ref, acyclic by

@@ -930,7 +930,7 @@ class SqlAnalysisRepo:
                 return []
             statement = payload.get("statement")
             kind = payload.get("fact_kind")
-            decision = await decide_predicate(
+            suggestions = await decide_predicate(
                 session,
                 predicate=predicate,
                 statement=statement if isinstance(statement, str) else "",
@@ -938,7 +938,7 @@ class SqlAnalysisRepo:
                 embedder=embedder,
                 k=k,
             )
-        return [{"name": n, "score": s} for n, s in decision.suggestions]
+        return [{"name": n, "score": s} for n, s in suggestions]
 
     async def resolve_review(
         self, ctx: SessionContext, item_id: str, action: str, payload: dict[str, Any]

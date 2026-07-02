@@ -1,12 +1,15 @@
 """The canonical-predicate index: descriptor synthesis, registry → seed rows,
-the cosine nearest-neighbour query (predicate canonicalization Phase 2,
-docs/PREDICATE_CANONICALIZATION.md §3), and the one-shot boot sweep that
-retires the open new_predicate card backlog the two-tier cutover orphaned.
+the cosine nearest-neighbour query behind the held-fact predicate-suggestion
+picker, and the one-shot boot sweep that retires the open new_predicate card
+backlog the two-tier cutover orphaned.
 
-Pure registry/SQL helpers — no embedding-canonicalization DECISION here (the
-STRONG/WEAK bands are Phase 3). The descriptor is the quality lever: a bare
-predicate token embeds poorly (worksFor vs worksWith), so we embed a synthesized
-definition + shape hint, not the token.
+Suggestions only — the embed-band DECISION (STRONG auto-merge / WEAK card) was
+retired with the two-tier cutover (docs/ENTITY_GRAPH_REFOCUS_PLAN.md): the
+Phase-4 calibration showed no cosine threshold separates drift spellings from
+genuinely novel predicates, so an unknown predicate now commits raw and the
+index's one job is ranking picker suggestions. The descriptor is the quality
+lever: a bare predicate token embeds poorly (worksFor vs worksWith), so we
+embed a synthesized definition + shape hint, not the token.
 """
 
 from __future__ import annotations
@@ -14,7 +17,6 @@ from __future__ import annotations
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Literal
 
 import structlog
 from sqlalchemy import text
@@ -30,19 +32,6 @@ log = structlog.get_logger()
 
 _CAMEL = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
 
-# Canonicalization bands (predicate canonicalization, docs §3.1/§5). Calibrated
-# against bge-small embeddings of the descriptors (Phase 4): true drifts that
-# should merge land only at ~0.57-0.72 (marriedTo->spouse 0.71) and OVERLAP with
-# genuine novels (favoriteColor->color 0.66) — no threshold cleanly separates
-# them, and nearest-neighbours are sometimes wrong (allergicTo->prescriber). So:
-# - STRONG stays high (0.90): auto-merge effectively never fires, which is the
-#   safe default — auto-merging onto a WRONG canonical is worse than minting.
-# - WEAK is low (0.55): unknown predicates file a review card that CARRIES the
-#   top suggestions (which are right for the clean drifts), so the feature acts as
-#   a suggestion-led review assistant, not an auto-merger. A richer descriptor
-#   (docs §7) is the lever to make reliable auto-merge possible later.
-_PRED_STRONG = 0.90  # >= this: canonicalize to the match automatically (rare by design)
-_PRED_WEAK = 0.55  # [WEAK, STRONG): card WITH suggestions; below: cold (no suggestion)
 _PRED_TOPK = 5
 
 
@@ -114,25 +103,6 @@ def raw_descriptor(predicate: str, statement: str, kind: str | None = None) -> s
     return " ".join(p for p in parts if p)
 
 
-@dataclass(frozen=True)
-class PredicateDecision:
-    """The canonicalization verdict for one unknown predicate (Phase 3 §3.1)."""
-
-    band: Literal["strong", "weak", "cold"]
-    canonical: str | None  # the STRONG match to rewrite to; None for weak/cold
-    suggestions: tuple[tuple[str, float], ...]  # top-k (canonical_name, similarity)
-
-
-def band_for(neighbors: tuple[tuple[str, float], ...]) -> PredicateDecision:
-    """The band verdict for a predicate's nearest canonicals: STRONG (top
-    >= _PRED_STRONG) canonicalizes; WEAK proposes the neighbours for review; cold
-    (no/distant neighbour) is a mint proposal."""
-    top = neighbors[0][1] if neighbors else 0.0
-    if top >= _PRED_STRONG:
-        return PredicateDecision("strong", neighbors[0][0], neighbors)
-    return PredicateDecision("weak" if top >= _PRED_WEAK else "cold", None, neighbors)
-
-
 async def alias_canonicals(session: AsyncSession, raws: Sequence[str]) -> dict[str, str]:
     """The durable raw->canonical aliases (Loop 3a, Wave 1) for a batch of raw predicates, keyed by
     `_norm_key(raw)`. A confirmed `map_to_existing`/rename wrote these so a resolved drift spelling
@@ -186,27 +156,28 @@ async def decide_predicates(
     *,
     embedder: EmbedClient,
     k: int = _PRED_TOPK,
-) -> list[PredicateDecision]:
-    """Decide a batch of unknown predicates (each item is (predicate, statement, kind)). A durable
-    alias short-circuits to STRONG with no embed and no card (Wave 1); the rest cosine-match against
-    the canonical index in ONE embed call. The storage invariant holds for every band — the
-    predicate name is never rejected."""
+) -> list[tuple[tuple[str, float], ...]]:
+    """Ranked canonical suggestions, top-k (canonical_name, similarity) per item
+    (each item is (predicate, statement, kind)), for the held-fact predicate
+    picker. A durable alias short-circuits to its owner-confirmed canonical
+    (similarity 1.0 — a resolution, not a guess) with no embed; the rest
+    cosine-match against the canonical index in ONE embed call."""
     if not items:
         return []
     aliases = await alias_canonicals(session, [p for p, _, _ in items])
-    out: list[PredicateDecision] = []
+    out: list[tuple[tuple[str, float], ...]] = []
     pending: list[tuple[int, str, str, str | None]] = []
     for idx, (p, s, kd) in enumerate(items):
         canonical = aliases.get(_norm_key(p))
         if canonical is not None:
-            out.append(PredicateDecision("strong", canonical, ()))
+            out.append(((canonical, 1.0),))
         else:
-            out.append(PredicateDecision("cold", None, ()))  # placeholder, filled after the embed
+            out.append(())  # placeholder, filled after the embed
             pending.append((idx, p, s, kd))
     if pending:
         vectors = await embedder.embed([raw_descriptor(p, s, kd) for _, p, s, kd in pending])
         for (idx, _p, _s, _kd), v in zip(pending, vectors, strict=True):
-            out[idx] = band_for(tuple(await nearest_predicates(session, v, k)))
+            out[idx] = tuple(await nearest_predicates(session, v, k))
     return out
 
 
@@ -218,7 +189,7 @@ async def decide_predicate(
     kind: str | None,
     embedder: EmbedClient,
     k: int = _PRED_TOPK,
-) -> PredicateDecision:
+) -> tuple[tuple[str, float], ...]:
     """Single-predicate convenience over decide_predicates."""
     out = await decide_predicates(session, [(predicate, statement, kind)], embedder=embedder, k=k)
     return out[0]
@@ -305,8 +276,8 @@ async def nearest_predicates(
     session: AsyncSession, query_embedding: Sequence[float], k: int
 ) -> list[tuple[str, float]]:
     """The k canonical predicates closest to `query_embedding` by cosine
-    similarity, strongest first. No band filtering — Phase 3's STRONG/WEAK
-    decision reads this. Global (predicates are not domain-scoped)."""
+    similarity, strongest first — the suggestion ranking reads this. Global
+    (predicates are not domain-scoped)."""
     rows = (
         await session.execute(
             text(

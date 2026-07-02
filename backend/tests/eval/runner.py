@@ -333,6 +333,10 @@ async def _read_commit(
     seeded_facts = tuple(
         _state(sym, name, pred, watched_rows[wid]) for sym, name, pred, wid in watched
     )
+    # All kinds, not just new_predicate: absent_review_cards is generic over kind,
+    # so a {"kind": "fact_conflict"} spec must be able to SEE those cards — a
+    # narrower read-back would pass it vacuously. Kinds without predicate/
+    # suggestions payload keys read back as None/() and match on kind alone.
     review_cards = tuple(
         ReviewCard(
             kind=c.kind,
@@ -340,7 +344,6 @@ async def _read_commit(
             suggestions=tuple((s["name"], s["score"]) for s in c.payload.get("suggestions", [])),
         )
         for c in cards
-        if c.kind == "new_predicate"
     )
     return DbCommit(
         owner_id=owner_id,

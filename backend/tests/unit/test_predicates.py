@@ -1,6 +1,6 @@
-"""Pure tests for the canonical-predicate helpers (predicate canonicalization):
-descriptor synthesis + registry seed-row collapse (Phase 2), and the embedding
-band decision (Phase 3, nearest_predicates faked). No DB."""
+"""Pure tests for the canonical-predicate helpers: descriptor synthesis +
+registry seed-row collapse, and the picker's ranked-suggestion lookup
+(nearest_predicates faked). No DB."""
 
 from __future__ import annotations
 
@@ -36,8 +36,8 @@ def _patch_nearest(monkeypatch: pytest.MonkeyPatch, neighbors: list[tuple[str, f
         return {}
 
     monkeypatch.setattr(pmod, "nearest_predicates", fake)
-    # The durable-alias consult (Wave 1) also reads the session; stub it so these band-logic tests
-    # keep their "session is never touched" contract.
+    # The durable-alias consult also reads the session; stub it so these
+    # suggestion tests keep their "session is never touched" contract.
     monkeypatch.setattr(pmod, "alias_canonicals", no_aliases)
 
 
@@ -48,31 +48,23 @@ def test_raw_descriptor_includes_token_statement_and_kind() -> None:
     assert raw_descriptor("x", "", None) == "x"
 
 
-async def test_decide_predicate_strong(monkeypatch: pytest.MonkeyPatch) -> None:
-    _patch_nearest(monkeypatch, [("spouse", 0.95), ("knows", 0.60)])
-    d = await decide_predicate(
-        _NO_SESSION,
-        predicate="marriedTo",
-        statement="x",
-        kind="relationship",
-        embedder=_FakeEmbed(),
-    )
-    assert d.band == "strong" and d.canonical == "spouse"
-
-
-async def test_decide_predicate_weak(monkeypatch: pytest.MonkeyPatch) -> None:
-    _patch_nearest(monkeypatch, [("spouse", 0.82)])
+async def test_decide_predicate_returns_ranked_suggestions(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_nearest(monkeypatch, [("spouse", 0.82), ("knows", 0.60)])
     d = await decide_predicate(
         _NO_SESSION,
         predicate="partneredWith",
         statement="x",
-        kind=None,
+        kind="relationship",
         embedder=_FakeEmbed(),
     )
-    assert d.band == "weak" and d.canonical is None and d.suggestions[0][0] == "spouse"
+    assert d == (("spouse", 0.82), ("knows", 0.60))
 
 
-async def test_decide_predicate_cold(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_decide_predicate_without_neighbors_suggests_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     _patch_nearest(monkeypatch, [])
     d = await decide_predicate(
         _NO_SESSION,
@@ -81,7 +73,7 @@ async def test_decide_predicate_cold(monkeypatch: pytest.MonkeyPatch) -> None:
         kind=None,
         embedder=_FakeEmbed(),
     )
-    assert d.band == "cold" and d.canonical is None and d.suggestions == ()
+    assert d == ()
 
 
 def test_predicate_descriptor_humanizes_name_and_adds_shape_hint() -> None:

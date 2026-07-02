@@ -603,13 +603,13 @@ class AnalysisPipeline:
                 (i, pf.fact) for i, pf in enumerate(plan.facts) if pf.status == "pending_review"
             ]
             if held:
-                decisions = await decide_predicates(
+                ranked = await decide_predicates(
                     session,
                     [(f.predicate, f.statement, f.kind) for _, f in held],
                     embedder=self._embedder,
                 )
-                for (i, _), decision in zip(held, decisions, strict=True):
-                    pred_suggestions[i] = [{"name": n, "score": s} for n, s in decision.suggestions]
+                for (i, _), suggestions in zip(held, ranked, strict=True):
+                    pred_suggestions[i] = [{"name": n, "score": s} for n, s in suggestions]
         for i, pf in enumerate(plan.facts):
             if pf.status != "pending_review":
                 continue

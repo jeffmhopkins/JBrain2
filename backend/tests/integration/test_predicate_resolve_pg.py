@@ -251,18 +251,18 @@ async def test_map_to_existing_records_a_durable_alias(maker):  # noqa: F811
     assert (await _aliases(maker)).get("zzqmarriedto") == "spouse"
 
 
-async def test_aliased_predicate_short_circuits_to_strong_without_embedding(maker):  # noqa: F811
+async def test_aliased_predicate_short_circuits_without_embedding(maker):  # noqa: F811
     await _seed_canonical(maker, "spouse")
     async with scoped_session(maker, SYSTEM_CTX) as s:
         await record_predicate_alias(s, "married_To", "spouse")
     # A spelling variant of the aliased raw still resolves (the alias key is normalized), and the
-    # BoomEmbed proves no embedding ran for it.
+    # BoomEmbed proves no embedding ran for it. The confirmed canonical ranks at 1.0 — a
+    # resolution, not a guess.
     async with scoped_session(maker, SYSTEM_CTX) as s:
-        decisions = await decide_predicates(
+        ranked = await decide_predicates(
             s, [("MarriedTo", "x marriedTo y", "relationship")], embedder=_BoomEmbed()
         )
-    assert len(decisions) == 1
-    assert decisions[0].band == "strong" and decisions[0].canonical == "spouse"
+    assert ranked == [(("spouse", 1.0),)]
 
 
 async def test_alias_canonicals_is_normalized_and_batched(maker):  # noqa: F811
@@ -281,7 +281,7 @@ async def test_decide_predicates_mixed_batch_embeds_only_the_non_aliased(maker):
         await record_predicate_alias(s, "wedTo", "spouse")
     rec = _RecordingEmbed()
     async with scoped_session(maker, SYSTEM_CTX) as s:
-        decisions = await decide_predicates(
+        ranked = await decide_predicates(
             s,
             [
                 ("marriedTo", "x marriedTo y", "relationship"),  # aliased
@@ -290,10 +290,9 @@ async def test_decide_predicates_mixed_batch_embeds_only_the_non_aliased(maker):
             ],
             embedder=rec,
         )
-    # Order + length preserved; the aliased items map to STRONG/spouse, the middle falls through.
-    assert [d.band for d in decisions] == ["strong", "cold", "strong"]
-    assert decisions[0].canonical == "spouse" and decisions[2].canonical == "spouse"
-    assert decisions[1].canonical is None
+    # Order + length preserved; the aliased items rank their confirmed canonical at 1.0, the
+    # middle falls through to the index (empty: the seeded canonical has no embedding).
+    assert ranked == [(("spouse", 1.0),), (), (("spouse", 1.0),)]
     # Cost + right-index mapping: exactly the one non-aliased predicate was embedded.
     assert len(rec.texts) == 1 and "frobnicates" in rec.texts[0]
 

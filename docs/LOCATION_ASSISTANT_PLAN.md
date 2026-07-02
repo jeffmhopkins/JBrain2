@@ -192,8 +192,9 @@ now deferred here)** plus a **proactive delivery channel** and/or tuning; the �
    minted with the model-emitted predicate as free text; `canonical_predicates` is a
    derived projection the `sync_predicates` job keeps in sync from the YAML registry
    (the existing `spouse`/`worksFor` relationship predicates have no hand-written seed
-   and follow the identical zero-migration pattern). `device.yaml` already has
-   `allow_open_predicates: true`; `is_functional` honors the registry flag.
+   and follow the identical zero-migration pattern). (`allow_open_predicates`, cited
+   here historically, was later removed with the two-tier model —
+   docs/ENTITY_GRAPH_REFOCUS_PLAN.md.) `is_functional` honors the registry flag.
 2. **Ship L5 (segmenter) now?** **Defer.** No build-now consumer; its consumers are the
    deferred 🟡 analytics tier.
 3. **Per-tool gate vs. master setting?** **Both.** Make `require_full_owner` a
