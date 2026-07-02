@@ -40,6 +40,9 @@ export function SettingsScreen({ deviceLabel, onLogout }: SettingsScreenProps) {
   // over app.settings): the worker reads it, so it must follow the account.
   // Theme and text size deliberately stay device-local for now.
   const [imageMode, setImageMode] = useState<ImageAnalysisMode | null>(null);
+  // Stream real prompt/answer text to the on-box wall display (:8800). Off by default;
+  // null until the server answers so the toggle doesn't flash the wrong state.
+  const [brainStream, setBrainStream] = useState<boolean | null>(null);
   // The owner's display timezone — synced from this device's zone on app load
   // (App.tsx); shown read-only so the owner knows which zone their times render
   // in. Falls back to the browser's detected zone before the server answers.
@@ -52,11 +55,15 @@ export function SettingsScreen({ deviceLabel, onLogout }: SettingsScreenProps) {
       .then((s) => {
         if (stale) return;
         setImageMode(s.image_analysis_mode);
+        setBrainStream(s.brain_llm_stream);
         if (s.owner_timezone) setTimezone(s.owner_timezone);
       })
       .catch(() => {
         // Unreachable backend: show the default; a tap still tries to save.
-        if (!stale) setImageMode("full");
+        if (!stale) {
+          setImageMode("full");
+          setBrainStream(false);
+        }
       });
     return () => {
       stale = true;
@@ -251,6 +258,11 @@ export function SettingsScreen({ deviceLabel, onLogout }: SettingsScreenProps) {
     void api.updateSettings({ image_analysis_mode: mode }).catch(() => {});
   }
 
+  function pickBrainStream(on: boolean) {
+    setBrainStream(on); // optimistic
+    void api.updateSettings({ brain_llm_stream: on }).catch(() => {});
+  }
+
   return (
     <main className="screen-body settings">
       <section className="settings-card">
@@ -332,6 +344,31 @@ export function SettingsScreen({ deviceLabel, onLogout }: SettingsScreenProps) {
               onClick={() => pickImageMode(opt.value)}
             >
               {opt.label}
+            </button>
+          ))}
+        </div>
+      </section>
+
+      <section className="settings-card">
+        <h2 className="settings-label">Stream LLM to wall display</h2>
+        <p className="settings-meta">
+          shows each chat turn on the on-box neural-brain display (:8800) as tendrils with the
+          prompt and answer text streaming along them, plus a fade-out popup of the answer. this
+          puts your real prompt and answer text on that display, which has no login — only turn it
+          on when the display is the box's own monitor (or bound to localhost), never an exposed LAN
+          screen. off by default.
+        </p>
+        <div className="theme-picker" aria-label="Stream LLM to wall display">
+          {[true, false].map((on) => (
+            <button
+              key={on ? "on" : "off"}
+              type="button"
+              aria-pressed={brainStream === on}
+              className={`seg${brainStream === on ? " seg-on" : ""}`}
+              disabled={brainStream === null}
+              onClick={() => pickBrainStream(on)}
+            >
+              {on ? "On" : "Off"}
             </button>
           ))}
         </div>

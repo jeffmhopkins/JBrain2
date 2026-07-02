@@ -327,7 +327,11 @@ const analyzingAttachments = new Set<string>();
 const analyzingNotes = new Set<string>();
 
 // The first server-synced settings object (theme/text-size stay local).
-const SETTINGS: AppSettings = { image_analysis_mode: "full", owner_timezone: null };
+const SETTINGS: AppSettings = {
+  image_analysis_mode: "full",
+  owner_timezone: null,
+  brain_llm_stream: false,
+};
 
 // Per-task LLM routing fixture (GET/PUT /api/settings/llm). Only grok carries
 // a reasoning level; reasoning_effort is null for any task off grok, mirroring
@@ -3101,6 +3105,9 @@ export const mockFetch: typeof fetch = async (input, init) => {
       } else if (key === "owner_timezone") {
         if (typeof value !== "string") return json({ detail: "bad timezone" }, 422);
         SETTINGS.owner_timezone = value;
+      } else if (key === "brain_llm_stream") {
+        if (typeof value !== "boolean") return json({ detail: "bad brain_llm_stream" }, 422);
+        SETTINGS.brain_llm_stream = value;
       } else {
         return json({ detail: `unknown key ${key}` }, 422);
       }

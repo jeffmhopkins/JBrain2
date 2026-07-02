@@ -20,15 +20,49 @@ def test_emit_without_running_loop_is_noop() -> None:
 
 
 async def test_emit_schedules_a_post(monkeypatch) -> None:  # type: ignore[no-untyped-def]
-    calls: list[tuple[str, str]] = []
+    calls: list[tuple[str, str, str | None]] = []
 
-    async def fake_post(url: str, kind: str) -> None:
-        calls.append((url, kind))
+    async def fake_post(url: str, kind: str, text: str | None = None) -> None:
+        calls.append((url, kind, text))
 
     monkeypatch.setattr("jbrain.agent.brainevents._post_event", fake_post)
     build_event_emitter("http://server-brain:8800/event")("web_search")
     await asyncio.sleep(0)  # let the fire-and-forget task run
-    assert calls == [("http://server-brain:8800/event", "web_search")]
+    assert calls == [("http://server-brain:8800/event", "web_search", None)]
+
+
+async def test_emit_carries_llm_text(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    posted: list[dict] = []
+
+    async def fake_send(self, url, json):  # type: ignore[no-untyped-def]
+        posted.append(json)
+
+        class _R:
+            pass
+
+        return _R()
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", fake_send)
+    build_event_emitter("http://server-brain:8800/event")("llm_input", "what's my next appt?")
+    await asyncio.sleep(0)
+    assert posted == [{"kind": "llm_input", "text": "what's my next appt?"}]
+
+
+async def test_post_event_truncates_long_text(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    posted: list[dict] = []
+
+    async def fake_send(self, url, json):  # type: ignore[no-untyped-def]
+        posted.append(json)
+
+        class _R:
+            pass
+
+        return _R()
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", fake_send)
+    await _post_event("http://server-brain:8800/event", "llm_output", "x" * 5000)
+    # Bounded so a long answer can't bloat the POST / the display buffer.
+    assert len(posted[0]["text"]) == 600
 
 
 async def test_post_event_swallows_transport_errors(monkeypatch) -> None:  # type: ignore[no-untyped-def]

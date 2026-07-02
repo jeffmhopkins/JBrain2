@@ -583,6 +583,19 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
         # The fullest context the turn reached (last usage event's prompt + output),
         # persisted on the session at settle so reopening the chat restores the meter.
         last_context_used: int | None = None
+        # Wall-display LLM streaming (opt-in, gated on the brain_llm_stream setting): the
+        # owner's message streams IN along a tendril now; the answer streams OUT at settle
+        # with a fade-out popup. Real owner text on the on-box display, so it fires only
+        # when the owner turned it on. Pure display telemetry — a read/emit hiccup here
+        # must never touch the turn, so the setting read is suppressed and the emit is
+        # itself fire-and-forget.
+        brain_emit = getattr(request.app.state, "brain_emit", None)
+        brain_stream = False
+        if brain_emit is not None:
+            with contextlib.suppress(Exception):
+                brain_stream = await get_settings_store(request).brain_llm_stream(owner_ctx)
+            if brain_stream and body.message:
+                brain_emit("llm_input", body.message)
         stream = loop.run_stream(
             session=read_ctx,
             scopes=read_scopes,
@@ -639,6 +652,9 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
                         # NOT recorded — Loop 1 is ephemeral and writes nothing durable.
                         live.emit(f"data: {event.model_dump_json()}\n\n".encode())
             if status == "done":
+                # Stream the finished answer OUT to the wall display (opt-in; see above).
+                if brain_stream and brain_emit is not None and acc.answer_text:
+                    brain_emit("llm_output", acc.answer_text)
                 # Episodic memory is owner-data: only a knowledge-base agent appends
                 # one, and never a `no_memory` sandbox session (the sub-agent flag —
                 # defense in depth so the structural no-memory guarantee holds even if

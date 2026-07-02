@@ -83,6 +83,25 @@ async def test_store_defaults_and_upsert_round_trip(
     assert await store.image_analysis_mode(OWNER) == "full"
 
 
+async def test_brain_llm_stream_defaults_off_and_round_trips(
+    maker: async_sessionmaker[AsyncSession],
+) -> None:
+    from jbrain.settings_store import BRAIN_LLM_STREAM_KEY
+
+    store = SqlSettingsStore(maker)
+    # Absent → off: owner text never rides the unauthenticated display by default.
+    assert await store.brain_llm_stream(OWNER) is False
+
+    await store.upsert(OWNER, BRAIN_LLM_STREAM_KEY, True)
+    assert await store.brain_llm_stream(OWNER) is True
+
+    # Any non-true stored value reads as off (fail-closed — junk never enables it).
+    await store.upsert(OWNER, BRAIN_LLM_STREAM_KEY, "on")
+    assert await store.brain_llm_stream(OWNER) is False
+    await store.upsert(OWNER, BRAIN_LLM_STREAM_KEY, False)
+    assert await store.brain_llm_stream(OWNER) is False
+
+
 async def test_owner_timezone_round_trip_and_rejects_unknown_zones(
     maker: async_sessionmaker[AsyncSession],
 ) -> None:

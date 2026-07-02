@@ -97,6 +97,19 @@ GMAIL_CLIENT_SECRET_KEY = "gmail_client_secret"
 GMAIL_REFRESH_TOKEN_KEY = "gmail_refresh_token"
 
 
+# Stream real LLM prompt + answer TEXT to the on-box wall display (deploy/server-brain,
+# the neural-brain page on :8800) as reach-out "tendrils" with the text streaming along
+# them, plus a fade-out popup of each final answer. OFF by default and gated ONLY here:
+# the display is unauthenticated (safe precisely because it otherwise carries no owner
+# data — host vitals + content-free web-tool markers only), so turning this on knowingly
+# puts prompt/answer text on that surface. Enable it only when the display is bound to the
+# box's own monitor / localhost (BRAIN_HOST_BIND=127.0.0.1), never on an exposed LAN port.
+# DB-backed, read live per turn (jbrain.api.agent) so it flips with no redeploy; an absent
+# or non-true value reads as OFF — text never leaks off a junk value.
+BRAIN_LLM_STREAM_KEY = "brain_llm_stream"
+BRAIN_LLM_STREAM_DEFAULT = False
+
+
 # The served-model id code mode (jcode) runs its coding agent against — the live
 # control surface for "which model does the jcode agent use". Absent/non-string =
 # "" (unset): the api falls back to the JBRAIN_JCODE_MODEL config default. The
@@ -371,6 +384,12 @@ class SqlSettingsStore:
             if sane:
                 clean[task] = sane
         return clean
+
+    async def brain_llm_stream(self, ctx: SessionContext) -> bool:
+        """Whether real LLM prompt/answer text is streamed to the on-box wall display.
+        Defaults OFF; only an explicit `true` enables it (any non-true value reads as
+        off, so owner text never rides the unauthenticated display off a junk value)."""
+        return await self.get(ctx, BRAIN_LLM_STREAM_KEY, BRAIN_LLM_STREAM_DEFAULT) is True
 
     async def jcode_model(self, ctx: SessionContext) -> str:
         """The selected served-model id for the code-mode (jcode) agent, or "" when

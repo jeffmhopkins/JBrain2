@@ -309,10 +309,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.connector_service = ConnectorService(connector_registry, SqlConnectorCache(maker))
         # The jerv chatbot's on-box internet tools — direct, sandboxed web access
         # (no owner data in context; docs/ASSISTANT.md "Agent selection").
+        # One best-effort emitter to the on-box wall display, shared by the web tools
+        # (content-free markers) and the agent turn (opt-in LLM text streaming, gated on
+        # the brain_llm_stream setting in jbrain.api.agent).
+        brain_emit = build_event_emitter(settings.brain_events_url)
+        app.state.brain_emit = brain_emit
         web_handlers = build_web_handlers(
             SearxngClient(settings.searxng_url),
             WebFetcher(reader_url=settings.reader_url),
-            emit=build_event_emitter(settings.brain_events_url),
+            emit=brain_emit,
         )
         # Fetches a source site's favicon on-box for web citation chips, so the PWA
         # renders a tappable logo without ever touching the third-party host (#9).
