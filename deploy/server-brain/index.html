@@ -75,6 +75,12 @@
     font-size: 9px; letter-spacing: 0.16em; text-transform: uppercase;
     color: #8FBC9A; opacity: 0.75;
   }
+  /* Prompt popup — steel accent + its own label (mirrors the answer popup). */
+  #popups .popup.in {
+    border-color: rgba(127,167,201,0.32);
+    box-shadow: 0 6px 26px rgba(0,0,0,0.5), 0 0 22px rgba(127,167,201,0.16);
+  }
+  #popups .popup.in::before { content: "↱ prompt"; color: #7FA7C9; }
   @keyframes popupLife {
     0%   { opacity: 0; transform: translate(0, 8px) scale(0.96); }
     12%  { opacity: 1; transform: translate(calc(var(--dx) * 0.12), calc(var(--dy) * 0.12)) scale(1); }
@@ -224,6 +230,7 @@
     <div class="leg"><span class="sw" style="background:linear-gradient(90deg,transparent,#5fe6ff)"></span><span><b>Cyan tendril</b> — web search (query streams out)</span></div>
     <div class="leg"><span class="sw" style="background:linear-gradient(90deg,transparent,#ffc66e)"></span><span><b>Amber tendril</b> — web fetch (URL streams out)</span></div>
     <div class="leg"><span class="sw" style="background:linear-gradient(90deg,#7FA7C9,transparent)"></span><span><b>Steel stream</b> — LLM prompt (streams in from the left)</span></div>
+    <div class="leg"><span class="sw" style="background:linear-gradient(90deg,transparent,#8f7ec0)"></span><span><b>Violet stream</b> — LLM thinking (fast reasoning trace)</span></div>
     <div class="leg"><span class="sw" style="background:linear-gradient(90deg,transparent,#8FBC9A)"></span><span><b>Green stream</b> — LLM answer (streams out to the right, + popup)</span></div>
     <div class="leg"><span class="sw" style="background:linear-gradient(90deg,#6699ff,#ff8c66)"></span><span><b>Rim aura</b> — net in (blue) / out (coral)</span></div>
     <div class="leg"><span class="sw dot" style="background:#a98cf9;box-shadow:0 0 8px #a98cf9"></span><span><b>Violet rim</b> — disk read</span></div>
@@ -798,13 +805,15 @@ for (let i = 0; i < 220; i++) {
   s.className = 'ch'; s.style.display = 'none';
   streamEl.appendChild(s); CHAR_POOL.push(s);
 }
-// Per-kind stream spec: geometry direction + glyph tint (g) + filament colour (f).
-// prompt/answer are the LLM turn; search/fetch stream the query / URL when text is on.
+// Per-kind stream spec: geometry direction + glyph tint (g) + filament colour (f) +
+// `speed` (higher = faster flow). prompt/answer/thinking are the LLM turn; search/fetch
+// stream the query / URL when text is on.
 const STREAM_SPEC = {
-  prompt: { dir: 'in',  g: '#c2d6ea', f: new THREE.Color('#7FA7C9') },  // steel, into the net
-  answer: { dir: 'out', g: '#c9e6cf', f: new THREE.Color('#8FBC9A') },  // green, out to the right
-  search: { dir: 'out', g: '#bff0ff', f: new THREE.Color('#5fe6ff') },  // cyan, reaching out to the web
-  fetch:  { dir: 'out', g: '#ffe2b4', f: new THREE.Color('#ffc66e') },  // amber
+  prompt:   { dir: 'in',  g: '#c2d6ea', f: new THREE.Color('#7FA7C9'), speed: 2 },  // steel, into the net
+  answer:   { dir: 'out', g: '#c9e6cf', f: new THREE.Color('#8FBC9A'), speed: 2 },  // green, out to the right
+  thinking: { dir: 'out', g: '#bcaede', f: new THREE.Color('#8f7ec0'), speed: 3 },  // violet, faster reasoning trace
+  search:   { dir: 'out', g: '#bff0ff', f: new THREE.Color('#5fe6ff'), speed: 2 },  // cyan, reaching out to the web
+  fetch:    { dir: 'out', g: '#ffe2b4', f: new THREE.Color('#ffc66e'), speed: 2 },  // amber
 };
 const LLM_BR = 15;        // world radius at the brain edge where a stream connects
 const LLM_REACH = 22;     // world length of the visible filament (brain edge -> screen edge)
@@ -840,9 +849,9 @@ function spawnStream(kind, text) {           // kind: prompt | answer | search |
   st.yb = (Math.random() - 0.5) * 20;               // vertical lane (kept on-screen)
   st.zb = (Math.random() - 0.5) * 6;
   st.bow = (2 + Math.random() * 3) * (Math.random() < 0.5 ? -1 : 1);  // gentle arc
-  // life sized so the whole message flows across (net edge -> off screen / into the core)
-  // at a readable pace
-  st.life = 2.6 + (LLM_REACH + st.L * LLM_STEP) * 0.10;
+  // life sized so the whole message flows across (net edge -> off screen / into the core);
+  // spec.speed sets the pace (2x baseline, 3x for the thinking trace)
+  st.life = (2.6 + (LLM_REACH + st.L * LLM_STEP) * 0.10) / spec.speed;
 }
 
 // World point at distance `d` from centre along a stream (a gentle sine bow in y).
@@ -862,9 +871,9 @@ function llmGlyphDist(st, i, p) {
     const d0 = (LLM_BR - block) + p * (LLM_FAR_OUT - (LLM_BR - block));
     return d0 + i * LLM_STEP;
   }
-  // char L-1 (leading, nearest the net) runs from FAR_IN in to DEEP; char 0 trails it
+  // char 0 leads into the net (first character first) from FAR_IN in to DEEP; the rest trail
   const dLead = LLM_FAR_IN + p * ((LLM_DEEP - block) - LLM_FAR_IN);
-  return dLead + (L - 1 - i) * LLM_STEP;
+  return dLead + i * LLM_STEP;
 }
 
 function updateLlmStreams(dt) {               // filament geometry — runs before render
@@ -942,11 +951,11 @@ function updateStreamText() {                 // project + flow glyphs — runs 
 }
 
 const popupsEl = document.getElementById('popups');
-function spawnPopup(text) {
+function spawnPopup(text, kind) {         // kind: 'answer' (default) | 'prompt'
   const t = String(text || '').replace(/\s+/g, ' ').trim();
   if (!t) return;
   const d = document.createElement('div');
-  d.className = 'popup';
+  d.className = kind === 'prompt' ? 'popup in' : 'popup';
   d.textContent = t.slice(0, 320);
   d.style.left = (13 + Math.random()*60).toFixed(1) + 'vw';   // safe margins
   d.style.top  = (15 + Math.random()*56).toFixed(1) + 'vh';
@@ -1107,10 +1116,17 @@ const DEMO_ANSWERS = [
   'Next: Dr. Alvarez, Thursday 9:40am, routine cleaning.',
   "Confirmed you'll renew at the current rate; asked to fix the porch light first.",
 ];
+const DEMO_THINKING = [
+  'Checking the roof notes… found the install date and warranty term.',
+  'Summing the four run entries and comparing to last week.',
+  'Scanning appointments for the next dentist visit and provider.',
+  'Drafting a polite renewal reply and noting the porch-light ask.',
+];
 let demoTurnI = 0;
 function demoLlmTurn() {
   const i = demoTurnI++ % DEMO_PROMPTS.length;
   ServerBrain.llmInput(DEMO_PROMPTS[i]);
+  setTimeout(() => ServerBrain.llmThinking(DEMO_THINKING[i]), 1900);
   setTimeout(() => ServerBrain.llmOutput(DEMO_ANSWERS[i]), 3200);
 }
 
@@ -1236,10 +1252,11 @@ const ServerBrain = {
   webSearch(text) { if (text) spawnStream('search', text); else webSearch(); },
   webFetch(text) { if (text) spawnStream('fetch', text); else webFetch(); },
   // LLM turn (opt-in real-text streaming): the prompt streams IN from the left, the
-  // answer streams OUT to the right and then blooms a fade-out popup so the finished
-  // answer is legible for a beat after the stream passes.
-  llmInput(text) { spawnStream('prompt', text); },
-  llmOutput(text) { spawnStream('answer', text); if (text) setTimeout(() => spawnPopup(text), 1400); },
+  // (fast) thinking trace and then the answer stream OUT to the right; prompt and answer
+  // each bloom a fade-out popup so the full text is legible for a beat.
+  llmInput(text) { spawnStream('prompt', text); if (text) setTimeout(() => spawnPopup(text, 'prompt'), 900); },
+  llmThinking(text) { spawnStream('thinking', text); },
+  llmOutput(text) { spawnStream('answer', text); if (text) setTimeout(() => spawnPopup(text, 'answer'), 1000); },
 };
 window.ServerBrain = ServerBrain;
 
@@ -1504,6 +1521,7 @@ async function pollStats() {
       if (ev.kind === 'web_search') ServerBrain.webSearch(ev.text);
       else if (ev.kind === 'web_fetch') ServerBrain.webFetch(ev.text);
       else if (ev.kind === 'llm_input') ServerBrain.llmInput(ev.text);
+      else if (ev.kind === 'llm_thinking') ServerBrain.llmThinking(ev.text);
       else if (ev.kind === 'llm_output') ServerBrain.llmOutput(ev.text);
     }
   } catch (e) {
