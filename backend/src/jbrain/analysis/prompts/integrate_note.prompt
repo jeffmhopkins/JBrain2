@@ -1,6 +1,6 @@
 ---
 name: integrate.note
-version: integrate-v11
+version: integrate-v12
 description: Integrate one note's extracted facts into the knowledge graph, producing an IntegrationIntent.
 strength: high
 config:
@@ -43,8 +43,10 @@ Three rules that are easy to get wrong — follow them exactly:
    omission — do not add facts to make the note look complete. The ONLY facts
    you may ADD are identity-relevant inferences about who someone is — a
    pronoun-resolved gender (see INFER GENDER below), an implied kinship or
-   relationship edge between people the candidate facts already reference.
-   Never add an inferred hobby, habit, activity, life event, plan, or
+   relationship edge between people the candidate facts already reference, or
+   a declared name, nickname, or alias the note states but the extraction
+   missed, captured as that person's `name.*` value per rule 3 (never as a new
+   entity). Never add an inferred hobby, habit, activity, life event, plan, or
    preference: if the extraction left it in the note's prose, it stays there.
    Reflection and sensory color are not facts either — drop "the kitchen felt
    fresher", "a sense of quiet satisfaction".

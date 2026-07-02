@@ -61,6 +61,14 @@ def _overlaps(a: str, b: str) -> bool:
     return any(long[i : i + len(short)] == short for i in range(len(long) - len(short) + 1))
 
 
+def _pred_norm(p: str) -> str:
+    """Predicate spellings compared style-blind: 'personalBest', 'personal_best',
+    and 'personal-best' are one predicate. Whole-token overlap can't see this
+    ('personalBest' is one token, 'personal_best' is two), which would let a
+    salience negative pass silently on a snake_case spelling."""
+    return re.sub(r"[_\-]", "", p).casefold()
+
+
 @dataclass
 class CaseResult:
     name: str
@@ -199,19 +207,23 @@ def _score(case: dict[str, Any], parsed: Any, anchor: datetime) -> CaseResult:
     for dom in expect.get("domain", []):
         res.checks.append((f"domain:{dom}", any(f.domain == dom for f in parsed.facts), ""))
 
-    # Salience negatives (the v29 contract: mentions stay generous, long-tail
-    # facts stay in the prose). `absent_edges` — no fact may LINK this object
-    # (a mention is fine); `absent_predicates` — no fact may carry this
-    # predicate. Labels deliberately do NOT use the "absent:" groundedness
-    # prefix: a salience miss is a task loss, not a fabrication.
+    # Salience negatives (the salience-first contract: mentions stay generous,
+    # long-tail facts stay in the prose). `absent_edges` — no fact may LINK
+    # this object into the graph, whether as the fact's SUBJECT (entity_ref)
+    # or its object (a mention is fine); `absent_predicates` — no fact may
+    # carry this predicate, compared style-blind so a snake_case respelling
+    # can't evade it. Labels deliberately do NOT use the "absent:"
+    # groundedness prefix: a salience miss is a task loss, not a fabrication.
     for spec in expect.get("absent_edges", []):
         obj = spec["object"]
         linked = any(
-            f.object_entity_ref and _overlaps(obj, f.object_entity_ref) for f in parsed.facts
+            _overlaps(obj, f.entity_ref)
+            or (f.object_entity_ref and _overlaps(obj, f.object_entity_ref))
+            for f in parsed.facts
         )
         res.checks.append((f"absent_edge->{obj}", not linked, ""))
     for pred in expect.get("absent_predicates", []):
-        present = any(_overlaps(pred, f.predicate) for f in parsed.facts)
+        present = any(_pred_norm(pred) in _pred_norm(f.predicate) for f in parsed.facts)
         res.checks.append((f"absent_predicate:{pred}", not present, ""))
 
     return res

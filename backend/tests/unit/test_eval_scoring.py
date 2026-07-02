@@ -189,7 +189,7 @@ def test_score_value_matches_measurement_in_fact() -> None:
 
 
 def test_score_absent_edges_flags_linked_object_but_allows_mention() -> None:
-    # Salience negative (v29): the thing may be MENTIONED, but no fact may link
+    # Salience negative: the thing may be MENTIONED, but no fact may link
     # it — a one-off event's venue stays in the prose, not on an edge.
     case: dict[str, Any] = {
         "name": "ae",
@@ -202,12 +202,39 @@ def test_score_absent_edges_flags_linked_object_but_allows_mention() -> None:
     assert any(label == "absent_edge->lakefront path" and not ok for label, ok, _ in linked.checks)
 
 
+def test_score_absent_edges_flags_fact_keyed_on_the_object() -> None:
+    # A fact keyed ON the forbidden object as its SUBJECT (entity_ref) links it
+    # into the graph just as much as an edge pointing at it — the negative must
+    # catch both, not only object_entity_ref.
+    case: dict[str, Any] = {
+        "name": "ae2",
+        "expect": {"absent_edges": [{"object": "lakefront path"}]},
+    }
+    subject_fact = ExtractedFact(
+        predicate="pathLength", qualifier="", kind="measurement",
+        statement="The lakefront path is 5 miles.", value_json={"value": 5, "unit": "mi"},
+        assertion="asserted", entity_ref="lakefront path", object_entity_ref=None,
+        temporal=None, domain="general", confidence=0.9,
+    )  # fmt: skip
+    assert not _score(case, _extraction([], [subject_fact]), _A).passed
+
+
 def test_score_absent_predicates_flags_longtail_fact() -> None:
     case: dict[str, Any] = {"name": "ap", "expect": {"absent_predicates": ["personalBest"]}}
     assert _score(case, _extraction([], []), _A).passed
     assert not _score(case, _extraction([], [_edge("personalBest", "5 miles")]), _A).passed
     # A different predicate doesn't trip the check.
     assert _score(case, _extraction([], [_edge("owns", "Bella")]), _A).passed
+
+
+def test_score_absent_predicates_catches_case_style_respellings() -> None:
+    # 'personal_best' is the same long-tail predicate as 'personalBest' — a
+    # snake_case (or kebab-case) respelling must not evade the negative.
+    case: dict[str, Any] = {"name": "ap2", "expect": {"absent_predicates": ["personalBest"]}}
+    assert not _score(case, _extraction([], [_edge("personal_best", "5 miles")]), _A).passed
+    assert not _score(case, _extraction([], [_edge("personal-best", "5 miles")]), _A).passed
+    # But an unrelated predicate sharing a word still passes.
+    assert _score(case, _extraction([], [_edge("bestFriend", "Yusuf")]), _A).passed
 
 
 def test_score_salience_negatives_are_task_not_groundedness() -> None:

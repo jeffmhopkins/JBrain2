@@ -486,7 +486,7 @@
           "cross_subject": false
         }
       ],
-      "rationale": "Per-fact domains from one general note. DB-hard since the two-tier refocus (docs/ENTITY_GRAPH_REFOCUS_PLAN.md section 4/7): the v29 prompt digest steers Grok to the exact tier-1 spellings (medication, treatedBy — both on the hardcoded health floor) and the kinship edge (children) is a MUST-emit general fact, so the per-domain floors are deterministic. The tightened fact bound is advisory until the 3-run Grok calibration.",
+      "rationale": "Per-fact domains from one general note. DB-hard since the two-tier refocus (docs/ENTITY_GRAPH_REFOCUS_PLAN.md section 4/7): the salience contract names 'a medication or diagnosis' as a root fact and treatedBy as a care edge, the per-fact domain rule classifies clinical facts health regardless of the note's capture domain, and the hardcoded _DOMAIN_BY_PREDICATE floor (extraction.py) forces medication/treatedBy spellings to health deterministically; the kinship edge (children) is a MUST-emit general fact. The tightened fact bound is advisory until the 3-run Grok calibration.",
       "committed_domains": {
         "health": 1,
         "general": 1
