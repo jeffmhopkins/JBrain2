@@ -876,8 +876,8 @@ def test_sidecars_pinned_to_their_versions() -> None:
         ),
         "hurricane.tool": (
             "hurricane",
-            2,
-            "78c94eaed4ca26f2d25891e0ec943758bb88b00a0ff5a88427c745f7dd9b0c15",
+            3,
+            "09606a541b29539f643447c27ba33a13e0219e7cd76a871c14e67d285ba77ad7",
         ),
         "gmail_search.tool": (
             "gmail_search",

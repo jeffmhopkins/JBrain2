@@ -1,6 +1,6 @@
 ---
 name: hurricane
-version: 2
+version: 3
 permission: web
 params:
   type: object
