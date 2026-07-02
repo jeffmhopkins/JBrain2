@@ -4,14 +4,19 @@ Local: the model call is faked (FakeLlmClient), so the whole produce-an-intent
 path is exercised with no provider and no DB.
 """
 
+import hashlib
 import json
 
 import pytest
 
 from jbrain.analysis.extraction import ExtractedFact, ExtractedMention, Extraction
 from jbrain.analysis.integrate import INTEGRATOR_VERSION, Integrator
-from jbrain.analysis.integrate_prompt import INTEGRATE_PROMPT_VERSION, build_integrate_prompt
-from jbrain.analysis.intent_parse import IntentParseError
+from jbrain.analysis.integrate_prompt import (
+    INTEGRATE_PROMPT_VERSION,
+    INTEGRATE_SYSTEM,
+    build_integrate_prompt,
+)
+from jbrain.analysis.intent_parse import INTENT_SCHEMA, IntentParseError
 from jbrain.llm import FakeLlmClient, LlmRouter
 
 
@@ -104,6 +109,21 @@ async def test_integrator_raises_on_wrong_shape_output():
         await Integrator(_router('{"foo": 1}')).integrate(
             note_id="n1", extraction=_extraction(), graph_context="", schema_version=1
         )
+
+
+def test_integrate_prompt_content_is_pinned_to_its_version():
+    """A content/version guard mirroring the note_extract pin
+    (test_promptfile.py): the rendered integrate system prompt + intent schema
+    hash to a pinned value. Editing the prose or schema fails this test until
+    you BOTH bump `version` in integrate_note.prompt AND update the hash here —
+    which keeps INTEGRATE_PROMPT_VERSION (stamped on every IntegrationIntent)
+    honest, so prose can never drift unversioned."""
+    blob = INTEGRATE_SYSTEM + "\x00" + json.dumps(INTENT_SCHEMA, sort_keys=True)
+    digest = hashlib.sha256(blob.encode()).hexdigest()
+    assert (INTEGRATE_PROMPT_VERSION, digest) == (
+        "integrate-v11",
+        "9e3f8a41492c6bcf8e08538cc42f34e8a5c7e2cdd50be4c6e695f11ff4216ba5",
+    )
 
 
 def test_build_integrate_prompt_includes_mentions_facts_and_context_fallback():
