@@ -80,11 +80,14 @@ Binding implementation notes (corrected against live `?f=json`):
 
 ## 2. Frozen `hurricane_card` payload shape (v2)
 
-The model still authors **no markup, no URL, no color, and no raw lat/lon** (#9). Map
-geometry is **projected to a unit square `[0,1]` on the backend** over a storm-relative
-bbox; the projection input for `you` is the **geocoded city centre** (never `ctx.here`),
-so the most that is ever recoverable from the payload is **city-centre coarseness** —
-the same coarseness the shipped `weather`/`hurricane` tools already expose (§5). `[r-B2-sec]`
+The model still authors **no markup and no color** (#9). **Superseded:** the Track tab
+now renders on **real map tiles** (the on-box `/api/tiles` proxy), so the geometry
+carries **real `{lat, lon}`** rather than a projected unit square, and the payload
+carries one URL — `nhc_url`, the storm's public NHC graphics page. The `track`/`cone`
+are public NHC coordinates; the `you` pin is still the **geocoded city centre** (never
+`ctx.here`), so the most recoverable from the payload remains **city-centre coarseness**
+— the same coarseness the shipped `weather`/`hurricane` tools already expose (§5), and
+the same coarseness the old projected pin already revealed. `[r-B2-sec]`
 
 ```jsonc
 {

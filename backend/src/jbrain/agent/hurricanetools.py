@@ -12,10 +12,16 @@ Geocoding is reused from the weather tool so the location firewall holds identic
 The NHC active-storm + GIS feeds carry no location (queried by storm identity); the
 two new coordinate egresses — NWS (alerts + gridpoint) and the NHC surge MapServer —
 receive only the geocoded **city centre** (`hit`), never the owner's precise fix
-(`ctx.here`), the same coarseness the weather tool already exposes. Map geometry is
-projected to a unit square on-box, so no latitude/longitude rides the payload (#9);
-the most the projected `you` pin can reveal — even inverted against the public track
-coordinates — is that same city centre.
+(`ctx.here`), the same coarseness the weather tool already exposes.
+
+The Track tab renders on real map tiles (the on-box `/api/tiles` proxy), so the card
+carries real coordinates — a scoped relaxation of the no-lat/lon rule (#9) for THIS
+view. The storm's track + cone are public NHC data; the only owner-derived coordinate
+is the `you` pin, and it is the geocoded **city centre** (`hit`), never `ctx.here` —
+the same coarseness the projected pin already revealed (it was recoverable by
+inverting it against the public track), so nothing new about the owner egresses. The
+card also carries the storm's public NHC graphics-page URL for a "see the official
+forecast" link.
 """
 
 from __future__ import annotations
@@ -36,6 +42,7 @@ from jbrain.web.hurricane import (
     format_as_of,
     haversine_mi,
     movement,
+    nhc_storm_url,
     sustained_mph,
 )
 from jbrain.web.nhc_gis import NhcGisClient, TrackPoint
@@ -56,10 +63,10 @@ _NO_STORMS = (
 _NEAR_MI = 300
 _REGIONAL_MI = 700
 _KT_TO_MPH = 1.15078
-# Projection: a margin so points don't sit on the card edge, and a floor below which a
-# degenerate bbox (a single point) is centred rather than divided by ~zero.
-_PROJ_MARGIN = 0.08
-_PROJ_MIN_SPAN = 1e-6
+# Coordinate precision on the payload: ~4 decimals (~11 m) is ample for a storm-scale
+# map and trims float noise; the `you` pin is already the city centre, so this rounding
+# is cosmetic, not a coarsening step.
+_COORD_DP = 4
 
 # Alert ranking for the governing-alert pick: a warning outranks a watch; within a
 # level the more acute hazard wins. These are NWS-sourced (the only legitimate
@@ -197,13 +204,15 @@ def hurricane_view(
     active_count: int,
     detail: StormDetail,
 ) -> ViewPayload:
-    """The data-only `hurricane_card` view (docs/HURRICANE_TABS_PLAN.md §2). No URLs, no
-    markup, no raw lat/lon (#9); `kind`/`cat`/`proximity`/`alert.level`/`level` are enums
-    the component maps to glyph + tone. Map geometry is projected to `[0,1]` on-box."""
+    """The data-only `hurricane_card` view (docs/HURRICANE_TABS_PLAN.md §2). Markup-free;
+    `kind`/`cat`/`proximity`/`alert.level`/`level` are enums the component maps to glyph +
+    tone. The Track tab draws on real tiles, so the map geometry carries real lat/lon — the
+    public storm track + cone, plus the `you` city centre (the scoped #9 relaxation, see the
+    module docstring). `nhc_url` is the storm's public NHC graphics page."""
     cat = category(storm.wind_kt, storm.kind)
     gust_mph = _kt_to_mph(detail.track[0].gust_kt) if detail.track else 0
     sustained = sustained_mph(storm)
-    track_xy, cone_xy, you_xy = _project(detail.track, detail.cone, hit)
+    track_geo, cone_geo, you_geo = _geo(detail.track, detail.cone, hit)
     return ViewPayload(
         view="hurricane_card",
         surface="inline",
@@ -231,9 +240,10 @@ def hurricane_view(
             "bearing": bearing,
             "proximity": _proximity(distance_mi, storm.kind),
             "alert": _governing_alert(detail.alerts),
-            "track": track_xy,
-            "cone": cone_xy,
-            "you": you_xy,
+            "track": track_geo,
+            "cone": cone_geo,
+            "you": you_geo,
+            "nhc_url": nhc_storm_url(storm),
             "timeline": _timeline_cells(detail.timeline),
             "arrival": _arrival(detail.timeline),
             "impact": _impact(detail.timeline, detail.surge_band),
@@ -384,51 +394,30 @@ def _surge_level(band: str) -> str:
     return "low"
 
 
-def _project(
+def _geo(
     track: tuple[TrackPoint, ...],
     cone: tuple[tuple[float, float], ...],
     hit: GeoHit,
 ) -> tuple[list[dict], list[dict], dict]:
-    """Project the storm geometry + the place into a unit square `[0,1]` over a
-    storm-relative bbox, so NO latitude/longitude rides the payload (#9). North is up
-    (latitude is inverted into screen-y). Aspect is preserved by scaling both axes by
-    the larger span (letterbox), longitudes are normalised across the antimeridian, and
-    a degenerate (single-point) bbox centres everything. The projection input for `you`
-    is the geocoded city centre, so an inversion against the public track coordinates
-    recovers only that city centre."""
-    n, m = len(track), len(cone)
-    # One index-aligned coordinate list: track points, then cone vertices, then `you`.
-    lons = _normalise_lons([p.longitude for p in track] + [c[0] for c in cone] + [hit.longitude])
-    lats = [p.latitude for p in track] + [c[1] for c in cone] + [hit.latitude]
-    min_lon, max_lon = min(lons), max(lons)
-    min_lat, max_lat = min(lats), max(lats)
-    span = max(max_lon - min_lon, max_lat - min_lat)
-    cx, cy = (min_lon + max_lon) / 2, (min_lat + max_lat) / 2
-    scale = (1 - 2 * _PROJ_MARGIN) / span if span >= _PROJ_MIN_SPAN else 0.0
-
-    def proj(i: int) -> dict:
-        # A degenerate (single-point) bbox centres everything rather than dividing by ~0.
-        return {
-            "x": round(0.5 + (lons[i] - cx) * scale, 4),
-            "y": round(0.5 - (lats[i] - cy) * scale, 4),  # invert lat → north-up screen-y
+    """Shape the storm geometry + the place into `{lat, lon}` slots the Track tab draws
+    on real tiles. The track/cone are public NHC coordinates; the `you` pin is the
+    geocoded city centre (`hit`), NEVER the owner's precise fix — the scoped #9
+    relaxation for this on-tile view (see the module docstring). Leaflet frames the map
+    from these bounds, so no on-box projection is needed. Cone vertices arrive as
+    `(lon, lat)` pairs (GeoJSON order) and are reordered to `{lat, lon}` here."""
+    track_geo = [
+        {
+            "lat": round(p.latitude, _COORD_DP),
+            "lon": round(p.longitude, _COORD_DP),
+            "label": p.label,
+            "cat": p.ss_cat,
+            "past": p.past,
         }
-
-    track_xy = [
-        {**proj(i), "label": p.label, "cat": p.ss_cat, "past": p.past} for i, p in enumerate(track)
+        for p in track
     ]
-    cone_xy = [proj(n + j) for j in range(m)]
-    you_xy = proj(n + m)
-    return track_xy, cone_xy, you_xy
-
-
-def _normalise_lons(lons: list[float]) -> list[float]:
-    """Shift western longitudes by +360 when a bbox straddles the antimeridian, so the
-    span is the small one across the seam rather than a spurious ~360°."""
-    if not lons:
-        return lons
-    if max(lons) - min(lons) > 180:
-        return [lon + 360 if lon < 0 else lon for lon in lons]
-    return lons
+    cone_geo = [{"lat": round(lat, _COORD_DP), "lon": round(lon, _COORD_DP)} for lon, lat in cone]
+    you_geo = {"lat": round(hit.latitude, _COORD_DP), "lon": round(hit.longitude, _COORD_DP)}
+    return track_geo, cone_geo, you_geo
 
 
 def _kt_to_mph(kt: int) -> int:

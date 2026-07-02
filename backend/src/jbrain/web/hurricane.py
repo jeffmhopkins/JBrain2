@@ -156,6 +156,9 @@ class ActiveStorm:
     move_dir: int  # degrees the storm is moving TOWARD (0 = N); -1 if unknown
     move_mph: int  # forward speed, mph; 0 if stationary/unknown
     last_update: str  # ISO-8601 UTC instant the advisory was issued
+    # NHC storm slot ("AT1"/"EP2"/…) that keys the public graphics page. Defaults empty
+    # (an older feed row or one missing the field simply yields no NHC link).
+    bin_number: str = ""
 
 
 class HurricaneClient:
@@ -226,7 +229,22 @@ def _parse_storm(row: object) -> ActiveStorm | None:
         move_dir=move_dir,
         move_mph=_i(row.get("movementSpeed")),
         last_update=str(row.get("lastUpdate") or "").strip(),
+        bin_number=str(row.get("binNumber") or "").strip(),
     )
+
+
+# The NHC per-storm graphics page is keyed by the advisory-cycle slot (`binNumber`),
+# exactly as nhc.noaa.gov's own links are: "AT1" → graphics_at1.shtml. It is the live
+# page for a currently-active storm (positional, so it tracks the storm only while
+# active — which is precisely when this card is shown).
+_NHC_STORM_PAGE = "https://www.nhc.noaa.gov/graphics_{bin}.shtml"
+
+
+def nhc_storm_url(storm: ActiveStorm) -> str:
+    """The NHC public graphics page for this storm, or "" when the feed carried no
+    `binNumber` (no slot → no canonical live page to link)."""
+    bin_slot = storm.bin_number.strip().lower()
+    return _NHC_STORM_PAGE.format(bin=bin_slot) if bin_slot else ""
 
 
 def format_as_of(iso_utc: str) -> str:

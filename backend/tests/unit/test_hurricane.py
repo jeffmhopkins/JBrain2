@@ -1,15 +1,16 @@
 """jerv's `hurricane` tool + the NHC CurrentStorms client (docs/DESIGN.md
 "hurricane_card tool-view"; build plan docs/HURRICANE_TABS_PLAN.md). HTTP is faked via
 MockTransport across every source — no live network and no real clock, like the
-weather adapter. Covers the v1 vitals client and the v2 tabbed assembly (track
-projection, NWS alert/timeline, impact, coverage degrade, and the location firewall)."""
+weather adapter. Covers the v1 vitals client and the v2 tabbed assembly (the geo
+track/cone the Track tab draws on tiles, NWS alert/timeline, impact, coverage degrade,
+the NHC storm link, and the location firewall)."""
 
 import httpx
 
 from jbrain.agent.hurricanetools import (
+    _geo,
     _governing_alert,
     _pressure_level,
-    _project,
     _rain_level,
     _surge_level,
     _wind_level,
@@ -19,6 +20,7 @@ from jbrain.agent.loop import ToolContext, ToolOutput
 from jbrain.citygeocode import CityHit
 from jbrain.db.session import SessionContext
 from jbrain.web.hurricane import (
+    ActiveStorm,
     HurricaneClient,
     HurricaneError,
     bearing_deg,
@@ -28,6 +30,7 @@ from jbrain.web.hurricane import (
     format_as_of,
     haversine_mi,
     movement,
+    nhc_storm_url,
     sustained_mph,
 )
 from jbrain.web.nhc_gis import NhcGisClient, TrackPoint
@@ -55,6 +58,7 @@ _STORMS_OK = {
     "activeStorms": [
         {
             "id": "al052026",
+            "binNumber": "AT2",
             "name": "Elena",
             "classification": "HU",
             "intensity": "105",
@@ -294,6 +298,15 @@ async def test_active_storms_parses_the_feed() -> None:
     assert (s.name, s.kind, s.wind_kt, s.pressure_mb) == ("Elena", "hurricane", 105, 948)
     assert (round(s.latitude, 1), round(s.longitude, 1)) == (25.5, -85.0)
     assert (s.move_dir, s.move_mph) == (30, 14)
+    assert s.bin_number == "AT2"
+
+
+def test_nhc_storm_url_builds_from_bin_number() -> None:
+    # The graphics page is keyed by the (lowercased) advisory slot, as nhc.noaa.gov links.
+    storm = ActiveStorm("al052026", "Elena", "hurricane", 105, 948, 25.5, -85.0, 30, 14, "", "EP1")
+    assert nhc_storm_url(storm) == "https://www.nhc.noaa.gov/graphics_ep1.shtml"
+    # No slot (an older/edge feed row) → no link rather than a broken URL.
+    assert nhc_storm_url(ActiveStorm("", "X", "low", 20, 0, 0.0, 0.0, -1, 0, "")) == ""
 
 
 async def test_active_storms_empty_off_season() -> None:
@@ -345,10 +358,14 @@ async def test_full_us_assembly_builds_every_tab() -> None:
     # official alert (the non-tropical Flood Watch is dropped)
     assert data["alert"]["level"] == "warning" and data["alert"]["kind"] == "hurricane"
     assert data["alert"]["event"] == "Hurricane Warning"
-    # track projected to [0,1], cone present, you pin present
-    assert data["track"] and all(0 <= p["x"] <= 1 and 0 <= p["y"] <= 1 for p in data["track"])
+    # The Track tab draws on real tiles, so it carries real lat/lon: the public track
+    # (the GIS point at 25.5, -85.0) + cone, and the city-centre `you` pin.
+    assert data["track"][0]["lat"] == 25.5 and data["track"][0]["lon"] == -85.0
     assert data["track"][0]["label"] == "Now" and data["track"][0]["cat"] == "3"
-    assert data["cone"] and 0 <= data["you"]["x"] <= 1
+    assert data["cone"] and "lat" in data["cone"][0] and "lon" in data["cone"][0]
+    assert data["you"]["lat"] == 27.9475 and data["you"]["lon"] == -82.4584
+    # the storm's public NHC graphics page (from binNumber "AT2")
+    assert data["nhc_url"] == "https://www.nhc.noaa.gov/graphics_at2.shtml"
     # timeline + arrival + impact
     assert data["timeline"]
     assert data["arrival"]["ts_force"] is not None
@@ -357,9 +374,6 @@ async def test_full_us_assembly_builds_every_tab() -> None:
     assert data["impact"]["surge"]["band"] == "Up to 9 ft"
     # summary mentions the official alert
     assert "Hurricane Warning" in out
-    # FIREWALL: no coordinate rides the data-only payload (#9)
-    assert "latitude" not in str(data) and "longitude" not in str(data)
-    assert "25.5" not in str(data) and "-85.0" not in str(data)
 
 
 async def test_non_us_degrades_to_global_and_skips_surge() -> None:
@@ -474,51 +488,46 @@ async def test_here_precise_fix_never_egresses_to_detail_feeds() -> None:
     blob = " ".join(urls)
     assert "27.9999" not in blob and "82.4999" not in blob  # precise fix never leaves
     assert urls and "27.9475" in blob  # the city centre is what's sent
-    # The projection input is the city centre too: the precise fix never reaches the
-    # `you` pin / payload (it is consumed only by city_geocoder.nearest, on-box).
-    assert "27.9999" not in str(out.view.data) and "82.4999" not in str(out.view.data)  # type: ignore[union-attr]
+    # The `you` pin carries the CITY CENTRE, never the precise fix: the payload holds the
+    # geocoded centre (27.9475), and the precise fix (27.9999) never reaches it (the fix
+    # is consumed only by city_geocoder.nearest, on-box).
+    data = out.view.data  # type: ignore[union-attr]
+    assert data["you"] == {"lat": 27.9475, "lon": -82.4584}
+    assert "27.9999" not in str(data) and "82.4999" not in str(data)
 
 
-# --- projection + level helpers (pure) -------------------------------------
+# --- geo geometry + level helpers (pure) -----------------------------------
 
 
 def _tp(lat: float, lon: float, label: str = "Now", cat: str = "3") -> TrackPoint:
     return TrackPoint(lat, lon, "", 0, 100, 120, 950, cat, label, False)
 
 
-def test_project_maps_bbox_to_unit_square_north_up() -> None:
-    # A track from (lat 25,lon -86) to (lat 28,lon -83); you at the centre.
-    track = (_tp(25.0, -86.0, "Now"), _tp(28.0, -83.0, "+24h"))
+def test_geo_emits_real_lat_lon_with_vitals() -> None:
+    # The track carries absolute lat/lon (rounded) plus the vitals the map tones by; the
+    # cone's (lon, lat) GeoJSON pairs become {lat, lon}; `you` is the city centre.
+    track = (_tp(25.0, -86.0, "Now"), _tp(28.0, -83.0, "+24h", cat="2"))
+    cone = ((-86.0, 25.0), (-83.0, 28.0), (-86.0, 28.0))
     you = GeoHit("X", 26.5, -84.5)
-    tx, cone, you_xy = _project(track, (), you)
-    assert cone == []
-    # north-up: the higher-latitude point has the SMALLER y.
-    assert tx[0]["y"] > tx[1]["y"]
-    # east is +x: the more-eastern (less negative lon) point has larger x.
-    assert tx[1]["x"] > tx[0]["x"]
-    # the centre `you` projects near the middle.
-    assert abs(you_xy["x"] - 0.5) < 0.01 and abs(you_xy["y"] - 0.5) < 0.01
-    # everything inside the unit square.
-    assert all(0 <= p["x"] <= 1 and 0 <= p["y"] <= 1 for p in tx)
+    track_geo, cone_geo, you_geo = _geo(track, cone, you)
+    assert track_geo[0] == {"lat": 25.0, "lon": -86.0, "label": "Now", "cat": "3", "past": False}
+    assert track_geo[1]["cat"] == "2" and track_geo[1]["label"] == "+24h"
+    assert cone_geo == [
+        {"lat": 25.0, "lon": -86.0},
+        {"lat": 28.0, "lon": -83.0},
+        {"lat": 28.0, "lon": -86.0},
+    ]
+    assert you_geo == {"lat": 26.5, "lon": -84.5}
 
 
-def test_project_single_point_is_centered() -> None:
-    # A degenerate bbox (one point, you co-located) must not divide by ~zero.
-    track = (_tp(25.0, -85.0),)
-    you = GeoHit("X", 25.0, -85.0)
-    tx, _, you_xy = _project(track, (), you)
-    assert tx[0] == {"x": 0.5, "y": 0.5, "label": "Now", "cat": "3", "past": False}
-    assert you_xy == {"x": 0.5, "y": 0.5}
-
-
-def test_project_normalises_antimeridian() -> None:
-    # A storm straddling ±180° must project without a spurious ~360° span collapsing it.
-    track = (_tp(10.0, 178.0, "Now"), _tp(12.0, -178.0, "+24h"))
-    you = GeoHit("X", 11.0, 179.0)
-    tx, _, you_xy = _project(track, (), you)
-    # the two points are 4° apart across the seam, so they land well apart, not on top.
-    assert abs(tx[0]["x"] - tx[1]["x"]) > 0.3
-    assert all(0 <= p["x"] <= 1 for p in tx) and 0 <= you_xy["x"] <= 1
+def test_geo_rounds_coordinates_and_tolerates_empty_geometry() -> None:
+    # Coordinates round to 4 dp (float-noise trim), and an empty track/cone is fine — the
+    # `you` pin still projects (the card degrades to just the place otherwise).
+    track = (_tp(25.123456, -85.987654),)
+    track_geo, cone_geo, you_geo = _geo(track, (), GeoHit("X", 10.111111, 20.222222))
+    assert track_geo[0]["lat"] == 25.1235 and track_geo[0]["lon"] == -85.9877
+    assert cone_geo == []
+    assert you_geo == {"lat": 10.1111, "lon": 20.2222}
 
 
 def test_governing_alert_precedence() -> None:
