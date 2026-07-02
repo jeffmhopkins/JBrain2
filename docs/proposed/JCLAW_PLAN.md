@@ -96,6 +96,39 @@ Even KB-blind, jclaw touches the two universal firewalls:
 
 ---
 
+## 3a. Engine selection — OpenClaw next to Claude Code, preconfigured to Qwen-Coder
+
+jclaw treats the **agent harness** as swappable, the way `jcode`'s launcher already
+treats a session's engine. The picker is: **Claude Code's engine** (what `jcode`
+runs today), a **Grok engine**, and **OpenClaw** as a third — each a different
+agent runtime, selectable per session.
+
+OpenClaw is a natural third option because it is model-agnostic (bring-your-own
+endpoint), and the box already runs the target: the local **Qwen-Coder**
+(`Qwen3-Coder-Next 80B-A3B`) that `jcode` drives. "Preconfigured connection to
+Qwen-Coder" ships as a default OpenClaw profile with three things baked in so the
+option is one click:
+
+1. the **model route**, and
+2. the KB-blind tool allowlist (§4), and
+3. the sandbox settings (§2).
+
+**Non-negotiable catch (NN-1).** OpenClaw connects to models through its own
+provider connectors. It must be pointed at the **JBrain2 LLM adapter's
+OpenAI-compatible endpoint** — which *routes* to Qwen-Coder — **not** directly at
+the Qwen server or any cloud provider. The adapter keeps ownership of routing,
+policy, and logging; OpenClaw sees only an OpenAI-shaped base URL that happens to
+resolve to the local coder model. Point it straight at the model and jclaw has
+bypassed the adapter firewall.
+
+**Cost of the option.** Offering OpenClaw means running **two agent harnesses**
+(Claude Code's loop *and* OpenClaw's loop), each with its own tool + sandbox model
+to reconcile against ours (§2, §4). That reconciliation — mapping OpenClaw's tool
+gating and Docker sandbox onto the jcode isolation envelope and the KB-blind
+allowlist — is the actual work of adding the engine, not the model config.
+
+---
+
 ## 4. Tool allowlist (this cut)
 
 Deliberately minimal — a conversational + web assistant, nothing that reads or
@@ -174,3 +207,6 @@ firewall this cut keeps shut.
 - Is a **cloud LLM** ever allowed on channel traffic, or local-only like jcode?
 - Pairing-code confirmation: required, or is a pre-registered handle enough?
 - Is the KB-blind cut worth shipping on its own, or only as step 0 of the §7 KB path?
+- Engine picker (§3a): is OpenClaw-next-to-Claude worth maintaining a second agent
+  harness, or is a single harness (Claude Code's engine) enough and OpenClaw only
+  interesting for its channel plugins?
