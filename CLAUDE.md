@@ -13,7 +13,7 @@ registry + typed value shapes (largely superseded by the refocus plan), and
 entity-graph refocus (spine, not encyclopedia): the registry is tier-1,
 long-tail predicates commit raw with no review card. Phases 0–5 are shipped —
 the Phase 5 workflow engine (engine + scheduler + run-log + the
-ingest/integration cutover) is complete; the migration head is 0112. The next
+ingest/integration cutover) is complete; the migration head is 0113. The next
 frontier is Phase 6 (the wiki); see `docs/ROADMAP.md`. Completed build plans and design
 research live under `docs/archive/` (see `docs/README.md` for the full map).
 

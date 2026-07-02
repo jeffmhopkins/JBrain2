@@ -103,6 +103,13 @@ async def seeded(maker: async_sessionmaker[AsyncSession], tmp_path: Any) -> dict
                                    NEWER derived reciprocal shadow — dedup bait)
     clinic --prescribes--> med    (HEALTH, 2 hops)
     nurse --referredTo--> specialist (HEALTH, 2 hops behind a co-mention)
+    boss --knows--> nurse         (a GENERAL fact pointing at a HEALTH entity —
+                                   production ratchets fact domains from the
+                                   note, so the mismatch is real: under a
+                                   general-only session the fact row is
+                                   visible and only the entities INNER JOIN
+                                   drops the edge — the REF-arm LEFT-JOIN trap,
+                                   twin of note_g's co-mention trap below)
     + co-mention chain: note_c1 {me, colleague, wife, gone}, note_c2
       {colleague, mentor}, note_c3 {mentor, protege} — hops 1/2/3 by shared note
     + note_h (HEALTH) {clinic, nurse} — the health branch's co-mention arm
@@ -187,6 +194,7 @@ async def seeded(maker: async_sessionmaker[AsyncSession], tmp_path: Any) -> dict
                 rel(me.id, gone.id, note_id, "knows", "general"),
                 rel(nurse.id, specialist.id, note_id, "referredTo", "health"),
                 rel(boss.id, me.id, note_id, "manages", "general"),
+                rel(boss.id, nurse.id, note_id, "knows", "general"),
                 rel(me.id, oldgym.id, note_id, "memberOf", "general", status="retracted"),
                 rel(me.id, foe.id, note_id, "enemyOf", "general", assertion="negated"),
             ]
@@ -519,10 +527,12 @@ async def test_neighborhood_kinds_narrows_to_one_edge_arm(
     repo = SqlAnalysisRepo(maker)
     refs = await repo.neighborhood(OWNER, seeded["me"], depth=2, kinds="relationships")
     assert refs is not None
-    # Only fact edges: the co-mention arrivals (colleague, nurse) and everything
-    # behind them (mentor, specialist) vanish; the ref web survives whole.
+    # Only fact edges: the co-mention arrivals (colleague, mentor) vanish and
+    # the ref web survives whole. Nurse still arrives — at hop 2 now, through
+    # boss's cross-domain knows fact instead of the co-mention note.
     assert entity_ids(refs) == {
-        seeded[k] for k in ("me", "wife", "employer", "clinic", "boss", "distant", "kid", "med")
+        seeded[k]
+        for k in ("me", "wife", "employer", "clinic", "boss", "distant", "kid", "med", "nurse")
     }
     # note_c1 still surfaces — wife (a ref arrival) is mentioned in it.
     assert seeded["note_c1"] in note_ids(refs)
@@ -637,7 +647,10 @@ async def test_neighborhood_is_rls_scoped(
     # the NOTE's domain): its general mention rows — nurse's included — are
     # visible to this session while the nurse ENTITY is not, so the co-mention
     # queries' INNER JOIN to entities is what drops the edge. A LEFT JOIN
-    # would leak a placeholder endpoint here.
+    # would leak a placeholder endpoint here. The REF arm is trapped the same
+    # way: boss's general-domain knows fact points at the health nurse, so the
+    # fact row is visible at hop 2 and only the ref queries' entities INNER
+    # JOIN keeps the nurse out of the exact set above.
     assert all(e["id"] and e["name"] for e in d3["entities"])
     by_note = {n["note_id"]: n for n in d3["notes"]}
     assert by_note[seeded["note_g"]]["connects"] == [f"Me {seeded['tag']}"]

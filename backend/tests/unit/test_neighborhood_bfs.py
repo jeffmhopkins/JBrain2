@@ -276,3 +276,28 @@ def test_assemble_notes_orders_hop_then_recency_and_caps() -> None:
 def test_assemble_notes_empty_inputs() -> None:
     assert assemble_notes([], [NoteMention("n", "x")]) == []
     assert assemble_notes([neighbor("me", "Me", 0)], []) == []
+
+
+async def test_degenerate_caps_still_return_the_anchor() -> None:
+    """Caps are advertised as freely tunable for evals: a zero/negative cap
+    clamps instead of producing an impossible empty result."""
+    celine = ent("celine", "Celine")
+    fetch = make_fetch(refs=[RefEdge("me", celine, "spouse")])
+    zero_total = await traverse(ME, fetch, total_cap=0)
+    assert [e.id for e in zero_total] == ["me"]
+    zero_hop = await traverse(ME, fetch, per_hop_limit=-1)
+    assert [e.id for e in zero_hop] == ["me"]
+
+
+async def test_out_of_frontier_edge_fails_loudly() -> None:
+    """The FetchEdges contract (src_id in the requested frontier) is enforced
+    at admission, so a retrieval-layer bug surfaces as a clear contract error
+    instead of an opaque KeyError at path-render time."""
+
+    async def rogue(frontier: Sequence[str], hop: int) -> EdgeBatch:
+        return EdgeBatch(refs=(RefEdge("never-traversed", ent("x"), "knows"),))
+
+    import pytest
+
+    with pytest.raises(ValueError, match="outside the traversed set"):
+        await traverse(ME, rogue)

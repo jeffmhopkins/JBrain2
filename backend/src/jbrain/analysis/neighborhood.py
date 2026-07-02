@@ -170,7 +170,12 @@ def _rank_candidates(
     surfaces via mention collection, it just isn't expanded through.
     """
     picked: dict[str, _Candidate] = {}
-    for edge in sorted(batch.refs, key=lambda e: (_recency_key(e.recency), e.dst.id, e.predicate)):
+    # Full tiebreak (through direction/src) so two equally-recent edges to one
+    # destination pick the same winner every run — paths must be deterministic.
+    for edge in sorted(
+        batch.refs,
+        key=lambda e: (_recency_key(e.recency), e.dst.id, e.predicate, e.direction, e.src_id),
+    ):
         if edge.dst.id in visited or edge.dst.id in picked:
             continue
         picked[edge.dst.id] = _Candidate(edge.dst, _Step(edge.src_id, _ref_label(edge)))
@@ -213,12 +218,16 @@ async def traverse(
     """BFS out from the anchor over caller-supplied per-hop edge batches.
 
     Returns entities in hop-then-rank order, the anchor first at hop 0 (it
-    counts toward ``total_cap``). ``depth`` clamps to 1..MAX_DEPTH, mirroring
-    ego_graph's clamp. First visit wins: the best-ranked edge that reaches a
-    node becomes its parent, so every entity carries exactly one connecting
-    path — a node seen at hop 1 is never restamped by a hop-2 edge.
+    counts toward ``total_cap``; degenerate caps clamp so the anchor is always
+    returned). ``depth`` clamps to 1..MAX_DEPTH — ego_graph's clamp PATTERN,
+    with the plan-mandated 1..3 bound (§5 T3.2; ego_graph itself caps at 2).
+    First visit wins: the best-ranked edge that reaches a node becomes its
+    parent, so every entity carries exactly one connecting path — a node seen
+    at hop 1 is never restamped by a hop-2 edge.
     """
     hops = max(1, min(depth, MAX_DEPTH))
+    total_cap = max(1, total_cap)
+    per_hop_limit = max(0, per_hop_limit)
     nodes: dict[str, EntityRef] = {anchor.id: anchor}
     hop_of: dict[str, int] = {anchor.id: 0}
     parents: dict[str, _Step] = {}
@@ -232,6 +241,13 @@ async def traverse(
         for cand in _rank_candidates(batch, hub_cap=hub_cap, visited=frozenset(nodes)):
             if len(admitted) >= per_hop_limit or len(order) >= total_cap:
                 break
+            # Contract guard: an edge whose src is outside the traversed set
+            # would install an unrenderable parent and KeyError at build time —
+            # fail loudly at the seam where the retrieval bug actually is.
+            if cand.step.parent_id not in nodes:
+                raise ValueError(
+                    f"edge batch references src_id outside the traversed set: {cand.step.parent_id}"
+                )
             nodes[cand.dst.id] = cand.dst
             hop_of[cand.dst.id] = hop
             parents[cand.dst.id] = cand.step
