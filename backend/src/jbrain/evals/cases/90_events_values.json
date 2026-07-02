@@ -360,10 +360,14 @@
     "domain": "health",
     "created_at": "2026-06-11T07:00:00-06:00",
     "expect": {
-      "value": [
+      "absent_edges": [
         {
-          "contains": "5"
+          "object": "lakefront path"
         }
+      ],
+      "absent_predicates": [
+        "personalBest",
+        "personalRecord"
       ]
     }
   },
@@ -373,10 +377,8 @@
     "domain": "finance",
     "created_at": "2026-06-11T18:30:00-06:00",
     "expect": {
-      "value": [
-        {
-          "contains": "45"
-        }
+      "mentions": [
+        "Trader Joe's"
       ]
     }
   },

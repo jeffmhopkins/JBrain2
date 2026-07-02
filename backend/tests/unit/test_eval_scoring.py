@@ -119,6 +119,7 @@ def test_eval_cases_are_wellformed() -> None:
     valid_expect = {
         "person_mentions", "mentions", "mention_kind", "absent_person",
         "not_person", "edges", "temporal", "value", "domain",
+        "absent_edges", "absent_predicates",
     }  # fmt: skip
     domains = {"general", "health", "finance", "location"}
     for c in cases:
@@ -127,6 +128,10 @@ def test_eval_cases_are_wellformed() -> None:
         assert set(c.get("expect", {})) <= valid_expect, c["name"]
         for edge in c.get("expect", {}).get("edges", []):
             assert "object" in edge, c["name"]
+        for spec in c.get("expect", {}).get("absent_edges", []):
+            assert "object" in spec, c["name"]
+        for pred in c.get("expect", {}).get("absent_predicates", []):
+            assert isinstance(pred, str) and pred, c["name"]
         for tt in c.get("expect", {}).get("temporal", []):
             assert {"phrase", "resolved_date"} <= set(tt), c["name"]
         for mk in c.get("expect", {}).get("mention_kind", []):
@@ -183,6 +188,51 @@ def test_score_value_matches_measurement_in_fact() -> None:
     assert not _score(case, _extraction([]), _A).passed
 
 
+def test_score_absent_edges_flags_linked_object_but_allows_mention() -> None:
+    # Salience negative (v29): the thing may be MENTIONED, but no fact may link
+    # it — a one-off event's venue stays in the prose, not on an edge.
+    case: dict[str, Any] = {
+        "name": "ae",
+        "expect": {"absent_edges": [{"object": "lakefront path"}]},
+    }
+    place = ExtractedMention(name="lakefront path", kind="Place", surface_text="lakefront path")
+    assert _score(case, _extraction([place]), _A).passed
+    linked = _score(case, _extraction([place], [_edge("ranAt", "lakefront path")]), _A)
+    assert not linked.passed
+    assert any(label == "absent_edge->lakefront path" and not ok for label, ok, _ in linked.checks)
+
+
+def test_score_absent_predicates_flags_longtail_fact() -> None:
+    case: dict[str, Any] = {"name": "ap", "expect": {"absent_predicates": ["personalBest"]}}
+    assert _score(case, _extraction([], []), _A).passed
+    assert not _score(case, _extraction([], [_edge("personalBest", "5 miles")]), _A).passed
+    # A different predicate doesn't trip the check.
+    assert _score(case, _extraction([], [_edge("owns", "Bella")]), _A).passed
+
+
+def test_score_salience_negatives_are_task_not_groundedness() -> None:
+    # The new labels must NOT count into the safety dimension: a salience miss
+    # is a task loss, not a fabrication (only "absent:"/"not_person:" are).
+    from jbrain.evals.runner import eval_run_from_cases
+
+    case: dict[str, Any] = {
+        "name": "sn",
+        "expect": {"absent_edges": [{"object": "X"}], "absent_predicates": ["p"]},
+    }
+    missed = _score(case, _extraction([], [_edge("p", "X")]), _A)
+    run = eval_run_from_cases([missed], "v")
+    score = run.scores[0]
+    assert score.task == 0.0
+    assert score.safety == 1.0
+
+
+def test_score_records_fact_count_for_the_leaner_metric() -> None:
+    case: dict[str, Any] = {"name": "fc", "expect": {}}
+    res = _score(case, _extraction([], [_edge("owns", "Bella"), _edge("spouse", "Maya")]), _A)
+    assert res.fact_count == 2
+    assert _score(case, _extraction([]), _A).fact_count == 0
+
+
 def test_eval_cases_pass_audit() -> None:
     # The offline pre-flight (evals.audit) is enforced here so a new/edited case
     # whose asserted name/number/phrase isn't in its body — or whose closed-set
@@ -190,6 +240,21 @@ def test_eval_cases_pass_audit() -> None:
     from evals.audit import audit_cases
 
     assert audit_cases(load_cases()) == []
+
+
+def test_audit_catches_vacuous_absent_edge() -> None:
+    # An absent_edges object the body never names would pass vacuously — the
+    # audit flags it as an authoring bug.
+    from evals.audit import audit_cases
+
+    case = {
+        "name": "bad",
+        "body": "Ran along the river this morning.",
+        "created_at": "2026-06-11T09:00:00-06:00",
+        "expect": {"absent_edges": [{"object": "lakefront path"}]},
+    }
+    issues = audit_cases([case])
+    assert any("absent_edges object" in i for i in issues)
 
 
 def test_score_domain_checks_per_fact_classification() -> None:

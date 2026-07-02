@@ -17,7 +17,12 @@
       "committed_domains": {
         "health": 1
       },
-      "rationale": "Owner-authored first-party medication floors to health (DB-mode asserts the domain, not Grok's variable predicate spelling)."
+      "absent_review_cards": [
+        {
+          "kind": "new_predicate"
+        }
+      ],
+      "rationale": "Owner-authored first-party medication floors to health (DB-mode asserts the domain, not Grok's variable predicate spelling). The card sweep pins the two-tier contract on an ordinary health note: whatever spelling Grok picks, no new_predicate card ever files."
     },
     "advisory": true,
     "db_advisory": false
@@ -147,7 +152,12 @@
       "committed_domains": {
         "finance": 1
       },
-      "rationale": "Owner's bank account floors to finance (predicate spelling is Grok latitude)."
+      "absent_review_cards": [
+        {
+          "kind": "new_predicate"
+        }
+      ],
+      "rationale": "Owner's bank account floors to finance (predicate spelling is Grok latitude). The card sweep pins the two-tier contract on an ordinary finance note: no new_predicate card files regardless of the spelling."
     },
     "advisory": true,
     "db_advisory": false
@@ -319,6 +329,48 @@
     "db_advisory": false
   },
   {
+    "id": "health-treatedby-owner-clinician",
+    "category": "health",
+    "domain": "health",
+    "note_text": "Saw Dr. Alvarez this afternoon about the recurring migraines. She's starting me on sumatriptan as needed and wants me back in six weeks.",
+    "graph_context": "Owner/author: entity id 'owner-1' name 'Me' (Person).",
+    "expect": {
+      "resolutions": [
+        {
+          "mention": "Me",
+          "mode": "existing",
+          "entity_id": "owner-1",
+          "cross_subject": false
+        },
+        {
+          "mention": "Dr. Alvarez",
+          "mode": "new",
+          "cross_subject": false
+        }
+      ],
+      "facts": [
+        {
+          "entity": "Me",
+          "predicate": "treatedBy",
+          "kind": "relationship",
+          "object": "Dr. Alvarez",
+          "assertion": "asserted",
+          "domain": "health"
+        }
+      ],
+      "committed_domains": {
+        "health": 1
+      },
+      "absent_review_cards": [
+        {
+          "kind": "new_predicate"
+        }
+      ],
+      "rationale": "The promoted tier-1 care edge (docs/ENTITY_GRAPH_REFOCUS_PLAN.md section 1): an owner-authored visit to a named clinician yields Me.treatedBy -> Dr. Alvarez as a linked relationship on the health floor, card-free. ADVISORY-FIRST: treatedBy had no graded-corpus predecessor to calibrate against (only nightly-eval coverage), so it hardens after the 3-run Grok calibration pass, per the corpus pattern for new cases."
+    },
+    "advisory": true
+  },
+  {
     "id": "cross-subject-relayed-medication",
     "category": "cross_subject",
     "domain": "general",
@@ -434,13 +486,15 @@
           "cross_subject": false
         }
       ],
-      "rationale": "Per-fact domains from one general note: Lily's medication should floor to health, but that floor depends on Grok using a registry-recognized health predicate (non-deterministic today) — advisory until predicate canonicalization lands.",
+      "rationale": "Per-fact domains from one general note. DB-hard since the two-tier refocus (docs/ENTITY_GRAPH_REFOCUS_PLAN.md section 4/7): the v29 prompt digest steers Grok to the exact tier-1 spellings (medication, treatedBy — both on the hardcoded health floor) and the kinship edge (children) is a MUST-emit general fact, so the per-domain floors are deterministic. The tightened fact bound is advisory until the 3-run Grok calibration.",
       "committed_domains": {
         "health": 1,
         "general": 1
-      }
+      },
+      "max_facts_advisory": 6
     },
-    "advisory": true
+    "advisory": true,
+    "db_advisory": false
   },
   {
     "id": "domain-floor-health-predicate-in-general-note",

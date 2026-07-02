@@ -375,6 +375,23 @@ def test_domain_floor_count_missing_is_caught() -> None:
     assert any("domain floor" in f and "health" in f for f in fails)
 
 
+def test_max_facts_advisory_reports_with_advisory_prefix_on_committed_rows() -> None:
+    # The tightened uncalibrated bound reports as an "advisory:"-prefixed miss
+    # (never a hard fail) against COMMITTED facts, while the calibrated hard
+    # bound stays authoritative.
+    case = case_from_dict(
+        {
+            "id": "c",
+            "note_text": "x",
+            "expect": {"max_facts": 5, "max_facts_advisory": 1},
+        }
+    )
+    commit = _commit((_cf(OWNER, "Me", "a", id="f1"), _cf(OWNER, "Me", "b", id="f2")))
+    fails = check_case_db(case, commit)
+    assert fails and all(f.startswith("advisory:") for f in fails)
+    assert check_case_db(case, _commit((_cf(OWNER, "Me", "a"),))) == []
+
+
 def test_absent_fact_committed_is_caught() -> None:
     case = case_from_dict(
         {

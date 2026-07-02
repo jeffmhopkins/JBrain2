@@ -61,6 +61,9 @@ def _report(results: list[CaseResult]) -> bool:
         f"{passed}/{len(results)} cases passed; {checks_ok}/{checks_total} checks ({pct:.0f}%)",
         flush=True,
     )
+    # The "leaner" metric (docs/ENTITY_GRAPH_REFOCUS_PLAN.md §7): total facts the
+    # model emitted across the corpus — compare before/after a salience change.
+    print(f"corpus-total facts emitted: {sum(r.fact_count for r in results)}", flush=True)
     return passed == len(results)
 
 

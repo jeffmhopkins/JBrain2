@@ -180,6 +180,22 @@ def test_max_facts_bound_is_caught():
     )
 
 
+def test_max_facts_advisory_bound_reports_with_advisory_prefix():
+    # The tightened uncalibrated bound (max_facts_advisory) reports as an
+    # "advisory:"-prefixed miss the runner never hard-fails on — while the
+    # calibrated hard bound stays silent when respected.
+    case = case_from_dict(
+        {"id": "c", "note_text": "n", "expect": {"max_facts": 5, "max_facts_advisory": 1}}
+    )
+    facts = [_fact("Me", "a"), _fact("Me", "b")]
+    intent = _intent([], facts)
+    fails = check_case(case, intent, _plan(facts, ["active", "active"]))
+    assert fails and all(f.startswith("advisory:") for f in fails)
+    # Within the tightened bound → no report at all.
+    one = [_fact("Me", "a")]
+    assert check_case(case, _intent([], one), _plan(one, ["active"])) == []
+
+
 def test_max_entities_catches_duplicate_or_junk():
     # The no-duplicate gate: owner doesn't count; two non-owner entities exceed 1.
     case = case_from_dict({"id": "c", "note_text": "n", "expect": {"max_entities": 1}})

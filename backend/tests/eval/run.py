@@ -56,11 +56,15 @@ async def _evaluate(
         except Exception as exc:  # noqa: BLE001 - the eval surfaces whatever happens
             fails = [f"RAISED {type(exc).__name__}: {exc}"]
         advisory = case.advisory_for(db=db)
-        tag = "ADVISORY" if advisory else ("FAIL" if fails else "PASS")
-        if fails and advisory:
-            advisory_failed.append(case.id)
-        elif fails:
+        # "advisory:"-prefixed failures are uncalibrated tightened bounds
+        # (max_facts_advisory): they report and count as advisory misses even
+        # when the case itself is a hard gate.
+        hard = [] if advisory else [f for f in fails if not f.startswith("advisory:")]
+        tag = "FAIL" if hard else ("ADVISORY" if (advisory or fails) else "PASS")
+        if hard:
             failed.append(case.id)
+        elif fails:
+            advisory_failed.append(case.id)
         marker = "ok " if not fails else "XX "
         print(f"{marker}[{tag:8}] {case.id} ({case.category})")
         for f in fails:
@@ -111,8 +115,10 @@ async def _db_loop(cases: list[Case], app_url: str, tmp: str, reset, *, canon: b
         await PredicateEmbedder(maker, embedder, embed_model).sync_predicates({})
 
     debug = bool(os.environ.get("JBRAIN_EVAL_DEBUG"))
+    facts_total = 0  # corpus-total committed facts — the "leaner" before/after metric
 
     async def run_one(case: Case) -> list[str]:
+        nonlocal facts_total
         reset()
         commit = await run_case_db(
             router,
@@ -123,6 +129,7 @@ async def _db_loop(cases: list[Case], app_url: str, tmp: str, reset, *, canon: b
             embed_model=embed_model,
             canonicalize=canon,
         )
+        facts_total += len(commit.facts)
         if debug:
             for f in commit.facts:
                 obj = f" -> {f.object_name}" if f.object_name else ""
@@ -134,6 +141,9 @@ async def _db_loop(cases: list[Case], app_url: str, tmp: str, reset, *, canon: b
 
     try:
         code = await _evaluate(cases, run_one, db=True)
+        # The fact-volume comparison for the refocus plan's acceptance criterion 3:
+        # run before/after a prompt change and compare this line.
+        print(f"corpus-total committed facts: {facts_total}")
         _print_cost(tally, db=True)
         return code
     finally:
@@ -215,12 +225,16 @@ async def main() -> int:
     cases = [c for c in _selected(sys.argv[1:]) if not c.requires_canon]
     tally = _Tally()
     router = build_router(settings, recorder=tally)
+    facts_total = 0  # corpus-total proposed facts — the intent-mode leaner metric
 
     async def run_one_intent(case: Case) -> list[str]:
+        nonlocal facts_total
         intent, plan = await run_case(router, case)
+        facts_total += len(intent.facts)
         return check_case(case, intent, plan)
 
     code = await _evaluate(cases, run_one_intent)
+    print(f"corpus-total intent facts: {facts_total}")
     _print_cost(tally, db=False)
     return code
 
