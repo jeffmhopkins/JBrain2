@@ -29,6 +29,14 @@ jclaw reuses it rather than inventing a new one.
 
 ## 1. Core idea
 
+> **Recommended first cut: CLI-only.** A local terminal is the lowest-ingress
+> channel — no Cloudflare Tunnel, no webhook, no provider polling. Running
+> CLI-only also collapses the §5 impersonation surface entirely: there is no
+> spoofable chat handle to resolve because the owner is already authenticated by
+> shell access on the box (exactly like `jcode` / Claude Code's own CLI). The
+> sandbox and KB-blind allowlist are unchanged — the CLI is just the outer shell.
+> Messaging channels (§6) are a later, higher-ingress adapter over the same core.
+
 A **channel gateway** process owns the connections to messaging providers and
 does nothing intelligent itself. For each inbound message it:
 
@@ -132,7 +140,9 @@ session.
   Cloudflare Tunnel + Caddy for any providers that need an inbound webhook; polling
   providers (e.g. Telegram long-poll) need no ingress.
 - Channel adapters behind a single interface (`ChannelPlugin`: `recv → normalized
-  message`, `send(reply)`), so providers are pluggable the OpenClaw way.
+  message`, `send(reply)`), so providers are pluggable the OpenClaw way. **A local
+  CLI is the first adapter** — stdin→message, stdout→reply — and needs neither the
+  gateway service nor Caddy/Tunnel; it runs the sandbox loop directly.
 - Sessions are **ephemeral and stateless on the box** — no `jclaw_*` table in this
   cut. Thread→session mapping lives in memory / a TTL cache; losing it just starts a
   fresh sandbox. (A persistent thread history table, if ever wanted, is owner-RLS
