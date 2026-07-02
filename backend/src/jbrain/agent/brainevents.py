@@ -32,6 +32,7 @@ class BrainEmit(Protocol):
 
     def __call__(self, kind: str, text: str | None = ...) -> None: ...
 
+
 # Cap the text we ship per event: enough to read at a glance on the wall, but bounded so
 # a long prompt/answer can't bloat the POST or the display's buffer. Truncated with an
 # ellipsis on the far side (the display shows a streaming excerpt, not the full turn).
