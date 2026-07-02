@@ -99,9 +99,20 @@ Even KB-blind, jclaw touches the two universal firewalls:
 ## 3a. Engine selection — OpenClaw next to Claude Code, preconfigured to Qwen-Coder
 
 jclaw treats the **agent harness** as swappable, the way `jcode`'s launcher already
-treats a session's engine. The picker is: **Claude Code's engine** (what `jcode`
-runs today), a **Grok engine**, and **OpenClaw** as a third — each a different
-agent runtime, selectable per session.
+treats a session's engine. Today only **Claude Code's engine** is wired (what
+`jcode` runs); a **Grok**-style agent and **OpenClaw** are candidate additional
+engines, each a different agent runtime selectable per session. (Grok is named here
+as an example of the class — a vendor sandboxed agent — not an already-configured
+option.)
+
+**The connection is not the differentiator.** All of these reach a model the same
+way: an HTTP endpoint speaking a known contract — OpenAI-compatible for Grok's API
+and for OpenClaw, Anthropic-compatible for Claude Code. Connecting an engine to a
+model is a solved, uniform problem, so pointing OpenClaw at Qwen-Coder is trivial:
+the JBrain2 adapter already exposes an OpenAI-compatible route to serve the local
+models at all, and any OpenAI-compatible harness drops onto that same endpoint.
+What differs between engines is the **harness** — the agent loop, the tool-call
+protocol, and the sandbox — never the wiring.
 
 OpenClaw is a natural third option because it is model-agnostic (bring-your-own
 endpoint), and the box already runs the target: the local **Qwen-Coder**
