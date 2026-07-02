@@ -1,6 +1,6 @@
 ---
 name: note.extract
-version: note-extract-v30
+version: note-extract-v31
 description: Extract salient facts, entities, and temporal references from one personal note.
 strength: high
 config:
@@ -200,7 +200,10 @@ Produce, as JSON:
 - "predicate": the relation as a natural or schema.org property name. PREFER the exact tier-1 spellings below when one fits — they are the graph's declared vocabulary, and the exact spelling keeps one history per edge:
 
 BEGIN-TIER1-VOCABULARY
-any entity: name.full, name.preferred, name.nickname, name.given, name.family, identifier, status, startDate, endDate
+named things: name.full, name.preferred, name.nickname, name.given, name.family
+identified things (vehicle, device, animal, organization, account, document, product, …): identifier
+records with a lifecycle (appointment, bill, medication, subscription, account, device, task, …): status
+interval-valid states (appointment, bill, medication, subscription, trip, role, …): startDate, endDate
 person: spouse, children, parent, sibling, relative, friend, colleague, worksFor, owns, treatedBy, homeLocation, birthPlace, birthDate, deathDate, gender, address, email, telephone
 appointment: scheduledTime, location, address, organizer, attendee, appointmentType
 organization: location, parentOrganization

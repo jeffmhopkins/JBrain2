@@ -129,8 +129,8 @@ def test_prompt_content_is_pinned_to_its_version() -> None:
     blob = SYSTEM_PROMPT + "\x00" + json.dumps(EXTRACTION_SCHEMA, sort_keys=True)
     digest = hashlib.sha256(blob.encode()).hexdigest()
     assert (PROMPT_VERSION, digest) == (
-        "note-extract-v30",
-        "fc3eab4eac27dc2dfda404ae3456f92a0acb714712154fa37c0046b11ef7bc44",
+        "note-extract-v31",
+        "be803b17d0ede66c257b9325c4aabdb5e2a87f536060ba3f3bf09116495c006c",
     )
 
 
@@ -158,3 +158,8 @@ def test_tier1_vocabulary_digest_matches_the_registry() -> None:
     registry = get_registry()
     undeclared = sorted({p for p in listed if not registry.declares_predicate(p)})
     assert not undeclared, f"digest lists predicates the registry does not declare: {undeclared}"
+    # And CANONICAL: declares_predicate normalizes renamed_from attractors first,
+    # so a drift spelling (treated_by, seenBy) would pass it while defeating the
+    # digest's purpose — the exact spelling is what keeps one history per edge.
+    drifted = sorted({p for p in listed if registry.normalize_predicate(p) != p})
+    assert not drifted, f"digest lists non-canonical drift spellings: {drifted}"
