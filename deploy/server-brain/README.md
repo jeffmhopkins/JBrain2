@@ -120,6 +120,8 @@ text to `POST /event`: `{"kind": "llm_input", "text": …}` when the turn starts
 `{"kind": "llm_output", "text": …}` when the answer settles (each excerpt-truncated).
 The page streams the prompt IN along a steel tendril and the answer OUT along a green
 one — the characters ride the tendril path — then blooms a fade-out popup of the answer.
+The same toggle also lets a web tool's **search query** (cyan) / **fetched URL** (amber)
+stream out along its tendril; with the toggle off those stay content-free markers.
 
 **This is the one place the display carries owner data.** Everything else here is host
 vitals + content-free markers, which is why it's safe unauthenticated on a trusted LAN.

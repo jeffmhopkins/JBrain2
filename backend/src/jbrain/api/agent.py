@@ -29,6 +29,7 @@ from pydantic import BaseModel, Field
 from jbrain.agent.agents import SPAWN_TOOL, agent_for
 from jbrain.agent.attachment_content import MAX_ATTACHMENTS_PER_TURN, build_attachment_content
 from jbrain.agent.attachments import TurnAttachmentRepo, attachment_scopes
+from jbrain.agent.brainevents import brain_text_enabled
 from jbrain.agent.clock import now_block
 from jbrain.agent.identity import me_block
 from jbrain.agent.loop import AgentLoop, guardrails_for_effort
@@ -594,6 +595,10 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
         if brain_emit is not None:
             with contextlib.suppress(Exception):
                 brain_stream = await get_settings_store(request).brain_llm_stream(owner_ctx)
+            # Gate owner TEXT for the whole turn — the same switch also lets a web tool's
+            # query/URL ride its tendril (jbrain.agent.brainevents.brain_text_enabled
+            # propagates on this turn's context to the tools it runs).
+            brain_text_enabled.set(brain_stream)
             if brain_stream and body.message:
                 brain_emit("llm_input", body.message)
         stream = loop.run_stream(

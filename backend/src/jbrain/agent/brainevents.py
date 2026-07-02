@@ -21,14 +21,24 @@ server-brain on the internal docker network), so it is not an egress under invar
 from __future__ import annotations
 
 import asyncio
+import contextvars
 from typing import Protocol
 
 import httpx
 
+# Per-turn gate for shipping owner TEXT to the display. The agent turn sets it from the
+# `brain_llm_stream` setting (jbrain.api.agent); it propagates on the turn's context to
+# every tool the turn runs, so a web tool's query/URL text is gated by the same switch as
+# the LLM prompt/answer — without threading the flag through the tool signatures. Default
+# OFF: outside an opted-in turn, text is dropped and only the content-free marker ships.
+brain_text_enabled: contextvars.ContextVar[bool] = contextvars.ContextVar(
+    "brain_text_enabled", default=False
+)
+
 
 class BrainEmit(Protocol):
-    """The wall-display emitter: `emit(kind)` for content-free web-tool markers,
-    `emit(kind, text)` for the opt-in LLM prompt/answer streams."""
+    """The wall-display emitter: `emit(kind)` for a content-free marker, `emit(kind, text)`
+    to also ship text — the text rides only when `brain_text_enabled` is set for the turn."""
 
     def __call__(self, kind: str, text: str | None = ...) -> None: ...
 
@@ -62,6 +72,9 @@ def build_event_emitter(url: str) -> BrainEmit:
             loop = asyncio.get_running_loop()
         except RuntimeError:
             return  # no event loop (shouldn't happen inside a tool) — skip silently
+        # Owner text ships only when this turn opted in; otherwise send the bare marker.
+        if text and not brain_text_enabled.get():
+            text = None
         loop.create_task(_post_event(url, kind, text))
 
     return emit
