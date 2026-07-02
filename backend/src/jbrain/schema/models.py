@@ -160,8 +160,8 @@ class SchemaRegistry:
     def is_functional(self, predicate: str) -> bool:
         """Whether a (canonical or drift) predicate is functional in the schema —
         at most one current value, so a new binding supersedes. Union semantics:
-        functional if ANY type declares it so (mirrors the by-any-type proxy the
-        arbiter uses for `predicate_known`)."""
+        functional if ANY type declares it so (the entity's type isn't known at
+        the call sites, so by-any-type is the sound global proxy)."""
         return _norm_key(self.normalize_predicate(predicate)) in self.functional_predicates
 
     def declares_predicate(self, predicate: str) -> bool:

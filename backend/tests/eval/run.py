@@ -98,8 +98,9 @@ async def _db_loop(cases: list[Case], app_url: str, tmp: str, reset, *, canon: b
     embedder = None
     embed_model = ""
     if canon:
-        # Real embeddings + the predicate_canonicalization setting ON, and seed the
-        # canonical index once via the real bootstrap job (needs the TEI container).
+        # Real embeddings + the canonical index seeded once via the real bootstrap
+        # job (needs the TEI container). The setting now gates only the held-fact
+        # suggestion picker; --canon exercises the alias collapse + that picker.
         from jbrain.embed import PredicateEmbedder, TeiEmbedClient
         from jbrain.queue import SYSTEM_CTX
         from jbrain.settings_store import PREDICATE_CANON_KEY, SqlSettingsStore

@@ -417,8 +417,8 @@ async def run() -> None:
         router,
         embedder=TeiEmbedClient(settings.embed_url),
         embed_model=settings.embed_model,
-        # Reads the predicate_canonicalization + value_shape_enforce toggles
-        # (Phase 3/4); both default ON, flip off live via a settings upsert.
+        # Reads the value_shape_enforce toggle and the predicate-suggestion
+        # picker toggle; both default ON, flip off live via a settings upsert.
         settings=SqlSettingsStore(maker),
     )
     # The archivist's Gmail provider, reading OAuth credentials live from the same

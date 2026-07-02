@@ -307,8 +307,8 @@ def test_decompose_leaves_well_formed_and_novel_predicates_untouched(
     assert registry.decompose_predicate("name.nickname", "kids") == ("name.nickname", "kids")
     # A dotted CANONICAL is declared, so it is never torn apart.
     assert registry.decompose_predicate("name.full", "") == ("name.full", "")
-    # A genuine novel a.b whose base takes no qualifier stays whole (-> the
-    # canonicalizer's new_predicate path, unchanged).
+    # A genuine novel a.b whose base takes no qualifier stays whole (-> commits
+    # raw as tier-2 long-tail, unchanged).
     assert registry.decompose_predicate("worksFor.contractor", "") == ("worksFor.contractor", "")
     # Never overwrite an explicit qualifier, even on a folded-looking predicate.
     assert registry.decompose_predicate("name.nickname.kids", "work") == (

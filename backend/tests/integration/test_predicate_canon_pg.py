@@ -1,9 +1,11 @@
-"""Embedding predicate canonicalization end to end (Phase 3a) against real
-Postgres, with the LLM + embedder faked. Proves: a STRONG match rewrites an
-unknown predicate to its canonical BEFORE the arbiter keys the fact (the
-committed graph address collapses); a cold match leaves the raw predicate and
-files a new_predicate review card; and the whole pass is inert when the
-predicate_canonicalization setting is off (the default).
+"""The two-tier predicate pipeline end to end (docs/ENTITY_GRAPH_REFOCUS_PLAN.md
+§1) against real Postgres, with the LLM faked. Proves: a durable predicate_alias
+rewrites an unknown predicate to its canonical BEFORE the arbiter keys the fact
+(no embedder required); an unaliased long-tail predicate commits raw with NO
+embed round-trip and NO new_predicate card (the retired noise machinery); the
+alias collapse ignores the predicate_canonicalization setting (repurposed — it
+now gates only the held-fact suggestion picker); and the picker's on-demand
+suggestion source still works.
 """
 
 import hashlib
@@ -12,10 +14,11 @@ import random
 import uuid
 
 import pytest
+import structlog.testing
 from sqlalchemy import text
 
 from jbrain.analysis.pipeline import AnalysisPipeline
-from jbrain.analysis.predicates import raw_descriptor
+from jbrain.analysis.predicates import raw_descriptor, record_predicate_alias
 from jbrain.analysis.repo import SqlAnalysisRepo
 from jbrain.db.session import scoped_session
 from jbrain.llm import FakeLlmClient, LlmRouter
@@ -40,7 +43,11 @@ def _vec(t: str) -> list[float]:
 
 
 class _FakeEmbed:
+    def __init__(self) -> None:
+        self.texts: list[str] = []  # lets tests pin what was (never) embedded
+
     async def embed(self, texts: list[str]) -> list[list[float]]:
+        self.texts.extend(texts)
         return [_vec(t) for t in texts]
 
 
@@ -83,12 +90,12 @@ def _router(predicate: str) -> LlmRouter:
     )
 
 
-def _pipeline(maker, predicate: str) -> AnalysisPipeline:  # noqa: F811
+def _pipeline(maker, predicate: str, *, embedder: _FakeEmbed | None = None) -> AnalysisPipeline:  # noqa: F811
     return AnalysisPipeline(
         maker,
         _router(predicate),
-        embedder=_FakeEmbed(),
-        embed_model=_MODEL,
+        embedder=embedder,
+        embed_model=_MODEL if embedder else "",
         settings=SqlSettingsStore(maker),
     )
 
@@ -97,22 +104,20 @@ async def _set_flag(maker, value: bool) -> None:  # noqa: F811
     await SqlSettingsStore(maker).upsert(SYSTEM_CTX, PREDICATE_CANON_KEY, value)
 
 
-async def _seed_canonical(maker, name: str, embedding_text: str) -> None:  # noqa: F811
+async def _seed_alias(maker, raw: str, canonical: str) -> None:  # noqa: F811
+    """A canonical row (the aliases FK target — no embedding needed) plus the
+    durable raw→canonical alias a past owner resolution would have written."""
     async with scoped_session(maker, SYSTEM_CTX) as session:
         await session.execute(
             text(
                 "INSERT INTO app.canonical_predicates"
-                " (canonical_name, descriptor, value_shape, kind, embedding, embedding_model)"
-                " VALUES (:n, 'd', 'ref', 'relationship', cast(:emb AS vector), :model)"
-                " ON CONFLICT (canonical_name) DO UPDATE SET"
-                " embedding = cast(:emb AS vector), embedding_model = :model"
+                " (canonical_name, descriptor, value_shape, kind)"
+                " VALUES (:n, 'd', 'ref', 'relationship')"
+                " ON CONFLICT (canonical_name) DO NOTHING"
             ),
-            {
-                "n": name,
-                "emb": "[" + ",".join(map(str, _vec(embedding_text))) + "]",
-                "model": _MODEL,
-            },
+            {"n": canonical},
         )
+        await record_predicate_alias(session, raw, canonical)
 
 
 async def _committed_predicates(maker, note_id: str) -> set[str]:  # noqa: F811
@@ -127,12 +132,24 @@ async def _committed_predicates(maker, note_id: str) -> set[str]:  # noqa: F811
         )
 
 
-async def test_strong_match_rewrites_the_committed_predicate(maker, tmp_path):  # noqa: F811
+async def _new_predicate_cards(maker, predicate: str) -> int:  # noqa: F811
+    async with scoped_session(maker, SYSTEM_CTX) as session:
+        return (
+            await session.execute(
+                text(
+                    "SELECT count(*) FROM app.review_items"
+                    " WHERE kind = 'new_predicate' AND payload->>'predicate' = :p"
+                ),
+                {"p": predicate},
+            )
+        ).scalar_one()
+
+
+async def test_durable_alias_rewrites_the_committed_predicate(maker, tmp_path):  # noqa: F811
+    # A past owner map_to_existing decision collapses the drift spelling — with
+    # NO embedder configured, proving the collapse is a pure aliases lookup.
     pred = "isHitchedTo"
-    # Seed 'spouse' with the exact vector the incoming predicate's descriptor
-    # embeds to (cosine 1 -> STRONG).
-    await _seed_canonical(maker, "spouse", raw_descriptor(pred, _STMT, "relationship"))
-    await _set_flag(maker, True)
+    await _seed_alias(maker, pred, "spouse")
     note_id = await make_note(maker, domain="general", body=_STMT)
     await ingest(maker, note_id, tmp_path)
 
@@ -143,37 +160,43 @@ async def test_strong_match_rewrites_the_committed_predicate(maker, tmp_path):  
     assert pred.lower() not in {p.lower() for p in predicates}
 
 
-async def test_cold_match_keeps_raw_and_files_a_card(maker, tmp_path):  # noqa: F811
-    pred = "isBondedWith"  # distinct so the global card dedup doesn't collide
-    # No seeded canonical matches this descriptor (any prior seed embeds to a
-    # ~orthogonal vector, cosine << WEAK) -> cold -> a new_predicate card.
+async def test_longtail_predicate_commits_raw_with_no_card(maker, tmp_path):  # noqa: F811
+    # The Wave-1 inversion: the exact configuration that used to file a
+    # new_predicate card (embedder live, setting ON) now commits the raw
+    # predicate with no card and logs predicate.longtail_kept instead.
+    pred = "isBondedWith"
     await _set_flag(maker, True)
+    note_id = await make_note(maker, domain="general", body=_STMT)
+    await ingest(maker, note_id, tmp_path)
+    embedder = _FakeEmbed()
+
+    with structlog.testing.capture_logs() as logs:
+        await _pipeline(maker, pred, embedder=embedder).integrate_note({"note_id": note_id})
+
+    assert pred in await _committed_predicates(maker, note_id)  # raw, never rejected
+    # The live embedder still serves graph-context entity candidates, but the
+    # long-tail predicate itself never took an embed round-trip: its descriptor
+    # (humanized "is bonded with" + statement) never reached embed().
+    assert not any("bonded" in t.lower() for t in embedder.texts)
+    assert await _new_predicate_cards(maker, pred) == 0
+    kept = [e for e in logs if e["event"] == "predicate.longtail_kept"]
+    assert kept and kept[0]["predicate"] == pred and kept[0]["note_id"] == note_id
+
+
+async def test_alias_collapse_ignores_the_repurposed_setting(maker, tmp_path):  # noqa: F811
+    # predicate_canonicalization now gates only the held-fact suggestion picker;
+    # the durable collapse honors past owner decisions regardless of the flag.
+    pred = "isPairedWith"
+    await _seed_alias(maker, pred, "spouse")
+    await _set_flag(maker, False)
     note_id = await make_note(maker, domain="general", body=_STMT)
     await ingest(maker, note_id, tmp_path)
 
     await _pipeline(maker, pred).integrate_note({"note_id": note_id})
 
-    assert pred in await _committed_predicates(maker, note_id)  # raw, never rejected
-    async with scoped_session(maker, SYSTEM_CTX) as session:
-        row = (
-            await session.execute(
-                text(
-                    "SELECT id, payload FROM app.review_items"
-                    " WHERE kind = 'new_predicate' AND payload->>'predicate' = :p"
-                ),
-                {"p": pred},
-            )
-        ).one()
-    assert row.payload["predicate"] == pred and row.payload["note_id"] == note_id
-    # The card carries the triggering edge (mention_refs resolved to the agent's
-    # names) so the UI can preview subject.<canonical> -> value, plus the ranked
-    # candidate list it renders instead of raw cosine numbers.
-    assert row.payload["subject"] == "Pat" and row.payload["value"] == "Dana"
-    assert isinstance(row.payload["suggestions"], list)
-    # The card is dismissable in 3a (accept/map land in 3b): reject must NOT
-    # raise UnknownAction — it leaves the fact under its raw name.
-    resolved = await SqlAnalysisRepo(maker).resolve_review(OWNER, str(row.id), "reject", {})
-    assert resolved is not None and resolved["status"] != "open"
+    predicates = await _committed_predicates(maker, note_id)
+    assert "spouse" in predicates
+    assert pred.lower() not in {p.lower() for p in predicates}
 
 
 async def test_predicate_suggestions_for_a_card(maker):  # noqa: F811
@@ -181,7 +204,21 @@ async def test_predicate_suggestions_for_a_card(maker):  # noqa: F811
     # computed live so cards filed before the picker existed still get them. Seed
     # 'spouse' at the predicate descriptor's exact vector (cosine 1 → top).
     pred = "isFondOf"
-    await _seed_canonical(maker, "spouse", raw_descriptor(pred, "x", None))
+    async with scoped_session(maker, SYSTEM_CTX) as session:
+        await session.execute(
+            text(
+                "INSERT INTO app.canonical_predicates"
+                " (canonical_name, descriptor, value_shape, kind, embedding, embedding_model)"
+                " VALUES (:n, 'd', 'ref', 'relationship', cast(:emb AS vector), :model)"
+                " ON CONFLICT (canonical_name) DO UPDATE SET"
+                " embedding = cast(:emb AS vector), embedding_model = :model"
+            ),
+            {
+                "n": "spouse",
+                "emb": "[" + ",".join(map(str, _vec(raw_descriptor(pred, "x", None)))) + "]",
+                "model": _MODEL,
+            },
+        )
     iid = str(uuid.uuid4())
     async with scoped_session(maker, OWNER) as s:
         await s.execute(
@@ -198,26 +235,3 @@ async def test_predicate_suggestions_for_a_card(maker):  # noqa: F811
     # A missing item is None (a 404 upstream), distinct from an empty list.
     missing = await repo.predicate_suggestions(OWNER, str(uuid.uuid4()), embedder=_FakeEmbed())
     assert missing is None
-
-
-async def test_canonicalization_is_inert_when_the_setting_is_off(maker, tmp_path):  # noqa: F811
-    pred = "isPairedWith"
-    await _seed_canonical(maker, "spouse", raw_descriptor(pred, _STMT, "relationship"))
-    await _set_flag(maker, False)  # default; explicit here against the shared DB
-    note_id = await make_note(maker, domain="general", body=_STMT)
-    await ingest(maker, note_id, tmp_path)
-
-    await _pipeline(maker, pred).integrate_note({"note_id": note_id})
-
-    assert pred in await _committed_predicates(maker, note_id)  # no rewrite
-    async with scoped_session(maker, SYSTEM_CTX) as session:
-        cards = (
-            await session.execute(
-                text(
-                    "SELECT count(*) FROM app.review_items"
-                    " WHERE kind = 'new_predicate' AND payload->>'predicate' = :p"
-                ),
-                {"p": pred},
-            )
-        ).scalar()
-    assert cards == 0  # no card filed

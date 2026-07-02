@@ -48,7 +48,6 @@ from jbrain.analysis.display import (
     inference_display,
     mark_snippet,
     merge_display,
-    new_predicate_display,
     promotion_display,
     truncation_display,
     value_label,
@@ -92,7 +91,7 @@ from jbrain.analysis.integrate import Integrator
 from jbrain.analysis.integrate_prompt import INTEGRATE_STRENGTH
 from jbrain.analysis.intent import EntityResolution, IntegrationIntent
 from jbrain.analysis.persist import IntegrationRunLog
-from jbrain.analysis.predicates import decide_predicates
+from jbrain.analysis.predicates import alias_canonicals, decide_predicates
 from jbrain.analysis.prompt import (
     EXTRACT_MAX_TOKENS,
     EXTRACTION_SCHEMA,
@@ -129,6 +128,7 @@ from jbrain.models.analysis import (
 from jbrain.models.notes import Attachment, AttachmentExtract, Chunk, Note
 from jbrain.queue import SYSTEM_CTX, PermanentJobError
 from jbrain.schema import SchemaError, get_registry
+from jbrain.schema.models import _norm_key
 from jbrain.settings_store import SqlSettingsStore
 
 log = structlog.get_logger()
@@ -148,9 +148,7 @@ _NEAR_DUP_PREDICATES = frozenset({"name.full", "name.maiden", "name.aka"})
 
 # Trace fallback when a fact has no computed signal (compute_signals keys every
 # fact, so this only guards a future caller): the most cautious reading.
-_CONSERVATIVE_SIGNALS = ConfidenceSignals(
-    surface_attested=False, predicate_known=False, is_supersede=True
-)
+_CONSERVATIVE_SIGNALS = ConfidenceSignals(surface_attested=False, is_supersede=True)
 
 
 def local_anchor(captured_at: datetime, tz_offset_minutes: int | None) -> datetime:
@@ -279,8 +277,10 @@ class AnalysisPipeline:
         # call sites keep their exact behavior.
         self._embedder = embedder
         self._embed_model = embed_model
-        # Read of the predicate_canonicalization toggle (Phase 3); None ⇒ the
-        # feature is off, so the harness/older call sites are byte-unchanged.
+        # Reads the value_shape_enforce toggle and the predicate_canonicalization
+        # toggle (which now gates only the held-fact predicate-suggestion
+        # picker); None ⇒ both off, so the harness/older call sites are
+        # byte-unchanged.
         self._settings = settings
 
     async def integrate_note(self, payload: dict[str, Any]) -> None:
@@ -380,10 +380,10 @@ class AnalysisPipeline:
         # (four "daughters" → four female children) when the model captured the
         # edges but omitted gender; _gender_grounded then attests it so it commits.
         intent = derive_kinship_gender(intent, note_text)
-        # Canonicalize unknown predicates BEFORE the arbiter keys facts, so a
-        # STRONG embedding match collapses the committed graph address and the
-        # weight model sees the canonical name (Phase 3 §3.1; no-op when off).
-        await self.canonicalize_intent(intent, note_domain=domain)
+        # Collapse durably-aliased predicates BEFORE the arbiter keys facts, so
+        # a past owner map/rename decision lands on the canonical graph address;
+        # unaliased long-tail predicates commit raw (two-tier model).
+        await self.canonicalize_intent(intent)
         signals = compute_signals(intent, [c.text for c in chunks])
         plan = plan_intent(intent, signals, correction=correction)
         flow_trace.plan(note_id, plan, signals)
@@ -718,24 +718,17 @@ class AnalysisPipeline:
                 )
             )
 
-    async def canonicalize_intent(self, intent: IntegrationIntent, *, note_domain: str) -> None:
-        """Public entry for the embedding predicate-canonicalization pass — the
-        supported seam the eval harness calls (production integrate_note uses it
-        too). Inert without an embedder or with the setting off."""
-        await self._canonicalize_predicates(intent, note_domain=note_domain)
+    async def canonicalize_intent(self, intent: IntegrationIntent) -> None:
+        """Public entry for the durable predicate-alias collapse — the supported
+        seam the eval harness calls (production integrate_note uses it too)."""
+        await self._canonicalize_predicates(intent)
 
-    async def _canonicalize_predicates(
-        self, intent: IntegrationIntent, *, note_domain: str
-    ) -> None:
-        """Embedding-canonicalize each unknown predicate in the intent before the
-        arbiter keys it (Phase 3 §3.1). A STRONG match rewrites the fact's
-        predicate in place (collapsing the committed graph address); WEAK/cold
-        leave it raw and file a new_predicate review card. No-op without an
-        embedder or with the setting off — the name is never rejected."""
-        if self._embedder is None or self._settings is None:
-            return
-        if not await self._settings.predicate_canonicalization(SYSTEM_CTX):
-            return
+    async def _canonicalize_predicates(self, intent: IntegrationIntent) -> None:
+        """Collapse each unknown predicate in the intent through the durable
+        `predicate_aliases` map (past owner map/rename decisions) before the
+        arbiter keys it. An unaliased predicate is tier-2 long-tail: it commits
+        raw — no embed round-trip, no new_predicate card, never rejected
+        (docs/ENTITY_GRAPH_REFOCUS_PLAN.md §1)."""
         registry = get_registry()
         unknown = [
             (i, f)
@@ -744,49 +737,23 @@ class AnalysisPipeline:
         ]
         if not unknown:
             return
-        note_id = uuid.UUID(intent.note_id)
-        carded: set[str] = set()  # one new_predicate card per raw predicate per run
-        # A mention_ref is opaque in the agentic flow, so resolve it to the name the
-        # agent gave a NEW entity for the card's edge preview; an unresolved ref
-        # (an existing entity, looked up only at apply time) falls back to itself.
-        names = {
-            r.mention_ref: r.new_name for r in intent.entity_resolutions if r.new_name is not None
-        }
         async with scoped_session(self._maker, SYSTEM_CTX) as session:
-            # One embed call for every unknown predicate, not one per fact.
-            decisions = await decide_predicates(
-                session,
-                [(f.predicate, f.statement, f.kind) for _, f in unknown],
-                embedder=self._embedder,
-            )
-            for (i, fact), decision in zip(unknown, decisions, strict=True):
-                if decision.band == "strong" and decision.canonical:
-                    intent.facts[i] = replace(fact, predicate=decision.canonical)
-                    self._rewrite_supersession(intent, fact.predicate, decision.canonical)
-                    log.info(
-                        "predicate.canonicalized", raw=fact.predicate, canonical=decision.canonical
-                    )
-                elif fact.predicate not in carded:
-                    carded.add(fact.predicate)
-                    await self._file_new_predicate_review(
-                        session,
-                        note_id=note_id,
-                        note_domain=note_domain,
-                        predicate=fact.predicate,
-                        statement=fact.statement,
-                        kind=fact.kind,
-                        suggestions=decision.suggestions,
-                        # The triggering edge, so the card can preview what each
-                        # mapping would write (subject.<canonical> -> value). A
-                        # relationship's value is the other mention's name; an
-                        # attribute's is its bare datum.
-                        subject=names.get(fact.entity_ref, fact.entity_ref),
-                        value=(
-                            names.get(fact.object_entity_ref, fact.object_entity_ref)
-                            if fact.object_entity_ref is not None
-                            else value_label(fact.value_json, fact.statement)
-                        ),
-                    )
+            aliases = await alias_canonicals(session, [f.predicate for _, f in unknown])
+        kept: set[str] = set()  # one longtail log line per raw spelling per run
+        for i, fact in unknown:
+            canonical = aliases.get(_norm_key(fact.predicate))
+            if canonical is not None:
+                intent.facts[i] = replace(fact, predicate=canonical)
+                self._rewrite_supersession(intent, fact.predicate, canonical)
+                log.info("predicate.canonicalized", raw=fact.predicate, canonical=canonical)
+            elif fact.predicate not in kept:
+                kept.add(fact.predicate)
+                log.info(
+                    "predicate.longtail_kept",
+                    predicate=fact.predicate,
+                    kind=fact.kind,
+                    note_id=intent.note_id,
+                )
 
     @staticmethod
     def _rewrite_supersession(intent: IntegrationIntent, raw: str, canonical: str) -> None:
@@ -797,55 +764,6 @@ class AnalysisPipeline:
         for j, sp in enumerate(intent.supersession_proposals):
             if sp.predicate == raw:
                 intent.supersession_proposals[j] = replace(sp, predicate=canonical)
-
-    async def _file_new_predicate_review(
-        self,
-        session: AsyncSession,
-        *,
-        note_id: uuid.UUID,
-        note_domain: str,
-        predicate: str,
-        statement: str,
-        kind: str,
-        suggestions: tuple[tuple[str, float], ...],
-        subject: str,
-        value: str,
-    ) -> None:
-        """File an idempotent new_predicate card for an unknown predicate the
-        canonicalizer could not confidently merge (Phase 3 §3.1a). The fact has
-        already committed under its raw name; this surfaces it for accept/map
-        (Phase 3b). One open card per raw predicate — re-analysis never piles up.
-        The card rides the predicate's floor/ratchet domain like inference cards."""
-        card_domain = _review_card_domain(predicate, note_domain)
-        existing = (
-            await session.execute(
-                text(
-                    "SELECT 1 FROM app.review_items"
-                    " WHERE kind = 'new_predicate' AND status = 'open'"
-                    " AND payload->>'predicate' = :pred LIMIT 1"
-                ),
-                {"pred": predicate},
-            )
-        ).first()
-        if existing is not None:
-            return
-        session.add(
-            ReviewItem(
-                kind="new_predicate",
-                payload={
-                    "predicate": predicate,
-                    "statement": statement,
-                    "fact_kind": kind,
-                    "note_id": str(note_id),
-                    # subject/value drive the card's per-candidate edge preview.
-                    "subject": subject,
-                    "value": value,
-                    "suggestions": [{"name": n, "score": s} for n, s in suggestions],
-                    **new_predicate_display(predicate=predicate, suggestions=suggestions),
-                },
-                domain_code=card_domain,
-            )
-        )
 
     async def _apply(
         self,

@@ -20,7 +20,6 @@ from jbrain.analysis.intent import (
     SupersessionProposal,
 )
 from jbrain.analysis.weight import ConfidenceSignals
-from jbrain.schema import get_registry
 
 
 def _res(ref: str = "m1", **kw) -> EntityResolution:
@@ -58,11 +57,11 @@ def _intent(**kw) -> IntegrationIntent:
 
 
 def _surface_sig():
-    return ConfidenceSignals(surface_attested=True, predicate_known=True, is_supersede=False)
+    return ConfidenceSignals(surface_attested=True, is_supersede=False)
 
 
 def _inferred_overwrite_sig():
-    return ConfidenceSignals(surface_attested=False, predicate_known=True, is_supersede=True)
+    return ConfidenceSignals(surface_attested=False, is_supersede=True)
 
 
 def test_fatal_violation_rejects_whole_intent():
@@ -674,21 +673,6 @@ def test_compute_signals_named_object_absent_from_text_is_not_attested():
     assert compute_signals(intent, ["I work at Globex now."])[0].surface_attested is False
 
 
-def test_compute_signals_predicate_known_matches_registry():
-    reg = get_registry()
-
-    def known(pred: str) -> bool:
-        return any(t.predicate(pred) is not None for t in reg.types.values())
-
-    intent = _intent(
-        entity_resolutions=[_res()],
-        facts=[_fact(predicate="zzz_made_up_predicate"), _fact(predicate="spouse")],
-    )
-    sigs = compute_signals(intent, ["x"])
-    assert sigs[0].predicate_known is False  # a coined long-tail predicate
-    assert sigs[1].predicate_known == known("spouse")  # matches the registry, no hardcoding
-
-
 def test_compute_signals_is_supersede_from_agent_proposal():
     intent = _intent(
         entity_resolutions=[_res()],
@@ -724,7 +708,7 @@ def test_inferred_fact_in_correction_note_is_not_elevated() -> None:
     # a hallucinated value can't bypass the inferred ceiling or force-supersede a confident prior.
     plan = plan_intent(
         _intent(entity_resolutions=[_res()], facts=[_fact(inferred=True, predicate="coined_pred")]),
-        signals={0: ConfidenceSignals(False, False, True)},  # inferred, unknown, would-overwrite
+        signals={0: ConfidenceSignals(False, True)},  # inferred, would-overwrite
         correction=True,
     )
     pf = plan.facts[0]

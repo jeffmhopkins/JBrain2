@@ -29,9 +29,6 @@ INFERRED_CEILING = 0.6
 # An inferred fact that would OVERWRITE existing history is the dangerous case
 # (silently rewriting a value the note never stated), so it is capped harder.
 INFERRED_OVERWRITE_CEILING = 0.4
-# A predicate the schema registry doesn't know is a weaker signal than a
-# schema.org-canonical one.
-UNKNOWN_PREDICATE_PENALTY = 0.1
 
 # Commit-vs-review threshold per fact kind. Attributes (gender, birthday) are
 # strictest — a wrong one is a bug, not news; preferences are loosest. Kinds not
@@ -57,8 +54,6 @@ class ConfidenceSignals:
     # The value's surface was verified at an attested span (plan I1). This is the
     # surface-attested vs inferred discriminator.
     surface_attested: bool
-    # The predicate resolves in the schema registry (after normalization).
-    predicate_known: bool
     # This fact would supersede an existing active head (vs filling an empty key).
     is_supersede: bool
     # Future (Wave-1 Track A): an `object_resolved` signal for relationship facts
@@ -68,13 +63,12 @@ class ConfidenceSignals:
 
 
 def ceiling(signals: ConfidenceSignals) -> float:
-    """The maximum weight these signals allow, in [0, 1]."""
-    c = 1.0 if signals.surface_attested else INFERRED_CEILING
-    if not signals.predicate_known:
-        c -= UNKNOWN_PREDICATE_PENALTY
-    if not signals.surface_attested and signals.is_supersede:
-        c = min(c, INFERRED_OVERWRITE_CEILING)
-    return max(0.0, min(1.0, c))
+    """The maximum weight these signals allow, in [0, 1]. An unregistered
+    (tier-2) predicate carries NO penalty — long-tail facts commit on the same
+    terms as declared ones (docs/ENTITY_GRAPH_REFOCUS_PLAN.md §1)."""
+    if signals.surface_attested:
+        return 1.0
+    return INFERRED_OVERWRITE_CEILING if signals.is_supersede else INFERRED_CEILING
 
 
 def effective_weight(self_confidence: float, signals: ConfidenceSignals) -> float:
