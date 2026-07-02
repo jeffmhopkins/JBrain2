@@ -421,6 +421,41 @@ async def test_reasoning_effort_dropped_for_a_non_reasoning_local_model() -> Non
     assert local.calls[0]["reasoning_effort"] is None
 
 
+async def test_bucket_default_effort_sent_without_an_override() -> None:
+    # Right-by-default: a high-bucket task (integrate.note) reaches the client at
+    # high with no stored override; a medium-bucket task (agent.turn) sends None —
+    # the model's own default — so the sub-agent spawner's "no chosen effort → the
+    # child model's default" contract still holds.
+    xai = FakeLlmClient(["a", "b"])
+    router = LlmRouter(
+        {"xai": xai},
+        {"integrate.note": ("xai", "grok-4.3"), "agent.turn": ("xai", "grok-4.3")},
+    )
+    await router.complete("integrate.note", system="s", user_text="u")
+    assert xai.calls[0]["reasoning_effort"] == "high"
+    await router.complete("agent.turn", system="s", user_text="u")
+    assert xai.calls[1]["reasoning_effort"] is None
+
+
+async def test_low_bucket_default_effort_sent_without_an_override() -> None:
+    xai = FakeLlmClient(["a"])
+    router = LlmRouter({"xai": xai}, {"session.title": ("xai", "grok-4.3")})
+    await router.complete("session.title", system="s", user_text="u")
+    assert xai.calls[0]["reasoning_effort"] == "low"
+
+
+async def test_stored_effort_override_wins_over_the_bucket_default() -> None:
+    # integrate.note defaults high; a stored 'low' override must win over it.
+    xai = FakeLlmClient(["a"])
+    router = LlmRouter(
+        {"xai": xai},
+        {"integrate.note": ("xai", "grok-4.3")},
+        overrides_loader=_loader({"integrate.note": {"reasoning_effort": "low"}}),
+    )
+    await router.complete("integrate.note", system="s", user_text="u")
+    assert xai.calls[0]["reasoning_effort"] == "low"
+
+
 async def test_converse_effort_override_wins_for_a_reasoning_model() -> None:
     # The per-call override (the sub-agent spawner's per-child effort) beats the
     # stored/default effort when the resolved model is reasoning-capable (xai Grok).

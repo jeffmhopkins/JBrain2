@@ -29,7 +29,7 @@ from jbrain.llm.providers import (
     provider_choices,
     supports_reasoning,
 )
-from jbrain.llm.router import TASK_DEFAULTS, _split_spec
+from jbrain.llm.router import TASK_DEFAULTS, TASK_REASONING_BUCKET, _split_spec
 from jbrain.settings_store import LLM_TASK_OVERRIDES_KEY, SqlSettingsStore
 
 log = structlog.get_logger()
@@ -254,8 +254,11 @@ def _effective(settings: Settings, task: str, overrides: dict[str, dict[str, str
         return TaskInfo(
             id=task, label=TASK_LABELS[task], provider=provider_label, reasoning_effort=None
         )
+    # Effective effort for the screen: a stored override wins; else the task's bucket
+    # default (high/medium/low); else the global fallback for a task with no bucket
+    # (the vision tasks, when routed to a reasoning-capable cloud provider).
     effort = (
-        (entry.get("reasoning_effort") or REASONING_DEFAULT)
+        (entry.get("reasoning_effort") or TASK_REASONING_BUCKET.get(task) or REASONING_DEFAULT)
         if supports_reasoning(settings, provider_id)
         else None
     )

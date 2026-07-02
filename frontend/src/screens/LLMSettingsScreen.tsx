@@ -25,38 +25,44 @@ interface GroupDef {
   taskIds: string[];
 }
 
-// Groups mirror the prompts' `strength:` so the screen tells the truth about
-// which work is heavy: note.extract/integrate.note/agent.turn are `high`,
-// entity.disambiguate/session.title/triage.classify are `low`. fact.adjudicate &
-// correction_note.extract have no prompt yet — placed by their design intent
-// (docs/ANALYSIS.md: adjudicate=cheap, correction=strong). video.summarize is the
-// analyze_video reduce step — owner-placed in high-stakes for a richer summary,
-// though its prompt is `low`. wiki.rewrite/wiki.ground (the Phase-6 builder's draft
-// + grounding-verify pass) are reasoning-heavy, so they sit in high-stakes too. A
-// task the API returns outside these defs lands in a synthesized "Other" group, so
-// new routable tasks are never silently dropped.
+// Groups are the reasoning-effort buckets (backend `TASK_REASONING_BUCKET`): each
+// bucket's default is correct for every task in it, so the box is right by default
+// and a per-task override reads as a deliberate deviation (the card shows "mixed").
+// High = async, reasoning-bound, correctness-critical (the knowledge-graph arbiters:
+// integrate.note, fact.adjudicate, and the Phase-6 wiki.ground verifier). Low =
+// deterministic one-shots (entity.disambiguate/session.title/triage.classify).
+// Medium = everything else that thinks (agent.turn, the extractors, video.summarize,
+// wiki.rewrite, intake.materialize). Vision has no reasoning channel. Keep this in
+// sync with the backend map; a task the API returns outside these defs lands in a
+// synthesized "Other" group, so new routable tasks are never silently dropped.
 const GROUP_DEFS: GroupDef[] = [
   {
     key: "high",
     accent: "high",
-    name: "High-stakes reasoning",
-    desc: "The hard judgment calls — worth deeper thinking.",
+    name: "High reasoning",
+    desc: "Async, correctness-critical judgment — worth the deepest thinking.",
+    taskIds: ["integrate.note", "fact.adjudicate", "wiki.ground"],
+  },
+  {
+    key: "medium",
+    accent: "high",
+    name: "Medium reasoning",
+    desc: "The default — interactive turns, extraction, and summaries.",
     taskIds: [
       "agent.turn",
-      "integrate.note",
       "note.extract",
       "correction_note.extract",
       "video.summarize",
       "wiki.rewrite",
-      "wiki.ground",
+      "intake.materialize",
     ],
   },
   {
-    key: "light",
+    key: "low",
     accent: "light",
-    name: "Lightweight",
-    desc: "Cheap, frequent extraction & one-shots.",
-    taskIds: ["entity.disambiguate", "fact.adjudicate", "session.title", "triage.classify"],
+    name: "Low reasoning",
+    desc: "Cheap, frequent one-shots — classify & title.",
+    taskIds: ["entity.disambiguate", "session.title", "triage.classify"],
   },
   {
     key: "vision",

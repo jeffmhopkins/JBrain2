@@ -163,18 +163,19 @@ async function group(name: string): Promise<HTMLElement> {
 describe("LLMSettingsScreen", () => {
   it("renders the tiers from fetched data", async () => {
     render(<LLMSettingsScreen />);
-    expect(await screen.findByText("High-stakes reasoning")).toBeInTheDocument();
-    expect(screen.getByText("Lightweight")).toBeInTheDocument();
-    // 3 of the 5 fixture tasks land in high (agent.turn, integrate.note,
-    // note.extract); entity.disambiguate + fact.adjudicate fall to lightweight.
-    const high = await group("High-stakes reasoning");
-    expect(within(high).getByText("3 tasks")).toBeInTheDocument();
+    expect(await screen.findByText("High reasoning")).toBeInTheDocument();
+    expect(screen.getByText("Medium reasoning")).toBeInTheDocument();
+    expect(screen.getByText("Low reasoning")).toBeInTheDocument();
+    // The fixture's arbiter tasks (integrate.note, fact.adjudicate) land in the
+    // high-reasoning bucket; agent.turn/note.extract are medium, the one-shots low.
+    const high = await group("High reasoning");
+    expect(within(high).getByText("2 tasks")).toBeInTheDocument();
   });
 
   it("hides the code-mode model card when jcode is disabled", async () => {
     // Default fixture has jcode.enabled = false.
     render(<LLMSettingsScreen />);
-    await screen.findByText("High-stakes reasoning");
+    await screen.findByText("High reasoning");
     expect(screen.queryByLabelText("Code mode model")).not.toBeInTheDocument();
   });
 
@@ -207,11 +208,11 @@ describe("LLMSettingsScreen", () => {
 
   it("hides reasoning and shows the Claude note when a tier moves off grok", async () => {
     render(<LLMSettingsScreen />);
-    const high = await group("High-stakes reasoning");
+    const high = await group("High reasoning");
     // Reasoning segments present while on grok.
     expect(within(high).getByRole("group", { name: /reasoning/i })).toBeInTheDocument();
 
-    fireEvent.change(within(high).getByLabelText(/High-stakes reasoning provider/i), {
+    fireEvent.change(within(high).getByLabelText(/High reasoning provider/i), {
       target: { value: "claude" },
     });
 
@@ -224,8 +225,8 @@ describe("LLMSettingsScreen", () => {
   it("issues an update when a tier's reasoning effort changes", async () => {
     const { puts } = stubLlmFetch();
     render(<LLMSettingsScreen />);
-    const high = await group("High-stakes reasoning");
-    const reasoning = within(high).getByRole("group", { name: /High-stakes reasoning reasoning/i });
+    const med = await group("Medium reasoning");
+    const reasoning = within(med).getByRole("group", { name: /Medium reasoning reasoning/i });
 
     fireEvent.click(within(reasoning).getByRole("button", { name: "High" }));
 
@@ -254,8 +255,8 @@ describe("LLMSettingsScreen", () => {
     ];
     const { puts } = stubLlmFetch(s);
     render(<LLMSettingsScreen />);
-    const high = await group("High-stakes reasoning");
-    const reasoning = within(high).getByRole("group", { name: /High-stakes reasoning reasoning/i });
+    const med = await group("Medium reasoning");
+    const reasoning = within(med).getByRole("group", { name: /Medium reasoning reasoning/i });
 
     fireEvent.click(within(reasoning).getByRole("button", { name: "High" }));
 
@@ -275,9 +276,9 @@ describe("LLMSettingsScreen", () => {
     ];
     stubLlmFetch(s);
     render(<LLMSettingsScreen />);
-    const high = await group("High-stakes reasoning");
-    expect(within(high).queryByRole("group", { name: /reasoning/i })).not.toBeInTheDocument();
-    expect(within(high).getByText("This model takes no reasoning level.")).toBeInTheDocument();
+    const med = await group("Medium reasoning");
+    expect(within(med).queryByRole("group", { name: /reasoning/i })).not.toBeInTheDocument();
+    expect(within(med).getByText("This model takes no reasoning level.")).toBeInTheDocument();
   });
 
   it("omits text-only local models from the Vision tier's choices", async () => {
@@ -310,9 +311,9 @@ describe("LLMSettingsScreen", () => {
     expect(visionOptions).not.toContain("gpt-oss-120b");
 
     // The text reasoner is still available to a non-vision tier.
-    const light = await group("Lightweight");
-    const lightSelect = within(light).getByLabelText(/Lightweight provider/i) as HTMLSelectElement;
-    expect(Array.from(lightSelect.options).map((o) => o.value)).toContain("gpt-oss-120b");
+    const low = await group("Low reasoning");
+    const lowSelect = within(low).getByLabelText(/Low reasoning provider/i) as HTMLSelectElement;
+    expect(Array.from(lowSelect.options).map((o) => o.value)).toContain("gpt-oss-120b");
   });
 
   it("shows enabled models with state, chips, and footprint", async () => {
@@ -1094,21 +1095,21 @@ describe("LLMSettingsScreen", () => {
   it("lets a per-task override diverge from its tier", async () => {
     const { state } = stubLlmFetch();
     render(<LLMSettingsScreen />);
-    const high = await group("High-stakes reasoning");
+    const med = await group("Medium reasoning");
 
     // Expand the per-task overrides, then move one task off grok.
-    fireEvent.click(within(high).getByRole("button", { name: /Per-task overrides/i }));
-    const taskSelect = await within(high).findByLabelText(/Agent turn provider/i);
+    fireEvent.click(within(med).getByRole("button", { name: /Per-task overrides/i }));
+    const taskSelect = await within(med).findByLabelText(/Agent turn provider/i);
     fireEvent.change(taskSelect, { target: { value: "local" } });
 
     await waitFor(() =>
       expect(state.tasks.find((t) => t.id === "agent.turn")?.provider).toBe("local"),
     );
     // The siblings stay on grok — the tier control now reflects "mixed".
-    expect(state.tasks.find((t) => t.id === "integrate.note")?.provider).toBe("grok");
+    expect(state.tasks.find((t) => t.id === "note.extract")?.provider).toBe("grok");
     await waitFor(() =>
       expect(
-        (within(high).getByLabelText(/High-stakes reasoning provider/i) as HTMLSelectElement).value,
+        (within(med).getByLabelText(/Medium reasoning provider/i) as HTMLSelectElement).value,
       ).toBe("mixed"),
     );
   });
