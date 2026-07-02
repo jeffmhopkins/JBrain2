@@ -14,6 +14,7 @@ typed loader so the schema is one source of truth.
   absent_facts      - facts that must NOT appear
   supersede         - supersession proposals that must be present
   max_facts         - upper bound on total facts (over-extraction guard)
+  absent_review_cards - review cards that must NOT be filed (DB-mode)
 A case marked `advisory: true` is reported but never fails the gate (the
 "correct" answer is genuinely debatable).
 """
@@ -73,6 +74,10 @@ class Expect:
     # DB-mode review cards a case must file — each spec {kind, predicate?,
     # min_suggestions?} (the new_predicate canonicalization card, Phase 4).
     review_cards: tuple[dict[str, Any], ...] = ()
+    # DB-mode NEGATIVE gate: each spec {kind, predicate?} must match ZERO filed
+    # cards — e.g. {"kind": "new_predicate"} proves a long-tail predicate
+    # committed raw, card-free (docs/ENTITY_GRAPH_REFOCUS_PLAN.md §1).
+    absent_review_cards: tuple[dict[str, Any], ...] = ()
     rationale: str = ""
 
 
@@ -168,8 +173,8 @@ class SeededFactState:
 
 @dataclass(frozen=True)
 class ReviewCard:
-    """A review-inbox card committed by a case (Phase 4: the new_predicate card a
-    WEAK/cold canonicalization files)."""
+    """A review-inbox card committed by a case. new_predicate cards no longer
+    file (two-tier model) — read back so absent_review_cards can prove it."""
 
     kind: str
     predicate: str | None
@@ -204,6 +209,7 @@ def _expect(raw: dict[str, Any]) -> Expect:
         max_entities=raw.get("max_entities"),
         committed_domains=raw.get("committed_domains", {}),
         review_cards=tuple(raw.get("review_cards", [])),
+        absent_review_cards=tuple(raw.get("absent_review_cards", [])),
         rationale=raw.get("rationale", ""),
     )
 

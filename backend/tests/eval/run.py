@@ -11,11 +11,11 @@ testcontainer and asserts on the COMMITTED graph (dispositions, supersession
 closure, resolve-to-existing, domain floors) — same two Grok calls, more gate.
 Needs Docker. The graph is reset between cases so they don't contaminate.
 
-`--canon` (implies --db) additionally turns predicate canonicalization ON: it
-seeds + embeds the canonical_predicates index (the real bootstrap job) and runs
-the requires_canon cases (drift→STRONG rewrite, novel→cold card, near-miss→WEAK
-card). Needs the TEI embed container up as well as Docker + Grok — the Phase-4
-band-calibration run.
+`--canon` (implies --db) additionally seeds + embeds the canonical_predicates
+index (the real bootstrap job) and runs the durable predicate-alias collapse
+before the arbiter, plus any requires_canon cases (alias-collapse/drift
+coverage — cards never file; long-tail commits raw either way). Needs the TEI
+embed container up as well as Docker + Grok.
 """
 
 from __future__ import annotations
@@ -164,8 +164,8 @@ def run_db_mode(args: list[str]) -> int:
     canon = "--canon" in args
     cases = _selected(args)
     if not canon:
-        # canon-only cases (drift/novel/near-miss) need predicate canonicalization
-        # live; they never file their cards without it, so skip them otherwise.
+        # requires_canon cases assert alias-collapse behavior that only runs
+        # with the collapse enabled, so skip them otherwise.
         cases = [c for c in cases if not c.requires_canon]
     with pgvector_container() as pg, tempfile.TemporaryDirectory() as tmp:
         admin = sqlalchemy.create_engine(

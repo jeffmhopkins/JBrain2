@@ -1,36 +1,40 @@
 [
   {
-    "id": "canon-novel-files-a-card",
-    "category": "canonicalization",
+    "id": "longtail-novel-commits-raw-no-card",
+    "category": "long-tail",
     "domain": "general",
     "note_text": "Just noting for the record that my favorite color is teal.",
-    "requires_canon": true,
     "db_advisory": false,
     "advisory": true,
     "expect": {
-      "review_cards": [
+      "committed_domains": {
+        "general": 1
+      },
+      "absent_review_cards": [
         {
           "kind": "new_predicate"
         }
       ],
-      "rationale": "A genuinely novel concept (no near canonical) is a cold band -> the unknown predicate commits on its raw name and files exactly one new_predicate review card. The exact predicate Grok emits is latitude, so the card is asserted by kind."
+      "rationale": "Two-tier model (docs/ENTITY_GRAPH_REFOCUS_PLAN.md section 1): a genuinely novel long-tail predicate commits on its raw spelling — no embed round-trip, no new_predicate card. The exact predicate Grok emits is latitude, so the case pins the card-free floor (at least one committed general fact, zero cards) rather than a spelling."
     }
   },
   {
-    "id": "canon-novel-second-files-a-card",
-    "category": "canonicalization",
+    "id": "longtail-novel-second-commits-raw-no-card",
+    "category": "long-tail",
     "domain": "general",
     "note_text": "Random fact about me: I can wiggle my ears on command.",
-    "requires_canon": true,
     "db_advisory": false,
     "advisory": true,
     "expect": {
-      "review_cards": [
+      "committed_domains": {
+        "general": 1
+      },
+      "absent_review_cards": [
         {
           "kind": "new_predicate"
         }
       ],
-      "rationale": "Another novel-concept cold case -> a new_predicate card. Drift->STRONG-rewrite and near-miss->WEAK cases are authored during the Phase-4 calibration run, where the real Grok predicate + embedding sims are observed."
+      "rationale": "Second novel-concept case, inverted from the retired cold-band card expectation: the unknown predicate commits raw and files nothing. Drift healing is the durable predicate_aliases collapse plus renamed_from, not review cards."
     }
   }
 ]

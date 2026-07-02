@@ -359,6 +359,18 @@ def check_case_db(case: Case, commit: DbCommit) -> list[str]:
                 f"expected review card {kind!r} for {pred!r} (>= {need} suggestions) missing"
             )
 
+    # --- review cards that must NOT be filed (tier-2 commits raw, card-free) ---
+    for spec in ex.absent_review_cards:
+        kind = spec.get("kind")
+        pred = spec.get("predicate")
+        hits = [
+            c
+            for c in commit.review_cards
+            if (kind is None or c.kind == kind) and (pred is None or _name_match(pred, c.predicate))
+        ]
+        if hits:
+            fails.append(f"forbidden review card filed: {spec} ({len(hits)} matched)")
+
     # --- over-extraction bound (committed facts this note wrote) ---
     if ex.max_facts is not None and len(commit.facts) > ex.max_facts:
         fails.append(f"too many committed facts: {len(commit.facts)} > max {ex.max_facts}")

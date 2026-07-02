@@ -1,14 +1,22 @@
 # Predicate canonicalization (embedding-assisted) + typed value shapes
 
-Status: **core shipped** (Phases 1–4); the self-improvement loop that once sat on
-top of it (an agent batching and auto-resolving new-predicate cards) was removed.
-Typed value-shape enforcement (`value_shape_enforce`) and
-embedding-assisted predicate canonicalization (`predicate_canonicalization`,
-via `AnalysisPipeline.canonicalize_intent` inside `integrate_note`, before the
-arbiter keys facts) both ship and **default ON** (`settings_store.py`). Owner-facing
-problem, machine-facing fix. Read alongside `docs/ANALYSIS.md` (Facts, the open
-vocabulary), `docs/entity.md` (the soft schema registry and its *deferred*
-consumers), and `tests/eval/README.md` (the gate that surfaced this).
+Status: **largely superseded** by `docs/ENTITY_GRAPH_REFOCUS_PLAN.md` (the
+two-tier predicate model). The embed-band decision and the `new_predicate`
+review card no longer run: an unknown predicate hits only the durable
+`predicate_aliases` collapse and otherwise **commits raw** — this doc's §5a
+calibration finding (true drift lands at 0.57–0.72 cosine, overlapping novel
+predicates, so every unknown spelling filed a card) is that plan's
+justification. What survives: typed value-shape enforcement
+(`value_shape_enforce`, default ON, tier-1 only by the declares guard); the
+`canonical_predicates` table + embeddings + `sync_predicates`, which anchor
+the `predicate_aliases` FK and now serve only the held-fact
+predicate-suggestion picker (gated by the repurposed
+`predicate_canonicalization` setting); and the resolution verbs — legacy and
+deferred cards stay resolvable. The self-improvement loop that once sat on top
+(an agent batching and auto-resolving new-predicate cards) was removed
+earlier. Read alongside `docs/ANALYSIS.md` (Facts, the open vocabulary),
+`docs/entity.md` (the soft schema registry), and `tests/eval/README.md`.
+Sections below describe the original design as shipped.
 
 ## 1. The problem
 
