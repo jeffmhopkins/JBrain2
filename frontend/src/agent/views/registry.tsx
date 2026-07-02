@@ -21,6 +21,12 @@ import { serverMetricSeries } from "../../components/serverMetricSeries";
 import type { CitationRef, ViewPayload } from "../types";
 import { Lightbox } from "./Lightbox";
 import {
+  type HuGeoPoint,
+  type HuMapData,
+  type HuTrackPointGeo,
+  renderHurricaneMap,
+} from "./hurricaneMap";
+import {
   type LiveList,
   getLiveList,
   loadLiveList,
@@ -28,12 +34,6 @@ import {
   subscribeLiveLists,
   toggleLiveItem,
 } from "./liveList";
-import {
-  type HuGeoPoint,
-  type HuMapData,
-  type HuTrackPointGeo,
-  renderHurricaneMap,
-} from "./hurricaneMap";
 import { type InlineMapHandle, type TrailLegData, renderPlace, renderTrail } from "./locationMap";
 
 export interface ViewProps {
