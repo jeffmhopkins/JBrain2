@@ -110,7 +110,15 @@ class PredicateEmbedder:
     the live schema registry (predicate canonicalization Phase 2). Upserts a row
     per registry-declared canonical (the registry is the source of truth, not a
     frozen migration snapshot), then fills missing/stale embeddings. Idempotent:
-    re-running inserts nothing new and re-embeds only rows whose model changed."""
+    re-running inserts nothing new and re-embeds only rows whose model changed.
+
+    Seed rows a registry trim DEMOTED are left in place, not pruned: 0031 ships
+    the table with no delete path at all (INSERT/UPDATE grants + policies only —
+    canonicals are permanent by doctrine), so a prune would need a privilege-
+    widening migration. The stale rows are inert suggestion-picker fodder, and a
+    surviving new_predicate card can still resolve onto them (the alias FK needs
+    the row) — exactly the guarded cases docs/ENTITY_GRAPH_REFOCUS_PLAN.md §3
+    T1.3 protects, which is why it allows dropping the prune outright."""
 
     def __init__(self, maker: async_sessionmaker[AsyncSession], client: EmbedClient, model: str):
         self._maker = maker
