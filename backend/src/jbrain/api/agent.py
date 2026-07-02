@@ -76,6 +76,13 @@ _SSE_HEARTBEAT_SECONDS = 20.0
 # Sized at 3x the per-child wall-clock so a 2-3 child serial fan plus synthesis fits.
 _MAX_TURN_WALL_CLOCK_S = 3600.0
 
+# A PROGRESS watchdog on the turn: force-end it after this long with NO streamed frame
+# (no token, tool step, or sub-agent return). Reset on every frame, so a steadily
+# progressing turn — even a long serial fan — is never cut; only a genuinely stalled one
+# (a wedged model, a hung tool) is. Sized at the per-call LLM timeout so a single
+# legitimate call (which either streams or times out on its own) can't false-trip it.
+_TURN_IDLE_S = 600.0
+
 _TURN_DONE = object()  # per-subscriber sentinel: the turn finished, no more frames
 
 # A memory backstop on one turn's live frame buffer. Set far above any real turn (a
@@ -605,22 +612,32 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
             # cancelled here (only a client disconnect cancelled the old wrapper, which no
             # longer reaches this detached task), so a plain loop suffices. Idle keepalives
             # are now each subscriber's job (`_LiveTurn.stream`), not buffered here.
-            # The whole turn runs under a hard wall-clock (_MAX_TURN_WALL_CLOCK_S): if it
-            # fires, asyncio cancels the in-flight await deep in the stream — cascading
-            # through spawn_fan's gather into every sub-agent — so NO LLM call outlives the
-            # turn, then surfaces as TimeoutError below.
+            # Two bounds on the turn, both surfacing as TimeoutError below (which cancels
+            # the in-flight await deep in the stream — cascading through spawn_fan's gather
+            # into every sub-agent — so NO LLM call outlives the turn and the GPU is freed):
+            #   * an ABSOLUTE ceiling (_MAX_TURN_WALL_CLOCK_S) a pathological turn can't
+            #     outrun; and
+            #   * a PROGRESS watchdog (_TURN_IDLE_S) rescheduled on EVERY streamed frame — a
+            #     token, a tool step, a sub-agent returning. A turn making steady progress
+            #     (even a long serial fan) never trips it; only a genuinely STALLED turn (no
+            #     frame for _TURN_IDLE_S — a wedged model or a hung tool) is force-ended. The
+            #     idle window sits at the per-call timeout, so a single legitimate LLM call
+            #     (which either streams or times out itself) can never false-trip it.
+            _loop_time = asyncio.get_running_loop().time
             async with asyncio.timeout(_MAX_TURN_WALL_CLOCK_S):
-                async for event in stream:
-                    acc.feed(event)
-                    if event.type == "usage":
-                        # The latest usage event is the fullest the context has been.
-                        last_context_used = event.input_tokens + event.output_tokens
-                    if event.type == "done":
-                        stop_reason, status = event.stop_reason, "done"
-                    # A reflexion `verdict` rides after `done` (Loop 1's annotation of a
-                    # critique-worthy turn). It is forwarded to the PWA but deliberately
-                    # NOT recorded — Loop 1 is ephemeral and writes nothing durable.
-                    live.emit(f"data: {event.model_dump_json()}\n\n".encode())
+                async with asyncio.timeout(_TURN_IDLE_S) as _idle:
+                    async for event in stream:
+                        _idle.reschedule(_loop_time() + _TURN_IDLE_S)
+                        acc.feed(event)
+                        if event.type == "usage":
+                            # The latest usage event is the fullest the context has been.
+                            last_context_used = event.input_tokens + event.output_tokens
+                        if event.type == "done":
+                            stop_reason, status = event.stop_reason, "done"
+                        # A reflexion `verdict` rides after `done` (Loop 1's annotation of a
+                        # critique-worthy turn). It is forwarded to the PWA but deliberately
+                        # NOT recorded — Loop 1 is ephemeral and writes nothing durable.
+                        live.emit(f"data: {event.model_dump_json()}\n\n".encode())
             if status == "done":
                 # Episodic memory is owner-data: only a knowledge-base agent appends
                 # one, and never a `no_memory` sandbox session (the sub-agent flag —
