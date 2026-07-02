@@ -104,6 +104,24 @@ async def test_mint_rejects_unknown_subject(maker: async_sessionmaker) -> None:
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as client:
         resp = await client.post("/api/intake/links", json=_mint_body(str(uuid.uuid4())))
         assert resp.status_code == 400
+        # A non-UUID subject is a clean 400, not a 500.
+        garbage = _mint_body("not-a-uuid")
+        assert (await client.post("/api/intake/links", json=garbage)).status_code == 400
+
+
+async def test_mint_allows_a_general_collection_with_no_subject(maker: async_sessionmaker) -> None:
+    """A collection about no one (a recipe) mints with a null subject and reads back null."""
+    app = _app(maker)
+    app.dependency_overrides[current_principal] = lambda: PrincipalInfo(
+        id=str(uuid.uuid4()), kind="owner", label="owner"
+    )
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as client:
+        body = _mint_body("", fields_brief="your favorite recipe")
+        del body["subject_id"]  # omitted entirely
+        minted = await client.post("/api/intake/links", json=body)
+        assert minted.status_code == 201
+        link_id = minted.json()["id"]
+        assert (await client.get(f"/api/intake/links/{link_id}")).json()["subject_id"] is None
 
 
 async def test_redeemed_intake_cookie_is_non_owner_and_403s_owner_routes(

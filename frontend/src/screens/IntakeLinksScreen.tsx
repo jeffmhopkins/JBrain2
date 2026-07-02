@@ -455,7 +455,7 @@ function LinkDetail({
         <KV k="Status" v={<span className={`intake-badge ${badge.cls}`}>{badge.text}</span>} />
         <KV
           k="About"
-          v={`${link.subject_id} · ${DOMAIN_TITLE[link.domain_code] ?? link.domain_code}`}
+          v={`${link.subject_id ?? "No specific person"} · ${DOMAIN_TITLE[link.domain_code] ?? link.domain_code}`}
         />
         <KV k="Binding" v={link.bind_on_first ? "One person (bound)" : "Open / many people"} />
         <KV k="Expires" v={link.status === "active" ? relTime(link.expires_at, now) : "—"} />

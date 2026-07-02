@@ -96,6 +96,19 @@ describe("IntakeLinksScreen", () => {
     expect(screen.getByText("Insurance")).toBeInTheDocument();
   });
 
+  it("shows a general (no-subject) link's About as 'No specific person'", async () => {
+    const d = deps({
+      listLinks: vi.fn(async () => [
+        link({ subject_id: null, domain_code: "general", label: "Family cookbook" }),
+      ]),
+      listSessions: vi.fn(async () => []),
+      listSubmissions: vi.fn(async () => []),
+    });
+    render(<IntakeLinksScreen deps={d} />);
+    fireEvent.click(await screen.findByText(/3\/5 submitted/));
+    expect(await screen.findByText(/No specific person · General/)).toBeInTheDocument();
+  });
+
   it("opens a link detail and its read-only conversation, then materializes", async () => {
     const d = deps();
     render(<IntakeLinksScreen deps={d} />);

@@ -179,8 +179,8 @@ async def test_make_intake_link_refuses_out_of_scope_domain_and_missing_fields()
         },
         CTX,
     )
-    assert "subject_id" in await _intake_handler(repo)(
-        {"domain": "health", "fields_brief": "x", "max_runs": 1, "bind_on_first": False}, CTX
+    assert "fields_brief" in await _intake_handler(repo)(
+        {"subject_id": "s", "domain": "health", "max_runs": 1, "bind_on_first": False}, CTX
     )
     assert "max_runs" in await _intake_handler(repo)(
         {
@@ -193,3 +193,20 @@ async def test_make_intake_link_refuses_out_of_scope_domain_and_missing_fields()
         CTX,
     )
     assert repo.staged == []  # nothing staged on any refusal
+
+
+async def test_make_intake_link_allows_a_general_collection_with_no_subject() -> None:
+    repo = FakeProposalRepo()
+    out = await _intake_handler(repo)(
+        {
+            "domain": "health",
+            "fields_brief": "your favorite recipe",
+            "max_runs": 1,
+            "bind_on_first": False,
+        },
+        CTX,
+    )
+    assert isinstance(out, ToolOutput)  # general intake stages without a subject
+    _, spec = repo.staged[0]
+    assert spec.subject_id is None
+    assert spec.nodes[0].preview["subject_id"] is None

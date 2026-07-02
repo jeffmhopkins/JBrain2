@@ -97,8 +97,8 @@ def build_intake_link_handlers(proposals: ProposalRepo) -> dict[str, ToolHandler
         domain = str(arguments.get("domain", "")).strip() or (
             ctx.scopes[0] if ctx.scopes else "general"
         )
-        if not subject_id:
-            return "make_intake_link needs the subject_id it collects information about."
+        # subject_id is optional (general intake): omit it for a collection that isn't
+        # about a specific existing person (a recipe, general info).
         if not fields_brief:
             return "make_intake_link needs fields_brief — what the interviewer should collect."
         # You cannot stage a link attributed to a domain this session cannot read.
@@ -121,7 +121,7 @@ def build_intake_link_handlers(proposals: ProposalRepo) -> dict[str, ToolHandler
         except (TypeError, ValueError):
             ttl_hours = 24.0
         config = {
-            "subject_id": subject_id,
+            "subject_id": subject_id or None,
             "domain": domain,
             "fields_brief": fields_brief,
             "persona_brief": str(arguments.get("persona_brief", "")).strip(),
@@ -144,7 +144,7 @@ def build_intake_link_handlers(proposals: ProposalRepo) -> dict[str, ToolHandler
         spec = ProposalSpec(
             kind="intake-link",
             domain=domain,
-            subject_id=subject_id,
+            subject_id=subject_id or None,
             title=_label(fields_brief),
             nodes=[node],
             provenance={"source": "chat"},
