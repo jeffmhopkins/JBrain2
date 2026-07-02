@@ -160,23 +160,53 @@ class _FakeStore:
         return ""  # falls back to settings.jcode_model
 
 
+class _FakeGateway:
+    """Records unloads and reports what's resident, so the power-off model housekeeping
+    (unload the coder, re-warm the general set) can be asserted without a real gateway."""
+
+    def __init__(self, running: set[str] | None = None) -> None:
+        self.running_set = set(running or ())
+        self.unloaded: list[str] = []
+
+    async def running(self) -> set[str]:
+        return set(self.running_set)
+
+    async def unload(self, served: str) -> None:
+        self.unloaded.append(served)
+        self.running_set.discard(served)
+
+
+class _FakeResidency:
+    """Records that the general hot set was asked to re-warm on power-off."""
+
+    def __init__(self) -> None:
+        self.restores = 0
+
+    def schedule_restore(self) -> None:
+        self.restores += 1
+
+
 def _power_app(
     principal: PrincipalInfo,
     supervisor: _FakeSupervisor,
     *,
     jcode_client: object | None = None,
+    local_llm_enabled: bool = False,  # skip the gateway probe; power is about services here
+    gateway: object | None = None,
+    residency: object | None = None,
 ) -> FastAPI:
     app = FastAPI()
     app.include_router(jcode.router, prefix="/api")
     app.state.jcode_client = jcode_client if jcode_client is not None else FakeJcodeClient()
     app.state.settings = SimpleNamespace(
-        local_llm_enabled=False,  # skip the gateway probe; power is about services here
+        local_llm_enabled=local_llm_enabled,
         supervisor_token="tok",
         jcode_model="qwen3-coder-next",
     )
     app.state.settings_store = _FakeStore()
     app.state.supervisor_client = supervisor
-    app.state.local_gateway = None
+    app.state.local_gateway = gateway
+    app.state.residency = residency
     app.dependency_overrides[current_principal] = lambda: principal
     return app
 
@@ -187,7 +217,9 @@ def test_power_status_reports_on_when_all_services_running() -> None:
     body = client.get("/api/jcode/power").json()
     assert body["on"] is True
     assert body["provisioned"] is True
-    assert {s["name"] for s in body["services"]} == {"local-llm", "claude-shim", "jcode"}
+    # The switch's status is scoped to the jcode-only services — the shared gateway is not
+    # part of code mode's on/off (chat/vision own its lifecycle separately).
+    assert {s["name"] for s in body["services"]} == {"claude-shim", "jcode"}
 
 
 def test_power_status_off_when_a_service_is_down() -> None:
@@ -223,12 +255,40 @@ def test_power_on_starts_services_in_order() -> None:
     assert body["on"] is True
 
 
-def test_power_off_stops_services_in_reverse_order() -> None:
+def test_power_off_stops_only_jcode_services_in_reverse_order() -> None:
     sup = _FakeSupervisor({"local-llm": "running", "claude-shim": "running", "jcode": "running"})
     client = TestClient(_power_app(OWNER, sup))
     body = client.post("/api/jcode/power", json={"on": False}).json()
-    assert sup.calls == [("stop", "jcode"), ("stop", "claude-shim"), ("stop", "local-llm")]
+    # Only the jcode-only services stop (control server first); the shared local-llm gateway
+    # is left running so chat/vision keep working.
+    assert sup.calls == [("stop", "jcode"), ("stop", "claude-shim")]
+    assert ("stop", "local-llm") not in sup.calls
     assert body["on"] is False
+
+
+def test_power_off_unloads_coder_and_rewarms_general_without_stopping_gateway() -> None:
+    # The decoupled OFF path: instead of stopping local-llm, free the coder by unloading it
+    # from the still-running gateway and re-warm the general hot set (gpt-oss-120b + vision).
+    sup = _FakeSupervisor({"local-llm": "running", "claude-shim": "running", "jcode": "running"})
+    gw = _FakeGateway(running={"qwen3-coder-next"})
+    res = _FakeResidency()
+    client = TestClient(_power_app(OWNER, sup, local_llm_enabled=True, gateway=gw, residency=res))
+    client.post("/api/jcode/power", json={"on": False})
+    assert gw.unloaded == ["qwen3-coder-next"]  # the configured coder's served name
+    assert res.restores == 1  # general hot set re-warmed so chat/agent is ready
+    assert ("stop", "local-llm") not in sup.calls  # gateway never stopped
+
+
+def test_power_off_skips_model_housekeeping_when_local_hosting_off() -> None:
+    # A cloud-only box has no coder to unload: OFF just stops the jcode services and never
+    # touches a gateway (there isn't one to hit).
+    sup = _FakeSupervisor({"claude-shim": "running", "jcode": "running"})
+    gw = _FakeGateway(running={"qwen3-coder-next"})
+    res = _FakeResidency()
+    client = TestClient(_power_app(OWNER, sup, local_llm_enabled=False, gateway=gw, residency=res))
+    client.post("/api/jcode/power", json={"on": False})
+    assert gw.unloaded == []
+    assert res.restores == 0
 
 
 def test_power_on_skips_unprovisioned_service() -> None:
