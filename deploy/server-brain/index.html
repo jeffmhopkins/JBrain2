@@ -219,8 +219,8 @@
     <div class="leg"><span class="sw dot" style="background:var(--amber);box-shadow:0 0 8px var(--amber)"></span><span><b>Bloom / heat</b> — APU power draw</span></div>
     <div class="leg"><span class="sw" style="background:linear-gradient(90deg,transparent,#5fe6ff)"></span><span><b>Cyan tendril</b> — web search (reach-out)</span></div>
     <div class="leg"><span class="sw" style="background:linear-gradient(90deg,transparent,#ffc66e)"></span><span><b>Amber tendril</b> — web fetch (reach-out)</span></div>
-    <div class="leg"><span class="sw" style="background:linear-gradient(90deg,transparent,#7FA7C9)"></span><span><b>Steel stream</b> — LLM prompt in (text along the path)</span></div>
-    <div class="leg"><span class="sw" style="background:linear-gradient(90deg,#8FBC9A,transparent)"></span><span><b>Green stream</b> — LLM answer out (+ fade-out popup)</span></div>
+    <div class="leg"><span class="sw" style="background:linear-gradient(90deg,#7FA7C9,transparent)"></span><span><b>Steel stream</b> — LLM prompt (streams in from the left)</span></div>
+    <div class="leg"><span class="sw" style="background:linear-gradient(90deg,transparent,#8FBC9A)"></span><span><b>Green stream</b> — LLM answer (streams out to the right, + popup)</span></div>
     <div class="leg"><span class="sw" style="background:linear-gradient(90deg,#6699ff,#ff8c66)"></span><span><b>Rim aura</b> — net in (blue) / out (coral)</span></div>
     <div class="leg"><span class="sw dot" style="background:#a98cf9;box-shadow:0 0 8px #a98cf9"></span><span><b>Violet rim</b> — disk read</span></div>
   </div>
@@ -689,14 +689,11 @@ let netInAcc = 0, netOutAcc = 0;
    Web search = a cyan fan of probes (one returns a result); web fetch = a single
    amber filament with a sustained inward stream.
    ========================================================================== */
-// Tendril filament colour by kind. web search/fetch reach OUT; the LLM kinds carry the
-// turn's real text streaming along the path — steel for the prompt in, green for the
-// answer out (JBrain2 brand accents).
+// Web-tool tendril filament colour by kind (LLM streams have their own palette,
+// LLM_FIL, in the world-space layer below).
 const TPAL = {
-  search:  new THREE.Color('#5fe6ff'),
-  fetch:   new THREE.Color('#ffc66e'),
-  llm_in:  new THREE.Color('#7FA7C9'),
-  llm_out: new THREE.Color('#8FBC9A'),
+  search: new THREE.Color('#5fe6ff'),
+  fetch:  new THREE.Color('#ffc66e'),
 };
 const MAX_TENDRILS = 14, TSEG = 18;
 const tendrils = [];
@@ -717,24 +714,17 @@ function pickPeriphery() {
   for (let k = 0; k < 16; k++) { const i = (Math.random()*NEURONS)|0; if (neuronRadial[i] > 0.62 && neuronRank[i] < d) return i; }
   return (Math.random()*NEURONS)|0;
 }
-// LLM streams carry text and live longer so the excerpt can be read; they also reach a
-// little farther out so the text spreads across more of the screen.
-const LLM_TEXT_MAX = 72;
-function spawnTendril(kind, text) {
+function spawnTendril(kind) {
   let td = null; for (const x of tendrils) if (!x.active) { td = x; break; }
   if (!td) return;
-  const isLlm = kind === 'llm_in' || kind === 'llm_out';
   const anchor = pickPeriphery();
   const ax = neuronPos[anchor*3], ay = neuronPos[anchor*3+1], az = neuronPos[anchor*3+2];
   const len = Math.hypot(ax, ay, az) || 1, ox = ax/len, oy = ay/len, oz = az/len;
-  const OUT = isLlm ? (40 + Math.random()*16) : (26 + Math.random()*16);
-  const j = isLlm ? 18 : 14;
-  td.ext.set(ox*OUT + (Math.random()-0.5)*j, oy*OUT*0.7 + (Math.random()-0.5)*(j-2), oz*OUT + (Math.random()-0.5)*j);
+  const OUT = 26 + Math.random()*16;
+  td.ext.set(ox*OUT + (Math.random()-0.5)*14, oy*OUT*0.7 + (Math.random()-0.5)*12, oz*OUT + (Math.random()-0.5)*14);
   td.ctrl.set((ax+td.ext.x)/2 + (Math.random()-0.5)*18, (ay+td.ext.y)/2 + (Math.random()-0.5)*18, (az+td.ext.z)/2 + (Math.random()-0.5)*18);
   td.anchor = anchor; td.kind = kind; td.age = 0; td.seeded = false; td._lastPhase = null; td.active = true;
-  td._flip = undefined;  // reading direction, decided once on first render (see updateStreamText)
-  td.text = isLlm ? String(text || '').replace(/\s+/g, ' ').trim().slice(0, LLM_TEXT_MAX) : '';
-  td.life = isLlm ? (4.5 + Math.random()*2.5) : kind === 'fetch' ? (2.4 + Math.random()*1.4) : (1.5 + Math.random()*0.5);
+  td.life = kind === 'fetch' ? (2.4 + Math.random()*1.4) : (1.5 + Math.random()*0.5);
 }
 function webSearch() { const n = 3 + ((Math.random()*3)|0); for (let i = 0; i < n; i++) spawnTendril('search'); }
 function webFetch() { spawnTendril('fetch'); }
@@ -755,22 +745,9 @@ function updateTendrils(dt) {
     td.age += dt;
     const p = td.age / td.life;
     if (p >= 1) td.active = false;
-    const col = TPAL[td.kind] || TPAL.search;
+    const col = td.kind === 'fetch' ? TPAL.fetch : TPAL.search;
     let packetU, baseGlow, peak, envel;
-    if (td.kind === 'llm_in' || td.kind === 'llm_out') {
-      // A steady bright filament while the text streams along it. The prompt travels
-      // ext->anchor (inward); the answer anchor->ext (outward). One cascade fires when
-      // the stream reaches the cortex — the brain "receiving" the query / emitting.
-      const inward = td.kind === 'llm_in';
-      packetU = inward ? (1 - p) : p;
-      // A clearly-lit thread along the WHOLE length (high baseGlow) so the streaming
-      // glyphs visibly ride a glowing line, with the packet a brighter travelling node.
-      baseGlow = 0.42; peak = 1.0; envel = Math.min(1, p*6) * Math.min(1, (1-p)*5);
-      if (!td.seeded) {
-        if (inward && p > 0.82) { td.seeded = true; seedCascadeAt(td.anchor, 1.15); }
-        else if (!inward && p > 0.06) { td.seeded = true; seedCascadeAt(td.anchor, 0.7); }
-      }
-    } else if (td.kind === 'fetch') {
+    if (td.kind === 'fetch') {
       const ph = (td.age * 1.1) % 1; packetU = 1 - ph;
       baseGlow = 0.14; peak = 1.1; envel = Math.min(1, p*4) * Math.min(1, (1-p)*4);
       if (td._lastPhase != null && ph < td._lastPhase) seedCascadeAt(td.anchor, 0.85);
@@ -802,70 +779,132 @@ function updateTendrils(dt) {
 }
 
 /* ============================================================================
-   LLM STREAM TEXT — the turn's real text streamed as glyphs riding the tendril
-   path. Each frame (after render, so the matrices are current) we walk each active
-   llm_in/llm_out tendril, project points along its bezier to screen space, and lay
-   the characters out: a glyph is "born" as the stream wavefront passes its spot, then
-   stays lit along the path until the tendril fades. A fixed DOM pool is reused so we
-   never thrash nodes. A completed answer also blooms a fade-out popup at a random spot.
+   LLM STREAMS — a turn's real text, in a WORLD-SPACE layer that does NOT rotate with
+   the cortex, so the convention is fixed on screen: a PROMPT enters from the LEFT and
+   streams rightward INTO the brain; an ANSWER leaves the brain and streams to the
+   RIGHT. Glyphs sit at a FIXED spacing out from the brain edge, so a short prompt stays
+   tight and legible instead of stretching across the whole tendril. Each rides a
+   gently-bowed glowing filament (scene space); a finished answer also blooms a fade-out
+   popup. A fixed DOM glyph pool is reused so we never thrash nodes.
    ========================================================================== */
 const streamEl = document.getElementById('stream');
 const CHAR_POOL = [];
-for (let i = 0; i < 280; i++) {
+for (let i = 0; i < 220; i++) {
   const s = document.createElement('span');
   s.className = 'ch'; s.style.display = 'none';
   streamEl.appendChild(s); CHAR_POOL.push(s);
 }
-const STREAM_COL = { llm_in: '#c2d6ea', llm_out: '#c9e6cf' };
-const _wp = new THREE.Vector3();
-function _bezierAt(td, u, out) {
-  const ax = neuronPos[td.anchor*3], ay = neuronPos[td.anchor*3+1], az = neuronPos[td.anchor*3+2];
-  const mu = 1 - u;
-  return out.set(
-    mu*mu*ax + 2*mu*u*td.ctrl.x + u*u*td.ext.x,
-    mu*mu*ay + 2*mu*u*td.ctrl.y + u*u*td.ext.y,
-    mu*mu*az + 2*mu*u*td.ctrl.z + u*u*td.ext.z,
-  );
+const STREAM_COL = { in: '#c2d6ea', out: '#c9e6cf' };      // glyph tint (steel / green)
+const LLM_FIL = { in: new THREE.Color('#7FA7C9'), out: new THREE.Color('#8FBC9A') };
+const LLM_BR = 15;        // world radius at the brain edge where a stream connects
+const LLM_REACH = 24;     // fixed world length of the tendril the text FLOWS across
+const LLM_STEP = 0.9;     // world units between glyphs — fixed, so short text stays tight
+const LLM_CAP = 34;       // glyphs carried on the tendril (the popup holds the full answer)
+const LLM_MAX = 6, LLM_SEG = 26;
+const llmStreams = [];
+for (let i = 0; i < LLM_MAX; i++) llmStreams.push({ active: false });
+// The filament geometry lives in WORLD space (added to `scene`, not `cortex`), so a
+// stream's left/right side is always the screen's left/right, never the brain's spin.
+const LLMV = LLM_MAX * (LLM_SEG - 1) * 2;
+const llmPos = new Float32Array(LLMV * 3), llmCol = new Float32Array(LLMV * 3);
+const llmGeo = new THREE.BufferGeometry();
+llmGeo.setAttribute('position', new THREE.BufferAttribute(llmPos, 3));
+llmGeo.setAttribute('color', new THREE.BufferAttribute(llmCol, 3));
+const llmLines = new THREE.LineSegments(llmGeo,
+  new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending }));
+scene.add(llmLines);
+const _lp = new THREE.Vector3(), _lp2 = new THREE.Vector3();
+
+function spawnLlmStream(dir, text) {         // dir: 'in' (prompt) | 'out' (answer)
+  let st = null; for (const x of llmStreams) if (!x.active) { st = x; break; }
+  if (!st) return;
+  const clean = String(text || '').replace(/\s+/g, ' ').trim().slice(0, LLM_CAP);
+  st.dir = dir; st.text = clean; st.age = 0; st.active = true; st.seeded = false;
+  st.L = Math.max(clean.length, 1);
+  st.yb = (Math.random() - 0.5) * 20;               // vertical lane (kept on-screen)
+  st.zb = (Math.random() - 0.5) * 6;
+  st.bow = (2 + Math.random() * 3) * (Math.random() < 0.5 ? -1 : 1);  // gentle arc
+  // life sized so the whole message flows across the fixed tendril at a readable pace
+  st.life = 3.0 + (LLM_REACH + st.L * LLM_STEP) * 0.12;
 }
-function updateStreamText() {
-  const W = window.innerWidth, H = window.innerHeight;
-  let idx = 0;
-  for (const td of tendrils) {
-    if (!td.active || !td.text) continue;
-    if (td.kind !== 'llm_in' && td.kind !== 'llm_out') continue;
-    const text = td.text, L = text.length; if (!L) continue;
-    const p = td.age / td.life;
-    const envel = Math.min(1, p*6) * Math.min(1, (1-p)*5);
-    const col = STREAM_COL[td.kind];
-    // Decide reading direction once (cached), so glyphs always write left->right on
-    // screen regardless of which way the tendril points — and don't flip mid-stream as
-    // the cortex slowly rotates. `_flip` true when the far end projects left of the anchor.
-    if (td._flip === undefined) {
-      const aX = _bezierAt(td, 0, _wp).applyMatrix4(cortex.matrixWorld).project(camera).x;
-      const eX = _bezierAt(td, 1, _wp).applyMatrix4(cortex.matrixWorld).project(camera).x;
-      td._flip = eX < aX;
+
+// World point at distance `d` from centre along a stream (a gentle sine bow in y).
+function llmPointAt(st, d, out) {
+  const s = st.dir === 'in' ? -1 : 1;               // left for a prompt, right for an answer
+  const t = clamp((d - LLM_BR) / LLM_REACH, 0, 1);
+  return out.set(s * d, st.yb + Math.sin(Math.PI * t) * st.bow, st.zb);
+}
+// Distance-from-centre for glyph `i` at progress `p`. The whole legible block FLOWS
+// along the tendril (order preserved: char 0 always reads leftmost). A prompt flows
+// from the far left INTO the brain; an answer flows OUT of the brain to the right.
+function llmGlyphDist(st, i, p) {
+  const L = st.L, block = (L - 1) * LLM_STEP, total = LLM_REACH + block;
+  return st.dir === 'out'
+    ? (LLM_BR - block) + p * total + i * LLM_STEP
+    : (LLM_BR - block) + (1 - p) * total + (L - 1 - i) * LLM_STEP;
+}
+
+function updateLlmStreams(dt) {               // filament geometry — runs before render
+  for (let si = 0; si < LLM_MAX; si++) {
+    const st = llmStreams[si], baseV = si * (LLM_SEG - 1) * 2 * 3;
+    const clear = () => { for (let s = 0; s < (LLM_SEG - 1) * 2 * 3; s++) { llmPos[baseV+s] = 0; llmCol[baseV+s] = 0; } };
+    if (!st.active) { clear(); continue; }
+    st.age += dt;
+    const p = st.age / st.life;
+    if (p >= 1) { st.active = false; clear(); continue; }
+    // a cascade fires as the stream meets the brain — receiving a prompt / emitting an answer
+    if (!st.seeded && p > (st.dir === 'in' ? 0.6 : 0.08)) {
+      st.seeded = true; seedCascadeAt(pickPeriphery(), st.dir === 'in' ? 1.15 : 0.7);
     }
-    // Lay the glyphs on the OUTER stretch of the tendril [U0..U1] — the anchor end (u→0)
-    // is buried in the dense cortex where text reads as off-path, and the very tip (u→1)
-    // stretches thin under perspective; the band between is a clean glowing thread.
-    // Emission order still reveals left-to-right (slot `k`).
-    const U0 = 0.2, U1 = 0.9;
+    const col = LLM_FIL[st.dir];
+    const envel = Math.min(1, p*5) * Math.min(1, (1-p)*5);
+    const shimmer = st.dir === 'in' ? (1 - p) : p;           // a soft highlight travelling the flow way
+    let prX = 0, prY = 0, prZ = 0;
+    for (let s = 0; s < LLM_SEG; s++) {
+      const t = s / (LLM_SEG - 1);
+      llmPointAt(st, LLM_BR + LLM_REACH * t, _lp);
+      if (s > 0) {
+        const g = (0.28 + 0.5 * Math.exp(-((t - shimmer) * (t - shimmer)) / 0.03)) * envel;
+        const idx = baseV + (s-1)*6;
+        llmPos[idx]=prX; llmPos[idx+1]=prY; llmPos[idx+2]=prZ;
+        llmCol[idx]=col.r*g; llmCol[idx+1]=col.g*g; llmCol[idx+2]=col.b*g;
+        llmPos[idx+3]=_lp.x; llmPos[idx+4]=_lp.y; llmPos[idx+5]=_lp.z;
+        llmCol[idx+3]=col.r*g; llmCol[idx+4]=col.g*g; llmCol[idx+5]=col.b*g;
+      }
+      prX=_lp.x; prY=_lp.y; prZ=_lp.z;
+    }
+  }
+  llmGeo.attributes.position.needsUpdate = true;
+  llmGeo.attributes.color.needsUpdate = true;
+}
+
+function updateStreamText() {                 // project + flow glyphs — runs after render
+  const W = window.innerWidth, H = window.innerHeight;
+  const A0 = LLM_BR, A1 = LLM_BR + LLM_REACH;
+  let idx = 0;
+  for (const st of llmStreams) {
+    if (!st.active || !st.text) continue;
+    const text = st.text, L = st.L;
+    const p = st.age / st.life;
+    const genv = Math.min(1, p*8) * Math.min(1, (1-p)*8);
+    const col = STREAM_COL[st.dir];
     for (let i = 0; i < L && idx < CHAR_POOL.length; i++) {
-      const f = L === 1 ? 1 : i/(L-1);   // 0 = first char emitted, 1 = last (reveal order)
-      if (p < f) continue;               // wavefront hasn't reached this glyph yet
-      const k = td._flip ? (L - 1 - i) : i;             // screen slot, left->right
-      const slot = L === 1 ? 1 : k / (L - 1);
-      const u = U0 + slot * (U1 - U0);                  // sit on the outer glowing thread
-      _bezierAt(td, u, _wp).applyMatrix4(cortex.matrixWorld).project(camera);
+      const d = llmGlyphDist(st, i, p);
+      if (d < A0 - 1 || d > A1 + 1) continue;                 // off the tendril -> not shown
+      llmPointAt(st, d, _lp).project(camera);
+      if (_lp.z > 1) continue;                                // behind the camera
+      llmPointAt(st, d + 0.7, _lp2).project(camera);          // a nearby point -> screen tangent
+      const sx = (_lp.x*0.5 + 0.5) * W, sy = (-_lp.y*0.5 + 0.5) * H;
+      const tx = (_lp2.x*0.5 + 0.5) * W, ty = (-_lp2.y*0.5 + 0.5) * H;
+      let ang = Math.atan2(ty - sy, tx - sx);                 // tangent runs along +d
+      if (st.dir === 'in') ang += Math.PI;                    // ...but a prompt reads toward -d
+      const edge = Math.min(1, (d - A0) / 2.5) * Math.min(1, (A1 - d) / 2.5);   // fade at the ends
       const s = CHAR_POOL[idx++];
-      if (_wp.z > 1) { s.style.display = 'none'; continue; }  // behind the camera
-      const sx = (_wp.x*0.5 + 0.5) * W, sy = (-_wp.y*0.5 + 0.5) * H;
-      const born = Math.min(1, (p - f) * 22);                 // fade each glyph in
       const ch = text[i];
-      s.textContent = ch === ' ' ? ' ' : ch;
+      s.textContent = ch === ' ' ? ' ' : ch;
       s.style.color = col;
-      s.style.opacity = (Math.max(0, envel) * (0.35 + 0.65*born)).toFixed(3);
-      s.style.transform = `translate(-50%,-50%) translate(${sx.toFixed(1)}px,${sy.toFixed(1)}px)`;
+      s.style.opacity = (Math.max(0, genv) * clamp(edge, 0, 1)).toFixed(3);
+      s.style.transform = `translate(-50%,-50%) translate(${sx.toFixed(1)}px,${sy.toFixed(1)}px) rotate(${ang.toFixed(3)}rad)`;
       s.style.display = '';
     }
   }
@@ -1164,11 +1203,11 @@ const ServerBrain = {
   // external tool calls reaching in from the web (see CONTRACT extension)
   webSearch() { webSearch(); },
   webFetch() { webFetch(); },
-  // LLM turn (opt-in real-text streaming): the prompt streams IN along a steel tendril,
-  // the answer streams OUT along a green one and then blooms a fade-out popup so the
-  // finished answer is legible for a beat after the stream passes.
-  llmInput(text) { spawnTendril('llm_in', text); },
-  llmOutput(text) { spawnTendril('llm_out', text); if (text) setTimeout(() => spawnPopup(text), 1400); },
+  // LLM turn (opt-in real-text streaming): the prompt streams IN from the left, the
+  // answer streams OUT to the right and then blooms a fade-out popup so the finished
+  // answer is legible for a beat after the stream passes.
+  llmInput(text) { spawnLlmStream('in', text); },
+  llmOutput(text) { spawnLlmStream('out', text); if (text) setTimeout(() => spawnPopup(text), 1400); },
 };
 window.ServerBrain = ServerBrain;
 
@@ -1343,6 +1382,7 @@ function frame() {
   sparkGeo.attributes.aLife.needsUpdate = true;
   sparkGeo.attributes.aColor.needsUpdate = true;
   updateTendrils(dt);
+  updateLlmStreams(dt);   // world-space LLM filaments (glyphs are projected after render)
 
   // --- orientation: smooth random walk on pitch/yaw/roll (~half the old speed) ---
   angRetarget -= dt;
