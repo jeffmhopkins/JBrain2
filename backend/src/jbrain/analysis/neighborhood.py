@@ -22,6 +22,11 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Literal
 
+# Which edge arms a traversal walks. The engine itself is kind-agnostic — the
+# retrieval layer honors this by skipping a fetch arm — but the vocabulary
+# lives here with the rest of the neighborhood contract shapes.
+EdgeKinds = Literal["relationships", "co-mentions", "both"]
+
 MAX_DEPTH = 3
 DEFAULT_DEPTH = 2
 # 25/hop keeps a 3-hop walk under the total cap while still letting one dense

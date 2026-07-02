@@ -511,6 +511,33 @@ async def test_neighborhood_paths_mix_edge_kinds_and_dedup_derived_shadow(
     assert paths[seeded["kid"]] == f"Me {tag} -spouse-> Wife {tag} -children-> Kid {tag}"
 
 
+async def test_neighborhood_kinds_narrows_to_one_edge_arm(
+    maker: async_sessionmaker[AsyncSession], seeded: dict[str, str]
+) -> None:
+    """The agent tool's kinds argument: each arm walks alone, and notes still
+    collect from mentions of whatever entity set that walk reached."""
+    repo = SqlAnalysisRepo(maker)
+    refs = await repo.neighborhood(OWNER, seeded["me"], depth=2, kinds="relationships")
+    assert refs is not None
+    # Only fact edges: the co-mention arrivals (colleague, nurse) and everything
+    # behind them (mentor, specialist) vanish; the ref web survives whole.
+    assert entity_ids(refs) == {
+        seeded[k] for k in ("me", "wife", "employer", "clinic", "boss", "distant", "kid", "med")
+    }
+    # note_c1 still surfaces — wife (a ref arrival) is mentioned in it.
+    assert seeded["note_c1"] in note_ids(refs)
+    co = await repo.neighborhood(OWNER, seeded["me"], depth=2, kinds="co-mentions")
+    assert co is not None
+    # Only shared notes: wife now arrives via note_c1 and clinic via note_h
+    # behind the nurse; the ref-only branch (employer, boss, kid, …) vanishes.
+    assert entity_ids(co) == {
+        seeded[k] for k in ("me", "wife", "colleague", "nurse", "mentor", "clinic")
+    }
+    paths = {e["id"]: e["path"] for e in co["entities"]}
+    tag = seeded["tag"]
+    assert paths[seeded["wife"]] == f"Me {tag} -co-mention(note {seeded['note_c1']})-> Wife {tag}"
+
+
 async def test_neighborhood_hub_note_damped_but_still_listed(
     maker: async_sessionmaker[AsyncSession], seeded: dict[str, str]
 ) -> None:
@@ -553,6 +580,9 @@ async def test_neighborhood_notes_min_hop_then_recency_and_cap(
     assert by_note[seeded["note_h"]]["hop"] == 1  # min over clinic(1), nurse(1)
     assert by_note[seeded["note_h"]]["connects"] == [f"Clinic {tag}", f"Nurse {tag}"]
     assert by_note[seeded["note_g"]]["connects"] == [f"Me {tag}", f"Nurse {tag}"]
+    # The note's domain rides along for the agent tool's source chips.
+    assert by_note[seeded["note_h"]]["domain"] == "health"
+    assert by_note[seeded["note_c1"]]["domain"] == "general"
     capped = await repo.neighborhood(OWNER, seeded["me"], depth=2, note_cap=2)
     assert capped is not None and note_ids(capped) == expected[:2]
 

@@ -27,6 +27,7 @@ from jbrain.analysis.neighborhood import (
     MAX_DEPTH,
     CoMentionEdge,
     EdgeBatch,
+    EdgeKinds,
     EntityRef,
     NoteMention,
     RefEdge,
@@ -591,6 +592,7 @@ class SqlAnalysisRepo:
         entity_id: str,
         *,
         depth: int = DEFAULT_DEPTH,
+        kinds: EdgeKinds = "both",
         per_hop_limit: int = DEFAULT_PER_HOP_LIMIT,
         total_cap: int = DEFAULT_TOTAL_CAP,
         hub_cap: int = DEFAULT_HUB_CAP,
@@ -598,8 +600,10 @@ class SqlAnalysisRepo:
     ) -> dict[str, Any] | None:
         """The agent's n-hop neighborhood around an anchor entity: everything
         within `depth` hops (clamped 1..3) over typed relationship edges AND
-        shared-note co-mentions, plus the notes connecting the final entity
-        set — "pull all notes within 3 connections of this person". BFS policy
+        shared-note co-mentions (`kinds` narrows to one arm — the skipped arm
+        simply fetches nothing, so notes are still collected from mentions of
+        whatever entity set the walk reaches), plus the notes connecting the
+        final entity set — "pull all notes within 3 connections". BFS policy
         (ranking, hub damping, caps, one connecting path per node) lives in
         `analysis.neighborhood`; this layer runs the per-hop edge queries in
         one transaction, the shipped ego_graph pattern (recursive CTEs are
@@ -681,7 +685,8 @@ class SqlAnalysisRepo:
         mention_sql = text(
             """
             SELECT DISTINCT m.note_id::text AS note_id,
-                   m.entity_id::text AS entity_id, n.created_at AS noted_at
+                   m.entity_id::text AS entity_id, n.created_at AS noted_at,
+                   n.domain_code AS domain
             FROM app.entity_mentions m
             JOIN app.notes n ON n.id = m.note_id AND n.deleted_at IS NULL
             WHERE m.entity_id IN :ids
@@ -712,13 +717,17 @@ class SqlAnalysisRepo:
 
             async def fetch(frontier: Sequence[str], hop: int) -> EdgeBatch:
                 params = {"ids": sorted(frontier)}
-                out_rows = (await session.execute(out_sql, params)).all()
-                in_rows = (await session.execute(in_sql, params)).all()
-                co_rows = (await session.execute(co_sql, params)).all()
-                return EdgeBatch(
-                    refs=tuple(ref_edge(r, "out") for r in out_rows)
-                    + tuple(ref_edge(r, "in") for r in in_rows),
-                    co_mentions=tuple(
+                refs: tuple[RefEdge, ...] = ()
+                if kinds != "co-mentions":
+                    out_rows = (await session.execute(out_sql, params)).all()
+                    in_rows = (await session.execute(in_sql, params)).all()
+                    refs = tuple(ref_edge(r, "out") for r in out_rows) + tuple(
+                        ref_edge(r, "in") for r in in_rows
+                    )
+                co_mentions: tuple[CoMentionEdge, ...] = ()
+                if kinds != "relationships":
+                    co_rows = (await session.execute(co_sql, params)).all()
+                    co_mentions = tuple(
                         CoMentionEdge(
                             src_id=r.src,
                             dst=EntityRef(id=r.dst, name=r.name, kind=r.kind, domain=r.domain_code),
@@ -727,8 +736,8 @@ class SqlAnalysisRepo:
                             noted_at=r.noted_at,
                         )
                         for r in co_rows
-                    ),
-                )
+                    )
+                return EdgeBatch(refs=refs, co_mentions=co_mentions)
 
             anchor = EntityRef(
                 id=root.id, name=root.canonical_name, kind=root.kind, domain=root.domain_code
@@ -749,6 +758,9 @@ class SqlAnalysisRepo:
             (NoteMention(r.note_id, r.entity_id, noted_at=r.noted_at) for r in mention_rows),
             note_cap=note_cap,
         )
+        # The note's domain rides along for the agent tool's source chips (the
+        # RLS-visible mention rows already carry it — no extra query).
+        note_domains = {r.note_id: r.domain for r in mention_rows}
         return {
             "anchor": root.id,
             "depth": hops,
@@ -764,7 +776,13 @@ class SqlAnalysisRepo:
                 for e in entities
             ],
             "notes": [
-                {"note_id": n.note_id, "hop": n.hop, "connects": list(n.connects)} for n in notes
+                {
+                    "note_id": n.note_id,
+                    "domain": note_domains[n.note_id],
+                    "hop": n.hop,
+                    "connects": list(n.connects),
+                }
+                for n in notes
             ],
         }
 
