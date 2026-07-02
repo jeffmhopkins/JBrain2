@@ -452,35 +452,37 @@ async def test_web_fetch_tool_needs_a_url() -> None:
 
 
 async def test_web_search_emits_a_tendril_event() -> None:
-    fired: list[str] = []
+    fired: list[tuple[str, str | None]] = []
     handlers = build_web_handlers(
         _searx(lambda r: httpx.Response(200, json=_SEARX_OK)),
         WebFetcher(),
-        emit=lambda kind, text=None: fired.append(kind),
+        emit=lambda kind, text=None: fired.append((kind, text)),
     )
     await handlers["web_search"]({"query": "python"}, CTX)
-    assert fired == ["web_search"]
+    # The query rides the emit so the display can stream it (the emitter gates the text
+    # on the turn's opt-in; here we assert the tool forwards it).
+    assert fired == [("web_search", "python")]
 
 
 async def test_web_fetch_emits_a_tendril_event() -> None:
     def handle(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, content=_HTML, headers={"content-type": "text/html"})
 
-    fired: list[str] = []
+    fired: list[tuple[str, str | None]] = []
     handlers = build_web_handlers(
         SearxngClient(""),
         WebFetcher(transport=httpx.MockTransport(handle)),
-        emit=lambda kind, text=None: fired.append(kind),
+        emit=lambda kind, text=None: fired.append((kind, text)),
     )
     await handlers["web_fetch"]({"url": "https://x.example/p"}, CTX)
-    assert fired == ["web_fetch"]
+    assert fired == [("web_fetch", "https://x.example/p")]
 
 
 async def test_invalid_web_calls_do_not_emit() -> None:
     # An empty query / missing url never reaches out, so it fires no tendril.
-    fired: list[str] = []
+    fired: list[tuple[str, str | None]] = []
     handlers = build_web_handlers(
-        SearxngClient(""), WebFetcher(), emit=lambda kind, text=None: fired.append(kind)
+        SearxngClient(""), WebFetcher(), emit=lambda kind, text=None: fired.append((kind, text))
     )
     await handlers["web_search"]({"query": "  "}, CTX)
     await handlers["web_fetch"]({}, CTX)

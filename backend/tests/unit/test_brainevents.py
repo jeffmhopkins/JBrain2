@@ -6,7 +6,7 @@ import asyncio
 
 import httpx
 
-from jbrain.agent.brainevents import _post_event, build_event_emitter
+from jbrain.agent.brainevents import _post_event, brain_text_enabled, build_event_emitter
 
 
 def test_emit_noop_without_url() -> None:
@@ -43,9 +43,30 @@ async def test_emit_carries_llm_text(monkeypatch) -> None:  # type: ignore[no-un
         return _R()
 
     monkeypatch.setattr(httpx.AsyncClient, "post", fake_send)
+    brain_text_enabled.set(True)  # this turn opted into text
     build_event_emitter("http://server-brain:8800/event")("llm_input", "what's my next appt?")
     await asyncio.sleep(0)
     assert posted == [{"kind": "llm_input", "text": "what's my next appt?"}]
+
+
+async def test_emit_drops_text_when_gate_off(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    # The gate defaults OFF: a query/answer never rides the display unless the turn
+    # opted in — only the content-free marker ships.
+    posted: list[dict] = []
+
+    async def fake_send(self, url, json):  # type: ignore[no-untyped-def]
+        posted.append(json)
+
+        class _R:
+            pass
+
+        return _R()
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", fake_send)
+    brain_text_enabled.set(False)
+    build_event_emitter("http://server-brain:8800/event")("web_search", "a personal query")
+    await asyncio.sleep(0)
+    assert posted == [{"kind": "web_search"}]  # marker only, text dropped
 
 
 async def test_post_event_truncates_long_text(monkeypatch) -> None:  # type: ignore[no-untyped-def]

@@ -417,16 +417,17 @@ class Handler(BaseHTTPRequestHandler):
             self._send(400, b"bad request", "text/plain")
             return
         kind = ev.get("kind") if isinstance(ev, dict) else None
-        if kind in ("web_search", "web_fetch"):
-            with _posted_lock:
-                _posted.append({"kind": kind, "ts": int(time.time() * 1000)})
-            self._send(204, b"", "text/plain")
-        elif kind in ("llm_input", "llm_output"):
-            # Bound the text on our side too — a truncated excerpt is all the wall shows.
+        if kind in ("web_search", "web_fetch", "llm_input", "llm_output"):
+            # Optional text (the LLM prompt/answer, or — when the owner enabled it — the
+            # web query / URL). Bound it on our side too; a truncated excerpt is all the
+            # wall shows. Absent/blank text just fires a content-free tendril.
             text = ev.get("text")
             text = text[:600] if isinstance(text, str) else ""
+            row = {"kind": kind, "ts": int(time.time() * 1000)}
+            if text:
+                row["text"] = text
             with _posted_lock:
-                _posted.append({"kind": kind, "text": text, "ts": int(time.time() * 1000)})
+                _posted.append(row)
             self._send(204, b"", "text/plain")
         else:
             self._send(400, b"unknown kind", "text/plain")

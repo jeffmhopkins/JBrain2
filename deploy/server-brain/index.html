@@ -55,16 +55,20 @@
     text-shadow: 0 0 6px currentColor, 0 0 12px currentColor;
   }
 
-  /* Final-answer popups — appear at a random spot, breathe in, hold, fade out. */
+  /* Final-answer popups — appear at a random spot, breathe in, drift, fade out. The
+     drift vector (--dx/--dy) is randomised per card in spawnPopup so they don't all
+     move alike. */
   #popups { position: fixed; inset: 0; z-index: 4; pointer-events: none; }
   #popups .popup {
+    --dx: 0px; --dy: -26px;
     position: absolute; max-width: min(30ch, 34vw);
     padding: 9px 13px; border-radius: 11px;
     background: rgba(20,22,26,0.78); border: 1px solid rgba(143,188,154,0.32);
     box-shadow: 0 6px 26px rgba(0,0,0,0.5), 0 0 22px rgba(143,188,154,0.16);
     color: #E6E7E9; font-size: 13px; line-height: 1.34; letter-spacing: 0.01em;
-    backdrop-filter: blur(3px); opacity: 0; transform: translateY(6px) scale(0.96);
-    animation: popupLife 7.5s ease-in-out forwards;
+    backdrop-filter: blur(3px); opacity: 0; will-change: transform, opacity;
+    transform: translate(0, 8px) scale(0.96);
+    animation: popupLife 8s ease-in-out forwards;
   }
   #popups .popup::before {
     content: "↳ answer"; display: block; margin-bottom: 3px;
@@ -72,10 +76,10 @@
     color: #8FBC9A; opacity: 0.75;
   }
   @keyframes popupLife {
-    0%   { opacity: 0; transform: translateY(6px) scale(0.96); }
-    9%   { opacity: 1; transform: translateY(0) scale(1); }
-    74%  { opacity: 1; transform: translateY(0) scale(1); }
-    100% { opacity: 0; transform: translateY(-10px) scale(0.99); }
+    0%   { opacity: 0; transform: translate(0, 8px) scale(0.96); }
+    12%  { opacity: 1; transform: translate(calc(var(--dx) * 0.12), calc(var(--dy) * 0.12)) scale(1); }
+    82%  { opacity: 1; transform: translate(calc(var(--dx) * 0.82), calc(var(--dy) * 0.82)) scale(1); }
+    100% { opacity: 0; transform: translate(var(--dx), var(--dy)) scale(0.99); }
   }
   body.ui-idle #popups .popup { /* keep answers visible even when panels fade */ }
 
@@ -217,8 +221,8 @@
     <div class="leg"><span class="sw dot" style="background:var(--steel);box-shadow:0 0 8px var(--steel)"></span><span><b>Neural activity</b> — GPU utilisation (cascade reach + rate)</span></div>
     <div class="leg"><span class="sw" style="background:linear-gradient(90deg,var(--steel),transparent)"></span><span><b>Active density</b> — RAM + VRAM in use</span></div>
     <div class="leg"><span class="sw dot" style="background:var(--amber);box-shadow:0 0 8px var(--amber)"></span><span><b>Bloom / heat</b> — APU power draw</span></div>
-    <div class="leg"><span class="sw" style="background:linear-gradient(90deg,transparent,#5fe6ff)"></span><span><b>Cyan tendril</b> — web search (reach-out)</span></div>
-    <div class="leg"><span class="sw" style="background:linear-gradient(90deg,transparent,#ffc66e)"></span><span><b>Amber tendril</b> — web fetch (reach-out)</span></div>
+    <div class="leg"><span class="sw" style="background:linear-gradient(90deg,transparent,#5fe6ff)"></span><span><b>Cyan tendril</b> — web search (query streams out)</span></div>
+    <div class="leg"><span class="sw" style="background:linear-gradient(90deg,transparent,#ffc66e)"></span><span><b>Amber tendril</b> — web fetch (URL streams out)</span></div>
     <div class="leg"><span class="sw" style="background:linear-gradient(90deg,#7FA7C9,transparent)"></span><span><b>Steel stream</b> — LLM prompt (streams in from the left)</span></div>
     <div class="leg"><span class="sw" style="background:linear-gradient(90deg,transparent,#8FBC9A)"></span><span><b>Green stream</b> — LLM answer (streams out to the right, + popup)</span></div>
     <div class="leg"><span class="sw" style="background:linear-gradient(90deg,#6699ff,#ff8c66)"></span><span><b>Rim aura</b> — net in (blue) / out (coral)</span></div>
@@ -794,8 +798,14 @@ for (let i = 0; i < 220; i++) {
   s.className = 'ch'; s.style.display = 'none';
   streamEl.appendChild(s); CHAR_POOL.push(s);
 }
-const STREAM_COL = { in: '#c2d6ea', out: '#c9e6cf' };      // glyph tint (steel / green)
-const LLM_FIL = { in: new THREE.Color('#7FA7C9'), out: new THREE.Color('#8FBC9A') };
+// Per-kind stream spec: geometry direction + glyph tint (g) + filament colour (f).
+// prompt/answer are the LLM turn; search/fetch stream the query / URL when text is on.
+const STREAM_SPEC = {
+  prompt: { dir: 'in',  g: '#c2d6ea', f: new THREE.Color('#7FA7C9') },  // steel, into the net
+  answer: { dir: 'out', g: '#c9e6cf', f: new THREE.Color('#8FBC9A') },  // green, out to the right
+  search: { dir: 'out', g: '#bff0ff', f: new THREE.Color('#5fe6ff') },  // cyan, reaching out to the web
+  fetch:  { dir: 'out', g: '#ffe2b4', f: new THREE.Color('#ffc66e') },  // amber
+};
 const LLM_BR = 15;        // world radius at the brain edge where a stream connects
 const LLM_REACH = 22;     // world length of the visible filament (brain edge -> screen edge)
 const LLM_STEP = 0.9;     // world units between glyphs — fixed, so short text stays tight
@@ -819,11 +829,13 @@ const llmLines = new THREE.LineSegments(llmGeo,
 scene.add(llmLines);
 const _lp = new THREE.Vector3(), _lp2 = new THREE.Vector3();
 
-function spawnLlmStream(dir, text) {         // dir: 'in' (prompt) | 'out' (answer)
+function spawnStream(kind, text) {           // kind: prompt | answer | search | fetch
   let st = null; for (const x of llmStreams) if (!x.active) { st = x; break; }
   if (!st) return;
+  const spec = STREAM_SPEC[kind] || STREAM_SPEC.answer;
   const clean = String(text || '').replace(/\s+/g, ' ').trim().slice(0, LLM_CAP);
-  st.dir = dir; st.text = clean; st.age = 0; st.active = true; st.seeded = false;
+  st.dir = spec.dir; st.g = spec.g; st.f = spec.f;
+  st.text = clean; st.age = 0; st.active = true; st.seeded = false;
   st.L = Math.max(clean.length, 1);
   st.yb = (Math.random() - 0.5) * 20;               // vertical lane (kept on-screen)
   st.zb = (Math.random() - 0.5) * 6;
@@ -867,7 +879,7 @@ function updateLlmStreams(dt) {               // filament geometry — runs befo
     if (!st.seeded && p > (st.dir === 'in' ? 0.6 : 0.08)) {
       st.seeded = true; seedCascadeAt(pickPeriphery(), st.dir === 'in' ? 1.15 : 0.7);
     }
-    const col = LLM_FIL[st.dir];
+    const col = st.f;
     const envel = Math.min(1, p*5) * Math.min(1, (1-p)*5);
     const shimmer = st.dir === 'in' ? (1 - p) : p;           // a soft highlight travelling the flow way
     let prX = 0, prY = 0, prZ = 0;
@@ -897,7 +909,7 @@ function updateStreamText() {                 // project + flow glyphs — runs 
     const text = st.text, L = st.L;
     const p = st.age / st.life;
     const genv = Math.min(1, p*8) * Math.min(1, (1-p)*8);
-    const col = STREAM_COL[st.dir];
+    const col = st.g;
     for (let i = 0; i < L && idx < CHAR_POOL.length; i++) {
       const d = llmGlyphDist(st, i, p);
       if (d < LLM_DEEP - 3 || d > LLM_FAR_OUT + 2) continue;   // fully past either end
@@ -938,6 +950,9 @@ function spawnPopup(text) {
   d.textContent = t.slice(0, 320);
   d.style.left = (13 + Math.random()*60).toFixed(1) + 'vw';   // safe margins
   d.style.top  = (15 + Math.random()*56).toFixed(1) + 'vh';
+  // a gentle, slightly-random drift while it lingers (mostly upward)
+  d.style.setProperty('--dx', ((Math.random() - 0.5) * 34).toFixed(0) + 'px');
+  d.style.setProperty('--dy', (-18 - Math.random() * 22).toFixed(0) + 'px');
   d.addEventListener('animationend', () => d.remove());
   popupsEl.appendChild(d);
 }
@@ -1216,14 +1231,15 @@ const ServerBrain = {
     // errorRate auto-clears on next sim tick; if paused, clear shortly.
     setTimeout(() => ServerBrain.update({ api: { ...stats.api, errorRate: 0 } }), 900);
   },
-  // external tool calls reaching in from the web (see CONTRACT extension)
-  webSearch() { webSearch(); },
-  webFetch() { webFetch(); },
+  // Web tool calls. With the text toggle on, the query / URL streams out (cyan / amber);
+  // otherwise the content-free reach-out tendril fan fires as before.
+  webSearch(text) { if (text) spawnStream('search', text); else webSearch(); },
+  webFetch(text) { if (text) spawnStream('fetch', text); else webFetch(); },
   // LLM turn (opt-in real-text streaming): the prompt streams IN from the left, the
   // answer streams OUT to the right and then blooms a fade-out popup so the finished
   // answer is legible for a beat after the stream passes.
-  llmInput(text) { spawnLlmStream('in', text); },
-  llmOutput(text) { spawnLlmStream('out', text); if (text) setTimeout(() => spawnPopup(text), 1400); },
+  llmInput(text) { spawnStream('prompt', text); },
+  llmOutput(text) { spawnStream('answer', text); if (text) setTimeout(() => spawnPopup(text), 1400); },
 };
 window.ServerBrain = ServerBrain;
 
@@ -1485,8 +1501,8 @@ async function pollStats() {
     failCount = 0;
     ServerBrain.update(s);
     if (s.events) for (const ev of s.events) {
-      if (ev.kind === 'web_search') ServerBrain.webSearch();
-      else if (ev.kind === 'web_fetch') ServerBrain.webFetch();
+      if (ev.kind === 'web_search') ServerBrain.webSearch(ev.text);
+      else if (ev.kind === 'web_fetch') ServerBrain.webFetch(ev.text);
       else if (ev.kind === 'llm_input') ServerBrain.llmInput(ev.text);
       else if (ev.kind === 'llm_output') ServerBrain.llmOutput(ev.text);
     }

@@ -69,8 +69,10 @@ window.ServerBrain.injectError(): void   // force an API error blip
     readRate: 0.0..1.0        // disk read throughput -> VIOLET rim
   },
   events: [                   // external tool calls since the last push; drained
-    { kind: 'web_search', ts: 1719772800000 },  // -> ServerBrain.webSearch()
-    { kind: 'web_fetch',  ts: 1719772800000 },  // -> ServerBrain.webFetch()
+    // web tools: content-free by default; `text` (the query / URL) is present only when
+    // the owner enabled text streaming, and streams out along the tendril:
+    { kind: 'web_search', text: '…', ts: 1719772800000 },  // -> ServerBrain.webSearch(text?)
+    { kind: 'web_fetch',  text: '…', ts: 1719772800000 },  // -> ServerBrain.webFetch(text?)
     // opt-in LLM text (present only when brain_llm_stream is on) — `text` is the real
     // prompt / answer, truncated to a display excerpt:
     { kind: 'llm_input',  text: '…', ts: 1719772800000 },  // -> ServerBrain.llmInput(text)

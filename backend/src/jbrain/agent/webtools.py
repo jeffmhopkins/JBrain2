@@ -24,8 +24,10 @@ def build_web_handlers(
     fetcher: WebFetcher,
     emit: BrainEmit | None = None,
 ) -> dict[str, ToolHandler]:
-    """`emit(kind)`, if given, fires a best-effort wall-display tendril event the
-    moment jerv reaches out to the web (see jbrain.agent.brainevents)."""
+    """`emit(kind, text)`, if given, fires a best-effort wall-display tendril event the
+    moment jerv reaches out to the web (see jbrain.agent.brainevents). The query / URL
+    text rides the tendril only when the turn opted into text streaming; otherwise the
+    marker is content-free."""
 
     async def web_search_tool(arguments: dict, ctx: ToolContext) -> str:
         query = str(arguments.get("query", "")).strip()
@@ -33,7 +35,7 @@ def build_web_handlers(
             return "web_search needs a non-empty query."
         limit = max(1, min(int(arguments.get("limit", 6) or 6), _MAX_LIMIT))
         if emit:
-            emit("web_search")
+            emit("web_search", query)
         try:
             hits = await search.search(query, limit)
         except WebSearchError as exc:
@@ -52,7 +54,7 @@ def build_web_handlers(
         if not url:
             return "web_fetch needs a url."
         if emit:
-            emit("web_fetch")
+            emit("web_fetch", url)
         try:
             result = await fetcher.fetch(url)
         except WebFetchError as exc:
