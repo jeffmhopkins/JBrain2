@@ -88,6 +88,120 @@ class GeoHit:
     longitude: float
 
 
+# US state/territory postal abbreviations → full names, so "Cocoa, FL" and
+# "San Juan, PR" match the geocoder's spelled-out admin1. The map is only a hint for
+# picking among candidates; an unknown qualifier just falls through to the top hit.
+_US_STATES = {
+    "al": "alabama",
+    "ak": "alaska",
+    "az": "arizona",
+    "ar": "arkansas",
+    "ca": "california",
+    "co": "colorado",
+    "ct": "connecticut",
+    "de": "delaware",
+    "fl": "florida",
+    "ga": "georgia",
+    "hi": "hawaii",
+    "id": "idaho",
+    "il": "illinois",
+    "in": "indiana",
+    "ia": "iowa",
+    "ks": "kansas",
+    "ky": "kentucky",
+    "la": "louisiana",
+    "me": "maine",
+    "md": "maryland",
+    "ma": "massachusetts",
+    "mi": "michigan",
+    "mn": "minnesota",
+    "ms": "mississippi",
+    "mo": "missouri",
+    "mt": "montana",
+    "ne": "nebraska",
+    "nv": "nevada",
+    "nh": "new hampshire",
+    "nj": "new jersey",
+    "nm": "new mexico",
+    "ny": "new york",
+    "nc": "north carolina",
+    "nd": "north dakota",
+    "oh": "ohio",
+    "ok": "oklahoma",
+    "or": "oregon",
+    "pa": "pennsylvania",
+    "ri": "rhode island",
+    "sc": "south carolina",
+    "sd": "south dakota",
+    "tn": "tennessee",
+    "tx": "texas",
+    "ut": "utah",
+    "vt": "vermont",
+    "va": "virginia",
+    "wa": "washington",
+    "wv": "west virginia",
+    "wi": "wisconsin",
+    "wy": "wyoming",
+    "dc": "district of columbia",
+    "pr": "puerto rico",
+    "vi": "virgin islands",
+    "gu": "guam",
+    "as": "american samoa",
+    "mp": "northern mariana islands",
+}
+
+
+def _split_place(name: str) -> tuple[str, list[str]]:
+    """Split a typed place into (search term, qualifier hints). The first
+    comma-separated segment is the name Open-Meteo searches; the rest are region
+    hints (a state/province/country, spelled out or a US abbreviation)."""
+    segments = [seg.strip() for seg in name.split(",")]
+    segments = [seg for seg in segments if seg]
+    if not segments:
+        return "", []
+    return segments[0], segments[1:]
+
+
+def _pick_row(rows: list[dict], hints: list[str]) -> dict:
+    """Choose the candidate best matching the region hints, else the top hit. A hint
+    matches when it equals a row's admin1/admin2/country/country_code (case-insensitive),
+    with US state abbreviations expanded to full names first."""
+    if not hints:
+        return rows[0]
+    wanted: set[str] = set()
+    for hint in hints:
+        low = hint.casefold()
+        wanted.add(low)
+        full = _US_STATES.get(low)
+        if full:
+            wanted.add(full)
+    for row in rows:
+        fields = {
+            str(row.get(key) or "").casefold()
+            for key in ("admin1", "admin2", "country", "country_code")
+        }
+        if wanted & (fields - {""}):
+            return row
+    return rows[0]
+
+
+def _build_hit(row: dict, fallback: str) -> GeoHit | None:
+    """Shape a geocoder result row into a GeoHit, or None if it lacks coordinates. The
+    display name is the place plus admin1 (state/region) and country to disambiguate."""
+    try:
+        lat = float(row["latitude"])
+        lon = float(row["longitude"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    parts = [str(row.get("name") or "").strip()]
+    for key in ("admin1", "country"):
+        val = str(row.get(key) or "").strip()
+        if val and val not in parts:
+            parts.append(val)
+    place = ", ".join(p for p in parts if p) or fallback
+    return GeoHit(name=place, latitude=lat, longitude=lon)
+
+
 @dataclass(frozen=True)
 class HourPoint:
     """One hour of the forecast: the slots the `weather_card` hourly strip renders."""
@@ -200,28 +314,32 @@ class WeatherClient:
         return bool(self._forecast_url and self._geocode_url)
 
     async def geocode(self, name: str) -> GeoHit | None:
-        """Resolve a place name to its centre coordinate, or None if not found."""
+        """Resolve a place name to its centre coordinate, or None if not found.
+
+        Open-Meteo's geocoder matches a BARE place name — it does not parse
+        "City, State", so passing "Cocoa, FL" or "Cocoa, Florida" straight
+        through returns nothing while "Cocoa" resolves. To accept the natural
+        formats a person (or the model) actually types, a comma-qualified
+        request is split here: the first segment is the term searched, and the
+        trailing segments (a state/region/country — spelled out or a US postal
+        abbreviation) disambiguate among the candidates. Without a usable
+        qualifier the top hit is returned, as before."""
         if not self._geocode_url:
             raise WeatherError("weather is not configured on this instance")
-        params = {"name": name, "count": 1, "language": "en", "format": "json"}
+        query, hints = _split_place(name)
+        if not query:
+            return None
+        # count=10 so a qualifier ("Portland, ME" vs "Portland, OR") has candidates to
+        # choose from; a bare name still takes the first (most populous) result.
+        params = {"name": query, "count": 10, "language": "en", "format": "json"}
         body = await self._get(f"{self._geocode_url}/v1/search", params)
         rows = body.get("results") if isinstance(body, dict) else None
-        if not isinstance(rows, list) or not rows or not isinstance(rows[0], dict):
+        if not isinstance(rows, list):
             return None
-        row = rows[0]
-        try:
-            lat = float(row["latitude"])
-            lon = float(row["longitude"])
-        except (KeyError, TypeError, ValueError):
+        rows = [r for r in rows if isinstance(r, dict)]
+        if not rows:
             return None
-        parts = [str(row.get("name") or "").strip()]
-        # admin1 is the state/region; include the country to disambiguate.
-        for key in ("admin1", "country"):
-            val = str(row.get(key) or "").strip()
-            if val and val not in parts:
-                parts.append(val)
-        place = ", ".join(p for p in parts if p) or name
-        return GeoHit(name=place, latitude=lat, longitude=lon)
+        return _build_hit(_pick_row(rows, hints), name)
 
     async def forecast(self, hit: GeoHit, *, weekly: bool = False) -> Weather:
         """Fetch the forecast for a geocoded place. `weekly` swaps the hourly strip for

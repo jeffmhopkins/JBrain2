@@ -128,6 +128,55 @@ async def test_geocode_none_when_no_results() -> None:
     assert hit is None
 
 
+async def test_geocode_searches_bare_name_dropping_the_state_qualifier() -> None:
+    # Open-Meteo matches only a bare name, so "Cocoa, FL" must reach it as "Cocoa".
+    seen: dict[str, str] = {}
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        seen.update(request.url.params)
+        return httpx.Response(200, json=_GEO_OK)
+
+    hit = await _client(handle).geocode("Cocoa, FL")
+    assert seen["name"] == "Cocoa"  # the state qualifier is stripped before the query
+    assert hit is not None and hit.name == "Cocoa, Florida, United States"
+
+
+async def test_geocode_state_qualifier_disambiguates_candidates() -> None:
+    # Two Portlands come back; the "ME" qualifier (abbrev → Maine) picks the right one.
+    two_portlands = {
+        "results": [
+            {
+                "name": "Portland",
+                "admin1": "Oregon",
+                "country": "United States",
+                "latitude": 45.52,
+                "longitude": -122.68,
+            },
+            {
+                "name": "Portland",
+                "admin1": "Maine",
+                "country": "United States",
+                "latitude": 43.66,
+                "longitude": -70.26,
+            },
+        ]
+    }
+    client = _client(lambda r: httpx.Response(200, json=two_portlands))
+    abbr = await client.geocode("Portland, ME")
+    assert abbr is not None and round(abbr.latitude, 1) == 43.7  # Maine, not Oregon
+    spelled = await client.geocode("Portland, Maine")
+    assert spelled is not None and round(spelled.latitude, 1) == 43.7
+    # No qualifier falls back to the top (first) hit — Oregon here.
+    bare = await client.geocode("Portland")
+    assert bare is not None and round(bare.latitude, 1) == 45.5
+
+
+async def test_geocode_unmatched_qualifier_falls_back_to_top_hit() -> None:
+    # A qualifier that matches no candidate must not drop the result — take the top hit.
+    hit = await _client(lambda r: httpx.Response(200, json=_GEO_OK)).geocode("Cocoa, Texas")
+    assert hit is not None and hit.name == "Cocoa, Florida, United States"
+
+
 async def test_forecast_shapes_current_hourly_and_hilo() -> None:
     client = _client(_both_ok)
     hit = await client.geocode("Cocoa")

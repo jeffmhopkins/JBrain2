@@ -45,17 +45,16 @@ const TILE_URL = tileUrl("dark");
  * (toned by Saffir-Simpson category, past positions muted), and the `you` pin — then
  * frame the whole thing. The card is embedded in a scrolling chat, so the wheel does
  * NOT zoom (it would hijack the page scroll); drag pans and the +/- buttons or a pinch
- * zoom, like the expanded location map. */
+ * zoom, like the expanded location map. The default Leaflet attribution control is off —
+ * on a small phone card its banner overlapped the storm; the required OSM/CARTO credit
+ * is carried by a compact static caption under the map instead (see HuTrackMap). */
 export function renderHurricaneMap(container: HTMLElement, data: HuMapData): HuMapHandle {
   const map = L.map(container, {
-    attributionControl: true,
+    attributionControl: false,
     zoomControl: true,
     scrollWheelZoom: false,
   });
-  L.tileLayer(TILE_URL, {
-    maxZoom: 12,
-    attribution: "© OpenStreetMap contributors © CARTO",
-  }).addTo(map);
+  L.tileLayer(TILE_URL, { maxZoom: 12 }).addTo(map);
 
   const bounds: L.LatLng[] = [];
 

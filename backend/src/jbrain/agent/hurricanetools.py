@@ -106,7 +106,14 @@ def build_hurricane_handlers(
             return str(exc)
         if hit is None:
             if name:
-                return f'I couldn\'t find a place called "{name}".'
+                # The geocoder already accepts "City", "City, State", and "City, Country"
+                # (state may be abbreviated), so a not-found is a genuine miss — retrying
+                # the same place in another comma format won't help; steer to a nearby city.
+                return (
+                    f'I couldn\'t find a place called "{name}". Try the nearest larger '
+                    "city, or check the spelling — retrying the same place a different "
+                    "way won't change the result."
+                )
             return _NO_LOCATION
         try:
             storms = await client.active_storms()

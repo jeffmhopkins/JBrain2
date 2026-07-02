@@ -7,7 +7,16 @@ params:
   properties:
     location:
       type: string
-      description: The place to check, as a plain name — a city, "city, state", or a landmark (e.g. "Tampa, FL", "New Orleans", "San Juan"). Omit it to use the owner's current location (resolved to the nearest city).
+      description: >-
+        The place to check. Pass it however it reads naturally — a bare city
+        ("Cocoa", "New Orleans", "San Juan"), a city with a state or region to
+        disambiguate ("Cocoa, FL", "Cocoa, Florida", "Portland, Maine"), or a
+        city and country ("Nassau, Bahamas"). A US state may be its two-letter
+        abbreviation or spelled out. Don't pass a ZIP code, coordinates, or a
+        street address. Omit this entirely to use the owner's current location
+        (resolved to the nearest city). If a place can't be found, the tool
+        says so — retrying the same place in a different comma format won't
+        help; try the nearest larger city instead.
   required: []
 ---
 Check for an active tropical cyclone (hurricane, tropical storm, or depression) near
