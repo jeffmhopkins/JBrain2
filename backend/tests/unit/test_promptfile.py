@@ -4,6 +4,7 @@ pipeline imports, and a content/version guard makes prose drift deliberate."""
 
 import hashlib
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -128,6 +129,32 @@ def test_prompt_content_is_pinned_to_its_version() -> None:
     blob = SYSTEM_PROMPT + "\x00" + json.dumps(EXTRACTION_SCHEMA, sort_keys=True)
     digest = hashlib.sha256(blob.encode()).hexdigest()
     assert (PROMPT_VERSION, digest) == (
-        "note-extract-v28",
-        "cc66b255fbf4310112fd480d194117707e68db6a1eab9ba1ce2c50f0670fb244",
+        "note-extract-v29",
+        "d408f49fbb3cf0ad84dc155c05d666762b6f8026675d462022649e73a8f8598b",
     )
+
+
+def test_tier1_vocabulary_digest_matches_the_registry() -> None:
+    """The prompt's tier-1 vocabulary digest is HAND-AUTHORED prose (dynamic
+    rendering is rejected: it would let a YAML edit silently change what
+    PROMPT_VERSION identifies), so this drift check — every spelling the digest
+    lists is a registry-declared predicate — is what keeps the trimmed registry
+    the source of truth. A registry demotion without a prompt edit is red here."""
+    from jbrain.schema.loader import get_registry
+
+    block = re.search(
+        r"^BEGIN-TIER1-VOCABULARY\n(.*?)\nEND-TIER1-VOCABULARY$",
+        SYSTEM_PROMPT,
+        re.MULTILINE | re.DOTALL,
+    )
+    assert block is not None, "tier-1 vocabulary digest block missing from the rendered prompt"
+    listed: list[str] = []
+    for line in block.group(1).splitlines():
+        _, colon, tail = line.partition(":")
+        assert colon, f"digest line without a 'type: predicates' shape: {line!r}"
+        listed += [p.strip() for p in tail.split(",") if p.strip()]
+    # A real vocabulary, not a stub — and every spelling is tier-1 (declared).
+    assert len(listed) >= 40
+    registry = get_registry()
+    undeclared = sorted({p for p in listed if not registry.declares_predicate(p)})
+    assert not undeclared, f"digest lists predicates the registry does not declare: {undeclared}"
