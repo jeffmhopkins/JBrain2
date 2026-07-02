@@ -26,7 +26,8 @@ export interface IntakeConfirmOut {
  * 'active' | 'revoked' | 'exhausted'. */
 export interface IntakeLink {
   id: string;
-  subject_id: string;
+  /** Null for a general collection not about a specific person (a recipe, general info). */
+  subject_id: string | null;
   domain_code: string;
   label: string;
   fields_brief: string;
@@ -91,7 +92,8 @@ export interface IntakeMintResult {
 /** POST /api/intake/links — the full mint request (used for re-mint: clone a link's
  * config to a fresh secret). */
 export interface IntakeMintRequest {
-  subject_id: string;
+  /** Omit / null for a general collection not about a specific person. */
+  subject_id?: string | null;
   domain_code: string;
   fields_brief: string;
   persona_brief?: string;

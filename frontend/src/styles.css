@@ -10333,45 +10333,59 @@ button.small {
 .fb-shell .tv-hu-track {
   padding: 11px 13px 12px;
 }
+/* The Leaflet map fills a fixed-height box (Leaflet needs an explicit height); tiles
+   come from the on-box /api/tiles proxy. `isolation` gives the map its own stacking
+   context so its panes/controls stay within the card. */
 .fb-shell .tv-hu-map {
   display: block;
   width: 100%;
-  height: auto;
-  aspect-ratio: 1 / 1;
+  height: 260px;
   background: var(--surface-2);
   border: 1px solid var(--border);
   border-radius: var(--r-input);
+  overflow: hidden;
+  isolation: isolate;
 }
-.fb-shell .tv-hu-map-cone {
+.tv-hu-map .leaflet-container {
+  /* Leaflet reads its background from here until tiles paint. */
+  background: var(--surface-2);
+}
+/* Track-tab Leaflet overlays. These are global path classes (not .fb-shell-scoped) —
+   Leaflet renders them in its own SVG overlay pane. Colours mirror the schematic map
+   they replaced: the rose forecast path/points, amber cat-1/2, muted past, steel cone
+   and `you` pin. */
+.tv-hu-lf-cone {
   fill: var(--steel-tint);
   stroke: var(--steel);
-  stroke-width: 0.6;
-  stroke-dasharray: 2 2;
+  stroke-width: 1;
+  stroke-dasharray: 4 3;
 }
-.fb-shell .tv-hu-map-path {
+.tv-hu-lf-path {
   fill: none;
   stroke: var(--rose);
-  stroke-width: 1;
+  stroke-width: 2;
   stroke-linecap: round;
   stroke-linejoin: round;
 }
-.fb-shell .tv-hu-map-pt {
+.tv-hu-lf-pt {
   fill: var(--surface);
+  fill-opacity: 1;
   stroke: var(--rose);
-  stroke-width: 0.8;
+  stroke-width: 2;
 }
-.fb-shell .tv-hu-map-pt.cat-1,
-.fb-shell .tv-hu-map-pt.cat-2 {
+.tv-hu-lf-pt.cat-1,
+.tv-hu-lf-pt.cat-2 {
   stroke: var(--amber);
 }
 /* observed (past) positions read muted, like the mock's gray past track. */
-.fb-shell .tv-hu-map-pt.past {
+.tv-hu-lf-pt.past {
   stroke: var(--text-3);
 }
-.fb-shell .tv-hu-map-you {
+.tv-hu-lf-you {
   fill: var(--steel);
+  fill-opacity: 1;
   stroke: var(--bg);
-  stroke-width: 0.8;
+  stroke-width: 2;
 }
 .fb-shell .tv-hu-track-legend {
   display: flex;
@@ -10591,6 +10605,17 @@ button.small {
   font-size: 11px;
   line-height: 1.35;
   color: var(--text-3);
+}
+/* The one link on the card: the storm's official NHC graphics page (opens externally). */
+.fb-shell .tv-hu-nhc {
+  display: inline-block;
+  margin-top: 5px;
+  color: var(--steel);
+  font-weight: 600;
+  text-decoration: none;
+}
+.fb-shell .tv-hu-nhc:hover {
+  text-decoration: underline;
 }
 
 /* generated_image — the image-gen tool-view (docs/mocks/genimage-c-edit-aware).

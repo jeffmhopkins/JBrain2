@@ -21,6 +21,12 @@ import { serverMetricSeries } from "../../components/serverMetricSeries";
 import type { CitationRef, ViewPayload } from "../types";
 import { Lightbox } from "./Lightbox";
 import {
+  type HuGeoPoint,
+  type HuMapData,
+  type HuTrackPointGeo,
+  renderHurricaneMap,
+} from "./hurricaneMap";
+import {
   type LiveList,
   getLiveList,
   loadLiveList,
@@ -1267,13 +1273,15 @@ function SubagentSynthesis({ data, onOpenSession }: ViewProps): ReactNode {
 
 // --- hurricane_card --------------------------------------------------------
 // jerv's tabbed active-tropical-cyclone view (docs/DESIGN.md "hurricane_card
-// tool-view"; build plan docs/HURRICANE_TABS_PLAN.md). Data-only slots, no URLs, no
-// raw lat/lon (#9); `kind`/`cat`/`proximity`/`alert.level`/`level` are closed enums
-// the component maps to a glyph + tone — the model never sends a glyph, icon, or color.
-// The `alert` slot is the ONLY watch/warning surface (NWS-sourced); a real warning is
-// the one case the danger/rose banner shows. Map geometry arrives pre-projected to the
-// unit square `[0,1]`, drawn as inline SVG. Upstream text (alert headline) renders as
-// escaped text content only.
+// tool-view"; build plan docs/HURRICANE_TABS_PLAN.md). Data-only slots;
+// `kind`/`cat`/`proximity`/`alert.level`/`level` are closed enums the component maps to
+// a glyph + tone — the model never sends a glyph, icon, or color. The `alert` slot is
+// the ONLY watch/warning surface (NWS-sourced); a real warning is the one case the
+// danger/rose banner shows. The Track tab draws the storm on real map tiles (the on-box
+// /api/tiles proxy) from `{lat, lon}` slots — the public NHC track + cone plus the
+// city-centre `you` pin (the scoped #9 relaxation, see backend hurricanetools.py). The
+// only URL is `nhc_url`, the storm's public NHC graphics page. Upstream text (alert
+// headline) renders as escaped text content only.
 
 type HuKind =
   | "hurricane"
@@ -1306,15 +1314,6 @@ function huLevel(value: unknown): HuLevel {
   return value === "moderate" || value === "high" || value === "extreme" ? value : "low";
 }
 
-interface HuPoint {
-  x: number;
-  y: number;
-}
-interface HuTrackPoint extends HuPoint {
-  label: string;
-  cat: string;
-  past: boolean;
-}
 interface HuTimelineCell {
   label: string;
   wind_mph: number;
@@ -1322,15 +1321,11 @@ interface HuTimelineCell {
   rain_in: number;
   peak: boolean;
 }
-function huPoint(value: unknown): HuPoint | null {
+function huPoint(value: unknown): HuGeoPoint | null {
   const o = (value ?? {}) as Record<string, unknown>;
-  const x = Number(o.x);
-  const y = Number(o.y);
-  return Number.isFinite(x) && Number.isFinite(y) ? { x, y } : null;
-}
-/** Project a unit-square coordinate into the 100×100 SVG viewBox. */
-function huXY(p: HuPoint): { x: number; y: number } {
-  return { x: Math.max(0, Math.min(1, p.x)) * 100, y: Math.max(0, Math.min(1, p.y)) * 100 };
+  const lat = Number(o.lat);
+  const lon = Number(o.lon);
+  return Number.isFinite(lat) && Number.isFinite(lon) ? { lat, lon } : null;
 }
 
 /** The cyclone spiral, drawn inline (no fetched icons, #9). */
@@ -1364,49 +1359,34 @@ function HuAlertBanner({ alert }: { alert: Record<string, unknown> }): ReactNode
   );
 }
 
-/** The Track tab: the cone polygon, the forecast path, its points (toned by category),
- * and the place pin — all drawn from pre-projected `[0,1]` slots (no map tiles, #9). */
+/** The Track tab: the storm on real map tiles (the on-box /api/tiles proxy) — the cone
+ * polygon, the forecast path, its points (toned by category), and the city-centre place
+ * pin — pannable/zoomable via Leaflet. The map geometry arrives as `{lat, lon}` (the
+ * scoped #9 relaxation); Leaflet frames it. */
 function HuTrackMap({
   track,
   cone,
   you,
-}: { track: HuTrackPoint[]; cone: HuPoint[]; you: HuPoint | null }): ReactNode {
-  const path = track.map((p) => huXY(p));
-  const conePts = cone.map((p) => huXY(p));
-  const youXY = you ? huXY(you) : null;
+}: { track: HuTrackPointGeo[]; cone: HuGeoPoint[]; you: HuGeoPoint | null }): ReactNode {
   const hasPast = track.some((p) => p.past);
+  const mapRef = useRef<HTMLDivElement>(null);
+  // The payload is immutable for the card's life; memoize so the effect redraws only
+  // when the actual geometry identity changes, not on every parent render.
+  const mapData = useMemo<HuMapData>(() => ({ track, cone, you }), [track, cone, you]);
+  useEffect(() => {
+    if (!mapRef.current) return;
+    const handle = renderHurricaneMap(mapRef.current, mapData);
+    // Leaflet mis-measures inside a just-shown tab (the pane was display:none until the
+    // Track tab was selected); re-measure on the next frame so tiles fill the box.
+    const t = setTimeout(() => handle.invalidate(), 60);
+    return () => {
+      clearTimeout(t);
+      handle.destroy();
+    };
+  }, [mapData]);
   return (
     <div className="tv-hu-track">
-      <svg
-        viewBox="0 0 100 100"
-        className="tv-hu-map"
-        preserveAspectRatio="xMidYMid meet"
-        aria-hidden="true"
-      >
-        {conePts.length >= 3 && (
-          <polygon
-            className="tv-hu-map-cone"
-            points={conePts.map((p) => `${p.x},${p.y}`).join(" ")}
-          />
-        )}
-        {path.length >= 2 && (
-          <polyline
-            className="tv-hu-map-path"
-            points={path.map((p) => `${p.x},${p.y}`).join(" ")}
-          />
-        )}
-        {path.map((p, i) => (
-          // Positional forecast points have no stable id; index + label key them.
-          <circle
-            key={`${track[i]?.label}-${i}`}
-            className={`tv-hu-map-pt cat-${track[i]?.cat || "0"}${track[i]?.past ? " past" : ""}`}
-            cx={p.x}
-            cy={p.y}
-            r={track[i]?.past ? 1.4 : 2.1}
-          />
-        ))}
-        {youXY && <circle className="tv-hu-map-you" cx={youXY.x} cy={youXY.y} r={2.4} />}
-      </svg>
+      <div className="tv-hu-map" ref={mapRef} />
       <div className="tv-hu-track-legend">
         <span>
           <i className="tv-hu-dot fc" /> forecast
@@ -1665,7 +1645,8 @@ function HurricaneCard({ data }: ViewProps): ReactNode {
   const distance = wxNum(data.distance_mi);
   const bearing = typeof data.bearing === "string" ? data.bearing : "";
   const alert = data.alert ? (data.alert as Record<string, unknown>) : null;
-  const track: HuTrackPoint[] = (Array.isArray(data.track) ? data.track : []).flatMap((p) => {
+  const nhcUrl = typeof data.nhc_url === "string" ? data.nhc_url : "";
+  const track: HuTrackPointGeo[] = (Array.isArray(data.track) ? data.track : []).flatMap((p) => {
     const pt = huPoint(p);
     if (!pt) return [];
     const row = (p ?? {}) as Record<string, unknown>;
@@ -1678,7 +1659,7 @@ function HurricaneCard({ data }: ViewProps): ReactNode {
       },
     ];
   });
-  const cone: HuPoint[] = (Array.isArray(data.cone) ? data.cone : []).flatMap((p) => {
+  const cone: HuGeoPoint[] = (Array.isArray(data.cone) ? data.cone : []).flatMap((p) => {
     const pt = huPoint(p);
     return pt ? [pt] : [];
   });
@@ -1768,6 +1749,11 @@ function HurricaneCard({ data }: ViewProps): ReactNode {
         {alert
           ? "Official NWS alert shown. Surge is a banded estimate and timing is approximate — follow official orders to evacuate."
           : "Storm position & forecast track. For watches, warnings & evacuation, check NWS/NHC and local emergency management."}
+        {nhcUrl && (
+          <a className="tv-hu-nhc" href={nhcUrl} target="_blank" rel="noopener noreferrer">
+            National Hurricane Center forecast ↗
+          </a>
+        )}
       </div>
     </div>
   );

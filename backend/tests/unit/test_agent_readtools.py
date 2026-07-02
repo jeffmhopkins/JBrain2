@@ -839,8 +839,8 @@ def test_sidecars_pinned_to_their_versions() -> None:
         ),
         "make_intake_link.tool": (
             "make_intake_link",
-            2,
-            "f83bcea8cec34615d6cdd5b468f4cf50292fca70e6d85aba5331f81b371ae2bb",
+            3,
+            "e8bec8c70f9af1ab3742a9a50eb6a9d7e6d5b74fc2807d4bdb0301cbac627daf",
         ),
         "propose_merge.tool": (
             "propose_merge",

@@ -1324,3 +1324,41 @@ def test_tool_arg_previews_the_human_readable_target_not_opaque_ids():
     assert _tool_arg("web_search", "not-a-dict") == ""
     # Long previews are clamped so one call can't blow out the fan row.
     assert len(_tool_arg("web_search", {"query": "x" * 500})) == _TOOL_ARG_LEN
+
+
+class _SlowLoop:
+    """A child loop that never returns on its own — so only a wall-clock cut ends it."""
+
+    def __init__(self, *_a, **_k) -> None:  # noqa: ANN002, ANN003
+        pass
+
+    async def run(self, **kw):  # noqa: ANN003
+        import asyncio
+
+        await asyncio.sleep(30)
+        raise AssertionError("child should have been cut by the wall-clock")  # pragma: no cover
+
+
+async def test_flat_fan_children_honor_the_tree_wall_clock(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A flat fan is bounded by the tree wall-clock, not only the per-child clock: once
+    the tree deadline has passed, each child is cut with a timeout result instead of
+    running on to CHILD_WALL_CLOCK_S — the runaway a stalled fan (e.g. one hammering
+    blocked directory sites) used to hit, since a flat fan never consulted the deadline."""
+    import time
+
+    monkeypatch.setattr(spawn_mod, "AgentLoop", _SlowLoop)
+    svc = SpawnService(
+        router=_FakeRouter(),  # type: ignore[arg-type]
+        registry=object(),  # type: ignore[arg-type]
+        sessions=_FakeSessions(),  # type: ignore[arg-type]
+        runlog=_FakeRunLog(),  # type: ignore[arg-type]
+        transcript=_FakeTranscript(),  # type: ignore[arg-type]
+    )
+    tree = TreeState.rooted(1_000_000)
+    tree.deadline = time.monotonic() + 0.05  # essentially out of time already
+    out = await svc.spawn_fan(
+        _ctx(tree=tree), {"tasks": [{"persona": "research", "brief": "x", "label": "L"}]}
+    )
+    assert "timed out" in out.lower()

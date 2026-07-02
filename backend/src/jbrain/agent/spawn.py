@@ -874,6 +874,15 @@ class SpawnService:
                     ),
                 )
 
+            # A flat fan honors the tree wall-clock too, not just the per-child clock:
+            # bound each child by whichever deadline is sooner, so a runaway flat fan can't
+            # outlive TREE_WALL_CLOCK_S the way an unbounded one used to (a stalled fan
+            # hammering blocked sites otherwise ran on to the per-child cap × batches).
+            # Computed before the try so it's always bound for the timeout handler below.
+            _tree_left = tree.seconds_left()
+            child_timeout = CHILD_WALL_CLOCK_S
+            if _tree_left is not None:
+                child_timeout = min(CHILD_WALL_CLOCK_S, _tree_left)
             try:
                 result = await asyncio.wait_for(
                     loop.run(
@@ -900,7 +909,7 @@ class SpawnService:
                         # gathered rather than returning an empty "(no answer)".
                         force_final_answer=True,
                     ),
-                    timeout=CHILD_WALL_CLOCK_S,
+                    timeout=child_timeout,
                 )
             except asyncio.CancelledError:
                 # A parent cancel cascades into the fan; mark the run best-effort and
@@ -918,7 +927,7 @@ class SpawnService:
             except TimeoutError:
                 # The per-child wall-clock fired (wait_for cancelled the run). One slow
                 # child must not stall the fan — degrade it and move on.
-                secs = int(CHILD_WALL_CLOCK_S)
+                secs = int(child_timeout)
                 with contextlib.suppress(Exception):
                     await self._runlog.finish(
                         owner_ctx,

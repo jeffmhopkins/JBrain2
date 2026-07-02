@@ -277,19 +277,28 @@ async def warm_model(owner: OwnerDep, request: Request) -> dict[str, object]:
 
 
 # --- Master power switch (the launcher's on/off) -----------------------------------
-# Code mode's jcode-only services and the coder's residency, toggled together. OFF frees
-# the box — it stops the containers, and stopping the local-llm gateway is what unloads
-# the coder — and takes down the whole on-box LLM stack (the deliberate "free the box"
-# the owner asked for; local-llm is shared with chat/vision). ON starts them back; the
-# screen then warms the coder via the existing /jcode/model/warm path and watches the
-# load bar. A LIVE control — it reflects the actual container + model state and stores no
+# Toggles the jcode-ONLY services and the coder's residency. `local-llm` — the shared
+# llama-swap gateway that serves ALL on-box inference (chat, vision, extraction), not just
+# the coder — is deliberately NOT in this set: turning code mode off must free the coder
+# WITHOUT taking the whole LLM stack down with it (an earlier version bundled local-llm
+# here, so an owner who switched code mode off lost chat/vision too). OFF now stops only the
+# jcode-only services and frees the coder's memory by UNLOADING it from the still-running
+# gateway, then re-warms the box's general hot set (gpt-oss-120b + vision). ON starts them
+# back; the screen then warms the coder via the existing /jcode/model/warm path and watches
+# the load bar. A LIVE control — it reflects the actual container + model state and stores no
 # flag, mirroring the ComfyUI image-service toggle. Service control is the supervisor's
 # (the only holder of the Docker socket); we proxy start/stop exactly as api/image_settings
 # does for comfyui.
 
-# Start order: the gateway hosting the coder first, then the shim that translates for it,
-# then the control server that drives sandboxes. OFF stops them in reverse.
-_POWER_SERVICES: tuple[str, ...] = ("local-llm", "claude-shim", "jcode")
+# The jcode-only services the switch's on/off STATUS and its OFF action are scoped to: the
+# shim that translates Anthropic<->OpenAI for the coder, then the control server that drives
+# sandboxes. OFF stops them in reverse (control server first).
+_JCODE_SERVICES: tuple[str, ...] = ("claude-shim", "jcode")
+
+# Powering ON also ensures the shared gateway is up first (idempotent when it already is) so
+# the coder has somewhere to load — but OFF never stops it (that's what unloading the coder
+# is for). Gateway, then the shim, then the control server.
+_POWER_ON_SERVICES: tuple[str, ...] = ("local-llm", *_JCODE_SERVICES)
 
 
 def _supervisor(request: Request) -> httpx.AsyncClient:
@@ -324,14 +333,16 @@ async def _power_payload(request: Request, owner_id: str) -> dict[str, object]:
     residency, and how many sessions are live (so a power-off can warn before it halts
     running shells)."""
     states = await _service_states(request)
-    services = [{"name": s, "running": states.get(s) == "running"} for s in _POWER_SERVICES]
+    services = [{"name": s, "running": states.get(s) == "running"} for s in _JCODE_SERVICES]
     model = await _model_payload(request, owner_id)
     live = await _live_statuses(request)
     return {
-        # `on` only when EVERY required service is running; `provisioned` when they all
-        # exist as containers at all (else there's nothing to toggle on this box).
+        # `on` only when EVERY jcode-only service is running; `provisioned` when they all
+        # exist as containers at all (else there's nothing to toggle on this box). Scoped to
+        # the jcode-only set — code mode's power must not read as off just because the shared
+        # gateway is down (that's a separate concern the Ops screen owns).
         "on": all(sv["running"] for sv in services),
-        "provisioned": all(s in states for s in _POWER_SERVICES),
+        "provisioned": all(s in states for s in _JCODE_SERVICES),
         "services": services,
         "coder_loaded": model["loaded"],
         "warming": model["warming"],
@@ -369,18 +380,44 @@ async def _toggle_services(request: Request, action: str, services: Sequence[str
         resp.raise_for_status()
 
 
+async def _free_coder_and_restore(request: Request, owner_id: str) -> None:
+    """Power-OFF's model housekeeping — the reason OFF no longer stops `local-llm`. Free the
+    coder's memory by UNLOADING it from the still-running shared gateway (not by stopping the
+    gateway, which would take chat/vision down with it), then re-warm the box's general hot
+    set (gpt-oss-120b + vision) via the residency coordinator so the next chat/agent turn is
+    ready instead of cold-loading. Best-effort throughout: local hosting off, no gateway, or a
+    gateway hiccup just leaves the coder resident (no worse than before) and never fails the
+    toggle. The re-warm follows the box's configured steady state (co-residency + staged set),
+    the same set end-of-turn residency restores — so a box that keeps nothing resident stays
+    that way rather than being forced to load a model it wouldn't keep."""
+    settings = cast("Settings", request.app.state.settings)
+    if not settings.local_llm_enabled:
+        return
+    gateway = getattr(request.app.state, "local_gateway", None)
+    if gateway is not None:
+        served = _served_model(await _resolve_model(request, owner_id))
+        with contextlib.suppress(LocalGatewayError):
+            await gateway.unload(served)
+    residency = getattr(request.app.state, "residency", None)
+    if residency is not None:
+        residency.schedule_restore()
+
+
 @router.post("/jcode/power")
 async def set_power(body: PowerBody, owner: OwnerDep, request: Request) -> dict[str, object]:
-    """Bring the jcode-only services up (on) or down (off), and report the fresh state.
+    """Bring code mode up (on) or down (off), and report the fresh state.
 
-    ON only STARTS the containers — the caller then warms the coder via /jcode/model/warm
-    and watches the load bar (so this returns promptly, before the ~1-minute weight read).
-    OFF stops them in reverse order; stopping the gateway is what unloads the coder and
-    frees the box. Best-effort per service; an unprovisioned service is skipped."""
+    ON starts the shared gateway (idempotent) then the jcode-only services — the caller then
+    warms the coder via /jcode/model/warm and watches the load bar (so this returns promptly,
+    before the ~1-minute weight read). OFF stops ONLY the jcode-only services (reverse order),
+    then unloads the coder and re-warms the general hot set — the shared gateway stays up so
+    chat and vision keep working. Best-effort per service; an unprovisioned service is
+    skipped."""
     if body.on:
-        await _toggle_services(request, "start", _POWER_SERVICES)
+        await _toggle_services(request, "start", _POWER_ON_SERVICES)
     else:
-        await _toggle_services(request, "stop", tuple(reversed(_POWER_SERVICES)))
+        await _toggle_services(request, "stop", tuple(reversed(_JCODE_SERVICES)))
+        await _free_coder_and_restore(request, owner.id)
     return await _power_payload(request, owner.id)
 
 

@@ -25,7 +25,10 @@ class IntakeLink(Base):
     __table_args__ = {"schema": "app"}
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    subject_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("app.subjects.id"))
+    # Optional (0113): a general collection (a recipe, general info) is about no one.
+    subject_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("app.subjects.id"), nullable=True
+    )
     domain_code: Mapped[str] = mapped_column(Text, ForeignKey("app.domains.code"))
     label: Mapped[str] = mapped_column(Text, default="")
     persona_brief: Mapped[str] = mapped_column(Text, default="")

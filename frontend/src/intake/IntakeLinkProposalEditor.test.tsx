@@ -1,5 +1,6 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
+import { ApiError } from "../api/client";
 import { type IntakeLinkEditorDeps, IntakeLinkProposalEditor } from "./IntakeLinkProposalEditor";
 
 function node(over: Record<string, unknown> = {}) {
@@ -114,6 +115,28 @@ describe("IntakeLinkProposalEditor", () => {
       target: { value: "phone number" },
     });
     expect(screen.getByRole("button", { name: /Approve & mint/ })).toBeEnabled();
+  });
+
+  it("renders a general (no-subject) collection and surfaces the server's mint error", async () => {
+    const d = deps({
+      mintFromProposal: vi.fn(async () => {
+        throw new ApiError(400, "the proposal's subject or domain is no longer valid");
+      }),
+    });
+    render(
+      <IntakeLinkProposalEditor
+        proposalId="p1"
+        node={node({ subject_id: null })}
+        onClose={vi.fn()}
+        deps={d}
+      />,
+    );
+    // A subject-less link reads as a general collection, not a blank "—".
+    expect(screen.getByText(/No specific person/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /Approve & mint/ }));
+    // The real backend reason is shown, not the generic dead-end.
+    expect(await screen.findByText(/subject or domain is no longer valid/)).toBeInTheDocument();
   });
 
   it("blocks minting an already-rejected proposal", () => {

@@ -1017,6 +1017,33 @@ def test_chat_turn_wall_clock_force_ends_a_runaway_turn(
     assert runlog.finished[-1]["stop_reason"] == "turn_timeout"
 
 
+def test_chat_turn_idle_watchdog_force_ends_a_stalled_turn(
+    client: TestClient,
+    repo: FakeAuthRepo,
+    sessions_store: FakeAgentSessions,
+    runlog: FakeRunLog,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A turn that STALLS — no streamed frame for _TURN_IDLE_S — is force-ended by the
+    progress watchdog while the absolute wall-clock is nowhere near. The watchdog resets on
+    every frame (HangStreamClient streams "working " first, then hangs), so it is the
+    SILENCE after that frame that trips it, not total elapsed time."""
+    import jbrain.api.agent as agent_mod
+
+    monkeypatch.setattr(agent_mod, "_TURN_IDLE_S", 0.1)
+    # Absolute cap stays generous, proving the IDLE watchdog — not the ceiling — fired.
+    monkeypatch.setattr(agent_mod, "_MAX_TURN_WALL_CLOCK_S", 3600.0)
+    login(client, repo)
+    sessions_store.add(AgentSessionInfo("sess-1", "", "active", ("general",), (), NOW, NOW))
+    client.app.state.llm_router = LlmRouter(  # type: ignore[attr-defined]
+        {"xai": cast(LlmClient, HangStreamClient())}, {"agent.turn": ("xai", "grok-4.3")}
+    )
+    resp = client.post("/api/chat", json={"session_id": "sess-1", "message": "hi"})
+    assert resp.status_code == 200
+    assert sse_events(resp.text)[-1] == {"type": "done", "stop_reason": "turn_timeout"}
+    assert runlog.finished[-1]["stop_reason"] == "turn_timeout"
+
+
 def test_chat_turn_timeout_persists_the_partial_turn(
     client: TestClient,
     repo: FakeAuthRepo,

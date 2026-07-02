@@ -5,6 +5,18 @@ import type { ViewPayload } from "../types";
 import { resetLiveLists } from "./liveList";
 import { ToolView, isKnownView } from "./registry";
 
+// Leaflet needs a real layout engine; mock the hurricane_card map glue so the Track
+// tab's React behaviour (mounting, the legend, the NHC link) is what's under test, and
+// the spy lets us assert the real lat/lon geometry handed to Leaflet — never rendered
+// tiles (mirrors locationViews.test.tsx / screens/LocationScreen.test.tsx).
+const { huMapSpy } = vi.hoisted(() => ({ huMapSpy: vi.fn() }));
+vi.mock("./hurricaneMap", () => ({
+  renderHurricaneMap: (...args: unknown[]) => {
+    huMapSpy(...args);
+    return { invalidate: vi.fn(), destroy: vi.fn() };
+  },
+}));
+
 function payload(over: Partial<ViewPayload>): ViewPayload {
   return { view: "", surface: "inline", data: {}, refs: [], ...over };
 }
@@ -16,6 +28,7 @@ function listOut(over: Partial<ListOut> = {}): ListOut {
 // Keep the shared live-list store (and api spies) from leaking across cases.
 afterEach(() => {
   resetLiveLists();
+  huMapSpy.mockClear();
   vi.restoreAllMocks();
 });
 
@@ -312,15 +325,16 @@ describe("ToolView registry", () => {
       headline: "Hurricane Warning for Tampa Bay <b>now</b>",
     },
     track: [
-      { x: 0.3, y: 0.86, label: "Now", cat: "3", past: false },
-      { x: 0.5, y: 0.5, label: "+24h", cat: "2", past: false },
+      { lat: 25.5, lon: -85.0, label: "Now", cat: "3", past: false },
+      { lat: 27.5, lon: -84.0, label: "+24h", cat: "2", past: false },
     ],
     cone: [
-      { x: 0.2, y: 0.9 },
-      { x: 0.6, y: 0.5 },
-      { x: 0.4, y: 0.3 },
+      { lat: 25.0, lon: -86.0 },
+      { lat: 28.0, lon: -83.0 },
+      { lat: 28.0, lon: -86.0 },
     ],
-    you: { x: 0.58, y: 0.42 },
+    you: { lat: 27.9475, lon: -82.4584 },
+    nhc_url: "https://www.nhc.noaa.gov/graphics_at2.shtml",
     timeline: [
       { label: "9 PM", wind_mph: 35, gust_mph: 50, rain_in: 0.2, peak: false },
       { label: "12 AM", wind_mph: 70, gust_mph: 100, rain_in: 0.4, peak: true },
@@ -358,7 +372,8 @@ describe("ToolView registry", () => {
     expect(tabs).toEqual(["Timeline", "Track", "Impact"]);
     expect(container.querySelector(".tv-hu-strip")).not.toBeNull();
     expect(container.querySelector(".tv-hu-cell.peak")?.textContent).toContain("100");
-    // No URL/markup rides the payload (#9).
+    // No injected <img> host: tiles come from the on-box proxy (mounted only on the
+    // Track tab) and the only URL is the public NHC link, rendered as an <a>.
     expect(container.querySelector("img")).toBeNull();
   });
 
@@ -368,11 +383,25 @@ describe("ToolView registry", () => {
     );
     const [, trackBtn, impactBtn] = container.querySelectorAll(".tv-hu-tabs button");
     fireEvent.click(trackBtn as Element);
-    // The Track tab draws the cone + path inline from the [0,1] slots — no <img>/tiles.
-    expect(container.querySelector(".tv-hu-map-cone")).not.toBeNull();
-    expect(container.querySelector(".tv-hu-map-path")).not.toBeNull();
-    expect(container.querySelectorAll(".tv-hu-map-pt")).toHaveLength(2);
-    expect(container.querySelector(".tv-hu-map-you")).not.toBeNull();
+    // The Track tab mounts the Leaflet map (mocked) and hands it the REAL lat/lon
+    // geometry — the public track + cone and the city-centre `you` pin. Tiles come from
+    // the on-box proxy, so there is still no <img> host on the payload.
+    expect(container.querySelector(".tv-hu-map")).not.toBeNull();
+    const mapArgs = huMapSpy.mock.calls[0];
+    if (!mapArgs) throw new Error("renderHurricaneMap was not called");
+    const mapData = mapArgs[1] as {
+      track: { lat: number; lon: number; cat: string }[];
+      cone: { lat: number; lon: number }[];
+      you: { lat: number; lon: number } | null;
+    };
+    expect(mapData.track).toHaveLength(2);
+    expect(mapData.track[0]).toMatchObject({ lat: 25.5, lon: -85.0, cat: "3" });
+    expect(mapData.cone).toHaveLength(3);
+    expect(mapData.you).toMatchObject({ lat: 27.9475, lon: -82.4584 });
+    // The card links out to the storm's official NHC page.
+    const nhc = container.querySelector(".tv-hu-nhc") as HTMLAnchorElement | null;
+    expect(nhc?.getAttribute("href")).toBe("https://www.nhc.noaa.gov/graphics_at2.shtml");
+    expect(nhc?.getAttribute("target")).toBe("_blank");
     fireEvent.click(impactBtn as Element);
     expect(container.querySelector(".tv-hu-grid")).not.toBeNull();
     expect(screen.getByText("Up to 9 ft")).toBeInTheDocument();
@@ -407,9 +436,10 @@ describe("ToolView registry", () => {
             bearing: "E",
             proximity: "near",
             alert: null,
-            track: [{ x: 0.3, y: 0.7, label: "Now", cat: "", past: false }],
+            track: [{ lat: 13.2, lon: -81.7, label: "Now", cat: "", past: false }],
             cone: [],
-            you: { x: 0.6, y: 0.4 },
+            you: { lat: 12.58, lon: -81.7 },
+            nhc_url: "",
             timeline: [],
             arrival: { ts_force: null, hurricane_force: null },
             impact: {},
@@ -427,8 +457,13 @@ describe("ToolView registry", () => {
       (b) => b.textContent,
     );
     expect(tabs).toEqual(["Track"]);
+    // The Track pane mounts the (mocked) Leaflet map with the single forecast point.
     expect(container.querySelector(".tv-hu-map")).not.toBeNull();
-    expect(container.querySelectorAll(".tv-hu-map-pt")).toHaveLength(1);
+    const mapArgs = huMapSpy.mock.calls[0];
+    if (!mapArgs) throw new Error("renderHurricaneMap was not called");
+    expect((mapArgs[1] as { track: unknown[] }).track).toHaveLength(1);
+    // A global storm carries no NHC bin slot, so no external link is shown.
+    expect(container.querySelector(".tv-hu-nhc")).toBeNull();
     expect(container.querySelector(".tv-hu-foot")?.textContent).toContain("NWS/NHC");
   });
 
