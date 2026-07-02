@@ -10399,6 +10399,12 @@ button.small {
   align-items: center;
   gap: 4px;
 }
+/* Map credit, small and muted (the in-map Leaflet attribution banner is off). */
+.fb-shell .tv-hu-attr {
+  margin-top: 5px;
+  font-size: 9.5px;
+  color: var(--text-3);
+}
 .fb-shell .tv-hu-dot {
   width: 9px;
   height: 9px;

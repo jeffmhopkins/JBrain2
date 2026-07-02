@@ -1405,6 +1405,9 @@ function HuTrackMap({
           </span>
         )}
       </div>
+      {/* OSM/CARTO credit, carried here as a compact static line since the map's own
+          Leaflet attribution banner is off (it overlapped the storm on a phone card). */}
+      <div className="tv-hu-attr">© OpenStreetMap contributors · © CARTO</div>
     </div>
   );
 }
