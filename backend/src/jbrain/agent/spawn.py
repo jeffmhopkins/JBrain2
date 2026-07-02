@@ -874,16 +874,16 @@ class SpawnService:
                     ),
                 )
 
+            # A flat fan honors the tree wall-clock too, not just the per-child clock:
+            # bound each child by whichever deadline is sooner, so a runaway flat fan can't
+            # outlive TREE_WALL_CLOCK_S the way an unbounded one used to (a stalled fan
+            # hammering blocked sites otherwise ran on to the per-child cap × batches).
+            # Computed before the try so it's always bound for the timeout handler below.
+            _tree_left = tree.seconds_left()
+            child_timeout = CHILD_WALL_CLOCK_S
+            if _tree_left is not None:
+                child_timeout = min(CHILD_WALL_CLOCK_S, _tree_left)
             try:
-                # A flat fan honors the tree wall-clock too, not just the per-child clock:
-                # bound each child by whichever deadline is sooner, so a runaway flat fan
-                # can't outlive TREE_WALL_CLOCK_S the way an unbounded one used to (a stalled
-                # fan hammering blocked sites otherwise ran on to the per-child cap ×
-                # batches).
-                _tree_left = tree.seconds_left()
-                child_timeout = CHILD_WALL_CLOCK_S
-                if _tree_left is not None:
-                    child_timeout = min(CHILD_WALL_CLOCK_S, _tree_left)
                 result = await asyncio.wait_for(
                     loop.run(
                         session=child_read_ctx,
