@@ -35,6 +35,7 @@ Phase-5 build record is `archive/PHASE5_COMPLETION_PLAN.md`.
 | `entity.md` | The entity & soft-schema model: predicates, facets, names, relationships, resolution. |
 | `PREDICATE_CANONICALIZATION.md` | Embedding-assisted predicate registry + typed value shapes (core shipped; the self-improvement loop on top of it was removed). |
 | `ASSISTANT.md` | The agent design — the Phase-4 core (shipped, incl. Loop 1 reflexion); the further self-improvement loops 2–4 were removed. |
+| `MODEL_PROMPTING.md` | Prompting reference for the two local models (gpt-oss-120b `high`/`low`, Qwen3-VL-30B `vision`): per-tier behaviours, do/don't for `.prompt` authoring, and the sampling-config gap. |
 | `OPERATIONS.md` | JBrain360 operator runbook: revoking a member, the encryption-at-rest compensating control, and rotating the device Keystore key + the server's pinned cert (SPKI). |
 | `STRIX_HALO_SETUP.md` | End-to-end runbook for self-hosting the optional local models on an AMD Strix Halo (Ryzen AI Max+ 395) box: distro → kernel → Vulkan → install → routing. |
 | `CLOUDFLARE_TUNNEL.md` | Reaching a home-network box from outside via Cloudflare Tunnel — the dynamic-IP / CGNAT path: no static IP, no port-forwarding, TLS at Cloudflare's edge. |
