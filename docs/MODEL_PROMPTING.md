@@ -7,40 +7,57 @@ vendors and the community have published about how these models behave, and how
 that maps onto JBrain's prompt set. When a prompt is edited, check it against the
 "Do / Don't" list for its tier.
 
-Grounding: the model behind each tier is defined in
+Grounding: the model behind a tier is defined in
 `backend/src/jbrain/llm/local_catalog.py`; the served `llama-server` command is
-built in `backend/src/jbrain/llm/llama_swap_config.py`. A prompt's `strength:`
-frontmatter selects the tier.
+built in `backend/src/jbrain/llm/llama_swap_config.py`; task→provider defaults are
+in `backend/src/jbrain/llm/router.py` and the owner's live per-task overrides
+(incl. reasoning effort) in `backend/src/jbrain/settings_store.py`.
 
-## Which model runs which prompt
+## Two tiering concepts — don't conflate them
 
-| `strength:` | Served by | Prompts |
+- **Per-task routing (authoritative, owner-configurable).** Every LLM call runs
+  under a named *task* (`agent.turn`, `integrate.note`, `vision.ocr`, …). Each task
+  is individually routed to a provider **and** a reasoning effort, stored per-task
+  (`settings_store.py`) and edited in Settings → LLM Settings. This is what
+  actually runs.
+- **Prompt `strength:` frontmatter (a default hint).** A prompt names a capability
+  tier (`high`/`low`/`vision`) so it never hard-codes a model. It seeds a default,
+  but the per-task config wins — e.g. `video_summary.prompt` declares
+  `strength: low`, yet its task `video.summarize` is owner-placed in the
+  High-stakes bucket for a richer summary.
+
+The Settings screen groups *tasks* into three role buckets (defined in the
+frontend, `LLMSettingsScreen.tsx`), each with a provider + effort and per-task
+overrides. Live configuration:
+
+| Bucket (role) | Model | Tasks · live effort |
 |---|---|---|
-| `high` | **gpt-oss-120b** — "High-stakes reasoning", **Med** effort (live default) | jerv, research, review, summarize, archivist, teacher, curator (`system`), intake, intake_materialize, correction_mine, wiki_editor, note_extract, integrate_note |
-| `low` | **gpt-oss-120b** — "Lightweight", **Low** effort | session_title, entity_disambiguate, triage_classify, video_summary |
-| `vision` | **Qwen3-VL-30B-A3B** — "Vision", no reasoning level | vision_ocr, vision_caption, video_frame |
+| **High-stakes reasoning** | gpt-oss-120b | `agent.turn` M · `integrate.note` **H** · `note.extract` M · `correction_note.extract` M · `video.summarize` M · `wiki.rewrite` M · `wiki.ground` M |
+| **Lightweight** | gpt-oss-120b | `entity.disambiguate` L · `fact.adjudicate` **H** · `session.title` L · `triage.classify` L |
+| **Vision** | Qwen3-VL-30B-A3B | `vision.ocr` · `vision.caption` · `agent.vision` (no reasoning level) |
 
-The routing is owner-configurable (Settings → LLM Settings): three tiers, each a
-provider + reasoning-effort pick. Live defaults are High-stakes → gpt-oss @ Med,
-Lightweight → gpt-oss @ Low, Vision → Qwen3-VL. Per-task overrides exist within
-each tier.
+**gpt-oss-120b serves both text buckets** — High-stakes and Lightweight are the
+*same model* at different effort, so the gpt-oss guidance below governs every text
+task. Qwen3-VL serves **only the three Vision tasks**. (The catalog lists Qwen
+with a `"low"` tier as a capable cheap text *fallback*, but live routing sends all
+text to gpt-oss.)
 
-**gpt-oss-120b serves both text tiers** — `high` and `low` are the *same model*
-at different reasoning effort, so the gpt-oss guidance below governs 17 of our 20
-prompts. Qwen3-VL serves **only the three `vision` prompts**. (The catalog lists
-Qwen with a `"low"` tier as a capable cheap text *fallback*, but live routing
-sends `low` text to gpt-oss at low effort — so ignore the Qwen text column for our
-prompt set.)
+Prompt → task, for reference: `agent.turn` runs the interactive personas (jerv,
+curator/`system`, archivist, teacher) and the spawned sub-agents (research, review,
+summarize); the rest map name-for-name (`note.extract`→note_extract,
+`integrate.note`→integrate_note, `correction_note.extract`→correction_mine,
+`wiki.rewrite`/`wiki.ground`→wiki_editor, `video.summarize`→video_summary,
+`intake.materialize`→intake_materialize, the four Lightweight tasks→their
+same-named prompts, and the Vision tasks→vision_ocr/vision_caption/video_frame).
 
-> `high`/`low` route to the local reasoning model on a self-hosted box. If a
-> deployment routes them to a cloud model instead, the gpt-oss notes stop
-> applying to those prompts — but the domain-firewall design keeps
-> health/finance/location analysis local, so treat gpt-oss as the default target
-> for text prompts.
+> These route to the local models on a self-hosted box. If a deployment routes a
+> task to a cloud model instead, the gpt-oss/Qwen notes stop applying to it — but
+> the domain-firewall design keeps health/finance/location analysis local, so
+> treat the local models as the default target.
 
 ---
 
-## gpt-oss-120b (the `high` reasoning tier)
+## gpt-oss-120b (the High-stakes & Lightweight text buckets)
 
 An OpenAI open-weight reasoning MoE served here at MXFP4. It uses the **Harmony**
 response format and emits a hidden chain-of-thought before its answer.
@@ -53,12 +70,11 @@ response format and emits a hidden chain-of-thought before its answer.
   prompt is authoritative for *task* rules, but it cannot override a genuine
   System instruction — keep prompt rules about the task, not about the harness.
 - **Reasoning effort (low / medium / high) is set in the System message**, not
-  the prompt. It trades latency for depth. The `high` tier runs at **Med** effort
-  by default here — deliberately, because full `high` effort is *slow* and tends
-  to over-think before acting; only bump a task to High when it genuinely needs
-  it. Our `low`-strength prompts
-  (session_title, entity_disambiguate, triage_classify, video_summary) run this
-  same model at **low effort** — right for their short, deterministic
+  the prompt. It trades latency for depth. Most High-stakes tasks run at **Med** by
+  default — deliberately, because full **High** is *slow* and tends to over-think
+  before acting; reserve High for the tasks that earn it (see "When to spend High
+  effort"). The Lightweight one-shots (`entity.disambiguate`, `session.title`,
+  `triage.classify`) run at **Low** — right for their short, deterministic
   classify/title jobs: minimal chain-of-thought, fast. Write those prompts so the
   answer needs almost no reasoning (a clear rule and output shape), because at low
   effort there is little to spend.
@@ -94,6 +110,27 @@ response format and emits a hidden chain-of-thought before its answer.
 - **Don't** use "exhaustive/comprehensive"; don't reference or shape the hidden
   reasoning; don't stack redundant restatements of the same rule (it reads as
   conflict).
+
+### When to spend High effort
+
+High effort is *slow* and over-reasons before acting, so it only pays off for a
+task that is **all three of**: async (latency-tolerant), reasoning-bound (not
+tool-bound), and correctness-critical. Set it per task (Settings → LLM Settings →
+per-task override), never by raising a whole bucket — that would drag the
+interactive/tool-driven tasks up with it.
+
+| Task | Effort | Why |
+|---|---|---|
+| `integrate.note` (Integrator) | **High** | Graph coreference/relationship/supersession calls that *write* the knowledge graph; runs in async ingestion, so latency is free. The best place to spend it. |
+| `fact.adjudicate` (arbiter) | **High** | Hard conflict/supersession judgment the deterministic core then validates; async. |
+| `wiki.ground` (Phase 6) | **High** when it ships | Strict "graph wins on conflict" grounding verification; correctness-critical, batch. |
+| `wiki.rewrite` (Phase 6) | Med (try High) | Generative drafting, not judgment; raise only if grounding rejects too much. |
+| `agent.turn` (chat) | **Med** — keep | Interactive (owner on phone) *and* tool-driven → High buys runaway-before-tools + slow UX. Deep research depth is already tunable per *sub-agent* at spawn time. |
+| `note.extract`, `correction_note.extract`, `video.summarize`, `intake.materialize` | Med | Structured/bounded work; Med is the right cost. |
+| Lightweight one-shots | Low | Deterministic; Low is correct. |
+
+The test in one line: *async + reasoning-bound + correctness-critical → High;
+interactive or tool-driven → never High.*
 
 Sources: [OpenAI gpt-oss model card (HF)](https://huggingface.co/openai/gpt-oss-120b) ·
 [IBM watsonx — gpt-oss model behaviour & instruction guidelines](https://www.ibm.com/docs/en/watsonx/watson-orchestrate/base?topic=models-gpt-oss-model-behavior-instruction-guidelines) ·
