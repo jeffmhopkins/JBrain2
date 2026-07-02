@@ -1035,13 +1035,17 @@ The in-chat **tabbed** card jerv shows after a `hurricane` tool call. A persiste
 storm hero + an official watch/warning banner sit above a tab bar: **Timeline** (the
 local hour-by-hour wind/gust/rain strip), **Track** (the forecast cone + path), and
 **Impact** (the hazard grid). A registered, data-only view like every other — the model
-**authors no markup, no URL, no color, and no raw latitude/longitude** (#9); every
-enum maps to a glyph + token in the component. The shape (full schema in
+**authors no markup and no color**; every enum maps to a glyph + token in the component.
+The **Track** tab draws the storm on **real map tiles** (the on-box `/api/tiles` proxy,
+via Leaflet — pannable/zoomable), so this card is the **scoped exception** to the no-URL /
+no-raw-lat/lon rule (#9): its geometry carries real coordinates (the public NHC track +
+cone, plus the city-centre `you` pin — never the owner's precise fix), and it carries one
+URL — `nhc_url`, the storm's public NHC graphics page. The shape (full schema in
 `docs/HURRICANE_TABS_PLAN.md` §2):
 `{place, as_of, active_count, coverage, storm:{name, kind, cat, sustained_mph,
 sustained_level, gust_mph, gust_level, pressure_mb, pressure_level, moving},
-distance_mi, bearing, proximity, alert, track[], cone[], you, timeline[], arrival,
-impact}`.
+distance_mi, bearing, proximity, alert, track[], cone[], you, nhc_url, timeline[],
+arrival, impact}`.
 
 - `kind` is a closed enum (`hurricane|typhoon|tropical-storm|tropical-depression|
   subtropical-storm|subtropical-depression|post-tropical|potential|low|cyclone`); `cat`
@@ -1056,9 +1060,14 @@ impact}`.
   kind, event, headline}`) or `null` — the **only** legitimate watch/warning surface. A
   real `warning` is the one case the card shows the **rose danger** banner (a watch reads
   amber); the headline renders as **escaped text content only**, never markup.
-- `track[]`/`cone[]`/`you` are geometry **projected to the unit square `[0,1]` on-box**
-  (storm-relative bbox, north-up), so no lat/lon rides the payload; the component draws
-  inline SVG from the slots.
+- `track[]`/`cone[]`/`you` are geometry in **real `{lat, lon}`** (the track points also
+  carry `label`/`cat`/`past`); Leaflet frames and draws them on the tiled basemap. The
+  track + cone are public NHC data; the `you` pin is the geocoded **city centre** (`hit`),
+  the same coarseness the projected pin already revealed — never `ctx.here`. This scoped
+  #9 relaxation is documented in `backend/.../hurricanetools.py`.
+- `nhc_url` is the storm's **public NHC graphics page** (keyed by the feed's `binNumber`,
+  e.g. `graphics_at2.shtml`) shown as a "National Hurricane Center forecast" link, or `""`
+  when the feed carried no slot.
 - `coverage` is `us` (NWS served the point → timeline/alert/impact present) or `global`
   (the point is outside NWS coverage → hero + Track only; the component hides the empty
   Timeline/Impact tabs). `timeline[]`, `arrival`, and `impact` are NWS-derived; `impact.surge`
