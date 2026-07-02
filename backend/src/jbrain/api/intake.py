@@ -60,7 +60,8 @@ def _owner_ctx(principal_id: str) -> SessionContext:
 
 
 class MintLinkRequest(BaseModel):
-    subject_id: str = Field(min_length=1)
+    # Optional (general intake): omit for a collection not about a specific person.
+    subject_id: str | None = Field(default=None)
     domain_code: str = Field(min_length=1, max_length=64)
     fields_brief: str = Field(min_length=1, max_length=8000)
     persona_brief: str = Field(default="", max_length=8000)
@@ -87,7 +88,7 @@ class MintLinkOut(BaseModel):
 
 class LinkOut(BaseModel):
     id: str
-    subject_id: str
+    subject_id: str | None
     domain_code: str
     label: str
     fields_brief: str
@@ -185,7 +186,7 @@ async def mint_link(body: MintLinkRequest, owner: OwnerDep, repo: IntakeRepoDep)
     The user-facing path mints via an agent-staged, owner-approved Proposal (W4); this
     direct route is the owner-only primitive that path calls on approval."""
     config = IntakeLinkConfig(
-        subject_id=body.subject_id,
+        subject_id=body.subject_id or None,
         domain_code=body.domain_code,
         label=body.label,
         persona_brief=body.persona_brief,
@@ -200,10 +201,10 @@ async def mint_link(body: MintLinkRequest, owner: OwnerDep, repo: IntakeRepoDep)
     )
     try:
         secret, record = await service.mint_intake_link(repo, _owner_ctx(owner.id), config)
-    except IntegrityError as exc:
-        # An unknown subject_id / domain_code trips the FK — the owner can't mint a link
-        # attributed to a subject/domain that doesn't exist (firewall integrity, §7).
-        raise HTTPException(status_code=400, detail="unknown subject or domain") from exc
+    except (IntegrityError, ValueError) as exc:
+        # An unknown/malformed subject_id or unknown domain_code — the owner can't mint a
+        # link attributed to a subject/domain that doesn't exist (firewall integrity, §7).
+        raise HTTPException(status_code=400, detail="unknown or invalid subject or domain") from exc
     return MintLinkOut(
         id=record.id, label=record.label, expires_at=record.expires_at, secret=secret
     )
@@ -334,7 +335,8 @@ async def mint_from_proposal(
     cfg = leaf.preview
     runs = int(cfg.get("max_runs", 1))
     config = IntakeLinkConfig(
-        subject_id=str(cfg.get("subject_id", "")),
+        # Empty → a general collection about no one (subject stays null at the FK).
+        subject_id=str(cfg.get("subject_id") or "") or None,
         domain_code=str(cfg.get("domain", "")),
         label=str(cfg.get("label", "")),
         persona_brief=str(cfg.get("persona_brief", "")),
@@ -349,9 +351,13 @@ async def mint_from_proposal(
     )
     try:
         secret, record = await service.mint_intake_link(repo, ctx, config)
-    except IntegrityError as exc:
+    except (IntegrityError, ValueError) as exc:
+        # Unknown/malformed subject (or unknown domain): surface it plainly so the owner
+        # knows to re-stage rather than seeing a generic failure or a 500.
         raise HTTPException(
-            status_code=400, detail="the proposal's subject or domain is no longer valid"
+            status_code=400,
+            detail="the proposal's subject or domain is no longer valid — ask the assistant"
+            " to redraft this link (omit the subject for a general collection).",
         ) from exc
     await proposals.mark_enacted(ctx, proposal_id)
     return MintLinkOut(

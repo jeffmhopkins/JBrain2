@@ -47,7 +47,7 @@ class SqlIntakeRepo:
         expires_at = datetime.now(UTC) + timedelta(hours=config.ttl_hours)
         async with scoped_session(self._maker, ctx) as session:
             row = IntakeLink(
-                subject_id=uuid.UUID(config.subject_id),
+                subject_id=uuid.UUID(config.subject_id) if config.subject_id else None,
                 domain_code=config.domain_code,
                 label=config.label,
                 persona_brief=config.persona_brief,
@@ -488,7 +488,7 @@ class SqlIntakeRepo:
 def _link_record(row: IntakeLink) -> IntakeLinkRecord:
     return IntakeLinkRecord(
         id=str(row.id),
-        subject_id=str(row.subject_id),
+        subject_id=str(row.subject_id) if row.subject_id else None,
         domain_code=row.domain_code,
         label=row.label,
         persona_brief=row.persona_brief,

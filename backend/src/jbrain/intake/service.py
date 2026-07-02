@@ -26,7 +26,8 @@ from jbrain.db.session import SessionContext
 class IntakeLinkConfig:
     """The owner's mint parameters for a link (the agent-staged defaults, W4)."""
 
-    subject_id: str
+    # None for a general collection not about a specific person (0113).
+    subject_id: str | None
     domain_code: str
     label: str
     persona_brief: str
@@ -45,7 +46,7 @@ class IntakeLinkRecord:
     """A link as the owner's management list sees it — carries NO secret (#14)."""
 
     id: str
-    subject_id: str
+    subject_id: str | None
     domain_code: str
     label: str
     persona_brief: str

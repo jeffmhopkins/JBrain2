@@ -5,7 +5,7 @@
 // mint FK), so they render read-only here — only the soft fields patch (§7).
 
 import { useState } from "react";
-import { api } from "../api/client";
+import { ApiError, api } from "../api/client";
 import { DOMAIN_TITLE } from "../notes/modes";
 import { intakeShareUrl } from "./share";
 import type { IntakeConfigPatch, IntakeMintResult } from "./types";
@@ -100,8 +100,10 @@ export function IntakeLinkProposalEditor({ proposalId, node, onClose, onMinted, 
       });
       setMinted(await mintFromProposal(proposalId));
       onMinted?.();
-    } catch {
-      setError("Couldn't mint the link — check the details and try again.");
+    } catch (e) {
+      // Surface the server's actual reason (e.g. an invalid subject) — the generic
+      // "check the details" is a dead end when the failing field is read-only here.
+      setError(e instanceof ApiError ? e.message : "Couldn't mint the link — please try again.");
     } finally {
       setBusy(false);
     }
@@ -260,11 +262,13 @@ export function IntakeLinkProposalEditor({ proposalId, node, onClose, onMinted, 
             <div className="ic-fixed">
               <span className="ic-fixed-k">About</span>
               <span className="ic-fixed-v">
-                {subjectId || "—"} · {DOMAIN_TITLE[domain] ?? domain}
+                {subjectId ? subjectId : "No specific person"} · {DOMAIN_TITLE[domain] ?? domain}
               </span>
             </div>
             <span className="ic-note">
-              The subject and domain are locked for this link — they can't be changed here.
+              {subjectId
+                ? "The subject and domain are locked for this link — they can't be changed here."
+                : "A general collection, not about a specific person. The domain is locked here."}
             </span>
           </div>
 
