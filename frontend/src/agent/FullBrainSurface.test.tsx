@@ -1723,10 +1723,10 @@ describe("FullBrainSurface", () => {
       fireEvent.change(screen.getByLabelText("Composer"), { target: { value: "go" } });
       fireEvent.click(screen.getByRole("button", { name: "send" }));
 
-      // Drive the recovery poll past its ceiling; the transcript never grows, so it
-      // must finally settle to error.
+      // Drive the recovery poll past its ceiling (now sized to outlast the backend turn
+      // cap); the transcript never grows, so it must finally settle to error.
       await act(async () => {
-        await vi.advanceTimersByTimeAsync(360_000 + 3000);
+        await vi.advanceTimersByTimeAsync(3_720_000 + 3000);
       });
 
       expect(screen.getByRole("status").textContent).toContain("Something went wrong");

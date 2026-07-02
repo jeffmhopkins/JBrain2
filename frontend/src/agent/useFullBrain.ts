@@ -101,10 +101,15 @@ function latestForMode(sessions: AgentSession[], mode: ConvMode): AgentSession |
 }
 
 // Recovery poll cadence after a dropped stream: the turn keeps running detached
-// server-side, so we re-check the transcript until the finished exchange lands. The
-// ceiling clears a long image edit (minutes) before giving up to a real error.
+// server-side, so we reconnect to its live stream (and, failing that, re-check the
+// transcript) until the finished exchange lands. The ceiling must OUTLAST the longest
+// a turn can run server-side — the backend hard turn cap (_MAX_TURN_WALL_CLOCK_S, 3600s)
+// — plus a margin, so the client never gives up on a still-running turn (which stranded
+// it as "Something went wrong" AND dropped the Stop button while the detached turn — and
+// its sub-agent fan — kept pegging the GPU with no way left to cancel it). While recovery
+// runs, the bubble stays streaming and `runId` stays set, so Stop remains live throughout.
 const RECONCILE_INTERVAL_MS = 3000;
-const RECONCILE_TIMEOUT_MS = 360_000;
+const RECONCILE_TIMEOUT_MS = 3_720_000;
 
 export interface FullBrainDeps {
   listSessions: () => Promise<AgentSession[]>;
