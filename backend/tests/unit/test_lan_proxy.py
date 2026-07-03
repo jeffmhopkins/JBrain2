@@ -33,9 +33,11 @@ def _load_avahi_alias():
 
 def test_proxy_lan_addr_defaults_on() -> None:
     # LAN access is on by default: an unset JBRAIN_LAN_ADDR falls back to
-    # jbrain.local, so every deploy gets the local HTTPS site (blank it to opt out).
+    # jbrain.local, so every deploy gets the local HTTPS site. Bare `-` (not `:-`)
+    # so an explicitly-empty value opts out instead of re-defaulting — that is what
+    # "blank it to disable" in LOCAL_ACCESS.md relies on.
     env = yaml.safe_load(_COMPOSE.read_text())["services"]["proxy"]["environment"]
-    assert env["JBRAIN_LAN_ADDR"] == "${JBRAIN_LAN_ADDR:-https://jbrain.local}"
+    assert env["JBRAIN_LAN_ADDR"] == "${JBRAIN_LAN_ADDR-https://jbrain.local}"
 
 
 def test_caddy_shares_handlers_and_imports_the_lan_site() -> None:
