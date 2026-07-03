@@ -93,17 +93,21 @@ async def test_extractor_drops_malformed_rows() -> None:
 
 
 async def test_extractor_empty_narrative_skips_llm() -> None:
-    router = _router({"diagnoses": [{"condition": "x", "ruled_out": False, "confidence": 1.0}]})
+    fake = FakeLlmClient(responses=('{"diagnoses": []}',))
+    router = LlmRouter(
+        {"xai": fake}, {PATHOLOGY_TASK: ("xai", "grok")}, tiers={"low": ("xai", "grok")}
+    )
     assert await extract_pathology_diagnoses(router, "   ") == []
-    assert router._clients["xai"].calls == []  # no LLM call for empty prose
+    assert fake.calls == []  # no LLM call for empty prose
 
 
 async def test_extractor_unrouted_task_fails_soft() -> None:
     # A router that carries only note.extract (the harness shape) can't route the
     # pathology task -> [] with no call, never an error.
-    router = LlmRouter({"xai": FakeLlmClient()}, {"note.extract": ("xai", "grok")})
+    fake = FakeLlmClient()
+    router = LlmRouter({"xai": fake}, {"note.extract": ("xai", "grok")})
     assert await extract_pathology_diagnoses(router, "Final Diagnosis: x") == []
-    assert router._clients["xai"].calls == []
+    assert fake.calls == []
 
 
 async def test_extractor_unusable_response_fails_soft() -> None:
