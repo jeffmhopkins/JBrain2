@@ -1,21 +1,72 @@
 #!/usr/bin/env bash
-# Per-session openclaw version management (docs/proposed/JCODE_SESSION_TOOLS_PLAN.md).
+# Per-session openclaw management: version pinning + the on-demand local gateway
+# (docs/proposed/JCODE_SESSION_TOOLS_PLAN.md).
 #
-# Installs the OpenClaw CLI into the session's PRIVATE npm prefix ($NPM_CONFIG_PREFIX, set by
-# the terminal to $HOME/.npm-global), whose bin leads PATH via /etc/profile.d/jcode-path.sh —
-# so the installed openclaw shadows the image's /usr/local/bin copy for THIS session only.
-# Other sessions and the image default are untouched. Like `jcode-claude` (and unlike
-# `jcode-grok`), this hits registry.npmjs.org, which IS on the git/npm egress allowlist — so
-# it works even under strict egress (JCODE_EGRESS_PROXY).
+# `upgrade` installs the OpenClaw CLI into the session's PRIVATE npm prefix ($NPM_CONFIG_PREFIX,
+# set by the terminal to $HOME/.npm-global), whose bin leads PATH via
+# /etc/profile.d/jcode-path.sh — so the installed openclaw shadows the image's /usr/local/bin
+# copy for THIS session only. Other sessions and the image default are untouched. Like
+# `jcode-claude` (and unlike `jcode-grok`), this hits registry.npmjs.org, which IS on the
+# git/npm egress allowlist — so it works even under strict egress (JCODE_EGRESS_PROXY).
+#
+# `gateway` starts/stops OpenClaw's local gateway daemon ON DEMAND. OpenClaw's CLI is a client
+# to a gateway (ws://127.0.0.1:<port>); actually driving an agent needs it running, but a
+# persistent ~300-800MB Node daemon (which leaks over long runs) isn't worth keeping alive in
+# every ephemeral session, so it's opt-in. Started backgrounded (it would otherwise block the
+# one session shell), logged to ~/.openclaw/gateway.log, tracked by a pidfile. gateway.mode is
+# already `local` via openclaw-config.sh, so no --allow-unconfigured is needed. On session
+# stop/delete jcode kills the shell's process group, which reaps the daemon.
 #
 #   jcode-openclaw upgrade [version]   install openclaw into the session (default: latest;
 #                                      pass a version/tag to pin, e.g. 1.2.3)
 #   jcode-openclaw version             show the session's openclaw vs the image default
+#   jcode-openclaw gateway [start|stop|status]   drive the local gateway (default: start)
 set -euo pipefail
 
 _die() { echo "jcode-openclaw: $1" >&2; exit "${2:-1}"; }
 
 case "${1:-}" in
+gateway)
+  sub="${2:-start}"
+  port="${OPENCLAW_GATEWAY_PORT:-18789}"
+  pidfile="${HOME:-/root}/.openclaw/gateway.pid"
+  log="${HOME:-/root}/.openclaw/gateway.log"
+  _running() { [ -f "$pidfile" ] && kill -0 "$(cat "$pidfile" 2>/dev/null)" 2>/dev/null; }
+  case "$sub" in
+  start)
+    if _running; then
+      echo "jcode-openclaw: gateway already running (pid $(cat "$pidfile")) on ws://127.0.0.1:$port"
+      exit 0
+    fi
+    command -v openclaw >/dev/null 2>&1 || _die "openclaw not installed (jcode-openclaw upgrade)" 1
+    mkdir -p "$(dirname "$pidfile")"
+    # Backgrounded + detached so it outlives this command but not the session shell's group.
+    nohup openclaw gateway >>"$log" 2>&1 &
+    echo "$!" > "$pidfile"
+    echo "jcode-openclaw: gateway started (pid $!) on ws://127.0.0.1:$port; logs: $log"
+    ;;
+  stop)
+    if ! _running; then
+      rm -f "$pidfile"  # clear a stale pidfile if the daemon already died
+      echo "jcode-openclaw: gateway not running"
+      exit 0
+    fi
+    kill "$(cat "$pidfile")" 2>/dev/null || true
+    rm -f "$pidfile"
+    echo "jcode-openclaw: gateway stopped"
+    ;;
+  status)
+    if _running; then
+      echo "gateway: running (pid $(cat "$pidfile")) on ws://127.0.0.1:$port"
+    else
+      echo "gateway: not running"
+    fi
+    ;;
+  *)
+    _die "usage: jcode-openclaw gateway {start|stop|status}" 2
+    ;;
+  esac
+  ;;
 upgrade)
   version="${2:-latest}"
   # Guard on (and pass) the prefix we ACTUALLY install into, not just the session marker:
@@ -32,6 +83,6 @@ version)
   echo "image:   /usr/local/bin/openclaw -> $(/usr/local/bin/openclaw --version 2>/dev/null || echo none)"
   ;;
 *)
-  _die "usage: jcode-openclaw {upgrade [version]|version}" 2
+  _die "usage: jcode-openclaw {upgrade [version]|version|gateway [start|stop|status]}" 2
   ;;
 esac

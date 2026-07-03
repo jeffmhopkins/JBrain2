@@ -485,6 +485,11 @@ services:
       # token meter and auto-compaction match the gateway's real size. Default 262144 = the
       # coder's native 256k; override if a different served `-c` is configured.
       OPENCLAW_CONTEXT_WINDOW: ${JCODE_OPENCLAW_CONTEXT_WINDOW:-262144}
+      # OpenClaw's local gateway loopback port (written as gateway.port; the daemon is
+      # started on demand by `jcode-openclaw gateway`, never automatically). Sessions share
+      # the container's loopback, so only one gateway can bind this at a time; override per
+      # session only if concurrent sessions each need their own gateway.
+      OPENCLAW_GATEWAY_PORT: ${JCODE_OPENCLAW_GATEWAY_PORT:-18789}
       # Headless-sandbox hardening for the bundled Claude Code CLI the Agent SDK spawns:
       # a writable config dir (it persists onboarding/ToS state there — a non-writable
       # ~/.claude exits 1), suppress first-run/update/telemetry traffic that fails
