@@ -23,14 +23,6 @@ given a roadmap slot in `../ROADMAP.md`, and promoted out of this folder.
   base, works in isolated per-session git checkouts, with an optional per-session preview
   tunnel. Five-wave build plan; one owner-only `jcode_sessions` table. Reference mocks:
   `../mocks/jcode-launcher.html`, `../mocks/jcode-session.html`.
-- `JCLAW_PLAN.md` — **jclaw** multi-channel assistant gateway (design sketch): the
-  OpenClaw pattern for JBrain2 — message your own assistant from any chat app
-  (Telegram, Signal, Slack, …), each inbound message running a JBrain2 agent turn in
-  a per-thread sandbox (reusing the jcode isolation envelope, à la Claude Code web /
-  Grok). This cut is **knowledge-base-blind**: no DB/RAG/wiki/storage access, a narrow
-  conversation-plus-web tool allowlist, pre-registered owner-handle auth. The KB read
-  path, write-back-as-Proposal, and per-thread memory are explicitly deferred (each
-  re-opens a firewall this cut keeps shut).
 - `PHOTO_ARCHIVE_PLAN.md` — photo archive pipeline: a staged, idempotent map over
   a decade of phone dumps (hash-keyed dedup, deterministic dating, a vision worker
   bridging pixels to the text-only 120B, CLIP search, InsightFace faces, residual
