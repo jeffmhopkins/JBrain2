@@ -1685,7 +1685,21 @@ unit-tested (`backend/src/jbrain/ingest/emr/`):
   e2e proves the ARIA reprint corroborates the 2021 OneContent draws (one graph draw, not two) while
   the 07/29 read parks with an idempotent card.
 
-**Remaining in W3 (next):** wiring `get_text("words")` into the extractor + selecting a parser by
-fingerprint on the dispatcher, and the full multi-source orchestration (parse all four files →
-reconcile → integrate the precise draws + card the parked reads) as one job. The vision-OCR job that
-feeds ARIA its text (§6.2) is a W3/W4 extractor concern.
+- **`dispatch.py` + `onecontent.pdf_word_pages`** — the parser selection + extraction glue. A
+  decrypted attachment is routed to exactly one parser by a **fingerprint** on its text (fail-closed:
+  no confident match → routed to review, never free-extracted), most-distinctive first so an ARIA OCR
+  reprint of the OneContent tables is caught by its banner before the generic `Account:` check.
+  `pdf_word_pages` extracts the §6.2 `get_text("words")` geometry OneContent needs (still PyMuPDF, no
+  new dependency); Epic/athena/ARIA parse the reading-order text. `parse_corpus` composes the whole
+  decrypted corpus with **no I/O**: dispatch each attachment, then reconcile the OCR reprints against
+  the precise draws (§6.4), returning the precise parses to integrate + the reconciliation +
+  fail-closed unrecognized refs. Tests: each fixture selects its source, an unrecognized file fails
+  closed, a real synthetic PDF round-trips its word boxes through the geometry parser, and a
+  mixed Epic+athena+ARIA corpus reconciles (ARIA never integrated directly; the 07/29 read parks).
+
+**Remaining in W3 (next):** the DB **job handler** that ties it together on a note's decrypted
+attachments — extract text (+ words for OneContent) per attachment, `parse_corpus`, integrate each
+precise parse with a per-attachment chunk resolver, and `file_parked_cards` for the parked reads. That
+handler is enqueued by the seeded `emr_import` **trigger** (migration + the §6.0/§12.2 event-payload
+widening) — the piece flagged for an owner sanity-check before it lands. The vision-OCR job that feeds
+ARIA its text (§6.2) is a W3/W4 extractor concern.
