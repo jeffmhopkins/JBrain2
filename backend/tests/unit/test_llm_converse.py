@@ -2,6 +2,9 @@
 scripted turns driving a multi-turn tool exchange (the only LLM the agent-loop
 tests will call)."""
 
+import json
+from typing import Any
+
 import httpx
 
 from jbrain.llm import (
@@ -114,3 +117,80 @@ async def test_fake_records_reasoning_effort() -> None:
     )
     assert fake.calls[0]["reasoning_effort"] == "high"
     assert fake.converse_calls[0]["reasoning_effort"] == "low"
+
+
+async def test_complete_captures_reasoning_content() -> None:
+    # A one-shot against a reasoning model splits its <think> trace onto
+    # reasoning_content (deepseek format); complete() keeps it OUT of `text` and
+    # surfaces it on the result — so a thinking one-shot's answer stays clean.
+    body = {
+        "choices": [
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": "Giraffe Height Facts",
+                    "reasoning_content": "the title should name the topic…",
+                },
+                "finish_reason": "stop",
+            }
+        ],
+        "usage": {"prompt_tokens": 3, "completion_tokens": 9},
+    }
+    client = OpenAiCompatClient(
+        "http://localhost:11434/v1",
+        "",
+        provider="local",
+        transport=httpx.MockTransport(lambda _req: httpx.Response(200, json=body)),
+    )
+    res = await client.complete(model="qwen3.5-0.8b", system="s", user_text="u")
+    assert res.text == "Giraffe Height Facts"
+    assert res.reasoning == "the title should name the topic…"
+
+
+def _capturing_client() -> tuple[dict[str, Any], OpenAiCompatClient]:
+    """A local client whose transport records the request payload it sends, so a
+    test can assert exactly what reached the gateway."""
+    captured: dict[str, Any] = {}
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        captured["payload"] = json.loads(req.content)
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": "t"}, "finish_reason": "stop"}], "usage": {}},
+        )
+
+    client = OpenAiCompatClient(
+        "http://localhost:11434/v1", "", provider="local", transport=httpx.MockTransport(handler)
+    )
+    return captured, client
+
+
+async def test_hybrid_qwen_maps_none_to_enable_thinking_false() -> None:
+    # A Qwen hybrid toggles thinking through its chat template, not reasoning_effort.
+    # "none" is the real "reasoning off": enable_thinking=false, and no reasoning_effort
+    # (which the Qwen template would ignore).
+    captured, client = _capturing_client()
+    await client.complete(model="qwen3.5-0.8b", system="s", user_text="u", reasoning_effort="none")
+    assert captured["payload"]["chat_template_kwargs"] == {"enable_thinking": False}
+    assert "reasoning_effort" not in captured["payload"]
+
+
+async def test_hybrid_qwen_maps_a_level_to_enable_thinking_true() -> None:
+    # Any non-"none" level leaves thinking on (a hybrid has no granular effort).
+    captured, client = _capturing_client()
+    await client.converse(
+        model="qwen3.5-4b",
+        system="s",
+        messages=[UserMessage(text="u")],
+        reasoning_effort="low",
+    )
+    assert captured["payload"]["chat_template_kwargs"] == {"enable_thinking": True}
+    assert "reasoning_effort" not in captured["payload"]
+
+
+async def test_harmony_local_reasoner_sends_effort_verbatim() -> None:
+    # gpt-oss understands the effort levels (incl. "none") directly — no template kwarg.
+    captured, client = _capturing_client()
+    await client.complete(model="gpt-oss-120b", system="s", user_text="u", reasoning_effort="none")
+    assert captured["payload"]["reasoning_effort"] == "none"
+    assert "chat_template_kwargs" not in captured["payload"]

@@ -48,8 +48,11 @@ with `reasoning_effort=None`.
 
 **gpt-oss-120b serves all three text buckets** — one model at three efforts, so the
 gpt-oss guidance below governs every text task. Qwen3-VL serves **only the three
-Vision tasks**. (The catalog lists Qwen with a `"low"` tier as a capable cheap text
-*fallback*, but live routing sends all text to gpt-oss.)
+Vision tasks**. The catalog also offers the **Qwen3.5 hybrids (0.8B tiny / 4B small)**
+as reasoning-capable `low`-tier alternatives an operator can route the one-shots to;
+their thinking is a chat-template toggle, so setting a task's effort to **`none`
+actually turns thinking off** (a snappy Instruct one-shot), while any other level runs
+the full trace. See the note under the Low bucket below.
 
 Prompt → task, for reference: `agent.turn` runs the interactive personas (jerv,
 curator/`system`, archivist, teacher) and the spawned sub-agents (research, review,
@@ -87,6 +90,17 @@ response format and emits a hidden chain-of-thought before its answer.
   classify/title jobs: minimal chain-of-thought, fast. Write those prompts so the
   answer needs almost no reasoning (a clear rule and output shape), because at low
   effort there is little to spend.
+
+> **Local hybrid one-shots (Qwen3.5 tiny/small).** These models don't have gpt-oss's
+> graded effort — thinking is a chat-template on/off toggle. `none` runs a true
+> non-thinking Instruct pass (fast, a handful of tokens); **any** other level runs the
+> *full* trace, which on the 0.8B ran ~2.3k tokens just to title one chat. Two
+> consequences: (1) a one-shot's `max_tokens` must cover a full trace plus the answer,
+> not just the answer — `session.title` and `entity.disambiguate` budget for this
+> (4096); (2) if you route a one-shot to a Qwen hybrid and want it snappy, set its
+> effort to `none` in Settings rather than `low`. The adapter maps `none`→
+> `enable_thinking=false` and everything else→thinking on; the trace itself lands on the
+> `reasoning_content` channel (deepseek format), so it never leaks into the answer.
 
 ### Behaviours to design around
 - **Conflicting instructions degrade it badly.** gpt-oss is unusually sensitive

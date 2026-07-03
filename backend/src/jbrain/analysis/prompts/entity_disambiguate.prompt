@@ -4,10 +4,12 @@ version: entity-disambiguate-v1
 description: Resolve undecided mention strings in one note to existing graph entities.
 strength: low
 config:
-  # Headroom for a reasoning model's thinking trace (gpt-oss/GLM bill it against
-  # this cap) on top of the small JSON answer — a tight budget truncated the
-  # structured reply, escalating through the JSON re-ask to a hard error.
-  max_tokens: 2048
+  # Headroom for a reasoning model's thinking trace (gpt-oss/GLM, or a local Qwen
+  # hybrid with thinking on, bill it against this cap) on top of the small JSON answer
+  # — a tight budget truncated the structured reply, escalating through the JSON re-ask
+  # to a hard error. A local tiny model's trace can run ~2k+ tokens, so keep generous
+  # headroom above the JSON answer.
+  max_tokens: 4096
 output:
   format: json
   schema:

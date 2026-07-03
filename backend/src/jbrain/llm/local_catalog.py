@@ -49,17 +49,25 @@ class LocalModel:
     quant: str
     size_gb: float
     note: str = ""
-    # Emits a `reasoning_content` channel and honors `reasoning_effort` (gpt-oss
-    # harmony reasoning / GLM thinking). Drives the settings effort control and lets
-    # the router send an effort to this model; default False (the Qwen Instruct
-    # variants and Llama here are non-thinking).
+    # Emits a `reasoning_content` channel and honors a reasoning setting (gpt-oss
+    # harmony effort / GLM thinking / a Qwen hybrid think toggle). Drives the settings
+    # effort control and lets the router send a level to this model; default False
+    # (plain Instruct variants and Llama here are non-thinking).
     supports_reasoning: bool = False
     # llama-server `--reasoning-format` for a model that emits its thinking inline as
-    # `<think>…</think>` (DeepSeek-R1 / Qwen3-Thinking): "deepseek" makes llama.cpp parse
-    # those tags OUT of `content` into a separate `reasoning_content` channel, which the
-    # claude-shim then maps to Anthropic `thinking` blocks. Empty = leave llama.cpp's
-    # default (`auto`) — correct for harmony/GLM reasoners, whose template `auto` handles.
+    # `<think>…</think>` (DeepSeek-R1 / Qwen3-Thinking / a Qwen hybrid with thinking on):
+    # "deepseek" makes llama.cpp parse those tags OUT of `content` into a separate
+    # `reasoning_content` channel, which the claude-shim then maps to Anthropic `thinking`
+    # blocks. Empty = leave llama.cpp's default (`auto`) — correct for harmony/GLM
+    # reasoners, whose template `auto` handles.
     reasoning_format: str = ""
+    # A Qwen-style HYBRID reasoner: thinking is a chat-template toggle
+    # (`enable_thinking`), not a `reasoning_effort` level. The adapter maps the routed
+    # level onto that toggle instead of sending `reasoning_effort` (which the Qwen
+    # template ignores): "none" → `enable_thinking=false` (a real "reasoning off"),
+    # any other level → thinking on. False for harmony/grok/GLM (they take the effort
+    # verbatim) and for always-on `<think>` checkpoints (which have no off switch).
+    hybrid_thinking: bool = False
     # The context window the gateway serves this model with (llama-server's `-c`)
     # ABSENT an operator override. The single source of truth: scripts/local-llm-setup.sh
     # stamps this into the llama-swap config, and the router reports it to the PWA's
@@ -318,8 +326,15 @@ CATALOG: tuple[LocalModel, ...] = (
         size_gb=0.9,
         note="Tiniest catalog model — a fast, cheap worker for side projects that "
         "don't need to be smart (classification, extraction, short one-shots). "
-        "Newer generation than qwen3-30b; thinking is off by default, so it serves "
-        "as a snappy Instruct model. Loads instantly and co-resides beside anything.",
+        "Newer generation than qwen3-30b: a hybrid reasoner whose thinking is a "
+        "chat-template toggle. Its level is set per task in LLM Settings (pick "
+        "'none' to run it as a snappy Instruct model, or a thinking level for the "
+        "extra depth). Loads instantly and co-resides beside anything.",
+        # A hybrid Qwen: emits <think> when thinking is on, so parse it onto the
+        # reasoning channel (deepseek) and drive the on/off via the hybrid toggle.
+        supports_reasoning=True,
+        reasoning_format="deepseek",
+        hybrid_thinking=True,
         # Native 256k; serves the conservative gateway default like the other low-tier
         # entries. Its KV cache is negligible at this size, so a big -c is cheap here.
         native_context_window=262144,
@@ -342,8 +357,13 @@ CATALOG: tuple[LocalModel, ...] = (
         size_gb=4.3,
         note="Small dense model — noticeably smarter than qwen3.5-0.8b while still "
         "loading instantly and co-residing beside anything. A solid low-tier daily "
-        "driver for local one-shots. Thinking is off by default (snappy Instruct); "
-        "tools on.",
+        "driver for local one-shots. A hybrid reasoner: set its thinking level per "
+        "task in LLM Settings ('none' runs it as a snappy Instruct model); tools on.",
+        # A hybrid Qwen: emits <think> when thinking is on, so parse it onto the
+        # reasoning channel (deepseek) and drive the on/off via the hybrid toggle.
+        supports_reasoning=True,
+        reasoning_format="deepseek",
+        hybrid_thinking=True,
         # Native 256k; serves the conservative gateway default like the other low-tier
         # entries. A dense 4B KV stays cheap here, so a big -c is affordable.
         native_context_window=262144,

@@ -26,11 +26,12 @@ async def test_titles_from_the_first_exchange() -> None:
 async def test_budget_leaves_reasoning_headroom() -> None:
     # The `low` tier is a reasoning model whose thinking trace is billed against
     # max_tokens before any visible answer. A budget sized only for the few-word
-    # title (24) was spent entirely on reasoning, returning empty content and
-    # leaving the chat untitled (regression). Guard a generous headroom.
+    # title was spent entirely on reasoning, returning empty content and leaving the
+    # chat untitled (regression). A local tiny hybrid's trace ran ~2.3k tokens for one
+    # title, so the budget must cover a full trace plus the label — guard that floor.
     router, fake = _router("A Title")
     await SessionTitler(router).title_for(question="hi", answer="hello")
-    assert fake.calls[0]["max_tokens"] >= 256
+    assert fake.calls[0]["max_tokens"] >= 2048
 
 
 async def test_blank_question_skips_the_model() -> None:

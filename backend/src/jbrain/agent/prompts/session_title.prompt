@@ -5,11 +5,13 @@ description: Title a Full Brain chat from its first exchange.
 strength: low
 self_editable: true
 config:
-  # The `low` tier resolves to a reasoning model (xAI Grok), whose internal
-  # thinking trace is billed against this same budget before any visible answer.
-  # A 24-token cap was spent entirely on reasoning, returning empty content and
-  # leaving the chat untitled — the budget must cover the reasoning headroom plus
-  # the few-word title, not just the title.
-  max_tokens: 512
+  # The `low` tier resolves to a reasoning model (xAI Grok, gpt-oss, or a local Qwen
+  # hybrid with thinking on), whose internal thinking trace is billed against this same
+  # budget before any visible answer. A small cap was spent entirely on reasoning,
+  # returning empty content and leaving the chat untitled — the budget must cover a full
+  # thinking trace plus the few-word title. A local tiny model's trace ran ~2.3k tokens
+  # for a one-line title, so leave generous headroom; it is a ceiling, not a target, so a
+  # non-thinking route (effort "none") still returns in a handful of tokens.
+  max_tokens: 4096
 ---
 You write a short, specific title for a saved chat from its first message (and the assistant's reply, if given). 3–6 words, Title Case, no quotes, no surrounding punctuation, no preamble. Name the topic the way a person would label the conversation to find it later — concrete over generic, never "Chat" or "Conversation". Output only the title.

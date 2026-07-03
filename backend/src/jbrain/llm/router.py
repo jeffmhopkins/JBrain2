@@ -446,6 +446,9 @@ class LlmRouter:
             model=model,
             input_tokens=result.usage.input_tokens,
             output_tokens=result.usage.output_tokens,
+            # A one-shot that spent its budget on a hidden thinking trace shows up as
+            # empty text + large reasoning_chars — the signature of a starved budget.
+            reasoning_chars=len(result.reasoning),
             elapsed_ms=round(elapsed * 1000),
             output_tokens_per_s=self._toks_per_s(result.usage.output_tokens, elapsed),
         )

@@ -30,11 +30,20 @@ class LlmUsage:
 @dataclass(frozen=True)
 class LlmResult:
     """Adapter response: raw text always; `parsed` only when a JSON schema was
-    requested and the text parsed (None signals the router to re-ask)."""
+    requested and the text parsed (None signals the router to re-ask).
+
+    `reasoning` is the model's thinking trace when the provider splits one onto a
+    separate channel (a local reasoning model served with `--reasoning-format
+    deepseek`, or gpt-oss/GLM harmony) — "" for a non-thinking model or a provider
+    that folds thinking into the answer. Display/observability only: it is never the
+    answer and never fed to grounding. Capturing it here keeps a thinking model's
+    trace OUT of `text` for one-shot `complete()` callers the same way `converse`
+    already separates it."""
 
     text: str
     parsed: Any | None
     usage: LlmUsage
+    reasoning: str = ""
 
 
 class UsageRecorder(Protocol):

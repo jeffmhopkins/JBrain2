@@ -9,10 +9,11 @@ docs/reference/ANALYSIS.md "Privacy routing".
 import asyncio
 import json
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
-from typing import Any
+from typing import Any, cast
 
 import httpx
 
+from jbrain.llm import local_catalog
 from jbrain.llm.errors import LlmBadResponseError
 from jbrain.llm.retry import post_json, stream_sse
 from jbrain.llm.types import (
@@ -150,7 +151,13 @@ class OpenAiCompatClient:
             sleep=self._sleep,
         )
         try:
-            text = data["choices"][0]["message"]["content"] or ""
+            message = data["choices"][0]["message"]
+            text = message.get("content") or ""
+            # A reasoning model served with `--reasoning-format deepseek` splits its
+            # `<think>` trace onto this channel; capture it so a one-shot's thinking
+            # stays OUT of `text` (mirroring `converse`) instead of being an invisible
+            # empty answer when the trace ran but no visible content followed.
+            reasoning = message.get("reasoning_content") or ""
         except (KeyError, IndexError, TypeError) as exc:
             raise LlmBadResponseError(f"{self.provider}: unexpected response shape") from exc
         # Local servers may omit usage; zeros keep the call observable anyway.
@@ -160,16 +167,29 @@ class OpenAiCompatClient:
             output_tokens=int(usage_body.get("completion_tokens", 0)),
         )
         parsed = parse_json_payload(text) if json_schema is not None else None
-        return LlmResult(text=text, parsed=parsed, usage=usage)
+        return LlmResult(text=text, parsed=parsed, usage=usage, reasoning=reasoning)
 
     def _apply_reasoning(self, payload: dict[str, Any], reasoning_effort: str | None) -> None:
-        # `reasoning_effort` is honored by xAI Grok and by the local gateway's
-        # reasoning models (gpt-oss/GLM via llama.cpp). The ROUTER gates eligibility
-        # (it only sets an effort for a reasoning-capable provider+model), so the
-        # client applies whatever it's given for those two providers — a non-reasoning
-        # local model never reaches here with an effort set.
-        if reasoning_effort is not None and self.provider in ("xai", "local"):
-            payload["reasoning_effort"] = reasoning_effort
+        # Put the routed reasoning setting on the wire. The ROUTER gates eligibility
+        # (it only sets a level for a reasoning-capable provider+model), so a
+        # non-reasoning local model never reaches here with a level set. Translation is
+        # per model family:
+        #   - A Qwen HYBRID reasoner toggles thinking through its chat template, NOT a
+        #     `reasoning_effort` level (which its template ignores). So map the level
+        #     onto that toggle — "none" → enable_thinking=false (a real "reasoning off"),
+        #     any other level → thinking on — and don't send `reasoning_effort`.
+        #   - xAI Grok and the harmony/GLM local reasoners take the effort verbatim
+        #     (they understand "none").
+        if reasoning_effort is None or self.provider not in ("xai", "local"):
+            return
+        model = (
+            local_catalog.get_by_served(str(payload["model"])) if self.provider == "local" else None
+        )
+        if model is not None and model.hybrid_thinking:
+            kwargs = cast(dict[str, Any], payload.setdefault("chat_template_kwargs", {}))
+            kwargs["enable_thinking"] = reasoning_effort != "none"
+            return
+        payload["reasoning_effort"] = reasoning_effort
 
     def _converse_payload(
         self,

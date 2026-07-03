@@ -8,16 +8,20 @@
 # what's sent to llama-swap, so it must match the gateway's route (the catalog
 # served_model). api_key is a placeholder — llama-swap needs no auth.
 #
-# Reasoning models (e.g. qwen3-next-80b-a3b-thinking) ride the wildcard too: the gateway
-# is rendered with `--reasoning-format deepseek` for those, so it splits `<think>` traces
+# Reasoning models ride the wildcard too — the always-on `<think>` checkpoints (e.g.
+# qwen3-next-80b-a3b-thinking) and the Qwen HYBRID reasoners (qwen3.5-0.8b / qwen3.5-4b),
+# all rendered with `--reasoning-format deepseek`, so the gateway splits `<think>` traces
 # onto the OpenAI `reasoning_content` field instead of leaking them into the answer. They
-# need no per-model entry here. Whether LiteLLM's /v1/messages adapter then reconstructs
-# Anthropic `thinking` blocks from `reasoning_content` on the OpenAI→Anthropic response
-# path is UNVERIFIED against this backend (LiteLLM's documented mapping is the request
-# direction + Anthropic-native models; this reverse path has open upstream bugs). And
-# `drop_params: true` below may strip reasoning params the local backend rejects. Treat
-# thinking-block surfacing as best-effort until exercised end to end on the box — at worst
-# the traces are merely hidden, not leaked.
+# need no per-model entry here. NOTE: a hybrid's thinking is a chat-template toggle
+# (`enable_thinking`) that the jbrain backend flips per task via chat_template_kwargs — but
+# THIS path is the Claude Agent SDK → LiteLLM → gateway (jcode only), which sends no such
+# kwarg, so a hybrid selected for jcode runs at its template default (thinking on). Whether
+# LiteLLM's /v1/messages adapter then reconstructs Anthropic `thinking` blocks from
+# `reasoning_content` on the OpenAI→Anthropic response path is UNVERIFIED against this
+# backend (LiteLLM's documented mapping is the request direction + Anthropic-native models;
+# this reverse path has open upstream bugs). And `drop_params: true` below may strip
+# reasoning params the local backend rejects. Treat thinking-block surfacing as best-effort
+# until exercised end to end on the box — at worst the traces are merely hidden, not leaked.
 model_list:
   - model_name: qwen3-coder-next
     litellm_params:
