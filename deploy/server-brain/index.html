@@ -821,11 +821,11 @@ for (let i = 0; i < 220; i++) {
 // `speed` (higher = faster flow). prompt/answer/thinking are the LLM turn; search/fetch
 // stream the query / URL when text is on.
 const STREAM_SPEC = {
-  prompt:   { dir: 'in',  g: '#c2d6ea', f: new THREE.Color('#7FA7C9'), speed: 6 },  // steel, into the net
-  answer:   { dir: 'out', g: '#c9e6cf', f: new THREE.Color('#8FBC9A'), speed: 6 },  // green, out to the right
-  thinking: { dir: 'out', g: '#bcaede', f: new THREE.Color('#8f7ec0'), speed: 9 },  // violet, fastest reasoning trace
-  search:   { dir: 'out', g: '#bff0ff', f: new THREE.Color('#5fe6ff'), speed: 6 },  // cyan, reaching out to the web
-  fetch:    { dir: 'out', g: '#ffe2b4', f: new THREE.Color('#ffc66e'), speed: 6 },  // amber
+  prompt:   { dir: 'in',  g: '#c2d6ea', f: new THREE.Color('#7FA7C9'), speed: 3 },   // steel, into the net
+  answer:   { dir: 'out', g: '#c9e6cf', f: new THREE.Color('#8FBC9A'), speed: 3 },   // green, out to the right
+  thinking: { dir: 'out', g: '#bcaede', f: new THREE.Color('#8f7ec0'), speed: 4.5 }, // violet, faster reasoning trace
+  search:   { dir: 'out', g: '#bff0ff', f: new THREE.Color('#5fe6ff'), speed: 3 },   // cyan, reaching out to the web
+  fetch:    { dir: 'out', g: '#ffe2b4', f: new THREE.Color('#ffc66e'), speed: 3 },   // amber
 };
 const LLM_BR = 15;        // world radius at the brain edge where a stream connects
 const LLM_REACH = 22;     // world length of the visible filament (brain edge -> screen edge)
