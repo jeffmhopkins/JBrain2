@@ -46,6 +46,11 @@ ensure_uv() {
   fi
 }
 
+# Backend runtime deps are declared in backend/pyproject.toml and installed by the
+# `uv sync --all-extras` below (no per-dep line here). New dependency of note: the
+# EMR importer's `pyzipper` (AES-encrypted ZIP extraction, docs/plans/EMR_IMPORT_PLAN.md
+# §6.1) — synced here, guarded by the tests/unit/test_emr_deps.py import smoke test
+# (CLAUDE.md rule #8 single-source-of-truth).
 sync_python() { # sync_python <dir>
   local dir="$1" stamp="py-${1//\//-}"
   if [ ! -f "$dir/pyproject.toml" ]; then
