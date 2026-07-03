@@ -3,7 +3,7 @@
 A note is captured in ONE domain, so all its chunks carry that domain. When a
 fact ratchets UP (a health reading written in a `general` note), its citation
 would point at a chunk in the capture domain that the fact's own RLS scope
-cannot see — a citation crossing the firewall (docs/ANALYSIS.md "Mixed-domain
+cannot see — a citation crossing the firewall (docs/reference/ANALYSIS.md "Mixed-domain
 notes"). Analysis now derives a `source_kind = 'derived'` copy of the cited
 chunk in the fact's domain and the fact cites that instead, so a citation never
 leaves the fact's scope. The original note stays the source of truth in its

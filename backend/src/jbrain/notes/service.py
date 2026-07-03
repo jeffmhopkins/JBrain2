@@ -60,7 +60,7 @@ class NoteInfo:
     analyzed: bool = False
     # 'human' (captured by the owner) or 'agent' (enacted from a Proposal). The
     # attribution rides as metadata, not in the body, so the citable source text
-    # stays clean (docs/ASSISTANT.md #7).
+    # stays clean (docs/reference/ASSISTANT.md #7).
     provenance: str = "human"
     attachments: list[AttachmentInfo] = field(default_factory=list)
     # Capture location: owner-eyes metadata (Phase 7 scoped views exclude it).

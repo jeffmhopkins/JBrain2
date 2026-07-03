@@ -1,5 +1,5 @@
 """The integrate_note job handler: one note.extract call -> Integrator -> facts,
-entities, mentions, temporal tokens, review items, note_analysis (docs/ANALYSIS.md).
+entities, mentions, temporal tokens, review items, note_analysis (docs/reference/ANALYSIS.md).
 
 Failure contract: transient LLM faults propagate and ride the queue's normal
 retry backoff; an extraction that stayed malformed through the adapter's
@@ -12,7 +12,7 @@ A note is captured in one domain, but a fact may ratchet UP (a health reading
 in a `general` note). Its citation must not point at a chunk the fact's own RLS
 scope cannot see, so `_citation_chunk` derives a per-domain copy of the cited
 chunk in the fact's domain — a citation never crosses the firewall
-(docs/ANALYSIS.md "Mixed-domain notes").
+(docs/reference/ANALYSIS.md "Mixed-domain notes").
 """
 
 import uuid
@@ -142,7 +142,7 @@ LLM_LINK_CONFIDENCE = 0.8
 # Only FULL declared names seed a near-duplicate merge PROPOSAL. A given/family
 # component, a preferred name, a nickname, or a bare `name` (pet decomposition)
 # is short and low-signal — proposing merges on those resurrects the
-# bare-first-name fan-out ANALYSIS rejected (docs/ANALYSIS.md "Same-name
+# bare-first-name fan-out ANALYSIS rejected (docs/reference/ANALYSIS.md "Same-name
 # coexistence"). Canonical spellings only; parse-time normalization already ran.
 _NEAR_DUP_PREDICATES = frozenset({"name.full", "name.maiden", "name.aka"})
 
@@ -158,7 +158,7 @@ def local_anchor(captured_at: datetime, tz_offset_minutes: int | None) -> dateti
     it tells the model the wrong calendar day (an evening capture serializes as
     the next UTC day). When the client recorded its offset we re-project the
     instant into that offset, so "today"/"in 3 months" resolve against the
-    note's local date (docs/ANALYSIS.md "Temporal model"). Offset absent (older
+    note's local date (docs/reference/ANALYSIS.md "Temporal model"). Offset absent (older
     rows, server-stamped captures): fall back to the instant as stored.
     """
     if tz_offset_minutes is None:
@@ -728,7 +728,7 @@ class AnalysisPipeline:
         `predicate_aliases` map (past owner map/rename decisions) before the
         arbiter keys it. An unaliased predicate is tier-2 long-tail: it commits
         raw — no embed round-trip, no new_predicate card, never rejected
-        (docs/ENTITY_GRAPH_REFOCUS_PLAN.md §1)."""
+        (docs/reference/ENTITY_GRAPH_REFOCUS_PLAN.md §1)."""
         registry = get_registry()
         unknown = [
             (i, f)
@@ -838,7 +838,7 @@ class AnalysisPipeline:
 
         # Identity keys this note no longer asserts were removed by the edit:
         # retract quietly — not a conflict, no inbox noise. Pinned facts are
-        # human decisions and survive (docs/ANALYSIS.md "Reprocessing"). Derived
+        # human decisions and survive (docs/reference/ANALYSIS.md "Reprocessing"). Derived
         # shadows are excluded: their lifecycle mirrors their source's, not the
         # note's re-extraction set, so the source's own refresh/supersession (or
         # FK cascade on its deletion) governs them, never this sweep. RETURNING
@@ -1018,7 +1018,7 @@ class AnalysisPipeline:
         resolution_override: dict[str, ResolvedEntity | None] | None = None,
     ) -> dict[str, ResolvedEntity | None]:
         """Layered resolution for every name the extraction references
-        (docs/ANALYSIS.md "Alias resolution & separation"): exact alias, the
+        (docs/reference/ANALYSIS.md "Alias resolution & separation"): exact alias, the
         relationship hop for reference-shaped mentions at the note's capture
         time, embedding similarity, then one batched entity.disambiguate call
         for whatever is still undecided.
@@ -1101,7 +1101,7 @@ class AnalysisPipeline:
         chunks: list[_ChunkRef],
     ) -> dict[str, ResolvedEntity | None]:
         """Layer 3: ONE batched cheap call for the note's undecided mentions —
-        conditional, never per-mention (docs/ANALYSIS.md "Model routing &
+        conditional, never per-mention (docs/reference/ANALYSIS.md "Model routing &
         cost"). Every failure mode — task not routed (the harness router only
         carries note.extract), bad JSON after the adapter's re-ask, an
         unanswered mention, a hallucinated id — degrades to the review inbox:
@@ -1260,7 +1260,7 @@ class AnalysisPipeline:
     ) -> None:
         """Once this note's facts have settled, refresh each touched entity's
         canonical_name from its current name.* facts — a projection of current
-        facts (docs/ANALYSIS.md), never the frozen first-mention surface form."""
+        facts (docs/reference/ANALYSIS.md), never the frozen first-mention surface form."""
         seen: set[uuid.UUID] = set()
         for entity in resolved.values():
             if entity is None or entity.id in seen:
@@ -1272,7 +1272,7 @@ class AnalysisPipeline:
         self, session: AsyncSession, resolved: dict[str, ResolvedEntity | None]
     ) -> None:
         """Confirm each touched provisional entity that >= CORROBORATION_THRESHOLD
-        distinct same-domain notes now corroborate (docs/entity.md). Eager and
+        distinct same-domain notes now corroborate (docs/reference/entity.md). Eager and
         complete: an entity only crosses the bar on a note that references it, and
         that note's refs are exactly `resolved`, so no sweep is needed. A
         contested identity (a live namesake) files a deduped confirm_entity card
@@ -1337,7 +1337,7 @@ class AnalysisPipeline:
         declaration. When the declared name already keys a DIFFERENT entity the
         alias is NOT widened across both (the wrong silent link); that collision
         is instead surfaced as a merge_proposal — the one high-confidence
-        same-person signal worth auto-suggesting (docs/ANALYSIS.md "Alias
+        same-person signal worth auto-suggesting (docs/reference/ANALYSIS.md "Alias
         resolution & separation")."""
         for fact in extraction.facts:
             if fact.assertion != "asserted":
@@ -1353,7 +1353,7 @@ class AnalysisPipeline:
                 # different entity — the same-person signal the exact collision
                 # below cannot see. Propose, never link. Restricted to full-name
                 # predicates so a first name / nickname / pet name never fans a
-                # merge card out across same-named people (docs/ANALYSIS.md
+                # merge card out across same-named people (docs/reference/ANALYSIS.md
                 # "Same-name coexistence").
                 if fact.predicate in _NEAR_DUP_PREDICATES:
                     await self._propose_near_duplicate(
@@ -1546,7 +1546,7 @@ class AnalysisPipeline:
         # owner SYSTEM_CTX, so RLS does not scope this read — without the
         # explicit domain filter a health fact would supersede a same-key
         # general fact and a review card would copy cross-domain text
-        # (docs/ANALYSIS.md "Domains and the firewall", "Facts").
+        # (docs/reference/ANALYSIS.md "Domains and the firewall", "Facts").
         stmt = select(Fact).where(
             Fact.entity_id == entity_id,
             Fact.predicate == predicate,
@@ -1596,7 +1596,7 @@ class AnalysisPipeline:
         fact (a health reading in a `general` note) would otherwise cite a chunk
         its own RLS scope cannot see. Derive a get-or-create `derived` copy of
         the source chunk in the fact's domain and cite that instead — the
-        citation never leaves the fact's scope (docs/ANALYSIS.md "Mixed-domain
+        citation never leaves the fact's scope (docs/reference/ANALYSIS.md "Mixed-domain
         notes"). A same-domain fact cites the source chunk directly."""
         if source_chunk_id is None or fact_domain == note_domain:
             return source_chunk_id
@@ -1800,7 +1800,7 @@ class AnalysisPipeline:
         value_json: dict[str, Any] | None,
         object_present: bool,
     ) -> dict[str, Any] | None:
-        """Typed value-shape validation (Phase 1/4, docs/PREDICATE_CANONICALIZATION.md).
+        """Typed value-shape validation (Phase 1/4, docs/reference/PREDICATE_CANONICALIZATION.md).
         Returns the value_json to commit: when the model left value_json null it is
         first deterministically recovered from the statement where it can be (an
         enum member, a name.* lead-in), so the page shows the value, not the whole
@@ -1862,7 +1862,7 @@ class AnalysisPipeline:
     ) -> uuid.UUID | None:
         # A still-future fact is `expected`, never an asserted past event; and an
         # undated "used to" relationship is CLOSED, not current — both resolved
-        # against the note's capture anchor (docs/ANALYSIS.md "Temporal model").
+        # against the note's capture anchor (docs/reference/ANALYSIS.md "Temporal model").
         fact = normalize_past_assertion(normalize_future_assertion(fact, captured_at), captured_at)
         entity = resolved.get(fact.entity_ref)
         if entity is None:

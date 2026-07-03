@@ -4,7 +4,7 @@
 
 Binding reference for how entities, names, and typed attributes are **shaped**
 across the knowledge graph. This is the schema layer that sits *underneath*
-`docs/ANALYSIS.md`'s extraction/resolution pipeline: ANALYSIS owns *how facts
+`docs/reference/ANALYSIS.md`'s extraction/resolution pipeline: ANALYSIS owns *how facts
 are produced and reconciled*; this doc owns *what an entity of a given kind is
 made of* and *how its name and properties are spelled, rendered, and resolved*.
 
@@ -147,7 +147,7 @@ when it is occupied. It runs as a boot self-heal today; recurring and on-demand
 ("emergency") triggering lands with the Phase-5 workflow engine
 (docs/ROADMAP.md "Scheduled-task migration").
 
-Under the two-tier model (docs/ENTITY_GRAPH_REFOCUS_PLAN.md §1),
+Under the two-tier model (docs/reference/ENTITY_GRAPH_REFOCUS_PLAN.md §1),
 **declared-in-registry IS tier-1**: a declared predicate gets the full
 treatment (canonicalization attractors, functional supersession, shape checks,
 projections); an undeclared one is long-tail — stored raw, searchable, no
@@ -174,7 +174,7 @@ description:         # why this type exists; can seed the prompt
 vehicle:             # graph | typed_record(phase N)   — see §Vehicles
 default_fact_kind:   # maps to the fixed fact-kind enum; per-predicate kind overrides it
 
-predicates:          # declared = tier-1 (docs/ENTITY_GRAPH_REFOCUS_PLAN.md §1); undeclared = long-tail, stored raw
+predicates:          # declared = tier-1 (docs/reference/ENTITY_GRAPH_REFOCUS_PLAN.md §1); undeclared = long-tail, stored raw
   - canonical_name:  # the predicate string (preferred spelling)
     qualifier_vocab: # 0..1 named vocab for predicate families (e.g. name.<kind>.<audience>)
     value_shape:     # scalar | text | enum | quantity | date | ref(<type>) | structured(<shape>)

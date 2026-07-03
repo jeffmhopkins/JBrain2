@@ -44,7 +44,7 @@ interface HomeScreenProps {
 
 interface Toast {
   message: string;
-  /** Single action max (docs/DESIGN.md "Toasts"); here it's the hide undo. */
+  /** Single action max (docs/reference/DESIGN.md "Toasts"); here it's the hide undo. */
   action?: { label: string; run: () => void };
 }
 

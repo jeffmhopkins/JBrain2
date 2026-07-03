@@ -6,7 +6,7 @@ talked out of. But the owner always passes `app.has_domain_scope` (is_owner()
 short-circuits), so this migration makes the firewall honour an opt-in
 `app.owner_scoped` GUC: when set to 'true', even the owner is restricted to
 `app.domain_scopes`. It defaults off, so the worker and ordinary owner API
-sessions keep seeing everything — fully backward compatible (docs/ASSISTANT.md
+sessions keep seeing everything — fully backward compatible (docs/reference/ASSISTANT.md
 "Session capabilities", invariant #4).
 
 `agent_sessions` itself is owner-only metadata (not per-row domain content), so

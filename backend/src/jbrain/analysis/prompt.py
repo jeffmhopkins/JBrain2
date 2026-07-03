@@ -102,7 +102,7 @@ def prompt_block(
     audio-transcribed, or uncertain content") only fires if the model can TELL the
     text is machine-read — nothing else in the concatenated note content conveys
     it. Facts from these blocks then inherit reduced confidence, which is what
-    keeps a misread health number from auto-superseding anything (docs/ANALYSIS.md
+    keeps a misread health number from auto-superseding anything (docs/reference/ANALYSIS.md
     "Guards"). A transcript additionally carries a "low-confidence" qualifier when
     its measured confidence was low, so the model discounts a noisy clip harder."""
     name = filename or "attachment"

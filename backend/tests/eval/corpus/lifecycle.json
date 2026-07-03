@@ -464,7 +464,7 @@
       ],
       "max_facts": 5,
       "max_facts_advisory": 2,
-      "rationale": "Pasted article material -> no encyclopedic entities, bounded output; only the owner's plan is personal. The calibrated hard bound stays at 5; the salience-first contract should yield at most the bookmark fact plus the owner's own plan, so the tightened bound of 2 lands advisory-first and hardens after the 3-run Grok calibration (docs/ENTITY_GRAPH_REFOCUS_PLAN.md section 4 T2.3)."
+      "rationale": "Pasted article material -> no encyclopedic entities, bounded output; only the owner's plan is personal. The calibrated hard bound stays at 5; the salience-first contract should yield at most the bookmark fact plus the owner's own plan, so the tightened bound of 2 lands advisory-first and hardens after the 3-run Grok calibration (docs/reference/ENTITY_GRAPH_REFOCUS_PLAN.md section 4 T2.3)."
     }
   },
   {

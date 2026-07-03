@@ -17,7 +17,7 @@ function usageLine(totals: UsageTotals): string {
   return parts.join(" · ");
 }
 
-/** AI usage (docs/ANALYSIS.md "Token accounting"): live token totals from the
+/** AI usage (docs/reference/ANALYSIS.md "Token accounting"): live token totals from the
  * adapter's llm_usage rows, priced at query time. Lives on the LLM Settings
  * screen as a collapsible drawer next to the model controls (moved off Ops in
  * the B3 redesign — spend belongs with the model config that drives it). The

@@ -308,7 +308,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
         app.state.connector_service = ConnectorService(connector_registry, SqlConnectorCache(maker))
         # The jerv chatbot's on-box internet tools — direct, sandboxed web access
-        # (no owner data in context; docs/ASSISTANT.md "Agent selection").
+        # (no owner data in context; docs/reference/ASSISTANT.md "Agent selection").
         # One best-effort emitter to the on-box wall display, shared by the web tools
         # (content-free markers) and the agent turn (opt-in LLM text streaming, gated on
         # the brain_llm_stream setting in jbrain.api.agent).
@@ -322,7 +322,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # Fetches a source site's favicon on-box for web citation chips, so the PWA
         # renders a tappable logo without ever touching the third-party host (#9).
         app.state.favicon_fetcher = FaviconFetcher()
-        # jerv's weather lookup (docs/DESIGN.md "weather_card tool-view") — a direct,
+        # jerv's weather lookup (docs/reference/DESIGN.md "weather_card tool-view") — a direct,
         # pinned Open-Meteo upstream, the same sandboxed-web posture as search. Merged
         # into the web handlers so it rides the existing `web` permission gate; the
         # offline city geocoder (set below) keeps the owner's precise fix on-box.

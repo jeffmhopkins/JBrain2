@@ -12,7 +12,7 @@ It is **off by default** and adds no surface until you enable it.
 
 > Driving it from a session? The assistant-facing runbook —
 > requesting a token, saving it, and the `scripts/debug-connect.sh` commands — is
-> `docs/DEBUG_ACCESS_SESSION_GUIDE.md`.
+> `docs/runbooks/DEBUG_ACCESS_SESSION_GUIDE.md`.
 
 ## The shape
 
@@ -152,7 +152,7 @@ be exposed publicly):
 ## Reachability
 
 The assistant reaches the box at the payload's host — normally the public
-Cloudflare Tunnel hostname (`docs/CLOUDFLARE_TUNNEL.md`). This only works if the
+Cloudflare Tunnel hostname (`docs/runbooks/CLOUDFLARE_TUNNEL.md`). This only works if the
 assistant's network egress can reach that host; an isolated sandbox may not be
 able to, in which case the token is fine but the connection won't establish.
 

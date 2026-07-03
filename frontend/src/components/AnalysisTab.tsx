@@ -1,4 +1,4 @@
-// Note view Analysis tab (docs/DESIGN.md "Analysis tab + entity pages" —
+// Note view Analysis tab (docs/reference/DESIGN.md "Analysis tab + entity pages" —
 // graph-forward): facts render as literal property-graph edges grouped by
 // subject node; subject headers double as entity navigation; tapping a fact
 // expands its citation back to the highlighted source words. The Sources

@@ -1,5 +1,5 @@
 """Agent sessions API: start and list the capability records that scope a Full
-Brain chat (docs/ASSISTANT.md "Session capabilities").
+Brain chat (docs/reference/ASSISTANT.md "Session capabilities").
 
 Owner-only. A session selects a read scope (domains × subjects); /chat then runs
 its tools narrowed to that scope via the owner_scoped firewall. Managing sessions
@@ -36,7 +36,7 @@ class SessionCreate(BaseModel):
     domain_scopes: list[str] = Field(default_factory=list)
     subject_ids: list[str] = Field(default_factory=list)
     title: str = ""
-    # The selected agent persona (docs/ASSISTANT.md "Agent selection"); validated
+    # The selected agent persona (docs/reference/ASSISTANT.md "Agent selection"); validated
     # against the closed set before it is stored.
     agent: str = DEFAULT_AGENT
 

@@ -1,6 +1,6 @@
 """propose_merge STAGES a merge proposal (never folds), keeping the entity ids
 structural; the merge leaf executor folds through the analysis repo only on enact
-(docs/ASSISTANT.md "Staging & approval", #7)."""
+(docs/reference/ASSISTANT.md "Staging & approval", #7)."""
 
 from jbrain.agent.contracts import ProposalRef
 from jbrain.agent.loop import ToolContext, ToolOutput

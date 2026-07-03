@@ -1,5 +1,5 @@
 """Persisting a session's conversation transcript so reopening Full Brain replays
-the same exchange (docs/ASSISTANT.md "Sessions").
+the same exchange (docs/reference/ASSISTANT.md "Sessions").
 
 Owner-only, append-only: one `agent_turns` row per turn. A completed turn writes
 the user message then the assistant answer (with the tool sources it surfaced) in

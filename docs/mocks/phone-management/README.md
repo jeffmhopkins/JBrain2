@@ -53,7 +53,7 @@ revoked / never-reported) so states compare across variants.
 
 **Chosen: B — swipe rail.** It gives the most aggressive vertical density and
 reuses the settled home-note / chats swipe paradigm. The pattern + reasoning are
-recorded in `docs/DESIGN.md` ("Phones tab — paired-phone management"), and B is
+recorded in `docs/reference/DESIGN.md` ("Phones tab — paired-phone management"), and B is
 implemented in `LocationScreen.tsx` (re-pair / rename / revoke / delete + the
 Active/Revoked filter) over the re-pair-aware pairing backend (migration 0077).
 A and C are retained above as the record. Family-member grouping is deferred (it

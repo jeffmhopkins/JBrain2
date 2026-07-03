@@ -4,7 +4,7 @@ picker, and the one-shot boot sweep that retires the open new_predicate card
 backlog the two-tier cutover orphaned.
 
 Suggestions only — the embed-band DECISION (STRONG auto-merge / WEAK card) was
-retired with the two-tier cutover (docs/ENTITY_GRAPH_REFOCUS_PLAN.md): the
+retired with the two-tier cutover (docs/reference/ENTITY_GRAPH_REFOCUS_PLAN.md): the
 Phase-4 calibration showed no cosine threshold separates drift spellings from
 genuinely novel predicates, so an unknown predicate now commits raw and the
 index's one job is ranking picker suggestions. The descriptor is the quality
@@ -207,7 +207,7 @@ _RETIRE_SWEEP_MARKER_KEY = "new_predicate_retire_swept"
 
 async def retire_open_new_predicate_cards(maker: async_sessionmaker[AsyncSession]) -> int:
     """Boot sweep, one-shot per database: delete every OPEN `new_predicate`
-    review card (docs/ENTITY_GRAPH_REFOCUS_PLAN.md §3 T1.3). The two-tier
+    review card (docs/reference/ENTITY_GRAPH_REFOCUS_PLAN.md §3 T1.3). The two-tier
     cutover stopped filing these — an unknown predicate now commits raw — so
     the open backlog is standing noise for a vocabulary that no longer grows.
     Open-only and kind-scoped: resolved/dismissed cards are human history and

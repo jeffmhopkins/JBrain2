@@ -1,6 +1,6 @@
 {
   "name": "acquiring an item mints the thing entity and an inbound owns edge",
-  "description": "Baseline ownership (docs/ANALYSIS.md 'property graph': me.owns -> [thing]). 'Bought a Honda Civic' mints a provisional Product entity and a relationship-kind owns edge from Me to it. The thing is an ENTITY with an inbound edge (object_entity_ref), not a value fact. owns has a named inverse (ownedBy) in the registry, so the active relationship edge materializes Civic.ownedBy -> Me as a derived edge on the thing's stream (docs/research/fix-options/2). Pins the happy-path the dispose/transfer cases break from. owns is NOT in supersession.FUNCTIONAL_PREDICATES so the single edge simply stays active.",
+  "description": "Baseline ownership (docs/reference/ANALYSIS.md 'property graph': me.owns -> [thing]). 'Bought a Honda Civic' mints a provisional Product entity and a relationship-kind owns edge from Me to it. The thing is an ENTITY with an inbound edge (object_entity_ref), not a value fact. owns has a named inverse (ownedBy) in the registry, so the active relationship edge materializes Civic.ownedBy -> Me as a derived edge on the thing's stream (docs/research/fix-options/2). Pins the happy-path the dispose/transfer cases break from. owns is NOT in supersession.FUNCTIONAL_PREDICATES so the single edge simply stays active.",
   "steps": [
     {
       "domain": "general",

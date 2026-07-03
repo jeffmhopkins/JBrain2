@@ -1,6 +1,6 @@
 """Add a nullable `skill_version` column to `app.runs` (Track N, N2).
 
-The deferred Track-C auditability item (docs/ASSISTANT.md): so a Phase-6
+The deferred Track-C auditability item (docs/reference/ASSISTANT.md): so a Phase-6
 skill-promoted run is auditable — stamped with the version of the skill it ran
 under — without a later schema change. This is groundwork only: the column is
 nullable and NO logic writes it yet (the skills table has no consumer this phase).

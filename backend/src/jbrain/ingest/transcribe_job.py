@@ -1,7 +1,7 @@
 """The transcribe_attachment job handler: one audio attachment -> a transcript
 cache row.
 
-The audio sibling of jbrain.ingest.ocr. Same doctrine (docs/ANALYSIS.md):
+The audio sibling of jbrain.ingest.ocr. Same doctrine (docs/reference/ANALYSIS.md):
 capture-to-searchable never waits on the model, so transcription is an async job,
 never inline in ingest_note — which only reads the attachment_extracts cache
 (ingest.extract.image_segments, kind-agnostic). The handler writes one
@@ -15,7 +15,7 @@ That eviction is best-effort — an optimization, never correctness — so a gat
 that can't be reached for it is logged and ignored, exactly like the settings
 screen tolerates a down gateway (jbrain.llm.local_gateway).
 
-Confidence is honest and capped ("Guards", docs/ANALYSIS.md): a transcription is
+Confidence is honest and capped ("Guards", docs/reference/ANALYSIS.md): a transcription is
 machine-heard, not author-written, so facts later mined from it inherit reduced
 confidence. It reads cleaner than OCR (audio carries no layout ambiguity) but is
 still a model's hearing, so it sits just below note text. An empty transcript
@@ -63,7 +63,7 @@ TRANSCRIBE_ATTACHMENT_SPEC = ActionSpec(
 # no layout to misread, but it is still machine-produced and must never auto-
 # supersede). The actual value is min(ceiling, the words' mean confidence), so
 # noisy audio reads low and the analysis weight machinery holds its facts for
-# review (docs/ANALYSIS.md "Guards"). No words → the flat ceiling.
+# review (docs/reference/ANALYSIS.md "Guards"). No words → the flat ceiling.
 TRANSCRIPT_CONFIDENCE = 0.8
 
 

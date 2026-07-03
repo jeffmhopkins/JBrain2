@@ -2,7 +2,7 @@
 
 Three interactive directions for the **Phase 7 location surface**, per the
 PROCESS.md GUI gate. Pick one; the chosen mock becomes the binding spec and its
-rationale is recorded in `DESIGN.md` + `docs/PHASE7_LOCATION_PLAN.md` when Wave 5
+rationale is recorded in `DESIGN.md` + `docs/archive/PHASE7_LOCATION_PLAN.md` when Wave 5
 (the UI) implementation starts.
 
 All three cover the **same three jobs** on one screen — **device management**

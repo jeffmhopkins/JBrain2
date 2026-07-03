@@ -2,7 +2,7 @@
 to the registry's canonical predicate (the `renamed_from` attractor).
 
 This is the nightly counterpart to the parse-time normalization slice 1 applies
-to NEW facts (docs/entity.md "The vocabulary invariant"): facts written under an
+to NEW facts (docs/reference/entity.md "The vocabulary invariant"): facts written under an
 older prompt/model keep their drift spelling (`legalName`) until this sweep
 moves them onto the canonical address (`name.full`), so the supersession chain
 for a property is not forked across spellings.

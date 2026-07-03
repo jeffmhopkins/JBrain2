@@ -1,7 +1,7 @@
 """Appointment facets — organizer / attendance / online link / description /
 type on the row, and a firewall-scoped sidecar for the venue.
 
-The where/who/org expansion of the appointment projection (docs/ANALYSIS.md,
+The where/who/org expansion of the appointment projection (docs/reference/ANALYSIS.md,
 appointment.yaml). The general-domain fields (organizer, attendance mode, online
 URL, description, type) ride the `appointments` row, so the row's own RLS already
 gates them. The venue cannot: an `address`/`place` fact floors into the LOCATION

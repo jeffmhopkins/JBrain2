@@ -1,4 +1,4 @@
-"""Allow an `archived` agent-session status (docs/ASSISTANT.md "Sessions").
+"""Allow an `archived` agent-session status (docs/reference/ASSISTANT.md "Sessions").
 
 Archiving tidies a chat out of the live Chats list without deleting it or its
 transcript — a third lifecycle state alongside `active` and `ended`. Widen the

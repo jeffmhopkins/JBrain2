@@ -1,15 +1,15 @@
 # JBrain2
 
 Personal knowledge system: notes in → RAG indexing → LLM-maintained wiki with
-notes as the sole sources of truth. See `docs/ARCHITECTURE.md` for the full
-design, `docs/ROADMAP.md` for phases, `docs/DEVELOPMENT.md` for binding
-standards, `docs/PROCESS.md` for the binding multi-wave execution process,
-`docs/DESIGN.md` for the binding GUI design system,
-`docs/ANALYSIS.md` for the note-analysis pipeline (Phases 2-3),
-`docs/ASSISTANT.md` for the agent design,
-`docs/PREDICATE_CANONICALIZATION.md` for the embedding-assisted predicate
+notes as the sole sources of truth. See `docs/reference/ARCHITECTURE.md` for the full
+design, `docs/ROADMAP.md` for phases, `docs/reference/DEVELOPMENT.md` for binding
+standards, `docs/reference/PROCESS.md` for the binding multi-wave execution process,
+`docs/reference/DESIGN.md` for the binding GUI design system,
+`docs/reference/ANALYSIS.md` for the note-analysis pipeline (Phases 2-3),
+`docs/reference/ASSISTANT.md` for the agent design,
+`docs/reference/PREDICATE_CANONICALIZATION.md` for the embedding-assisted predicate
 registry + typed value shapes (largely superseded by the refocus plan), and
-`docs/ENTITY_GRAPH_REFOCUS_PLAN.md` for the two-tier predicate model and the
+`docs/reference/ENTITY_GRAPH_REFOCUS_PLAN.md` for the two-tier predicate model and the
 entity-graph refocus (spine, not encyclopedia): the registry is tier-1,
 long-tail predicates commit raw with no review card. Phases 0–5 are shipped —
 the Phase 5 workflow engine (engine + scheduler + run-log + the

@@ -8,7 +8,7 @@ requires the LLM resident; this screen is the "I just want a picture — don't w
 brain" path. Each mock keeps the screen-vs-agent contrast legible (an unobtrusive
 "ask jerv in chat" note) without becoming a chat.
 
-Per `docs/PROCESS.md` / `docs/DESIGN.md` "UI development process": these are presented
+Per `docs/reference/PROCESS.md` / `docs/reference/DESIGN.md` "UI development process": these are presented
 to the owner to choose one; the chosen mock becomes the binding spec and the rest are
 retained here as the record. **No code until the owner picks.**
 
@@ -70,5 +70,5 @@ tool calls, which require the LLM resident.
 screen is built first against the **mock API client** (fixtures in `frontend/src/api/mock.ts`)
 so the working mocked UI can be approved before any backend wiring. The backend direct-render
 endpoints are a **follow-up wave** and are escalation-worthy (a non-agent surface that drives
-ComfyUI renders) — see `docs/IMAGE_LAUNCHER_PLAN.md`. The selection + rationale also land in
-`docs/DESIGN.md` (the "Image launcher" component entry).
+ComfyUI renders) — see `docs/archive/IMAGE_LAUNCHER_PLAN.md`. The selection + rationale also land in
+`docs/reference/DESIGN.md` (the "Image launcher" component entry).

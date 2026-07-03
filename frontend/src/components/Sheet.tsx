@@ -1,4 +1,4 @@
-// The shared bottom sheet (docs/DESIGN.md "Modal system"): scrim, body-scroll
+// The shared bottom sheet (docs/reference/DESIGN.md "Modal system"): scrim, body-scroll
 // lock, Escape + swipe-down + scrim-tap dismiss, drag handle, one title.
 // Every bottom-sheet flow composes this shell — bespoke modals are a
 // design-doc violation. It also self-registers in the back-layer stack so the

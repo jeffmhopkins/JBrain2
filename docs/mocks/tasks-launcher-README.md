@@ -93,8 +93,8 @@ entry rather than A's blank full-screen form.
 
 ## After a pick
 
-The chosen mock becomes the binding spec for the React build (per `docs/DESIGN.md` + the
-`docs/PROCESS.md` GUI mock gate). Implementation then adds: the **`tasks`** launcher tile +
+The chosen mock becomes the binding spec for the React build (per `docs/reference/DESIGN.md` + the
+`docs/reference/PROCESS.md` GUI mock gate). Implementation then adds: the **`tasks`** launcher tile +
 `LauncherTarget`/`Card` wiring in `Launcher.tsx` / `App.tsx`; a `TasksScreen` (+ editor) following
 the chosen layout; backend task records (prompt + agent + scope + schedule + delivery) on an
 RLS-scoped table with an isolation test; scheduler entries that, on fire, open an `AgentSession`

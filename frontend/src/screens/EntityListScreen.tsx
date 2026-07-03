@@ -1,4 +1,4 @@
-// Entities browse (docs/DESIGN.md): established paradigms only — the
+// Entities browse (docs/reference/DESIGN.md): established paradigms only — the
 // search screen's live filter input (250ms debounce, sequence-guarded) over
 // standard list rows in a card. Kind chips come from the loaded data, never
 // a hardcoded set. Tapping a row opens the existing entity-page layer.

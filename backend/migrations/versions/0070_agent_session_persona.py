@@ -1,7 +1,7 @@
 """Agent selection: the persona an agent session runs as.
 
 Full Brain mode lets the owner start a chat as one of several agents
-(docs/ASSISTANT.md "Agent selection"). The selection is stored on the session as
+(docs/reference/ASSISTANT.md "Agent selection"). The selection is stored on the session as
 `agent` — which system prompt frames the turn, which tools it may call, and
 whether it reads the knowledge base. A CHECK pins it to the closed code-defined
 set so a malformed value can never reach the turn loop; it defaults to the Full

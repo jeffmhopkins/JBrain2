@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Publish mDNS CNAME aliases pointing at this host's own .local name.
 
-The LAN site (docs/LOCAL_ACCESS.md) answers to a fixed name like jbrain.local,
+The LAN site (docs/runbooks/LOCAL_ACCESS.md) answers to a fixed name like jbrain.local,
 but avahi only auto-advertises the box's *system* hostname. Rather than rename
 the host, we publish jbrain.local as a CNAME -> <hostname>.local. avahi keeps a
 published record only while the D-Bus client that registered it stays connected,

@@ -47,7 +47,7 @@ export function groupByDay<T>(
 }
 
 /**
- * Home-stream bound (docs/DESIGN.md "Home stream"): true for local today and
+ * Home-stream bound (docs/reference/DESIGN.md "Home stream"): true for local today and
  * the previous `days - 1` calendar days. Older notes live in Search.
  */
 export function isWithinLastDays(date: Date, days: number, now: Date = new Date()): boolean {

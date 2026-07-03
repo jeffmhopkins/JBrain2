@@ -1,6 +1,6 @@
 {
   "name": "relative plan dates resolve absolutely against created_at",
-  "description": "Relative phrases must be resolved to absolute ISO against the note's capture anchor and stored, never kept only-relative (docs/ANALYSIS.md 'Temporal model'). Two plans: 'in 3 months' from 2026-06-10 -> 2026-09-10 (day precision), and 'next Tuesday' from 2026-06-10 (a Wednesday) -> 2026-06-16. The harness snapshot exposes value_json+statement but not valid_from/temporal_precision columns, so the resolved date is asserted via value_contains and the precision is encoded in value_json (the authored temporal also carries precision for the real pipeline). Pins that the resolved absolute dates land on the facts.",
+  "description": "Relative phrases must be resolved to absolute ISO against the note's capture anchor and stored, never kept only-relative (docs/reference/ANALYSIS.md 'Temporal model'). Two plans: 'in 3 months' from 2026-06-10 -> 2026-09-10 (day precision), and 'next Tuesday' from 2026-06-10 (a Wednesday) -> 2026-06-16. The harness snapshot exposes value_json+statement but not valid_from/temporal_precision columns, so the resolved date is asserted via value_contains and the precision is encoded in value_json (the authored temporal also carries precision for the real pipeline). Pins that the resolved absolute dates land on the facts.",
   "steps": [
     {
       "domain": "general",

@@ -1,5 +1,5 @@
 // Native back = climb one level, the same as the swipe-down every stacked layer
-// already honors (docs/DESIGN.md navigation tree). The app keeps no URL router,
+// already honors (docs/reference/DESIGN.md navigation tree). The app keeps no URL router,
 // so the OS/browser back gesture would otherwise leave the PWA instead of
 // popping a layer. We mirror the layer stack into the History API: a single
 // "trap" entry sits in history while anything is open, the OS back consumes it

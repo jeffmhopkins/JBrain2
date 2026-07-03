@@ -1,4 +1,4 @@
-"""jerv's `weather` tool (docs/ASSISTANT.md "Agent selection", DESIGN.md
+"""jerv's `weather` tool (docs/reference/ASSISTANT.md "Agent selection", DESIGN.md
 "weather_card tool-view").
 
 A jerv-only `web`-class tool that replaces the multi-step web-search-and-scrape

@@ -28,14 +28,14 @@ FEED_TOKEN_KEY = "appointments_feed_token"
 # Embedding-assisted predicate suggestions: when on, a held fact's review card
 # carries the canonicals nearest its predicate so the picker offers a ranked
 # swap list (suggestion UX only — never vocabulary policing; unknown predicates
-# commit raw regardless, docs/ENTITY_GRAPH_REFOCUS_PLAN.md §1). DB-backed;
+# commit raw regardless, docs/reference/ENTITY_GRAPH_REFOCUS_PLAN.md §1). DB-backed;
 # default ON; flip off live (a settings upsert) to disable without a redeploy.
 # Inert anyway without a configured embedder (the worker seeds the canonical
 # index at boot).
 PREDICATE_CANON_KEY = "predicate_canonicalization"
 PREDICATE_CANON_DEFAULT = True
 
-# Typed value-shape enforcement (docs/PREDICATE_CANONICALIZATION.md Phase 1/4):
+# Typed value-shape enforcement (docs/reference/PREDICATE_CANONICALIZATION.md Phase 1/4):
 # when off a value_json that violates its predicate's declared shape is only
 # logged; when ON (default) it is DROPPED (the fact survives on its statement,
 # per the storage invariant). DB-backed; flip off live (a settings upsert) to
@@ -137,7 +137,7 @@ WIKI_BUILD_KILL_SWITCH_DEFAULT = False
 WIKI_BUILD_SPEND_PREFIX = "wiki_build_spend:"
 
 
-# Provisional -> confirmed entity promotion (docs/entity.md "Entity lifecycle"):
+# Provisional -> confirmed entity promotion (docs/reference/entity.md "Entity lifecycle"):
 # when on, an entity corroborated by >= CORROBORATION_THRESHOLD distinct
 # same-domain notes is auto-confirmed; if its identity is contested (a live
 # namesake), a `confirm_entity` review card is filed instead of auto-confirming.
@@ -146,7 +146,7 @@ WIKI_BUILD_SPEND_PREFIX = "wiki_build_spend:"
 ENTITY_PROMOTION_KEY = "entity_promotion"
 ENTITY_PROMOTION_DEFAULT = False
 
-# Reflexion (Loop 1) buffer-then-retry mode (docs/ASSISTANT.md "Self-improvement
+# Reflexion (Loop 1) buffer-then-retry mode (docs/reference/ASSISTANT.md "Self-improvement
 # loops", Phase-5 Track R). DEFAULT is verify-and-annotate (mode b): a
 # critique-worthy /chat turn streams normally and emits a `verdict` event after
 # `done` (no retry, zero extra model calls — the verifiers are pure). This flag,
@@ -299,7 +299,7 @@ class SqlSettingsStore:
             await self.upsert(ctx, GMAIL_REFRESH_TOKEN_KEY, refresh_token)
 
     async def entity_promotion(self, ctx: SessionContext) -> bool:
-        """Whether provisional->confirmed entity promotion is on (docs/entity.md).
+        """Whether provisional->confirmed entity promotion is on (docs/reference/entity.md).
         Defaults OFF; an explicit `true` enables it."""
         return await self.get(ctx, ENTITY_PROMOTION_KEY, ENTITY_PROMOTION_DEFAULT) is True
 

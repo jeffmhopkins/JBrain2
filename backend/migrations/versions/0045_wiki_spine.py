@@ -1,4 +1,4 @@
-"""Phase 6 wiki — the graph-independent storage spine (docs/PHASE6_WIKI_PLAN.md Wave A).
+"""Phase 6 wiki — the graph-independent storage spine (docs/plans/PHASE6_WIKI_PLAN.md Wave A).
 
 The article/section/revision/index/exclusion tables + the `notes.wiki_built` dirty bit.
 This is the parallel-safe slice: it depends only on the STABLE substrate (notes, chunks,

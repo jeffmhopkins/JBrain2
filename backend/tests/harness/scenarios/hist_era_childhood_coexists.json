@@ -1,6 +1,6 @@
 {
   "name": "deep-past era-precision history coexists with the current value, no false conflict",
-  "description": "Note A sets Ingrid's current homeLocation (Oslo, valid_from 2026). Note B is a deep-past memory at ERA precision ('when I was a kid I lived in Bergen', resolved to a 1990s era range). The era fact's valid_from (1990) is far older than the active Oslo valid_from, so decide() takes the retrospective branch (supersession.decide final return): Bergen lands status='superseded', superseded_by=Oslo, NO fact_conflict. docs/ANALYSIS.md 'Temporal model': 'when I was a kid' -> era-precision range; both facts persist (history closed, current active). Pins era precision is preserved and that an era-range memory never displaces the current value.",
+  "description": "Note A sets Ingrid's current homeLocation (Oslo, valid_from 2026). Note B is a deep-past memory at ERA precision ('when I was a kid I lived in Bergen', resolved to a 1990s era range). The era fact's valid_from (1990) is far older than the active Oslo valid_from, so decide() takes the retrospective branch (supersession.decide final return): Bergen lands status='superseded', superseded_by=Oslo, NO fact_conflict. docs/reference/ANALYSIS.md 'Temporal model': 'when I was a kid' -> era-precision range; both facts persist (history closed, current active). Pins era precision is preserved and that an era-range memory never displaces the current value.",
   "steps": [
     {
       "domain": "general",

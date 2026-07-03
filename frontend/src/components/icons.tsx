@@ -1,5 +1,5 @@
 // Lucide-style outline icons, inlined to avoid an icon-font dependency.
-// 1.5px stroke per docs/DESIGN.md "Iconography"; size set by the caller.
+// 1.5px stroke per docs/reference/DESIGN.md "Iconography"; size set by the caller.
 
 import type { ReactNode } from "react";
 
@@ -88,7 +88,7 @@ export const SendIcon = (p: IconProps) => (
 );
 
 // A filled rounded square — the "stop the stream" affordance the send button
-// becomes while a turn is in flight (docs/DESIGN.md "Iconography").
+// becomes while a turn is in flight (docs/reference/DESIGN.md "Iconography").
 export const StopIcon = (p: IconProps) => (
   <Icon {...p}>
     <rect x="6" y="6" width="12" height="12" rx="2" fill="currentColor" stroke="none" />
@@ -251,7 +251,7 @@ export const EyeOffIcon = (p: IconProps) => (
   </Icon>
 );
 
-// Entity-type glyphs (docs/DESIGN.md "Iconography"). One per canonical kind;
+// Entity-type glyphs (docs/reference/DESIGN.md "Iconography"). One per canonical kind;
 // mapped to types and tinted by src/entities/kinds.tsx.
 
 export const PersonIcon = (p: IconProps) => (

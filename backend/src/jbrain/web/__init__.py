@@ -1,4 +1,4 @@
-"""On-box internet access for the jerv chatbot agent (docs/ASSISTANT.md "Agent
+"""On-box internet access for the jerv chatbot agent (docs/reference/ASSISTANT.md "Agent
 selection"): a self-hosted SearXNG metasearch client and a URL fetch-and-extract
 client. These back the `web_search` / `web_fetch` tools, which only the sandboxed
 jerv agent may call.

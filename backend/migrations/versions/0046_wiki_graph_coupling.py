@@ -1,4 +1,4 @@
-"""Phase 6 wiki — the graph-coupled write layer (docs/PHASE6_WIKI_PLAN.md Wave C1).
+"""Phase 6 wiki — the graph-coupled write layer (docs/plans/PHASE6_WIKI_PLAN.md Wave C1).
 
 The gated half of the wiki storage: the FKs into the (now-stable) fact/entity shape, plus
 the `entities.wiki_built` dirty bit and its mark-and-sweep propagation. No LLM, no builder

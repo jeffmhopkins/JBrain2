@@ -2,10 +2,10 @@
 // cookie, so every request sends credentials and a 401 anywhere means the
 // session is gone — the app-level handler flips back to the login screen.
 // Types are hand-written until Phase 1 introduces OpenAPI-generated clients
-// (docs/DEVELOPMENT.md, "Code standards / TypeScript").
+// (docs/reference/DEVELOPMENT.md, "Code standards / TypeScript").
 //
 // `npm run dev:mock` (VITE_MOCK=1) swaps the transport for in-memory
-// fixtures so UI work never needs a backend (docs/DESIGN.md, "UI
+// fixtures so UI work never needs a backend (docs/reference/DESIGN.md, "UI
 // development process"). The flag is a build-time constant and the mock
 // module loads via dynamic import, so fixtures never ship in real builds.
 
@@ -602,7 +602,7 @@ export interface NoteUpdate {
   destination?: string | null;
 }
 
-// ===== Phase 3: analysis, entities, review, LLM usage (docs/ANALYSIS.md) =====
+// ===== Phase 3: analysis, entities, review, LLM usage (docs/reference/ANALYSIS.md) =====
 
 export type FactKind =
   | "event"
@@ -2200,7 +2200,7 @@ export const api = {
     return ((await response.json()) as { count: number }).count;
   },
 
-  // ===== Phase 4: the agent — sessions + Full Brain chat (docs/ASSISTANT.md) =====
+  // ===== Phase 4: the agent — sessions + Full Brain chat (docs/reference/ASSISTANT.md) =====
 
   async listSessions(): Promise<AgentSession[]> {
     const response = await request("/api/sessions");

@@ -3,7 +3,7 @@
 > **Status:** Living · **Last verified:** 2026-07-03
 
 This is the **assistant-facing** runbook for the owner debug console. For the
-design, the auth model, and the security trade-offs, read `docs/DEBUG_ACCESS.md`
+design, the auth model, and the security trade-offs, read `docs/runbooks/DEBUG_ACCESS.md`
 first — especially the part about it being a **test-box** feature that bypasses
 the domain firewalls. This page is just "how a session gets connected and drives
 it."

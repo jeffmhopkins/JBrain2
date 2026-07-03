@@ -1,4 +1,4 @@
-"""Phase-6 wiki ORM models (docs/PHASE6_WIKI_PLAN.md §2). The graph-independent spine:
+"""Phase-6 wiki ORM models (docs/plans/PHASE6_WIKI_PLAN.md §2). The graph-independent spine:
 articles (the owner-visible cross-domain shell — display identity only), domain-scoped
 sections (the firewall/RLS unit; subsections inherit their parent's domain), append-only
 per-section revisions, the per-section embedding index, and owner source-exclusions.

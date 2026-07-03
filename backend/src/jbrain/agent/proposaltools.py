@@ -1,4 +1,4 @@
-"""The propose_correction tool and the agent-note executor (docs/ASSISTANT.md
+"""The propose_correction tool and the agent-note executor (docs/reference/ASSISTANT.md
 "Staging & approval", invariant #7).
 
 The agent has no privileged write into citable knowledge. `propose_correction`

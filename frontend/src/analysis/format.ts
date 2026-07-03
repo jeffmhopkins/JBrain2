@@ -1,5 +1,5 @@
 // Pure display helpers for the property-graph surfaces (analysis tab +
-// entity pages). The temper from docs/DESIGN.md applies: keep predicate
+// entity pages). The temper from docs/reference/DESIGN.md applies: keep predicate
 // paths, soften the meta (confidence as "96%", lowercase-calm chips).
 
 import type { FactOut } from "../api/client";

@@ -3,7 +3,7 @@
 // A self-contained full-screen overlay (its own back bar), like Automations. Cards
 // read "agent · schedule" with an enable toggle + next/last-run meta and a docked
 // "latest result" band — one tap to the newest run's session, a steel NEW signal
-// until viewed (docs/DESIGN.md "Tasks — the result band"). Expanding a card loads
+// until viewed (docs/reference/DESIGN.md "Tasks — the result band"). Expanding a card loads
 // its full recent runs (each links to the session it produced). "＋ New task" rises
 // a full-screen editor: prompt, agent (Curator reveals a scope dial), schedule, and
 // delivery. Reflects live state — the cards come from /api/tasks.

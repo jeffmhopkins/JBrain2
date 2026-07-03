@@ -1,6 +1,6 @@
 {
   "name": "spouse is functional: a new partner supersedes the old",
-  "description": "spouse is in supersession.FUNCTIONAL_PREDICATES, so a later spouse binding to a different person supersedes the earlier one (SCD-2 close + fact_conflict), exactly like employer. A subject (Me) has at most one current spouse. Pins the 'spouse' member of the functional allowlist in docs/ANALYSIS.md.",
+  "description": "spouse is in supersession.FUNCTIONAL_PREDICATES, so a later spouse binding to a different person supersedes the earlier one (SCD-2 close + fact_conflict), exactly like employer. A subject (Me) has at most one current spouse. Pins the 'spouse' member of the functional allowlist in docs/reference/ANALYSIS.md.",
   "steps": [
     {
       "domain": "general",

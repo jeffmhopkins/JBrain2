@@ -1,6 +1,6 @@
 {
   "name": "appointment reschedule supersedes the scheduled time, identity stable",
-  "description": "An appointment is a stable entity whose scheduled time is a supersedable state binding (docs/ANALYSIS.md 'Temporal tokens and appointment identity'). 'Dr. Nguyen Friday' then 'moved to Monday' must close the Friday binding (SCD-2), keep the full reschedule chain, file a fact_conflict, and leave exactly one active scheduled time — all on the same appointment entity. Modeled as a state fact on schema.org-style 'scheduledTime'; the Monday time is LATER validity than Friday so the validity-newest-wins comparison in supersession.decide picks it as current.",
+  "description": "An appointment is a stable entity whose scheduled time is a supersedable state binding (docs/reference/ANALYSIS.md 'Temporal tokens and appointment identity'). 'Dr. Nguyen Friday' then 'moved to Monday' must close the Friday binding (SCD-2), keep the full reschedule chain, file a fact_conflict, and leave exactly one active scheduled time — all on the same appointment entity. Modeled as a state fact on schema.org-style 'scheduledTime'; the Monday time is LATER validity than Friday so the validity-newest-wins comparison in supersession.decide picks it as current.",
   "steps": [
     {
       "domain": "general",

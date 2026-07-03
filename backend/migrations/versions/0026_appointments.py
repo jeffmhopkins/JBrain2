@@ -6,7 +6,7 @@ the appointment entities the analysis pipeline already extracts (notes are the
 sole sources of truth, non-negotiable #7). Each row projects exactly one
 appointment entity — `entity_id` is the key the projector upserts on, and it
 cascades, so when a note is deleted and its provisional entity purged, the
-projection row goes with it (the privacy promise, docs/ANALYSIS.md "purge").
+projection row goes with it (the privacy promise, docs/reference/ANALYSIS.md "purge").
 
 Owner-only and domain-firewalled like lists: a health appointment is invisible to
 a finance-scoped session and to any non-owner principal (#8). The agent never

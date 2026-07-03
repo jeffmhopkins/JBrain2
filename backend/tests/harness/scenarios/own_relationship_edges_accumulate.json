@@ -1,6 +1,6 @@
 {
   "name": "owns modeled as a non-functional relationship accumulates across items",
-  "description": "owns is NOT in supersession.FUNCTIONAL_PREDICATES, so when emitted as kind=relationship the pipeline's relationship branch returns insert=True with no supersede/review ('non-functional edges accumulate', docs/ANALYSIS.md 'default accumulate'). Three distinct possessions on Me.owns -- a Civic, a kayak, a wedding ring -- all stay active with no chain and no fact_conflict, EVEN with an empty qualifier, because the relationship branch never reads the current head. The contrast with own_many_items_collide_on_predicate (state kind, same empty qualifier, WRONGLY supersedes) shows the bug is specific to the newest-wins state/functional path, not to the identity key alone.",
+  "description": "owns is NOT in supersession.FUNCTIONAL_PREDICATES, so when emitted as kind=relationship the pipeline's relationship branch returns insert=True with no supersede/review ('non-functional edges accumulate', docs/reference/ANALYSIS.md 'default accumulate'). Three distinct possessions on Me.owns -- a Civic, a kayak, a wedding ring -- all stay active with no chain and no fact_conflict, EVEN with an empty qualifier, because the relationship branch never reads the current head. The contrast with own_many_items_collide_on_predicate (state kind, same empty qualifier, WRONGLY supersedes) shows the bug is specific to the newest-wins state/functional path, not to the identity key alone.",
   "steps": [
     {
       "domain": "general",

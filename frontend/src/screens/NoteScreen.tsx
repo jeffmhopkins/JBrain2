@@ -1,4 +1,4 @@
-// Note view layer (docs/DESIGN.md "Note view"): a slide-up tree level over
+// Note view layer (docs/reference/DESIGN.md "Note view"): a slide-up tree level over
 // home or search with Note / Attachments / Analysis tabs. Attachments is the
 // canonical manager (manifest rows + per-file sheet); pre-Phase-3 the header
 // is domain + date only (no title), and Analysis shows phased placeholders.

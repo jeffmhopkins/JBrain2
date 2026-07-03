@@ -1,7 +1,7 @@
 """The weight model — deterministic confidence ceilings for integrated facts.
 
 Plan N11: a fact's weight is NOT the model's self-reported number. The agent's
-self-confidence is untrusted content (docs/ASSISTANT.md: content-derived
+self-confidence is untrusted content (docs/reference/ASSISTANT.md: content-derived
 importance is untrusted and capped), so it may only ever *lower* a deterministic
 ceiling computed from signals the arbiter can check itself — it can make the
 system more cautious, never more permissive. The commit-vs-review decision reads
@@ -65,7 +65,7 @@ class ConfidenceSignals:
 def ceiling(signals: ConfidenceSignals) -> float:
     """The maximum weight these signals allow, in [0, 1]. An unregistered
     (tier-2) predicate carries NO penalty — long-tail facts commit on the same
-    terms as declared ones (docs/ENTITY_GRAPH_REFOCUS_PLAN.md §1)."""
+    terms as declared ones (docs/reference/ENTITY_GRAPH_REFOCUS_PLAN.md §1)."""
     if signals.surface_attested:
         return 1.0
     return INFERRED_OVERWRITE_CEILING if signals.is_supersede else INFERRED_CEILING

@@ -1,5 +1,5 @@
 """The Proposals API — the unified review-inbox surface for agent-staged work
-(docs/ASSISTANT.md "Staging & approval"). Owner-only.
+(docs/reference/ASSISTANT.md "Staging & approval"). Owner-only.
 
 List the open proposals, open a tree, approve/reject a node (cascading by
 containment), and enact — which runs every approved leaf whose prerequisites are

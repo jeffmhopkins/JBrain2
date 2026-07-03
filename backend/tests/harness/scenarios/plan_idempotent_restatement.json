@@ -1,6 +1,6 @@
 {
   "name": "restating the same plan is idempotent",
-  "description": "Re-stating an identical plan must refresh provenance in place, not mint a new supersession link or a duplicate review (docs/ANALYSIS.md 'Reprocessing': identical value -> refresh, no chain, no inbox noise). Two notes assert the SAME standup time (same scheduledTime value_json + same valid_from); supersession.decide hits the values_equal/active idempotency branch (refresh_id) on the second note. Pins exactly one active fact, no superseded chain link, and zero fact_conflict reviews.",
+  "description": "Re-stating an identical plan must refresh provenance in place, not mint a new supersession link or a duplicate review (docs/reference/ANALYSIS.md 'Reprocessing': identical value -> refresh, no chain, no inbox noise). Two notes assert the SAME standup time (same scheduledTime value_json + same valid_from); supersession.decide hits the values_equal/active idempotency branch (refresh_id) on the second note. Pins exactly one active fact, no superseded chain link, and zero fact_conflict reviews.",
   "steps": [
     {
       "domain": "general",

@@ -1,6 +1,6 @@
 """Allow the confirm_entity review-item kind.
 
-Provisional -> confirmed entity promotion (docs/entity.md "Entity lifecycle")
+Provisional -> confirmed entity promotion (docs/reference/entity.md "Entity lifecycle")
 auto-confirms an entity once enough distinct notes corroborate it, but when the
 identity is contested (a live namesake) it files a `confirm_entity` card instead
 of cementing a possibly-wrong identity. The review_items kind CHECK is an

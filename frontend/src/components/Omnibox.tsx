@@ -1,4 +1,4 @@
-// The bottom-docked composer (docs/DESIGN.md "The omnibox home").
+// The bottom-docked composer (docs/reference/DESIGN.md "The omnibox home").
 // Compact by default — two lines to type — and it grows with the text; the
 // segmented row morphs between the main trio and the entry sub-types, and
 // Medical/Financial expose an in-box destination row.

@@ -9,7 +9,7 @@ import {
 import { DatabaseIcon, RefreshIcon } from "../components/icons";
 import { useForegroundRef } from "../visibility";
 
-/** The Data launcher screen (docs/DESIGN.md "Data screen"): export / import /
+/** The Data launcher screen (docs/reference/DESIGN.md "Data screen"): export / import /
  * reset as one focused task at a time behind a Backup · Restore · Reset
  * segmented switch (variant C). The flows are the settled Ops Data card —
  * lifted onto their own screen and re-laid-out — so the supervisor one-shots,

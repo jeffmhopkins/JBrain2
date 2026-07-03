@@ -1,4 +1,4 @@
-"""jerv's `hurricane` tool (docs/ASSISTANT.md "Agent selection", DESIGN.md
+"""jerv's `hurricane` tool (docs/reference/ASSISTANT.md "Agent selection", DESIGN.md
 "hurricane_card tool-view"; build plan docs/HURRICANE_TABS_PLAN.md).
 
 A jerv-only `web`-class tool: given a place, it finds the nearest active tropical

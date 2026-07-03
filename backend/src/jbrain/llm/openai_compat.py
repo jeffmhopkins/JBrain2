@@ -3,7 +3,7 @@
 Serves two providers: xAI (https://api.x.ai/v1) and the local escape hatch
 (Ollama-style server at JBRAIN_LOCAL_LLM_URL). Keeping them on one client is
 what makes "go all-local" a config flip instead of a refactor — see
-docs/ANALYSIS.md "Privacy routing".
+docs/reference/ANALYSIS.md "Privacy routing".
 """
 
 import asyncio

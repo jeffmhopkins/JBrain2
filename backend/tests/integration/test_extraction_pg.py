@@ -687,7 +687,7 @@ async def test_ratcheted_fact_cites_a_derived_chunk_in_its_own_domain(
 ) -> None:
     """A health fact in a `general` note ratchets UP, so its citation must land
     on a chunk in HEALTH, not the note's general chunk — otherwise the citation
-    crosses the firewall (docs/ANALYSIS.md "Mixed-domain notes"). The same-domain
+    crosses the firewall (docs/reference/ANALYSIS.md "Mixed-domain notes"). The same-domain
     job-title fact keeps citing the original note chunk. A unique entity keeps
     the measurement from colliding with another test's reading on shared Me."""
     person = "Quincy Vitals"
@@ -1042,7 +1042,7 @@ async def test_declared_name_collision_files_one_merge_proposal(
     """When a self-naming fact's name already keys a DIFFERENT entity, the alias
     is NOT widened across both — the collision becomes a single merge_proposal
     (the older, more-anchored side as survivor), and re-analysis does not
-    multiply it (docs/ANALYSIS.md "Alias resolution & separation")."""
+    multiply it (docs/reference/ANALYSIS.md "Alias resolution & separation")."""
     full_name = "Wilhelmina Garcia Okonkwo"
     declarer = "Mina O."
     namesake = await _seed_provisional_namesake(maker, full_name)

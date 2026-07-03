@@ -69,6 +69,6 @@ preview: host mode enabled — sessions serve at <slug>-preview.$base
 preview: ONE manual Cloudflare step (once): in your tunnel's Published application
 preview: routes add Subdomain '*', Domain '$base', Service http://proxy:80 (this
 preview: creates the wildcard DNS). Free Universal SSL covers *.$base only when
-preview: $base is your zone apex. See docs/CLOUDFLARE_TUNNEL.md. Takes effect on
+preview: $base is your zone apex. See docs/runbooks/CLOUDFLARE_TUNNEL.md. Takes effect on
 preview: the next 'jbrain up' (a .env change isn't picked up by 'restart').
 EOF

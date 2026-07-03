@@ -2,11 +2,11 @@
 
 Three interactive directions for the **in-chat `generated_image` tool-view** —
 the card jerv shows after a `generate_image` or `edit_image` tool call
-(`docs/PROCESS.md` GUI gate; `docs/IMAGE_GEN_PLAN.md` "Wave G3"). Pick one; the
+(`docs/reference/PROCESS.md` GUI gate; `docs/archive/IMAGE_GEN_PLAN.md` "Wave G3"). Pick one; the
 chosen mock becomes the binding spec and the other two are retained here as the
 record (mirrors the `wiki-talk-README` convention).
 
-All three honor the tool-view contract (`docs/DESIGN.md` "Agent tool views"):
+All three honor the tool-view contract (`docs/reference/DESIGN.md` "Agent tool views"):
 the model authors **no markup and no URLs** — it only fills the data-only slots
 `{image_id, kind ('generate'|'edit'), prompt, width, height, model}`. The
 component builds the image source as `/api/images/generated/${image_id}` and
@@ -53,4 +53,4 @@ edit no differently from a fresh generate. **A** (result-only) and **B**
 (result + a collapsed prompt/seed/Regenerate disclosure) are retained in this
 directory as the record (C subsumes A's generate-only layout, so this choice also
 fixes the generate rendering). The selection + rationale also land in
-`docs/DESIGN.md` (the `generated_image` tool-view entry, per the GUI gate).
+`docs/reference/DESIGN.md` (the `generated_image` tool-view entry, per the GUI gate).

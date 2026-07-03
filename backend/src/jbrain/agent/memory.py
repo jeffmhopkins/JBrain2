@@ -1,5 +1,5 @@
 """Tier-A memory service: recall over the episodic namespace and ACE delta-edit
-writes to the behavioral/working blocks (docs/ASSISTANT.md "Memory model").
+writes to the behavioral/working blocks (docs/reference/ASSISTANT.md "Memory model").
 
 Two distinct jobs, one table family. *Recall* fuses the same dense+FTS RRF the
 corpus uses, but over `agent_episodes` — a segregated namespace (its own table),

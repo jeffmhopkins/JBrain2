@@ -109,7 +109,7 @@ worked example: `docs/mocks/wiki-reader-example-priya.html`.)
   all ANN queries run inside the RLS-scoped session.
 - **Editorial config as data**: style guide, citation-density floor, the **notability gate**
   (§6), and the per-entity-type **wiki guides** (sections/style/requirements; starter set
-  `docs/WIKI_TYPE_GUIDES.md`). *(Split/merge thresholds are vestigial under the
+  `docs/reference/WIKI_TYPE_GUIDES.md`). *(Split/merge thresholds are vestigial under the
   entity-driven model — omitted from v1.)*
 
 **Gated on the rebuild (FK into the frozen fact shape):**
@@ -401,7 +401,7 @@ predicate-canon, prompt/tool self-edit — and their eval/promotion harness were
   **Wave T2 shipped:** the live **Editor** (agent) reply — an owner reply draws an `AgentLoop.run()`
   turn (dedicated Editor system prompt + the wiki tools, owner full-read, `after_post_id` idempotency
   guard) that explains sourcing and enacts via the levers, posted as an `editor` post with an outcome
-  chip (`POST /wiki/{id}/talk/topics/{tid}/editor`). See `docs/TALK_BOARD_PLAN.md`. Deferred follow-up:
+  chip (`POST /wiki/{id}/talk/topics/{tid}/editor`). See `docs/archive/TALK_BOARD_PLAN.md`. Deferred follow-up:
   fold the reader's DiscussSheet quick-fix into the in-topic flow.
 
 ## 8. Non-negotiables (CLAUDE.md) + exit

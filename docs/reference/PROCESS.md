@@ -5,7 +5,7 @@
 The **binding process** for building a phased plan (e.g. `WORKFLOW_ENGINE_PLAN.md`)
 once its waves are defined. It governs *how* the work is sequenced, reviewed, and
 landed — and it binds human and AI contributors equally, on top of
-`docs/DEVELOPMENT.md` (the standards) and the `CLAUDE.md` non-negotiables.
+`docs/reference/DEVELOPMENT.md` (the standards) and the `CLAUDE.md` non-negotiables.
 
 ## The loop, per wave
 
@@ -60,7 +60,7 @@ A wave is a set of tasks that can run mostly in parallel. For each wave:
 ## GUI gate
 
 Any task that adds or changes a **GUI surface** requires **three interactive mock
-HTML artifacts** (real, clickable, per `docs/DESIGN.md`'s mock-first discipline)
+HTML artifacts** (real, clickable, per `docs/reference/DESIGN.md`'s mock-first discipline)
 **presented to the owner to choose the path before implementation begins**. The
 chosen mock becomes the binding spec and lands in `docs/mocks/`. This is a
 critical-decision interruption by design.

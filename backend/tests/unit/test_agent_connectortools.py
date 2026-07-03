@@ -1,5 +1,5 @@
 """Connector tools STAGE an egress Proposal (never call out), and the egress leaf
-executor fires the connector only on enact (docs/ASSISTANT.md #9)."""
+executor fires the connector only on enact (docs/reference/ASSISTANT.md #9)."""
 
 from types import SimpleNamespace
 from typing import Any

@@ -1,4 +1,4 @@
-"""The wiki builder engine (docs/PHASE6_WIKI_PLAN.md §3).
+"""The wiki builder engine (docs/plans/PHASE6_WIKI_PLAN.md §3).
 
 The builder is the *mechanism*: dirty-bit scan → source the entity's citable facts (minting a
 same-domain derived chunk for a ratcheted fact) → enact a redirect for a merged entity → write
@@ -270,7 +270,7 @@ def _linkify(body: str, links: list[tuple[str, str]]) -> str:
     return body
 
 
-# Notability (docs/PHASE6_WIKI_PLAN.md §6 #6): an entity earns an article with ≥3 cited facts
+# Notability (docs/plans/PHASE6_WIKI_PLAN.md §6 #6): an entity earns an article with ≥3 cited facts
 # OR ≥2 distinct source notes. Tunable in editorial config later; a constant for C2a.
 NOTABILITY_MIN_FACTS = 3
 NOTABILITY_MIN_NOTES = 2

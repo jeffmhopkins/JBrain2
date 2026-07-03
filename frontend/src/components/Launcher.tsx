@@ -1,4 +1,4 @@
-// Full-screen card launcher (docs/DESIGN.md "Navigation: the card
+// Full-screen card launcher (docs/reference/DESIGN.md "Navigation: the card
 // launcher"). A navigation surface, not a modal: it owns the whole screen,
 // slides up 150ms ease-out, and dismisses on swipe-down or Escape.
 
@@ -244,7 +244,7 @@ export function Launcher({ open, active = true, onClose, onNavigate }: LauncherP
   }
 
   return (
-    // A nav surface, not a modal (docs/DESIGN.md) — hence <nav>, no scrim.
+    // A nav surface, not a modal (docs/reference/DESIGN.md) — hence <nav>, no scrim.
     <nav
       className={`launcher${closing ? " launcher-closing" : ""}`}
       ref={panelRef}

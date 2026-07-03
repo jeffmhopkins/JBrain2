@@ -1,4 +1,4 @@
-"""jerv's owner-location tool: `current_location` (docs/ASSISTANT.md "Agent selection").
+"""jerv's owner-location tool: `current_location` (docs/reference/ASSISTANT.md "Agent selection").
 
 jerv answers location from the position the PWA captured for THIS turn (the same warm
 geolocation fix note sends attach) — or, when this turn carried none, the owner's

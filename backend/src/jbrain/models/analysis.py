@@ -1,6 +1,6 @@
 """Phase 3 analysis tables: entities, facts, temporal tokens, review inbox.
 
-Mirrors migration 0006 (docs/ANALYSIS.md is the binding spec). Facts and
+Mirrors migration 0006 (docs/reference/ANALYSIS.md is the binding spec). Facts and
 entities are append-mostly: supersession chains and merge tombstones are the
 revision history, so nothing here is ever hard-deleted by application code —
 with one sanctioned exception [decided]: deleting a source note purges every
@@ -189,7 +189,7 @@ class Fact(Base):
 
 class NoteAnalysis(Base):
     """Per-note product of the note.extract call; analyzed_at is the Phase 3
-    minimal reprocessing watermark (docs/ANALYSIS.md "Reprocessing")."""
+    minimal reprocessing watermark (docs/reference/ANALYSIS.md "Reprocessing")."""
 
     __tablename__ = "note_analysis"
     __table_args__ = {"schema": "app"}
@@ -225,7 +225,7 @@ class ReviewItem(Base):
 
 class CanonicalPredicate(Base):
     """One global reference row per canonical predicate (predicate
-    canonicalization Phase 2, docs/PREDICATE_CANONICALIZATION.md §3.3).
+    canonicalization Phase 2, docs/reference/PREDICATE_CANONICALIZATION.md §3.3).
 
     `embedding` (pgvector vector(384)) is deliberately unmapped — written and
     cosine-queried via raw SQL exactly like Entity.summary_embedding; the ORM

@@ -9,7 +9,7 @@ holding a JSON object of overrides ({"note.extract":
 "anthropic:claude-sonnet-4-6"}) merged over the defaults.
 
 The "local" provider must exist now so going all-local is config, not
-refactor — docs/ANALYSIS.md "Privacy routing".
+refactor — docs/reference/ANALYSIS.md "Privacy routing".
 """
 
 import time
@@ -48,7 +48,7 @@ TASK_DEFAULTS: dict[str, str] = {
     "correction_note.extract": "xai:grok-4.3",
     "vision.ocr": "xai:grok-4.3",
     "vision.caption": "xai:grok-4.3",
-    # The tool-using personal agent's turn (docs/ASSISTANT.md). Strong tier by
+    # The tool-using personal agent's turn (docs/reference/ASSISTANT.md). Strong tier by
     # default — agent reasoning over tools is the high-stakes path.
     "agent.turn": "xai:grok-4.3",
     # jerv's `analyze_image` tool: a vision read the turn delegates so a text-only
@@ -75,7 +75,7 @@ TASK_DEFAULTS: dict[str, str] = {
     # tokens for the thinking trace, not just the title). This default is just the
     # operator-override hook.
     "session.title": "xai:grok-4.3",
-    # The Phase-6 wiki builder (docs/PHASE6_WIKI_PLAN.md): `wiki.rewrite` drafts a
+    # The Phase-6 wiki builder (docs/plans/PHASE6_WIKI_PLAN.md): `wiki.rewrite` drafts a
     # type-guided article from an entity's cited facts; `wiki.ground` is the strict
     # grounding verifier (the entity graph wins on conflict). Without these the
     # builder's router.complete() raises `unknown LLM task` and every build aborts.
@@ -124,7 +124,7 @@ TASK_REASONING_DEFAULTS: dict[str, str] = {
 
 # Capability tiers (a prompt's `strength:`) → "provider:model". A prompt names a
 # tier, never a model, so swapping the model behind a tier is config, not a
-# prompt edit (docs/ANALYSIS.md "Privacy routing"). Today every tier resolves to
+# prompt edit (docs/reference/ANALYSIS.md "Privacy routing"). Today every tier resolves to
 # the same default as the tasks; the "embedding" tier is served by the embed
 # container, not this completion router, so it is not listed here.
 TIER_DEFAULTS: dict[str, str] = {

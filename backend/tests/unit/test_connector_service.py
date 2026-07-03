@@ -1,5 +1,5 @@
 """The egress executor: cache miss fetches+caches+logs, cache hit skips the
-network, and the egress guard rejects before any call (docs/ASSISTANT.md #9). HTTP
+network, and the egress guard rejects before any call (docs/reference/ASSISTANT.md #9). HTTP
 is faked via MockTransport — no live network, like the LLM adapter."""
 
 from typing import Any

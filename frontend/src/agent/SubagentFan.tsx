@@ -1,5 +1,5 @@
 // The in-chat sub-agent fan: jerv's web-sandboxed research/review/summarize children
-// rendered as a bordered accordion below its answer bubble (docs/DESIGN.md "Sub-agent
+// rendered as a bordered accordion below its answer bubble (docs/reference/DESIGN.md "Sub-agent
 // spawning surfaces", chosen layout A; docs/SUBAGENT_SPAWNING_PLAN.md Wave S3). Folded
 // from the parent turn's `subagent_*` events (transcript.ts). Persona is a NEUTRAL tag;
 // the only semantic colours are the glyph's steel=running / green=done / rose=failed.

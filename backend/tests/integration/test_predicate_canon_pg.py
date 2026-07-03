@@ -1,4 +1,4 @@
-"""The two-tier predicate pipeline end to end (docs/ENTITY_GRAPH_REFOCUS_PLAN.md
+"""The two-tier predicate pipeline end to end (docs/reference/ENTITY_GRAPH_REFOCUS_PLAN.md
 §1) against real Postgres, with the LLM faked. Proves: a durable predicate_alias
 rewrites an unknown predicate to its canonical BEFORE the arbiter keys the fact
 (no embedder required); an unaliased long-tail predicate commits raw with NO

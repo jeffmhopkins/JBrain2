@@ -84,11 +84,27 @@ check_index() {
 }
 check_index "$DOCS/proposed"
 check_index "$DOCS/archive"
+check_index "$DOCS/reference"
+check_index "$DOCS/runbooks"
+check_index "$DOCS/plans"
+
+# Doc links — warn on a docs/*.md reference (inside docs/, outside archive) whose
+# target file is missing. Keeps the doc corpus internally linked; code-comment
+# references are out of scope. Meta docs (illustrative example paths) are exempt.
+while IFS= read -r f; do
+  case "$f" in */archive/*|*/mocks/*) continue;; esac
+  is_meta "$f" && continue
+  while IFS= read -r ref; do
+    [ -z "$ref" ] && continue
+    [ -e "$ROOT/$ref" ] || warn "$f — links to $ref, which does not exist"
+  done < <(grep -oE 'docs/[A-Za-z0-9_./-]+\.md' "$f" | sort -u)
+done < <(find "$DOCS" -name '*.md' 2>/dev/null | sort)
 
 # Freshness age — warn only on ACTIVE plan docs (Scheduled/In progress) verified
 # > 90 days ago. Stable Living runbooks are exempt (GNU date only).
 today="$(date +%s)"
 while IFS= read -r f; do
+  case "$f" in */archive/*|*/mocks/*) continue;; esac
   status="$(head -n 8 "$f" | grep -m1 -oiE 'Status:\*\* *[A-Za-z ]+' || true)"
   case "$status" in *[Pp]rogress*|*[Ss]cheduled*) ;; *) continue;; esac
   d="$(grep -m1 -oE 'Last verified:\*\* *[0-9]{4}-[0-9]{2}-[0-9]{2}' "$f" 2>/dev/null | grep -oE '[0-9]{4}-[0-9]{2}-[0-9]{2}' || true)"
@@ -97,7 +113,7 @@ while IFS= read -r f; do
     age=$(( (today - ts) / 86400 ))
     [ "$age" -gt 90 ] && warn "$f — Last verified $d is ${age}d old (>90); re-verify or bump"
   fi
-done < <(find "$DOCS" -maxdepth 1 -name '*.md' 2>/dev/null | sort)
+done < <(find "$DOCS" -name '*.md' 2>/dev/null | sort)
 
 printf '\ndocs-freshness: %d error(s), %d warning(s)\n' "$errors" "$warns"
 [ "$errors" -eq 0 ]

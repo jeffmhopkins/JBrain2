@@ -105,7 +105,7 @@ note saved → event → extraction (attachments) → multi-granularity chunking
 
 ## Wiki
 
-> **Build plan: `docs/PHASE6_WIKI_PLAN.md`** (+ `PHASE6_WIKI_GRAPH_CONTRACT.md`). Where this
+> **Build plan: `docs/plans/PHASE6_WIKI_PLAN.md`** (+ `PHASE6_WIKI_GRAPH_CONTRACT.md`). Where this
 > section differs, the plan governs: split/merge **thresholds** are vestigial under the
 > entity-driven model (the *article* restructure follows the owner-approved **entity**
 > merge/split — not a separate review-inbox approval); citations are FKs to **chunks**

@@ -1,6 +1,6 @@
 """Allow the new_predicate review-item kind.
 
-Embedding-assisted predicate canonicalization (docs/PREDICATE_CANONICALIZATION.md
+Embedding-assisted predicate canonicalization (docs/reference/PREDICATE_CANONICALIZATION.md
 Phase 3) files a `new_predicate` card when an unknown predicate has no confident
 canonical match — the fact still commits under its raw name, and the card lets
 the owner/agent keep it or map it onto a suggested canonical. The review_items

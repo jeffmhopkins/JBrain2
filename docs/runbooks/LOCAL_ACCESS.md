@@ -2,7 +2,7 @@
 
 > **Status:** Living · **Last verified:** 2026-07-03
 
-The Cloudflare Tunnel (`docs/CLOUDFLARE_TUNNEL.md`) is how you reach JBrain from
+The Cloudflare Tunnel (`docs/runbooks/CLOUDFLARE_TUNNEL.md`) is how you reach JBrain from
 *outside* your house. But it depends on the internet: a power blip that takes the
 WAN down while the box and LAN stay up (battery backup) leaves you locked out of
 your own server, even from a laptop on the same switch.

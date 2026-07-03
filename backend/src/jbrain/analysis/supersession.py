@@ -1,4 +1,4 @@
-"""Per-kind fact supersession decisions (docs/ANALYSIS.md "Fact kinds").
+"""Per-kind fact supersession decisions (docs/reference/ANALYSIS.md "Fact kinds").
 
 Pure logic over fact views: the pipeline loads the identity key's existing
 facts, asks `decide`, and applies the returned actions in its transaction.
@@ -162,7 +162,7 @@ def inverse_predicate(predicate: str) -> str | None:
 # Schedule-binding predicates: an appointment's time is a binding whose value
 # IS a validity instant, so ordering by validity would make a reschedule to an
 # EARLIER time lose to the time it replaces. The newest INSTRUCTION wins
-# regardless of direction (docs/ANALYSIS.md "Temporal tokens and appointment
+# regardless of direction (docs/reference/ANALYSIS.md "Temporal tokens and appointment
 # identity"), so these order by reported_at. The set carries the schema.org
 # spelling the prompt steers toward plus its snake_case twin, like
 # FUNCTIONAL_PREDICATES above.
@@ -175,7 +175,7 @@ def is_schedule_binding(predicate: str) -> bool:
 
 # Below this, a candidate never auto-supersedes a MORE confident active fact;
 # it parks in pending_review behind a low_confidence card instead.
-# docs/ANALYSIS.md "Guards" demands this for low-confidence numeric health
+# docs/reference/ANALYSIS.md "Guards" demands this for low-confidence numeric health
 # facts (OCR-derived especially); we apply it domain-agnostically because
 # decide() is deliberately pure (it never sees the fact's domain) and the
 # asymmetry is safe — over-guarding a general fact costs one review card,
@@ -347,7 +347,7 @@ def values_equal(candidate: Candidate, existing: FactView) -> bool:
     asserts the inverse, so it must fall through to the per-kind supersession
     logic — the refresh path only writes rendering/provenance, never assertion,
     and would otherwise leave a head asserting the opposite of the truth
-    (docs/ANALYSIS.md "Assertion status")."""
+    (docs/reference/ANALYSIS.md "Assertion status")."""
     if candidate.object_entity_id != existing.object_entity_id:
         return False
     if candidate.assertion != existing.assertion:
@@ -372,7 +372,7 @@ def _interval_close(candidate: Candidate, live: list[FactView], predicate: str) 
     is not a value change: the candidate restates the SAME open state — same
     object/value, same valid_from — and merely supplies the valid_to the open
     row lacks. Closing that interval in place keeps one row whose old fact
-    "stays true about its interval" (docs/ANALYSIS.md state row / SCD-2);
+    "stays true about its interval" (docs/reference/ANALYSIS.md state row / SCD-2);
     chaining a duplicate or filing a conflict would dispute a fact nobody
     disputes. Checked BEFORE the refresh path, which writes only rendering and
     provenance and would otherwise swallow the new end date."""

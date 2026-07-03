@@ -9,7 +9,7 @@ manage places — plus the proactive/analytics ideas we deliberately parked.
 
 Produced by a multi-researcher brainstorm + an independent red-team pass (3 clusters).
 This is a **reference list** — only the ✅ items are slated to build now
-(see `docs/LOCATION_ASSISTANT_PLAN.md`); 🟡/⛔ are recorded so we don't re-derive them.
+(see `docs/archive/LOCATION_ASSISTANT_PLAN.md`); 🟡/⛔ are recorded so we don't re-derive them.
 
 ## Status legend
 - ✅ **DO** — build-ready, privacy-clean, no missing infrastructure.

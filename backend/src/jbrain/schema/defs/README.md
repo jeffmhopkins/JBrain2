@@ -3,7 +3,7 @@
 Declarative shape of each entity kind: the facets it carries, the canonical
 spelling of its core predicates, how its display name projects, and which
 predicates seed aliases. Binding rationale and the full model live in
-`docs/entity.md`. Loaded by the sibling package (`jbrain.schema`); the defs are
+`docs/reference/entity.md`. Loaded by the sibling package (`jbrain.schema`); the defs are
 co-located here so they ship in the wheel, like the `.prompt` files.
 **Status: [proposed]. Predicate normalization is wired into extraction; the
 remaining consumers are not yet read by the pipeline.**
@@ -22,7 +22,7 @@ types/*.yaml    per-type definitions composing facets + type-specific predicates
 The registry is **soft**: it supplies (a) preferred predicate spellings for the
 `note.extract` prompt digest and (b) `renamed_from` targets that nightly
 consolidation normalizes drift toward. It is never a storage gate — that would
-resurrect the controlled ontology `docs/ANALYSIS.md` rejects.
+resurrect the controlled ontology `docs/reference/ANALYSIS.md` rejects.
 
 ## Runtime
 
@@ -33,7 +33,7 @@ enum-without-values all fail fast). Two read APIs are WIRED into the pipeline:
 `normalize_predicate` (the `renamed_from` attractor) and `by_kind` →
 `display_name` (the canonical projection). Other projections the schema data
 would feed (prompt digest, value-shape validation, render config) are deferred
-design, not built (docs/entity.md). Tests:
+design, not built (docs/reference/entity.md). Tests:
 `backend/tests/unit/test_schema_registry.py`.
 
 ## Reading order

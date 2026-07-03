@@ -8,7 +8,7 @@
 # only the public site is served (no behaviour change for stock deploys).
 #
 # Split out from the entrypoint so it can be exercised directly in tests against
-# a throwaway output dir. See docs/LOCAL_ACCESS.md.
+# a throwaway output dir. See docs/runbooks/LOCAL_ACCESS.md.
 set -eu
 
 dir="${1:-/etc/caddy/lan}"

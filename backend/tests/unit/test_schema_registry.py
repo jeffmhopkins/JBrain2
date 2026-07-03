@@ -1,7 +1,7 @@
 """The entity schema registry: the shipped `schemas/` load and validate, the
 roll-down composes facets, the projections are coherent, and the value-shape
 validator rejects malformed values WITHOUT ever gating a predicate name
-(docs/entity.md invariant). Malformed definitions fail at load (SchemaError)."""
+(docs/reference/entity.md invariant). Malformed definitions fail at load (SchemaError)."""
 
 from __future__ import annotations
 

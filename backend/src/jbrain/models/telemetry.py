@@ -11,7 +11,7 @@ from jbrain.models.core import Base
 
 
 class LlmUsage(Base):
-    """One adapter call's token usage (docs/ANALYSIS.md "Token accounting").
+    """One adapter call's token usage (docs/reference/ANALYSIS.md "Token accounting").
 
     Written fire-and-forget by the usage recorder; costs are computed at query
     time from the config price table, so tokens here are the ground truth.

@@ -103,7 +103,7 @@ class SchemaRegistry:
     the `renamed_from` attractor) and the display projection (`by_kind` ->
     `display_name`, in `jbrain.analysis.canonical`). The YAML carries more
     schema (value_shapes, enum_values, alias-seeding, schema.org refs) that the
-    loader validates and `docs/entity.md` documents, for projections that aren't
+    loader validates and `docs/reference/entity.md` documents, for projections that aren't
     built yet — deliberately NOT carried as speculative methods here.
     """
 
@@ -134,7 +134,7 @@ class SchemaRegistry:
         """Rewrite a known drift spelling to its canonical predicate
         (`legalName` -> `name.full`). An unknown predicate passes through
         unchanged: this is normalization toward a preferred name, NEVER a
-        rejection (docs/entity.md invariant)."""
+        rejection (docs/reference/entity.md invariant)."""
         return self.normalization.get(_norm_key(predicate), predicate)
 
     def decompose_predicate(self, predicate: str, qualifier: str) -> tuple[str, str]:

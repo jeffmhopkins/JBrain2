@@ -1,4 +1,4 @@
-# SearXNG settings for the jerv chatbot's web search (docs/ASSISTANT.md "Agent
+# SearXNG settings for the jerv chatbot's web search (docs/reference/ASSISTANT.md "Agent
 # selection"). The JSON format MUST be enabled
 # (the default ships HTML only) — the SearxngClient speaks /search?format=json.
 # The rate limiter is off because the only caller is the on-box API, not the public

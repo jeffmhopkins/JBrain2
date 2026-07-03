@@ -1,4 +1,4 @@
-"""The fail-closed memory-domain classifier (docs/ASSISTANT.md "Domain
+"""The fail-closed memory-domain classifier (docs/reference/ASSISTANT.md "Domain
 classification", invariants #3/#4). Pure policy — every default leans
 restrictive."""
 

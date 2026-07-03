@@ -1,4 +1,4 @@
-"""Vision-extract cache for attachments (docs/ANALYSIS.md "Attachments").
+"""Vision-extract cache for attachments (docs/reference/ANALYSIS.md "Attachments").
 
 app.attachment_extracts holds the products of the vision backends — OCR
 transcriptions and captions are separate products [decided] — keyed by

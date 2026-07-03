@@ -883,7 +883,7 @@ function ServerMetrics({ data }: ViewProps): ReactNode {
 }
 
 // --- weather_card ----------------------------------------------------------
-// jerv's in-chat forecast (docs/DESIGN.md "weather_card tool-view", variant A —
+// jerv's in-chat forecast (docs/reference/DESIGN.md "weather_card tool-view", variant A —
 // hero + hourly strip). Data-only slots, no URLs (#9); `cond` is a closed enum and
 // `is_day` a flag the component maps to an inline glyph — the model never sends a
 // glyph, an icon URL, or a color.
@@ -1272,7 +1272,7 @@ function SubagentSynthesis({ data, onOpenSession }: ViewProps): ReactNode {
 }
 
 // --- hurricane_card --------------------------------------------------------
-// jerv's tabbed active-tropical-cyclone view (docs/DESIGN.md "hurricane_card
+// jerv's tabbed active-tropical-cyclone view (docs/reference/DESIGN.md "hurricane_card
 // tool-view"; build plan docs/HURRICANE_TABS_PLAN.md). Data-only slots;
 // `kind`/`cat`/`proximity`/`alert.level`/`level` are closed enums the component maps to
 // a glyph + tone — the model never sends a glyph, icon, or color. The `alert` slot is

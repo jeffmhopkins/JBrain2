@@ -96,7 +96,7 @@ class Settings(BaseSettings):
     # just this service).
     log_level: str = "INFO"
 
-    # When the owner turns on debug access (docs/DEBUG_ACCESS.md) the whole box is in
+    # When the owner turns on debug access (docs/runbooks/DEBUG_ACCESS.md) the whole box is in
     # "investigate a failure" mode, so jcode runs verbose with no second switch: this
     # forces the effective level to DEBUG, surfacing the per-request / tunnel-line
     # detail the owner debug console pulls. From the shared DEBUG_ACCESS_ENABLED flag

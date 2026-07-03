@@ -26,4 +26,4 @@ directions compare cleanly. Each opens in a browser with zero network.
 Reflects the live data shape: each run carries `session_id`, `summary`,
 `step_count` (turns), `started_at`, `status` (`TaskRun` in
 `frontend/src/api/client.ts`). The chosen pattern and reasoning get written
-into `docs/DESIGN.md` per the binding mock-first UI process.
+into `docs/reference/DESIGN.md` per the binding mock-first UI process.

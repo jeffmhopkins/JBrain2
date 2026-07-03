@@ -1,4 +1,4 @@
-// Code mode (jcode) — the terminal-first session (docs/DESIGN.md "jcode", 2-tab
+// Code mode (jcode) — the terminal-first session (docs/reference/DESIGN.md "jcode", 2-tab
 // Variant A, docs/mocks/jcode-session-2tab-a-fullbleed.html). One session, two views:
 // Terminal (a real shell in the sandbox over xterm.js — the way you drive the coder) and
 // Preview (the sandbox dev server at the session's own host address). A slim header carries the

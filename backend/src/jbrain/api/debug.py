@@ -1,4 +1,4 @@
-"""The owner debug console surface (docs/DEBUG_ACCESS.md).
+"""The owner debug console surface (docs/runbooks/DEBUG_ACCESS.md).
 
 Every route is gated by `DebugDep` — a live, revocable, time-boxed capability
 token (and the JBRAIN_DEBUG_ACCESS_ENABLED flag). The surface is deliberately

@@ -1,5 +1,5 @@
 """The egress guard (the security core of the connector chokepoint) and the
-medical connector parsers (docs/ASSISTANT.md "External connectors", invariant #9)."""
+medical connector parsers (docs/reference/ASSISTANT.md "External connectors", invariant #9)."""
 
 import pytest
 

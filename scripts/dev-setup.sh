@@ -2,7 +2,7 @@
 # Bootstraps a complete development environment from a fresh checkout.
 #
 # Single source of truth for dev tooling: any PR that adds a dependency or
-# tool must update this script (see docs/DEVELOPMENT.md). Idempotent — it
+# tool must update this script (see docs/reference/DEVELOPMENT.md). Idempotent — it
 # detects which parts of the project exist yet and skips the rest, so it
 # stays valid at every phase of the roadmap.
 set -euo pipefail
@@ -134,7 +134,7 @@ fi
 # Mentioned here per the dev-setup single-source-of-truth rule; a no-op in dev.
 
 # --- Local-network access / mDNS (production host only, NOT bootstrapped here) ---
-# LAN access (docs/LOCAL_ACCESS.md, on by default) installs avahi-daemon +
+# LAN access (docs/runbooks/LOCAL_ACCESS.md, on by default) installs avahi-daemon +
 # python3-dbus + python3-gi on the deploy host (deploy/lan-setup.sh) so the box
 # answers as jbrain.local via a CNAME alias; Caddy serves local HTTPS via its
 # internal CA. That is a production-host concern with no dev equivalent — the
@@ -159,7 +159,7 @@ fi
 # is a normal pyproject dep that `uv sync` above installs; nothing GPU-specific is
 # bootstrapped here. Empty JBRAIN_COMFYUI_URL (the default) disables the feature and
 # hides both tools, so this is a no-op in dev/CI. Mentioned here per the dev-setup
-# single-source-of-truth rule (CLAUDE.md rule #8); see docs/STRIX_HALO_SETUP.md
+# single-source-of-truth rule (CLAUDE.md rule #8); see docs/runbooks/STRIX_HALO_SETUP.md
 # ("Image generation"), docs/IMAGE_GEN_SERVICE_PLAN.md, and docs/IMAGE_GEN_LIVE_PLAN.md.
 
 # --- Code mode / jcode (Python deps synced above; SDK + model are opt-in) ---

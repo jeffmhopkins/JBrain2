@@ -1406,7 +1406,7 @@ class SqlAnalysisRepo:
             return "deferred", []
 
         if action == "correct":
-            # Correction-note path (docs/DESIGN.md "Edit model"): the human's
+            # Correction-note path (docs/reference/DESIGN.md "Edit model"): the human's
             # fix was filed as a real note (the #7 channel) — its id rides in
             # the payload. The graph change is the pipeline's when it processes
             # that note, so the resolve writes no facts; it only closes the
@@ -1848,7 +1848,7 @@ class SqlAnalysisRepo:
                     },
                 )
             elif action == "distinct_from":
-                # docs/ANALYSIS.md: distinct_from is permanent — the item
+                # docs/reference/ANALYSIS.md: distinct_from is permanent — the item
                 # re-queues but the edge stays.
                 notes.append(
                     "the distinct-from edge is permanent and stays — this pair is never re-proposed"

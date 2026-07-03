@@ -1,4 +1,4 @@
-"""Weather lookups via Open-Meteo (docs/ASSISTANT.md "Agent selection", DESIGN.md
+"""Weather lookups via Open-Meteo (docs/reference/ASSISTANT.md "Agent selection", DESIGN.md
 "weather_card tool-view").
 
 Like the jerv web tools, this runs DIRECTLY rather than staging an egress Proposal —

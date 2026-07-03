@@ -4,7 +4,7 @@ session's tools read under, and the action-policy lookup.
 A session is owner-only metadata. Managing sessions (create/list) runs as the
 full-scope owner; a session's *reads* run as the owner narrowed to its selected
 domains via the `owner_scoped` firewall (migration 0015) — enforced by Postgres,
-not by the tools (docs/ASSISTANT.md "Session capabilities").
+not by the tools (docs/reference/ASSISTANT.md "Session capabilities").
 """
 
 import uuid
@@ -33,7 +33,7 @@ class AgentSessionInfo:
     subject_ids: tuple[str, ...]
     created_at: datetime
     last_active_at: datetime
-    # The selected agent persona (docs/ASSISTANT.md "Agent selection"). Defaulted so
+    # The selected agent persona (docs/reference/ASSISTANT.md "Agent selection"). Defaulted so
     # existing callers/tests that predate agent selection resolve to the curator.
     agent: str = "curator"
     # Sub-agent lineage (docs/SUBAGENT_SPAWNING_PLAN.md). A root chat leaves these at
@@ -246,7 +246,7 @@ class AgentSessionRepo:
     ) -> None:
         """Re-scope a session after start (owner-only — the endpoint is owner-gated,
         and RLS still enforces the firewall per query). Scope is a rail the owner
-        nudges, not a gate frozen at creation (docs/ASSISTANT.md "Sessions")."""
+        nudges, not a gate frozen at creation (docs/reference/ASSISTANT.md "Sessions")."""
         async with scoped_session(self._maker, ctx) as session:
             await session.execute(
                 update(AgentSession)

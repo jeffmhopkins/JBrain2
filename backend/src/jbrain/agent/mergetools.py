@@ -1,4 +1,4 @@
-"""propose_merge — stage a duplicate-entity merge for the owner (docs/ASSISTANT.md
+"""propose_merge — stage a duplicate-entity merge for the owner (docs/reference/ASSISTANT.md
 "Staging & approval", invariant #7).
 
 The agent has no privileged write into citable knowledge — it cannot fold two

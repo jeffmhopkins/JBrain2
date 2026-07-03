@@ -141,7 +141,7 @@ class IngestPipeline:
         # OCR set — analysis waits on EITHER backend.
         outstanding |= await self._enqueue_transcribe_jobs(note_id, attachments, set(extracts))
         # Extraction is likewise a follow-up job (ingest stays LLM-free,
-        # docs/ANALYSIS.md), gated on outstanding vision WORK — never on
+        # docs/reference/ANALYSIS.md), gated on outstanding vision WORK — never on
         # extract kinds or the image-analysis mode: a mode flip on a cached
         # attachment enqueues no job and must not block analysis. While OCR is
         # outstanding the OCR handler's re-ingest re-emits this event with its OCR
@@ -211,7 +211,7 @@ class IngestPipeline:
         enqueued + already queued/running) — the analysis gate's input.
 
         Oversized images are skipped at enqueue time (the per-task size
-        budget, docs/ANALYSIS.md "Dispatcher-level policy") — deliberately
+        budget, docs/reference/ANALYSIS.md "Dispatcher-level policy") — deliberately
         without a cache row, so a re-uploaded smaller file OCRs normally;
         they are never outstanding, so they never block analysis. An already
         queued/running job suppresses duplicates the same way the startup
@@ -269,7 +269,7 @@ class IngestPipeline:
         then yields no chunks rather than a job with no reachable model.
 
         Oversized files are skipped at enqueue time (the per-task budget,
-        docs/ANALYSIS.md), deliberately without a cache row, so a smaller
+        docs/reference/ANALYSIS.md), deliberately without a cache row, so a smaller
         re-upload transcribes normally; they are never outstanding, so they never
         block analysis.
         """
@@ -351,7 +351,7 @@ class IngestPipeline:
         for att in attachments:
             if att.id in extracts:
                 # The image chain: a pure read over the vision-extract cache
-                # (docs/ANALYSIS.md "Attachments") — OCR/captioning already
+                # (docs/reference/ANALYSIS.md "Attachments") — OCR/captioning already
                 # ran in the ocr_attachment job, never here.
                 segments = image_segments(extracts[att.id])
             elif self._registry.extractor_for(att.media_type) is not None:

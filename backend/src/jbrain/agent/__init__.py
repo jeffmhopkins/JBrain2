@@ -1,4 +1,4 @@
-"""The self-improving personal agent (docs/ASSISTANT.md).
+"""The self-improving personal agent (docs/reference/ASSISTANT.md).
 
 Built on the existing substrate — the LLM adapter, RLS-scoped sessions, the job
 queue, storage — never around it. This package holds the agent loop, its tools,

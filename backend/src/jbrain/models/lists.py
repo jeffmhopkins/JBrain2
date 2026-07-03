@@ -1,4 +1,4 @@
-"""List ORM models (docs/ARCHITECTURE.md "Lists"). A list is owner-managed,
+"""List ORM models (docs/reference/ARCHITECTURE.md "Lists"). A list is owner-managed,
 single-domain, structured data the agent maintains directly — items inherit
 their list's visibility and order by `position`."""
 

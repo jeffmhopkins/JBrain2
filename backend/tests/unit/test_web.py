@@ -1,4 +1,4 @@
-"""The jerv chatbot's on-box web client + tools (docs/ASSISTANT.md "Agent
+"""The jerv chatbot's on-box web client + tools (docs/reference/ASSISTANT.md "Agent
 selection"). HTTP is faked via MockTransport — no live network, like the
 connector and LLM adapters."""
 

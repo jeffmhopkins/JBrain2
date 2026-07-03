@@ -3,10 +3,10 @@
 > **Status:** Proposed (icebox) · **Last verified:** 2026-07-03
 
 **Status: proposed / icebox.** Not on the roadmap, nothing built. Extends the shipped image
-stack (`docs/IMAGE_GEN_PLAN.md`, `docs/IMAGE_GEN_SERVICE_PLAN.md`, `docs/IMAGE_LAUNCHER_PLAN.md`)
+stack (`docs/archive/IMAGE_GEN_PLAN.md`, `docs/archive/IMAGE_GEN_SERVICE_PLAN.md`, `docs/archive/IMAGE_LAUNCHER_PLAN.md`)
 by teaching the **same opt-in `comfyui` compose service** to generate **music** — text/tags +
 lyrics → a full song — with **ACE-Step 1.5 XL Turbo** as the model. Binds on top of
-`docs/DEVELOPMENT.md`, `docs/PROCESS.md`, `docs/DESIGN.md`, and the `CLAUDE.md` non-negotiables.
+`docs/reference/DEVELOPMENT.md`, `docs/reference/PROCESS.md`, `docs/reference/DESIGN.md`, and the `CLAUDE.md` non-negotiables.
 When picked up, reconcile with the non-negotiables, get a `docs/ROADMAP.md` slot, and promote out
 of `proposed/` (per `docs/proposed/README.md`).
 

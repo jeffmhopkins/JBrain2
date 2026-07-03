@@ -1,6 +1,6 @@
 {
   "name": "second-hand relationship carries assertion=reported and still supersedes",
-  "description": "A relayed relationship ('Mom says Bob got a new job') attributes to the subject (Bob) with assertion=reported (docs/ANALYSIS.md 'First person and the owner': quoted/relayed -> reported). supersession.decide() does not gate on assertion, so the reported worksFor still supersedes Bob's prior asserted employer (functional) and the new active row keeps assertion=reported. Pins that the assertion enum survives onto the active head and that reported facts participate in supersession.",
+  "description": "A relayed relationship ('Mom says Bob got a new job') attributes to the subject (Bob) with assertion=reported (docs/reference/ANALYSIS.md 'First person and the owner': quoted/relayed -> reported). supersession.decide() does not gate on assertion, so the reported worksFor still supersedes Bob's prior asserted employer (functional) and the new active row keeps assertion=reported. Pins that the assertion enum survives onto the active head and that reported facts participate in supersession.",
   "steps": [
     {
       "domain": "general",

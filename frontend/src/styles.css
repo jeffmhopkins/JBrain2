@@ -3675,7 +3675,7 @@ button.small {
   margin: 0;
 }
 
-/* Attachments tab: manifest list (docs/DESIGN.md "Note view"). */
+/* Attachments tab: manifest list (docs/reference/DESIGN.md "Note view"). */
 
 .tab-count {
   display: inline-flex;
@@ -4763,7 +4763,7 @@ button.small {
 }
 
 /* Entity-type icon disc — tinted by type via --etype (see entities/kinds.tsx
-   and docs/DESIGN.md "Entity-type accents"). One tint formula for all types. */
+   and docs/reference/DESIGN.md "Entity-type accents"). One tint formula for all types. */
 .etype-disc {
   flex: none;
   display: grid;
@@ -7795,7 +7795,7 @@ button.small {
   padding-top: 4px;
 }
 
-/* Sub-agent fan — the in-chat accordion below jerv's bubble (docs/DESIGN.md
+/* Sub-agent fan — the in-chat accordion below jerv's bubble (docs/reference/DESIGN.md
    "Sub-agent spawning surfaces", layout A). Persona is a NEUTRAL tag; semantic
    colour is confined to the glyph: steel=running, green=done, rose=failed. */
 .fb-shell .fb-sa {
@@ -8868,7 +8868,7 @@ button.small {
   background: var(--green-tint);
 }
 /* the compact row: scope dot · title · turns/staged · chevron, ~44px tall */
-/* Sub-agent rail in the Chats panel (docs/DESIGN.md, layout B): children nested
+/* Sub-agent rail in the Chats panel (docs/reference/DESIGN.md, layout B): children nested
    under the chat that spawned them. Persona is a neutral tag; the live glyph is the
    only steel/green accent. */
 .fb-shell .sa-tree {
@@ -11050,7 +11050,7 @@ button.small {
   color: var(--steel);
 }
 
-/* Proposal tree (the review-inbox detail; docs/ASSISTANT.md "Staging & approval") */
+/* Proposal tree (the review-inbox detail; docs/reference/ASSISTANT.md "Staging & approval") */
 .fb-shell .proposal-tree {
   flex: 1;
   display: flex;
@@ -11450,7 +11450,7 @@ input.ld-title {
   cursor: pointer;
 }
 
-/* ===== Entity graph "Map" (docs/DESIGN.md graph-view mockups) ===== */
+/* ===== Entity graph "Map" (docs/reference/DESIGN.md graph-view mockups) ===== */
 .graph-screen {
   display: flex;
   flex-direction: column;
@@ -12875,7 +12875,7 @@ input.ld-title {
   margin-bottom: 12px;
 }
 
-/* The amber read-only pill (docs/DESIGN.md status register). */
+/* The amber read-only pill (docs/reference/DESIGN.md status register). */
 .wiki-ro {
   display: inline-flex;
   align-items: center;
@@ -16586,7 +16586,7 @@ button.task-band:active {
   background: var(--surface-2);
 }
 
-/* ===== Code mode (jcode) — Wave J3 (docs/DESIGN.md "jcode") ===== */
+/* ===== Code mode (jcode) — Wave J3 (docs/reference/DESIGN.md "jcode") ===== */
 /* The share-link boot states (opening / closed / invalid) — a centered full-screen
    message, shown before/instead of the session screen. */
 .jcode-shareboot {

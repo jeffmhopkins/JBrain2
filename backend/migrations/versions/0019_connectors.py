@@ -1,5 +1,5 @@
 """The egress chokepoint's stores: cached external reference data and the egress
-audit log (docs/ASSISTANT.md "External connectors", invariant #9).
+audit log (docs/reference/ASSISTANT.md "External connectors", invariant #9).
 
 The only outbound egress is the connector abstraction — a fixed allowlist of named,
 server-side, owner-configured upstreams called with typed minimal inputs, cached,

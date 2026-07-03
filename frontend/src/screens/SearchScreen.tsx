@@ -1,4 +1,4 @@
-// Search (docs/DESIGN.md "Search"): live as-you-type (debounced) with
+// Search (docs/reference/DESIGN.md "Search"): live as-you-type (debounced) with
 // passage-first result cards, retrieval-transparency match badges, domain
 // filter chips, and the amber degraded banner while semantic search
 // recovers. Stale responses are sequence-guarded so fast typing can't

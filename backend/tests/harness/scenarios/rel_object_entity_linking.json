@@ -1,6 +1,6 @@
 {
   "name": "relationship object_entity_ref links new and existing entities",
-  "description": "A relationship fact is an edge to another entity (docs/ANALYSIS.md 'property graph': me.employer -> Acme). Pins object_entity_ref handling in the pipeline: note 1 mints both subject (Felix) and a NEW provisional object (Umbrella Corp) and links the worksFor edge to it; note 2 reuses the SAME object entity (Umbrella Corp) for a different subject (Greta) -- one org entity, two inbound edges. Both edges are functional worksFor but to the same single value each, so neither supersedes and no review fires.",
+  "description": "A relationship fact is an edge to another entity (docs/reference/ANALYSIS.md 'property graph': me.employer -> Acme). Pins object_entity_ref handling in the pipeline: note 1 mints both subject (Felix) and a NEW provisional object (Umbrella Corp) and links the worksFor edge to it; note 2 reuses the SAME object entity (Umbrella Corp) for a different subject (Greta) -- one org entity, two inbound edges. Both edges are functional worksFor but to the same single value each, so neither supersedes and no review fires.",
   "steps": [
     {
       "domain": "general",

@@ -1,6 +1,6 @@
 {
   "name": "blood pressure readings are a time-series, not a conflict",
-  "description": "Two BP readings on different days are measurements: both stay active, NO supersession, NO false conflict (docs/ANALYSIS.md fact kinds: measurement = time-series, accumulate, never auto-supersede). A third reading taken the SAME day/instant as the second but with a different value is a same-instant disagreement -> the candidate lands pending_review and a fact_conflict is filed for a human to pick.",
+  "description": "Two BP readings on different days are measurements: both stay active, NO supersession, NO false conflict (docs/reference/ANALYSIS.md fact kinds: measurement = time-series, accumulate, never auto-supersede). A third reading taken the SAME day/instant as the second but with a different value is a same-instant disagreement -> the candidate lands pending_review and a fact_conflict is filed for a human to pick.",
   "steps": [
     {
       "domain": "health",

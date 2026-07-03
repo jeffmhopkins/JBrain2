@@ -1,6 +1,6 @@
 {
   "name": "non-functional relationships accumulate (colleague, knows)",
-  "description": "colleague and knows are NOT in supersession.FUNCTIONAL_PREDICATES, so decide() returns insert=True with no supersede/review (pipeline relationship branch: 'non-functional edges accumulate'). Two distinct colleague edges and a friend edge all stay active with no chain and no fact_conflict. Pins docs/ANALYSIS.md: 'default accumulate'.",
+  "description": "colleague and knows are NOT in supersession.FUNCTIONAL_PREDICATES, so decide() returns insert=True with no supersede/review (pipeline relationship branch: 'non-functional edges accumulate'). Two distinct colleague edges and a friend edge all stay active with no chain and no fact_conflict. Pins docs/reference/ANALYSIS.md: 'default accumulate'.",
   "steps": [
     {
       "domain": "general",
