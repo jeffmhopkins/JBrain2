@@ -24,6 +24,9 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from typing import Any, cast
+
+import pymupdf
 
 from jbrain.ingest.emr.candidates import (
     CandidateEncounter,
@@ -71,6 +74,18 @@ class WordBox:
 def fingerprint(text: str) -> bool:
     """A confident OneContent match: the abnormal-column legend or an `Account:` key."""
     return bool(_LEGEND.search(text) or _ACCOUNT.search(text))
+
+
+def pdf_word_pages(data: bytes) -> list[list[WordBox]]:
+    """Extract a decrypted PDF's word geometry (`get_text("words")`) per page — the
+    §6.2 input the geometry parser slices columns from. Synchronous CPU work, run off
+    the event loop by the caller (mirrors `extract.PdfTextLayerExtractor`)."""
+    pages: list[list[WordBox]] = []
+    with pymupdf.open(stream=data, filetype="pdf") as doc:
+        for number in range(doc.page_count):
+            words = cast(list[Any], doc.load_page(number).get_text("words"))
+            pages.append([WordBox(w[0], w[1], w[2], w[3], w[4]) for w in words])
+    return pages
 
 
 def _date(day: str, hm: str) -> datetime:
