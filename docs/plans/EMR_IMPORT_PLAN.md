@@ -1582,13 +1582,30 @@ W2 remains ◻️ (not complete). The **deterministic front-half** is built and 
   and the pathology report kept as prose. 13 fixture-driven tests.
 - **`importer.py`** — the `EmrImporter` lowering: parser candidates → the exact `IntegrationIntent`
   the shipped arbiter consumes, with the per-draw fan + analyte-constant facts, `fhir_status` on
-  `value` facts, the deterministic `effectiveDate` point token via `IntentTemporal`, one **episode**
-  intent per facility-transfer (so `partOfEncounter`/`hasObservation` resolve intra-intent), and the
-  **Layer-2 firewall guard** run on every prospective fact. 8 tests, all intents `validate_intent`-clean.
+  `value` facts, the deterministic `effectiveDate` point token via `IntentTemporal`, and the
+  **Layer-2 firewall guard** run on every prospective fact. All intents `validate_intent`-clean.
+- **`integrate.py`** — the deterministic integration driver: `integrate_parse_result` lowers a
+  parse result and commits each fact through `plan_intent → apply_intent` on an RLS session, no LLM.
+  The `value` measurement carries `valid_from = collected_at` (§3.3 — the address the §3.5 transition
+  keys on); the parser emits UTC-aware datetimes. **One intent per NOTE** (not per grouping unit): the
+  shipped `_apply` reconciles the whole note via its touched-set retract sweep, so a second per-unit
+  apply on the same note would retract the first unit's facts — the §6.6 per-unit transaction
+  isolation is a follow-on needing incremental note commits. An end-to-end integration test on real
+  Postgres proves the Epic fixture mints the health entities, final readings commit active, and the
+  corrected-without-original platelet is held `pending_review` (proving `fhir_status` reaches
+  `decide`).
 
-**Remaining in W2 (next):** wiring `lower_parse_result` → `plan_intent`/`apply_intent` on the RLS
-session; the kind-guarded `project_emr` projector (into `_apply` + `purge`) with lifecycle-derived
-`report_status`; `read_labs`/`read_encounters` tools proven on Epic; the pathology-narrative prose
-extraction; and the **intake stage** (`pyzipper` decrypt + note-inline password extraction +
+- **`emr_projection.py`** — the kind-guarded `project_emr` projector, wired into `_apply` AND `purge`
+  next to `project_appointments`. Re-derives `app.lab_results` (one row per `value` fact; `report_status`
+  DERIVED from the lifecycle + supersession chain — `final` for a lone active, `corrected` for an active
+  chain-head, a second `is_current=false` row for a superseded predecessor, `preliminary` for pending,
+  retracted dropped; `encounter_id`/`orderer` reached via the `hasObservation`→`attender[ordering]` path)
+  and `app.encounters` (+ providers/diagnoses sidecars; `los_days` computed; `part_of_id` for the
+  transfer). The e2e integration test asserts the lab rows populate (the corrected platelet as a
+  not-current `preliminary` row), the MICU encounter's `los_days=3`, the A3 transfer's `part_of_id`, and
+  the provider/diagnosis sidecars. A non-EMR note pays one empty kind-filtered SELECT (cost guard, §4).
+
+**Remaining in W2 (next):** `read_labs`/`read_encounters` tools proven on Epic; the pathology-narrative
+prose extraction; and the **intake stage** (`pyzipper` decrypt + note-inline password extraction +
 scrub-before-index + delete-last fail-closed, §6.1) — the security-critical secret handling, built
 carefully with its 100%-coverage tests. OneContent/athena/ARIA parsers + cross-source dedup are W3.

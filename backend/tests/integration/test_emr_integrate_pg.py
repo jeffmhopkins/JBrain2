@@ -13,7 +13,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 
 from jbrain.analysis.pipeline import AnalysisPipeline
 from jbrain.db.session import scoped_session
@@ -142,3 +142,70 @@ async def test_corrected_without_original_is_held_for_review(maker, tmp_path):  
             .all()
         )
         assert any((c.payload or {}).get("subkind") == "correction_without_original" for c in cards)
+
+
+async def test_lab_results_projection_populated(maker, tmp_path):  # noqa: F811
+    # project_emr runs inside _apply, so the projection is materialized already.
+    await _integrate(maker, tmp_path)
+    async with scoped_session(maker, SYSTEM_CTX) as s:
+        rows = (
+            (
+                await s.execute(
+                    text(
+                        "SELECT analyte, value_num, unit, loinc, report_status, is_current,"
+                        " collected_at FROM app.lab_results"
+                    )
+                )
+            )
+            .mappings()
+            .all()
+        )
+        assert rows
+        plt = [r for r in rows if r["analyte"] == "Platelet count"]
+        assert plt and any(r["loinc"] == "777-3" for r in plt)
+        assert all(r["collected_at"] is not None for r in rows)
+        # The corrected-without-original platelet is not current -> preliminary.
+        not_current = [r for r in plt if not r["is_current"]]
+        assert not_current and all(r["report_status"] == "preliminary" for r in not_current)
+        # Final readings are current.
+        finals = [r for r in rows if r["is_current"]]
+        assert finals and all(r["report_status"] == "final" for r in finals)
+
+
+async def test_encounters_projection_populated(maker, tmp_path):  # noqa: F811
+    await _integrate(maker, tmp_path)
+    async with scoped_session(maker, SYSTEM_CTX) as s:
+        encs = (
+            (
+                await s.execute(
+                    text(
+                        "SELECT class AS enc_class, facility, care_unit, admitted_at, discharged_at,"
+                        " los_days, part_of_id FROM app.encounters"
+                    )
+                )
+            )
+            .mappings()
+            .all()
+        )
+        assert encs
+        micu = [e for e in encs if e["care_unit"] == "MICU"]
+        assert micu, "the MICU inpatient encounter projected"
+        assert micu[0]["enc_class"] == "inpatient"
+        assert micu[0]["los_days"] == 3  # 01/25 -> 01/28
+
+        a3 = [e for e in encs if e["care_unit"] == "A3"]
+        assert a3 and a3[0]["part_of_id"] is not None  # the transfer linkage
+
+        providers = (
+            (await s.execute(text("SELECT provider_name, role FROM app.encounter_providers")))
+            .mappings()
+            .all()
+        )
+        assert any(
+            p["provider_name"] == "Chen, Sarah MD" and p["role"] == "attending" for p in providers
+        )
+
+        diagnoses = (
+            (await s.execute(text("SELECT icd10 FROM app.encounter_diagnoses"))).mappings().all()
+        )
+        assert any(d["icd10"] == "D69.6" for d in diagnoses)
