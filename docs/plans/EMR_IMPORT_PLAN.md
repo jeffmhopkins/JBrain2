@@ -1614,7 +1614,18 @@ W2 remains ◻️ (not complete). The **deterministic front-half** is built and 
   general-only scope** (the firewall), and `read_encounters` lists the MICU stay and expands to its
   Chen/attending provider + the D69.6 diagnosis.
 
+- **`intake.py` + `intake_handler.py`** — the intake stage (§6.1), the security-critical front door.
+  The pure core (`intake.py`): a deterministic password matcher over the note body, a hardened AES-unzip
+  (`pyzipper`) with zip-bomb size caps, member-count cap, and path-traversal/absolute-path rejection,
+  and a body scrub — the password lives only in memory, never a chunk/embedding/log. The orchestration
+  (`intake_handler.py`, `EmrIntakePipeline.intake`): decrypt (zip + any password-protected PDF via
+  PyMuPDF) → attach each decrypted PDF to the SAME note → **delete-last**: only after every attach
+  succeeds does it remove the zip and scrub the body, in one transaction, before re-ingest chunks/embeds
+  it. **Fail-closed:** any failure rolls back (no partial attach, no half-scrub), keeps the zip + original
+  body, writes no facts, and files a `low_confidence`/`emr_intake_failed` card in a separate committing
+  transaction. 16 unit tests (every guard + fail path, real AES zip in-memory) + 4 real-Postgres
+  integration tests (normalize-in-place, idempotent re-run, wrong-password and no-password fail-closed).
+
 **Remaining in W2 (next):** the pathology-narrative prose extraction (the one LLM touch, faked in
-tests); and the **intake stage** (`pyzipper` decrypt + note-inline password extraction +
-scrub-before-index + delete-last fail-closed, §6.1) — the security-critical secret handling, built
-carefully with its 100%-coverage tests. OneContent/athena/ARIA parsers + cross-source dedup are W3.
+tests), and wiring the intake handler to the seeded `emr_import` trigger (a Wave-4 concern — the
+trigger + event-payload widening, §6.0/§12.2). OneContent/athena/ARIA parsers + cross-source dedup are W3.
