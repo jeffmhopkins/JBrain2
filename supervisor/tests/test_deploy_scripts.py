@@ -137,13 +137,17 @@ def test_update_frees_llm_gateway_memory_before_recreate() -> None:
     # at full memory through the rebuild/migrate/recreate. On the Strix Halo box that
     # combined pressure drove a kernel reclaim livelock that hard-locked the host
     # (even keyboard/mouse), so the update must STOP the gateway before the churn and
-    # bring it back after the stack is up. Gated on hosting so a stock stack is untouched.
+    # restart it after the stack is up. Gated on hosting so a stock stack stays put.
     lines = (DEPLOY / "update-inner.sh").read_text().splitlines()
     text = "\n".join(lines)
-    stop = next((i for i, ln in enumerate(lines) if "stop local-llm" in ln), None)
-    build = next((i for i, ln in enumerate(lines) if "compose $JCODE_PROFILE build" in ln), None)
-    up = next((i for i, ln in enumerate(lines) if "compose $JCODE_PROFILE up -d" in ln), None)
-    restart = next((i for i, ln in enumerate(lines) if "up -d local-llm" in ln), None)
+
+    def idx(needle: str) -> int | None:
+        return next((i for i, ln in enumerate(lines) if needle in ln), None)
+
+    stop = idx("stop local-llm")
+    build = idx("compose $JCODE_PROFILE build")
+    up = idx("compose $JCODE_PROFILE up -d")
+    restart = idx("up -d local-llm")
     assert "LOCAL_LLM_ENABLED=true" in text, (
         "the gateway stop/restart must be gated on LOCAL_LLM_ENABLED so a stock "
         "cloud stack (no local-llm) is never touched"
@@ -151,7 +155,7 @@ def test_update_frees_llm_gateway_memory_before_recreate() -> None:
     assert stop is not None, "update must stop the local-llm gateway to free memory"
     assert build is not None and up is not None
     assert stop < build, "the gateway must be stopped before the rebuild/recreate"
-    assert restart is not None, "update must bring the gateway back after the stack is up"
+    assert restart is not None, "update must restart the gateway after the stack is up"
     assert restart > up, "the gateway restart must follow the stack `up -d`"
 
 
