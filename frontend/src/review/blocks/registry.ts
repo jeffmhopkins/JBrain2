@@ -50,6 +50,11 @@ const SEQUENCE: Partial<Record<ReviewItem["kind"], BlockId[]>> = {
   extraction_truncated: ["header", "action", "evidence"],
   low_confidence: ["header", "action", "evidence"],
   split_proposal: ["header", "action", "evidence"],
+  // wiki_lint (Wave B) health-sweep cards render through existing blocks — no bespoke component,
+  // so no three-mock GUI gate (docs/plans/WIKI_LINT_PLAN.md §7): a summary header + dismiss/correct
+  // action buttons + the source evidence.
+  wiki_contradiction: ["header", "action", "evidence"],
+  wiki_stale_claim: ["header", "action", "evidence"],
 };
 
 export function blockSequenceFor(item: ReviewItem): BlockId[] {

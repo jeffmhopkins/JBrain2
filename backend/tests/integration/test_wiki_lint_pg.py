@@ -19,15 +19,21 @@ Covers the plan's mandatory Wave-A checks and the convergence/security guarantee
   proving the entity-row key governs, not the mention-row domain.
 """
 
+import json
 import uuid
 from collections.abc import AsyncIterator
+from typing import Any
 
 import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
-from jbrain.db.session import scoped_session
+from jbrain.db.session import SessionContext, scoped_session
+from jbrain.llm.fake import FakeLlmClient
+from jbrain.llm.router import LlmRouter
+from jbrain.queue import SYSTEM_CTX
+from jbrain.settings_store import WIKI_LINT_KILL_SWITCH_KEY, SqlSettingsStore
 from jbrain.wiki.builder import StubRewriter, WikiBuilder
 from jbrain.wiki.lint import WikiLinter
 from tests.conftest import docker_available
@@ -63,8 +69,13 @@ async def _clean(database_url: str) -> AsyncIterator[None]:  # noqa: F811
     )
     try:
         async with admin.begin() as conn:
+            # review_items has no FK to entities/notes/articles, so it is NOT reached by the
+            # CASCADE — truncate it explicitly or Wave-B cards leak across tests.
             await conn.execute(
-                text("TRUNCATE app.entities, app.notes, app.wiki_articles CASCADE")
+                text(
+                    "TRUNCATE app.entities, app.notes, app.wiki_articles,"
+                    " app.review_items CASCADE"
+                )
             )
     finally:
         await admin.dispose()
@@ -444,3 +455,201 @@ async def test_handler_runs_end_to_end(maker: async_sessionmaker) -> None:
         await _fact(maker, e, "general", f"claim {i}")
     handler = wiki_lint_handler(maker, embedding_model="fake-embed")
     await handler({})  # no exception; a coverage gap is reported (E has no article), nothing raised
+
+
+# ---- Wave B: the LLM verifier (contradiction + stale-claim review cards) -------------------
+
+
+def _router(*responses: dict[str, Any]) -> tuple[LlmRouter, FakeLlmClient]:
+    """A FakeLlmClient-backed router for the two lint verifier tasks. `responses` are replayed in
+    call order (the last repeats), so a single verdict repeats across grouped batches."""
+    fake = FakeLlmClient(responses=[json.dumps(r) for r in responses] or ["{}"])
+    routes = {"wiki.lint.contradiction": ("xai", "m"), "wiki.lint.stale": ("xai", "m")}
+    return LlmRouter({"xai": fake}, routes), fake
+
+
+def _llm_linter(maker: async_sessionmaker, router: LlmRouter) -> WikiLinter:
+    return WikiLinter(
+        maker,
+        embedding_model="fake-embed",
+        redirty_index=False,
+        router=router,
+        settings=SqlSettingsStore(maker),
+    )
+
+
+async def _articled(
+    maker: async_sessionmaker,
+    domain: str,
+    name: str,
+    *,
+    rel_to: str | None = None,
+    marker: str = "",
+) -> str:
+    """A notable entity (3 facts) so the builder gives it an article; optionally one fact is a
+    relationship fact to `rel_to`. `marker` tags its statements so a prompt can be grepped."""
+    e = await _entity(maker, domain, name)
+    await _fact(maker, e, domain, f"{name} fact one {marker}")
+    await _fact(maker, e, domain, f"{name} fact two {marker}")
+    if rel_to is not None:
+        await _fact(maker, e, domain, f"{name} relates other {marker}", object_entity_id=rel_to)
+    else:
+        await _fact(maker, e, domain, f"{name} fact three {marker}")
+    return e
+
+
+async def _cards(maker: async_sessionmaker, ctx: SessionContext, kind: str) -> list[Any]:
+    async with scoped_session(maker, ctx) as s:
+        return (
+            await s.execute(
+                text(
+                    "SELECT id, domain_code, payload FROM app.review_items"
+                    " WHERE kind = :k ORDER BY created_at"
+                ),
+                {"k": kind},
+            )
+        ).all()
+
+
+async def test_contradiction_card_filed_and_deduped(maker: async_sessionmaker) -> None:
+    b = await _entity(maker, "general", "B")
+    a = await _entity(maker, "general", "A")
+    await _fact(maker, a, "general", "a one")
+    await _fact(maker, a, "general", "a two")
+    await _fact(maker, a, "general", "a knows b", object_entity_id=b)
+    await _fact(maker, b, "general", "b one")
+    await _fact(maker, b, "general", "b two")
+    await _fact(maker, b, "general", "b three")
+    await _build(maker)  # both A and B get active articles → an eligible candidate pair
+
+    router, fake = _router({"verdicts": [{"index": 0, "contradiction": True, "summary": "clash"}]})
+    report = await _llm_linter(maker, router).run()
+    assert report.contradiction_cards == 1
+    cards = await _cards(maker, OWNER, "wiki_contradiction")
+    assert len(cards) == 1
+    assert cards[0].domain_code == "general"
+    assert set(cards[0].payload["entity_ids"]) == {a, b}
+    assert len(fake.calls) == 1  # one general-group batch
+
+    # Re-run: the open-item dedup keeps it at one card.
+    report2 = await _llm_linter(maker, _router(
+        {"verdicts": [{"index": 0, "contradiction": True, "summary": "clash"}]}
+    )[0]).run()
+    assert report2.contradiction_cards == 0
+    assert len(await _cards(maker, OWNER, "wiki_contradiction")) == 1
+
+
+async def test_two_restricted_pair_never_verified_or_carded(maker: async_sessionmaker) -> None:
+    # SECURITY (100%): a general bridge G links a health entity H and a finance entity F, and H/F
+    # are also directly co-mentioned. No (health, finance) pair may ever be generated, carded, or
+    # co-mingled into one adapter prompt — proven for BOTH the transitive traverse-shaped path
+    # (G—H, G—F) and the direct co-mention (H—F).
+    h = await _entity(maker, "health", "H")
+    f = await _entity(maker, "finance", "F")
+    g = await _entity(maker, "general", "G")
+    # G relates to both H and F (+ one plain fact) → G articled and bridges them.
+    await _fact(maker, g, "general", "g plain")
+    await _fact(maker, g, "general", "g knows h", object_entity_id=h)
+    await _fact(maker, g, "general", "g knows f", object_entity_id=f)
+    # H and F each notable, with a UNIQUE marker in their statements to grep prompts.
+    for i in range(3):
+        await _fact(maker, h, "health", f"h HEALTHSECRET {i}")
+        await _fact(maker, f, "finance", f"f FINANCESECRET {i}")
+    await _comention(maker, h, f, "general")  # a DIRECT two-restricted co-mention too
+    await _build(maker)  # G, H, F all get articles
+
+    router, fake = _router({"verdicts": [{"index": 0, "contradiction": True, "summary": "x"}]})
+    await _llm_linter(maker, router).run()
+
+    # No card ever pairs the two restricted entities.
+    for card in await _cards(maker, OWNER, "wiki_contradiction"):
+        assert set(card.payload["entity_ids"]) != {h, f}
+    # No single adapter prompt co-mingles a health side and a finance side.
+    for call in fake.calls:
+        blob = call["system"] + call["user_text"]
+        assert not ("HEALTHSECRET" in blob and "FINANCESECRET" in blob)
+
+
+async def test_contradiction_card_stamped_restricted_and_scoped(maker: async_sessionmaker) -> None:
+    # SECURITY (100%): a general×health finding stamps `health` (card_domain) and is invisible to a
+    # narrowed general-only owner session, visible to a health-scoped one and the full owner.
+    h = await _entity(maker, "health", "H")
+    g = await _entity(maker, "general", "G")
+    await _fact(maker, g, "general", "g one")
+    await _fact(maker, g, "general", "g two")
+    await _fact(maker, g, "general", "g knows h", object_entity_id=h)
+    for i in range(3):
+        await _fact(maker, h, "health", f"h fact {i}")
+    await _build(maker)
+
+    router, _ = _router({"verdicts": [{"index": 0, "contradiction": True, "summary": "x"}]})
+    await _llm_linter(maker, router).run()
+
+    assert len(await _cards(maker, OWNER, "wiki_contradiction")) == 1  # full owner sees it
+    stamped = (await _cards(maker, OWNER, "wiki_contradiction"))[0]
+    assert stamped.domain_code == "health"  # card_domain(general, health) == health
+    general_only = SessionContext(
+        principal_id=str(uuid.uuid4()), principal_kind="owner",
+        owner_scoped=True, domain_scopes=("general",),
+    )
+    health_scope = SessionContext(
+        principal_id=str(uuid.uuid4()), principal_kind="owner",
+        owner_scoped=True, domain_scopes=("general", "health"),
+    )
+    assert len(await _cards(maker, general_only, "wiki_contradiction")) == 0  # firewalled out
+    assert len(await _cards(maker, health_scope, "wiki_contradiction")) == 1  # health scope sees it
+
+
+async def test_stale_claim_card_filed(maker: async_sessionmaker) -> None:
+    e = await _entity(maker, "general", "Stale")
+    for i in range(3):
+        await _fact(maker, e, "general", f"claim {i}")
+    await _build(maker)  # article cites the three facts
+    # Supersede one CITED fact, then re-mark the entity built (modelling the drift where the
+    # self-heal didn't run: a superseded fact is still cited while wiki_built stays true).
+    async with scoped_session(maker, SYSTEM_CTX) as s:
+        fid = (
+            await s.execute(
+                text(
+                    "SELECT c.fact_id FROM app.wiki_citations c"
+                    " JOIN app.wiki_revisions r ON r.id = c.revision_id"
+                    " JOIN app.wiki_sections sec ON sec.id = r.section_id"
+                    " JOIN app.wiki_articles a ON a.id = sec.article_id"
+                    " WHERE a.entity_ref = :e LIMIT 1"
+                ),
+                {"e": e},
+            )
+        ).scalar()
+        await s.execute(
+            text("UPDATE app.facts SET status = 'superseded' WHERE id = :f"), {"f": fid}
+        )
+        await s.execute(text("UPDATE app.entities SET wiki_built = true WHERE id = :e"), {"e": e})
+
+    router, fake = _router(
+        {"verdicts": [{"index": 0, "framed_as_current": True, "summary": "stale"}]}
+    )
+    report = await _llm_linter(maker, router).run()
+    assert report.stale_claim_cards == 1
+    cards = await _cards(maker, OWNER, "wiki_stale_claim")
+    assert len(cards) == 1
+    assert cards[0].domain_code == "general"  # single-entity stamp = subject's own domain
+    assert cards[0].payload["fact_id"] == str(fid)
+
+
+async def test_budget_kill_switch_refuses_before_spend(maker: async_sessionmaker) -> None:
+    b = await _entity(maker, "general", "B")
+    a = await _entity(maker, "general", "A")
+    await _fact(maker, a, "general", "a one")
+    await _fact(maker, a, "general", "a two")
+    await _fact(maker, a, "general", "a knows b", object_entity_id=b)
+    for i in range(3):
+        await _fact(maker, b, "general", f"b {i}")
+    await _build(maker)
+    # Engage the wiki-lint kill-switch → the gate refuses BEFORE any spend.
+    await SqlSettingsStore(maker).upsert(SYSTEM_CTX, WIKI_LINT_KILL_SWITCH_KEY, True)
+
+    router, fake = _router({"verdicts": [{"index": 0, "contradiction": True, "summary": "x"}]})
+    report = await _llm_linter(maker, router).run()
+    assert report.contradiction_cards == 0
+    assert len(await _cards(maker, OWNER, "wiki_contradiction")) == 0
+    assert fake.calls == []  # fail-closed: refused before the adapter was ever called

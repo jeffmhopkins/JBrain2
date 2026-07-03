@@ -136,6 +136,16 @@ WIKI_BUILD_KILL_SWITCH_KEY = "wiki_build_kill_switch"
 WIKI_BUILD_KILL_SWITCH_DEFAULT = False
 WIKI_BUILD_SPEND_PREFIX = "wiki_build_spend:"
 
+# The wiki_lint (Wave B) LLM verifier's SEPARATE token budget (docs/plans/WIKI_LINT_PLAN.md §4):
+# a corpus-wide health audit must never starve the nightly wiki BUILD's budget, so it gets its own
+# key + per-day tally. Sized to the MAX_CANDIDATE_PAIRS=500 worst case (§4). Fail-closed like the
+# build gate.
+WIKI_LINT_BUDGET_KEY = "wiki_lint_daily_tokens"
+WIKI_LINT_BUDGET_DEFAULT = 200_000
+WIKI_LINT_KILL_SWITCH_KEY = "wiki_lint_kill_switch"
+WIKI_LINT_KILL_SWITCH_DEFAULT = False
+WIKI_LINT_SPEND_PREFIX = "wiki_lint_spend:"
+
 
 # Provisional -> confirmed entity promotion (docs/reference/entity.md "Entity lifecycle"):
 # when on, an entity corroborated by >= CORROBORATION_THRESHOLD distinct
@@ -341,6 +351,32 @@ class SqlSettingsStore:
         delta is clamped to 0 so a bad caller can never refund the budget."""
         current = await self.wiki_build_spent_today(ctx, day=day)
         await self.upsert(ctx, WIKI_BUILD_SPEND_PREFIX + day, current + max(tokens, 0))
+
+    async def wiki_lint_kill_switch(self, ctx: SessionContext) -> bool:
+        """Whether the wiki_lint (Wave B) verifier kill-switch is engaged. Defaults OFF."""
+        return (
+            await self.get(ctx, WIKI_LINT_KILL_SWITCH_KEY, WIKI_LINT_KILL_SWITCH_DEFAULT) is True
+        )
+
+    async def wiki_lint_daily_budget(self, ctx: SessionContext) -> int:
+        """The per-day wiki_lint verifier TOKEN budget, separate from the wiki BUILD budget. A
+        malformed or non-positive stored value falls back to the default (fail-closed)."""
+        raw = await self.get(ctx, WIKI_LINT_BUDGET_KEY, WIKI_LINT_BUDGET_DEFAULT)
+        return (
+            raw
+            if isinstance(raw, int) and not isinstance(raw, bool) and raw > 0
+            else WIKI_LINT_BUDGET_DEFAULT
+        )
+
+    async def wiki_lint_spent_today(self, ctx: SessionContext, *, day: str) -> int:
+        """Tokens spent on wiki_lint verification on UTC date `day`. Absent/malformed = 0."""
+        raw = await self.get(ctx, WIKI_LINT_SPEND_PREFIX + day, 0)
+        return raw if isinstance(raw, int) and not isinstance(raw, bool) and raw >= 0 else 0
+
+    async def record_wiki_lint_spend(self, ctx: SessionContext, *, day: str, tokens: int) -> None:
+        """Add `tokens` to UTC date `day`'s wiki_lint tally. A negative delta is clamped to 0."""
+        current = await self.wiki_lint_spent_today(ctx, day=day)
+        await self.upsert(ctx, WIKI_LINT_SPEND_PREFIX + day, current + max(tokens, 0))
 
     async def integration_persist(self, ctx: SessionContext) -> bool:
         """Whether the Integrator persists its run + resolution pins (§E7b).

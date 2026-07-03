@@ -1,6 +1,34 @@
 # JBrain2 — `wiki_lint` Build Plan (corpus-wide wiki health pass)
 
-> **Status:** In progress · **Last verified:** 2026-07-03 · **Waves:** W0✅ A✅ B◻️
+> **Status:** Shipped (both waves implemented; like the hygiene sweeps the nightly schedule
+> ships **disabled** — owner ratification of §9 + an enable migration turn it on) ·
+> **Last verified:** 2026-07-03 · **Waves:** W0✅ A✅ B✅
+>
+> **Wave B — as-built (shipped, 2026-07-03).** The LLM verifier in `wiki/lint.py`
+> (candidate generation, `card_domain` stamping, the batched contradiction + stale-claim
+> verifiers, `_file_card` with open-item dedup), gated by a SEPARATE `WikiLintGate` /
+> `wiki_lint_daily_*` budget keys (`settings_store.py`, `wiki/budget.py`); the two router
+> tasks `wiki.lint.contradiction`/`wiki.lint.stale` (`llm/router.py` + `llm_settings.py`
+> labels); migration **0116** admitting the `wiki_contradiction`/`wiki_stale_claim`
+> review kinds; the frontend registry wiring (`ReviewKind` union + block SEQUENCE +
+> `registry.test.ts`); and the tests — `test_wiki_lint_prompts.py` (prompt digest pins +
+> `card_domain` branch coverage) and the Wave-B half of `test_wiki_lint_pg.py`
+> (contradiction card + dedup, the transitive two-restricted firewall no-leak security
+> test, `card_domain` stamping + narrowed-owner RLS invisibility, stale-claim card,
+> budget kill-switch fail-closed). **Deviations from the design below, reconciled here:**
+> 1. **Prompts are versioned module constants with a sha256 digest-pin unit test**, not
+>    rendered `.prompt` files — the same CI drift guard (edit prose → bump version + repin
+>    or red CI) without the `.prompt` loader machinery.
+> 2. **The no-leak guarantee is made STRUCTURAL by grouping candidates by `card_domain`
+>    and batching within a group**, so a single adapter call can never co-mingle two
+>    distinct restricted domains (a two-restricted PAIR is also never generated). This is
+>    the concrete realization of §5's "no prompt assembled from two restricted domains."
+> 3. **Resolution verbs are the universal `dismiss`/`correct` branches** (no new
+>    `_apply_resolution` code); richer `request_rebuild`/re-dirty verbs are a later add.
+> 4. Candidate generation forms only DIRECT relationship/co-mention pairs (the plan's
+>    `traverse` at `depth=1`), so transitive co-mingling is impossible by construction and
+>    the pair-formation endpoint firewall is the guarantee — verified by the transitive
+>    `health—general—finance` security test.
 >
 > **Wave A — as-built (shipped, 2026-07-03).** `wiki/lint.py` (`WIKI_LINT_SPEC` +
 > `wiki_lint_handler` + `WikiLinter`), wired into the worker/API registries and the

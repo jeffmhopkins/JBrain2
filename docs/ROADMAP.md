@@ -167,16 +167,6 @@ spec, the firewall design, and the cross-stream `PHASE6_WIKI_GRAPH_CONTRACT.md`.
 claim cites a note, and corrections happen by out-arguing the wiki with a
 correction note.
 
-### Wiki health sweep (separate plan) — In progress
-
-- **`wiki_lint`** — In progress (build plan: `docs/plans/WIKI_LINT_PLAN.md`). A
-  periodic corpus-wide wiki HEALTH audit — the "third leg" alongside ingest
-  `wiki_refresh`/`wiki_rebuild` and query `search`/`agent` — added as a fifth
-  in-code sweep `ActionSpec`, read-only against the wiki. **Wave A shipped** (the
-  deterministic no-LLM checks + optional index re-dirty + seed migration 0115,
-  disabled); Wave B (LLM contradiction/stale-claim review cards) open. Tracked
-  separately from the `PHASE6_WIKI_PLAN.md` waves above; see its own plan for status.
-
 ## Phase 6 follow-ons — Shipped (build records under `docs/archive/`)
 
 Each shipped as its own multi-wave plan. *(The self-improvement Loops 2–4 once
@@ -184,6 +174,12 @@ listed here — skill learning, durable-knowledge + predicate-canon promotion, a
 prompt/tool self-edit — and their eval/promotion harness were removed, not
 deferred.)*
 
+- **Wiki health sweep (`wiki_lint`)** ✅ (`archive/WIKI_LINT_PLAN.md`) — the "third
+  leg" alongside ingest and query: a corpus-wide wiki HEALTH audit as a fifth in-code
+  sweep `ActionSpec`, read-only against the wiki. Wave A (deterministic no-LLM checks +
+  optional index re-dirty, migration 0115); Wave B (the LLM contradiction/stale-claim
+  review cards + a separate lint budget, migration 0116). Seeded **disabled** + Ops-
+  fireable; owner ratification of the plan's §9 + an enable migration turn it on.
 - **Hygiene sweeps** ✅ (`archive/HYGIENE_SWEEPS_PLAN.md`) — `entity_hygiene`,
   `reembed_stale`, `tag_consolidate` engine actions on the Phase-5 sweep pattern,
   seeded disabled + Ops-fireable (migration 0066).
