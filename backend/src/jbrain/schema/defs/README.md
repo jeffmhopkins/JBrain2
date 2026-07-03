@@ -43,10 +43,12 @@ design, not built (docs/reference/entity.md). Tests:
 3. `types/person.yaml` — the richest example (structured names + projection).
 4. `types/role.yaml` — reified relationship edges (employment, ownership, …).
 5. `types/bill.yaml` / `appointment.yaml` — recurrence-as-token, not rows.
-6. `types/lab_result.yaml` — a deferred Phase-7 typed record's catalog.
+6. `types/lab_result.yaml` / `encounter.yaml` / `medical_condition.yaml` —
+   the health-domain EMR-import vocabulary (`docs/plans/EMR_IMPORT_PLAN.md`).
 
-All twenty-two catalog types are scaffolded. The original fourteen: `person,
+All twenty-four catalog types are scaffolded. The original fourteen: `person,
 organization, place, role, animal, appointment, bill, lab_result, vehicle,
-medication, financial_account, document, subscription, device`; plus the
+medication, financial_account, document, subscription, device`; the
 productivity/knowledge/lifestyle set: `project, task, goal, habit, trip,
-creative_work, product, insurance_policy`.
+creative_work, product, insurance_policy`; plus the EMR-import health types:
+`encounter, medical_condition`.

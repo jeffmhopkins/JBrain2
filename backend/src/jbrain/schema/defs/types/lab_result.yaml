@@ -1,13 +1,19 @@
-# Lab result / clinical Observation. 🔒🔒 health — strictest firewall. [proposed]
-# DEFERRED: populated by the Phase-7 typed parser, NOT free-extracted into facts
-# (ANALYSIS routes structured medical docs to typed parsers). Cataloged here so
-# the typed table and the graph speak the same facet vocabulary.
+# Lab result / clinical Observation. 🔒🔒 health — strictest firewall.
+# ACTIVE (EMR import, docs/plans/EMR_IMPORT_PLAN.md). Materialized as graph
+# entities + facts (one Observation entity per analyte; draws accumulate as
+# `value` measurement facts) and re-derived into the `app.lab_results`
+# projection — NOT a separate typed table. `vehicle` stays typed_record(P7) as
+# a legibility tag only; it is not runtime-enforced (§3 vehicle-deviation note).
+# Report status is NOT a stored fact: the Lifecycle facet is intentionally
+# dropped (its `status` is functional/one-per-entity, inapplicable to an
+# analyte spanning thousands of draws), and report status is derived in the
+# projection from each `value` fact's lifecycle + supersession chain (§3.2/§4.1).
 id: lab_result
 name: Observation                  # FHIR Observation shape
 schema_org_ref: schema:MedicalTest
-description: A clinical lab observation; FHIR/LOINC/UCUM-shaped typed record.
+description: A clinical lab observation; FHIR/LOINC/UCUM-shaped, stored as graph facts.
 vehicle: typed_record(P7)
-facets: [Named, ExternalIdentified, Temporal, Related, Lifecycle]   # Named -> display; Lifecycle.status carries status_values
+facets: [Named, ExternalIdentified, Temporal, Related]   # Named -> display; Lifecycle dropped (§3.2)
 default_fact_kind: measurement
 
 predicates:
@@ -15,15 +21,16 @@ predicates:
     qualifier_vocab: id_scheme
     value_shape: scalar
     kind: attribute
+    functional: true               # one current code per (analyte, scheme); matches ExternalIdentified
   - canonical_name: category       # FHIR Observation.category: lab vs vital-sign vs imaging
-    value_shape: enum
+    value_shape: enum              # kept as-is: no product.category collision exists (§12.2)
     enum_values: [laboratory, vital-signs, imaging, procedure, exam, survey, social-history, therapy, activity]
     kind: attribute
   - canonical_name: value          # the reading
-    value_shape: quantity          # {value, unit: UCUM}
+    value_shape: quantity          # {value, unit: UCUM} — STRICTLY {value, unit}
     kind: measurement
   - canonical_name: component      # multi-part result (BP systolic/diastolic); qualifier = component LOINC
-    value_shape: quantity
+    value_shape: quantity          # storage ready; projection support deferred (§3.2/§4.1)
     kind: measurement
   - canonical_name: referenceRange
     value_shape: structured
@@ -33,10 +40,10 @@ predicates:
     value_shape: enum
     enum_values: [normal, high, low, abnormal, critical, borderline, indeterminate]
     kind: attribute
-  - canonical_name: effectiveDate  # clinically relevant time
+  - canonical_name: effectiveDate  # clinically relevant time (deterministic point token, §3.2)
     value_shape: date
     kind: event
-  - canonical_name: performer      # ordering / performing provider
+  - canonical_name: performer      # the performing lab / facility
     value_shape: ref
     range_type: organization
     kind: relationship
@@ -44,7 +51,9 @@ predicates:
     value_shape: text
     kind: attribute
 
-# Lifecycle.status (FHIR): an amended/corrected result supersedes the prior value.
+# Documented FHIR report-status vocabulary the parser maps into the in-flight
+# `fhir_status` signal (§3.5). NOT a stored `status` fact — the Lifecycle facet
+# is dropped, so this list is documentation only (no `status` predicate to fill).
 status_values: [registered, preliminary, final, amended, corrected, cancelled, entered-in-error]
 
 display_name: [name]               # the LOINC long name; value rendered "<value> <unit>"
