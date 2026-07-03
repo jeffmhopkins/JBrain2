@@ -558,3 +558,24 @@ edges bidirectionally, so it picks relatedTo up later with zero changes.
 - **Docs drift:** PREDICATE_CANONICALIZATION.md must be re-statused in Wave 1
   (its §5a finding justifies this plan); CLAUDE.md's migration head is stale
   (0112, not 0044) and gets fixed in the same PR.
+
+## 10. Post-merge follow-ups (PR #718 shipped 2026-07-02; recorded 2026-07-03)
+
+- **Entity → notes doorway (shipped in the follow-up PR with this section):**
+  `read_entity` lists the entity's most recent source notes with ids (and
+  offers them as cards), and the agent system prompt (v8) teaches the
+  entity→notes chain — root facts from the edges, richness from `read_note`.
+  This is the spine acting as an index into the prose, per §0.
+- **Delete `retire_open_new_predicate_cards`** (worker boot sweep, T1.3) once
+  the production box has booted a post-refocus build — the settings marker
+  (`new_predicate_retire_swept`) makes it a permanent no-op after its one
+  firing, and destined-dead code should not linger. Do NOT delete before that
+  boot: a build without the sweep leaves the open-card backlog standing.
+- **Keep the legacy resolution chain** (`predicate_resolution_executor`,
+  `_apply_resolution` new_predicate branches, `resolution.changed` →
+  consolidate, the suggestion picker + `sync_predicates` embeddings). Not
+  cleanup material: it is the only owner-facing lever for remapping a
+  spelling, it writes the durable aliases the collapse heals from, and §9's
+  tier-1 chain-fork risk names it as the mitigation path.
+- **Parked `new_predicate` cards** are the last live consumers of that chain —
+  triage at leisure; map-to-existing resolutions still feed the alias table.
