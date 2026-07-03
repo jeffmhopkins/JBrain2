@@ -135,9 +135,7 @@ async def test_materialize_stages_code_attributed_proposal(maker: async_sessionm
             {"role": "recipient", "text": "555-1234"},
         ],
     )
-    router, fake = _router(
-        json.dumps({"title": "Phone number", "body": "Phone is 555-1234."})
-    )
+    router, fake = _router(json.dumps({"title": "Phone number", "body": "Phone is 555-1234."}))
     proposals = ProposalRepo(maker)
     prop_id = await materialize_submission(
         intake=SqlIntakeRepo(maker),
