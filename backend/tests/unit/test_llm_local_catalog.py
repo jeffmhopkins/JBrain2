@@ -130,6 +130,47 @@ def test_qwen3_next_thinking_is_a_reasoning_deepseek_format_alt() -> None:
     assert [x.id for x in local_catalog.CATALOG if x.reasoning_format] == [m.id]
 
 
+def test_qwen35_0_8b_is_a_tiny_text_only_low_tier() -> None:
+    # The smallest catalog entry: a fast, cheap Q8 worker for undemanding side
+    # projects. Non-thinking (thinking is off by default upstream), text-only, tools.
+    m = local_catalog.get("qwen3.5-0.8b")
+    assert m is not None
+    assert m.tiers == ("low",)
+    assert not m.supports_vision and m.mmproj_include is None
+    assert m.supports_tools
+    # Non-thinking — not in the reasoning gating set the router consults.
+    assert not m.supports_reasoning
+    assert m.served_model not in local_catalog.REASONING_SERVED_MODELS
+    # Q8_0 (near-lossless at this size), not the Q4 the big MoE entries use.
+    assert m.quant == "Q8_0"
+    assert "Q8_0" in m.gguf_include
+    assert m.hf_repo == "unsloth/Qwen3.5-0.8B-GGUF"
+    assert m.spec == "local:qwen3.5-0.8b"
+    # Serves the conservative gateway default with the full native 256k as the ceiling.
+    assert m.context_window == local_catalog.DEFAULT_LOCAL_CONTEXT_WINDOW
+    assert m.native_context_window == 262144
+    # Opt-in, not part of the default resident set the install prompt offers.
+    assert m.id not in local_catalog.recommended_ids()
+
+
+def test_qwen35_4b_is_a_small_text_only_low_tier() -> None:
+    # The step up from the 0.8b tiny model: a small dense Q8 low-tier daily driver.
+    m = local_catalog.get("qwen3.5-4b")
+    assert m is not None
+    assert m.tiers == ("low",)
+    assert not m.supports_vision and m.mmproj_include is None
+    assert m.supports_tools
+    assert not m.supports_reasoning
+    assert m.served_model not in local_catalog.REASONING_SERVED_MODELS
+    assert m.quant == "Q8_0"
+    assert "Q8_0" in m.gguf_include
+    assert m.hf_repo == "unsloth/Qwen3.5-4B-GGUF"
+    assert m.spec == "local:qwen3.5-4b"
+    assert m.context_window == local_catalog.DEFAULT_LOCAL_CONTEXT_WINDOW
+    assert m.native_context_window == 262144
+    assert m.id not in local_catalog.recommended_ids()
+
+
 def _settings(**kw: Any) -> Settings:
     # Both cloud keys present — provider_choices hides a keyless cloud provider, so
     # tests that expect grok/claude to be offered must supply the keys.
