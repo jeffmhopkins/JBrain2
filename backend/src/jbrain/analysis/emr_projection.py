@@ -319,6 +319,11 @@ async def _project_encounter(session: AsyncSession, ent: Entity) -> None:
         else None
     )
     note_id = period[0].note_id if period else _any_note(await _active_facts(session, eid, "class"))
+    if note_id is None:
+        # No active period/class fact carries a note — the encounter is fully retracted
+        # (e.g. superseded on a re-run's retract sweep). The stale row was already
+        # dropped above; there is nothing to re-project, and source_note_id is NOT NULL.
+        return
     await session.execute(
         text(
             "INSERT INTO app.encounters"

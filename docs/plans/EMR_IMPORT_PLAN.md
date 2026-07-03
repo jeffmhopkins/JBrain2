@@ -1697,9 +1697,24 @@ unit-tested (`backend/src/jbrain/ingest/emr/`):
   closed, a real synthetic PDF round-trips its word boxes through the geometry parser, and a
   mixed Epic+athena+ARIA corpus reconciles (ARIA never integrated directly; the 07/29 read parks).
 
-**Remaining in W3 (next):** the DB **job handler** that ties it together on a note's decrypted
-attachments — extract text (+ words for OneContent) per attachment, `parse_corpus`, integrate each
-precise parse with a per-attachment chunk resolver, and `file_parked_cards` for the parked reads. That
-handler is enqueued by the seeded `emr_import` **trigger** (migration + the §6.0/§12.2 event-payload
-widening) — the piece flagged for an owner sanity-check before it lands. The vision-OCR job that feeds
-ARIA its text (§6.2) is a W3/W4 extractor concern.
+- **`import_handler.py` (`EmrImportPipeline.parse`)** — the DB **job handler** (`emr_parse`) that ties
+  it together on a note's decrypted PDF attachments: extract each PDF's page text (+ word geometry for
+  OneContent) off the event loop → `parse_corpus` → integrate each precise parse through the shipped
+  arbiter → `file_parked_cards` for the parked OCR reads and a card for any unrecognized file. Each
+  precise source integrates against **its own attachment chunks** so a fact's citation lands on the
+  source document (the arbiter anchors an EMR fact to the head of its chunk set; per-page honoring of
+  the intent's attested span is a follow-on). Writes run on a **health-scoped owner session** (§3.6).
+  A real-Postgres e2e attaches a synthetic athena PDF, ingests it (so each page is a chunk), runs the
+  job, and proves the encounter/observation entities mint, `lab_results` projects, and every value
+  fact cites a real attachment page chunk; a second test proves a **re-run is safe** — the projection
+  stays at one current row per reading. This surfaced and fixed a projector bug: a fully-retracted
+  encounter (a re-run's retract sweep) must **skip** re-projection, not `INSERT` a NULL `source_note_id`
+  (`emr_projection._project_encounter`). *Entity-level idempotency (matching a re-mint to a stable EMR
+  key instead of `create_provisional`'s always-new) is a follow-on; the projection is correct either
+  way — retracted duplicates never surface.*
+
+**Remaining in W3 (next):** registering `emr_parse` with the worker + the seeded `emr_import`
+**trigger** (migration + the §6.0/§12.2 event-payload widening on `note.ingested`, where the
+attachments are present — `note.created` fires before the zip is uploaded) and the intake→ingest→parse
+sequencing. This is the piece flagged for an owner sanity-check. The vision-OCR job that feeds ARIA its
+text (§6.2) is a W3/W4 extractor concern.
