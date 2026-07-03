@@ -7,6 +7,7 @@ import { type ReactNode, useCallback, useEffect, useState } from "react";
 import { api } from "../api/client";
 import { EntityTypeIcon } from "../entities/kinds";
 import { IntakeLinkProposalEditor } from "../intake/IntakeLinkProposalEditor";
+import { Markdown } from "./markdown";
 import type { Decision, EnactResult, ProposalDetail, ProposalNode } from "./types";
 
 // A leaf's op turned into a short human descriptor for its row head — so a node
@@ -140,7 +141,11 @@ function NodeRow({
         <span className="node-status">{node.status}</span>{" "}
         {isMerge ? <MergeHead preview={node.preview} /> : heading}
       </div>
-      {body && <div className="r-sub">{body}</div>}
+      {body && (
+        <div className="r-sub">
+          <Markdown text={body} />
+        </div>
+      )}
       {node.type === "leaf" && node.status === "pending" && (
         <div className="node-actions">
           <button

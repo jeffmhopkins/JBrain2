@@ -1,17 +1,20 @@
 """Owner-side materialization of a captured intake submission into a Proposal (W4).
 
 The recipient's confirmed submission is stranger-authored, untrusted content. The
-owner — never the stranger — turns it into a Proposal tree (per-claim leaves) for
-review (#4/#10: the capture itself stages nothing; this is the separate owner step).
+owner — never the stranger — turns it into a Proposal for review (#4/#10: the capture
+itself stages nothing; this is the separate owner step). The submission becomes ONE
+note — the whole thing the person provided (a recipe, a set of details) as a single
+coherent record — not a shredded pile of per-fact leaves; the note re-enters normal
+ingestion, so facts are still extracted from it downstream, once, by the usual pipeline.
 
 Two boundaries make this safe:
   * The transcript is fed to the model behind the strict data/instruction boundary of
-    `intake_materialize.prompt` (the `correction_mine` pattern) — the model extracts
-    facts, it does not take orders from the text.
+    `intake_materialize.prompt` (the `correction_mine` pattern) — the model writes the
+    note, it does not take orders from the text.
   * Attribution is CODE-set, not model-set: the Proposal's domain, subject, kind, and
-    the notes' `untrusted_origin` provenance all come from the OWNER's link config, so
-    a poisoned transcript can influence only the leaf TEXT (which the owner reviews),
-    never where a note lands or how trusted it is.
+    the note's `untrusted_origin` provenance all come from the OWNER's link config, so
+    a poisoned transcript can influence only the note TEXT (which the owner reviews),
+    never where the note lands or how trusted it is.
 """
 
 from __future__ import annotations
@@ -67,32 +70,36 @@ async def materialize_submission(
         strength=_PROMPT.strength,
     )
     parsed = result.parsed if isinstance(result.parsed, dict) else {}
-    summary = str(parsed.get("summary", "")).strip() or "Intake submission"
-    raw_claims = parsed.get("claims")
-    claims = raw_claims if isinstance(raw_claims, list) else []
+    title = str(parsed.get("title", "")).strip() or "Intake submission"
+    body = str(parsed.get("body", "")).strip()
 
-    # Per-claim leaves — each an independently approvable note. Attribution (domain,
-    # subject, kind, provenance) is set HERE from the link, never from the model output.
-    nodes = [
-        NodeSpec(
-            id=str(uuid.uuid4()),
-            type="leaf",
-            op="add_intake_note",
-            label=str(claim.get("label", "")).strip()[:80] or "fact",
-            preview={
-                "body": str(claim.get("body", "")).strip(),
-                "domain": link.domain_code,
-                "submission_id": submission_id,
-            },
-        )
-        for claim in claims
-        if isinstance(claim, dict) and str(claim.get("body", "")).strip()
-    ]
+    # ONE leaf — the whole submission as a single approvable note (a recipe stays a
+    # recipe, not four disconnected facts). Attribution (domain, subject, kind,
+    # provenance) is set HERE from the link, never from the model output; a submission
+    # with nothing usable yields a node-less proposal. On enact the note re-enters
+    # ingestion, which extracts its facts the normal way.
+    nodes = (
+        [
+            NodeSpec(
+                id=str(uuid.uuid4()),
+                type="leaf",
+                op="add_intake_note",
+                label=title[:80],
+                preview={
+                    "body": body,
+                    "domain": link.domain_code,
+                    "submission_id": submission_id,
+                },
+            )
+        ]
+        if body
+        else []
+    )
     spec = ProposalSpec(
         kind="intake-submission",
         domain=link.domain_code,
         subject_id=link.subject_id,
-        title=summary[:200],
+        title=title[:200],
         nodes=nodes,
         provenance={
             "source": "intake-submission",
