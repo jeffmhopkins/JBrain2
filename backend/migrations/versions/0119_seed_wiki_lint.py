@@ -15,8 +15,8 @@ freshly-pruned state. Inert while disabled; the owner enables it from Ops once t
 slice is trusted (the 0047→0048 enable-migration precedent). The fixed UUIDs make the trigger
 addressable by the Ops/run-log surfaces across environments.
 
-Revision ID: 0115
-Revises: 0114
+Revision ID: 0119
+Revises: 0118
 Create Date: 2026-07-03
 """
 
@@ -24,8 +24,8 @@ import json
 
 from alembic import op
 
-revision = "0115"
-down_revision = "0114"
+revision = "0119"
+down_revision = "0118"
 branch_labels = None
 depends_on = None
 

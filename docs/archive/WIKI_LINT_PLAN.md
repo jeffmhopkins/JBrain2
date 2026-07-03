@@ -9,7 +9,7 @@
 > verifiers, `_file_card` with open-item dedup), gated by a SEPARATE `WikiLintGate` /
 > `wiki_lint_daily_*` budget keys (`settings_store.py`, `wiki/budget.py`); the two router
 > tasks `wiki.lint.contradiction`/`wiki.lint.stale` (`llm/router.py` + `llm_settings.py`
-> labels); migration **0116** admitting the `wiki_contradiction`/`wiki_stale_claim`
+> labels); migration **0120** admitting the `wiki_contradiction`/`wiki_stale_claim`
 > review kinds; the frontend registry wiring (`ReviewKind` union + block SEQUENCE +
 > `registry.test.ts`); and the tests — `test_wiki_lint_prompts.py` (prompt digest pins +
 > `card_domain` branch coverage) and the Wave-B half of `test_wiki_lint_pg.py`
@@ -32,7 +32,7 @@
 >
 > **Wave A — as-built (shipped, 2026-07-03).** `wiki/lint.py` (`WIKI_LINT_SPEC` +
 > `wiki_lint_handler` + `WikiLinter`), wired into the worker/API registries and the
-> three lockstep tests; seed migration **0115** (`nightly_wiki_lint`, disabled,
+> three lockstep tests; seed migration **0119** (`nightly_wiki_lint`, disabled,
 > manual-fireable); integration suite `tests/integration/test_wiki_lint_pg.py`
 > (8 tests incl. the 100% security-path firewall test and the index re-dirty
 > convergence/second-run-stability tests). **Two deviations from the design below,

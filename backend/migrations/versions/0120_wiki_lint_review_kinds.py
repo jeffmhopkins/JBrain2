@@ -7,23 +7,25 @@ current). The review_items kind CHECK is an explicit allowlist, so the new kinds
 
 Rides the existing app.review_items RLS policy (no new table → no new isolation test).
 
-Revision ID: 0116
-Revises: 0115
+Revision ID: 0120
+Revises: 0119
 Create Date: 2026-07-03
 """
 
 from alembic import op
 
-revision = "0116"
-down_revision = "0115"
+revision = "0120"
+down_revision = "0119"
 branch_labels = None
 depends_on = None
 
-# The kinds admitted through migration 0034, in the same order.
+# The current kind list through migration 0118 (0034's twelve + 'shape_mismatch'), in order —
+# NOT the 0006 baseline, which would silently drop the post-0006 kinds when the CHECK is rebuilt.
 _BASE = (
     "'fact_conflict', 'attribute_collision', 'merge_proposal', 'ambiguous_mention',"
     " 'domain_promotion', 'low_confidence', 'split_proposal', 'inverse_proposal',"
-    " 'extraction_truncated', 'low_confidence_inference', 'new_predicate', 'confirm_entity'"
+    " 'extraction_truncated', 'low_confidence_inference', 'new_predicate', 'confirm_entity',"
+    " 'shape_mismatch'"
 )
 _KINDS_WITH = f"({_BASE}, 'wiki_contradiction', 'wiki_stale_claim')"
 _KINDS_WITHOUT = f"({_BASE})"
