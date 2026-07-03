@@ -364,6 +364,21 @@
   line-height: 1.5;
   white-space: pre-wrap;
 }
+/* Rich text (the safe Markdown renderer) hosted in an intake card or transcript
+   bubble: drop the plain-text pre-wrap so headings and lists lay out normally, and
+   pull the renderer's own outer margins so it sits flush in the card. */
+.intake-convosum .body .md,
+.intake-tbub .md {
+  white-space: normal;
+}
+.intake-convosum .body .md > :first-child,
+.intake-tbub .md > :first-child {
+  margin-top: 0;
+}
+.intake-convosum .body .md > :last-child,
+.intake-tbub .md > :last-child {
+  margin-bottom: 0;
+}
 .intake-inbox-note {
   font-size: 13px;
   color: var(--text-2);
