@@ -469,6 +469,22 @@ services:
       # coder's native 256k (the gateway serves it at full native context); override if a
       # different served `-c` is configured.
       GROK_CONTEXT_WINDOW: ${JCODE_GROK_CONTEXT_WINDOW:-262144}
+      # OpenClaw (`openclaw`) the owner can run in the session shell alongside `claude` and
+      # `grok`. A login-shell hook (/etc/profile.d/openclaw-config.sh) renders
+      # ~/.openclaw/openclaw.json from these vars so `openclaw` targets the on-box coder over
+      # an OpenAI-compatible base_url — same gateway URL as GROK_MODELS_BASE_URL above (with
+      # /v1) so the engines can't drift, and NO claude-shim (that exists only for Claude
+      # Code's Anthropic API). The gateway is keyless, but a custom base_url makes the CLI
+      # send Authorization: Bearer, so OPENCLAW_API_KEY is a non-empty placeholder.
+      # OPENCLAW_MODEL pins the on-box coder; the interactive terminal further pins it per
+      # session with the owner's selected quant, like GROK_MODEL and the ANTHROPIC_* tiers.
+      OPENCLAW_MODELS_BASE_URL: ${JCODE_MODEL_URL:-http://local-llm:8080}/v1
+      OPENCLAW_API_KEY: ${JCODE_OPENCLAW_API_KEY:-sk-local-noauth}
+      OPENCLAW_MODEL: ${JCODE_MODEL:-qwen3-coder-next}
+      # The coder's served context window, written into ~/.openclaw/openclaw.json so its
+      # token meter and auto-compaction match the gateway's real size. Default 262144 = the
+      # coder's native 256k; override if a different served `-c` is configured.
+      OPENCLAW_CONTEXT_WINDOW: ${JCODE_OPENCLAW_CONTEXT_WINDOW:-262144}
       # Headless-sandbox hardening for the bundled Claude Code CLI the Agent SDK spawns:
       # a writable config dir (it persists onboarding/ToS state there — a non-writable
       # ~/.claude exits 1), suppress first-run/update/telemetry traffic that fails

@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+# Per-session openclaw version management (docs/proposed/JCODE_SESSION_TOOLS_PLAN.md).
+#
+# Installs the OpenClaw CLI into the session's PRIVATE npm prefix ($NPM_CONFIG_PREFIX, set by
+# the terminal to $HOME/.npm-global), whose bin leads PATH via /etc/profile.d/jcode-path.sh —
+# so the installed openclaw shadows the image's /usr/local/bin copy for THIS session only.
+# Other sessions and the image default are untouched. Like `jcode-claude` (and unlike
+# `jcode-grok`), this hits registry.npmjs.org, which IS on the git/npm egress allowlist — so
+# it works even under strict egress (JCODE_EGRESS_PROXY).
+#
+#   jcode-openclaw upgrade [version]   install openclaw into the session (default: latest;
+#                                      pass a version/tag to pin, e.g. 1.2.3)
+#   jcode-openclaw version             show the session's openclaw vs the image default
+set -euo pipefail
+
+_die() { echo "jcode-openclaw: $1" >&2; exit "${2:-1}"; }
+
+case "${1:-}" in
+upgrade)
+  version="${2:-latest}"
+  # Guard on (and pass) the prefix we ACTUALLY install into, not just the session marker:
+  # if NPM_CONFIG_PREFIX were unset/clobbered, a bare `npm i -g` would silently fall back to
+  # the image's shared global location. --prefix is explicit so the env can't redirect it.
+  [ -n "${NPM_CONFIG_PREFIX:-}" ] || _die "not in a jcode session shell (NPM_CONFIG_PREFIX unset)" 1
+  npm install -g --prefix "$NPM_CONFIG_PREFIX" "openclaw@${version}" \
+    || _die "npm install failed (see npm errors above)" 1
+  hash -r 2>/dev/null || true  # drop bash's cached /usr/local/bin/openclaw path
+  echo "jcode-openclaw: openclaw is now $(openclaw --version 2>/dev/null || echo '?') at $(command -v openclaw)"
+  ;;
+version)
+  echo "session: $(command -v openclaw 2>/dev/null || echo none) -> $(openclaw --version 2>/dev/null || echo none)"
+  echo "image:   /usr/local/bin/openclaw -> $(/usr/local/bin/openclaw --version 2>/dev/null || echo none)"
+  ;;
+*)
+  _die "usage: jcode-openclaw {upgrade [version]|version}" 2
+  ;;
+esac

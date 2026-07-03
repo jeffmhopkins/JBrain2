@@ -80,6 +80,15 @@ thread**; a future multi-persona mode could go per-persona.
 
 ### 2a. Recommended realization: OpenClaw *resident in* a jcode session — no sub-Docker
 
+> **Shipped (initial cut).** OpenClaw is now installed in the jcode image as a third
+> session CLI alongside `claude` and `grok`, prewired to the on-box coder over the
+> gateway's OpenAI-compatible route: the `openclaw` npm package in `jcode/Dockerfile`,
+> a `/etc/profile.d/openclaw-config.sh` hook that renders `~/.openclaw/openclaw.json`
+> from `OPENCLAW_*` env, `OPENCLAW_MODEL` in the terminal's per-session model pin, the
+> compose `OPENCLAW_*` block, and a `jcode-openclaw` per-session upgrade helper. It runs
+> in the jcode container with **no OpenClaw sub-sandbox** (the container is the single
+> boundary). What follows is the design rationale.
+
 The lowest-effort, lowest-surface way to get OpenClaw on the box is not a new
 gateway at all: **install OpenClaw as a package inside an existing jcode scratch
 session and turn its own sandbox off.** A jcode session is already an isolated
