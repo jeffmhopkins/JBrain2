@@ -853,11 +853,19 @@ class SqlAnalysisRepo:
             mentions = (
                 await session.execute(
                     text(
+                        # INNER JOIN notes (never LEFT): the join is the RLS
+                        # backstop — an out-of-scope note must drop the whole
+                        # mention, not leak a bare note_id. Live notes only;
+                        # n.created_at is the date shown next to the source note
+                        # (m.created_at is re-analysis-time, not capture time).
                         """
                         SELECT m.note_id::text, m.surface_text,
                                m.char_start, m.char_end,
-                               c.text AS chunk_text, m.created_at
+                               c.text AS chunk_text, m.created_at,
+                               n.domain_code AS note_domain,
+                               n.created_at AS note_created_at
                         FROM app.entity_mentions m
+                        JOIN app.notes n ON n.id = m.note_id AND n.deleted_at IS NULL
                         LEFT JOIN app.chunks c ON c.id = m.chunk_id
                         WHERE m.entity_id = :id
                         ORDER BY m.created_at DESC
@@ -941,6 +949,8 @@ class SqlAnalysisRepo:
                     "snippet": mark_snippet(m.chunk_text, m.char_start, m.char_end)
                     or m.surface_text,
                     "created_at": m.created_at,
+                    "domain": m.note_domain,
+                    "note_created_at": m.note_created_at,
                 }
                 for m in mentions
             ],

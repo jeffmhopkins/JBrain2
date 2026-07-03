@@ -247,11 +247,37 @@ def _current_facts(view: dict[str, Any]) -> list[dict[str, Any]]:
     return [p["current"] for p in view.get("predicates", []) if p.get("current")]
 
 
+# How many source notes the entity view lists (and offers as cards). The graph
+# is the spine, notes hold the richness (docs/ENTITY_GRAPH_REFOCUS_PLAN.md), so
+# the entity page must be a doorway into its sources — but a bounded one; the
+# model chains read_note only where it actually needs the prose.
+_SOURCE_NOTE_LIMIT = 5
+
+
+def _source_notes(view: dict[str, Any]) -> list[dict[str, Any]]:
+    """The entity's distinct mentioning notes, newest-first (mentions arrive in
+    that order; the first mention per note wins, so its snippet is the freshest)."""
+    seen: dict[str, dict[str, Any]] = {}
+    for m in view.get("mentions", []):
+        seen.setdefault(m["note_id"], m)
+    return list(seen.values())
+
+
+def _source_note_line(m: dict[str, Any]) -> str:
+    stamp = m.get("note_created_at") or m.get("created_at")
+    date = f" {stamp:%Y-%m-%d}" if stamp else ""
+    domain = f" [{m['domain']}]" if m.get("domain") else ""
+    snippet = " ".join(str(m.get("snippet") or "").split())[:140]
+    return f"- note {m['note_id']}{domain}{date}: {snippet}"
+
+
 def format_entity(view: dict[str, Any]) -> str:
     """The structured/graph view: schema.org kind, names, facts-as-edges (with the
     target entity's id on relationship edges, so they can be chained through),
-    inbound edges, and a mention count. Text-only now; an entity_card view comes
-    with the component registry (the text-first tool path, docs/archive/ASSISTANT_PLAN.md)."""
+    inbound edges, and the most recent source notes WITH ids — the graph is the
+    spine and notes hold the richness, so the entity page is also the doorway
+    into read_note. Text-only now; an entity_card view comes with the component
+    registry (the text-first tool path, docs/archive/ASSISTANT_PLAN.md)."""
     lines = [f"{view['canonical_name']} [{view['kind']}] ({view['domain']})"]
     if aliases := view.get("aliases"):
         lines.append("also known as: " + ", ".join(aliases))
@@ -261,9 +287,29 @@ def format_entity(view: dict[str, Any]) -> str:
     if inbound := view.get("inbound"):
         lines.append("referenced by:")
         lines += [f"- {r['name']} {r['predicate']} this" for r in inbound]
-    if mentions := view.get("mentions"):
-        lines.append(f"mentioned in {len(mentions)} note(s).")
+    if notes := _source_notes(view):
+        shown = notes[:_SOURCE_NOTE_LIMIT]
+        lines.append(f"source notes ({len(notes)} total, newest first — read_note for the prose):")
+        lines += [_source_note_line(m) for m in shown]
+        if len(notes) > len(shown):
+            lines.append(
+                f"  (+{len(notes) - len(shown)} more — search the entity name for the rest)"
+            )
     return "\n".join(lines)
+
+
+def entity_view_sources(view: dict[str, Any]) -> tuple[NoteSource, ...]:
+    """The listed source notes as cards — the structured twin of the note lines
+    format_entity prints, so the PWA renders openable sources alongside the
+    entity and the ids the model cites stay tappable for the owner."""
+    return tuple(
+        NoteSource(
+            note_id=str(m["note_id"]),
+            domain=str(m.get("domain") or view.get("domain", "general")),
+            snippet=" ".join(str(m.get("snippet") or "").split())[:140],
+        )
+        for m in _source_notes(view)[:_SOURCE_NOTE_LIMIT]
+    )
 
 
 def entity_view_objects(view: dict[str, Any]) -> tuple[EntityRef, ...]:
@@ -441,8 +487,10 @@ def build_entity_handlers(entities: EntityReader) -> dict[str, ToolHandler]:
             return ToolOutput("No entity with that id is in scope.")
         # The subject (with its facts) leads, then the entities it points at — so a
         # claim from the subject's own fact grounds, and related names still linkify.
+        # Source-note cards ride along so the doorway into the prose is tappable.
         return ToolOutput(
             format_entity(view),
+            entity_view_sources(view),
             entities=(entity_view_ref(view), *entity_view_objects(view)),
         )
 

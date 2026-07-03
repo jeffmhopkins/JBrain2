@@ -1,6 +1,6 @@
 ---
 name: read_entity
-version: 3
+version: 4
 permission: read
 params:
   type: object
@@ -12,8 +12,10 @@ params:
 ---
 Read one of the owner's entities by its id and get the structured GRAPH view: its
 type, names and aliases, its current facts as edges (predicate → value), which
-other entities point at it, and how many notes mention it. Use this for the
-structured view of who or what something is.
+other entities point at it, and its most recent source notes WITH note ids. Use
+this for the structured view of who or what something is — and, when the question
+needs more than the edges (context, history, "tell me about…"), chain read_note on
+the listed source notes: the graph is the spine, the notes hold the prose.
 
 To read the OWNER'S OWN entity ("Me" — the centre of the graph, where their own
 birthday, name, age, email, and the like live), pass entity_id "me". That is the

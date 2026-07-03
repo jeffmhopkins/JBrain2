@@ -13,6 +13,7 @@ from jbrain.agent.readtools import (
     build_registry,
     entity_view_objects,
     entity_view_ref,
+    entity_view_sources,
     format_currency,
     format_entity,
     format_neighborhood,
@@ -117,7 +118,31 @@ def entity_view(entity_id: str = "e1") -> dict:
             {"predicate": "employer", "qualifier": "", "current": None, "history": []},
         ],
         "inbound": [{"entity_id": "e2", "name": "Jeff", "predicate": "spouse", "statement": "..."}],
-        "mentions": [{"note_id": "n1", "snippet": "...", "created_at": None}],
+        "mentions": [
+            # Two mentions in one note plus one in another: the view lists
+            # DISTINCT notes newest-first, first mention per note winning.
+            {
+                "note_id": "n1",
+                "snippet": "met **Celine** at the lake",
+                "created_at": datetime(2026, 6, 20, tzinfo=UTC),
+                "domain": "general",
+                "note_created_at": datetime(2026, 6, 20, tzinfo=UTC),
+            },
+            {
+                "note_id": "n1",
+                "snippet": "Celine again",
+                "created_at": datetime(2026, 6, 20, tzinfo=UTC),
+                "domain": "general",
+                "note_created_at": datetime(2026, 6, 20, tzinfo=UTC),
+            },
+            {
+                "note_id": "n2",
+                "snippet": "Celine started lisinopril",
+                "created_at": datetime(2026, 6, 1, tzinfo=UTC),
+                "domain": "health",
+                "note_created_at": datetime(2026, 6, 1, tzinfo=UTC),
+            },
+        ],
     }
 
 
@@ -367,7 +392,38 @@ def test_format_entity_shows_kind_aliases_and_edges() -> None:
     # read_entity (the "my wife's name" traversal).
     assert "- spouse: married to Jeff → Jeff (id=e2)" in out
     assert "Jeff spouse this" in out  # inbound edge
-    assert "mentioned in 1 note" in out
+    # Source notes list DISTINCT notes with ids the model can read_note —
+    # the entity is the doorway into the prose, not just a mention count.
+    assert "source notes (2 total, newest first" in out
+    assert "- note n1 [general] 2026-06-20: met **Celine** at the lake" in out
+    assert "- note n2 [health] 2026-06-01: Celine started lisinopril" in out
+    assert out.count("note n1") == 1  # two mentions in n1 collapse to one line
+
+
+def test_format_entity_caps_source_notes_and_counts_the_rest() -> None:
+    view = entity_view()
+    view["mentions"] = [
+        {
+            "note_id": f"n{i}",
+            "snippet": f"snippet {i}",
+            "created_at": datetime(2026, 6, 28 - i, tzinfo=UTC),
+            "domain": "general",
+            "note_created_at": datetime(2026, 6, 28 - i, tzinfo=UTC),
+        }
+        for i in range(7)
+    ]
+    out = format_entity(view)
+    assert "source notes (7 total" in out
+    assert "note n4" in out and "note n5" not in out  # top 5 listed, rest counted
+    assert "(+2 more" in out
+
+
+def test_entity_view_sources_are_note_cards_for_the_listed_notes() -> None:
+    sources = entity_view_sources(entity_view())
+    assert sources == (
+        NoteSource(note_id="n1", domain="general", snippet="met **Celine** at the lake"),
+        NoteSource(note_id="n2", domain="health", snippet="Celine started lisinopril"),
+    )
 
 
 def test_entity_view_objects_are_chips_for_relationship_edges() -> None:
@@ -393,6 +449,8 @@ async def test_read_entity_found_and_missing() -> None:
     found = await tools["read_entity"]({"entity_id": "abc"}, CTX)
     assert isinstance(found, ToolOutput)
     assert "Celine Hopkins" in found
+    # The listed source notes ride along as openable cards.
+    assert [s.note_id for s in found.sources] == ["n1", "n2"]
     # The subject leads — carrying its current-fact statements so an answer from one
     # of its facts grounds (not just its name/aliases) — then the spouse edge's
     # target rides along as a chip the PWA can linkify.
@@ -764,8 +822,8 @@ def test_sidecars_pinned_to_their_versions() -> None:
         ),
         "read_entity.tool": (
             "read_entity",
-            3,
-            "5b1c6003e4ab455791cffd0bd8bc29fd83cbeae759c480f07e156901b0002af8",
+            4,
+            "53a69c1aa3e21178b43a569fc8cfba56b3b95e5e6e8ee7cd170fef97c6e309fd",
         ),
         "find_entity.tool": (
             "find_entity",
