@@ -549,6 +549,33 @@ async def test_seeded_nightly_sweeps_exist_and_are_fireable(maker: async_session
     assert await _total_jobs(maker) == before + len(rows)
 
 
+async def test_nightly_wiki_schedules_are_enabled(maker: async_sessionmaker) -> None:
+    """Migration 0121 flips the three nightly wiki schedules ON — the builder's refresh (03:30) +
+    prune (03:45) and the health sweep lint (04:00). `wiki_rebuild`/`wiki_reindex` stay Ops-manual
+    (disabled schedule) — a full re-derive / index re-embed is on-demand, not nightly."""
+    enabled_ids = {
+        "00000000-0000-0000-0000-0000000f0001",  # nightly_wiki_refresh
+        "00000000-0000-0000-0000-0000000f0003",  # nightly_wiki_prune
+        "00000000-0000-0000-0000-0000000c0021",  # nightly_wiki_lint
+    }
+    manual_only = {
+        "00000000-0000-0000-0000-0000000f0005",  # wiki_rebuild_all
+        "00000000-0000-0000-0000-0000000f0007",  # wiki_reindex_all
+    }
+    async with scoped_session(maker, queue.SYSTEM_CTX) as s:
+        rows = (
+            await s.execute(
+                text("SELECT id, enabled FROM app.schedules WHERE id = ANY(:ids)"),
+                {"ids": list(enabled_ids | manual_only)},
+            )
+        ).all()
+    state = {str(r.id): r.enabled for r in rows}
+    for sid in enabled_ids:
+        assert state.get(sid) is True, f"{sid} must be enabled by 0121"
+    for sid in manual_only:
+        assert state.get(sid) is False, f"{sid} must stay Ops-manual (disabled)"
+
+
 # --- the dropped-event safety net (Wave 2 — the whole point of this task) -----
 
 

@@ -2,9 +2,10 @@
 
 > **Status:** In progress · **Last verified:** 2026-07-03 · **Waves:** A✅ B✅ C✅ D◻️ —
 > the builder, `wiki_citations`/`wiki_links` graph coupling, and Talk all shipped
-> (migrations 0045–0053, `wiki/builder.py`). **Wave D (open):** re-enable the
-> nightly build schedules (disabled at migration 0088), grounding-gate tuning,
-> and purge→rebuild. Archive once D closes.
+> (migrations 0045–0053, `wiki/builder.py`). **Wave D (open):** the nightly build
+> schedules (`wiki_refresh` 03:30 + `wiki_prune` 03:45) were **re-enabled by migration
+> 0121** (alongside `wiki_lint` 04:00); grounding-gate tuning and purge→rebuild remain.
+> Archive once D closes.
 >
 > Research + two builder dry-runs + a three-reviewer independent
 > audit done; this is the post-audit v3. Owner decisions settled: article scope
