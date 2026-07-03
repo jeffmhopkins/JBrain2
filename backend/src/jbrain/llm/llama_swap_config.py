@@ -32,9 +32,10 @@ from typing import cast
 # share a port. 127.0.0.1: llama-swap and llama-server share the container.
 UPSTREAM_PORT_BASE = 9100
 
-# Explicit opt-OUT values for LOCAL_LLM_RESIDENT_GROUP: anything else (including
-# unset/empty) keeps the recommended set co-resident, since co-residency is the default.
-_FALSEY = ("0", "false", "no", "off")
+# Explicit opt-IN values for LOCAL_LLM_RESIDENT_GROUP: only these enable co-residency.
+# Anything else (including unset/empty) keeps the recommended set swapping one at a time —
+# co-residency pins ~91 GB and destabilised the Strix Halo box (docs/STRIX_HALO_SETUP.md).
+_TRUTHY = ("1", "true", "yes", "on")
 
 
 def resolve_weight(root: str, model_id: str, pattern: str) -> str:
@@ -135,9 +136,9 @@ def render(
     # A non-swapping group keeps a chosen set of models co-resident (hot paths skip the
     # cold-load on a task switch) — the agent's text model (gpt-oss-120b) and the vision
     # model (qwen3-vl) never swap each other out mid-turn; everything else stays swappable,
-    # one at a time. Two sources union: the install-time `recommended` set (when
-    # resident_group is on — now the DEFAULT, so the box runs 120b + vl co-resident out of
-    # the box) and the operator's runtime staged set (`pinned`, catalog ids).
+    # one at a time. Two sources union: the install-time `recommended` set (only when
+    # resident_group is opted ON — it defaults OFF, since co-residency pins ~91 GB and
+    # destabilised the box) and the operator's runtime staged set (`pinned`, catalog ids).
     #
     # `swap: false` lets the members coexist; `exclusive: false` lets a request for a
     # model OUTSIDE the group (the coder, an image-driven reload) still load without
@@ -189,10 +190,10 @@ def _main(argv: list[str]) -> int:
         return 2
     root = argv[0]
     models = json.loads(os.environ["MANIFEST"])
-    # Co-residency is the DEFAULT (the box runs the recommended set — 120b + vl — hot
-    # together): unset/empty reads as on. An operator on a memory-tight box opts OUT with
-    # an explicit false-y value (`LOCAL_LLM_RESIDENT_GROUP=0`).
-    resident = os.environ.get("LOCAL_LLM_RESIDENT_GROUP", "").strip().lower() not in _FALSEY
+    # Co-residency is OPT-IN (off by default): it pins ~91 GB in the unified pool, which
+    # destabilised the Strix Halo box, so unset/empty reads as OFF. An operator with the
+    # memory to spare opts IN with a truthy LOCAL_LLM_RESIDENT_GROUP (e.g. `=1`).
+    resident = os.environ.get("LOCAL_LLM_RESIDENT_GROUP", "").strip().lower() in _TRUTHY
     path = write(root, models, resident_group=resident)
     kept = len([m for m in models if m.get("recommended")]) if resident else 0
     print(f"wrote {path}: {len(models)} model(s); {kept} kept co-resident (others swap alone)")

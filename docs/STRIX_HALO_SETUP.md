@@ -113,13 +113,15 @@ sudo jbrain enable-local-models
 Builds the gateway (the community-maintained gfx1151 llama.cpp image +
 llama-swap), downloads the recommended set — **Qwen3-VL-30B-A3B Q8 (~32 GB)** +
 **gpt-oss-120b MXFP4 (~59 GB)**, ~91 GB total — generates the llama-swap config,
-and starts the gateway. The recommended set runs **co-resident by default** (~91
-GB, a llama-swap non-swapping group — 120b + vl stay hot together so the agent's
-text and vision models never swap each other out mid-turn). A switch to a state
-that needs the whole box (an image render, the coder) is the only thing that
-displaces them, and the agent re-warms the set at end of turn. On a memory-tight
-box, opt out with `LOCAL_LLM_RESIDENT_GROUP=0 sudo jbrain enable-local-models`
-(the recommended set then loads on demand, one at a time).
+and starts the gateway. The recommended set **swaps one at a time by default** — only
+the model the next request names is loaded, so the box never pins both at once.
+Co-residency (keeping 120b + vl hot together in a llama-swap non-swapping group, ~91
+GB) is **opt-in**: it removes the cold-load on a text↔vision switch but pins ~91 GB of
+the 128 GB pool, which on this hardware drove hard-freezes (see "Stability —
+hard-freeze / OOM hardening" below). Turn it on only if you have the headroom:
+`LOCAL_LLM_RESIDENT_GROUP=1 sudo jbrain enable-local-models` (and add
+`LOCAL_LLM_RESIDENT_GROUP=1` to `.env` so an update keeps it). Staged models pin
+regardless of the flag.
 
 ✅ **Checkpoint:** `jbrain status` shows `local-llm` running; `jbrain logs
 local-llm` shows llama-swap listening and the resident models loaded.
@@ -233,9 +235,10 @@ comfyui`) for the submitted graph.
 ---
 
 ## Expected performance
-~31 tok/s on gpt-oss-120b, ~30–45 tok/s on Qwen3-VL. By default the recommended
-set stays co-resident (~91 GB) with headroom for context; with
-`LOCAL_LLM_RESIDENT_GROUP=0` each loads on demand, one at a time.
+~31 tok/s on gpt-oss-120b, ~30–45 tok/s on Qwen3-VL. By default each model loads on
+demand, one at a time (a text↔vision switch cold-loads the other); opt into keeping
+the recommended pair co-resident (~91 GB) with `LOCAL_LLM_RESIDENT_GROUP=1` only if the
+box has the memory headroom to spare.
 
 ## Switching to ROCm (optional, faster)
 The ROCm/rocWMMA path is often faster on gfx1151 and is the better route for
@@ -281,9 +284,12 @@ churn. Harden the host against the rest (all idempotent and reversible):
    EOF
    sudo sysctl --system
    ```
-3. **Load models on demand** on a memory-tight box — drop the co-resident group so
-   nothing stays pinned: `LOCAL_LLM_RESIDENT_GROUP=0 sudo jbrain enable-local-models`
-   (restores ~30 GB of headroom; costs a few seconds on a text↔vision switch).
+3. **On-demand model loading is now the default** — the recommended set swaps one at a
+   time, so nothing pins the box. This applies automatically on your next update; no
+   `.env` edit needed. (Only if you had previously opted in with
+   `LOCAL_LLM_RESIDENT_GROUP=1` do you need to remove it to get the default back.) Note a
+   model you **staged** in the PWA still pins on its own — unstage it (Settings → LLM →
+   On-box models) if you want it to swap too.
 4. **Persistent logs** so the next event's full dump survives the freeze:
    ```bash
    sudo mkdir -p /var/log/journal

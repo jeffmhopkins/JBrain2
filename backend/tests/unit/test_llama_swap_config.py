@@ -1,6 +1,7 @@
 """llama-swap config generation: filename resolution, the `-c` window (default +
 override), the co-resident (non-swapping) group, and atomic write."""
 
+import json
 from dataclasses import asdict
 from pathlib import Path
 
@@ -133,6 +134,31 @@ def test_render_no_group_when_nothing_pinned_or_recommended(tmp_path: Path) -> N
     _lay_down(tmp_path)
     text = llama_swap_config.render(_manifest(), str(tmp_path), resident_group=False, pinned=[])
     assert "groups:" not in text
+
+
+def test_main_defaults_to_no_co_residency(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # The CLI (invoked by the update's model-sync and by enable-local-models) must default
+    # co-residency OFF: with LOCAL_LLM_RESIDENT_GROUP unset, the recommended set swaps one
+    # at a time so the box never pins ~91 GB and hard-freezes. This is the path that makes
+    # "disabled on the next update" true without any .env edit.
+    _lay_down(tmp_path)
+    monkeypatch.setenv("MANIFEST", json.dumps(_manifest()))
+    monkeypatch.delenv("LOCAL_LLM_RESIDENT_GROUP", raising=False)
+    assert llama_swap_config._main([str(tmp_path)]) == 0
+    assert "groups:" not in (tmp_path / "llama-swap.yaml").read_text()
+
+
+def test_main_opts_into_co_residency_with_truthy_env(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The escape hatch: an operator with headroom opts in with a truthy value, and both
+    # recommended models then join the non-swapping group.
+    _lay_down(tmp_path)
+    monkeypatch.setenv("MANIFEST", json.dumps(_manifest()))
+    monkeypatch.setenv("LOCAL_LLM_RESIDENT_GROUP", "1")
+    assert llama_swap_config._main([str(tmp_path)]) == 0
+    text = (tmp_path / "llama-swap.yaml").read_text()
+    assert "groups:" in text and "- gpt-oss-120b" in text and "- qwen3-vl-30b-a3b" in text
 
 
 def test_resolve_weight_requires_a_complete_shard_set(tmp_path: Path) -> None:

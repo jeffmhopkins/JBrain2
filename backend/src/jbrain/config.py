@@ -219,14 +219,13 @@ class Settings(BaseSettings):
     local_models_dir: str = "/data/local-models"
     # Whether the gateway keeps the recommended models co-resident (a llama-swap
     # non-swapping group — 120b + vl loaded together) rather than swapping one at a time.
-    # Defaults ON: co-residency is the box's intended steady state, so a switch to the
-    # coder or an image render is the only thing that displaces the hot set, and the
-    # agent re-warms it at end of turn (jbrain.llm.residency). Mirrors the install-time
-    # LOCAL_LLM_RESIDENT_GROUP so a runtime config regeneration (after a context-window
-    # edit) reproduces the same set the setup script wrote. An operator on a memory-tight
-    # box turns it off (the recommended set then swaps one at a time; staged models still
-    # pin).
-    local_llm_resident_group: bool = True
+    # Defaults OFF (opt-in): co-residency pins ~91 GB in the 128 GB unified pool, and on
+    # the Strix Halo box that lost headroom drove kernel reclaim livelocks that hard-locked
+    # the whole host (docs/STRIX_HALO_SETUP.md "hard-freeze / OOM hardening"). An operator
+    # with memory to spare opts in with LOCAL_LLM_RESIDENT_GROUP=1; staged models pin
+    # regardless. Mirrors the install-time LOCAL_LLM_RESIDENT_GROUP so a runtime config
+    # regeneration (after a context-window edit) reproduces the same set setup wrote.
+    local_llm_resident_group: bool = False
     # OPT-IN on-box speech-to-text: whisper.cpp served by the same llama-swap
     # gateway the local-llm profile runs (docs/WHISPER_TRANSCRIPTION_PLAN.md), so
     # it loads on first request and the gateway frees it when idle — and the
