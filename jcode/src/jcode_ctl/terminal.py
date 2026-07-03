@@ -45,8 +45,9 @@ def model_env(model: str) -> dict[str, str]:
     "the selected model may not exist". ``claude`` resolves its ``/model`` aliases
     (opus/sonnet/haiku/fable) and its background summariser through the ANTHROPIC_*
     vars, so on a single-model gateway they must ALL map to the one served route;
-    ``GROK_MODEL`` does the same for the Grok CLI (``grok``). This pins the model for
-    the shell's CLIs so the per-session quant the owner picked is what each requests."""
+    ``GROK_MODEL`` does the same for the Grok CLI (``grok``) and ``OPENCLAW_MODEL``
+    for ``openclaw`` (both read by their profile.d config hooks). This pins the model so
+    the per-session quant the owner picked is what each of the shell's CLIs requests."""
     return {
         "ANTHROPIC_MODEL": model,
         "ANTHROPIC_DEFAULT_OPUS_MODEL": model,
@@ -54,6 +55,7 @@ def model_env(model: str) -> dict[str, str]:
         "ANTHROPIC_DEFAULT_HAIKU_MODEL": model,
         "ANTHROPIC_DEFAULT_FABLE_MODEL": model,
         "GROK_MODEL": model,
+        "OPENCLAW_MODEL": model,
     }
 
 
