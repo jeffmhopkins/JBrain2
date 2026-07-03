@@ -1547,8 +1547,17 @@ Proven-empty tables, no parser (§10). Landed:
 - **The status-aware supersession exception.** `fhir_status` originates on `IntentFact` and threads
   `PlannedFact → _to_extracted → ExtractedFact → Candidate` (defaults None → non-lab callers
   byte-for-byte unchanged, proven by the full unit suite still green). `_lab_status_transition` runs
-  before the idempotency short-circuit in `decide()`; 17 pure tests cover the §3.5 matrix incl. the
+  before the idempotency short-circuit in `decide()`; 20 pure tests cover the §3.5 matrix incl. the
   corrected-same-value regression, re-run idempotency, and the None-status inert guard.
+  - **Red-team hardening (§3.5 deviation of record).** An adversarial review found the transition was
+    not idempotent when the first application left no `superseded` marker. Resolved: a transition that
+    changes a value always leaves a durable marker (a superseded predecessor or a retracted row), so
+    re-runs refresh in place; **a `corrected`/`amended` reading with NO original to revise is held in
+    review (`low_confidence` / `correction_without_original`) instead of minted as a bare active value**
+    — a safety-positive change from §3.5's "insert active (behaves as a first final)" for the none row
+    (a bare active correction is indistinguishable from a plain final on re-run). `final`/`preliminary`
+    defer to the unchanged path when an active reading already exists, so two current rows can never
+    collide on the `is_current` partial unique index.
 - **Layer-2 firewall guard** (`ingest/emr/firewall.py`): the `{address, geo}` ∪ floor-dict lock set,
   with a drift-guard test proving the union is necessary (geo is not floored) and sufficient.
 - **Migrations 0115–0118** (renumbered per §12.1) with RLS quartets + isolation tests, integration-
