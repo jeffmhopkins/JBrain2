@@ -27,6 +27,13 @@ dials out (no static IP or port-forwarding) — see `CLOUDFLARE_TUNNEL.md`.
 | `embed` | HF text-embeddings-inference (CPU) | Local embeddings (`EMBED_MODEL`, default bge-small-en-v1.5/384-dim; 1GB mem cap); model swap = env change + re-embed job |
 | `supervisor` | Minimal socket-mounted service | Host control: stack status/restart, log streaming, update orchestration (see Operations) |
 
+This is the core subset. Other always-on services (`searxng` + `reader` for the
+web tools, `server-brain` for the wall display) run stock too, and an **opt-in
+fleet** lives behind compose profiles — the on-box model services (`local-llm`,
+`comfyui`, `whisper`), the coding sandbox (`jcode` + `claude-shim`), the
+family-location spine (`mqtt` + `mqtt-ingest`), and the tunnel (`cloudflared`).
+`SERVICES.md` is the full inventory.
+
 Attachments are content-addressed blobs (sha256) on a disk volume behind a
 storage abstraction, so S3/MinIO can replace the filesystem without touching
 callers.
@@ -52,21 +59,28 @@ system stays operable by one person.
 ### LLM adapter
 
 All model access goes through one internal interface with two backends:
-Anthropic-native, and OpenAI-compatible (covers xAI today, vLLM/Ollama when a
-GPU arrives). Every LLM task declares a **task profile** (model tier, max
+Anthropic-native, and OpenAI-compatible (xAI on a stock deploy; opt-in **on-box
+models** — llama.cpp behind llama-swap on the Strix Halo iGPU — swap in per task,
+see `SERVICES.md`). Every LLM task declares a **task profile** (model tier, max
 cost, temperature) so cheap tasks route to cheap models and synthesis routes
 to strong ones — per provider, in config. LLM calls never run in tests; the
 adapter has a fake implementation.
 
 ## Frontend
 
-React + Vite + TypeScript PWA, **mobile-first** (bottom-nav: capture / chat /
-search / review inbox). `vite-plugin-pwa`, TanStack Query, Tailwind +
-shadcn/ui, markdown editor. Offline note capture via an IndexedDB outbox that
-syncs on reconnect. API types generated from the FastAPI OpenAPI schema.
+React 18 + Vite + TypeScript PWA, **mobile-first**: a persistent home stream, a
+segmented **omnibox** (capture a note or talk to an agent), and a swipe-up **card
+launcher** for every other screen. `vite-plugin-pwa` (Workbox service worker),
+plain CSS, Biome + Vitest; `leaflet` for maps, `@xterm/xterm` for the jcode
+terminal, `katex` for chat math. Offline note capture via an IndexedDB outbox
+that syncs on reconnect (idempotent on `client_id`). The api client is a single
+hand-written fetch wrapper (`frontend/src/api/client.ts`) — OpenAPI-generated
+types are a future step, not yet in place. The full screen inventory is in
+`SERVICES.md`.
 
-PWAs cannot do continuous background location; GPS tracking uses the
-**OwnTracks** native apps posting to our authenticated ingestion endpoint.
+PWAs cannot do continuous background location; GPS tracking uses the custom
+**JBrain360 Android app**, which posts batched fixes to the authenticated
+`/api/owntracks` ingestion endpoint (OwnTracks-shaped) — see `SERVICES.md`.
 
 ## Security model: subjects, principals, domains
 
