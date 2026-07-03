@@ -1,7 +1,7 @@
 """End-to-end calibration against the OWNER'S BOX: feed a year of persona notes
 CHRONOLOGICALLY through the REAL pipeline and watch the entity graph build.
 
-This is the stateful half of docs/CALIBRATION_LOOP.md that the per-layer eval
+This is the stateful half of docs/archive/CALIBRATION_LOOP.md that the per-layer eval
 scorers do NOT cover: each note is extracted (box) and integrated (box) and
 APPLIED to a real Postgres graph, so note N+1's integrator sees the entities and
 facts note N committed. It exercises what integration actually is — resolving a

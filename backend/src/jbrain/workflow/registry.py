@@ -1,5 +1,5 @@
 """The action registry: the six job handlers described as data, bound to the
-handler that runs each, validated at boot (E3, docs/WORKFLOW_ENGINE_PLAN.md §2).
+handler that runs each, validated at boot (E3, docs/archive/WORKFLOW_ENGINE_PLAN.md §2).
 
 An `action` *names* an existing registered handler — the engine cannot invent a
 handler or call arbitrary code. Pipeline/trigger rows reference actions by

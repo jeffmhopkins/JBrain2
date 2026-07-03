@@ -158,7 +158,7 @@ export interface GeneralKnowledgeEvent {
   type: "general_knowledge";
 }
 /** A web-sandboxed sub-agent child `jerv` launched inside a `spawn_subagent` fan
- * (docs/SUBAGENT_SPAWNING_PLAN.md). `tool_call_id` anchors the row under the spawning
+ * (docs/archive/SUBAGENT_SPAWNING_PLAN.md). `tool_call_id` anchors the row under the spawning
  * tool call; `child_id` keys it; `persona` is a neutral text tag (never a color).
  * Backend-authored live telemetry — ephemeral, never persisted. */
 export interface SubagentSpawnedEvent {
@@ -306,7 +306,7 @@ export interface AgentSession {
   turn_count?: number;
   preview?: string;
   staged_count?: number;
-  /** Sub-agent nesting (docs/SUBAGENT_SPAWNING_PLAN.md Wave S4): a child carries its
+  /** Sub-agent nesting (docs/archive/SUBAGENT_SPAWNING_PLAN.md Wave S4): a child carries its
    * parent's id (nested under it, excluded from top-level bucketing); a parent carries
    * how many direct children it spawned (the rail count). */
   parent_session_id?: string | null;

@@ -1,4 +1,4 @@
-"""The Gmail client + in-memory fake (docs/EMAIL_ARCHIVIST_PLAN.md). HTTP is faked
+"""The Gmail client + in-memory fake (docs/archive/EMAIL_ARCHIVIST_PLAN.md). HTTP is faked
 via MockTransport — no live network, like the web client and the LLM adapter."""
 
 import base64

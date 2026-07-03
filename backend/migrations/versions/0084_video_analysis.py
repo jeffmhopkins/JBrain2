@@ -1,6 +1,6 @@
 """Admit the 'video_analysis' attachment-extract kind + its structured column.
 
-The analyze_video chain (docs/VIDEO_ANALYSIS_PLAN.md) writes one
+The analyze_video chain (docs/archive/VIDEO_ANALYSIS_PLAN.md) writes one
 kind='video_analysis' row to app.attachment_extracts — the video sibling of the
 'ocr'/'caption'/'transcript' products. `text` holds the reduce-step summary (so it
 chunks and becomes searchable like the others); the per-frame timeline

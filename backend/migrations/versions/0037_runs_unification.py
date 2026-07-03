@@ -2,7 +2,7 @@
 
 `agent_runs`/`agent_steps` become `runs`/`run_steps` IN PLACE (a RENAME, not a
 copy) so the same tables can also hold integration/pipeline runs without breaking
-the agent (docs/WORKFLOW_ENGINE_PLAN.md §3, §5 Track A). A rename is chosen over a
+the agent (docs/archive/WORKFLOW_ENGINE_PLAN.md §3, §5 Track A). A rename is chosen over a
 new table specifically so the dependent FKs from `agent_episodes` and
 `agent_turns` (which reference `agent_runs.id`) follow the table
 automatically — Postgres rewrites those constraints to point at the renamed table,

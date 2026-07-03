@@ -36,7 +36,7 @@ class ToolFile:
 
     spec: ToolSpec
     description: str
-    # Loop 4 governance flag (docs/LOOP4_PROMPT_TOOL_EDIT_PLAN.md): opt-in, default
+    # Loop 4 governance flag (Loop 4 was removed; see docs/reference/ASSISTANT.md): opt-in, default
     # False. Deliberately NOT a ToolSpec field — it is governance metadata, not
     # model-facing behavior, so it stays out of the digest and a tool's editability
     # can change without forcing a version bump. The SELF_EDIT_LOCKED deny-set still

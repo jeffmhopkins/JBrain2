@@ -432,7 +432,7 @@ async def run() -> None:
     # settings store the API uses (env fallback). The triage_inbox sweep holds the
     # bound `client` method, so a saved credential change takes effect with no restart;
     # until a refresh token exists the sweep fails with a recoverable "connect Gmail"
-    # error and retries (docs/EMAIL_ARCHIVIST_PLAN.md).
+    # error and retries (docs/archive/EMAIL_ARCHIVIST_PLAN.md).
     gmail_provider = GmailClientProvider(
         worker_settings_store,
         settings,
@@ -462,7 +462,7 @@ async def run() -> None:
             settings.whisper_model,
             gateway=LocalGatewayClient(settings.whisper_url) if transcribe_enabled else None,
         ).transcribe_attachment,
-        # The video sibling (docs/VIDEO_ANALYSIS_PLAN.md): sample + caption frames via
+        # The video sibling (docs/archive/VIDEO_ANALYSIS_PLAN.md): sample + caption frames via
         # the vision route, transcribe the audio via the same whisper path (degrades
         # to frames-only when whisper is off), fuse on a timeline, and summarize.
         # On-demand only (the analyze_video tool kicks it, Wave 3), so it stays dormant
@@ -504,7 +504,7 @@ async def run() -> None:
         # projector hook or inline transition. In-code only (not the app.actions
         # seed); a migration seeds its schedule + pipeline. Runs as the full owner.
         "geofence_sweep": scheduler.geofence_sweep_handler(maker),
-        # Phase-6 hygiene sweeps (docs/HYGIENE_SWEEPS_PLAN.md): core-data maintenance, no LLM,
+        # Phase-6 hygiene sweeps (docs/archive/HYGIENE_SWEEPS_PLAN.md): core-data maintenance, no LLM,
         # in-code only (a migration seeds the schedules, disabled by default). entity_hygiene
         # deletes provisional orphan entities; reembed_stale re-embeds stale-model entities
         # (local embed container); tag_consolidate folds drift tag spellings to canonical.
@@ -513,7 +513,7 @@ async def run() -> None:
             maker, embedder=TeiEmbedClient(settings.embed_url), embedding_model=settings.embed_model
         ),
         "tag_consolidate": tag_consolidate_handler(maker),
-        # The archivist's inbox-triage sweep (docs/EMAIL_ARCHIVIST_PLAN.md): classify
+        # The archivist's inbox-triage sweep (docs/archive/EMAIL_ARCHIVIST_PLAN.md): classify
         # untriaged inbox mail into triaged/* priority labels, archiving all but `high`
         # (which stays in the inbox). The Gmail mechanics are direct API calls; only the
         # per-message classification is an LLM call (the `triage.classify` route). In-code

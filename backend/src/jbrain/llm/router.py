@@ -61,12 +61,12 @@ TASK_DEFAULTS: dict[str, str] = {
     # tier — it owns the hard decisions the deterministic core then validates.
     "integrate.note": "xai:grok-4.3",
     # Guided-intake materialization: read a captured submission's UNTRUSTED transcript
-    # and propose per-claim leaves for the owner to approve (docs/GUIDED_INTAKE_PLAN.md).
+    # and propose per-claim leaves for the owner to approve (docs/archive/GUIDED_INTAKE_PLAN.md).
     # Strong tier — it reasons over adversarial input behind a strict data/instruction
     # boundary, so the attribution it can influence is the leaf TEXT only.
     "intake.materialize": "xai:grok-4.3",
     # analyze_video's reduce step: fold a clip's frame-caption + transcript timeline
-    # into one summary (docs/VIDEO_ANALYSIS_PLAN.md). Text-only — the per-frame
+    # into one summary (docs/archive/VIDEO_ANALYSIS_PLAN.md). Text-only — the per-frame
     # captioning is the separate `agent.vision` route. Individually routable so the
     # summary can run on a cheaper/local model than the vision pass.
     "video.summarize": "xai:grok-4.3",
@@ -82,7 +82,7 @@ TASK_DEFAULTS: dict[str, str] = {
     # Individually routable so an on-box operator can point them at a local model.
     "wiki.rewrite": "xai:grok-4.3",
     "wiki.ground": "xai:grok-4.3",
-    # The archivist's `triage_inbox` sweep (docs/EMAIL_ARCHIVIST_PLAN.md): classify a
+    # The archivist's `triage_inbox` sweep (docs/archive/EMAIL_ARCHIVIST_PLAN.md): classify a
     # batch of inbox emails into priority buckets from sender/subject/snippet alone.
     # The prompt declares the `low` tier (a cheap one-shot judgment over many emails);
     # individually routable so an on-box operator can point it at a local model.

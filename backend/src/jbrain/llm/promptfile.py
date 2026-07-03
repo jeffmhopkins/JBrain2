@@ -48,7 +48,7 @@ class PromptFile:
     output_format: str | None = None
     output_schema: dict[str, Any] | None = None
     domain_guidance: dict[str, str] = field(default_factory=dict)
-    # Loop 4 governance flag (docs/LOOP4_PROMPT_TOOL_EDIT_PLAN.md): opt-in, default
+    # Loop 4 governance flag (Loop 4 was removed; see docs/reference/ASSISTANT.md): opt-in, default
     # False — only an explicitly-marked prompt is eligible for prompt/tool self-edit,
     # and even then the SELF_EDIT_LOCKED deny-set wins (non-neg #12). Not part of the
     # prompt's behavior, so it never enters the version-bump content digest.

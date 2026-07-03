@@ -86,7 +86,7 @@ def build_proposal_handlers(proposals: ProposalRepo) -> dict[str, ToolHandler]:
 
 
 def build_intake_link_handlers(proposals: ProposalRepo) -> dict[str, ToolHandler]:
-    """`make_intake_link` (docs/GUIDED_INTAKE_PLAN.md): stages an EDITABLE intake-link
+    """`make_intake_link` (docs/archive/GUIDED_INTAKE_PLAN.md): stages an EDITABLE intake-link
     Proposal, never mints. The owner edits the config and approves; minting (and the
     show-once secret) happens then, via the dedicated mint-from-proposal endpoint — not
     the generic enact, so the secret never has to ride through a leaf executor."""

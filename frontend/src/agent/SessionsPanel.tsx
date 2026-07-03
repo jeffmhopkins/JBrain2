@@ -225,7 +225,7 @@ export function SessionsPanel({
     q === "" || (s.title || "untitled chat").toLowerCase().includes(q);
 
   // Sub-agent children are sub-state of the chat that spawned them: they appear ONLY
-  // nested under their parent (docs/SUBAGENT_SPAWNING_PLAN.md Wave S4), never as their
+  // nested under their parent (docs/archive/SUBAGENT_SPAWNING_PLAN.md Wave S4), never as their
   // own top-level rows. Index them by parent so a chat can render its rail.
   const childrenByParent = new Map<string, AgentSession[]>();
   for (const s of sessions) {

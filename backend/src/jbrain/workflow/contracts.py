@@ -1,6 +1,6 @@
 """Typed workflow-engine shapes the Wave-1 tracks build against.
 
-Defined once in Wave 0 (docs/WORKFLOW_ENGINE_PLAN.md §5 W0.2) so the dispatcher
+Defined once in Wave 0 (docs/archive/WORKFLOW_ENGINE_PLAN.md §5 W0.2) so the dispatcher
 (Track A), the scheduler (Track B), the eval harness (Track C), and the run-log
 UI (Track D) agree on a fixed surface before any of them is written: an event,
 the filter a trigger matches it against, an ordered pipeline step, and a schedule

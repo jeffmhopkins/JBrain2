@@ -286,7 +286,7 @@ class SubagentSpawnedEvent(BaseModel):
     depth: int
     # Which wave of a staged (feeding) fan this child belongs to (0-based; 0 for an
     # ordinary flat fan). Lets the grouped-by-wave surface (F3) bucket rows; the flat
-    # fan ignores it (docs/SUBAGENT_FEEDING_WAVES_PLAN.md).
+    # fan ignores it (docs/archive/SUBAGENT_FEEDING_WAVES_PLAN.md).
     wave: int = 0
     # For a wave-2 consumer, the labels of the earlier-wave producers whose summaries
     # were fed into its brief — renders the "← fed by …" edge. Empty for a producer.

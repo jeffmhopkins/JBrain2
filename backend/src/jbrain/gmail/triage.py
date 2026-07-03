@@ -1,6 +1,6 @@
 """The `triage_inbox` engine action: classify untriaged inbox mail into priority
 labels, archiving everything except `high` — which stays in the inbox so it stays in
-front of the owner (docs/EMAIL_ARCHIVIST_PLAN.md).
+front of the owner (docs/archive/EMAIL_ARCHIVIST_PLAN.md).
 
 A mostly-deterministic sweep. The Gmail mechanics — find the inbox, read each
 message, apply labels, drop INBOX — are direct API calls through the `GmailApi`; the

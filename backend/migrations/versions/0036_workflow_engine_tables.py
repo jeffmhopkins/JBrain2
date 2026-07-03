@@ -1,4 +1,4 @@
-"""Phase-5 workflow-engine foundation tables (docs/WORKFLOW_ENGINE_PLAN.md §3).
+"""Phase-5 workflow-engine foundation tables (docs/archive/WORKFLOW_ENGINE_PLAN.md §3).
 
 The data-model substrate the Wave-1 tracks build against: the append-only event
 log, the trigger/pipeline/schedule definitions that bind events to actions, the

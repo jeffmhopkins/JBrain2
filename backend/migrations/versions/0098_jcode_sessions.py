@@ -1,7 +1,7 @@
 """jcode_sessions: the owner-only launcher index for code-mode sessions.
 
 The api's metadata mirror of the sandboxed coding sessions that live in the jcode
-control server (docs/proposed/JCODE_PLAN.md, Wave J2). Holds no owner knowledge —
+control server (docs/archive/JCODE_PLAN.md, Wave J2). Holds no owner knowledge —
 just the repo/branch/status the launcher lists and resumes. Owner-only RLS
 (app.is_owner()), like generated_images / archivist_memory; no domain column,
 because the sandbox touches no domain-scoped data.

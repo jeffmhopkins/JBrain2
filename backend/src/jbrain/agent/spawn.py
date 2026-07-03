@@ -1,4 +1,4 @@
-"""The sub-agent spawn service (docs/SUBAGENT_SPAWNING_PLAN.md, Wave S1).
+"""The sub-agent spawn service (docs/archive/SUBAGENT_SPAWNING_PLAN.md, Wave S1).
 
 Only `jerv` (the root turn, depth 0) calls the `spawn_subagent` tool; its handler is a
 `SpawnRef` that forwards to `SpawnService.spawn_fan`. The service launches a **fan** of
@@ -108,7 +108,7 @@ class _ChildResult:
     # The child's own session id (childId) — carried into the synthesis view so the
     # roster card can deep-link each row to the sub-agent's session on reopen. Empty
     # for a skipped consumer (it never ran, so no session was minted — the review's
-    # anti-orphan requirement, docs/SUBAGENT_FEEDING_WAVES_PLAN.md).
+    # anti-orphan requirement, docs/archive/SUBAGENT_FEEDING_WAVES_PLAN.md).
     session_id: str
     truncated: bool = False
     # A consumer that never ran because its fed producer was unavailable: the reason
@@ -199,7 +199,7 @@ def _template_brief(brief: object) -> str:
     return render_brief(template_id, params)
 
 
-# --- Feeding waves: plan validation (docs/SUBAGENT_FEEDING_WAVES_PLAN.md) ----
+# --- Feeding waves: plan validation (docs/archive/SUBAGENT_FEEDING_WAVES_PLAN.md) ----
 
 
 @dataclass(frozen=True)
@@ -391,7 +391,7 @@ class SpawnService:
         """Dispatch a spawn call to the flat fan (an ordinary `tasks` array) or the
         staged wave scheduler (an ordered `waves` array that feeds each wave forward).
         A call with no `waves` takes the byte-identical flat path — the feeding feature
-        is purely additive (docs/SUBAGENT_FEEDING_WAVES_PLAN.md)."""
+        is purely additive (docs/archive/SUBAGENT_FEEDING_WAVES_PLAN.md)."""
         if args.get("waves") is not None:
             return await self._spawn_waves(ctx, args)
         return await self._spawn_flat(ctx, args)
@@ -533,7 +533,7 @@ class SpawnService:
 
     async def _spawn_waves(self, ctx: ToolContext, args: dict) -> str:
         """Run an ordered sequence of disconnected waves, feeding each wave's summaries
-        forward into the next wave's briefs (docs/SUBAGENT_FEEDING_WAVES_PLAN.md). Each
+        forward into the next wave's briefs (docs/archive/SUBAGENT_FEEDING_WAVES_PLAN.md). Each
         wave is a flat fan; a hard barrier (the awaited gather) separates them. Children
         are minted/admitted per wave, so a skipped or never-reached wave orphans nothing.
         A consumer whose fed producer failed is skipped, never run over empty data."""

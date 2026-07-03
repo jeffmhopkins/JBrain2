@@ -335,7 +335,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # offline city geocoder so the location firewall is identical; distance and
         # bearing to a storm are computed on-box.
         hurricane_client = HurricaneClient(settings.nhc_current_storms_url)
-        # The tabbed hurricane card's detail feeds (docs/HURRICANE_TABS_PLAN.md): the
+        # The tabbed hurricane card's detail feeds (docs/archive/HURRICANE_TABS_PLAN.md): the
         # forecast track + cone (NHC GIS, queried by storm identity — no location), and
         # the official alert + local timeline (NWS) + peak-surge band (NHC), queried by
         # the geocoded city centre only. All free, no key; each degrades gracefully.
@@ -345,7 +345,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # The archivist persona's Gmail tools. Always wired over a provider that reads
         # the OAuth credentials live from the settings panel (env fallback), so a saved
         # change takes effect with no restart; until a refresh token exists the tools
-        # report "connect Gmail in Settings" (docs/EMAIL_ARCHIVIST_PLAN.md).
+        # report "connect Gmail in Settings" (docs/archive/EMAIL_ARCHIVIST_PLAN.md).
         app.state.gmail_provider = GmailClientProvider(
             settings_store,
             settings,
@@ -375,7 +375,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # through the same TurnAttachmentRepo, so it must exist first.
         app.state.agent_sessions = AgentSessionRepo(maker)
         app.state.turn_attachments = TurnAttachmentRepo(maker, app.state.agent_sessions)
-        # jerv's local image generator (docs/IMAGE_GEN_PLAN.md). Wired only when a
+        # jerv's local image generator (docs/archive/IMAGE_GEN_PLAN.md). Wired only when a
         # host-managed ComfyUI is configured; None otherwise, so an unconfigured box
         # silently lacks the feature — the registry then drops the image sidecars. The
         # client is dedicated because ComfyUI's long generations want their own timeout
@@ -430,7 +430,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             app.state.image_gen = None
             app.state.comfyui_gateway = None
             app.state.image_render = None
-        # jerv's on-box audio transcription (docs/WHISPER_TRANSCRIPTION_PLAN.md).
+        # jerv's on-box audio transcription (docs/archive/WHISPER_TRANSCRIPTION_PLAN.md).
         # Wired only when the whisper gateway is configured; the registry drops the
         # `transcribe` sidecar otherwise (graceful degrade, like the image tools).
         # The gateway frees the model after each call (load-on-demand / unload-after).
@@ -448,7 +448,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 gateway=LocalGatewayClient(settings.whisper_url),
                 max_bytes=settings.whisper_max_bytes,
             )
-        # Code mode (docs/proposed/JCODE_PLAN.md, Wave J2): the api proxies an owner's
+        # Code mode (docs/archive/JCODE_PLAN.md, Wave J2): the api proxies an owner's
         # sandboxed coding session to the internal jcode control server. Wired only when
         # configured — the owner-gated routes 404 otherwise (graceful degrade). The
         # session is driven through its interactive terminal (a WS PTY); there is no
@@ -456,7 +456,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.jcode_client = (
             JcodeClient(settings.jcode_url, settings.jcode_token) if settings.jcode_url else None
         )
-        # jerv's on-box video analysis (docs/VIDEO_ANALYSIS_PLAN.md): sample + caption
+        # jerv's on-box video analysis (docs/archive/VIDEO_ANALYSIS_PLAN.md): sample + caption
         # frames and transcribe the audio inline, like analyze_image/transcribe. Wired
         # only when ffmpeg can sample frames, so a box without it silently lacks the
         # feature (the registry drops the `analyze_video` sidecar, graceful degrade like
@@ -639,15 +639,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # Public, unauthenticated setup-script delivery (irm .../install/grok.ps1 | iex).
     # Carries no secrets; the script prompts for the access token at runtime.
     app.include_router(install.router, prefix="/api")
-    # Guided-intake share links (docs/GUIDED_INTAKE_PLAN.md). Owner management is
+    # Guided-intake share links (docs/archive/GUIDED_INTAKE_PLAN.md). Owner management is
     # owner-gated; /intake/redeem is public (the secret is the credential).
     app.include_router(intake.router, prefix="/api")
-    # Code mode (docs/proposed/JCODE_PLAN.md). Always mounted, but every route is
+    # Code mode (docs/archive/JCODE_PLAN.md). Always mounted, but every route is
     # owner-gated and 404s when jcode isn't configured (app.state.jcode_client is None).
     app.include_router(jcode.router, prefix="/api")
     app.include_router(jcode_share.router, prefix="/api")
     app.include_router(jcode_terminal.router, prefix="/api")
-    # The host-mode web preview proxy (docs/JCODE_PREVIEW_HOST_PLAN.md). NOT under /api:
+    # The host-mode web preview proxy (docs/archive/JCODE_PREVIEW_HOST_PLAN.md). NOT under /api:
     # Caddy host-routes <slug>-preview.<host> to /__jcode_preview/{slug} on the preview
     # subdomain only (the main site 404s it), and the unguessable slug is the auth.
     app.include_router(jcode_preview.router)

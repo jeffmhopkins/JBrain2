@@ -1,5 +1,5 @@
 """Peak storm-surge band lookup via the NHC Peak-Surge ArcGIS MapServer (best-effort;
-docs/HURRICANE_TABS_PLAN.md §1/§3). The ArcGIS `query` does the point-in-polygon
+docs/archive/HURRICANE_TABS_PLAN.md §1/§3). The ArcGIS `query` does the point-in-polygon
 intersect SERVER-SIDE (`esriGeometryPoint`), so the box carries no geometry library
 (plan requirement #2). The Peak-Surge layer has no numeric band field — the band is
 text inside each feature's `popupinfo` HTML, drawn from the renderer's labels ("Up

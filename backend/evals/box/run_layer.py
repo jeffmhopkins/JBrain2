@@ -1,5 +1,5 @@
 """Run a committed eval corpus against the OWNER'S BOX (the local model) and score
-it with the same scorers CI uses — the calibration track of docs/CALIBRATION_LOOP.md.
+it with the same scorers CI uses — the calibration track of docs/archive/CALIBRATION_LOOP.md.
 
   cd backend && JBRAIN_DEBUG_TOKEN=<payload> uv run python -m evals.box.run_layer <layer>
 

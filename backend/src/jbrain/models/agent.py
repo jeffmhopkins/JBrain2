@@ -37,7 +37,7 @@ class AgentSession(Base):
     # system prompt, tool allowlist, and knowledge-base access the session runs
     # under. Defaults to the Full Brain curator; constrained by a DB CHECK.
     agent: Mapped[str] = mapped_column(Text, default="curator", server_default="curator")
-    # Sub-agent lineage (docs/SUBAGENT_SPAWNING_PLAN.md, migration 0105). A root
+    # Sub-agent lineage (docs/archive/SUBAGENT_SPAWNING_PLAN.md, migration 0105). A root
     # chat has parent_session_id=NULL/depth=0; a spawned child points at its parent
     # and carries depth=parent.depth+1 (DB-CHECKed to 0..2 — the two-sub-agent-layer
     # cap is structural). `no_memory` is the sandbox flag the spawn helper sets so a

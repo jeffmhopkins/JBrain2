@@ -1118,7 +1118,7 @@ function WeatherCard({ data }: ViewProps): ReactNode {
   );
 }
 
-/** The sub-agent fan result (docs/SUBAGENT_SPAWNING_PLAN.md, Wave S3.2): a neutral
+/** The sub-agent fan result (docs/archive/SUBAGENT_SPAWNING_PLAN.md, Wave S3.2): a neutral
  * roster card — a ran/failed roll-up plus one line per child (label, neutral persona
  * tag, ✓/✕, summary). Data: `{ran, failed, children: [{label, persona, ok, summary}]}`.
  * Standard tool-view frame, never a bespoke green panel; colour stays on the marks
@@ -1273,7 +1273,7 @@ function SubagentSynthesis({ data, onOpenSession }: ViewProps): ReactNode {
 
 // --- hurricane_card --------------------------------------------------------
 // jerv's tabbed active-tropical-cyclone view (docs/reference/DESIGN.md "hurricane_card
-// tool-view"; build plan docs/HURRICANE_TABS_PLAN.md). Data-only slots;
+// tool-view"; build plan docs/archive/HURRICANE_TABS_PLAN.md). Data-only slots;
 // `kind`/`cat`/`proximity`/`alert.level`/`level` are closed enums the component maps to
 // a glyph + tone — the model never sends a glyph, icon, or color. The `alert` slot is
 // the ONLY watch/warning surface (NWS-sourced); a real warning is the one case the

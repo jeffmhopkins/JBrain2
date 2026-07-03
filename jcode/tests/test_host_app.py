@@ -1,6 +1,6 @@
 """The control surface in host preview mode: per-session hostname reservation, its
 lifecycle (survives a pause, freed on delete), and the reverse-proxy route's guards
-(Wave P2 of docs/JCODE_PREVIEW_HOST_PLAN.md)."""
+(Wave P2 of docs/archive/JCODE_PREVIEW_HOST_PLAN.md)."""
 
 from __future__ import annotations
 

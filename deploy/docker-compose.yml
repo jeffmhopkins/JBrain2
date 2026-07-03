@@ -27,7 +27,7 @@ services:
       # deploy/lan-setup.sh. Blank JBRAIN_LAN_ADDR in .env to turn it off.
       # See docs/runbooks/LOCAL_ACCESS.md.
       JBRAIN_LAN_ADDR: ${JBRAIN_LAN_ADDR:-https://jbrain.local}
-      # Host-mode jcode web preview (docs/JCODE_PREVIEW_HOST_PLAN.md): when set, the
+      # Host-mode jcode web preview (docs/archive/JCODE_PREVIEW_HOST_PLAN.md): when set, the
       # entrypoint renders a wildcard *.<host> Caddy site that routes <slug>-preview.<host>
       # to the api's /__jcode_preview/<slug>. Shares the .env var with the api + jcode
       # services; empty (the default) leaves the preview site unrendered.
@@ -99,7 +99,7 @@ services:
       JBRAIN_WHISPER_URL: ${WHISPER_URL:-}
       JBRAIN_WHISPER_ENABLED: ${WHISPER_ENABLED:-false}
       JBRAIN_WHISPER_MODEL: ${WHISPER_MODEL:-whisper}
-      # Code mode (docs/proposed/JCODE_PLAN.md) — OFF unless the operator opts in via
+      # Code mode (docs/archive/JCODE_PLAN.md) — OFF unless the operator opts in via
       # scripts/jcode-setup.sh. When enabled, points the api at the internal jcode
       # control server (Wave J2 proxies it to the owner); the shared token authenticates
       # those calls. Empty URL = feature off (fail-closed): no jcode routes, no tile.
@@ -107,7 +107,7 @@ services:
       JBRAIN_JCODE_ENABLED: ${JCODE_ENABLED:-false}
       JBRAIN_JCODE_TOKEN: ${JCODE_TOKEN:-}
       JBRAIN_JCODE_MODEL: ${JCODE_MODEL:-qwen3-coder-next}
-      # Host-mode web preview (docs/JCODE_PREVIEW_HOST_PLAN.md): the zone previews hang
+      # Host-mode web preview (docs/archive/JCODE_PREVIEW_HOST_PLAN.md): the zone previews hang
       # under. The api's preview proxy enforces the request Host is <slug>-preview.<this>
       # before forwarding, so a sandbox dev app can't be served on the owner origin.
       # Shares the .env var with the jcode service; empty fail-closes the proxy.
@@ -329,7 +329,7 @@ services:
     restart: unless-stopped
     # --preview-method auto emits b_preview frames over /ws during sampling, which
     # the live-generation pipeline relays to the chat as a progressive preview
-    # (docs/IMAGE_GEN_LIVE_PLAN.md). Cheap/low-fidelity; taesd is sharper but loads
+    # (docs/archive/IMAGE_GEN_LIVE_PLAN.md). Cheap/low-fidelity; taesd is sharper but loads
     # a small decoder.
     command:
       ["python", "/opt/ComfyUI/main.py", "--listen", "0.0.0.0", "--port", "8188",
@@ -399,7 +399,7 @@ services:
       - ./whisper-models:/models:ro
     networks: [internal]
 
-  # OPT-IN code mode (docs/proposed/JCODE_PLAN.md): a sandboxed coding-session
+  # OPT-IN code mode (docs/archive/JCODE_PLAN.md): a sandboxed coding-session
   # service running Claude Code's agent engine against an ON-BOX coder model, fronted
   # by the PWA. Guarded by the `jcode` compose profile so it NEVER starts on a stock
   # deploy — `scripts/jcode-setup.sh` provisions it and flips the profile on. It reads
@@ -491,7 +491,7 @@ services:
       # exposed until the owner opens a preview on a session. Set JCODE_PREVIEW_ENABLED=false
       # to withhold it.
       JCODE_PREVIEW_ENABLED: ${JCODE_PREVIEW_ENABLED:-true}
-      # Host-served per-session web preview (docs/JCODE_PREVIEW_HOST_PLAN.md): the zone
+      # Host-served per-session web preview (docs/archive/JCODE_PREVIEW_HOST_PLAN.md): the zone
       # previews hang under, served at <slug>-preview.<JCODE_PREVIEW_BASE_HOST> through the
       # box's own tunnel + the api↔jcode proxy. Empty (the default) fail-closes preview;
       # set it with `jbrain enable-jcode-preview`. (The legacy per-session cloudflared

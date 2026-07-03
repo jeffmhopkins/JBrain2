@@ -1444,7 +1444,7 @@ export function generatedImageSourceUrl(id: string): string {
 
 // --- Image launcher (Wave L1): the standalone on-box generate/edit screen. The
 // gallery shares the owner-only `generated_images` rows the jerv tools also write
-// (docs/IMAGE_LAUNCHER_PLAN.md). Mock-backed until the L3 direct render API.
+// (docs/archive/IMAGE_LAUNCHER_PLAN.md). Mock-backed until the L3 direct render API.
 
 /** One render in the gallery — the by-id summary the screen lists and reveals.
  * `seed` is the resolved seed (null only before a render is recorded). */

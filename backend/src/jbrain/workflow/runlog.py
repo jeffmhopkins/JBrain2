@@ -8,7 +8,7 @@ the engine path is auditable from `app.runs`, exactly like the agent loop is via
 agent writer stamps `kind='agent'`; this writer stamps `kind='pipeline'`, the
 discriminator that admits a session-less engine run under the table CHECK.
 
-`ran_as` records E1's scope choice on the audit (docs/WORKFLOW_ENGINE_PLAN.md E1):
+`ran_as` records E1's scope choice on the audit (docs/archive/WORKFLOW_ENGINE_PLAN.md E1):
 an event carrying a triggering principal + domain ran `scoped` (the dispatcher
 narrowed to that stamp); a system/unstamped event ran `system`. Each `run_step`
 carries the `job_id` it enqueued (a nullable FK, SET NULL on job age-out, N2) so a

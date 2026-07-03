@@ -1,4 +1,4 @@
-"""The `entity_hygiene` engine action (Phase-6 follow-on; docs/HYGIENE_SWEEPS_PLAN.md).
+"""The `entity_hygiene` engine action (Phase-6 follow-on; docs/archive/HYGIENE_SWEEPS_PLAN.md).
 
 Nightly maintenance, no LLM: hard-delete provisional orphan entities — those with no
 mentions, no facts (as subject or object), no distinct_from edge, and no merge tombstone

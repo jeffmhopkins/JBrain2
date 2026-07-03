@@ -1,5 +1,5 @@
 """jerv's image-generation tools: `generate_image` (text→image) and `edit_image`
-(image→image), thin handlers over the `jbrain.image_gen` adapter (docs/IMAGE_GEN_PLAN.md).
+(image→image), thin handlers over the `jbrain.image_gen` adapter (docs/archive/IMAGE_GEN_PLAN.md).
 
 These are `web`-class, jerv-only, direct-exec tools (the `current_location` precedent):
 on-box ComfyUI, no egress despite the class name. Each handler resolves the request to a
@@ -34,7 +34,7 @@ from jbrain.image_gen.gateway import ComfyUiMemory
 
 # The render core (constants, helpers, and the unload/free primitives) now lives in
 # `image_gen/render.py` so the jerv handlers below AND the direct owner API share one path
-# (docs/IMAGE_LAUNCHER_PLAN.md, Wave L2). The dunder helpers are re-exported here so existing
+# (docs/archive/IMAGE_LAUNCHER_PLAN.md, Wave L2). The dunder helpers are re-exported here so existing
 # imports — and the tests that pin the agent path's behavior — keep resolving from this module.
 from jbrain.image_gen.render import (
     _DREAMSHAPER_STEPS,  # noqa: F401

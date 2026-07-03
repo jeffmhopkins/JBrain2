@@ -54,7 +54,7 @@ class SessionOut(BaseModel):
     turn_count: int = 0
     preview: str = ""
     staged_count: int = 0
-    # Sub-agent nesting (docs/SUBAGENT_SPAWNING_PLAN.md Wave S4): a child carries its
+    # Sub-agent nesting (docs/archive/SUBAGENT_SPAWNING_PLAN.md Wave S4): a child carries its
     # parent's id (so the PWA nests it and drops it from top-level bucketing); a
     # parent carries how many direct children it spawned (the rail count).
     parent_session_id: str | None = None

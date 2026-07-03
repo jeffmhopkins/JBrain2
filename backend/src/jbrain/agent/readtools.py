@@ -82,7 +82,7 @@ OPTIONAL_TRANSCRIBE_TOOL = frozenset({"transcribe"})
 OPTIONAL_VIDEO_TOOL = frozenset({"analyze_video"})
 # The archivist persona's Gmail sidecars (`web`-class, opt-in), dropped from the
 # registry when Gmail is unconfigured — no refresh token, so no handlers are passed
-# (graceful degrade, docs/EMAIL_ARCHIVIST_PLAN.md).
+# (graceful degrade, docs/archive/EMAIL_ARCHIVIST_PLAN.md).
 OPTIONAL_GMAIL_TOOLS = frozenset(
     {
         "gmail_search",
@@ -629,7 +629,7 @@ def build_registry(
     never call out).
     `image_handlers` is jerv's local image-gen tools, present only when a ComfyUI is
     configured; when absent the `generate_image`/`edit_image` sidecars are dropped
-    (graceful degrade, docs/IMAGE_GEN_PLAN.md).
+    (graceful degrade, docs/archive/IMAGE_GEN_PLAN.md).
     Fails at startup if a sidecar and handler don't match exactly, so a new .tool
     can never ship unwired."""
     spawn_ref = SpawnRef()
@@ -679,7 +679,7 @@ def build_registry(
             # the owner-only `archivist_memory` table — always wired (the table always
             # exists); curator never sees it (the opt-in web class).
             **build_archivist_memory_handlers(maker),
-            # The sub-agent spawn primitive (docs/SUBAGENT_SPAWNING_PLAN.md). A
+            # The sub-agent spawn primitive (docs/archive/SUBAGENT_SPAWNING_PLAN.md). A
             # late-bound handler: the service it forwards to needs the very registry
             # being built (it launches children on it), so it is wired below once the
             # registry exists. jerv (+ research/review children) reach it by

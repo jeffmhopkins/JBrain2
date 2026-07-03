@@ -1,6 +1,6 @@
 // The in-chat sub-agent fan: jerv's web-sandboxed research/review/summarize children
 // rendered as a bordered accordion below its answer bubble (docs/reference/DESIGN.md "Sub-agent
-// spawning surfaces", chosen layout A; docs/SUBAGENT_SPAWNING_PLAN.md Wave S3). Folded
+// spawning surfaces", chosen layout A; docs/archive/SUBAGENT_SPAWNING_PLAN.md Wave S3). Folded
 // from the parent turn's `subagent_*` events (transcript.ts). Persona is a NEUTRAL tag;
 // the only semantic colours are the glyph's steel=running / green=done / rose=failed.
 
@@ -177,7 +177,7 @@ function BudgetMeter({ spent, total }: { spent: number; total: number }): ReactN
 }
 
 // A child's live context-window fill, the per-row twin of the composer's context meter
-// (docs/SUBAGENT_SPAWNING_PLAN.md): the latest model call's prompt+output over the child
+// (docs/archive/SUBAGENT_SPAWNING_PLAN.md): the latest model call's prompt+output over the child
 // model's window, so you can watch a research child's context climb as it reads. Tints
 // toward the warning hue as it fills — calm until it actually matters.
 function ChildContextMeter({ used, window }: { used: number; window: number }): ReactNode {

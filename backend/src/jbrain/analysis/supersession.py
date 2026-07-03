@@ -541,7 +541,7 @@ def decide(candidate: Candidate, existing: list[FactView], *, predicate: str = "
         return _validity(valid_from, reported_at)
 
     # Closed-on-arrival ("used to work for X"): history, never the CURRENT head
-    # (docs/research/legacy-links-handling.md §3.2). Gated to ASSERTED
+    # (docs/archive/research/legacy-links-handling.md §3.2). Gated to ASSERTED
     # state/relationship: a NEGATED disposal supersedes (falls through), and an
     # open-vs-open close was already taken by _interval_close.
     if (

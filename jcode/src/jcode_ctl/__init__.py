@@ -1,6 +1,6 @@
 """jcode control server.
 
-The box-side service behind JBrain's code mode (docs/proposed/JCODE_PLAN.md,
+The box-side service behind JBrain's code mode (docs/archive/JCODE_PLAN.md,
 Wave J1). It runs on the internal network only — like the supervisor and the
 local-LLM gateway, it has no published host port — and exposes a small,
 token-authed command set the JBrain api proxies (Wave J2): create/list a

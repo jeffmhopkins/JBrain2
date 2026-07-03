@@ -3,7 +3,7 @@
 Three owner-owned tables behind a non-owner read path (the per-session
 `intake_link` principal). The RLS firewall is Postgres' — these models carry no
 authority; every query runs on an already-scoped session (see
-`jbrain.intake.repo`). See `docs/GUIDED_INTAKE_PLAN.md` §5/§6.
+`jbrain.intake.repo`). See `docs/archive/GUIDED_INTAKE_PLAN.md` §5/§6.
 """
 
 from __future__ import annotations

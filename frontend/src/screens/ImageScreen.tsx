@@ -1,4 +1,4 @@
-// The image launcher (docs/IMAGE_LAUNCHER_PLAN.md "Wave L1", reference mock
+// The image launcher (docs/archive/IMAGE_LAUNCHER_PLAN.md "Wave L1", reference mock
 // docs/mocks/image-launcher/launcher-b-gallery.html). A card-launcher destination
 // that drives on-box renders DIRECTLY — the headline property is that the language
 // models stay UNLOADED (the honest residency line). Not a chat surface: only a

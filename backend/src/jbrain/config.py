@@ -117,7 +117,7 @@ class Settings(BaseSettings):
     # (the only place name that goes out is the shared weather geocoder).
     nhc_current_storms_url: str = "https://www.nhc.noaa.gov/CurrentStorms.json"
     # The forecast-track / cone + impact feeds for the tabbed hurricane card
-    # (docs/HURRICANE_TABS_PLAN.md). All free, no API key, pinned with public defaults;
+    # (docs/archive/HURRICANE_TABS_PLAN.md). All free, no API key, pinned with public defaults;
     # empty disables that source (the card degrades gracefully). The NHC ArcGIS
     # MapServers are queried by storm identity (no location); the NWS API is queried by
     # the geocoded city centre (the same coarseness as the weather tool's Open-Meteo
@@ -174,7 +174,7 @@ class Settings(BaseSettings):
     local_llm_url: str = "http://localhost:11434/v1"
     # OPT-IN on-box image generation: a ComfyUI service (Qwen-Image on the owner's
     # Strix Halo box) JBrain manages through the `comfyui` compose profile, the
-    # sibling of the local-llm gateway (docs/IMAGE_GEN_SERVICE_PLAN.md). EMPTY URL
+    # sibling of the local-llm gateway (docs/archive/IMAGE_GEN_SERVICE_PLAN.md). EMPTY URL
     # DISABLES the feature: main.py wires no client and the tools never reach the
     # registry — graceful degrade, mirroring a provider hidden when unkeyed. The URL
     # is the functional gate; `comfyui_enabled` mirrors the install-time choice for
@@ -227,7 +227,7 @@ class Settings(BaseSettings):
     # regeneration (after a context-window edit) reproduces the same set setup wrote.
     local_llm_resident_group: bool = False
     # OPT-IN on-box speech-to-text: whisper.cpp served by the same llama-swap
-    # gateway the local-llm profile runs (docs/WHISPER_TRANSCRIPTION_PLAN.md), so
+    # gateway the local-llm profile runs (docs/archive/WHISPER_TRANSCRIPTION_PLAN.md), so
     # it loads on first request and the gateway frees it when idle — and the
     # transcribe job/tool additionally unload it the moment they finish. Audio (and,
     # fast-follow, video) attachments transcribe through it, and jerv gets a
@@ -252,7 +252,7 @@ class Settings(BaseSettings):
     # transcribes normally. 100 MB ~ a long lossy recording.
     whisper_max_bytes: int = 100 * 1024 * 1024
 
-    # OPT-IN Gmail access for the `archivist` persona (docs/EMAIL_ARCHIVIST_PLAN.md):
+    # OPT-IN Gmail access for the `archivist` persona (docs/archive/EMAIL_ARCHIVIST_PLAN.md):
     # OAuth2 client credentials + a long-lived refresh token, minted once by
     # scripts/gmail-oauth-bootstrap.py and pasted here. No token table, no DB — a
     # single-owner box, so a config secret mirrors `mqtt_ingest_secret`. EMPTY
@@ -267,7 +267,7 @@ class Settings(BaseSettings):
     gmail_api_url: str = "https://gmail.googleapis.com/gmail/v1"
     gmail_token_url: str = "https://oauth2.googleapis.com/token"
 
-    # OPT-IN code mode (docs/proposed/JCODE_PLAN.md): a sandboxed coding-session
+    # OPT-IN code mode (docs/archive/JCODE_PLAN.md): a sandboxed coding-session
     # SIDECAR running Claude Code's agent engine against an on-box coder model, fronted
     # by the PWA. NOT a knowledge agent — it reads no notes and is not in the agent
     # loop; the api only PROXIES its control surface to the owner (Wave J2). EMPTY
@@ -279,7 +279,7 @@ class Settings(BaseSettings):
     jcode_enabled: bool = False
     jcode_token: str = ""
     jcode_model: str = "qwen3-coder-next"
-    # Host-mode web preview (docs/JCODE_PREVIEW_HOST_PLAN.md): the zone previews hang
+    # Host-mode web preview (docs/archive/JCODE_PREVIEW_HOST_PLAN.md): the zone previews hang
     # under, so a session is reachable at https://<slug>-preview.<jcode_preview_base_host>.
     # The preview proxy enforces this in-process (the request Host must be exactly
     # `<slug>-preview.<base>`) so a sandbox-run dev app can never be served on the owner

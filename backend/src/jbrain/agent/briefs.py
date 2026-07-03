@@ -1,4 +1,4 @@
-"""Sub-agent brief templates (docs/SUBAGENT_FEEDING_WAVES_PLAN.md).
+"""Sub-agent brief templates (docs/archive/SUBAGENT_FEEDING_WAVES_PLAN.md).
 
 The "insight from the spawning session" a child receives is an explicit *brief* —
 data wrapped in the data/instruction boundary, never shared memory or live parent
@@ -100,7 +100,7 @@ def render_brief(template_id: str, params: Mapping[str, object]) -> str:
 
 
 # --- Feeding waves: upstream summaries fed into a downstream brief -----------
-# (docs/SUBAGENT_FEEDING_WAVES_PLAN.md). A consumer child in wave 2 receives the
+# (docs/archive/SUBAGENT_FEEDING_WAVES_PLAN.md). A consumer child in wave 2 receives the
 # finished summaries of the wave-1 producers it names — as DATA, wrapped in the
 # data/instruction boundary the child prompts declare inert. The boundary is only
 # real because research/review/summarize.prompt carry the pinned clause naming this

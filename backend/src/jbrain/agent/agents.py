@@ -26,7 +26,7 @@ call, and whether it reads the owner's knowledge base:
   scratchpad table so a 20-year cleanup continues across sessions. Like jerv it reads
   no knowledge base, so no owner note/entity data is in context while it triages mail;
   its Gmail writes act only on the owner's own mailbox and never delete; its memory is
-  its own notes, not the owner's (docs/EMAIL_ARCHIVIST_PLAN.md).
+  its own notes, not the owner's (docs/archive/EMAIL_ARCHIVIST_PLAN.md).
 
 The set is closed and code-defined: a session's stored `agent` is validated
 against `AGENT_NAMES` before it is honoured.
@@ -43,7 +43,7 @@ _PROMPTS = Path(__file__).parent / "prompts"
 # agent opts in explicitly and the registry's web-tool gate has a single source.
 WEB_TOOLS = frozenset({"web_search", "web_fetch"})
 
-# The spawn primitive (docs/SUBAGENT_SPAWNING_PLAN.md): the single tool jerv — and,
+# The spawn primitive (docs/archive/SUBAGENT_SPAWNING_PLAN.md): the single tool jerv — and,
 # for nesting, the research/review children — calls to launch a bounded fan of
 # web-sandboxed children. It is `web`-gated (it drives web-class egress through its
 # children) and is in the registry's NEVER_DEFAULT set, so curator's `tools=None`
@@ -61,9 +61,9 @@ SPAWN_TOOL = "spawn_subagent"
 # jerv-only tools. `weather` runs directly over the pinned Open-Meteo upstreams (it
 # sends only a public place name / city centre, never the owner's precise fix — the
 # location firewall). The on-box tools (image/transcribe/video) drive the localhost
-# ComfyUI, docs/IMAGE_GEN_PLAN.md; `transcribe` drives the on-box whisper gateway,
-# docs/WHISPER_TRANSCRIPTION_PLAN.md; `analyze_video` reads a video via frame
-# sampling + whisper, docs/VIDEO_ANALYSIS_PLAN.md). The image/transcribe/video tools
+# ComfyUI, docs/archive/IMAGE_GEN_PLAN.md; `transcribe` drives the on-box whisper gateway,
+# docs/archive/WHISPER_TRANSCRIPTION_PLAN.md; `analyze_video` reads a video via frame
+# sampling + whisper, docs/archive/VIDEO_ANALYSIS_PLAN.md). The image/transcribe/video tools
 # are absent from the registry when their backend is unconfigured, so allowlisting
 # them here is harmless on a box without it. `query_server_metrics` is host
 # hardware telemetry (CPU/mem/disk/GPU/fans), not owner knowledge — owner-opted
@@ -81,7 +81,7 @@ JERV_TOOLS = WEB_TOOLS | frozenset(
         "transcribe",
         "analyze_video",
         "query_server_metrics",
-        # The spawn primitive — jerv is the spawner (docs/SUBAGENT_SPAWNING_PLAN.md).
+        # The spawn primitive — jerv is the spawner (docs/archive/SUBAGENT_SPAWNING_PLAN.md).
         SPAWN_TOOL,
     }
 )
@@ -89,7 +89,7 @@ JERV_TOOLS = WEB_TOOLS | frozenset(
 # The archivist persona's allowlist: the Gmail organize-an-inbox tools and nothing
 # else (the `web` permission class, opt-in like jerv's). The archivist reads no
 # knowledge base and holds no other tool, so no owner note/entity data is in context
-# while it triages mail (docs/EMAIL_ARCHIVIST_PLAN.md).
+# while it triages mail (docs/archive/EMAIL_ARCHIVIST_PLAN.md).
 GMAIL_TOOLS = frozenset(
     {
         "gmail_search",
@@ -107,7 +107,7 @@ GMAIL_TOOLS = frozenset(
 # The archivist's cross-session memory: a `web`-gated read/write pair over the
 # owner-only `archivist_memory` scratchpad, so it continues a 20-year cleanup across
 # sessions instead of starting blind. Owner-only (its own notes), never the knowledge
-# base (docs/EMAIL_ARCHIVIST_PLAN.md).
+# base (docs/archive/EMAIL_ARCHIVIST_PLAN.md).
 MEMORY_TOOLS = frozenset({"archivist_memory_read", "archivist_memory_write"})
 
 # The archivist's full allowlist: the Gmail organize-an-inbox tools, its memory, and
@@ -141,7 +141,7 @@ SUMMARIZE_TOOLS: frozenset[str] = frozenset()
 # endpoint's job (the recipient confirms a draft; the server writes it), never a tool the
 # model invokes. Empty allowlist → `ToolRegistry.allowed_names` is empty → dispatch refuses
 # every tool, so a brief or an injected message can never widen what it may call
-# (docs/GUIDED_INTAKE_PLAN.md §5, W2).
+# (docs/archive/GUIDED_INTAKE_PLAN.md §5, W2).
 INTAKE_TOOLS: frozenset[str] = frozenset()
 
 # The closed set of personas a NON-owner principal (an intake_link) may run. Resolution
@@ -165,7 +165,7 @@ class AgentProfile:
     the cost-token budget) for this persona — 1 keeps the shared defaults; the
     archivist and jerv both run at 4 because their work is a long, many-tool ReAct
     chain (a date-by-date mailbox cleanup; a multi-source web/research thread) that the
-    default 10-step / 200k-token budget cut off mid-sweep (docs/EMAIL_ARCHIVIST_PLAN.md)."""
+    default 10-step / 200k-token budget cut off mid-sweep (docs/archive/EMAIL_ARCHIVIST_PLAN.md)."""
 
     name: str
     prompt: str
@@ -242,7 +242,7 @@ AGENTS: dict[str, AgentProfile] = {
         reads_knowledge_base=False,
         budget_multiplier=1,
     ),
-    # The guided-intake interviewer (docs/GUIDED_INTAKE_PLAN.md). A closed, capture-only
+    # The guided-intake interviewer (docs/archive/GUIDED_INTAKE_PLAN.md). A closed, capture-only
     # persona a non-owner stranger runs: empty tool allowlist, no knowledge base, and a 1x
     # budget — a short bounded interview, NOT the 4x many-tool chain jerv/archivist run
     # (§5: per-session caps are the backstop, and the persona must not be a cost lever).

@@ -1,6 +1,6 @@
 """Admit the 'transcript' attachment-extract kind.
 
-The audio transcription chain (docs/WHISPER_TRANSCRIPTION_PLAN.md) writes a
+The audio transcription chain (docs/archive/WHISPER_TRANSCRIPTION_PLAN.md) writes a
 kind='transcript' row to app.attachment_extracts — the audio sibling of the
 'ocr'/'caption' vision products. The kind CHECK (migration 0011) is an explicit
 allowlist, so the new kind needs admitting here.

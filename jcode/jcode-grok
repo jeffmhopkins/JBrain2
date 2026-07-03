@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Per-session grok version management (docs/proposed/JCODE_SESSION_TOOLS_PLAN.md).
+# Per-session grok version management (docs/archive/JCODE_SESSION_TOOLS_PLAN.md).
 #
 # Installs the Grok Build CLI into the session's PRIVATE bin ($JCODE_TOOLS_BIN, set by the
 # terminal), which leads PATH via /etc/profile.d/jcode-path.sh — so the installed grok

@@ -4,7 +4,7 @@ Proves end-to-end (migration 0039 + queue + worker + db.session, all on real RLS
 that:
 - a stamped job's NARROWED execution context cannot read or write another domain's
   rows — Postgres RLS, not application politeness, denies it (CLAUDE.md rule 3,
-  docs/WORKFLOW_ENGINE_PLAN.md §2 E1, ASSISTANT.md I-8);
+  docs/archive/WORKFLOW_ENGINE_PLAN.md §2 E1, ASSISTANT.md I-8);
 - an UNSTAMPED job (every job today, the six shipped kinds) still runs under the
   all-domains SYSTEM_CTX exactly as before — no regression;
 - a PARTIAL stamp fails closed: the job is failed without ever running, never

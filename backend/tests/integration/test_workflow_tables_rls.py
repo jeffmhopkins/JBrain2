@@ -1,5 +1,5 @@
 """Migration 0036 against real Postgres: RLS isolation for every workflow-engine
-table (CLAUDE.md rule 3, docs/WORKFLOW_ENGINE_PLAN.md E2).
+table (CLAUDE.md rule 3, docs/archive/WORKFLOW_ENGINE_PLAN.md E2).
 
 Two postures are proven separately:
 - domain-firewalled tables (`events`, `resolution_pin`): a health-domain row is

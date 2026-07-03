@@ -1,5 +1,5 @@
 """GmailClientProvider — resolves live credentials (settings store over env) into a
-cached client (docs/EMAIL_ARCHIVIST_PLAN.md). No network: client() only constructs."""
+cached client (docs/archive/EMAIL_ARCHIVIST_PLAN.md). No network: client() only constructs."""
 
 from typing import Any
 

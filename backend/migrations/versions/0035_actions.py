@@ -4,7 +4,7 @@ The six shipped job handlers described as data: one global reference row per
 registered action, carrying the handler dispatch key plus the metadata the engine
 reasons over (mutating, cost_class, the dedup hint) without running code. The
 in-code `jbrain.workflow.registry` is the source of truth and validates at boot
-(E3, docs/WORKFLOW_ENGINE_PLAN.md §2/§3); this table is its reference projection so
+(E3, docs/archive/WORKFLOW_ENGINE_PLAN.md §2/§3); this table is its reference projection so
 pipeline/trigger rows can reference an action by name+version.
 
 Reference data like app.canonical_predicates (0031): every principal reads, only

@@ -2,7 +2,7 @@
 the unified-memory time-share (free the LLM → render → free ComfyUI), the blob put, and the
 RLS-scoped `generated_images` insert — extracted from `agent/imagegentools.py` so the jerv
 handlers AND the direct owner API (`api/images_render.py`) drive ONE render path and never
-diverge (docs/IMAGE_LAUNCHER_PLAN.md, Wave L2).
+diverge (docs/archive/IMAGE_LAUNCHER_PLAN.md, Wave L2).
 
 The service takes an explicit `SessionContext` (the value the handlers pass as `ctx.session`
 to `scoped_session`), not a `ToolContext`: each caller owns source resolution and supplies its

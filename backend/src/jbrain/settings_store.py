@@ -89,7 +89,7 @@ LLM_LOCAL_REMOVE_REQUESTED_KEY = "llm_local_remove_requested"
 # so a future instant reads correctly across a DST boundary.
 OWNER_TIMEZONE_KEY = "owner_timezone"
 # The archivist's Gmail OAuth credentials, set from the GUI settings panel
-# (docs/EMAIL_ARCHIVIST_PLAN.md). Owner-only like every other app.settings row; the
+# (docs/archive/EMAIL_ARCHIVIST_PLAN.md). Owner-only like every other app.settings row; the
 # refresh token is the durable credential. Stored values take precedence over the
 # JBRAIN_GMAIL_* env fallback, so the GUI is the live control surface (no restart).
 GMAIL_CLIENT_ID_KEY = "gmail_client_id"
@@ -160,7 +160,7 @@ ENTITY_PROMOTION_DEFAULT = False
 REFLEXION_BUFFER_RETRY_KEY = "reflexion_buffer_retry"
 REFLEXION_BUFFER_RETRY_DEFAULT = False
 
-# Integration run + resolution-pin persistence (docs/WORKFLOW_ENGINE_PLAN.md §E7b,
+# Integration run + resolution-pin persistence (docs/archive/WORKFLOW_ENGINE_PLAN.md §E7b,
 # Wave 1 Track A): when on, integrate_note writes an `app.runs` row
 # (kind='integration') and UPSERTs the Integrator's committed identity/predicate-key
 # decisions into `app.resolution_pin` (the pure analysis.pins). Net-new (the loop
@@ -172,7 +172,7 @@ REFLEXION_BUFFER_RETRY_DEFAULT = False
 INTEGRATION_PERSIST_KEY = "integration_persist"
 INTEGRATION_PERSIST_DEFAULT = True
 
-# The dispatcher's enqueue mode (docs/WORKFLOW_ENGINE_PLAN.md §5 Wave 2, §E7a):
+# The dispatcher's enqueue mode (docs/archive/WORKFLOW_ENGINE_PLAN.md §5 Wave 2, §E7a):
 # "shadow" computes the would-be enqueue + diffs it but never enqueues; "live"
 # (the default since the Wave-2 cutover, Sub-task C) actually enqueues the engine's
 # resolved jobs — the engine now OWNS the note->ingest, ingest->integrate, and

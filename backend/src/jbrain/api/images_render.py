@@ -3,7 +3,7 @@
 `GET /images/generated` lists the owner's gallery; `POST /images/generate` and
 `POST /images/edit` drive ONE render through `app.state.image_render` (the shared
 `ImageRenderService`, Wave L2) so the screen renders WITHOUT waking jerv — the LLM stays
-unloaded (docs/IMAGE_LAUNCHER_PLAN.md). Every route is `OwnerDep` + RLS-scoped: the
+unloaded (docs/archive/IMAGE_LAUNCHER_PLAN.md). Every route is `OwnerDep` + RLS-scoped: the
 `generated_images` table is owner-only (a non-owner principal sees zero rows, can't insert),
 so the surface is unreachable by a scoped/capability token.
 

@@ -1,5 +1,5 @@
 """The `transcribe` agent tool: jerv reads an attached audio OR video file with the
-local whisper model (docs/WHISPER_TRANSCRIPTION_PLAN.md).
+local whisper model (docs/archive/WHISPER_TRANSCRIPTION_PLAN.md).
 
 The audio sibling of `analyze_image`: resolves a chat attachment by id under the
 session's RLS scope (a foreign/out-of-scope id reads as a clean miss, never a

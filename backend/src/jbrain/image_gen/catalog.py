@@ -1,7 +1,7 @@
 """Curated catalog of self-hostable image-generation models.
 
 Single source of truth for the OPT-IN ComfyUI image feature
-(docs/IMAGE_GEN_SERVICE_PLAN.md): it names the diffusion models JBrain can run
+(docs/archive/IMAGE_GEN_SERVICE_PLAN.md): it names the diffusion models JBrain can run
 on-box through the `comfyui` compose profile (ROCm ComfyUI), records the weight
 files scripts/comfyui-setup.sh must download and where ComfyUI expects each, and
 maps each model to the workflow template the driver (jbrain.image_gen.comfyui)

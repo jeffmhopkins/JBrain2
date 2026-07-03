@@ -1,7 +1,7 @@
 # Try-it-once: does ROCm ComfyUI run under Docker on this box?
 
 **Throwaway experiment, not production.** Its only job: answer **one question** before we build
-the managed-service stack (Waves G4–G6 in `docs/IMAGE_GEN_SERVICE_PLAN.md`) —
+the managed-service stack (Waves G4–G6 in `docs/archive/IMAGE_GEN_SERVICE_PLAN.md`) —
 
 > Can a ROCm ComfyUI run inside plain Docker on this Strix Halo (gfx1151) and serve on `:8188`?
 

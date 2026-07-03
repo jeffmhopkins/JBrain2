@@ -1,4 +1,4 @@
-"""The archivist persona's cross-session memory tools (docs/EMAIL_ARCHIVIST_PLAN.md).
+"""The archivist persona's cross-session memory tools (docs/archive/EMAIL_ARCHIVIST_PLAN.md).
 
 A `web`-class (direct-exec, archivist-only) pair over the owner-only `archivist_memory`
 scratchpad: the agent recalls its taxonomy/filing decisions at session start and

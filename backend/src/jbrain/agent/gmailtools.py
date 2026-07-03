@@ -1,4 +1,4 @@
-"""The archivist persona's Gmail tools (docs/EMAIL_ARCHIVIST_PLAN.md).
+"""The archivist persona's Gmail tools (docs/archive/EMAIL_ARCHIVIST_PLAN.md).
 
 Like jerv's web tools (`jbrain.agent.webtools`), these are the `web` permission class
 and run DIRECTLY — the owner-authorized widening of invariant #9 from "public reads

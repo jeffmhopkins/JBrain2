@@ -1,7 +1,7 @@
 """Sub-agent spawning lineage: parent/depth/no-memory on sessions, parent_run_id +
 the `subagent` run kind, and the three web-sandboxed personas in the agent CHECKs.
 
-Wave S1.1 of docs/SUBAGENT_SPAWNING_PLAN.md. All net-new structural machinery for
+Wave S1.1 of docs/archive/SUBAGENT_SPAWNING_PLAN.md. All net-new structural machinery for
 `jerv`'s bounded fan of research/review/summarize children:
 
 - `agent_sessions` gains `parent_session_id` (self-FK, CASCADE so a deleted parent

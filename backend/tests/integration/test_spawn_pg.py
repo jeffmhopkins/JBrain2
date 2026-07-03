@@ -1,4 +1,4 @@
-"""The sub-agent spawn service against real Postgres (docs/SUBAGENT_SPAWNING_PLAN.md,
+"""The sub-agent spawn service against real Postgres (docs/archive/SUBAGENT_SPAWNING_PLAN.md,
 Wave S1.3): a fan mints children with the real lineage + sandbox flag, child runs are
 kind='subagent' with parent_run_id, and — the load-bearing sandbox invariant — a
 child turn writes NO episodic-memory row. Uses a minimal fake router (the loop needs

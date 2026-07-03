@@ -1,5 +1,5 @@
 """Public preview proxy: ``<slug>-preview.<host>`` → the jcode control server's
-``/preview/{slug}`` (Wave P3 of ``docs/JCODE_PREVIEW_HOST_PLAN.md``).
+``/preview/{slug}`` (Wave P3 of ``docs/archive/JCODE_PREVIEW_HOST_PLAN.md``).
 
 Caddy host-routes the per-session preview hostname to ``/__jcode_preview/{slug}{uri}``
 on the api (one static edge rule); this forwards to the internal control server, which

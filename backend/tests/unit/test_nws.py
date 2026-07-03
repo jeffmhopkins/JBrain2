@@ -1,5 +1,5 @@
 """The NWS client (alerts + gridpoint timeline) behind the hurricane card's US-coverage
-half (docs/HURRICANE_TABS_PLAN.md §1/§3/§8). HTTP is faked via MockTransport — no live
+half (docs/archive/HURRICANE_TABS_PLAN.md §1/§3/§8). HTTP is faked via MockTransport — no live
 network and no real clock, like the weather and hurricane adapters. Every time label is
 derived from an upstream `validTime` string through `zoneinfo`, never `datetime.now`.
 """

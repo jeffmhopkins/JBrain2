@@ -210,7 +210,7 @@ def normalize_future_assertion(fact: ExtractedFact, anchor: datetime) -> Extract
 # Past-tense markers that end an undated relationship/state the model left OPEN.
 # Forward companion above relaxes a still-future fact; this one CLOSES a fact the
 # note states as over ("I used to work for Acme"). Without a close it reads as a
-# current job (docs/research/legacy-links-handling.md). The Wave-2 prompt is the
+# current job (docs/archive/research/legacy-links-handling.md). The Wave-2 prompt is the
 # primary signal (it can set resolved_end directly); this is the deterministic
 # net for the common phrasings, the exact mirror of the future guard's role.
 _PAST_MARKERS = re.compile(

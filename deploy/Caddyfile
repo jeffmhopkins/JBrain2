@@ -76,6 +76,6 @@ import /etc/caddy/lan/*.caddy
 
 # Optional host-mode jcode web preview: when JBRAIN_JCODE_PREVIEW_BASE_HOST is set the
 # entrypoint renders a wildcard site here that routes <slug>-preview.<host> to the api's
-# /__jcode_preview/<slug> (docs/JCODE_PREVIEW_HOST_PLAN.md). Unset -> the glob matches
+# /__jcode_preview/<slug> (docs/archive/JCODE_PREVIEW_HOST_PLAN.md). Unset -> the glob matches
 # nothing, so a stock deploy is unaffected.
 import /etc/caddy/preview/*.caddy

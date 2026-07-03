@@ -29,7 +29,7 @@ ToolHandler = Callable[..., Awaitable[Any]]
 # Tools that must NEVER be absorbed by the `allow=None` knowledge-agent wildcard,
 # independent of their permission class — the spawn primitive is opt-in per agent
 # (jerv + the research/review children) and must never fall to the curator
-# (docs/SUBAGENT_SPAWNING_PLAN.md, review B3). The name is the single source of
+# (docs/archive/SUBAGENT_SPAWNING_PLAN.md, review B3). The name is the single source of
 # truth; `agents.SPAWN_TOOL` matches it (asserted in tests, kept here to avoid an
 # agents→toolregistry import cycle).
 NEVER_DEFAULT: frozenset[str] = frozenset({"spawn_subagent"})
@@ -117,7 +117,7 @@ class ToolRegistry:
             return False
         # Never-default tools (spawn_subagent) are excluded from the `allow=None`
         # wildcard even were they not web-classed, so curator's tools=None can never
-        # absorb the spawn primitive (docs/SUBAGENT_SPAWNING_PLAN.md, review B3).
+        # absorb the spawn primitive (docs/archive/SUBAGENT_SPAWNING_PLAN.md, review B3).
         if allow is None and tool.name in NEVER_DEFAULT:
             return False
         return _visible(tool.spec.domains, scopes)
@@ -162,7 +162,7 @@ def load_registry(
     `optional` names sidecars that may be absent when their feature is unconfigured:
     such a sidecar without a handler is SKIPPED (not loaded) rather than failing,
     so a feature like image generation can be gated off entirely (graceful degrade,
-    docs/IMAGE_GEN_PLAN.md). The strict pairing still holds for every other sidecar,
+    docs/archive/IMAGE_GEN_PLAN.md). The strict pairing still holds for every other sidecar,
     and a handler still always needs a sidecar.
     """
     loaded = [load_tool(path) for path in sorted(tools_dir.glob("*.tool"))]

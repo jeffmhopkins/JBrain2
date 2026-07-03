@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # OPT-IN: enable code mode (jcode) — a sandboxed coding-session sidecar running
-# Claude Code's agent engine against an ON-BOX coder model (docs/proposed/JCODE_PLAN.md).
+# Claude Code's agent engine against an ON-BOX coder model (docs/archive/JCODE_PLAN.md).
 #
 #   sudo bash scripts/jcode-setup.sh
 #
