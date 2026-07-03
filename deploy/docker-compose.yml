@@ -81,12 +81,15 @@ services:
       JBRAIN_LOCAL_LLM_ENABLED: ${LOCAL_LLM_ENABLED:-false}
       JBRAIN_LOCAL_LLM_URL: ${LOCAL_LLM_URL:-http://local-llm:8080/v1}
       JBRAIN_LOCAL_MODELS: ${LOCAL_MODELS:-[]}
-      # Mirrors the install-time resident-group choice so a runtime config
-      # regeneration (after a context-window edit) reproduces the same llama-swap
-      # non-swapping group the setup script wrote. Defaults OFF (opt-in): co-residency
-      # pins ~91 GB and hard-froze the box, so the recommended set swaps one at a time
-      # unless LOCAL_LLM_RESIDENT_GROUP=1 is set.
+      # Memory-safe co-residency (opt-in). When set, models are kept loaded together and
+      # the app evicts the fewest needed to hold JBRAIN_LOCAL_LLM_FREE_RAM_FRACTION of RAM
+      # free before a load (jbrain.llm.residency) — replacing the old all-or-nothing pin
+      # that hard-froze the box. Mirrors the install-time choice so a runtime config
+      # regeneration reproduces the same llama-swap group. Defaults OFF; swaps one at a
+      # time unless LOCAL_LLM_RESIDENT_GROUP=1.
       JBRAIN_LOCAL_LLM_RESIDENT_GROUP: ${LOCAL_LLM_RESIDENT_GROUP:-false}
+      # Headroom the residency budget keeps free when co-residency is on (0.25 = 25%).
+      JBRAIN_LOCAL_LLM_FREE_RAM_FRACTION: ${LOCAL_LLM_FREE_RAM_FRACTION:-0.25}
       # On-box image generation — OFF unless the operator opted in at install. When
       # enabled, points at the `comfyui` gateway (below) and lists the provisioned
       # catalog ids the settings screen may offer. Empty URL = feature off.
