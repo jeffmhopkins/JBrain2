@@ -422,10 +422,13 @@ def _lab_status_transition(candidate: Candidate, existing: list[FactView]) -> De
     unchanged. Report status is NOT stored: this decision's RESULT (the value fact's
     lifecycle + supersession chain) is the durable record, from which §4.1 derives it.
 
-    Idempotency on re-analysis (§6.6): on this deterministic path the only way a
-    value fact acquires a superseded predecessor / a retracted row at a qualifier is
-    one of these transitions, so their presence marks an already-applied transition
-    and the re-run defers to the idempotency refresh instead of re-transitioning.
+    Idempotency on re-analysis (§6.6): every transition that changes a value leaves a
+    durable marker at the draw — a `superseded` predecessor (corrected/final-promotion)
+    or a `retracted` row (cancelled) — so a re-run detects the applied transition and
+    refreshes in place instead of re-transitioning. A "correction" or "preliminary" with
+    no reading to act on is deliberately NOT minted as a bare active value (which would be
+    indistinguishable from a first correction on re-run, growing the chain): it is held in
+    review or deferred to the unchanged path, both of which re-run idempotently.
     """
     if candidate.kind != "measurement" or candidate.fhir_status is None:
         return None
@@ -436,32 +439,57 @@ def _lab_status_transition(candidate: Candidate, existing: list[FactView]) -> De
     pending_peers = [e for e in peers if e.status == "pending_review"]
 
     if status in ("corrected", "amended"):
-        # A revision: supersede the active reading(s) of this draw, hold pending ones,
-        # commit the correction active — even when the value is identical (the reason
-        # this runs before idempotency). FHIR `amended`/`corrected` collapse to
-        # `corrected` (§4.1). Re-run guard: if a superseded predecessor already exists
-        # at this draw AND the active head already equals the candidate, the correction
-        # is applied — defer to the idempotency refresh so re-analysis is byte-identical.
+        # A revision supersedes the ACTIVE reading(s) of this draw — even when the value
+        # is identical (the reason this runs before idempotency) — commits the correction
+        # active, and holds any pending peer. Superseding an active leaves a `superseded`
+        # predecessor, which is the durable marker that makes the re-run idempotent:
+        #   - already applied (a superseded predecessor exists and the active head already
+        #     equals the candidate) -> refresh that active head, do not re-transition.
+        # When there is NO active reading to revise, a "correction" has no original: it is
+        # anomalous and must NOT be minted as a citable active value (which would also be
+        # indistinguishable from a plain final on re-run, growing the chain). It is held in
+        # review instead — distinguishable (pending, not active) and idempotent. FHIR
+        # `amended` collapses to `corrected` (§4.1).
         already = any(e.status == "superseded" and e.valid_from == vf for e in existing)
-        if already and active_peers and all(values_equal(candidate, e) for e in active_peers):
-            return None
+        same_active = [e for e in active_peers if values_equal(candidate, e)]
+        diff_active = [e for e in active_peers if not values_equal(candidate, e)]
+        if already and same_active and not diff_active:
+            return Decision(refresh_id=same_active[0].id)
+        if active_peers:
+            return Decision(
+                insert=True,
+                insert_status="active",
+                supersede_ids=[e.id for e in active_peers],
+                hold_ids=[e.id for e in pending_peers],
+            )
+        same_pending = [e for e in pending_peers if values_equal(candidate, e)]
+        if same_pending:
+            return Decision(refresh_id=same_pending[0].id)  # re-run -> refresh the held row
         return Decision(
             insert=True,
-            insert_status="active",
-            supersede_ids=[e.id for e in active_peers],
-            hold_ids=[e.id for e in pending_peers],
+            insert_status="pending_review",
+            review_kind="low_confidence",
+            review_extra={"subkind": "correction_without_original"},
         )
     if status == "preliminary":
-        # Not yet a citable current value. Idempotent re-run refreshes the pending row.
+        # Not yet a citable current value. If the draw is already FINALIZED (an active
+        # reading exists) a late preliminary is stale — defer to the unchanged path
+        # (refresh if equal, fact_conflict if it disagrees) rather than planting a
+        # competing pending row that would false-flag the current value. Idempotent
+        # re-run refreshes the pending row.
+        if active_peers:
+            return None
         if any(values_equal(candidate, e) for e in pending_peers):
             return None
         return Decision(insert=True, insert_status="pending_review")
     if status == "final":
-        # Finalization only transitions when it promotes a preliminary — supersede the
-        # pending reading, commit active. With no preliminary peer this is a normal
-        # reading: return None so the unchanged accumulate / idempotent / same-instant
-        # fact_conflict path runs. (On re-run the promoted preliminary is superseded,
-        # not pending, so pending_peers is empty and the refresh path takes over.)
+        # An active reading of this draw already exists -> defer to the unchanged path
+        # (idempotent refresh if equal, same-instant fact_conflict if it disagrees); never
+        # insert a second active beside it. Otherwise finalization promotes a preliminary:
+        # supersede the pending reading, commit active. (On re-run the promoted preliminary
+        # is superseded, not pending, so pending_peers is empty and the refresh path runs.)
+        if active_peers:
+            return None
         if pending_peers:
             return Decision(
                 insert=True,

@@ -73,16 +73,31 @@ def test_amended_collapses_to_the_same_supersede_path() -> None:
     assert d.insert and d.supersede_ids == ["f-final"]
 
 
-def test_corrected_with_no_prior_behaves_as_first_final() -> None:
+def test_corrected_with_no_original_is_held_for_review_not_minted_active() -> None:
+    # A correction with no reading to revise is anomalous: it must NOT become a citable
+    # active value (which would be indistinguishable from a plain final on re-run and
+    # grow the chain). It is held in review.
     d = decide(cand(fhir_status="corrected"), [])
-    assert d.insert and d.insert_status == "active"
-    assert not d.supersede_ids and not d.hold_ids
+    assert d.insert and d.insert_status == "pending_review"
+    assert d.review_kind == "low_confidence"
+    assert d.review_extra.get("subkind") == "correction_without_original"
+    assert not d.supersede_ids
 
 
-def test_corrected_holds_a_pending_peer() -> None:
-    prelim = view(id="f-prelim", status="pending_review")
-    d = decide(cand(fhir_status="corrected", value_json={"value": 12, "unit": PLT}), [prelim])
-    assert d.insert and d.hold_ids == ["f-prelim"] and not d.supersede_ids
+def test_corrected_no_original_re_run_is_idempotent() -> None:
+    # The regression for red-team finding #1: re-feeding a corrected-with-no-original
+    # reading must NOT grow the chain — it refreshes the held row.
+    held = view(id="f-held", status="pending_review")
+    d = decide(cand(fhir_status="corrected"), [held])
+    assert d.refresh_id == "f-held" and not d.insert and not d.supersede_ids
+
+
+def test_corrected_over_active_and_pending_supersedes_active_holds_pending() -> None:
+    active = view(id="f-final", value_json={"value": 9, "unit": PLT})
+    pending = view(id="f-prelim", status="pending_review", value_json={"value": 8, "unit": PLT})
+    d = decide(cand(fhir_status="corrected", value_json={"value": 12, "unit": PLT}),
+               [active, pending])
+    assert d.insert and d.supersede_ids == ["f-final"] and d.hold_ids == ["f-prelim"]
 
 
 # --- new draw accumulates (the flag must stay meaningful) ------------------
@@ -119,6 +134,21 @@ def test_final_promotes_a_preliminary() -> None:
     d = decide(cand(fhir_status="final"), [prelim])
     assert d.insert and d.insert_status == "active"
     assert d.supersede_ids == ["f-prelim"]
+
+
+def test_final_beside_an_active_final_never_double_actives() -> None:
+    # Red-team #2: a `final` must not insert a second active beside an existing active
+    # reading; a disagreeing one routes to fact_conflict via the unchanged path.
+    d = decide(cand(fhir_status="final", value_json={"value": 8, "unit": PLT}), [view()])
+    assert d.insert and d.insert_status == "pending_review"
+    assert d.review_kind == "fact_conflict"
+
+
+def test_preliminary_after_a_final_does_not_plant_a_competing_pending() -> None:
+    # Red-team #3: a late preliminary over a finalized reading refreshes the active head
+    # rather than inserting a pending row that would false-flag the current value.
+    d = decide(cand(fhir_status="preliminary"), [view()])
+    assert d.refresh_id == "f-final" and not d.insert
 
 
 # --- cancelled / entered-in-error -> retracted ----------------------------
