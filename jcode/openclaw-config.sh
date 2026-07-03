@@ -14,13 +14,6 @@
 # auto-compaction honest — pin it to the served window (default 262144 = the coder's native
 # 256k). We deliberately do NOT set an agents.defaults.models allowlist: when unset every
 # provider model is allowed, which avoids the "model not allowed" error on a single-model box.
-#
-# The `gateway` block is required to USE openclaw (not just validate config): OpenClaw's
-# gateway "refuses to start unless gateway.mode=local is set". This ONLY makes the local
-# gateway permitted — it does not start it; `jcode-openclaw gateway` does that on demand
-# (a persistent daemon isn't worth running in every ephemeral session). Its loopback port
-# defaults to 18789; OPENCLAW_GATEWAY_PORT overrides it (e.g. a per-session port if concurrent
-# sessions ever each run a gateway — sessions share the container's loopback).
 if command -v openclaw >/dev/null 2>&1; then
   mkdir -p "${HOME:-/root}/.openclaw"
   cat > "${HOME:-/root}/.openclaw/openclaw.json" <<JSON
@@ -29,10 +22,6 @@ if command -v openclaw >/dev/null 2>&1; then
     "defaults": {
       "model": { "primary": "on-box-coder/${OPENCLAW_MODEL:-qwen3-coder-next}" }
     }
-  },
-  "gateway": {
-    "mode": "local",
-    "port": ${OPENCLAW_GATEWAY_PORT:-18789}
   },
   "models": {
     "providers": {

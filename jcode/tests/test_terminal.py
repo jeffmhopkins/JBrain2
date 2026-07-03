@@ -406,20 +406,6 @@ def test_openclaw_config_hook_renders_valid_json_at_the_gateway(tmp_path) -> Non
     assert model["id"] == "qwen3-coder-next-q8"
     # An int, not a string — so it parses as JSON:
     assert model["contextWindow"] == 262144
-    # gateway.mode=local is required or OpenClaw refuses to start its local gateway; the
-    # port is an int (the loopback the on-demand `jcode-openclaw gateway` daemon binds).
-    assert cfg["gateway"]["mode"] == "local"
-    assert cfg["gateway"]["port"] == 18789
-
-
-def test_openclaw_config_hook_honours_a_custom_gateway_port(tmp_path) -> None:
-    # A per-session OPENCLAW_GATEWAY_PORT (for concurrent sessions sharing the container
-    # loopback) lands as an int in gateway.port so each gateway can bind its own.
-    home = tmp_path / "home"
-    res = _render_openclaw_config(home, {"OPENCLAW_GATEWAY_PORT": "18801"})
-    assert res.returncode == 0, res.stderr
-    cfg = json.loads((home / ".openclaw" / "openclaw.json").read_text())
-    assert cfg["gateway"] == {"mode": "local", "port": 18801}
 
 
 def test_openclaw_config_hook_defaults_when_env_is_absent(tmp_path) -> None:
