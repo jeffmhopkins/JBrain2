@@ -504,7 +504,8 @@ async def run() -> None:
         # projector hook or inline transition. In-code only (not the app.actions
         # seed); a migration seeds its schedule + pipeline. Runs as the full owner.
         "geofence_sweep": scheduler.geofence_sweep_handler(maker),
-        # Phase-6 hygiene sweeps (docs/archive/HYGIENE_SWEEPS_PLAN.md): core-data maintenance, no LLM,
+        # Phase-6 hygiene sweeps (docs/archive/HYGIENE_SWEEPS_PLAN.md): core-data
+        # maintenance, no LLM,
         # in-code only (a migration seeds the schedules, disabled by default). entity_hygiene
         # deletes provisional orphan entities; reembed_stale re-embeds stale-model entities
         # (local embed container); tag_consolidate folds drift tag spellings to canonical.

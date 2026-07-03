@@ -34,8 +34,9 @@ from jbrain.image_gen.gateway import ComfyUiMemory
 
 # The render core (constants, helpers, and the unload/free primitives) now lives in
 # `image_gen/render.py` so the jerv handlers below AND the direct owner API share one path
-# (docs/archive/IMAGE_LAUNCHER_PLAN.md, Wave L2). The dunder helpers are re-exported here so existing
-# imports — and the tests that pin the agent path's behavior — keep resolving from this module.
+# (docs/archive/IMAGE_LAUNCHER_PLAN.md, Wave L2). The dunder helpers are re-exported
+# here so existing imports — and the tests that pin the agent path's behavior — keep
+# resolving from this module.
 from jbrain.image_gen.render import (
     _DREAMSHAPER_STEPS,  # noqa: F401
     _FAST_EDIT_MODEL,  # noqa: F401

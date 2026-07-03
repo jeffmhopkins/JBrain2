@@ -29,7 +29,8 @@ sessions = SessionManager(
     home_root=settings.home_root,
     max_sessions=settings.max_sessions,
 )
-# Host-served per-session preview (docs/archive/JCODE_PREVIEW_HOST_PLAN.md) — the sole preview
+# Host-served per-session preview (docs/archive/JCODE_PREVIEW_HOST_PLAN.md) — the sole
+# preview
 # path since the Wave P5b cutover retired the per-session cloudflared quick-tunnel. The
 # allocator is enabled only when a base host is configured AND preview is on; with no
 # base host (or preview off) it fail-closes (.enabled is False) and serves no preview.
