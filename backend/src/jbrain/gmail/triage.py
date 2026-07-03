@@ -111,6 +111,7 @@ TRIAGE_INBOX_SPEC = ActionSpec(
     cost_class="expensive",  # one LLM classification call per email
     dedup_key_expr=None,
     description="Classify untriaged inbox mail into triaged/* labels; archive all but high.",
+    category="note",  # email → notes; groups with the note pipeline on the Ops surface
     # Run only when the model triage routes to is already resident: classification
     # makes one local LLM call per email, so firing while that model is cold would
     # swap out whatever the owner is actively using (a code model, an image session).

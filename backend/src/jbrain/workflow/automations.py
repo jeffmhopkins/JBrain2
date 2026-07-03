@@ -31,19 +31,18 @@ from jbrain.db.session import SessionContext, scoped_session
 from jbrain.workflow.registry import ActionRegistry
 from jbrain.workflow.scheduler import next_schedule_run
 
-# The three groups the mock renders, in order. A trigger lands in a group by how
-# it fires and how often: event-bound -> note events; a sub-hourly schedule -> the
-# reconcilers; anything longer -> the nightly sweeps. Derived from live data (the
-# trigger source + the schedule interval), never a hardcoded id list, so a new
-# seeded automation slots into the right group automatically.
-GROUP_EVENT = "event"
-GROUP_RECONCILE = "reconcile"
-GROUP_NIGHTLY = "nightly"
-
-# A schedule at or below this cadence is a frequent reconciler; above it is a
-# nightly/periodic sweep. The seeds are 300s (reconcilers) and 86400s (nightly),
-# so an hour is a safe, stable split that needs no per-id knowledge.
-_RECONCILE_MAX_INTERVAL_SECONDS = 3600
+# The three groups the surface renders, in order — by SUBJECT, not by how a trigger
+# fires. `note` is the whole note lifecycle (ingest/integrate + their reconcilers +
+# inbox triage), `wiki` the wiki builder/lint sweeps, `maintenance` the background
+# graph/data hygiene. An automation's group is its pipeline's primary action's
+# `category` (registry.ActionSpec.category), so a new automation slots itself by
+# declaring a category — never a hardcoded id list. The default category is
+# `maintenance`, so an unclassified action falls to the bottom bucket rather than
+# vanishing. (Cadence still drives the schedule EDITOR mode — that's a separate,
+# frontend concern read off `interval_seconds`, not the display group.)
+GROUP_NOTE = "note"
+GROUP_WIKI = "wiki"
+GROUP_MAINTENANCE = "maintenance"
 
 
 @dataclass(frozen=True)
@@ -149,13 +148,15 @@ class AutomationsReader:
         self._registry = registry
         self._seeded = seeded_names
 
-    @staticmethod
-    def _group(kind: str, interval_seconds: int | None) -> str:
-        if kind == "on_event":
-            return GROUP_EVENT
-        if interval_seconds is not None and interval_seconds <= _RECONCILE_MAX_INTERVAL_SECONDS:
-            return GROUP_RECONCILE
-        return GROUP_NIGHTLY
+    def _group(self, steps: list[StepView]) -> str:
+        """Bucket an automation by its pipeline's primary (first registered) action's
+        category. A pipeline whose steps are all unknown to the registry (config
+        drift) falls to maintenance — the safe bottom bucket — rather than vanishing
+        from the surface."""
+        for step in steps:
+            if step.action in self._registry:
+                return self._registry.get(step.action).category
+        return GROUP_MAINTENANCE
 
     def _resolve_steps(self, steps: list[dict]) -> list[StepView]:
         out: list[StepView] = []
@@ -232,7 +233,7 @@ class AutomationsReader:
                 AutomationView(
                     trigger_id=row.trigger_id,
                     kind=kind,
-                    group=self._group(kind, row.interval_seconds),
+                    group=self._group(steps),
                     pipeline=row.pipeline,
                     enabled=row.enabled,
                     manual=row.manual,

@@ -72,6 +72,13 @@ class ActionSpec:
     # no description column), so the seed-lockstep test (which asserts the eight
     # table columns) deliberately ignores it.
     description: str = ""
+    # Which Automations section a trigger of this action buckets into
+    # ("note" | "wiki" | "maintenance"). In-code metadata only (no `app.actions`
+    # column, like `description`/`precondition`), so the seed-lockstep test ignores
+    # it. The reader groups an automation by its pipeline's primary action's
+    # category (workflow.automations), so a new action lands in the right section
+    # just by declaring one; the default drops the long tail into maintenance.
+    category: str = "maintenance"
 
 
 class ActionRegistry:
@@ -151,6 +158,7 @@ ACTION_SPECS: tuple[ActionSpec, ...] = (
         cost_class="standard",
         dedup_key_expr="note_id",
         description="Index a note: chunk it and stage embeddings.",
+        category="note",
     ),
     ActionSpec(
         name="embed_note",
@@ -161,6 +169,7 @@ ACTION_SPECS: tuple[ActionSpec, ...] = (
         cost_class="standard",
         dedup_key_expr="note_id",
         description="Embed a note's chunks for retrieval.",
+        category="note",
     ),
     ActionSpec(
         name="integrate_note",
@@ -171,6 +180,7 @@ ACTION_SPECS: tuple[ActionSpec, ...] = (
         cost_class="expensive",
         dedup_key_expr="note_id",
         description="Extract facts, resolve entities, and write the graph.",
+        category="note",
     ),
     ActionSpec(
         name="ocr_attachment",
@@ -181,6 +191,7 @@ ACTION_SPECS: tuple[ActionSpec, ...] = (
         cost_class="expensive",
         dedup_key_expr="attachment_id",
         description="Vision OCR and description for an image or PDF attachment.",
+        category="note",
     ),
     ActionSpec(
         name="consolidate_predicates",
@@ -191,6 +202,7 @@ ACTION_SPECS: tuple[ActionSpec, ...] = (
         cost_class="standard",
         dedup_key_expr=None,
         description="Merge near-duplicate predicates left by older prompts.",
+        category="maintenance",
     ),
     ActionSpec(
         name="sync_predicates",
@@ -201,6 +213,7 @@ ACTION_SPECS: tuple[ActionSpec, ...] = (
         cost_class="standard",
         dedup_key_expr=None,
         description="Re-embed the canonical_predicates index.",
+        category="maintenance",
     ),
 )
 

@@ -76,29 +76,32 @@ async def test_reader_projects_seeded_automations(maker: async_sessionmaker) -> 
     view = await _reader(maker).load(owner)
 
     by_id = {a.trigger_id: a for a in view.automations}
-    # The event trigger reads as on_event in the "event" group, not manually fireable.
+    # The ingest event trigger buckets into the "note" group by its action's category
+    # (ingest_note), not by how it fires; it is not manually fireable.
     event = by_id[EVENT_TRIGGER]
     assert event.kind == "on_event"
-    assert event.group == "event"
+    assert event.group == "note"
     assert event.on_event == "note.created"
     assert event.manual is False
     assert [s.action for s in event.steps] == ["ingest_note"]
     assert event.steps[0].cost_class == "standard"
     assert event.steps[0].description  # resolved through the registry
 
-    # The reconciler reads as a manually-fireable schedule in the "reconcile" group.
+    # The reconciler is a note-lifecycle safety net, so it groups with the note
+    # pipeline (not a separate cadence bucket); still a manually-fireable schedule.
     recon = by_id[RECONCILE_TRIGGER]
     assert recon.kind == "schedule"
-    assert recon.group == "reconcile"
+    assert recon.group == "note"
     assert recon.manual is True
     assert recon.schedule_id == RECONCILE_SCHEDULE
     assert recon.interval_seconds == 300
     assert recon.next_run_at is not None
 
-    # A nightly sweep lands in the "nightly" group (interval 86400s).
-    nightly = [a for a in view.automations if a.group == "nightly"]
-    assert nightly  # the 0038 seeds exist
-    assert all(a.interval_seconds == 86400 for a in nightly)
+    # The predicate sweeps (0038, interval 86400s) are background hygiene, so they
+    # bucket into "maintenance" now that grouping is by subject rather than cadence.
+    maintenance = [a for a in view.automations if a.group == "maintenance"]
+    assert maintenance
+    assert any(a.interval_seconds == 86400 for a in maintenance)
 
 
 async def test_catalog_flags_seeded_vs_in_code(maker: async_sessionmaker) -> None:

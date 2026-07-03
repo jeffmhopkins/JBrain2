@@ -11946,6 +11946,31 @@ input.ld-title {
   margin: 18px 2px 9px;
 }
 
+/* A section header that doubles as a collapse toggle (Automations: Maintenance
+   ships folded). The chevron rotates open like an automation card's. */
+button.auto-sect {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+button.auto-sect > svg {
+  color: var(--text-3);
+  flex: none;
+  transition: transform 0.16s;
+}
+button.auto-sect[aria-expanded="true"] > svg {
+  transform: rotate(90deg);
+}
+.auto-sect-count {
+  margin-left: auto;
+  letter-spacing: 0;
+  color: var(--text-3);
+}
+
 /* Status-tile grid (half-width, 2-col) */
 .runs-tiles {
   display: grid;

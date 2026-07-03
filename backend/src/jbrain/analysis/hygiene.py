@@ -34,6 +34,7 @@ ENTITY_HYGIENE_SPEC = ActionSpec(
     cost_class="cheap",  # pure SQL, no LLM
     dedup_key_expr=None,
     description="Delete provisional orphan entities stranded by retraction/supersession.",
+    category="maintenance",
 )
 
 

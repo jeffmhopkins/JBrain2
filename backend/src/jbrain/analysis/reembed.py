@@ -41,6 +41,7 @@ REEMBED_SPEC = ActionSpec(
     cost_class="standard",  # local embed container, no LLM router
     dedup_key_expr=None,
     description="Re-embed entities whose embedding_model is stale after a model change.",
+    category="maintenance",
 )
 
 
