@@ -853,6 +853,10 @@ const LLM_CAP = 34;       // glyphs carried on the tendril (the popup holds the 
 // straight line INTO the net, fully faded by FADE_END — 3/4 of the way across (net edge at
 // +LLM_BR to the far edge at -LLM_BR), rather than scrolling flat across to the far side.
 const LLM_FAR_OUT = 50, LLM_FAR_IN = 40, LLM_FADE_END = -0.5 * 15;
+// Incoming (prompt/fetch) dissolve: tied to WORLD x (the inward flow axis, brain centre at
+// x=0), NOT the anchor-relative distance — so a message fades out AT the core and never
+// drifts past the last neuron into the empty far side, wherever its firing-neuron anchor sits.
+const LLM_ABSORB_X = 0, LLM_ABSORB_RAMP = 10;
 const LLM_MAX = 6, LLM_SEG = 26;
 const llmStreams = [];
 for (let i = 0; i < LLM_MAX; i++) llmStreams.push({ active: false });
@@ -970,14 +974,16 @@ function updateStreamText() {                 // project + flow glyphs — runs 
     for (let i = 0; i < L && idx < CHAR_POOL.length; i++) {
       const d = llmGlyphDist(st, i, p);
       if (d < LLM_FADE_END - 2 || d > LLM_FAR_OUT + 2) continue;   // fully past either end
-      // Dissolve near whichever end the flow terminates at: an answer fades in as it clears
-      // the net edge and off at the far right; a prompt stays full on the tendril and up to
-      // the net edge, then fades across the net — fully gone by FADE_END (3/4 across).
+      llmPointAt(st, d, _lp);                                 // WORLD point (projected below)
+      // Dissolve near whichever end the flow terminates at: an ANSWER fades in as it clears
+      // the net edge and off at the far right; an INCOMING message (prompt/fetch) fades in at
+      // the far entry, then dissolves at the brain CORE (world x -> LLM_ABSORB_X) so it is
+      // gone before the last neuron in its direction — never drifting into the empty far side.
       const fade = st.dir === 'out'
         ? Math.min(1, (d - (LLM_BR - 4)) / 5) * Math.min(1, (LLM_FAR_OUT - d) / 7)
-        : Math.min(1, (LLM_FAR_IN - d) / 7) * Math.min(1, (d - LLM_FADE_END) / (LLM_BR - LLM_FADE_END));
+        : Math.min(1, (LLM_FAR_IN - d) / 7) * Math.min(1, (LLM_ABSORB_X - _lp.x) / LLM_ABSORB_RAMP);
       if (fade <= 0) continue;
-      llmPointAt(st, d, _lp).project(camera);
+      _lp.project(camera);                                    // project the same world point
       if (_lp.z > 1) continue;                                // behind the camera
       llmPointAt(st, d + 0.7, _lp2).project(camera);          // a nearby point -> screen tangent
       const sx = (_lp.x*0.5 + 0.5) * W, sy = (-_lp.y*0.5 + 0.5) * H;
