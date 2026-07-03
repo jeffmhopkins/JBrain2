@@ -104,7 +104,8 @@ Shipped plans to archive (evidence in the appendix):
 
 - **jcode out of the icebox:** `git mv docs/proposed/{JCODE_PLAN,
   JCODE_2TAB_PLAN,JCODE_SESSION_TOOLS_PLAN}.md docs/archive/` — all three are
-  built (jcode subsystem: `backend/src/jbrain/jcode/`, migr 0098–0104).
+  built (jcode-specific migrations 0098/0100/0102/0103; code under
+  `api/jcode*.py` + `models/jcode.py`, with `JcodeSessionScreen.tsx`).
 - **Rejected ≠ icebox:** `JCODE_CONTAINER_PER_SESSION_PLAN` is red-teamed
   "NOT VIABLE" — flip to `Rejected`, `git mv` to `archive/`.
 - **Research whose plan shipped:** `git mv docs/research/legacy-links-*.md
@@ -127,13 +128,16 @@ Shipped plans to archive (evidence in the appendix):
 
 ### W4 — Wire the enforcement
 
-- Land `scripts/docs-freshness.sh` (spec'd in `DOC_LIFECYCLE.md` §Enforcement).
-- Add the check to CI as a docs gate.
+- `scripts/docs-freshness.sh` already exists (landed with this plan, advisory).
+  Flip it from advisory to a binding CI gate **only after W1–W3**, once every
+  doc carries a freshness header — otherwise CI goes red repo-wide.
+- Add the check to the per-wave gate list in `PROCESS.md` §Verification
+  (alongside lint/types/testcontainers/coverage/`.prompt`+`.tool` pins).
 - Add the definition-of-done line to `DEVELOPMENT.md` and the PR template:
-  *"Docs reconciled — plan status flipped or archived, Living docs corrected,
-  `Last verified` bumped."*
-- Update `scripts/dev-setup.sh` if the check adds a setup step (per `CLAUDE.md`
-  non-negotiable #8).
+  *"Docs reconciled: plan status flipped or archived, Living docs corrected,
+  `Last verified` bumped."* (single canonical location, per `DOC_LIFECYCLE.md`.)
+- Update `scripts/dev-setup.sh` if the CI wiring adds a setup step (per
+  `CLAUDE.md` non-negotiable #8).
 
 ## Appendix — full per-doc audit (2026-07-03)
 
@@ -156,6 +160,8 @@ Verdict legend: **CURRENT** (no change) · **MINOR-DRIFT** (small fix in place) 
 | `MODEL_PROMPTING.md` | CURRENT | header; opt. cloud-default note |
 | `PREDICATE_CANONICALIZATION.md` | SUPERSEDED | keep (banner already correct) |
 | `ENTITY_GRAPH_REFOCUS_PLAN.md` | STALE | W1: "no code lands"→shipped; 0112→0114 |
+| `DOC_LIFECYCLE.md` | NEW (Living) | this cleanup — the going-forward process doc |
+| `DOC_CLEANUP_PLAN.md` | NEW (Plan) | this doc — the one-time cleanup, archives at W4 |
 
 ### Ops / runbook
 | Doc | Verdict | Action |
