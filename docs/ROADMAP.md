@@ -167,6 +167,14 @@ spec, the firewall design, and the cross-stream `PHASE6_WIKI_GRAPH_CONTRACT.md`.
 claim cites a note, and corrections happen by out-arguing the wiki with a
 correction note.
 
+### Wiki health sweep (separate plan) — Scheduled
+
+- **`wiki_lint`** — Scheduled (build plan: `docs/plans/WIKI_LINT_PLAN.md`). A
+  periodic corpus-wide wiki HEALTH audit — the "third leg" alongside ingest
+  `wiki_refresh`/`wiki_rebuild` and query `search`/`agent` — added as a fifth
+  in-code sweep `ActionSpec`, read-only against the wiki. Tracked separately from
+  the `PHASE6_WIKI_PLAN.md` waves above; see its own plan for status and waves.
+
 ## Phase 6 follow-ons — Shipped (build records under `docs/archive/`)
 
 Each shipped as its own multi-wave plan. *(The self-improvement Loops 2–4 once
