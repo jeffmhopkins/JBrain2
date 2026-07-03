@@ -69,6 +69,22 @@ if grep -q '^JCODE_ENABLED=true' .env; then
   grep -q '^JCODE_MODEL_URL=' .env || printf 'JCODE_MODEL_URL=%s\n' 'http://local-llm:8080' >> .env
 fi
 
+# Free the on-box LLM gateway's memory BEFORE the rebuild + recreate. The gateway
+# keeps its resident model set (~91 GB on the Strix Halo box) pinned in unified
+# memory, and it is profile-gated — the plain `up -d` below never recreates it, so
+# without this it sits at full memory through the whole update. Recreating every
+# other container on top of that once spiked allocation into a kernel reclaim
+# livelock that hard-locked the host (even USB keyboard/mouse), forcing a power
+# cycle. Stopping it here releases the memory for the build/migrate/recreate; it is
+# brought back after the stack is up (below). Gated on hosting being enabled so a
+# stock cloud stack is untouched; best-effort so a stop hiccup never fails the update.
+LOCAL_LLM_RUNNING=""
+if grep -q '^LOCAL_LLM_ENABLED=true' .env; then
+  LOCAL_LLM_RUNNING=1
+  echo "[update] stopping local-llm gateway to free memory for the update"
+  docker compose --profile local-llm stop local-llm || true
+fi
+
 echo "[update] building images"
 docker compose $JCODE_PROFILE build
 
@@ -85,6 +101,16 @@ docker compose $JCODE_PROFILE up -d
 # never abort the update — the queue persists and the next update retries.
 echo "[update] syncing local models"
 sh src/deploy/local-models-sync.sh || echo "[update] local-model sync skipped (will retry next update)"
+
+# Bring the LLM gateway back up now the churn is over (it loads models on demand).
+# Only when it was up before this update: the model sync above restarts it when the
+# roster CHANGED, but the common no-op sync ("no models to sync") exits before its
+# own `up -d`, so without this an enabled gateway would stay stopped after every
+# routine update. Idempotent with the sync's own start; best-effort like the rest.
+if [ -n "$LOCAL_LLM_RUNNING" ]; then
+  echo "[update] restarting local-llm gateway"
+  docker compose --profile local-llm up -d local-llm || true
+fi
 
 # Reclaim space, but never let a prune hiccup fail the whole update (set -e) after
 # the real work is done — a transient daemon error here once surfaced as a bogus
