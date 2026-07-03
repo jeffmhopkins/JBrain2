@@ -54,7 +54,18 @@ union="$(printf '%s\n%s\n%s\n' "$requested" "$current" "$reco" | grep -v '^[[:sp
 remove_file="$(mktemp)"
 trap 'rm -f "$remove_file"' EXIT
 printf '%s\n' "$removing" | grep -v '^[[:space:]]*$' | sort -u > "$remove_file"
-ids="$(printf '%s\n' "$union" | grep -vxF -f "$remove_file" | tr '\n' ' ')"
+# Set difference union - removing. Only run `grep -vxF -f` when the remove file is
+# NON-EMPTY: BusyBox grep (this runs in the docker:cli one-shot, Alpine/busybox — not
+# GNU) treats an EMPTY -f pattern file as a pattern that matches EVERY line, so
+# `grep -v` against it would drop the whole union → an empty `$ids` → a spurious "no
+# models to sync" on every install where nothing is queued for removal (the common
+# case). GNU grep returns all lines here, which is why this passed local testing but
+# silently no-op'd on the box. With no removals, ids IS the union.
+if [ -s "$remove_file" ]; then
+  ids="$(printf '%s\n' "$union" | grep -vxF -f "$remove_file" | tr '\n' ' ')"
+else
+  ids="$(printf '%s\n' "$union" | grep -v '^[[:space:]]*$' | tr '\n' ' ')"
+fi
 # Empty `$ids` is a VALID terminal state now that the uninstall queue is subtracted
 # above: "uninstall every served model" leaves an empty roster that must still be
 # APPLIED (write LOCAL_MODELS=[], restart, prune, clear) — bailing here would wedge
