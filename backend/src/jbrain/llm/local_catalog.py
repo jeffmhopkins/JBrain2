@@ -301,6 +301,31 @@ CATALOG: tuple[LocalModel, ...] = (
         kv_gb_per_128k=3.2,
     ),
     LocalModel(
+        id="qwen3.5-0.8b",
+        label="Qwen3.5 0.8B · tiny",
+        served_model="qwen3.5-0.8b",
+        tiers=("low",),
+        supports_vision=False,
+        supports_tools=True,
+        recommended=False,
+        hf_repo="unsloth/Qwen3.5-0.8B-GGUF",
+        gguf_include="*Q8_0*.gguf",
+        mmproj_include=None,
+        quant="Q8_0",
+        # 8-bit of a 0.8B dense model — near-lossless at trivial cost. On this
+        # memory-bandwidth-bound box the Q4 savings (~0.3 GB) buy nothing, so the
+        # tiny model keeps its quality rather than shaving already-thin headroom.
+        size_gb=0.9,
+        note="Tiniest catalog model — a fast, cheap worker for side projects that "
+        "don't need to be smart (classification, extraction, short one-shots). "
+        "Newer generation than qwen3-30b; thinking is off by default, so it serves "
+        "as a snappy Instruct model. Loads instantly and co-resides beside anything.",
+        # Native 256k; serves the conservative gateway default like the other low-tier
+        # entries. Its KV cache is negligible at this size, so a big -c is cheap here.
+        native_context_window=262144,
+        kv_gb_per_128k=0.5,
+    ),
+    LocalModel(
         id="llama-3.3-70b",
         label="Llama 3.3 70B · batch (slow)",
         served_model="llama-3.3-70b",
