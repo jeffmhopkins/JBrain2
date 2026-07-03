@@ -80,3 +80,20 @@ to paper. Manage the stack with
 - Backend: `cd backend && uv run pytest` (RLS integration tests need Docker)
 - Supervisor: `cd supervisor && uv run pytest`
 - Frontend: `cd frontend && npm run test`
+
+### Docs travel with the code
+
+Documentation is a first-class deliverable, not an afterthought. Every PR
+reconciles the docs it affects **in the same PR** — a plan's status flipped or
+archived when its waves land, reference/runbook docs corrected when behaviour
+changes, and each doc's `Last verified` stamp bumped. New docs are filed by kind
+(`docs/reference/` · `docs/runbooks/` · `docs/plans/`), and volatile counters
+(like a migration head) never get hardcoded in prose.
+
+This is binding — see [`docs/DOC_LIFECYCLE.md`](docs/DOC_LIFECYCLE.md) (and
+`CLAUDE.md` non-negotiable #9). The `docs` CI gate enforces the mechanical rules;
+run it before a docs change:
+
+```sh
+bash scripts/docs-freshness.sh
+```
