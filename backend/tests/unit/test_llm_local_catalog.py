@@ -153,6 +153,24 @@ def test_qwen35_0_8b_is_a_tiny_text_only_low_tier() -> None:
     assert m.id not in local_catalog.recommended_ids()
 
 
+def test_qwen35_4b_is_a_small_text_only_low_tier() -> None:
+    # The step up from the 0.8b tiny model: a small dense Q8 low-tier daily driver.
+    m = local_catalog.get("qwen3.5-4b")
+    assert m is not None
+    assert m.tiers == ("low",)
+    assert not m.supports_vision and m.mmproj_include is None
+    assert m.supports_tools
+    assert not m.supports_reasoning
+    assert m.served_model not in local_catalog.REASONING_SERVED_MODELS
+    assert m.quant == "Q8_0"
+    assert "Q8_0" in m.gguf_include
+    assert m.hf_repo == "unsloth/Qwen3.5-4B-GGUF"
+    assert m.spec == "local:qwen3.5-4b"
+    assert m.context_window == local_catalog.DEFAULT_LOCAL_CONTEXT_WINDOW
+    assert m.native_context_window == 262144
+    assert m.id not in local_catalog.recommended_ids()
+
+
 def _settings(**kw: Any) -> Settings:
     # Both cloud keys present — provider_choices hides a keyless cloud provider, so
     # tests that expect grok/claude to be offered must supply the keys.
