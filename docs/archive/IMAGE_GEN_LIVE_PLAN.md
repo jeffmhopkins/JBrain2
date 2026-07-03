@@ -1,5 +1,7 @@
 # Live image generation — progressive preview + stop (Wave G7)
 
+> **Status:** Shipped 2026-07 · \`ToolProgressEvent\` + image interrupt endpoint
+
 Extends the image-gen feature so a generation shows **live progressive previews**
 (updating at ~25% step intervals) and can be **stopped mid-render** from the chat.
 With on-box Qwen-Image taking ~3.5 min for a 20-step render, a blind 3.5-minute

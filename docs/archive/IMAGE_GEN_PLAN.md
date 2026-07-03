@@ -1,5 +1,7 @@
 # Image generation — build plan (local diffusion via ComfyUI)
 
+> **Status:** Shipped 2026-07 · migration 0078, \`image_gen/\`, \`agent/imagegentools.py\`
+
 A chat-driven image generator: the **jerv** chatbot gains two tools — `generate_image`
 (text→image) and `edit_image` (image→image) — that drive a **localhost ComfyUI** running
 **Qwen-Image-2512** (and the **Qwen-Image-Edit** sibling) on the owner's AMD Strix Halo

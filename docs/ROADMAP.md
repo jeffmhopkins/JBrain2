@@ -167,40 +167,39 @@ spec, the firewall design, and the cross-stream `PHASE6_WIKI_GRAPH_CONTRACT.md`.
 claim cites a note, and corrections happen by out-arguing the wiki with a
 correction note.
 
-## Phase 6 follow-ons — Planned (separate multi-wave plans)
+## Phase 6 follow-ons — Shipped (build records under `docs/archive/`)
 
-Each is its own multi-wave plan — some unblocked *by* the wiki spine, some
-independent agent-infrastructure that can run alongside it (folding any of them
-into the wiki broke one-PR-per-wave and hid the true size). *(The
-self-improvement Loops 2–4 once listed here — skill learning, durable-knowledge +
-predicate-canon promotion, and prompt/tool self-edit — and their eval/promotion
-harness were removed, not deferred.)*
+Each shipped as its own multi-wave plan. *(The self-improvement Loops 2–4 once
+listed here — skill learning, durable-knowledge + predicate-canon promotion, and
+prompt/tool self-edit — and their eval/promotion harness were removed, not
+deferred.)*
 
-- **Hygiene sweeps** (build plan: `docs/HYGIENE_SWEEPS_PLAN.md`) — entity hygiene
-  (`entity_hygiene`: delete provisional orphans stranded by retraction/supersession),
-  summary re-embedding (`reembed_stale`: re-embed stale-model entities), tag
-  consolidation (`tag_consolidate`: fold drift tag spellings) — built as engine actions
-  on the Phase-5 sweep pattern, seeded disabled + Ops-fireable. Distinct from the wiki's
-  own `wiki_reindex` (which only re-embeds wiki summaries).
-- **Sub-agent spawning** (build plan: `docs/SUBAGENT_SPAWNING_PLAN.md`) —
-  **agent-infrastructure, independent of the wiki spine** (parallel-safe; does not
-  wait on the entity-graph rebuild). Expands the reserved `spawn_subagent` hatch
-  (`docs/ASSISTANT.md`) into a bounded fan of web-sandboxed
-  research/review/summarize sub-agents spawned by `jerv`: parent-authored brief as
-  data, child tools/scope ⊆ parent, depth ≤ 2, a direct caps-bounded fan, a shared
-  tree budget, and live streaming into the chat + a nested session tree. Scheduled
-  as its own multi-wave plan (waves **S1–S4**); design-complete and through a
-  three-lens adversarial review.
+- **Hygiene sweeps** ✅ (`archive/HYGIENE_SWEEPS_PLAN.md`) — `entity_hygiene`,
+  `reembed_stale`, `tag_consolidate` engine actions on the Phase-5 sweep pattern,
+  seeded disabled + Ops-fireable (migration 0066).
+- **Sub-agent spawning** ✅ (`archive/SUBAGENT_SPAWNING_PLAN.md`,
+  `archive/SUBAGENT_FEEDING_WAVES_PLAN.md`) — `jerv` fans out web-sandboxed
+  research/review/summarize sub-agents (`agent/spawn.py`, migration 0105).
+  *Deferred:* feeding-wave run-log persistence + live SSE.
 
-## Phase 7 — Outer ring — Planned
+## Phase 7 — Outer ring — Mostly shipped
 
-Scoped capability tokens; guided-intake share links (interview agent gathers
-e.g. medical history or recipes, sessions become notes attributed to the
-right subject and domain) — **build plan: `docs/GUIDED_INTAKE_PLAN.md`** (five
-waves, GUI mock gate cleared). OwnTracks ingestion endpoint with per-device keys;
-location hypertable; PostGIS geofence events into the workflow engine.
-Lab-report extraction into typed `lab_results`.
+The location + family + intake slices shipped; build records are under
+`docs/archive/`.
 
-**Exit:** a family member completes an intake link unassisted; phones report
-location continuously; a photographed lab report becomes queryable rows
-citing its note.
+- **Guided-intake share links** ✅ (`archive/GUIDED_INTAKE_PLAN.md`) — owner-minted
+  interview links → owner-approved intake submissions → attributed notes
+  (migrations 0107–0113).
+- **Location** ✅ (`archive/PHASE7_LOCATION_PLAN.md`, `_LOCATION_DETAIL_PLAN.md`) —
+  OwnTracks ingest with per-device keys, location hypertable, geofence events into
+  the workflow engine, motion-adaptive dense trails (migrations 0059–0064/0073).
+- **Family tracker + app map** ✅ (`archive/PHASE7_FAMILY_TRACKER_PLAN.md`,
+  `_APP_MAP_PLAN.md`) — MQTT ingest, pairing/view-scope, the live member map
+  (migrations 0067/0075). *Deferred:* the M7c ops runbook + Android FCM
+  registration hardening.
+- **Location assistant** ✅ (`archive/LOCATION_ASSISTANT_PLAN.md`) — owner-only
+  `where_is`/dwell/`save_place` tools. *Deferred:* the L5 dwell segmenter (waits
+  on the analytics tier).
+
+**Still planned:** lab-report extraction into typed `lab_results` — a photographed
+lab report becomes queryable rows citing its note.

@@ -1,5 +1,7 @@
 # Calibration loop — LLM-in-the-loop testing for the analysis layers
 
+> **Status:** Shipped 2026-07 · \`evals/box/\` + integrate/disambiguate runners built
+
 A closed, repeatable loop for calibrating the three analysis-layer prompts
 (`note.extract`, `integrate.note`, `entity.disambiguate`) against the owner's
 local model on the box, and for guarding their quality in CI. It is the

@@ -1,4 +1,6 @@
 # JBrain2 — Phase 7+ Family Location Tracker — Hybrid Build Plan
+
+> **Status:** Shipped 2026-07 · \`mqtt/\`, migrations 0067/0075
 ### App name: **JBrain360** (forked OwnTracks · MQTT · view-scope)
 
 > **Provenance.** Synthesized from three independent research sweeps (OwnTracks

@@ -1,5 +1,7 @@
 # Email Archivist — build plan (a sandboxed Gmail persona)
 
+> **Status:** Shipped 2026-07 · 9 gmail sidecars, migrations 0094/0095; nightly triage layer (0096/0101) shipped too
+
 A new Full Brain persona — **`archivist`** — whose job is to triage and organize a
 20+ year Gmail history. It is built as a **sandbox** in the exact shape of `jerv`
 (`docs/ASSISTANT.md` "Agent selection"): it reads **no** knowledge base, holds

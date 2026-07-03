@@ -1,5 +1,7 @@
 # Whisper transcription — build plan
 
+> **Status:** Shipped 2026-07 · migration 0079, \`ingest/transcribe.py\` (on-box GPU smoke test deferred)
+
 Add on-box speech-to-text (whisper.cpp) to JBrain2 in two roles:
 
 1. **Attachment analyzer** — `audio/*` (and, fast-follow, `video/*`)

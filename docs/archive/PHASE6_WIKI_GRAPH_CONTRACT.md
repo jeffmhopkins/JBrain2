@@ -1,5 +1,7 @@
 # Wiki ↔ fact/entity contract (Phase 6 ⟷ the salient-fact / entity-graph rebuild)
 
+> **Status:** Shipped 2026-07 · contract fulfilled — migration 0046, entity image_sha, wiki_built dirty bit
+
 **Audience:** the entity-graph rebuild work-stream. **Purpose:** the Phase 6 wiki
 (`docs/PHASE6_WIKI_PLAN.md`) builds its citation, linking, and incremental-build
 machinery on top of the fact/entity layer you are reshaping. To build that machinery

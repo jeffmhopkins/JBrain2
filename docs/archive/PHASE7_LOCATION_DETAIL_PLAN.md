@@ -1,5 +1,7 @@
 # JBrain360 — high-detail, low-battery location trails (Phase 7)
 
+> **Status:** Shipped 2026-07 · \`android/.../SamplingPolicy.kt\` + batched array ingest
+
 Raises the member tracker from sparse, jittery trails to **Life360-grade detail**
 without adopting Google Play Services. Executed under `docs/PROCESS.md` (per-wave PR,
 independent adversarial review, red-team for any ingest/firewall-touching wave) and

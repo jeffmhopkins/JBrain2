@@ -1,5 +1,7 @@
 # analyze_video — build plan
 
+> **Status:** Shipped 2026-07 · migration 0084, \`ingest/video.py\` (self-marked done)
+
 On-box video understanding: jerv (and the note pipeline, later) can read a video
 attachment by **sampling frames → captioning each with the vision LLM → transcribing
 the audio (whisper) → fusing both on a timeline → summarizing**. The summary +

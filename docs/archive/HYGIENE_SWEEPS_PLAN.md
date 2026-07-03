@@ -1,5 +1,7 @@
 # Hygiene sweeps (build plan)
 
+> **Status:** Shipped 2026-07 · \`analysis/hygiene.py\`/\`reembed.py\`/\`tagconsolidate.py\`, migration 0066
+
 Phase-6 follow-on (ROADMAP §"Phase 6 follow-ons", `docs/ANALYSIS.md` nightly list); relocated
 out of the wiki build as its own plan (`docs/PHASE6_WIKI_PLAN.md` "Out of scope"). Three
 **core-data maintenance** engine actions on the Phase-5 sweep pattern (the

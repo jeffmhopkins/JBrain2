@@ -1,5 +1,7 @@
 # Location assistant — build plan (DO tools)
 
+> **Status:** Shipped 2026-07 · 10 location \`.tool\`s + \`agent/locationtools.py\` (L5 segmenter deferred)
+
 Implements the ✅ build-now spine from `docs/LOCATION_ASSISTANT_TOOLS.md`: items
 **1–13, 29, 31** (14/segmenter deferred — see below; 35 is ✅ but Phase-6-gated,
 excluded). Goal: the assistant can answer location questions, show maps inline, and
