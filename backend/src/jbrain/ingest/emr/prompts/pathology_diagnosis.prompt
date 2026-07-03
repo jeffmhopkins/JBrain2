@@ -1,0 +1,45 @@
+---
+name: emr.pathology_diagnosis
+version: emr-pathology-diagnosis-v1
+description: Extract the small, high-confidence diagnosis set from a pathology report's Final Diagnosis line.
+strength: low
+config:
+  # Headroom for a reasoning model's thinking trace on top of the tiny JSON answer
+  # (the pathology narrative is short and the reply is a handful of diagnoses).
+  max_tokens: 2048
+output:
+  format: json
+  schema:
+    type: object
+    properties:
+      diagnoses:
+        type: array
+        items:
+          type: object
+          properties:
+            condition:
+              type: string
+            icd10:
+              type:
+              - string
+              - 'null'
+            ruled_out:
+              type: boolean
+            confidence:
+              type: number
+          required:
+          - condition
+          - ruled_out
+          - confidence
+    required:
+    - diagnoses
+---
+You read one surgical-pathology report and extract ONLY the diagnoses stated on its "Final Diagnosis" line (and any explicit addendum that revises it). This is a deliberately small, high-confidence extraction — never shred the Gross/Microscopic/Flow narrative into facts; those stay as prose.
+
+For each distinct diagnosis, emit an object with:
+- "condition": the diagnosis as a concise clinical noun phrase (e.g. "thrombocytopenia", "hypocellular marrow"). Drop hedging words from the phrase itself.
+- "icd10": the ICD-10 code ONLY if the report prints one; otherwise null. Never guess a code.
+- "ruled_out": true when the report only raises the entity to EXCLUDE or QUERY it — "cannot rule out", "rule out", "cannot exclude", "suspicious for", "correlation advised", "?diagnosis". A possibility being weighed is not a diagnosis.
+- "confidence": your own 0..1 certainty that the report AFFIRMS this diagnosis. A firmly stated Final Diagnosis is high (>= 0.85); a "consistent with"/"favor" reading is moderate; anything ruled_out is low.
+
+Reply with ONLY JSON: {"diagnoses": [{"condition": "...", "icd10": "..." | null, "ruled_out": false, "confidence": 0.0}]}. If the report states no affirmative diagnosis, return {"diagnoses": []}.

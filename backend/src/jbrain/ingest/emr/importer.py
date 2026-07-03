@@ -17,7 +17,8 @@ cites the page-chunk it came from via the injected `chunk_for_anchor` resolver.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+import re
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
 from jbrain.analysis.intent import (
@@ -29,6 +30,7 @@ from jbrain.analysis.intent import (
 )
 from jbrain.ingest.emr.candidates import CandidateEncounter, CandidateObservation, ParseResult
 from jbrain.ingest.emr.firewall import FIREWALL_REVIEW_SUBKIND, is_location_locked
+from jbrain.ingest.emr.pathology import PathologyDiagnosis
 
 SCHEMA_VERSION = 1
 INTEGRATOR_VERSION = "emr-importer-1"
@@ -84,6 +86,8 @@ class _IntentBuilder:
         object_entity_ref: str | None = None,
         temporal: IntentTemporal | None = None,
         fhir_status: str | None = None,
+        assertion: str = "asserted",
+        self_confidence: float = 1.0,
     ) -> None:
         # Layer 2: a location-lock predicate on a health EMR entity is held out and
         # carded — never committed. The parsers never emit one; this is the
@@ -101,11 +105,11 @@ class _IntentBuilder:
                 kind=kind,
                 statement=statement,
                 value_json=value_json,
-                assertion="asserted",
+                assertion=assertion,
                 object_entity_ref=object_entity_ref,
                 temporal=temporal,
                 attested_span=AttestedSpan(chunk_id=self.chunk_for(anchor), surface=statement),
-                self_confidence=1.0,
+                self_confidence=self_confidence,
                 inferred=False,
                 fhir_status=fhir_status,
             )
@@ -370,8 +374,63 @@ def _add_encounter(
         )
 
 
+def _pathology_target(encounters: list[CandidateEncounter]) -> CandidateEncounter | None:
+    """The encounter a pathology Final Diagnosis is attributed to (§6.5): the
+    hospitalization it was drawn during. Prefer the episode's inpatient HEAD (an
+    inpatient encounter that is not itself a transfer segment), then any inpatient
+    encounter, then the first encounter. None ⇒ the file has no encounter to
+    anchor to, so the diagnosis stays prose-only (never guessed onto a lab visit)."""
+    inpatient = [e for e in encounters if e.encounter_class == "inpatient"]
+    heads = [e for e in inpatient if e.part_of_key is None]
+    if heads:
+        return heads[0]
+    if inpatient:
+        return inpatient[0]
+    return encounters[0] if encounters else None
+
+
+def _cond_ref(dx: PathologyDiagnosis) -> str:
+    key = dx.icd10 or re.sub(r"[^a-z0-9]+", "_", dx.condition.lower()).strip("_") or "unknown"
+    return f"cond:path:{key}"
+
+
+def _add_pathology(
+    b: _IntentBuilder,
+    diagnoses: Sequence[PathologyDiagnosis],
+    target: CandidateEncounter,
+    enc_ref_by_key: dict[str, str],
+    anchor: str,
+) -> None:
+    """Lower the committable Final-Diagnosis set into `encounterDiagnosis` edges on
+    the target encounter (§6.5). Only affirmed, above-floor diagnoses become facts;
+    a rule-out stays hypothetical prose and is never emitted. `self_confidence`
+    carries the model's certainty for provenance (the edge is surface-attested — the
+    condition is literally named on the Final Diagnosis line — so it commits, while
+    the `committable` gate upstream is what keeps the set small and confident)."""
+    enc_ref = enc_ref_by_key[target.key]
+    for dx in diagnoses:
+        if not dx.committable:
+            continue
+        c_ref = b.entity(_cond_ref(dx), KIND_CONDITION, dx.condition)
+        b.fact(
+            entity_ref=enc_ref,
+            entity_kind=KIND_ENCOUNTER,
+            predicate="encounterDiagnosis",
+            qualifier=dx.icd10 or "",
+            kind="relationship",
+            statement=f"pathology diagnosis: {dx.condition}",
+            anchor=anchor,
+            object_entity_ref=c_ref,
+            self_confidence=dx.confidence,
+        )
+
+
 def lower_parse_result(
-    result: ParseResult, note_id: str, chunk_for_anchor: ChunkResolver
+    result: ParseResult,
+    note_id: str,
+    chunk_for_anchor: ChunkResolver,
+    *,
+    pathology_diagnoses: Sequence[PathologyDiagnosis] = (),
 ) -> tuple[list[IntegrationIntent], list[FirewallCatch]]:
     """Lower a parse result into ONE IntegrationIntent for the note. All encounters
     (including a facility transfer's segments) and orphan portal observations share
@@ -391,4 +450,8 @@ def lower_parse_result(
         _add_encounter(b, enc, enc_ref_by_key)
     for obs in result.orphan_observations:
         _add_observation(b, obs)
+    target = _pathology_target(result.encounters)
+    if pathology_diagnoses and target is not None:
+        anchor = result.pathology_anchor or target.source_anchor
+        _add_pathology(b, pathology_diagnoses, target, enc_ref_by_key, anchor)
     return [b.build()], b.catches

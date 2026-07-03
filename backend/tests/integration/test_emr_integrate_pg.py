@@ -8,6 +8,7 @@ prior reading at its draw, so it is held for review (the §3.5 red-team outcome)
 which only the status-aware transition produces.
 """
 
+import json
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
@@ -19,6 +20,7 @@ from jbrain.analysis.pipeline import AnalysisPipeline
 from jbrain.db.session import scoped_session
 from jbrain.ingest.emr.epic import parse_epic
 from jbrain.ingest.emr.integrate import integrate_parse_result
+from jbrain.ingest.emr.pathology import PATHOLOGY_TASK
 from jbrain.llm import FakeLlmClient, LlmRouter
 from jbrain.models.analysis import Entity, Fact, ReviewItem
 from jbrain.queue import SYSTEM_CTX
@@ -225,6 +227,76 @@ async def test_read_labs_tool_returns_records_and_firewalls(maker, tmp_path):  #
     general = SessionContext(principal_kind="capability_token", domain_scopes=("general",))
     empty = await handlers["read_labs"]({}, ToolContext(session=general, scopes=()))
     assert "No lab results" in empty
+
+
+def _pathology_pipeline(maker, payload: object) -> AnalysisPipeline:  # noqa: F811
+    """A pipeline whose router routes the one pathology LLM touch (§6.5) to a fake
+    returning a scripted Final-Diagnosis payload."""
+    fake = FakeLlmClient(responses=(json.dumps(payload),))
+    router = LlmRouter(
+        {"xai": fake},
+        {"note.extract": ("xai", "grok-4.3"), PATHOLOGY_TASK: ("xai", "grok")},
+        tiers={"low": ("xai", "grok")},
+    )
+    return AnalysisPipeline(maker, router)
+
+
+async def test_pathology_final_diagnosis_commits_affirmed_only(maker, tmp_path):  # noqa: F811
+    # The Final Diagnosis line yields a small, high-confidence set (§6.5): an
+    # affirmed diagnosis becomes an encounterDiagnosis edge on the hospitalization;
+    # a rule-out stays hypothetical prose and is never a diagnosis fact.
+    payload = {
+        "diagnoses": [
+            {
+                "condition": "hypocellular marrow",
+                "icd10": None,
+                "ruled_out": False,
+                "confidence": 0.93,
+            },
+            {
+                "condition": "evolving primary marrow process",
+                "icd10": None,
+                "ruled_out": True,
+                "confidence": 0.3,
+            },
+        ]
+    }
+    note_id = await make_note(maker, domain="health", body="Imported EMR records.")
+    await ingest(maker, note_id, tmp_path)
+    chunks = await _load_chunks(maker, note_id)
+    anchor = str(chunks[0].id)
+    result = parse_epic(_FIXTURE.read_text())
+    await integrate_parse_result(
+        _pathology_pipeline(maker, payload),
+        maker,
+        SYSTEM_CTX,
+        note_id=uuid.UUID(note_id),
+        note_domain="health",
+        captured_at=datetime.now(UTC),
+        chunks=chunks,
+        result=result,
+        chunk_for_anchor=lambda _a: anchor,
+    )
+    async with scoped_session(maker, SYSTEM_CTX) as s:
+        conds = {
+            e.canonical_name
+            for e in (
+                await s.execute(select(Entity).where(func.lower(Entity.kind) == "medicalcondition"))
+            )
+            .scalars()
+            .all()
+        }
+        assert "hypocellular marrow" in conds  # the affirmed diagnosis is minted
+        assert "evolving primary marrow process" not in conds  # the rule-out is not
+        # The pathology diagnosis projects onto the inpatient encounter's diagnosis list.
+        labels = [
+            r["label"]
+            for r in (await s.execute(text("SELECT label FROM app.encounter_diagnoses")))
+            .mappings()
+            .all()
+        ]
+        assert "hypocellular marrow" in labels
+        assert "evolving primary marrow process" not in labels
 
 
 async def test_read_encounters_tool_lists_and_expands(maker, tmp_path):  # noqa: F811

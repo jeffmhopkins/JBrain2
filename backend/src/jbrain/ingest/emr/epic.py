@@ -147,6 +147,8 @@ def parse_epic(text: str) -> ParseResult:
 
         if line.strip().upper().startswith("SURGICAL PATHOLOGY REPORT"):
             in_pathology = True
+            if result.pathology_anchor is None:
+                result.pathology_anchor = page  # cite the page the narrative opens on
         if in_pathology:
             pathology_lines.append(line)
             continue

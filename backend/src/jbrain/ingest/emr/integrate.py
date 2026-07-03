@@ -27,6 +27,7 @@ from jbrain.analysis.weight import ConfidenceSignals
 from jbrain.db.session import SessionContext, scoped_session
 from jbrain.ingest.emr.candidates import ParseResult
 from jbrain.ingest.emr.importer import ChunkResolver, FirewallCatch, lower_parse_result
+from jbrain.ingest.emr.pathology import extract_pathology_diagnoses
 
 _SURFACE = ConfidenceSignals(surface_attested=True, is_supersede=False)
 EXTRACTOR = "emr:deterministic"
@@ -51,7 +52,15 @@ async def integrate_parse_result(
     held out of the graph). Provider resolution runs under `ctx` — pass a
     health-only scope so a general-domain namesake is invisible and a health
     `Person` is minted, not re-matched (§3.6)."""
-    intents, catches = lower_parse_result(result, str(note_id), chunk_for_anchor)
+    # The one LLM touch on the structured path (§6.5): the pathology Final Diagnosis.
+    # Fail-soft — an unrouted task / unusable reply yields no diagnoses and the
+    # deterministic labs + encounters still commit (the narrative stays searchable).
+    diagnoses = await extract_pathology_diagnoses(
+        pipeline._router, result.pathology_narrative or ""
+    )
+    intents, catches = lower_parse_result(
+        result, str(note_id), chunk_for_anchor, pathology_diagnoses=diagnoses
+    )
     for intent in intents:
         signals = {i: _SURFACE for i in range(len(intent.facts))}
         plan = plan_intent(intent, signals=signals)
