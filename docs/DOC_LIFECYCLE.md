@@ -189,11 +189,10 @@ Rules without teeth rot too. Two mechanisms:
    - *(warn)* an **active plan** (`Scheduled`/`In progress`) whose `Last verified`
      is older than 90 days. Living runbooks that stay true for years are exempt —
      the age warn is for work in flight, not stable reference.
-   **Sequencing:** it stays advisory (run locally, `make` target) until the
-   `DOC_CLEANUP_PLAN.md` waves land the freshness headers repo-wide; wiring it as
-   a binding CI gate is that plan's final wave, and adds it to the gate list in
-   `PROCESS.md`. Turning the gate on before then would fail CI on every not-yet-
-   migrated doc.
+   It is a **binding CI gate** — the `docs` job in `.github/workflows/ci.yml`,
+   listed among `PROCESS.md`'s per-wave gates — enabled once the cleanup brought
+   every doc to a clean baseline (`archive/DOC_CLEANUP_PLAN.md`). Run it locally
+   (`bash scripts/docs-freshness.sh`) before a docs PR.
 2. **Definition of done.** The canonical checklist line lives in `DEVELOPMENT.md`
    and the PR template — *"Docs reconciled: plan status flipped or archived,
    Living docs corrected, `Last verified` bumped."* — not restated here, so the

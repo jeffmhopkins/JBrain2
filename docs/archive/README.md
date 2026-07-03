@@ -18,6 +18,7 @@ its ship evidence.
 | `WORKFLOW_ENGINE_PLAN.md` | Phase-5 workflow-engine + cutover plan (superseded by `PHASE5_COMPLETION_PLAN.md`). |
 | `PHASE5_COMPLETION_PLAN.md` | Phase-5 residual-completion plan; Phase 5 closed. |
 | `CALIBRATION_LOOP.md` | Analysis-layer calibration harness + CI guard (`evals/box/`). |
+| `DOC_CLEANUP_PLAN.md` | The 2026-07 one-time doc cleanup that adopted `../DOC_LIFECYCLE.md` — includes the full per-doc staleness audit as its appendix. |
 
 ## Wiki (Phase 6)
 | Item | What it is |

@@ -33,8 +33,7 @@ Phase-5 build record is `archive/PHASE5_COMPLETION_PLAN.md`.
 | `ROADMAP.md` | Phase plan and current status. The source of truth for "what's next." |
 | `DEVELOPMENT.md` | Binding standards: the architectural constitution, comments, testing, git, releases, `dev-setup.sh`. |
 | `PROCESS.md` | Binding multi-wave execution process for plan work: parallel tasks, per-task + per-wave adversarial review, one PR per wave, the GUI mock gate. |
-| `DOC_LIFECYCLE.md` | Binding process for how a doc is born, changes, and is archived alongside its feature: the two doc kinds, the state vocabulary, the freshness header, and the anti-rot rules. Enforced by `scripts/docs-freshness.sh`. |
-| `DOC_CLEANUP_PLAN.md` | One-time plan (four waves) to bring `docs/` to a clean baseline under the lifecycle process, with the full 2026-07-03 per-doc staleness audit as its appendix. |
+| `DOC_LIFECYCLE.md` | Binding process for how a doc is born, changes, and is archived alongside its feature: the two doc kinds, the state vocabulary, the freshness header, and the anti-rot rules. Enforced by the `docs` CI gate (`scripts/docs-freshness.sh`). The one-time cleanup that adopted it is `archive/DOC_CLEANUP_PLAN.md`. |
 | `DESIGN.md` | Binding GUI design system: theming, components, navigation, the agent tool-view contract, settled UI decisions. |
 | `ANALYSIS.md` | The note→fact→entity pipeline (extract → Integrator → arbiter), supersession, the review inbox. |
 | `entity.md` | The entity & soft-schema model: predicates, facets, names, relationships, resolution. |

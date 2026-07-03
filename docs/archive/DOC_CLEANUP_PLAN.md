@@ -1,6 +1,6 @@
 # JBrain2 — Doc Cleanup Plan
 
-> **Status:** In progress · **Last verified:** 2026-07-03 · **Waves:** W1✅ W2✅ W3✅ W4◻️ — W1–W3 executed (docs at a clean, freshness-checked baseline: 0 errors / 0 warnings); **W4 (open):** flip `docs-freshness.sh` to a binding CI gate + add it to `PROCESS.md`'s gate list (owner decision — it changes CI for all future PRs).
+> **Status:** Shipped 2026-07 · all four waves executed — docs brought to a clean, freshness-checked baseline (0 errors / 0 warnings), and `scripts/docs-freshness.sh` wired as the binding `docs` CI gate. Kept as the record of the one-time cleanup + its 2026-07-03 per-doc audit (appendix).
 
 A one-time plan to bring `docs/` to a clean baseline and adopt the
 `DOC_LIFECYCLE.md` process going forward. Built from a full staleness audit of

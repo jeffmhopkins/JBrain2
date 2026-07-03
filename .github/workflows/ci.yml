@@ -82,6 +82,16 @@ jobs:
       - run: npm run test
       - run: npm run build
 
+  # Documentation freshness — enforces docs/DOC_LIFECYCLE.md: no stale migration
+  # counters in prose, no shipped plan still labelled active, every doc carries a
+  # freshness header, every directory index names its folder. Pure bash/grep/awk
+  # over docs/ — no deps to install. Errors fail; warnings don't.
+  docs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - run: bash scripts/docs-freshness.sh
+
   images:
     # stable channel = release tags; edge channel = every green main build.
     if: github.event_name == 'push'

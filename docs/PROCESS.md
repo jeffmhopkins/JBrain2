@@ -37,7 +37,8 @@ A wave is a set of tasks that can run mostly in parallel. For each wave:
   task's unit tests, run before merging into the wave branch.
 - **Per wave (CI, at the PR):** the full suite — lint, typecheck, testcontainers
   integration tests, coverage gates (80% / security-100%), `.prompt`/`.tool`
-  digest pins, `dev-setup.sh` currency. CI must be green before merge.
+  digest pins, `dev-setup.sh` currency, and `scripts/docs-freshness.sh` (the
+  `docs` job — enforces `docs/DOC_LIFECYCLE.md`). CI must be green before merge.
 
 ## Communication
 
