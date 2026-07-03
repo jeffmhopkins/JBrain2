@@ -19,6 +19,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from jbrain.analysis.arbiter import plan_intent
@@ -28,9 +29,62 @@ from jbrain.db.session import SessionContext, scoped_session
 from jbrain.ingest.emr.candidates import ParseResult
 from jbrain.ingest.emr.importer import ChunkResolver, FirewallCatch, lower_parse_result
 from jbrain.ingest.emr.pathology import extract_pathology_diagnoses
+from jbrain.ingest.emr.reconcile import REVIEW_KIND, ParkedRead
+from jbrain.models.analysis import ReviewItem
 
 _SURFACE = ConfidenceSignals(surface_attested=True, is_supersede=False)
 EXTRACTOR = "emr:deterministic"
+
+
+async def file_parked_cards(
+    maker: async_sessionmaker,
+    ctx: SessionContext,
+    *,
+    note_id: uuid.UUID,
+    note_domain: str,
+    parked: list[ParkedRead],
+) -> int:
+    """File a `low_confidence` card for each OCR read the reconciler parked (§6.4) —
+    a readable-but-unmatched reprint is held for review, never minted as a fact. One
+    card per (analyte, day) parked read; returns the number filed. Idempotent: a
+    re-run re-derives the same (subkind, analyte, collected) key and does not
+    duplicate an open card."""
+    if not parked:
+        return 0
+    filed = 0
+    async with scoped_session(maker, ctx) as session:
+        for p in parked:
+            obs = p.observation
+            key = f"{obs.analyte.code}|{obs.collected_at.isoformat()}"
+            exists = (
+                await session.execute(
+                    text(
+                        "SELECT 1 FROM app.review_items WHERE kind = :k AND status = 'open'"
+                        " AND payload->>'subkind' = :sk AND payload->>'note_id' = :nid"
+                        " AND payload->>'key' = :key LIMIT 1"
+                    ),
+                    {"k": REVIEW_KIND, "sk": p.subkind, "nid": str(note_id), "key": key},
+                )
+            ).first()
+            if exists is not None:
+                continue
+            session.add(
+                ReviewItem(
+                    kind=REVIEW_KIND,
+                    payload={
+                        "note_id": str(note_id),
+                        "subkind": p.subkind,
+                        "key": key,
+                        "analyte": obs.analyte.name,
+                        "collected": obs.collected_at.isoformat(),
+                        "source": obs.source_system,
+                        "reason": p.reason,
+                    },
+                    domain_code=note_domain,
+                )
+            )
+            filed += 1
+    return filed
 
 
 async def integrate_parse_result(
