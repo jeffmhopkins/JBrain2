@@ -100,3 +100,74 @@ def test_unknown_command_prints_usage(tmp_path) -> None:
     res = _run(["wat"], env={"PATH": "/usr/bin:/bin"})
     assert res.returncode == 2
     assert "usage: jcode-openclaw" in res.stderr
+
+
+def _fake_openclaw_gateway(bin_dir: Path) -> None:
+    """A fake `openclaw` whose `gateway` subcommand becomes a long-lived process (so the
+    pidfile's pid stays killable), and which is otherwise a no-op."""
+    body = (
+        "#!/usr/bin/env bash\n"
+        'if [ "$1" = "gateway" ]; then exec sleep 60; fi\n'
+        'echo "openclaw $*"\n'
+    )
+    oc = bin_dir / "openclaw"
+    oc.write_text(body)
+    oc.chmod(0o755)
+
+
+def test_gateway_start_status_stop_lifecycle(tmp_path) -> None:
+    # start backgrounds the daemon and records a pidfile; status sees it; stop kills it
+    # and clears the pidfile. Driven with a fake `openclaw gateway` that just sleeps.
+    fakebin = tmp_path / "fakebin"
+    fakebin.mkdir()
+    _fake_openclaw_gateway(fakebin)
+    home = tmp_path / "home"
+    env = {
+        "PATH": f"{fakebin}:/usr/bin:/bin",
+        "HOME": str(home),
+        "OPENCLAW_GATEWAY_PORT": "18801",
+    }
+    pidfile = home / ".openclaw" / "gateway.pid"
+    pid = None
+    try:
+        start = _run(["gateway", "start"], env=env)
+        assert start.returncode == 0, start.stderr
+        assert "ws://127.0.0.1:18801" in start.stdout
+        assert pidfile.is_file()
+        pid = int(pidfile.read_text().strip())
+        # A second start is idempotent: reports the daemon, doesn't spawn another.
+        again = _run(["gateway", "start"], env=env)
+        assert "already running" in again.stdout
+        assert int(pidfile.read_text().strip()) == pid
+        status = _run(["gateway", "status"], env=env)
+        assert "running" in status.stdout and "18801" in status.stdout
+        stop = _run(["gateway", "stop"], env=env)
+        assert stop.returncode == 0, stop.stderr
+        assert "stopped" in stop.stdout
+        assert not pidfile.exists()
+        pid = None
+    finally:
+        if pid is not None:
+            subprocess.run(["kill", str(pid)], capture_output=True)
+
+
+def test_gateway_status_when_not_running(tmp_path) -> None:
+    home = tmp_path / "home"
+    res = _run(["gateway", "status"], env={"PATH": "/usr/bin:/bin", "HOME": str(home)})
+    assert res.returncode == 0, res.stderr
+    assert "not running" in res.stdout
+
+
+def test_gateway_start_refuses_without_the_cli(tmp_path) -> None:
+    # No `openclaw` on PATH: start fails clearly instead of writing a dead pidfile.
+    home = tmp_path / "home"
+    res = _run(["gateway", "start"], env={"PATH": "/usr/bin:/bin", "HOME": str(home)})
+    assert res.returncode == 1
+    assert "openclaw not installed" in res.stderr
+    assert not (home / ".openclaw" / "gateway.pid").exists()
+
+
+def test_gateway_unknown_subcommand_prints_usage(tmp_path) -> None:
+    res = _run(["gateway", "wat"], env={"PATH": "/usr/bin:/bin", "HOME": str(tmp_path)})
+    assert res.returncode == 2
+    assert "usage: jcode-openclaw gateway" in res.stderr
