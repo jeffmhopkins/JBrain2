@@ -1,5 +1,7 @@
 # Music generation on the ComfyUI service — build plan (proposed)
 
+> **Status:** Proposed (icebox) · **Last verified:** 2026-07-03
+
 **Status: proposed / icebox.** Not on the roadmap, nothing built. Extends the shipped image
 stack (`docs/IMAGE_GEN_PLAN.md`, `docs/IMAGE_GEN_SERVICE_PLAN.md`, `docs/IMAGE_LAUNCHER_PLAN.md`)
 by teaching the **same opt-in `comfyui` compose service** to generate **music** — text/tags +

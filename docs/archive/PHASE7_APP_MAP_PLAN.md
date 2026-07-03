@@ -1,5 +1,7 @@
 # JBrain360 app — full-screen live-map build plan (Phase 7)
 
+> **Status:** Shipped 2026-07 · \`MemberDashboard.tsx\` + \`api/member.py\` coords
+
 Rebuilds the **member dashboard** (`/dash`, served into the Android app's WebView)
 from the Devices/Timeline/Map tab shell into a **full-screen live map with floating
 glass chrome**. Binding spec: `docs/mocks/app-live-map.html` (owner-approved;

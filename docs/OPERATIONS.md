@@ -1,5 +1,7 @@
 # JBrain360 operations runbook
 
+> **Status:** Living · **Last verified:** 2026-07-03
+
 Operating the family-location surface (Phase 7) safely: the controls the owner
 runs, and the deploy-time invariants the in-app security rests on. The in-database
 firewall (RLS), the content-free push, and the WebView lockdown are covered in

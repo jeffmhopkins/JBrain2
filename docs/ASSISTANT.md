@@ -1,5 +1,7 @@
 # JBrain2 — Assistant
 
+> **Status:** Living · **Last verified:** 2026-07-03
+
 The personal agent. This is the **binding design** for the tool-calling agent
 (ROADMAP.md): a smart, tool-using assistant with durable memory — built natively
 on JBrain2's existing substrate (LLM adapter, storage abstraction, RLS-scoped

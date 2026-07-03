@@ -1,5 +1,7 @@
 # Sub-agent feeding waves — build plan (revised: minimal single-hop)
 
+> **Status:** Shipped 2026-07 · \`agent/spawn.py\` feeding waves F1-F3 (run-log persistence + live SSE deferred)
+
 **Status: proposed — v2, re-scoped to a *minimal single-hop feed* after three
 independent adversarial reviews (security, architecture, GUI) rejected the original
 4-wave / nested design.** The reviews are recorded in

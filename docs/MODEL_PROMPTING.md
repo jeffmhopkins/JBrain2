@@ -1,5 +1,7 @@
 # Model prompting reference — gpt-oss-120b & Qwen3-VL-30B
 
+> **Status:** Living · **Last verified:** 2026-07-03
+
 Behavioural notes and prompting guidance for the two local models this box runs,
 so that every `.prompt` we write is shaped to the model that will actually
 execute it. This is a **reference**, not a spec: it records what the model

@@ -1,5 +1,7 @@
 # Sub-agent spawning — build plan (scheduled)
 
+> **Status:** Shipped 2026-07 · migration 0105, \`agent/spawn.py\` (review in archive/SUBAGENT_SPAWNING_REVIEW.md)
+
 > **Superseded in part — child-initiated nesting was removed.** This plan built a
 > two-layer tree (jerv → child → grandchild). In practice the model would not
 > reliably spawn *as a child* even when instructed, and the depth≥1 machinery

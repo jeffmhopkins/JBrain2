@@ -1,9 +1,14 @@
 # JBrain2 — Entity Graph Refocus Plan (spine, not encyclopedia)
 
-> **Status (plan doc only — no code lands from this file).** Owner-ratified
-> direction, grounded by six scoped codebase researchers (two-tier split,
-> prompting, traversal, relatedTo, review-inbox impact, eval fallout). Waves per
-> `docs/PROCESS.md`: one PR per wave, per-task + per-wave adversarial review,
+> **Status:** Living (reference) · **Last verified:** 2026-07-03 — the two-tier
+> predicate model this plan describes shipped (PR #718, 2026-07-02; see
+> `analysis/predicates.py`, `weight.py`, `pipeline.py`, `worker.py`). Kept in
+> `docs/` as the canonical description of the two-tier model, which `README`
+> cites; the wave log below is now history.
+>
+> Owner-ratified direction, grounded by six scoped codebase researchers (two-tier
+> split, prompting, traversal, relatedTo, review-inbox impact, eval fallout).
+> Waves per `docs/PROCESS.md`: one PR per wave, per-task + per-wave adversarial review,
 > CI green before merge. **No GUI surface changes anywhere in this plan — the
 > three-mock GUI gate never trips.** No new tables (one optional pure-index
 > migration), no new dependencies (`dev-setup.sh` untouched). Open owner
@@ -233,7 +238,7 @@ behavior is fixed; everything else in the wave is parallel.)
   `own_transfer_subject_cannot_move`) for accidental xpass.
 - Docs in the same PR: `docs/PREDICATE_CANONICALIZATION.md` status update (its
   §5a finding is this plan's justification); CLAUDE.md pointer to this plan +
-  fix the stale "migrations through 0044" note (actual head: 0112).
+  fix the stale migration-head note in CLAUDE.md.
 
 ## 4. Wave 2 — salience-first prompts + eval migration (same wave, same PR)
 
@@ -556,8 +561,8 @@ edges bidirectionally, so it picks relatedTo up later with zero changes.
   lines + tests together; verify pipeline.py module coverage locally before
   the Wave-1 PR.
 - **Docs drift:** PREDICATE_CANONICALIZATION.md must be re-statused in Wave 1
-  (its §5a finding justifies this plan); CLAUDE.md's migration head is stale
-  (0112, not 0044) and gets fixed in the same PR.
+  (its §5a finding justifies this plan); CLAUDE.md's migration-head note is
+  stale and gets fixed in the same PR.
 
 ## 10. Post-merge follow-ups (PR #718 shipped 2026-07-02; recorded 2026-07-03)
 

@@ -1,5 +1,7 @@
 # JBrain2 — Note Analysis Pipeline
 
+> **Status:** Living · **Last verified:** 2026-07-03
+
 Binding reference for Phases 2–3 (and the Phase 6 wiki's inputs). Produced
 from the owner's workflow concept plus a red-team and design review; owner
 decisions are marked **[decided]**.

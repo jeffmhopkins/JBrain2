@@ -1,5 +1,7 @@
 # Guided Intake Share Links — build plan (v2)
 
+> **Status:** Shipped 2026-07 · migrations 0107-0113, PR #700
+
 > **Status: scheduled build plan** (promoted from the icebox spec), **revised after three
 > independent adversarial reviews** (security / architecture-fit / plan-completeness — see §13).
 > Realizes the **Phase 7** roadmap line "guided-intake share links" (`ROADMAP.md`). The GUI mock

@@ -1,5 +1,7 @@
 # Photo Archive Pipeline — Design Spec
 
+> **Status:** Proposed (icebox) · **Last verified:** 2026-07-03
+
 > **Status: proposed, not scheduled.** This is a forward-looking design dropped
 > in for the record; nothing here is built and it is not on the current roadmap
 > (the active frontier is Phase 6, the wiki). When/if it is picked up, it must be

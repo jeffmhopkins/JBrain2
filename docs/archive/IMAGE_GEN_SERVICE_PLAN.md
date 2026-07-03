@@ -1,5 +1,7 @@
 # Image generation as a managed service — build plan (Waves G4–G6)
 
+> **Status:** Shipped 2026-07 · \`image_gen/gateway.py\`,\`render.py\` + Lightning workflow graphs
+
 Extends `docs/IMAGE_GEN_PLAN.md` (the chat tools + view, Waves G1–G3, shipped on PR #414).
 This plan makes the ComfyUI/Qwen image model a **first‑class managed service** controlled from
 JBrain — installed, started/stopped, and **loaded/unloaded for RAM** the same way local LLMs are

@@ -1,5 +1,7 @@
 # jcode — build plan (a sandboxed local coding agent, fronted by the PWA)
 
+> **Status:** Shipped 2026-07 · jcode subsystem — `api/jcode*.py`, `models/jcode.py`, migrations 0098/0100/0102/0103
+
 A **code mode** for JBrain2: tapping a `jcode` launcher tile opens a sandboxed
 coding session — **Claude Code's agent engine driving an on-box coder model** — over
 the JBrain phone interface, with the session running on the owner's own server. It is

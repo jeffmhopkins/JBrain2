@@ -1,5 +1,7 @@
 # Talk board — build plan (Phase 6, mock B)
 
+> **Status:** Shipped 2026-07 · migration 0053, \`wiki/talkstore.py\`, \`TalkScreen.tsx\`
+
 Chosen GUI direction **B — threaded topics** (`docs/mocks/wiki-talk-b-topics.html`; A/C retained
 as the record per `docs/mocks/wiki-talk-README.md`). The Talk page is a persistent, article-
 anchored editorial board with **two voices**: the batch **Builder** (per-build decision summaries,

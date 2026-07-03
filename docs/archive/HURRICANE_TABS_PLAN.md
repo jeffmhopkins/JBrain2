@@ -1,5 +1,7 @@
 # Hurricane tool — forecast track, impact timeline & official alerts (build plan)
 
+> **Status:** Shipped 2026-07 · \`agent/hurricanetools.py\` + \`hurricane_card\` tabbed view
+
 Upgrades the shipped `hurricane` tool (position + strength only) into the
 **tabbed `hurricane_card`** previewed by `docs/mocks/hurricane-view/hurricane-combined-tabs.html`:
 a persistent storm hero + a real watch/warning banner, with **Timeline**, **Track**,

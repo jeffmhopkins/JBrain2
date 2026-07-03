@@ -1,5 +1,7 @@
 # JBrain2 — Phase 7 (GPS / Location Ingestion) — Hybrid Build Plan
 
+> **Status:** Shipped 2026-07 · migrations 0059-0064/0073, \`api/owntracks.py\`
+
 > **Provenance.** Synthesized from four independent plans (vertical-slice,
 > foundation-first, threat-model-first, process-conformance) and three adversarial
 > red-team passes (Postgres/Timescale/RLS; auth/privacy/egress; process/completeness).

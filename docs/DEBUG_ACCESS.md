@@ -1,5 +1,7 @@
 # Owner debug console (assistant access for live prompt iteration)
 
+> **Status:** Living · **Last verified:** 2026-07-03
+
 A way to let an external assistant (e.g. a Claude Code session) reach a **running**
 JBrain box to iterate on prompts against the local model, run read-only SQL, read
 logs, and switch LLM routing — live, without a redeploy. Built for the owner's own

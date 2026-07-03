@@ -1,5 +1,7 @@
 # jcode preview — host-served, per-session (retiring the per-session quick-tunnel)
 
+> **Status:** Shipped 2026-07 · \`api/jcode_preview.py\`, waves P0-P5b
+
 A build plan to move the jcode web preview off **per-session TryCloudflare
 quick-tunnels** and onto the box's **own** named Cloudflare Tunnel, giving **each
 sandbox session its own stable preview hostname** — concurrent previews, no

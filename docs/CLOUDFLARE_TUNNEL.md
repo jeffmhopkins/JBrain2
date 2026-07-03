@@ -1,5 +1,7 @@
 # Home-network access via Cloudflare Tunnel
 
+> **Status:** Living · **Last verified:** 2026-07-03
+
 This is the recommended way to reach JBrain from outside your house when the box
 sits on a home network with a **dynamic IP** and possibly **CGNAT** (carrier-grade
 NAT). The tunnel solves both problems: a `cloudflared` connector on the box dials

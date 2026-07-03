@@ -1,5 +1,7 @@
 # JBrain2 — Multi-wave execution process
 
+> **Status:** Living · **Last verified:** 2026-07-03
+
 The **binding process** for building a phased plan (e.g. `WORKFLOW_ENGINE_PLAN.md`)
 once its waves are defined. It governs *how* the work is sequenced, reviewed, and
 landed — and it binds human and AI contributors equally, on top of
@@ -35,7 +37,8 @@ A wave is a set of tasks that can run mostly in parallel. For each wave:
   task's unit tests, run before merging into the wave branch.
 - **Per wave (CI, at the PR):** the full suite — lint, typecheck, testcontainers
   integration tests, coverage gates (80% / security-100%), `.prompt`/`.tool`
-  digest pins, `dev-setup.sh` currency. CI must be green before merge.
+  digest pins, `dev-setup.sh` currency, and `scripts/docs-freshness.sh` (the
+  `docs` job — enforces `docs/DOC_LIFECYCLE.md`). CI must be green before merge.
 
 ## Communication
 

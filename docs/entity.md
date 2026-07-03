@@ -1,5 +1,7 @@
 # JBrain2 — Entity & Schema Model
 
+> **Status:** Living · **Last verified:** 2026-07-03
+
 Binding reference for how entities, names, and typed attributes are **shaped**
 across the knowledge graph. This is the schema layer that sits *underneath*
 `docs/ANALYSIS.md`'s extraction/resolution pipeline: ANALYSIS owns *how facts
@@ -112,8 +114,9 @@ actually calls — no speculative projection methods sitting unconsumed.
 | **Predicate normalization** | **WIRED** (`extraction.py`, `consolidation.py`) | `normalize_predicate` / `renamed_from` attractor | normalizes a spelling, never rejects |
 | **Display projection** | **WIRED** (`canonical.py`) | `by_kind` → `display_name` precedence | recomputes `canonical_name` from name facts |
 
-The other consumers this doc envisions — a **prompt digest** injected into
-`note.extract`, **value-shape validation**, a **UI render config** — are
+Of the other consumers this doc envisions, **value-shape validation** has since
+shipped (tier-1 predicates, `value_shape_enforce`, default ON). A **prompt
+digest** injected into `note.extract` and a **UI render config** remain
 *deferred design*, NOT built. The data they would read (`value_shape`,
 `enum_values`, `alias_seeding_predicates`, `schema_org_ref`, …) is already in
 the YAML and loader-validated, so building them later is a small change. Until

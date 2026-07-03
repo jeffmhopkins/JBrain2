@@ -1,5 +1,7 @@
 # Image launcher — build plan (standalone direct generate/edit screen)
 
+> **Status:** Shipped 2026-07 · \`screens/ImageScreen.tsx\` + shared \`render.py\` service
+
 A **card-launcher destination** for on-box image generation/editing that drives ComfyUI
 **directly**, so the **language models stay unloaded**. Today image gen only exists as jerv
 tool calls (`generate_image`/`edit_image`, `docs/IMAGE_GEN_PLAN.md`), which require the LLM
