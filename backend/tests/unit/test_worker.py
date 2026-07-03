@@ -595,6 +595,9 @@ async def test_run_registers_all_job_handlers(
         "wiki_rebuild",
         "wiki_reindex",
         "wiki_prune",
+        # The wiki health sweep (docs/plans/WIKI_LINT_PLAN.md) — a fifth in-code wiki
+        # action, standalone from the four builder actions; a migration seeds its schedule.
+        "wiki_lint",
         # The archivist's inbox-triage sweep — in-code only, not in ACTION_SPECS /
         # the app.actions seed; a migration seeds its schedule
         # (docs/archive/EMAIL_ARCHIVIST_PLAN.md).

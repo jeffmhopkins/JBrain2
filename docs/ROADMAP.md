@@ -167,13 +167,15 @@ spec, the firewall design, and the cross-stream `PHASE6_WIKI_GRAPH_CONTRACT.md`.
 claim cites a note, and corrections happen by out-arguing the wiki with a
 correction note.
 
-### Wiki health sweep (separate plan) — Scheduled
+### Wiki health sweep (separate plan) — In progress
 
-- **`wiki_lint`** — Scheduled (build plan: `docs/plans/WIKI_LINT_PLAN.md`). A
+- **`wiki_lint`** — In progress (build plan: `docs/plans/WIKI_LINT_PLAN.md`). A
   periodic corpus-wide wiki HEALTH audit — the "third leg" alongside ingest
   `wiki_refresh`/`wiki_rebuild` and query `search`/`agent` — added as a fifth
-  in-code sweep `ActionSpec`, read-only against the wiki. Tracked separately from
-  the `PHASE6_WIKI_PLAN.md` waves above; see its own plan for status and waves.
+  in-code sweep `ActionSpec`, read-only against the wiki. **Wave A shipped** (the
+  deterministic no-LLM checks + optional index re-dirty + seed migration 0115,
+  disabled); Wave B (LLM contradiction/stale-claim review cards) open. Tracked
+  separately from the `PHASE6_WIKI_PLAN.md` waves above; see its own plan for status.
 
 ## Phase 6 follow-ons — Shipped (build records under `docs/archive/`)
 

@@ -1,6 +1,27 @@
 # JBrain2 — `wiki_lint` Build Plan (corpus-wide wiki health pass)
 
-> **Status:** Scheduled · **Last verified:** 2026-07-03 · **Waves:** W0◻️ A◻️ B◻️
+> **Status:** In progress · **Last verified:** 2026-07-03 · **Waves:** W0✅ A✅ B◻️
+>
+> **Wave A — as-built (shipped, 2026-07-03).** `wiki/lint.py` (`WIKI_LINT_SPEC` +
+> `wiki_lint_handler` + `WikiLinter`), wired into the worker/API registries and the
+> three lockstep tests; seed migration **0115** (`nightly_wiki_lint`, disabled,
+> manual-fireable); integration suite `tests/integration/test_wiki_lint_pg.py`
+> (8 tests incl. the 100% security-path firewall test and the index re-dirty
+> convergence/second-run-stability tests). **Two deviations from the design below,
+> reconciled here per DOC_LIFECYCLE:**
+> 1. **Report sink is structlog + the `runs` run-log, NOT the Talk board.** The
+>    design named a "Talk build-log summary" as output #4, but `wiki_talk_topics.article_id`
+>    is `NOT NULL` (FK to a single article) — a corpus-wide summary has no article to
+>    anchor to, and making that column nullable is a non-additive schema change. So the
+>    `LintReport` (weak-signal counts) is emitted via `log.info("wiki_lint_report", …)`
+>    and captured in the fire's `runs` step log (the shipped audit surface). Every
+>    "Talk build-log" reference below should be read as "the `runs` lint report"; a
+>    per-article-anchored Talk post is a possible later refinement. The no-leak property
+>    is unchanged (counts + no titles/bodies/domain-names).
+> 2. **Reciprocal-asymmetry weak-signal count is deferred** from the v1 slice (checks
+>    3/4a/4b/5a/5b + index-integrity shipped). It is never a card and minting the
+>    reciprocal is graph mutation the linter must not do; add it as a `LintReport` field
+>    when a consumer surfaces it.
 >
 > Owner-approved review direction (the "third leg" — a periodic corpus-wide wiki
 > HEALTH audit alongside ingest `wiki_refresh`/`wiki_rebuild` and query

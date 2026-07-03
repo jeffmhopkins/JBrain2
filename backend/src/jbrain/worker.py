@@ -44,6 +44,7 @@ from jbrain.storage import FsBlobStore
 from jbrain.transcribe import WhisperCppClient
 from jbrain.usage import SqlUsageRecorder, TokenScope
 from jbrain.wiki.actions import WIKI_SPECS, wiki_handlers
+from jbrain.wiki.lint import WIKI_LINT_SPEC, wiki_lint_handler
 from jbrain.wiki.rewriter import LlmRewriter
 from jbrain.workflow import dispatcher, scheduler
 from jbrain.workflow.preconditions import RETRY_AFTER, Precondition, model_already_loaded
@@ -531,6 +532,10 @@ async def run() -> None:
             embedding_model=settings.embed_model,
             rewriter=LlmRewriter(router, settings=worker_settings_store, ctx=queue.SYSTEM_CTX),
         ),
+        # The wiki health sweep (Phase-6 follow-on, docs/plans/WIKI_LINT_PLAN.md) — deterministic,
+        # no LLM (Wave A); in-code only, not in the app.actions seed; a migration seeds its
+        # schedule (disabled) + manual trigger. Standalone from the four builder actions.
+        "wiki_lint": wiki_lint_handler(maker, embedding_model=settings.embed_model),
     }
     # Build the dispatch table from the action registry (W0.1): an action without
     # a handler — or a handler with no registered action — fails the worker LOUDLY
@@ -555,6 +560,7 @@ async def run() -> None:
             TAG_CONSOLIDATE_SPEC,
             TRIAGE_INBOX_SPEC,
             *WIKI_SPECS,
+            WIKI_LINT_SPEC,
         )
     )
     handlers = registry.dispatch_table(impls)
