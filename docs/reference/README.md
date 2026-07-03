@@ -9,6 +9,7 @@ describe how JBrain2 *is* built. These are `Living` docs (per
 | Doc | What it covers |
 |---|---|
 | `ARCHITECTURE.md` | System shape: containers, the one-database design, the knowledge pipeline, security model, operations. |
+| `SERVICES.md` | Concrete inventory of everything the box runs: every Docker container (core + opt-in), the on-box GPU model services, the PWA + JBrain360 Android app, and the functions baked in (agent, pipeline, workflow engine, wiki). |
 | `DEVELOPMENT.md` | Binding standards: the architectural constitution, comments, testing, git, releases, `dev-setup.sh`. |
 | `PROCESS.md` | Binding multi-wave execution process: parallel tasks, per-task/per-wave adversarial review, one PR per wave, the GUI mock gate, CI gates. |
 | `DESIGN.md` | Binding GUI design system: theming, components, navigation, the agent tool-view contract. |
