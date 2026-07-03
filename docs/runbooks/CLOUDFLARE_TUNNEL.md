@@ -74,8 +74,10 @@ JBRAIN_SITE_ADDR=http://brain.yourdomain.com
 TUNNEL_ENABLED=true
 CLOUDFLARE_TUNNEL_TOKEN=eyJ...
 ```
-then `sudo jbrain restart` (the helper picks up the `tunnel` profile from
-`TUNNEL_ENABLED`). Complete the Cloudflare dashboard steps above first.
+then `sudo jbrain up` (the helper picks up the `tunnel` profile from
+`TUNNEL_ENABLED`; use `up`, not `restart` — `restart` reuses the old container
+env and never creates the `cloudflared` container or re-reads the changed
+`JBRAIN_SITE_ADDR`). Complete the Cloudflare dashboard steps above first.
 
 ## Verify and troubleshoot
 

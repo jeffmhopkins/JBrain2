@@ -4,10 +4,13 @@
 
 Per-entity-type editorial guides the **builder** loads when (re)writing an article: the
 ordered **sections** (each with a default domain + an include-if rule), the **style**,
-and the hard **requirements**. These are **data, not code** — they seed the editorial-config
-table and the owner can tune them without a deploy. This is a starter set for the
-article-worthy type families (the notability gate, `PHASE6_WIKI_PLAN.md §6`); the
-remaining catalog types fall back to the generic guide until given their own.
+and the hard **requirements**. Today the guides live **in code**
+(`backend/src/jbrain/wiki/typeguides.py`); the owner-tunable editorial-config *table* is a
+planned Phase-6 refinement, not yet built. **Only Person, Organization, and Place have
+dedicated guides today** — every other type (Project, Event, Concept, Drug,
+MedicalCondition, MedicalProcedure, Product, …) currently resolves to the **Generic**
+guide. The type-specific guides written up below for those other families are the intended
+spec (the notability gate, `PHASE6_WIKI_PLAN.md §6`), not yet wired.
 
 Section `domain` is the firewall unit (single-domain per section). A section is **omitted**
 when it has no cited facts. `health`/`finance` sections are hidden from out-of-scope viewers
@@ -230,8 +233,10 @@ style_default applies.
 
 ---
 
-> **Tuning:** these are editorial config — adjust section order, add/remove sections, or
-> tighten `requirements` per type without code. New article-worthy types get their own
-> guide; until then `_default` covers them. The `include_if` rules are guidance the
+> **Tuning:** these are editorial config in intent — adjust section order, add/remove
+> sections, or tighten `requirements` per type. Today that's a code edit to
+> `wiki/typeguides.py`; a deploy-free editorial-config table is the planned refinement.
+> New article-worthy types get their own guide; until then `_default` (the Generic guide)
+> covers them. The `include_if` rules are guidance the
 > builder's rewrite prompt follows; the *hard* gates (citation, single-domain, omit-empty)
 > are enforced by the builder + the Postgres firewall regardless of the guide.

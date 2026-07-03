@@ -170,10 +170,14 @@ exchange from the persisted transcript instead. The composer's Stop is an explic
 `POST /chat/runs/{id}/cancel` (closing the stream no longer ends the turn).
 
 **No standing multi-agent orchestra.** One context window holds a personal chat
-task. Keep exactly one narrow `spawn_subagent` escape hatch for rare fan-out
-(wide retrieval sweeps): it runs the **same loop with a fresh context and the same
-RLS-scoped tool set, returns only a summary** — it is context isolation, **not** a
-code-execution or privilege-escalation path.
+task. The one exception is a narrow, **jerv-only** `spawn_subagent` escape hatch
+for bounded web fan-out: `jerv` spawns a small, caps-bounded fan of
+**web-sandboxed** children drawn from a closed persona set
+(`research` / `review` / `summarize`) that hold **web tools only — no knowledge
+base, no location, no memory** — optionally in up to two `feed`-linked waves
+(depth ≤ 1). Each child returns only a summary. It is bounded web fan-out, **not**
+the knowledge agent sharing its RLS-scoped tool set, and **not** a code-execution
+or privilege-escalation path.
 
 ### Tools as `.tool` sidecars
 
@@ -206,11 +210,13 @@ stages a Proposal under the session's action policy. Adding a component is a
 deliberate, versioned change (`docs/reference/DESIGN.md` "Agent tool views"), like adding a
 tool.
 
-**The tool set stays small** (ACI discipline; every new tool pays a context-and-
-bloat tax): hybrid `search`, `read_note`/`read_entity`/`read_fact`,
-`manage_list`, `manage_appointment`, `propose_correction`, `propose_merge`, plus
-the memory tools (`remember`/`recall`/`memory.read`/`memory.edit`). Namespaced
-(`list_add`, `list_remove`).
+**Each tool pays a context-and-bloat tax** (ACI discipline), but the surface has
+grown well past the original core as capabilities landed — `SERVICES.md` has the
+full grouped inventory. The knowledge core: hybrid `search`,
+`read_note`/`read_entity`/`read_wiki`, the list tools
+(`create_list`/`read_list`/`add_list_item`/`remove_list_item`/`check_list_item`),
+`manage_appointment`/`read_appointment`, `propose_correction`, `propose_merge`,
+plus the memory tools (`remember`/`recall`/`memory_read`/`memory_edit`).
 
 `propose_merge` stages a duplicate-entity merge: the agent passes two entity ids
 (from `find_entity`) and the leaf carries them structurally in its preview, never
@@ -309,8 +315,12 @@ Full Brain mode adds a **third dial** beside read-scope and write-policy: which
 migration 0070; default `curator`, so every pre-existing session keeps today's
 behaviour). An agent bundles three things the turn loop reads — the **system
 prompt** that frames it, the **tool allowlist** it may call, and whether it **reads
-the knowledge base** at all. The set is closed and code-defined
-(`jbrain.agent.agents`):
+the knowledge base** at all. The set is code-defined (`jbrain.agent.agents`). The
+owner-facing conversation personas are `curator`, `teacher`, and `jerv` (below);
+the box also runs **`archivist`** (a Gmail-triage persona with the `gmail_*` tools
++ an owner-only cross-session memory, no KB), the non-owner **`intake`**
+interviewer (no tools, no KB), and the closed **`research`/`review`/`summarize`**
+personas `jerv` spawns — the full persona table is in `SERVICES.md`.
 
 - **`curator`** — the Full Brain personal agent (the original `agent.system`
   prompt, unchanged): every in-scope knowledge tool, narrowed to the session's

@@ -19,7 +19,7 @@ This is a **reference list** — only the ✅ items are slated to build now
 ## Cross-cutting invariants (apply to every location tool)
 - **Full-owner only.** Location reads need `app.is_full_owner()`; a narrowed /
   `owner_scoped` / sub-agent session sees zero rows. Every tool refuses such a
-  session like `geocode_forward` and says so in its `.tool` prose.
+  session (e.g. `where_is`, `home_status`) and says so in its `.tool` prose.
 - **Names, not coordinates.** Tools return names / times / distances / render-only
   GeoJSON to the owner UI — never raw lat/lon into the model's text, never the
   `raw` jsonb / SSID metadata.
@@ -48,7 +48,7 @@ This is a **reference list** — only the ✅ items are slated to build now
 | 11 | `home_status` | Core read | ✅ | current state + freshness |
 | 12 | `nearby_now` (KNN) | Core read | ✅ | bounded-radius KNN |
 | 13 | `save_place` (geofence-from-here) | Core write | ✅ | stages owner place-note Proposal (#7) |
-| 14 | Stay-point / trip segmenter | Analytics | ✅ | keystone; accuracy-gate + gap-split |
+| 14 | Stay-point / trip segmenter | Analytics | 🟡 | keystone, **deferred** (L5) — no `segments` primitive shipped |
 | 15 | `commute_summary` | Analytics | 🟡 | needs ≥N distinct days |
 | 16 | Distance / time trends | Analytics | 🟡 | continuous-aggregate migration |
 | 17 | `mode_of_transport` | Analytics | 🟡 | p50/p85 + glitch reject |
@@ -76,8 +76,9 @@ This is a **reference list** — only the ✅ items are slated to build now
 | 39 | Proactive anomaly auto-alerts | Surveillance | ⛔ | keep anomaly pull-only |
 | 40 | `create_location_note` (auto-author) | #7 line | ⛔ | events-only; the owner-deferred line |
 
-**Tally:** ✅ 16 · 🟡 18 · ⛔ 6 (5 hard + 1 "yet"). **Build-now spine:** 1–14, 29, 31
-(35 is ✅ but Phase-6-gated, so it is not in the build-now set).
+**Tally:** ✅ 15 · 🟡 19 · ⛔ 6 (5 hard + 1 "yet"). **Build-now spine:** 1–13, 29, 31
+(the item-14 segmenter was deferred to the analytics tier — see
+`../archive/LOCATION_ASSISTANT_PLAN.md`; 35 is ✅ but Phase-6-gated).
 
 ## Per-tool notes (red-teamed)
 
@@ -100,8 +101,8 @@ Each line: the build approach + the single most important mitigation the red-tea
 - **12. `nearby_now`.** Bounded-radius `ST_DWithin`/`<->` KNN over fences + past-stay clusters, name+distance only. *Mitigation:* GiST-indexed bounded KNN — no whole-table scan, no coordinate dump.
 - **13. `save_place`.** `mutate` tool, full-owner; resolves current position → **stages a place-note Proposal** (owner approves text + `{center,radiusMeters}`) → ingest → extraction → `project_place_geofences`. *Mitigation:* never a direct fact/mirror write (#7); no sub-agent can plant a place.
 
-### Analytics (✅ keystone + 🟡 tier)
-- **14. Stay-point/trip segmenter (✅ keystone).** `segments(...accuracy_gate, roaming_radius, min_dwell, max_gap)`: accuracy-gate, sessionize with `lag` distance + gap-split, label stays vs in-transit with confidence. *Mitigation:* gate + gap-split in the base CTE so dependents inherit clean segmentation.
+### Analytics (🟡 tier — segmenter deferred)
+- **14. Stay-point/trip segmenter (🟡 deferred — L5).** Not yet shipped — no `segments` primitive exists in code (see `../archive/LOCATION_ASSISTANT_PLAN.md`). Intended design: `segments(...accuracy_gate, roaming_radius, min_dwell, max_gap)`: accuracy-gate, sessionize with `lag` distance + gap-split, label stays vs in-transit with confidence. *Mitigation:* gate + gap-split in the base CTE so dependents inherit clean segmentation.
 - **15–23 (🟡).** commute_summary (≥N distinct days), distance/time trends (continuous aggregate), mode_of_transport (p50/p85 + glitch reject), presence heatmap (dwell-weighted, coarsened), rhythm punchcard ("no data"≠absence), place discovery + geofence_from_pattern (DBSCAN, proposes a note), who_was_with/co-location (sustained + gated, needs #1), unusual-day anomaly (baseline/variance guard, pull-only), territory hull + coverage report (pair every extent with confidence).
 
 ### Cross-domain (🟡)

@@ -70,9 +70,12 @@ Every later `jbrain update` does it for you.
 
 ### Renaming or disabling
 Edit `JBRAIN_LAN_ADDR` in `/opt/jbrain2/.env`:
-- a different `*.local` name, then `sudo jbrain enable-lan && sudo jbrain restart`;
+- a different `*.local` name, then `sudo jbrain enable-lan && sudo jbrain up`;
 - blank it to disable, then `sudo jbrain enable-lan` (tears down the alias
-  service) and `sudo jbrain restart` (drops the Caddy site).
+  service) and `sudo jbrain up` (drops the Caddy site).
+
+Use `sudo jbrain up`, not `restart` — a `.env` change is only picked up when the
+container is recreated; `restart` reuses the proxy's old environment.
 
 ## The certificate warning (and how to remove it)
 
