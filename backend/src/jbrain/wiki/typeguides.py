@@ -1,4 +1,5 @@
-"""Per-type editorial guides for the builder (the code projection of docs/reference/WIKI_TYPE_GUIDES.md).
+"""Per-type editorial guides for the builder (the code projection of
+docs/reference/WIKI_TYPE_GUIDES.md).
 
 The guides drive the LLM rewriter: the ordered sections (each with its firewall domain) and a
 per-type lead/style hint, plus the binding writing-style prompt shared by every article. A
@@ -26,8 +27,9 @@ class TypeGuide:
     sections: tuple[SectionSpec, ...]
 
 
-# The binding writing-style block (docs/reference/WIKI_TYPE_GUIDES.md "Writing style"). The hard rules
-# (citation, single-domain, omit-empty) are enforced in code regardless; this steers the prose.
+# The binding writing-style block (docs/reference/WIKI_TYPE_GUIDES.md "Writing style"). The
+# hard rules (citation, single-domain, omit-empty) are enforced in code regardless; this
+# steers the prose.
 STYLE_PROMPT = (
     "Write a neutral, third-person, encyclopedic article, like Wikipedia. No first person — "
     "'I/my' never appears; the owner is a named entity referred to by name. Past tense for "

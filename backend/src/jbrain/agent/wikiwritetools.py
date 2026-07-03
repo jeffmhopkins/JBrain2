@@ -1,5 +1,6 @@
-"""The wiki-editorial WRITE tools (docs/plans/PHASE6_WIKI_PLAN.md §4): the sanctioned levers the agent
-operates on the owner's behalf in Talk. The wiki stays machine-written — these never edit prose;
+"""The wiki-editorial WRITE tools (docs/plans/PHASE6_WIKI_PLAN.md §4): the sanctioned
+levers the agent operates on the owner's behalf in Talk. The wiki stays machine-written
+— these never edit prose;
 they file the inputs the builder re-derives from.
 
 - file_correction: mint an owner-authored correction note (provenance=owner_correction) and drive

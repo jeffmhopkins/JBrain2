@@ -1,7 +1,7 @@
 """The host-mode dev-server reverse-proxy: forwards to a loopback dev server, rewrites
 the Host so an allowlisting framework accepts it, and 502s when nothing's listening
-(Wave P2 of docs/archive/JCODE_PREVIEW_HOST_PLAN.md). Driven by an httpx mock transport — no
-real socket."""
+(Wave P2 of docs/archive/JCODE_PREVIEW_HOST_PLAN.md). Driven by an httpx mock transport
+— no real socket."""
 
 from __future__ import annotations
 
