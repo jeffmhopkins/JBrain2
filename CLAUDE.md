@@ -13,9 +13,11 @@ registry + typed value shapes (largely superseded by the refocus plan), and
 entity-graph refocus (spine, not encyclopedia): the registry is tier-1,
 long-tail predicates commit raw with no review card. Phases 0–5 are shipped —
 the Phase 5 workflow engine (engine + scheduler + run-log + the
-ingest/integration cutover) is complete; the migration head is 0114. The next
-frontier is Phase 6 (the wiki); see `docs/ROADMAP.md`. Completed build plans and design
-research live under `docs/archive/` (see `docs/README.md` for the full map).
+ingest/integration cutover) is complete. The next frontier is Phase 6 (the wiki);
+see `docs/ROADMAP.md` for current status. Completed build plans and design
+research live under `docs/archive/` (see `docs/README.md` for the full map). How
+those docs are kept true — the two doc kinds, the freshness header, and the
+archive-on-merge rule — is `docs/DOC_LIFECYCLE.md`, enforced by the `docs` CI gate.
 
 ## Non-negotiables for all code in this repo
 
@@ -33,3 +35,9 @@ research live under `docs/archive/` (see `docs/README.md` for the full map).
 8. `scripts/dev-setup.sh` bootstraps the dev environment (it auto-runs at
    session start on the web) and must be updated in the same PR as any new
    dependency, tool, or setup step.
+9. Docs travel with the code (`docs/DOC_LIFECYCLE.md`): every PR reconciles the
+   docs it touches — a plan's status flipped or archived when its waves land,
+   Living docs corrected when behaviour changes, `Last verified` bumped, and a
+   new doc filed by kind (`reference/` / `runbooks/` / `plans/`). Never hardcode
+   a volatile counter (e.g. a migration head) in prose. The `docs` CI gate
+   (`scripts/docs-freshness.sh`) enforces it.

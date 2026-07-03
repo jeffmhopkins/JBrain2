@@ -45,7 +45,8 @@ while IFS= read -r f; do
     [ -z "$ln" ] && continue
     err "$f:$ln — hardcoded migration counter in prose (R1: state it under 'Last verified' or point at backend/migrations/versions/)"
   done < <(prose "$f" | grep -iE "$R1" || true)
-done < <(find "$DOCS" -name '*.md' 2>/dev/null | sort)
+  # Also guard the root constitution — it must not hardcode a migration head either.
+done < <( { find "$DOCS" -name '*.md' 2>/dev/null; [ -f "$ROOT/CLAUDE.md" ] && echo "$ROOT/CLAUDE.md"; } | sort)
 
 # R4 — a plan doc whose header Waves are all done (✅) but whose Status is not
 # Shipped/archived should be archived. Activates once a doc carries the header.
