@@ -40,8 +40,9 @@ stays thin and doesn't drift against the folders it points at.
 | `mocks/` | Binding **HTML UI spec** (per `reference/DESIGN.md`). | — |
 
 **Start here:** `ROADMAP.md` (what's next) · `reference/ARCHITECTURE.md` (the
-system shape) · `reference/DEVELOPMENT.md` (binding standards) ·
-`DOC_LIFECYCLE.md` (how these docs are born, kept true, and archived).
+system shape) · `reference/SERVICES.md` (every container, service, and app the
+box runs) · `reference/DEVELOPMENT.md` (binding standards) · `DOC_LIFECYCLE.md`
+(how these docs are born, kept true, and archived).
 
 At the top level, beside this map: `ROADMAP.md` (phase plan + status) and
 `DOC_LIFECYCLE.md` (the doc process, enforced by the `docs` CI gate

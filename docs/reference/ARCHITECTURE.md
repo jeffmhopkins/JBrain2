@@ -7,6 +7,10 @@ LLM maintains a wiki built **exclusively from notes as primary sources**. Over
 time it extends to a personal agent, structured records (lists, labs,
 appointments), guided-intake share links, and Life360-style location tracking.
 
+> For the concrete inventory of **every** container (core + opt-in), the on-box
+> GPU model services, the PWA + Android app, and the baked-in functions, see
+> `SERVICES.md`. This doc covers the design and the why; that one is the map.
+
 ## System shape
 
 One Docker Compose stack on an Ubuntu host. Reachable either directly on a
