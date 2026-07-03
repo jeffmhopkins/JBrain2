@@ -38,6 +38,11 @@ EXPORT_COMMAND = "exec sh src/deploy/export-inner.sh"
 # the superuser role, which RLS does not bind, so the api's least-privilege role
 # cannot do it — only a supervisor one-shot running superuser psql + alembic can.
 RESET_COMMAND = "exec sh src/deploy/reset-inner.sh"
+# Provision runs ONLY the local-model weight sync (download + re-stamp llama-swap +
+# restart the gateway) — the tail of an update, WITHOUT git pull or rebuild. It is
+# how the PWA's "Download" action installs a model on demand, decoupled from a full
+# system update. No `apk add git`: a download-only sync needs no git.
+PROVISION_COMMAND = "exec sh src/deploy/local-models-sync.sh"
 
 # Docker reports this zero-value timestamp for containers that never started.
 _NEVER_STARTED = "0001-01-01T00:00:00Z"
@@ -132,6 +137,8 @@ class DockerGateway(Protocol):
     def start_import(self, archive: str) -> str: ...
 
     def start_reset(self) -> str: ...
+
+    def start_provision(self) -> str: ...
 
     def oneshot_status(self, kind: str, tail: int) -> UpdateStatus: ...
 
@@ -267,6 +274,11 @@ class ComposeDockerGateway:
     def start_reset(self) -> str:
         return self._run_oneshot(
             "jbrain-reset", {ONESHOT_LABEL: "reset"}, RESET_COMMAND
+        )
+
+    def start_provision(self) -> str:
+        return self._run_oneshot(
+            "jbrain-provision", {ONESHOT_LABEL: "provision"}, PROVISION_COMMAND
         )
 
     def oneshot_status(self, kind: str, tail: int) -> UpdateStatus:
