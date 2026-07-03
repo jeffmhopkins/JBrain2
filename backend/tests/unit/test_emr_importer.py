@@ -28,20 +28,17 @@ def _facts(pred=lambda f: True):
     return [f for intent in _INTENTS for f in intent.facts if pred(f)]
 
 
-def test_one_intent_per_episode_transfer_grouped() -> None:
-    # MICU + A3 (a transfer) -> ONE episode intent; the two outpatient visits ->
-    # their own intents. 3 intents total.
-    assert len(_INTENTS) == 3
-    # Exactly one intent carries both inpatient encounters (the transfer episode).
-    episode = [
-        i
-        for i in _INTENTS
-        if sum(
-            1 for f in i.facts if f.predicate == "period" and f.value_json == {"value": "inpatient"}
-        )
-        == 2
-    ]
-    assert len(episode) == 1
+def test_one_intent_per_note_all_encounters_together() -> None:
+    # One intent per note (the shipped _apply reconciles the whole note), so all
+    # four encounters — incl. the MICU + A3 transfer — share it and their
+    # partOfEncounter/hasObservation refs resolve intra-intent.
+    assert len(_INTENTS) == 1
+    inpatient_periods = sum(
+        1
+        for f in _INTENTS[0].facts
+        if f.predicate == "period" and f.value_json == {"value": "inpatient"}
+    )
+    assert inpatient_periods == 2
 
 
 def test_every_intent_is_structurally_valid() -> None:

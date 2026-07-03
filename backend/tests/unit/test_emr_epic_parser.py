@@ -7,7 +7,7 @@ narrative kept as prose. No DB, no LLM.
 from __future__ import annotations
 
 from collections.abc import Callable
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 
 from jbrain.ingest.emr.candidates import CandidateEncounter, canonicalize_analyte
@@ -43,10 +43,10 @@ def test_inpatient_vs_outpatient_by_banner_mode() -> None:
 def test_admit_discharge_dates() -> None:
     micu = _enc(lambda e: e.care_unit == "MICU")
     a3 = _enc(lambda e: e.care_unit == "A3")
-    assert micu.admitted_at == datetime(2026, 1, 25)
-    assert micu.discharged_at == datetime(2026, 1, 28)
-    assert a3.admitted_at == datetime(2026, 1, 28)
-    assert a3.discharged_at == datetime(2026, 2, 1)
+    assert micu.admitted_at == datetime(2026, 1, 25, tzinfo=UTC)
+    assert micu.discharged_at == datetime(2026, 1, 28, tzinfo=UTC)
+    assert a3.admitted_at == datetime(2026, 1, 28, tzinfo=UTC)
+    assert a3.discharged_at == datetime(2026, 2, 1, tzinfo=UTC)
 
 
 def test_micu_to_a3_transfer_links_part_of() -> None:
@@ -84,7 +84,7 @@ def test_observations_values_flags_status() -> None:
     assert plt.interpretation == "critical"  # (L*)
     assert plt.specimen_id == "H8202188-8"
     assert plt.fhir_status == "corrected"
-    assert plt.collected_at == datetime(2026, 2, 1, 6, 14)
+    assert plt.collected_at == datetime(2026, 2, 1, 6, 14, tzinfo=UTC)
 
 
 def test_analyte_canonicalization_across_labels() -> None:
@@ -102,7 +102,7 @@ def test_analyte_canonicalization_across_labels() -> None:
 def test_qualifier_is_collected_iso_pipe_specimen() -> None:
     a3 = _enc(lambda e: e.care_unit == "A3")
     plt = next(o for o in a3.observations if o.analyte.name == "Platelet count")
-    assert plt.qualifier == "2026-02-01T06:14:00|H8202188-8"
+    assert plt.qualifier == "2026-02-01T06:14:00+00:00|H8202188-8"
 
 
 def test_pathology_narrative_kept_as_prose() -> None:

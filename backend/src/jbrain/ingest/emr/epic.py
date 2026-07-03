@@ -17,7 +17,7 @@ prose (§6.5), not shredded into facts.
 from __future__ import annotations
 
 import re
-from datetime import datetime
+from datetime import UTC, datetime
 
 from jbrain.ingest.emr.candidates import (
     CandidateDiagnosis,
@@ -71,12 +71,15 @@ def fingerprint(text: str) -> bool:
     return any(_HEADER.match(line.strip()) for line in text.splitlines())
 
 
+# EMR export times are wall-clock with no zone; we normalize to UTC-aware so the
+# arbiter's temporal comparisons (against a tz-aware capture anchor) are valid.
+# Real per-facility timezone handling is a W3 refinement (§6.4 midnight/tz drift).
 def _date(s: str) -> datetime:
-    return datetime.strptime(s, "%m/%d/%Y")
+    return datetime.strptime(s, "%m/%d/%Y").replace(tzinfo=UTC)
 
 
 def _datetime(day: str, hm: str) -> datetime:
-    return datetime.strptime(f"{day} {hm}", "%m/%d/%Y %H:%M")
+    return datetime.strptime(f"{day} {hm}", "%m/%d/%Y %H:%M").replace(tzinfo=UTC)
 
 
 def _interpretation(flag: str | None) -> str | None:

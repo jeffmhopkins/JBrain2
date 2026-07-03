@@ -132,6 +132,14 @@ def _add_observation(b: _IntentBuilder, obs: CandidateObservation) -> str:
     q = obs.qualifier
     disp = f"{obs.analyte.name} {obs.value_num if obs.value_num is not None else obs.value_text}"
 
+    # The measurement's valid_from IS the collected instant (§3.3, bi-temporal) —
+    # the address the §3.5 status transition and time-series accumulation key on.
+    draw_temporal = IntentTemporal(
+        phrase=obs.collected_at.isoformat(),
+        resolved_start=obs.collected_at,
+        resolved_end=None,
+        precision=obs.precision,
+    )
     if obs.value_num is not None:
         b.fact(
             entity_ref=ref,
@@ -143,6 +151,7 @@ def _add_observation(b: _IntentBuilder, obs: CandidateObservation) -> str:
             anchor=obs.source_anchor,
             fhir_status=obs.fhir_status,
             value_json={"value": obs.value_num, "unit": obs.unit},
+            temporal=draw_temporal,
         )
     if obs.ref_low is not None and obs.ref_high is not None:
         b.fact(
@@ -361,48 +370,25 @@ def _add_encounter(
         )
 
 
-def _episodes(encounters: list[CandidateEncounter]) -> list[list[CandidateEncounter]]:
-    """Connected components over `part_of_key` — a facility-transfer's segments
-    share one episode (hence one intent)."""
-    by_key = {e.key: e for e in encounters}
-    parent: dict[str, str] = {e.key: e.key for e in encounters}
-
-    def find(k: str) -> str:
-        while parent[k] != k:
-            parent[k] = parent[parent[k]]
-            k = parent[k]
-        return k
-
-    for e in encounters:
-        if e.part_of_key and e.part_of_key in by_key:
-            parent[find(e.key)] = find(e.part_of_key)
-    groups: dict[str, list[CandidateEncounter]] = {}
-    for e in encounters:
-        groups.setdefault(find(e.key), []).append(e)
-    return list(groups.values())
-
-
 def lower_parse_result(
     result: ParseResult, note_id: str, chunk_for_anchor: ChunkResolver
 ) -> tuple[list[IntegrationIntent], list[FirewallCatch]]:
-    """Lower a parse result into one IntegrationIntent per episode (+ one for any
-    orphan portal observations). Returns the intents and any firewall catches."""
-    intents: list[IntegrationIntent] = []
-    catches: list[FirewallCatch] = []
+    """Lower a parse result into ONE IntegrationIntent for the note. All encounters
+    (including a facility transfer's segments) and orphan portal observations share
+    the intent, so `partOfEncounter`/`hasObservation` refs resolve intra-intent.
 
-    for episode in _episodes(result.encounters):
-        b = _IntentBuilder(note_id, chunk_for_anchor)
-        enc_ref_by_key = {e.key: f"enc:{e.key}" for e in episode}
-        for enc in episode:
-            _add_encounter(b, enc, enc_ref_by_key)
-        intents.append(b.build())
-        catches.extend(b.catches)
-
-    if result.orphan_observations:
-        b = _IntentBuilder(note_id, chunk_for_anchor)
-        for obs in result.orphan_observations:
-            _add_observation(b, obs)
-        intents.append(b.build())
-        catches.extend(b.catches)
-
-    return intents, catches
+    One intent per note — not per grouping unit — because the shipped `_apply`
+    reconciles the whole note (it retracts facts a re-apply doesn't re-assert,
+    pipeline.py's touched-set sweep), so a second per-unit apply on the same note
+    would retract the first unit's facts. The plan's §6.6 per-unit transaction
+    isolation (crash-resumability at 216-page scale) is a follow-on that needs
+    `apply_intent` to support incremental note commits; for correctness one intent
+    per note is right.
+    """
+    b = _IntentBuilder(note_id, chunk_for_anchor)
+    enc_ref_by_key = {e.key: f"enc:{e.key}" for e in result.encounters}
+    for enc in result.encounters:
+        _add_encounter(b, enc, enc_ref_by_key)
+    for obs in result.orphan_observations:
+        _add_observation(b, obs)
+    return [b.build()], b.catches
