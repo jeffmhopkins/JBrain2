@@ -27,6 +27,7 @@ from jbrain.agent.clock import build_clock_handlers
 from jbrain.agent.connectortools import build_connector_handlers
 from jbrain.agent.contracts import EntityRef, NoteSource
 from jbrain.agent.geocodetools import build_geocode_handlers
+from jbrain.agent.labtools import build_lab_handlers
 from jbrain.agent.listtools import build_list_handlers
 from jbrain.agent.locationtools import build_location_handlers
 from jbrain.agent.loop import ToolContext, ToolHandler, ToolOutput
@@ -644,6 +645,7 @@ def build_registry(
             **build_list_handlers(lists),
             **build_appointment_handlers(appointments),
             **build_appointment_write_handlers(proposals, appointments),
+            **build_lab_handlers(maker),
             **build_memory_handlers(memory),
             **build_proposal_handlers(proposals),
             **build_intake_link_handlers(proposals),

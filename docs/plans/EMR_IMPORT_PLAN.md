@@ -1605,7 +1605,16 @@ W2 remains ◻️ (not complete). The **deterministic front-half** is built and 
   not-current `preliminary` row), the MICU encounter's `los_days=3`, the A3 transfer's `part_of_id`, and
   the provider/diagnosis sidecars. A non-EMR note pays one empty kind-filtered SELECT (cost guard, §4).
 
-**Remaining in W2 (next):** `read_labs`/`read_encounters` tools proven on Epic; the pathology-narrative
-prose extraction; and the **intake stage** (`pyzipper` decrypt + note-inline password extraction +
+- **`agent/labtools.py` + `read_labs.tool`/`read_encounters.tool`** — the two health-scoped read tools
+  (§7.1), bound in `readtools.build_registry`. `read_labs` lists/filters/trends over `app.lab_results`
+  (marking superseded readings "corrected — see current" and pending ones not-current); `read_encounters`
+  lists and expands one encounter (providers, ICD diagnoses, transfusion events, the transfer chain).
+  Both read on the caller's RLS session, so a non-health scope returns nothing. The e2e test drives the
+  handlers: `read_labs` returns the platelet records under the owner scope and **empty under a
+  general-only scope** (the firewall), and `read_encounters` lists the MICU stay and expands to its
+  Chen/attending provider + the D69.6 diagnosis.
+
+**Remaining in W2 (next):** the pathology-narrative prose extraction (the one LLM touch, faked in
+tests); and the **intake stage** (`pyzipper` decrypt + note-inline password extraction +
 scrub-before-index + delete-last fail-closed, §6.1) — the security-critical secret handling, built
 carefully with its 100%-coverage tests. OneContent/athena/ARIA parsers + cross-source dedup are W3.

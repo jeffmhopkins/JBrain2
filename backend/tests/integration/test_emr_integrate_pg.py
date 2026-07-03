@@ -179,8 +179,8 @@ async def test_encounters_projection_populated(maker, tmp_path):  # noqa: F811
             (
                 await s.execute(
                     text(
-                        "SELECT class AS enc_class, facility, care_unit, admitted_at, discharged_at,"
-                        " los_days, part_of_id FROM app.encounters"
+                        "SELECT class AS enc_class, facility, care_unit, admitted_at,"
+                        " discharged_at, los_days, part_of_id FROM app.encounters"
                     )
                 )
             )
@@ -209,3 +209,36 @@ async def test_encounters_projection_populated(maker, tmp_path):  # noqa: F811
             (await s.execute(text("SELECT icd10 FROM app.encounter_diagnoses"))).mappings().all()
         )
         assert any(d["icd10"] == "D69.6" for d in diagnoses)
+
+
+async def test_read_labs_tool_returns_records_and_firewalls(maker, tmp_path):  # noqa: F811
+    from jbrain.agent.labtools import build_lab_handlers
+    from jbrain.agent.loop import ToolContext
+    from jbrain.db.session import SessionContext
+
+    await _integrate(maker, tmp_path)
+    handlers = build_lab_handlers(maker)
+    owner = ToolContext(session=SYSTEM_CTX, scopes=())
+    out = await handlers["read_labs"]({"analyte": "platelet"}, owner)
+    assert "Platelet count" in out
+    # A general-only scope sees nothing — the firewall is the tooth (§5, §7.2).
+    general = SessionContext(principal_kind="capability_token", domain_scopes=("general",))
+    empty = await handlers["read_labs"]({}, ToolContext(session=general, scopes=()))
+    assert "No lab results" in empty
+
+
+async def test_read_encounters_tool_lists_and_expands(maker, tmp_path):  # noqa: F811
+    import re
+
+    from jbrain.agent.labtools import build_lab_handlers
+    from jbrain.agent.loop import ToolContext
+
+    await _integrate(maker, tmp_path)
+    handlers = build_lab_handlers(maker)
+    owner = ToolContext(session=SYSTEM_CTX, scopes=())
+    listing = await handlers["read_encounters"]({}, owner)
+    assert "inpatient" in listing and "MICU" in listing
+    m = re.search(r"\[([0-9a-f-]{36})\] inpatient[^\n]*MICU", listing)
+    assert m, listing
+    detail = await handlers["read_encounters"]({"encounter_id": m.group(1)}, owner)
+    assert "Chen, Sarah MD" in detail and "D69.6" in detail
