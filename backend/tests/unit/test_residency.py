@@ -47,6 +47,15 @@ def test_default_resident_served_only_counts_installed() -> None:
     assert default_resident_served(s) == ["gpt-oss-120b"]
 
 
+def test_co_residency_is_off_by_default() -> None:
+    # The default is OPT-IN: co-residency pins ~91 GB and hard-froze the box, so with the
+    # flag unset the recommended set is NOT kept co-resident even when both models are
+    # provisioned. This is what makes a routine update stop the dual-load with no .env edit.
+    s = _settings(local_llm_enabled=True, local_models=["qwen3-vl-30b", "gpt-oss-120b"])
+    assert s.local_llm_resident_group is False
+    assert default_resident_served(s) == []
+
+
 @pytest.mark.asyncio
 async def test_restore_loads_only_the_missing_hot_member() -> None:
     # The image render left 120b resident (the reply reloaded it) but vl cold — restore

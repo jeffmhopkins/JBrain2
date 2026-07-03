@@ -78,9 +78,10 @@ if [ -n "$ids" ]; then
     sh src/deploy/download-local-weights.sh "$PWD/local-models"
 
   # 5. Re-stamp llama-swap.yaml for the new set (the api re-renders it, resolving
-  #    each glob to a real downloaded filename). resident_group defaults ON (the
-  #    recommended set runs co-resident); an absent/empty .env value reads as on, and
-  #    the operator opts OUT with LOCAL_LLM_RESIDENT_GROUP=0 on a memory-tight box.
+  #    each glob to a real downloaded filename). resident_group defaults OFF (opt-in):
+  #    an absent/empty .env value reads as off, so the recommended set swaps one at a
+  #    time — co-residency pins ~91 GB and destabilised the box; opt IN with
+  #    LOCAL_LLM_RESIDENT_GROUP=1 on a box with memory to spare.
   #    --user 0: the bind-mounted weights dir is root-owned (sudo setup + the root
   #    download container), but the api image runs as non-root appuser, so the default
   #    user can't create llama-swap.yaml there. Write as root, like the weights.
