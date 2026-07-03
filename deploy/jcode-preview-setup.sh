@@ -1,6 +1,6 @@
 #!/bin/sh
 # Enable host-mode jcode web preview by writing the .env key that drives it
-# (docs/JCODE_PREVIEW_HOST_PLAN.md): JCODE_PREVIEW_BASE_HOST. A non-empty base host
+# (docs/archive/JCODE_PREVIEW_HOST_PLAN.md): JCODE_PREVIEW_BASE_HOST. A non-empty base host
 # IS the switch — host is the only preview mode since the Wave P5b cutover, so the
 # api fail-closes when it's empty. Compose maps the base host to the api + proxy and
 # the sandbox, so this is the whole switch — the operator never hand-edits .env.

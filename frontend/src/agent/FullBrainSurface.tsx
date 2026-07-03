@@ -502,7 +502,7 @@ function Bubble({
 
   // The answer leads the bubble; the model's reasoning trace and tool steps share a
   // single disclosure line at the foot ("Thinking · Worked"), each expanding in place
-  // (docs/research/brain-tooluse-ux/A-disclosure-patterns.md). While thinking — before
+  // (docs/archive/research/brain-tooluse-ux/A-disclosure-patterns.md). While thinking — before
   // any answer — the bubble is just that line with the trace open and auto-following.
   // A settled answer also gets a copy affordance pinned to the right of that line, so
   // the foot strip shows on every finished turn even with no reasoning or tools.
@@ -1069,7 +1069,7 @@ function inlineArg(step: ToolStep): string | undefined {
 // One tool step, itself a pulldown: tap the row to reveal its arguments-in and
 // result-out; a failed step opens by default with its error text. Search/read
 // steps that surfaced source cards also offer a "raw result" rung for the
-// verbatim backend text (docs/research/brain-tooluse-ux/B-verbose-logging.md).
+// verbatim backend text (docs/archive/research/brain-tooluse-ux/B-verbose-logging.md).
 function StepRow({
   step,
   onOpenNote,

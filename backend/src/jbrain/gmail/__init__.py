@@ -1,4 +1,4 @@
-"""Gmail access for the `archivist` persona (docs/EMAIL_ARCHIVIST_PLAN.md): a thin,
+"""Gmail access for the `archivist` persona (docs/archive/EMAIL_ARCHIVIST_PLAN.md): a thin,
 pinned client over the Gmail API, an in-memory fake for tests, and the typed message
 / label shapes they share. No DB, no notes — the persona is stateless on the box."""
 

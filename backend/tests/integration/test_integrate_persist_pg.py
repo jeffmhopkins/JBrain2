@@ -1,5 +1,5 @@
 """integrate_note's net-new run + resolution-pin persistence against real Postgres
-(docs/WORKFLOW_ENGINE_PLAN.md §E7b, Wave 1 Track A).
+(docs/archive/WORKFLOW_ENGINE_PLAN.md §E7b, Wave 1 Track A).
 
 Net-new has no shadow baseline (the loop logged to structlog only), so it is
 validated by CONVERGENCE: integrating the same note twice yields IDENTICAL

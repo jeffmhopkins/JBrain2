@@ -1,6 +1,6 @@
 #!/bin/sh
 # Generate Caddy's optional host-mode web-preview site from
-# JBRAIN_JCODE_PREVIEW_BASE_HOST (docs/JCODE_PREVIEW_HOST_PLAN.md).
+# JBRAIN_JCODE_PREVIEW_BASE_HOST (docs/archive/JCODE_PREVIEW_HOST_PLAN.md).
 #
 # When set (e.g. hopkinsbrain.com) we write a wildcard site http://*.<host> that routes
 # ONLY <slug>-preview.<host> requests to the api's internal /__jcode_preview/<slug> prefix

@@ -14,7 +14,7 @@ COPY --from=ghcr.io/astral-sh/uv:0.8.17 /uv /uvx /usr/local/bin/
 # Grok Build (`grok`) is xAI's official agent — a standalone precompiled binary (no Node
 # or Bun), installed below into /usr/local/bin (on PATH for the login shell). The
 # per-session web preview is host-served (no `cloudflared` in the image since the Wave P5b
-# cutover — docs/JCODE_PREVIEW_HOST_PLAN.md).
+# cutover — docs/archive/JCODE_PREVIEW_HOST_PLAN.md).
 # Grok Build, pinned (provenance matters — a remote binary). The latest stable is the
 # https://x.ai/cli/stable pointer; bump deliberately.
 ARG GROK_BUILD_VERSION=0.2.67
@@ -35,7 +35,7 @@ COPY grok-config.sh /etc/profile.d/grok-config.sh
 # Login-shell hook: re-prepend the session's private tool dirs ($JCODE_TOOLS_BIN, set per
 # session by the terminal) to PATH after /etc/profile resets root's PATH, so a per-session
 # tool install (`jcode-grok upgrade`) shadows the image's copy. See
-# docs/proposed/JCODE_SESSION_TOOLS_PLAN.md.
+# docs/archive/JCODE_SESSION_TOOLS_PLAN.md.
 COPY jcode-path.sh /etc/profile.d/jcode-path.sh
 
 # Per-session grok version management: `jcode-grok upgrade` installs grok into the session's

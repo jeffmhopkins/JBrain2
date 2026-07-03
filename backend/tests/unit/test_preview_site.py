@@ -3,7 +3,7 @@ renders no preview site; setting JBRAIN_JCODE_PREVIEW_BASE_HOST makes the proxy 
 wildcard *.<host> Caddy site that routes ONLY <slug>-preview.<host> to the api's
 /__jcode_preview/<slug> prefix (404ing every other subdomain). The site is rendered from
 the env at container start by deploy/proxy-preview-conf.sh, mirroring the LAN site.
-See docs/JCODE_PREVIEW_HOST_PLAN.md."""
+See docs/archive/JCODE_PREVIEW_HOST_PLAN.md."""
 
 import subprocess
 from pathlib import Path

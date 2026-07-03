@@ -1,4 +1,4 @@
-"""An in-memory Gmail for tests (docs/EMAIL_ARCHIVIST_PLAN.md). Same `GmailApi`
+"""An in-memory Gmail for tests (docs/archive/EMAIL_ARCHIVIST_PLAN.md). Same `GmailApi`
 surface as `GmailClient`, so the gmail_* handlers and the archivist loop run against
 a scripted mailbox with no network — the connector/LLM-adapter testing posture."""
 

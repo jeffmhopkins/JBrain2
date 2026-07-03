@@ -1,4 +1,4 @@
-"""The three Phase-6 hygiene sweeps against real Postgres (docs/HYGIENE_SWEEPS_PLAN.md):
+"""The three Phase-6 hygiene sweeps against real Postgres (docs/archive/HYGIENE_SWEEPS_PLAN.md):
 entity_hygiene (orphan delete), reembed_stale (re-embed stale-model rows), tag_consolidate
 (canonicalize note tags). Pure-maintenance actions under SYSTEM_CTX; the embedder is faked.
 """

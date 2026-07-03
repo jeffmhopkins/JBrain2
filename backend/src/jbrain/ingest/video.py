@@ -2,7 +2,7 @@
 video-analysis row (map -> fuse -> reduce).
 
 The video sibling of jbrain.ingest.ocr / jbrain.ingest.transcribe_job, and the
-map-reduce-over-a-text-bottleneck the research converged on (docs/VIDEO_ANALYSIS_PLAN.md):
+map-reduce-over-a-text-bottleneck the research converged on (docs/archive/VIDEO_ANALYSIS_PLAN.md):
 
   MAP    sample bounded, deduped frames (jbrain.media, ffmpeg) and caption each via
          the vision model (router task `agent.vision`); transcribe the audio track

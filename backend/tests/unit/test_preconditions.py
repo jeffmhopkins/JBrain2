@@ -1,6 +1,6 @@
 """The `model_already_loaded` action precondition: a scheduled sweep runs only when
 the model its task resolves to is already resident, so it never forces a model swap
-(docs/EMAIL_ARCHIVIST_PLAN.md). Driven against a real router (static routing, no DB
+(docs/archive/EMAIL_ARCHIVIST_PLAN.md). Driven against a real router (static routing, no DB
 overrides) and an in-memory gateway — no network."""
 
 from __future__ import annotations

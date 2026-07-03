@@ -1,6 +1,6 @@
 # Prepend the session's private tool dirs to PATH so a session-local binary — e.g. one
 # installed by `jcode-grok upgrade` into $JCODE_TOOLS_BIN — shadows the image's shared
-# /usr/local/bin copy for THIS session only (docs/proposed/JCODE_SESSION_TOOLS_PLAN.md).
+# /usr/local/bin copy for THIS session only (docs/archive/JCODE_SESSION_TOOLS_PLAN.md).
 #
 # This MUST run from /etc/profile.d: `bash -l` sources it AFTER /etc/profile, which on
 # Debian RESETS root's PATH to a fixed default — so re-prepending here is the only thing

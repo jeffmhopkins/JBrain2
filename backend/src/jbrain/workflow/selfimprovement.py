@@ -1,4 +1,4 @@
-"""The shared spend-gate decision type (docs/WORKFLOW_ENGINE_PLAN.md E5, I-10).
+"""The shared spend-gate decision type (docs/archive/WORKFLOW_ENGINE_PLAN.md E5, I-10).
 
 `BudgetDecision` is the fail-closed verdict returned by a spend gate: whether an
 action may run, the headroom that informed it, and a human-readable reason. The

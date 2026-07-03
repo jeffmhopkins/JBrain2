@@ -1,4 +1,4 @@
-"""The `reembed_stale` engine action (Phase-6 follow-on; docs/HYGIENE_SWEEPS_PLAN.md).
+"""The `reembed_stale` engine action (Phase-6 follow-on; docs/archive/HYGIENE_SWEEPS_PLAN.md).
 
 Nightly maintenance: re-embed the embedded rows whose `embedding_model` is stale (or whose
 embedding is NULL) after an embed-model change — the rows that have NO existing re-embed

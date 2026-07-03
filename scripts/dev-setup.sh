@@ -155,12 +155,12 @@ fi
 # scripts/comfyui-setup.sh: it downloads tens of GB of weights and starts a GPU
 # service, so it must NEVER run from this auto-bootstrapped path (web/CI containers
 # have no GPU). The backend's one image dependency, `websockets` (a client used to
-# stream ComfyUI's live generation progress + previews — docs/IMAGE_GEN_LIVE_PLAN.md),
+# stream ComfyUI's live generation progress + previews — docs/archive/IMAGE_GEN_LIVE_PLAN.md),
 # is a normal pyproject dep that `uv sync` above installs; nothing GPU-specific is
 # bootstrapped here. Empty JBRAIN_COMFYUI_URL (the default) disables the feature and
 # hides both tools, so this is a no-op in dev/CI. Mentioned here per the dev-setup
 # single-source-of-truth rule (CLAUDE.md rule #8); see docs/runbooks/STRIX_HALO_SETUP.md
-# ("Image generation"), docs/IMAGE_GEN_SERVICE_PLAN.md, and docs/IMAGE_GEN_LIVE_PLAN.md.
+# ("Image generation"), docs/archive/IMAGE_GEN_SERVICE_PLAN.md, and docs/archive/IMAGE_GEN_LIVE_PLAN.md.
 
 # --- Code mode / jcode (Python deps synced above; SDK + model are opt-in) ---
 # The jcode control server (jcode/) is a normal Python service whose deps `uv sync`
@@ -172,7 +172,7 @@ fi
 # scripts/jcode-setup.sh (it builds the image and starts the `jcode` profile). Empty
 # JBRAIN_JCODE_URL (the default) disables the feature, so this is a no-op in dev/CI.
 # Mentioned here per the dev-setup single-source-of-truth rule (CLAUDE.md rule #8);
-# see docs/proposed/JCODE_PLAN.md.
+# see docs/archive/JCODE_PLAN.md.
 
 # --- Gmail archivist (opt-in, NOT bootstrapped here) ---
 # The `archivist` persona organizes a Gmail history via gmail_* tools over a thin
@@ -183,6 +183,6 @@ fi
 # which mints JBRAIN_GMAIL_REFRESH_TOKEN to paste into config. Empty
 # JBRAIN_GMAIL_REFRESH_TOKEN (the default) disables the feature and drops the gmail_*
 # tools, so this is a no-op here. Mentioned per CLAUDE.md rule #8; full click-path in
-# docs/EMAIL_ARCHIVIST_PLAN.md ("OAuth setup" appendix).
+# docs/archive/EMAIL_ARCHIVIST_PLAN.md ("OAuth setup" appendix).
 
 log "done"

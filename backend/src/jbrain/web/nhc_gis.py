@@ -1,5 +1,5 @@
 """Forecast track points + cone polygon for an active storm via the NHC tropical
-ArcGIS MapServer (docs/HURRICANE_TABS_PLAN.md §1/§3, the `NhcGisClient` bullet).
+ArcGIS MapServer (docs/archive/HURRICANE_TABS_PLAN.md §1/§3, the `NhcGisClient` bullet).
 
 This is the only off-box source in the hurricane card that carries NO location: the
 MapServer is queried by storm IDENTITY (stormname / basin+number), never by the

@@ -1,7 +1,7 @@
 """Persist an integration run + its resolution pins (Phase 5, Wave 1, Track A).
 
 The Integrator turn-loop logs to structlog only today; this is its net-new
-persistence (docs/WORKFLOW_ENGINE_PLAN.md §E7b). Two writes, both gated behind
+persistence (docs/archive/WORKFLOW_ENGINE_PLAN.md §E7b). Two writes, both gated behind
 the `integration_persist` setting and both run under the all-domains SYSTEM_CTX
 (the integration pipeline legitimately crosses every firewall, E1) while
 recording `ran_as='system'` on the run so the audit shows owner-system, not a

@@ -1,4 +1,4 @@
-"""The sub-agent tree budget (docs/SUBAGENT_SPAWNING_PLAN.md, Wave S2): the shared
+"""The sub-agent tree budget (docs/archive/SUBAGENT_SPAWNING_PLAN.md, Wave S2): the shared
 incremental-spend pool, the root reserve, and the admission floor — all pure, no
 adapter, no model cooperation."""
 

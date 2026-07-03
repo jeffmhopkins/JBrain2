@@ -1,7 +1,7 @@
 """The public preview proxy: forwards <slug>-preview.<host> → the control server's
 /preview/{slug}, enforces the preview origin in-process, adds the api↔jcode bearer, and
 strips the owner's credentials so a sandbox-run dev app never sees them (Wave P3a of
-docs/JCODE_PREVIEW_HOST_PLAN.md)."""
+docs/archive/JCODE_PREVIEW_HOST_PLAN.md)."""
 
 from __future__ import annotations
 

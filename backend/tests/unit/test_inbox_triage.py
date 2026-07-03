@@ -1,6 +1,6 @@
 """The `triage_inbox` engine action: classify untriaged inbox mail into priority
 labels, archiving all but `high` (which stays in the inbox) — see
-docs/EMAIL_ARCHIVIST_PLAN.md. Driven against the in-memory FakeGmail and a scripted
+docs/archive/EMAIL_ARCHIVIST_PLAN.md. Driven against the in-memory FakeGmail and a scripted
 FakeLlmClient — no network, no real model."""
 
 from __future__ import annotations

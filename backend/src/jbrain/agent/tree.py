@@ -1,4 +1,4 @@
-"""Per-root-turn sub-agent tree state (docs/SUBAGENT_SPAWNING_PLAN.md).
+"""Per-root-turn sub-agent tree state (docs/archive/SUBAGENT_SPAWNING_PLAN.md).
 
 The mutable state shared across one root turn's whole sub-agent fan. In Wave S1 it
 carries the running agent count so the tree-size cap holds across nested fans (a
@@ -11,7 +11,7 @@ spawn service — so both can reference it without an import cycle.
 import time
 from dataclasses import dataclass
 
-# Structural fan caps (docs/SUBAGENT_SPAWNING_PLAN.md, Wave S1). These shape caps
+# Structural fan caps (docs/archive/SUBAGENT_SPAWNING_PLAN.md, Wave S1). These shape caps
 # bound the tree on their own — no model cooperation.
 # spawn allowed iff parent.depth < MAX_DEPTH. At 1, only the root (jerv, depth 0) may
 # spawn — a child (depth 1) is always a leaf and cannot spawn further. Child-initiated
@@ -21,7 +21,7 @@ MAX_DEPTH = 1
 MAX_CHILDREN_PER_PARENT = 6  # the largest fan a single spawn call may launch
 MAX_PARALLEL = 4  # the most children that run concurrently within a fan
 MAX_TOTAL_AGENTS_PER_TREE = 12  # every child across the whole root turn, all depths
-# Feeding waves (docs/SUBAGENT_FEEDING_WAVES_PLAN.md): a single staged spawn call may
+# Feeding waves (docs/archive/SUBAGENT_FEEDING_WAVES_PLAN.md): a single staged spawn call may
 # chain at most this many ordered waves (a producer wave → a consumer wave). Kept at 2
 # so the serial local wall-clock stays under the parent turn cap and the surface stays
 # legible; the total children across all waves still obey MAX_CHILDREN_PER_PARENT.
@@ -54,7 +54,7 @@ def child_steps_for(effort: str | None) -> int:
     return CHILD_STEPS_BY_EFFORT.get(effort or "", CHILD_MAX_STEPS)
 
 
-# Token-budget shape (docs/SUBAGENT_SPAWNING_PLAN.md, Wave S2). The tree may spend at
+# Token-budget shape (docs/archive/SUBAGENT_SPAWNING_PLAN.md, Wave S2). The tree may spend at
 # most SPAWN_MULTIPLIER × the root's own per-turn token cap; a fraction is reserved off
 # the top so the root can always synthesize even after a fan drains the children's
 # pool; and a fan is admitted only if each child could get a viable slice of what's
@@ -64,7 +64,7 @@ SPAWN_MULTIPLIER = 3.5  # tree_budget = base_max_cost_tokens × this (~2.8M for 
 ROOT_RESERVE_FRACTION = 0.25  # share of tree_budget the root keeps for synthesis
 MIN_VIABLE_CHILD_BUDGET = 100_000  # admission floor: tokens each child must be able to get
 
-# Feeding waves runtime bound (docs/SUBAGENT_FEEDING_WAVES_PLAN.md, F2). A whole staged
+# Feeding waves runtime bound (docs/archive/SUBAGENT_FEEDING_WAVES_PLAN.md, F2). A whole staged
 # (feeding) spawn call must finish inside this cumulative wall-clock, sized to sit under
 # the parent turn cap (_MAX_TURN_WALL_CLOCK_S=3600s) with ~600s of synthesis headroom.
 # Checked at each wave barrier; a wave that can't start before it is skipped, loud. Only

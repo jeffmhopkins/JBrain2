@@ -2139,7 +2139,7 @@ class AnalysisPipeline:
         # edge gets one. A closed (former) relationship — "used to work for X" —
         # must NOT mint "X employs Me", or that derived edge would answer
         # "who works for X?" with the owner, smuggling a past job back as current
-        # (docs/research/legacy-links-plan.md §ledger F1).
+        # (docs/archive/research/legacy-links-plan.md §ledger F1).
         new_inverse_id: uuid.UUID | None = None
         if (
             fact.kind == "relationship"

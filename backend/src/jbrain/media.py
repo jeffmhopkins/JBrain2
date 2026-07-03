@@ -1,4 +1,4 @@
-"""Video frame sampling for `analyze_video` (docs/VIDEO_ANALYSIS_PLAN.md).
+"""Video frame sampling for `analyze_video` (docs/archive/VIDEO_ANALYSIS_PLAN.md).
 
 The video sibling of `jbrain.transcribe`: turn a video's bytes into a short,
 bounded set of still frames to hand the vision LLM, plus a probe of the clip's
@@ -6,7 +6,7 @@ duration. We shell out to the system **ffmpeg/ffprobe** (added to the worker ima
 and `scripts/dev-setup.sh`) rather than pull a heavyweight decode library — ffmpeg
 does the decoding/scaling, and Pillow only computes the cheap dedup hash.
 
-Sampling (owner decision, docs/VIDEO_ANALYSIS_PLAN.md): K evenly-spaced frames
+Sampling (owner decision, docs/archive/VIDEO_ANALYSIS_PLAN.md): K evenly-spaced frames
 (≈ every 100/K percent of the clip), capped at `max_frames`, each downscaled so its
 longest edge is `longest_edge`, then near-duplicate frames are dropped by a
 perceptual (difference) hash so a static stretch doesn't spend the budget on
@@ -30,7 +30,7 @@ from PIL import Image
 
 log = structlog.get_logger()
 
-# Owner-chosen defaults (docs/VIDEO_ANALYSIS_PLAN.md): a bounded frame budget keeps
+# Owner-chosen defaults (docs/archive/VIDEO_ANALYSIS_PLAN.md): a bounded frame budget keeps
 # the VLM cost flat regardless of clip length; 768px is the VLM-friendly longest
 # edge from the research; the hash distance is the near-duplicate threshold.
 DEFAULT_MAX_FRAMES = 24

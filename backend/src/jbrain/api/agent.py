@@ -551,7 +551,7 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
     # ...but never for a spawner (jerv): buffer-retry re-produces the turn, which would
     # re-dispatch spawn_subagent and re-run the ENTIRE fan — new child sessions + token
     # spend — on each retry. That is the "multiply model chains across the fan" failure
-    # the reflexion-off-for-children rule prevents (docs/SUBAGENT_SPAWNING_PLAN.md M6),
+    # the reflexion-off-for-children rule prevents (docs/archive/SUBAGENT_SPAWNING_PLAN.md M6),
     # just relocated to the parent layer. Post-hoc verify-and-annotate still applies.
     if profile.tools is not None and SPAWN_TOOL in profile.tools:
         buffer_retry = False
@@ -629,7 +629,7 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
             # state owns the tree-wide caps AND the shared token budget (sized off the
             # root's own per-turn cap × the locked spawn multiplier, with the root
             # reserve carved off), and the run_id stamps any child run's parent_run_id
-            # (docs/SUBAGENT_SPAWNING_PLAN.md). Harmless for personas that never spawn.
+            # (docs/archive/SUBAGENT_SPAWNING_PLAN.md). Harmless for personas that never spawn.
             tree=TreeState.rooted(guardrails.max_cost_tokens),
             run_id=run_id,
         )

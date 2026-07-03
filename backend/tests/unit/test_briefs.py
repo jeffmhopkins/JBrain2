@@ -1,4 +1,4 @@
-"""Sub-agent brief templates (docs/SUBAGENT_SPAWNING_PLAN.md, decision #7): the
+"""Sub-agent brief templates (docs/archive/SUBAGENT_SPAWNING_PLAN.md, decision #7): the
 template-bound form a depth>=1 spawner must use, and its fail-closed validation."""
 
 import pytest

@@ -5,7 +5,7 @@ set ('curator', 'teacher', 'jerv'). The archivist persona shipped in code
 (jbrain.agent.agents) but its name was never added to the DB constraints, so
 creating an archivist session — or task — raised a CHECK violation while the other
 personas worked. Widen both constraints to include 'archivist'. Owner-only metadata
-tables, so RLS is unchanged. See docs/EMAIL_ARCHIVIST_PLAN.md.
+tables, so RLS is unchanged. See docs/archive/EMAIL_ARCHIVIST_PLAN.md.
 
 Revision ID: 0095
 Revises: 0094

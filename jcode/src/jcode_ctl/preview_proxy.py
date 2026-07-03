@@ -1,5 +1,5 @@
 """Reverse-proxy a request to a session's loopback dev server (Wave P2 of
-``docs/JCODE_PREVIEW_HOST_PLAN.md``).
+``docs/archive/JCODE_PREVIEW_HOST_PLAN.md``).
 
 The api fronts ``<slug>-preview.<host>`` and forwards here by slug; this resolves the
 slug to the session's reserved dev port and proxies the request, rewriting the Host

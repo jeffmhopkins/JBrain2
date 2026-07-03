@@ -1,6 +1,6 @@
 # Box calibration track
 
-The owner-run half of the calibration loop (`docs/CALIBRATION_LOOP.md`): drive the
+The owner-run half of the calibration loop (`docs/archive/CALIBRATION_LOOP.md`): drive the
 committed eval corpora through the **local model on the box** and score them with
 the **same scorers CI uses** (`jbrain.evals.{runner,integrate_runner,disambiguate_runner}`).
 

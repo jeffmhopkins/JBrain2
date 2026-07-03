@@ -178,7 +178,7 @@ def test_spawn_set_matches_the_subagent_personas() -> None:
 def test_intake_is_a_capture_only_non_owner_persona() -> None:
     """The intake interviewer a stranger runs: EMPTY tool allowlist (so dispatch refuses
     every tool), no knowledge base, and a 1x budget — not jerv/archivist's 4x cost lever
-    (docs/GUIDED_INTAKE_PLAN.md §5)."""
+    (docs/archive/GUIDED_INTAKE_PLAN.md §5)."""
     intake = AGENTS["intake"]
     assert intake.tools == INTAKE_TOOLS == frozenset()
     assert intake.reads_knowledge_base is False

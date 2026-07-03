@@ -3,7 +3,7 @@
 Today every job runs under the all-domains `queue.SYSTEM_CTX` (the worker is the
 owner's own cross-domain machinery). Owner/agent-triggered jobs must instead run
 under the *narrowed* scope of whatever triggered them — the no-confused-deputy
-property (docs/WORKFLOW_ENGINE_PLAN.md §2 E1, ASSISTANT.md I-8). This migration
+property (docs/archive/WORKFLOW_ENGINE_PLAN.md §2 E1, ASSISTANT.md I-8). This migration
 adds the two nullable columns that carry that scope on the job row:
 
 - `principal_id` — the triggering principal (NULL for a system job);

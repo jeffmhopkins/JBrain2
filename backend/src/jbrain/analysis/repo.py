@@ -900,7 +900,7 @@ class SqlAnalysisRepo:
             group["history"].append(shaped)
             # "Current" means active AND OPEN (valid_to IS NULL); a closed
             # interval is a FORMER value, history not the live head, even when
-            # nothing replaced it (docs/research/legacy-links-handling.md §3.1).
+            # nothing replaced it (docs/archive/research/legacy-links-handling.md §3.1).
             # Three-valued by assertion (Wave 1, slice 2): an ASSERTED open head
             # is the live value; absent one, a NEGATED open head is the live
             # retraction, surfaced explicitly as currently-negated (it must not

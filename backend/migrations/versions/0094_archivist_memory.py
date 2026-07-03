@@ -1,4 +1,4 @@
-"""The archivist persona's cross-session memory (docs/EMAIL_ARCHIVIST_PLAN.md).
+"""The archivist persona's cross-session memory (docs/archive/EMAIL_ARCHIVIST_PLAN.md).
 
 A single owner-only scratchpad document the archivist reads at session start and
 rewrites as it makes filing/taxonomy decisions — the agent's own working notes, NOT

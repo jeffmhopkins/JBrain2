@@ -1,5 +1,5 @@
 """jerv's `hurricane` tool (docs/reference/ASSISTANT.md "Agent selection", DESIGN.md
-"hurricane_card tool-view"; build plan docs/HURRICANE_TABS_PLAN.md).
+"hurricane_card tool-view"; build plan docs/archive/HURRICANE_TABS_PLAN.md).
 
 A jerv-only `web`-class tool: given a place, it finds the nearest active tropical
 cyclone from NHC's global feed and returns a concise summary AND a data-only
@@ -211,7 +211,7 @@ def hurricane_view(
     active_count: int,
     detail: StormDetail,
 ) -> ViewPayload:
-    """The data-only `hurricane_card` view (docs/HURRICANE_TABS_PLAN.md §2). Markup-free;
+    """The data-only `hurricane_card` view (docs/archive/HURRICANE_TABS_PLAN.md §2). Markup-free;
     `kind`/`cat`/`proximity`/`alert.level`/`level` are enums the component maps to glyph +
     tone. The Track tab draws on real tiles, so the map geometry carries real lat/lon — the
     public storm track + cone, plus the `you` city centre (the scoped #9 relaxation, see the

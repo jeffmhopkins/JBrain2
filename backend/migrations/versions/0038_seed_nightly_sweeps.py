@@ -2,7 +2,7 @@
 
 The periodic work that is boot-only self-heal today — `consolidate_predicates`,
 `sync_predicates`, and the deleted-note-artifact purge — becomes data-defined
-nightly schedules (docs/WORKFLOW_ENGINE_PLAN.md §5 Track B). Each is a one-action
+nightly schedules (docs/archive/WORKFLOW_ENGINE_PLAN.md §5 Track B). Each is a one-action
 pipeline bound by a schedule-trigger; the trigger is `manual=true` so the same
 sweep is emergency-fireable from Ops (`POST /ops/triggers/{id}/run`) without a
 restart (E4). This is ADDITIVE: the worker boot backfills still run, so behavior

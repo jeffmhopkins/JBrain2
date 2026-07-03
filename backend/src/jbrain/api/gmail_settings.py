@@ -1,4 +1,4 @@
-"""Gmail credentials settings (docs/EMAIL_ARCHIVIST_PLAN.md "OAuth setup").
+"""Gmail credentials settings (docs/archive/EMAIL_ARCHIVIST_PLAN.md "OAuth setup").
 
 The settings panel writes the archivist's OAuth credentials (client id, client
 secret, refresh token) into owner-only app.settings, and the provider picks them up

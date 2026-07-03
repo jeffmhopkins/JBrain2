@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Per-session claude version management (docs/proposed/JCODE_SESSION_TOOLS_PLAN.md).
+# Per-session claude version management (docs/archive/JCODE_SESSION_TOOLS_PLAN.md).
 #
 # Installs the `claude` CLI into the session's PRIVATE npm prefix ($NPM_CONFIG_PREFIX, set by
 # the terminal to $HOME/.npm-global), whose bin leads PATH via /etc/profile.d/jcode-path.sh —

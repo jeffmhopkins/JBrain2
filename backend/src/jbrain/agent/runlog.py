@@ -46,7 +46,7 @@ class AgentRunLog:
             # kind='agent' is explicit so the shared run log's CHECK admits this row
             # (it requires session_id + prompt_version for agent runs). A spawned
             # child run is kind='subagent' with parent_run_id set for the tree cost
-            # rollup (docs/SUBAGENT_SPAWNING_PLAN.md); it still carries its own
+            # rollup (docs/archive/SUBAGENT_SPAWNING_PLAN.md); it still carries its own
             # session + prompt version.
             run = Run(
                 kind=kind,

@@ -36,7 +36,7 @@ class AgentSessionInfo:
     # The selected agent persona (docs/reference/ASSISTANT.md "Agent selection"). Defaulted so
     # existing callers/tests that predate agent selection resolve to the curator.
     agent: str = "curator"
-    # Sub-agent lineage (docs/SUBAGENT_SPAWNING_PLAN.md). A root chat leaves these at
+    # Sub-agent lineage (docs/archive/SUBAGENT_SPAWNING_PLAN.md). A root chat leaves these at
     # their defaults; a spawned child carries its parent + depth + sandbox flag.
     parent_session_id: str | None = None
     depth: int = 0
@@ -48,7 +48,7 @@ class AgentSessionInfo:
     preview: str = ""
     staged_count: int = 0
     # How many direct sub-agent children this chat spawned (the nested-rail count,
-    # docs/SUBAGENT_SPAWNING_PLAN.md Wave S4). 0 for a chat that never fanned out.
+    # docs/archive/SUBAGENT_SPAWNING_PLAN.md Wave S4). 0 for a chat that never fanned out.
     subagent_count: int = 0
     # The latest run's status (running | done | error) — lets the nested rail show a
     # child's settled outcome (a failed child renders rose ✕) and the parent roll-up

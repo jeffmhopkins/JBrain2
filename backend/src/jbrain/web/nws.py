@@ -1,6 +1,6 @@
 """Per-location watches/warnings + a wind/rain/arrival timeline via the NWS API
 (`api.weather.gov`) — the US-coverage half of the hurricane card (docs/reference/DESIGN.md
-"hurricane_card tool-view", docs/HURRICANE_TABS_PLAN.md §1/§3).
+"hurricane_card tool-view", docs/archive/HURRICANE_TABS_PLAN.md §1/§3).
 
 Like the weather and hurricane tools this runs DIRECTLY rather than staging an egress
 Proposal — the bounded jerv-sandbox exception to invariant #9. One pinned,

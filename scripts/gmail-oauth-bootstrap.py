@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """One-time OAuth bootstrap for the Gmail `archivist` persona
-(docs/EMAIL_ARCHIVIST_PLAN.md — see the "OAuth setup" appendix for the full
+(docs/archive/EMAIL_ARCHIVIST_PLAN.md — see the "OAuth setup" appendix for the full
 click-path).
 
 Runs the authorization-code flow with a **loopback redirect** (Google deprecated the

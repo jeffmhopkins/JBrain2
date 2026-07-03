@@ -217,7 +217,7 @@ def create_app(
         await sessions.delete(sid)
 
     # --- Web preview: a per-session hostname under the box's own tunnel, fronted by the
-    # api↔jcode proxy below (docs/JCODE_PREVIEW_HOST_PLAN.md). ---
+    # api↔jcode proxy below (docs/archive/JCODE_PREVIEW_HOST_PLAN.md). ---
 
     @authed.get("/sessions/{sid}/preview")
     def preview_status(sid: str) -> dict[str, object]:

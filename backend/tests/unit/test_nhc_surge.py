@@ -1,4 +1,4 @@
-"""NhcSurgeClient — the NHC Peak-Surge band lookup (docs/HURRICANE_TABS_PLAN.md §8).
+"""NhcSurgeClient — the NHC Peak-Surge band lookup (docs/archive/HURRICANE_TABS_PLAN.md §8).
 HTTP is faked via MockTransport — no live network, like the hurricane/weather
 clients. The surge band lives as text inside the feature's `popupinfo` HTML, so the
 fixtures mirror that shape."""

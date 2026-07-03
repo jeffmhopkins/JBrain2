@@ -1,5 +1,5 @@
 """The scheduler tick + emergency-trigger fire against real Postgres
-(docs/WORKFLOW_ENGINE_PLAN.md §5 Track B): a due schedule claimed SKIP-LOCKED
+(docs/archive/WORKFLOW_ENGINE_PLAN.md §5 Track B): a due schedule claimed SKIP-LOCKED
 enqueues its bound pipeline's action onto app.jobs and advances next_run_at
 app-side, and the seeded nightly sweeps (migration 0037) are fireable on demand.
 

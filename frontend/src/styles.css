@@ -7883,7 +7883,7 @@ button.small {
   margin-left: 18px;
 }
 /* Feeding-waves live grouping: a wave-header divider and the text feed edge, matching
-   the final synthesis card's Direction-1 language (docs/SUBAGENT_FEEDING_WAVES_PLAN.md). */
+   the final synthesis card's Direction-1 language (docs/archive/SUBAGENT_FEEDING_WAVES_PLAN.md). */
 .fb-shell .fb-sa-wave {
   border-bottom: 1px solid var(--border);
 }
@@ -9545,7 +9545,7 @@ button.small {
   color: var(--rose);
 }
 /* A staged consumer that never ran — a cascade/resource skip, muted amber, distinct
-   from a failure's rose (docs/SUBAGENT_FEEDING_WAVES_PLAN.md, Direction 1). */
+   from a failure's rose (docs/archive/SUBAGENT_FEEDING_WAVES_PLAN.md, Direction 1). */
 .fb-shell .tv-syn-mark.skip {
   color: var(--amber, #c9a36a);
 }
@@ -17616,7 +17616,7 @@ button.task-band:active {
 
 /* ============================================================================
    Image launcher (Wave L1) — the standalone on-box generate/edit screen
-   (docs/IMAGE_LAUNCHER_PLAN.md, mock launcher-b-gallery.html). Violet image
+   (docs/archive/IMAGE_LAUNCHER_PLAN.md, mock launcher-b-gallery.html). Violet image
    accent; tokens only. The reused EditCompare/ImageFrame (.tv-genimg-*) are
    given this scope at the end of the block.
    ============================================================================ */

@@ -1,4 +1,4 @@
-"""ComfyUI HTTP client for local Qwen-Image generation (docs/IMAGE_GEN_PLAN.md).
+"""ComfyUI HTTP client for local Qwen-Image generation (docs/archive/IMAGE_GEN_PLAN.md).
 
 The graph SHAPE lives in the JSON workflow templates, not here: this client is a
 generic ComfyUI driver that loads a template, fills a fixed set of well-known

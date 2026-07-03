@@ -3,7 +3,7 @@
 The two boot self-heal backfills — `reconcile_pending_notes` (ingest_state =
 'pending') and `reconcile_pending_integration` (integration_state <>
 'integrated') — become recurring data-defined schedules + manual triggers
-(docs/WORKFLOW_ENGINE_PLAN.md §5 Wave 2). These are the dropped-event safety net
+(docs/archive/WORKFLOW_ENGINE_PLAN.md §5 Wave 2). These are the dropped-event safety net
 the cutover leans on: post-cutover a dropped best-effort enqueue must not strand a
 note forever. The durability guarantee is the state columns; these sweeps are what
 reconcile them, so promoting them off boot-only means a dropped event self-heals

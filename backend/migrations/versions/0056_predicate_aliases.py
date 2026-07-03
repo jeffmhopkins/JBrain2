@@ -1,4 +1,4 @@
-"""The predicate_aliases store (Loop 3a, Wave 1; docs/LOOP3_PREDICATE_CANON_PLAN.md).
+"""The predicate_aliases store (Loop 3a, Wave 1; docs/reference/PREDICATE_CANONICALIZATION.md).
 
 A durable raw->canonical predicate alias. Today a resolved `new_predicate` card
 (`map_to_existing` / renaming `suggest_better`) only heals the *stored* facts — there is no

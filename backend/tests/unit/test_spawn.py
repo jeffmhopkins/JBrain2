@@ -1,4 +1,4 @@
-"""The sub-agent spawn service (docs/SUBAGENT_SPAWNING_PLAN.md, Wave S1): the
+"""The sub-agent spawn service (docs/archive/SUBAGENT_SPAWNING_PLAN.md, Wave S1): the
 structural caps and sandbox wiring, proven with NO model cooperation. Refusal paths
 return before any DB/model touch; the success path uses fakes + a loop seam so the
 service's wiring (clamp, depth, no-location, tree threading, lineage) is asserted
@@ -906,7 +906,7 @@ async def test_cancelled_child_runlog_settles_inline_not_detached(
     assert any(f["stop_reason"] == "cancelled" for f in runlog.finished)
 
 
-# --- feeding waves: the staged pipeline (docs/SUBAGENT_FEEDING_WAVES_PLAN.md) ---
+# --- feeding waves: the staged pipeline (docs/archive/SUBAGENT_FEEDING_WAVES_PLAN.md) ---
 
 
 async def test_waves_feed_producer_summary_into_consumer(service: SpawnService) -> None:

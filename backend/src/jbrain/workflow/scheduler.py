@@ -1,7 +1,7 @@
 """The scheduler tick: fire due schedules and manual triggers onto the queue.
 
 The engine's *dispatch* layer for time- and operator-driven work, sitting above
-the proven `app.jobs` executor (docs/WORKFLOW_ENGINE_PLAN.md §5 Track B). It owns
+the proven `app.jobs` executor (docs/archive/WORKFLOW_ENGINE_PLAN.md §5 Track B). It owns
 no new execution machinery: a schedule's bound trigger resolves to a pipeline, the
 pipeline's action steps name registered handlers (E3), and each step is enqueued
 through the existing `queue.enqueue` exactly as a hardcoded trigger would. The
@@ -71,7 +71,7 @@ PURGE_ACTION = ActionSpec(
 )
 
 # The two boot self-heal backfills as registered actions so they ride a recurring
-# schedule + an emergency Ops trigger, not just boot (docs/WORKFLOW_ENGINE_PLAN.md
+# schedule + an emergency Ops trigger, not just boot (docs/archive/WORKFLOW_ENGINE_PLAN.md
 # §5 Wave 2 — the dropped-event safety net). Post-cutover a dropped best-effort
 # event must not strand a note: the durability guarantee is the state columns
 # (`notes.ingest_state='pending'`, `notes.integration_state <> 'integrated'`), and

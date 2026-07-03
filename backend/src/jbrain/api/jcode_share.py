@@ -73,7 +73,7 @@ async def mint_share(
 ) -> MintShareOut:
     """Mint a time-boxed share link for a session (owner only). Returns the secret once.
 
-    Residual the recipient inherits (accepted; see docs/proposed/JCODE_PLAN.md "Security
+    Residual the recipient inherits (accepted; see docs/archive/JCODE_PLAN.md "Security
     posture"): a share grants access to ONE session, but the sandbox runs every session in
     one root container, so a recipient's shell/agent can read OTHER sessions' checkouts and
     has unrestricted NAT egress. Acceptable for a single-owner box handing time-boxed,

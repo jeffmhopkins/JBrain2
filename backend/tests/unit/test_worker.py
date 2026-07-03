@@ -568,10 +568,10 @@ async def test_run_registers_all_job_handlers(
         "integrate_note",
         "ocr_attachment",
         # The audio sibling of ocr_attachment — in-code only, not in ACTION_SPECS /
-        # the app.actions seed (docs/WHISPER_TRANSCRIPTION_PLAN.md).
+        # the app.actions seed (docs/archive/WHISPER_TRANSCRIPTION_PLAN.md).
         "transcribe_attachment",
         # The video sibling — in-code only, not in ACTION_SPECS / the app.actions
-        # seed (docs/VIDEO_ANALYSIS_PLAN.md).
+        # seed (docs/archive/VIDEO_ANALYSIS_PLAN.md).
         "analyze_video_attachment",
         "consolidate_predicates",
         "sync_predicates",
@@ -596,7 +596,7 @@ async def test_run_registers_all_job_handlers(
         "wiki_reindex",
         "wiki_prune",
         # The archivist's inbox-triage sweep — in-code only, not in ACTION_SPECS /
-        # the app.actions seed; a migration seeds its schedule (docs/EMAIL_ARCHIVIST_PLAN.md).
+        # the app.actions seed; a migration seeds its schedule (docs/archive/EMAIL_ARCHIVIST_PLAN.md).
         "triage_inbox",
     }
 

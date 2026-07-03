@@ -1,4 +1,4 @@
-"""The archivist memory tools' guards + web-gating (docs/EMAIL_ARCHIVIST_PLAN.md). The
+"""The archivist memory tools' guards + web-gating (docs/archive/EMAIL_ARCHIVIST_PLAN.md). The
 DB round-trip is covered by the RLS integration test; here we cover the no-DB branches
 (no principal, oversized content) and that the tools are archivist-only."""
 

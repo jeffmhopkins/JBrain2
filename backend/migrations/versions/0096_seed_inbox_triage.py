@@ -1,6 +1,6 @@
 """Seed the inbox-triage schedule, trigger, and pipeline (archivist).
 
-The `triage_inbox` action (docs/EMAIL_ARCHIVIST_PLAN.md) becomes a data-defined daily
+The `triage_inbox` action (docs/archive/EMAIL_ARCHIVIST_PLAN.md) becomes a data-defined daily
 schedule — **disabled by default** (`enabled=false`) and emergency-fireable from Ops
 (`manual=true`, `POST /ops/triggers/{id}/run`) without a restart. Mirrors 0066 (hygiene
 sweeps) / 0047 (wiki sweeps).

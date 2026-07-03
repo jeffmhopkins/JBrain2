@@ -1,6 +1,6 @@
 """The E1 scope-carrier helper: `narrowed_context` fail-closed semantics.
 
-The no-confused-deputy property (docs/WORKFLOW_ENGINE_PLAN.md §2 E1, ASSISTANT.md
+The no-confused-deputy property (docs/archive/WORKFLOW_ENGINE_PLAN.md §2 E1, ASSISTANT.md
 I-8) hinges on this helper never silently widening a partial stamp to the
 all-domains system scope. These are pure unit tests; the RLS proof that the
 narrowed context can't cross a firewall is the integration suite."""

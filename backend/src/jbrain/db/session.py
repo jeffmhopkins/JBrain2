@@ -46,7 +46,7 @@ class ScopeStampError(ValueError):
     """A job's (principal_id, domain_code) scope stamp is malformed — exactly one
     half present. Raised (never silently downgraded to a system context) so a
     partial stamp fails CLOSED: a confused deputy can never widen its scope by
-    sending a half-stamp (E1 / I-8, docs/WORKFLOW_ENGINE_PLAN.md §2)."""
+    sending a half-stamp (E1 / I-8, docs/archive/WORKFLOW_ENGINE_PLAN.md §2)."""
 
 
 def narrowed_context(principal_id: str | None, domain_code: str | None) -> SessionContext:

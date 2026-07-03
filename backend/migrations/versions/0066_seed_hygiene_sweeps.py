@@ -1,6 +1,6 @@
 """Seed the nightly hygiene-sweep schedules, triggers, and pipelines (Phase-6 follow-on).
 
-Three core-data maintenance actions (docs/HYGIENE_SWEEPS_PLAN.md), in-code only like the
+Three core-data maintenance actions (docs/archive/HYGIENE_SWEEPS_PLAN.md), in-code only like the
 other sweeps (`skill_sweep` / `consolidate_predicates`), become data-defined nightly
 schedules — **disabled by default** (`enabled=false`) and emergency-fireable from Ops
 (`manual=true`, `POST /ops/triggers/{id}/run`) without a restart. Mirrors 0047 (wiki sweeps).

@@ -1,6 +1,6 @@
 """Cache an analyze_video result on its chat attachment.
 
-jerv's `analyze_video` tool (docs/VIDEO_ANALYSIS_PLAN.md) computes a video analysis
+jerv's `analyze_video` tool (docs/archive/VIDEO_ANALYSIS_PLAN.md) computes a video analysis
 inline and now caches it on the `app.turn_attachments` row so a re-ask is free and —
 the security point — the per-frame thumbnails become servable: the thumbnail endpoint
 validates a requested `thumb_id` (a blob sha) against THIS row's stored frame list

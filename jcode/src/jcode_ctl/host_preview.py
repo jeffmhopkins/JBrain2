@@ -1,5 +1,5 @@
 """Host-served per-session preview allocation (Wave P1 of
-``docs/JCODE_PREVIEW_HOST_PLAN.md``).
+``docs/archive/JCODE_PREVIEW_HOST_PLAN.md``).
 
 Each session gets a dev **port** from a bounded pool and a stable, unguessable
 **hostname** under the box's OWN named tunnel — no per-session TryCloudflare

@@ -1,4 +1,4 @@
-"""The `tag_consolidate` engine action (Phase-6 follow-on; docs/HYGIENE_SWEEPS_PLAN.md).
+"""The `tag_consolidate` engine action (Phase-6 follow-on; docs/archive/HYGIENE_SWEEPS_PLAN.md).
 
 Nightly maintenance, no LLM: fold drift spellings of a note's `tags` to one canonical form
 — lowercase, collapse internal whitespace, trim, drop empties, de-duplicate — and rewrite the

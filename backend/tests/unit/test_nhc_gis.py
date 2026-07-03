@@ -1,5 +1,5 @@
 """NhcGisClient — name-based layer discovery, storm-identity feature match, and
-GeoJSON track/cone parse (docs/HURRICANE_TABS_PLAN.md §8). HTTP is faked via
+GeoJSON track/cone parse (docs/archive/HURRICANE_TABS_PLAN.md §8). HTTP is faked via
 MockTransport — no live network and no real clock, like the hurricane/weather
 adapters."""
 

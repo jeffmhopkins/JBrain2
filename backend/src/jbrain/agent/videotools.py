@@ -1,5 +1,5 @@
 """The `analyze_video` agent tool: jerv reads an attached video by sampling its
-frames and transcribing its audio (docs/VIDEO_ANALYSIS_PLAN.md, Wave 3).
+frames and transcribing its audio (docs/archive/VIDEO_ANALYSIS_PLAN.md, Wave 3).
 
 The video sibling of `analyze_image`/`transcribe`: it resolves a chat attachment by
 id under the session's RLS scope (a foreign/out-of-scope id reads as a clean miss,

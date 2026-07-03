@@ -1,5 +1,5 @@
 """The host-mode preview allocator: per-session port + unguessable hostname, no
-subprocess, no network (Wave P1 of docs/JCODE_PREVIEW_HOST_PLAN.md)."""
+subprocess, no network (Wave P1 of docs/archive/JCODE_PREVIEW_HOST_PLAN.md)."""
 
 from __future__ import annotations
 

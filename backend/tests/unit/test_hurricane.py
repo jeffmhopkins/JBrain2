@@ -1,5 +1,5 @@
 """jerv's `hurricane` tool + the NHC CurrentStorms client (docs/reference/DESIGN.md
-"hurricane_card tool-view"; build plan docs/HURRICANE_TABS_PLAN.md). HTTP is faked via
+"hurricane_card tool-view"; build plan docs/archive/HURRICANE_TABS_PLAN.md). HTTP is faked via
 MockTransport across every source — no live network and no real clock, like the
 weather adapter. Covers the v1 vitals client and the v2 tabbed assembly (the geo
 track/cone the Track tab draws on tiles, NWS alert/timeline, impact, coverage degrade,

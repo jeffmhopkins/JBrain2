@@ -1,5 +1,5 @@
 """The Gmail client: the one place an HTTP request to Google is made for the
-`archivist` persona (docs/EMAIL_ARCHIVIST_PLAN.md).
+`archivist` persona (docs/archive/EMAIL_ARCHIVIST_PLAN.md).
 
 Thin over httpx, mirroring `jbrain.web.search.SearxngClient`: the base URL and the
 OAuth token endpoint are pinned from config, never model-supplied; only typed query
@@ -396,7 +396,7 @@ async def exchange_authorization_code(
     transport: httpx.AsyncBaseTransport | None = None,
 ) -> str:
     """Exchange an OAuth authorization code for a long-lived refresh token (the
-    in-app Connect flow's one-shot, docs/EMAIL_ARCHIVIST_PLAN.md). `redirect_uri` must
+    in-app Connect flow's one-shot, docs/archive/EMAIL_ARCHIVIST_PLAN.md). `redirect_uri` must
     match the one the consent URL used. Raises GmailError if Google returns no refresh
     token (e.g. a re-consent without prompt=consent / access_type=offline)."""
     data = {

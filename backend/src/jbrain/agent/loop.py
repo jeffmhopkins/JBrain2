@@ -162,7 +162,7 @@ def guardrails_for_effort(effort: str | None, *, scale: int = 1) -> Guardrails:
     by a per-agent factor. `scale` (an agent's `budget_multiplier`, default 1) widens
     BOTH the step cap and the cost-token budget together: the archivist's long, many-
     tool mailbox cleanups run at 4, so a single sweep isn't cut off mid-chain
-    (docs/EMAIL_ARCHIVIST_PLAN.md). The consecutive-error cap is unscaled — a wedged
+    (docs/archive/EMAIL_ARCHIVIST_PLAN.md). The consecutive-error cap is unscaled — a wedged
     chain should still bail fast regardless of persona."""
     base = STEPS_BY_EFFORT.get(effort or "", Guardrails.max_steps)
     return Guardrails(
@@ -196,7 +196,7 @@ class ToolContext:
     agent_session_id: str | None = None
     here: tuple[float, float] | None = None
     here_as_of: datetime | None = None
-    # Sub-agent spawning context (docs/SUBAGENT_SPAWNING_PLAN.md). `depth` is this
+    # Sub-agent spawning context (docs/archive/SUBAGENT_SPAWNING_PLAN.md). `depth` is this
     # turn's depth in the agent tree (root=0); spawn is refused unless depth == 0 —
     # only the root jerv fans out, and its children are leaves (nesting removed).
     # `agent_tools` is THIS turn's effective allowed tool names — the ceiling the
@@ -434,7 +434,7 @@ class AgentLoop:
         allowed = self._registry.allowed_names(scopes, tools_allow)
         messages: list[LlmMessage] = list(conversation)
         # `agent_tools=allowed` is this turn's effective ceiling — a child this turn
-        # spawns is clamped to it (docs/SUBAGENT_SPAWNING_PLAN.md, the parent⊆child clamp).
+        # spawns is clamped to it (docs/archive/SUBAGENT_SPAWNING_PLAN.md, the parent⊆child clamp).
         tool_ctx = ToolContext(
             session=session,
             scopes=scopes,

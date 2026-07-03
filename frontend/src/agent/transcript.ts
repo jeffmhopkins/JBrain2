@@ -22,7 +22,7 @@ export interface SourceRef {
 }
 
 /** One sub-agent child in a `spawn_subagent` fan, folded from the `subagent_*`
- * events (docs/SUBAGENT_SPAWNING_PLAN.md, Wave S3). Persona is a neutral tag; the
+ * events (docs/archive/SUBAGENT_SPAWNING_PLAN.md, Wave S3). Persona is a neutral tag; the
  * glyph colour comes from `status` (steel=running, green=done, rose=failed). */
 export interface SubagentChild {
   childId: string;

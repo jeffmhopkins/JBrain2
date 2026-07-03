@@ -1,4 +1,4 @@
-"""Runtime Gmail credentials → a live client (docs/EMAIL_ARCHIVIST_PLAN.md).
+"""Runtime Gmail credentials → a live client (docs/archive/EMAIL_ARCHIVIST_PLAN.md).
 
 The credentials come from the owner-only settings store (set via the GUI panel),
 falling back to the JBRAIN_GMAIL_* env values for any blank field — so the panel is

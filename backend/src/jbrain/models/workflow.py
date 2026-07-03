@@ -1,4 +1,4 @@
-"""Workflow-engine ORM models (docs/WORKFLOW_ENGINE_PLAN.md §3).
+"""Workflow-engine ORM models (docs/archive/WORKFLOW_ENGINE_PLAN.md §3).
 
 The data-defined engine substrate created by migration 0036: the event log, the
 trigger/pipeline/schedule definitions, and the persisted resolution pins.

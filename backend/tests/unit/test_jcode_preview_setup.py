@@ -4,7 +4,7 @@ JCODE_PREVIEW_BASE_HOST into .env, defaulting the base host to JBRAIN_DOMAIN. A 
 base host IS the switch — host is the only preview mode since the Wave P5b cutover. It
 refuses on a box that can't serve previews (no jcode / no tunnel) and fails closed on a
 malformed host, so a bad value never reaches the rendered Caddy site. See
-docs/JCODE_PREVIEW_HOST_PLAN.md."""
+docs/archive/JCODE_PREVIEW_HOST_PLAN.md."""
 
 import subprocess
 from pathlib import Path
