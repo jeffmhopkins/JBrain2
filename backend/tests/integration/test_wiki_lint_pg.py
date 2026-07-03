@@ -73,8 +73,7 @@ async def _clean(database_url: str) -> AsyncIterator[None]:  # noqa: F811
             # CASCADE — truncate it explicitly or Wave-B cards leak across tests.
             await conn.execute(
                 text(
-                    "TRUNCATE app.entities, app.notes, app.wiki_articles,"
-                    " app.review_items CASCADE"
+                    "TRUNCATE app.entities, app.notes, app.wiki_articles, app.review_items CASCADE"
                 )
             )
     finally:
@@ -120,8 +119,7 @@ async def _fact(
     async with scoped_session(maker, OWNER) as s:
         await s.execute(
             text(
-                "INSERT INTO app.notes (id, client_id, domain_code, body)"
-                " VALUES (:i, :c, :d, :b)"
+                "INSERT INTO app.notes (id, client_id, domain_code, body) VALUES (:i, :c, :d, :b)"
             ),
             {"i": note, "c": note[:12], "d": domain, "b": statement},
         )
@@ -140,8 +138,15 @@ async def _fact(
                 " VALUES (:i, :e, :o, 'p', 'state', :st, 'asserted', '2026-01-01T00:00:00Z',"
                 " :n, :c, 'fake', 'v1', :d)"
             ),
-            {"i": fact, "e": entity_id, "o": object_entity_id, "st": statement, "n": note,
-             "c": chunk, "d": domain},
+            {
+                "i": fact,
+                "e": entity_id,
+                "o": object_entity_id,
+                "st": statement,
+                "n": note,
+                "c": chunk,
+                "d": domain,
+            },
         )
 
 
@@ -151,8 +156,7 @@ async def _mention(maker: async_sessionmaker, entity_id: str, domain: str) -> No
     async with scoped_session(maker, OWNER) as s:
         await s.execute(
             text(
-                "INSERT INTO app.notes (id, client_id, domain_code, body)"
-                " VALUES (:i, :c, :d, 'b')"
+                "INSERT INTO app.notes (id, client_id, domain_code, body) VALUES (:i, :c, :d, 'b')"
             ),
             {"i": note, "c": note[:12], "d": domain},
         )
@@ -181,8 +185,7 @@ async def _comention(maker: async_sessionmaker, e1: str, e2: str, chunk_domain: 
     async with scoped_session(maker, OWNER) as s:
         await s.execute(
             text(
-                "INSERT INTO app.notes (id, client_id, domain_code, body)"
-                " VALUES (:i, :c, :d, 'b')"
+                "INSERT INTO app.notes (id, client_id, domain_code, body) VALUES (:i, :c, :d, 'b')"
             ),
             {"i": note, "c": note[:12], "d": chunk_domain},
         )
@@ -500,15 +503,17 @@ async def _articled(
 
 async def _cards(maker: async_sessionmaker, ctx: SessionContext, kind: str) -> list[Any]:
     async with scoped_session(maker, ctx) as s:
-        return (
-            await s.execute(
-                text(
-                    "SELECT id, domain_code, payload FROM app.review_items"
-                    " WHERE kind = :k ORDER BY created_at"
-                ),
-                {"k": kind},
-            )
-        ).all()
+        return list(
+            (
+                await s.execute(
+                    text(
+                        "SELECT id, domain_code, payload FROM app.review_items"
+                        " WHERE kind = :k ORDER BY created_at"
+                    ),
+                    {"k": kind},
+                )
+            ).all()
+        )
 
 
 async def test_contradiction_card_filed_and_deduped(maker: async_sessionmaker) -> None:
@@ -532,9 +537,9 @@ async def test_contradiction_card_filed_and_deduped(maker: async_sessionmaker) -
     assert len(fake.calls) == 1  # one general-group batch
 
     # Re-run: the open-item dedup keeps it at one card.
-    report2 = await _llm_linter(maker, _router(
-        {"verdicts": [{"index": 0, "contradiction": True, "summary": "clash"}]}
-    )[0]).run()
+    report2 = await _llm_linter(
+        maker, _router({"verdicts": [{"index": 0, "contradiction": True, "summary": "clash"}]})[0]
+    ).run()
     assert report2.contradiction_cards == 0
     assert len(await _cards(maker, OWNER, "wiki_contradiction")) == 1
 
@@ -589,12 +594,16 @@ async def test_contradiction_card_stamped_restricted_and_scoped(maker: async_ses
     stamped = (await _cards(maker, OWNER, "wiki_contradiction"))[0]
     assert stamped.domain_code == "health"  # card_domain(general, health) == health
     general_only = SessionContext(
-        principal_id=str(uuid.uuid4()), principal_kind="owner",
-        owner_scoped=True, domain_scopes=("general",),
+        principal_id=str(uuid.uuid4()),
+        principal_kind="owner",
+        owner_scoped=True,
+        domain_scopes=("general",),
     )
     health_scope = SessionContext(
-        principal_id=str(uuid.uuid4()), principal_kind="owner",
-        owner_scoped=True, domain_scopes=("general", "health"),
+        principal_id=str(uuid.uuid4()),
+        principal_kind="owner",
+        owner_scoped=True,
+        domain_scopes=("general", "health"),
     )
     assert len(await _cards(maker, general_only, "wiki_contradiction")) == 0  # firewalled out
     assert len(await _cards(maker, health_scope, "wiki_contradiction")) == 1  # health scope sees it

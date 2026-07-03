@@ -641,9 +641,7 @@ class WikiLinter:
                         filed += 1
         return filed
 
-    async def _entity_claims(
-        self, session: AsyncSession, ids: set[Any]
-    ) -> dict[Any, list[str]]:
+    async def _entity_claims(self, session: AsyncSession, ids: set[Any]) -> dict[Any, list[str]]:
         if not ids:
             return {}
         rows = (

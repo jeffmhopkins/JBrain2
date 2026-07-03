@@ -82,10 +82,10 @@ TASK_DEFAULTS: dict[str, str] = {
     # Individually routable so an on-box operator can point them at a local model.
     "wiki.rewrite": "xai:grok-4.3",
     "wiki.ground": "xai:grok-4.3",
-    # The Phase-6 wiki HEALTH sweep (docs/plans/WIKI_LINT_PLAN.md, Wave B): `wiki.lint.contradiction`
-    # adjudicates whether two firewall-compatible subjects' facts contradict; `wiki.lint.stale`
-    # judges whether an article frames a superseded fact as current. Metered against the SEPARATE
-    # wiki-lint budget; individually routable to a local model.
+    # The Phase-6 wiki HEALTH sweep (docs/plans/WIKI_LINT_PLAN.md, Wave B):
+    # `wiki.lint.contradiction` adjudicates whether two firewall-compatible subjects' facts
+    # contradict; `wiki.lint.stale` judges whether an article frames a superseded fact as current.
+    # Metered against the SEPARATE wiki-lint budget; individually routable to a local model.
     "wiki.lint.contradiction": "xai:grok-4.3",
     "wiki.lint.stale": "xai:grok-4.3",
     # The archivist's `triage_inbox` sweep (docs/archive/EMAIL_ARCHIVIST_PLAN.md): classify a

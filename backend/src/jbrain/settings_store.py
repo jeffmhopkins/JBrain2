@@ -354,9 +354,7 @@ class SqlSettingsStore:
 
     async def wiki_lint_kill_switch(self, ctx: SessionContext) -> bool:
         """Whether the wiki_lint (Wave B) verifier kill-switch is engaged. Defaults OFF."""
-        return (
-            await self.get(ctx, WIKI_LINT_KILL_SWITCH_KEY, WIKI_LINT_KILL_SWITCH_DEFAULT) is True
-        )
+        return await self.get(ctx, WIKI_LINT_KILL_SWITCH_KEY, WIKI_LINT_KILL_SWITCH_DEFAULT) is True
 
     async def wiki_lint_daily_budget(self, ctx: SessionContext) -> int:
         """The per-day wiki_lint verifier TOKEN budget, separate from the wiki BUILD budget. A

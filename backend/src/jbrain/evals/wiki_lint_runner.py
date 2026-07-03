@@ -154,7 +154,7 @@ def report(results: list[CaseResult]) -> bool:
     return ok
 
 
-class _GatewayCompleter:
+class _GatewayCompleter:  # pragma: no cover - network shell, exercised at run not in CI
     """Posts a completion to the owner debug console (`/api/debug/complete`) with a capability-token
     bearer key. Routes by `task` (the deployed instance's live routing decides the actual model)."""
 
@@ -190,7 +190,7 @@ class _GatewayCompleter:
         await self._client.aclose()
 
 
-async def _main() -> int:
+async def _main() -> int:  # pragma: no cover - CLI/env entrypoint, run manually not in CI
     base_url = os.environ.get("HB_URL")
     key = os.environ.get("HB_KEY")
     task = os.environ.get("WIKI_LINT_EVAL_TASK", "wiki.ground")
