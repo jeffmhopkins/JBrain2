@@ -27,7 +27,6 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from jbrain.analysis import flow_trace, purge
 from jbrain.analysis.appointment_projection import project_appointments
-from jbrain.analysis.emr_projection import project_emr
 from jbrain.analysis.arbiter import (
     ArbiterPlan,
     compute_signals,
@@ -53,6 +52,7 @@ from jbrain.analysis.display import (
     truncation_display,
     value_label,
 )
+from jbrain.analysis.emr_projection import project_emr
 from jbrain.analysis.entities import (
     DISAMBIGUATE_MAX_TOKENS,
     DISAMBIGUATE_SCHEMA,
