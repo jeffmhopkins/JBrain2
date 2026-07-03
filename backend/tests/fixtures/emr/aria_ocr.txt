@@ -1,0 +1,19 @@
+--- page 1 ---
+ARIA Patient Portal   Printed Lab Report   (SYNTHETIC, OCR)
+Rivers, Jordan A     MRN 55500123
+[ scanned image, no text layer — the text below is canned vision-OCR output, confidence 0.7 ]
+
+Collected 07/22/2021
+
+Platelet count . . . . . 38  L   10*3/uL   (150-400)
+Hemoglobin  . . . . . . 10.9 L  g/dL      (13.5-17.5)
+White Blood Cell Count   3.2 L  10*3/uL   (4.O-11.0)
+
+--- page 2 ---
+Collected 07/29/2021
+
+Potassium . . . . . . . 4.8   mmol/L   (3.5-5.1)
+
+[ note: this 07/29/2021 date parses cleanly but matches no precise OneContent/Epic
+  draw within the same-day window; the reconciler must PARK this reading in review
+  rather than mint a spurious time-series point (plan §6.4). ]

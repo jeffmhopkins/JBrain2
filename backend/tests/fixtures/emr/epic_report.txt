@@ -1,0 +1,71 @@
+--- page 1 ---
+MRN: 55500123        RIVERS, JORDAN A        DOB: 03/14/1971
+Gateway Regional Medical Center — EMR Report (SYNTHETIC)
+Adm: 01/28/2026   DC: 02/01/2026   Unit: A3
+02/01/2026 - Inpatient Encounter in Gateway Regional A3
+Attending: Chen, Sarah MD
+Ordering: Ortiz, Miguel MD
+Diagnosis: D69.6 Thrombocytopenia, unspecified
+Transferred from MICU (see prior segment); continuity of stay.
+Disposition: discharged home
+
+Lab results (collected 02/01/2026 06:14):
+  Platelet count        9 (L*)   10*3/uL   [150-400]   spec H8202188-8   status corrected
+  Hemoglobin            8.1 (L)  g/dL      [13.5-17.5] spec H8202188-8   status final
+  Potassium             5.9 (H)  mmol/L    [3.5-5.1]   spec H8202188-8   status final
+
+Transfusion orders:
+  Order TX7781  Product: PLATELET  Units: 1  Indication: platelet count 9, active bleeding
+  Order TX7782  Product: FFP       Units: 2  Indication: coagulopathy
+
+--- page 2 ---
+Adm: 01/25/2026   DC: 01/28/2026   Unit: MICU
+01/28/2026 - Inpatient Encounter in Gateway Regional MICU
+Attending: Chen, Sarah MD
+Collecting RN: Lee, Pat RN
+Diagnosis: D69.6 Thrombocytopenia, unspecified
+Disposition: transferred
+
+Lab results (collected 01/26/2026 05:40):
+  Platelet count        14 (L*)  10*3/uL   [150-400]   spec H8115043-2   status final
+  White Blood Cell Count 2.1 (L) 10*3/uL   [4.0-11.0]  spec H8115043-2   status final
+  Potassium             4.4      mmol/L    [3.5-5.1]   spec H8115043-2   status final
+
+--- page 3 ---
+Visit date: 06/15/2025
+06/15/2025 - Outpatient Lab Visit in Gateway Outpatient Lab
+Ordering: Ortiz, Miguel MD
+Lab results (collected 06/15/2025 09:05):
+  Platelet count        212      10*3/uL   [150-400]   spec G5590011-1   status final
+  Hemoglobin            14.2     g/dL      [13.5-17.5] spec G5590011-1   status final
+  Creatinine            1.0      mg/dL     [0.7-1.3]   spec G5590011-1   status final
+
+--- page 4 ---
+Visit date: 02/10/2025
+02/10/2025 - Outpatient Lab Visit in Gateway Outpatient Lab
+Ordering: Ortiz, Miguel MD
+Lab results (collected 02/10/2025 08:30):
+  Platelet count        198      10*3/uL   [150-400]   spec G5411220-7   status final
+  Leukocytes            6.4      10*3/uL   [4.0-11.0]  spec G5411220-7   status final
+
+--- page 5 ---
+SURGICAL PATHOLOGY REPORT (SYNTHETIC)
+Accession: SP-26-00417   Collected: 01/29/2026   Pathologist: Frost, Alan MD
+
+Final Diagnosis:
+  Bone marrow, biopsy and aspirate — hypocellular marrow with markedly decreased
+  megakaryocytes, consistent with the clinical picture of thrombocytopenia.
+  Cannot rule out an evolving primary marrow process; correlation advised.
+
+Gross Description:
+  Received in formalin, a single core of tan-red bone, 1.4 cm in aggregate.
+
+Microscopic Description:
+  Sections show a hypocellular marrow (approximately 20% cellularity for age).
+  Megakaryocytes are markedly reduced. Erythroid and myeloid maturation preserved.
+
+Flow Cytometry:
+  No aberrant population identified. No increase in CD34-positive blasts.
+
+Addendum (02/03/2026):
+  Reviewed with hematology; findings support the reported thrombocytopenia.

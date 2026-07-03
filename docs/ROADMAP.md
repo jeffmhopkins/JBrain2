@@ -201,5 +201,10 @@ The location + family + intake slices shipped; build records are under
   `where_is`/dwell/`save_place` tools. *Deferred:* the L5 dwell segmenter (waits
   on the analytics tier).
 
-**Still planned:** lab-report extraction into typed `lab_results` — a photographed
-lab report becomes queryable rows citing its note.
+**In progress:** EMR / medical-record import (build plan: `docs/plans/EMR_IMPORT_PLAN.md`) —
+multi-system EMR PDF exports (Epic / OneContent / athena / scanned-OCR), fed as one note with an
+encrypted zip + inline password, normalized in place into cited, health-firewalled `measurement`
+and `event` facts, surfaced through `lab_results`/`encounters` projections and
+`read_labs`/`read_encounters` tools. Wave 0 (gates + synthetic fixtures) complete; W1–W5 open.
+Subsumes the earlier "typed `lab_results`" line (a photographed lab report becomes queryable rows
+citing its note).
