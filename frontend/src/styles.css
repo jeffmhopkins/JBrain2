@@ -7570,6 +7570,14 @@ button.small {
   border-radius: 999px;
   flex: none;
 }
+/* the "+N more" / "show less" overflow toggle — a chip in shape but a quiet control
+   in weight (dashed, muted, no dot), so it never reads as one of the entities */
+.fb-shell .entity-chip-more {
+  border-style: dashed;
+  background: transparent;
+  color: var(--text-3);
+  font-weight: 400;
+}
 
 /* the inline "Worked" disclosure under an answer (docs/research/brain-tooluse-ux).
    A labelled 44px button expands the tool steps in place — no flip, no 3D, no

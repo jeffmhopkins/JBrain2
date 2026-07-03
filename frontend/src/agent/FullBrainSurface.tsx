@@ -23,7 +23,7 @@ import { type CiteTarget, Markdown, type MdFlag, stripModelCitations } from "./m
 import { type AgentStatus, agentStatus } from "./status";
 import { type SourceRef, type ToolStep, toolStep } from "./toolSummary";
 import type { ToolActivity, TranscriptMessage } from "./transcript";
-import type { ChatAttachment, ProposalRef, WebSource } from "./types";
+import type { ChatAttachment, EntityRef, ProposalRef, WebSource } from "./types";
 import type { FullBrain } from "./useFullBrain";
 import { usePacedText } from "./usePacedText";
 import { ToolView } from "./views/registry";
@@ -1066,6 +1066,55 @@ function inlineArg(step: ToolStep): string | undefined {
   return typeof v === "string" && v.trim() ? v.trim() : undefined;
 }
 
+// How many entity chips a step shows before the rest tuck behind a "+N more"
+// toggle. A read_entity/neighborhood step surfaces every related entity as a chip
+// (one per relationship edge), so a richly-connected entity turns the result into a
+// wall; the cap keeps the step calm on a phone with every entity still one tap away.
+const ENTITY_CHIP_CAP = 6;
+
+// The entities a step resolved, as a tappable chip grid capped at ENTITY_CHIP_CAP —
+// the overflow reveals in place on tap (the same disclosure register as "raw
+// result"/"show all lines"), so the wall never leads but nothing is lost.
+function EntityChips({
+  entities,
+  onOpenEntity,
+}: {
+  entities: EntityRef[];
+  onOpenEntity?: ((entityId: string) => void) | undefined;
+}): ReactNode {
+  const [expanded, setExpanded] = useState(false);
+  const overflowing = entities.length > ENTITY_CHIP_CAP;
+  const shown = expanded || !overflowing ? entities : entities.slice(0, ENTITY_CHIP_CAP);
+  return (
+    <div className="toolwork-ents">
+      {shown.map((e) => (
+        <button
+          key={e.entity_id}
+          type="button"
+          className="entity-chip"
+          onClick={() => onOpenEntity?.(e.entity_id)}
+        >
+          <span
+            className="ent-dot"
+            style={{ background: DOMAIN_COLOR[e.domain] ?? "var(--text-3)" }}
+          />
+          {e.label}
+        </button>
+      ))}
+      {overflowing && (
+        <button
+          type="button"
+          className="entity-chip entity-chip-more"
+          aria-expanded={expanded}
+          onClick={() => setExpanded((v) => !v)}
+        >
+          {expanded ? "show less" : `+${entities.length - ENTITY_CHIP_CAP} more`}
+        </button>
+      )}
+    </div>
+  );
+}
+
 // One tool step, itself a pulldown: tap the row to reveal its arguments-in and
 // result-out; a failed step opens by default with its error text. Search/read
 // steps that surfaced source cards also offer a "raw result" rung for the
@@ -1151,22 +1200,7 @@ function StepRow({
           ) : hasEntities ? (
             <>
               <div className="fb-res-lab">result</div>
-              <div className="toolwork-ents">
-                {step.entities.map((e) => (
-                  <button
-                    key={e.entity_id}
-                    type="button"
-                    className="entity-chip"
-                    onClick={() => onOpenEntity?.(e.entity_id)}
-                  >
-                    <span
-                      className="ent-dot"
-                      style={{ background: DOMAIN_COLOR[e.domain] ?? "var(--text-3)" }}
-                    />
-                    {e.label}
-                  </button>
-                ))}
-              </div>
+              <EntityChips entities={step.entities} onOpenEntity={onOpenEntity} />
               {rawText && <RawBlock text={rawText} />}
             </>
           ) : hasWebSources ? (

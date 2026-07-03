@@ -1199,6 +1199,39 @@ describe("FullBrainSurface", () => {
     expect(screen.queryByText(/id=e9/)).toBeNull();
   });
 
+  it("caps a read_entity step's chip wall and reveals the rest on tap", async () => {
+    // A richly-connected entity surfaces many related entities as chips (one per
+    // relationship edge); the step shows a bounded set with a "+N more" toggle so it
+    // reads calm, then reveals the rest in place — nothing is lost.
+    const onOpenEntity = vi.fn();
+    const many = Array.from({ length: 10 }, (_, i) => ({
+      kind: "entity" as const,
+      entity_id: `e${i}`,
+      label: `Ent${i}`,
+      domain: "general" as const,
+    }));
+    async function* answer(): AsyncGenerator<ChatEvent> {
+      yield { type: "tool_call", id: "c1", name: "read_entity", arguments: { entity_id: "me" } };
+      yield { type: "tool_result", tool_call_id: "c1", ok: true, summary: "Me", entities: many };
+      yield { type: "text_delta", text: "Here is what I found." };
+      yield { type: "done", stop_reason: "end_turn" };
+    }
+    render(<Harness d={deps({ chat: answer })} onOpenEntity={onOpenEntity} />);
+    await waitFor(() => screen.getByLabelText("Conversation"));
+    fireEvent.change(screen.getByLabelText("Composer"), { target: { value: "who am i?" } });
+    fireEvent.click(screen.getByRole("button", { name: "send" }));
+
+    // Only the first six chips render; the overflow hides behind "+4 more".
+    const more = await screen.findByRole("button", { name: "+4 more" });
+    expect(screen.getByRole("button", { name: "Ent5" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Ent6" })).toBeNull();
+
+    // Tapping the toggle reveals the rest in place; each stays tappable.
+    fireEvent.click(more);
+    fireEvent.click(await screen.findByRole("button", { name: "Ent9" }));
+    expect(onOpenEntity).toHaveBeenCalledWith("e9");
+  });
+
   it("holds the bubble until the answer text begins — tools alone show only status", async () => {
     let release!: () => void;
     const gate = new Promise<void>((r) => {
