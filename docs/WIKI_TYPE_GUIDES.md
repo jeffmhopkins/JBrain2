@@ -1,5 +1,7 @@
 # Wiki type guides (editorial config — Phase 6)
 
+> **Status:** Living · **Last verified:** 2026-07-03
+
 Per-entity-type editorial guides the **builder** loads when (re)writing an article: the
 ordered **sections** (each with a default domain + an include-if rule), the **style**,
 and the hard **requirements**. These are **data, not code** — they seed the editorial-config

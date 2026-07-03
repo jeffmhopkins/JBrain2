@@ -1,5 +1,7 @@
 # Location assistant — tool catalog (reference)
 
+> **Status:** Living · **Last verified:** 2026-07-03
+
 Candidate AI-assistant tools, inline UI components, and automations for the Phase 7
 **location** domain, so the assistant can answer questions ("what was Jeff's battery
 last night at Walmart?"), show maps inline ("map of Jeff over the last week"), and

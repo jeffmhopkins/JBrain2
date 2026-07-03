@@ -1,5 +1,7 @@
 # JBrain2 — Architecture
 
+> **Status:** Living · **Last verified:** 2026-07-03
+
 A personal knowledge system: notes go in, a RAG pipeline indexes them, and an
 LLM maintains a wiki built **exclusively from notes as primary sources**. Over
 time it extends to a personal agent, structured records (lists, labs,

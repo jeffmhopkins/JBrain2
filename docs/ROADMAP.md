@@ -1,9 +1,11 @@
 # JBrain2 — Roadmap
 
+> **Status:** Living · **Last verified:** 2026-07-03
+
 Each phase ends with something used daily. Phases 1–4 make it a daily phone
 companion; 5–6 add the self-organizing wiki; 7 extends to family and devices.
 
-## Status (2026-06)
+## Status (2026-07)
 
 **Phases 0–4 and the Phase 5 workflow engine are shipped.** Notes,
 ingestion/search, the v3 note→graph analysis pipeline (extract → Integrator →
@@ -13,7 +15,7 @@ live; lists and appointments ship with it. The **Phase 5 workflow engine** —
 `events`/`triggers`/`pipelines`/`actions`/`runs`, the scheduler, the unified
 run-log, and the non-breaking cutover of ingest/integration/consolidation onto the
 engine — is also live, with reflexion-in-the-live-turn (Loop 1) and the recurring
-self-heal reconcilers; migrations run through 0044. The note-analysis calibration
+self-heal reconcilers. The note-analysis calibration
 evals (`docs/CALIBRATION_LOOP.md`) run as a CI quality guard. The build records for
 the agent and the v3 pipeline are archived under `docs/archive/` (`ASSISTANT_PLAN.md`,
 `INTEGRATOR_PLAN.md`, `CUTOVER_V1_REMOVAL.md`).
@@ -113,7 +115,7 @@ manage lists/appointments from the phone.
 Generalize the hardcoded ingest pipeline into `events` / `triggers` /
 `pipelines` / `actions` / `runs`, with a scheduler and run-log UI. The engine,
 scheduler, run-log, cutover, reflexion-in-the-live-turn, and the self-heal
-reconcilers all shipped (migrations through 0044; build record in
+reconcilers all shipped (build record in
 `docs/archive/PHASE5_COMPLETION_PLAN.md`). The carried-forward items below all
 landed or were deliberately seamed/deferred. The self-improvement Loops 2–4 and
 their eval/promotion harness were **removed** (only Loop 1 / reflexion remains).
@@ -149,7 +151,7 @@ gives them their scheduled and manual triggers.
 **Exit:** ingest and a scheduled job run as user-defined pipeline
 definitions; failures are diagnosable from run logs alone.
 
-## Phase 6 — Wiki — Planned (build plan: `docs/PHASE6_WIKI_PLAN.md`)
+## Phase 6 — Wiki — In progress (build plan: `docs/PHASE6_WIKI_PLAN.md`)
 
 The LLM-maintained wiki, and **only** the wiki. Wiki index (article summaries +
 embeddings). Incremental nightly builder: delta facts → index match → triage

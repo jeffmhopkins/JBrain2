@@ -1,6 +1,12 @@
 # JBrain2 — Phase 6 (Wiki) Build Plan
 
-> **Status (in progress).** Research + two builder dry-runs + a three-reviewer independent
+> **Status:** In progress · **Last verified:** 2026-07-03 · **Waves:** A✅ B✅ C✅ D◻️ —
+> the builder, `wiki_citations`/`wiki_links` graph coupling, and Talk all shipped
+> (migrations 0045–0053, `wiki/builder.py`). **Wave D (open):** re-enable the
+> nightly build schedules (disabled at migration 0088), grounding-gate tuning,
+> and purge→rebuild. Archive once D closes.
+>
+> Research + two builder dry-runs + a three-reviewer independent
 > audit done; this is the post-audit v3. Owner decisions settled: article scope
 > (cross-domain article; type-guided single-domain sections; hidden out-of-scope sections),
 > revision storage (inline `text`, full-body → reconstructable diffs), reader UI
@@ -17,8 +23,7 @@
 > index shell, editorial config, the `notes.wiki_built` bit, and the read-only UI on fixtures.
 
 The LLM-maintained wiki: notes → facts → entities → **machine-written articles**, every
-claim citing a note, corrected only by out-arguing it with a correction note. Plan doc
-only — no code lands from this file.
+claim citing a note, corrected only by out-arguing it with a correction note.
 
 ## 0. Framing: the graph-coupling line
 

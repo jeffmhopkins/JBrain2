@@ -1,5 +1,7 @@
 # Running JBrain's local models on an AMD Strix Halo box
 
+> **Status:** Living · **Last verified:** 2026-07-03
+
 End-to-end runbook for self-hosting the optional local models (docs/ANALYSIS.md,
 "Self-hosted local models") on a **Ryzen AI Max+ 395 / 128 GB** (gfx1151,
 Radeon 8060S) system. Path: **Ubuntu → kernel ≥ 6.18.4 → Vulkan → JBrain base

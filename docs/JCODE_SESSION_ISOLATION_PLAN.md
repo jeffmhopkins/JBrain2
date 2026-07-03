@@ -1,5 +1,7 @@
 # jcode session isolation — per-session network namespace (and the path to a real sandbox)
 
+> **Status:** Parked (after the Wave P1 spike; P0 substrate reverted) · **Last verified:** 2026-07-03
+
 **Status: PARKED after the Wave P1 spike (owner decision). The minimal-privilege path
 can _create_ per-session namespaces but cannot give them usable _networking_ without
 either broad privilege (`CAP_SYS_ADMIN`) or hand-rolled rootless-container networking —

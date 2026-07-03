@@ -1,5 +1,7 @@
 # Connecting a Claude session to a running box (debug console)
 
+> **Status:** Living · **Last verified:** 2026-07-03
+
 This is the **assistant-facing** runbook for the owner debug console. For the
 design, the auth model, and the security trade-offs, read `docs/DEBUG_ACCESS.md`
 first — especially the part about it being a **test-box** feature that bypasses
@@ -10,9 +12,11 @@ it."
 
 You can't mint your own token — the owner does. Ask them to:
 
-1. Make sure the box is running with `JBRAIN_DEBUG_ACCESS_ENABLED=true`
-   (in `/opt/jbrain2/.env`, then `sudo jbrain restart`). Minting is refused
-   (409) and the `/api/debug/*` surface is absent (404) until this is on.
+1. Make sure the box is running with `DEBUG_ACCESS_ENABLED=true`
+   (in `/opt/jbrain2/.env`, then `sudo jbrain up` — **not** `restart`, which
+   reuses the old environment so the flag never takes; see `DEBUG_ACCESS.md`).
+   Minting is refused (409) and the `/api/debug/*` surface is absent (404) until
+   this is on.
 2. Open the PWA → **Settings → Debug access (Claude)**, enter a label
    (e.g. the session/task), pick a lifetime, and tap **Mint token**.
 3. Copy the **payload** it shows once — an opaque `base64url` string — and paste

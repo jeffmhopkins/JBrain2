@@ -1,5 +1,7 @@
 # JBrain2 — Development Standards
 
+> **Status:** Living · **Last verified:** 2026-07-03
+
 These standards bind human and AI contributors equally. CI is the gatekeeper:
 lint, typecheck, and tests must be green before merge — no exceptions.
 
@@ -24,10 +26,11 @@ model id), and a `version` — in YAML frontmatter + a templated body, loaded by
 `jbrain.llm.promptfile` beside the module that uses it (e.g.
 `analysis/prompts/note_extract.prompt`). The version is stamped on every record
 the prompt produces, so a CI guard fails if the prose changes without a version
-bump (a re-run is then a deliberate migration). All current prompts live this way
-(note.extract, entity.disambiguate, vision.ocr, vision.caption); a new prompt is a
-new `.prompt` file, never an in-code string, and the same sidecar pattern is what
-Phase-4 tool definitions will adopt.
+bump (a re-run is then a deliberate migration). Every prompt lives this way
+(e.g. `note.extract`, `entity.disambiguate`, `vision.ocr`, `vision.caption`, and
+the wiki/intake/agent prompts added since); a new prompt is a new `.prompt` file,
+never an in-code string, and tool definitions adopt the same sidecar pattern
+(`.tool` files, with a matching version-bump CI guard).
 
 ## Comment standards
 
@@ -71,6 +74,9 @@ better than narrated code, and stale comments are worse than none.
 - **Conventional Commits**: `feat:`, `fix:`, `refactor:`, `docs:`, `test:`,
   `chore:`.
 - No force-pushes to `main`.
+- **Docs reconciled in the same PR** (per `docs/DOC_LIFECYCLE.md`): plan status
+  flipped or archived when its waves land, Living docs corrected when behaviour
+  changes, and `Last verified` bumped. Run `scripts/docs-freshness.sh` first.
 
 ## Releases
 

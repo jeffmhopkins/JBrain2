@@ -1,5 +1,7 @@
 # JBrain2 — GUI Design System
 
+> **Status:** Living · **Last verified:** 2026-07-03
+
 Binding reference for all UI work. Derived from the owner-supplied JBrain v1
 reference screens (dark composer, knowledge hub, calendar, medical entry).
 Components use **tokens only** — no raw hex values outside the token sheet.

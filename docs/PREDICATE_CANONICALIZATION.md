@@ -1,5 +1,7 @@
 # Predicate canonicalization (embedding-assisted) + typed value shapes
 
+> **Status:** Superseded (kept in place — still cited by `README`) · **Superseded-by:** `ENTITY_GRAPH_REFOCUS_PLAN.md` · **Last verified:** 2026-07-03
+
 Status: **largely superseded** by `docs/ENTITY_GRAPH_REFOCUS_PLAN.md` (the
 two-tier predicate model). The embed-band decision and the `new_predicate`
 review card no longer run: an unknown predicate hits only the durable

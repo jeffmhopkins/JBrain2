@@ -1,5 +1,7 @@
 # JBrain2 — Multi-wave execution process
 
+> **Status:** Living · **Last verified:** 2026-07-03
+
 The **binding process** for building a phased plan (e.g. `WORKFLOW_ENGINE_PLAN.md`)
 once its waves are defined. It governs *how* the work is sequenced, reviewed, and
 landed — and it binds human and AI contributors equally, on top of

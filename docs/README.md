@@ -1,11 +1,13 @@
 # JBrain2 — Documentation map
 
+> **Status:** Living · **Last verified:** 2026-07-03
+
 JBrain2 is a personal knowledge system: notes in → RAG indexing → an
 LLM-maintained wiki with notes as the sole sources of truth. This folder holds
 the binding design docs. Project-wide non-negotiables live in the root
 `CLAUDE.md`.
 
-## Where the project is (2026-06)
+## Where the project is (2026-07)
 
 **Phases 0–5 are shipped** — note capture,
 ingestion/search, the v3 note→graph analysis pipeline, the personal agent
@@ -14,7 +16,8 @@ the Full Brain chat surface), lists and appointments, and the **workflow engine*
 (`events`/`triggers`/`pipelines`/`actions`/`runs` + scheduler + unified run-log +
 the cutover of ingest/integration/consolidation onto the engine), reflexion in the
 live turn, and the recurring self-heal reconcilers. The note-analysis calibration
-evals run as a CI quality guard. Migrations run through 0044.
+evals run as a CI quality guard. The migration head advances continuously — see
+`backend/migrations/versions/` for the current head.
 
 **Phase 5 is complete; next is Phase 6 (Wiki).** The self-improvement Loops 2–4
 (skill learning, durable-knowledge promotion, prompt/tool self-edit) and their
