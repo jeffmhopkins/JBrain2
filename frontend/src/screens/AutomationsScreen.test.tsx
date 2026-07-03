@@ -9,7 +9,7 @@ const SOON = new Date(Date.now() + 120_000).toISOString();
 const EVENT: Automation = {
   trigger_id: "e1",
   kind: "on_event",
-  group: "event",
+  group: "note",
   pipeline: "event_integrate_note",
   enabled: true,
   manual: false,
@@ -46,7 +46,7 @@ const EVENT: Automation = {
 const RECONCILER: Automation = {
   trigger_id: "s1",
   kind: "schedule",
-  group: "reconcile",
+  group: "note",
   pipeline: "reconcile_pending_notes",
   enabled: true,
   manual: true,
@@ -72,12 +72,13 @@ const RECONCILER: Automation = {
   timezone: "UTC",
 };
 
-// A nightly sweep set to a task-style weekly repeat — the editable cadence the owner
-// can change (the reconciler above keeps its interval mode and offers no editor).
+// A maintenance sweep set to a task-style weekly repeat — the editable cadence the
+// owner can change (the reconciler above keeps its interval mode and offers no editor).
+// Lands in the Maintenance section, which ships collapsed.
 const NIGHTLY: Automation = {
   trigger_id: "n1",
   kind: "schedule",
-  group: "nightly",
+  group: "maintenance",
   pipeline: "nightly_purge_deleted_artifacts",
   enabled: true,
   manual: true,
@@ -135,14 +136,25 @@ function mount(opts: { automations?: Automation[]; actions?: CatalogAction[] } =
 }
 
 describe("AutomationsScreen", () => {
-  it("renders the grouped when -> do cards", async () => {
+  it("groups the event pipeline and its reconciler together under Notes", async () => {
     mount();
-    expect(await screen.findByText("On a note event")).toBeInTheDocument();
-    expect(screen.getByText("Reconcilers · every few minutes")).toBeInTheDocument();
+    // Both the event trigger and the reconciler bucket into one "Notes" section.
+    expect(await screen.findByText("Notes")).toBeInTheDocument();
     // The event card reads as "When <event> -> run <pipeline>".
     expect(screen.getByText("note.ingested")).toBeInTheDocument();
     expect(screen.getAllByText("event_integrate_note").length).toBeGreaterThan(0);
     expect(screen.getByText("reconcile_pending_notes")).toBeInTheDocument();
+  });
+
+  it("ships Maintenance collapsed and expands it on tap", async () => {
+    mount({ automations: [EVENT, NIGHTLY] });
+    // Notes is open (its card shows); Maintenance is folded, so its card is hidden.
+    await screen.findByText("note.ingested");
+    expect(screen.getByText("Maintenance")).toBeInTheDocument();
+    expect(screen.queryByText("nightly_purge_deleted_artifacts")).not.toBeInTheDocument();
+    // Tapping the section header reveals the card.
+    fireEvent.click(screen.getByText("Maintenance"));
+    expect(await screen.findByText("nightly_purge_deleted_artifacts")).toBeInTheDocument();
   });
 
   it("expands a card to its steps + recent runs, surfacing a failed run's error", async () => {
@@ -210,7 +222,8 @@ describe("AutomationsScreen", () => {
   it("edits a nightly sweep's schedule like a task and PUTs the new spec", async () => {
     const update = vi.spyOn(api, "updateSchedule").mockResolvedValue();
     mount({ automations: [NIGHTLY] });
-    // Expand the nightly sweep and open its schedule editor.
+    // Maintenance ships collapsed — open the section, then the card + its editor.
+    fireEvent.click(await screen.findByText("Maintenance"));
     fireEvent.click(await screen.findByText("nightly_purge_deleted_artifacts"));
     fireEvent.click(await screen.findByRole("button", { name: /Edit schedule/ }));
     // Switch from weekly repeat to a plain daily repeat and save.

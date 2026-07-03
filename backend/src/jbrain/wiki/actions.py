@@ -30,6 +30,7 @@ WIKI_REFRESH_SPEC = ActionSpec(
     cost_class="expensive",
     dedup_key_expr=None,
     description="Rebuild dirty entities' articles (dirty-bit driven).",
+    category="wiki",
 )
 WIKI_REBUILD_SPEC = ActionSpec(
     name="wiki_rebuild",
@@ -40,6 +41,7 @@ WIKI_REBUILD_SPEC = ActionSpec(
     cost_class="expensive",
     dedup_key_expr=None,
     description="Full re-derive of one article (or all).",
+    category="wiki",
 )
 WIKI_REINDEX_SPEC = ActionSpec(
     name="wiki_reindex",
@@ -50,6 +52,7 @@ WIKI_REINDEX_SPEC = ActionSpec(
     cost_class="standard",
     dedup_key_expr=None,
     description="Re-embed wiki section summaries.",
+    category="wiki",
 )
 WIKI_PRUNE_SPEC = ActionSpec(
     name="wiki_prune",
@@ -60,6 +63,7 @@ WIKI_PRUNE_SPEC = ActionSpec(
     cost_class="cheap",
     dedup_key_expr=None,
     description="Archive orphaned wiki articles.",
+    category="wiki",
 )
 
 WIKI_SPECS = (WIKI_REFRESH_SPEC, WIKI_REBUILD_SPEC, WIKI_REINDEX_SPEC, WIKI_PRUNE_SPEC)

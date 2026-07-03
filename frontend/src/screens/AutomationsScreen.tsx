@@ -35,12 +35,18 @@ import {
 const DAY_LABELS = ["S", "M", "T", "W", "T", "F", "S"];
 const DAY_KEYS = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
 
-/** The mock's three sections, in order; an automation's `group` buckets it. */
+/** The three sections, in order, bucketed by subject (not by how a trigger fires):
+ * the note lifecycle up top, then the wiki, then background maintenance. An
+ * automation's `group` (from its action's category) picks its section. */
 const GROUPS: { key: Automation["group"]; label: string }[] = [
-  { key: "event", label: "On a note event" },
-  { key: "reconcile", label: "Reconcilers · every few minutes" },
-  { key: "nightly", label: "Nightly sweeps" },
+  { key: "note", label: "Notes" },
+  { key: "wiki", label: "Wiki" },
+  { key: "maintenance", label: "Maintenance" },
 ];
+
+/** Sections collapsed on first render — Maintenance is background hygiene the owner
+ * rarely touches, so it ships folded while Notes and Wiki stay open. */
+const DEFAULT_COLLAPSED: Automation["group"][] = ["maintenance"];
 
 function errorMessage(err: unknown): string {
   return err instanceof ApiError ? err.message : "Request failed. Is the server reachable?";
@@ -146,15 +152,18 @@ function whenLine(a: Automation) {
   );
 }
 
-/** Whether a card offers a schedule editor. Nightly sweeps get the day/time/repeat
- * editor; reconcilers get the interval (number+unit) editor. Event triggers are not
- * scheduled. */
+/** A sub-day sweep (the reconciler/geofence/inbox cadence): edited with the
+ * number+unit interval control, never the wall-clock day/time picker that would
+ * downgrade it to once a day. Read off the live cadence, not the display group —
+ * the note/maintenance sections now each mix interval sweeps and daily ones. */
+function isIntervalCadence(a: Automation): boolean {
+  return a.interval_seconds !== null && a.interval_seconds <= 3600;
+}
+
+/** Whether a card offers a schedule editor. Every schedule-bound sweep is editable
+ * (interval or day/time, per its cadence); event triggers are not scheduled. */
 function isEditableSchedule(a: Automation): boolean {
-  return (
-    a.kind === "schedule" &&
-    a.schedule_id !== null &&
-    (a.group === "nightly" || a.group === "reconcile")
-  );
+  return a.kind === "schedule" && a.schedule_id !== null;
 }
 
 /** The dim status + next/last meta line under the headline. */
@@ -257,9 +266,9 @@ function draftFromAuto(a: Automation): SchedDraft {
     intervalValue,
     intervalUnit,
   };
-  // A reconciler edits its sub-day cadence: open on Interval (or On demand if paused),
+  // A sub-day sweep edits its cadence: open on Interval (or On demand if paused),
   // never the wall-clock repeat that would downgrade a minute-level sweep to once a day.
-  if (a.group === "reconcile") {
+  if (isIntervalCadence(a)) {
     return { ...base, kind: a.schedule_kind === "on_demand" ? "on_demand" : "interval" };
   }
   if (a.schedule_kind === "repeat") {
@@ -342,8 +351,8 @@ function ScheduleEditor({ auto, saving, onClose, onSave }: ScheduleEditorProps) 
       days: d.days.includes(day) ? d.days.filter((x) => x !== day) : [...d.days, day].sort(),
     }));
   }
-  // Reconcilers edit a sub-day interval; everything else uses the task-style day/time editor.
-  const isReconcile = auto.group === "reconcile";
+  // Sub-day sweeps edit a fixed interval; everything else uses the task-style day/time editor.
+  const isReconcile = isIntervalCadence(auto);
   const modes: SchedDraft["kind"][] = isReconcile
     ? ["interval", "on_demand"]
     : ["on_demand", "once", "repeat"];
@@ -659,6 +668,18 @@ export function AutomationsScreen({ onClose, onOpenRuns }: AutomationsScreenProp
   const [toast, setToast] = useState<string | null>(null);
   const [editing, setEditing] = useState<Automation | null>(null);
   const [savingSchedule, setSavingSchedule] = useState(false);
+  // Which sections are folded. Maintenance ships collapsed (background hygiene the
+  // owner rarely opens); tapping a section header toggles it.
+  const [collapsed, setCollapsed] = useState<Set<Automation["group"]>>(
+    () => new Set(DEFAULT_COLLAPSED),
+  );
+  const toggleCollapsed = (key: Automation["group"]) =>
+    setCollapsed((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
 
   const refresh = useCallback(async () => {
     setError(null);
@@ -801,24 +822,35 @@ export function AutomationsScreen({ onClose, onOpenRuns }: AutomationsScreenProp
             GROUPS.map(({ key, label }) => {
               const inGroup = automations?.filter((a) => a.group === key) ?? [];
               if (inGroup.length === 0) return null;
+              const isCollapsed = collapsed.has(key);
               return (
                 <div key={key}>
-                  <h3 className="runs-sect">{label}</h3>
-                  {inGroup.map((auto) => (
-                    <AutomationCard
-                      key={auto.trigger_id}
-                      auto={auto}
-                      open={openId === auto.trigger_id}
-                      running={running.has(auto.trigger_id)}
-                      onToggleOpen={() =>
-                        setOpenId((id) => (id === auto.trigger_id ? null : auto.trigger_id))
-                      }
-                      onFlip={() => void flip(auto)}
-                      onRun={() => void runNow(auto)}
-                      onAllRuns={onOpenRuns}
-                      onEdit={() => setEditing(auto)}
-                    />
-                  ))}
+                  <button
+                    type="button"
+                    className="runs-sect auto-sect"
+                    aria-expanded={!isCollapsed}
+                    onClick={() => toggleCollapsed(key)}
+                  >
+                    <ChevronRightIcon size={13} />
+                    {label}
+                    <span className="auto-sect-count">{inGroup.length}</span>
+                  </button>
+                  {!isCollapsed &&
+                    inGroup.map((auto) => (
+                      <AutomationCard
+                        key={auto.trigger_id}
+                        auto={auto}
+                        open={openId === auto.trigger_id}
+                        running={running.has(auto.trigger_id)}
+                        onToggleOpen={() =>
+                          setOpenId((id) => (id === auto.trigger_id ? null : auto.trigger_id))
+                        }
+                        onFlip={() => void flip(auto)}
+                        onRun={() => void runNow(auto)}
+                        onAllRuns={onOpenRuns}
+                        onEdit={() => setEditing(auto)}
+                      />
+                    ))}
                 </div>
               );
             })

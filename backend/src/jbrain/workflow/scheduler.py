@@ -68,6 +68,7 @@ PURGE_ACTION = ActionSpec(
     cost_class="cheap",
     dedup_key_expr=None,
     description="Reap chunks and blobs of deleted notes.",
+    category="maintenance",
 )
 
 # The two boot self-heal backfills as registered actions so they ride a recurring
@@ -93,6 +94,7 @@ RECONCILE_PENDING_NOTES_ACTION = ActionSpec(
     cost_class="cheap",
     dedup_key_expr=None,
     description="Re-enqueue ingest for notes still pending.",
+    category="note",
 )
 
 RECONCILE_PENDING_INTEGRATION_ACTION = ActionSpec(
@@ -104,6 +106,7 @@ RECONCILE_PENDING_INTEGRATION_ACTION = ActionSpec(
     cost_class="cheap",
     dedup_key_expr=None,
     description="Re-enqueue integration for indexed-but-unintegrated notes.",
+    category="note",
 )
 
 # The third boot self-heal backfill promoted off boot-only (Track S): a dropped
@@ -121,6 +124,7 @@ RECONCILE_UNEMBEDDED_NOTES_ACTION = ActionSpec(
     cost_class="cheap",
     dedup_key_expr=None,
     description="Embed notes whose chunks slipped through.",
+    category="note",
 )
 
 # The geofence reconciler backstop (Phase 7 Wave 3c): the scheduled twin of the
@@ -141,6 +145,7 @@ GEOFENCE_SWEEP_ACTION = ActionSpec(
     cost_class="cheap",
     dedup_key_expr=None,
     description="Rebuild geofence mirrors and re-detect missed transitions.",
+    category="maintenance",
 )
 
 # A monotonic UTC clock the tick reads through, so a test can inject a frozen one

@@ -38,7 +38,7 @@ class FakeAutomationsReader:
                 AutomationView(
                     trigger_id="e1",
                     kind="on_event",
-                    group="event",
+                    group="note",
                     pipeline="event_ingest_note",
                     enabled=True,
                     manual=False,
@@ -64,7 +64,7 @@ class FakeAutomationsReader:
                 AutomationView(
                     trigger_id="s1",
                     kind="schedule",
-                    group="reconcile",
+                    group="note",
                     pipeline="reconcile_pending_notes",
                     enabled=False,
                     manual=True,
@@ -188,7 +188,7 @@ def test_list_automations_shape(client: TestClient, repo: FakeAuthRepo) -> None:
     assert [a["trigger_id"] for a in autos] == ["e1", "s1"]
     event = autos[0]
     assert event["kind"] == "on_event"
-    assert event["group"] == "event"
+    assert event["group"] == "note"
     assert event["on_event"] == "note.created"
     assert event["manual"] is False  # event triggers are not manually fireable
     assert event["steps"][0]["cost_class"] == "standard"

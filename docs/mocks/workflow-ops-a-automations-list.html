@@ -48,6 +48,10 @@
   .body{flex:1;overflow-y:auto;padding:4px 14px 16px;}
   .sect{font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--text-3);margin:14px 2px 8px;}
   .sect:first-child{margin-top:6px;}
+  .sect-btn{display:flex;align-items:center;gap:7px;width:100%;background:none;border:none;cursor:pointer;font:inherit;}
+  .sect-chev{width:13px;height:13px;flex:none;color:var(--text-3);transition:transform .16s;}
+  .sect-btn[aria-expanded="true"] .sect-chev{transform:rotate(90deg);}
+  .sect-count{margin-left:auto;letter-spacing:0;color:var(--text-3);}
 
   /* automation card */
   .auto{background:var(--surface);border:1px solid var(--border);border-radius:16px;margin-bottom:11px;overflow:hidden;}
@@ -194,42 +198,54 @@ const ACTIONS={
   reconcile_pending_notes:{cost:'cheap',desc:'Re-enqueue ingest for notes still pending.'},
   reconcile_pending_integration:{cost:'cheap',desc:'Re-enqueue integration for indexed-but-unintegrated notes.'},
   reconcile_unembedded_notes:{cost:'cheap',desc:'Embed notes whose chunks slipped through.'},
+  wiki_refresh:{cost:'expensive',desc:'Rebuild dirty entities’ articles (dirty-bit driven).'},
+  wiki_lint:{cost:'expensive',desc:'Corpus-wide wiki health audit: report drift, re-dirty stale index, verify (LLM).'},
 };
 
 // ---- triggers as automations (seeds 0040 event / 0038 nightly / 0041 reconcilers) ----
 const AUTOS=[
   {id:'00000000-0000-0000-0000-0000000e0001',type:'event',ev:'note.created',pipeline:'event_ingest_note',
-   steps:['ingest_note'],enabled:true,last:'running',group:'event',
+   steps:['ingest_note'],enabled:true,last:'running',group:'note',
    runs:[{s:'run',t:'roof-quote note',m:'now · 1 of 1'},{s:'ok',t:'grocery note',m:'2h ago · 9s'},{s:'ok',t:'labs PDF note',m:'4h ago · 11s'}]},
   {id:'00000000-0000-0000-0000-0000000e0002',type:'event',ev:'note.ingested',pipeline:'event_integrate_note',
-   steps:['integrate_note'],enabled:true,last:'failed',group:'event',
+   steps:['integrate_note'],enabled:true,last:'failed',group:'note',
    runs:[{s:'failed',t:'labs PDF note',m:'18m ago · 31s',err:'integrate_note: ocr_attachment dep failed — extract skipped, retry queued.'},{s:'ok',t:'roof-quote note',m:'1h ago · 22s'}]},
-  {id:'00000000-0000-0000-0000-0000000e0003',type:'event',ev:'resolution.changed',pipeline:'event_consolidate_predicates',
-   steps:['consolidate_predicates'],enabled:true,last:'ok',group:'event',
-   runs:[{s:'ok',t:'after merge review',m:'40m ago · 3s'}]},
 
   {id:'00000000-0000-0000-0000-0000000c0012',type:'schedule',interval:'every 5m',next:'in 2m',pipeline:'reconcile_pending_notes',
-   steps:['reconcile_pending_notes'],enabled:true,last:'ok',manual:true,group:'reconcile',
+   steps:['reconcile_pending_notes'],enabled:true,last:'ok',manual:true,group:'note',
    runs:[{s:'ok',t:'swept 0 pending',m:'3m ago · 0.2s'},{s:'ok',t:'swept 1 pending',m:'8m ago · 0.4s'}]},
   {id:'00000000-0000-0000-0000-0000000c0014',type:'schedule',interval:'every 5m',next:'in 2m',pipeline:'reconcile_pending_integration',
-   steps:['reconcile_pending_integration'],enabled:true,last:'ok',manual:true,group:'reconcile',
+   steps:['reconcile_pending_integration'],enabled:true,last:'ok',manual:true,group:'note',
    runs:[{s:'ok',t:'swept 0 pending',m:'3m ago · 0.2s'}]},
   {id:'00000000-0000-0000-0000-0000000c0011x',type:'schedule',interval:'every 5m',next:'in 2m',pipeline:'reconcile_unembedded_notes',
-   steps:['reconcile_unembedded_notes'],enabled:false,last:'idle',manual:true,group:'reconcile',
+   steps:['reconcile_unembedded_notes'],enabled:false,last:'idle',manual:true,group:'note',
    runs:[{s:'ok',t:'swept 0 unembedded',m:'1h ago · 0.3s'}]},
 
+  {id:'wiki-refresh',type:'schedule',interval:'nightly',next:'03:00 UTC · in 8h',pipeline:'nightly_wiki_refresh',
+   steps:['wiki_refresh'],enabled:true,last:'ok',manual:true,group:'wiki',
+   runs:[{s:'ok',t:'rebuilt 3 articles',m:'03:00 · 41s'}]},
+  {id:'wiki-lint',type:'schedule',interval:'nightly',next:'03:30 UTC · in 8h',pipeline:'nightly_wiki_lint',
+   steps:['wiki_lint'],enabled:true,last:'ok',manual:true,group:'wiki',
+   runs:[{s:'ok',t:'2 findings · re-dirtied 1',m:'03:30 · 12s'}]},
+
+  {id:'00000000-0000-0000-0000-0000000e0003',type:'event',ev:'resolution.changed',pipeline:'event_consolidate_predicates',
+   steps:['consolidate_predicates'],enabled:true,last:'ok',group:'maintenance',
+   runs:[{s:'ok',t:'after merge review',m:'40m ago · 3s'}]},
   {id:'00000000-0000-0000-0000-0000000c0002',type:'schedule',interval:'nightly',next:'02:00 UTC · in 7h',pipeline:'nightly_consolidate_predicates',
-   steps:['consolidate_predicates'],enabled:true,last:'ok',manual:true,group:'nightly',
+   steps:['consolidate_predicates'],enabled:true,last:'ok',manual:true,group:'maintenance',
    runs:[{s:'ok',t:'merged 4 predicates',m:'02:00 · 6s'},{s:'ok',t:'merged 2 predicates',m:'yest 02:00 · 5s'}]},
   {id:'00000000-0000-0000-0000-0000000c0004',type:'schedule',interval:'nightly',next:'02:00 UTC · in 7h',pipeline:'nightly_sync_predicates',
-   steps:['sync_predicates'],enabled:true,last:'ok',manual:true,group:'nightly',
+   steps:['sync_predicates'],enabled:true,last:'ok',manual:true,group:'maintenance',
    runs:[{s:'ok',t:'index in step',m:'02:00 · 2s'}]},
   {id:'00000000-0000-0000-0000-0000000c0006',type:'schedule',interval:'nightly',next:'02:00 UTC · in 7h',pipeline:'nightly_purge_deleted_artifacts',
-   steps:['purge_deleted_artifacts'],enabled:true,last:'ok',manual:true,group:'nightly',
+   steps:['purge_deleted_artifacts'],enabled:true,last:'ok',manual:true,group:'maintenance',
    runs:[{s:'ok',t:'purged 12 orphans',m:'02:00 · 1s'}]},
 ];
 
-const GROUPS=[['event','On a note event'],['reconcile','Reconcilers · every 5 min'],['nightly','Nightly sweeps · 02:00']];
+// Grouped by SUBJECT (not by how a trigger fires): the note lifecycle, then the
+// wiki, then background maintenance. Maintenance ships collapsed.
+const GROUPS=[['note','Notes'],['wiki','Wiki'],['maintenance','Maintenance']];
+const COLLAPSED=new Set(['maintenance']);
 
 function whenLine(a){
   if(a.type==='event') return `When <span class="ev">${a.ev}</span> &rarr; run <span class="pl">${a.pipeline}</span>`;
@@ -284,10 +300,19 @@ function autoCard(a){
 function renderAuto(){
   let html='';
   for(const [g,label] of GROUPS){
-    html+=`<div class="sect">${label}</div>`;
-    html+=AUTOS.filter(a=>a.group===g).map(autoCard).join('');
+    const inGroup=AUTOS.filter(a=>a.group===g);
+    if(!inGroup.length) continue;               // an empty subject shows no header
+    const folded=COLLAPSED.has(g);
+    html+=`<button class="sect sect-btn" aria-expanded="${!folded}" onclick="toggleSect('${g}')">
+      <svg class="sect-chev" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>${label}
+      <span class="sect-count">${inGroup.length}</span></button>`;
+    if(!folded) html+=inGroup.map(autoCard).join('');
   }
   document.getElementById('pane-auto').innerHTML=html;
+}
+function toggleSect(g){
+  if(COLLAPSED.has(g)) COLLAPSED.delete(g); else COLLAPSED.add(g);
+  renderAuto();
 }
 
 function toggleCard(id,e){

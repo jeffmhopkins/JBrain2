@@ -948,11 +948,12 @@ export interface AutomationRun {
 }
 
 /** One "when X -> run Y" card. `kind` is on_event (auto, not manually fireable)
- * or schedule; `group` buckets it into the mock's sections. */
+ * or schedule; `group` buckets it into the surface's sections by subject
+ * (note lifecycle / wiki / background maintenance). */
 export interface Automation {
   trigger_id: string;
   kind: "on_event" | "schedule";
-  group: "event" | "reconcile" | "nightly";
+  group: "note" | "wiki" | "maintenance";
   pipeline: string;
   enabled: boolean;
   /** Manually fireable (a sweep/reconciler). Event triggers are never manual. */

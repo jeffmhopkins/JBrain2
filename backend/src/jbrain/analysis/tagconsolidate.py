@@ -36,6 +36,7 @@ TAG_CONSOLIDATE_SPEC = ActionSpec(
     cost_class="cheap",  # pure SQL, no LLM
     dedup_key_expr=None,
     description="Fold drift spellings of note tags to one canonical (lower/trim/dedupe) form.",
+    category="maintenance",
 )
 
 # Normalize each tag (lowercase, collapse whitespace, trim), drop empties, and re-aggregate

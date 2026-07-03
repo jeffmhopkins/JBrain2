@@ -173,6 +173,7 @@ WIKI_LINT_SPEC = ActionSpec(
     cost_class="expensive",
     dedup_key_expr=None,
     description="Corpus-wide wiki health audit: report drift, re-dirty stale index, verify (LLM).",
+    category="wiki",
 )
 
 
