@@ -75,12 +75,24 @@
     font-size: 9px; letter-spacing: 0.16em; text-transform: uppercase;
     color: #8FBC9A; opacity: 0.75;
   }
-  /* Prompt popup — steel accent + its own label (mirrors the answer popup). */
+  /* Prompt popup — steel accent + its own label (mirrors the answer popup). Unlike the
+     answer popup it HOLDS on screen (the brain is still working on the reply) and only
+     fades when the answer lands — otherwise a long turn would fade it before you saw it. */
   #popups .popup.in {
     border-color: rgba(127,167,201,0.32);
     box-shadow: 0 6px 26px rgba(0,0,0,0.5), 0 0 22px rgba(127,167,201,0.16);
+    animation: popupHoldIn 1.6s ease-out forwards;   /* fade in + settle, then hold */
   }
   #popups .popup.in::before { content: "↱ prompt"; color: #7FA7C9; }
+  #popups .popup.in.leaving { animation: popupOut 1.1s ease-in forwards; }
+  @keyframes popupHoldIn {
+    0%   { opacity: 0; transform: translate(0, 8px) scale(0.96); }
+    100% { opacity: 1; transform: translate(calc(var(--dx) * 0.28), calc(var(--dy) * 0.28)) scale(1); }
+  }
+  @keyframes popupOut {
+    from { opacity: 1; }
+    to   { opacity: 0; transform: translate(var(--dx), calc(var(--dy) - 10px)) scale(0.99); }
+  }
   @keyframes popupLife {
     0%   { opacity: 0; transform: translate(0, 8px) scale(0.96); }
     12%  { opacity: 1; transform: translate(calc(var(--dx) * 0.12), calc(var(--dy) * 0.12)) scale(1); }
@@ -809,11 +821,11 @@ for (let i = 0; i < 220; i++) {
 // `speed` (higher = faster flow). prompt/answer/thinking are the LLM turn; search/fetch
 // stream the query / URL when text is on.
 const STREAM_SPEC = {
-  prompt:   { dir: 'in',  g: '#c2d6ea', f: new THREE.Color('#7FA7C9'), speed: 2 },  // steel, into the net
-  answer:   { dir: 'out', g: '#c9e6cf', f: new THREE.Color('#8FBC9A'), speed: 2 },  // green, out to the right
-  thinking: { dir: 'out', g: '#bcaede', f: new THREE.Color('#8f7ec0'), speed: 3 },  // violet, faster reasoning trace
-  search:   { dir: 'out', g: '#bff0ff', f: new THREE.Color('#5fe6ff'), speed: 2 },  // cyan, reaching out to the web
-  fetch:    { dir: 'out', g: '#ffe2b4', f: new THREE.Color('#ffc66e'), speed: 2 },  // amber
+  prompt:   { dir: 'in',  g: '#c2d6ea', f: new THREE.Color('#7FA7C9'), speed: 6 },  // steel, into the net
+  answer:   { dir: 'out', g: '#c9e6cf', f: new THREE.Color('#8FBC9A'), speed: 6 },  // green, out to the right
+  thinking: { dir: 'out', g: '#bcaede', f: new THREE.Color('#8f7ec0'), speed: 9 },  // violet, fastest reasoning trace
+  search:   { dir: 'out', g: '#bff0ff', f: new THREE.Color('#5fe6ff'), speed: 6 },  // cyan, reaching out to the web
+  fetch:    { dir: 'out', g: '#ffe2b4', f: new THREE.Color('#ffc66e'), speed: 6 },  // amber
 };
 const LLM_BR = 15;        // world radius at the brain edge where a stream connects
 const LLM_REACH = 22;     // world length of the visible filament (brain edge -> screen edge)
@@ -821,8 +833,10 @@ const LLM_STEP = 0.9;     // world units between glyphs — fixed, so short text
 const LLM_CAP = 34;       // glyphs carried on the tendril (the popup holds the full answer)
 // Flow endpoints (world dist from centre): an answer emerges from the net and runs OFF the
 // right edge (FAR_OUT, well past the ~36 visible half-width); a prompt enters from off the
-// left edge (FAR_IN) and travels deep INTO the net (DEEP, near the core) before dissolving.
-const LLM_FAR_OUT = 50, LLM_FAR_IN = 40, LLM_DEEP = 2;
+// left edge (FAR_IN) and, after crossing the net edge, keeps the tendril's exit vector as a
+// straight line INTO the net, fully faded by FADE_END — 3/4 of the way across (net edge at
+// +LLM_BR to the far edge at -LLM_BR), rather than scrolling flat across to the far side.
+const LLM_FAR_OUT = 50, LLM_FAR_IN = 40, LLM_FADE_END = -0.5 * 15;
 const LLM_MAX = 6, LLM_SEG = 26;
 const llmStreams = [];
 for (let i = 0; i < LLM_MAX; i++) llmStreams.push({ active: false });
@@ -854,16 +868,24 @@ function spawnStream(kind, text) {           // kind: prompt | answer | search |
   st.life = (2.6 + (LLM_REACH + st.L * LLM_STEP) * 0.10) / spec.speed;
 }
 
-// World point at distance `d` from centre along a stream (a gentle sine bow in y).
+// World point at distance `d` from centre along a stream. A gentle sine bow in y over the
+// tendril span [0,1]; OUTSIDE that span (inside the net at t<0, or past the tip at t>1) the
+// curve continues as a STRAIGHT LINE along the boundary tangent — so text keeps the tendril's
+// last vector instead of snapping flat/horizontal.
 function llmPointAt(st, d, out) {
   const s = st.dir === 'in' ? -1 : 1;               // left for a prompt, right for an answer
-  const t = clamp((d - LLM_BR) / LLM_REACH, 0, 1);
-  return out.set(s * d, st.yb + Math.sin(Math.PI * t) * st.bow, st.zb);
+  const t = (d - LLM_BR) / LLM_REACH;               // raw (may be <0 inside the net or >1 past the tip)
+  let yoff;
+  if (t < 0)      yoff = t * Math.PI * st.bow;               // extend the t=0 tangent into the net
+  else if (t > 1) yoff = -(t - 1) * Math.PI * st.bow;        // extend the t=1 tangent past the tip
+  else            yoff = Math.sin(Math.PI * t) * st.bow;     // the bow itself
+  return out.set(s * d, st.yb + yoff, st.zb);
 }
 // Distance-from-centre for glyph `i` at progress `p`. The whole legible block FLOWS
-// (order preserved: char 0 always reads leftmost). An answer emerges from the net edge
-// and its leading edge runs out to FAR_OUT (off the right); a prompt enters from FAR_IN
-// (off the left) and its leading edge travels in to DEEP (the core), both fully clearing.
+// (order preserved: char 0 always reads leftmost). An answer emerges from the net edge and
+// its leading edge runs out to FAR_OUT (off the right); a prompt enters from FAR_IN (off the
+// left), char 0 leading in, and the block flows until its LAST char reaches FADE_END (3/4
+// across the net) — where it has fully dissolved — so it never scrolls to the far side.
 function llmGlyphDist(st, i, p) {
   const L = st.L, block = (L - 1) * LLM_STEP;
   if (st.dir === 'out') {
@@ -871,8 +893,8 @@ function llmGlyphDist(st, i, p) {
     const d0 = (LLM_BR - block) + p * (LLM_FAR_OUT - (LLM_BR - block));
     return d0 + i * LLM_STEP;
   }
-  // char 0 leads into the net (first character first) from FAR_IN in to DEEP; the rest trail
-  const dLead = LLM_FAR_IN + p * ((LLM_DEEP - block) - LLM_FAR_IN);
+  // char 0 leads into the net (first character first); the block ends with char L-1 at FADE_END
+  const dLead = LLM_FAR_IN + p * ((LLM_FADE_END - block) - LLM_FAR_IN);
   return dLead + i * LLM_STEP;
 }
 
@@ -921,13 +943,13 @@ function updateStreamText() {                 // project + flow glyphs — runs 
     const col = st.g;
     for (let i = 0; i < L && idx < CHAR_POOL.length; i++) {
       const d = llmGlyphDist(st, i, p);
-      if (d < LLM_DEEP - 3 || d > LLM_FAR_OUT + 2) continue;   // fully past either end
-      // Dissolve near whichever end the flow terminates at: an answer fades in as it
-      // clears the net edge and off at the far right; a prompt fades in as it enters
-      // from the left and dissolves as it reaches deep into the core.
+      if (d < LLM_FADE_END - 2 || d > LLM_FAR_OUT + 2) continue;   // fully past either end
+      // Dissolve near whichever end the flow terminates at: an answer fades in as it clears
+      // the net edge and off at the far right; a prompt stays full on the tendril and up to
+      // the net edge, then fades across the net — fully gone by FADE_END (3/4 across).
       const fade = st.dir === 'out'
         ? Math.min(1, (d - (LLM_BR - 4)) / 5) * Math.min(1, (LLM_FAR_OUT - d) / 7)
-        : Math.min(1, (LLM_FAR_IN - d) / 7) * Math.min(1, (d - LLM_DEEP) / 5);
+        : Math.min(1, (LLM_FAR_IN - d) / 7) * Math.min(1, (d - LLM_FADE_END) / (LLM_BR - LLM_FADE_END));
       if (fade <= 0) continue;
       llmPointAt(st, d, _lp).project(camera);
       if (_lp.z > 1) continue;                                // behind the camera
@@ -951,6 +973,17 @@ function updateStreamText() {                 // project + flow glyphs — runs 
 }
 
 const popupsEl = document.getElementById('popups');
+// The prompt popup that's currently held (waiting for its answer), so a landing answer —
+// or a safety timeout — can retire it.
+let activePromptPopup = null;
+function fadePromptPopup(d) {
+  if (!d || d._leaving) return;
+  d._leaving = true;
+  clearTimeout(d._safety);
+  if (activePromptPopup === d) activePromptPopup = null;
+  d.classList.add('leaving');
+  setTimeout(() => d.remove(), 1200);
+}
 function spawnPopup(text, kind) {         // kind: 'answer' (default) | 'prompt'
   const t = String(text || '').replace(/\s+/g, ' ').trim();
   if (!t) return;
@@ -962,7 +995,17 @@ function spawnPopup(text, kind) {         // kind: 'answer' (default) | 'prompt'
   // a gentle, slightly-random drift while it lingers (mostly upward)
   d.style.setProperty('--dx', ((Math.random() - 0.5) * 34).toFixed(0) + 'px');
   d.style.setProperty('--dy', (-18 - Math.random() * 22).toFixed(0) + 'px');
-  d.addEventListener('animationend', () => d.remove());
+  if (kind === 'prompt') {
+    // Hold the question up while the brain works; retire any previous held one first, and
+    // set a safety fade in case no answer ever lands (Stop, error, long stall).
+    if (activePromptPopup) fadePromptPopup(activePromptPopup);
+    activePromptPopup = d;
+    d._safety = setTimeout(() => fadePromptPopup(d), 45000);
+  } else {
+    // An answer landed — retire the paired question popup as this one blooms.
+    if (activePromptPopup) fadePromptPopup(activePromptPopup);
+    d.addEventListener('animationend', () => d.remove());
+  }
   popupsEl.appendChild(d);
 }
 
@@ -1254,7 +1297,7 @@ const ServerBrain = {
   // LLM turn (opt-in real-text streaming): the prompt streams IN from the left, the
   // (fast) thinking trace and then the answer stream OUT to the right; prompt and answer
   // each bloom a fade-out popup so the full text is legible for a beat.
-  llmInput(text) { spawnStream('prompt', text); if (text) setTimeout(() => spawnPopup(text, 'prompt'), 900); },
+  llmInput(text) { spawnStream('prompt', text); if (text) setTimeout(() => spawnPopup(text, 'prompt'), 400); },
   llmThinking(text) { spawnStream('thinking', text); },
   llmOutput(text) { spawnStream('answer', text); if (text) setTimeout(() => spawnPopup(text, 'answer'), 1000); },
 };
