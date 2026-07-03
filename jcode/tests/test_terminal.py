@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import asyncio
 import fcntl
-import json
 import os
 import select
 import struct
@@ -286,8 +285,8 @@ def test_spawn_shell_applies_model_env_overrides(tmp_path) -> None:
 
 def test_model_env_pins_every_tier() -> None:
     # All four Claude tier aliases (opus/sonnet/haiku/fable) + the main model, plus the
-    # Grok CLI's GROK_MODEL and OpenClaw's OPENCLAW_MODEL, resolve to the one served
-    # route: no CLI may ever request a tier the single-model gateway doesn't have.
+    # Grok CLI's GROK_MODEL, resolve to the one served route — no CLI may ever request a
+    # tier/model the single-model gateway doesn't have.
     env = model_env("qwen3-coder-next")
     assert set(env) == {
         "ANTHROPIC_MODEL",
@@ -296,7 +295,6 @@ def test_model_env_pins_every_tier() -> None:
         "ANTHROPIC_DEFAULT_HAIKU_MODEL",
         "ANTHROPIC_DEFAULT_FABLE_MODEL",
         "GROK_MODEL",
-        "OPENCLAW_MODEL",
     }
     assert all(v == "qwen3-coder-next" for v in env.values())
 
@@ -360,81 +358,6 @@ def test_jcode_path_profile_snippet_is_a_noop_without_the_marker() -> None:
         ["bash", "-c", script], capture_output=True, text=True, check=True
     ).stdout.strip()
     assert out == "/usr/bin"
-
-
-def _render_openclaw_config(
-    home: Path, env: dict[str, str]
-) -> subprocess.CompletedProcess[str]:
-    # Source /etc/profile.d/openclaw-config.sh the way `bash -l` does, with a fake
-    # `openclaw` on PATH so the `command -v openclaw` guard fires. Returns the completed
-    # process; the rendered config lands at <home>/.openclaw/openclaw.json.
-    hook = Path(__file__).resolve().parents[1] / "openclaw-config.sh"
-    fakebin = home / "fakebin"
-    fakebin.mkdir(parents=True)
-    (fakebin / "openclaw").write_text("#!/bin/sh\nexit 0\n")
-    (fakebin / "openclaw").chmod(0o755)
-    full = {"HOME": str(home), "PATH": f"{fakebin}:/usr/bin:/bin", **env}
-    return subprocess.run(
-        ["bash", "-c", f'. "{hook}"'], capture_output=True, text=True, env=full
-    )
-
-
-def test_openclaw_config_hook_renders_valid_json_at_the_gateway(tmp_path) -> None:
-    # The hook writes ~/.openclaw/openclaw.json from the OPENCLAW_* env: valid JSON, the
-    # custom OpenAI-compatible provider at the gateway, and the per-session model pin as
-    # the default (provider/model-id), so `openclaw` targets the on-box coder.
-    home = tmp_path / "home"
-    res = _render_openclaw_config(
-        home,
-        {
-            "OPENCLAW_MODEL": "qwen3-coder-next-q8",
-            "OPENCLAW_MODELS_BASE_URL": "http://local-llm:8080/v1",
-            "OPENCLAW_API_KEY": "sk-local-noauth",
-            "OPENCLAW_CONTEXT_WINDOW": "262144",
-        },
-    )
-    assert res.returncode == 0, res.stderr
-    cfg = json.loads((home / ".openclaw" / "openclaw.json").read_text())
-    primary = cfg["agents"]["defaults"]["model"]["primary"]
-    assert primary == "on-box-coder/qwen3-coder-next-q8"
-    provider = cfg["models"]["providers"]["on-box-coder"]
-    assert provider["baseUrl"] == "http://local-llm:8080/v1"
-    assert provider["api"] == "openai-completions"
-    assert provider["apiKey"] == "sk-local-noauth"
-    model = provider["models"][0]
-    # The per-session quant, not a cloud default:
-    assert model["id"] == "qwen3-coder-next-q8"
-    # An int, not a string — so it parses as JSON:
-    assert model["contextWindow"] == 262144
-
-
-def test_openclaw_config_hook_defaults_when_env_is_absent(tmp_path) -> None:
-    # With no OPENCLAW_* env the hook still renders valid JSON pinned to the on-box
-    # coder (the compose defaults), so a bare image never points `openclaw` at a cloud.
-    home = tmp_path / "home"
-    res = _render_openclaw_config(home, {})
-    assert res.returncode == 0, res.stderr
-    cfg = json.loads((home / ".openclaw" / "openclaw.json").read_text())
-    provider = cfg["models"]["providers"]["on-box-coder"]
-    primary = cfg["agents"]["defaults"]["model"]["primary"]
-    assert primary == "on-box-coder/qwen3-coder-next"
-    assert provider["baseUrl"] == "http://local-llm:8080/v1"
-
-
-def test_openclaw_config_hook_is_a_noop_without_the_cli(tmp_path) -> None:
-    # Image-wide safety: with `openclaw` not installed the guard skips, writing
-    # nothing — the hook is harmless in any shell that doesn't have the CLI.
-    home = tmp_path / "home"
-    home.mkdir()
-    hook = Path(__file__).resolve().parents[1] / "openclaw-config.sh"
-    res = subprocess.run(
-        ["bash", "-c", f'. "{hook}"'],
-        capture_output=True,
-        text=True,
-        env={"HOME": str(home), "PATH": "/usr/bin:/bin"},
-    )
-    assert res.returncode == 0, res.stderr
-    assert not (home / ".openclaw").exists()
 
 
 def test_preview_env_exports_the_port() -> None:
