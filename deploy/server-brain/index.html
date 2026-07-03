@@ -240,7 +240,7 @@
     <div class="leg"><span class="sw" style="background:linear-gradient(90deg,var(--steel),transparent)"></span><span><b>Active density</b> — RAM + VRAM in use</span></div>
     <div class="leg"><span class="sw dot" style="background:var(--amber);box-shadow:0 0 8px var(--amber)"></span><span><b>Bloom / heat</b> — APU power draw</span></div>
     <div class="leg"><span class="sw" style="background:linear-gradient(90deg,transparent,#5fe6ff)"></span><span><b>Cyan tendril</b> — web search (query streams out)</span></div>
-    <div class="leg"><span class="sw" style="background:linear-gradient(90deg,transparent,#ffc66e)"></span><span><b>Amber tendril</b> — web fetch (URL streams out)</span></div>
+    <div class="leg"><span class="sw" style="background:linear-gradient(90deg,#ffc66e,transparent)"></span><span><b>Amber tendril</b> — web fetch (data streams in from the left)</span></div>
     <div class="leg"><span class="sw" style="background:linear-gradient(90deg,#7FA7C9,transparent)"></span><span><b>Steel stream</b> — LLM prompt (streams in from the left)</span></div>
     <div class="leg"><span class="sw" style="background:linear-gradient(90deg,transparent,#8f7ec0)"></span><span><b>Violet stream</b> — LLM thinking (fast reasoning trace)</span></div>
     <div class="leg"><span class="sw" style="background:linear-gradient(90deg,transparent,#8FBC9A)"></span><span><b>Green stream</b> — LLM answer (streams out to the right, + popup)</span></div>
@@ -737,10 +737,26 @@ function pickPeriphery() {
   for (let k = 0; k < 16; k++) { const i = (Math.random()*NEURONS)|0; if (neuronRadial[i] > 0.62 && neuronRank[i] < d) return i; }
   return (Math.random()*NEURONS)|0;
 }
+// A currently-FIRING neuron (high flood activation `nodeAct`) to plant a tendril on, so
+// tendrils initiate/land from real brain activity rather than a generic spot. `pred` can
+// constrain the choice (side/periphery); falls back to a peripheral neuron when nothing is
+// firing (e.g. an idle box). Picks the most-activated of a random sample.
+const _np = new THREE.Vector3();
+function neuronWorldX(i) {
+  return _np.set(neuronPos[i*3], neuronPos[i*3+1], neuronPos[i*3+2]).applyMatrix4(cortex.matrixWorld).x;
+}
+function pickActivatedNeuron(pred) {
+  let best = -1, bestAct = 0.3;
+  for (let k = 0; k < 48; k++) {
+    const i = (Math.random()*NEURONS)|0;
+    if (nodeAct[i] > bestAct && (!pred || pred(i))) { best = i; bestAct = nodeAct[i]; }
+  }
+  return best >= 0 ? best : pickPeriphery();
+}
 function spawnTendril(kind) {
   let td = null; for (const x of tendrils) if (!x.active) { td = x; break; }
   if (!td) return;
-  const anchor = pickPeriphery();
+  const anchor = pickActivatedNeuron(i => neuronRadial[i] > 0.5);   // a firing peripheral neuron
   const ax = neuronPos[anchor*3], ay = neuronPos[anchor*3+1], az = neuronPos[anchor*3+2];
   const len = Math.hypot(ax, ay, az) || 1, ox = ax/len, oy = ay/len, oz = az/len;
   const OUT = 26 + Math.random()*16;
@@ -824,8 +840,8 @@ const STREAM_SPEC = {
   prompt:   { dir: 'in',  g: '#c2d6ea', f: new THREE.Color('#7FA7C9'), speed: 3 },   // steel, into the net
   answer:   { dir: 'out', g: '#c9e6cf', f: new THREE.Color('#8FBC9A'), speed: 3 },   // green, out to the right
   thinking: { dir: 'out', g: '#bcaede', f: new THREE.Color('#8f7ec0'), speed: 4.5 }, // violet, faster reasoning trace
-  search:   { dir: 'out', g: '#bff0ff', f: new THREE.Color('#5fe6ff'), speed: 3 },   // cyan, reaching out to the web
-  fetch:    { dir: 'out', g: '#ffe2b4', f: new THREE.Color('#ffc66e'), speed: 3 },   // amber
+  search:   { dir: 'out', g: '#bff0ff', f: new THREE.Color('#5fe6ff'), speed: 3 },   // cyan, query reaching OUT to the web
+  fetch:    { dir: 'in',  g: '#ffe2b4', f: new THREE.Color('#ffc66e'), speed: 3 },   // amber, fetched data IN to the llm (from the left)
 };
 const LLM_BR = 15;        // world radius at the brain edge where a stream connects
 const LLM_REACH = 22;     // world length of the visible filament (brain edge -> screen edge)
@@ -860,26 +876,32 @@ function spawnStream(kind, text) {           // kind: prompt | answer | search |
   st.dir = spec.dir; st.g = spec.g; st.f = spec.f;
   st.text = clean; st.age = 0; st.active = true; st.seeded = false;
   st.L = Math.max(clean.length, 1);
-  st.yb = (Math.random() - 0.5) * 20;               // vertical lane (kept on-screen)
-  st.zb = (Math.random() - 0.5) * 6;
+  // Plant the tendril on a currently-firing PERIPHERAL neuron, on the entry side (left for a
+  // prompt, right for an answer) so the left/right convention holds. Its live world position
+  // (tracked each frame in updateLlmStreams) is where the tendril meets the net.
+  const wantRight = spec.dir === 'out';
+  st.anchor = pickActivatedNeuron(i => neuronRadial[i] > 0.45 && (neuronWorldX(i) >= 0) === wantRight);
+  _np.set(neuronPos[st.anchor*3], neuronPos[st.anchor*3+1], neuronPos[st.anchor*3+2]).applyMatrix4(cortex.matrixWorld);
+  st._ax = _np.x; st._ay = _np.y; st._az = _np.z;
   st.bow = (2 + Math.random() * 3) * (Math.random() < 0.5 ? -1 : 1);  // gentle arc
   // life sized so the whole message flows across (net edge -> off screen / into the core);
   // spec.speed sets the pace (2x baseline, 3x for the thinking trace)
   st.life = (2.6 + (LLM_REACH + st.L * LLM_STEP) * 0.10) / spec.speed;
 }
 
-// World point at distance `d` from centre along a stream. A gentle sine bow in y over the
-// tendril span [0,1]; OUTSIDE that span (inside the net at t<0, or past the tip at t>1) the
-// curve continues as a STRAIGHT LINE along the boundary tangent — so text keeps the tendril's
-// last vector instead of snapping flat/horizontal.
+// World point at distance `d` along a stream, ANCHORED at the firing neuron (st._a*): at
+// d=LLM_BR the point sits ON the neuron, and the stream extends outward from there (left for
+// a prompt, right for an answer). A gentle sine bow in y over the tendril span [0,1]; OUTSIDE
+// that span (into the net at t<0, or past the tip at t>1) the curve continues as a STRAIGHT
+// LINE along the boundary tangent — so text keeps the tendril's last vector, not flat.
 function llmPointAt(st, d, out) {
   const s = st.dir === 'in' ? -1 : 1;               // left for a prompt, right for an answer
-  const t = (d - LLM_BR) / LLM_REACH;               // raw (may be <0 inside the net or >1 past the tip)
+  const t = (d - LLM_BR) / LLM_REACH;               // raw (may be <0 into the net or >1 past the tip)
   let yoff;
   if (t < 0)      yoff = t * Math.PI * st.bow;               // extend the t=0 tangent into the net
   else if (t > 1) yoff = -(t - 1) * Math.PI * st.bow;        // extend the t=1 tangent past the tip
   else            yoff = Math.sin(Math.PI * t) * st.bow;     // the bow itself
-  return out.set(s * d, st.yb + yoff, st.zb);
+  return out.set(st._ax + s * (d - LLM_BR), st._ay + yoff, st._az);
 }
 // Distance-from-centre for glyph `i` at progress `p`. The whole legible block FLOWS
 // (order preserved: char 0 always reads leftmost). An answer emerges from the net edge and
@@ -906,9 +928,13 @@ function updateLlmStreams(dt) {               // filament geometry — runs befo
     st.age += dt;
     const p = st.age / st.life;
     if (p >= 1) { st.active = false; clear(); continue; }
-    // a cascade fires as the stream meets the brain — receiving a prompt / emitting an answer
+    // Track the (rotating) anchor neuron's live world position, so the tendril stays planted
+    // on it as the cortex turns.
+    _np.set(neuronPos[st.anchor*3], neuronPos[st.anchor*3+1], neuronPos[st.anchor*3+2]).applyMatrix4(cortex.matrixWorld);
+    st._ax = _np.x; st._ay = _np.y; st._az = _np.z;
+    // a cascade fires from the anchor neuron — receiving a prompt / emitting an answer
     if (!st.seeded && p > (st.dir === 'in' ? 0.6 : 0.08)) {
-      st.seeded = true; seedCascadeAt(pickPeriphery(), st.dir === 'in' ? 1.15 : 0.7);
+      st.seeded = true; seedCascadeAt(st.anchor, st.dir === 'in' ? 1.15 : 0.7);
     }
     const col = st.f;
     const envel = Math.min(1, p*5) * Math.min(1, (1-p)*5);
