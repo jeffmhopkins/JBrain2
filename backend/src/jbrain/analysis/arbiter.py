@@ -68,6 +68,9 @@ class PlannedFact:
     review_reasons: tuple[str, ...] = ()
     # Owner-correction fact (Phase 6 §4): the executor force-supersedes + pins.
     correction: bool = False
+    # The incoming FHIR report status for an EMR lab reading (EMR import §3.5),
+    # carried verbatim from the IntentFact — lifecycle metadata, never weighed.
+    fhir_status: str | None = None
 
 
 @dataclass(frozen=True)
@@ -161,6 +164,7 @@ def plan_intent(
                 status=status,
                 review_reasons=tuple(reasons),
                 correction=fact_correction,
+                fhir_status=fact.fhir_status,
             )
         )
 
@@ -575,7 +579,11 @@ def compute_signals(
 
 
 def _to_extracted(
-    fact: IntentFact, confidence: float, *, correction: bool = False
+    fact: IntentFact,
+    confidence: float,
+    *,
+    correction: bool = False,
+    fhir_status: str | None = None,
 ) -> ExtractedFact:
     temporal = (
         ExtractedTemporal(
@@ -605,6 +613,7 @@ def _to_extracted(
         # supersession guard can still hold a low-confidence overwrite (N11).
         self_confidence=fact.self_confidence,
         correction=correction,
+        fhir_status=fhir_status,
     )
 
 
@@ -651,7 +660,10 @@ def plan_to_extraction(
         )
         for r in intent.entity_resolutions
     ]
-    facts = [_to_extracted(pf.fact, pf.weight, correction=pf.correction) for pf in source]
+    facts = [
+        _to_extracted(pf.fact, pf.weight, correction=pf.correction, fhir_status=pf.fhir_status)
+        for pf in source
+    ]
     return Extraction(
         title=title,
         tags=list(tags or []),

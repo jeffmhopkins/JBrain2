@@ -54,7 +54,18 @@ union="$(printf '%s\n%s\n%s\n' "$requested" "$current" "$reco" | grep -v '^[[:sp
 remove_file="$(mktemp)"
 trap 'rm -f "$remove_file"' EXIT
 printf '%s\n' "$removing" | grep -v '^[[:space:]]*$' | sort -u > "$remove_file"
-ids="$(printf '%s\n' "$union" | grep -vxF -f "$remove_file" | tr '\n' ' ')"
+# Set difference union - removing. Only run `grep -vxF -f` when the remove file is
+# NON-EMPTY: BusyBox grep (this runs in the docker:cli one-shot, Alpine/busybox — not
+# GNU) treats an EMPTY -f pattern file as a pattern that matches EVERY line, so
+# `grep -v` against it would drop the whole union → an empty `$ids` → a spurious "no
+# models to sync" on every install where nothing is queued for removal (the common
+# case). GNU grep returns all lines here, which is why this passed local testing but
+# silently no-op'd on the box. With no removals, ids IS the union.
+if [ -s "$remove_file" ]; then
+  ids="$(printf '%s\n' "$union" | grep -vxF -f "$remove_file" | tr '\n' ' ')"
+else
+  ids="$(printf '%s\n' "$union" | grep -v '^[[:space:]]*$' | tr '\n' ' ')"
+fi
 # Empty `$ids` is a VALID terminal state now that the uninstall queue is subtracted
 # above: "uninstall every served model" leaves an empty roster that must still be
 # APPLIED (write LOCAL_MODELS=[], restart, prune, clear) — bailing here would wedge
@@ -71,11 +82,30 @@ if [ -n "$ids" ]; then
   # shellcheck disable=SC2086  # $ids is a deliberately word-split id list.
   manifest="$(catalog -m jbrain.llm.local_catalog $ids)"
   [ -n "$manifest" ] || { say "empty manifest — aborting sync"; exit 1; }
+  # Log the provisioning plan (id -> repo (quant) include=glob) so the update/provision
+  # log names exactly what it is about to pull — the first thing to read when a
+  # download fails. Pure catalog read in the api image; best-effort (never fatal).
+  MAN="$manifest" catalog -c 'import json,os
+for m in json.loads(os.environ["MAN"]):
+    print("[local-llm]   %s <- %s (%s) include=%s" % (m["id"], m["hf_repo"], m["quant"], m["gguf_include"]))' \
+    || true
   # Absolute models dir: `docker run -v` resolves its source on the daemon, which has
   # no notion of this script's cwd, so a relative `./local-models` is not the host
   # path the api reads — pass the absolute path (cwd is the install dir).
+  # Capture the download's exit code so a failure is a LOUD, greppable line in the log
+  # (both the Ops screen and /api/debug/provision/status read this tail) instead of a
+  # bare non-zero exit. On failure we exit here: steps 5-8 (re-stamp, enable, restart,
+  # clear-queue) are deliberately skipped so a half-downloaded model is never served,
+  # and the queue persists for a retry.
+  set +e
   MANIFEST="$manifest" DOWNLOAD_CONTAINER="jbrain-local-models-sync-dl" \
     sh src/deploy/download-local-weights.sh "$PWD/local-models"
+  dl_rc=$?
+  set -e
+  if [ "$dl_rc" -ne 0 ]; then
+    say "DOWNLOAD FAILED for [${ids}] (rc=${dl_rc}) — see the hf output above for the reason (404 / auth / disk / network). Models stay queued for a retry."
+    exit "$dl_rc"
+  fi
 
   # 5. Re-stamp llama-swap.yaml for the new set (the api re-renders it, resolving
   #    each glob to a real downloaded filename). resident_group defaults OFF (opt-in):

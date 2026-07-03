@@ -315,6 +315,27 @@ def create_app(settings: Settings, gateway: DockerGateway) -> FastAPI:
             state=status.state, exit_code=status.exit_code, log_tail=status.log_tail
         )
 
+    @authed.post("/provision", status_code=202)
+    def start_provision() -> OneshotStartResponse:
+        # The PWA "Download" action: sync local-model weights on demand (no git pull,
+        # no rebuild). Shares the one-shot mutual-exclusion guard, so it 409s during
+        # an update/export/import/reset rather than racing over .env and the weights.
+        try:
+            return OneshotStartResponse(oneshot=gateway.start_provision())
+        except UpdateInProgressError:
+            raise HTTPException(
+                status_code=409, detail="another one-shot is running"
+            ) from None
+
+    @authed.get("/provision/status")
+    def provision_status(
+        tail: Annotated[int, Query(ge=1)] = 80,
+    ) -> UpdateStatusResponse:
+        status = gateway.oneshot_status("provision", min(tail, MAX_LOG_TAIL))
+        return UpdateStatusResponse(
+            state=status.state, exit_code=status.exit_code, log_tail=status.log_tail
+        )
+
     @authed.get("/logs/{service}", response_class=PlainTextResponse)
     def logs(
         service: str,

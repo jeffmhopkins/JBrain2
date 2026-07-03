@@ -117,13 +117,20 @@ llama-swap), downloads the recommended set — **Qwen3-VL-30B-A3B Q8 (~32 GB)** 
 **gpt-oss-120b MXFP4 (~59 GB)**, ~91 GB total — generates the llama-swap config,
 and starts the gateway. The recommended set **swaps one at a time by default** — only
 the model the next request names is loaded, so the box never pins both at once.
-Co-residency (keeping 120b + vl hot together in a llama-swap non-swapping group, ~91
-GB) is **opt-in**: it removes the cold-load on a text↔vision switch but pins ~91 GB of
-the 128 GB pool, which on this hardware drove hard-freezes (see "Stability —
-hard-freeze / OOM hardening" below). Turn it on only if you have the headroom:
-`LOCAL_LLM_RESIDENT_GROUP=1 sudo jbrain enable-local-models` (and add
-`LOCAL_LLM_RESIDENT_GROUP=1` to `.env` so an update keeps it). Staged models pin
-regardless of the flag.
+
+**Memory-safe co-residency** (`LOCAL_LLM_RESIDENT_GROUP=1`) keeps models loaded together
+*and stays under a RAM budget*. With it on, models share a llama-swap non-swapping group
+(the gateway never auto-evicts), and the app becomes the sole evictor: before a model
+loads it frees the **fewest** resident models needed to keep **≥25% of RAM free** (weights
++ KV, measured against live `/proc/meminfo`), evicting biggest-first and sparing staged
+models. So a small model (Qwen3.5-0.8B/4B) stays hot beside gpt-oss-120b, but requesting
+the coder evicts the *big* model — not the tiny one — and the box never over-commits. This
+replaces the old all-or-nothing pin that co-resided ~91 GB with no headroom and drove
+kernel-reclaim hard-freezes (see "Stability — hard-freeze / OOM hardening" below); the
+budget is what makes it safe. The 25% floor is tunable via `LOCAL_LLM_FREE_RAM_FRACTION`.
+Enable with `LOCAL_LLM_RESIDENT_GROUP=1 sudo jbrain enable-local-models` (add it to `.env`
+so an update keeps it); validate on-box before relying on it. Staged models pin regardless
+of the flag.
 
 ✅ **Checkpoint:** `jbrain status` shows `local-llm` running; `jbrain logs
 local-llm` shows llama-swap listening and the resident models loaded.
@@ -143,18 +150,27 @@ one) → **Settings → LLM**:
 - **High-stakes reasoning** → `GPT-OSS 120B`.
 - Leave the rest on cloud or go fully local — per task, your call.
 
-### Adding more models later — from the PWA, no shell
+### Adding / removing models later — from the PWA, no shell
 Once hosting is on, **Settings → LLM → On-box models** lists the whole catalog,
 not just what's provisioned. Each un-provisioned model (e.g. **Qwen3-235B-A22B**
-at 3-bit, ~104 GB) has an **Install** button that *queues* it. The next
-**Update** (Ops → Update, or `jbrain update`) downloads the queued weights, adds
-them to `LOCAL_MODELS`, re-stamps the gateway config, and restarts — the same
-provisioning `enable-local-models` does, driven from the queue instead of the
-shell. The drawer follows the download live (a per-model GB bar reading the bytes
-on disk); the coarse phase streams into the Ops update log. A model too large to
-co-reside (the 235B) installs **swappable** — it loads on its own, one at a time.
-First-time host prep (GPU GIDs, the gateway image, kernel params) still needs
-Phases 1–6 on the box; the PWA path only *adds models* to an already-enabled stack.
+at 3-bit, ~104 GB) has an **Install** button. Tapping it **starts the download
+immediately** — a dedicated weight-sync one-shot, **not** a system update: it
+pulls the queued weights, adds them to `LOCAL_MODELS`, re-stamps the gateway
+config, and restarts the gateway — the same provisioning `enable-local-models`
+does, but with no `git pull` or image rebuild. The drawer follows it live (a
+per-model GB bar reading the bytes on disk); the coarse phase and the verbose
+per-model download log stream into the queue banner. **Removing** is symmetric:
+an installed model's **Uninstall** button (on the Installed or Catalog tab) applies
+through the same sync one-shot, dropping it from `LOCAL_MODELS` and pruning its
+weights. A model too large to co-reside (the 235B) installs **swappable** — it
+loads on its own, one at a time. First-time host prep (GPU GIDs, the gateway image,
+kernel params) still needs Phases 1–6 on the box; the PWA path only *adds/removes
+models* on an already-enabled stack.
+
+> **When a download fails**, the banner shows the reason (last log line). For the
+> full verbose log — the resolved repo, include globs, and the hf error (404 / auth
+> / disk / network) — read `GET /api/debug/provision/status` via a debug token
+> (docs/runbooks/DEBUG_ACCESS.md), or the Ops update log.
 
 ## Phase 8 — Confirm it's really local
 - Add a note with a photo → it should OCR locally; watch `jbrain logs local-llm`.

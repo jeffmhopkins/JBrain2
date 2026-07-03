@@ -19,6 +19,11 @@ dependencies = [
     "structlog>=24.1",
     "python-multipart>=0.0.9",
     "pymupdf>=1.24",
+    # AES-encrypted ZIP extraction for the EMR importer (docs/plans/EMR_IMPORT_PLAN.md
+    # §6.1): the owner attaches an AES-256 zip of EMR exports, and stdlib `zipfile`
+    # handles only legacy ZipCrypto. Decryption of the contained PDFs still rides the
+    # already-present PyMuPDF; this is the one new runtime dependency the feature adds.
+    "pyzipper>=0.3.6",
     # Main-content extraction for jerv's web_fetch (jbrain.web.fetch): a real
     # readability engine that isolates a page's article as markdown, far cleaner than
     # the hand-rolled htmltext fallback. Keeps fetched pages legible enough that the

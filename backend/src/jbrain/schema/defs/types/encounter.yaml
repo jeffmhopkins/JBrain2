@@ -1,0 +1,62 @@
+# Clinical Encounter (FHIR Encounter). 🔒🔒 health — strictest firewall.
+# ACTIVE (EMR import, docs/plans/EMR_IMPORT_PLAN.md §3.4). One entity per
+# admit-facility-unit segment; a facility transfer is two entities linked by
+# `partOfEncounter`. Stored as graph facts + re-derived into `app.encounters`.
+# Every predicate name was collision-audited against the shipped registry
+# (§3.4): it avoids `location` (ref->place), `partOf` (ref->project), and
+# `reasonCode` (medication text) by using `serviceProvider`/`careUnit`,
+# `partOfEncounter`, and `encounterDiagnosis`. The lab<->encounter join
+# (`hasObservation`) is owned here because the lab reading vocab has none.
+id: encounter
+name: Encounter
+schema_org_ref: schema:MedicalProcedure
+description: A hospitalization or clinical visit; admit/discharge as an SCD-2 interval.
+vehicle: typed_record(P7)
+facets: [Named, Related]           # Named -> display; Related for reified roles
+default_fact_kind: state
+
+predicates:
+  - canonical_name: period         # the stay as an SCD-2 interval: valid_from=admit, valid_to=discharge
+    value_shape: enum              # value restates the class (§3.4 "class restated"); interval on valid_from/to
+    enum_values: [inpatient, emergency, ambulatory, observation]
+    kind: state
+    functional: true
+  - canonical_name: class          # queryable encounter class
+    value_shape: enum
+    enum_values: [inpatient, emergency, ambulatory, observation]
+    kind: attribute
+  - canonical_name: careUnit       # the clinical ward, e.g. "MICU" — health text, NOT a Located value
+    value_shape: text
+    kind: attribute
+  - canonical_name: serviceProvider  # the facility Organization (NAME only, no address; §3.6)
+    value_shape: ref
+    range_type: organization
+    kind: relationship
+    functional: true
+  - canonical_name: attender       # a provider on the encounter; qualifier = role
+    qualifier_vocab: encounter_role
+    value_shape: ref
+    range_type: person
+    kind: relationship
+  - canonical_name: encounterDiagnosis  # ICD-coded diagnosis edge; qualifier = icd10 code. Avoids `reasonCode`.
+    value_shape: ref
+    range_type: medical_condition
+    kind: relationship
+  - canonical_name: transfusion    # one blood-product order; qualifier = order id (events accumulate)
+    value_shape: structured
+    shape: transfusion_order
+    kind: event
+  - canonical_name: partOfEncounter  # facility-transfer linkage -> the episode's first Encounter. Avoids `partOf`.
+    value_shape: ref
+    range_type: encounter
+    kind: relationship
+    functional: true
+  - canonical_name: disposition    # discharge disposition, e.g. "transferred"
+    value_shape: text
+    kind: attribute
+  - canonical_name: hasObservation  # the lab<->encounter join; qualifier = "<collected_iso>|<specimen>", one edge per draw
+    value_shape: ref
+    range_type: lab_result
+    kind: relationship
+
+display_name: [name]

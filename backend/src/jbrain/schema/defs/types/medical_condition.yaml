@@ -1,0 +1,21 @@
+# Medical condition / diagnosis (schema.org MedicalCondition). 🔒🔒 health.
+# ACTIVE (EMR import, docs/plans/EMR_IMPORT_PLAN.md §3.4/§3.8). The target of an
+# encounter's `encounterDiagnosis` edge; ICD-10 codes ride `identifier.icd10`
+# (the open-scheme invariant validates icd10 with no _meta edit; the scheme is
+# seeded into id_scheme only as a digest hint). Stored as graph facts.
+id: medical_condition
+name: MedicalCondition
+schema_org_ref: schema:MedicalCondition
+description: A diagnosis as it appears in the record; ICD-10 via identifier.icd10.
+vehicle: typed_record(P7)
+facets: [Named, ExternalIdentified, Temporal, Related]
+default_fact_kind: attribute
+
+predicates:
+  - canonical_name: identifier     # identifier.icd10 — the diagnosis code
+    qualifier_vocab: id_scheme
+    value_shape: scalar
+    kind: attribute
+    functional: true
+
+display_name: [name]

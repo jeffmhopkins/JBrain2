@@ -50,6 +50,7 @@ docker run --rm $TTY_FLAG --name "$CONTAINER" \
   # this outer single-quoted bash -c string.
   python - <<'"'"'PY'"'"'
 import json, os, subprocess, time
+import huggingface_hub
 
 def _bytes(p):
     total = 0
@@ -60,6 +61,10 @@ def _bytes(p):
             except OSError:
                 pass
     return total
+
+# Name the tool + version up front — a chat-template / arch mismatch or a resume bug
+# is often a stale hub, so the reader wants this pinned in the log.
+print(f"== huggingface_hub {huggingface_hub.__version__} ==", flush=True)
 
 for m in json.loads(os.environ["MANIFEST"]):
     mid = m["id"]
@@ -81,7 +86,7 @@ for m in json.loads(os.environ["MANIFEST"]):
         try:
             subprocess.check_call(args)
             break
-        except subprocess.CalledProcessError:
+        except subprocess.CalledProcessError as exc:
             gained = _bytes(dest) - before
             if gained > 0:
                 stuck = 0
@@ -90,6 +95,13 @@ for m in json.loads(os.environ["MANIFEST"]):
                 stuck += 1
                 print(f"== download failed with no progress ({stuck}/5) ==", flush=True)
                 if stuck >= 5:
+                    # A loud, greppable terminal marker: the reason (hf stderr) is
+                    # already streamed above; this pins WHICH model died, the hf exit
+                    # code, and what (if anything) landed on disk, for the log tail the
+                    # PWA and /api/debug/provision/status read.
+                    listing = sorted(os.listdir(dest)) if os.path.isdir(dest) else "MISSING"
+                    print(f"== MODEL {mid} FAILED: {m['hf_repo']} — hf exited {exc.returncode} after {stuck} attempts with no progress ==", flush=True)
+                    print(f"== {mid} dest {dest} contains: {listing} ==", flush=True)
                     raise
             time.sleep(min(15, 3 * (stuck + 1)))
 PY

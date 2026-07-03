@@ -124,6 +124,19 @@ function stubLlmFetch(seed?: LlmSettings) {
         { status: 200, headers: { "Content-Type": "application/json" } },
       );
     }
+    // The Download action + its status poll — an install/uninstall auto-starts it.
+    if (path === "/api/ops/local-provision") {
+      return new Response(JSON.stringify({ oneshot: "jbrain-provision-1" }), {
+        status: 202,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+    if (path === "/api/ops/local-provision/status") {
+      return new Response(JSON.stringify({ state: "running", exit_code: null, log_tail: "" }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
     if (path !== "/api/settings/llm") throw new Error(`Unexpected fetch: ${path}`);
     if ((init?.method ?? "GET").toUpperCase() === "PUT") {
       const body = JSON.parse(String(init?.body)) as (typeof puts)[number];
@@ -661,7 +674,7 @@ describe("LLMSettingsScreen", () => {
     expect(screen.getByText(/unload to change/)).toBeInTheDocument();
   });
 
-  it("queues an un-provisioned model for install and offers 'Update & install now'", async () => {
+  it("queues an un-provisioned model for install and starts its download (no system update)", async () => {
     const s = initialSettings();
     s.local_hosting_enabled = true;
     s.host_memory = { total_gb: 128, used_gb: 0 };
@@ -682,11 +695,11 @@ describe("LLMSettingsScreen", () => {
           if (m0) m0.queued = true;
           return new Response(JSON.stringify(s), { status: 200 });
         }
-        if (path === "/api/ops/update" && method === "POST") {
+        if (path === "/api/ops/local-provision" && method === "POST") {
           calls.push(path);
-          return new Response(JSON.stringify({ updater: "jbrain-updater-1" }), { status: 202 });
+          return new Response(JSON.stringify({ oneshot: "jbrain-provision-1" }), { status: 202 });
         }
-        if (path === "/api/ops/update/status")
+        if (path === "/api/ops/local-provision/status")
           return new Response(
             JSON.stringify({ state: "running", exit_code: null, log_tail: "[local-llm] ↓" }),
             { status: 200 },
@@ -700,19 +713,21 @@ describe("LLMSettingsScreen", () => {
     fireEvent.click(screen.getByRole("tab", { name: /Catalog/i }));
 
     // No queue bar until something is queued.
-    expect(screen.queryByRole("button", { name: /Update & install now/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Download now/i })).not.toBeInTheDocument();
+    // A single tap both queues the install AND kicks the download — no system update.
     fireEvent.click(await screen.findByRole("button", { name: "Install" }));
     await waitFor(() =>
       expect(calls).toContain("/api/settings/llm/local-models/qwen3-235b-a22b/install"),
     );
+    await waitFor(() => expect(calls).toContain("/api/ops/local-provision"));
+    // No system-update endpoint is ever touched.
+    expect(calls).not.toContain("/api/ops/update");
 
-    // The queue bar appears with the GB tally; clicking it kicks the update one-shot.
-    expect(await screen.findByText(/1 to install · 104 GB/)).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: /Update & install now/i }));
-    await waitFor(() => expect(calls).toContain("/api/ops/update"));
+    // The queue bar appears with the GB tally.
+    expect(await screen.findByText(/1 to download · 104 GB/)).toBeInTheDocument();
   });
 
-  it("surfaces the update bar for a pending uninstall with nothing queued to install", async () => {
+  it("surfaces the download bar for a pending uninstall with nothing queued to install", async () => {
     const s = initialSettings();
     s.local_hosting_enabled = true;
     s.host_memory = { total_gb: 128, used_gb: 0 };
@@ -735,11 +750,11 @@ describe("LLMSettingsScreen", () => {
         const method = (init?.method ?? "GET").toUpperCase();
         if (path === "/api/settings/llm" && method === "GET")
           return new Response(JSON.stringify(s), { status: 200 });
-        if (path === "/api/ops/update" && method === "POST") {
+        if (path === "/api/ops/local-provision" && method === "POST") {
           calls.push(path);
-          return new Response(JSON.stringify({ updater: "jbrain-updater-1" }), { status: 202 });
+          return new Response(JSON.stringify({ oneshot: "jbrain-provision-1" }), { status: 202 });
         }
-        if (path === "/api/ops/update/status")
+        if (path === "/api/ops/local-provision/status")
           return new Response(JSON.stringify({ state: "running", exit_code: null, log_tail: "" }), {
             status: 200,
           });
@@ -751,9 +766,9 @@ describe("LLMSettingsScreen", () => {
     fireEvent.click(screen.getByRole("tab", { name: /Catalog/i }));
 
     // The bar reports the pending removal and offers an in-app trigger to apply it.
-    expect(await screen.findByText(/1 to uninstall/)).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: /Update & apply now/i }));
-    await waitFor(() => expect(calls).toContain("/api/ops/update"));
+    expect(await screen.findByText(/1 to remove/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /Apply now/i }));
+    await waitFor(() => expect(calls).toContain("/api/ops/local-provision"));
   });
 
   it("renders a live download bar from a queued model's on-disk bytes", async () => {
@@ -968,6 +983,15 @@ describe("LLMSettingsScreen", () => {
           if (m0) m0.remove_queued = true;
           return new Response(JSON.stringify(s), { status: 200 });
         }
+        // Uninstall applies through the same sync one-shot the Download action uses.
+        if (path === "/api/ops/local-provision" && method === "POST") {
+          calls.push(path);
+          return new Response(JSON.stringify({ oneshot: "jbrain-provision-1" }), { status: 202 });
+        }
+        if (path === "/api/ops/local-provision/status")
+          return new Response(JSON.stringify({ state: "running", exit_code: null, log_tail: "" }), {
+            status: 200,
+          });
         throw new Error(`unexpected fetch: ${method} ${path}`);
       }),
     );
@@ -982,6 +1006,53 @@ describe("LLMSettingsScreen", () => {
       expect(calls).toContain("/api/settings/llm/local-models/qwen3-vl-30b/uninstall"),
     );
     // Confirmed before queueing; the row now reads "uninstalling".
+    expect(confirm).toHaveBeenCalled();
+    expect(await screen.findByText("uninstalling")).toBeInTheDocument();
+    confirm.mockRestore();
+  });
+
+  it("removes an installed model directly from the Installed tab", async () => {
+    const s = initialSettings();
+    s.local_hosting_enabled = true;
+    s.host_memory = { total_gb: 128, used_gb: 0 };
+    s.local_models = [
+      lm({ id: "qwen3-vl-30b", label: "Qwen3-VL 30B", enabled: true, size_gb: 32, disk_gb: 32 }),
+    ];
+    const calls: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>(async (input, init) => {
+        const path = String(input);
+        const method = (init?.method ?? "GET").toUpperCase();
+        if (path === "/api/settings/llm" && method === "GET")
+          return new Response(JSON.stringify(s), { status: 200 });
+        if (path.endsWith("/qwen3-vl-30b/uninstall") && method === "POST") {
+          calls.push(path);
+          const m0 = s.local_models[0];
+          if (m0) m0.remove_queued = true;
+          return new Response(JSON.stringify(s), { status: 200 });
+        }
+        if (path === "/api/ops/local-provision" && method === "POST") {
+          calls.push(path);
+          return new Response(JSON.stringify({ oneshot: "jbrain-provision-1" }), { status: 202 });
+        }
+        if (path === "/api/ops/local-provision/status")
+          return new Response(JSON.stringify({ state: "running", exit_code: null, log_tail: "" }), {
+            status: 200,
+          });
+        throw new Error(`unexpected fetch: ${method} ${path}`);
+      }),
+    );
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+    render(<LLMSettingsScreen />);
+    // The Installed tab is the default; the row carries an Uninstall control now.
+    const row = (await screen.findByText("Qwen3-VL 30B")).closest(".llm-local-row") as HTMLElement;
+    fireEvent.click(within(row).getByRole("button", { name: "Uninstall" }));
+    await waitFor(() =>
+      expect(calls).toContain("/api/settings/llm/local-models/qwen3-vl-30b/uninstall"),
+    );
+    // Removal applies immediately through the sync one-shot (no system update).
+    await waitFor(() => expect(calls).toContain("/api/ops/local-provision"));
     expect(confirm).toHaveBeenCalled();
     expect(await screen.findByText("uninstalling")).toBeInTheDocument();
     confirm.mockRestore();

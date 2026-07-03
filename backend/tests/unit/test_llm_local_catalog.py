@@ -171,6 +171,26 @@ def test_qwen35_4b_is_a_small_text_only_low_tier() -> None:
     assert m.id not in local_catalog.recommended_ids()
 
 
+def test_footprint_gb_is_weights_plus_kv_scaled_by_window() -> None:
+    gpt = local_catalog.get("gpt-oss-120b")
+    vl = local_catalog.get("qwen3-vl-30b")
+    assert gpt is not None and vl is not None
+    # gpt-oss at its native 128k window: weights 59 + KV 4.5 (the 128k reference) = 63.5.
+    assert local_catalog.footprint_gb(gpt, 131072) == 63.5
+    # KV scales linearly with the window: vl at 32k = 32 + 6*(32768/131072) = 33.5.
+    assert local_catalog.footprint_gb(vl, 32768) == 33.5
+    # Half the window → half the KV term (16k = 32 + 0.75).
+    assert local_catalog.footprint_gb(vl, 16384) == 32.75
+    # A measured on-disk size overrides the nominal weights estimate.
+    assert local_catalog.footprint_gb(vl, 32768, disk_gb=31.9) == 33.4
+
+
+def test_get_by_served_maps_served_name_to_catalog_entry() -> None:
+    m = local_catalog.get_by_served("qwen3-vl-30b-a3b")
+    assert m is not None and m.id == "qwen3-vl-30b"
+    assert local_catalog.get_by_served("not-a-model") is None
+
+
 def _settings(**kw: Any) -> Settings:
     # Both cloud keys present — provider_choices hides a keyless cloud provider, so
     # tests that expect grok/claude to be offered must supply the keys.

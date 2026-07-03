@@ -29,6 +29,8 @@ def test_shipped_registry_loads_all_catalog_types(registry: SchemaRegistry) -> N
         "appointment",
         "bill",
         "lab_result",
+        "encounter",
+        "medical_condition",
         "vehicle",
         "medication",
         "financial_account",

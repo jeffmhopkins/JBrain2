@@ -7,6 +7,8 @@
 // (clone an existing link's config to a fresh show-once secret) and revokes.
 
 import { useCallback, useEffect, useState } from "react";
+import { Markdown } from "../agent/markdown";
+import type { Decision, EnactResult, ProposalDetail } from "../agent/types";
 import { api } from "../api/client";
 import { intakeShareUrl } from "../intake/share";
 import type {
@@ -28,6 +30,12 @@ export interface IntakeLinksDeps {
   materialize: (id: string) => Promise<{ proposal_id: string }>;
   revokeLink: (id: string) => Promise<void>;
   mintLink: (body: IntakeMintRequest) => Promise<IntakeMintResult>;
+  // Inline approval — the submission's Proposal is decided and enacted right here in
+  // the intake screen (still the owner-review trust gate under the hood), so the owner
+  // never has to hop to the separate Proposals panel to add a captured note.
+  getProposal: (id: string) => Promise<ProposalDetail>;
+  decideNode: (proposalId: string, nodeId: string, decision: Decision) => Promise<void>;
+  enactProposal: (id: string) => Promise<EnactResult>;
 }
 
 interface Props {
@@ -75,6 +83,9 @@ export function IntakeLinksScreen({ deps }: Props) {
     materialize: deps?.materialize ?? api.materializeIntakeSubmission,
     revokeLink: deps?.revokeLink ?? api.revokeIntakeLink,
     mintLink: deps?.mintLink ?? api.mintIntakeLink,
+    getProposal: deps?.getProposal ?? api.getProposal,
+    decideNode: deps?.decideNode ?? api.decideNode,
+    enactProposal: deps?.enactProposal ?? api.enactProposal,
   };
 
   const [links, setLinks] = useState<IntakeLink[] | null>(null);
@@ -554,10 +565,16 @@ function ConversationView({
   onMaterialized: () => void;
 }) {
   const [detail, setDetail] = useState<IntakeSubmissionDetail | null>(null);
+  const [proposal, setProposal] = useState<ProposalDetail | null>(null);
+  const [outcome, setOutcome] = useState<"added" | "rejected" | null>(null);
   const [error, setError] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [sent, setSent] = useState(false);
 
+  // `deps` is rebuilt each parent render (stable api refs behind it), and a
+  // materialize/approve triggers a parent reload — so these fetch effects key on the
+  // ids alone, never on `deps`, or the reload would re-run them and clobber the
+  // optimistic status we just set (matches the parent `reload`'s dep discipline).
+  // biome-ignore lint/correctness/useExhaustiveDependencies: see above.
   useEffect(() => {
     let stale = false;
     deps
@@ -571,14 +588,66 @@ function ConversationView({
     return () => {
       stale = true;
     };
-  }, [deps, submissionId]);
+  }, [submissionId]);
 
-  async function sendToInbox(): Promise<void> {
+  // Once the submission has a Proposal, load it so the owner can review the single
+  // note it became and approve it right here (no Proposals-panel hop).
+  const proposalId = detail?.proposal_id ?? null;
+  // biome-ignore lint/correctness/useExhaustiveDependencies: keyed on proposalId only — see above.
+  useEffect(() => {
+    if (!proposalId) return;
+    let stale = false;
+    deps
+      .getProposal(proposalId)
+      .then((p) => {
+        if (!stale) setProposal(p);
+      })
+      .catch(() => {
+        if (!stale) setError(true);
+      });
+    return () => {
+      stale = true;
+    };
+  }, [proposalId]);
+
+  // Turn the captured submission into its staged note (owner step — #10). The button
+  // then swaps for the note preview + approve, so the whole flow stays on this screen.
+  async function prepare(): Promise<void> {
     setBusy(true);
     try {
-      await deps.materialize(submissionId);
-      setSent(true);
-      setDetail((s) => (s ? { ...s, status: "proposed" } : s));
+      const { proposal_id } = await deps.materialize(submissionId);
+      setDetail((s) => (s ? { ...s, status: "proposed", proposal_id } : s));
+      onMaterialized();
+    } catch {
+      setError(true);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function approve(): Promise<void> {
+    const node = proposal?.nodes[0];
+    if (!proposal || !node) return;
+    setBusy(true);
+    try {
+      await deps.decideNode(proposal.id, node.id, "approve");
+      await deps.enactProposal(proposal.id);
+      setOutcome("added");
+      onMaterialized();
+    } catch {
+      setError(true);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function reject(): Promise<void> {
+    const node = proposal?.nodes[0];
+    if (!proposal || !node) return;
+    setBusy(true);
+    try {
+      await deps.decideNode(proposal.id, node.id, "reject");
+      setOutcome("rejected");
       onMaterialized();
     } catch {
       setError(true);
@@ -589,6 +658,13 @@ function ConversationView({
 
   const name = detail?.enterer_name || "Anonymous";
   const summary = typeof detail?.draft?.summary === "string" ? detail.draft.summary : "";
+  const noteNode = proposal?.nodes[0] ?? null;
+  const noteBody = typeof noteNode?.preview.body === "string" ? noteNode.preview.body : "";
+  // Reflect the just-made decision, or the persisted state on a revisit (a note was
+  // created, or the leaf already enacted/rejected in a prior visit).
+  const added =
+    outcome === "added" || (detail?.note_ids.length ?? 0) > 0 || noteNode?.status === "enacted";
+  const rejected = outcome === "rejected" || noteNode?.status === "rejected";
 
   return (
     <main className="screen-body intake-mgmt">
@@ -607,10 +683,13 @@ function ConversationView({
 
       {detail && (
         <>
-          {summary && (
+          {/* Before materializing: a preview of what the recipient confirmed. */}
+          {detail.status === "submitted" && summary && (
             <div className="intake-convosum">
               <div className="ttl">Draft shown to {name}</div>
-              <div className="body">{summary}</div>
+              <div className="body">
+                <Markdown text={summary} />
+              </div>
             </div>
           )}
 
@@ -619,16 +698,56 @@ function ConversationView({
               type="button"
               className="intake-btn steel"
               disabled={busy}
-              onClick={() => void sendToInbox()}
+              onClick={() => void prepare()}
             >
-              Send to review inbox →
+              Review as a note →
             </button>
           )}
-          {(detail.status === "proposed" || sent) && (
-            <p className="intake-inbox-note">
-              In your review inbox — open Proposals to approve the facts to keep.
-            </p>
-          )}
+
+          {/* After materializing: the single note it became, approvable inline. */}
+          {detail.status === "proposed" &&
+            (added ? (
+              <p className="intake-inbox-note">✓ Added to your notes.</p>
+            ) : rejected ? (
+              <p className="intake-inbox-note">Rejected — nothing was kept.</p>
+            ) : noteNode ? (
+              <>
+                <div className="intake-convosum">
+                  <div className="ttl">
+                    Note to add{proposal?.title ? ` · ${proposal.title}` : ""}
+                  </div>
+                  <div className="body">
+                    <Markdown text={noteBody} />
+                  </div>
+                </div>
+                <p className="intake-inbox-note">
+                  Review the note above — approve to add it to your notes, or reject to keep
+                  nothing.
+                </p>
+                <div className="intake-detail-actions">
+                  <button
+                    type="button"
+                    className="intake-btn steel"
+                    disabled={busy}
+                    onClick={() => void approve()}
+                  >
+                    Approve &amp; add to notes
+                  </button>
+                  <button
+                    type="button"
+                    className="intake-btn"
+                    disabled={busy}
+                    onClick={() => void reject()}
+                  >
+                    Reject
+                  </button>
+                </div>
+              </>
+            ) : proposal ? (
+              <p className="intake-inbox-note">Nothing usable to keep from this submission.</p>
+            ) : (
+              <p className="analysis-quiet">loading the note…</p>
+            ))}
 
           <div className="intake-sech">Full conversation</div>
           <div className="intake-transcript">
@@ -638,7 +757,9 @@ function ConversationView({
                 // biome-ignore lint/suspicious/noArrayIndexKey: a frozen, read-only transcript — index is a stable id.
                 <div key={i} className={`intake-tmsg${you ? " you" : ""}`}>
                   <div className="intake-twho">{you ? name : "Guide"}</div>
-                  <div className="intake-tbub">{t.text}</div>
+                  <div className="intake-tbub">
+                    <Markdown text={t.text ?? ""} />
+                  </div>
                 </div>
               );
             })}

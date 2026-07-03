@@ -1,5 +1,6 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
+import type { ProposalDetail } from "../agent/types";
 import type {
   IntakeLink,
   IntakeSessionRow,
@@ -7,6 +8,29 @@ import type {
   IntakeSubmissionDetail,
 } from "../intake/types";
 import { type IntakeLinksDeps, IntakeLinksScreen } from "./IntakeLinksScreen";
+
+function proposal(over: Partial<ProposalDetail> = {}): ProposalDetail {
+  return {
+    id: "P1",
+    kind: "intake-submission",
+    status: "staged",
+    domain: "health",
+    title: "Dad's health",
+    nodes: [
+      {
+        id: "N1",
+        parent_id: null,
+        type: "leaf",
+        op: "add_intake_note",
+        label: "Dad's health",
+        preview: { body: "Dad has **diabetes**.", domain: "health", submission_id: "S1" },
+        deps: [],
+        status: "pending",
+      },
+    ],
+    ...over,
+  };
+}
 
 function link(over: Partial<IntakeLink> = {}): IntakeLink {
   return {
@@ -73,6 +97,9 @@ function deps(over: Partial<IntakeLinksDeps> = {}): IntakeLinksDeps {
       expires_at: "2026-07-02T00:00:00Z",
       secret: "fresh",
     })),
+    getProposal: vi.fn(async () => proposal()),
+    decideNode: vi.fn(async () => {}),
+    enactProposal: vi.fn(async () => ({ enacted: ["N1"], held: [] })),
     ...over,
   };
 }
@@ -109,7 +136,7 @@ describe("IntakeLinksScreen", () => {
     expect(await screen.findByText(/No specific person · General/)).toBeInTheDocument();
   });
 
-  it("opens a link detail and its read-only conversation, then materializes", async () => {
+  it("materializes, then approves the single note inline (no Proposals-panel hop)", async () => {
     const d = deps();
     render(<IntakeLinksScreen deps={d} />);
 
@@ -124,10 +151,33 @@ describe("IntakeLinksScreen", () => {
     expect(screen.getAllByText("Dad has diabetes.").length).toBeGreaterThanOrEqual(2);
     expect(screen.getByText("Any conditions?")).toBeInTheDocument();
 
-    // Send to the review inbox → materialize.
-    fireEvent.click(screen.getByRole("button", { name: /Send to review inbox/ }));
+    // Review as a note → materialize, which loads the single-note Proposal.
+    fireEvent.click(screen.getByRole("button", { name: /Review as a note/ }));
     await waitFor(() => expect(d.materialize).toHaveBeenCalledWith("S1"));
-    expect(await screen.findByText(/In your review inbox/)).toBeInTheDocument();
+
+    // The materialized note is previewed inline (rich text: **diabetes** → bold).
+    expect(await screen.findByText(/Note to add · Dad's health/)).toBeInTheDocument();
+
+    // Approve → decide + enact the leaf right here, then confirm it was added.
+    fireEvent.click(await screen.findByRole("button", { name: /Approve & add to notes/ }));
+    await waitFor(() => expect(d.decideNode).toHaveBeenCalledWith("P1", "N1", "approve"));
+    expect(d.enactProposal).toHaveBeenCalledWith("P1");
+    expect(await screen.findByText(/Added to your notes/)).toBeInTheDocument();
+  });
+
+  it("rejects a materialized note inline, keeping nothing", async () => {
+    const d = deps();
+    render(<IntakeLinksScreen deps={d} />);
+
+    fireEvent.click(await screen.findByText(/3\/5 submitted/));
+    fireEvent.click(await screen.findByText("Carol Hopkins"));
+    fireEvent.click(await screen.findByRole("button", { name: /Review as a note/ }));
+    await waitFor(() => expect(d.materialize).toHaveBeenCalledWith("S1"));
+
+    fireEvent.click(await screen.findByRole("button", { name: "Reject" }));
+    await waitFor(() => expect(d.decideNode).toHaveBeenCalledWith("P1", "N1", "reject"));
+    expect(d.enactProposal).not.toHaveBeenCalled();
+    expect(await screen.findByText(/nothing was kept/)).toBeInTheDocument();
   });
 
   it("re-mints (clone + revoke) and reveals the fresh secret", async () => {

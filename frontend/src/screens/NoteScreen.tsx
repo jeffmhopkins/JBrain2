@@ -3,7 +3,8 @@
 // canonical manager (manifest rows + per-file sheet); pre-Phase-3 the header
 // is domain + date only (no title), and Analysis shows phased placeholders.
 
-import { Fragment, type TouchEvent, useEffect, useRef, useState } from "react";
+import { type TouchEvent, useEffect, useRef, useState } from "react";
+import { Markdown } from "../agent/markdown";
 import type { SearchResult } from "../api/client";
 import { attachmentUrl } from "../api/client";
 import { AnalysisTab } from "../components/AnalysisTab";
@@ -71,22 +72,14 @@ export function noteViewFromSearch(result: SearchResult): NoteViewSource {
   };
 }
 
-/** Minimal markdown: blank lines split paragraphs, single newlines break. */
+/** A note body rendered as rich text — headings, **bold**, and bulleted/numbered
+ * lists read as formatting rather than raw `**`/`-`/`1.` markup. Reuses the safe
+ * assistant Markdown renderer (React nodes, no innerHTML), so a captured recipe or a
+ * structured note looks the way it was written. */
 function BodyParagraphs({ body }: { body: string }) {
   return (
     <div className="note-view-body">
-      {body.split(/\n{2,}/).map((para, pi) => (
-        // biome-ignore lint/suspicious/noArrayIndexKey: paragraphs are static per body.
-        <p key={pi}>
-          {para.split("\n").map((line, li) => (
-            // biome-ignore lint/suspicious/noArrayIndexKey: lines are static per body.
-            <Fragment key={li}>
-              {li > 0 && <br />}
-              {line}
-            </Fragment>
-          ))}
-        </p>
-      ))}
+      <Markdown text={body} />
     </div>
   );
 }

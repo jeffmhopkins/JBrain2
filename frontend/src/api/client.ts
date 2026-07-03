@@ -2038,6 +2038,19 @@ export const api = {
     return (await response.json()) as UpdateStatus;
   },
 
+  /** Start the local-model DOWNLOAD one-shot (the "Download" action): sync queued
+   * weights without a system update. Throws ApiError(409) if a one-shot is already
+   * running — the caller attaches to the existing run's status instead of failing. */
+  async opsLocalProvisionStart(): Promise<{ oneshot: string }> {
+    const response = await request("/api/ops/local-provision", { method: "POST" });
+    return (await response.json()) as { oneshot: string };
+  },
+
+  async opsLocalProvisionStatus(): Promise<UpdateStatus> {
+    const response = await request("/api/ops/local-provision/status");
+    return (await response.json()) as UpdateStatus;
+  },
+
   async opsExportStart(): Promise<void> {
     await request("/api/ops/export", { method: "POST" });
   },

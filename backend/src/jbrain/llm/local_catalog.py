@@ -413,6 +413,30 @@ def id_for_served(served_model: str) -> str | None:
     return model.id if model else None
 
 
+def get_by_served(served_model: str) -> LocalModel | None:
+    """The catalog entry a gateway `served_model` name maps to, or None for a served
+    name outside the catalog (an operator serving something unlisted)."""
+    return _BY_SERVED.get(served_model)
+
+
+# The context length KV estimates are normalized to: kv_gb_per_128k is the KV cache at
+# 131072 tokens, and KV scales linearly with the served window.
+_KV_REFERENCE_TOKENS = 131072
+
+
+def footprint_gb(model: LocalModel, window: int, *, disk_gb: float | None = None) -> float:
+    """Total unified-memory footprint (GiB) of `model` held resident at `window`
+    tokens: weights + KV cache. Weights = the measured on-disk size when known
+    (`disk_gb`), else the catalog's nominal `size_gb`; KV scales linearly off the 128k
+    reference (`kv_gb_per_128k * window / 131072`) — the same figures the settings
+    memory meter shows. On a Strix Halo box the iGPU draws from unified system RAM, so
+    this one number is the whole cost of keeping the model loaded. The residency
+    budget compares it against live free RAM."""
+    weights = disk_gb if disk_gb is not None else model.size_gb
+    kv = model.kv_gb_per_128k * window / _KV_REFERENCE_TOKENS
+    return round(weights + kv, 2)
+
+
 def recommended_ids() -> tuple[str, ...]:
     """The default-enabled set the install prompt offers first."""
     return tuple(m.id for m in CATALOG if m.recommended)

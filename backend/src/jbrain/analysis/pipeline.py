@@ -1935,6 +1935,7 @@ class AnalysisPipeline:
             confidence=fact.confidence,
             self_confidence=fact.self_confidence,
             correction=fact.correction,
+            fhir_status=fact.fhir_status,
         )
         existing = await self._existing_facts(
             session,

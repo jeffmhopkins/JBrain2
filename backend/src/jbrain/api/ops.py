@@ -437,6 +437,31 @@ async def update_status(request: Request, settings: SettingsDep) -> dict[str, ob
     return cast(dict[str, object], resp.json())
 
 
+# --- Local-model download (the PWA "Download" action) -------------------
+# Installing an on-box model no longer rides a full system update. This triggers
+# the supervisor's provision one-shot — deploy/local-models-sync.sh alone (download
+# weights + re-stamp llama-swap + restart the gateway), with no git pull or rebuild.
+# It shares the one-shot mutual-exclusion guard, so it 409s during an update/export.
+
+
+@router.post("/local-provision", status_code=202)
+async def start_local_provision(request: Request, settings: SettingsDep) -> dict[str, object]:
+    resp = await _client(request).post("/provision", headers=_headers(settings))
+    if resp.status_code == 409:
+        raise HTTPException(status_code=409, detail="another operation is running")
+    resp.raise_for_status()
+    return cast(dict[str, object], resp.json())
+
+
+@router.get("/local-provision/status")
+async def local_provision_status(request: Request, settings: SettingsDep) -> dict[str, object]:
+    resp = await _client(request).get(
+        "/provision/status", params={"tail": 80}, headers=_headers(settings)
+    )
+    resp.raise_for_status()
+    return cast(dict[str, object], resp.json())
+
+
 # --- Data export/import -------------------------------------------------
 # Heavy lifting happens in supervisor-launched one-shots (they have docker;
 # the api deliberately has neither superuser DB access nor pg_dump). The api

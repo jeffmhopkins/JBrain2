@@ -566,6 +566,29 @@ async def update_status(
     return cast(dict[str, object], resp.json())
 
 
+@router.get("/provision/status")
+async def provision_status(
+    request: Request,
+    settings: SettingsDep,
+    _p: DebugDep,
+    tail: Annotated[int, Query(ge=1, le=2000)] = 200,
+) -> dict[str, object]:
+    """The most recent local-model DOWNLOAD one-shot's state + log tail (the PWA
+    'Download' action, deploy/local-models-sync.sh). Like /update/status, the sync
+    runs OUTSIDE the compose project, so /debug/logs/<service> can't reach it — this
+    is the read-only console's window into WHY a model download failed (the verbose
+    per-model hf output — repo, include globs, 404/auth/disk reason — streams here).
+    Proxied from the supervisor; mirrors the owner ops surface."""
+    request.state.debug_detail = f"provision (tail {tail})"
+    resp = await _supervisor(request).get(
+        "/provision/status",
+        params={"tail": tail},
+        headers={"Authorization": f"Bearer {settings.supervisor_token}"},
+    )
+    resp.raise_for_status()
+    return cast(dict[str, object], resp.json())
+
+
 # --- Host metrics (proxied to the supervisor) -------------------------------
 # "What is using the box's RAM?" The read-only meter (host_metrics) only knows
 # MemTotal/MemAvailable — the unified-memory TOTAL, with no breakdown. The
