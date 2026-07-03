@@ -70,7 +70,7 @@ restore:
 - **The owner key is the root of trust.** It mints pairing codes and is the only
   credential that can re-provision devices, so *it* is what must be backed up — keep
   the owner key in a password manager / hardware token, offline. Losing it means
-  re-bootstrapping (`scripts`/`deploy/install.sh` owner-key rotation), not data loss.
+  rotating it over SSH with `jbrain reset-owner-key`, not data loss.
 - Pairing codes are **one-time and short-lived**; never reuse or store a redeemed
   code.
 

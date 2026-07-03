@@ -58,8 +58,8 @@ opted in. Full runbook: `../runbooks/STRIX_HALO_SETUP.md`; prompting behaviour:
 - **`local-llm`** — Vulkan (RADV) llama.cpp under **llama-swap**, which loads a
   GGUF on first request and frees it after idle. By default models **swap one at
   a time** (co-residency pinned ~91 GB and froze the box); a resident group is
-  opt-in. Serves the text tiers and (via a config re-stamp) whisper. The api
-  hot-reloads its config after a context-window edit.
+  opt-in. Serves the text tiers only — transcription is the separate `whisper`
+  service below. The api hot-reloads its config after a context-window edit.
 - **`comfyui`** — ROCm (needs both `/dev/kfd` and `/dev/dri`, plus
   `HSA_OVERRIDE_GFX_VERSION`) serving Qwen-Image / Qwen-Image-Edit, with a
   Lightning fast path. Emits live `b_preview` frames so the chat shows a

@@ -25,8 +25,10 @@ services:
       # when the tunnel/internet is down (the Secure cookie needs HTTPS). The
       # host advertises the name over mDNS via an avahi CNAME alias — see
       # deploy/lan-setup.sh. Blank JBRAIN_LAN_ADDR in .env to turn it off.
-      # See docs/runbooks/LOCAL_ACCESS.md.
-      JBRAIN_LAN_ADDR: ${JBRAIN_LAN_ADDR:-https://jbrain.local}
+      # See docs/runbooks/LOCAL_ACCESS.md. Bare `-` (not `:-`): an explicitly
+      # empty value in .env passes through as empty (so blanking actually
+      # disables it); only an absent/unset var falls back to the default.
+      JBRAIN_LAN_ADDR: ${JBRAIN_LAN_ADDR-https://jbrain.local}
       # Host-mode jcode web preview (docs/archive/JCODE_PREVIEW_HOST_PLAN.md): when set, the
       # entrypoint renders a wildcard *.<host> Caddy site that routes <slug>-preview.<host>
       # to the api's /__jcode_preview/<slug>. Shares the .env var with the api + jcode
