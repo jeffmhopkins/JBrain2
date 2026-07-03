@@ -62,6 +62,7 @@
   #popups .popup {
     --dx: 0px; --dy: -26px;
     position: absolute; max-width: min(30ch, 34vw);
+    max-height: min(46vh, 320px); overflow: hidden;
     padding: 9px 13px; border-radius: 11px;
     background: rgba(20,22,26,0.78); border: 1px solid rgba(143,188,154,0.32);
     box-shadow: 0 6px 26px rgba(0,0,0,0.5), 0 0 22px rgba(143,188,154,0.16);
@@ -69,6 +70,14 @@
     backdrop-filter: blur(3px); opacity: 0; will-change: transform, opacity;
     transform: translate(0, 8px) scale(0.96);
     animation: popupLife 8s ease-in-out forwards;
+  }
+  /* An answer too tall for the card: it fades in, then autoScrollPopup() slowly walks its
+     scrollTop through the whole reply (no drift, no timed fade) before it retires. */
+  #popups .popup.scroll { animation: popupFadeIn .6s ease-out forwards; }
+  #popups .popup.scroll.leaving { animation: popupOut .9s ease-in forwards; }
+  @keyframes popupFadeIn {
+    0%   { opacity: 0; transform: translate(0, 8px) scale(0.96); }
+    100% { opacity: 1; transform: translate(calc(var(--dx) * 0.2), calc(var(--dy) * 0.2)) scale(1); }
   }
   #popups .popup::before {
     content: "↳ answer"; display: block; margin-bottom: 3px;
@@ -739,12 +748,9 @@ function pickPeriphery() {
 }
 // A currently-FIRING neuron (high flood activation `nodeAct`) to plant a tendril on, so
 // tendrils initiate/land from real brain activity rather than a generic spot. `pred` can
-// constrain the choice (side/periphery); falls back to a peripheral neuron when nothing is
-// firing (e.g. an idle box). Picks the most-activated of a random sample.
+// constrain the choice (e.g. inner-radius only); falls back to a peripheral neuron when nothing
+// is firing (e.g. an idle box). Picks the most-activated of a random sample.
 const _np = new THREE.Vector3();
-function neuronWorldX(i) {
-  return _np.set(neuronPos[i*3], neuronPos[i*3+1], neuronPos[i*3+2]).applyMatrix4(cortex.matrixWorld).x;
-}
 function pickActivatedNeuron(pred) {
   let best = -1, bestAct = 0.3;
   for (let k = 0; k < 48; k++) {
@@ -844,19 +850,19 @@ const STREAM_SPEC = {
   fetch:    { dir: 'in',  g: '#ffe2b4', f: new THREE.Color('#ffc66e'), speed: 3 },   // amber, fetched data IN to the llm (from the left)
 };
 const LLM_BR = 15;        // world radius at the brain edge where a stream connects
-const LLM_REACH = 22;     // world length of the visible filament (brain edge -> screen edge)
+const LLM_REACH = 60;     // world length of the filament: long enough to run from the anchor
+                          // clear OFF the screen edge, so a tendril spans edge <-> inner neuron
 const LLM_STEP = 0.9;     // world units between glyphs — fixed, so short text stays tight
 const LLM_CAP = 34;       // glyphs carried on the tendril (the popup holds the full answer)
-// Flow endpoints (world dist from centre): an answer emerges from the net and runs OFF the
-// right edge (FAR_OUT, well past the ~36 visible half-width); a prompt enters from off the
-// left edge (FAR_IN) and, after crossing the net edge, keeps the tendril's exit vector as a
-// straight line INTO the net, fully faded by FADE_END — 3/4 of the way across (net edge at
-// +LLM_BR to the far edge at -LLM_BR), rather than scrolling flat across to the far side.
-const LLM_FAR_OUT = 50, LLM_FAR_IN = 40, LLM_FADE_END = -0.5 * 15;
-// Incoming (prompt/fetch) dissolve: tied to WORLD x (the inward flow axis, brain centre at
-// x=0), NOT the anchor-relative distance — so a message fades out AT the core and never
-// drifts past the last neuron into the empty far side, wherever its firing-neuron anchor sits.
-const LLM_ABSORB_X = 0, LLM_ABSORB_RAMP = 10;
+// Flow endpoints (dist from the anchor along the tendril). The filament tip (LLM_BR + LLM_REACH)
+// sits OFF screen on either side, so both the tendril and its glyphs run edge <-> neuron: an
+// answer ORIGINATES at the (inner-50%) anchor and streams OFF the right edge; a prompt slides IN
+// from OFF the left edge and lands on the anchor. Glyphs ride the filament from tip to neuron.
+const LLM_FAR_OUT = LLM_BR + LLM_REACH, LLM_FAR_IN = LLM_BR + LLM_REACH, LLM_CULL_MIN = -9.5;
+// Incoming (prompt/fetch) dissolve — anchor-relative, NOT world x: a message fades IN near the
+// off-screen tip and back OUT a margin (LLM_IN_ABSORB) BEFORE the anchor at d=LLM_BR, so it is
+// gone before it reaches the last neuron it lands on, wherever that inner neuron turns to.
+const LLM_IN_ABSORB = 4, LLM_IN_RAMP = 7;
 const LLM_MAX = 6, LLM_SEG = 26;
 const llmStreams = [];
 for (let i = 0; i < LLM_MAX; i++) llmStreams.push({ active: false });
@@ -880,11 +886,10 @@ function spawnStream(kind, text) {           // kind: prompt | answer | search |
   st.dir = spec.dir; st.g = spec.g; st.f = spec.f;
   st.text = clean; st.age = 0; st.active = true; st.seeded = false;
   st.L = Math.max(clean.length, 1);
-  // Plant the tendril on a currently-firing PERIPHERAL neuron, on the entry side (left for a
-  // prompt, right for an answer) so the left/right convention holds. Its live world position
-  // (tracked each frame in updateLlmStreams) is where the tendril meets the net.
-  const wantRight = spec.dir === 'out';
-  st.anchor = pickActivatedNeuron(i => neuronRadial[i] > 0.45 && (neuronWorldX(i) >= 0) === wantRight);
+  // Plant the tendril on a currently-firing INNER neuron (inner 50% by radius): a prompt reaches
+  // in from off the left and lands here; an answer originates here and runs off the right. Its
+  // live world position (tracked each frame in updateLlmStreams) is where the tendril meets the net.
+  st.anchor = pickActivatedNeuron(i => neuronRadial[i] < 0.5);
   _np.set(neuronPos[st.anchor*3], neuronPos[st.anchor*3+1], neuronPos[st.anchor*3+2]).applyMatrix4(cortex.matrixWorld);
   st._ax = _np.x; st._ay = _np.y; st._az = _np.z;
   st.bow = (2 + Math.random() * 3) * (Math.random() < 0.5 ? -1 : 1);  // gentle arc
@@ -919,8 +924,9 @@ function llmGlyphDist(st, i, p) {
     const d0 = (LLM_BR - block) + p * (LLM_FAR_OUT - (LLM_BR - block));
     return d0 + i * LLM_STEP;
   }
-  // char 0 leads into the net (first character first); the block ends with char L-1 at FADE_END
-  const dLead = LLM_FAR_IN + p * ((LLM_FADE_END - block) - LLM_FAR_IN);
+  // char 0 leads toward the anchor (first character first); it flows from the off-screen tip
+  // (FAR_IN) in to the neuron (LLM_BR), fading out just before it — see the fade below.
+  const dLead = LLM_FAR_IN + p * (LLM_BR - LLM_FAR_IN);
   return dLead + i * LLM_STEP;
 }
 
@@ -973,15 +979,15 @@ function updateStreamText() {                 // project + flow glyphs — runs 
     const col = st.g;
     for (let i = 0; i < L && idx < CHAR_POOL.length; i++) {
       const d = llmGlyphDist(st, i, p);
-      if (d < LLM_FADE_END - 2 || d > LLM_FAR_OUT + 2) continue;   // fully past either end
+      if (d < LLM_CULL_MIN || d > LLM_FAR_IN + 2) continue;   // fully past either end
       llmPointAt(st, d, _lp);                                 // WORLD point (projected below)
-      // Dissolve near whichever end the flow terminates at: an ANSWER fades in as it clears
-      // the net edge and off at the far right; an INCOMING message (prompt/fetch) fades in at
-      // the far entry, then dissolves at the brain CORE (world x -> LLM_ABSORB_X) so it is
-      // gone before the last neuron in its direction — never drifting into the empty far side.
+      // Dissolve near whichever end the flow terminates at: an ANSWER fades in as it clears the
+      // net edge and off at the far right; an INCOMING prompt fades in near the off-screen tip
+      // and back OUT a margin before the anchor (d -> LLM_BR), so it is gone before it reaches
+      // the last neuron it lands on — never touching or overshooting that inner neuron.
       const fade = st.dir === 'out'
         ? Math.min(1, (d - (LLM_BR - 4)) / 5) * Math.min(1, (LLM_FAR_OUT - d) / 7)
-        : Math.min(1, (LLM_FAR_IN - d) / 7) * Math.min(1, (LLM_ABSORB_X - _lp.x) / LLM_ABSORB_RAMP);
+        : Math.min(1, (LLM_FAR_IN - d) / LLM_IN_RAMP) * Math.min(1, (d - (LLM_BR + LLM_IN_ABSORB)) / LLM_IN_RAMP);
       if (fade <= 0) continue;
       _lp.project(camera);                                    // project the same world point
       if (_lp.z > 1) continue;                                // behind the camera
@@ -1016,12 +1022,33 @@ function fadePromptPopup(d) {
   d.classList.add('leaving');
   setTimeout(() => d.remove(), 1200);
 }
+// An answer card that overflows its max-height gets no timed fade: instead we fade it in, hold
+// at the top, then slowly walk scrollTop through the whole reply, hold at the bottom, and fade
+// it out — so a long answer is fully legible. A card that fits keeps the normal bloom + drift.
+function driveAnswerPopup(d) {
+  const overflow = d.scrollHeight - d.clientHeight;
+  if (overflow <= 2) { d.addEventListener('animationend', () => d.remove()); return; }
+  d.classList.add('scroll');                              // cancels popupLife; fade in + hold
+  const SPEED = 26;                                       // px/sec — slow enough to read
+  const FADE_IN = 600, TOP_HOLD = 1100, END_HOLD = 1600, FADE_OUT = 900;
+  const scrollMs = (overflow / SPEED) * 1000;
+  const start = performance.now();
+  (function frame(now) {
+    if (!d.isConnected) return;
+    const t = now - start, s = FADE_IN + TOP_HOLD;
+    if (t <= s)                 d.scrollTop = 0;
+    else if (t <= s + scrollMs) d.scrollTop = overflow * ((t - s) / scrollMs);
+    else if (t <= s + scrollMs + END_HOLD) d.scrollTop = overflow;
+    else { d.classList.add('leaving'); setTimeout(() => d.remove(), FADE_OUT); return; }
+    requestAnimationFrame(frame);
+  })(start);
+}
 function spawnPopup(text, kind) {         // kind: 'answer' (default) | 'prompt'
   const t = String(text || '').replace(/\s+/g, ' ').trim();
   if (!t) return;
   const d = document.createElement('div');
   d.className = kind === 'prompt' ? 'popup in' : 'popup';
-  d.textContent = t.slice(0, 320);
+  d.textContent = t.slice(0, kind === 'prompt' ? 320 : 900);
   d.style.left = (13 + Math.random()*60).toFixed(1) + 'vw';   // safe margins
   d.style.top  = (15 + Math.random()*56).toFixed(1) + 'vh';
   // a gentle, slightly-random drift while it lingers (mostly upward)
@@ -1036,9 +1063,10 @@ function spawnPopup(text, kind) {         // kind: 'answer' (default) | 'prompt'
   } else {
     // An answer landed — retire the paired question popup as this one blooms.
     if (activePromptPopup) fadePromptPopup(activePromptPopup);
-    d.addEventListener('animationend', () => d.remove());
   }
   popupsEl.appendChild(d);
+  // Measure overflow after layout: a tall answer scrolls, a short one keeps its timed bloom.
+  if (kind !== 'prompt') driveAnswerPopup(d);
 }
 
 /* ============================================================================

@@ -118,8 +118,9 @@ When the owner turns on **Settings → Stream LLM to wall display** (the
 `brain_llm_stream` app setting, **off by default**), each jerv chat turn POSTs its real
 text to `POST /event`: `{"kind": "llm_input", "text": …}` when the turn starts and
 `{"kind": "llm_output", "text": …}` when the answer settles (each excerpt-truncated).
-The page streams the prompt IN along a steel tendril and the answer OUT along a green
-one — the characters ride the tendril path — then blooms a fade-out popup of the answer.
+The page streams the prompt IN from off the left edge along a steel tendril that lands on
+an inner neuron, and the answer OUT to the right along a green one — the characters ride the
+tendril path — then blooms a popup of the answer that slowly scrolls if it's too tall to fit.
 The same toggle also lets a web tool's **search query** (cyan) / **fetched URL** (amber)
 stream out along its tendril; with the toggle off those stay content-free markers.
 
