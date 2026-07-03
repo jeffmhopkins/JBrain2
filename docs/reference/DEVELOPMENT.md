@@ -78,6 +78,18 @@ better than narrated code, and stale comments are worse than none.
   flipped or archived when its waves land, Living docs corrected when behaviour
   changes, and `Last verified` bumped. Run `scripts/docs-freshness.sh` first.
 
+## Documentation
+
+`docs/DOC_LIFECYCLE.md` is **binding** — the same standing as this file. It
+defines the two doc kinds (Living reference/runbook vs Plan), where each lives
+(`reference/` · `runbooks/` · `plans/` · `proposed/` · `archive/`), the freshness
+header every doc carries, and the transitions that keep them true. The one rule:
+**docs ship with the code** — a feature isn't done until its plan is archived,
+and a Living doc is corrected in the PR that changes what it asserts. The `docs`
+CI gate (`scripts/docs-freshness.sh`, run it locally first) enforces the
+mechanical failure modes; the definition-of-done bullet above and the PR template
+carry the rest.
+
 ## Releases
 
 - Two channels: **stable** (images built on release tags, semver) and
