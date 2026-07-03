@@ -249,9 +249,57 @@ and in `docker-compose.yml` under the `local-llm` service add `- /dev/kfd:/dev/k
 to `devices:` and `security_opt: [seccomp:unconfined]`, then
 `jbrain enable-local-models` (or rebuild). Benchmark before committing.
 
+## Stability — hard-freeze / OOM hardening
+The recommended local set keeps **~91 GB resident** in the 130 GB unified pool,
+leaving only ~30 GB for the OS, containers, and KV-cache. A sudden allocation on top
+of that — a `jbrain update` recreating containers, a model swap, an image render, or
+context growth — can push the box to its memory ceiling. On this hardware the kernel
+does **not** always OOM-kill cleanly: it can enter a **reclaim livelock** where every
+core spins in page reclaim and the whole machine hard-locks — USB keyboard and mouse
+included — until a power cycle. The log signature is a burst of *missed kernel
+messages* ending mid `Mem-Info`/slab dump, and Postgres recovering with "database
+system was not properly shut down" on the next boot.
+
+Update-time recreation is handled for you: `jbrain update` (and the PWA update)
+**stops the `local-llm` gateway before the rebuild/recreate and restarts it after**
+(`deploy/update-inner.sh`), so the resident set never collides with the container
+churn. Harden the host against the rest (all idempotent and reversible):
+
+1. **earlyoom** — kill the biggest hog on memory pressure *before* the kernel stalls:
+   ```bash
+   sudo apt install -y earlyoom
+   echo 'EARLYOOM_ARGS="-r 60 -m 10 -m 5 -s 5 -s 3 --prefer ^llama-server$ --avoid ^(sshd|systemd|systemd-.*|dockerd|containerd|postgres|supervisor)$"' \
+     | sudo tee /etc/default/earlyoom
+   sudo systemctl enable --now earlyoom && sudo systemctl restart earlyoom
+   ```
+2. **Reclaim headroom (sysctl)** — start reclaiming earlier, thrash into swap less:
+   ```bash
+   sudo tee /etc/sysctl.d/99-jbrain-oom.conf >/dev/null <<'EOF'
+   vm.min_free_kbytes = 2097152
+   vm.watermark_scale_factor = 200
+   vm.swappiness = 10
+   EOF
+   sudo sysctl --system
+   ```
+3. **Load models on demand** on a memory-tight box — drop the co-resident group so
+   nothing stays pinned: `LOCAL_LLM_RESIDENT_GROUP=0 sudo jbrain enable-local-models`
+   (restores ~30 GB of headroom; costs a few seconds on a text↔vision switch).
+4. **Persistent logs** so the next event's full dump survives the freeze:
+   ```bash
+   sudo mkdir -p /var/log/journal
+   sudo sed -i 's/^#\?Storage=.*/Storage=persistent/' /etc/systemd/journald.conf
+   sudo systemctl restart systemd-journald
+   ```
+
+> **Swap is deliberately small (8 GB).** Do **not** enlarge it to "fix" the freezes —
+> on a reclaim livelock a large swap just prolongs the thrash instead of breaking it.
+> The levers above (kill fast, keep headroom) are the real fix; swap is only a shallow
+> cushion for brief spikes.
+
 ## Troubleshooting
 | Symptom | Likely cause / fix |
 |---|---|
+| Whole box hard-freezes (kbd/mouse dead), needs a power cycle | Unified-memory OOM / reclaim livelock — see "Stability — hard-freeze / OOM hardening" above. |
 | `vulkaninfo` shows no device | Mesa or kernel too old (Phases 2–3). |
 | Unsigned kernel won't boot | Secure Boot still on (Phase 0). |
 | Gateway crash-loops | `jbrain logs local-llm`; missing GGUF shard (setup validates this) or config path. |
