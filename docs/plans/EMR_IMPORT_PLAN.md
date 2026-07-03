@@ -1647,6 +1647,45 @@ W2 remains ◻️ (not complete). The **deterministic front-half** is built and 
 
 **Remaining in W2 (next):** wiring the intake handler to the seeded `emr_import` trigger (a Wave-4
 concern — the trigger + event-payload widening, §6.0/§12.2, needs an owner sanity-check on the payload
-approach before it lands). OneContent/athena/ARIA parsers + cross-source dedup are W3. The one LLM
-touch on the structured path — the pathology-narrative Final-Diagnosis extraction — is now landed
-(`pathology.py`, above).
+approach before it lands). The one LLM touch on the structured path — the pathology-narrative
+Final-Diagnosis extraction — is now landed (`pathology.py`, above).
+
+### 12.8 Wave 3 — in progress (parsers + cross-source dedup landed)
+
+The three remaining per-source parsers and the cross-source reconciliation enforcer are built and
+unit-tested (`backend/src/jbrain/ingest/emr/`):
+
+- **`onecontent.py`** — the OneContent cumulative-lab parser, resolving the §6.2 go/no-go to
+  **x-geometry**: a pure function of `get_text("words")` word boxes that groups words into lines by
+  y, derives each table's column bands from its header-row word x-positions, and assigns every word
+  to a band by x0. Because a band is an x-RANGE, right-aligned values and multi-word analyte names
+  ("White Blood Cell Count") that a character-offset ruler splits land in the right column. The spine
+  is the `Account:` number — each account is one **ambulatory** lab visit (§3.4 note) enclosing its
+  draws; each row's `Collected` sets `valid_from`; the abnormal-flag legend drives `interpretation`.
+  Tests prove geometry recovers columns on the real `onecontent_words.json` (with a negative control
+  showing a char-offset ruler misaligns on reflowed text) + 4-account grouping/dates/legend on
+  column-aligned constructed geometry.
+- **`athena.py`** — the outpatient-panel parser: text-layer `label: value` blocks into one ambulatory
+  `Encounter` carrying the explicit **Ordering Provider** via `attender[ordering]` (the path
+  `lab_results.orderer` projects from), the accession as the §3.3 specimen. A **cancelled** result
+  (`Status: cancelled` + RESULT NOTE) carries `fhir_status="cancelled"` with its value **suppressed**.
+- **`aria.py`** — the post-OCR portal-reprint parser: line-oriented (no geometry), **date-only**
+  draws (`precision="day"`, no fabricated time), **orphan** reads (encounter-less — ARIA prints no
+  orderer). OCR noise is respected — dot leaders dropped, but an `O`-for-`0` reference range that
+  fails to parse is kept VERBATIM, never guess-corrected. `FIDELITY_OCR=1` is the §6.4 tie-break loser.
+- **`reconcile.py`** — the cross-source **dedup enforcer** (§6.4), a pre-graph pure-Python step. An
+  OCR read reconciles to a precise draw only on same canonical code + a ±1-day window + a per-analyte
+  value tolerance (exact for integer counts, a relative epsilon for float chemistries); on a match the
+  OCR read **adopts the precise draw's timestamp + specimen** (identical minted qualifier → idempotent,
+  dual-cited) and the higher-`fidelity` precise draw is authoritative. A read matching **nothing** —
+  including a readable-but-WRONG timestamp — **parks** in `pending_review` behind a `low_confidence`/
+  `ocr_unreconciled` card (`integrate.file_parked_cards`, RLS-scoped + idempotent), never a spurious
+  point. The four red-team scenarios are unit-tested (divergent-rendering dedup, readable-but-wrong
+  parks, two-specimen-less draws both persist, matching by canonical LOINC not label) + a real-Postgres
+  e2e proves the ARIA reprint corroborates the 2021 OneContent draws (one graph draw, not two) while
+  the 07/29 read parks with an idempotent card.
+
+**Remaining in W3 (next):** wiring `get_text("words")` into the extractor + selecting a parser by
+fingerprint on the dispatcher, and the full multi-source orchestration (parse all four files →
+reconcile → integrate the precise draws + card the parked reads) as one job. The vision-OCR job that
+feeds ARIA its text (§6.2) is a W3/W4 extractor concern.

@@ -41,6 +41,29 @@ def test_final_results_parse_with_value_and_specimen() -> None:
     assert pot.value_num == 4.6 and pot.specimen_id == "A2024-88120"
 
 
+_FLAGGED = """--- page 1 ---
+athenahealth Patient Portal — Lab Results (SYNTHETIC)
+Ordering Provider: Ng, Priya MD
+Encounter: Ambulatory visit 03/04/2024
+
+Specimen/Accession ID: A2024-1
+  Collected: 03/04/2024 09:00
+  Analyte: Hemoglobin
+  Result: 18.9
+  Units: g/dL
+  Reference Range: 13.5-17.5
+  Flag: H
+  Status: final
+"""
+
+
+def test_flag_drives_interpretation() -> None:
+    enc = parse_athena(_FLAGGED).encounters[0]
+    hgb = enc.observations[0]
+    assert hgb.interpretation == "high"  # the "H" flag
+    assert hgb.value_num == 18.9
+
+
 def test_cancelled_result_suppresses_value() -> None:
     creat = next(o for o in _RESULT.encounters[0].observations if o.analyte.name == "Creatinine")
     assert creat.fhir_status == "cancelled"
