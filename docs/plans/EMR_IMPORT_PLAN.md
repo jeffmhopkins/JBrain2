@@ -1567,3 +1567,28 @@ Proven-empty tables, no parser (§10). Landed:
 
 Deferred to their planned waves: the `EmrImporter` wiring of the firewall guard + `fhir_status`
 population (W2), the `project_emr` projector (W2), and the parsers (W2/W3).
+
+### 12.7 Wave 2 — in progress (deterministic parse + lower landed)
+
+W2 remains ◻️ (not complete). The **deterministic front-half** is built and unit-tested
+(`backend/src/jbrain/ingest/emr/`):
+
+- **`candidates.py`** — the typed parser-output model + analyte canonicalization (a curated LOINC
+  subset + synonym map; `WBC`/`Leukocytes`/`White Blood Cell Count` → one code; an unmapped analyte
+  is slugged + `mapped=False`, never a guessed LOINC). The §3.3 qualifier is a property.
+- **`epic.py`** — the Epic parser: banner-bleed handling (a banner above a header binds to that
+  header's encounter; inpatient iff `Adm/DC` banners outnumber `Visit date`), the MICU→A3 facility
+  transfer linked by `part_of_key` via admit/discharge continuity, transfusion events, FHIR status,
+  and the pathology report kept as prose. 13 fixture-driven tests.
+- **`importer.py`** — the `EmrImporter` lowering: parser candidates → the exact `IntegrationIntent`
+  the shipped arbiter consumes, with the per-draw fan + analyte-constant facts, `fhir_status` on
+  `value` facts, the deterministic `effectiveDate` point token via `IntentTemporal`, one **episode**
+  intent per facility-transfer (so `partOfEncounter`/`hasObservation` resolve intra-intent), and the
+  **Layer-2 firewall guard** run on every prospective fact. 8 tests, all intents `validate_intent`-clean.
+
+**Remaining in W2 (next):** wiring `lower_parse_result` → `plan_intent`/`apply_intent` on the RLS
+session; the kind-guarded `project_emr` projector (into `_apply` + `purge`) with lifecycle-derived
+`report_status`; `read_labs`/`read_encounters` tools proven on Epic; the pathology-narrative prose
+extraction; and the **intake stage** (`pyzipper` decrypt + note-inline password extraction +
+scrub-before-index + delete-last fail-closed, §6.1) — the security-critical secret handling, built
+carefully with its 100%-coverage tests. OneContent/athena/ARIA parsers + cross-source dedup are W3.
