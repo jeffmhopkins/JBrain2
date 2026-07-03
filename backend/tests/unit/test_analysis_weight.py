@@ -25,7 +25,7 @@ def _sig(surface_attested=True, is_supersede=False):
 
 def test_surface_attested_ceils_at_one():
     # Whether the predicate is registry-declared is irrelevant here: the
-    # two-tier model (docs/ENTITY_GRAPH_REFOCUS_PLAN.md §1) carries no
+    # two-tier model (docs/reference/ENTITY_GRAPH_REFOCUS_PLAN.md §1) carries no
     # unknown-predicate penalty, so attestation alone sets the ceiling.
     assert ceiling(_sig()) == 1.0
 

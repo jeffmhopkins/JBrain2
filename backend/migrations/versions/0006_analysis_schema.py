@@ -1,6 +1,6 @@
 """Phase 3 analysis schema: entities, facts, temporal tokens, review inbox.
 
-Implements docs/ANALYSIS.md. Every table carries its own domain_code and the
+Implements docs/reference/ANALYSIS.md. Every table carries its own domain_code and the
 standard app.has_domain_scope policy from 0002 — facts always carry their own
 domain regardless of their entity's domain, so no policy ever needs a join.
 

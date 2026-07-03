@@ -1,4 +1,4 @@
-"""Web search via a self-hosted SearXNG instance (docs/ASSISTANT.md "Agent
+"""Web search via a self-hosted SearXNG instance (docs/reference/ASSISTANT.md "Agent
 selection").
 
 SearXNG is a metasearch engine the owner runs on their own box, so a jerv search

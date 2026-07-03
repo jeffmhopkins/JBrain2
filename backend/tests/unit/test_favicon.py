@@ -1,4 +1,4 @@
-"""The on-box favicon fetcher for web citation chips (docs/ASSISTANT.md "Agent
+"""The on-box favicon fetcher for web citation chips (docs/reference/ASSISTANT.md "Agent
 selection"). HTTP is faked via MockTransport — no live network, like the rest of
 the jerv web clients; the SSRF DNS check is skipped under an injected transport."""
 

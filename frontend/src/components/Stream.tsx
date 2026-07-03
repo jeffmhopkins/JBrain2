@@ -1,4 +1,4 @@
-// Entry-mode home stream (docs/DESIGN.md "Home stream"): bounded to the last
+// Entry-mode home stream (docs/reference/DESIGN.md "Home stream"): bounded to the last
 // 2 days (older notes live in Search), 3-line bubble clamp, ingest-state
 // chips, and the swipe-left action rail (Delete / Edit / Hide). Move domain
 // lives in the note-view ⋯ menu, not the rail.
@@ -172,7 +172,7 @@ function NoteRow({ item, railOpen, onRailChange, onOpen, onEdit, onDelete, onHid
             {headText(item)}
             {item.provenance === "agent" && (
               // Attribution is metadata, surfaced as a quiet tag — never written
-              // into the note body (docs/ASSISTANT.md #7).
+              // into the note body (docs/reference/ASSISTANT.md #7).
               <span className="note-by-assistant"> · assistant</span>
             )}
           </span>

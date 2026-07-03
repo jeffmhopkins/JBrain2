@@ -77,7 +77,7 @@ class CaseResult:
     error: str | None = None
     # Facts the model emitted for this case — summed across the corpus this is
     # the "leaner" metric a salience-first prompt change is measured by
-    # (docs/ENTITY_GRAPH_REFOCUS_PLAN.md §7).
+    # (docs/reference/ENTITY_GRAPH_REFOCUS_PLAN.md §7).
     fact_count: int = 0
 
     @property

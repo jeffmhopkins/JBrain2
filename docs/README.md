@@ -25,68 +25,25 @@ eval/promotion harness were **removed** — only Loop 1 (reflexion) shipped. The
 not-yet-built hygiene sweeps are deferred to Phase 6. See `ROADMAP.md`; the completed
 Phase-5 build record is `archive/PHASE5_COMPLETION_PLAN.md`.
 
-## Living reference (read these)
+## Documentation map
 
-| Doc | What it covers |
-|---|---|
-| `ARCHITECTURE.md` | System shape: containers, the one-database design, the knowledge pipeline, security model, operations. |
-| `ROADMAP.md` | Phase plan and current status. The source of truth for "what's next." |
-| `DEVELOPMENT.md` | Binding standards: the architectural constitution, comments, testing, git, releases, `dev-setup.sh`. |
-| `PROCESS.md` | Binding multi-wave execution process for plan work: parallel tasks, per-task + per-wave adversarial review, one PR per wave, the GUI mock gate. |
-| `DOC_LIFECYCLE.md` | Binding process for how a doc is born, changes, and is archived alongside its feature: the two doc kinds, the state vocabulary, the freshness header, and the anti-rot rules. Enforced by the `docs` CI gate (`scripts/docs-freshness.sh`). The one-time cleanup that adopted it is `archive/DOC_CLEANUP_PLAN.md`. |
-| `DESIGN.md` | Binding GUI design system: theming, components, navigation, the agent tool-view contract, settled UI decisions. |
-| `ANALYSIS.md` | The note→fact→entity pipeline (extract → Integrator → arbiter), supersession, the review inbox. |
-| `entity.md` | The entity & soft-schema model: predicates, facets, names, relationships, resolution. |
-| `PREDICATE_CANONICALIZATION.md` | Embedding-assisted predicate registry + typed value shapes (largely superseded by `ENTITY_GRAPH_REFOCUS_PLAN.md`: new_predicate cards no longer file; the embed index serves only the held-fact suggestion picker). |
-| `ENTITY_GRAPH_REFOCUS_PLAN.md` | Entity graph refocus (spine, not encyclopedia): the two-tier predicate model, salience-first prompts, n-hop neighborhood traversal. |
-| `ASSISTANT.md` | The agent design — the Phase-4 core (shipped, incl. Loop 1 reflexion); the further self-improvement loops 2–4 were removed. |
-| `MODEL_PROMPTING.md` | Prompting reference for the two local models (gpt-oss-120b `high`/`low`, Qwen3-VL-30B `vision`): per-tier behaviours, do/don't for `.prompt` authoring, and the sampling-config gap. |
-| `OPERATIONS.md` | JBrain360 operator runbook: revoking a member, the encryption-at-rest compensating control, and rotating the device Keystore key + the server's pinned cert (SPKI). |
-| `STRIX_HALO_SETUP.md` | End-to-end runbook for self-hosting the optional local models on an AMD Strix Halo (Ryzen AI Max+ 395) box: distro → kernel → Vulkan → install → routing. |
-| `CLOUDFLARE_TUNNEL.md` | Reaching a home-network box from outside via Cloudflare Tunnel — the dynamic-IP / CGNAT path: no static IP, no port-forwarding, TLS at Cloudflare's edge. |
-| `LOCAL_ACCESS.md` | Signing in on the LAN when the internet/tunnel is down: mDNS `<name>.local` + Caddy local HTTPS (internal CA) so the Secure session cookie works locally. |
-| `DEBUG_ACCESS.md` | The owner debug console: a revocable, time-boxed `capability_token` that lets an external assistant iterate on prompts, run read-only SQL, read logs, and switch LLM routing on a running box. Off by default. |
-| `DEBUG_ACCESS_SESSION_GUIDE.md` | Assistant-facing runbook for the debug console: how a Claude session requests a token, saves it, confirms reachability, and drives the box via `scripts/debug-connect.sh`. |
-| `mocks/` | Interactive HTML UI mockups. `DESIGN.md` cites these as the **binding spec** for reviewed surfaces — a living reference, not throwaway prototypes. |
+Docs are organized **by kind** — each folder owns its own index, so this map
+stays thin and doesn't drift against the folders it points at.
 
-## Active plans
+| Folder | Kind | Index |
+|---|---|---|
+| `reference/` | How the system **is** — architecture, standards, and models (Living, binding). | `reference/README.md` |
+| `runbooks/` | How to **operate** the box — setup, access, recovery. | `runbooks/README.md` |
+| `plans/` | **Active** multi-wave build plans (`Scheduled` / `In progress` / `Parked`). | `plans/README.md` |
+| `proposed/` | **Icebox** — forward-looking specs, not on the roadmap. | `proposed/README.md` |
+| `archive/` | **History** — completed plans, a fulfilled contract, a rejected design, research. | `archive/README.md` |
+| `mocks/` | Binding **HTML UI spec** (per `reference/DESIGN.md`). | — |
 
-- `PHASE6_WIKI_PLAN.md` — the **Phase 6 (Wiki)** build plan (in progress): the
-  machine-written wiki (cross-domain articles, incremental nightly builder,
-  correction-note loop, read-only UI). Waves A–C shipped — the builder,
-  `wiki_citations`/`wiki_links` graph coupling, and Talk. **Wave D (open):**
-  re-enable the nightly build schedules (disabled at migration 0088),
-  grounding-gate tuning, and purge→rebuild. Archives once Wave D closes.
-- `JCODE_SESSION_ISOLATION_PLAN.md` — **parked** per-session network-namespace
-  design. The on-box spike confirmed namespace _creation_ works, but unprivileged
-  outbound needs broad privilege; the owner parked it and the P0 substrate was
-  reverted. Kept for a future revisit; concurrent-Vite is covered by `--port $PORT`.
-- `LOCATION_ASSISTANT_TOOLS.md` — reference catalog of candidate location tools
-  (✅/🟡/⛔ triage). The ✅ spine shipped (`archive/LOCATION_ASSISTANT_PLAN.md`);
-  the 🟡/⛔ items are parked ideas kept as reference.
+**Start here:** `ROADMAP.md` (what's next) · `reference/ARCHITECTURE.md` (the
+system shape) · `reference/DEVELOPMENT.md` (binding standards) ·
+`DOC_LIFECYCLE.md` (how these docs are born, kept true, and archived).
 
-## Proposed (icebox)
-
-`proposed/` holds forward-looking design specs kept for the record but **not on
-the roadmap** — nothing built, no phase committed. See `proposed/README.md`.
-
-- `proposed/PHOTO_ARCHIVE_PLAN.md` — the **photo archive pipeline** design spec:
-  a staged, idempotent map over a decade of phone dumps (hash-keyed dedup,
-  deterministic dating, a vision worker, CLIP search, InsightFace faces, residual
-  RAG-backed date/identity inference, browser viewer).
-- `proposed/MUSIC_GEN_PLAN.md` — **music generation** on the opt-in `comfyui`
-  service (ACE-Step): an audio workflow, an owner-only `generated_audio` table, a
-  `generate_music` tool, and a MusicScreen — mirroring the shipped image stack.
-
-## Archive (history, not active)
-
-`archive/` holds completed build plans, a fulfilled contract, a rejected design,
-and the design research that fed them. Kept for the audit trail; not the place to
-learn the current system. See **`archive/README.md`** for the full index.
-
-Recently archived (all shipped, this cleanup): `PHASE6_WIKI_GRAPH_CONTRACT`, the
-four image-gen plans, `EMAIL_ARCHIVIST`, `GUIDED_INTAKE`, `HYGIENE_SWEEPS`, the
-four `PHASE7_*` location/family/app-map plans, `LOCATION_ASSISTANT`,
-`HURRICANE_TABS`, `TALK_BOARD`, `VIDEO_ANALYSIS`, `WHISPER_TRANSCRIPTION`, both
-`SUBAGENT_*` plans, the four `JCODE_*` plans (one `Rejected`), and
-`CALIBRATION_LOOP`. Residuals were carried into `ROADMAP.md` so nothing is lost.
+At the top level, beside this map: `ROADMAP.md` (phase plan + status) and
+`DOC_LIFECYCLE.md` (the doc process, enforced by the `docs` CI gate
+`scripts/docs-freshness.sh`). The one-time cleanup that adopted the lifecycle and
+sorted docs into these folders is `archive/DOC_CLEANUP_PLAN.md`.

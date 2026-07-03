@@ -1,6 +1,6 @@
 // The Proposals panel (right swipe from Full Brain): staged changes awaiting the
 // owner. The agent never writes truth directly — it proposes, and the owner enacts
-// (docs/ASSISTANT.md "Staging & approval"). Tapping a row opens its tree, where the
+// (docs/reference/ASSISTANT.md "Staging & approval"). Tapping a row opens its tree, where the
 // owner approves/rejects nodes and enacts.
 
 import type { ReactNode } from "react";

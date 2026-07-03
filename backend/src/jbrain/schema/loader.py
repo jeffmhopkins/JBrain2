@@ -2,7 +2,7 @@
 
 Mirrors `jbrain.llm.promptfile`: load-time validation so a malformed registry
 fails fast (SchemaError) rather than mid-pipeline. The definitions are the YAML
-authoring surface (docs/entity.md decision 1), co-located in `defs/` so they
+authoring surface (docs/reference/entity.md decision 1), co-located in `defs/` so they
 ship in the wheel like the `.prompt` files; `default_defs_dir()` finds them
 relative to this module and tests may pass an explicit dir.
 """

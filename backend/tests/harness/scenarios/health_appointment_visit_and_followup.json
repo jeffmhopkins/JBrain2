@@ -1,6 +1,6 @@
 {
   "name": "one visit note yields a measurement taken today and an expected follow-up",
-  "description": "docs/ANALYSIS.md: future-tense facts carry `expected` status (not occurred events); a measurement is an instant time-series point. A single appointment note emits BOTH a BP reading taken at the visit (measurement, asserted, today) AND the next appointment's scheduled time (state on the appointment entity, assertion=expected, three months out). Both land from one note with the correct kinds/assertions/domains; the future follow-up is NOT an asserted occurred event and does not collide with the measurement.",
+  "description": "docs/reference/ANALYSIS.md: future-tense facts carry `expected` status (not occurred events); a measurement is an instant time-series point. A single appointment note emits BOTH a BP reading taken at the visit (measurement, asserted, today) AND the next appointment's scheduled time (state on the appointment entity, assertion=expected, three months out). Both land from one note with the correct kinds/assertions/domains; the future follow-up is NOT an asserted occurred event and does not collide with the measurement.",
   "steps": [
     {
       "domain": "health",

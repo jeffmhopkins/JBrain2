@@ -466,7 +466,7 @@ previously section split [B]; reference mock:
 `docs/mocks/legacy-links-c-interval-timeline.html`). A relationship/state is
 **current** only when it is `active` **and** open (`valid_to IS NULL`); a closed
 interval (`valid_to` set) is **former**, even when nothing replaced it (the
-two-axis model — `docs/research/legacy-links-handling.md` §3.1). A former edge
+two-axis model — `docs/archive/research/legacy-links-handling.md` §3.1). A former edge
 stays **visible on the default view** (it is not superseded history to hide
 behind the `N earlier →` rail), rendered with a compact **validity track** under
 the edge: a `--green` open span to **now** for the current value, a faded/dashed
@@ -724,7 +724,7 @@ the mnemonic is temporal/actional (past sessions left, pending approvals right).
 Both are first-class **card-launcher destinations** (tiles, under a SYSTEM/
 ASSISTANT group) — that is their canonical, tappable home and the required visible
 way in and out. The **Proposals** page is the unified review queue focused on the
-agent's staged Proposal trees (see `docs/ASSISTANT.md`); **Sessions** lists past
+agent's staged Proposal trees (see `docs/reference/ASSISTANT.md`); **Sessions** lists past
 and active agent sessions with their selected read scope.
 
 As an **enhancement only** (never the sole path — the gesture rule above binds), a
@@ -794,7 +794,7 @@ chose the *stateful mini-glyph* over a pulsing dot and a spinner ring; reference
 replaces its leading scope dot with an **accent (`--steel`) activity glyph** so an
 in-flight thinking/render is visible from the picker even while another chat is open
 (the turn is detached from the SSE connection and keyed to its own session — see
-`docs/ASSISTANT.md`). The glyph is **stateful**: **three bouncing dots while thinking**
+`docs/reference/ASSISTANT.md`). The glyph is **stateful**: **three bouncing dots while thinking**
 (any non-image activity — reasoning, tools, answering), a **twinkling spark while an
 image tool renders** (`generate_image`/`edit_image`). The row's `turns / staged` meta is
 replaced by a calm accent **`thinking…` / `rendering…`** word for the duration. The glyph
@@ -841,7 +841,7 @@ the **mock API client** (fixtures) so the working mocked UI is owner-approved be
 wiring. The **direct, non-agent render endpoints are a follow-up wave** and are **escalation-
 worthy** (a non-agent surface that drives ComfyUI renders) — owner-only RLS, security-100%, and
 the shared render logic extracted from the jerv tool handlers so the two paths never diverge.
-See `docs/IMAGE_LAUNCHER_PLAN.md`.
+See `docs/archive/IMAGE_LAUNCHER_PLAN.md`.
 
 ## Surface paradigms (which container for which job)
 
@@ -875,7 +875,7 @@ See `docs/IMAGE_LAUNCHER_PLAN.md`.
 Agent tools render rich UI — lab plots, tables, timelines, appointment cards,
 confirm sheets — but **only through a closed registry of first-party
 components**, never by emitting HTML, scripts, or markdown URLs (that would be the
-exfiltration channel `docs/ASSISTANT.md` invariant I-9 forbids, and would let
+exfiltration channel `docs/reference/ASSISTANT.md` invariant I-9 forbids, and would let
 model output drive the render). The contract:
 
 - A tool result may carry a **`view`**: a schema-validated, **data-only** payload
@@ -928,7 +928,7 @@ its own decision.
 ### `generated_image` tool-view (settled in a three-way GUI review — reference mock: `docs/mocks/genimage-c-edit-aware.html`)
 
 The in-chat card jerv shows after a `generate_image` or `edit_image` call
-(`docs/IMAGE_GEN_PLAN.md`, Wave G3). A registered, data-only view like every
+(`docs/archive/IMAGE_GEN_PLAN.md`, Wave G3). A registered, data-only view like every
 other: the model fills `{image_id, kind ('generate'|'edit'), prompt, width,
 height, model}` and **authors no markup and no URL** — the component builds the
 image source as `/api/images/generated/${image_id}` and sizes the frame from
@@ -951,7 +951,7 @@ mirrors `wiki_*` RLS); never a note, never RAG-indexed — a chat artifact.
 
 ### `video_analysis` tool-view (settled in a GUI review — binding mock: `docs/mocks/analyze-video-approved.html`)
 
-The in-chat card jerv shows after an `analyze_video` call (`docs/VIDEO_ANALYSIS_PLAN.md`,
+The in-chat card jerv shows after an `analyze_video` call (`docs/archive/VIDEO_ANALYSIS_PLAN.md`,
 Wave 4). A registered, data-only view: the model fills `{attachment_id, source
 ('chat'|'note'), media:'video', filename, summary, duration_ms, frames:[{t_ms,
 caption, thumb_id}], transcript:{text, words:[{text,start_ms,end_ms,confidence}]}|null}`
@@ -1031,7 +1031,7 @@ reaches Open-Meteo is a city centre, the same coarseness as naming the city, nev
 precise fix. Coordinates never ride the data-only payload (#9). Owner-facing chat
 artifact; never a note, never RAG-indexed.
 
-### `hurricane_card` tool-view (binding mock: `docs/mocks/hurricane-view/hurricane-combined-tabs.html`; build plan `docs/HURRICANE_TABS_PLAN.md`)
+### `hurricane_card` tool-view (binding mock: `docs/mocks/hurricane-view/hurricane-combined-tabs.html`; build plan `docs/archive/HURRICANE_TABS_PLAN.md`)
 
 The in-chat **tabbed** card jerv shows after a `hurricane` tool call. A persistent
 storm hero + an official watch/warning banner sit above a tab bar: **Timeline** (the
@@ -1043,7 +1043,7 @@ via Leaflet — pannable/zoomable), so this card is the **scoped exception** to 
 no-raw-lat/lon rule (#9): its geometry carries real coordinates (the public NHC track +
 cone, plus the city-centre `you` pin — never the owner's precise fix), and it carries one
 URL — `nhc_url`, the storm's public NHC graphics page. The shape (full schema in
-`docs/HURRICANE_TABS_PLAN.md` §2):
+`docs/archive/HURRICANE_TABS_PLAN.md` §2):
 `{place, as_of, active_count, coverage, storm:{name, kind, cat, sustained_mph,
 sustained_level, gust_mph, gust_level, pressure_mb, pressure_level, moving},
 distance_mi, bearing, proximity, alert, track[], cone[], you, nhc_url, timeline[],
@@ -1222,9 +1222,9 @@ The elements, all owner-/family-scoped (never a scoped link — L8):
 The surface honours the firewall: a member session sees only **its own subject + its
 family group** (RLS `viewer_may_see`/`view_scope`), the basemap is self-hosted, and
 the Details/History content is **names + times only — never a raw coordinate in
-prose**. Build plan + wave breakdown: `docs/PHASE7_APP_MAP_PLAN.md`.
+prose**. Build plan + wave breakdown: `docs/archive/PHASE7_APP_MAP_PLAN.md`.
 
-## jcode — code mode (GUI gate settled; build plan `docs/proposed/JCODE_PLAN.md`, Wave J3)
+## jcode — code mode (GUI gate settled; build plan `docs/archive/JCODE_PLAN.md`, Wave J3)
 
 Code mode is a sandboxed coding session fronted by the PWA (a launcher tile →
 launcher → live session). The two surfaces went through the mock-first gate
@@ -1240,7 +1240,7 @@ launcher → live session). The two surfaces went through the mock-first gate
   the settled Chats picker — you resume far more than you start.
 - **Session — `jcode-session-2tab-a-fullbleed.html` [chosen, supersedes the 4-view
   `jcode-session-c-tabbed.html`].** Code mode was gutted to a **terminal-first** session
-  (owner decision, build plan `docs/proposed/JCODE_2TAB_PLAN.md`): the PWA chat, the diff
+  (owner decision, build plan `docs/archive/JCODE_2TAB_PLAN.md`): the PWA chat, the diff
   placeholder, and the read-only terminal-log view are gone. One session, **two views:
   Terminal · Preview**. The Terminal is the workhorse — a real shell in the sandbox
   (xterm.js) where the owner runs `claude` against the on-box coder; Preview is the
@@ -1296,10 +1296,10 @@ segmented sort — more screen surgery than the problem warranted, and it buried
 the config behind the disclosure). C keeps the per-card model while making the
 result a first-class, always-visible dock.
 
-## Sub-agent spawning surfaces (settled; build plan `docs/SUBAGENT_SPAWNING_PLAN.md`)
+## Sub-agent spawning surfaces (settled; build plan `docs/archive/SUBAGENT_SPAWNING_PLAN.md`)
 
 When `jerv` fans out web-sandboxed research/review/summarize sub-agents (the
-reserved `spawn_subagent` hatch, `docs/ASSISTANT.md`), two surfaces show them. The
+reserved `spawn_subagent` hatch, `docs/reference/ASSISTANT.md`), two surfaces show them. The
 **layouts** were chosen in a three-way review (rivals retained as the record); an
 adversarial review then re-opened the gate, and the revised mocks added the
 failure / cancel / long-fan / budget-exhausted states (scenario switchers) and

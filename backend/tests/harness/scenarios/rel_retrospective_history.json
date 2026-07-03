@@ -1,6 +1,6 @@
 {
   "name": "retrospective relationship lands as history, never supersedes current",
-  "description": "Supersession compares VALIDITY time, not capture time (supersession._validity / docs/ANALYSIS.md 'a retrospective note about 2019 must not supersede the current address'). A note captured in 2026 about a 2018 job has an OLDER valid_from than the current employer, so decide() takes the retrospective branch: insert_status='superseded', superseded_by=current, NO fact_conflict. The current worksFor stays active; the old job is recorded as already-closed history.",
+  "description": "Supersession compares VALIDITY time, not capture time (supersession._validity / docs/reference/ANALYSIS.md 'a retrospective note about 2019 must not supersede the current address'). A note captured in 2026 about a 2018 job has an OLDER valid_from than the current employer, so decide() takes the retrospective branch: insert_status='superseded', superseded_by=current, NO fact_conflict. The current worksFor stays active; the old job is recorded as already-closed history.",
   "steps": [
     {
       "domain": "general",

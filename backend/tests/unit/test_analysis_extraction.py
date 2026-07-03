@@ -245,7 +245,7 @@ def test_unknown_domain_falls_back_to_empty_for_pipeline_substitution() -> None:
 
 
 def test_unresolved_temporal_token_is_dropped() -> None:
-    """Never store only-relative (docs/ANALYSIS.md "Temporal model")."""
+    """Never store only-relative (docs/reference/ANALYSIS.md "Temporal model")."""
     payload = valid_payload()
     payload["temporal_tokens"].append(
         {

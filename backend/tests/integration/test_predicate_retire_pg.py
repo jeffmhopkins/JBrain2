@@ -1,5 +1,5 @@
 """The two-tier cutover's open-card retirement against real Postgres
-(docs/ENTITY_GRAPH_REFOCUS_PLAN.md §3 T1.3): the boot sweep deletes only OPEN
+(docs/reference/ENTITY_GRAPH_REFOCUS_PLAN.md §3 T1.3): the boot sweep deletes only OPEN
 new_predicate cards — resolved/dismissed/deferred rows are human history and
 survive — and is one-shot per database via a persisted app.settings marker, so
 a card the owner REOPENS (back to status='open') survives every later boot.

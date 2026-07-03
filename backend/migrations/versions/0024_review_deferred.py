@@ -1,4 +1,4 @@
-"""Deferred review items — a fourth review_items status (docs/DESIGN.md
+"""Deferred review items — a fourth review_items status (docs/reference/DESIGN.md
 "Review inbox", redesign: the split-inbox triage).
 
 The redesigned review inbox lets the owner park an item without deciding it:

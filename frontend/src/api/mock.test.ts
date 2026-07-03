@@ -1,6 +1,6 @@
 // Contract checks for the fixture backend so `npm run dev:mock` keeps
 // working as screens evolve (mock states are part of a screen's definition
-// of done — docs/DESIGN.md "UI development process").
+// of done — docs/reference/DESIGN.md "UI development process").
 
 import { describe, expect, it } from "vitest";
 import type {

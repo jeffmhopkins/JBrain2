@@ -25,7 +25,7 @@ services:
       # when the tunnel/internet is down (the Secure cookie needs HTTPS). The
       # host advertises the name over mDNS via an avahi CNAME alias — see
       # deploy/lan-setup.sh. Blank JBRAIN_LAN_ADDR in .env to turn it off.
-      # See docs/LOCAL_ACCESS.md.
+      # See docs/runbooks/LOCAL_ACCESS.md.
       JBRAIN_LAN_ADDR: ${JBRAIN_LAN_ADDR:-https://jbrain.local}
       # Host-mode jcode web preview (docs/JCODE_PREVIEW_HOST_PLAN.md): when set, the
       # entrypoint renders a wildcard *.<host> Caddy site that routes <slug>-preview.<host>
@@ -46,7 +46,7 @@ services:
   # In tunnel mode Caddy serves plain HTTP (see JBRAIN_SITE_ADDR) and the
   # connector reaches it at http://proxy:80 over the `edge` network; configure
   # that origin and the public hostname in the Cloudflare dashboard. The token
-  # carries the tunnel's identity and routing — see docs/CLOUDFLARE_TUNNEL.md.
+  # carries the tunnel's identity and routing — see docs/runbooks/CLOUDFLARE_TUNNEL.md.
   cloudflared:
     profiles: [tunnel]
     image: cloudflare/cloudflared:latest
@@ -122,7 +122,7 @@ services:
       # validates it in /internal/mqtt-auth and the consumer connects with it. Empty
       # disables the identity (fail-closed). Only meaningful with the `mqtt` profile.
       JBRAIN_MQTT_INGEST_SECRET: ${MQTT_INGEST_SECRET:-}
-      # Owner debug console (docs/DEBUG_ACCESS.md) — OFF unless the operator opts
+      # Owner debug console (docs/runbooks/DEBUG_ACCESS.md) — OFF unless the operator opts
       # in. When false the /api/debug/* surface is not mounted and minting is
       # refused, so it adds zero attack surface. Turn it on only on a box you are
       # comfortable letting an external assistant read in full (incl. health/
@@ -569,7 +569,7 @@ services:
       - embed_models:/data
     networks: [internal]
 
-  # Self-hosted web search (docs/ASSISTANT.md "Agent selection"): a SearXNG
+  # Self-hosted web search (docs/reference/ASSISTANT.md "Agent selection"): a SearXNG
   # metasearch instance backing the jerv chatbot's web_search/web_fetch tools.
   # Part of the stock stack (no profile) so it comes up with every deploy and is
   # recreated by `jbrain update` — the deploy tooling has no per-service enable
@@ -605,7 +605,7 @@ services:
       - ./searxng:/etc/searxng
     networks: [internal]
 
-  # Reader fallback for jerv's web_fetch (docs/ASSISTANT.md "Agent selection"): an
+  # Reader fallback for jerv's web_fetch (docs/reference/ASSISTANT.md "Agent selection"): an
   # on-box, r.jina.ai-compatible renderer web_fetch retries through when a direct fetch
   # is bot-walled or comes back empty (a JS-rendered page). It is the sanctioned,
   # owner-controlled stand-in for the model routing a URL through the public r.jina.ai

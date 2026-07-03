@@ -1,6 +1,6 @@
 {
   "name": "equal valid_from tie-break: the later-reported value wins",
-  "description": "Two state facts about Tomas's employer share the EXACT same valid_from (2025-09-01) but carry different values (Globex vs Initech) and were captured at different times. supersession._validity returns (valid_from, reported_at); with valid_from tied, the tie-break is reported_at. The newest-reported candidate (Initech, captured 2026-02-02) satisfies key(candidate) >= key(current) and supersedes the earlier-reported Globex (captured 2026-02-01). Pins the documented tie-break ('Newest = latest reported_at among facts about the same validity period', docs/ANALYSIS.md): with identical validity, capture order breaks the tie and the later report becomes active.",
+  "description": "Two state facts about Tomas's employer share the EXACT same valid_from (2025-09-01) but carry different values (Globex vs Initech) and were captured at different times. supersession._validity returns (valid_from, reported_at); with valid_from tied, the tie-break is reported_at. The newest-reported candidate (Initech, captured 2026-02-02) satisfies key(candidate) >= key(current) and supersedes the earlier-reported Globex (captured 2026-02-01). Pins the documented tie-break ('Newest = latest reported_at among facts about the same validity period', docs/reference/ANALYSIS.md): with identical validity, capture order breaks the tie and the later report becomes active.",
   "steps": [
     {
       "domain": "general",

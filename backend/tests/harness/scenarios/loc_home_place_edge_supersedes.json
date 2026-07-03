@@ -1,6 +1,6 @@
 {
   "name": "homeLocation as a Place edge still supersedes across different place nodes",
-  "description": "Follow-up to the object-edge work (docs/ANALYSIS.md 'property graph'): a residence now links to a Place node (object_entity_ref) AND keeps {place} for display, instead of burying the city in a string. The safety property this pins: homeLocation is FUNCTIONAL (supersession._existing_facts drops the object from a functional key), so moving Denver -> Boulder supersedes even though the two facts point at DIFFERENT Place entities — the move does not fork into two simultaneous residences. Contrast own_relationship_edges_accumulate, where owns is non-functional and distinct objects accumulate. Mints Denver and Boulder as provisional Place entities.",
+  "description": "Follow-up to the object-edge work (docs/reference/ANALYSIS.md 'property graph'): a residence now links to a Place node (object_entity_ref) AND keeps {place} for display, instead of burying the city in a string. The safety property this pins: homeLocation is FUNCTIONAL (supersession._existing_facts drops the object from a functional key), so moving Denver -> Boulder supersedes even though the two facts point at DIFFERENT Place entities — the move does not fork into two simultaneous residences. Contrast own_relationship_edges_accumulate, where owns is non-functional and distinct objects accumulate. Mints Denver and Boulder as provisional Place entities.",
   "steps": [
     {
       "domain": "general",

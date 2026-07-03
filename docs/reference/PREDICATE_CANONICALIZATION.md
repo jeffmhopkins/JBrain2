@@ -2,7 +2,7 @@
 
 > **Status:** Superseded (kept in place — still cited by `README`) · **Superseded-by:** `ENTITY_GRAPH_REFOCUS_PLAN.md` · **Last verified:** 2026-07-03
 
-Status: **largely superseded** by `docs/ENTITY_GRAPH_REFOCUS_PLAN.md` (the
+Status: **largely superseded** by `docs/reference/ENTITY_GRAPH_REFOCUS_PLAN.md` (the
 two-tier predicate model). The embed-band decision and the `new_predicate`
 review card no longer run: an unknown predicate hits only the durable
 `predicate_aliases` collapse and otherwise **commits raw** — this doc's §5a
@@ -16,8 +16,8 @@ predicate-suggestion picker (gated by the repurposed
 `predicate_canonicalization` setting); and the resolution verbs — legacy and
 deferred cards stay resolvable. The self-improvement loop that once sat on top
 (an agent batching and auto-resolving new-predicate cards) was removed
-earlier. Read alongside `docs/ANALYSIS.md` (Facts, the open vocabulary),
-`docs/entity.md` (the soft schema registry), and `tests/eval/README.md`.
+earlier. Read alongside `docs/reference/ANALYSIS.md` (Facts, the open vocabulary),
+`docs/reference/entity.md` (the soft schema registry), and `tests/eval/README.md`.
 Sections below describe the original design as shipped.
 
 ## 1. The problem
@@ -50,7 +50,7 @@ The schema registry is richer than the runtime uses:
   `enum_values`, `range_type`, `shape`, `renamed_from`, `description`. The
   **typed value table the proposal wants largely exists already** — it is just
   not enforced.
-- **`docs/entity.md` explicitly marks value-shape validation as deferred**: "the
+- **`docs/reference/entity.md` explicitly marks value-shape validation as deferred**: "the
   data they would read (`value_shape`, `enum_values`, …) is already in the YAML
   and loader-validated, so building them later is a small change."
 - **The normalization hook is a single function** (`SchemaRegistry.normalize_predicate`,

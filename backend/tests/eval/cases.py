@@ -69,7 +69,7 @@ class Expect:
     absent_facts: tuple[dict[str, Any], ...] = ()
     supersede: tuple[dict[str, Any], ...] = ()
     max_facts: int | None = None
-    # A TIGHTENED bound landing advisory-first (docs/ENTITY_GRAPH_REFOCUS_PLAN.md
+    # A TIGHTENED bound landing advisory-first (docs/reference/ENTITY_GRAPH_REFOCUS_PLAN.md
     # §4 T2.3): a miss reports as an "advisory:" failure that never hard-fails,
     # even when the case itself is a hard gate. Hardened into max_facts only
     # after the >=3-run Grok calibration.
@@ -84,7 +84,7 @@ class Expect:
     review_cards: tuple[dict[str, Any], ...] = ()
     # DB-mode NEGATIVE gate: each spec {kind, predicate?} must match ZERO filed
     # cards — e.g. {"kind": "new_predicate"} proves a long-tail predicate
-    # committed raw, card-free (docs/ENTITY_GRAPH_REFOCUS_PLAN.md §1).
+    # committed raw, card-free (docs/reference/ENTITY_GRAPH_REFOCUS_PLAN.md §1).
     absent_review_cards: tuple[dict[str, Any], ...] = ()
     rationale: str = ""
 

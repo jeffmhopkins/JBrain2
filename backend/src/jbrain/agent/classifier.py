@@ -3,8 +3,8 @@ and deterministic (no per-write LLM call). It decides the domain stamp every
 memory write carries, and getting it wrong must fail *closed*: over-restricting
 hides a memory from a session that could have read it (annoying); under-
 restricting leaks it to one that should not (a firewall breach). Every default
-here leans toward the restrictive side (docs/ASSISTANT.md "Domain classification",
-invariants #3/#4; the asymmetric rule is docs/ANALYSIS.md).
+here leans toward the restrictive side (docs/reference/ASSISTANT.md "Domain classification",
+invariants #3/#4; the asymmetric rule is docs/reference/ANALYSIS.md).
 
 This module is pure policy — the RLS columns it produces are what Postgres
 enforces. It is immutable to self-edit (invariant #12).

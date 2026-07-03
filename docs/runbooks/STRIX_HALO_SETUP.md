@@ -2,7 +2,7 @@
 
 > **Status:** Living · **Last verified:** 2026-07-03
 
-End-to-end runbook for self-hosting the optional local models (docs/ANALYSIS.md,
+End-to-end runbook for self-hosting the optional local models (docs/reference/ANALYSIS.md,
 "Self-hosted local models") on a **Ryzen AI Max+ 395 / 128 GB** (gfx1151,
 Radeon 8060S) system. Path: **Ubuntu → kernel ≥ 6.18.4 → Vulkan → JBrain base
 install → host tuning + reboot → enable local models → route in the UI.** Two
@@ -168,7 +168,7 @@ app and `jbrain logs`, not `curl localhost:8080`.
 
 ## Image generation — ComfyUI + Qwen-Image (optional, opt-in)
 Powers jerv's `generate_image` / `edit_image` tools
-(`docs/IMAGE_GEN_SERVICE_PLAN.md`): text→image via **Qwen-Image** (native bf16),
+(`docs/archive/IMAGE_GEN_SERVICE_PLAN.md`): text→image via **Qwen-Image** (native bf16),
 a near-instant **fast** path via **DreamShaper XL Lightning** (`generate_image`
 `speed: fast`), and image→image via **Qwen-Image-Edit**, served by a **ROCm ComfyUI JBrain manages
 as a compose service** — the sibling of the local-LLM gateway. Like that

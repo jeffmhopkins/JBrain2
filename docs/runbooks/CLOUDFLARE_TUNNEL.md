@@ -99,11 +99,11 @@ then `sudo jbrain restart` (the helper picks up the `tunnel` profile from
 - **The tunnel depends on the internet.** A WAN outage (even with the box and LAN
   on battery) takes the tunnel down with it. To keep signing in from devices on
   the same network during an outage, also enable LAN access — see
-  `docs/LOCAL_ACCESS.md`.
+  `docs/runbooks/LOCAL_ACCESS.md`.
 
 ## Per-session web preview (jcode host mode)
 
-`docs/JCODE_PREVIEW_HOST_PLAN.md` serves each jcode session's dev server at its own
+`docs/archive/JCODE_PREVIEW_HOST_PLAN.md` serves each jcode session's dev server at its own
 **`<slug>-preview.<host>`** under *this same tunnel* — no per-session TryCloudflare
 quick-tunnel. The api proxies the preview by slug to the internal control server
 (`/__jcode_preview/{slug}` → jcode `/preview/{slug}`, HTTP + the HMR WebSocket), so the
@@ -149,7 +149,7 @@ the one thing you do by hand is the Cloudflare wildcard:
    the stack so the change takes effect (a `.env` change isn't picked up by `restart`).
    Host-served preview is the only mode (the per-session cloudflared quick-tunnel was
    retired); a base host is all it needs. Turn on **debug access**
-   (`docs/DEBUG_ACCESS.md`) first so the control server's verbose logs (`/debug/logs/jcode`)
+   (`docs/runbooks/DEBUG_ACCESS.md`) first so the control server's verbose logs (`/debug/logs/jcode`)
    show `preview proxy → :port` per request. Start a dev server in a session on `$PORT`,
    open its `<slug>-preview.<host>` → the page loads and HMR live-reloads; open a second
    session to confirm concurrency.

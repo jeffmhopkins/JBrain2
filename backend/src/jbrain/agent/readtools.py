@@ -248,7 +248,7 @@ def _current_facts(view: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 # How many source notes the entity view lists (and offers as cards). The graph
-# is the spine, notes hold the richness (docs/ENTITY_GRAPH_REFOCUS_PLAN.md), so
+# is the spine, notes hold the richness (docs/reference/ENTITY_GRAPH_REFOCUS_PLAN.md), so
 # the entity page must be a doorway into its sources — but a bounded one; the
 # model chains read_note only where it actually needs the prose.
 _SOURCE_NOTE_LIMIT = 5

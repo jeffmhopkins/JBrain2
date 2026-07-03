@@ -1,4 +1,4 @@
-"""Fetch a URL and extract its readable text (docs/ASSISTANT.md "Agent
+"""Fetch a URL and extract its readable text (docs/reference/ASSISTANT.md "Agent
 selection").
 
 This is the one genuinely outbound leg of the jerv sandbox: it GETs a

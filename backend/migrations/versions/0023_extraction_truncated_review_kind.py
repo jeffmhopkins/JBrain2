@@ -2,7 +2,7 @@
 
 When a note holds more durable facts than its per-note budget, the analysis
 pipeline files an informational `extraction_truncated` card so the clipped
-tail is visible rather than silently dropped (docs/ANALYSIS.md "Over-extraction
+tail is visible rather than silently dropped (docs/reference/ANALYSIS.md "Over-extraction
 is the known quality risk"). The review_items kind CHECK is an explicit
 allowlist, so the new kind needs admitting here.
 

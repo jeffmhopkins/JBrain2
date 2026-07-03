@@ -1,7 +1,7 @@
 """Capability-token suspend: `suspended_at` on principals.
 
 Adds a *reversible* pause to the debug-console token lifecycle
-(docs/DEBUG_ACCESS.md). Revocation is permanent (`revoked_at`), and expiry lapses
+(docs/runbooks/DEBUG_ACCESS.md). Revocation is permanent (`revoked_at`), and expiry lapses
 on its own (`expires_at`); suspend sits between them — the owner (or the console
 itself) freezes a token so it stops authenticating, then the owner un-freezes it
 later from the PWA token list. Authentication therefore also filters

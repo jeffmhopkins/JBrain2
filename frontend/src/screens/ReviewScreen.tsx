@@ -1,9 +1,9 @@
-// Review inbox — split-inbox redesign (docs/DESIGN.md "Review inbox"). Two
+// Review inbox — split-inbox redesign (docs/reference/DESIGN.md "Review inbox"). Two
 // lanes (pending · decided) behind a segmented filter. The list is
 // browsable with a selection mode for bulk actions; tapping a row pushes a
 // detail view with prev/next so you move between items without returning to
 // the list. The detail is composed from a registry of typed blocks
-// (docs/DESIGN.md "Detail composition") declared per kind in
+// (docs/reference/DESIGN.md "Detail composition") declared per kind in
 // review/blocks/registry — header, claim:{inference,diff,notice}, trace,
 // action, evidence, plus a lane-driven footer — so a new kind is a sequence,
 // not a screen branch. Every decision raises an undo snackbar (undo is the

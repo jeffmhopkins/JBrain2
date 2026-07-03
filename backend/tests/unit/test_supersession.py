@@ -1,4 +1,4 @@
-"""The per-kind supersession matrix (docs/ANALYSIS.md "Fact kinds") as pure
+"""The per-kind supersession matrix (docs/reference/ANALYSIS.md "Fact kinds") as pure
 decision tests — all six kinds, pinned overrides, and the validity-vs-capture
 time rule."""
 

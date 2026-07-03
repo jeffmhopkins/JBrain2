@@ -366,7 +366,7 @@
           "kind": "new_predicate"
         }
       ],
-      "rationale": "The promoted tier-1 care edge (docs/ENTITY_GRAPH_REFOCUS_PLAN.md section 1): an owner-authored visit to a named clinician yields Me.treatedBy -> Dr. Alvarez as a linked relationship on the health floor, card-free. ADVISORY-FIRST: treatedBy had no graded-corpus predecessor to calibrate against (only nightly-eval coverage), so it hardens after the 3-run Grok calibration pass, per the corpus pattern for new cases."
+      "rationale": "The promoted tier-1 care edge (docs/reference/ENTITY_GRAPH_REFOCUS_PLAN.md section 1): an owner-authored visit to a named clinician yields Me.treatedBy -> Dr. Alvarez as a linked relationship on the health floor, card-free. ADVISORY-FIRST: treatedBy had no graded-corpus predecessor to calibrate against (only nightly-eval coverage), so it hardens after the 3-run Grok calibration pass, per the corpus pattern for new cases."
     },
     "advisory": true
   },
@@ -486,7 +486,7 @@
           "cross_subject": false
         }
       ],
-      "rationale": "Per-fact domains from one general note. DB-hard since the two-tier refocus (docs/ENTITY_GRAPH_REFOCUS_PLAN.md section 4/7): the salience contract names 'a medication or diagnosis' as a root fact and treatedBy as a care edge, the per-fact domain rule classifies clinical facts health regardless of the note's capture domain, and the hardcoded _DOMAIN_BY_PREDICATE floor (extraction.py) forces medication/treatedBy spellings to health deterministically; the kinship edge (children) is a MUST-emit general fact. The tightened fact bound is advisory until the 3-run Grok calibration.",
+      "rationale": "Per-fact domains from one general note. DB-hard since the two-tier refocus (docs/reference/ENTITY_GRAPH_REFOCUS_PLAN.md section 4/7): the salience contract names 'a medication or diagnosis' as a root fact and treatedBy as a care edge, the per-fact domain rule classifies clinical facts health regardless of the note's capture domain, and the hardcoded _DOMAIN_BY_PREDICATE floor (extraction.py) forces medication/treatedBy spellings to health deterministically; the kinship edge (children) is a MUST-emit general fact. The tightened fact bound is advisory until the 3-run Grok calibration.",
       "committed_domains": {
         "health": 1,
         "general": 1

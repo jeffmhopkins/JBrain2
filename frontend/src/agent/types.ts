@@ -1,7 +1,7 @@
 // The agent chat wire shapes, mirroring backend agent/contracts.py. These cross
 // the SSE wire from /api/chat (ChatEvent) and carry the tool-result views the
 // component registry renders (ViewPayload / CitationRef). Hand-written until
-// OpenAPI generation lands (docs/DEVELOPMENT.md "TypeScript").
+// OpenAPI generation lands (docs/reference/DEVELOPMENT.md "TypeScript").
 
 export type Domain = "general" | "health" | "finance" | "location";
 export type Surface = "inline" | "sheet" | "dialog";

@@ -413,7 +413,7 @@ async def llm_usage(
 ) -> dict[str, object]:
     """The AI usage card: today/month totals, per-task breakdown, last 30
     days — costs estimated at query time from the config price table
-    (docs/ANALYSIS.md "Token accounting" / "Cost estimates")."""
+    (docs/reference/ANALYSIS.md "Token accounting" / "Cost estimates")."""
     maker = cast("async_sessionmaker[AsyncSession]", request.app.state.session_maker)
     ctx = SessionContext(principal_id=principal.id, principal_kind=principal.kind)
     return await usage_summary(maker, ctx, settings.llm_prices)

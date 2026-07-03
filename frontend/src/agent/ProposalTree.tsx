@@ -1,7 +1,7 @@
 // The Proposal tree: the owner judges each node by its rendered preview and
 // approves or rejects it, then enacts. The agent never writes — enacting runs the
 // approved, prerequisite-satisfied leaves through the trusted executor; the rest
-// are held (docs/ASSISTANT.md "Staging & approval").
+// are held (docs/reference/ASSISTANT.md "Staging & approval").
 
 import { type ReactNode, useCallback, useEffect, useState } from "react";
 import { api } from "../api/client";
@@ -167,7 +167,7 @@ function NodeRow({
 
 // A merge leaf shows the two entities as type-tinted chips (their names, not their
 // ids) joined by a combine glyph — so the owner judges a readable effect, never a
-// uuid-laden sentence (docs/DESIGN.md "Entity-type accents").
+// uuid-laden sentence (docs/reference/DESIGN.md "Entity-type accents").
 function MergeHead({ preview }: { preview: Record<string, unknown> }): ReactNode {
   const nameA = String(preview.name_a ?? "");
   const nameB = String(preview.name_b ?? "");

@@ -1,4 +1,4 @@
-"""The starter medical/medicine connectors (docs/ASSISTANT.md "External
+"""The starter medical/medicine connectors (docs/reference/ASSISTANT.md "External
 connectors"). Reference enrichment, not authority: results are data the agent may
 cite to the owner with source attribution, never minted as facts. Both are
 health-domain, free, no-auth NLM services.

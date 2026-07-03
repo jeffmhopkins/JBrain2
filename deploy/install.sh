@@ -88,7 +88,7 @@ if [ ! -f .env ]; then
     echo "Cloudflare Tunnel token — create the tunnel under Cloudflare Zero Trust"
     echo "(Networks > Tunnels > Create) and paste the token it shows (starts 'eyJ')."
     echo "Leave blank to add CLOUDFLARE_TUNNEL_TOKEN to $INSTALL_DIR/.env later."
-    echo "Full walkthrough: docs/CLOUDFLARE_TUNNEL.md"
+    echo "Full walkthrough: docs/runbooks/CLOUDFLARE_TUNNEL.md"
     read -rp "Cloudflare Tunnel token: " TUNNEL_TOKEN
   fi
 
@@ -188,7 +188,7 @@ EOF
 
 DONE_DOMAIN="$(grep '^JBRAIN_DOMAIN=' .env | cut -d= -f2)"
 if grep -q '^TUNNEL_ENABLED=true' .env; then
-  say "Done. Finish the Cloudflare side (docs/CLOUDFLARE_TUNNEL.md): add a public"
+  say "Done. Finish the Cloudflare side (docs/runbooks/CLOUDFLARE_TUNNEL.md): add a public"
   say "hostname for $DONE_DOMAIN routing to http://proxy:80, then open"
   say "https://$DONE_DOMAIN and paste your owner key."
 else
@@ -197,6 +197,6 @@ fi
 DONE_LAN="$(grep '^JBRAIN_LAN_ADDR=' .env | cut -d= -f2)"
 if [ -n "$DONE_LAN" ]; then
   say "On the same network you can also use $DONE_LAN (trust the local"
-  say "certificate on first visit — see docs/LOCAL_ACCESS.md)."
+  say "certificate on first visit — see docs/runbooks/LOCAL_ACCESS.md)."
 fi
 say "Manage with: jbrain status | restart | logs | reset-owner-key | update | enable-lan | backup | restore"

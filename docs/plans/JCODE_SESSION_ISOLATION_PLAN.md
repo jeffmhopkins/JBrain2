@@ -42,7 +42,7 @@ the privilege/effort tradeoff changed the answer.
 Sessions today share one jcode container and one network namespace. This plan gives
 each session its **own** network namespace — its own `lo` — so every session can bind
 the same port independently (each gets its own `5173`). That fixes the concurrent-Vite
-ergonomics (`docs/JCODE_PREVIEW_HOST_PLAN.md` left this as a residual), and it's the
+ergonomics (`docs/archive/JCODE_PREVIEW_HOST_PLAN.md` left this as a residual), and it's the
 first step of the larger goal: making the sandbox an actual sandbox, closing the
 **cross-session filesystem-read residual** documented in `proposed/JCODE_PLAN.md` (§
 "Cross-session reads are an accepted residual").

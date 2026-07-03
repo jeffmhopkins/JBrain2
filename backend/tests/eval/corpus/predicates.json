@@ -16,7 +16,7 @@
           "kind": "new_predicate"
         }
       ],
-      "rationale": "Two-tier model (docs/ENTITY_GRAPH_REFOCUS_PLAN.md section 1): a genuinely novel long-tail predicate commits on its raw spelling \u2014 no embed round-trip, no new_predicate card. The exact predicate Grok emits is latitude, so the case pins the card-free floor (at least one committed general fact, zero cards) rather than a spelling."
+      "rationale": "Two-tier model (docs/reference/ENTITY_GRAPH_REFOCUS_PLAN.md section 1): a genuinely novel long-tail predicate commits on its raw spelling \u2014 no embed round-trip, no new_predicate card. The exact predicate Grok emits is latitude, so the case pins the card-free floor (at least one committed general fact, zero cards) rather than a spelling."
     }
   },
   {

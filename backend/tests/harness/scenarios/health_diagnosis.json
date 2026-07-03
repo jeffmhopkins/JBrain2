@@ -1,6 +1,6 @@
 {
   "name": "a diagnosis is an asserted state; a rule-out is hypothetical and not a diagnosis fact",
-  "description": "docs/ANALYSIS.md: assertion status gates what counts. A confirmed diagnosis lands as an asserted state on me.diagnosis. A separate 'wants to rule out X' is assertion=hypothetical — it is still recorded (the wiki demotes it) but must NEVER become an asserted diagnosis fact. The absent_facts check pins that no asserted diagnosis exists for the ruled-out condition, while the confirmed diagnosis is present and active.",
+  "description": "docs/reference/ANALYSIS.md: assertion status gates what counts. A confirmed diagnosis lands as an asserted state on me.diagnosis. A separate 'wants to rule out X' is assertion=hypothetical — it is still recorded (the wiki demotes it) but must NEVER become an asserted diagnosis fact. The absent_facts check pins that no asserted diagnosis exists for the ruled-out condition, while the confirmed diagnosis is present and active.",
   "steps": [
     {
       "domain": "health",

@@ -2,7 +2,7 @@
 
 Interactive mock artifacts for the **recipient-facing** surface of the guided-intake
 share-link feature (the public flow a stranger walks: **welcome → chat → draft-confirm
-→ done**). Per `docs/PROCESS.md`'s GUI gate, three clickable variants are presented for
+→ done**). Per `docs/reference/PROCESS.md`'s GUI gate, three clickable variants are presented for
 the owner to choose before implementation; the chosen one becomes the binding spec.
 
 These are the **recipient surface only** — the owner-side management screen and the

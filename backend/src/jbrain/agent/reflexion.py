@@ -1,5 +1,5 @@
 """Reflexion (self-improvement Loop 1): bounded, ephemeral self-correction of a
-turn before it is returned (docs/ASSISTANT.md "Self-improvement loops").
+turn before it is returned (docs/reference/ASSISTANT.md "Self-improvement loops").
 
 The gate is **mostly deterministic verifiers**, not an LLM judge — judges are
 noisy, and a citation either resolves to an in-scope fact or it does not. A turn
@@ -36,7 +36,7 @@ def critique_worthy(
     mutated: bool,
     touched_sensitive: bool,
 ) -> bool:
-    """The Loop-1 trigger (docs/ASSISTANT.md "Self-improvement loops"): a turn is
+    """The Loop-1 trigger (docs/reference/ASSISTANT.md "Self-improvement loops"): a turn is
     worth verifying when it made a checkable claim or carried real-world
     consequence — it surfaced evidence (note sources *or* graph entities, both
     citation-bearing), it staged a mutation, or it actually touched sensitive data
@@ -269,7 +269,7 @@ _FILLER_TOKENS = frozenset(
 def has_substantive_claim(answer: str) -> bool:
     """Whether an answer asserts something checkable — used to decide if a turn that
     retrieved NOTHING should carry the neutral "general knowledge" provenance label
-    (docs/ASSISTANT.md). True when any claim sentence has a significant token that
+    (docs/reference/ASSISTANT.md). True when any claim sentence has a significant token that
     isn't pure social filler: an etymology ("Jeff is a short form of Jeffrey") is
     substantive, a greeting ("hello there", "ok, sure") is not. Pure (no model call,
     no I/O) so it stays as cheap and deterministic as the rest of the gate."""
@@ -334,7 +334,7 @@ def ungrounded_claims(
 ) -> list[str]:
     """The verbatim claim sentences that failed grounding — the structured twin of
     `verify_grounding`'s prose issues, so the PWA can anchor a flag against the
-    exact answer sentence (docs/ASSISTANT.md "Self-improvement loops") instead of
+    exact answer sentence (docs/reference/ASSISTANT.md "Self-improvement loops") instead of
     re-parsing the `"claim not grounded…: <sentence>"` issue prefix."""
     sources = significant_tokens(" ".join(source_texts))
     return [c for c in claims if not _is_grounded(c, sources, threshold, cited_source_count)]

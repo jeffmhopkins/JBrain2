@@ -1,6 +1,6 @@
 """The agent's list tools: read and maintain the owner's lists.
 
-Lists are user-managed structured records (docs/ARCHITECTURE.md "Lists"), not
+Lists are user-managed structured records (docs/reference/ARCHITECTURE.md "Lists"), not
 citable truth — so unlike `propose_correction`, these write **directly** under
 the session's RLS scope (the firewall is Postgres, the memory-scratchpad
 category, invariant #7). Every handler runs on `ToolContext.session`, so a

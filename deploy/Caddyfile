@@ -71,7 +71,7 @@
 # from Caddy's internal CA. This makes the Secure session cookie work on the
 # local network even when the Cloudflare tunnel / internet is down. Unset -> no
 # file is written, so this glob matches nothing and only the public site runs.
-# See docs/LOCAL_ACCESS.md.
+# See docs/runbooks/LOCAL_ACCESS.md.
 import /etc/caddy/lan/*.caddy
 
 # Optional host-mode jcode web preview: when JBRAIN_JCODE_PREVIEW_BASE_HOST is set the

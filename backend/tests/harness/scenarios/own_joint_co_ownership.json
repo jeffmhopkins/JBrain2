@@ -1,6 +1,6 @@
 {
   "name": "joint ownership keeps two simultaneous owner edges active",
-  "description": "Shared/joint ownership: 'Lena and I co-own the lake cabin' is TWO owner edges -- Me.owns->Cabin and Lena.owns->Cabin -- that must BOTH stay active (accumulate, not supersede). They land on different identity keys (different subject/entity), so even the newest-wins state path cannot collide them. Pins docs/ANALYSIS.md 'property graph': ownership is a relationship/state edge between an owner entity and a thing; co-ownership is two such edges to one thing. Emitted as state kind to show the per-subject key keeps them apart regardless of kind; one provisional Place entity (Cabin) carries two inbound edges.",
+  "description": "Shared/joint ownership: 'Lena and I co-own the lake cabin' is TWO owner edges -- Me.owns->Cabin and Lena.owns->Cabin -- that must BOTH stay active (accumulate, not supersede). They land on different identity keys (different subject/entity), so even the newest-wins state path cannot collide them. Pins docs/reference/ANALYSIS.md 'property graph': ownership is a relationship/state edge between an owner entity and a thing; co-ownership is two such edges to one thing. Emitted as state kind to show the per-subject key keeps them apart regardless of kind; one provisional Place entity (Cabin) carries two inbound edges.",
   "steps": [
     {
       "domain": "general",

@@ -1,7 +1,7 @@
 """Capability-token lifetime: `expires_at` + `last_used_at` on principals.
 
 The dormant `capability_token` principal kind is activated for the owner debug
-console (docs/DEBUG_ACCESS.md): a revocable, time-boxed credential the owner mints
+console (docs/runbooks/DEBUG_ACCESS.md): a revocable, time-boxed credential the owner mints
 to let an external assistant run prompt iteration, read-only SQL, logs, and live
 LLM routing against the box. Unlike the owner key (which never expires) and a
 device key (revoked, not timed), a debug token must lapse on its own — so

@@ -38,7 +38,7 @@ class LlmResult:
 
 
 class UsageRecorder(Protocol):
-    """Persists one call's token usage (docs/ANALYSIS.md "Token accounting").
+    """Persists one call's token usage (docs/reference/ANALYSIS.md "Token accounting").
 
     A protocol rather than a concrete class keeps the llm package free of any
     persistence dependency; the SQL implementation lives in jbrain.usage. The

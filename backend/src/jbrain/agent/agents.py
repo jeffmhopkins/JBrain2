@@ -1,7 +1,7 @@
 """Agent selection: the personas a Full Brain session can run as.
 
 Full Brain mode lets the owner start a chat as one of several agents, chosen at
-session start (docs/ASSISTANT.md "Agent selection"). An agent bundles the three
+session start (docs/reference/ASSISTANT.md "Agent selection"). An agent bundles the three
 choices a chat turn reads — which system prompt frames it, which tools it may
 call, and whether it reads the owner's knowledge base:
 

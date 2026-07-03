@@ -1,6 +1,6 @@
 // Review-item model layer: the payload normalizer and the pure display helpers
 // the inbox list, the detail blocks, and the bulk actions all share. The wire
-// payload is `Record<string, unknown>` read defensively (docs/DESIGN.md "Review
+// payload is `Record<string, unknown>` read defensively (docs/reference/DESIGN.md "Review
 // inbox"); `parsePayload` turns it into the typed `Parsed` view-model every
 // block renders from, so layout never re-parses the raw shape.
 

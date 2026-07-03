@@ -1,4 +1,4 @@
-"""The wiki-build spend gate (docs/PHASE6_WIKI_PLAN.md §3b).
+"""The wiki-build spend gate (docs/plans/PHASE6_WIKI_PLAN.md §3b).
 
 A fail-closed daily token budget + kill-switch for wiki builds, SEPARATE from every other budget
 so a runaway rewrite loop can never starve eval (or interactive) spend. Fail-closed: refuses before

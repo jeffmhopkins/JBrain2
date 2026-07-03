@@ -85,7 +85,7 @@ class Note(Base):
 
 class AttachmentExtract(Base):
     """One vision-backend product for an attachment (migration 0010): OCR and
-    caption are separate products (docs/ANALYSIS.md "Attachments"). Ingest
+    caption are separate products (docs/reference/ANALYSIS.md "Attachments"). Ingest
     reads these as a pure cache; only the ocr_attachment job writes them, and
     re-OCR is delete + insert (the chunks pattern)."""
 

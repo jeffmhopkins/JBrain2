@@ -1,4 +1,4 @@
-"""Entity resolution (docs/ANALYSIS.md "Alias resolution & separation").
+"""Entity resolution (docs/reference/ANALYSIS.md "Alias resolution & separation").
 
 Layered, cheapest first:
 
@@ -7,7 +7,7 @@ Layered, cheapest first:
   layer 2b  relationship hop for reference-shaped mentions ("Summer's rat",
             "my dentist", "the rat") — deterministic graph lookups, no LLM.
             Role references resolve through the relationship fact valid at
-            the note's time (docs/ANALYSIS.md "Role references"), never
+            the note's time (docs/reference/ANALYSIS.md "Role references"), never
             static aliases.
   layer 2   embedding similarity vs entity name+aliases(+summary), only when
             an embed client is wired in.
@@ -40,7 +40,7 @@ from jbrain.models.analysis import Entity, EntityAlias
 from jbrain.models.core import Subject
 
 # A resolution RULE, not aliases: pronouns are never stored in entity_aliases
-# (docs/ANALYSIS.md "First person and the owner"). Extraction is instructed to
+# (docs/reference/ANALYSIS.md "First person and the owner"). Extraction is instructed to
 # emit "Me"; the raw pronouns are tolerated for robustness.
 FIRST_PERSON = frozenset({"me", "i", "my", "myself", "mine"})
 
@@ -149,7 +149,7 @@ def _word_regex(noun: str) -> str:
 
 # Relationship facts a hop may traverse: active asserted edges whose validity
 # interval covers the note's time — a provider/ownership change can't
-# misattribute later notes (docs/ANALYSIS.md "Role references").
+# misattribute later notes (docs/reference/ANALYSIS.md "Role references").
 _VALID_EDGE = """
     f.kind = 'relationship' AND f.status = 'active' AND f.assertion = 'asserted'
     AND (f.valid_from IS NULL OR f.valid_from <= :at)
@@ -497,7 +497,7 @@ async def near_duplicate_entity(
     — but not exact — match for a different entity is the same-person signal the
     exact-alias collision check misses ("Celine Kitina Hopkins" vs the existing
     "Celine Hopkins"). It only ever PROPOSES (the caller files a review card); a
-    near match is never an auto-link (docs/ANALYSIS.md "Alias resolution").
+    near match is never an auto-link (docs/reference/ANALYSIS.md "Alias resolution").
 
     Firewall: a subject-bearing candidate is proposed only against the SAME
     subject — cross-subject misattribution is a leak (CLAUDE.md #3), so a near
@@ -525,7 +525,7 @@ async def near_duplicate_entity(
 
 # The adapter call itself lives in the pipeline (it owns the router); the prompt
 # (system text, output schema, token budget, capability tier) is one artifact in
-# a co-located .prompt file (docs/DEVELOPMENT.md). These constants are the loader
+# a co-located .prompt file (docs/reference/DEVELOPMENT.md). These constants are the loader
 # facade so the pipeline and tests keep importing the same names.
 _DISAMBIGUATE = load_prompt(Path(__file__).parent / "prompts" / "entity_disambiguate.prompt")
 DISAMBIGUATE_TASK = _DISAMBIGUATE.name
@@ -538,7 +538,7 @@ DISAMBIGUATE_SCHEMA: dict[str, Any] = _DISAMBIGUATE.output_schema or {}
 def build_disambiguation_prompt(items: list[dict[str, Any]]) -> str:
     """One batched payload for every undecided mention in the note —
     entity.disambiguate is conditional and batched, never per-mention
-    (docs/ANALYSIS.md "Model routing & cost")."""
+    (docs/reference/ANALYSIS.md "Model routing & cost")."""
     return json.dumps({"mentions": items}, ensure_ascii=False)
 
 
@@ -633,7 +633,7 @@ async def create_provisional(
     session: AsyncSession, name: str, *, kind_hint: str, domain: str
 ) -> ResolvedEntity:
     """Provisional entity, confirmed implicitly later. It inherits the
-    creating note's domain (docs/ANALYSIS.md "Domain placement")."""
+    creating note's domain (docs/reference/ANALYSIS.md "Domain placement")."""
     entity = Entity(
         id=uuid.uuid4(),
         kind=kind_hint,
@@ -655,7 +655,7 @@ async def create_provisional(
     return ResolvedEntity(id=entity.id, subject_id=None, created=True)
 
 
-# --- declared-name aliasing (docs/ANALYSIS.md "Alias resolution & separation")
+# --- declared-name aliasing (docs/reference/ANALYSIS.md "Alias resolution & separation")
 
 # Predicates whose VALUE is a name the fact's entity is declaring for ITSELF:
 # "my full name is Jeffrey Mark Hopkins" makes that string an alias of Me, so a
@@ -914,7 +914,7 @@ async def resolve_entity(
         if len(scored) == 1 and scored[0][1] >= _EMBED_STRONG:
             only, sim = scored[0]
             # Subject-bearing entities never auto-link on similarity alone:
-            # cross-subject misattribution is a leak (docs/ANALYSIS.md
+            # cross-subject misattribution is a leak (docs/reference/ANALYSIS.md
             # "Entities"), so those candidates always face layer 3 / review.
             if only.subject_id is None:
                 return ResolvedEntity(

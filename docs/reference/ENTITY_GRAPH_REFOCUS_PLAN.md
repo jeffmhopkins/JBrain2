@@ -8,7 +8,7 @@
 >
 > Owner-ratified direction, grounded by six scoped codebase researchers (two-tier
 > split, prompting, traversal, relatedTo, review-inbox impact, eval fallout).
-> Waves per `docs/PROCESS.md`: one PR per wave, per-task + per-wave adversarial review,
+> Waves per `docs/reference/PROCESS.md`: one PR per wave, per-task + per-wave adversarial review,
 > CI green before merge. **No GUI surface changes anywhere in this plan — the
 > three-mock GUI gate never trips.** No new tables (one optional pure-index
 > migration), no new dependencies (`dev-setup.sh` untouched). Open owner
@@ -29,7 +29,7 @@ JBrain2's graph has drifted maximalist. The evidence:
    soft-fact (preference/goal/task) datum machinery, and a `min_facts: 12`
    floor on the per-note fact budget (`prompt.py:36-47`).
 2. **The predicate vocabulary cannot converge.** Per
-   `docs/PREDICATE_CANONICALIZATION.md` §5a, embedding calibration showed true
+   `docs/reference/PREDICATE_CANONICALIZATION.md` §5a, embedding calibration showed true
    drift spellings land at 0.57–0.72 cosine — overlapping novel predicates —
    so the STRONG auto-merge band (0.90, `analysis/predicates.py:38`)
    effectively never fires and **every** unknown predicate files a
@@ -53,7 +53,7 @@ salience-first prompt rewrite, and an n-hop neighborhood agent tool.
   survival included, and the owner should expect it.
 - **Notes remain the sole sources of truth**; the wiki stays machine-written.
 - **No controlled-ontology gate.** The vocabulary invariant from
-  `docs/entity.md` holds verbatim: *"Storage accepts any predicate. Shape
+  `docs/reference/entity.md` holds verbatim: *"Storage accepts any predicate. Shape
   validation may reject a malformed `value_json`; predicate-name validation
   may never reject anything."* Tier-2 is *less* processing, never a rejection.
 - **No demotion of long-tail facts to prose-only rows.** Tier-2 facts keep
@@ -236,7 +236,7 @@ behavior is fixed; everything else in the wave is parallel.)
   green untouched — verify, and check all **three** strict-xfail scenarios
   (`adv_same_first_name_collapses`, `adv_two_birthdays_attribute_collision`,
   `own_transfer_subject_cannot_move`) for accidental xpass.
-- Docs in the same PR: `docs/PREDICATE_CANONICALIZATION.md` status update (its
+- Docs in the same PR: `docs/reference/PREDICATE_CANONICALIZATION.md` status update (its
   §5a finding is this plan's justification); CLAUDE.md pointer to this plan +
   fix the stale migration-head note in CLAUDE.md.
 

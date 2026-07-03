@@ -1,4 +1,4 @@
-"""The connector tools and the egress leaf executor (docs/ASSISTANT.md "External
+"""The connector tools and the egress leaf executor (docs/reference/ASSISTANT.md "External
 connectors", invariant #9).
 
 A connector is the `external` permission class, gated by the Proposal primitive: a

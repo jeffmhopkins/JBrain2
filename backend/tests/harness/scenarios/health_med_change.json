@@ -1,6 +1,6 @@
 {
   "name": "medication regimen change from a visit is a state SCD-2 supersession",
-  "description": "A medication regimen is a state (docs/ANALYSIS.md fact kinds: state = SCD-2). Note 1 starts lisinopril; a later visit switches off lisinopril to losartan on the same predicate me.medicationRegimen.antihypertensive — the old regimen interval closes (superseded, chained), the new one is active, and a fact_conflict review is filed so the change is visible. The qualifier pins the regimen slot so the new value lands on the same identity key.",
+  "description": "A medication regimen is a state (docs/reference/ANALYSIS.md fact kinds: state = SCD-2). Note 1 starts lisinopril; a later visit switches off lisinopril to losartan on the same predicate me.medicationRegimen.antihypertensive — the old regimen interval closes (superseded, chained), the new one is active, and a fact_conflict review is filed so the change is visible. The qualifier pins the regimen slot so the new value lands on the same identity key.",
   "steps": [
     {
       "domain": "health",

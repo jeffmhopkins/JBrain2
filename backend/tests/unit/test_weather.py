@@ -1,4 +1,4 @@
-"""jerv's `weather` tool + the Open-Meteo client (docs/DESIGN.md "weather_card
+"""jerv's `weather` tool + the Open-Meteo client (docs/reference/DESIGN.md "weather_card
 tool-view"). HTTP is faked via MockTransport — no live network, like the web/search
 and connector adapters."""
 

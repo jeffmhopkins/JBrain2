@@ -1,6 +1,6 @@
 {
   "name": "employer change supersedes worksFor (functional relationship)",
-  "description": "worksFor is a functional relationship predicate (supersession.FUNCTIONAL_PREDICATES): a new job supersedes the old binding, the old edge closes (SCD-2, valid_to = new valid_from), and a fact_conflict review is filed. Pins docs/ANALYSIS.md relationship row: 'supersede only for functional predicates'. Marcus leaves Acme for Globex; both Marcus and the employers are object entities.",
+  "description": "worksFor is a functional relationship predicate (supersession.FUNCTIONAL_PREDICATES): a new job supersedes the old binding, the old edge closes (SCD-2, valid_to = new valid_from), and a fact_conflict review is filed. Pins docs/reference/ANALYSIS.md relationship row: 'supersede only for functional predicates'. Marcus leaves Acme for Globex; both Marcus and the employers are object entities.",
   "steps": [
     {
       "domain": "general",

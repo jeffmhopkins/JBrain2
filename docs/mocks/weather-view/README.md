@@ -2,7 +2,7 @@
 
 > **Decided: Variant A (hero + hourly strip) + Open-Meteo.** Shipped — the `weather`
 > tool (jerv-only, `web` class) + the registered `weather_card` view. The settled
-> pattern is recorded in `docs/DESIGN.md` "`weather_card` tool-view"; B/C/D are kept
+> pattern is recorded in `docs/reference/DESIGN.md` "`weather_card` tool-view"; B/C/D are kept
 > below as the record.
 
 
@@ -10,7 +10,7 @@ A `weather` tool for **jerv** + a registered in-chat **`weather_card`** view, to
 replace the long multi-step web-search-and-markdown-table flow with one glanceable
 component. Mock-first per DESIGN.md "UI development process" — these four are the
 options-before-commitment round; the owner picks, and the chosen pattern + reasoning
-gets a `docs/DESIGN.md` subsection in the implementing PR.
+gets a `docs/reference/DESIGN.md` subsection in the implementing PR.
 
 All four are tokens-only, dark-first with a light toggle, and render **no external
 resources** (invariant #9 — condition glyphs are inline Lucide-style SVG, never

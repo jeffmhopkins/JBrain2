@@ -1,4 +1,4 @@
-"""GET /api/search — hybrid passage-first search (docs/DESIGN.md "Search").
+"""GET /api/search — hybrid passage-first search (docs/reference/DESIGN.md "Search").
 
 `degraded: true` + keyword-only results when the embed container is down
 (the UI's amber banner); `match` is the per-result provenance badge.

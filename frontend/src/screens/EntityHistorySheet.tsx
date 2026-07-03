@@ -1,4 +1,4 @@
-// The per-property history sheet (docs/DESIGN.md "Modal system" + "entity
+// The per-property history sheet (docs/reference/DESIGN.md "Modal system" + "entity
 // pages"): a property's revision timeline lifted off the entity page into the
 // shared <Sheet>, so the page stays current-only and history is one tap away.
 // Reuses the approved timeline-rail paradigm verbatim — each dot a fact citing

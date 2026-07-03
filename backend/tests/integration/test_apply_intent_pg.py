@@ -441,7 +441,7 @@ async def test_conflict_card_carries_the_editable_proposed_fact(maker, tmp_path)
     # A conflict/collision card must carry the structured proposed fact (predicate,
     # value, modality, kind) — not only the fact_a/fact_b ids — so the review screen
     # can correct it IN PLACE, the common correct-in-place path every fact-bearing
-    # card now shares (docs/DESIGN.md "Edit model").
+    # card now shares (docs/reference/DESIGN.md "Edit model").
     ent_id, active_id = await _seed_active_fact(maker, predicate="industry", statement="Acme: old")
     note_id = await make_note(maker, domain="general", body="Acme industry notes.")
     await ingest(maker, note_id, tmp_path)

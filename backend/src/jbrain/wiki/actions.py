@@ -1,4 +1,4 @@
-"""The four wiki workflow actions (docs/PHASE6_WIKI_PLAN.md §3b), as in-code ActionSpecs.
+"""The four wiki workflow actions (docs/plans/PHASE6_WIKI_PLAN.md §3b), as in-code ActionSpecs.
 
 Like `PURGE_ACTION` / the reconcilers, these live in the in-code registry
 only — NOT in the `app.actions` seed (the seed-lockstep test pins the shipped six). They are

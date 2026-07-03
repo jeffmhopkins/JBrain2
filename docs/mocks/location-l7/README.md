@@ -1,7 +1,7 @@
 # Location L7 — GUI gate mocks (digest + presence chip)
 
 Three interactive directions for the **two small GUI surfaces** Wave L7 adds,
-mocked **together** in each option per the `docs/PROCESS.md` GUI gate. Pick one
+mocked **together** in each option per the `docs/reference/PROCESS.md` GUI gate. Pick one
 direction; the chosen mock becomes the binding spec for L7a + L7b and its
 rationale is recorded in `DESIGN.md` in the implementing PR.
 

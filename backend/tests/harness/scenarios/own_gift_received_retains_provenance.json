@@ -1,6 +1,6 @@
 {
   "name": "a gift received gives the owner the item and retains the giver relationship",
-  "description": "'Mom gave me her wedding ring' -> Me gains ownership (Me.owns->Ring) AND the provenance edge to Mom is retained as a separate gave/receivedFrom relationship -- two facts on different identity keys, both active, no conflict. Mom resolves to a provisional Person; Ring to a provisional Product. The owner is the canonical confirmed 'Me' entity (docs/ANALYSIS.md 'First person and the owner'). Pins that acquisition-by-gift records both the new possession and who it came from without either superseding the other.",
+  "description": "'Mom gave me her wedding ring' -> Me gains ownership (Me.owns->Ring) AND the provenance edge to Mom is retained as a separate gave/receivedFrom relationship -- two facts on different identity keys, both active, no conflict. Mom resolves to a provisional Person; Ring to a provisional Product. The owner is the canonical confirmed 'Me' entity (docs/reference/ANALYSIS.md 'First person and the owner'). Pins that acquisition-by-gift records both the new possession and who it came from without either superseding the other.",
   "steps": [
     {
       "domain": "general",

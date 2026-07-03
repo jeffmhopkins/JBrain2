@@ -1,7 +1,7 @@
 """Reopen = full unwind, against real Postgres: every resolution kind
 records effects sufficient to reverse it, and reopen_review restores the
 prior graph state in the same transaction that re-queues the item — except
-permanent distinct_from edges, which survive by doctrine (docs/ANALYSIS.md
+permanent distinct_from edges, which survive by doctrine (docs/reference/ANALYSIS.md
 "Alias resolution & separation")."""
 
 import json

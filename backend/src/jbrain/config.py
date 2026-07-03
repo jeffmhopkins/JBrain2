@@ -80,7 +80,7 @@ class Settings(BaseSettings):
     rxnav_url: str = "https://rxnav.nlm.nih.gov"
     medlineplus_url: str = "https://connect.medlineplus.gov"
     # The self-hosted SearXNG metasearch instance backing the jerv chatbot's
-    # web_search/web_fetch tools (docs/ASSISTANT.md "Agent selection"). On-box, so
+    # web_search/web_fetch tools (docs/reference/ASSISTANT.md "Agent selection"). On-box, so
     # a jerv search leaves the box only via SearXNG's own upstreams — the same
     # local-first posture as the geocoder. The compose service is part of the stock
     # stack, so this default points at a running instance; empty disables web search
@@ -102,7 +102,7 @@ class Settings(BaseSettings):
     # to the on-box display service — best-effort, no owner data, failures ignored.
     # Empty disables the emit (the display just shows no web tendrils).
     brain_events_url: str = ""
-    # The Open-Meteo upstreams backing jerv's `weather` tool (docs/ASSISTANT.md,
+    # The Open-Meteo upstreams backing jerv's `weather` tool (docs/reference/ASSISTANT.md,
     # DESIGN.md "weather_card tool-view"). Free, no API key, so these default to the
     # public endpoints; empty disables the tool (it reports "not configured") while the
     # sidecar still loads. Like SearXNG, the base URLs are pinned here and never
@@ -153,7 +153,7 @@ class Settings(BaseSettings):
     # the `local-llm` compose profile + scripts/local-llm-setup.sh). When false the
     # `local` provider client is still wired but nothing routes to it.
     local_llm_enabled: bool = False
-    # OPT-IN owner debug console (docs/DEBUG_ACCESS.md): the gate for the
+    # OPT-IN owner debug console (docs/runbooks/DEBUG_ACCESS.md): the gate for the
     # capability-token surface (/api/debug/*) the owner uses to let an external
     # assistant run prompt iteration, read-only SQL, logs, and live LLM routing.
     # OFF by default — when false the debug router is not mounted and minting is
@@ -221,7 +221,7 @@ class Settings(BaseSettings):
     # non-swapping group — 120b + vl loaded together) rather than swapping one at a time.
     # Defaults OFF (opt-in): co-residency pins ~91 GB in the 128 GB unified pool, and on
     # the Strix Halo box that lost headroom drove kernel reclaim livelocks that hard-locked
-    # the whole host (docs/STRIX_HALO_SETUP.md "hard-freeze / OOM hardening"). An operator
+    # the whole host (docs/runbooks/STRIX_HALO_SETUP.md "hard-freeze / OOM hardening"). An operator
     # with memory to spare opts in with LOCAL_LLM_RESIDENT_GROUP=1; staged models pin
     # regardless. Mirrors the install-time LOCAL_LLM_RESIDENT_GROUP so a runtime config
     # regeneration (after a context-window edit) reproduces the same set setup wrote.
@@ -246,7 +246,7 @@ class Settings(BaseSettings):
     # too-tight timeout would retry-loop mid-decode. Queue backoff still covers a
     # genuinely wedged server.
     whisper_timeout: float = 300.0
-    # Per-attachment size budget (the docs/ANALYSIS.md "Dispatcher-level policy"
+    # Per-attachment size budget (the docs/reference/ANALYSIS.md "Dispatcher-level policy"
     # cap, OCR's MAX_OCR_BYTES sibling): ingest skips enqueueing transcription for
     # larger files, with a logged warning and no cache row, so a smaller re-upload
     # transcribes normally. 100 MB ~ a long lossy recording.
@@ -302,7 +302,7 @@ class Settings(BaseSettings):
     # the task is explicitly pinned in llm_tasks, which wins.
     llm_tiers: dict[str, str] = {}
     # "provider:model" -> $/M tokens, applied at query time over llm_usage —
-    # docs/ANALYSIS.md "Cost estimates" (grok-4.3 rates, xAI docs June 2026).
+    # docs/reference/ANALYSIS.md "Cost estimates" (grok-4.3 rates, xAI docs June 2026).
     llm_prices: dict[str, dict[str, float]] = {
         "xai:grok-4.3": {"input_per_m": 1.25, "output_per_m": 2.50}
     }

@@ -1,5 +1,5 @@
 """The Proposal engine: staging, dependency-safe partial approval, and enactment
-(docs/ASSISTANT.md "Staging & approval").
+(docs/reference/ASSISTANT.md "Staging & approval").
 
 The tree logic is pure and the load-bearing safety property: the owner approves
 the whole tree, a subtree, or a single leaf, and the executor enacts a leaf **only

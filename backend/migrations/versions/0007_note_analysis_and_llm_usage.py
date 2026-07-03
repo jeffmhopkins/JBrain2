@@ -5,7 +5,7 @@ app.note_analysis is the one-row-per-note product of the note.extract call
 0006 tables. It carries the note's domain and the standard has_domain_scope
 policy so a sensitive auto-title can never leak through a scoped session.
 
-app.llm_usage is telemetry, not domain data (docs/ANALYSIS.md "Token
+app.llm_usage is telemetry, not domain data (docs/reference/ANALYSIS.md "Token
 accounting"): rows describe adapter calls, never note content, so the policy
 is owner-only rather than domain-scoped. Insert-only; aggregation happens at
 query time over created_at.

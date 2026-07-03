@@ -1,5 +1,5 @@
 """Agent ORM models. `AgentSession` is the capability record: which domains and
-subjects a session may read (docs/ASSISTANT.md "Session capabilities")."""
+subjects a session may read (docs/reference/ASSISTANT.md "Session capabilities")."""
 
 import uuid
 from datetime import datetime
@@ -33,7 +33,7 @@ class AgentSession(Base):
     )
     title: Mapped[str] = mapped_column(Text, default="", server_default="")
     status: Mapped[str] = mapped_column(Text, default="active", server_default="active")
-    # The selected agent persona (docs/ASSISTANT.md "Agent selection"): which
+    # The selected agent persona (docs/reference/ASSISTANT.md "Agent selection"): which
     # system prompt, tool allowlist, and knowledge-base access the session runs
     # under. Defaults to the Full Brain curator; constrained by a DB CHECK.
     agent: Mapped[str] = mapped_column(Text, default="curator", server_default="curator")
@@ -152,7 +152,7 @@ class RunStep(Base):
 
 
 class AgentTurn(Base):
-    """One conversation turn in a session's transcript (docs/ASSISTANT.md
+    """One conversation turn in a session's transcript (docs/reference/ASSISTANT.md
     "Sessions"). Owner-only; `seq` is the total insertion order (a user turn is
     written just before its assistant turn). Assistant turns carry the tool steps
     + note sources for the "Worked" block; user turns carry an empty list."""
@@ -211,7 +211,7 @@ class TurnAttachment(Base):
 
 
 class AgentMemory(Base):
-    """Working/behavioral memory as rows rendered as MD (docs/ASSISTANT.md
+    """Working/behavioral memory as rows rendered as MD (docs/reference/ASSISTANT.md
     "Memory model"). Owner-only, domain-narrowed; behavioral tiers are
     owner-confirmed-write only (invariant #3). Append-only revisions: a delta
     edit writes a new row and points the old one's `superseded_by` at it."""

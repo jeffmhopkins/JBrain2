@@ -1,5 +1,5 @@
 """The Proposal primitive: staged, owner-approved work as a dependency-ordered
-tree (docs/ASSISTANT.md "Staging & approval", invariant #7).
+tree (docs/reference/ASSISTANT.md "Staging & approval", invariant #7).
 
 The agent never writes citable truth or behaviour directly — it stages a
 *Proposal* and the owner enacts it. A proposal is a tree: a root intent, grouping

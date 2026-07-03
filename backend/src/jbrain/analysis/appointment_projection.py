@@ -18,7 +18,7 @@ The venue is the one field that can't ride the row: a `location`/`address` fact
 floors into the location domain (facets.yaml `Located` 🔒), and copying it onto a
 general-domain row would leak whereabouts to a non-location session. It projects
 into `app.appointment_locations` under its OWN domain, where the same owner+domain
-RLS gates it independently (docs/ANALYSIS.md "Mixed-domain notes [split]").
+RLS gates it independently (docs/reference/ANALYSIS.md "Mixed-domain notes [split]").
 """
 
 import uuid

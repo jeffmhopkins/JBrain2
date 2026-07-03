@@ -1,5 +1,5 @@
 """The Proposal tree logic (pure): containment cascade and dependency-safe
-enactment (docs/ASSISTANT.md "Staging & approval"). The DB repo is integration."""
+enactment (docs/reference/ASSISTANT.md "Staging & approval"). The DB repo is integration."""
 
 from jbrain.agent.proposals import (
     Node,

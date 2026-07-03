@@ -1,4 +1,4 @@
-"""Active tropical-cyclone lookups via the NHC feed (docs/ASSISTANT.md "Agent
+"""Active tropical-cyclone lookups via the NHC feed (docs/reference/ASSISTANT.md "Agent
 selection", DESIGN.md "hurricane_card tool-view").
 
 Like the weather tool this runs DIRECTLY rather than staging an egress Proposal —

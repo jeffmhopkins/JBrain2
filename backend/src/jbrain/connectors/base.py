@@ -1,5 +1,5 @@
 """The egress chokepoint: a Connector abstraction and the egress guard
-(docs/ASSISTANT.md "External connectors", invariant #9).
+(docs/reference/ASSISTANT.md "External connectors", invariant #9).
 
 No tool ever makes a raw HTTP request. A Connector is a named, owner-configured
 upstream with a **pinned base URL** (config, never model-supplied), a **typed

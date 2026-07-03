@@ -98,7 +98,7 @@ supersedes an old value, a correction note retracts an error, a conflict waits
 in review. The live value of `entity.predicate` is the active head of its chain,
 not whatever any one note (old or new) happens to say. Consumers that read raw
 notes — notably the assistant's retrieval tools — must reconcile against the
-graph rather than quote note prose as current (docs/ASSISTANT.md "Notes are the
+graph rather than quote note prose as current (docs/reference/ASSISTANT.md "Notes are the
 source of facts; the entity graph is the arbiter of current truth").
 
 ### Fact kinds and supersession **[decided: per-kind policy]**
@@ -352,7 +352,7 @@ so backends are config, not code:
 | `application/pdf` | per-page text layer (PyMuPDF); pages without one render to images → image chain |
 | `image/*` | OCR backend (Tesseract local / vision-LLM via the adapter) **and** captioning (vision-LLM) as separate products |
 | `video/*` | ffmpeg → audio track → transcription backend; keyframes → image chain (fast-follow; needs ffmpeg) |
-| `audio/*` | **shipped:** whisper.cpp via the on-box llama-swap gateway, an async `transcribe_attachment` job → `kind='transcript'` cache row (docs/WHISPER_TRANSCRIPTION_PLAN.md) |
+| `audio/*` | **shipped:** whisper.cpp via the on-box llama-swap gateway, an async `transcribe_attachment` job → `kind='transcript'` cache row (docs/archive/WHISPER_TRANSCRIPTION_PLAN.md) |
 
 Extractors return **provenanced segments**: source anchor (page, frame
 time, audio range), kind (`text-layer | ocr | transcript | caption`),

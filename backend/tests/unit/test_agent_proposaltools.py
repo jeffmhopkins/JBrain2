@@ -1,5 +1,5 @@
 """propose_correction stages (never writes), and the agent-note executor creates a
-provenance-flagged, source-attributed, idempotent note (docs/ASSISTANT.md #7)."""
+provenance-flagged, source-attributed, idempotent note (docs/reference/ASSISTANT.md #7)."""
 
 from jbrain.agent.contracts import ProposalRef
 from jbrain.agent.loop import ToolContext, ToolOutput

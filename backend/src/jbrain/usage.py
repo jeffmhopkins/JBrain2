@@ -1,7 +1,7 @@
 """LLM token accounting: the SQL usage recorder and the Ops usage card data.
 
 Costs are estimated at query time from the config price table
-(docs/ANALYSIS.md "Cost estimates"): a price-table update re-prices history,
+(docs/reference/ANALYSIS.md "Cost estimates"): a price-table update re-prices history,
 and models missing from the table contribute tokens but never a guessed
 dollar figure.
 """

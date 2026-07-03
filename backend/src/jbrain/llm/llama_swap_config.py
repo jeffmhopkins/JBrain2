@@ -34,7 +34,7 @@ UPSTREAM_PORT_BASE = 9100
 
 # Explicit opt-IN values for LOCAL_LLM_RESIDENT_GROUP: only these enable co-residency.
 # Anything else (including unset/empty) keeps the recommended set swapping one at a time —
-# co-residency pins ~91 GB and destabilised the Strix Halo box (docs/STRIX_HALO_SETUP.md).
+# co-residency pins ~91 GB and destabilised the Strix Halo box (docs/runbooks/STRIX_HALO_SETUP.md).
 _TRUTHY = ("1", "true", "yes", "on")
 
 

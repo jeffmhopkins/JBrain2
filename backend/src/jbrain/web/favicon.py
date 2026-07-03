@@ -1,5 +1,5 @@
 """Fetch a site's favicon ON-BOX, so the chat can show a tappable source logo
-without the client ever touching the third-party host (docs/ASSISTANT.md "Agent
+without the client ever touching the third-party host (docs/reference/ASSISTANT.md "Agent
 selection"; invariant #9 — agent output triggers no render-time external load).
 
 The PWA renders a web citation as `<img src="/api/agent/favicon?host=…">`, a

@@ -1,5 +1,5 @@
 """Tier-A agent memory: working/behavioral memory, episodic traces, and the
-episode→graph pointer table (docs/ASSISTANT.md "Memory model", invariants #2/#4/#11).
+episode→graph pointer table (docs/reference/ASSISTANT.md "Memory model", invariants #2/#4/#11).
 
 Three tables, all owner-only and domain-firewalled in Postgres:
 

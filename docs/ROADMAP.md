@@ -16,7 +16,7 @@ live; lists and appointments ship with it. The **Phase 5 workflow engine** —
 run-log, and the non-breaking cutover of ingest/integration/consolidation onto the
 engine — is also live, with reflexion-in-the-live-turn (Loop 1) and the recurring
 self-heal reconcilers. The note-analysis calibration
-evals (`docs/CALIBRATION_LOOP.md`) run as a CI quality guard. The build records for
+evals (`docs/archive/CALIBRATION_LOOP.md`) run as a CI quality guard. The build records for
 the agent and the v3 pipeline are archived under `docs/archive/` (`ASSISTANT_PLAN.md`,
 `INTEGRATOR_PLAN.md`, `CUTOVER_V1_REMOVAL.md`).
 
@@ -96,7 +96,7 @@ wrongly-attached name and re-resolving the mentions it linked) — is left for a
 later pass; the merge machinery's reversible-effects pattern is the model to
 mirror. Bare-first-name retro-recheck and layer-3 `distinct_from` are **not on
 the path** — they would only matter under same-name entity coexistence, which
-was evaluated and **rejected** (docs/ANALYSIS.md "Same-name coexistence"): the
+was evaluated and **rejected** (docs/reference/ANALYSIS.md "Same-name coexistence"): the
 conservative exact-collision → review card is the correct, safer answer for a
 single user, so the human-initiated split above is the only entity-correction
 worth building.
@@ -140,7 +140,7 @@ their eval/promotion harness were **removed** (only Loop 1 / reflexion remains).
 **Scheduled-task migration [note]:** by this phase, find every periodic or
 swept task that today runs as an ad-hoc boot self-heal or hardcoded handler —
 **predicate consolidation** (the `consolidate_predicates` action,
-docs/entity.md), entity hygiene, merge proposals, summary re-embedding, tag
+docs/reference/entity.md), entity hygiene, merge proposals, summary re-embedding, tag
 consolidation, and the nightly wiki build — and move them onto the engine's
 `events → triggers → pipelines → actions → runs`, defined as data. Each must be
 **on-demand ("emergency") triggerable**: a sweep becomes a run-logged action a
@@ -151,7 +151,7 @@ gives them their scheduled and manual triggers.
 **Exit:** ingest and a scheduled job run as user-defined pipeline
 definitions; failures are diagnosable from run logs alone.
 
-## Phase 6 — Wiki — In progress (build plan: `docs/PHASE6_WIKI_PLAN.md`)
+## Phase 6 — Wiki — In progress (build plan: `docs/plans/PHASE6_WIKI_PLAN.md`)
 
 The LLM-maintained wiki, and **only** the wiki. Wiki index (article summaries +
 embeddings). Incremental nightly builder: delta facts → index match → triage

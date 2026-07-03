@@ -1,4 +1,4 @@
-"""Auto-titling a Full Brain chat from its first exchange (docs/ASSISTANT.md
+"""Auto-titling a Full Brain chat from its first exchange (docs/reference/ASSISTANT.md
 "Sessions").
 
 A chat the owner didn't name gets a short, human title generated from its first

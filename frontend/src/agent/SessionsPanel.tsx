@@ -34,7 +34,7 @@ const PRESETS: { id: string; label: string; set: string[] | null }[] = [
   { id: "custom", label: "Custom…", set: null },
 ];
 
-// The selectable agents at session start (docs/ASSISTANT.md "Agent selection").
+// The selectable agents at session start (docs/reference/ASSISTANT.md "Agent selection").
 // Only the curator reads the knowledge base; teacher and jerv read no owner data,
 // so the scope dial is hidden for them and the chat is created with empty scopes —
 // the firewall, not just a label. `note` is the caveat shown under a no-data agent.

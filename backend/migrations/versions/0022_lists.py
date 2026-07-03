@@ -1,5 +1,5 @@
 """Lists — `lists` / `list_items`, the agent-managed structured records
-(docs/ARCHITECTURE.md "Lists", docs/ROADMAP.md Phase 4).
+(docs/reference/ARCHITECTURE.md "Lists", docs/ROADMAP.md Phase 4).
 
 A list is user-managed data the owner asks the agent to maintain — a shopping
 list, a packing list, a watchlist. Unlike facts/entities (the citable graph that

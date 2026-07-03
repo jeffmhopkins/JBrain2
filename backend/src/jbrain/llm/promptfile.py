@@ -4,7 +4,7 @@ A prompt is ONE artifact: its prose, the output JSON schema it expects, the
 capability tier it needs (model strength — never a concrete model id), a token
 budget, and a `version` stamped onto every record the prompt produces. Bumping
 the version makes a corpus re-run a budgeted migration instead of silent drift
-(docs/ANALYSIS.md "Reprocessing"), so the version travels WITH the prose.
+(docs/reference/ANALYSIS.md "Reprocessing"), so the version travels WITH the prose.
 
 The body is a template with `{{ name }}` variables. A deliberately tiny
 renderer (not Jinja) substitutes only those tokens and leaves every other brace

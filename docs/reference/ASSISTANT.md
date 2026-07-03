@@ -203,7 +203,7 @@ not instruction** (#1), render **no external resources** (#9), and carry
 came from an RLS-scoped tool call so domain firewalls hold at the source.
 **Interactive views never mutate directly** — a button dispatches a tool call or
 stages a Proposal under the session's action policy. Adding a component is a
-deliberate, versioned change (`docs/DESIGN.md` "Agent tool views"), like adding a
+deliberate, versioned change (`docs/reference/DESIGN.md` "Agent tool views"), like adding a
 tool.
 
 **The tool set stays small** (ACI discipline; every new tool pays a context-and-
@@ -230,7 +230,7 @@ correction-note / review-inbox path — the agent proposes, the pipeline dispose
 
 **Notes are the source of facts; the entity graph is the arbiter of current
 truth [decided].** A note is an immutable *provenance* record — every fact traces
-to one, and deleting a note purges its derived facts (docs/ANALYSIS.md
+to one, and deleting a note purges its derived facts (docs/reference/ANALYSIS.md
 "notes-as-sole-truth"). But a note's prose is the record *as captured*, frozen in
 time; **what is true now** is the fact graph after the supersession and review
 machinery has run — the entity layer, where a later note supersedes an old value,
@@ -726,7 +726,7 @@ Stage accordingly — **do not describe a Phase-6 world as Phase 4**.
   (Loop 1)** is wired into the live `/chat` turn (Track R). *(This phase once also
   stood up an eval/promotion harness to gate the later self-improvement loops; that
   harness and those loops were removed — the note-analysis calibration evals
-  (`docs/CALIBRATION_LOOP.md`) remain as a CI quality guard only, never a promotion
+  (`docs/archive/CALIBRATION_LOOP.md`) remain as a CI quality guard only, never a promotion
   gate.)*
 - **Phase 6 (wiki):** the **wiki analysis & restructuring** capability and its
   `wiki-restructure` Proposal flow build here on the wiki + review-inbox machinery.

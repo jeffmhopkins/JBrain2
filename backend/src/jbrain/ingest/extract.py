@@ -1,4 +1,4 @@
-"""Attachment extraction dispatcher (docs/ANALYSIS.md, "the analysis dispatcher").
+"""Attachment extraction dispatcher (docs/reference/ANALYSIS.md, "the analysis dispatcher").
 
 Every attachment routes by media type to a registered extractor; every
 extractor implements the same protocol and returns provenanced segments, so
@@ -56,7 +56,7 @@ class PdfTextLayerExtractor:
     """application/pdf: per-page text layer via PyMuPDF.
 
     TODO(vision): pages without a text layer (scans) still produce no
-    segment. The spec routes them through the image chain (docs/ANALYSIS.md
+    segment. The spec routes them through the image chain (docs/reference/ANALYSIS.md
     "Attachments": pages without one render to images -> image chain); doing
     that here means per-page rows in the attachment_extracts cache and a
     page-aware ocr_attachment job — a follow-up, not a registry tweak.

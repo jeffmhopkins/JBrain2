@@ -1,4 +1,4 @@
-// Entity-type icons + per-type accent (docs/DESIGN.md "Entity-type accents").
+// Entity-type icons + per-type accent (docs/reference/DESIGN.md "Entity-type accents").
 // Entity.kind is free text (schema.org-guided), so we normalize to a small set
 // of canonical types and fall back to Thing for anything unrecognized. The disc
 // is tinted by type; the surrounding row's dot still carries the domain.

@@ -1,6 +1,6 @@
 {
   "name": "restated identical relationship is an idempotent refresh",
-  "description": "A functional relationship (worksFor) re-asserted with the SAME object entity in a later note hits decide()'s idempotency branch (values_equal true, existing status active -> refresh_id): the rendering/provenance update in place, no second row, no supersession chain, no duplicate fact_conflict. Pins docs/ANALYSIS.md 'Reprocessing': same identity key + same value -> update in place, no inbox noise.",
+  "description": "A functional relationship (worksFor) re-asserted with the SAME object entity in a later note hits decide()'s idempotency branch (values_equal true, existing status active -> refresh_id): the rendering/provenance update in place, no second row, no supersession chain, no duplicate fact_conflict. Pins docs/reference/ANALYSIS.md 'Reprocessing': same identity key + same value -> update in place, no inbox noise.",
   "steps": [
     {
       "domain": "general",

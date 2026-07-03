@@ -1,5 +1,5 @@
 """Agent selection: the persona registry that sets each session's prompt, tool
-allowlist, and knowledge-base access (docs/ASSISTANT.md "Agent selection")."""
+allowlist, and knowledge-base access (docs/reference/ASSISTANT.md "Agent selection")."""
 
 import hashlib
 

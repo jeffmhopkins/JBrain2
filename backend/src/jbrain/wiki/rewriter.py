@@ -1,4 +1,4 @@
-"""The live LLM rewriter + grounding gate (docs/PHASE6_WIKI_PLAN.md §3 steps 4-6, Wave C2b).
+"""The live LLM rewriter + grounding gate (docs/plans/PHASE6_WIKI_PLAN.md §3 steps 4-6, Wave C2b).
 
 The rewriter turns a `SourcedEntity` into a `PlannedArticle` by driving the LLM adapter per the
 type guide, then passes every drafted clause through a **grounding gate** before it is written:

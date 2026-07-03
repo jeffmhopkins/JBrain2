@@ -3,7 +3,7 @@
 One request runs one agent turn-loop over the session's selected read scope: the
 loop's ChatEvents (`text_delta`, `tool_call`, `tool_result`, `done`) are
 serialized as `data:`-framed SSE so the PWA shows tool activity and the answer
-live (docs/ASSISTANT.md "Streaming to the phone").
+live (docs/reference/ASSISTANT.md "Streaming to the phone").
 
 Two RLS contexts ride the request: the loop's *tool reads* run under the session
 narrowed to its domains (the owner_scoped firewall), while the *run log* and the
@@ -459,7 +459,7 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
     if session is None:
         raise HTTPException(status_code=404, detail="no such session")
 
-    # The session's selected agent (docs/ASSISTANT.md "Agent selection") sets the
+    # The session's selected agent (docs/reference/ASSISTANT.md "Agent selection") sets the
     # persona prompt, the tool allowlist, and whether the turn reads the knowledge
     # base. A non-KB agent (teacher, jerv) runs with empty read scopes, so even a
     # session that carries domains touches no owner data — the firewall, not a flag.

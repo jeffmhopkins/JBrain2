@@ -1,5 +1,5 @@
 """The egress executor: the one place an off-box call actually fires
-(docs/ASSISTANT.md "External connectors", invariant #9).
+(docs/reference/ASSISTANT.md "External connectors", invariant #9).
 
 Calls run server-side, are egress-guarded (typed slots only), cached in Postgres
 (reference data is near-static), and logged (connector, input hash, domain,

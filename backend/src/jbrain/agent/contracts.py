@@ -15,13 +15,13 @@ from pydantic import BaseModel, ConfigDict, Field
 
 PermissionClass = Literal["read", "mutate", "external", "sensitive", "web"]
 """How consequential a tool is; the session policy maps each class to an outcome
-(docs/ASSISTANT.md "Session capabilities").
+(docs/reference/ASSISTANT.md "Session capabilities").
 
 `web` is the jerv sandbox's opt-in, direct-exec class: a tool that runs DIRECTLY
 (no egress Proposal) and is reserved for the `jerv` chatbot agent. Most members are
 off-box internet reads (`web_search`, `web_fetch`) — jerv holds no knowledge-base
 tools, so there is nothing personal in its context to exfiltrate into a query
-(docs/ASSISTANT.md "Agent selection", the deliberate, owner-approved exception to
+(docs/reference/ASSISTANT.md "Agent selection", the deliberate, owner-approved exception to
 invariant #9). The one non-internet member is `current_location`: it names the live
 position the owner's app shared THIS turn — by default an OFFLINE nearest-city lookup
 (no egress, no read of the firewalled location domain: no saved places, no device
@@ -47,7 +47,7 @@ DEFAULT_OWNER_POLICY: dict[PermissionClass, PolicyOutcome] = {
     "sensitive": "staged",
     "external": "staged",
     # The sandboxed web class runs directly — the jerv chatbot's only egress, with
-    # no owner data in its context (docs/ASSISTANT.md "Agent selection").
+    # no owner data in its context (docs/reference/ASSISTANT.md "Agent selection").
     "web": "direct",
 }
 
@@ -57,7 +57,7 @@ ResponseFormat = Literal["concise", "detailed"]
 
 
 class ToolSpec(BaseModel):
-    """The frontmatter of a `.tool` sidecar (docs/ASSISTANT.md "Tools as .tool
+    """The frontmatter of a `.tool` sidecar (docs/reference/ASSISTANT.md "Tools as .tool
     sidecars"). The prose body — the model-facing description — is loaded beside
     it and is not part of this schema. `version` is CI-guarded and stamped on
     every run the tool participates in, so a behavior change is a deliberate
@@ -88,7 +88,7 @@ Surface = Literal["inline", "sheet", "dialog"]
 
 class FactRef(BaseModel):
     """A pointer-not-copy reference to a fact: a bare id plus a denormalized label
-    for render; the hover-card fetches the live row (docs/ASSISTANT.md memory)."""
+    for render; the hover-card fetches the live row (docs/reference/ASSISTANT.md memory)."""
 
     kind: Literal["fact"] = "fact"
     fact_id: str
@@ -162,7 +162,7 @@ class ProposalRef(BaseModel):
 
 class ViewPayload(BaseModel):
     """A tool result's rich UI: a registered first-party component plus data-only
-    typed slots (docs/DESIGN.md "Agent tool views"). Never model-authored markup;
+    typed slots (docs/reference/DESIGN.md "Agent tool views"). Never model-authored markup;
     the named component is rendered from a fixed registry, or nothing is."""
 
     view: str
@@ -383,7 +383,7 @@ class DoneEvent(BaseModel):
 
 
 class VerdictEvent(BaseModel):
-    """Reflexion's Loop-1 verdict on a critique-worthy turn (docs/ASSISTANT.md
+    """Reflexion's Loop-1 verdict on a critique-worthy turn (docs/reference/ASSISTANT.md
     "Self-improvement loops"). In the default verify-and-annotate mode it rides
     *after* `DoneEvent` — the answer the user already saw stands, annotated: the
     PWA renders an "unverified claims" note when `passed` is false. The score is
@@ -409,7 +409,7 @@ class VerdictEvent(BaseModel):
 class GeneralKnowledgeEvent(BaseModel):
     """The neutral provenance label for a turn answered purely from the model's own
     world knowledge — zero retrieval (no note sources, no graph entities) yet a
-    substantive claim (docs/ASSISTANT.md). Like `VerdictEvent` it rides *after*
+    substantive claim (docs/reference/ASSISTANT.md). Like `VerdictEvent` it rides *after*
     `DoneEvent`, but it is NOT a warning: it carries no claims and is mutually
     exclusive with the amber verdict (a turn that retrieved nothing can't be
     grounding-flagged; a turn that retrieved evidence is judged by the verifiers

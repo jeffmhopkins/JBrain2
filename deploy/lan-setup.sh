@@ -4,7 +4,7 @@
 # the host's own hostname (so we never have to rename the box). The Caddy LAN
 # HTTPS site itself is on by default in compose; this is the host half that makes
 # the name resolve. Idempotent — safe to re-run from install.sh and `jbrain`.
-# See docs/LOCAL_ACCESS.md.
+# See docs/runbooks/LOCAL_ACCESS.md.
 set -euo pipefail
 
 INSTALL_DIR="${JBRAIN_INSTALL_DIR:-/opt/jbrain2}"

@@ -1,5 +1,5 @@
 /* Design tokens — the only place colors, radii, and font sizes are defined.
-   Values are the binding tables in docs/DESIGN.md. Dark is the default
+   Values are the binding tables in docs/reference/DESIGN.md. Dark is the default
    (:root); light overrides via [data-theme="light"] set by src/theme.ts. */
 
 :root {
@@ -15,7 +15,7 @@
   --text-3: #5c5f66;
   /* The composer sits slightly below --surface so it reads as the floor. */
   --surface-composer: #141518;
-  /* Sheet/dialog scrim: --bg at 60% alpha (docs/DESIGN.md "Modal system"). */
+  /* Sheet/dialog scrim: --bg at 60% alpha (docs/reference/DESIGN.md "Modal system"). */
   --scrim: rgba(14, 15, 17, 0.6);
 
   /* Accents — identical across themes. Tints are 13% alpha of the accent. */
@@ -32,7 +32,7 @@
 
   /* Entity-type accents — extend the five above to cover the entity-type icon
      discs, same muted register. Tinted at 16% via color-mix on the disc, so no
-     separate -tint tokens. See docs/DESIGN.md "Entity-type accents". */
+     separate -tint tokens. See docs/reference/DESIGN.md "Entity-type accents". */
   --periwinkle: #8f9fd0; /* Product */
   --sage: #a8bd7e; /* Animal */
   --terracotta: #d0917f; /* MedicalCondition */
@@ -51,7 +51,7 @@
   /* The location domain's accent (the Phase-7 teal candidate, made binding by the
      L3 GUI gate — Option B's inline trail/fence/start/gap markers ride this).
      Shares the teal hue with the MedicalProcedure entity disc; this is the
-     domain-color name surfaces reference. See docs/DESIGN.md. */
+     domain-color name surfaces reference. See docs/reference/DESIGN.md. */
   --location: #6fb6b1;
   --location-tint: rgba(111, 182, 177, 0.13);
 
@@ -104,7 +104,7 @@
 
 /* Dark variant with brighter hairlines. Inherits every dark neutral from
    :root and only lifts --border so raised surfaces, rows, and dividers read
-   with stronger edges. See docs/DESIGN.md "Theming". */
+   with stronger edges. See docs/reference/DESIGN.md "Theming". */
 [data-theme="dark-bright"] {
   --border: #464a52;
 }

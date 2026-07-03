@@ -1,6 +1,6 @@
 """The ocr_attachment job handler: one image -> OCR (+ description) cache rows.
 
-docs/ANALYSIS.md doctrine: capture-to-searchable never waits on a cloud LLM,
+docs/reference/ANALYSIS.md doctrine: capture-to-searchable never waits on a cloud LLM,
 so vision work is an async job — never inline in ingest_note, which only
 reads the attachment_extracts cache (ingest.extract.image_segments). What the
 handler calls is the image-analysis mode [decided: default full]: "full"
@@ -47,7 +47,7 @@ from jbrain.storage import BlobStore
 
 log = structlog.get_logger()
 
-# Per-task size budget (docs/ANALYSIS.md "Dispatcher-level policy"): ingest
+# Per-task size budget (docs/reference/ANALYSIS.md "Dispatcher-level policy"): ingest
 # skips ENQUEUEING OCR for larger images, with a logged warning — no cache
 # row, so shrinking the file and re-ingesting picks it up again.
 MAX_OCR_BYTES = 8 * 1024 * 1024
@@ -59,7 +59,7 @@ DESCRIPTION_CONFIDENCE = 0.6
 EXTRACT_CONFIDENCE = {"ocr": OCR_CONFIDENCE, "caption": DESCRIPTION_CONFIDENCE}
 
 # The vision prompts (system text, token budget, capability tier) are each one
-# co-located .prompt artifact (docs/DEVELOPMENT.md); these constants are the
+# co-located .prompt artifact (docs/reference/DEVELOPMENT.md); these constants are the
 # loader facade so the handler and tests keep importing the same names. Both run
 # on the "vision" tier — the adapter resolves it to an image-capable model.
 _OCR = load_prompt(Path(__file__).parent / "prompts" / "vision_ocr.prompt")

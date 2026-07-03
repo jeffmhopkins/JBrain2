@@ -1,5 +1,5 @@
 """Note deletion purges the derived graph, against real Postgres
-(docs/ANALYSIS.md: the one sanctioned exception to "nothing is deleted").
+(docs/reference/ANALYSIS.md: the one sanctioned exception to "nothing is deleted").
 
 Deleting a note must hard-delete its facts, mentions, temporal tokens,
 review items (any status), and note_analysis row, drop provisional entities

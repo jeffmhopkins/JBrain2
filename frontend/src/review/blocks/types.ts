@@ -1,5 +1,5 @@
 // The block-registry contract. A review detail is assembled from a sequence of
-// typed blocks (docs/DESIGN.md "Review inbox" → "Detail composition"); each one
+// typed blocks (docs/reference/DESIGN.md "Review inbox" → "Detail composition"); each one
 // is a `ReviewBlock` that reads the shared `BlockCtx` and renders its slice, or
 // returns null when its data is absent — so the kind→sequence table can be
 // generous and the blocks self-gate.

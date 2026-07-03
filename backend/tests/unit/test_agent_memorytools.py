@@ -1,5 +1,5 @@
 """The Tier-A memory tool handlers: data-framed reads, task-only edits, and the
-fail-closed behavioral write (docs/ASSISTANT.md invariants #1/#3)."""
+fail-closed behavioral write (docs/reference/ASSISTANT.md invariants #1/#3)."""
 
 from jbrain.agent.loop import ToolContext
 from jbrain.agent.memory import EpisodeHit, MemoryBlock

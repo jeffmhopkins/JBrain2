@@ -558,7 +558,7 @@ class AgentLoop:
         Guardrail accounting is identical to `run` so the two paths agree; the
         answer is only ever streamed (the deltas), never re-emitted whole.
 
-        Reflexion (Loop 1, docs/ASSISTANT.md) rides at the tail: the loop tracks
+        Reflexion (Loop 1, docs/reference/ASSISTANT.md) rides at the tail: the loop tracks
         the answer text it streamed, the sources tools surfaced, and whether a
         mutation was staged, then — only when the turn is critique-worthy — runs
         the pure verifiers after the terminal `DoneEvent` and emits a `VerdictEvent`
@@ -597,7 +597,7 @@ class AgentLoop:
             return
         scopes = tuple(scopes)
         # The selected agent supplies its persona prompt and tool allowlist
-        # (docs/ASSISTANT.md "Agent selection"); the default is the Full Brain curator.
+        # (docs/reference/ASSISTANT.md "Agent selection"); the default is the Full Brain curator.
         system_prompt = system or SYSTEM_PROMPT
         tools = self._registry.schemas_for(scopes, tools_allow)
         allowed = self._registry.allowed_names(scopes, tools_allow)

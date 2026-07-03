@@ -4,9 +4,9 @@ Personal knowledge system: notes in → RAG indexing → an LLM-maintained wiki
 with notes as the sole sources of truth. Self-hosted on Ubuntu + Docker.
 
 - Docs map: [`docs/README.md`](docs/README.md)
-- Design: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)
+- Design: [`docs/reference/ARCHITECTURE.md`](docs/reference/ARCHITECTURE.md)
 - Phases: [`docs/ROADMAP.md`](docs/ROADMAP.md)
-- Standards: [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md)
+- Standards: [`docs/reference/DEVELOPMENT.md`](docs/reference/DEVELOPMENT.md)
 
 ## Install (fresh Ubuntu server)
 

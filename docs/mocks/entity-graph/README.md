@@ -1,7 +1,7 @@
 # Entity graph — layout/rendering direction mockups
 
 Three interactive directions for an Obsidian-grade entity-graph render in the
-PWA, presented per the `docs/DESIGN.md` "Options before commitment" rule (3–4
+PWA, presented per the `docs/reference/DESIGN.md` "Options before commitment" rule (3–4
 distinct *directions*, not color-swaps). Open each `.html` directly in a
 browser — every file is self-contained, dark/light-toggleable (sun icon,
 top-right), and uses the design tokens. Each ships a real mini force/zoom

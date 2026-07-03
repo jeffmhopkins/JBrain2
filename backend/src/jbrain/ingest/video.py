@@ -19,7 +19,7 @@ frame's JPEG as a content-addressed blob whose id rides the timeline as `thumb_i
 retry idempotent; the handler then re-enqueues ingest_note so the rebuilt chunks
 pick the summary up.
 
-Confidence is honest and capped ("Guards", docs/ANALYSIS.md): a video analysis is
+Confidence is honest and capped ("Guards", docs/reference/ANALYSIS.md): a video analysis is
 machine-watched and machine-heard, not author-written, so it sits at the caption
 ceiling — facts later mined from the summary inherit reduced confidence and can
 never auto-supersede note text. An empty result (no decodable frames and no speech)
@@ -75,14 +75,14 @@ VIDEO_ANALYSIS_SPEC = ActionSpec(
     " audio, and summarize the fused timeline.",
 )
 
-# The Guards cap (docs/ANALYSIS.md): a video analysis is a model's reading of stills
+# The Guards cap (docs/reference/ANALYSIS.md): a video analysis is a model's reading of stills
 # plus its hearing of the audio — it describes, it does not transcribe the author, so
 # it sits at the caption ceiling, never above. The row carries this flat ceiling; the
 # per-frame/per-word confidences live in `analysis` for the UI gradient.
 VIDEO_ANALYSIS_CONFIDENCE = 0.6
 
 # The vision frame-caption prompt and the reduce summary prompt are co-located
-# .prompt artifacts (docs/DEVELOPMENT.md). Captioning routes by the `agent.vision`
+# .prompt artifacts (docs/reference/DEVELOPMENT.md). Captioning routes by the `agent.vision`
 # task (the same vision route jerv's analyze_image uses, so an on-box operator points
 # both at local qwen3-vl); the summary routes by its own `video.summarize` task.
 _FRAME = load_prompt(Path(__file__).parent / "prompts" / "video_frame.prompt")

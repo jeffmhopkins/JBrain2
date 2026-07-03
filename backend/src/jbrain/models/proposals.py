@@ -1,4 +1,4 @@
-"""Proposal ORM models (docs/ASSISTANT.md "Staging & approval"). A Proposal is a
+"""Proposal ORM models (docs/reference/ASSISTANT.md "Staging & approval"). A Proposal is a
 tree of staged operations the owner approves in whole or in part; nodes declare
 prerequisites so partial approval stays dependency-safe."""
 

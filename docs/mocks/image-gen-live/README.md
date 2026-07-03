@@ -3,7 +3,7 @@
 Three interactive mocks of the **in-chat "generating" state**: a live preview that
 sharpens at 25 / 50 / 75 / 100% of the sampling steps, plus a **Stop render**
 control. Open each in a browser — they auto-play and have ▶ Simulate / ↺ Reset and
-a working Stop. Plan: `docs/IMAGE_GEN_LIVE_PLAN.md`.
+a working Stop. Plan: `docs/archive/IMAGE_GEN_LIVE_PLAN.md`.
 
 **Decided: Variant A — image-as-progress** is the binding spec (built in G7b:
 `FullBrainSurface` `GeneratingPreview`, the `.fb-genprev-*` styles, and the

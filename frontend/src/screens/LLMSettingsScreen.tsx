@@ -18,7 +18,7 @@ import { AiUsageCard } from "./aiUsage";
 // tiers lands in a synthesized "Other" group so nothing is silently dropped.
 interface GroupDef {
   key: string;
-  /** Accent class flips the group's left rail (docs/DESIGN.md accents). */
+  /** Accent class flips the group's left rail (docs/reference/DESIGN.md accents). */
   accent: "high" | "light" | "vision";
   name: string;
   desc: string;
@@ -792,7 +792,7 @@ interface LlmTaskPatchLocal {
 }
 
 // Capability chips for a local model — same muted register as the rest of the
-// chrome (docs/DESIGN.md), keyed by what the model can do.
+// chrome (docs/reference/DESIGN.md), keyed by what the model can do.
 function capabilityChips(m: LocalModelInfo) {
   const chips: { key: string; label: string; cls: string }[] = [];
   if (m.supports_vision) chips.push({ key: "vision", label: "vision", cls: "vision" });

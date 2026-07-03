@@ -1,4 +1,4 @@
-// Entity page (docs/DESIGN.md "Analysis tab + entity pages" — the hub):
+// Entity page (docs/reference/DESIGN.md "Analysis tab + entity pages" — the hub):
 // centered node with kind/alias/domain meta, then each property's CURRENT
 // value as an outbound edge — the page is current-only so it stays a bounded
 // few rows tall regardless of how much revision history exists. Prior once-true

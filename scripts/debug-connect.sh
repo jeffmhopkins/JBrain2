@@ -2,7 +2,7 @@
 # Drive a RUNNING JBrain box's owner debug console from a Claude session using a
 # capability token the owner minted in the PWA (Settings → Debug access).
 # Decodes the host+key payload and calls /api/debug/* so you don't hand-build
-# curl. See docs/DEBUG_ACCESS_SESSION_GUIDE.md for the full workflow.
+# curl. See docs/runbooks/DEBUG_ACCESS_SESSION_GUIDE.md for the full workflow.
 #
 # Token source (first found wins):
 #   --token <payload>          a one-off, highest priority

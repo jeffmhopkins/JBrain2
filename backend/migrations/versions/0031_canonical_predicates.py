@@ -1,7 +1,7 @@
 """The canonical_predicates index (predicate canonicalization Phase 2).
 
 The storage substrate for embedding-assisted predicate canonicalization
-(docs/PREDICATE_CANONICALIZATION.md §3.3): one global reference row per canonical
+(docs/reference/PREDICATE_CANONICALIZATION.md §3.3): one global reference row per canonical
 predicate, carrying the descriptor we embed plus the registry metadata
 (value_shape/kind/functional). Phase 3 cosine-matches an unknown predicate
 against this index to canonicalize or propose a new one.

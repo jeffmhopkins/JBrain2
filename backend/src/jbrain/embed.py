@@ -117,7 +117,7 @@ class PredicateEmbedder:
     canonicals are permanent by doctrine), so a prune would need a privilege-
     widening migration. The stale rows are inert suggestion-picker fodder, and a
     surviving new_predicate card can still resolve onto them (the alias FK needs
-    the row) — exactly the guarded cases docs/ENTITY_GRAPH_REFOCUS_PLAN.md §3
+    the row) — exactly the guarded cases docs/reference/ENTITY_GRAPH_REFOCUS_PLAN.md §3
     T1.3 protects, which is why it allows dropping the prune outright."""
 
     def __init__(self, maker: async_sessionmaker[AsyncSession], client: EmbedClient, model: str):

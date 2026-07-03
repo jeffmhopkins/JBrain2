@@ -42,4 +42,4 @@ arbitrary value) and C · Preset chips (grid + Custom…; most vertical space).
   sweeps keep their existing on_demand/once/repeat editor unchanged.
 - Interval saves as `{ schedule_kind:"interval", interval_seconds }` (minutes×60
   or hours×3600); reject a non-positive / non-integer value before save.
-- Implementation follows the wave process (`docs/PROCESS.md`).
+- Implementation follows the wave process (`docs/reference/PROCESS.md`).

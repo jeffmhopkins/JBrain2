@@ -1,6 +1,6 @@
 {
   "name": "unknown long-tail predicate commits raw with no review card",
-  "description": "Two-tier predicate model (docs/ENTITY_GRAPH_REFOCUS_PLAN.md section 1): favoriteColor is declared by no entity type, so it is tier-2 long-tail. The pipeline's alias collapse misses (no durable predicate_aliases row), and the fact commits on its raw spelling — no embed round-trip, no new_predicate card, no unknown-predicate weight penalty holding it below the commit threshold. Pins the Wave-1 inversion of the retired behavior, where every unknown spelling filed one open new_predicate card. The zero-count review_items block mirrors rel_conjoined_past_employers.",
+  "description": "Two-tier predicate model (docs/reference/ENTITY_GRAPH_REFOCUS_PLAN.md section 1): favoriteColor is declared by no entity type, so it is tier-2 long-tail. The pipeline's alias collapse misses (no durable predicate_aliases row), and the fact commits on its raw spelling — no embed round-trip, no new_predicate card, no unknown-predicate weight penalty holding it below the commit threshold. Pins the Wave-1 inversion of the retired behavior, where every unknown spelling filed one open new_predicate card. The zero-count review_items block mirrors rel_conjoined_past_employers.",
   "steps": [
     {
       "domain": "general",

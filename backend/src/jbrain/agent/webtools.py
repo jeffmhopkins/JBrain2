@@ -1,5 +1,5 @@
 """The jerv chatbot's internet tools: `web_search` and `web_fetch`
-(docs/ASSISTANT.md "Agent selection").
+(docs/reference/ASSISTANT.md "Agent selection").
 
 Unlike the egress connectors (which stage an owner-approved Proposal before any
 off-box call), these run DIRECTLY — the deliberate, bounded exception to

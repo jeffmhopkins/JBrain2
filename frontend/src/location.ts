@@ -1,4 +1,4 @@
-// Capture location (docs/DESIGN.md "Capture location"): a Settings toggle,
+// Capture location (docs/reference/DESIGN.md "Capture location"): a Settings toggle,
 // on by default. While on, the app keeps a warm geolocation fix (refreshed at
 // start and when the tab becomes visible) and a send attaches the coordinates
 // only when the fix is under 2 minutes old — capture never waits for GPS.

@@ -1,7 +1,7 @@
 """Canonical-name projection and provisional -> confirmed promotion.
 
 `canonical_name` is a denormalized projection of an entity's current name.*
-facts (docs/ANALYSIS.md "Entity-row fields", docs/entity.md "Names") — NOT the
+facts (docs/reference/ANALYSIS.md "Entity-row fields", docs/reference/entity.md "Names") — NOT the
 frozen first-mention surface form the early pipeline left it as (the bug where a
 spouse stayed displayed as the nickname "Sammy"). After a note's facts land, the
 touched entities are reprojected by their type's `display_name` precedence. The
@@ -12,7 +12,7 @@ it — the "implicitly confirmed later" ANALYSIS describes. `promote_if_corrobor
 implements it (≥ CORROBORATION_THRESHOLD distinct same-domain notes; a contested
 identity routes to a confirm_entity review card instead of auto-confirming). It is
 gated by the `entity_promotion` setting (default OFF) and called eager in the
-apply path; see docs/entity.md "Entity lifecycle".
+apply path; see docs/reference/entity.md "Entity lifecycle".
 """
 
 from __future__ import annotations
@@ -107,7 +107,7 @@ async def reproject_canonical_name(session: AsyncSession, entity_id: uuid.UUID) 
     # Active heads only: a name held in pending_review is contested (e.g. an
     # attribute collision), and publishing a contested name as THE display name
     # is the same leak the wiki avoids ("contested facts are withheld",
-    # docs/ANALYSIS.md) one layer down.
+    # docs/reference/ANALYSIS.md) one layer down.
     facts = (
         await session.execute(
             text(
@@ -158,7 +158,7 @@ async def reproject_canonical_name(session: AsyncSession, entity_id: uuid.UUID) 
     return projected
 
 
-# --- provisional -> confirmed promotion (docs/entity.md "Entity lifecycle")
+# --- provisional -> confirmed promotion (docs/reference/entity.md "Entity lifecycle")
 
 # Distinct corroborating notes that confirm an entity is real (durable across the
 # loss of any one note, and outranking a one-note upstart in a merge — the two

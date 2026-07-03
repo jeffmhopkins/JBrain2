@@ -140,7 +140,7 @@ def _naive_tz(precision: str, anchor: datetime | None) -> tzinfo:
 # clearly-sensitive predicate is AT LEAST its domain regardless of the model's
 # per-fact judgment, closing the leak path where a clinical/financial fact gets
 # mislabeled `general`. Ratchet-UP only (general -> restricted, never down or
-# across restricted), matching the asymmetric bias in docs/ANALYSIS.md
+# across restricted), matching the asymmetric bias in docs/reference/ANALYSIS.md
 # ("misclassifying into health/finance is cheap; out of it is a leak"). A curated
 # allowlist of canonical schema.org/LOINC-ish predicates, lowercased; unknown
 # predicates fall back to the model (which already classifies well). A full LOINC
@@ -178,7 +178,7 @@ def domain_floor(predicate: str) -> str | None:
 
 
 def ratchet_domain(extracted: str, note_domain: str) -> tuple[str, bool]:
-    """Apply the asymmetric domain bias (docs/ANALYSIS.md "Domains").
+    """Apply the asymmetric domain bias (docs/reference/ANALYSIS.md "Domains").
 
     Returns (fact_domain, needs_promotion_review): ratcheting INTO a
     restricted domain from a general note is free; anything that would make a
@@ -194,7 +194,7 @@ def ratchet_domain(extracted: str, note_domain: str) -> tuple[str, bool]:
 
 def normalize_future_assertion(fact: ExtractedFact, anchor: datetime) -> ExtractedFact:
     """A fact whose validity is still in the future has not occurred yet, so it
-    cannot be an asserted past `event` (docs/ANALYSIS.md "Temporal model":
+    cannot be an asserted past `event` (docs/reference/ANALYSIS.md "Temporal model":
     future-tense facts carry `expected`). The v2 prompt teaches this, but a
     model lapse must not land a follow-up "in 3 months" as a bare asserted
     event — that would read as something that already happened. This is a
@@ -412,7 +412,7 @@ def finalize_temporal(
     here: a fact's valid_from must not gain an hour offset that would reorder
     same-day supersession, and a fact must never gain a valid_to (it would
     falsely close a `state` interval). Tokens are the first-class range objects
-    (docs/ANALYSIS.md), so the within-day meaning lives there."""
+    (docs/reference/ANALYSIS.md), so the within-day meaning lives there."""
     start, end, changed = _repair_dates(phrase, start, end, anchor)
     # Midnight-UTC normalization is for ABSOLUTE dates only ("June 8"). A KNOWN
     # relative phrase ("today"/"yesterday") is already handled by _repair_dates,
@@ -832,7 +832,7 @@ def parse_extraction(
         # Normalize drift spellings (legalName/legal_name -> name.full) and recover
         # a qualifier the model folded into the dotted path (name.nickname.kids ->
         # name.nickname + "kids") BEFORE the identity key is read, so the
-        # supersession chain and dedup see one stable address (docs/entity.md).
+        # supersession chain and dedup see one stable address (docs/reference/entity.md).
         predicate, qualifier = get_registry().decompose_predicate(
             str(raw.get("predicate", "")).strip(), str(raw.get("qualifier") or "").strip()
         )
@@ -923,7 +923,7 @@ def parse_extraction(
     if dropped_facts:
         # The prompt's soft cap, enforced: keep the FIRST N — fact order is
         # the model's salience ranking, so the tail is the trivia the prompt
-        # told it to skip (docs/ANALYSIS.md "soft cap on facts-per-note"). The
+        # told it to skip (docs/reference/ANALYSIS.md "soft cap on facts-per-note"). The
         # count rides out on the Extraction so the pipeline can flag it.
         log.warning("analysis.facts_capped", kept=max_facts, dropped=dropped_facts)
         facts = facts[:max_facts]
@@ -938,7 +938,7 @@ def parse_extraction(
         start = parse_datetime(raw.get("resolved_start"), naive_tz=naive_tz)
         phrase = str(raw.get("phrase") or "").strip()
         # Never store only-relative: an unresolved expression is not a token
-        # (docs/ANALYSIS.md "Temporal model").
+        # (docs/reference/ANALYSIS.md "Temporal model").
         if start is None or not phrase:
             log.warning("analysis.token_dropped", reason="unresolved", phrase=phrase)
             continue

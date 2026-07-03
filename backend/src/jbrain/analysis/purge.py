@@ -1,6 +1,6 @@
 """Note-deletion purge: hard-delete everything derived from a note.
 
-docs/ANALYSIS.md doctrine says nothing derived is ever deleted — the
+docs/reference/ANALYSIS.md doctrine says nothing derived is ever deleted — the
 supersession chain is the revision history. This module is the one
 sanctioned exception [decided]: notes are the sole sources of truth, so
 deleting a note is a privacy promise that everything derived from it goes

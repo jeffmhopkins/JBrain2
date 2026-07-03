@@ -1,4 +1,4 @@
-// Code mode (jcode) — the resume-first launcher (docs/DESIGN.md "jcode", variant B).
+// Code mode (jcode) — the resume-first launcher (docs/reference/DESIGN.md "jcode", variant B).
 // The session list is the hero (Chats-picker paradigm); "New session" opens setup in
 // a bottom sheet. Tapping a row opens the tabbed session screen, which this screen
 // stacks over itself (its own back returns to the list). A self-contained full-screen
