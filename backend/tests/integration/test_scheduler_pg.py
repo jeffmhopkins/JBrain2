@@ -22,6 +22,7 @@ from jbrain.analysis.reembed import REEMBED_SPEC
 from jbrain.analysis.tagconsolidate import TAG_CONSOLIDATE_SPEC
 from jbrain.db.session import scoped_session
 from jbrain.wiki.actions import WIKI_SPECS
+from jbrain.wiki.lint import WIKI_LINT_SPEC
 from jbrain.workflow.registry import ACTION_SPECS, build_registry
 from jbrain.workflow.runlog import finalize_job_step
 from jbrain.workflow.scheduler import (
@@ -61,6 +62,7 @@ def _registry():  # noqa: ANN202
             REEMBED_SPEC,
             TAG_CONSOLIDATE_SPEC,
             *WIKI_SPECS,
+            WIKI_LINT_SPEC,
         )
     )
 
@@ -530,6 +532,7 @@ async def test_seeded_nightly_sweeps_exist_and_are_fireable(maker: async_session
         "nightly_purge_deleted_artifacts",
         "nightly_wiki_refresh",
         "nightly_wiki_prune",
+        "nightly_wiki_lint",
         "nightly_entity_hygiene",
         "nightly_reembed_stale",
         "nightly_tag_consolidate",

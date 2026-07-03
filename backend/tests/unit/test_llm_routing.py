@@ -21,6 +21,8 @@ EXPECTED_TASKS = {
     "intake.materialize",
     "wiki.rewrite",
     "wiki.ground",
+    "wiki.lint.contradiction",
+    "wiki.lint.stale",
     "triage.classify",
 }
 

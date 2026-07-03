@@ -29,6 +29,7 @@ def test_api_registry_carries_every_ops_fireable_sweep() -> None:
         "wiki_rebuild",
         "wiki_reindex",
         "wiki_prune",
+        "wiki_lint",
         "triage_inbox",
     }
     missing = required - names

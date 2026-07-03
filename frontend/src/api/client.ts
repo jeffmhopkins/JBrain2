@@ -773,7 +773,9 @@ export type ReviewKind =
   | "split_proposal"
   | "extraction_truncated"
   | "new_predicate"
-  | "confirm_entity";
+  | "confirm_entity"
+  | "wiki_contradiction"
+  | "wiki_stale_claim";
 
 export type ReviewStatus = "open" | "resolved" | "dismissed" | "deferred";
 

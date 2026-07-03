@@ -134,6 +134,7 @@ from jbrain.web import (
     WebFetcher,
 )
 from jbrain.wiki.actions import WIKI_SPECS
+from jbrain.wiki.lint import WIKI_LINT_SPEC
 from jbrain.wiki.readstore import WikiReadStore
 from jbrain.wiki.talkstore import WikiTalkStore
 from jbrain.workflow.automations import AutomationsReader
@@ -170,6 +171,7 @@ API_ACTION_SPECS = (
     REEMBED_SPEC,
     TAG_CONSOLIDATE_SPEC,
     *WIKI_SPECS,
+    WIKI_LINT_SPEC,
     TRIAGE_INBOX_SPEC,
 )
 

@@ -28,7 +28,7 @@ capture (Phase 1)
                                     resolver as fallback], per-kind supersession,
                                     + review-inbox items)
 nightly: entity hygiene, merge proposals, summary re-embedding,
-         tag consolidation; (Phase 6) wiki triage
+         tag consolidation; (Phase 6) wiki triage, wiki_lint health sweep
 ```
 
 Capture-to-searchable never waits on a cloud LLM: embeddings/FTS index

@@ -29,6 +29,8 @@ describe("block registry", () => {
       "extraction_truncated",
       "new_predicate",
       "confirm_entity",
+      "wiki_contradiction",
+      "wiki_stale_claim",
     ];
     for (const kind of kinds) {
       for (const id of blockSequenceFor(item(kind))) {

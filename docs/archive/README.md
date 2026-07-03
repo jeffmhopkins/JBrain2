@@ -25,6 +25,7 @@ its ship evidence.
 |---|---|
 | `PHASE6_WIKI_GRAPH_CONTRACT.md` | Wiki↔entity-graph interface contract — fulfilled. |
 | `TALK_BOARD_PLAN.md` | Article-anchored wiki Talk board (owner/editor/builder voices). |
+| `WIKI_LINT_PLAN.md` | Corpus-wide wiki health sweep (`wiki_lint`, fifth ActionSpec): deterministic checks + LLM contradiction/stale-claim cards. Ships disabled. |
 
 ## Agent capabilities
 | Item | What it is |

@@ -53,3 +53,43 @@ class WikiBuildGate:
         self, ctx: SessionContext, *, tokens: int, now: datetime | None = None
     ) -> None:
         await self._settings.record_wiki_build_spend(ctx, day=_utc_day(now), tokens=max(tokens, 0))
+
+
+class WikiLintBudgetExceeded(Exception):
+    """Raised when the wiki_lint verifier budget/kill-switch refuses a batch — the verifier stops
+    (fail-closed) rather than spending. SEPARATE from the build budget so a corpus-wide audit can
+    never starve the nightly build (docs/plans/WIKI_LINT_PLAN.md §4)."""
+
+
+class WikiLintGate:
+    """The wiki_lint (Wave B) verifier spend gate — the WikiBuildGate shape against the SEPARATE
+    `wiki_lint_daily_*` keys. Fail-closed: refuses before spending when the kill-switch is on, the
+    day's budget is exhausted, or the next batch's estimate would overrun."""
+
+    def __init__(self, settings: SqlSettingsStore):
+        self._settings = settings
+
+    async def check(
+        self, ctx: SessionContext, *, estimated_tokens: int = 0, now: datetime | None = None
+    ) -> BudgetDecision:
+        if await self._settings.wiki_lint_kill_switch(ctx):
+            return BudgetDecision(False, 0, "wiki-lint kill-switch is engaged")
+        estimated_tokens = max(estimated_tokens, 0)
+        day = _utc_day(now)
+        budget = await self._settings.wiki_lint_daily_budget(ctx)
+        spent = await self._settings.wiki_lint_spent_today(ctx, day=day)
+        remaining = max(budget - spent, 0)
+        if remaining <= 0:
+            return BudgetDecision(False, 0, f"daily wiki-lint budget exhausted ({budget})")
+        if estimated_tokens > remaining:
+            return BudgetDecision(
+                False,
+                remaining,
+                f"estimated {estimated_tokens} tokens exceeds {remaining} remaining",
+            )
+        return BudgetDecision(True, remaining, "within wiki-lint budget")
+
+    async def record_spend(
+        self, ctx: SessionContext, *, tokens: int, now: datetime | None = None
+    ) -> None:
+        await self._settings.record_wiki_lint_spend(ctx, day=_utc_day(now), tokens=max(tokens, 0))

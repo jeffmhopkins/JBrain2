@@ -174,6 +174,12 @@ listed here — skill learning, durable-knowledge + predicate-canon promotion, a
 prompt/tool self-edit — and their eval/promotion harness were removed, not
 deferred.)*
 
+- **Wiki health sweep (`wiki_lint`)** ✅ (`archive/WIKI_LINT_PLAN.md`) — the "third
+  leg" alongside ingest and query: a corpus-wide wiki HEALTH audit as a fifth in-code
+  sweep `ActionSpec`, read-only against the wiki. Wave A (deterministic no-LLM checks +
+  optional index re-dirty, migration 0119); Wave B (the LLM contradiction/stale-claim
+  review cards + a separate lint budget, migration 0120). Seeded **disabled** + Ops-
+  fireable; owner ratification of the plan's §9 + an enable migration turn it on.
 - **Hygiene sweeps** ✅ (`archive/HYGIENE_SWEEPS_PLAN.md`) — `entity_hygiene`,
   `reembed_stale`, `tag_consolidate` engine actions on the Phase-5 sweep pattern,
   seeded disabled + Ops-fireable (migration 0066).
