@@ -1582,13 +1582,71 @@ W2 remains ◻️ (not complete). The **deterministic front-half** is built and 
   and the pathology report kept as prose. 13 fixture-driven tests.
 - **`importer.py`** — the `EmrImporter` lowering: parser candidates → the exact `IntegrationIntent`
   the shipped arbiter consumes, with the per-draw fan + analyte-constant facts, `fhir_status` on
-  `value` facts, the deterministic `effectiveDate` point token via `IntentTemporal`, one **episode**
-  intent per facility-transfer (so `partOfEncounter`/`hasObservation` resolve intra-intent), and the
-  **Layer-2 firewall guard** run on every prospective fact. 8 tests, all intents `validate_intent`-clean.
+  `value` facts, the deterministic `effectiveDate` point token via `IntentTemporal`, and the
+  **Layer-2 firewall guard** run on every prospective fact. All intents `validate_intent`-clean.
+- **`integrate.py`** — the deterministic integration driver: `integrate_parse_result` lowers a
+  parse result and commits each fact through `plan_intent → apply_intent` on an RLS session, no LLM.
+  The `value` measurement carries `valid_from = collected_at` (§3.3 — the address the §3.5 transition
+  keys on); the parser emits UTC-aware datetimes. **One intent per NOTE** (not per grouping unit): the
+  shipped `_apply` reconciles the whole note via its touched-set retract sweep, so a second per-unit
+  apply on the same note would retract the first unit's facts — the §6.6 per-unit transaction
+  isolation is a follow-on needing incremental note commits. An end-to-end integration test on real
+  Postgres proves the Epic fixture mints the health entities, final readings commit active, and the
+  corrected-without-original platelet is held `pending_review` (proving `fhir_status` reaches
+  `decide`).
 
-**Remaining in W2 (next):** wiring `lower_parse_result` → `plan_intent`/`apply_intent` on the RLS
-session; the kind-guarded `project_emr` projector (into `_apply` + `purge`) with lifecycle-derived
-`report_status`; `read_labs`/`read_encounters` tools proven on Epic; the pathology-narrative prose
-extraction; and the **intake stage** (`pyzipper` decrypt + note-inline password extraction +
-scrub-before-index + delete-last fail-closed, §6.1) — the security-critical secret handling, built
-carefully with its 100%-coverage tests. OneContent/athena/ARIA parsers + cross-source dedup are W3.
+- **`emr_projection.py`** — the kind-guarded `project_emr` projector, wired into `_apply` AND `purge`
+  next to `project_appointments`. Re-derives `app.lab_results` (one row per `value` fact; `report_status`
+  DERIVED from the lifecycle + supersession chain — `final` for a lone active, `corrected` for an active
+  chain-head, a second `is_current=false` row for a superseded predecessor, `preliminary` for pending,
+  retracted dropped; `encounter_id`/`orderer` reached via the `hasObservation`→`attender[ordering]` path)
+  and `app.encounters` (+ providers/diagnoses sidecars; `los_days` computed; `part_of_id` for the
+  transfer). The e2e integration test asserts the lab rows populate (the corrected platelet as a
+  not-current `preliminary` row), the MICU encounter's `los_days=3`, the A3 transfer's `part_of_id`, and
+  the provider/diagnosis sidecars. A non-EMR note pays one empty kind-filtered SELECT (cost guard, §4).
+
+- **`agent/labtools.py` + `read_labs.tool`/`read_encounters.tool`** — the two health-scoped read tools
+  (§7.1), bound in `readtools.build_registry`. `read_labs` lists/filters/trends over `app.lab_results`
+  (marking superseded readings "corrected — see current" and pending ones not-current); `read_encounters`
+  lists and expands one encounter (providers, ICD diagnoses, transfusion events, the transfer chain).
+  Both read on the caller's RLS session, so a non-health scope returns nothing. The e2e test drives the
+  handlers: `read_labs` returns the platelet records under the owner scope and **empty under a
+  general-only scope** (the firewall), and `read_encounters` lists the MICU stay and expands to its
+  Chen/attending provider + the D69.6 diagnosis.
+
+- **`pathology.py` + `prompts/pathology_diagnosis.prompt`** — the ONE LLM touch on the structured
+  path (§6.5), through the LLM adapter (non-neg #1), faked in tests (#5). `extract_pathology_diagnoses`
+  runs the Final-Diagnosis extraction (a `low`-tier `.prompt` with a `{diagnoses:[{condition, icd10,
+  ruled_out, confidence}]}` schema), coercing the reply into typed `PathologyDiagnosis` candidates and
+  dropping any malformed row. It is **fail-soft**: an empty narrative skips the call, an unrouted task
+  (the harness router carries only `note.extract`) or an unusable reply yields `[]` — the deterministic
+  labs/encounters still commit and the narrative stays chunked/searchable, so the pathology set is a
+  bonus, never a gate. `lower_parse_result` lowers only the **committable** set — `not ruled_out` AND
+  `confidence >= CONFIDENCE_FLOOR` (0.75, above the arbiter's inferred ceiling) — into an
+  `encounterDiagnosis` edge on the hospitalization's inpatient episode head (never a lab visit; a file
+  with no encounter leaves the diagnosis prose-only). A **rule-out stays hypothetical prose and is
+  never a diagnosis fact** (`_pathology_target` + the `committable` gate); the edge is surface-attested
+  (the condition is literally named on the Final Diagnosis line) so it commits, while the upstream
+  confidence gate — not a downstream weight surprise — is what keeps the set small. Wired into
+  `integrate_parse_result` (the only structured caller). 11 unit tests (parse/clamp, shape-drop, the
+  empty/unrouted/unusable fail-soft paths, the committable gate, and the lowering) + 1 real-Postgres
+  e2e (an affirmed `hypocellular marrow` mints a `MedicalCondition` and projects onto
+  `encounter_diagnoses`; the ruled-out `evolving primary marrow process` does neither).
+
+- **`intake.py` + `intake_handler.py`** — the intake stage (§6.1), the security-critical front door.
+  The pure core (`intake.py`): a deterministic password matcher over the note body, a hardened AES-unzip
+  (`pyzipper`) with zip-bomb size caps, member-count cap, and path-traversal/absolute-path rejection,
+  and a body scrub — the password lives only in memory, never a chunk/embedding/log. The orchestration
+  (`intake_handler.py`, `EmrIntakePipeline.intake`): decrypt (zip + any password-protected PDF via
+  PyMuPDF) → attach each decrypted PDF to the SAME note → **delete-last**: only after every attach
+  succeeds does it remove the zip and scrub the body, in one transaction, before re-ingest chunks/embeds
+  it. **Fail-closed:** any failure rolls back (no partial attach, no half-scrub), keeps the zip + original
+  body, writes no facts, and files a `low_confidence`/`emr_intake_failed` card in a separate committing
+  transaction. 16 unit tests (every guard + fail path, real AES zip in-memory) + 4 real-Postgres
+  integration tests (normalize-in-place, idempotent re-run, wrong-password and no-password fail-closed).
+
+**Remaining in W2 (next):** wiring the intake handler to the seeded `emr_import` trigger (a Wave-4
+concern — the trigger + event-payload widening, §6.0/§12.2, needs an owner sanity-check on the payload
+approach before it lands). OneContent/athena/ARIA parsers + cross-source dedup are W3. The one LLM
+touch on the structured path — the pathology-narrative Final-Diagnosis extraction — is now landed
+(`pathology.py`, above).

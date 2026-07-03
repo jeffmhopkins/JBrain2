@@ -52,6 +52,7 @@ from jbrain.analysis.display import (
     truncation_display,
     value_label,
 )
+from jbrain.analysis.emr_projection import project_emr
 from jbrain.analysis.entities import (
     DISAMBIGUATE_MAX_TOKENS,
     DISAMBIGUATE_SCHEMA,
@@ -927,6 +928,7 @@ class AnalysisPipeline:
         projected = {e.id for e in resolved.values() if e is not None}
         projected.update(r.entity_id for r in retracted)
         await project_appointments(session, projected)
+        await project_emr(session, projected)
         await project_place_geofences(session, projected)
         # Bind any touched Device entity to its operational subject row (owner-set,
         # deterministic, never LLM-chosen). Rides the same full-owner fact-apply

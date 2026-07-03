@@ -27,6 +27,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import aliased
 
 from jbrain.analysis.appointment_projection import project_appointments
+from jbrain.analysis.emr_projection import project_emr
 from jbrain.analysis.geofence_projection import project_place_geofences
 from jbrain.models.agent import AgentEpisode, AgentEpisodeRef
 from jbrain.models.analysis import (
@@ -115,6 +116,7 @@ async def purge_note_artifacts(session: AsyncSession, note_id: uuid.UUID) -> Non
     # (still mentioned elsewhere) may have lost this note's scheduledTime, so
     # re-derive its projection — the row is removed when no live time remains.
     await project_appointments(session, candidates)
+    await project_emr(session, candidates)
     await project_place_geofences(session, candidates)
     await _purge_episodes(session, note_id)
 

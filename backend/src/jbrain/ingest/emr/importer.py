@@ -17,7 +17,8 @@ cites the page-chunk it came from via the injected `chunk_for_anchor` resolver.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+import re
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
 from jbrain.analysis.intent import (
@@ -29,6 +30,7 @@ from jbrain.analysis.intent import (
 )
 from jbrain.ingest.emr.candidates import CandidateEncounter, CandidateObservation, ParseResult
 from jbrain.ingest.emr.firewall import FIREWALL_REVIEW_SUBKIND, is_location_locked
+from jbrain.ingest.emr.pathology import PathologyDiagnosis
 
 SCHEMA_VERSION = 1
 INTEGRATOR_VERSION = "emr-importer-1"
@@ -84,6 +86,8 @@ class _IntentBuilder:
         object_entity_ref: str | None = None,
         temporal: IntentTemporal | None = None,
         fhir_status: str | None = None,
+        assertion: str = "asserted",
+        self_confidence: float = 1.0,
     ) -> None:
         # Layer 2: a location-lock predicate on a health EMR entity is held out and
         # carded — never committed. The parsers never emit one; this is the
@@ -101,11 +105,11 @@ class _IntentBuilder:
                 kind=kind,
                 statement=statement,
                 value_json=value_json,
-                assertion="asserted",
+                assertion=assertion,
                 object_entity_ref=object_entity_ref,
                 temporal=temporal,
                 attested_span=AttestedSpan(chunk_id=self.chunk_for(anchor), surface=statement),
-                self_confidence=1.0,
+                self_confidence=self_confidence,
                 inferred=False,
                 fhir_status=fhir_status,
             )
@@ -132,6 +136,14 @@ def _add_observation(b: _IntentBuilder, obs: CandidateObservation) -> str:
     q = obs.qualifier
     disp = f"{obs.analyte.name} {obs.value_num if obs.value_num is not None else obs.value_text}"
 
+    # The measurement's valid_from IS the collected instant (§3.3, bi-temporal) —
+    # the address the §3.5 status transition and time-series accumulation key on.
+    draw_temporal = IntentTemporal(
+        phrase=obs.collected_at.isoformat(),
+        resolved_start=obs.collected_at,
+        resolved_end=None,
+        precision=obs.precision,
+    )
     if obs.value_num is not None:
         b.fact(
             entity_ref=ref,
@@ -143,6 +155,7 @@ def _add_observation(b: _IntentBuilder, obs: CandidateObservation) -> str:
             anchor=obs.source_anchor,
             fhir_status=obs.fhir_status,
             value_json={"value": obs.value_num, "unit": obs.unit},
+            temporal=draw_temporal,
         )
     if obs.ref_low is not None and obs.ref_high is not None:
         b.fact(
@@ -361,48 +374,84 @@ def _add_encounter(
         )
 
 
-def _episodes(encounters: list[CandidateEncounter]) -> list[list[CandidateEncounter]]:
-    """Connected components over `part_of_key` — a facility-transfer's segments
-    share one episode (hence one intent)."""
-    by_key = {e.key: e for e in encounters}
-    parent: dict[str, str] = {e.key: e.key for e in encounters}
+def _pathology_target(encounters: list[CandidateEncounter]) -> CandidateEncounter | None:
+    """The encounter a pathology Final Diagnosis is attributed to (§6.5): the
+    hospitalization it was drawn during. Prefer the episode's inpatient HEAD (an
+    inpatient encounter that is not itself a transfer segment), then any inpatient
+    encounter, then the first encounter. None ⇒ the file has no encounter to
+    anchor to, so the diagnosis stays prose-only (never guessed onto a lab visit)."""
+    inpatient = [e for e in encounters if e.encounter_class == "inpatient"]
+    heads = [e for e in inpatient if e.part_of_key is None]
+    if heads:
+        return heads[0]
+    if inpatient:
+        return inpatient[0]
+    return encounters[0] if encounters else None
 
-    def find(k: str) -> str:
-        while parent[k] != k:
-            parent[k] = parent[parent[k]]
-            k = parent[k]
-        return k
 
-    for e in encounters:
-        if e.part_of_key and e.part_of_key in by_key:
-            parent[find(e.key)] = find(e.part_of_key)
-    groups: dict[str, list[CandidateEncounter]] = {}
-    for e in encounters:
-        groups.setdefault(find(e.key), []).append(e)
-    return list(groups.values())
+def _cond_ref(dx: PathologyDiagnosis) -> str:
+    key = dx.icd10 or re.sub(r"[^a-z0-9]+", "_", dx.condition.lower()).strip("_") or "unknown"
+    return f"cond:path:{key}"
+
+
+def _add_pathology(
+    b: _IntentBuilder,
+    diagnoses: Sequence[PathologyDiagnosis],
+    target: CandidateEncounter,
+    enc_ref_by_key: dict[str, str],
+    anchor: str,
+) -> None:
+    """Lower the committable Final-Diagnosis set into `encounterDiagnosis` edges on
+    the target encounter (§6.5). Only affirmed, above-floor diagnoses become facts;
+    a rule-out stays hypothetical prose and is never emitted. `self_confidence`
+    carries the model's certainty for provenance (the edge is surface-attested — the
+    condition is literally named on the Final Diagnosis line — so it commits, while
+    the `committable` gate upstream is what keeps the set small and confident)."""
+    enc_ref = enc_ref_by_key[target.key]
+    for dx in diagnoses:
+        if not dx.committable:
+            continue
+        c_ref = b.entity(_cond_ref(dx), KIND_CONDITION, dx.condition)
+        b.fact(
+            entity_ref=enc_ref,
+            entity_kind=KIND_ENCOUNTER,
+            predicate="encounterDiagnosis",
+            qualifier=dx.icd10 or "",
+            kind="relationship",
+            statement=f"pathology diagnosis: {dx.condition}",
+            anchor=anchor,
+            object_entity_ref=c_ref,
+            self_confidence=dx.confidence,
+        )
 
 
 def lower_parse_result(
-    result: ParseResult, note_id: str, chunk_for_anchor: ChunkResolver
+    result: ParseResult,
+    note_id: str,
+    chunk_for_anchor: ChunkResolver,
+    *,
+    pathology_diagnoses: Sequence[PathologyDiagnosis] = (),
 ) -> tuple[list[IntegrationIntent], list[FirewallCatch]]:
-    """Lower a parse result into one IntegrationIntent per episode (+ one for any
-    orphan portal observations). Returns the intents and any firewall catches."""
-    intents: list[IntegrationIntent] = []
-    catches: list[FirewallCatch] = []
+    """Lower a parse result into ONE IntegrationIntent for the note. All encounters
+    (including a facility transfer's segments) and orphan portal observations share
+    the intent, so `partOfEncounter`/`hasObservation` refs resolve intra-intent.
 
-    for episode in _episodes(result.encounters):
-        b = _IntentBuilder(note_id, chunk_for_anchor)
-        enc_ref_by_key = {e.key: f"enc:{e.key}" for e in episode}
-        for enc in episode:
-            _add_encounter(b, enc, enc_ref_by_key)
-        intents.append(b.build())
-        catches.extend(b.catches)
-
-    if result.orphan_observations:
-        b = _IntentBuilder(note_id, chunk_for_anchor)
-        for obs in result.orphan_observations:
-            _add_observation(b, obs)
-        intents.append(b.build())
-        catches.extend(b.catches)
-
-    return intents, catches
+    One intent per note — not per grouping unit — because the shipped `_apply`
+    reconciles the whole note (it retracts facts a re-apply doesn't re-assert,
+    pipeline.py's touched-set sweep), so a second per-unit apply on the same note
+    would retract the first unit's facts. The plan's §6.6 per-unit transaction
+    isolation (crash-resumability at 216-page scale) is a follow-on that needs
+    `apply_intent` to support incremental note commits; for correctness one intent
+    per note is right.
+    """
+    b = _IntentBuilder(note_id, chunk_for_anchor)
+    enc_ref_by_key = {e.key: f"enc:{e.key}" for e in result.encounters}
+    for enc in result.encounters:
+        _add_encounter(b, enc, enc_ref_by_key)
+    for obs in result.orphan_observations:
+        _add_observation(b, obs)
+    target = _pathology_target(result.encounters)
+    if pathology_diagnoses and target is not None:
+        anchor = result.pathology_anchor or target.source_anchor
+        _add_pathology(b, pathology_diagnoses, target, enc_ref_by_key, anchor)
+    return [b.build()], b.catches

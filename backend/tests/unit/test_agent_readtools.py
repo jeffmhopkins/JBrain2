@@ -760,6 +760,8 @@ def test_build_registry_binds_the_shipped_sidecars() -> None:
         "read_appointments",
         "read_appointment",
         "manage_appointment",
+        "read_labs",
+        "read_encounters",
         "recall",
         "memory_read",
         "memory_edit",
@@ -919,6 +921,16 @@ def test_sidecars_pinned_to_their_versions() -> None:
             "read_appointments",
             1,
             "8ea83f930e0f6cfe662e5349c786d61a2c11bc98eadfd807928f3640d8a65d8d",
+        ),
+        "read_labs.tool": (
+            "read_labs",
+            1,
+            "d0eb90ac9c6e5953509d9ada921025adb5e3509a679880d6852c90e11c3b0cdc",
+        ),
+        "read_encounters.tool": (
+            "read_encounters",
+            1,
+            "537bb247f07b51d14ef10a1fd980dfd757aea5e61e663419a68b322e30de7983",
         ),
         "read_appointment.tool": (
             "read_appointment",

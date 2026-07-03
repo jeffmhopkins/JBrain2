@@ -160,4 +160,5 @@ class ParseResult:
     encounters: list[CandidateEncounter] = field(default_factory=list)
     orphan_observations: list[CandidateObservation] = field(default_factory=list)
     pathology_narrative: str | None = None  # kept as prose (§6.5), never shredded
+    pathology_anchor: str | None = None  # the chunk anchor ("page N") of the narrative
     blood_type: dict[str, str] | None = None  # {"abo","rh"} -> "Me" (§3.7)
