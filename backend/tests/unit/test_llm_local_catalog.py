@@ -114,33 +114,44 @@ def test_qwen3_next_is_a_text_only_alt_high_tier() -> None:
 
 def test_qwen3_next_thinking_is_a_reasoning_deepseek_format_alt() -> None:
     # The Thinking checkpoint is a separate model from the Instruct sibling: same size,
-    # but a reasoning model that emits <think> and needs --reasoning-format deepseek
-    # wired (the only catalog entry that sets reasoning_format).
+    # but an always-on reasoning model that emits <think> and needs --reasoning-format
+    # deepseek wired. It is NOT a hybrid — it has no thinking off switch.
     m = local_catalog.get("qwen3-next-80b-a3b-thinking")
     assert m is not None
     assert m.tiers == ("high",)
     assert not m.supports_vision and m.mmproj_include is None
     assert m.supports_reasoning and m.reasoning_format == "deepseek"
+    assert not m.hybrid_thinking
     assert m.supports_tools
     assert m.served_model in local_catalog.REASONING_SERVED_MODELS
     assert "Thinking" in m.hf_repo
     # Alternate, not part of the default resident set the install prompt offers.
     assert m.id not in local_catalog.recommended_ids()
-    # The only entry that pins a reasoning_format; everything else keeps llama.cpp's auto.
-    assert [x.id for x in local_catalog.CATALOG if x.reasoning_format] == [m.id]
+    # The <think>-emitting entries all pin --reasoning-format deepseek: this always-on
+    # checkpoint plus the two Qwen hybrids. The harmony/GLM reasoners keep llama.cpp's
+    # auto (empty), so reasoning_format is NOT just a synonym for supports_reasoning.
+    assert {x.id for x in local_catalog.CATALOG if x.reasoning_format} == {
+        "qwen3-next-80b-a3b-thinking",
+        "qwen3.5-0.8b",
+        "qwen3.5-4b",
+    }
 
 
-def test_qwen35_0_8b_is_a_tiny_text_only_low_tier() -> None:
+def test_qwen35_0_8b_is_a_tiny_hybrid_reasoner_low_tier() -> None:
     # The smallest catalog entry: a fast, cheap Q8 worker for undemanding side
-    # projects. Non-thinking (thinking is off by default upstream), text-only, tools.
+    # projects. A Qwen HYBRID reasoner — thinking is a chat-template toggle, so its
+    # level is set per task (incl. "none" to run it as a snappy Instruct model).
     m = local_catalog.get("qwen3.5-0.8b")
     assert m is not None
     assert m.tiers == ("low",)
     assert not m.supports_vision and m.mmproj_include is None
     assert m.supports_tools
-    # Non-thinking — not in the reasoning gating set the router consults.
-    assert not m.supports_reasoning
-    assert m.served_model not in local_catalog.REASONING_SERVED_MODELS
+    # Reasoning-capable and hybrid: in the gating set, <think> split via deepseek,
+    # and the adapter drives its on/off through enable_thinking.
+    assert m.supports_reasoning
+    assert m.reasoning_format == "deepseek"
+    assert m.hybrid_thinking
+    assert m.served_model in local_catalog.REASONING_SERVED_MODELS
     # Q8_0 (near-lossless at this size), not the Q4 the big MoE entries use.
     assert m.quant == "Q8_0"
     assert "Q8_0" in m.gguf_include
@@ -153,15 +164,18 @@ def test_qwen35_0_8b_is_a_tiny_text_only_low_tier() -> None:
     assert m.id not in local_catalog.recommended_ids()
 
 
-def test_qwen35_4b_is_a_small_text_only_low_tier() -> None:
+def test_qwen35_4b_is_a_small_hybrid_reasoner_low_tier() -> None:
     # The step up from the 0.8b tiny model: a small dense Q8 low-tier daily driver.
+    # Also a Qwen hybrid reasoner (thinking is a chat-template toggle).
     m = local_catalog.get("qwen3.5-4b")
     assert m is not None
     assert m.tiers == ("low",)
     assert not m.supports_vision and m.mmproj_include is None
     assert m.supports_tools
-    assert not m.supports_reasoning
-    assert m.served_model not in local_catalog.REASONING_SERVED_MODELS
+    assert m.supports_reasoning
+    assert m.reasoning_format == "deepseek"
+    assert m.hybrid_thinking
+    assert m.served_model in local_catalog.REASONING_SERVED_MODELS
     assert m.quant == "Q8_0"
     assert "Q8_0" in m.gguf_include
     assert m.hf_repo == "unsloth/Qwen3.5-4B-GGUF"
