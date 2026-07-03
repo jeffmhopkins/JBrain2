@@ -1,10 +1,11 @@
 # EMR Import — Build Plan
 
-> **Status:** In progress · **Last verified:** 2026-07-03 · **Waves:** W0✅ W1◻️ W2◻️ W3◻️ W4◻️ W5◻️
+> **Status:** In progress · **Last verified:** 2026-07-03 · **Waves:** W0✅ W1✅ W2◻️ W3◻️ W4◻️ W5◻️
 
-**An in-progress build plan** (per `docs/DOC_LIFECYCLE.md`): red-teamed, on the roadmap, Wave 0
-complete (gates, decisions, and the synthetic fixture corpus — see §12); waves W1–W5 in §10 open.
-Synthesized against the shipped graph (`app.entities`/`app.facts`,
+**An in-progress build plan** (per `docs/DOC_LIFECYCLE.md`): red-teamed, on the roadmap. Wave 0
+(gates + fixtures) and Wave 1 (storage bedrock — schema defs, the `fhir_status`/supersession
+exception, the Layer-2 firewall guard, migrations 0115–0118, RLS isolation tests; see §12) are
+complete; waves W2–W5 in §10 open. Synthesized against the shipped graph (`app.entities`/`app.facts`,
 migration `0006`), the projection pattern (`analysis/appointment_projection.py`), the attachment
 dispatcher and analysis pipeline (`docs/reference/ANALYSIS.md`), the predicate registry
 (`docs/reference/PREDICATE_CANONICALIZATION.md` + `schema/defs/**`, including the
@@ -1533,3 +1534,27 @@ orders, pathology narrative), OneContent (account grouping, abnormal legend, the
 its word-geometry pair), athena (accession blocks, ordering provider, a cancelled result), and ARIA
 (canned line-oriented OCR duplicating the 2021 OneContent labs, plus one readable-but-wrong timestamp
 that must park in review). **All synthetic — no real PHI.**
+
+### 12.6 Wave 1 — shipped surface (storage bedrock)
+
+Proven-empty tables, no parser (§10). Landed:
+
+- **Schema defs.** `lab_result.yaml` activated (Lifecycle dropped, `category` kept — §12.2.1);
+  new `encounter.yaml` (collision-audited names) + `medical_condition.yaml`; `_meta.yaml`
+  `id_scheme += icd10`, new `encounter_role` vocab + `transfusion_order` shape. A unit test pins
+  activation + the global collision audit (`category` seeds as its own enum row; the encounter names
+  don't collapse into `location`/`partOf`/`reasonCode`; `identifier` seeds once).
+- **The status-aware supersession exception.** `fhir_status` originates on `IntentFact` and threads
+  `PlannedFact → _to_extracted → ExtractedFact → Candidate` (defaults None → non-lab callers
+  byte-for-byte unchanged, proven by the full unit suite still green). `_lab_status_transition` runs
+  before the idempotency short-circuit in `decide()`; 17 pure tests cover the §3.5 matrix incl. the
+  corrected-same-value regression, re-run idempotency, and the None-status inert guard.
+- **Layer-2 firewall guard** (`ingest/emr/firewall.py`): the `{address, geo}` ∪ floor-dict lock set,
+  with a drift-guard test proving the union is necessary (geo is not floored) and sufficient.
+- **Migrations 0115–0118** (renumbered per §12.1) with RLS quartets + isolation tests, integration-
+  verified against real Postgres (RLS firewall for all four projection tables, the WITH CHECK block,
+  the sidecar EXISTS-join denial, the `is_current` partial unique index, and both CHECK-widening
+  safety tests). `pyzipper` added (pyproject + lock + dev-setup note + import smoke test).
+
+Deferred to their planned waves: the `EmrImporter` wiring of the firewall guard + `fhir_status`
+population (W2), the `project_emr` projector (W2), and the parsers (W2/W3).
