@@ -1,5 +1,7 @@
 # jcode → two tabs (Terminal · Preview) — build plan
 
+> **Status:** Shipped 2026-07 · `JcodeSessionScreen.tsx` 2-tab Terminal·Preview (Variant A)
+
 Binding plan for gutting code mode (jcode) down to a terminal-first session, per the
 multi-wave process (`docs/PROCESS.md`). The GUI gate is settled: three interactive
 mocks were presented and **Variant A — full-bleed terminal**

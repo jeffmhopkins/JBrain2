@@ -1,5 +1,7 @@
 # Build plan: past / "legacy" relationship links
 
+> **Status:** Shipped 2026-07 · past/former relationship links — `analysis/supersession.py`, `FactTenure` UI (all three waves).
+
 Buildable, wave-sequenced plan derived from `docs/research/legacy-links-handling.md`
 (the design dossier; read it first). Governed by `docs/PROCESS.md` (multi-wave
 execution), `docs/DEVELOPMENT.md` (standards), and the `CLAUDE.md`

@@ -1,5 +1,7 @@
 # jcode per-session tools — independent tool versions per session (no broker, no nesting)
 
+> **Status:** Shipped 2026-07 · `jcode/jcode-path.sh` per-session PATH shadowing
+
 **Status: PROPOSED. The cheap, red-team-endorsed alternative to
 `JCODE_CONTAINER_PER_SESSION_PLAN.md` (which three independent reviewers judged not viable
 as scoped). Delivers the originating need — upgrade `grok` per session without an image

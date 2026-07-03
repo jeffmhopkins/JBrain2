@@ -1,5 +1,7 @@
 # jcode container-per-session — independent containers, nested Docker, broker-orchestrated
 
+> **Status:** Rejected · **Last verified:** 2026-07-03 — red-teamed NOT VIABLE as scoped (per-session container needs broad privilege).
+
 **Status: RED-TEAMED — NOT VIABLE AS SCOPED. Three independent reviewers (security/
 privilege, operability/lifecycle, requirement/feasibility) converged on the same verdict:
 do not build full-nested-Docker-per-session as written. The architecture direction is
