@@ -83,6 +83,9 @@ _MAX_TURN_WALL_CLOCK_S = 3600.0
 # (a wedged model, a hung tool) is. Sized at the per-call LLM timeout so a single
 # legitimate call (which either streams or times out on its own) can't false-trip it.
 _TURN_IDLE_S = 600.0
+# Min gap between reasoning flushes to the wall display — buffers fast reasoning into
+# readable, real-time bursts without overrunning the display's stream slots.
+_THINK_FLUSH_S = 0.7
 
 _TURN_DONE = object()  # per-subscriber sentinel: the turn finished, no more frames
 
@@ -601,6 +604,11 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
             brain_text_enabled.set(brain_stream)
             if brain_stream and body.message:
                 brain_emit("llm_input", body.message)
+        # The reasoning trace streams LIVE to the display: reasoning deltas are buffered and
+        # flushed at most every _THINK_FLUSH_S so the wall shows the model thinking in
+        # near-real-time, not one dump at settle. Any residual flushes at done.
+        think_buf = ""
+        last_think = 0.0
         stream = loop.run_stream(
             session=read_ctx,
             scopes=read_scopes,
@@ -647,6 +655,20 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
                     async for event in stream:
                         _idle.reschedule(_loop_time() + _TURN_IDLE_S)
                         acc.feed(event)
+                        # Stream the reasoning LIVE (opt-in): buffer deltas, flush a burst to
+                        # the display at most every _THINK_FLUSH_S so the wall shows thinking
+                        # in near-real-time. Best-effort — never touches the turn.
+                        if (
+                            brain_stream
+                            and brain_emit is not None
+                            and event.type == "reasoning_delta"
+                        ):
+                            think_buf += getattr(event, "text", "") or ""
+                            _now = time.monotonic()
+                            if think_buf and _now - last_think >= _THINK_FLUSH_S:
+                                brain_emit("llm_thinking", think_buf)
+                                think_buf = ""
+                                last_think = _now
                         if event.type == "usage":
                             # The latest usage event is the fullest the context has been.
                             last_context_used = event.input_tokens + event.output_tokens
@@ -657,11 +679,11 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
                         # NOT recorded — Loop 1 is ephemeral and writes nothing durable.
                         live.emit(f"data: {event.model_dump_json()}\n\n".encode())
             if status == "done":
-                # Stream the reasoning trace (fast) then the finished answer OUT to the
-                # wall display (opt-in; see above).
+                # The reasoning already streamed live during the turn (above); flush any
+                # residual, then stream the finished answer OUT to the wall display (opt-in).
                 if brain_stream and brain_emit is not None:
-                    if acc.reasoning_text:
-                        brain_emit("llm_thinking", acc.reasoning_text)
+                    if think_buf:
+                        brain_emit("llm_thinking", think_buf)
                     if acc.answer_text:
                         brain_emit("llm_output", acc.answer_text)
                 # Episodic memory is owner-data: only a knowledge-base agent appends
