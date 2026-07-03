@@ -170,9 +170,7 @@ async def test_hybrid_qwen_maps_none_to_enable_thinking_false() -> None:
     # "none" is the real "reasoning off": enable_thinking=false, and no reasoning_effort
     # (which the Qwen template would ignore).
     captured, client = _capturing_client()
-    await client.complete(
-        model="qwen3.5-0.8b", system="s", user_text="u", reasoning_effort="none"
-    )
+    await client.complete(model="qwen3.5-0.8b", system="s", user_text="u", reasoning_effort="none")
     assert captured["payload"]["chat_template_kwargs"] == {"enable_thinking": False}
     assert "reasoning_effort" not in captured["payload"]
 
@@ -193,8 +191,6 @@ async def test_hybrid_qwen_maps_a_level_to_enable_thinking_true() -> None:
 async def test_harmony_local_reasoner_sends_effort_verbatim() -> None:
     # gpt-oss understands the effort levels (incl. "none") directly — no template kwarg.
     captured, client = _capturing_client()
-    await client.complete(
-        model="gpt-oss-120b", system="s", user_text="u", reasoning_effort="none"
-    )
+    await client.complete(model="gpt-oss-120b", system="s", user_text="u", reasoning_effort="none")
     assert captured["payload"]["reasoning_effort"] == "none"
     assert "chat_template_kwargs" not in captured["payload"]

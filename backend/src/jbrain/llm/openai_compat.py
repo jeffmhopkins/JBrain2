@@ -183,9 +183,7 @@ class OpenAiCompatClient:
         if reasoning_effort is None or self.provider not in ("xai", "local"):
             return
         model = (
-            local_catalog.get_by_served(str(payload["model"]))
-            if self.provider == "local"
-            else None
+            local_catalog.get_by_served(str(payload["model"])) if self.provider == "local" else None
         )
         if model is not None and model.hybrid_thinking:
             kwargs = cast(dict[str, Any], payload.setdefault("chat_template_kwargs", {}))
