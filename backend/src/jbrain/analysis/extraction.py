@@ -94,6 +94,9 @@ class ExtractedFact:
     # commits at full weight and force-supersedes the current head + pins (see
     # supersession.decide). Defaults False — every non-correction path is unchanged.
     correction: bool = False
+    # The incoming FHIR report status for an EMR lab reading (EMR import §3.5); set
+    # only on the EMR path, None everywhere else so the measurement path is unchanged.
+    fhir_status: str | None = None
 
 
 @dataclass(frozen=True)

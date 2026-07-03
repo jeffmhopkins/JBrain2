@@ -252,6 +252,13 @@ class Candidate:
     # the current head(s) and commits active + pinned, regardless of temporal order
     # (the only path by which a human assertion forcibly overrides — Phase 6 §4).
     correction: bool = False
+    # The incoming FHIR report status for an EMR lab reading (registered|preliminary|
+    # final|amended|corrected|cancelled|entered-in-error). Set ONLY by the EMR importer
+    # (docs/plans/EMR_IMPORT_PLAN.md §3.5); None for every other caller, whose
+    # measurement path is then byte-for-byte unchanged. Drives `_lab_status_transition`,
+    # which runs BEFORE the idempotency short-circuit so a same-value correction still
+    # supersedes. Not persisted: the value fact's resulting lifecycle IS the record.
+    fhir_status: str | None = None
 
 
 @dataclass
@@ -400,6 +407,94 @@ def _interval_close(candidate: Candidate, live: list[FactView], predicate: str) 
     return None
 
 
+def _lab_status_transition(candidate: Candidate, existing: list[FactView]) -> Decision | None:
+    """The status-aware measurement-supersession exception for EMR lab readings
+    (docs/plans/EMR_IMPORT_PLAN.md §3.5). Inert for every existing caller — it
+    returns None the instant the candidate is not a lab reading — so the default
+    "measurements accumulate, never auto-supersede" policy is untouched.
+
+    Runs BEFORE the idempotency short-circuit so a status-only correction
+    (`final` -> `corrected`, value unchanged) still transitions instead of being
+    swallowed as an identical-value refresh. Because "same draw ⇒ same qualifier ⇒
+    same valid_from", the peer set is the heads at the candidate's valid_from, so a
+    correction supersedes precisely the prior reading of THAT draw while a genuinely
+    new draw (distinct valid_from) never enters the peer set and accumulates
+    unchanged. Report status is NOT stored: this decision's RESULT (the value fact's
+    lifecycle + supersession chain) is the durable record, from which §4.1 derives it.
+
+    Idempotency on re-analysis (§6.6): on this deterministic path the only way a
+    value fact acquires a superseded predecessor / a retracted row at a qualifier is
+    one of these transitions, so their presence marks an already-applied transition
+    and the re-run defers to the idempotency refresh instead of re-transitioning.
+    """
+    if candidate.kind != "measurement" or candidate.fhir_status is None:
+        return None
+    status = candidate.fhir_status
+    vf = candidate.valid_from
+    peers = [e for e in existing if e.status in ("active", "pending_review") and e.valid_from == vf]
+    active_peers = [e for e in peers if e.status == "active"]
+    pending_peers = [e for e in peers if e.status == "pending_review"]
+
+    if status in ("corrected", "amended"):
+        # A revision: supersede the active reading(s) of this draw, hold pending ones,
+        # commit the correction active — even when the value is identical (the reason
+        # this runs before idempotency). FHIR `amended`/`corrected` collapse to
+        # `corrected` (§4.1). Re-run guard: if a superseded predecessor already exists
+        # at this draw AND the active head already equals the candidate, the correction
+        # is applied — defer to the idempotency refresh so re-analysis is byte-identical.
+        already = any(e.status == "superseded" and e.valid_from == vf for e in existing)
+        if already and active_peers and all(values_equal(candidate, e) for e in active_peers):
+            return None
+        return Decision(
+            insert=True,
+            insert_status="active",
+            supersede_ids=[e.id for e in active_peers],
+            hold_ids=[e.id for e in pending_peers],
+        )
+    if status == "preliminary":
+        # Not yet a citable current value. Idempotent re-run refreshes the pending row.
+        if any(values_equal(candidate, e) for e in pending_peers):
+            return None
+        return Decision(insert=True, insert_status="pending_review")
+    if status == "final":
+        # Finalization only transitions when it promotes a preliminary — supersede the
+        # pending reading, commit active. With no preliminary peer this is a normal
+        # reading: return None so the unchanged accumulate / idempotent / same-instant
+        # fact_conflict path runs. (On re-run the promoted preliminary is superseded,
+        # not pending, so pending_peers is empty and the refresh path takes over.)
+        if pending_peers:
+            return Decision(
+                insert=True,
+                insert_status="active",
+                supersede_ids=[e.id for e in pending_peers],
+            )
+        return None
+    if status in ("cancelled", "entered-in-error"):
+        # The reading is withdrawn: insert a retracted row (dropped by the projection,
+        # §4.1) and supersede the prior active. Re-run refreshes the retracted row
+        # (which `decide`'s `live` filter excludes, so returning None would wrongly
+        # re-insert an active reading).
+        retracted = next(
+            (
+                e
+                for e in existing
+                if e.status == "retracted" and e.valid_from == vf and values_equal(candidate, e)
+            ),
+            None,
+        )
+        if retracted is not None:
+            return Decision(refresh_id=retracted.id)
+        return Decision(
+            insert=True,
+            insert_status="retracted",
+            supersede_ids=[e.id for e in active_peers],
+            hold_ids=[e.id for e in pending_peers],
+        )
+    # `registered` (dormant; no such data in the corpus) and any unknown status make
+    # no transition — the reading flows through the unchanged measurement path.
+    return None
+
+
 def decide(candidate: Candidate, existing: list[FactView], *, predicate: str = "") -> Decision:
     """Resolve one candidate against the identity key's existing facts."""
     live = [e for e in existing if e.status != "retracted"]
@@ -407,6 +502,13 @@ def decide(candidate: Candidate, existing: list[FactView], *, predicate: str = "
     closed = _interval_close(candidate, live, predicate)
     if closed is not None:
         return closed
+
+    # The EMR status-aware transition runs BEFORE the idempotency short-circuit
+    # (§3.5) so a same-value correction still supersedes. Inert (returns None) for
+    # every non-lab caller — `fhir_status` is None everywhere but the EMR importer.
+    lab = _lab_status_transition(candidate, existing)
+    if lab is not None:
+        return lab
 
     # Re-extraction idempotency: an identical value refreshes provenance in
     # place — citations survive, no chain link, no review noise. Accumulating

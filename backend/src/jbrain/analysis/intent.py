@@ -87,6 +87,12 @@ class IntentFact:
     attested_span: AttestedSpan | None
     self_confidence: float
     inferred: bool
+    # The incoming FHIR report status for an EMR lab reading, set ONLY by the EMR
+    # importer (docs/plans/EMR_IMPORT_PLAN.md §3.5); None for the LLM Integrator and
+    # every other producer. There is deliberately no `correction` field here — that
+    # concept originates later at the arbiter's PlannedFact; `fhir_status` originates
+    # here and, from PlannedFact onward, travels the exact links `correction` does.
+    fhir_status: str | None = None
 
 
 @dataclass(frozen=True)
