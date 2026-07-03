@@ -108,6 +108,30 @@ def test_render_emits_resident_group_when_enabled(tmp_path: Path) -> None:
     assert "- qwen3-vl-30b-a3b" in text and "- gpt-oss-120b" in text
 
 
+def test_co_residency_makes_every_model_a_member_so_the_app_evicts(tmp_path: Path) -> None:
+    # Memory-safe co-residency: with resident_group ON, EVERY provisioned model (not just
+    # the recommended set) joins the swap:false group, so llama-swap never auto-evicts —
+    # the app (jbrain.llm.residency) is the sole evictor. Here a NON-recommended model is
+    # still a member.
+    manifest = [
+        *_manifest(),
+        {
+            "id": "qwen3.5-0.8b",
+            "served_model": "qwen3.5-0.8b",
+            "gguf_include": "*Q8_0*.gguf",
+            "mmproj_include": None,
+            "context_window": 32768,
+            "recommended": False,
+        },
+    ]
+    (tmp_path / "qwen3.5-0.8b").mkdir()
+    (tmp_path / "qwen3.5-0.8b" / "model-Q8_0.gguf").write_bytes(b"\0")
+    _lay_down(tmp_path)
+    text = llama_swap_config.render(manifest, str(tmp_path), resident_group=True)
+    assert "- qwen3.5-0.8b" in text  # the non-recommended model co-resides too
+    assert "- gpt-oss-120b" in text and "- qwen3-vl-30b-a3b" in text
+
+
 def test_render_pins_staged_models_into_the_swap_group(tmp_path: Path) -> None:
     # Staging adds a model to the co-resident group: both stay loaded together even with
     # resident_group off (the recommended set's own membership is what the flag gates).

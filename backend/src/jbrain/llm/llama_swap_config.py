@@ -133,25 +133,23 @@ def render(
         lines.append("    cmd: >")
         lines.append("      " + " ".join(cmd))
 
-    # A non-swapping group keeps a chosen set of models co-resident (hot paths skip the
-    # cold-load on a task switch) — the agent's text model (gpt-oss-120b) and the vision
-    # model (qwen3-vl) never swap each other out mid-turn; everything else stays swappable,
-    # one at a time. Two sources union: the install-time `recommended` set (only when
-    # resident_group is opted ON — it defaults OFF, since co-residency pins ~91 GB and
-    # destabilised the box) and the operator's runtime staged set (`pinned`, catalog ids).
+    # Residency group. `swap: false` lets the members coexist (llama-swap never evicts one
+    # to load another); `exclusive: false` lets a request outside the group still load. Two
+    # modes, chosen by `resident_group`:
     #
-    # `swap: false` lets the members coexist; `exclusive: false` lets a request for a
-    # model OUTSIDE the group (the coder, an image-driven reload) still load without
-    # tearing the group down for an unrelated reason — the box's memory limit is what
-    # forces the eviction when a state genuinely needs the whole box, and the agent
-    # re-warms the pair at end of turn (jbrain.llm.residency). Validated on-box: this
-    # exact block co-resides 120b + vl on a 128 GB Strix Halo with room to spare.
+    #   - MEMORY-SAFE CO-RESIDENCY (resident_group ON): EVERY provisioned model is a member,
+    #     so llama-swap never auto-evicts anything — the app (jbrain.llm.residency.ensure_room)
+    #     becomes the sole evictor, freeing the fewest models to hold the free-RAM floor
+    #     before a load. This replaces the old all-or-nothing pin (recommended pair ≈ 91 GB
+    #     with no headroom) that hard-locked the host; the app's budget is what keeps it safe.
+    #   - SWAP ONE AT A TIME (resident_group OFF, the default): only the operator's runtime
+    #     STAGED set (`pinned`, catalog ids) pins as an explicit "keep hot"; everything else
+    #     swaps one at a time as llama-swap's default.
     pinned_ids = set(pinned or ())
-    resident = [
-        str(m["served_model"])
-        for m in models
-        if (resident_group and m.get("recommended")) or str(m["id"]) in pinned_ids
-    ]
+    if resident_group:
+        resident = [str(m["served_model"]) for m in models]
+    else:
+        resident = [str(m["served_model"]) for m in models if str(m["id"]) in pinned_ids]
     if resident:
         lines.append("groups:")
         lines.append("  resident:")

@@ -117,13 +117,20 @@ llama-swap), downloads the recommended set — **Qwen3-VL-30B-A3B Q8 (~32 GB)** 
 **gpt-oss-120b MXFP4 (~59 GB)**, ~91 GB total — generates the llama-swap config,
 and starts the gateway. The recommended set **swaps one at a time by default** — only
 the model the next request names is loaded, so the box never pins both at once.
-Co-residency (keeping 120b + vl hot together in a llama-swap non-swapping group, ~91
-GB) is **opt-in**: it removes the cold-load on a text↔vision switch but pins ~91 GB of
-the 128 GB pool, which on this hardware drove hard-freezes (see "Stability —
-hard-freeze / OOM hardening" below). Turn it on only if you have the headroom:
-`LOCAL_LLM_RESIDENT_GROUP=1 sudo jbrain enable-local-models` (and add
-`LOCAL_LLM_RESIDENT_GROUP=1` to `.env` so an update keeps it). Staged models pin
-regardless of the flag.
+
+**Memory-safe co-residency** (`LOCAL_LLM_RESIDENT_GROUP=1`) keeps models loaded together
+*and stays under a RAM budget*. With it on, models share a llama-swap non-swapping group
+(the gateway never auto-evicts), and the app becomes the sole evictor: before a model
+loads it frees the **fewest** resident models needed to keep **≥25% of RAM free** (weights
++ KV, measured against live `/proc/meminfo`), evicting biggest-first and sparing staged
+models. So a small model (Qwen3.5-0.8B/4B) stays hot beside gpt-oss-120b, but requesting
+the coder evicts the *big* model — not the tiny one — and the box never over-commits. This
+replaces the old all-or-nothing pin that co-resided ~91 GB with no headroom and drove
+kernel-reclaim hard-freezes (see "Stability — hard-freeze / OOM hardening" below); the
+budget is what makes it safe. The 25% floor is tunable via `LOCAL_LLM_FREE_RAM_FRACTION`.
+Enable with `LOCAL_LLM_RESIDENT_GROUP=1 sudo jbrain enable-local-models` (add it to `.env`
+so an update keeps it); validate on-box before relying on it. Staged models pin regardless
+of the flag.
 
 ✅ **Checkpoint:** `jbrain status` shows `local-llm` running; `jbrain logs
 local-llm` shows llama-swap listening and the resident models loaded.

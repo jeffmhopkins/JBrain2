@@ -128,6 +128,122 @@ async def test_schedule_restore_warms_in_the_background() -> None:
     assert set(gw.loaded) == {"qwen3-vl-30b-a3b", "gpt-oss-120b"}
 
 
+# --- memory-budgeted co-residency (ensure_room + budgeted re-warm) -----------
+# Footprints at default windows (weights + KV) used by these tests, from the catalog:
+#   gpt-oss-120b        = 59.0 + 4.5           = 63.5
+#   qwen3-vl-30b-a3b    = 32.0 + 6.0*32768/128k = 33.5
+#   qwen3-coder-next    = 49.6 + 5.0*262144/128k = 59.6
+#   qwen3.5-4b          =  4.3 + 1.2*32768/128k =  4.6
+#   qwen3.5-0.8b        =  0.9 + 0.5*32768/128k ≈  1.0  (the tiny model)
+
+
+def _budgeted(
+    gw: FakeLocalGateway,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    total: float,
+    used: float,
+    recommended: list[str] | None = None,
+    staged: list[str] | None = None,
+) -> ResidencyCoordinator:
+    monkeypatch.setattr(
+        "jbrain.llm.residency.read_memory_gb", lambda path="/proc/meminfo": (total, used)
+    )
+
+    async def _staged() -> list[str]:
+        return staged or []
+
+    return ResidencyCoordinator(
+        gw,
+        recommended or [],
+        staged_loader=_staged if staged is not None else None,
+        models_dir="",  # nominal catalog size_gb, no filesystem read
+        budget_enabled=True,
+        free_ram_fraction=0.25,
+    )
+
+
+@pytest.mark.asyncio
+async def test_ensure_room_evicts_the_big_model_and_keeps_the_tiny_one(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # gpt-oss (63.5) + the tiny model resident, used=66; loading the coder (59.6) would
+    # blow the 25% floor (ceiling 96 of 128). Evict the FEWEST to fit: drop gpt-oss alone
+    # (frees enough), keep the tiny model — never evict the tiny one when a big one suffices.
+    gw = FakeLocalGateway(running={"gpt-oss-120b", "qwen3.5-0.8b"})
+    coord = _budgeted(gw, monkeypatch, total=128.0, used=66.0)
+    await coord.ensure_room("qwen3-coder-next")
+    assert gw.unloaded == ["gpt-oss-120b"]
+    assert "qwen3.5-0.8b" in await gw.running()
+
+
+@pytest.mark.asyncio
+async def test_ensure_room_evicts_nothing_when_it_fits(monkeypatch: pytest.MonkeyPatch) -> None:
+    gw = FakeLocalGateway(running={"gpt-oss-120b"})
+    coord = _budgeted(gw, monkeypatch, total=128.0, used=40.0)
+    await coord.ensure_room("qwen3.5-4b")  # 4.6 → 44.6, well under the 96 ceiling
+    assert gw.unloaded == []
+
+
+@pytest.mark.asyncio
+async def test_ensure_room_is_a_noop_when_already_resident(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    gw = FakeLocalGateway(running={"qwen3.5-4b"})
+    coord = _budgeted(gw, monkeypatch, total=128.0, used=120.0)  # tight, but it's already up
+    await coord.ensure_room("qwen3.5-4b")
+    assert gw.unloaded == []
+
+
+@pytest.mark.asyncio
+async def test_ensure_room_spares_staged_models_evicting_others_first(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # gpt-oss is STAGED (an explicit keep-hot pin), vl is not. Freeing room for a small
+    # model evicts the non-staged vl and leaves the staged gpt-oss resident.
+    gw = FakeLocalGateway(running={"gpt-oss-120b", "qwen3-vl-30b-a3b"})
+    coord = _budgeted(gw, monkeypatch, total=128.0, used=99.0, staged=["gpt-oss-120b"])
+    await coord.ensure_room("qwen3.5-4b")
+    assert gw.unloaded == ["qwen3-vl-30b-a3b"]
+    assert "gpt-oss-120b" in await gw.running()
+
+
+@pytest.mark.asyncio
+async def test_ensure_room_is_a_noop_when_co_residency_off() -> None:
+    # budget_enabled False → the gateway swaps on its own; the app evicts nothing even
+    # with a full box (no read_memory_gb call needed — it returns on the first line).
+    gw = FakeLocalGateway(running={"gpt-oss-120b", "qwen3-vl-30b-a3b"})
+    coord = ResidencyCoordinator(gw, [], budget_enabled=False)
+    await coord.ensure_room("qwen3-coder-next")
+    assert gw.unloaded == []
+
+
+@pytest.mark.asyncio
+async def test_ensure_room_best_effort_when_memory_unreadable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    gw = FakeLocalGateway(running={"gpt-oss-120b"})
+    monkeypatch.setattr("jbrain.llm.residency.read_memory_gb", lambda path="/proc/meminfo": None)
+    coord = ResidencyCoordinator(gw, [], models_dir="", budget_enabled=True)
+    await coord.ensure_room("qwen3-coder-next")  # can't measure RAM → evict nothing, no raise
+    assert gw.unloaded == []
+
+
+@pytest.mark.asyncio
+async def test_budgeted_restore_only_loads_members_that_fit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Re-warm is opportunistic under the budget: gpt-oss (63.5) fits under the 96 ceiling
+    # from a used=10 baseline, but vl (33.5) would push to 107 — so it's left to load on
+    # demand rather than evicting a hot member to squeeze it in.
+    gw = FakeLocalGateway(running=set())
+    coord = _budgeted(
+        gw, monkeypatch, total=128.0, used=10.0, recommended=["gpt-oss-120b", "qwen3-vl-30b-a3b"]
+    )
+    await coord._restore()  # noqa: SLF001
+    assert gw.loaded == ["gpt-oss-120b"]
+
+
 @pytest.mark.asyncio
 async def test_schedule_restore_coalesces_and_no_ops_on_empty_set() -> None:
     gw = FakeLocalGateway(running=set())

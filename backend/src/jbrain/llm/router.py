@@ -231,6 +231,7 @@ class LlmRouter:
         pinned: frozenset[str] = frozenset(),
         overrides_loader: Callable[[], Awaitable[Mapping[str, Mapping[str, str]]]] | None = None,
         local_windows_loader: Callable[[], Awaitable[Mapping[str, int]]] | None = None,
+        local_admit: Callable[[str], Awaitable[None]] | None = None,
         local_enabled: bool = True,
     ):
         self._clients = clients
@@ -254,6 +255,15 @@ class LlmRouter:
         # so the meter reports the operator's chosen `-c`, not just the catalog
         # default. None → fall back to the catalog window.
         self._local_windows_loader = local_windows_loader
+        # Residency admission for a LOCAL model: called with the served-model name just
+        # before a local completion so the memory budget can evict to make room (co-
+        # residency mode). None → no admission (the gateway swaps on its own). Best-effort
+        # inside the callback; the router awaits it but it never raises a turn-fatal error.
+        self._local_admit = local_admit
+
+    async def _admit_local(self, provider: str, model: str) -> None:
+        if provider == local_catalog.LOCAL_PROVIDER and self._local_admit is not None:
+            await self._local_admit(model)
 
     def _resolve(self, task: str, strength: str | None) -> tuple[str, str]:
         """Precedence: an explicit per-task pin (JBRAIN_LLM_TASKS) wins; else the
@@ -390,6 +400,7 @@ class LlmRouter:
     ) -> LlmResult:
         provider, model, reasoning_effort = await self._resolve_live(task, strength)
         client = self._clients[provider]
+        await self._admit_local(provider, model)
         start = time.perf_counter()
         result = await client.complete(
             model=model,
@@ -455,6 +466,7 @@ class LlmRouter:
         if effort_override is not None and _reasoning_capable(provider, model):
             reasoning_effort = effort_override
         client = self._clients[provider]
+        await self._admit_local(provider, model)
         start = time.perf_counter()
         turn = await client.converse(
             model=model,
@@ -500,6 +512,7 @@ class LlmRouter:
         if effort_override is not None and _reasoning_capable(provider, model):
             reasoning_effort = effort_override
         client = self._clients[provider]
+        await self._admit_local(provider, model)
         final: LlmTurn | None = None
         start = time.perf_counter()
         async for part in client.converse_stream(
@@ -538,11 +551,13 @@ def build_router(
     recorder: UsageRecorder | None = None,
     overrides_loader: Callable[[], Awaitable[Mapping[str, Mapping[str, str]]]] | None = None,
     local_windows_loader: Callable[[], Awaitable[Mapping[str, int]]] | None = None,
+    local_admit: Callable[[str], Awaitable[None]] | None = None,
 ) -> LlmRouter:
     """Wire the three providers from settings; transport/sleep injectable for tests.
     `overrides_loader` supplies the live DB-backed per-task overrides;
-    `local_windows_loader` the live per-model context-window overrides (both None
-    keep the static-config behavior)."""
+    `local_windows_loader` the live per-model context-window overrides;
+    `local_admit` the residency budget's evict-to-make-room hook run before a local
+    completion (all None keep the static-config, no-admission behavior)."""
     extra: dict[str, Any] = {"transport": transport}
     if sleep is not None:
         extra["sleep"] = sleep
@@ -565,5 +580,6 @@ def build_router(
         pinned=frozenset(settings.llm_tasks),
         overrides_loader=overrides_loader,
         local_windows_loader=local_windows_loader,
+        local_admit=local_admit,
         local_enabled=settings.local_llm_enabled,
     )

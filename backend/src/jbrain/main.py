@@ -281,6 +281,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 if settings.local_llm_enabled
                 else None
             ),
+            windows_loader=lambda: settings_store.llm_local_context_windows(SYSTEM_CTX),
+            models_dir=settings.local_models_dir,
+            # Co-residency mode: the app evicts to hold the free-RAM floor before a local
+            # model loads. Off → the gateway swaps one at a time (ensure_room is inert).
+            budget_enabled=settings.local_llm_enabled and settings.local_llm_resident_group,
+            free_ram_fraction=settings.local_llm_free_ram_fraction,
         )
         # Any API-side LLM call must flow through this router so its tokens
         # land in app.llm_usage like the worker's do. The overrides loader reads
@@ -291,6 +297,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             recorder=SqlUsageRecorder(maker),
             overrides_loader=lambda: settings_store.llm_task_overrides(SYSTEM_CTX),
             local_windows_loader=lambda: settings_store.llm_local_context_windows(SYSTEM_CTX),
+            # Evict-to-make-room before a local completion (co-residency budget).
+            local_admit=app.state.residency.ensure_room,
         )
         # The agent: Tier-A memory, the tool registry (validated against the .tool
         # sidecars at startup), the session capability store, and the run log.

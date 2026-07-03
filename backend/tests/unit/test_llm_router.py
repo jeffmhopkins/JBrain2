@@ -30,6 +30,33 @@ async def test_complete_routes_task_to_provider_model() -> None:
     assert fake.calls[0]["system"] == "s"
 
 
+async def test_local_admit_runs_before_a_local_completion() -> None:
+    # A local model's completion first gives the residency budget a chance to evict for it
+    # (the served-model name), then delegates to the client — co-residency admission.
+    fake = FakeLlmClient(["ok"])
+    admitted: list[str] = []
+
+    async def admit(model: str) -> None:
+        admitted.append(model)
+
+    router = LlmRouter({"local": fake}, {"agent.turn": ("local", "qwen3.5-4b")}, local_admit=admit)
+    await router.complete("agent.turn", system="s", user_text="u")
+    assert admitted == ["qwen3.5-4b"]
+    assert fake.calls[0]["model"] == "qwen3.5-4b"
+
+
+async def test_local_admit_not_called_for_a_cloud_completion() -> None:
+    fake = FakeLlmClient(["ok"])
+    admitted: list[str] = []
+
+    async def admit(model: str) -> None:
+        admitted.append(model)
+
+    router = LlmRouter({"xai": fake}, {"note.extract": ("xai", "grok-4.3")}, local_admit=admit)
+    await router.complete("note.extract", system="s", user_text="u")
+    assert admitted == []  # cloud models never touch the local residency budget
+
+
 async def test_unknown_task_raises() -> None:
     with pytest.raises(LlmError, match="unknown LLM task"):
         await fake_router(FakeLlmClient()).complete("nope", system="s", user_text="u")
