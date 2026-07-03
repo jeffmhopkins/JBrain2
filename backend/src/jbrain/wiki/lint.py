@@ -130,6 +130,19 @@ _STALE_SCHEMA: dict[str, Any] = {
 }
 
 
+def contradiction_batch_line(index: int, a_claims: list[str], b_claims: list[str]) -> str:
+    """One candidate pair rendered for the contradiction verifier prompt. Exposed so the
+    calibration harness (`evals/wiki_lint_runner`) exercises the EXACT production wording."""
+    a = "\n".join(f"    - {s}" for s in a_claims)
+    b = "\n".join(f"    - {s}" for s in b_claims)
+    return f"Pair [{index}]:\n  Subject A facts:\n{a}\n  Subject B facts:\n{b}"
+
+
+def stale_batch_line(index: int, superseded_fact: str, prose: str) -> str:
+    """One candidate rendered for the stale-claim verifier prompt (production wording)."""
+    return f"Item [{index}]:\n  Superseded fact: {superseded_fact}\n  Article prose: {prose}"
+
+
 def card_domain(d_a: str, d_b: str) -> str | None:
     """The firewall-safe `domain_code` to stamp a CROSS-article (two-domain) finding's review card
     with — NEVER `ratchet_domain`/`_review_card_domain` (order-dependent, leak across firewalls):
@@ -494,10 +507,7 @@ class WikiLinter:
             for start in range(0, len(group), VERIFY_BATCH):
                 batch = group[start : start + VERIFY_BATCH]
                 user_text = "\n\n".join(
-                    f"Pair [{i}]:\n  Subject A facts:\n"
-                    + "\n".join(f"    - {s}" for s in c["a_claims"])
-                    + "\n  Subject B facts:\n"
-                    + "\n".join(f"    - {s}" for s in c["b_claims"])
+                    contradiction_batch_line(i, c["a_claims"], c["b_claims"])
                     for i, c in enumerate(batch)
                 )
                 verdicts = await self._verify_batch(
@@ -603,8 +613,7 @@ class WikiLinter:
             for start in range(0, len(group), VERIFY_BATCH):
                 batch = group[start : start + VERIFY_BATCH]
                 user_text = "\n\n".join(
-                    f"Item [{i}]:\n  Superseded fact: {r.statement}\n  Article prose: {r.body}"
-                    for i, r in enumerate(batch)
+                    stale_batch_line(i, r.statement, r.body) for i, r in enumerate(batch)
                 )
                 verdicts = await self._verify_batch(
                     "wiki.lint.stale", STALE_SYSTEM, user_text, _STALE_SCHEMA
