@@ -11,7 +11,7 @@ from typing import Any
 
 from jbrain.analysis.supersession import Candidate, FactView, decide
 
-DRAW = datetime(2026, 2, 1, 6, 14, tzinfo=UTC)   # the collected instant of one draw
+DRAW = datetime(2026, 2, 1, 6, 14, tzinfo=UTC)  # the collected instant of one draw
 OTHER = datetime(2025, 6, 15, 9, 5, tzinfo=UTC)  # a different draw
 PLT = "10*3/uL"
 
@@ -95,8 +95,9 @@ def test_corrected_no_original_re_run_is_idempotent() -> None:
 def test_corrected_over_active_and_pending_supersedes_active_holds_pending() -> None:
     active = view(id="f-final", value_json={"value": 9, "unit": PLT})
     pending = view(id="f-prelim", status="pending_review", value_json={"value": 8, "unit": PLT})
-    d = decide(cand(fhir_status="corrected", value_json={"value": 12, "unit": PLT}),
-               [active, pending])
+    d = decide(
+        cand(fhir_status="corrected", value_json={"value": 12, "unit": PLT}), [active, pending]
+    )
     assert d.insert and d.supersede_ids == ["f-final"] and d.hold_ids == ["f-prelim"]
 
 
@@ -104,8 +105,9 @@ def test_corrected_over_active_and_pending_supersedes_active_holds_pending() -> 
 
 
 def test_new_draw_accumulates_not_supersedes() -> None:
-    older = view(id="f-old", value_json={"value": 212, "unit": PLT}, valid_from=OTHER,
-                 reported_at=OTHER)
+    older = view(
+        id="f-old", value_json={"value": 212, "unit": PLT}, valid_from=OTHER, reported_at=OTHER
+    )
     d = decide(cand(fhir_status="final", value_json={"value": 9, "unit": PLT}), [older])
     assert d.insert and d.insert_status == "active"
     assert not d.supersede_ids and d.review_kind is None
@@ -172,8 +174,9 @@ def test_none_status_is_byte_for_byte_the_unchanged_measurement_path() -> None:
     # A non-lab measurement (fhir_status=None) never enters the transition: a new
     # draw accumulates, and a same-instant identical value refreshes idempotently —
     # exactly the shipped behavior.
-    older = view(id="f-old", value_json={"value": 212, "unit": PLT}, valid_from=OTHER,
-                 reported_at=OTHER)
+    older = view(
+        id="f-old", value_json={"value": 212, "unit": PLT}, valid_from=OTHER, reported_at=OTHER
+    )
     accumulate = decide(cand(value_json={"value": 9, "unit": PLT}), [older])
     assert accumulate.insert and not accumulate.supersede_ids
     refresh = decide(cand(value_json={"value": 9, "unit": PLT}), [view()])
@@ -196,16 +199,19 @@ def test_corrected_re_run_is_idempotent() -> None:
     # idempotency refresh so re-analysis is byte-identical.
     superseded = view(id="f-final", status="superseded")
     corrected = view(id="f-corr", value_json={"value": 12, "unit": PLT})
-    d = decide(cand(fhir_status="corrected", value_json={"value": 12, "unit": PLT}),
-               [superseded, corrected])
+    d = decide(
+        cand(fhir_status="corrected", value_json={"value": 12, "unit": PLT}),
+        [superseded, corrected],
+    )
     assert d.refresh_id == "f-corr" and not d.insert and not d.supersede_ids
 
 
 def test_second_distinct_correction_still_transitions() -> None:
     superseded = view(id="f-final", status="superseded")
     corrected = view(id="f-corr", value_json={"value": 12, "unit": PLT})
-    d = decide(cand(fhir_status="corrected", value_json={"value": 7, "unit": PLT}),
-               [superseded, corrected])
+    d = decide(
+        cand(fhir_status="corrected", value_json={"value": 7, "unit": PLT}), [superseded, corrected]
+    )
     assert d.insert and d.supersede_ids == ["f-corr"]
 
 

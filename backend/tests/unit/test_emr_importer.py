@@ -33,9 +33,14 @@ def test_one_intent_per_episode_transfer_grouped() -> None:
     # their own intents. 3 intents total.
     assert len(_INTENTS) == 3
     # Exactly one intent carries both inpatient encounters (the transfer episode).
-    episode = [i for i in _INTENTS if sum(
-        1 for f in i.facts if f.predicate == "period" and f.value_json == {"value": "inpatient"}
-    ) == 2]
+    episode = [
+        i
+        for i in _INTENTS
+        if sum(
+            1 for f in i.facts if f.predicate == "period" and f.value_json == {"value": "inpatient"}
+        )
+        == 2
+    ]
     assert len(episode) == 1
 
 
@@ -46,7 +51,8 @@ def test_every_intent_is_structurally_valid() -> None:
 
 def test_value_fact_carries_fhir_status() -> None:
     plt_corrected = [
-        f for f in _facts(lambda f: f.predicate == "value")
+        f
+        for f in _facts(lambda f: f.predicate == "value")
         if f.fhir_status == "corrected" and f.value_json == {"value": 9.0, "unit": "10*3/uL"}
     ]
     assert len(plt_corrected) == 1
@@ -83,7 +89,8 @@ def test_has_observation_join_one_per_draw() -> None:
 def test_effective_date_carries_a_point_temporal() -> None:
     eff = _facts(lambda f: f.predicate == "effectiveDate")
     assert eff and all(
-        f.temporal is not None and f.temporal.precision == "instant"
+        f.temporal is not None
+        and f.temporal.precision == "instant"
         and f.temporal.resolved_start is not None
         for f in eff
     )

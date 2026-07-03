@@ -92,8 +92,9 @@ def _interpretation(flag: str | None) -> str | None:
 
 
 class _EncounterDraft:
-    def __init__(self, key: str, type_phrase: str, facility: str, header_date: datetime,
-                 anchor: str) -> None:
+    def __init__(
+        self, key: str, type_phrase: str, facility: str, header_date: datetime, anchor: str
+    ) -> None:
         self.key = key
         self.type_phrase = type_phrase
         self.facility = facility
@@ -235,8 +236,9 @@ def parse_epic(text: str) -> ParseResult:
     return result
 
 
-def _observation(m: re.Match[str], collected_at: datetime, facility: str,
-                 anchor: str) -> CandidateObservation:
+def _observation(
+    m: re.Match[str], collected_at: datetime, facility: str, anchor: str
+) -> CandidateObservation:
     return CandidateObservation(
         analyte=canonicalize_analyte(m.group("analyte").strip()),
         collected_at=collected_at,

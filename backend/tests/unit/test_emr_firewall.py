@@ -16,10 +16,13 @@ from jbrain.ingest.emr.firewall import (
 )
 
 
-@pytest.mark.parametrize("kind", ["Observation", "lab_result", "encounter", "Person",
-                                  "Organization", "medical_condition"])
-@pytest.mark.parametrize("predicate", ["address", "geo", "latitude", "longitude",
-                                       "geocoordinates", "gpscoordinates"])
+@pytest.mark.parametrize(
+    "kind",
+    ["Observation", "lab_result", "encounter", "Person", "Organization", "medical_condition"],
+)
+@pytest.mark.parametrize(
+    "predicate", ["address", "geo", "latitude", "longitude", "geocoordinates", "gpscoordinates"]
+)
 def test_locks_every_location_predicate_on_every_health_entity(kind: str, predicate: str) -> None:
     assert is_location_locked(predicate, kind)
 

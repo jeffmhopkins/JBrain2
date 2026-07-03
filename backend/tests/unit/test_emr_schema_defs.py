@@ -42,8 +42,17 @@ def test_lab_result_active_lifecycle_dropped_category_kept() -> None:
 
 def test_lab_result_reading_vocabulary_present() -> None:
     eff = _eff("lab_result")
-    for name in ("value", "referenceRange", "interpretation", "specimen",
-                 "effectiveDate", "identifier", "category", "performer", "component"):
+    for name in (
+        "value",
+        "referenceRange",
+        "interpretation",
+        "specimen",
+        "effectiveDate",
+        "identifier",
+        "category",
+        "performer",
+        "component",
+    ):
         assert name in eff, name
 
 
@@ -52,9 +61,18 @@ def test_lab_result_reading_vocabulary_present() -> None:
 
 def test_encounter_declares_collision_audited_vocabulary() -> None:
     own = {p.canonical_name for p in _REG.type("encounter").own_predicates}
-    expected = {"period", "class", "careUnit", "serviceProvider", "attender",
-                "encounterDiagnosis", "transfusion", "partOfEncounter",
-                "disposition", "hasObservation"}
+    expected = {
+        "period",
+        "class",
+        "careUnit",
+        "serviceProvider",
+        "attender",
+        "encounterDiagnosis",
+        "transfusion",
+        "partOfEncounter",
+        "disposition",
+        "hasObservation",
+    }
     assert expected <= own
     # It must NOT reuse the colliding shipped names.
     assert "location" not in own and "partOf" not in own and "reasonCode" not in own

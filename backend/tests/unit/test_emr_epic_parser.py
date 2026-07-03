@@ -6,10 +6,11 @@ narrative kept as prose. No DB, no LLM.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 
-from jbrain.ingest.emr.candidates import canonicalize_analyte
+from jbrain.ingest.emr.candidates import CandidateEncounter, canonicalize_analyte
 from jbrain.ingest.emr.epic import fingerprint, parse_epic
 
 _FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "emr" / "epic_report.txt"
@@ -17,7 +18,7 @@ _TEXT = _FIXTURE.read_text()
 _RESULT = parse_epic(_TEXT)
 
 
-def _enc(pred) -> object:
+def _enc(pred: Callable[[CandidateEncounter], bool]) -> CandidateEncounter:
     return next(e for e in _RESULT.encounters if pred(e))
 
 
@@ -109,8 +110,9 @@ def test_pathology_narrative_kept_as_prose() -> None:
     assert "Final Diagnosis" in _RESULT.pathology_narrative
     assert "hypocellular marrow" in _RESULT.pathology_narrative
     # The narrative is NOT shredded into observation facts.
-    assert all("marrow" not in (o.analyte.name.lower()) for e in _RESULT.encounters
-               for o in e.observations)
+    assert all(
+        "marrow" not in (o.analyte.name.lower()) for e in _RESULT.encounters for o in e.observations
+    )
 
 
 def test_potassium_no_flag_has_no_interpretation() -> None:

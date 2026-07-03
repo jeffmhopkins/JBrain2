@@ -73,12 +73,10 @@ def upgrade() -> None:
         """
     )
     op.execute(
-        "CREATE INDEX encounter_providers_encounter_idx"
-        " ON app.encounter_providers (encounter_id)"
+        "CREATE INDEX encounter_providers_encounter_idx ON app.encounter_providers (encounter_id)"
     )
     op.execute(
-        "CREATE INDEX encounter_diagnoses_encounter_idx"
-        " ON app.encounter_diagnoses (encounter_id)"
+        "CREATE INDEX encounter_diagnoses_encounter_idx ON app.encounter_diagnoses (encounter_id)"
     )
     for table in _TABLES:
         op.execute(f"ALTER TABLE app.{table} ENABLE ROW LEVEL SECURITY")

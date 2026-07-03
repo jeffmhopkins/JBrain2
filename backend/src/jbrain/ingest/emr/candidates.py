@@ -19,6 +19,7 @@ from datetime import datetime
 # normalized synonym. Unmapped analytes get loinc=None and a slug code (never a
 # guessed LOINC) and are FLAGGED so they can't masquerade as dedup-eligible.
 
+
 @dataclass(frozen=True)
 class Analyte:
     code: str  # the canonical, stable identity key (LOINC when known, else a slug)
@@ -32,7 +33,11 @@ _LOINC_SUBSET: dict[tuple[str, str | None], set[str]] = {
     ("Platelet count", "777-3"): {"platelet count", "platelets", "plt"},
     ("Hemoglobin", "718-7"): {"hemoglobin", "hgb", "hb"},
     ("White blood cell count", "6690-2"): {
-        "white blood cell count", "wbc", "leukocytes", "leucocytes", "white blood cells",
+        "white blood cell count",
+        "wbc",
+        "leukocytes",
+        "leucocytes",
+        "white blood cells",
     },
     ("Potassium", "2823-3"): {"potassium", "k", "k+"},
     ("Creatinine", "2160-0"): {"creatinine", "cr", "creat"},

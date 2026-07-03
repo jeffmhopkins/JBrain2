@@ -202,10 +202,21 @@ async def test_attachment_extract_kind_admits_emr_parse_and_keeps_video(
 
 @pytest.mark.parametrize(
     "kind",
-    ["fact_conflict", "attribute_collision", "merge_proposal", "ambiguous_mention",
-     "domain_promotion", "low_confidence", "split_proposal", "inverse_proposal",
-     "extraction_truncated", "low_confidence_inference", "new_predicate", "confirm_entity",
-     "shape_mismatch"],
+    [
+        "fact_conflict",
+        "attribute_collision",
+        "merge_proposal",
+        "ambiguous_mention",
+        "domain_promotion",
+        "low_confidence",
+        "split_proposal",
+        "inverse_proposal",
+        "extraction_truncated",
+        "low_confidence_inference",
+        "new_predicate",
+        "confirm_entity",
+        "shape_mismatch",
+    ],
 )
 async def test_review_item_kind_admits_shape_mismatch_and_all_prior(
     maker: async_sessionmaker, kind: str
