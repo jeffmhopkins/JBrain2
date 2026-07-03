@@ -1,0 +1,31 @@
+--- page 1 ---
+Cape Canaveral Hospital — Cumulative Laboratory Report (SYNTHETIC)
+RIVERS, JORDAN A    MRN 55500123    DOB 03/14/1971    Blood type: O POS
+KEY FOR ABNORMAL COLUMN:  H=High   L=Low   *=Critical
+
+Account: C0000202101
+Analyte                 Result   Ab   Units       Ref Range        Collected
+Platelet count             38   L*   10*3/uL     150-400          07/22/2021 07:12
+Hemoglobin               10.9   L    g/dL        13.5-17.5        07/22/2021 07:12
+White Blood Cell Count    3.2   L    10*3/uL     4.0-11.0         07/22/2021 07:12
+Potassium                 4.1        mmol/L      3.5-5.1          07/22/2021 07:12
+Creatinine                0.9        mg/dL       0.7-1.3          07/22/2021 07:12
+
+Account: C0000202001
+Analyte      Result  Ab  Units      Ref Range     Collected
+Platelet count   205      10*3/uL   150-400       11/03/2020 10:48
+Hemoglobin      14.6      g/dL      13.5-17.5     11/03/2020 10:48
+Potassium        4.3      mmol/L    3.5-5.1       11/03/2020 10:48
+
+--- page 2 ---
+Account: C0000202201
+Analyte                    Result    Ab    Units        Ref Range         Collected
+Platelet count                171          10*3/uL      150-400           05/19/2022 14:03
+Hemoglobin                   13.8          g/dL         13.5-17.5         05/19/2022 14:03
+White Blood Cell Count        7.1          10*3/uL      4.0-11.0          05/19/2022 14:03
+
+Account: C0000202501
+Analyte           Result Ab Units    Ref Range   Collected
+Platelet count       120  L 10*3/uL  150-400     09/30/2025 06:55
+Hemoglobin          12.4  L g/dL     13.5-17.5   09/30/2025 06:55
+Potassium            5.0    mmol/L   3.5-5.1     09/30/2025 06:55

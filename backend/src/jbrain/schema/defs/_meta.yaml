@@ -35,8 +35,14 @@ value_shapes:
 name_audiences: [kids, family, friends, work, public]
 
 # Preferred external-identifier schemes (qualifier on identifier.<scheme>).
-# Preferred, not closed — open schemes are accepted.
-id_scheme: [loinc, rxnorm, vin, imei, serial, mac, uuid, ein, duns, lei, vatid, taxid, microchip, last4, sha256, isbn, doi, issn, policy_number]
+# Preferred, not closed — open schemes are accepted. `icd10` seeds the digest
+# hint for MedicalCondition diagnosis codes (identifier.icd10); the open-scheme
+# invariant means it already validates without this entry (EMR import §3.8).
+id_scheme: [loinc, rxnorm, icd10, vin, imei, serial, mac, uuid, ein, duns, lei, vatid, taxid, microchip, last4, sha256, isbn, doi, issn, policy_number]
+
+# Preferred provider-role vocabulary for encounter.attender.<role> (EMR import
+# §3.4). Preferred, not closed — an open role is accepted.
+encounter_role: [attending, ordering, authorizing, pathologist, collecting_rn]
 
 # Reusable structured shapes (atomic compounds only).
 shapes:
@@ -58,6 +64,10 @@ shapes:
     dose: quantity
     route: text
     timing: text           # may carry an RRULE-shaped Timing
+  transfusion_order:       # EMR import §3.4: one blood-product order on an encounter
+    product: text          # FFP | PLATELET | RBC | ...
+    units: scalar          # number of units ordered
+    indication: text       # clinical indication as written
   license_plate:
     value: text
     jurisdiction: text
