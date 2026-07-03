@@ -83,6 +83,16 @@ class _FakeSupervisor:
                     "log_tail": "[update] syncing local models",
                 },
             )
+        if url == "/provision/status":
+            return _FakeResp(
+                200,
+                "",
+                json_body={
+                    "state": "exited",
+                    "exit_code": 1,
+                    "log_tail": "[local-llm] DOWNLOAD FAILED for qwen3.5-0.8b",
+                },
+            )
         if url == "/metrics":
             return _FakeResp(
                 200,
@@ -543,6 +553,24 @@ def test_update_status_proxies_to_supervisor(debug_client: tuple[TestClient, str
 def test_update_status_requires_the_debug_token(debug_client: tuple[TestClient, str]) -> None:
     client, _ = debug_client
     assert client.get("/api/debug/update/status").status_code == 401
+
+
+def test_provision_status_proxies_the_download_log(debug_client: tuple[TestClient, str]) -> None:
+    # The local-model download one-shot also runs outside the compose project, so its
+    # verbose per-model failure reason is only reachable via this proxy — the console's
+    # window into why a "Download" failed.
+    client, key = debug_client
+    resp = client.get("/api/debug/provision/status", headers=_auth(key), params={"tail": 300})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["state"] == "exited" and body["exit_code"] == 1
+    assert "DOWNLOAD FAILED" in body["log_tail"]
+    assert ("/provision/status", {"tail": 300}) in _state(client).supervisor_client.calls
+
+
+def test_provision_status_requires_the_debug_token(debug_client: tuple[TestClient, str]) -> None:
+    client, _ = debug_client
+    assert client.get("/api/debug/provision/status").status_code == 401
 
 
 # --- host breakdown (/host) + gateway logs + host telemetry (/host/metrics) --

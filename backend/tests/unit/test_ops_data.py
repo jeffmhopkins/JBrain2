@@ -25,9 +25,11 @@ class FakeSupervisor:
         self.export_state = {"state": "none", "exit_code": None, "log_tail": ""}
         self.import_state = {"state": "none", "exit_code": None, "log_tail": ""}
         self.reset_state = {"state": "none", "exit_code": None, "log_tail": ""}
+        self.provision_state = {"state": "none", "exit_code": None, "log_tail": ""}
         self.busy = False
         self.import_started_with: list[str] = []
         self.resets_started = 0
+        self.provisions_started = 0
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
         if request.headers.get("Authorization") != "Bearer st-token":
@@ -56,6 +58,13 @@ class FakeSupervisor:
             return httpx.Response(202, json={"oneshot": "jbrain-reset-1"})
         if path == "/reset/status":
             return httpx.Response(200, json=self.reset_state)
+        if path == "/provision" and method == "POST":
+            if self.busy:
+                return httpx.Response(409)
+            self.provisions_started += 1
+            return httpx.Response(202, json={"oneshot": "jbrain-provision-1"})
+        if path == "/provision/status":
+            return httpx.Response(200, json=self.provision_state)
         if path == "/metrics":
             return httpx.Response(
                 200,
@@ -259,3 +268,29 @@ def test_reset_status_proxies(client: TestClient, supervisor: FakeSupervisor) ->
     assert done["state"] == "exited"
     assert done["exit_code"] == 0
     assert "[reset] complete" in done["log_tail"]
+
+
+def test_local_provision_start_and_busy_conflict(
+    client: TestClient, supervisor: FakeSupervisor
+) -> None:
+    # The "Download" action: trigger the weight-sync one-shot without a system update.
+    assert client.post("/api/ops/local-provision").status_code == 202
+    assert supervisor.provisions_started == 1
+
+    supervisor.busy = True
+    busy = client.post("/api/ops/local-provision")
+    assert busy.status_code == 409
+    assert busy.json()["detail"] == "another operation is running"
+
+
+def test_local_provision_status_proxies(client: TestClient, supervisor: FakeSupervisor) -> None:
+    assert client.get("/api/ops/local-provision/status").json()["state"] == "none"
+    supervisor.provision_state = {
+        "state": "exited",
+        "exit_code": 1,
+        "log_tail": "[local-llm] DOWNLOAD FAILED for qwen3.5-0.8b",
+    }
+    done = client.get("/api/ops/local-provision/status").json()
+    assert done["state"] == "exited"
+    assert done["exit_code"] == 1
+    assert "DOWNLOAD FAILED" in done["log_tail"]

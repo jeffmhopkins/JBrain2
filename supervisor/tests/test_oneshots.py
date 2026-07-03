@@ -48,6 +48,46 @@ def test_reset_starts_detached_oneshot(client: TestClient, gateway) -> None:  # 
     assert ("reset", None) in gateway.oneshots_started
 
 
+def test_provision_requires_token(client: TestClient) -> None:
+    assert client.post("/provision").status_code == 401
+    assert client.get("/provision/status").status_code == 401
+
+
+def test_provision_starts_detached_oneshot(client: TestClient, gateway) -> None:  # type: ignore[no-untyped-def]
+    resp = client.post("/provision", headers=AUTH)
+    assert resp.status_code == 202
+    assert resp.json()["oneshot"].startswith("jbrain-provision-")
+    assert ("provision", None) in gateway.oneshots_started
+
+
+def test_provision_status_lifecycle(client: TestClient, gateway) -> None:  # type: ignore[no-untyped-def]
+    assert client.get("/provision/status", headers=AUTH).json()["state"] == "none"
+
+    client.post("/provision", headers=AUTH)
+    running = client.get("/provision/status", headers=AUTH).json()
+    assert running["state"] == "running"
+    assert "[provision]" in running["log_tail"]
+    # A running provision keeps other kinds' status independent.
+    assert client.get("/export/status", headers=AUTH).json()["state"] == "none"
+
+    gateway.oneshot_running = None
+    done = client.get("/provision/status", headers=AUTH).json()
+    assert done["state"] == "exited"
+    assert done["exit_code"] == 0
+
+
+def test_provision_excludes_others(client: TestClient, gateway) -> None:  # type: ignore[no-untyped-def]
+    assert client.post("/provision", headers=AUTH).status_code == 202
+    assert client.post("/provision", headers=AUTH).status_code == 409
+    assert client.post("/update", headers=AUTH).status_code == 409
+    assert client.post("/export", headers=AUTH).status_code == 409
+
+    # And a running update blocks a provision.
+    gateway.oneshot_running = None
+    gateway.updater_running = True
+    assert client.post("/provision", headers=AUTH).status_code == 409
+
+
 def test_oneshots_and_update_exclude_each_other(client: TestClient, gateway) -> None:  # type: ignore[no-untyped-def]
     assert client.post("/export", headers=AUTH).status_code == 202
     assert client.post("/export", headers=AUTH).status_code == 409

@@ -9,7 +9,7 @@ import type {
   LocalModelInfo,
   ReasoningEffort,
 } from "../api/client";
-import { api } from "../api/client";
+import { ApiError, api } from "../api/client";
 import { useForeground } from "../visibility";
 import { AiUsageCard } from "./aiUsage";
 
@@ -331,8 +331,9 @@ export function LLMSettingsScreen() {
       .finally(() => unmark("jcode-model"));
   }
 
-  // Queue / unqueue an un-provisioned model for install; the snapshot reflects the
-  // queued flag at once (the download itself happens during the next update).
+  // Queue a model for install, then start its download immediately — no system
+  // update. The snapshot reflects the queued flag at once and the per-model bar fills
+  // as the sync one-shot pulls the weights. Un-queueing (on=false) just clears it.
   function queueInstall(id: string, on: boolean) {
     mark(id);
     const seq = ++putSeq.current;
@@ -340,15 +341,17 @@ export function LLMSettingsScreen() {
       .queueLocalInstall(id, on)
       .then((s) => {
         if (seq === putSeq.current) setSettings(s);
+        if (on) startDownload();
       })
       .catch(() => {})
       .finally(() => unmark(id));
   }
 
-  // Queue / unqueue a provisioned model for uninstall — destructive (the next
-  // update drops it from LOCAL_MODELS and prunes its weights), so queueing confirms.
+  // Queue a provisioned model for uninstall, then apply it now via the same sync
+  // one-shot — destructive (it drops the model from LOCAL_MODELS and prunes its
+  // weights), so queueing confirms first.
   function queueUninstall(id: string, on: boolean) {
-    if (on && !window.confirm("Uninstall this model and delete its weights on the next update?")) {
+    if (on && !window.confirm("Uninstall this model and delete its weights now?")) {
       return;
     }
     mark(id);
@@ -357,34 +360,43 @@ export function LLMSettingsScreen() {
       .queueLocalUninstall(id, on)
       .then((s) => {
         if (seq === putSeq.current) setSettings(s);
+        if (on) startDownload();
       })
       .catch(() => {})
       .finally(() => unmark(id));
   }
 
-  // "Update & install now": kick the supervisor update one-shot, which provisions
-  // the queued models at its tail. We follow it two ways: the coarse phase from the
-  // update log tail (here), and each model's live download bar (the snapshot poll).
-  const [updateState, setUpdateState] = useState<"idle" | "running" | "failed">("idle");
-  const [updateTail, setUpdateTail] = useState("");
-  function startInstallUpdate() {
-    setUpdateState("running");
-    setUpdateTail("");
-    api.opsUpdateStart().catch(() => setUpdateState("failed"));
+  // "Download": kick the supervisor's local-model sync one-shot, which downloads the
+  // queued weights (and applies queued removals) WITHOUT a system update — installing
+  // a model no longer rides a full server update. We follow it two ways: the coarse
+  // phase from the sync log tail (here, which surfaces the verbose failure reason),
+  // and each model's live download bar (the snapshot poll).
+  const [downloadState, setDownloadState] = useState<"idle" | "running" | "failed">("idle");
+  const [downloadTail, setDownloadTail] = useState("");
+  function startDownload() {
+    setDownloadState("running");
+    setDownloadTail("");
+    api.opsLocalProvisionStart().catch((e) => {
+      // 409 = a one-shot is already running; attach to it (the poll shows its state)
+      // rather than reporting a spurious failure.
+      if (e instanceof ApiError && e.status === 409) return;
+      setDownloadState("failed");
+    });
   }
   useEffect(() => {
-    if (updateState !== "running" || !foreground) return;
+    if (downloadState !== "running" || !foreground) return;
     let stop = false;
     const tick = () => {
       api
-        .opsUpdateStatus()
+        .opsLocalProvisionStatus()
         .then((s) => {
           if (stop) return;
           const lines = s.log_tail.trimEnd().split("\n");
-          setUpdateTail(lines[lines.length - 1] ?? "");
-          // The download runs inside the one-shot, so an exit means provisioning is
-          // done (the snapshot poll has the models enabled by now).
-          if (s.state === "exited") setUpdateState(s.exit_code === 0 ? "idle" : "failed");
+          setDownloadTail(lines[lines.length - 1] ?? "");
+          // The download runs inside the one-shot, so an exit means the sync is done
+          // (the snapshot poll has the models enabled by now); a non-zero exit surfaces
+          // the failure, its reason in the last log line.
+          if (s.state === "exited") setDownloadState(s.exit_code === 0 ? "idle" : "failed");
         })
         .catch(() => {});
     };
@@ -394,7 +406,7 @@ export function LLMSettingsScreen() {
       stop = true;
       clearInterval(id);
     };
-  }, [updateState, foreground]);
+  }, [downloadState, foreground]);
 
   // Image-service controls (owner-only): free unloads the resident model; start/stop
   // toggle the service via the supervisor. Each reconciles from a fresh snapshot.
@@ -547,9 +559,9 @@ export function LLMSettingsScreen() {
         onSetWindow={setContextWindow}
         onInstall={queueInstall}
         onUninstall={queueUninstall}
-        onUpdate={startInstallUpdate}
-        updateState={updateState}
-        updateTail={updateTail}
+        onDownload={startDownload}
+        downloadState={downloadState}
+        downloadTail={downloadTail}
         onFreeImage={freeImage}
         onStartImageService={startImageService}
         onStopImageService={stopImageService}
@@ -952,9 +964,9 @@ function OnBoxModelsCard({
   onSetWindow,
   onInstall,
   onUninstall,
-  onUpdate,
-  updateState,
-  updateTail,
+  onDownload,
+  downloadState,
+  downloadTail,
   onFreeImage,
   onStartImageService,
   onStopImageService,
@@ -978,9 +990,9 @@ function OnBoxModelsCard({
   onSetWindow: (id: string, window: number | null) => void;
   onInstall: (id: string, on: boolean) => void;
   onUninstall: (id: string, on: boolean) => void;
-  onUpdate: () => void;
-  updateState: "idle" | "running" | "failed";
-  updateTail: string;
+  onDownload: () => void;
+  downloadState: "idle" | "running" | "failed";
+  downloadTail: string;
   onFreeImage: () => void;
   onStartImageService: () => void;
   onStopImageService: () => void;
@@ -989,13 +1001,13 @@ function OnBoxModelsCard({
   const loaded = enabled.filter((m) => m.loaded);
   const stagedOnly = enabled.filter((m) => m.staged && !m.loaded);
   // Catalog models not on the box: the install rows. Queued ones carry an in-flight
-  // download the next update finishes.
+  // download the sync one-shot is pulling.
   const available = hostingEnabled ? models.filter((m) => !m.enabled) : [];
   const queued = available.filter((m) => m.queued);
   const queuedGb = queued.reduce((sum, m) => sum + m.size_gb, 0);
-  // Provisioned models queued for removal — they reach the supervisor update via the
-  // same one-shot as installs, so a pending uninstall must surface the update bar too
-  // (otherwise a queued removal has no in-app control to apply it).
+  // Provisioned models queued for removal — they apply through the same sync one-shot
+  // as installs, so a pending uninstall surfaces the download bar too (otherwise a
+  // queued removal would have no in-app control to apply it).
   const removing = hostingEnabled ? enabled.filter((m) => m.remove_queued) : [];
   // Resident footprint = weights + KV for everything actually loaded.
   const residentGb = loaded.reduce((sum, m) => sum + residentGbOf(m), 0);
@@ -1188,43 +1200,46 @@ function OnBoxModelsCard({
                     onLoad={onLoad}
                     onStage={onStage}
                     onSetWindow={onSetWindow}
+                    onUninstall={onUninstall}
                   />
                 ),
               )}
           </div>
-          {llmTab === "catalog" && (queued.length > 0 || removing.length > 0) && (
-            <div className="llm-local-queue">
-              <div className="llm-local-queue-text">
-                <b>
-                  {[
-                    queued.length > 0 && `${queued.length} to install · ${Math.round(queuedGb)} GB`,
-                    removing.length > 0 && `${removing.length} to uninstall`,
-                  ]
-                    .filter(Boolean)
-                    .join(" · ")}
-                </b>
-                <span>
-                  {updateState === "running"
-                    ? updateTail || "Update running — applying changes after rebuild…"
-                    : updateState === "failed"
-                      ? "Update failed — check the Ops screen."
-                      : "Applied on your next update, or start one now."}
-                </span>
+          {llmTab !== "staged" &&
+            (queued.length > 0 || removing.length > 0 || downloadState !== "idle") && (
+              <div className="llm-local-queue">
+                <div className="llm-local-queue-text">
+                  <b>
+                    {[
+                      queued.length > 0 &&
+                        `${queued.length} to download · ${Math.round(queuedGb)} GB`,
+                      removing.length > 0 && `${removing.length} to remove`,
+                    ]
+                      .filter(Boolean)
+                      .join(" · ") || "Local models"}
+                  </b>
+                  <span>
+                    {downloadState === "running"
+                      ? downloadTail || "Downloading weights…"
+                      : downloadState === "failed"
+                        ? `Download failed — ${downloadTail || "check the Ops screen"}`
+                        : "Starts on install; tap Download to retry."}
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  className="llm-local-btn load"
+                  disabled={downloadState === "running"}
+                  onClick={onDownload}
+                >
+                  {downloadState === "running"
+                    ? "Working…"
+                    : queued.length > 0
+                      ? "Download now"
+                      : "Apply now"}
+                </button>
               </div>
-              <button
-                type="button"
-                className="llm-local-btn load"
-                disabled={updateState === "running"}
-                onClick={onUpdate}
-              >
-                {updateState === "running"
-                  ? "Updating…"
-                  : queued.length > 0
-                    ? "Update & install now"
-                    : "Update & apply now"}
-              </button>
-            </div>
-          )}
+            )}
         </div>
       )}
 
@@ -1284,6 +1299,7 @@ function LlmModelRow({
   onLoad,
   onStage,
   onSetWindow,
+  onUninstall,
 }: {
   model: LocalModelInfo;
   busy: boolean;
@@ -1291,6 +1307,7 @@ function LlmModelRow({
   onLoad: (id: string) => void;
   onStage: (id: string, on: boolean) => void;
   onSetWindow: (id: string, window: number | null) => void;
+  onUninstall: (id: string, on: boolean) => void;
 }) {
   const footprint = m.disk_gb ?? m.size_gb;
   const sizeText = `${m.disk_gb == null ? "~" : ""}${footprint} GB`;
@@ -1320,49 +1337,76 @@ function LlmModelRow({
         </div>
         <div className="llm-local-topright">
           <div className="llm-local-act">
-            {state === "idle" && (
-              <button
-                type="button"
-                className="llm-local-btn stage"
-                disabled={isBusy}
-                onClick={() => onStage(m.id, true)}
-              >
-                {isBusy ? "…" : "Stage"}
-              </button>
-            )}
-            {state === "staged" && (
-              <>
-                <button
-                  type="button"
-                  className="llm-local-btn load"
-                  disabled={isBusy}
-                  onClick={() => onLoad(m.id)}
-                >
-                  {isBusy ? "…" : "Load"}
-                </button>
-                <button
-                  type="button"
-                  className="llm-local-btn"
-                  disabled={isBusy}
-                  onClick={() => onStage(m.id, false)}
-                >
-                  Unstage
-                </button>
-              </>
-            )}
-            {state === "loaded" && (
+            {m.remove_queued ? (
+              // Removal is queued/applying — offer only "Keep" to back out.
               <button
                 type="button"
                 className="llm-local-btn"
                 disabled={isBusy}
-                onClick={() => onUnload(m.id)}
+                onClick={() => onUninstall(m.id, false)}
               >
-                {isBusy ? "…" : "Unload"}
+                {isBusy ? "…" : "Keep"}
               </button>
+            ) : (
+              <>
+                {state === "idle" && (
+                  <button
+                    type="button"
+                    className="llm-local-btn stage"
+                    disabled={isBusy}
+                    onClick={() => onStage(m.id, true)}
+                  >
+                    {isBusy ? "…" : "Stage"}
+                  </button>
+                )}
+                {state === "staged" && (
+                  <>
+                    <button
+                      type="button"
+                      className="llm-local-btn load"
+                      disabled={isBusy}
+                      onClick={() => onLoad(m.id)}
+                    >
+                      {isBusy ? "…" : "Load"}
+                    </button>
+                    <button
+                      type="button"
+                      className="llm-local-btn"
+                      disabled={isBusy}
+                      onClick={() => onStage(m.id, false)}
+                    >
+                      Unstage
+                    </button>
+                  </>
+                )}
+                {state === "loaded" && (
+                  <button
+                    type="button"
+                    className="llm-local-btn"
+                    disabled={isBusy}
+                    onClick={() => onUnload(m.id)}
+                  >
+                    {isBusy ? "…" : "Unload"}
+                  </button>
+                )}
+                {/* Remove the model + its weights, directly from the Installed tab. */}
+                <button
+                  type="button"
+                  className="llm-local-btn danger"
+                  disabled={isBusy}
+                  onClick={() => onUninstall(m.id, true)}
+                >
+                  Uninstall
+                </button>
+              </>
             )}
           </div>
-          <span className={`llm-local-state${m.loaded ? " on" : m.staged ? " staged" : ""}`}>
-            {state}
+          <span
+            className={`llm-local-state${
+              m.remove_queued ? " removing" : m.loaded ? " on" : m.staged ? " staged" : ""
+            }`}
+          >
+            {m.remove_queued ? "uninstalling" : state}
           </span>
         </div>
       </div>
@@ -1406,8 +1450,8 @@ function LlmModelRow({
 }
 
 // A provisioned model in the Catalog tab: its current state chip + a danger
-// "Uninstall" button (queues the removal). Once queued it reads "uninstalling" and
-// offers "Keep" to back out before the next update prunes it.
+// "Uninstall" button (queues the removal and kicks the sync one-shot). Once queued it
+// reads "uninstalling" and offers "Keep" to back out before the sync prunes it.
 function UninstallRow({
   model: m,
   busy,
