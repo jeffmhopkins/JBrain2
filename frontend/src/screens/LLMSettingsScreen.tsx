@@ -29,7 +29,8 @@ interface GroupDef {
 // bucket's default is correct for every task in it, so the box is right by default
 // and a per-task override reads as a deliberate deviation (the card shows "mixed").
 // High = async, reasoning-bound, correctness-critical (the knowledge-graph arbiters:
-// integrate.note, fact.adjudicate, and the Phase-6 wiki.ground verifier). Low =
+// integrate.note, fact.adjudicate, the Phase-6 wiki.ground verifier, and the wiki_lint
+// contradiction/stale verifiers). Low =
 // deterministic one-shots (entity.disambiguate/session.title/triage.classify).
 // Medium = everything else that thinks (agent.turn, the extractors, video.summarize,
 // wiki.rewrite, intake.materialize). Vision has no reasoning channel. Keep this in
@@ -41,7 +42,13 @@ const GROUP_DEFS: GroupDef[] = [
     accent: "high",
     name: "High reasoning",
     desc: "Async, correctness-critical judgment — worth the deepest thinking.",
-    taskIds: ["integrate.note", "fact.adjudicate", "wiki.ground"],
+    taskIds: [
+      "integrate.note",
+      "fact.adjudicate",
+      "wiki.ground",
+      "wiki.lint.contradiction",
+      "wiki.lint.stale",
+    ],
   },
   {
     key: "medium",
