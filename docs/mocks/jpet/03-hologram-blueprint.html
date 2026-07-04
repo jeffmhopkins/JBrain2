@@ -1,0 +1,234 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>JPet — Hologram Blueprint</title>
+<style>
+  :root{
+    --line:#5fe6ff; --line2:#9dfcff; --accent:#8affc1; --glow:#3ec6ff; --ink:#cdf4ff;
+    --panel:rgba(6,26,46,.6); --good:#8affc1; --warn:#ffe08a; --bad:#ff8fb0;
+    --font:"Segoe UI",system-ui,sans-serif; --mono:ui-monospace,"Courier New",monospace;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;background:#02101f;color:var(--ink);font-family:var(--font);overflow:hidden}
+  #stage{position:fixed;inset:0;width:100%;height:100%;display:block}
+  .frame{position:fixed;inset:14px;border:1px solid rgba(95,230,255,.45);border-radius:6px;
+    box-shadow:0 0 50px rgba(62,198,255,.18) inset;pointer-events:none;z-index:5}
+  .frame::before{content:"";position:absolute;inset:6px;border:1px dashed rgba(95,230,255,.25);border-radius:4px}
+  .hud{position:fixed;top:26px;left:34px;z-index:6}
+  .name{font-size:22px;font-weight:600;letter-spacing:4px;color:var(--line2);text-shadow:0 0 12px var(--glow)}
+  .mood{font-family:var(--mono);font-size:12px;opacity:.85;letter-spacing:1px;margin-top:4px}
+  .mood::before{content:"◈ STATUS: "}
+  .bars{position:fixed;top:26px;right:34px;z-index:6;width:186px}
+  .bar{margin-bottom:9px}
+  .bar label{display:flex;justify-content:space-between;font-family:var(--mono);font-size:11px;
+    letter-spacing:1px;opacity:.9;margin-bottom:3px}
+  .track{height:9px;border:1px solid rgba(95,230,255,.5);border-radius:1px;overflow:hidden;position:relative}
+  .fill{height:100%;transition:width .4s ease,background .4s;
+    background-image:repeating-linear-gradient(90deg,currentColor 0 3px,transparent 3px 6px)}
+  .controls{position:fixed;bottom:26px;left:50%;transform:translateX(-50%);z-index:6;
+    display:flex;gap:9px;flex-wrap:wrap;justify-content:center}
+  button{font-family:var(--font);font-size:13px;font-weight:600;letter-spacing:1px;color:var(--ink);
+    background:var(--panel);border:1px solid var(--line);border-radius:4px;padding:11px 15px;cursor:pointer;
+    backdrop-filter:blur(4px);transition:box-shadow .2s,background .15s}
+  button:hover{box-shadow:0 0 18px rgba(95,230,255,.5);background:rgba(95,230,255,.12)}
+  button:active{transform:translateY(1px)}
+  .tag{position:fixed;bottom:24px;left:24px;z-index:6;font-family:var(--mono);font-size:11px;letter-spacing:2px;opacity:.55}
+  .tag a{color:var(--accent);text-decoration:none}
+  .speech{position:fixed;z-index:7;max-width:250px;padding:10px 15px;border:1px solid var(--line2);border-radius:3px;
+    background:var(--panel);color:var(--line2);font-size:16px;font-weight:700;letter-spacing:.5px;
+    text-shadow:0 0 10px var(--glow);box-shadow:0 0 24px rgba(62,198,255,.4);backdrop-filter:blur(4px);
+    opacity:0;transform:translate(-50%,6px);transition:opacity .22s,transform .22s;pointer-events:none;white-space:nowrap}
+  .speech.show{opacity:1;transform:translate(-50%,0)}
+</style>
+</head>
+<body>
+<canvas id="stage"></canvas>
+<div class="frame"></div>
+<div class="hud"><div class="name" id="petname">HOLO-3</div><div class="mood" id="moodlbl">calibrated</div></div>
+<div class="bars" id="bars"></div>
+<div class="speech" id="speech"></div>
+<div class="controls">
+  <button data-act="feed">🍔 Feed</button>
+  <button data-act="play">🎮 Play</button>
+  <button data-act="pet">✋ Pet</button>
+  <button data-act="sleep">💤 Sleep</button>
+  <button data-act="talk">💬 Talk</button>
+  <button data-act="sound">🔊 Sound</button>
+</div>
+<div class="tag">03 · HOLOGRAM BLUEPRINT &nbsp;·&nbsp; <a href="index.html">← all mockups</a></div>
+<script>
+const cv=document.getElementById('stage'),ctx=cv.getContext('2d');
+let W,H,DPR;
+function resize(){DPR=Math.min(2,devicePixelRatio||1);W=cv.clientWidth;H=cv.clientHeight;
+  cv.width=W*DPR;cv.height=H*DPR;ctx.setTransform(DPR,0,0,DPR,0,0);}
+addEventListener('resize',resize);
+const S={food:78,energy:82,fun:70,love:74,asleep:false,poke:0,blink:0,nextBlink:2,
+  mouseX:.5,mouseY:.4,emotion:'happy',emoT:0};
+const DRIVES=[['food','◇ FOOD'],['energy','◇ POWER'],['fun','◇ PLAY'],['love','◇ BOND']];
+const barsEl=document.getElementById('bars');
+DRIVES.forEach(([k,lbl])=>{barsEl.insertAdjacentHTML('beforeend',
+  `<div class="bar"><label><span>${lbl}</span><span id="v_${k}"></span></label>
+   <div class="track"><div class="fill" id="f_${k}"></div></div></div>`);});
+function mood(){const m=(S.food+S.energy+S.fun+S.love)/4;
+  if(S.asleep)return['sleepy','standby'];
+  if(S.food<25)return['hungry','ENERGY LOW'];
+  if(m>70)return['happy','optimal'];
+  if(m>45)return['neutral','stable'];
+  return['sad','drifting'];}
+function colFor(v){return v>55?'#8affc1':v>28?'#ffe08a':'#ff8fb0';}
+function syncBars(){DRIVES.forEach(([k])=>{const v=Math.round(S[k]);
+  document.getElementById('v_'+k).textContent=v+'%';
+  const f=document.getElementById('f_'+k);f.style.width=v+'%';f.style.color=colFor(v);});
+  const[e,l]=mood();S.emotion=(S.poke>0?'excited':e);document.getElementById('moodlbl').textContent=l;}
+const SYL=['dah','boo','bah','kah','mee','wee','doo','loo','nah','tay','kee','boh','dan','nye',
+  'way','loh','toh','day','dee','noo','mah','guh','tee','oo','wah','shi','vey'];
+const CANNED={feed:['Num num num!','Mmm-tay!','Wee-food!'],play:['Wheee-loh!','Play-dah!','Boo fun!'],
+  pet:['Aww~ mee','Purr-loh','Love-oo'],sleep:['Standby… zzz','Nini-noo','Dee-doo…'],
+  hungry:['Feed-mee?','Low… num?','Boo-hungee'],};
+function phrase(){const n=2+(Math.random()*4|0);let w=[];for(let i=0;i<n;i++)w.push(SYL[Math.random()*SYL.length|0]);
+  let s=w.join('-');return s[0].toUpperCase()+s.slice(1)+(Math.random()<.4?'!':'?');}
+let soundOn=false,actx=null;const OSC='sine';
+function babble(base){if(!soundOn)return;try{actx=actx||new(AudioContext||webkitAudioContext)();
+  let t=actx.currentTime;const n=2+(Math.random()*3|0);
+  for(let i=0;i<n;i++){const o=actx.createOscillator(),g=actx.createGain();o.type=OSC;
+    const f=base*(.7+Math.random()*.9);o.frequency.setValueAtTime(f,t);
+    o.frequency.linearRampToValueAtTime(f*(.8+Math.random()*.6),t+.12);
+    g.gain.setValueAtTime(.0001,t);g.gain.exponentialRampToValueAtTime(.12,t+.02);
+    g.gain.exponentialRampToValueAtTime(.0001,t+.16);o.connect(g).connect(actx.destination);
+    o.start(t);o.stop(t+.18);t+=.14;}}catch(e){}}
+const speechEl=document.getElementById('speech');let speechT=0;
+function say(txt,base=300){speechEl.textContent=txt;speechEl.classList.add('show');speechT=2.6;babble(base);}
+function robotHead(){return{x:W*0.5,y:H*0.46+Math.sin(clock*1.5)*6};}
+function positionSpeech(){const h=robotHead();speechEl.style.left=h.x+'px';speechEl.style.top=(h.y-150)+'px';}
+function act(a){
+  if(a==='sound'){soundOn=!soundOn;try{actx=actx||new(AudioContext||webkitAudioContext)();}catch(e){}
+    say(soundOn?'Beep (audio on)':'…(muted)',280);return;}
+  if(S.asleep&&a!=='sleep')S.asleep=false;
+  if(a==='feed'){S.food=Math.min(100,S.food+26);S.love=Math.min(100,S.love+4);pop('excited');say(rand(CANNED.feed),340);}
+  if(a==='play'){S.fun=Math.min(100,S.fun+24);S.energy=Math.max(0,S.energy-10);pop('excited');say(rand(CANNED.play),360);}
+  if(a==='pet'){S.love=Math.min(100,S.love+22);S.fun=Math.min(100,S.fun+6);pop('happy');say(rand(CANNED.pet),300);}
+  if(a==='sleep'){S.asleep=!S.asleep;if(S.asleep)say(rand(CANNED.sleep),190);else say('Wake-loh!',310);}
+  if(a==='talk'){pop('excited');say(phrase(),280+Math.random()*160);}
+  syncBars();}
+function rand(a){return a[Math.random()*a.length|0];}
+function pop(e){S.emotion=e;S.emoT=1.1;S.poke=.6;}
+document.querySelectorAll('button').forEach(b=>b.onclick=()=>act(b.dataset.act));
+cv.addEventListener('pointermove',e=>{S.mouseX=e.clientX/W;S.mouseY=e.clientY/H;});
+cv.addEventListener('pointerdown',e=>{const h=robotHead();const d=Math.hypot(e.clientX-h.x,e.clientY-h.y);
+  if(d<160){if(S.asleep)S.asleep=false;S.poke=1;pop('excited');S.fun=Math.min(100,S.fun+8);
+    say(Math.random()<.5?phrase():'Hee-loh!',420);}});
+
+let clock=0;
+function drawBackground(t){
+  const g=ctx.createLinearGradient(0,0,0,H);g.addColorStop(0,'#02101f');g.addColorStop(1,'#031a30');
+  ctx.fillStyle=g;ctx.fillRect(0,0,W,H);
+  // dot grid
+  ctx.save();ctx.fillStyle='rgba(95,230,255,.18)';
+  for(let x=24;x<W;x+=28)for(let y=24;y<H;y+=28){ctx.beginPath();ctx.arc(x,y,1,0,7);ctx.fill();}
+  ctx.restore();
+  // holo pedestal glow
+  const cx=W/2,cy=H*.62;const rg=ctx.createRadialGradient(cx,cy,10,cx,cy,Math.min(W,H)*.5);
+  rg.addColorStop(0,'rgba(62,198,255,.16)');rg.addColorStop(1,'rgba(0,0,0,0)');ctx.fillStyle=rg;ctx.fillRect(0,0,W,H);
+  // pedestal rings
+  ctx.save();ctx.strokeStyle='rgba(95,230,255,.5)';ctx.lineWidth=1.4;ctx.shadowColor='#3ec6ff';ctx.shadowBlur=14;
+  for(let i=0;i<3;i++){ctx.beginPath();ctx.ellipse(cx,cy+80,90-i*20,18-i*4,0,0,7);ctx.stroke();}
+  ctx.restore();
+}
+function drawOverlay(t){
+  // horizontal scan sweep
+  const sy=(t*70)%(H+120)-60;ctx.save();
+  const sg=ctx.createLinearGradient(0,sy-40,0,sy+40);sg.addColorStop(0,'rgba(157,252,255,0)');
+  sg.addColorStop(.5,'rgba(157,252,255,.12)');sg.addColorStop(1,'rgba(157,252,255,0)');
+  ctx.fillStyle=sg;ctx.fillRect(0,sy-40,W,80);
+  ctx.strokeStyle='rgba(157,252,255,.35)';ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(0,sy);ctx.lineTo(W,sy);ctx.stroke();
+  ctx.restore();
+  // faint scanlines
+  ctx.save();ctx.globalAlpha=.05;ctx.fillStyle='#5fe6ff';for(let y=0;y<H;y+=4)ctx.fillRect(0,y,W,1);ctx.restore();
+}
+const T={line:'#5fe6ff',line2:'#9dfcff',accent:'#8affc1',glow:'#3ec6ff',lw:2};
+function annotate(x,y,txt,anchor){ctx.save();ctx.shadowBlur=0;ctx.strokeStyle='rgba(138,255,193,.7)';ctx.lineWidth=1;
+  ctx.beginPath();ctx.moveTo(x,y);ctx.lineTo(x+anchor*22,y);ctx.stroke();
+  ctx.fillStyle='rgba(138,255,193,.85)';ctx.font='9px ui-monospace,monospace';
+  ctx.textAlign=anchor>0?'left':'right';ctx.fillText(txt,x+anchor*26,y+3);ctx.restore();}
+function drawRobot(t){
+  const bob=Math.sin(clock*1.5)*6, breathe=Math.sin(clock*1.5)*.5;
+  const cx=W/2, cy=H*0.46+bob;
+  const look={x:(S.mouseX-.5)*11,y:(S.mouseY-.5)*8};
+  ctx.save();ctx.translate(cx,cy);
+  ctx.lineWidth=T.lw;ctx.lineJoin='round';ctx.lineCap='round';ctx.globalAlpha=.96;
+  const glow=(c,b)=>{ctx.shadowColor=c;ctx.shadowBlur=b;};
+  glow(T.glow,12);ctx.strokeStyle=T.line;
+  // spherical hover body
+  ctx.beginPath();ctx.ellipse(0,86,52,58,0,0,7);ctx.stroke();
+  // latitude/longitude wire
+  ctx.globalAlpha=.5;
+  for(let i=-2;i<=2;i++){ctx.beginPath();ctx.ellipse(0,86,52,Math.abs(58*Math.cos(i*.5)),0,0,7);ctx.stroke();}
+  ctx.beginPath();ctx.ellipse(0,86,52*Math.cos(clock*.6),58,0,0,7);ctx.stroke();ctx.globalAlpha=.96;
+  // chest core
+  const mc=S.emotion==='sad'?'#ff8fb0':S.emotion==='hungry'?'#ffe08a':S.asleep?'#7aa8ff':T.accent;
+  glow(mc,20);ctx.strokeStyle=mc;ctx.beginPath();ctx.arc(0,86,15,0,7);ctx.stroke();
+  ctx.fillStyle=mc;ctx.globalAlpha=.2+Math.abs(breathe)*.35;ctx.beginPath();ctx.arc(0,86,15,0,7);ctx.fill();ctx.globalAlpha=.96;
+  // arms
+  glow(T.glow,10);ctx.strokeStyle=T.line;const asw=Math.sin(clock*1.5+1)*7;
+  ctx.beginPath();ctx.moveTo(-46,66);ctx.quadraticCurveTo(-78,80+asw,-72,116+asw);ctx.stroke();
+  ctx.beginPath();ctx.moveTo(46,66);ctx.quadraticCurveTo(78,80-asw,72,116-asw);ctx.stroke();
+  ctx.beginPath();ctx.arc(-72,116+asw,7,0,7);ctx.stroke();ctx.beginPath();ctx.arc(72,116-asw,7,0,7);ctx.stroke();
+  // neck
+  ctx.beginPath();ctx.moveTo(-12,34);ctx.lineTo(-12,24);ctx.moveTo(12,34);ctx.lineTo(12,24);ctx.stroke();
+  // antenna
+  const ax=Math.sin(clock*2.0)*7;ctx.beginPath();ctx.moveTo(0,-72);ctx.lineTo(ax,-106);ctx.stroke();
+  glow(T.accent,22);ctx.fillStyle=T.accent;ctx.beginPath();ctx.arc(ax,-106,5,0,7);ctx.fill();
+  glow(T.accent,10);ctx.globalAlpha=.5;ctx.beginPath();ctx.arc(ax,-106,10,0,7);ctx.stroke();ctx.globalAlpha=.96;
+  // head (rounded)
+  glow(T.glow,16);ctx.strokeStyle=T.line;
+  ctx.beginPath();if(ctx.roundRect)ctx.roundRect(-46,-72,92,66,26);else ctx.ellipse(0,-39,46,33,0,0,7);ctx.stroke();
+  // schematic annotations
+  annotate(46,-52,'OPTIC.SENSOR',1);annotate(-46,86,'CORE',-1);annotate(72,116,'MANIP',1);
+  // face
+  drawFace(look.x,look.y-40,T.line2);
+  ctx.restore();
+}
+function drawFace(ox,oy,col){
+  ctx.save();ctx.translate(ox,oy);ctx.shadowColor=col;ctx.shadowBlur=18;ctx.strokeStyle=col;ctx.fillStyle=col;ctx.lineWidth=2;
+  const blink=S.blink,e=S.emotion,asleep=S.asleep;const ex=17;
+  for(const s of[-1,1]){ctx.save();ctx.translate(s*ex,0);
+    if(asleep||blink>.6||e==='sleepy'){ctx.beginPath();ctx.moveTo(-8,0);ctx.quadraticCurveTo(0,4,8,0);ctx.stroke();}
+    else if(e==='happy'||e==='excited'){ctx.beginPath();ctx.arc(0,0,7,0,7);ctx.stroke();
+      ctx.beginPath();ctx.arc((S.mouseX-.5)*4,(S.mouseY-.5)*3,3,0,7);ctx.fill();
+      ctx.globalAlpha=.4;ctx.beginPath();ctx.arc(0,0,10,0,7);ctx.stroke();ctx.globalAlpha=1;}
+    else if(e==='hungry'){ctx.beginPath();ctx.arc(0,0,7,0,7);ctx.stroke();ctx.beginPath();ctx.arc(0,2,2.5,0,7);ctx.fill();}
+    else{ctx.beginPath();ctx.arc(0,0,7,0,7);ctx.stroke();ctx.beginPath();ctx.arc(0,0,3,0,7);ctx.fill();}
+    ctx.restore();}
+  ctx.beginPath();
+  if(asleep){ctx.arc(0,15,4,0,7);}
+  else if(e==='excited'){ctx.moveTo(-9,11);ctx.quadraticCurveTo(0,25,9,11);ctx.quadraticCurveTo(0,17,-9,11);}
+  else if(e==='happy'){ctx.moveTo(-9,12);ctx.quadraticCurveTo(0,21,9,12);}
+  else if(e==='sad'||e==='hungry'){ctx.moveTo(-8,17);ctx.quadraticCurveTo(0,10,8,17);}
+  else{ctx.moveTo(-7,14);ctx.lineTo(7,14);}
+  ctx.stroke();ctx.restore();
+}
+let last=0;
+function frame(ts){
+  const dt=Math.min(.05,(ts-last)/1000||0);last=ts;clock+=dt;
+  const rate=S.asleep?0.15:1;
+  S.food=Math.max(0,S.food-dt*0.9*rate);
+  S.energy=S.asleep?Math.min(100,S.energy+dt*3.2):Math.max(0,S.energy-dt*0.7);
+  S.fun=Math.max(0,S.fun-dt*1.0*rate);
+  S.love=Math.max(0,S.love-dt*0.6*rate);
+  if(S.poke>0)S.poke=Math.max(0,S.poke-dt*1.6);
+  if(S.emoT>0){S.emoT-=dt;if(S.emoT<=0&&!S.asleep){const[e]=mood();S.emotion=e;}}
+  S.nextBlink-=dt;if(S.nextBlink<=0){S.blink=1;S.nextBlink=1.6+Math.random()*3;}
+  if(S.blink>0)S.blink=Math.max(0,S.blink-dt*7);
+  if(S.food<22&&!S.asleep&&speechT<=0&&Math.random()<dt*0.4){pop('hungry');say(rand(CANNED.hungry),260);}
+  if(speechT>0){speechT-=dt;if(speechT<=0)speechEl.classList.remove('show');}
+  syncBars();
+  ctx.clearRect(0,0,W,H);drawBackground(clock);drawRobot(clock);drawOverlay(clock);positionSpeech();
+  requestAnimationFrame(frame);
+}
+resize();syncBars();requestAnimationFrame(frame);
+setTimeout(()=>say('Dee-boo! Hallo-loh!',300),700);
+</script>
+</body>
+</html>

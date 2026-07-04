@@ -149,6 +149,15 @@ JPet card** in `LLMSettingsScreen`, not a buried constant:
 
 ## 6. The render — Tron/synthwave wireframe (frontend only)
 
+**Aesthetic exploration (interactive):** five self-contained mockups of the same
+toy — a Tamagotchi-style wireframe robot with Furby babble — live under
+`../mocks/jpet/` (open `../mocks/jpet/index.html`): **01 Synthwave Sunset**,
+**02 CRT Terminal**, **03 Hologram Blueprint**, **04 Glitch Arcade**, **05 Soft
+Neon**. They are throwaway 2D-canvas sketches for *look-and-feel sign-off only*
+(mouse-look, poke, Feed/Play/Pet/Sleep/Talk, decaying drives, WebAudio babble) —
+not binding UI spec. The chosen direction becomes the DESIGN.md-gated binding mock
+before W1.
+
 A new full-screen **Wall** screen under `frontend/src/screens/`, launched from a
 `Launcher` tile. Self-contained WebGL; it does not hit the Python backend to
 render.

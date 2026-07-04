@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>JPet — Aesthetic Mockups</title>
+<style>
+  :root{--bg:#0a0714;--card:#15102a;--ink:#ece7ff;--dim:#a99fd0;--line:#ff4fd8;--cy:#3bf0ff}
+  *{box-sizing:border-box}
+  body{margin:0;background:
+      radial-gradient(1200px 600px at 50% -10%,rgba(255,79,216,.18),transparent 60%),
+      radial-gradient(900px 500px at 90% 110%,rgba(59,240,255,.14),transparent 60%),var(--bg);
+    color:var(--ink);font-family:"Segoe UI",system-ui,sans-serif;min-height:100vh;padding:48px 24px 64px}
+  .wrap{max-width:1060px;margin:0 auto}
+  h1{font-size:clamp(28px,5vw,44px);font-weight:800;letter-spacing:1px;margin:0 0 6px;
+    text-shadow:0 0 24px rgba(255,79,216,.4)}
+  .sub{color:var(--dim);font-size:15px;line-height:1.6;max-width:720px;margin:0 0 8px}
+  .note{color:var(--dim);font-size:13px;max-width:720px;margin:0 0 34px;opacity:.85}
+  .note b{color:var(--cy)}
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:20px}
+  a.card{display:block;text-decoration:none;color:inherit;background:var(--card);
+    border:1px solid rgba(255,255,255,.09);border-radius:16px;overflow:hidden;
+    transition:transform .18s,box-shadow .25s,border-color .25s;position:relative}
+  a.card:hover{transform:translateY(-4px);box-shadow:0 14px 44px rgba(0,0,0,.5);border-color:rgba(255,79,216,.5)}
+  .thumb{height:150px;position:relative;overflow:hidden;display:flex;align-items:center;justify-content:center}
+  .robot{font-size:64px;filter:drop-shadow(0 0 14px rgba(255,255,255,.5));z-index:2}
+  .meta{padding:16px 18px 18px}
+  .num{font-size:12px;letter-spacing:3px;color:var(--dim);font-weight:700}
+  .title{font-size:19px;font-weight:800;margin:4px 0 6px}
+  .desc{font-size:13px;color:var(--dim);line-height:1.5}
+  /* per-thumb aesthetics */
+  .t1{background:linear-gradient(#12002e,#3d0a52 55%,#0a0018 56%,#1a0533)}
+  .t1::after{content:"";position:absolute;inset:auto 0 0 0;height:60%;
+    background:repeating-linear-gradient(90deg,transparent 0 22px,rgba(255,79,216,.4) 22px 23px),
+      repeating-linear-gradient(0deg,transparent 0 16px,rgba(255,79,216,.3) 16px 17px);
+    -webkit-mask:linear-gradient(#000,transparent);mask:linear-gradient(#000,transparent)}
+  .t1 .robot{color:#ffd23f}
+  .t2{background:#000600}
+  .t2::before{content:"";position:absolute;inset:0;background:
+      repeating-linear-gradient(0deg,transparent 0 2px,rgba(0,0,0,.5) 2px 4px),
+      radial-gradient(circle at 50% 45%,rgba(51,255,156,.18),transparent 60%)}
+  .t2 .robot{color:#33ff9c;font-family:monospace}
+  .t3{background:linear-gradient(#02101f,#031a30)}
+  .t3::before{content:"";position:absolute;inset:0;
+    background-image:radial-gradient(rgba(95,230,255,.4) 1px,transparent 1px);background-size:16px 16px}
+  .t3 .robot{color:#87e6ff}
+  .t4{background:#08000a}
+  .t4::after{content:"";position:absolute;inset:0;background:
+      repeating-linear-gradient(90deg,transparent 0 20px,rgba(255,46,151,.35) 20px 21px),
+      repeating-linear-gradient(0deg,transparent 0 20px,rgba(34,224,255,.25) 20px 21px)}
+  .t4 .robot{color:#22e0ff;text-shadow:3px 0 #ff2e97,-3px 0 #22e0ff;transform:skewX(-6deg)}
+  .t5{background:radial-gradient(circle at 50% 40%,#150f2e,#080614)}
+  .t5 .robot{color:#b79bff}
+  .foot{margin-top:38px;color:var(--dim);font-size:12.5px;line-height:1.7;border-top:1px solid rgba(255,255,255,.08);padding-top:18px}
+  .foot code{color:var(--cy);background:rgba(59,240,255,.08);padding:1px 6px;border-radius:5px}
+  kbd{background:#241a3f;border:1px solid rgba(255,255,255,.15);border-radius:5px;padding:1px 6px;font-size:12px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>JPet — aesthetic mockups</h1>
+  <p class="sub">A Tamagotchi-style robot pet with Furby babble, in a Tron/synthwave wireframe room.
+     Five looks for the same toy — pick the vibe before we build anything real.</p>
+  <p class="note">Every mockup is <b>live and interactive</b>: move the mouse (its eyes follow),
+     <b>click the robot to poke it</b>, and use the buttons to <b>Feed / Play / Pet / Sleep / Talk</b>.
+     Food·Energy·Fun·Love drain over time (Tamagotchi care-loop); neglect it and it gets hungry and sad.
+     Hit <b>🔊 Sound</b> then <b>💬 Talk</b> to hear the Furby babble.</p>
+
+  <div class="grid">
+    <a class="card" href="01-synthwave-sunset.html">
+      <div class="thumb t1"><span class="robot">🤖</span></div>
+      <div class="meta"><div class="num">01</div><div class="title">Synthwave Sunset</div>
+        <div class="desc">Retro grid horizon, banded sun, hot magenta + cyan + gold. Chunky, playful, unmistakably ’80s.</div></div>
+    </a>
+    <a class="card" href="02-crt-terminal.html">
+      <div class="thumb t2"><span class="robot">🤖</span></div>
+      <div class="meta"><div class="num">02</div><div class="title">CRT Terminal</div>
+        <div class="desc">Green phosphor, scanlines, monospace HUD, boxy pixel bot. Babble reads like a booting machine.</div></div>
+    </a>
+    <a class="card" href="03-hologram-blueprint.html">
+      <div class="thumb t3"><span class="robot">🤖</span></div>
+      <div class="meta"><div class="num">03</div><div class="title">Hologram Blueprint</div>
+        <div class="desc">Cyan schematic on navy, dot grid, scan sweep, part labels. Cool, techy, projected-hologram feel.</div></div>
+    </a>
+    <a class="card" href="04-glitch-arcade.html">
+      <div class="thumb t4"><span class="robot">🤖</span></div>
+      <div class="meta"><div class="num">04</div><div class="title">Glitch Arcade</div>
+        <div class="desc">Hot pink + electric blue, chromatic-aberration on poke, datamosh slices. Loud, energetic, arcade attract-mode.</div></div>
+    </a>
+    <a class="card" href="05-soft-neon.html">
+      <div class="thumb t5"><span class="robot">🤖</span></div>
+      <div class="meta"><div class="num">05</div><div class="title">Soft Neon</div>
+        <div class="desc">Thin elegant lines, violet halo, floating motes, rosy cheeks. Calm, premium, huggable — the gentle option.</div></div>
+    </a>
+  </div>
+
+  <div class="foot">
+    Throwaway aesthetic exploration for the <code>JPET_PLAN.md</code> proposal — self-contained HTML,
+    no dependencies, no network, no backend. The real build would render this in Three.js as a
+    frontend screen (see the plan's §6). Not binding UI spec yet.<br>
+    Tip: open one, then use your browser <kbd>←</kbd> back button to return here and compare.
+  </div>
+</div>
+</body>
+</html>
