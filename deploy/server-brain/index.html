@@ -1687,6 +1687,39 @@ function ttsPlayNext() {
 ttsAudio.addEventListener('ended', () => { ttsBusy = false; ttsPlayNext(); });
 ttsAudio.addEventListener('error', () => { ttsBusy = false; ttsPlayNext(); });
 function ttsStop() { ttsQueue.length = 0; try { ttsAudio.pause(); } catch { /* ignore */ } ttsBusy = false; }
+// Keep the OS audio sink from suspending on idle — the real cause of the clipped first
+// word on a quiet wall. Linux audio (PulseAudio's module-suspend-on-idle / PipeWire's
+// session.suspend-timeout-seconds) powers the output sink down after a few seconds of
+// silence; the cold resume on the next clip swallows its start. serve.py's lead-silence
+// pad only absorbs a short resume — after a long idle the resume outlasts it. The fix is
+// to never let the sink go idle: a permanently-running, truly-silent WebAudio source
+// holds a live stream on the sink (suspend keys on stream PRESENCE, not level), so there
+// is no cold resume to clip. Started on the enable gesture (also the interaction WebAudio
+// needs to run), and resumed whenever the context or tab is throttled. The guaranteed
+// fix for a box that power-manages harder is still the OS one-liner in the README.
+let ttsKeepAliveCtx = null;
+function startSinkKeepAlive() {
+  try {
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return;                                     // no WebAudio -> lean on the lead pad + OS fix
+    if (!ttsKeepAliveCtx) {
+      ttsKeepAliveCtx = new AC();
+      const osc = ttsKeepAliveCtx.createOscillator();
+      const gain = ttsKeepAliveCtx.createGain();
+      gain.gain.value = 0;                               // truly silent — never audible on any system
+      osc.connect(gain).connect(ttsKeepAliveCtx.destination);
+      osc.start();                                       // runs forever: one live stream = sink never idles
+    }
+    if (ttsKeepAliveCtx.state === 'suspended') ttsKeepAliveCtx.resume().catch(() => {});
+  } catch { /* WebAudio unavailable / blocked -> fall back to the lead pad + OS fix */ }
+}
+// A kiosk tab regaining focus, or an autoplay-gesture, can leave the context suspended;
+// re-arm it so the sink stays warm across those transitions.
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden && ttsKeepAliveCtx && ttsKeepAliveCtx.state === 'suspended') {
+    ttsKeepAliveCtx.resume().catch(() => {});
+  }
+});
 function enqueueTTS(kind, text) {
   const c = voiceCfg[kind];
   if (!c.on.checked || !c.sel.value) return;
@@ -1722,11 +1755,21 @@ async function initVoices() {                            // ask the box which pi
     const want = pref.voice || DEFAULT_VOICE[kind];
     c.sel.value = voices.includes(want) ? want : voices[0];
     c.on.checked = !!pref.on;
-    c.on.addEventListener('change', () => { saveVoicePref(kind); if (!c.on.checked) ttsStop(); });
+    // Enabling a voice is the user gesture that both permits <audio> playback and lets us
+    // start the sink keep-alive; disabling silences any in-flight clip.
+    c.on.addEventListener('change', () => {
+      saveVoicePref(kind);
+      if (c.on.checked) startSinkKeepAlive();
+      else ttsStop();
+    });
     c.sel.addEventListener('change', () => saveVoicePref(kind));
   }
   voicesAvailable = true;
   updateVoicePanel();
+  // A voice already enabled from a saved pref (a returning kiosk) never fires the change
+  // above, so warm the sink now — best-effort: if autoplay isn't yet permitted it starts
+  // suspended and the first interaction (or the autoplay site-permission) resumes it.
+  if (voiceCfg.prompt.on.checked || voiceCfg.answer.on.checked) startSinkKeepAlive();
 }
 initVoices();
 
