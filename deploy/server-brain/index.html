@@ -1698,14 +1698,18 @@ function populateVoices() {
   }
 }
 // ---- Voice scheduler --------------------------------------------------------
-// Web Speech synthesis (esp. speech-dispatcher on Linux) is flaky: an utterance dropped
-// by a cancel()-then-speak() race, garbage-collected mid-sentence, or truncated past the
-// engine's ~15s ceiling all read as "it only said part of it". So we serialize — ONE
-// utterance at a time, long text SPLIT into sentence-sized chunks, each HELD referenced
-// until it ends, the queue advancing on end/error. We never cancel to start a turn (that
-// is the drop race); a new prompt just clears the not-yet-spoken backlog.
+// Web Speech synthesis (esp. speech-dispatcher on Linux) can drop an utterance, so we
+// serialize — ONE utterance at a time, long text SPLIT into sentence-sized chunks, each HELD
+// referenced until it ends, the queue advancing on end. Retries key off the honest `onstart`
+// signal ("audio actually began"), NOT a guess from how fast `onend` fired: only a chunk that
+// never STARTED (onstart never fired, or onerror) is re-spoken — so a real short sentence is
+// never double-spoken, and a genuine cold-engine drop is still recovered.
+//
+// NOTE: the usual root cause of a dropped FIRST utterance on a Linux wall box is BELOW the
+// browser — the audio sink suspending on idle (clipping the resume) and speech-dispatcher's
+// cold start. Those are fixed on the box, not here (README "Reliable audio on the wall box").
 const ttsQueue = [];        // pending { text, voiceName, _tries }
-let ttsActive = null;       // the utterance now speaking — kept referenced so it can't be GC'd mid-word
+let ttsActive = null;       // the utterance now speaking — HELD referenced so it can't be GC'd mid-word
 let ttsGen = 0;             // bumped on clear, so a cancelled utterance's late callbacks are ignored
 function ttsChunks(s) {     // sentence-ish chunks, hard-split anything still too long for the engine
   const out = [];
@@ -1718,13 +1722,6 @@ function ttsChunks(s) {     // sentence-ish chunks, hard-split anything still to
   if (buf.trim()) out.push(buf.trim());
   return out.filter(Boolean);
 }
-// Prime the engine on the enabling gesture: speech-dispatcher / a cold audio pipeline often
-// silently DROPS the first utterance, so a warm-up (near-silent) call takes that hit instead
-// of the first real chunk — which is what made a long answer start part-way in.
-function ttsWarm() {
-  if (!TTS || ttsActive || ttsQueue.length) return;
-  try { const u = new SpeechSynthesisUtterance(' '); u.volume = 0; TTS.speak(u); } catch { /* ignore */ }
-}
 function ttsDrain() {
   if (!TTS || ttsActive || !ttsQueue.length) return;
   if (TTS.paused) TTS.resume();                     // a stray pause shouldn't wedge the queue
@@ -1732,21 +1729,25 @@ function ttsDrain() {
   const u = new SpeechSynthesisUtterance(item.text);
   const v = TTS.getVoices().find((x) => x.name === item.voiceName);
   if (v) { u.voice = v; u.lang = v.lang; }
-  const gen = ttsGen, started = performance.now();
-  let settled = false;
-  const next = (spoke) => {
+  const gen = ttsGen;
+  let started = false, settled = false;
+  const finish = (retry) => {
     if (settled || gen !== ttsGen) return;          // ignore duplicate / cancelled-generation callbacks
-    settled = true; clearTimeout(item._wd); ttsActive = null;
-    // A silent DROP shows up as onerror, or as an onend that fired implausibly fast for the
-    // text length — the engine skipped it. Retry the SAME chunk (a couple of times) instead of
-    // advancing, so a long answer never starts part-way in because its first chunk was dropped.
-    const reallySpoke = spoke && (performance.now() - started > 250 || item.text.length < 12);
-    if (!reallySpoke && (item._tries = (item._tries || 0) + 1) < 3) ttsQueue.unshift(item);
-    setTimeout(ttsDrain, 60);                        // a beat between utterances — fewer drops
+    settled = true; clearTimeout(item._w); ttsActive = null;
+    // Retry ONLY a chunk that never STARTED (onstart never fired, or onerror): no audio was
+    // emitted, so re-speaking can't double it. Give up after a few tries rather than wedge the
+    // rest of the answer. A chunk that DID start is never retried (no double-speak).
+    if (retry && !started && (item._tries = (item._tries || 0) + 1) < 4) { TTS.cancel(); ttsQueue.unshift(item); }
+    setTimeout(ttsDrain, 120);
   };
-  u.onend = () => next(true);
-  u.onerror = () => next(false);
-  item._wd = setTimeout(() => next(false), Math.max(8000, item.text.length * 250));  // no-event watchdog
+  u.onstart = () => {                               // the honest "audio actually began" signal
+    started = true;
+    clearTimeout(item._w);
+    item._w = setTimeout(() => finish(false), Math.max(6000, item.text.length * 220));  // lost-onend guard: advance
+  };
+  u.onend = () => finish(false);
+  u.onerror = () => finish(true);
+  item._w = setTimeout(() => finish(true), 3000);   // never STARTED within 3s -> cold-engine drop -> retry
   ttsActive = u;                                     // hold the reference BEFORE speaking
   TTS.speak(u);
 }
@@ -1768,7 +1769,7 @@ if (TTS) {
     const c = voiceCfg[kind], pref = loadVoicePref(kind);
     c.on.checked = !!pref.on;
     if (pref.voice) c.sel.value = pref.voice;       // provisional; confirmed once voices populate
-    c.on.addEventListener('change', () => { saveVoicePref(kind); if (c.on.checked) ttsWarm(); else ttsClear(); });
+    c.on.addEventListener('change', () => { saveVoicePref(kind); if (!c.on.checked) ttsClear(); });
     c.sel.addEventListener('change', () => saveVoicePref(kind));
   }
   populateVoices();
