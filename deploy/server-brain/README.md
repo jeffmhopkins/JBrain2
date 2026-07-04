@@ -140,13 +140,37 @@ two independent voices — one for **prompts**, one for **answers** — each wit
 checkbox and voice picker (English voices only); both persist in `localStorage`. Markdown is
 stripped before speaking. A small scheduler serializes speech and splits a long reply into
 sentence-sized chunks it queues one at a time (holding each utterance referenced until it
-ends) — so a long answer isn't cut off partway, which the raw API is prone to. The panel
-hides itself when the browser exposes no speech synthesis.
+ends), and keys retries off the `onstart` signal — only a chunk that never *started* is
+re-spoken, so nothing is double-read. The panel hides itself when the browser exposes no
+speech synthesis.
 
 On **Ubuntu / Firefox**, Web Speech synthesis is backed by `speech-dispatcher`, so install it
 plus a voice engine once — `sudo apt install speech-dispatcher espeak-ng` — and ensure
 `about:config` → `media.webspeech.synth.enabled` is `true` (the default in modern Firefox).
 The picker then lists the installed voices. (No network or extra setup on Chromium.)
+
+#### Reliable audio on the wall box
+
+If the **first utterance after idle is dropped/clipped**, that is *not* a page bug — it is the
+Linux audio stack **below** the browser, and it can't be fully fixed from JS. Two box-level
+causes, two fixes (apply on the machine that drives the display):
+
+1. **The audio sink suspends on idle** and clips the start when it resumes (best match for
+   "first-after-idle dropped, the rest fine"). Disable it:
+   - PipeWire / WirePlumber (Ubuntu 22.04+): drop a file at
+     `~/.config/wireplumber/wireplumber.conf.d/50-no-suspend.conf` setting
+     `session.suspend-timeout-seconds = 0` on the output node, then restart WirePlumber.
+   - Classic PulseAudio: comment out `load-module module-suspend-on-idle` in
+     `/etc/pulse/default.pa` (and add `tsched=0` if speech is choppy).
+2. **speech-dispatcher cold start** — the first request spawns the daemon + module + opens the
+   sink and gets swallowed. Pre-warm it at kiosk launch (before Firefox speaks) and pick a fast
+   module: `spd-say -w "ready"` once at session start, set `DefaultModule espeak-ng` and the
+   matching `AudioOutputMethod` in `~/.config/speech-dispatcher/speechd.conf`.
+
+A near-silent keep-alive audio stream also stops the sink from ever going cold on a wall that
+idles for minutes. (Planned follow-up: render TTS **server-side** with `piper` in `serve.py`
+and play it via `<audio>`, which removes the browser speech engine from the path entirely —
+though the sink-suspend fix above still applies to any audio.)
 
 **This is the one place the display carries owner data.** Everything else here is host
 vitals + content-free markers, which is why it's safe unauthenticated on a trusted LAN.
