@@ -1698,6 +1698,9 @@ function enqueueTTS(kind, text) {
 }
 function speakPrompt(text) { enqueueTTS('prompt', text); }
 function speakAnswer(text) { enqueueTTS('answer', text); }
+// Default model per kind when nothing is saved yet — matched by the installed set, else the
+// first available. The picker still lists every installed model, so adding voices just works.
+const DEFAULT_VOICE = { prompt: 'en_US-joe-medium', answer: 'en_US-amy-medium' };
 async function initVoices() {                            // ask the box which piper models are installed
   let voices = [];
   try { voices = ((await (await fetch('/tts/voices', { cache: 'no-store' })).json()).voices) || []; } catch { /* server offline / no tts */ }
@@ -1706,7 +1709,8 @@ async function initVoices() {                            // ask the box which pi
     const c = voiceCfg[kind], pref = loadVoicePref(kind);
     c.sel.textContent = '';
     for (const v of voices) { const o = document.createElement('option'); o.value = v; o.textContent = v; c.sel.appendChild(o); }
-    c.sel.value = voices.includes(pref.voice) ? pref.voice : voices[0];
+    const want = pref.voice || DEFAULT_VOICE[kind];
+    c.sel.value = voices.includes(want) ? want : voices[0];
     c.on.checked = !!pref.on;
     c.on.addEventListener('change', () => { saveVoicePref(kind); if (!c.on.checked) ttsStop(); });
     c.sel.addEventListener('change', () => saveVoicePref(kind));
