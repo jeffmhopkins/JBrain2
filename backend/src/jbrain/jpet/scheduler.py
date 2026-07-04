@@ -9,6 +9,7 @@ exists, and advances its drives. No LLM here — the tick is pure arithmetic; th
 """
 
 import asyncio
+import secrets
 
 import structlog
 from sqlalchemy import text
@@ -28,6 +29,21 @@ TICK_INTERVAL_SECONDS = 30.0
 # The safe family domain the kids' pet lives in — never health/finance/location.
 DEFAULT_PET_DOMAIN = "general"
 DEFAULT_PET_NAME = "Blink"
+
+# Chance per tick that an awake, idle pet picks a new floor target and wanders — so it
+# feels alive on the Wall with no interaction (docs/plans/JPET_PLAN.md W5). Pure
+# arithmetic; the clients interpolate the walk.
+WANDER_CHANCE = 0.5
+
+
+def _wander_target() -> tuple[float, float]:
+    """A random floor point in [-0.9, 0.9]² (secrets — Math.random-free, avoids the
+    weak-PRNG lint; the values are cosmetic, not security-sensitive)."""
+    return (
+        secrets.randbelow(1801) / 1000 - 0.9,
+        secrets.randbelow(1801) / 1000 - 0.9,
+    )
+
 
 # A system owner context to resolve the owner principal (owner identity is what
 # is_owner() checks); the pet row itself is stamped with that principal id.
@@ -57,6 +73,12 @@ async def jpet_tick(
     ctx = SessionContext(principal_id=str(owner_pid), principal_kind="owner")
     await repo.ensure_pet(ctx, name=name, domain=domain)
     state = await repo.tick(ctx, domain=domain)
+    # Autonomous wander: an awake pet occasionally strolls to a new floor point.
+    if state is not None and not state.asleep and secrets.randbelow(1000) < WANDER_CHANCE * 1000:
+        x, z = _wander_target()
+        moved = await repo.set_target(ctx, domain=domain, x=x, z=z)
+        if moved is not None:
+            state = moved
     if state is not None and broadcaster is not None:
         broadcaster.publish(state)
     return state

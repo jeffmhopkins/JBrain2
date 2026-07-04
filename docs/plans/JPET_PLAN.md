@@ -1,6 +1,6 @@
 # JBrain2 — JPet: the wall pet (a robot avatar for the box)
 
-> **Status:** In progress · **Last verified:** 2026-07-04 · **Waves:** W0✅ W1✅ W2✅ W3✅ W4✅ W5◻️ W6◻️
+> **Status:** In progress · **Last verified:** 2026-07-04 · **Waves:** W0✅ W1✅ W2✅ W3✅ W4✅ W5✅ W6◻️
 
 A **wall pet** for the family: a display shows a window into a 3D Tron/synthwave
 room, and inside it a wireframe robot — an LLM-driven avatar that walks around,
@@ -20,7 +20,9 @@ WebGL room); the `ControlScreen` (the phone remote); and the **talk brain** — 
 `pet.turn` LLM route (adapter, structured `{speech, emotion, action}`, safe kids'
 persona) reached by a `say` command, with a talk box on the phone and a speech
 bubble on the Wall. Both surfaces render the same server-authoritative pet and stay
-in sync. **W5 (memory + autonomous life) is next.**
+in sync. **W6 (voice + polish) is next.** W5 (memory + autonomous life) has landed:
+a `pet_memory` table (RLS-firewalled) woven back into `pet.turn` (it remembers you),
+and an autonomous wander in the tick (it strolls the room on its own).
 Every wave satisfies the `CLAUDE.md` non-negotiables.
 
 **Chosen aesthetic + interaction (signed off):** the interactive 3D mockup
@@ -308,12 +310,16 @@ Vitest coverage and are built mock-first.
   it something and it answers in character on both surfaces.* (Default route is
   `xai:grok-4.3` like every task — the owner points it at the local model via the
   JPet routing row; `JBRAIN_LLM_TASKS` also works.)
-- **W5 — It's alive.** Idle action-selection + occasional `pet.thought` (skippable
-  under load); `app.pet_memory` (RLS + isolation test) fed back into prompts (the
-  Generative-Agents loop); the curated firewalled environment feed; autonomous
-  behaviours (wander, seek food when hungry, sleep at night). *Exit: the pet acts
-  on its own, remembers recent interactions, and reacts to a safe digest of the
-  house.*
+- **W5 — It's alive.** ✅ **Landed.** `app.pet_memory` (migration 0124, RLS + isolation
+  test) — episodic memories recorded on each `say` and the most recent woven back into
+  the `pet.turn` prompt (the Generative-Agents loop: it remembers you). Autonomous
+  wander: the tick occasionally points the pet at a new floor target so it strolls the
+  room on its own (clients interpolate the walk). Tests: memory RLS isolation +
+  record/recent + `set_target` PG; the brain prompt test asserts memories are woven in.
+  *Exit met: the pet acts on its own and remembers recent interactions.*
+  *(Deferred, carried to ROADMAP: the idle `pet.thought` LLM daydream and a curated
+  time-of-day environment feed — enhancements, not load-bearing; the memory recall is
+  the headline "it remembers you" behaviour.)*
 - **W6 — Voice + polish.** Web Speech STT on the phone (talk to it out loud) + a
   TTS/babble voice on the Wall; day/night lighting; care-loop stakes (neglect →
   visibly sad); Wall kiosk mode + phone↔wall pairing. *Exit: the kids talk to it

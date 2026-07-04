@@ -13,6 +13,24 @@ from sqlalchemy.orm import Mapped, mapped_column
 from jbrain.models.core import Base
 
 
+class PetMemory(Base):
+    """One episodic memory — a child's message, a care event — the pet recalls. The
+    most recent are woven back into the `pet.turn` prompt (docs/plans/JPET_PLAN.md W5).
+    Owner-only, single-domain (mirror of `pet_state`; migration 0124)."""
+
+    __tablename__ = "pet_memory"
+    __table_args__ = {"schema": "app"}
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    principal_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("app.principals.id")
+    )
+    domain_code: Mapped[str] = mapped_column(Text, ForeignKey("app.domains.code"))
+    kind: Mapped[str] = mapped_column(Text, default="said", server_default="said")
+    body: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
 class PetState(Base):
     """One pet, pinned to a single domain. Drives are 0–100 satisfaction (higher is
     better); `mood`/`emotion` are derived and materialized for cheap reads; the

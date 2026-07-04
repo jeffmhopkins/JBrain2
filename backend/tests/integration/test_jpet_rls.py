@@ -94,6 +94,28 @@ async def test_pet_owner_only_and_domain_narrowed(maker: async_sessionmaker) -> 
         ).scalar() == 0
 
 
+async def test_pet_memory_is_owner_only_and_domain_narrowed(maker: async_sessionmaker) -> None:
+    pid = await _owner_principal(maker)
+    tag = uuid.uuid4().hex[:8]
+    for code in ("general", "health"):
+        async with scoped_session(maker, OWNER) as session:
+            await session.execute(
+                text(
+                    "INSERT INTO app.pet_memory (principal_id, domain_code, kind, body)"
+                    " VALUES (:pid, :code, 'said', :body)"
+                ),
+                {"pid": pid, "code": code, "body": f"{tag}-{code}"},
+            )
+    like = {"t": f"{tag}%"}
+    count = text("SELECT count(*) FROM app.pet_memory WHERE body LIKE :t")
+    # A health-only session sees only its own domain's memory; a kid device sees none.
+    async with scoped_session(maker, read_context(pid, ("health",))) as session:
+        assert (await session.execute(count, like)).scalar() == 1
+    kid = SessionContext(principal_kind="device_key", domain_scopes=("general",))
+    async with scoped_session(maker, kid) as session:
+        assert (await session.execute(count, like)).scalar() == 0
+
+
 async def test_narrowed_owner_cannot_create_pet_outside_scope(maker: async_sessionmaker) -> None:
     pid = await _owner_principal(maker)
     health = read_context(pid, ("health",))

@@ -126,10 +126,19 @@ async def send_command(request: Request, principal: PrincipalDep, body: CommandI
     domain = _settings(request).jpet_domain
     repo = _repo(request)
     if body.action == "say":
-        reply = await pet_turn(_router(request), state=state, message=body.text or "")
+        text = (body.text or "").strip()
+        memories = await repo.recent_memories(ctx, domain=domain)
+        reply = await pet_turn(_router(request), state=state, message=text, memories=memories)
         info = await repo.apply_reply(
             ctx, domain=domain, speech=reply.speech, emotion=reply.emotion, action=reply.action
         )
+        if text:  # remember the exchange so the next turn can recall it (W5)
+            await repo.record_memory(
+                ctx,
+                domain=domain,
+                kind="said",
+                body=f'A child said: "{text[:120]}" — you replied: "{reply.speech[:120]}"',
+            )
     else:
         info = await repo.apply_command(
             ctx, domain=domain, command=Command(action=body.action, x=body.x, z=body.z)

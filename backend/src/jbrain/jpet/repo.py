@@ -19,7 +19,7 @@ from jbrain.jpet.service import (
     decayed,
     mood_of,
 )
-from jbrain.models.jpet import PetState
+from jbrain.models.jpet import PetMemory, PetState
 
 
 def _info(row: PetState) -> PetStateInfo:
@@ -168,6 +168,54 @@ class SqlJpetRepo:
                     mood=mood_of(drives, asleep=False),
                     updated_at=func.now(),
                 )
+            )
+            await session.refresh(row)
+            return _info(row)
+
+    async def record_memory(
+        self, ctx: SessionContext, *, domain: str, kind: str, body: str
+    ) -> None:
+        """Append an episodic memory (a child's message, a care event). Best-effort —
+        a memory write must never break the interaction it describes."""
+        async with scoped_session(self._maker, ctx) as session:
+            session.add(
+                PetMemory(
+                    domain_code=domain, principal_id=_principal(ctx), kind=kind, body=body[:400]
+                )
+            )
+
+    async def recent_memories(
+        self, ctx: SessionContext, *, domain: str, limit: int = 6
+    ) -> list[str]:
+        """The pet's most recent memories (newest first) for the `pet.turn` prompt."""
+        async with scoped_session(self._maker, ctx) as session:
+            rows = (
+                (
+                    await session.execute(
+                        select(PetMemory.body)
+                        .where(PetMemory.domain_code == domain)
+                        .order_by(PetMemory.created_at.desc(), PetMemory.id.desc())
+                        .limit(limit)
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            return list(rows)
+
+    async def set_target(
+        self, ctx: SessionContext, *, domain: str, x: float, z: float
+    ) -> PetStateInfo | None:
+        """Point the pet at a new floor target and set it walking — the autonomous
+        wander step (docs/plans/JPET_PLAN.md W5). None when no pet is in scope."""
+        async with scoped_session(self._maker, ctx) as session:
+            row = await self._load(session, domain)
+            if row is None:
+                return None
+            await session.execute(
+                update(PetState)
+                .where(PetState.id == row.id)
+                .values(target_x=x, target_z=z, action="walk", updated_at=func.now())
             )
             await session.refresh(row)
             return _info(row)

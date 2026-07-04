@@ -14,7 +14,7 @@ from jbrain.models.core import Base, DeviceSession, Domain, Principal, Subject
 from jbrain.models.images import GeneratedImage
 from jbrain.models.intake import IntakeLink, IntakeSession, IntakeSubmission
 from jbrain.models.jcode import JcodeSession
-from jbrain.models.jpet import PetState
+from jbrain.models.jpet import PetMemory, PetState
 from jbrain.models.location import GeofenceState, LocationFix, PlaceGeofence
 from jbrain.models.telemetry import HostMetric, HostMetricHourly, LlmUsage
 from jbrain.models.wiki import (
@@ -57,6 +57,7 @@ __all__ = [
     "LlmUsage",
     "LocationFix",
     "NoteAnalysis",
+    "PetMemory",
     "PetState",
     "Pipeline",
     "PlaceGeofence",

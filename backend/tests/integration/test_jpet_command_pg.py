@@ -88,6 +88,28 @@ async def test_apply_reply_persists_speech_and_emotion(maker: async_sessionmaker
     assert info.action == "play"
 
 
+async def test_memory_records_and_reads_newest_first(maker: async_sessionmaker) -> None:
+    ctx = await _owner_ctx(maker)
+    repo = SqlJpetRepo(maker)
+    await repo.ensure_pet(ctx, name="Blink", domain="general")
+    await repo.record_memory(ctx, domain="general", kind="said", body="Emma fed you an apple")
+    await repo.record_memory(ctx, domain="general", kind="said", body="Sam played fetch")
+    recent = await repo.recent_memories(ctx, domain="general", limit=6)
+    assert recent[0] == "Sam played fetch"  # newest first
+    assert "Emma fed you an apple" in recent
+
+
+async def test_set_target_makes_the_pet_walk(maker: async_sessionmaker) -> None:
+    ctx = await _owner_ctx(maker)
+    repo = SqlJpetRepo(maker)
+    await repo.ensure_pet(ctx, name="Blink", domain="general")
+    info = await repo.set_target(ctx, domain="general", x=-0.6, z=0.4)
+    assert info is not None
+    assert info.target_x == pytest.approx(-0.6)
+    assert info.target_z == pytest.approx(0.4)
+    assert info.action == "walk"
+
+
 async def test_command_state_reaches_a_subscriber(maker: async_sessionmaker) -> None:
     ctx = await _owner_ctx(maker)
     repo = SqlJpetRepo(maker)
