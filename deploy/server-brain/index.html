@@ -362,8 +362,12 @@ scene.fog = new THREE.FogExp2(0x0a0b0d, 0.018);
 const camera = new THREE.PerspectiveCamera(52, window.innerWidth / window.innerHeight, 0.1, 400);
 camera.position.set(0, 4, 46);   // closer in -> the cortex fills more of the screen
 
-// Container we slowly auto-rotate (the whole cortex).
+// Container we slowly auto-rotate (the whole cortex). Scaled up so neuron-to-neuron spacing
+// reads 1.5x wider on screen — applied on the GROUP (not the local neuron coords), so the
+// flood distances, synapse-link topology and lit-band width all keep their original tuning;
+// only the on-screen scale changes. Stream anchors track world position, so tendrils follow.
 const cortex = new THREE.Group();
+cortex.scale.setScalar(1.5);
 scene.add(cortex);
 
 /* ----------------------------------------------------------------------------
@@ -891,8 +895,9 @@ const STREAM_SPEC = {
   fetch:    { dir: 'in',  g: '#ffe2b4', f: new THREE.Color('#ffc66e'), speed: 3 },   // amber, fetched data IN to the llm (from the left)
 };
 const LLM_BR = 15;        // world radius at the brain edge where a stream connects
-const LLM_REACH = 60;     // world length of the filament: long enough to run from the anchor
-                          // clear OFF the screen edge, so a tendril spans edge <-> inner neuron
+const LLM_REACH = 90;     // world length of the filament: long enough to run from the anchor
+                          // (now on a 1.5x-wider cortex) clear OFF the screen edge, so a tendril
+                          // still spans screen-edge <-> inner neuron
 const LLM_STEP = 0.9;     // world units between glyphs — fixed, so short text stays tight
 const LLM_CAP = 600;      // max glyphs on the tendril — the WHOLE message streams (a marquee that
                           // scrolls the full thinking/answer through the visible span, running until
