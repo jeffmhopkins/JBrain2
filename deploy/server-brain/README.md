@@ -137,8 +137,11 @@ their own card — a quiet twin of the prompt popup.
 
 The **Read aloud** panel (bottom-right) speaks turns via the browser's Web Speech API. It has
 two independent voices — one for **prompts**, one for **answers** — each with its own enable
-checkbox and voice picker; both persist in `localStorage`. Markdown is stripped before
-speaking. The panel hides itself when the browser exposes no speech synthesis.
+checkbox and voice picker (English voices only); both persist in `localStorage`. Markdown is
+stripped before speaking. A small scheduler serializes speech and splits a long reply into
+sentence-sized chunks it queues one at a time (holding each utterance referenced until it
+ends) — so a long answer isn't cut off partway, which the raw API is prone to. The panel
+hides itself when the browser exposes no speech synthesis.
 
 On **Ubuntu / Firefox**, Web Speech synthesis is backed by `speech-dispatcher`, so install it
 plus a voice engine once — `sudo apt install speech-dispatcher espeak-ng` — and ensure
