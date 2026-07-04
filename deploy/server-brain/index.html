@@ -387,11 +387,12 @@ const camera = new THREE.PerspectiveCamera(52, window.innerWidth / window.innerH
 camera.position.set(0, 4, 46);   // closer in -> the cortex fills more of the screen
 
 // Container we slowly auto-rotate (the whole cortex). Scaled up so neuron-to-neuron spacing
-// reads 1.5x wider on screen — applied on the GROUP (not the local neuron coords), so the
-// flood distances, synapse-link topology and lit-band width all keep their original tuning;
-// only the on-screen scale changes. Stream anchors track world position, so tendrils follow.
+// reads wider on screen (1.25x — halfway between the original 1.0 and the 1.5 that was too
+// much) — applied on the GROUP (not the local neuron coords), so the flood distances,
+// synapse-link topology and lit-band width all keep their original tuning; only the on-screen
+// scale changes. Stream anchors track world position, so tendrils follow.
 const cortex = new THREE.Group();
-cortex.scale.setScalar(1.5);
+cortex.scale.setScalar(1.25);
 scene.add(cortex);
 
 /* ----------------------------------------------------------------------------
@@ -919,8 +920,8 @@ const STREAM_SPEC = {
   fetch:    { dir: 'in',  g: '#ffe2b4', f: new THREE.Color('#ffc66e'), speed: 3 },   // amber, fetched data IN to the llm (from the left)
 };
 const LLM_BR = 15;        // world radius at the brain edge where a stream connects
-const LLM_REACH = 90;     // world length of the filament: long enough to run from the anchor
-                          // (now on a 1.5x-wider cortex) clear OFF the screen edge, so a tendril
+const LLM_REACH = 75;     // world length of the filament: long enough to run from the anchor
+                          // (on the 1.25x-wider cortex) clear OFF the screen edge, so a tendril
                           // still spans screen-edge <-> inner neuron
 const LLM_STEP = 0.9;     // world units between glyphs — fixed, so short text stays tight
 const LLM_CAP = 600;      // max glyphs on the tendril — the WHOLE message streams (a marquee that
@@ -1671,14 +1672,15 @@ function saveVoicePref(kind) {
   const c = voiceCfg[kind];
   try { localStorage.setItem('brainVoice_' + kind, JSON.stringify({ on: c.on.checked, voice: c.sel.value })); } catch { /* private mode */ }
 }
+const isEnglishVoice = (v) => /^en(\b|[-_])/i.test(v.lang || '');
 function populateVoices() {
   if (!TTS) return;
-  const voices = TTS.getVoices();
+  const voices = TTS.getVoices().filter(isEnglishVoice);   // English voices only
   for (const kind of ['prompt', 'answer']) {
     const c = voiceCfg[kind];
-    if (!voices.length) {                           // none yet (async) or no engine installed
+    if (!voices.length) {                           // none yet (async) or no English engine installed
       if (!c.sel.options.length) {
-        const o = document.createElement('option'); o.value = ''; o.textContent = '— no system voices —';
+        const o = document.createElement('option'); o.value = ''; o.textContent = '— no English voices —';
         c.sel.appendChild(o);
       }
       continue;                                     // voiceschanged will re-call once they load
@@ -1690,31 +1692,62 @@ function populateVoices() {
       o.value = v.name; o.textContent = v.name + (v.lang ? ' · ' + v.lang : '') + (v.default ? ' ✓' : '');
       c.sel.appendChild(o);
     }
-    // restore saved/prior selection, else the browser default voice
-    const def = voices.find((v) => v.default);
-    c.sel.value = voices.some((v) => v.name === want) ? want : (def ? def.name : voices[0].name);
+    // restore saved/prior selection, else the default English voice
+    const def = voices.find((v) => v.default) || voices[0];
+    c.sel.value = voices.some((v) => v.name === want) ? want : def.name;
   }
 }
-function speak(kind, text) {
+// ---- Voice scheduler --------------------------------------------------------
+// Web Speech synthesis (esp. speech-dispatcher on Linux) is flaky: an utterance dropped
+// by a cancel()-then-speak() race, garbage-collected mid-sentence, or truncated past the
+// engine's ~15s ceiling all read as "it only said part of it". So we serialize — ONE
+// utterance at a time, long text SPLIT into sentence-sized chunks, each HELD referenced
+// until it ends, the queue advancing on end/error. We never cancel to start a turn (that
+// is the drop race); a new prompt just clears the not-yet-spoken backlog.
+const ttsQueue = [];        // pending { text, voiceName }
+let ttsActive = null;       // the utterance now speaking — kept referenced so it can't be GC'd mid-word
+function ttsChunks(s) {     // sentence-ish chunks, hard-split anything still too long for the engine
+  const out = [];
+  let buf = '';
+  for (const part of s.match(/[^.!?]+[.!?]*\s*|\s+/g) || [s]) {
+    if (buf && (buf + part).length > 180) { out.push(buf.trim()); buf = ''; }
+    buf += part;
+    while (buf.length > 200) { out.push(buf.slice(0, 200).trim()); buf = buf.slice(200); }
+  }
+  if (buf.trim()) out.push(buf.trim());
+  return out.filter(Boolean);
+}
+function ttsDrain() {
+  if (!TTS || ttsActive || !ttsQueue.length) return;
+  if (TTS.paused) TTS.resume();                     // a stray pause shouldn't wedge the queue
+  const item = ttsQueue.shift();
+  const u = new SpeechSynthesisUtterance(item.text);
+  const v = TTS.getVoices().find((x) => x.name === item.voiceName);
+  if (v) { u.voice = v; u.lang = v.lang; }
+  u.onend = () => { ttsActive = null; ttsDrain(); };
+  u.onerror = () => { ttsActive = null; ttsDrain(); };
+  ttsActive = u;                                    // hold the reference BEFORE speaking
+  TTS.speak(u);
+}
+function ttsClear() { ttsQueue.length = 0; ttsActive = null; if (TTS) TTS.cancel(); }
+function enqueueSpeak(kind, text) {
   const c = voiceCfg[kind];
   if (!TTS || !c.on.checked) return;
   const clean = mdToPlain(text);
   if (!clean) return;
-  if (kind === 'prompt') TTS.cancel();              // a prompt starts a fresh turn — clear any backlog
-  const u = new SpeechSynthesisUtterance(clean.slice(0, 600));
-  const v = TTS.getVoices().find((x) => x.name === c.sel.value);
-  if (v) { u.voice = v; u.lang = v.lang; }
-  TTS.speak(u);                                     // an answer just queues after its prompt
+  if (kind === 'prompt') ttsQueue.length = 0;       // new turn — drop un-spoken backlog (keep the active chunk)
+  for (const chunk of ttsChunks(clean)) ttsQueue.push({ text: chunk, voiceName: c.sel.value });
+  ttsDrain();
 }
-function speakPrompt(text) { speak('prompt', text); }
-function speakAnswer(text) { speak('answer', text); }
+function speakPrompt(text) { enqueueSpeak('prompt', text); }
+function speakAnswer(text) { enqueueSpeak('answer', text); }
 if (TTS) {
   voicePanel.hidden = false;
   for (const kind of ['prompt', 'answer']) {
     const c = voiceCfg[kind], pref = loadVoicePref(kind);
     c.on.checked = !!pref.on;
     if (pref.voice) c.sel.value = pref.voice;       // provisional; confirmed once voices populate
-    c.on.addEventListener('change', () => { saveVoicePref(kind); if (!c.on.checked) TTS.cancel(); });
+    c.on.addEventListener('change', () => { saveVoicePref(kind); if (!c.on.checked) ttsClear(); });
     c.sel.addEventListener('change', () => saveVoicePref(kind));
   }
   populateVoices();
