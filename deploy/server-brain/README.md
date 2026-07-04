@@ -141,8 +141,11 @@ checkbox and voice picker (English voices only); both persist in `localStorage`.
 stripped before speaking. A small scheduler serializes speech and splits a long reply into
 sentence-sized chunks it queues one at a time (holding each utterance referenced until it
 ends), and keys retries off the `onstart` signal — only a chunk that never *started* is
-re-spoken, so nothing is double-read. The panel hides itself when the browser exposes no
-speech synthesis.
+re-spoken, so nothing is double-read. Before the real text it fires a tiny **sacrificial probe
+and waits for its `onstart`** (the honest "audio is flowing" signal), so the cold-engine hit
+lands on the throwaway, not your first sentence; and while a voice is enabled it runs a
+**near-silent WebAudio keep-alive** so the OS sink can't idle-suspend between turns. The panel
+hides itself when the browser exposes no speech synthesis.
 
 On **Ubuntu / Firefox**, Web Speech synthesis is backed by `speech-dispatcher`, so install it
 plus a voice engine once — `sudo apt install speech-dispatcher espeak-ng` — and ensure
@@ -151,8 +154,9 @@ The picker then lists the installed voices. (No network or extra setup on Chromi
 
 #### Reliable audio on the wall box
 
-If the **first utterance after idle is dropped/clipped**, that is *not* a page bug — it is the
-Linux audio stack **below** the browser, and it can't be fully fixed from JS. Two box-level
+The page now defends itself here — the readiness probe + WebAudio keep-alive above cover most
+setups with no box config. But if the **first utterance after idle is still dropped/clipped**,
+the durable fix is one level down, in the Linux audio stack **below** the browser. Two box-level
 causes, two fixes (apply on the machine that drives the display):
 
 1. **The audio sink suspends on idle** and clips the start when it resumes (best match for
@@ -167,10 +171,11 @@ causes, two fixes (apply on the machine that drives the display):
    module: `spd-say -w "ready"` once at session start, set `DefaultModule espeak-ng` and the
    matching `AudioOutputMethod` in `~/.config/speech-dispatcher/speechd.conf`.
 
-A near-silent keep-alive audio stream also stops the sink from ever going cold on a wall that
-idles for minutes. (Planned follow-up: render TTS **server-side** with `piper` in `serve.py`
-and play it via `<audio>`, which removes the browser speech engine from the path entirely —
-though the sink-suspend fix above still applies to any audio.)
+(The page's own keep-alive already does this from the browser side; the box setting is the
+belt-and-suspenders fix for stacks that suspend even an active silent stream. Planned
+follow-up: render TTS **server-side** with `piper` in `serve.py` and play it via `<audio>`,
+which removes the browser speech engine from the path entirely — though the sink-suspend fix
+above still applies to any audio.)
 
 **This is the one place the display carries owner data.** Everything else here is host
 vitals + content-free markers, which is why it's safe unauthenticated on a trusted LAN.
