@@ -218,8 +218,10 @@ animation locally; it does not compute the pet, only draws it.
 ## 7. The Phone Control screen (PWA) — the remote
 
 A new **mobile-first Control screen** in the existing PWA (`frontend/src/screens/`,
-a `Launcher` tile), the "remote" the kids hold. It subscribes to `/pet/stream` for
-live status and sends `POST /pet/command`:
+a `Launcher` tile), the "remote" the kids hold. Interactive mock:
+`../mocks/jpet/07-phone-control.html` (paired-to-Wall status, care buttons, a
+send-it-somewhere room map, chat, and a talk bar with mic). It subscribes to
+`/pet/stream` for live status and sends `POST /pet/command`:
 
 - **Live status**: the pet's name, mood face, and Food/Energy/Fun/Love bars,
   updating in real time as the Wall (or the tick) changes them.
