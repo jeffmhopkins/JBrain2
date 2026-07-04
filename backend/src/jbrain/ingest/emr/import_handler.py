@@ -45,10 +45,25 @@ from jbrain.ingest.extract import PdfTextLayerExtractor
 from jbrain.models.analysis import ReviewItem
 from jbrain.models.notes import Attachment, Chunk, Note
 from jbrain.storage import BlobStore
+from jbrain.workflow.registry import ActionSpec
 
 PDF_MEDIA_TYPE = "application/pdf"
 PARAGRAPH = "paragraph"
 UNRECOGNIZED_SUBKIND = "emr_unrecognized_source"
+
+# In-code-only action (a migration seeds its trigger). Stage 2 of the EMR import
+# (§6.3–§6.6) — parse the decrypted PDFs into graph facts. No LLM on this path.
+EMR_PARSE_SPEC = ActionSpec(
+    name="emr_parse",
+    version=1,
+    handler="emr_parse",
+    domain_optional=True,
+    mutating=True,
+    cost_class="standard",
+    dedup_key_expr="note_id",
+    description="Parse a note's decrypted EMR PDFs into cited lab/encounter facts.",
+    category="note",
+)
 
 # The plain-read session for note/attachment/chunk lookups (no domain write).
 _SYSTEM = SessionContext(principal_id="worker", principal_kind="owner")

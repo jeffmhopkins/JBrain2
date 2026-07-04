@@ -38,6 +38,12 @@ from jbrain.workflow import events as wf_events
 
 log = structlog.get_logger()
 
+# Attachment media types the EMR-import triggers key on in the note.ingested payload
+# (docs/plans/EMR_IMPORT_PLAN.md §6.0): an archive is the pre-decryption import marker,
+# a decrypted PDF is the post-intake parse marker.
+ZIP_MEDIA_TYPES = ("application/zip", "application/x-zip-compressed")
+PDF_MEDIA_TYPE = "application/pdf"
+
 
 @dataclass(frozen=True)
 class _AttachmentRef:
@@ -82,6 +88,7 @@ class IngestPipeline:
             note.ingest_state = "processing"
             body = note.body
             domain = note.domain_code
+            destination = note.destination
             attachments = [
                 _AttachmentRef(
                     id=a.id,
@@ -168,12 +175,24 @@ class IngestPipeline:
             # safety net for a dropped event. The has_active_analysis gate above stays
             # as a cheap pre-filter (skip emitting when a queued integrate already
             # exists), but the dispatcher's dedup is the authoritative once-only.
+            # The payload carries the pre-decryption markers the EMR-import triggers key
+            # on (docs/plans/EMR_IMPORT_PLAN.md §6.0/§12.2 #4): `destination` +
+            # whether the note currently holds an archive vs a decrypted PDF. These are
+            # visible on the raw/ingested note, so the trigger stays a precise
+            # user-chosen marker via `payload_equals` — never a body-text guess. Extra
+            # keys are inert for every other note.ingested trigger (payload_equals is a
+            # subset match; forward_keys still defaults to {note_id}).
             await wf_events.emit_event(
                 self._maker,
                 SYSTEM_CTX,
                 type=wf_events.NOTE_INGESTED,
                 domain_code=domain,
-                payload={"note_id": note_id},
+                payload={
+                    "note_id": note_id,
+                    "destination": destination,
+                    "has_zip_attachment": any(a.media_type in ZIP_MEDIA_TYPES for a in attachments),
+                    "has_pdf_attachment": any(a.media_type == PDF_MEDIA_TYPE for a in attachments),
+                },
                 enqueued=wf_events.shadow_enqueued("integrate_note", {"note_id": note_id}),
             )
         log.info("ingest.indexed", note_id=note_id, chunks=len(chunks))

@@ -1,6 +1,6 @@
 # EMR Import — Build Plan
 
-> **Status:** In progress · **Last verified:** 2026-07-03 · **Waves:** W0✅ W1✅ W2◻️ W3◻️ W4◻️ W5◻️
+> **Status:** In progress · **Last verified:** 2026-07-04 · **Waves:** W0✅ W1✅ W2◻️ W3◻️ W4◻️ W5◻️
 
 **An in-progress build plan** (per `docs/DOC_LIFECYCLE.md`): red-teamed, on the roadmap. Wave 0
 (gates + fixtures) and Wave 1 (storage bedrock — schema defs, the `fhir_status`/supersession
@@ -1650,10 +1650,11 @@ concern — the trigger + event-payload widening, §6.0/§12.2, needs an owner s
 approach before it lands). The one LLM touch on the structured path — the pathology-narrative
 Final-Diagnosis extraction — is now landed (`pathology.py`, above).
 
-### 12.8 Wave 3 — in progress (parsers + cross-source dedup landed)
+### 12.8 Wave 3 — in progress (parsers + dedup + dispatch + job + trigger landed)
 
-The three remaining per-source parsers and the cross-source reconciliation enforcer are built and
-unit-tested (`backend/src/jbrain/ingest/emr/`):
+The three remaining per-source parsers, the cross-source reconciliation enforcer, the parser dispatch,
+the `emr_parse` job, and the seeded two-stage trigger are built and tested (`backend/src/jbrain/ingest/emr/`);
+only the ARIA vision-OCR extractor is left:
 
 - **`onecontent.py`** — the OneContent cumulative-lab parser, resolving the §6.2 go/no-go to
   **x-geometry**: a pure function of `get_text("words")` word boxes that groups words into lines by
@@ -1713,8 +1714,21 @@ unit-tested (`backend/src/jbrain/ingest/emr/`):
   key instead of `create_provisional`'s always-new) is a follow-on; the projection is correct either
   way — retracted duplicates never surface.*
 
-**Remaining in W3 (next):** registering `emr_parse` with the worker + the seeded `emr_import`
-**trigger** (migration + the §6.0/§12.2 event-payload widening on `note.ingested`, where the
-attachments are present — `note.created` fires before the zip is uploaded) and the intake→ingest→parse
-sequencing. This is the piece flagged for an owner sanity-check. The vision-OCR job that feeds ARIA its
-text (§6.2) is a W3/W4 extractor concern.
+- **the trigger wiring** — `emr_import`/`emr_parse` registered with the worker (`worker.py` impls +
+  `build_registry`; each an in-code-only `ActionSpec` beside the handler, no `app.actions` seed) and a
+  **two-stage pipeline** seeded off `note.ingested` (migration `0122`). Its payload is widened
+  (`ingest/pipeline.py`, the approved §12.2 #4) with `destination` + `has_zip_attachment` +
+  `has_pdf_attachment` — the pre-decryption markers a `payload_equals` filter keys on (on
+  `note.ingested`, where the attachments exist; `note.created` fires before the zip is uploaded). Stage
+  1 (`emr_import`, `has_zip`) decrypts in place + re-ingests; the re-ingest re-emits `note.ingested`
+  with the zip gone, selecting stage 2 (`emr_parse`, `has_pdf` ∧ ¬`has_zip`). No loop: stage 1 can't
+  re-fire and stage 2 is projection-idempotent; both are health-only (the automatic firewall). This
+  surfaced a small robustness need honored en route. Tests: the trigger `payload_equals` gating +
+  worker-registration bijection (unit); and a real-Postgres e2e proving ingest emits the markers and a
+  live dispatcher tick resolves the archive note into exactly one intake job, the decrypted note into
+  one parse job, and a plain Records note into neither.
+
+**Remaining in W3 (next):** the **ARIA vision-OCR extractor** (§6.2) — rasterize a scanned (zero
+text-layer) PDF's pages and run the vision-LLM OCR route (`confidence=0.7`) into the
+`attachment_extracts` cache, so the shipped `emr_parse` handler feeds the ARIA parser real OCR text
+rather than the current canned fixtures. The parsers, dedup, dispatch, job, and trigger are all landed.

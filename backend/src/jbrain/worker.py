@@ -31,6 +31,8 @@ from jbrain.embed import NoteEmbedder, PredicateEmbedder, TeiEmbedClient
 from jbrain.gmail.provider import GmailClientProvider
 from jbrain.gmail.triage import TRIAGE_INBOX_SPEC, triage_inbox_handler
 from jbrain.ingest import ocr
+from jbrain.ingest.emr.import_handler import EMR_PARSE_SPEC, EmrImportPipeline
+from jbrain.ingest.emr.intake_handler import EMR_IMPORT_SPEC, EmrIntakePipeline
 from jbrain.ingest.ocr import OcrPipeline
 from jbrain.ingest.pipeline import IngestPipeline
 from jbrain.ingest.transcribe_job import TRANSCRIBE_ATTACHMENT_SPEC, TranscribePipeline
@@ -482,6 +484,18 @@ async def run() -> None:
             transcribe_model=settings.whisper_model,
             gateway=LocalGatewayClient(settings.whisper_url) if transcribe_enabled else None,
         ).analyze_video_attachment,
+        # EMR import (docs/plans/EMR_IMPORT_PLAN.md), a two-stage pipeline the seeded
+        # `emr_import`/`emr_parse` triggers drive off note.ingested. Stage 1 decrypts the
+        # archive in place and re-ingests (enqueue_ingest re-chunks the decrypted PDFs);
+        # stage 2 parses those PDFs into cited facts via the shipped arbiter (no LLM).
+        "emr_import": EmrIntakePipeline(
+            maker,
+            blobs,
+            enqueue_ingest=lambda nid: queue.enqueue(
+                maker, queue.SYSTEM_CTX, "ingest_note", {"note_id": nid}
+            ),
+        ).intake,
+        "emr_parse": EmrImportPipeline(maker, blobs, analyzer).parse,
         # Retroactive predicate normalization; trigger is the Phase-5 engine.
         "consolidate_predicates": Consolidator(maker).run,
         # Keep the canonical_predicates index in step with the schema registry.
@@ -568,6 +582,8 @@ async def run() -> None:
             TRIAGE_INBOX_SPEC,
             *WIKI_SPECS,
             WIKI_LINT_SPEC,
+            EMR_IMPORT_SPEC,
+            EMR_PARSE_SPEC,
         )
     )
     handlers = registry.dispatch_table(impls)
