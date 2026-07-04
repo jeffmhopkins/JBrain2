@@ -245,6 +245,22 @@
   #fps { position: fixed; bottom: 6px; right: 10px; z-index: 3;
     font-size: 9px; color: rgba(154,157,163,0.5); letter-spacing: 0.1em; }
 
+  /* Read-aloud panel — Web Speech API. Two independent voices (prompt + answer), each with
+     its own enable checkbox and voice picker. Fades with the panels when idle; hidden
+     entirely when the browser exposes no speech synthesis. */
+  #voice { bottom: 18px; right: 14px; z-index: 3; padding: 9px 11px 10px;
+    display: flex; flex-direction: column; gap: 6px; min-width: 172px; }
+  #voice .hd { font-size: 9px; letter-spacing: 0.22em; color: var(--text-2);
+    text-transform: uppercase; margin-bottom: 1px; }
+  #voice .vrow { display: flex; align-items: center; gap: 7px; cursor: pointer; }
+  #voice .vrow input { accent-color: #6FB6B1; cursor: pointer; margin: 0; }
+  #voice .vk { font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase;
+    color: var(--text-2); width: 46px; }
+  #voice .vrow input:checked ~ .vk { color: #6FB6B1; }
+  #voice select { flex: 1; min-width: 0; font-family: inherit; font-size: 10px;
+    color: var(--text); background: rgba(20,22,26,0.9); cursor: pointer;
+    border: 1px solid rgba(127,167,201,0.22); border-radius: 6px; padding: 3px 5px; }
+
   @media (max-width: 640px) {
     #legend { display: none; }
     #readout { min-width: 150px; padding: 10px 12px; }
@@ -306,6 +322,14 @@
     <button id="btnFetch">⇩ Web fetch</button>
     <button id="btnLlmStream">🧠 LLM stream</button>
     <button id="btnTask">⚙ Task</button>
+  </div>
+
+  <div id="voice" class="panel" hidden>
+    <div class="hd">🔊 READ ALOUD</div>
+    <label class="vrow"><input type="checkbox" id="vPromptOn"><span class="vk">prompt</span>
+      <select id="vPromptVoice" title="Voice for prompts"></select></label>
+    <label class="vrow"><input type="checkbox" id="vAnswerOn"><span class="vk">answer</span>
+      <select id="vAnswerVoice" title="Voice for answers"></select></label>
   </div>
 
   <div id="fps">—</div>
@@ -1590,9 +1614,9 @@ const ServerBrain = {
   // LLM turn (opt-in real-text streaming): the prompt streams IN from the left, the
   // (fast) thinking trace and then the answer stream OUT to the right; prompt and answer
   // each bloom a fade-out popup so the full text is legible for a beat.
-  llmInput(text) { spawnStream('prompt', text); if (text) setTimeout(() => spawnPopup(text, 'prompt'), 400); },
+  llmInput(text) { spawnStream('prompt', text); if (text) { setTimeout(() => spawnPopup(text, 'prompt'), 400); speakPrompt(text); } },
   llmThinking(text) { spawnStream('thinking', text); },
-  llmOutput(text) { spawnStream('answer', text); if (text) setTimeout(() => spawnPopup(text, 'answer'), 1000); },
+  llmOutput(text) { spawnStream('answer', text); if (text) { setTimeout(() => spawnPopup(text, 'answer'), 1000); speakAnswer(text); } },
   // A workflow/task started or finished — a held teal popup names what's running (call
   // taskStop with the same name when it ends). Several can hold at once.
   taskStart(name) { taskStart(name); },
@@ -1626,6 +1650,76 @@ document.getElementById('btnSearch').onclick = () => ServerBrain.webSearch();
 document.getElementById('btnFetch').onclick = () => ServerBrain.webFetch();
 document.getElementById('btnLlmStream').onclick = () => demoLlmTurn();
 document.getElementById('btnTask').onclick = () => demoTask();
+
+/* ============================================================================
+   READ ALOUD — two independent Web Speech voices: one reads prompts, one reads
+   answers. Each has its own enable checkbox and voice picker; both persist. The
+   panel hides entirely when the browser has no speechSynthesis (e.g. Firefox on
+   Linux without speech-dispatcher installed). speakPrompt/speakAnswer are called
+   from ServerBrain.llmInput / .llmOutput.
+   ========================================================================== */
+const TTS = ('speechSynthesis' in window) ? window.speechSynthesis : null;
+const voicePanel = document.getElementById('voice');
+const voiceCfg = {
+  prompt: { on: document.getElementById('vPromptOn'), sel: document.getElementById('vPromptVoice') },
+  answer: { on: document.getElementById('vAnswerOn'), sel: document.getElementById('vAnswerVoice') },
+};
+function loadVoicePref(kind) {
+  try { return JSON.parse(localStorage.getItem('brainVoice_' + kind) || '{}'); } catch { return {}; }
+}
+function saveVoicePref(kind) {
+  const c = voiceCfg[kind];
+  try { localStorage.setItem('brainVoice_' + kind, JSON.stringify({ on: c.on.checked, voice: c.sel.value })); } catch { /* private mode */ }
+}
+function populateVoices() {
+  if (!TTS) return;
+  const voices = TTS.getVoices();
+  for (const kind of ['prompt', 'answer']) {
+    const c = voiceCfg[kind];
+    if (!voices.length) {                           // none yet (async) or no engine installed
+      if (!c.sel.options.length) {
+        const o = document.createElement('option'); o.value = ''; o.textContent = '— no system voices —';
+        c.sel.appendChild(o);
+      }
+      continue;                                     // voiceschanged will re-call once they load
+    }
+    const want = c.sel.value || loadVoicePref(kind).voice || '';
+    c.sel.textContent = '';
+    for (const v of voices) {
+      const o = document.createElement('option');
+      o.value = v.name; o.textContent = v.name + (v.lang ? ' · ' + v.lang : '') + (v.default ? ' ✓' : '');
+      c.sel.appendChild(o);
+    }
+    // restore saved/prior selection, else the browser default voice
+    const def = voices.find((v) => v.default);
+    c.sel.value = voices.some((v) => v.name === want) ? want : (def ? def.name : voices[0].name);
+  }
+}
+function speak(kind, text) {
+  const c = voiceCfg[kind];
+  if (!TTS || !c.on.checked) return;
+  const clean = mdToPlain(text);
+  if (!clean) return;
+  if (kind === 'prompt') TTS.cancel();              // a prompt starts a fresh turn — clear any backlog
+  const u = new SpeechSynthesisUtterance(clean.slice(0, 600));
+  const v = TTS.getVoices().find((x) => x.name === c.sel.value);
+  if (v) { u.voice = v; u.lang = v.lang; }
+  TTS.speak(u);                                     // an answer just queues after its prompt
+}
+function speakPrompt(text) { speak('prompt', text); }
+function speakAnswer(text) { speak('answer', text); }
+if (TTS) {
+  voicePanel.hidden = false;
+  for (const kind of ['prompt', 'answer']) {
+    const c = voiceCfg[kind], pref = loadVoicePref(kind);
+    c.on.checked = !!pref.on;
+    if (pref.voice) c.sel.value = pref.voice;       // provisional; confirmed once voices populate
+    c.on.addEventListener('change', () => { saveVoicePref(kind); if (!c.on.checked) TTS.cancel(); });
+    c.sel.addEventListener('change', () => saveVoicePref(kind));
+  }
+  populateVoices();
+  TTS.addEventListener('voiceschanged', populateVoices);   // voices load async (esp. first paint)
+}
 
 const HEALTH_COLOR = { ok: '#8FBC9A', warn: '#C9A36A', crit: '#CF8A8F' };
 const HEALTH_LABEL = { ok: 'healthy', warn: 'degraded', crit: 'critical' };
