@@ -116,9 +116,7 @@ def _warm_tasks(request: Request) -> set[asyncio.Task[None]]:
     return cast("set[asyncio.Task[None]]", tasks)
 
 
-async def _warm_model(
-    gateway: LocalGateway, served: str, residency: object | None = None
-) -> None:
+async def _warm_model(gateway: LocalGateway, served: str, residency: object | None = None) -> None:
     # Give the coder the whole box: if it's NOT already resident, evict every OTHER model
     # then load it; if it IS already resident, do nothing (no evict, no reload). A cold
     # 80B load reads tens of GB (blocks up to ~2 min), so this runs in the background —
