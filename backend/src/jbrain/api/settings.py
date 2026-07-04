@@ -14,6 +14,7 @@ from jbrain.api.deps import PrincipalDep
 from jbrain.api.notes import ctx_for
 from jbrain.settings_store import (
     BRAIN_LLM_STREAM_KEY,
+    BRAIN_READ_ALOUD_KEY,
     IMAGE_ANALYSIS_KEY,
     OWNER_TIMEZONE_KEY,
     SqlSettingsStore,
@@ -38,6 +39,10 @@ class SettingsOut(BaseModel):
     # default — see BRAIN_LLM_STREAM_KEY: it puts owner text on the unauthenticated
     # display, so only enable it for a localhost-bound / box-monitor-only display.
     brain_llm_stream: bool = False
+    # Read the streamed wall-display turns aloud (piper TTS on the box). OFF by
+    # default — the runtime companion to brain_llm_stream (BRAIN_READ_ALOUD_KEY),
+    # same localhost-bound / box-monitor-only caveat.
+    brain_read_aloud: bool = False
 
 
 class SettingsPatch(BaseModel):
@@ -47,6 +52,7 @@ class SettingsPatch(BaseModel):
     image_analysis_mode: Literal["full", "ocr"] | None = None
     owner_timezone: str | None = None
     brain_llm_stream: bool | None = None
+    brain_read_aloud: bool | None = None
 
 
 async def _read(ctx, store: SqlSettingsStore) -> SettingsOut:
@@ -54,6 +60,7 @@ async def _read(ctx, store: SqlSettingsStore) -> SettingsOut:
         image_analysis_mode=await store.image_analysis_mode(ctx),
         owner_timezone=await store.owner_timezone(ctx),
         brain_llm_stream=await store.brain_llm_stream(ctx),
+        brain_read_aloud=await store.brain_read_aloud(ctx),
     )
 
 
@@ -64,7 +71,7 @@ async def read_settings(principal: PrincipalDep, store: SettingsStoreDep) -> Set
 
 @router.put("/settings")
 async def update_settings(
-    body: SettingsPatch, principal: PrincipalDep, store: SettingsStoreDep
+    body: SettingsPatch, request: Request, principal: PrincipalDep, store: SettingsStoreDep
 ) -> SettingsOut:
     ctx = ctx_for(principal)
     if body.image_analysis_mode is not None:
@@ -76,4 +83,12 @@ async def update_settings(
         await store.upsert(ctx, OWNER_TIMEZONE_KEY, body.owner_timezone)
     if body.brain_llm_stream is not None:
         await store.upsert(ctx, BRAIN_LLM_STREAM_KEY, body.brain_llm_stream)
+    if body.brain_read_aloud is not None:
+        await store.upsert(ctx, BRAIN_READ_ALOUD_KEY, body.brain_read_aloud)
+        # Push the read-aloud flag to the wall now so the voice panel shows/hides on the
+        # toggle without waiting for the next chat turn (which re-syncs it anyway). Best-
+        # effort display config, never owner text — a hiccup must not fail the save.
+        flag_emit = getattr(request.app.state, "brain_flag_emit", None)
+        if flag_emit is not None:
+            flag_emit("read_aloud", body.brain_read_aloud)
     return await _read(ctx, store)

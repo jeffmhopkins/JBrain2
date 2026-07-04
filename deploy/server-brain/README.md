@@ -153,7 +153,20 @@ clips the silence, not the first word.
 only thing to provision is the voice models. They live (git-ignored) in the bind-mounted `voices/`
 dir; with none present, TTS stays **off** (panel hidden), so this is inert by default.
 
-**Enable it (on the box):**
+The voice panel shows only when **both** are true: the owner has turned on **Settings → Read wall
+display aloud** (the `brain_read_aloud` app setting, **off by default** — the runtime companion to
+*Stream LLM to wall display*) **and** at least one piper voice is installed. The app pushes the
+setting to this service as a held flag (`{"kind": "read_aloud", "on": …}` to `POST /event`, surfaced
+in `/stats.read_aloud`) on the toggle and again each chat turn, so flipping it shows/hides the panel
+live with no redeploy; the display is ephemeral, so it stays off until the next push after a restart.
+Like *Stream LLM*, it only speaks the streamed prompt/answer text, so enable it only for a
+localhost-bound / box-monitor-only display.
+
+Two layers, then: the Settings toggle above is the **runtime** switch (show the panel / speak),
+flipped live with no redeploy. Provisioning the piper voices is the one **deploy-time** step (a heavy
+download, so it's env-gated like the other optional services):
+
+**Provision the voices (on the box):**
 
 - **Containerized deploy:** set `BRAIN_TTS_ENABLED=true` in the compose `.env`, then `jbrain update`
   — the update downloads the default Amy + Joe models into `voices/` (idempotent, best-effort) and
@@ -161,6 +174,8 @@ dir; with none present, TTS stays **off** (panel hidden), so this is inert by de
   `bash src/deploy/server-brain/install-tts.sh --voices-only`.
 - **Run-on-host** (`python3 serve.py` directly): `bash deploy/server-brain/install-tts.sh` installs
   piper *and* the models.
+
+With the voices present, flip **Settings → Read wall display aloud** on to actually hear turns.
 
 Add more voices by dropping `<name>.onnx` + `<name>.onnx.json` in `voices/` (or list extra names in
 `install-tts.sh`); grab English voices from the

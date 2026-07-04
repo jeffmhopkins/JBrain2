@@ -121,6 +121,13 @@ EVENTS_PATH = os.environ.get("BRAIN_EVENTS_FILE", "")
 _posted: "deque" = deque(maxlen=64)
 _posted_lock = threading.Lock()
 
+# Persistent read-aloud switch, pushed by the app ({"kind": "read_aloud", "on": bool} to
+# /event) from the brain_read_aloud setting. Unlike the queued tendril events this is a
+# held boolean surfaced in every /stats, so the page shows/hides its voice panel on it (in
+# addition to piper voices being installed). Default OFF: a fresh/restarted display speaks
+# nothing until the app re-pushes the flag (it does so on the setting change and each turn).
+_read_aloud = [False]
+
 
 def _drain_posted() -> list:
     with _posted_lock:
@@ -406,12 +413,16 @@ def _demo_snapshot() -> dict:
         _demo_state["task"] = ""
     return _shape(util, mem, power, temp, load=util * 6, uptime_h=72.0,
                   net_in=net_in, net_out=net_out, disk_read=disk_read,
-                  events=events + _drain_posted())
+                  events=events + _drain_posted(),
+                  # Demo previews the voice panel (if voices are installed) without an app.
+                  read_aloud=True)
 
 
 def _shape(util, mem, power, temp, load, uptime_h,
-           net_in=0.0, net_out=0.0, disk_read=0.0, events=None) -> dict:
+           net_in=0.0, net_out=0.0, disk_read=0.0, events=None, read_aloud=None) -> dict:
     """Assemble the ServerBrain contract shape from raw host vitals."""
+    if read_aloud is None:
+        read_aloud = _read_aloud[0]
     util = max(0.0, min(1.0, util))
     mem = max(0.0, min(1.0, mem))
     if util > 0.97 or mem > 0.95 or (temp or 0) > 92:
@@ -440,6 +451,9 @@ def _shape(util, mem, power, temp, load, uptime_h,
         "disk": {"readRate": round(disk_read, 4)},
         # web-tool calls -> reach-out tendrils (drained by the page each poll).
         "events": events or [],
+        # Persistent read-aloud switch (brain_read_aloud) — the page shows its voice panel
+        # only when this is on AND piper voices are installed.
+        "read_aloud": bool(read_aloud),
         "host": {"load_1m": round(load, 2), "uptime_h": uptime_h},
     }
 
@@ -504,7 +518,9 @@ class Handler(BaseHTTPRequestHandler):
         # ({"kind": "web_search"|"web_fetch"} — content-free) or, when the owner has
         # opted in, an LLM turn ({"kind": "llm_input"|"llm_output", "text": ...} —
         # the real prompt/answer text). A running workflow/task posts
-        # {"kind": "task_start"|"task_stop", "text": name} to hold/retire a teal popup.
+        # {"kind": "task_start"|"task_stop", "text": name} to hold/retire a teal popup, and
+        # the read-aloud setting pushes {"kind": "read_aloud", "on": bool} — a held flag, not
+        # a tendril, latched below and surfaced in /stats to show/hide the voice panel.
         # We queue it for the next /stats drain (-> a tendril; the llm kinds stream their
         # text along it + fade an answer popup; the task kinds hold a named popup).
         if self.path.split("?", 1)[0] != "/event":
@@ -517,6 +533,12 @@ class Handler(BaseHTTPRequestHandler):
             self._send(400, b"bad request", "text/plain")
             return
         kind = ev.get("kind") if isinstance(ev, dict) else None
+        if kind == "read_aloud":
+            # A held display-config flag, not a tendril event: latch it (the app pushes it
+            # from the brain_read_aloud setting) so /stats reflects it until the next push.
+            _read_aloud[0] = bool(ev.get("on"))
+            self._send(204, b"", "text/plain")
+            return
         if kind in (
             "web_search",
             "web_fetch",

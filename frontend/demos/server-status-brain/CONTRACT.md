@@ -79,7 +79,11 @@ window.ServerBrain.injectError(): void   // force an API error blip
     { kind: 'llm_input',    text: '…', ts: 1719772800000 },  // -> ServerBrain.llmInput(text)
     { kind: 'llm_thinking', text: '…', ts: 1719772800000 },  // -> ServerBrain.llmThinking(text)
     { kind: 'llm_output',   text: '…', ts: 1719772800000 }   // -> ServerBrain.llmOutput(text)
-  ]
+  ],
+  read_aloud: false           // held display-config flag (brain_read_aloud), not an event:
+                              // the page shows its read-aloud voice panel only when this is
+                              // true AND piper voices are installed. Pushed out-of-band via
+                              // POST /event {kind:'read_aloud', on}; absent in the pure demo.
 }
 ```
 

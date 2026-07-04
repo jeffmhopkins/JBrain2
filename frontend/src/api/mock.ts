@@ -331,6 +331,7 @@ const SETTINGS: AppSettings = {
   image_analysis_mode: "full",
   owner_timezone: null,
   brain_llm_stream: false,
+  brain_read_aloud: false,
 };
 
 // Per-task LLM routing fixture (GET/PUT /api/settings/llm). Only grok carries
@@ -3108,6 +3109,9 @@ export const mockFetch: typeof fetch = async (input, init) => {
       } else if (key === "brain_llm_stream") {
         if (typeof value !== "boolean") return json({ detail: "bad brain_llm_stream" }, 422);
         SETTINGS.brain_llm_stream = value;
+      } else if (key === "brain_read_aloud") {
+        if (typeof value !== "boolean") return json({ detail: "bad brain_read_aloud" }, 422);
+        SETTINGS.brain_read_aloud = value;
       } else {
         return json({ detail: `unknown key ${key}` }, 422);
       }

@@ -110,6 +110,19 @@ BRAIN_LLM_STREAM_KEY = "brain_llm_stream"
 BRAIN_LLM_STREAM_DEFAULT = False
 
 
+# Read the wall display's streamed turns ALOUD, rendered on the box by piper TTS
+# (deploy/server-brain, GET /tts). The runtime companion to brain_llm_stream: it is
+# the gate the wall uses to SHOW its read-aloud voice panel — and it only speaks the
+# text that brain_llm_stream already streams, so like that switch it is meaningful
+# only when the display is the box's own monitor (localhost-bound). The wall also
+# needs piper voice models installed (baked image + downloaded voices); with none it
+# shows no panel regardless. OFF by default and read live per turn (jbrain.api.agent),
+# which fire-and-forget POSTs the flag to the display so it flips with no redeploy; an
+# absent or non-true value reads as OFF.
+BRAIN_READ_ALOUD_KEY = "brain_read_aloud"
+BRAIN_READ_ALOUD_DEFAULT = False
+
+
 # The served-model id code mode (jcode) runs its coding agent against — the live
 # control surface for "which model does the jcode agent use". Absent/non-string =
 # "" (unset): the api falls back to the JBRAIN_JCODE_MODEL config default. The
@@ -424,6 +437,12 @@ class SqlSettingsStore:
         Defaults OFF; only an explicit `true` enables it (any non-true value reads as
         off, so owner text never rides the unauthenticated display off a junk value)."""
         return await self.get(ctx, BRAIN_LLM_STREAM_KEY, BRAIN_LLM_STREAM_DEFAULT) is True
+
+    async def brain_read_aloud(self, ctx: SessionContext) -> bool:
+        """Whether the on-box wall display reads its streamed turns aloud (shows/enables
+        its piper voice panel). Defaults OFF; only an explicit `true` enables it (any
+        non-true value reads as off)."""
+        return await self.get(ctx, BRAIN_READ_ALOUD_KEY, BRAIN_READ_ALOUD_DEFAULT) is True
 
     async def jcode_model(self, ctx: SessionContext) -> str:
         """The selected served-model id for the code-mode (jcode) agent, or "" when

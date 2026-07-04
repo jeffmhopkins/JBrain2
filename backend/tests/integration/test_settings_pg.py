@@ -102,6 +102,25 @@ async def test_brain_llm_stream_defaults_off_and_round_trips(
     assert await store.brain_llm_stream(OWNER) is False
 
 
+async def test_brain_read_aloud_defaults_off_and_round_trips(
+    maker: async_sessionmaker[AsyncSession],
+) -> None:
+    from jbrain.settings_store import BRAIN_READ_ALOUD_KEY
+
+    store = SqlSettingsStore(maker)
+    # Absent → off: the wall shows no voice panel until the owner opts in.
+    assert await store.brain_read_aloud(OWNER) is False
+
+    await store.upsert(OWNER, BRAIN_READ_ALOUD_KEY, True)
+    assert await store.brain_read_aloud(OWNER) is True
+
+    # Any non-true stored value reads as off (fail-closed).
+    await store.upsert(OWNER, BRAIN_READ_ALOUD_KEY, "on")
+    assert await store.brain_read_aloud(OWNER) is False
+    await store.upsert(OWNER, BRAIN_READ_ALOUD_KEY, False)
+    assert await store.brain_read_aloud(OWNER) is False
+
+
 async def test_owner_timezone_round_trip_and_rejects_unknown_zones(
     maker: async_sessionmaker[AsyncSession],
 ) -> None:

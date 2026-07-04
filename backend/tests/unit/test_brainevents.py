@@ -6,7 +6,13 @@ import asyncio
 
 import httpx
 
-from jbrain.agent.brainevents import _post_event, brain_text_enabled, build_event_emitter
+from jbrain.agent.brainevents import (
+    _post_event,
+    _post_flag,
+    brain_text_enabled,
+    build_event_emitter,
+    build_flag_emitter,
+)
 
 
 def test_emit_noop_without_url() -> None:
@@ -92,3 +98,40 @@ async def test_post_event_swallows_transport_errors(monkeypatch) -> None:  # typ
 
     monkeypatch.setattr(httpx.AsyncClient, "post", boom)
     await _post_event("http://server-brain:8800/event", "web_search")  # must not raise
+
+
+def test_flag_emit_noop_without_url() -> None:
+    # No URL configured -> the flag emitter is a silent no-op (and needs no loop).
+    build_flag_emitter("")("read_aloud", True)  # must not raise
+
+
+def test_flag_emit_without_running_loop_is_noop() -> None:
+    build_flag_emitter("http://server-brain:8800/event")("read_aloud", True)  # must not raise
+
+
+async def test_flag_emit_ships_regardless_of_text_gate(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    # The read-aloud flag is display config, not owner text: it ships even with the
+    # per-turn text gate OFF (unlike the text emitter).
+    posted: list[dict] = []
+
+    async def fake_send(self, url, json):  # type: ignore[no-untyped-def]
+        posted.append(json)
+
+        class _R:
+            pass
+
+        return _R()
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", fake_send)
+    brain_text_enabled.set(False)
+    build_flag_emitter("http://server-brain:8800/event")("read_aloud", True)
+    await asyncio.sleep(0)
+    assert posted == [{"kind": "read_aloud", "on": True}]
+
+
+async def test_post_flag_swallows_transport_errors(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    async def boom(*_args, **_kwargs) -> None:
+        raise httpx.ConnectError("display unreachable")
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", boom)
+    await _post_flag("http://server-brain:8800/event", "read_aloud", True)  # must not raise

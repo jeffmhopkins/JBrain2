@@ -1701,6 +1701,16 @@ function speakAnswer(text) { enqueueTTS('answer', text); }
 // Default model per kind when nothing is saved yet — matched by the installed set, else the
 // first available. The picker still lists every installed model, so adding voices just works.
 const DEFAULT_VOICE = { prompt: 'en_US-joe-medium', answer: 'en_US-amy-medium' };
+// The panel shows only when BOTH piper voices are installed on the box AND the owner has
+// turned on the brain_read_aloud setting (surfaced as /stats.read_aloud). Either alone is
+// not enough: no voices means nothing to speak; setting off means the owner hasn't opted in.
+let voicesAvailable = false;
+let readAloudOn = false;
+function updateVoicePanel() {
+  const show = voicesAvailable && readAloudOn;
+  voicePanel.hidden = !show;
+  if (!show) ttsStop();                                  // hidden -> silence any in-flight clip
+}
 async function initVoices() {                            // ask the box which piper models are installed
   let voices = [];
   try { voices = ((await (await fetch('/tts/voices', { cache: 'no-store' })).json()).voices) || []; } catch { /* server offline / no tts */ }
@@ -1715,7 +1725,8 @@ async function initVoices() {                            // ask the box which pi
     c.on.addEventListener('change', () => { saveVoicePref(kind); if (!c.on.checked) ttsStop(); });
     c.sel.addEventListener('change', () => saveVoicePref(kind));
   }
-  voicePanel.hidden = false;
+  voicesAvailable = true;
+  updateVoicePanel();
 }
 initVoices();
 
@@ -1950,6 +1961,9 @@ async function pollStats() {
     if (!liveOk) { liveOk = true; if (modelTag) modelTag.textContent = '— live —'; }
     failCount = 0;
     ServerBrain.update(s);
+    // Read-aloud is a held display-config flag (brain_read_aloud), not a queued event:
+    // show/hide the voice panel on it (gated too by piper voices being installed).
+    if (readAloudOn !== !!s.read_aloud) { readAloudOn = !!s.read_aloud; updateVoicePanel(); }
     if (s.events) for (const ev of s.events) {
       if (ev.kind === 'web_search') ServerBrain.webSearch(ev.text);
       else if (ev.kind === 'web_fetch') ServerBrain.webFetch(ev.text);

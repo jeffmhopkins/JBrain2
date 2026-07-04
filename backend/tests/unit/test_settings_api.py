@@ -54,6 +54,7 @@ def test_get_settings_defaults_to_full_analysis(
         "image_analysis_mode": "full",
         "owner_timezone": None,
         "brain_llm_stream": False,
+        "brain_read_aloud": False,
     }
 
 
@@ -65,18 +66,21 @@ def test_put_settings_round_trips_the_mode(client: tuple[TestClient, FakeSetting
         "image_analysis_mode": "ocr",
         "owner_timezone": None,
         "brain_llm_stream": False,
+        "brain_read_aloud": False,
     }
     assert store.values["image_analysis_mode"] == "ocr"
     assert c.get("/api/settings").json() == {
         "image_analysis_mode": "ocr",
         "owner_timezone": None,
         "brain_llm_stream": False,
+        "brain_read_aloud": False,
     }
 
     assert c.put("/api/settings", json={"image_analysis_mode": "full"}).json() == {
         "image_analysis_mode": "full",
         "owner_timezone": None,
         "brain_llm_stream": False,
+        "brain_read_aloud": False,
     }
 
 
@@ -90,6 +94,7 @@ def test_put_settings_round_trips_the_timezone(
         "image_analysis_mode": "full",
         "owner_timezone": "America/New_York",
         "brain_llm_stream": False,
+        "brain_read_aloud": False,
     }
     assert store.values["owner_timezone"] == "America/New_York"
 
@@ -119,6 +124,36 @@ def test_put_settings_rejects_non_bool_brain_llm_stream(
     assert "brain_llm_stream" not in store.values
 
 
+def test_put_settings_round_trips_brain_read_aloud_and_pushes_flag(
+    client: tuple[TestClient, FakeSettingsStore],
+) -> None:
+    c, store = client
+    # The PUT also fire-and-forget pushes the flag to the wall so the voice panel shows/
+    # hides on the toggle without a chat turn; capture those pushes.
+    pushes: list[tuple[str, bool]] = []
+    c.app.state.brain_flag_emit = lambda kind, on: pushes.append((kind, on))  # type: ignore[attr-defined]
+
+    resp = c.put("/api/settings", json={"brain_read_aloud": True})
+    assert resp.status_code == 200
+    assert resp.json()["brain_read_aloud"] is True
+    assert store.values["brain_read_aloud"] is True
+    assert c.get("/api/settings").json()["brain_read_aloud"] is True
+    assert pushes == [("read_aloud", True)]
+
+    off = c.put("/api/settings", json={"brain_read_aloud": False})
+    assert off.json()["brain_read_aloud"] is False
+    assert pushes == [("read_aloud", True), ("read_aloud", False)]
+
+
+def test_put_settings_rejects_non_bool_brain_read_aloud(
+    client: tuple[TestClient, FakeSettingsStore],
+) -> None:
+    c, store = client
+    assert c.put("/api/settings", json={"brain_read_aloud": "maybe"}).status_code == 422
+    assert c.put("/api/settings", json={"brain_read_aloud": [1]}).status_code == 422
+    assert "brain_read_aloud" not in store.values
+
+
 def test_put_settings_rejects_an_unknown_timezone(
     client: tuple[TestClient, FakeSettingsStore],
 ) -> None:
@@ -145,4 +180,5 @@ def test_put_settings_with_empty_patch_changes_nothing(
         "image_analysis_mode": "ocr",
         "owner_timezone": None,
         "brain_llm_stream": False,
+        "brain_read_aloud": False,
     }

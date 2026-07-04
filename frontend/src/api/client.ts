@@ -325,6 +325,9 @@ export interface AppSettings {
   // default — it puts owner text on the unauthenticated display, so only turn it on
   // for a display bound to the box's own monitor / localhost.
   brain_llm_stream: boolean;
+  // Read the streamed wall-display turns aloud (piper TTS on the box). OFF by
+  // default — the runtime companion to brain_llm_stream, same localhost-only caveat.
+  brain_read_aloud: boolean;
 }
 
 /** The read-only appointments ICS feed: enabled state + the URL token (owner-only). */

@@ -60,6 +60,39 @@ async def _post_event(url: str, kind: str, text: str | None = None) -> None:
         pass
 
 
+class BrainFlagEmit(Protocol):
+    """The wall-display config emitter: `emit_flag(kind, on)` ships a persistent boolean
+    flag (e.g. read_aloud) the display holds and reflects, NOT owner text."""
+
+    def __call__(self, kind: str, on: bool) -> None: ...
+
+
+async def _post_flag(url: str, kind: str, on: bool) -> None:
+    try:
+        async with httpx.AsyncClient(timeout=2.0) as client:
+            await client.post(url, json={"kind": kind, "on": bool(on)})
+    except Exception:  # noqa: BLE001 — display telemetry must never raise into a turn
+        pass
+
+
+def build_flag_emitter(url: str) -> BrainFlagEmit:
+    """Return `emit_flag(kind, on)` that fire-and-forget POSTs a persistent boolean flag
+    to the display, or a no-op when no URL is configured. Unlike the text emitter this is
+    deliberately NOT gated by `brain_text_enabled`: the flag is display config (does the
+    wall show its read-aloud panel), not owner content, so it always ships."""
+
+    def emit_flag(kind: str, on: bool) -> None:
+        if not url:
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return  # no event loop (shouldn't happen inside a request) — skip silently
+        loop.create_task(_post_flag(url, kind, on))
+
+    return emit_flag
+
+
 def build_event_emitter(url: str) -> BrainEmit:
     """Return `emit(kind, text=None)` that fires a fire-and-forget POST to the display,
     or a no-op when no URL is configured (the default — the display is optional). `text`
