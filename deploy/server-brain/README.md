@@ -126,6 +126,13 @@ quotes, links, tables), slowly scrolling if it's too tall to fit.
 The same toggle also lets a web tool's **search query** (cyan) / **fetched URL** (amber)
 stream out along its tendril; with the toggle off those stay content-free markers.
 
+### Running-workflow / task popups
+
+A workflow or task in flight can POST `{"kind": "task_start", "text": name}` to raise a held
+teal popup naming what's running, and `{"kind": "task_stop", "text": name}` (same name) to
+retire it when it finishes. Several hold at once, so a couple of concurrent workflows each get
+their own card — a quiet twin of the prompt popup.
+
 **This is the one place the display carries owner data.** Everything else here is host
 vitals + content-free markers, which is why it's safe unauthenticated on a trusted LAN.
 Turning this on puts your prompt and answer text on that unauthenticated surface, so

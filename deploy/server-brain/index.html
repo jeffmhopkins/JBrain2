@@ -94,6 +94,15 @@
   }
   #popups .popup.in::before { content: "↱ prompt"; color: #7FA7C9; }
   #popups .popup.in.leaving { animation: popupOut 1.1s ease-in forwards; }
+  /* Task / workflow popup — like the prompt, it HOLDS while the workflow or task runs and
+     fades when it finishes; teal accent + its own label. Several can show at once. */
+  #popups .popup.task {
+    border-color: rgba(111,182,177,0.34);
+    box-shadow: 0 6px 26px rgba(0,0,0,0.5), 0 0 22px rgba(111,182,177,0.16);
+    animation: popupHoldIn 1.6s ease-out forwards;   /* fade in + settle, then hold while it runs */
+  }
+  #popups .popup.task::before { content: "⚙ task"; color: #6FB6B1; }
+  #popups .popup.task.leaving { animation: popupOut 1.1s ease-in forwards; }
   @keyframes popupHoldIn {
     0%   { opacity: 0; transform: translate(0, 8px) scale(0.96); }
     100% { opacity: 1; transform: translate(calc(var(--dx) * 0.28), calc(var(--dy) * 0.28)) scale(1); }
@@ -296,6 +305,7 @@
     <button id="btnSearch">🔎 Web search</button>
     <button id="btnFetch">⇩ Web fetch</button>
     <button id="btnLlmStream">🧠 LLM stream</button>
+    <button id="btnTask">⚙ Task</button>
   </div>
 
   <div id="fps">—</div>
@@ -1055,6 +1065,34 @@ function fadePromptPopup(d) {
   d.classList.add('leaving');
   setTimeout(() => d.remove(), 1200);
 }
+// Running-workflow / task popups: one held card per active task (keyed by name), a teal
+// twin of the prompt popup. It stays up while the workflow/task runs and fades when it
+// ends; several can be on screen at once (a couple of workflows in flight).
+const taskPopups = new Map();          // name -> element
+function taskStart(name) {
+  const t = String(name || '').replace(/\s+/g, ' ').trim().slice(0, 120);
+  if (!t || taskPopups.has(t)) return;   // no dup card for the same running task
+  const d = document.createElement('div');
+  d.className = 'popup task';
+  const p = document.createElement('p'); p.className = 'md-p'; p.textContent = t;  // the task name, verbatim
+  d.appendChild(p);
+  d.style.left = (13 + Math.random()*60).toFixed(1) + 'vw';
+  d.style.top  = (15 + Math.random()*56).toFixed(1) + 'vh';
+  d.style.setProperty('--dx', ((Math.random() - 0.5) * 26).toFixed(0) + 'px');
+  d.style.setProperty('--dy', (-12 - Math.random() * 16).toFixed(0) + 'px');
+  taskPopups.set(t, d);
+  popupsEl.appendChild(d);
+}
+function taskStop(name) {
+  const t = String(name || '').replace(/\s+/g, ' ').trim().slice(0, 120);
+  const d = taskPopups.get(t);
+  if (!d) return;
+  taskPopups.delete(t);
+  if (d._leaving) return;
+  d._leaving = true;
+  d.classList.add('leaving');
+  setTimeout(() => d.remove(), 1200);
+}
 // An answer card that overflows its max-height gets no timed fade: instead we fade it in, hold
 // at the top, then slowly walk scrollTop through the whole reply, hold at the bottom, and fade
 // it out — so a long answer is fully legible. A card that fits keeps the normal bloom + drift.
@@ -1318,10 +1356,13 @@ function spawnFlood(seed, speed, strength, branchK, maxHops, density) {
 // the advancing wavefront glow (brightest right at the front, ramping to dark
 // behind it), so each cascade reads as a ring of fire sweeping through the graph.
 const FLOOD_TAIL = 8.0;
+// Global pace of synapse propagation — how fast a flood's wavefront sweeps the graph.
+// 0.5 = half the raw per-flood speed, so cascades travel neuron-to-neuron more slowly.
+const SYNAPSE_SPEED = 0.5;
 function updateFloods(dt) {
   for (const f of floodPool) {
     if (!f.active) continue;
-    f.front += dt * f.speed;
+    f.front += dt * f.speed * SYNAPSE_SPEED;
     // front pointer: neurons the wavefront has now reached
     while (f.ptr < f.n && f.dist[f.order[f.ptr]] <= f.front) {
       const fn = f.order[f.ptr];
@@ -1402,6 +1443,21 @@ function demoLlmTurn() {
   setTimeout(() => ServerBrain.llmThinking(DEMO_THINKING[i]), 1900);
   setTimeout(() => ServerBrain.llmOutput(DEMO_ANSWERS[i]), 3200);
 }
+// Synthetic running workflows/tasks for the demo path — each holds a teal popup for a few
+// seconds then finishes, so the running-task effect is alive without the backend.
+const DEMO_TASKS = [
+  'ingest workflow · new note',
+  'nightly wiki rebuild',
+  'entity-graph reconciliation',
+  'embedding reindex',
+  'integration sweep',
+];
+let demoTaskI = 0;
+function demoTask() {
+  const name = DEMO_TASKS[demoTaskI++ % DEMO_TASKS.length];
+  ServerBrain.taskStart(name);
+  setTimeout(() => ServerBrain.taskStop(name), 4000 + Math.random() * 6000);
+}
 
 const ServerBrain = {
   update(s) {
@@ -1472,6 +1528,8 @@ const ServerBrain = {
       if (Math.random() < 0.012) ServerBrain.webFetch();
       // occasional synthetic LLM turn -> streaming-text tendrils + a fade-out popup
       if (Math.random() < 0.01) demoLlmTurn();
+      // occasional workflow/task -> a held teal popup naming what's running
+      if (Math.random() < 0.012) demoTask();
       ServerBrain.update({
         ts: Date.now(), health,
         gpu: { util, vram, tempC: temp, powerW, powerMaxW: 600 },
@@ -1530,6 +1588,10 @@ const ServerBrain = {
   llmInput(text) { spawnStream('prompt', text); if (text) setTimeout(() => spawnPopup(text, 'prompt'), 400); },
   llmThinking(text) { spawnStream('thinking', text); },
   llmOutput(text) { spawnStream('answer', text); if (text) setTimeout(() => spawnPopup(text, 'answer'), 1000); },
+  // A workflow/task started or finished — a held teal popup names what's running (call
+  // taskStop with the same name when it ends). Several can hold at once.
+  taskStart(name) { taskStart(name); },
+  taskStop(name) { taskStop(name); },
 };
 window.ServerBrain = ServerBrain;
 
@@ -1558,6 +1620,7 @@ document.getElementById('btnErr').onclick = () => ServerBrain.injectError();
 document.getElementById('btnSearch').onclick = () => ServerBrain.webSearch();
 document.getElementById('btnFetch').onclick = () => ServerBrain.webFetch();
 document.getElementById('btnLlmStream').onclick = () => demoLlmTurn();
+document.getElementById('btnTask').onclick = () => demoTask();
 
 const HEALTH_COLOR = { ok: '#8FBC9A', warn: '#C9A36A', crit: '#CF8A8F' };
 const HEALTH_LABEL = { ok: 'healthy', warn: 'degraded', crit: 'critical' };
@@ -1796,6 +1859,8 @@ async function pollStats() {
       else if (ev.kind === 'llm_input') ServerBrain.llmInput(ev.text);
       else if (ev.kind === 'llm_thinking') ServerBrain.llmThinking(ev.text);
       else if (ev.kind === 'llm_output') ServerBrain.llmOutput(ev.text);
+      else if (ev.kind === 'task_start') ServerBrain.taskStart(ev.text);
+      else if (ev.kind === 'task_stop') ServerBrain.taskStop(ev.text);
     }
   } catch (e) {
     // No telemetry reachable (opened standalone, or the service is down): fall back
