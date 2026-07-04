@@ -863,7 +863,9 @@ function updateTendrils(dt) {
    ========================================================================== */
 const streamEl = document.getElementById('stream');
 const CHAR_POOL = [];
-for (let i = 0; i < 220; i++) {
+// Headroom for several long marquees at once: only the on-screen slice of each stream draws
+// (~a screen-span's worth of glyphs), but a few concurrent full-length streams can overlap.
+for (let i = 0; i < 400; i++) {
   const s = document.createElement('span');
   s.className = 'ch'; s.style.display = 'none';
   streamEl.appendChild(s); CHAR_POOL.push(s);
@@ -882,7 +884,9 @@ const LLM_BR = 15;        // world radius at the brain edge where a stream conne
 const LLM_REACH = 60;     // world length of the filament: long enough to run from the anchor
                           // clear OFF the screen edge, so a tendril spans edge <-> inner neuron
 const LLM_STEP = 0.9;     // world units between glyphs — fixed, so short text stays tight
-const LLM_CAP = 34;       // glyphs carried on the tendril (the popup holds the full answer)
+const LLM_CAP = 600;      // max glyphs on the tendril — the WHOLE message streams (a marquee that
+                          // scrolls the full thinking/answer through the visible span, running until
+                          // well past the popup); 600 matches serve.py's LLM-text cap. Not truncated.
 // Flow endpoints (dist from the anchor along the tendril). The filament tip (LLM_BR + LLM_REACH)
 // sits OFF screen on either side, so both the tendril and its glyphs run edge <-> neuron: an
 // answer ORIGINATES at the (inner-50%) anchor and streams OFF the right edge; a prompt slides IN
