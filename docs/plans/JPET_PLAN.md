@@ -1,6 +1,6 @@
 # JBrain2 — JPet: the wall pet (a robot avatar for the box)
 
-> **Status:** Proposed · **Last verified:** 2026-07-04 · **Waves:** W0◻️ W1◻️ W2◻️ W3◻️ W4◻️ W5◻️ W6◻️
+> **Status:** Scheduled · **Last verified:** 2026-07-04 · **Waves:** W0◻️ W1◻️ W2◻️ W3◻️ W4◻️ W5◻️ W6◻️
 
 A **wall pet** for the family: a display shows a window into a 3D Tron/synthwave
 room, and inside it a wireframe robot — an LLM-driven avatar that walks around,
@@ -12,10 +12,9 @@ sync in real time by the server. The pet is a **companion surface on top of the
 existing box**, not a new brain: it runs beside JBrain and always **takes second
 seat to the app's real processing**.
 
-This doc is a full, wave-decomposed build plan but still `Proposed` (icebox, like
-`MUSIC_GEN_PLAN.md`): nothing is built and it holds no roadmap slot yet. Promoting
-it (→ `Scheduled`, `git mv` to `plans/`, `ROADMAP.md` entry) is a separate step.
-Every wave is written to satisfy the `CLAUDE.md` non-negotiables.
+This is a `Scheduled` build plan under **Phase 7 (outer ring — family & devices)**:
+the waves below are committed and built in order (W0 first). Nothing has merged
+yet. Every wave is written to satisfy the `CLAUDE.md` non-negotiables.
 
 **Chosen aesthetic + interaction (signed off):** the interactive 3D mockup
 `../mocks/jpet/06-room-3d.html` — a real WebGL perspective room with the pet as a

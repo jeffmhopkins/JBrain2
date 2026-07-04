@@ -25,17 +25,6 @@ given a roadmap slot in `../ROADMAP.md`, and promoted out of this folder.
   tool, and a MusicScreen — mirroring the shipped image stack. Backend (Waves M0–M3) +
   frontend (M4), with M0 a blocking on-box host-validation spike. Interactive mock:
   `../mocks/music-gen-live/live-music-tool-card.html`.
-- `JPET_PLAN.md` — JPet, the wall pet: a Tron/synthwave **3D** wireframe robot that
-  walks a room, an LLM companion for the kids (poke, tell, talk) with Sims-style drives
-  (hunger/energy/mood) — **no training, no neural net**. Two surfaces over one
-  server-authoritative `pet_state`: a **Wall** (3D WebGL/Three.js room) and a **phone
-  Control screen** in the PWA, kept in sync by SSE fanout + `POST /pet/command`. Reuses
-  the LLM adapter (new `pet.turn`/`pet.thought` tasks on the local model, a JPet settings
-  card), scheduler ticks (drives off the single-threaded job queue → always second seat),
-  the SSE transport, and the RLS domain firewall (scoped pet + kid principals — kids never
-  see health/finance/location). Chosen mock: `../mocks/jpet/06-room-3d.html` (interactive
-  3D). Waves: backend safety spine (W0) → realtime backbone (W1) → 3D Wall (W2) → phone
-  Control (W3) → talk (W4) → memory/idle life (W5) → voice (W6).
-
 _(The jcode plans, `GUIDED_INTAKE_PLAN.md`, and `SUBAGENT_SPAWNING_PLAN.md` were
-promoted out of the icebox and have since shipped — see `../archive/`.)_
+promoted out of the icebox and have since shipped; `JPET_PLAN.md` was promoted to
+`Scheduled` and now lives in `../plans/` — see `../archive/` and `../plans/`.)_
