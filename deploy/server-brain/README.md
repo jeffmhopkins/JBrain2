@@ -145,9 +145,15 @@ silent first-word drops) out of the path entirely.
 
 Two independent voices — **Joe** reads prompts and **Amy** reads answers by default — each an enable
 checkbox + a picker over the installed piper models (add more and they show up automatically); both
-persist in `localStorage`. Markdown is stripped before speaking, and `serve.py` prepends a short
-lead of silence to each clip (`BRAIN_PIPER_LEAD_MS`, default 250 ms) so a cold audio-sink resume
-clips the silence, not the first word.
+persist in `localStorage`. Markdown is stripped before speaking.
+
+**No clipped first word.** Linux audio suspends the output sink after a few seconds of silence, and the
+cold resume on the next clip swallows its start — the one durable read-aloud gotcha. The page prevents
+it at the source: while a voice is enabled it runs a **permanently-silent WebAudio keep-alive** that
+holds one live stream on the sink, so the sink never goes idle and there is no cold resume to clip.
+(Suspend keys on stream *presence*, not level, so the keep-alive is truly silent.) As a backstop for
+the brief window before it warms — or a browser where WebAudio can't run — `serve.py` also prepends a
+short lead of silence to each clip (`BRAIN_PIPER_LEAD_MS`, default 400 ms).
 
 `piper` **and the default Joe/Amy voice models** ship **baked into the server-brain image**
 (`deploy/Dockerfile.server-brain`, at `/opt/piper-voices` — outside the read-only `/app` bind mount
@@ -179,10 +185,12 @@ is no command-injection or path-traversal surface.
 the session. On a gesture-free kiosk, also set `media.autoplay.default = 0` in `about:config` (or a
 site permission for the localhost origin) so clips play without an interaction.
 
-**Sink suspend (rare):** the lead-silence pad absorbs the usual "first-after-idle clip." If a very
-quiet wall still clips, stop the audio sink suspending on idle one level down — WirePlumber
+**Sink suspend (guaranteed fix):** the silent WebAudio keep-alive above stops the sink suspending from
+inside the browser, which is enough on a normal desktop. If a box power-manages its audio harder and
+still clips the first syllable after a long idle, stop the sink suspending one level down — WirePlumber
 (Ubuntu 22.04+) `session.suspend-timeout-seconds = 0`, or comment out
-`load-module module-suspend-on-idle` in classic PulseAudio.
+`load-module module-suspend-on-idle` in classic PulseAudio. That removes the cold resume entirely, so
+the keep-alive and the lead pad become belt-and-suspenders.
 
 **This is the one place the display carries owner data.** Everything else here is host
 vitals + content-free markers, which is why it's safe unauthenticated on a trusted LAN.

@@ -55,7 +55,10 @@ PIPER_BIN = os.environ.get("BRAIN_PIPER_BIN", "piper")
 PIPER_VOICES_DIR = Path(os.environ.get("BRAIN_PIPER_VOICES_DIR", str(HERE / "voices")))
 PIPER_BAKED_VOICES_DIR = Path(os.environ.get("BRAIN_PIPER_BAKED_VOICES_DIR", "/opt/piper-voices"))
 # A short lead of silence so a cold audio-sink resume clips the silence, not the first word.
-PIPER_LEAD_MS = int(os.environ.get("BRAIN_PIPER_LEAD_MS", "250"))
+# Backstop only: the page's silent WebAudio keep-alive is what actually stops the sink
+# suspending on idle (index.html) — this pad just covers the brief window before it warms,
+# or a browser where it can't run. Bump it if a box still clips the first syllable.
+PIPER_LEAD_MS = int(os.environ.get("BRAIN_PIPER_LEAD_MS", "400"))
 
 
 def _voice_models() -> dict[str, Path]:
