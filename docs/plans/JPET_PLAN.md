@@ -1,6 +1,6 @@
 # JBrain2 — JPet: the wall pet (a robot avatar for the box)
 
-> **Status:** In progress · **Last verified:** 2026-07-04 · **Waves:** W0✅ W1✅ W2✅ W3◻️ W4◻️ W5◻️ W6◻️
+> **Status:** In progress · **Last verified:** 2026-07-04 · **Waves:** W0✅ W1✅ W2✅ W3✅ W4◻️ W5◻️ W6◻️
 
 A **wall pet** for the family: a display shows a window into a 3D Tron/synthwave
 room, and inside it a wireframe robot — an LLM-driven avatar that walks around,
@@ -13,12 +13,13 @@ existing box**, not a new brain: it runs beside JBrain and always **takes second
 seat to the app's real processing**.
 
 This is an `In progress` build plan under **Phase 7 (outer ring — family & devices)**:
-the waves below are built in order. **W0 (safety spine)**, **W1 (realtime
-backbone)**, and **W2 (the 3D Wall)** have landed — the `pet_state` table + RLS
-firewall + drive math + tick; the `/api/pet` surface (`GET /pet`, `POST /pet/command`,
-`GET /pet/stream` SSE fan-out); and the `WallScreen` (a self-contained WebGL room
-that renders the live stream and issues commands). W3 (the phone Control screen) is
-next.
+the waves below are built in order. **W0–W3 have landed:** the `pet_state` table +
+RLS firewall + drive math + tick; the `/api/pet` surface (`GET /pet`, `POST
+/pet/command`, `GET /pet/stream` SSE fan-out); the `WallScreen` (a self-contained
+WebGL room); and the `ControlScreen` (the phone remote — live status, care buttons,
+and a room map that sends the pet places). Both surfaces render the same
+server-authoritative pet and stay in sync. **W4 (the talk brain — `pet.turn`) is
+next.**
 Every wave satisfies the `CLAUDE.md` non-negotiables.
 
 **Chosen aesthetic + interaction (signed off):** the interactive 3D mockup
@@ -225,13 +226,14 @@ uses.
   single-purpose committed surface; the owner picked the neon 3D mock as the
   direction, so this divergence from the muted register is intentional.
 
-## 7. The Phone Control screen (PWA) — the remote
+## 7. The Phone Control screen (PWA) — the remote — **built (W3)**
 
-A new **mobile-first Control screen** in the existing PWA (`frontend/src/screens/`,
-a `Launcher` tile), the "remote" the kids hold. Interactive mock:
-`../mocks/jpet/07-phone-control.html` (paired-to-Wall status, care buttons, a
-send-it-somewhere room map, chat, and a talk bar with mic). It subscribes to
-`/pet/stream` for live status and sends `POST /pet/command`:
+The **mobile-first Control screen** (`frontend/src/screens/ControlScreen.tsx`, a
+`Launcher` tile), the "remote" the kids hold. Interactive mock:
+`../mocks/jpet/07-phone-control.html`. It subscribes to `api.petStream` (SSE) for
+live status and sends `POST /api/pet/command`. Shipped in W3: live status +
+care buttons + the send-it-somewhere room map. (The **talk bar + voice** ride in
+with the `pet.turn` brain in W4 — the `say` command doesn't exist until then.)
 
 - **Live status**: the pet's name, mood face, and Food/Energy/Fun/Love bars,
   updating in real time as the Wall (or the tick) changes them.
@@ -287,13 +289,16 @@ Vitest coverage and are built mock-first.
   Launcher tile + App route wired; `api.getPet`/`sendPetCommand`/`petStream` + mock
   fixtures added. Tested with `vi.mock`-ed scene (jsdom has no WebGL); full frontend
   suite green. *Exit met: the pet lives on the wall and obeys commands from W1.*
-- **W3 — The Phone Control screen (PWA).** Mobile-first control surface: live
-  status via `/pet/stream`, care buttons, the room map "send it here", and a talk
-  box (text). Commands hit `/pet/command`. *Exit: a kid drives the wall pet from
-  the phone; Wall and phone stay in sync.*
+- **W3 — The Phone Control screen (PWA).** ✅ **Landed.** `ControlScreen.tsx` —
+  mobile-first control surface: live status via `api.petStream`, care buttons, and
+  the "send it here" room map (tap → `move` command). Launcher tile + App route
+  wired; tested with injected deps; full frontend suite green. (Talk box moved to
+  W4 with `pet.turn`.) *Exit met: a kid drives the wall pet from the phone; Wall and
+  phone stay in sync off the shared stream.*
 - **W4 — The brain (talk).** `pet.turn` task + the JPet settings card; a `say`
   command → structured `{speech, emotion, action, move_target}` applied + broadcast
-  (Wall speaks, emotes, maybe moves). Local model default. *Exit: a child tells it
+  (Wall speaks, emotes, maybe moves). Local model default. **Adds the talk box to
+  the Control screen** (deferred from W3) that posts `say`. *Exit: a child tells it
   something and it answers in character on both surfaces.*
 - **W5 — It's alive.** Idle action-selection + occasional `pet.thought` (skippable
   under load); `app.pet_memory` (RLS + isolation test) fed back into prompts (the

@@ -43,6 +43,7 @@ export type LauncherTarget =
   | "intake"
   | "tasks"
   | "wall"
+  | "petcontrol"
   | "jcode";
 
 interface Tile {
@@ -70,6 +71,7 @@ const SECTIONS: Section[] = [
       { title: "Map", icon: <GraphIcon size={24} />, target: "graph" },
       { title: "Location", icon: <PinIcon size={24} />, target: "location" },
       { title: "Wall", icon: <BotIcon size={24} />, target: "wall" },
+      { title: "Pet", icon: <BotIcon size={24} />, target: "petcontrol" },
     ],
   },
   {

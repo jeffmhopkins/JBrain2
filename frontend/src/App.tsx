@@ -10,6 +10,7 @@ import { useNoteActions } from "./notes/useNoteActions";
 import { type StreamAttachment, type StreamItem, useNotes } from "./notes/useNotes";
 import { AutomationsScreen } from "./screens/AutomationsScreen";
 import { CalendarScreen } from "./screens/CalendarScreen";
+import { ControlScreen } from "./screens/ControlScreen";
 import { DataScreen } from "./screens/DataScreen";
 import { EntityListScreen } from "./screens/EntityListScreen";
 import { EntityScreen } from "./screens/EntityScreen";
@@ -64,13 +65,14 @@ type Card =
   | "image"
   | "intake"
   | "wall"
+  | "petcontrol"
   | "jcode";
 
 // Automations, Tasks, Image and jcode bring their own full-screen overlay (own back
 // bar + slide-in), so they render outside the shared subscreen TopBar wrapper — hence
 // no entry here. Every Card that uses the wrapper needs a title.
 const SCREEN_TITLES: Record<
-  Exclude<Card, "automations" | "tasks" | "image" | "jcode" | "wall">,
+  Exclude<Card, "automations" | "tasks" | "image" | "jcode" | "wall" | "petcontrol">,
   string
 > = {
   ops: "Ops",
@@ -428,6 +430,7 @@ export function App() {
     if (card === "image") return setCard(null);
     if (card === "jcode") return setCard(null);
     if (card === "wall") return setCard(null);
+    if (card === "petcontrol") return setCard(null);
     if (card !== null) return closeCardToLauncher();
     // Drops the depth immediately; the launcher plays its retreat off `open`.
     if (launcherOpen) return setLauncherOpen(false);
@@ -485,6 +488,7 @@ export function App() {
         card !== "tasks" &&
         card !== "image" &&
         card !== "wall" &&
+        card !== "petcontrol" &&
         card !== "jcode" && (
           <div
             className={`subscreen${cardClosing ? " subscreen-closing" : ""}`}
@@ -573,6 +577,7 @@ export function App() {
           bar + internal list↔session navigation), like Tasks/Automations. */}
       {card === "jcode" && <JcodeScreen onClose={() => setCard(null)} />}
       {card === "wall" && <WallScreen onClose={() => setCard(null)} />}
+      {card === "petcontrol" && <ControlScreen onClose={() => setCard(null)} />}
 
       {/* The wiki reader brings its own subscreen + TopBar (like the entity
           page), so it renders outside the shared wrapper. It stacks above the
