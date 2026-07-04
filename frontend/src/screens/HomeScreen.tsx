@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { FullBrainSurface } from "../agent/FullBrainSurface";
 import type { AppointmentRef } from "../agent/types";
 import { type FullBrainDeps, useFullBrain } from "../agent/useFullBrain";
+import { useReadAloud } from "../agent/useReadAloud";
 import { Omnibox } from "../components/Omnibox";
 import { Stream } from "../components/Stream";
 import { TopBar } from "../components/TopBar";
@@ -90,6 +91,35 @@ export function HomeScreen({
   // a fresh one) on entry.
   const convMode = seg.mode === "research" || seg.mode === "fullbrain" ? seg.mode : null;
   const fb = useFullBrain(convMode, fbDeps, true);
+
+  // Local read-aloud: when the owner has enabled read-aloud, the omnibox offers a volume
+  // toggle that speaks each completed turn on this device (browser TTS).
+  const readAloud = useReadAloud();
+  // Speak a completed assistant turn when playback is on. Fires on the busy → idle edge (a
+  // turn just settled), only for the chat currently on screen (never a background turn),
+  // and only a cleanly-finished, non-empty answer (never a stopped / errored one).
+  const prevBusyRef = useRef(false);
+  const streamingSessionRef = useRef<string | null>(null);
+  if (fb.activeTurn) streamingSessionRef.current = fb.activeTurn.sessionId;
+  useEffect(() => {
+    const wasBusy = prevBusyRef.current;
+    prevBusyRef.current = fb.busy;
+    if (!wasBusy || fb.busy) return; // only the settle edge
+    const sid = streamingSessionRef.current;
+    streamingSessionRef.current = null;
+    if (!readAloud.available || !readAloud.on) return;
+    if (!sid || sid !== fb.active?.id) return; // a turn in a chat you've navigated away from
+    const last = fb.messages[fb.messages.length - 1];
+    if (
+      last?.role === "assistant" &&
+      !last.streaming &&
+      last.text.trim() &&
+      last.stopReason !== "stopped" &&
+      last.stopReason !== "error"
+    ) {
+      readAloud.speak(last.text);
+    }
+  }, [fb.busy, fb.messages, fb.active, readAloud.available, readAloud.on, readAloud.speak]);
 
   // A Tasks run → open its session: flip to the conversation tab that hosts the
   // session's persona, then open it by id (the controller suppresses the tab's
@@ -226,6 +256,13 @@ export function HomeScreen({
         // context meter shows how full the model's window is getting.
         onStop={conversational ? fb.stop : undefined}
         contextUsage={conversational ? fb.usage : null}
+        // Conversation surfaces only, and only when read-aloud is enabled: a volume toggle
+        // left of the context meter that speaks completed turns locally; off stops it now.
+        readAloud={
+          conversational && readAloud.available
+            ? { on: readAloud.on, onToggle: readAloud.toggle }
+            : undefined
+        }
         onOpenLauncher={onOpenLauncher}
         labels={segLabels}
         // Conversation tabs only: a horizontal swipe across the omnibox shuttles

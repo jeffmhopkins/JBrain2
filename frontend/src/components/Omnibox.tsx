@@ -28,6 +28,8 @@ import {
   SearchIcon,
   SendIcon,
   StopIcon,
+  VolumeIcon,
+  VolumeMuteIcon,
 } from "./icons";
 
 const MODE_ICON: Record<Mode, (p: { size?: number }) => ReactNode> = {
@@ -81,6 +83,11 @@ interface OmniboxProps {
    * attachments). A conversation mode allows it only when the agent's model is
    * vision-capable; with vision off the paperclip is simply hidden. Defaults to true. */
   attachEnabled?: boolean;
+  /** Read-aloud toggle (left of the context meter), shown only when the owner has
+   * enabled read-aloud and the browser can speak. `on` reflects the device-local
+   * playback preference; `onToggle` flips it (turning it off stops playback at once).
+   * Absent = no toggle (capture modes, or read-aloud unavailable). */
+  readAloud?: { on: boolean; onToggle: () => void } | undefined;
 }
 
 export function Omnibox({
@@ -99,6 +106,7 @@ export function Omnibox({
   onClearApptRef,
   onLateralSwipe,
   attachEnabled = true,
+  readAloud,
 }: OmniboxProps) {
   const [text, setText] = useState("");
   const [files, setFiles] = useState<File[]>([]);
@@ -323,6 +331,17 @@ export function Omnibox({
           {/* Vision off on a conversation mode just hides the paperclip — no stand-in
             line (capture modes always keep their attach). */}
           <div className="composer-foot">
+            {readAloud && (
+              <button
+                type="button"
+                className={`icon-btn ctx-speak${readAloud.on ? " ctx-speak-on" : ""}`}
+                aria-label={readAloud.on ? "Stop reading replies aloud" : "Read replies aloud"}
+                aria-pressed={readAloud.on}
+                onClick={readAloud.onToggle}
+              >
+                {readAloud.on ? <VolumeIcon size={20} /> : <VolumeMuteIcon size={20} />}
+              </button>
+            )}
             {contextUsage && <ContextMeter usage={contextUsage} />}
             <div className="foot-icons">
               {attachEnabled && (

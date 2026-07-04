@@ -1,10 +1,20 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ChatRequest } from "../agent/types";
 import type { FullBrainDeps } from "../agent/useFullBrain";
 import type { NoteActions } from "../notes/useNoteActions";
 import type { NotesController } from "../notes/useNotes";
 import { HomeScreen } from "./HomeScreen";
+
+// useReadAloud reads the brain_read_aloud setting from the live client; keep the rest of
+// the api real and only stub that read (on) so the read-aloud toggle is offered in tests.
+vi.mock("../api/client", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../api/client")>();
+  return {
+    ...actual,
+    api: { ...actual.api, getSettings: vi.fn(async () => ({ brain_read_aloud: true })) },
+  };
+});
 
 function fbDeps(): FullBrainDeps {
   return {
@@ -492,5 +502,80 @@ describe("HomeScreen mode scoping", () => {
 
     await waitFor(() => expect(screen.getByText("on it")).toBeInTheDocument());
     expect(screen.getByText("summarize my week")).toBeInTheDocument();
+  });
+});
+
+describe("HomeScreen read-aloud", () => {
+  const synth = { speak: vi.fn(), cancel: vi.fn() };
+  beforeEach(() => {
+    synth.speak.mockClear();
+    synth.cancel.mockClear();
+    Object.defineProperty(window, "speechSynthesis", { configurable: true, value: synth });
+    Object.defineProperty(window, "SpeechSynthesisUtterance", {
+      configurable: true,
+      value: class {
+        text: string;
+        constructor(t: string) {
+          this.text = t;
+        }
+      },
+    });
+    localStorage.clear();
+  });
+  afterEach(() => {
+    // Clear the stubbed engine so tests without it (elsewhere) see no speech support.
+    Object.defineProperty(window, "speechSynthesis", { configurable: true, value: undefined });
+  });
+
+  function streamingDeps(answer: string): FullBrainDeps {
+    const deps = fbDeps();
+    deps.chat = async function* () {
+      yield { type: "text_delta", text: answer };
+      yield { type: "done", stop_reason: "end_turn" };
+    };
+    return deps;
+  }
+
+  function renderHome(deps: FullBrainDeps) {
+    render(
+      <HomeScreen
+        notes={fakeController()}
+        actions={fakeActions()}
+        onOpenNote={vi.fn()}
+        onOpenSearch={vi.fn()}
+        onOpenLauncher={vi.fn()}
+        fbDeps={deps}
+      />,
+    );
+  }
+
+  it("shows the toggle and speaks a completed turn once playback is on", async () => {
+    renderHome(streamingDeps("The answer is forty two."));
+    fireEvent.click(screen.getByRole("tab", { name: "Brain" }));
+    // The toggle appears (setting on + a speech engine present); enable playback.
+    const toggle = await screen.findByRole("button", { name: "Read replies aloud" });
+    fireEvent.click(toggle);
+    await screen.findByRole("button", { name: "Stop reading replies aloud" });
+
+    fireEvent.change(screen.getByLabelText("Composer"), {
+      target: { value: "the meaning of life?" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    await waitFor(() => expect(synth.speak).toHaveBeenCalledTimes(1));
+    expect(synth.speak.mock.calls[0]?.[0].text).toBe("The answer is forty two.");
+  });
+
+  it("stays silent when playback is left off", async () => {
+    renderHome(streamingDeps("hush now"));
+    fireEvent.click(screen.getByRole("tab", { name: "Brain" }));
+    // The toggle is offered but NOT enabled.
+    await screen.findByRole("button", { name: "Read replies aloud" });
+
+    fireEvent.change(screen.getByLabelText("Composer"), { target: { value: "quietly" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    await waitFor(() => expect(screen.getByText("hush now")).toBeInTheDocument());
+    expect(synth.speak).not.toHaveBeenCalled();
   });
 });

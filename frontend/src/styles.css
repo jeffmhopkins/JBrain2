@@ -672,6 +672,19 @@ h3 {
   align-items: center;
 }
 
+/* The read-aloud toggle sits at the far left of the composer foot. margin-right:auto
+   keeps it there even before the first turn (no context meter to fill the row); with a
+   meter present its flex:1 absorbs the free space, so the auto margin is a no-op. Muted
+   until enabled, when it takes the mode accent like the send button. */
+.ctx-speak {
+  margin-right: auto;
+  color: var(--text-2);
+}
+
+.ctx-speak-on {
+  color: var(--mode);
+}
+
 .send-btn {
   color: var(--mode);
 }
