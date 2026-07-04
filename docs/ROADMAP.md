@@ -209,13 +209,17 @@ The location + family + intake slices shipped; build records are under
   on the analytics tier).
 
 - **JPet — the family wall pet** ✅ (`archive/JPET_PLAN.md`) — a Tron/synthwave **3D** wireframe
-  robot the kids feed, send around, and talk to. Two surfaces over one server-authoritative
-  `pet_state`: a WebGL **Wall** and a **phone Control screen**, kept in sync by an SSE fan-out +
-  `POST /pet/command`. `pet.turn` talk brain (text + Web Speech voice), `pet_memory` (it
-  remembers you), autonomous wander; drives off the job queue (second seat); scoped pet + kid
-  principal firewall (never health/finance/location). Migrations 0123–0124. *Deferred:* the idle
-  `pet.thought` daydream, a curated time-of-day environment feed, day/night lighting, and Wall
-  kiosk mode + phone↔wall pairing.
+  robot the kids feed, send around, and talk to. One server-authoritative `pet_state`, two
+  surfaces: the **phone Control** screen in the PWA (status, care, room-map "send it here",
+  text/voice talk) drives it via `POST /api/pet/command`, and the **wall view lives on the on-box
+  server-brain display** (`deploy/server-brain`, `:8800/pet`) — a read-only WebGL room that polls
+  the pet through the internal-only `GET /internal/pet` (Caddy never routes `/internal` off-box),
+  so the display stays DB-free and the pet is never exposed publicly. `pet.turn` talk brain (text +
+  Web Speech voice), `pet_memory` (it remembers you), autonomous wander; drives off the job queue
+  (second seat); scoped pet + kid principal firewall (never health/finance/location). Migrations
+  0123–0124. *(The in-PWA Wall screen from the original plan was removed in favour of the `:8800`
+  wall view; per-owner request.)* *Deferred:* idle `pet.thought` daydream, a time-of-day
+  environment feed, day/night lighting, live phone→wall sync latency polish.
 
 **In progress:** EMR / medical-record import (build plan: `docs/plans/EMR_IMPORT_PLAN.md`) —
 multi-system EMR PDF exports (Epic / OneContent / athena / scanned-OCR), fed as one note with an

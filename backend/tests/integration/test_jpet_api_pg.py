@@ -88,3 +88,8 @@ async def test_pet_api_round_trip(
 
         # An unknown action is rejected by the request schema.
         assert client.post("/api/pet/command", json={"action": "explode"}).status_code == 422
+
+        # The internal, un-authed read the on-box wall display uses (the pet now exists).
+        internal = client.get("/internal/pet")
+        assert internal.status_code == 200
+        assert set(internal.json()) == PET_FIELDS

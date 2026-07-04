@@ -695,6 +695,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # The MQTT broker's go-auth HTTP backend calls these on the internal network
     # only — NOT under /api (Caddy never routes /internal off-box).
     app.include_router(mqtt.router, prefix="/internal")
+    # The on-box server-brain wall display reads the pet snapshot here (internal
+    # network only; read-only; safe 'general' domain) — never off-box via Caddy.
+    app.include_router(pet_api.internal_router, prefix="/internal")
     app.include_router(notes.router, prefix="/api")
     app.include_router(ops.router, prefix="/api")
     app.include_router(owntracks.router, prefix="/api")
