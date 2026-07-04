@@ -24,6 +24,9 @@ vi.mock("./petScene", () => ({
   },
 }));
 
+const { speakMock } = vi.hoisted(() => ({ speakMock: vi.fn() }));
+vi.mock("./speech", () => ({ speak: speakMock }));
+
 function petState(over: Partial<PetState> = {}): PetState {
   return {
     name: "Blink",
@@ -51,9 +54,8 @@ function makeDeps(): { deps: WallDeps; sendPetCommand: ReturnType<typeof vi.fn> 
   const deps: WallDeps = {
     getPet: async () => petState(),
     sendPetCommand,
-    // eslint-disable-next-line require-yield
     async *petStream() {
-      yield petState({ mood: "happy" });
+      yield petState({ mood: "happy", speech: "Hi kiddo!" });
     },
   };
   return { deps, sendPetCommand };
@@ -63,7 +65,17 @@ describe("WallScreen", () => {
   beforeEach(() => {
     sceneUpdate.mockClear();
     sceneDestroy.mockClear();
+    speakMock.mockClear();
     handlers.current = null;
+  });
+
+  it("speaks the pet's line aloud once voice is enabled", async () => {
+    const { deps } = makeDeps();
+    render(<WallScreen onClose={() => {}} deps={deps} />);
+    await screen.findByText("BLINK");
+    expect(speakMock).not.toHaveBeenCalled(); // silent by default
+    fireEvent.click(screen.getByRole("button", { name: /enable voice/i }));
+    await waitFor(() => expect(speakMock).toHaveBeenCalledWith("Hi kiddo!"));
   });
 
   it("renders the pet's live status from the stream", async () => {

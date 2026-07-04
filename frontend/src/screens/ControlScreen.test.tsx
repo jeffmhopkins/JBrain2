@@ -3,6 +3,17 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { PetState } from "../api/client";
 import { type ControlDeps, ControlScreen } from "./ControlScreen";
 
+// Voice is jsdom-untestable; mock the speech module so the mic is available and one
+// spoken phrase can be simulated (the leafletMap/petScene convention).
+vi.mock("./speech", () => ({
+  sttAvailable: () => true,
+  listenOnce: (onText: (t: string) => void) => {
+    onText("hello pet");
+    return { stop: vi.fn() };
+  },
+  speak: vi.fn(),
+}));
+
 function petState(over: Partial<PetState> = {}): PetState {
   return {
     name: "Blink",
@@ -78,6 +89,16 @@ describe("ControlScreen", () => {
     fireEvent.click(screen.getByRole("button", { name: /send message/i }));
     await waitFor(() =>
       expect(sendPetCommand).toHaveBeenCalledWith({ action: "say", text: "hi Blink" }),
+    );
+  });
+
+  it("says a spoken phrase to the pet from the mic", async () => {
+    const { deps, sendPetCommand } = makeDeps();
+    render(<ControlScreen onClose={() => {}} deps={deps} />);
+    await screen.findByText(/paired to Wall/);
+    fireEvent.click(screen.getByRole("button", { name: /talk to the pet by voice/i }));
+    await waitFor(() =>
+      expect(sendPetCommand).toHaveBeenCalledWith({ action: "say", text: "hello pet" }),
     );
   });
 });

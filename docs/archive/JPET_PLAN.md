@@ -1,6 +1,6 @@
 # JBrain2 — JPet: the wall pet (a robot avatar for the box)
 
-> **Status:** In progress · **Last verified:** 2026-07-04 · **Waves:** W0✅ W1✅ W2✅ W3✅ W4✅ W5✅ W6◻️
+> **Status:** Shipped 2026-07 · migrations 0123–0124 · **Waves:** W0✅ W1✅ W2✅ W3✅ W4✅ W5✅ W6✅ · **Residual:** see `ROADMAP.md` (idle `pet.thought`, environment feed, day/night lighting, kiosk/pairing)
 
 A **wall pet** for the family: a display shows a window into a 3D Tron/synthwave
 room, and inside it a wireframe robot — an LLM-driven avatar that walks around,
@@ -12,17 +12,15 @@ sync in real time by the server. The pet is a **companion surface on top of the
 existing box**, not a new brain: it runs beside JBrain and always **takes second
 seat to the app's real processing**.
 
-This is an `In progress` build plan under **Phase 7 (outer ring — family & devices)**:
-the waves below are built in order. **W0–W4 have landed:** the `pet_state` table +
-RLS firewall + drive math + tick; the `/api/pet` surface (`GET /pet`, `POST
-/pet/command`, `GET /pet/stream` SSE fan-out); the `WallScreen` (a self-contained
-WebGL room); the `ControlScreen` (the phone remote); and the **talk brain** — a
-`pet.turn` LLM route (adapter, structured `{speech, emotion, action}`, safe kids'
-persona) reached by a `say` command, with a talk box on the phone and a speech
-bubble on the Wall. Both surfaces render the same server-authoritative pet and stay
-in sync. **W6 (voice + polish) is next.** W5 (memory + autonomous life) has landed:
-a `pet_memory` table (RLS-firewalled) woven back into `pet.turn` (it remembers you),
-and an autonomous wander in the tick (it strolls the room on its own).
+**Shipped** under **Phase 7 (outer ring — family & devices)** — all seven waves
+merged (migrations 0123–0124). The family wall pet is live: one server-authoritative
+`pet_state`, a Tron/synthwave **3D WebGL Wall** and a **phone Control** screen kept in
+sync over an SSE fan-out, an LLM **talk brain** (`pet.turn`) the kids reach by text or
+voice, **memory** that lets it remember them, and an **autonomous wander** so it feels
+alive. Drives run off the job queue (always second seat); a scoped pet + kid principal
+firewall keeps it out of health/finance/location. A few enhancements were deliberately
+deferred (idle `pet.thought` daydream, a curated time-of-day environment feed, day/night
+lighting, and Wall kiosk mode + phone↔wall pairing) — carried to `ROADMAP.md`.
 Every wave satisfies the `CLAUDE.md` non-negotiables.
 
 **Chosen aesthetic + interaction (signed off):** the interactive 3D mockup
@@ -320,10 +318,13 @@ Vitest coverage and are built mock-first.
   *(Deferred, carried to ROADMAP: the idle `pet.thought` LLM daydream and a curated
   time-of-day environment feed — enhancements, not load-bearing; the memory recall is
   the headline "it remembers you" behaviour.)*
-- **W6 — Voice + polish.** Web Speech STT on the phone (talk to it out loud) + a
-  TTS/babble voice on the Wall; day/night lighting; care-loop stakes (neglect →
-  visibly sad); Wall kiosk mode + phone↔wall pairing. *Exit: the kids talk to it
-  by voice and it feels alive and cared-for.*
+- **W6 — Voice + polish.** ✅ **Landed.** Web Speech behind a guarded `screens/speech.ts`
+  (jsdom-safe, `vi.mock`-ed in tests): **STT** on the Control screen (a mic button says a
+  spoken phrase to the pet) + **TTS** on the Wall (a sound toggle speaks each new line in a
+  bright toy voice, off by default). Care-loop stakes already read through the drive→mood
+  face (neglect → sad). Tests: mic→say and toggle→speak, both mocked. *Exit met: the kids
+  talk to it by voice and it talks back.* *(Deferred to ROADMAP: day/night lighting; Wall
+  kiosk mode + phone↔wall pairing — deployment polish, the surfaces already sync.)*
 
 **Ordering:** W0 → W1 are the blocking spine (safety + sync). W2 (Wall) and W3
 (Phone) both build on W1 and can proceed in parallel; W4 needs W1 + one surface.

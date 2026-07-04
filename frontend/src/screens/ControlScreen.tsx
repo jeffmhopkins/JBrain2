@@ -10,6 +10,7 @@
 import { type PointerEvent, useCallback, useEffect, useState } from "react";
 import { type PetCommand, type PetState, api } from "../api/client";
 import "./control.css";
+import { listenOnce, sttAvailable } from "./speech";
 
 export interface ControlDeps {
   getPet: () => Promise<PetState>;
@@ -54,6 +55,7 @@ interface ControlScreenProps {
 export function ControlScreen({ onClose, deps = defaultDeps }: ControlScreenProps) {
   const [pet, setPet] = useState<PetState | null>(null);
   const [text, setText] = useState("");
+  const [listening, setListening] = useState(false);
 
   const send = useCallback(
     async (command: PetCommand): Promise<void> => {
@@ -98,6 +100,16 @@ export function ControlScreen({ onClose, deps = defaultDeps }: ControlScreenProp
     if (!t) return;
     setText("");
     void send({ action: "say", text: t });
+  };
+
+  // Talk to it out loud (W6): capture one spoken phrase and say it to the pet.
+  const listen = (): void => {
+    if (listening) return;
+    const handle = listenOnce(
+      (spoken) => void send({ action: "say", text: spoken }),
+      () => setListening(false),
+    );
+    if (handle) setListening(true);
   };
 
   const name = pet?.name ?? "JPet";
@@ -175,6 +187,16 @@ export function ControlScreen({ onClose, deps = defaultDeps }: ControlScreenProp
         <h3>Talk to {name}</h3>
         {pet?.speech ? <div className="pctl-speech">💬 {pet.speech}</div> : null}
         <div className="pctl-talk">
+          {sttAvailable() ? (
+            <button
+              type="button"
+              className={`pctl-mic${listening ? " on" : ""}`}
+              onClick={listen}
+              aria-label="Talk to the pet by voice"
+            >
+              🎤
+            </button>
+          ) : null}
           <input
             value={text}
             onChange={(e) => setText(e.target.value)}

@@ -7,6 +7,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { type PetCommand, type PetState, api } from "../api/client";
 import { type PetScene, createPetScene } from "./petScene";
+import { speak } from "./speech";
 import "./wall.css";
 
 export interface WallDeps {
@@ -42,6 +43,18 @@ export function WallScreen({ onClose, deps = defaultDeps }: WallScreenProps) {
   const bloomRef = useRef<HTMLCanvasElement>(null);
   const sceneRef = useRef<PetScene | null>(null);
   const [pet, setPet] = useState<PetState | null>(null);
+  // Voice is off by default — a talking wall can startle; the owner turns it on.
+  const [sound, setSound] = useState(false);
+  const spokenRef = useRef<string | null>(null);
+
+  // Speak each new utterance aloud when sound is on (W6). Guarded to fire once per
+  // distinct line so a re-render doesn't repeat it.
+  useEffect(() => {
+    if (!sound) return;
+    const line = pet?.speech ?? null;
+    if (line && line !== spokenRef.current) speak(line);
+    spokenRef.current = line;
+  }, [pet?.speech, sound]);
 
   // Apply a command and reflect the returned authoritative state immediately (the
   // stream will also carry it to every other surface). Failures are swallowed — a
@@ -106,6 +119,15 @@ export function WallScreen({ onClose, deps = defaultDeps }: WallScreenProps) {
         <div className="wall-name">{(pet?.name ?? "JPet").toUpperCase()}</div>
         <div className="wall-mood">{mood}</div>
       </div>
+      <button
+        type="button"
+        className="wall-sound"
+        onClick={() => setSound((s) => !s)}
+        aria-label={sound ? "Mute voice" : "Enable voice"}
+        aria-pressed={sound}
+      >
+        {sound ? "🔊" : "🔇"}
+      </button>
       <button type="button" className="wall-close" onClick={onClose} aria-label="Close wall">
         ✕
       </button>
