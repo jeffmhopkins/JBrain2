@@ -1,0 +1,15 @@
+# server-brain wall display + server-side piper TTS.
+#
+# Same python:3.12-slim base the stock service used — we only add `piper` (+ its
+# onnxruntime OpenMP dep) so serve.py can render read-aloud on the box. The app
+# itself (serve.py, index.html, voices/) is still BIND-MOUNTED read-only at /app,
+# so a `jbrain update` (git reset of src) serves the new page with no rebuild —
+# only a piper or base-image bump needs `docker compose build server-brain`.
+FROM python:3.12-slim
+
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends libgomp1 \
+ && rm -rf /var/lib/apt/lists/* \
+ && pip install --no-cache-dir piper-tts
+
+# No COPY: the app is bind-mounted at /app and run via the compose `command`.

@@ -2,11 +2,15 @@
 # Install piper + the wall display's default voice models for server-side read-aloud
 # (see README "Read aloud"). Idempotent: re-running only fetches what's missing.
 #
-#   bash deploy/server-brain/install-tts.sh
+#   bash deploy/server-brain/install-tts.sh                 # piper + voices (run-on-host)
+#   bash deploy/server-brain/install-tts.sh --voices-only   # just the models (piper baked in the image)
 #
 # Voices land in ./voices (or $BRAIN_PIPER_VOICES_DIR). Joe reads prompts, Amy reads
 # answers by default; the picker lists every model you drop here, so add more freely.
 set -euo pipefail
+
+VOICES_ONLY=0
+[ "${1:-}" = "--voices-only" ] && VOICES_ONLY=1
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 VOICES_DIR="${BRAIN_PIPER_VOICES_DIR:-$HERE/voices}"
@@ -15,8 +19,10 @@ MODELS=(en_US-amy-medium en_US-joe-medium)   # answer, prompt — add more names
 
 log() { printf '[tts-setup] %s\n' "$*"; }
 
-# --- piper ------------------------------------------------------------------
-if command -v piper >/dev/null 2>&1; then
+# --- piper (skipped with --voices-only: the compose image bakes it in) ------
+if [ "$VOICES_ONLY" = 1 ]; then
+  log "voices-only: skipping piper install (baked into the server-brain image)"
+elif command -v piper >/dev/null 2>&1; then
   log "piper already on PATH"
 elif command -v pipx >/dev/null 2>&1; then
   log "installing piper via pipx"; pipx install piper-tts
@@ -40,4 +46,7 @@ done
 
 log "done — voices in $VOICES_DIR:"
 ls -1 "$VOICES_DIR"/*.onnx 2>/dev/null | sed 's#.*/##;s/\.onnx$//' | sed 's/^/  /'
-command -v piper >/dev/null 2>&1 && piper --version 2>/dev/null || log "note: 'piper' not on PATH yet — you may need to open a new shell or add ~/.local/bin"
+if [ "$VOICES_ONLY" != 1 ]; then
+  command -v piper >/dev/null 2>&1 && piper --version 2>/dev/null \
+    || log "note: 'piper' not on PATH yet — open a new shell or add ~/.local/bin"
+fi

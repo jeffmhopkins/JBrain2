@@ -18,13 +18,15 @@ its telemetry. Stdlib only, no dependencies, no build step.
 ## Deployment (auto-started, auto-updated)
 
 It runs as the `server-brain` service in `deploy/docker-compose.yml` — a default
-profile service on a stock `python:3.12-slim` image, so the standard deploy flow
-owns its lifecycle:
+profile service on a thin `python:3.12-slim` + `piper` image
+(`deploy/Dockerfile.server-brain`; piper is only used for the opt-in read-aloud
+below), so the standard deploy flow owns its lifecycle:
 
 - **`jbrain update`** brings it up and keeps it current via `docker compose up
-  -d`. No rebuild: `serve.py` re-reads `index.html` from the bind mount on every
-  request, so a git reset of `src/` serves the new page immediately. (A change to
-  `serve.py` itself takes effect on the container's next restart.)
+  -d`. The page still hot-reloads with no rebuild: `serve.py` re-reads `index.html`
+  from the bind mount on every request, so a git reset of `src/` serves the new page
+  immediately. (A change to `serve.py`, or a piper/base bump, takes effect on the
+  container's next rebuild + restart, which `jbrain update` does.)
 - It needs **no GPU device and no extra mounts** — Docker already exposes the
   host's `/sys` (read-only) and non-namespaced `/proc` to every container, which
   is exactly where the amdgpu and meminfo vitals live.
@@ -141,24 +143,31 @@ The **Read aloud** panel (bottom-right) reads turns aloud. Speech is rendered **
 `<audio>` element — keeping the browser's flaky Web Speech engine (speech-dispatcher cold start,
 silent first-word drops) out of the path entirely.
 
-Two independent voices — one for **prompts**, one for **answers** — each an enable checkbox + a
-picker over the installed piper models; both persist in `localStorage`. Markdown is stripped before
-speaking, and `serve.py` prepends a short lead of silence to each clip (`BRAIN_PIPER_LEAD_MS`,
-default 250 ms) so a cold audio-sink resume clips the silence, not the first word.
+Two independent voices — **Joe** reads prompts and **Amy** reads answers by default — each an enable
+checkbox + a picker over the installed piper models (add more and they show up automatically); both
+persist in `localStorage`. Markdown is stripped before speaking, and `serve.py` prepends a short
+lead of silence to each clip (`BRAIN_PIPER_LEAD_MS`, default 250 ms) so a cold audio-sink resume
+clips the silence, not the first word.
 
-**Setup (once, on the box):**
+`piper` itself ships **baked into the server-brain image** (`deploy/Dockerfile.server-brain`), so the
+only thing to provision is the voice models. They live (git-ignored) in the bind-mounted `voices/`
+dir; with none present, TTS stays **off** (panel hidden), so this is inert by default.
 
-1. Install piper — `pipx install piper-tts` (or drop a prebuilt binary on `PATH`).
-2. Put one or more voice models (`<name>.onnx` + `<name>.onnx.json`) in the voices dir —
-   `deploy/server-brain/voices/` by default, or set `BRAIN_PIPER_VOICES_DIR`. Grab English voices
-   from the [piper voices list](https://github.com/OHF-Voice/piper1-gpl/blob/main/VOICES.md)
-   (e.g. `en_US-lessac-medium`, `en_GB-alba-medium`). Each model's file stem becomes a selectable
-   voice; pick different models for prompt vs answer.
-3. TTS stays **off** (panel hidden) until at least one model is present, so this is inert by default.
+**Enable it (on the box):**
 
-Env knobs: `BRAIN_PIPER_BIN` (default `piper`), `BRAIN_PIPER_VOICES_DIR`, `BRAIN_PIPER_LEAD_MS`. Text
-is passed to piper on **stdin** (never a shell arg) and the `voice` param is validated against the
-installed set, so there is no command-injection or path-traversal surface.
+- **Containerized deploy:** set `BRAIN_TTS_ENABLED=true` in the compose `.env`, then `jbrain update`
+  — the update downloads the default Amy + Joe models into `voices/` (idempotent, best-effort) and
+  rebuilds the thin piper image. Or run the downloader directly:
+  `bash src/deploy/server-brain/install-tts.sh --voices-only`.
+- **Run-on-host** (`python3 serve.py` directly): `bash deploy/server-brain/install-tts.sh` installs
+  piper *and* the models.
+
+Add more voices by dropping `<name>.onnx` + `<name>.onnx.json` in `voices/` (or list extra names in
+`install-tts.sh`); grab English voices from the
+[piper voices list](https://github.com/OHF-Voice/piper1-gpl/blob/main/VOICES.md). Env knobs:
+`BRAIN_PIPER_BIN` (default `piper`), `BRAIN_PIPER_VOICES_DIR` (default `/app/voices` in the container),
+`BRAIN_PIPER_LEAD_MS`. Text is passed to piper on **stdin** (never a shell arg) and the `voice` param
+is validated against the installed set, so there is no command-injection or path-traversal surface.
 
 **Autoplay:** the enable checkbox is the user gesture Firefox needs to allow `<audio>` playback for
 the session. On a gesture-free kiosk, also set `media.autoplay.default = 0` in `about:config` (or a
