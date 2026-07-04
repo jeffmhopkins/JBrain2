@@ -37,7 +37,6 @@ import { SearchScreen } from "./screens/SearchScreen";
 import { SettingsScreen } from "./screens/SettingsScreen";
 import { TalkScreen } from "./screens/TalkScreen";
 import { TasksScreen } from "./screens/TasksScreen";
-import { WallScreen } from "./screens/WallScreen";
 import { WikiLandingScreen } from "./screens/WikiLandingScreen";
 import { WikiScreen } from "./screens/WikiScreen";
 import { useBackGesture } from "./useBackGesture";
@@ -64,7 +63,6 @@ type Card =
   | "wiki"
   | "image"
   | "intake"
-  | "wall"
   | "petcontrol"
   | "jcode";
 
@@ -72,7 +70,7 @@ type Card =
 // bar + slide-in), so they render outside the shared subscreen TopBar wrapper — hence
 // no entry here. Every Card that uses the wrapper needs a title.
 const SCREEN_TITLES: Record<
-  Exclude<Card, "automations" | "tasks" | "image" | "jcode" | "wall" | "petcontrol">,
+  Exclude<Card, "automations" | "tasks" | "image" | "jcode" | "petcontrol">,
   string
 > = {
   ops: "Ops",
@@ -429,7 +427,6 @@ export function App() {
     if (card === "tasks") return setCard(null);
     if (card === "image") return setCard(null);
     if (card === "jcode") return setCard(null);
-    if (card === "wall") return setCard(null);
     if (card === "petcontrol") return setCard(null);
     if (card !== null) return closeCardToLauncher();
     // Drops the depth immediately; the launcher plays its retreat off `open`.
@@ -487,7 +484,6 @@ export function App() {
         card !== "automations" &&
         card !== "tasks" &&
         card !== "image" &&
-        card !== "wall" &&
         card !== "petcontrol" &&
         card !== "jcode" && (
           <div
@@ -576,7 +572,6 @@ export function App() {
       {/* Code mode (jcode) is a self-contained full-screen overlay (its own back
           bar + internal list↔session navigation), like Tasks/Automations. */}
       {card === "jcode" && <JcodeScreen onClose={() => setCard(null)} />}
-      {card === "wall" && <WallScreen onClose={() => setCard(null)} />}
       {card === "petcontrol" && <ControlScreen onClose={() => setCard(null)} />}
 
       {/* The wiki reader brings its own subscreen + TopBar (like the entity

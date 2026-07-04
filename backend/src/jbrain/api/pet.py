@@ -32,6 +32,12 @@ from jbrain.llm.router import LlmRouter
 
 router = APIRouter(prefix="/pet", dependencies=[Depends(owner_only)])
 
+# Mounted under /internal (Caddy never routes /internal off-box), so it is reachable
+# only on the docker network — e.g. by the on-box server-brain wall display. No auth:
+# it is a READ of the pet snapshot, the pet lives in the safe 'general' domain (no
+# health/finance/location), and the display never mutates. See main.include_router.
+internal_router = APIRouter(prefix="/pet")
+
 # How long a quiet stream waits before emitting an SSE comment keepalive, so proxies
 # and mobile radios don't drop an idle connection between ticks.
 _KEEPALIVE_SECONDS = 15.0
@@ -159,6 +165,17 @@ async def stream_pet(request: Request, principal: PrincipalDep) -> StreamingResp
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+@internal_router.get("")
+async def internal_get_pet(request: Request) -> PetOut:
+    """The current pet snapshot for the on-box wall display (server-brain). Read-only,
+    under a system owner context; 404 until the drives tick has created the pet."""
+    ctx = SessionContext(principal_kind="owner")
+    info = await _repo(request).get_pet(ctx, domain=_settings(request).jpet_domain)
+    if info is None:
+        raise HTTPException(status_code=404, detail="pet not ready")
+    return PetOut.of(info)
 
 
 async def _events(broadcaster: PetBroadcaster, initial: PetStateInfo) -> AsyncIterator[bytes]:

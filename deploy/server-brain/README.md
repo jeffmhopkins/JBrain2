@@ -15,6 +15,23 @@ flood-ping cascades driven by real host vitals:
 `serve.py` reads the vitals from `/proc` and `/sys` and serves both the page and
 its telemetry. Stdlib only, no dependencies, no build step.
 
+## JPet wall view (`/pet`)
+
+A second view — the **family wall pet** (`docs/archive/JPET_PLAN.md`). The `🤖 Pet`
+link (top-left of the neural wall) opens **`http://<host>.local:8800/pet`**
+(`pet.html`, a self-contained WebGL Tron room). It is **display only** — the kids
+drive the pet from the **phone Control screen** in the PWA; this wall just shows it.
+
+Data path: `pet.html` polls `GET /pet/state` on this server once a second, and
+`serve.py` proxies that to the on-box api's **internal-only** `GET /internal/pet`
+(`BRAIN_API_URL`, default `http://api:8000`; reachable only on the docker `internal`
+network — Caddy never routes `/internal` off-box). The snapshot is a content-free
+pet state (name/mood/drives/position/speech in the safe `general` domain), so the
+display stays DB-free and the pet is never exposed publicly. Until the api is up (or
+the drives tick has created the pet) the wall shows *"waiting for the pet…"* and
+retries. On a box without the api, the neural wall is unaffected — only `/pet` needs
+it.
+
 ## Deployment (auto-started, auto-updated)
 
 It runs as the `server-brain` service in `deploy/docker-compose.yml` — a default
@@ -80,6 +97,7 @@ badge, so the display is never a dead black screen.
 | --- | --- | --- |
 | `BRAIN_HOST` | `0.0.0.0` | Bind interface — set a LAN IP to pin one NIC |
 | `BRAIN_PORT` | `8800` | Port |
+| `BRAIN_API_URL` | `http://api:8000` | On-box api base for the `/pet` view's read-only snapshot (`/internal/pet`) |
 | `BRAIN_POWER_MAX_W` | `90` | APU TDP ceiling, used to normalise power → heat |
 | `BRAIN_DEMO` | unset | `1` = synthetic values (no amdgpu needed) |
 

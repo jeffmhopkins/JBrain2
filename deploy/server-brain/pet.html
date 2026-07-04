@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>JPet — wall</title>
+<style>
+  :root{--line:#ff4fd8;--cy:#3bf0ff;--gold:#ffd23f;--ink:#ffe9fb;--panel:rgba(28,4,48,.55);
+    --good:#3bf0ff;--warn:#ffb03a;--bad:#ff477e;--font:"Segoe UI",system-ui,sans-serif;}
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;background:#08040f;color:var(--ink);font-family:var(--font);overflow:hidden}
+  #gl,#bloom{position:fixed;inset:0;width:100%;height:100%;display:block}
+  #bloom{pointer-events:none;mix-blend-mode:screen;opacity:.85}
+  .frame{position:fixed;inset:14px;border:2px solid rgba(255,79,216,.32);border-radius:16px;
+    box-shadow:0 0 40px rgba(255,79,216,.2) inset,0 0 26px rgba(59,240,255,.12);pointer-events:none;z-index:5}
+  .hud{position:fixed;top:24px;left:32px;z-index:6}
+  .name{font-size:30px;font-weight:800;letter-spacing:2px;text-shadow:0 0 14px var(--line)}
+  .mood{font-size:14px;opacity:.85;letter-spacing:3px;text-transform:uppercase;margin-top:2px}
+  .bars{position:fixed;top:24px;right:32px;z-index:6;width:200px}
+  .bar{margin-bottom:10px}
+  .bar label{display:flex;justify-content:space-between;font-size:12px;letter-spacing:1px;
+    text-transform:uppercase;opacity:.9;margin-bottom:3px}
+  .track{height:9px;border-radius:6px;background:rgba(255,255,255,.1);overflow:hidden}
+  .fill{height:100%;border-radius:6px;transition:width .5s ease,background .5s;box-shadow:0 0 8px currentColor}
+  .speech{position:fixed;top:96px;left:50%;transform:translateX(-50%);z-index:6;max-width:60%;
+    padding:14px 20px;border-radius:16px;background:var(--panel);border:1.5px solid var(--cy);
+    font-size:24px;font-weight:700;text-align:center;text-shadow:0 0 12px var(--cy);
+    box-shadow:0 0 26px rgba(59,240,255,.4);opacity:0;transition:opacity .3s}
+  .speech.show{opacity:1}
+  .status{position:fixed;bottom:22px;left:50%;transform:translateX(-50%);z-index:6;
+    font-size:13px;letter-spacing:2px;opacity:.5}
+  .back{position:fixed;bottom:20px;left:24px;z-index:6;font-size:12px;letter-spacing:2px;
+    color:var(--cy);text-decoration:none;opacity:.6}
+</style>
+</head>
+<body>
+<canvas id="gl"></canvas>
+<canvas id="bloom"></canvas>
+<div class="frame"></div>
+<div class="hud"><div class="name" id="name">JPET</div><div class="mood" id="mood">connecting…</div></div>
+<div class="bars" id="bars"></div>
+<div class="speech" id="speech"></div>
+<div class="status" id="status">waiting for the pet…</div>
+<a class="back" href="/">← neural wall</a>
+<script>
+/* Live wall view of the family pet: renders the server-authoritative state polled from
+   /pet/state (proxied to the on-box api). Display only — the kids drive it from the phone
+   Control screen. Engine ported from docs/mocks/jpet/06-room-3d.html. */
+const cv=document.getElementById('gl'),gl=cv.getContext('webgl',{antialias:true,alpha:false,preserveDrawingBuffer:true});
+const bcv=document.getElementById('bloom'),bctx=bcv.getContext('2d');
+const R=6.2,WALL=5.0;
+const M={ident(){return[1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1];},
+ mul(a,b){const o=new Array(16);for(let c=0;c<4;c++){const b0=b[c*4],b1=b[c*4+1],b2=b[c*4+2],b3=b[c*4+3];
+  o[c*4]=b0*a[0]+b1*a[4]+b2*a[8]+b3*a[12];o[c*4+1]=b0*a[1]+b1*a[5]+b2*a[9]+b3*a[13];
+  o[c*4+2]=b0*a[2]+b1*a[6]+b2*a[10]+b3*a[14];o[c*4+3]=b0*a[3]+b1*a[7]+b2*a[11]+b3*a[15];}return o;},
+ persp(f,a,n,fa){const t=1/Math.tan(f/2),nf=1/(n-fa);return[t/a,0,0,0,0,t,0,0,0,0,(fa+n)*nf,-1,0,0,2*fa*n*nf,0];},
+ lookAt(e,c,u){let z0=e[0]-c[0],z1=e[1]-c[1],z2=e[2]-c[2],l=1/Math.hypot(z0,z1,z2);z0*=l;z1*=l;z2*=l;
+  let x0=u[1]*z2-u[2]*z1,x1=u[2]*z0-u[0]*z2,x2=u[0]*z1-u[1]*z0;l=Math.hypot(x0,x1,x2);l=l?1/l:0;x0*=l;x1*=l;x2*=l;
+  const y0=z1*x2-z2*x1,y1=z2*x0-z0*x2,y2=z0*x1-z1*x0;
+  return[x0,y0,z0,0,x1,y1,z1,0,x2,y2,z2,0,-(x0*e[0]+x1*e[1]+x2*e[2]),-(y0*e[0]+y1*e[1]+y2*e[2]),-(z0*e[0]+z1*e[1]+z2*e[2]),1];},
+ trans(a,x,y,z){const o=a.slice();o[12]=a[0]*x+a[4]*y+a[8]*z+a[12];o[13]=a[1]*x+a[5]*y+a[9]*z+a[13];
+  o[14]=a[2]*x+a[6]*y+a[10]*z+a[14];o[15]=a[3]*x+a[7]*y+a[11]*z+a[15];return o;},
+ rotY(a,r){const s=Math.sin(r),c=Math.cos(r),o=a.slice();o[0]=a[0]*c-a[8]*s;o[1]=a[1]*c-a[9]*s;o[2]=a[2]*c-a[10]*s;o[3]=a[3]*c-a[11]*s;
+  o[8]=a[0]*s+a[8]*c;o[9]=a[1]*s+a[9]*c;o[10]=a[2]*s+a[10]*c;o[11]=a[3]*s+a[11]*c;return o;},
+ rotX(a,r){const s=Math.sin(r),c=Math.cos(r),o=a.slice();o[4]=a[4]*c+a[8]*s;o[5]=a[5]*c+a[9]*s;o[6]=a[6]*c+a[10]*s;o[7]=a[7]*c+a[11]*s;
+  o[8]=a[8]*c-a[4]*s;o[9]=a[9]*c-a[5]*s;o[10]=a[10]*c-a[6]*s;o[11]=a[11]*c-a[7]*s;return o;},
+ scale(a,x,y,z){const o=a.slice();o[0]=a[0]*x;o[1]=a[1]*x;o[2]=a[2]*x;o[3]=a[3]*x;o[4]=a[4]*y;o[5]=a[5]*y;o[6]=a[6]*y;o[7]=a[7]*y;
+  o[8]=a[8]*z;o[9]=a[9]*z;o[10]=a[10]*z;o[11]=a[11]*z;return o;}};
+const hx=h=>[parseInt(h.slice(1,3),16)/255,parseInt(h.slice(3,5),16)/255,parseInt(h.slice(5,7),16)/255];
+const CY=hx('#3bf0ff'),MG=hx('#ff4fd8'),GD=hx('#ffd23f'),RD=hx('#ff477e'),BL=hx('#6a7bff'),OR=hx('#ffb03a');
+let W,H,DPR,vp=M.ident();
+function resize(){DPR=Math.min(2,devicePixelRatio||1);W=innerWidth;H=innerHeight;cv.width=W*DPR;cv.height=H*DPR;
+  gl&&gl.viewport(0,0,cv.width,cv.height);bcv.width=W*DPR;bcv.height=H*DPR;}
+addEventListener('resize',resize);resize();
+
+const bars=document.getElementById('bars');
+[['food','🍔 Food'],['energy','⚡ Energy'],['fun','🎮 Fun'],['love','💗 Love']].forEach(([k,l])=>{
+  bars.insertAdjacentHTML('beforeend',`<div class="bar"><label><span>${l}</span><span id="v_${k}"></span></label>
+   <div class="track"><div class="fill" id="f_${k}"></div></div></div>`);});
+const speechEl=document.getElementById('speech');
+const live={name:'JPet',mood:'…',food:0,energy:0,fun:0,love:0,emotion:'neutral',asleep:false,target_x:0,target_z:0,speech:null};
+const P={x:0,z:0,tx:0,tz:0,facing:0,walk:0,emotion:'neutral',asleep:false,blink:0,nextBlink:2};
+let connected=false,lastSpeech=null;
+function fillColor(v){return v>55?'#3bf0ff':v>28?'#ffb03a':'#ff477e';}
+function applyLive(){
+  P.tx=Math.max(-R,Math.min(R,live.target_x*R));P.tz=Math.max(-R,Math.min(R,live.target_z*R));
+  P.emotion=live.emotion;P.asleep=live.asleep;
+  document.getElementById('name').textContent=(live.name||'JPet').toUpperCase();
+  document.getElementById('mood').textContent=live.mood||'';
+  for(const k of['food','energy','fun','love']){const v=Math.round(live[k]||0);
+    document.getElementById('v_'+k).textContent=v;const f=document.getElementById('f_'+k);
+    f.style.width=v+'%';f.style.background=fillColor(v);f.style.color=fillColor(v);}
+  if(live.speech&&live.speech!==lastSpeech){speechEl.textContent=live.speech;speechEl.classList.add('show');
+    clearTimeout(applyLive._t);applyLive._t=setTimeout(()=>speechEl.classList.remove('show'),6000);}
+  lastSpeech=live.speech;
+  document.getElementById('status').style.display=connected?'none':'block';
+}
+async function poll(){try{const r=await fetch('/pet/state',{cache:'no-store'});
+  if(r.ok){Object.assign(live,await r.json());connected=true;applyLive();}
+  else{connected=false;document.getElementById('mood').textContent='waiting…';applyLive();}
+ }catch(e){connected=false;}}
+setInterval(poll,1000);poll();
+
+/* ---- GL ---- */
+let prog,aP,uMVP,uCol,uAl,gFloor,nFloor,gBack,nBack,gSide,nSide,gCube,gCirc;
+if(gl&&bctx){
+ const sh=(t,s)=>{const o=gl.createShader(t);gl.shaderSource(o,s);gl.compileShader(o);return o;};
+ prog=gl.createProgram();
+ gl.attachShader(prog,sh(gl.VERTEX_SHADER,'attribute vec3 p;uniform mat4 mvp;void main(){gl_Position=mvp*vec4(p,1.0);}'));
+ gl.attachShader(prog,sh(gl.FRAGMENT_SHADER,'precision mediump float;uniform vec3 col;uniform float alpha;void main(){gl_FragColor=vec4(col,alpha);}'));
+ gl.linkProgram(prog);gl.useProgram(prog);
+ aP=gl.getAttribLocation(prog,'p');uMVP=gl.getUniformLocation(prog,'mvp');uCol=gl.getUniformLocation(prog,'col');uAl=gl.getUniformLocation(prog,'alpha');
+ gl.enable(gl.DEPTH_TEST);gl.enable(gl.BLEND);gl.blendFunc(gl.SRC_ALPHA,gl.ONE_MINUS_SRC_ALPHA);gl.clearColor(.03,.015,.06,1);
+ const buf=a=>{const b=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,b);gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(a),gl.STATIC_DRAW);return b;};
+ const grid=()=>{const v=[];for(let x=-R;x<=R+1e-3;x+=1)v.push(x,0,-R,x,0,R);for(let z=-R;z<=R+1e-3;z+=1)v.push(-R,0,z,R,0,z);return v;};
+ const back=()=>{const v=[];for(let x=-R;x<=R+1e-3;x+=1)v.push(x,0,-R,x,WALL,-R);for(let y=0;y<=WALL+1e-3;y+=1)v.push(-R,y,-R,R,y,-R);return v;};
+ const side=()=>{const v=[];for(const sx of[-R,R]){for(let z=-R;z<=R+1e-3;z+=1)v.push(sx,0,z,sx,WALL,z);for(let y=0;y<=WALL+1e-3;y+=1)v.push(sx,y,-R,sx,y,R);}return v;};
+ const cube=()=>{const c=.5,p=[[-c,-c,-c],[c,-c,-c],[c,c,-c],[-c,c,-c],[-c,-c,c],[c,-c,c],[c,c,c],[-c,c,c]],
+  e=[[0,1],[1,2],[2,3],[3,0],[4,5],[5,6],[6,7],[7,4],[0,4],[1,5],[2,6],[3,7]],v=[];for(const[a,b]of e)v.push(...p[a],...p[b]);return v;};
+ const circ=n=>{const v=[];for(let i=0;i<n;i++){const a=i/n*Math.PI*2;v.push(Math.cos(a),0,Math.sin(a));}return v;};
+ gFloor=buf(grid());nFloor=grid().length/3;gBack=buf(back());nBack=back().length/3;gSide=buf(side());nSide=side().length/3;
+ gCube=buf(cube());gCirc=buf(circ(40));
+}
+function draw(b,count,mode,mvp,col,alpha){gl.bindBuffer(gl.ARRAY_BUFFER,b);gl.enableVertexAttribArray(aP);
+ gl.vertexAttribPointer(aP,3,gl.FLOAT,false,0,0);gl.uniformMatrix4fv(uMVP,false,new Float32Array(mvp));
+ gl.uniform3fv(uCol,col);gl.uniform1f(uAl,alpha==null?1:alpha);gl.drawArrays(mode,0,count);}
+function part(model,lx,ly,lz,sx,sy,sz,col,alpha){draw(gCube,24,gl.LINES,M.mul(vp,M.scale(M.trans(model,lx,ly,lz),sx,sy,sz)),col,alpha);}
+function robot(t){
+ const walking=P.walk>0.05&&!P.asleep,bob=walking?Math.sin(t*10)*.05:Math.sin(t*2)*.03,sit=P.asleep?-.28:0;
+ let m=M.rotY(M.trans(M.ident(),P.x,0,P.z),P.facing),y=bob+sit;
+ draw(gCirc,40,gl.LINE_LOOP,M.mul(vp,M.scale(M.trans(M.ident(),P.x,.02,P.z),.55,1,.55)),MG,.5);
+ const sw=walking?Math.sin(t*10):0,sw2=walking?Math.sin(t*10+Math.PI):0;
+ part(m,-.22,y+.28,sw*.16,.17,.5,.17,CY);part(m,.22,y+.28,sw2*.16,.17,.5,.17,CY);
+ part(m,0,y+.92,0,.82,.72,.56,MG);
+ const mc=P.emotion==='sad'?RD:P.emotion==='hungry'?OR:P.asleep?BL:CY;
+ part(m,0,y+.92,.3,.34,.34,.06,mc);part(m,0,y+.92,.3,.2,.2,.05,mc,.6);
+ const asw=walking?Math.sin(t*10+Math.PI)*.25:Math.sin(t*2+1)*.06;
+ part(M.rotX(M.trans(m,-.52,y+1.06,0),asw),0,-.22,0,.15,.5,.15,MG);
+ part(M.rotX(M.trans(m,.52,y+1.06,0),-asw),0,-.22,0,.15,.5,.15,MG);
+ part(m,0,y+1.58,0,.7,.52,.56,CY);part(m,-.38,y+1.58,0,.09,.14,.14,MG);part(m,.38,y+1.58,0,.09,.14,.14,MG);
+ const eb=P.asleep||P.blink>.6?.02:.13;part(m,-.16,y+1.6,.29,.13,eb,.05,GD);part(m,.16,y+1.6,.29,.13,eb,.05,GD);
+ const mw=P.emotion==='excited'?.3:P.emotion==='happy'?.24:(P.emotion==='sad'||P.emotion==='hungry')?.14:.2;
+ part(m,0,y+1.44,.29,mw,.05,.04,GD);part(m,0,y+1.9,0,.03,.22,.03,MG);part(m,0,y+2.04,0,.09,.09,.09,GD);
+}
+let last=0;
+function frame(ts){const dt=Math.min(.05,(ts-last)/1000||0);last=ts;const t=ts/1000;
+ if(gl&&bctx){
+  vp=M.mul(M.persp(46*Math.PI/180,W/H,.1,100),M.lookAt([0,4.6,11.5],[0,1.3,0],[0,1,0]));
+  const dx=P.tx-P.x,dz=P.tz-P.z,d=Math.hypot(dx,dz);P.walk=0;
+  if(!P.asleep&&d>0.06){const s=Math.min(d,2.2*dt);P.x+=dx/d*s;P.z+=dz/d*s;P.walk=2.2;
+   const want=Math.atan2(dx,dz);let a=want-P.facing;while(a>Math.PI)a-=2*Math.PI;while(a<-Math.PI)a+=2*Math.PI;P.facing+=a*Math.min(1,dt*8);}
+  P.nextBlink-=dt;if(P.nextBlink<=0){P.blink=1;P.nextBlink=1.6+Math.random()*3;}if(P.blink>0)P.blink=Math.max(0,P.blink-dt*7);
+  gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);
+  draw(gFloor,nFloor,gl.LINES,vp,MG,.55);draw(gBack,nBack,gl.LINES,vp,MG,.32);draw(gSide,nSide,gl.LINES,vp,CY,.14);
+  robot(t);
+  bctx.clearRect(0,0,bcv.width,bcv.height);bctx.globalAlpha=.9;bctx.filter='blur(7px)';bctx.drawImage(cv,0,0,bcv.width,bcv.height);bctx.filter='none';
+ }
+ requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>

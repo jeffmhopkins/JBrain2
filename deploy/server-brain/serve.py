@@ -32,6 +32,7 @@ import tempfile
 import threading
 import time
 import urllib.parse
+import urllib.request
 import wave
 from collections import deque
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -39,6 +40,25 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 PAGE = HERE / "index.html"
+PET_PAGE = HERE / "pet.html"
+
+# The on-box api, reached over the internal docker network for the read-only JPet
+# snapshot (`GET /internal/pet`) — the ONE api touch-point: a content-free,
+# non-sensitive pet snapshot (mood/position/speech in the safe 'general' domain),
+# proxied so the LAN browser reads it same-origin. Never off-box.
+API_URL = os.environ.get("BRAIN_API_URL", "http://api:8000")
+
+
+def fetch_pet_state() -> bytes | None:
+    """GET the pet snapshot from the on-box api. None on any error (the wall shows a
+    'waiting for pet' state and retries on the next poll)."""
+    try:
+        with urllib.request.urlopen(f"{API_URL}/internal/pet", timeout=2) as resp:  # noqa: S310
+            if resp.status != 200:
+                return None
+            return resp.read()
+    except Exception:  # noqa: BLE001 — any failure just means "not ready"; poll again
+        return None
 
 # ── Server-side text-to-speech (piper) ────────────────────────────────────────
 # The wall renders speech on the box with `piper` and plays it via <audio>, so the
@@ -536,6 +556,17 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(200, PAGE.read_bytes(), "text/html; charset=utf-8")
             except OSError:
                 self._send(500, b"index.html not found next to serve.py", "text/plain")
+        elif path in ("/pet", "/pet/"):
+            try:
+                self._send(200, PET_PAGE.read_bytes(), "text/html; charset=utf-8")
+            except OSError:
+                self._send(500, b"pet.html not found next to serve.py", "text/plain")
+        elif path == "/pet/state":
+            data = fetch_pet_state()
+            if data is None:
+                self._send(503, b'{"error":"pet not ready"}', "application/json")
+            else:
+                self._send(200, data, "application/json")
         elif path == "/healthz":
             self._send(200, b"ok", "text/plain")
         elif path == "/tts/voices":

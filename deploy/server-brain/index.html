@@ -273,6 +273,12 @@
 </style>
 </head>
 <body>
+  <!-- JPet wall view: switch this display to the live family pet (served at /pet,
+       which proxies the on-box api's read-only /internal/pet snapshot). -->
+  <a href="/pet" id="petlink" style="position:fixed;top:14px;left:16px;z-index:3;
+     font:600 12px/1 system-ui,sans-serif;letter-spacing:2px;text-transform:uppercase;
+     color:#3bf0ff;text-decoration:none;opacity:.55;padding:6px 10px;border:1px solid rgba(59,240,255,.35);
+     border-radius:8px;background:rgba(8,4,15,.4)">🤖 Pet</a>
   <div id="scene"></div>
   <div id="vignette"></div>
   <div id="stream"></div>
