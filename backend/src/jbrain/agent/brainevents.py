@@ -43,10 +43,11 @@ class BrainEmit(Protocol):
     def __call__(self, kind: str, text: str | None = ...) -> None: ...
 
 
-# Cap the text we ship per event: enough to read at a glance on the wall, but bounded so
-# a long prompt/answer can't bloat the POST or the display's buffer. Truncated with an
-# ellipsis on the far side (the display shows a streaming excerpt, not the full turn).
-_MAX_TEXT = 600
+# Cap the text we ship per event. The wall reads the whole reply aloud and its popup scrolls
+# the full text, so this is a generous whole-reply bound (the tendril marquee slices its own
+# shorter visual cap page-side), not a glance-excerpt — just large enough to bound the POST /
+# display buffer against a pathologically long turn.
+_MAX_TEXT = 4000
 
 
 async def _post_event(url: str, kind: str, text: str | None = None) -> None:
