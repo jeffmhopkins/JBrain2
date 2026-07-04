@@ -208,14 +208,15 @@ The location + family + intake slices shipped; build records are under
   `where_is`/dwell/`save_place` tools. *Deferred:* the L5 dwell segmenter (waits
   on the analytics tier).
 
-**Scheduled:** JPet — the family wall pet (build plan: `docs/plans/JPET_PLAN.md`) — a
+**In progress:** JPet — the family wall pet (build plan: `docs/plans/JPET_PLAN.md`) — a
 Tron/synthwave **3D** wireframe robot that walks a room; an LLM companion the kids feed, send
 around, and talk to. Two surfaces over one server-authoritative `pet_state`: a **Wall**
 (Three.js/WebGL 3D room) and a **phone Control screen** in the PWA, kept in sync by an SSE
 fanout + `POST /pet/command`. Local-model brain (new `pet.turn`/`pet.thought` tasks, a JPet
 settings card), drives off the job queue (always second seat), and a scoped pet + kid principal
 firewall (kids never see health/finance/location). Chosen mocks: `docs/mocks/jpet/06-room-3d.html`
-+ `07-phone-control.html`. Waves W0–W6; W0 (backend safety spine) first.
++ `07-phone-control.html`. **W0 (backend safety spine — `pet_state` + RLS + drives tick,
+migration 0123) landed;** W1 (realtime backbone) next.
 
 **In progress:** EMR / medical-record import (build plan: `docs/plans/EMR_IMPORT_PLAN.md`) —
 multi-system EMR PDF exports (Epic / OneContent / athena / scanned-OCR), fed as one note with an

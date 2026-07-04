@@ -294,6 +294,15 @@ class Settings(BaseSettings):
     jcode_shim_url: str = "http://claude-shim:4000"
     jcode_gateway_token: str = ""
 
+    # JPet — the family wall pet (docs/plans/JPET_PLAN.md). The drives tick runs in
+    # the web process on this cadence (brisker than the tasks tick so the pet feels
+    # live); it's pure arithmetic, never the job queue, so the pet always takes
+    # second seat. The pet lives in `jpet_domain` — the safe family domain the kids
+    # can reach, NEVER health/finance/location — and starts named `jpet_name`.
+    jpet_tick_seconds: float = 30.0
+    jpet_domain: str = "general"
+    jpet_name: str = "Blink"
+
     # JSON object of per-task "provider:model" overrides, merged over the
     # adapter defaults — see jbrain.llm.router.TASK_DEFAULTS.
     llm_tasks: dict[str, str] = {}

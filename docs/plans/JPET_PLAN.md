@@ -1,6 +1,6 @@
 # JBrain2 — JPet: the wall pet (a robot avatar for the box)
 
-> **Status:** Scheduled · **Last verified:** 2026-07-04 · **Waves:** W0◻️ W1◻️ W2◻️ W3◻️ W4◻️ W5◻️ W6◻️
+> **Status:** In progress · **Last verified:** 2026-07-04 · **Waves:** W0✅ W1◻️ W2◻️ W3◻️ W4◻️ W5◻️ W6◻️
 
 A **wall pet** for the family: a display shows a window into a 3D Tron/synthwave
 room, and inside it a wireframe robot — an LLM-driven avatar that walks around,
@@ -12,9 +12,11 @@ sync in real time by the server. The pet is a **companion surface on top of the
 existing box**, not a new brain: it runs beside JBrain and always **takes second
 seat to the app's real processing**.
 
-This is a `Scheduled` build plan under **Phase 7 (outer ring — family & devices)**:
-the waves below are committed and built in order (W0 first). Nothing has merged
-yet. Every wave is written to satisfy the `CLAUDE.md` non-negotiables.
+This is an `In progress` build plan under **Phase 7 (outer ring — family & devices)**:
+the waves below are built in order. **W0 (backend safety spine) has landed** —
+the `pet_state` table + RLS firewall, the pure drive math, and the drives tick,
+with unit + real-Postgres isolation/tick tests. W1 (realtime backbone) is next.
+Every wave satisfies the `CLAUDE.md` non-negotiables.
 
 **Chosen aesthetic + interaction (signed off):** the interactive 3D mockup
 `../mocks/jpet/06-room-3d.html` — a real WebGL perspective room with the pet as a
@@ -149,15 +151,18 @@ twice: what the pet can *see*, and who can *drive* it.
 - **What it says.** `pet.turn` output is constrained to the pet persona +
   scoped feed; it cannot surface a firewalled fact because it never receives one.
 
-## 4. The drives model (new table, pure arithmetic)
+## 4. The drives model (new table, pure arithmetic) — **built (W0)**
 
-**`app.pet_state`** — one row per pet (start with one; `subject_id` anchors it).
-Columns: `id`, `subject_id`, `name`, `hunger` / `energy` / `boredom` / `social`
-(0–100 floats), `mood` (derived enum, materialized for cheap reads), `asleep`
-(bool), `pos_x` / `pos_z` / `target_x` / `target_z` / `facing` (float, the floor
-position + heading the Wall renders), `action` (enum: idle/walk/eat/play/sleep),
-`speech` + `emotion` (the current utterance to voice), `last_tick_at`,
-`created_at`, `updated_at`. RLS-scoped + isolation-tested.
+**`app.pet_state`** (migration 0123) — one row per pet, one per `(principal_id,
+domain_code)`. Columns: `id`, `principal_id`, `domain_code`, `name`, `food` /
+`energy` / `fun` / `love` (0–100 satisfaction floats, higher = better — the names
+the Control screen shows), `mood` + `emotion` (derived, materialized for cheap
+reads), `speech` (the current utterance), `asleep` (bool), `pos_x` / `pos_z` /
+`target_x` / `target_z` / `facing` (the floor position + heading the Wall renders),
+`action` (CHECK-enum: idle/walk/eat/play/sleep), `last_tick_at`, `created_at`,
+`updated_at`. Owner-only + domain-firewalled RLS, isolation-tested. The drive math
+(decay, sleep energy recovery, mood thresholds) is a pure, unit-tested module
+(`jpet/service.py`); the repo/tick just apply it.
 
 The **tick** (owner-configurable cadence, ~5–30 s for movement responsiveness)
 advances each drive by `elapsed × rate`, clamps 0–100, recomputes `mood`, flips
@@ -252,11 +257,15 @@ Each wave is independently mergeable; tests land with code (80% backend / 100%
 security), CI green before merge (non-negotiables #5–#6). Frontend waves carry
 Vitest coverage and are built mock-first.
 
-- **W0 — Backend safety spine.** `app.pet_state` table + migration + RLS isolation
-  test; the scoped **pet principal** + firewall isolation test (security path); the
-  **kid/family command principal** + its scope test; the drives tick (arithmetic,
-  asyncio ticker, no LLM). *Exit: drives advance on a clock; neither the pet
-  principal nor a kid principal can read a firewalled domain.*
+- **W0 — Backend safety spine.** ✅ **Landed** (migration 0123). `app.pet_state`
+  table + owner-only, domain-firewalled RLS + isolation test (a health-narrowed
+  session sees only its pet; a non-owner kid/device principal sees none; a
+  cross-domain insert is rejected); the pure drive math (`jpet/service.py`, unit-
+  tested); the drives tick (`jpet/scheduler.py`, arithmetic-only asyncio loop wired
+  into the app lifespan, off the job queue) with a real-Postgres tick test. *Exit
+  met: drives advance on a clock; neither the pet nor a kid principal can read a
+  firewalled domain.* (Dedicated kid device-session minting rides in with the
+  command API in W1/W3; the firewall guarantee is already enforced + tested.)
 - **W1 — Realtime backbone.** `GET /pet/stream` (SSE fanout, reconnect/replay) +
   `POST /pet/command` for the care/movement actions (feed/play/pet/sleep/move/poke)
   applying deltas + broadcasting; a throwaway debug client proves two subscribers
