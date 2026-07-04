@@ -75,6 +75,19 @@ async def test_move_command_sets_target(maker: async_sessionmaker) -> None:
     assert info.target_z == pytest.approx(-0.3)
 
 
+async def test_apply_reply_persists_speech_and_emotion(maker: async_sessionmaker) -> None:
+    ctx = await _owner_ctx(maker)
+    repo = SqlJpetRepo(maker)
+    await repo.ensure_pet(ctx, name="Blink", domain="general")
+    info = await repo.apply_reply(
+        ctx, domain="general", speech="Boo! Hallo!", emotion="excited", action="play"
+    )
+    assert info is not None
+    assert info.speech == "Boo! Hallo!"
+    assert info.emotion == "excited"
+    assert info.action == "play"
+
+
 async def test_command_state_reaches_a_subscriber(maker: async_sessionmaker) -> None:
     ctx = await _owner_ctx(maker)
     repo = SqlJpetRepo(maker)

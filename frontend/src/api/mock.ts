@@ -2728,6 +2728,13 @@ function applyMockPetCommand(command: PetCommand): void {
       mockPet.action = "walk";
       mockPet.asleep = false;
       break;
+    case "say": {
+      const babble = ["Hee-hee, hallo!", "Dah-boo! Wee!", "Mee love oo!", "Boop boop!"];
+      mockPet.speech = babble[Math.floor(Math.random() * babble.length)] ?? "Boo!";
+      mockPet.emotion = "excited";
+      mockPet.asleep = false;
+      break;
+    }
   }
   const avg = (mockPet.food + mockPet.energy + mockPet.fun + mockPet.love) / 4;
   mockPet.mood = mockPet.asleep

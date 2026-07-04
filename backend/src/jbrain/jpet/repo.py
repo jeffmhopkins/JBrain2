@@ -147,6 +147,31 @@ class SqlJpetRepo:
             await session.refresh(row)
             return _info(row)
 
+    async def apply_reply(
+        self, ctx: SessionContext, *, domain: str, speech: str, emotion: str, action: str
+    ) -> PetStateInfo | None:
+        """Persist a `pet.turn` reply — the current utterance + emotion/action — and
+        recompute mood. None when no pet is in scope. The caller broadcasts."""
+        async with scoped_session(self._maker, ctx) as session:
+            row = await self._load(session, domain)
+            if row is None:
+                return None
+            drives = Drives(food=row.food, energy=row.energy, fun=row.fun, love=row.love)
+            await session.execute(
+                update(PetState)
+                .where(PetState.id == row.id)
+                .values(
+                    speech=speech,
+                    emotion=emotion,
+                    action=action,
+                    asleep=False,
+                    mood=mood_of(drives, asleep=False),
+                    updated_at=func.now(),
+                )
+            )
+            await session.refresh(row)
+            return _info(row)
+
     async def _load(self, session: AsyncSession, domain: str) -> PetState | None:
         return (
             await session.execute(select(PetState).where(PetState.domain_code == domain))

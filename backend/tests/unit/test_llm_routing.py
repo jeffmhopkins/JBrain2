@@ -24,6 +24,8 @@ EXPECTED_TASKS = {
     "wiki.lint.contradiction",
     "wiki.lint.stale",
     "triage.classify",
+    "pet.turn",
+    "pet.thought",
 }
 
 

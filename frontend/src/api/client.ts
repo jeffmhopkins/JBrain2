@@ -1303,13 +1303,15 @@ export interface PetState {
   action: string;
 }
 
-export type PetAction = "feed" | "play" | "pet" | "poke" | "sleep" | "move";
+export type PetAction = "feed" | "play" | "pet" | "poke" | "sleep" | "move" | "say";
 
 export interface PetCommand {
   action: PetAction;
   /** Normalized floor coords in [-1, 1] — only read for `move`. */
   x?: number;
   z?: number;
+  /** What the child said — only read for `say` (runs the pet.turn brain). */
+  text?: string;
 }
 
 export class ApiError extends Error {

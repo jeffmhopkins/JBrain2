@@ -53,6 +53,7 @@ interface ControlScreenProps {
 
 export function ControlScreen({ onClose, deps = defaultDeps }: ControlScreenProps) {
   const [pet, setPet] = useState<PetState | null>(null);
+  const [text, setText] = useState("");
 
   const send = useCallback(
     async (command: PetCommand): Promise<void> => {
@@ -89,6 +90,14 @@ export function ControlScreen({ onClose, deps = defaultDeps }: ControlScreenProp
     const nz = r.height > 0 ? ((e.clientY - r.top) / r.height) * 2 - 1 : 0;
     const clamp = (n: number) => Math.max(-1, Math.min(1, n));
     void send({ action: "move", x: clamp(nx), z: clamp(nz) });
+  };
+
+  // Say something to the pet → the pet.turn brain answers (W4).
+  const talk = (): void => {
+    const t = text.trim();
+    if (!t) return;
+    setText("");
+    void send({ action: "say", text: t });
   };
 
   const name = pet?.name ?? "JPet";
@@ -159,6 +168,25 @@ export function ControlScreen({ onClose, deps = defaultDeps }: ControlScreenProp
           <div className="pctl-maphint">
             Tap the room to send <b>{name}</b> there. It walks over on the Wall.
           </div>
+        </div>
+      </div>
+
+      <div className="pctl-card">
+        <h3>Talk to {name}</h3>
+        {pet?.speech ? <div className="pctl-speech">💬 {pet.speech}</div> : null}
+        <div className="pctl-talk">
+          <input
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") talk();
+            }}
+            placeholder={`Tell ${name} something…`}
+            aria-label="Message to the pet"
+          />
+          <button type="button" onClick={talk} aria-label="Send message">
+            ➤
+          </button>
         </div>
       </div>
     </div>

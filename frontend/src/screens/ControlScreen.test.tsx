@@ -67,4 +67,17 @@ describe("ControlScreen", () => {
       expect(sendPetCommand).toHaveBeenCalledWith(expect.objectContaining({ action: "move" })),
     );
   });
+
+  it("sends a say command from the talk box", async () => {
+    const { deps, sendPetCommand } = makeDeps();
+    render(<ControlScreen onClose={() => {}} deps={deps} />);
+    await screen.findByText(/paired to Wall/);
+    fireEvent.change(screen.getByLabelText("Message to the pet"), {
+      target: { value: "hi Blink" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /send message/i }));
+    await waitFor(() =>
+      expect(sendPetCommand).toHaveBeenCalledWith({ action: "say", text: "hi Blink" }),
+    );
+  });
 });

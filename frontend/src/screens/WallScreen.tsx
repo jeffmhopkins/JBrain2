@@ -109,6 +109,7 @@ export function WallScreen({ onClose, deps = defaultDeps }: WallScreenProps) {
       <button type="button" className="wall-close" onClick={onClose} aria-label="Close wall">
         ✕
       </button>
+      {pet?.speech ? <div className="wall-speech">{pet.speech}</div> : null}
       <div className="wall-bars">
         {DRIVES.map(({ key, label }) => {
           const v = Math.round((pet?.[key] as number) ?? 0);

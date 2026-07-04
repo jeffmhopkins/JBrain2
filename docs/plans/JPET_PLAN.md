@@ -1,6 +1,6 @@
 # JBrain2 — JPet: the wall pet (a robot avatar for the box)
 
-> **Status:** In progress · **Last verified:** 2026-07-04 · **Waves:** W0✅ W1✅ W2✅ W3✅ W4◻️ W5◻️ W6◻️
+> **Status:** In progress · **Last verified:** 2026-07-04 · **Waves:** W0✅ W1✅ W2✅ W3✅ W4✅ W5◻️ W6◻️
 
 A **wall pet** for the family: a display shows a window into a 3D Tron/synthwave
 room, and inside it a wireframe robot — an LLM-driven avatar that walks around,
@@ -13,13 +13,14 @@ existing box**, not a new brain: it runs beside JBrain and always **takes second
 seat to the app's real processing**.
 
 This is an `In progress` build plan under **Phase 7 (outer ring — family & devices)**:
-the waves below are built in order. **W0–W3 have landed:** the `pet_state` table +
+the waves below are built in order. **W0–W4 have landed:** the `pet_state` table +
 RLS firewall + drive math + tick; the `/api/pet` surface (`GET /pet`, `POST
 /pet/command`, `GET /pet/stream` SSE fan-out); the `WallScreen` (a self-contained
-WebGL room); and the `ControlScreen` (the phone remote — live status, care buttons,
-and a room map that sends the pet places). Both surfaces render the same
-server-authoritative pet and stay in sync. **W4 (the talk brain — `pet.turn`) is
-next.**
+WebGL room); the `ControlScreen` (the phone remote); and the **talk brain** — a
+`pet.turn` LLM route (adapter, structured `{speech, emotion, action}`, safe kids'
+persona) reached by a `say` command, with a talk box on the phone and a speech
+bubble on the Wall. Both surfaces render the same server-authoritative pet and stay
+in sync. **W5 (memory + autonomous life) is next.**
 Every wave satisfies the `CLAUDE.md` non-negotiables.
 
 **Chosen aesthetic + interaction (signed off):** the interactive 3D mockup
@@ -246,18 +247,19 @@ with the `pet.turn` brain in W4 — the `say` command doesn't exist until then.)
 - Fits the PWA's existing mobile shell, offline outbox, and device-session auth
   (the phone is a kid/family device session, §3).
 
-## 8. LLM configurability — a "JPet" card in settings
+## 8. LLM configurability — the JPet routing rows (built, W4)
 
-Per the owner decision, the pet's brain is a **first-class LLM option under a new
-JPet card** in `LLMSettingsScreen`, not a buried constant:
+The pet's brain is a **first-class, owner-routable LLM option**, not a buried
+constant:
 
-- `pet.turn` and `pet.thought` land in `TASK_DEFAULTS` / `TASK_REASONING_BUCKET`,
-  **defaulting to the local model** at a low reasoning bucket (cheap, fast,
-  private).
-- The JPet card lists those tasks with the same per-task provider:model picker the
-  other task cards use (backed by `JBRAIN_LLM_TASKS`), so the owner can promote the
-  pet to a cheap cloud model per-environment without code changes.
-- Reasoning stays low by default — pet chat should be snappy, not deliberative.
+- `pet.turn` and `pet.thought` are registered in `TASK_DEFAULTS` /
+  `TASK_REASONING_BUCKET` (low reasoning — pet chat should be snappy) with
+  `TASK_LABELS` entries ("JPet — reply" / "JPet — idle thought"). The
+  `LLMSettingsScreen` **lists every `TASK_DEFAULTS` key**, so they surface
+  automatically with the same per-task provider:model picker — no bespoke card UI.
+- Default route is `xai:grok-4.3` (like every task, so it works out of the box);
+  the owner points either at the **on-box local model** from that row (or via
+  `JBRAIN_LLM_TASKS`) to make the pet free/private and keep it in second seat.
 
 ## 9. Waves
 
@@ -295,11 +297,17 @@ Vitest coverage and are built mock-first.
   wired; tested with injected deps; full frontend suite green. (Talk box moved to
   W4 with `pet.turn`.) *Exit met: a kid drives the wall pet from the phone; Wall and
   phone stay in sync off the shared stream.*
-- **W4 — The brain (talk).** `pet.turn` task + the JPet settings card; a `say`
-  command → structured `{speech, emotion, action, move_target}` applied + broadcast
-  (Wall speaks, emotes, maybe moves). Local model default. **Adds the talk box to
-  the Control screen** (deferred from W3) that posts `say`. *Exit: a child tells it
-  something and it answers in character on both surfaces.*
+- **W4 — The brain (talk).** ✅ **Landed.** `pet.turn`/`pet.thought` registered in
+  the router (`TASK_DEFAULTS`/`TASK_REASONING_BUCKET` + a `TASK_LABELS` entry, so they
+  auto-surface in the LLM-settings screen — the "JPet card" is a routing row, no new
+  UI). `jpet/brain.py`: a safe kids' persona + structured `{speech, emotion, action}`
+  through the adapter, degrading to a friendly babble on a bad response. A `say`
+  command (`/api/pet/command`) runs it, `repo.apply_reply` persists + broadcasts; a
+  talk box on the Control screen and a speech bubble on the Wall. Tests: brain unit
+  (faked LLM) + `apply_reply` PG + the talk-box screen test. *Exit met: a child tells
+  it something and it answers in character on both surfaces.* (Default route is
+  `xai:grok-4.3` like every task — the owner points it at the local model via the
+  JPet routing row; `JBRAIN_LLM_TASKS` also works.)
 - **W5 — It's alive.** Idle action-selection + occasional `pet.thought` (skippable
   under load); `app.pet_memory` (RLS + isolation test) fed back into prompts (the
   Generative-Agents loop); the curated firewalled environment feed; autonomous

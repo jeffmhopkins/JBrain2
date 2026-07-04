@@ -24,9 +24,11 @@ from jbrain.api.deps import PrincipalDep, owner_only
 from jbrain.api.notes import ctx_for
 from jbrain.config import Settings
 from jbrain.db.session import SessionContext
+from jbrain.jpet.brain import pet_turn
 from jbrain.jpet.broadcast import PetBroadcaster
 from jbrain.jpet.repo import SqlJpetRepo
 from jbrain.jpet.service import Command, PetStateInfo
+from jbrain.llm.router import LlmRouter
 
 router = APIRouter(prefix="/pet", dependencies=[Depends(owner_only)])
 
@@ -45,6 +47,10 @@ def _broadcaster(request: Request) -> PetBroadcaster:
 
 def _settings(request: Request) -> Settings:
     return cast(Settings, request.app.state.settings)
+
+
+def _router(request: Request) -> LlmRouter:
+    return cast(LlmRouter, request.app.state.llm_router)
 
 
 class PetOut(BaseModel):
@@ -93,9 +99,11 @@ class CommandIn(BaseModel):
     """A command from a surface. `x`/`z` (normalized floor coords in [-1, 1]) are read
     only for `move`."""
 
-    action: Literal["feed", "play", "pet", "poke", "sleep", "move"]
+    action: Literal["feed", "play", "pet", "poke", "sleep", "move", "say"]
     x: float | None = None
     z: float | None = None
+    # Only read for `say`: what the child said to the pet.
+    text: str | None = None
 
 
 async def _ensure(request: Request, ctx: SessionContext) -> PetStateInfo:
@@ -111,14 +119,21 @@ async def get_pet(request: Request, principal: PrincipalDep) -> PetOut:
 
 @router.post("/command")
 async def send_command(request: Request, principal: PrincipalDep, body: CommandIn) -> PetOut:
-    """Apply a command, broadcast the new state to every subscriber, and return it."""
+    """Apply a command, broadcast the new state to every subscriber, and return it.
+    `say` runs the pet.turn brain to answer the child; the rest are pure deltas."""
     ctx = ctx_for(principal)
-    await _ensure(request, ctx)
-    info = await _repo(request).apply_command(
-        ctx,
-        domain=_settings(request).jpet_domain,
-        command=Command(action=body.action, x=body.x, z=body.z),
-    )
+    state = await _ensure(request, ctx)
+    domain = _settings(request).jpet_domain
+    repo = _repo(request)
+    if body.action == "say":
+        reply = await pet_turn(_router(request), state=state, message=body.text or "")
+        info = await repo.apply_reply(
+            ctx, domain=domain, speech=reply.speech, emotion=reply.emotion, action=reply.action
+        )
+    else:
+        info = await repo.apply_command(
+            ctx, domain=domain, command=Command(action=body.action, x=body.x, z=body.z)
+        )
     if info is None:  # pragma: no cover — the ensure above guarantees a pet
         raise HTTPException(status_code=404, detail="no pet")
     _broadcaster(request).publish(info)

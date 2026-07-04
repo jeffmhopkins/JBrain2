@@ -215,10 +215,10 @@ around, and talk to. Two surfaces over one server-authoritative `pet_state`: a *
 fanout + `POST /pet/command`. Local-model brain (new `pet.turn`/`pet.thought` tasks, a JPet
 settings card), drives off the job queue (always second seat), and a scoped pet + kid principal
 firewall (kids never see health/finance/location). Chosen mocks: `docs/mocks/jpet/06-room-3d.html`
-+ `07-phone-control.html`. **W0–W3 landed** (safety spine
++ `07-phone-control.html`. **W0–W4 landed** (safety spine
 `pet_state`+RLS+tick / migration 0123; `/api/pet` GET/command/stream SSE fan-out; the 3D
-WebGL `WallScreen`; the mobile `ControlScreen` — status, care, and a send-it-here room
-map); **W4 (the `pet.turn` talk brain) next.**
+WebGL `WallScreen`; the mobile `ControlScreen`; and the `pet.turn` talk brain — a `say`
+command, a talk box, and a Wall speech bubble); **W5 (memory + autonomous life) next.**
 
 **In progress:** EMR / medical-record import (build plan: `docs/plans/EMR_IMPORT_PLAN.md`) —
 multi-system EMR PDF exports (Epic / OneContent / athena / scanned-OCR), fed as one note with an
