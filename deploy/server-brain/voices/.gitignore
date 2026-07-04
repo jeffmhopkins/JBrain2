@@ -1,0 +1,4 @@
+# piper voice models live here — see README "Read aloud (optional TTS — server-side piper)".
+# Models are large and licensed separately, so they are not committed; the dir is kept by this file.
+*.onnx
+*.onnx.json

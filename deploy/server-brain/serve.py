@@ -22,17 +22,87 @@ Stdlib only — no dependencies, no build step.
 
 from __future__ import annotations
 
+import io
 import json
 import math
 import os
+import shutil
+import subprocess
+import tempfile
 import threading
 import time
+import urllib.parse
+import wave
 from collections import deque
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 PAGE = HERE / "index.html"
+
+# ── Server-side text-to-speech (piper) ────────────────────────────────────────
+# The wall renders speech on the box with `piper` and plays it via <audio>, so the
+# browser's flaky Web Speech engine (speech-dispatcher cold start, silent drops) is
+# out of the path entirely. `BRAIN_PIPER_VOICES_DIR` holds the `.onnx` voice models
+# (+ their `.onnx.json`); each model's file stem is a selectable "voice". TTS is off
+# unless that dir has at least one model, so this stays inert by default.
+PIPER_BIN = os.environ.get("BRAIN_PIPER_BIN", "piper")
+PIPER_VOICES_DIR = Path(os.environ.get("BRAIN_PIPER_VOICES_DIR", str(HERE / "voices")))
+# A short lead of silence so a cold audio-sink resume clips the silence, not the first word.
+PIPER_LEAD_MS = int(os.environ.get("BRAIN_PIPER_LEAD_MS", "250"))
+
+
+def piper_voices() -> list[str]:
+    """Installed voice names (model file stems) in the voices dir, or [] if none/unset."""
+    try:
+        return sorted(p.stem for p in PIPER_VOICES_DIR.glob("*.onnx"))
+    except OSError:
+        return []
+
+
+def _pad_lead(wav_bytes: bytes, lead_ms: int) -> bytes:
+    """Prepend `lead_ms` of silence to a WAV (stdlib only), so a sink resume clips silence."""
+    try:
+        with wave.open(io.BytesIO(wav_bytes), "rb") as w:
+            params = w.getparams()
+            frames = w.readframes(w.getnframes())
+        pad = b"\x00" * (int(params.framerate * lead_ms / 1000) * params.sampwidth * params.nchannels)
+        out = io.BytesIO()
+        with wave.open(out, "wb") as o:
+            o.setparams(params)
+            o.writeframes(pad + frames)
+        return out.getvalue()
+    except (wave.Error, OSError, EOFError, ValueError):
+        return wav_bytes
+
+
+def tts_wav(text: str, voice: str) -> bytes | None:
+    """Render `text` to a WAV with piper using `voice` (validated against the installed
+    set — no path traversal). None when TTS isn't available or rendering fails. Text is
+    passed on STDIN, never as a shell arg, so there is no command-injection surface."""
+    voices = piper_voices()
+    if not voices or shutil.which(PIPER_BIN) is None:
+        return None
+    name = voice if voice in voices else voices[0]
+    model = PIPER_VOICES_DIR / f"{name}.onnx"
+    if not model.exists():
+        return None
+    tmp = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
+    tmp.close()
+    try:
+        subprocess.run(
+            [PIPER_BIN, "--model", str(model), "--output_file", tmp.name],
+            input=text.encode(), capture_output=True, timeout=25, check=True,
+        )
+        data = Path(tmp.name).read_bytes()
+    except (subprocess.SubprocessError, OSError):
+        return None
+    finally:
+        try:
+            os.unlink(tmp.name)
+        except OSError:
+            pass
+    return _pad_lead(data, PIPER_LEAD_MS) if PIPER_LEAD_MS > 0 else data
 
 # Strix Halo APU configurable TDP ceiling (package watts) — used to normalise the
 # power reading into the 0..1 "heat" the visual expects. Override per box.
@@ -413,6 +483,19 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(500, b"index.html not found next to serve.py", "text/plain")
         elif path == "/healthz":
             self._send(200, b"ok", "text/plain")
+        elif path == "/tts/voices":
+            self._send(200, json.dumps({"voices": piper_voices()}).encode(), "application/json")
+        elif path == "/tts":
+            qs = urllib.parse.parse_qs(self.path.split("?", 1)[1] if "?" in self.path else "")
+            text = qs.get("text", [""])[0][:600]
+            if not text.strip():
+                self._send(400, b"no text", "text/plain")
+                return
+            wav = tts_wav(text, qs.get("voice", [""])[0])
+            if wav is None:
+                self._send(503, b"tts unavailable", "text/plain")
+            else:
+                self._send(200, wav, "audio/wav")
         else:
             self._send(404, b"not found", "text/plain")
 

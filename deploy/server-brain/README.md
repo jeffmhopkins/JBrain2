@@ -133,49 +133,41 @@ teal popup naming what's running, and `{"kind": "task_stop", "text": name}` (sam
 retire it when it finishes. Several hold at once, so a couple of concurrent workflows each get
 their own card — a quiet twin of the prompt popup.
 
-### Read aloud (optional TTS)
+### Read aloud (optional TTS — server-side piper)
 
-The **Read aloud** panel (bottom-right) speaks turns via the browser's Web Speech API. It has
-two independent voices — one for **prompts**, one for **answers** — each with its own enable
-checkbox and voice picker (English voices only); both persist in `localStorage`. Markdown is
-stripped before speaking. A small scheduler serializes speech and splits a long reply into
-sentence-sized chunks it queues one at a time (holding each utterance referenced until it
-ends), and keys retries off the `onstart` signal — only a chunk that never *started* is
-re-spoken, so nothing is double-read. Before the real text it fires a tiny **sacrificial probe
-and waits for its `onstart`** (the honest "audio is flowing" signal), so the cold-engine hit
-lands on the throwaway, not your first sentence; and while a voice is enabled it runs a
-**near-silent WebAudio keep-alive** so the OS sink can't idle-suspend between turns. The panel
-hides itself when the browser exposes no speech synthesis.
+The **Read aloud** panel (bottom-right) reads turns aloud. Speech is rendered **on the box** by
+[`piper`](https://github.com/OHF-Voice/piper1-gpl): `serve.py` exposes `GET /tts?voice=<model>&text=…`
+(returns a WAV) and `GET /tts/voices` (the installed models), and the page plays the clip through an
+`<audio>` element — keeping the browser's flaky Web Speech engine (speech-dispatcher cold start,
+silent first-word drops) out of the path entirely.
 
-On **Ubuntu / Firefox**, Web Speech synthesis is backed by `speech-dispatcher`, so install it
-plus a voice engine once — `sudo apt install speech-dispatcher espeak-ng` — and ensure
-`about:config` → `media.webspeech.synth.enabled` is `true` (the default in modern Firefox).
-The picker then lists the installed voices. (No network or extra setup on Chromium.)
+Two independent voices — one for **prompts**, one for **answers** — each an enable checkbox + a
+picker over the installed piper models; both persist in `localStorage`. Markdown is stripped before
+speaking, and `serve.py` prepends a short lead of silence to each clip (`BRAIN_PIPER_LEAD_MS`,
+default 250 ms) so a cold audio-sink resume clips the silence, not the first word.
 
-#### Reliable audio on the wall box
+**Setup (once, on the box):**
 
-The page now defends itself here — the readiness probe + WebAudio keep-alive above cover most
-setups with no box config. But if the **first utterance after idle is still dropped/clipped**,
-the durable fix is one level down, in the Linux audio stack **below** the browser. Two box-level
-causes, two fixes (apply on the machine that drives the display):
+1. Install piper — `pipx install piper-tts` (or drop a prebuilt binary on `PATH`).
+2. Put one or more voice models (`<name>.onnx` + `<name>.onnx.json`) in the voices dir —
+   `deploy/server-brain/voices/` by default, or set `BRAIN_PIPER_VOICES_DIR`. Grab English voices
+   from the [piper voices list](https://github.com/OHF-Voice/piper1-gpl/blob/main/VOICES.md)
+   (e.g. `en_US-lessac-medium`, `en_GB-alba-medium`). Each model's file stem becomes a selectable
+   voice; pick different models for prompt vs answer.
+3. TTS stays **off** (panel hidden) until at least one model is present, so this is inert by default.
 
-1. **The audio sink suspends on idle** and clips the start when it resumes (best match for
-   "first-after-idle dropped, the rest fine"). Disable it:
-   - PipeWire / WirePlumber (Ubuntu 22.04+): drop a file at
-     `~/.config/wireplumber/wireplumber.conf.d/50-no-suspend.conf` setting
-     `session.suspend-timeout-seconds = 0` on the output node, then restart WirePlumber.
-   - Classic PulseAudio: comment out `load-module module-suspend-on-idle` in
-     `/etc/pulse/default.pa` (and add `tsched=0` if speech is choppy).
-2. **speech-dispatcher cold start** — the first request spawns the daemon + module + opens the
-   sink and gets swallowed. Pre-warm it at kiosk launch (before Firefox speaks) and pick a fast
-   module: `spd-say -w "ready"` once at session start, set `DefaultModule espeak-ng` and the
-   matching `AudioOutputMethod` in `~/.config/speech-dispatcher/speechd.conf`.
+Env knobs: `BRAIN_PIPER_BIN` (default `piper`), `BRAIN_PIPER_VOICES_DIR`, `BRAIN_PIPER_LEAD_MS`. Text
+is passed to piper on **stdin** (never a shell arg) and the `voice` param is validated against the
+installed set, so there is no command-injection or path-traversal surface.
 
-(The page's own keep-alive already does this from the browser side; the box setting is the
-belt-and-suspenders fix for stacks that suspend even an active silent stream. Planned
-follow-up: render TTS **server-side** with `piper` in `serve.py` and play it via `<audio>`,
-which removes the browser speech engine from the path entirely — though the sink-suspend fix
-above still applies to any audio.)
+**Autoplay:** the enable checkbox is the user gesture Firefox needs to allow `<audio>` playback for
+the session. On a gesture-free kiosk, also set `media.autoplay.default = 0` in `about:config` (or a
+site permission for the localhost origin) so clips play without an interaction.
+
+**Sink suspend (rare):** the lead-silence pad absorbs the usual "first-after-idle clip." If a very
+quiet wall still clips, stop the audio sink suspending on idle one level down — WirePlumber
+(Ubuntu 22.04+) `session.suspend-timeout-seconds = 0`, or comment out
+`load-module module-suspend-on-idle` in classic PulseAudio.
 
 **This is the one place the display carries owner data.** Everything else here is host
 vitals + content-free markers, which is why it's safe unauthenticated on a trusted LAN.
