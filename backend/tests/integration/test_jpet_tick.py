@@ -1,8 +1,8 @@
-"""The JPet drives tick against real Postgres (docs/proposed/JPET_V2_PLAN.md).
+"""The JPet ensure loop against real Postgres (docs/plans/JPET_V3_PLAN.md).
 
-Proves the pet exists and ticks on a clock — `jpet_tick` creates the pet once
-(idempotently, with the room seeded) and each tick is a positive no-op: v2 meters do NOT
-decay while awake (no neglect). No LLM is involved.
+Proves the server guarantees the pet exists — `jpet_tick` creates it once (idempotently,
+with the room seeded) and each tick just refreshes the `last_tick_at` heartbeat (v3 has no
+drives; the pet's life runs on the wall). No LLM is involved.
 """
 
 from collections.abc import AsyncIterator
@@ -60,24 +60,18 @@ async def test_ensure_pet_is_idempotent(maker: async_sessionmaker) -> None:
     assert first.id == second.id
 
 
-async def test_tick_does_not_decay_awake_meters(maker: async_sessionmaker) -> None:
+async def test_tick_refreshes_the_heartbeat(maker: async_sessionmaker) -> None:
     ctx = await _owner_ctx(maker)
     repo = SqlJpetRepo(maker)
     await repo.ensure_pet(ctx, name="Blink", domain="general")
-    # Pin a known starting state so the assertion is exact regardless of prior ticks.
     base = datetime(2026, 1, 1, tzinfo=UTC)
     async with scoped_session(maker, ctx) as session:
         await session.execute(
-            text(
-                "UPDATE app.pet_state SET food=80, energy=80, fun=70, love=70,"
-                " asleep=false, last_tick_at=:base WHERE domain_code='general'"
-            ),
+            text("UPDATE app.pet_state SET last_tick_at=:base WHERE domain_code='general'"),
             {"base": base},
         )
 
-    ticked = await repo.tick(ctx, domain="general", now=base + timedelta(hours=5))
+    when = base + timedelta(hours=5)
+    ticked = await repo.tick(ctx, domain="general", now=when)
     assert ticked is not None
-    # v2: awake for 5h, the meters are unchanged — the pet is never neglected.
-    assert ticked.drives.food == pytest.approx(80.0)
-    assert ticked.drives.energy == pytest.approx(80.0)
-    assert ticked.mood in ("happy", "excited", "playful")  # always positive
+    assert ticked.last_tick_at == when  # the heartbeat advanced; no drives to change

@@ -60,16 +60,12 @@ def _router(request: Request) -> LlmRouter:
 
 
 class PetOut(BaseModel):
-    """The pet's wire shape — the drives flattened to the names the UI shows, plus the
-    v2 action `script`, the room `objects` ({kind: [x, z]}), what it's carrying, and the
-    light state. Both surfaces render this row; the wall plays out the script."""
+    """The pet's wire shape (v3 — no drive meters): durable state + the current command
+    `script`, the room `objects` ({kind: [x, z]}), what it's carrying, and the light state.
+    The wall runs the pet's continuous life and plays a script as an interrupt."""
 
     name: str
     domain: str
-    food: float
-    energy: float
-    fun: float
-    love: float
     mood: str
     emotion: str
     speech: str | None
@@ -90,10 +86,6 @@ class PetOut(BaseModel):
         return cls(
             name=info.name,
             domain=info.domain,
-            food=info.drives.food,
-            energy=info.drives.energy,
-            fun=info.drives.fun,
-            love=info.drives.love,
             mood=info.mood,
             emotion=info.emotion,
             speech=info.speech,

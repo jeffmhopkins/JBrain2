@@ -10,7 +10,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from jbrain.jpet.brain import _system_prompt, pet_turn
-from jbrain.jpet.service import OBJECT_HOMES, Drives, PetStateInfo
+from jbrain.jpet.service import OBJECT_HOMES, PetStateInfo
 from jbrain.llm.types import LlmResult, LlmUsage, parse_json_payload
 
 OBJS = {k: (v[0], v[1]) for k, v in OBJECT_HOMES.items()}
@@ -40,7 +40,6 @@ def _state() -> PetStateInfo:
         id="p",
         name="Blink",
         domain="general",
-        drives=Drives(food=80, energy=80, fun=70, love=74),
         mood="happy",
         emotion="happy",
         speech=None,

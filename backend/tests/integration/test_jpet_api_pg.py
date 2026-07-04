@@ -35,10 +35,6 @@ pytestmark = [
 PET_FIELDS = {
     "name",
     "domain",
-    "food",
-    "energy",
-    "fun",
-    "love",
     "mood",
     "emotion",
     "speech",
@@ -80,13 +76,11 @@ async def test_pet_api_round_trip(
         assert set(pet) == PET_FIELDS  # the frozen wire contract for both surfaces
         assert pet["name"] == "Blink"
         assert "ball" in pet["objects"]  # the room is seeded
-        fun0 = pet["fun"]
 
-        # A play button expands to a bounded, terminating script and rewards the meters.
+        # A play button expands to a bounded, terminating script the wall plays out.
         danced = client.post("/api/pet/command", json={"action": "dance"}).json()
         assert danced["script"], "dance should produce a script"
         assert danced["script"][-1]["action"] in {"sit", "idle", "sleep"}  # always terminates
-        assert danced["fun"] >= fun0  # play only ever raises the meters
 
         # A parent raw-move walks the pet to a floor point.
         moved = client.post("/api/pet/command", json={"action": "move", "x": 0.5, "z": -0.3}).json()

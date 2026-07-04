@@ -2731,11 +2731,7 @@ const MOCK_SCRIPTS: Record<string, PetState["script"]> = {
 const mockPet: PetState = {
   name: "Blink",
   domain: "general",
-  food: 82,
-  energy: 84,
-  fun: 76,
-  love: 80,
-  mood: "excited",
+  mood: "playful",
   emotion: "happy",
   speech: null,
   asleep: false,
@@ -2784,7 +2780,6 @@ function mockSettle(script: PetState["script"]): void {
 }
 
 function applyMockPetCommand(command: PetCommand): void {
-  const clamp = (v: number) => Math.max(0, Math.min(100, v));
   if (command.action === "move") {
     mockPet.target_x = command.x ?? mockPet.target_x;
     mockPet.target_z = command.z ?? mockPet.target_z;
@@ -2804,12 +2799,9 @@ function applyMockPetCommand(command: PetCommand): void {
   }
   const script = MOCK_SCRIPTS[command.action] ?? [{ action: "idle" }];
   mockPet.script = script;
-  mockPet.fun = clamp(mockPet.fun + 8);
-  mockPet.love = clamp(mockPet.love + 4);
   mockPet.emotion = "excited";
   mockSettle(script);
-  const avg = (mockPet.food + mockPet.energy + mockPet.fun + mockPet.love) / 4;
-  mockPet.mood = mockPet.asleep ? "sleepy" : avg > 75 ? "excited" : avg > 45 ? "happy" : "playful";
+  mockPet.mood = mockPet.asleep ? "sleepy" : "playful";
 }
 
 export const mockFetch: typeof fetch = async (input, init) => {

@@ -24,13 +24,6 @@ const defaultDeps: ControlDeps = {
   petStream: (s) => api.petStream(s),
 };
 
-const METERS: { key: keyof PetState; label: string }[] = [
-  { key: "food", label: "🍔 Full" },
-  { key: "energy", label: "⚡ Peppy" },
-  { key: "fun", label: "🎉 Fun" },
-  { key: "love", label: "💗 Love" },
-];
-
 // The big kid play-buttons — each is a one-tap canned script. Few, large, and never
 // destructive; `sleep`/`wake` is swapped in contextually below.
 const PLAY: { action: PetCommand["action"]; ico: string; label: string }[] = [
@@ -42,11 +35,6 @@ const PLAY: { action: PetCommand["action"]; ico: string; label: string }[] = [
   { action: "spin", ico: "🌀", label: "Spin" },
   { action: "beep", ico: "🔊", label: "Silly sound" },
 ];
-
-// Happy meters are never a threat — a friendly, always-positive fill (no red "danger").
-function fillColor(v: number): string {
-  return v > 55 ? "#3bf0ff" : "#ffd23f";
-}
 
 // Normalized [-1, 1] → CSS percent for the dot's position on the map.
 function pct(n: number): string {
@@ -202,26 +190,6 @@ export function ControlScreen({ onClose, deps = defaultDeps }: ControlScreenProp
           <button type="button" onClick={talk} aria-label="Send message">
             ➤
           </button>
-        </div>
-      </div>
-
-      <div className="pctl-card">
-        <h3>How {name} feels</h3>
-        <div className="pctl-meters">
-          {METERS.map(({ key, label }) => {
-            const v = Math.round((pet?.[key] as number) ?? 0);
-            return (
-              <div key={key} className="pctl-meter">
-                <span>
-                  <span>{label}</span>
-                  <b>{v}</b>
-                </span>
-                <div className="pctl-track">
-                  <div className="pctl-fill" style={{ width: `${v}%`, background: fillColor(v) }} />
-                </div>
-              </div>
-            );
-          })}
         </div>
       </div>
 

@@ -26,20 +26,24 @@ Data path: `pet.html` polls `GET /pet/state` on this server once a second, and
 `serve.py` proxies that to the on-box api's **internal-only** `GET /internal/pet`
 (`BRAIN_API_URL`, default `http://api:8000`; reachable only on the docker `internal`
 network — Caddy never routes `/internal` off-box). The snapshot is a content-free
-pet state (name/mood/drives/position/speech in the safe `general` domain), so the
-display stays DB-free and the pet is never exposed publicly. Until the api is up (or
-the drives tick has created the pet) the wall shows *"waiting for the pet…"* and
-retries. On a box without the api, the neural wall is unaffected — only `/pet` needs
-it.
+pet state (name/mood/position/current-command/objects in the safe `general` domain), so
+the display stays DB-free and the pet is never exposed publicly. Until the api is up (or
+the ensure loop has created the pet) the wall shows *"waiting for the pet…"* and retries.
+On a box without the api, the neural wall is unaffected — only `/pet` needs it.
 
-**Play (v2).** The pet is a command-and-response play companion (`docs/proposed/JPET_V2_PLAN.md`):
-the state carries a bounded **action script** (`{action, target?, destination?, duration_ms?}[]`)
-and the room's **objects** (`{kind: [x, z]}`), and `pet.html` *plays the script out* locally
-at 60fps — walking to a target, picking up and carrying the ball, dancing/spinning/jumping/
-waving/hiding, then resting. It renders the props (ball, bed, toy box, food bowl, ball pit,
-light switch) from `objects`, and dims to night when `lights_on` is false. The kids drive it
-from the phone Control screen (big play buttons + "ask it to do something"); the wall just
-shows it.
+**The wall runs the pet's brain (v3, `docs/plans/JPET_V3_PLAN.md`).** `pet.html` is a
+continuous 60fps simulation: an **autonomy engine** keeps the pet fluidly doing things on
+its own — strolling between the room's spots, looking around, little wiggles/spins/nods,
+the odd nap — chosen by constrained randomness so it never repeats and never stands idle.
+Motion is **damped-spring** (eased accel/decel, speed-scaled turning) with always-on idle
+micro-motion, so nothing snaps or freezes. The pet is drawn in **solid wireframe** (dark
+occluding faces behind the neon edges — not X-ray). There are **no meters** — mood reads
+from behaviour, the way a real pet does. A server **command** (a phone button, or talking
+to it) arrives via `/pet/state` as a bounded action `script` and plays as a brief
+*interrupt*; when it finishes the pet resumes its own life. It renders the props (ball, bed,
+toy box, food bowl, ball pit, light switch) from `objects` and dims to night when
+`lights_on` is false. (Richer interaction — click-to-play, physics, the block-builder — is
+later v3 waves.)
 
 **Sound.** When the pet speaks, `/pet` reads its speech bubble aloud with the same on-box
 piper `/tts` endpoint the neural wall uses (`/tts/voices` picks the voice — `en_US-amy-medium`

@@ -221,7 +221,13 @@ The location + family + intake slices shipped; build records are under
   bowl/ball-pit/light-switch) with object-targeted actions + carry; per-action WebAudio **sound**
   cues + piper speech + **day/night** lighting; happy meters that never decay; capped ambient life.
   `pet_memory` (it remembers you); play off the job queue (second seat); scoped pet + kid principal
-  firewall (never health/finance/location). Migrations 0123–0125.
+  firewall (never health/finance/location). Migrations 0123–0125. **v3 in progress**
+  (`plans/JPET_V3_PLAN.md`): the wall becomes the pet's continuous real-time brain. **W1 shipped**
+  (migration 0126) — an autonomy engine so it's *constantly, fluidly* alive on its own (constrained-
+  randomness behaviour + damped-spring motion + always-on idle micro-motion), the drive meters
+  **ripped out** (mood reads from behaviour), **solid-wireframe** rendering, and a **2×** room. W2
+  (interactive/physics world: click-to-play, kickable ball, block-builder, detailed furniture, TV/
+  window, circadian) + W3 (reliable hybrid talk→action, activities, colour) open.
 
 **In progress:** EMR / medical-record import (build plan: `docs/plans/EMR_IMPORT_PLAN.md`) —
 multi-system EMR PDF exports (Epic / OneContent / athena / scanned-OCR), fed as one note with an

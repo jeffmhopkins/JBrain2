@@ -58,15 +58,14 @@ async def test_carry_script_moves_the_ball_and_persists(maker: async_sessionmake
     assert info.action in ("sit", "idle", "sleep")
 
 
-async def test_button_scripts_reward_and_sleep(maker: async_sessionmaker) -> None:
+async def test_button_scripts_run_and_sleep(maker: async_sessionmaker) -> None:
     ctx = await _owner_ctx(maker)
     repo = SqlJpetRepo(maker)
     before = await repo.ensure_pet(ctx, name="Blink", domain="general")
-    fun0 = before.drives.fun
-    after = await repo.run_script(
+    danced = await repo.run_script(
         ctx, domain="general", script=canned_script("dance", objects=before.objects)
     )
-    assert after is not None and after.drives.fun >= fun0  # play only ever raises the meters
+    assert danced is not None and danced.script  # the command script persisted
     napped = await repo.run_script(
         ctx, domain="general", script=canned_script("sleep", objects=before.objects)
     )

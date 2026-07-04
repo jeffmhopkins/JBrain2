@@ -18,10 +18,6 @@ function petState(over: Partial<PetState> = {}): PetState {
   return {
     name: "Blink",
     domain: "general",
-    food: 78,
-    energy: 82,
-    fun: 70,
-    love: 74,
     mood: "happy",
     emotion: "happy",
     speech: null,

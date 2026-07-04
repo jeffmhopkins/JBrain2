@@ -16,12 +16,6 @@
   .hud{position:fixed;top:24px;left:32px;z-index:6}
   .name{font-size:30px;font-weight:800;letter-spacing:2px;text-shadow:0 0 14px var(--line)}
   .mood{font-size:14px;opacity:.85;letter-spacing:3px;text-transform:uppercase;margin-top:2px}
-  .bars{position:fixed;top:24px;right:32px;z-index:6;width:200px}
-  .bar{margin-bottom:10px}
-  .bar label{display:flex;justify-content:space-between;font-size:12px;letter-spacing:1px;
-    text-transform:uppercase;opacity:.9;margin-bottom:3px}
-  .track{height:9px;border-radius:6px;background:rgba(255,255,255,.1);overflow:hidden}
-  .fill{height:100%;border-radius:6px;transition:width .5s ease,background .5s;box-shadow:0 0 8px currentColor}
   .speech{position:fixed;top:96px;left:50%;transform:translateX(-50%);z-index:6;max-width:60%;
     padding:14px 20px;border-radius:16px;background:var(--panel);border:1.5px solid var(--cy);
     font-size:24px;font-weight:700;text-align:center;text-shadow:0 0 12px var(--cy);
@@ -42,18 +36,19 @@
 <canvas id="bloom"></canvas>
 <div class="frame"></div>
 <div class="hud"><div class="name" id="name">JPET</div><div class="mood" id="mood">connecting…</div></div>
-<div class="bars" id="bars"></div>
 <div class="speech" id="speech"></div>
 <div class="status" id="status">waiting for the pet…</div>
 <button id="sound" hidden>🔊 tap for sound</button>
 <a class="back" href="/">← neural wall</a>
 <script>
-/* Live wall view of the family pet: renders the server-authoritative state polled from
-   /pet/state (proxied to the on-box api). Display only — the kids drive it from the phone
-   Control screen. Engine ported from docs/mocks/jpet/06-room-3d.html. */
+/* Live wall view of the family pet (docs/plans/JPET_V3_PLAN.md W1). The WALL runs the
+   pet's brain: a continuous 60fps sim — an autonomy engine that keeps it fluidly doing
+   things on its own, with damped-spring motion. A server command (from the phone/talk)
+   arrives via /pet/state and plays as a brief interrupt, then the pet resumes its life.
+   Engine ported from docs/mocks/jpet/06-room-3d.html. */
 const cv=document.getElementById('gl'),gl=cv.getContext('webgl',{antialias:true,alpha:false,preserveDrawingBuffer:true});
 const bcv=document.getElementById('bloom'),bctx=bcv.getContext('2d');
-const R=6.2,WALL=5.0;
+const R=12.0,WALL=8.5;
 const M={ident(){return[1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1];},
  mul(a,b){const o=new Array(16);for(let c=0;c<4;c++){const b0=b[c*4],b1=b[c*4+1],b2=b[c*4+2],b3=b[c*4+3];
   o[c*4]=b0*a[0]+b1*a[4]+b2*a[8]+b3*a[12];o[c*4+1]=b0*a[1]+b1*a[5]+b2*a[9]+b3*a[13];
@@ -80,26 +75,21 @@ function resize(){DPR=Math.min(2,devicePixelRatio||1);W=innerWidth;H=innerHeight
   gl&&gl.viewport(0,0,cv.width,cv.height);bcv.width=W*DPR;bcv.height=H*DPR;}
 addEventListener('resize',resize);resize();
 
-const bars=document.getElementById('bars');
-[['food','🍔 Food'],['energy','⚡ Energy'],['fun','🎮 Fun'],['love','💗 Love']].forEach(([k,l])=>{
-  bars.insertAdjacentHTML('beforeend',`<div class="bar"><label><span>${l}</span><span id="v_${k}"></span></label>
-   <div class="track"><div class="fill" id="f_${k}"></div></div></div>`);});
 const speechEl=document.getElementById('speech');
 // Named floor spots (normalized [-1,1]) the pet's script can target — mirror of the
 // backend LOCATIONS so a `destination` step resolves to the same place.
 const LOC={corner_ne:[.85,-.85],corner_nw:[-.85,-.85],corner_se:[.85,.85],corner_sw:[-.85,.85],
   center:[0,0],near_child:[0,.82]};
-const live={name:'JPet',mood:'…',food:0,energy:0,fun:0,love:0,emotion:'happy',asleep:false,
+const live={name:'JPet',mood:'…',emotion:'happy',asleep:false,
   target_x:0,target_z:0,speech:null,script:[],carrying:null,lights_on:true,objects:{}};
-// P holds the pet's live render state; the script player drives `act`/anim flags per step.
-const P={x:0,z:0,tx:0,tz:0,facing:0,walk:0,emotion:'happy',asleep:false,blink:0,nextBlink:2,
-  act:'idle',stepT:0,held:null,pop:0};
+// P holds the pet's live render state. `vx/vz` are velocity (fluid accel/decel motion);
+// the script player and the autonomy engine both steer it via the target (tx,tz) + act.
+const P={x:0,z:0,tx:0,tz:0,vx:0,vz:0,facing:0,walk:0,emotion:'happy',asleep:false,blink:0,
+  nextBlink:2,act:'idle',stepT:0,held:null};
 // Locally-animated room object positions (world coords), lerped toward the server's.
 const room={};let lights=1;   // lights: 1 = day, eased toward 0 at night
 let connected=false,lastSpeech=null;
-// Always-positive fill (v2 has no danger state): bright when high, warm gold when lower.
-function fillColor(v){return v>55?'#3bf0ff':'#ffd23f';}
-// The script player: replay the ordered steps locally (60fps), one at a time.
+// The script player: replay a server COMMAND's ordered steps locally, one at a time.
 const player={key:'',steps:[],i:-1};
 function objPos(name){const o=live.objects&&live.objects[name];return o?[o[0]*R,o[1]*R]:null;}
 function stepTarget(s){                                    // world target for a moving step, else null
@@ -122,24 +112,26 @@ function enterStep(i){
   else if(s.act==='sleep')P.asleep=true;else if(s.act==='wake')P.asleep=false;
   sfx(s.act);                                              // a per-action sound cue
 }
-function loadScript(){                                     // called when a new script arrives
+let scriptActive=false,lastMoveKey='';
+function scriptRunning(){return scriptActive&&player.i>=0&&player.i<player.steps.length;}
+function loadScript(){                                     // a new server COMMAND arrived
   const steps=(live.script||[]).map(s=>({act:s.action,target:s.target,destination:s.destination,
     duration_ms:s.duration_ms,emotion:s.emotion}));
   const key=JSON.stringify(steps);if(key===player.key)return;
   player.key=key;player.steps=steps;player.held=null;
-  if(steps.length)enterStep(0);else{player.i=-1;P.act=live.asleep?'sleep':'idle';}
+  if(steps.length){scriptActive=true;enterStep(0);}        // interrupt autonomy, play it
 }
 function applyLive(){
-  P.emotion=live.emotion||'happy';
-  if(live.asleep!==undefined&&!(player.steps.length&&player.i>=0))P.asleep=live.asleep;
   document.getElementById('name').textContent=(live.name||'JPet').toUpperCase();
   document.getElementById('mood').textContent=live.mood||'';
-  for(const k of['food','energy','fun','love']){const v=Math.round(live[k]||0);
-    document.getElementById('v_'+k).textContent=v;const f=document.getElementById('f_'+k);
-    f.style.width=v+'%';f.style.background=fillColor(v);f.style.color=fillColor(v);}
   loadScript();
-  // No active script (e.g. a parent raw move) — follow the server's plain target.
-  if(!player.steps.length){P.tx=Math.max(-R,Math.min(R,(live.target_x||0)*R));P.tz=Math.max(-R,Math.min(R,(live.target_z||0)*R));}
+  // A parent raw `move` (empty script, a fresh target) → a one-off travel interrupt.
+  const mk=(live.target_x||0)+','+(live.target_z||0);
+  if(!(live.script&&live.script.length)&&mk!==lastMoveKey&&(Math.abs(live.target_x)>0.001||Math.abs(live.target_z)>0.001)){
+    lastMoveKey=mk;ai.mode='move';ai.phase='travel';ai.act='walk';
+    ai.target=[Math.max(-R,Math.min(R,live.target_x*R)),Math.max(-R,Math.min(R,live.target_z*R))];
+    ai.until=0;P.asleep=false;
+  }
   if(live.speech&&live.speech!==lastSpeech){speechEl.textContent=live.speech;speechEl.classList.add('show');
     speakPet(live.speech);
     clearTimeout(applyLive._t);applyLive._t=setTimeout(()=>speechEl.classList.remove('show'),6000);}
@@ -199,7 +191,11 @@ soundBtn.addEventListener('click',()=>{
 initSound();
 
 /* ---- GL ---- */
-let prog,aP,uMVP,uCol,uAl,gFloor,nFloor,gBack,nBack,gSide,nSide,gCube,gCirc;
+// Solid-wireframe fill: a dark, near-opaque shell drawn behind the neon edges so a shape
+// reads as SOLID, not X-ray. FILL is a dark navy tint; polygonOffset pushes it back so the
+// bright edges always win at the surface.
+const FILL=[.05,.03,.10];
+let prog,aP,uMVP,uCol,uAl,gFloor,nFloor,gBack,nBack,gSide,nSide,gCube,gCubeF,gCirc;
 if(gl&&bctx){
  const sh=(t,s)=>{const o=gl.createShader(t);gl.shaderSource(o,s);gl.compileShader(o);return o;};
  prog=gl.createProgram();
@@ -212,27 +208,87 @@ if(gl&&bctx){
  const grid=()=>{const v=[];for(let x=-R;x<=R+1e-3;x+=1)v.push(x,0,-R,x,0,R);for(let z=-R;z<=R+1e-3;z+=1)v.push(-R,0,z,R,0,z);return v;};
  const back=()=>{const v=[];for(let x=-R;x<=R+1e-3;x+=1)v.push(x,0,-R,x,WALL,-R);for(let y=0;y<=WALL+1e-3;y+=1)v.push(-R,y,-R,R,y,-R);return v;};
  const side=()=>{const v=[];for(const sx of[-R,R]){for(let z=-R;z<=R+1e-3;z+=1)v.push(sx,0,z,sx,WALL,z);for(let y=0;y<=WALL+1e-3;y+=1)v.push(sx,y,-R,sx,y,R);}return v;};
- const cube=()=>{const c=.5,p=[[-c,-c,-c],[c,-c,-c],[c,c,-c],[-c,c,-c],[-c,-c,c],[c,-c,c],[c,c,c],[-c,c,c]],
-  e=[[0,1],[1,2],[2,3],[3,0],[4,5],[5,6],[6,7],[7,4],[0,4],[1,5],[2,6],[3,7]],v=[];for(const[a,b]of e)v.push(...p[a],...p[b]);return v;};
+ const CP=[[-.5,-.5,-.5],[.5,-.5,-.5],[.5,.5,-.5],[-.5,.5,-.5],[-.5,-.5,.5],[.5,-.5,.5],[.5,.5,.5],[-.5,.5,.5]];
+ const cube=()=>{const e=[[0,1],[1,2],[2,3],[3,0],[4,5],[5,6],[6,7],[7,4],[0,4],[1,5],[2,6],[3,7]],v=[];
+  for(const[a,b]of e)v.push(...CP[a],...CP[b]);return v;};
+ // Filled cube (12 tris) for the solid-wireframe occluding shell.
+ const cubeF=()=>{const f=[[0,1,2,3],[5,4,7,6],[4,0,3,7],[1,5,6,2],[3,2,6,7],[4,5,1,0]],v=[];
+  for(const[a,b,c,d]of f){v.push(...CP[a],...CP[b],...CP[c],...CP[a],...CP[c],...CP[d]);}return v;};
  const circ=n=>{const v=[];for(let i=0;i<n;i++){const a=i/n*Math.PI*2;v.push(Math.cos(a),0,Math.sin(a));}return v;};
  gFloor=buf(grid());nFloor=grid().length/3;gBack=buf(back());nBack=back().length/3;gSide=buf(side());nSide=side().length/3;
- gCube=buf(cube());gCirc=buf(circ(40));
+ gCube=buf(cube());gCubeF=buf(cubeF());gCirc=buf(circ(40));
 }
 function draw(b,count,mode,mvp,col,alpha){gl.bindBuffer(gl.ARRAY_BUFFER,b);gl.enableVertexAttribArray(aP);
  gl.vertexAttribPointer(aP,3,gl.FLOAT,false,0,0);gl.uniformMatrix4fv(uMVP,false,new Float32Array(mvp));
  gl.uniform3fv(uCol,col);gl.uniform1f(uAl,alpha==null?1:alpha);gl.drawArrays(mode,0,count);}
-function part(model,lx,ly,lz,sx,sy,sz,col,alpha){draw(gCube,24,gl.LINES,M.mul(vp,M.scale(M.trans(model,lx,ly,lz),sx,sy,sz)),col,alpha);}
+// A solid-wireframe box part: dark occluding faces (depth-offset back) then the neon edges.
+function part(model,lx,ly,lz,sx,sy,sz,col,alpha){
+ const mvp=M.mul(vp,M.scale(M.trans(model,lx,ly,lz),sx,sy,sz));
+ gl.enable(gl.POLYGON_OFFSET_FILL);gl.polygonOffset(1.2,1.2);
+ draw(gCubeF,36,gl.TRIANGLES,mvp,FILL,(alpha==null?1:alpha)*0.9);
+ gl.disable(gl.POLYGON_OFFSET_FILL);
+ draw(gCube,24,gl.LINES,mvp,col,alpha);}
 // Advance the script player: complete a travel step on arrival, an in-place step after its
-// duration, then step to the next — until a terminal (sit/idle/sleep) rest.
-function advancePlayer(dt){
- if(player.i<0||player.i>=player.steps.length)return;
- const s=player.steps[player.i];P.stepT+=dt;
+// duration, then step to the next — until a terminal rest, when the pet resumes its own
+// life. (frame() owns P.stepT — the time-in-current-action, reset on any action change.)
+function advancePlayer(){
+ if(player.i<0||player.i>=player.steps.length){scriptActive=false;return;}
+ const s=player.steps[player.i];
  let done;
- if(TRAVEL.includes(s.act)){const d=Math.hypot(P.tx-P.x,P.tz-P.z);done=d<0.3||P.stepT>4.5;}
+ if(TRAVEL.includes(s.act)){const d=Math.hypot(P.tx-P.x,P.tz-P.z);done=d<0.4||P.stepT>5;}
  else{const def={dance:2000,spin:1400,jump:900,wave:1200,wiggle:1400}[s.act]||800;
   done=P.stepT>=(s.duration_ms||def)/1000;}
  if(done)enterStep(player.i+1);
 }
+
+/* ---- Autonomy engine: the pet's own continuous life (docs/plans/JPET_V3_PLAN.md W1).
+   Every beat it picks the next thing to do (constrained randomness + recency), and the
+   instant one beat ends it starts the next — no dead air. Two phases: TRAVEL (stroll to a
+   spot) then BEAT (a little expressive thing there). A rare nap. A server command
+   interrupts all of this and the pet resumes here when it finishes. */
+const ai={mode:'auto',phase:'beat',act:'idle',beat:'look',target:[0,0],until:0,deadline:0,last:''};
+let napUntil=0;
+const BEATS=['look','wiggle','nod','spin','sit','look','look'];  // 'look' weighted (calm default)
+function randSpot(){
+  const objs=Object.keys(live.objects||{}).filter(n=>n!=='light_switch');
+  const locs=Object.keys(LOC);const pool=objs.concat(locs);
+  if(!pool.length)return[0,0];
+  const pick=pool[Math.floor(Math.random()*pool.length)];
+  if(LOC[pick])return[LOC[pick][0]*R,LOC[pick][1]*R];
+  const p=room[pick]||objPos(pick);return p?[p[0],p[1]]:[0,0];
+}
+function nextBehavior(now){
+  if(Math.random()<0.07){                                  // a rare little nap in the bed
+    const b=objPos('bed');ai.target=b?[b[0],b[1]]:randSpot();ai.phase='travel';ai.act='walk';
+    ai.deadline=now+7;ai.beat='nap';return;
+  }
+  let beat;do{beat=BEATS[Math.floor(Math.random()*BEATS.length)];}while(beat===ai.last&&Math.random()<0.6);
+  ai.last=beat;ai.beat=beat;
+  if(Math.random()<0.72){ai.target=randSpot();ai.phase='travel';ai.act='walk';ai.deadline=now+6;}
+  else{ai.target=[P.x,P.z];ai.phase='beat';ai.act=beat;ai.until=now+1+Math.random()*2;sfxIdle(beat);}
+}
+function sfxIdle(beat){if(beat==='spin'||beat==='wiggle'||beat==='nod')sfx(beat);}
+function stepAutonomy(now){
+  if(napUntil>now){P.asleep=true;P.act='sleep';P.tx=P.x;P.tz=P.z;return;}
+  P.asleep=false;
+  const arrived=Math.hypot(ai.target[0]-P.x,ai.target[1]-P.z)<0.5;
+  if(ai.mode==='move'){                                    // parent raw-move interrupt
+    P.act='walk';P.tx=ai.target[0];P.tz=ai.target[1];
+    if(arrived){ai.mode='auto';ai.phase='beat';ai.act='look';ai.until=now+0.8;}
+    return;
+  }
+  if(ai.phase==='travel'){
+    P.act='walk';P.tx=ai.target[0];P.tz=ai.target[1];
+    if(arrived||now>ai.deadline){
+      if(ai.beat==='nap'){napUntil=now+8+Math.random()*8;P.asleep=true;nextPhaseBeat(now,'look',0.5);}
+      else nextPhaseBeat(now,ai.beat,1+Math.random()*2);
+    }
+  }else{                                                   // beat
+    P.act=ai.act;P.tx=P.x;P.tz=P.z;
+    if(now>ai.until)nextBehavior(now);
+  }
+}
+function nextPhaseBeat(now,beat,dur){ai.phase='beat';ai.act=beat;ai.until=now+dur;sfxIdle(beat);}
 // A wireframe ring at (x,y,z) with radius r; `rot` is 0 (flat), 1 (rotX), 2 (rotZ) — three
 // perpendicular rings make a cheap glowing "ball".
 function ring(x,y,z,r,rot,col,al){let m=M.trans(M.ident(),x,y,z);if(rot===1)m=M.rotX(m,Math.PI/2);else if(rot===2)m=M.rotZ(m,Math.PI/2);
@@ -254,8 +310,11 @@ function drawObjects(t){
  }
 }
 function robot(t){
- const walking=P.walk>0.05&&!P.asleep,act=P.act,ph=P.stepT;
- let bob=walking?Math.sin(t*10)*.05:Math.sin(t*2)*.03,spinAdd=0,wiggle=0,nod=0,jumpY=0,crouch=0;
+ const sp=P.walk,walking=sp>0.15&&!P.asleep,act=P.act,ph=P.stepT;
+ // Always-on idle micro-motion (breathing, a slow look-around) so it's NEVER perfectly still.
+ const idleYaw=walking?0:(act==='look'?Math.sin(ph*1.1)*.55:Math.sin(t*0.6)*.08);
+ const wf=6+sp*3;                                           // leg swing frequency scales with speed
+ let bob=walking?Math.sin(t*wf)*.05*Math.min(1,sp/2):Math.sin(t*2)*.035,spinAdd=0,wiggle=0,nod=0,jumpY=0,crouch=0;
  if(act==='jump')jumpY=Math.abs(Math.sin(ph*7))*.55;
  if(act==='spin')spinAdd=ph*14;
  if(act==='dance'){spinAdd=Math.sin(ph*6)*.5;bob=Math.abs(Math.sin(ph*7))*.13;}
@@ -263,9 +322,10 @@ function robot(t){
  if(act==='nod')nod=Math.sin(ph*8)*.28;
  if(act==='hide'||act==='sit')crouch=-.3;
  if(P.asleep||act==='sleep')crouch=-.3;
- let m=M.rotY(M.trans(M.ident(),P.x,0,P.z),P.facing+spinAdd+wiggle),y=bob+crouch+jumpY;
- draw(gCirc,40,gl.LINE_LOOP,M.mul(vp,M.scale(M.trans(M.ident(),P.x,.02,P.z),.55,1,.55)),MG,.5);
- const sw=walking?Math.sin(t*10):0,sw2=walking?Math.sin(t*10+Math.PI):0;
+ const S=1.7;                                              // scale the pet up for the bigger room
+ let m=M.scale(M.rotY(M.trans(M.ident(),P.x,0,P.z),P.facing+spinAdd+wiggle+idleYaw),S,S,S),y=bob+crouch+jumpY;
+ draw(gCirc,40,gl.LINE_LOOP,M.mul(vp,M.scale(M.trans(M.ident(),P.x,.02,P.z),.55*S,1,.55*S)),MG,.5);
+ const sw=walking?Math.sin(t*wf)*Math.min(1,sp/2.5):0,sw2=walking?Math.sin(t*wf+Math.PI)*Math.min(1,sp/2.5):0;
  part(m,-.22,y+.28,sw*.16,.17,.5,.17,CY);part(m,.22,y+.28,sw2*.16,.17,.5,.17,CY);
  part(m,0,y+.92,0,.82,.72,.56,MG);
  const mc=P.emotion==='sleepy'?BL:P.emotion==='scared'?RD:P.emotion==='silly'?GD:P.emotion==='curious'?OR:CY;
@@ -282,15 +342,24 @@ function robot(t){
  const mw=P.emotion==='excited'?.3:P.emotion==='silly'?.28:P.emotion==='happy'?.24:P.emotion==='scared'?.14:.2;
  part(m,0,y+1.44,.29,mw,.05,.04,GD);part(m,0,y+1.9,0,.03,.22,.03,MG);part(m,0,y+2.04,0,.09,.09,.09,GD);
 }
-let last=0;
+const CRUISE=3.6;                                          // stroll speed (units/s) in the bigger room
+let last=0,lastAct='';
 function frame(ts){const dt=Math.min(.05,(ts-last)/1000||0);last=ts;const t=ts/1000;
  if(gl&&bctx){
-  vp=M.mul(M.persp(46*Math.PI/180,W/H,.1,100),M.lookAt([0,4.6,11.5],[0,1.3,0],[0,1,0]));
+  vp=M.mul(M.persp(48*Math.PI/180,W/H,.1,200),M.lookAt([0,9.5,25],[0,2.4,-1],[0,1,0]));
   const wantL=live.lights_on===false?0:1;lights+=(wantL-lights)*Math.min(1,dt*3);
-  advancePlayer(dt);
-  const dx=P.tx-P.x,dz=P.tz-P.z,d=Math.hypot(dx,dz);P.walk=0;
-  if(!P.asleep&&d>0.06){const s=Math.min(d,2.4*dt);P.x+=dx/d*s;P.z+=dz/d*s;P.walk=2.4;
-   const want=Math.atan2(dx,dz);let a=want-P.facing;while(a>Math.PI)a-=2*Math.PI;while(a<-Math.PI)a+=2*Math.PI;P.facing+=a*Math.min(1,dt*8);}
+  // ---- Decide who steers the pet: a server command, else its own autonomy ----
+  if(scriptRunning()){advancePlayer();ai.mode='script';}
+  else{if(ai.mode==='script'){ai.mode='auto';ai.until=0;ai.phase='beat';}stepAutonomy(t);}
+  // ---- Time-in-current-action (drives one-shot beat anims), reset whenever it changes ----
+  if(P.act!==lastAct){P.stepT=0;lastAct=P.act;}P.stepT+=dt;
+  // ---- Fluid locomotion: damped-spring velocity, eased accel/decel, speed-scaled turn ----
+  const dx=P.tx-P.x,dz=P.tz-P.z,d=Math.hypot(dx,dz);
+  let des=0;if(!P.asleep&&(P.act==='walk'||d>0.6))des=Math.min(CRUISE,d*2.2);
+  const dirx=d>1e-4?dx/d:0,dirz=d>1e-4?dz/d:0,k=1-Math.exp(-dt*6);
+  P.vx+=(dirx*des-P.vx)*k;P.vz+=(dirz*des-P.vz)*k;P.x+=P.vx*dt;P.z+=P.vz*dt;
+  const sp=Math.hypot(P.vx,P.vz);P.walk=sp;
+  if(sp>0.08){const want=Math.atan2(P.vx,P.vz);let a=want-P.facing;while(a>Math.PI)a-=2*Math.PI;while(a<-Math.PI)a+=2*Math.PI;P.facing+=a*Math.min(1,dt*(3+sp*1.5));}
   P.nextBlink-=dt;if(P.nextBlink<=0){P.blink=1;P.nextBlink=1.6+Math.random()*3;}if(P.blink>0)P.blink=Math.max(0,P.blink-dt*7);
   const gA=.18+.42*lights,bA=.1+.22*lights;                // grids dim at night
   gl.clearColor(.02+.02*lights,.01+.01*lights,.05+.02*lights,1);
