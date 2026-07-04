@@ -1,20 +1,20 @@
-"""JPet HTTP surface (docs/plans/JPET_PLAN.md §1, W1) — the realtime backbone both
+"""JPet HTTP surface (docs/proposed/JPET_V2_PLAN.md) — the realtime backbone both
 surfaces build on.
 
 - `GET /pet` — the current authoritative state (creating the pet on first read).
-- `POST /pet/command` — a care/move command (feed/play/pet/poke/sleep/move); applies
-  it, broadcasts the new state, and returns it.
+- `POST /pet/command` — a play command: a kid button (dance/chase/hide/…) that expands
+  to a bounded action script, `say` (freeform → the talk brain → a script), or a parent
+  `move`. Applies it, broadcasts the new state, and returns it.
 - `GET /pet/stream` — a Server-Sent-Events stream (matching the repo's SSE-not-WS
   choice): an initial snapshot, then every subsequent state change, so the Wall and
   the phone Control screen stay in sync off one server-authoritative row.
 
-Owner-gated for W1 (single-owner box); the kid/family device-session principal that
-lets a child drive the pet from the phone arrives with W3.
+Owner-gated (single-owner box).
 """
 
 import asyncio
 from collections.abc import AsyncIterator
-from typing import Literal, cast
+from typing import Any, Literal, cast
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
@@ -27,7 +27,7 @@ from jbrain.db.session import SessionContext
 from jbrain.jpet.brain import pet_turn
 from jbrain.jpet.broadcast import PetBroadcaster
 from jbrain.jpet.repo import SqlJpetRepo
-from jbrain.jpet.service import Command, PetStateInfo
+from jbrain.jpet.service import PetStateInfo, canned_script
 from jbrain.llm.router import LlmRouter
 
 router = APIRouter(prefix="/pet", dependencies=[Depends(owner_only)])
@@ -60,7 +60,9 @@ def _router(request: Request) -> LlmRouter:
 
 
 class PetOut(BaseModel):
-    """The pet's wire shape — the drives flattened to the names the UI shows."""
+    """The pet's wire shape — the drives flattened to the names the UI shows, plus the
+    v2 action `script`, the room `objects` ({kind: [x, z]}), what it's carrying, and the
+    light state. Both surfaces render this row; the wall plays out the script."""
 
     name: str
     domain: str
@@ -78,6 +80,10 @@ class PetOut(BaseModel):
     target_z: float
     facing: float
     action: str
+    script: list[dict[str, Any]]
+    carrying: str | None
+    lights_on: bool
+    objects: dict[str, list[float]]
 
     @classmethod
     def of(cls, info: PetStateInfo) -> "PetOut":
@@ -98,17 +104,41 @@ class PetOut(BaseModel):
             target_z=info.target_z,
             facing=info.facing,
             action=info.action,
+            script=list(info.script),
+            carrying=info.carrying,
+            lights_on=info.lights_on,
+            objects={k: [v[0], v[1]] for k, v in info.objects.items()},
         )
+
+
+# The kid play-buttons (each expands to a canned, bounded script) + `say` (freeform, runs
+# the talk brain) + `move` (a parent affordance: send the pet to a raw floor point).
+CommandAction = Literal[
+    "dance",
+    "spin",
+    "jump",
+    "wave",
+    "wiggle",
+    "chase",
+    "hide",
+    "beep",
+    "come",
+    "sleep",
+    "wake",
+    "eat",
+    "lights",
+    "say",
+    "move",
+]
 
 
 class CommandIn(BaseModel):
     """A command from a surface. `x`/`z` (normalized floor coords in [-1, 1]) are read
-    only for `move`."""
+    only for `move`; `text` only for `say`."""
 
-    action: Literal["feed", "play", "pet", "poke", "sleep", "move", "say"]
+    action: CommandAction
     x: float | None = None
     z: float | None = None
-    # Only read for `say`: what the child said to the pet.
     text: str | None = None
 
 
@@ -125,8 +155,9 @@ async def get_pet(request: Request, principal: PrincipalDep) -> PetOut:
 
 @router.post("/command")
 async def send_command(request: Request, principal: PrincipalDep, body: CommandIn) -> PetOut:
-    """Apply a command, broadcast the new state to every subscriber, and return it.
-    `say` runs the pet.turn brain to answer the child; the rest are pure deltas."""
+    """Apply a command, broadcast the new state to every subscriber, and return it. `say`
+    runs the pet.turn brain to answer the child and act it out as a script; a play button
+    runs its canned script; `move` sends the pet to a raw floor point."""
     ctx = ctx_for(principal)
     state = await _ensure(request, ctx)
     domain = _settings(request).jpet_domain
@@ -134,21 +165,24 @@ async def send_command(request: Request, principal: PrincipalDep, body: CommandI
     if body.action == "say":
         text = (body.text or "").strip()
         memories = await repo.recent_memories(ctx, domain=domain)
-        reply = await pet_turn(_router(request), state=state, message=text, memories=memories)
-        info = await repo.apply_reply(
-            ctx, domain=domain, speech=reply.speech, emotion=reply.emotion, action=reply.action
+        reply = await pet_turn(
+            _router(request), state=state, message=text, memories=memories, objects=state.objects
         )
-        if text:  # remember the exchange so the next turn can recall it (W5)
+        info = await repo.run_script(
+            ctx, domain=domain, script=reply.script, speech=reply.speech, emotion=reply.emotion
+        )
+        if text:  # remember the exchange so the next turn can recall it
             await repo.record_memory(
                 ctx,
                 domain=domain,
                 kind="said",
                 body=f'A child said: "{text[:120]}" — you replied: "{reply.speech[:120]}"',
             )
+    elif body.action == "move":
+        info = await repo.move_to(ctx, domain=domain, x=body.x or 0.0, z=body.z or 0.0)
     else:
-        info = await repo.apply_command(
-            ctx, domain=domain, command=Command(action=body.action, x=body.x, z=body.z)
-        )
+        script = canned_script(body.action, objects=state.objects)
+        info = await repo.run_script(ctx, domain=domain, script=script)
     if info is None:  # pragma: no cover — the ensure above guarantees a pet
         raise HTTPException(status_code=404, detail="no pet")
     _broadcaster(request).publish(info)

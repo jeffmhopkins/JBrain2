@@ -1,8 +1,8 @@
-"""The JPet drives tick against real Postgres (docs/plans/JPET_PLAN.md §4).
+"""The JPet drives tick against real Postgres (docs/proposed/JPET_V2_PLAN.md).
 
-Proves the exit criterion of W0: the pet exists and its drives advance on a clock —
-`jpet_tick` creates the pet once (idempotently) and each tick decays the needs by
-the elapsed time, with mood recomputed. No LLM is involved.
+Proves the pet exists and ticks on a clock — `jpet_tick` creates the pet once
+(idempotently, with the room seeded) and each tick is a positive no-op: v2 meters do NOT
+decay while awake (no neglect). No LLM is involved.
 """
 
 from collections.abc import AsyncIterator
@@ -43,12 +43,13 @@ async def _owner_ctx(maker: async_sessionmaker) -> SessionContext:
     return SessionContext(principal_id=str(pid), principal_kind="owner")
 
 
-async def test_jpet_tick_creates_the_pet(maker: async_sessionmaker) -> None:
+async def test_jpet_tick_creates_the_pet_and_seeds_the_room(maker: async_sessionmaker) -> None:
     await _owner_ctx(maker)
     info = await jpet_tick(maker, SqlJpetRepo(maker))
     assert info is not None
     assert info.name == "Blink"
     assert info.domain == "general"
+    assert "ball" in info.objects and "bed" in info.objects  # room seeded on create
 
 
 async def test_ensure_pet_is_idempotent(maker: async_sessionmaker) -> None:
@@ -59,7 +60,7 @@ async def test_ensure_pet_is_idempotent(maker: async_sessionmaker) -> None:
     assert first.id == second.id
 
 
-async def test_tick_decays_drives_over_elapsed_time(maker: async_sessionmaker) -> None:
+async def test_tick_does_not_decay_awake_meters(maker: async_sessionmaker) -> None:
     ctx = await _owner_ctx(maker)
     repo = SqlJpetRepo(maker)
     await repo.ensure_pet(ctx, name="Blink", domain="general")
@@ -76,8 +77,7 @@ async def test_tick_decays_drives_over_elapsed_time(maker: async_sessionmaker) -
 
     ticked = await repo.tick(ctx, domain="general", now=base + timedelta(hours=5))
     assert ticked is not None
-    # Awake for 5h: food -6/h, energy -4/h — dropped but not bottomed out.
-    assert ticked.drives.food == pytest.approx(50.0)
-    assert ticked.drives.energy == pytest.approx(60.0)
-    assert 0 < ticked.drives.food < 80
-    assert ticked.mood == "neutral"  # average 57.5 → neutral band
+    # v2: awake for 5h, the meters are unchanged — the pet is never neglected.
+    assert ticked.drives.food == pytest.approx(80.0)
+    assert ticked.drives.energy == pytest.approx(80.0)
+    assert ticked.mood in ("happy", "excited", "playful")  # always positive

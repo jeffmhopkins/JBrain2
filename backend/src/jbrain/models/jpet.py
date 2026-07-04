@@ -5,9 +5,10 @@ mutate it. Mirrors migration 0123 (the migration is the source of truth)."""
 
 import uuid
 from datetime import datetime
+from typing import Any
 
 from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Text, func
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from jbrain.models.core import Base
@@ -63,6 +64,17 @@ class PetState(Base):
     target_z: Mapped[float] = mapped_column(Float, default=0.0, server_default="0")
     facing: Mapped[float] = mapped_column(Float, default=0.0, server_default="0")
     action: Mapped[str] = mapped_column(Text, default="idle", server_default="idle")
+
+    # v2 (migration 0125): the bounded action script the pet plays out, the room objects
+    # it can target/carry (a fixed set of mutable {kind: [x, z]} positions), what it is
+    # currently carrying, and the day/night light state.
+    script: Mapped[list[Any]] = mapped_column(JSONB, default=list, server_default="[]")
+    script_started_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    objects: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict, server_default="{}")
+    carrying: Mapped[str | None] = mapped_column(Text, nullable=True)
+    lights_on: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
 
     last_tick_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()

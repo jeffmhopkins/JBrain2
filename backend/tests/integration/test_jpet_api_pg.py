@@ -49,6 +49,10 @@ PET_FIELDS = {
     "target_z",
     "facing",
     "action",
+    "script",
+    "carrying",
+    "lights_on",
+    "objects",
 }
 
 
@@ -75,12 +79,16 @@ async def test_pet_api_round_trip(
         pet = client.get("/api/pet").json()
         assert set(pet) == PET_FIELDS  # the frozen wire contract for both surfaces
         assert pet["name"] == "Blink"
-        food0 = pet["food"]
+        assert "ball" in pet["objects"]  # the room is seeded
+        fun0 = pet["fun"]
 
-        fed = client.post("/api/pet/command", json={"action": "feed"}).json()
-        assert fed["food"] >= food0  # fed (clamped at 100 if already full)
-        assert fed["action"] == "eat"
+        # A play button expands to a bounded, terminating script and rewards the meters.
+        danced = client.post("/api/pet/command", json={"action": "dance"}).json()
+        assert danced["script"], "dance should produce a script"
+        assert danced["script"][-1]["action"] in {"sit", "idle", "sleep"}  # always terminates
+        assert danced["fun"] >= fun0  # play only ever raises the meters
 
+        # A parent raw-move walks the pet to a floor point.
         moved = client.post("/api/pet/command", json={"action": "move", "x": 0.5, "z": -0.3}).json()
         assert moved["action"] == "walk"
         assert moved["target_x"] == pytest.approx(0.5)
