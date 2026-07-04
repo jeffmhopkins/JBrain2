@@ -25,12 +25,27 @@ from jbrain.models.analysis import ReviewItem
 from jbrain.models.notes import Attachment, Note
 from jbrain.queue import SYSTEM_CTX
 from jbrain.storage import BlobStore
+from jbrain.workflow.registry import ActionSpec
 
 ZIP_MEDIA_TYPES = ("application/zip", "application/x-zip-compressed")
 PDF_MEDIA_TYPE = "application/pdf"
 REVIEW_KIND = "low_confidence"
 FAIL_SUBKIND = "emr_intake_failed"
 _REDACTED = "[redacted]"
+
+# In-code-only action (not in the app.actions seed, like the wiki/hygiene sweeps): a
+# migration seeds its trigger. Stage 1 of the EMR import (§6.1) — decrypt in place.
+EMR_IMPORT_SPEC = ActionSpec(
+    name="emr_import",
+    version=1,
+    handler="emr_import",
+    domain_optional=True,
+    mutating=True,
+    cost_class="standard",
+    dedup_key_expr="note_id",
+    description="Decrypt an EMR archive, attach its PDFs, and scrub the password from the note.",
+    category="note",
+)
 
 
 class EmrIntakeError(Exception):

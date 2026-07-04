@@ -602,6 +602,10 @@ async def test_run_registers_all_job_handlers(
         # the app.actions seed; a migration seeds its schedule
         # (docs/archive/EMAIL_ARCHIVIST_PLAN.md).
         "triage_inbox",
+        # The two-stage EMR import (docs/plans/EMR_IMPORT_PLAN.md) — in-code only, not
+        # in ACTION_SPECS / the app.actions seed; migration 0122 seeds its triggers.
+        "emr_import",
+        "emr_parse",
     }
 
 
