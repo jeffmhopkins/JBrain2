@@ -126,6 +126,25 @@ quotes, links, tables), slowly scrolling if it's too tall to fit.
 The same toggle also lets a web tool's **search query** (cyan) / **fetched URL** (amber)
 stream out along its tendril; with the toggle off those stay content-free markers.
 
+### Running-workflow / task popups
+
+A workflow or task in flight can POST `{"kind": "task_start", "text": name}` to raise a held
+teal popup naming what's running, and `{"kind": "task_stop", "text": name}` (same name) to
+retire it when it finishes. Several hold at once, so a couple of concurrent workflows each get
+their own card — a quiet twin of the prompt popup.
+
+### Read aloud (optional TTS)
+
+The **Read aloud** panel (bottom-right) speaks turns via the browser's Web Speech API. It has
+two independent voices — one for **prompts**, one for **answers** — each with its own enable
+checkbox and voice picker; both persist in `localStorage`. Markdown is stripped before
+speaking. The panel hides itself when the browser exposes no speech synthesis.
+
+On **Ubuntu / Firefox**, Web Speech synthesis is backed by `speech-dispatcher`, so install it
+plus a voice engine once — `sudo apt install speech-dispatcher espeak-ng` — and ensure
+`about:config` → `media.webspeech.synth.enabled` is `true` (the default in modern Firefox).
+The picker then lists the installed voices. (No network or extra setup on Chromium.)
+
 **This is the one place the display carries owner data.** Everything else here is host
 vitals + content-free markers, which is why it's safe unauthenticated on a trusted LAN.
 Turning this on puts your prompt and answer text on that unauthenticated surface, so

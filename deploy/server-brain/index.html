@@ -94,6 +94,15 @@
   }
   #popups .popup.in::before { content: "↱ prompt"; color: #7FA7C9; }
   #popups .popup.in.leaving { animation: popupOut 1.1s ease-in forwards; }
+  /* Task / workflow popup — like the prompt, it HOLDS while the workflow or task runs and
+     fades when it finishes; teal accent + its own label. Several can show at once. */
+  #popups .popup.task {
+    border-color: rgba(111,182,177,0.34);
+    box-shadow: 0 6px 26px rgba(0,0,0,0.5), 0 0 22px rgba(111,182,177,0.16);
+    animation: popupHoldIn 1.6s ease-out forwards;   /* fade in + settle, then hold while it runs */
+  }
+  #popups .popup.task::before { content: "⚙ task"; color: #6FB6B1; }
+  #popups .popup.task.leaving { animation: popupOut 1.1s ease-in forwards; }
   @keyframes popupHoldIn {
     0%   { opacity: 0; transform: translate(0, 8px) scale(0.96); }
     100% { opacity: 1; transform: translate(calc(var(--dx) * 0.28), calc(var(--dy) * 0.28)) scale(1); }
@@ -236,6 +245,22 @@
   #fps { position: fixed; bottom: 6px; right: 10px; z-index: 3;
     font-size: 9px; color: rgba(154,157,163,0.5); letter-spacing: 0.1em; }
 
+  /* Read-aloud panel — Web Speech API. Two independent voices (prompt + answer), each with
+     its own enable checkbox and voice picker. Fades with the panels when idle; hidden
+     entirely when the browser exposes no speech synthesis. */
+  #voice { bottom: 18px; right: 14px; z-index: 3; padding: 9px 11px 10px;
+    display: flex; flex-direction: column; gap: 6px; min-width: 172px; }
+  #voice .hd { font-size: 9px; letter-spacing: 0.22em; color: var(--text-2);
+    text-transform: uppercase; margin-bottom: 1px; }
+  #voice .vrow { display: flex; align-items: center; gap: 7px; cursor: pointer; }
+  #voice .vrow input { accent-color: #6FB6B1; cursor: pointer; margin: 0; }
+  #voice .vk { font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase;
+    color: var(--text-2); width: 46px; }
+  #voice .vrow input:checked ~ .vk { color: #6FB6B1; }
+  #voice select { flex: 1; min-width: 0; font-family: inherit; font-size: 10px;
+    color: var(--text); background: rgba(20,22,26,0.9); cursor: pointer;
+    border: 1px solid rgba(127,167,201,0.22); border-radius: 6px; padding: 3px 5px; }
+
   @media (max-width: 640px) {
     #legend { display: none; }
     #readout { min-width: 150px; padding: 10px 12px; }
@@ -296,6 +321,15 @@
     <button id="btnSearch">🔎 Web search</button>
     <button id="btnFetch">⇩ Web fetch</button>
     <button id="btnLlmStream">🧠 LLM stream</button>
+    <button id="btnTask">⚙ Task</button>
+  </div>
+
+  <div id="voice" class="panel" hidden>
+    <div class="hd">🔊 READ ALOUD</div>
+    <label class="vrow"><input type="checkbox" id="vPromptOn"><span class="vk">prompt</span>
+      <select id="vPromptVoice" title="Voice for prompts"></select></label>
+    <label class="vrow"><input type="checkbox" id="vAnswerOn"><span class="vk">answer</span>
+      <select id="vAnswerVoice" title="Voice for answers"></select></label>
   </div>
 
   <div id="fps">—</div>
@@ -352,8 +386,12 @@ scene.fog = new THREE.FogExp2(0x0a0b0d, 0.018);
 const camera = new THREE.PerspectiveCamera(52, window.innerWidth / window.innerHeight, 0.1, 400);
 camera.position.set(0, 4, 46);   // closer in -> the cortex fills more of the screen
 
-// Container we slowly auto-rotate (the whole cortex).
+// Container we slowly auto-rotate (the whole cortex). Scaled up so neuron-to-neuron spacing
+// reads 1.5x wider on screen — applied on the GROUP (not the local neuron coords), so the
+// flood distances, synapse-link topology and lit-band width all keep their original tuning;
+// only the on-screen scale changes. Stream anchors track world position, so tendrils follow.
 const cortex = new THREE.Group();
+cortex.scale.setScalar(1.5);
 scene.add(cortex);
 
 /* ----------------------------------------------------------------------------
@@ -863,7 +901,9 @@ function updateTendrils(dt) {
    ========================================================================== */
 const streamEl = document.getElementById('stream');
 const CHAR_POOL = [];
-for (let i = 0; i < 220; i++) {
+// Headroom for several long marquees at once: only the on-screen slice of each stream draws
+// (~a screen-span's worth of glyphs), but a few concurrent full-length streams can overlap.
+for (let i = 0; i < 400; i++) {
   const s = document.createElement('span');
   s.className = 'ch'; s.style.display = 'none';
   streamEl.appendChild(s); CHAR_POOL.push(s);
@@ -879,10 +919,13 @@ const STREAM_SPEC = {
   fetch:    { dir: 'in',  g: '#ffe2b4', f: new THREE.Color('#ffc66e'), speed: 3 },   // amber, fetched data IN to the llm (from the left)
 };
 const LLM_BR = 15;        // world radius at the brain edge where a stream connects
-const LLM_REACH = 60;     // world length of the filament: long enough to run from the anchor
-                          // clear OFF the screen edge, so a tendril spans edge <-> inner neuron
+const LLM_REACH = 90;     // world length of the filament: long enough to run from the anchor
+                          // (now on a 1.5x-wider cortex) clear OFF the screen edge, so a tendril
+                          // still spans screen-edge <-> inner neuron
 const LLM_STEP = 0.9;     // world units between glyphs — fixed, so short text stays tight
-const LLM_CAP = 34;       // glyphs carried on the tendril (the popup holds the full answer)
+const LLM_CAP = 600;      // max glyphs on the tendril — the WHOLE message streams (a marquee that
+                          // scrolls the full thinking/answer through the visible span, running until
+                          // well past the popup); 600 matches serve.py's LLM-text cap. Not truncated.
 // Flow endpoints (dist from the anchor along the tendril). The filament tip (LLM_BR + LLM_REACH)
 // sits OFF screen on either side, so both the tendril and its glyphs run edge <-> neuron: an
 // answer ORIGINATES at the (inner-50%) anchor and streams OFF the right edge; a prompt slides IN
@@ -1048,6 +1091,34 @@ function fadePromptPopup(d) {
   d._leaving = true;
   clearTimeout(d._safety);
   if (activePromptPopup === d) activePromptPopup = null;
+  d.classList.add('leaving');
+  setTimeout(() => d.remove(), 1200);
+}
+// Running-workflow / task popups: one held card per active task (keyed by name), a teal
+// twin of the prompt popup. It stays up while the workflow/task runs and fades when it
+// ends; several can be on screen at once (a couple of workflows in flight).
+const taskPopups = new Map();          // name -> element
+function taskStart(name) {
+  const t = String(name || '').replace(/\s+/g, ' ').trim().slice(0, 120);
+  if (!t || taskPopups.has(t)) return;   // no dup card for the same running task
+  const d = document.createElement('div');
+  d.className = 'popup task';
+  const p = document.createElement('p'); p.className = 'md-p'; p.textContent = t;  // the task name, verbatim
+  d.appendChild(p);
+  d.style.left = (13 + Math.random()*60).toFixed(1) + 'vw';
+  d.style.top  = (15 + Math.random()*56).toFixed(1) + 'vh';
+  d.style.setProperty('--dx', ((Math.random() - 0.5) * 26).toFixed(0) + 'px');
+  d.style.setProperty('--dy', (-12 - Math.random() * 16).toFixed(0) + 'px');
+  taskPopups.set(t, d);
+  popupsEl.appendChild(d);
+}
+function taskStop(name) {
+  const t = String(name || '').replace(/\s+/g, ' ').trim().slice(0, 120);
+  const d = taskPopups.get(t);
+  if (!d) return;
+  taskPopups.delete(t);
+  if (d._leaving) return;
+  d._leaving = true;
   d.classList.add('leaving');
   setTimeout(() => d.remove(), 1200);
 }
@@ -1314,10 +1385,13 @@ function spawnFlood(seed, speed, strength, branchK, maxHops, density) {
 // the advancing wavefront glow (brightest right at the front, ramping to dark
 // behind it), so each cascade reads as a ring of fire sweeping through the graph.
 const FLOOD_TAIL = 8.0;
+// Global pace of synapse propagation — how fast a flood's wavefront sweeps the graph.
+// 0.5 = half the raw per-flood speed, so cascades travel neuron-to-neuron more slowly.
+const SYNAPSE_SPEED = 0.5;
 function updateFloods(dt) {
   for (const f of floodPool) {
     if (!f.active) continue;
-    f.front += dt * f.speed;
+    f.front += dt * f.speed * SYNAPSE_SPEED;
     // front pointer: neurons the wavefront has now reached
     while (f.ptr < f.n && f.dist[f.order[f.ptr]] <= f.front) {
       const fn = f.order[f.ptr];
@@ -1398,6 +1472,21 @@ function demoLlmTurn() {
   setTimeout(() => ServerBrain.llmThinking(DEMO_THINKING[i]), 1900);
   setTimeout(() => ServerBrain.llmOutput(DEMO_ANSWERS[i]), 3200);
 }
+// Synthetic running workflows/tasks for the demo path — each holds a teal popup for a few
+// seconds then finishes, so the running-task effect is alive without the backend.
+const DEMO_TASKS = [
+  'ingest workflow · new note',
+  'nightly wiki rebuild',
+  'entity-graph reconciliation',
+  'embedding reindex',
+  'integration sweep',
+];
+let demoTaskI = 0;
+function demoTask() {
+  const name = DEMO_TASKS[demoTaskI++ % DEMO_TASKS.length];
+  ServerBrain.taskStart(name);
+  setTimeout(() => ServerBrain.taskStop(name), 4000 + Math.random() * 6000);
+}
 
 const ServerBrain = {
   update(s) {
@@ -1468,6 +1557,8 @@ const ServerBrain = {
       if (Math.random() < 0.012) ServerBrain.webFetch();
       // occasional synthetic LLM turn -> streaming-text tendrils + a fade-out popup
       if (Math.random() < 0.01) demoLlmTurn();
+      // occasional workflow/task -> a held teal popup naming what's running
+      if (Math.random() < 0.012) demoTask();
       ServerBrain.update({
         ts: Date.now(), health,
         gpu: { util, vram, tempC: temp, powerW, powerMaxW: 600 },
@@ -1523,9 +1614,13 @@ const ServerBrain = {
   // LLM turn (opt-in real-text streaming): the prompt streams IN from the left, the
   // (fast) thinking trace and then the answer stream OUT to the right; prompt and answer
   // each bloom a fade-out popup so the full text is legible for a beat.
-  llmInput(text) { spawnStream('prompt', text); if (text) setTimeout(() => spawnPopup(text, 'prompt'), 400); },
+  llmInput(text) { spawnStream('prompt', text); if (text) { setTimeout(() => spawnPopup(text, 'prompt'), 400); speakPrompt(text); } },
   llmThinking(text) { spawnStream('thinking', text); },
-  llmOutput(text) { spawnStream('answer', text); if (text) setTimeout(() => spawnPopup(text, 'answer'), 1000); },
+  llmOutput(text) { spawnStream('answer', text); if (text) { setTimeout(() => spawnPopup(text, 'answer'), 1000); speakAnswer(text); } },
+  // A workflow/task started or finished — a held teal popup names what's running (call
+  // taskStop with the same name when it ends). Several can hold at once.
+  taskStart(name) { taskStart(name); },
+  taskStop(name) { taskStop(name); },
 };
 window.ServerBrain = ServerBrain;
 
@@ -1554,6 +1649,77 @@ document.getElementById('btnErr').onclick = () => ServerBrain.injectError();
 document.getElementById('btnSearch').onclick = () => ServerBrain.webSearch();
 document.getElementById('btnFetch').onclick = () => ServerBrain.webFetch();
 document.getElementById('btnLlmStream').onclick = () => demoLlmTurn();
+document.getElementById('btnTask').onclick = () => demoTask();
+
+/* ============================================================================
+   READ ALOUD — two independent Web Speech voices: one reads prompts, one reads
+   answers. Each has its own enable checkbox and voice picker; both persist. The
+   panel hides entirely when the browser has no speechSynthesis (e.g. Firefox on
+   Linux without speech-dispatcher installed). speakPrompt/speakAnswer are called
+   from ServerBrain.llmInput / .llmOutput.
+   ========================================================================== */
+const TTS = ('speechSynthesis' in window) ? window.speechSynthesis : null;
+const voicePanel = document.getElementById('voice');
+const voiceCfg = {
+  prompt: { on: document.getElementById('vPromptOn'), sel: document.getElementById('vPromptVoice') },
+  answer: { on: document.getElementById('vAnswerOn'), sel: document.getElementById('vAnswerVoice') },
+};
+function loadVoicePref(kind) {
+  try { return JSON.parse(localStorage.getItem('brainVoice_' + kind) || '{}'); } catch { return {}; }
+}
+function saveVoicePref(kind) {
+  const c = voiceCfg[kind];
+  try { localStorage.setItem('brainVoice_' + kind, JSON.stringify({ on: c.on.checked, voice: c.sel.value })); } catch { /* private mode */ }
+}
+function populateVoices() {
+  if (!TTS) return;
+  const voices = TTS.getVoices();
+  for (const kind of ['prompt', 'answer']) {
+    const c = voiceCfg[kind];
+    if (!voices.length) {                           // none yet (async) or no engine installed
+      if (!c.sel.options.length) {
+        const o = document.createElement('option'); o.value = ''; o.textContent = '— no system voices —';
+        c.sel.appendChild(o);
+      }
+      continue;                                     // voiceschanged will re-call once they load
+    }
+    const want = c.sel.value || loadVoicePref(kind).voice || '';
+    c.sel.textContent = '';
+    for (const v of voices) {
+      const o = document.createElement('option');
+      o.value = v.name; o.textContent = v.name + (v.lang ? ' · ' + v.lang : '') + (v.default ? ' ✓' : '');
+      c.sel.appendChild(o);
+    }
+    // restore saved/prior selection, else the browser default voice
+    const def = voices.find((v) => v.default);
+    c.sel.value = voices.some((v) => v.name === want) ? want : (def ? def.name : voices[0].name);
+  }
+}
+function speak(kind, text) {
+  const c = voiceCfg[kind];
+  if (!TTS || !c.on.checked) return;
+  const clean = mdToPlain(text);
+  if (!clean) return;
+  if (kind === 'prompt') TTS.cancel();              // a prompt starts a fresh turn — clear any backlog
+  const u = new SpeechSynthesisUtterance(clean.slice(0, 600));
+  const v = TTS.getVoices().find((x) => x.name === c.sel.value);
+  if (v) { u.voice = v; u.lang = v.lang; }
+  TTS.speak(u);                                     // an answer just queues after its prompt
+}
+function speakPrompt(text) { speak('prompt', text); }
+function speakAnswer(text) { speak('answer', text); }
+if (TTS) {
+  voicePanel.hidden = false;
+  for (const kind of ['prompt', 'answer']) {
+    const c = voiceCfg[kind], pref = loadVoicePref(kind);
+    c.on.checked = !!pref.on;
+    if (pref.voice) c.sel.value = pref.voice;       // provisional; confirmed once voices populate
+    c.on.addEventListener('change', () => { saveVoicePref(kind); if (!c.on.checked) TTS.cancel(); });
+    c.sel.addEventListener('change', () => saveVoicePref(kind));
+  }
+  populateVoices();
+  TTS.addEventListener('voiceschanged', populateVoices);   // voices load async (esp. first paint)
+}
 
 const HEALTH_COLOR = { ok: '#8FBC9A', warn: '#C9A36A', crit: '#CF8A8F' };
 const HEALTH_LABEL = { ok: 'healthy', warn: 'degraded', crit: 'critical' };
@@ -1792,6 +1958,8 @@ async function pollStats() {
       else if (ev.kind === 'llm_input') ServerBrain.llmInput(ev.text);
       else if (ev.kind === 'llm_thinking') ServerBrain.llmThinking(ev.text);
       else if (ev.kind === 'llm_output') ServerBrain.llmOutput(ev.text);
+      else if (ev.kind === 'task_start') ServerBrain.taskStart(ev.text);
+      else if (ev.kind === 'task_stop') ServerBrain.taskStop(ev.text);
     }
   } catch (e) {
     // No telemetry reachable (opened standalone, or the service is down): fall back

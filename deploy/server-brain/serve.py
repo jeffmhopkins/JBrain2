@@ -276,7 +276,7 @@ def drain_events() -> list:
     return out[-20:]   # never flood the page with a huge backlog
 
 
-_demo_state = {"search": 0.0, "fetch": 0.0, "llm_in": 0.0, "llm_out": 0.0}
+_demo_state = {"search": 0.0, "fetch": 0.0, "llm_in": 0.0, "llm_out": 0.0, "task_at": 0.0, "task": ""}
 # Content-free synthetic text for the demo LLM tendrils (no owner data — this path
 # never sees a real turn), so `BRAIN_DEMO=1` shows the streaming-text + popup effect.
 _DEMO_PROMPTS = (
@@ -290,6 +290,12 @@ _DEMO_ANSWERS = (
     "You logged 24.6 miles across four runs — up ~15% on last week.",
     "Next up: Dr. Alvarez, Thursday 9:40am, for a routine cleaning.",
     "Confirmed you'll renew at the current rate; asked to fix the porch light first.",
+)
+_DEMO_TASKS = (
+    "ingest workflow · new note",
+    "nightly wiki rebuild",
+    "entity-graph reconciliation",
+    "embedding reindex",
 )
 
 
@@ -319,6 +325,15 @@ def _demo_snapshot() -> dict:
         _demo_state["llm_out"] = t
         i = int(_demo_state["llm_in"] / 11) % len(_DEMO_ANSWERS)
         events.append({"kind": "llm_output", "text": _DEMO_ANSWERS[i], "ts": int(t * 1000)})
+    # A synthetic workflow/task: holds a named teal popup for ~6s, then finishes; next
+    # one starts a few seconds later (9s cycle).
+    if not _demo_state["task"] and t - _demo_state["task_at"] > 9:
+        _demo_state["task_at"] = t
+        _demo_state["task"] = _DEMO_TASKS[int(t / 9) % len(_DEMO_TASKS)]
+        events.append({"kind": "task_start", "text": _demo_state["task"], "ts": int(t * 1000)})
+    elif _demo_state["task"] and t - _demo_state["task_at"] > 6:
+        events.append({"kind": "task_stop", "text": _demo_state["task"], "ts": int(t * 1000)})
+        _demo_state["task"] = ""
     return _shape(util, mem, power, temp, load=util * 6, uptime_h=72.0,
                   net_in=net_in, net_out=net_out, disk_read=disk_read,
                   events=events + _drain_posted())
@@ -405,8 +420,10 @@ class Handler(BaseHTTPRequestHandler):
         # The JBrain2 agent POSTs here when it runs a web tool
         # ({"kind": "web_search"|"web_fetch"} — content-free) or, when the owner has
         # opted in, an LLM turn ({"kind": "llm_input"|"llm_output", "text": ...} —
-        # the real prompt/answer text). We queue it for the next /stats drain (-> a
-        # tendril; the llm kinds stream their text along it + fade an answer popup).
+        # the real prompt/answer text). A running workflow/task posts
+        # {"kind": "task_start"|"task_stop", "text": name} to hold/retire a teal popup.
+        # We queue it for the next /stats drain (-> a tendril; the llm kinds stream their
+        # text along it + fade an answer popup; the task kinds hold a named popup).
         if self.path.split("?", 1)[0] != "/event":
             self._send(404, b"not found", "text/plain")
             return
@@ -417,7 +434,15 @@ class Handler(BaseHTTPRequestHandler):
             self._send(400, b"bad request", "text/plain")
             return
         kind = ev.get("kind") if isinstance(ev, dict) else None
-        if kind in ("web_search", "web_fetch", "llm_input", "llm_thinking", "llm_output"):
+        if kind in (
+            "web_search",
+            "web_fetch",
+            "llm_input",
+            "llm_thinking",
+            "llm_output",
+            "task_start",
+            "task_stop",
+        ):
             # Optional text (the LLM prompt/answer, or — when the owner enabled it — the
             # web query / URL). Bound it on our side too; a truncated excerpt is all the
             # wall shows. Absent/blank text just fires a content-free tendril.
