@@ -58,6 +58,7 @@ MAX_SCRIPT_STEPS = 6
 MIN_STEP_MS = 200
 MAX_STEP_MS = 3000
 
+
 def _clamp_unit(v: float) -> float:
     return max(-1.0, min(1.0, v))
 
