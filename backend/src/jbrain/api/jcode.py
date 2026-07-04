@@ -116,12 +116,15 @@ def _warm_tasks(request: Request) -> set[asyncio.Task[None]]:
     return cast("set[asyncio.Task[None]]", tasks)
 
 
-async def _warm_model(gateway: LocalGateway, served: str) -> None:
+async def _warm_model(
+    gateway: LocalGateway, served: str, residency: object | None = None
+) -> None:
     # Give the coder the whole box: if it's NOT already resident, evict every OTHER model
     # then load it; if it IS already resident, do nothing (no evict, no reload). A cold
     # 80B load reads tens of GB (blocks up to ~2 min), so this runs in the background —
     # never blocking session creation. NOT unloaded later: the coder stays resident until
-    # another JBrain task loads a different model (the gateway swaps it then). All
+    # another JBrain task loads a different model (the gateway swaps it then). The evicted
+    # models are recorded so code power-off's restore returns the box to its prior set. All
     # best-effort: a gateway hiccup must never break a session.
     with contextlib.suppress(Exception):
         resident = await gateway.running()
@@ -130,9 +133,13 @@ async def _warm_model(gateway: LocalGateway, served: str) -> None:
         # it's already on the box must be instant.
         if served in resident:
             return
+        evicted: list[str] = []
         for other in resident:
             with contextlib.suppress(LocalGatewayError):
                 await gateway.unload(other)
+                evicted.append(other)
+        if evicted and residency is not None:
+            residency.note_evicted(evicted)  # type: ignore[attr-defined]
         await gateway.load(served)
 
 
@@ -155,7 +162,8 @@ def _warm_coder(request: Request, model_id: str) -> None:
     # overlapping creates of the same coder don't clear each other early.
     warming = _warming_models(request)
     warming[served] += 1
-    task = asyncio.create_task(_warm_model(gateway, served))
+    residency = getattr(request.app.state, "residency", None)
+    task = asyncio.create_task(_warm_model(gateway, served, residency))
     tasks = _warm_tasks(request)
     tasks.add(task)
 

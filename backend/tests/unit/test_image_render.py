@@ -77,6 +77,7 @@ def _service(
         "qwen-image-edit-lightning",
         "dreamshaper",
     ),
+    on_evicted: object | None = None,
 ) -> tuple[ImageRenderService, _FakeRepo, MemBlobStore, FakeLocalGateway, FakeComfyUiGateway]:
     repo = _FakeRepo()
     blobs = MemBlobStore()
@@ -90,6 +91,7 @@ def _service(
         lg,
         cg,
         provisioned,
+        on_evicted=on_evicted,  # type: ignore[arg-type]
     )
     return svc, repo, blobs, lg, cg
 
@@ -123,6 +125,16 @@ async def test_generate_unloads_llm_before_and_comfyui_after() -> None:
     await svc.generate(_OWNER, prompt="x", aspect="square", resolution="medium")
     assert lg.unloaded == ["gpt-oss-120b"]  # the resident LLM was freed before the render
     assert cg.frees == [(True, True)]  # ComfyUI's model freed after
+
+
+async def test_generate_reports_freed_llms_to_on_evicted() -> None:
+    # Freeing the LLMs for a render is a displacement: the freed models are reported so the
+    # residency coordinator can restore them at end of turn.
+    fake = FakeImageGen()
+    evicted: list[str] = []
+    svc, _, _, _, _ = _service(fake, on_evicted=evicted.extend)
+    await svc.generate(_OWNER, prompt="x", aspect="square", resolution="medium")
+    assert evicted == ["gpt-oss-120b"]
 
 
 async def test_generate_bad_aspect_raises_validation() -> None:

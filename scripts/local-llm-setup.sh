@@ -126,7 +126,6 @@ say "Writing $MODELS_DIR/llama-swap.yaml"
 # non-root api still works — root writing the initial config into that dir is fine.
 docker compose run --rm --no-deps -T --user 0 \
   -e MANIFEST="$MANIFEST" \
-  -e LOCAL_LLM_RESIDENT_GROUP="${LOCAL_LLM_RESIDENT_GROUP:-}" \
   api python -m jbrain.llm.llama_swap_config /data/local-models
 
 # The gateway container must join the HOST's video/render group GIDs to open

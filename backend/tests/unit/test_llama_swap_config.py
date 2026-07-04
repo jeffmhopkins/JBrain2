@@ -50,9 +50,10 @@ def test_render_stamps_default_windows_and_resolves_files(tmp_path: Path) -> Non
     assert "--port 9100" in text and "--port 9101" in text
     assert "/models/qwen3-vl-30b/model-Q8_0.gguf" in text
     assert "--mmproj /models/qwen3-vl-30b/mmproj-f16.gguf" in text
-    # No co-resident group unless asked (the render() param defaults off; the box's real
-    # default comes from config/env, exercised separately).
-    assert "groups:" not in text
+    # Every model joins one non-swapping group so the gateway never auto-evicts — the app is
+    # the sole evictor (jbrain.llm.residency).
+    assert "groups:" in text and "swap: false" in text and "exclusive: false" in text
+    assert "- qwen3-vl-30b-a3b" in text and "- gpt-oss-120b" in text
 
 
 def test_render_adds_reasoning_format_only_for_thinking_models(tmp_path: Path) -> None:
@@ -99,20 +100,12 @@ def test_render_applies_a_per_model_window_override(tmp_path: Path) -> None:
     assert "-c 131072" not in text
 
 
-def test_render_emits_resident_group_when_enabled(tmp_path: Path) -> None:
-    _lay_down(tmp_path)
-    text = llama_swap_config.render(_manifest(), str(tmp_path), resident_group=True)
-    # A non-swapping group (validated on-box): both recommended models are members and
-    # co-reside (swap: false / exclusive: false).
-    assert "groups:" in text and "swap: false" in text and "exclusive: false" in text
-    assert "- qwen3-vl-30b-a3b" in text and "- gpt-oss-120b" in text
-
-
-def test_co_residency_makes_every_model_a_member_so_the_app_evicts(tmp_path: Path) -> None:
-    # Memory-safe co-residency: with resident_group ON, EVERY provisioned model (not just
-    # the recommended set) joins the swap:false group, so llama-swap never auto-evicts —
-    # the app (jbrain.llm.residency) is the sole evictor. Here a NON-recommended model is
-    # still a member.
+def test_render_makes_every_model_a_non_swapping_member_so_the_app_evicts(
+    tmp_path: Path,
+) -> None:
+    # EVERY provisioned model (not just a chosen pair) joins the swap:false group, so
+    # llama-swap never auto-evicts — the app (jbrain.llm.residency) is the sole evictor.
+    # Here a small extra model is a member alongside the two larger ones.
     manifest = [
         *_manifest(),
         {
@@ -127,59 +120,26 @@ def test_co_residency_makes_every_model_a_member_so_the_app_evicts(tmp_path: Pat
     (tmp_path / "qwen3.5-0.8b").mkdir()
     (tmp_path / "qwen3.5-0.8b" / "model-Q8_0.gguf").write_bytes(b"\0")
     _lay_down(tmp_path)
-    text = llama_swap_config.render(manifest, str(tmp_path), resident_group=True)
-    assert "- qwen3.5-0.8b" in text  # the non-recommended model co-resides too
+    text = llama_swap_config.render(manifest, str(tmp_path))
+    assert "groups:" in text and "swap: false" in text and "exclusive: false" in text
+    assert "- qwen3.5-0.8b" in text
     assert "- gpt-oss-120b" in text and "- qwen3-vl-30b-a3b" in text
 
 
-def test_render_pins_staged_models_into_the_swap_group(tmp_path: Path) -> None:
-    # Staging adds a model to the co-resident group: both stay loaded together even with
-    # resident_group off (the recommended set's own membership is what the flag gates).
-    _lay_down(tmp_path)
-    text = llama_swap_config.render(
-        _manifest(), str(tmp_path), resident_group=False, pinned=["qwen3-vl-30b", "gpt-oss-120b"]
-    )
-    assert "groups:" in text and "swap: false" in text
-    assert "- qwen3-vl-30b-a3b" in text and "- gpt-oss-120b" in text
-
-
-def test_render_pins_a_single_staged_model(tmp_path: Path) -> None:
-    # A lone staged model is the only group member; the other model is absent (free to swap).
-    _lay_down(tmp_path)
-    text = llama_swap_config.render(
-        _manifest(), str(tmp_path), resident_group=False, pinned=["gpt-oss-120b"]
-    )
-    assert "groups:" in text and "- gpt-oss-120b" in text
-    assert "- qwen3-vl-30b-a3b" not in text
-
-
-def test_render_no_group_when_nothing_pinned_or_recommended(tmp_path: Path) -> None:
-    # resident_group off and nothing staged → no group, every model swaps alone.
-    _lay_down(tmp_path)
-    text = llama_swap_config.render(_manifest(), str(tmp_path), resident_group=False, pinned=[])
+def test_render_emits_no_group_for_an_empty_roster(tmp_path: Path) -> None:
+    # No models → no group block (nothing to keep resident).
+    text = llama_swap_config.render([], str(tmp_path))
     assert "groups:" not in text
 
 
-def test_main_defaults_to_no_co_residency(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    # The CLI (invoked by the update's model-sync and by enable-local-models) must default
-    # co-residency OFF: with LOCAL_LLM_RESIDENT_GROUP unset, the recommended set swaps one
-    # at a time so the box never pins ~91 GB and hard-freezes. This is the path that makes
-    # "disabled on the next update" true without any .env edit.
-    _lay_down(tmp_path)
-    monkeypatch.setenv("MANIFEST", json.dumps(_manifest()))
-    monkeypatch.delenv("LOCAL_LLM_RESIDENT_GROUP", raising=False)
-    assert llama_swap_config._main([str(tmp_path)]) == 0
-    assert "groups:" not in (tmp_path / "llama-swap.yaml").read_text()
-
-
-def test_main_opts_into_co_residency_with_truthy_env(
+def test_main_always_emits_the_full_non_swapping_group(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # The escape hatch: an operator with headroom opts in with a truthy value, and both
-    # recommended models then join the non-swapping group.
+    # The CLI (invoked by the update's model-sync and by enable-local-models) always stamps
+    # every model into the swap:false group — the app is the sole evictor, so the gateway
+    # never auto-evicts and nothing pins ~91 GB and hard-freezes.
     _lay_down(tmp_path)
     monkeypatch.setenv("MANIFEST", json.dumps(_manifest()))
-    monkeypatch.setenv("LOCAL_LLM_RESIDENT_GROUP", "1")
     assert llama_swap_config._main([str(tmp_path)]) == 0
     text = (tmp_path / "llama-swap.yaml").read_text()
     assert "groups:" in text and "- gpt-oss-120b" in text and "- qwen3-vl-30b-a3b" in text
