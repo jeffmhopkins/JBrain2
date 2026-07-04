@@ -32,13 +32,23 @@ the drives tick has created the pet) the wall shows *"waiting for the pet…"* a
 retries. On a box without the api, the neural wall is unaffected — only `/pet` needs
 it.
 
-**Sound.** When the pet speaks, `/pet` reads its speech bubble aloud with the same
-on-box piper `/tts` endpoint the neural wall uses (`/tts/voices` picks the voice —
-`en_US-amy-medium` if installed). A display tab can't autoplay audio, so a one-time
-**🔊 tap for sound** button (bottom-right) unlocks it and primes the OS audio sink;
-after that the pet just talks. No piper voices on the box → the button never appears
-and the pet stays silent — unlike the neural wall's read-aloud, this is *not* gated on
-the `brain_read_aloud` setting, since the pet is its own surface.
+**Play (v2).** The pet is a command-and-response play companion (`docs/proposed/JPET_V2_PLAN.md`):
+the state carries a bounded **action script** (`{action, target?, destination?, duration_ms?}[]`)
+and the room's **objects** (`{kind: [x, z]}`), and `pet.html` *plays the script out* locally
+at 60fps — walking to a target, picking up and carrying the ball, dancing/spinning/jumping/
+waving/hiding, then resting. It renders the props (ball, bed, toy box, food bowl, ball pit,
+light switch) from `objects`, and dims to night when `lights_on` is false. The kids drive it
+from the phone Control screen (big play buttons + "ask it to do something"); the wall just
+shows it.
+
+**Sound.** When the pet speaks, `/pet` reads its speech bubble aloud with the same on-box
+piper `/tts` endpoint the neural wall uses (`/tts/voices` picks the voice — `en_US-amy-medium`
+if installed), and each action fires a short, volume-capped WebAudio cue (a chirp to jump, a
+wobble to wiggle, a robot beep, …). A display tab can't autoplay audio, so a one-time **🔊 tap
+for sound** button (bottom-right) unlocks it and primes the OS audio sink; after that the pet
+just plays. No piper voices on the box → the button never appears and speech stays silent
+(the WebAudio cues still play once unlocked) — unlike the neural wall's read-aloud, this is
+*not* gated on the `brain_read_aloud` setting, since the pet is its own surface.
 
 ## Deployment (auto-started, auto-updated)
 

@@ -1,8 +1,8 @@
 # JBrain2 — JPet v2: play companion (positive, command-scripted, room-aware)
 
-> **Status:** Proposed · **Last verified:** 2026-07-04 · **Waves:** W1◻️ W2◻️ W3◻️
+> **Status:** Shipped 2026-07 · migration 0125 · **Waves:** W1✅ W2✅ W3✅
 
-A redesign of the shipped wall pet (`../archive/JPET_PLAN.md`) that keeps the
+A redesign of the shipped wall pet (`JPET_PLAN.md`) that keeps the
 3D Tron room, the server-authoritative `pet_state`, the SSE fan-out, the phone
 Control screen, and the on-box `:8800` wall — but **changes what the pet is
 for**. v1 shipped a Tamagotchi: drives *decay*, the pet gets *hungry / neglected*,
@@ -13,15 +13,17 @@ command-and-response play companion**: the pet is always happy to play, the kids
 the ball and put it in the corner"), and it does them — with sound. Nothing
 decays; there is no fail state.
 
-This doc is `Proposed` — nothing built. It supersedes the *interaction model* of
-`../archive/JPET_PLAN.md` (which stays the shipped record of the v1 surfaces the
-kids still use); when v2's waves land, its own status climbs the ladder and v1's
-decay framing is retired in prose.
+**Shipped** (migration 0125) — all three waves landed together: the positive framing +
+the action-script engine + kid play-buttons + per-action sounds (W1), room objects +
+object-targeted actions + carry (W2), and the freeform→script pipeline + capped ambient
+life + optimistic wall playback (W3). It supersedes the *interaction model* of
+`JPET_PLAN.md` (the v1 record of the same surfaces); v1's Tamagotchi decay framing is
+retired. The three deep-research dossiers that back the pivot are summarized below.
 
 ## Why (the research, three dossiers)
 
-Three deep-research dossiers back this pivot (design research, to be filed under
-`../archive/research/` if v2 is scheduled). The load-bearing, *verified* findings:
+Three deep-research dossiers back this pivot; their load-bearing, *verified* findings are
+summarized here (the full cited reports are the design record):
 
 - **Decay/neglect is wrong for this age.** 3–4-year-olds grasp simple
   cause-and-effect ("I did something → something happened") but struggle to map

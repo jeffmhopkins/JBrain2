@@ -15,15 +15,6 @@ given a roadmap slot in `../ROADMAP.md`, and promoted out of this folder.
 
 ## Contents
 
-- `JPET_V2_PLAN.md` — JPet v2: a positive, command-scripted, room-aware play
-  companion that supersedes the shipped wall pet's Tamagotchi *interaction model*
-  (`../archive/JPET_PLAN.md`). Backed by three deep-research dossiers: drops decay/
-  neglect stakes (wrong for 3–4-year-olds), grows the talk brain from a single
-  `action` to a bounded, enum-constrained **action-script** (`dance`, `chase ball`,
-  `pick up the ball and put it in the corner`), adds room props + object-targeted
-  actions, big kid play-buttons, and per-action sound. Waves W1 (framing + objectless
-  scripts + buttons + sounds), W2 (room objects + carry), W3 (freeform polish +
-  autonomy + latency).
 - `PHOTO_ARCHIVE_PLAN.md` — photo archive pipeline: a staged, idempotent map over
   a decade of phone dumps (hash-keyed dedup, deterministic dating, a vision worker
   bridging pixels to the text-only 120B, CLIP search, InsightFace faces, residual
@@ -35,5 +26,5 @@ given a roadmap slot in `../ROADMAP.md`, and promoted out of this folder.
   frontend (M4), with M0 a blocking on-box host-validation spike. Interactive mock:
   `../mocks/music-gen-live/live-music-tool-card.html`.
 _(The jcode plans, `GUIDED_INTAKE_PLAN.md`, and `SUBAGENT_SPAWNING_PLAN.md` were
-promoted out of the icebox and have since shipped; `JPET_PLAN.md` was promoted to
-`Scheduled` and now lives in `../plans/` — see `../archive/` and `../plans/`.)_
+promoted out of the icebox and have since shipped; `JPET_PLAN.md` and `JPET_V2_PLAN.md`
+shipped and now live in `../archive/`.)_
