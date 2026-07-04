@@ -31,6 +31,10 @@
     font-size:13px;letter-spacing:2px;opacity:.5}
   .back{position:fixed;bottom:20px;left:24px;z-index:6;font-size:12px;letter-spacing:2px;
     color:var(--cy);text-decoration:none;opacity:.6}
+  #sound{position:fixed;bottom:20px;right:24px;z-index:7;font-size:14px;letter-spacing:1px;
+    padding:10px 16px;border-radius:12px;background:var(--panel);border:1.5px solid var(--gold);
+    color:var(--gold);cursor:pointer;text-shadow:0 0 10px var(--gold);box-shadow:0 0 18px rgba(255,210,63,.3)}
+  #sound[hidden]{display:none}
 </style>
 </head>
 <body>
@@ -41,6 +45,7 @@
 <div class="bars" id="bars"></div>
 <div class="speech" id="speech"></div>
 <div class="status" id="status">waiting for the pet…</div>
+<button id="sound" hidden>🔊 tap for sound</button>
 <a class="back" href="/">← neural wall</a>
 <script>
 /* Live wall view of the family pet: renders the server-authoritative state polled from
@@ -91,6 +96,7 @@ function applyLive(){
     document.getElementById('v_'+k).textContent=v;const f=document.getElementById('f_'+k);
     f.style.width=v+'%';f.style.background=fillColor(v);f.style.color=fillColor(v);}
   if(live.speech&&live.speech!==lastSpeech){speechEl.textContent=live.speech;speechEl.classList.add('show');
+    speakPet(live.speech);
     clearTimeout(applyLive._t);applyLive._t=setTimeout(()=>speechEl.classList.remove('show'),6000);}
   lastSpeech=live.speech;
   document.getElementById('status').style.display=connected?'none':'block';
@@ -100,6 +106,39 @@ async function poll(){try{const r=await fetch('/pet/state',{cache:'no-store'});
   else{connected=false;document.getElementById('mood').textContent='waiting…';applyLive();}
  }catch(e){connected=false;}}
 setInterval(poll,1000);poll();
+
+/* ---- Sound: the pet reads its speech bubble aloud with the box's piper /tts (same
+   endpoint as the neural wall). Display tabs can't autoplay audio, so a one-time tap
+   unlocks it — after that the pet just talks. No voices installed / tts off -> stays silent. */
+let soundOn=false,petVoice=null;
+const petAudio=new Audio(),ttsQ=[];let ttsBusy=false;
+function ttsNext(){if(ttsBusy||!ttsQ.length)return;ttsBusy=true;petAudio.src=ttsQ.shift();
+ const pr=petAudio.play();if(pr&&pr.catch)pr.catch(()=>{ttsBusy=false;ttsNext();});}
+petAudio.addEventListener('ended',()=>{ttsBusy=false;ttsNext();});
+petAudio.addEventListener('error',()=>{ttsBusy=false;ttsNext();});
+// A truly-silent WebAudio stream keeps the OS sink from suspending, so the first word of a
+// quiet pet isn't clipped by the sink's cold resume (same fix as the wall).
+let keepAliveCtx=null;
+function startKeepAlive(){try{const AC=window.AudioContext||window.webkitAudioContext;if(!AC)return;
+ if(!keepAliveCtx){keepAliveCtx=new AC();const o=keepAliveCtx.createOscillator(),g=keepAliveCtx.createGain();
+  g.gain.value=0;o.connect(g).connect(keepAliveCtx.destination);o.start();}
+ if(keepAliveCtx.state==='suspended')keepAliveCtx.resume().catch(()=>{});}catch(e){}}
+document.addEventListener('visibilitychange',()=>{if(!document.hidden&&keepAliveCtx&&keepAliveCtx.state==='suspended')keepAliveCtx.resume().catch(()=>{});});
+function speakPet(text){if(!soundOn||!petVoice||!text)return;
+ const clean=String(text).replace(/\s+/g,' ').trim().slice(0,220);if(!clean)return;
+ ttsQ.length=0;ttsBusy&&petAudio.pause();ttsBusy=false;   // newest utterance wins — drop stale backlog
+ ttsQ.push('/tts?voice='+encodeURIComponent(petVoice)+'&text='+encodeURIComponent(clean));ttsNext();}
+const soundBtn=document.getElementById('sound');
+async function initSound(){let voices=[];
+ try{voices=((await(await fetch('/tts/voices',{cache:'no-store'})).json()).voices)||[];}catch(e){}
+ if(!voices.length)return;                                // no piper voices on the box -> pet stays silent
+ petVoice=voices.includes('en_US-amy-medium')?'en_US-amy-medium':voices[0];
+ soundBtn.hidden=false;}
+soundBtn.addEventListener('click',()=>{
+ soundOn=true;soundBtn.hidden=true;startKeepAlive();
+ ttsQ.push('/tts/silence');ttsNext();                     // prime the sink on the unlock gesture
+ if(live.speech)speakPet(live.speech);});
+initSound();
 
 /* ---- GL ---- */
 let prog,aP,uMVP,uCol,uAl,gFloor,nFloor,gBack,nBack,gSide,nSide,gCube,gCirc;

@@ -32,6 +32,14 @@ the drives tick has created the pet) the wall shows *"waiting for the pet…"* a
 retries. On a box without the api, the neural wall is unaffected — only `/pet` needs
 it.
 
+**Sound.** When the pet speaks, `/pet` reads its speech bubble aloud with the same
+on-box piper `/tts` endpoint the neural wall uses (`/tts/voices` picks the voice —
+`en_US-amy-medium` if installed). A display tab can't autoplay audio, so a one-time
+**🔊 tap for sound** button (bottom-right) unlocks it and primes the OS audio sink;
+after that the pet just talks. No piper voices on the box → the button never appears
+and the pet stays silent — unlike the neural wall's read-aloud, this is *not* gated on
+the `brain_read_aloud` setting, since the pet is its own surface.
+
 ## Deployment (auto-started, auto-updated)
 
 It runs as the `server-brain` service in `deploy/docker-compose.yml` — a default
