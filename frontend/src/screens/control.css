@@ -118,31 +118,59 @@
   border-radius: 6px;
   transition: width 0.4s ease, background 0.4s;
 }
-.pctl-care {
+/* Big kid play-buttons — large (~2cm) targets, few, well-separated; a 3–4-year-old's
+   fine motor skills are still developing (docs/proposed/JPET_V2_PLAN.md). Fired on
+   touch-down, so `touch-action: none` stops the tap from also scrolling/zooming. */
+.pctl-play {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 9px;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 11px;
 }
-.pctl-care button {
+.pctl-playbtn {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 5px;
-  padding: 11px 4px;
-  border-radius: 14px;
-  border: 1.5px solid rgba(255, 79, 216, 0.28);
-  background: rgba(40, 12, 66, 0.55);
+  justify-content: center;
+  gap: 8px;
+  min-height: 84px;
+  padding: 12px 6px;
+  border-radius: 18px;
+  border: 2px solid rgba(255, 79, 216, 0.35);
+  background: linear-gradient(180deg, rgba(60, 18, 96, 0.6), rgba(40, 12, 66, 0.6));
   color: #ffe9fb;
   font-family: inherit;
-  font-size: 11px;
-  font-weight: 700;
+  font-size: 15px;
+  font-weight: 800;
+  letter-spacing: 0.3px;
   cursor: pointer;
+  touch-action: none;
+  -webkit-tap-highlight-color: transparent;
+  transition: transform 0.06s ease, box-shadow 0.12s ease, border-color 0.12s ease;
 }
-.pctl-care button .ico {
-  font-size: 22px;
+.pctl-playbtn .ico {
+  font-size: 34px;
+  line-height: 1;
 }
-.pctl-care button:active {
-  transform: scale(0.94);
+.pctl-playbtn:active {
+  transform: scale(0.92);
+  border-color: #3bf0ff;
+  box-shadow: 0 0 22px rgba(59, 240, 255, 0.5);
+}
+/* Grown-ups' room-map control — collapsed by default so a child never lands there. */
+.pctl-grownup > summary {
+  cursor: pointer;
+  font-size: 11px;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: #c79fd6;
+  font-weight: 700;
+  list-style: none;
+}
+.pctl-grownup > summary::-webkit-details-marker {
+  display: none;
+}
+.pctl-grownup[open] > summary {
+  margin-bottom: 10px;
 }
 .pctl-maprow {
   display: flex;

@@ -1,11 +1,11 @@
-// The JPet phone Control screen (docs/plans/JPET_PLAN.md W3) — the mobile "remote"
+// The JPet phone Control screen (docs/proposed/JPET_V2_PLAN.md) — the mobile "remote"
 // the kids hold, paired to the Wall. It subscribes to /api/pet/stream for live status
-// and issues /api/pet/command: care actions (feed/play/pet/sleep) and "send it here"
-// (tap the room map → a move command → the Wall's robot walks there). Both surfaces
+// and issues /api/pet/command. v2 is command-and-response PLAY: big, few, non-destructive
+// buttons a 3–4-year-old can hit (dance, chase the ball, hide, jump, wave, spin, silly
+// sound, sleep/wake), each firing on touch-DOWN for instant feedback, plus a push-to-talk
+// mic and text box so a kid can just ask ("pick up the ball and put it in the corner").
+// The room-map "send it somewhere" is demoted to a grown-ups affordance. Both surfaces
 // render the same server-authoritative pet, so they stay in sync.
-//
-// (Talking to the pet arrives in W4 with the pet.turn brain; W3 is the care + move
-// remote, all working against W1's command API.)
 
 import { type PointerEvent, useCallback, useEffect, useState } from "react";
 import { type PetCommand, type PetState, api } from "../api/client";
@@ -24,22 +24,28 @@ const defaultDeps: ControlDeps = {
   petStream: (s) => api.petStream(s),
 };
 
-const DRIVES: { key: keyof PetState; label: string }[] = [
-  { key: "food", label: "🍔 Food" },
-  { key: "energy", label: "⚡ Energy" },
-  { key: "fun", label: "🎮 Fun" },
+const METERS: { key: keyof PetState; label: string }[] = [
+  { key: "food", label: "🍔 Full" },
+  { key: "energy", label: "⚡ Peppy" },
+  { key: "fun", label: "🎉 Fun" },
   { key: "love", label: "💗 Love" },
 ];
 
-const CARE: { action: PetCommand["action"]; ico: string; label: string }[] = [
-  { action: "feed", ico: "🍔", label: "Feed" },
-  { action: "play", ico: "🎮", label: "Play" },
-  { action: "pet", ico: "✋", label: "Pet" },
-  { action: "sleep", ico: "💤", label: "Sleep" },
+// The big kid play-buttons — each is a one-tap canned script. Few, large, and never
+// destructive; `sleep`/`wake` is swapped in contextually below.
+const PLAY: { action: PetCommand["action"]; ico: string; label: string }[] = [
+  { action: "dance", ico: "💃", label: "Dance" },
+  { action: "chase", ico: "⚽", label: "Chase ball" },
+  { action: "hide", ico: "🙈", label: "Hide" },
+  { action: "jump", ico: "⭐", label: "Jump!" },
+  { action: "wave", ico: "👋", label: "Wave hi" },
+  { action: "spin", ico: "🌀", label: "Spin" },
+  { action: "beep", ico: "🔊", label: "Silly sound" },
 ];
 
+// Happy meters are never a threat — a friendly, always-positive fill (no red "danger").
 function fillColor(v: number): string {
-  return v > 55 ? "#3bf0ff" : v > 28 ? "#ffb03a" : "#ff477e";
+  return v > 55 ? "#3bf0ff" : "#ffd23f";
 }
 
 // Normalized [-1, 1] → CSS percent for the dot's position on the map.
@@ -85,7 +91,15 @@ export function ControlScreen({ onClose, deps = defaultDeps }: ControlScreenProp
     return () => controller.abort();
   }, [deps]);
 
-  // Tap the room map → send the pet to that normalized floor point.
+  // Fire a play command on touch-DOWN (not lift): a 3–4-year-old taps hard and expects an
+  // instant reaction; waiting for lift reads as "nothing happened". preventDefault stops
+  // the synthetic click/scroll so a fast double-tap doesn't zoom the page.
+  const onPlayDown = (action: PetCommand["action"]) => (e: PointerEvent<HTMLButtonElement>) => {
+    e.preventDefault();
+    void send({ action });
+  };
+
+  // Tap the room map → send the pet to that normalized floor point (a grown-up control).
   const onMapDown = (e: PointerEvent<HTMLButtonElement>): void => {
     const r = e.currentTarget.getBoundingClientRect();
     const nx = r.width > 0 ? ((e.clientX - r.left) / r.width) * 2 - 1 : 0;
@@ -94,7 +108,7 @@ export function ControlScreen({ onClose, deps = defaultDeps }: ControlScreenProp
     void send({ action: "move", x: clamp(nx), z: clamp(nz) });
   };
 
-  // Say something to the pet → the pet.turn brain answers (W4).
+  // Say something to the pet → the pet.turn brain answers and acts it out as a script.
   const talk = (): void => {
     const t = text.trim();
     if (!t) return;
@@ -102,7 +116,7 @@ export function ControlScreen({ onClose, deps = defaultDeps }: ControlScreenProp
     void send({ action: "say", text: t });
   };
 
-  // Talk to it out loud (W6): capture one spoken phrase and say it to the pet.
+  // Talk to it out loud: capture one spoken phrase and say it to the pet.
   const listen = (): void => {
     if (listening) return;
     const handle = listenOnce(
@@ -113,6 +127,10 @@ export function ControlScreen({ onClose, deps = defaultDeps }: ControlScreenProp
   };
 
   const name = pet?.name ?? "JPet";
+  const asleep = pet?.asleep ?? false;
+  const sleepBtn = asleep
+    ? { action: "wake" as const, ico: "☀️", label: "Wake up" }
+    : { action: "sleep" as const, ico: "😴", label: "Sleep" };
   return (
     <div className="pctl">
       <div className="pctl-head">
@@ -132,60 +150,35 @@ export function ControlScreen({ onClose, deps = defaultDeps }: ControlScreenProp
       </div>
 
       <div className="pctl-card">
-        <h3>Needs</h3>
-        <div className="pctl-meters">
-          {DRIVES.map(({ key, label }) => {
-            const v = Math.round((pet?.[key] as number) ?? 0);
-            return (
-              <div key={key} className="pctl-meter">
-                <span>
-                  <span>{label}</span>
-                  <b>{v}</b>
-                </span>
-                <div className="pctl-track">
-                  <div className="pctl-fill" style={{ width: `${v}%`, background: fillColor(v) }} />
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      </div>
-
-      <div className="pctl-card">
-        <h3>Take care of {name}</h3>
-        <div className="pctl-care">
-          {CARE.map(({ action, ico, label }) => (
-            <button key={action} type="button" onClick={() => void send({ action })}>
+        <h3>Let's play!</h3>
+        {pet?.speech ? <div className="pctl-speech">💬 {pet.speech}</div> : null}
+        <div className="pctl-play">
+          {PLAY.map(({ action, ico, label }) => (
+            <button
+              key={action}
+              type="button"
+              className="pctl-playbtn"
+              onPointerDown={onPlayDown(action)}
+              aria-label={label}
+            >
               <span className="ico">{ico}</span>
               {label}
             </button>
           ))}
-        </div>
-      </div>
-
-      <div className="pctl-card">
-        <h3>Send it somewhere</h3>
-        <div className="pctl-maprow">
           <button
             type="button"
-            className="pctl-map"
-            onPointerDown={onMapDown}
-            aria-label="Room map — tap to send the pet there"
+            className="pctl-playbtn"
+            onPointerDown={onPlayDown(sleepBtn.action)}
+            aria-label={sleepBtn.label}
           >
-            <div
-              className="pctl-petdot"
-              style={{ left: pct(pet?.pos_x ?? 0), top: pct(pet?.pos_z ?? 0) }}
-            />
+            <span className="ico">{sleepBtn.ico}</span>
+            {sleepBtn.label}
           </button>
-          <div className="pctl-maphint">
-            Tap the room to send <b>{name}</b> there. It walks over on the Wall.
-          </div>
         </div>
       </div>
 
       <div className="pctl-card">
         <h3>Talk to {name}</h3>
-        {pet?.speech ? <div className="pctl-speech">💬 {pet.speech}</div> : null}
         <div className="pctl-talk">
           {sttAvailable() ? (
             <button
@@ -203,7 +196,7 @@ export function ControlScreen({ onClose, deps = defaultDeps }: ControlScreenProp
             onKeyDown={(e) => {
               if (e.key === "Enter") talk();
             }}
-            placeholder={`Tell ${name} something…`}
+            placeholder={`Ask ${name} to do something…`}
             aria-label="Message to the pet"
           />
           <button type="button" onClick={talk} aria-label="Send message">
@@ -211,6 +204,46 @@ export function ControlScreen({ onClose, deps = defaultDeps }: ControlScreenProp
           </button>
         </div>
       </div>
+
+      <div className="pctl-card">
+        <h3>How {name} feels</h3>
+        <div className="pctl-meters">
+          {METERS.map(({ key, label }) => {
+            const v = Math.round((pet?.[key] as number) ?? 0);
+            return (
+              <div key={key} className="pctl-meter">
+                <span>
+                  <span>{label}</span>
+                  <b>{v}</b>
+                </span>
+                <div className="pctl-track">
+                  <div className="pctl-fill" style={{ width: `${v}%`, background: fillColor(v) }} />
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      <details className="pctl-card pctl-grownup">
+        <summary>Grown-ups: send it somewhere</summary>
+        <div className="pctl-maprow">
+          <button
+            type="button"
+            className="pctl-map"
+            onPointerDown={onMapDown}
+            aria-label="Room map — tap to send the pet there"
+          >
+            <div
+              className="pctl-petdot"
+              style={{ left: pct(pet?.pos_x ?? 0), top: pct(pet?.pos_z ?? 0) }}
+            />
+          </button>
+          <div className="pctl-maphint">
+            Tap the room to send <b>{name}</b> there. It walks over on the Wall.
+          </div>
+        </div>
+      </details>
     </div>
   );
 }

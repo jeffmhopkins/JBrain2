@@ -1283,7 +1283,16 @@ export interface WikiLandingOut {
   groups: WikiTypeGroup[];
 }
 
-// ----- JPet: the family wall pet (docs/plans/JPET_PLAN.md) -----
+// ----- JPet: the family wall pet (docs/proposed/JPET_V2_PLAN.md) -----
+/** One step of the pet's action script (wire mirror of the backend `Step`). */
+export interface PetStep {
+  action: string;
+  target?: string;
+  destination?: string;
+  duration_ms?: number;
+  emotion?: string;
+}
+
 export interface PetState {
   name: string;
   domain: string;
@@ -1301,9 +1310,34 @@ export interface PetState {
   target_z: number;
   facing: number;
   action: string;
+  /** The bounded, ordered action script the wall plays out (v2). */
+  script: PetStep[];
+  /** The room object the pet is currently holding, or null. */
+  carrying: string | null;
+  /** Day/night light state (the light_switch toggles it). */
+  lights_on: boolean;
+  /** Room props the pet can target/carry: {kind: [x, z]} in normalized floor coords. */
+  objects: Record<string, [number, number]>;
 }
 
-export type PetAction = "feed" | "play" | "pet" | "poke" | "sleep" | "move" | "say";
+/** A kid play-button (each expands to a canned script), `say` (freeform → talk brain),
+ * or the parent `move` (send the pet to a raw floor point). */
+export type PetAction =
+  | "dance"
+  | "spin"
+  | "jump"
+  | "wave"
+  | "wiggle"
+  | "chase"
+  | "hide"
+  | "beep"
+  | "come"
+  | "sleep"
+  | "wake"
+  | "eat"
+  | "lights"
+  | "say"
+  | "move";
 
 export interface PetCommand {
   action: PetAction;
