@@ -1,10 +1,17 @@
 # server-brain wall display + server-side piper TTS.
 #
-# Same python:3.12-slim base the stock service used — we only add `piper` (+ its
-# onnxruntime OpenMP dep) so serve.py can render read-aloud on the box. The app
-# itself (serve.py, index.html, voices/) is still BIND-MOUNTED read-only at /app,
-# so a `jbrain update` (git reset of src) serves the new page with no rebuild —
-# only a piper or base-image bump needs `docker compose build server-brain`.
+# Same python:3.12-slim base the stock service used — we add `piper` (+ its
+# onnxruntime OpenMP dep) so serve.py can render read-aloud on the box, and we BAKE
+# the default voice models into the image (/opt/piper-voices). The app itself
+# (serve.py, index.html) is still BIND-MOUNTED read-only at /app, so a `jbrain update`
+# (git reset of src) serves the new page with no rebuild — only a piper/base/voice bump
+# needs `docker compose build server-brain`.
+#
+# Voices live OUTSIDE /app on purpose: the read-only /app bind mount would shadow
+# anything baked under it, so the defaults go to /opt/piper-voices (serve.py scans it
+# plus the mounted /app/voices for any extra models an operator drops in). This is why
+# read-aloud needs NO env var or download step to work — it is driven entirely by the
+# Settings toggle (brain_read_aloud); the voices are always present.
 FROM python:3.12-slim
 
 RUN apt-get update \
@@ -12,4 +19,14 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/* \
  && pip install --no-cache-dir piper-tts
 
-# No COPY: the app is bind-mounted at /app and run via the compose `command`.
+# Default voices: Joe reads prompts, Amy reads answers (the picker lists whatever is
+# installed, so extra models dropped in the mounted voices/ dir just show up too).
+# Fetched with stdlib urllib (urlretrieve follows HF's CDN redirect) — no curl in slim,
+# and a single `python -c` (not a heredoc) so the build needs no BuildKit frontend.
+RUN python -c "import urllib.request as u; from pathlib import Path; \
+d=Path('/opt/piper-voices'); d.mkdir(parents=True, exist_ok=True); \
+B='https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US'; \
+[ (print('[voices]', v, e, flush=True), u.urlretrieve(f'{B}/{v}/medium/en_US-{v}-medium{e}', d/f'en_US-{v}-medium{e}')) for v in ('joe','amy') for e in ('.onnx','.onnx.json') ]"
+
+# No app COPY: serve.py/index.html are bind-mounted at /app and run via the compose
+# `command`. Only the baked voices above live in the image.

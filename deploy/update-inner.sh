@@ -69,16 +69,10 @@ if grep -q '^JCODE_ENABLED=true' .env; then
   grep -q '^JCODE_MODEL_URL=' .env || printf 'JCODE_MODEL_URL=%s\n' 'http://local-llm:8080' >> .env
 fi
 
-# Read-aloud voices (server-side piper TTS). Opt-in: when BRAIN_TTS_ENABLED=true in
-# .env, ensure the default piper voice models are present in the git-ignored, bind-
-# mounted voices dir so the wall display can speak. Idempotent + best-effort — it skips
-# models already on disk (untracked, so they survive `git reset --hard`) and a network
-# hiccup never fails the update. piper itself is baked into the server-brain image
-# (deploy/Dockerfile.server-brain), so nothing is installed on the host here.
-if grep -q '^BRAIN_TTS_ENABLED=true' .env 2>/dev/null; then
-  echo "[update] ensuring piper read-aloud voices"
-  bash src/deploy/server-brain/install-tts.sh --voices-only || echo "[update] voice download skipped (offline?)"
-fi
+# Read-aloud (server-side piper TTS) needs NOTHING here: piper AND the default voice
+# models are baked into the server-brain image (deploy/Dockerfile.server-brain), rebuilt
+# by the `docker compose build` below. It is driven entirely by the Settings toggle
+# (brain_read_aloud) at runtime — no env var, no host download, no provisioning step.
 
 # Free the on-box LLM gateway's memory BEFORE the rebuild + recreate. The gateway
 # keeps its resident model set (~91 GB on the Strix Halo box) pinned in unified

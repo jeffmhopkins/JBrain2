@@ -19,8 +19,8 @@ its telemetry. Stdlib only, no dependencies, no build step.
 
 It runs as the `server-brain` service in `deploy/docker-compose.yml` — a default
 profile service on a thin `python:3.12-slim` + `piper` image
-(`deploy/Dockerfile.server-brain`; piper is only used for the opt-in read-aloud
-below), so the standard deploy flow owns its lifecycle:
+(`deploy/Dockerfile.server-brain`; piper + the baked default voices power the
+toggle-gated read-aloud below), so the standard deploy flow owns its lifecycle:
 
 - **`jbrain update`** brings it up and keeps it current via `docker compose up
   -d`. The page still hot-reloads with no rebuild: `serve.py` re-reads `index.html`
@@ -149,40 +149,31 @@ persist in `localStorage`. Markdown is stripped before speaking, and `serve.py` 
 lead of silence to each clip (`BRAIN_PIPER_LEAD_MS`, default 250 ms) so a cold audio-sink resume
 clips the silence, not the first word.
 
-`piper` itself ships **baked into the server-brain image** (`deploy/Dockerfile.server-brain`), so the
-only thing to provision is the voice models. They live (git-ignored) in the bind-mounted `voices/`
-dir; with none present, TTS stays **off** (panel hidden), so this is inert by default.
+`piper` **and the default Joe/Amy voice models** ship **baked into the server-brain image**
+(`deploy/Dockerfile.server-brain`, at `/opt/piper-voices` — outside the read-only `/app` bind mount
+that would otherwise shadow them). So there is **nothing to provision and no env var to set**: the
+feature is driven entirely by one Settings toggle.
 
-The voice panel shows only when **both** are true: the owner has turned on **Settings → Read wall
-display aloud** (the `brain_read_aloud` app setting, **off by default** — the runtime companion to
-*Stream LLM to wall display*) **and** at least one piper voice is installed. The app pushes the
-setting to this service as a held flag (`{"kind": "read_aloud", "on": …}` to `POST /event`, surfaced
-in `/stats.read_aloud`) on the toggle and again each chat turn, so flipping it shows/hides the panel
-live with no redeploy; the display is ephemeral, so it stays off until the next push after a restart.
-Like *Stream LLM*, it only speaks the streamed prompt/answer text, so enable it only for a
-localhost-bound / box-monitor-only display.
+**One switch — the toggle.** The voice panel shows only when the owner turns on **Settings → Read
+wall display aloud** (the `brain_read_aloud` app setting, **off by default** — the runtime companion
+to *Stream LLM to wall display*). The app pushes the setting to this service as a held flag
+(`{"kind": "read_aloud", "on": …}` to `POST /event`, surfaced in `/stats.read_aloud`) on the toggle
+and again each chat turn, so flipping it shows/hides the panel live with no redeploy; the display is
+ephemeral, so it stays off until the next push after a restart. Like *Stream LLM*, it only speaks the
+streamed prompt/answer text, so enable it only for a localhost-bound / box-monitor-only display.
 
-Two layers, then: the Settings toggle above is the **runtime** switch (show the panel / speak),
-flipped live with no redeploy. Provisioning the piper voices is the one **deploy-time** step (a heavy
-download, so it's env-gated like the other optional services):
+A stock `jbrain update` rebuilds the image (which re-bakes the voices), so read-aloud is ready the
+moment you flip the toggle — no `.env` edit, no download step.
 
-**Provision the voices (on the box):**
-
-- **Containerized deploy:** set `BRAIN_TTS_ENABLED=true` in the compose `.env`, then `jbrain update`
-  — the update downloads the default Amy + Joe models into `voices/` (idempotent, best-effort) and
-  rebuilds the thin piper image. Or run the downloader directly:
-  `bash src/deploy/server-brain/install-tts.sh --voices-only`.
-- **Run-on-host** (`python3 serve.py` directly): `bash deploy/server-brain/install-tts.sh` installs
-  piper *and* the models.
-
-With the voices present, flip **Settings → Read wall display aloud** on to actually hear turns.
-
-Add more voices by dropping `<name>.onnx` + `<name>.onnx.json` in `voices/` (or list extra names in
-`install-tts.sh`); grab English voices from the
-[piper voices list](https://github.com/OHF-Voice/piper1-gpl/blob/main/VOICES.md). Env knobs:
-`BRAIN_PIPER_BIN` (default `piper`), `BRAIN_PIPER_VOICES_DIR` (default `/app/voices` in the container),
-`BRAIN_PIPER_LEAD_MS`. Text is passed to piper on **stdin** (never a shell arg) and the `voice` param
-is validated against the installed set, so there is no command-injection or path-traversal surface.
+Add more voices by dropping `<name>.onnx` + `<name>.onnx.json` in the mounted `voices/` dir (scanned
+alongside the baked defaults; a dropped-in name overrides a baked one) — grab English voices from the
+[piper voices list](https://github.com/OHF-Voice/piper1-gpl/blob/main/VOICES.md). For run-on-host dev
+(`python3 serve.py` directly, no image), `bash deploy/server-brain/install-tts.sh` installs piper +
+the models into `voices/`. Env knobs (all optional): `BRAIN_PIPER_BIN` (default `piper`),
+`BRAIN_PIPER_VOICES_DIR` (mounted extras, default `/app/voices`), `BRAIN_PIPER_BAKED_VOICES_DIR`
+(baked defaults, default `/opt/piper-voices`), `BRAIN_PIPER_LEAD_MS`. Text is passed to piper on
+**stdin** (never a shell arg) and the `voice` param is validated against the installed set, so there
+is no command-injection or path-traversal surface.
 
 **Autoplay:** the enable checkbox is the user gesture Firefox needs to allow `<audio>` playback for
 the session. On a gesture-free kiosk, also set `media.autoplay.default = 0` in `about:config` (or a

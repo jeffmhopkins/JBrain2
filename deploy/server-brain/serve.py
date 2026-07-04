@@ -43,21 +43,38 @@ PAGE = HERE / "index.html"
 # ── Server-side text-to-speech (piper) ────────────────────────────────────────
 # The wall renders speech on the box with `piper` and plays it via <audio>, so the
 # browser's flaky Web Speech engine (speech-dispatcher cold start, silent drops) is
-# out of the path entirely. `BRAIN_PIPER_VOICES_DIR` holds the `.onnx` voice models
-# (+ their `.onnx.json`); each model's file stem is a selectable "voice". TTS is off
-# unless that dir has at least one model, so this stays inert by default.
+# out of the path entirely. Each `.onnx` voice model (+ its `.onnx.json`) is a
+# selectable "voice" named by its file stem. Voices are found across two dirs, so the
+# feature needs no configuration to work — the default Joe/Amy models are BAKED into
+# the image (`BRAIN_PIPER_BAKED_VOICES_DIR`, default /opt/piper-voices, deliberately
+# OUTSIDE the read-only /app bind mount that would otherwise shadow them), and an
+# operator can still drop extra models into the mounted `BRAIN_PIPER_VOICES_DIR` and
+# they show up alongside. Whether the wall actually SHOWS its voice panel is a runtime
+# choice (the brain_read_aloud setting), not a provisioning one.
 PIPER_BIN = os.environ.get("BRAIN_PIPER_BIN", "piper")
 PIPER_VOICES_DIR = Path(os.environ.get("BRAIN_PIPER_VOICES_DIR", str(HERE / "voices")))
+PIPER_BAKED_VOICES_DIR = Path(os.environ.get("BRAIN_PIPER_BAKED_VOICES_DIR", "/opt/piper-voices"))
 # A short lead of silence so a cold audio-sink resume clips the silence, not the first word.
 PIPER_LEAD_MS = int(os.environ.get("BRAIN_PIPER_LEAD_MS", "250"))
 
 
+def _voice_models() -> dict[str, Path]:
+    """Map each voice name (model file stem) to its `.onnx` path, scanned across the
+    mounted extras dir then the baked-in defaults dir. Earlier dirs win on a name clash,
+    so a dropped-in model can override a baked default of the same name. {} if none."""
+    models: dict[str, Path] = {}
+    for d in (PIPER_VOICES_DIR, PIPER_BAKED_VOICES_DIR):
+        try:
+            for p in sorted(d.glob("*.onnx")):
+                models.setdefault(p.stem, p)
+        except OSError:
+            continue
+    return models
+
+
 def piper_voices() -> list[str]:
-    """Installed voice names (model file stems) in the voices dir, or [] if none/unset."""
-    try:
-        return sorted(p.stem for p in PIPER_VOICES_DIR.glob("*.onnx"))
-    except OSError:
-        return []
+    """Installed voice names (model file stems) across all voice dirs, or [] if none."""
+    return sorted(_voice_models())
 
 
 def _pad_lead(wav_bytes: bytes, lead_ms: int) -> bytes:
@@ -80,11 +97,11 @@ def tts_wav(text: str, voice: str) -> bytes | None:
     """Render `text` to a WAV with piper using `voice` (validated against the installed
     set — no path traversal). None when TTS isn't available or rendering fails. Text is
     passed on STDIN, never as a shell arg, so there is no command-injection surface."""
-    voices = piper_voices()
-    if not voices or shutil.which(PIPER_BIN) is None:
+    models = _voice_models()
+    if not models or shutil.which(PIPER_BIN) is None:
         return None
-    name = voice if voice in voices else voices[0]
-    model = PIPER_VOICES_DIR / f"{name}.onnx"
+    name = voice if voice in models else sorted(models)[0]
+    model = models[name]
     if not model.exists():
         return None
     tmp = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)

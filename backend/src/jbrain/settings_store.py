@@ -114,9 +114,10 @@ BRAIN_LLM_STREAM_DEFAULT = False
 # (deploy/server-brain, GET /tts). The runtime companion to brain_llm_stream: it is
 # the gate the wall uses to SHOW its read-aloud voice panel — and it only speaks the
 # text that brain_llm_stream already streams, so like that switch it is meaningful
-# only when the display is the box's own monitor (localhost-bound). The wall also
-# needs piper voice models installed (baked image + downloaded voices); with none it
-# shows no panel regardless. OFF by default and read live per turn (jbrain.api.agent),
+# only when the display is the box's own monitor (localhost-bound). The wall's piper
+# voices are baked into the server-brain image, so this toggle is the only switch —
+# there is no env var or download step to enable it. OFF by default and read live per
+# turn (jbrain.api.agent),
 # which fire-and-forget POSTs the flag to the display so it flips with no redeploy; an
 # absent or non-true value reads as OFF.
 BRAIN_READ_ALOUD_KEY = "brain_read_aloud"
