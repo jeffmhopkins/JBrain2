@@ -12,7 +12,6 @@ import {
   CheckSquareIcon,
   CodeIcon,
   DatabaseIcon,
-  FlaskIcon,
   GaugeIcon,
   GlobeIcon,
   GraphIcon,
@@ -43,6 +42,7 @@ export type LauncherTarget =
   | "image"
   | "intake"
   | "tasks"
+  | "wall"
   | "jcode";
 
 interface Tile {
@@ -69,7 +69,7 @@ const SECTIONS: Section[] = [
       { title: "Entities", icon: <UsersIcon size={24} />, target: "entities" },
       { title: "Map", icon: <GraphIcon size={24} />, target: "graph" },
       { title: "Location", icon: <PinIcon size={24} />, target: "location" },
-      { title: "Labs", icon: <FlaskIcon size={24} />, phase: "P7" },
+      { title: "Wall", icon: <BotIcon size={24} />, target: "wall" },
     ],
   },
   {

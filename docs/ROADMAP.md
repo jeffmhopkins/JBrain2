@@ -216,8 +216,8 @@ fanout + `POST /pet/command`. Local-model brain (new `pet.turn`/`pet.thought` ta
 settings card), drives off the job queue (always second seat), and a scoped pet + kid principal
 firewall (kids never see health/finance/location). Chosen mocks: `docs/mocks/jpet/06-room-3d.html`
 + `07-phone-control.html`. **W0 (safety spine — `pet_state` + RLS + drives tick, migration
-0123) and W1 (realtime backbone — `/api/pet` GET/command/stream SSE fan-out) landed;** W2
-(the 3D Wall) next.
+0123), W1 (realtime backbone — `/api/pet` GET/command/stream SSE fan-out), and W2 (the 3D
+Wall — a self-contained WebGL `WallScreen`) landed;** W3 (the phone Control screen) next.
 
 **In progress:** EMR / medical-record import (build plan: `docs/plans/EMR_IMPORT_PLAN.md`) —
 multi-system EMR PDF exports (Epic / OneContent / athena / scanned-OCR), fed as one note with an

@@ -1,6 +1,6 @@
 # JBrain2 — JPet: the wall pet (a robot avatar for the box)
 
-> **Status:** In progress · **Last verified:** 2026-07-04 · **Waves:** W0✅ W1✅ W2◻️ W3◻️ W4◻️ W5◻️ W6◻️
+> **Status:** In progress · **Last verified:** 2026-07-04 · **Waves:** W0✅ W1✅ W2✅ W3◻️ W4◻️ W5◻️ W6◻️
 
 A **wall pet** for the family: a display shows a window into a 3D Tron/synthwave
 room, and inside it a wireframe robot — an LLM-driven avatar that walks around,
@@ -13,11 +13,12 @@ existing box**, not a new brain: it runs beside JBrain and always **takes second
 seat to the app's real processing**.
 
 This is an `In progress` build plan under **Phase 7 (outer ring — family & devices)**:
-the waves below are built in order. **W0 (safety spine)** and **W1 (realtime
-backbone)** have landed — the `pet_state` table + RLS firewall + drive math + tick,
-and the `/api/pet` surface (`GET /pet`, `POST /pet/command`, `GET /pet/stream` SSE
-fan-out) that keeps every surface in sync — with unit + real-Postgres + HTTP
-round-trip tests. W2 (the 3D Wall) is next.
+the waves below are built in order. **W0 (safety spine)**, **W1 (realtime
+backbone)**, and **W2 (the 3D Wall)** have landed — the `pet_state` table + RLS
+firewall + drive math + tick; the `/api/pet` surface (`GET /pet`, `POST /pet/command`,
+`GET /pet/stream` SSE fan-out); and the `WallScreen` (a self-contained WebGL room
+that renders the live stream and issues commands). W3 (the phone Control screen) is
+next.
 Every wave satisfies the `CLAUDE.md` non-negotiables.
 
 **Chosen aesthetic + interaction (signed off):** the interactive 3D mockup
@@ -199,27 +200,30 @@ instead of adding a scheduler tier:**
 True on-queue deprioritization (a priority term in `claim()`'s `ORDER BY`, or a
 separate lane) is net-new and **out of scope for JPet**.
 
-## 6. The Wall — 3D Tron room (frontend)
+## 6. The Wall — 3D Tron room (frontend) — **built (W2)**
 
-A new full-screen **Wall** screen under `frontend/src/screens/`, launched from a
-`Launcher` tile, intended for a wall-mounted display / old tablet in kiosk mode.
-It **renders authoritative state from `/pet/stream`** and interpolates the
-animation locally; it does not compute the pet, only draws it.
+The full-screen **Wall** screen (`frontend/src/screens/WallScreen.tsx`), launched
+from a `Launcher` tile, for a wall-mounted display / old tablet in kiosk mode. It
+**renders authoritative state from `/api/pet/stream`** (the `api.petStream` SSE
+generator) and interpolates the animation locally; it does not compute the pet,
+only draws it. Local input (click-floor-to-walk, click-to-poke) and the care
+buttons emit `POST /api/pet/command`, through the same authority path the phone
+uses.
 
-- **Three.js** (new frontend dep — added to `package.json` **and**
-  `scripts/dev-setup.sh` in the same wave, non-negotiable #8). The `06-room-3d.html`
-  mock is the raw-WebGL proof; W2 ports it to Three.js + React.
-- Wireframe materials on a low-poly robot rig + room box; `UnrealBloomPass` for the
-  neon glow; grid floor + walls; synthwave palette from `reference/DESIGN.md`'s
-  dark-first tokens.
-- Robot rig: walk cycle interpolated toward the server's `target`, turn-to-face,
-  idle bob, blink, and an `emotion → pose/face` map driven by the server's
-  `emotion` field; a floor shadow ring; a food bowl prop on `eat`.
-- Local input still works: mouse-look, click-floor-to-walk and click-to-poke emit
-  `POST /pet/command` (so the Wall's own touches flow through the same authority
-  path the phone uses).
-- Honors the DESIGN.md system; the 3D mock is promoted to a DESIGN.md-gated binding
-  mock under `docs/mocks/` before W2 builds it.
+- **Renderer: a self-contained WebGL engine** in `screens/petScene.ts` — the
+  verified `06-room-3d.html` engine ported to TypeScript (perspective room, wireframe
+  robot, walk interpolation toward the server `target`, turn-to-face, bob, blink,
+  `emotion → pose`, a 2D-canvas bloom pass). **No external 3D dependency** —
+  chosen over Three.js/`UnrealBloomPass` to reuse the proven engine, keep the
+  dep footprint lean (so `package.json`/`dev-setup.sh` are untouched), and stay
+  headless-verifiable; a Three.js swap remains an optional future polish.
+- The scene is isolated behind the `petScene` module so `WallScreen` (state +
+  subscription + commands) unit-tests under jsdom by `vi.mock`-ing it — the same
+  convention as `leafletMap`.
+- **Visual identity:** the Wall is a **deliberately committed neon/synthwave world**
+  (its own `wall.css`, not the app's muted design tokens). DESIGN.md sanctions a
+  single-purpose committed surface; the owner picked the neon 3D mock as the
+  direction, so this divergence from the muted register is intentional.
 
 ## 7. The Phone Control screen (PWA) — the remote
 
@@ -276,12 +280,13 @@ Vitest coverage and are built mock-first.
   command deltas + a subscriber-receives-the-command sync test + an HTTP round-trip.
   *Exit met: a command from one client updates every subscriber live — the sync
   contract both surfaces build on.*
-- **W2 — The Wall (3D).** Port `06-room-3d.html` to a Three.js + React **Wall**
-  screen rendering authoritative state from `/pet/stream`; client-side walk
-  interpolation, `emotion → pose`, bloom; local poke/click-to-walk emit commands.
-  `package.json` + `dev-setup.sh` updated together; the 3D mock promoted to a
-  binding DESIGN.md mock. *Exit: the pet lives on the wall and obeys commands from
-  W1.*
+- **W2 — The Wall (3D).** ✅ **Landed.** `WallScreen.tsx` + `petScene.ts` (the
+  verified WebGL engine ported to TS — no external 3D dep), rendering authoritative
+  state from `api.petStream` (SSE), client-side walk interpolation + `emotion → pose`
+  + bloom; local poke/click-to-walk + care buttons emit `POST /api/pet/command`.
+  Launcher tile + App route wired; `api.getPet`/`sendPetCommand`/`petStream` + mock
+  fixtures added. Tested with `vi.mock`-ed scene (jsdom has no WebGL); full frontend
+  suite green. *Exit met: the pet lives on the wall and obeys commands from W1.*
 - **W3 — The Phone Control screen (PWA).** Mobile-first control surface: live
   status via `/pet/stream`, care buttons, the room map "send it here", and a talk
   box (text). Commands hit `/pet/command`. *Exit: a kid drives the wall pet from
