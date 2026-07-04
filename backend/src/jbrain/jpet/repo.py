@@ -11,7 +11,14 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from jbrain.db.session import SessionContext, scoped_session
-from jbrain.jpet.service import Drives, PetStateInfo, decayed, mood_of
+from jbrain.jpet.service import (
+    Command,
+    Drives,
+    PetStateInfo,
+    apply_command,
+    decayed,
+    mood_of,
+)
 from jbrain.models.jpet import PetState
 
 
@@ -96,6 +103,44 @@ class SqlJpetRepo:
                     love=drives.love,
                     mood=mood,
                     last_tick_at=now,
+                    updated_at=func.now(),
+                )
+            )
+            await session.refresh(row)
+            return _info(row)
+
+    async def apply_command(
+        self, ctx: SessionContext, *, domain: str, command: Command
+    ) -> PetStateInfo | None:
+        """Fold a client command (feed/play/pet/poke/sleep/move) into the pet and
+        persist. Adjusts drives/asleep/target/action/emotion and recomputes mood; does
+        NOT touch `last_tick_at` (decay is the tick's job). None when no pet is in
+        scope. The caller broadcasts the returned state to the surfaces."""
+        async with scoped_session(self._maker, ctx) as session:
+            row = await self._load(session, domain)
+            if row is None:
+                return None
+            outcome = apply_command(
+                drives=Drives(food=row.food, energy=row.energy, fun=row.fun, love=row.love),
+                asleep=row.asleep,
+                target_x=row.target_x,
+                target_z=row.target_z,
+                command=command,
+            )
+            await session.execute(
+                update(PetState)
+                .where(PetState.id == row.id)
+                .values(
+                    food=outcome.drives.food,
+                    energy=outcome.drives.energy,
+                    fun=outcome.drives.fun,
+                    love=outcome.drives.love,
+                    asleep=outcome.asleep,
+                    emotion=outcome.emotion,
+                    action=outcome.action,
+                    target_x=outcome.target_x,
+                    target_z=outcome.target_z,
+                    mood=mood_of(outcome.drives, asleep=outcome.asleep),
                     updated_at=func.now(),
                 )
             )

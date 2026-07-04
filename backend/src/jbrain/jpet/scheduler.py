@@ -15,6 +15,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from jbrain.db.session import SessionContext, scoped_session
+from jbrain.jpet.broadcast import PetBroadcaster
 from jbrain.jpet.repo import SqlJpetRepo
 from jbrain.jpet.service import PetStateInfo
 
@@ -45,15 +46,20 @@ async def jpet_tick(
     *,
     domain: str = DEFAULT_PET_DOMAIN,
     name: str = DEFAULT_PET_NAME,
+    broadcaster: PetBroadcaster | None = None,
 ) -> PetStateInfo | None:
-    """Ensure the pet exists and advance its drives once. Returns the new state (used
-    by tests; the loop ignores it), or None on a fresh box with no owner yet."""
+    """Ensure the pet exists and advance its drives once, publishing the new state to
+    `broadcaster` so the surfaces see the decay live. Returns the new state (used by
+    tests; the loop ignores it), or None on a fresh box with no owner yet."""
     owner_pid = await _owner_principal_id(maker)
     if owner_pid is None:
         return None
     ctx = SessionContext(principal_id=str(owner_pid), principal_kind="owner")
     await repo.ensure_pet(ctx, name=name, domain=domain)
-    return await repo.tick(ctx, domain=domain)
+    state = await repo.tick(ctx, domain=domain)
+    if state is not None and broadcaster is not None:
+        broadcaster.publish(state)
+    return state
 
 
 async def run_jpet_loop(
@@ -63,12 +69,13 @@ async def run_jpet_loop(
     domain: str = DEFAULT_PET_DOMAIN,
     name: str = DEFAULT_PET_NAME,
     interval: float = TICK_INTERVAL_SECONDS,
+    broadcaster: PetBroadcaster | None = None,
 ) -> None:
     """Drive `jpet_tick` forever on `interval`. A tick blip is logged and swallowed so
     a transient DB hiccup never kills the loop (mirrors the tasks loop's tolerance)."""
     while True:
         try:
-            await jpet_tick(maker, repo, domain=domain, name=name)
+            await jpet_tick(maker, repo, domain=domain, name=name, broadcaster=broadcaster)
         except Exception as exc:  # noqa: BLE001 — the tick must not kill the loop
             log.warning("jpet.tick_error", error=repr(exc))
         await asyncio.sleep(interval)

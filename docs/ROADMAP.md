@@ -215,8 +215,9 @@ around, and talk to. Two surfaces over one server-authoritative `pet_state`: a *
 fanout + `POST /pet/command`. Local-model brain (new `pet.turn`/`pet.thought` tasks, a JPet
 settings card), drives off the job queue (always second seat), and a scoped pet + kid principal
 firewall (kids never see health/finance/location). Chosen mocks: `docs/mocks/jpet/06-room-3d.html`
-+ `07-phone-control.html`. **W0 (backend safety spine — `pet_state` + RLS + drives tick,
-migration 0123) landed;** W1 (realtime backbone) next.
++ `07-phone-control.html`. **W0 (safety spine — `pet_state` + RLS + drives tick, migration
+0123) and W1 (realtime backbone — `/api/pet` GET/command/stream SSE fan-out) landed;** W2
+(the 3D Wall) next.
 
 **In progress:** EMR / medical-record import (build plan: `docs/plans/EMR_IMPORT_PLAN.md`) —
 multi-system EMR PDF exports (Epic / OneContent / athena / scanned-OCR), fed as one note with an

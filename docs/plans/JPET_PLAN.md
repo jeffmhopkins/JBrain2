@@ -1,6 +1,6 @@
 # JBrain2 — JPet: the wall pet (a robot avatar for the box)
 
-> **Status:** In progress · **Last verified:** 2026-07-04 · **Waves:** W0✅ W1◻️ W2◻️ W3◻️ W4◻️ W5◻️ W6◻️
+> **Status:** In progress · **Last verified:** 2026-07-04 · **Waves:** W0✅ W1✅ W2◻️ W3◻️ W4◻️ W5◻️ W6◻️
 
 A **wall pet** for the family: a display shows a window into a 3D Tron/synthwave
 room, and inside it a wireframe robot — an LLM-driven avatar that walks around,
@@ -13,9 +13,11 @@ existing box**, not a new brain: it runs beside JBrain and always **takes second
 seat to the app's real processing**.
 
 This is an `In progress` build plan under **Phase 7 (outer ring — family & devices)**:
-the waves below are built in order. **W0 (backend safety spine) has landed** —
-the `pet_state` table + RLS firewall, the pure drive math, and the drives tick,
-with unit + real-Postgres isolation/tick tests. W1 (realtime backbone) is next.
+the waves below are built in order. **W0 (safety spine)** and **W1 (realtime
+backbone)** have landed — the `pet_state` table + RLS firewall + drive math + tick,
+and the `/api/pet` surface (`GET /pet`, `POST /pet/command`, `GET /pet/stream` SSE
+fan-out) that keeps every surface in sync — with unit + real-Postgres + HTTP
+round-trip tests. W2 (the 3D Wall) is next.
 Every wave satisfies the `CLAUDE.md` non-negotiables.
 
 **Chosen aesthetic + interaction (signed off):** the interactive 3D mockup
@@ -266,11 +268,14 @@ Vitest coverage and are built mock-first.
   met: drives advance on a clock; neither the pet nor a kid principal can read a
   firewalled domain.* (Dedicated kid device-session minting rides in with the
   command API in W1/W3; the firewall guarantee is already enforced + tested.)
-- **W1 — Realtime backbone.** `GET /pet/stream` (SSE fanout, reconnect/replay) +
-  `POST /pet/command` for the care/movement actions (feed/play/pet/sleep/move/poke)
-  applying deltas + broadcasting; a throwaway debug client proves two subscribers
-  stay in sync. *Exit: a command from one client updates every subscriber live.
-  This is the sync contract both surfaces build on.*
+- **W1 — Realtime backbone.** ✅ **Landed.** `GET /api/pet` + `POST /api/pet/command`
+  (feed/play/pet/poke/sleep/move — pure command folding in `jpet/service.py`, applied
+  by the repo) + `GET /api/pet/stream` (SSE fan-out via `PetBroadcaster`; the tick and
+  every command publish, so subscribers re-render live). Owner-gated for now (the kid
+  device principal joins in W3). Tests: unit command/broadcaster + real-Postgres
+  command deltas + a subscriber-receives-the-command sync test + an HTTP round-trip.
+  *Exit met: a command from one client updates every subscriber live — the sync
+  contract both surfaces build on.*
 - **W2 — The Wall (3D).** Port `06-room-3d.html` to a Three.js + React **Wall**
   screen rendering authoritative state from `/pet/stream`; client-side walk
   interpolation, `emotion → pose`, bloom; local poke/click-to-walk emit commands.
