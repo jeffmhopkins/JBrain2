@@ -26,5 +26,5 @@ given a roadmap slot in `../ROADMAP.md`, and promoted out of this folder.
   frontend (M4), with M0 a blocking on-box host-validation spike. Interactive mock:
   `../mocks/music-gen-live/live-music-tool-card.html`.
 _(The jcode plans, `GUIDED_INTAKE_PLAN.md`, and `SUBAGENT_SPAWNING_PLAN.md` were
-promoted out of the icebox and have since shipped; `JPET_PLAN.md` was promoted to
-`Scheduled` and now lives in `../plans/` — see `../archive/` and `../plans/`.)_
+promoted out of the icebox and have since shipped; `JPET_PLAN.md` and `JPET_V2_PLAN.md`
+shipped and now live in `../archive/`.)_

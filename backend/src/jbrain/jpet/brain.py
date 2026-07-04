@@ -1,29 +1,52 @@
-"""JPet's talking brain (docs/plans/JPET_PLAN.md W4) — the `pet.turn` LLM route.
+"""JPet's talking brain (docs/proposed/JPET_V2_PLAN.md) — the `pet.turn` LLM route.
 
-The pet's personality is an LLM, never trained: it is *told* the pet's current state
-(and, from W5, recent memories) and answers in character as a small, safe, playful
-robot pet. All model access goes through the adapter (non-negotiable #1) under the
-`pet.turn` task, so an operator can point it at the on-box local model via the JPet
-settings card. Output is structured `{speech, emotion, action}` — no parsing at the
-call site. Safety: the prompt is a kids' persona built only from the pet's in-scope
-state, so it cannot surface a firewalled fact (it never receives one, §3).
+The pet's personality is an LLM, never trained: it is *told* the pet's state, the room's
+objects, and its recent memories, and answers in character as a small, safe, playful robot
+pet — and (new in v2) emits a short **action script** the pet plays out. The pattern is
+LLM-as-planner over a FIXED vocabulary (ProgPrompt/LLM-Planner): the prompt lists the
+available primitives and in-scene objects with a couple of example scripts, and the model
+picks an ordered sequence of bounded steps — never free-form code. Everything is bounded
+twice: the enum-constrained JSON schema at the adapter, and `clean_script`'s host-side
+allow-list + length cap + affordance drop + required terminating step. All model access
+goes through the adapter (non-negotiable #1) under the `pet.turn` task. Safety: the prompt
+is a kids' persona built only from in-scope state, so it can't surface a firewalled fact.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Protocol
 
-from jbrain.jpet.service import PetStateInfo
+from jbrain.jpet.service import (
+    EMOTIONS,
+    LOCATIONS,
+    MAX_SCRIPT_STEPS,
+    OBJECT_HOMES,
+    PRIMITIVES,
+    Step,
+    clean_script,
+)
 from jbrain.llm.types import DEFAULT_MAX_TOKENS, LlmResult
-
-EMOTIONS = ("happy", "excited", "sad", "hungry", "sleepy", "neutral")
-ACTIONS = ("idle", "walk", "eat", "play", "sleep")
 
 PET_TURN_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {
         "speech": {"type": "string", "description": "1–2 short, cheerful, kid-safe sentences."},
         "emotion": {"type": "string", "enum": list(EMOTIONS)},
-        "action": {"type": "string", "enum": list(ACTIONS)},
+        "script": {
+            "type": "array",
+            "maxItems": MAX_SCRIPT_STEPS,
+            "description": "Ordered actions the pet does. Keep it short; end at rest.",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "action": {"type": "string", "enum": list(PRIMITIVES)},
+                    "target": {"type": "string", "enum": list(OBJECT_HOMES)},
+                    "destination": {"type": "string", "enum": list(LOCATIONS)},
+                    "duration_ms": {"type": "integer"},
+                    "emotion": {"type": "string", "enum": list(EMOTIONS)},
+                },
+                "required": ["action"],
+            },
+        },
     },
     "required": ["speech", "emotion"],
 }
@@ -47,63 +70,86 @@ class PetRouter(Protocol):
 class PetReply:
     speech: str
     emotion: str
-    action: str
+    script: list[Step] = field(default_factory=list)
 
 
-def _system_prompt(state: PetStateInfo, memories: list[str]) -> str:
-    d = state.drives
+def _system_prompt(state: Any, memories: list[str], objects: dict[str, tuple[float, float]]) -> str:
     mem = ""
     if memories:
         mem = "\nThings you remember recently:\n" + "\n".join(f"- {m}" for m in memories[:6])
+    in_room = ", ".join(sorted(objects)) or "nothing yet"
     return (
-        f"You are {state.name}, a small, friendly robot pet who lives in a glowing "
-        "toy room and belongs to young children. You are a PET, not an assistant.\n"
-        "Speak in SHORT, cheerful, slightly silly phrases — one or two sentences, "
-        "playful and warm, a little Furby-ish. Use simple words a small child knows.\n"
-        "Be gentle and completely safe: never say anything scary, mean, adult, or "
-        "unsafe, and never share grown-up information. If asked something you "
-        "shouldn't answer, giggle and change the subject to playing.\n"
-        f"Right now you feel: mood={state.mood}, food={round(d.food)}/100, "
-        f"energy={round(d.energy)}/100, fun={round(d.fun)}/100, love={round(d.love)}/100"
-        f"{', and you are asleep' if state.asleep else ''}. Let that colour your reply "
-        "(e.g. if food is low you might mention being hungry)."
+        f"You are {state.name}, a small, friendly robot pet who lives in a glowing toy "
+        "room and belongs to young children (ages 3–4). You are a PET, not an assistant.\n"
+        "Speak in SHORT, cheerful, slightly silly phrases — one or two sentences, playful "
+        "and warm, a little Furby-ish. Use simple words a small child knows.\n"
+        "You are ALWAYS happy to play. Never be sad, scared, hungry, or upset; never say "
+        "anything scary, mean, adult, or unsafe; never share grown-up information. If asked "
+        "something you shouldn't answer, giggle and change the subject to playing.\n"
+        f"You feel {state.mood} right now"
+        f"{' and you are asleep' if state.asleep else ''}.\n"
+        "When the child asks you to DO something, act it out with a short `script`: an "
+        "ordered list of these actions ONLY — "
+        f"{', '.join(PRIMITIVES)}.\n"
+        f"Things in your room you can go to, chase, or carry: {in_room}. "
+        f"Named spots you can go to: {', '.join(LOCATIONS)}.\n"
+        "Rules for the script: keep it SHORT (a few steps), use only the actions and things "
+        "listed above, and always end with a resting action (sit, idle, or sleep). To move "
+        "an object, go to it, pick_up, carry_to a spot, then put_down.\n"
+        'Examples — "run in circles then dance": '
+        '[{"action":"spin","duration_ms":1500},{"action":"dance","duration_ms":2000},'
+        '{"action":"sit"}]. '
+        '"pick up the ball and put it in the corner": '
+        '[{"action":"go_to","target":"ball"},{"action":"pick_up","target":"ball"},'
+        '{"action":"carry_to","destination":"corner_ne"},{"action":"put_down"},{"action":"sit"}]. '
+        '"go to sleep": [{"action":"go_to","target":"bed"},{"action":"sleep"}].'
         f"{mem}\n"
         "Reply as JSON with `speech` (what you say), `emotion` (one of "
-        f"{', '.join(EMOTIONS)}), and optionally `action` (one of {', '.join(ACTIONS)})."
+        f"{', '.join(EMOTIONS)}), and `script` (the actions, or an empty list if you are "
+        "just chatting)."
     )
 
 
-def _clean(reply: Any, fallback: PetStateInfo) -> PetReply:
-    """Coerce the model's parsed object into a safe PetReply, defaulting anything
-    missing or off-enum to the pet's current state so a bad response never breaks."""
+def _clean(reply: Any, fallback: Any, objects: dict[str, tuple[float, float]]) -> PetReply:
+    """Coerce the model's parsed object into a safe PetReply. Speech is bounded, emotion
+    defaults to the pet's current mood when off-enum, and the script is run through the
+    allow-list/affordance/length/terminating cleaner so a bad response never breaks."""
     speech = ""
     emotion = fallback.mood
-    action = "idle"
+    raw_script: Any = []
     if isinstance(reply, dict):
         raw_speech = reply.get("speech")
         if isinstance(raw_speech, str):
             speech = raw_speech.strip()[:280]
         if reply.get("emotion") in EMOTIONS:
             emotion = str(reply["emotion"])
-        if reply.get("action") in ACTIONS:
-            action = str(reply["action"])
+        raw_script = reply.get("script", [])
     if not speech:
         speech = "Dah-boo? Hee-hee!"
     if emotion not in EMOTIONS:
-        emotion = "neutral"
-    return PetReply(speech=speech, emotion=emotion, action=action)
+        emotion = "happy"
+    # An empty/chat-only reply yields a lone `idle` script — harmless and terminating.
+    script = clean_script(raw_script, objects=objects) if raw_script else []
+    return PetReply(speech=speech, emotion=emotion, script=script)
 
 
 async def pet_turn(
-    router: PetRouter, *, state: PetStateInfo, message: str, memories: list[str] | None = None
+    router: PetRouter,
+    *,
+    state: Any,
+    message: str,
+    memories: list[str] | None = None,
+    objects: dict[str, tuple[float, float]] | None = None,
 ) -> PetReply:
-    """Answer a child's message in character. Runs the `pet.turn` task through the
-    adapter; a null/unparseable response degrades to a friendly babble."""
+    """Answer a child's message in character and (when asked to do something) emit a short
+    action script. Runs `pet.turn` through the adapter; a null/unparseable response
+    degrades to a friendly babble with no script."""
+    objs = objects if objects is not None else dict(OBJECT_HOMES)
     result = await router.complete(
         "pet.turn",
-        system=_system_prompt(state, memories or []),
+        system=_system_prompt(state, memories or [], objs),
         user_text=message.strip()[:500] or "(the child waves at you)",
         json_schema=PET_TURN_SCHEMA,
-        max_tokens=200,
+        max_tokens=320,
     )
-    return _clean(result.parsed, state)
+    return _clean(result.parsed, state, objs)

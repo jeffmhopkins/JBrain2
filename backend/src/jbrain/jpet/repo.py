@@ -1,10 +1,12 @@
 """SQL JPet repository. Every query runs on an RLS-scoped session, so the domain
-firewall (and the owner-only rule) is Postgres', not this module's — the same
-pattern as lists/notes. W0 surface: ensure the single pet exists, read it, and
-advance its drives on a tick."""
+firewall (and the owner-only rule) is Postgres', not this module's — the same pattern
+as lists/notes. v2 (docs/proposed/JPET_V2_PLAN.md) persists the pet's action *script*
+and the room objects it targets/carries; the pet's play stays pure arithmetic, no LLM
+in the tick (still second seat)."""
 
 import uuid
 from datetime import UTC, datetime
+from typing import Any
 
 from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
@@ -12,14 +14,31 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from jbrain.db.session import SessionContext, scoped_session
 from jbrain.jpet.service import (
-    Command,
+    OBJECT_HOMES,
     Drives,
     PetStateInfo,
-    apply_command,
+    Step,
+    apply_play_reward,
     decayed,
     mood_of,
+    settle_script,
 )
 from jbrain.models.jpet import PetMemory, PetState
+
+
+def _objects_from_row(row: PetState) -> dict[str, tuple[float, float]]:
+    """Row jsonb `{kind: [x, z]}` → the typed dict the service math uses. Falls back to
+    the object homes for a pre-v2 row whose objects were never seeded."""
+    raw = row.objects or {}
+    out: dict[str, tuple[float, float]] = {}
+    for kind, xz in raw.items():
+        if isinstance(xz, (list, tuple)) and len(xz) == 2:
+            out[str(kind)] = (float(xz[0]), float(xz[1]))
+    return out or {k: (v[0], v[1]) for k, v in OBJECT_HOMES.items()}
+
+
+def _objects_to_json(objects: dict[str, tuple[float, float]]) -> dict[str, list[float]]:
+    return {k: [round(v[0], 4), round(v[1], 4)] for k, v in objects.items()}
 
 
 def _info(row: PetState) -> PetStateInfo:
@@ -38,6 +57,11 @@ def _info(row: PetState) -> PetStateInfo:
         target_z=row.target_z,
         facing=row.facing,
         action=row.action,
+        script=list(row.script or []),
+        script_started_at=row.script_started_at,
+        carrying=row.carrying,
+        lights_on=row.lights_on,
+        objects=_objects_from_row(row),
         last_tick_at=row.last_tick_at,
         updated_at=row.updated_at,
     )
@@ -54,15 +78,26 @@ class SqlJpetRepo:
             return _info(row) if row is not None else None
 
     async def ensure_pet(self, ctx: SessionContext, *, name: str, domain: str) -> PetStateInfo:
-        """Get-or-create the single pet for this owner in `domain`. Idempotent: the
-        UNIQUE (principal_id, domain_code) constraint makes a lost create race re-read
-        the winner. The insert runs in a SAVEPOINT so a conflict rolls back just that
-        step and leaves the surrounding transaction usable for the re-read."""
+        """Get-or-create the single pet for this owner in `domain`. Idempotent via the
+        UNIQUE (principal_id, domain_code) constraint. Seeds the room objects on create
+        (and backfills them for a pre-v2 row whose objects are still empty)."""
         async with scoped_session(self._maker, ctx) as session:
             row = await self._load(session, domain)
             if row is not None:
+                if not row.objects:  # pre-v2 row — seed the room so targeting works
+                    await session.execute(
+                        update(PetState)
+                        .where(PetState.id == row.id)
+                        .values(objects=_objects_to_json(dict(OBJECT_HOMES)))
+                    )
+                    await session.refresh(row)
                 return _info(row)
-            row = PetState(name=name, domain_code=domain, principal_id=_principal(ctx))
+            row = PetState(
+                name=name,
+                domain_code=domain,
+                principal_id=_principal(ctx),
+                objects=_objects_to_json(dict(OBJECT_HOMES)),
+            )
             try:
                 async with session.begin_nested():
                     session.add(row)
@@ -78,9 +113,9 @@ class SqlJpetRepo:
     async def tick(
         self, ctx: SessionContext, *, domain: str, now: datetime | None = None
     ) -> PetStateInfo | None:
-        """Advance the pet's drives by the time elapsed since `last_tick_at`, recompute
-        mood, and persist. Pure arithmetic — no LLM. None when there is no pet in scope.
-        `now` is injectable for tests."""
+        """Advance the pet once and persist. v2: the happy meters do NOT decay (only a
+        napping pet recovers energy); mood is always positive. Pure arithmetic — no LLM.
+        None when there is no pet in scope. `now` is injectable for tests."""
         now = now or datetime.now(UTC)
         async with scoped_session(self._maker, ctx) as session:
             row = await self._load(session, domain)
@@ -109,74 +144,104 @@ class SqlJpetRepo:
             await session.refresh(row)
             return _info(row)
 
-    async def apply_command(
-        self, ctx: SessionContext, *, domain: str, command: Command
+    async def run_script(
+        self,
+        ctx: SessionContext,
+        *,
+        domain: str,
+        script: list[Step],
+        speech: str | None = None,
+        emotion: str | None = None,
+        reward: bool = True,
+        now: datetime | None = None,
     ) -> PetStateInfo | None:
-        """Fold a client command (feed/play/pet/poke/sleep/move) into the pet and
-        persist. Adjusts drives/asleep/target/action/emotion and recomputes mood; does
-        NOT touch `last_tick_at` (decay is the tick's job). None when no pet is in
-        scope. The caller broadcasts the returned state to the surfaces."""
+        """Settle a (already-cleaned) action script into the pet + room and persist it: the
+        pet's resting pose, what it now carries, the room objects' new positions, the light
+        state, and the script itself + its start time (the wall replays the motion from
+        there). Optionally sets the utterance/emotion (the `say` path) and applies the
+        one-directional play reward. Does NOT touch `last_tick_at`. None when no pet in
+        scope; the caller broadcasts."""
+        now = now or datetime.now(UTC)
         async with scoped_session(self._maker, ctx) as session:
             row = await self._load(session, domain)
             if row is None:
                 return None
-            outcome = apply_command(
-                drives=Drives(food=row.food, energy=row.energy, fun=row.fun, love=row.love),
+            objects = _objects_from_row(row)
+            settled = settle_script(
+                pos_x=row.pos_x,
+                pos_z=row.pos_z,
+                facing=row.facing,
                 asleep=row.asleep,
-                target_x=row.target_x,
-                target_z=row.target_z,
-                command=command,
+                carrying=row.carrying,
+                lights_on=row.lights_on,
+                objects=objects,
+                script=script,
             )
-            await session.execute(
-                update(PetState)
-                .where(PetState.id == row.id)
-                .values(
-                    food=outcome.drives.food,
-                    energy=outcome.drives.energy,
-                    fun=outcome.drives.fun,
-                    love=outcome.drives.love,
-                    asleep=outcome.asleep,
-                    emotion=outcome.emotion,
-                    action=outcome.action,
-                    target_x=outcome.target_x,
-                    target_z=outcome.target_z,
-                    mood=mood_of(outcome.drives, asleep=outcome.asleep),
-                    updated_at=func.now(),
-                )
-            )
+            drives = Drives(food=row.food, energy=row.energy, fun=row.fun, love=row.love)
+            if reward:
+                drives = apply_play_reward(drives)
+            values: dict[str, Any] = {
+                "script": [s.as_dict() for s in script],
+                "script_started_at": now,
+                "action": settled.action,
+                "pos_x": settled.pos_x,
+                "pos_z": settled.pos_z,
+                "target_x": settled.pos_x,
+                "target_z": settled.pos_z,
+                "facing": settled.facing,
+                "asleep": settled.asleep,
+                "carrying": settled.carrying,
+                "lights_on": settled.lights_on,
+                "objects": _objects_to_json(settled.objects),
+                "food": drives.food,
+                "energy": drives.energy,
+                "fun": drives.fun,
+                "love": drives.love,
+                "mood": mood_of(drives, asleep=settled.asleep),
+                "updated_at": func.now(),
+            }
+            if speech is not None:
+                values["speech"] = speech
+            if emotion is not None:
+                values["emotion"] = emotion
+            await session.execute(update(PetState).where(PetState.id == row.id).values(**values))
             await session.refresh(row)
             return _info(row)
 
-    async def apply_reply(
-        self, ctx: SessionContext, *, domain: str, speech: str, emotion: str, action: str
+    async def move_to(
+        self, ctx: SessionContext, *, domain: str, x: float, z: float, now: datetime | None = None
     ) -> PetStateInfo | None:
-        """Persist a `pet.turn` reply — the current utterance + emotion/action — and
-        recompute mood. None when no pet is in scope. The caller broadcasts."""
+        """Send the pet to a raw floor point (the parent room-map affordance) — a plain
+        walk, no script. Clears any script so the wall falls back to its target-walk, and
+        carries a held object along. None when no pet in scope; the caller broadcasts."""
+        now = now or datetime.now(UTC)
+        x, z = max(-1.0, min(1.0, x)), max(-1.0, min(1.0, z))
         async with scoped_session(self._maker, ctx) as session:
             row = await self._load(session, domain)
             if row is None:
                 return None
-            drives = Drives(food=row.food, energy=row.energy, fun=row.fun, love=row.love)
-            await session.execute(
-                update(PetState)
-                .where(PetState.id == row.id)
-                .values(
-                    speech=speech,
-                    emotion=emotion,
-                    action=action,
-                    asleep=False,
-                    mood=mood_of(drives, asleep=False),
-                    updated_at=func.now(),
-                )
-            )
+            values: dict[str, Any] = {
+                "script": [],
+                "script_started_at": now,
+                "action": "walk",
+                "asleep": False,
+                "target_x": x,
+                "target_z": z,
+                "updated_at": func.now(),
+            }
+            if row.carrying:  # a carried object rides to the destination
+                objects = _objects_from_row(row)
+                objects[row.carrying] = (x, z)
+                values["objects"] = _objects_to_json(objects)
+            await session.execute(update(PetState).where(PetState.id == row.id).values(**values))
             await session.refresh(row)
             return _info(row)
 
     async def record_memory(
         self, ctx: SessionContext, *, domain: str, kind: str, body: str
     ) -> None:
-        """Append an episodic memory (a child's message, a care event). Best-effort —
-        a memory write must never break the interaction it describes."""
+        """Append an episodic memory (a child's message, a play event). Best-effort — a
+        memory write must never break the interaction it describes."""
         async with scoped_session(self._maker, ctx) as session:
             session.add(
                 PetMemory(
@@ -202,23 +267,6 @@ class SqlJpetRepo:
                 .all()
             )
             return list(rows)
-
-    async def set_target(
-        self, ctx: SessionContext, *, domain: str, x: float, z: float
-    ) -> PetStateInfo | None:
-        """Point the pet at a new floor target and set it walking — the autonomous
-        wander step (docs/plans/JPET_PLAN.md W5). None when no pet is in scope."""
-        async with scoped_session(self._maker, ctx) as session:
-            row = await self._load(session, domain)
-            if row is None:
-                return None
-            await session.execute(
-                update(PetState)
-                .where(PetState.id == row.id)
-                .values(target_x=x, target_z=z, action="walk", updated_at=func.now())
-            )
-            await session.refresh(row)
-            return _info(row)
 
     async def _load(self, session: AsyncSession, domain: str) -> PetState | None:
         return (

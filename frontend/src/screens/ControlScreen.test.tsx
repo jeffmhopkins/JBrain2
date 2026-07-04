@@ -32,6 +32,10 @@ function petState(over: Partial<PetState> = {}): PetState {
     target_z: 0,
     facing: 0,
     action: "idle",
+    script: [],
+    carrying: null,
+    lights_on: true,
+    objects: { ball: [0, 0.35] },
     ...over,
   };
 }
@@ -58,12 +62,27 @@ describe("ControlScreen", () => {
     expect(screen.getByText("happy")).toBeInTheDocument();
   });
 
-  it("sends a care command from a button", async () => {
+  it("fires a play command on pointer-down (touch-down feedback)", async () => {
     const { deps, sendPetCommand } = makeDeps();
     render(<ControlScreen onClose={() => {}} deps={deps} />);
     await screen.findByText(/paired to Wall/);
-    fireEvent.click(screen.getByRole("button", { name: /feed/i }));
-    await waitFor(() => expect(sendPetCommand).toHaveBeenCalledWith({ action: "feed" }));
+    fireEvent.pointerDown(screen.getByRole("button", { name: /dance/i }));
+    await waitFor(() => expect(sendPetCommand).toHaveBeenCalledWith({ action: "dance" }));
+  });
+
+  it("swaps sleep for wake when the pet is asleep", async () => {
+    const sendPetCommand = vi.fn(async () => petState({ asleep: true }));
+    const deps: ControlDeps = {
+      getPet: async () => petState({ asleep: true }),
+      sendPetCommand,
+      async *petStream() {
+        yield petState({ asleep: true });
+      },
+    };
+    render(<ControlScreen onClose={() => {}} deps={deps} />);
+    await screen.findByText(/paired to Wall/);
+    fireEvent.pointerDown(screen.getByRole("button", { name: /wake up/i }));
+    await waitFor(() => expect(sendPetCommand).toHaveBeenCalledWith({ action: "wake" }));
   });
 
   it("sends a move command when the room map is tapped", async () => {

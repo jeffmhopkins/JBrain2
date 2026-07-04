@@ -55,7 +55,8 @@ its ship evidence.
 | `LOCATION_ASSISTANT_PLAN.md` | Owner-only location assistant tool spine. |
 | `GUIDED_INTAKE_PLAN.md` | Owner-minted intake share links → attributed notes. |
 | `HYGIENE_SWEEPS_PLAN.md` | Core-data maintenance engine actions. |
-| `JPET_PLAN.md` | The family wall pet: server-authoritative `pet_state`, a 3D WebGL Wall + phone Control screen synced over SSE, a `pet.turn` talk brain (text + voice), memory, and autonomous wander (migrations 0123–0124). Residual (idle `pet.thought`, environment feed, day/night, kiosk/pairing) carried to `../ROADMAP.md`. |
+| `JPET_PLAN.md` | The family wall pet v1: server-authoritative `pet_state`, a 3D WebGL Wall + phone Control screen synced over SSE, a `pet.turn` talk brain (text + voice), memory, and autonomous wander (migrations 0123–0124). Its Tamagotchi decay *interaction model* is superseded by `JPET_V2_PLAN.md`. |
+| `JPET_V2_PLAN.md` | JPet v2 (migration 0125): the pivot from Tamagotchi decay to a positive, command-and-response play companion for 3–4-year-olds. Happy meters that never decay; a bounded, enum-constrained **action-script** the pet plays out (`dance`, `chase the ball`, `pick up the ball and put it in the corner`); room objects + object-targeted actions + carry; big kid play-buttons + push-to-talk on the phone; per-action WebAudio sound cues + day/night on the `:8800` wall; capped ambient life. Backed by three deep-research dossiers. |
 
 ## jcode
 | Item | What it is |

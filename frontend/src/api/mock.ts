@@ -2674,15 +2674,68 @@ const jcodeExternal: {
 }[] = [];
 let jcodeExternalN = 1;
 
-// --- JPet (the wall pet): one in-memory authoritative state the mock mutates ---
+// --- JPet (the wall pet): one in-memory authoritative state the mock mutates (v2) ---
+const MOCK_OBJECTS: Record<string, [number, number]> = {
+  ball: [0, 0.35],
+  bed: [-0.72, -0.7],
+  toy_box: [0.72, -0.7],
+  food_bowl: [0.72, 0.72],
+  ball_pit: [-0.72, 0.72],
+  light_switch: [0, -0.92],
+};
+const MOCK_LOCATIONS: Record<string, [number, number]> = {
+  corner_ne: [0.85, -0.85],
+  corner_nw: [-0.85, -0.85],
+  corner_se: [0.85, 0.85],
+  corner_sw: [-0.85, 0.85],
+  center: [0, 0],
+  near_child: [0, 0.82],
+};
+// The canned kid-button scripts, mirrored from the backend so dev:mock plays them out.
+const MOCK_SCRIPTS: Record<string, PetState["script"]> = {
+  dance: [{ action: "dance", duration_ms: 2200, emotion: "silly" }, { action: "sit" }],
+  spin: [{ action: "spin", duration_ms: 1400, emotion: "excited" }, { action: "idle" }],
+  jump: [{ action: "jump", duration_ms: 900, emotion: "excited" }, { action: "idle" }],
+  wave: [{ action: "wave", duration_ms: 1200, emotion: "happy" }, { action: "idle" }],
+  wiggle: [{ action: "wiggle", duration_ms: 1400, emotion: "silly" }, { action: "idle" }],
+  chase: [
+    { action: "chase", target: "ball", emotion: "excited" },
+    { action: "wiggle", duration_ms: 900 },
+    { action: "sit" },
+  ],
+  hide: [{ action: "hide", destination: "corner_nw", emotion: "curious" }, { action: "sit" }],
+  beep: [{ action: "beep", duration_ms: 700, emotion: "silly" }, { action: "idle" }],
+  come: [
+    { action: "come_here", emotion: "happy" },
+    { action: "wave", duration_ms: 900 },
+    { action: "idle" },
+  ],
+  sleep: [{ action: "go_to", target: "bed", emotion: "sleepy" }, { action: "sleep" }],
+  wake: [
+    { action: "wake", emotion: "happy" },
+    { action: "wiggle", duration_ms: 800 },
+    { action: "idle" },
+  ],
+  eat: [
+    { action: "go_to", target: "food_bowl", emotion: "happy" },
+    { action: "nod", duration_ms: 1200 },
+    { action: "sit" },
+  ],
+  lights: [
+    { action: "go_to", target: "light_switch", emotion: "curious" },
+    { action: "jump", duration_ms: 700 },
+    { action: "idle" },
+  ],
+};
+
 const mockPet: PetState = {
   name: "Blink",
   domain: "general",
-  food: 78,
-  energy: 82,
-  fun: 70,
-  love: 74,
-  mood: "happy",
+  food: 82,
+  energy: 84,
+  fun: 76,
+  love: 80,
+  mood: "excited",
   emotion: "happy",
   speech: null,
   asleep: false,
@@ -2692,60 +2745,71 @@ const mockPet: PetState = {
   target_z: 0.2,
   facing: 0,
   action: "idle",
+  script: [],
+  carrying: null,
+  lights_on: true,
+  objects: { ...MOCK_OBJECTS },
 };
+
+// A compact mirror of the backend's settle_script: fold a script into the pet + room's
+// resting state so the mock stays coherent (carry the ball, toggle lights, nap).
+function mockSettle(script: PetState["script"]): void {
+  const clampUnit = (n: number) => Math.max(-1, Math.min(1, n));
+  let pos: [number, number] = [mockPet.pos_x, mockPet.pos_z];
+  let held = mockPet.carrying;
+  for (const step of script) {
+    const dest = step.destination ? MOCK_LOCATIONS[step.destination] : undefined;
+    const tgt = step.target ? mockPet.objects[step.target] : undefined;
+    let want: [number, number] | undefined = dest ?? undefined;
+    if (!want && ["go_to", "look_at", "chase", "pick_up"].includes(step.action) && tgt) want = tgt;
+    if (!want && step.action === "chase") want = mockPet.objects.ball;
+    if (!want && step.action === "come_here") want = MOCK_LOCATIONS.near_child;
+    if (!want && step.action === "hide") want = MOCK_LOCATIONS.corner_nw;
+    if (want) pos = [clampUnit(want[0]), clampUnit(want[1])];
+    if (step.action === "pick_up") held = step.target ?? "ball";
+    else if (step.action === "put_down") held = null;
+    if (step.action === "go_to" && step.target === "light_switch")
+      mockPet.lights_on = !mockPet.lights_on;
+    if (held) mockPet.objects[held] = [pos[0], pos[1]];
+    if (step.action === "sleep") mockPet.asleep = true;
+    else if (step.action === "wake") mockPet.asleep = false;
+  }
+  mockPet.pos_x = pos[0];
+  mockPet.pos_z = pos[1];
+  mockPet.target_x = pos[0];
+  mockPet.target_z = pos[1];
+  mockPet.carrying = held;
+  const last = script[script.length - 1];
+  mockPet.action = last ? last.action : "idle";
+}
 
 function applyMockPetCommand(command: PetCommand): void {
   const clamp = (v: number) => Math.max(0, Math.min(100, v));
-  switch (command.action) {
-    case "feed":
-      mockPet.food = clamp(mockPet.food + 26);
-      mockPet.emotion = "excited";
-      mockPet.action = "eat";
-      mockPet.asleep = false;
-      break;
-    case "play":
-      mockPet.fun = clamp(mockPet.fun + 24);
-      mockPet.energy = clamp(mockPet.energy - 10);
-      mockPet.emotion = "excited";
-      mockPet.action = "play";
-      break;
-    case "pet":
-      mockPet.love = clamp(mockPet.love + 22);
-      mockPet.emotion = "happy";
-      mockPet.action = "idle";
-      break;
-    case "poke":
-      mockPet.fun = clamp(mockPet.fun + 8);
-      mockPet.emotion = "excited";
-      break;
-    case "sleep":
-      mockPet.asleep = !mockPet.asleep;
-      mockPet.action = mockPet.asleep ? "sleep" : "idle";
-      break;
-    case "move":
-      mockPet.target_x = command.x ?? mockPet.target_x;
-      mockPet.target_z = command.z ?? mockPet.target_z;
-      mockPet.action = "walk";
-      mockPet.asleep = false;
-      break;
-    case "say": {
-      const babble = ["Hee-hee, hallo!", "Dah-boo! Wee!", "Mee love oo!", "Boop boop!"];
-      mockPet.speech = babble[Math.floor(Math.random() * babble.length)] ?? "Boo!";
-      mockPet.emotion = "excited";
-      mockPet.asleep = false;
-      break;
-    }
+  if (command.action === "move") {
+    mockPet.target_x = command.x ?? mockPet.target_x;
+    mockPet.target_z = command.z ?? mockPet.target_z;
+    mockPet.action = "walk";
+    mockPet.asleep = false;
+    mockPet.script = [];
+    return;
   }
+  if (command.action === "say") {
+    const babble = ["Hee-hee, okay!", "Dah-boo! Watch me!", "Mee love oo!", "Boop boop!"];
+    mockPet.speech = babble[Math.floor(Math.random() * babble.length)] ?? "Boo!";
+    mockPet.emotion = "excited";
+    // Playful stand-in: acting out freeform speech isn't parsed in the mock, so wiggle.
+    mockPet.script = [{ action: "wiggle", duration_ms: 1200 }, { action: "idle" }];
+    mockSettle(mockPet.script);
+    return;
+  }
+  const script = MOCK_SCRIPTS[command.action] ?? [{ action: "idle" }];
+  mockPet.script = script;
+  mockPet.fun = clamp(mockPet.fun + 8);
+  mockPet.love = clamp(mockPet.love + 4);
+  mockPet.emotion = "excited";
+  mockSettle(script);
   const avg = (mockPet.food + mockPet.energy + mockPet.fun + mockPet.love) / 4;
-  mockPet.mood = mockPet.asleep
-    ? "sleepy"
-    : mockPet.food < 25
-      ? "hungry"
-      : avg > 70
-        ? "happy"
-        : avg > 45
-          ? "neutral"
-          : "sad";
+  mockPet.mood = mockPet.asleep ? "sleepy" : avg > 75 ? "excited" : avg > 45 ? "happy" : "playful";
 }
 
 export const mockFetch: typeof fetch = async (input, init) => {
