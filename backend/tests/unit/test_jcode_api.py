@@ -177,13 +177,18 @@ class _FakeGateway:
 
 
 class _FakeResidency:
-    """Records that the general hot set was asked to re-warm on power-off."""
+    """Records that the general hot set was asked to re-warm on power-off, and any models a
+    coder warm reported evicting."""
 
     def __init__(self) -> None:
         self.restores = 0
+        self.evicted: list[str] = []
 
     def schedule_restore(self) -> None:
         self.restores += 1
+
+    def note_evicted(self, served_names: object) -> None:
+        self.evicted.extend(served_names)  # type: ignore[arg-type]
 
 
 def _power_app(

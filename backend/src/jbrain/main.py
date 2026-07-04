@@ -102,7 +102,7 @@ from jbrain.jcode import JcodeClient
 from jbrain.lists.repo import SqlListsRepo
 from jbrain.llm import build_router
 from jbrain.llm.local_gateway import LocalGatewayClient
-from jbrain.llm.residency import ResidencyCoordinator, default_resident_served
+from jbrain.llm.residency import ResidencyCoordinator
 from jbrain.locations import SqlLocationRepo
 from jbrain.locations.live import LiveBroadcaster, live_feeder
 from jbrain.locations.pairing import SqlPairingRepo
@@ -269,15 +269,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # Admin client for the local-model gateway (runtime loaded-state + unload).
         # Best-effort; the settings screen tolerates it being unreachable.
         app.state.local_gateway = LocalGatewayClient(settings.local_llm_url)
-        # Re-warms the hot LLM set (the recommended pair gpt-oss-120b + qwen3-vl, plus any
-        # staged model) at end of turn after an image render or a code session displaced it,
-        # so the box returns to its co-resident steady state instead of cold-loading the
-        # missing model on the next turn. The staged set is read live (so staging/unstaging
-        # needs no restart); inert on a cloud-only box (no local hosting → no loader, empty
-        # recommended set).
+        # The box's sole model evictor/restorer: ensure_room frees the fewest models to hold
+        # the free-RAM floor before each local load (wired as the router's local_admit below),
+        # and schedule_restore puts back whatever a transient displacement (image render, code
+        # session) removed at end of turn instead of cold-loading it. The staged set is read
+        # live (so staging/unstaging needs no restart); inert on a cloud-only box (enabled off,
+        # no staged loader).
         app.state.residency = ResidencyCoordinator(
             app.state.local_gateway,
-            default_resident_served(settings),
             staged_loader=(
                 (lambda: settings_store.llm_local_staged(SYSTEM_CTX))
                 if settings.local_llm_enabled
@@ -285,9 +284,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             ),
             windows_loader=lambda: settings_store.llm_local_context_windows(SYSTEM_CTX),
             models_dir=settings.local_models_dir,
-            # Co-residency mode: the app evicts to hold the free-RAM floor before a local
-            # model loads. Off → the gateway swaps one at a time (ensure_room is inert).
-            budget_enabled=settings.local_llm_enabled and settings.local_llm_resident_group,
+            enabled=settings.local_llm_enabled,
             free_ram_fraction=settings.local_llm_free_ram_fraction,
         )
         # Any API-side LLM call must flow through this router so its tokens
@@ -412,6 +409,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 app.state.local_gateway,
                 app.state.comfyui_gateway,
                 settings.comfyui_models,
+                # Freeing the LLMs for a render is a displacement: record what it evicts so the
+                # end-of-turn restore puts the box back to its pre-render steady state.
+                on_evicted=app.state.residency.note_evicted,
             )
             image_handlers = build_image_handlers(
                 app.state.image_gen,

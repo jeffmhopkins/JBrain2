@@ -108,17 +108,14 @@ for m in json.loads(os.environ["MAN"]):
   fi
 
   # 5. Re-stamp llama-swap.yaml for the new set (the api re-renders it, resolving
-  #    each glob to a real downloaded filename). resident_group defaults OFF (opt-in):
-  #    an absent/empty .env value reads as off, so the recommended set swaps one at a
-  #    time — co-residency pins ~91 GB and destabilised the box; opt IN with
-  #    LOCAL_LLM_RESIDENT_GROUP=1 on a box with memory to spare.
+  #    each glob to a real downloaded filename). Every model is a non-swapping group
+  #    member — the app (jbrain.llm.residency) is the sole evictor, freeing the fewest
+  #    models to hold the free-RAM floor before each load, so nothing pins ~91 GB.
   #    --user 0: the bind-mounted weights dir is root-owned (sudo setup + the root
   #    download container), but the api image runs as non-root appuser, so the default
   #    user can't create llama-swap.yaml there. Write as root, like the weights.
-  resident="$(grep '^LOCAL_LLM_RESIDENT_GROUP=' .env | cut -d= -f2- || true)"
   docker compose run --rm --no-deps -T --user 0 \
     -e MANIFEST="$manifest" \
-    -e LOCAL_LLM_RESIDENT_GROUP="$resident" \
     api python -m jbrain.llm.llama_swap_config /data/local-models
 else
   # Empty roster: every served model was uninstalled. Skip download/swap (nothing to

@@ -1,6 +1,6 @@
 # Running JBrain's local models on an AMD Strix Halo box
 
-> **Status:** Living · **Last verified:** 2026-07-03
+> **Status:** Living · **Last verified:** 2026-07-04
 
 End-to-end runbook for self-hosting the optional local models (docs/reference/ANALYSIS.md,
 "Self-hosted local models") on a **Ryzen AI Max+ 395 / 128 GB** (gfx1151,
@@ -115,22 +115,24 @@ sudo jbrain enable-local-models
 Builds the gateway (the community-maintained gfx1151 llama.cpp image +
 llama-swap), downloads the recommended set — **Qwen3-VL-30B-A3B Q8 (~32 GB)** +
 **gpt-oss-120b MXFP4 (~59 GB)**, ~91 GB total — generates the llama-swap config,
-and starts the gateway. The recommended set **swaps one at a time by default** — only
-the model the next request names is loaded, so the box never pins both at once.
+and starts the gateway.
 
-**Memory-safe co-residency** (`LOCAL_LLM_RESIDENT_GROUP=1`) keeps models loaded together
-*and stays under a RAM budget*. With it on, models share a llama-swap non-swapping group
-(the gateway never auto-evicts), and the app becomes the sole evictor: before a model
-loads it frees the **fewest** resident models needed to keep **≥25% of RAM free** (weights
-+ KV, measured against live `/proc/meminfo`), evicting biggest-first and sparing staged
-models. So a small model (Qwen3.5-0.8B/4B) stays hot beside gpt-oss-120b, but requesting
-the coder evicts the *big* model — not the tiny one — and the box never over-commits. This
-replaces the old all-or-nothing pin that co-resided ~91 GB with no headroom and drove
-kernel-reclaim hard-freezes (see "Stability — hard-freeze / OOM hardening" below); the
-budget is what makes it safe. The 25% floor is tunable via `LOCAL_LLM_FREE_RAM_FRACTION`.
-Enable with `LOCAL_LLM_RESIDENT_GROUP=1 sudo jbrain enable-local-models` (add it to `.env`
-so an update keeps it); validate on-box before relying on it. Staged models pin regardless
-of the flag.
+**The app is the box's sole model evictor, and it restores.** Every model is a llama-swap
+non-swapping group member, so the gateway never auto-evicts anyone — instead, before a
+model loads, the app (`jbrain.llm.residency`) frees the **fewest** resident models needed to
+keep **≥25% of RAM free** after it's resident (weights + KV, measured against live
+`/proc/meminfo` so image-gen and OS pressure count too), evicting biggest-first and sparing
+staged models. So you can **stage and load any model**: a small model (Qwen3.5-0.8B/4B)
+stays hot beside gpt-oss-120b, requesting the coder evicts the *big* model — not the tiny
+one — and a model too large to co-reside evicts everything and takes the box. Whatever an
+eviction removed (also an image render freeing the LLMs, or a code session giving the coder
+the box) is **remembered and restored at end of turn**, so the box drifts back to its prior
+steady state instead of cold-loading on demand. This replaced the old all-or-nothing pin
+that co-resided ~91 GB with no headroom and drove kernel-reclaim hard-freezes (see
+"Stability — hard-freeze / OOM hardening" below); the budget is what makes it safe. The 25%
+floor is tunable via `LOCAL_LLM_FREE_RAM_FRACTION`. **Staging** a model is an explicit "keep
+this hot and evict it last" — it's read live, so no restart or config regeneration is
+needed.
 
 ✅ **Checkpoint:** `jbrain status` shows `local-llm` running; `jbrain logs
 local-llm` shows llama-swap listening and the resident models loaded.
@@ -162,8 +164,8 @@ per-model GB bar reading the bytes on disk); the coarse phase and the verbose
 per-model download log stream into the queue banner. **Removing** is symmetric:
 an installed model's **Uninstall** button (on the Installed or Catalog tab) applies
 through the same sync one-shot, dropping it from `LOCAL_MODELS` and pruning its
-weights. A model too large to co-reside (the 235B) installs **swappable** — it
-loads on its own, one at a time. First-time host prep (GPU GIDs, the gateway image,
+weights. A model too large to co-reside (the 235B) simply evicts
+everything else when loaded — it ends up with the box to itself. First-time host prep (GPU GIDs, the gateway image,
 kernel params) still needs Phases 1–6 on the box; the PWA path only *adds/removes
 models* on an already-enabled stack.
 
@@ -253,10 +255,10 @@ comfyui`) for the submitted graph.
 ---
 
 ## Expected performance
-~31 tok/s on gpt-oss-120b, ~30–45 tok/s on Qwen3-VL. By default each model loads on
-demand, one at a time (a text↔vision switch cold-loads the other); opt into keeping
-the recommended pair co-resident (~91 GB) with `LOCAL_LLM_RESIDENT_GROUP=1` only if the
-box has the memory headroom to spare.
+~31 tok/s on gpt-oss-120b, ~30–45 tok/s on Qwen3-VL. Models co-reside up to the RAM
+budget: as many stay hot as fit under the ≥25%-free floor, and a load evicts the fewest
+others needed to make room (so a text↔vision switch only cold-loads if both don't fit).
+Tune the headroom with `LOCAL_LLM_FREE_RAM_FRACTION`.
 
 ## Switching to ROCm (optional, faster)
 The ROCm/rocWMMA path is often faster on gfx1151 and is the better route for
@@ -302,12 +304,12 @@ churn. Harden the host against the rest (all idempotent and reversible):
    EOF
    sudo sysctl --system
    ```
-3. **On-demand model loading is now the default** — the recommended set swaps one at a
-   time, so nothing pins the box. This applies automatically on your next update; no
-   `.env` edit needed. (Only if you had previously opted in with
-   `LOCAL_LLM_RESIDENT_GROUP=1` do you need to remove it to get the default back.) Note a
-   model you **staged** in the PWA still pins on its own — unstage it (Settings → LLM →
-   On-box models) if you want it to swap too.
+3. **The app evicts to a RAM budget, so nothing over-commits the box** — every load frees
+   the fewest resident models needed to keep ≥25% of RAM free (`LOCAL_LLM_FREE_RAM_FRACTION`)
+   before it loads, and nothing is ever pinned beyond that floor. A model you **staged** in
+   the PWA is only evicted *last* (kept hot when there's room), never held past the budget —
+   so a big load still displaces it if that's the only way to fit. Unstage it (Settings →
+   LLM → On-box models) to drop the keep-hot preference.
 4. **Persistent logs** so the next event's full dump survives the freeze:
    ```bash
    sudo mkdir -p /var/log/journal

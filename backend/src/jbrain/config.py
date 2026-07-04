@@ -217,21 +217,15 @@ class Settings(BaseSettings):
     # here — host/infra files, not application blobs, so the read sits outside the
     # storage abstraction (same rationale as host_metrics' /proc read).
     local_models_dir: str = "/data/local-models"
-    # MEMORY-SAFE co-residency. When on, models are kept loaded together (a llama-swap
-    # non-swapping group) and the app is the sole evictor: before a model loads it evicts
-    # the FEWEST resident models needed to keep >= local_llm_free_ram_fraction of RAM free
-    # (weights + KV), biggest-first, staged last (jbrain.llm.residency.ensure_room). When
-    # off, the gateway swaps one model at a time (the old default). This replaces the old
-    # all-or-nothing pin that hard-locked the host by co-residing ~91 GB with no headroom
-    # (docs/runbooks/STRIX_HALO_SETUP.md "hard-freeze / OOM hardening"); the budget is what
-    # makes co-residency safe to enable. Still OPT-IN (LOCAL_LLM_RESIDENT_GROUP=1) until
-    # validated on-box. Mirrors the install-time value so a runtime config regeneration
-    # (after a context-window edit) reproduces the same group shape setup wrote.
-    local_llm_resident_group: bool = False
-    # The fraction of physical RAM the residency budget keeps FREE when co-residency is on
-    # — a model load evicts until at least this much would remain free after it's resident
-    # (measured against live /proc/meminfo `used`, so image-gen and OS pressure count too).
-    # 0.25 = keep 25% headroom, the floor that avoids the kernel-reclaim freeze on the box.
+    # The fraction of physical RAM the residency budget keeps FREE. The app is the box's sole
+    # model evictor (the gateway never swaps on its own — every model is a llama-swap
+    # `swap: false` member): before a model loads, jbrain.llm.residency.ensure_room evicts the
+    # FEWEST resident models needed to keep >= this fraction free after it's resident (weights
+    # + KV, biggest-first, staged last), so any model loads by unloading others until it fits.
+    # Measured against live /proc/meminfo `used`, so image-gen and OS pressure count too. This
+    # replaced the old all-or-nothing pin that hard-locked the host by co-residing ~91 GB with
+    # no headroom (docs/runbooks/STRIX_HALO_SETUP.md "hard-freeze / OOM hardening"). 0.25 =
+    # keep 25% headroom, the floor that avoids the kernel-reclaim freeze on the box.
     local_llm_free_ram_fraction: float = 0.25
     # OPT-IN on-box speech-to-text: whisper.cpp served by the same llama-swap
     # gateway the local-llm profile runs (docs/archive/WHISPER_TRANSCRIPTION_PLAN.md), so

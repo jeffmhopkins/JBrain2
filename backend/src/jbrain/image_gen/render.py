@@ -17,7 +17,7 @@ caller-scoped session under the owner-only firewall (rule 3)."""
 from __future__ import annotations
 
 import secrets
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -176,7 +176,9 @@ def _png_dims(data: bytes) -> tuple[int, int] | None:
     return (width, height) if width > 0 and height > 0 else None
 
 
-async def _free_local_llms(gateway: LocalGateway) -> None:
+async def _free_local_llms(
+    gateway: LocalGateway, on_evicted: Callable[[Sequence[str]], None] | None = None
+) -> None:
     """Time-share unified memory: unload any resident local LLM before a render.
 
     On a single unified-memory box (Strix Halo) the LLM that drove this turn (~tens
@@ -186,13 +188,21 @@ async def _free_local_llms(gateway: LocalGateway) -> None:
     llama-swap's on-demand loading (no explicit reload needed, so the image still
     surfaces promptly and the reload is just the usual "composing" wait).
 
+    `on_evicted` records what we unloaded (jbrain.llm.residency.note_evicted) so the
+    end-of-turn restore returns the box to its pre-render steady state rather than
+    leaving the freed models cold.
+
     Best-effort: a cloud-driven turn (nothing resident) or an unreachable gateway is a
     clean no-op — never let memory housekeeping fail the generation."""
+    freed: list[str] = []
     try:
         for served in await gateway.running():
             await gateway.unload(served)
+            freed.append(served)
     except LocalGatewayError as exc:
         log.info("image_gen.llm_unload_skipped", error=str(exc))
+    if freed and on_evicted is not None:
+        on_evicted(freed)
 
 
 async def _free_comfyui_model(gateway: ComfyUiMemory) -> None:
@@ -230,6 +240,7 @@ class ImageRenderService:
         local_gateway: LocalGateway,
         comfyui_gateway: ComfyUiMemory,
         provisioned_models: Sequence[str] = (),
+        on_evicted: Callable[[Sequence[str]], None] | None = None,
     ) -> None:
         self._imagegen = imagegen
         self._blob_store = blob_store
@@ -238,6 +249,8 @@ class ImageRenderService:
         self._local_gateway = local_gateway
         self._comfyui_gateway = comfyui_gateway
         self._installed = set(provisioned_models)
+        # Records the LLMs a render frees so residency can restore them afterward.
+        self._on_evicted = on_evicted
 
     async def generate(
         self,
@@ -282,7 +295,7 @@ class ImageRenderService:
             model=model,
             negative_prompt=negative_prompt.strip(),
         )
-        await _free_local_llms(self._local_gateway)
+        await _free_local_llms(self._local_gateway, self._on_evicted)
         # An interrupt/error propagates here untouched (skipping the ComfyUI free + the row),
         # exactly as the original handler did — the caller maps it to its own surface.
         png = await self._imagegen.generate(spec, on_progress)
@@ -347,7 +360,7 @@ class ImageRenderService:
             megapixels=_megapixels(resolution),
             negative_prompt=negative_prompt.strip(),
         )
-        await _free_local_llms(self._local_gateway)
+        await _free_local_llms(self._local_gateway, self._on_evicted)
         png = await self._imagegen.edit(
             spec, source_bytes, on_progress, extra_sources=list(extra_sources)
         )

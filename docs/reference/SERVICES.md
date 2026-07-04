@@ -1,6 +1,6 @@
 # JBrain2 — Services & components map
 
-> **Status:** Living · **Last verified:** 2026-07-03
+> **Status:** Living · **Last verified:** 2026-07-04
 
 The concrete inventory of everything the box runs and everything baked into it:
 the Docker containers, the two apps (the PWA and the JBrain360 Android client),
@@ -56,10 +56,12 @@ opted in. Full runbook: `../runbooks/STRIX_HALO_SETUP.md`; prompting behaviour:
 `MODEL_PROMPTING.md`.
 
 - **`local-llm`** — Vulkan (RADV) llama.cpp under **llama-swap**, which loads a
-  GGUF on first request and frees it after idle. By default models **swap one at
-  a time** (co-residency pinned ~91 GB and froze the box); a resident group is
-  opt-in. Serves the text tiers only — transcription is the separate `whisper`
-  service below. The api hot-reloads its config after a context-window edit.
+  GGUF on first request. Every model is a **non-swapping group member**, so the
+  gateway never auto-evicts — the **app** (`jbrain.llm.residency`) is the sole
+  evictor, freeing the fewest models to hold a free-RAM floor before each load and
+  restoring what a displacement removed (the old all-or-nothing ~91 GB pin froze the
+  box). Serves the text tiers only — transcription is the separate `whisper` service
+  below. The api hot-reloads its config after a context-window edit.
 - **`comfyui`** — ROCm (needs both `/dev/kfd` and `/dev/dri`, plus
   `HSA_OVERRIDE_GFX_VERSION`) serving Qwen-Image / Qwen-Image-Edit, with a
   Lightning fast path. Emits live `b_preview` frames so the chat shows a
