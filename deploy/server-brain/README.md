@@ -120,7 +120,9 @@ text to `POST /event`: `{"kind": "llm_input", "text": …}` when the turn starts
 `{"kind": "llm_output", "text": …}` when the answer settles (each excerpt-truncated).
 The page streams the prompt IN from off the left edge along a steel tendril that lands on
 an inner neuron, and the answer OUT to the right along a green one — the characters ride the
-tendril path — then blooms a popup of the answer that slowly scrolls if it's too tall to fit.
+tendril path as clean prose (markdown syntax stripped) — then blooms a popup that renders the
+message as Markdown (the same markup as the jerv chat: headings, bold/italic, code, lists,
+quotes, links, tables), slowly scrolling if it's too tall to fit.
 The same toggle also lets a web tool's **search query** (cyan) / **fetched URL** (amber)
 stream out along its tendril; with the toggle off those stay content-free markers.
 

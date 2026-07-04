@@ -108,6 +108,35 @@
     82%  { opacity: 1; transform: translate(calc(var(--dx) * 0.82), calc(var(--dy) * 0.82)) scale(1); }
     100% { opacity: 0; transform: translate(var(--dx), var(--dy)) scale(0.99); }
   }
+  /* Markdown inside a message popup — mirrors the app's jerv-chat markup
+     (frontend/src/agent/markdown.tsx), scaled for the wall card. Built as DOM nodes
+     (never innerHTML) by mdRender(); links render styled but inert (the wall is
+     display-only, pointer-events off). */
+  #popups .popup .md-p { margin: 0 0 6px; line-height: 1.34; }
+  #popups .popup > :last-child { margin-bottom: 0; }
+  #popups .popup .md-h { margin: 6px 0 3px; font-size: 13.5px; font-weight: 600; color: var(--text); }
+  #popups .popup .md-ul, #popups .popup .md-ol { margin: 0 0 6px; padding-left: 18px; }
+  #popups .popup li { margin: 2px 0; }
+  #popups .popup .md-code { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 0.86em;
+    background: rgba(127,167,201,0.14); border-radius: 4px; padding: 0 4px; }
+  #popups .popup .md-pre { margin: 0 0 6px; background: rgba(0,0,0,0.34);
+    border: 1px solid rgba(127,167,201,0.18); border-radius: 7px; padding: 8px 10px; overflow-x: auto; }
+  #popups .popup .md-pre code { font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: 11px; line-height: 1.5; white-space: pre; }
+  #popups .popup .md-quote { margin: 0 0 6px; padding: 1px 0 1px 10px;
+    border-left: 2px solid rgba(143,188,154,0.4); color: var(--text-2); }
+  #popups .popup .md-link { color: var(--steel); text-decoration: underline; text-underline-offset: 2px; }
+  #popups .popup .md-cite { font-size: 0.7em; color: var(--steel); padding: 0 1px; }
+  #popups .popup .md-table-wrap { overflow-x: auto; margin: 0 0 6px;
+    border: 1px solid rgba(127,167,201,0.2); border-radius: 7px; }
+  #popups .popup .md-table { border-collapse: collapse; width: 100%; font-size: 11.5px; line-height: 1.35; }
+  #popups .popup .md-table th, #popups .popup .md-table td { padding: 4px 8px; text-align: left;
+    vertical-align: top; border-bottom: 1px solid rgba(127,167,201,0.16);
+    border-right: 1px solid rgba(127,167,201,0.16); }
+  #popups .popup .md-table th:last-child, #popups .popup .md-table td:last-child { border-right: none; }
+  #popups .popup .md-table thead th { background: rgba(127,167,201,0.1); font-weight: 600;
+    color: var(--text-2); white-space: nowrap; }
+  #popups .popup .md-table tbody tr:last-child td { border-bottom: none; }
   body.ui-idle #popups .popup { /* keep answers visible even when panels fade */ }
 
   .panel {
@@ -882,7 +911,7 @@ function spawnStream(kind, text) {           // kind: prompt | answer | search |
   let st = null; for (const x of llmStreams) if (!x.active) { st = x; break; }
   if (!st) return;
   const spec = STREAM_SPEC[kind] || STREAM_SPEC.answer;
-  const clean = String(text || '').replace(/\s+/g, ' ').trim().slice(0, LLM_CAP);
+  const clean = mdToPlain(text).slice(0, LLM_CAP);   // glyphs ride the tendril as clean prose, not raw markdown
   st.dir = spec.dir; st.g = spec.g; st.f = spec.f;
   st.text = clean; st.age = 0; st.active = true; st.seeded = false;
   st.L = Math.max(clean.length, 1);
@@ -1043,12 +1072,149 @@ function driveAnswerPopup(d) {
     requestAnimationFrame(frame);
   })(start);
 }
+// ---- Message-popup Markdown ---------------------------------------------------
+// A small, safe Markdown renderer that mirrors the app's jerv-chat markup
+// (frontend/src/agent/markdown.tsx) for the constructs that make sense on the wall:
+// headings, bold/italic, inline code + fenced code, ordered/unordered lists,
+// blockquotes, links, pipe tables, [^n] citation chips, and soft line breaks. Nodes
+// are built with textContent (never innerHTML), so streamed owner text carries no
+// injection surface — the same guarantee as the app renderer. Math (KaTeX), entity
+// links, place pins and flags are app-only affordances (they need turn context the
+// wall never receives), so they stay as prose here.
+const MD_MODEL_CITE = /[ \t]?(?:【[^】\n]*†[^】\n]*】|\[[^\]\n]*†[^\]\n]*\])/g;   // browse-cursor tokens
+const MD_SOURCE_PROSE = /[ \t]?【\s*source\b[^】\n]*】/gi;                         // narrated stray source
+const stripModelCitations = (s) => s.replace(MD_MODEL_CITE, '').replace(MD_SOURCE_PROSE, '');
+// Flatten markdown to clean prose for the tendril glyph stream — the flying glyphs
+// can't render block markup, so strip the syntax (headings, emphasis, code, list
+// markers, links -> label, citations, table pipes) rather than fly raw ## / ** past.
+function mdToPlain(s) {
+  return stripModelCitations(String(s || ''))
+    .replace(/```[\s\S]*?```/g, ' ').replace(/`([^`]+)`/g, '$1')
+    .replace(/^\s{0,3}#{1,6}\s+/gm, '').replace(/^\s*>\s?/gm, '')
+    .replace(/^\s*[-*+]\s+/gm, '').replace(/^\s*\d+\.\s+/gm, '')
+    .replace(/\*\*([^*]+)\*\*/g, '$1').replace(/\*([^*]+)\*/g, '$1')
+    .replace(/\[([^\]]+)\]\([^)\n]+\)/g, '$1').replace(/\[\^\d+\]|【\^?\d+】/g, '')
+    .replace(/\|/g, ' ').replace(/\s+/g, ' ').trim();
+}
+// Inline: code first (so ** inside code is literal), then bold, italic, links, then
+// [^n] / 【^n】 / 【n】 source citations, then a browsing model's bare-URL citation.
+// Emphasis can't hug a space (avoids "3 * 4 * 5"). Math delimiters are left as prose.
+const MD_INLINE = /(`[^`]+`)|(\*\*(?! )[^*\n]+(?<! )\*\*)|(\*(?! )[^*\n]+(?<! )\*)|(\[[^\]\n]+\]\([^)\n]+\))|(\[\^\d+\])|(【\^?\d+】)|(【\s*https?:\/\/[^】\n]+】)/;
+const MD_SAFE_URL = /^(https?:|mailto:)/i;
+function mdLink(parent, href, label) {
+  const a = document.createElement('a');
+  a.className = 'md-link'; a.href = href; a.target = '_blank'; a.rel = 'noreferrer noopener';
+  a.textContent = label; parent.appendChild(a);
+}
+function mdInline(parent, text) {
+  let rest = text;
+  while (rest.length) {
+    const m = MD_INLINE.exec(rest);
+    if (!m) { parent.appendChild(document.createTextNode(rest)); break; }
+    if (m.index > 0) parent.appendChild(document.createTextNode(rest.slice(0, m.index)));
+    const tok = m[0];
+    if (tok[0] === '`') {
+      const c = document.createElement('code'); c.className = 'md-code'; c.textContent = tok.slice(1, -1); parent.appendChild(c);
+    } else if (tok.startsWith('**')) {
+      const s = document.createElement('strong'); mdInline(s, tok.slice(2, -2)); parent.appendChild(s);
+    } else if (tok[0] === '*') {
+      const e = document.createElement('em'); mdInline(e, tok.slice(1, -1)); parent.appendChild(e);
+    } else if (tok.startsWith('[^') || /^【\^?\d+】$/.test(tok)) {
+      const sup = document.createElement('sup'); sup.className = 'md-cite'; sup.textContent = tok.replace(/[[\]【】^]/g, ''); parent.appendChild(sup);
+    } else if (tok[0] === '【') {
+      const url = tok.slice(1, -1).trim(); mdLink(parent, url, url);
+    } else {
+      const lm = /^\[([^\]]+)\]\(([^)]+)\)$/.exec(tok);
+      if (lm && MD_SAFE_URL.test(lm[2])) mdLink(parent, lm[2], lm[1]);
+      else parent.appendChild(document.createTextNode(lm ? lm[1] : tok));
+    }
+    rest = rest.slice(m.index + tok.length);
+  }
+}
+function mdSplitCells(line) {                    // one pipe-table row -> trimmed cells
+  let s = line.trim();
+  if (s.startsWith('|')) s = s.slice(1);
+  if (s.endsWith('|') && !s.endsWith('\\|')) s = s.slice(0, -1);
+  const cells = []; let cur = '';
+  for (let i = 0; i < s.length; i++) {
+    if (s[i] === '\\' && s[i + 1] === '|') { cur += '|'; i++; }
+    else if (s[i] === '|') { cells.push(cur); cur = ''; }
+    else cur += s[i];
+  }
+  cells.push(cur);
+  return cells.map((c) => c.trim());
+}
+const mdIsDelimRow = (l) => { if (!l.includes('-')) return false; const c = mdSplitCells(l); return c.length > 0 && c.every((x) => /^:?-+:?$/.test(x)); };
+const mdAlign = (c) => { const l = c.startsWith(':'), r = c.endsWith(':'); return l && r ? 'center' : r ? 'right' : l ? 'left' : ''; };
+const mdStartsTable = (lines, i) => (lines[i] || '').includes('|') && mdIsDelimRow(lines[i + 1] || '');
+const mdIsSpecial = (l) => /^(#{1,6})\s+/.test(l) || /^```/.test(l.trim()) || /^>\s?/.test(l) || /^\s*[-*+]\s+/.test(l) || /^\s*\d+\.\s+/.test(l);
+function mdTable(head, align, rows) {
+  const wrap = document.createElement('div'); wrap.className = 'md-table-wrap';
+  const table = document.createElement('table'); table.className = 'md-table';
+  const thead = document.createElement('thead'), htr = document.createElement('tr');
+  head.forEach((c, idx) => { const th = document.createElement('th'); if (align[idx]) th.style.textAlign = align[idx]; mdInline(th, c); htr.appendChild(th); });
+  thead.appendChild(htr); table.appendChild(thead);
+  const tbody = document.createElement('tbody');
+  for (const row of rows) {
+    const tr = document.createElement('tr');
+    for (let ci = 0; ci < head.length; ci++) { const td = document.createElement('td'); if (align[ci]) td.style.textAlign = align[ci]; mdInline(td, row[ci] || ''); tr.appendChild(td); }
+    tbody.appendChild(tr);
+  }
+  table.appendChild(tbody); wrap.appendChild(table);
+  return wrap;
+}
+function mdRender(src) {                          // markdown source -> a DocumentFragment
+  const frag = document.createDocumentFragment();
+  const lines = src.replace(/\r\n/g, '\n').split('\n');
+  let i = 0;
+  while (i < lines.length) {
+    const line = lines[i] || '';
+    if (/^```/.test(line.trim())) {              // fenced code
+      i++; const buf = [];
+      while (i < lines.length && !/^```/.test((lines[i] || '').trim())) buf.push(lines[i++] || '');
+      i++;                                        // consume closing fence (or run off the end)
+      const pre = document.createElement('pre'); pre.className = 'md-pre';
+      const code = document.createElement('code'); code.textContent = buf.join('\n');
+      pre.appendChild(code); frag.appendChild(pre); continue;
+    }
+    if (line.trim() === '') { i++; continue; }
+    const h = /^(#{1,6})\s+(.*)$/.exec(line);
+    if (h) { const el = document.createElement('h' + Math.min(h[1].length + 2, 6)); el.className = 'md-h'; mdInline(el, h[2]); frag.appendChild(el); i++; continue; }
+    if (/^>\s?/.test(line)) {                      // blockquote
+      const buf = [];
+      while (i < lines.length && /^>\s?/.test(lines[i] || '')) buf.push((lines[i++] || '').replace(/^>\s?/, ''));
+      const bq = document.createElement('blockquote'); bq.className = 'md-quote'; mdInline(bq, buf.join(' ')); frag.appendChild(bq); continue;
+    }
+    if (/^\s*[-*+]\s+/.test(line)) {               // unordered list
+      const ul = document.createElement('ul'); ul.className = 'md-ul';
+      while (i < lines.length && /^\s*[-*+]\s+/.test(lines[i] || '')) { const li = document.createElement('li'); mdInline(li, (lines[i++] || '').replace(/^\s*[-*+]\s+/, '')); ul.appendChild(li); }
+      frag.appendChild(ul); continue;
+    }
+    if (/^\s*\d+\.\s+/.test(line)) {               // ordered list
+      const ol = document.createElement('ol'); ol.className = 'md-ol';
+      while (i < lines.length && /^\s*\d+\.\s+/.test(lines[i] || '')) { const li = document.createElement('li'); mdInline(li, (lines[i++] || '').replace(/^\s*\d+\.\s+/, '')); ol.appendChild(li); }
+      frag.appendChild(ol); continue;
+    }
+    if (mdStartsTable(lines, i)) {                 // pipe table
+      const head = mdSplitCells(line), align = mdSplitCells(lines[i + 1] || '').map(mdAlign);
+      i += 2; const rows = [];
+      while (i < lines.length && (lines[i] || '').trim() !== '' && (lines[i] || '').includes('|') && !mdIsSpecial(lines[i] || '')) rows.push(mdSplitCells(lines[i++] || ''));
+      frag.appendChild(mdTable(head, align, rows)); continue;
+    }
+    const buf = [];                                // paragraph (soft newlines -> <br>)
+    while (i < lines.length && (lines[i] || '').trim() !== '' && !mdIsSpecial(lines[i] || '') && !mdStartsTable(lines, i)) buf.push(lines[i++] || '');
+    const p = document.createElement('p'); p.className = 'md-p';
+    buf.join('\n').split('\n').forEach((ln, idx) => { if (idx) p.appendChild(document.createElement('br')); mdInline(p, ln); });
+    frag.appendChild(p);
+  }
+  return frag;
+}
 function spawnPopup(text, kind) {         // kind: 'answer' (default) | 'prompt'
-  const t = String(text || '').replace(/\s+/g, ' ').trim();
+  const t = stripModelCitations(String(text || '')).trim();   // keep newlines — markdown needs the block structure
   if (!t) return;
   const d = document.createElement('div');
   d.className = kind === 'prompt' ? 'popup in' : 'popup';
-  d.textContent = t.slice(0, kind === 'prompt' ? 320 : 900);
+  d.appendChild(mdRender(t.slice(0, kind === 'prompt' ? 320 : 900)));
   d.style.left = (13 + Math.random()*60).toFixed(1) + 'vw';   // safe margins
   d.style.top  = (15 + Math.random()*56).toFixed(1) + 'vh';
   // a gentle, slightly-random drift while it lingers (mostly upward)
