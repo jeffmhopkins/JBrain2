@@ -87,9 +87,10 @@ async def test_post_event_truncates_long_text(monkeypatch) -> None:  # type: ign
         return _R()
 
     monkeypatch.setattr(httpx.AsyncClient, "post", fake_send)
-    await _post_event("http://server-brain:8800/event", "llm_output", "x" * 5000)
-    # Bounded so a long answer can't bloat the POST / the display buffer.
-    assert len(posted[0]["text"]) == 600
+    await _post_event("http://server-brain:8800/event", "llm_output", "x" * 9000)
+    # Bounded so a pathologically long answer can't bloat the POST / the display buffer —
+    # generous now (the wall reads the whole reply aloud), not a glance excerpt.
+    assert len(posted[0]["text"]) == 4000
 
 
 async def test_post_event_swallows_transport_errors(monkeypatch) -> None:  # type: ignore[no-untyped-def]

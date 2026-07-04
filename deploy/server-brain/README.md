@@ -119,12 +119,13 @@ is truncated/rotated.
 When the owner turns on **Settings → Stream LLM to wall display** (the
 `brain_llm_stream` app setting, **off by default**), each jerv chat turn POSTs its real
 text to `POST /event`: `{"kind": "llm_input", "text": …}` when the turn starts and
-`{"kind": "llm_output", "text": …}` when the answer settles (each excerpt-truncated).
+`{"kind": "llm_output", "text": …}` when the answer settles (the whole reply, bounded at 4000 chars).
 The page streams the prompt IN from off the left edge along a steel tendril that lands on
 an inner neuron, and the answer OUT to the right along a green one — the characters ride the
-tendril path as clean prose (markdown syntax stripped) — then blooms a popup that renders the
-message as Markdown (the same markup as the jerv chat: headings, bold/italic, code, lists,
-quotes, links, tables), slowly scrolling if it's too tall to fit.
+tendril path as clean prose (markdown syntax stripped, the marquee capped for legibility) — then
+blooms a popup that renders the full message as Markdown (the same markup as the jerv chat:
+headings, bold/italic, code, lists, quotes, links, tables), slowly scrolling if it's too tall to
+fit, and (when read-aloud is on) speaks the whole thing.
 The same toggle also lets a web tool's **search query** (cyan) / **fetched URL** (amber)
 stream out along its tendril; with the toggle off those stay content-free markers.
 
@@ -147,13 +148,20 @@ Two independent voices — **Joe** reads prompts and **Amy** reads answers by de
 checkbox + a picker over the installed piper models (add more and they show up automatically); both
 persist in `localStorage`. Markdown is stripped before speaking.
 
+**The whole reply, not an excerpt.** The page splits a reply into sentence-sized clips and plays them
+back-to-back through one queue: the first clip renders while the rest queue, so speech starts fast, the
+*entire* answer is read, and no single giant piper render risks the timeout. Only the first clip of a
+turn carries the silence pad — continuation clips request `?lead=0` so the sentences run together
+instead of gapping between each.
+
 **No clipped first word.** Linux audio suspends the output sink after a few seconds of silence, and the
-cold resume on the next clip swallows its start — the one durable read-aloud gotcha. The page prevents
-it at the source: while a voice is enabled it runs a **permanently-silent WebAudio keep-alive** that
-holds one live stream on the sink, so the sink never goes idle and there is no cold resume to clip.
-(Suspend keys on stream *presence*, not level, so the keep-alive is truly silent.) As a backstop for
-the brief window before it warms — or a browser where WebAudio can't run — `serve.py` also prepends a
-short lead of silence to each clip (`BRAIN_PIPER_LEAD_MS`, default 400 ms).
+cold resume on the next clip swallows its start — the one durable read-aloud gotcha. The page fights it
+on three fronts: (1) while a voice is enabled it runs a **permanently-silent WebAudio keep-alive** that
+holds one live stream on the sink, so the sink never goes idle (suspend keys on stream *presence*, not
+level, so it's truly silent); (2) it **primes** the `<audio>`→sink path with one silent clip
+(`GET /tts/silence`) the moment read-aloud activates, so the very first utterance after a fresh load
+isn't clipped by the sink's cold start; (3) as a last backstop, `serve.py` prepends a short lead of
+silence to the first clip (`BRAIN_PIPER_LEAD_MS`, default 400 ms).
 
 `piper` **and the default Joe/Amy voice models** ship **baked into the server-brain image**
 (`deploy/Dockerfile.server-brain`, at `/opt/piper-voices` — outside the read-only `/app` bind mount

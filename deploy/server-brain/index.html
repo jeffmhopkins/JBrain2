@@ -1712,6 +1712,15 @@ function startSinkKeepAlive() {
     }
     if (ttsKeepAliveCtx.state === 'suspended') ttsKeepAliveCtx.resume().catch(() => {});
   } catch { /* WebAudio unavailable / blocked -> fall back to the lead pad + OS fix */ }
+  primeSink();
+}
+// Prime the <audio> -> sink path with one silent clip when read-aloud activates, so the FIRST
+// real utterance after a fresh load/restart isn't clipped by the sink's cold start (the
+// keep-alive holds it warm from then on). No-op if a clip is already playing/queued.
+function primeSink() {
+  if (ttsBusy || ttsQueue.length) return;
+  ttsQueue.push('/tts/silence');
+  ttsPlayNext();
 }
 // A kiosk tab regaining focus, or an autoplay-gesture, can leave the context suspended;
 // re-arm it so the sink stays warm across those transitions.
@@ -1720,13 +1729,41 @@ document.addEventListener('visibilitychange', () => {
     ttsKeepAliveCtx.resume().catch(() => {});
   }
 });
+// Split a reply into sentence-sized clips so speech starts fast (first clip renders while the
+// rest queue), the WHOLE reply is read — not a 600-char excerpt — and no single giant piper
+// render risks a timeout. Packs whole sentences up to ~TTS_CHUNK chars; hard-splits an overlong
+// sentence on a word boundary. mdToPlain has already stripped markdown to clean prose.
+const TTS_CHUNK = 220;
+function chunkForTTS(text) {
+  const sentences = text.replace(/\s+/g, ' ').trim().match(/[^.!?]+[.!?]+|[^.!?]+$/g) || [];
+  const out = [];
+  let buf = '';
+  const flush = () => { if (buf.trim()) out.push(buf.trim()); buf = ''; };
+  for (let s of sentences) {
+    s = s.trim();
+    while (s.length > TTS_CHUNK) {                        // a single very long sentence -> word-split
+      let cut = s.lastIndexOf(' ', TTS_CHUNK); if (cut <= 0) cut = TTS_CHUNK;
+      flush(); out.push(s.slice(0, cut).trim()); s = s.slice(cut).trim();
+    }
+    if ((buf + ' ' + s).length > TTS_CHUNK) flush();
+    buf = buf ? buf + ' ' + s : s;
+  }
+  flush();
+  return out;
+}
 function enqueueTTS(kind, text) {
   const c = voiceCfg[kind];
   if (!c.on.checked || !c.sel.value) return;
-  const clean = mdToPlain(text).slice(0, 600);
-  if (!clean) return;
+  const clean = mdToPlain(text).slice(0, 4000);          // whole reply (bounded), not an excerpt
+  if (!clean.trim()) return;
   if (kind === 'prompt') ttsQueue.length = 0;            // a new turn — drop un-played backlog
-  ttsQueue.push('/tts?voice=' + encodeURIComponent(c.sel.value) + '&text=' + encodeURIComponent(clean));
+  const voice = encodeURIComponent(c.sel.value);
+  chunkForTTS(clean).forEach((chunk, i) => {
+    // Only the FIRST clip of a turn pads for a possible sink resume; continuation clips ask for
+    // no lead (&lead=0) so the sentences of one reply run together instead of gapping every clip.
+    const lead = i === 0 ? '' : '&lead=0';
+    ttsQueue.push('/tts?voice=' + voice + '&text=' + encodeURIComponent(chunk) + lead);
+  });
   ttsPlayNext();
 }
 function speakPrompt(text) { enqueueTTS('prompt', text); }

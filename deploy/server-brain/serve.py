@@ -57,8 +57,13 @@ PIPER_BAKED_VOICES_DIR = Path(os.environ.get("BRAIN_PIPER_BAKED_VOICES_DIR", "/o
 # A short lead of silence so a cold audio-sink resume clips the silence, not the first word.
 # Backstop only: the page's silent WebAudio keep-alive is what actually stops the sink
 # suspending on idle (index.html) — this pad just covers the brief window before it warms,
-# or a browser where it can't run. Bump it if a box still clips the first syllable.
+# or a browser where it can't run. Bump it if a box still clips the first syllable. The page
+# asks for it only on the FIRST clip of a turn (?lead=0 on the continuation chunks) so a long
+# reply, split into sentence-sized clips, plays gaplessly.
 PIPER_LEAD_MS = int(os.environ.get("BRAIN_PIPER_LEAD_MS", "400"))
+# Longest single /tts render the page requests — it splits a reply into sentence-sized clips
+# (fast first-audio, no giant render), so this only bounds one chunk, not the whole answer.
+TTS_CHUNK_CAP = 1000
 
 
 def _voice_models() -> dict[str, Path]:
@@ -96,10 +101,25 @@ def _pad_lead(wav_bytes: bytes, lead_ms: int) -> bytes:
         return wav_bytes
 
 
-def tts_wav(text: str, voice: str) -> bytes | None:
+def _silence_wav(ms: int) -> bytes:
+    """A short mono silent WAV — the page plays it once when read-aloud activates to PRIME the
+    <audio> -> sink path, so the very first real clip after a fresh load doesn't eat the sink's
+    cold start (the WebAudio keep-alive then holds it warm)."""
+    out = io.BytesIO()
+    with wave.open(out, "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(22050)
+        w.writeframes(b"\x00\x00" * int(22050 * max(ms, 0) / 1000))
+    return out.getvalue()
+
+
+def tts_wav(text: str, voice: str, lead_ms: int | None = None) -> bytes | None:
     """Render `text` to a WAV with piper using `voice` (validated against the installed
     set — no path traversal). None when TTS isn't available or rendering fails. Text is
-    passed on STDIN, never as a shell arg, so there is no command-injection surface."""
+    passed on STDIN, never as a shell arg, so there is no command-injection surface.
+    `lead_ms` overrides the silence pad for this clip (the page sends 0 on continuation
+    chunks so a multi-clip reply plays gaplessly); None uses the PIPER_LEAD_MS default."""
     models = _voice_models()
     if not models or shutil.which(PIPER_BIN) is None:
         return None
@@ -122,7 +142,8 @@ def tts_wav(text: str, voice: str) -> bytes | None:
             os.unlink(tmp.name)
         except OSError:
             pass
-    return _pad_lead(data, PIPER_LEAD_MS) if PIPER_LEAD_MS > 0 else data
+    lead = PIPER_LEAD_MS if lead_ms is None else lead_ms
+    return _pad_lead(data, lead) if lead > 0 else data
 
 # Strix Halo APU configurable TDP ceiling (package watts) — used to normalise the
 # power reading into the 0..1 "heat" the visual expects. Override per box.
@@ -519,13 +540,24 @@ class Handler(BaseHTTPRequestHandler):
             self._send(200, b"ok", "text/plain")
         elif path == "/tts/voices":
             self._send(200, json.dumps({"voices": piper_voices()}).encode(), "application/json")
+        elif path == "/tts/silence":
+            self._send(200, _silence_wav(600), "audio/wav")
         elif path == "/tts":
             qs = urllib.parse.parse_qs(self.path.split("?", 1)[1] if "?" in self.path else "")
-            text = qs.get("text", [""])[0][:600]
+            text = qs.get("text", [""])[0][:TTS_CHUNK_CAP]
             if not text.strip():
                 self._send(400, b"no text", "text/plain")
                 return
-            wav = tts_wav(text, qs.get("voice", [""])[0])
+            # Optional per-clip lead override (page sends lead=0 on continuation chunks so a
+            # multi-clip reply plays gaplessly); a bad/absent value falls back to the default.
+            lead_ms = None
+            try:
+                raw = qs.get("lead", [None])[0]
+                if raw is not None:
+                    lead_ms = max(0, min(2000, int(raw)))
+            except (TypeError, ValueError):
+                lead_ms = None
+            wav = tts_wav(text, qs.get("voice", [""])[0], lead_ms)
             if wav is None:
                 self._send(503, b"tts unavailable", "text/plain")
             else:
@@ -547,7 +579,7 @@ class Handler(BaseHTTPRequestHandler):
             self._send(404, b"not found", "text/plain")
             return
         try:
-            n = min(int(self.headers.get("Content-Length", 0)), 8192)
+            n = min(int(self.headers.get("Content-Length", 0)), 16384)
             ev = json.loads(self.rfile.read(n) if n > 0 else b"{}")
         except (ValueError, OSError):
             self._send(400, b"bad request", "text/plain")
@@ -569,10 +601,11 @@ class Handler(BaseHTTPRequestHandler):
             "task_stop",
         ):
             # Optional text (the LLM prompt/answer, or — when the owner enabled it — the
-            # web query / URL). Bound it on our side too; a truncated excerpt is all the
-            # wall shows. Absent/blank text just fires a content-free tendril.
+            # web query / URL). Bound it on our side too — the popup shows the whole reply
+            # (it scrolls) and read-aloud speaks it all, so the cap is generous, not an
+            # excerpt. Absent/blank text just fires a content-free tendril.
             text = ev.get("text")
-            text = text[:600] if isinstance(text, str) else ""
+            text = text[:4000] if isinstance(text, str) else ""
             row = {"kind": kind, "ts": int(time.time() * 1000)}
             if text:
                 row["text"] = text
