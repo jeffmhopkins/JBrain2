@@ -259,16 +259,24 @@ services:
   # so it never shares the authed app's origin or session cookie. Reachable at
   # http://<host>.local:8800/. Keep it on the LAN — do not forward 8800 past the
   # network edge; set BRAIN_HOST_BIND=127.0.0.1 to pin it to the box's own monitor.
-  # Stdlib-only, no build: serve.py reads index.html from the bind mount each
-  # request, so a `jbrain update` (git reset of src) serves the new page with no
-  # rebuild. Default profile -> started and kept current by `docker compose up -d`.
+  # Thin image (python:3.12-slim + piper + the baked default voices, for server-side
+  # read-aloud); the app is bind-mounted, so serve.py still reads index.html from the
+  # mount each request and a `jbrain update` (git reset of src) serves the new page with
+  # no rebuild — only a piper/base/voice bump rebuilds. The default Joe/Amy voices are
+  # baked into the image at /opt/piper-voices (outside the /app mount that would shadow
+  # them), so read-aloud needs no env var — it is driven entirely by the brain_read_aloud
+  # Settings toggle; extra models can still be dropped in the mounted voices/ dir.
+  # Default profile -> up + kept current by up -d.
   server-brain:
-    image: python:3.12-slim
+    build:
+      context: ./src
+      dockerfile: deploy/Dockerfile.server-brain
     restart: unless-stopped
     command: ["python3", "/app/serve.py"]
     environment:
       BRAIN_PORT: "8800"
       BRAIN_POWER_MAX_W: ${BRAIN_POWER_MAX_W:-90}
+      BRAIN_PIPER_VOICES_DIR: /app/voices
     volumes:
       - ./src/deploy/server-brain:/app:ro
     ports:

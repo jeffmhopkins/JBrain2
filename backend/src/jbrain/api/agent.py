@@ -604,6 +604,14 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
             brain_text_enabled.set(brain_stream)
             if brain_stream and body.message:
                 brain_emit("llm_input", body.message)
+        # Re-sync the wall's read-aloud flag each turn (its own switch, independent of the
+        # text gate): the display is ephemeral and loses the flag on restart, so a turn is a
+        # natural resync point. Best-effort display config — never touches the turn.
+        brain_flag_emit = getattr(request.app.state, "brain_flag_emit", None)
+        if brain_flag_emit is not None:
+            with contextlib.suppress(Exception):
+                read_aloud = await get_settings_store(request).brain_read_aloud(owner_ctx)
+                brain_flag_emit("read_aloud", read_aloud)
         # The reasoning trace streams LIVE to the display: reasoning deltas are buffered and
         # flushed at most every _THINK_FLUSH_S so the wall shows the model thinking in
         # near-real-time, not one dump at settle. Any residual flushes at done.

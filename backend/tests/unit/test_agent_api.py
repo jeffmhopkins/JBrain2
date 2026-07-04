@@ -366,6 +366,27 @@ def test_chat_does_not_stream_llm_text_when_disabled(
     assert calls == []
 
 
+def test_chat_resyncs_read_aloud_flag_to_the_wall_display(
+    client: TestClient,
+    repo: FakeAuthRepo,
+    sessions_store: FakeAgentSessions,
+) -> None:
+    # The read-aloud flag re-syncs to the display each turn (its own switch, independent
+    # of the text gate): with brain_read_aloud ON the turn pushes read_aloud=True even
+    # though brain_llm_stream stays OFF.
+    login(client, repo)
+    sessions_store.add(AgentSessionInfo("sess-1", "", "active", ("general",), (), NOW, NOW))
+    client.app.state.settings_store.values["brain_read_aloud"] = True  # type: ignore[attr-defined]
+    flags: list[tuple[str, bool]] = []
+    client.app.state.brain_emit = lambda kind, text=None: None  # type: ignore[attr-defined]
+    client.app.state.brain_flag_emit = lambda kind, on: flags.append((kind, on))  # type: ignore[attr-defined]
+
+    resp = client.post("/api/chat", json={"session_id": "sess-1", "message": "hi"})
+    assert resp.status_code == 200
+    _ = resp.text
+    assert flags == [("read_aloud", True)]
+
+
 def test_chat_streams_reasoning_then_answer_to_the_wall_display(
     client: TestClient,
     repo: FakeAuthRepo,

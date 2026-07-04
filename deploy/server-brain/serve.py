@@ -22,17 +22,104 @@ Stdlib only — no dependencies, no build step.
 
 from __future__ import annotations
 
+import io
 import json
 import math
 import os
+import shutil
+import subprocess
+import tempfile
 import threading
 import time
+import urllib.parse
+import wave
 from collections import deque
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 PAGE = HERE / "index.html"
+
+# ── Server-side text-to-speech (piper) ────────────────────────────────────────
+# The wall renders speech on the box with `piper` and plays it via <audio>, so the
+# browser's flaky Web Speech engine (speech-dispatcher cold start, silent drops) is
+# out of the path entirely. Each `.onnx` voice model (+ its `.onnx.json`) is a
+# selectable "voice" named by its file stem. Voices are found across two dirs, so the
+# feature needs no configuration to work — the default Joe/Amy models are BAKED into
+# the image (`BRAIN_PIPER_BAKED_VOICES_DIR`, default /opt/piper-voices, deliberately
+# OUTSIDE the read-only /app bind mount that would otherwise shadow them), and an
+# operator can still drop extra models into the mounted `BRAIN_PIPER_VOICES_DIR` and
+# they show up alongside. Whether the wall actually SHOWS its voice panel is a runtime
+# choice (the brain_read_aloud setting), not a provisioning one.
+PIPER_BIN = os.environ.get("BRAIN_PIPER_BIN", "piper")
+PIPER_VOICES_DIR = Path(os.environ.get("BRAIN_PIPER_VOICES_DIR", str(HERE / "voices")))
+PIPER_BAKED_VOICES_DIR = Path(os.environ.get("BRAIN_PIPER_BAKED_VOICES_DIR", "/opt/piper-voices"))
+# A short lead of silence so a cold audio-sink resume clips the silence, not the first word.
+PIPER_LEAD_MS = int(os.environ.get("BRAIN_PIPER_LEAD_MS", "250"))
+
+
+def _voice_models() -> dict[str, Path]:
+    """Map each voice name (model file stem) to its `.onnx` path, scanned across the
+    mounted extras dir then the baked-in defaults dir. Earlier dirs win on a name clash,
+    so a dropped-in model can override a baked default of the same name. {} if none."""
+    models: dict[str, Path] = {}
+    for d in (PIPER_VOICES_DIR, PIPER_BAKED_VOICES_DIR):
+        try:
+            for p in sorted(d.glob("*.onnx")):
+                models.setdefault(p.stem, p)
+        except OSError:
+            continue
+    return models
+
+
+def piper_voices() -> list[str]:
+    """Installed voice names (model file stems) across all voice dirs, or [] if none."""
+    return sorted(_voice_models())
+
+
+def _pad_lead(wav_bytes: bytes, lead_ms: int) -> bytes:
+    """Prepend `lead_ms` of silence to a WAV (stdlib only), so a sink resume clips silence."""
+    try:
+        with wave.open(io.BytesIO(wav_bytes), "rb") as w:
+            params = w.getparams()
+            frames = w.readframes(w.getnframes())
+        pad = b"\x00" * (int(params.framerate * lead_ms / 1000) * params.sampwidth * params.nchannels)
+        out = io.BytesIO()
+        with wave.open(out, "wb") as o:
+            o.setparams(params)
+            o.writeframes(pad + frames)
+        return out.getvalue()
+    except (wave.Error, OSError, EOFError, ValueError):
+        return wav_bytes
+
+
+def tts_wav(text: str, voice: str) -> bytes | None:
+    """Render `text` to a WAV with piper using `voice` (validated against the installed
+    set — no path traversal). None when TTS isn't available or rendering fails. Text is
+    passed on STDIN, never as a shell arg, so there is no command-injection surface."""
+    models = _voice_models()
+    if not models or shutil.which(PIPER_BIN) is None:
+        return None
+    name = voice if voice in models else sorted(models)[0]
+    model = models[name]
+    if not model.exists():
+        return None
+    tmp = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
+    tmp.close()
+    try:
+        subprocess.run(
+            [PIPER_BIN, "--model", str(model), "--output_file", tmp.name],
+            input=text.encode(), capture_output=True, timeout=25, check=True,
+        )
+        data = Path(tmp.name).read_bytes()
+    except (subprocess.SubprocessError, OSError):
+        return None
+    finally:
+        try:
+            os.unlink(tmp.name)
+        except OSError:
+            pass
+    return _pad_lead(data, PIPER_LEAD_MS) if PIPER_LEAD_MS > 0 else data
 
 # Strix Halo APU configurable TDP ceiling (package watts) — used to normalise the
 # power reading into the 0..1 "heat" the visual expects. Override per box.
@@ -50,6 +137,13 @@ EVENTS_PATH = os.environ.get("BRAIN_EVENTS_FILE", "")
 # BRAIN_EVENTS_FILE is an alternative). Drained into /stats on each poll.
 _posted: "deque" = deque(maxlen=64)
 _posted_lock = threading.Lock()
+
+# Persistent read-aloud switch, pushed by the app ({"kind": "read_aloud", "on": bool} to
+# /event) from the brain_read_aloud setting. Unlike the queued tendril events this is a
+# held boolean surfaced in every /stats, so the page shows/hides its voice panel on it (in
+# addition to piper voices being installed). Default OFF: a fresh/restarted display speaks
+# nothing until the app re-pushes the flag (it does so on the setting change and each turn).
+_read_aloud = [False]
 
 
 def _drain_posted() -> list:
@@ -336,12 +430,16 @@ def _demo_snapshot() -> dict:
         _demo_state["task"] = ""
     return _shape(util, mem, power, temp, load=util * 6, uptime_h=72.0,
                   net_in=net_in, net_out=net_out, disk_read=disk_read,
-                  events=events + _drain_posted())
+                  events=events + _drain_posted(),
+                  # Demo previews the voice panel (if voices are installed) without an app.
+                  read_aloud=True)
 
 
 def _shape(util, mem, power, temp, load, uptime_h,
-           net_in=0.0, net_out=0.0, disk_read=0.0, events=None) -> dict:
+           net_in=0.0, net_out=0.0, disk_read=0.0, events=None, read_aloud=None) -> dict:
     """Assemble the ServerBrain contract shape from raw host vitals."""
+    if read_aloud is None:
+        read_aloud = _read_aloud[0]
     util = max(0.0, min(1.0, util))
     mem = max(0.0, min(1.0, mem))
     if util > 0.97 or mem > 0.95 or (temp or 0) > 92:
@@ -370,6 +468,9 @@ def _shape(util, mem, power, temp, load, uptime_h,
         "disk": {"readRate": round(disk_read, 4)},
         # web-tool calls -> reach-out tendrils (drained by the page each poll).
         "events": events or [],
+        # Persistent read-aloud switch (brain_read_aloud) — the page shows its voice panel
+        # only when this is on AND piper voices are installed.
+        "read_aloud": bool(read_aloud),
         "host": {"load_1m": round(load, 2), "uptime_h": uptime_h},
     }
 
@@ -413,6 +514,19 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(500, b"index.html not found next to serve.py", "text/plain")
         elif path == "/healthz":
             self._send(200, b"ok", "text/plain")
+        elif path == "/tts/voices":
+            self._send(200, json.dumps({"voices": piper_voices()}).encode(), "application/json")
+        elif path == "/tts":
+            qs = urllib.parse.parse_qs(self.path.split("?", 1)[1] if "?" in self.path else "")
+            text = qs.get("text", [""])[0][:600]
+            if not text.strip():
+                self._send(400, b"no text", "text/plain")
+                return
+            wav = tts_wav(text, qs.get("voice", [""])[0])
+            if wav is None:
+                self._send(503, b"tts unavailable", "text/plain")
+            else:
+                self._send(200, wav, "audio/wav")
         else:
             self._send(404, b"not found", "text/plain")
 
@@ -421,7 +535,9 @@ class Handler(BaseHTTPRequestHandler):
         # ({"kind": "web_search"|"web_fetch"} — content-free) or, when the owner has
         # opted in, an LLM turn ({"kind": "llm_input"|"llm_output", "text": ...} —
         # the real prompt/answer text). A running workflow/task posts
-        # {"kind": "task_start"|"task_stop", "text": name} to hold/retire a teal popup.
+        # {"kind": "task_start"|"task_stop", "text": name} to hold/retire a teal popup, and
+        # the read-aloud setting pushes {"kind": "read_aloud", "on": bool} — a held flag, not
+        # a tendril, latched below and surfaced in /stats to show/hide the voice panel.
         # We queue it for the next /stats drain (-> a tendril; the llm kinds stream their
         # text along it + fade an answer popup; the task kinds hold a named popup).
         if self.path.split("?", 1)[0] != "/event":
@@ -434,6 +550,12 @@ class Handler(BaseHTTPRequestHandler):
             self._send(400, b"bad request", "text/plain")
             return
         kind = ev.get("kind") if isinstance(ev, dict) else None
+        if kind == "read_aloud":
+            # A held display-config flag, not a tendril event: latch it (the app pushes it
+            # from the brain_read_aloud setting) so /stats reflects it until the next push.
+            _read_aloud[0] = bool(ev.get("on"))
+            self._send(204, b"", "text/plain")
+            return
         if kind in (
             "web_search",
             "web_fetch",

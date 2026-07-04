@@ -1653,13 +1653,14 @@ document.getElementById('btnLlmStream').onclick = () => demoLlmTurn();
 document.getElementById('btnTask').onclick = () => demoTask();
 
 /* ============================================================================
-   READ ALOUD — two independent Web Speech voices: one reads prompts, one reads
-   answers. Each has its own enable checkbox and voice picker; both persist. The
-   panel hides entirely when the browser has no speechSynthesis (e.g. Firefox on
-   Linux without speech-dispatcher installed). speakPrompt/speakAnswer are called
-   from ServerBrain.llmInput / .llmOutput.
+   READ ALOUD — server-side TTS. serve.py renders speech on the box with piper and
+   returns a WAV from GET /tts?voice=<model>&text=... ; the page just plays it via
+   <audio>, so the browser's flaky Web Speech engine (speech-dispatcher cold start,
+   silent drops) is out of the path entirely. Two independent voices (prompt / answer),
+   each an enable checkbox + a picker over the installed piper models (GET /tts/voices);
+   both persist. The panel stays hidden until the server reports at least one voice.
+   speakPrompt/speakAnswer are called from ServerBrain.llmInput / .llmOutput.
    ========================================================================== */
-const TTS = ('speechSynthesis' in window) ? window.speechSynthesis : null;
 const voicePanel = document.getElementById('voice');
 const voiceCfg = {
   prompt: { on: document.getElementById('vPromptOn'), sel: document.getElementById('vPromptVoice') },
@@ -1672,153 +1673,62 @@ function saveVoicePref(kind) {
   const c = voiceCfg[kind];
   try { localStorage.setItem('brainVoice_' + kind, JSON.stringify({ on: c.on.checked, voice: c.sel.value })); } catch { /* private mode */ }
 }
-const isEnglishVoice = (v) => /^en(\b|[-_])/i.test(v.lang || '');
-function populateVoices() {
-  if (!TTS) return;
-  const voices = TTS.getVoices().filter(isEnglishVoice);   // English voices only
-  for (const kind of ['prompt', 'answer']) {
-    const c = voiceCfg[kind];
-    if (!voices.length) {                           // none yet (async) or no English engine installed
-      if (!c.sel.options.length) {
-        const o = document.createElement('option'); o.value = ''; o.textContent = '— no English voices —';
-        c.sel.appendChild(o);
-      }
-      continue;                                     // voiceschanged will re-call once they load
-    }
-    const want = c.sel.value || loadVoicePref(kind).voice || '';
-    c.sel.textContent = '';
-    for (const v of voices) {
-      const o = document.createElement('option');
-      o.value = v.name; o.textContent = v.name + (v.lang ? ' · ' + v.lang : '') + (v.default ? ' ✓' : '');
-      c.sel.appendChild(o);
-    }
-    // restore saved/prior selection, else the default English voice
-    const def = voices.find((v) => v.default) || voices[0];
-    c.sel.value = voices.some((v) => v.name === want) ? want : def.name;
-  }
+// Sequential <audio> player: one clip at a time, prompt-before-answer preserved by a queue.
+const ttsAudio = new Audio();
+const ttsQueue = [];
+let ttsBusy = false;
+function ttsPlayNext() {
+  if (ttsBusy || !ttsQueue.length) return;
+  ttsBusy = true;
+  ttsAudio.src = ttsQueue.shift();
+  const pr = ttsAudio.play();
+  if (pr && pr.catch) pr.catch(() => { ttsBusy = false; ttsPlayNext(); });   // autoplay blocked / decode error -> skip
 }
-// ---- Voice scheduler --------------------------------------------------------
-// Web Speech synthesis (esp. speech-dispatcher on Linux) can drop an utterance, so we
-// serialize — ONE utterance at a time, long text SPLIT into sentence-sized chunks, each HELD
-// referenced until it ends, the queue advancing on end. Retries key off the honest `onstart`
-// signal ("audio actually began"), NOT a guess from how fast `onend` fired: only a chunk that
-// never STARTED (onstart never fired, or onerror) is re-spoken — so a real short sentence is
-// never double-spoken, and a genuine cold-engine drop is still recovered.
-//
-// NOTE: the usual root cause of a dropped FIRST utterance on a Linux wall box is BELOW the
-// browser — the audio sink suspending on idle (clipping the resume) and speech-dispatcher's
-// cold start. Those are fixed on the box, not here (README "Reliable audio on the wall box").
-const ttsQueue = [];        // pending { text, voiceName, _tries }
-let ttsActive = null;       // the utterance now speaking — HELD referenced so it can't be GC'd mid-word
-let ttsGen = 0;             // bumped on clear, so a cancelled utterance's late callbacks are ignored
-// Read-aloud readiness + keep-alive (see the note above and README "Reliable audio on the wall
-// box"). ttsReady flips true only once a sacrificial probe's `onstart`/`onend` shows the engine
-// actually ran; a ~silent WebAudio stream then holds the OS sink open so it never idle-sleeps
-// (the sink resume is what clips the first word — the thing no JS retry can otherwise catch).
-let ttsReady = false, ttsProbing = false, ttsProbeU = null, ttsProbeTries = 0, ttsLastAt = 0;
-let ttsKeepCtx = null;
-function ttsKeepAliveOn() {                          // a ~silent, always-on stream so the audio sink never suspends
-  if (ttsKeepCtx) { try { ttsKeepCtx.resume && ttsKeepCtx.resume(); } catch { /* ignore */ } return; }
-  try {
-    const Ctx = window.AudioContext || window.webkitAudioContext;
-    if (!Ctx) return;
-    ttsKeepCtx = new Ctx();
-    const osc = ttsKeepCtx.createOscillator(), g = ttsKeepCtx.createGain();
-    g.gain.value = 0.0001;                           // ~-80 dB: inaudible, but a live (non-idle) stream
-    osc.connect(g); g.connect(ttsKeepCtx.destination); osc.start();
-    ttsKeepCtx.resume && ttsKeepCtx.resume();        // permitted by the enabling checkbox gesture
-  } catch { ttsKeepCtx = null; }
-}
-function ttsKeepAliveOff() { if (ttsKeepCtx) { try { ttsKeepCtx.close(); } catch { /* ignore */ } ttsKeepCtx = null; } }
-function ttsProbe() {                                // WAIT until the engine is really producing audio
-  if (!TTS || ttsReady || ttsProbing) return;
-  ttsProbing = true;
-  const u = new SpeechSynthesisUtterance('.');       // tiny sacrificial utterance — wakes speechd + the sink
-  const v = TTS.getVoices().find(isEnglishVoice); if (v) { u.voice = v; u.lang = v.lang; }
-  const gen = ttsGen; let done = false;
-  const settle = (ok) => {
-    if (done || gen !== ttsGen) return; done = true; clearTimeout(u._t); ttsProbing = false; ttsProbeU = null;
-    if (ok || ++ttsProbeTries >= 3) {                // confirmed (or give up after a few) -> release the real queue
-      ttsReady = true; ttsProbeTries = 0; ttsLastAt = performance.now(); ttsDrain();
-    } else { try { TTS.cancel(); } catch { /* ignore */ } setTimeout(ttsProbe, 350); }
-  };
-  u.onstart = () => settle(true);                    // the honest "audio began" signal
-  u.onend = () => settle(false);                     // onend without onstart = it didn't really speak -> re-probe
-  u.onerror = () => settle(false);
-  u._t = setTimeout(() => settle(false), 1200);      // no event in 1.2s -> not ready yet, re-probe
-  ttsProbeU = u;                                     // hold the reference
-  TTS.speak(u);
-}
-function ttsChunks(s) {     // sentence-ish chunks, hard-split anything still too long for the engine
-  const out = [];
-  let buf = '';
-  for (const part of s.match(/[^.!?]+[.!?]*\s*|\s+/g) || [s]) {
-    if (buf && (buf + part).length > 180) { out.push(buf.trim()); buf = ''; }
-    buf += part;
-    while (buf.length > 200) { out.push(buf.slice(0, 200).trim()); buf = buf.slice(200); }
-  }
-  if (buf.trim()) out.push(buf.trim());
-  return out.filter(Boolean);
-}
-function ttsDrain() {
-  if (!TTS || ttsActive || !ttsQueue.length) return;
-  if (!ttsReady) { ttsProbe(); return; }            // hold the real text until a probe confirms audio is flowing
-  if (TTS.paused) TTS.resume();                     // a stray pause shouldn't wedge the queue
-  const item = ttsQueue.shift();                    // out of the queue while it speaks
-  const u = new SpeechSynthesisUtterance(item.text);
-  const v = TTS.getVoices().find((x) => x.name === item.voiceName);
-  if (v) { u.voice = v; u.lang = v.lang; }
-  const gen = ttsGen;
-  let started = false, settled = false;
-  const finish = (retry) => {
-    if (settled || gen !== ttsGen) return;          // ignore duplicate / cancelled-generation callbacks
-    settled = true; clearTimeout(item._w); ttsActive = null;
-    // Retry ONLY a chunk that never STARTED (onstart never fired, or onerror): no audio was
-    // emitted, so re-speaking can't double it. Give up after a few tries rather than wedge the
-    // rest of the answer. A chunk that DID start is never retried (no double-speak).
-    if (retry && !started && (item._tries = (item._tries || 0) + 1) < 4) { TTS.cancel(); ttsQueue.unshift(item); }
-    setTimeout(ttsDrain, 120);
-  };
-  u.onstart = () => {                               // the honest "audio actually began" signal
-    started = true; ttsLastAt = performance.now();
-    clearTimeout(item._w);
-    item._w = setTimeout(() => finish(false), Math.max(6000, item.text.length * 220));  // lost-onend guard: advance
-  };
-  u.onend = () => finish(false);
-  u.onerror = () => finish(true);
-  item._w = setTimeout(() => finish(true), 3000);   // never STARTED within 3s -> cold-engine drop -> retry
-  ttsActive = u;                                     // hold the reference BEFORE speaking
-  TTS.speak(u);
-}
-function ttsClear() { ttsGen++; ttsQueue.length = 0; ttsActive = null; ttsReady = false; ttsProbing = false; ttsProbeU = null; if (TTS) TTS.cancel(); }
-function enqueueSpeak(kind, text) {
+ttsAudio.addEventListener('ended', () => { ttsBusy = false; ttsPlayNext(); });
+ttsAudio.addEventListener('error', () => { ttsBusy = false; ttsPlayNext(); });
+function ttsStop() { ttsQueue.length = 0; try { ttsAudio.pause(); } catch { /* ignore */ } ttsBusy = false; }
+function enqueueTTS(kind, text) {
   const c = voiceCfg[kind];
-  if (!TTS || !c.on.checked) return;
-  const clean = mdToPlain(text);
+  if (!c.on.checked || !c.sel.value) return;
+  const clean = mdToPlain(text).slice(0, 600);
   if (!clean) return;
-  if (ttsReady && performance.now() - ttsLastAt > 20000) ttsReady = false;  // long idle: re-probe
-  if (kind === 'prompt') ttsQueue.length = 0;       // new turn — drop un-spoken backlog (keep the active chunk)
-  for (const chunk of ttsChunks(clean)) ttsQueue.push({ text: chunk, voiceName: c.sel.value });
-  ttsDrain();
+  if (kind === 'prompt') ttsQueue.length = 0;            // a new turn — drop un-played backlog
+  ttsQueue.push('/tts?voice=' + encodeURIComponent(c.sel.value) + '&text=' + encodeURIComponent(clean));
+  ttsPlayNext();
 }
-function speakPrompt(text) { enqueueSpeak('prompt', text); }
-function speakAnswer(text) { enqueueSpeak('answer', text); }
-if (TTS) {
-  voicePanel.hidden = false;
+function speakPrompt(text) { enqueueTTS('prompt', text); }
+function speakAnswer(text) { enqueueTTS('answer', text); }
+// Default model per kind when nothing is saved yet — matched by the installed set, else the
+// first available. The picker still lists every installed model, so adding voices just works.
+const DEFAULT_VOICE = { prompt: 'en_US-joe-medium', answer: 'en_US-amy-medium' };
+// The panel shows only when BOTH piper voices are installed on the box AND the owner has
+// turned on the brain_read_aloud setting (surfaced as /stats.read_aloud). Either alone is
+// not enough: no voices means nothing to speak; setting off means the owner hasn't opted in.
+let voicesAvailable = false;
+let readAloudOn = false;
+function updateVoicePanel() {
+  const show = voicesAvailable && readAloudOn;
+  voicePanel.hidden = !show;
+  if (!show) ttsStop();                                  // hidden -> silence any in-flight clip
+}
+async function initVoices() {                            // ask the box which piper models are installed
+  let voices = [];
+  try { voices = ((await (await fetch('/tts/voices', { cache: 'no-store' })).json()).voices) || []; } catch { /* server offline / no tts */ }
+  if (!voices.length) return;                            // no models -> leave the panel hidden
   for (const kind of ['prompt', 'answer']) {
     const c = voiceCfg[kind], pref = loadVoicePref(kind);
+    c.sel.textContent = '';
+    for (const v of voices) { const o = document.createElement('option'); o.value = v; o.textContent = v; c.sel.appendChild(o); }
+    const want = pref.voice || DEFAULT_VOICE[kind];
+    c.sel.value = voices.includes(want) ? want : voices[0];
     c.on.checked = !!pref.on;
-    if (pref.voice) c.sel.value = pref.voice;       // provisional; confirmed once voices populate
-    c.on.addEventListener('change', () => { saveVoicePref(kind);
-      if (c.on.checked) ttsKeepAliveOn();
-      if (!(voiceCfg.prompt.on.checked || voiceCfg.answer.on.checked)) { ttsClear(); ttsKeepAliveOff(); } });
+    c.on.addEventListener('change', () => { saveVoicePref(kind); if (!c.on.checked) ttsStop(); });
     c.sel.addEventListener('change', () => saveVoicePref(kind));
   }
-  populateVoices();
-  if (voiceCfg.prompt.on.checked || voiceCfg.answer.on.checked) ttsKeepAliveOn();
-  ['pointerdown', 'keydown'].forEach((e) => window.addEventListener(e, () => { if (ttsKeepCtx) ttsKeepCtx.resume && ttsKeepCtx.resume(); }, { passive: true }));
-  TTS.addEventListener('voiceschanged', populateVoices);   // voices load async (esp. first paint)
+  voicesAvailable = true;
+  updateVoicePanel();
 }
+initVoices();
 
 const HEALTH_COLOR = { ok: '#8FBC9A', warn: '#C9A36A', crit: '#CF8A8F' };
 const HEALTH_LABEL = { ok: 'healthy', warn: 'degraded', crit: 'critical' };
@@ -2051,6 +1961,9 @@ async function pollStats() {
     if (!liveOk) { liveOk = true; if (modelTag) modelTag.textContent = '— live —'; }
     failCount = 0;
     ServerBrain.update(s);
+    // Read-aloud is a held display-config flag (brain_read_aloud), not a queued event:
+    // show/hide the voice panel on it (gated too by piper voices being installed).
+    if (readAloudOn !== !!s.read_aloud) { readAloudOn = !!s.read_aloud; updateVoicePanel(); }
     if (s.events) for (const ev of s.events) {
       if (ev.kind === 'web_search') ServerBrain.webSearch(ev.text);
       else if (ev.kind === 'web_fetch') ServerBrain.webFetch(ev.text);

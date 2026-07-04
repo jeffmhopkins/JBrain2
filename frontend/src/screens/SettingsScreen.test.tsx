@@ -10,7 +10,7 @@ function setup() {
 // The screen loads the server-synced settings on mount; a stateful stub
 // makes GET/PUT round-trip like the real /api/settings.
 function stubSettingsFetch(initial: "full" | "ocr" = "full") {
-  const state = { mode: initial, brainStream: false };
+  const state = { mode: initial, brainStream: false, brainReadAloud: false };
   const puts: unknown[] = [];
   const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
     const path = String(input);
@@ -47,13 +47,19 @@ function stubSettingsFetch(initial: "full" | "ocr" = "full") {
       const body = JSON.parse(String(init?.body)) as {
         image_analysis_mode?: "full" | "ocr";
         brain_llm_stream?: boolean;
+        brain_read_aloud?: boolean;
       };
       puts.push(body);
       if (body.image_analysis_mode) state.mode = body.image_analysis_mode;
       if (typeof body.brain_llm_stream === "boolean") state.brainStream = body.brain_llm_stream;
+      if (typeof body.brain_read_aloud === "boolean") state.brainReadAloud = body.brain_read_aloud;
     }
     return new Response(
-      JSON.stringify({ image_analysis_mode: state.mode, brain_llm_stream: state.brainStream }),
+      JSON.stringify({
+        image_analysis_mode: state.mode,
+        brain_llm_stream: state.brainStream,
+        brain_read_aloud: state.brainReadAloud,
+      }),
       { status: 200, headers: { "Content-Type": "application/json" } },
     );
   });
@@ -107,6 +113,19 @@ describe("SettingsScreen stream-LLM-to-wall-display toggle", () => {
     );
     fireEvent.click(group.getByRole("button", { name: "On" }));
     await waitFor(() => expect(puts).toContainEqual({ brain_llm_stream: true }));
+  });
+});
+
+describe("SettingsScreen read-wall-display-aloud toggle", () => {
+  it("defaults to Off and enables on tap (PUTs brain_read_aloud: true)", async () => {
+    const { puts } = stubSettingsFetch();
+    setup();
+    const group = within(screen.getByLabelText("Read wall display aloud"));
+    await waitFor(() =>
+      expect(group.getByRole("button", { name: "Off" })).toHaveAttribute("aria-pressed", "true"),
+    );
+    fireEvent.click(group.getByRole("button", { name: "On" }));
+    await waitFor(() => expect(puts).toContainEqual({ brain_read_aloud: true }));
   });
 });
 

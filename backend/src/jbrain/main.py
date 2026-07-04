@@ -10,7 +10,7 @@ from fastapi import FastAPI, Request
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from jbrain.agent.attachments import TurnAttachmentRepo
-from jbrain.agent.brainevents import build_event_emitter
+from jbrain.agent.brainevents import build_event_emitter, build_flag_emitter
 from jbrain.agent.gmailtools import build_gmail_handlers
 from jbrain.agent.hurricanetools import build_hurricane_handlers
 from jbrain.agent.imagegentools import build_image_handlers
@@ -321,6 +321,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # the brain_llm_stream setting in jbrain.api.agent).
         brain_emit = build_event_emitter(settings.brain_events_url)
         app.state.brain_emit = brain_emit
+        # A separate emitter for the wall's persistent config flags (read_aloud): boolean
+        # display config, not owner text, so it is not gated by the per-turn text switch.
+        app.state.brain_flag_emit = build_flag_emitter(settings.brain_events_url)
         web_handlers = build_web_handlers(
             SearxngClient(settings.searxng_url),
             WebFetcher(reader_url=settings.reader_url),

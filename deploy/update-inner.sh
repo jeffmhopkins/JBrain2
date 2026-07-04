@@ -69,6 +69,11 @@ if grep -q '^JCODE_ENABLED=true' .env; then
   grep -q '^JCODE_MODEL_URL=' .env || printf 'JCODE_MODEL_URL=%s\n' 'http://local-llm:8080' >> .env
 fi
 
+# Read-aloud (server-side piper TTS) needs NOTHING here: piper AND the default voice
+# models are baked into the server-brain image (deploy/Dockerfile.server-brain), rebuilt
+# by the `docker compose build` below. It is driven entirely by the Settings toggle
+# (brain_read_aloud) at runtime — no env var, no host download, no provisioning step.
+
 # Free the on-box LLM gateway's memory BEFORE the rebuild + recreate. The gateway
 # keeps its resident model set (~91 GB on the Strix Halo box) pinned in unified
 # memory, and it is profile-gated — the plain `up -d` below never recreates it, so

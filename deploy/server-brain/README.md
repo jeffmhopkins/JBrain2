@@ -18,13 +18,15 @@ its telemetry. Stdlib only, no dependencies, no build step.
 ## Deployment (auto-started, auto-updated)
 
 It runs as the `server-brain` service in `deploy/docker-compose.yml` — a default
-profile service on a stock `python:3.12-slim` image, so the standard deploy flow
-owns its lifecycle:
+profile service on a thin `python:3.12-slim` + `piper` image
+(`deploy/Dockerfile.server-brain`; piper + the baked default voices power the
+toggle-gated read-aloud below), so the standard deploy flow owns its lifecycle:
 
 - **`jbrain update`** brings it up and keeps it current via `docker compose up
-  -d`. No rebuild: `serve.py` re-reads `index.html` from the bind mount on every
-  request, so a git reset of `src/` serves the new page immediately. (A change to
-  `serve.py` itself takes effect on the container's next restart.)
+  -d`. The page still hot-reloads with no rebuild: `serve.py` re-reads `index.html`
+  from the bind mount on every request, so a git reset of `src/` serves the new page
+  immediately. (A change to `serve.py`, or a piper/base bump, takes effect on the
+  container's next rebuild + restart, which `jbrain update` does.)
 - It needs **no GPU device and no extra mounts** — Docker already exposes the
   host's `/sys` (read-only) and non-namespaced `/proc` to every container, which
   is exactly where the amdgpu and meminfo vitals live.
@@ -133,49 +135,54 @@ teal popup naming what's running, and `{"kind": "task_stop", "text": name}` (sam
 retire it when it finishes. Several hold at once, so a couple of concurrent workflows each get
 their own card — a quiet twin of the prompt popup.
 
-### Read aloud (optional TTS)
+### Read aloud (optional TTS — server-side piper)
 
-The **Read aloud** panel (bottom-right) speaks turns via the browser's Web Speech API. It has
-two independent voices — one for **prompts**, one for **answers** — each with its own enable
-checkbox and voice picker (English voices only); both persist in `localStorage`. Markdown is
-stripped before speaking. A small scheduler serializes speech and splits a long reply into
-sentence-sized chunks it queues one at a time (holding each utterance referenced until it
-ends), and keys retries off the `onstart` signal — only a chunk that never *started* is
-re-spoken, so nothing is double-read. Before the real text it fires a tiny **sacrificial probe
-and waits for its `onstart`** (the honest "audio is flowing" signal), so the cold-engine hit
-lands on the throwaway, not your first sentence; and while a voice is enabled it runs a
-**near-silent WebAudio keep-alive** so the OS sink can't idle-suspend between turns. The panel
-hides itself when the browser exposes no speech synthesis.
+The **Read aloud** panel (bottom-right) reads turns aloud. Speech is rendered **on the box** by
+[`piper`](https://github.com/OHF-Voice/piper1-gpl): `serve.py` exposes `GET /tts?voice=<model>&text=…`
+(returns a WAV) and `GET /tts/voices` (the installed models), and the page plays the clip through an
+`<audio>` element — keeping the browser's flaky Web Speech engine (speech-dispatcher cold start,
+silent first-word drops) out of the path entirely.
 
-On **Ubuntu / Firefox**, Web Speech synthesis is backed by `speech-dispatcher`, so install it
-plus a voice engine once — `sudo apt install speech-dispatcher espeak-ng` — and ensure
-`about:config` → `media.webspeech.synth.enabled` is `true` (the default in modern Firefox).
-The picker then lists the installed voices. (No network or extra setup on Chromium.)
+Two independent voices — **Joe** reads prompts and **Amy** reads answers by default — each an enable
+checkbox + a picker over the installed piper models (add more and they show up automatically); both
+persist in `localStorage`. Markdown is stripped before speaking, and `serve.py` prepends a short
+lead of silence to each clip (`BRAIN_PIPER_LEAD_MS`, default 250 ms) so a cold audio-sink resume
+clips the silence, not the first word.
 
-#### Reliable audio on the wall box
+`piper` **and the default Joe/Amy voice models** ship **baked into the server-brain image**
+(`deploy/Dockerfile.server-brain`, at `/opt/piper-voices` — outside the read-only `/app` bind mount
+that would otherwise shadow them). So there is **nothing to provision and no env var to set**: the
+feature is driven entirely by one Settings toggle.
 
-The page now defends itself here — the readiness probe + WebAudio keep-alive above cover most
-setups with no box config. But if the **first utterance after idle is still dropped/clipped**,
-the durable fix is one level down, in the Linux audio stack **below** the browser. Two box-level
-causes, two fixes (apply on the machine that drives the display):
+**One switch — the toggle.** The voice panel shows only when the owner turns on **Settings → Read
+wall display aloud** (the `brain_read_aloud` app setting, **off by default** — the runtime companion
+to *Stream LLM to wall display*). The app pushes the setting to this service as a held flag
+(`{"kind": "read_aloud", "on": …}` to `POST /event`, surfaced in `/stats.read_aloud`) on the toggle
+and again each chat turn, so flipping it shows/hides the panel live with no redeploy; the display is
+ephemeral, so it stays off until the next push after a restart. Like *Stream LLM*, it only speaks the
+streamed prompt/answer text, so enable it only for a localhost-bound / box-monitor-only display.
 
-1. **The audio sink suspends on idle** and clips the start when it resumes (best match for
-   "first-after-idle dropped, the rest fine"). Disable it:
-   - PipeWire / WirePlumber (Ubuntu 22.04+): drop a file at
-     `~/.config/wireplumber/wireplumber.conf.d/50-no-suspend.conf` setting
-     `session.suspend-timeout-seconds = 0` on the output node, then restart WirePlumber.
-   - Classic PulseAudio: comment out `load-module module-suspend-on-idle` in
-     `/etc/pulse/default.pa` (and add `tsched=0` if speech is choppy).
-2. **speech-dispatcher cold start** — the first request spawns the daemon + module + opens the
-   sink and gets swallowed. Pre-warm it at kiosk launch (before Firefox speaks) and pick a fast
-   module: `spd-say -w "ready"` once at session start, set `DefaultModule espeak-ng` and the
-   matching `AudioOutputMethod` in `~/.config/speech-dispatcher/speechd.conf`.
+A stock `jbrain update` rebuilds the image (which re-bakes the voices), so read-aloud is ready the
+moment you flip the toggle — no `.env` edit, no download step.
 
-(The page's own keep-alive already does this from the browser side; the box setting is the
-belt-and-suspenders fix for stacks that suspend even an active silent stream. Planned
-follow-up: render TTS **server-side** with `piper` in `serve.py` and play it via `<audio>`,
-which removes the browser speech engine from the path entirely — though the sink-suspend fix
-above still applies to any audio.)
+Add more voices by dropping `<name>.onnx` + `<name>.onnx.json` in the mounted `voices/` dir (scanned
+alongside the baked defaults; a dropped-in name overrides a baked one) — grab English voices from the
+[piper voices list](https://github.com/OHF-Voice/piper1-gpl/blob/main/VOICES.md). For run-on-host dev
+(`python3 serve.py` directly, no image), `bash deploy/server-brain/install-tts.sh` installs piper +
+the models into `voices/`. Env knobs (all optional): `BRAIN_PIPER_BIN` (default `piper`),
+`BRAIN_PIPER_VOICES_DIR` (mounted extras, default `/app/voices`), `BRAIN_PIPER_BAKED_VOICES_DIR`
+(baked defaults, default `/opt/piper-voices`), `BRAIN_PIPER_LEAD_MS`. Text is passed to piper on
+**stdin** (never a shell arg) and the `voice` param is validated against the installed set, so there
+is no command-injection or path-traversal surface.
+
+**Autoplay:** the enable checkbox is the user gesture Firefox needs to allow `<audio>` playback for
+the session. On a gesture-free kiosk, also set `media.autoplay.default = 0` in `about:config` (or a
+site permission for the localhost origin) so clips play without an interaction.
+
+**Sink suspend (rare):** the lead-silence pad absorbs the usual "first-after-idle clip." If a very
+quiet wall still clips, stop the audio sink suspending on idle one level down — WirePlumber
+(Ubuntu 22.04+) `session.suspend-timeout-seconds = 0`, or comment out
+`load-module module-suspend-on-idle` in classic PulseAudio.
 
 **This is the one place the display carries owner data.** Everything else here is host
 vitals + content-free markers, which is why it's safe unauthenticated on a trusted LAN.

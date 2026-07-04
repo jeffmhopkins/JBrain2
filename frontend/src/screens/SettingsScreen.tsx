@@ -43,6 +43,9 @@ export function SettingsScreen({ deviceLabel, onLogout }: SettingsScreenProps) {
   // Stream real prompt/answer text to the on-box wall display (:8800). Off by default;
   // null until the server answers so the toggle doesn't flash the wrong state.
   const [brainStream, setBrainStream] = useState<boolean | null>(null);
+  // Read the streamed wall-display turns aloud (piper TTS on the box). Off by default;
+  // null until the server answers. Companion to the stream toggle above.
+  const [brainReadAloud, setBrainReadAloud] = useState<boolean | null>(null);
   // The owner's display timezone — synced from this device's zone on app load
   // (App.tsx); shown read-only so the owner knows which zone their times render
   // in. Falls back to the browser's detected zone before the server answers.
@@ -56,6 +59,7 @@ export function SettingsScreen({ deviceLabel, onLogout }: SettingsScreenProps) {
         if (stale) return;
         setImageMode(s.image_analysis_mode);
         setBrainStream(s.brain_llm_stream);
+        setBrainReadAloud(s.brain_read_aloud);
         if (s.owner_timezone) setTimezone(s.owner_timezone);
       })
       .catch(() => {
@@ -263,6 +267,11 @@ export function SettingsScreen({ deviceLabel, onLogout }: SettingsScreenProps) {
     void api.updateSettings({ brain_llm_stream: on }).catch(() => {});
   }
 
+  function pickBrainReadAloud(on: boolean) {
+    setBrainReadAloud(on); // optimistic
+    void api.updateSettings({ brain_read_aloud: on }).catch(() => {});
+  }
+
   return (
     <main className="screen-body settings">
       <section className="settings-card">
@@ -367,6 +376,30 @@ export function SettingsScreen({ deviceLabel, onLogout }: SettingsScreenProps) {
               className={`seg${brainStream === on ? " seg-on" : ""}`}
               disabled={brainStream === null}
               onClick={() => pickBrainStream(on)}
+            >
+              {on ? "On" : "Off"}
+            </button>
+          ))}
+        </div>
+      </section>
+
+      <section className="settings-card">
+        <h2 className="settings-label">Read wall display aloud</h2>
+        <p className="settings-meta">
+          speaks each streamed chat turn out loud on the box, rendered by piper. companion to the
+          stream toggle above — it reads the same prompt and answer text, so it only speaks when
+          streaming is on and the display is the box's own monitor. the display shows its voice
+          panel only while this is on and voices are installed. off by default.
+        </p>
+        <div className="theme-picker" aria-label="Read wall display aloud">
+          {[true, false].map((on) => (
+            <button
+              key={on ? "on" : "off"}
+              type="button"
+              aria-pressed={brainReadAloud === on}
+              className={`seg${brainReadAloud === on ? " seg-on" : ""}`}
+              disabled={brainReadAloud === null}
+              onClick={() => pickBrainReadAloud(on)}
             >
               {on ? "On" : "Off"}
             </button>
