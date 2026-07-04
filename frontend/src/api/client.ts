@@ -1283,6 +1283,37 @@ export interface WikiLandingOut {
   groups: WikiTypeGroup[];
 }
 
+// ----- JPet: the family wall pet (docs/plans/JPET_PLAN.md) -----
+export interface PetState {
+  name: string;
+  domain: string;
+  food: number;
+  energy: number;
+  fun: number;
+  love: number;
+  mood: string;
+  emotion: string;
+  speech: string | null;
+  asleep: boolean;
+  pos_x: number;
+  pos_z: number;
+  target_x: number;
+  target_z: number;
+  facing: number;
+  action: string;
+}
+
+export type PetAction = "feed" | "play" | "pet" | "poke" | "sleep" | "move" | "say";
+
+export interface PetCommand {
+  action: PetAction;
+  /** Normalized floor coords in [-1, 1] — only read for `move`. */
+  x?: number;
+  z?: number;
+  /** What the child said — only read for `say` (runs the pet.turn brain). */
+  text?: string;
+}
+
 export class ApiError extends Error {
   readonly status: number;
 
@@ -2725,5 +2756,49 @@ export const api = {
   // (possibly shared by another render or an edit's source), so it stays.
   async deleteGeneratedImage(id: string): Promise<void> {
     await request(`/api/images/generated/${encodeURIComponent(id)}`, { method: "DELETE" });
+  },
+
+  // ----- JPet: the wall pet, one server-authoritative state both surfaces render -----
+  async getPet(): Promise<PetState> {
+    const response = await request("/api/pet");
+    return (await response.json()) as PetState;
+  },
+  async sendPetCommand(command: PetCommand): Promise<PetState> {
+    const response = await request("/api/pet/command", jsonInit("POST", command));
+    return (await response.json()) as PetState;
+  },
+  // Subscribe to the live pet stream (SSE, `data: <json>\n\n` frames, like /api/chat):
+  // an initial snapshot then every change. Iterate under an AbortController; the
+  // caller's useEffect cleanup aborts to unsubscribe.
+  async *petStream(signal?: AbortSignal): AsyncGenerator<PetState> {
+    const response = await request("/api/pet/stream", signal ? { signal } : {});
+    if (!response.body) return;
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        let boundary = buffer.indexOf("\n\n");
+        while (boundary !== -1) {
+          const frame = buffer.slice(0, boundary);
+          buffer = buffer.slice(boundary + 2);
+          const line = frame.split("\n").find((l) => l.startsWith("data:"));
+          const jsonText = line?.slice("data:".length).trim();
+          if (jsonText) {
+            try {
+              yield JSON.parse(jsonText) as PetState;
+            } catch {
+              // skip a malformed frame; the next snapshot supersedes it
+            }
+          }
+          boundary = buffer.indexOf("\n\n");
+        }
+      }
+    } finally {
+      reader.releaseLock();
+    }
   },
 };

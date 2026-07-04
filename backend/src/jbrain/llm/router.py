@@ -93,6 +93,12 @@ TASK_DEFAULTS: dict[str, str] = {
     # The prompt declares the `low` tier (a cheap one-shot judgment over many emails);
     # individually routable so an on-box operator can point it at a local model.
     "triage.classify": "xai:grok-4.3",
+    # JPet — the family wall pet (docs/plans/JPET_PLAN.md). `pet.turn` answers a child
+    # in character; `pet.thought` is the idle daydream. Cheap and snappy; an on-box
+    # operator points these at the local model via the JPet settings card so the pet
+    # never spends API budget and always takes second seat.
+    "pet.turn": "xai:grok-4.3",
+    "pet.thought": "xai:grok-4.3",
 }
 
 # Each task's DEFAULT reasoning effort — the Settings bucket it sits in, so a fresh
@@ -119,6 +125,8 @@ TASK_REASONING_BUCKET: dict[str, str] = {
     "entity.disambiguate": "low",
     "session.title": "low",
     "triage.classify": "low",
+    "pet.turn": "low",
+    "pet.thought": "low",
 }
 
 # The deviations the router must ACTIVELY put on the wire. Medium is omitted on

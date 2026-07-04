@@ -1,0 +1,259 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>JPet — Synthwave Sunset</title>
+<style>
+  :root{
+    --bg0:#1a0533; --bg1:#3d0a52; --line:#ff4fd8; --line2:#3bf0ff;
+    --accent:#ffd23f; --glow:#ff4fd8; --ink:#ffe9fb; --panel:rgba(30,3,50,.55);
+    --good:#3bf0ff; --warn:#ffb03a; --bad:#ff477e;
+    --font:"Segoe UI",system-ui,sans-serif;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;background:#000;color:var(--ink);font-family:var(--font);overflow:hidden}
+  #stage{position:fixed;inset:0;width:100%;height:100%;display:block}
+  .frame{position:fixed;inset:14px;border:2px solid rgba(255,79,216,.35);border-radius:18px;
+    box-shadow:0 0 40px rgba(255,79,216,.25) inset,0 0 30px rgba(59,240,255,.15);pointer-events:none;z-index:5}
+  .hud{position:fixed;top:26px;left:34px;z-index:6}
+  .name{font-size:26px;font-weight:800;letter-spacing:2px;text-shadow:0 0 14px var(--glow)}
+  .mood{font-size:13px;opacity:.85;letter-spacing:3px;text-transform:uppercase;margin-top:2px}
+  .bars{position:fixed;top:26px;right:34px;z-index:6;width:180px}
+  .bar{margin-bottom:9px}
+  .bar label{display:flex;justify-content:space-between;font-size:11px;letter-spacing:1px;
+    text-transform:uppercase;opacity:.9;margin-bottom:3px}
+  .track{height:8px;border-radius:6px;background:rgba(255,255,255,.1);overflow:hidden;
+    box-shadow:0 0 8px rgba(0,0,0,.4) inset}
+  .fill{height:100%;border-radius:6px;transition:width .4s ease,background .4s}
+  .controls{position:fixed;bottom:26px;left:50%;transform:translateX(-50%);z-index:6;
+    display:flex;gap:10px;flex-wrap:wrap;justify-content:center}
+  button{font-family:var(--font);font-size:14px;font-weight:700;letter-spacing:1px;color:var(--ink);
+    background:var(--panel);border:1.5px solid var(--line);border-radius:12px;padding:11px 16px;cursor:pointer;
+    backdrop-filter:blur(6px);box-shadow:0 0 14px rgba(255,79,216,.25);transition:transform .1s,box-shadow .2s}
+  button:hover{transform:translateY(-2px);box-shadow:0 0 22px rgba(59,240,255,.5)}
+  button:active{transform:translateY(1px)}
+  .tag{position:fixed;bottom:24px;left:24px;z-index:6;font-size:11px;letter-spacing:2px;opacity:.55}
+  .tag a{color:var(--line2);text-decoration:none}
+  .speech{position:fixed;z-index:7;max-width:240px;padding:12px 16px;border-radius:16px;
+    background:var(--panel);border:1.5px solid var(--line2);color:var(--ink);font-size:17px;font-weight:700;
+    letter-spacing:.5px;text-shadow:0 0 10px var(--line2);box-shadow:0 0 26px rgba(59,240,255,.4);
+    opacity:0;transform:translate(-50%,8px) scale(.9);transition:opacity .25s,transform .25s;pointer-events:none;
+    white-space:nowrap}
+  .speech.show{opacity:1;transform:translate(-50%,0) scale(1)}
+</style>
+</head>
+<body>
+<canvas id="stage"></canvas>
+<div class="frame"></div>
+<div class="hud"><div class="name" id="petname">BLINK</div><div class="mood" id="moodlbl">feeling good</div></div>
+<div class="bars" id="bars"></div>
+<div class="speech" id="speech"></div>
+<div class="controls">
+  <button data-act="feed">🍔 Feed</button>
+  <button data-act="play">🎮 Play</button>
+  <button data-act="pet">✋ Pet</button>
+  <button data-act="sleep">💤 Sleep</button>
+  <button data-act="talk">💬 Talk</button>
+  <button data-act="sound">🔊 Sound</button>
+</div>
+<div class="tag">01 · SYNTHWAVE SUNSET &nbsp;·&nbsp; <a href="index.html">← all mockups</a></div>
+<script>
+/* ---------- shared JPet toy engine (2D canvas) ---------- */
+const cv=document.getElementById('stage'),ctx=cv.getContext('2d');
+let W,H,DPR;
+function resize(){DPR=Math.min(2,devicePixelRatio||1);W=cv.clientWidth;H=cv.clientHeight;
+  cv.width=W*DPR;cv.height=H*DPR;ctx.setTransform(DPR,0,0,DPR,0,0);}
+addEventListener('resize',resize);
+
+const S={food:78,energy:82,fun:70,love:74,asleep:false,poke:0,blink:0,nextBlink:2,
+  mouseX:.5,mouseY:.4,emotion:'happy',emoT:0};
+const DRIVES=[['food','🍔 Food','food'],['energy','⚡ Energy','energy'],['fun','🎮 Fun','fun'],['love','💗 Love','love']];
+const barsEl=document.getElementById('bars');
+DRIVES.forEach(([k,lbl])=>{barsEl.insertAdjacentHTML('beforeend',
+  `<div class="bar"><label><span>${lbl}</span><span id="v_${k}"></span></label>
+   <div class="track"><div class="fill" id="f_${k}"></div></div></div>`);});
+
+function mood(){const m=(S.food+S.energy+S.fun+S.love)/4;
+  if(S.asleep)return['sleepy','💤 dreaming'];
+  if(S.food<25)return['hungry','😖 so hungry'];
+  if(m>70)return['happy','feeling great'];
+  if(m>45)return['neutral','doing okay'];
+  return['sad','a bit gloomy'];}
+function fillColor(v){return v>55?'var(--good)':v>28?'var(--warn)':'var(--bad)';}
+function syncBars(){DRIVES.forEach(([k])=>{const v=Math.round(S[k]);
+  document.getElementById('v_'+k).textContent=v;
+  const f=document.getElementById('f_'+k);f.style.width=v+'%';f.style.background=fillColor(v);});
+  const[e,l]=mood();S.emotion=(S.poke>0?'excited':e);document.getElementById('moodlbl').textContent=l;}
+
+/* Furby babble: gibberish text + WebAudio blips */
+const SYL=['dah','boo','bah','kah','mee','wee','doo','loo','nah','tay','kee','boh','dan','nye',
+  'way','loh','toh','day','dee','noo','mah','guh','tee','oo','wah','bok','lah'];
+const CANNED={feed:['Num num num!','Yummy!','Mee-tay food!'],play:['Wheee!','Play play!','Dah-boo fun!'],
+  pet:['Purr~','Aww-loh','Mee love oo'],sleep:['Zzz…','Noo-noo sleep','Dee-doo… nini'],
+  hungry:['Feed me!','Boo-hungry…','Num? Num??'],talk:null};
+function phrase(){const n=2+(Math.random()*4|0);let w=[];for(let i=0;i<n;i++)w.push(SYL[Math.random()*SYL.length|0]);
+  let s=w.join('-');return s[0].toUpperCase()+s.slice(1)+(Math.random()<.4?'!':'?');}
+let soundOn=false,actx=null;
+const OSC='sawtooth';
+function babble(base){if(!soundOn)return;try{actx=actx||new(AudioContext||webkitAudioContext)();
+  let t=actx.currentTime;const n=2+(Math.random()*3|0);
+  for(let i=0;i<n;i++){const o=actx.createOscillator(),g=actx.createGain();o.type=OSC;
+    const f=base*(.7+Math.random()*.9);o.frequency.setValueAtTime(f,t);
+    o.frequency.linearRampToValueAtTime(f*(.75+Math.random()*.7),t+.11);
+    g.gain.setValueAtTime(.0001,t);g.gain.exponentialRampToValueAtTime(.1,t+.02);
+    g.gain.exponentialRampToValueAtTime(.0001,t+.15);o.connect(g).connect(actx.destination);
+    o.start(t);o.stop(t+.17);t+=.14;}}catch(e){}}
+const speechEl=document.getElementById('speech');let speechT=0;
+function say(txt,base=280){speechEl.textContent=txt;speechEl.classList.add('show');speechT=2.6;babble(base);}
+function robotHead(){return{x:W*0.5,y:H*0.46+Math.sin(clock*1.6)*6-Math.max(0,52*0)};}
+function positionSpeech(){const h=robotHead();speechEl.style.left=h.x+'px';speechEl.style.top=(h.y-150)+'px';}
+
+/* actions */
+function act(a){
+  if(a==='sound'){soundOn=!soundOn;try{actx=actx||new(AudioContext||webkitAudioContext)();}catch(e){}
+    say(soundOn?'Boo! (sound on)':'…(muted)',260);return;}
+  if(S.asleep&&a!=='sleep'){S.asleep=false;}
+  if(a==='feed'){S.food=Math.min(100,S.food+26);S.love=Math.min(100,S.love+4);pop('excited');say(rand(CANNED.feed),330);}
+  if(a==='play'){S.fun=Math.min(100,S.fun+24);S.energy=Math.max(0,S.energy-10);pop('excited');say(rand(CANNED.play),360);}
+  if(a==='pet'){S.love=Math.min(100,S.love+22);S.fun=Math.min(100,S.fun+6);pop('happy');say(rand(CANNED.pet),300);}
+  if(a==='sleep'){S.asleep=!S.asleep;if(S.asleep)say(rand(CANNED.sleep),180);else say('Boo! morning!',300);}
+  if(a==='talk'){pop('excited');say(phrase(),260+Math.random()*160);}
+  syncBars();}
+function rand(a){return a[Math.random()*a.length|0];}
+function pop(e){S.emotion=e;S.emoT=1.1;S.poke=.6;}
+document.querySelectorAll('button').forEach(b=>b.onclick=()=>act(b.dataset.act));
+cv.addEventListener('pointermove',e=>{S.mouseX=e.clientX/W;S.mouseY=e.clientY/H;});
+cv.addEventListener('pointerdown',e=>{const h=robotHead();const d=Math.hypot(e.clientX-h.x,e.clientY-h.y);
+  if(d<160){if(S.asleep)S.asleep=false;S.poke=1;pop('excited');S.fun=Math.min(100,S.fun+8);
+    say(Math.random()<.5?phrase():'Hee-hee!',420);}});
+
+/* ---------- theme-specific drawing ---------- */
+let clock=0;
+function drawBackground(t){
+  const g=ctx.createLinearGradient(0,0,0,H);g.addColorStop(0,'#12002e');g.addColorStop(.55,'#3d0a52');
+  g.addColorStop(.56,'#0a0018');g.addColorStop(1,'#1a0533');ctx.fillStyle=g;ctx.fillRect(0,0,W,H);
+  // sun
+  const sx=W/2,sy=H*.4,sr=Math.min(W,H)*.17;
+  const sg=ctx.createLinearGradient(0,sy-sr,0,sy+sr);sg.addColorStop(0,'#ffd23f');sg.addColorStop(.5,'#ff7a3f');
+  sg.addColorStop(1,'#ff2e88');ctx.save();ctx.beginPath();ctx.arc(sx,sy,sr,0,7);ctx.clip();
+  ctx.fillStyle=sg;ctx.fillRect(sx-sr,sy-sr,sr*2,sr*2);
+  ctx.globalCompositeOperation='destination-out';ctx.fillStyle='#000';
+  for(let i=0;i<7;i++){const yy=sy+sr*.15+i*sr*.14;ctx.fillRect(sx-sr,yy-(i*.6+1),sr*2,i*.9+2);}
+  ctx.restore();
+  ctx.save();ctx.shadowColor='#ff2e88';ctx.shadowBlur=40;ctx.strokeStyle='rgba(255,120,180,.25)';
+  ctx.beginPath();ctx.arc(sx,sy,sr,0,7);ctx.stroke();ctx.restore();
+  // perspective grid floor
+  const hz=H*.56;ctx.save();ctx.strokeStyle='rgba(255,79,216,.5)';ctx.lineWidth=1.2;
+  ctx.shadowColor='#ff4fd8';ctx.shadowBlur=8;
+  for(let i=-10;i<=10;i++){const vx=W/2+i*(W*.08);ctx.beginPath();ctx.moveTo(W/2+i*24,hz);
+    ctx.lineTo(vx,H);ctx.stroke();}
+  for(let i=0;i<14;i++){const p=i/14;const yy=hz+(H-hz)*(p*p);ctx.globalAlpha=1-p*.5;
+    ctx.beginPath();ctx.moveTo(0,yy);ctx.lineTo(W,yy);ctx.stroke();}
+  ctx.restore();
+}
+function drawOverlay(t){/* subtle vignette scan */
+  ctx.save();ctx.globalAlpha=.06;ctx.fillStyle='#fff';
+  for(let y=0;y<H;y+=3)ctx.fillRect(0,y,W,1);ctx.restore();}
+
+/* robot: chunky wireframe, restyled by theme vars */
+const T={line:'#ff4fd8',line2:'#3bf0ff',accent:'#ffd23f',glow:'#ff4fd8',lw:2.4};
+function rr(x,y,w,h,r){ctx.beginPath();if(ctx.roundRect){ctx.roundRect(x,y,w,h,r);}else{
+  ctx.moveTo(x+r,y);ctx.arcTo(x+w,y,x+w,y+h,r);ctx.arcTo(x+w,y+h,x,y+h,r);
+  ctx.arcTo(x,y+h,x,y,r);ctx.arcTo(x,y,x+w,y,r);}ctx.closePath();}
+function drawRobot(t){
+  const bob=Math.sin(clock*1.6)*6, breathe=Math.sin(clock*1.6)*.5;
+  const cx=W/2, cy=H*0.46+bob;
+  const look={x:(S.mouseX-.5)*10,y:(S.mouseY-.5)*8};
+  ctx.save();ctx.translate(cx,cy);
+  ctx.lineWidth=T.lw;ctx.lineJoin='round';ctx.lineCap='round';
+  const glow=(c,b)=>{ctx.shadowColor=c;ctx.shadowBlur=b;};
+  // legs/hover base
+  glow(T.glow,10);ctx.strokeStyle=T.line;
+  ctx.globalAlpha=.8;ctx.beginPath();ctx.ellipse(0,150,60,14,0,0,7);ctx.stroke();ctx.globalAlpha=1;
+  // body
+  glow(T.glow,14);ctx.strokeStyle=T.line;
+  ctx.beginPath();ctx.moveTo(-46,40);ctx.lineTo(46,40);ctx.lineTo(58,140);ctx.lineTo(-58,140);ctx.closePath();ctx.stroke();
+  // chest panel (mood heart)
+  const mc=S.emotion==='sad'?'#ff477e':S.emotion==='hungry'?'#ffb03a':S.asleep?'#6a7bff':T.line2;
+  glow(mc,18);ctx.strokeStyle=mc;rr(-22,64,44,44,8);ctx.stroke();
+  ctx.fillStyle=mc;ctx.globalAlpha=.18+Math.abs(breathe)*.3;rr(-22,64,44,44,8);ctx.fill();ctx.globalAlpha=1;
+  drawFace(-14,86,mc,.55);// tiny chest face reflect
+  // arms
+  glow(T.glow,10);ctx.strokeStyle=T.line;
+  const asw=Math.sin(clock*1.6+1)*6;
+  ctx.beginPath();ctx.moveTo(-46,52);ctx.lineTo(-74,86+asw);ctx.lineTo(-70,120+asw);ctx.stroke();
+  ctx.beginPath();ctx.moveTo(46,52);ctx.lineTo(74,86-asw);ctx.lineTo(70,120-asw);ctx.stroke();
+  ctx.beginPath();ctx.arc(-70,120+asw,7,0,7);ctx.stroke();
+  ctx.beginPath();ctx.arc(70,120-asw,7,0,7);ctx.stroke();
+  // neck
+  ctx.beginPath();ctx.moveTo(-14,40);ctx.lineTo(-14,26);ctx.moveTo(14,40);ctx.lineTo(14,26);ctx.stroke();
+  // antenna
+  const ax=Math.sin(clock*2.1)*7;
+  ctx.beginPath();ctx.moveTo(0,-72);ctx.lineTo(ax,-104);ctx.stroke();
+  glow(T.accent,22);ctx.fillStyle=T.accent;ctx.beginPath();ctx.arc(ax,-104,5.5,0,7);ctx.fill();
+  // head
+  glow(T.glow,16);ctx.strokeStyle=T.line;rr(-48,-72,96,66,16);ctx.stroke();
+  // ears
+  ctx.beginPath();ctx.arc(-48,-39,8,0,7);ctx.stroke();ctx.beginPath();ctx.arc(48,-39,8,0,7);ctx.stroke();
+  // face
+  drawFace(look.x,look.y-38,T.line2,1);
+  ctx.restore();
+}
+function drawFace(ox,oy,col,sc){
+  ctx.save();ctx.translate(ox,oy);ctx.scale(sc,sc);
+  ctx.shadowColor=col;ctx.shadowBlur=16;ctx.strokeStyle=col;ctx.fillStyle=col;ctx.lineWidth=2.4/sc*sc;
+  const blink=S.blink, e=S.emotion, asleep=S.asleep;
+  const ex=18;// eye spacing half
+  for(const s of[-1,1]){
+    ctx.save();ctx.translate(s*ex,0);
+    if(asleep||blink>.6||e==='sleepy'){ctx.beginPath();ctx.moveTo(-8,0);ctx.quadraticCurveTo(0,5,8,0);ctx.stroke();}
+    else if(e==='happy'||e==='excited'){ctx.beginPath();ctx.arc(0,0,7,0,7);ctx.stroke();
+      ctx.beginPath();ctx.arc(look()*s*0+ (S.mouseX-.5)*4, (S.mouseY-.5)*3,3,0,7);ctx.fill();}
+    else if(e==='hungry'){ctx.beginPath();ctx.arc(0,0,7,0,7);ctx.stroke();ctx.beginPath();ctx.arc(0,2,2.5,0,7);ctx.fill();}
+    else{ctx.beginPath();ctx.arc(0,0,7,0,7);ctx.stroke();ctx.beginPath();ctx.arc(0,0,3,0,7);ctx.fill();}
+    ctx.restore();
+  }
+  // mouth
+  ctx.beginPath();
+  if(asleep){ctx.arc(0,16,4,0,7);}
+  else if(e==='excited'){ctx.moveTo(-9,12);ctx.quadraticCurveTo(0,26,9,12);ctx.quadraticCurveTo(0,18,-9,12);}
+  else if(e==='happy'){ctx.moveTo(-9,13);ctx.quadraticCurveTo(0,22,9,13);}
+  else if(e==='sad'||e==='hungry'){ctx.moveTo(-8,18);ctx.quadraticCurveTo(0,11,8,18);}
+  else{ctx.moveTo(-7,15);ctx.lineTo(7,15);}
+  ctx.stroke();
+  ctx.restore();
+}
+function look(){return 0;}
+
+/* ---------- loop ---------- */
+let last=0;
+function frame(ts){
+  const dt=Math.min(.05,(ts-last)/1000||0);last=ts;clock+=dt;
+  // decay (tamagotchi)
+  const rate=S.asleep?0.15:1;
+  S.food=Math.max(0,S.food-dt*0.9*rate);
+  S.energy=S.asleep?Math.min(100,S.energy+dt*3.2):Math.max(0,S.energy-dt*0.7);
+  S.fun=Math.max(0,S.fun-dt*1.0*rate);
+  S.love=Math.max(0,S.love-dt*0.6*rate);
+  if(S.poke>0)S.poke=Math.max(0,S.poke-dt*1.6);
+  if(S.emoT>0){S.emoT-=dt;if(S.emoT<=0&&!S.asleep){const[e]=mood();S.emotion=e;}}
+  // blink
+  S.nextBlink-=dt;if(S.nextBlink<=0){S.blink=1;S.nextBlink=1.6+Math.random()*3;}
+  if(S.blink>0)S.blink=Math.max(0,S.blink-dt*7);
+  // idle hungry nag
+  if(S.food<22&&!S.asleep&&speechT<=0&&Math.random()<dt*0.4){pop('hungry');say(rand(CANNED.hungry),240);}
+  if(speechT>0){speechT-=dt;if(speechT<=0)speechEl.classList.remove('show');}
+  syncBars();
+  ctx.clearRect(0,0,W,H);
+  drawBackground(clock);
+  drawRobot(clock);
+  drawOverlay(clock);
+  positionSpeech();
+  requestAnimationFrame(frame);
+}
+resize();syncBars();requestAnimationFrame(frame);
+setTimeout(()=>say('Dah-boo! Hallo!',300),700);
+</script>
+</body>
+</html>

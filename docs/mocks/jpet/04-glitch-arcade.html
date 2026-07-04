@@ -1,0 +1,241 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>JPet — Glitch Arcade</title>
+<style>
+  :root{
+    --line:#ff2e97; --line2:#22e0ff; --accent:#faff00; --glow:#ff2e97; --ink:#ffe6f5;
+    --panel:rgba(24,2,20,.6); --good:#22e0ff; --warn:#faff00; --bad:#ff2e97;
+    --font:"Segoe UI",system-ui,sans-serif;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;background:#08000a;color:var(--ink);font-family:var(--font);overflow:hidden}
+  #stage{position:fixed;inset:0;width:100%;height:100%;display:block}
+  .frame{position:fixed;inset:12px;border:3px solid var(--line);border-radius:4px;
+    box-shadow:0 0 30px rgba(255,46,151,.5),0 0 30px rgba(34,224,255,.3) inset;pointer-events:none;z-index:5}
+  .hud{position:fixed;top:24px;left:32px;z-index:6}
+  .name{font-size:28px;font-weight:900;font-style:italic;letter-spacing:1px;
+    color:var(--line2);text-shadow:2px 0 var(--line),-2px 0 #22e0ff,0 0 18px var(--glow)}
+  .mood{font-size:12px;opacity:.9;letter-spacing:3px;text-transform:uppercase;margin-top:2px;color:var(--accent)}
+  .bars{position:fixed;top:24px;right:32px;z-index:6;width:180px}
+  .bar{margin-bottom:9px}
+  .bar label{display:flex;justify-content:space-between;font-size:11px;font-weight:800;letter-spacing:1px;
+    text-transform:uppercase;margin-bottom:3px}
+  .track{height:10px;background:rgba(255,255,255,.08);border:1px solid rgba(255,46,151,.5);overflow:hidden;transform:skewX(-12deg)}
+  .fill{height:100%;transition:width .3s ease,background .3s;box-shadow:0 0 12px currentColor}
+  .controls{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);z-index:6;
+    display:flex;gap:9px;flex-wrap:wrap;justify-content:center}
+  button{font-family:var(--font);font-size:14px;font-weight:900;font-style:italic;letter-spacing:1px;color:var(--ink);
+    background:var(--panel);border:2px solid var(--line);border-radius:4px;padding:10px 15px;cursor:pointer;
+    transform:skewX(-8deg);transition:transform .1s,box-shadow .15s,background .15s}
+  button:hover{background:rgba(255,46,151,.2);box-shadow:0 0 20px rgba(34,224,255,.6);transform:skewX(-8deg) translateY(-2px)}
+  button:active{transform:skewX(-8deg) translateY(1px)}
+  .tag{position:fixed;bottom:22px;left:22px;z-index:6;font-size:11px;font-weight:800;letter-spacing:2px;opacity:.6}
+  .tag a{color:var(--line2);text-decoration:none}
+  .speech{position:fixed;z-index:7;max-width:250px;padding:11px 16px;background:var(--panel);
+    border:2px solid var(--line2);border-radius:4px;color:#fff;font-size:18px;font-weight:900;font-style:italic;
+    letter-spacing:.5px;text-shadow:2px 0 var(--line),-2px 0 var(--line2);box-shadow:0 0 28px rgba(255,46,151,.5);
+    opacity:0;transform:translate(-50%,8px) skewX(-6deg);transition:opacity .18s,transform .18s;pointer-events:none;white-space:nowrap}
+  .speech.show{opacity:1;transform:translate(-50%,0) skewX(-6deg)}
+</style>
+</head>
+<body>
+<canvas id="stage"></canvas>
+<div class="frame"></div>
+<div class="hud"><div class="name" id="petname">Z4P</div><div class="mood" id="moodlbl">vibing</div></div>
+<div class="bars" id="bars"></div>
+<div class="speech" id="speech"></div>
+<div class="controls">
+  <button data-act="feed">🍔 Feed</button>
+  <button data-act="play">🎮 Play</button>
+  <button data-act="pet">✋ Pet</button>
+  <button data-act="sleep">💤 Sleep</button>
+  <button data-act="talk">💬 Talk</button>
+  <button data-act="sound">🔊 Sound</button>
+</div>
+<div class="tag">04 · GLITCH ARCADE &nbsp;·&nbsp; <a href="index.html">← all mockups</a></div>
+<script>
+const cv=document.getElementById('stage'),ctx=cv.getContext('2d');
+let W,H,DPR;
+function resize(){DPR=Math.min(2,devicePixelRatio||1);W=cv.clientWidth;H=cv.clientHeight;
+  cv.width=W*DPR;cv.height=H*DPR;ctx.setTransform(DPR,0,0,DPR,0,0);}
+addEventListener('resize',resize);
+const S={food:78,energy:82,fun:70,love:74,asleep:false,poke:0,blink:0,nextBlink:2,
+  mouseX:.5,mouseY:.4,emotion:'happy',emoT:0,glitch:0};
+const DRIVES=[['food','🍔 Food'],['energy','⚡ Power'],['fun','🎮 Fun'],['love','💗 Love']];
+const barsEl=document.getElementById('bars');
+DRIVES.forEach(([k,lbl])=>{barsEl.insertAdjacentHTML('beforeend',
+  `<div class="bar"><label><span>${lbl}</span><span id="v_${k}"></span></label>
+   <div class="track"><div class="fill" id="f_${k}"></div></div></div>`);});
+function mood(){const m=(S.food+S.energy+S.fun+S.love)/4;
+  if(S.asleep)return['sleepy','afk zzz'];
+  if(S.food<25)return['hungry','FOOD PLZ'];
+  if(m>70)return['happy','vibing'];
+  if(m>45)return['neutral','ok-ish'];
+  return['sad','glitchy mood'];}
+function colFor(v){return v>55?'#22e0ff':v>28?'#faff00':'#ff2e97';}
+function syncBars(){DRIVES.forEach(([k])=>{const v=Math.round(S[k]);
+  document.getElementById('v_'+k).textContent=v;
+  const f=document.getElementById('f_'+k);f.style.width=v+'%';f.style.background=colFor(v);f.style.color=colFor(v);});
+  const[e,l]=mood();S.emotion=(S.poke>0?'excited':e);document.getElementById('moodlbl').textContent=l;}
+const SYL=['dah','boo','bah','kah','mee','wee','doo','loo','nah','tay','kee','boh','dan','nye',
+  'way','loh','toh','day','dee','noo','mah','zap','gli','tch','oo','wah','yee','bzz'];
+const CANNED={feed:['Nom nom!!','Yesss food!','Mee-zap yum!'],play:['WHEEE!!','Play mode!','Boo-glitch!'],
+  pet:['Aww~ <3','Purr-zap','Mee luv oo!'],sleep:['afk… zzz','Nini-zap','Boo… sleep'],
+  hungry:['FOOD PLZ!','Hungee!!','Nom? Nom??'],};
+function phrase(){const n=2+(Math.random()*4|0);let w=[];for(let i=0;i<n;i++)w.push(SYL[Math.random()*SYL.length|0]);
+  let s=w.join('-');return s[0].toUpperCase()+s.slice(1)+(Math.random()<.4?'!':'?');}
+let soundOn=false,actx=null;const OSC='square';
+function babble(base){if(!soundOn)return;try{actx=actx||new(AudioContext||webkitAudioContext)();
+  let t=actx.currentTime;const n=2+(Math.random()*3|0);
+  for(let i=0;i<n;i++){const o=actx.createOscillator(),g=actx.createGain();o.type=OSC;
+    const f=base*(.6+Math.random()*1.0);o.frequency.setValueAtTime(f,t);
+    o.frequency.linearRampToValueAtTime(f*(.6+Math.random()*.9),t+.1);
+    g.gain.setValueAtTime(.0001,t);g.gain.exponentialRampToValueAtTime(.09,t+.015);
+    g.gain.exponentialRampToValueAtTime(.0001,t+.13);o.connect(g).connect(actx.destination);
+    o.start(t);o.stop(t+.15);t+=.12;}}catch(e){}}
+const speechEl=document.getElementById('speech');let speechT=0;
+function say(txt,base=260){speechEl.textContent=txt;speechEl.classList.add('show');speechT=2.6;babble(base);S.glitch=Math.max(S.glitch,.5);}
+function robotHead(){return{x:W*0.5,y:H*0.46+Math.sin(clock*1.7)*6};}
+function positionSpeech(){const h=robotHead();speechEl.style.left=h.x+'px';speechEl.style.top=(h.y-150)+'px';}
+function act(a){
+  if(a==='sound'){soundOn=!soundOn;try{actx=actx||new(AudioContext||webkitAudioContext)();}catch(e){}
+    say(soundOn?'Bzzt! on!':'…mute',240);return;}
+  if(S.asleep&&a!=='sleep')S.asleep=false;
+  if(a==='feed'){S.food=Math.min(100,S.food+26);S.love=Math.min(100,S.love+4);pop('excited');say(rand(CANNED.feed),320);}
+  if(a==='play'){S.fun=Math.min(100,S.fun+24);S.energy=Math.max(0,S.energy-10);pop('excited');say(rand(CANNED.play),350);}
+  if(a==='pet'){S.love=Math.min(100,S.love+22);S.fun=Math.min(100,S.fun+6);pop('happy');say(rand(CANNED.pet),300);}
+  if(a==='sleep'){S.asleep=!S.asleep;if(S.asleep)say(rand(CANNED.sleep),170);else say('Bzzt! back!',300);}
+  if(a==='talk'){pop('excited');say(phrase(),240+Math.random()*180);S.glitch=1;}
+  syncBars();}
+function rand(a){return a[Math.random()*a.length|0];}
+function pop(e){S.emotion=e;S.emoT=1.1;S.poke=.6;S.glitch=Math.max(S.glitch,.7);}
+document.querySelectorAll('button').forEach(b=>b.onclick=()=>act(b.dataset.act));
+cv.addEventListener('pointermove',e=>{S.mouseX=e.clientX/W;S.mouseY=e.clientY/H;});
+cv.addEventListener('pointerdown',e=>{const h=robotHead();const d=Math.hypot(e.clientX-h.x,e.clientY-h.y);
+  if(d<160){if(S.asleep)S.asleep=false;S.poke=1;pop('excited');S.fun=Math.min(100,S.fun+8);S.glitch=1;
+    say(Math.random()<.5?phrase():'Hee-zap!',430);}});
+
+let clock=0;
+function drawBackground(t){
+  ctx.fillStyle='#08000a';ctx.fillRect(0,0,W,H);
+  // bold magenta perspective grid
+  const hz=H*.6;ctx.save();ctx.strokeStyle='rgba(255,46,151,.35)';ctx.lineWidth=1.5;ctx.shadowColor='#ff2e97';ctx.shadowBlur=6;
+  for(let i=-12;i<=12;i++){ctx.beginPath();ctx.moveTo(W/2+i*22,hz);ctx.lineTo(W/2+i*(W*.09),H);ctx.stroke();}
+  for(let i=0;i<12;i++){const p=i/12;const yy=hz+(H-hz)*(p*p);ctx.globalAlpha=1-p*.4;
+    ctx.strokeStyle=i%2?'rgba(34,224,255,.3)':'rgba(255,46,151,.35)';
+    ctx.beginPath();ctx.moveTo(0,yy);ctx.lineTo(W,yy);ctx.stroke();}
+  ctx.restore();
+  // top glow blobs
+  const g=ctx.createRadialGradient(W*.3,H*.2,10,W*.3,H*.2,W*.4);
+  g.addColorStop(0,'rgba(34,224,255,.10)');g.addColorStop(1,'rgba(0,0,0,0)');ctx.fillStyle=g;ctx.fillRect(0,0,W,H);
+  const g2=ctx.createRadialGradient(W*.7,H*.25,10,W*.7,H*.25,W*.4);
+  g2.addColorStop(0,'rgba(255,46,151,.12)');g2.addColorStop(1,'rgba(0,0,0,0)');ctx.fillStyle=g2;ctx.fillRect(0,0,W,H);
+}
+function drawOverlay(t){
+  if(S.glitch>0.02){
+    const n=Math.ceil(S.glitch*5);
+    for(let i=0;i<n;i++){const y=Math.random()*H,h=4+Math.random()*22;
+      const dx=(Math.random()-.5)*40*S.glitch;
+      const slice=ctx.getImageData(0,y*DPR,W*DPR,h*DPR);
+      ctx.putImageData(slice,dx*DPR,y*DPR);
+      ctx.save();ctx.globalAlpha=.25*S.glitch;ctx.fillStyle=Math.random()<.5?'#22e0ff':'#ff2e97';
+      ctx.fillRect(0,y,W,1.5);ctx.restore();}
+  }
+  ctx.save();ctx.globalAlpha=.06;ctx.fillStyle='#fff';for(let y=0;y<H;y+=3)ctx.fillRect(0,y,W,1);ctx.restore();
+}
+let CUR=null;
+function C(def){return CUR||def;}
+const T={line:'#ff2e97',line2:'#22e0ff',accent:'#faff00',glow:'#ff2e97',lw:2.6};
+function rr(x,y,w,h,r){ctx.beginPath();if(ctx.roundRect)ctx.roundRect(x,y,w,h,r);else{
+  ctx.moveTo(x+r,y);ctx.arcTo(x+w,y,x+w,y+h,r);ctx.arcTo(x+w,y+h,x,y+h,r);
+  ctx.arcTo(x,y+h,x,y,r);ctx.arcTo(x,y,x+w,y,r);}ctx.closePath();}
+function robotPass(dx,dy){
+  const bob=Math.sin(clock*1.7)*6, breathe=Math.sin(clock*1.7)*.5;
+  const cx=W/2, cy=H*0.46+bob;
+  const look={x:(S.mouseX-.5)*11,y:(S.mouseY-.5)*8};
+  ctx.save();ctx.translate(cx+dx,cy+dy);
+  ctx.lineWidth=T.lw;ctx.lineJoin='round';ctx.lineCap='round';
+  const glow=(c,b)=>{ctx.shadowColor=CUR||c;ctx.shadowBlur=CUR?4:b;};
+  glow(T.glow,10);ctx.strokeStyle=C(T.line);
+  ctx.globalAlpha=.8;ctx.beginPath();ctx.ellipse(0,150,58,13,0,0,7);ctx.stroke();ctx.globalAlpha=1;
+  // body
+  glow(T.glow,14);ctx.strokeStyle=C(T.line);
+  ctx.beginPath();ctx.moveTo(-48,40);ctx.lineTo(48,40);ctx.lineTo(60,138);ctx.lineTo(-60,138);ctx.closePath();ctx.stroke();
+  // chest bolt
+  const mc=S.emotion==='sad'?'#ff2e97':S.emotion==='hungry'?'#faff00':S.asleep?'#22e0ff':T.line2;
+  glow(mc,16);ctx.strokeStyle=C(mc);
+  ctx.beginPath();ctx.moveTo(-4,62);ctx.lineTo(-16,92);ctx.lineTo(-2,92);ctx.lineTo(-8,116);
+  ctx.lineTo(16,80);ctx.lineTo(2,80);ctx.lineTo(8,62);ctx.closePath();ctx.stroke();
+  ctx.fillStyle=C(mc);ctx.globalAlpha=.2+Math.abs(breathe)*.35;ctx.fill();ctx.globalAlpha=1;
+  // arms
+  glow(T.glow,10);ctx.strokeStyle=C(T.line);const asw=Math.sin(clock*1.7+1)*6;
+  ctx.beginPath();ctx.moveTo(-48,52);ctx.lineTo(-76,84+asw);ctx.lineTo(-72,120+asw);ctx.stroke();
+  ctx.beginPath();ctx.moveTo(48,52);ctx.lineTo(76,84-asw);ctx.lineTo(72,120-asw);ctx.stroke();
+  ctx.beginPath();ctx.arc(-72,120+asw,7,0,7);ctx.stroke();ctx.beginPath();ctx.arc(72,120-asw,7,0,7);ctx.stroke();
+  // neck
+  ctx.beginPath();ctx.moveTo(-14,40);ctx.lineTo(-14,26);ctx.moveTo(14,40);ctx.lineTo(14,26);ctx.stroke();
+  // antenna (lightning bolt tip)
+  const ax=Math.sin(clock*2.3)*8;ctx.beginPath();ctx.moveTo(0,-72);ctx.lineTo(ax,-104);ctx.stroke();
+  glow(T.accent,20);ctx.fillStyle=C(T.accent);ctx.beginPath();ctx.arc(ax,-104,5.5,0,7);ctx.fill();
+  // head
+  glow(T.glow,16);ctx.strokeStyle=C(T.line);rr(-48,-72,96,64,10);ctx.stroke();
+  // face
+  drawFace(look.x,look.y-40);
+  ctx.restore();
+}
+function drawFace(ox,oy){
+  ctx.save();ctx.translate(ox,oy);ctx.shadowColor=CUR||T.line2;ctx.shadowBlur=CUR?4:16;
+  ctx.strokeStyle=C(T.line2);ctx.fillStyle=C(T.line2);ctx.lineWidth=2.6;
+  const blink=S.blink,e=S.emotion,asleep=S.asleep;const ex=19;
+  for(const s of[-1,1]){ctx.save();ctx.translate(s*ex,0);
+    if(asleep||blink>.6||e==='sleepy'){ctx.beginPath();ctx.moveTo(-8,0);ctx.lineTo(8,0);ctx.stroke();}
+    else if(e==='happy'||e==='excited'){ctx.beginPath();ctx.moveTo(-8,-8);ctx.lineTo(8,-8);ctx.lineTo(8,8);ctx.lineTo(-8,8);ctx.closePath();ctx.stroke();
+      ctx.fillRect(-3+(S.mouseX-.5)*4,-3+(S.mouseY-.5)*3,6,6);}
+    else if(e==='hungry'){ctx.strokeRect(-8,-8,16,16);ctx.fillRect(-2,2,4,4);}
+    else{ctx.strokeRect(-8,-8,16,16);ctx.fillRect(-3,-3,6,6);}
+    ctx.restore();}
+  ctx.beginPath();
+  if(asleep){ctx.fillRect(-3,14,6,3);}
+  else if(e==='excited'){ctx.moveTo(-10,12);ctx.lineTo(-4,24);ctx.lineTo(4,24);ctx.lineTo(10,12);ctx.closePath();ctx.stroke();}
+  else if(e==='happy'){ctx.moveTo(-10,13);ctx.quadraticCurveTo(0,23,10,13);ctx.stroke();}
+  else if(e==='sad'||e==='hungry'){ctx.moveTo(-8,19);ctx.quadraticCurveTo(0,12,8,19);ctx.stroke();}
+  else{ctx.moveTo(-8,15);ctx.lineTo(8,15);ctx.stroke();}
+  ctx.restore();
+}
+function drawRobot(){
+  if(S.glitch>0.12){
+    const a=6*S.glitch;
+    ctx.save();ctx.globalCompositeOperation='lighter';
+    CUR='#ff2e5f';robotPass(-a,0);
+    CUR='#22e0ff';robotPass(a,0);
+    ctx.restore();CUR=null;robotPass(0,0);
+  }else{CUR=null;robotPass(0,0);}
+}
+let last=0;
+function frame(ts){
+  const dt=Math.min(.05,(ts-last)/1000||0);last=ts;clock+=dt;
+  const rate=S.asleep?0.15:1;
+  S.food=Math.max(0,S.food-dt*0.9*rate);
+  S.energy=S.asleep?Math.min(100,S.energy+dt*3.2):Math.max(0,S.energy-dt*0.7);
+  S.fun=Math.max(0,S.fun-dt*1.0*rate);
+  S.love=Math.max(0,S.love-dt*0.6*rate);
+  if(S.poke>0)S.poke=Math.max(0,S.poke-dt*1.6);
+  if(S.glitch>0)S.glitch=Math.max(0,S.glitch-dt*1.4);
+  if(Math.random()<dt*0.25)S.glitch=Math.max(S.glitch,.25);// ambient flicker
+  if(S.emoT>0){S.emoT-=dt;if(S.emoT<=0&&!S.asleep){const[e]=mood();S.emotion=e;}}
+  S.nextBlink-=dt;if(S.nextBlink<=0){S.blink=1;S.nextBlink=1.6+Math.random()*3;}
+  if(S.blink>0)S.blink=Math.max(0,S.blink-dt*7);
+  if(S.food<22&&!S.asleep&&speechT<=0&&Math.random()<dt*0.4){pop('hungry');say(rand(CANNED.hungry),240);}
+  if(speechT>0){speechT-=dt;if(speechT<=0)speechEl.classList.remove('show');}
+  syncBars();
+  ctx.clearRect(0,0,W,H);drawBackground(clock);drawRobot();drawOverlay(clock);positionSpeech();
+  requestAnimationFrame(frame);
+}
+resize();syncBars();requestAnimationFrame(frame);
+setTimeout(()=>say('Bzzt-boo! Hallo!',280),700);
+</script>
+</body>
+</html>

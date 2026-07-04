@@ -20,6 +20,8 @@ import type {
   LlmUsage,
   NoteAnalysis,
   NoteOut,
+  PetCommand,
+  PetState,
   Principal,
   ReasoningEffort,
   ReviewItem,
@@ -2672,6 +2674,80 @@ const jcodeExternal: {
 }[] = [];
 let jcodeExternalN = 1;
 
+// --- JPet (the wall pet): one in-memory authoritative state the mock mutates ---
+const mockPet: PetState = {
+  name: "Blink",
+  domain: "general",
+  food: 78,
+  energy: 82,
+  fun: 70,
+  love: 74,
+  mood: "happy",
+  emotion: "happy",
+  speech: null,
+  asleep: false,
+  pos_x: 0,
+  pos_z: 0.2,
+  target_x: 0,
+  target_z: 0.2,
+  facing: 0,
+  action: "idle",
+};
+
+function applyMockPetCommand(command: PetCommand): void {
+  const clamp = (v: number) => Math.max(0, Math.min(100, v));
+  switch (command.action) {
+    case "feed":
+      mockPet.food = clamp(mockPet.food + 26);
+      mockPet.emotion = "excited";
+      mockPet.action = "eat";
+      mockPet.asleep = false;
+      break;
+    case "play":
+      mockPet.fun = clamp(mockPet.fun + 24);
+      mockPet.energy = clamp(mockPet.energy - 10);
+      mockPet.emotion = "excited";
+      mockPet.action = "play";
+      break;
+    case "pet":
+      mockPet.love = clamp(mockPet.love + 22);
+      mockPet.emotion = "happy";
+      mockPet.action = "idle";
+      break;
+    case "poke":
+      mockPet.fun = clamp(mockPet.fun + 8);
+      mockPet.emotion = "excited";
+      break;
+    case "sleep":
+      mockPet.asleep = !mockPet.asleep;
+      mockPet.action = mockPet.asleep ? "sleep" : "idle";
+      break;
+    case "move":
+      mockPet.target_x = command.x ?? mockPet.target_x;
+      mockPet.target_z = command.z ?? mockPet.target_z;
+      mockPet.action = "walk";
+      mockPet.asleep = false;
+      break;
+    case "say": {
+      const babble = ["Hee-hee, hallo!", "Dah-boo! Wee!", "Mee love oo!", "Boop boop!"];
+      mockPet.speech = babble[Math.floor(Math.random() * babble.length)] ?? "Boo!";
+      mockPet.emotion = "excited";
+      mockPet.asleep = false;
+      break;
+    }
+  }
+  const avg = (mockPet.food + mockPet.energy + mockPet.fun + mockPet.love) / 4;
+  mockPet.mood = mockPet.asleep
+    ? "sleepy"
+    : mockPet.food < 25
+      ? "hungry"
+      : avg > 70
+        ? "happy"
+        : avg > 45
+          ? "neutral"
+          : "sad";
+}
+
 export const mockFetch: typeof fetch = async (input, init) => {
   await sleep();
   const url = new URL(String(input instanceof Request ? input.url : input), "http://mock");
@@ -2680,6 +2756,23 @@ export const mockFetch: typeof fetch = async (input, init) => {
 
   if (path === "/api/auth/session") return new Response(null, { status: 204 });
   if (path === "/api/auth/me") return json(PRINCIPAL);
+
+  // --- JPet (the wall pet) ---
+  if (path === "/api/pet" && method === "GET") return json(mockPet);
+  if (path === "/api/pet/command" && method === "POST") {
+    applyMockPetCommand(JSON.parse(String(init?.body ?? "{}")) as PetCommand);
+    return json(mockPet);
+  }
+  if (path === "/api/pet/stream" && method === "GET") {
+    const frame = `data: ${JSON.stringify(mockPet)}\n\n`;
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode(frame));
+        // leave open: a real stream stays subscribed; the caller aborts on unmount
+      },
+    });
+    return new Response(body, { headers: { "Content-Type": "text/event-stream" } });
+  }
 
   // Chat composer capabilities: vision gate + the agent.turn window, so the context
   // meter can seed a fresh chat before the first turn reports live usage.

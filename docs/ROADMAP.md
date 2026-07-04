@@ -208,6 +208,15 @@ The location + family + intake slices shipped; build records are under
   `where_is`/dwell/`save_place` tools. *Deferred:* the L5 dwell segmenter (waits
   on the analytics tier).
 
+- **JPet — the family wall pet** ✅ (`archive/JPET_PLAN.md`) — a Tron/synthwave **3D** wireframe
+  robot the kids feed, send around, and talk to. Two surfaces over one server-authoritative
+  `pet_state`: a WebGL **Wall** and a **phone Control screen**, kept in sync by an SSE fan-out +
+  `POST /pet/command`. `pet.turn` talk brain (text + Web Speech voice), `pet_memory` (it
+  remembers you), autonomous wander; drives off the job queue (second seat); scoped pet + kid
+  principal firewall (never health/finance/location). Migrations 0123–0124. *Deferred:* the idle
+  `pet.thought` daydream, a curated time-of-day environment feed, day/night lighting, and Wall
+  kiosk mode + phone↔wall pairing.
+
 **In progress:** EMR / medical-record import (build plan: `docs/plans/EMR_IMPORT_PLAN.md`) —
 multi-system EMR PDF exports (Epic / OneContent / athena / scanned-OCR), fed as one note with an
 encrypted zip + inline password, normalized in place into cited, health-firewalled `measurement`

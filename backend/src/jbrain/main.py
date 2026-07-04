@@ -73,6 +73,7 @@ from jbrain.api import gmail_settings as gmail_settings_api
 from jbrain.api import image_settings as image_settings_api
 from jbrain.api import lists as lists_api
 from jbrain.api import llm_settings as llm_settings_api
+from jbrain.api import pet as pet_api
 from jbrain.api import settings as settings_api
 from jbrain.api import (
     tasks as tasks_api,
@@ -99,6 +100,9 @@ from jbrain.image_gen.render import ImageRenderService
 from jbrain.intake.repo import SqlIntakeRepo
 from jbrain.intake.sweep import intake_reaper_loop
 from jbrain.jcode import JcodeClient
+from jbrain.jpet.broadcast import PetBroadcaster
+from jbrain.jpet.repo import SqlJpetRepo
+from jbrain.jpet.scheduler import run_jpet_loop
 from jbrain.lists.repo import SqlListsRepo
 from jbrain.llm import build_router
 from jbrain.llm.local_gateway import LocalGatewayClient
@@ -550,6 +554,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         intake_reaper_task = asyncio.create_task(
             intake_reaper_loop(app.state.intake_repo, SYSTEM_CTX)
         )
+        # JPet drives tick: advances the family wall-pet's needs on a clock, in the web
+        # process (pure arithmetic, never the job queue → the pet takes second seat).
+        # The broadcaster fans each tick/command state change out to the Wall + phone
+        # Control screen over /api/pet/stream so both surfaces stay in sync.
+        app.state.jpet_repo = SqlJpetRepo(maker)
+        app.state.pet_broadcaster = PetBroadcaster()
+        jpet_loop_task = asyncio.create_task(
+            run_jpet_loop(
+                maker,
+                app.state.jpet_repo,
+                domain=settings.jpet_domain,
+                name=settings.jpet_name,
+                interval=settings.jpet_tick_seconds,
+                broadcaster=app.state.pet_broadcaster,
+            )
+        )
         # Stopping a service is a synchronous `docker stop` on the supervisor — up to
         # the container's SIGTERM grace (ComfyUI's ~10 s) before it returns — so the
         # default 5 s httpx timeout would spuriously fail a stop that actually succeeds.
@@ -561,6 +581,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             live_task.cancel()
         tasks_loop_task.cancel()
         intake_reaper_task.cancel()
+        jpet_loop_task.cancel()
         # Stop any chat turns still running detached from a (now-gone) SSE response, so
         # shutdown doesn't strand them; each closes via its own CancelledError path. AWAIT
         # their tasks (bounded) before disposing the engine: their cancel-cleanup runs the
@@ -666,6 +687,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(jcode_preview.router)
     app.include_router(external_llm.router, prefix="/api")
     app.include_router(lists_api.router, prefix="/api")
+    app.include_router(pet_api.router, prefix="/api")
     app.include_router(llm_settings_api.router, prefix="/api")
     app.include_router(locations.router, prefix="/api")
     app.include_router(live.router, prefix="/api")

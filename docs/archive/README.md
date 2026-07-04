@@ -55,6 +55,7 @@ its ship evidence.
 | `LOCATION_ASSISTANT_PLAN.md` | Owner-only location assistant tool spine. |
 | `GUIDED_INTAKE_PLAN.md` | Owner-minted intake share links → attributed notes. |
 | `HYGIENE_SWEEPS_PLAN.md` | Core-data maintenance engine actions. |
+| `JPET_PLAN.md` | The family wall pet: server-authoritative `pet_state`, a 3D WebGL Wall + phone Control screen synced over SSE, a `pet.turn` talk brain (text + voice), memory, and autonomous wander (migrations 0123–0124). Residual (idle `pet.thought`, environment feed, day/night, kiosk/pairing) carried to `../ROADMAP.md`. |
 
 ## jcode
 | Item | What it is |

@@ -10,6 +10,7 @@ import { useNoteActions } from "./notes/useNoteActions";
 import { type StreamAttachment, type StreamItem, useNotes } from "./notes/useNotes";
 import { AutomationsScreen } from "./screens/AutomationsScreen";
 import { CalendarScreen } from "./screens/CalendarScreen";
+import { ControlScreen } from "./screens/ControlScreen";
 import { DataScreen } from "./screens/DataScreen";
 import { EntityListScreen } from "./screens/EntityListScreen";
 import { EntityScreen } from "./screens/EntityScreen";
@@ -36,6 +37,7 @@ import { SearchScreen } from "./screens/SearchScreen";
 import { SettingsScreen } from "./screens/SettingsScreen";
 import { TalkScreen } from "./screens/TalkScreen";
 import { TasksScreen } from "./screens/TasksScreen";
+import { WallScreen } from "./screens/WallScreen";
 import { WikiLandingScreen } from "./screens/WikiLandingScreen";
 import { WikiScreen } from "./screens/WikiScreen";
 import { useBackGesture } from "./useBackGesture";
@@ -62,12 +64,17 @@ type Card =
   | "wiki"
   | "image"
   | "intake"
+  | "wall"
+  | "petcontrol"
   | "jcode";
 
 // Automations, Tasks, Image and jcode bring their own full-screen overlay (own back
 // bar + slide-in), so they render outside the shared subscreen TopBar wrapper — hence
 // no entry here. Every Card that uses the wrapper needs a title.
-const SCREEN_TITLES: Record<Exclude<Card, "automations" | "tasks" | "image" | "jcode">, string> = {
+const SCREEN_TITLES: Record<
+  Exclude<Card, "automations" | "tasks" | "image" | "jcode" | "wall" | "petcontrol">,
+  string
+> = {
   ops: "Ops",
   data: "Data",
   settings: "Settings",
@@ -422,6 +429,8 @@ export function App() {
     if (card === "tasks") return setCard(null);
     if (card === "image") return setCard(null);
     if (card === "jcode") return setCard(null);
+    if (card === "wall") return setCard(null);
+    if (card === "petcontrol") return setCard(null);
     if (card !== null) return closeCardToLauncher();
     // Drops the depth immediately; the launcher plays its retreat off `open`.
     if (launcherOpen) return setLauncherOpen(false);
@@ -478,6 +487,8 @@ export function App() {
         card !== "automations" &&
         card !== "tasks" &&
         card !== "image" &&
+        card !== "wall" &&
+        card !== "petcontrol" &&
         card !== "jcode" && (
           <div
             className={`subscreen${cardClosing ? " subscreen-closing" : ""}`}
@@ -565,6 +576,8 @@ export function App() {
       {/* Code mode (jcode) is a self-contained full-screen overlay (its own back
           bar + internal list↔session navigation), like Tasks/Automations. */}
       {card === "jcode" && <JcodeScreen onClose={() => setCard(null)} />}
+      {card === "wall" && <WallScreen onClose={() => setCard(null)} />}
+      {card === "petcontrol" && <ControlScreen onClose={() => setCard(null)} />}
 
       {/* The wiki reader brings its own subscreen + TopBar (like the entity
           page), so it renders outside the shared wrapper. It stacks above the

@@ -55,6 +55,8 @@ TASK_LABELS: dict[str, str] = {
     "wiki.lint.contradiction": "Wiki lint — contradiction",
     "wiki.lint.stale": "Wiki lint — stale claim",
     "triage.classify": "Inbox triage",
+    "pet.turn": "JPet — reply",
+    "pet.thought": "JPet — idle thought",
 }
 
 
