@@ -1,6 +1,6 @@
 # Proposed (not scheduled)
 
-> **Status:** Living · **Last verified:** 2026-07-03
+> **Status:** Living · **Last verified:** 2026-07-04
 
 Forward-looking design specs **dropped in for the record but not on the
 roadmap** — the icebox: ideas worth keeping shaped, kept out of the active-plan
@@ -25,6 +25,14 @@ given a roadmap slot in `../ROADMAP.md`, and promoted out of this folder.
   tool, and a MusicScreen — mirroring the shipped image stack. Backend (Waves M0–M3) +
   frontend (M4), with M0 a blocking on-box host-validation spike. Interactive mock:
   `../mocks/music-gen-live/live-music-tool-card.html`.
+- `JPET_PLAN.md` — JPet, the wall pet: a Tron/synthwave wireframe robot avatar for
+  the box, an LLM companion for the kids (poke, tell, talk) with Sims-style drives
+  (hunger/energy/mood) — **no training, no neural net**. Reuses the LLM adapter (new
+  `pet.turn`/`pet.thought` tasks on the local model, a JPet settings card), scheduler
+  ticks (drives off the single-threaded job queue → always second seat), SSE chat, and
+  the RLS domain firewall (a scoped pet principal — kids never see health/finance/
+  location). Backend safety spine (W0) + Three.js wall (W1) + talk (W2) + memory/idle
+  life (W3) + voice (W4).
 
 _(The jcode plans, `GUIDED_INTAKE_PLAN.md`, and `SUBAGENT_SPAWNING_PLAN.md` were
 promoted out of the icebox and have since shipped — see `../archive/`.)_
