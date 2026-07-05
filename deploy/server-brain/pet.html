@@ -110,9 +110,10 @@ const SYNTH=[-3.4,R*0.42],NKEYS=8,SYNW=4.2,SYNKEY=SYNW/NKEYS;
 const SYNTHPLAY=[SYNTH[0],SYNTH[1]+2.0];
 const SCALE=[261.63,293.66,329.63,349.23,392.0,440.0,493.88,523.25]; // C4 D4 E4 F4 G4 A4 B4 C5
 let keyLit=-1,keyLitT=0;                                    // which key is glowing, and for how long
-// The drum kit and the wall-hung guitar (further play surfaces).
-const DRUMS=[4.6,R*0.5],GUITAR=[R-0.4,2.7];                 // drums on the floor; guitar on the right wall
-let padLit=-1,padLitT=0,strumT=0;                          // drum-pad / guitar flashes
+// The drum kit and the wall-hung guitar (further play surfaces). GUITARPLAY is the floor spot
+// the pet stands on to strum (a step out from the corner it hangs in).
+const DRUMS=[4.6,R*0.5],GUITAR=[R-0.4,2.7],GUITARPLAY=[GUITAR[0]-0.8,-R+1.9];
+let padLit=-1,padLitT=0,strumT=0,strumAt=0;               // drum-pad / guitar flashes; strumAt paces the strums
 // Circadian day factor from the REAL local clock (1 = day, 0 = night, smooth dawn/dusk).
 function dayFactor(){const h=new Date().getHours()+new Date().getMinutes()/60;
  if(h>=7&&h<19)return 1;if(h<5||h>=21)return 0;return h<7?(h-5)/2:(21-h)/2;}
@@ -127,7 +128,9 @@ const P={x:0,z:0,tx:0,tz:0,vx:0,vz:0,facing:0,walk:0,emotion:'happy',asleep:fals
 // `tvProg` — 0 = off, 1..TVPROGS = which channel/cartoon is showing (click to change);
 // `artLevel` — the light dimmer: 0 off → .5 dim → 1 bright (click to cycle its luminosity);
 // `lastLightsOn` edge-tracks the server so the phone `lights` command flips the same switch.
-const TVPROGS=3;let tvProg=1,artLevel=0.5,lastLightsOn=true;
+const TVPROGS=3;let tvProg=1,artLevel=0.5,lastLightsOn=true,switchLitT=0;
+// Flip the dimmer one notch and flash the switch plate, so every path (click/key/space/phone) pops.
+function flipLight(){artLevel=nextLevel(artLevel);switchLitT=0.35;}
 // Locally-animated room object positions (world coords), lerped toward the server's.
 const room={};let lights=1;   // lights: 1 = day, eased toward 0 at night
 let connected=false,lastSpeech=null;
@@ -253,10 +256,13 @@ function synthNote(freq){try{const AC=window.AudioContext||window.webkitAudioCon
   g.gain.setValueAtTime(0,t0);g.gain.linearRampToValueAtTime(g0,t0+.015);
   g.gain.exponentialRampToValueAtTime(.0001,t0+dur);o.connect(g).connect(ctx.destination);o.start(t0);o.stop(t0+dur);}
 }catch(e){}}
-// Play a synth key: light it, sing its note, and send the pet to its play spot to bop.
+// Play a synth key: light it and sing its note NOW (the kid's tap is instant), then send the pet
+// ambling over to the synth to join in — it plinks the song once it arrives (via stepMusic). The
+// old code jammed a 'beat' in place, so the pet air-played across the room; travel fixes that.
 function pressKey(i){if(i<0||i>=NKEYS)return;keyLit=i;keyLitT=0.28;synthNote(SCALE[i]);
- P.emotion='silly';ai.mode='auto';ai.phase='beat';ai.act='play_music';ai.until=performance.now()/1000+beatDur('play_music',0);
- P.tx=SYNTHPLAY[0];P.tz=SYNTHPLAY[1];P.asleep=false;napUntil=0;}
+ P.emotion='silly';P.asleep=false;napUntil=0;
+ ai.mode='auto';ai.phase='travel';ai.act='walk';ai.beat='play_music';ai.last='synth';
+ ai.target=[SYNTHPLAY[0],SYNTHPLAY[1]];ai.deadline=performance.now()/1000+6;song=null;}
 // Kids' songs, as [key-index, beats] over the C-major keys — the pet picks one to plink out.
 const SONGS=[
  // Twinkle Twinkle Little Star
@@ -284,11 +290,24 @@ function drumVoice(kind){try{const AC=window.AudioContext||window.webkitAudioCon
  const bp=ctx.createBiquadFilter();bp.type=kind===3?'highpass':'bandpass';bp.frequency.value=kind===3?7000:kind===2?400:1800;
  const g=ctx.createGain();const dur=kind===3?.05:.13;g.gain.setValueAtTime(kind===3?.18:.24,t0);g.gain.exponentialRampToValueAtTime(.001,t0+dur);
  src.connect(bp).connect(g).connect(ctx.destination);src.start(t0);src.stop(t0+dur);}catch(e){}} // snare/tom/hat
-function drumHit(i){padLit=i;padLitT=0.18;drumVoice(i);P.emotion='excited';
- ai.mode='auto';ai.phase='beat';ai.act='drum';ai.until=performance.now()/1000+beatDur('drum',0);P.tx=DRUMS[0];P.tz=DRUMS[1]+2.0;P.asleep=false;napUntil=0;}
-// Strum the wall guitar: a quick major-chord arpeggio.
+// Hit a drum pad: sound + flash NOW, then the pet walks to the kit and lays down the groove
+// (stepDrums) on arrival — same travel fix as pressKey.
+function drumHit(i){padLit=i;padLitT=0.18;drumVoice(i);P.emotion='excited';P.asleep=false;napUntil=0;
+ ai.mode='auto';ai.phase='travel';ai.act='walk';ai.beat='drum';ai.last='drum';
+ ai.target=[DRUMS[0],DRUMS[1]+2.0];ai.deadline=performance.now()/1000+6;}
+// A plucked, stringy guitar voice (fast attack, quick decay) — distinct from the synth's bell.
+function pluckNote(freq){try{const AC=window.AudioContext||window.webkitAudioContext;if(!AC)return;
+ const ctx=keepAliveCtx||(synthCtx||(synthCtx=new AC()));if(ctx.state==='suspended')ctx.resume().catch(()=>{});
+ const t0=ctx.currentTime,dur=.42,o=ctx.createOscillator(),g=ctx.createGain();o.type='sawtooth';o.frequency.value=freq;
+ g.gain.setValueAtTime(.0001,t0);g.gain.exponentialRampToValueAtTime(.16,t0+.006);
+ g.gain.exponentialRampToValueAtTime(.0001,t0+dur);o.connect(g).connect(ctx.destination);o.start(t0);o.stop(t0+dur);}catch(e){}}
+// Strum the wall guitar: a quick plucked major-chord arpeggio NOW, then the pet ambles to the
+// guitar corner and keeps strumming there (stepGuitar) — like the synth/drums, it actually plays it.
 function strum(){strumT=0.3;const ch=[329.63,415.30,493.88,659.25];
- ch.forEach((f,k)=>setTimeout(()=>synthNote(f),k*45));P.emotion='silly';}
+ ch.forEach((f,k)=>setTimeout(()=>pluckNote(f),k*55));strumAt=performance.now()/1000+1.4;
+ P.emotion='silly';P.asleep=false;napUntil=0;
+ ai.mode='auto';ai.phase='travel';ai.act='walk';ai.beat='strum';ai.last='guitar';
+ ai.target=[GUITARPLAY[0],GUITARPLAY[1]];ai.deadline=performance.now()/1000+6;}
 const soundBtn=document.getElementById('sound');
 async function initSound(){let voices=[];
  try{voices=((await(await fetch('/tts/voices',{cache:'no-store'})).json()).voices)||[];}catch(e){}
@@ -368,8 +387,9 @@ function stepBall(dt){const b=phys.ball;if(!b.init)return;
  // Corner un-stick: a slow ball crept into a corner gets a gentle nudge back toward centre.
  if(spd<0.5&&grounded&&(Math.abs(b.x)>lim-0.7||Math.abs(b.z)>lim-0.7)){b.vx-=b.x*0.05;b.vz-=b.z*0.05;}
  if(spd<0.04&&grounded&&Math.abs(b.vy)<0.05){b.vx=0;b.vz=0;}}
-function kickBall(fromx,fromz,power){const b=phys.ball;let dx=b.x-fromx,dz=b.z-fromz,d=Math.hypot(dx,dz)||1;
- b.vx+=dx/d*power;b.vz+=dz/d*power;b.vy+=4+power*0.35;sfx('jump');} // adds lift → the ball arcs
+function kickBall(fromx,fromz,power){const b=phys.ball;let dx=b.x-fromx,dz=b.z-fromz,d=Math.hypot(dx,dz);
+ if(d<0.3){const a=Math.random()*6.283;dx=Math.cos(a);dz=Math.sin(a);d=1;} // coincident → kick a random way, not straight up
+ b.vx+=dx/d*power;b.vz+=dz/d*power;b.vy=Math.min(b.vy+4+power*0.35,9);sfx('jump');} // capped lift → arcs, never pinned to the roof
 // Solid furniture the ball/blocks can't pass through: [x, z, radius]. Rebuilt each frame
 // from the (lerped) room positions so bounding-box hits track the furniture. `forPet` drops
 // the bed (the pet climbs onto it to sleep) and narrows the synth (it stands close to play).
@@ -391,9 +411,9 @@ function resolveObstacles(e,er,bounce,forPet){for(const[cx,cz,r]of obstacles(for
 // The ball shoves any loose block it rolls into (bounding-box-ish: sphere vs block), and
 // slows a touch — so a kicked ball scatters bricks and knocks the statue's pieces around.
 function ballHitsBlocks(){const b=phys.ball;if(!b.init)return;const br=0.7,kr=BLOCK_S*0.5;
- for(const bl of phys.blocks){if(bl===carried)continue;
+ for(const bl of phys.blocks){if(bl===carried||bl.stacked)continue;  // stacked bricks are checkCollapse's job (a slow
+  // ball must not silently unstack the whole statue at its shared centre — only checkCollapse, speed-gated, does that)
   let dx=bl.x-b.x,dz=bl.z-b.z,d=Math.hypot(dx,dz),min=br+kr;if(d>=min||d<1e-4)continue;
-  if(bl.stacked){bl.stacked=false;}                                 // a struck stacked brick breaks loose
   const nx=dx/d,nz=dz/d,imp=Math.max(2.5,ballSpeed()*0.9);
   bl.vx+=nx*imp;bl.vz+=nz*imp;bl.x=b.x+nx*min;bl.z=b.z+nz*min;      // shove the block out along the hit
   b.vx-=nx*imp*0.35;b.vz-=nz*imp*0.35;sfx('beep');}}
@@ -424,7 +444,7 @@ cv.addEventListener('pointerdown',e=>{
  const k=synthKeyAt(nx,ny);if(k>=0){pressKey(k);return;}    // tap a synth key → it sings
  if(nearPx(e.clientX,e.clientY,[TV[0],2.9,TV[1]+.16],110)){tvProg=(tvProg+1)%(TVPROGS+1);sfx('beep');return;} // click the TV → next channel (0=off)
  const lsw=room.light_switch||objPos('light_switch');
- if(lsw&&nearPx(e.clientX,e.clientY,[lsw[0],3.0,lsw[1]],60)){artLevel=nextLevel(artLevel);sfx('nod');return;} // click the switch → dim/bright/off
+ if(lsw&&nearPx(e.clientX,e.clientY,[lsw[0],3.0,lsw[1]],95)){flipLight();sfx('nod');return;} // click the switch → dim/bright/off (bigger target)
  if(nearPx(e.clientX,e.clientY,[DRUMS[0],1.0,DRUMS[1]],95)){drumHit(Math.floor(Math.random()*4));return;}    // bang the drums
  if(nearPx(e.clientX,e.clientY,[GUITAR[0],GUITAR[1],-R+0.3],80)){strum();return;}                            // strum the guitar
  const p=floorPoint(nx,ny);if(!p)return;
@@ -484,7 +504,7 @@ function petInteract(){
   case'drums':drumHit(Math.floor(Math.random()*4));break;
   case'guitar':strum();break;
   case'tv':tvProg=(tvProg+1)%(TVPROGS+1);sfx('beep');break;
-  case'light':artLevel=nextLevel(artLevel);sfx('nod');break;
+  case'light':flipLight();sfx('nod');break;
   case'statue':knockStatue();break;
  }}
 // Play a robot trick in place for a moment (fart/burp are quick, sing lingers).
@@ -507,13 +527,13 @@ function doKey(tok){const[kind,arg]=tok.split(':');
  if(kind==='action')doAction(arg);
  else if(kind==='drum')drumHit(+arg);
  else if(kind==='color'){colorOverride=arg;P.emotion='silly';}
- else if(kind==='light')artLevel=nextLevel(artLevel);
+ else if(kind==='light')flipLight();
  else if(kind==='tv')tvProg=(tvProg+1)%(TVPROGS+1);
  else if(kind==='ball'){if(phys.ball.init){kickBall(P.x,P.z,14);wantChase=true;}}
  else if(kind==='guitar')strum();
  else if(kind==='statue')knockStatue();
  else if(kind==='wander'){P.asleep=false;napUntil=0;ai.mode='auto';ai.phase='travel';ai.act='walk';ai.beat='look';ai.target=randSpot();ai.deadline=performance.now()/1000+6;}
- else if(kind==='vacuum'){P.asleep=false;napUntil=0;ai.mode='vacuum';ai.hasVac=false;}
+ else if(kind==='vacuum'){P.asleep=false;napUntil=0;dropCarried();ai.mode='vacuum';ai.hasVac=false;} // drop any carried block (no orphan)
  else if(kind==='chase'){if(phys.ball.init){P.asleep=false;napUntil=0;dropCarried();ai.mode='chase';P.emotion='excited';}}
  else if(kind==='go')goPlay(arg==='drum'?'drum':'play_music');}
 
@@ -630,8 +650,9 @@ function nextBehavior(now){
     const b=objPos('bed');ai.target=b?[b[0],b[1]]:randSpot();ai.phase='travel';ai.act='walk';
     ai.deadline=now+7;ai.beat='nap';return;
   }
-  if(Math.random()<0.13){                                  // go watch some TV
-    ai.target=[TV[0],TV[1]+2.5];ai.phase='travel';ai.act='walk';ai.deadline=now+6;ai.beat='sit';ai.last='watch';return;
+  if(Math.random()<0.13){                                  // go watch some TV (turn it on if a kid left it off)
+    if(tvProg===0)tvProg=1;
+    ai.target=[TV[0],TV[1]+2.5];ai.phase='travel';ai.act='walk';ai.deadline=now+6;ai.beat='watch';ai.last='watch';P.emotion='happy';return;
   }
   if(Math.random()<0.13){                                  // gaze out the window (esp. at dusk)
     ai.target=[WINDOW[0],WINDOW[1]+2.5];ai.phase='travel';ai.act='walk';ai.deadline=now+6;ai.beat='look';ai.last='gaze';return;
@@ -643,6 +664,18 @@ function nextBehavior(now){
   if(ai.last!=='drum'&&Math.random()<0.1){                 // stroll to the kit and lay down a beat
     ai.target=[DRUMS[0],DRUMS[1]+2.0];ai.phase='travel';ai.act='walk';ai.deadline=now+6;
     ai.beat='drum';ai.last='drum';return;
+  }
+  if(ai.last!=='guitar'&&Math.random()<0.09){              // stroll to the guitar corner and strum a chord
+    ai.target=[GUITARPLAY[0],GUITARPLAY[1]];ai.phase='travel';ai.act='walk';ai.deadline=now+6;
+    ai.beat='strum';ai.last='guitar';return;
+  }
+  if(ai.last!=='charge'&&live.objects.food_bowl&&Math.random()<0.08){ // trundle to the charge dock (bowl) for a top-up
+    const d=objPos('food_bowl');if(d){ai.target=[d[0],d[1]+1.4];ai.phase='travel';ai.act='walk';ai.deadline=now+6;
+      ai.beat='recharge';ai.last='charge';return;}
+  }
+  if(ai.last!=='flop'&&live.objects.ball_pit&&Math.random()<0.07){    // dive into the ball pit for a flop
+    const bp=objPos('ball_pit');if(bp){ai.target=[bp[0],bp[1]];ai.phase='travel';ai.act='walk';ai.deadline=now+6;
+      ai.beat='flop';ai.last='flop';return;}
   }
   if(ai.last!=='silly'&&Math.random()<0.09){               // a random giggle: a toot, a burp, or a little song
     const pick=Math.random();ai.act=pick<0.4?'fart':pick<0.8?'burp':'sing';
@@ -688,8 +721,11 @@ function stepAutonomy(now){
     const lb=looseBlock();
     if(!lb||buildFull()){P.act='walk';P.tx=VAC[0];P.tz=VAC[1];   // done → park the vacuum
       if(Math.hypot(VAC[0]-P.x,VAC[1]-P.z)<1.0){ai.hasVac=false;ai.mode='auto';ai.phase='beat';ai.act='nod';ai.until=now+0.6;}return;}
-    P.act='walk';P.tx=lb.x;P.tz=lb.z;
-    if(Math.hypot(lb.x-P.x,lb.z-P.z)<1.3){const slot=stackCount();lb.stacked=true;lb.slot=slot;lb.o=curShape[slot];lb.x=BUILD[0];lb.z=BUILD[1];sfx('beep');} // sucked → tidied into the statue
+    const nx=P.x+Math.sin(P.facing)*1.1,nz=P.z+Math.cos(P.facing)*1.1; // the nozzle tip in front of the pet
+    if(Math.hypot(lb.x-P.x,lb.z-P.z)>1.6){P.act='walk';P.tx=lb.x;P.tz=lb.z;} // approach the loose block
+    else{P.act='walk';P.tx=P.x;P.tz=P.z;                          // close: hold and visibly suck it into the nozzle
+      lb.x+=(nx-lb.x)*0.3;lb.z+=(nz-lb.z)*0.3;                    // (position lerp keeps it "settled" for looseBlock())
+      if(Math.hypot(lb.x-nx,lb.z-nz)<0.4){const slot=stackCount();lb.stacked=true;lb.slot=slot;lb.o=curShape[slot];lb.x=BUILD[0];lb.z=BUILD[1];sfx('beep');}} // sucked → tidied into the statue
     return;
   }
   if(ai.mode==='build'){                                   // gather a block, carry it, stack it
@@ -708,8 +744,12 @@ function stepAutonomy(now){
     P.act='walk';P.tx=ai.target[0];P.tz=ai.target[1];
     if(arrived||now>ai.deadline){
       if(ai.beat==='nap'){const b=objPos('bed');if(b){P.x=b[0];P.z=b[1];P.tx=b[0];P.tz=b[1];P.facing=Math.PI/2;} // settle onto the bed
-        napUntil=now+8+Math.random()*8;P.asleep=true;nextPhaseBeat(now,'look',0.5);}
-      else nextPhaseBeat(now,ai.beat,1+Math.random()*2);
+        P.emotion='sleepy';napUntil=now+8+Math.random()*8;P.asleep=true;nextPhaseBeat(now,'look',0.5);}
+      else{                                                  // face the fixture it came to enjoy (no side-on watching)
+        const fp=ai.last==='watch'?TV:ai.last==='gaze'?WINDOW:ai.last==='guitar'?[GUITAR[0],-R+0.3]:null;
+        if(fp)P.facing=Math.atan2(fp[0]-P.x,fp[1]-P.z);
+        nextPhaseBeat(now,ai.beat,1+Math.random()*2);
+      }
     }
   }else{                                                   // beat
     P.act=ai.act;P.tx=P.x;P.tz=P.z;
@@ -721,7 +761,9 @@ function stepAutonomy(now){
 // A beat's duration. Play activities run a long while; other *actions* last ~3× longer than
 // before (the pet lingers in each); the calm "state" beats (look/sit/nap) keep their pace.
 function beatDur(beat,dur){
- if(beat==='play_music'||beat==='jumprope'||beat==='drum')return 10.5+Math.random()*6;
+ if(beat==='play_music'||beat==='jumprope'||beat==='drum'||beat==='strum')return 10.5+Math.random()*6;
+ if(beat==='watch')return 8+Math.random()*6;               // linger in front of the telly
+ if(beat==='recharge'||beat==='flop')return 4+Math.random()*3;
  if(beat==='look'||beat==='sit'||beat==='nap')return dur;
  return dur*3;
 }
@@ -739,11 +781,16 @@ function stepMusic(t){
 let drumAt=0,drumStep=0;
 function stepDrums(t){
  if(P.act!=='drum'||Math.hypot(P.x-DRUMS[0],P.z-DRUMS[1])>2.6){drumStep=0;return;}
- if(t>=drumAt){const s=drumStep%8;                          // 8th-note pattern
-  if(s%2===0)drumVoice(3);                                  // hats on every off-beat
-  if(s===0||s===4)drumVoice(0);                             // kick on 1 and 3
+ if(t>=drumAt){const s=drumStep%8;                          // 8th-note pattern; flash the pad that sounds
+  if(s%2===1){drumVoice(3);padLit=3;padLitT=0.1;}           // hats on the off-beats
+  if(s===0||s===4){drumVoice(0);padLit=0;padLitT=0.12;}     // kick on 1 and 3
   if(s===2||s===6){drumVoice(1);padLit=1;padLitT=0.12;}     // snare on 2 and 4
   drumAt=t+0.2;drumStep++;}}
+// While the pet is at the guitar corner strumming, re-pluck the chord every so often + flash strings.
+function stepGuitar(t){
+ if(P.act!=='strum'||Math.hypot(P.x-GUITARPLAY[0],P.z-GUITARPLAY[1])>2.6)return;
+ if(t>=strumAt){strumT=0.3;const ch=[329.63,415.30,493.88,659.25];
+  ch.forEach((f,k)=>setTimeout(()=>pluckNote(f),k*55));strumAt=t+1.4;}}
 // A wireframe ring at (x,y,z) with radius r; `rot` is 0 (flat), 1 (rotX), 2 (rotZ) — three
 // perpendicular rings make a cheap glowing "ball".
 function ring(x,y,z,r,rot,col,al){let m=M.trans(M.ident(),x,y,z);if(rot===1)m=M.rotX(m,Math.PI/2);else if(rot===2)m=M.rotZ(m,Math.PI/2);
@@ -798,9 +845,15 @@ function drawWindow(t,dim){const x=WINDOW[0],z=WINDOW[1],df=dayFactor();   // sk
  part(M.ident(),x,2.8,z,2.6,2.8,.24,GD,dim);                // frame
  const sky=[.05+.18*df,.06+.32*df,.14+.55*df];             // blue by day, deep at night
  draw(gCubeF,36,gl.TRIANGLES,M.mul(vp,M.scale(M.trans(M.ident(),x,2.8,z+.13),2.2,2.4,.02)),sky,.9);
- ring(x+.6,3.6,z+.15,.42,0,df>.5?GD:[.85,.85,.95],Math.min(1,dim+.2)); // sun by day / moon by night
+ if(df>.5){ring(x+.6,3.6,z+.15,.42,0,GD,Math.min(1,dim+.2));  // the sun, with a ring of rays
+  for(let i=0;i<8;i++){const a=i/8*6.283;part(M.ident(),x+.6+Math.cos(a)*.62,3.6+Math.sin(a)*.62,z+.15,.05,.05,.02,GD,dim);}}
+ else{ring(x+.6,3.6,z+.15,.42,0,[.85,.85,.95],Math.min(1,dim+.2)); // the moon, with a couple of craters
+  ring(x+.5,3.66,z+.16,.09,0,[.7,.7,.82],.8);ring(x+.72,3.5,z+.16,.06,0,[.7,.7,.82],.8);}
  part(M.ident(),x,2.8,z+.16,.08,2.4,.02,GD,dim*.5);part(M.ident(),x,2.8,z+.16,2.2,.08,.02,GD,dim*.5); // mullions
- if(df<.55)for(let i=0;i<7;i++)ring(x-.8+((i*5)%7)*.24,1.9+((i*3)%5)*.36,z+.15,.05,0,[1,1,1],.9);} // stars
+ if(df<.55)for(let i=0;i<7;i++)ring(x-.8+((i*5)%7)*.24,1.9+((i*3)%5)*.36,z+.15,.05,0,[1,1,1],.4+.5*Math.abs(Math.sin(t*2+i*1.3))); // twinkling stars
+ if(df>.5){const bx=x-1.0+((t*0.18)%1)*2.0,by=3.9+Math.sin(t*2)*.12; // a little bird glides past by day
+  part(M.rotZ(M.trans(M.ident(),bx,by,z+.15),.5),0,0,0,.22,.03,.02,[.9,.9,.95],dim);
+  part(M.rotZ(M.trans(M.ident(),bx,by,z+.15),-.5),0,0,0,.22,.03,.02,[.9,.9,.95],dim);}}
 // The playable synth: a stand, a body, and a row of tappable keys. A pressed key glows and
 // the whole thing pulses gently — a clear "tap me" object at a 3–4-year-old's eye height.
 function drawSynth(t,dim){const x=SYNTH[0],z=SYNTH[1],x0=x-SYNW/2;
@@ -852,7 +905,9 @@ function drawObjects(t){
   part(M.ident(),x,y,z,BLOCK_S*0.92,BLOCK_H*0.92,BLOCK_S*0.92,bl.col,bl===carried?1:dim);}
  // Vacuum: parked at its spot, or held out in front of the pet while it's tidying.
  if(ai.hasVac){const vx=P.x+Math.sin(P.facing)*1.0,vz=P.z+Math.cos(P.facing)*1.0;
-  part(M.ident(),vx,.45,vz,.5,.9,.5,CY,1);part(M.ident(),P.x+Math.sin(P.facing)*.55,.95,P.z+Math.cos(P.facing)*.55,.12,.7,.12,MG,1);}
+  part(M.ident(),vx,.45,vz,.5,.9,.5,CY,1);                             // canister body
+  part(M.ident(),P.x+Math.sin(P.facing)*.55,.95,P.z+Math.cos(P.facing)*.55,.12,.7,.12,MG,1); // handle
+  part(M.ident(),P.x+Math.sin(P.facing)*1.35,.16,P.z+Math.cos(P.facing)*1.35,.42,.16,.42,GD,1);} // suction mouth on the floor
  else part(M.ident(),VAC[0],.5,VAC[1],.55,1.0,.55,CY,dim);
  for(const name in live.objects){if(name==='ball')continue;const w=objPos(name);if(!w)continue;
   if(!room[name])room[name]=w.slice();
@@ -861,12 +916,15 @@ function drawObjects(t){
   const[x,z]=room[name];
   if(name==='bed')drawBed(x,z,dim);
   else if(name==='toy_box')drawToybox(x,z,t,dim);
-  else if(name==='food_bowl'){ring(x,.1,z,.42,0,GD,dim);ring(x,.4,z,.6,0,GD,dim*.7);ring(x,.3,z,.3,0,OR,dim*.6);} // widens to the rim (a bowl, not a pot) + a bit of food
+  else if(name==='food_bowl'){const charging=P.act==='recharge'&&Math.hypot(P.x-x,P.z-z)<2.2; // a robot charge-dock
+   ring(x,.1,z,.42,0,GD,dim);ring(x,.4,z,.6,0,GD,dim*.7);              // dish widens to its rim
+   ring(x,.3,z,.42,0,charging?GD:OR,charging?.55+.45*Math.sin(t*9):dim*.6);} // the energy ring pulses while the pet tops up
   else if(name==='ball_pit'){ring(x,.06,z,1.0,0,MG,dim);ring(x,.45,z,1.0,0,MG,dim*.8); // floor + a raised rim
-   for(const b of[[-.4,.25,-.3,CY],[.4,.2,.25,GD],[0,.3,.45,RD],[.45,.22,-.4,BL]])ring(x+b[0],b[1],z+b[2],.22,0,b[3],dim);} // a few balls inside
-  else if(name==='light_switch'){const on=artLevel>0.25,c=artLevel>0.75?GD:on?OR:BL;
-   part(M.ident(),x,3.0,z,.3,.5,.08,c,on?1:dim);                        // wall plate
-   part(M.ident(),x,3.0+(on?.12:-.12),z+.09,.12,.18,.08,c,on?1:dim);}   // the toggle — up when lit, down when off
+   [[-.4,.25,-.3,CY],[.4,.2,.25,GD],[0,.3,.45,RD],[.45,.22,-.4,BL]].forEach((b,i)=>
+    ring(x+b[0],b[1]+Math.abs(Math.sin(t*2.5+i*1.7))*.12,z+b[2],.22,0,b[3],dim));} // balls jostle in place
+  else if(name==='light_switch'){const on=artLevel>0.25,fl=switchLitT>0,c=fl||artLevel>0.75?GD:on?OR:BL,a=fl?1:on?1:dim;
+   part(M.ident(),x,3.0,z,.34,.56,.08,c,a);                            // wall plate (flashes gold on a flip)
+   part(M.ident(),x,3.0+(on?.12:-.12),z+.09,.14,.2,.08,c,a);}          // the toggle — up when lit, down when off
  }
  drawTV(t,dim);drawWindow(t,dim);drawSynth(t,dim);drawDrums(t,dim);drawGuitar(dim); // fixtures
 }
@@ -901,7 +959,11 @@ function robot(t){
  if(act==='fart'){crouch=-.14;wiggle=Math.sin(ph*34)*.09;jumpY=ph<.25?ph*.5:0;} // a lean + a little pop
  if(act==='burp'){nod=-Math.abs(Math.sin(ph*7))*.42;bob=Math.abs(Math.sin(ph*9))*.07;} // head tips back
  if(act==='nod')nod=Math.sin(ph*8)*.28;
- if(act==='hide'||act==='sit')crouch=-.3;
+ if(act==='strum')bob=Math.abs(Math.sin(ph*5))*.08;        // sways while strumming (arms handled below)
+ if(act==='watch')nod=Math.sin(ph*1.6)*.05;                // a gentle engaged head-bob at the telly
+ if(act==='recharge')bob=Math.abs(Math.sin(ph*3))*.05;     // idle hum while docked
+ if(act==='hide'||act==='sit'||act==='watch')crouch=-.3;
+ if(act==='flop')crouch=-.34;                              // flopped down into the ball pit
  // Kid-chosen colour (or rainbow) tints the body/head/limbs; null = default synthwave.
  const pc=petCol(t),body=pc||MG,head=pc||CY,limb=pc||MG;
  const S=1.7;                                              // scale the pet up for the bigger room
@@ -928,6 +990,7 @@ function robot(t){
  let armL=act==='dance'?Math.sin(ph*6)*.5:asw, armR=act==='wave'?-1.9+Math.sin(ph*10)*.4:asw*-1;
  if(holding){armL=-1.35;armR=-1.35;}
  if(act==='drum'){armL=-0.6+Math.sin(ph*14)*.5;armR=-0.6+Math.sin(ph*14+Math.PI)*.5;}
+ if(act==='strum'){armL=-1.2;armR=-0.7+Math.sin(ph*11)*.7;} // left hand frets high, right hand strums
  part(M.rotX(M.trans(m,-.52,y+1.06,0),armL),0,-.22,0,.15,.5,.15,limb);
  part(M.rotX(M.trans(m,.52,y+1.06,0),armR),0,-.22,0,.15,.5,.15,limb);
  // Build the head once in its own tilt frame so the whole face (eyes, mouth, ears, antenna)
@@ -941,6 +1004,9 @@ function robot(t){
  // A bouncing music note floats up beside the head while it sings.
  if(act==='sing'){const nx=P.x+.7+Math.sin(t*3)*.15,ny=2.9+y*S+Math.abs(Math.sin(t*4))*.3;
   part(M.ident(),nx,ny,P.z,.12,.12,.12,GD,1);part(M.ident(),nx+.09,ny+.3,P.z,.05,.4,.05,GD,1);} // note head + stem
+ // Little Z's drift up while it sleeps, so a toddler can read "snoozing", not "fell over".
+ if(P.asleep){const zx=P.x+.55,zb=2.5;for(let i=0;i<3;i++){const zp=(t*0.5+i*0.34)%1,zs=.17-i*.03;
+  part(M.ident(),zx+zp*.45,zb+zp*1.0,P.z,zs,zs,.05,CY,(1-zp)*.85);}}
 }
 // Puff clouds: a little vapour cloud the pet lets off — greeny by the butt on a fart, pale by
 // the head on a burp. Each puff grows, drifts up and fades over ~1.5s; drawn as a cluster of
@@ -965,14 +1031,15 @@ function frame(ts){const dt=Math.min(.05,(ts-last)/1000||0);last=ts;const t=ts/1
  if(gl&&bctx){
   vp=M.mul(M.persp(48*Math.PI/180,W/H,.1,200),M.lookAt([0,9.5,25],[0,2.4,-1],[0,1,0]));
   // The phone `lights` command flips the server flag → step the dimmer one notch.
-  if(live.lights_on!==lastLightsOn){artLevel=nextLevel(artLevel);lastLightsOn=live.lights_on;}
-  // Effective brightness = daylight OR the lamp's level — so the switch genuinely changes the
-  // room's luminosity (three notches) at night, and daylight keeps it lit by day.
-  const wantL=Math.max(dayFactor()*0.9,artLevel);lights+=(wantL-lights)*Math.min(1,dt*0.9);
+  if(live.lights_on!==lastLightsOn){flipLight();lastLightsOn=live.lights_on;}
+  // Effective brightness: the lamp modulates the room even in daylight (dimmer term scaled by
+  // artLevel) so flipping the switch always visibly darkens/brightens — not a daytime no-op.
+  const wantL=Math.max(artLevel,dayFactor()*(0.4+0.6*artLevel));lights+=(wantL-lights)*Math.min(1,dt*0.9);
   stepBall(dt);stepBlocks(dt);checkCollapse();             // ball + blocks physics; ball knocks the statue down
   if(keyLitT>0){keyLitT-=dt;if(keyLitT<=0)keyLit=-1;}       // fade a just-pressed synth key
   if(padLitT>0){padLitT-=dt;if(padLitT<=0)padLit=-1;}       // fade a struck drum pad
   if(strumT>0)strumT-=dt;                                   // fade a guitar strum
+  if(switchLitT>0)switchLitT-=dt;                           // fade the light-switch flip flash
   // ---- Decide who steers the pet: a server command, else its own autonomy ----
   if(scriptRunning()){advancePlayer();ai.mode='script';}
   else{
@@ -983,7 +1050,7 @@ function frame(ts){const dt=Math.min(.05,(ts-last)/1000||0);last=ts;const t=ts/1
   }
   // ---- Time-in-current-action (drives one-shot beat anims), reset whenever it changes ----
   if(P.act!==lastAct){P.stepT=0;lastAct=P.act;if(P.act==='fart'||P.act==='burp')spawnPuff(P.act);}P.stepT+=dt;
-  stepMusic(t);stepDrums(t);                               // play the synth song / drum beat while at each
+  stepMusic(t);stepDrums(t);stepGuitar(t);                 // play the synth song / drum beat / guitar strum while at each
   // ---- Fluid locomotion: damped-spring velocity, eased accel/decel, speed-scaled turn ----
   const dx=P.tx-P.x,dz=P.tz-P.z,d=Math.hypot(dx,dz);
   // Ease the desired speed to zero over the last stride so the pet glides to a stop (no
