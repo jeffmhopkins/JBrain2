@@ -517,15 +517,18 @@ addEventListener('keyup',e=>{const k=e.key.toLowerCase();
 addEventListener('blur',()=>heldArrows.clear());            // lost focus → don't get stuck walking
 function petJump(){P.asleep=false;napUntil=0;P.emotion='excited';sfx('jump');
  ai.mode='auto';ai.phase='beat';ai.act='jump';ai.until=performance.now()/1000+2.1;P.tx=P.x;P.tz=P.z;}
-// Space bar: pick up the nearest loose block and hold it out in front; press again to THROW it
-// the way the pet faces (drive with the arrows to carry it around first). Nothing in reach → a
-// little hop, so space always does something. `manualHold` pauses the builder while the kid holds.
+// Space bar: if the ball's right at the pet's feet, KICK it; otherwise pick up the nearest loose
+// block and hold it out front, and press again to THROW it the way the pet faces (drive with the
+// arrows to carry it first). Nothing in reach → a little hop, so space always does something.
+// `manualHold` pauses the builder while the kid holds a block.
 let manualHold=false;
 function grabOrThrow(){P.asleep=false;napUntil=0;
- if(carried){                                              // already holding one → fling it out ahead
+ if(carried){                                              // already holding a block → fling it out ahead
   const s=Math.sin(P.facing),c=Math.cos(P.facing);
   carried.vx=s*12;carried.vz=c*12;carried.x=P.x+s*0.9;carried.z=P.z+c*0.9;
   carried=null;manualHold=false;if(ai.mode==='build')ai.mode='auto';P.emotion='excited';sfx('jump');return;}
+ if(phys.ball.init&&Math.hypot(phys.ball.x-P.x,phys.ball.z-P.z)<1.8){ // ball in reach → boot it (like a click / the '.' key)
+  kickBall(P.x,P.z,14);wantChase=true;P.emotion='excited';return;}
  if(ai.mode==='build'||ai.mode==='vacuum'){dropCarried();ai.mode='auto';} // stop building — free the hands
  let best=null,bd=1e9;
  for(const bl of phys.blocks){if(bl.stacked||bl===carried)continue;const d=Math.hypot(bl.x-P.x,bl.z-P.z);if(d<bd){bd=d;best=bl;}}
@@ -644,7 +647,11 @@ function advancePlayer(){
  if(player.i<0||player.i>=player.steps.length){scriptActive=false;return;}
  const s=player.steps[player.i];
  let done;
- if(TRAVEL.includes(s.act)){const d=Math.hypot(P.tx-P.x,P.tz-P.z);done=d<0.4||P.stepT>5;}
+ if(s.act==='chase'&&phys.ball.init){                     // the "Kick ball" command: run at the LIVE ball and boot it
+  const bp=ballPos();P.tx=bp[0];P.tz=bp[1];
+  if(Math.hypot(bp[0]-P.x,bp[1]-P.z)<1.2){kickBall(P.x,P.z,12+Math.random()*4);wantChase=true;done=true;} // reached it → kick
+  else done=P.stepT>5;}                                    // give up if it somehow can't get there
+ else if(TRAVEL.includes(s.act)){const d=Math.hypot(P.tx-P.x,P.tz-P.z);done=d<0.4||P.stepT>5;}
  else{const def={dance:6000,spin:4200,jump:2700,wave:3600,wiggle:4200,nod:3600,beep:2100,sing:6000,fart:1400,burp:1400}[s.act]||2400;
   done=P.stepT>=(s.duration_ms||def)/1000;}
  if(done)enterStep(player.i+1);
