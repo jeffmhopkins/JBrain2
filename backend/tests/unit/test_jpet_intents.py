@@ -5,8 +5,15 @@ never needs the LLM to do something), folds colour aliases, and returns None for
 open-ended input (which falls through to the LLM).
 """
 
-from jbrain.jpet.intents import PET_COLORS, canonical_color, classify
+from jbrain.jpet.intents import PET_COLORS, Intent, canonical_color, classify
 from jbrain.jpet.service import BUTTON_ACTIONS
+
+
+def _c(text: str) -> Intent:
+    """Classify and assert a match (narrows `Intent | None` for the assertions)."""
+    intent = classify(text)
+    assert intent is not None, text
+    return intent
 
 
 def test_action_words_match_a_canned_action() -> None:
@@ -53,15 +60,15 @@ def test_every_matched_action_is_a_real_button_script() -> None:
 
 
 def test_colour_words_win_and_fold_aliases() -> None:
-    assert classify("turn red").value == "red"
-    assert classify("make it blue please").value == "blue"
-    assert classify("go rainbow!").value == "rainbow"
+    assert _c("turn red").value == "red"
+    assert _c("make it blue please").value == "blue"
+    assert _c("go rainbow!").value == "rainbow"
     # aliases fold onto a known colour
-    assert classify("be turquoise").value == "cyan"
-    assert classify("i want yellow").value == "gold"
+    assert _c("be turquoise").value == "cyan"
+    assert _c("i want yellow").value == "gold"
     for c in ("red", "blue", "rainbow", "cyan", "gold"):
         assert c in PET_COLORS
-    assert classify("turn purple").kind == "color"
+    assert _c("turn purple").kind == "color"
 
 
 def test_open_ended_falls_through_to_the_llm() -> None:
