@@ -360,8 +360,9 @@ function obstacles(forPet){const o=[];
  if(room.toy_box)o.push([room.toy_box[0],room.toy_box[1],1.2]);
  o.push([SYNTH[0],SYNTH[1],1.2]);                                  // the keyboard is solid
  o.push([DRUMS[0],DRUMS[1],1.2]);                                  // the drum kit is solid
- if(stackCount()>0&&!(forPet&&(ai.mode==='build'||ai.mode==='vacuum')))
-   o.push([BUILD[0],BUILD[1],1.6]);                                // the statue is solid (but the builder may approach)
+ // The statue blocks the PET only (not while it's building) — the ball must reach it to
+ // knock it down (see checkCollapse), so it's deliberately absent from the ball's obstacles.
+ if(stackCount()>0&&forPet&&ai.mode!=='build'&&ai.mode!=='vacuum')o.push([BUILD[0],BUILD[1],1.6]);
  return o;}
 // Push a moving circle (an entity {x,z,vx,vz} of radius er) out of any obstacle it overlaps.
 // `bounce` 0 = just stop against it (the pet slides), >0 = reflect the velocity (the ball).
