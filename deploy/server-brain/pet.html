@@ -450,10 +450,13 @@ const KEYMAP={
 const ARROWS={arrowup:[0,-1],arrowdown:[0,1],arrowleft:[-1,0],arrowright:[1,0]};
 function drivePet(dx,dz){P.asleep=false;napUntil=0;P.emotion='excited';const step=4;
  ai.mode='move';ai.phase='travel';ai.act='walk';ai.until=0;
+ // Manual grace: hold the autonomy engine off for a few seconds after a drive so the pet
+ // stays put where the kid parked it, instead of immediately wandering off on its own.
+ manualUntil=performance.now()/1000+5;
  ai.target=[Math.max(-R,Math.min(R,P.x+dx*step)),Math.max(-R,Math.min(R,P.z+dz*step))];}
 addEventListener('keydown',e=>{
  if(e.repeat||e.metaKey||e.ctrlKey||e.altKey)return;
- if(e.code==='Space'){e.preventDefault();petJump();return;}
+ if(e.code==='Space'){e.preventDefault();petInteract();return;}
  const k=e.key.toLowerCase();
  const ar=ARROWS[k];if(ar){e.preventDefault();drivePet(ar[0],ar[1]);return;}
  const si=SYNROW.indexOf(k);if(si>=0){e.preventDefault();pressKey(si);return;}
@@ -461,6 +464,28 @@ addEventListener('keydown',e=>{
 });
 function petJump(){P.asleep=false;napUntil=0;P.emotion='excited';sfx('jump');
  ai.mode='auto';ai.phase='beat';ai.act='jump';ai.until=performance.now()/1000+2.1;P.tx=P.x;P.tz=P.z;}
+// Space bar: reach out and play with whatever fun thing the pet is standing closest to — the
+// synth, the drums, the wall guitar, the ball, the TV, the light, or a finished statue. With
+// nothing in arm's reach it just hops, so space always does *something*.
+function petInteract(){
+ const cands=[['synth',SYNTH[0],SYNTH[1]],['drums',DRUMS[0],DRUMS[1]],
+   ['guitar',GUITAR[0],-R+0.3],['tv',TV[0],TV[1]]];
+ if(phys.ball.init)cands.push(['ball',phys.ball.x,phys.ball.z]);
+ const lsw=room.light_switch||objPos('light_switch');if(lsw)cands.push(['light',lsw[0],lsw[1]]);
+ if(stackCount()>0)cands.push(['statue',BUILD[0],BUILD[1]]);
+ let best=null,bd=1e9;
+ for(const c of cands){const d=Math.hypot(P.x-c[1],P.z-c[2]);if(d<bd){bd=d;best=c;}}
+ if(!best||bd>4.2){petJump();return;}                      // nothing within reach → just hop
+ P.asleep=false;napUntil=0;
+ switch(best[0]){
+  case'ball':kickBall(P.x,P.z,14);wantChase=true;break;
+  case'synth':pressKey(Math.floor(Math.random()*NKEYS));break;
+  case'drums':drumHit(Math.floor(Math.random()*4));break;
+  case'guitar':strum();break;
+  case'tv':tvProg=(tvProg+1)%(TVPROGS+1);sfx('beep');break;
+  case'light':artLevel=nextLevel(artLevel);sfx('nod');break;
+  case'statue':knockStatue();break;
+ }}
 // Play a robot trick in place for a moment (fart/burp are quick, sing lingers).
 function doAction(name){P.asleep=false;napUntil=0;P.emotion=name==='sleep'?'sleepy':'silly';
  ai.mode='auto';ai.phase='beat';ai.act=name;ai.beat=name;ai.target=[P.x,P.z];
@@ -586,7 +611,7 @@ function advancePlayer(){
    spot) then BEAT (a little expressive thing there). A rare nap. A server command
    interrupts all of this and the pet resumes here when it finishes. */
 const ai={mode:'auto',phase:'beat',act:'idle',beat:'look',target:[0,0],until:0,deadline:0,last:''};
-let napUntil=0;
+let napUntil=0,manualUntil=0;                              // manualUntil: autonomy paused after an arrow drive
 const BEATS=['look','wiggle','nod','spin','sit','look','look'];  // 'look' weighted (calm default)
 function randSpot(){
   const objs=Object.keys(live.objects||{}).filter(n=>n!=='light_switch');
@@ -687,7 +712,9 @@ function stepAutonomy(now){
     }
   }else{                                                   // beat
     P.act=ai.act;P.tx=P.x;P.tz=P.z;
-    if(now>ai.until)nextBehavior(now);
+    // During the manual grace, don't start a new autonomous behaviour — just keep looking
+    // around in place until the grace lapses, then resume the pet's own life.
+    if(now>ai.until){if(now<manualUntil){ai.act='look';ai.until=now+0.5;}else nextBehavior(now);}
   }
 }
 // A beat's duration. Play activities run a long while; other *actions* last ~3× longer than
@@ -904,6 +931,23 @@ function robot(t){
  if(act==='sing'){const nx=P.x+.7+Math.sin(t*3)*.15,ny=2.9+y*S+Math.abs(Math.sin(t*4))*.3;
   part(M.ident(),nx,ny,P.z,.12,.12,.12,GD,1);part(M.ident(),nx+.09,ny+.3,P.z,.05,.4,.05,GD,1);} // note head + stem
 }
+// Puff clouds: a little vapour cloud the pet lets off — greeny by the butt on a fart, pale by
+// the head on a burp. Each puff grows, drifts up and fades over ~1.5s; drawn as a cluster of
+// wireframe rings (same neon language as the ball), so it reads as a puff not a solid blob.
+let puffs=[];
+const FART_COL=[.61,.94,.42],BURP_COL=[.85,.95,1];
+function spawnPuff(kind){const f=P.facing,behind=kind==='fart';
+ const s=behind?-0.6:0.55;                                  // butt is behind the pet; a burp puffs out front of the mouth
+ puffs.push({x:P.x+Math.sin(f)*s,y:behind?0.85:2.95,z:P.z+Math.cos(f)*s,t0:performance.now()/1000,kind});
+ if(puffs.length>16)puffs.shift();}
+function drawPuffs(t){
+ for(let i=puffs.length-1;i>=0;i--){const p=puffs[i],age=t-p.t0,life=1.5;
+  if(age>life){puffs.splice(i,1);continue;}
+  const u=age/life,r=0.16+u*0.5,cy=p.y+u*(p.kind==='fart'?0.9:0.7),al=(1-u)*0.85;
+  const col=p.kind==='fart'?FART_COL:BURP_COL;
+  for(const o of[[0,0,0],[r*0.9,r*0.5,0],[-r*0.8,r*0.4,0],[r*0.1,r*1.0,r*0.3]]){  // an overlapping cluster of blobs
+   ring(p.x+o[0],cy+o[1],p.z+o[2],r,0,col,al);ring(p.x+o[0],cy+o[1],p.z+o[2],r*0.7,1,col,al*0.7);}
+ }}
 const CRUISE=3.6;                                          // stroll speed (units/s) in the bigger room
 let last=0,lastAct='';
 function frame(ts){const dt=Math.min(.05,(ts-last)/1000||0);last=ts;const t=ts/1000;
@@ -923,11 +967,11 @@ function frame(ts){const dt=Math.min(.05,(ts-last)/1000||0);last=ts;const t=ts/1
   else{
    if(ai.mode==='script'){ai.mode='auto';ai.until=0;ai.phase='beat';}
    // attention: notice a fast-moving (or just-flicked) ball and give chase
-   if((wantChase||ballSpeed()>1.4)&&t>kickCool&&napUntil<t&&ai.mode!=='move'&&ai.mode!=='chase'){dropCarried();ai.mode='chase';wantChase=false;P.emotion='excited';}
+   if((wantChase||ballSpeed()>1.4)&&t>kickCool&&napUntil<t&&t>manualUntil&&ai.mode!=='move'&&ai.mode!=='chase'){dropCarried();ai.mode='chase';wantChase=false;P.emotion='excited';}
    stepAutonomy(t);
   }
   // ---- Time-in-current-action (drives one-shot beat anims), reset whenever it changes ----
-  if(P.act!==lastAct){P.stepT=0;lastAct=P.act;}P.stepT+=dt;
+  if(P.act!==lastAct){P.stepT=0;lastAct=P.act;if(P.act==='fart'||P.act==='burp')spawnPuff(P.act);}P.stepT+=dt;
   stepMusic(t);stepDrums(t);                               // play the synth song / drum beat while at each
   // ---- Fluid locomotion: damped-spring velocity, eased accel/decel, speed-scaled turn ----
   const dx=P.tx-P.x,dz=P.tz-P.z,d=Math.hypot(dx,dz);
@@ -947,6 +991,7 @@ function frame(ts){const dt=Math.min(.05,(ts-last)/1000||0);last=ts;const t=ts/1
   draw(gFloor,nFloor,gl.LINES,vp,MG,gA);draw(gBack,nBack,gl.LINES,vp,MG,bA);draw(gSide,nSide,gl.LINES,vp,CY,bA*.5);
   drawObjects(t);
   robot(t);
+  drawPuffs(t);                                            // fart/burp vapour clouds, over the pet
   bctx.clearRect(0,0,bcv.width,bcv.height);bctx.globalAlpha=.9;bctx.filter='blur(7px)';bctx.drawImage(cv,0,0,bcv.width,bcv.height);bctx.filter='none';
  }
  requestAnimationFrame(frame);
