@@ -1337,6 +1337,9 @@ export type PetAction =
   | "lights"
   | "jumprope"
   | "music"
+  | "sing"
+  | "fart"
+  | "burp"
   | "say"
   | "move"
   | "color";

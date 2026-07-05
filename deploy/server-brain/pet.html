@@ -86,7 +86,8 @@ const NAMED={cyan:CY,magenta:MG,gold:GD,orange:OR,blue:BL,red:RD,green:hx('#49f0
  pink:hx('#ff8ad0'),purple:hx('#b06aff'),white:[1,1,1]};
 function hsv(h,s,v){const i=Math.floor(h*6),f=h*6-i,p=v*(1-s),q=v*(1-f*s),u=v*(1-(1-f)*s);
  return[[v,u,p],[q,v,p],[p,v,u],[p,q,v],[u,p,v],[v,p,q]][i%6];}
-function petCol(t){const c=live.color;if(!c)return null;
+let colorOverride=null;                                     // a wall-local recolour (keyboard) wins over the server
+function petCol(t){const c=colorOverride||live.color;if(!c||c==='default')return null;
  if(c==='rainbow')return hsv((t*0.14)%1,0.85,1);return NAMED[c]||null;}
 let W,H,DPR,vp=M.ident();
 function resize(){DPR=Math.min(2,devicePixelRatio||1);W=innerWidth;H=innerHeight;cv.width=W*DPR;cv.height=H*DPR;
@@ -217,21 +218,34 @@ function speakPet(text){if(!soundOn||!petVoice||!text)return;
 const CUES={jump:[440,880],spin:[330,660,990],dance:[523,659,784],wave:[660,520],wiggle:[600,540,600,540],
  nod:[300,300],beep:[880,1200],hide:[520,320],chase:[700,900],pick_up:[500,760],put_down:[760,500],
  come_here:[440,660],sleep:[420,300,220],wake:[330,520,740],go_to:[480]};
-function sfx(action){if(!soundOn||!keepAliveCtx)return;const notes=CUES[action];if(!notes)return;
+// The gross-funny voices a 3-year-old adores: a buzzy raspberry fart (sawtooth sliding down
+// with a heavy vibrato) and a short burp gurgle. Volume-capped like the other cues.
+function rudeSound(kind){if(!keepAliveCtx)return;try{const ctx=keepAliveCtx,t0=ctx.currentTime;
+ const o=ctx.createOscillator(),lfo=ctx.createOscillator(),lg=ctx.createGain(),g=ctx.createGain();
+ o.type='sawtooth';const dur=kind==='fart'?.55:.34;
+ o.frequency.setValueAtTime(kind==='fart'?150:120,t0);
+ o.frequency.exponentialRampToValueAtTime(kind==='fart'?60:70,t0+dur);
+ lfo.frequency.value=kind==='fart'?22:14;lg.gain.value=kind==='fart'?40:18; // the buzzy wobble
+ lfo.connect(lg).connect(o.frequency);
+ g.gain.setValueAtTime(.09,t0);g.gain.exponentialRampToValueAtTime(.001,t0+dur);
+ o.connect(g).connect(ctx.destination);o.start(t0);lfo.start(t0);o.stop(t0+dur);lfo.stop(t0+dur);}catch(e){}}
+function sfx(action){if(!soundOn||!keepAliveCtx)return;
+ if(action==='fart'||action==='burp'){rudeSound(action);return;}
+ const notes=CUES[action];if(!notes)return;
  try{const ctx=keepAliveCtx,t0=ctx.currentTime,dur=.11;
   notes.forEach((f,k)=>{const o=ctx.createOscillator(),g=ctx.createGain();
    o.type=action==='beep'?'square':'triangle';o.frequency.value=f;
    const s=t0+k*dur*.9;g.gain.setValueAtTime(0,s);g.gain.linearRampToValueAtTime(.06,s+.02);
    g.gain.exponentialRampToValueAtTime(.0001,s+dur);o.connect(g).connect(ctx.destination);o.start(s);o.stop(s+dur);});
  }catch(e){}}
-// The playable synth's voice: a warm two-oscillator note with a soft bell envelope, volume
-// capped so it never startles. A click is a user gesture, so we can spin up / resume an
-// AudioContext here even before the sound button unlocks TTS.
+// The playable synth's voice: a warm two-oscillator note with a soft bell envelope, at a
+// good clear volume. A click is a user gesture, so we can spin up / resume an AudioContext
+// here even before the sound button unlocks TTS.
 let synthCtx=null;
 function synthNote(freq){try{const AC=window.AudioContext||window.webkitAudioContext;if(!AC)return;
  const ctx=keepAliveCtx||(synthCtx||(synthCtx=new AC()));if(ctx.state==='suspended')ctx.resume().catch(()=>{});
  const t0=ctx.currentTime,dur=.55;
- for(const[f,g0,ty]of[[freq,.09,'triangle'],[freq*2,.03,'sine']]){
+ for(const[f,g0,ty]of[[freq,.2,'triangle'],[freq*2,.07,'sine']]){                  // louder note
   const o=ctx.createOscillator(),g=ctx.createGain();o.type=ty;o.frequency.value=f;
   g.gain.setValueAtTime(0,t0);g.gain.linearRampToValueAtTime(g0,t0+.015);
   g.gain.exponentialRampToValueAtTime(.0001,t0+dur);o.connect(g).connect(ctx.destination);o.start(t0);o.stop(t0+dur);}
@@ -261,11 +275,11 @@ function drumVoice(kind){try{const AC=window.AudioContext||window.webkitAudioCon
  if(!noiseBuf){noiseBuf=ctx.createBuffer(1,4096,ctx.sampleRate);const d=noiseBuf.getChannelData(0);
   for(let i=0;i<4096;i++)d[i]=Math.random()*2-1;}
  if(kind===0){const o=ctx.createOscillator(),g=ctx.createGain();o.type='sine';o.frequency.setValueAtTime(150,t0);
-  o.frequency.exponentialRampToValueAtTime(50,t0+.12);g.gain.setValueAtTime(.12,t0);g.gain.exponentialRampToValueAtTime(.001,t0+.15);
-  o.connect(g).connect(ctx.destination);o.start(t0);o.stop(t0+.16);return;}                 // kick
+  o.frequency.exponentialRampToValueAtTime(50,t0+.12);g.gain.setValueAtTime(.32,t0);g.gain.exponentialRampToValueAtTime(.001,t0+.15);
+  o.connect(g).connect(ctx.destination);o.start(t0);o.stop(t0+.16);return;}                 // kick (louder)
  const src=ctx.createBufferSource();src.buffer=noiseBuf;src.loop=true;
  const bp=ctx.createBiquadFilter();bp.type=kind===3?'highpass':'bandpass';bp.frequency.value=kind===3?7000:kind===2?400:1800;
- const g=ctx.createGain();const dur=kind===3?.05:.13;g.gain.setValueAtTime(.09,t0);g.gain.exponentialRampToValueAtTime(.001,t0+dur);
+ const g=ctx.createGain();const dur=kind===3?.05:.13;g.gain.setValueAtTime(kind===3?.18:.24,t0);g.gain.exponentialRampToValueAtTime(.001,t0+dur);
  src.connect(bp).connect(g).connect(ctx.destination);src.start(t0);src.stop(t0+dur);}catch(e){}} // snare/tom/hat
 function drumHit(i){padLit=i;padLitT=0.18;drumVoice(i);P.emotion='excited';
  ai.mode='auto';ai.phase='beat';ai.act='drum';ai.until=performance.now()/1000+beatDur('drum',0);P.tx=DRUMS[0];P.tz=DRUMS[1]+2.0;P.asleep=false;napUntil=0;}
@@ -415,16 +429,54 @@ cv.addEventListener('pointerdown',e=>{
  else{dropCarried();ai.mode='move';ai.phase='travel';ai.act='walk';P.emotion='excited'; // send the pet there
   ai.target=[Math.max(-R,Math.min(R,fx)),Math.max(-R,Math.min(R,fz))];ai.until=0;P.asleep=false;}
 });
-// Keyboard play on the box's own machine: Z X C V B N M are the seven synth keys, and the
-// spacebar makes the pet jump.
-const KEYROW='zxcvbnm,';                                    // eight keys → a full octave (C…C)
+/* ---- Keyboard play on the box's own machine: the WHOLE keyboard does something fun (mapped
+   by a research pass). Bottom row Z X C V B N M , = the synth octave; home row A S D F G H J K L
+   = a playable drum kit; top row Q W E R T Y U I O P [ ] = robot tricks; number row = the room
+   + colours; space = jump. Each key is one token dispatched by doKey(). ---- */
+const SYNROW='zxcvbnm,';                                    // bottom row → a full octave (C…C)
+const KEYMAP={
+ '1':'light','2':'tv','3':'color:red','4':'color:orange','5':'color:gold','6':'color:green',
+ '7':'color:cyan','8':'color:blue','9':'color:purple','0':'color:pink','-':'color:rainbow','=':'color:default',
+ q:'action:jumprope',w:'action:wave',e:'action:hide',r:'action:spin',t:'go:drum',y:'action:wiggle',
+ u:'action:jump',i:'action:sing',o:'action:nod',p:'go:synth','[':'action:dance',']':'action:beep',
+ a:'drum:0',s:'drum:1',d:'drum:0',f:'drum:3',g:'drum:2',h:'drum:2',j:'drum:3',k:'drum:1',l:'drum:0',
+ ';':'action:fart',"'":'action:burp','.':'ball','/':'guitar',
+};
 addEventListener('keydown',e=>{
- if(e.repeat)return;
+ if(e.repeat||e.metaKey||e.ctrlKey||e.altKey)return;
  if(e.code==='Space'){e.preventDefault();petJump();return;}
- const i=KEYROW.indexOf(e.key.toLowerCase());if(i>=0){e.preventDefault();pressKey(i);}
+ const k=e.key.toLowerCase();
+ const si=SYNROW.indexOf(k);if(si>=0){e.preventDefault();pressKey(si);return;}
+ const tok=KEYMAP[k];if(tok){e.preventDefault();doKey(tok);}
 });
 function petJump(){P.asleep=false;napUntil=0;P.emotion='excited';sfx('jump');
  ai.mode='auto';ai.phase='beat';ai.act='jump';ai.until=performance.now()/1000+2.1;P.tx=P.x;P.tz=P.z;}
+// Play a robot trick in place for a moment (fart/burp are quick, sing lingers).
+function doAction(name){P.asleep=false;napUntil=0;P.emotion=name==='sleep'?'sleepy':'silly';
+ ai.mode='auto';ai.phase='beat';ai.act=name;ai.beat=name;ai.target=[P.x,P.z];
+ const d=name==='fart'||name==='burp'?1.6:name==='sing'?6:beatDur(name,2);
+ ai.until=performance.now()/1000+d;sfx(name);}
+// Send the pet to play an instrument at its fixed spot (t → drums, p → synth).
+function goPlay(beat){P.asleep=false;napUntil=0;P.emotion='silly';ai.mode='auto';ai.phase='travel';ai.act='walk';
+ ai.beat=beat;ai.deadline=performance.now()/1000+6;
+ if(beat==='drum'){ai.target=[DRUMS[0],DRUMS[1]+2.0];ai.last='drum';}
+ else{ai.target=[SYNTHPLAY[0],SYNTHPLAY[1]];ai.last='synth';song=null;}}
+// Knock the current statue down on demand (same scatter as a ball hit).
+function knockStatue(){let any=false;for(const bl of phys.blocks)if(bl.stacked){bl.stacked=false;any=true;
+  const a=Math.random()*6.283,s=3+Math.random()*3;bl.vx=Math.cos(a)*s;bl.vz=Math.sin(a)*s;
+  bl.x=BUILD[0]+(Math.random()-.5);bl.z=BUILD[1]+(Math.random()-.5);}
+ if(any){sfx('beep');curShape=randShape();pickBuildSpot();}}
+// Dispatch one keymap token to its effect.
+function doKey(tok){const[kind,arg]=tok.split(':');
+ if(kind==='action')doAction(arg);
+ else if(kind==='drum')drumHit(+arg);
+ else if(kind==='color'){colorOverride=arg;P.emotion='silly';}
+ else if(kind==='light')artLevel=nextLevel(artLevel);
+ else if(kind==='tv')tvProg=(tvProg+1)%(TVPROGS+1);
+ else if(kind==='ball'){if(phys.ball.init){kickBall(P.x,P.z,14);wantChase=true;}}
+ else if(kind==='guitar')strum();
+ else if(kind==='statue')knockStatue();
+ else if(kind==='go')goPlay(arg==='drum'?'drum':'play_music');}
 
 /* ---- Block-builder (docs/archive/JPET_V3_PLAN.md W2): the pet constantly gathers little
    glowing blocks and stacks them into an evolving statue in the build zone; a kicked/
@@ -510,7 +562,7 @@ function advancePlayer(){
  const s=player.steps[player.i];
  let done;
  if(TRAVEL.includes(s.act)){const d=Math.hypot(P.tx-P.x,P.tz-P.z);done=d<0.4||P.stepT>5;}
- else{const def={dance:6000,spin:4200,jump:2700,wave:3600,wiggle:4200,nod:3600,beep:2100}[s.act]||2400;
+ else{const def={dance:6000,spin:4200,jump:2700,wave:3600,wiggle:4200,nod:3600,beep:2100,sing:6000,fart:1400,burp:1400}[s.act]||2400;
   done=P.stepT>=(s.duration_ms||def)/1000;}
  if(done)enterStep(player.i+1);
 }
@@ -552,6 +604,11 @@ function nextBehavior(now){
   if(ai.last!=='drum'&&Math.random()<0.1){                 // stroll to the kit and lay down a beat
     ai.target=[DRUMS[0],DRUMS[1]+2.0];ai.phase='travel';ai.act='walk';ai.deadline=now+6;
     ai.beat='drum';ai.last='drum';return;
+  }
+  if(ai.last!=='silly'&&Math.random()<0.09){               // a random giggle: a toot, a burp, or a little song
+    const pick=Math.random();ai.act=pick<0.4?'fart':pick<0.8?'burp':'sing';
+    ai.phase='beat';ai.beat=ai.act;ai.target=[P.x,P.z];ai.until=now+(ai.act==='sing'?6:1.6);
+    ai.last='silly';P.emotion='silly';sfx(ai.act);return;
   }
   if(ai.last!=='rope'&&Math.random()<0.09){                // skip rope in place for a few seconds
     ai.phase='beat';ai.act='jumprope';ai.beat='jumprope';ai.target=[P.x,P.z];
@@ -792,6 +849,9 @@ function robot(t){
  if(act==='jumprope'){ropeTh=ph*7;jumpY=Math.max(0,Math.cos(ropeTh))*.42;} // (direction handled in drawRope)
  if(act==='play_music'){spinAdd=Math.sin(ph*7)*.22;bob=Math.abs(Math.sin(ph*6))*.11;} // bops at the synth
  if(act==='drum')bob=Math.abs(Math.sin(ph*10))*.09;        // bounces on the beat at the kit
+ if(act==='sing'){wiggle=Math.sin(ph*3)*.2;bob=Math.abs(Math.sin(ph*4))*.06;} // sways as it sings
+ if(act==='fart'){crouch=-.14;wiggle=Math.sin(ph*34)*.09;jumpY=ph<.25?ph*.5:0;} // a lean + a little pop
+ if(act==='burp'){nod=-Math.abs(Math.sin(ph*7))*.42;bob=Math.abs(Math.sin(ph*9))*.07;} // head tips back
  if(act==='nod')nod=Math.sin(ph*8)*.28;
  if(act==='hide'||act==='sit')crouch=-.3;
  // Kid-chosen colour (or rainbow) tints the body/head/limbs; null = default synthwave.
@@ -827,6 +887,9 @@ function robot(t){
  const eb=P.asleep||P.blink>.6?.02:.13;part(m,-.16,y+1.6,.29,.13,eb,.05,GD);part(m,.16,y+1.6,.29,.13,eb,.05,GD);
  const mw=P.emotion==='excited'?.3:P.emotion==='silly'?.28:P.emotion==='happy'?.24:P.emotion==='scared'?.14:.2;
  part(m,0,y+1.44,.29,mw,.05,.04,GD);part(m,0,y+1.9,0,.03,.22,.03,MG);part(m,0,y+2.04,0,.09,.09,.09,GD);
+ // A bouncing music note floats up beside the head while it sings.
+ if(act==='sing'){const nx=P.x+.7+Math.sin(t*3)*.15,ny=2.9+y*S+Math.abs(Math.sin(t*4))*.3;
+  part(M.ident(),nx,ny,P.z,.12,.12,.12,GD,1);part(M.ident(),nx+.09,ny+.3,P.z,.05,.4,.05,GD,1);} // note head + stem
 }
 const CRUISE=3.6;                                          // stroll speed (units/s) in the bigger room
 let last=0,lastAct='';

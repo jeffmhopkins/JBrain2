@@ -35,6 +35,9 @@ const PLAY: { action: PetCommand["action"]; ico: string; label: string }[] = [
   { action: "spin", ico: "🌀", label: "Spin" },
   { action: "jumprope", ico: "🤸", label: "Jump rope" },
   { action: "music", ico: "🎹", label: "Play music" },
+  { action: "sing", ico: "🎤", label: "Sing" },
+  { action: "fart", ico: "💨", label: "Toot!" },
+  { action: "burp", ico: "🫧", label: "Burp!" },
   { action: "beep", ico: "🔊", label: "Silly sound" },
 ];
 
@@ -165,6 +168,18 @@ export function ControlScreen({ onClose, deps = defaultDeps }: ControlScreenProp
         </button>
       </div>
 
+      {sttAvailable() ? (
+        <button
+          type="button"
+          className={`pctl-michero${listening ? " on" : ""}`}
+          onClick={listen}
+          aria-label="Talk to the pet by voice"
+        >
+          <span className="pctl-michero-ico">🎤</span>
+          <span className="pctl-michero-label">{listening ? "Listening…" : `Talk to ${name}!`}</span>
+        </button>
+      ) : null}
+
       <div className="pctl-card">
         <h3>Let's play!</h3>
         {pet?.speech ? <div className="pctl-speech">💬 {pet.speech}</div> : null}
@@ -213,18 +228,8 @@ export function ControlScreen({ onClose, deps = defaultDeps }: ControlScreenProp
       </div>
 
       <div className="pctl-card">
-        <h3>Talk to {name}</h3>
+        <h3>Or type to {name}</h3>
         <div className="pctl-talk">
-          {sttAvailable() ? (
-            <button
-              type="button"
-              className={`pctl-mic${listening ? " on" : ""}`}
-              onClick={listen}
-              aria-label="Talk to the pet by voice"
-            >
-              🎤
-            </button>
-          ) : null}
           <input
             value={text}
             onChange={(e) => setText(e.target.value)}

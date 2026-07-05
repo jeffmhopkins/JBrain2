@@ -83,6 +83,52 @@
   padding: 12px;
   margin-bottom: 12px;
 }
+/* The hero push-to-talk mic — the first, biggest target on the screen. Full-width so a
+   3–4-year-old can't miss it; pulses while listening. */
+.pctl-michero {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 84px;
+  margin-bottom: 12px;
+  padding: 14px;
+  border-radius: 20px;
+  border: 2px solid #3bf0ff;
+  background: linear-gradient(180deg, rgba(59, 240, 255, 0.28), rgba(59, 240, 255, 0.12));
+  color: #eafcff;
+  font-family: inherit;
+  font-size: 20px;
+  font-weight: 800;
+  letter-spacing: 0.4px;
+  cursor: pointer;
+  touch-action: none;
+  -webkit-tap-highlight-color: transparent;
+  box-shadow: 0 0 20px rgba(59, 240, 255, 0.35);
+  transition: transform 0.06s ease, box-shadow 0.15s ease;
+}
+.pctl-michero-ico {
+  font-size: 40px;
+  line-height: 1;
+}
+.pctl-michero:active {
+  transform: scale(0.97);
+}
+.pctl-michero.on {
+  border-color: #ff4fd8;
+  background: linear-gradient(180deg, rgba(255, 79, 216, 0.34), rgba(255, 79, 216, 0.16));
+  animation: pctl-mic-pulse 1s ease-in-out infinite;
+}
+@keyframes pctl-mic-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 18px rgba(255, 79, 216, 0.4);
+  }
+  50% {
+    box-shadow: 0 0 34px rgba(255, 79, 216, 0.85);
+  }
+}
 .pctl-card h3 {
   margin: 0 0 9px;
   font-size: 11px;
