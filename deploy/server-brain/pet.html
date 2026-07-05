@@ -282,18 +282,30 @@ cv.addEventListener('pointerdown',e=>{
    glowing blocks and stacks them into an evolving statue in the build zone; a kicked/
    rolling ball that hits the statue knocks it down and the blocks scatter — then the pet
    tidies up and rebuilds. Cheap floor-plane physics, no rigid-body engine. ---- */
-const BUILD=[-R*0.5,R*0.45],BLOCK_S=0.32,BLOCK_H=0.32,NBLOCKS=11;
+const BUILD=[-R*0.5,R*0.4],BLOCK_S=0.5,BLOCK_H=0.5,NBLOCKS=24;
 const BPAL=[CY,MG,GD,OR,BL,RD];                             // each block keeps its own fun colour
-// Statue shapes — local [dx, dy, dz] slots (in block units) the pet stacks into; a fresh
-// one is picked each build so the statue is a different fun shape every time.
+// Statue shapes — local [dx, dy, dz] slots (in block units, 3D). Big, detailed multi-layer
+// shapes so the statue is a real little monument; a fresh one is picked each build.
 const SHAPES=[
- [[0,0,0],[0,1,0],[0,2,0],[0,3,0],[0,4,0]],                          // tower
- [[-1,0,0],[0,0,0],[1,0,0],[-.5,1,0],[.5,1,0],[0,2,0]],             // pyramid
- [[0,0,0],[1,0,0],[1,1,0],[2,0,0],[2,1,0],[2,2,0]],                 // staircase
- [[-1,0,0],[0,0,0],[1,0,0],[-1,1,0],[0,1,0],[1,1,0]],               // wall
- [[0,0,0],[-1,1,0],[0,1,0],[1,1,0],[0,2,0]],                        // plus
- [[-1,0,0],[1,0,0],[-1,1,0],[1,1,0],[0,2,0]],                       // arch
- [[0,0,0],[1,0,0],[0,0,1],[1,0,1],[0,1,0],[1,1,1]],                 // little castle
+ // grand stepped pyramid: 4×4 base → 2×2 → 1  (21 blocks)
+ [[-1.5,0,-1.5],[-.5,0,-1.5],[.5,0,-1.5],[1.5,0,-1.5],[-1.5,0,-.5],[-.5,0,-.5],[.5,0,-.5],[1.5,0,-.5],
+  [-1.5,0,.5],[-.5,0,.5],[.5,0,.5],[1.5,0,.5],[-1.5,0,1.5],[-.5,0,1.5],[.5,0,1.5],[1.5,0,1.5],
+  [-.5,1,-.5],[.5,1,-.5],[-.5,1,.5],[.5,1,.5],[0,2,0]],
+ // castle — four 3-tall corner turrets + a gate wall  (20)
+ [[-1.5,0,-1.5],[-1.5,1,-1.5],[-1.5,2,-1.5],[1.5,0,-1.5],[1.5,1,-1.5],[1.5,2,-1.5],
+  [-1.5,0,1.5],[-1.5,1,1.5],[-1.5,2,1.5],[1.5,0,1.5],[1.5,1,1.5],[1.5,2,1.5],
+  [-.5,0,-1.5],[.5,0,-1.5],[-.5,0,1.5],[.5,0,1.5],[-1.5,0,-.5],[-1.5,0,.5],[1.5,0,-.5],[1.5,0,.5]],
+ // tall tower on a 3×3 base  (17)
+ [[-1,0,-1],[0,0,-1],[1,0,-1],[-1,0,0],[0,0,0],[1,0,0],[-1,0,1],[0,0,1],[1,0,1],
+  [0,1,0],[0,2,0],[0,3,0],[0,4,0],[0,5,0],[-.5,5,0],[.5,5,0],[0,6,0]],
+ // gateway arch  (14)
+ [[-1.5,0,0],[-1.5,1,0],[-1.5,2,0],[-1.5,3,0],[1.5,0,0],[1.5,1,0],[1.5,2,0],[1.5,3,0],
+  [-1,4,0],[-.5,4,0],[0,4,0],[.5,4,0],[1,4,0],[0,5,0]],
+ // grand staircase  (15)
+ [[0,0,0],[1,0,0],[1,1,0],[2,0,0],[2,1,0],[2,2,0],[3,0,0],[3,1,0],[3,2,0],[3,3,0],
+  [4,0,0],[4,1,0],[4,2,0],[4,3,0],[4,4,0]],
+ // rocket — tall column + a fin ring + nose  (13)
+ [[0,0,0],[0,1,0],[0,2,0],[0,3,0],[0,4,0],[0,5,0],[0,6,0],[-1,0,0],[1,0,0],[0,0,-1],[0,0,1],[0,7,0],[0,8,0]],
 ];
 let carried=null,curShape=SHAPES[0];
 function randShape(){return SHAPES[Math.floor(Math.random()*SHAPES.length)];}
