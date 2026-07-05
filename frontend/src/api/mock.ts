@@ -2829,7 +2829,10 @@ function applyMockPetCommand(command: PetCommand): void {
     const chat: [string[], string][] = [
       [["how are you", "how do you feel"], "Sooo happy and wiggly, thank you! How are YOU?"],
       [["love you", "love oo"], "I love oo too! Squishy robot hug! Mwah!"],
-      [["joke", "knock knock", "funny"], "Why did the robot boogie? To shake its bolts off! Hee-hee!"],
+      [
+        ["joke", "knock knock", "funny"],
+        "Why did the robot boogie? To shake its bolts off! Hee-hee!",
+      ],
       [["your name", "who are you", "what are you"], "I'm your silly robot buddy! Beep-boop-beep!"],
       [["thank you", "thanks"], "You're welcome, best friend!"],
       [["what are you doing", "whatcha doing"], "Playing playing playing! Wanna play?"],

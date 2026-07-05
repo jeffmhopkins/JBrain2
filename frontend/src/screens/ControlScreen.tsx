@@ -176,7 +176,9 @@ export function ControlScreen({ onClose, deps = defaultDeps }: ControlScreenProp
           aria-label="Talk to the pet by voice"
         >
           <span className="pctl-michero-ico">🎤</span>
-          <span className="pctl-michero-label">{listening ? "Listening…" : `Talk to ${name}!`}</span>
+          <span className="pctl-michero-label">
+            {listening ? "Listening…" : `Talk to ${name}!`}
+          </span>
         </button>
       ) : null}
 
