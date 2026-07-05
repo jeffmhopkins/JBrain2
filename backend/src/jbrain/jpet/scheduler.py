@@ -1,4 +1,4 @@
-"""The JPet ensure loop (docs/plans/JPET_V3_PLAN.md W1).
+"""The JPet ensure loop (docs/archive/JPET_V3_PLAN.md W1).
 
 v3 moved the pet's continuous life onto the wall (a 60fps client sim). The server no
 longer drives behaviour — this loop only makes sure the durable pet row EXISTS (so a

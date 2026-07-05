@@ -1,5 +1,5 @@
 """JPet play model — the command vocabulary + the pure script/room math
-(docs/plans/JPET_V3_PLAN.md).
+(docs/archive/JPET_V3_PLAN.md).
 
 v3 deleted the drive meters (food/energy/fun/love): a needs-free "just alive and playful"
 pet is the design (validated — PF.Magic's Petz exposed no meters and made mood readable

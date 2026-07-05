@@ -1,6 +1,6 @@
 # JBrain2 — Roadmap
 
-> **Status:** Living · **Last verified:** 2026-07-03
+> **Status:** Living · **Last verified:** 2026-07-05
 
 Each phase ends with something used daily. Phases 1–4 make it a daily phone
 companion; 5–6 add the self-organizing wiki; 7 extends to family and devices.
@@ -208,7 +208,8 @@ The location + family + intake slices shipped; build records are under
   `where_is`/dwell/`save_place` tools. *Deferred:* the L5 dwell segmenter (waits
   on the analytics tier).
 
-- **JPet — the family wall play-pet** ✅ (`archive/JPET_PLAN.md` v1, `archive/JPET_V2_PLAN.md` v2)
+- **JPet — the family wall play-pet** ✅ (`archive/JPET_PLAN.md` v1, `archive/JPET_V2_PLAN.md` v2,
+  `archive/JPET_V3_PLAN.md` v3)
   — a Tron/synthwave **3D** wireframe robot the kids make *do things* and talk to. One
   server-authoritative `pet_state`, two surfaces: the **phone Control** screen in the PWA (big kid
   play-buttons, push-to-talk, a grown-ups room-map) drives it via `POST /api/pet/command`, and the
@@ -221,15 +222,18 @@ The location + family + intake slices shipped; build records are under
   bowl/ball-pit/light-switch) with object-targeted actions + carry; per-action WebAudio **sound**
   cues + piper speech + **day/night** lighting; happy meters that never decay; capped ambient life.
   `pet_memory` (it remembers you); play off the job queue (second seat); scoped pet + kid principal
-  firewall (never health/finance/location). Migrations 0123–0125. **v3 in progress**
-  (`plans/JPET_V3_PLAN.md`): the wall becomes the pet's continuous real-time brain. **W1 shipped**
+  firewall (never health/finance/location). Migrations 0123–0125. **v3 shipped**
+  (`archive/JPET_V3_PLAN.md`): the wall became the pet's continuous real-time brain. **W1**
   (migration 0126) — an autonomy engine so it's *constantly, fluidly* alive on its own (constrained-
   randomness behaviour + damped-spring motion + always-on idle micro-motion), the drive meters
   **ripped out** (mood reads from behaviour), **solid-wireframe** rendering, and a **2×** room.
-  **W2 shipped** — the living, interactive world: **ball physics** + **mouse click-to-play**, the
+  **W2** — the living, interactive world: **ball physics** + **mouse click-to-play**, the
   **block-builder** (small coloured solid bricks → big varied statues, knocked down by the ball +
   rebuilt), **detailed furniture** + **TV** + **window**, **circadian** day/night (sleepy at night),
-  and a **vacuum** tool. W3 (reliable hybrid talk→action, jump-rope/synth, colour) open.
+  and a **vacuum** tool. **W3** — reliable **hybrid talk→action** router (keyword-first, LLM never
+  500s), **colour-on-command** (rainbow cycling), and two activities: a **jump rope** and a
+  **playable synth** (clickable pentatonic keys, WebAudio, the pet plays it), plus the phone
+  Control colour palette + activity buttons (migration 0127).
 
 **In progress:** EMR / medical-record import (build plan: `docs/plans/EMR_IMPORT_PLAN.md`) —
 multi-system EMR PDF exports (Epic / OneContent / athena / scanned-OCR), fed as one note with an

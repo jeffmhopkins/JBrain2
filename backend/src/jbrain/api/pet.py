@@ -1,4 +1,4 @@
-"""JPet HTTP surface (docs/plans/JPET_V3_PLAN.md) — the realtime backbone both
+"""JPet HTTP surface (docs/archive/JPET_V3_PLAN.md) — the realtime backbone both
 surfaces build on.
 
 - `GET /pet` — the current authoritative state (creating the pet on first read).
@@ -183,7 +183,7 @@ async def send_command(request: Request, principal: PrincipalDep, body: CommandI
 async def _say(
     request: Request, ctx: SessionContext, domain: str, state: PetStateInfo, text: str
 ) -> PetStateInfo | None:
-    """The hybrid talk→action router (docs/plans/JPET_V3_PLAN.md W3). A fast keyword
+    """The hybrid talk→action router (docs/archive/JPET_V3_PLAN.md W3). A fast keyword
     classifier runs FIRST — "dance!", "chase the ball", "turn red" act immediately with no
     LLM. Only open-ended input reaches the LLM, wrapped so a slow/unconfigured/failed model
     NEVER 500s: it degrades to a friendly wiggle. So talking always does *something*."""

@@ -31,7 +31,7 @@ the display stays DB-free and the pet is never exposed publicly. Until the api i
 the ensure loop has created the pet) the wall shows *"waiting for the pet…"* and retries.
 On a box without the api, the neural wall is unaffected — only `/pet` needs it.
 
-**The wall runs the pet's brain (v3, `docs/plans/JPET_V3_PLAN.md`).** `pet.html` is a
+**The wall runs the pet's brain (v3, `docs/archive/JPET_V3_PLAN.md`).** `pet.html` is a
 continuous 60fps simulation: an **autonomy engine** keeps the pet fluidly doing things on
 its own — strolling between the room's spots, looking around, little wiggles/spins/nods,
 the odd nap — chosen by constrained randomness so it never repeats and never stands idle.

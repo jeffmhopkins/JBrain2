@@ -1,4 +1,4 @@
-"""Fast, LLM-free intent classifier for the pet's talk box (docs/plans/JPET_V3_PLAN.md W3).
+"""Fast, LLM-free intent classifier for the pet's talk box (docs/archive/JPET_V3_PLAN.md W3).
 
 The hybrid talk→action router: this keyword/rule classifier runs FIRST on a child's
 message so simple requests ("dance!", "chase the ball", "turn red") always produce a

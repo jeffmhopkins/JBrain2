@@ -1,6 +1,6 @@
 # JBrain2 — JPet v3: a pet that's genuinely alive (autonomy engine on the wall)
 
-> **Status:** In progress · **Last verified:** 2026-07-05 · **Waves:** W1✅ W2✅ W3◻️
+> **Status:** Shipped · **Last verified:** 2026-07-05 · **Waves:** W1✅ W2✅ W3✅
 
 **W1 shipped** (migration 0126): the engine reboot — the wall runs the pet's continuous
 autonomous life (constrained-randomness behaviour selection, damped-spring fluid motion,
@@ -14,8 +14,18 @@ varied **statues** — pyramid/castle/tower/arch/staircase/rocket — a new shap
 a rolling ball knocks the statue down and it rebuilds); **detailed furniture** (bed/toy box/
 food bowl) + a **TV** (flickering screen the pet watches) + a **window** (a day/night sky it
 gazes out of); **circadian** day/night from the real clock (dim + moon/stars + sleepy at
-night); and a **vacuum** tool the pet uses to tidy loose blocks. W3 (reliable talk + activities
-+ colour) follows.
+night); and a **vacuum** tool the pet uses to tidy loose blocks.
+
+**W3 shipped** — reliable talk + the expressive layer: a **hybrid talk→action router**
+(a fast keyword/rule classifier in `jpet/intents.py` runs first — "dance!", "chase the
+ball", "turn red" act with no LLM; only open-ended input reaches the LLM, wrapped so a
+slow/failed model degrades to a friendly wiggle instead of a 500 — this is the fix for
+"talk does nothing"); **colour change** on command (a `color` column, a palette action,
+and colour words recognised inside `say`; the wall recolours the robot, rainbow cycling);
+and two **activities** — a **jump rope** (a real rope arc swings around the pet as it hops)
+and a **playable synth** (a keyboard fixture with mouse-clickable pentatonic keys, WebAudio
+tones, and the pet playing it — on command and on its own). The phone Control screen gains
+the colour palette + activity buttons.
 
 The v3 leap: JPet stops being a server-driven puppet and becomes a **living little
 creature** that potters around its room *all the time*, on its own, fluidly — and does
@@ -144,7 +154,7 @@ on durable state). Prime cause-and-effect delight.
 |---|---|---|
 | **W1 — Engine reboot** | Move the sim to the wall: continuous utility-AI autonomy (constrained randomness, continuous re-eval, parallel micro-behaviours); damped-spring fluid motion + always-on idle layer; **rip out meters** (migration drops the drive columns; server → durable state + command inbox; delete the autonomous tick); **solid-wireframe** rendering; **2× zoned room**. | Fixes infrequent/steppy, meters-gone, see-through, bigger room — the core "alive" feel. |
 | **W2 — Living world** | Smart/behaviour objects; **mouse click-to-play** + attention/surprise; self-moving items; **ball physics** (kick/roll/bounce); **blocks + build loop + statue collapse** physics; **detailed furniture**; **vacuum**; **TV**; **window**; **circadian** day/night. | The physics playground + the room that lives on its own. |
-| **W3 — Play & expression** | **Hybrid talk→action router** + keyword fallback (fixes the talk bug); activities (**jump rope**, **synth** with playable keys, watch TV); **colour change**; phone Control rebuild (no meters, activity buttons, colour palette, push-to-talk). | Reliable talk + the expressive/creative layer. |
+| **W3 — Play & expression** ✅ | **Hybrid talk→action router** + keyword fallback (fixes the talk bug); activities (**jump rope**, **synth** with playable keys, watch TV); **colour change**; phone Control rebuild (no meters, activity buttons, colour palette, push-to-talk). | Reliable talk + the expressive/creative layer. |
 
 ## Non-negotiables (unchanged from `CLAUDE.md`)
 

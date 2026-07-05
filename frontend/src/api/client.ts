@@ -1283,7 +1283,7 @@ export interface WikiLandingOut {
   groups: WikiTypeGroup[];
 }
 
-// ----- JPet: the family wall pet (docs/proposed/JPET_V3_PLAN.md) -----
+// ----- JPet: the family wall pet (docs/archive/JPET_V3_PLAN.md) -----
 /** One step of the pet's action script (wire mirror of the backend `Step`). */
 export interface PetStep {
   action: string;
