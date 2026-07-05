@@ -91,6 +91,12 @@ const speechEl=document.getElementById('speech');
 // backend LOCATIONS so a `destination` step resolves to the same place.
 const LOC={corner_ne:[.85,-.85],corner_nw:[-.85,-.85],corner_se:[.85,.85],corner_sw:[-.85,.85],
   center:[0,0],near_child:[0,.82]};
+// Wall-mounted fixtures (world coords on the back wall) the pet can watch / gaze at.
+const TV=[4.6,-R+0.5],WINDOW=[-5.6,-R+0.4];
+const VAC=[R-2.5,R-2.5];                                    // the vacuum's parking spot
+// Circadian day factor from the REAL local clock (1 = day, 0 = night, smooth dawn/dusk).
+function dayFactor(){const h=new Date().getHours()+new Date().getMinutes()/60;
+ if(h>=7&&h<19)return 1;if(h<5||h>=21)return 0;return h<7?(h-5)/2:(21-h)/2;}
 const live={name:'JPet',mood:'…',emotion:'happy',asleep:false,
   target_x:0,target_z:0,speech:null,script:[],carrying:null,lights_on:true,objects:{}};
 // P holds the pet's live render state. `vx/vz` are velocity (fluid accel/decel motion);
@@ -316,7 +322,7 @@ function initBlocks(){if(phys.blocks&&phys.blocks.length)return;phys.blocks=[];
 function stackCount(){return phys.blocks.filter(b=>b.stacked).length;}
 function looseBlock(){return phys.blocks.find(b=>!b.stacked&&b!==carried&&Math.hypot(b.vx,b.vz)<0.1);}
 function buildFull(){return stackCount()>=curShape.length;}  // the current shape is complete
-function dropCarried(){if(carried){carried.stacked=false;carried=null;}}
+function dropCarried(){if(carried){carried.stacked=false;carried=null;}ai.hasVac=false;}
 function stepBlocks(dt){for(const bl of phys.blocks){if(bl.stacked||bl===carried)continue;
  bl.x+=bl.vx*dt;bl.z+=bl.vz*dt;const lim=R-0.6;
  if(bl.x<-lim){bl.x=-lim;bl.vx*=-0.5;}if(bl.x>lim){bl.x=lim;bl.vx*=-0.5;}
@@ -358,11 +364,23 @@ function randSpot(){
   const p=room[pick]||objPos(pick);return p?[p[0],p[1]]:[0,0];
 }
 function nextBehavior(now){
+  const df=dayFactor();
+  if(df<0.3&&Math.random()<0.5){                           // night: sleepy → head to bed and sleep
+    const b=objPos('bed');ai.target=b?[b[0],b[1]]:randSpot();ai.phase='travel';ai.act='walk';
+    ai.deadline=now+7;ai.beat='nap';return;
+  }
+  if(Math.random()<0.13){                                  // go watch some TV
+    ai.target=[TV[0],TV[1]+2.5];ai.phase='travel';ai.act='walk';ai.deadline=now+6;ai.beat='sit';ai.last='watch';return;
+  }
+  if(Math.random()<0.13){                                  // gaze out the window (esp. at dusk)
+    ai.target=[WINDOW[0],WINDOW[1]+2.5];ai.phase='travel';ai.act='walk';ai.deadline=now+6;ai.beat='look';ai.last='gaze';return;
+  }
   if(Math.random()<0.07){                                  // a rare little nap in the bed
     const b=objPos('bed');ai.target=b?[b[0],b[1]]:randSpot();ai.phase='travel';ai.act='walk';
     ai.deadline=now+7;ai.beat='nap';return;
   }
   const lb=looseBlock();
+  if(lb&&!buildFull()&&Math.random()<0.12){ai.mode='vacuum';ai.hasVac=false;return;} // sometimes tidy up with the vacuum
   if(lb&&!buildFull()&&Math.random()<0.4){ai.mode='build';ai.buildPhase='toBlock';ai.block=lb;return;} // build the statue
   if(phys.ball.init&&Math.random()<0.2){ai.mode='chase';return;} // sometimes go play with the ball
   let beat;do{beat=BEATS[Math.floor(Math.random()*BEATS.length)];}while(beat===ai.last&&Math.random()<0.6);
@@ -384,6 +402,16 @@ function stepAutonomy(now){
   if(ai.mode==='move'){                                    // click-to-send / parent raw-move
     P.act='walk';P.tx=ai.target[0];P.tz=ai.target[1];
     if(arrived){ai.mode='auto';ai.phase='beat';ai.act='look';ai.until=now+0.8;}
+    return;
+  }
+  if(ai.mode==='vacuum'){                                  // grab the vacuum and hoover up loose blocks
+    if(!ai.hasVac){P.act='walk';P.tx=VAC[0];P.tz=VAC[1];
+      if(Math.hypot(VAC[0]-P.x,VAC[1]-P.z)<1.0){ai.hasVac=true;sfx('pick_up');}return;}
+    const lb=looseBlock();
+    if(!lb||buildFull()){P.act='walk';P.tx=VAC[0];P.tz=VAC[1];   // done → park the vacuum
+      if(Math.hypot(VAC[0]-P.x,VAC[1]-P.z)<1.0){ai.hasVac=false;ai.mode='auto';ai.phase='beat';ai.act='nod';ai.until=now+0.6;}return;}
+    P.act='walk';P.tx=lb.x;P.tz=lb.z;
+    if(Math.hypot(lb.x-P.x,lb.z-P.z)<1.3){lb.stacked=true;lb.slot=stackCount();lb.x=BUILD[0];lb.z=BUILD[1];sfx('beep');} // sucked → tidied into the statue
     return;
   }
   if(ai.mode==='build'){                                   // gather a block, carry it, stack it
@@ -414,6 +442,27 @@ function nextPhaseBeat(now,beat,dur){ai.phase='beat';ai.act=beat;ai.until=now+du
 // perpendicular rings make a cheap glowing "ball".
 function ring(x,y,z,r,rot,col,al){let m=M.trans(M.ident(),x,y,z);if(rot===1)m=M.rotX(m,Math.PI/2);else if(rot===2)m=M.rotZ(m,Math.PI/2);
  draw(gCirc,40,gl.LINE_LOOP,M.mul(vp,M.scale(m,r,r,r)),col,al==null?.9:al);}
+// Detailed multi-part furniture, all in the solid-wireframe style.
+function drawBed(x,z,dim){
+ part(M.ident(),x,.55,z,2.6,.35,1.6,BL,dim);                // mattress frame
+ for(const sx of[-1.15,1.15])for(const sz of[-.65,.65])part(M.ident(),x+sx,.22,z+sz,.2,.44,.2,MG,dim); // legs
+ part(M.ident(),x-1.35,1.05,z,.2,1.1,1.6,CY,dim);           // headboard
+ part(M.ident(),x-.55,.82,z,1.0,.28,1.1,GD,dim*.9);}        // pillow
+function drawToybox(x,z,t,dim){
+ part(M.ident(),x,.55,z,1.5,1.1,1.5,CY,dim);                // box
+ part(M.rotZ(M.trans(M.ident(),x-.78,1.15,z),.5+Math.sin(t*.7)*.06),0,0,0,1.6,.14,1.6,MG,dim);} // open lid
+function drawTV(t,dim){const x=TV[0],z=TV[1];
+ part(M.ident(),x,2.6,z,3.0,2.0,.3,MG,dim);                 // frame
+ const flick=[CY,MG,GD,OR,BL][Math.floor(t*2.5)%5];         // the "content" flickers
+ part(M.ident(),x,2.6,z+.18,2.6,1.6,.06,flick,Math.min(1,dim+.3));
+ part(M.ident(),x,3.75,z,.06,.6,.06,GD,dim);part(M.ident(),x+.4,4.0,z,.5,.06,.06,GD,dim);} // antenna
+function drawWindow(t,dim){const x=WINDOW[0],z=WINDOW[1],df=lights;   // window view follows day/night
+ part(M.ident(),x,2.8,z,2.6,2.8,.24,GD,dim);                // frame
+ const sky=[.05+.18*df,.06+.32*df,.14+.55*df];             // blue by day, deep at night
+ draw(gCubeF,36,gl.TRIANGLES,M.mul(vp,M.scale(M.trans(M.ident(),x,2.8,z+.13),2.2,2.4,.02)),sky,.9);
+ ring(x+.6,3.6,z+.15,.42,0,df>.5?GD:[.85,.85,.95],Math.min(1,dim+.2)); // sun by day / moon by night
+ part(M.ident(),x,2.8,z+.16,.08,2.4,.02,GD,dim*.5);part(M.ident(),x,2.8,z+.16,2.2,.08,.02,GD,dim*.5); // mullions
+ if(df<.55)for(let i=0;i<7;i++)ring(x-.8+((i*5)%7)*.24,1.9+((i*3)%5)*.36,z+.15,.05,0,[1,1,1],.9);} // stars
 // A solid glowing ball: a dark occluding sphere (so it's not X-ray) behind three
 // perpendicular neon rings; `spin` rotates it so it reads as rolling.
 function drawBall(x,y,z,r,spin,dim){const base=M.rotY(M.trans(M.ident(),x,y,z),spin);
@@ -438,17 +487,22 @@ function drawObjects(t){
   else if(bl===carried){x=P.x;y=1.45+Math.sin(t*8)*.04;z=P.z;}
   else{x=bl.x;y=0.28;z=bl.z;}
   part(M.ident(),x,y,z,BLOCK_S*0.92,BLOCK_H*0.92,BLOCK_S*0.92,bl.col,bl===carried?1:dim);}
+ // Vacuum: parked at its spot, or held out in front of the pet while it's tidying.
+ if(ai.hasVac){const vx=P.x+Math.sin(P.facing)*1.0,vz=P.z+Math.cos(P.facing)*1.0;
+  part(M.ident(),vx,.45,vz,.5,.9,.5,CY,1);part(M.ident(),P.x+Math.sin(P.facing)*.55,.95,P.z+Math.cos(P.facing)*.55,.12,.7,.12,MG,1);}
+ else part(M.ident(),VAC[0],.5,VAC[1],.55,1.0,.55,CY,dim);
  for(const name in live.objects){if(name==='ball')continue;const w=objPos(name);if(!w)continue;
   if(!room[name])room[name]=w.slice();
   if(player.held===name){room[name]=[P.x,P.z];}            // a carried object rides the pet
   else{room[name][0]+=(w[0]-room[name][0])*.12;room[name][1]+=(w[1]-room[name][1])*.12;}
   const[x,z]=room[name];
-  if(name==='bed')part(M.ident(),x,.16,z,1.5,.32,1.0,BL,dim);
-  else if(name==='toy_box')part(M.ident(),x,.4,z,.9,.8,.9,CY,dim);
-  else if(name==='food_bowl'){ring(x,.06,z,.42,0,GD,dim);ring(x,.24,z,.3,0,GD,dim*.7);}
-  else if(name==='ball_pit')ring(x,.05,z,.75,0,MG,dim);
-  else if(name==='light_switch')part(M.ident(),x,2.2,z,.16,.28,.06,lights>.5?GD:BL,dim);
+  if(name==='bed')drawBed(x,z,dim);
+  else if(name==='toy_box')drawToybox(x,z,t,dim);
+  else if(name==='food_bowl'){ring(x,.1,z,.6,0,GD,dim);ring(x,.35,z,.42,0,GD,dim*.7);}
+  else if(name==='ball_pit')ring(x,.06,z,1.0,0,MG,dim);
+  else if(name==='light_switch')part(M.ident(),x,3.0,z,.22,.4,.08,lights>.5?GD:BL,dim);
  }
+ drawTV(t,dim);drawWindow(t,dim);                          // wall-mounted fixtures
 }
 function robot(t){
  const sp=P.walk,walking=sp>0.15&&!P.asleep,act=P.act,ph=P.stepT;
@@ -488,7 +542,7 @@ let last=0,lastAct='';
 function frame(ts){const dt=Math.min(.05,(ts-last)/1000||0);last=ts;const t=ts/1000;
  if(gl&&bctx){
   vp=M.mul(M.persp(48*Math.PI/180,W/H,.1,200),M.lookAt([0,9.5,25],[0,2.4,-1],[0,1,0]));
-  const wantL=live.lights_on===false?0:1;lights+=(wantL-lights)*Math.min(1,dt*3);
+  const wantL=live.lights_on===false?0:dayFactor();lights+=(wantL-lights)*Math.min(1,dt*0.6);
   stepBall(dt);stepBlocks(dt);checkCollapse();             // ball + blocks physics; ball knocks the statue down
   // ---- Decide who steers the pet: a server command, else its own autonomy ----
   if(scriptRunning()){advancePlayer();ai.mode='script';}

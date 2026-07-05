@@ -225,9 +225,11 @@ The location + family + intake slices shipped; build records are under
   (`plans/JPET_V3_PLAN.md`): the wall becomes the pet's continuous real-time brain. **W1 shipped**
   (migration 0126) — an autonomy engine so it's *constantly, fluidly* alive on its own (constrained-
   randomness behaviour + damped-spring motion + always-on idle micro-motion), the drive meters
-  **ripped out** (mood reads from behaviour), **solid-wireframe** rendering, and a **2×** room. W2
-  (interactive/physics world: click-to-play, kickable ball, block-builder, detailed furniture, TV/
-  window, circadian) + W3 (reliable hybrid talk→action, activities, colour) open.
+  **ripped out** (mood reads from behaviour), **solid-wireframe** rendering, and a **2×** room.
+  **W2 shipped** — the living, interactive world: **ball physics** + **mouse click-to-play**, the
+  **block-builder** (small coloured solid bricks → big varied statues, knocked down by the ball +
+  rebuilt), **detailed furniture** + **TV** + **window**, **circadian** day/night (sleepy at night),
+  and a **vacuum** tool. W3 (reliable hybrid talk→action, jump-rope/synth, colour) open.
 
 **In progress:** EMR / medical-record import (build plan: `docs/plans/EMR_IMPORT_PLAN.md`) —
 multi-system EMR PDF exports (Epic / OneContent / athena / scanned-OCR), fed as one note with an

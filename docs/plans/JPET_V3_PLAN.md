@@ -1,12 +1,21 @@
 # JBrain2 — JPet v3: a pet that's genuinely alive (autonomy engine on the wall)
 
-> **Status:** In progress · **Last verified:** 2026-07-04 · **Waves:** W1✅ W2◻️ W3◻️
+> **Status:** In progress · **Last verified:** 2026-07-05 · **Waves:** W1✅ W2✅ W3◻️
 
 **W1 shipped** (migration 0126): the engine reboot — the wall runs the pet's continuous
 autonomous life (constrained-randomness behaviour selection, damped-spring fluid motion,
 always-on idle micro-motion), the drive meters are ripped out, the robot + props render in
-solid wireframe, and the room is 2× with a reframed camera. W2 (living/interactive world +
-physics) and W3 (reliable talk + activities + colour) follow.
+solid wireframe, and the room is 2× with a reframed camera.
+
+**W2 shipped** (wall-only): the living, interactive world — **ball physics** (rolls/bounces/
+settles; the pet kicks + chases; **mouse click** flicks it or sends the pet); the
+**block-builder** (the pet gathers small coloured solid bricks and stacks them into big
+varied **statues** — pyramid/castle/tower/arch/staircase/rocket — a new shape each rebuild;
+a rolling ball knocks the statue down and it rebuilds); **detailed furniture** (bed/toy box/
+food bowl) + a **TV** (flickering screen the pet watches) + a **window** (a day/night sky it
+gazes out of); **circadian** day/night from the real clock (dim + moon/stars + sleepy at
+night); and a **vacuum** tool the pet uses to tidy loose blocks. W3 (reliable talk + activities
++ colour) follows.
 
 The v3 leap: JPet stops being a server-driven puppet and becomes a **living little
 creature** that potters around its room *all the time*, on its own, fluidly — and does
