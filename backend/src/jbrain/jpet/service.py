@@ -29,6 +29,9 @@ EXPRESSIVE = (
     "hide",
     "jumprope",
     "play_music",
+    "sing",
+    "fart",
+    "burp",
 )
 TERMINAL = ("idle", "sit", "sleep")
 # Primitives that relocate the pet and/or touch a room object.
@@ -65,9 +68,11 @@ LOCATIONS: dict[str, tuple[float, float]] = {
 }
 
 # Every script is capped short (attention span + always-terminating) and ends at rest.
+# A single step may run up to 10s so the long play actions (a 9s tune, a 6.6s dance) survive
+# the clamp — kids want the pet to keep going after a tap, not stop in a second.
 MAX_SCRIPT_STEPS = 6
 MIN_STEP_MS = 200
-MAX_STEP_MS = 3000
+MAX_STEP_MS = 10000
 
 
 def _clamp_unit(v: float) -> float:
@@ -145,6 +150,15 @@ CANNED_SCRIPTS: dict[str, list[dict[str, Any]]] = {
     ),
     "music": _script(
         {"action": "play_music", "duration_ms": 9000, "emotion": "silly"}, {"action": "idle"}
+    ),
+    "sing": _script(
+        {"action": "sing", "duration_ms": 6000, "emotion": "silly"}, {"action": "idle"}
+    ),
+    "fart": _script(
+        {"action": "fart", "duration_ms": 1400, "emotion": "silly"}, {"action": "idle"}
+    ),
+    "burp": _script(
+        {"action": "burp", "duration_ms": 1400, "emotion": "silly"}, {"action": "idle"}
     ),
 }
 BUTTON_ACTIONS = frozenset(CANNED_SCRIPTS)

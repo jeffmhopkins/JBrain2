@@ -47,7 +47,7 @@ def test_clean_duration_is_clamped() -> None:
     steps = clean_script(
         [{"action": "dance", "duration_ms": 999999}, {"action": "sit"}], objects=OBJS
     )
-    assert steps[0].duration_ms == 3000  # MAX_STEP_MS
+    assert steps[0].duration_ms == 10000  # MAX_STEP_MS
 
 
 def test_empty_script_becomes_lone_idle() -> None:

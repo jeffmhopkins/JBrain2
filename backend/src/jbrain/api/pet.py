@@ -14,6 +14,7 @@ Owner-gated (single-owner box).
 """
 
 import asyncio
+import random
 from collections.abc import AsyncIterator
 from typing import Any, Literal, cast
 
@@ -28,7 +29,7 @@ from jbrain.config import Settings
 from jbrain.db.session import SessionContext
 from jbrain.jpet.brain import pet_turn
 from jbrain.jpet.broadcast import PetBroadcaster
-from jbrain.jpet.intents import canonical_color, classify, color_speech
+from jbrain.jpet.intents import CHAT_BABBLE, canonical_color, chat_reply, classify, color_speech
 from jbrain.jpet.repo import SqlJpetRepo
 from jbrain.jpet.service import PetStateInfo, canned_script
 from jbrain.llm.router import LlmRouter
@@ -128,6 +129,9 @@ CommandAction = Literal[
     "lights",
     "jumprope",
     "music",
+    "sing",
+    "fart",
+    "burp",
     "say",
     "move",
     "color",
@@ -185,13 +189,15 @@ async def _say(
 ) -> PetStateInfo | None:
     """The hybrid talk→action router (docs/archive/JPET_V3_PLAN.md W3). A fast keyword
     classifier runs FIRST — "dance!", "chase the ball", "turn red" act immediately with no
-    LLM. Only open-ended input reaches the LLM, wrapped so a slow/unconfigured/failed model
-    NEVER 500s: it degrades to a friendly wiggle. So talking always does *something*."""
+    LLM, and common small talk ("how are you", "tell me a joke") gets a funny canned reply.
+    Only genuinely open-ended input reaches the LLM, wrapped so a slow/unconfigured/failed
+    model NEVER 500s: it degrades to a random funny babble + emote (never the same line), so
+    the mic/text mode always holds a silly little conversation."""
     repo = _repo(request)
     intent = classify(text)
     if intent is not None and intent.kind == "color":
         info = await repo.set_color(ctx, domain=domain, color=intent.value, speech=intent.speech)
-    elif intent is not None:  # a recognised action — no LLM needed
+    elif intent is not None:  # a recognised command action or a bit of small talk — no LLM
         script = canned_script(intent.value, objects=state.objects)
         info = await repo.run_script(ctx, domain=domain, script=script, speech=intent.speech)
     else:  # open-ended → the LLM, but it must never break the interaction
@@ -209,11 +215,17 @@ async def _say(
             )
         except Exception as exc:  # noqa: BLE001 — the LLM must not break "say"
             log.warning("jpet.say_llm_error", error=repr(exc))
+            # No model: match known small talk for a funny reply, else a random babble + emote.
+            reply = chat_reply(text)
+            emote, speech = reply or (
+                random.choice(("wiggle", "nod", "wave", "beep", "spin")),
+                random.choice(CHAT_BABBLE),
+            )
             info = await repo.run_script(
                 ctx,
                 domain=domain,
-                script=canned_script("wiggle", objects=state.objects),
-                speech="Hee-hee! Boop boop!",
+                script=canned_script(emote, objects=state.objects),
+                speech=speech,
             )
     if text:  # remember the exchange so the next turn can recall it
         await repo.record_memory(

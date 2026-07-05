@@ -2728,6 +2728,9 @@ const MOCK_SCRIPTS: Record<string, PetState["script"]> = {
   ],
   jumprope: [{ action: "jumprope", duration_ms: 3000, emotion: "excited" }, { action: "idle" }],
   music: [{ action: "play_music", duration_ms: 3000, emotion: "silly" }, { action: "idle" }],
+  sing: [{ action: "sing", duration_ms: 6000, emotion: "silly" }, { action: "idle" }],
+  fart: [{ action: "fart", duration_ms: 1400, emotion: "silly" }, { action: "idle" }],
+  burp: [{ action: "burp", duration_ms: 1400, emotion: "silly" }, { action: "idle" }],
 };
 
 const mockPet: PetState = {
@@ -2822,8 +2825,29 @@ function applyMockPetCommand(command: PetCommand): void {
       mockPet.speech = spoken === "rainbow" ? "Rainbow time!" : `Ooh, ${spoken}!`;
       return;
     }
-    const babble = ["Hee-hee, okay!", "Dah-boo! Watch me!", "Mee love oo!", "Boop boop!"];
-    mockPet.speech = babble[Math.floor(Math.random() * babble.length)] ?? "Boo!";
+    // Mirror the backend chat layer: common small talk gets a funny reply + emote.
+    const chat: [string[], string][] = [
+      [["how are you", "how do you feel"], "Sooo happy and wiggly, thank you! How are YOU?"],
+      [["love you", "love oo"], "I love oo too! Squishy robot hug! Mwah!"],
+      [
+        ["joke", "knock knock", "funny"],
+        "Why did the robot boogie? To shake its bolts off! Hee-hee!",
+      ],
+      [["your name", "who are you", "what are you"], "I'm your silly robot buddy! Beep-boop-beep!"],
+      [["thank you", "thanks"], "You're welcome, best friend!"],
+      [["what are you doing", "whatcha doing"], "Playing playing playing! Wanna play?"],
+      [["bye", "goodbye", "see you"], "Bye bye! Come play again super soon!"],
+    ];
+    const hit = chat.find(([keys]) => keys.some((k) => said.includes(k)));
+    const babble = [
+      "Hee-hee! Boop boop!",
+      "Beeble-beeble-boop! That tickles my circuits!",
+      "Ooh ooh, tell me more! Boop!",
+      "Dah-boo! You're my favourite!",
+      "Bzzt-bloop! Robots love chatting!",
+      "Beep? Beep beep! (that means yay!)",
+    ];
+    mockPet.speech = hit ? hit[1] : (babble[Math.floor(Math.random() * babble.length)] ?? "Boo!");
     mockPet.emotion = "excited";
     // Playful stand-in: acting out freeform speech isn't parsed in the mock, so wiggle.
     mockPet.script = [{ action: "wiggle", duration_ms: 1200 }, { action: "idle" }];
