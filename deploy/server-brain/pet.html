@@ -102,12 +102,12 @@ const LOC={corner_ne:[.85,-.85],corner_nw:[-.85,-.85],corner_se:[.85,.85],corner
 const TV=[4.6,-R+0.5],WINDOW=[-5.6,-R+0.4];
 const VAC=[R-2.5,R-2.5];                                    // the vacuum's parking spot
 // The playable synth (a little keyboard on a stand), left-of-centre so a kid can reach its
-// keys with the mouse. NKEYS keys span SYNW along x. A C-major scale (C D E F G A B) so the
-// kids' songs play, and random taps still sound sweet. SYNTHPLAY is the fixed spot the pet
-// stands to play it (so it's always in the same place).
-const SYNTH=[-3.4,R*0.42],NKEYS=7,SYNW=3.6,SYNKEY=SYNW/NKEYS;
+// keys with the mouse. NKEYS keys span SYNW along x — a full C-major octave (C D E F G A B C)
+// so the kids' songs play, and random taps still sound sweet. SYNTHPLAY is the fixed spot the
+// pet stands to play it (so it's always in the same place).
+const SYNTH=[-3.4,R*0.42],NKEYS=8,SYNW=4.2,SYNKEY=SYNW/NKEYS;
 const SYNTHPLAY=[SYNTH[0],SYNTH[1]+2.0];
-const SCALE=[261.63,293.66,329.63,349.23,392.0,440.0,493.88]; // C4 D4 E4 F4 G4 A4 B4
+const SCALE=[261.63,293.66,329.63,349.23,392.0,440.0,493.88,523.25]; // C4 D4 E4 F4 G4 A4 B4 C5
 let keyLit=-1,keyLitT=0;                                    // which key is glowing, and for how long
 // The drum kit and the wall-hung guitar (further play surfaces).
 const DRUMS=[4.6,R*0.5],GUITAR=[R-0.4,2.7];                 // drums on the floor; guitar on the right wall
@@ -416,7 +416,7 @@ cv.addEventListener('pointerdown',e=>{
 });
 // Keyboard play on the box's own machine: Z X C V B N M are the seven synth keys, and the
 // spacebar makes the pet jump.
-const KEYROW='zxcvbnm';
+const KEYROW='zxcvbnm,';                                    // eight keys → a full octave (C…C)
 addEventListener('keydown',e=>{
  if(e.repeat)return;
  if(e.code==='Space'){e.preventDefault();petJump();return;}
@@ -706,7 +706,7 @@ function drawSynth(t,dim){const x=SYNTH[0],z=SYNTH[1],x0=x-SYNW/2;
  part(M.ident(),x,.85,z,SYNW+.4,.5,.9,CY,dim);              // keyboard body
  part(M.ident(),x,1.06,z+.3,SYNW+.2,.06,.16,GD,dim);        // control strip
  for(let i=0;i<NKEYS;i++){const kx=x0+(i+.5)*SYNKEY,lit=keyLit===i;
-  const col=lit?GD:[CY,MG,GD,OR,BL,RD,CY][i];const kal=lit?1:dim*.9;
+  const col=lit?GD:[CY,MG,GD,OR,BL,RD,CY,MG][i];const kal=lit?1:dim*.9;
   part(M.ident(),kx,SYNKY+(lit?-.03:0),z-.08,SYNKEY*.82,.1,.5,col,kal);}} // the keys
 // The drum kit: a bass drum, two toms and a hi-hat on a stand; a struck pad flashes gold.
 function drawDrums(t,dim){const x=DRUMS[0],z=DRUMS[1];
