@@ -7,7 +7,44 @@ on:
   pull_request:
 
 jobs:
+  # Work out which top-level areas a PR actually touches, so the heavy jobs (above
+  # all backend's Postgres testcontainers suite) can no-op when they're irrelevant.
+  # On push (main/tags) nothing is filtered — main always gets the full suite.
+  # Every area filter also includes this workflow, so a CI edit re-runs everything.
+  changes:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      backend: ${{ steps.f.outputs.backend }}
+      supervisor: ${{ steps.f.outputs.supervisor }}
+      jcode: ${{ steps.f.outputs.jcode }}
+      frontend: ${{ steps.f.outputs.frontend }}
+    steps:
+      - uses: dorny/paths-filter@v3
+        id: f
+        with:
+          filters: |
+            backend:
+              - 'backend/**'
+              - '.github/workflows/ci.yml'
+            supervisor:
+              - 'supervisor/**'
+              - '.github/workflows/ci.yml'
+            jcode:
+              - 'jcode/**'
+              - '.github/workflows/ci.yml'
+            frontend:
+              - 'frontend/**'
+              - '.github/workflows/ci.yml'
+
+  # NOTE: the area jobs always run so their status checks always post — the heavy
+  # steps are gated instead of the whole job, so this stays safe with branch
+  # protection whatever the required-check names are (a gated job still reports
+  # success in seconds). The gate is: this area changed on the PR, OR it's a push.
   backend:
+    needs: changes
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -21,71 +58,109 @@ jobs:
       # ffmpeg/ffprobe back the analyze_video frame-sampling tests (jbrain.media);
       # ubuntu-latest ships them, but install explicitly so the suite never silently
       # skips and drops coverage.
-      - run: sudo apt-get update && sudo apt-get install -y ffmpeg
-      - uses: astral-sh/setup-uv@v7
-      - run: uv sync --all-extras
-      - run: uv run ruff check .
-      - run: uv run ruff format --check .
-      - run: uv run pyright
+      - if: needs.changes.outputs.backend == 'true' || github.event_name != 'pull_request'
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - if: needs.changes.outputs.backend == 'true' || github.event_name != 'pull_request'
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          cache-dependency-glob: backend/uv.lock
+      - if: needs.changes.outputs.backend == 'true' || github.event_name != 'pull_request'
+        run: uv sync --all-extras
+      - if: needs.changes.outputs.backend == 'true' || github.event_name != 'pull_request'
+        run: uv run ruff check .
+      - if: needs.changes.outputs.backend == 'true' || github.event_name != 'pull_request'
+        run: uv run ruff format --check .
+      - if: needs.changes.outputs.backend == 'true' || github.event_name != 'pull_request'
+        run: uv run pyright
       # Runners have Docker, so the testcontainers RLS suite runs here. Each
       # test module spins its own Postgres container, so spread modules across
       # cores with xdist; loadscope keeps a module (and its container) on one
       # worker so the module-scoped fixtures stay valid.
-      - run: uv run pytest -n auto --dist loadscope --cov --cov-fail-under=80
+      - if: needs.changes.outputs.backend == 'true' || github.event_name != 'pull_request'
+        run: uv run pytest -n auto --dist loadscope --cov --cov-fail-under=80
 
   supervisor:
+    needs: changes
     runs-on: ubuntu-latest
     defaults:
       run:
         working-directory: supervisor
     steps:
       - uses: actions/checkout@v5
-      - uses: astral-sh/setup-uv@v7
-      - run: uv sync --all-extras
-      - run: uv run ruff check .
-      - run: uv run ruff format --check .
-      - run: uv run pyright
-      - run: uv run pytest
+      - if: needs.changes.outputs.supervisor == 'true' || github.event_name != 'pull_request'
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          cache-dependency-glob: supervisor/uv.lock
+      - if: needs.changes.outputs.supervisor == 'true' || github.event_name != 'pull_request'
+        run: uv sync --all-extras
+      - if: needs.changes.outputs.supervisor == 'true' || github.event_name != 'pull_request'
+        run: uv run ruff check .
+      - if: needs.changes.outputs.supervisor == 'true' || github.event_name != 'pull_request'
+        run: uv run ruff format --check .
+      - if: needs.changes.outputs.supervisor == 'true' || github.event_name != 'pull_request'
+        run: uv run pyright
+      - if: needs.changes.outputs.supervisor == 'true' || github.event_name != 'pull_request'
+        run: uv run pytest
 
   # The jcode control server (opt-in code mode) — a Python service tested like the
   # supervisor: its unit tests run against fakes (no SDK, no model, no network), so
   # CI needs no GPU/box. The box-only SDK + CLI live in jcode/Dockerfile.
   jcode:
+    needs: changes
     runs-on: ubuntu-latest
     defaults:
       run:
         working-directory: jcode
     steps:
       - uses: actions/checkout@v5
-      - uses: astral-sh/setup-uv@v7
-      - run: uv sync --all-extras
-      - run: uv run ruff check .
-      - run: uv run ruff format --check .
-      - run: uv run pyright
-      - run: uv run pytest
+      - if: needs.changes.outputs.jcode == 'true' || github.event_name != 'pull_request'
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          cache-dependency-glob: jcode/uv.lock
+      - if: needs.changes.outputs.jcode == 'true' || github.event_name != 'pull_request'
+        run: uv sync --all-extras
+      - if: needs.changes.outputs.jcode == 'true' || github.event_name != 'pull_request'
+        run: uv run ruff check .
+      - if: needs.changes.outputs.jcode == 'true' || github.event_name != 'pull_request'
+        run: uv run ruff format --check .
+      - if: needs.changes.outputs.jcode == 'true' || github.event_name != 'pull_request'
+        run: uv run pyright
+      - if: needs.changes.outputs.jcode == 'true' || github.event_name != 'pull_request'
+        run: uv run pytest
 
   frontend:
+    needs: changes
     runs-on: ubuntu-latest
     defaults:
       run:
         working-directory: frontend
     steps:
       - uses: actions/checkout@v5
-      - uses: actions/setup-node@v5
+      - if: needs.changes.outputs.frontend == 'true' || github.event_name != 'pull_request'
+        uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: npm
           cache-dependency-path: frontend/package-lock.json
-      - run: npm ci
-      - run: npm run lint
-      - run: npm run typecheck
-      - run: npm run test
-      - run: npm run build
+      - if: needs.changes.outputs.frontend == 'true' || github.event_name != 'pull_request'
+        run: npm ci
+      - if: needs.changes.outputs.frontend == 'true' || github.event_name != 'pull_request'
+        run: npm run lint
+      - if: needs.changes.outputs.frontend == 'true' || github.event_name != 'pull_request'
+        run: npm run typecheck
+      - if: needs.changes.outputs.frontend == 'true' || github.event_name != 'pull_request'
+        run: npm run test
+      - if: needs.changes.outputs.frontend == 'true' || github.event_name != 'pull_request'
+        run: npm run build
 
   # Documentation freshness — enforces docs/DOC_LIFECYCLE.md: no stale migration
   # counters in prose, no shipped plan still labelled active, every doc carries a
   # freshness header, every directory index names its folder. Pure bash/grep/awk
-  # over docs/ — no deps to install. Errors fail; warnings don't.
+  # over docs/ — no deps to install, so it always runs (fast, and a code change can
+  # still leave a doc stale). Errors fail; warnings don't.
   docs:
     runs-on: ubuntu-latest
     steps:
