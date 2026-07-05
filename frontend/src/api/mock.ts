@@ -2726,16 +2726,14 @@ const MOCK_SCRIPTS: Record<string, PetState["script"]> = {
     { action: "jump", duration_ms: 700 },
     { action: "idle" },
   ],
+  jumprope: [{ action: "jumprope", duration_ms: 3000, emotion: "excited" }, { action: "idle" }],
+  music: [{ action: "play_music", duration_ms: 3000, emotion: "silly" }, { action: "idle" }],
 };
 
 const mockPet: PetState = {
   name: "Blink",
   domain: "general",
-  food: 82,
-  energy: 84,
-  fun: 76,
-  love: 80,
-  mood: "excited",
+  mood: "playful",
   emotion: "happy",
   speech: null,
   asleep: false,
@@ -2745,11 +2743,27 @@ const mockPet: PetState = {
   target_z: 0.2,
   facing: 0,
   action: "idle",
+  color: null,
   script: [],
   carrying: null,
   lights_on: true,
   objects: { ...MOCK_OBJECTS },
 };
+
+// Colour names the mock accepts (mirror of the backend `PET_COLORS`), for the palette.
+const MOCK_COLORS = [
+  "cyan",
+  "magenta",
+  "gold",
+  "orange",
+  "blue",
+  "red",
+  "green",
+  "pink",
+  "purple",
+  "white",
+  "rainbow",
+];
 
 // A compact mirror of the backend's settle_script: fold a script into the pet + room's
 // resting state so the mock stays coherent (carry the ball, toggle lights, nap).
@@ -2784,7 +2798,6 @@ function mockSettle(script: PetState["script"]): void {
 }
 
 function applyMockPetCommand(command: PetCommand): void {
-  const clamp = (v: number) => Math.max(0, Math.min(100, v));
   if (command.action === "move") {
     mockPet.target_x = command.x ?? mockPet.target_x;
     mockPet.target_z = command.z ?? mockPet.target_z;
@@ -2793,7 +2806,21 @@ function applyMockPetCommand(command: PetCommand): void {
     mockPet.script = [];
     return;
   }
+  if (command.action === "color") {
+    const c = (command.text ?? "").trim().toLowerCase();
+    mockPet.color = MOCK_COLORS.includes(c) ? c : "rainbow";
+    mockPet.speech = mockPet.color === "rainbow" ? "Rainbow time!" : `Ooh, ${mockPet.color}!`;
+    return;
+  }
   if (command.action === "say") {
+    const said = (command.text ?? "").trim().toLowerCase();
+    // Mirror the backend's fast classifier: a colour word in the message recolours.
+    const spoken = MOCK_COLORS.find((c) => said.includes(c));
+    if (spoken) {
+      mockPet.color = spoken;
+      mockPet.speech = spoken === "rainbow" ? "Rainbow time!" : `Ooh, ${spoken}!`;
+      return;
+    }
     const babble = ["Hee-hee, okay!", "Dah-boo! Watch me!", "Mee love oo!", "Boop boop!"];
     mockPet.speech = babble[Math.floor(Math.random() * babble.length)] ?? "Boo!";
     mockPet.emotion = "excited";
@@ -2804,12 +2831,9 @@ function applyMockPetCommand(command: PetCommand): void {
   }
   const script = MOCK_SCRIPTS[command.action] ?? [{ action: "idle" }];
   mockPet.script = script;
-  mockPet.fun = clamp(mockPet.fun + 8);
-  mockPet.love = clamp(mockPet.love + 4);
   mockPet.emotion = "excited";
   mockSettle(script);
-  const avg = (mockPet.food + mockPet.energy + mockPet.fun + mockPet.love) / 4;
-  mockPet.mood = mockPet.asleep ? "sleepy" : avg > 75 ? "excited" : avg > 45 ? "happy" : "playful";
+  mockPet.mood = mockPet.asleep ? "sleepy" : "playful";
 }
 
 export const mockFetch: typeof fetch = async (input, init) => {

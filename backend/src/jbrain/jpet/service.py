@@ -1,27 +1,35 @@
-"""JPet play model — DTOs + the pure play/room math (docs/proposed/JPET_V2_PLAN.md).
+"""JPet play model — the command vocabulary + the pure script/room math
+(docs/archive/JPET_V3_PLAN.md).
 
-v2 pivots the pet from a Tamagotchi (drives that *decay* toward hunger/neglect) to a
-positive, command-and-response play companion for 3–4-year-olds. Two things still live
-here, both pure and side-effect-free so they unit-test with no DB or clock:
-
-1. **Drives** (`food`/`energy`/`fun`/`love`, 0–100) are now *happy meters*, not a
-   countdown: playing raises them and they never decay toward sad. `mood_of` only ever
-   returns a positive label — the pet is always willing to play.
-2. **The action script** — the pet does short, ordered sequences of bounded *primitive*
-   actions ("chase the ball, then spin, then sit"). The vocabulary is a fixed allow-list;
-   `clean_script` guarantees every script is short, in-vocabulary, affordance-grounded,
-   and always-terminating; `settle_script` computes the pet's + room's resting state after
-   a script runs (the wall animates the journey between server updates).
+v3 deleted the drive meters (food/energy/fun/love): a needs-free "just alive and playful"
+pet is the design (validated — PF.Magic's Petz exposed no meters and made mood readable
+from behaviour), and the pet's continuous, autonomous life now runs on the wall. What
+stays here is the **command vocabulary + script math** the server still uses to relay a
+phone/talk command to the wall — pure and side-effect-free so it unit-tests with no DB:
+`clean_script` bounds a script to the fixed allow-list (short, in-vocabulary, affordance-
+grounded, always-terminating) and `settle_script` computes the pet + room resting state a
+command produces.
 """
 
 import math
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
 # ── Vocabulary (the fixed allow-list the LLM and the buttons may draw from) ────────────
 # In-place expressive primitives (no target, cosmetic) and the terminating rest poses.
-EXPRESSIVE = ("dance", "spin", "jump", "wave", "wiggle", "nod", "beep", "hide")
+EXPRESSIVE = (
+    "dance",
+    "spin",
+    "jump",
+    "wave",
+    "wiggle",
+    "nod",
+    "beep",
+    "hide",
+    "jumprope",
+    "play_music",
+)
 TERMINAL = ("idle", "sit", "sleep")
 # Primitives that relocate the pet and/or touch a room object.
 TARGETED = ("go_to", "come_here", "chase", "look_at", "pick_up", "put_down", "carry_to")
@@ -61,58 +69,19 @@ MAX_SCRIPT_STEPS = 6
 MIN_STEP_MS = 200
 MAX_STEP_MS = 3000
 
-DRIVE_NAMES = ("food", "energy", "fun", "love")
-
-
-def _clamp(v: float) -> float:
-    return max(0.0, min(100.0, v))
-
 
 def _clamp_unit(v: float) -> float:
     return max(-1.0, min(1.0, v))
 
 
-@dataclass(frozen=True)
-class Drives:
-    """The four happy meters, 0–100 (higher is better). They no longer decay."""
-
-    food: float
-    energy: float
-    fun: float
-    love: float
-
-    @property
-    def average(self) -> float:
-        return (self.food + self.energy + self.fun + self.love) / 4
-
-
-def decayed(drives: Drives, dt_seconds: float, *, asleep: bool) -> Drives:
-    """v2: the meters do NOT decay — the pet is never neglected. Awake time is a no-op;
-    the one time-based change kept is that sleeping gently *recovers* energy, so a nap is
-    rewarding. Clamped 0–100. `dt_seconds <= 0` is a no-op (a clock that didn't move)."""
-    if dt_seconds <= 0 or not asleep:
-        return drives
-    hours = dt_seconds / 3600.0
-    return replace(drives, energy=_clamp(drives.energy + 30.0 * hours))
-
-
-def mood_of(drives: Drives, *, asleep: bool) -> str:
-    """The materialized mood — a pure function of the meters, always POSITIVE (no sad/
-    hungry stakes). A well-played-with pet is `excited`; a calm one is `happy`; a quiet
-    one is `playful`; asleep is `sleepy`."""
-    if asleep:
-        return "sleepy"
-    avg = drives.average
-    if avg > 75:
-        return "excited"
-    if avg > 45:
-        return "happy"
-    return "playful"
+def mood_of(*, asleep: bool) -> str:
+    """A trivial mood label for the phone header — the wall reads real mood from behaviour;
+    the server just distinguishes sleeping from playing."""
+    return "sleepy" if asleep else "playful"
 
 
 # ── Play commands (the big kid buttons) → canned scripts ──────────────────────────────
-# Each one-tap button expands to a short, safe, terminating script. Drive bumps are pure
-# reward (play always raises meters, never lowers below a floor). Mirrors the phone UI.
+# Each one-tap button expands to a short, safe, terminating script the wall plays out.
 def _script(*steps: dict[str, Any]) -> list[dict[str, Any]]:
     return [dict(s) for s in steps]
 
@@ -165,9 +134,15 @@ CANNED_SCRIPTS: dict[str, list[dict[str, Any]]] = {
         {"action": "jump", "duration_ms": 700},
         {"action": "idle"},
     ),
+    # W3 activities — the wall renders dedicated jump-rope / synth animations for these
+    # actions (the primitives are recognised there); the scripts keep them bounded + terminating.
+    "jumprope": _script(
+        {"action": "jumprope", "duration_ms": 3000, "emotion": "excited"}, {"action": "idle"}
+    ),
+    "music": _script(
+        {"action": "play_music", "duration_ms": 3000, "emotion": "silly"}, {"action": "idle"}
+    ),
 }
-# Play reward applied on any command (bounded, one-directional): fun + a bit of love.
-PLAY_REWARD = {"fun": 8.0, "love": 4.0, "energy": -2.0}
 BUTTON_ACTIONS = frozenset(CANNED_SCRIPTS)
 
 
@@ -346,25 +321,15 @@ def settle_script(
     )
 
 
-def apply_play_reward(drives: Drives) -> Drives:
-    """Bump the happy meters for any play command — bounded and one-directional (fun/love
-    up, a nudge of energy spent), then clamped. There is no punishment path."""
-    return Drives(
-        food=_clamp(drives.food + PLAY_REWARD.get("food", 0.0)),
-        energy=_clamp(drives.energy + PLAY_REWARD.get("energy", 0.0)),
-        fun=_clamp(drives.fun + PLAY_REWARD.get("fun", 0.0)),
-        love=_clamp(drives.love + PLAY_REWARD.get("love", 0.0)),
-    )
-
-
 @dataclass(frozen=True)
 class PetStateInfo:
-    """A read of the pet row for the API/tick layers. Wire shapes build from this."""
+    """A read of the pet row for the API/tick layers. Wire shapes build from this. v3 has
+    no drives — the pet's life is the wall's continuous sim; the server keeps durable state
+    (name, mood/emotion, the current command script, the room objects)."""
 
     id: str
     name: str
     domain: str
-    drives: Drives
     mood: str
     emotion: str
     speech: str | None
@@ -375,6 +340,7 @@ class PetStateInfo:
     target_z: float
     facing: float
     action: str
+    color: str | None = None
     script: list[dict[str, Any]] = field(default_factory=list)
     script_started_at: datetime | None = None
     carrying: str | None = None
@@ -382,9 +348,3 @@ class PetStateInfo:
     objects: dict[str, tuple[float, float]] = field(default_factory=dict)
     last_tick_at: datetime | None = None
     updated_at: datetime | None = None
-
-    def with_drives(self, drives: Drives, *, asleep: bool | None = None) -> "PetStateInfo":
-        """A copy with new drives and recomputed mood — used by the tick to project the
-        next state before it's written."""
-        sleep = self.asleep if asleep is None else asleep
-        return replace(self, drives=drives, asleep=sleep, mood=mood_of(drives, asleep=sleep))

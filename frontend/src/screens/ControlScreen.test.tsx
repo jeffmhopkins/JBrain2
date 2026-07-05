@@ -18,10 +18,6 @@ function petState(over: Partial<PetState> = {}): PetState {
   return {
     name: "Blink",
     domain: "general",
-    food: 78,
-    energy: 82,
-    fun: 70,
-    love: 74,
     mood: "happy",
     emotion: "happy",
     speech: null,
@@ -32,6 +28,7 @@ function petState(over: Partial<PetState> = {}): PetState {
     target_z: 0,
     facing: 0,
     action: "idle",
+    color: null,
     script: [],
     carrying: null,
     lights_on: true,
@@ -108,6 +105,16 @@ describe("ControlScreen", () => {
     fireEvent.click(screen.getByRole("button", { name: /send message/i }));
     await waitFor(() =>
       expect(sendPetCommand).toHaveBeenCalledWith({ action: "say", text: "hi Blink" }),
+    );
+  });
+
+  it("recolours the pet from a palette swatch", async () => {
+    const { deps, sendPetCommand } = makeDeps();
+    render(<ControlScreen onClose={() => {}} deps={deps} />);
+    await screen.findByText(/paired to Wall/);
+    fireEvent.pointerDown(screen.getByRole("button", { name: /turn red/i }));
+    await waitFor(() =>
+      expect(sendPetCommand).toHaveBeenCalledWith({ action: "color", text: "red" }),
     );
   });
 

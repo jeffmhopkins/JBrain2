@@ -35,10 +35,6 @@ pytestmark = [
 PET_FIELDS = {
     "name",
     "domain",
-    "food",
-    "energy",
-    "fun",
-    "love",
     "mood",
     "emotion",
     "speech",
@@ -49,6 +45,7 @@ PET_FIELDS = {
     "target_z",
     "facing",
     "action",
+    "color",
     "script",
     "carrying",
     "lights_on",
@@ -80,19 +77,30 @@ async def test_pet_api_round_trip(
         assert set(pet) == PET_FIELDS  # the frozen wire contract for both surfaces
         assert pet["name"] == "Blink"
         assert "ball" in pet["objects"]  # the room is seeded
-        fun0 = pet["fun"]
 
-        # A play button expands to a bounded, terminating script and rewards the meters.
+        # A play button expands to a bounded, terminating script the wall plays out.
         danced = client.post("/api/pet/command", json={"action": "dance"}).json()
         assert danced["script"], "dance should produce a script"
         assert danced["script"][-1]["action"] in {"sit", "idle", "sleep"}  # always terminates
-        assert danced["fun"] >= fun0  # play only ever raises the meters
 
         # A parent raw-move walks the pet to a floor point.
         moved = client.post("/api/pet/command", json={"action": "move", "x": 0.5, "z": -0.3}).json()
         assert moved["action"] == "walk"
         assert moved["target_x"] == pytest.approx(0.5)
         assert moved["target_z"] == pytest.approx(-0.3)
+
+        # Talking a known action acts immediately with NO LLM (the keyword router) — the
+        # fake test router would raise, so a green result proves the classifier short-circuit.
+        said = client.post(
+            "/api/pet/command", json={"action": "say", "text": "dance for me!"}
+        ).json()
+        assert said["script"], "a recognised say should produce a script without the LLM"
+
+        # Colour-on-command (both via `say` and the palette action).
+        red = client.post("/api/pet/command", json={"action": "say", "text": "turn red"}).json()
+        assert red["color"] == "red"
+        blue = client.post("/api/pet/command", json={"action": "color", "text": "blue"}).json()
+        assert blue["color"] == "blue"
 
         # An unknown action is rejected by the request schema.
         assert client.post("/api/pet/command", json={"action": "explode"}).status_code == 422

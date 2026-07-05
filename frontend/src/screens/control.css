@@ -156,6 +156,30 @@
   border-color: #3bf0ff;
   box-shadow: 0 0 22px rgba(59, 240, 255, 0.5);
 }
+/* Colour swatches — round, chunky, easy to hit; the picked one gets a neon ring. */
+.pctl-colors {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.pctl-swatch {
+  width: 46px;
+  height: 46px;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.25);
+  padding: 0;
+  cursor: pointer;
+  touch-action: none;
+  -webkit-tap-highlight-color: transparent;
+  transition: transform 0.06s ease, box-shadow 0.12s ease, border-color 0.12s ease;
+}
+.pctl-swatch:active {
+  transform: scale(0.9);
+}
+.pctl-swatch.on {
+  border-color: #fff;
+  box-shadow: 0 0 16px rgba(255, 255, 255, 0.7);
+}
 /* Grown-ups' room-map control — collapsed by default so a child never lands there. */
 .pctl-grownup > summary {
   cursor: pointer;

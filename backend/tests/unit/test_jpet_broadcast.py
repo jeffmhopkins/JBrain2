@@ -7,20 +7,20 @@ oldest snapshot instead of blocking, and unsubscribe removes it.
 from datetime import UTC, datetime
 
 from jbrain.jpet.broadcast import PetBroadcaster
-from jbrain.jpet.service import Drives, PetStateInfo
+from jbrain.jpet.service import PetStateInfo
 
 
-def _state(food: float) -> PetStateInfo:
+def _state(marker: float) -> PetStateInfo:
+    # `pos_x` carries a distinguishing marker so the fan-out assertions can tell frames apart.
     return PetStateInfo(
         id="p",
         name="Blink",
         domain="general",
-        drives=Drives(food=food, energy=80, fun=70, love=70),
         mood="happy",
         emotion="happy",
         speech=None,
         asleep=False,
-        pos_x=0,
+        pos_x=marker,
         pos_z=0,
         target_x=0,
         target_z=0,
@@ -36,16 +36,16 @@ async def test_publish_reaches_every_subscriber() -> None:
     a, c = b.subscribe(), b.subscribe()
     assert b.subscriber_count == 2
     b.publish(_state(50))
-    assert (await a.get()).drives.food == 50
-    assert (await c.get()).drives.food == 50
+    assert (await a.get()).pos_x == 50
+    assert (await c.get()).pos_x == 50
 
 
 async def test_full_queue_drops_oldest() -> None:
     b = PetBroadcaster(maxsize=2)
     q = b.subscribe()
-    for food in (10, 20, 30):  # 3 into a size-2 queue → oldest (10) dropped
-        b.publish(_state(food))
-    assert [(q.get_nowait()).drives.food for _ in range(2)] == [20, 30]
+    for marker in (10, 20, 30):  # 3 into a size-2 queue → oldest (10) dropped
+        b.publish(_state(marker))
+    assert [(q.get_nowait()).pos_x for _ in range(2)] == [20, 30]
 
 
 async def test_unsubscribe_stops_delivery() -> None:

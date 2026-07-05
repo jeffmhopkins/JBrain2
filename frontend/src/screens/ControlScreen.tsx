@@ -24,13 +24,6 @@ const defaultDeps: ControlDeps = {
   petStream: (s) => api.petStream(s),
 };
 
-const METERS: { key: keyof PetState; label: string }[] = [
-  { key: "food", label: "🍔 Full" },
-  { key: "energy", label: "⚡ Peppy" },
-  { key: "fun", label: "🎉 Fun" },
-  { key: "love", label: "💗 Love" },
-];
-
 // The big kid play-buttons — each is a one-tap canned script. Few, large, and never
 // destructive; `sleep`/`wake` is swapped in contextually below.
 const PLAY: { action: PetCommand["action"]; ico: string; label: string }[] = [
@@ -40,13 +33,26 @@ const PLAY: { action: PetCommand["action"]; ico: string; label: string }[] = [
   { action: "jump", ico: "⭐", label: "Jump!" },
   { action: "wave", ico: "👋", label: "Wave hi" },
   { action: "spin", ico: "🌀", label: "Spin" },
+  { action: "jumprope", ico: "🤸", label: "Jump rope" },
+  { action: "music", ico: "🎹", label: "Play music" },
   { action: "beep", ico: "🔊", label: "Silly sound" },
 ];
 
-// Happy meters are never a threat — a friendly, always-positive fill (no red "danger").
-function fillColor(v: number): string {
-  return v > 55 ? "#3bf0ff" : "#ffd23f";
-}
+// The colour swatches — each recolours the robot on both surfaces. Names mirror the
+// backend `PET_COLORS`; the hex here is the swatch face only (not the neon wall palette).
+const COLORS: { name: string; hex: string }[] = [
+  { name: "cyan", hex: "#37e0f0" },
+  { name: "magenta", hex: "#ff4fd8" },
+  { name: "gold", hex: "#ffce3a" },
+  { name: "orange", hex: "#ff8a3a" },
+  { name: "blue", hex: "#4a7bff" },
+  { name: "red", hex: "#ff4d5e" },
+  { name: "green", hex: "#49f08a" },
+  { name: "pink", hex: "#ff8ad0" },
+  { name: "purple", hex: "#b06aff" },
+  { name: "white", hex: "#f0f4ff" },
+  { name: "rainbow", hex: "conic-gradient(red,orange,gold,green,blue,purple,red)" },
+];
 
 // Normalized [-1, 1] → CSS percent for the dot's position on the map.
 function pct(n: number): string {
@@ -178,6 +184,25 @@ export function ControlScreen({ onClose, deps = defaultDeps }: ControlScreenProp
       </div>
 
       <div className="pctl-card">
+        <h3>Change colour</h3>
+        <div className="pctl-colors">
+          {COLORS.map(({ name: cname, hex }) => (
+            <button
+              key={cname}
+              type="button"
+              className={`pctl-swatch${pet?.color === cname ? " on" : ""}`}
+              style={{ background: hex }}
+              onPointerDown={(e) => {
+                e.preventDefault();
+                void send({ action: "color", text: cname });
+              }}
+              aria-label={`Turn ${cname}`}
+            />
+          ))}
+        </div>
+      </div>
+
+      <div className="pctl-card">
         <h3>Talk to {name}</h3>
         <div className="pctl-talk">
           {sttAvailable() ? (
@@ -202,26 +227,6 @@ export function ControlScreen({ onClose, deps = defaultDeps }: ControlScreenProp
           <button type="button" onClick={talk} aria-label="Send message">
             ➤
           </button>
-        </div>
-      </div>
-
-      <div className="pctl-card">
-        <h3>How {name} feels</h3>
-        <div className="pctl-meters">
-          {METERS.map(({ key, label }) => {
-            const v = Math.round((pet?.[key] as number) ?? 0);
-            return (
-              <div key={key} className="pctl-meter">
-                <span>
-                  <span>{label}</span>
-                  <b>{v}</b>
-                </span>
-                <div className="pctl-track">
-                  <div className="pctl-fill" style={{ width: `${v}%`, background: fillColor(v) }} />
-                </div>
-              </div>
-            );
-          })}
         </div>
       </div>
 

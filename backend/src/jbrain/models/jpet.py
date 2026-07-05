@@ -33,10 +33,10 @@ class PetMemory(Base):
 
 
 class PetState(Base):
-    """One pet, pinned to a single domain. Drives are 0–100 satisfaction (higher is
-    better); `mood`/`emotion` are derived and materialized for cheap reads; the
-    `pos`/`target`/`facing`/`action` fields are the discrete intent the Wall
-    animates locally between server updates."""
+    """One pet, pinned to a single domain. v3 has no drive meters — the pet's continuous
+    life is the wall's own sim. The server keeps durable state: `name`, `mood`/`emotion`
+    (plain labels for the phone header), the current command `script` + room `objects`, and
+    the `pos`/`target`/`facing`/`action` a command sets. Mirrors migrations 0123–0126."""
 
     __tablename__ = "pet_state"
     __table_args__ = {"schema": "app"}
@@ -47,11 +47,6 @@ class PetState(Base):
     )
     domain_code: Mapped[str] = mapped_column(Text, ForeignKey("app.domains.code"))
     name: Mapped[str] = mapped_column(Text)
-
-    food: Mapped[float] = mapped_column(Float, default=80.0, server_default="80")
-    energy: Mapped[float] = mapped_column(Float, default=80.0, server_default="80")
-    fun: Mapped[float] = mapped_column(Float, default=70.0, server_default="70")
-    love: Mapped[float] = mapped_column(Float, default=70.0, server_default="70")
 
     mood: Mapped[str] = mapped_column(Text, default="neutral", server_default="neutral")
     emotion: Mapped[str] = mapped_column(Text, default="neutral", server_default="neutral")
@@ -64,6 +59,9 @@ class PetState(Base):
     target_z: Mapped[float] = mapped_column(Float, default=0.0, server_default="0")
     facing: Mapped[float] = mapped_column(Float, default=0.0, server_default="0")
     action: Mapped[str] = mapped_column(Text, default="idle", server_default="idle")
+    # v3 W3 (migration 0127): the kid-chosen robot colour (a name the wall maps to a neon
+    # RGB, or `rainbow`); null = the default synthwave palette.
+    color: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     # v2 (migration 0125): the bounded action script the pet plays out, the room objects
     # it can target/carry (a fixed set of mutable {kind: [x, z]} positions), what it is

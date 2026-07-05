@@ -15,11 +15,8 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from jbrain.db.session import SessionContext, scoped_session
 from jbrain.jpet.service import (
     OBJECT_HOMES,
-    Drives,
     PetStateInfo,
     Step,
-    apply_play_reward,
-    decayed,
     mood_of,
     settle_script,
 )
@@ -46,7 +43,6 @@ def _info(row: PetState) -> PetStateInfo:
         id=str(row.id),
         name=row.name,
         domain=row.domain_code,
-        drives=Drives(food=row.food, energy=row.energy, fun=row.fun, love=row.love),
         mood=row.mood,
         emotion=row.emotion,
         speech=row.speech,
@@ -57,6 +53,7 @@ def _info(row: PetState) -> PetStateInfo:
         target_z=row.target_z,
         facing=row.facing,
         action=row.action,
+        color=row.color,
         script=list(row.script or []),
         script_started_at=row.script_started_at,
         carrying=row.carrying,
@@ -113,33 +110,17 @@ class SqlJpetRepo:
     async def tick(
         self, ctx: SessionContext, *, domain: str, now: datetime | None = None
     ) -> PetStateInfo | None:
-        """Advance the pet once and persist. v2: the happy meters do NOT decay (only a
-        napping pet recovers energy); mood is always positive. Pure arithmetic — no LLM.
-        None when there is no pet in scope. `now` is injectable for tests."""
+        """v3: the pet has no drives to advance — its life runs on the wall. The tick just
+        keeps `last_tick_at` fresh (a liveness heartbeat) and returns the current state, so
+        the ensure-loop has something to call. None when there is no pet in scope. `now` is
+        injectable for tests."""
         now = now or datetime.now(UTC)
         async with scoped_session(self._maker, ctx) as session:
             row = await self._load(session, domain)
             if row is None:
                 return None
-            dt = (now - row.last_tick_at).total_seconds()
-            drives = decayed(
-                Drives(food=row.food, energy=row.energy, fun=row.fun, love=row.love),
-                dt,
-                asleep=row.asleep,
-            )
-            mood = mood_of(drives, asleep=row.asleep)
             await session.execute(
-                update(PetState)
-                .where(PetState.id == row.id)
-                .values(
-                    food=drives.food,
-                    energy=drives.energy,
-                    fun=drives.fun,
-                    love=drives.love,
-                    mood=mood,
-                    last_tick_at=now,
-                    updated_at=func.now(),
-                )
+                update(PetState).where(PetState.id == row.id).values(last_tick_at=now)
             )
             await session.refresh(row)
             return _info(row)
@@ -152,15 +133,13 @@ class SqlJpetRepo:
         script: list[Step],
         speech: str | None = None,
         emotion: str | None = None,
-        reward: bool = True,
         now: datetime | None = None,
     ) -> PetStateInfo | None:
-        """Settle a (already-cleaned) action script into the pet + room and persist it: the
-        pet's resting pose, what it now carries, the room objects' new positions, the light
-        state, and the script itself + its start time (the wall replays the motion from
-        there). Optionally sets the utterance/emotion (the `say` path) and applies the
-        one-directional play reward. Does NOT touch `last_tick_at`. None when no pet in
-        scope; the caller broadcasts."""
+        """Settle a (already-cleaned) action command script into the pet + room and persist
+        it: the pet's resting pose, what it now carries, the room objects' new positions, the
+        light state, and the script itself + its start time (the wall plays it as an interrupt
+        to its own life, then resumes). Optionally sets the utterance/emotion (the `say`
+        path). None when no pet in scope; the caller broadcasts."""
         now = now or datetime.now(UTC)
         async with scoped_session(self._maker, ctx) as session:
             row = await self._load(session, domain)
@@ -177,9 +156,6 @@ class SqlJpetRepo:
                 objects=objects,
                 script=script,
             )
-            drives = Drives(food=row.food, energy=row.energy, fun=row.fun, love=row.love)
-            if reward:
-                drives = apply_play_reward(drives)
             values: dict[str, Any] = {
                 "script": [s.as_dict() for s in script],
                 "script_started_at": now,
@@ -193,11 +169,7 @@ class SqlJpetRepo:
                 "carrying": settled.carrying,
                 "lights_on": settled.lights_on,
                 "objects": _objects_to_json(settled.objects),
-                "food": drives.food,
-                "energy": drives.energy,
-                "fun": drives.fun,
-                "love": drives.love,
-                "mood": mood_of(drives, asleep=settled.asleep),
+                "mood": mood_of(asleep=settled.asleep),
                 "updated_at": func.now(),
             }
             if speech is not None:
@@ -233,6 +205,22 @@ class SqlJpetRepo:
                 objects = _objects_from_row(row)
                 objects[row.carrying] = (x, z)
                 values["objects"] = _objects_to_json(objects)
+            await session.execute(update(PetState).where(PetState.id == row.id).values(**values))
+            await session.refresh(row)
+            return _info(row)
+
+    async def set_color(
+        self, ctx: SessionContext, *, domain: str, color: str, speech: str | None = None
+    ) -> PetStateInfo | None:
+        """Recolour the robot (a kid command / phone palette) — durable state the wall reads.
+        Optionally sets an utterance. None when no pet in scope; the caller broadcasts."""
+        async with scoped_session(self._maker, ctx) as session:
+            row = await self._load(session, domain)
+            if row is None:
+                return None
+            values: dict[str, Any] = {"color": color, "updated_at": func.now()}
+            if speech is not None:
+                values["speech"] = speech
             await session.execute(update(PetState).where(PetState.id == row.id).values(**values))
             await session.refresh(row)
             return _info(row)

@@ -11,8 +11,6 @@ from jbrain.jpet.service import (
     MAX_SCRIPT_STEPS,
     OBJECT_HOMES,
     TERMINAL,
-    Drives,
-    apply_play_reward,
     canned_script,
     clean_script,
     settle_script,
@@ -115,12 +113,3 @@ def test_all_canned_button_scripts_are_valid_and_terminate() -> None:
         steps = canned_script(action, objects=OBJS)
         assert steps, f"{action} produced an empty script"
         assert steps[-1].action in TERMINAL, f"{action} does not terminate"
-
-
-def test_play_reward_is_one_directional() -> None:
-    before = Drives(food=50.0, energy=50.0, fun=50.0, love=50.0)
-    after = apply_play_reward(before)
-    assert after.fun > before.fun and after.love > before.love
-    # clamps at 100, never below 0
-    full = apply_play_reward(Drives(100, 100, 100, 100))
-    assert full.fun == 100.0 and full.energy <= 100.0

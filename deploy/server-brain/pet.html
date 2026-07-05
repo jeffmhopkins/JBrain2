@@ -16,12 +16,6 @@
   .hud{position:fixed;top:24px;left:32px;z-index:6}
   .name{font-size:30px;font-weight:800;letter-spacing:2px;text-shadow:0 0 14px var(--line)}
   .mood{font-size:14px;opacity:.85;letter-spacing:3px;text-transform:uppercase;margin-top:2px}
-  .bars{position:fixed;top:24px;right:32px;z-index:6;width:200px}
-  .bar{margin-bottom:10px}
-  .bar label{display:flex;justify-content:space-between;font-size:12px;letter-spacing:1px;
-    text-transform:uppercase;opacity:.9;margin-bottom:3px}
-  .track{height:9px;border-radius:6px;background:rgba(255,255,255,.1);overflow:hidden}
-  .fill{height:100%;border-radius:6px;transition:width .5s ease,background .5s;box-shadow:0 0 8px currentColor}
   .speech{position:fixed;top:96px;left:50%;transform:translateX(-50%);z-index:6;max-width:60%;
     padding:14px 20px;border-radius:16px;background:var(--panel);border:1.5px solid var(--cy);
     font-size:24px;font-weight:700;text-align:center;text-shadow:0 0 12px var(--cy);
@@ -42,18 +36,19 @@
 <canvas id="bloom"></canvas>
 <div class="frame"></div>
 <div class="hud"><div class="name" id="name">JPET</div><div class="mood" id="mood">connecting…</div></div>
-<div class="bars" id="bars"></div>
 <div class="speech" id="speech"></div>
 <div class="status" id="status">waiting for the pet…</div>
 <button id="sound" hidden>🔊 tap for sound</button>
 <a class="back" href="/">← neural wall</a>
 <script>
-/* Live wall view of the family pet: renders the server-authoritative state polled from
-   /pet/state (proxied to the on-box api). Display only — the kids drive it from the phone
-   Control screen. Engine ported from docs/mocks/jpet/06-room-3d.html. */
+/* Live wall view of the family pet (docs/archive/JPET_V3_PLAN.md W1). The WALL runs the
+   pet's brain: a continuous 60fps sim — an autonomy engine that keeps it fluidly doing
+   things on its own, with damped-spring motion. A server command (from the phone/talk)
+   arrives via /pet/state and plays as a brief interrupt, then the pet resumes its life.
+   Engine ported from docs/mocks/jpet/06-room-3d.html. */
 const cv=document.getElementById('gl'),gl=cv.getContext('webgl',{antialias:true,alpha:false,preserveDrawingBuffer:true});
 const bcv=document.getElementById('bloom'),bctx=bcv.getContext('2d');
-const R=6.2,WALL=5.0;
+const R=12.0,WALL=8.5;
 const M={ident(){return[1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1];},
  mul(a,b){const o=new Array(16);for(let c=0;c<4;c++){const b0=b[c*4],b1=b[c*4+1],b2=b[c*4+2],b3=b[c*4+3];
   o[c*4]=b0*a[0]+b1*a[4]+b2*a[8]+b3*a[12];o[c*4+1]=b0*a[1]+b1*a[5]+b2*a[9]+b3*a[13];
@@ -72,40 +67,65 @@ const M={ident(){return[1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1];},
  rotZ(a,r){const s=Math.sin(r),c=Math.cos(r),o=a.slice();o[0]=a[0]*c+a[4]*s;o[1]=a[1]*c+a[5]*s;o[2]=a[2]*c+a[6]*s;o[3]=a[3]*c+a[7]*s;
   o[4]=a[4]*c-a[0]*s;o[5]=a[5]*c-a[1]*s;o[6]=a[6]*c-a[2]*s;o[7]=a[7]*c-a[3]*s;return o;},
  scale(a,x,y,z){const o=a.slice();o[0]=a[0]*x;o[1]=a[1]*x;o[2]=a[2]*x;o[3]=a[3]*x;o[4]=a[4]*y;o[5]=a[5]*y;o[6]=a[6]*y;o[7]=a[7]*y;
-  o[8]=a[8]*z;o[9]=a[9]*z;o[10]=a[10]*z;o[11]=a[11]*z;return o;}};
+  o[8]=a[8]*z;o[9]=a[9]*z;o[10]=a[10]*z;o[11]=a[11]*z;return o;},
+ invert(m){const[a00,a01,a02,a03,a10,a11,a12,a13,a20,a21,a22,a23,a30,a31,a32,a33]=m;
+  const b00=a00*a11-a01*a10,b01=a00*a12-a02*a10,b02=a00*a13-a03*a10,b03=a01*a12-a02*a11,
+   b04=a01*a13-a03*a11,b05=a02*a13-a03*a12,b06=a20*a31-a21*a30,b07=a20*a32-a22*a30,
+   b08=a20*a33-a23*a30,b09=a21*a32-a22*a31,b10=a21*a33-a23*a31,b11=a22*a33-a23*a32;
+  let d=b00*b11-b01*b10+b02*b09+b03*b08-b04*b07+b05*b06;if(!d)return null;d=1/d;
+  return[(a11*b11-a12*b10+a13*b09)*d,(a02*b10-a01*b11-a03*b09)*d,(a31*b05-a32*b04+a33*b03)*d,
+   (a22*b04-a21*b05-a23*b03)*d,(a12*b08-a10*b11-a13*b07)*d,(a00*b11-a02*b08+a03*b07)*d,
+   (a32*b02-a30*b05-a33*b01)*d,(a20*b05-a22*b02+a23*b01)*d,(a10*b10-a11*b08+a13*b06)*d,
+   (a01*b08-a00*b10-a03*b06)*d,(a30*b04-a31*b02+a33*b00)*d,(a21*b02-a20*b04-a23*b00)*d,
+   (a11*b07-a10*b09-a12*b06)*d,(a00*b09-a01*b07+a02*b06)*d,(a31*b01-a30*b03-a32*b00)*d,
+   (a20*b03-a21*b01+a22*b00)*d];}};
 const hx=h=>[parseInt(h.slice(1,3),16)/255,parseInt(h.slice(3,5),16)/255,parseInt(h.slice(5,7),16)/255];
 const CY=hx('#3bf0ff'),MG=hx('#ff4fd8'),GD=hx('#ffd23f'),RD=hx('#ff477e'),BL=hx('#6a7bff'),OR=hx('#ffb03a');
+// Named robot colours (set on command / the phone palette); `rainbow` cycles the hue.
+const NAMED={cyan:CY,magenta:MG,gold:GD,orange:OR,blue:BL,red:RD,green:hx('#49f08a'),
+ pink:hx('#ff8ad0'),purple:hx('#b06aff'),white:[1,1,1]};
+function hsv(h,s,v){const i=Math.floor(h*6),f=h*6-i,p=v*(1-s),q=v*(1-f*s),u=v*(1-(1-f)*s);
+ return[[v,u,p],[q,v,p],[p,v,u],[p,q,v],[u,p,v],[v,p,q]][i%6];}
+function petCol(t){const c=live.color;if(!c)return null;
+ if(c==='rainbow')return hsv((t*0.14)%1,0.85,1);return NAMED[c]||null;}
 let W,H,DPR,vp=M.ident();
 function resize(){DPR=Math.min(2,devicePixelRatio||1);W=innerWidth;H=innerHeight;cv.width=W*DPR;cv.height=H*DPR;
   gl&&gl.viewport(0,0,cv.width,cv.height);bcv.width=W*DPR;bcv.height=H*DPR;}
 addEventListener('resize',resize);resize();
 
-const bars=document.getElementById('bars');
-[['food','🍔 Food'],['energy','⚡ Energy'],['fun','🎮 Fun'],['love','💗 Love']].forEach(([k,l])=>{
-  bars.insertAdjacentHTML('beforeend',`<div class="bar"><label><span>${l}</span><span id="v_${k}"></span></label>
-   <div class="track"><div class="fill" id="f_${k}"></div></div></div>`);});
 const speechEl=document.getElementById('speech');
 // Named floor spots (normalized [-1,1]) the pet's script can target — mirror of the
 // backend LOCATIONS so a `destination` step resolves to the same place.
 const LOC={corner_ne:[.85,-.85],corner_nw:[-.85,-.85],corner_se:[.85,.85],corner_sw:[-.85,.85],
   center:[0,0],near_child:[0,.82]};
-const live={name:'JPet',mood:'…',food:0,energy:0,fun:0,love:0,emotion:'happy',asleep:false,
+// Wall-mounted fixtures (world coords on the back wall) the pet can watch / gaze at.
+const TV=[4.6,-R+0.5],WINDOW=[-5.6,-R+0.4];
+const VAC=[R-2.5,R-2.5];                                    // the vacuum's parking spot
+// The playable synth (a little keyboard on a stand), front-and-centre so a kid can reach
+// its keys with the mouse. NKEYS keys span SYNW along x, pentatonic so any tap sounds nice.
+const SYNTH=[2.6,R*0.5],NKEYS=7,SYNW=3.2,SYNKEY=SYNW/NKEYS;
+const PENTA=[523.25,587.33,659.25,783.99,880.0,1046.5,1174.66]; // C5 D5 E5 G5 A5 C6 D6
+let keyLit=-1,keyLitT=0;                                    // which key is glowing, and for how long
+// Circadian day factor from the REAL local clock (1 = day, 0 = night, smooth dawn/dusk).
+function dayFactor(){const h=new Date().getHours()+new Date().getMinutes()/60;
+ if(h>=7&&h<19)return 1;if(h<5||h>=21)return 0;return h<7?(h-5)/2:(21-h)/2;}
+const live={name:'JPet',mood:'…',emotion:'happy',asleep:false,
   target_x:0,target_z:0,speech:null,script:[],carrying:null,lights_on:true,objects:{}};
-// P holds the pet's live render state; the script player drives `act`/anim flags per step.
-const P={x:0,z:0,tx:0,tz:0,facing:0,walk:0,emotion:'happy',asleep:false,blink:0,nextBlink:2,
-  act:'idle',stepT:0,held:null,pop:0};
+// P holds the pet's live render state. `vx/vz` are velocity (fluid accel/decel motion);
+// the script player and the autonomy engine both steer it via the target (tx,tz) + act.
+const P={x:0,z:0,tx:0,tz:0,vx:0,vz:0,facing:0,walk:0,emotion:'happy',asleep:false,blink:0,
+  nextBlink:2,act:'idle',stepT:0,held:null};
 // Locally-animated room object positions (world coords), lerped toward the server's.
 const room={};let lights=1;   // lights: 1 = day, eased toward 0 at night
 let connected=false,lastSpeech=null;
-// Always-positive fill (v2 has no danger state): bright when high, warm gold when lower.
-function fillColor(v){return v>55?'#3bf0ff':'#ffd23f';}
-// The script player: replay the ordered steps locally (60fps), one at a time.
+// The script player: replay a server COMMAND's ordered steps locally, one at a time.
 const player={key:'',steps:[],i:-1};
 function objPos(name){const o=live.objects&&live.objects[name];return o?[o[0]*R,o[1]*R]:null;}
+function objWorld(n){return n==='ball'&&phys.ball.init?ballPos():(room[n]||objPos(n));}
 function stepTarget(s){                                    // world target for a moving step, else null
   if(s.destination&&LOC[s.destination])return[LOC[s.destination][0]*R,LOC[s.destination][1]*R];
-  if(['go_to','look_at','chase','pick_up'].includes(s.act)&&s.target){const p=room[s.target]||objPos(s.target);if(p)return[p[0],p[1]];}
-  if(s.act==='chase'){const p=room.ball||objPos('ball');if(p)return[p[0],p[1]];}
+  if(['go_to','look_at','chase','pick_up'].includes(s.act)&&s.target){const p=objWorld(s.target);if(p)return[p[0],p[1]];}
+  if(s.act==='chase'){const p=objWorld('ball');if(p)return[p[0],p[1]];}
   if(s.act==='come_here')return[LOC.near_child[0]*R,LOC.near_child[1]*R];
   if(s.act==='hide')return[LOC.corner_nw[0]*R,LOC.corner_nw[1]*R];
   return null;
@@ -122,24 +142,28 @@ function enterStep(i){
   else if(s.act==='sleep')P.asleep=true;else if(s.act==='wake')P.asleep=false;
   sfx(s.act);                                              // a per-action sound cue
 }
-function loadScript(){                                     // called when a new script arrives
+let scriptActive=false,lastMoveKey='';
+function scriptRunning(){return scriptActive&&player.i>=0&&player.i<player.steps.length;}
+function loadScript(){                                     // a new server COMMAND arrived
   const steps=(live.script||[]).map(s=>({act:s.action,target:s.target,destination:s.destination,
     duration_ms:s.duration_ms,emotion:s.emotion}));
   const key=JSON.stringify(steps);if(key===player.key)return;
   player.key=key;player.steps=steps;player.held=null;
-  if(steps.length)enterStep(0);else{player.i=-1;P.act=live.asleep?'sleep':'idle';}
+  if(steps.length){dropCarried();scriptActive=true;enterStep(0);} // interrupt autonomy, play it
 }
 function applyLive(){
-  P.emotion=live.emotion||'happy';
-  if(live.asleep!==undefined&&!(player.steps.length&&player.i>=0))P.asleep=live.asleep;
   document.getElementById('name').textContent=(live.name||'JPet').toUpperCase();
   document.getElementById('mood').textContent=live.mood||'';
-  for(const k of['food','energy','fun','love']){const v=Math.round(live[k]||0);
-    document.getElementById('v_'+k).textContent=v;const f=document.getElementById('f_'+k);
-    f.style.width=v+'%';f.style.background=fillColor(v);f.style.color=fillColor(v);}
+  if(!phys.ball.init&&live.objects&&live.objects.ball){            // seed the ball + blocks once
+    phys.ball.x=live.objects.ball[0]*R;phys.ball.z=live.objects.ball[1]*R;phys.ball.init=true;initBlocks();}
   loadScript();
-  // No active script (e.g. a parent raw move) — follow the server's plain target.
-  if(!player.steps.length){P.tx=Math.max(-R,Math.min(R,(live.target_x||0)*R));P.tz=Math.max(-R,Math.min(R,(live.target_z||0)*R));}
+  // A parent raw `move` (empty script, a fresh target) → a one-off travel interrupt.
+  const mk=(live.target_x||0)+','+(live.target_z||0);
+  if(!(live.script&&live.script.length)&&mk!==lastMoveKey&&(Math.abs(live.target_x)>0.001||Math.abs(live.target_z)>0.001)){
+    lastMoveKey=mk;ai.mode='move';ai.phase='travel';ai.act='walk';
+    ai.target=[Math.max(-R,Math.min(R,live.target_x*R)),Math.max(-R,Math.min(R,live.target_z*R))];
+    ai.until=0;P.asleep=false;
+  }
   if(live.speech&&live.speech!==lastSpeech){speechEl.textContent=live.speech;speechEl.classList.add('show');
     speakPet(live.speech);
     clearTimeout(applyLive._t);applyLive._t=setTimeout(()=>speechEl.classList.remove('show'),6000);}
@@ -186,6 +210,22 @@ function sfx(action){if(!soundOn||!keepAliveCtx)return;const notes=CUES[action];
    const s=t0+k*dur*.9;g.gain.setValueAtTime(0,s);g.gain.linearRampToValueAtTime(.06,s+.02);
    g.gain.exponentialRampToValueAtTime(.0001,s+dur);o.connect(g).connect(ctx.destination);o.start(s);o.stop(s+dur);});
  }catch(e){}}
+// The playable synth's voice: a warm two-oscillator note with a soft bell envelope, volume
+// capped so it never startles. A click is a user gesture, so we can spin up / resume an
+// AudioContext here even before the sound button unlocks TTS.
+let synthCtx=null;
+function synthNote(freq){try{const AC=window.AudioContext||window.webkitAudioContext;if(!AC)return;
+ const ctx=keepAliveCtx||(synthCtx||(synthCtx=new AC()));if(ctx.state==='suspended')ctx.resume().catch(()=>{});
+ const t0=ctx.currentTime,dur=.55;
+ for(const[f,g0,ty]of[[freq,.09,'triangle'],[freq*2,.03,'sine']]){
+  const o=ctx.createOscillator(),g=ctx.createGain();o.type=ty;o.frequency.value=f;
+  g.gain.setValueAtTime(0,t0);g.gain.linearRampToValueAtTime(g0,t0+.015);
+  g.gain.exponentialRampToValueAtTime(.0001,t0+dur);o.connect(g).connect(ctx.destination);o.start(t0);o.stop(t0+dur);}
+}catch(e){}}
+// Play a synth key: light it, sing its note, and make the pet bop toward the keyboard.
+function pressKey(i){if(i<0||i>=NKEYS)return;keyLit=i;keyLitT=0.28;synthNote(PENTA[i]);
+ P.emotion='silly';ai.mode='auto';ai.phase='beat';ai.act='play_music';ai.until=performance.now()/1000+0.9;
+ P.tx=P.x;P.tz=P.z;P.asleep=false;napUntil=0;}
 const soundBtn=document.getElementById('sound');
 async function initSound(){let voices=[];
  try{voices=((await(await fetch('/tts/voices',{cache:'no-store'})).json()).voices)||[];}catch(e){}
@@ -199,7 +239,11 @@ soundBtn.addEventListener('click',()=>{
 initSound();
 
 /* ---- GL ---- */
-let prog,aP,uMVP,uCol,uAl,gFloor,nFloor,gBack,nBack,gSide,nSide,gCube,gCirc;
+// Solid-wireframe fill: a dark, near-opaque shell drawn behind the neon edges so a shape
+// reads as SOLID, not X-ray. FILL is a dark navy tint; polygonOffset pushes it back so the
+// bright edges always win at the surface.
+const FILL=[.05,.03,.10];
+let prog,aP,uMVP,uCol,uAl,gFloor,nFloor,gBack,nBack,gSide,nSide,gCube,gCubeF,gCirc,gSphere,nSphere,gRope;
 if(gl&&bctx){
  const sh=(t,s)=>{const o=gl.createShader(t);gl.shaderSource(o,s);gl.compileShader(o);return o;};
  prog=gl.createProgram();
@@ -212,85 +256,394 @@ if(gl&&bctx){
  const grid=()=>{const v=[];for(let x=-R;x<=R+1e-3;x+=1)v.push(x,0,-R,x,0,R);for(let z=-R;z<=R+1e-3;z+=1)v.push(-R,0,z,R,0,z);return v;};
  const back=()=>{const v=[];for(let x=-R;x<=R+1e-3;x+=1)v.push(x,0,-R,x,WALL,-R);for(let y=0;y<=WALL+1e-3;y+=1)v.push(-R,y,-R,R,y,-R);return v;};
  const side=()=>{const v=[];for(const sx of[-R,R]){for(let z=-R;z<=R+1e-3;z+=1)v.push(sx,0,z,sx,WALL,z);for(let y=0;y<=WALL+1e-3;y+=1)v.push(sx,y,-R,sx,y,R);}return v;};
- const cube=()=>{const c=.5,p=[[-c,-c,-c],[c,-c,-c],[c,c,-c],[-c,c,-c],[-c,-c,c],[c,-c,c],[c,c,c],[-c,c,c]],
-  e=[[0,1],[1,2],[2,3],[3,0],[4,5],[5,6],[6,7],[7,4],[0,4],[1,5],[2,6],[3,7]],v=[];for(const[a,b]of e)v.push(...p[a],...p[b]);return v;};
+ const CP=[[-.5,-.5,-.5],[.5,-.5,-.5],[.5,.5,-.5],[-.5,.5,-.5],[-.5,-.5,.5],[.5,-.5,.5],[.5,.5,.5],[-.5,.5,.5]];
+ const cube=()=>{const e=[[0,1],[1,2],[2,3],[3,0],[4,5],[5,6],[6,7],[7,4],[0,4],[1,5],[2,6],[3,7]],v=[];
+  for(const[a,b]of e)v.push(...CP[a],...CP[b]);return v;};
+ // Filled cube (12 tris) for the solid-wireframe occluding shell.
+ const cubeF=()=>{const f=[[0,1,2,3],[5,4,7,6],[4,0,3,7],[1,5,6,2],[3,2,6,7],[4,5,1,0]],v=[];
+  for(const[a,b,c,d]of f){v.push(...CP[a],...CP[b],...CP[c],...CP[a],...CP[c],...CP[d]);}return v;};
  const circ=n=>{const v=[];for(let i=0;i<n;i++){const a=i/n*Math.PI*2;v.push(Math.cos(a),0,Math.sin(a));}return v;};
+ // Filled low-poly UV sphere (triangles) — the occluding shell behind the ball's rings.
+ const sphere=()=>{const v=[],LA=6,LO=10,SP=(la,lo)=>{const th=la/LA*Math.PI,ph=lo/LO*Math.PI*2;
+   return[Math.sin(th)*Math.cos(ph),Math.cos(th),Math.sin(th)*Math.sin(ph)];};
+  for(let la=0;la<LA;la++)for(let lo=0;lo<LO;lo++){const a=SP(la,lo),b=SP(la+1,lo),c=SP(la+1,lo+1),d=SP(la,lo+1);
+   v.push(...a,...b,...c,...a,...c,...d);}return v;};
  gFloor=buf(grid());nFloor=grid().length/3;gBack=buf(back());nBack=back().length/3;gSide=buf(side());nSide=side().length/3;
- gCube=buf(cube());gCirc=buf(circ(40));
+ gCube=buf(cube());gCubeF=buf(cubeF());gCirc=buf(circ(40));gSphere=buf(sphere());nSphere=sphere().length/3;
+ gRope=gl.createBuffer();                                   // dynamic: the jump-rope arc, rebuilt per frame
 }
 function draw(b,count,mode,mvp,col,alpha){gl.bindBuffer(gl.ARRAY_BUFFER,b);gl.enableVertexAttribArray(aP);
  gl.vertexAttribPointer(aP,3,gl.FLOAT,false,0,0);gl.uniformMatrix4fv(uMVP,false,new Float32Array(mvp));
  gl.uniform3fv(uCol,col);gl.uniform1f(uAl,alpha==null?1:alpha);gl.drawArrays(mode,0,count);}
-function part(model,lx,ly,lz,sx,sy,sz,col,alpha){draw(gCube,24,gl.LINES,M.mul(vp,M.scale(M.trans(model,lx,ly,lz),sx,sy,sz)),col,alpha);}
+// A solid-wireframe box part: dark occluding faces (depth-offset back) then the neon edges.
+function part(model,lx,ly,lz,sx,sy,sz,col,alpha){
+ const mvp=M.mul(vp,M.scale(M.trans(model,lx,ly,lz),sx,sy,sz));
+ gl.enable(gl.POLYGON_OFFSET_FILL);gl.polygonOffset(1.2,1.2);
+ draw(gCubeF,36,gl.TRIANGLES,mvp,FILL,(alpha==null?1:alpha)*0.9);
+ gl.disable(gl.POLYGON_OFFSET_FILL);
+ draw(gCube,24,gl.LINES,mvp,col,alpha);}
+
+/* ---- Physics playground (docs/archive/JPET_V3_PLAN.md W2): the ball rolls, bounces off the
+   walls and settles with friction; the pet kicks it and chases; a mouse click flicks the
+   ball or sends the pet to a spot (with a little surprise). The wall owns the ball's
+   physics (seeded from the server's object position). ---- */
+const phys={ball:{x:0,z:0,vx:0,vz:0,init:false},blocks:[]};
+let wantChase=false;
+function ballPos(){return[phys.ball.x,phys.ball.z];}
+function ballSpeed(){return Math.hypot(phys.ball.vx,phys.ball.vz);}
+function stepBall(dt){const b=phys.ball;if(!b.init)return;
+ b.x+=b.vx*dt;b.z+=b.vz*dt;const lim=R-0.7;
+ if(b.x<-lim){b.x=-lim;b.vx=Math.abs(b.vx)*0.72;}if(b.x>lim){b.x=lim;b.vx=-Math.abs(b.vx)*0.72;}
+ if(b.z<-lim){b.z=-lim;b.vz=Math.abs(b.vz)*0.72;}if(b.z>lim){b.z=lim;b.vz=-Math.abs(b.vz)*0.72;}
+ const fr=Math.exp(-dt*1.4);b.vx*=fr;b.vz*=fr;if(Math.hypot(b.vx,b.vz)<0.06){b.vx=0;b.vz=0;}}
+function kickBall(fromx,fromz,power){const b=phys.ball;let dx=b.x-fromx,dz=b.z-fromz,d=Math.hypot(dx,dz)||1;
+ b.vx+=dx/d*power;b.vz+=dz/d*power;sfx('jump');}
+// A mouse point on screen (NDC) -> the world point where its ray crosses the horizontal
+// plane y=py (py=0 is the floor; the synth keys use their own key-top height).
+function planePoint(nx,ny,py){const inv=M.invert(vp);if(!inv)return null;
+ const un=z=>{const w=inv[3]*nx+inv[7]*ny+inv[11]*z+inv[15];
+  return[(inv[0]*nx+inv[4]*ny+inv[8]*z+inv[12])/w,(inv[1]*nx+inv[5]*ny+inv[9]*z+inv[13])/w,
+   (inv[2]*nx+inv[6]*ny+inv[10]*z+inv[14])/w];};
+ const a=un(-1),b=un(1),dy=b[1]-a[1];if(Math.abs(dy)<1e-6)return null;const t=(py-a[1])/dy;
+ return[a[0]+(b[0]-a[0])*t,a[2]+(b[2]-a[2])*t];}
+function floorPoint(nx,ny){return planePoint(nx,ny,0);}
+// Which synth key (if any) a screen point is over: hit-test the ray at the key-top height.
+const SYNKY=1.15;                                           // world height of the key tops
+function synthKeyAt(nx,ny){const q=planePoint(nx,ny,SYNKY);if(!q)return-1;
+ const[kx,kz]=q,dx=kx-(SYNTH[0]-SYNW/2),dz=kz-SYNTH[1];
+ if(dx<0||dx>SYNW||Math.abs(dz)>0.85)return-1;
+ return Math.max(0,Math.min(NKEYS-1,Math.floor(dx/SYNKEY)));}
+cv.addEventListener('pointerdown',e=>{
+ const nx=(e.clientX/W)*2-1,ny=-((e.clientY/H)*2-1);
+ const k=synthKeyAt(nx,ny);if(k>=0){pressKey(k);return;}    // tap a synth key → it sings
+ const p=floorPoint(nx,ny);if(!p)return;
+ const[fx,fz]=p,b=phys.ball;
+ if(b.init&&Math.hypot(fx-b.x,fz-b.z)<1.5){kickBall(P.x,P.z,7+Math.random()*3);wantChase=true;} // flick the ball
+ else{dropCarried();ai.mode='move';ai.phase='travel';ai.act='walk';P.emotion='excited'; // send the pet there
+  ai.target=[Math.max(-R,Math.min(R,fx)),Math.max(-R,Math.min(R,fz))];ai.until=0;P.asleep=false;}
+});
+
+/* ---- Block-builder (docs/archive/JPET_V3_PLAN.md W2): the pet constantly gathers little
+   glowing blocks and stacks them into an evolving statue in the build zone; a kicked/
+   rolling ball that hits the statue knocks it down and the blocks scatter — then the pet
+   tidies up and rebuilds. Cheap floor-plane physics, no rigid-body engine. ---- */
+const BUILD=[-R*0.5,R*0.4],BLOCK_S=0.5,BLOCK_H=0.5,NBLOCKS=24;
+const BPAL=[CY,MG,GD,OR,BL,RD];                             // each block keeps its own fun colour
+// Statue shapes — local [dx, dy, dz] slots (in block units, 3D). Big, detailed multi-layer
+// shapes so the statue is a real little monument; a fresh one is picked each build.
+const SHAPES=[
+ // grand stepped pyramid: 4×4 base → 2×2 → 1  (21 blocks)
+ [[-1.5,0,-1.5],[-.5,0,-1.5],[.5,0,-1.5],[1.5,0,-1.5],[-1.5,0,-.5],[-.5,0,-.5],[.5,0,-.5],[1.5,0,-.5],
+  [-1.5,0,.5],[-.5,0,.5],[.5,0,.5],[1.5,0,.5],[-1.5,0,1.5],[-.5,0,1.5],[.5,0,1.5],[1.5,0,1.5],
+  [-.5,1,-.5],[.5,1,-.5],[-.5,1,.5],[.5,1,.5],[0,2,0]],
+ // castle — four 3-tall corner turrets + a gate wall  (20)
+ [[-1.5,0,-1.5],[-1.5,1,-1.5],[-1.5,2,-1.5],[1.5,0,-1.5],[1.5,1,-1.5],[1.5,2,-1.5],
+  [-1.5,0,1.5],[-1.5,1,1.5],[-1.5,2,1.5],[1.5,0,1.5],[1.5,1,1.5],[1.5,2,1.5],
+  [-.5,0,-1.5],[.5,0,-1.5],[-.5,0,1.5],[.5,0,1.5],[-1.5,0,-.5],[-1.5,0,.5],[1.5,0,-.5],[1.5,0,.5]],
+ // tall tower on a 3×3 base  (17)
+ [[-1,0,-1],[0,0,-1],[1,0,-1],[-1,0,0],[0,0,0],[1,0,0],[-1,0,1],[0,0,1],[1,0,1],
+  [0,1,0],[0,2,0],[0,3,0],[0,4,0],[0,5,0],[-.5,5,0],[.5,5,0],[0,6,0]],
+ // gateway arch  (14)
+ [[-1.5,0,0],[-1.5,1,0],[-1.5,2,0],[-1.5,3,0],[1.5,0,0],[1.5,1,0],[1.5,2,0],[1.5,3,0],
+  [-1,4,0],[-.5,4,0],[0,4,0],[.5,4,0],[1,4,0],[0,5,0]],
+ // grand staircase  (15)
+ [[0,0,0],[1,0,0],[1,1,0],[2,0,0],[2,1,0],[2,2,0],[3,0,0],[3,1,0],[3,2,0],[3,3,0],
+  [4,0,0],[4,1,0],[4,2,0],[4,3,0],[4,4,0]],
+ // rocket — tall column + a fin ring + nose  (13)
+ [[0,0,0],[0,1,0],[0,2,0],[0,3,0],[0,4,0],[0,5,0],[0,6,0],[-1,0,0],[1,0,0],[0,0,-1],[0,0,1],[0,7,0],[0,8,0]],
+];
+let carried=null,curShape=SHAPES[0];
+function randShape(){return SHAPES[Math.floor(Math.random()*SHAPES.length)];}
+function initBlocks(){if(phys.blocks&&phys.blocks.length)return;phys.blocks=[];
+ for(let i=0;i<NBLOCKS;i++)phys.blocks.push({x:BUILD[0]+(Math.random()-0.5)*6,z:BUILD[1]+(Math.random()-0.5)*6,
+  vx:0,vz:0,stacked:false,slot:0,col:BPAL[i%BPAL.length]});
+ curShape=randShape();}
+function stackCount(){return phys.blocks.filter(b=>b.stacked).length;}
+function looseBlock(){return phys.blocks.find(b=>!b.stacked&&b!==carried&&Math.hypot(b.vx,b.vz)<0.1);}
+function buildFull(){return stackCount()>=curShape.length;}  // the current shape is complete
+function dropCarried(){if(carried){carried.stacked=false;carried=null;}ai.hasVac=false;}
+function stepBlocks(dt){for(const bl of phys.blocks){if(bl.stacked||bl===carried)continue;
+ bl.x+=bl.vx*dt;bl.z+=bl.vz*dt;const lim=R-0.6;
+ if(bl.x<-lim){bl.x=-lim;bl.vx*=-0.5;}if(bl.x>lim){bl.x=lim;bl.vx*=-0.5;}
+ if(bl.z<-lim){bl.z=-lim;bl.vz*=-0.5;}if(bl.z>lim){bl.z=lim;bl.vz*=-0.5;}
+ const fr=Math.exp(-dt*3);bl.vx*=fr;bl.vz*=fr;if(Math.hypot(bl.vx,bl.vz)<0.06){bl.vx=0;bl.vz=0;}}}
+function checkCollapse(){const b=phys.ball;if(!b.init||ballSpeed()<1.2)return;
+ if(Math.hypot(b.x-BUILD[0],b.z-BUILD[1])>1.8)return;let any=false;
+ for(const bl of phys.blocks)if(bl.stacked){bl.stacked=false;any=true;
+  const a=Math.random()*Math.PI*2,sp=3+Math.random()*3;bl.vx=Math.cos(a)*sp;bl.vz=Math.sin(a)*sp;
+  bl.x=BUILD[0]+(Math.random()-0.5);bl.z=BUILD[1]+(Math.random()-0.5);}
+ if(any){sfx('beep');b.vx*=0.3;b.vz*=0.3;curShape=randShape();}} // knock it down → next time a new shape
 // Advance the script player: complete a travel step on arrival, an in-place step after its
-// duration, then step to the next — until a terminal (sit/idle/sleep) rest.
-function advancePlayer(dt){
- if(player.i<0||player.i>=player.steps.length)return;
- const s=player.steps[player.i];P.stepT+=dt;
+// duration, then step to the next — until a terminal rest, when the pet resumes its own
+// life. (frame() owns P.stepT — the time-in-current-action, reset on any action change.)
+function advancePlayer(){
+ if(player.i<0||player.i>=player.steps.length){scriptActive=false;return;}
+ const s=player.steps[player.i];
  let done;
- if(TRAVEL.includes(s.act)){const d=Math.hypot(P.tx-P.x,P.tz-P.z);done=d<0.3||P.stepT>4.5;}
+ if(TRAVEL.includes(s.act)){const d=Math.hypot(P.tx-P.x,P.tz-P.z);done=d<0.4||P.stepT>5;}
  else{const def={dance:2000,spin:1400,jump:900,wave:1200,wiggle:1400}[s.act]||800;
   done=P.stepT>=(s.duration_ms||def)/1000;}
  if(done)enterStep(player.i+1);
 }
+
+/* ---- Autonomy engine: the pet's own continuous life (docs/archive/JPET_V3_PLAN.md W1).
+   Every beat it picks the next thing to do (constrained randomness + recency), and the
+   instant one beat ends it starts the next — no dead air. Two phases: TRAVEL (stroll to a
+   spot) then BEAT (a little expressive thing there). A rare nap. A server command
+   interrupts all of this and the pet resumes here when it finishes. */
+const ai={mode:'auto',phase:'beat',act:'idle',beat:'look',target:[0,0],until:0,deadline:0,last:''};
+let napUntil=0;
+const BEATS=['look','wiggle','nod','spin','sit','look','look'];  // 'look' weighted (calm default)
+function randSpot(){
+  const objs=Object.keys(live.objects||{}).filter(n=>n!=='light_switch');
+  const locs=Object.keys(LOC);const pool=objs.concat(locs);
+  if(!pool.length)return[0,0];
+  const pick=pool[Math.floor(Math.random()*pool.length)];
+  if(LOC[pick])return[LOC[pick][0]*R,LOC[pick][1]*R];
+  const p=room[pick]||objPos(pick);return p?[p[0],p[1]]:[0,0];
+}
+function nextBehavior(now){
+  const df=dayFactor();
+  if(df<0.3&&Math.random()<0.5){                           // night: sleepy → head to bed and sleep
+    const b=objPos('bed');ai.target=b?[b[0],b[1]]:randSpot();ai.phase='travel';ai.act='walk';
+    ai.deadline=now+7;ai.beat='nap';return;
+  }
+  if(Math.random()<0.13){                                  // go watch some TV
+    ai.target=[TV[0],TV[1]+2.5];ai.phase='travel';ai.act='walk';ai.deadline=now+6;ai.beat='sit';ai.last='watch';return;
+  }
+  if(Math.random()<0.13){                                  // gaze out the window (esp. at dusk)
+    ai.target=[WINDOW[0],WINDOW[1]+2.5];ai.phase='travel';ai.act='walk';ai.deadline=now+6;ai.beat='look';ai.last='gaze';return;
+  }
+  if(ai.last!=='synth'&&Math.random()<0.12){               // stroll to the synth and plink out a tune
+    ai.target=[SYNTH[0],SYNTH[1]+1.5];ai.phase='travel';ai.act='walk';ai.deadline=now+6;
+    ai.beat='play_music';ai.last='synth';ai.noteAt=0;return;
+  }
+  if(ai.last!=='rope'&&Math.random()<0.09){                // skip rope in place for a few seconds
+    ai.phase='beat';ai.act='jumprope';ai.beat='jumprope';ai.target=[P.x,P.z];
+    ai.until=now+3+Math.random()*2;ai.last='rope';P.emotion='excited';return;
+  }
+  if(Math.random()<0.07){                                  // a rare little nap in the bed
+    const b=objPos('bed');ai.target=b?[b[0],b[1]]:randSpot();ai.phase='travel';ai.act='walk';
+    ai.deadline=now+7;ai.beat='nap';return;
+  }
+  const lb=looseBlock();
+  if(lb&&!buildFull()&&Math.random()<0.12){ai.mode='vacuum';ai.hasVac=false;return;} // sometimes tidy up with the vacuum
+  if(lb&&!buildFull()&&Math.random()<0.4){ai.mode='build';ai.buildPhase='toBlock';ai.block=lb;return;} // build the statue
+  if(phys.ball.init&&Math.random()<0.2){ai.mode='chase';return;} // sometimes go play with the ball
+  let beat;do{beat=BEATS[Math.floor(Math.random()*BEATS.length)];}while(beat===ai.last&&Math.random()<0.6);
+  ai.last=beat;ai.beat=beat;
+  if(Math.random()<0.72){ai.target=randSpot();ai.phase='travel';ai.act='walk';ai.deadline=now+6;}
+  else{ai.target=[P.x,P.z];ai.phase='beat';ai.act=beat;ai.until=now+1+Math.random()*2;sfxIdle(beat);}
+}
+function sfxIdle(beat){if(beat==='spin'||beat==='wiggle'||beat==='nod')sfx(beat);}
+function stepAutonomy(now){
+  if(napUntil>now){P.asleep=true;P.act='sleep';P.tx=P.x;P.tz=P.z;return;}
+  P.asleep=false;
+  const arrived=Math.hypot(ai.target[0]-P.x,ai.target[1]-P.z)<0.5;
+  if(ai.mode==='chase'){                                   // run at the ball and kick it
+    const bp=ballPos();P.act='walk';P.tx=bp[0];P.tz=bp[1];
+    if(Math.hypot(bp[0]-P.x,bp[1]-P.z)<1.2){
+      kickBall(P.x,P.z,5+Math.random()*3);ai.mode='auto';ai.phase='beat';ai.act='wiggle';ai.until=now+0.7;}
+    return;
+  }
+  if(ai.mode==='move'){                                    // click-to-send / parent raw-move
+    P.act='walk';P.tx=ai.target[0];P.tz=ai.target[1];
+    if(arrived){ai.mode='auto';ai.phase='beat';ai.act='look';ai.until=now+0.8;}
+    return;
+  }
+  if(ai.mode==='vacuum'){                                  // grab the vacuum and hoover up loose blocks
+    if(!ai.hasVac){P.act='walk';P.tx=VAC[0];P.tz=VAC[1];
+      if(Math.hypot(VAC[0]-P.x,VAC[1]-P.z)<1.0){ai.hasVac=true;sfx('pick_up');}return;}
+    const lb=looseBlock();
+    if(!lb||buildFull()){P.act='walk';P.tx=VAC[0];P.tz=VAC[1];   // done → park the vacuum
+      if(Math.hypot(VAC[0]-P.x,VAC[1]-P.z)<1.0){ai.hasVac=false;ai.mode='auto';ai.phase='beat';ai.act='nod';ai.until=now+0.6;}return;}
+    P.act='walk';P.tx=lb.x;P.tz=lb.z;
+    if(Math.hypot(lb.x-P.x,lb.z-P.z)<1.3){lb.stacked=true;lb.slot=stackCount();lb.x=BUILD[0];lb.z=BUILD[1];sfx('beep');} // sucked → tidied into the statue
+    return;
+  }
+  if(ai.mode==='build'){                                   // gather a block, carry it, stack it
+    const bl=ai.block;if(!bl){ai.mode='auto';ai.phase='beat';ai.act='look';ai.until=now+0.3;return;}
+    if(ai.buildPhase==='toBlock'){P.act='walk';P.tx=bl.x;P.tz=bl.z;
+      if(Math.hypot(bl.x-P.x,bl.z-P.z)<1.0){carried=bl;ai.buildPhase='toBuild';sfx('pick_up');}}
+    else{P.act='walk';P.tx=BUILD[0];P.tz=BUILD[1];bl.x=P.x;bl.z=P.z;   // carry it over
+      if(Math.hypot(BUILD[0]-P.x,BUILD[1]-P.z)<1.1){
+        bl.stacked=true;bl.slot=stackCount();bl.x=BUILD[0];bl.z=BUILD[1];carried=null;sfx('put_down');
+        const nx=looseBlock();
+        if(!buildFull()&&nx){ai.block=nx;ai.buildPhase='toBlock';}   // sticky: finish the whole shape
+        else{ai.mode='auto';ai.phase='beat';ai.act='nod';ai.until=now+0.8;}}}
+    return;
+  }
+  if(ai.phase==='travel'){
+    P.act='walk';P.tx=ai.target[0];P.tz=ai.target[1];
+    if(arrived||now>ai.deadline){
+      if(ai.beat==='nap'){napUntil=now+8+Math.random()*8;P.asleep=true;nextPhaseBeat(now,'look',0.5);}
+      else nextPhaseBeat(now,ai.beat,1+Math.random()*2);
+    }
+  }else{                                                   // beat
+    P.act=ai.act;P.tx=P.x;P.tz=P.z;
+    if(now>ai.until)nextBehavior(now);
+  }
+}
+function nextPhaseBeat(now,beat,dur){ai.phase='beat';ai.act=beat;
+ ai.until=now+(beat==='play_music'||beat==='jumprope'?3.5+Math.random()*2:dur);sfxIdle(beat);}
+// While the pet is at the synth playing music, plink a random pentatonic key on a loose beat
+// (covers both its own play and a `music` command); lights the key it "presses".
+let musicNoteAt=0;
+function stepMusic(t){
+ if(P.act!=='play_music'||Math.hypot(P.x-SYNTH[0],P.z-SYNTH[1])>3.2){musicNoteAt=0;return;}
+ if(t>=musicNoteAt){const ki=Math.floor(Math.random()*NKEYS);keyLit=ki;keyLitT=0.3;synthNote(PENTA[ki]);
+  musicNoteAt=t+0.42+Math.random()*0.34;}}
 // A wireframe ring at (x,y,z) with radius r; `rot` is 0 (flat), 1 (rotX), 2 (rotZ) — three
 // perpendicular rings make a cheap glowing "ball".
 function ring(x,y,z,r,rot,col,al){let m=M.trans(M.ident(),x,y,z);if(rot===1)m=M.rotX(m,Math.PI/2);else if(rot===2)m=M.rotZ(m,Math.PI/2);
  draw(gCirc,40,gl.LINE_LOOP,M.mul(vp,M.scale(m,r,r,r)),col,al==null?.9:al);}
+// Detailed multi-part furniture, all in the solid-wireframe style.
+function drawBed(x,z,dim){
+ part(M.ident(),x,.55,z,2.6,.35,1.6,BL,dim);                // mattress frame
+ for(const sx of[-1.15,1.15])for(const sz of[-.65,.65])part(M.ident(),x+sx,.22,z+sz,.2,.44,.2,MG,dim); // legs
+ part(M.ident(),x-1.35,1.05,z,.2,1.1,1.6,CY,dim);           // headboard
+ part(M.ident(),x-.55,.82,z,1.0,.28,1.1,GD,dim*.9);}        // pillow
+function drawToybox(x,z,t,dim){
+ part(M.ident(),x,.55,z,1.5,1.1,1.5,CY,dim);                // box
+ part(M.rotZ(M.trans(M.ident(),x-.78,1.15,z),.5+Math.sin(t*.7)*.06),0,0,0,1.6,.14,1.6,MG,dim);} // open lid
+function drawTV(t,dim){const x=TV[0],z=TV[1];
+ part(M.ident(),x,2.6,z,3.0,2.0,.3,MG,dim);                 // frame
+ const flick=[CY,MG,GD,OR,BL][Math.floor(t*2.5)%5];         // the "content" flickers
+ part(M.ident(),x,2.6,z+.18,2.6,1.6,.06,flick,Math.min(1,dim+.3));
+ part(M.ident(),x,3.75,z,.06,.6,.06,GD,dim);part(M.ident(),x+.4,4.0,z,.5,.06,.06,GD,dim);} // antenna
+function drawWindow(t,dim){const x=WINDOW[0],z=WINDOW[1],df=lights;   // window view follows day/night
+ part(M.ident(),x,2.8,z,2.6,2.8,.24,GD,dim);                // frame
+ const sky=[.05+.18*df,.06+.32*df,.14+.55*df];             // blue by day, deep at night
+ draw(gCubeF,36,gl.TRIANGLES,M.mul(vp,M.scale(M.trans(M.ident(),x,2.8,z+.13),2.2,2.4,.02)),sky,.9);
+ ring(x+.6,3.6,z+.15,.42,0,df>.5?GD:[.85,.85,.95],Math.min(1,dim+.2)); // sun by day / moon by night
+ part(M.ident(),x,2.8,z+.16,.08,2.4,.02,GD,dim*.5);part(M.ident(),x,2.8,z+.16,2.2,.08,.02,GD,dim*.5); // mullions
+ if(df<.55)for(let i=0;i<7;i++)ring(x-.8+((i*5)%7)*.24,1.9+((i*3)%5)*.36,z+.15,.05,0,[1,1,1],.9);} // stars
+// The playable synth: a stand, a body, and a row of tappable keys. A pressed key glows and
+// the whole thing pulses gently — a clear "tap me" object at a 3–4-year-old's eye height.
+function drawSynth(t,dim){const x=SYNTH[0],z=SYNTH[1],x0=x-SYNW/2;
+ part(M.ident(),x,.42,z,SYNW+.5,.16,1.0,MG,dim);            // top of the stand
+ for(const sx of[-SYNW/2+.2,SYNW/2-.2])part(M.ident(),x+sx,.2,z,.16,.44,.16,BL,dim); // stand legs
+ part(M.ident(),x,.85,z,SYNW+.4,.5,.9,CY,dim);              // keyboard body
+ part(M.ident(),x,1.06,z+.3,SYNW+.2,.06,.16,GD,dim);        // control strip
+ for(let i=0;i<NKEYS;i++){const kx=x0+(i+.5)*SYNKEY,lit=keyLit===i;
+  const col=lit?GD:[CY,MG,GD,OR,BL,RD,CY][i];const kal=lit?1:dim*.9;
+  part(M.ident(),kx,SYNKY+(lit?-.03:0),z-.08,SYNKEY*.82,.1,.5,col,kal);}} // the keys
+// A solid glowing ball: a dark occluding sphere (so it's not X-ray) behind three
+// perpendicular neon rings; `spin` rotates it so it reads as rolling.
+function drawBall(x,y,z,r,spin,dim){const base=M.rotY(M.trans(M.ident(),x,y,z),spin);
+ gl.enable(gl.POLYGON_OFFSET_FILL);gl.polygonOffset(1.2,1.2);
+ draw(gSphere,nSphere,gl.TRIANGLES,M.mul(vp,M.scale(base,r*.97,r*.97,r*.97)),FILL,.9);
+ gl.disable(gl.POLYGON_OFFSET_FILL);
+ draw(gCirc,40,gl.LINE_LOOP,M.mul(vp,M.scale(base,r,r,r)),GD,dim);
+ draw(gCirc,40,gl.LINE_LOOP,M.mul(vp,M.scale(M.rotX(base,Math.PI/2),r,r,r)),GD,dim*.85);
+ draw(gCirc,40,gl.LINE_LOOP,M.mul(vp,M.scale(M.rotZ(base,Math.PI/2),r,r,r)),OR,dim*.7);}
 function drawObjects(t){
  const dim=.35+.65*lights;                                 // props dim a little at night
- for(const name in live.objects){const w=objPos(name);if(!w)continue;
+ // The ball is wall-simulated physics (rolls with a spin proportional to its speed).
+ if(phys.ball.init){const b=phys.ball,by=player.held==='ball'?1.9:.7,bob=player.held==='ball'?0:Math.sin(t*2)*.05,
+   spin=t*(1+ballSpeed());
+  drawBall(player.held==='ball'?P.x:b.x,by+bob,player.held==='ball'?P.z:b.z,.7,spin,dim);}
+ // Blocks: little coloured bricks — stacked into the build-zone statue (a fun shape),
+ // carried by the pet (shown bright in its own colour), or scattered on the floor.
+ for(const bl of phys.blocks){
+  let x,y,z;
+  if(bl.stacked){const o=curShape[bl.slot]||[0,bl.slot,0];
+   x=BUILD[0]+o[0]*BLOCK_S*1.05;y=0.28+o[1]*BLOCK_H;z=BUILD[1]+o[2]*BLOCK_S*1.05;}
+  else if(bl===carried){x=P.x;y=1.45+Math.sin(t*8)*.04;z=P.z;}
+  else{x=bl.x;y=0.28;z=bl.z;}
+  part(M.ident(),x,y,z,BLOCK_S*0.92,BLOCK_H*0.92,BLOCK_S*0.92,bl.col,bl===carried?1:dim);}
+ // Vacuum: parked at its spot, or held out in front of the pet while it's tidying.
+ if(ai.hasVac){const vx=P.x+Math.sin(P.facing)*1.0,vz=P.z+Math.cos(P.facing)*1.0;
+  part(M.ident(),vx,.45,vz,.5,.9,.5,CY,1);part(M.ident(),P.x+Math.sin(P.facing)*.55,.95,P.z+Math.cos(P.facing)*.55,.12,.7,.12,MG,1);}
+ else part(M.ident(),VAC[0],.5,VAC[1],.55,1.0,.55,CY,dim);
+ for(const name in live.objects){if(name==='ball')continue;const w=objPos(name);if(!w)continue;
   if(!room[name])room[name]=w.slice();
   if(player.held===name){room[name]=[P.x,P.z];}            // a carried object rides the pet
   else{room[name][0]+=(w[0]-room[name][0])*.12;room[name][1]+=(w[1]-room[name][1])*.12;}
   const[x,z]=room[name];
-  if(name==='ball'){const by=player.held==='ball'?1.15:.5,bob=player.held==='ball'?0:Math.sin(t*2)*.05;
-   ring(x,by+bob,z,.5,0,GD,dim);ring(x,by+bob,z,.5,1,GD,dim*.8);ring(x,by+bob,z,.5,2,OR,dim*.7);}
-  else if(name==='bed')part(M.ident(),x,.16,z,1.5,.32,1.0,BL,dim);
-  else if(name==='toy_box')part(M.ident(),x,.4,z,.9,.8,.9,CY,dim);
-  else if(name==='food_bowl'){ring(x,.06,z,.42,0,GD,dim);ring(x,.24,z,.3,0,GD,dim*.7);}
-  else if(name==='ball_pit')ring(x,.05,z,.75,0,MG,dim);
-  else if(name==='light_switch')part(M.ident(),x,2.2,z,.16,.28,.06,lights>.5?GD:BL,dim);
+  if(name==='bed')drawBed(x,z,dim);
+  else if(name==='toy_box')drawToybox(x,z,t,dim);
+  else if(name==='food_bowl'){ring(x,.1,z,.6,0,GD,dim);ring(x,.35,z,.42,0,GD,dim*.7);}
+  else if(name==='ball_pit')ring(x,.06,z,1.0,0,MG,dim);
+  else if(name==='light_switch')part(M.ident(),x,3.0,z,.22,.4,.08,lights>.5?GD:BL,dim);
  }
+ drawTV(t,dim);drawWindow(t,dim);drawSynth(t,dim);         // fixtures: TV, window, playable synth
 }
+// The jump rope: a line-strip arc from hand to hand that bulges along a direction sweeping
+// the sagittal plane (θ), rebuilt each frame into the dynamic gRope buffer. Drawn in the
+// pet's local frame `m`, so it inherits its position, facing and scale.
+const _rope=new Float32Array(22*3);
+function drawRope(m,hy,theta,col,al){const HX=.9,Rr=1.35,ry=-Math.cos(theta),rz=Math.sin(theta),N=22;
+ for(let k=0;k<N;k++){const u=k/(N-1),s=Math.sin(u*Math.PI);
+  _rope[k*3]=-HX+2*HX*u;_rope[k*3+1]=hy+ry*Rr*s;_rope[k*3+2]=rz*Rr*s;}
+ gl.bindBuffer(gl.ARRAY_BUFFER,gRope);gl.bufferData(gl.ARRAY_BUFFER,_rope,gl.DYNAMIC_DRAW);
+ draw(gRope,N,gl.LINE_STRIP,M.mul(vp,m),col,al);}
 function robot(t){
- const walking=P.walk>0.05&&!P.asleep,act=P.act,ph=P.stepT;
- let bob=walking?Math.sin(t*10)*.05:Math.sin(t*2)*.03,spinAdd=0,wiggle=0,nod=0,jumpY=0,crouch=0;
+ const sp=P.walk,walking=sp>0.15&&!P.asleep,act=P.act,ph=P.stepT;
+ // Always-on idle micro-motion (breathing, a slow look-around) so it's NEVER perfectly still.
+ const idleYaw=walking?0:(act==='look'?Math.sin(ph*1.1)*.55:Math.sin(t*0.6)*.08);
+ const wf=6+sp*3;                                           // leg swing frequency scales with speed
+ let bob=walking?Math.sin(t*wf)*.05*Math.min(1,sp/2):Math.sin(t*2)*.035,spinAdd=0,wiggle=0,nod=0,jumpY=0,crouch=0,ropeTh=-1;
  if(act==='jump')jumpY=Math.abs(Math.sin(ph*7))*.55;
  if(act==='spin')spinAdd=ph*14;
  if(act==='dance'){spinAdd=Math.sin(ph*6)*.5;bob=Math.abs(Math.sin(ph*7))*.13;}
  if(act==='wiggle')wiggle=Math.sin(ph*22)*.14;
+ // Jump rope: a real rope arc swings around the pet, and it hops each time the rope
+ // comes under its feet (highest when the rope is at the bottom, θ≈0).
+ if(act==='jumprope'){ropeTh=ph*7;jumpY=Math.max(0,Math.cos(ropeTh))*.42;}
+ if(act==='play_music'){spinAdd=Math.sin(ph*7)*.22;bob=Math.abs(Math.sin(ph*6))*.11;} // bops at the synth
  if(act==='nod')nod=Math.sin(ph*8)*.28;
  if(act==='hide'||act==='sit')crouch=-.3;
  if(P.asleep||act==='sleep')crouch=-.3;
- let m=M.rotY(M.trans(M.ident(),P.x,0,P.z),P.facing+spinAdd+wiggle),y=bob+crouch+jumpY;
- draw(gCirc,40,gl.LINE_LOOP,M.mul(vp,M.scale(M.trans(M.ident(),P.x,.02,P.z),.55,1,.55)),MG,.5);
- const sw=walking?Math.sin(t*10):0,sw2=walking?Math.sin(t*10+Math.PI):0;
- part(m,-.22,y+.28,sw*.16,.17,.5,.17,CY);part(m,.22,y+.28,sw2*.16,.17,.5,.17,CY);
- part(m,0,y+.92,0,.82,.72,.56,MG);
+ // Kid-chosen colour (or rainbow) tints the body/head/limbs; null = default synthwave.
+ const pc=petCol(t),body=pc||MG,head=pc||CY,limb=pc||MG;
+ const S=1.7;                                              // scale the pet up for the bigger room
+ let m=M.scale(M.rotY(M.trans(M.ident(),P.x,0,P.z),P.facing+spinAdd+wiggle+idleYaw),S,S,S),y=bob+crouch+jumpY;
+ if(ropeTh>=0)drawRope(m,y+1.05,ropeTh,[1,1,1],1);         // the swinging jump rope (bright, contrasts any body colour)
+ draw(gCirc,40,gl.LINE_LOOP,M.mul(vp,M.scale(M.trans(M.ident(),P.x,.02,P.z),.55*S,1,.55*S)),body,.5);
+ const sw=walking?Math.sin(t*wf)*Math.min(1,sp/2.5):0,sw2=walking?Math.sin(t*wf+Math.PI)*Math.min(1,sp/2.5):0;
+ part(m,-.22,y+.28,sw*.16,.17,.5,.17,limb);part(m,.22,y+.28,sw2*.16,.17,.5,.17,limb);
+ part(m,0,y+.92,0,.82,.72,.56,body);
  const mc=P.emotion==='sleepy'?BL:P.emotion==='scared'?RD:P.emotion==='silly'?GD:P.emotion==='curious'?OR:CY;
  const chest=act==='beep'&&Math.sin(ph*30)>0?GD:mc;
  part(m,0,y+.92,.3,.34,.34,.06,chest);part(m,0,y+.92,.3,.2,.2,.05,chest,.6);
  // Arms: a normal swing, but a raised waving right arm for `wave`.
  const asw=walking?Math.sin(t*10+Math.PI)*.25:Math.sin(t*2+1)*.06;
  const wavR=act==='wave'?-1.9+Math.sin(ph*10)*.4:asw*-1;
- part(M.rotX(M.trans(m,-.52,y+1.06,0),act==='dance'?Math.sin(ph*6)*.5:asw),0,-.22,0,.15,.5,.15,MG);
- part(M.rotX(M.trans(m,.52,y+1.06,0),wavR),0,-.22,0,.15,.5,.15,MG);
- part(M.rotX(M.trans(m,0,y+1.58,0),nod),0,0,0,.7,.52,.56,CY);
- part(m,-.38,y+1.58,0,.09,.14,.14,MG);part(m,.38,y+1.58,0,.09,.14,.14,MG);
+ part(M.rotX(M.trans(m,-.52,y+1.06,0),act==='dance'?Math.sin(ph*6)*.5:asw),0,-.22,0,.15,.5,.15,limb);
+ part(M.rotX(M.trans(m,.52,y+1.06,0),wavR),0,-.22,0,.15,.5,.15,limb);
+ part(M.rotX(M.trans(m,0,y+1.58,0),nod),0,0,0,.7,.52,.56,head);
+ part(m,-.38,y+1.58,0,.09,.14,.14,limb);part(m,.38,y+1.58,0,.09,.14,.14,limb);
  const eb=P.asleep||P.blink>.6?.02:.13;part(m,-.16,y+1.6,.29,.13,eb,.05,GD);part(m,.16,y+1.6,.29,.13,eb,.05,GD);
  const mw=P.emotion==='excited'?.3:P.emotion==='silly'?.28:P.emotion==='happy'?.24:P.emotion==='scared'?.14:.2;
  part(m,0,y+1.44,.29,mw,.05,.04,GD);part(m,0,y+1.9,0,.03,.22,.03,MG);part(m,0,y+2.04,0,.09,.09,.09,GD);
 }
-let last=0;
+const CRUISE=3.6;                                          // stroll speed (units/s) in the bigger room
+let last=0,lastAct='';
 function frame(ts){const dt=Math.min(.05,(ts-last)/1000||0);last=ts;const t=ts/1000;
  if(gl&&bctx){
-  vp=M.mul(M.persp(46*Math.PI/180,W/H,.1,100),M.lookAt([0,4.6,11.5],[0,1.3,0],[0,1,0]));
-  const wantL=live.lights_on===false?0:1;lights+=(wantL-lights)*Math.min(1,dt*3);
-  advancePlayer(dt);
-  const dx=P.tx-P.x,dz=P.tz-P.z,d=Math.hypot(dx,dz);P.walk=0;
-  if(!P.asleep&&d>0.06){const s=Math.min(d,2.4*dt);P.x+=dx/d*s;P.z+=dz/d*s;P.walk=2.4;
-   const want=Math.atan2(dx,dz);let a=want-P.facing;while(a>Math.PI)a-=2*Math.PI;while(a<-Math.PI)a+=2*Math.PI;P.facing+=a*Math.min(1,dt*8);}
+  vp=M.mul(M.persp(48*Math.PI/180,W/H,.1,200),M.lookAt([0,9.5,25],[0,2.4,-1],[0,1,0]));
+  const wantL=live.lights_on===false?0:dayFactor();lights+=(wantL-lights)*Math.min(1,dt*0.6);
+  stepBall(dt);stepBlocks(dt);checkCollapse();             // ball + blocks physics; ball knocks the statue down
+  if(keyLitT>0){keyLitT-=dt;if(keyLitT<=0)keyLit=-1;}       // fade a just-pressed synth key
+  // ---- Decide who steers the pet: a server command, else its own autonomy ----
+  if(scriptRunning()){advancePlayer();ai.mode='script';}
+  else{
+   if(ai.mode==='script'){ai.mode='auto';ai.until=0;ai.phase='beat';}
+   // attention: notice a fast-moving (or just-flicked) ball and give chase
+   if((wantChase||ballSpeed()>1.4)&&napUntil<t&&ai.mode!=='move'&&ai.mode!=='chase'){dropCarried();ai.mode='chase';wantChase=false;P.emotion='excited';}
+   stepAutonomy(t);
+  }
+  // ---- Time-in-current-action (drives one-shot beat anims), reset whenever it changes ----
+  if(P.act!==lastAct){P.stepT=0;lastAct=P.act;}P.stepT+=dt;
+  stepMusic(t);                                            // plink the synth keys while playing music
+  // ---- Fluid locomotion: damped-spring velocity, eased accel/decel, speed-scaled turn ----
+  const dx=P.tx-P.x,dz=P.tz-P.z,d=Math.hypot(dx,dz);
+  let des=0;if(!P.asleep&&(P.act==='walk'||d>0.6))des=Math.min(CRUISE,d*2.2);
+  const dirx=d>1e-4?dx/d:0,dirz=d>1e-4?dz/d:0,k=1-Math.exp(-dt*6);
+  P.vx+=(dirx*des-P.vx)*k;P.vz+=(dirz*des-P.vz)*k;P.x+=P.vx*dt;P.z+=P.vz*dt;
+  const sp=Math.hypot(P.vx,P.vz);P.walk=sp;
+  if(sp>0.08){const want=Math.atan2(P.vx,P.vz);let a=want-P.facing;while(a>Math.PI)a-=2*Math.PI;while(a<-Math.PI)a+=2*Math.PI;P.facing+=a*Math.min(1,dt*(3+sp*1.5));}
   P.nextBlink-=dt;if(P.nextBlink<=0){P.blink=1;P.nextBlink=1.6+Math.random()*3;}if(P.blink>0)P.blink=Math.max(0,P.blink-dt*7);
   const gA=.18+.42*lights,bA=.1+.22*lights;                // grids dim at night
   gl.clearColor(.02+.02*lights,.01+.01*lights,.05+.02*lights,1);
