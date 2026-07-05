@@ -441,11 +441,18 @@ const KEYMAP={
  u:'action:jump',i:'action:sing',o:'action:nod',p:'go:synth','[':'action:dance',']':'action:beep',
  a:'drum:0',s:'drum:1',d:'drum:0',f:'drum:3',g:'drum:2',h:'drum:2',j:'drum:3',k:'drum:1',l:'drum:0',
  ';':'action:fart',"'":'action:burp','.':'ball','/':'guitar',
+ '`':'statue',"\\":'wander',enter:'chase',tab:'vacuum',
 };
+// Arrow keys drive the pet around the room a step at a time.
+const ARROWS={arrowup:[0,-1],arrowdown:[0,1],arrowleft:[-1,0],arrowright:[1,0]};
+function drivePet(dx,dz){P.asleep=false;napUntil=0;P.emotion='excited';const step=4;
+ ai.mode='move';ai.phase='travel';ai.act='walk';ai.until=0;
+ ai.target=[Math.max(-R,Math.min(R,P.x+dx*step)),Math.max(-R,Math.min(R,P.z+dz*step))];}
 addEventListener('keydown',e=>{
  if(e.repeat||e.metaKey||e.ctrlKey||e.altKey)return;
  if(e.code==='Space'){e.preventDefault();petJump();return;}
  const k=e.key.toLowerCase();
+ const ar=ARROWS[k];if(ar){e.preventDefault();drivePet(ar[0],ar[1]);return;}
  const si=SYNROW.indexOf(k);if(si>=0){e.preventDefault();pressKey(si);return;}
  const tok=KEYMAP[k];if(tok){e.preventDefault();doKey(tok);}
 });
@@ -476,6 +483,9 @@ function doKey(tok){const[kind,arg]=tok.split(':');
  else if(kind==='ball'){if(phys.ball.init){kickBall(P.x,P.z,14);wantChase=true;}}
  else if(kind==='guitar')strum();
  else if(kind==='statue')knockStatue();
+ else if(kind==='wander'){P.asleep=false;napUntil=0;ai.mode='auto';ai.phase='travel';ai.act='walk';ai.beat='look';ai.target=randSpot();ai.deadline=performance.now()/1000+6;}
+ else if(kind==='vacuum'){P.asleep=false;napUntil=0;ai.mode='vacuum';ai.hasVac=false;}
+ else if(kind==='chase'){if(phys.ball.init){P.asleep=false;napUntil=0;dropCarried();ai.mode='chase';P.emotion='excited';}}
  else if(kind==='go')goPlay(arg==='drum'?'drum':'play_music');}
 
 /* ---- Block-builder (docs/archive/JPET_V3_PLAN.md W2): the pet constantly gathers little
