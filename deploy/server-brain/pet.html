@@ -131,13 +131,13 @@ function loadScript(){                                     // a new server COMMA
     duration_ms:s.duration_ms,emotion:s.emotion}));
   const key=JSON.stringify(steps);if(key===player.key)return;
   player.key=key;player.steps=steps;player.held=null;
-  if(steps.length){scriptActive=true;enterStep(0);}        // interrupt autonomy, play it
+  if(steps.length){dropCarried();scriptActive=true;enterStep(0);} // interrupt autonomy, play it
 }
 function applyLive(){
   document.getElementById('name').textContent=(live.name||'JPet').toUpperCase();
   document.getElementById('mood').textContent=live.mood||'';
-  if(!phys.ball.init&&live.objects&&live.objects.ball){            // seed the ball's physics once
-    phys.ball.x=live.objects.ball[0]*R;phys.ball.z=live.objects.ball[1]*R;phys.ball.init=true;}
+  if(!phys.ball.init&&live.objects&&live.objects.ball){            // seed the ball + blocks once
+    phys.ball.x=live.objects.ball[0]*R;phys.ball.z=live.objects.ball[1]*R;phys.ball.init=true;initBlocks();}
   loadScript();
   // A parent raw `move` (empty script, a fresh target) → a one-off travel interrupt.
   const mk=(live.target_x||0)+','+(live.target_z||0);
@@ -247,7 +247,7 @@ function part(model,lx,ly,lz,sx,sy,sz,col,alpha){
    walls and settles with friction; the pet kicks it and chases; a mouse click flicks the
    ball or sends the pet to a spot (with a little surprise). The wall owns the ball's
    physics (seeded from the server's object position). ---- */
-const phys={ball:{x:0,z:0,vx:0,vz:0,init:false}};
+const phys={ball:{x:0,z:0,vx:0,vz:0,init:false},blocks:[]};
 let wantChase=false;
 function ballPos(){return[phys.ball.x,phys.ball.z];}
 function ballSpeed(){return Math.hypot(phys.ball.vx,phys.ball.vz);}
@@ -269,9 +269,32 @@ cv.addEventListener('pointerdown',e=>{
  const nx=(e.clientX/W)*2-1,ny=-((e.clientY/H)*2-1),p=floorPoint(nx,ny);if(!p)return;
  const[fx,fz]=p,b=phys.ball;
  if(b.init&&Math.hypot(fx-b.x,fz-b.z)<1.5){kickBall(P.x,P.z,7+Math.random()*3);wantChase=true;} // flick the ball
- else{ai.mode='move';ai.phase='travel';ai.act='walk';P.emotion='excited'; // send the pet there
+ else{dropCarried();ai.mode='move';ai.phase='travel';ai.act='walk';P.emotion='excited'; // send the pet there
   ai.target=[Math.max(-R,Math.min(R,fx)),Math.max(-R,Math.min(R,fz))];ai.until=0;P.asleep=false;}
 });
+
+/* ---- Block-builder (docs/plans/JPET_V3_PLAN.md W2): the pet constantly gathers little
+   glowing blocks and stacks them into an evolving statue in the build zone; a kicked/
+   rolling ball that hits the statue knocks it down and the blocks scatter — then the pet
+   tidies up and rebuilds. Cheap floor-plane physics, no rigid-body engine. ---- */
+const BUILD=[-R*0.5,R*0.45],BLOCK_S=0.8,BLOCK_H=0.85;
+let carried=null;
+function initBlocks(){if(phys.blocks&&phys.blocks.length)return;phys.blocks=[];
+ for(let i=0;i<6;i++)phys.blocks.push({x:BUILD[0]+(Math.random()-0.5)*5,z:BUILD[1]+(Math.random()-0.5)*5,vx:0,vz:0,stacked:false,slot:0});}
+function stackCount(){return phys.blocks.filter(b=>b.stacked).length;}
+function looseBlock(){return phys.blocks.find(b=>!b.stacked&&b!==carried&&Math.hypot(b.vx,b.vz)<0.1);}
+function dropCarried(){if(carried){carried.stacked=false;carried=null;}}
+function stepBlocks(dt){for(const bl of phys.blocks){if(bl.stacked||bl===carried)continue;
+ bl.x+=bl.vx*dt;bl.z+=bl.vz*dt;const lim=R-0.6;
+ if(bl.x<-lim){bl.x=-lim;bl.vx*=-0.5;}if(bl.x>lim){bl.x=lim;bl.vx*=-0.5;}
+ if(bl.z<-lim){bl.z=-lim;bl.vz*=-0.5;}if(bl.z>lim){bl.z=lim;bl.vz*=-0.5;}
+ const fr=Math.exp(-dt*3);bl.vx*=fr;bl.vz*=fr;if(Math.hypot(bl.vx,bl.vz)<0.06){bl.vx=0;bl.vz=0;}}}
+function checkCollapse(){const b=phys.ball;if(!b.init||ballSpeed()<1.2)return;
+ if(Math.hypot(b.x-BUILD[0],b.z-BUILD[1])>1.8)return;let any=false;
+ for(const bl of phys.blocks)if(bl.stacked){bl.stacked=false;any=true;
+  const a=Math.random()*Math.PI*2,sp=3+Math.random()*3;bl.vx=Math.cos(a)*sp;bl.vz=Math.sin(a)*sp;
+  bl.x=BUILD[0]+(Math.random()-0.5);bl.z=BUILD[1]+(Math.random()-0.5);}
+ if(any){sfx('beep');b.vx*=0.3;b.vz*=0.3;}}                // the ball loses steam knocking it down
 // Advance the script player: complete a travel step on arrival, an in-place step after its
 // duration, then step to the next — until a terminal rest, when the pet resumes its own
 // life. (frame() owns P.stepT — the time-in-current-action, reset on any action change.)
@@ -306,7 +329,9 @@ function nextBehavior(now){
     const b=objPos('bed');ai.target=b?[b[0],b[1]]:randSpot();ai.phase='travel';ai.act='walk';
     ai.deadline=now+7;ai.beat='nap';return;
   }
-  if(phys.ball.init&&Math.random()<0.22){ai.mode='chase';return;} // sometimes go play with the ball
+  const lb=looseBlock();
+  if(lb&&Math.random()<0.34){ai.mode='build';ai.buildPhase='toBlock';ai.block=lb;return;} // tidy/build
+  if(phys.ball.init&&Math.random()<0.2){ai.mode='chase';return;} // sometimes go play with the ball
   let beat;do{beat=BEATS[Math.floor(Math.random()*BEATS.length)];}while(beat===ai.last&&Math.random()<0.6);
   ai.last=beat;ai.beat=beat;
   if(Math.random()<0.72){ai.target=randSpot();ai.phase='travel';ai.act='walk';ai.deadline=now+6;}
@@ -326,6 +351,16 @@ function stepAutonomy(now){
   if(ai.mode==='move'){                                    // click-to-send / parent raw-move
     P.act='walk';P.tx=ai.target[0];P.tz=ai.target[1];
     if(arrived){ai.mode='auto';ai.phase='beat';ai.act='look';ai.until=now+0.8;}
+    return;
+  }
+  if(ai.mode==='build'){                                   // gather a block, carry it, stack it
+    const bl=ai.block;if(!bl){ai.mode='auto';ai.phase='beat';ai.act='look';ai.until=now+0.3;return;}
+    if(ai.buildPhase==='toBlock'){P.act='walk';P.tx=bl.x;P.tz=bl.z;
+      if(Math.hypot(bl.x-P.x,bl.z-P.z)<1.0){carried=bl;ai.buildPhase='toBuild';sfx('pick_up');}}
+    else{P.act='walk';P.tx=BUILD[0];P.tz=BUILD[1];bl.x=P.x;bl.z=P.z;   // carry it over
+      if(Math.hypot(BUILD[0]-P.x,BUILD[1]-P.z)<1.1){
+        bl.stacked=true;bl.slot=stackCount();bl.x=BUILD[0];bl.z=BUILD[1];carried=null;sfx('put_down');
+        ai.mode='auto';ai.phase='beat';ai.act='nod';ai.until=now+0.6;}}
     return;
   }
   if(ai.phase==='travel'){
@@ -355,6 +390,11 @@ function drawObjects(t){
  if(phys.ball.init){const b=phys.ball,by=player.held==='ball'?1.9:.7,bob=player.held==='ball'?0:Math.sin(t*2)*.05,
    spin=t*(1+ballSpeed());
   drawBall(player.held==='ball'?P.x:b.x,by+bob,player.held==='ball'?P.z:b.z,.7,spin,dim);}
+ // Blocks: stacked into the build-zone statue, carried by the pet, or scattered on the floor.
+ for(const bl of phys.blocks){
+  const y=bl.stacked?(0.45+bl.slot*BLOCK_H):(bl===carried?1.5:0.45),
+   x=bl===carried?P.x:bl.x,z=bl===carried?P.z:bl.z;
+  part(M.ident(),x,y,z,BLOCK_S,BLOCK_H*0.9,BLOCK_S,bl.stacked?CY:MG,dim);}
  for(const name in live.objects){if(name==='ball')continue;const w=objPos(name);if(!w)continue;
   if(!room[name])room[name]=w.slice();
   if(player.held===name){room[name]=[P.x,P.z];}            // a carried object rides the pet
@@ -406,13 +446,13 @@ function frame(ts){const dt=Math.min(.05,(ts-last)/1000||0);last=ts;const t=ts/1
  if(gl&&bctx){
   vp=M.mul(M.persp(48*Math.PI/180,W/H,.1,200),M.lookAt([0,9.5,25],[0,2.4,-1],[0,1,0]));
   const wantL=live.lights_on===false?0:1;lights+=(wantL-lights)*Math.min(1,dt*3);
-  stepBall(dt);                                            // the ball rolls / bounces / settles
+  stepBall(dt);stepBlocks(dt);checkCollapse();             // ball + blocks physics; ball knocks the statue down
   // ---- Decide who steers the pet: a server command, else its own autonomy ----
   if(scriptRunning()){advancePlayer();ai.mode='script';}
   else{
    if(ai.mode==='script'){ai.mode='auto';ai.until=0;ai.phase='beat';}
    // attention: notice a fast-moving (or just-flicked) ball and give chase
-   if((wantChase||ballSpeed()>1.4)&&napUntil<t&&ai.mode!=='move'){ai.mode='chase';wantChase=false;P.emotion='excited';}
+   if((wantChase||ballSpeed()>1.4)&&napUntil<t&&ai.mode!=='move'&&ai.mode!=='chase'){dropCarried();ai.mode='chase';wantChase=false;P.emotion='excited';}
    stepAutonomy(t);
   }
   // ---- Time-in-current-action (drives one-shot beat anims), reset whenever it changes ----
