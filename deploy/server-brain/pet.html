@@ -555,8 +555,8 @@ const SHAPES=[
  // a little robot statue — legs, 2×2 body, raised arms (±1.5, not ±1 which clipped the head), head + antenna  (19)
  [[-1,0,0],[-1,1,0],[1,0,0],[1,1,0],[-.5,2,0],[.5,2,0],[-.5,3,0],[.5,3,0],
   [-1.5,3,0],[-1.5,2,0],[1.5,3,0],[1.5,2,0],[-.5,4,0],[.5,4,0],[-.5,5,0],[.5,5,0],[0,6,0],[-1.5,4,0],[1.5,4,0]],
- // a diamond / gem  (13)
- [[0,0,0],[-1,1,0],[0,1,0],[1,1,0],[-2,2,0],[-1,2,0],[0,2,0],[1,2,0],[2,2,0],[-1,3,0],[0,3,0],[1,3,0],[0,4,0]],
+ // a diamond / gem — a supported facet stack (widens 2→3→4→3→1) instead of balancing on one point  (13)
+ [[-.5,0,0],[.5,0,0],[-1,1,0],[0,1,0],[1,1,0],[-1.5,2,0],[-.5,2,0],[.5,2,0],[1.5,2,0],[-1,3,0],[0,3,0],[1,3,0],[0,4,0]],
  // a totem pole — tall column with side + depth wings  (16)
  [[0,0,0],[0,1,0],[0,2,0],[0,3,0],[0,4,0],[0,5,0],[0,6,0],[0,7,0],
   [-1,1,0],[1,1,0],[-1,4,0],[1,4,0],[0,1,-1],[0,1,1],[0,4,-1],[0,4,1]],
@@ -752,11 +752,13 @@ function ring(x,y,z,r,rot,col,al){let m=M.trans(M.ident(),x,y,z);if(rot===1)m=M.
 function drawBed(x,z,dim){
  part(M.ident(),x,.55,z,3.4,.4,2.4,BL,dim);                 // mattress frame (roomy — the pet fits in it)
  for(const sx of[-1.55,1.55])for(const sz of[-1.05,1.05])part(M.ident(),x+sx,.24,z+sz,.22,.48,.22,MG,dim); // legs
- part(M.ident(),x-1.75,1.15,z,.22,1.3,2.4,CY,dim);          // headboard
+ part(M.ident(),x-1.75,.95,z,.22,1.9,2.4,CY,dim);           // headboard (reaches the floor)
  part(M.ident(),x-.75,.86,z,1.2,.3,1.6,GD,dim*.9);}         // pillow
 function drawToybox(x,z,t,dim){
  part(M.ident(),x,.55,z,1.5,1.1,1.5,CY,dim);                // box
- part(M.rotZ(M.trans(M.ident(),x-.78,1.15,z),.5+Math.sin(t*.7)*.06),0,0,0,1.6,.14,1.6,MG,dim);} // open lid
+ // Lid hinged at the back top edge (pivot pushed to z-.75, geometry offset forward), so it
+ // tips open up-and-back and covers the box instead of swinging off to one side.
+ part(M.rotX(M.trans(M.ident(),x,1.1,z-.75),-(.5+Math.sin(t*.7)*.06)),0,0,.75,1.5,.14,1.5,MG,dim);}
 function drawTV(t,dim){const x=TV[0],z=TV[1],on=tvProg>0;
  part(M.ident(),x,2.6,z,3.2,2.2,.3,MG,dim);                 // frame (bigger set)
  // Screen: a dark glass panel. Off → nearly black. On → a soft glow with the current
@@ -765,7 +767,9 @@ function drawTV(t,dim){const x=TV[0],z=TV[1],on=tvProg>0;
  draw(gCubeF,36,gl.TRIANGLES,M.mul(vp,M.scale(M.trans(M.ident(),x,2.6,z+.15),2.8,1.7,.02)),scr,.96);
  part(M.ident(),x,2.6,z+.17,2.8,1.7,.04,on?CY:BL,on?Math.min(1,dim+.3):dim*.5); // bezel
  if(on)drawTVShow(t,x,2.6,z+.22,tvProg-1);                  // the show on the current channel
- part(M.ident(),x,3.85,z,.06,.6,.06,GD,dim);part(M.ident(),x+.4,4.1,z,.5,.06,.06,GD,on?1:dim*.6);} // antenna
+ part(M.ident(),x,3.85,z,.06,.6,.06,GD,dim);                 // antenna stalk
+ part(M.rotZ(M.trans(M.ident(),x,4.15,z),.5),0,.28,0,.05,.56,.05,GD,on?1:dim*.6);
+ part(M.rotZ(M.trans(M.ident(),x,4.15,z),-.5),0,.28,0,.05,.56,.05,GD,on?1:dim*.6);} // symmetric rabbit-ears
 // The TV cartoon — three channels: (0) a hopping robot chasing a star, (1) a bouncing ball
 // over rolling hills, (2) a rocket flying past stars. Drawn just in front of the screen.
 function drawTVShow(t,cx,cy,cz,prog){
@@ -810,15 +814,15 @@ function drawSynth(t,dim){const x=SYNTH[0],z=SYNTH[1],x0=x-SYNW/2;
 // The drum kit: a bass drum, two toms and a hi-hat on a stand; a struck pad flashes gold.
 function drawDrums(t,dim){const x=DRUMS[0],z=DRUMS[1];
  const pc=(i,c)=>padLit===i?GD:c;
- ring(x,.9,z+.4,.75,1,pc(0,MG),padLit===0?1:dim);ring(x,.5,z+.4,.75,1,pc(0,MG),dim); // bass drum (front rings)
  part(M.ident(),x,.5,z+.4,1.4,1.0,1.4,pc(0,BL),dim);        // bass drum body
+ ring(x,.5,z+1.1,.5,1,pc(0,MG),padLit===0?1:dim);ring(x,.5,z+1.1,.32,1,pc(0,MG),dim); // bass drum head (concentric, on the front face)
  part(M.ident(),x-.9,1.15,z-.2,.7,.5,.7,pc(2,CY),padLit===2?1:dim);   // left tom
  part(M.ident(),x+.9,1.15,z-.2,.7,.5,.7,pc(1,RD),padLit===1?1:dim);   // right tom (snare)
- ring(x+1.3,1.7,z+.2,.55,0,pc(3,GD),padLit===3?1:dim);part(M.ident(),x+1.3,1.0,z+.2,.06,1.4,.06,GD,dim); // hi-hat + stand
+ ring(x+1.3,1.7,z+.2,.55,0,pc(3,GD),padLit===3?1:dim);part(M.ident(),x+1.3,.85,z+.2,.06,1.7,.06,GD,dim); // hi-hat + stand (rod meets the floor)
  for(const sx of[-1.0,1.0])part(M.ident(),x+sx,.6,z-.2,.08,1.2,.08,MG,dim);} // stand legs
 // The guitar, hung on the right wall: a body, a neck up the wall, and strings that flash on a strum.
 function drawGuitar(dim){const x=GUITAR[0],y=GUITAR[1],z=-R+0.3,lit=strumT>0;
- ring(x,y,z,.7,0,lit?GD:OR,lit?1:dim);ring(x,y,z,.45,0,lit?GD:OR,lit?1:dim*.8); // sound-hole body
+ ring(x,y,z,.7,1,lit?GD:OR,lit?1:dim);ring(x,y,z,.45,1,lit?GD:OR,lit?1:dim*.8); // sound-hole body (faces the room, like the neck)
  part(M.ident(),x,y+1.9,z,.24,2.6,.12,MG,dim);             // neck up the wall
  part(M.ident(),x,y+3.25,z,.34,.3,.12,CY,dim);             // headstock
  for(let i=0;i<4;i++)part(M.ident(),x-.15+i*.1,y+1.5,z+.02,.02,2.0,.01,lit?GD:[.8,.8,.9],lit?1:dim*.7);} // strings
@@ -857,9 +861,12 @@ function drawObjects(t){
   const[x,z]=room[name];
   if(name==='bed')drawBed(x,z,dim);
   else if(name==='toy_box')drawToybox(x,z,t,dim);
-  else if(name==='food_bowl'){ring(x,.1,z,.6,0,GD,dim);ring(x,.35,z,.42,0,GD,dim*.7);}
-  else if(name==='ball_pit')ring(x,.06,z,1.0,0,MG,dim);
-  else if(name==='light_switch')part(M.ident(),x,3.0,z,.24,.44,.1,artLevel>0.75?GD:artLevel>0.25?OR:BL,artLevel>0.25?1:dim); // brightness = dimmer notch
+  else if(name==='food_bowl'){ring(x,.1,z,.42,0,GD,dim);ring(x,.4,z,.6,0,GD,dim*.7);ring(x,.3,z,.3,0,OR,dim*.6);} // widens to the rim (a bowl, not a pot) + a bit of food
+  else if(name==='ball_pit'){ring(x,.06,z,1.0,0,MG,dim);ring(x,.45,z,1.0,0,MG,dim*.8); // floor + a raised rim
+   for(const b of[[-.4,.25,-.3,CY],[.4,.2,.25,GD],[0,.3,.45,RD],[.45,.22,-.4,BL]])ring(x+b[0],b[1],z+b[2],.22,0,b[3],dim);} // a few balls inside
+  else if(name==='light_switch'){const on=artLevel>0.25,c=artLevel>0.75?GD:on?OR:BL;
+   part(M.ident(),x,3.0,z,.3,.5,.08,c,on?1:dim);                        // wall plate
+   part(M.ident(),x,3.0+(on?.12:-.12),z+.09,.12,.18,.08,c,on?1:dim);}   // the toggle — up when lit, down when off
  }
  drawTV(t,dim);drawWindow(t,dim);drawSynth(t,dim);drawDrums(t,dim);drawGuitar(dim); // fixtures
 }
@@ -923,11 +930,14 @@ function robot(t){
  if(act==='drum'){armL=-0.6+Math.sin(ph*14)*.5;armR=-0.6+Math.sin(ph*14+Math.PI)*.5;}
  part(M.rotX(M.trans(m,-.52,y+1.06,0),armL),0,-.22,0,.15,.5,.15,limb);
  part(M.rotX(M.trans(m,.52,y+1.06,0),armR),0,-.22,0,.15,.5,.15,limb);
- part(M.rotX(M.trans(m,0,y+1.58,0),nod),0,0,0,.7,.52,.56,head);
- part(m,-.38,y+1.58,0,.09,.14,.14,limb);part(m,.38,y+1.58,0,.09,.14,.14,limb);
- const eb=P.asleep||P.blink>.6?.02:.13;part(m,-.16,y+1.6,.29,.13,eb,.05,GD);part(m,.16,y+1.6,.29,.13,eb,.05,GD);
+ // Build the head once in its own tilt frame so the whole face (eyes, mouth, ears, antenna)
+ // rides the nod/burp head-tip together, instead of the box tipping while the face stays put.
+ const hm=M.rotX(M.trans(m,0,y+1.58,0),nod);
+ part(hm,0,0,0,.7,.52,.56,head);
+ part(hm,-.38,0,0,.09,.14,.14,limb);part(hm,.38,0,0,.09,.14,.14,limb); // ears
+ const eb=P.asleep||P.blink>.6?.02:.13;part(hm,-.16,.02,.29,.13,eb,.05,GD);part(hm,.16,.02,.29,.13,eb,.05,GD);
  const mw=P.emotion==='excited'?.3:P.emotion==='silly'?.28:P.emotion==='happy'?.24:P.emotion==='scared'?.14:.2;
- part(m,0,y+1.44,.29,mw,.05,.04,GD);part(m,0,y+1.9,0,.03,.22,.03,MG);part(m,0,y+2.04,0,.09,.09,.09,GD);
+ part(hm,0,-.14,.29,mw,.05,.04,GD);part(hm,0,.32,0,.03,.22,.03,MG);part(hm,0,.46,0,.09,.09,.09,GD); // mouth + antenna
  // A bouncing music note floats up beside the head while it sings.
  if(act==='sing'){const nx=P.x+.7+Math.sin(t*3)*.15,ny=2.9+y*S+Math.abs(Math.sin(t*4))*.3;
   part(M.ident(),nx,ny,P.z,.12,.12,.12,GD,1);part(M.ident(),nx+.09,ny+.3,P.z,.05,.4,.05,GD,1);} // note head + stem
