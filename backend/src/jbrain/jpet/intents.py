@@ -25,6 +25,7 @@ PET_COLORS = (
     "purple",
     "white",
     "rainbow",
+    "default",  # the original synthwave look (no override) — the wall renders null-colour
 )
 _COLOR_ALIASES = {
     "aqua": "cyan",
@@ -40,6 +41,10 @@ _COLOR_ALIASES = {
     "rainbowy": "rainbow",
     "colourful": "rainbow",
     "colorful": "rainbow",
+    "original": "default",
+    "normal": "default",
+    "reset": "default",
+    "robot": "default",
 }
 
 # Ordered phrase → canned button action (the actions `service.CANNED_SCRIPTS` knows).
@@ -108,12 +113,21 @@ def classify(text: str) -> Intent | None:
         return None
     color = _color_in(t.replace("!", " ").replace(".", " ").split())
     if color is not None:
-        say = "Rainbow time!" if color == "rainbow" else f"Ooh, {color}!"
+        say = color_speech(color)
         return Intent(kind="color", value=color, speech=say)
     for phrases, action in _KEYWORDS:
         if any(p in t for p in phrases):
             return Intent(kind="action", value=action, speech=_REPLIES.get(action, "Okay!"))
     return None
+
+
+def color_speech(color: str) -> str:
+    """A friendly line for a colour change (shared by the classifier and the palette action)."""
+    if color == "rainbow":
+        return "Rainbow time!"
+    if color == "default":
+        return "Back to my old self!"
+    return f"Ooh, {color}!"
 
 
 def canonical_color(name: str) -> str | None:

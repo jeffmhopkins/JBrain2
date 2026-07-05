@@ -2763,6 +2763,7 @@ const MOCK_COLORS = [
   "purple",
   "white",
   "rainbow",
+  "default",
 ];
 
 // A compact mirror of the backend's settle_script: fold a script into the pet + room's

@@ -28,7 +28,7 @@ from jbrain.config import Settings
 from jbrain.db.session import SessionContext
 from jbrain.jpet.brain import pet_turn
 from jbrain.jpet.broadcast import PetBroadcaster
-from jbrain.jpet.intents import canonical_color, classify
+from jbrain.jpet.intents import canonical_color, classify, color_speech
 from jbrain.jpet.repo import SqlJpetRepo
 from jbrain.jpet.service import PetStateInfo, canned_script
 from jbrain.llm.router import LlmRouter
@@ -168,7 +168,7 @@ async def send_command(request: Request, principal: PrincipalDep, body: CommandI
         info = await _say(request, ctx, domain, state, (body.text or "").strip())
     elif body.action == "color":
         color = canonical_color(body.text or "") or "rainbow"
-        info = await repo.set_color(ctx, domain=domain, color=color, speech=f"Ooh, {color}!")
+        info = await repo.set_color(ctx, domain=domain, color=color, speech=color_speech(color))
     elif body.action == "move":
         info = await repo.move_to(ctx, domain=domain, x=body.x or 0.0, z=body.z or 0.0)
     else:

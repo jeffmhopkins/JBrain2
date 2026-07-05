@@ -69,6 +69,10 @@ def test_colour_words_win_and_fold_aliases() -> None:
     for c in ("red", "blue", "rainbow", "cyan", "gold"):
         assert c in PET_COLORS
     assert _c("turn purple").kind == "color"
+    # "original"/"normal" restore the default (null-colour) look
+    assert _c("go back to normal").value == "default"
+    assert _c("original colour").value == "default"
+    assert "default" in PET_COLORS
 
 
 def test_open_ended_falls_through_to_the_llm() -> None:
@@ -81,4 +85,5 @@ def test_open_ended_falls_through_to_the_llm() -> None:
 def test_canonical_color_validates() -> None:
     assert canonical_color("Red") == "red"
     assert canonical_color("aqua") == "cyan"
+    assert canonical_color("original") == "default"
     assert canonical_color("not-a-colour") is None

@@ -44,13 +44,18 @@ to it) arrives via `/pet/state` as a bounded action `script` and plays as a brie
 toy box, food bowl, ball pit, light switch) from `objects`.
 
 **Interactive room (wall-owned).** The wall runs a light physics layer the kids play with by
-**clicking**: a **ball** that's kicked hard, bounces off the walls and furniture, scatters the
-loose building **blocks** and knocks down the pet's **statue**; the pet **avoids the furniture**
-(bounding-box collisions) and shoves blocks it walks into. Clicking the **TV** turns its little
-robot **cartoon** on/off; clicking the **light switch** toggles an artificial light that
-genuinely brightens the room **at night** (daylight still lights it by day; the phone `lights`
-command flips the same switch). The pet **lies down** on the bed to sleep, and a distance-phased
-gait keeps the walk smooth. The block-builder, jump-rope and playable synth round out the room.
+**clicking** (and, on the box's own keyboard, by pressing keys): a **ball** with real vertical
+physics — a kick sends it **arcing**, and it bounces off the walls and furniture, scatters the
+loose building **blocks** and knocks the pet's **statue** flying; the pet **avoids solid
+furniture / the statue / the instruments** (bounding-box collisions) and shoves loose blocks it
+walks into. The pet builds one of **ten+ statue shapes** in a **random spot** each time. Clicking
+the **TV** changes its channel (**off → three animated cartoons**); clicking the **light switch**
+cycles a **dimmer** (off → dim → bright) that changes the room's luminosity — genuinely lighting
+it **at night** (daylight lights it by day; the phone `lights` command steps the same dimmer).
+There's a **drum kit** and a wall-hung **guitar** to play alongside the **synth**, which plinks
+out **kids' songs** (Twinkle, Row Row, Itsy Bitsy Spider, Mary…) from a fixed spot. The pet
+**lies down** in the bed to sleep; a distance-phased gait keeps the walk smooth; and it lingers
+in each activity (durations run long). Keyboard: **Z–M** play the synth keys, **space** jumps.
 
 **Sound.** When the pet speaks, `/pet` reads its speech bubble aloud with the same on-box
 piper `/tts` endpoint the neural wall uses (`/tts/voices` picks the voice — `en_US-amy-medium`
