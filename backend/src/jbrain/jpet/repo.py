@@ -53,6 +53,7 @@ def _info(row: PetState) -> PetStateInfo:
         target_z=row.target_z,
         facing=row.facing,
         action=row.action,
+        color=row.color,
         script=list(row.script or []),
         script_started_at=row.script_started_at,
         carrying=row.carrying,
@@ -204,6 +205,22 @@ class SqlJpetRepo:
                 objects = _objects_from_row(row)
                 objects[row.carrying] = (x, z)
                 values["objects"] = _objects_to_json(objects)
+            await session.execute(update(PetState).where(PetState.id == row.id).values(**values))
+            await session.refresh(row)
+            return _info(row)
+
+    async def set_color(
+        self, ctx: SessionContext, *, domain: str, color: str, speech: str | None = None
+    ) -> PetStateInfo | None:
+        """Recolour the robot (a kid command / phone palette) — durable state the wall reads.
+        Optionally sets an utterance. None when no pet in scope; the caller broadcasts."""
+        async with scoped_session(self._maker, ctx) as session:
+            row = await self._load(session, domain)
+            if row is None:
+                return None
+            values: dict[str, Any] = {"color": color, "updated_at": func.now()}
+            if speech is not None:
+                values["speech"] = speech
             await session.execute(update(PetState).where(PetState.id == row.id).values(**values))
             await session.refresh(row)
             return _info(row)

@@ -1306,6 +1306,8 @@ export interface PetState {
   target_z: number;
   facing: number;
   action: string;
+  /** The pet's current colour (a named colour or "rainbow"); null = default palette. */
+  color: string | null;
   /** The bounded, ordered action script the wall plays out (v2). */
   script: PetStep[];
   /** The room object the pet is currently holding, or null. */
@@ -1317,7 +1319,8 @@ export interface PetState {
 }
 
 /** A kid play-button (each expands to a canned script), `say` (freeform → talk brain),
- * or the parent `move` (send the pet to a raw floor point). */
+ * `color` (recolour from the phone palette), or the parent `move` (send the pet to a raw
+ * floor point). */
 export type PetAction =
   | "dance"
   | "spin"
@@ -1332,15 +1335,18 @@ export type PetAction =
   | "wake"
   | "eat"
   | "lights"
+  | "jumprope"
+  | "music"
   | "say"
-  | "move";
+  | "move"
+  | "color";
 
 export interface PetCommand {
   action: PetAction;
   /** Normalized floor coords in [-1, 1] — only read for `move`. */
   x?: number;
   z?: number;
-  /** What the child said — only read for `say` (runs the pet.turn brain). */
+  /** What the child said (`say`), or the colour name (`color`). */
   text?: string;
 }
 

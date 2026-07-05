@@ -59,6 +59,9 @@ class PetState(Base):
     target_z: Mapped[float] = mapped_column(Float, default=0.0, server_default="0")
     facing: Mapped[float] = mapped_column(Float, default=0.0, server_default="0")
     action: Mapped[str] = mapped_column(Text, default="idle", server_default="idle")
+    # v3 W3 (migration 0127): the kid-chosen robot colour (a name the wall maps to a neon
+    # RGB, or `rainbow`); null = the default synthwave palette.
+    color: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     # v2 (migration 0125): the bounded action script the pet plays out, the room objects
     # it can target/carry (a fixed set of mutable {kind: [x, z]} positions), what it is

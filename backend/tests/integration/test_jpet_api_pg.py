@@ -45,6 +45,7 @@ PET_FIELDS = {
     "target_z",
     "facing",
     "action",
+    "color",
     "script",
     "carrying",
     "lights_on",
@@ -87,6 +88,19 @@ async def test_pet_api_round_trip(
         assert moved["action"] == "walk"
         assert moved["target_x"] == pytest.approx(0.5)
         assert moved["target_z"] == pytest.approx(-0.3)
+
+        # Talking a known action acts immediately with NO LLM (the keyword router) — the
+        # fake test router would raise, so a green result proves the classifier short-circuit.
+        said = client.post(
+            "/api/pet/command", json={"action": "say", "text": "dance for me!"}
+        ).json()
+        assert said["script"], "a recognised say should produce a script without the LLM"
+
+        # Colour-on-command (both via `say` and the palette action).
+        red = client.post("/api/pet/command", json={"action": "say", "text": "turn red"}).json()
+        assert red["color"] == "red"
+        blue = client.post("/api/pet/command", json={"action": "color", "text": "blue"}).json()
+        assert blue["color"] == "blue"
 
         # An unknown action is rejected by the request schema.
         assert client.post("/api/pet/command", json={"action": "explode"}).status_code == 422

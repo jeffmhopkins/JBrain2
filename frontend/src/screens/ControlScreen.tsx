@@ -33,7 +33,25 @@ const PLAY: { action: PetCommand["action"]; ico: string; label: string }[] = [
   { action: "jump", ico: "⭐", label: "Jump!" },
   { action: "wave", ico: "👋", label: "Wave hi" },
   { action: "spin", ico: "🌀", label: "Spin" },
+  { action: "jumprope", ico: "🤸", label: "Jump rope" },
+  { action: "music", ico: "🎹", label: "Play music" },
   { action: "beep", ico: "🔊", label: "Silly sound" },
+];
+
+// The colour swatches — each recolours the robot on both surfaces. Names mirror the
+// backend `PET_COLORS`; the hex here is the swatch face only (not the neon wall palette).
+const COLORS: { name: string; hex: string }[] = [
+  { name: "cyan", hex: "#37e0f0" },
+  { name: "magenta", hex: "#ff4fd8" },
+  { name: "gold", hex: "#ffce3a" },
+  { name: "orange", hex: "#ff8a3a" },
+  { name: "blue", hex: "#4a7bff" },
+  { name: "red", hex: "#ff4d5e" },
+  { name: "green", hex: "#49f08a" },
+  { name: "pink", hex: "#ff8ad0" },
+  { name: "purple", hex: "#b06aff" },
+  { name: "white", hex: "#f0f4ff" },
+  { name: "rainbow", hex: "conic-gradient(red,orange,gold,green,blue,purple,red)" },
 ];
 
 // Normalized [-1, 1] → CSS percent for the dot's position on the map.
@@ -162,6 +180,25 @@ export function ControlScreen({ onClose, deps = defaultDeps }: ControlScreenProp
             <span className="ico">{sleepBtn.ico}</span>
             {sleepBtn.label}
           </button>
+        </div>
+      </div>
+
+      <div className="pctl-card">
+        <h3>Change colour</h3>
+        <div className="pctl-colors">
+          {COLORS.map(({ name: cname, hex }) => (
+            <button
+              key={cname}
+              type="button"
+              className={`pctl-swatch${pet?.color === cname ? " on" : ""}`}
+              style={{ background: hex }}
+              onPointerDown={(e) => {
+                e.preventDefault();
+                void send({ action: "color", text: cname });
+              }}
+              aria-label={`Turn ${cname}`}
+            />
+          ))}
         </div>
       </div>
 

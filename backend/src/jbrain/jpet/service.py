@@ -18,7 +18,18 @@ from typing import Any
 
 # ── Vocabulary (the fixed allow-list the LLM and the buttons may draw from) ────────────
 # In-place expressive primitives (no target, cosmetic) and the terminating rest poses.
-EXPRESSIVE = ("dance", "spin", "jump", "wave", "wiggle", "nod", "beep", "hide")
+EXPRESSIVE = (
+    "dance",
+    "spin",
+    "jump",
+    "wave",
+    "wiggle",
+    "nod",
+    "beep",
+    "hide",
+    "jumprope",
+    "play_music",
+)
 TERMINAL = ("idle", "sit", "sleep")
 # Primitives that relocate the pet and/or touch a room object.
 TARGETED = ("go_to", "come_here", "chase", "look_at", "pick_up", "put_down", "carry_to")
@@ -122,6 +133,14 @@ CANNED_SCRIPTS: dict[str, list[dict[str, Any]]] = {
         {"action": "go_to", "target": "light_switch", "emotion": "curious"},
         {"action": "jump", "duration_ms": 700},
         {"action": "idle"},
+    ),
+    # W3 activities — the wall renders dedicated jump-rope / synth animations for these
+    # actions (the primitives are recognised there); the scripts keep them bounded + terminating.
+    "jumprope": _script(
+        {"action": "jumprope", "duration_ms": 3000, "emotion": "excited"}, {"action": "idle"}
+    ),
+    "music": _script(
+        {"action": "play_music", "duration_ms": 3000, "emotion": "silly"}, {"action": "idle"}
     ),
 }
 BUTTON_ACTIONS = frozenset(CANNED_SCRIPTS)
@@ -321,6 +340,7 @@ class PetStateInfo:
     target_z: float
     facing: float
     action: str
+    color: str | None = None
     script: list[dict[str, Any]] = field(default_factory=list)
     script_started_at: datetime | None = None
     carrying: str | None = None
