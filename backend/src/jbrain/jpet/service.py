@@ -86,21 +86,23 @@ def _script(*steps: dict[str, Any]) -> list[dict[str, Any]]:
     return [dict(s) for s in steps]
 
 
+# Durations run long (~3× a first-pass motion): a 3–4-year-old wants the pet to keep
+# dancing/spinning after they tap, not stop in a second. Chase stays snappy (it's ball play).
 CANNED_SCRIPTS: dict[str, list[dict[str, Any]]] = {
     "dance": _script(
-        {"action": "dance", "duration_ms": 2200, "emotion": "silly"}, {"action": "sit"}
+        {"action": "dance", "duration_ms": 6600, "emotion": "silly"}, {"action": "sit"}
     ),
     "spin": _script(
-        {"action": "spin", "duration_ms": 1400, "emotion": "excited"}, {"action": "idle"}
+        {"action": "spin", "duration_ms": 4200, "emotion": "excited"}, {"action": "idle"}
     ),
     "jump": _script(
-        {"action": "jump", "duration_ms": 900, "emotion": "excited"}, {"action": "idle"}
+        {"action": "jump", "duration_ms": 2700, "emotion": "excited"}, {"action": "idle"}
     ),
     "wave": _script(
-        {"action": "wave", "duration_ms": 1200, "emotion": "happy"}, {"action": "idle"}
+        {"action": "wave", "duration_ms": 3600, "emotion": "happy"}, {"action": "idle"}
     ),
     "wiggle": _script(
-        {"action": "wiggle", "duration_ms": 1400, "emotion": "silly"}, {"action": "idle"}
+        {"action": "wiggle", "duration_ms": 4200, "emotion": "silly"}, {"action": "idle"}
     ),
     "chase": _script(
         {"action": "chase", "target": "ball", "emotion": "excited"},
@@ -110,10 +112,12 @@ CANNED_SCRIPTS: dict[str, list[dict[str, Any]]] = {
     "hide": _script(
         {"action": "hide", "destination": "corner_nw", "emotion": "curious"}, {"action": "sit"}
     ),
-    "beep": _script({"action": "beep", "duration_ms": 700, "emotion": "silly"}, {"action": "idle"}),
+    "beep": _script(
+        {"action": "beep", "duration_ms": 2100, "emotion": "silly"}, {"action": "idle"}
+    ),
     "come": _script(
         {"action": "come_here", "emotion": "happy"},
-        {"action": "wave", "duration_ms": 900},
+        {"action": "wave", "duration_ms": 2700},
         {"action": "idle"},
     ),
     "sleep": _script(
@@ -121,26 +125,26 @@ CANNED_SCRIPTS: dict[str, list[dict[str, Any]]] = {
     ),
     "wake": _script(
         {"action": "wake", "emotion": "happy"},
-        {"action": "wiggle", "duration_ms": 800},
+        {"action": "wiggle", "duration_ms": 2400},
         {"action": "idle"},
     ),
     "eat": _script(
         {"action": "go_to", "target": "food_bowl", "emotion": "happy"},
-        {"action": "nod", "duration_ms": 1200},
+        {"action": "nod", "duration_ms": 3600},
         {"action": "sit"},
     ),
     "lights": _script(
         {"action": "go_to", "target": "light_switch", "emotion": "curious"},
-        {"action": "jump", "duration_ms": 700},
+        {"action": "jump", "duration_ms": 2100},
         {"action": "idle"},
     ),
     # W3 activities — the wall renders dedicated jump-rope / synth animations for these
     # actions (the primitives are recognised there); the scripts keep them bounded + terminating.
     "jumprope": _script(
-        {"action": "jumprope", "duration_ms": 3000, "emotion": "excited"}, {"action": "idle"}
+        {"action": "jumprope", "duration_ms": 9000, "emotion": "excited"}, {"action": "idle"}
     ),
     "music": _script(
-        {"action": "play_music", "duration_ms": 3000, "emotion": "silly"}, {"action": "idle"}
+        {"action": "play_music", "duration_ms": 9000, "emotion": "silly"}, {"action": "idle"}
     ),
 }
 BUTTON_ACTIONS = frozenset(CANNED_SCRIPTS)

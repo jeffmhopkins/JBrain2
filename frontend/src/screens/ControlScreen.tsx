@@ -40,18 +40,28 @@ const PLAY: { action: PetCommand["action"]; ico: string; label: string }[] = [
 
 // The colour swatches — each recolours the robot on both surfaces. Names mirror the
 // backend `PET_COLORS`; the hex here is the swatch face only (not the neon wall palette).
-const COLORS: { name: string; hex: string }[] = [
-  { name: "cyan", hex: "#37e0f0" },
-  { name: "magenta", hex: "#ff4fd8" },
-  { name: "gold", hex: "#ffce3a" },
-  { name: "orange", hex: "#ff8a3a" },
-  { name: "blue", hex: "#4a7bff" },
-  { name: "red", hex: "#ff4d5e" },
-  { name: "green", hex: "#49f08a" },
-  { name: "pink", hex: "#ff8ad0" },
-  { name: "purple", hex: "#b06aff" },
-  { name: "white", hex: "#f0f4ff" },
-  { name: "rainbow", hex: "conic-gradient(red,orange,gold,green,blue,purple,red)" },
+const COLORS: { name: string; label: string; hex: string }[] = [
+  // "default" restores the pet's original synthwave look (magenta + cyan).
+  {
+    name: "default",
+    label: "original robot",
+    hex: "linear-gradient(135deg,#ff4fd8 0 50%,#37e0f0 50% 100%)",
+  },
+  { name: "cyan", label: "cyan", hex: "#37e0f0" },
+  { name: "magenta", label: "magenta", hex: "#ff4fd8" },
+  { name: "gold", label: "gold", hex: "#ffce3a" },
+  { name: "orange", label: "orange", hex: "#ff8a3a" },
+  { name: "blue", label: "blue", hex: "#4a7bff" },
+  { name: "red", label: "red", hex: "#ff4d5e" },
+  { name: "green", label: "green", hex: "#49f08a" },
+  { name: "pink", label: "pink", hex: "#ff8ad0" },
+  { name: "purple", label: "purple", hex: "#b06aff" },
+  { name: "white", label: "white", hex: "#f0f4ff" },
+  {
+    name: "rainbow",
+    label: "rainbow",
+    hex: "conic-gradient(red,orange,gold,green,blue,purple,red)",
+  },
 ];
 
 // Normalized [-1, 1] → CSS percent for the dot's position on the map.
@@ -186,7 +196,7 @@ export function ControlScreen({ onClose, deps = defaultDeps }: ControlScreenProp
       <div className="pctl-card">
         <h3>Change colour</h3>
         <div className="pctl-colors">
-          {COLORS.map(({ name: cname, hex }) => (
+          {COLORS.map(({ name: cname, label, hex }) => (
             <button
               key={cname}
               type="button"
@@ -196,7 +206,7 @@ export function ControlScreen({ onClose, deps = defaultDeps }: ControlScreenProp
                 e.preventDefault();
                 void send({ action: "color", text: cname });
               }}
-              aria-label={`Turn ${cname}`}
+              aria-label={cname === "default" ? "Original robot colours" : `Turn ${label}`}
             />
           ))}
         </div>
