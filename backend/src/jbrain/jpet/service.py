@@ -29,6 +29,7 @@ EXPRESSIVE = (
     "hide",
     "jumprope",
     "play_music",
+    "play_guitar",
     "sing",
     "fart",
     "burp",
@@ -150,6 +151,9 @@ CANNED_SCRIPTS: dict[str, list[dict[str, Any]]] = {
     ),
     "music": _script(
         {"action": "play_music", "duration_ms": 9000, "emotion": "silly"}, {"action": "idle"}
+    ),
+    "guitar": _script(
+        {"action": "play_guitar", "duration_ms": 9000, "emotion": "silly"}, {"action": "idle"}
     ),
     "sing": _script(
         {"action": "sing", "duration_ms": 6000, "emotion": "silly"}, {"action": "idle"}

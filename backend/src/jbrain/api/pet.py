@@ -129,6 +129,7 @@ CommandAction = Literal[
     "lights",
     "jumprope",
     "music",
+    "guitar",
     "sing",
     "fart",
     "burp",

@@ -113,3 +113,9 @@ def test_all_canned_button_scripts_are_valid_and_terminate() -> None:
         steps = canned_script(action, objects=OBJS)
         assert steps, f"{action} produced an empty script"
         assert steps[-1].action in TERMINAL, f"{action} does not terminate"
+
+
+def test_guitar_button_plays_the_guitar_primitive() -> None:
+    steps = canned_script("guitar", objects=OBJS)
+    assert steps[0].action == "play_guitar"
+    assert steps[-1].action in TERMINAL

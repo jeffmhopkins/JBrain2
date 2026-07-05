@@ -29,6 +29,7 @@ def test_action_words_match_a_canned_action() -> None:
         ("come here buddy", "come"),
         ("jump rope!", "jumprope"),
         ("play some music", "music"),
+        ("play guitar!", "guitar"),
     ]:
         intent = classify(phrase)
         assert intent is not None and intent.kind == "action", phrase
@@ -53,6 +54,7 @@ def test_every_matched_action_is_a_real_button_script() -> None:
         "lights",
         "jump rope",
         "music",
+        "guitar",
     ):
         intent = classify(phrase)
         assert intent is not None and intent.kind == "action"

@@ -1,9 +1,9 @@
 // The JPet phone Control screen (docs/proposed/JPET_V2_PLAN.md) — the mobile "remote"
 // the kids hold, paired to the Wall. It subscribes to /api/pet/stream for live status
 // and issues /api/pet/command. v2 is command-and-response PLAY: big, few, non-destructive
-// buttons a 3–4-year-old can hit (dance, chase the ball, hide, jump, wave, spin, silly
-// sound, sleep/wake), each firing on touch-DOWN for instant feedback, plus a push-to-talk
-// mic and text box so a kid can just ask ("pick up the ball and put it in the corner").
+// buttons a 3–4-year-old can hit (dance, kick ball, jump, wave, spin, jump rope, play
+// music/guitar, toot/burp, sleep/wake), each firing on touch-DOWN for instant feedback, plus
+// a push-to-talk mic and text box so a kid can just ask ("pick up the ball and put it in the corner").
 // The room-map "send it somewhere" is demoted to a grown-ups affordance. Both surfaces
 // render the same server-authoritative pet, so they stay in sync.
 
@@ -28,17 +28,15 @@ const defaultDeps: ControlDeps = {
 // destructive; `sleep`/`wake` is swapped in contextually below.
 const PLAY: { action: PetCommand["action"]; ico: string; label: string }[] = [
   { action: "dance", ico: "💃", label: "Dance" },
-  { action: "chase", ico: "⚽", label: "Chase ball" },
-  { action: "hide", ico: "🙈", label: "Hide" },
+  { action: "chase", ico: "⚽", label: "Kick ball" },
   { action: "jump", ico: "⭐", label: "Jump!" },
   { action: "wave", ico: "👋", label: "Wave hi" },
   { action: "spin", ico: "🌀", label: "Spin" },
   { action: "jumprope", ico: "🤸", label: "Jump rope" },
   { action: "music", ico: "🎹", label: "Play music" },
-  { action: "sing", ico: "🎤", label: "Sing" },
+  { action: "guitar", ico: "🎸", label: "Play guitar" },
   { action: "fart", ico: "💨", label: "Toot!" },
   { action: "burp", ico: "🫧", label: "Burp!" },
-  { action: "beep", ico: "🔊", label: "Silly sound" },
 ];
 
 // The colour swatches — each recolours the robot on both surfaces. Names mirror the
