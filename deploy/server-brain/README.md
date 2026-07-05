@@ -41,9 +41,16 @@ occluding faces behind the neon edges — not X-ray). There are **no meters** �
 from behaviour, the way a real pet does. A server **command** (a phone button, or talking
 to it) arrives via `/pet/state` as a bounded action `script` and plays as a brief
 *interrupt*; when it finishes the pet resumes its own life. It renders the props (ball, bed,
-toy box, food bowl, ball pit, light switch) from `objects` and dims to night when
-`lights_on` is false. (Richer interaction — click-to-play, physics, the block-builder — is
-later v3 waves.)
+toy box, food bowl, ball pit, light switch) from `objects`.
+
+**Interactive room (wall-owned).** The wall runs a light physics layer the kids play with by
+**clicking**: a **ball** that's kicked hard, bounces off the walls and furniture, scatters the
+loose building **blocks** and knocks down the pet's **statue**; the pet **avoids the furniture**
+(bounding-box collisions) and shoves blocks it walks into. Clicking the **TV** turns its little
+robot **cartoon** on/off; clicking the **light switch** toggles an artificial light that
+genuinely brightens the room **at night** (daylight still lights it by day; the phone `lights`
+command flips the same switch). The pet **lies down** on the bed to sleep, and a distance-phased
+gait keeps the walk smooth. The block-builder, jump-rope and playable synth round out the room.
 
 **Sound.** When the pet speaks, `/pet` reads its speech bubble aloud with the same on-box
 piper `/tts` endpoint the neural wall uses (`/tts/voices` picks the voice — `en_US-amy-medium`

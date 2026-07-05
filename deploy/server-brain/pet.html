@@ -114,7 +114,12 @@ const live={name:'JPet',mood:'…',emotion:'happy',asleep:false,
 // P holds the pet's live render state. `vx/vz` are velocity (fluid accel/decel motion);
 // the script player and the autonomy engine both steer it via the target (tx,tz) + act.
 const P={x:0,z:0,tx:0,tz:0,vx:0,vz:0,facing:0,walk:0,emotion:'happy',asleep:false,blink:0,
-  nextBlink:2,act:'idle',stepT:0,held:null};
+  nextBlink:2,act:'idle',stepT:0,held:null,gait:0,lie:0};
+// Room appliance state the wall owns (kids toggle these by clicking the fixtures):
+// `tvOn` — the TV is showing its cartoon; `artOn` — the artificial light is on (brightens
+// the room even at night); `lastLightsOn` edge-tracks the server so the phone `lights`
+// command flips the same switch.
+let tvOn=true,artOn=false,lastLightsOn=true;
 // Locally-animated room object positions (world coords), lerped toward the server's.
 const room={};let lights=1;   // lights: 1 = day, eased toward 0 at night
 let connected=false,lastSpeech=null;
@@ -292,12 +297,36 @@ let wantChase=false;
 function ballPos(){return[phys.ball.x,phys.ball.z];}
 function ballSpeed(){return Math.hypot(phys.ball.vx,phys.ball.vz);}
 function stepBall(dt){const b=phys.ball;if(!b.init)return;
- b.x+=b.vx*dt;b.z+=b.vz*dt;const lim=R-0.7;
- if(b.x<-lim){b.x=-lim;b.vx=Math.abs(b.vx)*0.72;}if(b.x>lim){b.x=lim;b.vx=-Math.abs(b.vx)*0.72;}
- if(b.z<-lim){b.z=-lim;b.vz=Math.abs(b.vz)*0.72;}if(b.z>lim){b.z=lim;b.vz=-Math.abs(b.vz)*0.72;}
- const fr=Math.exp(-dt*1.4);b.vx*=fr;b.vz*=fr;if(Math.hypot(b.vx,b.vz)<0.06){b.vx=0;b.vz=0;}}
+ b.x+=b.vx*dt;b.z+=b.vz*dt;const lim=R-0.7;                         // livelier: walls barely bleed energy
+ if(b.x<-lim){b.x=-lim;b.vx=Math.abs(b.vx)*0.9;}if(b.x>lim){b.x=lim;b.vx=-Math.abs(b.vx)*0.9;}
+ if(b.z<-lim){b.z=-lim;b.vz=Math.abs(b.vz)*0.9;}if(b.z>lim){b.z=lim;b.vz=-Math.abs(b.vz)*0.9;}
+ resolveObstacles(b,0.7,0.75);ballHitsBlocks();                     // bounce off furniture; scatter blocks
+ const fr=Math.exp(-dt*0.7);b.vx*=fr;b.vz*=fr;if(Math.hypot(b.vx,b.vz)<0.05){b.vx=0;b.vz=0;}} // rolls far
 function kickBall(fromx,fromz,power){const b=phys.ball;let dx=b.x-fromx,dz=b.z-fromz,d=Math.hypot(dx,dz)||1;
  b.vx+=dx/d*power;b.vz+=dz/d*power;sfx('jump');}
+// Solid furniture the ball/blocks can't pass through: [x, z, radius]. Rebuilt each frame
+// from the (lerped) room positions so bounding-box hits track the furniture. `forPet` drops
+// the bed (the pet climbs onto it to sleep) and narrows the synth (it stands close to play).
+function obstacles(forPet){const o=[];
+ if(room.bed&&!forPet)o.push([room.bed[0],room.bed[1],1.7]);
+ if(room.toy_box)o.push([room.toy_box[0],room.toy_box[1],1.15]);
+ o.push([SYNTH[0],SYNTH[1],forPet?0.9:1.35]);
+ return o;}
+// Push a moving circle (an entity {x,z,vx,vz} of radius er) out of any obstacle it overlaps.
+// `bounce` 0 = just stop against it (the pet slides), >0 = reflect the velocity (the ball).
+function resolveObstacles(e,er,bounce,forPet){for(const[cx,cz,r]of obstacles(forPet)){
+  let dx=e.x-cx,dz=e.z-cz,d=Math.hypot(dx,dz),min=r+er;if(d>=min||d<1e-4)continue;
+  const nx=dx/d,nz=dz/d;e.x=cx+nx*min;e.z=cz+nz*min;                 // eject to the surface
+  const vn=e.vx*nx+e.vz*nz;if(vn<0){e.vx-=(1+bounce)*vn*nx;e.vz-=(1+bounce)*vn*nz;}}}
+// The ball shoves any loose block it rolls into (bounding-box-ish: sphere vs block), and
+// slows a touch — so a kicked ball scatters bricks and knocks the statue's pieces around.
+function ballHitsBlocks(){const b=phys.ball;if(!b.init)return;const br=0.7,kr=BLOCK_S*0.5;
+ for(const bl of phys.blocks){if(bl===carried)continue;
+  let dx=bl.x-b.x,dz=bl.z-b.z,d=Math.hypot(dx,dz),min=br+kr;if(d>=min||d<1e-4)continue;
+  if(bl.stacked){bl.stacked=false;}                                 // a struck stacked brick breaks loose
+  const nx=dx/d,nz=dz/d,imp=Math.max(2.5,ballSpeed()*0.9);
+  bl.vx+=nx*imp;bl.vz+=nz*imp;bl.x=b.x+nx*min;bl.z=b.z+nz*min;      // shove the block out along the hit
+  b.vx-=nx*imp*0.35;b.vz-=nz*imp*0.35;sfx('beep');}}
 // A mouse point on screen (NDC) -> the world point where its ray crosses the horizontal
 // plane y=py (py=0 is the floor; the synth keys use their own key-top height).
 function planePoint(nx,ny,py){const inv=M.invert(vp);if(!inv)return null;
@@ -307,6 +336,13 @@ function planePoint(nx,ny,py){const inv=M.invert(vp);if(!inv)return null;
  const a=un(-1),b=un(1),dy=b[1]-a[1];if(Math.abs(dy)<1e-6)return null;const t=(py-a[1])/dy;
  return[a[0]+(b[0]-a[0])*t,a[2]+(b[2]-a[2])*t];}
 function floorPoint(nx,ny){return planePoint(nx,ny,0);}
+// Project a world point to screen pixels (for clicking wall-mounted fixtures like the TV and
+// the light switch, which a floor-plane hit-test can't reach). Returns null if behind camera.
+function projectPt(x,y,z){const w=vp[3]*x+vp[7]*y+vp[11]*z+vp[15];if(w<=1e-4)return null;
+ const cx=(vp[0]*x+vp[4]*y+vp[8]*z+vp[12])/w,cy=(vp[1]*x+vp[5]*y+vp[9]*z+vp[13])/w;
+ return[(cx*.5+.5)*W,(1-(cy*.5+.5))*H];}
+function nearPx(px,py,wpt,rad){const s=projectPt(wpt[0],wpt[1],wpt[2]);
+ return s!=null&&Math.hypot(px-s[0],py-s[1])<rad;}
 // Which synth key (if any) a screen point is over: hit-test the ray at the key-top height.
 const SYNKY=1.15;                                           // world height of the key tops
 function synthKeyAt(nx,ny){const q=planePoint(nx,ny,SYNKY);if(!q)return-1;
@@ -316,9 +352,12 @@ function synthKeyAt(nx,ny){const q=planePoint(nx,ny,SYNKY);if(!q)return-1;
 cv.addEventListener('pointerdown',e=>{
  const nx=(e.clientX/W)*2-1,ny=-((e.clientY/H)*2-1);
  const k=synthKeyAt(nx,ny);if(k>=0){pressKey(k);return;}    // tap a synth key → it sings
+ if(nearPx(e.clientX,e.clientY,[TV[0],2.6,TV[1]+.16],95)){tvOn=!tvOn;sfx('beep');return;}          // click the TV → on/off
+ const lsw=room.light_switch||objPos('light_switch');
+ if(lsw&&nearPx(e.clientX,e.clientY,[lsw[0],3.0,lsw[1]],55)){artOn=!artOn;sfx('nod');return;}       // click the switch → light
  const p=floorPoint(nx,ny);if(!p)return;
  const[fx,fz]=p,b=phys.ball;
- if(b.init&&Math.hypot(fx-b.x,fz-b.z)<1.5){kickBall(P.x,P.z,7+Math.random()*3);wantChase=true;} // flick the ball
+ if(b.init&&Math.hypot(fx-b.x,fz-b.z)<1.7){kickBall(P.x,P.z,13+Math.random()*5);wantChase=true;} // whack the ball hard
  else{dropCarried();ai.mode='move';ai.phase='travel';ai.act='walk';P.emotion='excited'; // send the pet there
   ai.target=[Math.max(-R,Math.min(R,fx)),Math.max(-R,Math.min(R,fz))];ai.until=0;P.asleep=false;}
 });
@@ -366,13 +405,20 @@ function stepBlocks(dt){for(const bl of phys.blocks){if(bl.stacked||bl===carried
  bl.x+=bl.vx*dt;bl.z+=bl.vz*dt;const lim=R-0.6;
  if(bl.x<-lim){bl.x=-lim;bl.vx*=-0.5;}if(bl.x>lim){bl.x=lim;bl.vx*=-0.5;}
  if(bl.z<-lim){bl.z=-lim;bl.vz*=-0.5;}if(bl.z>lim){bl.z=lim;bl.vz*=-0.5;}
- const fr=Math.exp(-dt*3);bl.vx*=fr;bl.vz*=fr;if(Math.hypot(bl.vx,bl.vz)<0.06){bl.vx=0;bl.vz=0;}}}
+ resolveObstacles(bl,BLOCK_S*0.5,0.4);                             // slide/bounce off the furniture
+ if(ai.mode!=='build'&&ai.mode!=='vacuum'){                        // (not while it's fetching a block to stack)
+  const pdx=bl.x-P.x,pdz=bl.z-P.z,pd=Math.hypot(pdx,pdz),pmin=0.55+BLOCK_S*0.5; // the pet shoves blocks it walks into
+  if(pd<pmin&&pd>1e-3){const nx=pdx/pd,nz=pdz/pd;bl.x=P.x+nx*pmin;bl.z=P.z+nz*pmin;
+   const push=Math.max(P.walk,0.6);bl.vx+=nx*push;bl.vz+=nz*push;}}
+ const fr=Math.exp(-dt*2.2);bl.vx*=fr;bl.vz*=fr;if(Math.hypot(bl.vx,bl.vz)<0.06){bl.vx=0;bl.vz=0;}}}
 function checkCollapse(){const b=phys.ball;if(!b.init||ballSpeed()<1.2)return;
  if(Math.hypot(b.x-BUILD[0],b.z-BUILD[1])>1.8)return;let any=false;
+ const bs=ballSpeed(),bx=b.vx/bs,bz=b.vz/bs;                        // fling mostly along the ball's path
  for(const bl of phys.blocks)if(bl.stacked){bl.stacked=false;any=true;
-  const a=Math.random()*Math.PI*2,sp=3+Math.random()*3;bl.vx=Math.cos(a)*sp;bl.vz=Math.sin(a)*sp;
+  const a=Math.random()*Math.PI*2,sp=3+Math.random()*4;
+  bl.vx=bx*(bs*0.7)+Math.cos(a)*sp;bl.vz=bz*(bs*0.7)+Math.sin(a)*sp;
   bl.x=BUILD[0]+(Math.random()-0.5);bl.z=BUILD[1]+(Math.random()-0.5);}
- if(any){sfx('beep');b.vx*=0.3;b.vz*=0.3;curShape=randShape();}} // knock it down → next time a new shape
+ if(any){sfx('beep');b.vx*=0.45;b.vz*=0.45;curShape=randShape();}} // knock it down → next time a new shape
 // Advance the script player: complete a travel step on arrival, an in-place step after its
 // duration, then step to the next — until a terminal rest, when the pet resumes its own
 // life. (frame() owns P.stepT — the time-in-current-action, reset on any action change.)
@@ -400,7 +446,9 @@ function randSpot(){
   if(!pool.length)return[0,0];
   const pick=pool[Math.floor(Math.random()*pool.length)];
   if(LOC[pick])return[LOC[pick][0]*R,LOC[pick][1]*R];
-  const p=room[pick]||objPos(pick);return p?[p[0],p[1]]:[0,0];
+  const p=room[pick]||objPos(pick);if(!p)return[0,0];
+  const d=Math.hypot(p[0],p[1])||1,off=1.8;                // stand a step short of the furniture, not inside it
+  return[p[0]-p[0]/d*off,p[1]-p[1]/d*off];
 }
 function nextBehavior(now){
   const df=dayFactor();
@@ -443,7 +491,7 @@ function stepAutonomy(now){
   if(ai.mode==='chase'){                                   // run at the ball and kick it
     const bp=ballPos();P.act='walk';P.tx=bp[0];P.tz=bp[1];
     if(Math.hypot(bp[0]-P.x,bp[1]-P.z)<1.2){
-      kickBall(P.x,P.z,5+Math.random()*3);ai.mode='auto';ai.phase='beat';ai.act='wiggle';ai.until=now+0.7;}
+      kickBall(P.x,P.z,10+Math.random()*4);ai.mode='auto';ai.phase='beat';ai.act='wiggle';ai.until=now+0.7;}
     return;
   }
   if(ai.mode==='move'){                                    // click-to-send / parent raw-move
@@ -508,10 +556,29 @@ function drawToybox(x,z,t,dim){
  part(M.rotZ(M.trans(M.ident(),x-.78,1.15,z),.5+Math.sin(t*.7)*.06),0,0,0,1.6,.14,1.6,MG,dim);} // open lid
 function drawTV(t,dim){const x=TV[0],z=TV[1];
  part(M.ident(),x,2.6,z,3.0,2.0,.3,MG,dim);                 // frame
- const flick=[CY,MG,GD,OR,BL][Math.floor(t*2.5)%5];         // the "content" flickers
- part(M.ident(),x,2.6,z+.18,2.6,1.6,.06,flick,Math.min(1,dim+.3));
- part(M.ident(),x,3.75,z,.06,.6,.06,GD,dim);part(M.ident(),x+.4,4.0,z,.5,.06,.06,GD,dim);} // antenna
-function drawWindow(t,dim){const x=WINDOW[0],z=WINDOW[1],df=lights;   // window view follows day/night
+ // Screen: a dark glass panel. Off → nearly black. On → a soft glow with a little robot
+ // cartoon playing on it. Kids toggle it by clicking the screen (see pointerdown).
+ const scr=tvOn?[.05,.09,.15]:[.02,.02,.03];
+ draw(gCubeF,36,gl.TRIANGLES,M.mul(vp,M.scale(M.trans(M.ident(),x,2.6,z+.15),2.6,1.6,.02)),scr,.96);
+ part(M.ident(),x,2.6,z+.17,2.6,1.6,.04,tvOn?CY:BL,tvOn?Math.min(1,dim+.3):dim*.5); // bezel
+ if(tvOn)drawTVShow(t,x,2.6,z+.22);                         // the show
+ part(M.ident(),x,3.75,z,.06,.6,.06,GD,dim);part(M.ident(),x+.4,4.0,z,.5,.06,.06,GD,tvOn?1:dim*.6);} // antenna
+// The TV cartoon: a tiny wireframe robot that hops, waves and changes colour, chasing a
+// bouncing star — drawn on the plane just in front of the screen.
+function drawTVShow(t,cx,cy,cz){
+ const hop=Math.abs(Math.sin(t*3))*.16,sway=Math.sin(t*1.5)*.5,col=[CY,MG,GD,OR][Math.floor(t*0.6)%4];
+ const bx=cx+sway,by=cy-.34+hop;
+ part(M.ident(),bx,by,cz,.32,.3,.06,col,1);                 // body
+ part(M.ident(),bx,by+.32,cz,.26,.24,.06,col,1);            // head
+ part(M.ident(),bx-.1,by+.34,cz+.02,.05,.05,.02,GD,1);part(M.ident(),bx+.1,by+.34,cz+.02,.05,.05,.02,GD,1); // eyes
+ part(M.ident(),bx,by+.5,cz,.02,.1,.02,GD,1);part(M.ident(),bx,by+.58,cz,.05,.05,.05,GD,1); // antenna
+ const wav=Math.sin(t*7)*.5;                                // both arms wave
+ part(M.rotZ(M.trans(M.ident(),bx-.24,by+.02,cz),wav),0,0,0,.05,.22,.05,col,1);
+ part(M.rotZ(M.trans(M.ident(),bx+.24,by+.02,cz),-wav),0,0,0,.05,.22,.05,col,1);
+ part(M.ident(),bx-.09,by-.3,cz,.07,.18,.06,col,1);part(M.ident(),bx+.09,by-.3,cz,.07,.18,.06,col,1); // legs
+ const sx=cx+Math.sin(t*1.9)*.85,sy=cy+.42+Math.abs(Math.cos(t*2.4))*.22; // a star it plays with
+ part(M.ident(),sx,sy,cz,.09,.09,.06,GD,1);}
+function drawWindow(t,dim){const x=WINDOW[0],z=WINDOW[1],df=dayFactor();   // sky follows the real clock, not the lamp
  part(M.ident(),x,2.8,z,2.6,2.8,.24,GD,dim);                // frame
  const sky=[.05+.18*df,.06+.32*df,.14+.55*df];             // blue by day, deep at night
  draw(gCubeF,36,gl.TRIANGLES,M.mul(vp,M.scale(M.trans(M.ident(),x,2.8,z+.13),2.2,2.4,.02)),sky,.9);
@@ -565,7 +632,7 @@ function drawObjects(t){
   else if(name==='toy_box')drawToybox(x,z,t,dim);
   else if(name==='food_bowl'){ring(x,.1,z,.6,0,GD,dim);ring(x,.35,z,.42,0,GD,dim*.7);}
   else if(name==='ball_pit')ring(x,.06,z,1.0,0,MG,dim);
-  else if(name==='light_switch')part(M.ident(),x,3.0,z,.22,.4,.08,lights>.5?GD:BL,dim);
+  else if(name==='light_switch')part(M.ident(),x,3.0,z,.24,.44,.1,artOn?GD:BL,artOn?1:dim); // glows when on
  }
  drawTV(t,dim);drawWindow(t,dim);drawSynth(t,dim);         // fixtures: TV, window, playable synth
 }
@@ -580,10 +647,13 @@ function drawRope(m,hy,theta,col,al){const HX=.9,Rr=1.35,ry=-Math.cos(theta),rz=
  draw(gRope,N,gl.LINE_STRIP,M.mul(vp,m),col,al);}
 function robot(t){
  const sp=P.walk,walking=sp>0.15&&!P.asleep,act=P.act,ph=P.stepT;
+ const ga=Math.min(1,sp/1.6),gp=P.gait;                    // gait amount (0→1, continuous) + distance phase
  // Always-on idle micro-motion (breathing, a slow look-around) so it's NEVER perfectly still.
  const idleYaw=walking?0:(act==='look'?Math.sin(ph*1.1)*.55:Math.sin(t*0.6)*.08);
- const wf=6+sp*3;                                           // leg swing frequency scales with speed
- let bob=walking?Math.sin(t*wf)*.05*Math.min(1,sp/2):Math.sin(t*2)*.035,spinAdd=0,wiggle=0,nod=0,jumpY=0,crouch=0,ropeTh=-1;
+ // Distance-phased gait: the bob + leg swing advance with steps *taken*, not wall-clock, and
+ // their amplitude eases in with speed — so a changing pace never jitters the stride (the fix
+ // for the old t*wf "jumpy" walk). Breathing fades as it strides / lies down.
+ let bob=Math.sin(t*1.8)*.03*(1-P.lie)+Math.sin(gp*2)*.05*ga,spinAdd=0,wiggle=0,nod=0,jumpY=0,crouch=0,ropeTh=-1;
  if(act==='jump')jumpY=Math.abs(Math.sin(ph*7))*.55;
  if(act==='spin')spinAdd=ph*14;
  if(act==='dance'){spinAdd=Math.sin(ph*6)*.5;bob=Math.abs(Math.sin(ph*7))*.13;}
@@ -594,21 +664,23 @@ function robot(t){
  if(act==='play_music'){spinAdd=Math.sin(ph*7)*.22;bob=Math.abs(Math.sin(ph*6))*.11;} // bops at the synth
  if(act==='nod')nod=Math.sin(ph*8)*.28;
  if(act==='hide'||act==='sit')crouch=-.3;
- if(P.asleep||act==='sleep')crouch=-.3;
  // Kid-chosen colour (or rainbow) tints the body/head/limbs; null = default synthwave.
  const pc=petCol(t),body=pc||MG,head=pc||CY,limb=pc||MG;
  const S=1.7;                                              // scale the pet up for the bigger room
- let m=M.scale(M.rotY(M.trans(M.ident(),P.x,0,P.z),P.facing+spinAdd+wiggle+idleYaw),S,S,S),y=bob+crouch+jumpY;
+ // Lie down flat when asleep: tip the whole body back about the feet (eased via P.lie).
+ let base=M.rotY(M.trans(M.ident(),P.x,0,P.z),P.facing+spinAdd+wiggle+idleYaw);
+ if(P.lie>0.01)base=M.rotX(base,-P.lie*1.45);
+ let m=M.scale(base,S,S,S),y=(bob+crouch+jumpY)*(1-P.lie*0.6);
  if(ropeTh>=0)drawRope(m,y+1.05,ropeTh,[1,1,1],1);         // the swinging jump rope (bright, contrasts any body colour)
  draw(gCirc,40,gl.LINE_LOOP,M.mul(vp,M.scale(M.trans(M.ident(),P.x,.02,P.z),.55*S,1,.55*S)),body,.5);
- const sw=walking?Math.sin(t*wf)*Math.min(1,sp/2.5):0,sw2=walking?Math.sin(t*wf+Math.PI)*Math.min(1,sp/2.5):0;
+ const sw=Math.sin(gp)*.9*ga,sw2=Math.sin(gp+Math.PI)*.9*ga; // smooth leg swing (0 at a standstill)
  part(m,-.22,y+.28,sw*.16,.17,.5,.17,limb);part(m,.22,y+.28,sw2*.16,.17,.5,.17,limb);
  part(m,0,y+.92,0,.82,.72,.56,body);
  const mc=P.emotion==='sleepy'?BL:P.emotion==='scared'?RD:P.emotion==='silly'?GD:P.emotion==='curious'?OR:CY;
  const chest=act==='beep'&&Math.sin(ph*30)>0?GD:mc;
  part(m,0,y+.92,.3,.34,.34,.06,chest);part(m,0,y+.92,.3,.2,.2,.05,chest,.6);
  // Arms: a normal swing, but a raised waving right arm for `wave`.
- const asw=walking?Math.sin(t*10+Math.PI)*.25:Math.sin(t*2+1)*.06;
+ const asw=Math.sin(gp+Math.PI)*.25*ga+Math.sin(t*2+1)*.06*(1-ga);
  const wavR=act==='wave'?-1.9+Math.sin(ph*10)*.4:asw*-1;
  part(M.rotX(M.trans(m,-.52,y+1.06,0),act==='dance'?Math.sin(ph*6)*.5:asw),0,-.22,0,.15,.5,.15,limb);
  part(M.rotX(M.trans(m,.52,y+1.06,0),wavR),0,-.22,0,.15,.5,.15,limb);
@@ -623,7 +695,11 @@ let last=0,lastAct='';
 function frame(ts){const dt=Math.min(.05,(ts-last)/1000||0);last=ts;const t=ts/1000;
  if(gl&&bctx){
   vp=M.mul(M.persp(48*Math.PI/180,W/H,.1,200),M.lookAt([0,9.5,25],[0,2.4,-1],[0,1,0]));
-  const wantL=live.lights_on===false?0:dayFactor();lights+=(wantL-lights)*Math.min(1,dt*0.6);
+  // The phone `lights` command flips the server flag → mirror it onto the artificial switch.
+  if(live.lights_on!==lastLightsOn){artOn=!artOn;lastLightsOn=live.lights_on;}
+  // Effective brightness = daylight OR the artificial light — so the switch genuinely lights
+  // the room at night, and daylight keeps it bright by day regardless.
+  const wantL=Math.max(dayFactor(),artOn?1:0);lights+=(wantL-lights)*Math.min(1,dt*0.9);
   stepBall(dt);stepBlocks(dt);checkCollapse();             // ball + blocks physics; ball knocks the statue down
   if(keyLitT>0){keyLitT-=dt;if(keyLitT<=0)keyLit=-1;}       // fade a just-pressed synth key
   // ---- Decide who steers the pet: a server command, else its own autonomy ----
@@ -639,10 +715,14 @@ function frame(ts){const dt=Math.min(.05,(ts-last)/1000||0);last=ts;const t=ts/1
   stepMusic(t);                                            // plink the synth keys while playing music
   // ---- Fluid locomotion: damped-spring velocity, eased accel/decel, speed-scaled turn ----
   const dx=P.tx-P.x,dz=P.tz-P.z,d=Math.hypot(dx,dz);
-  let des=0;if(!P.asleep&&(P.act==='walk'||d>0.6))des=Math.min(CRUISE,d*2.2);
+  // Ease the desired speed to zero over the last stride so the pet glides to a stop (no
+  // abrupt halt that reads as a jolt); a dead-band near the target kills arrival jitter.
+  let des=0;if(!P.asleep&&(P.act==='walk'||d>0.6))des=Math.min(CRUISE,Math.max(0,d-0.15)*2.2);
   const dirx=d>1e-4?dx/d:0,dirz=d>1e-4?dz/d:0,k=1-Math.exp(-dt*6);
   P.vx+=(dirx*des-P.vx)*k;P.vz+=(dirz*des-P.vz)*k;P.x+=P.vx*dt;P.z+=P.vz*dt;
-  const sp=Math.hypot(P.vx,P.vz);P.walk=sp;
+  resolveObstacles(P,0.55,0,true);                          // don't walk through the furniture
+  const sp=Math.hypot(P.vx,P.vz);P.walk=sp;P.gait+=sp*dt*1.15; // distance-phased gait (smooth, no t-jitter)
+  const lieT=(P.asleep||P.act==='sleep')?1:0;P.lie+=(lieT-P.lie)*Math.min(1,dt*3); // ease into/out of lying
   if(sp>0.08){const want=Math.atan2(P.vx,P.vz);let a=want-P.facing;while(a>Math.PI)a-=2*Math.PI;while(a<-Math.PI)a+=2*Math.PI;P.facing+=a*Math.min(1,dt*(3+sp*1.5));}
   P.nextBlink-=dt;if(P.nextBlink<=0){P.blink=1;P.nextBlink=1.6+Math.random()*3;}if(P.blink>0)P.blink=Math.max(0,P.blink-dt*7);
   const gA=.18+.42*lights,bA=.1+.22*lights;                // grids dim at night
