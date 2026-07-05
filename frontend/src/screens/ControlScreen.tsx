@@ -81,13 +81,20 @@ export function ControlScreen({ onClose, deps = defaultDeps }: ControlScreenProp
   const [pet, setPet] = useState<PetState | null>(null);
   const [text, setText] = useState("");
   const [listening, setListening] = useState(false);
+  const [thinking, setThinking] = useState(false);
 
   const send = useCallback(
     async (command: PetCommand): Promise<void> => {
+      // Talking can hit the LLM, which takes a moment — show a "thinking" indicator so the
+      // wait never feels dead. (Play buttons are instant, so they don't flip it.)
+      const talk = command.action === "say";
+      if (talk) setThinking(true);
       try {
         setPet(await deps.sendPetCommand(command));
       } catch {
         // ignore — the next stream frame reconciles state
+      } finally {
+        if (talk) setThinking(false);
       }
     },
     [deps],
@@ -171,20 +178,24 @@ export function ControlScreen({ onClose, deps = defaultDeps }: ControlScreenProp
       {sttAvailable() ? (
         <button
           type="button"
-          className={`pctl-michero${listening ? " on" : ""}`}
+          className={`pctl-michero${listening || thinking ? " on" : ""}`}
           onClick={listen}
           aria-label="Talk to the pet by voice"
         >
-          <span className="pctl-michero-ico">🎤</span>
+          <span className="pctl-michero-ico">{thinking ? "💭" : "🎤"}</span>
           <span className="pctl-michero-label">
-            {listening ? "Listening…" : `Talk to ${name}!`}
+            {thinking ? "Thinking…" : listening ? "Listening…" : `Talk to ${name}!`}
           </span>
         </button>
       ) : null}
 
       <div className="pctl-card">
         <h3>Let's play!</h3>
-        {pet?.speech ? <div className="pctl-speech">💬 {pet.speech}</div> : null}
+        {thinking ? (
+          <div className="pctl-speech pctl-think">💭 thinking…</div>
+        ) : pet?.speech ? (
+          <div className="pctl-speech">💬 {pet.speech}</div>
+        ) : null}
         <div className="pctl-play">
           {PLAY.map(({ action, ico, label }) => (
             <button
