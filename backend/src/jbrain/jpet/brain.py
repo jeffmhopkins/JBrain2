@@ -159,6 +159,6 @@ async def pet_turn(
         system=_system_prompt(state, memories or [], objs),
         user_text=message.strip()[:500] or "(the child waves at you)",
         json_schema=PET_TURN_SCHEMA,
-        max_tokens=320,
+        max_tokens=160,  # one sentence + a short script — kept tight so replies come back fast
     )
     return _clean(result.parsed, state, objs)

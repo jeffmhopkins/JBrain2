@@ -86,7 +86,7 @@ const NAMED={cyan:CY,magenta:MG,gold:GD,orange:OR,blue:BL,red:RD,green:hx('#49f0
  pink:hx('#ff8ad0'),purple:hx('#b06aff'),white:[1,1,1]};
 function hsv(h,s,v){const i=Math.floor(h*6),f=h*6-i,p=v*(1-s),q=v*(1-f*s),u=v*(1-(1-f)*s);
  return[[v,u,p],[q,v,p],[p,v,u],[p,q,v],[u,p,v],[v,p,q]][i%6];}
-let colorOverride=null;                                     // a wall-local recolour (keyboard) wins over the server
+let colorOverride=null,lastServerColor=null;                // a wall-local recolour (keyboard); cleared when the server colour changes
 function petCol(t){const c=colorOverride||live.color;if(!c||c==='default')return null;
  if(c==='rainbow')return hsv((t*0.14)%1,0.85,1);return NAMED[c]||null;}
 let W,H,DPR,vp=M.ident();
@@ -172,6 +172,9 @@ function applyLive(){
   if(!phys.ball.init&&live.objects&&live.objects.ball){            // seed the ball + blocks once
     phys.ball.x=live.objects.ball[0]*R;phys.ball.z=live.objects.ball[1]*R;phys.ball.init=true;initBlocks();}
   loadScript();
+  // A fresh colour from the phone/talk (the server value changed) clears any keyboard
+  // override, so whichever surface acted most recently wins the recolour.
+  if(live.color!==lastServerColor){colorOverride=null;lastServerColor=live.color;}
   // A parent raw `move` (empty script, a fresh target) → a one-off travel interrupt.
   const mk=(live.target_x||0)+','+(live.target_z||0);
   if(!(live.script&&live.script.length)&&mk!==lastMoveKey&&(Math.abs(live.target_x)>0.001||Math.abs(live.target_z)>0.001)){

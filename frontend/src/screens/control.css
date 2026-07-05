@@ -169,7 +169,7 @@
    touch-down, so `touch-action: none` stops the tap from also scrolling/zooming. */
 .pctl-play {
   display: grid;
-  grid-template-columns: repeat(2, 1fr);
+  grid-template-columns: repeat(3, 1fr);
   gap: 11px;
 }
 .pctl-playbtn {
@@ -291,6 +291,20 @@
   border-radius: 12px;
   border: 1px solid rgba(59, 240, 255, 0.4);
   background: rgba(59, 240, 255, 0.1);
+}
+/* The "thinking" bubble shown while a reply is on its way — gently pulses so the wait reads
+   as the pet working, not a freeze. */
+.pctl-think {
+  animation: pctl-think-pulse 1.1s ease-in-out infinite;
+}
+@keyframes pctl-think-pulse {
+  0%,
+  100% {
+    opacity: 0.55;
+  }
+  50% {
+    opacity: 1;
+  }
 }
 .pctl-talk {
   display: flex;
