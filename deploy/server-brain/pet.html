@@ -209,7 +209,7 @@ initSound();
 // reads as SOLID, not X-ray. FILL is a dark navy tint; polygonOffset pushes it back so the
 // bright edges always win at the surface.
 const FILL=[.05,.03,.10];
-let prog,aP,uMVP,uCol,uAl,gFloor,nFloor,gBack,nBack,gSide,nSide,gCube,gCubeF,gCirc;
+let prog,aP,uMVP,uCol,uAl,gFloor,nFloor,gBack,nBack,gSide,nSide,gCube,gCubeF,gCirc,gSphere,nSphere;
 if(gl&&bctx){
  const sh=(t,s)=>{const o=gl.createShader(t);gl.shaderSource(o,s);gl.compileShader(o);return o;};
  prog=gl.createProgram();
@@ -229,8 +229,13 @@ if(gl&&bctx){
  const cubeF=()=>{const f=[[0,1,2,3],[5,4,7,6],[4,0,3,7],[1,5,6,2],[3,2,6,7],[4,5,1,0]],v=[];
   for(const[a,b,c,d]of f){v.push(...CP[a],...CP[b],...CP[c],...CP[a],...CP[c],...CP[d]);}return v;};
  const circ=n=>{const v=[];for(let i=0;i<n;i++){const a=i/n*Math.PI*2;v.push(Math.cos(a),0,Math.sin(a));}return v;};
+ // Filled low-poly UV sphere (triangles) — the occluding shell behind the ball's rings.
+ const sphere=()=>{const v=[],LA=6,LO=10,SP=(la,lo)=>{const th=la/LA*Math.PI,ph=lo/LO*Math.PI*2;
+   return[Math.sin(th)*Math.cos(ph),Math.cos(th),Math.sin(th)*Math.sin(ph)];};
+  for(let la=0;la<LA;la++)for(let lo=0;lo<LO;lo++){const a=SP(la,lo),b=SP(la+1,lo),c=SP(la+1,lo+1),d=SP(la,lo+1);
+   v.push(...a,...b,...c,...a,...c,...d);}return v;};
  gFloor=buf(grid());nFloor=grid().length/3;gBack=buf(back());nBack=back().length/3;gSide=buf(side());nSide=side().length/3;
- gCube=buf(cube());gCubeF=buf(cubeF());gCirc=buf(circ(40));
+ gCube=buf(cube());gCubeF=buf(cubeF());gCirc=buf(circ(40));gSphere=buf(sphere());nSphere=sphere().length/3;
 }
 function draw(b,count,mode,mvp,col,alpha){gl.bindBuffer(gl.ARRAY_BUFFER,b);gl.enableVertexAttribArray(aP);
  gl.vertexAttribPointer(aP,3,gl.FLOAT,false,0,0);gl.uniformMatrix4fv(uMVP,false,new Float32Array(mvp));
@@ -277,12 +282,28 @@ cv.addEventListener('pointerdown',e=>{
    glowing blocks and stacks them into an evolving statue in the build zone; a kicked/
    rolling ball that hits the statue knocks it down and the blocks scatter — then the pet
    tidies up and rebuilds. Cheap floor-plane physics, no rigid-body engine. ---- */
-const BUILD=[-R*0.5,R*0.45],BLOCK_S=0.8,BLOCK_H=0.85;
-let carried=null;
+const BUILD=[-R*0.5,R*0.45],BLOCK_S=0.32,BLOCK_H=0.32,NBLOCKS=11;
+const BPAL=[CY,MG,GD,OR,BL,RD];                             // each block keeps its own fun colour
+// Statue shapes — local [dx, dy, dz] slots (in block units) the pet stacks into; a fresh
+// one is picked each build so the statue is a different fun shape every time.
+const SHAPES=[
+ [[0,0,0],[0,1,0],[0,2,0],[0,3,0],[0,4,0]],                          // tower
+ [[-1,0,0],[0,0,0],[1,0,0],[-.5,1,0],[.5,1,0],[0,2,0]],             // pyramid
+ [[0,0,0],[1,0,0],[1,1,0],[2,0,0],[2,1,0],[2,2,0]],                 // staircase
+ [[-1,0,0],[0,0,0],[1,0,0],[-1,1,0],[0,1,0],[1,1,0]],               // wall
+ [[0,0,0],[-1,1,0],[0,1,0],[1,1,0],[0,2,0]],                        // plus
+ [[-1,0,0],[1,0,0],[-1,1,0],[1,1,0],[0,2,0]],                       // arch
+ [[0,0,0],[1,0,0],[0,0,1],[1,0,1],[0,1,0],[1,1,1]],                 // little castle
+];
+let carried=null,curShape=SHAPES[0];
+function randShape(){return SHAPES[Math.floor(Math.random()*SHAPES.length)];}
 function initBlocks(){if(phys.blocks&&phys.blocks.length)return;phys.blocks=[];
- for(let i=0;i<6;i++)phys.blocks.push({x:BUILD[0]+(Math.random()-0.5)*5,z:BUILD[1]+(Math.random()-0.5)*5,vx:0,vz:0,stacked:false,slot:0});}
+ for(let i=0;i<NBLOCKS;i++)phys.blocks.push({x:BUILD[0]+(Math.random()-0.5)*6,z:BUILD[1]+(Math.random()-0.5)*6,
+  vx:0,vz:0,stacked:false,slot:0,col:BPAL[i%BPAL.length]});
+ curShape=randShape();}
 function stackCount(){return phys.blocks.filter(b=>b.stacked).length;}
 function looseBlock(){return phys.blocks.find(b=>!b.stacked&&b!==carried&&Math.hypot(b.vx,b.vz)<0.1);}
+function buildFull(){return stackCount()>=curShape.length;}  // the current shape is complete
 function dropCarried(){if(carried){carried.stacked=false;carried=null;}}
 function stepBlocks(dt){for(const bl of phys.blocks){if(bl.stacked||bl===carried)continue;
  bl.x+=bl.vx*dt;bl.z+=bl.vz*dt;const lim=R-0.6;
@@ -294,7 +315,7 @@ function checkCollapse(){const b=phys.ball;if(!b.init||ballSpeed()<1.2)return;
  for(const bl of phys.blocks)if(bl.stacked){bl.stacked=false;any=true;
   const a=Math.random()*Math.PI*2,sp=3+Math.random()*3;bl.vx=Math.cos(a)*sp;bl.vz=Math.sin(a)*sp;
   bl.x=BUILD[0]+(Math.random()-0.5);bl.z=BUILD[1]+(Math.random()-0.5);}
- if(any){sfx('beep');b.vx*=0.3;b.vz*=0.3;}}                // the ball loses steam knocking it down
+ if(any){sfx('beep');b.vx*=0.3;b.vz*=0.3;curShape=randShape();}} // knock it down → next time a new shape
 // Advance the script player: complete a travel step on arrival, an in-place step after its
 // duration, then step to the next — until a terminal rest, when the pet resumes its own
 // life. (frame() owns P.stepT — the time-in-current-action, reset on any action change.)
@@ -330,7 +351,7 @@ function nextBehavior(now){
     ai.deadline=now+7;ai.beat='nap';return;
   }
   const lb=looseBlock();
-  if(lb&&Math.random()<0.34){ai.mode='build';ai.buildPhase='toBlock';ai.block=lb;return;} // tidy/build
+  if(lb&&!buildFull()&&Math.random()<0.4){ai.mode='build';ai.buildPhase='toBlock';ai.block=lb;return;} // build the statue
   if(phys.ball.init&&Math.random()<0.2){ai.mode='chase';return;} // sometimes go play with the ball
   let beat;do{beat=BEATS[Math.floor(Math.random()*BEATS.length)];}while(beat===ai.last&&Math.random()<0.6);
   ai.last=beat;ai.beat=beat;
@@ -360,7 +381,9 @@ function stepAutonomy(now){
     else{P.act='walk';P.tx=BUILD[0];P.tz=BUILD[1];bl.x=P.x;bl.z=P.z;   // carry it over
       if(Math.hypot(BUILD[0]-P.x,BUILD[1]-P.z)<1.1){
         bl.stacked=true;bl.slot=stackCount();bl.x=BUILD[0];bl.z=BUILD[1];carried=null;sfx('put_down');
-        ai.mode='auto';ai.phase='beat';ai.act='nod';ai.until=now+0.6;}}
+        const nx=looseBlock();
+        if(!buildFull()&&nx){ai.block=nx;ai.buildPhase='toBlock';}   // sticky: finish the whole shape
+        else{ai.mode='auto';ai.phase='beat';ai.act='nod';ai.until=now+0.8;}}}
     return;
   }
   if(ai.phase==='travel'){
@@ -379,8 +402,12 @@ function nextPhaseBeat(now,beat,dur){ai.phase='beat';ai.act=beat;ai.until=now+du
 // perpendicular rings make a cheap glowing "ball".
 function ring(x,y,z,r,rot,col,al){let m=M.trans(M.ident(),x,y,z);if(rot===1)m=M.rotX(m,Math.PI/2);else if(rot===2)m=M.rotZ(m,Math.PI/2);
  draw(gCirc,40,gl.LINE_LOOP,M.mul(vp,M.scale(m,r,r,r)),col,al==null?.9:al);}
-// A glowing ball = three perpendicular rings; `spin` rotates it so it reads as rolling.
+// A solid glowing ball: a dark occluding sphere (so it's not X-ray) behind three
+// perpendicular neon rings; `spin` rotates it so it reads as rolling.
 function drawBall(x,y,z,r,spin,dim){const base=M.rotY(M.trans(M.ident(),x,y,z),spin);
+ gl.enable(gl.POLYGON_OFFSET_FILL);gl.polygonOffset(1.2,1.2);
+ draw(gSphere,nSphere,gl.TRIANGLES,M.mul(vp,M.scale(base,r*.97,r*.97,r*.97)),FILL,.9);
+ gl.disable(gl.POLYGON_OFFSET_FILL);
  draw(gCirc,40,gl.LINE_LOOP,M.mul(vp,M.scale(base,r,r,r)),GD,dim);
  draw(gCirc,40,gl.LINE_LOOP,M.mul(vp,M.scale(M.rotX(base,Math.PI/2),r,r,r)),GD,dim*.85);
  draw(gCirc,40,gl.LINE_LOOP,M.mul(vp,M.scale(M.rotZ(base,Math.PI/2),r,r,r)),OR,dim*.7);}
@@ -390,11 +417,15 @@ function drawObjects(t){
  if(phys.ball.init){const b=phys.ball,by=player.held==='ball'?1.9:.7,bob=player.held==='ball'?0:Math.sin(t*2)*.05,
    spin=t*(1+ballSpeed());
   drawBall(player.held==='ball'?P.x:b.x,by+bob,player.held==='ball'?P.z:b.z,.7,spin,dim);}
- // Blocks: stacked into the build-zone statue, carried by the pet, or scattered on the floor.
+ // Blocks: little coloured bricks — stacked into the build-zone statue (a fun shape),
+ // carried by the pet (shown bright in its own colour), or scattered on the floor.
  for(const bl of phys.blocks){
-  const y=bl.stacked?(0.45+bl.slot*BLOCK_H):(bl===carried?1.5:0.45),
-   x=bl===carried?P.x:bl.x,z=bl===carried?P.z:bl.z;
-  part(M.ident(),x,y,z,BLOCK_S,BLOCK_H*0.9,BLOCK_S,bl.stacked?CY:MG,dim);}
+  let x,y,z;
+  if(bl.stacked){const o=curShape[bl.slot]||[0,bl.slot,0];
+   x=BUILD[0]+o[0]*BLOCK_S*1.05;y=0.28+o[1]*BLOCK_H;z=BUILD[1]+o[2]*BLOCK_S*1.05;}
+  else if(bl===carried){x=P.x;y=1.45+Math.sin(t*8)*.04;z=P.z;}
+  else{x=bl.x;y=0.28;z=bl.z;}
+  part(M.ident(),x,y,z,BLOCK_S*0.92,BLOCK_H*0.92,BLOCK_S*0.92,bl.col,bl===carried?1:dim);}
  for(const name in live.objects){if(name==='ball')continue;const w=objPos(name);if(!w)continue;
   if(!room[name])room[name]=w.slice();
   if(player.held===name){room[name]=[P.x,P.z];}            // a carried object rides the pet
