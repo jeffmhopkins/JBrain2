@@ -48,7 +48,7 @@
    Engine ported from docs/mocks/jpet/06-room-3d.html. */
 const cv=document.getElementById('gl'),gl=cv.getContext('webgl',{antialias:true,alpha:false,preserveDrawingBuffer:true});
 const bcv=document.getElementById('bloom'),bctx=bcv.getContext('2d');
-const R=12.0,WALL=8.5;
+const R=12.0,WALL=8.5,BALL_CEIL=7.0;                          // BALL_CEIL: an unseen roof the ball bounces off
 const M={ident(){return[1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1];},
  mul(a,b){const o=new Array(16);for(let c=0;c<4;c++){const b0=b[c*4],b1=b[c*4+1],b2=b[c*4+2],b3=b[c*4+3];
   o[c*4]=b0*a[0]+b1*a[4]+b2*a[8]+b3*a[12];o[c*4+1]=b0*a[1]+b1*a[5]+b2*a[9]+b3*a[13];
@@ -358,6 +358,7 @@ function stepBall(dt){const b=phys.ball;if(!b.init)return;
  b.x+=b.vx*dt;b.z+=b.vz*dt;
  b.vy-=14*dt;b.y+=b.vy*dt;                                          // gravity → a kicked ball arcs
  if(b.y<0.7){b.y=0.7;if(b.vy<0)b.vy=-b.vy*0.55;if(Math.abs(b.vy)<0.7)b.vy=0;} // bounce off the floor
+ if(b.y>BALL_CEIL){b.y=BALL_CEIL;if(b.vy>0)b.vy=-b.vy*0.6;} // and off the invisible roof, so a mashed ball can't fly off-screen
  const lim=R-0.7;                                                   // livelier: walls barely bleed energy
  if(b.x<-lim){b.x=-lim;b.vx=Math.abs(b.vx)*0.9;}if(b.x>lim){b.x=lim;b.vx=-Math.abs(b.vx)*0.9;}
  if(b.z<-lim){b.z=-lim;b.vz=Math.abs(b.vz)*0.9;}if(b.z>lim){b.z=lim;b.vz=-Math.abs(b.vz)*0.9;}
@@ -540,29 +541,29 @@ const SHAPES=[
  [[-1.5,0,-1.5],[-1.5,1,-1.5],[-1.5,2,-1.5],[1.5,0,-1.5],[1.5,1,-1.5],[1.5,2,-1.5],
   [-1.5,0,1.5],[-1.5,1,1.5],[-1.5,2,1.5],[1.5,0,1.5],[1.5,1,1.5],[1.5,2,1.5],
   [-.5,0,-1.5],[.5,0,-1.5],[-.5,0,1.5],[.5,0,1.5],[-1.5,0,-.5],[-1.5,0,.5],[1.5,0,-.5],[1.5,0,.5]],
- // tall tower on a 3×3 base  (17)
+ // tall tower on a 3×3 base — a clean spire (the old ±.5 cap overlapped the column)  (15)
  [[-1,0,-1],[0,0,-1],[1,0,-1],[-1,0,0],[0,0,0],[1,0,0],[-1,0,1],[0,0,1],[1,0,1],
-  [0,1,0],[0,2,0],[0,3,0],[0,4,0],[0,5,0],[-.5,5,0],[.5,5,0],[0,6,0]],
- // gateway arch  (14)
+  [0,1,0],[0,2,0],[0,3,0],[0,4,0],[0,5,0],[0,6,0]],
+ // gateway arch — lintel on the posts' half-unit grid so its blocks butt, not overlap  (13)
  [[-1.5,0,0],[-1.5,1,0],[-1.5,2,0],[-1.5,3,0],[1.5,0,0],[1.5,1,0],[1.5,2,0],[1.5,3,0],
-  [-1,4,0],[-.5,4,0],[0,4,0],[.5,4,0],[1,4,0],[0,5,0]],
+  [-1.5,4,0],[-.5,4,0],[.5,4,0],[1.5,4,0],[0,5,0]],
  // grand staircase  (15)
  [[0,0,0],[1,0,0],[1,1,0],[2,0,0],[2,1,0],[2,2,0],[3,0,0],[3,1,0],[3,2,0],[3,3,0],
   [4,0,0],[4,1,0],[4,2,0],[4,3,0],[4,4,0]],
  // rocket — tall column + a fin ring + nose  (13)
  [[0,0,0],[0,1,0],[0,2,0],[0,3,0],[0,4,0],[0,5,0],[0,6,0],[-1,0,0],[1,0,0],[0,0,-1],[0,0,1],[0,7,0],[0,8,0]],
- // a little robot statue — legs, 2×2 body, out-stretched arms, head + antenna  (19)
+ // a little robot statue — legs, 2×2 body, raised arms (±1.5, not ±1 which clipped the head), head + antenna  (19)
  [[-1,0,0],[-1,1,0],[1,0,0],[1,1,0],[-.5,2,0],[.5,2,0],[-.5,3,0],[.5,3,0],
-  [-1.5,3,0],[-1.5,2,0],[1.5,3,0],[1.5,2,0],[-.5,4,0],[.5,4,0],[-.5,5,0],[.5,5,0],[0,6,0],[-1,4,0],[1,4,0]],
+  [-1.5,3,0],[-1.5,2,0],[1.5,3,0],[1.5,2,0],[-.5,4,0],[.5,4,0],[-.5,5,0],[.5,5,0],[0,6,0],[-1.5,4,0],[1.5,4,0]],
  // a diamond / gem  (13)
  [[0,0,0],[-1,1,0],[0,1,0],[1,1,0],[-2,2,0],[-1,2,0],[0,2,0],[1,2,0],[2,2,0],[-1,3,0],[0,3,0],[1,3,0],[0,4,0]],
  // a totem pole — tall column with side + depth wings  (16)
  [[0,0,0],[0,1,0],[0,2,0],[0,3,0],[0,4,0],[0,5,0],[0,6,0],[0,7,0],
   [-1,1,0],[1,1,0],[-1,4,0],[1,4,0],[0,1,-1],[0,1,1],[0,4,-1],[0,4,1]],
- // a pyramid-and-spire ziggurat  (22)
- [[-1.5,0,-1.5],[-.5,0,-1.5],[.5,0,-1.5],[1.5,0,-1.5],[-1.5,0,1.5],[-.5,0,1.5],[.5,0,1.5],[1.5,0,1.5],
-  [-1.5,0,-.5],[-1.5,0,.5],[1.5,0,-.5],[1.5,0,.5],[-.5,1,-.5],[.5,1,-.5],[-.5,1,.5],[.5,1,.5],
-  [0,2,0],[0,3,0],[0,4,0],[-.5,2,0],[.5,2,0],[0,5,0]],
+ // a pyramid-and-spire ziggurat — solid 4×4 base carries the spire; no ±.5-vs-0 overlap  (22)
+ [[-1.5,0,-1.5],[-.5,0,-1.5],[.5,0,-1.5],[1.5,0,-1.5],[-1.5,0,-.5],[-.5,0,-.5],[.5,0,-.5],[1.5,0,-.5],
+  [-1.5,0,.5],[-.5,0,.5],[.5,0,.5],[1.5,0,.5],[-1.5,0,1.5],[-.5,0,1.5],[.5,0,1.5],[1.5,0,1.5],
+  [-.5,1,-.5],[.5,1,-.5],[-.5,1,.5],[.5,1,.5],[0,2,0],[0,3,0]],
 ];
 let carried=null,curShape=SHAPES[0];
 function randShape(){return SHAPES[Math.floor(Math.random()*SHAPES.length)];}
