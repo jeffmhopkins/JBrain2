@@ -53,6 +53,7 @@ _COLOR_ALIASES = {
 # First match wins, so put the more specific phrases first.
 _KEYWORDS: tuple[tuple[tuple[str, ...], str], ...] = (
     (("jump rope", "skip rope", "skipping"), "jumprope"),
+    (("play guitar", "guitar", "strum"), "guitar"),
     (("play music", "play a song", "piano", "synth", "music"), "music"),
     (("sing", "sing a song", "la la", "sing me"), "sing"),
     (("chase the ball", "chase", "fetch", "kick the ball", "get the ball", "ball"), "chase"),
@@ -89,6 +90,7 @@ _REPLIES = {
     "lights": "Flicky flick!",
     "jumprope": "Jumpy jump rope!",
     "music": "La la laaa!",
+    "guitar": "Strum strum strum!",
     "sing": "🎵 La la laaa, I love youuu! 🎵",
     "fart": "Pfffffbt! Hee-hee, 'scuse me!",
     "burp": "BUUURP! Hehe, that was a big one!",

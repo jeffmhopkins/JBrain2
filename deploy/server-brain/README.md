@@ -52,10 +52,14 @@ walks into. The pet builds one of **ten+ statue shapes** in a **random spot** ea
 the **TV** changes its channel (**off → three animated cartoons**); clicking the **light switch**
 cycles a **dimmer** (off → dim → bright) that changes the room's luminosity — genuinely lighting
 it **at night** (daylight lights it by day; the phone `lights` command steps the same dimmer).
-There's a **drum kit** and a wall-hung **guitar** to play alongside the **synth**, which plinks
-out **kids' songs** (Twinkle, Row Row, Itsy Bitsy Spider, Mary…) from a fixed spot. The pet
+There's a **drum kit** and a wall-hung **guitar** to play alongside the **synth**; the synth and
+guitar both plink out **kids' songs** (Twinkle, Itsy Bitsy Spider, Hot Cross Buns, Frère Jacques,
+Old MacDonald…) — the guitar **plucked**, an octave down — from their fixed play spots. The pet
 **lies down** in the bed to sleep; a distance-phased gait keeps the walk smooth; and it lingers
-in each activity (durations run long). Keyboard: **Z–M** play the synth keys, **space** jumps.
+in each activity (durations run long). Keyboard: **hold an arrow** to walk the pet around until
+you let go; the bottom row (**Z–M**) plays the **synth** and the home row (**A–L**) the **drums**
+— play either and the pet ambles over to the *other* to **jam along**; **space** picks up the
+nearest **block** and throws it the way the pet faces (press again to let go).
 
 **Sound.** When the pet speaks, `/pet` reads its speech bubble aloud with the same on-box
 piper `/tts` endpoint the neural wall uses (`/tts/voices` picks the voice — `en_US-amy-medium`
