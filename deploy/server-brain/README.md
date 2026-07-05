@@ -34,7 +34,8 @@ On a box without the api, the neural wall is unaffected — only `/pet` needs it
 **The wall runs the pet's brain (v3, `docs/archive/JPET_V3_PLAN.md`).** `pet.html` is a
 continuous 60fps simulation: an **autonomy engine** keeps the pet fluidly doing things on
 its own — strolling between the room's spots, looking around, little wiggles/spins/nods,
-the odd nap — chosen by constrained randomness so it never repeats and never stands idle.
+playing its instruments — chosen by constrained randomness so it never repeats and never
+stands idle (and it heads to bed on its own at night; see the interactive room below).
 Motion is **damped-spring** (eased accel/decel, speed-scaled turning) with always-on idle
 micro-motion, so nothing snaps or freezes. The pet is drawn in **solid wireframe** (dark
 occluding faces behind the neon edges — not X-ray). There are **no meters** — mood reads
@@ -55,8 +56,9 @@ it **at night** (daylight lights it by day; the phone `lights` command steps the
 There's a **drum kit** and a wall-hung **guitar** to play alongside the **synth**; the synth and
 guitar both plink out **kids' songs** (Twinkle, Itsy Bitsy Spider, Hot Cross Buns, Frère Jacques,
 Old MacDonald…) — the guitar **plucked**, an octave down — from their fixed play spots. The pet
-**lies down** in the bed to sleep; a distance-phased gait keeps the walk smooth; and it lingers
-in each activity (durations run long). Keyboard: **hold an arrow** to walk the pet around until
+**puts itself to bed**: at night with the **light off and the TV off** it curls up asleep and
+**stays** there, only getting up when day breaks or a **light / the TV** comes on. A
+distance-phased gait keeps the walk smooth, and it lingers in each activity (durations run long). Keyboard: **hold an arrow** to walk the pet around until
 you let go; the bottom row (**Z–M**) plays the **synth** and the home row (**A–L**) the **drums**
 — play either and the pet ambles over to the *other* to **jam along**; **space** picks up the
 nearest **block** and throws it the way the pet faces (press again to let go).

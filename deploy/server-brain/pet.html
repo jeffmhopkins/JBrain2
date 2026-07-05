@@ -118,6 +118,10 @@ let padLit=-1,padLitT=0,strumT=0;                         // drum-pad / guitar-s
 function dayFactor(){const h=new Date().getHours()+new Date().getMinutes()/60;
  if(h>=7&&h<19)return 1;if(h<5||h>=21)return 0;return h<7?(h-5)/2:(21-h)/2;}
 function nextLevel(l){return l<0.25?0.5:l<0.75?1:0;}        // light dimmer: off → dim → bright → off
+// The pet wants to be asleep in its bed by default — it only stays up when it's DAYTIME, the
+// LIGHT is on, or the TV is on. So: night + light off + TV off ⇒ bedtime (and it stays there
+// until one of those flips). `artLevel` is the dimmer notch (0 = off); `tvProg` 0 = TV off.
+function wantsSleep(){return dayFactor()<0.5&&artLevel<0.25&&tvProg===0;}
 const live={name:'JPet',mood:'…',emotion:'happy',asleep:false,
   target_x:0,target_z:0,speech:null,script:[],carrying:null,lights_on:true,objects:{}};
 // P holds the pet's live render state. `vx/vz` are velocity (fluid accel/decel motion);
@@ -676,11 +680,8 @@ function randSpot(){
   return[p[0]-p[0]/d*off,p[1]-p[1]/d*off];
 }
 function nextBehavior(now){
-  const df=dayFactor();
-  if(df<0.3&&Math.random()<0.5){                           // night: sleepy → head to bed and sleep
-    const b=objPos('bed');ai.target=b?[b[0],b[1]]:randSpot();ai.phase='travel';ai.act='walk';
-    ai.deadline=now+7;ai.beat='nap';return;
-  }
+  // (Sleep is handled up in stepAutonomy by wantsSleep() — night + light off + TV off — so there
+  // are no random nap beats here any more; nextBehavior only runs while the pet is awake.)
   if(Math.random()<0.13){                                  // go watch some TV (turn it on if a kid left it off)
     if(tvProg===0)tvProg=1;
     ai.target=[TV[0],TV[1]+2.5];ai.phase='travel';ai.act='walk';ai.deadline=now+6;ai.beat='watch';ai.last='watch';P.emotion='happy';return;
@@ -717,10 +718,6 @@ function nextBehavior(now){
     ai.phase='beat';ai.act='jumprope';ai.beat='jumprope';ai.target=[P.x,P.z];
     ai.until=now+beatDur('jumprope',0);ai.last='rope';P.emotion='excited';return;
   }
-  if(Math.random()<0.07){                                  // a rare little nap in the bed
-    const b=objPos('bed');ai.target=b?[b[0],b[1]]:randSpot();ai.phase='travel';ai.act='walk';
-    ai.deadline=now+7;ai.beat='nap';return;
-  }
   const lb=manualHold?null:looseBlock();                  // don't build/tidy while the kid is holding a block
   if(lb&&!buildFull()&&Math.random()<0.12){ai.mode='vacuum';ai.hasVac=false;return;} // sometimes tidy up with the vacuum
   if(lb&&!buildFull()&&Math.random()<0.4){ai.mode='build';ai.buildPhase='toBlock';ai.block=lb;return;} // build the statue
@@ -732,6 +729,14 @@ function nextBehavior(now){
 }
 function sfxIdle(beat){if(beat==='spin'||beat==='wiggle'||beat==='nod')sfx(beat);}
 function stepAutonomy(now){
+  // Automatic bedtime: night + light off + TV off → the pet heads to bed and stays asleep there,
+  // only getting up when day breaks or a light / the TV comes on.
+  if(wantsSleep()){
+    const b=objPos('bed');
+    if(b&&Math.hypot(b[0]-P.x,b[1]-P.z)>=0.6){P.asleep=false;P.act='walk';P.tx=b[0];P.tz=b[1];ai.mode='auto';ai.phase='travel';return;} // trundle to bed
+    if(b){P.x=b[0];P.z=b[1];P.facing=Math.PI/2;}          // settle onto the mattress
+    P.asleep=true;P.act='sleep';P.emotion='sleepy';P.tx=P.x;P.tz=P.z;return;
+  }
   if(napUntil>now){P.asleep=true;P.act='sleep';P.tx=P.x;P.tz=P.z;return;}
   P.asleep=false;
   const arrived=Math.hypot(ai.target[0]-P.x,ai.target[1]-P.z)<0.5;
@@ -1080,8 +1085,9 @@ function frame(ts){const dt=Math.min(.05,(ts-last)/1000||0);last=ts;const t=ts/1
   else if(driveHeld()){if(ai.mode==='script')ai.mode='auto';} // a held arrow steers the pet — autonomy stands down
   else{
    if(ai.mode==='script'){ai.mode='auto';ai.until=0;ai.phase='beat';}
-   // attention: notice a fast-moving (or just-flicked) ball and give chase (not while carrying a block)
-   if((wantChase||ballSpeed()>1.4)&&t>kickCool&&napUntil<t&&t>manualUntil&&!manualHold&&ai.mode!=='move'&&ai.mode!=='chase'){dropCarried();ai.mode='chase';wantChase=false;P.emotion='excited';}
+   // attention: notice a fast-moving (or just-flicked) ball and give chase (not while carrying a
+   // block, and not at bedtime — a rolling ball shouldn't wake a sleeping pet)
+   if((wantChase||ballSpeed()>1.4)&&t>kickCool&&napUntil<t&&t>manualUntil&&!manualHold&&!wantsSleep()&&ai.mode!=='move'&&ai.mode!=='chase'){dropCarried();ai.mode='chase';wantChase=false;P.emotion='excited';}
    stepAutonomy(t);
   }
   // ---- Time-in-current-action (drives one-shot beat anims), reset whenever it changes ----
