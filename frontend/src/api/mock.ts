@@ -45,6 +45,7 @@ const PRINCIPAL: Principal = {
 };
 
 const mockUpdate = { state: "none" as "none" | "running" | "exited", ticks: 0 };
+const mockRebuild = { state: "none" as "none" | "running" | "exited", ticks: 0 };
 const mockExport = { state: "none" as "none" | "running" | "exited", ticks: 0 };
 const mockImport = { state: "none" as "none" | "running" | "exited", ticks: 0 };
 const mockReset = { state: "none" as "none" | "running" | "exited", ticks: 0 };
@@ -3939,6 +3940,21 @@ export const mockFetch: typeof fetch = async (input, init) => {
   }
   if (path === "/api/ops/status") return json({ containers: CONTAINERS });
   if (path === "/api/ops/restart") return new Response(null, { status: 204 });
+  if (path === "/api/ops/rebuild" && init?.method === "POST") {
+    mockRebuild.state = "running";
+    mockRebuild.ticks = 0;
+    return json({ oneshot: "jbrain-rebuild-mock" }, 202);
+  }
+  if (path === "/api/ops/rebuild/status") {
+    if (mockRebuild.state === "running" && ++mockRebuild.ticks >= 2) {
+      mockRebuild.state = "exited";
+    }
+    return json({
+      state: mockRebuild.state,
+      exit_code: mockRebuild.state === "exited" ? 0 : null,
+      log_tail: mockRebuild.state === "none" ? "" : "[rebuild] server-brain: building image",
+    });
+  }
 
   // The Runs surface (owner-only run log) + the sweep-trigger controls.
   if (path === "/api/runs") return json(MOCK_RUNS);

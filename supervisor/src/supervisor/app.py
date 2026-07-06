@@ -116,6 +116,10 @@ class ImportStartRequest(BaseModel):
     archive: str
 
 
+class RebuildRequest(BaseModel):
+    service: str
+
+
 # Import archives are api-named uploads; anything else is rejected before the
 # name reaches a shell command line.
 IMPORT_ARCHIVE_RE = re.compile(r"^import-\d{8}-\d{6}\.jbrain\.tar$")
@@ -332,6 +336,30 @@ def create_app(settings: Settings, gateway: DockerGateway) -> FastAPI:
         tail: Annotated[int, Query(ge=1)] = 80,
     ) -> UpdateStatusResponse:
         status = gateway.oneshot_status("provision", min(tail, MAX_LOG_TAIL))
+        return UpdateStatusResponse(
+            state=status.state, exit_code=status.exit_code, log_tail=status.log_tail
+        )
+
+    @authed.post("/rebuild", status_code=202)
+    def start_rebuild(body: RebuildRequest) -> OneshotStartResponse:
+        # Rebuild ONE service (compose build + up -d) — the PWA's per-service Rebuild
+        # button, applying a code/Dockerfile change already on the box without a full
+        # update. Validate against the live service set so only a real compose service
+        # reaches the shell-quoted command; shares the one-shot mutual-exclusion guard.
+        if body.service not in {c.service for c in gateway.list_containers()}:
+            raise UnknownServiceError(body.service)
+        try:
+            return OneshotStartResponse(oneshot=gateway.start_rebuild(body.service))
+        except UpdateInProgressError:
+            raise HTTPException(
+                status_code=409, detail="another one-shot is running"
+            ) from None
+
+    @authed.get("/rebuild/status")
+    def rebuild_status(
+        tail: Annotated[int, Query(ge=1)] = 80,
+    ) -> UpdateStatusResponse:
+        status = gateway.oneshot_status("rebuild", min(tail, MAX_LOG_TAIL))
         return UpdateStatusResponse(
             state=status.state, exit_code=status.exit_code, log_tail=status.log_tail
         )

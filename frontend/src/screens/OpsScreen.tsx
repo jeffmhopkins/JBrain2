@@ -380,14 +380,26 @@ function SystemRows({ metrics }: { metrics: OpsMetrics }) {
 
 const LOG_TAIL = 200;
 
+// A per-service rebuild (compose build + up -d) runs as a supervisor one-shot, so like the
+// server update it needs progress, not fire-and-forget. Only one runs at a time (the
+// one-shot guard), so a single state at the screen level tracks which service and where.
+type RebuildState =
+  | { step: "idle" }
+  | { step: "running"; service: string; log: string; unreachable: boolean }
+  | { step: "done"; service: string; ok: boolean; log: string };
+
 function ServiceGroup({
   group,
   memByService,
   onRestart,
+  onRebuild,
+  rebuild,
 }: {
   group: { label: string; items: ContainerStatus[] };
   memByService: Map<string, number>;
   onRestart: (service: string) => void;
+  onRebuild: (service: string) => void;
+  rebuild: RebuildState;
 }) {
   const level = group.items.reduce<Level>((w, c) => worse(w, svcLevel(c)), "ok");
   const label = level === "ok" ? "all up" : level === "warn" ? "degraded" : "down";
@@ -413,6 +425,8 @@ function ServiceGroup({
           c={c}
           memBytes={memByService.get(c.service) ?? null}
           onRestart={onRestart}
+          onRebuild={onRebuild}
+          rebuild={rebuild}
         />
       ))}
     </OpsCard>
@@ -423,10 +437,14 @@ function ServiceRow({
   c,
   memBytes,
   onRestart,
+  onRebuild,
+  rebuild,
 }: {
   c: ContainerStatus;
   memBytes: number | null;
   onRestart: (service: string) => void;
+  onRebuild: (service: string) => void;
+  rebuild: RebuildState;
 }) {
   const [open, setOpen] = useState(false);
   return (
@@ -452,7 +470,15 @@ function ServiceRow({
         {memBytes !== null && <span className="ops-smem">{fmtBytes(memBytes)}</span>}
         <span className="ops-scaret">›</span>
       </button>
-      {open && <ServiceBody c={c} memBytes={memBytes} onRestart={onRestart} />}
+      {open && (
+        <ServiceBody
+          c={c}
+          memBytes={memBytes}
+          onRestart={onRestart}
+          onRebuild={onRebuild}
+          rebuild={rebuild}
+        />
+      )}
     </div>
   );
 }
@@ -461,10 +487,14 @@ function ServiceBody({
   c,
   memBytes,
   onRestart,
+  onRebuild,
+  rebuild,
 }: {
   c: ContainerStatus;
   memBytes: number | null;
   onRestart: (service: string) => void;
+  onRebuild: (service: string) => void;
+  rebuild: RebuildState;
 }) {
   const [lines, setLines] = useState<string[] | null>(null);
   const [follow, setFollow] = useState(false);
@@ -566,9 +596,32 @@ function ServiceBody({
         {lines === null ? "loading…" : lines.join("\n")}
       </pre>
 
-      <button type="button" className="danger ops-srestart" onClick={() => onRestart(c.service)}>
-        Restart {c.service}
-      </button>
+      <div className="ops-sactions">
+        <button type="button" className="danger ops-srestart" onClick={() => onRestart(c.service)}>
+          Restart {c.service}
+        </button>
+        <button
+          type="button"
+          className="ops-srebuild"
+          onClick={() => onRebuild(c.service)}
+          disabled={rebuild.step === "running"}
+        >
+          {rebuild.step === "running" && rebuild.service === c.service ? "Rebuilding…" : "Rebuild"}
+        </button>
+      </div>
+      {rebuild.step !== "idle" && rebuild.service === c.service && (
+        <div className="ops-update-status" aria-label={`Rebuild ${c.service}`}>
+          {rebuild.step === "running" && (
+            <p className="muted">{rebuild.unreachable ? "Recreating — hold on…" : "Rebuilding…"}</p>
+          )}
+          {rebuild.step === "done" && (
+            <p className={rebuild.ok ? "muted" : "error"}>
+              {rebuild.ok ? "Rebuild complete." : "Rebuild failed — see log."}
+            </p>
+          )}
+          <pre className="ops-update-log">{rebuild.log}</pre>
+        </div>
+      )}
     </div>
   );
 }
@@ -952,6 +1005,69 @@ export function OpsScreen() {
     [refresh],
   );
 
+  // Per-service rebuild (compose build + up -d) via the supervisor one-shot. Long-running,
+  // so it kicks the one-shot then polls its status until it exits — and if the service being
+  // rebuilt is the api/proxy itself, the poll briefly can't reach the box (unreachable).
+  const [rebuild, setRebuild] = useState<RebuildState>({ step: "idle" });
+  const startRebuild = useCallback(
+    async (service: string) => {
+      if (rebuild.step === "running") return; // one at a time (the one-shot guard)
+      if (!window.confirm(`Rebuild ${service}? This rebuilds its image and recreates it.`)) return;
+      setError(null);
+      try {
+        await api.opsRebuildStart(service);
+      } catch (err) {
+        setError(
+          err instanceof ApiError && err.status === 409
+            ? "Another operation is running — try again when it finishes."
+            : errorMessage(err),
+        );
+        return;
+      }
+      setRebuild({
+        step: "running",
+        service,
+        log: `[rebuild] ${service} starting`,
+        unreachable: false,
+      });
+    },
+    [rebuild.step],
+  );
+
+  useEffect(() => {
+    if (rebuild.step !== "running") return;
+    let cancelled = false;
+    const tick = async () => {
+      let status: UpdateStatus;
+      try {
+        status = await api.opsRebuildStatus();
+      } catch {
+        // Rebuilding api/proxy drops the box briefly — flag it and keep polling.
+        if (!cancelled) setRebuild((r) => (r.step === "running" ? { ...r, unreachable: true } : r));
+        return;
+      }
+      if (cancelled) return;
+      if (status.state === "running") {
+        setRebuild((r) =>
+          r.step === "running" ? { ...r, log: status.log_tail, unreachable: false } : r,
+        );
+      } else if (status.state === "exited") {
+        setRebuild((r) =>
+          r.step === "running"
+            ? { step: "done", service: r.service, ok: status.exit_code === 0, log: status.log_tail }
+            : r,
+        );
+        void refresh();
+      }
+    };
+    const id = setInterval(() => void tick(), 2000);
+    void tick();
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [rebuild.step, refresh]);
+
   const groups = groupContainers(containers ?? []);
   const memByService = new Map((metrics?.containers ?? []).map((x) => [x.service, x.mem_bytes]));
 
@@ -993,7 +1109,14 @@ export function OpsScreen() {
         <p className="muted">Loading status…</p>
       ) : (
         groups.map((g) => (
-          <ServiceGroup key={g.label} group={g} memByService={memByService} onRestart={restart} />
+          <ServiceGroup
+            key={g.label}
+            group={g}
+            memByService={memByService}
+            onRestart={restart}
+            onRebuild={startRebuild}
+            rebuild={rebuild}
+          />
         ))
       )}
 

@@ -26,10 +26,13 @@ class FakeSupervisor:
         self.import_state = {"state": "none", "exit_code": None, "log_tail": ""}
         self.reset_state = {"state": "none", "exit_code": None, "log_tail": ""}
         self.provision_state = {"state": "none", "exit_code": None, "log_tail": ""}
+        self.rebuild_state = {"state": "none", "exit_code": None, "log_tail": ""}
         self.busy = False
         self.import_started_with: list[str] = []
         self.resets_started = 0
         self.provisions_started = 0
+        self.rebuilt_services: list[str] = []
+        self.rebuild_known = {"api", "server-brain", "worker"}
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
         if request.headers.get("Authorization") != "Bearer st-token":
@@ -65,6 +68,16 @@ class FakeSupervisor:
             return httpx.Response(202, json={"oneshot": "jbrain-provision-1"})
         if path == "/provision/status":
             return httpx.Response(200, json=self.provision_state)
+        if path == "/rebuild" and method == "POST":
+            service = json.loads(request.content)["service"]
+            if service not in self.rebuild_known:
+                return httpx.Response(404)
+            if self.busy:
+                return httpx.Response(409)
+            self.rebuilt_services.append(service)
+            return httpx.Response(202, json={"oneshot": "jbrain-rebuild-1"})
+        if path == "/rebuild/status":
+            return httpx.Response(200, json=self.rebuild_state)
         if path == "/metrics":
             return httpx.Response(
                 200,
@@ -169,6 +182,46 @@ def test_data_endpoints_require_owner(
         assert anon.post("/api/ops/import/upload").status_code == 401
         assert anon.post("/api/ops/reset").status_code == 401
         assert anon.get("/api/ops/reset/status").status_code == 401
+
+
+def test_rebuild_requires_owner(
+    repo: FakeAuthRepo, supervisor: FakeSupervisor, shelf_dir: Path
+) -> None:
+    settings = Settings(
+        secure_cookies=False,
+        supervisor_token="st-token",
+        database_url="postgresql+asyncpg://nobody@localhost:1/none",
+        backups_dir=str(shelf_dir),
+    )
+    app = create_app(settings)
+    with TestClient(app) as anon:
+        app.state.auth_repo = repo
+        assert anon.post("/api/ops/rebuild", json={"service": "api"}).status_code == 401
+        assert anon.get("/api/ops/rebuild/status").status_code == 401
+
+
+def test_rebuild_proxies_the_service(client: TestClient, supervisor: FakeSupervisor) -> None:
+    resp = client.post("/api/ops/rebuild", json={"service": "server-brain"})
+    assert resp.status_code == 202
+    assert resp.json()["oneshot"] == "jbrain-rebuild-1"
+    assert supervisor.rebuilt_services == ["server-brain"]
+
+
+def test_rebuild_unknown_service_is_404(client: TestClient) -> None:
+    assert client.post("/api/ops/rebuild", json={"service": "nope"}).status_code == 404
+
+
+def test_rebuild_conflicts_while_a_oneshot_runs(
+    client: TestClient, supervisor: FakeSupervisor
+) -> None:
+    supervisor.busy = True
+    assert client.post("/api/ops/rebuild", json={"service": "api"}).status_code == 409
+
+
+def test_rebuild_status_proxies(client: TestClient, supervisor: FakeSupervisor) -> None:
+    supervisor.rebuild_state = {"state": "running", "exit_code": None, "log_tail": "[rebuild]"}
+    body = client.get("/api/ops/rebuild/status").json()
+    assert body["state"] == "running"
 
 
 def test_metrics_merges_per_process_breakdown(client: TestClient) -> None:
