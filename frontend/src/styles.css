@@ -12178,6 +12178,10 @@ button.auto-sect[aria-expanded="true"] > svg {
 .runs-dot-error {
   background: var(--rose);
 }
+.runs-dot-superseded {
+  background: var(--text-3);
+  opacity: 0.55;
+}
 
 @keyframes runs-pulse {
   0%,
@@ -12263,6 +12267,9 @@ button.auto-sect[aria-expanded="true"] > svg {
 .runs-status-queued {
   color: var(--text-3);
 }
+.runs-status-superseded {
+  color: var(--text-3);
+}
 
 .runs-empty {
   padding: 10px 2px;
@@ -12298,6 +12305,10 @@ button.auto-sect[aria-expanded="true"] > svg {
 .runs-badge-error {
   background: var(--rose-tint);
   color: var(--rose);
+}
+.runs-badge-superseded {
+  background: var(--surface-2);
+  color: var(--text-3);
 }
 
 .runs-sp-meta {

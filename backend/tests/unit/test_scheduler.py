@@ -102,6 +102,16 @@ def _stub_runlog(monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setattr(scheduler.PipelineRunLog, "record", _record)
 
+    # fire_trigger also reaps a pipeline's prior still-running run before enqueuing
+    # (supersede_running_runs). That is a real DB write — covered against Postgres in
+    # test_scheduler_pg — and it opens its OWN scoped_session inside runlog.py, which
+    # the scheduler-module monkeypatch here does not reach. With the DB faked, stub it
+    # to a no-op that reaps nothing so these tests stay on the enqueue/advance logic.
+    async def _supersede(*args: Any, **kwargs: Any) -> int:
+        return 0
+
+    monkeypatch.setattr(scheduler, "supersede_running_runs", _supersede)
+
 
 # --- the pure advance helper (the clock contract) ---------------------------
 
