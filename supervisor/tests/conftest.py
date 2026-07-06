@@ -122,6 +122,13 @@ class FakeGateway:
         self.oneshots_started.append(("provision", None))
         return f"jbrain-provision-{len(self.oneshots_started)}"
 
+    def start_rebuild(self, service: str) -> str:
+        if self._busy():
+            raise UpdateInProgressError
+        self.oneshot_running = "rebuild"
+        self.oneshots_started.append(("rebuild", service))
+        return f"jbrain-rebuild-{len(self.oneshots_started)}"
+
     def oneshot_status(self, kind: str, tail: int) -> UpdateStatus:
         if not any(k == kind for k, _ in self.oneshots_started):
             return UpdateStatus(state="none", exit_code=None, log_tail="")

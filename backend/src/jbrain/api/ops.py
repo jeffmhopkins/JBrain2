@@ -437,6 +437,40 @@ async def update_status(request: Request, settings: SettingsDep) -> dict[str, ob
     return cast(dict[str, object], resp.json())
 
 
+# --- Per-service rebuild (the PWA per-container "Rebuild" button) --------
+# Rebuild ONE service (compose build + up -d) via a supervisor one-shot, to apply a
+# code/Dockerfile change already on the box (e.g. a newly-baked server-brain voice)
+# without a full system update. Shares the one-shot mutual-exclusion guard.
+
+
+class RebuildRequest(BaseModel):
+    service: str
+
+
+@router.post("/rebuild", status_code=202)
+async def start_rebuild(
+    body: RebuildRequest, request: Request, settings: SettingsDep
+) -> dict[str, object]:
+    resp = await _client(request).post(
+        "/rebuild", json={"service": body.service}, headers=_headers(settings)
+    )
+    if resp.status_code == 404:
+        raise HTTPException(status_code=404, detail="unknown service")
+    if resp.status_code == 409:
+        raise HTTPException(status_code=409, detail="another operation is running")
+    resp.raise_for_status()
+    return cast(dict[str, object], resp.json())
+
+
+@router.get("/rebuild/status")
+async def rebuild_status(request: Request, settings: SettingsDep) -> dict[str, object]:
+    resp = await _client(request).get(
+        "/rebuild/status", params={"tail": 80}, headers=_headers(settings)
+    )
+    resp.raise_for_status()
+    return cast(dict[str, object], resp.json())
+
+
 # --- Local-model download (the PWA "Download" action) -------------------
 # Installing an on-box model no longer rides a full system update. This triggers
 # the supervisor's provision one-shot — deploy/local-models-sync.sh alone (download

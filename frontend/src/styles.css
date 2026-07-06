@@ -3464,9 +3464,27 @@ button.small {
   word-break: break-all;
 }
 
-.ops-srestart {
-  width: 100%;
+/* Per-service action row: Restart (primary width) + Rebuild (neutral, compact). */
+.ops-sactions {
+  display: flex;
+  gap: 8px;
+  align-items: stretch;
   margin-top: 10px;
+}
+.ops-srestart {
+  flex: 1;
+}
+.ops-srebuild {
+  flex: none;
+  font-weight: 500;
+  border-radius: var(--r-input);
+  padding: 8px 16px;
+  border: 1px solid var(--border);
+  background: var(--steel-tint);
+  color: var(--steel);
+}
+.ops-srebuild:disabled {
+  opacity: 0.55;
 }
 
 /* ===== Bottom sheet (shared modal shell) ===== */

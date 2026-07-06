@@ -44,6 +44,16 @@ RESET_COMMAND = "exec sh src/deploy/reset-inner.sh"
 # system update. No `apk add git`: a download-only sync needs no git.
 PROVISION_COMMAND = "exec sh src/deploy/local-models-sync.sh"
 
+
+# Rebuild ONE service: `docker compose build <svc>` then `up -d <svc>` — a targeted
+# subset of an update (no git pull, no backup, one service), so a code/Dockerfile change
+# already on the box (e.g. a new baked server-brain voice) lands without a full update.
+# The service is shell-quoted here AND validated against the live container set at the
+# HTTP layer, so it can't inject; no `apk add git` — a rebuild needs no git.
+def _rebuild_command(service: str) -> str:
+    return f"exec sh src/deploy/rebuild-inner.sh {shlex.quote(service)}"
+
+
 # Docker reports this zero-value timestamp for containers that never started.
 _NEVER_STARTED = "0001-01-01T00:00:00Z"
 
@@ -139,6 +149,8 @@ class DockerGateway(Protocol):
     def start_reset(self) -> str: ...
 
     def start_provision(self) -> str: ...
+
+    def start_rebuild(self, service: str) -> str: ...
 
     def oneshot_status(self, kind: str, tail: int) -> UpdateStatus: ...
 
@@ -279,6 +291,11 @@ class ComposeDockerGateway:
     def start_provision(self) -> str:
         return self._run_oneshot(
             "jbrain-provision", {ONESHOT_LABEL: "provision"}, PROVISION_COMMAND
+        )
+
+    def start_rebuild(self, service: str) -> str:
+        return self._run_oneshot(
+            "jbrain-rebuild", {ONESHOT_LABEL: "rebuild"}, _rebuild_command(service)
         )
 
     def oneshot_status(self, kind: str, tail: int) -> UpdateStatus:

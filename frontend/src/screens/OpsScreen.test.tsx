@@ -255,6 +255,42 @@ describe("OpsScreen", () => {
     expect(alerts.some((el) => el.textContent?.includes("Request failed: 500"))).toBe(true);
   });
 
+  it("rebuilds a single service and shows the one-shot's progress to completion", async () => {
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    let rebuildPolls = 0;
+    fetchMock.mockImplementation(async (input, init) => {
+      const path = String(input);
+      const base = baseMock(input);
+      if (base) return base;
+      if (path.startsWith("/api/ops/logs/api")) return new Response("api log", { status: 200 });
+      if (path === "/api/ops/rebuild" && init?.method === "POST") {
+        return json({ oneshot: "jbrain-rebuild-1" }, 202);
+      }
+      if (path === "/api/ops/rebuild/status") {
+        rebuildPolls += 1;
+        return rebuildPolls < 2
+          ? json({ state: "running", exit_code: null, log_tail: "[rebuild] api building" })
+          : json({ state: "exited", exit_code: 0, log_tail: "[rebuild] api done" });
+      }
+      return new Response(null, { status: 404 });
+    });
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      render(<OpsScreen />);
+      fireEvent.click(await screen.findByRole("button", { name: /Core/ }));
+      fireEvent.click(screen.getByText("api"));
+      // The service row offers Restart AND Rebuild.
+      fireEvent.click(await screen.findByRole("button", { name: "Rebuild" }));
+      // The button flips to a disabled "Rebuilding…" while the one-shot runs.
+      expect(await screen.findByRole("button", { name: "Rebuilding…" })).toBeDisabled();
+      await act(() => vi.advanceTimersByTimeAsync(2000));
+      await act(() => vi.advanceTimersByTimeAsync(2000));
+      expect(screen.getByText("Rebuild complete.")).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("opens the Runs surface from the Ops header (Direction C, reachable from Ops)", async () => {
     fetchMock.mockImplementation(async (input) => {
       const path = String(input);
