@@ -260,21 +260,23 @@ describe("useReadAloud piper engine", () => {
     expect(result.current.playing).toBe("a");
   });
 
-  it("streams piper clips per sentence when fed, playing them in order", async () => {
+  it("streams piper clips per sentence when fed, prefetching then playing them in order", async () => {
     const { result } = renderHook(() => useReadAloud());
     await waitFor(() => expect(result.current.available).toBe(true));
     await act(async () => result.current.feed("1", "One. Two. ", false));
-    // Sequential: the first sentence renders + plays; the second waits its turn.
-    await waitFor(() => expect(brainTts).toHaveBeenCalledTimes(1));
+    // Prefetch: both clips RENDER up front (the second overlaps the first's playback for
+    // gapless audio), but only the head clip PLAYS until it finishes.
+    await waitFor(() => expect(brainTts).toHaveBeenCalledTimes(2));
     expect(brainTts.mock.calls[0]?.[1]).toBe("One.");
     expect(brainTts.mock.calls[0]?.[2]).toBeUndefined(); // first clip carries the lead
+    expect(brainTts.mock.calls[1]?.[1]).toBe("Two.");
+    expect(brainTts.mock.calls[1]?.[2]).toBe(0); // continuation clip, no lead
     expect(audios).toHaveLength(1);
     expect(result.current.playing).toBe("1");
-    // First clip finishes -> the queued "Two." renders + plays, gapless (lead 0).
+    // First clip finishes -> the already-rendered "Two." plays immediately (no fetch gap).
     await act(async () => audios[0]?.onended?.());
-    await waitFor(() => expect(brainTts).toHaveBeenCalledTimes(2));
-    expect(brainTts.mock.calls[1]?.[1]).toBe("Two.");
-    expect(brainTts.mock.calls[1]?.[2]).toBe(0);
+    await waitFor(() => expect(audios).toHaveLength(2));
+    expect(brainTts).toHaveBeenCalledTimes(2); // not re-fetched — the prefetch is reused
   });
 
   it("clears playing once the final piper clip finishes", async () => {

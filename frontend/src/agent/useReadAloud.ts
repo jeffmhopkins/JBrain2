@@ -58,6 +58,9 @@ interface PiperClip {
   key: string;
   text: string;
   first: boolean;
+  // The in-flight (or resolved) render, memoized so a prefetch and the later playback share
+  // one /tts request rather than fetching the clip twice.
+  blobP?: Promise<Blob>;
 }
 
 export function useReadAloud(): ReadAloud {
@@ -242,6 +245,21 @@ export function useReadAloud(): ReadAloud {
 
   // Drain the piper FIFO one clip at a time (fetch → play → next), tied to the gen that
   // started it so a stop()/switch abandons it. Only one pump runs per gen.
+  // Render a clip on the box, memoizing the in-flight request on the item so a prefetch and
+  // the later consume share ONE render (the first clip carries the silence lead; the rest
+  // ask for lead=0 so a multi-clip reply plays gaplessly).
+  const fetchClip = useCallback((item: PiperClip): Promise<Blob> => {
+    if (!item.blobP) {
+      item.blobP = api.brainTts(answerVoiceRef.current, item.text, item.first ? undefined : 0);
+    }
+    return item.blobP;
+  }, []);
+
+  // Drain the piper FIFO with a small PREFETCH window: while the head clip plays, the next
+  // clip is already rendering, so playback is gapless (render overlaps playback instead of
+  // the old fetch→play→fetch serial gap). Tied to the gen that started it, so a stop()/switch
+  // abandons it; only one pump runs per gen.
+  const PREFETCH = 2;
   const pumpPiper = useCallback(() => {
     const myGen = genRef.current;
     if (piperRunningGenRef.current === myGen) return;
@@ -251,13 +269,18 @@ export function useReadAloud(): ReadAloud {
         const item = piperFifoRef.current[0] as PiperClip;
         let blob: Blob;
         try {
-          blob = await api.brainTts(answerVoiceRef.current, item.text, item.first ? undefined : 0);
+          blob = await fetchClip(item); // usually already resolving — prefetched last round
         } catch {
           if (genRef.current === myGen) piperFallback();
           break;
         }
         if (genRef.current !== myGen) break;
-        await playAudio(blob);
+        // Start playback, then — WHILE it plays — kick off renders for the next PREFETCH-1
+        // clips (now enqueued), so the next clip is ready the instant this one ends (gapless).
+        // Rejections on the look-ahead are swallowed; the head's await handles the real one.
+        const playing = playAudio(blob);
+        for (const it of piperFifoRef.current.slice(1, PREFETCH)) fetchClip(it).catch(() => {});
+        await playing;
         if (genRef.current !== myGen) break;
         piperFifoRef.current.shift();
         settle(item.key);
@@ -265,7 +288,7 @@ export function useReadAloud(): ReadAloud {
       if (piperRunningGenRef.current === myGen) piperRunningGenRef.current = null;
     };
     void run();
-  }, [playAudio, piperFallback, settle]);
+  }, [playAudio, piperFallback, settle, fetchClip]);
 
   // Enqueue one chunk for `key` on the active engine: a piper clip (fetched + played in
   // order) or a native utterance (the browser serialises these). Either way its end

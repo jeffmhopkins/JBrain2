@@ -7,7 +7,4 @@ export function speakable(md: string): string;
  * cursor, return normalized speakable clips for the complete units it can emit now, plus
  * how many raw chars were consumed (advance a raw-space cursor). Incomplete trailing blocks
  * and a partial trailing sentence are held until `flush`. */
-export function chunkStream(
-  raw: string,
-  flush: boolean,
-): { chunks: string[]; consumed: number };
+export function chunkStream(raw: string, flush: boolean): { chunks: string[]; consumed: number };

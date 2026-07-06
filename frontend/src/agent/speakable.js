@@ -291,8 +291,7 @@ function splitClips(norm) {
 function intraLineSafe(line) {
   let last = 0;
   const re = /[.!?]["')\]]?\s/g;
-  let m;
-  while ((m = re.exec(line)) !== null) last = re.lastIndex;
+  for (let m = re.exec(line); m !== null; m = re.exec(line)) last = re.lastIndex;
   return last;
 }
 
