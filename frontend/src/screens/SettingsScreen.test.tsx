@@ -29,6 +29,13 @@ function stubSettingsFetch(initial: "full" | "ocr" = "full") {
         { status: 200, headers: { "Content-Type": "application/json" } },
       );
     }
+    // The voice explorer loads the multi-speaker roster on mount (a small stand-in list).
+    if (path === "/api/brain/speakers") {
+      return new Response(
+        JSON.stringify({ speakers: { "en_US-libritts_r-medium": ["3922", "1234", "6272"] } }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    }
     // A voice sample renders a WAV via the api proxy — an empty audio blob is enough.
     if (path.startsWith("/api/brain/tts")) {
       return new Response(new Blob([], { type: "audio/wav" }), {
@@ -210,6 +217,48 @@ describe("SettingsScreen read-aloud voice picker", () => {
     const sample = await screen.findByRole("button", { name: "Play sample" });
     fireEvent.click(sample);
     await waitFor(() => expect(played).toHaveLength(1));
+  });
+
+  it("shuffles a random speaker, auditions it, and keeps it as the answer voice", async () => {
+    const played: string[] = [];
+    class FakeAudio {
+      onended: (() => void) | null = null;
+      onerror: (() => void) | null = null;
+      constructor(src: string) {
+        played.push(src);
+      }
+      play() {
+        this.onended?.();
+        return Promise.resolve();
+      }
+      pause() {}
+    }
+    vi.stubGlobal("Audio", FakeAudio);
+    Object.defineProperty(URL, "createObjectURL", { configurable: true, value: () => "blob:x" });
+    Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: () => {} });
+    const { puts } = stubSettingsFetch();
+    setup();
+    // Keep is disabled until a speaker has been auditioned.
+    const explorer = within(await screen.findByLabelText("Discover a voice"));
+    expect(explorer.getByRole("button", { name: "Keep this voice" })).toBeDisabled();
+    // Shuffle auditions a random speaker (renders a sample) and enables Keep.
+    fireEvent.click(explorer.getByRole("button", { name: "Shuffle" }));
+    await waitFor(() => expect(played).toHaveLength(1));
+    const keep = explorer.getByRole("button", { name: "Keep this voice" });
+    await waitFor(() => expect(keep).not.toBeDisabled());
+    fireEvent.click(keep);
+    // The kept voice is one of the roster's speakers, saved as "<model>#<name>".
+    await waitFor(() =>
+      expect(
+        puts.some(
+          (p) =>
+            typeof (p as { brain_answer_voice?: string }).brain_answer_voice === "string" &&
+            /^en_US-libritts_r-medium#(3922|1234|6272)$/.test(
+              (p as { brain_answer_voice: string }).brain_answer_voice,
+            ),
+        ),
+      ).toBe(true),
+    );
   });
 });
 

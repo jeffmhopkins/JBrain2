@@ -1698,6 +1698,21 @@ export const api = {
       : [];
   },
 
+  // Per multi-speaker model, its speaker names ordered by piper index (names[i] renders as
+  // speaker i). The Settings voice explorer shuffles across this roster to audition every
+  // libritts_r speaker. Empty when the box is unreachable or has no multi-speaker model.
+  async brainSpeakers(): Promise<Record<string, string[]>> {
+    const response = await request("/api/brain/speakers");
+    const body = (await response.json()) as { speakers?: unknown };
+    const raw = body.speakers;
+    if (!raw || typeof raw !== "object") return {};
+    const out: Record<string, string[]> = {};
+    for (const [stem, names] of Object.entries(raw as Record<string, unknown>)) {
+      if (Array.isArray(names)) out[stem] = names.filter((n): n is string => typeof n === "string");
+    }
+    return out;
+  },
+
   // Render `text` to a WAV in `voice` on the box's piper (via the api proxy) — the audio
   // the in-chat read-aloud and the Settings "play sample" button play. `lead` (silence
   // pad, ms) is 0 on continuation chunks so a multi-clip reply plays gaplessly.

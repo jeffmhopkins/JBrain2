@@ -70,6 +70,13 @@ export function SettingsScreen({ deviceLabel, onLogout }: SettingsScreenProps) {
   // "native" (the device's own voice). null until the server answers.
   const [brainEngine, setBrainEngine] = useState<"piper" | "native" | null>(null);
   const [voices, setVoices] = useState<string[] | null>(null);
+  // Multi-speaker rosters (model stem -> speaker names ordered by piper index), for the voice
+  // explorer's shuffle. Null until fetched; {} when the box has no multi-speaker model.
+  const [speakers, setSpeakers] = useState<Record<string, string[]> | null>(null);
+  // The speaker index currently being auditioned in the explorer (null = none yet), and the
+  // "recently heard" rail (most-recent-first indices) so a good one clicked past isn't lost.
+  const [discoverIndex, setDiscoverIndex] = useState<number | null>(null);
+  const [discoverHistory, setDiscoverHistory] = useState<number[]>([]);
   const [samplePlaying, setSamplePlaying] = useState(false);
   const [sampleError, setSampleError] = useState<string | null>(null);
   const sampleAudioRef = useRef<HTMLAudioElement | null>(null);
@@ -114,6 +121,23 @@ export function SettingsScreen({ deviceLabel, onLogout }: SettingsScreenProps) {
       })
       .catch(() => {
         if (!stale) setVoices([]);
+      });
+    return () => {
+      stale = true;
+    };
+  }, []);
+
+  // The multi-speaker rosters, for the voice explorer's shuffle. {} on any failure so the
+  // explorer simply doesn't render (the curated picker above still works).
+  useEffect(() => {
+    let stale = false;
+    api
+      .brainSpeakers()
+      .then((s) => {
+        if (!stale) setSpeakers(s);
+      })
+      .catch(() => {
+        if (!stale) setSpeakers({});
       });
     return () => {
       stale = true;
@@ -339,10 +363,15 @@ export function SettingsScreen({ deviceLabel, onLogout }: SettingsScreenProps) {
     void api.updateSettings({ brain_read_aloud_engine: next }).catch(() => {});
   }
 
-  // Render + play a short sample of the selected voice on the box's piper, so a speaker
-  // can be auditioned before it's used. A new sample stops any previous one.
-  function playSample() {
-    const voice = brainAnswerVoice;
+  // The one multi-speaker model the explorer shuffles across (libritts_r today), and its
+  // speaker roster ordered by piper index. Empty roster -> the explorer stays hidden.
+  const explorerModel = speakers ? (Object.keys(speakers)[0] ?? null) : null;
+  const roster: string[] = (explorerModel && speakers ? speakers[explorerModel] : []) ?? [];
+
+  // Render + play a short sample of `voice` on the box's piper, so a speaker can be
+  // auditioned before it's used. A new sample stops any previous one. Shared by the voice
+  // picker's "Play sample" and the explorer's shuffle/replay.
+  function playVoiceSample(voice: string) {
     if (!voice) return;
     setSampleError(null);
     sampleAudioRef.current?.pause();
@@ -373,6 +402,33 @@ export function SettingsScreen({ deviceLabel, onLogout }: SettingsScreenProps) {
         setSamplePlaying(false);
         setSampleError("Couldn't reach the box to render a sample.");
       });
+  }
+
+  function playSample() {
+    if (brainAnswerVoice) playVoiceSample(brainAnswerVoice);
+  }
+
+  // Voice explorer (Direction A — shuffle): audition speaker `i` of the multi-speaker
+  // roster, optionally recording it in the "recently heard" rail. LibriTTS speakers are
+  // anonymous indices, so shuffling + listening is the only way to find one you like.
+  function auditionSpeaker(i: number, remember: boolean) {
+    if (!explorerModel || i < 0 || i >= roster.length) return;
+    setDiscoverIndex(i);
+    if (remember)
+      setDiscoverHistory((h) => (h[0] === i ? h : [i, ...h.filter((x) => x !== i)].slice(0, 8)));
+    playVoiceSample(`${explorerModel}#${roster[i]}`);
+  }
+
+  function shuffleSpeaker() {
+    if (roster.length === 0) return;
+    let next = Math.floor(Math.random() * roster.length);
+    if (next === discoverIndex && roster.length > 1) next = (next + 1) % roster.length;
+    auditionSpeaker(next, true);
+  }
+
+  function keepSpeaker() {
+    if (discoverIndex === null || !explorerModel) return;
+    pickAnswerVoice(`${explorerModel}#${roster[discoverIndex]}`);
   }
 
   return (
@@ -575,6 +631,73 @@ export function SettingsScreen({ deviceLabel, onLogout }: SettingsScreenProps) {
                 </button>
               </div>
               {sampleError && <p className="settings-meta settings-error">{sampleError}</p>}
+              {roster.length > 0 && (
+                <div className="voice-explorer" aria-label="Discover a voice">
+                  <p className="voice-explorer-cap">Discover a voice</p>
+                  <p className="settings-meta">
+                    LibriTTS ships {roster.length} anonymous speakers — no names or descriptions, so
+                    the only way to know one is to hear it. Shuffle for a random speaker, then keep
+                    the one you like.
+                  </p>
+                  <div className="ve-stage" aria-live="polite">
+                    {discoverIndex === null ? (
+                      <p className="ve-empty">Tap Shuffle to audition a random speaker.</p>
+                    ) : (
+                      <p className="ve-id">
+                        <span className="ve-num">Voice {discoverIndex + 1}</span>
+                        <span className="ve-of">of {roster.length}</span>
+                        <span className="ve-name">speaker {roster[discoverIndex]}</span>
+                      </p>
+                    )}
+                  </div>
+                  <div className="settings-actions">
+                    <button
+                      type="button"
+                      className="seg"
+                      disabled={samplePlaying}
+                      onClick={shuffleSpeaker}
+                    >
+                      {samplePlaying ? "Playing…" : "Shuffle"}
+                    </button>
+                    <button
+                      type="button"
+                      className="seg"
+                      disabled={discoverIndex === null || samplePlaying}
+                      onClick={() =>
+                        discoverIndex !== null && auditionSpeaker(discoverIndex, false)
+                      }
+                    >
+                      Play again
+                    </button>
+                    <button
+                      type="button"
+                      className="seg ve-keep"
+                      disabled={discoverIndex === null}
+                      onClick={keepSpeaker}
+                    >
+                      Keep this voice
+                    </button>
+                  </div>
+                  {discoverHistory.length > 0 && (
+                    <>
+                      <p className="ve-rail-cap">Recently heard</p>
+                      <div className="ve-rail" aria-label="Recently heard speakers">
+                        {discoverHistory.map((i) => (
+                          <button
+                            key={i}
+                            type="button"
+                            className={`ve-chip${discoverIndex === i ? " ve-chip-on" : ""}`}
+                            disabled={samplePlaying}
+                            onClick={() => auditionSpeaker(i, false)}
+                          >
+                            {i + 1}
+                          </button>
+                        ))}
+                      </div>
+                    </>
+                  )}
+                </div>
+              )}
             </>
           ))}
       </section>
