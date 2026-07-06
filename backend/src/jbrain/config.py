@@ -97,11 +97,15 @@ class Settings(BaseSettings):
     # via a reader the owner runs); the base URL is pinned here and never model-supplied.
     # Empty disables the fallback (a blocked/empty fetch just reports so).
     reader_url: str = "http://reader:3000"
-    # The neural wall display (deploy/server-brain) draws a reach-out tendril when
-    # jerv runs a web tool. We POST a tiny {"kind": "web_search"|"web_fetch"} marker
-    # to the on-box display service — best-effort, no owner data, failures ignored.
-    # Empty disables the emit (the display just shows no web tendrils).
+    # The neural wall display (deploy/wall) draws a reach-out tendril when jerv runs a web
+    # tool. We POST a tiny {"kind": "web_search"|"web_fetch"} marker to the wall service —
+    # best-effort, no owner data, failures ignored. Empty disables the emit (no web tendrils).
     brain_events_url: str = ""
+    # The `tts-stt` speech service's piper TTS base URL (deploy/tts-stt). The PWA read-aloud
+    # proxy (/api/brain/tts, /api/brain/voices) targets it, and the tts_debug flag is pushed
+    # to its /event. Separate from brain_events_url (the wall) since TTS is its own always-on
+    # service now. Empty -> the read-aloud proxy 503s (no voices).
+    brain_tts_url: str = ""
     # The Open-Meteo upstreams backing jerv's `weather` tool (docs/reference/ASSISTANT.md,
     # DESIGN.md "weather_card tool-view"). Free, no API key, so these default to the
     # public endpoints; empty disables the tool (it reports "not configured") while the

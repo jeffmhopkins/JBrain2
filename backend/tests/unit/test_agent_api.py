@@ -371,21 +371,22 @@ def test_chat_resyncs_read_aloud_flag_to_the_wall_display(
     repo: FakeAuthRepo,
     sessions_store: FakeAgentSessions,
 ) -> None:
-    # The read-aloud flag re-syncs to the display each turn (its own switch, independent
-    # of the text gate): with brain_read_aloud ON the turn pushes read_aloud=True even
-    # though brain_llm_stream stays OFF. The tts_debug flag re-syncs alongside it — False
-    # here since no debug token is live (it gates the wall's verbose TTS trace).
+    # Each turn re-syncs two independent flags: read_aloud -> the wall (its display panel),
+    # and tts_debug -> the tts-stt renderer (False here since no debug token is live).
     login(client, repo)
     sessions_store.add(AgentSessionInfo("sess-1", "", "active", ("general",), (), NOW, NOW))
     client.app.state.settings_store.values["brain_read_aloud"] = True  # type: ignore[attr-defined]
     flags: list[tuple[str, bool]] = []
+    tts_flags: list[tuple[str, bool]] = []
     client.app.state.brain_emit = lambda kind, text=None: None  # type: ignore[attr-defined]
     client.app.state.brain_flag_emit = lambda kind, on: flags.append((kind, on))  # type: ignore[attr-defined]
+    client.app.state.brain_tts_flag_emit = lambda kind, on: tts_flags.append((kind, on))  # type: ignore[attr-defined]
 
     resp = client.post("/api/chat", json={"session_id": "sess-1", "message": "hi"})
     assert resp.status_code == 200
     _ = resp.text
-    assert flags == [("read_aloud", True), ("tts_debug", False)]
+    assert flags == [("read_aloud", True)]  # wall
+    assert tts_flags == [("tts_debug", False)]  # tts-stt renderer
 
 
 def test_chat_pushes_tts_debug_flag_while_a_debug_token_is_live(
@@ -393,27 +394,28 @@ def test_chat_pushes_tts_debug_flag_while_a_debug_token_is_live(
     repo: FakeAuthRepo,
     sessions_store: FakeAgentSessions,
 ) -> None:
-    # A live debug-console token switches the wall's verbose TTS trace on for the session:
-    # the per-turn resync pushes tts_debug=True (no env flag/restart), and it reverts once
-    # the token is revoked.
+    # A live debug-console token switches the tts-stt renderer's verbose TTS trace on for
+    # the session: the per-turn resync pushes tts_debug=True (no env flag/restart) to the
+    # tts flag emitter, and it reverts once the token is revoked.
     import asyncio
 
     from jbrain.auth import service as auth_service
 
     login(client, repo)
     sessions_store.add(AgentSessionInfo("sess-1", "", "active", ("general",), (), NOW, NOW))
-    flags: list[tuple[str, bool]] = []
+    tts_flags: list[tuple[str, bool]] = []
     client.app.state.brain_emit = lambda kind, text=None: None  # type: ignore[attr-defined]
-    client.app.state.brain_flag_emit = lambda kind, on: flags.append((kind, on))  # type: ignore[attr-defined]
+    client.app.state.brain_flag_emit = lambda kind, on: None  # type: ignore[attr-defined]
+    client.app.state.brain_tts_flag_emit = lambda kind, on: tts_flags.append((kind, on))  # type: ignore[attr-defined]
 
     _, token = asyncio.run(auth_service.mint_capability(repo, "claude", ttl_hours=24))
     client.post("/api/chat", json={"session_id": "sess-1", "message": "hi"})
-    assert ("tts_debug", True) in flags
+    assert ("tts_debug", True) in tts_flags
 
-    flags.clear()
+    tts_flags.clear()
     assert asyncio.run(repo.revoke_capability(token.id)) is True
     client.post("/api/chat", json={"session_id": "sess-1", "message": "hi"})
-    assert ("tts_debug", False) in flags
+    assert ("tts_debug", False) in tts_flags
 
 
 def test_chat_streams_reasoning_then_answer_to_the_wall_display(

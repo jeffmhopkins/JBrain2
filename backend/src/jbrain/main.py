@@ -329,10 +329,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # A separate emitter for the wall's persistent config flags (read_aloud): boolean
         # display config, not owner text, so it is not gated by the per-turn text switch.
         app.state.brain_flag_emit = build_flag_emitter(settings.brain_events_url)
-        # The server-brain base URL (the events URL minus its /event suffix) — the api's
-        # authenticated /api/brain/* proxy reaches the on-box piper TTS through it so the
-        # PWA read-aloud + voice picker never touch the unauthenticated display directly.
+        # The wall base URL (events URL minus /event) — kept for any wall-direct call.
         app.state.brain_base_url = settings.brain_events_url.removesuffix("/event")
+        # TTS moved into the `tts-stt` service: the authenticated /api/brain/tts +
+        # /api/brain/voices proxy reaches its piper renderer here (so the PWA read-aloud +
+        # voice picker never touch an unauthenticated service directly), and the tts_debug
+        # flag is pushed to its /event (not the wall's).
+        tts_base = settings.brain_tts_url.rstrip("/")
+        app.state.brain_tts_base_url = tts_base
+        app.state.brain_tts_flag_emit = build_flag_emitter(f"{tts_base}/event" if tts_base else "")
         web_handlers = build_web_handlers(
             SearxngClient(settings.searxng_url),
             WebFetcher(reader_url=settings.reader_url),
@@ -701,7 +706,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # The MQTT broker's go-auth HTTP backend calls these on the internal network
     # only — NOT under /api (Caddy never routes /internal off-box).
     app.include_router(mqtt.router, prefix="/internal")
-    # The on-box server-brain wall display reads the pet snapshot here (internal
+    # The on-box wall display reads the pet snapshot here (internal
     # network only; read-only; safe 'general' domain) — never off-box via Caddy.
     app.include_router(pet_api.internal_router, prefix="/internal")
     app.include_router(notes.router, prefix="/api")

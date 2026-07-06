@@ -70,7 +70,7 @@ if grep -q '^JCODE_ENABLED=true' .env; then
 fi
 
 # Read-aloud (server-side piper TTS) needs NOTHING here: piper AND the default voice
-# models are baked into the server-brain image (deploy/Dockerfile.server-brain), rebuilt
+# models are baked into the tts-stt image (deploy/Dockerfile.tts-stt), rebuilt
 # by the `docker compose build` below. It is driven entirely by the Settings toggle
 # (brain_read_aloud) at runtime — no env var, no host download, no provisioning step.
 

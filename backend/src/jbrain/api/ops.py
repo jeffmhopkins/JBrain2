@@ -468,7 +468,7 @@ async def update_status(request: Request, settings: SettingsDep) -> dict[str, ob
 
 # --- Per-service rebuild (the PWA per-container "Rebuild" button) --------
 # Rebuild ONE service (compose build + up -d) via a supervisor one-shot, to apply a
-# code/Dockerfile change already on the box (e.g. a newly-baked server-brain voice)
+# code/Dockerfile change already on the box (e.g. a newly-baked tts-stt voice)
 # without a full system update. Shares the one-shot mutual-exclusion guard.
 
 

@@ -18,9 +18,15 @@ from pathlib import Path
 
 import pytest
 
-_SERVER_PATH = (
-    Path(__file__).resolve().parents[3] / "deploy" / "tts-stt" / "piper_server.py"
-)
+_DEPLOY = Path(__file__).resolve().parents[3] / "deploy"
+_SERVER_PATH = _DEPLOY / "tts-stt" / "piper_server.py"
+_DOCKERFILE = _DEPLOY / "Dockerfile.tts-stt"
+_INSTALL_SCRIPT = _DEPLOY / "tts-stt" / "install-tts.sh"
+
+
+def _short_name(stem: str) -> str:
+    """A voice stem's model name as the fetch loops key it — "en_US-amy-medium" -> "amy"."""
+    return stem.removeprefix("en_US-").removesuffix("-medium")
 
 
 class _FakeVoice:
@@ -147,3 +153,22 @@ def test_tts_debug_trace_when_latched(
     err = capsys.readouterr().err
     assert "rendering 'en_US-libritts_r-medium#3922'" in err
     assert "speaker=0" in err
+
+
+def test_docker_image_bakes_every_curated_multispeaker_model(server: types.ModuleType) -> None:
+    # A curated speaker only reaches the picker if its MODEL is installed — and production
+    # installs are the BAKED tts-stt image. Guard that Dockerfile.tts-stt's baked tuple stays
+    # in step with CURATED_SPEAKERS so a new curated model can't be exposed yet missing.
+    dockerfile = _DOCKERFILE.read_text()
+    for stem in server.CURATED_SPEAKERS:
+        assert _short_name(stem) in dockerfile, (
+            f"{stem} is curated in piper_server.py but not baked into Dockerfile.tts-stt"
+        )
+    assert "'joe'" in dockerfile and "'amy'" in dockerfile
+
+
+def test_install_script_installs_every_curated_model(server: types.ModuleType) -> None:
+    # The run-on-host path (install-tts.sh MODELS) must carry the curated models too.
+    script = _INSTALL_SCRIPT.read_text()
+    for stem in server.CURATED_SPEAKERS:
+        assert stem in script, f"{stem} curated in piper_server.py but missing from install-tts.sh"

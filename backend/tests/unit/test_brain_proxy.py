@@ -1,4 +1,4 @@
-"""The authenticated api -> on-box server-brain TTS proxy (jbrain.api.brain).
+"""The authenticated api -> on-box tts-stt TTS proxy (jbrain.api.brain).
 
 The PWA read-aloud + voice picker reach the unauthenticated LAN display through the
 owner's api session: /api/brain/voices lists the box's piper voices and /api/brain/tts
@@ -62,7 +62,7 @@ def client() -> Iterator[TestClient]:
     auth_repo = FakeAuthRepo()
     with TestClient(app) as test_client:
         app.state.auth_repo = auth_repo
-        app.state.brain_base_url = "http://server-brain:8800"
+        app.state.brain_tts_base_url = "http://tts-stt:8801"
         key = asyncio.run(auth_service.rotate_owner_key(auth_repo))
         assert (
             test_client.post(
@@ -93,11 +93,11 @@ def test_voices_proxies_the_installed_list(
     resp = client.get("/api/brain/voices")
     assert resp.status_code == 200
     assert resp.json() == {"voices": voices}
-    assert calls == [("http://server-brain:8800/tts/voices", None)]
+    assert calls == [("http://tts-stt:8801/tts/voices", None)]
 
 
 def test_voices_503_when_display_unconfigured(client: TestClient) -> None:
-    client.app.state.brain_base_url = ""  # type: ignore[attr-defined]
+    client.app.state.brain_tts_base_url = ""  # type: ignore[attr-defined]
     assert client.get("/api/brain/voices").status_code == 503
 
 
@@ -123,7 +123,7 @@ def test_tts_proxies_audio_with_voice_and_clamped_lead(
     assert resp.content == b"RIFFwav"
     assert resp.headers["content-type"] == "audio/wav"
     url, params = calls[0]
-    assert url == "http://server-brain:8800/tts"
+    assert url == "http://tts-stt:8801/tts"
     assert params == {
         "text": "Hello there.",
         "voice": "en_US-libritts_r-medium#3922",

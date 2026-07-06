@@ -47,7 +47,7 @@ PROVISION_COMMAND = "exec sh src/deploy/local-models-sync.sh"
 
 # Rebuild ONE service: `docker compose build <svc>` then `up -d <svc>` — a targeted
 # subset of an update (no git pull, no backup, one service), so a code/Dockerfile change
-# already on the box (e.g. a new baked server-brain voice) lands without a full update.
+# already on the box (e.g. a new baked tts-stt voice) lands without a full update.
 # The service is shell-quoted here AND validated against the live container set at the
 # HTTP layer, so it can't inject; no `apk add git` — a rebuild needs no git.
 def _rebuild_command(service: str) -> str:

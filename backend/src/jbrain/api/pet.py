@@ -39,7 +39,7 @@ log = structlog.get_logger()
 router = APIRouter(prefix="/pet", dependencies=[Depends(owner_only)])
 
 # Mounted under /internal (Caddy never routes /internal off-box), so it is reachable
-# only on the docker network — e.g. by the on-box server-brain wall display. No auth:
+# only on the docker network — e.g. by the on-box wall display. No auth:
 # it is a READ of the pet snapshot, the pet lives in the safe 'general' domain (no
 # health/finance/location), and the display never mutates. See main.include_router.
 internal_router = APIRouter(prefix="/pet")
@@ -249,7 +249,7 @@ async def stream_pet(request: Request, principal: PrincipalDep) -> StreamingResp
 
 @internal_router.get("")
 async def internal_get_pet(request: Request) -> PetOut:
-    """The current pet snapshot for the on-box wall display (server-brain). Read-only,
+    """The current pet snapshot for the on-box wall display (deploy/wall). Read-only,
     under a system owner context; 404 until the drives tick has created the pet."""
     ctx = SessionContext(principal_kind="owner")
     info = await _repo(request).get_pet(ctx, domain=_settings(request).jpet_domain)

@@ -81,14 +81,14 @@ const SERVICE_GROUPS: { label: string; services: string[] }[] = [
   // The always-on app spine (db/web/postgres are alias names some deploys use).
   { label: "Core", services: ["api", "worker", "supervisor", "db", "postgres", "web"] },
   // On-box model / media inference (mostly opt-in).
-  { label: "AI", services: ["local-llm", "embed", "whisper", "comfyui", "jcode", "claude-shim"] },
+  { label: "AI", services: ["local-llm", "embed", "tts-stt", "comfyui", "jcode", "claude-shim"] },
   // Outward networking + web access.
   {
     label: "Infra",
     services: ["proxy", "cloudflared", "reader", "searxng", "mqtt", "mqtt-ingest"],
   },
   // The on-box neural wall display that renders read-aloud (piper TTS).
-  { label: "Display", services: ["server-brain"] },
+  { label: "Display", services: ["wall"] },
   // One-shot maintenance containers — run once and exit.
   { label: "Maintenance", services: ["migrate", "wipe"] },
 ];
@@ -756,7 +756,7 @@ function HistoryCard() {
 type MemItem = { service: string; rss_bytes: number; command: string };
 
 const MEM_GROUPS: { services: string[]; cls: string }[] = [
-  { services: ["local-llm", "embed", "comfyui", "whisper"], cls: "ai" },
+  { services: ["local-llm", "embed", "comfyui", "tts-stt"], cls: "ai" },
   { services: ["jcode", "claude-shim"], cls: "code" },
   { services: ["api", "worker", "supervisor", "db", "postgres", "web"], cls: "core" },
 ];

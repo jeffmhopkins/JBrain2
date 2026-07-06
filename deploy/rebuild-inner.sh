@@ -7,7 +7,7 @@
 # A targeted subset of `jbrain update`: no git pull, no backup, no migrate — just
 # `docker compose build <svc>` (a no-op for an image-only service) then `up -d <svc>`
 # to recreate it. Used to apply a code/Dockerfile change already on the box (e.g. a
-# new baked server-brain voice) without a full system update.
+# new baked tts-stt voice) without a full system update.
 #
 # $1 is the compose service name; the supervisor validates it against the live
 # service set and shell-quotes it before this runs, so it is a known-safe token.
