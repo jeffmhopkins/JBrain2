@@ -208,6 +208,13 @@ setInterval(poll,1000);poll();
    unlocks it — after that the pet just talks. No voices installed / tts off -> stays silent. */
 let soundOn=false,petVoice=null;
 const petAudio=new Audio(),ttsQ=[];let ttsBusy=false;
+petAudio.volume=0.85;                                       // trim the piper voice a touch so the toys sit alongside it
+// All the WebAudio toys (synth, guitar, drums, sfx) route through a per-context compressor, so we
+// can run them LOUD — up near the voice — without the peaks clipping when several notes stack.
+const _masters=new WeakMap();
+function masterOut(ctx){let m=_masters.get(ctx);if(!m){m=ctx.createDynamicsCompressor();
+ try{m.threshold.value=-8;m.knee.value=6;m.ratio.value=4;m.attack.value=.003;m.release.value=.25;}catch(e){}
+ m.connect(ctx.destination);_masters.set(ctx,m);}return m;}
 function ttsNext(){if(ttsBusy||!ttsQ.length)return;ttsBusy=true;petAudio.src=ttsQ.shift();
  const pr=petAudio.play();if(pr&&pr.catch)pr.catch(()=>{ttsBusy=false;ttsNext();});}
 petAudio.addEventListener('ended',()=>{ttsBusy=false;ttsNext();});
@@ -239,16 +246,16 @@ function rudeSound(kind){if(!keepAliveCtx)return;try{const ctx=keepAliveCtx,t0=c
  o.frequency.exponentialRampToValueAtTime(kind==='fart'?60:70,t0+dur);
  lfo.frequency.value=kind==='fart'?22:14;lg.gain.value=kind==='fart'?40:18; // the buzzy wobble
  lfo.connect(lg).connect(o.frequency);
- g.gain.setValueAtTime(.09,t0);g.gain.exponentialRampToValueAtTime(.001,t0+dur);
- o.connect(g).connect(ctx.destination);o.start(t0);lfo.start(t0);o.stop(t0+dur);lfo.stop(t0+dur);}catch(e){}}
+ g.gain.setValueAtTime(.2,t0);g.gain.exponentialRampToValueAtTime(.001,t0+dur);
+ o.connect(g).connect(masterOut(ctx));o.start(t0);lfo.start(t0);o.stop(t0+dur);lfo.stop(t0+dur);}catch(e){}}
 function sfx(action){if(!soundOn||!keepAliveCtx)return;
  if(action==='fart'||action==='burp'){rudeSound(action);return;}
  const notes=CUES[action];if(!notes)return;
  try{const ctx=keepAliveCtx,t0=ctx.currentTime,dur=.11;
   notes.forEach((f,k)=>{const o=ctx.createOscillator(),g=ctx.createGain();
    o.type=action==='beep'?'square':'triangle';o.frequency.value=f;
-   const s=t0+k*dur*.9;g.gain.setValueAtTime(0,s);g.gain.linearRampToValueAtTime(.06,s+.02);
-   g.gain.exponentialRampToValueAtTime(.0001,s+dur);o.connect(g).connect(ctx.destination);o.start(s);o.stop(s+dur);});
+   const s=t0+k*dur*.9;g.gain.setValueAtTime(0,s);g.gain.linearRampToValueAtTime(.16,s+.02);
+   g.gain.exponentialRampToValueAtTime(.0001,s+dur);o.connect(g).connect(masterOut(ctx));o.start(s);o.stop(s+dur);});
  }catch(e){}}
 // The playable synth's voice: a warm two-oscillator note with a soft bell envelope, at a
 // good clear volume. A click is a user gesture, so we can spin up / resume an AudioContext
@@ -257,10 +264,10 @@ let synthCtx=null;
 function synthNote(freq){try{const AC=window.AudioContext||window.webkitAudioContext;if(!AC)return;
  const ctx=keepAliveCtx||(synthCtx||(synthCtx=new AC()));if(ctx.state==='suspended')ctx.resume().catch(()=>{});
  const t0=ctx.currentTime,dur=.55;
- for(const[f,g0,ty]of[[freq,.2,'triangle'],[freq*2,.07,'sine']]){                  // louder note
+ for(const[f,g0,ty]of[[freq,.34,'triangle'],[freq*2,.12,'sine']]){                 // loud, clear note
   const o=ctx.createOscillator(),g=ctx.createGain();o.type=ty;o.frequency.value=f;
   g.gain.setValueAtTime(0,t0);g.gain.linearRampToValueAtTime(g0,t0+.015);
-  g.gain.exponentialRampToValueAtTime(.0001,t0+dur);o.connect(g).connect(ctx.destination);o.start(t0);o.stop(t0+dur);}
+  g.gain.exponentialRampToValueAtTime(.0001,t0+dur);o.connect(g).connect(masterOut(ctx));o.start(t0);o.stop(t0+dur);}
 }catch(e){}}
 // Play a synth key: light it and sing its note NOW (the kid's tap is instant), then send the pet
 // ambling over to the synth to join in — it plinks the song once it arrives (via stepMusic). The
@@ -298,12 +305,12 @@ function drumVoice(kind){try{const AC=window.AudioContext||window.webkitAudioCon
  if(!noiseBuf){noiseBuf=ctx.createBuffer(1,4096,ctx.sampleRate);const d=noiseBuf.getChannelData(0);
   for(let i=0;i<4096;i++)d[i]=Math.random()*2-1;}
  if(kind===0){const o=ctx.createOscillator(),g=ctx.createGain();o.type='sine';o.frequency.setValueAtTime(150,t0);
-  o.frequency.exponentialRampToValueAtTime(50,t0+.12);g.gain.setValueAtTime(.32,t0);g.gain.exponentialRampToValueAtTime(.001,t0+.15);
-  o.connect(g).connect(ctx.destination);o.start(t0);o.stop(t0+.16);return;}                 // kick (louder)
+  o.frequency.exponentialRampToValueAtTime(50,t0+.12);g.gain.setValueAtTime(.6,t0);g.gain.exponentialRampToValueAtTime(.001,t0+.15);
+  o.connect(g).connect(masterOut(ctx));o.start(t0);o.stop(t0+.16);return;}                 // kick (punchy)
  const src=ctx.createBufferSource();src.buffer=noiseBuf;src.loop=true;
  const bp=ctx.createBiquadFilter();bp.type=kind===3?'highpass':'bandpass';bp.frequency.value=kind===3?7000:kind===2?400:1800;
- const g=ctx.createGain();const dur=kind===3?.05:.13;g.gain.setValueAtTime(kind===3?.18:.24,t0);g.gain.exponentialRampToValueAtTime(.001,t0+dur);
- src.connect(bp).connect(g).connect(ctx.destination);src.start(t0);src.stop(t0+dur);}catch(e){}} // snare/tom/hat
+ const g=ctx.createGain();const dur=kind===3?.05:.13;g.gain.setValueAtTime(kind===3?.34:.46,t0);g.gain.exponentialRampToValueAtTime(.001,t0+dur);
+ src.connect(bp).connect(g).connect(masterOut(ctx));src.start(t0);src.stop(t0+dur);}catch(e){}} // snare/tom/hat
 // Hit a drum pad: sound + flash NOW, then the pet walks to the kit and lays down the groove
 // (stepDrums) on arrival — same travel fix as pressKey.
 function drumHit(i){padLit=i;padLitT=0.18;drumVoice(i);P.emotion='excited';P.asleep=false;napUntil=0;
@@ -313,8 +320,8 @@ function drumHit(i){padLit=i;padLitT=0.18;drumVoice(i);P.emotion='excited';P.asl
 function pluckNote(freq){try{const AC=window.AudioContext||window.webkitAudioContext;if(!AC)return;
  const ctx=keepAliveCtx||(synthCtx||(synthCtx=new AC()));if(ctx.state==='suspended')ctx.resume().catch(()=>{});
  const t0=ctx.currentTime,dur=.42,o=ctx.createOscillator(),g=ctx.createGain();o.type='sawtooth';o.frequency.value=freq;
- g.gain.setValueAtTime(.0001,t0);g.gain.exponentialRampToValueAtTime(.16,t0+.006);
- g.gain.exponentialRampToValueAtTime(.0001,t0+dur);o.connect(g).connect(ctx.destination);o.start(t0);o.stop(t0+dur);}catch(e){}}
+ g.gain.setValueAtTime(.0001,t0);g.gain.exponentialRampToValueAtTime(.3,t0+.006);
+ g.gain.exponentialRampToValueAtTime(.0001,t0+dur);o.connect(g).connect(masterOut(ctx));o.start(t0);o.stop(t0+dur);}catch(e){}}
 // Strum the wall guitar: a quick plucked major-chord arpeggio NOW, then the pet ambles to the
 // guitar corner and plinks out a plucked tune there (stepGuitar) — like the synth/drums.
 function strum(){strumT=0.3;const ch=[329.63,415.30,493.88,659.25];
@@ -334,8 +341,8 @@ function petPlay(inst){const want={synth:'synth',drums:'drum',guitar:'guitar'}[i
  else{ai.target=[SYNTHPLAY[0],SYNTHPLAY[1]];ai.beat='play_music';ai.last='synth';song=null;}}
 // The computer keyboard is the KID's instrument: playing a synth key or a drum pad sounds it
 // NOW, and the pet grabs a DIFFERENT instrument to jam along (synth ↔ drums), so they duet.
-function kidSynth(i){if(i<0||i>=NKEYS)return;keyLit=i;keyLitT=0.28;synthNote(SCALE[i]);petPlay('drums');}
-function kidDrum(i){padLit=i;padLitT=0.18;drumVoice(i);P.emotion='excited';petPlay('synth');}
+function kidSynth(i){if(i<0||i>=NKEYS)return;keyLit=i;keyLitT=0.28;synthNote(SCALE[i]);petPlay('drums');kidPlayUntil=performance.now()/1000+2.5;}
+function kidDrum(i){padLit=i;padLitT=0.18;drumVoice(i);P.emotion='excited';petPlay('synth');kidPlayUntil=performance.now()/1000+2.5;}
 const soundBtn=document.getElementById('sound');
 async function initSound(){let voices=[];
  try{voices=((await(await fetch('/tts/voices',{cache:'no-store'})).json()).voices)||[];}catch(e){}
@@ -667,7 +674,7 @@ function advancePlayer(){
    spot) then BEAT (a little expressive thing there). A rare nap. A server command
    interrupts all of this and the pet resumes here when it finishes. */
 const ai={mode:'auto',phase:'beat',act:'idle',beat:'look',target:[0,0],until:0,deadline:0,last:''};
-let napUntil=0,manualUntil=0;                              // manualUntil: autonomy paused after an arrow drive
+let napUntil=0,manualUntil=0,kidPlayUntil=0;               // manualUntil: autonomy paused after an arrow drive; kidPlayUntil: the kid is jamming on the keyboard
 const BEATS=['look','wiggle','nod','spin','sit','look','look'];  // 'look' weighted (calm default)
 function randSpot(){
   const objs=Object.keys(live.objects||{}).filter(n=>n!=='light_switch');
@@ -731,7 +738,7 @@ function sfxIdle(beat){if(beat==='spin'||beat==='wiggle'||beat==='nod')sfx(beat)
 function stepAutonomy(now){
   // Automatic bedtime: night + light off + TV off → the pet heads to bed and stays asleep there,
   // only getting up when day breaks or a light / the TV comes on.
-  if(wantsSleep()){
+  if(wantsSleep()&&now>=kidPlayUntil&&now>=manualUntil){   // …but not mid-jam or right after a kid drove it
     const b=objPos('bed');
     if(b&&Math.hypot(b[0]-P.x,b[1]-P.z)>=0.6){P.asleep=false;P.act='walk';P.tx=b[0];P.tz=b[1];ai.mode='auto';ai.phase='travel';return;} // trundle to bed
     if(b){P.x=b[0];P.z=b[1];P.facing=Math.PI/2;}          // settle onto the mattress
@@ -791,7 +798,10 @@ function stepAutonomy(now){
     P.act=ai.act;P.tx=P.x;P.tz=P.z;
     // During the manual grace, don't start a new autonomous behaviour — just keep looking
     // around in place until the grace lapses, then resume the pet's own life.
-    if(now>ai.until){if(now<manualUntil){ai.act='look';ai.until=now+0.5;}else nextBehavior(now);}
+    if(now>ai.until){
+     if(now<manualUntil){ai.act='look';ai.until=now+0.5;}
+     else if(now<kidPlayUntil&&(ai.act==='drum'||ai.act==='play_music'||ai.act==='play_guitar')){ai.until=now+1.5;} // keep jamming while the kid plays
+     else nextBehavior(now);}
   }
 }
 // A beat's duration. Play activities run a long while; other *actions* last ~3× longer than
@@ -813,15 +823,25 @@ function stepMusic(t){
  if(!song)pickSong();                                       // the pet picks a tune
  if(t>=songUntil){const[ki,beats]=song[songI];keyLit=ki;keyLitT=Math.min(0.4,beats*BEAT);synthNote(SCALE[ki]);
   songUntil=t+beats*BEAT;songI++;if(songI>=song.length){songI=0;if(Math.random()<0.6)pickSong();}}}
-// While the pet is at the kit drumming, lay down a simple rock beat (kick/snare + hats).
-let drumAt=0,drumStep=0;
+// The kit knows a handful of grooves. Each is one 4/4 measure of eighth-notes (8 steps); every
+// step lists which pads fire (0 kick, 1 snare, 2 tom, 3 hat). The pet plays a groove for FOUR
+// measures, then switches it up. Voices: 0 kick, 1 snare, 2 tom, 3 hi-hat.
+const DRUMPATTERNS=[
+ [[0,3],[3],[1,3],[3],[0,3],[3],[1,3],[3]],                 // rock: kick 1&3, snare 2&4, hats throughout
+ [[0,3],[3],[1,3],[3],[0,3],[0,3],[1,3],[3]],               // disco-ish: an extra kick pickup before beat 3
+ [[0,3],[3],[3],[0,3],[1,3],[3],[0,3],[3]],                 // boom-bap: kick on 1 & the "and" of 2, snare 3
+ [[0,3],[2],[1,3],[2],[0,3],[2],[1,3],[2]],                 // tom groove: toms on the off-beats
+ [[0,3],[0,3],[1,3],[0,3],[0,3],[0,3],[1,3],[3]],           // four-on-the-floor: a kick on every eighth-ish
+ [[0],[3],[1],[3],[0],[3],[1],[3]],                         // light/half-time: sparse kick-snare, quiet hats
+];
+let drumAt=0,drumStep=0,drumPat=0;
 function stepDrums(t){
  if(P.act!=='drum'||Math.hypot(P.x-DRUMS[0],P.z-DRUMS[1])>2.6){drumStep=0;return;}
- if(t>=drumAt){const s=drumStep%8;                          // 8th-note pattern; flash the pad that sounds
-  if(s%2===1){drumVoice(3);padLit=3;padLitT=0.1;}           // hats on the off-beats
-  if(s===0||s===4){drumVoice(0);padLit=0;padLitT=0.12;}     // kick on 1 and 3
-  if(s===2||s===6){drumVoice(1);padLit=1;padLitT=0.12;}     // snare on 2 and 4
-  drumAt=t+0.2;drumStep++;}}
+ if(t>=drumAt){const s=drumStep%8;
+  for(const d of DRUMPATTERNS[drumPat][s]){drumVoice(d);padLit=d;padLitT=0.1;}
+  drumAt=t+0.2;drumStep++;
+  if(drumStep%32===0)drumPat=(drumPat+1+Math.floor(Math.random()*(DRUMPATTERNS.length-1)))%DRUMPATTERNS.length;} // 4 measures → new groove
+}
 // While the pet is at the guitar corner, plink out a kids' tune PLUCKED (same songbook as the
 // synth, an octave down for a warm guitar tone), flashing the strings on each note.
 let gsong=null,gsongI=0,gsongUntil=0;

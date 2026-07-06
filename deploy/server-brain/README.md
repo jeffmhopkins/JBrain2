@@ -60,7 +60,8 @@ Old MacDonald…) — the guitar **plucked**, an octave down — from their fixe
 **stays** there, only getting up when day breaks or a **light / the TV** comes on. A
 distance-phased gait keeps the walk smooth, and it lingers in each activity (durations run long). Keyboard: **hold an arrow** to walk the pet around until
 you let go; the bottom row (**Z–M**) plays the **synth** and the home row (**A–L**) the **drums**
-— play either and the pet ambles over to the *other* to **jam along**; **space** picks up the
+— play either and the pet ambles over to the *other* to **jam along**, holding the groove (the
+kit knows several patterns and switches it up every four bars) until you stop; **space** picks up the
 nearest **block** and throws it the way the pet faces (press again to let go).
 
 **Sound.** When the pet speaks, `/pet` reads its speech bubble aloud with the same on-box
