@@ -1,7 +1,7 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { api } from "../api/client";
-import { chunkSentences, speakableText, useReadAloud } from "./useReadAloud";
+import { useReadAloud } from "./useReadAloud";
 
 vi.mock("../api/client", () => ({
   api: { getSettings: vi.fn(), brainVoices: vi.fn(), brainTts: vi.fn() },
@@ -66,20 +66,6 @@ beforeEach(() => {
   localStorage.clear();
 });
 
-describe("speakableText", () => {
-  it("strips markdown down to plain prose", () => {
-    const out = speakableText(
-      "# Heading\n\n- item **bold**\n\n`code`\n\n> quote [^1] [x](http://y)",
-    );
-    expect(out).toContain("Heading");
-    expect(out).toContain("item bold");
-    expect(out).toContain("quote");
-    expect(out).toContain("x"); // a link keeps its text
-    expect(out).not.toMatch(/[#>*`[\]]/); // no markdown syntax remains
-    expect(out).not.toContain("http"); // the link URL is dropped
-  });
-});
-
 describe("useReadAloud", () => {
   it("is available only when the setting is on and the browser can speak", async () => {
     const { result } = renderHook(() => useReadAloud());
@@ -98,7 +84,7 @@ describe("useReadAloud", () => {
     act(() => result.current.toggle("a", "**Hello** `world` [link](http://x)"));
     expect(synth.cancel).toHaveBeenCalled();
     expect(synth.speak).toHaveBeenCalledTimes(1);
-    expect(synth.speak.mock.calls[0]?.[0].text).toBe("Hello world link");
+    expect(synth.speak.mock.calls[0]?.[0].text).toBe("Hello world link.");
     expect(result.current.playing).toBe("a");
   });
 
@@ -141,27 +127,6 @@ describe("useReadAloud", () => {
   });
 });
 
-describe("chunkSentences", () => {
-  it("splits complete sentences off the front, leaving a trailing partial", () => {
-    const { chunks, consumed } = chunkSentences("Hello world. How are yo", false);
-    expect(chunks).toEqual(["Hello world."]);
-    expect("Hello world. How are yo".slice(consumed)).toBe("How are yo");
-  });
-
-  it("keeps a partial final sentence until flushed", () => {
-    expect(chunkSentences("no terminator yet", false).chunks).toEqual([]);
-    expect(chunkSentences("no terminator yet", true).chunks).toEqual(["no terminator yet"]);
-  });
-
-  it("does not split a decimal (terminator with no following space)", () => {
-    expect(chunkSentences("pi is 3.14 exactly", true).chunks).toEqual(["pi is 3.14 exactly"]);
-  });
-
-  it("breaks on newlines and multiple terminators", () => {
-    expect(chunkSentences("One!\nTwo? Three.", true).chunks).toEqual(["One!", "Two?", "Three."]);
-  });
-});
-
 describe("useReadAloud auto-play", () => {
   it("persists the auto-play mode across the localStorage key", () => {
     const { result } = renderHook(() => useReadAloud());
@@ -200,7 +165,7 @@ describe("useReadAloud auto-play", () => {
     expect(synth.speak.mock.calls.map((c) => c[0].text)).toEqual([
       "The sky is blue.",
       "Grass is green.",
-      "And done",
+      "And done.", // pause-authoring gives the punctuation-less tail a terminal period
     ]);
   });
 
@@ -288,28 +253,30 @@ describe("useReadAloud piper engine", () => {
     await waitFor(() => expect(audios).toHaveLength(1));
     expect(brainTts).toHaveBeenCalledWith(
       "en_US-libritts_r-medium#3922",
-      "Hello world link",
+      "Hello world link.",
       undefined,
     );
     expect(audios[0]?.played).toBe(true);
     expect(result.current.playing).toBe("a");
   });
 
-  it("streams piper clips per sentence when fed, playing them in order", async () => {
+  it("streams piper clips per sentence when fed, prefetching then playing them in order", async () => {
     const { result } = renderHook(() => useReadAloud());
     await waitFor(() => expect(result.current.available).toBe(true));
     await act(async () => result.current.feed("1", "One. Two. ", false));
-    // Sequential: the first sentence renders + plays; the second waits its turn.
-    await waitFor(() => expect(brainTts).toHaveBeenCalledTimes(1));
+    // Prefetch: both clips RENDER up front (the second overlaps the first's playback for
+    // gapless audio), but only the head clip PLAYS until it finishes.
+    await waitFor(() => expect(brainTts).toHaveBeenCalledTimes(2));
     expect(brainTts.mock.calls[0]?.[1]).toBe("One.");
     expect(brainTts.mock.calls[0]?.[2]).toBeUndefined(); // first clip carries the lead
+    expect(brainTts.mock.calls[1]?.[1]).toBe("Two.");
+    expect(brainTts.mock.calls[1]?.[2]).toBe(0); // continuation clip, no lead
     expect(audios).toHaveLength(1);
     expect(result.current.playing).toBe("1");
-    // First clip finishes -> the queued "Two." renders + plays, gapless (lead 0).
+    // First clip finishes -> the already-rendered "Two." plays immediately (no fetch gap).
     await act(async () => audios[0]?.onended?.());
-    await waitFor(() => expect(brainTts).toHaveBeenCalledTimes(2));
-    expect(brainTts.mock.calls[1]?.[1]).toBe("Two.");
-    expect(brainTts.mock.calls[1]?.[2]).toBe(0);
+    await waitFor(() => expect(audios).toHaveLength(2));
+    expect(brainTts).toHaveBeenCalledTimes(2); // not re-fetched — the prefetch is reused
   });
 
   it("clears playing once the final piper clip finishes", async () => {
@@ -340,7 +307,7 @@ describe("useReadAloud piper engine", () => {
     // No piper voices -> falls straight to the device voice.
     expect(brainTts).not.toHaveBeenCalled();
     expect(synth.speak).toHaveBeenCalledTimes(1);
-    expect(synth.speak.mock.calls[0]?.[0].text).toBe("read me natively");
+    expect(synth.speak.mock.calls[0]?.[0].text).toBe("read me natively.");
     expect(result.current.playing).toBe("a");
   });
 
@@ -352,7 +319,7 @@ describe("useReadAloud piper engine", () => {
     await act(async () => result.current.toggle("a", "read me"));
     await waitFor(() => expect(synth.speak).toHaveBeenCalledTimes(1));
     expect(brainTts).toHaveBeenCalledTimes(1); // tried piper first
-    expect(synth.speak.mock.calls[0]?.[0].text).toBe("read me"); // then the device voice
+    expect(synth.speak.mock.calls[0]?.[0].text).toBe("read me."); // then the device voice
   });
 
   it("uses the device voice when the engine is native even with box voices", async () => {
