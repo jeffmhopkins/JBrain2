@@ -1,0 +1,239 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Teacher Mode — Mock 04 · Course Home (Structure &amp; Navigation)</title>
+<style>
+  :root {
+    color-scheme: dark light;
+    --bg:#0e1113; --surface:#171b1e; --surface-2:#1f2529; --border:#2b3237;
+    --text:#e7edf1; --dim:#8b979f; --faint:#5c666d;
+    --accent:#6aa9d6; --accent-dim:#28414f;
+    --good:#57b98a; --good-dim:#1c3a2c; --warn:#d8a24a; --warn-dim:#3a2f18;
+    --r-lg:16px; --r-md:12px; --r-pill:999px; --sp:4px;
+    --fs-0:12px; --fs-1:14px; --fs-2:16px; --fs-3:18px; --fs-4:22px; --fs-5:28px;
+    --font:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+    --mono:"SF Mono",ui-monospace,Menlo,Consolas,monospace;
+  }
+  @media (prefers-color-scheme: light){
+    :root{ --bg:#f2f4f6; --surface:#fff; --surface-2:#f6f8fa; --border:#dde2e6;
+      --text:#141a1e; --dim:#5a666e; --faint:#8b979f; --accent:#2f7bb0; --accent-dim:#d3e6f3;
+      --good:#2f9d6b; --good-dim:#dcf1e7; --warn:#b8791f; --warn-dim:#f6ecd6; }
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--bg);color:var(--text);font-family:var(--font);font-size:var(--fs-1);line-height:1.5;-webkit-font-smoothing:antialiased;}
+  .phone{max-width:430px;margin:0 auto;min-height:100vh;padding:calc(var(--sp)*4) calc(var(--sp)*3) calc(var(--sp)*16);display:flex;flex-direction:column;gap:calc(var(--sp)*3);}
+
+  .hero{padding:calc(var(--sp)*2) var(--sp) 0;}
+  .hero .eyebrow{font-size:var(--fs-0);color:var(--accent);font-weight:600;letter-spacing:.05em;text-transform:uppercase;}
+  .hero h1{margin:var(--sp) 0 0;font-size:var(--fs-5);line-height:1.1;}
+
+  .card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-lg);overflow:hidden;position:relative;}
+  .tag{position:absolute;top:0;right:0;font-size:10px;letter-spacing:.03em;color:var(--faint);background:var(--surface-2);border-left:1px solid var(--border);border-bottom:1px solid var(--border);border-bottom-left-radius:var(--r-md);padding:3px 8px;font-weight:600;z-index:2;}
+  .card-body{padding:calc(var(--sp)*3.5);}
+  .clabel{font-size:var(--fs-0);color:var(--dim);font-weight:600;letter-spacing:.03em;text-transform:uppercase;margin:0 0 calc(var(--sp)*3);padding-right:110px;}
+
+  /* progress */
+  .bar{height:10px;border-radius:var(--r-pill);background:var(--surface-2);overflow:hidden;margin:calc(var(--sp)*2) 0;}
+  .bar > i{display:block;height:100%;width:44%;background:linear-gradient(90deg,var(--good),var(--accent));border-radius:var(--r-pill);}
+  .pstats{display:flex;justify-content:space-between;font-size:var(--fs-0);color:var(--dim);}
+  .resume{display:flex;align-items:center;gap:calc(var(--sp)*2);width:100%;text-align:left;margin-top:calc(var(--sp)*3.5);font:inherit;cursor:pointer;background:var(--accent);color:#05141d;border:0;border-radius:var(--r-md);padding:calc(var(--sp)*3);font-weight:600;}
+  @media (prefers-color-scheme: light){ .resume{color:#fff;} }
+  .resume .sub{font-weight:400;opacity:.85;font-size:var(--fs-0);display:block;}
+  .resume .ar{margin-left:auto;font-size:var(--fs-3);}
+
+  /* recap */
+  .recaphead{display:flex;align-items:center;gap:calc(var(--sp)*2);margin-bottom:calc(var(--sp)*2);}
+  .recaphead b{font-size:var(--fs-2);}
+  .save{margin-left:auto;font:inherit;font-size:var(--fs-0);font-weight:600;color:var(--dim);background:var(--surface-2);border:1px solid var(--border);border-radius:var(--r-pill);padding:5px 11px;cursor:pointer;display:flex;gap:var(--sp);align-items:center;}
+  .save.on{color:var(--good);border-color:var(--good);background:var(--good-dim);}
+  .takes{list-style:none;margin:calc(var(--sp)*2) 0 0;padding:0;display:flex;flex-direction:column;gap:calc(var(--sp)*2.5);}
+  .takes li{display:flex;gap:calc(var(--sp)*2.5);align-items:flex-start;font-size:var(--fs-1);}
+  .takes .k{flex:0 0 auto;width:20px;height:20px;border-radius:var(--r-pill);background:var(--warn-dim);color:var(--warn);display:grid;place-items:center;font-size:11px;font-weight:800;margin-top:1px;}
+
+  /* outline */
+  .unit{border-top:1px solid var(--border);}
+  .unit:first-child{border-top:0;}
+  .uhead{display:flex;align-items:center;gap:calc(var(--sp)*2.5);width:100%;text-align:left;font:inherit;cursor:pointer;background:transparent;border:0;color:var(--text);padding:calc(var(--sp)*3) 0;}
+  .uhead .st{flex:0 0 auto;width:22px;height:22px;border-radius:var(--r-pill);display:grid;place-items:center;font-size:12px;font-weight:800;}
+  .st.done{background:var(--good-dim);color:var(--good);}
+  .st.curr{background:var(--accent-dim);color:var(--accent);}
+  .st.lock{background:var(--surface-2);color:var(--faint);}
+  .uhead .ut{flex:1;font-weight:600;} .uhead .ut small{display:block;font-weight:400;color:var(--dim);font-size:var(--fs-0);}
+  .uhead .chev{color:var(--faint);transition:transform .15s;}
+  .uhead[aria-expanded="true"] .chev{transform:rotate(90deg);}
+  .lessons{display:none;flex-direction:column;padding:0 0 calc(var(--sp)*2) calc(var(--sp)*8);gap:2px;}
+  .lessons.show{display:flex;}
+  .lrow{display:flex;align-items:center;gap:calc(var(--sp)*2.5);padding:calc(var(--sp)*2) calc(var(--sp)*2);border-radius:var(--r-md);font-size:var(--fs-1);color:var(--dim);}
+  .lrow .li{flex:0 0 auto;width:16px;text-align:center;font-size:11px;}
+  .lrow.done{color:var(--text);} .lrow.done .li{color:var(--good);}
+  .lrow.here{background:var(--accent-dim);color:var(--text);font-weight:600;}
+  .lrow.here .li{color:var(--accent);}
+  .lrow.lock .li{color:var(--faint);}
+  .lrow .youare{margin-left:auto;font-size:10px;font-weight:700;text-transform:uppercase;color:var(--accent);}
+
+  /* skill tree */
+  .skillmap svg{width:100%;height:auto;display:block;}
+  .snode{cursor:pointer;}
+  .slabel{font-family:var(--font);font-size:11px;font-weight:600;fill:var(--text);}
+  .slabel.lock{fill:var(--faint);}
+  .legend{display:flex;gap:calc(var(--sp)*3);justify-content:center;margin-top:calc(var(--sp)*2);font-size:var(--fs-0);color:var(--dim);}
+  .legend span{display:flex;gap:var(--sp);align-items:center;}
+  .legend i{width:10px;height:10px;border-radius:var(--r-pill);display:inline-block;}
+  .scaption{margin-top:calc(var(--sp)*3);padding:calc(var(--sp)*2.5) calc(var(--sp)*3);background:var(--surface-2);border:1px solid var(--border);border-radius:var(--r-md);font-size:var(--fs-1);min-height:20px;}
+  .scaption b{color:var(--accent);}
+  .note{text-align:center;color:var(--faint);font-size:var(--fs-0);padding:calc(var(--sp)*2);}
+</style>
+</head>
+<body>
+<main class="phone">
+
+  <div class="hero">
+    <div class="eyebrow">Course · in progress</div>
+    <h1>Statistical Reasoning</h1>
+  </div>
+
+  <!-- 2 · PROGRESS TRACKER -->
+  <section class="card" aria-label="Progress">
+    <span class="tag">progress tracker</span>
+    <div class="card-body">
+      <p class="clabel">Your progress</p>
+      <div class="pstats"><span>Unit 2 of 3 · Reading Data</span><span><b>44%</b></span></div>
+      <div class="bar"><i></i></div>
+      <div class="pstats"><span>4 of 9 lessons complete</span><span>~28 min left in unit</span></div>
+      <button class="resume">
+        <span>Resume<span class="sub">Lesson 5 · Confounding variables</span></span>
+        <span class="ar">→</span>
+      </button>
+    </div>
+  </section>
+
+  <!-- 3 · KEY TAKEAWAYS / RECAP -->
+  <section class="card" aria-label="Recap">
+    <span class="tag">key takeaways · recap</span>
+    <div class="card-body">
+      <div class="recaphead">
+        <b>Recap — Correlation vs. Causation</b>
+        <button class="save" id="save"><span class="hi">☆</span> Save</button>
+      </div>
+      <p style="margin:0;color:var(--dim);font-size:var(--fs-0)">Your last completed lesson · keep these three:</p>
+      <ul class="takes">
+        <li><span class="k">1</span><span>Correlation measures how two variables move together — it never proves one <em>causes</em> the other.</span></li>
+        <li><span class="k">2</span><span>A <b>confounder</b> (like hot weather) can drive both variables, creating a spurious link.</span></li>
+        <li><span class="k">3</span><span>To claim causation you need a <b>controlled comparison</b>, not just a strong correlation.</span></li>
+      </ul>
+    </div>
+  </section>
+
+  <!-- 1 · COURSE OUTLINE -->
+  <section class="card" aria-label="Course outline">
+    <span class="tag">course outline</span>
+    <div class="card-body" style="padding-top:calc(var(--sp)*3)">
+      <p class="clabel" style="margin-bottom:var(--sp)">Outline</p>
+
+      <div class="unit">
+        <button class="uhead" aria-expanded="false">
+          <span class="st done">✓</span>
+          <span class="ut">Unit 1 — Describing Data <small>3 lessons · complete</small></span>
+          <span class="chev">▸</span>
+        </button>
+        <div class="lessons">
+          <div class="lrow done"><span class="li">✓</span>Types of data</div>
+          <div class="lrow done"><span class="li">✓</span>Center &amp; spread</div>
+          <div class="lrow done"><span class="li">✓</span>Reading a scatter plot</div>
+        </div>
+      </div>
+
+      <div class="unit">
+        <button class="uhead" aria-expanded="true">
+          <span class="st curr">●</span>
+          <span class="ut">Unit 2 — Reading Data <small>in progress · 1 of 3</small></span>
+          <span class="chev">▸</span>
+        </button>
+        <div class="lessons show">
+          <div class="lrow done"><span class="li">✓</span>Correlation vs. Causation</div>
+          <div class="lrow here"><span class="li">●</span>Confounding variables <span class="youare">You are here</span></div>
+          <div class="lrow lock"><span class="li">🔒</span>Controlled comparisons</div>
+        </div>
+      </div>
+
+      <div class="unit">
+        <button class="uhead" aria-expanded="false">
+          <span class="st lock">🔒</span>
+          <span class="ut">Unit 3 — Inference <small>locked · finish Unit 2 to open</small></span>
+          <span class="chev">▸</span>
+        </button>
+        <div class="lessons">
+          <div class="lrow lock"><span class="li">🔒</span>Sampling</div>
+          <div class="lrow lock"><span class="li">🔒</span>Confidence intervals</div>
+          <div class="lrow lock"><span class="li">🔒</span>Hypothesis testing</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 4 · SKILL-TREE / MASTERY MAP -->
+  <section class="card" aria-label="Skill tree">
+    <span class="tag">skill-tree ⭐</span>
+    <div class="card-body">
+      <p class="clabel">Mastery map</p>
+      <div class="skillmap">
+        <svg viewBox="0 0 340 330" role="img" aria-label="Skill tree showing mastered, available, and locked skills">
+          <!-- edges -->
+          <g stroke-width="2" fill="none">
+            <line x1="170" y1="42"  x2="170" y2="96"  stroke="var(--good)"/>
+            <line x1="170" y1="110" x2="170" y2="164" stroke="var(--good)"/>
+            <line x1="170" y1="178" x2="95"  y2="232" stroke="var(--accent)"/>
+            <line x1="170" y1="178" x2="245" y2="232" stroke="var(--border)"/>
+            <line x1="95"  y1="246" x2="170" y2="292" stroke="var(--border)"/>
+            <line x1="245" y1="246" x2="170" y2="292" stroke="var(--border)"/>
+          </g>
+          <!-- nodes: data-cap holds the caption -->
+          <g class="snode" data-cap="<b>Scatter plots</b> — mastered. Reading a scatter and its trend."><circle cx="170" cy="28" r="15" fill="var(--good-dim)" stroke="var(--good)" stroke-width="2"/><text x="170" y="33" text-anchor="middle" class="slabel" style="fill:var(--good)">✓</text><text x="170" y="-2" dy="0" text-anchor="middle" class="slabel" transform="translate(0,8)">Scatter</text></g>
+          <g class="snode" data-cap="<b>Correlation (r)</b> — mastered. Quantifying how two variables move together."><circle cx="170" cy="103" r="15" fill="var(--good-dim)" stroke="var(--good)" stroke-width="2"/><text x="170" y="108" text-anchor="middle" class="slabel" style="fill:var(--good)">✓</text><text x="210" y="107" text-anchor="start" class="slabel">Correlation</text></g>
+          <g class="snode" data-cap="<b>Confounders</b> — in progress (current lesson). Unlocks: Controlled comparison."><circle cx="170" cy="171" r="16" fill="var(--accent-dim)" stroke="var(--accent)" stroke-width="2.5"/><text x="170" y="176" text-anchor="middle" class="slabel" style="fill:var(--accent)">●</text><text x="196" y="176" text-anchor="start" class="slabel" style="fill:var(--accent)">Confounders</text></g>
+          <g class="snode" data-cap="<b>Controlled comparison</b> — locked. Needs: Confounders."><circle cx="95" cy="239" r="15" fill="var(--surface-2)" stroke="var(--border)" stroke-width="2"/><text x="95" y="244" text-anchor="middle" class="slabel lock">🔒</text><text x="95" y="272" text-anchor="middle" class="slabel lock">Control</text></g>
+          <g class="snode" data-cap="<b>Sampling</b> — locked. Part of Unit 3 (Inference)."><circle cx="245" cy="239" r="15" fill="var(--surface-2)" stroke="var(--border)" stroke-width="2"/><text x="245" y="244" text-anchor="middle" class="slabel lock">🔒</text><text x="245" y="272" text-anchor="middle" class="slabel lock">Sampling</text></g>
+          <g class="snode" data-cap="<b>Inference</b> — locked. The Unit 3 goal skill."><circle cx="170" cy="299" r="15" fill="var(--surface-2)" stroke="var(--border)" stroke-width="2"/><text x="170" y="304" text-anchor="middle" class="slabel lock">🔒</text><text x="196" y="304" text-anchor="start" class="slabel lock">Inference</text></g>
+        </svg>
+      </div>
+      <div class="legend">
+        <span><i style="background:var(--good)"></i>Mastered</span>
+        <span><i style="background:var(--accent)"></i>Available</span>
+        <span><i style="background:var(--faint)"></i>Locked</span>
+      </div>
+      <div class="scaption" id="scap">Tap a skill to see its status and what it unlocks.</div>
+    </div>
+  </section>
+
+  <p class="note">Mock 04 · expand the outline units, toggle Save on the recap, and tap skills on the mastery map.</p>
+
+</main>
+
+<script>
+  // recap save toggle
+  const save = document.getElementById('save');
+  save.addEventListener('click', ()=>{
+    const on = save.classList.toggle('on');
+    save.querySelector('.hi').textContent = on ? '★' : '☆';
+    save.childNodes[1].textContent = on ? ' Saved' : ' Save';
+  });
+
+  // outline expand/collapse
+  document.querySelectorAll('.uhead').forEach(h=>{
+    h.addEventListener('click', ()=>{
+      const open = h.getAttribute('aria-expanded')==='true';
+      h.setAttribute('aria-expanded', String(!open));
+      h.parentElement.querySelector('.lessons').classList.toggle('show', !open);
+    });
+  });
+
+  // skill tree captions
+  const scap = document.getElementById('scap');
+  document.querySelectorAll('.snode').forEach(n=>{
+    n.addEventListener('click', ()=>{ scap.innerHTML = n.dataset.cap; });
+  });
+</script>
+</body>
+</html>
