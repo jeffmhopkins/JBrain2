@@ -58,17 +58,26 @@ function Harness({
   onOpenNote,
   onOpenEntity,
   files,
+  readAloud,
 }: {
   d: FullBrainDeps;
   onOpenNote?: (id: string) => void;
   onOpenEntity?: (id: string) => void;
   files?: File[];
+  readAloud?:
+    | { playing: string | null; onToggle: (key: string, markdown: string) => void }
+    | undefined;
 }) {
   const fb = useFullBrain("fullbrain", d);
   const [text, setText] = useState("");
   return (
     <>
-      <FullBrainSurface fb={fb} onOpenNote={onOpenNote} onOpenEntity={onOpenEntity} />
+      <FullBrainSurface
+        fb={fb}
+        onOpenNote={onOpenNote}
+        onOpenEntity={onOpenEntity}
+        readAloud={readAloud}
+      />
       <input aria-label="Composer" value={text} onChange={(e) => setText(e.target.value)} />
       <button type="button" onClick={() => fb.send(text, files ? { files } : undefined)}>
         send
@@ -683,6 +692,44 @@ describe("FullBrainSurface", () => {
     expect(screen.queryByRole("button", { name: "Copy response" })).not.toBeInTheDocument();
     act(() => resolve());
     await screen.findByRole("button", { name: "Copy response" });
+  });
+
+  it("shows a read-aloud play control beside a label-less copy when read-aloud is on", async () => {
+    const onToggle = vi.fn();
+    async function* answer(): AsyncGenerator<ChatEvent> {
+      yield { type: "text_delta", text: "spoken answer" };
+      yield { type: "done", stop_reason: "end_turn" };
+    }
+    render(<Harness d={deps({ chat: answer })} readAloud={{ playing: null, onToggle }} />);
+    await waitFor(() => screen.getByLabelText("Conversation"));
+    fireEvent.change(screen.getByLabelText("Composer"), { target: { value: "read it" } });
+    fireEvent.click(screen.getByRole("button", { name: "send" }));
+
+    // The play control sits beside the copy button, whose label is gone (icon only) to
+    // make room — its accessible name still identifies it.
+    const play = await screen.findByRole("button", { name: "Read response aloud" });
+    expect(play).toHaveAttribute("aria-pressed", "false");
+    const copy = screen.getByRole("button", { name: "Copy response" });
+    expect(copy).toHaveClass("compact");
+    expect(copy.querySelector(".fb-act-copy-lab")).toBeNull();
+
+    // Tapping it asks the parent to play this turn (positional key "1": user turn is 0).
+    fireEvent.click(play);
+    expect(onToggle).toHaveBeenCalledWith("1", "spoken answer");
+  });
+
+  it("renders the play control as pause for the turn that is speaking", async () => {
+    async function* answer(): AsyncGenerator<ChatEvent> {
+      yield { type: "text_delta", text: "now playing" };
+      yield { type: "done", stop_reason: "end_turn" };
+    }
+    render(<Harness d={deps({ chat: answer })} readAloud={{ playing: "1", onToggle: vi.fn() }} />);
+    await waitFor(() => screen.getByLabelText("Conversation"));
+    fireEvent.change(screen.getByLabelText("Composer"), { target: { value: "read it" } });
+    fireEvent.click(screen.getByRole("button", { name: "send" }));
+
+    const pause = await screen.findByRole("button", { name: "Pause reading aloud" });
+    expect(pause).toHaveAttribute("aria-pressed", "true");
   });
 
   it("shows thinking and worked on one activity line, thinking through the tools", async () => {

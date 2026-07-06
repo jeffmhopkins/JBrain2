@@ -54,32 +54,50 @@ describe("useReadAloud", () => {
     expect(result.current.available).toBe(false);
   });
 
-  it("speaks a turn's stripped text, cancelling any prior utterance first", () => {
+  it("plays a turn's stripped text and marks it playing, cancelling any prior utterance", () => {
     const { result } = renderHook(() => useReadAloud());
-    act(() => result.current.speak("**Hello** `world` [link](http://x)"));
+    act(() => result.current.toggle("a", "**Hello** `world` [link](http://x)"));
     expect(synth.cancel).toHaveBeenCalled();
     expect(synth.speak).toHaveBeenCalledTimes(1);
     expect(synth.speak.mock.calls[0]?.[0].text).toBe("Hello world link");
+    expect(result.current.playing).toBe("a");
   });
 
-  it("does not speak empty/whitespace-only content", () => {
+  it("does not play empty/whitespace-only content", () => {
     const { result } = renderHook(() => useReadAloud());
-    act(() => result.current.speak("   \n  "));
+    act(() => result.current.toggle("a", "   \n  "));
     expect(synth.speak).not.toHaveBeenCalled();
+    expect(result.current.playing).toBeNull();
   });
 
-  it("persists the toggle and stops in-flight speech when turned off mid-stream", async () => {
+  it("pauses the turn already playing when toggled again", () => {
     const { result } = renderHook(() => useReadAloud());
-    await waitFor(() => expect(result.current.available).toBe(true));
-
-    act(() => result.current.toggle()); // on
-    expect(result.current.on).toBe(true);
-    expect(localStorage.getItem("readAloudPlayback")).toBe("1");
+    act(() => result.current.toggle("a", "read me"));
+    expect(result.current.playing).toBe("a");
 
     synth.cancel.mockClear();
-    act(() => result.current.toggle()); // off mid-stream -> cancel now
-    expect(result.current.on).toBe(false);
+    act(() => result.current.toggle("a", "read me")); // tap again -> pause
     expect(synth.cancel).toHaveBeenCalled();
-    expect(localStorage.getItem("readAloudPlayback")).toBe("0");
+    expect(result.current.playing).toBeNull();
+  });
+
+  it("switches playback to another turn, stopping the first", () => {
+    const { result } = renderHook(() => useReadAloud());
+    act(() => result.current.toggle("a", "first"));
+    expect(result.current.playing).toBe("a");
+
+    act(() => result.current.toggle("b", "second"));
+    expect(synth.speak).toHaveBeenCalledTimes(2);
+    expect(result.current.playing).toBe("b");
+  });
+
+  it("clears the playing state once the utterance finishes on its own", () => {
+    const { result } = renderHook(() => useReadAloud());
+    act(() => result.current.toggle("a", "read me"));
+    const utt = synth.speak.mock.calls[0]?.[0];
+    expect(result.current.playing).toBe("a");
+
+    act(() => utt.onend?.());
+    expect(result.current.playing).toBeNull();
   });
 });

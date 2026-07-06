@@ -40,53 +40,6 @@ describe("Omnibox", () => {
     expect(onConsumeDraft).toHaveBeenCalled();
   });
 
-  it("shows the read-aloud toggle only when provided, and reflects/flips its state", () => {
-    const onToggle = vi.fn();
-    const { rerender } = render(
-      <Omnibox
-        seg={{ row: "main", mode: "fullbrain" }}
-        onSegChange={vi.fn()}
-        onSend={vi.fn()}
-        onConversation={vi.fn()}
-        onOpenLauncher={vi.fn()}
-      />,
-    );
-    // Absent by default (capture modes / read-aloud unavailable).
-    expect(screen.queryByRole("button", { name: /read(ing)? replies aloud/i })).toBeNull();
-
-    // Off → the muted affordance, labelled to enable.
-    rerender(
-      <Omnibox
-        seg={{ row: "main", mode: "fullbrain" }}
-        onSegChange={vi.fn()}
-        onSend={vi.fn()}
-        onConversation={vi.fn()}
-        onOpenLauncher={vi.fn()}
-        readAloud={{ on: false, onToggle }}
-      />,
-    );
-    const off = screen.getByRole("button", { name: "Read replies aloud" });
-    expect(off).toHaveAttribute("aria-pressed", "false");
-    fireEvent.click(off);
-    expect(onToggle).toHaveBeenCalledTimes(1);
-
-    // On → pressed, labelled to stop.
-    rerender(
-      <Omnibox
-        seg={{ row: "main", mode: "fullbrain" }}
-        onSegChange={vi.fn()}
-        onSend={vi.fn()}
-        onConversation={vi.fn()}
-        onOpenLauncher={vi.fn()}
-        readAloud={{ on: true, onToggle }}
-      />,
-    );
-    expect(screen.getByRole("button", { name: "Stop reading replies aloud" })).toHaveAttribute(
-      "aria-pressed",
-      "true",
-    );
-  });
-
   it("shows the appointment pill and clears it on tap", () => {
     const onClearApptRef = vi.fn();
     render(

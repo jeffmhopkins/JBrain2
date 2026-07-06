@@ -1,14 +1,13 @@
 // Local read-aloud for the chat surface: when the owner has turned on the
 // brain_read_aloud setting (the same switch that gates the wall display's piper
-// voices), the omnibox offers a volume toggle that speaks each COMPLETED assistant
-// turn on THIS device via the browser's Web Speech engine — no server round-trip,
-// so it works wherever the PWA is open. Turning it off (or leaving the surface)
-// cancels any in-flight speech immediately.
+// voices), each COMPLETED assistant turn gets a play/pause control next to its copy
+// button. Tapping play speaks that one turn on THIS device via the browser's Web
+// Speech engine — no server round-trip, so it works wherever the PWA is open —
+// and the control flips to pause; tapping pause (or playing another turn, or
+// leaving the surface) stops the speech at once.
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../api/client";
-
-const PLAYBACK_KEY = "readAloudPlayback";
 
 // Strip the markdown the assistant writes down to speakable prose (mirrors the wall
 // display's mdToPlain): drop code, turn links into their text, and remove heading /
@@ -28,14 +27,15 @@ export function speakableText(md: string): string {
 
 export interface ReadAloud {
   /** The brain_read_aloud setting is on AND this browser can speak — gates whether the
-   * omnibox shows the volume toggle at all. */
+   * bubbles show a play control at all. */
   available: boolean;
-  /** The device-local playback toggle (persisted). Meaningful only while `available`. */
-  on: boolean;
-  toggle: () => void;
-  /** Speak one completed turn's answer (markdown in; stripped to prose). Cancels any
-   * prior utterance so turns never overlap. */
-  speak: (markdown: string) => void;
+  /** Key of the turn currently being spoken aloud, or null when silent — a bubble is
+   * "playing" (shows pause) only when its key matches. */
+  playing: string | null;
+  /** Play one turn (markdown in; stripped to prose), or pause it if it's the turn
+   * already playing. Starting a new turn stops any other in flight so they never
+   * overlap. */
+  toggle: (key: string, markdown: string) => void;
   /** Stop any in-flight speech at once. */
   stop: () => void;
 }
@@ -44,13 +44,11 @@ const canSpeak = (): boolean => typeof window !== "undefined" && "speechSynthesi
 
 export function useReadAloud(): ReadAloud {
   const [settingOn, setSettingOn] = useState(false);
-  const [on, setOn] = useState<boolean>(() => {
-    try {
-      return localStorage.getItem(PLAYBACK_KEY) === "1";
-    } catch {
-      return false;
-    }
-  });
+  const [playing, setPlaying] = useState<string | null>(null);
+  // The utterance in flight — used to ignore an `onend` fired by our own cancel()
+  // when a later toggle has already replaced it.
+  const activeRef = useRef<SpeechSynthesisUtterance | null>(null);
+  const playingRef = useRef<string | null>(null);
 
   // Whether the owner enabled read-aloud at all — the same setting the wall reads.
   useEffect(() => {
@@ -66,7 +64,14 @@ export function useReadAloud(): ReadAloud {
     };
   }, []);
 
+  const setPlay = useCallback((key: string | null) => {
+    playingRef.current = key;
+    setPlaying(key);
+  }, []);
+
   const stop = useCallback(() => {
+    activeRef.current = null;
+    setPlay(null);
     if (canSpeak()) {
       try {
         window.speechSynthesis.cancel();
@@ -74,39 +79,51 @@ export function useReadAloud(): ReadAloud {
         /* speech engine unavailable — nothing to cancel */
       }
     }
-  }, []);
+  }, [setPlay]);
 
-  const speak = useCallback((markdown: string) => {
-    if (!canSpeak()) return;
-    const text = speakableText(markdown);
-    if (!text) return;
-    try {
-      window.speechSynthesis.cancel(); // never overlap the previous turn
-      window.speechSynthesis.speak(new SpeechSynthesisUtterance(text));
-    } catch {
-      /* speak failed — leave the turn silent */
-    }
-  }, []);
-
-  const toggle = useCallback(() => {
-    setOn((prev) => {
-      const next = !prev;
-      try {
-        localStorage.setItem(PLAYBACK_KEY, next ? "1" : "0");
-      } catch {
-        /* private mode — the toggle just won't persist */
+  const toggle = useCallback(
+    (key: string, markdown: string) => {
+      if (!canSpeak()) return;
+      // Tapping the turn already playing pauses it.
+      if (playingRef.current === key) {
+        stop();
+        return;
       }
-      return next;
-    });
-  }, []);
+      const text = speakableText(markdown);
+      if (!text) return;
+      try {
+        window.speechSynthesis.cancel(); // never overlap the previous turn
+        const utt = new SpeechSynthesisUtterance(text);
+        // Clear the pause state once this turn finishes (or errors) on its own — but
+        // only while it's still the active one, so a cancel from a later toggle
+        // doesn't wipe the newer turn's playing state.
+        const settle = () => {
+          if (activeRef.current === utt) {
+            activeRef.current = null;
+            setPlay(null);
+          }
+        };
+        utt.onend = settle;
+        utt.onerror = settle;
+        activeRef.current = utt;
+        window.speechSynthesis.speak(utt);
+        setPlay(key);
+      } catch {
+        /* speak failed — leave the turn silent */
+        activeRef.current = null;
+        setPlay(null);
+      }
+    },
+    [stop, setPlay],
+  );
 
   const available = settingOn && canSpeak();
-  // Turning playback off, disabling the whole feature, or leaving the surface
-  // (unmount) stops any in-flight speech immediately — "off mid-stream stops it".
+  // Disabling the whole feature stops any in-flight speech immediately.
   useEffect(() => {
-    if (!on || !available) stop();
-  }, [on, available, stop]);
+    if (!available) stop();
+  }, [available, stop]);
+  // Leaving the surface (unmount) stops speech too — "off mid-stream stops it".
   useEffect(() => stop, [stop]);
 
-  return { available, on, toggle, speak, stop };
+  return { available, playing, toggle, stop };
 }
