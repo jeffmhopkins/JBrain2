@@ -273,7 +273,11 @@ alongside the baked defaults; a dropped-in name overrides a baked one) — grab 
 the models into `voices/`. Env knobs (all optional): `BRAIN_PIPER_BIN` (default `piper`),
 `BRAIN_PIPER_VOICES_DIR` (mounted extras, default `/app/voices`), `BRAIN_PIPER_BAKED_VOICES_DIR`
 (baked defaults, default `/opt/piper-voices`), `BRAIN_PIPER_LEAD_MS`, `BRAIN_PIPER_TIMEOUT_S`
-(per-clip render cap, default 60 s). Text is passed to piper on
+(per-clip render cap, default 60 s), and `BRAIN_TTS_DEBUG=1` (verbose per-clip tracing —
+logs each render's voice-as-received, resolved `--speaker`, byte count and elapsed ms, so
+you can confirm the box rendered the requested voice rather than falling back; failures
+always log regardless). Read the trace via `docker logs server-brain` or the debug
+console's `GET /api/debug/logs/server-brain`. Text is passed to piper on
 **stdin** (never a shell arg) and the `voice` param is validated against the installed set, so there
 is no command-injection or path-traversal surface.
 

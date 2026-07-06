@@ -91,6 +91,13 @@ PIPER_LEAD_MS = int(os.environ.get("BRAIN_PIPER_LEAD_MS", "400"))
 # time out and silently fall back to the device's native voice. Bump it per box if a
 # voice keeps degrading; watch `docker logs server-brain` for the "tts render failed" line.
 PIPER_TIMEOUT_S = float(os.environ.get("BRAIN_PIPER_TIMEOUT_S", "60"))
+# Verbose per-clip TTS tracing (BRAIN_TTS_DEBUG=1): log every render as it starts and
+# completes — the voice AS RECEIVED, the model + resolved --speaker index, the output
+# bytes, and the elapsed ms. Off by default (a read reply is many clips, so it's noisy);
+# flip it on when a voice sounds wrong to see exactly what the box rendered vs. what the
+# PWA fell back to. Failures ALWAYS log (debug or not), so a silent native fall back can
+# never hide its cause. Read via the debug console: GET /api/debug/logs/server-brain.
+TTS_DEBUG = os.environ.get("BRAIN_TTS_DEBUG") == "1"
 # Longest single /tts render the page requests — it splits a reply into sentence-sized clips
 # (fast first-audio, no giant render), so this only bounds one chunk, not the whole answer.
 TTS_CHUNK_CAP = 1000
@@ -208,17 +215,28 @@ def tts_wav(text: str, voice: str, lead_ms: int | None = None) -> bytes | None:
     command-injection surface. `lead_ms` overrides the silence pad for this clip (the page
     sends 0 on continuation chunks so a multi-clip reply plays gaplessly); None uses the
     PIPER_LEAD_MS default."""
+    # Every None path below is logged: a silent None degrades the reply to the device's
+    # native voice, which looks like "the wrong voice" rather than a failure, so the cause
+    # must be visible (via `docker logs server-brain` / the debug console).
     if shutil.which(PIPER_BIN) is None:
+        print(f"[tts] render failed for {voice!r}: piper binary {PIPER_BIN!r} not on PATH",
+              file=sys.stderr)
         return None
     resolved = _resolve_voice(voice)
     if resolved is None:
+        print(f"[tts] render failed for {voice!r}: no voices installed", file=sys.stderr)
         return None
     model, speaker = resolved
     if not model.exists():
+        print(f"[tts] render failed for {voice!r}: model file {model} missing", file=sys.stderr)
         return None
+    if TTS_DEBUG:
+        print(f"[tts] rendering {voice!r} -> {model.stem} speaker={speaker} ({len(text)} chars)",
+              file=sys.stderr)
     cmd = [PIPER_BIN, "--model", str(model), "--output_file"]
     tmp = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
     tmp.close()
+    started = time.monotonic()
     try:
         cmd.append(tmp.name)
         if speaker is not None:
@@ -228,9 +246,7 @@ def tts_wav(text: str, voice: str, lead_ms: int | None = None) -> bytes | None:
         )
         data = Path(tmp.name).read_bytes()
     except (subprocess.SubprocessError, OSError) as exc:
-        # A silent None here degrades the reply to the device's native voice, which looks
-        # like "the wrong voice" rather than a failure — so name the cause in the logs (the
-        # only place to see it): a timeout points at PIPER_TIMEOUT_S, a non-zero exit at a
+        # Name the cause: a timeout points at PIPER_TIMEOUT_S, a non-zero exit at a
         # bad/corrupt model (piper's own stderr says which).
         detail = f"exit {exc.returncode}: {exc.stderr.decode(errors='replace').strip()[:300]}" \
             if isinstance(exc, subprocess.CalledProcessError) else str(exc) or type(exc).__name__
@@ -241,6 +257,10 @@ def tts_wav(text: str, voice: str, lead_ms: int | None = None) -> bytes | None:
             os.unlink(tmp.name)
         except OSError:
             pass
+    if TTS_DEBUG:
+        ms = int((time.monotonic() - started) * 1000)
+        print(f"[tts] rendered {voice!r} (speaker {speaker}): {len(data)} bytes in {ms} ms",
+              file=sys.stderr)
     lead = PIPER_LEAD_MS if lead_ms is None else lead_ms
     return _pad_lead(data, lead) if lead > 0 else data
 
