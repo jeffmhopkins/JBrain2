@@ -1,4 +1,9 @@
-# server-brain — neural wall display
+# wall — neural wall display
+
+> Read-aloud TTS moved to the `tts-stt` service (`deploy/tts-stt`); this wall keeps a thin
+> `/tts*` **forward** to it so the kiosk browser fetches audio same-origin. See that README
+> for piper, voices, and the warm model cache.
+
 
 A dark, glowing neural-network animation of the JBrain2 host's live status, for
 the otherwise-blank terminal/monitor on the box. The brain fires in travelling
@@ -75,10 +80,10 @@ just plays. No piper voices on the box → the button never appears and speech s
 
 ## Deployment (auto-started, auto-updated)
 
-It runs as the `server-brain` service in `deploy/docker-compose.yml` — a default
-profile service on a thin `python:3.12-slim` + `piper` image
-(`deploy/Dockerfile.server-brain`; piper + the baked default voices power the
-toggle-gated read-aloud below), so the standard deploy flow owns its lifecycle:
+It runs as the `wall` service in `deploy/docker-compose.yml` — a default service on a thin
+stdlib `python:3.12-slim` image (`deploy/Dockerfile.wall`; no piper — read-aloud audio is
+rendered by the `tts-stt` service and forwarded here), so the standard deploy flow owns its
+lifecycle:
 
 - **`jbrain update`** brings it up and keeps it current via `docker compose up
   -d`. The page still hot-reloads with no rebuild: `serve.py` re-reads `index.html`

@@ -1,6 +1,6 @@
 # JBrain2 — Architecture
 
-> **Status:** Living · **Last verified:** 2026-07-03
+> **Status:** Living · **Last verified:** 2026-07-06
 
 A personal knowledge system: notes go in, a RAG pipeline indexes them, and an
 LLM maintains a wiki built **exclusively from notes as primary sources**. Over
@@ -28,7 +28,7 @@ dials out (no static IP or port-forwarding) — see `CLOUDFLARE_TUNNEL.md`.
 | `supervisor` | Minimal socket-mounted service | Host control: stack status/restart, log streaming, update orchestration (see Operations) |
 
 This is the core subset. Other always-on services (`searxng` + `reader` for the
-web tools, `server-brain` for the wall display) run stock too, and an **opt-in
+web tools, `wall` for the display, `tts-stt` for speech) run stock too, and an **opt-in
 fleet** lives behind compose profiles — the on-box model services (`local-llm`,
 `comfyui`, `whisper`), the coding sandbox (`jcode` + `claude-shim`), the
 family-location spine (`mqtt` + `mqtt-ingest`), and the tunnel (`cloudflared`).

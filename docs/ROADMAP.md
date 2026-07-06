@@ -213,7 +213,7 @@ The location + family + intake slices shipped; build records are under
   — a Tron/synthwave **3D** wireframe robot the kids make *do things* and talk to. One
   server-authoritative `pet_state`, two surfaces: the **phone Control** screen in the PWA (big kid
   play-buttons, push-to-talk, a grown-ups room-map) drives it via `POST /api/pet/command`, and the
-  **wall view lives on the on-box server-brain display** (`deploy/server-brain`, `:8800/pet`) — a
+  **wall view lives on the on-box wall display** (`deploy/wall`, `:8800/pet`) — a
   read-only WebGL room that polls the pet through the internal-only `GET /internal/pet` (Caddy never
   routes `/internal` off-box), so the display stays DB-free and the pet is never exposed publicly.
   **v2 (migration 0125)** pivoted from Tamagotchi decay to positive, command-and-response play: the

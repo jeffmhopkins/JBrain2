@@ -1,6 +1,6 @@
 # JBrain2 — Services & components map
 
-> **Status:** Living · **Last verified:** 2026-07-04
+> **Status:** Living · **Last verified:** 2026-07-06
 
 The concrete inventory of everything the box runs and everything baked into it:
 the Docker containers, the two apps (the PWA and the JBrain360 Android client),
@@ -10,7 +10,7 @@ explains the *design* and the *why*, this is the *what's actually here*.
 
 Everything is one Docker Compose stack (`deploy/docker-compose.yml`, project name
 `jbrain`) on one Ubuntu host. Most services are internal-only; only `proxy`
-(80/443) and the optional `server-brain` wall display (LAN :8800) publish a port.
+(80/443) and the `wall` display (LAN :8800) publish a port.
 
 ## The stack at a glance
 
@@ -26,7 +26,8 @@ Everything is one Docker Compose stack (`deploy/docker-compose.yml`, project nam
 | `supervisor` | minimal socket-mounted service | Holds the Docker socket; a fixed command set (status/restart/logs/update) behind an internal token. Drives the Ops screen. | internal |
 | `searxng` | SearXNG | Self-hosted metasearch backing `jerv`'s `web_search`/`web_fetch`. Only the KB-blind `jerv` reaches it. | internal |
 | `reader` | headless-Chromium reader (r.jina.ai-compatible) | `web_fetch` fallback renderer for bot-walled / JS-only pages. | internal |
-| `server-brain` | stdlib Python | Unauthenticated **neural-wall display** for the host's own monitor / a LAN kiosk — host vitals only (GPU %, RAM, power), no DB, its own LAN port :8800. | internal |
+| `wall` | stdlib Python | Unauthenticated **neural-wall display** for the host's own monitor / a LAN kiosk — host vitals only (GPU %, RAM, power), no DB, its own LAN port :8800; forwards read-aloud to `tts-stt`. | internal |
+| `tts-stt` | whisper.cpp + piper | The box's **speech I/O**: warm piper text-to-speech (:8801, the read-aloud renderer) + whisper.cpp speech-to-text (:8080). Default-on; the STT model is provisioned by `jbrain enable-whisper`. | internal |
 
 **Opt-in — compose-profile guarded (never start on a stock deploy):**
 
@@ -35,7 +36,7 @@ Everything is one Docker Compose stack (`deploy/docker-compose.yml`, project nam
 | `cloudflared` | `tunnel` | `install.sh` (dial-out tunnel mode) | Cloudflare Tunnel connector — public reachability with no static IP / port-forward, works behind CGNAT. See `../runbooks/CLOUDFLARE_TUNNEL.md`. |
 | `local-llm` | `local-llm` | `jbrain enable-local-models` | llama-swap fronting llama.cpp (Vulkan) — several GGUF models on one OpenAI-compatible endpoint, loaded/swapped on demand. |
 | `comfyui` | `comfyui` | `scripts/comfyui-setup.sh` | ROCm ComfyUI serving Qwen-Image (gen + edit) for the image tools. |
-| `whisper` | `whisper` | `jbrain enable-whisper` | whisper.cpp behind its **own** llama-swap — on-box speech-to-text, independent of the LLM gateway. |
+| STT model | `tts-stt` | `jbrain enable-whisper` | Provisions the whisper.cpp GGML model + config for the always-on `tts-stt` service (the container is default; only the model is opt-in). |
 | `jcode` | `jcode` | `scripts/jcode-setup.sh` | Sandboxed coding sessions: Claude Code's agent engine + `grok` CLI against an on-box coder model. KB-blind, isolated `jcode` network, resource-capped. See `../archive/JCODE_PLAN.md`. |
 | `claude-shim` | `jcode` | (with `jcode`) | LiteLLM Anthropic↔OpenAI translator so the Claude Agent SDK can talk to the OpenAI-speaking local gateway. |
 | `mqtt` | `mqtt` | JBrain360 setup | Mosquitto + go-auth broker (auth delegated to the API's `/internal/mqtt-*`) — the secure spine for family location. |
@@ -60,13 +61,13 @@ opted in. Full runbook: `../runbooks/STRIX_HALO_SETUP.md`; prompting behaviour:
   gateway never auto-evicts — the **app** (`jbrain.llm.residency`) is the sole
   evictor, freeing the fewest models to hold a free-RAM floor before each load and
   restoring what a displacement removed (the old all-or-nothing ~91 GB pin froze the
-  box). Serves the text tiers only — transcription is the separate `whisper` service
+  box). Serves the text tiers only — transcription is the `tts-stt` service
   below. The api hot-reloads its config after a context-window edit.
 - **`comfyui`** — ROCm (needs both `/dev/kfd` and `/dev/dri`, plus
   `HSA_OVERRIDE_GFX_VERSION`) serving Qwen-Image / Qwen-Image-Edit, with a
   Lightning fast path. Emits live `b_preview` frames so the chat shows a
   progressive image. See `../archive/IMAGE_GEN_*_PLAN.md`.
-- **`whisper`** — whisper.cpp behind a **separate** llama-swap so transcription
+- **`tts-stt`** — whisper.cpp behind its own llama-swap (plus warm piper TTS) so transcription
   works without local LLMs; load-on-demand, unload-after.
 
 Stock deploys route LLM calls to the cloud (Anthropic / xAI) through the LLM
