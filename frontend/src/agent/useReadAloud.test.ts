@@ -1,7 +1,7 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { api } from "../api/client";
-import { speakableText, useReadAloud } from "./useReadAloud";
+import { chunkSentences, speakableText, useReadAloud } from "./useReadAloud";
 
 vi.mock("../api/client", () => ({ api: { getSettings: vi.fn() } }));
 const getSettings = api.getSettings as unknown as ReturnType<typeof vi.fn>;
@@ -98,6 +98,104 @@ describe("useReadAloud", () => {
     expect(result.current.playing).toBe("a");
 
     act(() => utt.onend?.());
+    expect(result.current.playing).toBeNull();
+  });
+});
+
+describe("chunkSentences", () => {
+  it("splits complete sentences off the front, leaving a trailing partial", () => {
+    const { chunks, consumed } = chunkSentences("Hello world. How are yo", false);
+    expect(chunks).toEqual(["Hello world."]);
+    expect("Hello world. How are yo".slice(consumed)).toBe("How are yo");
+  });
+
+  it("keeps a partial final sentence until flushed", () => {
+    expect(chunkSentences("no terminator yet", false).chunks).toEqual([]);
+    expect(chunkSentences("no terminator yet", true).chunks).toEqual(["no terminator yet"]);
+  });
+
+  it("does not split a decimal (terminator with no following space)", () => {
+    expect(chunkSentences("pi is 3.14 exactly", true).chunks).toEqual(["pi is 3.14 exactly"]);
+  });
+
+  it("breaks on newlines and multiple terminators", () => {
+    expect(chunkSentences("One!\nTwo? Three.", true).chunks).toEqual(["One!", "Two?", "Three."]);
+  });
+});
+
+describe("useReadAloud auto-play", () => {
+  it("persists the auto-play mode across the localStorage key", () => {
+    const { result } = renderHook(() => useReadAloud());
+    expect(result.current.autoPlay).toBe(false);
+    act(() => result.current.toggleAutoPlay());
+    expect(result.current.autoPlay).toBe(true);
+    expect(localStorage.getItem("readAloudAutoPlay")).toBe("1");
+
+    act(() => result.current.toggleAutoPlay());
+    expect(result.current.autoPlay).toBe(false);
+    expect(localStorage.getItem("readAloudAutoPlay")).toBe("0");
+  });
+
+  it("restores auto-play from localStorage on mount", () => {
+    localStorage.setItem("readAloudAutoPlay", "1");
+    const { result } = renderHook(() => useReadAloud());
+    expect(result.current.autoPlay).toBe(true);
+  });
+
+  it("feeds a streaming turn sentence-by-sentence, flushing the tail on done", () => {
+    const { result } = renderHook(() => useReadAloud());
+    // First delta carries one complete sentence + a partial — only the complete one speaks.
+    act(() => result.current.feed("1", "The sky is blue. Grass is", false));
+    expect(synth.speak.mock.calls.map((c) => c[0].text)).toEqual(["The sky is blue."]);
+    expect(result.current.playing).toBe("1");
+
+    // More text arrives; the next complete sentence speaks (no re-speak of the first).
+    act(() => result.current.feed("1", "The sky is blue. Grass is green. And", false));
+    expect(synth.speak.mock.calls.map((c) => c[0].text)).toEqual([
+      "The sky is blue.",
+      "Grass is green.",
+    ]);
+
+    // Settle flushes the remaining partial sentence.
+    act(() => result.current.feed("1", "The sky is blue. Grass is green. And done", true));
+    expect(synth.speak.mock.calls.map((c) => c[0].text)).toEqual([
+      "The sky is blue.",
+      "Grass is green.",
+      "And done",
+    ]);
+  });
+
+  it("clears playing once the final fed chunk finishes", () => {
+    const { result } = renderHook(() => useReadAloud());
+    act(() => result.current.feed("1", "All at once.", false)); // begin streaming this turn
+    act(() => result.current.feed("1", "All at once.", true)); // settle flushes the sentence
+    expect(result.current.playing).toBe("1");
+    const last = synth.speak.mock.calls.at(-1)?.[0];
+    expect(last.text).toBe("All at once.");
+    act(() => last.onend?.());
+    expect(result.current.playing).toBeNull();
+  });
+
+  it("never auto-starts an already-settled turn", () => {
+    const { result } = renderHook(() => useReadAloud());
+    act(() => result.current.feed("1", "Settled already.", true));
+    expect(synth.speak).not.toHaveBeenCalled();
+    expect(result.current.playing).toBeNull();
+  });
+
+  it("does not resume a turn the owner paused mid-stream", () => {
+    const { result } = renderHook(() => useReadAloud());
+    act(() => result.current.feed("1", "First sentence.", false));
+    expect(result.current.playing).toBe("1");
+
+    // Owner taps pause on the still-streaming turn.
+    act(() => result.current.toggle("1", "First sentence."));
+    expect(result.current.playing).toBeNull();
+
+    // More text streams in — it must stay silent (suppressed), not resume.
+    synth.speak.mockClear();
+    act(() => result.current.feed("1", "First sentence. Second sentence.", false));
+    expect(synth.speak).not.toHaveBeenCalled();
     expect(result.current.playing).toBeNull();
   });
 });

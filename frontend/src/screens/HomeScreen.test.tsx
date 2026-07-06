@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ChatRequest } from "../agent/types";
 import type { FullBrainDeps } from "../agent/useFullBrain";
@@ -559,8 +559,8 @@ describe("HomeScreen read-aloud", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
 
-    // Nothing speaks on its own — the turn settles silent, offering a play control.
-    const play = await screen.findByRole("button", { name: "Read response aloud" });
+    // Nothing speaks on its own (auto-play off) — the turn settles silent, offering play.
+    const play = await screen.findByRole("button", { name: /Read response aloud/ });
     expect(synth.speak).not.toHaveBeenCalled();
 
     // Tapping play speaks the turn and flips the control to pause.
@@ -572,7 +572,40 @@ describe("HomeScreen read-aloud", () => {
     // Tapping pause cancels the speech and restores the play control.
     fireEvent.click(pause);
     expect(synth.cancel).toHaveBeenCalled();
-    await screen.findByRole("button", { name: "Read response aloud" });
+    await screen.findByRole("button", { name: /Read response aloud/ });
+  });
+
+  it("auto-play speaks the turn as it streams, chunk by chunk", async () => {
+    // Auto-play armed before entry (persisted preference).
+    localStorage.setItem("readAloudAutoPlay", "1");
+    let release: () => void = () => {};
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
+    const deps = fbDeps();
+    deps.chat = async function* () {
+      yield { type: "text_delta", text: "The sky is blue. " };
+      yield { type: "text_delta", text: "Grass is green." };
+      await gate; // hold the stream open so we observe speech BEFORE the turn settles
+      yield { type: "done", stop_reason: "end_turn" };
+    };
+    renderHome(deps);
+    fireEvent.click(screen.getByRole("tab", { name: "Brain" }));
+    await waitFor(() => screen.getByLabelText("Conversation"));
+
+    fireEvent.change(screen.getByLabelText("Composer"), { target: { value: "describe outside" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    // The first complete sentence speaks while the turn is still streaming (not settled).
+    await waitFor(() =>
+      expect(synth.speak.mock.calls.map((c) => c[0].text)).toContain("The sky is blue."),
+    );
+    expect(screen.queryByRole("button", { name: "Copy response" })).toBeNull(); // still streaming
+
+    act(() => release());
+    await waitFor(() =>
+      expect(synth.speak.mock.calls.map((c) => c[0].text)).toContain("Grass is green."),
+    );
   });
 
   it("offers no play control when read-aloud is unavailable (no speech engine)", async () => {
@@ -589,6 +622,6 @@ describe("HomeScreen read-aloud", () => {
     await waitFor(() => expect(screen.getByText("hush now")).toBeInTheDocument());
     // The copy affordance is there (settled answer), but no read-aloud play control.
     await screen.findByRole("button", { name: "Copy response" });
-    expect(screen.queryByRole("button", { name: "Read response aloud" })).toBeNull();
+    expect(screen.queryByRole("button", { name: /Read response aloud/ })).toBeNull();
   });
 });

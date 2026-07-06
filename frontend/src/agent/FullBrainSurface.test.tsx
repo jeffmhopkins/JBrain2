@@ -65,7 +65,12 @@ function Harness({
   onOpenEntity?: (id: string) => void;
   files?: File[];
   readAloud?:
-    | { playing: string | null; onToggle: (key: string, markdown: string) => void }
+    | {
+        playing: string | null;
+        autoPlay: boolean;
+        onToggle: (key: string, markdown: string) => void;
+        onToggleAuto: () => void;
+      }
     | undefined;
 }) {
   const fb = useFullBrain("fullbrain", d);
@@ -700,20 +705,25 @@ describe("FullBrainSurface", () => {
       yield { type: "text_delta", text: "spoken answer" };
       yield { type: "done", stop_reason: "end_turn" };
     }
-    render(<Harness d={deps({ chat: answer })} readAloud={{ playing: null, onToggle }} />);
+    render(
+      <Harness
+        d={deps({ chat: answer })}
+        readAloud={{ playing: null, autoPlay: false, onToggle, onToggleAuto: vi.fn() }}
+      />,
+    );
     await waitFor(() => screen.getByLabelText("Conversation"));
     fireEvent.change(screen.getByLabelText("Composer"), { target: { value: "read it" } });
     fireEvent.click(screen.getByRole("button", { name: "send" }));
 
     // The play control sits beside the copy button, whose label is gone (icon only) to
     // make room — its accessible name still identifies it.
-    const play = await screen.findByRole("button", { name: "Read response aloud" });
+    const play = await screen.findByRole("button", { name: /Read response aloud/ });
     expect(play).toHaveAttribute("aria-pressed", "false");
     const copy = screen.getByRole("button", { name: "Copy response" });
     expect(copy).toHaveClass("compact");
     expect(copy.querySelector(".fb-act-copy-lab")).toBeNull();
 
-    // Tapping it asks the parent to play this turn (positional key "1": user turn is 0).
+    // A quick tap asks the parent to play this turn (positional key "1": user turn is 0).
     fireEvent.click(play);
     expect(onToggle).toHaveBeenCalledWith("1", "spoken answer");
   });
@@ -723,13 +733,61 @@ describe("FullBrainSurface", () => {
       yield { type: "text_delta", text: "now playing" };
       yield { type: "done", stop_reason: "end_turn" };
     }
-    render(<Harness d={deps({ chat: answer })} readAloud={{ playing: "1", onToggle: vi.fn() }} />);
+    render(
+      <Harness
+        d={deps({ chat: answer })}
+        readAloud={{ playing: "1", autoPlay: false, onToggle: vi.fn(), onToggleAuto: vi.fn() }}
+      />,
+    );
     await waitFor(() => screen.getByLabelText("Conversation"));
     fireEvent.change(screen.getByLabelText("Composer"), { target: { value: "read it" } });
     fireEvent.click(screen.getByRole("button", { name: "send" }));
 
     const pause = await screen.findByRole("button", { name: "Pause reading aloud" });
     expect(pause).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("shows the auto-play state and toggles auto-play on a long-press (not a tap)", async () => {
+    const onToggle = vi.fn();
+    const onToggleAuto = vi.fn();
+    async function* answer(): AsyncGenerator<ChatEvent> {
+      yield { type: "text_delta", text: "auto answer" };
+      yield { type: "done", stop_reason: "end_turn" };
+    }
+    render(
+      <Harness
+        d={deps({ chat: answer })}
+        readAloud={{ playing: null, autoPlay: true, onToggle, onToggleAuto }}
+      />,
+    );
+    await waitFor(() => screen.getByLabelText("Conversation"));
+    fireEvent.change(screen.getByLabelText("Composer"), { target: { value: "read it" } });
+    fireEvent.click(screen.getByRole("button", { name: "send" }));
+
+    // Auto-play armed: the control reads as the auto state (long-press hint in its name).
+    const ctrl = await screen.findByRole("button", { name: /Auto-play on/ });
+    expect(ctrl).toHaveClass("auto");
+
+    // A held press past the threshold flips auto-play and the trailing click is swallowed.
+    vi.useFakeTimers();
+    try {
+      fireEvent.pointerDown(ctrl);
+      act(() => vi.advanceTimersByTime(600));
+      expect(onToggleAuto).toHaveBeenCalledTimes(1);
+      fireEvent.pointerUp(ctrl);
+      fireEvent.click(ctrl);
+      expect(onToggle).not.toHaveBeenCalled();
+
+      // A quick press (released before the threshold) is a plain tap → play this turn.
+      fireEvent.pointerDown(ctrl);
+      act(() => vi.advanceTimersByTime(100));
+      fireEvent.pointerUp(ctrl);
+      fireEvent.click(ctrl);
+      expect(onToggle).toHaveBeenCalledWith("1", "auto answer");
+      expect(onToggleAuto).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("shows thinking and worked on one activity line, thinking through the tools", async () => {
