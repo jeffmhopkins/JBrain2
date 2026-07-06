@@ -19,59 +19,11 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../api/client";
+import { chunkStream, speakable } from "./speakable.js";
 
 type ReadAloudEngine = "piper" | "native";
 
 const AUTOPLAY_KEY = "readAloudAutoPlay";
-
-// Strip the markdown the assistant writes down to speakable prose (mirrors the wall
-// display's mdToPlain): drop code, turn links into their text, and remove heading /
-// quote / list markers, emphasis, and footnote chips so none are read out literally.
-export function speakableText(md: string): string {
-  return md
-    .replace(/```[\s\S]*?```/g, " ") // fenced code blocks
-    .replace(/`([^`]+)`/g, "$1") // inline code
-    .replace(/!\[[^\]]*\]\([^)]*\)/g, " ") // images
-    .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1") // links -> their text
-    .replace(/\[\^[^\]]+\]/g, "") // footnote chips
-    .replace(/^\s{0,3}(?:[>#]+|[-*+]\s|\d+\.\s)\s*/gm, "") // heading / quote / list markers
-    .replace(/[*_~]/g, "") // emphasis
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-// Split complete sentences off the FRONT of `text` for incremental speech. A boundary
-// is a . ! or ? followed by whitespace, or a newline; a trailing partial sentence is
-// left behind (spoken on a later feed, or now if `flush`). Returns the chunks plus how
-// many chars were consumed so a streaming caller can advance its cursor. A terminator
-// with no following whitespace (e.g. "3.14") is NOT a boundary, so decimals stay whole.
-export function chunkSentences(
-  text: string,
-  flush: boolean,
-): { chunks: string[]; consumed: number } {
-  const chunks: string[] = [];
-  let start = 0;
-  for (let i = 0; i < text.length; i++) {
-    const c = text[i];
-    const term = c === "." || c === "!" || c === "?";
-    const nextIsSpace = i + 1 < text.length && /\s/.test(text[i + 1] as string);
-    if (c === "\n" || (term && nextIsSpace)) {
-      let end = i + 1;
-      while (end < text.length && /\s/.test(text[end] as string)) end++;
-      const chunk = text.slice(start, end).trim();
-      if (chunk) chunks.push(chunk);
-      start = end;
-      i = end - 1;
-    }
-  }
-  let consumed = start;
-  if (flush && start < text.length) {
-    const tail = text.slice(start).trim();
-    if (tail) chunks.push(tail);
-    consumed = text.length;
-  }
-  return { chunks, consumed };
-}
 
 export interface ReadAloud {
   /** Read-aloud is on AND an engine can speak (the device's native voice, or piper
@@ -394,8 +346,9 @@ export function useReadAloud(): ReadAloud {
         stop();
         return;
       }
-      const text = speakableText(markdown);
-      if (!text) return;
+      // The whole turn is known — normalize + split it into speakable clips (flush).
+      const { chunks } = chunkStream(markdown, true);
+      if (!chunks.length) return;
       suppressedRef.current.delete(key);
       try {
         beginQueue(key); // clears manualRef, so set it after
@@ -404,9 +357,9 @@ export function useReadAloud(): ReadAloud {
         // Native speaks the whole turn as one utterance; piper renders sentence-sized
         // clips (bounded < the server's /tts cap) and plays them back-to-back.
         if (usePiper()) {
-          for (const c of chunkSentences(text, true).chunks) speakChunk(key, c);
+          for (const c of chunks) speakChunk(key, c);
         } else {
-          speakChunk(key, text);
+          speakChunk(key, speakable(markdown));
         }
       } catch {
         stop();
@@ -428,13 +381,12 @@ export function useReadAloud(): ReadAloud {
       } else if (manualRef.current) {
         return; // this turn is under manual playback — don't double-feed it
       }
-      // speakableText trims the trailing space that marks a sentence boundary; restore
-      // it while streaming so a delta ending in ". " speaks its sentence right away
-      // rather than stalling until the next delta (or settle) arrives.
-      let plain = speakableText(textSoFar);
-      if (!done && /\s$/.test(textSoFar)) plain += " ";
-      const pending = plain.slice(spokenLenRef.current);
-      const { chunks, consumed } = chunkSentences(pending, done);
+      // chunkStream works on the RAW markdown from a raw-space cursor: it extracts only
+      // COMPLETE units (a whole sentence / table / code block), normalizes each with
+      // speakable(), and reports how many raw chars it consumed — stable across deltas, so
+      // a half-received table or a mid-token "." never speaks early.
+      const pending = textSoFar.slice(spokenLenRef.current);
+      const { chunks, consumed } = chunkStream(pending, done);
       try {
         for (const c of chunks) speakChunk(key, c);
       } catch {

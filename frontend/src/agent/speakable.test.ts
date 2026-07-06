@@ -1,5 +1,21 @@
 import { describe, expect, it } from "vitest";
-import { speakable } from "./speakable.js";
+import { chunkStream, speakable } from "./speakable.js";
+
+/** Feed `full` to chunkStream in `steps` growing prefixes (simulating streaming), advancing
+ * a raw cursor, then flush — returning every clip emitted in order. */
+function drive(full: string, steps: number): string[] {
+  const all: string[] = [];
+  let cursor = 0;
+  for (let k = 1; k <= steps; k++) {
+    const prefix = full.slice(0, Math.ceil((full.length * k) / steps));
+    const { chunks, consumed } = chunkStream(prefix.slice(cursor), false);
+    all.push(...chunks);
+    cursor += consumed;
+  }
+  const { chunks } = chunkStream(full.slice(cursor), true);
+  all.push(...chunks);
+  return all;
+}
 
 describe("speakable", () => {
   it("authors pauses: each line/list item/heading becomes its own sentence", () => {
@@ -18,7 +34,7 @@ describe("speakable", () => {
   it("linearizes a pipe table into one sentence per row", () => {
     const md = "| Name | Age |\n|------|-----|\n| Alice | 30 |\n| Bob | 25 |";
     expect(speakable(md)).toBe(
-      "Name, Age. Row one: Name, Alice. Age, thirty. Row two: Name, Bob. Age, twenty five.",
+      "Name, Age. Row one: Name, Alice; Age, thirty. Row two: Name, Bob; Age, twenty five.",
     );
   });
 
@@ -71,5 +87,44 @@ describe("speakable", () => {
     expect(speakable("")).toBe("");
     // @ts-expect-error — defends against a null/undefined answer body
     expect(speakable(null)).toBe("");
+  });
+});
+
+describe("chunkStream", () => {
+  it("emits one clip per complete sentence and holds a partial tail", () => {
+    expect(chunkStream("One sentence. Two sentence. Thr", false)).toEqual({
+      chunks: ["One sentence.", "Two sentence."],
+      consumed: "One sentence. Two sentence. ".length,
+    });
+  });
+
+  it("holds an open code fence until it closes", () => {
+    const open = "Here:\n```py\nprint(1)\n";
+    expect(chunkStream(open, false).chunks).toEqual(["Here:"]); // fence body held
+    const closed = `${open}print(2)\n\`\`\`\nDone.`;
+    expect(chunkStream(closed, true).chunks).toEqual(["Here: code block.", "Done."]);
+  });
+
+  it("holds a streaming table until the block is complete, then linearizes it whole", () => {
+    const partial = "Scores:\n| Name | Pts |\n|------|-----|\n| Al | 3 |\n";
+    // The table body is still open (a next row could arrive), so only the lead-in commits.
+    expect(chunkStream(partial, false).chunks).toEqual(["Scores:"]);
+    const full = `${partial}| Bo | 2 |\n\nAfter.`;
+    const clips = chunkStream(full, true).chunks;
+    expect(clips[0]).toContain("Scores:"); // label + column lead-in merge (label ends in ":")
+    expect(clips).toContain("Row one: Name, Al; Pts, three.");
+    expect(clips).toContain("Row two: Name, Bo; Pts, two.");
+    expect(clips.at(-1)).toBe("After.");
+  });
+
+  it("streaming in any number of steps yields the same clips as one shot (no loss/dup)", () => {
+    const doc =
+      "# Report\n\nWe shipped 3 things today.\n\n- Fixed login\n- Added 2 charts\n\n" +
+      "| Item | Qty |\n|------|-----|\n| Milk | 2 |\n| Eggs | 12 |\n\n" +
+      "```js\nconst x = 1;\n```\n\nSee https://example.com/docs for 50% more. Done ✅";
+    const oneShot = chunkStream(doc, true).chunks;
+    for (const steps of [1, 2, 3, 7, 20, doc.length]) {
+      expect(drive(doc, steps)).toEqual(oneShot);
+    }
   });
 });

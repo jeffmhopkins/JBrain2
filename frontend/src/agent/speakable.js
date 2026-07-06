@@ -173,7 +173,9 @@ function linearizeTables(text) {
         const cells = splitRow(lines[i + 1]);
         r += 1;
         const pairs = headers.map((h, c) => (h ? `${h}, ${cells[c] ?? ""}` : (cells[c] ?? "")));
-        out.push(`Row ${intToWords(r)}: ${pairs.join(". ")}.`);
+        // Pairs joined with "; " (not ". ") so the whole row stays ONE spoken clip — a bare
+        // "Age, thirty." clip would lose the "Row one" context.
+        out.push(`Row ${intToWords(r)}: ${pairs.join("; ")}.`);
         i += 1;
       }
     } else {
@@ -263,4 +265,108 @@ export function speakable(md) {
     .replace(/\s+([.!?,;:])/g, "$1")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+// --- streaming chunker -----------------------------------------------------------------
+
+const ENDS_LINE = /[.!?]["')\]]?\s*$/;
+// A line that begins a new block (so the previous line is a safe cut point even without
+// terminal punctuation): heading, list item, blockquote, table row, fence, or blank.
+const BLOCK_START = /^\s*(?:#{1,6}\s|[-*+]\s|\d+\.\s|>|\||`{3}|~{3})|^\s*$/;
+
+/** Split NORMALIZED text (one line, no newlines; decimals already verbalized) into
+ * sentence-sized clips for piper — on whitespace that follows terminal punctuation.
+ * Lossless (a lookbehind split keeps every character, even across abbreviations). */
+function splitClips(norm) {
+  return norm
+    .split(/(?<=[.!?])\s+/)
+    .map((c) => c.trim())
+    .filter(Boolean);
+}
+
+/** In the trailing (newline-less) line, the length up to the last COMPLETE sentence — so a
+ * partial final sentence is held for the next delta. A terminator is only a boundary when
+ * WHITESPACE follows it: a buffer that ends right at a "." is ambiguous mid-stream (it could
+ * be "example." → "example.com"), so it waits for the next char (flush commits the tail). */
+function intraLineSafe(line) {
+  let last = 0;
+  const re = /[.!?]["')\]]?\s/g;
+  let m;
+  while ((m = re.exec(line)) !== null) last = re.lastIndex;
+  return last;
+}
+
+/** The largest prefix of `raw` made only of COMPLETE units — never inside an open code
+ * fence or a still-streaming table, ending at a sentence/line boundary. */
+function committedLen(raw) {
+  const lines = raw.split("\n");
+  const starts = [];
+  let off = 0;
+  for (const ln of lines) {
+    starts.push(off);
+    off += ln.length + 1;
+  }
+  const lastIdx = lines.length - 1;
+  let inFence = false;
+  let fenceOpenAt = -1;
+  let tableStart = -1; // offset where the current trailing table run began (-1 = none)
+  let safe = 0;
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const isLast = i === lastIdx;
+    const lineEnd = starts[i] + line.length + (isLast ? 0 : 1);
+    if (/^\s*(?:```|~~~)/.test(line)) {
+      if (inFence) {
+        inFence = false;
+        fenceOpenAt = -1;
+        if (!isLast) safe = lineEnd; // closing fence -> committable
+      } else {
+        inFence = true;
+        fenceOpenAt = starts[i];
+      }
+      continue;
+    }
+    if (inFence) continue; // inside code -> not committable
+    if (isLast) {
+      const s = intraLineSafe(line); // trailing partial line -> commit whole sentences only
+      if (s > 0 && tableStart < 0) safe = starts[i] + s;
+      continue;
+    }
+    const next = lines[i + 1];
+    if (line.includes("|")) {
+      if (tableStart < 0) tableStart = starts[i];
+      // A table is complete only when a genuine terminating line follows — NOT another row,
+      // and NOT the empty trailing artifact of a buffer that just ends in a newline (a next
+      // row could still stream in). Hold the whole run until then.
+      const nextIsRow = next.includes("|");
+      const nextIsTrailingBlank = i + 1 === lastIdx && next === "";
+      if (nextIsRow || nextIsTrailingBlank) continue;
+      safe = lineEnd; // table terminated by a real non-table line
+      tableStart = -1;
+      continue;
+    }
+    // A newline-terminated prose line commits if the next line starts a new block/blank or
+    // this line ends a sentence — otherwise it's a soft-wrapped continuation, so hold.
+    if (BLOCK_START.test(next) || ENDS_LINE.test(line)) safe = lineEnd;
+  }
+  // Never commit into an open code fence or a still-streaming table at the buffer tail.
+  if (inFence && fenceOpenAt >= 0 && safe > fenceOpenAt) safe = fenceOpenAt;
+  if (tableStart >= 0 && safe > tableStart) safe = tableStart;
+  return safe;
+}
+
+/**
+ * Streaming, block-aware splitter for read-aloud. Given the raw markdown received since the
+ * caller's cursor, return normalized speakable clips for the COMPLETE units it can emit now,
+ * plus how many RAW chars were consumed (advance a raw-space cursor — stable across deltas).
+ * Incomplete trailing blocks (an open ``` fence, a table still streaming) and a partial
+ * trailing sentence are held until more arrives (or `flush`). Blocks normalize whole.
+ * @param {string} raw
+ * @param {boolean} flush
+ * @returns {{ chunks: string[]; consumed: number }}
+ */
+export function chunkStream(raw, flush) {
+  const committed = flush ? raw.length : committedLen(raw);
+  if (committed <= 0) return { chunks: [], consumed: 0 };
+  return { chunks: splitClips(speakable(raw.slice(0, committed))), consumed: committed };
 }
