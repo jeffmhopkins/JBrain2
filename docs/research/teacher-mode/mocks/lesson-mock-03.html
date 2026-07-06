@@ -1,0 +1,234 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Teacher Mode — Mock 03 · Adaptivity (Recursion)</title>
+<style>
+  :root {
+    color-scheme: dark light;
+    --bg:#0e1113; --surface:#171b1e; --surface-2:#1f2529; --border:#2b3237;
+    --text:#e7edf1; --dim:#8b979f; --faint:#5c666d;
+    --accent:#6aa9d6; --accent-dim:#28414f;
+    --good:#57b98a; --good-dim:#1c3a2c; --warn:#d8a24a; --warn-dim:#3a2f18;
+    --r-lg:16px; --r-md:12px; --r-pill:999px; --sp:4px;
+    --fs-0:12px; --fs-1:14px; --fs-2:16px; --fs-3:18px; --fs-4:22px;
+    --font:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+    --mono:"SF Mono",ui-monospace,Menlo,Consolas,monospace;
+  }
+  @media (prefers-color-scheme: light){
+    :root{ --bg:#f2f4f6; --surface:#fff; --surface-2:#f6f8fa; --border:#dde2e6;
+      --text:#141a1e; --dim:#5a666e; --faint:#8b979f; --accent:#2f7bb0; --accent-dim:#d3e6f3;
+      --good:#2f9d6b; --good-dim:#dcf1e7; --warn:#b8791f; --warn-dim:#f6ecd6; }
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--bg);color:var(--text);font-family:var(--font);font-size:var(--fs-1);line-height:1.5;-webkit-font-smoothing:antialiased;}
+  .phone{max-width:430px;margin:0 auto;min-height:100vh;padding:calc(var(--sp)*4) calc(var(--sp)*3) calc(var(--sp)*16);display:flex;flex-direction:column;gap:calc(var(--sp)*3);}
+
+  .appbar{display:flex;align-items:center;gap:calc(var(--sp)*2);padding:calc(var(--sp)*2) var(--sp);color:var(--dim);font-size:var(--fs-0);border-bottom:1px solid var(--border);margin-bottom:var(--sp);}
+  .appbar .dot{width:8px;height:8px;border-radius:var(--r-pill);background:var(--accent);}
+  .appbar b{color:var(--text);font-size:var(--fs-1);font-weight:600;} .appbar .spacer{flex:1;}
+
+  .turn{display:flex;gap:calc(var(--sp)*2);align-items:flex-end;}
+  .turn.student{flex-direction:row-reverse;}
+  .avatar{flex:0 0 auto;width:26px;height:26px;border-radius:var(--r-pill);display:grid;place-items:center;font-size:11px;font-weight:700;background:var(--accent-dim);color:var(--accent);margin-bottom:2px;}
+  .student .avatar{background:var(--surface-2);color:var(--dim);}
+  .bubble{max-width:82%;padding:calc(var(--sp)*2.5) calc(var(--sp)*3);border-radius:var(--r-lg);background:var(--surface);border:1px solid var(--border);border-bottom-left-radius:var(--sp);}
+  .student .bubble{background:var(--accent-dim);border-color:transparent;border-bottom-left-radius:var(--r-lg);border-bottom-right-radius:var(--sp);}
+  .bubble p{margin:0;} .bubble p+p{margin-top:calc(var(--sp)*2);}
+
+  .card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-lg);overflow:hidden;position:relative;}
+  .tag{position:absolute;top:0;right:0;font-size:10px;letter-spacing:.03em;color:var(--faint);background:var(--surface-2);border-left:1px solid var(--border);border-bottom:1px solid var(--border);border-bottom-left-radius:var(--r-md);padding:3px 8px;font-weight:600;z-index:2;}
+  .card-body{padding:calc(var(--sp)*3.5);}
+
+  /* dials */
+  .dials{display:flex;flex-direction:column;gap:calc(var(--sp)*2.5);padding-bottom:calc(var(--sp)*3.5);border-bottom:1px solid var(--border);margin-bottom:calc(var(--sp)*3.5);}
+  .dial{display:flex;align-items:center;gap:calc(var(--sp)*2);}
+  .dial > .lbl{font-size:var(--fs-0);color:var(--dim);width:64px;flex:0 0 auto;text-transform:uppercase;letter-spacing:.03em;font-weight:600;}
+  .seg{display:flex;gap:2px;padding:2px;background:var(--surface-2);border:1px solid var(--border);border-radius:var(--r-pill);flex:1;}
+  .seg button{flex:1;font:inherit;font-size:var(--fs-0);font-weight:600;color:var(--dim);background:transparent;border:0;padding:6px 4px;border-radius:var(--r-pill);cursor:pointer;white-space:nowrap;}
+  .seg button.on{background:var(--accent-dim);color:var(--accent);}
+  .combo{font-size:var(--fs-0);color:var(--faint);text-align:right;padding-right:100px;margin-bottom:calc(var(--sp)*2);}
+
+  .explain{font-size:var(--fs-2);min-height:120px;}
+  .explain .warm{color:var(--good);font-style:italic;display:block;margin-bottom:calc(var(--sp)*2);}
+  .explain .signoff{color:var(--dim);display:block;margin-top:calc(var(--sp)*2);}
+  .explain ol{margin:0;padding-left:calc(var(--sp)*5);display:flex;flex-direction:column;gap:var(--sp);}
+  .explain code, .term{font-family:var(--mono);background:var(--surface-2);border:1px solid var(--border);border-radius:6px;padding:0 5px;font-size:.92em;}
+  .term{color:var(--accent);}
+
+  /* confused */
+  .confbar{display:flex;align-items:center;gap:calc(var(--sp)*2);margin-top:calc(var(--sp)*3.5);padding-top:calc(var(--sp)*3);border-top:1px solid var(--border);}
+  .confbtn{font:inherit;font-size:var(--fs-0);font-weight:600;color:var(--warn);background:var(--warn-dim);border:1px solid var(--border);border-radius:var(--r-pill);padding:6px 12px;cursor:pointer;}
+  .chips{display:none;flex-wrap:wrap;gap:var(--sp);margin-top:calc(var(--sp)*2.5);}
+  .chips.show{display:flex;}
+  .chip{font:inherit;font-size:var(--fs-0);color:var(--text);background:var(--surface-2);border:1px solid var(--border);border-radius:var(--r-pill);padding:6px 12px;cursor:pointer;}
+  .chip:hover{border-color:var(--warn);}
+  .chips .q{font-size:var(--fs-0);color:var(--dim);width:100%;}
+
+  /* branch */
+  .branch{display:flex;flex-direction:column;gap:calc(var(--sp)*2.5);}
+  .branch h3{margin:0 0 var(--sp);font-size:var(--fs-2);padding-right:110px;}
+  .opt{display:flex;gap:calc(var(--sp)*3);align-items:center;text-align:left;font:inherit;cursor:pointer;background:var(--surface-2);border:1px solid var(--border);border-radius:var(--r-md);padding:calc(var(--sp)*3);color:var(--text);}
+  .opt:hover{border-color:var(--accent);}
+  .opt.rec{border-color:var(--good);}
+  .opt .ic{flex:0 0 auto;width:30px;height:30px;border-radius:var(--r-md);display:grid;place-items:center;background:var(--surface);border:1px solid var(--border);font-size:15px;}
+  .opt .t{flex:1;} .opt .t b{display:block;} .opt .t small{color:var(--dim);}
+  .badge{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.03em;color:var(--good);background:var(--good-dim);border-radius:var(--r-pill);padding:2px 8px;}
+  .note{text-align:center;color:var(--faint);font-size:var(--fs-0);padding:calc(var(--sp)*2);}
+</style>
+</head>
+<body>
+<main class="phone">
+
+  <div class="appbar">
+    <span class="dot"></span><b>Teacher</b><span>· Computer Science</span>
+    <span class="spacer"></span><span>Lesson 3 / 8</span>
+  </div>
+
+  <div class="turn teacher">
+    <div class="avatar">T</div>
+    <div class="bubble"><p>Let's tackle <b>recursion</b>. Use the dials to get the explanation at the level, pace, and tone that work for you — I'll rewrite it on the fly.</p></div>
+  </div>
+
+  <!-- 1 · ADAPTIVITY DIALS + live explanation -->
+  <section class="card" aria-label="Adaptivity dials">
+    <span class="tag">adaptivity dials ⭐</span>
+    <div class="card-body">
+      <div class="dials">
+        <div class="dial"><span class="lbl">Level</span>
+          <div class="seg" id="d-level">
+            <button data-v="beginner" class="on">Beginner</button>
+            <button data-v="intermediate">Intermediate</button>
+            <button data-v="advanced">Advanced</button>
+          </div>
+        </div>
+        <div class="dial"><span class="lbl">Pace</span>
+          <div class="seg" id="d-pace">
+            <button data-v="overview" class="on">Overview</button>
+            <button data-v="steps">Step-by-step</button>
+          </div>
+        </div>
+        <div class="dial"><span class="lbl">Tone</span>
+          <div class="seg" id="d-tone">
+            <button data-v="warm" class="on">Warm</button>
+            <button data-v="terse">Terse</button>
+          </div>
+        </div>
+      </div>
+      <div class="combo" id="combo"></div>
+      <div class="explain" id="explain"></div>
+
+      <!-- 2 · CONFUSED FLAG lives right under the explanation -->
+      <div class="confbar">
+        <button class="confbtn" id="confbtn">🚩 I'm confused here</button>
+        <span style="font-size:var(--fs-0);color:var(--faint)">— get a targeted re-explain</span>
+      </div>
+      <div class="chips" id="chips">
+        <span class="q">Which part is fuzzy?</span>
+        <button class="chip" data-k="base">the “base case”</button>
+        <button class="chip" data-k="stop">why it eventually stops</button>
+        <button class="chip" data-k="self">a function calling itself</button>
+      </div>
+    </div>
+  </section>
+
+  <div id="reexplain"></div>
+
+  <div class="turn teacher">
+    <div class="avatar">T</div>
+    <div class="bubble"><p>You moved through that quickly. Where do you want to go next?</p></div>
+  </div>
+
+  <!-- 3 · ADAPTIVE BRANCHING -->
+  <section class="card" aria-label="Adaptive branching">
+    <span class="tag">adaptive branching ⭐</span>
+    <div class="card-body branch">
+      <h3>Where to next?</h3>
+      <button class="opt rec" data-b="practice">
+        <span class="ic">✎</span>
+        <span class="t"><b>Write <code>factorial(n)</code> yourself</b><small>You breezed the analogy — practice will lock it in.</small></span>
+        <span class="badge">Recommended</span>
+      </button>
+      <button class="opt" data-b="trace">
+        <span class="ic">▷</span>
+        <span class="t"><b>Watch a call get traced on the stack</b><small>See each frame push and pop, step by step.</small></span>
+      </button>
+      <button class="opt" data-b="move">
+        <span class="ic">→</span>
+        <span class="t"><b>Move on: recursion vs. iteration</b><small>When to reach for a loop instead.</small></span>
+      </button>
+    </div>
+  </section>
+
+  <p class="note">Mock 03 · move the three dials to rewrite the explanation live, tap “I'm confused” for a targeted re-explain, then pick a branch.</p>
+
+</main>
+
+<script>
+  const CORE = {
+    beginner: {
+      overview: 'Think of recursion like a set of Russian nesting dolls. To open the biggest doll you open the one inside it, then the one inside that — the same move on a smaller version each time — until you reach the tiny solid doll that won\'t open. That last doll is the <span class="term">base case</span>: the signal to stop.',
+      steps: ['Do the same move on a <b>smaller</b> version of the problem.','Keep shrinking it each round.','Stop at the smallest case that needs no more shrinking — the <span class="term">base case</span>.','That\'s recursion: a thing defined using a smaller copy of itself.']
+    },
+    intermediate: {
+      overview: 'A recursive function is one that <b>calls itself</b> on a smaller input. Every recursion needs two parts: a <span class="term">base case</span> that returns an answer directly with no further call, and a recursive case that shrinks the problem and calls itself. e.g. <code>factorial(n) = n × factorial(n−1)</code>, with <code>factorial(0)=1</code>.',
+      steps: ['Write the <span class="term">base case</span>: the smallest input you can answer immediately.','Write the recursive case: solve a smaller version by calling the function itself.','Fold that smaller result into your answer.','<code>factorial(n) = n × factorial(n−1)</code>, base case <code>factorial(0)=1</code>.']
+    },
+    advanced: {
+      overview: 'Each call pushes a <b>stack frame</b> holding that call\'s locals and return address. Frames accumulate as the problem descends toward the <span class="term">base case</span>; once reached, calls return in reverse, each frame popping and folding its result into its caller. Depth is bounded by stack size — a missing or too-deep base case overflows it.',
+      steps: ['A call pushes a stack frame (locals + return address).','Recursive descent stacks frames until the <span class="term">base case</span>.','Base case returns without recursing — unwinding begins.','Frames pop LIFO, each folding its child\'s result upward.']
+    }
+  };
+  const WARM = { lead:'No stress — this one clicks for everyone eventually. ', sign:'Make sense so far? 🙂' };
+
+  const state = { level:'beginner', pace:'overview', tone:'warm' };
+  const cap = s => s[0].toUpperCase()+s.slice(1);
+
+  function render(){
+    document.getElementById('combo').textContent =
+      cap(state.level)+' · '+(state.pace==='steps'?'Step-by-step':'Overview')+' · '+cap(state.tone);
+    const c = CORE[state.level];
+    let html='';
+    if(state.tone==='warm') html+='<span class="warm">'+WARM.lead+'</span>';
+    if(state.pace==='overview'){ html+='<p>'+c.overview+'</p>'; }
+    else { html+='<ol>'+c.steps.map(s=>'<li>'+s+'</li>').join('')+'</ol>'; }
+    if(state.tone==='warm') html+='<span class="signoff">'+WARM.sign+'</span>';
+    document.getElementById('explain').innerHTML=html;
+  }
+  function wire(id,key){
+    const g=document.getElementById(id);
+    g.addEventListener('click',e=>{ const b=e.target.closest('button'); if(!b)return;
+      [...g.children].forEach(x=>x.classList.remove('on')); b.classList.add('on');
+      state[key]=b.dataset.v; render();
+    });
+  }
+  wire('d-level','level'); wire('d-pace','pace'); wire('d-tone','tone'); render();
+
+  // 2 · confused → targeted re-explain
+  const RE = {
+    base:'<b>The base case</b> is just the stopping point — the smallest input where you already know the answer without recursing. For the dolls it\'s the solid tiny doll; in code it\'s the <code>if</code> that <b>returns a value</b> instead of calling the function again.',
+    stop:'<b>Why it stops:</b> every step makes the problem <i>smaller</i>, and the base case catches the smallest one. Remove the base case (or forget to shrink) and it calls itself forever — that\'s infinite recursion / a stack overflow.',
+    self:'<b>A function calling itself</b> isn\'t magic — it\'s the same function starting fresh on a smaller input, like standing between two mirrors. Each "copy" waits for the smaller copy\'s answer before finishing its own.'
+  };
+  document.getElementById('confbtn').addEventListener('click',()=>{
+    document.getElementById('chips').classList.toggle('show');
+  });
+  document.getElementById('chips').addEventListener('click',e=>{
+    const c=e.target.closest('.chip'); if(!c)return;
+    document.getElementById('chips').classList.remove('show');
+    const host=document.getElementById('reexplain');
+    host.innerHTML =
+      '<div class="turn student"><div class="avatar">You</div><div class="bubble"><p>🚩 Confused about '+c.textContent+'</p></div></div>'+
+      '<div class="turn teacher"><div class="avatar">T</div><div class="bubble"><p>'+RE[c.dataset.k]+'</p></div></div>';
+    host.scrollIntoView({behavior:'smooth',block:'center'});
+  });
+
+  // 3 · branch select (propose, don't mutate)
+  document.querySelectorAll('.opt').forEach(o=>o.addEventListener('click',()=>{
+    document.querySelectorAll('.opt').forEach(x=>x.style.outline='');
+    o.style.outline='2px solid var(--accent)';
+  }));
+</script>
+</body>
+</html>
