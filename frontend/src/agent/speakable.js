@@ -272,9 +272,21 @@ export function speakable(md) {
   // Emoji: verbalize the allow-list, drop the rest.
   for (const [glyph, word] of Object.entries(EMOJI_WORDS)) s = s.split(glyph).join(word);
   s = s.replace(EMOJI_STRIP, " ");
-  // Tidy: no space before punctuation (a dropped emoji/symbol can leave one), collapse.
+  // Parentheticals: piper carries no pause across ( ), so it races the aside into the
+  // surrounding clause in one breath. Bracket it with commas instead — a beat on each side —
+  // so "spending (target 5%) and reaffirm" reads as "spending, target five percent, and
+  // reaffirm". (Markdown links/images + fenced code already had their parens removed above,
+  // so only prose asides reach here.)
+  s = s.replace(/\s*\(\s*/g, ", ").replace(/\s*\)/g, ",");
+  // Tidy: no space before punctuation (a dropped emoji/symbol can leave one); fold a comma
+  // that a bracket left touching stronger punctuation ("2035)." → "2035,." → "2035.", and
+  // "(He agreed.)" → ".," → "."), then any doubled/leading comma; finally collapse whitespace.
   return s
     .replace(/\s+([.!?,;:])/g, "$1")
+    .replace(/,+(?=[.!?;:])/g, "")
+    .replace(/([.!?;:]),+/g, "$1")
+    .replace(/,{2,}/g, ",")
+    .replace(/^\s*,\s*/, "")
     .replace(/\s+/g, " ")
     .trim();
 }

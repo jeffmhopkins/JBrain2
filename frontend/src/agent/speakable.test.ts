@@ -86,6 +86,15 @@ describe("speakable", () => {
     expect(speakable("it is 20° outside")).toBe("it is twenty degrees outside.");
   });
 
+  it("brackets a parenthetical with commas so piper pauses around it", () => {
+    expect(speakable("defence spending (target 5% by 2035) and reaffirm")).toBe(
+      "defence spending, target five percent by two thousand thirty five, and reaffirm.",
+    );
+    // A parenthetical at a sentence end folds into the period — no ",." / ".," stutter.
+    expect(speakable("raise it (a lot).")).toBe("raise it, a lot.");
+    expect(speakable("He agreed (reluctantly.)")).toBe("He agreed, reluctantly.");
+  });
+
   it("strips emphasis, headings, blockquotes and horizontal rules", () => {
     expect(speakable("**Bold** and _italic_ and ~~struck~~.")).toBe("Bold and italic and struck.");
     expect(speakable("> quoted note\n\n---\n\nafter rule")).toBe("quoted note. after rule.");
