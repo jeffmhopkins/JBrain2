@@ -215,11 +215,13 @@ in `serve.py` (keyed by model stem → speaker names from the model's `.onnx.jso
 uncurated multi-speaker model falls back to its default speaker so it stays usable. `serve.py` resolves
 the id's speaker index and passes it to piper as `--speaker`.
 
-**The PWA reads aloud too.** The in-chat read-aloud (per-turn play button) renders through this same
-piper, reached from the PWA over the authenticated api proxy `GET /api/brain/tts` /
-`GET /api/brain/voices` (the api → this on-box service, internal network only). The voice — any id
-above, speakers included — is chosen in **Settings → Read-aloud voice** (`brain_answer_voice`), which
-also offers a *play sample* button; that setting is the wall's answer voice as well.
+**The PWA reads aloud too.** The in-chat read-aloud (per-turn play button) can render through this
+same piper, reached from the PWA over the authenticated api proxy `GET /api/brain/tts` /
+`GET /api/brain/voices` (the api → this on-box service, internal network only). **Settings → Read-aloud
+voice** picks the engine (`brain_read_aloud_engine`): **piper** (the voice — any id above, speakers
+included, chosen via `brain_answer_voice`, which is also the wall's answer voice; a *play sample*
+button auditions it) with an automatic fall back to the **device's native (Web Speech) voice** when
+this box is unreachable, or **native** to always use the device voice.
 
 **The whole reply, not an excerpt.** The page splits a reply into sentence-sized clips and plays them
 back-to-back through one queue: the first clip renders while the rest queue, so speech starts fast, the

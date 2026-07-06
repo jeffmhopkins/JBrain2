@@ -335,6 +335,7 @@ const SETTINGS: AppSettings = {
   brain_llm_stream: false,
   brain_read_aloud: false,
   brain_answer_voice: "en_US-amy-medium",
+  brain_read_aloud_engine: "piper",
 };
 
 // The box's installed piper voices, for the read-aloud voice picker mock — one curated
@@ -3336,6 +3337,9 @@ export const mockFetch: typeof fetch = async (input, init) => {
       } else if (key === "brain_answer_voice") {
         if (typeof value !== "string" || !value.trim()) return json({ detail: "empty voice" }, 422);
         SETTINGS.brain_answer_voice = value;
+      } else if (key === "brain_read_aloud_engine") {
+        if (value !== "piper" && value !== "native") return json({ detail: "bad engine" }, 422);
+        SETTINGS.brain_read_aloud_engine = value;
       } else {
         return json({ detail: `unknown key ${key}` }, 422);
       }

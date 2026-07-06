@@ -13,9 +13,10 @@ from pydantic import BaseModel, ConfigDict, Field
 from jbrain.api.deps import PrincipalDep
 from jbrain.api.notes import ctx_for
 from jbrain.settings_store import (
-    BRAIN_ANSWER_VOICE_KEY,
     BRAIN_ANSWER_VOICE_DEFAULT,
+    BRAIN_ANSWER_VOICE_KEY,
     BRAIN_LLM_STREAM_KEY,
+    BRAIN_READ_ALOUD_ENGINE_KEY,
     BRAIN_READ_ALOUD_KEY,
     IMAGE_ANALYSIS_KEY,
     OWNER_TIMEZONE_KEY,
@@ -49,6 +50,9 @@ class SettingsOut(BaseModel):
     # PWA renders its per-turn read-aloud through piper in this voice, and its Settings
     # picker writes it. Defaults to Amy.
     brain_answer_voice: str = BRAIN_ANSWER_VOICE_DEFAULT
+    # Which engine the PWA read-aloud renders with — "piper" (on-box, native fallback) or
+    # "native" (the browser's own voice). Defaults to piper.
+    brain_read_aloud_engine: Literal["piper", "native"] = "piper"
 
 
 class SettingsPatch(BaseModel):
@@ -62,6 +66,7 @@ class SettingsPatch(BaseModel):
     # A voice id from the live installed picker; bounded so a junk value can't bloat the
     # row. Empty/blank is rejected below rather than stored (it would read as the default).
     brain_answer_voice: Annotated[str, Field(max_length=128)] | None = None
+    brain_read_aloud_engine: Literal["piper", "native"] | None = None
 
 
 async def _read(ctx, store: SqlSettingsStore) -> SettingsOut:
@@ -71,6 +76,7 @@ async def _read(ctx, store: SqlSettingsStore) -> SettingsOut:
         brain_llm_stream=await store.brain_llm_stream(ctx),
         brain_read_aloud=await store.brain_read_aloud(ctx),
         brain_answer_voice=await store.brain_answer_voice(ctx),
+        brain_read_aloud_engine=await store.brain_read_aloud_engine(ctx),
     )
 
 
@@ -108,4 +114,6 @@ async def update_settings(
         if not voice:
             raise HTTPException(status_code=422, detail="empty voice")
         await store.upsert(ctx, BRAIN_ANSWER_VOICE_KEY, voice)
+    if body.brain_read_aloud_engine is not None:
+        await store.upsert(ctx, BRAIN_READ_ALOUD_ENGINE_KEY, body.brain_read_aloud_engine)
     return await _read(ctx, store)

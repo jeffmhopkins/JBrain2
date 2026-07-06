@@ -1,16 +1,21 @@
 // In-chat read-aloud for the chat surface: when the owner has turned on the
 // brain_read_aloud setting (the same switch that gates the wall display's piper
 // voices), each COMPLETED assistant turn gets a play/pause control next to its copy
-// button. Tapping play speaks that one turn through the box's piper voice — the same
-// engine the wall uses — rendered on the box and streamed back over the owner's
-// authenticated api session (GET /api/brain/tts), so the voice matches the wall and
-// picking a voice/speaker in Settings (brain_answer_voice) applies here too. The control
-// flips to pause; tapping pause (or playing another turn, or leaving the surface) stops
-// the audio at once. A long reply is split into sentence-sized clips so the first audio
-// starts fast and the clips play back-to-back.
+// button. Tapping play speaks that one turn, and the control flips to pause; tapping
+// pause (or playing another turn, or leaving the surface) stops it at once.
+//
+// Two engines, chosen by the brain_read_aloud_engine setting:
+//  - "piper" (default): the box renders the turn in the chosen voice (brain_answer_voice)
+//    and the audio streams back over the owner's authenticated api session
+//    (GET /api/brain/tts), so the voice matches the wall. A long reply is split into
+//    sentence-sized clips so audio starts fast and plays back-to-back. If the box can't be
+//    reached, it falls back to the device's native voice so read-aloud still works.
+//  - "native": always the browser's own Web Speech voice — no box needed.
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../api/client";
+
+type ReadAloudEngine = "piper" | "native";
 
 // Strip the markdown the assistant writes down to speakable prose (mirrors the wall
 // display's mdToPlain): drop code, turn links into their text, and remove heading /
@@ -51,8 +56,8 @@ export function chunkForTts(text: string, cap = 800): string[] {
 }
 
 export interface ReadAloud {
-  /** The brain_read_aloud setting is on AND the box has piper voices we can reach —
-   * gates whether the bubbles show a play control at all. */
+  /** Read-aloud is on AND an engine can actually speak (a native voice on this device,
+   * or piper voices on the box) — gates whether the bubbles show a play control at all. */
   available: boolean;
   /** Key of the turn currently being spoken aloud, or null when silent — a bubble is
    * "playing" (shows pause) only when its key matches. */
@@ -65,13 +70,18 @@ export interface ReadAloud {
   stop: () => void;
 }
 
-const canPlay = (): boolean => typeof window !== "undefined" && "Audio" in window;
+const canPlayPiper = (): boolean => typeof window !== "undefined" && "Audio" in window;
+const canSpeakNative = (): boolean => typeof window !== "undefined" && "speechSynthesis" in window;
 
 export function useReadAloud(): ReadAloud {
   const [settingOn, setSettingOn] = useState(false);
   const [hasVoices, setHasVoices] = useState(false);
+  const [engine, setEngine] = useState<ReadAloudEngine>("piper");
   const [playing, setPlaying] = useState<string | null>(null);
   const answerVoiceRef = useRef("en_US-amy-medium");
+  // Live copies for the toggle callback (which closes over these without re-creating).
+  const engineRef = useRef<ReadAloudEngine>("piper");
+  const hasVoicesRef = useRef(false);
   const playingRef = useRef<string | null>(null);
   // The <audio> element in flight, so stop()/a switch can pause it at once.
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -79,8 +89,8 @@ export function useReadAloud(): ReadAloud {
   // fetch/play from a superseded turn sees the mismatch and bails without touching state.
   const genRef = useRef(0);
 
-  // Whether the owner enabled read-aloud, and which voice answers speak in — the same
-  // setting the wall reads. A voice/speaker change in Settings lands here on the next open.
+  // Whether read-aloud is on, which voice answers speak in, and which engine to use — the
+  // same settings the wall reads. A change in Settings lands here on the next open.
   useEffect(() => {
     let stale = false;
     api
@@ -89,6 +99,9 @@ export function useReadAloud(): ReadAloud {
         if (stale) return;
         setSettingOn(s.brain_read_aloud);
         if (s.brain_answer_voice) answerVoiceRef.current = s.brain_answer_voice;
+        const eng: ReadAloudEngine = s.brain_read_aloud_engine === "native" ? "native" : "piper";
+        engineRef.current = eng;
+        setEngine(eng);
       })
       .catch(() => {});
     return () => {
@@ -96,17 +109,22 @@ export function useReadAloud(): ReadAloud {
     };
   }, []);
 
-  // Which piper voices the box actually has — read-aloud has nothing to speak with when
-  // the display is unreachable (or has no models), so the control stays hidden then.
+  // Which piper voices the box has — piper mode needs at least one; without any (box
+  // unreachable / no models) piper mode falls back to the device's native voice.
   useEffect(() => {
     let stale = false;
     api
       .brainVoices()
       .then((voices) => {
-        if (!stale) setHasVoices(voices.length > 0);
+        if (stale) return;
+        hasVoicesRef.current = voices.length > 0;
+        setHasVoices(voices.length > 0);
       })
       .catch(() => {
-        if (!stale) setHasVoices(false);
+        if (!stale) {
+          hasVoicesRef.current = false;
+          setHasVoices(false);
+        }
       });
     return () => {
       stale = true;
@@ -129,27 +147,53 @@ export function useReadAloud(): ReadAloud {
         /* already torn down — nothing to pause */
       }
     }
+    if (canSpeakNative()) {
+      try {
+        window.speechSynthesis.cancel();
+      } catch {
+        /* engine unavailable — nothing to cancel */
+      }
+    }
     setPlay(null);
   }, [setPlay]);
 
-  const toggle = useCallback(
-    (key: string, markdown: string) => {
-      if (!canPlay()) return;
-      // Tapping the turn already playing pauses it.
-      if (playingRef.current === key) {
-        stop();
+  // Speak the whole turn with the browser's own voice — the "native" engine, and the
+  // fallback piper mode uses when the box can't render.
+  const speakNative = useCallback(
+    (text: string, gen: number) => {
+      if (!canSpeakNative()) {
+        if (gen === genRef.current) setPlay(null);
         return;
       }
-      const text = speakableText(markdown);
-      if (!text) return;
-      stop(); // never overlap the previous turn
-      const gen = genRef.current;
-      const chunks = chunkForTts(text);
-      setPlay(key);
+      try {
+        window.speechSynthesis.cancel();
+        const utt = new SpeechSynthesisUtterance(text);
+        const settle = () => {
+          if (gen === genRef.current) setPlay(null);
+        };
+        utt.onend = settle;
+        utt.onerror = settle;
+        window.speechSynthesis.speak(utt);
+      } catch {
+        if (gen === genRef.current) setPlay(null);
+      }
+    },
+    [setPlay],
+  );
 
-      // Render + play one clip, then chain to the next when it ends. Each step re-checks
-      // the generation token so a stop()/switch mid-fetch abandons the rest cleanly.
-      const playChunk = (idx: number): void => {
+  // Render + play one piper clip, then chain to the next when it ends. Each step re-checks
+  // the generation token so a stop()/switch mid-fetch abandons the rest cleanly. If the
+  // FIRST clip can't be rendered/played (box unreachable), fall back to the native voice
+  // for the whole turn rather than leaving it silent.
+  const playPiper = useCallback(
+    (text: string, gen: number) => {
+      const chunks = chunkForTts(text);
+      const onFail = (idx: number) => {
+        if (gen !== genRef.current) return;
+        if (idx === 0 && canSpeakNative()) speakNative(text, gen);
+        else setPlay(null);
+      };
+      const step = (idx: number): void => {
         if (gen !== genRef.current) return;
         const chunk = chunks[idx];
         if (chunk === undefined) {
@@ -163,30 +207,50 @@ export function useReadAloud(): ReadAloud {
             const url = URL.createObjectURL(blob);
             const audio = new Audio(url);
             audioRef.current = audio;
-            const next = () => {
+            audio.onended = () => {
               URL.revokeObjectURL(url);
-              playChunk(idx + 1);
+              step(idx + 1);
             };
-            audio.onended = next;
             audio.onerror = () => {
               URL.revokeObjectURL(url);
-              if (gen === genRef.current) setPlay(null);
+              onFail(idx);
             };
-            void audio.play().catch(() => {
-              if (gen === genRef.current) setPlay(null);
-            });
+            void audio.play().catch(() => onFail(idx));
           })
-          .catch(() => {
-            // Box unreachable mid-play — stop rather than hang on a half-read reply.
-            if (gen === genRef.current) setPlay(null);
-          });
+          .catch(() => onFail(idx));
       };
-      playChunk(0);
+      step(0);
     },
-    [stop, setPlay],
+    [setPlay, speakNative],
   );
 
-  const available = settingOn && hasVoices && canPlay();
+  const toggle = useCallback(
+    (key: string, markdown: string) => {
+      // Tapping the turn already playing pauses it.
+      if (playingRef.current === key) {
+        stop();
+        return;
+      }
+      const text = speakableText(markdown);
+      if (!text) return;
+      stop(); // never overlap the previous turn
+      const gen = genRef.current;
+      setPlay(key);
+      // Piper when it's the chosen engine and the box has voices we can play; otherwise
+      // (native engine, or piper with no reachable voices) the device's own voice.
+      if (engineRef.current === "piper" && hasVoicesRef.current && canPlayPiper()) {
+        playPiper(text, gen);
+      } else {
+        speakNative(text, gen);
+      }
+    },
+    [stop, setPlay, playPiper, speakNative],
+  );
+
+  // Native covers any device that can speak; piper covers a device that can play audio and
+  // a box that has voices. Either path being possible makes read-aloud available.
+  const available =
+    settingOn && (canSpeakNative() || (engine === "piper" && hasVoices && canPlayPiper()));
   // Disabling the whole feature stops any in-flight audio immediately.
   useEffect(() => {
     if (!available) stop();

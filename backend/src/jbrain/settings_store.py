@@ -135,6 +135,16 @@ BRAIN_ANSWER_VOICE_KEY = "brain_answer_voice"
 BRAIN_ANSWER_VOICE_DEFAULT = "en_US-amy-medium"
 
 
+# Which engine the PWA read-aloud renders with: "piper" (on-box, the brain_answer_voice
+# above — falls back to the device's native voice when the box is unreachable) or "native"
+# (always the browser's own Web Speech voice, which works with no box at all). Default
+# "piper"; any unrecognized stored value reads as the default.
+ReadAloudEngine = Literal["piper", "native"]
+READ_ALOUD_ENGINES: tuple[ReadAloudEngine, ...] = ("piper", "native")
+BRAIN_READ_ALOUD_ENGINE_KEY = "brain_read_aloud_engine"
+BRAIN_READ_ALOUD_ENGINE_DEFAULT: ReadAloudEngine = "piper"
+
+
 # The served-model id code mode (jcode) runs its coding agent against — the live
 # control surface for "which model does the jcode agent use". Absent/non-string =
 # "" (unset): the api falls back to the JBRAIN_JCODE_MODEL config default. The
@@ -462,6 +472,17 @@ class SqlSettingsStore:
         a valid voice."""
         raw = await self.get(ctx, BRAIN_ANSWER_VOICE_KEY, BRAIN_ANSWER_VOICE_DEFAULT)
         return raw if isinstance(raw, str) and raw else BRAIN_ANSWER_VOICE_DEFAULT
+
+    async def brain_read_aloud_engine(self, ctx: SessionContext) -> ReadAloudEngine:
+        """Which engine the PWA read-aloud renders with — "piper" (on-box, native
+        fallback) or "native". Defaults to piper; an unrecognized value reads as the
+        default."""
+        raw = await self.get(ctx, BRAIN_READ_ALOUD_ENGINE_KEY, BRAIN_READ_ALOUD_ENGINE_DEFAULT)
+        return (
+            cast(ReadAloudEngine, raw)
+            if raw in READ_ALOUD_ENGINES
+            else BRAIN_READ_ALOUD_ENGINE_DEFAULT
+        )
 
     async def jcode_model(self, ctx: SessionContext) -> str:
         """The selected served-model id for the code-mode (jcode) agent, or "" when

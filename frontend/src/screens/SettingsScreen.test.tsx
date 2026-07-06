@@ -15,6 +15,7 @@ function stubSettingsFetch(initial: "full" | "ocr" = "full") {
     brainStream: false,
     brainReadAloud: false,
     brainAnswerVoice: "en_US-amy-medium",
+    engine: "piper" as "piper" | "native",
   };
   const puts: unknown[] = [];
   const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
@@ -70,6 +71,7 @@ function stubSettingsFetch(initial: "full" | "ocr" = "full") {
         brain_llm_stream?: boolean;
         brain_read_aloud?: boolean;
         brain_answer_voice?: string;
+        brain_read_aloud_engine?: "piper" | "native";
       };
       puts.push(body);
       if (body.image_analysis_mode) state.mode = body.image_analysis_mode;
@@ -77,6 +79,7 @@ function stubSettingsFetch(initial: "full" | "ocr" = "full") {
       if (typeof body.brain_read_aloud === "boolean") state.brainReadAloud = body.brain_read_aloud;
       if (typeof body.brain_answer_voice === "string")
         state.brainAnswerVoice = body.brain_answer_voice;
+      if (body.brain_read_aloud_engine) state.engine = body.brain_read_aloud_engine;
     }
     return new Response(
       JSON.stringify({
@@ -84,6 +87,7 @@ function stubSettingsFetch(initial: "full" | "ocr" = "full") {
         brain_llm_stream: state.brainStream,
         brain_read_aloud: state.brainReadAloud,
         brain_answer_voice: state.brainAnswerVoice,
+        brain_read_aloud_engine: state.engine,
       }),
       { status: 200, headers: { "Content-Type": "application/json" } },
     );
@@ -166,6 +170,22 @@ describe("SettingsScreen read-aloud voice picker", () => {
     await waitFor(() =>
       expect(puts).toContainEqual({ brain_answer_voice: "en_US-libritts_r-medium#3922" }),
     );
+  });
+
+  it("switches the read-aloud engine and hides the voice picker on Native", async () => {
+    const { puts } = stubSettingsFetch();
+    setup();
+    const group = within(await screen.findByLabelText("Read-aloud engine"));
+    // Defaults to Piper (on-box), so the voice picker is shown.
+    await waitFor(() =>
+      expect(group.getByRole("button", { name: "Piper" })).toHaveAttribute("aria-pressed", "true"),
+    );
+    expect(screen.getByLabelText("Read-aloud voice")).toBeInTheDocument();
+
+    fireEvent.click(group.getByRole("button", { name: "Native" }));
+    await waitFor(() => expect(puts).toContainEqual({ brain_read_aloud_engine: "native" }));
+    // Native uses the device voice — the piper voice picker drops away.
+    await waitFor(() => expect(screen.queryByLabelText("Read-aloud voice")).toBeNull());
   });
 
   it("renders a sample of the selected voice on tap", async () => {

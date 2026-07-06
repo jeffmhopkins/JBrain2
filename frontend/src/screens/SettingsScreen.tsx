@@ -66,6 +66,9 @@ export function SettingsScreen({ deviceLabel, onLogout }: SettingsScreenProps) {
   // (null until fetched; [] when the display is unreachable / has no models) and the
   // "play sample" state. The sample audio ref lets a new sample stop the previous one.
   const [brainAnswerVoice, setBrainAnswerVoice] = useState<string | null>(null);
+  // Which engine the read-aloud renders with: "piper" (on-box, native fallback) or
+  // "native" (the device's own voice). null until the server answers.
+  const [brainEngine, setBrainEngine] = useState<"piper" | "native" | null>(null);
   const [voices, setVoices] = useState<string[] | null>(null);
   const [samplePlaying, setSamplePlaying] = useState(false);
   const [sampleError, setSampleError] = useState<string | null>(null);
@@ -85,6 +88,7 @@ export function SettingsScreen({ deviceLabel, onLogout }: SettingsScreenProps) {
         setBrainStream(s.brain_llm_stream);
         setBrainReadAloud(s.brain_read_aloud);
         setBrainAnswerVoice(s.brain_answer_voice);
+        setBrainEngine(s.brain_read_aloud_engine);
         if (s.owner_timezone) setTimezone(s.owner_timezone);
       })
       .catch(() => {
@@ -329,6 +333,12 @@ export function SettingsScreen({ deviceLabel, onLogout }: SettingsScreenProps) {
     void api.updateSettings({ brain_answer_voice: id }).catch(() => {});
   }
 
+  function pickEngine(next: "piper" | "native") {
+    setBrainEngine(next); // optimistic
+    setSampleError(null);
+    void api.updateSettings({ brain_read_aloud_engine: next }).catch(() => {});
+  }
+
   // Render + play a short sample of the selected voice on the box's piper, so a speaker
   // can be auditioned before it's used. A new sample stops any previous one.
   function playSample() {
@@ -503,50 +513,70 @@ export function SettingsScreen({ deviceLabel, onLogout }: SettingsScreenProps) {
       <section className="settings-card">
         <h2 className="settings-label">Read-aloud voice</h2>
         <p className="settings-meta">
-          the piper voice the assistant reads answers in — the same voice the wall display uses, so
-          a pick here applies to both. multi-speaker models (like LibriTTS) list their individual
-          speakers. play a sample to hear one before choosing it.
+          how the assistant reads answers aloud in chat. piper renders on the box in the voice below
+          — the same voice the wall display uses — and falls back to this device's built-in voice
+          when the box can't be reached; native always uses this device's built-in voice.
         </p>
-        {voices === null ? (
-          <div className="settings-value">…</div>
-        ) : voices.length === 0 ? (
-          <p className="settings-meta">
-            no voices installed on the box, or the display is unreachable — install them with
-            deploy/server-brain/install-tts.sh.
-          </p>
-        ) : (
-          <>
-            <label className="settings-field">
-              Voice
-              <select
-                aria-label="Read-aloud voice"
-                value={brainAnswerVoice ?? ""}
-                onChange={(e) => pickAnswerVoice(e.target.value)}
-              >
-                {/* Surface a stored voice the box no longer lists so the select isn't blank. */}
-                {brainAnswerVoice && !voices.includes(brainAnswerVoice) && (
-                  <option value={brainAnswerVoice}>{voiceLabel(brainAnswerVoice)}</option>
-                )}
-                {voices.map((v) => (
-                  <option key={v} value={v}>
-                    {voiceLabel(v)}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <div className="settings-actions">
-              <button
-                type="button"
-                className="seg"
-                disabled={!brainAnswerVoice || samplePlaying}
-                onClick={playSample}
-              >
-                {samplePlaying ? "Playing…" : "Play sample"}
-              </button>
-            </div>
-            {sampleError && <p className="settings-meta settings-error">{sampleError}</p>}
-          </>
-        )}
+        <div className="theme-picker" aria-label="Read-aloud engine">
+          {(["piper", "native"] as const).map((eng) => (
+            <button
+              key={eng}
+              type="button"
+              aria-pressed={brainEngine === eng}
+              className={`seg${brainEngine === eng ? " seg-on" : ""}`}
+              disabled={brainEngine === null}
+              onClick={() => pickEngine(eng)}
+            >
+              {eng === "piper" ? "Piper" : "Native"}
+            </button>
+          ))}
+        </div>
+        {brainEngine === "piper" &&
+          (voices === null ? (
+            <div className="settings-value">…</div>
+          ) : voices.length === 0 ? (
+            <p className="settings-meta">
+              no voices installed on the box, or the display is unreachable — install them with
+              deploy/server-brain/install-tts.sh. read-aloud uses this device's built-in voice until
+              then.
+            </p>
+          ) : (
+            <>
+              <p className="settings-meta">
+                multi-speaker models (like LibriTTS) list their individual speakers. play a sample
+                to hear one before choosing it.
+              </p>
+              <label className="settings-field">
+                Voice
+                <select
+                  aria-label="Read-aloud voice"
+                  value={brainAnswerVoice ?? ""}
+                  onChange={(e) => pickAnswerVoice(e.target.value)}
+                >
+                  {/* Surface a stored voice the box no longer lists so the select isn't blank. */}
+                  {brainAnswerVoice && !voices.includes(brainAnswerVoice) && (
+                    <option value={brainAnswerVoice}>{voiceLabel(brainAnswerVoice)}</option>
+                  )}
+                  {voices.map((v) => (
+                    <option key={v} value={v}>
+                      {voiceLabel(v)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <div className="settings-actions">
+                <button
+                  type="button"
+                  className="seg"
+                  disabled={!brainAnswerVoice || samplePlaying}
+                  onClick={playSample}
+                >
+                  {samplePlaying ? "Playing…" : "Play sample"}
+                </button>
+              </div>
+              {sampleError && <p className="settings-meta settings-error">{sampleError}</p>}
+            </>
+          ))}
       </section>
 
       <section className="settings-card">

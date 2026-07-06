@@ -332,6 +332,10 @@ export interface AppSettings {
   // brainVoices() (e.g. "en_US-amy-medium" or "en_US-libritts_r-medium#3922"). The
   // in-chat read-aloud renders each turn through piper in this voice.
   brain_answer_voice: string;
+  // Which engine the read-aloud renders with: "piper" (on-box, falls back to the
+  // device's native voice when the box is unreachable) or "native" (always the
+  // browser's own Web Speech voice).
+  brain_read_aloud_engine: "piper" | "native";
 }
 
 /** The read-only appointments ICS feed: enabled state + the URL token (owner-only). */

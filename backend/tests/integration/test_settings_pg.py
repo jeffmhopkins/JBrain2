@@ -140,6 +140,23 @@ async def test_brain_answer_voice_defaults_to_amy_and_round_trips(
     assert await store.brain_answer_voice(OWNER) == "en_US-amy-medium"
 
 
+async def test_brain_read_aloud_engine_defaults_piper_and_round_trips(
+    maker: async_sessionmaker[AsyncSession],
+) -> None:
+    from jbrain.settings_store import BRAIN_READ_ALOUD_ENGINE_KEY
+
+    store = SqlSettingsStore(maker)
+    # Absent → piper (on-box, native fallback).
+    assert await store.brain_read_aloud_engine(OWNER) == "piper"
+
+    await store.upsert(OWNER, BRAIN_READ_ALOUD_ENGINE_KEY, "native")
+    assert await store.brain_read_aloud_engine(OWNER) == "native"
+
+    # An unrecognized value reads back as the default.
+    await store.upsert(OWNER, BRAIN_READ_ALOUD_ENGINE_KEY, "robot")
+    assert await store.brain_read_aloud_engine(OWNER) == "piper"
+
+
 async def test_owner_timezone_round_trip_and_rejects_unknown_zones(
     maker: async_sessionmaker[AsyncSession],
 ) -> None:

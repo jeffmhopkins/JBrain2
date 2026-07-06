@@ -19,6 +19,7 @@ vi.mock("../api/client", async (importOriginal) => {
       getSettings: vi.fn(async () => ({
         brain_read_aloud: true,
         brain_answer_voice: "en_US-amy-medium",
+        brain_read_aloud_engine: "piper",
       })),
       brainVoices: vi.fn(async () => ["en_US-amy-medium", "en_US-libritts_r-medium#3922"]),
       brainTts: vi.fn(async () => new Blob(["wav"], { type: "audio/wav" })),
