@@ -692,11 +692,15 @@ local append with an amber "pending sync" chip until the outbox clears.
   meter fills the foot's left, with the action icons hard right.
 - **Read-aloud (per turn)**: when the owner has enabled read-aloud (the
   `brain_read_aloud` setting) and the browser can speak, each settled answer
-  carries a play control just left of its copy button — tapping it speaks that
-  one turn aloud on this device (browser TTS) and the glyph flips to pause;
-  tapping pause (or playing another turn, or leaving the surface) stops it. With
-  read-aloud on, the copy button drops its "Copy" label to just the icon so the
-  pair fits on the foot line.
+  carries a **three-state** play control just left of its copy button. Tapping
+  it speaks that one turn aloud on this device (browser TTS) and the glyph flips
+  to **pause**; tapping pause (or playing another turn, or leaving the surface)
+  stops it. A **long-press** arms **auto-play** (a violet loop-marked triangle —
+  the third state): every new turn then speaks itself *as it streams in*, fed
+  sentence-by-sentence so it starts talking without waiting for the whole answer;
+  long-press again to disarm. Auto-play is a device-local, persisted preference.
+  With read-aloud on, the copy button drops its "Copy" label to just the icon so
+  the pair fits on the foot line.
 
 ## Navigation: the card launcher (no bottom nav)
 
