@@ -8,11 +8,13 @@ owner holds a session), and the store's RLS enforces it regardless.
 from typing import Annotated, Literal, cast
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from jbrain.api.deps import PrincipalDep
 from jbrain.api.notes import ctx_for
 from jbrain.settings_store import (
+    BRAIN_ANSWER_VOICE_KEY,
+    BRAIN_ANSWER_VOICE_DEFAULT,
     BRAIN_LLM_STREAM_KEY,
     BRAIN_READ_ALOUD_KEY,
     IMAGE_ANALYSIS_KEY,
@@ -43,6 +45,10 @@ class SettingsOut(BaseModel):
     # default — the runtime companion to brain_llm_stream (BRAIN_READ_ALOUD_KEY),
     # same localhost-bound / box-monitor-only caveat.
     brain_read_aloud: bool = False
+    # The piper voice id the read-aloud speaks answers in (BRAIN_ANSWER_VOICE_KEY) — the
+    # PWA renders its per-turn read-aloud through piper in this voice, and its Settings
+    # picker writes it. Defaults to Amy.
+    brain_answer_voice: str = BRAIN_ANSWER_VOICE_DEFAULT
 
 
 class SettingsPatch(BaseModel):
@@ -53,6 +59,9 @@ class SettingsPatch(BaseModel):
     owner_timezone: str | None = None
     brain_llm_stream: bool | None = None
     brain_read_aloud: bool | None = None
+    # A voice id from the live installed picker; bounded so a junk value can't bloat the
+    # row. Empty/blank is rejected below rather than stored (it would read as the default).
+    brain_answer_voice: Annotated[str, Field(max_length=128)] | None = None
 
 
 async def _read(ctx, store: SqlSettingsStore) -> SettingsOut:
@@ -61,6 +70,7 @@ async def _read(ctx, store: SqlSettingsStore) -> SettingsOut:
         owner_timezone=await store.owner_timezone(ctx),
         brain_llm_stream=await store.brain_llm_stream(ctx),
         brain_read_aloud=await store.brain_read_aloud(ctx),
+        brain_answer_voice=await store.brain_answer_voice(ctx),
     )
 
 
@@ -91,4 +101,11 @@ async def update_settings(
         flag_emit = getattr(request.app.state, "brain_flag_emit", None)
         if flag_emit is not None:
             flag_emit("read_aloud", body.brain_read_aloud)
+    if body.brain_answer_voice is not None:
+        # A blank id would read back as the default anyway — reject it rather than store
+        # a value that silently means "unset".
+        voice = body.brain_answer_voice.strip()
+        if not voice:
+            raise HTTPException(status_code=422, detail="empty voice")
+        await store.upsert(ctx, BRAIN_ANSWER_VOICE_KEY, voice)
     return await _read(ctx, store)

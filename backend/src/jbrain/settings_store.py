@@ -124,6 +124,17 @@ BRAIN_READ_ALOUD_KEY = "brain_read_aloud"
 BRAIN_READ_ALOUD_DEFAULT = False
 
 
+# The piper voice the read-aloud speaks answers in — a voice id from the on-box picker
+# (server-brain GET /tts/voices), e.g. "en_US-amy-medium" or a multi-speaker
+# "en_US-libritts_r-medium#3922". The PWA reads this to render its per-turn read-aloud
+# through piper (via the api->box /api/brain/tts proxy), and its Settings picker writes
+# it. Absent / non-string / empty reads as the Amy default so read-aloud always has a
+# valid voice; the id is only lightly trusted (the client picks from the live installed
+# list, and piper itself falls back to its first voice on an unknown id).
+BRAIN_ANSWER_VOICE_KEY = "brain_answer_voice"
+BRAIN_ANSWER_VOICE_DEFAULT = "en_US-amy-medium"
+
+
 # The served-model id code mode (jcode) runs its coding agent against — the live
 # control surface for "which model does the jcode agent use". Absent/non-string =
 # "" (unset): the api falls back to the JBRAIN_JCODE_MODEL config default. The
@@ -444,6 +455,13 @@ class SqlSettingsStore:
         its piper voice panel). Defaults OFF; only an explicit `true` enables it (any
         non-true value reads as off)."""
         return await self.get(ctx, BRAIN_READ_ALOUD_KEY, BRAIN_READ_ALOUD_DEFAULT) is True
+
+    async def brain_answer_voice(self, ctx: SessionContext) -> str:
+        """The piper voice id the read-aloud speaks answers in. Defaults to Amy; a
+        non-string or empty stored value reads as the default so read-aloud always has
+        a valid voice."""
+        raw = await self.get(ctx, BRAIN_ANSWER_VOICE_KEY, BRAIN_ANSWER_VOICE_DEFAULT)
+        return raw if isinstance(raw, str) and raw else BRAIN_ANSWER_VOICE_DEFAULT
 
     async def jcode_model(self, ctx: SessionContext) -> str:
         """The selected served-model id for the code-mode (jcode) agent, or "" when

@@ -2,17 +2,27 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ChatRequest } from "../agent/types";
 import type { FullBrainDeps } from "../agent/useFullBrain";
+import { api } from "../api/client";
 import type { NoteActions } from "../notes/useNoteActions";
 import type { NotesController } from "../notes/useNotes";
 import { HomeScreen } from "./HomeScreen";
 
-// useReadAloud reads the brain_read_aloud setting from the live client; keep the rest of
-// the api real and only stub that read (on) so the read-aloud toggle is offered in tests.
+// useReadAloud reads the read-aloud setting + the box's piper voices from the live client;
+// keep the rest of the api real and only stub those reads so the read-aloud control is
+// offered in tests, and stub the TTS render so it never hits the network.
 vi.mock("../api/client", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../api/client")>();
   return {
     ...actual,
-    api: { ...actual.api, getSettings: vi.fn(async () => ({ brain_read_aloud: true })) },
+    api: {
+      ...actual.api,
+      getSettings: vi.fn(async () => ({
+        brain_read_aloud: true,
+        brain_answer_voice: "en_US-amy-medium",
+      })),
+      brainVoices: vi.fn(async () => ["en_US-amy-medium", "en_US-libritts_r-medium#3922"]),
+      brainTts: vi.fn(async () => new Blob(["wav"], { type: "audio/wav" })),
+    },
   };
 });
 
@@ -506,25 +516,35 @@ describe("HomeScreen mode scoping", () => {
 });
 
 describe("HomeScreen read-aloud", () => {
-  const synth = { speak: vi.fn(), cancel: vi.fn() };
+  // Read-aloud renders each turn through the box's piper (api.brainTts) and plays the
+  // returned audio; jsdom has no <audio>, so a stand-in records what plays.
+  const brainTts = api.brainTts as unknown as ReturnType<typeof vi.fn>;
+  const played: { paused: boolean; onended: (() => void) | null }[] = [];
+  class FakeAudio {
+    onended: (() => void) | null = null;
+    onerror: (() => void) | null = null;
+    paused = false;
+    constructor(_src: string) {
+      played.push(this);
+    }
+    play() {
+      return Promise.resolve();
+    }
+    pause() {
+      this.paused = true;
+    }
+  }
   beforeEach(() => {
-    synth.speak.mockClear();
-    synth.cancel.mockClear();
-    Object.defineProperty(window, "speechSynthesis", { configurable: true, value: synth });
-    Object.defineProperty(window, "SpeechSynthesisUtterance", {
-      configurable: true,
-      value: class {
-        text: string;
-        constructor(t: string) {
-          this.text = t;
-        }
-      },
-    });
+    brainTts.mockClear();
+    played.length = 0;
+    Object.defineProperty(window, "Audio", { configurable: true, value: FakeAudio });
+    Object.defineProperty(URL, "createObjectURL", { configurable: true, value: () => "blob:x" });
+    Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: () => {} });
     localStorage.clear();
   });
   afterEach(() => {
-    // Clear the stubbed engine so tests without it (elsewhere) see no speech support.
-    Object.defineProperty(window, "speechSynthesis", { configurable: true, value: undefined });
+    // Clear the stubbed engine so tests without it (elsewhere) see no audio support.
+    Reflect.deleteProperty(window, "Audio");
   });
 
   function streamingDeps(answer: string): FullBrainDeps {
@@ -561,24 +581,28 @@ describe("HomeScreen read-aloud", () => {
 
     // Nothing speaks on its own — the turn settles silent, offering a play control.
     const play = await screen.findByRole("button", { name: "Read response aloud" });
-    expect(synth.speak).not.toHaveBeenCalled();
+    expect(brainTts).not.toHaveBeenCalled();
 
-    // Tapping play speaks the turn and flips the control to pause.
+    // Tapping play renders the turn through the box's piper and flips to pause.
     fireEvent.click(play);
-    await waitFor(() => expect(synth.speak).toHaveBeenCalledTimes(1));
-    expect(synth.speak.mock.calls[0]?.[0].text).toBe("The answer is forty two.");
+    await waitFor(() => expect(brainTts).toHaveBeenCalledTimes(1));
+    expect(brainTts).toHaveBeenCalledWith(
+      "en_US-amy-medium",
+      "The answer is forty two.",
+      undefined,
+    );
     const pause = await screen.findByRole("button", { name: "Pause reading aloud" });
 
-    // Tapping pause cancels the speech and restores the play control.
+    // Tapping pause stops the audio and restores the play control.
     fireEvent.click(pause);
-    expect(synth.cancel).toHaveBeenCalled();
+    expect(played.at(-1)?.paused).toBe(true);
     await screen.findByRole("button", { name: "Read response aloud" });
   });
 
-  it("offers no play control when read-aloud is unavailable (no speech engine)", async () => {
-    // A browser with no Web Speech at all — the key is absent, not just undefined,
-    // so `"speechSynthesis" in window` is false and read-aloud stays unavailable.
-    Reflect.deleteProperty(window, "speechSynthesis");
+  it("offers no play control when read-aloud is unavailable (box has no voices)", async () => {
+    // The box reports no installed piper voices — read-aloud has nothing to speak with,
+    // so the control stays hidden (the piper equivalent of "no speech engine").
+    (api.brainVoices as unknown as ReturnType<typeof vi.fn>).mockResolvedValueOnce([]);
     renderHome(streamingDeps("hush now"));
     fireEvent.click(screen.getByRole("tab", { name: "Brain" }));
     await waitFor(() => screen.getByLabelText("Conversation"));

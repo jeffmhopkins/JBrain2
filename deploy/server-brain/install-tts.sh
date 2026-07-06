@@ -7,6 +7,8 @@
 #
 # Voices land in ./voices (or $BRAIN_PIPER_VOICES_DIR). Joe reads prompts, Amy reads
 # answers by default; the picker lists every model you drop here, so add more freely.
+# Multi-speaker models (e.g. libritts_r) expose curated speakers as extra voices —
+# see CURATED_SPEAKERS in serve.py.
 set -euo pipefail
 
 VOICES_ONLY=0
@@ -15,7 +17,9 @@ VOICES_ONLY=0
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 VOICES_DIR="${BRAIN_PIPER_VOICES_DIR:-$HERE/voices}"
 BASE="https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US"
-MODELS=(en_US-amy-medium en_US-joe-medium)   # answer, prompt — add more names here to preinstall
+# answer, prompt, then a multi-speaker model (libritts_r) whose curated speaker 3922
+# gives a second female agent voice — add more names here to preinstall.
+MODELS=(en_US-amy-medium en_US-joe-medium en_US-libritts_r-medium)
 
 log() { printf '[tts-setup] %s\n' "$*"; }
 

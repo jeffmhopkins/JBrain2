@@ -328,6 +328,10 @@ export interface AppSettings {
   // Read the streamed wall-display turns aloud (piper TTS on the box). OFF by
   // default — the runtime companion to brain_llm_stream, same localhost-only caveat.
   brain_read_aloud: boolean;
+  // The piper voice id the read-aloud speaks answers in — a voice id from
+  // brainVoices() (e.g. "en_US-amy-medium" or "en_US-libritts_r-medium#3922"). The
+  // in-chat read-aloud renders each turn through piper in this voice.
+  brain_answer_voice: string;
 }
 
 /** The read-only appointments ICS feed: enabled state + the URL token (owner-only). */
@@ -1674,6 +1678,27 @@ export const api = {
   async updateSettings(patch: Partial<AppSettings>): Promise<AppSettings> {
     const response = await request("/api/settings", jsonInit("PUT", patch));
     return (await response.json()) as AppSettings;
+  },
+
+  // The piper voice ids installed on the box (incl. curated multi-speaker entries like
+  // "en_US-libritts_r-medium#3922"), proxied through the api from the on-box display.
+  // Empty when the display is unconfigured/unreachable — read-aloud then has no voices.
+  async brainVoices(): Promise<string[]> {
+    const response = await request("/api/brain/voices");
+    const body = (await response.json()) as { voices?: unknown };
+    return Array.isArray(body.voices)
+      ? body.voices.filter((v): v is string => typeof v === "string")
+      : [];
+  },
+
+  // Render `text` to a WAV in `voice` on the box's piper (via the api proxy) — the audio
+  // the in-chat read-aloud and the Settings "play sample" button play. `lead` (silence
+  // pad, ms) is 0 on continuation chunks so a multi-clip reply plays gaplessly.
+  async brainTts(voice: string, text: string, lead?: number): Promise<Blob> {
+    const params = new URLSearchParams({ voice, text });
+    if (lead !== undefined) params.set("lead", String(lead));
+    const response = await request(`/api/brain/tts?${params.toString()}`);
+    return response.blob();
   },
 
   // The archivist's Gmail connection. Status is booleans only; saving a partial

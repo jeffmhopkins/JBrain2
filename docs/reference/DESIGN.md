@@ -691,12 +691,16 @@ local append with an amber "pending sync" chip until the outbox clears.
 - **Conversation-surface foot** (added post-Phase-1): a live context-window
   meter fills the foot's left, with the action icons hard right.
 - **Read-aloud (per turn)**: when the owner has enabled read-aloud (the
-  `brain_read_aloud` setting) and the browser can speak, each settled answer
-  carries a play control just left of its copy button — tapping it speaks that
-  one turn aloud on this device (browser TTS) and the glyph flips to pause;
-  tapping pause (or playing another turn, or leaving the surface) stops it. With
-  read-aloud on, the copy button drops its "Copy" label to just the icon so the
-  pair fits on the foot line.
+  `brain_read_aloud` setting) and the box has piper voices, each settled answer
+  carries a play control just left of its copy button — tapping it renders that
+  one turn through the box's piper in the chosen voice (`brain_answer_voice`,
+  streamed back over the api's `/api/brain/tts` proxy, split into sentence-sized
+  clips) and the glyph flips to pause; tapping pause (or playing another turn, or
+  leaving the surface) stops it. The voice — including a multi-speaker model's
+  individual speakers (e.g. LibriTTS 3922) — is chosen in **Settings → Read-aloud
+  voice**, which also offers a *play sample* button; the same voice reads the wall
+  display's answers. With read-aloud on, the copy button drops its "Copy" label to
+  just the icon so the pair fits on the foot line.
 
 ## Navigation: the card launcher (no bottom nav)
 

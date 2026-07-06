@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type {
   DebugToken,
   FeedConfig,
@@ -24,6 +24,22 @@ const IMAGE_ANALYSIS_OPTIONS: { value: ImageAnalysisMode; label: string }[] = [
   { value: "full", label: "full analysis" },
 ];
 
+// A short, content-free phrase the "play sample" button renders so the owner can hear a
+// voice/speaker before choosing it — never real answer text.
+const VOICE_SAMPLE_TEXT = "This is how the assistant will sound when it reads your answers aloud.";
+
+// Prettify a piper voice id for the picker: drop the "en_US-" locale + "-medium" quality,
+// title-case the model name, and surface a multi-speaker id's speaker after a dot —
+// "en_US-libritts_r-medium#3922" -> "Libritts_r · 3922", "en_US-amy-medium" -> "Amy".
+function voiceLabel(id: string): string {
+  const parts = id.split("#");
+  const model = parts[0] ?? id;
+  const speaker = parts[1];
+  const base = model.replace(/^[a-z]{2}_[A-Z]{2}-/, "").replace(/-(x_low|low|medium|high)$/, "");
+  const name = base ? base.charAt(0).toUpperCase() + base.slice(1) : id;
+  return speaker ? `${name} · ${speaker}` : name;
+}
+
 interface SettingsScreenProps {
   deviceLabel: string;
   onLogout: () => void;
@@ -46,6 +62,14 @@ export function SettingsScreen({ deviceLabel, onLogout }: SettingsScreenProps) {
   // Read the streamed wall-display turns aloud (piper TTS on the box). Off by default;
   // null until the server answers. Companion to the stream toggle above.
   const [brainReadAloud, setBrainReadAloud] = useState<boolean | null>(null);
+  // The piper voice id the read-aloud speaks answers in, plus the box's installed voices
+  // (null until fetched; [] when the display is unreachable / has no models) and the
+  // "play sample" state. The sample audio ref lets a new sample stop the previous one.
+  const [brainAnswerVoice, setBrainAnswerVoice] = useState<string | null>(null);
+  const [voices, setVoices] = useState<string[] | null>(null);
+  const [samplePlaying, setSamplePlaying] = useState(false);
+  const [sampleError, setSampleError] = useState<string | null>(null);
+  const sampleAudioRef = useRef<HTMLAudioElement | null>(null);
   // The owner's display timezone — synced from this device's zone on app load
   // (App.tsx); shown read-only so the owner knows which zone their times render
   // in. Falls back to the browser's detected zone before the server answers.
@@ -60,6 +84,7 @@ export function SettingsScreen({ deviceLabel, onLogout }: SettingsScreenProps) {
         setImageMode(s.image_analysis_mode);
         setBrainStream(s.brain_llm_stream);
         setBrainReadAloud(s.brain_read_aloud);
+        setBrainAnswerVoice(s.brain_answer_voice);
         if (s.owner_timezone) setTimezone(s.owner_timezone);
       })
       .catch(() => {
@@ -73,6 +98,32 @@ export function SettingsScreen({ deviceLabel, onLogout }: SettingsScreenProps) {
       stale = true;
     };
   }, []);
+
+  // Which piper voices the box has installed (incl. curated multi-speaker speakers), for
+  // the read-aloud voice picker. [] when the display is unreachable / has no models.
+  useEffect(() => {
+    let stale = false;
+    api
+      .brainVoices()
+      .then((v) => {
+        if (!stale) setVoices(v);
+      })
+      .catch(() => {
+        if (!stale) setVoices([]);
+      });
+    return () => {
+      stale = true;
+    };
+  }, []);
+
+  // Stop any sample still playing when the screen unmounts.
+  useEffect(
+    () => () => {
+      sampleAudioRef.current?.pause();
+      sampleAudioRef.current = null;
+    },
+    [],
+  );
 
   // The archivist's Gmail connection. Status is booleans only (secrets never leave
   // the server); the three inputs are write-only — empty fields are left unchanged.
@@ -272,6 +323,48 @@ export function SettingsScreen({ deviceLabel, onLogout }: SettingsScreenProps) {
     void api.updateSettings({ brain_read_aloud: on }).catch(() => {});
   }
 
+  function pickAnswerVoice(id: string) {
+    setBrainAnswerVoice(id); // optimistic
+    setSampleError(null);
+    void api.updateSettings({ brain_answer_voice: id }).catch(() => {});
+  }
+
+  // Render + play a short sample of the selected voice on the box's piper, so a speaker
+  // can be auditioned before it's used. A new sample stops any previous one.
+  function playSample() {
+    const voice = brainAnswerVoice;
+    if (!voice) return;
+    setSampleError(null);
+    sampleAudioRef.current?.pause();
+    sampleAudioRef.current = null;
+    setSamplePlaying(true);
+    void api
+      .brainTts(voice, VOICE_SAMPLE_TEXT)
+      .then((blob) => {
+        const url = URL.createObjectURL(blob);
+        const audio = new Audio(url);
+        sampleAudioRef.current = audio;
+        const done = () => {
+          URL.revokeObjectURL(url);
+          setSamplePlaying(false);
+          if (sampleAudioRef.current === audio) sampleAudioRef.current = null;
+        };
+        audio.onended = done;
+        audio.onerror = () => {
+          done();
+          setSampleError("Couldn't play a sample — is the box reachable?");
+        };
+        void audio.play().catch(() => {
+          done();
+          setSampleError("Couldn't play a sample.");
+        });
+      })
+      .catch(() => {
+        setSamplePlaying(false);
+        setSampleError("Couldn't reach the box to render a sample.");
+      });
+  }
+
   return (
     <main className="screen-body settings">
       <section className="settings-card">
@@ -405,6 +498,55 @@ export function SettingsScreen({ deviceLabel, onLogout }: SettingsScreenProps) {
             </button>
           ))}
         </div>
+      </section>
+
+      <section className="settings-card">
+        <h2 className="settings-label">Read-aloud voice</h2>
+        <p className="settings-meta">
+          the piper voice the assistant reads answers in — the same voice the wall display uses, so
+          a pick here applies to both. multi-speaker models (like LibriTTS) list their individual
+          speakers. play a sample to hear one before choosing it.
+        </p>
+        {voices === null ? (
+          <div className="settings-value">…</div>
+        ) : voices.length === 0 ? (
+          <p className="settings-meta">
+            no voices installed on the box, or the display is unreachable — install them with
+            deploy/server-brain/install-tts.sh.
+          </p>
+        ) : (
+          <>
+            <label className="settings-field">
+              Voice
+              <select
+                aria-label="Read-aloud voice"
+                value={brainAnswerVoice ?? ""}
+                onChange={(e) => pickAnswerVoice(e.target.value)}
+              >
+                {/* Surface a stored voice the box no longer lists so the select isn't blank. */}
+                {brainAnswerVoice && !voices.includes(brainAnswerVoice) && (
+                  <option value={brainAnswerVoice}>{voiceLabel(brainAnswerVoice)}</option>
+                )}
+                {voices.map((v) => (
+                  <option key={v} value={v}>
+                    {voiceLabel(v)}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <div className="settings-actions">
+              <button
+                type="button"
+                className="seg"
+                disabled={!brainAnswerVoice || samplePlaying}
+                onClick={playSample}
+              >
+                {samplePlaying ? "Playing…" : "Play sample"}
+              </button>
+            </div>
+            {sampleError && <p className="settings-meta settings-error">{sampleError}</p>}
+          </>
+        )}
       </section>
 
       <section className="settings-card">

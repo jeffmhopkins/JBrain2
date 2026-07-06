@@ -440,6 +440,10 @@ class FakeSettingsStore:
     async def brain_read_aloud(self, ctx: object) -> bool:
         return self.values.get("brain_read_aloud", False) is True
 
+    async def brain_answer_voice(self, ctx: object) -> str:
+        raw = self.values.get("brain_answer_voice", "en_US-amy-medium")
+        return raw if isinstance(raw, str) and raw else "en_US-amy-medium"
+
     async def llm_task_overrides(self, ctx: object) -> dict[str, dict[str, str]]:
         # Mirrors the SQL store's sanitizing read (drops malformed entries).
         raw = self.values.get("llm_task_overrides", {})
