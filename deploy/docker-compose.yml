@@ -96,12 +96,14 @@ services:
       JBRAIN_COMFYUI_URL: ${COMFYUI_URL:-}
       JBRAIN_COMFYUI_ENABLED: ${COMFYUI_ENABLED:-false}
       JBRAIN_COMFYUI_MODELS: ${COMFYUI_MODELS:-[]}
-      # On-box speech-to-text — points at the `tts-stt` service (below), which serves
-      # whisper.cpp via llama-swap on :8080 and loads/frees the model on demand. Default-on
-      # now that tts-stt is a default service; the model is provisioned at setup. An operator
-      # can still override the URL to "" to hard-disable transcription. Inherited by worker.
-      JBRAIN_WHISPER_URL: ${WHISPER_URL:-http://tts-stt:8080/v1}
-      JBRAIN_WHISPER_ENABLED: ${WHISPER_ENABLED:-true}
+      # On-box speech-to-text — served by the always-on `tts-stt` service (below), but the
+      # STT MODEL is a heavy opt-in download, so transcribe stays OFF (empty URL) until
+      # `jbrain enable-whisper` provisions the model and sets WHISPER_URL in .env
+      # (http://tts-stt:8080/v1). Empty here = audio attachments aren't transcribed and
+      # jerv's transcribe tool is hidden — never advertising an STT port that isn't loaded.
+      # Read-aloud (piper TTS) needs none of this; it works from the default tts-stt service.
+      JBRAIN_WHISPER_URL: ${WHISPER_URL:-}
+      JBRAIN_WHISPER_ENABLED: ${WHISPER_ENABLED:-false}
       JBRAIN_WHISPER_MODEL: ${WHISPER_MODEL:-whisper}
       # Code mode (docs/archive/JCODE_PLAN.md) — OFF unless the operator opts in via
       # scripts/jcode-setup.sh. When enabled, points the api at the internal jcode
@@ -364,8 +366,11 @@ services:
   # STT. Built on the official llama-swap unified image (llama-swap + ffmpeg, Vulkan) with
   # whisper.cpp's server + Python/piper + the baked default voices layered on
   # (deploy/Dockerfile.tts-stt). /dev/dri + the GIDs give whisper the iGPU; piper is CPU.
-  # `scripts/whisper-setup.sh` provisions the GGML model + the one-model llama-swap config
-  # (folded into the default setup). Internal only — neither port is published.
+  # The CONTAINER is default-on (TTS always available); STT's GGML model is a heavy opt-in
+  # download provisioned by `jbrain enable-whisper` (scripts/whisper-setup.sh), which also
+  # sets WHISPER_URL so the api starts using it. Until then the entrypoint runs piper only
+  # (no whisper config -> no llama-swap), so a stock box serves read-aloud, not a dead STT
+  # port. Internal only — neither port is published.
   tts-stt:
     image: jbrain2-tts-stt:local
     build:
