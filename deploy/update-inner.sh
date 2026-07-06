@@ -96,6 +96,15 @@ docker compose $JCODE_PROFILE build
 echo "[update] running migrations"
 docker compose run --rm migrate
 
+# The wall/tts-stt split RENAMED two services (server-brain->wall, whisper->tts-stt). Compose
+# leaves a renamed service's old container running as an orphan; the old server-brain keeps host
+# port 8800 bound, so the new `wall` can't start and the `up -d` below aborts mid-recreate — which
+# is what took the tunnel down after the split update. Drop the stale pair by name, NOT with
+# `--remove-orphans`: this one-shot doesn't activate the tunnel/local-llm/comfyui profiles, so
+# `--remove-orphans` would reap those running services too.
+echo "[update] clearing renamed-service orphans (server-brain->wall, whisper->tts-stt)"
+docker rm -f jbrain-server-brain-1 jbrain-whisper-1 2>/dev/null || true
+
 echo "[update] restarting stack"
 docker compose $JCODE_PROFILE up -d
 
