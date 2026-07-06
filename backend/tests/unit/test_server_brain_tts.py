@@ -12,7 +12,15 @@ from pathlib import Path
 
 import pytest
 
-_SERVE_PATH = Path(__file__).resolve().parents[3] / "deploy" / "server-brain" / "serve.py"
+_DEPLOY = Path(__file__).resolve().parents[3] / "deploy"
+_SERVE_PATH = _DEPLOY / "server-brain" / "serve.py"
+_DOCKERFILE = _DEPLOY / "Dockerfile.server-brain"
+_INSTALL_SCRIPT = _DEPLOY / "server-brain" / "install-tts.sh"
+
+
+def _short_name(stem: str) -> str:
+    """A voice stem's model name as the fetch loops key it — "en_US-amy-medium" -> "amy"."""
+    return stem.removeprefix("en_US-").removesuffix("-medium")
 
 
 def _load_serve() -> types.ModuleType:
@@ -108,3 +116,25 @@ def test_tts_wav_none_without_piper(
 ) -> None:
     monkeypatch.setattr(serve.shutil, "which", lambda _bin: None)
     assert serve.tts_wav("hello", "en_US-amy-medium") is None
+
+
+def test_docker_image_bakes_every_curated_multispeaker_model(serve: types.ModuleType) -> None:
+    # A curated speaker (e.g. libritts_r 3922) only reaches the picker if its MODEL is
+    # actually installed — and production installs are the BAKED image, not install-tts.sh.
+    # Guard that the Dockerfile's baked-voices tuple stays in step with CURATED_SPEAKERS so a
+    # new curated model can't be exposed by serve.py yet missing from the box.
+    dockerfile = _DOCKERFILE.read_text()
+    for stem in serve.CURATED_SPEAKERS:
+        assert _short_name(stem) in dockerfile, (
+            f"{stem} is curated in serve.py but not baked into Dockerfile.server-brain"
+        )
+    # The single-speaker defaults stay baked too.
+    assert "'joe'" in dockerfile and "'amy'" in dockerfile
+
+
+def test_install_script_installs_every_curated_model(serve: types.ModuleType) -> None:
+    # The run-on-host path (install-tts.sh MODELS) must carry the curated models too, so a
+    # dev box matches the baked image.
+    script = _INSTALL_SCRIPT.read_text()
+    for stem in serve.CURATED_SPEAKERS:
+        assert stem in script, f"{stem} is curated in serve.py but missing from install-tts.sh"
