@@ -79,6 +79,27 @@ async def test_expiry_and_revocation_fail_closed(maker: async_sessionmaker) -> N
     assert await repo.revoke_capability(live.id) is False
 
 
+async def test_has_active_capability_tracks_the_live_set(maker: async_sessionmaker) -> None:
+    # The signal that switches on the wall's verbose TTS trace: True iff SOME token is live,
+    # with the same fail-closed liveness as auth (expiry, revoke, suspend all drop it).
+    repo = SqlAuthRepo(maker)
+    assert await repo.has_active_capability() is False  # none minted yet
+
+    await auth_service.mint_capability(repo, "expired", ttl_hours=-1)
+    assert await repo.has_active_capability() is False  # an expired token doesn't count
+
+    _, live = await auth_service.mint_capability(repo, "live", ttl_hours=24)
+    assert await repo.has_active_capability() is True
+
+    assert await repo.suspend_capability(live.id) is True
+    assert await repo.has_active_capability() is False  # suspended -> not active
+    assert await repo.resume_capability(live.id) is True
+    assert await repo.has_active_capability() is True
+
+    assert await repo.revoke_capability(live.id) is True
+    assert await repo.has_active_capability() is False  # last live token gone
+
+
 async def test_suspend_and_resume_fail_closed_then_restore(maker: async_sessionmaker) -> None:
     repo = SqlAuthRepo(maker)
     key, record = await auth_service.mint_capability(repo, "pausable", ttl_hours=24)

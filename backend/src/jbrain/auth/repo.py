@@ -178,6 +178,26 @@ class SqlAuthRepo:
             )
         return info
 
+    async def has_active_capability(self) -> bool:
+        """True while any debug-console token is live (unrevoked, unsuspended, unexpired) —
+        the signal that an owner-authorized debug session is open. Used to switch on verbose
+        diagnostics (the wall's per-clip TTS trace) for the session's duration, without an
+        env flag. Same liveness predicate as the auth path, minus the key match + stamp."""
+        async with scoped_session(self._maker, _LOGIN) as session:
+            row = (
+                await session.execute(
+                    select(Principal.id)
+                    .where(
+                        Principal.kind == "capability_token",
+                        Principal.revoked_at.is_(None),
+                        Principal.suspended_at.is_(None),
+                        or_(Principal.expires_at.is_(None), Principal.expires_at > func.now()),
+                    )
+                    .limit(1)
+                )
+            ).first()
+            return row is not None
+
     async def list_capabilities(self) -> list[CapabilityToken]:
         async with scoped_session(self._maker, _LOGIN) as session:
             rows = (

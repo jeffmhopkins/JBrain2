@@ -91,13 +91,6 @@ PIPER_LEAD_MS = int(os.environ.get("BRAIN_PIPER_LEAD_MS", "400"))
 # time out and silently fall back to the device's native voice. Bump it per box if a
 # voice keeps degrading; watch `docker logs server-brain` for the "tts render failed" line.
 PIPER_TIMEOUT_S = float(os.environ.get("BRAIN_PIPER_TIMEOUT_S", "60"))
-# Verbose per-clip TTS tracing (BRAIN_TTS_DEBUG=1): log every render as it starts and
-# completes — the voice AS RECEIVED, the model + resolved --speaker index, the output
-# bytes, and the elapsed ms. Off by default (a read reply is many clips, so it's noisy);
-# flip it on when a voice sounds wrong to see exactly what the box rendered vs. what the
-# PWA fell back to. Failures ALWAYS log (debug or not), so a silent native fall back can
-# never hide its cause. Read via the debug console: GET /api/debug/logs/server-brain.
-TTS_DEBUG = os.environ.get("BRAIN_TTS_DEBUG") == "1"
 # Longest single /tts render the page requests — it splits a reply into sentence-sized clips
 # (fast first-audio, no giant render), so this only bounds one chunk, not the whole answer.
 TTS_CHUNK_CAP = 1000
@@ -230,7 +223,7 @@ def tts_wav(text: str, voice: str, lead_ms: int | None = None) -> bytes | None:
     if not model.exists():
         print(f"[tts] render failed for {voice!r}: model file {model} missing", file=sys.stderr)
         return None
-    if TTS_DEBUG:
+    if _tts_debug[0]:
         print(f"[tts] rendering {voice!r} -> {model.stem} speaker={speaker} ({len(text)} chars)",
               file=sys.stderr)
     cmd = [PIPER_BIN, "--model", str(model), "--output_file"]
@@ -257,7 +250,7 @@ def tts_wav(text: str, voice: str, lead_ms: int | None = None) -> bytes | None:
             os.unlink(tmp.name)
         except OSError:
             pass
-    if TTS_DEBUG:
+    if _tts_debug[0]:
         ms = int((time.monotonic() - started) * 1000)
         print(f"[tts] rendered {voice!r} (speaker {speaker}): {len(data)} bytes in {ms} ms",
               file=sys.stderr)
@@ -287,6 +280,16 @@ _posted_lock = threading.Lock()
 # addition to piper voices being installed). Default OFF: a fresh/restarted display speaks
 # nothing until the app re-pushes the flag (it does so on the setting change and each turn).
 _read_aloud = [False]
+
+# Verbose per-clip TTS tracing, pushed by the app the same way ({"kind": "tts_debug",
+# "on": bool} to /event) — ON only while an owner-authorized debug session is open (a live
+# debug-console token exists), so diagnostics follow the token's lifecycle with no env flag
+# or restart. While on, each render logs the voice AS RECEIVED, the model + resolved
+# --speaker index, output bytes and elapsed ms — so an operator can confirm the box
+# rendered the requested voice rather than the PWA falling back to its native voice.
+# Failures ALWAYS log regardless; this only adds the success trace. Default OFF; the app
+# re-pushes it each turn, so it clears when the token lapses.
+_tts_debug = [False]
 
 
 def _drain_posted() -> list:
@@ -719,6 +722,12 @@ class Handler(BaseHTTPRequestHandler):
             # A held display-config flag, not a tendril event: latch it (the app pushes it
             # from the brain_read_aloud setting) so /stats reflects it until the next push.
             _read_aloud[0] = bool(ev.get("on"))
+            self._send(204, b"", "text/plain")
+            return
+        if kind == "tts_debug":
+            # Held diagnostic flag, latched like read_aloud: the app pushes it on while a
+            # debug-console token is live, switching on the verbose per-clip TTS trace.
+            _tts_debug[0] = bool(ev.get("on"))
             self._send(204, b"", "text/plain")
             return
         if kind in (

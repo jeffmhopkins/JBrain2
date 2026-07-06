@@ -373,7 +373,8 @@ def test_chat_resyncs_read_aloud_flag_to_the_wall_display(
 ) -> None:
     # The read-aloud flag re-syncs to the display each turn (its own switch, independent
     # of the text gate): with brain_read_aloud ON the turn pushes read_aloud=True even
-    # though brain_llm_stream stays OFF.
+    # though brain_llm_stream stays OFF. The tts_debug flag re-syncs alongside it — False
+    # here since no debug token is live (it gates the wall's verbose TTS trace).
     login(client, repo)
     sessions_store.add(AgentSessionInfo("sess-1", "", "active", ("general",), (), NOW, NOW))
     client.app.state.settings_store.values["brain_read_aloud"] = True  # type: ignore[attr-defined]
@@ -384,7 +385,35 @@ def test_chat_resyncs_read_aloud_flag_to_the_wall_display(
     resp = client.post("/api/chat", json={"session_id": "sess-1", "message": "hi"})
     assert resp.status_code == 200
     _ = resp.text
-    assert flags == [("read_aloud", True)]
+    assert flags == [("read_aloud", True), ("tts_debug", False)]
+
+
+def test_chat_pushes_tts_debug_flag_while_a_debug_token_is_live(
+    client: TestClient,
+    repo: FakeAuthRepo,
+    sessions_store: FakeAgentSessions,
+) -> None:
+    # A live debug-console token switches the wall's verbose TTS trace on for the session:
+    # the per-turn resync pushes tts_debug=True (no env flag/restart), and it reverts once
+    # the token is revoked.
+    import asyncio
+
+    from jbrain.auth import service as auth_service
+
+    login(client, repo)
+    sessions_store.add(AgentSessionInfo("sess-1", "", "active", ("general",), (), NOW, NOW))
+    flags: list[tuple[str, bool]] = []
+    client.app.state.brain_emit = lambda kind, text=None: None  # type: ignore[attr-defined]
+    client.app.state.brain_flag_emit = lambda kind, on: flags.append((kind, on))  # type: ignore[attr-defined]
+
+    _, token = asyncio.run(auth_service.mint_capability(repo, "claude", ttl_hours=24))
+    client.post("/api/chat", json={"session_id": "sess-1", "message": "hi"})
+    assert ("tts_debug", True) in flags
+
+    flags.clear()
+    assert asyncio.run(repo.revoke_capability(token.id)) is True
+    client.post("/api/chat", json={"session_id": "sess-1", "message": "hi"})
+    assert ("tts_debug", False) in flags
 
 
 def test_chat_streams_reasoning_then_answer_to_the_wall_display(

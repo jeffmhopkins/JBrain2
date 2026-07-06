@@ -120,16 +120,17 @@ def test_tts_wav_none_without_piper(
     assert "render failed" in capsys.readouterr().err
 
 
-def test_tts_wav_verbose_trace_when_debug(
+def test_tts_wav_verbose_trace_when_debug_latched(
     serve: types.ModuleType, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    # With BRAIN_TTS_DEBUG on, a SUCCESSFUL render traces the resolved voice + speaker, so
-    # an operator can confirm the box actually rendered the requested voice (not a fallback).
+    # With the tts_debug flag latched on (pushed by the app while a debug token is live), a
+    # SUCCESSFUL render traces the resolved voice + speaker, so an operator can confirm the
+    # box actually rendered the requested voice rather than the PWA falling back.
     def fake_run(cmd: list[str], **kwargs: object):  # type: ignore[no-untyped-def]
         Path(cmd[cmd.index("--output_file") + 1]).write_bytes(b"RIFFfakewav")
         return types.SimpleNamespace(returncode=0)
 
-    monkeypatch.setattr(serve, "TTS_DEBUG", True)
+    serve._tts_debug[0] = True  # fresh module per test (the `serve` fixture reloads it)
     monkeypatch.setattr(serve.shutil, "which", lambda _bin: "/usr/bin/piper")
     monkeypatch.setattr(serve.subprocess, "run", fake_run)
 
@@ -138,6 +139,23 @@ def test_tts_wav_verbose_trace_when_debug(
     assert "rendering 'en_US-libritts_r-medium#3922'" in err  # start trace: voice as received
     assert "speaker=0" in err  # resolved --speaker
     assert "rendered" in err  # completion trace with byte count
+
+
+def test_tts_trace_silent_unless_latched(
+    serve: types.ModuleType, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # Default OFF: a successful render says nothing (a read reply is many clips), so the
+    # trace only appears while a debug session has switched it on.
+    def fake_run(cmd: list[str], **kwargs: object):  # type: ignore[no-untyped-def]
+        Path(cmd[cmd.index("--output_file") + 1]).write_bytes(b"RIFFfakewav")
+        return types.SimpleNamespace(returncode=0)
+
+    assert serve._tts_debug[0] is False
+    monkeypatch.setattr(serve.shutil, "which", lambda _bin: "/usr/bin/piper")
+    monkeypatch.setattr(serve.subprocess, "run", fake_run)
+
+    serve.tts_wav("hello", "en_US-amy-medium", lead_ms=0)
+    assert capsys.readouterr().err == ""
 
 
 def test_tts_wav_render_failure_is_logged_not_silent(
@@ -175,6 +193,31 @@ def test_tts_wav_uses_configurable_timeout(
 
     serve.tts_wav("hello", "en_US-amy-medium", lead_ms=0)
     assert seen["timeout"] == 123.0
+
+
+def _post_event(serve: types.ModuleType, body: bytes) -> int:
+    """Drive the Handler's do_POST for a POST /event with `body`, returning the status
+    code — bypassing BaseHTTPRequestHandler's socket setup with fake rfile/_send."""
+    import io
+
+    handler = serve.Handler.__new__(serve.Handler)
+    handler.path = "/event"
+    handler.headers = {"Content-Length": str(len(body))}
+    handler.rfile = io.BytesIO(body)
+    sent: list[int] = []
+    handler._send = lambda code, b, ctype: sent.append(code)  # type: ignore[method-assign]
+    handler.do_POST()
+    return sent[0]
+
+
+def test_tts_debug_flag_is_latched_by_the_pushed_event(serve: types.ModuleType) -> None:
+    # The app pushes {"kind":"tts_debug","on":bool} while a debug token is live; the box
+    # latches it (like read_aloud) so the trace follows the debug session, no env/restart.
+    assert serve._tts_debug[0] is False
+    assert _post_event(serve, b'{"kind":"tts_debug","on":true}') == 204
+    assert serve._tts_debug[0] is True
+    assert _post_event(serve, b'{"kind":"tts_debug","on":false}') == 204
+    assert serve._tts_debug[0] is False
 
 
 def test_docker_image_bakes_every_curated_multispeaker_model(serve: types.ModuleType) -> None:

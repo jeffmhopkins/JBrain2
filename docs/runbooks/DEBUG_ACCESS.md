@@ -43,6 +43,12 @@ PWA (owner) ──mint──▶ capability token  ──hand off──▶  assis
   the surface — so **resume is owner-only** (the PWA token list). The console (or
   the owner) can *enter* suspension; only the owner leaves it. That asymmetry is
   deliberate.
+- **Side effect while a token is live:** the api pushes a `tts_debug` flag to the
+  server-brain display each turn, switching on its verbose per-clip TTS trace (voice
+  as received, resolved `--speaker`, byte count, elapsed ms — read via `GET
+  /logs/server-brain`). It follows token liveness (the same active-set predicate as
+  auth), so it clears on the next turn once the token lapses, is suspended, or is
+  revoked. Diagnostics-only: the trace carries no owner text.
 
 ## Auth model
 

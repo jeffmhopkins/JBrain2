@@ -272,14 +272,19 @@ alongside the baked defaults; a dropped-in name overrides a baked one) — grab 
 (`python3 serve.py` directly, no image), `bash deploy/server-brain/install-tts.sh` installs piper +
 the models into `voices/`. Env knobs (all optional): `BRAIN_PIPER_BIN` (default `piper`),
 `BRAIN_PIPER_VOICES_DIR` (mounted extras, default `/app/voices`), `BRAIN_PIPER_BAKED_VOICES_DIR`
-(baked defaults, default `/opt/piper-voices`), `BRAIN_PIPER_LEAD_MS`, `BRAIN_PIPER_TIMEOUT_S`
-(per-clip render cap, default 60 s), and `BRAIN_TTS_DEBUG=1` (verbose per-clip tracing —
-logs each render's voice-as-received, resolved `--speaker`, byte count and elapsed ms, so
-you can confirm the box rendered the requested voice rather than falling back; failures
-always log regardless). Read the trace via `docker logs server-brain` or the debug
-console's `GET /api/debug/logs/server-brain`. Text is passed to piper on
+(baked defaults, default `/opt/piper-voices`), `BRAIN_PIPER_LEAD_MS`, and `BRAIN_PIPER_TIMEOUT_S`
+(per-clip render cap, default 60 s). Text is passed to piper on
 **stdin** (never a shell arg) and the `voice` param is validated against the installed set, so there
 is no command-injection or path-traversal surface.
+
+**Verbose TTS tracing follows a debug session — no env flag.** While an owner-authorized
+debug-console token is live (minted in **Settings → Debug tokens**), the api pushes a
+`tts_debug` flag to the display each turn (latched like `read_aloud`), switching on a
+per-clip trace: each render logs the voice AS RECEIVED, the model + resolved `--speaker`,
+byte count and elapsed ms — so you can confirm the box rendered the requested voice rather
+than the PWA falling back to its native voice. It clears automatically when the token
+lapses or is revoked. (Failures always log, debug session or not.) Read the trace via
+`docker logs server-brain` or the console's `GET /api/debug/logs/server-brain`.
 
 **Autoplay:** the enable checkbox is the user gesture Firefox needs to allow `<audio>` playback for
 the session. On a gesture-free kiosk, also set `media.autoplay.default = 0` in `about:config` (or a

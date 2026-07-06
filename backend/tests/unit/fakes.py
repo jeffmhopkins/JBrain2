@@ -116,6 +116,16 @@ class FakeAuthRepo:
                 return _info(p)
         return None
 
+    async def has_active_capability(self) -> bool:
+        now = datetime.now(UTC)
+        return any(
+            p.kind == "capability_token"
+            and not p.revoked
+            and p.suspended_at is None
+            and (p.expires_at is None or p.expires_at > now)
+            for p in self.principals
+        )
+
     async def list_capabilities(self) -> list[CapabilityToken]:
         return [_capability(p) for p in self.principals if p.kind == "capability_token"]
 
