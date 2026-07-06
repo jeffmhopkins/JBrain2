@@ -81,7 +81,9 @@ export interface ReadAloud {
   /** Feed the live text of a streaming turn (auto-play path): speaks any newly-complete
    * sentences and marks the turn playing. Call as text grows, then once with
    * done=true on settle to flush the tail. A no-op unless auto-play armed (the caller
-   * gates on that). Never auto-starts an already-settled turn. */
+   * gates on that). Never auto-starts an already-settled turn. When a NEW turn starts
+   * streaming it cuts off whatever's speaking (a prior turn or a manual playback) and
+   * takes over — the next turn always wins. */
   feed: (key: string, textSoFar: string, done: boolean) => void;
   /** Stop any in-flight speech at once. */
   stop: () => void;
@@ -175,8 +177,8 @@ export function useReadAloud(): ReadAloud {
     [setPlay],
   );
 
-  // Start a fresh utterance queue for `key`: cancel whatever's playing, reset the
-  // cursor, and mark the turn playing.
+  // Start a fresh utterance queue for `key`: cancel whatever's playing (cutting off any
+  // prior turn — manual or auto), reset the cursor, and mark the turn playing.
   const beginQueue = useCallback(
     (key: string) => {
       try {
@@ -184,6 +186,7 @@ export function useReadAloud(): ReadAloud {
       } catch {
         /* nothing to cancel */
       }
+      manualRef.current = false; // this turn takes over from any manual playback
       queueRef.current = { key, pending: 0, finalized: false };
       spokenLenRef.current = 0;
       feedKeyRef.current = key;
@@ -205,9 +208,9 @@ export function useReadAloud(): ReadAloud {
       const text = speakableText(markdown);
       if (!text) return;
       suppressedRef.current.delete(key);
-      manualRef.current = true;
       try {
-        beginQueue(key);
+        beginQueue(key); // clears manualRef, so set it after
+        manualRef.current = true;
         queueRef.current.finalized = true; // one settled utterance — done as soon as it ends
         speakChunk(key, text);
       } catch {
@@ -221,10 +224,14 @@ export function useReadAloud(): ReadAloud {
     (key: string, textSoFar: string, done: boolean) => {
       if (!canSpeak()) return;
       if (suppressedRef.current.has(key)) return;
-      if (manualRef.current) return; // don't fight a manual play in progress
       if (feedKeyRef.current !== key) {
         if (done) return; // never auto-start an already-settled turn
+        // A new agent turn is streaming — cut off whatever's speaking (a prior auto
+        // turn OR a manual playback) and take it over. beginQueue cancels + clears
+        // manualRef, so the next turn always wins over the old stream.
         beginQueue(key);
+      } else if (manualRef.current) {
+        return; // this turn is under manual playback — don't double-feed it
       }
       // speakableText trims the trailing space that marks a sentence boundary; restore
       // it while streaming so a delta ending in ". " speaks its sentence right away
