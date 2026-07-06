@@ -138,6 +138,14 @@ const SYMBOL_WORDS = [
   [/\|/g, " "], // a stray pipe (non-table) reads as nothing, never "bar"
 ];
 
+// Latin abbreviations piper spells out letter-by-letter ("e g") and stumbles on the interior
+// dots of. Expand to words, and consume any trailing comma so the result carries exactly one —
+// a pause after the aside — whether the source wrote "e.g., X" or "e.g. X". Case-insensitive.
+const ABBREVIATIONS = [
+  [/\be\.g\.\s*,?/gi, "for example, "],
+  [/\bi\.e\.\s*,?/gi, "that is, "],
+];
+
 // --- URLs → spoken domain --------------------------------------------------------------
 
 // A bare URL: read the registrable domain ("github dot com"), drop scheme/path/query —
@@ -237,6 +245,9 @@ export function speakable(md) {
     .join("\n");
   // Emphasis markers.
   s = s.replace(/(\*\*|__|\*|_|~~)/g, "");
+  // Latin abbreviations → words (before pause-authoring, so their interior dots aren't read
+  // as sentence ends and the spoken aside carries a real pause).
+  for (const [re, word] of ABBREVIATIONS) s = s.replace(re, word);
   // PAUSE AUTHORING (before any whitespace collapse): every non-empty line that doesn't
   // already end in terminal punctuation gets a period, so each list item / heading /
   // paragraph becomes its own spoken sentence with a real pause.
@@ -272,9 +283,21 @@ export function speakable(md) {
   // Emoji: verbalize the allow-list, drop the rest.
   for (const [glyph, word] of Object.entries(EMOJI_WORDS)) s = s.split(glyph).join(word);
   s = s.replace(EMOJI_STRIP, " ");
-  // Tidy: no space before punctuation (a dropped emoji/symbol can leave one), collapse.
+  // Parentheticals: piper carries no pause across ( ), so it races the aside into the
+  // surrounding clause in one breath. Bracket it with commas instead — a beat on each side —
+  // so "spending (target 5%) and reaffirm" reads as "spending, target five percent, and
+  // reaffirm". (Markdown links/images + fenced code already had their parens removed above,
+  // so only prose asides reach here.)
+  s = s.replace(/\s*\(\s*/g, ", ").replace(/\s*\)/g, ",");
+  // Tidy: no space before punctuation (a dropped emoji/symbol can leave one); fold a comma
+  // that a bracket left touching stronger punctuation ("2035)." → "2035,." → "2035.", and
+  // "(He agreed.)" → ".," → "."), then any doubled/leading comma; finally collapse whitespace.
   return s
     .replace(/\s+([.!?,;:])/g, "$1")
+    .replace(/,+(?=[.!?;:])/g, "")
+    .replace(/([.!?;:]),+/g, "$1")
+    .replace(/,{2,}/g, ",")
+    .replace(/^\s*,\s*/, "")
     .replace(/\s+/g, " ")
     .trim();
 }
