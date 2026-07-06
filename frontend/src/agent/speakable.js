@@ -138,6 +138,14 @@ const SYMBOL_WORDS = [
   [/\|/g, " "], // a stray pipe (non-table) reads as nothing, never "bar"
 ];
 
+// Latin abbreviations piper spells out letter-by-letter ("e g") and stumbles on the interior
+// dots of. Expand to words, and consume any trailing comma so the result carries exactly one —
+// a pause after the aside — whether the source wrote "e.g., X" or "e.g. X". Case-insensitive.
+const ABBREVIATIONS = [
+  [/\be\.g\.\s*,?/gi, "for example, "],
+  [/\bi\.e\.\s*,?/gi, "that is, "],
+];
+
 // --- URLs → spoken domain --------------------------------------------------------------
 
 // A bare URL: read the registrable domain ("github dot com"), drop scheme/path/query —
@@ -237,6 +245,9 @@ export function speakable(md) {
     .join("\n");
   // Emphasis markers.
   s = s.replace(/(\*\*|__|\*|_|~~)/g, "");
+  // Latin abbreviations → words (before pause-authoring, so their interior dots aren't read
+  // as sentence ends and the spoken aside carries a real pause).
+  for (const [re, word] of ABBREVIATIONS) s = s.replace(re, word);
   // PAUSE AUTHORING (before any whitespace collapse): every non-empty line that doesn't
   // already end in terminal punctuation gets a period, so each list item / heading /
   // paragraph becomes its own spoken sentence with a real pause.

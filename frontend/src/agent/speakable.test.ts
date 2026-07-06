@@ -95,6 +95,18 @@ describe("speakable", () => {
     expect(speakable("He agreed (reluctantly.)")).toBe("He agreed, reluctantly.");
   });
 
+  it("expands e.g. / i.e. to spoken words with a pause", () => {
+    expect(speakable("warm voices, e.g., Ashley, work best")).toBe(
+      "warm voices, for example, Ashley, work best.",
+    );
+    // Period-space form (no comma) still gets the pause.
+    expect(speakable("tune it e.g. slower")).toBe("tune it for example, slower.");
+    // Inside a parenthetical, both rules compose cleanly.
+    expect(speakable("Use the box voice (i.e. piper) here")).toBe(
+      "Use the box voice, that is, piper, here.",
+    );
+  });
+
   it("strips emphasis, headings, blockquotes and horizontal rules", () => {
     expect(speakable("**Bold** and _italic_ and ~~struck~~.")).toBe("Bold and italic and struck.");
     expect(speakable("> quoted note\n\n---\n\nafter rule")).toBe("quoted note. after rule.");
