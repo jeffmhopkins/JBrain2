@@ -57,6 +57,25 @@ async def brain_voices(principal: PrincipalDep, request: Request) -> JSONRespons
         raise HTTPException(status_code=503, detail="tts service unreachable") from exc
 
 
+@router.get("/brain/speakers")
+async def brain_speakers(principal: PrincipalDep, request: Request) -> JSONResponse:
+    """Per multi-speaker model, its speaker names ordered by piper index, proxied from the
+    tts-stt service's GET /tts/speakers as `{"speakers": {"<stem>": ["<name>", ...]}}`. The
+    Settings voice explorer shuffles across this roster to audition every speaker. 503 when
+    the service is unconfigured/unreachable so the explorer can hide itself."""
+    base = _brain_base(request)
+    if not base:
+        raise HTTPException(status_code=503, detail="tts service not configured")
+    try:
+        async with httpx.AsyncClient(timeout=3.0) as client:
+            resp = await client.get(f"{base}/tts/speakers")
+        if resp.status_code != 200:
+            raise HTTPException(status_code=503, detail="tts service unavailable")
+        return JSONResponse(resp.json())
+    except (httpx.HTTPError, ValueError) as exc:
+        raise HTTPException(status_code=503, detail="tts service unreachable") from exc
+
+
 @router.get("/brain/tts")
 async def brain_tts(
     principal: PrincipalDep,

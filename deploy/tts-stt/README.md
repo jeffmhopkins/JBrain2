@@ -5,9 +5,13 @@ One always-on container serving the box's **speech I/O**:
 - **TTS (`:8801`)** — `piper_server.py`, a stdlib HTTP server that renders read-aloud with
   **piper**, holding each voice's model **resident** (`piper.voice.PiperVoice`) so a clip
   renders in ~0.1 s instead of cold-loading the model every call (~1.5 s — the old
-  subprocess-per-clip cost). Serves `/tts`, `/tts/voices`, `/tts/silence`, `/healthz`, and
-  latches the `tts_debug` flag. Reached by the api's authenticated read-aloud proxy
-  (`/api/brain/tts`, `/api/brain/voices`) and by the `wall` display's `/tts` forward.
+  subprocess-per-clip cost). Serves `/tts`, `/tts/voices`, `/tts/speakers`, `/tts/silence`,
+  `/healthz`, and latches the `tts_debug` flag. Reached by the api's authenticated read-aloud
+  proxy (`/api/brain/tts`, `/api/brain/voices`, `/api/brain/speakers`) and by the `wall`
+  display's `/tts` forward. `/tts/voices` is the curated preset list; `/tts/speakers` is the
+  **full multi-speaker roster** (speaker names ordered by piper index) that the Settings voice
+  explorer shuffles across — `/tts` renders **any** valid `<stem>#<speaker>` of an installed
+  model, not only the curated few, validated against the model's `speaker_id_map`.
 - **STT (`:8080`)** — whisper.cpp behind llama-swap (load-on-demand, idle-unload). The api
   reaches it at `http://tts-stt:8080/v1`; the model + `llama-swap.yaml` config are
   provisioned by `jbrain enable-whisper` (`scripts/whisper-setup.sh`).

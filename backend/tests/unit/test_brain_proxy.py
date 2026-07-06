@@ -80,7 +80,24 @@ def test_voices_and_tts_require_auth() -> None:
     with TestClient(app) as anon:
         app.state.auth_repo = FakeAuthRepo()
         assert anon.get("/api/brain/voices").status_code == 401
+        assert anon.get("/api/brain/speakers").status_code == 401
         assert anon.get("/api/brain/tts", params={"text": "hi", "voice": "v"}).status_code == 401
+
+
+def test_speakers_proxies_the_roster(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    roster = {"en_US-libritts_r-medium": ["3922", "1234", "6272"]}
+    calls = _install_fake_httpx(
+        monkeypatch, lambda url, params: _FakeResp(200, json_data={"speakers": roster})
+    )
+    resp = client.get("/api/brain/speakers")
+    assert resp.status_code == 200
+    assert resp.json() == {"speakers": roster}
+    assert calls == [("http://tts-stt:8801/tts/speakers", None)]
+
+
+def test_speakers_503_when_display_unconfigured(client: TestClient) -> None:
+    client.app.state.brain_tts_base_url = ""  # type: ignore[attr-defined]
+    assert client.get("/api/brain/speakers").status_code == 503
 
 
 def test_voices_proxies_the_installed_list(

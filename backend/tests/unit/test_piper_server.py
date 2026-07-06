@@ -105,6 +105,27 @@ def test_resolve_maps_curated_id_to_speaker_index(server: types.ModuleType) -> N
     assert amy_speaker is None  # single-speaker -> no speaker id
 
 
+def test_resolve_accepts_any_valid_speaker_not_just_curated(server: types.ModuleType) -> None:
+    # The voice explorer auditions every speaker, so a NON-curated but valid speaker id must
+    # resolve to its real index (1234 -> piper index 1 here), not fall back to a default.
+    model, speaker = server._resolve_voice("en_US-libritts_r-medium#1234")
+    assert model.stem == "en_US-libritts_r-medium"
+    assert speaker == 1
+
+
+def test_resolve_unknown_speaker_falls_back_no_traversal(server: types.ModuleType) -> None:
+    # An id with a speaker the model doesn't have must NOT pass a bogus index to piper — it
+    # falls back to the first installed voice. (The stem is still a real installed model.)
+    model, speaker = server._resolve_voice("en_US-libritts_r-medium#nope")
+    assert model.stem == "en_US-amy-medium"  # first installed voice, sorted
+    assert speaker is None
+
+
+def test_speakers_roster_ordered_by_index_multispeaker_only(server: types.ModuleType) -> None:
+    # The explorer roster: names ordered by piper index, and single-speaker models excluded.
+    assert server.piper_speakers() == {"en_US-libritts_r-medium": ["3922", "1234"]}
+
+
 def test_warm_cache_loads_each_model_once(server: types.ModuleType) -> None:
     # The point of the service: repeated renders of a voice REUSE the resident model.
     for _ in range(3):

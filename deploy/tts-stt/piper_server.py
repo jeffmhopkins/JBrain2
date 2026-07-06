@@ -123,6 +123,22 @@ def piper_voices() -> list[str]:
     return [vid for vid, _, _ in _voices()]
 
 
+def piper_speakers() -> dict[str, list[str]]:
+    """For each installed MULTI-speaker model, its speaker names sorted by piper speaker index
+    (ascending) — a stable, glanceable ordering the caller shuffles across, rebuilding the id
+    "<stem>#<name>" from a name (which `_resolve_voice` maps back to the real index, so the
+    list position is only a display counter, not the synthesis id). The Settings voice explorer
+    uses this to audition all 900-odd libritts_r speakers, not just the curated few. {} when no
+    installed model is multi-speaker."""
+    out: dict[str, list[str]] = {}
+    for stem, model in sorted(_voice_models().items()):
+        smap = _speaker_map(model)
+        if len(smap) <= 1:
+            continue
+        out[stem] = [name for name, _ in sorted(smap.items(), key=lambda kv: kv[1])]
+    return out
+
+
 def _resolve_voice(voice_id: str) -> tuple[Path, int | None] | None:
     """Map a requested voice id to `(model_path, speaker_index)`, validated against the
     installed set (no path traversal). An unknown/blank id falls back to the first voice;
@@ -133,6 +149,17 @@ def _resolve_voice(voice_id: str) -> tuple[Path, int | None] | None:
     for vid, model, spk in voices:
         if vid == voice_id:
             return model, spk
+    # Not a curated preset — accept any "<stem>#<name>" whose speaker exists in an installed
+    # multi-speaker model, so the voice explorer can render any of its speakers (not only the
+    # curated few). <name> is validated against the model's speaker_id_map (a finite set read
+    # from the model file), so this never yields an out-of-range speaker or a traversal path.
+    if "#" in voice_id:
+        stem, name = voice_id.split("#", 1)
+        model = _voice_models().get(stem)
+        if model is not None:
+            index = _speaker_map(model).get(name)
+            if index is not None:
+                return model, index
     _, model, spk = voices[0]
     return model, spk
 
@@ -253,6 +280,8 @@ class Handler(BaseHTTPRequestHandler):
             self._send(200, b"ok", "text/plain")
         elif path == "/tts/voices":
             self._send(200, json.dumps({"voices": piper_voices()}).encode(), "application/json")
+        elif path == "/tts/speakers":
+            self._send(200, json.dumps({"speakers": piper_speakers()}).encode(), "application/json")
         elif path == "/tts/silence":
             self._send(200, _silence_wav(600), "audio/wav")
         elif path == "/tts":

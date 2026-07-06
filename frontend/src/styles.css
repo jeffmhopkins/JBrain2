@@ -965,6 +965,100 @@ h3 {
   gap: 8px;
 }
 
+/* Voice explorer (read-aloud) — shuffle-audition the multi-speaker roster. Sits inside the
+   Read-aloud voice card under the curated picker; a nested surface so it reads as a sub-tool. */
+.voice-explorer {
+  margin-top: 14px;
+  padding: 14px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-seg);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.voice-explorer-cap {
+  font-size: var(--fs-micro);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-3);
+  margin: 0;
+}
+.voice-explorer .settings-meta {
+  margin: 0;
+}
+.ve-stage {
+  min-height: 40px;
+  display: flex;
+  align-items: center;
+}
+.ve-empty {
+  margin: 0;
+  font-size: var(--fs-secondary);
+  color: var(--text-3);
+}
+/* The auditioned speaker: a big tabular index, its total, and the raw speaker name. */
+.ve-id {
+  margin: 0;
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.ve-num {
+  font-size: 22px;
+  font-weight: 600;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+.ve-of {
+  font-size: var(--fs-secondary);
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+.ve-name {
+  font-size: var(--fs-secondary);
+  color: var(--text-2);
+}
+.ve-keep {
+  /* the "saved" affordance, tinted green like other save actions in the design system */
+  color: var(--green);
+}
+.ve-rail-cap {
+  font-size: var(--fs-micro);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-3);
+  margin: 2px 0 0;
+}
+.ve-rail {
+  display: flex;
+  gap: 7px;
+  overflow-x: auto;
+  padding-bottom: 2px;
+}
+.ve-chip {
+  flex: none;
+  min-width: 40px;
+  padding: 7px 11px;
+  border-radius: 999px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+  font-size: var(--fs-note);
+  cursor: pointer;
+}
+.ve-chip-on {
+  color: var(--text);
+  border-color: color-mix(in srgb, var(--steel) 45%, transparent);
+  background: var(--steel-tint, rgba(127, 167, 201, 0.13));
+}
+.ve-chip:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
 /* Debug-access (capability token) management list */
 .settings-error {
   color: var(--danger, #e5484d);
