@@ -57,12 +57,12 @@ presentation blocks + one or two `⭐` differentiators to prove the whole path.
 
 ## A. Checks for understanding — selected & constructed response
 
-- [ ] **Single-select multiple choice** — one-correct picker; fast pulse-check, auto-graded, can gate advancement. `S`
+- [x] **Single-select multiple choice** — one-correct picker; fast pulse-check, auto-graded, can gate advancement. `S` · ✓ Mock 01
 - [ ] **Multi-select ("all that apply")** — probes category boundaries (over-/under-inclusion). `S`
 - [ ] **True/False + justification** — binary verdict plus a required reason; defeats coin-flip guessing. `M`
 - [ ] **Likert / scaled judgment** — "how strong / how likely / where on the spectrum"; trains calibrated judgment vs. binary. `S`
 - [ ] **Hotspot / click-the-region** — point at the right spot on an image/diagram/code/text; spatial recognition words can't test. `M`
-- [ ] **Short free-response + AI grading** — open recall graded against a rubric; forces retrieval, names specific gaps. `M` ⭐
+- [x] **Short free-response + AI grading** — open recall graded against a rubric; forces retrieval, names specific gaps. `M` ⭐ · ✓ Mock 01
 - [ ] **Long-form / essay with rubric feedback** — extended argument/synthesis, per-criterion feedback not just a grade. `M` ⭐
 - [ ] **Numeric / formula answer** — value or expression graded with tolerance + unit check; partial credit on method. `M`
 - [ ] **Cloze (fill-in-the-blank)** — reconstruct missing terms in a passage; cued recall, middle rung between recognition and free recall. `M`
@@ -93,7 +93,7 @@ presentation blocks + one or two `⭐` differentiators to prove the whole path.
 
 - [ ] **Line chart** — trend over an ordered/continuous axis; rate & trend reading. `S`
 - [ ] **Bar / column chart** — magnitude across discrete categories; grouped/stacked/100% toggles. `S`
-- [ ] **Scatter plot** — relationship between two variables; correlation, clusters, outliers; optional trend line. `S`
+- [x] **Scatter plot** — relationship between two variables; correlation, clusters, outliers; optional trend line. `S` · ✓ Mock 01
 - [ ] **Area / stacked-area chart** — cumulative magnitude / composition over a continuous axis. `S`
 - [ ] **Pie / donut** — part-to-whole at one moment; few categories only. `S`
 - [ ] **Histogram** — distribution of one variable via bins; live bin-width slider; shape/skew/modality. `M`
@@ -214,7 +214,7 @@ contract; they're the ones a generic LMS structurally cannot have.*
 *(Feeds the future course-plan layer. Many read from one shared node-tree +
 completion/mastery model — design that spine once; these are views over it.)*
 
-- [ ] **Learning-objectives card** — "by the end you'll be able to…"; primes attention, mirrored at close. `S`
+- [x] **Learning-objectives card** — "by the end you'll be able to…"; primes attention, mirrored at close. `S` · ✓ Mock 01 (lesson-plan-driven header)
 - [ ] **Prerequisites checklist** — assumed prior knowledge, each linked to remedial content; self-assess readiness. `S` ⭐
 - [ ] **"Why this matters" card** — relevance/payoff up front; optionally tied to the owner's stated goals. `S` ⭐
 - [ ] **Course/lesson outline (expandable)** — module→lesson→section tree with completion state + "you are here." `M`
@@ -246,7 +246,7 @@ on the persona gaining tools + RLS-scoped retrieval over the owner's notes (the
 domain firewalls — health/finance/location — still gate what it can pull in).*
 
 - [ ] **Inline "ask a follow-up"** — anchored chat on any lesson span; turns monologue into dialogue. `M` ⭐
-- [ ] **"Explain this differently" / re-explain** — regenerate via a different representation (analogy/example/visual/formal); avoids repeating tried modes. `S` ⭐
+- [x] **"Explain this differently" / re-explain** — regenerate via a different representation (analogy/example/visual/formal); avoids repeating tried modes. `S` ⭐ · ✓ Mock 01
 - [ ] **Tone / persona selector** — warm coach ↔ terse expert ↔ Socratic gadfly; match affective needs. `S` ⭐
 - [ ] **Verbosity / depth dial** — how *much* is said at a given difficulty (terse ↔ expansive) — orthogonal to pace. `S` ⭐
 - [ ] **Difficulty / level adjuster** — shift conceptual load on the same topic; keep the learner in the ZPD. `M` ⭐
@@ -255,7 +255,7 @@ domain firewalls — health/finance/location — still gate what it can pull in)
 - [ ] **Just-in-time prerequisite back-fill** — detects a missing prereq mid-lesson, inserts a mini-lesson, returns. `M` ⭐
 - [ ] **Zoom lens (abstraction ladder)** — big-picture ↔ concrete instance ↔ detail on the *same* idea. `S` ⭐
 - [ ] **"I'm confused here" flag** — one-tap panic button on a span; triggers a diagnostic re-explain. `S` ⭐
-- [ ] **Misconception detector + targeted remediation** — infers the *specific* faulty mental model from wrong answers, counters with a contrasting case. Highest-value LLM-only component. `M` ⭐
+- [x] **Misconception detector + targeted remediation** — infers the *specific* faulty mental model from wrong answers, counters with a contrasting case. Highest-value LLM-only component. `M` ⭐ · ✓ Mock 01
 - [ ] **Error-driven counterexample generator** — on over-generalization, fabricates the minimal case that breaks the rule. `S` ⭐
 - [ ] **Checkpoint / "ready to move on?"** — brief mastery gate before advancing; shared go/no-go signal. `M` ⭐
 - [ ] **Live feedback on free responses** — span-level, criterion-referenced feedback, checked against the owner's own notes. `M` ⭐
