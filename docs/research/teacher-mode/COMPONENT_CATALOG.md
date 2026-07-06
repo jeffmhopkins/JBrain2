@@ -247,14 +247,14 @@ domain firewalls — health/finance/location — still gate what it can pull in)
 
 - [ ] **Inline "ask a follow-up"** — anchored chat on any lesson span; turns monologue into dialogue. `M` ⭐
 - [x] **"Explain this differently" / re-explain** — regenerate via a different representation (analogy/example/visual/formal); avoids repeating tried modes. `S` ⭐ · ✓ Mock 01
-- [ ] **Tone / persona selector** — warm coach ↔ terse expert ↔ Socratic gadfly; match affective needs. `S` ⭐
+- [x] **Tone / persona selector** — warm coach ↔ terse expert ↔ Socratic gadfly; match affective needs. `S` ⭐ · ✓ Mock 03
 - [ ] **Verbosity / depth dial** — how *much* is said at a given difficulty (terse ↔ expansive) — orthogonal to pace. `S` ⭐
-- [ ] **Difficulty / level adjuster** — shift conceptual load on the same topic; keep the learner in the ZPD. `M` ⭐
-- [ ] **Pace adjuster** — lesson tempo & step size ("slow down / skip ahead"). `M` ⭐
-- [ ] **Adaptive branching (choose-your-path)** — ranked next directions based on the learner model. `M` ⭐
+- [x] **Difficulty / level adjuster** — shift conceptual load on the same topic; keep the learner in the ZPD. `M` ⭐ · ✓ Mock 03
+- [x] **Pace adjuster** — lesson tempo & step size ("slow down / skip ahead"). `M` ⭐ · ✓ Mock 03
+- [x] **Adaptive branching (choose-your-path)** — ranked next directions based on the learner model. `M` ⭐ · ✓ Mock 03
 - [ ] **Just-in-time prerequisite back-fill** — detects a missing prereq mid-lesson, inserts a mini-lesson, returns. `M` ⭐
 - [ ] **Zoom lens (abstraction ladder)** — big-picture ↔ concrete instance ↔ detail on the *same* idea. `S` ⭐
-- [ ] **"I'm confused here" flag** — one-tap panic button on a span; triggers a diagnostic re-explain. `S` ⭐
+- [x] **"I'm confused here" flag** — one-tap panic button on a span; triggers a diagnostic re-explain. `S` ⭐ · ✓ Mock 03
 - [x] **Misconception detector + targeted remediation** — infers the *specific* faulty mental model from wrong answers, counters with a contrasting case. Highest-value LLM-only component. `M` ⭐ · ✓ Mock 01
 - [ ] **Error-driven counterexample generator** — on over-generalization, fabricates the minimal case that breaks the rule. `S` ⭐
 - [ ] **Checkpoint / "ready to move on?"** — brief mastery gate before advancing; shared go/no-go signal. `M` ⭐
