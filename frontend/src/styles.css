@@ -672,19 +672,6 @@ h3 {
   align-items: center;
 }
 
-/* The read-aloud toggle sits at the far left of the composer foot. margin-right:auto
-   keeps it there even before the first turn (no context meter to fill the row); with a
-   meter present its flex:1 absorbs the free space, so the auto margin is a no-op. Muted
-   until enabled, when it takes the mode accent like the send button. */
-.ctx-speak {
-  margin-right: auto;
-  color: var(--text-2);
-}
-
-.ctx-speak-on {
-  color: var(--mode);
-}
-
 .send-btn {
   color: var(--mode);
 }
@@ -7725,6 +7712,41 @@ button.small {
 }
 .fb-shell .fb-act-copy.done {
   color: var(--green);
+}
+/* read-aloud on: the copy button drops its label to just the icon (square) so the
+   play control fits beside it. The play control owns the far-right auto margin, so
+   copy clears its own (the row gap alone spaces the pair) and squares up its padding. */
+.fb-shell .fb-act-copy.compact {
+  margin-left: 0;
+  padding: 3px;
+  gap: 0;
+}
+.fb-shell .fb-act-play {
+  flex: none;
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 25px;
+  padding: 3px;
+  border-radius: 8px;
+  background: none;
+  border: none;
+  color: var(--text-3);
+  cursor: pointer;
+  transition: color 0.14s;
+}
+.fb-shell .fb-act-play:hover {
+  color: var(--steel);
+}
+.fb-shell .fb-act-play.on {
+  color: var(--steel);
+}
+.fb-shell .fb-act-play .fb-act-ic {
+  width: 15px;
+  height: 15px;
+  flex: none;
+  color: currentColor;
 }
 .fb-shell .fb-act-pulse {
   width: 6px;

@@ -92,34 +92,13 @@ export function HomeScreen({
   const convMode = seg.mode === "research" || seg.mode === "fullbrain" ? seg.mode : null;
   const fb = useFullBrain(convMode, fbDeps, true);
 
-  // Local read-aloud: when the owner has enabled read-aloud, the omnibox offers a volume
-  // toggle that speaks each completed turn on this device (browser TTS).
+  // Local read-aloud: when the owner has enabled read-aloud, each settled answer in the
+  // transcript gets a play/pause control (beside its copy button) that speaks that one
+  // turn on this device (browser TTS). Flipping away from a conversation tab stops it.
   const readAloud = useReadAloud();
-  // Speak a completed assistant turn when playback is on. Fires on the busy → idle edge (a
-  // turn just settled), only for the chat currently on screen (never a background turn),
-  // and only a cleanly-finished, non-empty answer (never a stopped / errored one).
-  const prevBusyRef = useRef(false);
-  const streamingSessionRef = useRef<string | null>(null);
-  if (fb.activeTurn) streamingSessionRef.current = fb.activeTurn.sessionId;
   useEffect(() => {
-    const wasBusy = prevBusyRef.current;
-    prevBusyRef.current = fb.busy;
-    if (!wasBusy || fb.busy) return; // only the settle edge
-    const sid = streamingSessionRef.current;
-    streamingSessionRef.current = null;
-    if (!readAloud.available || !readAloud.on) return;
-    if (!sid || sid !== fb.active?.id) return; // a turn in a chat you've navigated away from
-    const last = fb.messages[fb.messages.length - 1];
-    if (
-      last?.role === "assistant" &&
-      !last.streaming &&
-      last.text.trim() &&
-      last.stopReason !== "stopped" &&
-      last.stopReason !== "error"
-    ) {
-      readAloud.speak(last.text);
-    }
-  }, [fb.busy, fb.messages, fb.active, readAloud.available, readAloud.on, readAloud.speak]);
+    if (convMode === null) readAloud.stop();
+  }, [convMode, readAloud.stop]);
 
   // A Tasks run → open its session: flip to the conversation tab that hosts the
   // session's persona, then open it by id (the controller suppresses the tab's
@@ -202,6 +181,13 @@ export function HomeScreen({
           // Enacting a correction creates a note out of band; refresh the stream
           // now so it's already there when the owner flips back to entry mode.
           onProposalEnacted={() => void notes.refresh()}
+          // Read-aloud on: each settled answer gets a play/pause control by its copy
+          // button that speaks that turn locally. Off/unavailable = no control.
+          readAloud={
+            readAloud.available
+              ? { playing: readAloud.playing, onToggle: readAloud.toggle }
+              : undefined
+          }
         />
       ) : (
         <Stream
@@ -256,13 +242,6 @@ export function HomeScreen({
         // context meter shows how full the model's window is getting.
         onStop={conversational ? fb.stop : undefined}
         contextUsage={conversational ? fb.usage : null}
-        // Conversation surfaces only, and only when read-aloud is enabled: a volume toggle
-        // left of the context meter that speaks completed turns locally; off stops it now.
-        readAloud={
-          conversational && readAloud.available
-            ? { on: readAloud.on, onToggle: readAloud.toggle }
-            : undefined
-        }
         onOpenLauncher={onOpenLauncher}
         labels={segLabels}
         // Conversation tabs only: a horizontal swipe across the omnibox shuttles

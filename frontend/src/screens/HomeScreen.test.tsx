@@ -549,33 +549,46 @@ describe("HomeScreen read-aloud", () => {
     );
   }
 
-  it("shows the toggle and speaks a completed turn once playback is on", async () => {
+  it("plays a settled turn from its bubble control and flips it to pause", async () => {
     renderHome(streamingDeps("The answer is forty two."));
     fireEvent.click(screen.getByRole("tab", { name: "Brain" }));
-    // The toggle appears (setting on + a speech engine present); enable playback.
-    const toggle = await screen.findByRole("button", { name: "Read replies aloud" });
-    fireEvent.click(toggle);
-    await screen.findByRole("button", { name: "Stop reading replies aloud" });
+    await waitFor(() => screen.getByLabelText("Conversation"));
 
     fireEvent.change(screen.getByLabelText("Composer"), {
       target: { value: "the meaning of life?" },
     });
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
 
+    // Nothing speaks on its own — the turn settles silent, offering a play control.
+    const play = await screen.findByRole("button", { name: "Read response aloud" });
+    expect(synth.speak).not.toHaveBeenCalled();
+
+    // Tapping play speaks the turn and flips the control to pause.
+    fireEvent.click(play);
     await waitFor(() => expect(synth.speak).toHaveBeenCalledTimes(1));
     expect(synth.speak.mock.calls[0]?.[0].text).toBe("The answer is forty two.");
+    const pause = await screen.findByRole("button", { name: "Pause reading aloud" });
+
+    // Tapping pause cancels the speech and restores the play control.
+    fireEvent.click(pause);
+    expect(synth.cancel).toHaveBeenCalled();
+    await screen.findByRole("button", { name: "Read response aloud" });
   });
 
-  it("stays silent when playback is left off", async () => {
+  it("offers no play control when read-aloud is unavailable (no speech engine)", async () => {
+    // A browser with no Web Speech at all — the key is absent, not just undefined,
+    // so `"speechSynthesis" in window` is false and read-aloud stays unavailable.
+    Reflect.deleteProperty(window, "speechSynthesis");
     renderHome(streamingDeps("hush now"));
     fireEvent.click(screen.getByRole("tab", { name: "Brain" }));
-    // The toggle is offered but NOT enabled.
-    await screen.findByRole("button", { name: "Read replies aloud" });
+    await waitFor(() => screen.getByLabelText("Conversation"));
 
     fireEvent.change(screen.getByLabelText("Composer"), { target: { value: "quietly" } });
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
 
     await waitFor(() => expect(screen.getByText("hush now")).toBeInTheDocument());
-    expect(synth.speak).not.toHaveBeenCalled();
+    // The copy affordance is there (settled answer), but no read-aloud play control.
+    await screen.findByRole("button", { name: "Copy response" });
+    expect(screen.queryByRole("button", { name: "Read response aloud" })).toBeNull();
   });
 });

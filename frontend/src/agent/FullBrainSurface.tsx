@@ -42,6 +42,14 @@ interface Props {
   /** Fired after a Proposal enacts — the home stream refreshes so a note the
    * enactment created shows without waiting for the poll. */
   onProposalEnacted?: (() => void) | undefined;
+  /** Read-aloud (piper) is enabled: each settled answer gets a play/pause control
+   * beside its copy button, and the copy button drops its label to save room.
+   * `playing` is the key of the turn speaking now (null = silent); `onToggle`
+   * plays a turn by key or pauses it if it's the one already playing. Absent =
+   * no play control (read-aloud off / unavailable). */
+  readAloud?:
+    | { playing: string | null; onToggle: (key: string, markdown: string) => void }
+    | undefined;
 }
 
 export function FullBrainSurface({
@@ -49,6 +57,7 @@ export function FullBrainSurface({
   onOpenNote,
   onOpenEntity,
   onProposalEnacted,
+  readAloud,
 }: Props): ReactNode {
   const chatRef = useRef<HTMLElement>(null);
   const { panel, setPanel } = fb;
@@ -122,6 +131,16 @@ export function FullBrainSurface({
                 }}
                 onStop={fb.stop}
                 onOpenSession={fb.requestOpen}
+                // The positional key doubles as the read-aloud turn key (append-only,
+                // so it stays put for the turn's lifetime).
+                audio={
+                  readAloud
+                    ? {
+                        playing: readAloud.playing === String(i),
+                        onToggle: () => readAloud.onToggle(String(i), m.text),
+                      }
+                    : undefined
+                }
               />
             ))}
             {fb.messages.length === 0 && (
@@ -300,6 +319,7 @@ function Bubble({
   onOpenEntity,
   onStop,
   onOpenSession,
+  audio,
 }: {
   message: TranscriptMessage;
   onOpenNote?: ((noteId: string) => void) | undefined;
@@ -309,6 +329,9 @@ function Bubble({
   onStop?: (() => void) | undefined;
   /** Open a sub-agent child's own session by id (from the fan's row). */
   onOpenSession?: ((sessionId: string) => void) | undefined;
+  /** Read-aloud play/pause for this settled answer: `playing` = it's speaking now;
+   * `onToggle` plays/pauses it. Absent = read-aloud off (no play control, labelled copy). */
+  audio?: { playing: boolean; onToggle: () => void } | undefined;
 }): ReactNode {
   // Which ungrounded-claim flag's reason note is open (one at a time). Declared
   // before the early returns so the hook order is stable across renders.
@@ -515,6 +538,7 @@ function Bubble({
         hasAnswer={message.text !== ""}
         tools={message.tools}
         copyText={settledAnswer ? stripModelCitations(message.text) : ""}
+        audio={settledAnswer ? audio : undefined}
         onOpenNote={onOpenNote}
         onOpenEntity={onOpenEntity}
       />
@@ -666,6 +690,7 @@ function ActivityLine({
   hasAnswer,
   tools,
   copyText,
+  audio,
   onOpenNote,
   onOpenEntity,
 }: {
@@ -675,6 +700,9 @@ function ActivityLine({
   tools: ToolActivity[];
   /** The settled answer text to copy; "" while streaming or empty (no copy button). */
   copyText: string;
+  /** Read-aloud play/pause for this turn — present only when read-aloud (piper) is on.
+   * Its presence also compacts the copy button to an icon to make room. */
+  audio?: { playing: boolean; onToggle: () => void } | undefined;
   onOpenNote?: ((noteId: string) => void) | undefined;
   onOpenEntity?: ((entityId: string) => void) | undefined;
 }): ReactNode {
@@ -762,7 +790,8 @@ function ActivityLine({
             </span>
           </button>
         )}
-        {copyText && <CopyButton text={copyText} />}
+        {copyText && audio && <PlayButton playing={audio.playing} onToggle={audio.onToggle} />}
+        {copyText && <CopyButton text={copyText} compact={audio !== undefined} />}
       </div>
       {(hasReasoning || tools.length > 0) && (
         <div className={`fb-act-body${open ? " open" : ""}`}>
@@ -805,15 +834,16 @@ function ActivityLine({
 
 // Copy the answer to the clipboard, pinned to the right of the activity line: a glyph
 // plus a "Copy" label that briefly swaps to a green check + "Copied" then resets — the
-// same confirmation pattern as the review trace.
-function CopyButton({ text }: { text: string }): ReactNode {
+// same confirmation pattern as the review trace. With read-aloud on it shares the row
+// with the play control, so `compact` drops the label to just the icon to save room.
+function CopyButton({ text, compact }: { text: string; compact?: boolean }): ReactNode {
   const [copied, setCopied] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => () => clearTimeout(timer.current ?? undefined), []);
   return (
     <button
       type="button"
-      className={`fb-act-copy${copied ? " done" : ""}`}
+      className={`fb-act-copy${compact ? " compact" : ""}${copied ? " done" : ""}`}
       aria-label={copied ? "Copied" : "Copy response"}
       onClick={() => {
         void navigator.clipboard?.writeText(text);
@@ -823,8 +853,50 @@ function CopyButton({ text }: { text: string }): ReactNode {
       }}
     >
       {copied ? <CheckGlyph className="fb-act-ic" /> : <CopyGlyph className="fb-act-ic" />}
-      <span className="fb-act-copy-lab">{copied ? "Copied" : "Copy"}</span>
+      {!compact && <span className="fb-act-copy-lab">{copied ? "Copied" : "Copy"}</span>}
     </button>
+  );
+}
+
+// Read-aloud play/pause for one settled answer, sitting just left of the copy button
+// (present only when read-aloud is enabled). Play speaks this turn on the device;
+// while it speaks the glyph flips to a pause bar — tapping pauses (stops) it.
+function PlayButton({
+  playing,
+  onToggle,
+}: {
+  playing: boolean;
+  onToggle: () => void;
+}): ReactNode {
+  return (
+    <button
+      type="button"
+      className={`fb-act-play${playing ? " on" : ""}`}
+      aria-label={playing ? "Pause reading aloud" : "Read response aloud"}
+      aria-pressed={playing}
+      onClick={onToggle}
+    >
+      {playing ? <PauseGlyph className="fb-act-ic" /> : <PlayGlyph className="fb-act-ic" />}
+    </button>
+  );
+}
+
+// A filled play triangle for the read-aloud affordance.
+function PlayGlyph({ className }: { className?: string }): ReactNode {
+  return (
+    <svg className={className} viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M7 5v14l12-7z" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}
+
+// Two bars — the pause state the play glyph becomes while a turn is speaking.
+function PauseGlyph({ className }: { className?: string }): ReactNode {
+  return (
+    <svg className={className} viewBox="0 0 24 24" aria-hidden="true">
+      <rect x="6" y="5" width="4" height="14" rx="1" fill="currentColor" stroke="none" />
+      <rect x="14" y="5" width="4" height="14" rx="1" fill="currentColor" stroke="none" />
+    </svg>
   );
 }
 
