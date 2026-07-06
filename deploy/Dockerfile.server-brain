@@ -19,14 +19,18 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/* \
  && pip install --no-cache-dir piper-tts
 
-# Default voices: Joe reads prompts, Amy reads answers (the picker lists whatever is
-# installed, so extra models dropped in the mounted voices/ dir just show up too).
-# Fetched with stdlib urllib (urlretrieve follows HF's CDN redirect) — no curl in slim,
-# and a single `python -c` (not a heredoc) so the build needs no BuildKit frontend.
+# Default voices: Joe reads prompts, Amy reads answers, plus the multi-speaker libritts_r
+# model whose curated speaker 3922 is a second female agent voice (the picker lists whatever
+# is installed, so extra models dropped in the mounted voices/ dir just show up too). This
+# tuple is the baked source of truth and must stay in step with install-tts.sh's MODELS (the
+# run-on-host path). Fetched with stdlib urllib (urlretrieve follows HF's CDN redirect) — no
+# curl in slim, and a single `python -c` (not a heredoc) so the build needs no BuildKit
+# frontend. libritts_r-medium is a ~75 MB multi-speaker model (904 speakers), so this pulls
+# more at build than the two single-speaker defaults.
 RUN python -c "import urllib.request as u; from pathlib import Path; \
 d=Path('/opt/piper-voices'); d.mkdir(parents=True, exist_ok=True); \
 B='https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US'; \
-[ (print('[voices]', v, e, flush=True), u.urlretrieve(f'{B}/{v}/medium/en_US-{v}-medium{e}', d/f'en_US-{v}-medium{e}')) for v in ('joe','amy') for e in ('.onnx','.onnx.json') ]"
+[ (print('[voices]', v, e, flush=True), u.urlretrieve(f'{B}/{v}/medium/en_US-{v}-medium{e}', d/f'en_US-{v}-medium{e}')) for v in ('joe','amy','libritts_r') for e in ('.onnx','.onnx.json') ]"
 
 # No app COPY: serve.py/index.html are bind-mounted at /app and run via the compose
 # `command`. Only the baked voices above live in the image.

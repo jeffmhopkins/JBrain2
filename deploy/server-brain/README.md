@@ -238,10 +238,16 @@ level, so it's truly silent); (2) it **primes** the `<audio>`→sink path with o
 isn't clipped by the sink's cold start; (3) as a last backstop, `serve.py` prepends a short lead of
 silence to the first clip (`BRAIN_PIPER_LEAD_MS`, default 400 ms).
 
-`piper` **and the default Joe/Amy voice models** ship **baked into the server-brain image**
+`piper` **and the default voice models** (Joe, Amy, and the multi-speaker `libritts_r` — its curated
+speaker 3922 is a second female agent voice) ship **baked into the server-brain image**
 (`deploy/Dockerfile.server-brain`, at `/opt/piper-voices` — outside the read-only `/app` bind mount
 that would otherwise shadow them). So there is **nothing to provision and no env var to set**: the
-feature is driven entirely by one Settings toggle.
+feature is driven entirely by one Settings toggle. A **new baked voice lands on the next `jbrain update`**:
+`update-inner.sh` runs `docker compose build` (which re-bakes this image — a changed voice tuple
+invalidates the fetch layer's cache) and then `up -d` (which recreates the container from the new
+image). A container **restart alone does not re-bake** — restarting reuses the existing image, so use
+`jbrain update` (or a manual `docker compose build server-brain && docker compose up -d server-brain`)
+for a voice bump, not the Ops "restart all".
 
 **One switch — the toggle.** The voice panel shows only when the owner turns on **Settings → Read
 wall display aloud** (the `brain_read_aloud` app setting, **off by default** — the runtime companion
