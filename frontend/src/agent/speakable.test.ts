@@ -38,6 +38,15 @@ describe("speakable", () => {
     );
   });
 
+  it("does not read a ragged table row's extra cells as nothing, and ignores a bare rule", () => {
+    // A body row wider than the header keeps the extra cell (no silent drop).
+    expect(speakable("| A | B |\n|---|---|\n| 1 | 2 | 3 |")).toBe(
+      "A, B. Row one: A, one; B, two; three.",
+    );
+    // A prose line with a pipe followed by a horizontal rule is NOT a table.
+    expect(speakable("apples | oranges\n-----\nDone.")).toBe("apples oranges. Done.");
+  });
+
   it("announces fenced code blocks instead of reading them", () => {
     expect(speakable("Try this:\n```py\nprint(1)\n```\nDone.")).toBe("Try this: code block. Done.");
   });

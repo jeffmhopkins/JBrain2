@@ -1,10 +1,10 @@
 // Turn an assistant answer's Markdown into legible, speakable plain text for TTS.
 //
-// This is the SINGLE source of truth for read-aloud text normalization, shared by two
-// surfaces that cannot share a build: the PWA (imports it, typed via speakable.d.ts) and
-// the wall display's index.html (loads a byte-identical copy at deploy/server-brain/
-// speakable.js via <script src>, guarded by a parity test). Authored as plain ESM — no
-// framework, no deps — so the browser runs it verbatim.
+// The read-aloud text normalizer for the PWA (imported here, typed via speakable.d.ts).
+// Authored as plain ESM — no framework, no deps — so it can ALSO be loaded verbatim by the
+// wall display's index.html (which has no build step); that adoption, and a byte-parity
+// guard between the two copies, land with the wall restructure in Wave 0 of
+// docs/plans/READ_ALOUD_LEGIBILITY.md. Until then the wall still uses its own mdToPlain.
 //
 // piper is a plain-text neural voice: no SSML, no markup — pauses come only from
 // punctuation and sentence splitting. So every legibility win is a plain-text rewrite:
@@ -135,6 +135,7 @@ const SYMBOL_WORDS = [
   [/°/g, " degrees "],
   [/#/g, " number "],
   [/%/g, " percent "],
+  [/\|/g, " "], // a stray pipe (non-table) reads as nothing, never "bar"
 ];
 
 // --- URLs → spoken domain --------------------------------------------------------------
@@ -147,7 +148,11 @@ const domainWords = (host) => host.replace(/\.+$/, "").split(".").join(" dot ");
 
 // --- tables → sentences ----------------------------------------------------------------
 
-const isTableSep = (line) => /^\s*\|?[\s:|-]*-[\s:|-]*\|?\s*$/.test(line) && line.includes("-");
+// A table delimiter row: dashes/colons/pipes only, AND at least one pipe — so a bare
+// horizontal rule ("-----") under a prose line that happens to contain a "|" is NOT
+// mistaken for a table header.
+const isTableSep = (line) =>
+  /^\s*\|?[\s:|-]*-[\s:|-]*\|?\s*$/.test(line) && line.includes("-") && line.includes("|");
 const splitRow = (line) =>
   line
     .replace(/^\s*\|/, "")
@@ -172,7 +177,14 @@ function linearizeTables(text) {
       while (i + 1 < lines.length && lines[i + 1].includes("|") && !isTableSep(lines[i + 1])) {
         const cells = splitRow(lines[i + 1]);
         r += 1;
-        const pairs = headers.map((h, c) => (h ? `${h}, ${cells[c] ?? ""}` : (cells[c] ?? "")));
+        // Iterate over the WIDER of header/row so a ragged row with extra cells isn't
+        // silently dropped (the extra cells read without a header label).
+        const width = Math.max(headers.length, cells.length);
+        const pairs = [];
+        for (let c = 0; c < width; c++) {
+          const h = headers[c];
+          pairs.push(h ? `${h}, ${cells[c] ?? ""}` : (cells[c] ?? ""));
+        }
         // Pairs joined with "; " (not ". ") so the whole row stays ONE spoken clip — a bare
         // "Age, thirty." clip would lose the "Row one" context.
         out.push(`Row ${intToWords(r)}: ${pairs.join("; ")}.`);
