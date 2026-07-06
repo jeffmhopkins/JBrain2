@@ -1,0 +1,400 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Teacher Mode — Mock 01 · Correlation vs. Causation</title>
+<style>
+  /* ---- Design tokens (mirrors frontend/src/styles/tokens.css intent) ---- */
+  :root {
+    color-scheme: dark light;
+    --bg:        #0e1113;
+    --surface:   #171b1e;
+    --surface-2: #1f2529;
+    --border:    #2b3237;
+    --text:      #e7edf1;
+    --dim:       #8b979f;
+    --faint:     #5c666d;
+    --accent:    #6aa9d6;   /* steel — agent, per DESIGN.md */
+    --accent-dim:#28414f;
+    --good:      #57b98a;   /* green — correct / save */
+    --good-dim:  #1c3a2c;
+    --warn:      #d8a24a;   /* amber — review / caution */
+    --warn-dim:  #3a2f18;
+    --wrong:     #d97b7b;
+    --wrong-dim: #3a2124;
+    --r-lg: 16px; --r-md: 12px; --r-pill: 999px;
+    --sp: 4px;
+    --fs-0: 12px; --fs-1: 14px; --fs-2: 16px; --fs-3: 18px; --fs-4: 22px;
+    --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+  @media (prefers-color-scheme: light) {
+    :root {
+      --bg:#f2f4f6; --surface:#ffffff; --surface-2:#f6f8fa; --border:#dde2e6;
+      --text:#141a1e; --dim:#5a666e; --faint:#8b979f;
+      --accent:#2f7bb0; --accent-dim:#d3e6f3;
+      --good:#2f9d6b; --good-dim:#dcf1e7; --warn:#b8791f; --warn-dim:#f6ecd6;
+      --wrong:#c0504e; --wrong-dim:#f6dfdf;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: var(--font); font-size: var(--fs-1); line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+  }
+  .phone {
+    max-width: 430px; margin: 0 auto; min-height: 100vh;
+    padding: calc(var(--sp)*4) calc(var(--sp)*3) calc(var(--sp)*16);
+    display: flex; flex-direction: column; gap: calc(var(--sp)*3);
+  }
+
+  /* ---- Chat scaffold ---- */
+  .appbar {
+    display:flex; align-items:center; gap: calc(var(--sp)*2);
+    padding: calc(var(--sp)*2) calc(var(--sp)*1);
+    color: var(--dim); font-size: var(--fs-0);
+    border-bottom: 1px solid var(--border); margin-bottom: var(--sp);
+  }
+  .appbar .dot { width:8px; height:8px; border-radius:var(--r-pill); background:var(--accent); }
+  .appbar b { color: var(--text); font-size: var(--fs-1); font-weight:600; }
+  .appbar .spacer { flex:1; }
+
+  .turn { display:flex; gap: calc(var(--sp)*2); align-items:flex-end; }
+  .turn.student { flex-direction: row-reverse; }
+  .avatar {
+    flex: 0 0 auto; width: 26px; height: 26px; border-radius: var(--r-pill);
+    display:grid; place-items:center; font-size: 11px; font-weight:700;
+    background: var(--accent-dim); color: var(--accent); margin-bottom: 2px;
+  }
+  .student .avatar { background: var(--surface-2); color: var(--dim); }
+  .bubble {
+    max-width: 82%; padding: calc(var(--sp)*2.5) calc(var(--sp)*3);
+    border-radius: var(--r-lg); background: var(--surface);
+    border: 1px solid var(--border); border-bottom-left-radius: var(--sp);
+  }
+  .student .bubble {
+    background: var(--accent-dim); border-color: transparent; color: var(--text);
+    border-bottom-left-radius: var(--r-lg); border-bottom-right-radius: var(--sp);
+  }
+  .bubble p { margin: 0; }
+  .bubble p + p { margin-top: calc(var(--sp)*2); }
+
+  /* A component card sits full-width in the flow, tagged so you can appraise it */
+  .card {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--r-lg); overflow: hidden; position: relative;
+  }
+  .tag {
+    position:absolute; top:0; right:0;
+    font-size: 10px; letter-spacing:.03em; color: var(--faint);
+    background: var(--surface-2); border-left:1px solid var(--border);
+    border-bottom:1px solid var(--border); border-bottom-left-radius: var(--r-md);
+    padding: 3px 8px; font-weight:600;
+  }
+  .card-body { padding: calc(var(--sp)*3.5); }
+  .eyebrow {
+    font-size: var(--fs-0); color: var(--accent); font-weight:600;
+    letter-spacing:.04em; text-transform:uppercase; margin-bottom: var(--sp);
+  }
+  h2.title { margin: 0 0 calc(var(--sp)*2); font-size: var(--fs-4); line-height:1.2; padding-right: 92px; }
+  h3.q { margin: 0 0 calc(var(--sp)*3); font-size: var(--fs-2); padding-right: 96px; }
+
+  /* ---- 1. Objectives / lesson-plan header ---- */
+  .obj { list-style:none; margin: calc(var(--sp)*2) 0 0; padding:0; display:flex; flex-direction:column; gap: var(--sp); }
+  .obj li { display:flex; gap: calc(var(--sp)*2); align-items:flex-start; font-size: var(--fs-1); color: var(--dim); }
+  .obj .n { flex:0 0 auto; width:18px; height:18px; border-radius:var(--r-pill); background:var(--surface-2);
+            border:1px solid var(--border); color:var(--faint); font-size:11px; font-weight:700; display:grid; place-items:center; margin-top:1px; }
+  .planline { display:flex; align-items:center; gap:calc(var(--sp)*2); margin-top:calc(var(--sp)*3);
+              padding-top:calc(var(--sp)*3); border-top:1px solid var(--border); font-size:var(--fs-0); color:var(--faint); }
+  .track { flex:1; height:5px; border-radius:var(--r-pill); background:var(--surface-2); overflow:hidden; }
+  .track > i { display:block; height:100%; width:44%; background:var(--accent); }
+
+  /* ---- 2. Scatter plot ---- */
+  figure.chart { margin:0; }
+  .chart svg { width:100%; height:auto; display:block; }
+  figcaption { font-size: var(--fs-0); color: var(--dim); margin-top: calc(var(--sp)*2); }
+  .rlabel { fill: var(--accent); font-size: 11px; font-weight:700; font-family:var(--font); }
+  .axlabel { fill: var(--faint); font-size: 10px; font-family:var(--font); }
+
+  /* ---- 3. Multiple choice ---- */
+  .opts { display:flex; flex-direction:column; gap: calc(var(--sp)*2); }
+  .opt {
+    display:flex; gap: calc(var(--sp)*2.5); align-items:center; text-align:left;
+    padding: calc(var(--sp)*3); border-radius: var(--r-md);
+    border:1px solid var(--border); background: var(--surface-2); color: var(--text);
+    font: inherit; cursor:pointer; transition: border-color .12s, background .12s;
+  }
+  .opt:hover { border-color: var(--accent); }
+  .opt .mk { flex:0 0 auto; width:22px; height:22px; border-radius:var(--r-pill);
+             border:1.5px solid var(--faint); display:grid; place-items:center; font-size:12px; font-weight:700; color:transparent; }
+  .opt.correct { border-color: var(--good); background: var(--good-dim); }
+  .opt.correct .mk { border-color: var(--good); color: var(--good); }
+  .opt.incorrect { border-color: var(--wrong); background: var(--wrong-dim); }
+  .opt.incorrect .mk { border-color: var(--wrong); color: var(--wrong); }
+  .fb { margin-top: calc(var(--sp)*3); font-size: var(--fs-1); display:none; gap:calc(var(--sp)*2); align-items:flex-start; }
+  .fb.show { display:flex; }
+  .fb .pip { flex:0 0 auto; margin-top:2px; font-weight:700; }
+  .fb.bad  { color: var(--wrong); }
+  .fb.ok   { color: var(--good); }
+
+  /* ---- 4. Misconception remediation ---- */
+  .card.flagged { border-color: var(--warn); }
+  .flaghead {
+    display:flex; align-items:center; gap: calc(var(--sp)*2);
+    background: var(--warn-dim); color: var(--warn);
+    padding: calc(var(--sp)*2.5) calc(var(--sp)*3.5); font-weight:600; font-size: var(--fs-1);
+    border-bottom:1px solid var(--border); padding-right: 150px;
+  }
+  .flaghead .ic { font-size:15px; }
+  .variant { display:none; }
+  .variant.active { display:block; }
+  .cause {
+    margin-top: calc(var(--sp)*3); background: var(--surface-2); border:1px solid var(--border);
+    border-radius: var(--r-md); padding: calc(var(--sp)*3); font-size: var(--fs-1);
+  }
+  .cause .root { color: var(--warn); font-weight:700; }
+  .cause .arm { color: var(--dim); padding-left: calc(var(--sp)*4); position:relative; }
+  .cause .arm::before { content:"↳"; position:absolute; left:calc(var(--sp)*1.5); color:var(--faint); }
+  .switch {
+    margin-top: calc(var(--sp)*3); display:flex; gap: var(--sp); padding:3px;
+    background: var(--surface-2); border:1px solid var(--border); border-radius: var(--r-pill); width:max-content;
+  }
+  .switch button {
+    font: inherit; font-size: var(--fs-0); font-weight:600; color: var(--dim);
+    background: transparent; border:0; padding: 5px 12px; border-radius: var(--r-pill); cursor:pointer;
+  }
+  .switch button.on { background: var(--accent-dim); color: var(--accent); }
+
+  /* ---- 5. Free response + grading ---- */
+  textarea {
+    width:100%; min-height: 74px; resize:vertical; font: inherit; color: var(--text);
+    background: var(--surface-2); border:1px solid var(--border); border-radius: var(--r-md);
+    padding: calc(var(--sp)*3); margin-top: calc(var(--sp)*2);
+  }
+  textarea:focus { outline:none; border-color: var(--accent); }
+  .btn {
+    margin-top: calc(var(--sp)*3); font: inherit; font-weight:600; font-size: var(--fs-1);
+    background: var(--accent); color:#05141d; border:0; border-radius: var(--r-pill);
+    padding: calc(var(--sp)*2.5) calc(var(--sp)*5); cursor:pointer;
+  }
+  @media (prefers-color-scheme: light){ .btn{ color:#fff; } }
+  .btn:disabled { opacity:.5; cursor:default; }
+  .grade { display:none; margin-top: calc(var(--sp)*3); }
+  .grade.show { display:block; }
+  .rubric { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:calc(var(--sp)*2); }
+  .rubric li { display:flex; gap: calc(var(--sp)*2.5); align-items:flex-start; font-size: var(--fs-1); }
+  .rubric .pip { flex:0 0 auto; margin-top:1px; font-weight:800; }
+  .rubric .hit .pip { color: var(--good); } .rubric .hit { color: var(--text); }
+  .rubric .miss .pip { color: var(--wrong); } .rubric .miss { color: var(--dim); }
+  .score {
+    margin-top: calc(var(--sp)*3.5); padding-top: calc(var(--sp)*3); border-top:1px solid var(--border);
+    display:flex; align-items:center; gap: calc(var(--sp)*2); font-size: var(--fs-1);
+  }
+  .score b { font-size: var(--fs-3); color: var(--good); }
+  .score .barwrap { flex:1; height:6px; border-radius:var(--r-pill); background:var(--surface-2); overflow:hidden; }
+  .score .barwrap > i { display:block; height:100%; width:67%; background:var(--good); }
+
+  .note { text-align:center; color: var(--faint); font-size: var(--fs-0); padding: calc(var(--sp)*2); }
+  .note kbd { background:var(--surface-2); border:1px solid var(--border); border-radius:6px; padding:1px 6px; font-size:11px; }
+</style>
+</head>
+<body>
+<main class="phone">
+
+  <div class="appbar">
+    <span class="dot"></span><b>Teacher</b>
+    <span>· Statistical Reasoning</span>
+    <span class="spacer"></span>
+    <span>Lesson 4 / 9</span>
+  </div>
+
+  <!-- 1 · LESSON HEADER / OBJECTIVES (from lesson-plan table) -->
+  <section class="card" aria-label="Lesson header">
+    <span class="tag">objectives · lesson-plan</span>
+    <div class="card-body">
+      <div class="eyebrow">Unit 2 — Reading Data</div>
+      <h2 class="title">Correlation vs. Causation</h2>
+      <p style="margin:0;color:var(--dim)">By the end of this lesson you'll be able to:</p>
+      <ul class="obj">
+        <li><span class="n">1</span> Read a correlation from a scatter plot</li>
+        <li><span class="n">2</span> Explain why correlation doesn't prove causation</li>
+        <li><span class="n">3</span> Spot a confounding variable behind a spurious link</li>
+      </ul>
+      <div class="planline">
+        <span>Est. 8 min</span><span>·</span><span>Prereq: reading a scatter plot ✓</span>
+        <span class="track"><i></i></span>
+      </div>
+    </div>
+  </section>
+
+  <!-- teacher intro -->
+  <div class="turn teacher">
+    <div class="avatar">T</div>
+    <div class="bubble"><p>Let's start with a real pattern. Here's a year of data from a beach town — each dot is one month.</p></div>
+  </div>
+
+  <!-- 2 · SCATTER PLOT -->
+  <section class="card" aria-label="Scatter plot">
+    <span class="tag">scatter plot</span>
+    <div class="card-body">
+      <figure class="chart">
+        <svg viewBox="0 0 340 210" role="img" aria-label="Scatter plot of ice-cream sales versus drownings, strong upward trend">
+          <!-- axes -->
+          <line x1="38" y1="12" x2="38" y2="176" stroke="var(--border)" />
+          <line x1="38" y1="176" x2="326" y2="176" stroke="var(--border)" />
+          <!-- trend line -->
+          <line x1="46" y1="164" x2="318" y2="34" stroke="var(--accent)" stroke-width="2" stroke-dasharray="5 4" opacity="0.85"/>
+          <!-- points -->
+          <g fill="var(--text)">
+            <circle cx="58"  cy="158" r="4.5"/>
+            <circle cx="78"  cy="150" r="4.5"/>
+            <circle cx="96"  cy="152" r="4.5"/>
+            <circle cx="118" cy="134" r="4.5"/>
+            <circle cx="140" cy="128" r="4.5"/>
+            <circle cx="160" cy="118" r="4.5"/>
+            <circle cx="182" cy="104" r="4.5"/>
+            <circle cx="205" cy="96"  r="4.5"/>
+            <circle cx="228" cy="80"  r="4.5"/>
+            <circle cx="252" cy="72"  r="4.5"/>
+            <circle cx="278" cy="52"  r="4.5"/>
+            <circle cx="302" cy="44"  r="4.5"/>
+          </g>
+          <text class="rlabel" x="150" y="60">r ≈ 0.93</text>
+          <text class="axlabel" x="182" y="196" text-anchor="middle">Ice-cream sales →</text>
+          <text class="axlabel" x="14" y="96" text-anchor="middle" transform="rotate(-90 14 96)">Drownings →</text>
+        </svg>
+        <figcaption>Monthly ice-cream sales vs. drowning incidents. The two rise together almost perfectly.</figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <div class="turn teacher">
+    <div class="avatar">T</div>
+    <div class="bubble"><p>They track tightly — a strong positive correlation. So here's the question:</p></div>
+  </div>
+
+  <!-- 3 · MULTIPLE CHOICE -->
+  <section class="card" aria-label="Multiple choice check">
+    <span class="tag">multiple choice</span>
+    <div class="card-body">
+      <h3 class="q">Does buying ice cream <em>cause</em> drownings?</h3>
+      <div class="opts" id="mc">
+        <button class="opt" data-correct="false">
+          <span class="mk"></span><span>Yes — the data shows a clear link.</span>
+        </button>
+        <button class="opt" data-correct="true">
+          <span class="mk"></span><span>No — a third factor probably drives both.</span>
+        </button>
+        <button class="opt" data-correct="false">
+          <span class="mk"></span><span>There isn't enough data to say anything.</span>
+        </button>
+      </div>
+      <div class="fb bad" id="mcbad"><span class="pip">✕</span><span>That's the trap this lesson is about — let's look at why.</span></div>
+      <div class="fb ok"  id="mcok"><span class="pip">✓</span><span>Exactly — correlation on its own can't establish cause.</span></div>
+    </div>
+  </section>
+
+  <!-- student answer echo -->
+  <div class="turn student">
+    <div class="avatar">You</div>
+    <div class="bubble"><p>Yeah, A — the correlation is really strong.</p></div>
+  </div>
+
+  <!-- 4 · MISCONCEPTION REMEDIATION -->
+  <section class="card flagged" aria-label="Misconception remediation">
+    <span class="tag">misconception remediation ⭐</span>
+    <div class="flaghead"><span class="ic">◆</span><span>Misconception: reading correlation as causation</span></div>
+    <div class="card-body">
+      <div class="variant active" id="v-data">
+        <p style="margin:0">A strong correlation <em>feels</em> like proof — but you're missing a lurking third variable. Ask: what else climbs in the summer?</p>
+        <div class="cause">
+          <div class="root">☀ Hot weather</div>
+          <div class="arm">drives ice-cream sales <b>up</b></div>
+          <div class="arm">drives swimming up → drownings <b>up</b></div>
+        </div>
+        <p style="margin:calc(var(--sp)*3) 0 0;color:var(--dim)">Ice cream and drownings never touch each other — the heat moves both. That's a <b>confounder</b>.</p>
+      </div>
+      <div class="variant" id="v-analogy">
+        <p style="margin:0">Think of it this way: <em>roosters crow right before sunrise, every single day.</em></p>
+        <p style="color:var(--dim)">Perfect correlation — but no one thinks the rooster <em>causes</em> the sun to rise. Something else (the Earth turning) drives both the crowing and the dawn. Same shape as the ice cream.</p>
+      </div>
+      <div class="switch" role="tablist" aria-label="Explain differently">
+        <button class="on" data-v="v-data">With the data</button>
+        <button data-v="v-analogy">As an analogy</button>
+      </div>
+    </div>
+  </section>
+
+  <div class="turn teacher">
+    <div class="avatar">T</div>
+    <div class="bubble"><p>Good — now put it in your own words so I know it landed.</p></div>
+  </div>
+
+  <!-- 5 · FREE RESPONSE + AI GRADING -->
+  <section class="card" aria-label="Free response with grading">
+    <span class="tag">free response + AI grading ⭐</span>
+    <div class="card-body">
+      <h3 class="q" style="margin-bottom:var(--sp)">What would you need to show to prove ice cream <em>actually</em> causes drownings?</h3>
+      <textarea id="resp">You'd have to rule out other causes, like the weather.</textarea>
+      <button class="btn" id="submit">Submit for feedback</button>
+      <div class="grade" id="grade">
+        <ul class="rubric">
+          <li class="hit"><span class="pip">✓</span><span>You named a <b>confounder</b> (weather) — that's the key idea.</span></li>
+          <li class="hit"><span class="pip">✓</span><span>You framed it as <b>ruling out alternatives</b> — right instinct.</span></li>
+          <li class="miss"><span class="pip">✕</span><span>Missing: a <b>controlled comparison</b> — e.g. hold weather fixed and vary ice cream, or run an experiment.</span></li>
+        </ul>
+        <div class="score">
+          <span>Score</span><b>2 / 3</b>
+          <span class="barwrap"><i></i></span>
+          <span style="color:var(--dim)">Solid — one step from a full answer.</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <div class="turn teacher">
+    <div class="avatar">T</div>
+    <div class="bubble"><p>That's the right instinct. Next lesson: how a <em>controlled comparison</em> turns a correlation into evidence for cause.</p></div>
+  </div>
+
+  <p class="note">Mock 01 · canned interaction — tap the options, switch the explanation, edit &amp; resubmit the answer.</p>
+
+</main>
+
+<script>
+  // 3 · multiple choice
+  const mc = document.getElementById('mc');
+  const bad = document.getElementById('mcbad'), ok = document.getElementById('mcok');
+  mc.addEventListener('click', e => {
+    const b = e.target.closest('.opt'); if (!b) return;
+    [...mc.children].forEach(o => o.classList.remove('correct','incorrect'));
+    const right = b.dataset.correct === 'true';
+    b.classList.add(right ? 'correct' : 'incorrect');
+    b.querySelector('.mk').textContent = right ? '✓' : '✕';
+    [...mc.children].forEach(o => { if (o!==b) o.querySelector('.mk').textContent=''; });
+    bad.classList.toggle('show', !right);
+    ok.classList.toggle('show', right);
+  });
+  // preload the "student picked the wrong one" state for the storyboard
+  mc.children[0].click();
+
+  // 4 · explain differently
+  document.querySelectorAll('.switch button').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.switch button').forEach(x => x.classList.remove('on'));
+      btn.classList.add('on');
+      document.querySelectorAll('.variant').forEach(v => v.classList.remove('active'));
+      document.getElementById(btn.dataset.v).classList.add('active');
+    });
+  });
+
+  // 5 · free response grading
+  document.getElementById('submit').addEventListener('click', () => {
+    document.getElementById('grade').classList.add('show');
+    document.getElementById('submit').disabled = true;
+    document.getElementById('submit').textContent = 'Graded';
+  });
+</script>
+</body>
+</html>

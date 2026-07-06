@@ -1,0 +1,230 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Teacher Mode — Mock 02 · Guided Practice (Algebra)</title>
+<style>
+  :root {
+    color-scheme: dark light;
+    --bg:#0e1113; --surface:#171b1e; --surface-2:#1f2529; --border:#2b3237;
+    --text:#e7edf1; --dim:#8b979f; --faint:#5c666d;
+    --accent:#6aa9d6; --accent-dim:#28414f;
+    --good:#57b98a; --good-dim:#1c3a2c; --warn:#d8a24a; --warn-dim:#3a2f18;
+    --wrong:#d97b7b; --wrong-dim:#3a2124;
+    --r-lg:16px; --r-md:12px; --r-pill:999px; --sp:4px;
+    --fs-0:12px; --fs-1:14px; --fs-2:16px; --fs-3:18px; --fs-4:22px;
+    --font:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+    --mono:"SF Mono",ui-monospace,Menlo,Consolas,monospace;
+  }
+  @media (prefers-color-scheme: light){
+    :root{ --bg:#f2f4f6; --surface:#fff; --surface-2:#f6f8fa; --border:#dde2e6;
+      --text:#141a1e; --dim:#5a666e; --faint:#8b979f; --accent:#2f7bb0; --accent-dim:#d3e6f3;
+      --good:#2f9d6b; --good-dim:#dcf1e7; --warn:#b8791f; --warn-dim:#f6ecd6;
+      --wrong:#c0504e; --wrong-dim:#f6dfdf; }
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--bg);color:var(--text);font-family:var(--font);font-size:var(--fs-1);line-height:1.5;-webkit-font-smoothing:antialiased;}
+  .phone{max-width:430px;margin:0 auto;min-height:100vh;padding:calc(var(--sp)*4) calc(var(--sp)*3) calc(var(--sp)*16);display:flex;flex-direction:column;gap:calc(var(--sp)*3);}
+
+  .appbar{display:flex;align-items:center;gap:calc(var(--sp)*2);padding:calc(var(--sp)*2) var(--sp);color:var(--dim);font-size:var(--fs-0);border-bottom:1px solid var(--border);margin-bottom:var(--sp);}
+  .appbar .dot{width:8px;height:8px;border-radius:var(--r-pill);background:var(--accent);}
+  .appbar b{color:var(--text);font-size:var(--fs-1);font-weight:600;}
+  .appbar .spacer{flex:1;}
+
+  .turn{display:flex;gap:calc(var(--sp)*2);align-items:flex-end;}
+  .turn.student{flex-direction:row-reverse;}
+  .avatar{flex:0 0 auto;width:26px;height:26px;border-radius:var(--r-pill);display:grid;place-items:center;font-size:11px;font-weight:700;background:var(--accent-dim);color:var(--accent);margin-bottom:2px;}
+  .student .avatar{background:var(--surface-2);color:var(--dim);}
+  .bubble{max-width:82%;padding:calc(var(--sp)*2.5) calc(var(--sp)*3);border-radius:var(--r-lg);background:var(--surface);border:1px solid var(--border);border-bottom-left-radius:var(--sp);}
+  .student .bubble{background:var(--accent-dim);border-color:transparent;border-bottom-left-radius:var(--r-lg);border-bottom-right-radius:var(--sp);}
+  .bubble p{margin:0;} .bubble p+p{margin-top:calc(var(--sp)*2);}
+
+  .card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-lg);overflow:hidden;position:relative;}
+  .tag{position:absolute;top:0;right:0;font-size:10px;letter-spacing:.03em;color:var(--faint);background:var(--surface-2);border-left:1px solid var(--border);border-bottom:1px solid var(--border);border-bottom-left-radius:var(--r-md);padding:3px 8px;font-weight:600;z-index:2;}
+  .card-body{padding:calc(var(--sp)*3.5);}
+  .clabel{font-size:var(--fs-0);color:var(--accent);font-weight:600;letter-spacing:.04em;text-transform:uppercase;margin:0 0 calc(var(--sp)*3);padding-right:120px;}
+  .prob{font-family:var(--mono);font-size:var(--fs-3);text-align:center;padding:calc(var(--sp)*3);background:var(--surface-2);border:1px solid var(--border);border-radius:var(--r-md);margin-bottom:calc(var(--sp)*3);}
+
+  /* worked example — progressive reveal */
+  .wstep{width:100%;text-align:left;font:inherit;cursor:pointer;background:var(--surface-2);border:1px dashed var(--border);border-radius:var(--r-md);padding:calc(var(--sp)*2.5) calc(var(--sp)*3);color:var(--dim);display:flex;align-items:center;gap:calc(var(--sp)*2);margin-top:calc(var(--sp)*2);}
+  .wstep .pk{color:var(--faint);}
+  .wstep.done{cursor:default;border-style:solid;background:var(--surface);color:var(--text);flex-direction:column;align-items:stretch;gap:var(--sp);}
+  .wstep .rule{font-size:var(--fs-0);color:var(--accent);font-weight:600;}
+  .wstep .expr{font-family:var(--mono);font-size:var(--fs-2);}
+  .solved{margin-top:calc(var(--sp)*3);text-align:center;font-family:var(--mono);font-size:var(--fs-3);color:var(--good);font-weight:700;display:none;}
+  .solved.show{display:block;}
+
+  /* step-check — solution builder */
+  .line{display:flex;gap:calc(var(--sp)*2.5);align-items:center;padding:calc(var(--sp)*2.5) calc(var(--sp)*3);border-radius:var(--r-md);margin-top:calc(var(--sp)*2);font-family:var(--mono);font-size:var(--fs-2);border:1px solid transparent;}
+  .line .rule{font-family:var(--font);font-size:var(--fs-0);color:var(--dim);margin-left:auto;}
+  .line.ok{background:var(--good-dim);border-color:var(--good);}
+  .line.ok .ck{color:var(--good);font-weight:800;}
+  .line.err{background:var(--wrong-dim);border-color:var(--wrong);text-decoration:line-through;text-decoration-color:var(--wrong);}
+  .line.err .ck{color:var(--wrong);font-weight:800;text-decoration:none;}
+  .flag{display:none;gap:calc(var(--sp)*2);align-items:flex-start;margin-top:calc(var(--sp)*2);padding:calc(var(--sp)*2.5) calc(var(--sp)*3);background:var(--wrong-dim);border-radius:var(--r-md);color:var(--wrong);font-size:var(--fs-1);}
+  .flag.show{display:flex;}
+  .entry{display:flex;gap:var(--sp);margin-top:calc(var(--sp)*2);}
+  .entry input{flex:1;font-family:var(--mono);font-size:var(--fs-2);color:var(--text);background:var(--surface-2);border:1px solid var(--border);border-radius:var(--r-md);padding:calc(var(--sp)*2.5) calc(var(--sp)*3);}
+  .entry input:focus{outline:none;border-color:var(--accent);}
+
+  .btn{font:inherit;font-weight:600;font-size:var(--fs-1);background:var(--accent);color:#05141d;border:0;border-radius:var(--r-pill);padding:calc(var(--sp)*2.5) calc(var(--sp)*4);cursor:pointer;}
+  @media (prefers-color-scheme: light){ .btn{color:#fff;} }
+  .btn.ghost{background:var(--surface-2);color:var(--accent);border:1px solid var(--border);}
+  .btn:disabled{opacity:.5;cursor:default;}
+
+  /* hint ladder */
+  .card.hint{border-color:var(--warn);}
+  .hinthead{display:flex;align-items:center;gap:calc(var(--sp)*2);background:var(--warn-dim);color:var(--warn);padding:calc(var(--sp)*2.5) calc(var(--sp)*3.5);padding-right:108px;font-weight:600;font-size:var(--fs-1);border-bottom:1px solid var(--border);}
+  .hinthead .count{margin-left:auto;font-size:var(--fs-0);color:var(--dim);font-weight:600;}
+  .rung{display:none;gap:calc(var(--sp)*2.5);align-items:flex-start;padding:calc(var(--sp)*2.5) 0;border-top:1px solid var(--border);font-size:var(--fs-1);}
+  .rung:first-of-type{border-top:0;}
+  .rung.show{display:flex;}
+  .rung .lvl{flex:0 0 auto;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--warn);background:var(--warn-dim);border-radius:var(--r-pill);padding:2px 8px;margin-top:1px;}
+  .rung .full{font-family:var(--mono);color:var(--text);}
+  .note{text-align:center;color:var(--faint);font-size:var(--fs-0);padding:calc(var(--sp)*2);}
+</style>
+</head>
+<body>
+<main class="phone">
+
+  <div class="appbar">
+    <span class="dot"></span><b>Teacher</b><span>· Algebra I</span>
+    <span class="spacer"></span><span>Lesson 6 / 11</span>
+  </div>
+
+  <div class="turn teacher">
+    <div class="avatar">T</div>
+    <div class="bubble"><p>Today: equations with the variable on <em>both</em> sides. Watch me solve one first — try to predict each step before you tap it open.</p></div>
+  </div>
+
+  <!-- 1 · WORKED EXAMPLE (progressive reveal + predict) -->
+  <section class="card" aria-label="Worked example">
+    <span class="tag">worked example</span>
+    <div class="card-body">
+      <p class="clabel">I do — worked example</p>
+      <div class="prob">3(x − 2) = x + 8</div>
+      <div id="worked">
+        <button class="wstep" data-rule="Distribute the 3" data-expr="3x − 6 = x + 8"><span class="pk">🤔</span><span>Step 1 — predict, then tap to reveal</span></button>
+        <button class="wstep" data-rule="Subtract x from both sides" data-expr="2x − 6 = 8"><span class="pk">🤔</span><span>Step 2 — predict, then tap to reveal</span></button>
+        <button class="wstep" data-rule="Add 6 to both sides" data-expr="2x = 14"><span class="pk">🤔</span><span>Step 3 — predict, then tap to reveal</span></button>
+        <button class="wstep" data-rule="Divide both sides by 2" data-expr="x = 7"><span class="pk">🤔</span><span>Step 4 — predict, then tap to reveal</span></button>
+      </div>
+      <div class="solved" id="wsolved">✓ x = 7</div>
+    </div>
+  </section>
+
+  <div class="turn teacher">
+    <div class="avatar">T</div>
+    <div class="bubble"><p>Your turn — same idea. Enter one line at a time and I'll check it before you go on. Stuck? Grab a hint.</p></div>
+  </div>
+
+  <!-- 2 · LIVE STEP-CHECK -->
+  <section class="card" aria-label="Live step-check problem">
+    <span class="tag">live step-check ⭐</span>
+    <div class="card-body">
+      <p class="clabel">You do — I check each step</p>
+      <div class="prob">2(x + 3) = 5x − 9</div>
+
+      <div class="line ok"><span class="ck">✓</span><span>2x + 6 = 5x − 9</span><span class="rule">distributed</span></div>
+
+      <!-- the stuck point: hint ladder lives right here -->
+      <button class="btn ghost" id="hintbtn" style="margin-top:calc(var(--sp)*3)">I'm stuck — hint</button>
+
+      <div class="entry" id="l2entry">
+        <input id="l2" value="6 = 3x + 9" aria-label="your next line" />
+        <button class="btn" id="check2">Check</button>
+      </div>
+      <div class="flag" id="flag2"><span>✕</span><span><b>Sign slip.</b> You moved 2x across correctly, but −9 was already on the right — it doesn't change sign. Should be <code>6 = 3x − 9</code>.</span></div>
+      <button class="btn ghost" id="fix2" style="display:none;margin-top:calc(var(--sp)*2)">Apply the fix ▷</button>
+
+      <div id="rest"></div>
+    </div>
+  </section>
+
+  <div class="turn teacher" id="closing" style="display:none">
+    <div class="avatar">T</div>
+    <div class="bubble"><p>Nailed it — and you caught the sign yourself once I flagged it. That slip is the #1 mistake here; you'll spot it next time.</p></div>
+  </div>
+
+  <p class="note">Mock 02 · reveal the worked steps, open the hint rungs, and run the Check to see the step-checker catch a slip.</p>
+
+</main>
+
+<!-- HINT LADDER (revealed inline on demand) -->
+<template id="hint-tpl">
+  <section class="card hint" aria-label="Hint ladder" style="margin-top:calc(var(--sp)*3)">
+    <span class="tag">hint ladder ⭐</span>
+    <div class="hinthead"><span>◆ Hints</span><span class="count" id="hc">used 0 / 4</span></div>
+    <div class="card-body" style="padding-top:0">
+      <div class="rung"><span class="lvl">nudge</span><span>You've got <code>2x + 6 = 5x − 9</code>. First goal: get all the x's onto one side.</span></div>
+      <div class="rung"><span class="lvl">strategy</span><span>Subtract <b>2x</b> from both sides — starting with the smaller x-term keeps x positive.</span></div>
+      <div class="rung"><span class="lvl">partial</span><span>Left side: 2x − 2x cancels → 6. Right side: 5x − 2x = 3x. The −9 stays put.</span></div>
+      <div class="rung"><span class="lvl">answer</span><span class="full">6 = 3x − 9</span></div>
+      <button class="btn ghost" id="nexthint" style="margin-top:calc(var(--sp)*3)">Reveal next hint ▷</button>
+    </div>
+  </section>
+</template>
+
+<script>
+  // 1 · worked example — reveal + predict
+  const worked = document.getElementById('worked');
+  worked.addEventListener('click', e => {
+    const b = e.target.closest('.wstep'); if(!b || b.classList.contains('done')) return;
+    b.classList.add('done');
+    b.innerHTML = '<span class="rule">'+b.dataset.rule+'</span><span class="expr">'+b.dataset.expr+'</span>';
+    if([...worked.children].every(s=>s.classList.contains('done')))
+      document.getElementById('wsolved').classList.add('show');
+  });
+
+  // hint ladder — injected on demand, rungs reveal one at a time
+  document.getElementById('hintbtn').addEventListener('click', function(){
+    if(document.getElementById('hint-live')) return;
+    const node = document.getElementById('hint-tpl').content.cloneNode(true);
+    const card = node.querySelector('.card'); card.id='hint-live';
+    this.insertAdjacentElement('afterend', card);
+    this.style.display='none';
+    const rungs = card.querySelectorAll('.rung');
+    const counter = card.querySelector('#hc');
+    const next = card.querySelector('#nexthint');
+    let i=0;
+    const reveal = () => {
+      rungs[i].classList.add('show'); i++;
+      counter.textContent = 'used '+i+' / 4';
+      if(i>=rungs.length){ next.textContent='All hints used'; next.disabled=true; }
+    };
+    reveal();
+    next.addEventListener('click', reveal);
+  });
+
+  // 2 · step-check — catch the slip, then continue
+  document.getElementById('check2').addEventListener('click', ()=>{
+    const val = document.getElementById('l2').value.replace(/\s/g,'');
+    const flag = document.getElementById('flag2');
+    if(val==='6=3x-9'){ acceptL2(); return; }        // if they fix it themselves
+    // storyboard: the pre-filled slip is wrong -> flag it
+    const entry = document.getElementById('l2entry');
+    entry.insertAdjacentHTML('beforebegin',
+      '<div class="line err"><span class="ck">✕</span><span>'+document.getElementById('l2').value+'</span><span class="rule">rejected</span></div>');
+    entry.style.display='none';
+    flag.classList.add('show');
+    document.getElementById('fix2').style.display='inline-block';
+  });
+  document.getElementById('fix2').addEventListener('click', ()=>{
+    document.getElementById('fix2').style.display='none';
+    document.getElementById('flag2').classList.remove('show');
+    acceptL2();
+  });
+  function acceptL2(){
+    document.getElementById('l2entry').style.display='none';
+    const rest = document.getElementById('rest');
+    rest.innerHTML =
+      '<div class="line ok"><span class="ck">✓</span><span>6 = 3x − 9</span><span class="rule">−2x both sides</span></div>'+
+      '<div class="line ok"><span class="ck">✓</span><span>15 = 3x</span><span class="rule">+9 both sides</span></div>'+
+      '<div class="line ok"><span class="ck">✓</span><span>x = 5</span><span class="rule">÷3 both sides</span></div>'+
+      '<div class="solved show" style="margin-top:calc(var(--sp)*3)">✓ Solved — x = 5</div>';
+    document.getElementById('closing').style.display='flex';
+  }
+</script>
+</body>
+</html>
