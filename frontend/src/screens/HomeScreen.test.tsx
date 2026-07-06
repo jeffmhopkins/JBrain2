@@ -6,13 +6,23 @@ import type { NoteActions } from "../notes/useNoteActions";
 import type { NotesController } from "../notes/useNotes";
 import { HomeScreen } from "./HomeScreen";
 
-// useReadAloud reads the brain_read_aloud setting from the live client; keep the rest of
-// the api real and only stub that read (on) so the read-aloud toggle is offered in tests.
+// useReadAloud reads the read-aloud setting + the box's piper voices from the live client;
+// keep the rest of the api real and stub those reads so the read-aloud control is offered
+// with the native engine (engine "native" + no box voices), which these tests exercise.
 vi.mock("../api/client", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../api/client")>();
   return {
     ...actual,
-    api: { ...actual.api, getSettings: vi.fn(async () => ({ brain_read_aloud: true })) },
+    api: {
+      ...actual.api,
+      getSettings: vi.fn(async () => ({
+        brain_read_aloud: true,
+        brain_answer_voice: "en_US-amy-medium",
+        brain_read_aloud_engine: "native",
+      })),
+      brainVoices: vi.fn(async () => [] as string[]),
+      brainTts: vi.fn(async () => new Blob(["wav"], { type: "audio/wav" })),
+    },
   };
 });
 

@@ -1,16 +1,26 @@
-// Local read-aloud for the chat surface: when the owner has turned on the
+// In-chat read-aloud for the chat surface: when the owner has turned on the
 // brain_read_aloud setting (the same switch that gates the wall display's piper
-// voices), each assistant turn gets a play control next to its copy button, spoken
-// on THIS device via the browser's Web Speech engine — no server round-trip, so it
-// works wherever the PWA is open. The control has three states:
+// voices), each assistant turn gets a play control next to its copy button. The control
+// has three states:
 //   • play  — tap to speak this turn; long-press to arm auto-play
 //   • pause — this turn is speaking; tap to stop
 //   • auto  — auto-play is armed (long-press again to disarm)
-// With auto-play armed, each new turn speaks itself as it streams in — fed sentence
-// by sentence (`feed`) so it starts talking without waiting for the whole answer.
+// With auto-play armed, each new turn speaks itself as it streams in — fed sentence by
+// sentence (`feed`) so it starts talking without waiting for the whole answer.
+//
+// Two engines, chosen by the brain_read_aloud_engine setting:
+//   • "piper" (default): the box renders each sentence in the chosen voice
+//     (brain_answer_voice) and the audio streams back over the owner's authenticated api
+//     session (GET /api/brain/tts) — the same voice the wall uses — played back-to-back.
+//     If the box can't render, it falls back to the device's native voice.
+//   • "native": the browser's own Web Speech voice — no box needed.
+// The engine is swapped under the same queue, so the three-state control, auto-play, and
+// streaming behave identically either way.
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../api/client";
+
+type ReadAloudEngine = "piper" | "native";
 
 const AUTOPLAY_KEY = "readAloudAutoPlay";
 
@@ -64,8 +74,8 @@ export function chunkSentences(
 }
 
 export interface ReadAloud {
-  /** The brain_read_aloud setting is on AND this browser can speak — gates whether the
-   * bubbles show a play control at all. */
+  /** Read-aloud is on AND an engine can speak (the device's native voice, or piper
+   * voices on the box) — gates whether the bubbles show a play control at all. */
   available: boolean;
   /** Key of the turn currently being spoken aloud, or null when silent — a bubble is
    * "playing" (shows pause) only when its key matches. */
@@ -89,10 +99,19 @@ export interface ReadAloud {
   stop: () => void;
 }
 
-const canSpeak = (): boolean => typeof window !== "undefined" && "speechSynthesis" in window;
+const canPlayPiper = (): boolean => typeof window !== "undefined" && "Audio" in window;
+const canSpeakNative = (): boolean => typeof window !== "undefined" && "speechSynthesis" in window;
+
+interface PiperClip {
+  key: string;
+  text: string;
+  first: boolean;
+}
 
 export function useReadAloud(): ReadAloud {
   const [settingOn, setSettingOn] = useState(false);
+  const [hasVoices, setHasVoices] = useState(false);
+  const [engine, setEngine] = useState<ReadAloudEngine>("piper");
   const [playing, setPlaying] = useState<string | null>(null);
   const [autoPlay, setAutoPlay] = useState<boolean>(() => {
     try {
@@ -102,13 +121,18 @@ export function useReadAloud(): ReadAloud {
     }
   });
 
+  // Live copies read by the callbacks (which close over these without re-creating).
+  const engineRef = useRef<ReadAloudEngine>("piper");
+  const hasVoicesRef = useRef(false);
+  const answerVoiceRef = useRef("en_US-amy-medium");
+
   const playingRef = useRef<string | null>(null);
   // The turn currently being streamed to the engine, and how far (in stripped chars)
   // it has been dispatched — the cursor a `feed` advances so it only speaks new text.
   const feedKeyRef = useRef<string | null>(null);
   const spokenLenRef = useRef(0);
-  // The utterance queue for the active turn: chunks enqueued but not yet finished, and
-  // whether the turn is finalized (its end drains the queue and clears `playing`).
+  // The queue for the active turn: chunks enqueued but not yet finished, and whether the
+  // turn is finalized (its last chunk finishing drains the queue and clears `playing`).
   const queueRef = useRef<{ key: string; pending: number; finalized: boolean }>({
     key: "",
     pending: 0,
@@ -119,15 +143,68 @@ export function useReadAloud(): ReadAloud {
   // A manual play is in flight — auto-play's `feed` defers so the two don't overlap.
   const manualRef = useRef(false);
 
-  // Whether the owner enabled read-aloud at all — the same setting the wall reads.
+  // --- piper engine state ---------------------------------------------------------
+  // A generation token bumped by every stop()/beginQueue so an in-flight piper fetch or
+  // clip from a superseded turn bails without touching state. The FIFO of clips for the
+  // active turn, the <audio> playing now (so stop can pause it), a resolver that unsticks
+  // the play await on stop, whether a pump owns the current gen, a per-turn clip counter
+  // (only the first clip carries the silence lead), and whether the box failed (so the
+  // turn degrades to the native voice).
+  const genRef = useRef(0);
+  const piperFifoRef = useRef<PiperClip[]>([]);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const piperResolveRef = useRef<(() => void) | null>(null);
+  const piperRunningGenRef = useRef<number | null>(null);
+  const piperClipCountRef = useRef(0);
+  const piperFailedRef = useRef(false);
+
+  // Stable (ref-only reads) so the callbacks that depend on them don't churn each render.
+  const usePiper = useCallback(
+    (): boolean =>
+      engineRef.current === "piper" &&
+      hasVoicesRef.current &&
+      canPlayPiper() &&
+      !piperFailedRef.current,
+    [],
+  );
+  const canVoice = useCallback((): boolean => usePiper() || canSpeakNative(), [usePiper]);
+
+  // Whether read-aloud is on, which voice answers speak in, and which engine to use.
   useEffect(() => {
     let stale = false;
     api
       .getSettings()
       .then((s) => {
-        if (!stale) setSettingOn(s.brain_read_aloud);
+        if (stale) return;
+        setSettingOn(s.brain_read_aloud);
+        if (s.brain_answer_voice) answerVoiceRef.current = s.brain_answer_voice;
+        const eng: ReadAloudEngine = s.brain_read_aloud_engine === "native" ? "native" : "piper";
+        engineRef.current = eng;
+        setEngine(eng);
       })
       .catch(() => {});
+    return () => {
+      stale = true;
+    };
+  }, []);
+
+  // Which piper voices the box has — piper mode needs at least one; without any (box
+  // unreachable / no models) piper mode falls back to the device's native voice.
+  useEffect(() => {
+    let stale = false;
+    api
+      .brainVoices()
+      .then((voices) => {
+        if (stale) return;
+        hasVoicesRef.current = voices.length > 0;
+        setHasVoices(voices.length > 0);
+      })
+      .catch(() => {
+        if (!stale) {
+          hasVoicesRef.current = false;
+          setHasVoices(false);
+        }
+      });
     return () => {
       stale = true;
     };
@@ -138,66 +215,178 @@ export function useReadAloud(): ReadAloud {
     setPlaying(key);
   }, []);
 
-  const stop = useCallback(() => {
+  // One chunk of the active turn finished (a native utterance ended, or a piper clip
+  // played): drop the pending count and, when the last chunk of a finalized turn is done,
+  // clear playback — but only while it's still the active turn.
+  const settle = useCallback(
+    (key: string) => {
+      const q = queueRef.current;
+      if (q.key !== key) return;
+      q.pending = Math.max(0, q.pending - 1);
+      if (q.pending === 0 && q.finalized && playingRef.current === key) {
+        manualRef.current = false;
+        feedKeyRef.current = null;
+        setPlay(null);
+      }
+    },
+    [setPlay],
+  );
+
+  // Play one rendered piper clip, resolving when it ends / errors / is stopped.
+  const playAudio = useCallback((blob: Blob): Promise<void> => {
+    return new Promise<void>((resolve) => {
+      let url = "";
+      const finish = () => {
+        if (url) {
+          try {
+            URL.revokeObjectURL(url);
+          } catch {
+            /* nothing to revoke */
+          }
+        }
+        if (piperResolveRef.current === wrapped) piperResolveRef.current = null;
+        resolve();
+      };
+      const wrapped = () => {
+        if (audioRef.current) {
+          try {
+            audioRef.current.pause();
+          } catch {
+            /* already torn down */
+          }
+        }
+        finish();
+      };
+      try {
+        url = URL.createObjectURL(blob);
+        const audio = new Audio(url);
+        audioRef.current = audio;
+        piperResolveRef.current = wrapped;
+        audio.onended = finish;
+        audio.onerror = finish;
+        void audio.play().catch(finish);
+      } catch {
+        finish();
+      }
+    });
+  }, []);
+
+  // The box failed mid-turn: re-voice everything still queued (and mark the turn degraded
+  // so later chunks go native too), so a reachable device voice finishes the reply.
+  const piperFallback = useCallback(() => {
+    piperFailedRef.current = true;
+    const items = piperFifoRef.current.splice(0);
+    if (canSpeakNative()) {
+      for (const it of items) {
+        const utt = new SpeechSynthesisUtterance(it.text);
+        utt.onend = () => settle(it.key);
+        utt.onerror = () => settle(it.key);
+        window.speechSynthesis.speak(utt);
+      }
+    } else {
+      for (const it of items) settle(it.key);
+    }
+  }, [settle]);
+
+  // Drain the piper FIFO one clip at a time (fetch → play → next), tied to the gen that
+  // started it so a stop()/switch abandons it. Only one pump runs per gen.
+  const pumpPiper = useCallback(() => {
+    const myGen = genRef.current;
+    if (piperRunningGenRef.current === myGen) return;
+    piperRunningGenRef.current = myGen;
+    const run = async () => {
+      while (genRef.current === myGen && piperFifoRef.current.length) {
+        const item = piperFifoRef.current[0] as PiperClip;
+        let blob: Blob;
+        try {
+          blob = await api.brainTts(answerVoiceRef.current, item.text, item.first ? undefined : 0);
+        } catch {
+          if (genRef.current === myGen) piperFallback();
+          break;
+        }
+        if (genRef.current !== myGen) break;
+        await playAudio(blob);
+        if (genRef.current !== myGen) break;
+        piperFifoRef.current.shift();
+        settle(item.key);
+      }
+      if (piperRunningGenRef.current === myGen) piperRunningGenRef.current = null;
+    };
+    void run();
+  }, [playAudio, piperFallback, settle]);
+
+  // Enqueue one chunk for `key` on the active engine: a piper clip (fetched + played in
+  // order) or a native utterance (the browser serialises these). Either way its end
+  // settles the queue.
+  const speakChunk = useCallback(
+    (key: string, text: string) => {
+      queueRef.current.pending += 1;
+      if (usePiper()) {
+        piperFifoRef.current.push({ key, text, first: piperClipCountRef.current === 0 });
+        piperClipCountRef.current += 1;
+        pumpPiper();
+      } else if (canSpeakNative()) {
+        const utt = new SpeechSynthesisUtterance(text);
+        utt.onend = () => settle(key);
+        utt.onerror = () => settle(key);
+        window.speechSynthesis.speak(utt);
+      } else {
+        settle(key); // nothing can voice — keep the accounting balanced
+      }
+    },
+    [pumpPiper, settle, usePiper],
+  );
+
+  // Tear down whatever's playing (both engines) and reset the piper state.
+  const teardown = useCallback(() => {
+    genRef.current += 1; // supersede any in-flight piper fetch/clip
+    piperResolveRef.current?.(); // unstick the current clip's await
+    const audio = audioRef.current;
+    audioRef.current = null;
+    if (audio) {
+      try {
+        audio.pause();
+      } catch {
+        /* already torn down */
+      }
+    }
+    piperFifoRef.current = [];
+    piperClipCountRef.current = 0;
+    piperFailedRef.current = false;
     manualRef.current = false;
-    feedKeyRef.current = null;
-    spokenLenRef.current = 0;
-    queueRef.current = { key: "", pending: 0, finalized: false };
-    setPlay(null);
-    if (canSpeak()) {
+    if (canSpeakNative()) {
       try {
         window.speechSynthesis.cancel();
       } catch {
         /* speech engine unavailable — nothing to cancel */
       }
     }
-  }, [setPlay]);
+  }, []);
 
-  // Enqueue one chunk for `key`, wiring its end to drain the queue — when the last
-  // chunk of a finalized turn finishes, playback clears (but only while it's still the
-  // active turn; a later turn replaces the queue).
-  const speakChunk = useCallback(
-    (key: string, text: string) => {
-      const utt = new SpeechSynthesisUtterance(text);
-      const settle = () => {
-        const q = queueRef.current;
-        if (q.key !== key) return;
-        q.pending = Math.max(0, q.pending - 1);
-        if (q.pending === 0 && q.finalized && playingRef.current === key) {
-          manualRef.current = false;
-          feedKeyRef.current = null;
-          setPlay(null);
-        }
-      };
-      utt.onend = settle;
-      utt.onerror = settle;
-      queueRef.current.pending += 1;
-      window.speechSynthesis.speak(utt);
-    },
-    [setPlay],
-  );
+  const stop = useCallback(() => {
+    teardown();
+    feedKeyRef.current = null;
+    spokenLenRef.current = 0;
+    queueRef.current = { key: "", pending: 0, finalized: false };
+    setPlay(null);
+  }, [teardown, setPlay]);
 
-  // Start a fresh utterance queue for `key`: cancel whatever's playing (cutting off any
-  // prior turn — manual or auto), reset the cursor, and mark the turn playing.
+  // Start a fresh queue for `key`: cut off whatever's playing (any prior turn — manual or
+  // auto), reset the cursor, and mark the turn playing.
   const beginQueue = useCallback(
     (key: string) => {
-      try {
-        window.speechSynthesis.cancel();
-      } catch {
-        /* nothing to cancel */
-      }
-      manualRef.current = false; // this turn takes over from any manual playback
+      teardown();
       queueRef.current = { key, pending: 0, finalized: false };
       spokenLenRef.current = 0;
       feedKeyRef.current = key;
       setPlay(key);
     },
-    [setPlay],
+    [teardown, setPlay],
   );
 
   const toggle = useCallback(
     (key: string, markdown: string) => {
-      if (!canSpeak()) return;
+      if (!canVoice()) return;
       // Tapping the turn already playing pauses it — and suppresses it so auto-play
       // won't pick it back up if it's still streaming.
       if (playingRef.current === key) {
@@ -211,24 +400,30 @@ export function useReadAloud(): ReadAloud {
       try {
         beginQueue(key); // clears manualRef, so set it after
         manualRef.current = true;
-        queueRef.current.finalized = true; // one settled utterance — done as soon as it ends
-        speakChunk(key, text);
+        queueRef.current.finalized = true; // the whole turn is known — done when it drains
+        // Native speaks the whole turn as one utterance; piper renders sentence-sized
+        // clips (bounded < the server's /tts cap) and plays them back-to-back.
+        if (usePiper()) {
+          for (const c of chunkSentences(text, true).chunks) speakChunk(key, c);
+        } else {
+          speakChunk(key, text);
+        }
       } catch {
         stop();
       }
     },
-    [beginQueue, speakChunk, stop],
+    [beginQueue, speakChunk, stop, usePiper, canVoice],
   );
 
   const feed = useCallback(
     (key: string, textSoFar: string, done: boolean) => {
-      if (!canSpeak()) return;
+      if (!canVoice()) return;
       if (suppressedRef.current.has(key)) return;
       if (feedKeyRef.current !== key) {
         if (done) return; // never auto-start an already-settled turn
-        // A new agent turn is streaming — cut off whatever's speaking (a prior auto
-        // turn OR a manual playback) and take it over. beginQueue cancels + clears
-        // manualRef, so the next turn always wins over the old stream.
+        // A new agent turn is streaming — cut off whatever's speaking (a prior auto turn
+        // OR a manual playback) and take it over. beginQueue cancels + clears manualRef,
+        // so the next turn always wins over the old stream.
         beginQueue(key);
       } else if (manualRef.current) {
         return; // this turn is under manual playback — don't double-feed it
@@ -256,7 +451,7 @@ export function useReadAloud(): ReadAloud {
         }
       }
     },
-    [beginQueue, speakChunk, stop, setPlay],
+    [beginQueue, speakChunk, stop, setPlay, canVoice],
   );
 
   const toggleAutoPlay = useCallback(() => {
@@ -271,7 +466,10 @@ export function useReadAloud(): ReadAloud {
     });
   }, []);
 
-  const available = settingOn && canSpeak();
+  // Native covers any device that can speak; piper covers a device that can play audio
+  // and a box that has voices. Either path being possible makes read-aloud available.
+  const available =
+    settingOn && (canSpeakNative() || (engine === "piper" && hasVoices && canPlayPiper()));
   // Disabling the whole feature stops any in-flight speech immediately.
   useEffect(() => {
     if (!available) stop();

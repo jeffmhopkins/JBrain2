@@ -63,8 +63,10 @@ def fetch_pet_state() -> bytes | None:
 # ── Server-side text-to-speech (piper) ────────────────────────────────────────
 # The wall renders speech on the box with `piper` and plays it via <audio>, so the
 # browser's flaky Web Speech engine (speech-dispatcher cold start, silent drops) is
-# out of the path entirely. Each `.onnx` voice model (+ its `.onnx.json`) is a
-# selectable "voice" named by its file stem. Voices are found across two dirs, so the
+# out of the path entirely. A single-speaker `.onnx` model (+ its `.onnx.json`) is one
+# selectable "voice" named by its file stem; a MULTI-speaker model (e.g. libritts_r)
+# contributes one voice per CURATED speaker, id "<stem>#<speaker>". Voices are found
+# across two dirs, so the
 # feature needs no configuration to work — the default Joe/Amy models are BAKED into
 # the image (`BRAIN_PIPER_BAKED_VOICES_DIR`, default /opt/piper-voices, deliberately
 # OUTSIDE the read-only /app bind mount that would otherwise shadow them), and an
@@ -85,11 +87,19 @@ PIPER_LEAD_MS = int(os.environ.get("BRAIN_PIPER_LEAD_MS", "400"))
 # (fast first-audio, no giant render), so this only bounds one chunk, not the whole answer.
 TTS_CHUNK_CAP = 1000
 
+# A multi-speaker piper model carries hundreds of speakers; we surface only a curated
+# few as named voices (id "<stem>#<speaker>"), keyed by model file stem -> the speaker
+# names to expose (as they appear in the model's `.onnx.json` speaker_id_map). libritts_r
+# speaker 3922 (piper index 0) is a second, female agent voice. Add names to expose more.
+CURATED_SPEAKERS: dict[str, tuple[str, ...]] = {
+    "en_US-libritts_r-medium": ("3922",),
+}
+
 
 def _voice_models() -> dict[str, Path]:
-    """Map each voice name (model file stem) to its `.onnx` path, scanned across the
-    mounted extras dir then the baked-in defaults dir. Earlier dirs win on a name clash,
-    so a dropped-in model can override a baked default of the same name. {} if none."""
+    """Map each model file stem to its `.onnx` path, scanned across the mounted extras
+    dir then the baked-in defaults dir. Earlier dirs win on a name clash, so a dropped-in
+    model can override a baked default of the same name. {} if none."""
     models: dict[str, Path] = {}
     for d in (PIPER_VOICES_DIR, PIPER_BAKED_VOICES_DIR):
         try:
@@ -100,9 +110,57 @@ def _voice_models() -> dict[str, Path]:
     return models
 
 
+def _speaker_map(model: Path) -> dict[str, int]:
+    """`{speaker_name: index}` from a model's `.onnx.json` `speaker_id_map` (piper writes
+    the sidecar as `<model>.onnx.json`), or {} for a single-speaker model. Only name->int
+    entries survive, so a junk map can never yield a bad `--speaker` arg."""
+    try:
+        meta = json.loads(Path(str(model) + ".json").read_text())
+    except (OSError, ValueError):
+        return {}
+    sid = meta.get("speaker_id_map")
+    if not isinstance(sid, dict):
+        return {}
+    return {str(k): v for k, v in sid.items() if isinstance(v, int) and not isinstance(v, bool)}
+
+
+def _voices() -> list[tuple[str, Path, int | None]]:
+    """The selectable voices as `(id, model_path, speaker_index)`, stems sorted. A
+    single-speaker model is one entry (id = stem, speaker None). A multi-speaker model
+    contributes one entry per CURATED speaker present in its map (id "<stem>#<name>");
+    if none of its curated names are present (or none are curated) it falls back to its
+    default speaker (id = stem, index 0) so the model stays usable."""
+    out: list[tuple[str, Path, int | None]] = []
+    for stem, model in sorted(_voice_models().items()):
+        smap = _speaker_map(model)
+        if not smap:
+            out.append((stem, model, None))
+            continue
+        names = [n for n in CURATED_SPEAKERS.get(stem, ()) if n in smap]
+        if names:
+            out.extend((f"{stem}#{n}", model, smap[n]) for n in names)
+        else:
+            out.append((stem, model, 0))  # multi-speaker but uncurated -> default speaker
+    return out
+
+
 def piper_voices() -> list[str]:
-    """Installed voice names (model file stems) across all voice dirs, or [] if none."""
-    return sorted(_voice_models())
+    """Installed selectable voice ids (incl. curated multi-speaker entries), or []."""
+    return [vid for vid, _, _ in _voices()]
+
+
+def _resolve_voice(voice_id: str) -> tuple[Path, int | None] | None:
+    """Map a requested voice id to `(model_path, speaker_index)`, validated against the
+    installed set (no path traversal). An unknown/blank id falls back to the first voice;
+    None only when nothing is installed."""
+    voices = _voices()
+    if not voices:
+        return None
+    for vid, model, spk in voices:
+        if vid == voice_id:
+            return model, spk
+    _, model, spk = voices[0]
+    return model, spk
 
 
 def _pad_lead(wav_bytes: bytes, lead_ms: int) -> bytes:
@@ -135,24 +193,30 @@ def _silence_wav(ms: int) -> bytes:
 
 
 def tts_wav(text: str, voice: str, lead_ms: int | None = None) -> bytes | None:
-    """Render `text` to a WAV with piper using `voice` (validated against the installed
-    set — no path traversal). None when TTS isn't available or rendering fails. Text is
-    passed on STDIN, never as a shell arg, so there is no command-injection surface.
-    `lead_ms` overrides the silence pad for this clip (the page sends 0 on continuation
-    chunks so a multi-clip reply plays gaplessly); None uses the PIPER_LEAD_MS default."""
-    models = _voice_models()
-    if not models or shutil.which(PIPER_BIN) is None:
+    """Render `text` to a WAV with piper using `voice` (a voice id validated against the
+    installed set — no path traversal). For a multi-speaker voice ("<stem>#<speaker>") the
+    resolved speaker index is passed as `--speaker`. None when TTS isn't available or
+    rendering fails. Text is passed on STDIN, never as a shell arg, so there is no
+    command-injection surface. `lead_ms` overrides the silence pad for this clip (the page
+    sends 0 on continuation chunks so a multi-clip reply plays gaplessly); None uses the
+    PIPER_LEAD_MS default."""
+    if shutil.which(PIPER_BIN) is None:
         return None
-    name = voice if voice in models else sorted(models)[0]
-    model = models[name]
+    resolved = _resolve_voice(voice)
+    if resolved is None:
+        return None
+    model, speaker = resolved
     if not model.exists():
         return None
+    cmd = [PIPER_BIN, "--model", str(model), "--output_file"]
     tmp = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
     tmp.close()
     try:
+        cmd.append(tmp.name)
+        if speaker is not None:
+            cmd += ["--speaker", str(speaker)]
         subprocess.run(
-            [PIPER_BIN, "--model", str(model), "--output_file", tmp.name],
-            input=text.encode(), capture_output=True, timeout=25, check=True,
+            cmd, input=text.encode(), capture_output=True, timeout=25, check=True,
         )
         data = Path(tmp.name).read_bytes()
     except (subprocess.SubprocessError, OSError):

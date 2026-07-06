@@ -55,6 +55,8 @@ def test_get_settings_defaults_to_full_analysis(
         "owner_timezone": None,
         "brain_llm_stream": False,
         "brain_read_aloud": False,
+        "brain_answer_voice": "en_US-amy-medium",
+        "brain_read_aloud_engine": "piper",
     }
 
 
@@ -67,6 +69,8 @@ def test_put_settings_round_trips_the_mode(client: tuple[TestClient, FakeSetting
         "owner_timezone": None,
         "brain_llm_stream": False,
         "brain_read_aloud": False,
+        "brain_answer_voice": "en_US-amy-medium",
+        "brain_read_aloud_engine": "piper",
     }
     assert store.values["image_analysis_mode"] == "ocr"
     assert c.get("/api/settings").json() == {
@@ -74,6 +78,8 @@ def test_put_settings_round_trips_the_mode(client: tuple[TestClient, FakeSetting
         "owner_timezone": None,
         "brain_llm_stream": False,
         "brain_read_aloud": False,
+        "brain_answer_voice": "en_US-amy-medium",
+        "brain_read_aloud_engine": "piper",
     }
 
     assert c.put("/api/settings", json={"image_analysis_mode": "full"}).json() == {
@@ -81,6 +87,8 @@ def test_put_settings_round_trips_the_mode(client: tuple[TestClient, FakeSetting
         "owner_timezone": None,
         "brain_llm_stream": False,
         "brain_read_aloud": False,
+        "brain_answer_voice": "en_US-amy-medium",
+        "brain_read_aloud_engine": "piper",
     }
 
 
@@ -95,6 +103,8 @@ def test_put_settings_round_trips_the_timezone(
         "owner_timezone": "America/New_York",
         "brain_llm_stream": False,
         "brain_read_aloud": False,
+        "brain_answer_voice": "en_US-amy-medium",
+        "brain_read_aloud_engine": "piper",
     }
     assert store.values["owner_timezone"] == "America/New_York"
 
@@ -154,6 +164,54 @@ def test_put_settings_rejects_non_bool_brain_read_aloud(
     assert "brain_read_aloud" not in store.values
 
 
+def test_put_settings_round_trips_brain_answer_voice(
+    client: tuple[TestClient, FakeSettingsStore],
+) -> None:
+    c, store = client
+    # Defaults to Amy; a chosen voice id (incl. a multi-speaker "#speaker" entry) persists
+    # and round-trips — this is the voice the PWA read-aloud renders answers in.
+    assert c.get("/api/settings").json()["brain_answer_voice"] == "en_US-amy-medium"
+    resp = c.put("/api/settings", json={"brain_answer_voice": "en_US-libritts_r-medium#3922"})
+    assert resp.status_code == 200
+    assert resp.json()["brain_answer_voice"] == "en_US-libritts_r-medium#3922"
+    assert store.values["brain_answer_voice"] == "en_US-libritts_r-medium#3922"
+    assert c.get("/api/settings").json()["brain_answer_voice"] == "en_US-libritts_r-medium#3922"
+
+
+def test_put_settings_rejects_blank_brain_answer_voice(
+    client: tuple[TestClient, FakeSettingsStore],
+) -> None:
+    c, store = client
+    # A blank id would read back as the default (i.e. "unset"), so it's rejected rather
+    # than stored; an over-long id is a 422 at validation.
+    assert c.put("/api/settings", json={"brain_answer_voice": "   "}).status_code == 422
+    assert c.put("/api/settings", json={"brain_answer_voice": "x" * 200}).status_code == 422
+    assert "brain_answer_voice" not in store.values
+
+
+def test_put_settings_round_trips_read_aloud_engine(
+    client: tuple[TestClient, FakeSettingsStore],
+) -> None:
+    c, store = client
+    # Defaults to piper (on-box, native fallback); the owner can switch to the device's
+    # native voice and back.
+    assert c.get("/api/settings").json()["brain_read_aloud_engine"] == "piper"
+    resp = c.put("/api/settings", json={"brain_read_aloud_engine": "native"})
+    assert resp.status_code == 200
+    assert resp.json()["brain_read_aloud_engine"] == "native"
+    assert store.values["brain_read_aloud_engine"] == "native"
+    back = c.put("/api/settings", json={"brain_read_aloud_engine": "piper"})
+    assert back.json()["brain_read_aloud_engine"] == "piper"
+
+
+def test_put_settings_rejects_unknown_read_aloud_engine(
+    client: tuple[TestClient, FakeSettingsStore],
+) -> None:
+    c, store = client
+    assert c.put("/api/settings", json={"brain_read_aloud_engine": "robot"}).status_code == 422
+    assert "brain_read_aloud_engine" not in store.values
+
+
 def test_put_settings_rejects_an_unknown_timezone(
     client: tuple[TestClient, FakeSettingsStore],
 ) -> None:
@@ -181,4 +239,6 @@ def test_put_settings_with_empty_patch_changes_nothing(
         "owner_timezone": None,
         "brain_llm_stream": False,
         "brain_read_aloud": False,
+        "brain_answer_voice": "en_US-amy-medium",
+        "brain_read_aloud_engine": "piper",
     }

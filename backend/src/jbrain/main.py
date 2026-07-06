@@ -34,6 +34,7 @@ from jbrain.api import (
     agent,
     analysis,
     auth,
+    brain,
     chat_attachments,
     debug,
     debug_tokens,
@@ -328,6 +329,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # A separate emitter for the wall's persistent config flags (read_aloud): boolean
         # display config, not owner text, so it is not gated by the per-turn text switch.
         app.state.brain_flag_emit = build_flag_emitter(settings.brain_events_url)
+        # The server-brain base URL (the events URL minus its /event suffix) — the api's
+        # authenticated /api/brain/* proxy reaches the on-box piper TTS through it so the
+        # PWA read-aloud + voice picker never touch the unauthenticated display directly.
+        app.state.brain_base_url = settings.brain_events_url.removesuffix("/event")
         web_handlers = build_web_handlers(
             SearxngClient(settings.searxng_url),
             WebFetcher(reader_url=settings.reader_url),
@@ -650,6 +655,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(analysis.router, prefix="/api")
     app.include_router(appointments_api.router, prefix="/api")
     app.include_router(auth.router, prefix="/api")
+    app.include_router(brain.router, prefix="/api")
     app.include_router(chat_attachments.sessions_router, prefix="/api")
     app.include_router(chat_attachments.router, prefix="/api")
     app.include_router(chat_attachments.capabilities_router, prefix="/api")

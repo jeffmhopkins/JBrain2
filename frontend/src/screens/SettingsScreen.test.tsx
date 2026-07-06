@@ -10,10 +10,32 @@ function setup() {
 // The screen loads the server-synced settings on mount; a stateful stub
 // makes GET/PUT round-trip like the real /api/settings.
 function stubSettingsFetch(initial: "full" | "ocr" = "full") {
-  const state = { mode: initial, brainStream: false, brainReadAloud: false };
+  const state = {
+    mode: initial,
+    brainStream: false,
+    brainReadAloud: false,
+    brainAnswerVoice: "en_US-amy-medium",
+    engine: "piper" as "piper" | "native",
+  };
   const puts: unknown[] = [];
   const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
     const path = String(input);
+    // The read-aloud voice picker loads the box's installed piper voices on mount.
+    if (path === "/api/brain/voices") {
+      return new Response(
+        JSON.stringify({
+          voices: ["en_US-amy-medium", "en_US-joe-medium", "en_US-libritts_r-medium#3922"],
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    }
+    // A voice sample renders a WAV via the api proxy — an empty audio blob is enough.
+    if (path.startsWith("/api/brain/tts")) {
+      return new Response(new Blob([], { type: "audio/wav" }), {
+        status: 200,
+        headers: { "Content-Type": "audio/wav" },
+      });
+    }
     // The calendar-feed section loads its config on mount; default to disabled.
     if (path.startsWith("/api/feed/appointments")) {
       return new Response(JSON.stringify({ enabled: false, token: null }), {
@@ -48,17 +70,24 @@ function stubSettingsFetch(initial: "full" | "ocr" = "full") {
         image_analysis_mode?: "full" | "ocr";
         brain_llm_stream?: boolean;
         brain_read_aloud?: boolean;
+        brain_answer_voice?: string;
+        brain_read_aloud_engine?: "piper" | "native";
       };
       puts.push(body);
       if (body.image_analysis_mode) state.mode = body.image_analysis_mode;
       if (typeof body.brain_llm_stream === "boolean") state.brainStream = body.brain_llm_stream;
       if (typeof body.brain_read_aloud === "boolean") state.brainReadAloud = body.brain_read_aloud;
+      if (typeof body.brain_answer_voice === "string")
+        state.brainAnswerVoice = body.brain_answer_voice;
+      if (body.brain_read_aloud_engine) state.engine = body.brain_read_aloud_engine;
     }
     return new Response(
       JSON.stringify({
         image_analysis_mode: state.mode,
         brain_llm_stream: state.brainStream,
         brain_read_aloud: state.brainReadAloud,
+        brain_answer_voice: state.brainAnswerVoice,
+        brain_read_aloud_engine: state.engine,
       }),
       { status: 200, headers: { "Content-Type": "application/json" } },
     );
@@ -126,6 +155,61 @@ describe("SettingsScreen read-wall-display-aloud toggle", () => {
     );
     fireEvent.click(group.getByRole("button", { name: "On" }));
     await waitFor(() => expect(puts).toContainEqual({ brain_read_aloud: true }));
+  });
+});
+
+describe("SettingsScreen read-aloud voice picker", () => {
+  it("lists the box's voices (multi-speaker speakers prettified) and PUTs a pick", async () => {
+    const { puts } = stubSettingsFetch();
+    setup();
+    const select = (await screen.findByLabelText("Read-aloud voice")) as HTMLSelectElement;
+    // The curated multi-speaker entry shows its speaker after a dot.
+    expect(within(select).getByRole("option", { name: "Libritts_r · 3922" })).toBeInTheDocument();
+    expect(within(select).getByRole("option", { name: "Amy" })).toBeInTheDocument();
+    fireEvent.change(select, { target: { value: "en_US-libritts_r-medium#3922" } });
+    await waitFor(() =>
+      expect(puts).toContainEqual({ brain_answer_voice: "en_US-libritts_r-medium#3922" }),
+    );
+  });
+
+  it("switches the read-aloud engine and hides the voice picker on Native", async () => {
+    const { puts } = stubSettingsFetch();
+    setup();
+    const group = within(await screen.findByLabelText("Read-aloud engine"));
+    // Defaults to Piper (on-box), so the voice picker is shown.
+    await waitFor(() =>
+      expect(group.getByRole("button", { name: "Piper" })).toHaveAttribute("aria-pressed", "true"),
+    );
+    expect(screen.getByLabelText("Read-aloud voice")).toBeInTheDocument();
+
+    fireEvent.click(group.getByRole("button", { name: "Native" }));
+    await waitFor(() => expect(puts).toContainEqual({ brain_read_aloud_engine: "native" }));
+    // Native uses the device voice — the piper voice picker drops away.
+    await waitFor(() => expect(screen.queryByLabelText("Read-aloud voice")).toBeNull());
+  });
+
+  it("renders a sample of the selected voice on tap", async () => {
+    // Audio isn't implemented in jsdom — a stand-in captures play().
+    const played: string[] = [];
+    class FakeAudio {
+      onended: (() => void) | null = null;
+      onerror: (() => void) | null = null;
+      constructor(src: string) {
+        played.push(src);
+      }
+      play() {
+        this.onended?.();
+        return Promise.resolve();
+      }
+      pause() {}
+    }
+    vi.stubGlobal("Audio", FakeAudio);
+    Object.defineProperty(URL, "createObjectURL", { configurable: true, value: () => "blob:x" });
+    Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: () => {} });
+    setup();
+    const sample = await screen.findByRole("button", { name: "Play sample" });
+    fireEvent.click(sample);
+    await waitFor(() => expect(played).toHaveLength(1));
   });
 });
 

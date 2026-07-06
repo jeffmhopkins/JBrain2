@@ -3,27 +3,66 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { api } from "../api/client";
 import { chunkSentences, speakableText, useReadAloud } from "./useReadAloud";
 
-vi.mock("../api/client", () => ({ api: { getSettings: vi.fn() } }));
+vi.mock("../api/client", () => ({
+  api: { getSettings: vi.fn(), brainVoices: vi.fn(), brainTts: vi.fn() },
+}));
 const getSettings = api.getSettings as unknown as ReturnType<typeof vi.fn>;
+const brainVoices = api.brainVoices as unknown as ReturnType<typeof vi.fn>;
+const brainTts = api.brainTts as unknown as ReturnType<typeof vi.fn>;
 
+// The native (Web Speech) engine stand-ins — records the text handed to the engine.
 const synth = { speak: vi.fn(), cancel: vi.fn() };
-
-beforeEach(() => {
-  getSettings.mockReset().mockResolvedValue({ brain_read_aloud: true });
-  synth.speak.mockClear();
-  synth.cancel.mockClear();
-  Object.defineProperty(window, "speechSynthesis", { configurable: true, value: synth });
-  // Minimal utterance stand-in — records the text the hook hands to the engine.
-  class FakeUtterance {
-    text: string;
-    constructor(t: string) {
-      this.text = t;
-    }
+class FakeUtterance {
+  text: string;
+  onend: (() => void) | null = null;
+  onerror: (() => void) | null = null;
+  constructor(t: string) {
+    this.text = t;
   }
+}
+function stubNative() {
+  Object.defineProperty(window, "speechSynthesis", { configurable: true, value: synth });
   Object.defineProperty(window, "SpeechSynthesisUtterance", {
     configurable: true,
     value: FakeUtterance,
   });
+}
+
+// The piper (box) engine stand-in — each new Audio() is captured so a test can fire
+// onended to advance the sequential clip playback.
+const audios: FakeAudio[] = [];
+class FakeAudio {
+  src: string;
+  onended: (() => void) | null = null;
+  onerror: (() => void) | null = null;
+  played = false;
+  constructor(src: string) {
+    this.src = src;
+    audios.push(this);
+  }
+  play() {
+    this.played = true;
+    return Promise.resolve();
+  }
+  pause() {}
+}
+
+beforeEach(() => {
+  audios.length = 0;
+  synth.speak.mockClear();
+  synth.cancel.mockClear();
+  // Default: native engine, no box voices — the native path, as the pre-piper hook behaved.
+  getSettings.mockReset().mockResolvedValue({
+    brain_read_aloud: true,
+    brain_answer_voice: "en_US-amy-medium",
+    brain_read_aloud_engine: "native",
+  });
+  brainVoices.mockReset().mockResolvedValue([]);
+  brainTts.mockReset().mockResolvedValue(new Blob(["wav"], { type: "audio/wav" }));
+  stubNative();
+  Object.defineProperty(window, "Audio", { configurable: true, value: FakeAudio });
+  Object.defineProperty(URL, "createObjectURL", { configurable: true, value: () => "blob:x" });
+  Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: () => {} });
   localStorage.clear();
 });
 
@@ -51,7 +90,7 @@ describe("useReadAloud", () => {
     getSettings.mockResolvedValue({ brain_read_aloud: false });
     const { result } = renderHook(() => useReadAloud());
     await waitFor(() => expect(getSettings).toHaveBeenCalled());
-    expect(result.current.available).toBe(false);
+    await waitFor(() => expect(result.current.available).toBe(false));
   });
 
   it("plays a turn's stripped text and marks it playing, cancelling any prior utterance", () => {
@@ -221,5 +260,112 @@ describe("useReadAloud auto-play", () => {
     act(() => result.current.feed("3", "New turn.", false));
     expect(synth.cancel).toHaveBeenCalled();
     expect(result.current.playing).toBe("3");
+  });
+});
+
+describe("useReadAloud piper engine", () => {
+  // In this block the box has piper voices and native is absent by default, so `available`
+  // reflects the box — awaiting it guarantees the voices have loaded before we toggle.
+  beforeEach(() => {
+    Reflect.deleteProperty(window, "speechSynthesis");
+    getSettings.mockResolvedValue({
+      brain_read_aloud: true,
+      brain_answer_voice: "en_US-libritts_r-medium#3922",
+      brain_read_aloud_engine: "piper",
+    });
+    brainVoices.mockResolvedValue(["en_US-amy-medium", "en_US-libritts_r-medium#3922"]);
+  });
+
+  it("is available when the setting is on and the box has voices", async () => {
+    const { result } = renderHook(() => useReadAloud());
+    await waitFor(() => expect(result.current.available).toBe(true));
+  });
+
+  it("renders a turn through piper in the configured voice and marks it playing", async () => {
+    const { result } = renderHook(() => useReadAloud());
+    await waitFor(() => expect(result.current.available).toBe(true));
+    await act(async () => result.current.toggle("a", "**Hello** `world` [link](http://x)"));
+    await waitFor(() => expect(audios).toHaveLength(1));
+    expect(brainTts).toHaveBeenCalledWith(
+      "en_US-libritts_r-medium#3922",
+      "Hello world link",
+      undefined,
+    );
+    expect(audios[0]?.played).toBe(true);
+    expect(result.current.playing).toBe("a");
+  });
+
+  it("streams piper clips per sentence when fed, playing them in order", async () => {
+    const { result } = renderHook(() => useReadAloud());
+    await waitFor(() => expect(result.current.available).toBe(true));
+    await act(async () => result.current.feed("1", "One. Two. ", false));
+    // Sequential: the first sentence renders + plays; the second waits its turn.
+    await waitFor(() => expect(brainTts).toHaveBeenCalledTimes(1));
+    expect(brainTts.mock.calls[0]?.[1]).toBe("One.");
+    expect(brainTts.mock.calls[0]?.[2]).toBeUndefined(); // first clip carries the lead
+    expect(audios).toHaveLength(1);
+    expect(result.current.playing).toBe("1");
+    // First clip finishes -> the queued "Two." renders + plays, gapless (lead 0).
+    await act(async () => audios[0]?.onended?.());
+    await waitFor(() => expect(brainTts).toHaveBeenCalledTimes(2));
+    expect(brainTts.mock.calls[1]?.[1]).toBe("Two.");
+    expect(brainTts.mock.calls[1]?.[2]).toBe(0);
+  });
+
+  it("clears playing once the final piper clip finishes", async () => {
+    const { result } = renderHook(() => useReadAloud());
+    await waitFor(() => expect(result.current.available).toBe(true));
+    await act(async () => result.current.toggle("a", "read me"));
+    await waitFor(() => expect(audios).toHaveLength(1));
+    expect(result.current.playing).toBe("a");
+    await act(async () => {
+      audios[0]?.onended?.();
+    });
+    expect(result.current.playing).toBeNull();
+  });
+
+  it("is unavailable when the box has no voices and this device can't speak", async () => {
+    brainVoices.mockResolvedValue([]); // no piper, native already absent in this block
+    const { result } = renderHook(() => useReadAloud());
+    await waitFor(() => expect(brainVoices).toHaveBeenCalled());
+    await waitFor(() => expect(result.current.available).toBe(false));
+  });
+
+  it("stays available on the native fallback when the box has no voices", async () => {
+    brainVoices.mockResolvedValue([]);
+    stubNative();
+    const { result } = renderHook(() => useReadAloud());
+    await waitFor(() => expect(result.current.available).toBe(true));
+    await act(async () => result.current.toggle("a", "read me natively"));
+    // No piper voices -> falls straight to the device voice.
+    expect(brainTts).not.toHaveBeenCalled();
+    expect(synth.speak).toHaveBeenCalledTimes(1);
+    expect(synth.speak.mock.calls[0]?.[0].text).toBe("read me natively");
+    expect(result.current.playing).toBe("a");
+  });
+
+  it("falls back to the native voice when a piper render fails", async () => {
+    const { result } = renderHook(() => useReadAloud());
+    await waitFor(() => expect(result.current.available).toBe(true)); // voices loaded (no native yet)
+    brainTts.mockRejectedValue(new Error("box unreachable"));
+    stubNative();
+    await act(async () => result.current.toggle("a", "read me"));
+    await waitFor(() => expect(synth.speak).toHaveBeenCalledTimes(1));
+    expect(brainTts).toHaveBeenCalledTimes(1); // tried piper first
+    expect(synth.speak.mock.calls[0]?.[0].text).toBe("read me"); // then the device voice
+  });
+
+  it("uses the device voice when the engine is native even with box voices", async () => {
+    getSettings.mockResolvedValue({
+      brain_read_aloud: true,
+      brain_answer_voice: "en_US-amy-medium",
+      brain_read_aloud_engine: "native",
+    });
+    stubNative();
+    const { result } = renderHook(() => useReadAloud());
+    await waitFor(() => expect(result.current.available).toBe(true));
+    await act(async () => result.current.toggle("a", "spoken locally"));
+    expect(brainTts).not.toHaveBeenCalled(); // native mode never touches the box
+    expect(synth.speak).toHaveBeenCalledTimes(1);
   });
 });

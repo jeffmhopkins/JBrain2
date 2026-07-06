@@ -198,14 +198,30 @@ their own card — a quiet twin of the prompt popup.
 ### Read aloud (optional TTS — server-side piper)
 
 The **Read aloud** panel (bottom-right) reads turns aloud. Speech is rendered **on the box** by
-[`piper`](https://github.com/OHF-Voice/piper1-gpl): `serve.py` exposes `GET /tts?voice=<model>&text=…`
-(returns a WAV) and `GET /tts/voices` (the installed models), and the page plays the clip through an
+[`piper`](https://github.com/OHF-Voice/piper1-gpl): `serve.py` exposes `GET /tts?voice=<id>&text=…`
+(returns a WAV) and `GET /tts/voices` (the installed voice ids), and the page plays the clip through an
 `<audio>` element — keeping the browser's flaky Web Speech engine (speech-dispatcher cold start,
 silent first-word drops) out of the path entirely.
 
 Two independent voices — **Joe** reads prompts and **Amy** reads answers by default — each an enable
-checkbox + a picker over the installed piper models (add more and they show up automatically); both
+checkbox + a picker over the installed voice ids (add more and they show up automatically); both
 persist in `localStorage`. Markdown is stripped before speaking.
+
+**Voice ids and speakers.** A single-speaker model is one voice, its id the file stem
+(`en_US-amy-medium`). A **multi-speaker** model (e.g. `en_US-libritts_r-medium`, which carries
+hundreds of speakers) contributes one voice per *curated* speaker — id `"<stem>#<speaker>"`, e.g.
+`en_US-libritts_r-medium#3922` (a second, female agent voice). Curation lives in `CURATED_SPEAKERS`
+in `serve.py` (keyed by model stem → speaker names from the model's `.onnx.json` `speaker_id_map`); an
+uncurated multi-speaker model falls back to its default speaker so it stays usable. `serve.py` resolves
+the id's speaker index and passes it to piper as `--speaker`.
+
+**The PWA reads aloud too.** The in-chat read-aloud (per-turn play button) can render through this
+same piper, reached from the PWA over the authenticated api proxy `GET /api/brain/tts` /
+`GET /api/brain/voices` (the api → this on-box service, internal network only). **Settings → Read-aloud
+voice** picks the engine (`brain_read_aloud_engine`): **piper** (the voice — any id above, speakers
+included, chosen via `brain_answer_voice`, which is also the wall's answer voice; a *play sample*
+button auditions it) with an automatic fall back to the **device's native (Web Speech) voice** when
+this box is unreachable, or **native** to always use the device voice.
 
 **The whole reply, not an excerpt.** The page splits a reply into sentence-sized clips and plays them
 back-to-back through one queue: the first clip renders while the rest queue, so speech starts fast, the

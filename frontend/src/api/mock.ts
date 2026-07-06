@@ -334,7 +334,13 @@ const SETTINGS: AppSettings = {
   owner_timezone: null,
   brain_llm_stream: false,
   brain_read_aloud: false,
+  brain_answer_voice: "en_US-amy-medium",
+  brain_read_aloud_engine: "piper",
 };
+
+// The box's installed piper voices, for the read-aloud voice picker mock — one curated
+// multi-speaker entry (libritts_r 3922) alongside the two single-speaker defaults.
+const BRAIN_VOICES = ["en_US-amy-medium", "en_US-joe-medium", "en_US-libritts_r-medium#3922"];
 
 // Per-task LLM routing fixture (GET/PUT /api/settings/llm). Only grok carries
 // a reasoning level; reasoning_effort is null for any task off grok, mirroring
@@ -3301,6 +3307,16 @@ export const mockFetch: typeof fetch = async (input, init) => {
     return json({ job_id: id("job") }, 202);
   }
 
+  // The on-box piper TTS, proxied through the api (read-aloud voice picker + samples).
+  if (path === "/api/brain/voices" && method === "GET") return json({ voices: BRAIN_VOICES });
+  if (path.startsWith("/api/brain/tts") && method === "GET") {
+    // A tiny empty WAV stand-in — enough for a same-origin <audio> load in dev; tests
+    // stub the api layer directly rather than exercising this.
+    return new Response(new Blob([], { type: "audio/wav" }), {
+      headers: { "Content-Type": "audio/wav" },
+    });
+  }
+
   if (path === "/api/settings" && method === "GET") return json(SETTINGS);
   if (path === "/api/settings" && method === "PUT") {
     const patch = JSON.parse(String(init?.body)) as Record<string, unknown>;
@@ -3318,6 +3334,12 @@ export const mockFetch: typeof fetch = async (input, init) => {
       } else if (key === "brain_read_aloud") {
         if (typeof value !== "boolean") return json({ detail: "bad brain_read_aloud" }, 422);
         SETTINGS.brain_read_aloud = value;
+      } else if (key === "brain_answer_voice") {
+        if (typeof value !== "string" || !value.trim()) return json({ detail: "empty voice" }, 422);
+        SETTINGS.brain_answer_voice = value;
+      } else if (key === "brain_read_aloud_engine") {
+        if (value !== "piper" && value !== "native") return json({ detail: "bad engine" }, 422);
+        SETTINGS.brain_read_aloud_engine = value;
       } else {
         return json({ detail: `unknown key ${key}` }, 422);
       }
