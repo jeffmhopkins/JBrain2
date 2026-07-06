@@ -198,4 +198,28 @@ describe("useReadAloud auto-play", () => {
     expect(synth.speak).not.toHaveBeenCalled();
     expect(result.current.playing).toBeNull();
   });
+
+  it("cuts off the current auto turn when a new turn starts streaming", () => {
+    const { result } = renderHook(() => useReadAloud());
+    act(() => result.current.feed("1", "Older turn still talking.", false));
+    expect(result.current.playing).toBe("1");
+
+    // The next agent turn begins streaming — cut the old stream, take over.
+    synth.cancel.mockClear();
+    act(() => result.current.feed("3", "Newer turn.", false));
+    expect(synth.cancel).toHaveBeenCalled();
+    expect(result.current.playing).toBe("3");
+  });
+
+  it("a new streaming turn cuts off a manual playback", () => {
+    const { result } = renderHook(() => useReadAloud());
+    act(() => result.current.toggle("1", "Manually reading this long answer aloud."));
+    expect(result.current.playing).toBe("1");
+
+    // A fresh turn streams in — it wins over the manual playback.
+    synth.cancel.mockClear();
+    act(() => result.current.feed("3", "New turn.", false));
+    expect(synth.cancel).toHaveBeenCalled();
+    expect(result.current.playing).toBe("3");
+  });
 });

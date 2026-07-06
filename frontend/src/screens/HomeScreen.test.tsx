@@ -608,6 +608,36 @@ describe("HomeScreen read-aloud", () => {
     );
   });
 
+  it("auto-play cuts off a still-speaking turn when the next turn starts", async () => {
+    localStorage.setItem("readAloudAutoPlay", "1");
+    const answers = ["First answer here.", "Second answer here."];
+    let call = 0;
+    const deps = fbDeps();
+    deps.chat = async function* () {
+      yield { type: "text_delta", text: answers[call++] ?? "" };
+      yield { type: "done", stop_reason: "end_turn" };
+    };
+    renderHome(deps);
+    fireEvent.click(screen.getByRole("tab", { name: "Brain" }));
+    await waitFor(() => screen.getByLabelText("Conversation"));
+
+    fireEvent.change(screen.getByLabelText("Composer"), { target: { value: "one" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    await waitFor(() =>
+      expect(synth.speak.mock.calls.map((c) => c[0].text)).toContain("First answer here."),
+    );
+
+    // The first turn's speech is still queued (jsdom never fires 'end'); starting the
+    // next turn cancels it and takes over.
+    synth.cancel.mockClear();
+    fireEvent.change(screen.getByLabelText("Composer"), { target: { value: "two" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    await waitFor(() =>
+      expect(synth.speak.mock.calls.map((c) => c[0].text)).toContain("Second answer here."),
+    );
+    expect(synth.cancel).toHaveBeenCalled();
+  });
+
   it("offers no play control when read-aloud is unavailable (no speech engine)", async () => {
     // A browser with no Web Speech at all — the key is absent, not just undefined,
     // so `"speechSynthesis" in window` is false and read-aloud stays unavailable.
