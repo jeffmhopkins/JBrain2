@@ -1,10 +1,17 @@
 # Read-aloud legibility — split the `tts` service, normalize the text, ramp the chunks
 
-> **Status:** In progress · **Last verified:** 2026-07-06 · **Waves:** 1◻️ 2◻️ 0◻️ —
-> sequence **reordered** (owner call): the fully CI-verifiable legibility (W1) and
-> fluid-chunking (W2) land first on the current layout; the big infra split/colocate
-> (W0) — which only validates on the box — lands last. Warm piper is proven (load
-> once ~8 s, then ~0.05–0.3 s/clip vs ~1.5 s subprocess-per-clip).
+> **Status:** In progress · **Last verified:** 2026-07-06 · **Waves:** 1✅ 2✅ 0◻️ —
+> sequence **reordered** (owner call): the CI-verifiable legibility (W1) + fluid
+> streaming (W2) land first on the current layout; the infra split/colocate (W0) —
+> which only validates on the box — lands last. W1+W2 **merged** (coupled through the
+> auto-play cursor) and shipping as one PR: the shared `speakable` normalizer, a
+> stream-safe `chunkStream` (complete-unit extraction, proven by a property test), and
+> a prefetch pump for gapless playback. **Deferred into W0** (the wall restructure): the
+> wall's adoption of the shared module + the server-side defensive scrub. **Ramp
+> sizing deferred/reassess:** warm piper (proven — load once ~8 s, then ~0.05–0.3 s/clip
+> vs ~1.5 s subprocess-per-clip) plus the prefetch pump already give gapless playback,
+> so packing sentences into growing budgets buys little; revisit after W0 if the PWA→api→box
+> round-trip count matters.
 
 Read-aloud today feeds piper near-raw markdown, so emoji, tables, line breaks,
 numbers and symbols garble; and the box renders one piper subprocess per clip
