@@ -217,25 +217,25 @@ completion/mastery model — design that spine once; these are views over it.)*
 - [x] **Learning-objectives card** — "by the end you'll be able to…"; primes attention, mirrored at close. `S` · ✓ Mock 01 (lesson-plan-driven header)
 - [ ] **Prerequisites checklist** — assumed prior knowledge, each linked to remedial content; self-assess readiness. `S` ⭐
 - [ ] **"Why this matters" card** — relevance/payoff up front; optionally tied to the owner's stated goals. `S` ⭐
-- [ ] **Course/lesson outline (expandable)** — module→lesson→section tree with completion state + "you are here." `M`
+- [x] **Course/lesson outline (expandable)** — module→lesson→section tree with completion state + "you are here." `M` · ✓ Mock 04
 - [ ] **Table of contents / jump-nav** — flat list of the current lesson's sections; active section auto-highlights. `S`
 - [ ] **Breadcrumb / "you are here"** — compact path trail for deep hierarchies. `S`
 - [ ] **Section headers & dividers** — chunk a lesson into typed units (concept/example/practice/recap). `S`
-- [ ] **Course progress bar** — aggregate % across a multi-lesson course; hover for breakdown. `S`
+- [x] **Course progress bar** — aggregate % across a multi-lesson course; hover for breakdown. `S` · ✓ Mock 04
 - [ ] **Lesson progress bar** — progress within the current lesson; manage effort/attention. `S`
 - [ ] **Step / segment progress (stepper)** — discrete numbered track for staged content; which step is active/done. `S`
 - [ ] **Completion tracker / checklist** — explicit lesson requirements checking off; makes "done" unambiguous. `M`
 - [ ] **Mastery / skill meter** — per-concept proficiency from demonstrated performance, not exposure. `M` ⭐
 - [ ] **Estimated-time indicator** — "~12 min" per node; recomputes remaining as they progress. `S`
-- [ ] **"Next up" / continue card** — the single recommended next action + why; eliminates decision friction. `S` ⭐
+- [x] **"Next up" / continue card** — the single recommended next action + why; eliminates decision friction. `S` ⭐ · ✓ Mock 04 (Resume CTA)
 - [ ] **Resume / "since last time" card** — auto-remembered position + a recap of last session; bridges the gap. `M` ⭐
 - [ ] **Branch / path chooser** — forks ("dive deeper" vs "move on"); learner agency over the route. `M`
-- [ ] **Lesson-summary / recap card** — condenses what was covered; optional save-to-notes. `S`
-- [ ] **Key-takeaways callout** — 2–5 must-remember points, elevated; feeds spaced-repetition. `S`
+- [x] **Lesson-summary / recap card** — condenses what was covered; optional save-to-notes. `S` · ✓ Mock 04
+- [x] **Key-takeaways callout** — 2–5 must-remember points, elevated; feeds spaced-repetition. `S` · ✓ Mock 04
 - [ ] **Glossary panel** — full alphabetized/grouped term list for the lesson/course. `S`
 - [ ] **Bookmark / save-for-later** — learner markers on sections/terms; browse & jump back. `M`
 - [ ] **Note-taking / annotation panel** — learner writes notes / annotates passages; these can re-enter the RAG/wiki pipeline as notes. `M` ⭐
-- [ ] **Skill-tree / mastery map** — unlockable tree gated on prerequisites; the learner-facing face of the course plan. `M` ⭐
+- [x] **Skill-tree / mastery map** — unlockable tree gated on prerequisites; the learner-facing face of the course plan. `M` ⭐ · ✓ Mock 04
 - [ ] **Milestone / achievement markers** — celebrate thresholds; opt-in, pressure-free framing. `S`
 - [ ] **Streak / engagement indicator** — consecutive-session habit tracking. *(Churn/guilt risk — flag opt-in.)* `S`
 
