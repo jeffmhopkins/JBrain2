@@ -2212,6 +2212,16 @@ export const api = {
     await request("/api/ops/restart", jsonInit("POST", { service }));
   },
 
+  /** Stop / start a single container (docker stop/start on the existing container) —
+   * the per-container power controls next to Restart. */
+  async opsStop(service: string): Promise<void> {
+    await request("/api/ops/stop", jsonInit("POST", { service }));
+  },
+
+  async opsStart(service: string): Promise<void> {
+    await request("/api/ops/start", jsonInit("POST", { service }));
+  },
+
   async opsLogs(service: string, tail: number): Promise<string> {
     const response = await request(`/api/ops/logs/${encodeURIComponent(service)}?tail=${tail}`);
     return await response.text();

@@ -3940,6 +3940,9 @@ export const mockFetch: typeof fetch = async (input, init) => {
   }
   if (path === "/api/ops/status") return json({ containers: CONTAINERS });
   if (path === "/api/ops/restart") return new Response(null, { status: 204 });
+  if ((path === "/api/ops/start" || path === "/api/ops/stop") && init?.method === "POST") {
+    return json({ service: "mock", action: path.endsWith("start") ? "start" : "stop" }, 202);
+  }
   if (path === "/api/ops/rebuild" && init?.method === "POST") {
     mockRebuild.state = "running";
     mockRebuild.ticks = 0;

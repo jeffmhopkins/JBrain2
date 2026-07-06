@@ -33,6 +33,9 @@ class FakeSupervisor:
         self.provisions_started = 0
         self.rebuilt_services: list[str] = []
         self.rebuild_known = {"api", "server-brain", "worker"}
+        self.started: list[str] = []
+        self.stopped: list[str] = []
+        self.lifecycle_known = {"api", "server-brain", "worker"}
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
         if request.headers.get("Authorization") != "Bearer st-token":
@@ -78,6 +81,13 @@ class FakeSupervisor:
             return httpx.Response(202, json={"oneshot": "jbrain-rebuild-1"})
         if path == "/rebuild/status":
             return httpx.Response(200, json=self.rebuild_state)
+        if path in ("/start", "/stop") and method == "POST":
+            service = json.loads(request.content)["service"]
+            if service not in self.lifecycle_known:
+                return httpx.Response(404)
+            (self.started if path == "/start" else self.stopped).append(service)
+            action = "start" if path == "/start" else "stop"
+            return httpx.Response(202, json={"service": service, "action": action})
         if path == "/metrics":
             return httpx.Response(
                 200,
@@ -222,6 +232,33 @@ def test_rebuild_status_proxies(client: TestClient, supervisor: FakeSupervisor) 
     supervisor.rebuild_state = {"state": "running", "exit_code": None, "log_tail": "[rebuild]"}
     body = client.get("/api/ops/rebuild/status").json()
     assert body["state"] == "running"
+
+
+def test_start_stop_require_owner(
+    repo: FakeAuthRepo, supervisor: FakeSupervisor, shelf_dir: Path
+) -> None:
+    settings = Settings(
+        secure_cookies=False,
+        supervisor_token="st-token",
+        database_url="postgresql+asyncpg://nobody@localhost:1/none",
+        backups_dir=str(shelf_dir),
+    )
+    app = create_app(settings)
+    with TestClient(app) as anon:
+        app.state.auth_repo = repo
+        assert anon.post("/api/ops/start", json={"service": "api"}).status_code == 401
+        assert anon.post("/api/ops/stop", json={"service": "api"}).status_code == 401
+
+
+def test_stop_and_start_proxy_the_service(client: TestClient, supervisor: FakeSupervisor) -> None:
+    assert client.post("/api/ops/stop", json={"service": "server-brain"}).status_code == 202
+    assert supervisor.stopped == ["server-brain"]
+    assert client.post("/api/ops/start", json={"service": "server-brain"}).status_code == 202
+    assert supervisor.started == ["server-brain"]
+
+
+def test_stop_unknown_service_is_404(client: TestClient) -> None:
+    assert client.post("/api/ops/stop", json={"service": "nope"}).status_code == 404
 
 
 def test_metrics_merges_per_process_breakdown(client: TestClient) -> None:
