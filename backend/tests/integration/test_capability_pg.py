@@ -83,7 +83,11 @@ async def test_has_active_capability_tracks_the_live_set(maker: async_sessionmak
     # The signal that switches on the wall's verbose TTS trace: True iff SOME token is live,
     # with the same fail-closed liveness as auth (expiry, revoke, suspend all drop it).
     repo = SqlAuthRepo(maker)
-    assert await repo.has_active_capability() is False  # none minted yet
+    # Sibling tests share this DB and leave live tokens behind, so start from a known-empty
+    # active set by revoking any that are still live.
+    for t in await repo.list_capabilities():
+        await repo.revoke_capability(t.id)
+    assert await repo.has_active_capability() is False  # no live token
 
     await auth_service.mint_capability(repo, "expired", ttl_hours=-1)
     assert await repo.has_active_capability() is False  # an expired token doesn't count
