@@ -109,9 +109,9 @@ def test_warm_cache_loads_each_model_once(server: types.ModuleType) -> None:
     # The point of the service: repeated renders of a voice REUSE the resident model.
     for _ in range(3):
         assert server.tts_wav("hello", "en_US-libritts_r-medium#3922", lead_ms=0) is not None
-    assert _FakeVoice.loads.count(
-        str(server.PIPER_VOICES_DIR / "en_US-libritts_r-medium.onnx")
-    ) == 1
+    assert (
+        _FakeVoice.loads.count(str(server.PIPER_VOICES_DIR / "en_US-libritts_r-medium.onnx")) == 1
+    )
     # A different voice loads its own model, still once across repeats.
     for _ in range(2):
         server.tts_wav("hi", "en_US-amy-medium", lead_ms=0)
