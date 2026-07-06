@@ -78,10 +78,10 @@ presentation blocks + one or two `⭐` differentiators to prove the whole path.
 
 ## B. Worked examples & guided practice
 
-- [ ] **Worked example, progressive reveal** — fully solved example with steps hidden, revealed one at a time; optional "predict the next step." `M`
+- [x] **Worked example, progressive reveal** — fully solved example with steps hidden, revealed one at a time; optional "predict the next step." `M` · ✓ Mock 02 (with predict-the-step)
 - [ ] **Faded worked example (completion problem)** — learner completes the later steps; the fade from watching to doing. `M` ⭐
-- [ ] **Hint ladder / scaffolded problem** — ordered hints (nudge → strategy → partial → full) unlocked only as needed; preserves productive struggle. `M` ⭐
-- [ ] **Live step-check problem** — learner submits each step and is validated before proceeding; catches errors early, not at the end. `M` ⭐
+- [x] **Hint ladder / scaffolded problem** — ordered hints (nudge → strategy → partial → full) unlocked only as needed; preserves productive struggle. `M` ⭐ · ✓ Mock 02
+- [x] **Live step-check problem** — learner submits each step and is validated before proceeding; catches errors early, not at the end. `M` ⭐ · ✓ Mock 02
 - [ ] **Derivation / proof stepper** — multi-line derivation revealed line-by-line, each with a "by X rule" justification. `M`
 - [ ] **Predict-then-reveal** — learner commits a prediction before the outcome; the wrong-prediction surprise boosts encoding. `S`
 - [ ] **Estimate-then-check (Fermi)** — estimate a quantity with reasoning, then compare order-of-magnitude to the real value. `S`
