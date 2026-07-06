@@ -100,7 +100,7 @@ services:
       # whisper.cpp via llama-swap on :8080 and loads/frees the model on demand. Default-on
       # now that tts-stt is a default service; the model is provisioned at setup. An operator
       # can still override the URL to "" to hard-disable transcription. Inherited by worker.
-      JBRAIN_WHISPER_URL: ${WHISPER_URL:-http://tts-stt:8080}
+      JBRAIN_WHISPER_URL: ${WHISPER_URL:-http://tts-stt:8080/v1}
       JBRAIN_WHISPER_ENABLED: ${WHISPER_ENABLED:-true}
       JBRAIN_WHISPER_MODEL: ${WHISPER_MODEL:-whisper}
       # Code mode (docs/archive/JCODE_PLAN.md) — OFF unless the operator opts in via
