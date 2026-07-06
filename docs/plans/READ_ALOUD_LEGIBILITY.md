@@ -1,6 +1,10 @@
 # Read-aloud legibility — split the `tts` service, normalize the text, ramp the chunks
 
-> **Status:** Scheduled · **Last verified:** 2026-07-06 · **Waves:** 0◻️ 1◻️ 2◻️
+> **Status:** In progress · **Last verified:** 2026-07-06 · **Waves:** 1◻️ 2◻️ 0◻️ —
+> sequence **reordered** (owner call): the fully CI-verifiable legibility (W1) and
+> fluid-chunking (W2) land first on the current layout; the big infra split/colocate
+> (W0) — which only validates on the box — lands last. Warm piper is proven (load
+> once ~8 s, then ~0.05–0.3 s/clip vs ~1.5 s subprocess-per-clip).
 
 Read-aloud today feeds piper near-raw markdown, so emoji, tables, line breaks,
 numbers and symbols garble; and the box renders one piper subprocess per clip
