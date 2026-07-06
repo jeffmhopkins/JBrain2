@@ -33,6 +33,18 @@ import { ToolView } from "./views/registry";
 // swaps the label and re-arms the hold (see AgentStatusLine).
 const TOOL_HOLD_MS = 1000;
 
+// Read-aloud control state for one settled answer: whether it's speaking, whether
+// auto-play is armed (the control's third state), and the tap / long-press handlers.
+interface AudioControl {
+  playing: boolean;
+  autoPlay: boolean;
+  onToggle: () => void;
+  onToggleAuto: () => void;
+}
+
+// How long a press must hold before it counts as a long-press (arm/disarm auto-play).
+const LONG_PRESS_MS = 500;
+
 interface Props {
   fb: FullBrain;
   /** Open a source note by id (from a Worked-block card). */
@@ -42,13 +54,21 @@ interface Props {
   /** Fired after a Proposal enacts — the home stream refreshes so a note the
    * enactment created shows without waiting for the poll. */
   onProposalEnacted?: (() => void) | undefined;
-  /** Read-aloud (piper) is enabled: each settled answer gets a play/pause control
-   * beside its copy button, and the copy button drops its label to save room.
-   * `playing` is the key of the turn speaking now (null = silent); `onToggle`
-   * plays a turn by key or pauses it if it's the one already playing. Absent =
-   * no play control (read-aloud off / unavailable). */
+  /** Read-aloud (piper) is enabled: each settled answer gets a three-state play
+   * control beside its copy button, and the copy button drops its label to save room.
+   * The control also shows on a still-streaming turn while auto-play is speaking it, so
+   * a long turn can be paused before it settles. `playing` is the key of the turn
+   * speaking now (null = silent); `autoPlay` is the armed auto-play mode (the control's
+   * third state). `onToggle` plays a turn by key (or pauses it if it's the one playing);
+   * `onToggleAuto` (long-press) flips auto-play. Absent = no play control (read-aloud
+   * off / unavailable). */
   readAloud?:
-    | { playing: string | null; onToggle: (key: string, markdown: string) => void }
+    | {
+        playing: string | null;
+        autoPlay: boolean;
+        onToggle: (key: string, markdown: string) => void;
+        onToggleAuto: () => void;
+      }
     | undefined;
 }
 
@@ -137,7 +157,9 @@ export function FullBrainSurface({
                   readAloud
                     ? {
                         playing: readAloud.playing === String(i),
+                        autoPlay: readAloud.autoPlay,
                         onToggle: () => readAloud.onToggle(String(i), m.text),
+                        onToggleAuto: readAloud.onToggleAuto,
                       }
                     : undefined
                 }
@@ -329,9 +351,11 @@ function Bubble({
   onStop?: (() => void) | undefined;
   /** Open a sub-agent child's own session by id (from the fan's row). */
   onOpenSession?: ((sessionId: string) => void) | undefined;
-  /** Read-aloud play/pause for this settled answer: `playing` = it's speaking now;
-   * `onToggle` plays/pauses it. Absent = read-aloud off (no play control, labelled copy). */
-  audio?: { playing: boolean; onToggle: () => void } | undefined;
+  /** Read-aloud control for this settled answer: `playing` = it's speaking now,
+   * `autoPlay` = auto-play armed (third icon state); `onToggle` plays/pauses it,
+   * `onToggleAuto` (long-press) flips auto-play. Absent = read-aloud off (no control,
+   * labelled copy). */
+  audio?: AudioControl | undefined;
 }): ReactNode {
   // Which ungrounded-claim flag's reason note is open (one at a time). Declared
   // before the early returns so the hook order is stable across renders.
@@ -530,15 +554,24 @@ function Bubble({
   // A settled answer also gets a copy affordance pinned to the right of that line, so
   // the foot strip shows on every finished turn even with no reasoning or tools.
   const settledAnswer = !message.streaming && message.text.trim() !== "";
+  // Read-aloud engaged with a turn that is still streaming: auto-play armed, or this
+  // turn already speaking (auto-play feeds it sentence-by-sentence before it settles).
+  // Surface the play control now — not just on settle — so a long turn can be paused
+  // mid-stream. A quiet streaming turn (auto-play off, silent) keeps its clean foot.
+  const streamingAudio =
+    message.streaming &&
+    message.text.trim() !== "" &&
+    audio !== undefined &&
+    (audio.autoPlay || audio.playing);
   const activityLine =
-    message.reasoning || message.tools.length > 0 || settledAnswer ? (
+    message.reasoning || message.tools.length > 0 || settledAnswer || streamingAudio ? (
       <ActivityLine
         reasoning={message.reasoning}
         thinking={message.thinking}
         hasAnswer={message.text !== ""}
         tools={message.tools}
         copyText={settledAnswer ? stripModelCitations(message.text) : ""}
-        audio={settledAnswer ? audio : undefined}
+        audio={settledAnswer || streamingAudio ? audio : undefined}
         onOpenNote={onOpenNote}
         onOpenEntity={onOpenEntity}
       />
@@ -700,9 +733,9 @@ function ActivityLine({
   tools: ToolActivity[];
   /** The settled answer text to copy; "" while streaming or empty (no copy button). */
   copyText: string;
-  /** Read-aloud play/pause for this turn — present only when read-aloud (piper) is on.
+  /** Read-aloud control for this turn — present only when read-aloud (piper) is on.
    * Its presence also compacts the copy button to an icon to make room. */
-  audio?: { playing: boolean; onToggle: () => void } | undefined;
+  audio?: AudioControl | undefined;
   onOpenNote?: ((noteId: string) => void) | undefined;
   onOpenEntity?: ((entityId: string) => void) | undefined;
 }): ReactNode {
@@ -790,7 +823,7 @@ function ActivityLine({
             </span>
           </button>
         )}
-        {copyText && audio && <PlayButton playing={audio.playing} onToggle={audio.onToggle} />}
+        {audio && <PlayButton audio={audio} />}
         {copyText && <CopyButton text={copyText} compact={audio !== undefined} />}
       </div>
       {(hasReasoning || tools.length > 0) && (
@@ -858,25 +891,69 @@ function CopyButton({ text, compact }: { text: string; compact?: boolean }): Rea
   );
 }
 
-// Read-aloud play/pause for one settled answer, sitting just left of the copy button
-// (present only when read-aloud is enabled). Play speaks this turn on the device;
-// while it speaks the glyph flips to a pause bar — tapping pauses (stops) it.
-function PlayButton({
-  playing,
-  onToggle,
-}: {
-  playing: boolean;
-  onToggle: () => void;
-}): ReactNode {
+// Read-aloud control for an answer, sitting just left of the copy button (present only
+// when read-aloud is enabled — on every settled answer, and on a streaming turn while
+// auto-play is speaking it, so a long turn can be paused before it finalizes). Three
+// states: play (tap to speak this turn), pause (it's speaking — tap to stop), and auto
+// (auto-play armed, shown with a loop-marked triangle). A long-press on the control
+// arms/disarms auto-play, so new turns speak themselves as they stream; a quick tap
+// always plays/pauses this turn.
+function PlayButton({ audio }: { audio: AudioControl }): ReactNode {
+  const { playing, autoPlay, onToggle, onToggleAuto } = audio;
+  // Long-press detection: a press held past LONG_PRESS_MS fires the auto-play toggle
+  // and marks the gesture so the trailing click doesn't also play the turn.
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const longFired = useRef(false);
+  const cancel = () => {
+    if (timer.current) {
+      clearTimeout(timer.current);
+      timer.current = null;
+    }
+  };
+  // Clear a pending long-press timer if the bubble unmounts mid-hold (refs only,
+  // so the empty dep list is exhaustive).
+  useEffect(() => () => clearTimeout(timer.current ?? undefined), []);
+  const start = () => {
+    longFired.current = false;
+    cancel();
+    timer.current = setTimeout(() => {
+      longFired.current = true;
+      onToggleAuto();
+    }, LONG_PRESS_MS);
+  };
+
+  const label = playing
+    ? "Pause reading aloud"
+    : autoPlay
+      ? "Auto-play on — long-press to turn off"
+      : "Read response aloud — long-press for auto-play";
+  const glyph = playing ? (
+    <PauseGlyph className="fb-act-ic" />
+  ) : autoPlay ? (
+    <AutoPlayGlyph className="fb-act-ic" />
+  ) : (
+    <PlayGlyph className="fb-act-ic" />
+  );
   return (
     <button
       type="button"
-      className={`fb-act-play${playing ? " on" : ""}`}
-      aria-label={playing ? "Pause reading aloud" : "Read response aloud"}
-      aria-pressed={playing}
-      onClick={onToggle}
+      className={`fb-act-play${playing ? " on" : ""}${autoPlay ? " auto" : ""}`}
+      aria-label={label}
+      aria-pressed={playing || autoPlay}
+      onPointerDown={start}
+      onPointerUp={cancel}
+      onPointerLeave={cancel}
+      onPointerCancel={cancel}
+      onClick={() => {
+        // A completed long-press already toggled auto-play — swallow the click.
+        if (longFired.current) {
+          longFired.current = false;
+          return;
+        }
+        onToggle();
+      }}
     >
-      {playing ? <PauseGlyph className="fb-act-ic" /> : <PlayGlyph className="fb-act-ic" />}
+      {glyph}
     </button>
   );
 }
@@ -896,6 +973,27 @@ function PauseGlyph({ className }: { className?: string }): ReactNode {
     <svg className={className} viewBox="0 0 24 24" aria-hidden="true">
       <rect x="6" y="5" width="4" height="14" rx="1" fill="currentColor" stroke="none" />
       <rect x="14" y="5" width="4" height="14" rx="1" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}
+
+// The auto-play state: a small play triangle ringed by a repeat loop — "every turn
+// speaks itself" — distinct from the bare play triangle.
+function AutoPlayGlyph({ className }: { className?: string }): ReactNode {
+  return (
+    <svg
+      className={className}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.7"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M17 5a8 8 0 1 0 2.5 5" />
+      <path d="M20 3v5h-5" />
+      <path d="M10 9.5v5l4-2.5z" fill="currentColor" stroke="none" />
     </svg>
   );
 }

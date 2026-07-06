@@ -93,12 +93,24 @@ export function HomeScreen({
   const fb = useFullBrain(convMode, fbDeps, true);
 
   // Local read-aloud: when the owner has enabled read-aloud, each settled answer in the
-  // transcript gets a play/pause control (beside its copy button) that speaks that one
+  // transcript gets a three-state play control (beside its copy button) that speaks that
   // turn on this device (browser TTS). Flipping away from a conversation tab stops it.
   const readAloud = useReadAloud();
   useEffect(() => {
     if (convMode === null) readAloud.stop();
   }, [convMode, readAloud.stop]);
+
+  // Auto-play: while armed, feed the newest assistant turn to the engine as it streams
+  // so it starts speaking sentence-by-sentence without waiting for the whole answer,
+  // then flushes on settle. `feed` ignores already-settled turns, so opening an old
+  // chat (or arming auto-play after a turn finished) never re-speaks it.
+  useEffect(() => {
+    if (convMode === null || !readAloud.available || !readAloud.autoPlay) return;
+    const msgs = fb.messages;
+    const last = msgs[msgs.length - 1];
+    if (!last || last.role !== "assistant" || !last.text) return;
+    readAloud.feed(String(msgs.length - 1), last.text, !last.streaming);
+  }, [fb.messages, convMode, readAloud.available, readAloud.autoPlay, readAloud.feed]);
 
   // A Tasks run → open its session: flip to the conversation tab that hosts the
   // session's persona, then open it by id (the controller suppresses the tab's
@@ -181,11 +193,17 @@ export function HomeScreen({
           // Enacting a correction creates a note out of band; refresh the stream
           // now so it's already there when the owner flips back to entry mode.
           onProposalEnacted={() => void notes.refresh()}
-          // Read-aloud on: each settled answer gets a play/pause control by its copy
-          // button that speaks that turn locally. Off/unavailable = no control.
+          // Read-aloud on: each settled answer gets a three-state play control by its
+          // copy button (play / pause / auto-play) that speaks that turn locally.
+          // Off/unavailable = no control.
           readAloud={
             readAloud.available
-              ? { playing: readAloud.playing, onToggle: readAloud.toggle }
+              ? {
+                  playing: readAloud.playing,
+                  autoPlay: readAloud.autoPlay,
+                  onToggle: readAloud.toggle,
+                  onToggleAuto: readAloud.toggleAutoPlay,
+                }
               : undefined
           }
         />

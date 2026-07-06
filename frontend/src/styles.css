@@ -7742,6 +7742,18 @@ button.small {
 .fb-shell .fb-act-play.on {
   color: var(--steel);
 }
+/* auto-play armed: the violet register (distinct from the steel playing/hover state),
+   so the loop-marked triangle reads as "on" even when this turn isn't speaking. */
+.fb-shell .fb-act-play.auto {
+  color: var(--violet);
+}
+/* the long-press target shouldn't trigger the OS text-selection / callout while held. */
+.fb-shell .fb-act-play {
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+  touch-action: manipulation;
+}
 .fb-shell .fb-act-play .fb-act-ic {
   width: 15px;
   height: 15px;
