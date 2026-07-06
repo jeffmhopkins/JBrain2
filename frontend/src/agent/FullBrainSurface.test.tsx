@@ -790,6 +790,40 @@ describe("FullBrainSurface", () => {
     }
   });
 
+  it("shows the pause control while a turn is still streaming so auto-play can be stopped", async () => {
+    // A long turn that has started streaming text but not settled. With auto-play
+    // armed it speaks as it streams, so the pause control must be reachable now —
+    // not only once the turn finalizes.
+    let resolveGate: () => void = () => {};
+    const gate = new Promise<void>((r) => {
+      resolveGate = r;
+    });
+    async function* answer(): AsyncGenerator<ChatEvent> {
+      yield { type: "text_delta", text: "a very long answer still coming in" };
+      await gate; // hold the stream open so the turn stays mid-flight
+      yield { type: "done", stop_reason: "end_turn" };
+    }
+    render(
+      <Harness
+        d={deps({ chat: answer })}
+        readAloud={{ playing: "1", autoPlay: true, onToggle: vi.fn(), onToggleAuto: vi.fn() }}
+      />,
+    );
+    await waitFor(() => screen.getByLabelText("Conversation"));
+    fireEvent.change(screen.getByLabelText("Composer"), { target: { value: "read it" } });
+    fireEvent.click(screen.getByRole("button", { name: "send" }));
+
+    // The play control shows a pause (this turn is speaking) before the turn settles —
+    // and no copy button yet, since the answer isn't final.
+    const pause = await screen.findByRole("button", { name: "Pause reading aloud" });
+    expect(pause).toHaveAttribute("aria-pressed", "true");
+    expect(screen.queryByRole("button", { name: "Copy response" })).toBeNull();
+
+    // Let the turn settle so the stream generator completes cleanly.
+    act(() => resolveGate());
+    await screen.findByRole("button", { name: "Copy response" });
+  });
+
   it("shows thinking and worked on one activity line, thinking through the tools", async () => {
     // A turn that reasons, runs a tool, then answers: both segments live on the
     // single foot line, and "Thinking…" persists across the tool call until the

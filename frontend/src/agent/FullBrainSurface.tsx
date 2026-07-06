@@ -56,10 +56,12 @@ interface Props {
   onProposalEnacted?: (() => void) | undefined;
   /** Read-aloud (piper) is enabled: each settled answer gets a three-state play
    * control beside its copy button, and the copy button drops its label to save room.
-   * `playing` is the key of the turn speaking now (null = silent); `autoPlay` is the
-   * armed auto-play mode (the control's third state). `onToggle` plays a turn by key
-   * (or pauses it if it's the one playing); `onToggleAuto` (long-press) flips auto-play.
-   * Absent = no play control (read-aloud off / unavailable). */
+   * The control also shows on a still-streaming turn while auto-play is speaking it, so
+   * a long turn can be paused before it settles. `playing` is the key of the turn
+   * speaking now (null = silent); `autoPlay` is the armed auto-play mode (the control's
+   * third state). `onToggle` plays a turn by key (or pauses it if it's the one playing);
+   * `onToggleAuto` (long-press) flips auto-play. Absent = no play control (read-aloud
+   * off / unavailable). */
   readAloud?:
     | {
         playing: string | null;
@@ -552,15 +554,24 @@ function Bubble({
   // A settled answer also gets a copy affordance pinned to the right of that line, so
   // the foot strip shows on every finished turn even with no reasoning or tools.
   const settledAnswer = !message.streaming && message.text.trim() !== "";
+  // Read-aloud engaged with a turn that is still streaming: auto-play armed, or this
+  // turn already speaking (auto-play feeds it sentence-by-sentence before it settles).
+  // Surface the play control now — not just on settle — so a long turn can be paused
+  // mid-stream. A quiet streaming turn (auto-play off, silent) keeps its clean foot.
+  const streamingAudio =
+    message.streaming &&
+    message.text.trim() !== "" &&
+    audio !== undefined &&
+    (audio.autoPlay || audio.playing);
   const activityLine =
-    message.reasoning || message.tools.length > 0 || settledAnswer ? (
+    message.reasoning || message.tools.length > 0 || settledAnswer || streamingAudio ? (
       <ActivityLine
         reasoning={message.reasoning}
         thinking={message.thinking}
         hasAnswer={message.text !== ""}
         tools={message.tools}
         copyText={settledAnswer ? stripModelCitations(message.text) : ""}
-        audio={settledAnswer ? audio : undefined}
+        audio={settledAnswer || streamingAudio ? audio : undefined}
         onOpenNote={onOpenNote}
         onOpenEntity={onOpenEntity}
       />
@@ -812,7 +823,7 @@ function ActivityLine({
             </span>
           </button>
         )}
-        {copyText && audio && <PlayButton audio={audio} />}
+        {audio && <PlayButton audio={audio} />}
         {copyText && <CopyButton text={copyText} compact={audio !== undefined} />}
       </div>
       {(hasReasoning || tools.length > 0) && (
@@ -880,11 +891,13 @@ function CopyButton({ text, compact }: { text: string; compact?: boolean }): Rea
   );
 }
 
-// Read-aloud control for one settled answer, sitting just left of the copy button
-// (present only when read-aloud is enabled). Three states: play (tap to speak this
-// turn), pause (it's speaking — tap to stop), and auto (auto-play armed, shown with a
-// loop-marked triangle). A long-press on the control arms/disarms auto-play, so new
-// turns speak themselves as they stream; a quick tap always plays/pauses this turn.
+// Read-aloud control for an answer, sitting just left of the copy button (present only
+// when read-aloud is enabled — on every settled answer, and on a streaming turn while
+// auto-play is speaking it, so a long turn can be paused before it finalizes). Three
+// states: play (tap to speak this turn), pause (it's speaking — tap to stop), and auto
+// (auto-play armed, shown with a loop-marked triangle). A long-press on the control
+// arms/disarms auto-play, so new turns speak themselves as they stream; a quick tap
+// always plays/pauses this turn.
 function PlayButton({ audio }: { audio: AudioControl }): ReactNode {
   const { playing, autoPlay, onToggle, onToggleAuto } = audio;
   // Long-press detection: a press held past LONG_PRESS_MS fires the auto-play toggle
