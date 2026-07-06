@@ -97,7 +97,7 @@ GMAIL_CLIENT_SECRET_KEY = "gmail_client_secret"
 GMAIL_REFRESH_TOKEN_KEY = "gmail_refresh_token"
 
 
-# Stream real LLM prompt + answer TEXT to the on-box wall display (deploy/server-brain,
+# Stream real LLM prompt + answer TEXT to the on-box wall display (deploy/wall,
 # the neural-brain page on :8800) as reach-out "tendrils" with the text streaming along
 # them, plus a fade-out popup of each final answer. OFF by default and gated ONLY here:
 # the display is unauthenticated (safe precisely because it otherwise carries no owner
@@ -111,11 +111,11 @@ BRAIN_LLM_STREAM_DEFAULT = False
 
 
 # Read the wall display's streamed turns ALOUD, rendered on the box by piper TTS
-# (deploy/server-brain, GET /tts). The runtime companion to brain_llm_stream: it is
+# (deploy/tts-stt, GET /tts). The runtime companion to brain_llm_stream: it is
 # the gate the wall uses to SHOW its read-aloud voice panel — and it only speaks the
 # text that brain_llm_stream already streams, so like that switch it is meaningful
 # only when the display is the box's own monitor (localhost-bound). The wall's piper
-# voices are baked into the server-brain image, so this toggle is the only switch —
+# voices are baked into the tts-stt image, so this toggle is the only switch —
 # there is no env var or download step to enable it. OFF by default and read live per
 # turn (jbrain.api.agent),
 # which fire-and-forget POSTs the flag to the display so it flips with no redeploy; an
@@ -125,7 +125,7 @@ BRAIN_READ_ALOUD_DEFAULT = False
 
 
 # The piper voice the read-aloud speaks answers in — a voice id from the on-box picker
-# (server-brain GET /tts/voices), e.g. "en_US-amy-medium" or a multi-speaker
+# (tts-stt GET /tts/voices), e.g. "en_US-amy-medium" or a multi-speaker
 # "en_US-libritts_r-medium#3922". The PWA reads this to render its per-turn read-aloud
 # through piper (via the api->box /api/brain/tts proxy), and its Settings picker writes
 # it. Absent / non-string / empty reads as the Amy default so read-aloud always has a

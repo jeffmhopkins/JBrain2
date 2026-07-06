@@ -537,7 +537,7 @@ export function SettingsScreen({ deviceLabel, onLogout }: SettingsScreenProps) {
           ) : voices.length === 0 ? (
             <p className="settings-meta">
               no voices installed on the box, or the display is unreachable — install them with
-              deploy/server-brain/install-tts.sh. read-aloud uses this device's built-in voice until
+              deploy/tts-stt/install-tts.sh. read-aloud uses this device's built-in voice until
               then.
             </p>
           ) : (

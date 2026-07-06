@@ -11,7 +11,7 @@
 #   1. downloads the chosen GGML whisper model into ./whisper-models/,
 #   2. writes ./whisper-models/llama-swap.yaml (the one-model gateway config —
 #      whisper-server on the OpenAI audio path, idle-unloaded after `ttl`),
-#   3. flips JBRAIN_WHISPER_* on in .env and starts the `whisper` compose profile.
+#   3. flips JBRAIN_WHISPER_* on in .env and recreates the always-on tts-stt service.
 #
 # Run from the install dir (/opt/jbrain2) where docker-compose.yml + .env live.
 set -euo pipefail
@@ -119,22 +119,24 @@ if [ -z "$RENDER_GID" ] && [ -z "$VIDEO_GID" ]; then
 fi
 
 # Flip the feature on in .env (idempotent): enabled flag, gateway URL, served-model
-# name, and the GPU GIDs (shared with the local-llm/comfyui gateways). We do NOT
-# persist COMPOSE_PROFILES — the `jbrain` helper activates the whisper profile from
-# WHISPER_ENABLED so the service isn't dragged into unrelated commands.
+# name, and the GPU GIDs (shared with the local-llm/comfyui gateways). STT is served by
+# the always-on `tts-stt` service now (no profile), so we point at it and recreate.
 say "Enabling transcription in .env"
 sed -i '/^WHISPER_ENABLED=/d; /^WHISPER_URL=/d; /^WHISPER_MODEL=/d; /^VIDEO_GID=/d; /^RENDER_GID=/d' .env
 {
   echo "WHISPER_ENABLED=true"
-  echo "WHISPER_URL=http://whisper:8080/v1"
+  echo "WHISPER_URL=http://tts-stt:8080/v1"
   echo "WHISPER_MODEL=whisper"
   [ -n "$VIDEO_GID" ] && echo "VIDEO_GID=$VIDEO_GID"
   [ -n "$RENDER_GID" ] && echo "RENDER_GID=$RENDER_GID"
 } >> .env
 
-say "Building the whisper image (compiles whisper.cpp's server) and starting it"
-docker compose --profile whisper build whisper
-docker compose --profile whisper up -d whisper
+# The tts-stt container is already up (default service) serving read-aloud; force-recreate
+# it so its entrypoint re-runs and — now that llama-swap.yaml exists — launches whisper's
+# STT alongside piper. Build in case the image needs a GID/base bump.
+say "Recreating the tts-stt service so it picks up the whisper model"
+docker compose build tts-stt
+docker compose up -d --force-recreate tts-stt
 # Recreate the api + worker so they pick up the new JBRAIN_WHISPER_* env (audio
 # attachments now transcribe and jerv gains the transcribe tool).
 docker compose up -d api worker

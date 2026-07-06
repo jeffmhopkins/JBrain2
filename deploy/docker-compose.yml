@@ -71,10 +71,13 @@ services:
       JBRAIN_BLOB_DIR: /data/blobs
       JBRAIN_BACKUPS_DIR: /data/backups
       JBRAIN_EMBED_URL: http://embed:80
-      # Neural wall display (deploy/server-brain): jerv POSTs a web-tool event here
-      # so the display draws a reach-out tendril. On-box (internal network),
-      # best-effort, no owner data; empty disables it. Worker inherits via *api_env.
-      JBRAIN_BRAIN_EVENTS_URL: ${BRAIN_EVENTS_URL:-http://server-brain:8800/event}
+      # Neural wall display (deploy/wall): jerv POSTs a web-tool event here so the display
+      # draws a reach-out tendril. On-box (internal network), best-effort, no owner data;
+      # empty disables it. Worker inherits via *api_env.
+      JBRAIN_BRAIN_EVENTS_URL: ${BRAIN_EVENTS_URL:-http://wall:8800/event}
+      # The tts-stt speech service's piper TTS endpoint — the PWA read-aloud proxy
+      # (/api/brain/tts, /api/brain/voices) and the tts_debug flag push target it.
+      JBRAIN_BRAIN_TTS_URL: ${BRAIN_TTS_URL:-http://tts-stt:8801}
       # Self-hosted local models — OFF unless the operator opted in at install.
       # When enabled, points at the local-llm gateway (below) and lists the
       # provisioned catalog ids the settings screen may route to.
@@ -93,11 +96,12 @@ services:
       JBRAIN_COMFYUI_URL: ${COMFYUI_URL:-}
       JBRAIN_COMFYUI_ENABLED: ${COMFYUI_ENABLED:-false}
       JBRAIN_COMFYUI_MODELS: ${COMFYUI_MODELS:-[]}
-      # On-box speech-to-text — OFF unless the operator opted in. When enabled,
-      # points at the whisper model the local-llm gateway serves (the same
-      # llama-swap container loads/frees it on demand) and names that served model.
-      # Empty URL = feature off: audio attachments aren't transcribed and jerv's
-      # transcribe tool is hidden. Inherited by the worker via *api_env.
+      # On-box speech-to-text — served by the always-on `tts-stt` service (below), but the
+      # STT MODEL is a heavy opt-in download, so transcribe stays OFF (empty URL) until
+      # `jbrain enable-whisper` provisions the model and sets WHISPER_URL in .env
+      # (http://tts-stt:8080/v1). Empty here = audio attachments aren't transcribed and
+      # jerv's transcribe tool is hidden — never advertising an STT port that isn't loaded.
+      # Read-aloud (piper TTS) needs none of this; it works from the default tts-stt service.
       JBRAIN_WHISPER_URL: ${WHISPER_URL:-}
       JBRAIN_WHISPER_ENABLED: ${WHISPER_ENABLED:-false}
       JBRAIN_WHISPER_MODEL: ${WHISPER_MODEL:-whisper}
@@ -251,34 +255,29 @@ services:
     networks: [internal]
 
   # Neural wall display for the host's own (otherwise-blank) monitor or a LAN
-  # kiosk — see deploy/server-brain. UNAUTHENTICATED by design: it serves ONLY
-  # host vitals (GPU busy %, RAM, APU power, load) read from the /proc and /sys
-  # that Docker exposes read-only to every container — the same sources as the
-  # supervisor's host metrics. It touches no database and nothing behind the RLS
-  # firewalls, and it is published on its own LAN port rather than behind Caddy,
-  # so it never shares the authed app's origin or session cookie. Reachable at
-  # http://<host>.local:8800/. Keep it on the LAN — do not forward 8800 past the
-  # network edge; set BRAIN_HOST_BIND=127.0.0.1 to pin it to the box's own monitor.
-  # Thin image (python:3.12-slim + piper + the baked default voices, for server-side
-  # read-aloud); the app is bind-mounted, so serve.py still reads index.html from the
-  # mount each request and a `jbrain update` (git reset of src) serves the new page with
-  # no rebuild — only a piper/base/voice bump rebuilds. The default Joe/Amy voices are
-  # baked into the image at /opt/piper-voices (outside the /app mount that would shadow
-  # them), so read-aloud needs no env var — it is driven entirely by the brain_read_aloud
-  # Settings toggle; extra models can still be dropped in the mounted voices/ dir.
-  # Default profile -> up + kept current by up -d.
-  server-brain:
+  # wall kiosk — see deploy/wall. UNAUTHENTICATED by design: it serves ONLY host vitals
+  # (GPU busy %, RAM, APU power, load) read from the /proc and /sys that Docker exposes
+  # read-only to every container — the same sources as the supervisor's host metrics. It
+  # touches no database and nothing behind the RLS firewalls, and it is published on its own
+  # LAN port rather than behind Caddy, so it never shares the authed app's origin or session
+  # cookie. Reachable at http://<host>.local:8800/. Keep it on the LAN — do not forward 8800
+  # past the network edge; set BRAIN_HOST_BIND=127.0.0.1 to pin it to the box's own monitor.
+  # Stdlib-only image (no piper — TTS moved to tts-stt); the app is bind-mounted, so serve.py
+  # reads index.html from the mount each request and a `jbrain update` (git reset of src)
+  # serves the new page with no rebuild. Read-aloud audio is FORWARDED to the tts-stt service
+  # (BRAIN_TTS_URL) so the kiosk browser fetches it same-origin. Default profile -> up -d.
+  wall:
     build:
       context: ./src
-      dockerfile: deploy/Dockerfile.server-brain
+      dockerfile: deploy/Dockerfile.wall
     restart: unless-stopped
     command: ["python3", "/app/serve.py"]
     environment:
       BRAIN_PORT: "8800"
       BRAIN_POWER_MAX_W: ${BRAIN_POWER_MAX_W:-90}
-      BRAIN_PIPER_VOICES_DIR: /app/voices
+      BRAIN_TTS_URL: ${BRAIN_TTS_URL:-http://tts-stt:8801}
     volumes:
-      - ./src/deploy/server-brain:/app:ro
+      - ./src/deploy/wall:/app:ro
     ports:
       - "${BRAIN_HOST_BIND:-0.0.0.0}:8800:8800"
     networks: [internal]
@@ -360,41 +359,39 @@ services:
       - ./comfyui-models:/opt/ComfyUI/models:ro
     networks: [internal]
 
-  # OPT-IN on-box speech-to-text: whisper.cpp behind its OWN llama-swap, the audio
-  # sibling of the local-llm gateway but a SEPARATE service so transcription works
-  # without local LLMs and never entangles the LLM gateway's runtime config. Guarded
-  # by the `whisper` compose profile so it NEVER starts on a stock deploy —
-  # `scripts/whisper-setup.sh` (jbrain enable-whisper) downloads the GGML model,
-  # writes the one-model llama-swap config, and flips the profile on. Built on the
-  # official llama-swap unified image (llama-swap + ffmpeg, Vulkan-capable) with
-  # whisper.cpp's server compiled in (deploy/Dockerfile.whisper) — the image bundles
-  # llama-server/sd-server but NOT whisper. Keeps /dev/dri + seccomp=unconfined so a
-  # future Vulkan whisper build needs no compose change. The api reaches it at
-  # http://whisper:8080 (internal only). llama-swap loads the model on the first
-  # request and frees it after `ttl:` idle — and the transcribe job/tool also unload
-  # it explicitly via the admin API (load-on-demand / unload-after).
-  whisper:
-    profiles: [whisper]
-    image: jbrain2-whisper:local
+  # tts-stt — the box's speech I/O in one always-on container: whisper.cpp speech-to-text
+  # (llama-swap on :8080, the api reaches it at http://tts-stt:8080) AND warm piper
+  # text-to-speech (piper_server.py on :8801, reached by the api's read-aloud proxy and the
+  # wall's /tts forward). DEFAULT-ON (no profile) — read-aloud must not depend on enabling
+  # STT. Built on the official llama-swap unified image (llama-swap + ffmpeg, Vulkan) with
+  # whisper.cpp's server + Python/piper + the baked default voices layered on
+  # (deploy/Dockerfile.tts-stt). /dev/dri + the GIDs give whisper the iGPU; piper is CPU.
+  # The CONTAINER is default-on (TTS always available); STT's GGML model is a heavy opt-in
+  # download provisioned by `jbrain enable-whisper` (scripts/whisper-setup.sh), which also
+  # sets WHISPER_URL so the api starts using it. Until then the entrypoint runs piper only
+  # (no whisper config -> no llama-swap), so a stock box serves read-aloud, not a dead STT
+  # port. Internal only — neither port is published.
+  tts-stt:
+    image: jbrain2-tts-stt:local
     build:
       context: ./src
-      dockerfile: deploy/Dockerfile.whisper
+      dockerfile: deploy/Dockerfile.tts-stt
       args:
-        # The base providing llama-swap + ffmpeg; whisper.cpp is layered on top.
+        # The base providing llama-swap + ffmpeg; whisper.cpp + piper are layered on top.
         WHISPER_BASE: ${WHISPER_IMAGE:-ghcr.io/mostlygeek/llama-swap:vulkan}
     restart: unless-stopped
-    # This image ships its OWN entrypoint that hardcodes `-config /app/config.yaml`
-    # (a bundled multi-model sample), so a plain `command:` can't repoint it —
-    # llama-swap would load the sample and crash-loop. Override the entrypoint
-    # entirely to run the same binary against OUR one-model config in the mounted
-    # dir (`/dev/dri` + the GIDs below give it the iGPU; --watch-config hot-reloads
-    # a model swap). Unlike the kyuz0 LLM base, which has no entrypoint and takes a
-    # `command:` directly.
-    entrypoint:
-      ["/app/llama-swap", "--config", "/models/llama-swap.yaml", "--listen", ":8080",
-       "--watch-config"]
-    # Blank the image's default CMD so Docker can't append it to our entrypoint and
-    # re-introduce the bundled `-config /app/config.yaml`.
+    environment:
+      # piper (TTS) — baked voices at /opt/piper-voices, extras dropped in the mounted dir;
+      # pre-warm the default answer voice so the first read-aloud clip isn't slow.
+      BRAIN_TTS_PORT: "8801"
+      BRAIN_PIPER_VOICES_DIR: /tts/voices
+      BRAIN_PIPER_BAKED_VOICES_DIR: /opt/piper-voices
+      BRAIN_PIPER_PREWARM: en_US-amy-medium
+    # The launcher starts the piper server (background, :8801) then execs llama-swap
+    # (foreground, :8080). Overrides the image's hardcoded `-config /app/config.yaml`
+    # entrypoint (which would load a bundled sample and crash-loop). --watch-config on
+    # llama-swap hot-reloads a model swap. Blank CMD so Docker can't re-append the default.
+    entrypoint: ["/bin/sh", "/tts/entrypoint.sh"]
     command: []
     devices:
       - /dev/dri:/dev/dri
@@ -407,6 +404,7 @@ services:
       - "${RENDER_GID:-render}"
     volumes:
       - ./whisper-models:/models:ro
+      - ./src/deploy/tts-stt:/tts:ro
     networks: [internal]
 
   # OPT-IN code mode (docs/archive/JCODE_PLAN.md): a sandboxed coding-session

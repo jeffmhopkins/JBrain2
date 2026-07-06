@@ -611,13 +611,15 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
         if brain_flag_emit is not None:
             with contextlib.suppress(Exception):
                 read_aloud = await get_settings_store(request).brain_read_aloud(owner_ctx)
-                brain_flag_emit("read_aloud", read_aloud)
-                # A live debug-console token means an owner-authorized debug session is
-                # open, so switch on the wall's verbose per-clip TTS trace for its duration
-                # (no env flag/restart). Re-synced here, so it clears when the token lapses.
+                brain_flag_emit("read_aloud", read_aloud)  # display panel -> the wall
+                # A live debug-console token means an owner-authorized debug session is open,
+                # so switch on the verbose per-clip TTS trace for its duration (no env
+                # flag/restart). The trace lives in the tts-stt renderer now, so the flag is
+                # pushed there — re-synced each turn, clearing when the token lapses.
+                tts_flag_emit = getattr(request.app.state, "brain_tts_flag_emit", None)
                 auth_repo = getattr(request.app.state, "auth_repo", None)
-                if auth_repo is not None:
-                    brain_flag_emit("tts_debug", await auth_repo.has_active_capability())
+                if tts_flag_emit is not None and auth_repo is not None:
+                    tts_flag_emit("tts_debug", await auth_repo.has_active_capability())
         # The reasoning trace streams LIVE to the display: reasoning deltas are buffered and
         # flushed at most every _THINK_FLUSH_S so the wall shows the model thinking in
         # near-real-time, not one dump at settle. Any residual flushes at done.

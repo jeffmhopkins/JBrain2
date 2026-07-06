@@ -32,10 +32,10 @@ class FakeSupervisor:
         self.resets_started = 0
         self.provisions_started = 0
         self.rebuilt_services: list[str] = []
-        self.rebuild_known = {"api", "server-brain", "worker"}
+        self.rebuild_known = {"api", "wall", "worker"}
         self.started: list[str] = []
         self.stopped: list[str] = []
-        self.lifecycle_known = {"api", "server-brain", "worker"}
+        self.lifecycle_known = {"api", "wall", "worker"}
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
         if request.headers.get("Authorization") != "Bearer st-token":
@@ -211,10 +211,10 @@ def test_rebuild_requires_owner(
 
 
 def test_rebuild_proxies_the_service(client: TestClient, supervisor: FakeSupervisor) -> None:
-    resp = client.post("/api/ops/rebuild", json={"service": "server-brain"})
+    resp = client.post("/api/ops/rebuild", json={"service": "wall"})
     assert resp.status_code == 202
     assert resp.json()["oneshot"] == "jbrain-rebuild-1"
-    assert supervisor.rebuilt_services == ["server-brain"]
+    assert supervisor.rebuilt_services == ["wall"]
 
 
 def test_rebuild_unknown_service_is_404(client: TestClient) -> None:
@@ -251,10 +251,10 @@ def test_start_stop_require_owner(
 
 
 def test_stop_and_start_proxy_the_service(client: TestClient, supervisor: FakeSupervisor) -> None:
-    assert client.post("/api/ops/stop", json={"service": "server-brain"}).status_code == 202
-    assert supervisor.stopped == ["server-brain"]
-    assert client.post("/api/ops/start", json={"service": "server-brain"}).status_code == 202
-    assert supervisor.started == ["server-brain"]
+    assert client.post("/api/ops/stop", json={"service": "wall"}).status_code == 202
+    assert supervisor.stopped == ["wall"]
+    assert client.post("/api/ops/start", json={"service": "wall"}).status_code == 202
+    assert supervisor.started == ["wall"]
 
 
 def test_stop_unknown_service_is_404(client: TestClient) -> None:

@@ -2147,7 +2147,7 @@ export const api = {
 
   /** Rebuild ONE service (compose build + up -d) via a supervisor one-shot — the
    * per-container "Rebuild" button, for applying a code/Dockerfile change already on the
-   * box (e.g. a newly-baked server-brain voice) without a full update. Throws
+   * box (e.g. a newly-baked tts-stt voice) without a full update. Throws
    * ApiError(409) if another one-shot is running, ApiError(404) for an unknown service. */
   async opsRebuildStart(service: string): Promise<{ oneshot: string }> {
     const response = await request("/api/ops/rebuild", jsonInit("POST", { service }));

@@ -140,7 +140,7 @@ describe("OpsScreen", () => {
     expect(screen.getByText("jbrain/api:edge", { exact: false })).toBeInTheDocument();
   });
 
-  it("files server-brain under the Display group, not Other", async () => {
+  it("files wall under the Display group, not Other", async () => {
     fetchMock.mockImplementation(async (input) => {
       const path = String(input);
       if (path === "/api/ops/status") {
@@ -154,11 +154,11 @@ describe("OpsScreen", () => {
               image: "jbrain2-api:local",
             },
             {
-              service: "server-brain",
+              service: "wall",
               state: "running",
               health: null,
               started_at: "2026-06-10T08:00:00Z",
-              image: "jbrain2-server-brain",
+              image: "jbrain2-wall",
             },
           ],
         });
@@ -171,7 +171,7 @@ describe("OpsScreen", () => {
     render(<OpsScreen />);
     // The wall display gets its own "Display" group, not orphaned in "Other".
     fireEvent.click(await screen.findByRole("button", { name: /Display/ }));
-    expect(screen.getByText("server-brain")).toBeInTheDocument();
+    expect(screen.getByText("wall")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Other/ })).toBeNull();
   });
 

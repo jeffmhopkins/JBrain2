@@ -3955,7 +3955,7 @@ export const mockFetch: typeof fetch = async (input, init) => {
     return json({
       state: mockRebuild.state,
       exit_code: mockRebuild.state === "exited" ? 0 : null,
-      log_tail: mockRebuild.state === "none" ? "" : "[rebuild] server-brain: building image",
+      log_tail: mockRebuild.state === "none" ? "" : "[rebuild] wall: building image",
     });
   }
 

@@ -1,4 +1,9 @@
-# server-brain — neural wall display
+# wall — neural wall display
+
+> Read-aloud TTS moved to the `tts-stt` service (`deploy/tts-stt`); this wall keeps a thin
+> `/tts*` **forward** to it so the kiosk browser fetches audio same-origin. See that README
+> for piper, voices, and the warm model cache.
+
 
 A dark, glowing neural-network animation of the JBrain2 host's live status, for
 the otherwise-blank terminal/monitor on the box. The brain fires in travelling
@@ -75,10 +80,10 @@ just plays. No piper voices on the box → the button never appears and speech s
 
 ## Deployment (auto-started, auto-updated)
 
-It runs as the `server-brain` service in `deploy/docker-compose.yml` — a default
-profile service on a thin `python:3.12-slim` + `piper` image
-(`deploy/Dockerfile.server-brain`; piper + the baked default voices power the
-toggle-gated read-aloud below), so the standard deploy flow owns its lifecycle:
+It runs as the `wall` service in `deploy/docker-compose.yml` — a default service on a thin
+stdlib `python:3.12-slim` image (`deploy/Dockerfile.wall`; no piper — read-aloud audio is
+rendered by the `tts-stt` service and forwarded here), so the standard deploy flow owns its
+lifecycle:
 
 - **`jbrain update`** brings it up and keeps it current via `docker compose up
   -d`. The page still hot-reloads with no rebuild: `serve.py` re-reads `index.html`
@@ -117,11 +122,11 @@ Never port-forward it to the public internet. Bind it to your LAN only
 
 ```bash
 # live, from the host vitals (needs amdgpu on this box):
-python3 deploy/server-brain/serve.py
+python3 deploy/wall/serve.py
 #  -> http://0.0.0.0:8800/  — reachable on the LAN at http://<host>.local:8800/
 
 # preview without amdgpu (synthetic wandering values):
-BRAIN_DEMO=1 python3 deploy/server-brain/serve.py
+BRAIN_DEMO=1 python3 deploy/wall/serve.py
 ```
 
 Then point the wall terminal's browser at `http://<host>.local:8800/` (full-screen
@@ -223,7 +228,7 @@ included, chosen via `brain_answer_voice`, which is also the wall's answer voice
 button auditions it) with an automatic fall back to the **device's native (Web Speech) voice** when
 this box is unreachable **or a clip fails to render**, or **native** to always use the device voice.
 A silent fall back can look like "the wrong voice" (the native default is often male), so a failed
-render is logged — `docker logs server-brain` shows a `[tts] render failed …` line naming the cause
+render is logged — `docker logs tts-stt` shows a `[tts] render failed …` line naming the cause
 (a timeout points at `BRAIN_PIPER_TIMEOUT_S`; a non-zero exit at a bad/corrupt model).
 
 **The whole reply, not an excerpt.** The page splits a reply into sentence-sized clips and plays them
@@ -245,14 +250,14 @@ isn't clipped by the sink's cold start; (3) as a last backstop, `serve.py` prepe
 silence to the first clip (`BRAIN_PIPER_LEAD_MS`, default 400 ms).
 
 `piper` **and the default voice models** (Joe, Amy, and the multi-speaker `libritts_r` — its curated
-speaker 3922 is a second female agent voice) ship **baked into the server-brain image**
-(`deploy/Dockerfile.server-brain`, at `/opt/piper-voices` — outside the read-only `/app` bind mount
+speaker 3922 is a second female agent voice) ship **baked into the tts-stt image**
+(`deploy/Dockerfile.tts-stt`, at `/opt/piper-voices` — outside the read-only `/app` bind mount
 that would otherwise shadow them). So there is **nothing to provision and no env var to set**: the
 feature is driven entirely by one Settings toggle. A **new baked voice lands on the next `jbrain update`**:
 `update-inner.sh` runs `docker compose build` (which re-bakes this image — a changed voice tuple
 invalidates the fetch layer's cache) and then `up -d` (which recreates the container from the new
 image). A container **restart alone does not re-bake** — restarting reuses the existing image, so use
-`jbrain update` (or a manual `docker compose build server-brain && docker compose up -d server-brain`)
+`jbrain update` (or a manual `docker compose build tts-stt && docker compose up -d tts-stt`)
 for a voice bump, not the Ops "restart all".
 
 **One switch — the toggle.** The voice panel shows only when the owner turns on **Settings → Read
@@ -269,7 +274,7 @@ moment you flip the toggle — no `.env` edit, no download step.
 Add more voices by dropping `<name>.onnx` + `<name>.onnx.json` in the mounted `voices/` dir (scanned
 alongside the baked defaults; a dropped-in name overrides a baked one) — grab English voices from the
 [piper voices list](https://github.com/OHF-Voice/piper1-gpl/blob/main/VOICES.md). For run-on-host dev
-(`python3 serve.py` directly, no image), `bash deploy/server-brain/install-tts.sh` installs piper +
+(`python3 serve.py` directly, no image), `bash deploy/tts-stt/install-tts.sh` installs piper +
 the models into `voices/`. Env knobs (all optional): `BRAIN_PIPER_BIN` (default `piper`),
 `BRAIN_PIPER_VOICES_DIR` (mounted extras, default `/app/voices`), `BRAIN_PIPER_BAKED_VOICES_DIR`
 (baked defaults, default `/opt/piper-voices`), `BRAIN_PIPER_LEAD_MS`, and `BRAIN_PIPER_TIMEOUT_S`
@@ -284,7 +289,7 @@ per-clip trace: each render logs the voice AS RECEIVED, the model + resolved `--
 byte count and elapsed ms — so you can confirm the box rendered the requested voice rather
 than the PWA falling back to its native voice. It clears automatically when the token
 lapses or is revoked. (Failures always log, debug session or not.) Read the trace via
-`docker logs server-brain` or the console's `GET /api/debug/logs/server-brain`.
+`docker logs tts-stt` or the console's `GET /api/debug/logs/tts-stt`.
 
 **Autoplay:** the enable checkbox is the user gesture Firefox needs to allow `<audio>` playback for
 the session. On a gesture-free kiosk, also set `media.autoplay.default = 0` in `about:config` (or a

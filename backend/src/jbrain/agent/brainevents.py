@@ -1,7 +1,7 @@
-"""Best-effort event emitter for the server-brain wall display.
+"""Best-effort event emitter for the wall display.
 
-Two kinds of marker are POSTed to the unauthenticated on-box server-brain display
-(deploy/server-brain) so it can draw a reach-out tendril:
+Two kinds of marker are POSTed to the unauthenticated on-box wall display
+(deploy/wall) so it can draw a reach-out tendril:
 
 * content-free web-tool markers — `{"kind": "web_search"|"web_fetch"}` — fired when
   jerv runs a web tool; these carry NO owner data, only the fact that a tool ran;
@@ -15,7 +15,7 @@ Two kinds of marker are POSTed to the unauthenticated on-box server-brain displa
 
 All of it is fire-and-forget *display telemetry*: a failure (display down, slow,
 disabled) never touches the tool result or the turn. The POST stays on-box (the api →
-server-brain on the internal docker network), so it is not an egress under invariant #9.
+the wall on the internal docker network), so it is not an egress under invariant #9.
 """
 
 from __future__ import annotations

@@ -36,6 +36,7 @@ its ship evidence.
 | `HURRICANE_TABS_PLAN.md` | Tabbed hurricane card (track/cone/alerts/surge). |
 | `VIDEO_ANALYSIS_PLAN.md` | On-box video understanding. |
 | `WHISPER_TRANSCRIPTION_PLAN.md` | On-box whisper.cpp transcription. |
+| `READ_ALOUD_LEGIBILITY.md` | Read-aloud legibility + fluidity: shared `speakable` normalizer + stream-safe chunker + prefetch pump (W1/W2), and the `wall`/`tts-stt` split with warm piper (W0). |
 
 ## Image generation
 | Item | What it is |

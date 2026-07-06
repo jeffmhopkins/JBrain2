@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
-# Install piper + the wall display's default voice models for server-side read-aloud
+# Install piper + the tts-stt service's default voice models for read-aloud
 # (see README "Read aloud"). Idempotent: re-running only fetches what's missing.
 #
-#   bash deploy/server-brain/install-tts.sh                 # piper + voices (run-on-host)
-#   bash deploy/server-brain/install-tts.sh --voices-only   # just the models (piper baked in the image)
+#   bash deploy/tts-stt/install-tts.sh                 # piper + voices (run-on-host)
+#   bash deploy/tts-stt/install-tts.sh --voices-only   # just the models (piper baked in the image)
 #
 # Voices land in ./voices (or $BRAIN_PIPER_VOICES_DIR). Joe reads prompts, Amy reads
 # answers by default; the picker lists every model you drop here, so add more freely.
 # Multi-speaker models (e.g. libritts_r) expose curated speakers as extra voices —
-# see CURATED_SPEAKERS in serve.py.
+# see CURATED_SPEAKERS in piper_server.py.
 set -euo pipefail
 
 VOICES_ONLY=0
@@ -25,7 +25,7 @@ log() { printf '[tts-setup] %s\n' "$*"; }
 
 # --- piper (skipped with --voices-only: the compose image bakes it in) ------
 if [ "$VOICES_ONLY" = 1 ]; then
-  log "voices-only: skipping piper install (baked into the server-brain image)"
+  log "voices-only: skipping piper install (baked into the tts-stt image)"
 elif command -v piper >/dev/null 2>&1; then
   log "piper already on PATH"
 elif command -v pipx >/dev/null 2>&1; then

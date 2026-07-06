@@ -1,0 +1,10 @@
+# The `wall` kiosk display (deploy/wall/serve.py + index.html + pet.html).
+#
+# Stdlib-only Python — the display server needs NO dependencies (piper TTS moved out to
+# the `tts-stt` service). The app is BIND-MOUNTED read-only at /app and run via the compose
+# `command`, so a `jbrain update` (git reset of src) serves the new page with no rebuild;
+# only a base bump rebuilds. The wall forwards /tts* to the tts-stt service (BRAIN_TTS_URL),
+# so its kiosk browser fetches read-aloud audio same-origin without shipping piper here.
+FROM python:3.12-slim
+
+# No app COPY and no packages: serve.py/index.html/pet.html are bind-mounted at /app.

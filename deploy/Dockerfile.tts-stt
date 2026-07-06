@@ -1,0 +1,56 @@
+# The `tts-stt` speech service: whisper.cpp speech-to-text AND warm piper text-to-speech
+# in one always-on container (the box's speech I/O).
+#
+# STT half — whisper.cpp's server compiled onto the official llama-swap unified Vulkan image
+# (which bundles llama-server + sd-server + llama-swap + ffmpeg, but NOT whisper.cpp). Built
+# in the SAME base so the binary's glibc/libstdc++ match the runtime. A CPU build keeps it
+# self-contained (ggml falls back to CPU; large-v3-turbo is quick on the Strix Halo CPU).
+#
+# TTS half — Python + piper-tts + the baked default voices. piper_server.py (bind-mounted
+# at /tts, like the wall's serve.py) holds each voice's model resident and reuses it, so a
+# read-aloud clip renders in ~0.1s instead of cold-loading the model every call.
+#
+# Both services are DEFAULT-ON now (dropped the opt-in `whisper` profile), so a stock deploy
+# has read-aloud (piper) and, once its model is provisioned, transcription (whisper).
+
+ARG WHISPER_BASE=ghcr.io/mostlygeek/llama-swap:vulkan
+
+FROM ${WHISPER_BASE} AS build
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends git build-essential cmake ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
+# Pin a known-good whisper.cpp release (carries --inference-path + --convert, the
+# OpenAI-audio-endpoint flags the gateway config relies on).
+ARG WHISPER_CPP_VERSION=v1.7.4
+RUN git clone --depth 1 --branch "${WHISPER_CPP_VERSION}" \
+      https://github.com/ggml-org/whisper.cpp /src
+WORKDIR /src
+# Static link (BUILD_SHARED_LIBS=OFF) so whisper-server carries its own ggml and
+# can't collide with the base image's bundled libggml*.so (a different version).
+RUN cmake -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF \
+      -DWHISPER_BUILD_TESTS=OFF -DWHISPER_BUILD_EXAMPLES=ON \
+ && cmake --build build --target whisper-server -j"$(nproc)"
+
+FROM ${WHISPER_BASE}
+# STT: whisper-server onto PATH so the generated llama-swap config can invoke it by name.
+COPY --from=build /src/build/bin/whisper-server /usr/local/bin/whisper-server
+
+# TTS: Python runtime + piper (onnxruntime's OpenMP dep is libgomp1). --break-system-packages
+# installs into the container's system python (PEP 668) — fine for a single-purpose image.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends python3 python3-pip libgomp1 \
+ && rm -rf /var/lib/apt/lists/* \
+ && pip install --no-cache-dir --break-system-packages piper-tts
+
+# Baked default voices: Joe reads prompts, Amy reads answers, plus the multi-speaker
+# libritts_r model whose curated speaker 3922 is a second female agent voice. Fetched with
+# stdlib urllib (follows HF's CDN redirect) into /opt/piper-voices (outside the /tts mount).
+# This tuple is the baked source of truth and must stay in step with install-tts.sh's MODELS.
+RUN python3 -c "import urllib.request as u; from pathlib import Path; \
+d=Path('/opt/piper-voices'); d.mkdir(parents=True, exist_ok=True); \
+B='https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US'; \
+[ (print('[voices]', v, e, flush=True), u.urlretrieve(f'{B}/{v}/medium/en_US-{v}-medium{e}', d/f'en_US-{v}-medium{e}')) for v in ('joe','amy','libritts_r') for e in ('.onnx','.onnx.json') ]"
+
+# No app COPY: piper_server.py + entrypoint.sh are bind-mounted at /tts and launched via the
+# compose entrypoint (which starts the piper server, then execs llama-swap). Only the baked
+# voices + the whisper/piper runtimes live in the image.

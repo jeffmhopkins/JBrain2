@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Unauthenticated LAN wall-display server for the JBrain2 server-brain.
+"""Unauthenticated LAN wall-display server for the JBrain2 `wall` kiosk.
 
 Serves the neural-brain page at `/` and its telemetry at `GET /stats`, reading
 host vitals straight from /proc and /sys — the same amdgpu/meminfo sources as
@@ -22,19 +22,13 @@ Stdlib only — no dependencies, no build step.
 
 from __future__ import annotations
 
-import io
 import json
 import math
 import os
-import shutil
-import subprocess
-import sys
-import tempfile
 import threading
 import time
 import urllib.parse
 import urllib.request
-import wave
 from collections import deque
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -61,201 +55,24 @@ def fetch_pet_state() -> bytes | None:
     except Exception:  # noqa: BLE001 — any failure just means "not ready"; poll again
         return None
 
-# ── Server-side text-to-speech (piper) ────────────────────────────────────────
-# The wall renders speech on the box with `piper` and plays it via <audio>, so the
-# browser's flaky Web Speech engine (speech-dispatcher cold start, silent drops) is
-# out of the path entirely. A single-speaker `.onnx` model (+ its `.onnx.json`) is one
-# selectable "voice" named by its file stem; a MULTI-speaker model (e.g. libritts_r)
-# contributes one voice per CURATED speaker, id "<stem>#<speaker>". Voices are found
-# across two dirs, so the
-# feature needs no configuration to work — the default Joe/Amy models are BAKED into
-# the image (`BRAIN_PIPER_BAKED_VOICES_DIR`, default /opt/piper-voices, deliberately
-# OUTSIDE the read-only /app bind mount that would otherwise shadow them), and an
-# operator can still drop extra models into the mounted `BRAIN_PIPER_VOICES_DIR` and
-# they show up alongside. Whether the wall actually SHOWS its voice panel is a runtime
-# choice (the brain_read_aloud setting), not a provisioning one.
-PIPER_BIN = os.environ.get("BRAIN_PIPER_BIN", "piper")
-PIPER_VOICES_DIR = Path(os.environ.get("BRAIN_PIPER_VOICES_DIR", str(HERE / "voices")))
-PIPER_BAKED_VOICES_DIR = Path(os.environ.get("BRAIN_PIPER_BAKED_VOICES_DIR", "/opt/piper-voices"))
-# A short lead of silence so a cold audio-sink resume clips the silence, not the first word.
-# Backstop only: the page's silent WebAudio keep-alive is what actually stops the sink
-# suspending on idle (index.html) — this pad just covers the brief window before it warms,
-# or a browser where it can't run. Bump it if a box still clips the first syllable. The page
-# asks for it only on the FIRST clip of a turn (?lead=0 on the continuation chunks) so a long
-# reply, split into sentence-sized clips, plays gaplessly.
-PIPER_LEAD_MS = int(os.environ.get("BRAIN_PIPER_LEAD_MS", "400"))
-# Wall-clock cap on a single piper render (seconds). Piper is a fresh subprocess per
-# clip, so it COLD-LOADS the model every call — a big multi-speaker model (libritts_r is
-# ~78 MB / 904 speakers) on a box already busy with the LLM/GPU workloads can be far
-# slower than a small single-speaker one, and a too-tight cap makes ONLY the heavy voice
-# time out and silently fall back to the device's native voice. Bump it per box if a
-# voice keeps degrading; watch `docker logs server-brain` for the "tts render failed" line.
-PIPER_TIMEOUT_S = float(os.environ.get("BRAIN_PIPER_TIMEOUT_S", "60"))
-# Longest single /tts render the page requests — it splits a reply into sentence-sized clips
-# (fast first-audio, no giant render), so this only bounds one chunk, not the whole answer.
-TTS_CHUNK_CAP = 1000
-
-# A multi-speaker piper model carries hundreds of speakers; we surface only a curated
-# few as named voices (id "<stem>#<speaker>"), keyed by model file stem -> the speaker
-# names to expose (as they appear in the model's `.onnx.json` speaker_id_map). libritts_r
-# speaker 3922 (piper index 0) is a second, female agent voice. Add names to expose more.
-CURATED_SPEAKERS: dict[str, tuple[str, ...]] = {
-    "en_US-libritts_r-medium": ("3922",),
-}
+# ── Text-to-speech (proxied to the tts-stt speech service) ─────────────────
+# Rendering moved out of the wall into the shared `tts-stt` service (which also serves the
+# PWA read-aloud). The wall keeps a thin SAME-ORIGIN forward so its own kiosk browser —
+# which can reach neither the internal `tts-stt` name nor the authenticated api — still
+# fetches read-aloud audio from wall:8800/tts*.
+TTS_URL = os.environ.get("BRAIN_TTS_URL", "http://tts-stt:8801").rstrip("/")
 
 
-def _voice_models() -> dict[str, Path]:
-    """Map each model file stem to its `.onnx` path, scanned across the mounted extras
-    dir then the baked-in defaults dir. Earlier dirs win on a name clash, so a dropped-in
-    model can override a baked default of the same name. {} if none."""
-    models: dict[str, Path] = {}
-    for d in (PIPER_VOICES_DIR, PIPER_BAKED_VOICES_DIR):
-        try:
-            for p in sorted(d.glob("*.onnx")):
-                models.setdefault(p.stem, p)
-        except OSError:
-            continue
-    return models
-
-
-def _speaker_map(model: Path) -> dict[str, int]:
-    """`{speaker_name: index}` from a model's `.onnx.json` `speaker_id_map` (piper writes
-    the sidecar as `<model>.onnx.json`), or {} for a single-speaker model. Only name->int
-    entries survive, so a junk map can never yield a bad `--speaker` arg."""
+def tts_forward(path_qs: str) -> tuple[int, bytes, str]:
+    """GET `path_qs` (e.g. '/tts?voice=...&text=...') from the tts-stt service and return
+    (status, body, content-type). Any failure surfaces as 503 so the page can degrade."""
     try:
-        meta = json.loads(Path(str(model) + ".json").read_text())
-    except (OSError, ValueError):
-        return {}
-    sid = meta.get("speaker_id_map")
-    if not isinstance(sid, dict):
-        return {}
-    return {str(k): v for k, v in sid.items() if isinstance(v, int) and not isinstance(v, bool)}
+        with urllib.request.urlopen(f"{TTS_URL}{path_qs}", timeout=30) as resp:  # noqa: S310
+            ctype = resp.headers.get("Content-Type", "application/octet-stream")
+            return resp.status, resp.read(), ctype
+    except Exception:  # noqa: BLE001 — any failure means tts unavailable; the page falls back
+        return 503, b"tts unavailable", "text/plain"
 
-
-def _voices() -> list[tuple[str, Path, int | None]]:
-    """The selectable voices as `(id, model_path, speaker_index)`, stems sorted. A
-    single-speaker model is one entry (id = stem, speaker None). A multi-speaker model
-    contributes one entry per CURATED speaker present in its map (id "<stem>#<name>");
-    if none of its curated names are present (or none are curated) it falls back to its
-    default speaker (id = stem, index 0) so the model stays usable."""
-    out: list[tuple[str, Path, int | None]] = []
-    for stem, model in sorted(_voice_models().items()):
-        smap = _speaker_map(model)
-        if not smap:
-            out.append((stem, model, None))
-            continue
-        names = [n for n in CURATED_SPEAKERS.get(stem, ()) if n in smap]
-        if names:
-            out.extend((f"{stem}#{n}", model, smap[n]) for n in names)
-        else:
-            out.append((stem, model, 0))  # multi-speaker but uncurated -> default speaker
-    return out
-
-
-def piper_voices() -> list[str]:
-    """Installed selectable voice ids (incl. curated multi-speaker entries), or []."""
-    return [vid for vid, _, _ in _voices()]
-
-
-def _resolve_voice(voice_id: str) -> tuple[Path, int | None] | None:
-    """Map a requested voice id to `(model_path, speaker_index)`, validated against the
-    installed set (no path traversal). An unknown/blank id falls back to the first voice;
-    None only when nothing is installed."""
-    voices = _voices()
-    if not voices:
-        return None
-    for vid, model, spk in voices:
-        if vid == voice_id:
-            return model, spk
-    _, model, spk = voices[0]
-    return model, spk
-
-
-def _pad_lead(wav_bytes: bytes, lead_ms: int) -> bytes:
-    """Prepend `lead_ms` of silence to a WAV (stdlib only), so a sink resume clips silence."""
-    try:
-        with wave.open(io.BytesIO(wav_bytes), "rb") as w:
-            params = w.getparams()
-            frames = w.readframes(w.getnframes())
-        pad = b"\x00" * (int(params.framerate * lead_ms / 1000) * params.sampwidth * params.nchannels)
-        out = io.BytesIO()
-        with wave.open(out, "wb") as o:
-            o.setparams(params)
-            o.writeframes(pad + frames)
-        return out.getvalue()
-    except (wave.Error, OSError, EOFError, ValueError):
-        return wav_bytes
-
-
-def _silence_wav(ms: int) -> bytes:
-    """A short mono silent WAV — the page plays it once when read-aloud activates to PRIME the
-    <audio> -> sink path, so the very first real clip after a fresh load doesn't eat the sink's
-    cold start (the WebAudio keep-alive then holds it warm)."""
-    out = io.BytesIO()
-    with wave.open(out, "wb") as w:
-        w.setnchannels(1)
-        w.setsampwidth(2)
-        w.setframerate(22050)
-        w.writeframes(b"\x00\x00" * int(22050 * max(ms, 0) / 1000))
-    return out.getvalue()
-
-
-def tts_wav(text: str, voice: str, lead_ms: int | None = None) -> bytes | None:
-    """Render `text` to a WAV with piper using `voice` (a voice id validated against the
-    installed set — no path traversal). For a multi-speaker voice ("<stem>#<speaker>") the
-    resolved speaker index is passed as `--speaker`. None when TTS isn't available or
-    rendering fails. Text is passed on STDIN, never as a shell arg, so there is no
-    command-injection surface. `lead_ms` overrides the silence pad for this clip (the page
-    sends 0 on continuation chunks so a multi-clip reply plays gaplessly); None uses the
-    PIPER_LEAD_MS default."""
-    # Every None path below is logged: a silent None degrades the reply to the device's
-    # native voice, which looks like "the wrong voice" rather than a failure, so the cause
-    # must be visible (via `docker logs server-brain` / the debug console).
-    if shutil.which(PIPER_BIN) is None:
-        print(f"[tts] render failed for {voice!r}: piper binary {PIPER_BIN!r} not on PATH",
-              file=sys.stderr)
-        return None
-    resolved = _resolve_voice(voice)
-    if resolved is None:
-        print(f"[tts] render failed for {voice!r}: no voices installed", file=sys.stderr)
-        return None
-    model, speaker = resolved
-    if not model.exists():
-        print(f"[tts] render failed for {voice!r}: model file {model} missing", file=sys.stderr)
-        return None
-    if _tts_debug[0]:
-        print(f"[tts] rendering {voice!r} -> {model.stem} speaker={speaker} ({len(text)} chars)",
-              file=sys.stderr)
-    cmd = [PIPER_BIN, "--model", str(model), "--output_file"]
-    tmp = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
-    tmp.close()
-    started = time.monotonic()
-    try:
-        cmd.append(tmp.name)
-        if speaker is not None:
-            cmd += ["--speaker", str(speaker)]
-        subprocess.run(
-            cmd, input=text.encode(), capture_output=True, timeout=PIPER_TIMEOUT_S, check=True,
-        )
-        data = Path(tmp.name).read_bytes()
-    except (subprocess.SubprocessError, OSError) as exc:
-        # Name the cause: a timeout points at PIPER_TIMEOUT_S, a non-zero exit at a
-        # bad/corrupt model (piper's own stderr says which).
-        detail = f"exit {exc.returncode}: {exc.stderr.decode(errors='replace').strip()[:300]}" \
-            if isinstance(exc, subprocess.CalledProcessError) else str(exc) or type(exc).__name__
-        print(f"[tts] render failed for {voice!r} (speaker {speaker}): {detail}", file=sys.stderr)
-        return None
-    finally:
-        try:
-            os.unlink(tmp.name)
-        except OSError:
-            pass
-    if _tts_debug[0]:
-        ms = int((time.monotonic() - started) * 1000)
-        print(f"[tts] rendered {voice!r} (speaker {speaker}): {len(data)} bytes in {ms} ms",
-              file=sys.stderr)
-    lead = PIPER_LEAD_MS if lead_ms is None else lead_ms
-    return _pad_lead(data, lead) if lead > 0 else data
 
 # Strix Halo APU configurable TDP ceiling (package watts) — used to normalise the
 # power reading into the 0..1 "heat" the visual expects. Override per box.
@@ -271,7 +88,7 @@ EVENTS_PATH = os.environ.get("BRAIN_EVENTS_FILE", "")
 
 # Web-tool events POSTed by the JBrain2 agent to `/event` (the primary live path;
 # BRAIN_EVENTS_FILE is an alternative). Drained into /stats on each poll.
-_posted: "deque" = deque(maxlen=64)
+_posted: deque = deque(maxlen=64)
 _posted_lock = threading.Lock()
 
 # Persistent read-aloud switch, pushed by the app ({"kind": "read_aloud", "on": bool} to
@@ -281,15 +98,6 @@ _posted_lock = threading.Lock()
 # nothing until the app re-pushes the flag (it does so on the setting change and each turn).
 _read_aloud = [False]
 
-# Verbose per-clip TTS tracing, pushed by the app the same way ({"kind": "tts_debug",
-# "on": bool} to /event) — ON only while an owner-authorized debug session is open (a live
-# debug-console token exists), so diagnostics follow the token's lifecycle with no env flag
-# or restart. While on, each render logs the voice AS RECEIVED, the model + resolved
-# --speaker index, output bytes and elapsed ms — so an operator can confirm the box
-# rendered the requested voice rather than the PWA falling back to its native voice.
-# Failures ALWAYS log regardless; this only adds the success trace. Default OFF; the app
-# re-pushes it each turn, so it clears when the token lapses.
-_tts_debug = [False]
 
 
 def _drain_posted() -> list:
@@ -671,30 +479,10 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(200, data, "application/json")
         elif path == "/healthz":
             self._send(200, b"ok", "text/plain")
-        elif path == "/tts/voices":
-            self._send(200, json.dumps({"voices": piper_voices()}).encode(), "application/json")
-        elif path == "/tts/silence":
-            self._send(200, _silence_wav(600), "audio/wav")
-        elif path == "/tts":
-            qs = urllib.parse.parse_qs(self.path.split("?", 1)[1] if "?" in self.path else "")
-            text = qs.get("text", [""])[0][:TTS_CHUNK_CAP]
-            if not text.strip():
-                self._send(400, b"no text", "text/plain")
-                return
-            # Optional per-clip lead override (page sends lead=0 on continuation chunks so a
-            # multi-clip reply plays gaplessly); a bad/absent value falls back to the default.
-            lead_ms = None
-            try:
-                raw = qs.get("lead", [None])[0]
-                if raw is not None:
-                    lead_ms = max(0, min(2000, int(raw)))
-            except (TypeError, ValueError):
-                lead_ms = None
-            wav = tts_wav(text, qs.get("voice", [""])[0], lead_ms)
-            if wav is None:
-                self._send(503, b"tts unavailable", "text/plain")
-            else:
-                self._send(200, wav, "audio/wav")
+        elif path in ("/tts", "/tts/voices", "/tts/silence"):
+            # Forward read-aloud to the tts-stt service, same-origin for the kiosk browser.
+            code, body, ctype = tts_forward(self.path)
+            self._send(code, body, ctype)
         else:
             self._send(404, b"not found", "text/plain")
 
@@ -722,12 +510,6 @@ class Handler(BaseHTTPRequestHandler):
             # A held display-config flag, not a tendril event: latch it (the app pushes it
             # from the brain_read_aloud setting) so /stats reflects it until the next push.
             _read_aloud[0] = bool(ev.get("on"))
-            self._send(204, b"", "text/plain")
-            return
-        if kind == "tts_debug":
-            # Held diagnostic flag, latched like read_aloud: the app pushes it on while a
-            # debug-console token is live, switching on the verbose per-clip TTS trace.
-            _tts_debug[0] = bool(ev.get("on"))
             self._send(204, b"", "text/plain")
             return
         if kind in (
@@ -763,7 +545,7 @@ def main() -> None:
     port = int(os.environ.get("BRAIN_PORT", "8800"))
     server = ThreadingHTTPServer((host, port), Handler)
     mode = "DEMO (synthetic)" if DEMO else "live sysfs"
-    print(f"server-brain on http://{host}:{port}/  ({mode}; power ceiling {POWER_MAX_W:.0f} W)")
+    print(f"wall display on http://{host}:{port}/  ({mode}; power ceiling {POWER_MAX_W:.0f} W)")
     print("  no auth — keep this on the LAN only, never port-forward it.")
     try:
         server.serve_forever()
