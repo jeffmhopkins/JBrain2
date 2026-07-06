@@ -3464,18 +3464,21 @@ button.small {
   word-break: break-all;
 }
 
-/* Per-service action row: Restart (primary width) + Rebuild (neutral, compact). */
+/* Per-service action row: Restart (primary, takes a full row) + compact Stop/Start and
+   Rebuild that wrap to a second line on narrow screens. */
 .ops-sactions {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   align-items: stretch;
   margin-top: 10px;
 }
 .ops-srestart {
-  flex: 1;
+  flex: 1 1 100%;
 }
-.ops-srebuild {
-  flex: none;
+.ops-srebuild,
+.ops-slifecycle {
+  flex: 1;
   font-weight: 500;
   border-radius: var(--r-input);
   padding: 8px 16px;

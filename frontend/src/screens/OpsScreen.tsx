@@ -75,11 +75,22 @@ function worse(a: Level, b: Level): Level {
 
 /** Services are grouped by role so the list stays scannable as the stack
  * grows (B3 redesign). Grouping is frontend-only — the backend status payload
- * is flat; anything unrecognized falls into a trailing "Other" group. */
+ * is flat. Every compose service is assigned a group here; anything unrecognized
+ * still falls into a trailing "Other" group, and empty groups don't render. */
 const SERVICE_GROUPS: { label: string; services: string[] }[] = [
-  { label: "Core", services: ["api", "worker", "supervisor", "web", "db", "postgres"] },
-  { label: "AI", services: ["local-llm", "embed", "jcode", "claude-shim"] },
-  { label: "Infra", services: ["proxy", "searxng", "cloudflared"] },
+  // The always-on app spine (db/web/postgres are alias names some deploys use).
+  { label: "Core", services: ["api", "worker", "supervisor", "db", "postgres", "web"] },
+  // On-box model / media inference (mostly opt-in).
+  { label: "AI", services: ["local-llm", "embed", "whisper", "comfyui", "jcode", "claude-shim"] },
+  // Outward networking + web access.
+  {
+    label: "Infra",
+    services: ["proxy", "cloudflared", "reader", "searxng", "mqtt", "mqtt-ingest"],
+  },
+  // The on-box neural wall display that renders read-aloud (piper TTS).
+  { label: "Display", services: ["server-brain"] },
+  // One-shot maintenance containers — run once and exit.
+  { label: "Maintenance", services: ["migrate", "wipe"] },
 ];
 
 function groupContainers(
@@ -393,12 +404,14 @@ function ServiceGroup({
   memByService,
   onRestart,
   onRebuild,
+  onLifecycle,
   rebuild,
 }: {
   group: { label: string; items: ContainerStatus[] };
   memByService: Map<string, number>;
   onRestart: (service: string) => void;
   onRebuild: (service: string) => void;
+  onLifecycle: (service: string, action: "start" | "stop") => void;
   rebuild: RebuildState;
 }) {
   const level = group.items.reduce<Level>((w, c) => worse(w, svcLevel(c)), "ok");
@@ -426,6 +439,7 @@ function ServiceGroup({
           memBytes={memByService.get(c.service) ?? null}
           onRestart={onRestart}
           onRebuild={onRebuild}
+          onLifecycle={onLifecycle}
           rebuild={rebuild}
         />
       ))}
@@ -438,12 +452,14 @@ function ServiceRow({
   memBytes,
   onRestart,
   onRebuild,
+  onLifecycle,
   rebuild,
 }: {
   c: ContainerStatus;
   memBytes: number | null;
   onRestart: (service: string) => void;
   onRebuild: (service: string) => void;
+  onLifecycle: (service: string, action: "start" | "stop") => void;
   rebuild: RebuildState;
 }) {
   const [open, setOpen] = useState(false);
@@ -476,6 +492,7 @@ function ServiceRow({
           memBytes={memBytes}
           onRestart={onRestart}
           onRebuild={onRebuild}
+          onLifecycle={onLifecycle}
           rebuild={rebuild}
         />
       )}
@@ -488,12 +505,14 @@ function ServiceBody({
   memBytes,
   onRestart,
   onRebuild,
+  onLifecycle,
   rebuild,
 }: {
   c: ContainerStatus;
   memBytes: number | null;
   onRestart: (service: string) => void;
   onRebuild: (service: string) => void;
+  onLifecycle: (service: string, action: "start" | "stop") => void;
   rebuild: RebuildState;
 }) {
   const [lines, setLines] = useState<string[] | null>(null);
@@ -600,6 +619,23 @@ function ServiceBody({
         <button type="button" className="danger ops-srestart" onClick={() => onRestart(c.service)}>
           Restart {c.service}
         </button>
+        {c.state === "running" || c.state === "restarting" ? (
+          <button
+            type="button"
+            className="ops-slifecycle"
+            onClick={() => onLifecycle(c.service, "stop")}
+          >
+            Stop
+          </button>
+        ) : (
+          <button
+            type="button"
+            className="ops-slifecycle"
+            onClick={() => onLifecycle(c.service, "start")}
+          >
+            Start
+          </button>
+        )}
         <button
           type="button"
           className="ops-srebuild"
@@ -1005,6 +1041,21 @@ export function OpsScreen() {
     [refresh],
   );
 
+  // Power a single container off/on. Stop is disruptive, so it confirms; Start is safe.
+  const lifecycle = useCallback(
+    async (service: string, action: "start" | "stop") => {
+      if (action === "stop" && !window.confirm(`Stop ${service}?`)) return;
+      setError(null);
+      try {
+        await (action === "stop" ? api.opsStop(service) : api.opsStart(service));
+        await refresh();
+      } catch (err) {
+        setError(errorMessage(err));
+      }
+    },
+    [refresh],
+  );
+
   // Per-service rebuild (compose build + up -d) via the supervisor one-shot. Long-running,
   // so it kicks the one-shot then polls its status until it exits — and if the service being
   // rebuilt is the api/proxy itself, the poll briefly can't reach the box (unreachable).
@@ -1115,6 +1166,7 @@ export function OpsScreen() {
             memByService={memByService}
             onRestart={restart}
             onRebuild={startRebuild}
+            onLifecycle={lifecycle}
             rebuild={rebuild}
           />
         ))

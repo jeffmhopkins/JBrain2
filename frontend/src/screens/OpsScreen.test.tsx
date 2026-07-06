@@ -140,6 +140,41 @@ describe("OpsScreen", () => {
     expect(screen.getByText("jbrain/api:edge", { exact: false })).toBeInTheDocument();
   });
 
+  it("files server-brain under the Display group, not Other", async () => {
+    fetchMock.mockImplementation(async (input) => {
+      const path = String(input);
+      if (path === "/api/ops/status") {
+        return json({
+          containers: [
+            {
+              service: "api",
+              state: "running",
+              health: "healthy",
+              started_at: "2026-06-10T08:00:00Z",
+              image: "jbrain2-api:local",
+            },
+            {
+              service: "server-brain",
+              state: "running",
+              health: null,
+              started_at: "2026-06-10T08:00:00Z",
+              image: "jbrain2-server-brain",
+            },
+          ],
+        });
+      }
+      if (path === "/api/ops/metrics") return json(METRICS);
+      if (path.startsWith("/api/ops/metrics/history")) return json(HISTORY);
+      return new Response(null, { status: 404 });
+    });
+
+    render(<OpsScreen />);
+    // The wall display gets its own "Display" group, not orphaned in "Other".
+    fireEvent.click(await screen.findByRole("button", { name: /Display/ }));
+    expect(screen.getByText("server-brain")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Other/ })).toBeNull();
+  });
+
   it("the History card is expanded by default on the 6h window and switches range", async () => {
     fetchMock.mockImplementation(
       async (input) => baseMock(input) ?? new Response(null, { status: 404 }),
@@ -289,6 +324,37 @@ describe("OpsScreen", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("offers Stop for a running service and Start for a stopped one, and stops it", async () => {
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    fetchMock.mockImplementation(async (input, init) => {
+      const path = String(input);
+      const base = baseMock(input);
+      if (base) return base;
+      if (path.startsWith("/api/ops/logs/")) return new Response("log", { status: 200 });
+      if (path === "/api/ops/stop" && init?.method === "POST")
+        return new Response(null, { status: 202 });
+      return new Response(null, { status: 404 });
+    });
+
+    render(<OpsScreen />);
+    fireEvent.click(await screen.findByRole("button", { name: /Core/ }));
+    // api is running -> Stop; worker is exited -> Start.
+    fireEvent.click(screen.getByText("api"));
+    expect(await screen.findByRole("button", { name: "Stop" })).toBeInTheDocument();
+    fireEvent.click(screen.getByText("worker"));
+    expect(await screen.findByRole("button", { name: "Start" })).toBeInTheDocument();
+
+    // Stopping api hits the stop endpoint.
+    fireEvent.click(screen.getByRole("button", { name: "Stop" }));
+    await waitFor(() =>
+      expect(
+        fetchMock.mock.calls.some(
+          ([u, i]) => String(u) === "/api/ops/stop" && (i?.method ?? "") === "POST",
+        ),
+      ).toBe(true),
+    );
   });
 
   it("opens the Runs surface from the Ops header (Direction C, reachable from Ops)", async () => {

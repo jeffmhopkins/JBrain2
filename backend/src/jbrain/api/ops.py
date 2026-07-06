@@ -325,6 +325,35 @@ async def restart(
     return cast(dict[str, object], resp.json())
 
 
+# Start/stop a single existing container — the per-container power controls next to
+# restart. Both proxy the supervisor's fixed-command gateway (docker start/stop on the
+# existing container); an unknown/never-created service 404s.
+async def _lifecycle(
+    action: str, service: str, request: Request, settings: Settings
+) -> dict[str, object]:
+    resp = await _client(request).post(
+        f"/{action}", json={"service": service}, headers=_headers(settings)
+    )
+    if resp.status_code == 404:
+        raise HTTPException(status_code=404, detail="unknown service")
+    resp.raise_for_status()
+    return cast(dict[str, object], resp.json())
+
+
+@router.post("/start", status_code=202)
+async def start_service(
+    body: RestartRequest, request: Request, settings: SettingsDep
+) -> dict[str, object]:
+    return await _lifecycle("start", body.service, request, settings)
+
+
+@router.post("/stop", status_code=202)
+async def stop_service(
+    body: RestartRequest, request: Request, settings: SettingsDep
+) -> dict[str, object]:
+    return await _lifecycle("stop", body.service, request, settings)
+
+
 @router.get("/metrics")
 async def metrics(
     request: Request, principal: PrincipalDep, settings: SettingsDep
