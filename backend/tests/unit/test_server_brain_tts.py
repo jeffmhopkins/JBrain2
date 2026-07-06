@@ -118,6 +118,43 @@ def test_tts_wav_none_without_piper(
     assert serve.tts_wav("hello", "en_US-amy-medium") is None
 
 
+def test_tts_wav_render_failure_is_logged_not_silent(
+    serve: types.ModuleType, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # A failed render must return None *and* name the voice + cause on stderr — otherwise the
+    # reply silently degrades to the device's native voice and looks like the wrong speaker.
+    def fake_run(cmd: list[str], **kwargs: object):  # type: ignore[no-untyped-def]
+        raise serve.subprocess.CalledProcessError(1, cmd, stderr=b"onnx load failed")
+
+    monkeypatch.setattr(serve.shutil, "which", lambda _bin: "/usr/bin/piper")
+    monkeypatch.setattr(serve.subprocess, "run", fake_run)
+
+    assert serve.tts_wav("hello", "en_US-libritts_r-medium#3922", lead_ms=0) is None
+    err = capsys.readouterr().err
+    assert "en_US-libritts_r-medium#3922" in err
+    assert "onnx load failed" in err
+
+
+def test_tts_wav_uses_configurable_timeout(
+    serve: types.ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The per-render cap is tunable so a heavy voice on a busy box can be given more time
+    # instead of timing out into the native-voice fallback.
+    monkeypatch.setattr(serve, "PIPER_TIMEOUT_S", 123.0)
+    seen: dict[str, object] = {}
+
+    def fake_run(cmd: list[str], **kwargs: object):  # type: ignore[no-untyped-def]
+        seen["timeout"] = kwargs.get("timeout")
+        Path(cmd[cmd.index("--output_file") + 1]).write_bytes(b"RIFFfakewav")
+        return types.SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(serve.shutil, "which", lambda _bin: "/usr/bin/piper")
+    monkeypatch.setattr(serve.subprocess, "run", fake_run)
+
+    serve.tts_wav("hello", "en_US-amy-medium", lead_ms=0)
+    assert seen["timeout"] == 123.0
+
+
 def test_docker_image_bakes_every_curated_multispeaker_model(serve: types.ModuleType) -> None:
     # A curated speaker (e.g. libritts_r 3922) only reaches the picker if its MODEL is
     # actually installed — and production installs are the BAKED image, not install-tts.sh.

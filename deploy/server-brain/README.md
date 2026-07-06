@@ -221,11 +221,17 @@ same piper, reached from the PWA over the authenticated api proxy `GET /api/brai
 voice** picks the engine (`brain_read_aloud_engine`): **piper** (the voice — any id above, speakers
 included, chosen via `brain_answer_voice`, which is also the wall's answer voice; a *play sample*
 button auditions it) with an automatic fall back to the **device's native (Web Speech) voice** when
-this box is unreachable, or **native** to always use the device voice.
+this box is unreachable **or a clip fails to render**, or **native** to always use the device voice.
+A silent fall back can look like "the wrong voice" (the native default is often male), so a failed
+render is logged — `docker logs server-brain` shows a `[tts] render failed …` line naming the cause
+(a timeout points at `BRAIN_PIPER_TIMEOUT_S`; a non-zero exit at a bad/corrupt model).
 
 **The whole reply, not an excerpt.** The page splits a reply into sentence-sized clips and plays them
 back-to-back through one queue: the first clip renders while the rest queue, so speech starts fast, the
-*entire* answer is read, and no single giant piper render risks the timeout. Only the first clip of a
+*entire* answer is read, and no single giant piper render risks the per-clip timeout
+(`BRAIN_PIPER_TIMEOUT_S`, default 60 s — piper cold-loads the model on every clip, so a big
+multi-speaker voice on a busy box needs headroom, else only that voice times out into the native
+fall back). Only the first clip of a
 turn carries the silence pad — continuation clips request `?lead=0` so the sentences run together
 instead of gapping between each.
 
@@ -266,7 +272,8 @@ alongside the baked defaults; a dropped-in name overrides a baked one) — grab 
 (`python3 serve.py` directly, no image), `bash deploy/server-brain/install-tts.sh` installs piper +
 the models into `voices/`. Env knobs (all optional): `BRAIN_PIPER_BIN` (default `piper`),
 `BRAIN_PIPER_VOICES_DIR` (mounted extras, default `/app/voices`), `BRAIN_PIPER_BAKED_VOICES_DIR`
-(baked defaults, default `/opt/piper-voices`), `BRAIN_PIPER_LEAD_MS`. Text is passed to piper on
+(baked defaults, default `/opt/piper-voices`), `BRAIN_PIPER_LEAD_MS`, `BRAIN_PIPER_TIMEOUT_S`
+(per-clip render cap, default 60 s). Text is passed to piper on
 **stdin** (never a shell arg) and the `voice` param is validated against the installed set, so there
 is no command-injection or path-traversal surface.
 

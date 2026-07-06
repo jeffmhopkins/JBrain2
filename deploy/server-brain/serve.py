@@ -28,6 +28,7 @@ import math
 import os
 import shutil
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -83,6 +84,13 @@ PIPER_BAKED_VOICES_DIR = Path(os.environ.get("BRAIN_PIPER_BAKED_VOICES_DIR", "/o
 # asks for it only on the FIRST clip of a turn (?lead=0 on the continuation chunks) so a long
 # reply, split into sentence-sized clips, plays gaplessly.
 PIPER_LEAD_MS = int(os.environ.get("BRAIN_PIPER_LEAD_MS", "400"))
+# Wall-clock cap on a single piper render (seconds). Piper is a fresh subprocess per
+# clip, so it COLD-LOADS the model every call — a big multi-speaker model (libritts_r is
+# ~78 MB / 904 speakers) on a box already busy with the LLM/GPU workloads can be far
+# slower than a small single-speaker one, and a too-tight cap makes ONLY the heavy voice
+# time out and silently fall back to the device's native voice. Bump it per box if a
+# voice keeps degrading; watch `docker logs server-brain` for the "tts render failed" line.
+PIPER_TIMEOUT_S = float(os.environ.get("BRAIN_PIPER_TIMEOUT_S", "60"))
 # Longest single /tts render the page requests — it splits a reply into sentence-sized clips
 # (fast first-audio, no giant render), so this only bounds one chunk, not the whole answer.
 TTS_CHUNK_CAP = 1000
@@ -216,10 +224,17 @@ def tts_wav(text: str, voice: str, lead_ms: int | None = None) -> bytes | None:
         if speaker is not None:
             cmd += ["--speaker", str(speaker)]
         subprocess.run(
-            cmd, input=text.encode(), capture_output=True, timeout=25, check=True,
+            cmd, input=text.encode(), capture_output=True, timeout=PIPER_TIMEOUT_S, check=True,
         )
         data = Path(tmp.name).read_bytes()
-    except (subprocess.SubprocessError, OSError):
+    except (subprocess.SubprocessError, OSError) as exc:
+        # A silent None here degrades the reply to the device's native voice, which looks
+        # like "the wrong voice" rather than a failure — so name the cause in the logs (the
+        # only place to see it): a timeout points at PIPER_TIMEOUT_S, a non-zero exit at a
+        # bad/corrupt model (piper's own stderr says which).
+        detail = f"exit {exc.returncode}: {exc.stderr.decode(errors='replace').strip()[:300]}" \
+            if isinstance(exc, subprocess.CalledProcessError) else str(exc) or type(exc).__name__
+        print(f"[tts] render failed for {voice!r} (speaker {speaker}): {detail}", file=sys.stderr)
         return None
     finally:
         try:
