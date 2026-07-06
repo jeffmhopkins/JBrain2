@@ -870,7 +870,10 @@ export interface LlmUsage {
  * failed state; the Runs surface renders it as the red "failed" tile/dot. */
 // 'queued' is a derived display state (no stored value): an in-flight pipeline run
 // whose steps have not started yet, waiting behind the single-threaded worker.
-export type RunStatus = "queued" | "running" | "done" | "error";
+// 'superseded' is a terminal state a scheduler fire stamps on a pipeline's prior
+// still-running run when it fires again ("latest run wins") — neither done nor an
+// error; the Runs surface renders it as a quiet, muted terminal tile/dot.
+export type RunStatus = "queued" | "running" | "done" | "error" | "superseded";
 
 /** A manual/sweep trigger the owner can fire on demand. The list endpoint is
  * sibling Track B's (`GET /api/ops/triggers`); the Runs surface reads it

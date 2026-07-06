@@ -24,8 +24,9 @@ from __future__ import annotations
 import json
 import uuid
 from dataclasses import dataclass
+from typing import Any, cast
 
-from sqlalchemy import text
+from sqlalchemy import CursorResult, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from jbrain.db.session import SessionContext, scoped_session
@@ -97,6 +98,56 @@ class PipelineRunLog:
                     )
                 )
         return run_id
+
+
+async def supersede_running_runs(
+    maker: async_sessionmaker[AsyncSession],
+    ctx: SessionContext,
+    *,
+    pipeline: str,
+) -> int:
+    """End any still-`running` runs of `pipeline` before a new fire opens a fresh one
+    — "latest run wins" (E4). Returns the number of runs superseded.
+
+    First cancels each such run's still-QUEUED job — a deferred sweep waiting on its
+    precondition (e.g. inbox triage's local model not resident) — so a fresh job can
+    take its place rather than the fire coalescing onto the one it just superseded.
+    Then marks those runs `superseded` with an `ended_at`.
+
+    A run with an actively-RUNNING step is left ALONE (both statements carry the same
+    `NOT EXISTS … j.status = 'running'` guard): that job is mid-flight, so its run
+    stays `running` and finalizes normally through `finalize_job_step` — we only reap
+    the deferred and the orphaned (zero-step, or coalesced) rows that would otherwise
+    never close. Both statements are keyed through `run_steps`, so only THIS pipeline's
+    jobs are ever touched, never an unrelated `ingest_note`/`embed_note` job."""
+    async with scoped_session(maker, ctx) as session:
+        await session.execute(
+            text(
+                "UPDATE app.jobs j"
+                "   SET status = 'canceled', finished_at = now(),"
+                "       last_error = 'superseded: a newer run of the same pipeline'"
+                "  FROM app.run_steps s"
+                "  JOIN app.runs r ON r.id = s.run_id"
+                " WHERE s.job_id = j.id AND r.pipeline = :pipeline"
+                "   AND r.status = 'running' AND j.status = 'queued'"
+                "   AND NOT EXISTS ("
+                "       SELECT 1 FROM app.run_steps s2 JOIN app.jobs j2 ON j2.id = s2.job_id"
+                "       WHERE s2.run_id = r.id AND j2.status = 'running')"
+            ),
+            {"pipeline": pipeline},
+        )
+        result = await session.execute(
+            text(
+                "UPDATE app.runs r"
+                "   SET status = 'superseded', ended_at = now(), progress_note = NULL"
+                " WHERE r.pipeline = :pipeline AND r.status = 'running'"
+                "   AND NOT EXISTS ("
+                "       SELECT 1 FROM app.run_steps s JOIN app.jobs j ON j.id = s.job_id"
+                "       WHERE s.run_id = r.id AND j.status = 'running')"
+            ),
+            {"pipeline": pipeline},
+        )
+    return cast(CursorResult[Any], result).rowcount or 0
 
 
 async def set_run_progress(

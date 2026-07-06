@@ -48,7 +48,7 @@ from jbrain.db.session import scoped_session
 from jbrain.tasks.schedule import next_run_after, spec_from
 from jbrain.workflow.contracts import Pipeline
 from jbrain.workflow.registry import ActionRegistry, ActionSpec
-from jbrain.workflow.runlog import EnqueuedStep, PipelineRunLog
+from jbrain.workflow.runlog import EnqueuedStep, PipelineRunLog, supersede_running_runs
 
 log = structlog.get_logger()
 
@@ -313,13 +313,31 @@ async def fire_trigger(
         raise ScheduleResolutionError(f"trigger {trigger_id!r} is not manually fireable")
     async with scoped_session(maker, queue.SYSTEM_CTX) as session:
         pipeline = await _load_pipeline(session, row.pipeline)
+    # Reap this pipeline's prior still-running run BEFORE enqueuing — "latest run
+    # wins". A preconditioned sweep (inbox triage) can sit deferred for hours while
+    # its model is unavailable; without this its run row stays open and each hourly
+    # fire stacks another orphan. Cancelling the prior deferred job here also clears
+    # the coalesce guard in _enqueue_pipeline, so this fire enqueues a fresh job in
+    # its place. An actively-running job is left to finish (supersede_running_runs
+    # skips its run), so re-firing never interrupts work already in flight.
+    superseded = await supersede_running_runs(maker, queue.SYSTEM_CTX, pipeline=pipeline.name)
+    if superseded:
+        log.info("scheduler.runs_superseded", pipeline=pipeline.name, count=superseded)
     steps = await _enqueue_pipeline(maker, registry, pipeline)
+    # Only open a run row when this fire actually enqueued work. A fully coalesced
+    # fire (every step suppressed because an equivalent job is still ACTIVELY RUNNING —
+    # the one case supersede_running_runs left in place) enqueues nothing, and a
+    # zero-step `running` run could never finalize (finalize is per job step), so
+    # recording one would orphan it exactly as the pre-reap scheduler did. Skip it.
+    if not steps:
+        log.info("scheduler.trigger_noop", trigger_id=trigger_id, pipeline=pipeline.name)
+        return FiredTrigger(trigger_id=trigger_id, pipeline=pipeline.name, job_ids=[])
     # Record the dispatch on the unified run-log so a schedule/Ops fire is auditable
     # from app.runs — exactly like the event-triggered path (dispatcher.live_enqueue)
     # and the agent loop. Without this, manual "Run now" and nightly sweeps enqueued
     # real jobs but left no run row, so the Ops Runs surface showed nothing. The run
-    # is `done` on write (the dispatch's job is to enqueue; each step's job carries
-    # its own status), and `system` since a trigger fire runs under SYSTEM_CTX.
+    # opens `running` and its step's job carries its own status; `system` since a
+    # trigger fire runs under SYSTEM_CTX.
     run_id = await PipelineRunLog(maker).record(
         queue.SYSTEM_CTX,
         pipeline=pipeline.name,

@@ -357,23 +357,119 @@ async def test_fire_trigger_enqueues_immediately(maker: async_sessionmaker) -> N
     assert await _jobs_of_kind(maker, "consolidate_predicates") == before + 1
 
 
-async def test_preconditioned_action_coalesces_a_refire(maker: async_sessionmaker) -> None:
-    # A preconditioned action can sit DEFERRED in the queue (waiting on its model to
-    # load), so re-firing its schedule must NOT stack a second waiting job. The first
-    # fire enqueues one triage_inbox job; while it is still active, the second fire
-    # coalesces and enqueues nothing — deferred runs never pile up across ticks.
+async def _queued_of_kind(maker: async_sessionmaker, kind: str) -> int:
+    async with scoped_session(maker, queue.SYSTEM_CTX) as s:
+        return (
+            await s.execute(
+                text("SELECT count(*) FROM app.jobs WHERE kind = :k AND status = 'queued'"),
+                {"k": kind},
+            )
+        ).scalar_one()
+
+
+async def _run_statuses(maker: async_sessionmaker, pipeline: str) -> list[str]:
+    async with scoped_session(maker, queue.SYSTEM_CTX) as s:
+        return list(
+            (
+                await s.execute(
+                    text("SELECT status FROM app.runs WHERE pipeline = :p"), {"p": pipeline}
+                )
+            ).scalars()
+        )
+
+
+async def _quiesce_kind(maker: async_sessionmaker, kind: str) -> None:
+    """Cancel any leftover active jobs of `kind` from a prior test. The coalesce guard
+    (queue.has_active_kind) is keyed by kind, not by pipeline, so a preconditioned
+    sweep's job left queued by an earlier test would suppress this test's first fire.
+    The shared-container suite has no per-test rollback, so reset the kind explicitly."""
+    async with scoped_session(maker, queue.SYSTEM_CTX) as s:
+        await s.execute(
+            text(
+                "UPDATE app.jobs SET status = 'canceled', finished_at = now()"
+                " WHERE kind = :k AND status IN ('queued', 'running')"
+            ),
+            {"k": kind},
+        )
+
+
+async def test_refire_supersedes_prior_deferred_run_and_replaces_its_job(
+    maker: async_sessionmaker,
+) -> None:
+    # A preconditioned action can sit DEFERRED (queued, waiting on its model to load)
+    # with an open run row. Re-firing its schedule must NOT stack a second orphan: it
+    # supersedes the prior run, CANCELS its deferred job, and enqueues a fresh one in
+    # its place ("latest run wins"). So there is always exactly one live run + one
+    # active job, never a growing trail of `running` rows.
     from jbrain.gmail.triage import TRIAGE_INBOX_SPEC
 
     registry = build_registry((*ACTION_SPECS, TRIAGE_INBOX_SPEC))
+    await _quiesce_kind(maker, "triage_inbox")
     ids = await _seed_schedule(maker, action="triage_inbox", next_run_at=NOW)
 
     first = await fire_trigger(maker, registry, ids["trigger"])
     assert len(first.job_ids) == 1
-    assert await _jobs_of_kind(maker, "triage_inbox") == 1
+    first_job = first.job_ids[0]
 
     second = await fire_trigger(maker, registry, ids["trigger"])
-    assert second.job_ids == []  # coalesced: the still-queued job absorbs this fire
-    assert await _jobs_of_kind(maker, "triage_inbox") == 1
+    assert len(second.job_ids) == 1
+    assert second.job_ids[0] != first_job  # a fresh job, not the coalesced original
+
+    async with scoped_session(maker, queue.SYSTEM_CTX) as s:
+        first_status = (
+            await s.execute(text("SELECT status FROM app.jobs WHERE id = :j"), {"j": first_job})
+        ).scalar_one()
+    assert first_status == "canceled"  # the deferred job was dropped
+    assert sorted(await _run_statuses(maker, ids["pipeline"])) == ["running", "superseded"]
+    assert await _queued_of_kind(maker, "triage_inbox") == 1  # exactly one active job
+
+
+async def test_refire_does_not_interrupt_a_running_job(maker: async_sessionmaker) -> None:
+    # If the prior job is actively RUNNING (mid-execution), a re-fire must NOT cancel
+    # it or supersede its run — only deferred/orphaned runs are reaped. The re-fire
+    # coalesces (enqueues nothing) and opens no new run, so the in-flight job finalizes
+    # normally rather than being abandoned mid-sweep.
+    from jbrain.gmail.triage import TRIAGE_INBOX_SPEC
+
+    registry = build_registry((*ACTION_SPECS, TRIAGE_INBOX_SPEC))
+    await _quiesce_kind(maker, "triage_inbox")
+    ids = await _seed_schedule(maker, action="triage_inbox", next_run_at=NOW)
+
+    first = await fire_trigger(maker, registry, ids["trigger"])
+    running_job = first.job_ids[0]
+    async with scoped_session(maker, queue.SYSTEM_CTX) as s:
+        await s.execute(
+            text("UPDATE app.jobs SET status = 'running', locked_at = now() WHERE id = :j"),
+            {"j": running_job},
+        )
+
+    second = await fire_trigger(maker, registry, ids["trigger"])
+    assert second.job_ids == []  # coalesced onto the in-flight job
+
+    async with scoped_session(maker, queue.SYSTEM_CTX) as s:
+        job_status = (
+            await s.execute(text("SELECT status FROM app.jobs WHERE id = :j"), {"j": running_job})
+        ).scalar_one()
+    assert job_status == "running"  # untouched
+    assert await _run_statuses(maker, ids["pipeline"]) == ["running"]  # no new orphan opened
+
+
+async def test_refire_leaves_other_pipelines_runs_untouched(maker: async_sessionmaker) -> None:
+    # Reaping is scoped to the FIRING pipeline: another pipeline's running run is left
+    # alone. Guards against a global "cancel every running run" that would clobber an
+    # unrelated in-flight sweep.
+    from jbrain.gmail.triage import TRIAGE_INBOX_SPEC
+
+    registry = build_registry((*ACTION_SPECS, TRIAGE_INBOX_SPEC))
+    await _quiesce_kind(maker, "triage_inbox")
+    a = await _seed_schedule(maker, action="triage_inbox", next_run_at=NOW)
+    b = await _seed_schedule(maker, action="consolidate_predicates", next_run_at=NOW)
+
+    await fire_trigger(maker, registry, b["trigger"])  # B opens a running run
+    await fire_trigger(maker, registry, a["trigger"])  # first triage run
+    await fire_trigger(maker, registry, a["trigger"])  # re-fire A -> reaps A only
+
+    assert await _run_statuses(maker, b["pipeline"]) == ["running"]  # B untouched
 
 
 async def test_fire_trigger_records_a_running_run_on_the_run_log(
