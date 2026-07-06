@@ -16,10 +16,13 @@ is shown on the unauthenticated display, so there is no new exposure surface.
 from __future__ import annotations
 
 import httpx
+import structlog
 from fastapi import APIRouter, HTTPException, Request, Response
 from fastapi.responses import JSONResponse
 
 from jbrain.api.deps import PrincipalDep
+
+log = structlog.get_logger()
 
 router = APIRouter()
 
@@ -79,8 +82,12 @@ async def brain_tts(
         async with httpx.AsyncClient(timeout=30.0) as client:
             resp = await client.get(f"{base}/tts", params=params)
     except httpx.HTTPError as exc:
+        # A silent failure here makes the PWA fall back to the device's native voice, so
+        # log the reason — pair with the box's own `[tts]` line to place the failure.
+        log.warning("brain_tts.unreachable", voice=voice, error=str(exc))
         raise HTTPException(status_code=503, detail="wall display unreachable") from exc
     if resp.status_code != 200:
+        log.warning("brain_tts.upstream_failed", voice=voice, status=resp.status_code)
         raise HTTPException(status_code=502, detail="tts failed")
     return Response(
         content=resp.content,

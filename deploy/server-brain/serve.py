@@ -28,6 +28,7 @@ import math
 import os
 import shutil
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -83,6 +84,13 @@ PIPER_BAKED_VOICES_DIR = Path(os.environ.get("BRAIN_PIPER_BAKED_VOICES_DIR", "/o
 # asks for it only on the FIRST clip of a turn (?lead=0 on the continuation chunks) so a long
 # reply, split into sentence-sized clips, plays gaplessly.
 PIPER_LEAD_MS = int(os.environ.get("BRAIN_PIPER_LEAD_MS", "400"))
+# Wall-clock cap on a single piper render (seconds). Piper is a fresh subprocess per
+# clip, so it COLD-LOADS the model every call — a big multi-speaker model (libritts_r is
+# ~78 MB / 904 speakers) on a box already busy with the LLM/GPU workloads can be far
+# slower than a small single-speaker one, and a too-tight cap makes ONLY the heavy voice
+# time out and silently fall back to the device's native voice. Bump it per box if a
+# voice keeps degrading; watch `docker logs server-brain` for the "tts render failed" line.
+PIPER_TIMEOUT_S = float(os.environ.get("BRAIN_PIPER_TIMEOUT_S", "60"))
 # Longest single /tts render the page requests — it splits a reply into sentence-sized clips
 # (fast first-audio, no giant render), so this only bounds one chunk, not the whole answer.
 TTS_CHUNK_CAP = 1000
@@ -200,32 +208,52 @@ def tts_wav(text: str, voice: str, lead_ms: int | None = None) -> bytes | None:
     command-injection surface. `lead_ms` overrides the silence pad for this clip (the page
     sends 0 on continuation chunks so a multi-clip reply plays gaplessly); None uses the
     PIPER_LEAD_MS default."""
+    # Every None path below is logged: a silent None degrades the reply to the device's
+    # native voice, which looks like "the wrong voice" rather than a failure, so the cause
+    # must be visible (via `docker logs server-brain` / the debug console).
     if shutil.which(PIPER_BIN) is None:
+        print(f"[tts] render failed for {voice!r}: piper binary {PIPER_BIN!r} not on PATH",
+              file=sys.stderr)
         return None
     resolved = _resolve_voice(voice)
     if resolved is None:
+        print(f"[tts] render failed for {voice!r}: no voices installed", file=sys.stderr)
         return None
     model, speaker = resolved
     if not model.exists():
+        print(f"[tts] render failed for {voice!r}: model file {model} missing", file=sys.stderr)
         return None
+    if _tts_debug[0]:
+        print(f"[tts] rendering {voice!r} -> {model.stem} speaker={speaker} ({len(text)} chars)",
+              file=sys.stderr)
     cmd = [PIPER_BIN, "--model", str(model), "--output_file"]
     tmp = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
     tmp.close()
+    started = time.monotonic()
     try:
         cmd.append(tmp.name)
         if speaker is not None:
             cmd += ["--speaker", str(speaker)]
         subprocess.run(
-            cmd, input=text.encode(), capture_output=True, timeout=25, check=True,
+            cmd, input=text.encode(), capture_output=True, timeout=PIPER_TIMEOUT_S, check=True,
         )
         data = Path(tmp.name).read_bytes()
-    except (subprocess.SubprocessError, OSError):
+    except (subprocess.SubprocessError, OSError) as exc:
+        # Name the cause: a timeout points at PIPER_TIMEOUT_S, a non-zero exit at a
+        # bad/corrupt model (piper's own stderr says which).
+        detail = f"exit {exc.returncode}: {exc.stderr.decode(errors='replace').strip()[:300]}" \
+            if isinstance(exc, subprocess.CalledProcessError) else str(exc) or type(exc).__name__
+        print(f"[tts] render failed for {voice!r} (speaker {speaker}): {detail}", file=sys.stderr)
         return None
     finally:
         try:
             os.unlink(tmp.name)
         except OSError:
             pass
+    if _tts_debug[0]:
+        ms = int((time.monotonic() - started) * 1000)
+        print(f"[tts] rendered {voice!r} (speaker {speaker}): {len(data)} bytes in {ms} ms",
+              file=sys.stderr)
     lead = PIPER_LEAD_MS if lead_ms is None else lead_ms
     return _pad_lead(data, lead) if lead > 0 else data
 
@@ -252,6 +280,16 @@ _posted_lock = threading.Lock()
 # addition to piper voices being installed). Default OFF: a fresh/restarted display speaks
 # nothing until the app re-pushes the flag (it does so on the setting change and each turn).
 _read_aloud = [False]
+
+# Verbose per-clip TTS tracing, pushed by the app the same way ({"kind": "tts_debug",
+# "on": bool} to /event) — ON only while an owner-authorized debug session is open (a live
+# debug-console token exists), so diagnostics follow the token's lifecycle with no env flag
+# or restart. While on, each render logs the voice AS RECEIVED, the model + resolved
+# --speaker index, output bytes and elapsed ms — so an operator can confirm the box
+# rendered the requested voice rather than the PWA falling back to its native voice.
+# Failures ALWAYS log regardless; this only adds the success trace. Default OFF; the app
+# re-pushes it each turn, so it clears when the token lapses.
+_tts_debug = [False]
 
 
 def _drain_posted() -> list:
@@ -684,6 +722,12 @@ class Handler(BaseHTTPRequestHandler):
             # A held display-config flag, not a tendril event: latch it (the app pushes it
             # from the brain_read_aloud setting) so /stats reflects it until the next push.
             _read_aloud[0] = bool(ev.get("on"))
+            self._send(204, b"", "text/plain")
+            return
+        if kind == "tts_debug":
+            # Held diagnostic flag, latched like read_aloud: the app pushes it on while a
+            # debug-console token is live, switching on the verbose per-clip TTS trace.
+            _tts_debug[0] = bool(ev.get("on"))
             self._send(204, b"", "text/plain")
             return
         if kind in (

@@ -701,7 +701,9 @@ local append with an amber "pending sync" chip until the outbox clears.
   **engine** is chosen in **Settings → Read-aloud voice** (`brain_read_aloud_engine`):
   **Piper** renders each sentence on the box in the chosen voice (`brain_answer_voice`,
   streamed back over the api's `/api/brain/tts` proxy and played back-to-back) and
-  falls back to the device's native voice when the box is unreachable; **Native** uses
+  falls back to the device's native voice when the box is unreachable or a clip fails to
+  render (the failure is logged on the box, since a silent fall back reads as the wrong
+  voice); **Native** uses
   the device's own Web Speech voice. In Piper mode the same card offers the voice picker
   — any installed voice, including a multi-speaker model's individual speakers (e.g.
   LibriTTS 3922) — and a *play sample* button; that voice also reads the wall display's
