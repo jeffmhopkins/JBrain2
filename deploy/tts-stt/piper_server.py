@@ -114,6 +114,15 @@ CURATED_KOKORO_VOICES: tuple[str, ...] = (
 # insensitive whole-word match.
 KOKORO_LEXICON: dict[str, str] = {}
 
+# Curated NARRATOR blends: a blend id "kokoro-<key>" whose voice is a weighted average of real
+# Kokoro voice style matrices — a custom timbre no single baked voice gives. Each key maps to
+# ((voice, weight), …); weights should sum to ~1 (the style row is used directly, no
+# renormalization). Owner-tunable by ear — retune the voices/weights or add blends. The referenced
+# voices must be real English voices in the bin (a test guards they're in CURATED_KOKORO_VOICES).
+KOKORO_BLENDS: dict[str, tuple[tuple[str, float], ...]] = {
+    "narrator": (("am_michael", 0.6), ("af_nicole", 0.4)),
+}
+
 # Verbose per-clip tracing, pushed on by the app ({"kind": "tts_debug", "on": bool} to
 # /event) while a debug-console token is live — logs each render's voice-as-received,
 # resolved speaker, bytes and elapsed ms. Failures ALWAYS log; this adds the success trace.
@@ -287,7 +296,9 @@ def kokoro_voices() -> list[str]:
     a box without them lists no Kokoro voices instead of dead entries. [] otherwise."""
     if not _kokoro_available():
         return []
-    return [f"{KOKORO_ID_PREFIX}{v}" for v in CURATED_KOKORO_VOICES]
+    return [f"{KOKORO_ID_PREFIX}{v}" for v in CURATED_KOKORO_VOICES] + [
+        f"{KOKORO_ID_PREFIX}{k}" for k in KOKORO_BLENDS
+    ]
 
 
 def _load_kokoro() -> Any:
@@ -364,6 +375,17 @@ def _apply_lexicon(text: str) -> str:
     )
 
 
+def _blend_style(kokoro: Any, blend: tuple[tuple[str, float], ...]) -> Any:
+    """Weighted average of named Kokoro voice style matrices → a blended voice style, passed to
+    create() as an array (which indexes it by token length exactly like a named voice). numpy-free
+    here — the style arrays' own * / + operators do the work, so this module stays out of numpy."""
+    style: Any = None
+    for vname, weight in blend:
+        contrib = kokoro.get_voice_style(vname) * weight
+        style = contrib if style is None else style + contrib
+    return style
+
+
 def _kokoro_wav(
     text: str,
     voice_id: str,
@@ -390,20 +412,23 @@ def _kokoro_wav(
     try:
         kokoro = _load_kokoro()
         g2p = _load_g2p()  # None → let Kokoro phonemize with its built-in espeak
+        # A blend id resolves to a computed style array; a normal voice passes its name string.
+        blend = KOKORO_BLENDS.get(name)
+        voice_arg: Any = _blend_style(kokoro, blend) if blend else name
         with _synth_lock:
             samples: Any = None
             if g2p is not None:
                 try:
                     phonemes, _tokens = g2p(_apply_lexicon(text))
                     samples, sample_rate = kokoro.create(
-                        phonemes, voice=name, speed=spd, is_phonemes=True
+                        phonemes, voice=voice_arg, speed=spd, is_phonemes=True
                     )
                 except Exception as exc:  # noqa: BLE001 — a G2P hiccup degrades to espeak, not silence
                     print(f"[tts] misaki phonemize failed for {voice_id!r}, using espeak: "
                           f"{type(exc).__name__}: {exc}", file=sys.stderr)
                     samples = None
             if samples is None:  # no misaki, or it just failed — Kokoro's built-in espeak
-                samples, sample_rate = kokoro.create(text, voice=name, speed=spd, lang="en-us")
+                samples, sample_rate = kokoro.create(text, voice=voice_arg, speed=spd, lang="en-us")
         data = _floats_to_wav(samples, int(sample_rate))
     except Exception as exc:  # noqa: BLE001 — any synth failure must surface, not crash the server
         print(f"[tts] render failed for {voice_id!r} (kokoro): {type(exc).__name__}: {exc}",
