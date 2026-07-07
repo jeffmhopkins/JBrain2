@@ -66,15 +66,31 @@ CURATED_SPEAKERS: dict[str, tuple[str, ...]] = {
 # --- Kokoro-82M: a second, more natural TTS engine baked beside piper (Apache-2.0) ----------
 # Unlike piper (one .onnx per voice), Kokoro is ONE onnx model + a voice-styles bin that
 # together serve many voices; both live in their OWN dir so the piper `*.onnx` glob never tries
-# to load the Kokoro model as a PiperVoice. We surface a curated few as ids "kokoro-<voice>",
-# selectable ONLY when the weights are baked on disk — a box without them lists no Kokoro voices
-# rather than dead entries. Keep KOKORO_MODEL/KOKORO_VOICES_FILE in step with the bake block in
+# to load the Kokoro model as a PiperVoice. We surface a set as ids "kokoro-<voice>", selectable
+# ONLY when the weights are baked on disk — a box without them lists no Kokoro voices rather than
+# dead entries. Keep KOKORO_MODEL/KOKORO_VOICES_FILE in step with the bake block in
 # Dockerfile.tts-stt (the test guards this).
 KOKORO_DIR = Path(os.environ.get("BRAIN_KOKORO_DIR", "/opt/kokoro"))
 KOKORO_MODEL = "kokoro-v1.0.onnx"
 KOKORO_VOICES_FILE = "voices-v1.0.bin"
 KOKORO_ID_PREFIX = "kokoro-"
-CURATED_KOKORO_VOICES: tuple[str, ...] = ("af_heart", "am_michael")
+# The exposed Kokoro voices: the ENGLISH v1.0 roster only (American af_/am_, British bf_/bm_) —
+# read-aloud renders with lang="en-us", so the model's French/Japanese/etc. voices would
+# mispronounce English and are deliberately omitted. Names are the model's own voice ids and are
+# stable for the pinned v1.0 weights; af_heart (Kokoro's default/highest-quality voice) leads so
+# it's the pick when the owner first switches to Kokoro. The Settings picker groups these under a
+# single "Kokoro" entry that reveals a second dropdown of the full list.
+CURATED_KOKORO_VOICES: tuple[str, ...] = (
+    # American English — female
+    "af_heart", "af_bella", "af_nicole", "af_aoede", "af_kore", "af_sarah",
+    "af_sky", "af_nova", "af_alloy", "af_jessica", "af_river",
+    # American English — male
+    "am_michael", "am_puck", "am_fenrir", "am_echo", "am_eric", "am_liam",
+    "am_onyx", "am_adam", "am_santa",
+    # British English — female then male
+    "bf_emma", "bf_isabella", "bf_alice", "bf_lily",
+    "bm_george", "bm_fable", "bm_daniel", "bm_lewis",
+)
 
 # Verbose per-clip tracing, pushed on by the app ({"kind": "tts_debug", "on": bool} to
 # /event) while a debug-console token is live — logs each render's voice-as-received,
