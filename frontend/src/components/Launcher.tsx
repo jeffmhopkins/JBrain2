@@ -4,6 +4,7 @@
 
 import { type ReactNode, type TouchEvent, useEffect, useRef, useState } from "react";
 import { api } from "../api/client";
+import { countUnviewed, loadViewed } from "../tasks/viewed";
 import { useForeground } from "../visibility";
 import {
   BookIcon,
@@ -112,9 +113,6 @@ function fetchImageEnabled(): Promise<boolean> {
     .catch(() => false);
   return imageEnabledPromise;
 }
-// The Tasks tile badge counts runs since the owner last opened Tasks; that marker
-// is stamped by TasksScreen on open and read here. Same key on both sides.
-export const TASKS_SEEN_KEY = "jb.tasks.seenAt";
 // The Review badge polls while the launcher is open so it reads live — new
 // holds tick up, resolved ones clear — without reopening the menu. Human/
 // analysis pace, so a light interval; the launcher is only mounted while open.
@@ -139,7 +137,9 @@ export function Launcher({ open, active = true, onClose, onNavigate }: LauncherP
   // a poll while the launcher is the surface on screen. Failures just leave the
   // badge at its last value.
   const [reviewCount, setReviewCount] = useState<number | null>(null);
-  // The Tasks tile badge: runs that finished since the owner last opened Tasks.
+  // The Tasks tile badge: tasks whose latest run hasn't been opened on this device
+  // (the same device-local "unviewed" state that drives each card's NEW band), not
+  // merely runs since Tasks was last opened — opening the screen no longer clears it.
   const [taskCount, setTaskCount] = useState<number | null>(null);
   // Config gate for the Image tile (cached once per session). Null until resolved,
   // so the tile only appears when image hosting is confirmed enabled.
@@ -174,21 +174,13 @@ export function Launcher({ open, active = true, onClose, onNavigate }: LauncherP
           if (!stale) setReviewCount(queue.items.length);
         })
         .catch(() => {});
-      // Seed the "seen" marker on first run so the badge has a baseline; then count
-      // runs started since the owner last opened Tasks.
-      let seen = localStorage.getItem(TASKS_SEEN_KEY);
-      if (seen === null) {
-        seen = new Date().toISOString();
-        try {
-          localStorage.setItem(TASKS_SEEN_KEY, seen);
-        } catch {
-          // best-effort; a missing marker just re-seeds next tick
-        }
-      }
+      // Count tasks with an unviewed latest run — recomputed each poll against the
+      // device-local viewed markers, so returning from a task's session (which stamps
+      // its marker) drops the badge on the next tick.
       api
-        .taskRunActivity(seen)
-        .then((count) => {
-          if (!stale) setTaskCount(count);
+        .tasks()
+        .then((tasks) => {
+          if (!stale) setTaskCount(countUnviewed(tasks, loadViewed()));
         })
         .catch(() => {});
     };
