@@ -153,7 +153,7 @@ deployed box the compose service (above) runs it for you.
 ## Signals wired
 
 `serve.py`'s `snapshot()` returns the full `ServerBrain` contract (see
-`frontend/demos/server-status-brain/CONTRACT.md`). Wired to real host data:
+`CONTRACT.md`, alongside this README). Wired to real host data:
 
 - **GPU util** (`gpu_busy_percent`) → neural activity / cascade routing
 - **RAM + VRAM** (`/proc/meminfo` + amdgpu `mem_info_vram_used`) → active density

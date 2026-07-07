@@ -151,8 +151,8 @@ Docs are sorted first by **kind** (into sub-directories), then by **state**.
 | `docs/plans/` | Active plans (`Scheduled`, `In progress`, `Parked`). | `Shipped`, `Rejected`, `Retired`, or `Proposed`. |
 | `docs/proposed/` | `Proposed` only — the icebox. Nothing built, nothing killed. | Built or rejected designs. |
 | `docs/archive/` | Terminal states: `Shipped`, `Rejected`, `Retired`, uncited `Superseded`, and completed research. | Anything still active. |
-| `docs/research/` | Live research feeding a not-yet-shipped plan. | Research whose plan has shipped — that moves to `archive/research/`. |
-| `docs/mocks/` | Binding UI spec as HTML (Living, per `reference/DESIGN.md`). | — |
+| `docs/research/` | Live research **prose** feeding a not-yet-shipped plan. | Research whose plan has shipped — that moves to `archive/research/`; and HTML UI mocks — those live in `docs/mocks/` (a research grouping subfolder), never beside the prose. |
+| `docs/mocks/` | The single common root for **all** HTML UI mocks — binding UI specs (Living, per `reference/DESIGN.md`) and exploratory research mocks alike, grouped in per-feature subfolders. | HTML UI mocks scattered under `frontend/`, `deploy/`, or `docs/research/`. |
 
 Every directory that has a `README.md` index must name **every** file in the
 folder; an index that omits a sibling is itself stale, and the freshness check
