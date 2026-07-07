@@ -515,3 +515,39 @@ export function chunkStream(raw, flush, engine = "piper") {
   if (committed <= 0) return { chunks: [], consumed: 0 };
   return { chunks: splitClips(speakable(raw.slice(0, committed), engine)), consumed: committed };
 }
+
+// --- reading profile (markup vs prose) -------------------------------------------------
+
+/**
+ * Classify an answer's Markdown as heavy "markup" (a structured LLM answer — headings, lists,
+ * tables, code, dense inline emphasis) vs "prose" (a story / plain paragraphs). Drives AUTOMATIC
+ * audiobook pacing without a mode switch: a prose turn gets a slower, spaced read; a markup turn
+ * stays snappy. A heuristic threshold — tune by feel. Blank text reads as prose (a bare line is
+ * fine either way; prose pacing is the gentle one).
+ * @param {string} md
+ * @returns {"markup" | "prose"}
+ */
+export function readingProfile(md) {
+  const text = String(md || "");
+  const lines = text.split("\n").filter((l) => l.trim());
+  if (!lines.length) return "prose";
+  let structural = 0;
+  let fenced = false;
+  for (const line of lines) {
+    if (/^\s*(?:```|~~~)/.test(line)) {
+      fenced = true; // a code fence — unmistakably an answer, not a story
+      structural += 1;
+    } else if (
+      /^\s{0,3}#{1,6}\s/.test(line) || // heading
+      /^\s*[-*+]\s/.test(line) || // bullet
+      /^\s*\d+\.\s/.test(line) || // numbered item
+      /^\s*>/.test(line) || // blockquote
+      line.includes("|") // table-ish row
+    ) {
+      structural += 1;
+    }
+  }
+  // Inline emphasis / code / links — a few is prose flavour, many is a structured answer.
+  const inlineMarks = (text.match(/\*\*|__|`|\]\(/g) || []).length;
+  return structural / lines.length >= 0.25 || fenced || inlineMarks >= 4 ? "markup" : "prose";
+}

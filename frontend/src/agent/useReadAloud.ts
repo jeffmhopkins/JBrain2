@@ -20,11 +20,20 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../api/client";
 import { onReadAloudSettings } from "./readAloudBus";
-import { chunkStream, speakable } from "./speakable.js";
+import { chunkStream, readingProfile, speakable } from "./speakable.js";
 
 type ReadAloudEngine = "piper" | "native";
 
 const AUTOPLAY_KEY = "readAloudAutoPlay";
+
+// Automatic audiobook pacing (no user mode): a prose/story turn reads a touch slower with a beat
+// between sentences; a markup answer sends no override, so the box's env default (snappy) applies.
+// Classified per turn from the Markdown. Values tunable by feel. Kokoro honours both; piper honours
+// only the trail (it ignores speed) — the box gates the rest.
+const PROSE_SPEED = 0.9;
+const PROSE_TRAIL_MS = 220;
+const paceFor = (md: string): { speed?: number; trail?: number } =>
+  readingProfile(md) === "prose" ? { speed: PROSE_SPEED, trail: PROSE_TRAIL_MS } : {};
 
 export interface ReadAloud {
   /** Read-aloud is on AND an engine can speak (the device's native voice, or piper
@@ -81,6 +90,8 @@ export function useReadAloud(): ReadAloud {
   const engineRef = useRef<ReadAloudEngine>("piper");
   const hasVoicesRef = useRef(false);
   const answerVoiceRef = useRef("en_US-amy-medium");
+  // The current turn's pacing (from the markup-vs-prose classifier), read by fetchClip per clip.
+  const paceRef = useRef<{ speed?: number; trail?: number }>({});
 
   const playingRef = useRef<string | null>(null);
   // The turn currently being streamed to the engine, and how far (in stripped chars)
@@ -267,7 +278,14 @@ export function useReadAloud(): ReadAloud {
   // ask for lead=0 so a multi-clip reply plays gaplessly).
   const fetchClip = useCallback((item: PiperClip): Promise<Blob> => {
     if (!item.blobP) {
-      item.blobP = api.brainTts(answerVoiceRef.current, item.text, item.first ? undefined : 0);
+      const { speed, trail } = paceRef.current;
+      item.blobP = api.brainTts(
+        answerVoiceRef.current,
+        item.text,
+        item.first ? undefined : 0,
+        speed,
+        trail,
+      );
     }
     return item.blobP;
   }, []);
@@ -389,6 +407,7 @@ export function useReadAloud(): ReadAloud {
       // The whole turn is known — normalize + split it into speakable clips (flush).
       const { chunks } = chunkStream(markdown, true);
       if (!chunks.length) return;
+      paceRef.current = paceFor(markdown); // whole turn known — classify it
       suppressedRef.current.delete(key);
       try {
         beginQueue(key); // clears manualRef, so set it after
@@ -421,6 +440,9 @@ export function useReadAloud(): ReadAloud {
       } else if (manualRef.current) {
         return; // this turn is under manual playback — don't double-feed it
       }
+      // Reclassify on the text so far — the profile stabilizes as the answer streams in, and any
+      // not-yet-rendered clip picks up the settled pace.
+      paceRef.current = paceFor(textSoFar);
       // chunkStream works on the RAW markdown from a raw-space cursor: it extracts only
       // COMPLETE units (a whole sentence / table / code block), normalizes each with
       // speakable(), and reports how many raw chars it consumed — stable across deltas, so

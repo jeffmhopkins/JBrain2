@@ -23,3 +23,7 @@ export function chunkStream(
   flush: boolean,
   engine?: SpeakEngine,
 ): { chunks: string[]; consumed: number };
+
+/** Classify Markdown as heavy "markup" (a structured LLM answer) vs "prose" (a story / plain
+ * paragraphs), for automatic audiobook pacing (prose = slower + spaced; markup = snappy). */
+export function readingProfile(md: string): "markup" | "prose";

@@ -37,6 +37,7 @@ its ship evidence.
 | `VIDEO_ANALYSIS_PLAN.md` | On-box video understanding. |
 | `WHISPER_TRANSCRIPTION_PLAN.md` | On-box whisper.cpp transcription. |
 | `READ_ALOUD_LEGIBILITY.md` | Read-aloud legibility + fluidity: shared `speakable` normalizer + stream-safe chunker + prefetch pump (W1/W2), and the `wall`/`tts-stt` split with warm piper (W0). |
+| `READ_ALOUD_AUDIOBOOK_PLAN.md` | Audiobook-grade Kokoro read-aloud: two-layer `toProse`/`toUtterance` split, misaki G2P + `KOKORO_LEXICON`, env-tunable pacing (speed + trailing silence), narrator voice blends, and an automatic markup-vs-prose classifier (no mode UI). W0–W4 shipped. |
 
 ## Image generation
 | Item | What it is |

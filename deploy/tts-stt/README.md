@@ -71,10 +71,12 @@ Kokoro read speed — set ~0.9 for a slower, warmer audiobook read) · **`BRAIN_
 silence appended after each Kokoro clip for a beat between sentences).
 
 **Audiobook pacing.** `BRAIN_KOKORO_SPEED` / `BRAIN_KOKORO_TRAIL_MS` (and per-request `/tts?speed=`
-/`?trail=`, clamped) tune Kokoro's pacing; both default to **no-op** so chat answers are unchanged
-— dial them in by ear after a listen (they apply to *all* Kokoro clips, chat included, so keep the
-trail modest; per-mode story-vs-answer control is a later wave). They affect **Kokoro only** — the
-snappy piper fallback ignores the speed and the trail env default.
+/`?trail=`, clamped) tune Kokoro's pacing; both default to **no-op** so *markup* answers are
+unchanged. They affect **Kokoro only** — the snappy piper fallback ignores the speed and the trail
+env default. The PWA classifies each turn (`readingProfile`, markup vs prose) and **automatically**
+sends a slower speed + inter-clip trail for **prose/stories** while leaving markup answers on the
+env default — no user mode. The env vars set the markup/default read; the prose preset lives in
+`useReadAloud` (`PROSE_SPEED`/`PROSE_TRAIL_MS`). Dial all of it in by ear after a listen.
 
 **Narrator blends.** `KOKORO_BLENDS` in `piper_server.py` defines custom voices as a **weighted
 average of two or more Kokoro voice style vectors** (a timbre no single baked voice gives) — each
