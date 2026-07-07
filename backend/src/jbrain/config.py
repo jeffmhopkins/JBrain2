@@ -95,7 +95,10 @@ class Settings(BaseSettings):
     # unmonitored). The reader is part of the stock compose stack, so this default points
     # at the on-box instance (local-first — only the public target URL leaves the box,
     # via a reader the owner runs); the base URL is pinned here and never model-supplied.
-    # Empty disables the fallback (a blocked/empty fetch just reports so).
+    # An empty field value disables the fallback (a blocked/empty fetch just reports
+    # so) — but note env_ignore_empty above: an empty JBRAIN_READER_URL is treated as
+    # absent and falls back to this default, so it does NOT disable it. To turn the
+    # fallback off, remove the reader service or point this at a non-serving endpoint.
     reader_url: str = "http://reader:3000"
     # The neural wall display (deploy/wall) draws a reach-out tendril when jerv runs a web
     # tool. We POST a tiny {"kind": "web_search"|"web_fetch"} marker to the wall service —

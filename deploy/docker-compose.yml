@@ -492,12 +492,14 @@ services:
       # case the CLI's IS_SANDBOX escape hatch exists for. Without it every turn exits 1
       # before any model call (confirmed on-box via the captured CLI stderr).
       IS_SANDBOX: "1"
-      # Per-session web preview (Wave J4): an ephemeral Cloudflare quick-tunnel
-      # (cloudflared, bundled in the image) to the sandbox's dev server. ON whenever
-      # code mode is — this whole profile is opt-in, so enabling jcode already opts into
-      # preview; no second env var to set. The flag only gates the capability; nothing is
-      # exposed until the owner opens a preview on a session. Set JCODE_PREVIEW_ENABLED=false
-      # to withhold it.
+      # Per-session web preview: the capability flag for the host-served preview
+      # (JCODE_PREVIEW_BASE_HOST below) — a session's dev server is reachable at
+      # <slug>-preview.<host> through the box's own tunnel + the api↔jcode proxy. ON
+      # whenever code mode is — this whole profile is opt-in, so enabling jcode already
+      # opts into preview; no second env var to set. The flag only gates the capability;
+      # nothing is exposed until the owner opens a preview on a session (and only if a
+      # base host is configured). Set JCODE_PREVIEW_ENABLED=false to withhold it. (The
+      # legacy per-session cloudflared quick-tunnel was retired at the Wave P5b cutover.)
       JCODE_PREVIEW_ENABLED: ${JCODE_PREVIEW_ENABLED:-true}
       # Host-served per-session web preview (docs/archive/JCODE_PREVIEW_HOST_PLAN.md): the zone
       # previews hang under, served at <slug>-preview.<JCODE_PREVIEW_BASE_HOST> through the
@@ -622,9 +624,10 @@ services:
   # and the api's JBRAIN_READER_URL points here by default; only jerv (no knowledge-base
   # tools, no owner data) reaches it. It renders with a headless browser, so it carries a
   # real memory cost and needs its own /dev/shm — heavier than searxng. To turn it off,
-  # set JBRAIN_READER_URL empty in the api/worker environment (web_fetch then just
-  # reports a blocked/empty page, as before). It needs egress to fetch the target, so it
-  # sits on `internal` alongside searxng.
+  # point JBRAIN_READER_URL at a non-serving endpoint or remove this service (web_fetch
+  # then just reports a blocked/empty page, as before) — an EMPTY JBRAIN_READER_URL does
+  # NOT disable it, since env_ignore_empty falls back to the on-box default. It needs
+  # egress to fetch the target, so it sits on `internal` alongside searxng.
   reader:
     image: ${READER_IMAGE:-ghcr.io/intergalacticalvariable/reader:latest}
     restart: unless-stopped
