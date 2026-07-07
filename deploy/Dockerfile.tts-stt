@@ -35,16 +35,26 @@ FROM ${WHISPER_BASE}
 # STT: whisper-server onto PATH so the generated llama-swap config can invoke it by name.
 COPY --from=build /src/build/bin/whisper-server /usr/local/bin/whisper-server
 
-# TTS: Python runtime + piper AND kokoro-onnx (onnxruntime's OpenMP dep is libgomp1; espeak-ng
-# is the phonemizer backend — kokoro-onnx bundles it via espeakng-loader, kept here as a
-# belt-and-suspenders so phonemization can't fail on a build that resolves an older stack).
-# --break-system-packages installs into the container's system python (PEP 668) — fine for a
-# single-purpose image. onnxruntime is NOT pinned separately: piper-tts and kokoro-onnx both
-# depend on it, so pip resolves one shared build.
+# TTS: Python runtime + piper (onnxruntime's OpenMP dep is libgomp1; espeak-ng is Kokoro's
+# phonemizer backend — kokoro-onnx bundles it via espeakng-loader, kept here as a belt-and-
+# suspenders). --break-system-packages installs into the container's system python (PEP 668) —
+# fine for a single-purpose image. piper-tts is the ALWAYS-ON half read-aloud depends on, so it
+# stays fatal; onnxruntime rides in as its dependency.
 RUN apt-get update \
  && apt-get install -y --no-install-recommends python3 python3-pip libgomp1 espeak-ng \
  && rm -rf /var/lib/apt/lists/* \
- && pip install --no-cache-dir --break-system-packages piper-tts kokoro-onnx==0.5.0
+ && pip install --no-cache-dir --break-system-packages piper-tts
+
+# Kokoro-82M is an OPTIONAL second TTS engine — its pip install must NEVER fail the image build
+# (a Kokoro-only hiccup would otherwise abort the whole stack's `jbrain update`, since one build
+# recreates every service). On failure the image still builds and read-aloud runs piper-only; the
+# weight fetch below is skipped unless this import succeeds, so /opt/kokoro stays empty and
+# piper_server lists no Kokoro voices (never a dead, listed voice). Pinned to 0.4.7 — the newest
+# release whose Requires-Python (>=3.9, no upper bound) installs on this base image's Python 3.14;
+# 0.4.8+/0.5.x cap at <3.14 and pip refuses them here. Same Kokoro()/.create() API and same v1.0
+# model files as 0.5.x, so the render code is unchanged. Bump when the base's Python moves.
+RUN pip install --no-cache-dir --break-system-packages kokoro-onnx==0.4.7 \
+ || echo "[kokoro] pip install failed — read-aloud will run piper-only until the next build"
 
 # Baked default voices: Joe reads prompts, Amy reads answers, plus the multi-speaker
 # libritts_r model whose curated speaker 3922 is a second female agent voice. Fetched with
@@ -57,13 +67,22 @@ B='https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US'; \
 
 # Kokoro-82M voices (Apache-2.0): ONE shared onnx model + a voice-styles bin that together serve
 # many voices, baked into /opt/kokoro — its OWN dir, so the piper voice glob never scans it. These
-# are the canonical kokoro-onnx release artifacts. Fetched with retry: they total ~340 MB and this
-# RUN executes under `docker compose build` during a `jbrain update` (set -e), so a transient blip
-# on a plain urlretrieve would abort an otherwise-fine update mid-build. The filenames must stay in
-# step with piper_server.py's KOKORO_MODEL/KOKORO_VOICES_FILE (the test guards this).
-RUN python3 - <<'PY'
-import time, urllib.request
+# are the canonical kokoro-onnx release artifacts. Fetched with retry (they total ~340 MB from
+# GitHub). Like the pip step, this is NON-FATAL — a transient blip or blocked egress must not abort
+# an otherwise-fine `jbrain update`. The `|| echo` swallows the failure; a giving-up SystemExit
+# leaves /opt/kokoro empty-or-partial, and piper_server's weights-both-present gate then lists no
+# Kokoro voices (piper-only) rather than a broken one. Skipped entirely unless the package imported,
+# so weights are never present without a runtime to use them. The filenames must stay in step with
+# piper_server.py's KOKORO_MODEL/KOKORO_VOICES_FILE (the test guards this).
+RUN python3 - <<'PY' \
+ || echo "[kokoro] weight fetch unavailable — read-aloud will run piper-only until the next build"
+import importlib.util
+import time
+import urllib.request
 from pathlib import Path
+
+if importlib.util.find_spec("kokoro_onnx") is None:
+    raise SystemExit("[kokoro] package not installed; skipping weight fetch")
 
 d = Path("/opt/kokoro")
 d.mkdir(parents=True, exist_ok=True)
