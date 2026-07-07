@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { useState } from "react";
 import { describe, expect, it, vi } from "vitest";
 import type { SegState } from "../notes/modes";
@@ -307,5 +307,107 @@ describe("Omnibox", () => {
     expect(sendBtn).not.toBeDisabled();
     fireEvent.click(sendBtn);
     expect(onConversation).toHaveBeenCalledWith("", [file]);
+  });
+
+  it("opens the model sheet on a long-press of a conversation tab, swallowing the tap", () => {
+    vi.useFakeTimers();
+    try {
+      const onLongPressTab = vi.fn();
+      const onSegChange = vi.fn();
+      render(
+        <Omnibox
+          seg={{ row: "main", mode: "research" }}
+          onSegChange={onSegChange}
+          onSend={vi.fn()}
+          onConversation={vi.fn()}
+          onOpenLauncher={vi.fn()}
+          onLongPressTab={onLongPressTab}
+        />,
+      );
+      const research = screen.getByRole("tab", { name: "Research" });
+      fireEvent.pointerDown(research, { clientX: 10, clientY: 10 });
+      act(() => vi.advanceTimersByTime(500));
+      expect(onLongPressTab).toHaveBeenCalledWith("research");
+      // The release + click that follows a long press must NOT also flip the tab.
+      fireEvent.pointerUp(research);
+      fireEvent.click(research);
+      expect(onSegChange).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not fire on a quick tap (release before the hold) and still switches tabs", () => {
+    vi.useFakeTimers();
+    try {
+      const onLongPressTab = vi.fn();
+      const onSegChange = vi.fn();
+      render(
+        <Omnibox
+          seg={{ row: "main", mode: "research" }}
+          onSegChange={onSegChange}
+          onSend={vi.fn()}
+          onConversation={vi.fn()}
+          onOpenLauncher={vi.fn()}
+          onLongPressTab={onLongPressTab}
+        />,
+      );
+      const brain = screen.getByRole("tab", { name: "Brain" });
+      // Press and release well before the hold threshold — a tap, not a long press.
+      fireEvent.pointerDown(brain, { clientX: 10, clientY: 10 });
+      act(() => vi.advanceTimersByTime(100));
+      fireEvent.pointerUp(brain);
+      act(() => vi.advanceTimersByTime(500));
+      expect(onLongPressTab).not.toHaveBeenCalled();
+      // The tap still selects the tab (no long press swallowed it).
+      fireEvent.click(brain);
+      expect(onSegChange).toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("right-clicks a conversation tab into the sheet, but leaves capture tabs alone", () => {
+    const onLongPressTab = vi.fn();
+    const { rerender } = render(
+      <Omnibox
+        seg={{ row: "main", mode: "research" }}
+        onSegChange={vi.fn()}
+        onSend={vi.fn()}
+        onConversation={vi.fn()}
+        onOpenLauncher={vi.fn()}
+        onLongPressTab={onLongPressTab}
+      />,
+    );
+    fireEvent.contextMenu(screen.getByRole("tab", { name: "Research" }));
+    expect(onLongPressTab).toHaveBeenCalledWith("research");
+
+    onLongPressTab.mockClear();
+    rerender(
+      <Omnibox
+        seg={{ row: "main", mode: "entry" }}
+        onSegChange={vi.fn()}
+        onSend={vi.fn()}
+        onConversation={vi.fn()}
+        onOpenLauncher={vi.fn()}
+        onLongPressTab={onLongPressTab}
+      />,
+    );
+    fireEvent.contextMenu(screen.getByRole("tab", { name: "Entry" }));
+    expect(onLongPressTab).not.toHaveBeenCalled();
+  });
+
+  it("shows the conversation model chip when a pick is active", () => {
+    render(
+      <Omnibox
+        seg={{ row: "main", mode: "research" }}
+        onSegChange={vi.fn()}
+        onSend={vi.fn()}
+        onConversation={vi.fn()}
+        onOpenLauncher={vi.fn()}
+        modelLabel="GPT-OSS 120B"
+      />,
+    );
+    expect(screen.getByText("GPT-OSS 120B")).toBeInTheDocument();
   });
 });

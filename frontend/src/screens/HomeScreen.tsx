@@ -3,6 +3,7 @@ import { FullBrainSurface } from "../agent/FullBrainSurface";
 import type { AppointmentRef } from "../agent/types";
 import { type FullBrainDeps, useFullBrain } from "../agent/useFullBrain";
 import { useReadAloud } from "../agent/useReadAloud";
+import { AgentModelSheet } from "../components/AgentModelSheet";
 import { Omnibox } from "../components/Omnibox";
 import { Stream } from "../components/Stream";
 import { TopBar } from "../components/TopBar";
@@ -70,6 +71,9 @@ export function HomeScreen({
   const [pendingAppt, setPendingAppt] = useState<AppointmentRef | null>(null);
   const [toast, setToast] = useState<Toast | null>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // The agent-model sheet (omnibox long-press on a conversation tab): pick the model
+  // the open conversation runs on, for that conversation only.
+  const [modelSheet, setModelSheet] = useState(false);
 
   // A compose handoff (the calendar's reschedule/cancel/ask) flips to Full Brain
   // and hands the prompt to the omnibox; the owner reviews and sends it. The
@@ -287,7 +291,19 @@ export function HomeScreen({
         attachEnabled={
           !conversational || fb.supportsVision || (seg.mode === "research" && fb.canEditImages)
         }
+        // Long-press a conversation tab → pick the model this chat runs on (that
+        // conversation only). Only offered on a conversation surface; the chip in the
+        // foot shows the active pick.
+        onLongPressTab={conversational ? () => setModelSheet(true) : undefined}
+        modelLabel={conversational ? (fb.modelOverride?.label ?? null) : null}
       />
+      {modelSheet && conversational && (
+        <AgentModelSheet
+          selected={fb.modelOverride}
+          onChoose={fb.setModelOverride}
+          onClose={() => setModelSheet(false)}
+        />
+      )}
       {toast && (
         <output className="toast">
           {toast.message}

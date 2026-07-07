@@ -22,6 +22,10 @@ vi.mock("../api/client", async (importOriginal) => {
       })),
       brainVoices: vi.fn(async () => [] as string[]),
       brainTts: vi.fn(async () => new Blob(["wav"], { type: "audio/wav" })),
+      // The agent-model sheet (omnibox long-press) reads the on-box models from here.
+      getLlmSettings: vi.fn(async () => ({
+        local_models: [{ id: "gpt-oss-120b", label: "GPT-OSS 120B", loaded: true }],
+      })),
     },
   };
 });
@@ -295,6 +299,35 @@ describe("HomeScreen mode scoping", () => {
         agent: "curator",
       }),
     );
+  });
+
+  it("long-pressing a conversation tab picks the model for that conversation", async () => {
+    const deps = fbDeps();
+    render(
+      <HomeScreen
+        notes={fakeController()}
+        actions={fakeActions()}
+        onOpenNote={vi.fn()}
+        onOpenSearch={vi.fn()}
+        onOpenLauncher={vi.fn()}
+        fbDeps={deps}
+      />,
+    );
+    fireEvent.click(screen.getByRole("tab", { name: "Brain" }));
+    await waitFor(() =>
+      expect(document.querySelector(".session-title")?.textContent).toBe("Recap"),
+    );
+    // Right-click (desktop long-press analog) the tab → the model sheet opens.
+    fireEvent.contextMenu(screen.getByRole("tab", { name: "Brain" }));
+    await waitFor(() =>
+      expect(screen.getByRole("dialog", { name: "Conversation model" })).toBeInTheDocument(),
+    );
+    // Pick the loaded model → the sheet closes and the composer shows the pick.
+    fireEvent.click(await screen.findByText("GPT-OSS 120B"));
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "Conversation model" })).not.toBeInTheDocument(),
+    );
+    expect(document.querySelector(".model-pill")?.textContent).toContain("GPT-OSS 120B");
   });
 
   it("renames the Research tab to Teacher while a Teacher chat is open", async () => {

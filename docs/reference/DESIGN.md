@@ -689,7 +689,16 @@ local append with an amber "pending sync" chip until the outbox clears.
 - Research / Full Brain sends hand off to the (Phase 4) conversation
   surface; in Phase 1 they explain themselves via toast.
 - **Conversation-surface foot** (added post-Phase-1): a live context-window
-  meter fills the foot's left, with the action icons hard right.
+  meter fills the foot's left, with the action icons hard right. When the open
+  conversation has a **per-conversation model pick** (below), a small mode-tinted
+  model chip sits beside the meter as a reminder the turn isn't on the default route.
+- **Per-conversation model pick** (long-press a conversation tab): long-pressing
+  (or right-clicking) the **Research** or **Full Brain** tab opens a bottom sheet
+  listing the on-box models **currently loaded**, plus an **Automatic** row that
+  clears back to the default route. The choice is scoped to **that conversation
+  only** — it rides every turn of that chat and is kept in memory (a reload reverts
+  to Automatic); it never touches the global task routing in Settings. Only
+  conversation tabs arm the gesture; capture tabs keep their native tap/right-click.
 - **Read-aloud (per turn)**: when the owner has enabled read-aloud (the
   `brain_read_aloud` setting), each settled answer carries a **three-state** play
   control just left of its copy button. Tapping it speaks that one turn and the glyph

@@ -5,7 +5,7 @@
 
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { AgentSession, ChatEvent, TranscriptTurn } from "./types";
+import type { AgentSession, ChatEvent, ChatRequest, TranscriptTurn } from "./types";
 import { type FullBrainDeps, useFullBrain } from "./useFullBrain";
 
 function session(over: Partial<AgentSession> = {}): AgentSession {
@@ -315,6 +315,74 @@ describe("useFullBrain — a turn stays attached to its own chat", () => {
     });
     await waitFor(() => expect(result.current.messages.at(-1)?.streaming).toBe(false));
     expect(result.current.messages.at(-1)?.text).toContain("the answer");
+  });
+});
+
+describe("useFullBrain — per-conversation model override", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  function recordingChat(bodies: ChatRequest[]) {
+    return vi.fn(async function* (body: ChatRequest): AsyncGenerator<ChatEvent> {
+      bodies.push(body);
+      yield { type: "done", stop_reason: "end_turn" };
+    });
+  }
+
+  it("rides the chosen model on every send, and clears back to the default", async () => {
+    const bodies: ChatRequest[] = [];
+    const d = deps({ chat: recordingChat(bodies) });
+    const { result } = renderHook(() => useFullBrain("fullbrain", d));
+    await waitFor(() => expect(result.current.active?.id).toBe("A"));
+
+    // Default route: nothing on the wire, nothing shown.
+    await act(async () => {
+      await result.current.send("hi");
+    });
+    await waitFor(() => expect(bodies).toHaveLength(1));
+    expect(bodies[0]?.model).toBeUndefined();
+    expect(result.current.modelOverride).toBeNull();
+
+    // Pick a model → it shows on the override and rides the next turn.
+    act(() => result.current.setModelOverride({ id: "gpt-oss-120b", label: "GPT-OSS 120B" }));
+    expect(result.current.modelOverride?.id).toBe("gpt-oss-120b");
+    await act(async () => {
+      await result.current.send("again");
+    });
+    await waitFor(() => expect(bodies).toHaveLength(2));
+    expect(bodies[1]?.model).toBe("gpt-oss-120b");
+
+    // Clear → back to the default route.
+    act(() => result.current.setModelOverride(null));
+    expect(result.current.modelOverride).toBeNull();
+    await act(async () => {
+      await result.current.send("more");
+    });
+    await waitFor(() => expect(bodies).toHaveLength(3));
+    expect(bodies[2]?.model).toBeUndefined();
+  });
+
+  it("scopes the pick to its own conversation", async () => {
+    const bodies: ChatRequest[] = [];
+    const d = deps({ chat: recordingChat(bodies) });
+    const { result } = renderHook(() => useFullBrain("fullbrain", d));
+    await waitFor(() => expect(result.current.active?.id).toBe("A"));
+
+    act(() => result.current.setModelOverride({ id: "gpt-oss-120b", label: "GPT-OSS 120B" }));
+
+    // Chat B has no pick — a send there carries no model.
+    act(() => result.current.open(session({ id: "B", title: "B" })));
+    await waitFor(() => expect(result.current.active?.id).toBe("B"));
+    expect(result.current.modelOverride).toBeNull();
+    await act(async () => {
+      await result.current.send("from B");
+    });
+    await waitFor(() => expect(bodies).toHaveLength(1));
+    expect(bodies[0]?.model).toBeUndefined();
+
+    // Back to A — its pick is intact.
+    act(() => result.current.open(session({ id: "A", title: "A" })));
+    await waitFor(() => expect(result.current.active?.id).toBe("A"));
+    expect(result.current.modelOverride?.id).toBe("gpt-oss-120b");
   });
 });
 

@@ -342,12 +342,18 @@ class AgentLoop:
         recorder: RunRecorder | None = None,
         guardrails: Guardrails | None = None,
         task: str = "agent.turn",
+        model_override: str | None = None,
     ):
         self._router = router
         self._registry = registry
         self._recorder = recorder
         self._g = guardrails or Guardrails()
         self._task = task
+        # A per-conversation model pick (the omnibox long-press sheet): a "provider:model"
+        # spec every model call this loop makes runs on, outranking the task's resolved
+        # route. None = the resolved default. Scoped to THIS loop (the /chat turn), so a
+        # sub-agent the turn spawns still runs on its own configured model.
+        self._model_override = model_override
 
     @staticmethod
     def _tree_exhausted(tree: TreeState | None, depth: int) -> bool:
@@ -383,6 +389,7 @@ class AgentLoop:
                 max_tokens=TURN_MAX_TOKENS,
                 strength=SYSTEM_STRENGTH,
                 effort_override=reasoning_effort,
+                spec_override=self._model_override,
             )
         turn: LlmTurn | None = None
         async for part in self._router.converse_stream(
@@ -393,6 +400,7 @@ class AgentLoop:
             max_tokens=TURN_MAX_TOKENS,
             strength=SYSTEM_STRENGTH,
             effort_override=reasoning_effort,
+            spec_override=self._model_override,
         ):
             if isinstance(part, TextChunk):
                 if part.text and on_text is not None:
@@ -645,6 +653,7 @@ class AgentLoop:
                 tools=tools,
                 max_tokens=TURN_MAX_TOKENS,
                 strength=SYSTEM_STRENGTH,
+                spec_override=self._model_override,
             ):
                 if isinstance(part, TextChunk):
                     if part.text:
@@ -983,6 +992,7 @@ class AgentLoop:
                 tools=tools,
                 max_tokens=TURN_MAX_TOKENS,
                 strength=SYSTEM_STRENGTH,
+                spec_override=self._model_override,
             )
             spent = turn.usage.input_tokens + turn.usage.output_tokens
             budget[0] -= spent

@@ -365,6 +365,11 @@ export interface ChatRequest {
   /** Ids of files the owner attached this turn (uploaded ahead of the send). The
    * agent reads their extracts/vision; the bubble shows them as chips. */
   attachment_ids?: string[];
+  /** The owner's per-conversation agent-model pick (the omnibox long-press sheet):
+   * a LOCAL catalog id the turn's agent.turn runs on instead of the resolved default.
+   * Turn-local — never persisted on the session; the backend validates it against the
+   * catalog and ignores an unknown id (the turn runs on the default). */
+  model?: string;
 }
 
 // --- Proposals (the review inbox; /api/proposals) ---
