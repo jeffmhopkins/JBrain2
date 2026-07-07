@@ -76,6 +76,13 @@ silence appended after each Kokoro clip for a beat between sentences).
 trail modest; per-mode story-vs-answer control is a later wave). They affect **Kokoro only** — the
 snappy piper fallback ignores the speed and the trail env default.
 
+**Narrator blends.** `KOKORO_BLENDS` in `piper_server.py` defines custom voices as a **weighted
+average of two or more Kokoro voice style vectors** (a timbre no single baked voice gives) — each
+appears in the Settings Kokoro list as `kokoro-<key>` ("Kokoro · Narrator"). Seeded with one warm
+`narrator` blend (`am_michael` 0.6 + `af_nicole` 0.4); retune the voices/weights or add blends by
+ear (weights should sum to ~1; referenced voices must be in `CURATED_KOKORO_VOICES` — a test
+guards it). Blending is style-vector math on the resident model, so it needs no extra weights.
+
 Diagnostics: while an owner debug-console token is live the api pushes `tts_debug` here, and
 each render logs `[tts] rendering … speaker=N` / `[tts] rendered … in N ms` (failures always
 log). Read via `docker logs tts-stt` or the debug console's `GET /api/debug/logs/tts-stt`.

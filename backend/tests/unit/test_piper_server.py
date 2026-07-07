@@ -54,6 +54,22 @@ class _FakeSynthesisConfig:
         self.speaker_id = speaker_id
 
 
+class _FakeStyle:
+    """Minimal Kokoro voice-style-matrix stand-in: supports the weighted-average blending the
+    server does (scalar `*` then `+`), so a blend's math is checkable without numpy."""
+
+    def __init__(self, data: list[float]) -> None:
+        self.data = list(data)
+
+    def __mul__(self, w: float) -> "_FakeStyle":
+        return _FakeStyle([x * w for x in self.data])
+
+    __rmul__ = __mul__
+
+    def __add__(self, other: "_FakeStyle") -> "_FakeStyle":
+        return _FakeStyle([a + b for a, b in zip(self.data, other.data, strict=True)])
+
+
 class _FakeKokoro:
     """Stand-in for kokoro_onnx.Kokoro: records loads + the last create() call, returns a
     numpy-free (list, rate) so the stdlib float->PCM path is exercised without pulling numpy into
@@ -61,9 +77,14 @@ class _FakeKokoro:
 
     loads: list[str] = []
     last_create: dict = {}
+    # Deterministic per-voice style vectors so a blend's weighted average is exactly checkable.
+    _STYLES = {"am_michael": [10.0, 20.0], "af_nicole": [30.0, 40.0]}
 
     def __init__(self, model_path: str, voices_path: str) -> None:
         type(self).loads.append(str(model_path))
+
+    def get_voice_style(self, name: str) -> "_FakeStyle":
+        return _FakeStyle(_FakeKokoro._STYLES.get(name, [0.0, 0.0]))
 
     def create(  # type: ignore[no-untyped-def]
         self, text, voice, speed=1.0, lang="en-us", is_phonemes=False, trim=True
@@ -446,3 +467,39 @@ def test_piper_ignores_the_kokoro_trail_env_default(
     out = server.tts_wav("hi", "en_US-amy-medium", lead_ms=0)
     assert out is not None
     assert _wav_frames(out) == 100  # piper's own 100 frames, no trailing silence
+
+
+# --- W3: narrator voice blending -----------------------------------------------------------
+
+
+def test_kokoro_blend_listed_after_the_plain_voices(kokoro_server: types.ModuleType) -> None:
+    voices = kokoro_server.piper_voices()
+    assert "kokoro-narrator" in voices
+    assert voices.index("kokoro-narrator") > voices.index("kokoro-af_heart")  # blends come last
+
+
+def test_kokoro_blend_weighted_averages_the_voice_styles(kokoro_server: types.ModuleType) -> None:
+    kokoro_server._g2p_holder.clear()
+    assert kokoro_server.tts_wav("hi", "kokoro-narrator", lead_ms=0) is not None
+    voice = _FakeKokoro.last_create["voice"]
+    # narrator = am_michael*0.6 + af_nicole*0.4 = [10,20]*0.6 + [30,40]*0.4 = [18, 28].
+    assert isinstance(voice, _FakeStyle)
+    assert voice.data == pytest.approx([18.0, 28.0])
+    assert _FakeKokoro.last_create["is_phonemes"] is True  # blends still ride the misaki path
+
+
+def test_kokoro_plain_voice_passes_its_name_not_a_blend(kokoro_server: types.ModuleType) -> None:
+    kokoro_server._g2p_holder.clear()
+    kokoro_server.tts_wav("hi", "kokoro-af_heart", lead_ms=0)
+    assert _FakeKokoro.last_create["voice"] == "af_heart"  # a plain voice is a name string
+
+
+def test_kokoro_blends_are_well_formed(server: types.ModuleType) -> None:
+    # Guard the blend registry: non-empty (an empty blend renders None), keys don't collide with a
+    # real voice name (which would shadow it), and every referenced voice is actually baked in the
+    # bin (a typo would otherwise render None).
+    for key, blend in server.KOKORO_BLENDS.items():
+        assert blend, f"blend {key!r} is empty"
+        assert key not in server.CURATED_KOKORO_VOICES, f"blend {key!r} collides with a real voice"
+        for vname, _weight in blend:
+            assert vname in server.CURATED_KOKORO_VOICES

@@ -1,6 +1,6 @@
 # Read-aloud, audiobook grade — Kokoro pronunciation, pacing, and narrator voice
 
-> **Status:** In progress · **Last verified:** 2026-07-07 · **Waves:** W0✅ W1✅ W2✅ W3◻️ W4◻️
+> **Status:** In progress · **Last verified:** 2026-07-07 · **Waves:** W0✅ W1✅ W2✅ W3✅ W4◻️
 
 **A scheduled, multi-wave build plan** (per `docs/DOC_LIFECYCLE.md`), governed by
 `docs/reference/PROCESS.md`. It builds directly on the shipped
@@ -147,7 +147,10 @@ RLS / the domain firewall / principal scope, so no red-team gate — except wher
   one or more curated blended narrator ids (e.g. `kokoro-narrator`) through the existing
   `/tts/voices` list — they appear in the **existing** picker (data-driven), so **no new
   GUI surface**.
-- **Verify:** blend-math + listing + render tests. No new deps, no GUI gate.
+- **Verify:** blend-math + listing + render tests. No new deps, no GUI gate. **(Landed** —
+  `KOKORO_BLENDS` in `piper_server.py`, seeded with one `narrator` blend, owner-tunable; blends
+  ride the misaki path; a plain voice still passes its name string. Which voices/weights actually
+  sound good is an **ear** call for the owner.**)**
 
 ### W4 — Reading modes (story vs answer) — **GUI gate**
 
