@@ -28,12 +28,17 @@ const IMAGE_ANALYSIS_OPTIONS: { value: ImageAnalysisMode; label: string }[] = [
 // voice/speaker before choosing it — never real answer text.
 const VOICE_SAMPLE_TEXT = "This is how the assistant will sound when it reads your answers aloud.";
 
-// The primary Voice dropdown offers piper voices directly plus one "Kokoro" entry; this sentinel
-// is that entry's value (not a real voice id), and selecting it reveals the Kokoro sub-dropdown.
-const KOKORO_SENTINEL = "__kokoro__";
+// Read-aloud models surfaced as one Piper | Kokoro | Native control: "piper" and "kokoro" both
+// render on the box (the engine "piper"), "native" is the device's own voice.
+type ReadAloudModel = "piper" | "kokoro" | "native";
+const MODEL_LABEL: Record<ReadAloudModel, string> = {
+  piper: "Piper",
+  kokoro: "Kokoro",
+  native: "Native",
+};
 
 // Kokoro accent/gender from the voice-id prefix (af_ = American female, etc.), for a readable
-// label in the Kokoro sub-dropdown.
+// label in the Kokoro voice dropdown.
 const KOKORO_ACCENT: Record<string, string> = {
   af: "American F",
   am: "American M",
@@ -386,22 +391,39 @@ export function SettingsScreen({ deviceLabel, onLogout }: SettingsScreenProps) {
     void api.updateSettings({ brain_read_aloud_engine: next }).catch(() => {});
   }
 
-  // The picker splits the installed voices by engine: piper voices sit directly in the primary
-  // dropdown; Kokoro's (English) voices are many, so they hide behind one "Kokoro" entry that
-  // reveals a second dropdown (the owner's chosen "double dropdown"). Kokoro ids are "kokoro-*".
+  // The read-aloud model is a view over two settings. "native" is the engine; "piper" and
+  // "kokoro" both render on-box (engine "piper") and differ only by whether the chosen answer
+  // voice is a Kokoro id ("kokoro-*"). Split the installed voices so each model shows its own.
   const installedVoices = voices ?? [];
   const kokoroVoices = installedVoices.filter((v) => v.startsWith("kokoro-"));
   const piperVoiceIds = installedVoices.filter((v) => !v.startsWith("kokoro-"));
   const answerIsKokoro = (brainAnswerVoice ?? "").startsWith("kokoro-");
+  const currentModel: ReadAloudModel | null =
+    brainEngine === null
+      ? null
+      : brainEngine === "native"
+        ? "native"
+        : answerIsKokoro
+          ? "kokoro"
+          : "piper";
+  // Offer Kokoro only when the box has Kokoro voices — or one is already selected, so a saved
+  // Kokoro pick on a box that lists none still shows (and stays on) its model.
+  const models: ReadAloudModel[] =
+    kokoroVoices.length > 0 || currentModel === "kokoro"
+      ? ["piper", "kokoro", "native"]
+      : ["piper", "native"];
 
-  // Primary dropdown change: the Kokoro sentinel switches engines (defaulting to the first Kokoro
-  // voice unless one is already chosen); any other value is a piper voice picked directly.
-  function pickPrimaryVoice(value: string) {
-    if (value === KOKORO_SENTINEL) {
-      if (!answerIsKokoro && kokoroVoices[0]) pickAnswerVoice(kokoroVoices[0]);
-    } else {
-      pickAnswerVoice(value);
+  // Switch model: "native" flips the engine; "piper"/"kokoro" both render on-box (engine "piper")
+  // and steer the answer voice to that model's kind when it isn't already there.
+  function pickModel(model: ReadAloudModel) {
+    if (model === "native") {
+      pickEngine("native");
+      return;
     }
+    if (brainEngine !== "piper") pickEngine("piper");
+    if (model === "kokoro" && !answerIsKokoro && kokoroVoices[0]) pickAnswerVoice(kokoroVoices[0]);
+    else if (model === "piper" && answerIsKokoro && piperVoiceIds[0])
+      pickAnswerVoice(piperVoiceIds[0]);
   }
 
   // The one multi-speaker model the explorer shuffles across (libritts_r today), and its
@@ -610,22 +632,22 @@ export function SettingsScreen({ deviceLabel, onLogout }: SettingsScreenProps) {
       <section className="settings-card">
         <h2 className="settings-label">Read-aloud voice</h2>
         <p className="settings-meta">
-          how the assistant reads answers aloud in chat. the box renders it on-device in the voice
-          below (piper, or the more natural Kokoro) — the same voice the wall display uses — and
-          falls back to this device's built-in voice when the box can't be reached; native always
-          uses this device's built-in voice.
+          how the assistant reads answers aloud in chat (and on the wall display). pick a model:{" "}
+          <b>Piper</b> or the more natural <b>Kokoro</b> render on the box; <b>Native</b> uses this
+          device's built-in voice. the on-box models fall back to native when the box can't be
+          reached.
         </p>
-        <div className="theme-picker" aria-label="Read-aloud engine">
-          {(["piper", "native"] as const).map((eng) => (
+        <div className="theme-picker" aria-label="Read-aloud model">
+          {models.map((model) => (
             <button
-              key={eng}
+              key={model}
               type="button"
-              aria-pressed={brainEngine === eng}
-              className={`seg${brainEngine === eng ? " seg-on" : ""}`}
+              aria-pressed={currentModel === model}
+              className={`seg${currentModel === model ? " seg-on" : ""}`}
               disabled={brainEngine === null}
-              onClick={() => pickEngine(eng)}
+              onClick={() => pickModel(model)}
             >
-              {eng === "piper" ? "Piper" : "Native"}
+              {MODEL_LABEL[model]}
             </button>
           ))}
         </div>
@@ -640,55 +662,58 @@ export function SettingsScreen({ deviceLabel, onLogout }: SettingsScreenProps) {
             </p>
           ) : (
             <>
-              <p className="settings-meta">
-                piper multi-speaker models (like LibriTTS) list their speakers; pick <b>Kokoro</b>{" "}
-                for a more natural voice, then choose one from its list. play a sample to hear one
-                before choosing it.
-              </p>
-              <label className="settings-field">
-                Voice
-                <select
-                  aria-label="Read-aloud voice"
-                  value={answerIsKokoro ? KOKORO_SENTINEL : (brainAnswerVoice ?? "")}
-                  onChange={(e) => pickPrimaryVoice(e.target.value)}
-                >
-                  {/* Surface a stored piper voice the box no longer lists so the select isn't blank. */}
-                  {brainAnswerVoice && !answerIsKokoro && !voices.includes(brainAnswerVoice) && (
-                    <option value={brainAnswerVoice}>{voiceLabel(brainAnswerVoice)}</option>
-                  )}
-                  {piperVoiceIds.map((v) => (
-                    <option key={v} value={v}>
-                      {voiceLabel(v)}
-                    </option>
-                  ))}
-                  {/* Show the Kokoro entry whenever this box offers Kokoro voices OR the saved
-                      voice is already a Kokoro one — the latter keeps the sentinel selectable (so
-                      the primary isn't blank) when viewing a box that lists no Kokoro voices. */}
-                  {(kokoroVoices.length > 0 || answerIsKokoro) && (
-                    <option value={KOKORO_SENTINEL}>Kokoro</option>
-                  )}
-                </select>
-              </label>
-              {answerIsKokoro && (
-                <label className="settings-field">
-                  Kokoro voice
-                  <select
-                    aria-label="Kokoro voice"
-                    value={brainAnswerVoice ?? ""}
-                    onChange={(e) => pickAnswerVoice(e.target.value)}
-                  >
-                    {/* Surface the saved Kokoro voice when the box doesn't list it (incl. a box
-                        with no Kokoro weights at all) so the sub-dropdown isn't blank. */}
-                    {brainAnswerVoice && !voices.includes(brainAnswerVoice) && (
-                      <option value={brainAnswerVoice}>{voiceLabel(brainAnswerVoice)}</option>
-                    )}
-                    {kokoroVoices.map((v) => (
-                      <option key={v} value={v}>
-                        {voiceLabel(v)}
-                      </option>
-                    ))}
-                  </select>
-                </label>
+              {currentModel === "kokoro" ? (
+                <>
+                  <p className="settings-meta">
+                    Kokoro's natural English voices — American and British. play a sample to hear
+                    one before choosing it.
+                  </p>
+                  <label className="settings-field">
+                    Kokoro voice
+                    <select
+                      aria-label="Kokoro voice"
+                      value={brainAnswerVoice ?? ""}
+                      onChange={(e) => pickAnswerVoice(e.target.value)}
+                    >
+                      {/* Surface the saved Kokoro voice when the box doesn't list it so it isn't blank. */}
+                      {brainAnswerVoice && !voices.includes(brainAnswerVoice) && (
+                        <option value={brainAnswerVoice}>{voiceLabel(brainAnswerVoice)}</option>
+                      )}
+                      {kokoroVoices.map((v) => (
+                        <option key={v} value={v}>
+                          {voiceLabel(v)}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </>
+              ) : (
+                <>
+                  <p className="settings-meta">
+                    piper multi-speaker models (like LibriTTS) list their individual speakers. play
+                    a sample to hear one before choosing it.
+                  </p>
+                  <label className="settings-field">
+                    Voice
+                    <select
+                      aria-label="Read-aloud voice"
+                      value={brainAnswerVoice ?? ""}
+                      onChange={(e) => pickAnswerVoice(e.target.value)}
+                    >
+                      {/* Surface a stored piper voice the box no longer lists so the select isn't blank. */}
+                      {brainAnswerVoice &&
+                        !answerIsKokoro &&
+                        !voices.includes(brainAnswerVoice) && (
+                          <option value={brainAnswerVoice}>{voiceLabel(brainAnswerVoice)}</option>
+                        )}
+                      {piperVoiceIds.map((v) => (
+                        <option key={v} value={v}>
+                          {voiceLabel(v)}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </>
               )}
               <div className="settings-actions">
                 <button
@@ -701,7 +726,7 @@ export function SettingsScreen({ deviceLabel, onLogout }: SettingsScreenProps) {
                 </button>
               </div>
               {sampleError && <p className="settings-meta settings-error">{sampleError}</p>}
-              {roster.length > 0 && (
+              {currentModel !== "kokoro" && roster.length > 0 && (
                 <div className="voice-explorer" aria-label="Discover a voice">
                   <p className="voice-explorer-cap">Discover a voice</p>
                   <p className="settings-meta">
