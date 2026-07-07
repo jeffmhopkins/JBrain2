@@ -125,6 +125,33 @@ describe("speakable", () => {
     expect(speakable("pick 3-5 of them")).toBe("pick three to five of them.");
   });
 
+  it("expands titles and abbreviations espeak reads wrong or splits on", () => {
+    // Titles: espeak says "Mister" but breaks the sentence before the name — expanding + dropping
+    // the period keeps the clause together.
+    expect(speakable("Dr. Lee met Mr. Ng")).toBe("Doctor Lee met Mister Ng.");
+    expect(speakable("Mrs. Ng and Ms. Poe")).toBe("Missus Ng and Miz Poe.");
+    expect(speakable("Prof. Ada spoke")).toBe("Professor Ada spoke.");
+    // vs/approx: espeak reads "V S" / "approx" — say the words.
+    expect(speakable("cats vs. dogs")).toBe("cats versus dogs.");
+    expect(speakable("approx. 5 items")).toBe("approximately five items.");
+  });
+
+  it("turns an ellipsis into a comma beat (not a sentence break or 'dot dot dot')", () => {
+    expect(speakable("wait... okay then")).toBe("wait, okay then.");
+    expect(speakable("hmm… maybe")).toBe("hmm, maybe.");
+    // Trailing ellipsis folds into the sentence period, no stray comma.
+    expect(speakable("that's it...")).toBe("that's it.");
+  });
+
+  it("speaks simple proper fractions but leaves ratios and dates as slashes", () => {
+    expect(speakable("add 3/4 cup")).toBe("add three quarters cup.");
+    expect(speakable("1/2 of it")).toBe("one half of it.");
+    expect(speakable("2/3 done")).toBe("two thirds done.");
+    // Improper ratio and a date must NOT become fractions (they fall through to the slash map).
+    expect(speakable("24/7 support")).toBe("twenty four slash seven support.");
+    expect(speakable("on 07/04 today")).toBe("on seven slash four today.");
+  });
+
   it("strips emphasis, headings, blockquotes and horizontal rules", () => {
     expect(speakable("**Bold** and _italic_ and ~~struck~~.")).toBe("Bold and italic and struck.");
     expect(speakable("> quoted note\n\n---\n\nafter rule")).toBe("quoted note. after rule.");
@@ -163,6 +190,16 @@ describe("chunkStream", () => {
     expect(clips).toContain("Row one: Name, Al; Pts, three.");
     expect(clips).toContain("Row two: Name, Bo; Pts, two.");
     expect(clips.at(-1)).toBe("After.");
+  });
+
+  it("does not cut a clip after an abbreviation or ellipsis mid-stream", () => {
+    // Buffer ends right after "Dr." with no real sentence terminator yet — must hold, not emit
+    // "Doctor" as its own clip (which would drop a pause before the name).
+    expect(chunkStream("Dr. Smith is here", false).chunks).toEqual([]);
+    // Once the sentence closes it commits as one clip, with the title expanded.
+    expect(chunkStream("Dr. Smith is here. ", false).chunks).toEqual(["Doctor Smith is here."]);
+    // An ellipsis mid-thought is likewise held, not treated as a sentence boundary.
+    expect(chunkStream("wait... nearly", false).chunks).toEqual([]);
   });
 
   it("streaming in any number of steps yields the same clips as one shot (no loss/dup)", () => {
