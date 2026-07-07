@@ -116,13 +116,22 @@ describe("speakable", () => {
     );
     // Spaced ASCII hyphen used as a dash also gets the beat.
     expect(speakable("quick round - then swap")).toBe("quick round, then swap.");
-    // A compound hyphen (no surrounding space) is left alone — no pause; a stylized
-    // non-breaking hyphen normalizes to it, so "most‑play‑again" reads as one compound.
-    expect(speakable("the most‑play‑again award is well-known")).toBe(
-      "the most-play-again award is well-known.",
-    );
     // Numeric ranges still read as "to", not a comma.
     expect(speakable("pick 3-5 of them")).toBe("pick three to five of them.");
+  });
+
+  it("splits a compound hyphen into a space so espeak doesn't mash the words", () => {
+    // ASCII "large-scale" reads as "largescale" in espeak; a space gives two clean words. The
+    // Unicode/non-breaking hyphens ("Bob‑verse", "most‑play‑again") are handled the same way.
+    expect(speakable("a large-scale AI matrix")).toBe("a large scale AI matrix.");
+    expect(speakable("the most‑play‑again award is well-known")).toBe(
+      "the most play again award is well known.",
+    );
+    expect(speakable("a self‑replicating Bob‑verse probe")).toBe(
+      "a self replicating Bob verse probe.",
+    );
+    // Letter/digit compounds too (model numbers, callsigns).
+    expect(speakable("Aurora‑One near Kestrel‑7")).toBe("Aurora One near Kestrel seven.");
   });
 
   it("expands titles and abbreviations espeak reads wrong or splits on", () => {
@@ -136,11 +145,13 @@ describe("speakable", () => {
     expect(speakable("approx. 5 items")).toBe("approximately five items.");
   });
 
-  it("turns an ellipsis into a comma beat (not a sentence break or 'dot dot dot')", () => {
-    expect(speakable("wait... okay then")).toBe("wait, okay then.");
-    expect(speakable("hmm… maybe")).toBe("hmm, maybe.");
-    // Trailing ellipsis folds into the sentence period, no stray comma.
-    expect(speakable("that's it...")).toBe("that's it.");
+  it("keeps an ellipsis as a dramatic beat (not a comma, not 'dot dot dot')", () => {
+    // "..." and "…" both normalize to one ellipsis char — a ~300 ms pause espeak renders without
+    // saying the dots, and which the chunker won't split on (it's not . ! ?).
+    expect(speakable("wait... okay then")).toBe("wait… okay then.");
+    expect(speakable("hmm… maybe")).toBe("hmm… maybe.");
+    // A trailing ellipsis is itself terminal — no extra period appended.
+    expect(speakable("that's it...")).toBe("that's it…");
   });
 
   it("speaks simple proper fractions but leaves ratios and dates as slashes", () => {
