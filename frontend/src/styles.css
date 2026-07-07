@@ -984,7 +984,7 @@ h3 {
 }
 
 /* Voice explorer (read-aloud) — shuffle-audition the multi-speaker roster. Sits inside the
-   Read-aloud voice card under the curated picker; a nested surface so it reads as a sub-tool. */
+   Read-aloud card under the Piper model's voice picker; a nested surface so it reads as a sub-tool. */
 .voice-explorer {
   margin-top: 14px;
   padding: 14px;

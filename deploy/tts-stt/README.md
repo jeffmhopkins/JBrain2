@@ -13,8 +13,9 @@ One always-on container serving the box's **speech I/O**:
   `/tts/voices` lists the curated piper presets **and** the Kokoro English voice roster (ids
   `kokoro-<voice>` — the American + British v1.0 voices, since read-aloud renders `lang=en-us`;
   appended after the piper ones and only when the Kokoro weights are baked, so a box without them
-  lists none). In Settings these group under a single **Kokoro** entry that reveals a second
-  dropdown of the full list. `/tts/speakers` is the **full multi-speaker piper roster** (speaker
+  lists none). In Settings, **Kokoro** is a first-class read-aloud model (Piper | Kokoro | Native);
+  selecting it shows a dropdown of these voices. `/tts/speakers` is the **full multi-speaker piper
+  roster** (speaker
   names ordered by piper index) that the Settings voice explorer shuffles across — for piper,
   `/tts` renders **any** valid `<stem>#<speaker>` of an installed model, not only the curated
   few, validated against the model's `speaker_id_map`. A `kokoro-<voice>` id is

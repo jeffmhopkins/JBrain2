@@ -175,17 +175,19 @@ describe("SettingsScreen read-wall-display-aloud toggle", () => {
 });
 
 describe("SettingsScreen read-aloud voice picker", () => {
-  it("lists piper voices directly plus a single Kokoro entry, and PUTs a pick", async () => {
+  it("defaults to the Piper model, listing piper voices only (Kokoro is a model, not an option)", async () => {
     const { puts } = stubSettingsFetch();
     setup();
+    const models = within(await screen.findByLabelText("Read-aloud model"));
+    expect(models.getByRole("button", { name: "Piper" })).toHaveAttribute("aria-pressed", "true");
+    expect(models.getByRole("button", { name: "Kokoro" })).toBeInTheDocument();
+    expect(models.getByRole("button", { name: "Native" })).toBeInTheDocument();
     const select = (await screen.findByLabelText("Read-aloud voice")) as HTMLSelectElement;
-    // The curated multi-speaker entry shows its speaker after a dot.
     expect(within(select).getByRole("option", { name: "Libritts_r · 3922" })).toBeInTheDocument();
     expect(within(select).getByRole("option", { name: "Amy" })).toBeInTheDocument();
-    // Kokoro's many voices hide behind ONE "Kokoro" entry, not flat in the primary dropdown.
-    expect(within(select).getByRole("option", { name: "Kokoro" })).toBeInTheDocument();
+    // Kokoro is a model button now — no "Kokoro" entry, and no Kokoro voices, in the piper dropdown.
+    expect(within(select).queryByRole("option", { name: "Kokoro" })).toBeNull();
     expect(within(select).queryByRole("option", { name: "Heart · American F" })).toBeNull();
-    // The Kokoro sub-dropdown is hidden until Kokoro is chosen.
     expect(screen.queryByLabelText("Kokoro voice")).toBeNull();
     fireEvent.change(select, { target: { value: "en_US-libritts_r-medium#3922" } });
     await waitFor(() =>
@@ -193,53 +195,70 @@ describe("SettingsScreen read-aloud voice picker", () => {
     );
   });
 
-  it("reveals the Kokoro sub-dropdown and PUTs a Kokoro voice pick", async () => {
+  it("switches to the Kokoro model, showing the Kokoro voice list and PUTting a pick", async () => {
     const { puts } = stubSettingsFetch();
     setup();
-    const primary = (await screen.findByLabelText("Read-aloud voice")) as HTMLSelectElement;
-    // Choosing "Kokoro" defaults to the first Kokoro voice and reveals the sub-dropdown.
-    fireEvent.change(primary, { target: { value: "__kokoro__" } });
+    const models = within(await screen.findByLabelText("Read-aloud model"));
+    // Selecting the Kokoro model defaults to the first Kokoro voice and swaps in its voice list.
+    fireEvent.click(models.getByRole("button", { name: "Kokoro" }));
     await waitFor(() => expect(puts).toContainEqual({ brain_answer_voice: "kokoro-af_heart" }));
+    // The piper Voice dropdown gives way to the Kokoro one.
+    await waitFor(() => expect(screen.queryByLabelText("Read-aloud voice")).toBeNull());
     const sub = (await screen.findByLabelText("Kokoro voice")) as HTMLSelectElement;
-    // Kokoro voices read as "Name · Accent Gender".
     expect(within(sub).getByRole("option", { name: "Heart · American F" })).toBeInTheDocument();
     expect(within(sub).getByRole("option", { name: "Michael · American M" })).toBeInTheDocument();
     expect(within(sub).getByRole("option", { name: "Emma · British F" })).toBeInTheDocument();
-    // Picking one from the sub-dropdown saves that exact kokoro-* id.
     fireEvent.change(sub, { target: { value: "kokoro-bf_emma" } });
     await waitFor(() => expect(puts).toContainEqual({ brain_answer_voice: "kokoro-bf_emma" }));
   });
 
-  it("keeps a saved Kokoro voice visible on a box that lists no Kokoro voices", async () => {
+  it("switches back to Piper from Kokoro, reverting the answer voice to a piper id", async () => {
+    const { puts } = stubSettingsFetch("full", { answerVoice: "kokoro-af_heart" });
+    setup();
+    const models = within(await screen.findByLabelText("Read-aloud model"));
+    // Starts on Kokoro (saved kokoro voice); its voice list is shown.
+    await waitFor(() =>
+      expect(models.getByRole("button", { name: "Kokoro" })).toHaveAttribute(
+        "aria-pressed",
+        "true",
+      ),
+    );
+    expect(screen.getByLabelText("Kokoro voice")).toBeInTheDocument();
+    // Clicking Piper reverts the answer voice to the first piper id and swaps the list back.
+    fireEvent.click(models.getByRole("button", { name: "Piper" }));
+    await waitFor(() => expect(puts).toContainEqual({ brain_answer_voice: "en_US-amy-medium" }));
+    await waitFor(() => expect(screen.queryByLabelText("Kokoro voice")).toBeNull());
+    expect(screen.getByLabelText("Read-aloud voice")).toBeInTheDocument();
+  });
+
+  it("keeps a saved Kokoro model selected on a box that lists no Kokoro voices", async () => {
     // brain_answer_voice is account-synced, but /tts/voices is per-box: a box without the Kokoro
-    // weights lists none. The primary must still show "Kokoro" (not blank) and the saved voice
-    // must surface in the sub-dropdown, so the selection stays visible + recoverable.
+    // weights lists none. The Kokoro model must still show selected and the saved voice must
+    // surface, so the selection stays visible + recoverable.
     stubSettingsFetch("full", {
       answerVoice: "kokoro-af_sky",
       voices: ["en_US-amy-medium", "en_US-joe-medium"],
     });
     setup();
-    const primary = (await screen.findByLabelText("Read-aloud voice")) as HTMLSelectElement;
-    expect(primary.value).toBe("__kokoro__"); // shows Kokoro selected, not blank
-    expect(within(primary).getByRole("option", { name: "Kokoro" })).toBeInTheDocument();
+    const models = within(await screen.findByLabelText("Read-aloud model"));
+    expect(models.getByRole("button", { name: "Kokoro" })).toHaveAttribute("aria-pressed", "true");
     const sub = (await screen.findByLabelText("Kokoro voice")) as HTMLSelectElement;
     expect(sub.value).toBe("kokoro-af_sky");
     expect(within(sub).getByRole("option", { name: "Sky · American F" })).toBeInTheDocument();
   });
 
-  it("switches the read-aloud engine and hides the voice picker on Native", async () => {
+  it("switches to the Native model and hides the on-box voice picker", async () => {
     const { puts } = stubSettingsFetch();
     setup();
-    const group = within(await screen.findByLabelText("Read-aloud engine"));
-    // Defaults to Piper (on-box), so the voice picker is shown.
+    const models = within(await screen.findByLabelText("Read-aloud model"));
     await waitFor(() =>
-      expect(group.getByRole("button", { name: "Piper" })).toHaveAttribute("aria-pressed", "true"),
+      expect(models.getByRole("button", { name: "Piper" })).toHaveAttribute("aria-pressed", "true"),
     );
     expect(screen.getByLabelText("Read-aloud voice")).toBeInTheDocument();
 
-    fireEvent.click(group.getByRole("button", { name: "Native" }));
+    fireEvent.click(models.getByRole("button", { name: "Native" }));
     await waitFor(() => expect(puts).toContainEqual({ brain_read_aloud_engine: "native" }));
-    // Native uses the device voice — the piper voice picker drops away.
+    // Native uses the device voice — the on-box voice picker drops away.
     await waitFor(() => expect(screen.queryByLabelText("Read-aloud voice")).toBeNull());
   });
 
