@@ -1,13 +1,16 @@
 # Teacher Mode — Component Catalog (for triage)
 
-> **Status:** Living · **Last verified:** 2026-07-06
+> **Status:** Living · **Last verified:** 2026-07-07
 
 Research dossier. A consolidated, deduplicated catalog of UI components a live
 LLM **teacher** could compose into a lesson. Produced by five parallel research
 sweeps (assessment, visualization, lesson-structure, content/media,
-dialogue/adaptivity) and merged here. **Nothing is built or mocked** — this is a
-menu to triage. The eventual "teacher course plan" that would sequence these is
-**out of current scope**; this only catalogs the building blocks it would draw on.
+dialogue/adaptivity) and merged here. **Nothing is built** — this is a menu to
+triage. The eventual "teacher course plan" that would sequence these is **out of
+current scope**; this only catalogs the building blocks it would draw on. The
+exploratory lesson mocks that probe these components (referenced below as "Mock
+01–04") live under `docs/mocks/teacher-mode/` — the canonical home for all HTML
+UI mocks — not beside this doc.
 
 ## How to use this doc
 
