@@ -365,12 +365,18 @@ def _kokoro_wav(text: str, voice_id: str, lead_ms: int | None) -> bytes | None:
         kokoro = _load_kokoro()
         g2p = _load_g2p()  # None → let Kokoro phonemize with its built-in espeak
         with _synth_lock:
+            samples: Any = None
             if g2p is not None:
-                phonemes, _tokens = g2p(_apply_lexicon(text))
-                samples, sample_rate = kokoro.create(
-                    phonemes, voice=name, speed=1.0, is_phonemes=True
-                )
-            else:
+                try:
+                    phonemes, _tokens = g2p(_apply_lexicon(text))
+                    samples, sample_rate = kokoro.create(
+                        phonemes, voice=name, speed=1.0, is_phonemes=True
+                    )
+                except Exception as exc:  # noqa: BLE001 — a G2P hiccup degrades to espeak, not silence
+                    print(f"[tts] misaki phonemize failed for {voice_id!r}, using espeak: "
+                          f"{type(exc).__name__}: {exc}", file=sys.stderr)
+                    samples = None
+            if samples is None:  # no misaki, or it just failed — Kokoro's built-in espeak
                 samples, sample_rate = kokoro.create(text, voice=name, speed=1.0, lang="en-us")
         data = _floats_to_wav(samples, int(sample_rate))
     except Exception as exc:  # noqa: BLE001 — any synth failure must surface, not crash the server

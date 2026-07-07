@@ -362,6 +362,22 @@ def test_kokoro_falls_back_to_espeak_when_misaki_absent(
     assert _FakeG2P.calls == []  # misaki never ran
 
 
+def test_kokoro_degrades_to_espeak_when_misaki_call_throws(
+    kokoro_server: types.ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # misaki loads but throws at phonemize time → render must fall back to espeak, not go silent.
+    def boom(_self, _text):  # type: ignore[no-untyped-def]
+        raise RuntimeError("g2p exploded")
+
+    monkeypatch.setattr(_FakeG2P, "__call__", boom)
+    kokoro_server._g2p_holder.clear()
+    assert kokoro_server.tts_wav("hello", "kokoro-af_heart", lead_ms=0) is not None
+    assert _FakeKokoro.last_create["is_phonemes"] is False  # espeak path used
+    assert "misaki phonemize failed" in capsys.readouterr().err
+
+
 def test_kokoro_lexicon_emits_misaki_override(
     kokoro_server: types.ModuleType, monkeypatch: pytest.MonkeyPatch
 ) -> None:

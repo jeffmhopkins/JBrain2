@@ -29,7 +29,7 @@ One always-on container serving the box's **speech I/O**:
   to load), the Kokoro path falls back to kokoro-onnx's built-in espeak, so read-aloud never
   breaks. To **fix a specific word**, add it to `KOKORO_LEXICON` in `piper_server.py` — key is the
   lowercased word, value is its **misaki phonemes** (misaki's alphabet, not raw IPA; derive them on
-  the box with `python3 -c "from misaki import en; print(en.G2P()('the word')[0])"`). Entries are
+  the box with `python3 -c "from misaki import en, espeak; print(en.G2P(fallback=espeak.EspeakFallback())('the word')[0])"`). Entries are
   emitted as misaki inline overrides `[word](/phonemes/)` and applied only on the misaki path.
   **RAM:** misaki + its spaCy model add resident memory on top of Kokoro's ~310 MB — measure with
   `docker stats tts-stt` after a Kokoro render and record it here.
