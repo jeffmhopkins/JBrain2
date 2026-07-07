@@ -256,6 +256,8 @@ describe("useReadAloud piper engine", () => {
       "en_US-libritts_r-medium#3922",
       "Hello world link.",
       undefined,
+      undefined, // markup turn → no speed override
+      undefined, // markup turn → no trail override
     );
     expect(audios[0]?.played).toBe(true);
     expect(result.current.playing).toBe("a");
@@ -269,6 +271,17 @@ describe("useReadAloud piper engine", () => {
     await act(async () => result.current.toggle("a", "hi"));
     await waitFor(() => expect(brainTts).toHaveBeenCalled());
     expect(brainTts.mock.calls[0]?.[0]).toBe("kokoro-af_heart"); // not the mount-time voice
+  });
+
+  it("reads a prose turn slower with a trailing beat (automatic audiobook pacing)", async () => {
+    const { result } = renderHook(() => useReadAloud());
+    await waitFor(() => expect(result.current.available).toBe(true));
+    // Plain prose (no markdown structure) → the prose profile drives speed + inter-clip trail.
+    await act(async () => result.current.toggle("p", "The wind rose. She waited by the door."));
+    await waitFor(() => expect(brainTts).toHaveBeenCalled());
+    const call = brainTts.mock.calls[0];
+    expect(call?.[3]).toBe(0.9); // speed
+    expect(call?.[4]).toBe(220); // trail ms
   });
 
   it("streams piper clips per sentence when fed, prefetching then playing them in order", async () => {

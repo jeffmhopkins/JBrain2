@@ -148,6 +148,35 @@ def test_tts_proxies_audio_with_voice_and_clamped_lead(
     }
 
 
+def test_tts_forwards_clamped_speed_and_trail(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The PWA's markup-vs-prose classifier sends audiobook pacing; the proxy clamps + forwards it.
+    calls = _install_fake_httpx(monkeypatch, lambda url, params: _FakeResp(200, content=b"wav"))
+    resp = client.get(
+        "/api/brain/tts",
+        params={"text": "A quiet line.", "voice": "kokoro-af_heart", "speed": 9.0, "trail": 9000},
+    )
+    assert resp.status_code == 200
+    _url, params = calls[0]
+    assert params == {
+        "text": "A quiet line.",
+        "voice": "kokoro-af_heart",
+        "speed": "2.0",  # clamped to the 0.5..2.0 ceiling
+        "trail": "3000",  # clamped to the 0..3000 ceiling
+    }
+
+
+def test_tts_omits_pacing_params_when_absent(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A markup turn sends no speed/trail → the box's env default applies; nothing extra forwarded.
+    calls = _install_fake_httpx(monkeypatch, lambda url, params: _FakeResp(200, content=b"wav"))
+    client.get("/api/brain/tts", params={"text": "hi", "voice": "kokoro-af_heart"})
+    _url, params = calls[0]
+    assert params == {"text": "hi", "voice": "kokoro-af_heart"}
+
+
 def test_tts_rejects_blank_text(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
     calls = _install_fake_httpx(monkeypatch, lambda url, params: _FakeResp(200, content=b"x"))
     assert client.get("/api/brain/tts", params={"text": "   ", "voice": "v"}).status_code == 400

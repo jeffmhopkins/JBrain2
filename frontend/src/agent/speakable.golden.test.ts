@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { speakable, toProse, toUtterance } from "./speakable.js";
+import { readingProfile, speakable, toProse, toUtterance } from "./speakable.js";
 
-// Golden read-aloud corpus — the audiobook-plan regression net (docs/plans/READ_ALOUD_AUDIOBOOK_PLAN.md).
+// Golden read-aloud corpus — the audiobook-plan regression net (docs/archive/READ_ALOUD_AUDIOBOOK_PLAN.md).
 // These lock the CURRENT normalized output for a short-story excerpt and a Markdown answer, so any
 // later prosody/pronunciation change (misaki, pacing, lexicon) shows up as an INTENTIONAL diff here
 // rather than silently. Known warts are captured as-is on purpose — e.g. "1.5s" -> "one.5s" (a
@@ -62,5 +62,30 @@ describe("speakable golden corpus", () => {
     // W1 gives kokoro its own misaki-aware profile; until then output must match byte-for-byte.
     expect(speakable(STORY, "kokoro")).toBe(speakable(STORY, "piper"));
     expect(speakable(ANSWER, "kokoro")).toBe(speakable(ANSWER, "piper"));
+  });
+});
+
+describe("readingProfile (markup vs prose)", () => {
+  it("reads the story excerpt as prose and the Markdown answer as markup", () => {
+    expect(readingProfile(STORY)).toBe("prose");
+    expect(readingProfile(ANSWER)).toBe("markup");
+  });
+
+  it("classifies structural / code / dense-inline Markdown as markup", () => {
+    expect(readingProfile("## Heading\n\nsome text")).toBe("markup"); // heading
+    expect(readingProfile("- one\n- two\n- three")).toBe("markup"); // list
+    expect(readingProfile("intro\n\n```\ncode()\n```")).toBe("markup"); // fenced code
+    expect(readingProfile("| a | b |\n|---|---|\n| 1 | 2 |")).toBe("markup"); // table
+    expect(readingProfile("**a** **b** `c` [d](x)")).toBe("markup"); // dense inline
+  });
+
+  it("classifies plain paragraphs and light dialogue as prose", () => {
+    expect(readingProfile("The wind rose. She waited by the door, and said nothing.")).toBe(
+      "prose",
+    );
+    expect(readingProfile('He turned. "You came," she said. A single *beat* hung there.')).toBe(
+      "prose",
+    );
+    expect(readingProfile("")).toBe("prose"); // blank → the gentle default
   });
 });

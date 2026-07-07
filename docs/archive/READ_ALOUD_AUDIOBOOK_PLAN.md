@@ -1,8 +1,17 @@
 # Read-aloud, audiobook grade — Kokoro pronunciation, pacing, and narrator voice
 
-> **Status:** In progress · **Last verified:** 2026-07-07 · **Waves:** W0✅ W1✅ W2✅ W3✅ W4◻️
+> **Status:** Shipped · **Last verified:** 2026-07-07 · **Waves:** W0✅ W1✅ W2✅ W3✅ W4✅ — all
+> landed; archived. W0 split the `speakable` normalizer into `toProse` + `toUtterance(engine)`
+> (byte-identical) with a golden corpus. W1 gave Kokoro **misaki** G2P (homographs, `num2words`,
+> espeak fallback) + an owner-tunable `KOKORO_LEXICON`. W2 added env-tunable **pacing** (Kokoro
+> `speed` + trailing silence, no-op by default). W3 added **narrator blends** (weighted style
+> vectors, e.g. `kokoro-narrator`). W4 **dropped the mode UI** (owner call) for an **automatic
+> markup-vs-prose classifier** (`readingProfile`) that drives the W2 pacing per turn — so no GUI
+> surface and no GUI gate. **Tuning is ear-work on the box:** the prose speed/trail preset, the
+> lexicon, blend weights, and the `BRAIN_KOKORO_*` env are all owner knobs; the misaki **RAM** is
+> measured on the box. Multi-voice per-character dialogue stays a named follow-on (§8).
 
-**A scheduled, multi-wave build plan** (per `docs/DOC_LIFECYCLE.md`), governed by
+**A multi-wave build plan** (per `docs/DOC_LIFECYCLE.md`), governed by
 `docs/reference/PROCESS.md`. It builds directly on the shipped
 `archive/READ_ALOUD_LEGIBILITY.md` (the `speakable` normalizer + warm `tts-stt`
 service) and the shipped Kokoro-82M engine (`deploy/tts-stt/piper_server.py`,
@@ -152,20 +161,25 @@ RLS / the domain firewall / principal scope, so no red-team gate — except wher
   ride the misaki path; a plain voice still passes its name string. Which voices/weights actually
   sound good is an **ear** call for the owner.**)**
 
-### W4 — Reading modes (story vs answer) — **GUI gate**
+### W4 — Automatic markup-vs-prose pacing (no modes, no GUI gate)
 
-- **T4.1** A **reading-style profile** — story (narrator blend, slower speed, generous
-  paragraph/scene silence) vs answer (clear voice, snappy, minimal silence) — wiring the
-  W1–W3 levers into two presets.
-- **T4.2 (from W2)** The deferred `toUtterance` **prosody marks** + per-gap sizing: the frontend
-  chunker exposes block structure (sentence / paragraph / scene / turn-end) so the mode can drive
-  the W2 `trail`/`speed` per clip, plus colon/ellipsis dwell and quote/dialogue micro-pauses.
-- **Decision (owner):** whether the mode is **automatic by context** (chat turn = answer;
-  a long-form "read this note/story aloud" entry = story) or a **user control**. A user
-  control (and/or a new long-form read-aloud entry point) is a **GUI surface** →
-  `PROCESS.md`'s **three interactive mock artifacts, chosen before implementation**, landing
-  in `docs/mocks/`. This wave is deliberately last and may split once the mode surface is chosen.
-- **Verify:** preset application through the pipeline; whatever the chosen surface needs.
+**Owner call:** *no user-facing modes* — the pipeline should just **understand when it's reading
+heavy markup vs book/prose format** and pace itself. So the "story/answer mode + control" of the
+original plan is dropped; there's **no new GUI surface**, hence **no GUI gate**.
+
+- **T4.1** `readingProfile(md)` in `speakable.js` classifies a turn as **markup** (headings /
+  lists / tables / code / dense inline emphasis) vs **prose** (plain paragraphs / dialogue) by a
+  tunable heuristic.
+- **T4.2** `useReadAloud` classifies each turn (whole turn on manual play; the accumulated text as
+  it streams) and, for **prose**, sends a slower `speed` + inter-clip `trail` to the box via the
+  W2 `/tts` params; **markup** sends nothing, so the box's env default (snappy) applies. Plumbed
+  `speed`/`trail` through `api.brainTts` and the api proxy (`brain.py`, clamped).
+- **Deferred (named follow-on):** the finer `toUtterance` prosody marks (per-paragraph/scene gap
+  sizing, colon/ellipsis dwell, quote/dialogue micro-pauses) still want the chunker to expose block
+  structure — a bounded refinement on top of this per-turn classification, not required for it.
+- **Verify:** `readingProfile` classification (golden story = prose, golden answer = markup, +
+  structural/inline cases); `useReadAloud` sends the prose pace on a prose turn and nothing on a
+  markup turn; the proxy clamps + forwards `speed`/`trail`. No new deps, no GUI. **(Landed.)**
 
 ---
 

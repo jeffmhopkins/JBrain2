@@ -1716,9 +1716,17 @@ export const api = {
   // Render `text` to a WAV in `voice` on the box's piper (via the api proxy) — the audio
   // the in-chat read-aloud and the Settings "play sample" button play. `lead` (silence
   // pad, ms) is 0 on continuation chunks so a multi-clip reply plays gaplessly.
-  async brainTts(voice: string, text: string, lead?: number): Promise<Blob> {
+  async brainTts(
+    voice: string,
+    text: string,
+    lead?: number,
+    speed?: number,
+    trail?: number,
+  ): Promise<Blob> {
     const params = new URLSearchParams({ voice, text });
     if (lead !== undefined) params.set("lead", String(lead));
+    if (speed !== undefined) params.set("speed", String(speed));
+    if (trail !== undefined) params.set("trail", String(trail));
     const response = await request(`/api/brain/tts?${params.toString()}`);
     return response.blob();
   },

@@ -83,11 +83,14 @@ async def brain_tts(
     text: str = "",
     voice: str = "",
     lead: int | None = None,
+    speed: float | None = None,
+    trail: int | None = None,
 ) -> Response:
     """Render `text` to a WAV in `voice` (a voice id from /brain/voices) via the on-box
-    piper and return the audio. The PWA read-aloud and the Settings "play sample" button
-    both call this. Text is bounded; `lead` (silence pad, ms) is clamped and passed through
-    so a multi-clip reply plays gaplessly."""
+    piper/Kokoro and return the audio. The PWA read-aloud and the Settings "play sample" button
+    both call this. Text is bounded; `lead` (silence pad, ms) and the audiobook-pacing controls
+    `speed`/`trail` (ms) are clamped and passed through so a multi-clip reply plays gaplessly and
+    the reading style (set by the PWA's markup-vs-prose classifier) reaches the box."""
     base = _brain_base(request)
     if not base:
         raise HTTPException(status_code=503, detail="tts service not configured")
@@ -97,6 +100,10 @@ async def brain_tts(
     params: dict[str, str] = {"text": clipped, "voice": voice}
     if lead is not None:
         params["lead"] = str(max(0, min(2000, lead)))
+    if speed is not None:
+        params["speed"] = str(max(0.5, min(2.0, speed)))
+    if trail is not None:
+        params["trail"] = str(max(0, min(3000, trail)))
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
             resp = await client.get(f"{base}/tts", params=params)
