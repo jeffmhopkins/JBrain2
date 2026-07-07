@@ -1,6 +1,6 @@
 # Read-aloud, audiobook grade — Kokoro pronunciation, pacing, and narrator voice
 
-> **Status:** In progress · **Last verified:** 2026-07-07 · **Waves:** W0✅ W1✅ W2◻️ W3◻️ W4◻️
+> **Status:** In progress · **Last verified:** 2026-07-07 · **Waves:** W0✅ W1✅ W2✅ W3◻️ W4◻️
 
 **A scheduled, multi-wave build plan** (per `docs/DOC_LIFECYCLE.md`), governed by
 `docs/reference/PROCESS.md`. It builds directly on the shipped
@@ -124,17 +124,22 @@ RLS / the domain firewall / principal scope, so no red-team gate — except wher
   degrade-to-espeak path; lexicon → inline override); Dockerfile bake-guard. RAM measured on the
   box (§6). No GUI. **(Landed.)**
 
-### W2 — Audiobook pacing (shaped silence + prosody marks)
+### W2 — Audiobook pacing (server-side speed + trailing silence)
 
-- **T2.1** Server-side **silence shaping** in the Kokoro render/concatenation path:
-  tunable sentence / paragraph / scene-break gaps (numpy silence arrays), generalizing
-  today's lead-pad. Bounded, gapless.
-- **T2.2** `toUtterance` pacing marks: paragraph & scene-break detection → longer
-  pauses; colon/ellipsis dwell; **quote/dialogue micro-pauses** for a single narrator
-  (set dialogue off by pacing, not a second voice).
-- **T2.3** Plumb a **`speed`** param end-to-end (`/tts?speed=` → `create(speed=)`).
-- **Verify:** silence-gap durations asserted on rendered WAV frame counts; prosody rules
-  on the golden story fixture; property tests for chunk/pacing stability. No new deps, no GUI.
+- **T2.1** Server-side **silence shaping**: generalize the lead-pad into `_pad(lead, trail)` and
+  append a tunable **trailing silence** after each Kokoro clip — a beat between sentences.
+- **T2.3** **Speed** control: `KOKORO_SPEED` env + per-request `/tts?speed=` → `create(speed=)`.
+- Both are **env-tunable and default to no-op** (`BRAIN_KOKORO_SPEED`=1.0, `BRAIN_KOKORO_TRAIL_MS`=0)
+  so chat answers are unchanged; the owner dials them in by ear. Kokoro-only — piper ignores speed
+  and the trail env default. Per-request `speed`/`trail` (clamped) exist for W4's modes to drive.
+- **T2.2 deferred to W4.** The `toUtterance` prosody marks (paragraph & scene-break detection,
+  colon/ellipsis dwell, quote/dialogue micro-pauses) and the **per-gap** sizing need the frontend
+  chunker to expose block structure and a *mode* to decide gap sizes — so they land with the
+  story-vs-answer modes (W4) that consume them, rather than as an always-on global that would slow
+  chat answers. *(Scope refinement: W2 ships the pacing engine + speed; W4 drives it.)*
+- **Verify:** trailing-silence durations asserted on rendered WAV frame counts; speed passed to
+  `create` (env default, per-request override, clamp); piper isolation from the Kokoro env trail.
+  No new deps, no GUI. **(Landed.)**
 
 ### W3 — Narrator timbre (voice blending)
 
@@ -149,6 +154,9 @@ RLS / the domain firewall / principal scope, so no red-team gate — except wher
 - **T4.1** A **reading-style profile** — story (narrator blend, slower speed, generous
   paragraph/scene silence) vs answer (clear voice, snappy, minimal silence) — wiring the
   W1–W3 levers into two presets.
+- **T4.2 (from W2)** The deferred `toUtterance` **prosody marks** + per-gap sizing: the frontend
+  chunker exposes block structure (sentence / paragraph / scene / turn-end) so the mode can drive
+  the W2 `trail`/`speed` per clip, plus colon/ellipsis dwell and quote/dialogue micro-pauses.
 - **Decision (owner):** whether the mode is **automatic by context** (chat turn = answer;
   a long-form "read this note/story aloud" entry = story) or a **user control**. A user
   control (and/or a new long-form read-aloud entry point) is a **GUI surface** →

@@ -75,6 +75,19 @@ KOKORO_DIR = Path(os.environ.get("BRAIN_KOKORO_DIR", "/opt/kokoro"))
 KOKORO_MODEL = "kokoro-v1.0.onnx"
 KOKORO_VOICES_FILE = "voices-v1.0.bin"
 KOKORO_ID_PREFIX = "kokoro-"
+# Audiobook pacing (env-tunable; both default to NO-OP so chat answers are unchanged — the owner
+# dials them in by ear after a listen). SPEED < 1.0 reads slower/warmer; TRAIL_MS appends silence
+# after each Kokoro clip for a beat between sentences. Per-request `speed`/`trail` on /tts override
+# these (for the future story-vs-answer modes). Kokoro only; clamped at use. Parsed defensively so a
+# typo'd env can't crash the always-on service (a crash here would take piper down too).
+try:
+    KOKORO_SPEED = float(os.environ.get("BRAIN_KOKORO_SPEED", "1.0"))
+except ValueError:
+    KOKORO_SPEED = 1.0
+try:
+    KOKORO_TRAIL_MS = int(os.environ.get("BRAIN_KOKORO_TRAIL_MS", "0"))
+except ValueError:
+    KOKORO_TRAIL_MS = 0
 # The exposed Kokoro voices: the ENGLISH v1.0 roster only (American af_/am_, British bf_/bm_) —
 # read-aloud renders with lang="en-us", so the model's French/Japanese/etc. voices would
 # mispronounce English and are deliberately omitted. Names are the model's own voice ids and are
@@ -230,18 +243,23 @@ def _load_voice(model: Path) -> PiperVoice:
     return voice
 
 
-def _pad_lead(wav_bytes: bytes, lead_ms: int) -> bytes:
-    """Prepend `lead_ms` of silence to a WAV (stdlib only), so a sink resume clips silence."""
+def _pad(wav_bytes: bytes, lead_ms: int, trail_ms: int) -> bytes:
+    """Prepend `lead_ms` and append `trail_ms` of silence to a WAV (stdlib only). The lead lets a
+    cold audio sink clip silence not the first word; the trail is audiobook pacing — a beat between
+    clips. No-op (returns the input) when both are ≤ 0."""
+    if lead_ms <= 0 and trail_ms <= 0:
+        return wav_bytes
     try:
         with wave.open(io.BytesIO(wav_bytes), "rb") as w:
             params = w.getparams()
             frames = w.readframes(w.getnframes())
         frame = params.sampwidth * params.nchannels
-        pad = b"\x00" * (int(params.framerate * lead_ms / 1000) * frame)
+        lead = b"\x00" * (int(params.framerate * max(lead_ms, 0) / 1000) * frame)
+        trail = b"\x00" * (int(params.framerate * max(trail_ms, 0) / 1000) * frame)
         out = io.BytesIO()
         with wave.open(out, "wb") as o:
             o.setparams(params)
-            o.writeframes(pad + frames)
+            o.writeframes(lead + frames + trail)
         return out.getvalue()
     except (wave.Error, OSError, EOFError, ValueError):
         return wav_bytes
@@ -346,14 +364,22 @@ def _apply_lexicon(text: str) -> str:
     )
 
 
-def _kokoro_wav(text: str, voice_id: str, lead_ms: int | None) -> bytes | None:
+def _kokoro_wav(
+    text: str,
+    voice_id: str,
+    lead_ms: int | None,
+    speed: float | None = None,
+    trail_ms: int | None = None,
+) -> bytes | None:
     """Render `text` with the warm Kokoro engine for a "kokoro-<voice>" id. Dispatched BEFORE
     the piper resolver so a Kokoro id can never hit piper's unknown-id fallback and render in
     the first piper voice (a silent wrong-voice). None (→ device native) when Kokoro isn't baked
     or synth fails — every None path logs. The model LOAD runs outside _synth_lock (a
     multi-second one-time cost); only the synth call is serialised (onnxruntime isn't safe to
-    Run concurrently on one session)."""
+    Run concurrently on one session). `speed`/`trail_ms` default to the KOKORO_SPEED/TRAIL_MS env
+    (audiobook pacing); `speed` is clamped here, `trail_ms` is bounded by the /tts handler / env."""
     name = voice_id[len(KOKORO_ID_PREFIX) :]
+    spd = max(0.5, min(2.0, KOKORO_SPEED if speed is None else speed))
     if not _kokoro_available():
         print(f"[tts] render failed for {voice_id!r}: kokoro not installed", file=sys.stderr)
         return None
@@ -370,14 +396,14 @@ def _kokoro_wav(text: str, voice_id: str, lead_ms: int | None) -> bytes | None:
                 try:
                     phonemes, _tokens = g2p(_apply_lexicon(text))
                     samples, sample_rate = kokoro.create(
-                        phonemes, voice=name, speed=1.0, is_phonemes=True
+                        phonemes, voice=name, speed=spd, is_phonemes=True
                     )
                 except Exception as exc:  # noqa: BLE001 — a G2P hiccup degrades to espeak, not silence
                     print(f"[tts] misaki phonemize failed for {voice_id!r}, using espeak: "
                           f"{type(exc).__name__}: {exc}", file=sys.stderr)
                     samples = None
             if samples is None:  # no misaki, or it just failed — Kokoro's built-in espeak
-                samples, sample_rate = kokoro.create(text, voice=name, speed=1.0, lang="en-us")
+                samples, sample_rate = kokoro.create(text, voice=name, speed=spd, lang="en-us")
         data = _floats_to_wav(samples, int(sample_rate))
     except Exception as exc:  # noqa: BLE001 — any synth failure must surface, not crash the server
         print(f"[tts] render failed for {voice_id!r} (kokoro): {type(exc).__name__}: {exc}",
@@ -388,17 +414,28 @@ def _kokoro_wav(text: str, voice_id: str, lead_ms: int | None) -> bytes | None:
         print(f"[tts] rendered {voice_id!r} (kokoro): {len(data)} bytes in {ms} ms",
               file=sys.stderr)
     lead = PIPER_LEAD_MS if lead_ms is None else lead_ms
-    return _pad_lead(data, lead) if lead > 0 else data
+    trail = KOKORO_TRAIL_MS if trail_ms is None else trail_ms
+    return _pad(data, lead, trail)
 
 
-def tts_wav(text: str, voice: str, lead_ms: int | None = None) -> bytes | None:
+def tts_wav(
+    text: str,
+    voice: str,
+    lead_ms: int | None = None,
+    speed: float | None = None,
+    trail_ms: int | None = None,
+) -> bytes | None:
     """Render `text` to a WAV with the warm piper model for `voice` (a voice id validated
     against the installed set — no path traversal). For a multi-speaker voice
     ("<stem>#<speaker>") the resolved index is passed as the synthesis speaker_id. None
     when TTS isn't available or rendering fails; every None path is logged (a silent None
-    degrades the reply to the device's native voice, which looks like the wrong voice)."""
+    degrades the reply to the device's native voice, which looks like the wrong voice).
+    `speed`/`trail_ms` are the audiobook-pacing controls — Kokoro honours both; piper ignores
+    `speed` (its synthesizer isn't speed-controlled on this path) and honours only an EXPLICIT
+    `trail_ms` (its env default is 0, since the snappy piper is the fallback voice, not the
+    audiobook one)."""
     if voice.startswith(KOKORO_ID_PREFIX):
-        return _kokoro_wav(text, voice, lead_ms)
+        return _kokoro_wav(text, voice, lead_ms, speed, trail_ms)
     resolved = _resolve_voice(voice)
     if resolved is None:
         print(f"[tts] render failed for {voice!r}: no voices installed", file=sys.stderr)
@@ -434,7 +471,7 @@ def tts_wav(text: str, voice: str, lead_ms: int | None = None) -> bytes | None:
         print(f"[tts] rendered {voice!r} (speaker {speaker}): {len(data)} bytes in {ms} ms",
               file=sys.stderr)
     lead = PIPER_LEAD_MS if lead_ms is None else lead_ms
-    return _pad_lead(data, lead) if lead > 0 else data
+    return _pad(data, lead, trail_ms or 0)  # piper: only an explicit trail; no audiobook default
 
 
 def _prewarm() -> None:
@@ -486,7 +523,21 @@ class Handler(BaseHTTPRequestHandler):
                     lead_ms = max(0, min(2000, int(raw)))
             except (TypeError, ValueError):
                 lead_ms = None
-            wav = tts_wav(text, qs.get("voice", [""])[0], lead_ms)
+            speed = None
+            try:
+                raw = qs.get("speed", [None])[0]
+                if raw is not None:
+                    speed = max(0.5, min(2.0, float(raw)))
+            except (TypeError, ValueError):
+                speed = None
+            trail_ms = None
+            try:
+                raw = qs.get("trail", [None])[0]
+                if raw is not None:
+                    trail_ms = max(0, min(3000, int(raw)))
+            except (TypeError, ValueError):
+                trail_ms = None
+            wav = tts_wav(text, qs.get("voice", [""])[0], lead_ms, speed, trail_ms)
             if wav is None:
                 self._send(503, b"tts unavailable", "text/plain")
             else:

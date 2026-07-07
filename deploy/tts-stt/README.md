@@ -66,7 +66,15 @@ voice/base bump rebuilds. Extra piper voices drop into the mounted `voices/` dir
 `BRAIN_PIPER_BAKED_VOICES_DIR` (`/opt/piper-voices`) · `BRAIN_KOKORO_DIR` (`/opt/kokoro`, the
 baked Kokoro model + voices bin) · `BRAIN_PIPER_PREWARM`
 (`en_US-amy-medium` — pre-loaded at startup so the first clip isn't slow) ·
-`BRAIN_PIPER_LEAD_MS` (silence pad on the first clip of a turn).
+`BRAIN_PIPER_LEAD_MS` (silence pad on the first clip of a turn) · **`BRAIN_KOKORO_SPEED`** (1.0;
+Kokoro read speed — set ~0.9 for a slower, warmer audiobook read) · **`BRAIN_KOKORO_TRAIL_MS`** (0;
+silence appended after each Kokoro clip for a beat between sentences).
+
+**Audiobook pacing.** `BRAIN_KOKORO_SPEED` / `BRAIN_KOKORO_TRAIL_MS` (and per-request `/tts?speed=`
+/`?trail=`, clamped) tune Kokoro's pacing; both default to **no-op** so chat answers are unchanged
+— dial them in by ear after a listen (they apply to *all* Kokoro clips, chat included, so keep the
+trail modest; per-mode story-vs-answer control is a later wave). They affect **Kokoro only** — the
+snappy piper fallback ignores the speed and the trail env default.
 
 Diagnostics: while an owner debug-console token is live the api pushes `tts_debug` here, and
 each render logs `[tts] rendering … speaker=N` / `[tts] rendered … in N ms` (failures always

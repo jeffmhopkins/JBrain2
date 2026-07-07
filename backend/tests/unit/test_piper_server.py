@@ -68,7 +68,12 @@ class _FakeKokoro:
     def create(  # type: ignore[no-untyped-def]
         self, text, voice, speed=1.0, lang="en-us", is_phonemes=False, trim=True
     ):
-        type(self).last_create = {"text": text, "voice": voice, "is_phonemes": is_phonemes}
+        type(self).last_create = {
+            "text": text,
+            "voice": voice,
+            "is_phonemes": is_phonemes,
+            "speed": speed,
+        }
         return [0.0, 0.5, -0.5, 1.0, -1.0] * 20, 24000  # 100 samples, the real engine's 24 kHz
 
 
@@ -391,3 +396,53 @@ def test_kokoro_lexicon_emits_misaki_override(
 def test_dockerfile_bakes_misaki(server: types.ModuleType) -> None:
     # The G2P upgrade rides the image build — keep the Dockerfile in step with _load_g2p's import.
     assert "misaki" in _DOCKERFILE.read_text()
+
+
+# --- W2: audiobook pacing (speed + trailing silence) ---------------------------------------
+
+
+def test_kokoro_speed_defaults_to_env(
+    kokoro_server: types.ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    assert kokoro_server.tts_wav("hi", "kokoro-af_heart", lead_ms=0) is not None
+    assert _FakeKokoro.last_create["speed"] == 1.0  # default env is no-op
+    monkeypatch.setattr(kokoro_server, "KOKORO_SPEED", 0.85)
+    kokoro_server.tts_wav("hi", "kokoro-af_heart", lead_ms=0)
+    assert _FakeKokoro.last_create["speed"] == 0.85  # env slows the read
+
+
+def test_kokoro_speed_param_overrides_and_clamps(kokoro_server: types.ModuleType) -> None:
+    kokoro_server.tts_wav("hi", "kokoro-af_heart", lead_ms=0, speed=0.8)
+    assert _FakeKokoro.last_create["speed"] == 0.8  # explicit request wins over the env default
+    kokoro_server.tts_wav("hi", "kokoro-af_heart", lead_ms=0, speed=5.0)
+    assert _FakeKokoro.last_create["speed"] == 2.0  # clamped high
+    kokoro_server.tts_wav("hi", "kokoro-af_heart", lead_ms=0, speed=0.1)
+    assert _FakeKokoro.last_create["speed"] == 0.5  # clamped low
+
+
+def test_kokoro_trail_appends_silence(kokoro_server: types.ModuleType) -> None:
+    plain = kokoro_server.tts_wav("hi", "kokoro-af_heart", lead_ms=0)
+    padded = kokoro_server.tts_wav("hi", "kokoro-af_heart", lead_ms=0, trail_ms=200)
+    assert plain and padded
+    # 100 base samples @ 24 kHz + 200 ms of trailing silence (0.2 * 24000 = 4800 frames).
+    assert _wav_frames(plain) == 100
+    assert _wav_frames(padded) == 100 + 4800
+
+
+def test_kokoro_trail_defaults_to_env(
+    kokoro_server: types.ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(kokoro_server, "KOKORO_TRAIL_MS", 100)
+    out = kokoro_server.tts_wav("hi", "kokoro-af_heart", lead_ms=0)
+    assert out is not None
+    assert _wav_frames(out) == 100 + 2400  # 100 ms env trail = 2400 frames @ 24 kHz
+
+
+def test_piper_ignores_the_kokoro_trail_env_default(
+    server: types.ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The audiobook trail is a Kokoro control — the snappy piper fallback must not inherit it.
+    monkeypatch.setattr(server, "KOKORO_TRAIL_MS", 500)
+    out = server.tts_wav("hi", "en_US-amy-medium", lead_ms=0)
+    assert out is not None
+    assert _wav_frames(out) == 100  # piper's own 100 frames, no trailing silence
