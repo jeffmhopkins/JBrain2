@@ -283,6 +283,16 @@ export function speakable(md) {
   // Emoji: verbalize the allow-list, drop the rest.
   for (const [glyph, word] of Object.entries(EMOJI_WORDS)) s = s.split(glyph).join(word);
   s = s.replace(EMOJI_STRIP, " ");
+  // Dashes as clause breaks: piper races an em/en dash straight through the break with no
+  // pause. Turn a dash USED AS A SEPARATOR into a comma so the clauses get a beat — "yours—let's
+  // see" → "yours, let's see", "guess it — great" → "guess it, great". A non-breaking hyphen
+  // becomes a plain one first (so a stylized "most‑play‑again" reads as the compound, not a
+  // pause); a hyphen with NO surrounding space ("well-known") is a compound, left alone; and
+  // numeric ranges (3–5) were already turned into "three to five" above.
+  s = s
+    .replace(/‑/g, "-")
+    .replace(/\s*[–—―]\s*/g, ", ")
+    .replace(/\s+-\s+/g, ", ");
   // Parentheticals: piper carries no pause across ( ), so it races the aside into the
   // surrounding clause in one breath. Bracket it with commas instead — a beat on each side —
   // so "spending (target 5%) and reaffirm" reads as "spending, target five percent, and

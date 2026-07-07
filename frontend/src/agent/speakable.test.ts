@@ -107,6 +107,24 @@ describe("speakable", () => {
     );
   });
 
+  it("pauses on a dash used as a clause break, but not a compound hyphen", () => {
+    expect(speakable("you send me one of yours—let's see who wins")).toBe(
+      "you send me one of yours, let's see who wins.",
+    );
+    expect(speakable("Play a track and guess it — great fun")).toBe(
+      "Play a track and guess it, great fun.",
+    );
+    // Spaced ASCII hyphen used as a dash also gets the beat.
+    expect(speakable("quick round - then swap")).toBe("quick round, then swap.");
+    // A compound hyphen (no surrounding space) is left alone — no pause; a stylized
+    // non-breaking hyphen normalizes to it, so "most‑play‑again" reads as one compound.
+    expect(speakable("the most‑play‑again award is well-known")).toBe(
+      "the most-play-again award is well-known.",
+    );
+    // Numeric ranges still read as "to", not a comma.
+    expect(speakable("pick 3-5 of them")).toBe("pick three to five of them.");
+  });
+
   it("strips emphasis, headings, blockquotes and horizontal rules", () => {
     expect(speakable("**Bold** and _italic_ and ~~struck~~.")).toBe("Bold and italic and struck.");
     expect(speakable("> quoted note\n\n---\n\nafter rule")).toBe("quoted note. after rule.");
