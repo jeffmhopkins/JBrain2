@@ -266,8 +266,10 @@ export function speakable(md) {
   s = s.replace(/\[([^\]]+)\]\([^)]*\)/g, "$1");
   // Tables → sentences (needs the multi-line block, so before per-line work).
   s = linearizeTables(s);
-  // Per-line structure: drop heading/quote/list markers and horizontal rules, so only
-  // prose remains. Marker removal happens before pause-authoring appends terminal marks.
+  // Per-line structure: drop heading/quote/bullet markers and horizontal rules, so only prose
+  // remains. A NUMBERED item keeps its number as a spoken word ("4." → "four.") so the listener
+  // hears the enumeration — a bare bullet carries no such info, so it's dropped. Marker handling
+  // happens before pause-authoring appends terminal marks.
   s = s
     .split("\n")
     .map((line) => {
@@ -276,7 +278,7 @@ export function speakable(md) {
         .replace(/^\s{0,3}#{1,6}\s+/, "") // heading
         .replace(/^\s*>\s?/, "") // blockquote
         .replace(/^\s*[-*+]\s+/, "") // bullet
-        .replace(/^\s*\d+\.\s+/, ""); // numbered
+        .replace(/^(\s*)(\d+)\.\s+/, (_m, indent, n) => `${indent}${numberToWords(n)}. `); // numbered → spoken
     })
     .join("\n");
   // Emphasis markers.

@@ -152,6 +152,15 @@ describe("speakable", () => {
     expect(speakable("on 07/04 today")).toBe("on seven slash four today.");
   });
 
+  it("speaks a numbered list's number but drops bare bullets", () => {
+    // The number carries the enumeration, so it's read; a plain bullet does not.
+    expect(speakable("4. Bring up a shared memory")).toBe("four. Bring up a shared memory.");
+    expect(speakable("1. First\n2. Second\n10. Tenth")).toBe(
+      "one. First. two. Second. ten. Tenth.",
+    );
+    expect(speakable("- just a bullet")).toBe("just a bullet.");
+  });
+
   it("strips emphasis, headings, blockquotes and horizontal rules", () => {
     expect(speakable("**Bold** and _italic_ and ~~struck~~.")).toBe("Bold and italic and struck.");
     expect(speakable("> quoted note\n\n---\n\nafter rule")).toBe("quoted note. after rule.");
