@@ -96,6 +96,31 @@ function numberToWords(raw) {
   return neg ? `minus ${words}` : words;
 }
 
+// Denominator words for a spoken fraction; only small, unambiguous denominators.
+const FRACTION_DENOM = {
+  2: "half",
+  3: "third",
+  4: "quarter",
+  5: "fifth",
+  6: "sixth",
+  7: "seventh",
+  8: "eighth",
+  9: "ninth",
+  10: "tenth",
+};
+
+/** A PROPER fraction "n/d" (small known denominator, n < d) to words: "3/4" → "three quarters".
+ * null for anything else so the caller leaves "/" to the slash map — this is what keeps dates
+ * and ratios ("07/04", "24/7", "16/9") from being mis-said as fractions. */
+function fractionWords(numStr, denStr) {
+  const num = Number(numStr);
+  const den = Number(denStr);
+  const denom = FRACTION_DENOM[den];
+  if (!denom || num < 1 || num >= den) return null;
+  const plural = den === 2 ? "halves" : `${denom}s`;
+  return `${numberToWords(String(num))} ${num === 1 ? denom : plural}`;
+}
+
 // --- emoji + symbols -------------------------------------------------------------------
 
 // The few emoji worth speaking; everything else is dropped (a stray "grinning face"
@@ -138,12 +163,23 @@ const SYMBOL_WORDS = [
   [/\|/g, " "], // a stray pipe (non-table) reads as nothing, never "bar"
 ];
 
-// Latin abbreviations piper spells out letter-by-letter ("e g") and stumbles on the interior
-// dots of. Expand to words, and consume any trailing comma so the result carries exactly one —
-// a pause after the aside — whether the source wrote "e.g., X" or "e.g. X". Case-insensitive.
+// Abbreviations espeak (piper's phonemizer) reads wrong or with a sentence-splitting pause.
+// e.g./i.e.: it spells "i.e." as "aye ee"; we expand and consume any trailing comma so the
+// aside carries exactly one pause whether the source wrote "e.g., X" or "e.g. X". Titles: espeak
+// expands "Mr."→"Mister" but treats the "." as a SENTENCE END, so "Mr. Lee" gets an unwanted
+// pause ("Mister" ⏸ "Lee"); dropping the period here keeps the clause together. vs/approx: espeak
+// reads "vs"→"V S" and "approx"→"approx", so we say the words. Ordinals (1st→first) and repeated
+// "!!!"/"..." need no rule — espeak already handles them; verified against espeak-ng 1.51.
 const ABBREVIATIONS = [
   [/\be\.g\.\s*,?/gi, "for example, "],
   [/\bi\.e\.\s*,?/gi, "that is, "],
+  [/\bMr\.\s*/g, "Mister "],
+  [/\bMrs\.\s*/g, "Missus "],
+  [/\bMs\.\s*/g, "Miz "],
+  [/\bDr\.\s*/g, "Doctor "],
+  [/\bProf\.\s*/g, "Professor "],
+  [/\bvs\.?\s*/gi, "versus "],
+  [/\bapprox\.\s*/gi, "approximately "],
 ];
 
 // --- URLs → spoken domain --------------------------------------------------------------
@@ -230,8 +266,10 @@ export function speakable(md) {
   s = s.replace(/\[([^\]]+)\]\([^)]*\)/g, "$1");
   // Tables → sentences (needs the multi-line block, so before per-line work).
   s = linearizeTables(s);
-  // Per-line structure: drop heading/quote/list markers and horizontal rules, so only
-  // prose remains. Marker removal happens before pause-authoring appends terminal marks.
+  // Per-line structure: drop heading/quote/bullet markers and horizontal rules, so only prose
+  // remains. A NUMBERED item keeps its number as a spoken word ("4." → "four.") so the listener
+  // hears the enumeration — a bare bullet carries no such info, so it's dropped. Marker handling
+  // happens before pause-authoring appends terminal marks.
   s = s
     .split("\n")
     .map((line) => {
@@ -240,7 +278,7 @@ export function speakable(md) {
         .replace(/^\s{0,3}#{1,6}\s+/, "") // heading
         .replace(/^\s*>\s?/, "") // blockquote
         .replace(/^\s*[-*+]\s+/, "") // bullet
-        .replace(/^\s*\d+\.\s+/, ""); // numbered
+        .replace(/^(\s*)(\d+)\.\s+/, (_m, indent, n) => `${indent}${numberToWords(n)}. `); // numbered → spoken
     })
     .join("\n");
   // Emphasis markers.
@@ -248,6 +286,9 @@ export function speakable(md) {
   // Latin abbreviations → words (before pause-authoring, so their interior dots aren't read
   // as sentence ends and the spoken aside carries a real pause).
   for (const [re, word] of ABBREVIATIONS) s = s.replace(re, word);
+  // Ellipsis (…/...): espeak treats it as a sentence break and neural voices give it a hesitant
+  // tone. A comma keeps the thought flowing with a short beat instead (collapses any dot-run).
+  s = s.replace(/\s*(?:\.{2,}|…)\s*/g, ", ");
   // PAUSE AUTHORING (before any whitespace collapse): every non-empty line that doesn't
   // already end in terminal punctuation gets a period, so each list item / heading /
   // paragraph becomes its own spoken sentence with a real pause.
@@ -270,6 +311,13 @@ export function speakable(md) {
   s = s.replace(
     /(\d[\d,]*(?:\.\d+)?)\s?%/g,
     (_m, n) => `${numberToWords(n.replace(/,/g, ""))} percent`,
+  );
+  // Simple proper fractions BEFORE the slash map turns "/" into "slash": 3/4 → three quarters.
+  // Gated to n < d with a known small denominator and no adjacent digit/slash/dot, so dates and
+  // ratios ("07/04", "24/7", "16/9") fall through to the slash map untouched.
+  s = s.replace(
+    /(?<![\d/.])(\d{1,2})\/(\d{1,2})(?![\d/.])/g,
+    (m, a, b) => fractionWords(a, b) ?? m,
   );
   // Numeric ranges: 3-5 → three to five.
   s = s.replace(
@@ -329,14 +377,28 @@ function splitClips(norm) {
     .filter(Boolean);
 }
 
+// Abbreviations whose trailing "." never ends a sentence (titles before a name, e.g./i.e.) —
+// so the streaming committer doesn't cut a clip mid-name ("Dr. Smith" → "Doctor" ⏸ "Smith").
+// Kept to never-sentence-final tokens only, so a real sentence end is never wrongly held.
+const ABBREV_NO_BREAK = /(?:^|[\s("'‘“])(?:mr|mrs|ms|dr|prof|vs|approx|e\.g|i\.e)\.$/i;
+
 /** In the trailing (newline-less) line, the length up to the last COMPLETE sentence — so a
  * partial final sentence is held for the next delta. A terminator is only a boundary when
  * WHITESPACE follows it: a buffer that ends right at a "." is ambiguous mid-stream (it could
- * be "example." → "example.com"), so it waits for the next char (flush commits the tail). */
+ * be "example." → "example.com"), so it waits for the next char (flush commits the tail). A
+ * "." inside an ellipsis run or right after a known abbreviation is NOT a boundary, so a clip
+ * isn't cut where piper shouldn't pause — the real sentence end (which speakable normalizes
+ * the abbreviation/ellipsis away before) follows. */
 function intraLineSafe(line) {
   let last = 0;
   const re = /[.!?]["')\]]?\s/g;
-  for (let m = re.exec(line); m !== null; m = re.exec(line)) last = re.lastIndex;
+  for (let m = re.exec(line); m !== null; m = re.exec(line)) {
+    const t = m.index;
+    if (line[t] === "." && (line[t - 1] === "." || ABBREV_NO_BREAK.test(line.slice(0, t + 1)))) {
+      continue; // ellipsis run or abbreviation — not a real sentence boundary
+    }
+    last = re.lastIndex;
+  }
   return last;
 }
 
