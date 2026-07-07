@@ -56,15 +56,33 @@ class _FakeRouter:
         return 131_072  # the child meter's denominator
 
     async def converse(
-        self, task: str, *, system, messages, tools, max_tokens, strength=None, effort_override=None
-    ):  # noqa: ANN001, ANN003, E501
+        self,
+        task: str,
+        *,
+        system,
+        messages,
+        tools,
+        max_tokens,
+        strength=None,
+        effort_override=None,
+        spec_override=None,
+    ):  # noqa: ANN001, ANN003
         return LlmTurn(
             text="child summary", tool_calls=(), stop_reason="end_turn", usage=LlmUsage(5, 5)
         )
 
     async def converse_stream(
-        self, task: str, *, system, messages, tools, max_tokens, strength=None, effort_override=None
-    ):  # noqa: ANN001, ANN003, E501
+        self,
+        task: str,
+        *,
+        system,
+        messages,
+        tools,
+        max_tokens,
+        strength=None,
+        effort_override=None,
+        spec_override=None,
+    ):  # noqa: ANN001, ANN003
         yield TextChunk(text="child summary")
         yield LlmTurn(
             text="child summary", tool_calls=(), stop_reason="end_turn", usage=LlmUsage(5, 5)
