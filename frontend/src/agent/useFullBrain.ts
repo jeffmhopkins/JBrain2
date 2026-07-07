@@ -26,6 +26,13 @@ import type {
 
 export type Panel = "none" | "sessions" | "proposals";
 
+/** A per-conversation agent-model pick (the omnibox long-press sheet): the local
+ * catalog `id` the turn runs on plus its `label` for the composer indicator. */
+export interface ModelPick {
+  id: string;
+  label: string;
+}
+
 // A shared empty transcript so the active chat's `messages` keeps a stable reference
 // when its buffer is absent (no needless re-renders of the conversation).
 const EMPTY_MESSAGES: TranscriptMessage[] = [];
@@ -246,6 +253,13 @@ export interface FullBrain {
    * appointment; the user bubble still shows only `text`. `files` are uploaded
    * first (in order) and ride the turn as attachments. */
   send: (text: string, opts?: { appointmentId?: string; files?: File[] }) => Promise<boolean>;
+  /** The active conversation's per-conversation agent-model pick (the omnibox
+   * long-press sheet), or null when the turn runs on the resolved default. Turn-local:
+   * kept per session in memory, rides every send of that chat, and clears on reload. */
+  modelOverride: ModelPick | null;
+  /** Set (or clear, with null) the active chat's agent-model pick. A no-op when no
+   * chat is open — there's no conversation to scope it to yet. */
+  setModelOverride: (pick: ModelPick | null) => void;
   /** Whether the agent's model can accept images — gates the chat attach
    * affordance. Defaults to false until the capability check answers (the safe
    * default: never offer an attach the model would reject; the paperclip simply
@@ -330,6 +344,11 @@ export function useFullBrain(
   // vision is confirmed and never flashes a broken state on first paint.
   const [supportsVision, setSupportsVision] = useState(false);
   const [canEditImages, setCanEditImages] = useState(false);
+  // Per-conversation agent-model picks (the omnibox long-press sheet), keyed by
+  // session id: the chosen local model rides every send of that chat and is dropped
+  // for the rest. In-memory only — "this conversation only" for this app session; a
+  // reload reverts to the resolved default.
+  const [modelOverrides, setModelOverrides] = useState<Record<string, ModelPick>>({});
   // The open chat's id — the key the transcript and proposal inbox load against.
   const activeId = active?.id ?? null;
   // The visible transcript: the active chat's buffer (empty until loaded). A stable
@@ -562,6 +581,7 @@ export function useFullBrain(
     const controller = new AbortController();
     abortRef.current = controller;
     runIdRef.current = null;
+    const pick = modelOverrides[turnSessionId];
     const body: ChatRequest = {
       session_id: turnSessionId,
       message: text,
@@ -569,6 +589,8 @@ export function useFullBrain(
       ...(opts?.appointmentId ? { appointment_id: opts.appointmentId } : {}),
       ...(coords ? { latitude: coords.latitude, longitude: coords.longitude } : {}),
       ...(attachmentIds.length ? { attachment_ids: attachmentIds } : {}),
+      // The owner's per-conversation model pick rides every turn of this chat.
+      ...(pick ? { model: pick.id } : {}),
     };
     // Uploads succeeded and the turn is under way — `send` resolves HERE so the composer
     // clears the typed text and staged files immediately, rather than staying populated
@@ -834,6 +856,22 @@ export function useFullBrain(
   // no stored fill falls through to the near-empty fresh-chat bar.
   const displayUsage: ContextUsage | null = usage ?? restored ?? freshSeed;
 
+  // The active chat's model pick (or null for the default route); scoped to the open
+  // session so switching chats shows each one's own pick.
+  const modelOverride = activeId !== null ? (modelOverrides[activeId] ?? null) : null;
+  const setModelOverride = useCallback((pick: ModelPick | null) => {
+    const id = activeRef.current?.id;
+    if (!id) return; // no open chat to scope the pick to
+    setModelOverrides((prev) => {
+      if (pick === null) {
+        if (!(id in prev)) return prev;
+        const { [id]: _cleared, ...rest } = prev;
+        return rest;
+      }
+      return { ...prev, [id]: pick };
+    });
+  }, []);
+
   return {
     active,
     sessions: visibleSessions,
@@ -863,6 +901,8 @@ export function useFullBrain(
           return true; // the stream runs in the background now; any failure settles there
         },
       ),
+    modelOverride,
+    setModelOverride,
     create,
     startFresh,
     open,

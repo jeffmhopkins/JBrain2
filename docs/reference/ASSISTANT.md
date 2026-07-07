@@ -1,6 +1,6 @@
 # JBrain2 — Assistant
 
-> **Status:** Living · **Last verified:** 2026-07-03
+> **Status:** Living · **Last verified:** 2026-07-07
 
 The personal agent. This is the **binding design** for the tool-calling agent
 (ROADMAP.md): a smart, tool-using assistant with durable memory — built natively
@@ -168,6 +168,17 @@ last-seen offset and follows live, so thinking/render progress resumes rather th
 restarting. Once the run has finished the reconnect 404s and the PWA recovers the
 exchange from the persisted transcript instead. The composer's Stop is an explicit
 `POST /chat/runs/{id}/cancel` (closing the stream no longer ends the turn).
+
+**Per-conversation model pick.** The turn's model is the `agent.turn` route by
+default, but the owner can steer a single conversation onto a different **on-box
+model** from the omnibox (long-press a conversation tab → pick a loaded model; see
+DESIGN.md). The pick rides `/chat` as a `model` field (a **local catalog id**,
+validated server-side — an unknown id is ignored, never routed), and the endpoint
+threads it as a per-turn `spec_override` through the router so the effort, context
+window, and vision gate all reflect the chosen model. It is **turn-local**: scoped
+to that conversation, never persisted on the session, and it does **not** change the
+global task routing in Settings. A sub-agent the turn spawns still runs on its own
+configured model — the override is the top-level loop's only.
 
 **No standing multi-agent orchestra.** One context window holds a personal chat
 task. The one exception is a narrow, **jerv-only** `spawn_subagent` escape hatch

@@ -48,7 +48,7 @@ from jbrain.api.settings import get_settings_store
 from jbrain.auth.service import PrincipalInfo
 from jbrain.db.session import SessionContext
 from jbrain.devices.repo import SqlDeviceRepo
-from jbrain.llm import AssistantMessage, LlmImage, LlmMessage, LlmRouter, UserMessage
+from jbrain.llm import AssistantMessage, LlmImage, LlmMessage, LlmRouter, UserMessage, local_catalog
 from jbrain.locations import LocationToolRefusal, SqlLocationRepo
 from jbrain.locations.presence import presence_block, read_owner_presence
 from jbrain.storage import BlobStore
@@ -200,6 +200,13 @@ class ChatRequest(BaseModel):
     # (MAX_ATTACHMENTS_PER_TURN) and binding follows the same truncation, so an
     # over-cap list is handled gracefully (extra ids dropped) rather than 422'd.
     attachment_ids: list[str] = Field(default_factory=list)
+    # The owner's per-conversation agent-model pick (the omnibox long-press sheet): a
+    # LOCAL catalog id (e.g. "gpt-oss-120b") this turn's agent.turn runs on instead of
+    # the resolved default. Turn-local — it never persists on the session and is
+    # validated against the catalog before it can steer the route; an unknown/blank id
+    # is ignored (the turn runs on the default) rather than 422'd, so a stale pick from
+    # a client can never break a conversation.
+    model: str | None = None
 
 
 def get_agent_sessions(request: Request) -> AgentSessionRepo:
@@ -417,6 +424,20 @@ def _appt_hint(appointment_id: str | None) -> str | None:
         return None
 
 
+def _model_override_spec(model_id: str | None) -> str | None:
+    """Validate the owner's per-conversation model pick (a local catalog id) into a
+    `local:<served>` spec the router can steer this turn onto, or None to leave the
+    turn on its resolved default. Only a KNOWN catalog id resolves — an unknown or
+    blank id is dropped rather than routed, so a client can never smuggle an arbitrary
+    provider:model spec straight to the model call. Whether the box can actually serve
+    a local model is the router's guard (it ignores a local override when local hosting
+    is off); this only guarantees the spec names a real catalog model."""
+    if not model_id:
+        return None
+    entry = local_catalog.get(model_id)
+    return entry.spec if entry is not None else None
+
+
 def _model_message(body: ChatRequest) -> str:
     """The model-facing user turn. A calendar handoff appends the appointment id
     as an explicit instruction so the agent reads that exact appointment rather
@@ -477,18 +498,26 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
     # mailbox cleanups and jerv's multi-source web threads run at 4 so a sweep isn't
     # cut off mid-chain.
     router = get_llm_router(request)
-    effort = await router.effective_reasoning_effort("agent.turn")
+    # The owner's per-conversation model pick (omnibox long-press sheet): a local
+    # catalog id validated to a "provider:model" spec here, so an unknown/blank id is
+    # dropped (the turn runs on the resolved default) rather than smuggling an
+    # arbitrary spec at the model call. When it lands, every agent.turn probe below
+    # AND the loop's model calls run on it, so the effort, window, and vision gate all
+    # reflect the picked model — not the default route.
+    model_override = _model_override_spec(body.model)
+    effort = await router.effective_reasoning_effort("agent.turn", spec_override=model_override)
     # The resolved model's total context window — the denominator for the PWA's live
     # context-usage meter (a local model's is the gateway's `-c`, mainly what this
     # serves). Resolved once here and passed to the loop, which stamps it on each
     # UsageEvent so the meter never has to know the route.
-    context_window = await router.context_window("agent.turn")
+    context_window = await router.context_window("agent.turn", spec_override=model_override)
     guardrails = guardrails_for_effort(effort, scale=profile.budget_multiplier)
     loop = AgentLoop(
         router,
         get_agent_registry(request),
         recorder=tally,
         guardrails=guardrails,
+        model_override=model_override,
     )
     read_ctx = read_context(principal.id, read_scopes)
     # The turn's attachments are fetched under the SESSION's own scopes PLUS the domain
@@ -513,7 +542,7 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
     # model can't see. The attachment's id still rides in attach_text, so the model
     # can edit it (edit_image) or look at it (analyze_image) BY REFERENCE without the
     # bytes; a vision-capable route keeps the images inline as before.
-    if images and not await router.supports_vision("agent.turn"):
+    if images and not await router.supports_vision("agent.turn", spec_override=model_override):
         images = []
     conversation = _conversation(body, images, attach_text)
     # L7b: prepend the owner's coarse presence as a DATA-framed UserMessage, on the

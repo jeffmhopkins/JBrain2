@@ -298,15 +298,25 @@ class LlmRouter:
         except KeyError:
             raise LlmError(f"unknown LLM task: {task!r}") from None
 
-    async def _resolve_live(self, task: str, strength: str | None) -> tuple[str, str, str | None]:
+    async def _resolve_live(
+        self, task: str, strength: str | None, spec_override: str | None = None
+    ) -> tuple[str, str, str | None]:
         """Resolve (provider, model, reasoning_effort) folding in the live DB
-        overrides. A stored `spec` is the HIGHEST-precedence selector — above an
-        env pin, the strength tier, and the task default — because the settings
-        screen is the operator's live control surface and must win over any
+        overrides. A stored `spec` is the HIGHEST-precedence PERSISTENT selector —
+        above an env pin, the strength tier, and the task default — because the
+        settings screen is the operator's live control surface and must win over any
         deploy-time config. A stored `reasoning_effort` applies only when the
         resolved provider+model is reasoning-capable (xai Grok, or a local reasoning
         model like gpt-oss/GLM); for anything else it is dropped. Malformed stored
-        entries are ignored: a bad saved setting must never break a call."""
+        entries are ignored: a bad saved setting must never break a call.
+
+        `spec_override` is a per-CALL selector (the omnibox's per-conversation agent
+        model pick) that outranks even the stored spec — it is the caller saying
+        "run THIS turn on that model". Same guards as the stored spec: a malformed or
+        can't-serve-local override is ignored (the call falls back to the resolved
+        route) rather than breaking the turn. When it lands, the reasoning effort is
+        re-gated on the overridden model, so picking a non-reasoning local model
+        drops the effort param the resolved route would have carried."""
         provider, model = self._resolve(task, strength)
         # The task's bucket default (high/low deviations only) unless a stored
         # override replaces it below — so a fresh box runs at the right effort.
@@ -329,17 +339,31 @@ class LlmRouter:
             stored_effort = entry.get("reasoning_effort")
             if stored_effort:
                 reasoning_effort = stored_effort
+        if spec_override is not None:
+            try:
+                sp, sm = _split_spec(task, spec_override)
+            except LlmError:
+                log.warning("llm.call_override_bad_spec", task=task, spec=spec_override)
+            else:
+                if sp == "local" and not self._local_enabled:
+                    log.warning("llm.local_call_override_ignored", task=task, spec=spec_override)
+                else:
+                    provider, model = sp, sm
         if not _reasoning_capable(provider, model):
             reasoning_effort = None
         return provider, model, reasoning_effort
 
-    async def context_window(self, task: str, strength: str | None = None) -> int:
+    async def context_window(
+        self, task: str, strength: str | None = None, spec_override: str | None = None
+    ) -> int:
         """The total context window (tokens) the `task` will actually run against
         after live overrides — the denominator for the PWA's context-usage meter. A
         local model's window comes from the catalog (the gateway's `-c`); a cloud
         model's from CONTEXT_WINDOWS, falling back to a conservative default for an
-        unlisted model so the meter degrades gracefully rather than misreports."""
-        provider, model, _ = await self._resolve_live(task, strength)
+        unlisted model so the meter degrades gracefully rather than misreports.
+        `spec_override` (the per-conversation model pick) makes the window reflect
+        the model the turn will actually run on, not the resolved default."""
+        provider, model, _ = await self._resolve_live(task, strength, spec_override)
         if provider == "local":
             if self._local_windows_loader is not None:
                 windows = await self._local_windows_loader()
@@ -349,26 +373,32 @@ class LlmRouter:
             return local_catalog.context_window(model)
         return CONTEXT_WINDOWS.get(model, DEFAULT_CONTEXT_WINDOW)
 
-    async def supports_vision(self, task: str, strength: str | None = None) -> bool:
+    async def supports_vision(
+        self, task: str, strength: str | None = None, spec_override: str | None = None
+    ) -> bool:
         """Whether the model `task` actually resolves to (after live overrides) can
         accept image content in a turn. A local model declares it in the catalog —
         a text-only gateway model like gpt-oss has no vision projector; the cloud
         providers we wire (Grok, Claude 4.x) are all multimodal, so any non-local
         route is vision-capable. The agent path consults this to DROP image bytes a
         non-vision model can't read (the model still sees the attachment's id as
-        text, so it can edit it or analyze it by reference)."""
-        provider, model, _ = await self._resolve_live(task, strength)
+        text, so it can edit it or analyze it by reference). `spec_override` (the
+        per-conversation pick) makes the check reflect the turn's actual model."""
+        provider, model, _ = await self._resolve_live(task, strength, spec_override)
         if provider == "local":
             return local_catalog.supports_vision(model)
         return True
 
     async def effective_reasoning_effort(
-        self, task: str, strength: str | None = None
+        self, task: str, strength: str | None = None, spec_override: str | None = None
     ) -> str | None:
         """The reasoning effort a `task` will actually run with after live overrides —
         None when the resolved model isn't reasoning-capable. Lets a caller (e.g. the
-        agent loop) size its budget to how hard the model is set to think."""
-        return (await self._resolve_live(task, strength))[2]
+        agent loop) size its budget to how hard the model is set to think.
+        `spec_override` (the per-conversation pick) re-gates the effort on the
+        overridden model, so a turn steered onto a non-reasoning local model reports
+        None rather than the resolved route's effort."""
+        return (await self._resolve_live(task, strength, spec_override))[2]
 
     def spec(self, task: str, strength: str | None = None) -> tuple[str, str]:
         """The (provider, model) a task resolves to from STATIC config alone — env
@@ -472,6 +502,7 @@ class LlmRouter:
         max_tokens: int = DEFAULT_MAX_TOKENS,
         strength: str | None = None,
         effort_override: str | None = None,
+        spec_override: str | None = None,
     ) -> LlmTurn:
         """One tool-aware turn for the agent loop. Unlike `complete` there is no
         JSON re-ask — tool calls are structured by the provider, and the loop
@@ -480,8 +511,11 @@ class LlmRouter:
         `effort_override` lets a caller steer how hard the model thinks for THIS
         turn (the sub-agent spawner sets it per child); it wins over the resolved
         effort but is still dropped for a non-reasoning model — same gate as a
-        stored override, so a non-reasoning route never receives the param."""
-        provider, model, reasoning_effort = await self._resolve_live(task, strength)
+        stored override, so a non-reasoning route never receives the param.
+        `spec_override` steers the MODEL for this turn (the omnibox's per-conversation
+        pick), outranking the resolved route; a malformed/can't-serve override is
+        ignored."""
+        provider, model, reasoning_effort = await self._resolve_live(task, strength, spec_override)
         if effort_override is not None and _reasoning_capable(provider, model):
             reasoning_effort = effort_override
         client = self._clients[provider]
@@ -521,13 +555,15 @@ class LlmRouter:
         max_tokens: int = DEFAULT_MAX_TOKENS,
         strength: str | None = None,
         effort_override: str | None = None,
+        spec_override: str | None = None,
     ) -> AsyncIterator[StreamPart]:
         """Stream a tool-aware turn for the agent loop (StreamPart events). Usage
         is recorded once from the closing LlmTurn — the streamed text chunks
         carry no usage, only the final turn does. `effort_override` steers the
         model's reasoning for this turn (gated to reasoning-capable models, like
-        `converse`)."""
-        provider, model, reasoning_effort = await self._resolve_live(task, strength)
+        `converse`); `spec_override` steers the MODEL (the per-conversation pick),
+        outranking the resolved route."""
+        provider, model, reasoning_effort = await self._resolve_live(task, strength, spec_override)
         if effort_override is not None and _reasoning_capable(provider, model):
             reasoning_effort = effort_override
         client = self._clients[provider]

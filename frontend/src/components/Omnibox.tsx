@@ -6,6 +6,7 @@
 import {
   type CSSProperties,
   type ReactNode,
+  type PointerEvent as ReactPointerEvent,
   type TouchEvent,
   useEffect,
   useLayoutEffect,
@@ -40,6 +41,10 @@ const MODE_ICON: Record<Mode, (p: { size?: number }) => ReactNode> = {
 
 const SWIPE_UP_PX = 48;
 const PANEL_PX = 56; // horizontal travel that commits a Full Brain lateral panel
+// Long-press a conversation tab to open the agent-model sheet: hold this long without
+// moving past the slop (so a swipe or a scroll never trips it).
+const LONG_PRESS_MS = 450;
+const LONG_PRESS_SLOP_PX = 10;
 
 interface OmniboxProps {
   /** Mode state is lifted so the home stream can scope itself to the mode. */
@@ -81,6 +86,13 @@ interface OmniboxProps {
    * attachments). A conversation mode allows it only when the agent's model is
    * vision-capable; with vision off the paperclip is simply hidden. Defaults to true. */
   attachEnabled?: boolean;
+  /** Long-press (or right-click) a CONVERSATION tab (Research / Full Brain) → open the
+   * agent-model sheet for that mode. Only conversation tabs fire it; a long press
+   * suppresses the tab-switch tap that would otherwise follow. Absent = no long press. */
+  onLongPressTab?: ((mode: Mode) => void) | undefined;
+  /** The active conversation's model pick, shown as a chip in the composer foot so the
+   * owner sees the turn isn't on the default route. Null/absent = the default. */
+  modelLabel?: string | null | undefined;
 }
 
 export function Omnibox({
@@ -99,6 +111,8 @@ export function Omnibox({
   onClearApptRef,
   onLateralSwipe,
   attachEnabled = true,
+  onLongPressTab,
+  modelLabel,
 }: OmniboxProps) {
   const [text, setText] = useState("");
   const [files, setFiles] = useState<File[]>([]);
@@ -108,6 +122,12 @@ export function Omnibox({
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const touchStartY = useRef<number | null>(null);
   const touchStartX = useRef<number | null>(null);
+  // Long-press state for the agent-model sheet: a pending timer, the press origin (to
+  // cancel on a swipe/scroll), and whether the long press already fired (so the tap
+  // that follows the release doesn't also switch tabs).
+  const pressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pressOrigin = useRef<{ x: number; y: number } | null>(null);
+  const longFired = useRef(false);
 
   // A handoff (e.g. the calendar's "reschedule") seeds the composer once, then
   // clears so a re-render can't re-seed; the owner reviews and sends themselves.
@@ -210,6 +230,49 @@ export function Omnibox({
     if (Math.abs(dx) >= PANEL_PX) onLateralSwipe(dx);
   }
 
+  // Long-press only on conversation tabs (Research / Full Brain) — capture tabs keep
+  // their native tap/right-click. Fires the sheet after the hold, and marks `longFired`
+  // so the release tap doesn't also flip the tab.
+  const longPressable = (mode: Mode) => onLongPressTab !== undefined && MODES[mode].domain === null;
+
+  function clearPress() {
+    if (pressTimer.current) {
+      clearTimeout(pressTimer.current);
+      pressTimer.current = null;
+    }
+    pressOrigin.current = null;
+  }
+
+  function startPress(mode: Mode, event: ReactPointerEvent) {
+    if (!longPressable(mode)) return;
+    longFired.current = false;
+    pressOrigin.current = { x: event.clientX, y: event.clientY };
+    pressTimer.current = setTimeout(() => {
+      pressTimer.current = null;
+      longFired.current = true;
+      onLongPressTab?.(mode);
+    }, LONG_PRESS_MS);
+  }
+
+  function movePress(event: ReactPointerEvent) {
+    const origin = pressOrigin.current;
+    if (!origin) return;
+    if (
+      Math.abs(event.clientX - origin.x) > LONG_PRESS_SLOP_PX ||
+      Math.abs(event.clientY - origin.y) > LONG_PRESS_SLOP_PX
+    ) {
+      clearPress();
+    }
+  }
+
+  // Drop a pending long-press timer if the box unmounts mid-hold.
+  useEffect(
+    () => () => {
+      if (pressTimer.current) clearTimeout(pressTimer.current);
+    },
+    [],
+  );
+
   const boxStyle = { "--mode": meta.color, "--mode-tint": meta.tint } as CSSProperties;
   const ModeIcon = MODE_ICON[seg.mode];
 
@@ -239,7 +302,26 @@ export function Omnibox({
                     ? ({ "--mode": m.color, "--mode-tint": m.tint } as CSSProperties)
                     : undefined
                 }
-                onClick={() => onSegChange(tapSegment(seg, mode))}
+                onClick={() => {
+                  // Swallow the tap that trails a long press (it already opened the sheet).
+                  if (longFired.current) {
+                    longFired.current = false;
+                    return;
+                  }
+                  onSegChange(tapSegment(seg, mode));
+                }}
+                onPointerDown={(e) => startPress(mode, e)}
+                onPointerMove={movePress}
+                onPointerUp={clearPress}
+                onPointerLeave={clearPress}
+                onPointerCancel={clearPress}
+                onContextMenu={(e) => {
+                  // Desktop long-press analog: right-click a conversation tab opens the
+                  // sheet instead of the browser menu.
+                  if (!longPressable(mode)) return;
+                  e.preventDefault();
+                  onLongPressTab?.(mode);
+                }}
               >
                 <span className="seg-ic">
                   <Ic size={18} />
@@ -324,6 +406,12 @@ export function Omnibox({
             line (capture modes always keep their attach). */}
           <div className="composer-foot">
             {contextUsage && <ContextMeter usage={contextUsage} />}
+            {modelLabel && (
+              <span className="model-pill" title={`This conversation runs on ${modelLabel}`}>
+                <BotIcon size={12} />
+                {modelLabel}
+              </span>
+            )}
             <div className="foot-icons">
               {attachEnabled && (
                 <button

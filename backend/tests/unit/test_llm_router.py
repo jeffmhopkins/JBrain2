@@ -520,6 +520,78 @@ async def test_converse_effort_override_dropped_for_a_non_reasoning_model() -> N
     assert anthropic.converse_calls[0]["reasoning_effort"] is None
 
 
+async def test_converse_spec_override_wins_over_the_resolved_route() -> None:
+    # The omnibox's per-conversation model pick: a per-call spec_override steers this
+    # turn onto the picked model, outranking even a stored spec.
+    xai, local = FakeLlmClient(["x"]), FakeLlmClient(["l"])
+    router = LlmRouter(
+        {"xai": xai, "local": local},
+        {"agent.turn": ("xai", "grok-4.3")},
+        overrides_loader=_loader({"agent.turn": {"spec": "xai:grok-4.3"}}),
+        local_enabled=True,
+    )
+    await router.converse("agent.turn", system="s", messages=[], spec_override="local:gpt-oss-120b")
+    assert local.converse_calls[0]["model"] == "gpt-oss-120b" and not xai.converse_calls
+
+
+async def test_converse_stream_spec_override_steers_the_model() -> None:
+    xai, local = FakeLlmClient(["x"]), FakeLlmClient(["l"])
+    router = LlmRouter(
+        {"xai": xai, "local": local},
+        {"agent.turn": ("xai", "grok-4.3")},
+        local_enabled=True,
+    )
+    async for _ in router.converse_stream(
+        "agent.turn", system="s", messages=[], spec_override="local:gpt-oss-120b"
+    ):
+        pass
+    assert local.stream_calls[0]["model"] == "gpt-oss-120b" and not xai.stream_calls
+
+
+async def test_spec_override_re_gates_reasoning_effort_on_the_picked_model() -> None:
+    # Steering onto a non-reasoning local model drops the effort the resolved (xai)
+    # route would have carried — the param never reaches a model with no thinking channel.
+    local = FakeLlmClient(["l"])
+    router = LlmRouter(
+        {"xai": FakeLlmClient(), "local": local},
+        {"agent.turn": ("xai", "grok-4.3")},
+        overrides_loader=_loader({"agent.turn": {"reasoning_effort": "high"}}),
+        local_enabled=True,
+    )
+    await router.converse(
+        "agent.turn", system="s", messages=[], spec_override="local:qwen3-30b-a3b"
+    )
+    assert local.converse_calls[0]["reasoning_effort"] is None
+
+
+async def test_spec_override_ignored_when_local_hosting_off() -> None:
+    # A local pick can't route at a dead gateway: the override is dropped and the turn
+    # runs on the resolved cloud default (the same fail-safe as a stored local spec).
+    xai, local = FakeLlmClient(["x"]), FakeLlmClient(["l"])
+    router = LlmRouter(
+        {"xai": xai, "local": local},
+        {"agent.turn": ("xai", "grok-4.3")},
+        local_enabled=False,
+    )
+    await router.converse("agent.turn", system="s", messages=[], spec_override="local:gpt-oss-120b")
+    assert xai.converse_calls and not local.converse_calls
+
+
+async def test_spec_override_reflects_in_window_and_vision_probes() -> None:
+    # The endpoint probes the picked model's window + vision, not the default route's:
+    # the local VL model reports its catalog window and vision-capable.
+    router = LlmRouter(
+        {"xai": FakeLlmClient(), "local": FakeLlmClient()},
+        {"agent.turn": ("xai", "grok-4.3")},
+        local_enabled=True,
+    )
+    vl = "local:qwen3-vl-30b-a3b"
+    assert await router.context_window("agent.turn", spec_override=vl) == 32768
+    assert await router.supports_vision("agent.turn", spec_override=vl) is True
+    # ...and without the override it stays on the cloud default.
+    assert await router.context_window("agent.turn") == CONTEXT_WINDOWS["grok-4.3"]
+
+
 async def test_bad_stored_spec_falls_back_without_crashing() -> None:
     xai = FakeLlmClient(["x"])
     router = _override_router({"xai": xai}, {"note.extract": {"spec": "garbage"}})

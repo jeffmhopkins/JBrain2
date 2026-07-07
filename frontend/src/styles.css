@@ -672,6 +672,24 @@ h3 {
   align-items: center;
 }
 
+/* The per-conversation agent-model chip in the composer foot — a calm reminder that
+   the turn isn't on the default route. Sits left of the action icons; never grows. */
+.model-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+  max-width: 45%;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--mode-tint);
+  color: var(--mode);
+  font-size: var(--fs-secondary);
+}
+
 .send-btn {
   color: var(--mode);
 }
@@ -3697,6 +3715,34 @@ button.small {
 .domain-row-on {
   background: var(--surface-2);
   font-weight: 500;
+}
+
+/* Agent-model sheet (omnibox long-press): the conversation-scoped model picker. */
+.model-sheet-note {
+  margin: 0 0 12px;
+  color: var(--text-2);
+  font-size: 0.85rem;
+}
+
+.model-row-name {
+  flex: 1;
+  padding-left: 12px;
+}
+
+.model-row-meta {
+  color: var(--text-2);
+  font-size: 0.78rem;
+}
+
+.model-row-check {
+  padding: 0 12px;
+  color: var(--accent);
+}
+
+.model-sheet-empty {
+  margin: 12px 0 0;
+  color: var(--text-2);
+  font-size: 0.85rem;
 }
 
 /* ===== Note view layer ===== */
@@ -12525,7 +12571,7 @@ button.auto-sect[aria-expanded="true"] > svg {
 
 .runs-slog > summary {
   font-size: var(--fs-micro);
-  color: var(--text-dim);
+  color: var(--text-2);
   cursor: pointer;
   user-select: none;
 }
@@ -12534,7 +12580,7 @@ button.auto-sect[aria-expanded="true"] > svg {
   margin: 6px 0 0;
   font-size: var(--fs-micro);
   font-family: var(--font-mono);
-  color: var(--text-dim);
+  color: var(--text-2);
   background: var(--bg);
   border: 1px solid var(--border);
   border-radius: 7px;
@@ -17673,7 +17719,7 @@ button.task-band:active {
   display: flex;
   justify-content: space-between;
   font-size: 13px;
-  color: var(--text-dim);
+  color: var(--text-2);
   margin-bottom: 8px;
 }
 .jcode-modelload-pct {
@@ -17711,7 +17757,7 @@ button.task-band:active {
 .jcode-modelask-body {
   font-size: 13px;
   line-height: 1.5;
-  color: var(--text-dim);
+  color: var(--text-2);
   margin: 0 0 10px;
 }
 
@@ -17807,7 +17853,7 @@ button.task-band:active {
   border: 1px solid var(--border);
   border-radius: 8px;
   background: color-mix(in srgb, var(--surface) 88%, transparent);
-  color: var(--text-dim);
+  color: var(--text-2);
   cursor: pointer;
   backdrop-filter: blur(4px);
 }

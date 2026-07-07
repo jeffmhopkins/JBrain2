@@ -330,6 +330,50 @@ def test_chat_streams_text_then_done(
     ]
 
 
+def test_chat_runs_the_turn_on_a_per_conversation_model_pick(
+    client: TestClient,
+    repo: FakeAuthRepo,
+    sessions_store: FakeAgentSessions,
+) -> None:
+    # The omnibox long-press sheet: a `model` (local catalog id) steers THIS turn onto
+    # the picked local model. The loop's model call lands on it, and the usage event's
+    # context window reflects the picked model — not the default cloud route.
+    login(client, repo)
+    sessions_store.add(AgentSessionInfo("sess-1", "", "active", ("general",), (), NOW, NOW))
+    local = FakeLlmClient(
+        turns=[LlmTurn("local hi", (), "end_turn", LlmUsage(5, 2))], stream_chunks=[["local hi"]]
+    )
+    client.app.state.llm_router = LlmRouter(  # type: ignore[attr-defined]
+        {"xai": FakeLlmClient(), "local": local},
+        {"agent.turn": ("xai", "grok-4.3")},
+        local_enabled=True,
+    )
+    resp = client.post(
+        "/api/chat", json={"session_id": "sess-1", "message": "hi", "model": "gpt-oss-120b"}
+    )
+    assert resp.status_code == 200
+    assert local.stream_calls[0]["model"] == "gpt-oss-120b"
+    usage = next(e for e in sse_events(resp.text) if e["type"] == "usage")
+    assert usage["context_window"] == 131072  # the local model's window, not grok's 256k
+
+
+def test_chat_ignores_an_unknown_model_pick(
+    client: TestClient,
+    repo: FakeAuthRepo,
+    sessions_store: FakeAgentSessions,
+) -> None:
+    # A stale/garbage `model` id is dropped (not 422'd): the turn runs on the resolved
+    # default route, so a bad client pick can never break a conversation.
+    login(client, repo)
+    sessions_store.add(AgentSessionInfo("sess-1", "", "active", ("general",), (), NOW, NOW))
+    resp = client.post(
+        "/api/chat", json={"session_id": "sess-1", "message": "hi", "model": "no-such-model"}
+    )
+    assert resp.status_code == 200
+    usage = next(e for e in sse_events(resp.text) if e["type"] == "usage")
+    assert usage["context_window"] == 256_000  # fell back to the default grok route
+
+
 def test_chat_streams_llm_text_to_the_wall_display_when_enabled(
     client: TestClient,
     repo: FakeAuthRepo,
