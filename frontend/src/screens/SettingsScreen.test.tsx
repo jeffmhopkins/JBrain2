@@ -24,7 +24,12 @@ function stubSettingsFetch(initial: "full" | "ocr" = "full") {
     if (path === "/api/brain/voices") {
       return new Response(
         JSON.stringify({
-          voices: ["en_US-amy-medium", "en_US-joe-medium", "en_US-libritts_r-medium#3922"],
+          voices: [
+            "en_US-amy-medium",
+            "en_US-joe-medium",
+            "en_US-libritts_r-medium#3922",
+            "kokoro-af_heart",
+          ],
         }),
         { status: 200, headers: { "Content-Type": "application/json" } },
       );
@@ -173,6 +178,8 @@ describe("SettingsScreen read-aloud voice picker", () => {
     // The curated multi-speaker entry shows its speaker after a dot.
     expect(within(select).getByRole("option", { name: "Libritts_r · 3922" })).toBeInTheDocument();
     expect(within(select).getByRole("option", { name: "Amy" })).toBeInTheDocument();
+    // A Kokoro voice reads with its engine and the lang/gender code dropped.
+    expect(within(select).getByRole("option", { name: "Kokoro · Heart" })).toBeInTheDocument();
     fireEvent.change(select, { target: { value: "en_US-libritts_r-medium#3922" } });
     await waitFor(() =>
       expect(puts).toContainEqual({ brain_answer_voice: "en_US-libritts_r-medium#3922" }),

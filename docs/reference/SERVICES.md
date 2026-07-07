@@ -1,6 +1,6 @@
 # JBrain2 — Services & components map
 
-> **Status:** Living · **Last verified:** 2026-07-06
+> **Status:** Living · **Last verified:** 2026-07-07
 
 The concrete inventory of everything the box runs and everything baked into it:
 the Docker containers, the two apps (the PWA and the JBrain360 Android client),
@@ -27,7 +27,7 @@ Everything is one Docker Compose stack (`deploy/docker-compose.yml`, project nam
 | `searxng` | SearXNG | Self-hosted metasearch backing `jerv`'s `web_search`/`web_fetch`. Only the KB-blind `jerv` reaches it. | internal |
 | `reader` | headless-Chromium reader (r.jina.ai-compatible) | `web_fetch` fallback renderer for bot-walled / JS-only pages. | internal |
 | `wall` | stdlib Python | Unauthenticated **neural-wall display** for the host's own monitor / a LAN kiosk — host vitals only (GPU %, RAM, power), no DB, its own LAN port :8800; forwards read-aloud to `tts-stt`. | internal |
-| `tts-stt` | whisper.cpp + piper | The box's **speech I/O**: warm piper text-to-speech (:8801, the read-aloud renderer) + whisper.cpp speech-to-text (:8080). Default-on; the STT model is provisioned by `jbrain enable-whisper`. | internal |
+| `tts-stt` | whisper.cpp + piper + kokoro | The box's **speech I/O**: warm text-to-speech (:8801, the read-aloud renderer — piper voices plus baked-in Kokoro-82M voices) + whisper.cpp speech-to-text (:8080). Default-on; both TTS engines' voices ride the image build, so no provisioning step — the STT model is the one opt-in (`jbrain enable-whisper`). | internal |
 
 **Opt-in — compose-profile guarded (never start on a stock deploy):**
 
@@ -67,8 +67,11 @@ opted in. Full runbook: `../runbooks/STRIX_HALO_SETUP.md`; prompting behaviour:
   `HSA_OVERRIDE_GFX_VERSION`) serving Qwen-Image / Qwen-Image-Edit, with a
   Lightning fast path. Emits live `b_preview` frames so the chat shows a
   progressive image. See `../archive/IMAGE_GEN_*_PLAN.md`.
-- **`tts-stt`** — whisper.cpp behind its own llama-swap (plus warm piper TTS) so transcription
-  works without local LLMs; load-on-demand, unload-after.
+- **`tts-stt`** — whisper.cpp behind its own llama-swap (plus warm TTS) so transcription
+  works without local LLMs; load-on-demand, unload-after. Read-aloud renders with piper by
+  default; **Kokoro-82M** (Apache-2.0, more natural) is baked alongside and offered as extra
+  `kokoro-<voice>` picks in Settings — the same warm-model seam, no provisioning step. A box
+  without the Kokoro weights simply lists no Kokoro voices.
 
 Stock deploys route LLM calls to the cloud (Anthropic / xAI) through the LLM
 adapter; the local services are an opt-in swap, chosen per task in **LLM

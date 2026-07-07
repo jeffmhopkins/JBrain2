@@ -28,10 +28,15 @@ const IMAGE_ANALYSIS_OPTIONS: { value: ImageAnalysisMode; label: string }[] = [
 // voice/speaker before choosing it — never real answer text.
 const VOICE_SAMPLE_TEXT = "This is how the assistant will sound when it reads your answers aloud.";
 
-// Prettify a piper voice id for the picker: drop the "en_US-" locale + "-medium" quality,
-// title-case the model name, and surface a multi-speaker id's speaker after a dot —
-// "en_US-libritts_r-medium#3922" -> "Libritts_r · 3922", "en_US-amy-medium" -> "Amy".
+// Prettify a voice id for the picker: drop the "en_US-" locale + "-medium" quality, title-case
+// the model name, and surface a multi-speaker id's speaker after a dot —
+// "en_US-libritts_r-medium#3922" -> "Libritts_r · 3922", "en_US-amy-medium" -> "Amy". Kokoro
+// ids ("kokoro-af_heart") read as "Kokoro · Heart" (drop the lang/gender code prefix).
 function voiceLabel(id: string): string {
+  if (id.startsWith("kokoro-")) {
+    const name = id.slice("kokoro-".length).replace(/^[a-z]{2}_/, "");
+    return `Kokoro · ${name ? name.charAt(0).toUpperCase() + name.slice(1) : id}`;
+  }
   const parts = id.split("#");
   const model = parts[0] ?? id;
   const speaker = parts[1];
