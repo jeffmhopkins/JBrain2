@@ -1,6 +1,6 @@
 # JBrain2 — GUI Design System
 
-> **Status:** Living · **Last verified:** 2026-07-06
+> **Status:** Living · **Last verified:** 2026-07-07
 
 Binding reference for all UI work. Derived from the owner-supplied JBrain v1
 reference screens (dark composer, knowledge hub, calendar, medical entry).
@@ -1299,13 +1299,15 @@ expanding a card and comparing run timestamps. The fix is a **two-zone card**:
   pill, and a full-`--text` summary**; once its session is opened the band relaxes
   — bar and pill gone, summary to `--text-2`, an **"opened ·"** meta prefix.
   Failures keep a rose dot regardless.
-- **Viewed-state is device-local**, mirroring the launcher's `TASKS_SEEN_KEY`
-  badge (and theme / text size): a `jb.tasks.viewedRunAt` map (task id → the
-  newest opened run's `started_at`). A task reads "new" until its latest run's
+- **Viewed-state is device-local** (like theme / text size): a
+  `jb.tasks.viewedRunAt` map (task id → the newest opened run's `started_at`),
+  shared by the card band and the launcher's **Tasks tile badge** — both read
+  from the same map (`frontend/src/tasks/viewed.ts`), so the badge counts exactly
+  the tasks whose bands still say "new". A task reads "new" until its latest run's
   session is opened **on this device**; opening Tasks does not clear it (only
-  opening the session does). Cross-device read-sync would need a server column
-  and is deliberately deferred — the existing badge set the device-local
-  precedent.
+  opening the session does), so the badge tracks unopened results, not screen
+  visits. Cross-device read-sync would need a server column and is deliberately
+  deferred.
 - **The latest run is embedded in the task payload** (`Task.latest_run`,
   server-computed via one `DISTINCT ON (task_id)` query) so every band renders
   from the single `GET /api/tasks` — no per-card fetch. Mutations that return a

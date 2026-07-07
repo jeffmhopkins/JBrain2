@@ -194,30 +194,12 @@ class EnabledPatch(BaseModel):
     enabled: bool
 
 
-class RunActivity(BaseModel):
-    """The count of runs since the owner last opened Tasks — the launcher badge."""
-
-    count: int
-
-
 @router.get("/tasks")
 async def list_tasks(request: Request, principal: OwnerDep) -> list[TaskOut]:
     ctx = ctx_for(principal)
     tasks = await get_task_repo(request).list(ctx)
     latest = await get_task_runs(request).latest_per_task(ctx, [t.id for t in tasks])
     return [TaskOut.of(t, latest.get(t.id)) for t in tasks]
-
-
-@router.get("/tasks/run-activity")
-async def run_activity(
-    request: Request, principal: OwnerDep, since: datetime | None = None
-) -> RunActivity:
-    """How many task runs started after `since`. No `since` (the owner has never
-    opened Tasks) reads as zero — the badge has no baseline yet."""
-    if since is None:
-        return RunActivity(count=0)
-    count = await get_task_runs(request).count_since(ctx_for(principal), since)
-    return RunActivity(count=count)
 
 
 @router.post("/tasks", status_code=201)

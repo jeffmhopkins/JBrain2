@@ -169,9 +169,6 @@ class FakeRuns:
     async def latest_per_task(self, ctx, task_ids):  # type: ignore[no-untyped-def]
         return {tid: _run(tid) for tid in task_ids}
 
-    async def count_since(self, ctx, since):  # type: ignore[no-untyped-def]
-        return 3
-
 
 def _request(repo: FakeRepo) -> SimpleNamespace:
     state = SimpleNamespace(task_repo=repo, task_runner=FakeRunner(), task_runs=FakeRuns())
@@ -222,14 +219,3 @@ async def test_delete_and_runs() -> None:
     await tasks_api.delete_task(req, PRINCIPAL, "task-1")  # type: ignore[arg-type]
     assert repo.deleted == ["task-1"]
     assert await tasks_api.task_runs(req, PRINCIPAL, "task-1") == []  # type: ignore[arg-type]
-
-
-@pytest.mark.asyncio
-async def test_run_activity_badge() -> None:
-    req = _request(FakeRepo())
-    # No baseline yet → zero, no query.
-    none = await tasks_api.run_activity(req, PRINCIPAL, None)  # type: ignore[arg-type]
-    assert none.count == 0
-    # With a since, the repo's count is surfaced.
-    some = await tasks_api.run_activity(req, PRINCIPAL, NOW)  # type: ignore[arg-type]
-    assert some.count == 3

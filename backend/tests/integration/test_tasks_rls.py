@@ -212,43 +212,6 @@ async def test_runs_are_owner_only_and_cascade_with_the_task(maker: async_sessio
     assert remaining == 0
 
 
-async def test_count_since_powers_the_badge(maker: async_sessionmaker) -> None:
-    owner = await _owner_ctx(maker)
-    repo, runs = TaskRepo(maker), TaskRunRepo(maker)
-    task = await _make_task(repo, owner)
-
-    async def _start() -> str:
-        return await runs.start(
-            owner,
-            task_id=task.id,
-            principal_id=owner.principal_id,
-            session_id=None,
-            run_id=None,
-            trigger="manual",
-        )
-
-    marker = datetime.now(UTC)
-    # The badge counts runs that FINISHED after the marker, not ones that merely
-    # started — a run surfaces as a result only once its turn completes.
-    finished_before = await _start()  # finished before the marker → doesn't count
-    async with scoped_session(maker, owner) as session:
-        await session.execute(
-            text("UPDATE app.task_runs SET ended_at = :t, status = 'done' WHERE id = :id"),
-            {"t": marker - timedelta(minutes=5), "id": finished_before},
-        )
-    in_flight = await _start()  # still running (NULL ended_at) → doesn't count on start
-    for _ in range(2):  # two that finish after the marker → both count
-        await runs.finish(owner, await _start(), status="done", summary="ok", step_count=1)
-
-    assert await runs.count_since(owner, marker) == 2
-    # Finishing the in-flight run now surfaces it: the badge ticks on completion.
-    await runs.finish(owner, in_flight, status="done", summary="late", step_count=1)
-    assert await runs.count_since(owner, marker) == 3
-    # A non-owner sees nothing (RLS).
-    token = SessionContext(principal_kind="capability_token", domain_scopes=("general",))
-    assert await runs.count_since(token, marker) == 0
-
-
 async def test_latest_per_task_returns_the_newest_run(maker: async_sessionmaker) -> None:
     """The card-band query: one row per task — its most recent FINISHED run — and
     nothing for a task that has never run, whose only run is still in flight, or for a

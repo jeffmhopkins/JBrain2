@@ -221,3 +221,73 @@ describe("Launcher review badge (live count)", () => {
     expect(fetchMock.mock.calls.length).toBe(callsWhileOpen);
   });
 });
+
+// The Tasks badge counts tasks whose latest run hasn't been opened on THIS device
+// (the jb.tasks.viewedRunAt markers that also drive each card's NEW band) — not
+// runs since Tasks was last opened. Opening the screen no longer clears it; only
+// opening a task's session does.
+describe("Launcher tasks badge (unviewed count)", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.stubGlobal("matchMedia", () => ({ matches: false }));
+    localStorage.clear();
+  });
+  afterEach(() => {
+    vi.runOnlyPendingTimers();
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+    localStorage.clear();
+  });
+
+  const noop = () => {};
+  const flush = () => act(async () => void (await vi.advanceTimersByTimeAsync(0)));
+
+  // Only `id` + `latest_run.started_at` feed the count; keep the rest minimal.
+  const task = (id: string, startedAt: string | null) => ({
+    id,
+    latest_run: startedAt === null ? null : { id: `${id}-run`, started_at: startedAt },
+  });
+
+  // The launcher fires two badge fetches: the review queue and the tasks list.
+  function stubFetch(tasks: unknown[]): void {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const path = String(input);
+        const body = path.includes("/api/tasks") ? tasks : { items: [] };
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: () => Promise.resolve(body),
+        } as Response);
+      }),
+    );
+  }
+
+  it("counts tasks with an unviewed latest run, ignoring viewed and never-run ones", async () => {
+    const T1 = "2026-07-07T05:00:00.000Z";
+    const T2 = "2026-07-06T08:30:00.000Z";
+    // "opened" was viewed on this device at its latest run; "never" has no run.
+    localStorage.setItem("jb.tasks.viewedRunAt", JSON.stringify({ opened: T1 }));
+    stubFetch([
+      task("a", T1), // no marker → unviewed
+      task("b", T2), // no marker → unviewed
+      task("opened", T1), // marker == latest → viewed, not counted
+      task("never", null), // never ran → not counted
+    ]);
+    render(<Launcher open onClose={noop} onNavigate={noop} />);
+
+    await flush();
+    expect(screen.getByText("2")).toBeInTheDocument();
+  });
+
+  it("shows no badge when every task's latest run has been opened", async () => {
+    const T1 = "2026-07-07T05:00:00.000Z";
+    localStorage.setItem("jb.tasks.viewedRunAt", JSON.stringify({ a: T1, b: T1 }));
+    stubFetch([task("a", T1), task("b", T1)]);
+    render(<Launcher open onClose={noop} onNavigate={noop} />);
+
+    await flush();
+    expect(screen.queryByText(/^\d+$/)).toBeNull();
+  });
+});

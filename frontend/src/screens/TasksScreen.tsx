@@ -19,7 +19,6 @@ import {
   type TaskRun,
   api,
 } from "../api/client";
-import { TASKS_SEEN_KEY } from "../components/Launcher";
 import {
   CheckIcon,
   ChevronLeftIcon,
@@ -29,6 +28,7 @@ import {
   RefreshIcon,
   XIcon,
 } from "../components/icons";
+import { isUnviewed, loadViewed, writeViewed } from "../tasks/viewed";
 
 function errorMessage(err: unknown): string {
   return err instanceof ApiError ? err.message : "Request failed. Is the server reachable?";
@@ -91,30 +91,6 @@ function metaLine(t: Task): string {
 
 function runDot(status: TaskRun["status"]): string {
   return status === "error" ? "failed" : status === "running" ? "running" : "ok";
-}
-
-// Per-task "have I opened the latest run's session?" markers, keyed task id →
-// the started_at of the newest run opened on this device. Device-local like the
-// launcher's TASKS_SEEN_KEY badge (and theme / text size): a task's band reads
-// "new" until its latest run's session has been opened here.
-const TASKS_VIEWED_KEY = "jb.tasks.viewedRunAt";
-
-function loadViewed(): Record<string, string> {
-  try {
-    const raw = localStorage.getItem(TASKS_VIEWED_KEY);
-    return raw ? (JSON.parse(raw) as Record<string, string>) : {};
-  } catch {
-    return {};
-  }
-}
-
-/** A task has an unviewed result when its latest run is newer than the last run
- * whose session was opened on this device (or none has been). */
-function isUnviewed(task: Task, viewed: Record<string, string>): boolean {
-  const latest = task.latest_run;
-  if (latest === null) return false;
-  const seen = viewed[task.id];
-  return seen === undefined || new Date(seen) < new Date(latest.started_at);
 }
 
 /** The card's "latest result" band — a one-tap dock to the newest run's session
@@ -704,14 +680,7 @@ export function TasksScreen({ onClose, onOpenSession }: TasksScreenProps) {
     if (latest === null) return;
     const startedAt = latest.started_at;
     setViewed((m) => ({ ...m, [task.id]: startedAt }));
-    try {
-      localStorage.setItem(
-        TASKS_VIEWED_KEY,
-        JSON.stringify({ ...loadViewed(), [task.id]: startedAt }),
-      );
-    } catch {
-      // best-effort; a dropped marker just re-shows the band as "new"
-    }
+    writeViewed(task.id, startedAt);
   }, []);
 
   // Open the agent session a run produced; opening the latest run also marks the
@@ -734,16 +703,6 @@ export function TasksScreen({ onClose, onOpenSession }: TasksScreenProps) {
   useEffect(() => {
     void refresh();
   }, [refresh]);
-
-  // Opening Tasks marks every run so far as "seen", so the launcher's Tasks badge
-  // (runs since last opened) clears the next time the menu is shown.
-  useEffect(() => {
-    try {
-      localStorage.setItem(TASKS_SEEN_KEY, new Date().toISOString());
-    } catch {
-      // best-effort; the launcher re-seeds a missing marker
-    }
-  }, []);
 
   const loadRuns = useCallback(async (taskId: string) => {
     try {
