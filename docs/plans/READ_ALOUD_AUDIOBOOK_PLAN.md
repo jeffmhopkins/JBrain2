@@ -1,6 +1,6 @@
 # Read-aloud, audiobook grade — Kokoro pronunciation, pacing, and narrator voice
 
-> **Status:** Scheduled · **Last verified:** 2026-07-07 · **Waves:** W0◻️ W1◻️ W2◻️ W3◻️ W4◻️
+> **Status:** In progress · **Last verified:** 2026-07-07 · **Waves:** W0✅ W1✅ W2◻️ W3◻️ W4◻️
 
 **A scheduled, multi-wave build plan** (per `docs/DOC_LIFECYCLE.md`), governed by
 `docs/reference/PROCESS.md`. It builds directly on the shipped
@@ -114,12 +114,15 @@ RLS / the domain firewall / principal scope, so no red-team gate — except wher
   a build hiccup can never break read-aloud. Dockerfile bake-guard test.
 - **T1.2** `piper_server.py` Kokoro path phonemizes via misaki (espeak fallback for OOV)
   and feeds Kokoro phonemes; resident like the model, under the existing warm-load lock.
-- **T1.3** `toUtterance` (Kokoro variant): **acronym/initialism rules** (spell
-  initialisms letter-by-letter, keep true acronyms as words) + a **curated pronunciation
-  lexicon** emitted as misaki inline overrides `[word](/ipa/)` for known-hard words
-  (`SQL`, `GIF`, product names, …).
-- **Verify:** fake-misaki unit tests; acronym-rule + lexicon tests against the golden
-  corpus; bake-guard; the degrade-to-espeak path. RAM measured on the box (§6). No GUI.
+- **T1.3** A **pronunciation lexicon**, `KOKORO_LEXICON` in `piper_server.py` (server-side,
+  co-located with misaki — avoids emitting misaki markup across the api/tts boundary where an
+  espeak fallback couldn't read it): known-hard words → misaki phonemes, emitted as inline
+  overrides `[word](/…/)` on the misaki path only. Ships **empty** (nothing guessed); the owner
+  adds entries after a listen, deriving phonemes on the box (see `deploy/tts-stt/README.md`).
+  *(Refinement vs the original plan, which put this in the frontend `toUtterance`.)*
+- **Verify:** fake-misaki unit tests (misaki path feeds phonemes with `is_phonemes=True`; the
+  degrade-to-espeak path; lexicon → inline override); Dockerfile bake-guard. RAM measured on the
+  box (§6). No GUI. **(Landed.)**
 
 ### W2 — Audiobook pacing (shaped silence + prosody marks)
 
