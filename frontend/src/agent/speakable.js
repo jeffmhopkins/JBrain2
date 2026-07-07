@@ -182,6 +182,15 @@ const ABBREVIATIONS = [
   [/\bapprox\.\s*/gi, "approximately "],
 ];
 
+// Per-engine utterance profiles — the pronunciation rules that depend on the voice's PHONEMIZER.
+// piper embeds espeak-ng and our Kokoro build phonemizes through espeak-ng too, so both share one
+// ruleset today; keeping the seam here means giving Kokoro its own (misaki-aware) profile later is
+// a config change, not a re-thread of the pipeline. Engine-agnostic work lives in toProse().
+const UTTERANCE_PROFILES = {
+  piper: { abbreviations: ABBREVIATIONS },
+  kokoro: { abbreviations: ABBREVIATIONS },
+};
+
 // --- URLs → spoken domain --------------------------------------------------------------
 
 // A bare URL: read the registrable domain ("github dot com"), drop scheme/path/query —
@@ -249,11 +258,14 @@ const CITE_CHIP = /\[\^\d+\]|【\^?\d+】/g;
 const ENDS_SENTENCE = /[.!?:;…]["')\]]?$/;
 
 /**
- * Normalize answer Markdown to a single line of speakable prose.
+ * Structural, ENGINE-AGNOSTIC pass: Markdown → plain multi-line prose. Strips citations and
+ * markup, linearizes tables, drops heading/quote/bullet markers (spelling a numbered marker),
+ * removes emphasis. Newlines are PRESERVED — the utterance pass authors pauses from them. Every
+ * TTS engine needs this identically.
  * @param {string} md
  * @returns {string}
  */
-export function speakable(md) {
+export function toProse(md) {
   let s = String(md || "");
   // Citations / browse-cursor chips — never read them.
   s = s.replace(CITE_MODEL, "").replace(CITE_SOURCE, "").replace(CITE_CHIP, "");
@@ -283,9 +295,23 @@ export function speakable(md) {
     .join("\n");
   // Emphasis markers.
   s = s.replace(/(\*\*|__|\*|_|~~)/g, "");
+  return s;
+}
+
+/**
+ * Pronunciation + pacing pass over `prose` from toProse, tuned to `engine`'s phonemizer. Verbalizes
+ * abbreviations/numbers/currency/percent/fractions/symbols/emoji/URLs, authors pauses from line
+ * ends, and shapes dashes/parentheticals into comma beats. Returns ONE speakable line.
+ * @param {string} prose
+ * @param {"piper" | "kokoro"} [engine]
+ * @returns {string}
+ */
+export function toUtterance(prose, engine = "piper") {
+  const profile = UTTERANCE_PROFILES[engine] ?? UTTERANCE_PROFILES.piper;
+  let s = String(prose || "");
   // Latin abbreviations → words (before pause-authoring, so their interior dots aren't read
   // as sentence ends and the spoken aside carries a real pause).
-  for (const [re, word] of ABBREVIATIONS) s = s.replace(re, word);
+  for (const [re, word] of profile.abbreviations) s = s.replace(re, word);
   // Ellipsis: normalize "..."/"…" to a single ellipsis char. espeak renders it as a ~300 ms
   // trailing beat — longer than a comma, no spoken "dot dot dot" — and the chunker never cuts on
   // it (it's not . ! ?), so the dramatic pause stays inside the clause instead of splitting it.
@@ -359,6 +385,17 @@ export function speakable(md) {
     .replace(/^\s*,\s*/, "")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+/**
+ * Normalize answer Markdown to a single line of speakable prose for `engine` (default piper) —
+ * the engine-agnostic structural pass composed with the engine-specific utterance pass.
+ * @param {string} md
+ * @param {"piper" | "kokoro"} [engine]
+ * @returns {string}
+ */
+export function speakable(md, engine = "piper") {
+  return toUtterance(toProse(md), engine);
 }
 
 // --- streaming chunker -----------------------------------------------------------------
@@ -470,10 +507,11 @@ function committedLen(raw) {
  * trailing sentence are held until more arrives (or `flush`). Blocks normalize whole.
  * @param {string} raw
  * @param {boolean} flush
+ * @param {"piper" | "kokoro"} [engine]
  * @returns {{ chunks: string[]; consumed: number }}
  */
-export function chunkStream(raw, flush) {
+export function chunkStream(raw, flush, engine = "piper") {
   const committed = flush ? raw.length : committedLen(raw);
   if (committed <= 0) return { chunks: [], consumed: 0 };
-  return { chunks: splitClips(speakable(raw.slice(0, committed))), consumed: committed };
+  return { chunks: splitClips(speakable(raw.slice(0, committed), engine)), consumed: committed };
 }

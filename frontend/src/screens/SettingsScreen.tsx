@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { emitReadAloudSettings } from "../agent/readAloudBus";
 import type {
   DebugToken,
   FeedConfig,
@@ -374,20 +375,25 @@ export function SettingsScreen({ deviceLabel, onLogout }: SettingsScreenProps) {
     void api.updateSettings({ brain_llm_stream: on }).catch(() => {});
   }
 
+  // Each read-aloud setter also broadcasts the change: the chat read-aloud hook lives in the
+  // always-mounted HomeScreen, so this overlay is its only way to learn of a live change.
   function pickBrainReadAloud(on: boolean) {
     setBrainReadAloud(on); // optimistic
+    emitReadAloudSettings({ brain_read_aloud: on });
     void api.updateSettings({ brain_read_aloud: on }).catch(() => {});
   }
 
   function pickAnswerVoice(id: string) {
     setBrainAnswerVoice(id); // optimistic
     setSampleError(null);
+    emitReadAloudSettings({ brain_answer_voice: id });
     void api.updateSettings({ brain_answer_voice: id }).catch(() => {});
   }
 
   function pickEngine(next: "piper" | "native") {
     setBrainEngine(next); // optimistic
     setSampleError(null);
+    emitReadAloudSettings({ brain_read_aloud_engine: next });
     void api.updateSettings({ brain_read_aloud_engine: next }).catch(() => {});
   }
 
