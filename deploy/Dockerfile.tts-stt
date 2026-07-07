@@ -40,11 +40,15 @@ COPY --from=build /src/build/bin/whisper-server /usr/local/bin/whisper-server
 # belt-and-suspenders so phonemization can't fail on a build that resolves an older stack).
 # --break-system-packages installs into the container's system python (PEP 668) — fine for a
 # single-purpose image. onnxruntime is NOT pinned separately: piper-tts and kokoro-onnx both
-# depend on it, so pip resolves one shared build.
+# depend on it, so pip resolves one shared build. kokoro-onnx is pinned to 0.4.7, the newest
+# release whose Requires-Python (>=3.9, no upper bound) installs on this base image's Python
+# 3.14 — 0.4.8+/0.5.x cap at <3.14 and pip refuses them here. Same Kokoro() / .create() API and
+# same v1.0 model files as 0.5.x, so the render code is unchanged. Bump when the base image's
+# Python moves and a newer kokoro-onnx supports it.
 RUN apt-get update \
  && apt-get install -y --no-install-recommends python3 python3-pip libgomp1 espeak-ng \
  && rm -rf /var/lib/apt/lists/* \
- && pip install --no-cache-dir --break-system-packages piper-tts kokoro-onnx==0.5.0
+ && pip install --no-cache-dir --break-system-packages piper-tts kokoro-onnx==0.4.7
 
 # Baked default voices: Joe reads prompts, Amy reads answers, plus the multi-speaker
 # libritts_r model whose curated speaker 3922 is a second female agent voice. Fetched with
