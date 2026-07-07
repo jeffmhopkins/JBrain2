@@ -80,8 +80,13 @@ function worse(a: Level, b: Level): Level {
 const SERVICE_GROUPS: { label: string; services: string[] }[] = [
   // The always-on app spine (db/web/postgres are alias names some deploys use).
   { label: "Core", services: ["api", "worker", "supervisor", "db", "postgres", "web"] },
-  // On-box model / media inference (mostly opt-in).
-  { label: "AI", services: ["local-llm", "embed", "tts-stt", "comfyui", "jcode", "claude-shim"] },
+  // On-box model / media inference: the always-on spine (embed, tts-stt) plus
+  // local-llm, which is opt-in but stays up once enabled.
+  { label: "AI", services: ["local-llm", "embed", "tts-stt"] },
+  // Opt-in extras guarded by compose profiles (comfyui, jcode) — off by default
+  // and typically stopped, so they get their own card and don't drag the AI
+  // group's roll-up to "down" when they're not running.
+  { label: "AI - Optional", services: ["comfyui", "jcode", "claude-shim"] },
   // Outward networking + web access.
   {
     label: "Infra",
