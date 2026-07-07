@@ -22,6 +22,17 @@ One always-on container serving the box's **speech I/O**:
   dispatched to Kokoro **before** the piper resolver, so it can never fall back to a piper
   voice; an unavailable Kokoro voice degrades to `None` (the device's native voice), never a
   silent wrong voice.
+- **Kokoro pronunciation (misaki G2P).** Kokoro phonemizes through **misaki** (`_load_g2p`,
+  `trf=False` → the small `en_core_web_sm` spaCy model to bound RAM) with an **espeak fallback**
+  for out-of-vocabulary words — better English than espeak alone (POS-based homographs like
+  "lead"/"read", `num2words`). misaki is **optional and non-fatal**: if it's not baked (or fails
+  to load), the Kokoro path falls back to kokoro-onnx's built-in espeak, so read-aloud never
+  breaks. To **fix a specific word**, add it to `KOKORO_LEXICON` in `piper_server.py` — key is the
+  lowercased word, value is its **misaki phonemes** (misaki's alphabet, not raw IPA; derive them on
+  the box with `python3 -c "from misaki import en; print(en.G2P()('the word')[0])"`). Entries are
+  emitted as misaki inline overrides `[word](/phonemes/)` and applied only on the misaki path.
+  **RAM:** misaki + its spaCy model add resident memory on top of Kokoro's ~310 MB — measure with
+  `docker stats tts-stt` after a Kokoro render and record it here.
 - **STT (`:8080`)** — whisper.cpp behind llama-swap (load-on-demand, idle-unload). The api
   reaches it at `http://tts-stt:8080/v1`; the model + `llama-swap.yaml` config are
   provisioned by `jbrain enable-whisper` (`scripts/whisper-setup.sh`).

@@ -56,6 +56,16 @@ RUN apt-get update \
 RUN pip install --no-cache-dir --break-system-packages kokoro-onnx==0.4.7 \
  || echo "[kokoro] pip install failed — read-aloud will run piper-only until the next build"
 
+# misaki — Kokoro's recommended G2P: better English pronunciation than espeak (POS-based
+# homographs, num2words), with an espeak fallback for OOV. INDEPENDENT of kokoro-onnx above and
+# NON-FATAL: if misaki or its small spaCy model (en_core_web_sm; piper_server uses trf=False to
+# stay on it and bound RAM) fails to install, the Kokoro path phonemizes with its built-in espeak
+# instead — never a broken read-aloud or a blocked update. Keep the "misaki" token here in step
+# with piper_server.py's _load_g2p (the test guards it).
+RUN (pip install --no-cache-dir --break-system-packages "misaki[en]" \
+      && python3 -m spacy download en_core_web_sm) \
+ || echo "[kokoro] misaki G2P unavailable — Kokoro will phonemize with espeak until the next build"
+
 # Baked default voices: Joe reads prompts, Amy reads answers, plus the multi-speaker
 # libritts_r model whose curated speaker 3922 is a second female agent voice. Fetched with
 # stdlib urllib (follows HF's CDN redirect) into /opt/piper-voices (outside the /tts mount).

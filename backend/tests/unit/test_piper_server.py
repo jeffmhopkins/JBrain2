@@ -55,30 +55,65 @@ class _FakeSynthesisConfig:
 
 
 class _FakeKokoro:
-    """Stand-in for kokoro_onnx.Kokoro: records loads, returns a numpy-free (list, rate) so the
-    stdlib float->PCM path is exercised without pulling numpy into the backend venv."""
+    """Stand-in for kokoro_onnx.Kokoro: records loads + the last create() call, returns a
+    numpy-free (list, rate) so the stdlib float->PCM path is exercised without pulling numpy into
+    the backend venv."""
 
     loads: list[str] = []
+    last_create: dict = {}
 
     def __init__(self, model_path: str, voices_path: str) -> None:
         type(self).loads.append(str(model_path))
 
-    def create(self, text: str, voice: str, speed: float = 1.0, lang: str = "en-us"):  # type: ignore[no-untyped-def]
+    def create(  # type: ignore[no-untyped-def]
+        self, text, voice, speed=1.0, lang="en-us", is_phonemes=False, trim=True
+    ):
+        type(self).last_create = {"text": text, "voice": voice, "is_phonemes": is_phonemes}
         return [0.0, 0.5, -0.5, 1.0, -1.0] * 20, 24000  # 100 samples, the real engine's 24 kHz
+
+
+class _FakeG2P:
+    """Stand-in for misaki.en.G2P: records the text it phonemized, returns (phonemes, tokens)."""
+
+    calls: list[str] = []
+
+    def __init__(self, trf: bool = False, british: bool = False, fallback: object = None) -> None:
+        pass
+
+    def __call__(self, text: str):  # type: ignore[no-untyped-def]
+        type(self).calls.append(text)
+        return (f"PH[{text}]", [])
+
+
+class _FakeEspeakFallback:
+    def __init__(self, british: bool = False) -> None:
+        pass
 
 
 def _load_server() -> types.ModuleType:
     _FakeVoice.loads = []
     _FakeKokoro.loads = []
+    _FakeKokoro.last_create = {}
+    _FakeG2P.calls = []
     fake_piper = types.ModuleType("piper")
     fake_piper.PiperVoice = _FakeVoice  # type: ignore[attr-defined]
     fake_piper.SynthesisConfig = _FakeSynthesisConfig  # type: ignore[attr-defined]
     sys.modules["piper"] = fake_piper
-    # Kokoro is imported lazily inside _load_kokoro, so this fake only matters once a Kokoro
-    # voice actually renders — harmless for the piper-only tests.
+    # Kokoro + misaki are imported lazily inside _load_kokoro / _load_g2p, so these fakes only
+    # matter once a Kokoro voice actually renders — harmless for the piper-only tests.
     fake_kokoro = types.ModuleType("kokoro_onnx")
     fake_kokoro.Kokoro = _FakeKokoro  # type: ignore[attr-defined]
     sys.modules["kokoro_onnx"] = fake_kokoro
+    fake_misaki = types.ModuleType("misaki")
+    fake_en = types.ModuleType("misaki.en")
+    fake_en.G2P = _FakeG2P  # type: ignore[attr-defined]
+    fake_espeak = types.ModuleType("misaki.espeak")
+    fake_espeak.EspeakFallback = _FakeEspeakFallback  # type: ignore[attr-defined]
+    fake_misaki.en = fake_en  # type: ignore[attr-defined]
+    fake_misaki.espeak = fake_espeak  # type: ignore[attr-defined]
+    sys.modules["misaki"] = fake_misaki
+    sys.modules["misaki.en"] = fake_en
+    sys.modules["misaki.espeak"] = fake_espeak
     spec = importlib.util.spec_from_file_location("piper_server", _SERVER_PATH)
     assert spec and spec.loader
     mod = importlib.util.module_from_spec(spec)
@@ -282,7 +317,7 @@ def test_kokoro_render_failure_is_logged_not_silent(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    def boom(_self, _text, voice, speed=1.0, lang="en-us"):  # type: ignore[no-untyped-def]
+    def boom(_self, _text, voice, speed=1.0, lang="en-us", is_phonemes=False, trim=True):  # type: ignore[no-untyped-def]
         raise RuntimeError("kokoro exploded")
 
     monkeypatch.setattr(_FakeKokoro, "create", boom)
@@ -301,3 +336,42 @@ def test_dockerfile_bakes_kokoro_weights(server: types.ModuleType) -> None:
     assert server.KOKORO_MODEL in dockerfile
     assert server.KOKORO_VOICES_FILE in dockerfile
     assert server.CURATED_KOKORO_VOICES
+
+
+# --- W1: misaki G2P pronunciation ----------------------------------------------------------
+
+
+def test_kokoro_phonemizes_with_misaki_when_available(kokoro_server: types.ModuleType) -> None:
+    kokoro_server._g2p_holder.clear()
+    assert kokoro_server.tts_wav("hello there", "kokoro-af_heart", lead_ms=0) is not None
+    assert _FakeG2P.calls == ["hello there"]  # misaki phonemized the text...
+    assert _FakeKokoro.last_create["is_phonemes"] is True  # ...and phonemes were fed as phonemes
+    assert _FakeKokoro.last_create["text"] == "PH[hello there]"  # not the raw text
+
+
+def test_kokoro_falls_back_to_espeak_when_misaki_absent(
+    kokoro_server: types.ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # misaki not importable → the Kokoro path lets kokoro-onnx phonemize with its own espeak.
+    for name in ("misaki", "misaki.en", "misaki.espeak"):
+        monkeypatch.delitem(sys.modules, name, raising=False)
+    kokoro_server._g2p_holder.clear()
+    assert kokoro_server.tts_wav("hello", "kokoro-af_heart", lead_ms=0) is not None
+    assert _FakeKokoro.last_create["is_phonemes"] is False  # raw text → kokoro's built-in espeak
+    assert _FakeKokoro.last_create["text"] == "hello"
+    assert _FakeG2P.calls == []  # misaki never ran
+
+
+def test_kokoro_lexicon_emits_misaki_override(
+    kokoro_server: types.ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A lexicon entry becomes a misaki inline override "[word](/phonemes/)" before phonemizing.
+    monkeypatch.setitem(kokoro_server.KOKORO_LEXICON, "kokoro", "kˈOkəɹO")
+    kokoro_server._g2p_holder.clear()
+    kokoro_server.tts_wav("say Kokoro now", "kokoro-af_heart", lead_ms=0)
+    assert _FakeG2P.calls[-1] == "say [Kokoro](/kˈOkəɹO/) now"
+
+
+def test_dockerfile_bakes_misaki(server: types.ModuleType) -> None:
+    # The G2P upgrade rides the image build — keep the Dockerfile in step with _load_g2p's import.
+    assert "misaki" in _DOCKERFILE.read_text()

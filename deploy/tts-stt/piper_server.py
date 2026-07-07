@@ -30,6 +30,7 @@ import contextlib
 import io
 import json
 import os
+import re
 import sys
 import threading
 import time
@@ -92,6 +93,14 @@ CURATED_KOKORO_VOICES: tuple[str, ...] = (
     "bm_george", "bm_fable", "bm_daniel", "bm_lewis",
 )
 
+# Pronunciation overrides for words misaki/espeak get wrong — keyed by lowercased word, valued by
+# misaki PHONEMES (misaki's alphabet, not raw IPA; e.g. Kokoro → "kˈOkəɹO"). Emitted as misaki
+# inline overrides "[word](/phonemes/)" and applied ONLY on the misaki path (espeak can't read the
+# markup). Empty by default — nothing is guessed; the owner adds an entry by running misaki on the
+# box to get the word's phonemes, then dropping it here (see deploy/tts-stt/README.md). Case-
+# insensitive whole-word match.
+KOKORO_LEXICON: dict[str, str] = {}
+
 # Verbose per-clip tracing, pushed on by the app ({"kind": "tts_debug", "on": bool} to
 # /event) while a debug-console token is live — logs each render's voice-as-received,
 # resolved speaker, bytes and elapsed ms. Failures ALWAYS log; this adds the success trace.
@@ -110,6 +119,11 @@ _synth_lock = threading.Lock()
 # construct a model and leave two resident (piper's path self-dedupes via a dict; this can't).
 _kokoro_holder: list[Any] = []
 _kokoro_load_lock = threading.Lock()
+
+# Resident misaki G2P (holds 0 or 1 — the G2P, or None once we've learned it's unavailable, so
+# we don't retry the import every render). Loaded outside _synth_lock like the model; its own lock.
+_g2p_holder: list[Any] = []
+_g2p_load_lock = threading.Lock()
 
 
 def _voice_models() -> dict[str, Path]:
@@ -289,6 +303,49 @@ def _floats_to_wav(samples: Any, sample_rate: int) -> bytes:
     return out.getvalue()
 
 
+def _load_g2p() -> Any:
+    """The resident misaki English G2P — better English than espeak (POS-based homographs,
+    num2words) with an espeak fallback for OOV — loaded once. Returns None when misaki isn't
+    installed or fails to load, so the caller lets Kokoro phonemize with its built-in espeak.
+    Non-fatal: a misaki problem disables the upgrade, never a broken render. trf=False keeps it on
+    the small en_core_web_sm spaCy model (bounded RAM). The load runs outside _synth_lock."""
+    if not _g2p_holder:
+        with _g2p_load_lock:
+            if not _g2p_holder:
+                try:
+                    from misaki import en, espeak
+
+                    fallback = espeak.EspeakFallback(british=False)
+                    _g2p_holder.append(en.G2P(trf=False, british=False, fallback=fallback))
+                    print("[tts] misaki G2P loaded for Kokoro", file=sys.stderr)
+                except Exception as exc:  # noqa: BLE001 — misaki is optional; degrade to espeak
+                    print(
+                        f"[tts] misaki G2P unavailable, Kokoro will use espeak: "
+                        f"{type(exc).__name__}: {exc}",
+                        file=sys.stderr,
+                    )
+                    _g2p_holder.append(None)
+    return _g2p_holder[0]
+
+
+def _apply_lexicon(text: str) -> str:
+    """Wrap each KOKORO_LEXICON word in misaki's inline override "[word](/phonemes/)" so the G2P
+    speaks it our way. No-op when the lexicon is empty (the default) — misaki+espeak handle the
+    rest. Only meaningful on the misaki path (espeak can't read the markup)."""
+    if not KOKORO_LEXICON:
+        return text
+    alternation = "|".join(re.escape(w) for w in KOKORO_LEXICON)
+    pattern = re.compile(rf"\b(?:{alternation})\b", re.IGNORECASE)
+    return pattern.sub(
+        lambda m: (
+            f"[{m.group(0)}](/{KOKORO_LEXICON[m.group(0).lower()]}/)"
+            if m.group(0).lower() in KOKORO_LEXICON
+            else m.group(0)
+        ),
+        text,
+    )
+
+
 def _kokoro_wav(text: str, voice_id: str, lead_ms: int | None) -> bytes | None:
     """Render `text` with the warm Kokoro engine for a "kokoro-<voice>" id. Dispatched BEFORE
     the piper resolver so a Kokoro id can never hit piper's unknown-id fallback and render in
@@ -306,8 +363,15 @@ def _kokoro_wav(text: str, voice_id: str, lead_ms: int | None) -> bytes | None:
     started = time.monotonic()
     try:
         kokoro = _load_kokoro()
+        g2p = _load_g2p()  # None → let Kokoro phonemize with its built-in espeak
         with _synth_lock:
-            samples, sample_rate = kokoro.create(text, voice=name, speed=1.0, lang="en-us")
+            if g2p is not None:
+                phonemes, _tokens = g2p(_apply_lexicon(text))
+                samples, sample_rate = kokoro.create(
+                    phonemes, voice=name, speed=1.0, is_phonemes=True
+                )
+            else:
+                samples, sample_rate = kokoro.create(text, voice=name, speed=1.0, lang="en-us")
         data = _floats_to_wav(samples, int(sample_rate))
     except Exception as exc:  # noqa: BLE001 — any synth failure must surface, not crash the server
         print(f"[tts] render failed for {voice_id!r} (kokoro): {type(exc).__name__}: {exc}",
