@@ -1,6 +1,6 @@
 # JBrain2 — Services & components map
 
-> **Status:** Living · **Last verified:** 2026-07-06
+> **Status:** Living · **Last verified:** 2026-07-07
 
 The concrete inventory of everything the box runs and everything baked into it:
 the Docker containers, the two apps (the PWA and the JBrain360 Android client),
@@ -23,7 +23,7 @@ Everything is one Docker Compose stack (`deploy/docker-compose.yml`, project nam
 | `worker` | same image as `api` | Postgres job-queue consumer: extraction, chunking, embedding, analysis, wiki builds, the scheduled sweeps. | internal |
 | `db` | TimescaleDB-HA (Postgres 17 + Timescale + PostGIS + pgvector) | The single stateful service — relational + vector + FTS + time-series + geo + job queue + workflow state. | internal |
 | `embed` | HF text-embeddings-inference (CPU) | Local embeddings (`bge-small-en-v1.5`, 384-dim, 1 GB cap). Model = env var; swap ⇒ re-embed job. | internal |
-| `supervisor` | minimal socket-mounted service | Holds the Docker socket; a fixed command set (status/restart/logs/update) behind an internal token. Drives the Ops screen. | internal |
+| `supervisor` | minimal socket-mounted service | Holds the Docker socket; a fixed command set (status/restart/start/stop/logs/update/rebuild/provision/export/import/reset) behind an internal token. Drives the Ops screen. | internal |
 | `searxng` | SearXNG | Self-hosted metasearch backing `jerv`'s `web_search`/`web_fetch`. Only the KB-blind `jerv` reaches it. | internal |
 | `reader` | headless-Chromium reader (r.jina.ai-compatible) | `web_fetch` fallback renderer for bot-walled / JS-only pages. | internal |
 | `wall` | stdlib Python | Unauthenticated **neural-wall display** for the host's own monitor / a LAN kiosk — host vitals only (GPU %, RAM, power), no DB, its own LAN port :8800; forwards read-aloud to `tts-stt`. | internal |
@@ -36,11 +36,18 @@ Everything is one Docker Compose stack (`deploy/docker-compose.yml`, project nam
 | `cloudflared` | `tunnel` | `install.sh` (dial-out tunnel mode) | Cloudflare Tunnel connector — public reachability with no static IP / port-forward, works behind CGNAT. See `../runbooks/CLOUDFLARE_TUNNEL.md`. |
 | `local-llm` | `local-llm` | `jbrain enable-local-models` | llama-swap fronting llama.cpp (Vulkan) — several GGUF models on one OpenAI-compatible endpoint, loaded/swapped on demand. |
 | `comfyui` | `comfyui` | `scripts/comfyui-setup.sh` | ROCm ComfyUI serving Qwen-Image (gen + edit) for the image tools. |
-| STT model | `tts-stt` | `jbrain enable-whisper` | Provisions the whisper.cpp GGML model + config for the always-on `tts-stt` service (the container is default; only the model is opt-in). |
 | `jcode` | `jcode` | `scripts/jcode-setup.sh` | Sandboxed coding sessions: Claude Code's agent engine + `grok` CLI against an on-box coder model. KB-blind, isolated `jcode` network, resource-capped. See `../archive/JCODE_PLAN.md`. |
 | `claude-shim` | `jcode` | (with `jcode`) | LiteLLM Anthropic↔OpenAI translator so the Claude Agent SDK can talk to the OpenAI-speaking local gateway. |
 | `mqtt` | `mqtt` | JBrain360 setup | Mosquitto + go-auth broker (auth delegated to the API's `/internal/mqtt-*`) — the secure spine for family location. |
 | `mqtt-ingest` | `mqtt` | (with `mqtt`) | Server-side subscriber streaming published OwnTracks fixes into the location hypertable. |
+
+**STT model — opt-in, but _not_ profile-guarded:** the `tts-stt` container is
+default-on (read-aloud / piper TTS is always available); it is *not* a compose
+profile. Only its whisper.cpp speech-to-text GGML model is a heavy opt-in
+download — `jbrain enable-whisper` (`scripts/whisper-setup.sh`) fetches the model,
+writes `whisper-models/llama-swap.yaml`, sets `WHISPER_URL`, and force-recreates
+the always-on service so STT starts alongside piper. Until then the entrypoint
+runs piper only, so a stock box still serves read-aloud.
 
 **One-shot (`tools` profile):** `migrate` (`alembic upgrade head`, the only container with DDL rights) · `wipe` (destructive first-install reset, double-guarded).
 
