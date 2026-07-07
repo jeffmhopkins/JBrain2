@@ -1,6 +1,6 @@
 # Running JBrain's local models on an AMD Strix Halo box
 
-> **Status:** Living · **Last verified:** 2026-07-04
+> **Status:** Living · **Last verified:** 2026-07-07
 
 End-to-end runbook for self-hosting the optional local models (docs/reference/ANALYSIS.md,
 "Self-hosted local models") on a **Ryzen AI Max+ 395 / 128 GB** (gfx1151,
@@ -187,7 +187,7 @@ app and `jbrain logs`, not `curl localhost:8080`.
 ## Image generation — ComfyUI + Qwen-Image (optional, opt-in)
 Powers jerv's `generate_image` / `edit_image` tools
 (`docs/archive/IMAGE_GEN_SERVICE_PLAN.md`): text→image via **Qwen-Image** (native bf16),
-a near-instant **fast** path via **DreamShaper XL Lightning** (`generate_image`
+a near-instant **fast** path via the **Qwen-Image 4-step Lightning** LoRA (`generate_image`
 `speed: fast`), and image→image via **Qwen-Image-Edit**, served by a **ROCm ComfyUI JBrain manages
 as a compose service** — the sibling of the local-LLM gateway. Like that
 gateway, it is **opt-in**: a stock deploy never starts it, and JBrain only ever
@@ -233,14 +233,18 @@ failure is logged without aborting the update.
   and ComfyUI's model is freed after — so the diffusion model has the box to itself
   and bf16 costs no more RAM than the old fp8 build (gfx1151 upcast fp8 to bf16 at
   load anyway), minus the quantization loss. The `qwen-image-edit` model ships
-  **non-recommended** — its graph is wired but its bf16 weights await an on-box
-  download+run.
-- **Fast path — DreamShaper XL Lightning.** `generate_image` with `speed: fast`
-  routes to a single all-in-one SDXL checkpoint (~6.7 GB, baked VAE) driven by the
-  stock SDXL graph at 4–8 steps, so a render returns in **seconds** rather than
-  minutes — lower fidelity than Qwen, but the right tool for quick or exploratory
-  requests. It ships **non-recommended** (its standard SDXL graph is authored, not
-  yet box-exported); a first on-box render is the final confirmation.
+  **recommended** (part of the default provisioned set) — its graph is validated
+  structurally (exported from the box).
+- **Fast path — Qwen-Image 4-step Lightning.** `generate_image` with `speed: fast`
+  routes to the Qwen-Image base model driven through the shared 4-step Lightning
+  LoRA at CFG 1 — the same ~58 GB Qwen family as the quality path, so it returns in
+  a fraction of the quality render time without a second large checkpoint.
+  **DreamShaper XL Lightning** is a separate opt-in tier (`speed: dreamshaper`): a
+  single all-in-one SDXL checkpoint (~6.7 GB, baked VAE) driven by the stock SDXL
+  graph at 4–8 steps that renders in **seconds** — lower fidelity than Qwen, but a
+  tiny standalone for quick or exploratory requests. It ships **non-recommended**
+  (opt in with `comfyui-setup.sh dreamshaper`; its standard SDXL graph is authored,
+  not yet box-exported); a first on-box render is the final confirmation.
 - **JBrain owns the graph, not the model.** The backend POSTs the workflow JSON in
   `backend/src/jbrain/image_gen/workflows/` (`qwen_image.json`,
   `qwen_image_edit.json`, `dreamshaper_xl.json`), filling typed slots (prompt,

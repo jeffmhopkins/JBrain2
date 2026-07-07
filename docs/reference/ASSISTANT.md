@@ -1,6 +1,6 @@
 # JBrain2 — Assistant
 
-> **Status:** Living · **Last verified:** 2026-07-03
+> **Status:** Living · **Last verified:** 2026-07-07
 
 The personal agent. This is the **binding design** for the tool-calling agent
 (ROADMAP.md): a smart, tool-using assistant with durable memory — built natively
@@ -397,7 +397,10 @@ JS-rendered shell with no served content — there is a **reader fallback**
 (`JBRAIN_READER_URL`): a pinned reader endpoint that web_fetch retries through. It ships
 as part of the stock compose stack (an on-box, r.jina.ai-compatible renderer, like the
 self-hosted SearXNG), so the default points at the on-box instance and it is on for a
-stock deploy; set `JBRAIN_READER_URL` empty to turn it off. It is the sanctioned,
+stock deploy. Because Settings runs with `env_ignore_empty`, setting
+`JBRAIN_READER_URL` empty does *not* disable it — an empty value is treated as absent
+and falls back to the on-box `reader_url` default; to turn the fallback off, stop the
+`reader` service or point `JBRAIN_READER_URL` at a non-serving endpoint. It is the sanctioned,
 owner-controlled version of what the model was doing on its own — only the public target
 URL travels off-box, and through an endpoint the owner pins (never one the model builds). The egress-Proposal
 connectors (below) remain the rule for every *other* agent and every off-box call that

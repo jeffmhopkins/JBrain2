@@ -1,6 +1,6 @@
 # JBrain360 operations runbook
 
-> **Status:** Living · **Last verified:** 2026-07-03
+> **Status:** Living · **Last verified:** 2026-07-07
 
 Operating the family-location surface (Phase 7) safely: the controls the owner
 runs, and the deploy-time invariants the in-app security rests on. The in-database
@@ -42,10 +42,11 @@ at rest. This is a **deploy-host invariant**, not application code:
    filesystem** — LUKS on the data disk, or a cloud provider's encrypted volume.
    On a single self-hosted box, LUKS with a passphrase entered at boot is the
    baseline; an unattended box should use a TPM-sealed key.
-2. The Docker named volumes (`pgdata`, blobs, backups in `docker-compose.yml`)
-   inherit the host filesystem's encryption — there is nothing to configure in
-   compose beyond ensuring the Docker root / those volumes live on the encrypted
-   mount.
+2. The Postgres data (Docker named volume `db_data`, mounted at
+   `/home/postgres/pgdata/data`) and blobs (named volume `blobs`) inherit the host
+   filesystem's encryption, as does the backups host bind mount (`./backups`) —
+   there is nothing to configure in compose beyond ensuring the Docker root and
+   that host path live on the encrypted mount.
 3. **Backups carry the same data.** `deploy/backup.sh` output must land on
    encrypted storage too; never copy a backup to an unencrypted disk or an
    un-encrypted cloud bucket.
