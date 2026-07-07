@@ -19,6 +19,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../api/client";
+import { onReadAloudSettings } from "./readAloudBus";
 import { chunkStream, speakable } from "./speakable.js";
 
 type ReadAloudEngine = "piper" | "native";
@@ -142,6 +143,22 @@ export function useReadAloud(): ReadAloud {
       stale = true;
     };
   }, []);
+
+  // Settings live in the always-mounted HomeScreen, so a read-aloud change made in the Settings
+  // overlay would never reach this hook via a re-fetch. Apply saved changes as they happen so the
+  // next turn speaks in the newly chosen voice/engine and the on/off toggle takes effect live.
+  useEffect(
+    () =>
+      onReadAloudSettings((patch) => {
+        if (typeof patch.brain_read_aloud === "boolean") setSettingOn(patch.brain_read_aloud);
+        if (patch.brain_answer_voice) answerVoiceRef.current = patch.brain_answer_voice;
+        if (patch.brain_read_aloud_engine) {
+          engineRef.current = patch.brain_read_aloud_engine;
+          setEngine(patch.brain_read_aloud_engine);
+        }
+      }),
+    [],
+  );
 
   // Which piper voices the box has — piper mode needs at least one; without any (box
   // unreachable / no models) piper mode falls back to the device's native voice.

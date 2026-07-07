@@ -1,5 +1,6 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { onReadAloudSettings } from "../agent/readAloudBus";
 import { isLocationCaptureEnabled } from "../location";
 import { SettingsScreen } from "./SettingsScreen";
 
@@ -245,6 +246,20 @@ describe("SettingsScreen read-aloud voice picker", () => {
     const sub = (await screen.findByLabelText("Kokoro voice")) as HTMLSelectElement;
     expect(sub.value).toBe("kokoro-af_sky");
     expect(within(sub).getByRole("option", { name: "Sky · American F" })).toBeInTheDocument();
+  });
+
+  it("broadcasts a voice change so the mounted chat read-aloud hook picks it up", async () => {
+    // The chat hook (HomeScreen) never unmounts, so a save here must reach it over the bus.
+    const seen: Array<Record<string, unknown>> = [];
+    const off = onReadAloudSettings((p) => seen.push(p as Record<string, unknown>));
+    stubSettingsFetch();
+    setup();
+    const select = await screen.findByLabelText("Read-aloud voice");
+    fireEvent.change(select, { target: { value: "en_US-libritts_r-medium#3922" } });
+    await waitFor(() =>
+      expect(seen).toContainEqual({ brain_answer_voice: "en_US-libritts_r-medium#3922" }),
+    );
+    off();
   });
 
   it("switches to the Native model and hides the on-box voice picker", async () => {

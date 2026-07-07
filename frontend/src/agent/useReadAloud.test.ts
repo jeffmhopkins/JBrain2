@@ -1,6 +1,7 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { api } from "../api/client";
+import { emitReadAloudSettings } from "./readAloudBus";
 import { useReadAloud } from "./useReadAloud";
 
 vi.mock("../api/client", () => ({
@@ -258,6 +259,16 @@ describe("useReadAloud piper engine", () => {
     );
     expect(audios[0]?.played).toBe(true);
     expect(result.current.playing).toBe("a");
+  });
+
+  it("uses a voice changed live in the Settings overlay for the next turn", async () => {
+    const { result } = renderHook(() => useReadAloud());
+    await waitFor(() => expect(result.current.available).toBe(true));
+    // HomeScreen stays mounted, so the change arrives over the read-aloud bus, not a re-fetch.
+    act(() => emitReadAloudSettings({ brain_answer_voice: "kokoro-af_heart" }));
+    await act(async () => result.current.toggle("a", "hi"));
+    await waitFor(() => expect(brainTts).toHaveBeenCalled());
+    expect(brainTts.mock.calls[0]?.[0]).toBe("kokoro-af_heart"); // not the mount-time voice
   });
 
   it("streams piper clips per sentence when fed, prefetching then playing them in order", async () => {
