@@ -10,12 +10,14 @@ One always-on container serving the box's **speech I/O**:
   Serves `/tts`, `/tts/voices`, `/tts/speakers`, `/tts/silence`, `/healthz`, and latches the
   `tts_debug` flag. Reached by the api's authenticated read-aloud proxy (`/api/brain/tts`,
   `/api/brain/voices`, `/api/brain/speakers`) and by the `wall` display's `/tts` forward.
-  `/tts/voices` lists the curated piper presets **and** the curated Kokoro voices (ids
-  `kokoro-<voice>`, appended after the piper ones and only when the Kokoro weights are baked, so
-  a box without them lists none). `/tts/speakers` is the **full multi-speaker piper roster**
-  (speaker names ordered by piper index) that the Settings voice explorer shuffles across — for
-  piper, `/tts` renders **any** valid `<stem>#<speaker>` of an installed model, not only the
-  curated few, validated against the model's `speaker_id_map`. A `kokoro-<voice>` id is
+  `/tts/voices` lists the curated piper presets **and** the Kokoro English voice roster (ids
+  `kokoro-<voice>` — the American + British v1.0 voices, since read-aloud renders `lang=en-us`;
+  appended after the piper ones and only when the Kokoro weights are baked, so a box without them
+  lists none). In Settings these group under a single **Kokoro** entry that reveals a second
+  dropdown of the full list. `/tts/speakers` is the **full multi-speaker piper roster** (speaker
+  names ordered by piper index) that the Settings voice explorer shuffles across — for piper,
+  `/tts` renders **any** valid `<stem>#<speaker>` of an installed model, not only the curated
+  few, validated against the model's `speaker_id_map`. A `kokoro-<voice>` id is
   dispatched to Kokoro **before** the piper resolver, so it can never fall back to a piper
   voice; an unavailable Kokoro voice degrades to `None` (the device's native voice), never a
   silent wrong voice.
