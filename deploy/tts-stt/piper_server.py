@@ -88,8 +88,12 @@ _voice_cache: dict[str, PiperVoice] = {}
 _synth_lock = threading.Lock()
 
 # Resident Kokoro engine (holds 0 or 1) — the ~310 MB model loads lazily on the first Kokoro
-# render (outside _synth_lock, like piper's model load) and is reused thereafter.
+# render (outside _synth_lock, like piper's model load) and is reused thereafter. Its own load
+# lock (NOT _synth_lock, so a cold load never blocks piper renders) makes the lazy init
+# check-and-set atomic: without it two concurrent first-renders on a threaded server could each
+# construct a model and leave two resident (piper's path self-dedupes via a dict; this can't).
 _kokoro_holder: list[Any] = []
+_kokoro_load_lock = threading.Lock()
 
 
 def _voice_models() -> dict[str, Path]:
@@ -243,11 +247,13 @@ def _load_kokoro() -> Any:
     expensive step (~310 MB model); every render after reuses it. Imported lazily — the
     `kokoro_onnx` package lives only in the tts-stt image, not the app/test venv."""
     if not _kokoro_holder:
-        from kokoro_onnx import Kokoro
+        with _kokoro_load_lock:
+            if not _kokoro_holder:  # re-check: a racing caller may have loaded it while we waited
+                from kokoro_onnx import Kokoro
 
-        _kokoro_holder.append(
-            Kokoro(str(KOKORO_DIR / KOKORO_MODEL), str(KOKORO_DIR / KOKORO_VOICES_FILE))
-        )
+                _kokoro_holder.append(
+                    Kokoro(str(KOKORO_DIR / KOKORO_MODEL), str(KOKORO_DIR / KOKORO_VOICES_FILE))
+                )
     return _kokoro_holder[0]
 
 
