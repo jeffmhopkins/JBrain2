@@ -661,10 +661,15 @@ export function SettingsScreen({ deviceLabel, onLogout }: SettingsScreenProps) {
                       {voiceLabel(v)}
                     </option>
                   ))}
-                  {kokoroVoices.length > 0 && <option value={KOKORO_SENTINEL}>Kokoro</option>}
+                  {/* Show the Kokoro entry whenever this box offers Kokoro voices OR the saved
+                      voice is already a Kokoro one — the latter keeps the sentinel selectable (so
+                      the primary isn't blank) when viewing a box that lists no Kokoro voices. */}
+                  {(kokoroVoices.length > 0 || answerIsKokoro) && (
+                    <option value={KOKORO_SENTINEL}>Kokoro</option>
+                  )}
                 </select>
               </label>
-              {answerIsKokoro && kokoroVoices.length > 0 && (
+              {answerIsKokoro && (
                 <label className="settings-field">
                   Kokoro voice
                   <select
@@ -672,7 +677,8 @@ export function SettingsScreen({ deviceLabel, onLogout }: SettingsScreenProps) {
                     value={brainAnswerVoice ?? ""}
                     onChange={(e) => pickAnswerVoice(e.target.value)}
                   >
-                    {/* Surface a stored Kokoro voice the box no longer lists so the select isn't blank. */}
+                    {/* Surface the saved Kokoro voice when the box doesn't list it (incl. a box
+                        with no Kokoro weights at all) so the sub-dropdown isn't blank. */}
                     {brainAnswerVoice && !voices.includes(brainAnswerVoice) && (
                       <option value={brainAnswerVoice}>{voiceLabel(brainAnswerVoice)}</option>
                     )}

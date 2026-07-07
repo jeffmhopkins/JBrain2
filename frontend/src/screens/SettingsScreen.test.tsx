@@ -9,32 +9,34 @@ function setup() {
 
 // The screen loads the server-synced settings on mount; a stateful stub
 // makes GET/PUT round-trip like the real /api/settings.
-function stubSettingsFetch(initial: "full" | "ocr" = "full") {
+function stubSettingsFetch(
+  initial: "full" | "ocr" = "full",
+  opts: { answerVoice?: string; voices?: string[] } = {},
+) {
   const state = {
     mode: initial,
     brainStream: false,
     brainReadAloud: false,
-    brainAnswerVoice: "en_US-amy-medium",
+    brainAnswerVoice: opts.answerVoice ?? "en_US-amy-medium",
     engine: "piper" as "piper" | "native",
   };
+  const boxVoices = opts.voices ?? [
+    "en_US-amy-medium",
+    "en_US-joe-medium",
+    "en_US-libritts_r-medium#3922",
+    "kokoro-af_heart",
+    "kokoro-am_michael",
+    "kokoro-bf_emma",
+  ];
   const puts: unknown[] = [];
   const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
     const path = String(input);
     // The read-aloud voice picker loads the box's installed piper voices on mount.
     if (path === "/api/brain/voices") {
-      return new Response(
-        JSON.stringify({
-          voices: [
-            "en_US-amy-medium",
-            "en_US-joe-medium",
-            "en_US-libritts_r-medium#3922",
-            "kokoro-af_heart",
-            "kokoro-am_michael",
-            "kokoro-bf_emma",
-          ],
-        }),
-        { status: 200, headers: { "Content-Type": "application/json" } },
-      );
+      return new Response(JSON.stringify({ voices: boxVoices }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
     }
     // The voice explorer loads the multi-speaker roster on mount (a small stand-in list).
     if (path === "/api/brain/speakers") {
@@ -206,6 +208,23 @@ describe("SettingsScreen read-aloud voice picker", () => {
     // Picking one from the sub-dropdown saves that exact kokoro-* id.
     fireEvent.change(sub, { target: { value: "kokoro-bf_emma" } });
     await waitFor(() => expect(puts).toContainEqual({ brain_answer_voice: "kokoro-bf_emma" }));
+  });
+
+  it("keeps a saved Kokoro voice visible on a box that lists no Kokoro voices", async () => {
+    // brain_answer_voice is account-synced, but /tts/voices is per-box: a box without the Kokoro
+    // weights lists none. The primary must still show "Kokoro" (not blank) and the saved voice
+    // must surface in the sub-dropdown, so the selection stays visible + recoverable.
+    stubSettingsFetch("full", {
+      answerVoice: "kokoro-af_sky",
+      voices: ["en_US-amy-medium", "en_US-joe-medium"],
+    });
+    setup();
+    const primary = (await screen.findByLabelText("Read-aloud voice")) as HTMLSelectElement;
+    expect(primary.value).toBe("__kokoro__"); // shows Kokoro selected, not blank
+    expect(within(primary).getByRole("option", { name: "Kokoro" })).toBeInTheDocument();
+    const sub = (await screen.findByLabelText("Kokoro voice")) as HTMLSelectElement;
+    expect(sub.value).toBe("kokoro-af_sky");
+    expect(within(sub).getByRole("option", { name: "Sky · American F" })).toBeInTheDocument();
   });
 
   it("switches the read-aloud engine and hides the voice picker on Native", async () => {
