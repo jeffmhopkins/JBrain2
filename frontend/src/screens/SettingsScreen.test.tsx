@@ -212,6 +212,25 @@ describe("SettingsScreen read-aloud voice picker", () => {
     await waitFor(() => expect(puts).toContainEqual({ brain_answer_voice: "kokoro-bf_emma" }));
   });
 
+  it("switches back to Piper from Kokoro, reverting the answer voice to a piper id", async () => {
+    const { puts } = stubSettingsFetch("full", { answerVoice: "kokoro-af_heart" });
+    setup();
+    const models = within(await screen.findByLabelText("Read-aloud model"));
+    // Starts on Kokoro (saved kokoro voice); its voice list is shown.
+    await waitFor(() =>
+      expect(models.getByRole("button", { name: "Kokoro" })).toHaveAttribute(
+        "aria-pressed",
+        "true",
+      ),
+    );
+    expect(screen.getByLabelText("Kokoro voice")).toBeInTheDocument();
+    // Clicking Piper reverts the answer voice to the first piper id and swaps the list back.
+    fireEvent.click(models.getByRole("button", { name: "Piper" }));
+    await waitFor(() => expect(puts).toContainEqual({ brain_answer_voice: "en_US-amy-medium" }));
+    await waitFor(() => expect(screen.queryByLabelText("Kokoro voice")).toBeNull());
+    expect(screen.getByLabelText("Read-aloud voice")).toBeInTheDocument();
+  });
+
   it("keeps a saved Kokoro model selected on a box that lists no Kokoro voices", async () => {
     // brain_answer_voice is account-synced, but /tts/voices is per-box: a box without the Kokoro
     // weights lists none. The Kokoro model must still show selected and the saved voice must
