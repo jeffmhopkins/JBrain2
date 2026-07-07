@@ -54,12 +54,31 @@ class _FakeSynthesisConfig:
         self.speaker_id = speaker_id
 
 
+class _FakeKokoro:
+    """Stand-in for kokoro_onnx.Kokoro: records loads, returns a numpy-free (list, rate) so the
+    stdlib float->PCM path is exercised without pulling numpy into the backend venv."""
+
+    loads: list[str] = []
+
+    def __init__(self, model_path: str, voices_path: str) -> None:
+        type(self).loads.append(str(model_path))
+
+    def create(self, text: str, voice: str, speed: float = 1.0, lang: str = "en-us"):  # type: ignore[no-untyped-def]
+        return [0.0, 0.5, -0.5, 1.0, -1.0] * 20, 24000  # 100 samples, the real engine's 24 kHz
+
+
 def _load_server() -> types.ModuleType:
     _FakeVoice.loads = []
+    _FakeKokoro.loads = []
     fake_piper = types.ModuleType("piper")
     fake_piper.PiperVoice = _FakeVoice  # type: ignore[attr-defined]
     fake_piper.SynthesisConfig = _FakeSynthesisConfig  # type: ignore[attr-defined]
     sys.modules["piper"] = fake_piper
+    # Kokoro is imported lazily inside _load_kokoro, so this fake only matters once a Kokoro
+    # voice actually renders — harmless for the piper-only tests.
+    fake_kokoro = types.ModuleType("kokoro_onnx")
+    fake_kokoro.Kokoro = _FakeKokoro  # type: ignore[attr-defined]
+    sys.modules["kokoro_onnx"] = fake_kokoro
     spec = importlib.util.spec_from_file_location("piper_server", _SERVER_PATH)
     assert spec and spec.loader
     mod = importlib.util.module_from_spec(spec)
@@ -85,6 +104,27 @@ def server(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> types.ModuleType:
     _write_voice(voices, "en_US-libritts_r-medium", {"3922": 0, "1234": 1})
     monkeypatch.setattr(mod, "PIPER_VOICES_DIR", voices)
     monkeypatch.setattr(mod, "PIPER_BAKED_VOICES_DIR", tmp_path / "baked")  # absent
+    # Point Kokoro at an absent dir so these piper-only tests are hermetic regardless of a
+    # real /opt/kokoro on the build host.
+    monkeypatch.setattr(mod, "KOKORO_DIR", tmp_path / "kokoro_absent")
+    return mod
+
+
+@pytest.fixture
+def kokoro_server(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> types.ModuleType:
+    """A server with the Kokoro weights present (fake files) alongside a single piper voice, so
+    the Kokoro engine path lists + renders."""
+    mod = _load_server()
+    voices = tmp_path / "voices"
+    voices.mkdir()
+    _write_voice(voices, "en_US-amy-medium")
+    monkeypatch.setattr(mod, "PIPER_VOICES_DIR", voices)
+    monkeypatch.setattr(mod, "PIPER_BAKED_VOICES_DIR", tmp_path / "baked")
+    kdir = tmp_path / "kokoro"
+    kdir.mkdir()
+    (kdir / mod.KOKORO_MODEL).write_bytes(b"onnx")
+    (kdir / mod.KOKORO_VOICES_FILE).write_bytes(b"bin")
+    monkeypatch.setattr(mod, "KOKORO_DIR", kdir)
     return mod
 
 
@@ -193,3 +233,71 @@ def test_install_script_installs_every_curated_model(server: types.ModuleType) -
     script = _INSTALL_SCRIPT.read_text()
     for stem in server.CURATED_SPEAKERS:
         assert stem in script, f"{stem} curated in piper_server.py but missing from install-tts.sh"
+
+
+# --- Kokoro engine -------------------------------------------------------------------------
+
+
+def test_kokoro_voices_listed_after_piper_when_baked(kokoro_server: types.ModuleType) -> None:
+    voices = kokoro_server.piper_voices()
+    assert voices[0] == "en_US-amy-medium"  # piper voices first
+    assert "kokoro-af_heart" in voices
+    assert "kokoro-am_michael" in voices
+
+
+def test_kokoro_voices_absent_without_weights(server: types.ModuleType) -> None:
+    # The shared fixture points KOKORO_DIR at a missing dir — no Kokoro ids leak into the list.
+    assert server.kokoro_voices() == []
+    assert not any(v.startswith("kokoro-") for v in server.piper_voices())
+
+
+def test_kokoro_renders_a_24khz_mono_wav(kokoro_server: types.ModuleType) -> None:
+    out = kokoro_server.tts_wav("hello there", "kokoro-af_heart", lead_ms=0)
+    assert out is not None
+    with wave.open(io.BytesIO(out), "rb") as w:
+        assert w.getframerate() == 24000  # Kokoro's native rate, not piper's 22050
+        assert w.getnchannels() == 1
+        assert w.getsampwidth() == 2
+        assert w.getnframes() == 100  # the fake engine returns 100 samples
+
+
+def test_kokoro_warm_load_once(kokoro_server: types.ModuleType) -> None:
+    for _ in range(3):
+        assert kokoro_server.tts_wav("hi", "kokoro-am_michael", lead_ms=0) is not None
+    assert len(_FakeKokoro.loads) == 1  # the ~310 MB model loads once across renders
+
+
+def test_kokoro_id_degrades_to_none_not_a_piper_voice(
+    server: types.ModuleType, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # Kokoro NOT baked (shared fixture). A kokoro-* id must return None (→ device native voice),
+    # NEVER fall through to the first piper voice — that silent wrong-voice is the trap the
+    # dispatch-before-resolve ordering exists to prevent.
+    assert server.tts_wav("hi", "kokoro-af_heart", lead_ms=0) is None
+    assert "kokoro not installed" in capsys.readouterr().err
+
+
+def test_kokoro_render_failure_is_logged_not_silent(
+    kokoro_server: types.ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    def boom(_self, _text, voice, speed=1.0, lang="en-us"):  # type: ignore[no-untyped-def]
+        raise RuntimeError("kokoro exploded")
+
+    monkeypatch.setattr(_FakeKokoro, "create", boom)
+    kokoro_server._kokoro_holder.clear()
+    assert kokoro_server.tts_wav("hi", "kokoro-af_heart", lead_ms=0) is None
+    err = capsys.readouterr().err
+    assert "render failed" in err
+    assert "kokoro exploded" in err
+
+
+def test_dockerfile_bakes_kokoro_weights(server: types.ModuleType) -> None:
+    # A curated Kokoro voice only reaches the picker if the weights are baked into the image —
+    # guard that the Dockerfile bake block stays in step with the module's filenames + that the
+    # curated list is non-empty (so the id scheme can't silently ship with nothing behind it).
+    dockerfile = _DOCKERFILE.read_text()
+    assert server.KOKORO_MODEL in dockerfile
+    assert server.KOKORO_VOICES_FILE in dockerfile
+    assert server.CURATED_KOKORO_VOICES

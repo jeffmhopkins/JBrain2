@@ -35,8 +35,10 @@ import threading
 import time
 import urllib.parse
 import wave
+from array import array
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from typing import Any
 
 from piper import PiperVoice, SynthesisConfig
 
@@ -61,6 +63,19 @@ CURATED_SPEAKERS: dict[str, tuple[str, ...]] = {
     "en_US-libritts_r-medium": ("3922",),
 }
 
+# --- Kokoro-82M: a second, more natural TTS engine baked beside piper (Apache-2.0) ----------
+# Unlike piper (one .onnx per voice), Kokoro is ONE onnx model + a voice-styles bin that
+# together serve many voices; both live in their OWN dir so the piper `*.onnx` glob never tries
+# to load the Kokoro model as a PiperVoice. We surface a curated few as ids "kokoro-<voice>",
+# selectable ONLY when the weights are baked on disk — a box without them lists no Kokoro voices
+# rather than dead entries. Keep KOKORO_MODEL/KOKORO_VOICES_FILE in step with the bake block in
+# Dockerfile.tts-stt (the test guards this).
+KOKORO_DIR = Path(os.environ.get("BRAIN_KOKORO_DIR", "/opt/kokoro"))
+KOKORO_MODEL = "kokoro-v1.0.onnx"
+KOKORO_VOICES_FILE = "voices-v1.0.bin"
+KOKORO_ID_PREFIX = "kokoro-"
+CURATED_KOKORO_VOICES: tuple[str, ...] = ("af_heart", "am_michael")
+
 # Verbose per-clip tracing, pushed on by the app ({"kind": "tts_debug", "on": bool} to
 # /event) while a debug-console token is live — logs each render's voice-as-received,
 # resolved speaker, bytes and elapsed ms. Failures ALWAYS log; this adds the success trace.
@@ -71,6 +86,14 @@ _tts_debug = [False]
 # single global lock is simplest and cheap).
 _voice_cache: dict[str, PiperVoice] = {}
 _synth_lock = threading.Lock()
+
+# Resident Kokoro engine (holds 0 or 1) — the ~310 MB model loads lazily on the first Kokoro
+# render (outside _synth_lock, like piper's model load) and is reused thereafter. Its own load
+# lock (NOT _synth_lock, so a cold load never blocks piper renders) makes the lazy init
+# check-and-set atomic: without it two concurrent first-renders on a threaded server could each
+# construct a model and leave two resident (piper's path self-dedupes via a dict; this can't).
+_kokoro_holder: list[Any] = []
+_kokoro_load_lock = threading.Lock()
 
 
 def _voice_models() -> dict[str, Path]:
@@ -119,8 +142,10 @@ def _voices() -> list[tuple[str, Path, int | None]]:
 
 
 def piper_voices() -> list[str]:
-    """Installed selectable voice ids (incl. curated multi-speaker entries), or []."""
-    return [vid for vid, _, _ in _voices()]
+    """Installed selectable voice ids: piper voices (incl. curated multi-speaker entries) plus
+    the curated Kokoro voices when Kokoro is baked. [] when nothing is installed. (Name kept for
+    the /tts/voices seam its callers use; it now spans both engines.)"""
+    return [vid for vid, _, _ in _voices()] + kokoro_voices()
 
 
 def piper_speakers() -> dict[str, list[str]]:
@@ -204,12 +229,90 @@ def _silence_wav(ms: int) -> bytes:
     return out.getvalue()
 
 
+def _kokoro_available() -> bool:
+    """True when both Kokoro weight files are baked on disk (gates listing AND render)."""
+    return (KOKORO_DIR / KOKORO_MODEL).exists() and (KOKORO_DIR / KOKORO_VOICES_FILE).exists()
+
+
+def kokoro_voices() -> list[str]:
+    """The curated Kokoro voice ids ("kokoro-<voice>"), but only when the weights are baked — so
+    a box without them lists no Kokoro voices instead of dead entries. [] otherwise."""
+    if not _kokoro_available():
+        return []
+    return [f"{KOKORO_ID_PREFIX}{v}" for v in CURATED_KOKORO_VOICES]
+
+
+def _load_kokoro() -> Any:
+    """Return the resident Kokoro engine, loading (and caching) it on first use. The load is the
+    expensive step (~310 MB model); every render after reuses it. Imported lazily — the
+    `kokoro_onnx` package lives only in the tts-stt image, not the app/test venv."""
+    if not _kokoro_holder:
+        with _kokoro_load_lock:
+            if not _kokoro_holder:  # re-check: a racing caller may have loaded it while we waited
+                from kokoro_onnx import Kokoro
+
+                _kokoro_holder.append(
+                    Kokoro(str(KOKORO_DIR / KOKORO_MODEL), str(KOKORO_DIR / KOKORO_VOICES_FILE))
+                )
+    return _kokoro_holder[0]
+
+
+def _floats_to_wav(samples: Any, sample_rate: int) -> bytes:
+    """Pack float samples in [-1, 1] into a mono 16-bit PCM WAV — stdlib only, so numpy (which
+    ships inside the kokoro package) is never imported here. Clamps before scaling so a sample
+    slightly past ±1 can't wrap to the opposite rail."""
+    pcm = array("h", (max(-32768, min(32767, int(s * 32767))) for s in samples))
+    if sys.byteorder == "big":  # WAV frames are little-endian
+        pcm.byteswap()
+    out = io.BytesIO()
+    with wave.open(out, "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(sample_rate)
+        w.writeframes(pcm.tobytes())
+    return out.getvalue()
+
+
+def _kokoro_wav(text: str, voice_id: str, lead_ms: int | None) -> bytes | None:
+    """Render `text` with the warm Kokoro engine for a "kokoro-<voice>" id. Dispatched BEFORE
+    the piper resolver so a Kokoro id can never hit piper's unknown-id fallback and render in
+    the first piper voice (a silent wrong-voice). None (→ device native) when Kokoro isn't baked
+    or synth fails — every None path logs. The model LOAD runs outside _synth_lock (a
+    multi-second one-time cost); only the synth call is serialised (onnxruntime isn't safe to
+    Run concurrently on one session)."""
+    name = voice_id[len(KOKORO_ID_PREFIX) :]
+    if not _kokoro_available():
+        print(f"[tts] render failed for {voice_id!r}: kokoro not installed", file=sys.stderr)
+        return None
+    if _tts_debug[0]:
+        print(f"[tts] rendering {voice_id!r} -> kokoro voice={name} ({len(text)} chars)",
+              file=sys.stderr)
+    started = time.monotonic()
+    try:
+        kokoro = _load_kokoro()
+        with _synth_lock:
+            samples, sample_rate = kokoro.create(text, voice=name, speed=1.0, lang="en-us")
+        data = _floats_to_wav(samples, int(sample_rate))
+    except Exception as exc:  # noqa: BLE001 — any synth failure must surface, not crash the server
+        print(f"[tts] render failed for {voice_id!r} (kokoro): {type(exc).__name__}: {exc}",
+              file=sys.stderr)
+        return None
+    if _tts_debug[0]:
+        ms = int((time.monotonic() - started) * 1000)
+        print(f"[tts] rendered {voice_id!r} (kokoro): {len(data)} bytes in {ms} ms",
+              file=sys.stderr)
+    lead = PIPER_LEAD_MS if lead_ms is None else lead_ms
+    return _pad_lead(data, lead) if lead > 0 else data
+
+
 def tts_wav(text: str, voice: str, lead_ms: int | None = None) -> bytes | None:
     """Render `text` to a WAV with the warm piper model for `voice` (a voice id validated
     against the installed set — no path traversal). For a multi-speaker voice
     ("<stem>#<speaker>") the resolved index is passed as the synthesis speaker_id. None
     when TTS isn't available or rendering fails; every None path is logged (a silent None
     degrades the reply to the device's native voice, which looks like the wrong voice)."""
+    if voice.startswith(KOKORO_ID_PREFIX):
+        return _kokoro_wav(text, voice, lead_ms)
     resolved = _resolve_voice(voice)
     if resolved is None:
         print(f"[tts] render failed for {voice!r}: no voices installed", file=sys.stderr)
