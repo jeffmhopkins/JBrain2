@@ -277,6 +277,20 @@ describe("SettingsScreen read-aloud voice picker", () => {
     await waitFor(() => expect(screen.queryByLabelText("Read-aloud voice")).toBeNull());
   });
 
+  it("opens the read-custom-text surface from the voice picker", async () => {
+    stubSettingsFetch();
+    setup();
+    const open = await screen.findByRole("button", { name: "Read custom text" });
+    fireEvent.click(open);
+    // The overlay is mostly a text area, with Play + Export controls.
+    expect(await screen.findByLabelText("Text to read aloud")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Play" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Export audio" })).toBeInTheDocument();
+    // Its back button closes it again.
+    fireEvent.click(screen.getByRole("button", { name: "Back" }));
+    await waitFor(() => expect(screen.queryByLabelText("Text to read aloud")).toBeNull());
+  });
+
   it("renders a sample of the selected voice on tap", async () => {
     // Audio isn't implemented in jsdom — a stand-in captures play().
     const played: string[] = [];

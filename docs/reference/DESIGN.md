@@ -715,9 +715,14 @@ local append with an amber "pending sync" chip until the outbox clears.
   voice); **Native** uses
   the device's own Web Speech voice. In Piper mode the same card offers the voice picker
   — any installed voice, including a multi-speaker model's individual speakers (e.g.
-  LibriTTS 3922) — and a *play sample* button; that voice also reads the wall display's
-  answers. With read-aloud on, the copy button drops its "Copy" label to just the icon
-  so the pair fits on the foot line.
+  LibriTTS 3922) — a *play sample* button, and a *read custom text* button; that voice also
+  reads the wall display's answers. **Read custom text** opens a full-screen surface that is
+  mostly a text area (paste a note or a book chapter) with a **Play/Stop** control and an
+  **Export audio** button at the foot — Play renders the text on the box clip-by-clip and
+  plays it gaplessly in the chosen voice; Export renders the whole thing and downloads it as a
+  single WAV. On-box (Piper/Kokoro) only, since it needs the box to render capturable audio; a
+  back button is its explicit exit. With read-aloud on, the copy button drops its "Copy" label
+  to just the icon so the pair fits on the foot line.
 
 ## Navigation: the card launcher (no bottom nav)
 

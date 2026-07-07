@@ -12,6 +12,7 @@ import { FONT_SCALES, type FontScale, getFontScale, setFontScale } from "../font
 import { isLocationCaptureEnabled, setLocationCaptureEnabled } from "../location";
 import { type ThemePref, getThemePref, setThemePref } from "../theme";
 import { TOKEN_RATES, type TokenRate, getTokenRate, setTokenRate } from "../tokenRate";
+import { ReadTextScreen } from "./ReadTextScreen";
 
 const THEME_OPTIONS: { value: ThemePref; label: string }[] = [
   { value: "system", label: "System" },
@@ -109,6 +110,10 @@ export function SettingsScreen({ deviceLabel, onLogout }: SettingsScreenProps) {
   const [samplePlaying, setSamplePlaying] = useState(false);
   const [sampleError, setSampleError] = useState<string | null>(null);
   const sampleAudioRef = useRef<HTMLAudioElement | null>(null);
+  // The "read custom text" overlay: paste arbitrary prose, play it in the chosen on-box voice
+  // or export it to a WAV file. Piper-engine only (it renders on the box), so it opens from the
+  // voice picker below.
+  const [readTextOpen, setReadTextOpen] = useState(false);
   // The owner's display timezone — synced from this device's zone on app load
   // (App.tsx); shown read-only so the owner knows which zone their times render
   // in. Falls back to the browser's detected zone before the server answers.
@@ -730,6 +735,14 @@ export function SettingsScreen({ deviceLabel, onLogout }: SettingsScreenProps) {
                 >
                   {samplePlaying ? "Playing…" : "Play sample"}
                 </button>
+                <button
+                  type="button"
+                  className="seg"
+                  disabled={!brainAnswerVoice}
+                  onClick={() => setReadTextOpen(true)}
+                >
+                  Read custom text
+                </button>
               </div>
               {sampleError && <p className="settings-meta settings-error">{sampleError}</p>}
               {currentModel !== "kokoro" && roster.length > 0 && (
@@ -1084,6 +1097,10 @@ export function SettingsScreen({ deviceLabel, onLogout }: SettingsScreenProps) {
           {confirmingLogout ? "Tap again to confirm" : "Log out"}
         </button>
       </section>
+
+      {readTextOpen && brainAnswerVoice && (
+        <ReadTextScreen voice={brainAnswerVoice} onClose={() => setReadTextOpen(false)} />
+      )}
     </main>
   );
 }

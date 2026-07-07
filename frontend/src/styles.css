@@ -983,6 +983,37 @@ h3 {
   gap: 8px;
 }
 
+/* Read-custom-text overlay (opened from the read-aloud voice picker): a mostly-textarea
+   surface with a Play/Stop + Export foot. The body is a flex column so the textarea grows to
+   fill and the actions pin to the bottom. */
+.read-text-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.read-text-area {
+  flex: 1;
+  min-height: 240px;
+  resize: none;
+  width: 100%;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-seg);
+  padding: 12px;
+  font: inherit;
+  line-height: 1.5;
+}
+.read-text-area:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.read-text-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
 /* Voice explorer (read-aloud) — shuffle-audition the multi-speaker roster. Sits inside the
    Read-aloud card under the Piper model's voice picker; a nested surface so it reads as a sub-tool. */
 .voice-explorer {
