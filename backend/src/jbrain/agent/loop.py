@@ -122,9 +122,10 @@ class Guardrails:
 
 # A model set to think harder earns a deeper tool budget: a longer ReAct chain (more
 # searches/reads) before the step cap stops it. low/none/non-reasoning keep the default.
-# (Doubled from 10/15/20 alongside the per-child caps so a heavy jerv turn rarely
-# truncates mid-chain; the cost-token backstop still bounds a runaway.)
-STEPS_BY_EFFORT: dict[str, int] = {"high": 40, "medium": 30}
+# (Raised from 40/30 so a many-source turn — a scheduled news/research Task runs curator
+# at medium — rarely truncates mid-chain; the 200k cost-token backstop still bounds a
+# runaway.)
+STEPS_BY_EFFORT: dict[str, int] = {"high": 60, "medium": 50}
 
 # The forced-final synthesis (force_final_answer, on step exhaustion) writes an answer
 # from already-gathered material — a mechanical step that needs no thinking. Run it at
