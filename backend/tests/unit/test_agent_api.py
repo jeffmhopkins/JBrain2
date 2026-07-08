@@ -1108,7 +1108,7 @@ def test_chat_high_reasoning_effort_widens_the_tool_step_cap(
     runlog: FakeRunLog,
 ) -> None:
     # agent.turn stored at high effort on a reasoning-capable model → the loop's step
-    # cap widens to 40. A model that always asks for a tool runs the full 40 steps.
+    # cap widens to 60. A model that always asks for a tool runs the full 60 steps.
     login(client, repo)
     sessions_store.add(AgentSessionInfo("sess-1", "", "active", ("general",), (), NOW, NOW))
 
@@ -1128,8 +1128,8 @@ def test_chat_high_reasoning_effort_widens_the_tool_step_cap(
     resp = client.post("/api/chat", json={"session_id": "sess-1", "message": "dig deep"})
     assert resp.status_code == 200
     assert runlog.finished[-1]["stop_reason"] == "max_steps"
-    # The model was asked 40 times before the widened cap stopped it (20 by default).
-    assert len(fake.stream_calls) == 40
+    # The model was asked 60 times before the widened cap stopped it (20 by default).
+    assert len(fake.stream_calls) == 60
 
 
 def test_chat_model_failure_emits_error_done_and_marks_run_failed(
