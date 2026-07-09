@@ -7,6 +7,7 @@ from typing import Any
 from jbrain.agent.hurricanetools import build_hurricane_handlers
 from jbrain.agent.readtools import build_registry
 from jbrain.agent.toolregistry import ToolRegistry
+from jbrain.agent.weatherhistorytools import build_weather_history_handlers
 from jbrain.agent.weathertools import build_weather_handlers
 from jbrain.agent.webtools import build_web_handlers
 from jbrain.agent.wikiwritetools import build_wiki_write_handlers
@@ -23,6 +24,7 @@ from jbrain.web import (
     NwsClient,
     SearxngClient,
     WeatherClient,
+    WeatherHistoryClient,
     WebFetcher,
 )
 from jbrain.wiki.editor import _conversation, _outcome, _ToolTally, run_editor_turn
@@ -146,6 +148,7 @@ async def test_run_editor_turn_chip_only_when_lever_fires_with_empty_prose() -> 
         {
             **build_web_handlers(SearxngClient(""), WebFetcher()),
             **build_weather_handlers(WeatherClient("", ""), stub),
+            **build_weather_history_handlers(WeatherHistoryClient(""), WeatherClient("", ""), stub),
             **build_hurricane_handlers(
                 HurricaneClient(""),
                 WeatherClient("", ""),

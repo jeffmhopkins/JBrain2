@@ -16,6 +16,7 @@ from jbrain.agent.hurricanetools import build_hurricane_handlers
 from jbrain.agent.readtools import build_registry
 from jbrain.agent.session import read_context
 from jbrain.agent.toolregistry import ToolRegistry
+from jbrain.agent.weatherhistorytools import build_weather_history_handlers
 from jbrain.agent.weathertools import build_weather_handlers
 from jbrain.agent.webtools import build_web_handlers
 from jbrain.agent.wikiwritetools import build_wiki_write_handlers
@@ -35,6 +36,7 @@ from jbrain.web import (
     NwsClient,
     SearxngClient,
     WeatherClient,
+    WeatherHistoryClient,
     WebFetcher,
 )
 from jbrain.wiki.builder import StubRewriter, WikiBuilder
@@ -381,6 +383,7 @@ def _editor_registry(maker: async_sessionmaker, jobs: _FakeJobs) -> ToolRegistry
         {
             **build_web_handlers(SearxngClient(""), WebFetcher()),
             **build_weather_handlers(WeatherClient("", ""), stub),
+            **build_weather_history_handlers(WeatherHistoryClient(""), WeatherClient("", ""), stub),
             **build_hurricane_handlers(
                 HurricaneClient(""),
                 WeatherClient("", ""),
