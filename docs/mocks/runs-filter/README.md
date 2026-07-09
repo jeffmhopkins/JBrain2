@@ -1,6 +1,11 @@
 # Runs page — filtering & agent-turn visibility (mock round)
 
 > **Status:** Plan · **Last verified:** 2026-07-09
+>
+> **Decided: B — multi-select show/hide chips + filter sheet** (owner pick).
+> Shipped in `frontend/src/screens/RunsScreen.tsx`; the settled pattern +
+> reasoning live in `docs/reference/DESIGN.md` ("Runs — filtering"). A and C are
+> retained below as the record.
 
 Three interactive mockups for adding **show/hide filtering** to the Runs surface
 (`frontend/src/screens/RunsScreen.tsx`), per the DESIGN.md "3–4 distinct

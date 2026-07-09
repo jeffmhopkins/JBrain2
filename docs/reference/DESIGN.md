@@ -1,6 +1,6 @@
 # JBrain2 — GUI Design System
 
-> **Status:** Living · **Last verified:** 2026-07-07
+> **Status:** Living · **Last verified:** 2026-07-09
 
 Binding reference for all UI work. Derived from the owner-supplied JBrain v1
 reference screens (dark composer, knowledge hub, calendar, medical entry).
@@ -253,6 +253,43 @@ text (the dot's level is also the badge). Rejected rivals: A's one-screen
 tile board (status legible but logs/detail cramped) and C's health-triage
 bar + per-service sheet (the filter+sheet added navigation for a list that
 groups solve inline).
+
+**Runs — filtering (settled in a three-way mock review; chosen **B —
+multi-select show/hide chips + filter sheet** over A "kind segmented lanes" and
+C "collapsible groups, agent pinned"; reference mocks
+`docs/mocks/runs-filter/{a-segmented,b-chips-sheet,c-grouped}.html`).** The run
+log is dominated by the scheduler's ~0-token housekeeping (`reconcile_*`,
+`geofence_sweep`), which buries the runs that carry signal — agent turns and
+integrations — and the surface shipped with no filter. B won for doing exactly
+what was asked ("show/hide pipeline and other runs", agent turns one tap away)
+with the most expressive control and the least new paradigm:
+
+- A **multi-select chip row** (reusing the settled `.filter-chip` pattern), one
+  chip per kind — **Agent · Integration · Pipeline** — each carrying a live
+  count and its kind tint (steel / green / violet). A `subagent` run rides the
+  Agent chip. Tapping a chip strikes it out and hides that kind; **any
+  combination is legal** (additive, not one-lane-at-a-time). Agent is always a
+  first-class chip, so a turn is never buried.
+- A **filter button** (sliders glyph, with a non-default-count badge) opens the
+  shared `Sheet` for the lower-frequency controls: a **date range** (`.seg-row`
+  Today / 7d / 30d / All), a **result limit** (25 / 50 / All), and a one-tap
+  **Hide reconcile sweeps** switch that drops the seeded housekeeping
+  (`reconcile_*` / `geofence_sweep` / `purge_deleted_artifacts`) without hiding
+  real pipelines like `nightly_predicate_sweep`.
+- **Filtering is client-side over the fetched recency window and opt-in**: the
+  default shows everything (so the surface reads as before until a control is
+  touched), and the **status tiles stay derived from the whole window** — the
+  filter scopes only the list, so "failed today / tokens today" never lie. A
+  `N of M runs · <range> · <kinds> hidden · sweeps hidden` count line and a
+  **reset** link report exactly what's applied. When a filter empties the list,
+  the empty state names the fix rather than reading as "no runs".
+
+Rejected rivals: A's exclusive segmented lanes (can't see agent + integration
+together without re-mixing the noise) and C's structural grouping (loses the
+strictly-chronological cross-kind default). Open follow-up flagged in
+`docs/mocks/runs-filter/README.md`: whether those 0-token reconcile runs should
+be logged as first-class runs at all — a backend change that would shrink the
+problem upstream.
 
 **Calendar** — Day/Week/Month/List segments; month grid with hairline cell
 borders, out-of-month days in `--text-3`, today = accent ring around the day

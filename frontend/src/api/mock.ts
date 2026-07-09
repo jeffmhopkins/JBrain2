@@ -283,6 +283,41 @@ const MOCK_RUN_DETAILS: RunDetail[] = [
       },
     ],
   },
+  // The scheduler's high-frequency, ~0-token housekeeping sweeps — they fire every
+  // few minutes and bury the runs that carry signal. Included so mock mode exercises
+  // the Runs filter's "hide reconcile sweeps" / kind toggles (docs/mocks/runs-filter).
+  ...(
+    [
+      ["reconcile_pending_integration", 60_000],
+      ["reconcile_unembedded_notes", 63_000],
+      ["reconcile_pending_notes", 66_000],
+      ["geofence_sweep", 120_000],
+      ["reconcile_pending_integration", 360_000],
+      ["reconcile_pending_notes", 366_000],
+    ] as const
+  ).map(([name, msAgo], i) => ({
+    id: `run-sweep-${i}`,
+    kind: "pipeline",
+    status: "done" as const,
+    name,
+    started_at: ago(msAgo),
+    duration_ms: 100 + i,
+    step_count: 1,
+    cost_tokens: 0,
+    stop_reason: "end" as const,
+    progress_note: null,
+    steps: [
+      {
+        idx: 0,
+        kind: "job",
+        name,
+        ok: true,
+        cost_tokens: 0,
+        job_id: `job-sweep-${i}`,
+        error: null,
+      },
+    ],
+  })),
 ];
 
 const MOCK_RUNS: RunSummary[] = MOCK_RUN_DETAILS.map(

@@ -126,6 +126,12 @@ export const ListIcon = (p: IconProps) => (
   </Icon>
 );
 
+export const FilterIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M4 6h16M7 12h10M10 18h4" />
+  </Icon>
+);
+
 export const GraphIcon = (p: IconProps) => (
   <Icon {...p}>
     <circle cx="5" cy="6" r="2.4" />

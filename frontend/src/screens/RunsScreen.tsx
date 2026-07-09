@@ -24,6 +24,7 @@ import {
   ChevronLeftIcon,
   ChevronRightIcon,
   CoinsIcon,
+  FilterIcon,
   ListIcon,
   PlusIcon,
   RefreshIcon,
@@ -160,6 +161,81 @@ function kindClass(kind: string): string {
   return KIND_CHIPS.has(kind) ? kind : "pipeline";
 }
 
+// ===== Filtering (docs/reference/DESIGN.md "Runs — filtering"; mock B) =====
+// The list is filtered client-side over the fetched recency window so the status
+// tiles above stay derived from the *whole* window (honest "failed/tokens today"),
+// while the list scopes to what the owner asks for. Default is everything shown —
+// filtering is opt-in, so the surface behaves as before until a control is touched.
+
+type ChipKey = "agent" | "integration" | "pipeline";
+const CHIP_DEFS: { key: ChipKey; label: string }[] = [
+  { key: "agent", label: "Agent" },
+  { key: "integration", label: "Integration" },
+  { key: "pipeline", label: "Pipeline" },
+];
+
+/** A subagent run rides under the Agent chip (it is an agent turn's child). Any
+ * unknown kind buckets with pipeline, mirroring kindClass. */
+function chipKey(kind: string): ChipKey {
+  if (kind === "agent" || kind === "subagent") return "agent";
+  if (kind === "integration") return "integration";
+  return "pipeline";
+}
+
+/** The scheduler's seeded background-maintenance sweeps (workflow/scheduler.py:
+ * reconcile_pending_*, reconcile_unembedded_notes, geofence_sweep,
+ * purge_deleted_artifacts) — high-frequency, ~0-token housekeeping that buries the
+ * agent turns and integrations. "Hide reconcile sweeps" drops exactly these. */
+const SWEEP_NAMES = new Set(["geofence_sweep", "purge_deleted_artifacts"]);
+function isSweep(run: RunSummary): boolean {
+  return run.name.startsWith("reconcile_") || SWEEP_NAMES.has(run.name);
+}
+
+const DAY_MS = 86_400_000;
+/** days = Infinity means "all time" (the whole fetched window). */
+function withinRange(iso: string, days: number): boolean {
+  if (!Number.isFinite(days)) return true;
+  return Date.now() - new Date(iso).getTime() <= days * DAY_MS;
+}
+
+const RANGES: { label: string; days: number }[] = [
+  { label: "Today", days: 1 },
+  { label: "7d", days: 7 },
+  { label: "30d", days: 30 },
+  { label: "All", days: Number.POSITIVE_INFINITY },
+];
+const LIMITS: { label: string; n: number }[] = [
+  { label: "25", n: 25 },
+  { label: "50", n: 50 },
+  { label: "All", n: Number.POSITIVE_INFINITY },
+];
+
+interface RunFilter {
+  show: Record<ChipKey, boolean>;
+  rangeDays: number;
+  limit: number;
+  hideSweeps: boolean;
+}
+const DEFAULT_FILTER: RunFilter = {
+  show: { agent: true, integration: true, pipeline: true },
+  rangeDays: Number.POSITIVE_INFINITY,
+  limit: 50,
+  hideSweeps: false,
+};
+
+/** How many *sheet* filters are non-default — drives the filter button's badge.
+ * The kind chips are their own visible control and don't count here. */
+function sheetFilterCount(f: RunFilter): number {
+  return (
+    (Number.isFinite(f.rangeDays) ? 1 : 0) +
+    (f.limit !== DEFAULT_FILTER.limit ? 1 : 0) +
+    (f.hideSweeps ? 1 : 0)
+  );
+}
+function anyKindHidden(f: RunFilter): boolean {
+  return CHIP_DEFS.some((c) => !f.show[c.key]);
+}
+
 interface RunRowProps {
   run: RunSummary;
   onOpen: (run: RunSummary) => void;
@@ -283,6 +359,118 @@ function RunDetailSheet({ run, detail, error, onClose, onRerun }: DetailProps) {
   );
 }
 
+interface FilterBarProps {
+  filter: RunFilter;
+  /** Per-kind counts within the active range (after any hide-sweeps), for the chip pills. */
+  counts: Record<ChipKey, number>;
+  onToggleKind: (key: ChipKey) => void;
+  onOpenSheet: () => void;
+}
+
+/** The multi-select show/hide chip row + the filter-sheet button (mock B). */
+function FilterBar({ filter, counts, onToggleKind, onOpenSheet }: FilterBarProps) {
+  const badge = sheetFilterCount(filter);
+  return (
+    <div className="runs-filterbar">
+      <div className="runs-chips">
+        {CHIP_DEFS.map(({ key, label }) => (
+          <button
+            key={key}
+            type="button"
+            className={`runs-kindchip ${key}`}
+            aria-pressed={filter.show[key]}
+            onClick={() => onToggleKind(key)}
+          >
+            <span className="runs-kindchip-dot" aria-hidden="true" />
+            {label}
+            <span className="runs-kindchip-n">{counts[key]}</span>
+          </button>
+        ))}
+      </div>
+      <button
+        type="button"
+        className={`runs-filtbtn${badge > 0 ? " runs-filtbtn-on" : ""}`}
+        onClick={onOpenSheet}
+        aria-label="Filter runs"
+      >
+        <FilterIcon size={18} />
+        {badge > 0 && <span className="runs-filt-badge">{badge}</span>}
+      </button>
+    </div>
+  );
+}
+
+interface FilterSheetProps {
+  filter: RunFilter;
+  onChange: (next: RunFilter) => void;
+  onClose: () => void;
+}
+
+/** Date range, result limit, and the hide-reconcile-sweeps convenience — the
+ * lower-frequency controls tucked behind the filter button (mock B). Changes
+ * apply live; the sheet composes the shared Sheet + settled .seg-row control. */
+function FilterSheet({ filter, onChange, onClose }: FilterSheetProps) {
+  return (
+    <Sheet title="Filter runs" onClose={onClose}>
+      <div className="runs-fil">
+        <div className="runs-fil-group">
+          <div className="runs-fil-label">Date range</div>
+          <div className="seg-row">
+            {RANGES.map((r) => (
+              <button
+                key={r.label}
+                type="button"
+                className={`seg${filter.rangeDays === r.days ? " seg-on" : ""}`}
+                aria-pressed={filter.rangeDays === r.days}
+                onClick={() => onChange({ ...filter, rangeDays: r.days })}
+              >
+                {r.label}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div className="runs-fil-group">
+          <div className="runs-fil-label">Show at most</div>
+          <div className="seg-row">
+            {LIMITS.map((l) => (
+              <button
+                key={l.label}
+                type="button"
+                className={`seg${filter.limit === l.n ? " seg-on" : ""}`}
+                aria-pressed={filter.limit === l.n}
+                onClick={() => onChange({ ...filter, limit: l.n })}
+              >
+                {l.label}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div className="runs-fil-group">
+          <button
+            type="button"
+            className="runs-fil-noise"
+            aria-pressed={filter.hideSweeps}
+            onClick={() => onChange({ ...filter, hideSweeps: !filter.hideSweeps })}
+          >
+            <span className="runs-fil-noise-txt">
+              <span className="runs-fil-noise-t">Hide reconcile sweeps</span>
+              <span className="runs-fil-noise-d">
+                the ~0-token reconcile_* / geofence housekeeping runs
+              </span>
+            </span>
+            <span className="auto-sw" aria-hidden="true" aria-checked={filter.hideSweeps}>
+              <span className="auto-knob" />
+            </span>
+          </button>
+        </div>
+        <button type="button" className="runs-fil-done" onClick={onClose}>
+          Done
+        </button>
+      </div>
+    </Sheet>
+  );
+}
+
 interface RunsScreenProps {
   onClose: () => void;
 }
@@ -296,6 +484,8 @@ export function RunsScreen({ onClose }: RunsScreenProps) {
   const [detail, setDetail] = useState<RunDetail | null>(null);
   const [detailError, setDetailError] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
+  const [filter, setFilter] = useState<RunFilter>(DEFAULT_FILTER);
+  const [filterOpen, setFilterOpen] = useState(false);
 
   const refresh = useCallback(async () => {
     setError(null);
@@ -386,6 +576,34 @@ export function RunsScreen({ onClose }: RunsScreenProps) {
     setToast("To re-run, fire its pipeline from the sweep row above.");
   }
 
+  function toggleKind(key: ChipKey) {
+    setFilter((f) => ({ ...f, show: { ...f.show, [key]: !f.show[key] } }));
+  }
+
+  // Filter the fetched window client-side (the tiles above keep the whole window).
+  const allRuns = runs ?? [];
+  const inRange = allRuns.filter((r) => withinRange(r.started_at, filter.rangeDays));
+  const notSwept = inRange.filter((r) => !(filter.hideSweeps && isSweep(r)));
+  // Chip pills count what each kind *would* show (range + hide-sweeps applied),
+  // independent of the on/off toggles — so a hidden chip still advertises its size.
+  const counts: Record<ChipKey, number> = { agent: 0, integration: 0, pipeline: 0 };
+  for (const r of notSwept) counts[chipKey(r.kind)]++;
+  const matched = notSwept.filter((r) => filter.show[chipKey(r.kind)]);
+  const shown = Number.isFinite(filter.limit) ? matched.slice(0, filter.limit) : matched;
+  const filtersActive = sheetFilterCount(filter) > 0 || anyKindHidden(filter);
+
+  // The count line's descriptor tail (range · hidden kinds · sweeps).
+  const parts: string[] = [];
+  if (Number.isFinite(filter.rangeDays)) {
+    parts.push(RANGES.find((r) => r.days === filter.rangeDays)?.label.toLowerCase() ?? "today");
+  }
+  const hidden = CHIP_DEFS.filter((c) => !filter.show[c.key]).map((c) => c.label.toLowerCase());
+  if (hidden.length) parts.push(`${hidden.join(" + ")} hidden`);
+  if (filter.hideSweeps) parts.push("sweeps hidden");
+  const countN =
+    shown.length === matched.length ? `${matched.length}` : `${shown.length} of ${matched.length}`;
+  const countText = `${countN} run${matched.length === 1 ? "" : "s"}${parts.length ? ` · ${parts.join(" · ")}` : ""}`;
+
   return (
     // Runs can mount inside Ops's `.subscreen`, whose down-swipe dismiss
     // (App.tsx) would otherwise bubble through and climb out from under this
@@ -427,13 +645,43 @@ export function RunsScreen({ onClose }: RunsScreenProps) {
         ) : runs !== null && runs.length === 0 ? (
           <p className="muted runs-empty">No runs yet — they appear here as the engine works.</p>
         ) : (
-          <div className="runs-card">
-            {runs?.map((run) => (
-              <RunRow key={run.id} run={run} onOpen={openRun} />
-            ))}
-          </div>
+          <>
+            <FilterBar
+              filter={filter}
+              counts={counts}
+              onToggleKind={toggleKind}
+              onOpenSheet={() => setFilterOpen(true)}
+            />
+            <p className="runs-countline">
+              {countText}
+              {filtersActive && (
+                <button
+                  type="button"
+                  className="runs-countline-reset"
+                  onClick={() => setFilter(DEFAULT_FILTER)}
+                >
+                  reset
+                </button>
+              )}
+            </p>
+            {shown.length === 0 ? (
+              <p className="muted runs-empty">
+                No runs match — turn a chip back on, clear a filter, or widen the range.
+              </p>
+            ) : (
+              <div className="runs-card">
+                {shown.map((run) => (
+                  <RunRow key={run.id} run={run} onOpen={openRun} />
+                ))}
+              </div>
+            )}
+          </>
         )}
       </div>
+
+      {filterOpen && (
+        <FilterSheet filter={filter} onChange={setFilter} onClose={() => setFilterOpen(false)} />
+      )}
 
       {selected !== null && (
         <RunDetailSheet
