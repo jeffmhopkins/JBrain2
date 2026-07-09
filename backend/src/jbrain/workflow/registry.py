@@ -22,8 +22,10 @@ from typing import Any, Literal
 
 # A handler runs one job: it receives the job payload (row IDs only — never note
 # content) and performs the work. The worker, not the registry, invokes it, so the
-# registry stores the binding opaquely.
-Handler = Callable[[dict[str, Any]], Awaitable[None]]
+# registry stores the binding opaquely. The return is `object`: most handlers return
+# None, but the housekeeping sweeps return a work count the worker reads to reap an
+# idle fire's run.
+Handler = Callable[[dict[str, Any]], Awaitable[object]]
 
 CostClass = Literal["cheap", "standard", "expensive"]
 """How consequential an action's spend is — mirrors the `.tool` cost classes so the

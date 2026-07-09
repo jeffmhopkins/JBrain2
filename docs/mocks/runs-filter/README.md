@@ -73,7 +73,11 @@ default; time ordering lives *within* each group.
 - Should the reconcile housekeeping be **hideable by name-pattern** (B's "hide
   sweeps"), by **kind** (A/B), or **folded by grouping** (C) — or should those
   0-token reconcile runs simply **not be logged as first-class runs** at all
-  (a backend change that would shrink the problem upstream)?
+  (a backend change that would shrink the problem upstream)? **Resolved:** both —
+  B's server-side filter shipped, *and* the upstream cleanup landed: the worker
+  **reaps a sweep's run when the fire reconciled nothing**, so idle reconcile /
+  geofence fires no longer create runs at all (productive fires still do). See the
+  "Runs — filtering" subsection in `docs/reference/DESIGN.md`.
 
-Once the owner picks, the chosen pattern + reasoning gets a subsection in
-`docs/reference/DESIGN.md` and the loser mocks stay here as the record.
+The chosen pattern + reasoning live in the "Runs — filtering" subsection of
+`docs/reference/DESIGN.md`; the loser mocks stay here as the record.

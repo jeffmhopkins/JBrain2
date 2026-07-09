@@ -168,6 +168,57 @@ async def test_process_one_runs_handler_and_completes(monkeypatch: pytest.Monkey
     assert fake.failed == []
 
 
+def _spy_reap(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """Replace the worker's run-reaper with a spy; returns the reaped job_ids."""
+    reaped: list[str] = []
+
+    async def spy(maker: Any, job_id: str) -> None:
+        reaped.append(job_id)
+
+    monkeypatch.setattr(worker, "_reap_idle_run", spy)
+    return reaped
+
+
+async def test_process_one_reaps_an_idle_sweep_run(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A reconcile sweep that reconciled nothing returns 0 → its 0-work run is reaped.
+    fake = FakeQueue([job(kind="reconcile_pending_notes")])
+    install(monkeypatch, fake)
+    reaped = _spy_reap(monkeypatch)
+
+    async def handler(_payload: dict[str, Any]) -> int:
+        return 0
+
+    assert await worker.process_one(None, {"reconcile_pending_notes": handler}) is True  # type: ignore[arg-type]
+    assert fake.completed == ["job-1"]
+    assert reaped == ["job-1"]
+
+
+async def test_process_one_keeps_a_productive_sweep_run(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A reconcile sweep that enqueued work (count > 0) keeps its run.
+    fake = FakeQueue([job(kind="reconcile_pending_notes")])
+    install(monkeypatch, fake)
+    reaped = _spy_reap(monkeypatch)
+
+    async def handler(_payload: dict[str, Any]) -> int:
+        return 3
+
+    assert await worker.process_one(None, {"reconcile_pending_notes": handler}) is True  # type: ignore[arg-type]
+    assert reaped == []
+
+
+async def test_process_one_only_reaps_reapable_sweep_kinds(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A non-sweep handler that happens to return 0 is never reaped (kind-gated).
+    fake = FakeQueue([job(kind="ingest_note")])
+    install(monkeypatch, fake)
+    reaped = _spy_reap(monkeypatch)
+
+    async def handler(_payload: dict[str, Any]) -> int:
+        return 0
+
+    assert await worker.process_one(None, {"ingest_note": handler}) is True  # type: ignore[arg-type]
+    assert reaped == []
+
+
 async def test_unstamped_job_runs_under_system_ctx(monkeypatch: pytest.MonkeyPatch) -> None:
     """The six shipped kinds carry no stamp: the worker runs them under SYSTEM_CTX
     exactly as before — the regression guard for E1 not touching system jobs."""

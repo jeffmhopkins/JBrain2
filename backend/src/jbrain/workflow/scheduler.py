@@ -459,6 +459,21 @@ async def run_tick_safely(
         log.warning("scheduler.tick_error", error=repr(exc))
 
 
+# The high-frequency, single-step housekeeping sweeps whose handler returns a work
+# count: the worker reaps their run when a fire reconciled nothing (count == 0), so
+# idle fires don't flood the Ops "Runs" log (docs/reference/DESIGN.md "Runs — filtering").
+# Keyed by job kind (== the pipeline/handler name). Purge is excluded — its handler
+# reports no count, so its (rare) run is kept.
+REAPABLE_IDLE_SWEEPS: frozenset[str] = frozenset(
+    {
+        "reconcile_pending_notes",
+        "reconcile_pending_integration",
+        "reconcile_unembedded_notes",
+        "geofence_sweep",
+    }
+)
+
+
 def purge_handler(
     maker: async_sessionmaker[AsyncSession],
 ) -> Callable[[dict[str, Any]], Awaitable[None]]:
@@ -474,65 +489,70 @@ def purge_handler(
 
 def reconcile_pending_notes_handler(
     maker: async_sessionmaker[AsyncSession],
-) -> Callable[[dict[str, Any]], Awaitable[None]]:
+) -> Callable[[dict[str, Any]], Awaitable[int]]:
     """Wrap the pending-ingest backfill as a queue handler so it is fireable as a
     recurring schedule + an emergency Ops trigger, not just at boot. It takes no
     payload — the sweep finds its own candidates (every note in `ingest_state =
     'pending'` lacking an active `ingest_note` job) — and runs under SYSTEM_CTX
     because reconciliation legitimately crosses every domain (E1). Re-firing is
     safe: the underlying INSERT…SELECT skips notes that already have an active job,
-    so a dropped-event re-run enqueues nothing extra (E4)."""
+    so a dropped-event re-run enqueues nothing extra (E4). Returns the number of jobs
+    enqueued — the worker reaps this sweep's run when that count is 0 (an idle fire
+    that reconciled nothing, kept out of the Ops run log; see REAPABLE_IDLE_SWEEPS)."""
 
-    async def handler(_payload: dict[str, Any]) -> None:
-        await queue.backfill_pending_notes(maker, queue.SYSTEM_CTX)
+    async def handler(_payload: dict[str, Any]) -> int:
+        return await queue.backfill_pending_notes(maker, queue.SYSTEM_CTX)
 
     return handler
 
 
 def reconcile_pending_integration_handler(
     maker: async_sessionmaker[AsyncSession],
-) -> Callable[[dict[str, Any]], Awaitable[None]]:
+) -> Callable[[dict[str, Any]], Awaitable[int]]:
     """Wrap the pending-integration backfill as a queue handler (bounded,
     oldest-first), fireable on a recurring schedule + on demand from Ops. Same
     SYSTEM_CTX + idempotency contract as the pending-notes reconciler: the
     INSERT…SELECT skips notes with an active `integrate_note` job, so re-firing
-    never double-enqueues (E4)."""
+    never double-enqueues (E4). Returns the number of jobs enqueued so the worker can
+    reap an idle (0-work) fire's run."""
 
-    async def handler(_payload: dict[str, Any]) -> None:
-        await queue.backfill_pending_integration(maker, queue.SYSTEM_CTX)
+    async def handler(_payload: dict[str, Any]) -> int:
+        return await queue.backfill_pending_integration(maker, queue.SYSTEM_CTX)
 
     return handler
 
 
 def reconcile_unembedded_notes_handler(
     maker: async_sessionmaker[AsyncSession],
-) -> Callable[[dict[str, Any]], Awaitable[None]]:
+) -> Callable[[dict[str, Any]], Awaitable[int]]:
     """Wrap the unembedded-notes backfill as a queue handler (Track S), fireable on
     a recurring schedule + on demand from Ops, not just at boot. Same SYSTEM_CTX +
     idempotency contract as the other reconcilers: the INSERT…SELECT enqueues
     `embed_note` for notes with NULL-embedding chunks but skips any with an active
-    `embed_note` job, so a dropped-event re-run never double-enqueues (E4)."""
+    `embed_note` job, so a dropped-event re-run never double-enqueues (E4). Returns the
+    number of jobs enqueued so the worker can reap an idle (0-work) fire's run."""
 
-    async def handler(_payload: dict[str, Any]) -> None:
-        await queue.backfill_unembedded_notes(maker, queue.SYSTEM_CTX)
+    async def handler(_payload: dict[str, Any]) -> int:
+        return await queue.backfill_unembedded_notes(maker, queue.SYSTEM_CTX)
 
     return handler
 
 
 def geofence_sweep_handler(
     maker: async_sessionmaker[AsyncSession],
-) -> Callable[[dict[str, Any]], Awaitable[None]]:
+) -> Callable[[dict[str, Any]], Awaitable[int]]:
     """Wrap the geofence reconciler as a queue handler, fireable on a recurring
     schedule + on demand from Ops. It takes no payload — the sweep finds its own
     work (every Place's live geofence fact + every device subject's latest fix) —
     and runs as the full owner inside `sweep_geofences` (the only identity entitled
     to reconcile across every subject's pinned track, B3). Idempotent: a stream the
     inline path already handled re-evaluates to no crossing, so re-firing emits
-    nothing extra (E4)."""
+    nothing extra (E4). Returns the number of transition events emitted so the worker
+    can reap an idle (0-work) fire's run."""
 
-    async def handler(_payload: dict[str, Any]) -> None:
+    async def handler(_payload: dict[str, Any]) -> int:
         from jbrain.locations.geofence import sweep_geofences
 
-        await sweep_geofences(maker)
+        return await sweep_geofences(maker)
 
     return handler
