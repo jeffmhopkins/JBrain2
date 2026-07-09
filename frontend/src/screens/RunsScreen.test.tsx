@@ -18,21 +18,20 @@ const RUNNING: RunSummary = {
   progress_note: "processed 12 of 30 emails",
 };
 
-const RUNS: RunSummary[] = [
-  RUNNING,
-  {
-    id: "r3",
-    kind: "pipeline",
-    status: "error",
-    name: "predicate_sweep",
-    started_at: NOW,
-    duration_ms: 31000,
-    step_count: 4,
-    cost_tokens: 6700,
-    last_error: "ocr_attachment",
-    progress_note: null,
-  },
-];
+const PIPELINE_RUN: RunSummary = {
+  id: "r3",
+  kind: "pipeline",
+  status: "error",
+  name: "predicate_sweep",
+  started_at: NOW,
+  duration_ms: 31000,
+  step_count: 4,
+  cost_tokens: 6700,
+  last_error: "ocr_attachment",
+  progress_note: null,
+};
+
+const RUNS: RunSummary[] = [RUNNING, PIPELINE_RUN];
 
 const DETAIL: RunDetail = {
   id: "r3",
@@ -166,6 +165,62 @@ describe("RunsScreen", () => {
     mount({ runs: [], sweeps: [] });
     expect(await screen.findByText(/No runs yet/)).toBeInTheDocument();
     expect(screen.queryByText("Run a sweep now")).not.toBeInTheDocument();
+  });
+
+  const AGENT_RUN: RunSummary = {
+    id: "ra",
+    kind: "agent",
+    status: "done",
+    name: "agent",
+    started_at: NOW,
+    duration_ms: 48000,
+    step_count: 9,
+    cost_tokens: 21400,
+    last_error: null,
+    progress_note: null,
+  };
+  const RECONCILE: RunSummary = {
+    id: "rc",
+    kind: "pipeline",
+    status: "done",
+    name: "reconcile_pending_notes",
+    started_at: NOW,
+    duration_ms: 105,
+    step_count: 1,
+    cost_tokens: 0,
+    last_error: null,
+    progress_note: null,
+  };
+
+  it("hides a kind when its show/hide chip is toggled off", async () => {
+    mount({ runs: [AGENT_RUN, RUNNING, PIPELINE_RUN] });
+    // The pipeline run (predicate_sweep) shows until its chip is switched off.
+    expect(await screen.findByText("predicate_sweep")).toBeInTheDocument();
+    fireEvent.click(screen.getByText("Pipeline"));
+    expect(screen.queryByText("predicate_sweep")).not.toBeInTheDocument();
+    // The other kinds stay put, and the count line advertises what's hidden.
+    expect(screen.getByText("integrate_note")).toBeInTheDocument();
+    expect(screen.getByText(/pipeline hidden/)).toBeInTheDocument();
+  });
+
+  it("hides reconcile sweeps from the filter sheet", async () => {
+    mount({ runs: [RECONCILE, RUNNING] });
+    expect(await screen.findByText("reconcile_pending_notes")).toBeInTheDocument();
+    fireEvent.click(screen.getByLabelText("Filter runs"));
+    const sheet = await screen.findByRole("dialog");
+    fireEvent.click(within(sheet).getByText("Hide reconcile sweeps"));
+    // The 0-token housekeeping run drops out; the real integration stays.
+    expect(screen.queryByText("reconcile_pending_notes")).not.toBeInTheDocument();
+    expect(screen.getByText("integrate_note")).toBeInTheDocument();
+  });
+
+  it("restores the full list when the filter is reset", async () => {
+    mount({ runs: [AGENT_RUN, PIPELINE_RUN] });
+    await screen.findByText("predicate_sweep");
+    fireEvent.click(screen.getByText("Pipeline"));
+    expect(screen.queryByText("predicate_sweep")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByText("reset"));
+    expect(screen.getByText("predicate_sweep")).toBeInTheDocument();
   });
 
   it("returns to Ops via the back control", async () => {

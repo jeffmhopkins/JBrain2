@@ -1,0 +1,218 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Runs filter · A — kind segmented control + range/limit bar</title>
+<style>
+  :root{
+    --bg:#0E0F11; --surface:#17181B; --surface-2:#1E2024; --border:#26282C;
+    --text:#E6E7E9; --text-2:#9A9DA3; --text-3:#5C5F66;
+    --steel:#7FA7C9; --green:#8FBC9A; --amber:#C9A36A; --rose:#CF8A8F; --violet:#A493C9;
+    --steel-tint:rgba(127,167,201,.13); --green-tint:rgba(143,188,154,.13);
+    --amber-tint:rgba(201,163,106,.13); --rose-tint:rgba(207,138,143,.13); --violet-tint:rgba(164,147,201,.13);
+    --ok:var(--green); --warn:var(--amber); --danger:var(--rose); --info:var(--steel);
+    --font-mono:ui-monospace,"SF Mono","Cascadia Mono",Menlo,Consolas,monospace;
+    font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  }
+  [data-theme="light"]{ color-scheme:light; --bg:#F7F7F5; --surface:#FFFFFF; --surface-2:#F0F0EE; --border:#E2E2DF; --text:#1A1B1E; --text-2:#5C5F66; --text-3:#9A9DA3; }
+  [data-theme="dark"]{ color-scheme:dark; }
+  *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
+  body{background:#000;color:var(--text);display:flex;flex-direction:column;align-items:center;gap:14px;padding:18px 0 40px;min-height:100vh;}
+  svg{fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;}
+
+  .caption{max-width:392px;padding:0 18px;color:var(--text-2);font-size:13px;line-height:1.55;}
+  .caption b{color:var(--text);font-weight:500;}
+  .caption .tag{display:inline-block;background:var(--steel-tint);color:var(--steel);font-size:11px;padding:2px 8px;border-radius:999px;margin-bottom:6px;}
+  .toggle{display:inline-flex;background:var(--surface);border:1px solid var(--border);border-radius:999px;padding:3px;margin-left:8px;}
+  .toggle button{appearance:none;border:none;background:none;color:var(--text-2);font:inherit;font-size:11px;padding:4px 11px;border-radius:999px;cursor:pointer;}
+  .toggle button[aria-pressed="true"]{background:var(--steel-tint);color:var(--steel);font-weight:600;}
+
+  .phone{width:390px;height:820px;background:var(--bg);border:1px solid #2a2c30;border-radius:34px;overflow:hidden;position:relative;display:flex;flex-direction:column;}
+
+  .bar{height:56px;display:flex;align-items:center;gap:12px;padding:0 14px;border-bottom:1px solid var(--border);flex:none;}
+  .bar .back{color:var(--text-2);background:none;border:none;padding:4px;}
+  .bar .ttl{font-size:18px;font-weight:600;}
+  .bar .dot{margin-left:auto;width:8px;height:8px;border-radius:999px;background:var(--green);}
+  .bar .health{font-size:12px;color:var(--text-2);}
+
+  /* pinned filter header (does not scroll) */
+  .filthead{flex:none;padding:11px 14px 10px;border-bottom:1px solid var(--border);display:flex;flex-direction:column;gap:9px;}
+
+  /* segmented kind control — the settled .seg-row paradigm */
+  .seg{display:flex;background:var(--surface-2);border:1px solid var(--border);border-radius:14px;padding:3px;gap:2px;}
+  .seg button{flex:1;appearance:none;border:none;background:none;color:var(--text-2);font:inherit;font-size:12.5px;font-weight:500;padding:8px 4px;border-radius:11px;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:5px;min-height:38px;white-space:nowrap;}
+  .seg button .pill{font-size:10.5px;font-weight:600;padding:0 6px;height:16px;min-width:16px;display:inline-flex;align-items:center;justify-content:center;border-radius:999px;background:var(--border);color:var(--text-2);font-variant-numeric:tabular-nums;}
+  .seg button[aria-selected="true"]{color:var(--text);}
+  .seg button[data-k="all"][aria-selected="true"]{background:var(--steel-tint);}
+  .seg button[data-k="agent"][aria-selected="true"]{background:var(--steel-tint);color:var(--steel);}
+  .seg button[data-k="integration"][aria-selected="true"]{background:var(--green-tint);color:var(--green);}
+  .seg button[data-k="pipeline"][aria-selected="true"]{background:var(--violet-tint);color:var(--violet);}
+  .seg button[aria-selected="true"] .pill{background:color-mix(in srgb,currentColor 22%,transparent);color:currentColor;}
+
+  /* range + limit sub-line */
+  .subctl{display:flex;align-items:center;gap:8px;}
+  .miniseg{display:inline-flex;background:var(--surface-2);border:1px solid var(--border);border-radius:999px;padding:2px;}
+  .miniseg button{appearance:none;border:none;background:none;color:var(--text-3);font:inherit;font-size:11.5px;padding:4px 10px;border-radius:999px;cursor:pointer;}
+  .miniseg button[aria-pressed="true"]{background:var(--steel-tint);color:var(--steel);font-weight:600;}
+  .limit{margin-left:auto;display:inline-flex;align-items:center;gap:6px;font-size:11.5px;color:var(--text-2);}
+  .limit select{appearance:none;background:var(--surface-2);border:1px solid var(--border);color:var(--text);font:inherit;font-size:11.5px;border-radius:8px;padding:4px 22px 4px 9px;cursor:pointer;
+    background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%239A9DA3' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M6 9l6 6 6-6'/></svg>");background-repeat:no-repeat;background-position:right 6px center;}
+
+  .body{flex:1;overflow-y:auto;padding:10px 14px 16px;}
+  .countline{font-size:11.5px;color:var(--text-3);margin:2px 2px 9px;display:flex;align-items:center;gap:6px;}
+  .countline .clear{margin-left:auto;color:var(--steel);background:none;border:none;font:inherit;font-size:11.5px;cursor:pointer;padding:2px;}
+
+  .runs-card{background:var(--surface);border:1px solid var(--border);border-radius:16px;overflow:hidden;}
+  .rowbtn{width:100%;text-align:left;background:none;border:none;border-bottom:1px solid var(--border);color:inherit;font:inherit;padding:11px 13px;display:flex;align-items:center;gap:11px;cursor:pointer;min-height:44px;}
+  .rowbtn:last-child{border-bottom:none;}
+  .rowbtn:hover{background:var(--surface-2);}
+  .sdot{width:9px;height:9px;border-radius:999px;flex:none;}
+  .sdot.running{background:var(--green);animation:pulse 1.4s ease-in-out infinite;}
+  @keyframes pulse{0%,100%{opacity:1;}50%{opacity:.3;}}
+  .sdot.done{background:var(--text-3);}
+  .sdot.error{background:var(--rose);}
+  .rmain{flex:1;min-width:0;}
+  .rn{font-size:14px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:flex;align-items:center;gap:7px;}
+  .kdot{font-size:10px;font-weight:700;letter-spacing:.03em;text-transform:uppercase;padding:1px 6px;border-radius:5px;flex:none;}
+  .kdot.agent,.kdot.subagent{background:var(--steel-tint);color:var(--steel);}
+  .kdot.integration{background:var(--green-tint);color:var(--green);}
+  .kdot.pipeline{background:var(--violet-tint);color:var(--violet);}
+  .rsub{font-size:11.5px;color:var(--text-3);margin-top:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-variant-numeric:tabular-nums;}
+  .rright{font-size:11px;color:var(--text-3);flex:none;text-align:right;font-variant-numeric:tabular-nums;line-height:1.5;}
+  .rright .st.error{color:var(--rose);}
+  .rright .st.running{color:var(--green);}
+  .chev{width:15px;height:15px;color:var(--text-3);flex:none;}
+  .empty{color:var(--text-2);font-size:13px;line-height:1.5;padding:26px 8px;text-align:center;}
+</style>
+</head>
+<body>
+  <div class="caption">
+    <span class="tag">Runs filter · A — segmented kinds</span>
+    <span class="toggle" role="group" aria-label="theme">
+      <button id="c-dark" aria-pressed="true" onclick="setTheme('dark')">dark</button>
+      <button id="c-light" aria-pressed="false" onclick="setTheme('light')">light</button>
+    </span><br/>
+    One <b>kind at a time</b> via a segmented control (the settled Review-inbox / Chats paradigm) — <b>All · Agent · Pipeline · Integration</b>, each with a live count pill. Agent is a first-class tab, so a turn is one tap away instead of buried under reconcile noise. A thin sub-line carries a <b>date range</b> (Today / 7d / 30d / All) and a <b>result limit</b>. Exclusive: you're always looking at exactly one lane.
+  </div>
+
+  <div class="phone">
+    <div class="bar">
+      <button class="back"><svg width="22" height="22" viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6"/></svg></button>
+      <span class="ttl">Runs</span>
+      <span class="dot"></span><span class="health">worker live</span>
+    </div>
+
+    <div class="filthead">
+      <div class="seg" id="seg" role="tablist"></div>
+      <div class="subctl">
+        <div class="miniseg" id="range" role="group" aria-label="date range">
+          <button data-r="1" aria-pressed="true">Today</button>
+          <button data-r="7">7d</button>
+          <button data-r="30">30d</button>
+          <button data-r="9999">All</button>
+        </div>
+        <label class="limit">show
+          <select id="limit">
+            <option value="25">last 25</option>
+            <option value="50" selected>last 50</option>
+            <option value="100">last 100</option>
+            <option value="9999">all</option>
+          </select>
+        </label>
+      </div>
+    </div>
+
+    <div class="body">
+      <div class="countline" id="countline"></div>
+      <div class="runs-card" id="runs"></div>
+    </div>
+  </div>
+
+<script>
+function setTheme(t){document.documentElement.dataset.theme=t;document.getElementById('c-dark').setAttribute('aria-pressed',String(t==='dark'));document.getElementById('c-light').setAttribute('aria-pressed',String(t==='light'));}
+
+/* mins = minutes ago; reproduces the screenshot: reconcile_* pipeline runs every few
+   minutes at 0 tok, burying a handful of agent turns + integrations. */
+const RUNS=[
+  {kind:'agent',name:'Full Brain · "clean up the health wiki"',status:'done',mins:3,dur:'48s',steps:9,turns:4,cost:'21.4k'},
+  {kind:'integration',name:'Integrate · roof-quote note',status:'running',mins:0,dur:'12s',steps:'3 of 5',cost:'4.1k'},
+  {kind:'pipeline',name:'reconcile_pending_integration',status:'done',mins:1,dur:'105ms',steps:1,cost:'0'},
+  {kind:'pipeline',name:'reconcile_unembedded_notes',status:'done',mins:1,dur:'108ms',steps:1,cost:'0'},
+  {kind:'pipeline',name:'reconcile_pending_notes',status:'done',mins:1,dur:'111ms',steps:1,cost:'0'},
+  {kind:'pipeline',name:'geofence_sweep',status:'done',mins:2,dur:'110ms',steps:1,cost:'0'},
+  {kind:'agent',name:'Full Brain · "what did the roof cost?"',status:'done',mins:41,dur:'22s',steps:5,turns:2,cost:'12.1k'},
+  {kind:'subagent',name:'search_notes subagent · health',status:'done',mins:42,dur:'8s',steps:3,turns:1,cost:'3.2k'},
+  {kind:'integration',name:'Integrate · labs PDF note',status:'error',mins:22,dur:'31s',steps:'4 of 6',cost:'6.7k',err:'ocr timeout'},
+  {kind:'pipeline',name:'reconcile_pending_integration',status:'done',mins:6,dur:'100ms',steps:1,cost:'0'},
+  {kind:'pipeline',name:'reconcile_unembedded_notes',status:'done',mins:6,dur:'103ms',steps:1,cost:'0'},
+  {kind:'pipeline',name:'reconcile_pending_notes',status:'done',mins:6,dur:'106ms',steps:1,cost:'0'},
+  {kind:'pipeline',name:'reconcile_pending_integration',status:'done',mins:11,dur:'96ms',steps:1,cost:'0'},
+  {kind:'pipeline',name:'reconcile_unembedded_notes',status:'done',mins:11,dur:'99ms',steps:1,cost:'0'},
+  {kind:'pipeline',name:'reconcile_pending_notes',status:'done',mins:11,dur:'101ms',steps:1,cost:'0'},
+  {kind:'integration',name:'Integrate · grocery note',status:'done',mins:126,dur:'9s',steps:5,cost:'3.0k'},
+  {kind:'pipeline',name:'reconcile_pending_notes',status:'done',mins:130,dur:'104ms',steps:1,cost:'0'},
+  {kind:'agent',name:'Full Brain · "draft a note about the trip"',status:'done',mins:190,dur:'1m 12s',steps:14,turns:6,cost:'44.2k'},
+  {kind:'pipeline',name:'nightly_predicate_sweep',status:'done',mins:520,dur:'2m 04s',steps:2,cost:'0.8k'},
+  {kind:'integration',name:'Integrate · meeting note',status:'done',mins:1500,dur:'11s',steps:5,cost:'3.4k'},
+  {kind:'agent',name:'Full Brain · "summarize this week"',status:'done',mins:1600,dur:'38s',steps:8,turns:3,cost:'18.9k'},
+  {kind:'pipeline',name:'reconcile_pending_notes',status:'done',mins:2900,dur:'99ms',steps:1,cost:'0'},
+];
+
+let state={kind:'all',range:1,limit:50};
+const KINDS=[
+  {k:'all',label:'All'},{k:'agent',label:'Agent'},
+  {k:'pipeline',label:'Pipeline'},{k:'integration',label:'Integ.'}
+];
+function inKind(r){ if(state.kind==='all')return true; if(state.kind==='agent')return r.kind==='agent'||r.kind==='subagent'; return r.kind===state.kind; }
+function inRange(r){ return r.mins <= state.range*1440; }
+function fmtAgo(m){ if(m<45)return'now'; if(m<90)return'1m ago'; if(m<60*90/45&&m<60)return m+'m ago'; if(m<60)return m+'m ago'; const h=Math.round(m/60); if(h<24)return h+'h ago'; return Math.round(h/24)+'d ago'; }
+
+function renderSeg(){
+  document.getElementById('seg').innerHTML=KINDS.map(k=>{
+    const n=RUNS.filter(r=> (k.k==='all'?true:(k.k==='agent'?(r.kind==='agent'||r.kind==='subagent'):r.kind===k.k)) && inRange(r)).length;
+    return `<button role="tab" data-k="${k.k}" aria-selected="${state.kind===k.k}" onclick="pick('${k.k}')">${k.label}<span class="pill">${n}</span></button>`;
+  }).join('');
+}
+function pick(k){state.kind=k;render();}
+
+function row(r){
+  const sub = r.kind==='agent'||r.kind==='subagent'
+    ? `${r.turns} turn${r.turns>1?'s':''} · ${r.steps} steps · ${r.cost} tok`
+    : (r.status==='running'? r.dur+' · '+r.steps+' steps · '+r.cost+' tok'
+      : `${r.dur} · ${r.steps} steps · ${r.cost} tok${r.err?' · '+r.err:''}`);
+  const stCls=r.status==='error'?'error':r.status==='running'?'running':'';
+  const stTxt=r.status==='error'?'failed':r.status;
+  return `<button class="rowbtn">
+    <span class="sdot ${r.status}"></span>
+    <span class="rmain">
+      <span class="rn"><span class="kdot ${r.kind}">${r.kind}</span>${r.name}</span>
+      <span class="rsub">${sub}</span>
+    </span>
+    <span class="rright">${fmtAgo(r.mins)}<br/><span class="st ${stCls}">${stTxt}</span></span>
+    <svg class="chev" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>
+  </button>`;
+}
+
+function render(){
+  renderSeg();
+  const all=RUNS.filter(r=>inKind(r)&&inRange(r));
+  const shown=all.slice(0,state.limit);
+  const rangeLbl={1:'today',7:'last 7 days',30:'last 30 days',9999:'all time'}[state.range];
+  const kindLbl=state.kind==='all'?'runs':state.kind+' runs';
+  const filtered = state.kind!=='all' || state.range!==1 || state.limit!==50;
+  document.getElementById('countline').innerHTML=
+    `${shown.length===all.length?shown.length:shown.length+' of '+all.length} ${kindLbl} · ${rangeLbl}`
+    + (filtered?`<button class="clear" onclick="reset()">reset</button>`:'');
+  document.getElementById('runs').innerHTML = shown.length
+    ? shown.map(row).join('')
+    : `<div class="empty">No ${state.kind==='all'?'':state.kind+' '}runs in ${rangeLbl} — widen the range or switch tab.</div>`;
+}
+function reset(){state={kind:'all',range:1,limit:50};document.querySelectorAll('#range button').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.r==='1')));document.getElementById('limit').value='50';render();}
+
+document.getElementById('range').addEventListener('click',e=>{const b=e.target.closest('button');if(!b)return;state.range=+b.dataset.r;document.querySelectorAll('#range button').forEach(x=>x.setAttribute('aria-pressed',String(x===b)));render();});
+document.getElementById('limit').addEventListener('change',e=>{state.limit=+e.target.value;render();});
+render();
+</script>
+</body>
+</html>

@@ -12446,6 +12446,197 @@ button.auto-sect[aria-expanded="true"] > svg {
   padding: 10px 2px;
 }
 
+/* Filter bar — mock B: multi-select show/hide kind chips + a filter-sheet button
+   (date range, result limit, hide reconcile sweeps). Filtering is client-side over
+   the fetched window; the status tiles above stay unfiltered. */
+.runs-filterbar {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin-bottom: 9px;
+}
+
+.runs-chips {
+  display: flex;
+  gap: 7px;
+  flex: 1;
+  min-width: 0;
+  overflow-x: auto;
+  padding-bottom: 1px;
+  scrollbar-width: none;
+}
+.runs-chips::-webkit-scrollbar {
+  display: none;
+}
+
+.runs-kindchip {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 34px;
+  padding: 6px 12px;
+  border-radius: var(--r-pill);
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text-2);
+  font: inherit;
+  font-size: var(--fs-secondary);
+  font-weight: 500;
+  cursor: pointer;
+}
+.runs-kindchip-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: var(--r-pill);
+  background: currentColor;
+  flex: none;
+}
+.runs-kindchip-n {
+  font-size: var(--fs-micro);
+  font-variant-numeric: tabular-nums;
+  opacity: 0.8;
+}
+/* Off = struck through + dimmed: the kind is being hidden. */
+.runs-kindchip[aria-pressed="false"] {
+  opacity: 0.55;
+  text-decoration: line-through;
+  text-decoration-color: var(--text-3);
+}
+.runs-kindchip[aria-pressed="false"] .runs-kindchip-dot {
+  background: var(--text-3);
+}
+.runs-kindchip.agent[aria-pressed="true"] {
+  background: var(--steel-tint);
+  border-color: transparent;
+  color: var(--steel);
+}
+.runs-kindchip.integration[aria-pressed="true"] {
+  background: var(--green-tint);
+  border-color: transparent;
+  color: var(--green);
+}
+.runs-kindchip.pipeline[aria-pressed="true"] {
+  background: var(--violet-tint);
+  border-color: transparent;
+  color: var(--violet);
+}
+
+.runs-filtbtn {
+  flex: none;
+  position: relative;
+  width: 40px;
+  height: 40px;
+  border-radius: var(--r-input);
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text-2);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+.runs-filtbtn-on {
+  color: var(--steel);
+  border-color: transparent;
+  background: var(--steel-tint);
+}
+.runs-filt-badge {
+  position: absolute;
+  top: -5px;
+  right: -5px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: var(--r-pill);
+  background: var(--steel);
+  color: var(--bg);
+  font-size: 10px;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.runs-countline {
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+  margin: 0 2px 9px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-variant-numeric: tabular-nums;
+}
+.runs-countline-reset {
+  margin-left: auto;
+  color: var(--steel);
+  background: none;
+  border: none;
+  font: inherit;
+  font-size: var(--fs-micro);
+  cursor: pointer;
+  padding: 2px;
+}
+
+/* Filter-sheet contents (composes the shared Sheet + settled .seg-row control;
+   the steel accent rides --mode so .seg-on tints correctly). */
+.runs-fil {
+  --mode: var(--steel);
+  --mode-tint: var(--steel-tint);
+}
+.runs-fil-group {
+  margin-bottom: 16px;
+}
+.runs-fil-label {
+  font-size: var(--fs-micro);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-3);
+  margin-bottom: 8px;
+}
+.runs-fil-noise {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  text-align: left;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-input);
+  padding: 11px 13px;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.runs-fil-noise-txt {
+  flex: 1;
+  min-width: 0;
+}
+.runs-fil-noise-t {
+  display: block;
+  font-size: var(--fs-secondary);
+  font-weight: 500;
+}
+.runs-fil-noise-d {
+  display: block;
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+  margin-top: 2px;
+}
+.runs-fil-done {
+  width: 100%;
+  border: none;
+  border-radius: var(--r-input);
+  background: var(--steel-tint);
+  color: var(--steel);
+  font: inherit;
+  font-size: var(--fs-body);
+  font-weight: 600;
+  padding: 13px;
+  min-height: 44px;
+  cursor: pointer;
+}
+
 /* The split panel's contents inside the shared Sheet */
 .runs-sp-head {
   margin: -6px 0 8px;
