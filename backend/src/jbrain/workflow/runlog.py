@@ -150,6 +150,38 @@ async def supersede_running_runs(
     return cast(CursorResult[Any], result).rowcount or 0
 
 
+async def reap_idle_run(
+    maker: async_sessionmaker[AsyncSession],
+    ctx: SessionContext,
+    job_id: str,
+) -> bool:
+    """Delete the run a housekeeping sweep just opened when the sweep reconciled
+    nothing — so idle reconcile/geofence fires don't flood the Ops run log (the worker
+    calls this only for reap-eligible sweeps whose handler reported zero work). Guarded
+    to a LONE-step, 0-token, done run (this job's own), so it can never remove a real
+    multi-step pipeline run; the `run_steps` FK cascade drops the step. A no-op when the
+    job has no run step. Returns True when a run was reaped. Best-effort like
+    `finalize_job_step`: a run-log write must never fail the executor job it annotates."""
+    async with scoped_session(maker, ctx) as session:
+        row = (
+            await session.execute(
+                text("SELECT run_id FROM app.run_steps WHERE job_id = :jid"),
+                {"jid": job_id},
+            )
+        ).first()
+        if row is None:
+            return False  # an ad-hoc enqueue with no dispatched run
+        result = await session.execute(
+            text(
+                "DELETE FROM app.runs r"
+                " WHERE r.id = :rid AND r.status = 'done' AND r.cost_tokens = 0"
+                "   AND (SELECT count(*) FROM app.run_steps s WHERE s.run_id = r.id) = 1"
+            ),
+            {"rid": str(row.run_id)},
+        )
+    return (cast(CursorResult[Any], result).rowcount or 0) > 0
+
+
 async def set_run_progress(
     maker: async_sessionmaker[AsyncSession],
     ctx: SessionContext,

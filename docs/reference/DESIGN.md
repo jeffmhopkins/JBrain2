@@ -291,11 +291,19 @@ with the most expressive control and the least new paradigm:
 
 Rejected rivals: A's exclusive segmented lanes (can't see agent + integration
 together without re-mixing the noise) and C's structural grouping (loses the
-strictly-chronological cross-kind default). Open follow-up flagged in
-`docs/mocks/runs-filter/README.md`: whether those 0-token reconcile runs should
-be logged as first-class runs at all — a backend change that would shrink the
-problem upstream (server-side filtering treats the symptom; not logging no-op
-sweeps would treat the cause).
+strictly-chronological cross-kind default).
+
+**Cause, not just symptom — idle sweeps are reaped [shipped].** The reconcile /
+geofence sweeps fire every few minutes; a fire that reconciles *nothing* used to
+still write a 0-work run, and that flood is what saturated the window in the first
+place. The worker now **reaps an idle sweep's run right after the job completes**:
+the four housekeeping handlers (`REAPABLE_IDLE_SWEEPS` in `workflow/scheduler.py`)
+return their work count, and `runlog.reap_idle_run` deletes the run when a fire did
+zero work (guarded to a lone-step, 0-token, done run, so a real pipeline is never
+touched; needs the `app.runs` DELETE grant, migration `runs_reap_delete_grant`).
+So no-op reconcile fires no longer appear in the log at all, while a fire that
+actually picked up work still shows. Server-side filtering (above) is the display
+control; reaping is the upstream cleanup — together the log reads as real activity.
 
 **Calendar** — Day/Week/Month/List segments; month grid with hairline cell
 borders, out-of-month days in `--text-3`, today = accent ring around the day

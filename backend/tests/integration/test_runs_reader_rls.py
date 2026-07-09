@@ -16,7 +16,12 @@ from jbrain.agent.session import AgentSessionRepo
 from jbrain.auth import service
 from jbrain.auth.repo import SqlAuthRepo
 from jbrain.db.session import SessionContext, scoped_session
-from jbrain.workflow.runlog import EnqueuedStep, PipelineRunLog
+from jbrain.workflow.runlog import (
+    EnqueuedStep,
+    PipelineRunLog,
+    finalize_job_step,
+    reap_idle_run,
+)
 from tests.conftest import docker_available
 from tests.integration.test_rls import database_url  # noqa: F401
 
@@ -116,6 +121,52 @@ async def test_reader_filters_by_kind_and_sweeps(maker: async_sessionmaker) -> N
     assert stats.by_kind["agent"] >= 1 and stats.by_kind["pipeline"] >= 2
     swept = await reader.stats(owner, exclude_sweeps=True)
     assert swept.by_kind["pipeline"] == stats.by_kind["pipeline"] - 2
+
+
+async def _finished_run(
+    maker: async_sessionmaker, owner: SessionContext, pipeline: str, n_steps: int
+) -> tuple[str, list[str]]:
+    """A pipeline run with `n_steps` real (enqueued-then-done) job steps, finalized done
+    at 0 tokens — the shape a housekeeping sweep leaves behind. Returns (run_id, job_ids).
+    Real jobs are required: `run_steps.job_id` FKs `app.jobs`."""
+    job_ids = [await queue.enqueue(maker, owner, pipeline, {"i": i}) for i in range(n_steps)]
+    run_id = await PipelineRunLog(maker).record(
+        owner,
+        pipeline=pipeline,
+        trigger_id=None,
+        ran_as="system",
+        domain_code=None,
+        principal_id=None,
+        steps=[EnqueuedStep(kind=pipeline, job_id=j) for j in job_ids],
+    )
+    async with scoped_session(maker, owner) as session:
+        for j in job_ids:
+            await session.execute(
+                text("UPDATE app.jobs SET status = 'done', finished_at = now() WHERE id = :id"),
+                {"id": j},
+            )
+    for j in job_ids:  # closes the run once every step's job is terminal
+        await finalize_job_step(maker, owner, j, ok=True, cost_tokens=0)
+    return run_id, job_ids
+
+
+async def test_reap_idle_run_drops_only_lone_zero_work_runs(maker: async_sessionmaker) -> None:
+    owner = await _owner(maker)
+    reader = RunLogReader(maker)
+
+    # A lone-step, 0-token, done sweep run (an idle reconcile fire) is reaped.
+    idle, (j1,) = await _finished_run(maker, owner, "reconcile_pending_notes", 1)
+    assert await reader.load(owner, idle) is not None
+    assert await reap_idle_run(maker, owner, j1) is True
+    assert await reader.load(owner, idle) is None  # gone, its step cascaded
+
+    # A two-step run is never reaped (guard: only a run with exactly one step).
+    multi, (j2, _j3) = await _finished_run(maker, owner, "daily_inbox_triage", 2)
+    assert await reap_idle_run(maker, owner, j2) is False
+    assert await reader.load(owner, multi) is not None
+
+    # A job with no dispatched run step is a no-op (an ad-hoc enqueue).
+    assert await reap_idle_run(maker, owner, str(uuid.uuid4())) is False
 
 
 async def test_stats_is_owner_only(maker: async_sessionmaker) -> None:

@@ -51,7 +51,12 @@ from jbrain.wiki.rewriter import LlmRewriter
 from jbrain.workflow import dispatcher, scheduler
 from jbrain.workflow.preconditions import RETRY_AFTER, Precondition, model_already_loaded
 from jbrain.workflow.registry import ACTION_SPECS, ActionRegistry, build_registry
-from jbrain.workflow.runlog import PipelineRunLog, finalize_job_step, set_run_progress
+from jbrain.workflow.runlog import (
+    PipelineRunLog,
+    finalize_job_step,
+    reap_idle_run,
+    set_run_progress,
+)
 
 log = structlog.get_logger()
 
@@ -68,11 +73,13 @@ METRICS_MAINTENANCE_SECONDS = 300
 # owner/agent-triggered handler may instead accept the resolved execution
 # `SessionContext` as a second argument and run its queries under that *narrowed*
 # scope (E1); the worker inspects arity (`_invoke`) and passes the context only when
-# the handler asks for it, so the existing handlers are untouched.
-Handler = Callable[[dict[str, Any]], Awaitable[None]]
+# the handler asks for it, so the existing handlers are untouched. The return is
+# `object`: most handlers return None, but the housekeeping sweeps return a work count
+# the worker reads to reap an idle (0-work) fire's run.
+Handler = Callable[[dict[str, Any]], Awaitable[object]]
 
 # A handler that opts into the narrowed execution scope by accepting it explicitly.
-ScopedHandler = Callable[[dict[str, Any], SessionContext], Awaitable[None]]
+ScopedHandler = Callable[[dict[str, Any], SessionContext], Awaitable[object]]
 
 # A live-progress sink a long-running handler may opt into (a keyword-only `progress`
 # parameter): each call updates its run's `progress_note` for the Ops "Runs" screen.
@@ -92,16 +99,18 @@ def resolve_exec_context(job: queue.Job) -> SessionContext:
 
 
 async def _invoke(
-    handler: Callable[..., Awaitable[None]],
+    handler: Callable[..., Awaitable[object]],
     payload: dict[str, Any],
     ctx: SessionContext,
     progress: ProgressFn,
-) -> None:
-    """Call a handler, injecting only the extras it actually declares. The execution
-    context is passed positionally to a handler with a second positional parameter (the
-    narrowed-scope handlers); a `progress` callback is passed by keyword to a handler
-    that declares a `progress` parameter (a long sweep reporting its progress). A plain
-    payload-only handler is still called exactly as before."""
+) -> object:
+    """Call a handler, injecting only the extras it actually declares, and return its
+    result. The execution context is passed positionally to a handler with a second
+    positional parameter (the narrowed-scope handlers); a `progress` callback is passed
+    by keyword to a handler that declares a `progress` parameter (a long sweep reporting
+    its progress). A plain payload-only handler is still called exactly as before. The
+    return value is the handler's own — most return None; the housekeeping sweeps return
+    a work count the caller uses to reap an idle (0-work) fire's run."""
     params = inspect.signature(handler).parameters
     kwargs: dict[str, Any] = {}
     if "progress" in params:
@@ -113,9 +122,8 @@ async def _invoke(
         and p.kind in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)
     )
     if positional >= 2:
-        await cast("ScopedHandler", handler)(payload, ctx, **kwargs)
-    else:
-        await cast("Handler", handler)(payload, **kwargs)
+        return await cast("ScopedHandler", handler)(payload, ctx, **kwargs)
+    return await cast("Handler", handler)(payload, **kwargs)
 
 
 async def process_one(
@@ -174,7 +182,7 @@ async def process_one(
     # not the 0-token placeholder. logs.events is the tap; toks.total the token sum.
     with TokenScope() as toks, LogScope() as logs:
         try:
-            await _invoke(handler, job.payload, exec_ctx, report_progress)
+            result = await _invoke(handler, job.payload, exec_ctx, report_progress)
         except queue.PermanentJobError as exc:
             # Retrying cannot help (e.g. malformed extraction after the re-ask):
             # fail now instead of burning the retry budget.
@@ -196,6 +204,12 @@ async def process_one(
             # an owner-system run is visible as such, not a smuggled escalation.
             log.info("worker.job_done", job_id=job.id, kind=job.kind, ran_as=ran_as)
             await _finalize_run_step(maker, job.id, ok=True, toks=toks, logs=logs)
+            # A reap-eligible housekeeping sweep that reconciled nothing (count 0)
+            # leaves a 0-work run behind; drop it so idle fires don't flood the Ops
+            # run log. Only these sweeps return an int count, so `result == 0` never
+            # matches an ordinary handler (which returns None).
+            if job.kind in scheduler.REAPABLE_IDLE_SWEEPS and result == 0:
+                await _reap_idle_run(maker, job.id)
     return True
 
 
@@ -252,6 +266,15 @@ async def _finalize_run_step(
         )
     except Exception:  # noqa: BLE001 — the run-log is an annotation, never the job's gate
         log.warning("worker.run_step_finalize_failed", job_id=job_id)
+
+
+async def _reap_idle_run(maker: async_sessionmaker[AsyncSession], job_id: str) -> None:
+    """Drop the 0-work run an idle housekeeping sweep opened (best-effort): reaping the
+    run-log annotation must never fail the executor job that produced it."""
+    try:
+        await reap_idle_run(maker, queue.SYSTEM_CTX, job_id)
+    except Exception:  # noqa: BLE001 — the run-log is an annotation, never the job's gate
+        log.warning("worker.reap_idle_run_failed", job_id=job_id)
 
 
 async def _after_exhaustion(
