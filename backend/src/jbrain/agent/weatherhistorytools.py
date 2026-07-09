@@ -1,10 +1,11 @@
 """jerv's `weather_history` tool (docs/reference/ASSISTANT.md "Agent selection").
 
 A jerv-only `web`-class tool: given a place and a past date range, it fetches the
-hourly archive, computes the NWS heat index on-box, and returns the aggregated
-temperature / humidity / heat-index numbers as text. It answers the class of question
-the forecast `weather` tool can't (history beyond a week) and web search can't reliably
-(per-year heat index is a computation over hourly data, not a published figure).
+hourly + daily archive, computes the NWS heat index on-box, and returns aggregates across
+every dimension the record carries (temperature, humidity, dew point, heat index,
+precipitation, wind, sky, pressure) as text. It answers the class of question the forecast
+`weather` tool can't (history beyond a week) and web search can't reliably (per-year heat
+index is a computation over hourly data, not a published figure).
 
 Geocoding is reused from the forecast weather tool so the location firewall holds
 identically — a named place geocodes by name; the owner's "here" fix is resolved to a
@@ -115,28 +116,94 @@ async def _resolve(
     return await client.geocode(city.name)
 
 
-def _t(value: float) -> str:
-    """A temperature to one decimal, or "n/a" when the daily block was missing (nan)."""
-    return "n/a" if math.isnan(value) else f"{value:.1f}°F"
+def _f(value: float, suffix: str) -> str | None:
+    """A one-decimal number with a unit suffix, or None when the value is absent (nan) so
+    the caller can drop that clause entirely rather than print a placeholder."""
+    return None if math.isnan(value) else f"{value:.1f}{suffix}"
 
 
 def _summarize(s: HistoryStats) -> str:
-    """A concise, numbers-first observation for the model to answer from. Leads with the
-    heat-index figures (the tool's reason to exist), names which average is which so the
-    model doesn't conflate them, and states the range so a per-year call is self-labeling."""
+    """A numbers-first observation for the model to answer from, grouped by dimension.
+    Leads with the heat-index figures (the tool's reason to exist), names which average is
+    which so the model doesn't conflate them, and states the range so a per-year call is
+    self-labeling. Any dimension the archive didn't return is silently omitted."""
     span = f"{s.start.isoformat()} to {s.end.isoformat()}"
-    danger = (
-        f' {s.danger_days} of {s.days} days reached the NWS "Danger" heat-index band (peak ≥103°F).'
-        if s.danger_days
-        else ""
-    )
-    return (
-        f"{s.place} — {span} ({s.days} days). "
+    parts: list[str] = [f"{s.place} — {span} ({s.days} days)."]
+
+    parts.append(
         f"Heat index: average across all hours {s.avg_hi_f:.1f}°F, "
-        f"average daily peak {s.avg_high_hi_f:.1f}°F, single peak {s.peak_hi_f:.1f}°F. "
-        f"Air temperature: average {s.avg_temp_f:.1f}°F, average high {_t(s.avg_high_f)}, "
-        f"average low {_t(s.avg_low_f)}. Average relative humidity {s.avg_humidity}%."
-        f"{danger} "
-        "Heat index is computed on-box from the hourly temperature and humidity (NWS "
-        'formula); the average daily peak is the daytime "feels like" figure.'
+        f"average daily peak {s.avg_high_hi_f:.1f}°F, single peak {s.peak_hi_f:.1f}°F."
     )
+    if s.danger_days:
+        parts.append(
+            f'{s.danger_days} of {s.days} days reached the NWS "Danger" heat-index band '
+            "(peak ≥103°F)."
+        )
+
+    temp = (
+        f"Air temperature: average {s.avg_temp_f:.1f}°F, "
+        f"average high {_f(s.avg_high_f, '°F')}, average low {_f(s.avg_low_f, '°F')}, "
+        f"range {_f(s.min_temp_f, '°F')} to {_f(s.max_temp_f, '°F')}."
+    )
+    parts.append(temp.replace("None", "n/a"))
+
+    moisture = f"Humidity {s.avg_humidity}% average"
+    dew = _f(s.avg_dew_point_f, "°F")
+    moisture += f", dew point {dew} average." if dew else " average."
+    parts.append(moisture)
+
+    precip = _precip_clause(s)
+    if precip:
+        parts.append(precip)
+
+    wind = _wind_clause(s)
+    if wind:
+        parts.append(wind)
+
+    sky = _sky_clause(s)
+    if sky:
+        parts.append(sky)
+
+    pressure = _f(s.avg_pressure_mb, " hPa")
+    if pressure:
+        parts.append(f"Average surface pressure {pressure}.")
+
+    parts.append(
+        "Heat index is computed on-box from the hourly temperature and humidity (NWS "
+        'formula); the average daily peak is the daytime "feels like" figure. Totals '
+        "(precipitation, snow) are for the whole range; the rest are averages over it."
+    )
+    return " ".join(parts)
+
+
+def _precip_clause(s: HistoryStats) -> str | None:
+    total = _f(s.total_precip_in, '"')
+    if total is None:
+        return None
+    clause = f"Precipitation: {total} total over {s.rainy_days} rainy days"
+    wettest = _f(s.max_daily_precip_in, '"')
+    if wettest:
+        clause += f" (wettest day {wettest})"
+    if s.total_snow_in:
+        clause += f', plus {s.total_snow_in:.1f}" snow'
+    return clause + "."
+
+
+def _wind_clause(s: HistoryStats) -> str | None:
+    avg = _f(s.avg_wind_mph, " mph")
+    if avg is None:
+        return None
+    clause = f"Wind: average {avg}"
+    gust = _f(s.max_gust_mph, " mph")
+    if gust:
+        clause += f", peak gust {gust}"
+    if s.wind_dir:
+        clause += f", prevailing from the {s.wind_dir}"
+    return clause + "."
+
+
+def _sky_clause(s: HistoryStats) -> str | None:
+    sun = _f(s.avg_sunshine_hours, " h")
+    cloud = None if s.avg_cloud_cover == 0 else f"{s.avg_cloud_cover}% average cloud cover"
+    bits = [b for b in (f"{sun}/day sunshine" if sun else None, cloud) if b]
+    return "Sky: " + ", ".join(bits) + "." if bits else None

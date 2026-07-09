@@ -34,7 +34,8 @@ _GEO_OK = {
 }
 
 # Two days of hourly data: a hot/humid day (peaks in the Danger band) and a mild day
-# (heat index tracks temperature). Enough to exercise the daily-peak grouping.
+# (heat index tracks temperature). Enough to exercise the daily-peak grouping and every
+# reduced dimension (dew point, precip, wind, gusts, cloud, pressure, sunshine).
 _ARCHIVE_OK = {
     "hourly": {
         "time": [
@@ -46,11 +47,25 @@ _ARCHIVE_OK = {
         ],
         "temperature_2m": [80, 95, 96, 74, 84],
         "relative_humidity_2m": [80, 65, 70, 90, 55],
+        "dew_point_2m": [73, 74, 75, 71, 66],
+        "precipitation": [0.0, 0.1, 0.2, 0.0, 0.0],
+        "wind_speed_10m": [4, 8, 10, 3, 12],
+        "wind_gusts_10m": [9, 18, 22, 6, 20],
+        "cloud_cover": [40, 60, 80, 20, 30],
+        "surface_pressure": [1015, 1013, 1012, 1016, 1014],
     },
     "daily": {
         "time": ["2023-07-01", "2023-07-02"],
         "temperature_2m_max": [96, 88],
         "temperature_2m_min": [76, 72],
+        "precipitation_sum": [0.30, 0.0],
+        "rain_sum": [0.30, 0.0],
+        "snowfall_sum": [0.0, 0.0],
+        "precipitation_hours": [2, 0],
+        "wind_speed_10m_max": [10, 12],
+        "wind_gusts_10m_max": [22, 20],
+        "wind_direction_10m_dominant": [90, 110],
+        "sunshine_duration": [36000, 43200],  # 10 h, 12 h
     },
 }
 
@@ -86,11 +101,43 @@ def test_reduce_computes_aggregates_and_daily_peaks() -> None:
     stats = _reduce("Titusville, Florida", date(2023, 7, 1), date(2023, 7, 31), _ARCHIVE_OK)
     assert stats.days == 2  # two distinct calendar days
     assert stats.avg_high_f == 92.0 and stats.avg_low_f == 74.0  # (96+88)/2, (76+72)/2
+    assert stats.max_temp_f == 96.0 and stats.min_temp_f == 74.0  # hourly extremes
     # The single peak is day 1's hottest hour; the average daily peak blends both days'
     # peaks, so it sits below the single peak.
     assert stats.peak_hi_f > stats.avg_high_hi_f
     assert stats.peak_hi_f == max(heat_index_f(95, 65), heat_index_f(96, 70))
     assert stats.danger_days >= 1  # day 1 reaches the ≥103°F Danger band
+
+
+def test_reduce_computes_every_dimension() -> None:
+    stats = _reduce("X", date(2023, 7, 1), date(2023, 7, 31), _ARCHIVE_OK)
+    assert stats.avg_dew_point_f == 71.8  # (73+74+75+71+66)/5
+    assert round(stats.total_precip_in, 2) == 0.30  # sum of daily precipitation_sum
+    assert stats.rainy_days == 1 and round(stats.max_daily_precip_in, 2) == 0.30
+    assert stats.total_snow_in == 0.0
+    assert stats.avg_wind_mph == 7.4  # (4+8+10+3+12)/5
+    assert stats.max_gust_mph == 22.0  # the daily gust max
+    assert stats.wind_dir == "E"  # circular mean of 90° and 110° → ~100° → E
+    assert stats.avg_cloud_cover == 46  # round((40+60+80+20+30)/5)
+    assert stats.avg_sunshine_hours == 11.0  # (10h + 12h)/2
+    assert stats.avg_pressure_mb == 1014.0  # (1015+1013+1012+1016+1014)/5
+
+
+def test_reduce_omits_absent_dimensions() -> None:
+    # Only temp + humidity present (the minimum) — every other dimension reads absent,
+    # never crashes.
+    import math
+
+    body = {
+        "hourly": {
+            "time": ["2023-07-01T12:00"],
+            "temperature_2m": [95],
+            "relative_humidity_2m": [65],
+        }
+    }
+    stats = _reduce("X", date(2023, 7, 1), date(2023, 7, 1), body)
+    assert math.isnan(stats.total_precip_in) and math.isnan(stats.avg_wind_mph)
+    assert stats.wind_dir is None and stats.total_snow_in == 0.0
 
 
 def test_reduce_skips_null_hours() -> None:
@@ -177,6 +224,9 @@ async def test_named_place_range_returns_computed_summary() -> None:
     assert "Titusville, Florida, United States" in out
     assert "Heat index" in out and "average daily peak" in out
     assert "2023-07-01 to 2023-07-31" in out
+    # The expanded dimensions all surface in the summary.
+    assert "Precipitation:" in out and "Wind:" in out
+    assert "dew point" in out and "sunshine" in out and "pressure" in out
 
 
 async def test_missing_dates_is_recoverable() -> None:

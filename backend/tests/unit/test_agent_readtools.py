@@ -1082,8 +1082,8 @@ def test_sidecars_pinned_to_their_versions() -> None:
         ),
         "weather_history.tool": (
             "weather_history",
-            1,
-            "0b0d57d04c22b8832772b59d1e2e8be9e920bd0bb96558bc769c218e5f21fbbf",
+            2,
+            "5d6feae2c5de166c5e3d9352a51ae2b07934683035a0cd1dfba65cf97be50cc7",
         ),
         "hurricane.tool": (
             "hurricane",

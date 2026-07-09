@@ -358,9 +358,12 @@ personas `jerv` spawns — the full persona table is in `SERVICES.md`.
   **`weather_history`** answers the "what was it like in the past" question the
   forecast can't (beyond ~a week) and web search can't reliably (per-year **heat
   index** is a computation over hourly data, published nowhere): given a place and a
-  past date range it fetches the Open-Meteo **Archive** hourly record, computes the
-  NWS heat index on-box, and returns the temperature/humidity/heat-index aggregates as
-  text (no card). Same pinned-upstream, same geocoder, same location firewall as the
+  past date range it fetches the Open-Meteo **Archive** hourly + daily record, computes
+  the NWS heat index on-box, and returns aggregates across every dimension the archive
+  carries — temperature (avg/high/low/range), humidity, dew point, heat index,
+  precipitation (total/rainy-days/wettest/snow), wind (avg/gust/direction), sky
+  (sunshine/cloud), and pressure — as text (no card; absent dimensions are omitted).
+  Same pinned-upstream, same geocoder, same location firewall as the
   forecast tool; one call spans up to a year, so a multi-year question is answered by
   one call per year. When the on-box backends are configured, jerv also gets the
   `web`-gated, jerv-only
