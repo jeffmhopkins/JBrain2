@@ -1,6 +1,6 @@
 # JBrain2 — Services & components map
 
-> **Status:** Living · **Last verified:** 2026-07-07
+> **Status:** Living · **Last verified:** 2026-07-09
 
 The concrete inventory of everything the box runs and everything baked into it:
 the Docker containers, the two apps (the PWA and the JBrain360 Android client),
@@ -157,7 +157,8 @@ Tools are `.tool` files (`backend/src/jbrain/agent/tools/`) with handlers in
 graph/wiki writes** (`propose_correction`, `propose_merge`, `relate`,
 `file_correction`, `request_rebuild` — never direct edits) · **episodic memory**
 (`remember`/`recall`) · **lists** · **appointments** · **location** (firewalled:
-`where_is`, `location_history`, `nearby_now`, `save_place`, …) · **weather /
+`where_is`, `location_history`, `nearby_now`, `save_place`, …) · **weather**
+(`weather` forecast + `weather_history` archive with on-box heat-index compute) **/
 hurricane** · **image** (`generate_image`/`edit_image`/`analyze_image`) ·
 **media** (`transcribe`, `analyze_video`) · **Gmail** (`gmail_*`) · **web**
 (`web_search`/`web_fetch`) · **sub-agents** (`spawn_subagent`) · **health

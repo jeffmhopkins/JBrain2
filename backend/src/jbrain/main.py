@@ -23,6 +23,7 @@ from jbrain.agent.session import AgentSessionRepo
 from jbrain.agent.transcribetools import build_transcribe_handlers
 from jbrain.agent.transcript_store import AgentTranscript
 from jbrain.agent.videotools import build_video_handlers
+from jbrain.agent.weatherhistorytools import build_weather_history_handlers
 from jbrain.agent.weathertools import build_weather_handlers
 from jbrain.agent.webtools import build_web_handlers
 from jbrain.agent.wikiwritetools import build_wiki_write_handlers
@@ -136,6 +137,7 @@ from jbrain.web import (
     NwsClient,
     SearxngClient,
     WeatherClient,
+    WeatherHistoryClient,
     WebFetcher,
 )
 from jbrain.wiki.actions import WIKI_SPECS
@@ -353,6 +355,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         weather_client = WeatherClient(
             settings.open_meteo_forecast_url, settings.open_meteo_geocode_url
         )
+        # jerv's historical weather lookup — the Open-Meteo Archive twin of the forecast
+        # tool. It reuses weather_client's geocoder so the location firewall is identical;
+        # it fetches the hourly past record and computes the heat index on-box (the
+        # per-year figure web search can't find). Merged into the web handlers below.
+        weather_history_client = WeatherHistoryClient(settings.open_meteo_archive_url)
         # jerv's hurricane lookup (DESIGN.md "hurricane_card tool-view") — a direct,
         # pinned NHC upstream (the global active-storm list, no query), the same
         # sandboxed-web posture as weather. It reuses the weather geocoder + the
@@ -384,6 +391,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # jerv (default off when external_geocoder_url is unset).
         app.state.city_geocoder = CityGeocoder()
         web_handlers.update(build_weather_handlers(weather_client, app.state.city_geocoder))
+        web_handlers.update(
+            build_weather_history_handlers(
+                weather_history_client, weather_client, app.state.city_geocoder
+            )
+        )
         web_handlers.update(
             build_hurricane_handlers(
                 hurricane_client,

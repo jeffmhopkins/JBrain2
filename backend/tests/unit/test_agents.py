@@ -79,6 +79,7 @@ def test_jerv_is_a_sandboxed_web_chatbot() -> None:
             "current_time",
             "current_location",
             "weather",
+            "weather_history",
             "hurricane",
             "generate_image",
             "edit_image",
