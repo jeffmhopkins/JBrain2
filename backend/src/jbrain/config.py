@@ -116,6 +116,11 @@ class Settings(BaseSettings):
     # model-supplied; only a public place name + a city-centre coordinate go out.
     open_meteo_forecast_url: str = "https://api.open-meteo.com"
     open_meteo_geocode_url: str = "https://geocoding-api.open-meteo.com"
+    # The Open-Meteo Archive upstream backing jerv's `weather_history` tool (past
+    # temperature/humidity → computed heat index). Same family, key, and egress profile
+    # as the forecast URLs (public place name + city-centre coordinate only); empty
+    # disables the tool (it reports "not configured") while the sidecar still loads.
+    open_meteo_archive_url: str = "https://archive-api.open-meteo.com"
     # The NHC feed backing jerv's `hurricane` tool (DESIGN.md "hurricane_card
     # tool-view"). Free, no API key, so this defaults to the public endpoint; empty
     # disables the tool (it reports "not configured") while the sidecar still loads.

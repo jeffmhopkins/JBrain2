@@ -51,7 +51,8 @@ WEB_TOOLS = frozenset({"web_search", "web_fetch"})
 SPAWN_TOOL = "spawn_subagent"
 
 # jerv's full allowlist: the internet tools, the dataless clock read, the
-# owner-approved coarse location read, the weather + hurricane lookups, the local
+# owner-approved coarse location read, the weather (forecast + history) + hurricane
+# lookups, the local
 # image-generation tools, the local audio transcription, the local video analysis,
 # and the host-metrics read.
 # `current_time` is allowlisted explicitly (a default-knowledge tool jerv's closed
@@ -74,6 +75,7 @@ JERV_TOOLS = WEB_TOOLS | frozenset(
         "current_time",
         "current_location",
         "weather",
+        "weather_history",
         "hurricane",
         "generate_image",
         "edit_image",

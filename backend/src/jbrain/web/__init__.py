@@ -12,11 +12,13 @@ from jbrain.web.nhc_surge import NhcSurgeClient, NhcSurgeError
 from jbrain.web.nws import NwsClient, NwsOutOfCoverage, NwsUnavailable
 from jbrain.web.search import SearchHit, SearxngClient, WebSearchError
 from jbrain.web.weather import Weather, WeatherClient, WeatherError
+from jbrain.web.weather_history import HistoryStats, WeatherHistoryClient
 
 __all__ = [
     "FaviconFetcher",
     "FaviconResult",
     "FetchResult",
+    "HistoryStats",
     "HurricaneClient",
     "HurricaneError",
     "NhcGisClient",
@@ -31,6 +33,7 @@ __all__ = [
     "Weather",
     "WeatherClient",
     "WeatherError",
+    "WeatherHistoryClient",
     "WebFetchError",
     "WebFetcher",
     "WebSearchError",

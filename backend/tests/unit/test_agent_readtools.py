@@ -25,6 +25,7 @@ from jbrain.agent.readtools import (
     neighborhood_sources,
 )
 from jbrain.agent.toolfile import load_tool
+from jbrain.agent.weatherhistorytools import build_weather_history_handlers
 from jbrain.agent.weathertools import build_weather_handlers
 from jbrain.agent.webtools import build_web_handlers
 from jbrain.agent.wikiwritetools import build_wiki_write_handlers
@@ -40,6 +41,7 @@ from jbrain.web import (
     NwsClient,
     SearxngClient,
     WeatherClient,
+    WeatherHistoryClient,
     WebFetcher,
 )
 
@@ -709,6 +711,11 @@ def test_build_registry_binds_the_shipped_sidecars() -> None:
         {
             **build_web_handlers(SearxngClient(""), WebFetcher()),
             **build_weather_handlers(WeatherClient("", ""), object()),  # type: ignore[arg-type]
+            **build_weather_history_handlers(
+                WeatherHistoryClient(""),
+                WeatherClient("", ""),
+                object(),  # type: ignore[arg-type]
+            ),
             **build_hurricane_handlers(
                 HurricaneClient(""),
                 WeatherClient("", ""),
@@ -731,6 +738,7 @@ def test_build_registry_binds_the_shipped_sidecars() -> None:
         "web_fetch",
         "current_location",
         "weather",
+        "weather_history",
         "hurricane",
         "archivist_memory_read",
         "archivist_memory_write",
@@ -1071,6 +1079,11 @@ def test_sidecars_pinned_to_their_versions() -> None:
             "weather",
             3,
             "82727cb75c53aa71beb7fda415a918f18417cdc1192786d715f36290f8f99056",
+        ),
+        "weather_history.tool": (
+            "weather_history",
+            2,
+            "5d6feae2c5de166c5e3d9352a51ae2b07934683035a0cd1dfba65cf97be50cc7",
         ),
         "hurricane.tool": (
             "hurricane",

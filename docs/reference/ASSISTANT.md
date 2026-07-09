@@ -1,6 +1,6 @@
 # JBrain2 — Assistant
 
-> **Status:** Living · **Last verified:** 2026-07-07
+> **Status:** Living · **Last verified:** 2026-07-09
 
 The personal agent. This is the **binding design** for the tool-calling agent
 (ROADMAP.md): a smart, tool-using assistant with durable memory — built natively
@@ -354,8 +354,19 @@ personas `jerv` spawns — the full persona table is in `SERVICES.md`.
   multi-step search-and-scrape weather flow with one call returning a summary plus a
   `weather_card` view (DESIGN.md). It sends only a public place name / city centre off-
   box — a named place geocodes by name, and "here" is resolved to a nearest-city name
-  on-box first — so the owner's precise fix never leaves the box. When the
-  on-box backends are configured, jerv also gets the `web`-gated, jerv-only
+  on-box first — so the owner's precise fix never leaves the box. Its history twin
+  **`weather_history`** answers the "what was it like in the past" question the
+  forecast can't (beyond ~a week) and web search can't reliably (per-year **heat
+  index** is a computation over hourly data, published nowhere): given a place and a
+  past date range it fetches the Open-Meteo **Archive** hourly + daily record, computes
+  the NWS heat index on-box, and returns aggregates across every dimension the archive
+  carries — temperature (avg/high/low/range), humidity, dew point, heat index,
+  precipitation (total/rainy-days/wettest/snow), wind (avg/gust/direction), sky
+  (sunshine/cloud), and pressure — as text (no card; absent dimensions are omitted).
+  Same pinned-upstream, same geocoder, same location firewall as the
+  forecast tool; one call spans up to a year, so a multi-year question is answered by
+  one call per year. When the on-box backends are configured, jerv also gets the
+  `web`-gated, jerv-only
   **`transcribe`** (read an attached audio file via the local whisper gateway) and
   the image tools (`generate_image`/`edit_image`/`analyze_image`) — each resolves a
   chat attachment by id under the session scope, runs an on-box model, and is dropped
