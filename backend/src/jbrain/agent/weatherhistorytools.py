@@ -126,8 +126,7 @@ def _summarize(s: HistoryStats) -> str:
     model doesn't conflate them, and states the range so a per-year call is self-labeling."""
     span = f"{s.start.isoformat()} to {s.end.isoformat()}"
     danger = (
-        f" {s.danger_days} of {s.days} days reached the NWS \"Danger\" heat-index band "
-        f"(peak ≥103°F)."
+        f' {s.danger_days} of {s.days} days reached the NWS "Danger" heat-index band (peak ≥103°F).'
         if s.danger_days
         else ""
     )
@@ -139,5 +138,5 @@ def _summarize(s: HistoryStats) -> str:
         f"average low {_t(s.avg_low_f)}. Average relative humidity {s.avg_humidity}%."
         f"{danger} "
         "Heat index is computed on-box from the hourly temperature and humidity (NWS "
-        "formula); the average daily peak is the daytime \"feels like\" figure."
+        'formula); the average daily peak is the daytime "feels like" figure.'
     )
