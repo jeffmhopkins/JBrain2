@@ -18,7 +18,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
-from sqlalchemy import bindparam, select, text, update
+from sqlalchemy import and_, bindparam, not_, or_, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from jbrain.db.session import SessionContext, scoped_session
@@ -154,6 +154,50 @@ def _duration_ms(started_at: datetime, ended_at: datetime | None) -> int | None:
     return int((ended_at - started_at).total_seconds() * 1000)
 
 
+# The scheduler's seeded background-maintenance sweeps (workflow/scheduler.py):
+# reconcile_* + the named ones — high-frequency, ~0-token housekeeping the Runs
+# surface can filter out. Mirrored by the frontend's isSweep predicate.
+_SWEEP_NAMES = ("geofence_sweep", "purge_deleted_artifacts")
+# Raw-SQL form of the same predicate, for the stats aggregates.
+_SWEEP_SQL = (
+    "kind = 'pipeline' AND (pipeline LIKE 'reconcile\\_%' ESCAPE '\\'"
+    " OR pipeline IN ('geofence_sweep', 'purge_deleted_artifacts'))"
+)
+
+
+def _sweep_filter():  # type: ignore[no-untyped-def]
+    """ORM form of the sweep predicate for `list_recent`'s exclude_sweeps."""
+    return and_(
+        Run.kind == "pipeline",
+        or_(Run.pipeline.like("reconcile\\_%", escape="\\"), Run.pipeline.in_(_SWEEP_NAMES)),
+    )
+
+
+def _chip_bucket(kind: str) -> str:
+    """Map a stored run kind to its Runs-surface chip bucket: a subagent run rides
+    the Agent chip; anything unrecognized buckets with pipeline (mirrors the frontend)."""
+    if kind in ("agent", "subagent"):
+        return "agent"
+    if kind == "integration":
+        return "integration"
+    return "pipeline"
+
+
+@dataclass(frozen=True)
+class RunStats:
+    """The Runs dashboard's tile + chip-count aggregates, computed over the whole log
+    (not just the fetched page — so `tokens_today` reflects the day, not the last N
+    rows). The three tiles are always today (UTC day, matching the usage reader) / now;
+    the per-kind counts respect the surface's active date-range + hide-sweeps so the
+    chip pills match the filtered list."""
+
+    active: int
+    failed_today: int
+    tokens_today: int
+    # Keyed by chip bucket: agent | integration | pipeline.
+    by_kind: dict[str, int]
+
+
 @dataclass(frozen=True)
 class RunSummary:
     """A row in the Ops run log: enough to render a list entry without loading
@@ -266,16 +310,28 @@ class RunLogReader:
         whose steps are all still queued reads as 'queued' (see `_queued_pipeline_ids`)."""
         return "queued" if str(run.id) in queued_ids else run.status
 
-    async def list_recent(self, ctx: SessionContext, *, limit: int = 50) -> list[RunSummary]:
+    async def list_recent(
+        self,
+        ctx: SessionContext,
+        *,
+        limit: int = 50,
+        kinds: list[str] | None = None,
+        exclude_sweeps: bool = False,
+        since: datetime | None = None,
+    ) -> list[RunSummary]:
+        """The run log, newest first, filtered server-side so the Runs surface can
+        reach past the recency window: `kinds` (the enabled chip kinds — subagent
+        rides under agent), `exclude_sweeps` (drop the reconcile housekeeping), and
+        `since` (the date-range floor). Without filters this is the plain recent page."""
         async with scoped_session(self._maker, ctx) as session:
-            rows = (
-                await session.execute(
-                    select(Run, Trigger.pipeline)
-                    .outerjoin(Trigger, Run.trigger_id == Trigger.id)
-                    .order_by(Run.started_at.desc())
-                    .limit(limit)
-                )
-            ).all()
+            stmt = select(Run, Trigger.pipeline).outerjoin(Trigger, Run.trigger_id == Trigger.id)
+            if kinds:
+                stmt = stmt.where(Run.kind.in_(kinds))
+            if exclude_sweeps:
+                stmt = stmt.where(not_(_sweep_filter()))
+            if since is not None:
+                stmt = stmt.where(Run.started_at >= since)
+            rows = (await session.execute(stmt.order_by(Run.started_at.desc()).limit(limit))).all()
             # In-flight pipeline runs whose steps have not started yet read as
             # 'queued' (derived, not stored) so the dashboard shows them waiting.
             queued_ids = await self._queued_pipeline_ids(
@@ -313,6 +369,56 @@ class RunLogReader:
                     )
                 )
             return out
+
+    async def stats(
+        self,
+        ctx: SessionContext,
+        *,
+        since: datetime | None = None,
+        exclude_sweeps: bool = False,
+    ) -> RunStats:
+        """Tile + chip-count aggregates over the whole log. The tiles (active now /
+        failed today / tokens today) are computed independently of the surface's
+        filters; the per-kind counts respect `since` + `exclude_sweeps` so the chip
+        pills agree with the filtered list. Owner-scoped like the rest of the reader."""
+        day_start = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
+        async with scoped_session(self._maker, ctx) as session:
+            tiles = (
+                await session.execute(
+                    text(
+                        "SELECT"
+                        "  count(*) FILTER (WHERE status = 'running') AS active,"
+                        "  count(*) FILTER (WHERE status = 'error' AND started_at >= :day)"
+                        "    AS failed_today,"
+                        "  COALESCE(sum(cost_tokens) FILTER (WHERE started_at >= :day), 0)"
+                        "    AS tokens_today"
+                        " FROM app.runs"
+                    ),
+                    {"day": day_start},
+                )
+            ).one()
+            clauses: list[str] = []
+            params: dict[str, object] = {}
+            if since is not None:
+                clauses.append("started_at >= :since")
+                params["since"] = since
+            if exclude_sweeps:
+                clauses.append(f"NOT ({_SWEEP_SQL})")
+            where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+            kind_rows = (
+                await session.execute(
+                    text(f"SELECT kind, count(*) AS n FROM app.runs{where} GROUP BY kind"), params
+                )
+            ).all()
+            by_kind = {"agent": 0, "integration": 0, "pipeline": 0}
+            for kind, n in kind_rows:
+                by_kind[_chip_bucket(kind)] += int(n)
+            return RunStats(
+                active=int(tiles.active),
+                failed_today=int(tiles.failed_today),
+                tokens_today=int(tiles.tokens_today),
+                by_kind=by_kind,
+            )
 
     async def load(self, ctx: SessionContext, run_id: str) -> RunDetail | None:
         try:

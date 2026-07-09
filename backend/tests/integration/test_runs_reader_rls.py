@@ -2,6 +2,7 @@
 step tree, and (CLAUDE.md rule 3) a non-owner session reads an empty log even
 through the reader — the RLS firewall, not the API, is the enforcement point."""
 
+import uuid
 from collections.abc import AsyncIterator
 
 import pytest
@@ -71,6 +72,61 @@ async def test_reader_lists_and_loads_for_owner(maker: async_sessionmaker) -> No
     assert detail.stop_reason == "step_error"
     assert [(s.idx, s.ok) for s in detail.steps] == [(0, True), (1, False)]
     assert detail.steps[1].error == "search"
+
+
+async def _seed_sweep(maker: async_sessionmaker, owner: SessionContext, pipeline: str) -> str:
+    """A finished 0-token reconcile-sweep pipeline run (the noise the filter drops)."""
+    rid = str(uuid.uuid4())  # id has no DB default — the ORM writer generates it in Python.
+    async with scoped_session(maker, owner) as session:
+        await session.execute(
+            text(
+                "INSERT INTO app.runs (id, kind, pipeline, ran_as, status, step_count,"
+                " cost_tokens, ended_at)"
+                " VALUES (:id, 'pipeline', :p, 'system', 'done', 1, 0, now())"
+            ),
+            {"id": rid, "p": pipeline},
+        )
+    return rid
+
+
+async def test_reader_filters_by_kind_and_sweeps(maker: async_sessionmaker) -> None:
+    # The test DB is shared across this file, so assert on subsets/deltas around the
+    # rows THIS test seeds, never absolute contents.
+    owner = await _owner(maker)
+    agent_run = await _seed_run(maker, owner)  # kind='agent'
+    sweep_a = await _seed_sweep(maker, owner, "reconcile_pending_notes")
+    sweep_b = await _seed_sweep(maker, owner, "geofence_sweep")
+    reader = RunLogReader(maker)
+
+    # kinds= narrows to agent turns; the reconcile sweeps (kind='pipeline') drop out.
+    by_kind = await reader.list_recent(owner, kinds=["agent", "subagent"], limit=200)
+    ids = {r.id for r in by_kind}
+    assert agent_run in ids
+    assert sweep_a not in ids and sweep_b not in ids
+    assert all(r.kind in ("agent", "subagent") for r in by_kind)
+
+    # exclude_sweeps drops the reconcile_* + geofence housekeeping, keeping the rest.
+    kept = await reader.list_recent(owner, exclude_sweeps=True, limit=200)
+    kept_ids = {r.id for r in kept}
+    assert sweep_a not in kept_ids and sweep_b not in kept_ids
+    assert agent_run in kept_ids
+
+    # stats: the two sweeps count under pipeline; excluding them drops that bucket by 2.
+    stats = await reader.stats(owner)
+    assert stats.by_kind["agent"] >= 1 and stats.by_kind["pipeline"] >= 2
+    swept = await reader.stats(owner, exclude_sweeps=True)
+    assert swept.by_kind["pipeline"] == stats.by_kind["pipeline"] - 2
+
+
+async def test_stats_is_owner_only(maker: async_sessionmaker) -> None:
+    owner = await _owner(maker)
+    await _seed_run(maker, owner)
+    reader = RunLogReader(maker)
+    token = SessionContext(principal_kind="capability_token", domain_scopes=("general",))
+    # RLS firewall: a non-owner sees an empty log, so every aggregate is zero.
+    blind = await reader.stats(token)
+    assert blind.active == 0 and blind.failed_today == 0 and blind.tokens_today == 0
+    assert blind.by_kind == {"agent": 0, "integration": 0, "pipeline": 0}
 
 
 async def test_reader_is_owner_only(maker: async_sessionmaker) -> None:

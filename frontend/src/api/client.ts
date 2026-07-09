@@ -886,6 +886,27 @@ export interface SweepTrigger {
   label?: string | null;
 }
 
+/** The Runs dashboard's tile + chip-count aggregates (GET /api/runs/stats),
+ * computed server-side over the whole log — so the tiles reflect the day, not the
+ * fetched page. `by_kind` respects the surface's active date-range + hide-sweeps. */
+export interface RunStats {
+  active: number;
+  failed_today: number;
+  tokens_today: number;
+  /** Keyed by chip bucket: agent | integration | pipeline. */
+  by_kind: Record<string, number>;
+}
+
+/** The server-side filters the Runs surface drives (GET /api/runs). */
+export interface RunListParams {
+  /** The enabled chip kinds to include (agent expands to agent+subagent); omit for all. */
+  kinds?: string[];
+  excludeSweeps?: boolean;
+  /** ISO floor for the date-range filter; omit for all time. */
+  since?: string;
+  limit?: number;
+}
+
 /** A row in the run log list (GET /api/runs). */
 export interface RunSummary {
   id: string;
@@ -2262,14 +2283,35 @@ export const api = {
 
   // ===== The workflow run log — the Ops "Runs" surface (owner-only) =====
 
-  async runs(): Promise<RunSummary[]> {
-    const response = await request("/api/runs");
+  // The run log, filtered server-side so the surface reaches past the recency window
+  // (picking "Agent" fetches the last N agent turns from history, not just whatever
+  // survived the reconcile noise in the recent 50).
+  async runs(params: RunListParams = {}): Promise<RunSummary[]> {
+    const q = new URLSearchParams();
+    for (const kind of params.kinds ?? []) q.append("kinds", kind);
+    if (params.excludeSweeps) q.set("exclude_sweeps", "true");
+    if (params.since) q.set("since", params.since);
+    if (params.limit !== undefined) q.set("limit", String(params.limit));
+    const qs = q.toString();
+    const response = await request(`/api/runs${qs ? `?${qs}` : ""}`);
     return (await response.json()) as RunSummary[];
   },
 
   async run(id: string): Promise<RunDetail> {
     const response = await request(`/api/runs/${encodeURIComponent(id)}`);
     return (await response.json()) as RunDetail;
+  },
+
+  // The tile + chip-count aggregates (over the whole log, not the fetched page), so
+  // the tiles stay honest while the list is filtered. `since`/`excludeSweeps` scope
+  // the per-kind counts to match the active filters.
+  async runsStats(params: { excludeSweeps?: boolean; since?: string } = {}): Promise<RunStats> {
+    const q = new URLSearchParams();
+    if (params.excludeSweeps) q.set("exclude_sweeps", "true");
+    if (params.since) q.set("since", params.since);
+    const qs = q.toString();
+    const response = await request(`/api/runs/stats${qs ? `?${qs}` : ""}`);
+    return (await response.json()) as RunStats;
   },
 
   // The job-queue backlog (status='queued' in app.jobs) for the "jobs queued" tile.

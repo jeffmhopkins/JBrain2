@@ -4002,10 +4002,60 @@ export const mockFetch: typeof fetch = async (input, init) => {
     });
   }
 
-  // The Runs surface (owner-only run log) + the sweep-trigger controls.
-  if (path === "/api/runs") return json(MOCK_RUNS);
+  // The Runs surface (owner-only run log) + the sweep-trigger controls. Filtering is
+  // server-side (mirrors backend/src/jbrain/agent/runlog.py) so the mock exercises the
+  // same kind / hide-sweeps / date-range / limit path the real API drives.
+  const runIsSweep = (r: RunSummary): boolean =>
+    r.kind === "pipeline" &&
+    (r.name.startsWith("reconcile_") ||
+      r.name === "geofence_sweep" ||
+      r.name === "purge_deleted_artifacts");
+  const runBucket = (kind: string): string =>
+    kind === "agent" || kind === "subagent"
+      ? "agent"
+      : kind === "integration"
+        ? "integration"
+        : "pipeline";
   if (path === "/api/runs/queue-depth") {
     return json({ queued: MOCK_RUNS.filter((r) => r.status === "queued").length });
+  }
+  if (path === "/api/runs/stats") {
+    const sp = url.searchParams;
+    const excludeSweeps = sp.get("exclude_sweeps") === "true";
+    const sinceStr = sp.get("since");
+    const since = sinceStr ? Date.parse(sinceStr) : null;
+    const dayStart = new Date();
+    dayStart.setUTCHours(0, 0, 0, 0);
+    const day = dayStart.getTime();
+    const today = MOCK_RUNS.filter((r) => Date.parse(r.started_at) >= day);
+    const byKind: Record<string, number> = { agent: 0, integration: 0, pipeline: 0 };
+    for (const r of MOCK_RUNS) {
+      if (since !== null && Date.parse(r.started_at) < since) continue;
+      if (excludeSweeps && runIsSweep(r)) continue;
+      const b = runBucket(r.kind);
+      byKind[b] = (byKind[b] ?? 0) + 1;
+    }
+    return json({
+      active: MOCK_RUNS.filter((r) => r.status === "running").length,
+      failed_today: today.filter((r) => r.status === "error").length,
+      tokens_today: today.reduce((sum, r) => sum + r.cost_tokens, 0),
+      by_kind: byKind,
+    });
+  }
+  if (path === "/api/runs") {
+    const sp = url.searchParams;
+    const kinds = sp.getAll("kinds");
+    const excludeSweeps = sp.get("exclude_sweeps") === "true";
+    const sinceStr = sp.get("since");
+    const since = sinceStr ? Date.parse(sinceStr) : null;
+    const limit = Number(sp.get("limit") ?? "50");
+    const rows = MOCK_RUNS.filter((r) => {
+      if (kinds.length && !kinds.includes(r.kind)) return false;
+      if (excludeSweeps && runIsSweep(r)) return false;
+      if (since !== null && Date.parse(r.started_at) < since) return false;
+      return true;
+    }).slice(0, Math.max(1, Math.min(limit, 200)));
+    return json(rows);
   }
   const runMatch = path.match(/^\/api\/runs\/([^/]+)$/);
   if (runMatch) {

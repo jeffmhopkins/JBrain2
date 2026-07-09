@@ -7,7 +7,7 @@ from datetime import UTC, datetime
 import pytest
 from fastapi.testclient import TestClient
 
-from jbrain.agent.runlog import RunDetail, RunStepView, RunSummary
+from jbrain.agent.runlog import RunDetail, RunStats, RunStepView, RunSummary
 from jbrain.auth import service
 from jbrain.config import Settings
 from jbrain.main import create_app
@@ -79,8 +79,36 @@ class FakeRunReader:
             ],
         )
 
-    async def list_recent(self, ctx: object, *, limit: int = 50) -> list[RunSummary]:
+        self.calls: dict[str, object] = {}
+
+    async def list_recent(
+        self,
+        ctx: object,
+        *,
+        limit: int = 50,
+        kinds: list[str] | None = None,
+        exclude_sweeps: bool = False,
+        since: datetime | None = None,
+    ) -> list[RunSummary]:
+        # Record the resolved filters so the API-layer test can assert they flow through.
+        self.calls = {
+            "limit": limit,
+            "kinds": kinds,
+            "exclude_sweeps": exclude_sweeps,
+            "since": since,
+        }
         return self._summaries
+
+    async def stats(
+        self, ctx: object, *, since: datetime | None = None, exclude_sweeps: bool = False
+    ) -> RunStats:
+        self.calls = {"stats_since": since, "stats_exclude_sweeps": exclude_sweeps}
+        return RunStats(
+            active=1,
+            failed_today=2,
+            tokens_today=41000,
+            by_kind={"agent": 3, "integration": 1, "pipeline": 47},
+        )
 
     async def load(self, ctx: object, run_id: str) -> RunDetail | None:
         return self._detail if run_id == "r3" else None
@@ -163,3 +191,50 @@ def test_run_detail_step_tree(client: TestClient, repo: FakeAuthRepo) -> None:
 def test_unknown_run_is_404(client: TestClient, repo: FakeAuthRepo) -> None:
     login(client, repo)
     assert client.get("/api/runs/ghost").status_code == 404
+
+
+def test_list_runs_passes_filters_through(
+    client: TestClient, repo: FakeAuthRepo, reader: FakeRunReader
+) -> None:
+    login(client, repo)
+    resp = client.get(
+        "/api/runs",
+        params={
+            "kinds": ["agent", "subagent"],
+            "exclude_sweeps": "true",
+            "since": "2026-06-15T00:00:00Z",
+            "limit": 25,
+        },
+    )
+    assert resp.status_code == 200
+    assert reader.calls["kinds"] == ["agent", "subagent"]
+    assert reader.calls["exclude_sweeps"] is True
+    assert reader.calls["limit"] == 25
+    assert reader.calls["since"] == datetime(2026, 6, 15, tzinfo=UTC)
+
+
+def test_list_runs_clamps_limit_to_max(
+    client: TestClient, repo: FakeAuthRepo, reader: FakeRunReader
+) -> None:
+    login(client, repo)
+    assert client.get("/api/runs", params={"limit": 100000}).status_code == 200
+    assert reader.calls["limit"] == 200  # MAX_LIMIT, never an unbounded scan
+
+
+def test_run_stats_shape(client: TestClient, repo: FakeAuthRepo, reader: FakeRunReader) -> None:
+    login(client, repo)
+    resp = client.get("/api/runs/stats", params={"exclude_sweeps": "true"})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body == {
+        "active": 1,
+        "failed_today": 2,
+        "tokens_today": 41000,
+        "by_kind": {"agent": 3, "integration": 1, "pipeline": 47},
+    }
+    # "/stats" wins the route match over "/{run_id}" (never parsed as a run id).
+    assert reader.calls["stats_exclude_sweeps"] is True
+
+
+def test_run_stats_requires_owner(client: TestClient) -> None:
+    assert client.get("/api/runs/stats").status_code == 401

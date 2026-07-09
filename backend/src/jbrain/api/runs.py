@@ -11,7 +11,7 @@ log private. The sweep/emergency-trigger control the dashboard renders fires
 from datetime import datetime
 from typing import Annotated, cast
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
 
 from jbrain.agent.runlog import RunLogReader
@@ -24,8 +24,11 @@ router = APIRouter(prefix="/runs", dependencies=[Depends(owner_only)])
 OwnerDep = Annotated[PrincipalInfo, Depends(owner_only)]
 
 # A generous-but-bounded recency window: the dashboard shows the live log, not
-# the full history (the audit trail is queried elsewhere).
+# the full history (the audit trail is queried elsewhere). The client may ask for
+# fewer, or more up to MAX_LIMIT once it filters server-side (e.g. the last 200
+# agent turns), but never an unbounded scan.
 RECENT_LIMIT = 50
+MAX_LIMIT = 200
 
 
 def get_run_reader(request: Request) -> RunLogReader:
@@ -48,6 +51,15 @@ class RunSummaryOut(BaseModel):
 class QueueDepthOut(BaseModel):
     # Jobs waiting in app.jobs (status='queued') — the dashboard "jobs queued" tile.
     queued: int
+
+
+class RunStatsOut(BaseModel):
+    # The dashboard's tile + chip-count aggregates (computed over the whole log, not
+    # the fetched page). Tiles are today/now; by_kind respects the active filters.
+    active: int
+    failed_today: int
+    tokens_today: int
+    by_kind: dict[str, int]
 
 
 class RunStepOut(BaseModel):
@@ -78,18 +90,43 @@ class RunDetailOut(BaseModel):
 
 
 @router.get("")
-async def list_runs(request: Request, principal: OwnerDep) -> list[RunSummaryOut]:
+async def list_runs(
+    request: Request,
+    principal: OwnerDep,
+    kinds: Annotated[list[str] | None, Query()] = None,
+    exclude_sweeps: bool = False,
+    since: datetime | None = None,
+    limit: int = RECENT_LIMIT,
+) -> list[RunSummaryOut]:
     reader = get_run_reader(request)
-    runs = await reader.list_recent(ctx_for(principal), limit=RECENT_LIMIT)
+    runs = await reader.list_recent(
+        ctx_for(principal),
+        limit=max(1, min(limit, MAX_LIMIT)),
+        kinds=kinds,
+        exclude_sweeps=exclude_sweeps,
+        since=since,
+    )
     return [RunSummaryOut(**vars(r)) for r in runs]
 
 
 # Declared before "/{run_id}" so the literal path wins the route match (otherwise
-# "queue-depth" is captured as a run id and 404s).
+# "queue-depth"/"stats" are captured as a run id and 404).
 @router.get("/queue-depth")
 async def queue_depth(request: Request, principal: OwnerDep) -> QueueDepthOut:
     reader = get_run_reader(request)
     return QueueDepthOut(queued=await reader.queue_depth(ctx_for(principal)))
+
+
+@router.get("/stats")
+async def run_stats(
+    request: Request,
+    principal: OwnerDep,
+    exclude_sweeps: bool = False,
+    since: datetime | None = None,
+) -> RunStatsOut:
+    reader = get_run_reader(request)
+    stats = await reader.stats(ctx_for(principal), since=since, exclude_sweeps=exclude_sweeps)
+    return RunStatsOut(**vars(stats))
 
 
 @router.get("/{run_id}")

@@ -276,20 +276,26 @@ with the most expressive control and the least new paradigm:
   **Hide reconcile sweeps** switch that drops the seeded housekeeping
   (`reconcile_*` / `geofence_sweep` / `purge_deleted_artifacts`) without hiding
   real pipelines like `nightly_predicate_sweep`.
-- **Filtering is client-side over the fetched recency window and opt-in**: the
-  default shows everything (so the surface reads as before until a control is
-  touched), and the **status tiles stay derived from the whole window** — the
-  filter scopes only the list, so "failed today / tokens today" never lie. A
-  `N of M runs · <range> · <kinds> hidden · sweeps hidden` count line and a
-  **reset** link report exactly what's applied. When a filter empties the list,
-  the empty state names the fix rather than reading as "no runs".
+- **Filtering is server-side and opt-in.** `GET /api/runs` takes `kinds` /
+  `exclude_sweeps` / `since` / `limit`, so picking a kind fetches *that kind from
+  the whole history*, not just whatever survived the reconcile noise in the recent
+  page — the first cut shipped client-side over the fetched 50, but the sweeps fire
+  every few minutes and saturate that window, so agent turns never reached the app
+  to be filtered (the reported failure). The **status tiles + chip counts come from
+  a separate `GET /api/runs/stats`** aggregate over the whole log — so the tiles
+  stay honest while the list is filtered, and "tokens today" reflects the day
+  rather than the last 50 rows. The default shows everything (the surface reads as
+  before until a control is touched); a `N of M runs · <range> · <kinds> hidden ·
+  sweeps hidden` count line and a **reset** link report what's applied; an emptied
+  list names the fix rather than reading as "no runs".
 
 Rejected rivals: A's exclusive segmented lanes (can't see agent + integration
 together without re-mixing the noise) and C's structural grouping (loses the
 strictly-chronological cross-kind default). Open follow-up flagged in
 `docs/mocks/runs-filter/README.md`: whether those 0-token reconcile runs should
 be logged as first-class runs at all — a backend change that would shrink the
-problem upstream.
+problem upstream (server-side filtering treats the symptom; not logging no-op
+sweeps would treat the cause).
 
 **Calendar** — Day/Week/Month/List segments; month grid with hairline cell
 borders, out-of-month days in `--text-3`, today = accent ring around the day
