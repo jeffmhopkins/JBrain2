@@ -1,6 +1,12 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import { type RunDetail, type RunSummary, type SweepTrigger, api } from "../api/client";
+import {
+  type RunDetail,
+  type RunStats,
+  type RunSummary,
+  type SweepTrigger,
+  api,
+} from "../api/client";
 import { RunsScreen } from "./RunsScreen";
 
 const NOW = new Date().toISOString();
@@ -74,14 +80,32 @@ const SWEEPS: SweepTrigger[] = [
   { id: "t1", pipeline: "consolidate_predicates", label: "Consolidate" },
 ];
 
-function mount(opts: { runs?: RunSummary[]; sweeps?: SweepTrigger[]; queueDepth?: number } = {}) {
-  vi.spyOn(api, "runs").mockResolvedValue(opts.runs ?? RUNS);
+// Aggregates for the tiles + chip pills — the tiles now come from the server-side
+// stats (over the whole log), not the fetched list. Defaults match RUNS: 1 running,
+// 1 failed today, one integration + one pipeline run.
+const STATS: RunStats = {
+  active: 1,
+  failed_today: 1,
+  tokens_today: 10800,
+  by_kind: { agent: 0, integration: 1, pipeline: 1 },
+};
+
+function mount(
+  opts: {
+    runs?: RunSummary[];
+    sweeps?: SweepTrigger[];
+    queueDepth?: number;
+    stats?: Partial<RunStats>;
+  } = {},
+) {
+  const runs = vi.spyOn(api, "runs").mockResolvedValue(opts.runs ?? RUNS);
   vi.spyOn(api, "run").mockResolvedValue(DETAIL);
   vi.spyOn(api, "sweepTriggers").mockResolvedValue(opts.sweeps ?? SWEEPS);
   vi.spyOn(api, "queueDepth").mockResolvedValue(opts.queueDepth ?? 0);
+  const stats = vi.spyOn(api, "runsStats").mockResolvedValue({ ...STATS, ...opts.stats });
   const onClose = vi.fn();
   render(<RunsScreen onClose={onClose} />);
-  return { onClose };
+  return { onClose, runs, stats };
 }
 
 describe("RunsScreen", () => {
@@ -192,35 +216,60 @@ describe("RunsScreen", () => {
     progress_note: null,
   };
 
-  it("hides a kind when its show/hide chip is toggled off", async () => {
-    mount({ runs: [AGENT_RUN, RUNNING, PIPELINE_RUN] });
-    // The pipeline run (predicate_sweep) shows until its chip is switched off.
+  // A param-aware api.runs so the fetched list reflects the server-side filter — the
+  // point of this feature (the client no longer hides rows locally).
+  function mountFiltered(data: RunSummary[]) {
+    const runs = vi.spyOn(api, "runs").mockImplementation(async (p = {}) => {
+      let out = data;
+      if (p.kinds) out = out.filter((r) => p.kinds?.includes(r.kind));
+      if (p.excludeSweeps) out = out.filter((r) => !r.name.startsWith("reconcile_"));
+      return out;
+    });
+    const stats = vi.spyOn(api, "runsStats").mockResolvedValue(STATS);
+    vi.spyOn(api, "run").mockResolvedValue(DETAIL);
+    vi.spyOn(api, "sweepTriggers").mockResolvedValue(SWEEPS);
+    vi.spyOn(api, "queueDepth").mockResolvedValue(0);
+    render(<RunsScreen onClose={vi.fn()} />);
+    return { runs, stats };
+  }
+
+  it("re-queries server-side (no pipeline kind) when its chip is toggled off", async () => {
+    const { runs } = mountFiltered([AGENT_RUN, RUNNING, PIPELINE_RUN]);
     expect(await screen.findByText("predicate_sweep")).toBeInTheDocument();
     fireEvent.click(screen.getByText("Pipeline"));
-    expect(screen.queryByText("predicate_sweep")).not.toBeInTheDocument();
-    // The other kinds stay put, and the count line advertises what's hidden.
+    // The refetch drops the pipeline kind server-side, so its run leaves the list.
+    await waitFor(() => expect(screen.queryByText("predicate_sweep")).not.toBeInTheDocument());
     expect(screen.getByText("integrate_note")).toBeInTheDocument();
     expect(screen.getByText(/pipeline hidden/)).toBeInTheDocument();
+    // The query carries the enabled kinds only (agent expands to agent+subagent).
+    expect(runs.mock.calls.at(-1)?.[0]?.kinds).toEqual(["agent", "subagent", "integration"]);
   });
 
-  it("hides reconcile sweeps from the filter sheet", async () => {
-    mount({ runs: [RECONCILE, RUNNING] });
+  it("re-queries with exclude_sweeps when hide-sweeps is toggled", async () => {
+    const { runs, stats } = mountFiltered([RECONCILE, RUNNING]);
     expect(await screen.findByText("reconcile_pending_notes")).toBeInTheDocument();
     fireEvent.click(screen.getByLabelText("Filter runs"));
     const sheet = await screen.findByRole("dialog");
     fireEvent.click(within(sheet).getByText("Hide reconcile sweeps"));
-    // The 0-token housekeeping run drops out; the real integration stays.
-    expect(screen.queryByText("reconcile_pending_notes")).not.toBeInTheDocument();
+    // The 0-token housekeeping run drops out server-side; the real integration stays.
+    await waitFor(() =>
+      expect(screen.queryByText("reconcile_pending_notes")).not.toBeInTheDocument(),
+    );
     expect(screen.getByText("integrate_note")).toBeInTheDocument();
+    // Both the list and the stats aggregate refetch with exclude_sweeps.
+    expect(runs.mock.calls.at(-1)?.[0]?.excludeSweeps).toBe(true);
+    expect(stats.mock.calls.at(-1)?.[0]?.excludeSweeps).toBe(true);
   });
 
-  it("restores the full list when the filter is reset", async () => {
-    mount({ runs: [AGENT_RUN, PIPELINE_RUN] });
+  it("restores the default query (all kinds) on reset", async () => {
+    const { runs } = mountFiltered([AGENT_RUN, PIPELINE_RUN]);
     await screen.findByText("predicate_sweep");
     fireEvent.click(screen.getByText("Pipeline"));
-    expect(screen.queryByText("predicate_sweep")).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByText("predicate_sweep")).not.toBeInTheDocument());
     fireEvent.click(screen.getByText("reset"));
-    expect(screen.getByText("predicate_sweep")).toBeInTheDocument();
+    // Reset drops the kinds filter entirely, so the pipeline run returns.
+    await waitFor(() => expect(screen.getByText("predicate_sweep")).toBeInTheDocument());
+    expect(runs.mock.calls.at(-1)?.[0]?.kinds).toBeUndefined();
   });
 
   it("returns to Ops via the back control", async () => {

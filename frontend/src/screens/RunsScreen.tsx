@@ -12,6 +12,8 @@ import { useCallback, useEffect, useState } from "react";
 import {
   ApiError,
   type RunDetail,
+  type RunListParams,
+  type RunStats,
   type RunStatus,
   type RunSummary,
   type SweepTrigger,
@@ -37,16 +39,6 @@ import { fmtTokens } from "./aiUsage";
  * as the red "failed" tile/dot. This is the one place the mapping lives. */
 function statusLabel(status: RunStatus): string {
   return status === "error" ? "failed" : status;
-}
-
-function isToday(iso: string): boolean {
-  const d = new Date(iso);
-  const now = new Date();
-  return (
-    d.getFullYear() === now.getFullYear() &&
-    d.getMonth() === now.getMonth() &&
-    d.getDate() === now.getDate()
-  );
 }
 
 function fmtDuration(ms: number | null): string {
@@ -84,34 +76,32 @@ function fmtLogEvent(ev: Record<string, unknown>): string {
 }
 
 interface TilesProps {
-  runs: RunSummary[];
+  /** Aggregates over the whole log (GET /api/runs/stats); null until it loads. */
+  stats: RunStats | null;
   /** Jobs waiting in app.jobs (GET /api/runs/queue-depth); null until it loads. */
   queueDepth: number | null;
 }
 
-/** The status-tile grid: active now / failed today / queued / tokens today — all
- * derived honestly from the run log, plus the live job-queue depth. */
-function StatusTiles({ runs, queueDepth }: TilesProps) {
-  // 'running' only — a 'queued' run is waiting, not active (the queue tile counts it).
-  const active = runs.filter((r) => r.status === "running").length;
-  const failedToday = runs.filter((r) => r.status === "error" && isToday(r.started_at)).length;
-  const tokensToday = runs
-    .filter((r) => isToday(r.started_at))
-    .reduce((sum, r) => sum + r.cost_tokens, 0);
+/** The status-tile grid: active now / failed today / queued / tokens today. These
+ * come from the server-side stats aggregate (the whole log), so they stay honest
+ * while the list below is filtered — and "tokens today" reflects the day, not just
+ * the fetched page. */
+function StatusTiles({ stats, queueDepth }: TilesProps) {
+  const num = (n: number | undefined) => (n === undefined ? "—" : String(n));
   return (
     <div className="runs-tiles">
       <div className="runs-tile runs-tile-running">
         <span className="runs-tile-icon">
           <RefreshIcon size={14} />
         </span>
-        <span className="runs-tile-num">{active}</span>
+        <span className="runs-tile-num">{num(stats?.active)}</span>
         <span className="runs-tile-label">runs active now</span>
       </div>
       <div className="runs-tile runs-tile-failed">
         <span className="runs-tile-icon">
           <AlertTriangleIcon size={14} />
         </span>
-        <span className="runs-tile-num">{failedToday}</span>
+        <span className="runs-tile-num">{num(stats?.failed_today)}</span>
         <span className="runs-tile-label">failed today</span>
       </div>
       <div className="runs-tile runs-tile-queue">
@@ -125,7 +115,9 @@ function StatusTiles({ runs, queueDepth }: TilesProps) {
         <span className="runs-tile-icon">
           <CoinsIcon size={14} />
         </span>
-        <span className="runs-tile-num">{fmtTokens(tokensToday)}</span>
+        <span className="runs-tile-num">
+          {stats === null ? "—" : fmtTokens(stats.tokens_today)}
+        </span>
         <span className="runs-tile-label">tokens today</span>
       </div>
     </div>
@@ -162,41 +154,25 @@ function kindClass(kind: string): string {
 }
 
 // ===== Filtering (docs/reference/DESIGN.md "Runs — filtering"; mock B) =====
-// The list is filtered client-side over the fetched recency window so the status
-// tiles above stay derived from the *whole* window (honest "failed/tokens today"),
-// while the list scopes to what the owner asks for. Default is everything shown —
-// filtering is opt-in, so the surface behaves as before until a control is touched.
+// Filtering is server-side (GET /api/runs): the filter state maps to query params so
+// picking a kind fetches that kind from the FULL history, not just whatever survived
+// the reconcile noise in the recent 50. The status tiles + chip counts come from a
+// separate stats aggregate (over the whole log), so they stay honest while the list
+// is filtered. Default is everything shown — the surface behaves as before until a
+// control is touched.
 
 type ChipKey = "agent" | "integration" | "pipeline";
-const CHIP_DEFS: { key: ChipKey; label: string }[] = [
-  { key: "agent", label: "Agent" },
-  { key: "integration", label: "Integration" },
-  { key: "pipeline", label: "Pipeline" },
+/** Each chip expands to the run kinds it fetches: a subagent run is an agent turn's
+ * child, so it rides the Agent chip. */
+const CHIP_DEFS: { key: ChipKey; label: string; kinds: string[] }[] = [
+  { key: "agent", label: "Agent", kinds: ["agent", "subagent"] },
+  { key: "integration", label: "Integration", kinds: ["integration"] },
+  { key: "pipeline", label: "Pipeline", kinds: ["pipeline"] },
 ];
 
-/** A subagent run rides under the Agent chip (it is an agent turn's child). Any
- * unknown kind buckets with pipeline, mirroring kindClass. */
-function chipKey(kind: string): ChipKey {
-  if (kind === "agent" || kind === "subagent") return "agent";
-  if (kind === "integration") return "integration";
-  return "pipeline";
-}
-
-/** The scheduler's seeded background-maintenance sweeps (workflow/scheduler.py:
- * reconcile_pending_*, reconcile_unembedded_notes, geofence_sweep,
- * purge_deleted_artifacts) — high-frequency, ~0-token housekeeping that buries the
- * agent turns and integrations. "Hide reconcile sweeps" drops exactly these. */
-const SWEEP_NAMES = new Set(["geofence_sweep", "purge_deleted_artifacts"]);
-function isSweep(run: RunSummary): boolean {
-  return run.name.startsWith("reconcile_") || SWEEP_NAMES.has(run.name);
-}
-
 const DAY_MS = 86_400_000;
-/** days = Infinity means "all time" (the whole fetched window). */
-function withinRange(iso: string, days: number): boolean {
-  if (!Number.isFinite(days)) return true;
-  return Date.now() - new Date(iso).getTime() <= days * DAY_MS;
-}
+// "All" limit fetches up to the server's MAX_LIMIT (the API clamps there anyway).
+const ALL_LIMIT = 200;
 
 const RANGES: { label: string; days: number }[] = [
   { label: "Today", days: 1 },
@@ -234,6 +210,42 @@ function sheetFilterCount(f: RunFilter): number {
 }
 function anyKindHidden(f: RunFilter): boolean {
   return CHIP_DEFS.some((c) => !f.show[c.key]);
+}
+
+/** The enabled chips, in display order (also the ones whose counts sum to the total). */
+function enabledChips(f: RunFilter) {
+  return CHIP_DEFS.filter((c) => f.show[c.key]);
+}
+
+/** The date-range floor as an ISO string, or undefined for "all time". */
+function sinceIso(f: RunFilter): string | undefined {
+  return Number.isFinite(f.rangeDays)
+    ? new Date(Date.now() - f.rangeDays * DAY_MS).toISOString()
+    : undefined;
+}
+
+/** Map the filter state to the list endpoint's query params. `kinds` is omitted when
+ * every chip is on (fetch all, including any unknown kind); a fully-off selection is
+ * handled by the caller (it fetches nothing rather than sending an empty kinds list,
+ * which the API would read as "no filter"). */
+function listParams(f: RunFilter): RunListParams {
+  const enabled = enabledChips(f);
+  const p: RunListParams = { limit: Number.isFinite(f.limit) ? f.limit : ALL_LIMIT };
+  if (enabled.length !== CHIP_DEFS.length) p.kinds = enabled.flatMap((c) => c.kinds);
+  if (f.hideSweeps) p.excludeSweeps = true;
+  const since = sinceIso(f);
+  if (since) p.since = since;
+  return p;
+}
+
+/** The stats query params — the list's date-range + hide-sweeps (kinds don't scope
+ * the per-kind counts, so they're never sent here). */
+function statsParams(f: RunFilter): { excludeSweeps?: boolean; since?: string } {
+  const p: { excludeSweeps?: boolean; since?: string } = {};
+  if (f.hideSweeps) p.excludeSweeps = true;
+  const since = sinceIso(f);
+  if (since) p.since = since;
+  return p;
 }
 
 interface RunRowProps {
@@ -477,6 +489,7 @@ interface RunsScreenProps {
 
 export function RunsScreen({ onClose }: RunsScreenProps) {
   const [runs, setRuns] = useState<RunSummary[] | null>(null);
+  const [stats, setStats] = useState<RunStats | null>(null);
   const [queueDepth, setQueueDepth] = useState<number | null>(null);
   const [sweeps, setSweeps] = useState<SweepTrigger[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -487,8 +500,29 @@ export function RunsScreen({ onClose }: RunsScreenProps) {
   const [filter, setFilter] = useState<RunFilter>(DEFAULT_FILTER);
   const [filterOpen, setFilterOpen] = useState(false);
 
-  const refresh = useCallback(async () => {
+  // The filtered list + the stats aggregate, both driven by the current filter. The
+  // list reaches past the recency window server-side; the stats keep the tiles +
+  // chip counts honest over the whole log. A fully-off chip selection fetches no
+  // list (an empty kinds set would read as "no filter") but still pulls stats.
+  const loadFiltered = useCallback(async (f: RunFilter) => {
     setError(null);
+    api
+      .runsStats(statsParams(f))
+      .then(setStats)
+      .catch(() => {});
+    if (enabledChips(f).length === 0) {
+      setRuns([]);
+      return;
+    }
+    try {
+      setRuns(await api.runs(listParams(f)));
+    } catch (err) {
+      setError(errorMessage(err));
+    }
+  }, []);
+
+  // Filter-independent chrome: the sweep controls and the job-queue depth tile.
+  const loadMeta = useCallback(() => {
     // The sweep list is sibling Track B's; treat its absence as "no sweeps".
     api
       .sweepTriggers()
@@ -499,36 +533,35 @@ export function RunsScreen({ onClose }: RunsScreenProps) {
       .queueDepth()
       .then(setQueueDepth)
       .catch(() => setQueueDepth(null));
-    try {
-      setRuns(await api.runs());
-    } catch (err) {
-      setError(errorMessage(err));
-    }
   }, []);
 
+  const refresh = useCallback(() => {
+    loadMeta();
+    void loadFiltered(filter);
+  }, [loadMeta, loadFiltered, filter]);
+
   useEffect(() => {
-    void refresh();
-  }, [refresh]);
+    loadMeta();
+  }, [loadMeta]);
+
+  // Re-fetch the list + stats whenever the filter changes (and on first mount).
+  useEffect(() => {
+    void loadFiltered(filter);
+  }, [filter, loadFiltered]);
 
   // Live updates: while any run is in flight (and the tab is foreground), re-pull
-  // the list — and the open run's detail — every few seconds so status, duration,
-  // and tokens tick up without a manual refresh. Stops the moment nothing is
-  // running (a backgrounded app suspends the poll, like the LLM-settings drawer).
+  // the list, stats, and the open run's detail every few seconds so status,
+  // duration, and tokens tick up without a manual refresh. Stops the moment nothing
+  // is running (a backgrounded app suspends the poll, like the LLM-settings drawer).
   const foreground = useForeground();
-  // Poll while anything is in flight OR waiting — a queued run will flip to running
-  // and on to done, and the queue tile drains, all without a manual refresh.
-  const anyActive = (runs ?? []).some((r) => r.status === "running" || r.status === "queued");
+  // Poll while anything is in flight OR waiting — a queued job or running run will
+  // flip to done, and the queue tile drains, all without a manual refresh. Read from
+  // stats/queueDepth (not the filtered list), since the active run may be filtered out.
+  const anyActive = (stats?.active ?? 0) > 0 || (queueDepth ?? 0) > 0;
   useEffect(() => {
     if (!foreground || !anyActive) return;
     const tick = () => {
-      api
-        .runs()
-        .then((fresh) => {
-          setRuns(fresh);
-          // Keep the open run's header live by re-deriving it from the fresh list.
-          setSelected((cur) => (cur ? (fresh.find((r) => r.id === cur.id) ?? cur) : cur));
-        })
-        .catch(() => {});
+      void loadFiltered(filter);
       api
         .queueDepth()
         .then(setQueueDepth)
@@ -541,7 +574,7 @@ export function RunsScreen({ onClose }: RunsScreenProps) {
     };
     const id = setInterval(tick, 3000);
     return () => clearInterval(id);
-  }, [foreground, anyActive, selected]);
+  }, [foreground, anyActive, selected, filter, loadFiltered]);
 
   const openRun = useCallback((run: RunSummary) => {
     setSelected(run);
@@ -580,16 +613,21 @@ export function RunsScreen({ onClose }: RunsScreenProps) {
     setFilter((f) => ({ ...f, show: { ...f.show, [key]: !f.show[key] } }));
   }
 
-  // Filter the fetched window client-side (the tiles above keep the whole window).
-  const allRuns = runs ?? [];
-  const inRange = allRuns.filter((r) => withinRange(r.started_at, filter.rangeDays));
-  const notSwept = inRange.filter((r) => !(filter.hideSweeps && isSweep(r)));
-  // Chip pills count what each kind *would* show (range + hide-sweeps applied),
-  // independent of the on/off toggles — so a hidden chip still advertises its size.
-  const counts: Record<ChipKey, number> = { agent: 0, integration: 0, pipeline: 0 };
-  for (const r of notSwept) counts[chipKey(r.kind)]++;
-  const matched = notSwept.filter((r) => filter.show[chipKey(r.kind)]);
-  const shown = Number.isFinite(filter.limit) ? matched.slice(0, filter.limit) : matched;
+  // The server did the filtering; the chip pills + count line read off the stats
+  // aggregate (per-kind counts over the whole log, scoped to the active range +
+  // hide-sweeps), so they agree with the filtered list without re-deriving it.
+  const shown = runs ?? [];
+  const counts: Record<ChipKey, number> = {
+    agent: stats?.by_kind.agent ?? 0,
+    integration: stats?.by_kind.integration ?? 0,
+    pipeline: stats?.by_kind.pipeline ?? 0,
+  };
+  // Total matched = the enabled chips' counts; the list caps at the limit, so the
+  // line reads "N of M" when the page is capped. Guard against a briefly-stale stat.
+  const total = Math.max(
+    enabledChips(filter).reduce((n, c) => n + counts[c.key], 0),
+    shown.length,
+  );
   const filtersActive = sheetFilterCount(filter) > 0 || anyKindHidden(filter);
 
   // The count line's descriptor tail (range · hidden kinds · sweeps).
@@ -600,9 +638,8 @@ export function RunsScreen({ onClose }: RunsScreenProps) {
   const hidden = CHIP_DEFS.filter((c) => !filter.show[c.key]).map((c) => c.label.toLowerCase());
   if (hidden.length) parts.push(`${hidden.join(" + ")} hidden`);
   if (filter.hideSweeps) parts.push("sweeps hidden");
-  const countN =
-    shown.length === matched.length ? `${matched.length}` : `${shown.length} of ${matched.length}`;
-  const countText = `${countN} run${matched.length === 1 ? "" : "s"}${parts.length ? ` · ${parts.join(" · ")}` : ""}`;
+  const countN = shown.length === total ? `${total}` : `${shown.length} of ${total}`;
+  const countText = `${countN} run${total === 1 ? "" : "s"}${parts.length ? ` · ${parts.join(" · ")}` : ""}`;
 
   return (
     // Runs can mount inside Ops's `.subscreen`, whose down-swipe dismiss
@@ -635,14 +672,15 @@ export function RunsScreen({ onClose }: RunsScreenProps) {
           </p>
         )}
 
-        {runs !== null && <StatusTiles runs={runs} queueDepth={queueDepth} />}
+        <StatusTiles stats={stats} queueDepth={queueDepth} />
 
         <SweepRow sweeps={sweeps} onFire={(t) => void fireSweep(t)} />
 
         <h3 className="runs-sect">Recent runs</h3>
         {runs === null && error === null ? (
           <p className="muted">Loading runs…</p>
-        ) : runs !== null && runs.length === 0 ? (
+        ) : runs !== null && runs.length === 0 && !filtersActive ? (
+          // An empty log (no filters applied) — nothing to filter, so no bar.
           <p className="muted runs-empty">No runs yet — they appear here as the engine works.</p>
         ) : (
           <>

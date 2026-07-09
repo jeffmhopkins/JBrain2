@@ -362,7 +362,8 @@ describe("OpsScreen", () => {
       const path = String(input);
       const base = baseMock(input);
       if (base) return base;
-      if (path === "/api/runs")
+      // The list is filtered server-side, so the client sends a query string.
+      if (path === "/api/runs" || path.startsWith("/api/runs?"))
         return json([
           {
             id: "r1",
@@ -377,6 +378,13 @@ describe("OpsScreen", () => {
             progress_note: null,
           },
         ]);
+      if (path.startsWith("/api/runs/stats"))
+        return json({
+          active: 1,
+          failed_today: 0,
+          tokens_today: 4100,
+          by_kind: { agent: 0, integration: 1, pipeline: 0 },
+        });
       // The sweep-trigger list is sibling Track B's; absent here.
       if (path === "/api/ops/triggers") return new Response(null, { status: 404 });
       return new Response(null, { status: 500 });
