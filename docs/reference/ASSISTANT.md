@@ -1,6 +1,6 @@
 # JBrain2 — Assistant
 
-> **Status:** Living · **Last verified:** 2026-07-09
+> **Status:** Living · **Last verified:** 2026-07-10
 
 The personal agent. This is the **binding design** for the tool-calling agent
 (ROADMAP.md): a smart, tool-using assistant with durable memory — built natively
@@ -362,7 +362,9 @@ personas `jerv` spawns — the full persona table is in `SERVICES.md`.
   the NWS heat index on-box, and returns aggregates across every dimension the archive
   carries — temperature (avg/high/low/range), humidity, dew point, heat index,
   precipitation (total/rainy-days/wettest/snow), wind (avg/gust/direction), sky
-  (sunshine/cloud), and pressure — as text (no card; absent dimensions are omitted).
+  (sunshine/cloud), and pressure — as text (no card; absent dimensions are omitted). A
+  `detail` param switches the roll-up for a breakdown: `hourly` returns the heat index
+  hour by hour (capped at a few days), `daily` one row per day (capped at ~a season).
   Same pinned-upstream, same geocoder, same location firewall as the
   forecast tool; one call spans up to a year, so a multi-year question is answered by
   one call per year. When the on-box backends are configured, jerv also gets the

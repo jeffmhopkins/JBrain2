@@ -126,6 +126,31 @@ class HistoryStats:
     avg_pressure_mb: float
 
 
+@dataclass(frozen=True)
+class HourPointHI:
+    """One hour of the heat-index series: the local time plus the temperature, humidity,
+    and the heat index computed from them (all rounded to whole units for a compact
+    table)."""
+
+    time: str  # local "YYYY-MM-DD HH:MM"
+    temp_f: int
+    humidity: int
+    hi_f: int
+
+
+@dataclass(frozen=True)
+class DayPointHI:
+    """One day's heat-index roll-up: the high/low temperature plus the day's average
+    humidity and its average and peak heat index."""
+
+    date: str  # "YYYY-MM-DD"
+    high_f: int
+    low_f: int
+    avg_humidity: int
+    avg_hi_f: int
+    peak_hi_f: int
+
+
 class WeatherHistoryClient:
     """Fetch the hourly + daily archive for a place/date-range from Open-Meteo's Archive
     API and reduce it to a `HistoryStats`. The base URL is config-pinned; `transport` is
@@ -140,9 +165,22 @@ class WeatherHistoryClient:
         return bool(self._archive_url)
 
     async def archive(self, hit: GeoHit, start: date, end: date) -> HistoryStats:
-        """Fetch the hourly + daily record for the range and reduce it to the full
-        aggregate. Defensive: a missing/ragged block is a malformed body, surfaced as a
-        WeatherError rather than a crash."""
+        """Fetch the record for the range and reduce it to the full aggregate summary."""
+        return _reduce(hit.name, start, end, await self._fetch(hit, start, end))
+
+    async def archive_hourly(self, hit: GeoHit, start: date, end: date) -> list[HourPointHI]:
+        """The per-hour heat-index series for the range (time, temp, humidity, computed
+        heat index) — the hour-by-hour view the summary rolls up."""
+        return _hourly_series(await self._fetch(hit, start, end))
+
+    async def archive_daily(self, hit: GeoHit, start: date, end: date) -> list[DayPointHI]:
+        """The per-day roll-up for the range (high/low, average humidity, average and peak
+        heat index) — one row per calendar day."""
+        return _daily_series(await self._fetch(hit, start, end))
+
+    async def _fetch(self, hit: GeoHit, start: date, end: date) -> dict:
+        """The shared archive GET behind every view. Defensive: a missing/ragged block is a
+        malformed body, surfaced as a WeatherError rather than a crash."""
         if not self._archive_url:
             raise WeatherError("historical weather is not configured on this instance")
         params = {
@@ -160,7 +198,7 @@ class WeatherHistoryClient:
         body = await self._get(f"{self._archive_url}/v1/archive", params)
         if not isinstance(body, dict):
             raise WeatherError("the weather service returned an unexpected response")
-        return _reduce(hit.name, start, end, body)
+        return body
 
     async def _get(self, url: str, params: dict) -> object:
         try:
@@ -269,6 +307,101 @@ def _reduce(place: str, start: date, end: date, body: dict) -> HistoryStats:
         avg_sunshine_hours=_avg_sunshine(daily.get("sunshine_duration")),
         avg_pressure_mb=_avg(hourly.get("surface_pressure")),
     )
+
+
+def _hourly_cols(body: dict) -> tuple[list, list, list]:
+    """The (time, temperature, humidity) hourly columns, or a WeatherError if the block is
+    missing/malformed — the shared front door for both the summary and the series views."""
+    hourly = body.get("hourly")
+    if not isinstance(hourly, dict):
+        raise WeatherError("the weather service returned an incomplete history")
+    times, temps, hums = (
+        hourly.get("time"),
+        hourly.get("temperature_2m"),
+        hourly.get("relative_humidity_2m"),
+    )
+    if not (isinstance(times, list) and isinstance(temps, list) and isinstance(hums, list)):
+        raise WeatherError("the weather service returned an incomplete history")
+    return times, temps, hums
+
+
+def _hourly_series(body: dict) -> list[HourPointHI]:
+    """The per-hour heat-index series: each hour's temperature + humidity with the heat
+    index computed from them, rounded for a compact table. Hours missing either input are
+    skipped; an empty result is a malformed body."""
+    times, temps, hums = _hourly_cols(body)
+    out: list[HourPointHI] = []
+    for t, temp, rh in zip(times, temps, hums, strict=False):
+        if temp is None or rh is None:
+            continue
+        temp, rh = float(temp), float(rh)
+        out.append(
+            HourPointHI(
+                time=str(t).replace("T", " "),
+                temp_f=round(temp),
+                humidity=round(rh),
+                hi_f=round(heat_index_f(temp, rh)),
+            )
+        )
+    if not out:
+        raise WeatherError("the weather service returned no usable history for that range")
+    return out
+
+
+def _daily_series(body: dict) -> list[DayPointHI]:
+    """The per-day roll-up: each calendar day's high/low (from the daily block) plus its
+    average humidity and average and peak heat index (grouped from the hourly series)."""
+    times, temps, hums = _hourly_cols(body)
+    per_day: dict[str, list[float]] = {}  # day → [hi_sum, hum_sum, n, peak_hi]
+    for t, temp, rh in zip(times, temps, hums, strict=False):
+        if temp is None or rh is None:
+            continue
+        hi = heat_index_f(float(temp), float(rh))
+        agg = per_day.setdefault(str(t)[:10], [0.0, 0.0, 0.0, float("-inf")])
+        agg[0] += hi
+        agg[1] += float(rh)
+        agg[2] += 1
+        agg[3] = max(agg[3], hi)
+    if not per_day:
+        raise WeatherError("the weather service returned no usable history for that range")
+    highs, lows = _daily_hilo_map(body.get("daily"))
+    out: list[DayPointHI] = []
+    for day in sorted(per_day):
+        hi_sum, hum_sum, n, peak = per_day[day]
+        out.append(
+            DayPointHI(
+                date=day,
+                high_f=round(highs[day]) if day in highs else round(peak),
+                low_f=round(lows[day]) if day in lows else 0,
+                avg_humidity=round(hum_sum / n),
+                avg_hi_f=round(hi_sum / n),
+                peak_hi_f=round(peak),
+            )
+        )
+    return out
+
+
+def _daily_hilo_map(daily: object) -> tuple[dict[str, float], dict[str, float]]:
+    """Map each date to its published daily max and min temperature, for aligning the daily
+    roll-up's high/low with the hourly-grouped heat index. Empty when the block is absent."""
+    if not isinstance(daily, dict):
+        return {}, {}
+    dates = daily.get("time")
+    if not isinstance(dates, list):
+        return {}, {}
+    maxs = daily.get("temperature_2m_max") or []
+    mins = daily.get("temperature_2m_min") or []
+    highs = {
+        str(d): float(maxs[i])
+        for i, d in enumerate(dates)
+        if i < len(maxs) and isinstance(maxs[i], (int, float))
+    }
+    lows = {
+        str(d): float(mins[i])
+        for i, d in enumerate(dates)
+        if i < len(mins) and isinstance(mins[i], (int, float))
+    }
+    return highs, lows
 
 
 def _daily_hilo(daily: dict) -> tuple[float, float]:

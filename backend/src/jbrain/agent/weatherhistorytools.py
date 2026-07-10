@@ -22,7 +22,13 @@ from jbrain.agent.clock import _resolve as _resolve_zone
 from jbrain.agent.loop import ToolContext, ToolHandler, ToolOutput
 from jbrain.citygeocode import CityGeocoder
 from jbrain.web.weather import GeoHit, WeatherClient, WeatherError
-from jbrain.web.weather_history import HistoryStats, WeatherHistoryClient, parse_iso_date
+from jbrain.web.weather_history import (
+    DayPointHI,
+    HistoryStats,
+    HourPointHI,
+    WeatherHistoryClient,
+    parse_iso_date,
+)
 
 _NO_LOCATION = (
     'I need a place to check — name a city (e.g. "heat index history for Austin"), or '
@@ -33,6 +39,11 @@ _NOT_CONFIGURED = "Historical weather isn't configured on this instance."
 # multi-year question is answered by calling once per year (the sidecar says so), which
 # also keeps each year's aggregate cleanly separated.
 _MAX_RANGE_DAYS = 370
+# The detail modes and their span caps: an hour-by-hour list is only legible for a few
+# days (a month of hours is 744 rows), and a per-day list for at most a season.
+_DETAILS = ("summary", "daily", "hourly")
+_MAX_HOURLY_DAYS = 7
+_MAX_DAILY_DAYS = 92
 
 
 def build_weather_history_handlers(
@@ -45,7 +56,10 @@ def build_weather_history_handlers(
             return _NOT_CONFIGURED
         start = parse_iso_date(arguments.get("start_date", ""))
         end = parse_iso_date(arguments.get("end_date", ""))
-        err = _validate_range(start, end, _today(ctx))
+        detail = str(arguments.get("detail", "summary")).strip().lower()
+        if detail not in _DETAILS:
+            detail = "summary"
+        err = _validate_range(start, end, _today(ctx)) or _validate_detail(detail, start, end)
         if err is not None:
             return err
         assert start is not None and end is not None  # _validate_range guarantees it
@@ -57,10 +71,13 @@ def build_weather_history_handlers(
         if hit is None:
             return f'I couldn\'t find a place called "{name}".' if name else _NO_LOCATION
         try:
-            stats = await history.archive(hit, start, end)
+            if detail == "hourly":
+                return _hourly_table(hit.name, await history.archive_hourly(hit, start, end))
+            if detail == "daily":
+                return _daily_table(hit.name, await history.archive_daily(hit, start, end))
+            return _summarize(await history.archive(hit, start, end))
         except WeatherError as exc:
             return str(exc)
-        return _summarize(stats)
 
     return {"weather_history": weather_history_tool}
 
@@ -98,6 +115,27 @@ def _validate_range(start: date | None, end: date | None, today: date) -> str | 
     return None
 
 
+def _validate_detail(detail: str, start: date | None, end: date | None) -> str | None:
+    """Cap the row-by-row modes so a table stays legible: an hour-by-hour list is only
+    useful over a few days, a per-day list over at most a season. Wider spans steer to a
+    coarser mode. `summary` has no cap (it's already reduced to one paragraph)."""
+    if start is None or end is None:
+        return None  # _validate_range already handled the missing-dates case
+    span = (end - start).days + 1
+    if detail == "hourly" and span > _MAX_HOURLY_DAYS:
+        return (
+            f"Hour-by-hour detail is capped at {_MAX_HOURLY_DAYS} days (that range is "
+            f"{span}). Narrow it to a day or a few days, or use detail='daily' for a "
+            "per-day list over a longer span."
+        )
+    if detail == "daily" and span > _MAX_DAILY_DAYS:
+        return (
+            f"Per-day detail is capped at about {_MAX_DAILY_DAYS} days (that range is "
+            f"{span}). Narrow it, or use the default summary for a longer span."
+        )
+    return None
+
+
 async def _resolve(
     client: WeatherClient, city_geocoder: CityGeocoder, name: str, ctx: ToolContext
 ) -> GeoHit | None:
@@ -114,6 +152,34 @@ async def _resolve(
     if city is None:
         raise WeatherError("I couldn't pin a nearby city to check the history for.")
     return await client.geocode(city.name)
+
+
+def _hourly_table(place: str, rows: list[HourPointHI]) -> str:
+    """The per-hour heat-index table: a header line naming the place and span, then one line
+    per hour (time, temp, humidity, heat index). This is the hour-by-hour view the summary
+    rolls up — used for a single day or a few days."""
+    span = f"{rows[0].time} to {rows[-1].time}"
+    lines = [f"{r.time}: {r.temp_f}°F, {r.humidity}% RH → heat index {r.hi_f}°F" for r in rows]
+    return (
+        f"{place} — hour-by-hour heat index, {span} ({len(rows)} hours). "
+        "Each row is the air temperature, relative humidity, and the NWS heat index "
+        f"computed from them on-box:\n" + "\n".join(lines)
+    )
+
+
+def _daily_table(place: str, rows: list[DayPointHI]) -> str:
+    """The per-day heat-index table: one line per calendar day with the high/low, average
+    humidity, and the day's average and peak heat index."""
+    span = f"{rows[0].date} to {rows[-1].date}"
+    lines = [
+        f"{r.date}: high {r.high_f}°F / low {r.low_f}°F, humidity {r.avg_humidity}%, "
+        f"heat index avg {r.avg_hi_f}°F / peak {r.peak_hi_f}°F"
+        for r in rows
+    ]
+    return (
+        f"{place} — daily heat index, {span} ({len(rows)} days). Heat index is computed "
+        f"on-box from the hourly temperature and humidity (NWS formula):\n" + "\n".join(lines)
+    )
 
 
 def _f(value: float, suffix: str) -> str | None:
