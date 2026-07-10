@@ -14,6 +14,8 @@ from jbrain.db.session import SessionContext
 from jbrain.web.weather import WeatherClient, WeatherError
 from jbrain.web.weather_history import (
     WeatherHistoryClient,
+    _daily_series,
+    _hourly_series,
     _reduce,
     heat_index_f,
     parse_iso_date,
@@ -180,6 +182,37 @@ async def test_archive_http_error_is_recoverable() -> None:
         raise AssertionError("expected WeatherError")
 
 
+def test_hourly_series_computes_per_hour_heat_index() -> None:
+    rows = _hourly_series(_ARCHIVE_OK)
+    assert len(rows) == 5  # every hour (none dropped)
+    first = rows[0]
+    assert first.time == "2023-07-01 00:00"  # the T separator is flattened
+    assert (first.temp_f, first.humidity) == (80, 80)
+    assert first.hi_f == round(heat_index_f(80, 80))
+    # The hot hour lands in the Danger band.
+    assert max(r.hi_f for r in rows) == round(heat_index_f(96, 70))
+
+
+def test_hourly_series_skips_null_hours() -> None:
+    body = {
+        "hourly": {
+            "time": ["2023-07-01T12:00", "2023-07-01T13:00"],
+            "temperature_2m": [95, None],
+            "relative_humidity_2m": [65, 70],
+        }
+    }
+    rows = _hourly_series(body)
+    assert len(rows) == 1 and rows[0].temp_f == 95
+
+
+def test_daily_series_rolls_up_per_day() -> None:
+    rows = _daily_series(_ARCHIVE_OK)
+    assert [r.date for r in rows] == ["2023-07-01", "2023-07-02"]  # sorted
+    day1 = rows[0]
+    assert day1.high_f == 96 and day1.low_f == 76  # from the daily block
+    assert day1.peak_hi_f == round(max(heat_index_f(95, 65), heat_index_f(96, 70)))
+
+
 def test_parse_iso_date() -> None:
     assert parse_iso_date("2023-07-01") == date(2023, 7, 1)
     assert parse_iso_date("2023-07-01T12:00") == date(2023, 7, 1)
@@ -296,3 +329,74 @@ async def test_unknown_place_reports_not_found() -> None:
         lambda r: httpx.Response(200, json={"results": []}),
     )({"location": "Atlantis", "start_date": "2023-07-01", "end_date": "2023-07-31"}, CTX)
     assert isinstance(out, str) and "Atlantis" in out
+
+
+async def test_hourly_detail_returns_a_per_hour_table() -> None:
+    out = await _tool(
+        lambda r: httpx.Response(200, json=_ARCHIVE_OK),
+        lambda r: httpx.Response(200, json=_GEO_OK),
+    )(
+        {
+            "location": "Titusville, FL",
+            "start_date": "2023-07-01",
+            "end_date": "2023-07-02",
+            "detail": "hourly",
+        },
+        CTX,
+    )
+    assert isinstance(out, str)
+    assert "hour-by-hour heat index" in out
+    # One line per hour, each carrying the computed heat index.
+    assert out.count("heat index") >= 5
+    assert "2023-07-01 00:00:" in out and "% RH" in out
+
+
+async def test_daily_detail_returns_a_per_day_table() -> None:
+    out = await _tool(
+        lambda r: httpx.Response(200, json=_ARCHIVE_OK),
+        lambda r: httpx.Response(200, json=_GEO_OK),
+    )(
+        {
+            "location": "Titusville, FL",
+            "start_date": "2023-07-01",
+            "end_date": "2023-07-31",
+            "detail": "daily",
+        },
+        CTX,
+    )
+    assert isinstance(out, str)
+    assert "daily heat index" in out
+    assert "2023-07-01: high 96°F / low 76°F" in out
+
+
+async def test_hourly_detail_over_a_week_is_capped() -> None:
+    # An hour-by-hour list over more than a week is refused before any fetch.
+    out = await _tool(
+        lambda r: httpx.Response(200, json=_ARCHIVE_OK),
+        lambda r: httpx.Response(200, json=_GEO_OK),
+    )(
+        {
+            "location": "X",
+            "start_date": "2023-07-01",
+            "end_date": "2023-07-31",
+            "detail": "hourly",
+        },
+        CTX,
+    )
+    assert isinstance(out, str) and "capped at 7 days" in out
+
+
+async def test_unknown_detail_falls_back_to_summary() -> None:
+    out = await _tool(
+        lambda r: httpx.Response(200, json=_ARCHIVE_OK),
+        lambda r: httpx.Response(200, json=_GEO_OK),
+    )(
+        {
+            "location": "Titusville, FL",
+            "start_date": "2023-07-01",
+            "end_date": "2023-07-31",
+            "detail": "nonsense",
+        },
+        CTX,
+    )
+    assert isinstance(out, str) and "Heat index: average across all hours" in out
