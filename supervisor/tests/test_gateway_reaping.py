@@ -11,7 +11,7 @@ gateway against a fake docker client (no daemon).
 from __future__ import annotations
 
 import time
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
@@ -74,7 +74,11 @@ def _provision(age_s: int, *, name: str | None = None) -> _FakeContainer:
 
 def _gateway(items: list[_FakeContainer]) -> tuple[ComposeDockerGateway, _FakeClient]:
     client = _FakeClient(items)
-    gw = ComposeDockerGateway(client, project="jbrain", project_dir="/opt/jbrain2")
+    # The fake stands in for a docker.DockerClient; only the methods the reaping path
+    # touches are implemented, so cast past the constructor's concrete type.
+    gw = ComposeDockerGateway(
+        cast(Any, client), project="jbrain", project_dir="/opt/jbrain2"
+    )
     return gw, client
 
 
