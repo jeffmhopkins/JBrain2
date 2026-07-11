@@ -296,6 +296,18 @@ def test_sync_applies_removals_when_the_roster_empties() -> None:
     )
 
 
+def test_sync_sweeps_stale_cache_partials() -> None:
+    # A killed/interrupted download leaves tens of GB of huggingface .cache/*.incomplete
+    # staging in an otherwise-complete model dir, which nothing else reclaims. The sync
+    # must sweep `<models>/*/.cache` from every model dir, guarded by a realpath
+    # containment check so a symlinked-out cache is never followed.
+    text = (DEPLOY / "local-models-sync.sh").read_text()
+    assert "/.cache" in text and "clearing partials" in text, (
+        "the sync must sweep stale huggingface .cache partials from each model dir"
+    )
+    assert "realpath" in text, "the .cache sweep must realpath-check containment"
+
+
 @pytest.mark.skipif(shutil.which("sh") is None, reason="no POSIX sh available")
 def test_prune_deletes_only_guarded_targets(tmp_path: Path) -> None:
     # Behavioral coverage for the destructive deleter: run the real script against a
