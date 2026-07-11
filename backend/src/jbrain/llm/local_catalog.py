@@ -139,6 +139,45 @@ CATALOG: tuple[LocalModel, ...] = (
         kv_gb_per_128k=4.5,
     ),
     LocalModel(
+        id="nemotron-3-super-120b",
+        label="Nemotron 3 Super 120B · reasoning (alt)",
+        served_model="nemotron-3-super-120b",
+        tiers=("high",),
+        supports_vision=False,
+        supports_tools=True,
+        recommended=False,
+        hf_repo="unsloth/NVIDIA-Nemotron-3-Super-120B-A12B-GGUF",
+        # Sharded into a UD-Q4_K_XL/ subdir (same shape as the 235B's UD-Q3_K_XL/ and
+        # the coder's Q8_0/ subdirs); the glob matches each shard path and the config
+        # generator resolves them.
+        gguf_include="*UD-Q4_K_XL*.gguf",
+        mmproj_include=None,
+        quant="UD-Q4_K_XL",
+        size_gb=83.8,
+        note="120B MoE, 12B active — NVIDIA's US-made agentic (tool-use + RAG) reasoner, "
+        "an alternate to gpt-oss-120b in the high tier. Hybrid LatentMoE (interleaved "
+        "Mamba-2 + MoE + select attention): the constant Mamba state keeps the KV cache "
+        "small, so it holds long context far better than a dense 120B. ~84 GB at "
+        "UD-Q4_K_XL — co-resides only with a small low-tier model on a 128 GB box, else "
+        "standalone with a cold load on every switch. A HYBRID reasoner: thinking is the "
+        "enable_thinking chat-template toggle, set per task in LLM Settings ('none' runs "
+        "it as a snappy Instruct model). Emits <think> traces, so it needs a recent "
+        "llama.cpp build that serves the LatentMoE arch and supports --reasoning-format.",
+        supports_reasoning=True,
+        # Emits <think>…</think> inline (token ids 12/13); deepseek format splits it onto
+        # the reasoning channel like the Qwen hybrids and the Next-Thinking checkpoint.
+        reasoning_format="deepseek",
+        # enable_thinking chat-template toggle (not a reasoning_effort level), so the
+        # adapter maps the routed level onto it — same path as the Qwen hybrids.
+        hybrid_thinking=True,
+        # Native 1M context; serves the conservative gateway default. The Mamba-2 hybrid's
+        # constant state makes the KV term small, so raising the window is cheap here — the
+        # drawer's linear KV estimate overcounts the non-growing Mamba layers, so it is a
+        # conservative guardrail rather than a true measure.
+        native_context_window=1048576,
+        kv_gb_per_128k=3.0,
+    ),
+    LocalModel(
         id="qwen3-235b-a22b",
         label="Qwen3-235B-A22B · reasoning (alt, 3-bit)",
         served_model="qwen3-235b-a22b",

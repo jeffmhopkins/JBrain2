@@ -132,9 +132,35 @@ def test_qwen3_next_thinking_is_a_reasoning_deepseek_format_alt() -> None:
     # auto (empty), so reasoning_format is NOT just a synonym for supports_reasoning.
     assert {x.id for x in local_catalog.CATALOG if x.reasoning_format} == {
         "qwen3-next-80b-a3b-thinking",
+        "nemotron-3-super-120b",
         "qwen3.5-0.8b",
         "qwen3.5-4b",
     }
+
+
+def test_nemotron_3_super_is_a_hybrid_reasoner_alt_high_tier_at_q4() -> None:
+    # NVIDIA's US-made 120B/12B agentic reasoner: an alternate high-tier MoE at
+    # Unsloth's UD-Q4_K_XL. A HYBRID reasoner (enable_thinking chat-template toggle)
+    # that emits <think>, so it pins --reasoning-format deepseek like the Qwen hybrids.
+    m = local_catalog.get("nemotron-3-super-120b")
+    assert m is not None
+    assert m.tiers == ("high",)
+    assert not m.supports_vision and m.mmproj_include is None
+    assert m.supports_tools
+    assert m.supports_reasoning
+    assert m.reasoning_format == "deepseek"
+    assert m.hybrid_thinking
+    assert m.served_model in local_catalog.REASONING_SERVED_MODELS
+    # The 4-bit dynamic quant the manifest pulls, from NVIDIA's Unsloth GGUF repo.
+    assert m.quant == "UD-Q4_K_XL"
+    assert "UD-Q4_K_XL" in m.gguf_include
+    assert m.hf_repo == "unsloth/NVIDIA-Nemotron-3-Super-120B-A12B-GGUF"
+    assert m.spec == "local:nemotron-3-super-120b"
+    # Serves the conservative gateway default with its native 1M window as the ceiling.
+    assert m.context_window == local_catalog.DEFAULT_LOCAL_CONTEXT_WINDOW
+    assert m.native_context_window == 1048576
+    # Alternate, not part of the default resident set the install prompt offers.
+    assert m.id not in local_catalog.recommended_ids()
 
 
 def test_qwen35_0_8b_is_a_tiny_hybrid_reasoner_low_tier() -> None:
