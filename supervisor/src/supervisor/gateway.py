@@ -7,6 +7,7 @@ and so tests can substitute a fake without a docker daemon.
 
 from __future__ import annotations
 
+import contextlib
 import shlex
 import time
 from dataclasses import dataclass
@@ -56,6 +57,15 @@ def _rebuild_command(service: str) -> str:
 
 # Docker reports this zero-value timestamp for containers that never started.
 _NEVER_STARTED = "0001-01-01T00:00:00Z"
+
+# A one-shot (update/provision/export/…) is a detached container expected to exit on
+# its own. If one HANGS — e.g. a provision stuck on a silently stalled hf download —
+# the mutual-exclusion guard would otherwise block every future update and provision
+# FOREVER, since the wedged container never leaves the Running state. Past this age a
+# still-running one-shot is treated as dead and reaped so a fresh one can start. Set
+# well above any legitimate run (a slow multi-model download can be hours), so it only
+# ever fires on a genuine wedge, never on real work in progress.
+_ONESHOT_MAX_RUNTIME_S = 6 * 60 * 60
 
 
 class UnknownServiceError(LookupError):
@@ -322,11 +332,35 @@ class ComposeDockerGateway:
     def _oneshot_running(self) -> bool:
         for label in (f"{UPDATER_LABEL}=1", ONESHOT_LABEL):
             latest = self._latest(label)
-            if latest is not None and (latest.attrs or {}).get("State", {}).get(
-                "Running"
-            ):
-                return True
+            if latest is None:
+                continue
+            if not (latest.attrs or {}).get("State", {}).get("Running"):
+                continue
+            # A one-shot past the max runtime is hung, not in progress: reap it so it
+            # can never wedge updates/provisions forever, then keep scanning (its slot
+            # is now free). Only a genuinely in-flight one-shot blocks a new one.
+            if self._oneshot_age_seconds(latest) > _ONESHOT_MAX_RUNTIME_S:
+                self._reap(latest)
+                continue
+            return True
         return False
+
+    def _oneshot_age_seconds(self, container: Container) -> float:
+        """Seconds since a one-shot started, read from the epoch suffix baked into its
+        name by _run_oneshot (`{prefix}-{int(time.time())}`) — robust and free of
+        docker's RFC3339/nanosecond StartedAt parsing. An unparseable name reads as age
+        0 (never reaped), so an unexpected name can only ever be over-cautious."""
+        _, _, suffix = (container.name or "").rpartition("-")
+        if not suffix.isdigit():
+            return 0.0
+        return max(0.0, time.time() - int(suffix))
+
+    def _reap(self, container: Container) -> None:
+        """Force-remove a hung one-shot so a fresh one can take its slot. Best-effort:
+        a daemon hiccup or a container that just exited on its own must never raise
+        into the start path — the worst case is the guard blocks one more time."""
+        with contextlib.suppress(Exception):
+            container.remove(force=True)
 
     def _status_of(self, container: Container | None, tail: int) -> UpdateStatus:
         if container is None:
