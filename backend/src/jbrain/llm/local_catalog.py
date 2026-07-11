@@ -153,11 +153,15 @@ CATALOG: tuple[LocalModel, ...] = (
         gguf_include="*UD-Q4_K_XL*.gguf",
         mmproj_include=None,
         quant="UD-Q4_K_XL",
-        size_gb=83.8,
+        # GiB on disk (the catalog's size unit — local_weights measures in GiB), summed
+        # from the three real UD-Q4_K_XL shards (0.01 + 49.91 + 33.86 GB = 78.0 GiB). NOT
+        # HuggingFace's 83.8 decimal-GB listing: that overshoots by ~7%, so the install
+        # bar (download_gb_GiB / size_gb) would cap near 93% and read as a stall.
+        size_gb=78.0,
         note="120B MoE, 12B active — NVIDIA's US-made agentic (tool-use + RAG) reasoner, "
         "an alternate to gpt-oss-120b in the high tier. Hybrid LatentMoE (interleaved "
         "Mamba-2 + MoE + select attention): the constant Mamba state keeps the KV cache "
-        "small, so it holds long context far better than a dense 120B. ~84 GB at "
+        "small, so it holds long context far better than a dense 120B. ~78 GiB at "
         "UD-Q4_K_XL — co-resides only with a small low-tier model on a 128 GB box, else "
         "standalone with a cold load on every switch. A HYBRID reasoner: thinking is the "
         "enable_thinking chat-template toggle, set per task in LLM Settings ('none' runs "

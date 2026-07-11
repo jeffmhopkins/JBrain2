@@ -49,8 +49,15 @@ docker run --rm $TTY_FLAG --name "$CONTAINER" \
   # no shell expansion here. The quoted delimiter is written '"'"'PY'"'"' to survive
   # this outer single-quoted bash -c string.
   python - <<'"'"'PY'"'"'
-import json, os, subprocess, time
+import json, os, signal, subprocess, time
 import huggingface_hub
+
+# Kill and resume a transfer that writes NOTHING for this long. A silently hung
+# connection (never errors, never returns) would make a plain check_call block
+# forever — the exact stall that stranded a 120B pull with the updater stuck
+# "running" and zero bytes moving. A live download writes continuously, so this
+# only ever trips on a genuine hang, not a slow link.
+STALL_SECONDS = 180
 
 def _bytes(p):
     total = 0
@@ -61,6 +68,37 @@ def _bytes(p):
             except OSError:
                 pass
     return total
+
+def _run_until_stalled(args, dest):
+    # Run `hf download`, but kill it (and its process group) if the on-disk size
+    # stops growing for STALL_SECONDS, returning a nonzero code so the retry loop
+    # resumes from the .incomplete partials. Output inherits our stdout, so the hf
+    # progress still streams to the provision log. start_new_session puts hf in its
+    # own group so a hung child is killed with it.
+    proc = subprocess.Popen(args, start_new_session=True)
+    last_size = _bytes(dest)
+    last_change = time.monotonic()
+    while True:
+        try:
+            return proc.wait(timeout=15)
+        except subprocess.TimeoutExpired:
+            pass
+        size = _bytes(dest)
+        if size > last_size:
+            last_size = size
+            last_change = time.monotonic()
+        elif time.monotonic() - last_change >= STALL_SECONDS:
+            print(f"== no bytes for {STALL_SECONDS}s — killing stalled transfer to resume ==", flush=True)
+            for sig in (signal.SIGTERM, signal.SIGKILL):
+                try:
+                    os.killpg(proc.pid, sig)
+                except OSError:
+                    proc.kill()
+                try:
+                    return proc.wait(timeout=15)
+                except subprocess.TimeoutExpired:
+                    continue
+            return proc.wait()
 
 # Name the tool + version up front — a chat-template / arch mismatch or a resume bug
 # is often a stale hub, so the reader wants this pinned in the log.
@@ -83,26 +121,29 @@ for m in json.loads(os.environ["MANIFEST"]):
     stuck = 0
     while True:
         before = _bytes(dest)
-        try:
-            subprocess.check_call(args)
+        rc = _run_until_stalled(args, dest)
+        if rc == 0:
             break
-        except subprocess.CalledProcessError as exc:
-            gained = _bytes(dest) - before
-            if gained > 0:
-                stuck = 0
-                print(f"== connection dropped; resuming (+{gained // (1024 * 1024)} MB this pass) ==", flush=True)
-            else:
-                stuck += 1
-                print(f"== download failed with no progress ({stuck}/5) ==", flush=True)
-                if stuck >= 5:
-                    # A loud, greppable terminal marker: the reason (hf stderr) is
-                    # already streamed above; this pins WHICH model died, the hf exit
-                    # code, and what (if anything) landed on disk, for the log tail the
-                    # PWA and /api/debug/provision/status read.
-                    listing = sorted(os.listdir(dest)) if os.path.isdir(dest) else "MISSING"
-                    print(f"== MODEL {mid} FAILED: {m['hf_repo']} — hf exited {exc.returncode} after {stuck} attempts with no progress ==", flush=True)
-                    print(f"== {mid} dest {dest} contains: {listing} ==", flush=True)
-                    raise
+        # hf exited nonzero, OR the watchdog killed a hung transfer. Same recovery
+        # either way: resume from the .incomplete partials. Distinguish a slow-but-
+        # moving link (progress this pass) from a genuinely stuck one (none) so the
+        # retry budget bounds only real failures, not a flaky 100 GB pull.
+        gained = _bytes(dest) - before
+        if gained > 0:
+            stuck = 0
+            print(f"== transfer interrupted; resuming (+{gained // (1024 * 1024)} MB this pass) ==", flush=True)
+        else:
+            stuck += 1
+            print(f"== download failed with no progress ({stuck}/5) ==", flush=True)
+            if stuck >= 5:
+                # A loud, greppable terminal marker: the reason (hf stderr) is
+                # already streamed above; this pins WHICH model died, the hf exit
+                # code, and what (if anything) landed on disk, for the log tail the
+                # PWA and /api/debug/provision/status read.
+                listing = sorted(os.listdir(dest)) if os.path.isdir(dest) else "MISSING"
+                print(f"== MODEL {mid} FAILED: {m['hf_repo']} — hf exited {rc} after {stuck} attempts with no progress ==", flush=True)
+                print(f"== {mid} dest {dest} contains: {listing} ==", flush=True)
+                raise SystemExit(1)
             time.sleep(min(15, 3 * (stuck + 1)))
 PY
 '

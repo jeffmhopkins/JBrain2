@@ -174,6 +174,27 @@ def test_downloader_python_heredoc_delimiter_is_quoted() -> None:
     assert "<<PY" not in text, "a bare <<PY lets bash expand backticks/$ in the body"
 
 
+def test_downloader_kills_a_stalled_transfer() -> None:
+    # A silently hung connection (never errors, never returns) made the old blocking
+    # `subprocess.check_call(args)` wait forever — the updater sat "running" with zero
+    # bytes moving and a 120B pull never finished, needing a manual container kill. The
+    # downloader must instead run hf under a stall watchdog that kills a transfer making
+    # no progress and lets the existing progress-aware loop resume from the partials, so
+    # a hung download self-heals on the next update with no operator action.
+    text = (DEPLOY / "download-local-weights.sh").read_text()
+    assert "subprocess.check_call(args)" not in text, (
+        "the bare blocking check_call hangs forever on a stalled connection; the "
+        "download must run under the stall watchdog instead"
+    )
+    assert "STALL_SECONDS" in text and "_run_until_stalled" in text, (
+        "the downloader must bound a no-progress transfer with a stall watchdog"
+    )
+    # It must actually kill the hung process group (not just wait on it) to resume.
+    assert "killpg" in text and "start_new_session=True" in text, (
+        "the watchdog must kill the hf process group so a hung transfer can resume"
+    )
+
+
 def _logical_lines(text: str) -> list[str]:
     # Join backslash-continued shell lines into one logical command.
     out: list[str] = []

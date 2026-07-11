@@ -156,6 +156,10 @@ def test_nemotron_3_super_is_a_hybrid_reasoner_alt_high_tier_at_q4() -> None:
     assert "UD-Q4_K_XL" in m.gguf_include
     assert m.hf_repo == "unsloth/NVIDIA-Nemotron-3-Super-120B-A12B-GGUF"
     assert m.spec == "local:nemotron-3-super-120b"
+    # Size is on-disk GiB (the catalog unit), summed from the real shards (78.0 GiB),
+    # NOT HuggingFace's 83.8 decimal-GB listing — an overshoot there caps the install
+    # progress bar near 93% and reads as a stall.
+    assert m.size_gb == 78.0
     # Serves the conservative gateway default with its native 1M window as the ceiling.
     assert m.context_window == local_catalog.DEFAULT_LOCAL_CONTEXT_WINDOW
     assert m.native_context_window == 1048576
