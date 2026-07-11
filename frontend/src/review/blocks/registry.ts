@@ -6,6 +6,7 @@
 
 import type { ReviewItem } from "../../api/client";
 import { Action } from "./Action";
+import { ClaimContradiction } from "./ClaimContradiction";
 import { ClaimDiff } from "./ClaimDiff";
 import { ClaimInference } from "./ClaimInference";
 import { ClaimNotice } from "./ClaimNotice";
@@ -20,6 +21,7 @@ export const BLOCKS: Record<BlockId, ReviewBlock> = {
   trace: Trace,
   "claim:diff": ClaimDiff,
   "claim:notice": ClaimNotice,
+  "claim:contradiction": ClaimContradiction,
   action: Action,
   evidence: Evidence,
 };
@@ -50,10 +52,12 @@ const SEQUENCE: Partial<Record<ReviewItem["kind"], BlockId[]>> = {
   extraction_truncated: ["header", "action", "evidence"],
   low_confidence: ["header", "action", "evidence"],
   split_proposal: ["header", "action", "evidence"],
-  // wiki_lint (Wave B) health-sweep cards render through existing blocks — no bespoke component,
-  // so no three-mock GUI gate (docs/plans/WIKI_LINT_PLAN.md §7): a summary header + dismiss/correct
-  // action buttons + the source evidence.
-  wiki_contradiction: ["header", "action", "evidence"],
+  // wiki_contradiction renders the source-grounded claim:contradiction block (chosen via the
+  // three-mock GUI gate, docs/mocks/review-wiki-contradiction-b-source.html): the raw source is hero
+  // and each paired record's facts hang beneath, so the owner rules in place. It self-gates on the
+  // enriched payload, so a pre-enrichment card still renders (header + dismiss/correct action).
+  wiki_contradiction: ["header", "claim:contradiction", "action", "evidence"],
+  // wiki_stale_claim stays on the generic blocks (single-entity, no side-by-side to compare).
   wiki_stale_claim: ["header", "action", "evidence"],
 };
 

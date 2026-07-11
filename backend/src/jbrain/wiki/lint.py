@@ -67,6 +67,11 @@ log = structlog.get_logger()
 # wiki_lint budget is sized to. Deterministic ORDER BY (least,greatest) makes sampling stable.
 MAX_CANDIDATE_PAIRS = 500
 VERIFY_BATCH = 20  # candidate pairs per adapter call
+# Per-source-chunk text cap on a contradiction card (the card carries the owner's own source so a
+# ruling needs no round-trip; a whole note would bloat the payload, and the head holds the flagged
+# lines). Same-or-general domain only — the pair already cleared card_domain, so no cross-firewall
+# text rides along.
+SOURCE_TEXT_CAP = 1200
 # Conservative per-batch estimate checked against the remaining lint budget before spending.
 LINT_VERIFY_ESTIMATE_TOKENS = 4_000
 
@@ -533,6 +538,11 @@ class WikiLinter:
                         payload={
                             "entity_ids": [str(c["a"]), str(c["b"])],
                             "summary": str(v.get("summary", "")),
+                            # The structured evidence the card renders so the owner rules in the
+                            # inbox: each side's name/kind + its (predicate, statement) facts, and
+                            # the deduped source chunk(s) both were extracted from.
+                            "entities": c["entities"],
+                            "sources": c["sources"],
                         },
                         dedup_ids=[str(c["a"]), str(c["b"])],
                     ):
@@ -578,10 +588,38 @@ class WikiLinter:
             involved.update((r.a, r.b))
             if len(admitted) >= MAX_CANDIDATE_PAIRS:
                 break
-        claims = await self._entity_claims(session, involved)
+        details = await self._entity_details(session, involved)
+        chunk_ids = {
+            f["chunk_id"]
+            for cand in admitted
+            for eid in (cand["a"], cand["b"])
+            for f in details.get(eid, {}).get("facts", [])
+            if f["chunk_id"]
+        }
+        chunk_texts = await self._chunk_texts(session, chunk_ids)
         for cand in admitted:
-            cand["a_claims"] = claims.get(cand["a"], [])
-            cand["b_claims"] = claims.get(cand["b"], [])
+            cand["entities"], cand["sources"] = [], []
+            cand["a_claims"], cand["b_claims"] = [], []
+            src_seen: set[str] = set()
+            for side, eid in (("a_claims", cand["a"]), ("b_claims", cand["b"])):
+                d = details.get(eid, {"name": "", "kind": "", "facts": []})
+                cand["entities"].append(
+                    {
+                        "id": str(eid),
+                        "name": d["name"],
+                        "kind": d["kind"],
+                        "facts": [
+                            {"predicate": f["predicate"], "statement": f["statement"]}
+                            for f in d["facts"]
+                        ],
+                    }
+                )
+                cand[side] = [f["statement"] for f in d["facts"]]
+                for f in d["facts"]:
+                    cid = f["chunk_id"]
+                    if cid and cid not in src_seen and cid in chunk_texts:
+                        src_seen.add(cid)
+                        cand["sources"].append({"text": chunk_texts[cid][:SOURCE_TEXT_CAP]})
         return admitted
 
     async def _verify_stale(self, session: AsyncSession) -> int:
@@ -642,23 +680,53 @@ class WikiLinter:
                         filed += 1
         return filed
 
-    async def _entity_claims(self, session: AsyncSession, ids: set[Any]) -> dict[Any, list[str]]:
+    async def _entity_details(
+        self, session: AsyncSession, ids: set[Any]
+    ) -> dict[Any, dict[str, Any]]:
+        """Name, kind, and the (predicate, statement, chunk_id) facts of each entity — the
+        structured detail a contradiction card carries so the owner rules in the inbox without a
+        round-trip. Facts ordered by created_at for a stable card layout; `statement`s double as
+        the verifier prompt's claim lines."""
         if not ids:
             return {}
+        ents = (
+            await session.execute(
+                text("SELECT id, canonical_name, kind FROM app.entities WHERE id = ANY(:ids)"),
+                {"ids": list(ids)},
+            )
+        ).all()
+        out: dict[Any, dict[str, Any]] = {
+            e.id: {"name": e.canonical_name, "kind": e.kind, "facts": []} for e in ents
+        }
         rows = (
             await session.execute(
                 text(
-                    "SELECT entity_id, statement FROM app.facts"
-                    " WHERE entity_id = ANY(:ids) AND status IN ('active', 'superseded')"
-                    " ORDER BY created_at"
+                    "SELECT entity_id, predicate, statement, chunk_id::text AS chunk_id"
+                    " FROM app.facts WHERE entity_id = ANY(:ids)"
+                    "   AND status IN ('active', 'superseded') ORDER BY created_at"
                 ),
                 {"ids": list(ids)},
             )
         ).all()
-        out: dict[Any, list[str]] = defaultdict(list)
         for r in rows:
-            out[r.entity_id].append(r.statement)
+            if r.entity_id in out:
+                out[r.entity_id]["facts"].append(
+                    {"predicate": r.predicate, "statement": r.statement, "chunk_id": r.chunk_id}
+                )
         return out
+
+    async def _chunk_texts(self, session: AsyncSession, ids: set[str]) -> dict[str, str]:
+        """The source text of each chunk, by id — the provenance a contradiction card shows as its
+        hero. Only chunks backing an admitted (card_domain-cleared) entity's facts are ever read."""
+        if not ids:
+            return {}
+        rows = (
+            await session.execute(
+                text("SELECT id::text AS id, text FROM app.chunks WHERE id = ANY(:ids)"),
+                {"ids": list(ids)},
+            )
+        ).all()
+        return {r.id: r.text for r in rows}
 
     async def _verify_batch(
         self, task: str, system: str, user_text: str, schema: dict[str, Any]

@@ -27,6 +27,54 @@ export interface TraceStage {
   rows: [string, string][];
 }
 
+// One side of a wiki_contradiction card: the entity the linter paired and its
+// facts (predicate → statement), so the owner sees WHAT clashes, not only that
+// something did. Backfilled server-side (wiki/lint._entity_details).
+export interface ContradictionEntity {
+  id: string;
+  name: string;
+  kind: string;
+  facts: { predicate: string; statement: string }[];
+}
+
+// A wiki_contradiction card's structured evidence: the two paired entities and
+// the deduped source chunk(s) both were extracted from. Present only on cards
+// filed after the enrichment; absent → the card's block self-gates off and the
+// summary line carries alone (older cards, and every non-contradiction kind).
+export interface Contradiction {
+  entities: ContradictionEntity[];
+  sources: { text: string }[];
+}
+
+function parseContradiction(rawEntities: unknown, rawSources: unknown): Contradiction | null {
+  if (!Array.isArray(rawEntities)) return null;
+  const entities = rawEntities.flatMap((e: unknown): ContradictionEntity[] => {
+    if (e === null || typeof e !== "object") return [];
+    const o = e as Record<string, unknown>;
+    if (typeof o.id !== "string" || typeof o.name !== "string") return [];
+    const facts = Array.isArray(o.facts)
+      ? o.facts.flatMap((f: unknown): { predicate: string; statement: string }[] => {
+          if (f === null || typeof f !== "object") return [];
+          const fo = f as Record<string, unknown>;
+          return typeof fo.predicate === "string" && typeof fo.statement === "string"
+            ? [{ predicate: fo.predicate, statement: fo.statement }]
+            : [];
+        })
+      : [];
+    return [{ id: o.id, name: o.name, kind: typeof o.kind === "string" ? o.kind : "Thing", facts }];
+  });
+  // Needs both sides to be a comparison; one-sided data isn't decidable.
+  if (entities.length < 2) return null;
+  const sources = Array.isArray(rawSources)
+    ? rawSources.flatMap((s: unknown): { text: string }[] => {
+        if (s === null || typeof s !== "object") return [];
+        const text = (s as Record<string, unknown>).text;
+        return typeof text === "string" && text.trim().length > 0 ? [{ text }] : [];
+      })
+    : [];
+  return { entities, sources };
+}
+
 export function parseTrace(raw: unknown): TraceStage[] | null {
   if (raw === null || typeof raw !== "object") return null;
   const stages = (raw as Record<string, unknown>).stages;
@@ -93,6 +141,10 @@ export interface Parsed {
   predicateSuggestions: { name: string; score: number }[];
   subject: string | null;
   value: string | null;
+  // wiki_contradiction cards: the two paired entities + their facts + the shared
+  // source, so the card is decidable in place. Null for every other kind and for
+  // pre-enrichment cards (the block self-gates).
+  contradiction: Contradiction | null;
 }
 
 /** Parse a weighted-suggestion list ([{name, score}]) read defensively off the
@@ -165,6 +217,7 @@ export function parsePayload(payload: Record<string, unknown>): Parsed {
     predicateSuggestions: parseSuggestions(payload.predicate_suggestions),
     subject: str(payload.subject),
     value: str(payload.value),
+    contradiction: parseContradiction(payload.entities, payload.sources),
   };
 }
 
@@ -238,6 +291,13 @@ export function decidedVerb(item: ReviewItem): string {
 }
 
 export function correctionDraft(item: ReviewItem, p: Parsed): string {
+  // A contradiction correction names both paired records so the note the pipeline
+  // re-ingests already says WHICH is right (or that they're distinct).
+  if (p.contradiction !== null) {
+    const [a, b] = p.contradiction.entities;
+    const lead = a && b ? `“${a.name}” and “${b.name}” — ` : "these records — ";
+    return `Correction — ${p.summary ?? kindLabel(item.kind)}.\n\n${lead}`;
+  }
   const lead =
     item.kind === "ambiguous_mention" && p.candidateName !== null
       ? `“${p.candidateName}” here refers to `

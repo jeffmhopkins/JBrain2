@@ -64,6 +64,14 @@ describe("block registry", () => {
     expect(blockSequenceFor(item("attribute_collision"))).toContain("claim:diff");
   });
 
+  it("gives a wiki contradiction its source-grounded comparison block", () => {
+    // The block self-gates on the enriched payload, so it sits before the action
+    // block and a pre-enrichment card still renders through header + action.
+    const seq = blockSequenceFor(item("wiki_contradiction"));
+    expect(seq).toContain("claim:contradiction");
+    expect(seq.indexOf("claim:contradiction")).toBeLessThan(seq.indexOf("action"));
+  });
+
   it("falls back to the default sequence for an unknown kind", () => {
     // A kind the table doesn't list still renders via the generous default.
     const seq = blockSequenceFor(item("low_confidence" as ReviewItem["kind"]));
