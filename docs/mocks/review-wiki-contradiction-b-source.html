@@ -1,0 +1,692 @@
+<title>Contradiction review — source-grounded</title>
+<style>
+  :root{
+    --bg:#0E0F11; --surface:#17181B; --surface-2:#1E2024;
+    --border:#26282C; --text:#E6E7E9; --text-2:#9A9DA3; --text-3:#5C5F66;
+    --steel:#7FA7C9; --green:#8FBC9A; --amber:#C9A36A; --rose:#CF8A8F;
+    --violet:#A493C9; --teal:#6FB6B1;
+    --steel-tint:rgba(127,167,201,.13); --amber-tint:rgba(201,163,106,.13);
+    --green-tint:rgba(143,188,154,.13); --rose-tint:rgba(207,138,143,.13);
+    --steel-16:rgba(127,167,201,.16); --amber-16:rgba(201,163,106,.16);
+    --page:#000; --ease:cubic-bezier(.32,.72,.34,1);
+    --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+    --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  }
+  :root[data-theme="light"]{
+    --bg:#F7F7F5; --surface:#FFFFFF; --surface-2:#F0F0EE;
+    --border:#E2E2DF; --text:#1A1B1E; --text-2:#5C5F66; --text-3:#9A9DA3;
+    --steel-tint:rgba(127,167,201,.16); --amber-tint:rgba(201,163,106,.18);
+    --green-tint:rgba(143,188,154,.18); --rose-tint:rgba(207,138,143,.16);
+    --page:#DEDEDA;
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{margin:0;padding:0}
+  body{
+    background:var(--page); color:var(--text); font-family:var(--sans);
+    min-height:100vh; display:flex; align-items:center; justify-content:center;
+    padding:24px 12px; font-size:15px; line-height:1.4;
+  }
+
+  /* ---- phone frame ---- */
+  .phone{
+    width:390px; max-width:100%; height:844px; max-height:calc(100vh - 40px);
+    background:var(--bg); border-radius:44px; position:relative;
+    box-shadow:0 0 0 11px #1b1c1e, 0 0 0 13px #2c2d30, 0 30px 70px rgba(0,0,0,.6);
+    overflow:hidden; display:flex; flex-direction:column;
+  }
+  .notch{
+    position:absolute; top:9px; left:50%; transform:translateX(-50%);
+    width:120px; height:30px; background:#000; border-radius:16px; z-index:40;
+  }
+  .statusbar{
+    height:52px; flex:0 0 auto; display:flex; align-items:flex-end;
+    justify-content:space-between; padding:0 26px 6px; font-size:13px;
+    font-weight:600; color:var(--text); letter-spacing:.02em; z-index:30;
+  }
+  .statusbar .r{display:flex; gap:6px; align-items:center}
+  .statusbar svg{display:block}
+
+  /* ---- app chrome ---- */
+  .nav{
+    flex:0 0 auto; display:flex; align-items:center; gap:10px;
+    padding:6px 16px 12px; border-bottom:1px solid var(--border);
+    background:var(--bg); position:relative; z-index:20;
+  }
+  .nav .icon-btn{
+    width:34px; height:34px; border-radius:9px; border:1px solid var(--border);
+    background:var(--surface); color:var(--text-2); display:grid; place-items:center;
+    cursor:pointer; transition:background .15s var(--ease);
+  }
+  .nav .icon-btn:active{background:var(--surface-2)}
+  .nav .titles{flex:1; min-width:0}
+  .nav .kicker{
+    font-size:10.5px; text-transform:uppercase; letter-spacing:.09em;
+    color:var(--text-3); font-weight:600;
+  }
+  .nav h1{margin:1px 0 0; font-size:16px; font-weight:650; letter-spacing:-.01em}
+  .theme-toggle{
+    width:34px; height:34px; border-radius:9px; border:1px solid var(--border);
+    background:var(--surface); color:var(--text-2); display:grid; place-items:center; cursor:pointer;
+  }
+
+  /* ---- scroll body ---- */
+  .scroll{flex:1 1 auto; overflow-y:auto; overflow-x:hidden; -webkit-overflow-scrolling:touch}
+  .scroll::-webkit-scrollbar{width:0}
+  .pad{padding:14px 14px 8px}
+
+  /* contradiction banner */
+  .flag{
+    display:flex; gap:10px; align-items:flex-start; padding:11px 12px;
+    background:var(--rose-tint); border:1px solid rgba(207,138,143,.28);
+    border-radius:12px; margin-bottom:14px;
+  }
+  .flag .dot{
+    flex:0 0 auto; width:26px; height:26px; border-radius:7px;
+    background:rgba(207,138,143,.18); color:var(--rose);
+    display:grid; place-items:center; margin-top:1px;
+  }
+  .flag .txt{flex:1; min-width:0}
+  .flag .tag{
+    font-size:10px; text-transform:uppercase; letter-spacing:.08em;
+    color:var(--rose); font-weight:700; margin-bottom:2px;
+  }
+  .flag .summary{font-size:12.5px; color:var(--text); line-height:1.42}
+  .flag .summary b{color:var(--text); font-weight:650}
+
+  /* section label */
+  .seclabel{
+    display:flex; align-items:center; gap:8px; margin:2px 2px 9px;
+    font-size:10.5px; text-transform:uppercase; letter-spacing:.09em;
+    color:var(--text-3); font-weight:650;
+  }
+  .seclabel .line{flex:1; height:1px; background:var(--border)}
+  .seclabel .hint{
+    font-size:9.5px; letter-spacing:.02em; text-transform:none;
+    color:var(--text-3); font-weight:500;
+  }
+
+  /* ---- SOURCE CARD — the hero ---- */
+  .source{
+    background:var(--surface); border:1px solid var(--border);
+    border-radius:14px; overflow:hidden; margin-bottom:6px;
+  }
+  .source .head{
+    display:flex; align-items:center; gap:8px; padding:10px 13px;
+    border-bottom:1px solid var(--border); background:var(--surface-2);
+  }
+  .source .head .brand{
+    display:flex; align-items:center; gap:7px; font-size:12px; font-weight:650;
+    color:var(--text); letter-spacing:.01em;
+  }
+  .source .head .brand .sq{
+    width:16px;height:16px;border-radius:4px;background:var(--rose);opacity:.85;
+    display:grid;place-items:center;color:#0E0F11;font-weight:800;font-size:10px;
+  }
+  .source .head .crumb{
+    margin-left:auto; font-size:10.5px; color:var(--text-3);
+    font-family:var(--mono);
+  }
+  .source .list{padding:5px 0}
+
+  /* one source line */
+  .line{
+    position:relative; padding:9px 13px 9px 13px; font-family:var(--mono);
+    font-size:11px; line-height:1.5; color:var(--text-3);
+    border-left:3px solid transparent;
+  }
+  .line .date{color:var(--text-2); font-weight:600}
+  .line.dim{opacity:.72}
+  .line.dim .tail{color:var(--text-3)}
+
+  /* flagged (matched) lines */
+  .line.match{cursor:pointer; border-left-width:3px; transition:background .15s var(--ease)}
+  .line.match.a{background:var(--steel-tint); border-left-color:var(--steel)}
+  .line.match.b{background:var(--amber-tint); border-left-color:var(--amber)}
+  .line.match:active{filter:brightness(1.08)}
+  .line.match .lead{
+    display:flex; align-items:center; gap:7px; margin-bottom:1px;
+    font-family:var(--sans);
+  }
+  .line.match .chip{
+    font-size:9px; font-weight:700; letter-spacing:.05em; text-transform:uppercase;
+    padding:1.5px 6px; border-radius:5px;
+  }
+  .line.a .chip{background:var(--steel-16); color:var(--steel)}
+  .line.b .chip{background:var(--amber-16); color:var(--amber)}
+  .line.match .caret{
+    margin-left:auto; color:var(--text-3); transition:transform .18s var(--ease);
+    display:grid; place-items:center;
+  }
+  .line.match.open .caret{transform:rotate(180deg)}
+  .line.match .raw{color:var(--text); font-weight:500}
+  .line.match .raw .date{color:var(--text)}
+
+  /* extracted facts drawer hanging beneath a matched line */
+  .facts{
+    display:grid; grid-template-rows:0fr;
+    transition:grid-template-rows .22s var(--ease);
+    font-family:var(--sans);
+  }
+  .line.match.open + .facts{grid-template-rows:1fr}
+  .facts .inner{overflow:hidden}
+  .facts .box{
+    margin:0 13px 10px 22px; padding:10px 11px 4px;
+    border-radius:10px; position:relative;
+    background:var(--surface-2); border:1px solid var(--border);
+  }
+  .facts.a .box{border-left:2px solid var(--steel)}
+  .facts.b .box{border-left:2px solid var(--amber)}
+  .facts .prov{
+    display:flex; align-items:center; gap:5px; font-size:9.5px; color:var(--text-3);
+    margin-bottom:8px; font-style:italic;
+  }
+  .facts .prov svg{opacity:.8}
+  .fact{display:flex; gap:8px; padding:0 0 7px}
+  .fact .k{
+    flex:0 0 84px; font-size:10px; text-transform:uppercase; letter-spacing:.05em;
+    color:var(--text-3); font-weight:600; padding-top:1px;
+  }
+  .fact .v{flex:1; font-size:12.5px; color:var(--text); line-height:1.35}
+  .fact .v .em{font-weight:650}
+
+  /* the "aha" strip between the two matched blocks */
+  .divider-note{
+    display:flex; align-items:center; gap:8px; margin:8px 6px 4px;
+    padding:8px 11px; border-radius:10px;
+    background:var(--green-tint); border:1px dashed rgba(143,188,154,.35);
+  }
+  .divider-note svg{flex:0 0 auto; color:var(--green)}
+  .divider-note span{font-size:11px; color:var(--text); line-height:1.4}
+  .divider-note b{color:var(--green); font-weight:650}
+
+  /* ---- RULING dock ---- */
+  .ruling{
+    flex:0 0 auto; border-top:1px solid var(--border); background:var(--surface);
+    padding:11px 14px calc(11px + env(safe-area-inset-bottom));
+    box-shadow:0 -8px 24px rgba(0,0,0,.35); z-index:25;
+  }
+  .ruling .q{
+    font-size:11px; color:var(--text-2); margin:0 2px 9px; font-weight:500;
+    display:flex; align-items:center; gap:6px;
+  }
+  .choices{display:flex; flex-direction:column; gap:8px}
+  .choice{
+    display:flex; align-items:center; gap:11px; width:100%; text-align:left;
+    padding:11px 12px; border-radius:11px; border:1px solid var(--border);
+    background:var(--surface-2); color:var(--text); cursor:pointer;
+    font-family:inherit; font-size:13.5px; transition:border-color .15s var(--ease),background .15s var(--ease);
+  }
+  .choice:active{background:var(--border)}
+  .choice .cico{
+    flex:0 0 auto; width:30px; height:30px; border-radius:8px; display:grid; place-items:center;
+  }
+  .choice .cbody{flex:1; min-width:0}
+  .choice .ctitle{font-weight:600; font-size:13.5px; letter-spacing:-.01em}
+  .choice .csub{font-size:10.5px; color:var(--text-3); margin-top:1px; line-height:1.3}
+  .choice .rec{
+    font-size:8.5px; font-weight:700; text-transform:uppercase; letter-spacing:.06em;
+    color:var(--green); background:var(--green-tint); padding:2px 6px; border-radius:5px; flex:0 0 auto;
+  }
+  .choice.dismiss .cico{background:var(--green-tint); color:var(--green)}
+  .choice.dismiss{border-color:rgba(143,188,154,.32)}
+  .choice.supersede .cico{background:var(--amber-tint); color:var(--amber)}
+  .choice.correct .cico{background:var(--steel-tint); color:var(--steel)}
+
+  /* expanding sub-panels inside ruling */
+  .subpanel{
+    display:grid; grid-template-rows:0fr; transition:grid-template-rows .2s var(--ease);
+  }
+  .subpanel.open{grid-template-rows:1fr; margin-top:8px}
+  .subpanel .inner{overflow:hidden}
+  .subpanel .pad2{
+    padding:11px; border:1px solid var(--border); border-radius:11px; background:var(--surface-2);
+  }
+  .subpanel .plabel{font-size:10.5px; color:var(--text-2); margin-bottom:9px; line-height:1.4}
+
+  /* winner picker */
+  .winners{display:flex; gap:8px; margin-bottom:10px}
+  .winner{
+    flex:1; padding:9px 9px; border-radius:9px; border:1px solid var(--border);
+    background:var(--surface); cursor:pointer; transition:all .15s var(--ease);
+  }
+  .winner .wname{font-size:11.5px; font-weight:650; display:flex; align-items:center; gap:6px}
+  .winner .wname .pin{width:8px; height:8px; border-radius:3px}
+  .winner.a .wname .pin{background:var(--steel)}
+  .winner.b .wname .pin{background:var(--amber)}
+  .winner .wmeta{font-size:9.5px; color:var(--text-3); margin-top:4px; font-family:var(--mono)}
+  .winner.sel.a{border-color:var(--steel); background:var(--steel-tint)}
+  .winner.sel.b{border-color:var(--amber); background:var(--amber-tint)}
+  .winner .wtag{
+    font-size:8px; font-weight:700; text-transform:uppercase; letter-spacing:.05em;
+    margin-top:6px; display:inline-block; opacity:0; transition:opacity .15s;
+  }
+  .winner.sel .wtag.keep{opacity:1; color:var(--green)}
+  .winner:not(.sel) .wtag.drop{opacity:1; color:var(--text-3)}
+
+  /* correction composer */
+  textarea{
+    width:100%; min-height:76px; resize:none; border-radius:9px;
+    border:1px solid var(--border); background:var(--surface); color:var(--text);
+    font-family:inherit; font-size:12.5px; padding:9px 10px; line-height:1.4;
+  }
+  textarea::placeholder{color:var(--text-3)}
+  textarea:focus{outline:2px solid var(--steel); outline-offset:0; border-color:transparent}
+
+  .actionrow{display:flex; gap:8px; margin-top:9px}
+  .btn{
+    flex:1; padding:10px; border-radius:9px; border:1px solid var(--border);
+    background:var(--surface); color:var(--text-2); font-family:inherit; font-size:12.5px;
+    font-weight:600; cursor:pointer; transition:all .15s var(--ease);
+  }
+  .btn:active{transform:scale(.98)}
+  .btn.primary{background:var(--green); color:#0E0F11; border-color:transparent}
+  .btn.warn{background:var(--rose); color:#0E0F11; border-color:transparent}
+  .btn.warn[disabled]{opacity:.4; cursor:not-allowed}
+  .btn.ghost{flex:0 0 auto; padding:10px 14px}
+
+  .arm{
+    display:flex; align-items:center; gap:8px; margin:2px 0 10px;
+    font-size:10.5px; color:var(--text-2); cursor:pointer;
+  }
+  .arm .box{
+    width:17px; height:17px; border-radius:5px; border:1px solid var(--text-3);
+    display:grid; place-items:center; flex:0 0 auto; transition:all .15s;
+  }
+  .arm.on .box{background:var(--rose); border-color:var(--rose)}
+  .arm.on .box svg{opacity:1}
+  .arm .box svg{opacity:0; color:#0E0F11}
+
+  /* confirmation overlay state */
+  .done{
+    position:absolute; inset:0; background:var(--bg); z-index:60;
+    display:none; flex-direction:column; align-items:center; justify-content:center;
+    padding:40px 30px; text-align:center; gap:6px;
+  }
+  .done.show{display:flex; animation:fade .25s var(--ease)}
+  @keyframes fade{from{opacity:0}to{opacity:1}}
+  .done .seal{
+    width:66px; height:66px; border-radius:20px; display:grid; place-items:center;
+    margin-bottom:14px;
+  }
+  .done h2{margin:0; font-size:19px; font-weight:650; letter-spacing:-.02em}
+  .done p{margin:2px 0 0; font-size:12.5px; color:var(--text-2); max-width:250px; line-height:1.5}
+  .done .outcome{
+    margin-top:16px; font-family:var(--mono); font-size:10.5px; color:var(--text-3);
+    background:var(--surface); border:1px solid var(--border); border-radius:8px;
+    padding:8px 12px; letter-spacing:.01em;
+  }
+  .done .outcome b{color:var(--text-2)}
+  .done .undo{
+    margin-top:22px; font-size:12.5px; color:var(--steel); font-weight:600;
+    background:none; border:none; cursor:pointer;
+  }
+
+  /* why-this-design footer */
+  .why{margin:14px 0 6px}
+  .why summary{
+    list-style:none; cursor:pointer; display:flex; align-items:center; gap:8px;
+    padding:10px 12px; border:1px solid var(--border); border-radius:11px;
+    background:var(--surface); font-size:11.5px; color:var(--text-2); font-weight:600;
+  }
+  .why summary::-webkit-details-marker{display:none}
+  .why summary .caret{margin-left:auto; transition:transform .18s var(--ease); color:var(--text-3)}
+  .why[open] summary .caret{transform:rotate(180deg)}
+  .why .content{
+    padding:12px 13px; font-size:11.5px; color:var(--text-2); line-height:1.55;
+    border:1px solid var(--border); border-top:none;
+    border-radius:0 0 11px 11px; background:var(--surface);
+  }
+  .why .content p{margin:0 0 9px}
+  .why .content b{color:var(--text)}
+  .why .map{display:flex; flex-direction:column; gap:6px; margin:4px 0 2px}
+  .why .map .row{
+    display:flex; align-items:center; gap:8px; font-size:10.5px; font-family:var(--mono);
+    color:var(--text-3); padding:6px 8px; background:var(--surface-2); border-radius:7px;
+  }
+  .why .map .row .pill{
+    font-family:var(--sans); font-size:9.5px; font-weight:700; padding:2px 6px; border-radius:5px; flex:0 0 auto;
+  }
+  .why .map .row .arrow{color:var(--text-3)}
+  .pill.g{background:var(--green-tint); color:var(--green)}
+  .pill.a{background:var(--amber-tint); color:var(--amber)}
+  .pill.s{background:var(--steel-tint); color:var(--steel)}
+
+  @media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+</style>
+
+<div class="phone" id="phone">
+  <div class="notch"></div>
+
+  <!-- confirmation overlay -->
+  <div class="done" id="done">
+    <div class="seal" id="doneSeal"></div>
+    <h2 id="doneTitle">Dismissed</h2>
+    <p id="doneMsg">Marked not a contradiction. Both appointments stay as separate entities.</p>
+    <div class="outcome" id="doneOutcome"></div>
+    <button class="undo" onclick="reset()">Undo & re-open card</button>
+  </div>
+
+  <!-- status bar -->
+  <div class="statusbar">
+    <span>9:41</span>
+    <div class="r">
+      <svg width="17" height="11" viewBox="0 0 17 11" fill="none"><rect x="0" y="6" width="3" height="5" rx="1" fill="currentColor"/><rect x="4.5" y="4" width="3" height="7" rx="1" fill="currentColor"/><rect x="9" y="2" width="3" height="9" rx="1" fill="currentColor"/><rect x="13.5" y="0" width="3" height="11" rx="1" fill="currentColor" opacity="0.4"/></svg>
+      <svg width="22" height="11" viewBox="0 0 24 12" fill="none"><rect x="0.5" y="0.5" width="20" height="11" rx="3" stroke="currentColor" opacity="0.5"/><rect x="2" y="2" width="15" height="8" rx="1.5" fill="currentColor"/><rect x="21.5" y="4" width="1.5" height="4" rx="1" fill="currentColor" opacity="0.5"/></svg>
+    </div>
+  </div>
+
+  <!-- app chrome -->
+  <div class="nav">
+    <div class="icon-btn" title="Back">
+      <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
+    </div>
+    <div class="titles">
+      <div class="kicker">Wiki lint · review card</div>
+      <h1>Possible contradiction</h1>
+    </div>
+    <div class="theme-toggle" id="themeBtn" title="Toggle theme">
+      <svg id="themeIcon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></svg>
+    </div>
+  </div>
+
+  <!-- scrollable body -->
+  <div class="scroll">
+    <div class="pad">
+
+      <!-- the linter's claim -->
+      <div class="flag">
+        <div class="dot">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v4"/><path d="M12 17h.01"/><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/></svg>
+        </div>
+        <div class="txt">
+          <div class="tag">Wiki contradiction</div>
+          <div class="summary">"The follow-up appointment is listed with two different dates, times, doctors, and locations."</div>
+        </div>
+      </div>
+
+      <!-- SOURCE — the hero -->
+      <div class="seclabel">
+        <span>The source, as captured</span>
+        <span class="line"></span>
+        <span class="hint">tap a highlighted row</span>
+      </div>
+
+      <div class="source">
+        <div class="head">
+          <div class="brand"><span class="sq">H</span> HealthFirst · MyChart</div>
+          <div class="crumb">1 screenshot</div>
+        </div>
+        <div class="list">
+
+          <div class="line dim">
+            <span class="date">JUL 2 2026</span> <span class="tail">Lab — Health First Cancer Institute Merritt Island Lab — Starts at 13:00</span>
+          </div>
+
+          <!-- Entity A (steel) -->
+          <div class="line match a open" id="lineA" onclick="toggleLine('A')">
+            <div class="lead">
+              <span class="chip">Entity A</span>
+              <span class="caret">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
+              </span>
+            </div>
+            <div class="raw"><span class="date">JUL 2 2026</span> Follow Up Appointment — Dr. Amit Barochia, MD — Health First Cancer Institute Merritt Island — Arrive by 13:00 — Starts at 13:15</div>
+          </div>
+          <div class="facts a">
+            <div class="inner">
+              <div class="box">
+                <div class="prov">
+                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>
+                  extracted from the row above
+                </div>
+                <div class="fact"><div class="k">Entity</div><div class="v"><span class="em">JUL 2 2026 Follow Up Appointment</span></div></div>
+                <div class="fact"><div class="k">When</div><div class="v">Jul 2 2026 · 13:15</div></div>
+                <div class="fact"><div class="k">Provider</div><div class="v">Dr. Amit Barochia, MD</div></div>
+                <div class="fact"><div class="k">Location</div><div class="v">Health First Cancer Institute, Merritt Island</div></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Entity B (amber) -->
+          <div class="line match b open" id="lineB" onclick="toggleLine('B')">
+            <div class="lead">
+              <span class="chip">Entity B</span>
+              <span class="caret">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
+              </span>
+            </div>
+            <div class="raw"><span class="date">JUL 27 2026</span> Follow Up Appointment — Dr. Carlos Berrios Rosado, MD — Health First Medical Group Malabar — Arrive by 13:15 — Starts at 13:30</div>
+          </div>
+          <div class="facts b">
+            <div class="inner">
+              <div class="box">
+                <div class="prov">
+                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>
+                  extracted from the row above
+                </div>
+                <div class="fact"><div class="k">Entity</div><div class="v"><span class="em">JUL 27 2026 Follow Up Appointment</span></div></div>
+                <div class="fact"><div class="k">When</div><div class="v">Jul 27 2026 · 13:30</div></div>
+                <div class="fact"><div class="k">Provider</div><div class="v">Dr. Carlos Berrios Rosado, MD</div></div>
+                <div class="fact"><div class="k">Location</div><div class="v">Health First Medical Group, Malabar</div></div>
+              </div>
+            </div>
+          </div>
+
+          <div class="line dim">
+            <span class="date">DEC 22 2026</span> <span class="tail">Follow Up Appointment — Dr. Thomas Nguyen, MD — Health First Medical Group Rockledge Square — Starts at 11:00</span>
+          </div>
+          <div class="line dim">
+            <span class="date">JUN 22 2026</span> <span class="tail">Office Visit (Past) — Dr. Thomas Nguyen, MD — Health First Medical Group Rockledge Square</span>
+          </div>
+
+        </div>
+      </div>
+
+      <!-- the aha -->
+      <div class="divider-note">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M9 12l2 2 4-4"/></svg>
+        <span>Both rows are <b>separate line items</b> in one appointment list — 25 days apart, different doctors and clinics.</span>
+      </div>
+
+      <!-- why this design -->
+      <details class="why">
+        <summary>
+          Why this design · outcome mapping
+          <span class="caret">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
+          </span>
+        </summary>
+        <div class="content">
+          <p>The stored card is only <b>{entity_ids:[A,B], summary}</b> — not rulable on a phone. This screen re-hydrates it and <b>leads with the raw source</b>: the exact MyChart list both entities were extracted from, with the two flagged rows tinted (<b>steel = A</b>, <b>amber = B</b>) and every other appointment kept visible but greyed.</p>
+          <p>Grounding beats argument. Once you see two <b>distinct rows in one screenshot</b>, the false positive is self-evident — no cross-referencing required. Each entity's extracted facts hang directly under the line they came from, so provenance is physical: <b>fact → source line</b>.</p>
+          <p>The three rulings map straight to backend outcomes:</p>
+          <div class="map">
+            <div class="row"><span class="pill g">Dismiss</span><span class="arrow">→</span> resolve card, keep A &amp; B distinct</div>
+            <div class="row"><span class="pill a">Supersede</span><span class="arrow">→</span> retire loser, retain winner's values</div>
+            <div class="row"><span class="pill s">Correct</span><span class="arrow">→</span> file correction note (channel&nbsp;#7)</div>
+          </div>
+          <p style="margin-top:9px">The wiki is machine-written — a human never hand-edits it. <b>Correct</b> composes a note in the owner's words and lets the pipeline re-derive.</p>
+        </div>
+      </details>
+
+    </div>
+  </div>
+
+  <!-- RULING dock -->
+  <div class="ruling">
+    <div class="q">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9.1 9a3 3 0 0 1 5.8 1c0 2-3 3-3 3"/><path d="M12 17h.01"/><circle cx="12" cy="12" r="9"/></svg>
+      Your ruling
+    </div>
+    <div class="choices">
+
+      <!-- dismiss -->
+      <button class="choice dismiss" onclick="rule('dismiss')">
+        <span class="cico">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
+        </span>
+        <span class="cbody">
+          <span class="ctitle">Two separate appointments</span>
+          <span class="csub">Not a contradiction — keep both entities</span>
+        </span>
+        <span class="rec">Likely</span>
+      </button>
+
+      <!-- supersede -->
+      <button class="choice supersede" onclick="toggleSub('super')">
+        <span class="cico">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-15 6.7L3 16"/><path d="M3 21v-5h5"/></svg>
+        </span>
+        <span class="cbody">
+          <span class="ctitle">One is stale — supersede</span>
+          <span class="csub">Keep the current value, retire the other</span>
+        </span>
+      </button>
+
+      <div class="subpanel" id="subSuper">
+        <div class="inner"><div class="pad2">
+          <div class="plabel">Which value is current? The other entity will be retired.</div>
+          <div class="winners">
+            <div class="winner a" id="winA" onclick="pickWinner('A')">
+              <div class="wname"><span class="pin"></span>Entity A</div>
+              <div class="wmeta">JUL 2 · Barochia · Merritt Is.</div>
+              <span class="wtag keep">Keep</span><span class="wtag drop">Retire</span>
+            </div>
+            <div class="winner b" id="winB" onclick="pickWinner('B')">
+              <div class="wname"><span class="pin"></span>Entity B</div>
+              <div class="wmeta">JUL 27 · Berrios · Malabar</div>
+              <span class="wtag keep">Keep</span><span class="wtag drop">Retire</span>
+            </div>
+          </div>
+          <div class="arm" id="armSuper" onclick="toggleArm()">
+            <span class="box"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></span>
+            I understand the retired appointment is removed from the wiki.
+          </div>
+          <div class="actionrow">
+            <button class="btn ghost" onclick="toggleSub('super')">Cancel</button>
+            <button class="btn warn" id="superGo" disabled onclick="rule('supersede')">Supersede</button>
+          </div>
+        </div></div>
+      </div>
+
+      <!-- correct -->
+      <button class="choice correct" onclick="toggleSub('correct')">
+        <span class="cico">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
+        </span>
+        <span class="cbody">
+          <span class="ctitle">Both wrong — write a correction</span>
+          <span class="csub">Tell the wiki what's true, in your words</span>
+        </span>
+      </button>
+
+      <div class="subpanel" id="subCorrect">
+        <div class="inner"><div class="pad2">
+          <div class="plabel">Filed as a correction note (channel #7). The pipeline re-derives — the wiki is never hand-edited.</div>
+          <textarea id="noteText" oninput="checkNote()" placeholder="e.g. These are two different visits; the Malabar one was already rescheduled to Aug 4…"></textarea>
+          <div class="actionrow">
+            <button class="btn ghost" onclick="toggleSub('correct')">Cancel</button>
+            <button class="btn primary" id="noteGo" onclick="rule('correct')" style="opacity:.4;pointer-events:none">File note</button>
+          </div>
+        </div></div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<script>
+  // theme
+  var root=document.documentElement;
+  document.getElementById('themeBtn').addEventListener('click',function(){
+    var cur=root.getAttribute('data-theme');
+    var next=cur==='light'?'dark':(cur==='dark'?'light':(matchMedia('(prefers-color-scheme: dark)').matches?'light':'dark'));
+    root.setAttribute('data-theme',next);
+    document.getElementById('themeIcon').innerHTML = next==='light'
+      ? '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>'
+      : '<path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/>';
+  });
+
+  // expand/collapse a source line's facts
+  function toggleLine(id){
+    document.getElementById('line'+id).classList.toggle('open');
+  }
+
+  // ruling sub-panels (accordion)
+  function toggleSub(which){
+    var s=document.getElementById('subSuper'), c=document.getElementById('subCorrect');
+    if(which==='super'){ c.classList.remove('open'); s.classList.toggle('open'); }
+    else { s.classList.remove('open'); c.classList.toggle('open'); }
+  }
+
+  // supersede winner picker
+  var winner=null, armed=false;
+  function pickWinner(id){
+    winner=id; armed=false;
+    document.getElementById('winA').classList.toggle('sel',id==='A');
+    document.getElementById('winB').classList.toggle('sel',id==='B');
+    document.getElementById('armSuper').classList.remove('on');
+    updateSuper();
+  }
+  function toggleArm(){
+    if(!winner) return;
+    armed=!armed;
+    document.getElementById('armSuper').classList.toggle('on',armed);
+    updateSuper();
+  }
+  function updateSuper(){
+    document.getElementById('superGo').disabled = !(winner && armed);
+  }
+
+  // correction note enable
+  function checkNote(){
+    var t=document.getElementById('noteText').value.trim();
+    var go=document.getElementById('noteGo');
+    var ok=t.length>3;
+    go.style.opacity=ok?'1':'.4';
+    go.style.pointerEvents=ok?'auto':'none';
+  }
+
+  // resolve
+  function rule(kind){
+    var seal=document.getElementById('doneSeal');
+    var title=document.getElementById('doneTitle');
+    var msg=document.getElementById('doneMsg');
+    var out=document.getElementById('doneOutcome');
+    var check='<svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>';
+
+    if(kind==='dismiss'){
+      seal.style.background='var(--green-tint)'; seal.style.color='var(--green)'; seal.innerHTML=check;
+      title.textContent='Dismissed';
+      msg.textContent='Marked not a contradiction. Both appointments stay as separate entities.';
+      out.innerHTML='card.resolve(<b>not_contradiction</b>) · keep A, B';
+    } else if(kind==='supersede'){
+      var keep=winner, drop=winner==='A'?'B':'A';
+      seal.style.background='var(--amber-tint)'; seal.style.color='var(--amber)';
+      seal.innerHTML='<svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-15 6.7L3 16"/><path d="M3 21v-5h5"/></svg>';
+      title.textContent='Superseded';
+      msg.textContent='Entity '+keep+' kept as current. Entity '+drop+' retired from the wiki.';
+      out.innerHTML='supersede(keep=<b>'+keep+'</b>, retire=<b>'+drop+'</b>)';
+    } else {
+      seal.style.background='var(--steel-tint)'; seal.style.color='var(--steel)';
+      seal.innerHTML='<svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>';
+      title.textContent='Correction filed';
+      msg.textContent='Your note went to the ingest queue. The wiki will re-derive from it — no hand-edit.';
+      out.innerHTML='note.create(<b>channel #7</b>) · re-derive';
+    }
+    document.getElementById('done').classList.add('show');
+  }
+
+  function reset(){
+    document.getElementById('done').classList.remove('show');
+    document.getElementById('subSuper').classList.remove('open');
+    document.getElementById('subCorrect').classList.remove('open');
+    winner=null; armed=false;
+    document.getElementById('winA').classList.remove('sel');
+    document.getElementById('winB').classList.remove('sel');
+    document.getElementById('armSuper').classList.remove('on');
+    document.getElementById('superGo').disabled=true;
+    document.getElementById('noteText').value='';
+    checkNote();
+  }
+</script>

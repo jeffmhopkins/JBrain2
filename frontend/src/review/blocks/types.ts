@@ -74,5 +74,6 @@ export type BlockId =
   | "trace"
   | "claim:diff"
   | "claim:notice"
+  | "claim:contradiction"
   | "action"
   | "evidence";

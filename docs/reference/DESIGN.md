@@ -613,12 +613,17 @@ pipeline, stays the open #7 decision.
 *Detail composition: the block registry [decided].* The review detail is
 **assembled from a sequence of typed, reusable blocks**, not a per-kind
 conditional screen — so a new review kind is "declare a block sequence", not
-"add a branch". The vocabulary is `header`, `claim:{inference,diff,notice}`,
+"add a branch". The vocabulary is `header`, `claim:{inference,diff,notice,contradiction}`,
 `trace`, `action`, `evidence`, plus a lane-driven `footer` appended to every
 detail. A `kind → block-sequence` table (`frontend/src/review/blocks/registry`)
 declares each kind's blocks in a canonical order (e.g. a collision is
 `header · trace · claim:diff · action · evidence`; an inference is
-`header · claim:inference · trace · action · evidence`); listed blocks
+`header · claim:inference · trace · action · evidence`; a wiki_contradiction is
+`header · claim:contradiction · action · evidence`, the source-grounded
+side-by-side that makes a `wiki_lint` clash decidable in place — the raw source
+is the hero, each paired record's facts hang beneath it, chosen via the
+three-mock GUI gate, `docs/mocks/review-wiki-contradiction-{a-ledger,b-source,c-verdict}.html`);
+listed blocks
 **self-gate** — they render nothing when their payload data is absent — so a
 sequence can be generous and reads as the kind's intent. The polymorphic
 `action` block carries the per-lane fork (pending controls / decided record /

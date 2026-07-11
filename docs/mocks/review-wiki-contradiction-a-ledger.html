@@ -1,0 +1,622 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Contradiction ledger</title>
+<style>
+  :root{
+    --bg:#0E0F11; --surface:#17181B; --surface-2:#1E2024;
+    --border:#26282C; --text:#E6E7E9; --text-2:#9A9DA3; --text-3:#5C5F66;
+    --steel:#7FA7C9; --green:#8FBC9A; --amber:#C9A36A; --rose:#CF8A8F;
+    --violet:#A493C9; --teal:#6FB6B1;
+    --amber-t:rgba(201,163,106,.13); --steel-t:rgba(127,167,201,.13);
+    --green-t:rgba(143,188,154,.13); --rose-t:rgba(207,138,143,.13);
+    --amber-disc:color-mix(in srgb, var(--amber) 16%, transparent);
+    --ease:180ms cubic-bezier(.4,0,.2,1);
+    font-size:16px;
+  }
+  *{box-sizing:border-box; -webkit-tap-highlight-color:transparent}
+  html,body{margin:0; background:#050506; color:var(--text);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;
+    -webkit-font-smoothing:antialiased; text-rendering:optimizeLegibility}
+  body{min-height:100dvh; display:flex; align-items:center; justify-content:center;
+    padding:24px 12px; background:
+      radial-gradient(1200px 600px at 50% -10%, #101216 0%, #050506 60%);}
+
+  /* ---- phone frame ---- */
+  .phone{width:390px; max-width:100%; height:844px; max-height:calc(100dvh - 40px);
+    background:var(--bg); border-radius:44px; position:relative;
+    box-shadow:0 0 0 12px #0a0b0d, 0 0 0 13px #1c1d21, 0 30px 80px rgba(0,0,0,.6);
+    overflow:hidden; display:flex; flex-direction:column}
+  .island{position:absolute; top:10px; left:50%; transform:translateX(-50%);
+    width:118px; height:34px; background:#000; border-radius:20px; z-index:40}
+  .statusbar{height:52px; flex:0 0 auto; display:flex; align-items:flex-end;
+    justify-content:space-between; padding:0 26px 6px; font-size:13px; font-weight:600;
+    color:var(--text); letter-spacing:.2px; z-index:30}
+  .statusbar .r{display:flex; gap:6px; align-items:center}
+  .statusbar svg{display:block}
+
+  /* ---- app chrome ---- */
+  .appbar{flex:0 0 auto; display:flex; align-items:center; gap:10px;
+    padding:6px 16px 12px; border-bottom:1px solid var(--border)}
+  .appbar .back{width:34px; height:34px; border-radius:10px; border:1px solid var(--border);
+    background:var(--surface); display:grid; place-items:center; color:var(--text-2); cursor:pointer}
+  .appbar .ttl{display:flex; flex-direction:column; gap:2px; line-height:1}
+  .appbar .k{font-size:10.5px; letter-spacing:.14em; text-transform:uppercase; color:var(--text-3); font-weight:700}
+  .appbar .h{font-size:14px; color:var(--text); font-weight:600}
+  .flag{margin-left:auto; display:inline-flex; align-items:center; gap:6px;
+    background:var(--amber-t); color:var(--amber); border:1px solid rgba(201,163,106,.28);
+    padding:5px 9px; border-radius:999px; font-size:10.5px; font-weight:600; letter-spacing:.02em}
+  .flag .dot{width:6px; height:6px; border-radius:50%; background:var(--amber)}
+
+  /* ---- scroll body ---- */
+  .scroll{flex:1 1 auto; overflow-y:auto; overflow-x:hidden; padding:14px 14px 8px;
+    -webkit-overflow-scrolling:touch}
+  .scroll::-webkit-scrollbar{width:0}
+
+  .lint{font-size:12.5px; color:var(--text-2); line-height:1.45; margin:0 2px 14px;
+    display:flex; gap:8px}
+  .lint b{color:var(--text); font-weight:600}
+  .lint .qi{flex:0 0 auto; color:var(--amber); margin-top:1px}
+
+  /* ---- entity headers ---- */
+  .card{background:var(--surface); border:1px solid var(--border); border-radius:14px;
+    overflow:hidden}
+  .heads{display:grid; grid-template-columns:1fr 1fr; position:relative}
+  .heads .col{padding:13px 12px 12px; display:flex; flex-direction:column; gap:9px; cursor:pointer;
+    transition:background var(--ease)}
+  .heads .col:first-child{border-right:1px solid var(--border)}
+  .disc{width:30px; height:30px; border-radius:9px; background:var(--amber-disc);
+    display:grid; place-items:center; color:var(--amber)}
+  .cname{font-size:12.5px; font-weight:650; color:var(--text); line-height:1.25}
+  .cmeta{font-size:10px; color:var(--text-3); letter-spacing:.05em; text-transform:uppercase; font-weight:600}
+  .col .pick-tag{margin-top:2px; font-size:10px; font-weight:700; letter-spacing:.04em;
+    display:none; align-items:center; gap:4px}
+  .col.win .pick-tag{display:inline-flex; color:var(--green)}
+  .col.lose{opacity:.42}
+  .col.win{background:var(--green-t)}
+  .vs{position:absolute; top:11px; left:50%; transform:translate(-50%,0);
+    width:26px; height:18px; border-radius:6px; background:var(--surface-2); border:1px solid var(--border);
+    display:grid; place-items:center; font-size:9px; font-weight:800; color:var(--text-3); letter-spacing:.06em; z-index:2}
+
+  /* ---- predicate rows ---- */
+  .rows{border-top:1px solid var(--border)}
+  .row{border-top:1px solid var(--border)}
+  .row:first-child{border-top:0}
+  .plabel{display:flex; align-items:center; gap:7px; padding:9px 12px 4px}
+  .plabel .pi{color:var(--text-3)}
+  .plabel .pn{font-size:10px; letter-spacing:.12em; text-transform:uppercase; color:var(--text-3); font-weight:700}
+  .plabel .diff{margin-left:auto; display:inline-flex; align-items:center; gap:5px;
+    font-size:9.5px; font-weight:700; letter-spacing:.03em; color:var(--amber)}
+  .plabel .diff .d{width:6px; height:6px; border-radius:50%; background:var(--amber);
+    box-shadow:0 0 0 3px var(--amber-t)}
+  .plabel.same .diff{color:var(--text-3)}
+  .plabel.same .diff .d{background:var(--text-3); box-shadow:none}
+
+  .vals{display:grid; grid-template-columns:1fr 1fr; gap:0; padding:0 8px 8px; position:relative}
+  .val{margin:2px; padding:9px 10px; border-radius:10px; border:1px solid var(--border);
+    background:var(--surface-2); font-size:12px; color:var(--text); line-height:1.35;
+    cursor:pointer; transition:all var(--ease); position:relative; min-height:44px;
+    display:flex; align-items:center}
+  .val .vt{display:block}
+  .row.same .val{color:var(--text-2); background:transparent; border-color:transparent; cursor:default}
+  .row.same .val:first-child{border-right:0}
+  .val.chosen{border-color:rgba(143,188,154,.5); background:var(--green-t); color:var(--text)}
+  .val.dropped{opacity:.38}
+  .val .chk{position:absolute; top:7px; right:7px; width:15px; height:15px; opacity:0;
+    color:var(--green); transition:opacity var(--ease)}
+  .val.chosen .chk{opacity:1}
+  .amber-rail{position:absolute; top:8px; bottom:8px; left:50%; width:1px; transform:translateX(-50%);
+    background:linear-gradient(var(--amber),rgba(201,163,106,.15)); opacity:.5}
+  .row.same .amber-rail, .row.distinct .amber-rail{display:none}
+
+  /* per-row distinct toggle */
+  .rowfoot{display:flex; align-items:center; padding:0 10px 10px}
+  .distinct-tog{margin:0 auto; display:inline-flex; align-items:center; gap:7px;
+    padding:6px 12px; border-radius:999px; border:1px solid var(--border); background:var(--surface-2);
+    color:var(--text-2); font-size:11px; font-weight:600; cursor:pointer; transition:all var(--ease)}
+  .distinct-tog .ti{width:13px; height:13px}
+  .row.distinct .distinct-tog{background:var(--steel-t); border-color:rgba(127,167,201,.4); color:var(--steel)}
+  .row.distinct .val{border-color:rgba(127,167,201,.28); background:var(--steel-t); color:var(--text); opacity:1}
+  .row.distinct .val.dropped{opacity:1}
+  .row.same .rowfoot{display:none}
+
+  /* ---- source ---- */
+  .src{margin-top:12px; background:var(--surface); border:1px solid var(--border); border-radius:14px; overflow:hidden}
+  .src-h{display:flex; align-items:center; gap:9px; padding:12px; cursor:pointer}
+  .src-h .si{width:30px; height:30px; border-radius:9px; background:var(--steel-t); color:var(--steel); display:grid; place-items:center}
+  .src-h .st{display:flex; flex-direction:column; gap:2px}
+  .src-h .st .a{font-size:12px; font-weight:600; color:var(--text)}
+  .src-h .st .b{font-size:10px; color:var(--text-3)}
+  .src-h .cv{margin-left:auto; color:var(--text-3); transition:transform var(--ease)}
+  .src.open .cv{transform:rotate(180deg)}
+  .src-body{max-height:0; overflow:hidden; transition:max-height var(--ease)}
+  .src.open .src-body{max-height:420px}
+  .src-inner{padding:0 12px 12px}
+  pre.snippet{margin:0; padding:11px; background:var(--bg); border:1px solid var(--border); border-radius:10px;
+    font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:10px; line-height:1.6; color:var(--text-2);
+    white-space:pre-wrap; word-break:break-word}
+  pre.snippet .hl{color:var(--amber); background:var(--amber-t); border-radius:3px; padding:0 2px}
+  .src-note{font-size:10.5px; color:var(--text-3); margin:9px 2px 0; line-height:1.4}
+
+  /* ---- why footer ---- */
+  .why{margin-top:12px; border:1px dashed var(--border); border-radius:12px; overflow:hidden}
+  .why-h{display:flex; align-items:center; gap:8px; padding:11px 12px; cursor:pointer;
+    font-size:11px; color:var(--text-2); font-weight:600}
+  .why-h .cv{margin-left:auto; transition:transform var(--ease); color:var(--text-3)}
+  .why.open .cv{transform:rotate(180deg)}
+  .why-body{max-height:0; overflow:hidden; transition:max-height var(--ease)}
+  .why.open .why-body{max-height:640px}
+  .why-inner{padding:2px 13px 14px; font-size:11px; color:var(--text-2); line-height:1.55}
+  .why-inner h4{margin:12px 0 5px; font-size:10px; letter-spacing:.1em; text-transform:uppercase; color:var(--text-3)}
+  .why-inner p{margin:0 0 8px}
+  .why-inner code{background:var(--surface-2); padding:1px 5px; border-radius:5px; font-size:10px; color:var(--steel)}
+  .why-inner .maprow{display:flex; gap:8px; padding:6px 0; border-top:1px solid var(--border)}
+  .why-inner .maprow:first-of-type{border-top:0}
+  .why-inner .maprow b{color:var(--text); font-weight:650}
+
+  /* ---- decision bar ---- */
+  .decision{flex:0 0 auto; border-top:1px solid var(--border); background:var(--surface);
+    padding:11px 14px calc(11px + env(safe-area-inset-bottom)); z-index:20}
+  .readout{display:flex; align-items:center; gap:9px; margin-bottom:10px}
+  .readout .ri{width:26px; height:26px; border-radius:8px; display:grid; place-items:center; flex:0 0 auto;
+    background:var(--surface-2); color:var(--text-3); transition:all var(--ease)}
+  .readout .rt{font-size:11.5px; line-height:1.35; color:var(--text-2)}
+  .readout .rt b{color:var(--text); font-weight:650}
+  .readout.ready-dismiss .ri{background:var(--steel-t); color:var(--steel)}
+  .readout.ready-keep .ri{background:var(--green-t); color:var(--green)}
+  .readout.ready-correct .ri{background:var(--amber-t); color:var(--amber)}
+
+  .actbtn{width:100%; display:flex; align-items:center; justify-content:center; gap:8px;
+    padding:14px; border-radius:12px; border:1px solid var(--border); background:var(--surface-2);
+    color:var(--text-3); font-size:14px; font-weight:650; cursor:not-allowed; transition:all var(--ease)}
+  .actbtn.on{cursor:pointer}
+  .actbtn.dismiss.on{background:var(--steel-t); border-color:rgba(127,167,201,.5); color:var(--steel)}
+  .actbtn.keep.on{background:var(--green-t); border-color:rgba(143,188,154,.5); color:var(--green)}
+  .actbtn.correct.on{background:var(--amber-t); border-color:rgba(201,163,106,.5); color:var(--amber)}
+  .subacts{display:flex; gap:8px; margin-top:8px}
+  .subacts button{flex:1; padding:9px; border-radius:10px; border:1px solid var(--border);
+    background:transparent; color:var(--text-3); font-size:11px; font-weight:600; cursor:pointer; transition:all var(--ease)}
+  .subacts button:active{background:var(--surface-2)}
+
+  /* ---- correction composer sheet ---- */
+  .sheet-bg{position:absolute; inset:0; background:rgba(0,0,0,.55); opacity:0; pointer-events:none;
+    transition:opacity var(--ease); z-index:50}
+  .sheet-bg.show{opacity:1; pointer-events:auto}
+  .sheet{position:absolute; left:0; right:0; bottom:0; transform:translateY(100%);
+    background:var(--surface); border-top:1px solid var(--border); border-radius:22px 22px 0 0;
+    padding:16px 16px calc(18px + env(safe-area-inset-bottom)); transition:transform var(--ease); z-index:51}
+  .sheet.show{transform:translateY(0)}
+  .sheet .grab{width:38px; height:4px; border-radius:2px; background:var(--border); margin:0 auto 14px}
+  .sheet h3{margin:0 0 4px; font-size:15px; color:var(--text)}
+  .sheet p{margin:0 0 12px; font-size:11.5px; color:var(--text-2); line-height:1.45}
+  .sheet textarea{width:100%; min-height:82px; resize:none; background:var(--bg); color:var(--text);
+    border:1px solid var(--border); border-radius:11px; padding:11px; font-size:13px; font-family:inherit; line-height:1.45}
+  .sheet textarea:focus{outline:none; border-color:var(--steel)}
+  .sheet .srow{display:flex; gap:9px; margin-top:12px}
+  .sheet .srow button{flex:1; padding:12px; border-radius:11px; font-size:13px; font-weight:650; border:1px solid var(--border); cursor:pointer}
+  .sheet .srow .cancel{background:transparent; color:var(--text-2)}
+  .sheet .srow .file{background:var(--amber-t); border-color:rgba(201,163,106,.5); color:var(--amber)}
+
+  /* ---- toast ---- */
+  .toast{position:absolute; left:16px; right:16px; bottom:calc(16px + env(safe-area-inset-bottom));
+    background:var(--surface-2); border:1px solid var(--border); border-radius:12px; padding:13px 14px;
+    display:flex; gap:10px; align-items:flex-start; transform:translateY(140%); transition:transform 220ms cubic-bezier(.4,0,.2,1);
+    z-index:60; box-shadow:0 12px 40px rgba(0,0,0,.5)}
+  .toast.show{transform:translateY(0)}
+  .toast .tji{flex:0 0 auto; margin-top:1px}
+  .toast .ta{font-size:12.5px; font-weight:650; color:var(--text)}
+  .toast .tb{font-size:11px; color:var(--text-2); margin-top:2px; line-height:1.4}
+  .toast.dismiss .tji{color:var(--steel)}
+  .toast.keep .tji{color:var(--green)}
+  .toast.correct .tji{color:var(--amber)}
+</style>
+</head>
+<body>
+<div class="phone" id="phone">
+  <div class="island"></div>
+  <div class="statusbar">
+    <span>9:41</span>
+    <span class="r">
+      <svg width="18" height="11" viewBox="0 0 18 11" fill="none"><rect x="0" y="6" width="3" height="5" rx="1" fill="#E6E7E9"/><rect x="5" y="3.5" width="3" height="7.5" rx="1" fill="#E6E7E9"/><rect x="10" y="1" width="3" height="10" rx="1" fill="#E6E7E9"/><rect x="15" y="1" width="3" height="10" rx="1" fill="#E6E7E9" opacity=".4"/></svg>
+      <svg width="16" height="11" viewBox="0 0 16 11" fill="none"><path d="M8 2.2C10.2 2.2 12.2 3 13.7 4.4L15 3C13.1 1.2 10.7 .2 8 .2S2.9 1.2 1 3l1.3 1.4C3.8 3 5.8 2.2 8 2.2Z" fill="#E6E7E9"/><path d="M8 5.6c1.2 0 2.3.45 3.1 1.2l1.3-1.35C11.2 4.3 9.7 3.7 8 3.7s-3.2.6-4.4 1.75L4.9 6.8C5.7 6.05 6.8 5.6 8 5.6Z" fill="#E6E7E9"/><path d="M8 9.2 9.7 7.5C9.25 7.05 8.65 6.8 8 6.8s-1.25.25-1.7.7L8 9.2Z" fill="#E6E7E9"/></svg>
+      <svg width="25" height="12" viewBox="0 0 25 12" fill="none"><rect x=".7" y=".7" width="21" height="10.6" rx="3" stroke="#E6E7E9" stroke-opacity=".5"/><rect x="2.2" y="2.2" width="17" height="7.6" rx="1.7" fill="#E6E7E9"/><rect x="23" y="4" width="1.6" height="4" rx=".8" fill="#E6E7E9" fill-opacity=".5"/></svg>
+    </span>
+  </div>
+
+  <div class="appbar">
+    <div class="back" aria-label="Back">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+    </div>
+    <div class="ttl">
+      <span class="k">Review · Wiki lint</span>
+      <span class="h">Possible contradiction</span>
+    </div>
+    <span class="flag"><span class="dot"></span>1 of 4</span>
+  </div>
+
+  <div class="scroll" id="scroll">
+    <div class="lint">
+      <span class="qi">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.1 9a3 3 0 0 1 5.8 1c0 2-3 3-3 3"/><path d="M12 17h.01"/></svg>
+      </span>
+      <span>Lint flagged: <b>the follow-up appointment is listed with two different dates, times, doctors, and locations.</b> Compare the facts below to rule.</span>
+    </div>
+
+    <!-- LEDGER CARD -->
+    <div class="card">
+      <div class="heads">
+        <div class="vs">VS</div>
+        <div class="col" data-side="A">
+          <div class="disc">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>
+          </div>
+          <div class="cname">JUL 2 2026<br>Follow Up Appointment</div>
+          <div class="cmeta">Appointment · Entity A</div>
+          <span class="pick-tag"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>SURVIVING</span>
+        </div>
+        <div class="col" data-side="B">
+          <div class="disc">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>
+          </div>
+          <div class="cname">JUL 27 2026<br>Follow Up Appointment</div>
+          <div class="cmeta">Appointment · Entity B</div>
+          <span class="pick-tag"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>SURVIVING</span>
+        </div>
+      </div>
+
+      <div class="rows" id="rows">
+        <!-- scheduledTime -->
+        <div class="row" data-pred="scheduledTime" data-state="undecided">
+          <div class="plabel">
+            <span class="pi"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></span>
+            <span class="pn">scheduledTime</span>
+            <span class="diff"><span class="d"></span>DIFFERS</span>
+          </div>
+          <div class="vals">
+            <span class="amber-rail"></span>
+            <div class="val" data-side="A"><span class="vt">Jul 2 2026 · 13:15</span><span class="chk"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></span></div>
+            <div class="val" data-side="B"><span class="vt">Jul 27 2026 · 13:30</span><span class="chk"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></span></div>
+          </div>
+          <div class="rowfoot">
+            <button class="distinct-tog">
+              <svg class="ti" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3m0 8v3a2 2 0 0 0 2 2h3m8 0h3a2 2 0 0 0 2-2v-3m0-8V5a2 2 0 0 0-2-2h-3"/></svg>
+              Both valid · distinct
+            </button>
+          </div>
+        </div>
+
+        <!-- provider -->
+        <div class="row" data-pred="provider" data-state="undecided">
+          <div class="plabel">
+            <span class="pi"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21a8 8 0 0 0-16 0"/><circle cx="12" cy="7" r="4"/></svg></span>
+            <span class="pn">provider</span>
+            <span class="diff"><span class="d"></span>DIFFERS</span>
+          </div>
+          <div class="vals">
+            <span class="amber-rail"></span>
+            <div class="val" data-side="A"><span class="vt">Dr. Amit Barochia, MD</span><span class="chk"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></span></div>
+            <div class="val" data-side="B"><span class="vt">Dr. Carlos Berrios Rosado, MD</span><span class="chk"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></span></div>
+          </div>
+          <div class="rowfoot">
+            <button class="distinct-tog">
+              <svg class="ti" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3m0 8v3a2 2 0 0 0 2 2h3m8 0h3a2 2 0 0 0 2-2v-3m0-8V5a2 2 0 0 0-2-2h-3"/></svg>
+              Both valid · distinct
+            </button>
+          </div>
+        </div>
+
+        <!-- location -->
+        <div class="row" data-pred="location" data-state="undecided">
+          <div class="plabel">
+            <span class="pi"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z"/><circle cx="12" cy="10" r="3"/></svg></span>
+            <span class="pn">location</span>
+            <span class="diff"><span class="d"></span>DIFFERS</span>
+          </div>
+          <div class="vals">
+            <span class="amber-rail"></span>
+            <div class="val" data-side="A"><span class="vt">Health First Cancer Institute — Merritt Island</span><span class="chk"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></span></div>
+            <div class="val" data-side="B"><span class="vt">Health First Medical Group — Malabar</span><span class="chk"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></span></div>
+          </div>
+          <div class="rowfoot">
+            <button class="distinct-tog">
+              <svg class="ti" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3m0 8v3a2 2 0 0 0 2 2h3m8 0h3a2 2 0 0 0 2-2v-3m0-8V5a2 2 0 0 0-2-2h-3"/></svg>
+              Both valid · distinct
+            </button>
+          </div>
+        </div>
+
+        <!-- kind (matching / muted) -->
+        <div class="row same" data-pred="kind" data-state="same">
+          <div class="plabel same">
+            <span class="pi"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7V5a1 1 0 0 1 1-1h14a1 1 0 0 1 1 1v2M9 20h6M12 4v16"/></svg></span>
+            <span class="pn">kind · domain</span>
+            <span class="diff"><span class="d"></span>MATCHES</span>
+          </div>
+          <div class="vals">
+            <div class="val" data-side="A"><span class="vt">Appointment · general</span></div>
+            <div class="val" data-side="B"><span class="vt">Appointment · general</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- SHARED SOURCE -->
+    <div class="src" id="src">
+      <div class="src-h" id="srcHead">
+        <div class="si"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M9 13h6M9 17h4"/></svg></div>
+        <div class="st">
+          <span class="a">Shared source — 1 chunk</span>
+          <span class="b">HealthFirst MyChart · Appointments — Future</span>
+        </div>
+        <span class="cv"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg></span>
+      </div>
+      <div class="src-body">
+        <div class="src-inner">
+<pre class="snippet">HealthFirst | MyChart
+Appointments — Future
+JUL 2 2026 Lab — Health First Cancer Institute
+   Merritt Island Lab — Starts at 13:00
+<span class="hl">JUL 2 2026 Follow Up Appointment — Dr. Amit
+   Barochia, MD — Health First Cancer Institute
+   Merritt Island — Arrive by 13:00 — Starts at 13:15</span>
+<span class="hl">JUL 27 2026 Follow Up Appointment — Dr. Carlos
+   Berrios Rosado, MD — Health First Medical Group
+   Malabar — Arrive by 13:15 — Starts at 13:30</span>
+DEC 22 2026 Follow Up Appointment — Dr. Thomas
+   Nguyen, MD — Health First Medical Group
+   Rockledge Square — Starts at 11:00
+JUN 22 2026 Office Visit (Past) — Dr. Thomas
+   Nguyen, MD — Rockledge Square</pre>
+          <p class="src-note">Both entities were extracted from the <b>same</b> chunk — a single list of <b>five distinct</b> future appointments. Separate rows, separate dates.</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- WHY THIS DESIGN -->
+    <div class="why" id="why">
+      <div class="why-h" id="whyHead">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>
+        Why this design · outcome mapping
+        <span class="cv"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg></span>
+      </div>
+      <div class="why-body">
+        <div class="why-inner">
+          <p>The original card stored only <code>{entity_ids, summary}</code> — no names, no facts, no source — so the owner had to leave the app to rule. This screen hydrates the card into a <b>fact ledger</b>: the two entity <b>names</b> head two columns, and one aligned <b>row per shared predicate</b> puts the values side by side. Differing rows carry an amber hairline + <b>DIFFERS</b> dot; matching rows are muted. Seeing "JUL 2" vs "JUL 27" adjacently makes "are these the same thing?" answerable at a glance.</p>
+          <h4>Per-row inputs → one decision</h4>
+          <p>Tap a value to <b>elect a survivor</b> (that side supersedes), or tap <b>Both valid · distinct</b> to declare the row a legit difference. The bottom bar aggregates every row live:</p>
+          <div class="maprow"><b>Dismiss</b><span>All rows marked distinct → these are separate appointments. Backend: close card, <code>not_a_contradiction</code>, no wiki change.</span></div>
+          <div class="maprow"><b>Keep A / Keep B</b><span>All rows elect one side → the other is a stale duplicate. Backend: <code>supersede</code> — merge/retire the losing entity.</span></div>
+          <div class="maprow"><b>File correction</b><span>Mixed picks, or "both wrong" → the truth isn't a clean pick. Opens a composer; backend files a <b>correction note</b> (channel #7, the only human-write path — the wiki is never hand-edited).</span></div>
+          <h4>This card's truth</h4>
+          <p>A false positive: mark all three rows distinct and the bar resolves to <b>Dismiss</b>. The source panel confirms one shared chunk listing five separate appointments.</p>
+        </div>
+      </div>
+    </div>
+
+    <div style="height:6px"></div>
+  </div>
+
+  <!-- DECISION BAR -->
+  <div class="decision">
+    <div class="readout" id="readout">
+      <div class="ri" id="readIcon">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+      </div>
+      <div class="rt" id="readText">Rule each differing row to build a decision. <b>0 of 3</b> resolved.</div>
+    </div>
+    <button class="actbtn" id="primaryBtn" disabled>Rule 3 rows to decide</button>
+    <div class="subacts">
+      <button id="allDistinctBtn">All distinct</button>
+      <button id="resetBtn">Reset</button>
+    </div>
+  </div>
+
+  <!-- CORRECTION SHEET -->
+  <div class="sheet-bg" id="sheetBg"></div>
+  <div class="sheet" id="sheet">
+    <div class="grab"></div>
+    <h3>File a correction note</h3>
+    <p>The wiki is machine-written; your note is the source of truth the next sweep reads. Describe what's actually true in your words.</p>
+    <textarea id="noteText" placeholder="e.g. These are two different appointments on Jul 2 and Jul 27 — not a contradiction. Don't merge them."></textarea>
+    <div class="srow">
+      <button class="cancel" id="sheetCancel">Cancel</button>
+      <button class="file" id="sheetFile">File note</button>
+    </div>
+  </div>
+
+  <!-- TOAST -->
+  <div class="toast" id="toast">
+    <span class="tji" id="toastIcon"></span>
+    <div><div class="ta" id="toastA">Card dismissed</div><div class="tb" id="toastB"></div></div>
+  </div>
+</div>
+
+<script>
+(function(){
+  var DIFF = ['scheduledTime','provider','location']; // the rulable rows
+  var state = {scheduledTime:'undecided', provider:'undecided', location:'undecided'};
+
+  var rows = {};
+  document.querySelectorAll('.row[data-pred]').forEach(function(r){
+    rows[r.dataset.pred] = r;
+  });
+
+  // ---- value taps (elect survivor) ----
+  document.querySelectorAll('.row:not(.same) .val').forEach(function(v){
+    v.addEventListener('click', function(){
+      var row = v.closest('.row'); var pred = row.dataset.pred;
+      var side = v.dataset.side;
+      if(state[pred] === side){ state[pred] = 'undecided'; }
+      else { state[pred] = side; }
+      render();
+    });
+  });
+
+  // ---- distinct toggles ----
+  document.querySelectorAll('.distinct-tog').forEach(function(t){
+    t.addEventListener('click', function(){
+      var row = t.closest('.row'); var pred = row.dataset.pred;
+      state[pred] = (state[pred] === 'distinct') ? 'undecided' : 'distinct';
+      render();
+    });
+  });
+
+  // ---- header column tap = elect whole entity across all rows ----
+  document.querySelectorAll('.heads .col').forEach(function(c){
+    c.addEventListener('click', function(){
+      var side = c.dataset.side;
+      var allSame = DIFF.every(function(p){ return state[p] === side; });
+      DIFF.forEach(function(p){ state[p] = allSame ? 'undecided' : side; });
+      render();
+    });
+  });
+
+  function render(){
+    // per-row visuals
+    DIFF.forEach(function(p){
+      var row = rows[p]; var s = state[p];
+      row.dataset.state = s;
+      row.classList.toggle('distinct', s === 'distinct');
+      var vals = row.querySelectorAll('.val');
+      vals.forEach(function(v){
+        var side = v.dataset.side;
+        v.classList.remove('chosen','dropped');
+        if(s === 'A' || s === 'B'){
+          if(side === s) v.classList.add('chosen'); else v.classList.add('dropped');
+        }
+      });
+    });
+
+    // aggregate
+    var vals = DIFF.map(function(p){ return state[p]; });
+    var decided = vals.filter(function(x){ return x !== 'undecided'; }).length;
+    var allDistinct = vals.every(function(x){ return x === 'distinct'; });
+    var allA = vals.every(function(x){ return x === 'A'; });
+    var allB = vals.every(function(x){ return x === 'B'; });
+    var complete = decided === DIFF.length;
+
+    // header win/lose
+    var colA = document.querySelector('.heads .col[data-side="A"]');
+    var colB = document.querySelector('.heads .col[data-side="B"]');
+    colA.classList.remove('win','lose'); colB.classList.remove('win','lose');
+    if(allA){ colA.classList.add('win'); colB.classList.add('lose'); }
+    if(allB){ colB.classList.add('win'); colA.classList.add('lose'); }
+
+    var btn = document.getElementById('primaryBtn');
+    var readout = document.getElementById('readout');
+    var readText = document.getElementById('readText');
+    var readIcon = document.getElementById('readIcon');
+    btn.className = 'actbtn';
+    readout.className = 'readout';
+
+    if(!complete){
+      btn.classList.add('correct'); // neutral look; keep disabled styling
+      btn.className = 'actbtn';
+      btn.disabled = true;
+      btn.textContent = 'Rule ' + (DIFF.length - decided) + ' more row' + ((DIFF.length-decided)===1?'':'s');
+      readText.innerHTML = 'Rule each differing row to build a decision. <b>' + decided + ' of 3</b> resolved.';
+      readIcon.innerHTML = clipboardIcon();
+      btn.dataset.outcome = '';
+      return;
+    }
+
+    btn.disabled = false;
+    if(allDistinct){
+      btn.classList.add('dismiss','on');
+      btn.textContent = 'Dismiss — not a contradiction';
+      btn.dataset.outcome = 'dismiss';
+      readout.classList.add('ready-dismiss');
+      readText.innerHTML = 'All 3 rows are legitimately distinct. <b>Two separate appointments.</b>';
+      readIcon.innerHTML = branchIcon();
+    } else if(allA || allB){
+      var keep = allA ? 'A' : 'B';
+      var keepName = allA ? 'JUL 2' : 'JUL 27';
+      var loseName = allA ? 'JUL 27' : 'JUL 2';
+      btn.classList.add('keep','on');
+      btn.textContent = 'Keep ' + keepName + ' — supersede ' + loseName;
+      btn.dataset.outcome = 'keep';
+      readout.classList.add('ready-keep');
+      readText.innerHTML = '<b>' + keepName + '</b> survives · <b>' + loseName + '</b> retired as a stale duplicate.';
+      readIcon.innerHTML = mergeIcon();
+    } else {
+      btn.classList.add('correct','on');
+      btn.textContent = 'File correction note';
+      btn.dataset.outcome = 'correct';
+      readout.classList.add('ready-correct');
+      readText.innerHTML = 'Picks are mixed — the truth isn’t a clean supersede. <b>Write a note.</b>';
+      readIcon.innerHTML = penIcon();
+    }
+  }
+
+  // ---- primary action ----
+  document.getElementById('primaryBtn').addEventListener('click', function(){
+    if(this.disabled) return;
+    var out = this.dataset.outcome;
+    if(out === 'correct'){ openSheet(); return; }
+    if(out === 'dismiss'){
+      toast('dismiss','Card dismissed','Closed as not_a_contradiction. Both appointments kept, no wiki change.');
+    } else if(out === 'keep'){
+      var allA = DIFF.every(function(p){ return state[p]==='A'; });
+      toast('keep', allA?'JUL 2 kept':'JUL 27 kept','supersede queued — the losing entity is merged and retired.');
+    }
+  });
+
+  document.getElementById('allDistinctBtn').addEventListener('click', function(){
+    DIFF.forEach(function(p){ state[p] = 'distinct'; }); render();
+  });
+  document.getElementById('resetBtn').addEventListener('click', function(){
+    DIFF.forEach(function(p){ state[p] = 'undecided'; }); render();
+  });
+
+  // ---- source expand ----
+  document.getElementById('srcHead').addEventListener('click', function(){
+    document.getElementById('src').classList.toggle('open');
+  });
+  document.getElementById('whyHead').addEventListener('click', function(){
+    document.getElementById('why').classList.toggle('open');
+  });
+
+  // ---- correction sheet ----
+  function openSheet(){
+    document.getElementById('sheetBg').classList.add('show');
+    document.getElementById('sheet').classList.add('show');
+  }
+  function closeSheet(){
+    document.getElementById('sheetBg').classList.remove('show');
+    document.getElementById('sheet').classList.remove('show');
+  }
+  document.getElementById('sheetBg').addEventListener('click', closeSheet);
+  document.getElementById('sheetCancel').addEventListener('click', closeSheet);
+  document.getElementById('sheetFile').addEventListener('click', function(){
+    var txt = document.getElementById('noteText').value.trim();
+    closeSheet();
+    toast('correct','Correction note filed', (txt?'“'+ (txt.length>60?txt.slice(0,60)+'…':txt) +'” ':'') + 'queued for the next sweep (channel #7).');
+    document.getElementById('noteText').value = '';
+  });
+
+  // ---- toast ----
+  var toastT;
+  function toast(kind, a, b){
+    var t = document.getElementById('toast');
+    t.className = 'toast ' + kind;
+    document.getElementById('toastA').textContent = a;
+    document.getElementById('toastB').textContent = b;
+    document.getElementById('toastIcon').innerHTML =
+      kind==='dismiss'?branchIcon(): kind==='keep'?mergeIcon(): penIcon();
+    t.classList.add('show');
+    clearTimeout(toastT);
+    toastT = setTimeout(function(){ t.classList.remove('show'); }, 3400);
+  }
+
+  function clipboardIcon(){return '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="8" y="2" width="8" height="4" rx="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/></svg>';}
+  function branchIcon(){return '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M6 9v6"/><path d="M18 6a9 9 0 0 1-9 9"/><circle cx="18" cy="6" r="3"/></svg>';}
+  function mergeIcon(){return '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M6 21V9a9 9 0 0 0 9 9"/></svg>';}
+  function penIcon(){return '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>';}
+
+  render();
+})();
+</script>
+</body>
+</html>

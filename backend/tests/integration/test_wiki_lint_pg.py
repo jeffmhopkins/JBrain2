@@ -536,6 +536,21 @@ async def test_contradiction_card_filed_and_deduped(maker: async_sessionmaker) -
     assert set(cards[0].payload["entity_ids"]) == {a, b}
     assert len(fake.calls) == 1  # one general-group batch
 
+    # The card is DECIDABLE in place: it carries both records' names + facts and the
+    # source text, so the owner rules without a round-trip (the enrichment the
+    # source-grounded claim:contradiction block renders).
+    payload = cards[0].payload
+    entities = {e["name"]: e for e in payload["entities"]}
+    assert set(entities) == {"A", "B"}
+    assert {str(e["id"]) for e in payload["entities"]} == {a, b}
+    a_statements = {f["statement"] for f in entities["A"]["facts"]}
+    assert {"a one", "a two", "a knows b"} <= a_statements
+    assert all("predicate" in f and "statement" in f for f in entities["A"]["facts"])
+    # Source provenance rides along (deduped {text} chunks backing those facts).
+    assert payload["sources"]
+    source_blob = " ".join(s["text"] for s in payload["sources"])
+    assert "a one" in source_blob
+
     # Re-run: the open-item dedup keeps it at one card.
     report2 = await _llm_linter(
         maker, _router({"verdicts": [{"index": 0, "contradiction": True, "summary": "clash"}]})[0]

@@ -1,6 +1,6 @@
 import { edgePath } from "../../analysis/format";
 import type { ReviewItem } from "../../api/client";
-import { type Parsed, type Proposal, kindLabel, proposalsFor } from "../payload";
+import { type Parsed, type Proposal, correctionDraft, kindLabel, proposalsFor } from "../payload";
 import { NewPredicateCard } from "./NewPredicateCard";
 import type { InferenceEdit, ReviewBlock } from "./types";
 
@@ -46,6 +46,15 @@ export const Action: ReviewBlock = ({ ctx }) => {
   // Fact-bearing cards advance to the next item (triage flow); the rest return
   // to the list. A destructive proposal arms a confirm-tap first.
   function choose(proposal: Proposal, advance: boolean) {
+    // "correct" is not a bare resolve — it needs a note_id the backend rejects
+    // without (the #7 channel is a real note). So the choice opens the composer
+    // (prefilled), and filing it there resolves as corrected. Every other action
+    // resolves directly.
+    if (proposal.action === "correct") {
+      ctx.setDraft(correctionDraft(item, parsed));
+      ctx.setComposing(true);
+      return;
+    }
     const key = `prop-${proposal.action}`;
     if (proposal.destructive && !tap(key)) return;
     queue.resolve(item.id, proposal.action, {

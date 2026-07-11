@@ -1,0 +1,750 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Contradiction card — Guided verdict</title>
+<style>
+  :root{
+    --bg:#0E0F11; --surface:#17181B; --surface-2:#1E2024;
+    --border:#26282C; --text:#E6E7E9; --text-2:#9A9DA3; --text-3:#5C5F66;
+    --steel:#7FA7C9; --green:#8FBC9A; --amber:#C9A36A; --rose:#CF8A8F;
+    --violet:#A493C9; --teal:#6FB6B1;
+    --ease:cubic-bezier(.4,0,.2,1);
+    --dur:150ms;
+  }
+  *{box-sizing:border-box; -webkit-tap-highlight-color:transparent;}
+  html,body{margin:0;padding:0;}
+  body{
+    background:radial-gradient(120% 80% at 50% -10%, #191B1F 0%, #0B0C0E 60%);
+    min-height:100vh;
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    color:var(--text);
+    display:flex; align-items:center; justify-content:center;
+    padding:24px 12px;
+  }
+
+  /* ---- phone frame ---- */
+  .phone{
+    width:390px; max-width:100%;
+    background:var(--bg);
+    border:10px solid #050506;
+    border-radius:44px;
+    box-shadow:0 30px 80px -20px rgba(0,0,0,.8), 0 0 0 1px #1c1d20 inset;
+    overflow:hidden;
+    position:relative;
+    height:812px;
+    display:flex; flex-direction:column;
+  }
+  .notch{
+    position:absolute; top:0; left:50%; transform:translateX(-50%);
+    width:150px; height:28px; background:#050506;
+    border-bottom-left-radius:16px; border-bottom-right-radius:16px; z-index:40;
+  }
+  .statusbar{
+    height:44px; flex:0 0 44px; display:flex; align-items:center; justify-content:space-between;
+    padding:0 26px; font-size:13px; font-weight:600; color:var(--text);
+    letter-spacing:.2px;
+  }
+  .statusbar .right{display:flex; gap:6px; align-items:center;}
+  .statusbar svg{display:block;}
+
+  /* app header */
+  .appbar{
+    flex:0 0 auto; padding:6px 18px 12px; display:flex; align-items:center; gap:12px;
+    border-bottom:1px solid var(--border);
+  }
+  .appbar .back{color:var(--text-2); display:flex;}
+  .appbar .title{font-size:14px; font-weight:600;}
+  .appbar .sub{font-size:11px; color:var(--text-3); margin-top:1px;}
+  .appbar .count{
+    margin-left:auto; font-size:11px; color:var(--text-2);
+    border:1px solid var(--border); border-radius:20px; padding:3px 9px;
+  }
+
+  .scroll{flex:1 1 auto; overflow-y:auto; overflow-x:hidden; -webkit-overflow-scrolling:touch;}
+  .scroll::-webkit-scrollbar{width:0;}
+  .pad{padding:16px 16px 130px;}
+
+  /* flag chip */
+  .flagrow{display:flex; align-items:center; gap:8px; margin-bottom:14px;}
+  .chip{
+    display:inline-flex; align-items:center; gap:6px;
+    font-size:10.5px; font-weight:600; letter-spacing:.3px; text-transform:uppercase;
+    color:var(--amber);
+    background:color-mix(in srgb, var(--amber) 13%, transparent);
+    border:1px solid color-mix(in srgb, var(--amber) 30%, transparent);
+    padding:4px 9px; border-radius:20px;
+  }
+  .chip svg{width:12px; height:12px;}
+  .flagrow .id{margin-left:auto; font-size:10.5px; color:var(--text-3); font-variant-numeric:tabular-nums;}
+
+  /* the question */
+  .question{
+    font-size:20px; line-height:1.32; font-weight:600; letter-spacing:-.2px;
+    margin:2px 0 6px;
+  }
+  .question em{font-style:normal; color:var(--amber);}
+  .why{
+    font-size:12px; line-height:1.5; color:var(--text-2); margin:0 0 4px;
+  }
+  .why .dot{color:var(--text-3);}
+  .why b{color:var(--text); font-weight:500;}
+
+  /* why-flagged reveal */
+  .whymore{
+    font-size:11.5px; color:var(--steel); background:none; border:none; padding:6px 0 2px;
+    display:inline-flex; align-items:center; gap:4px; cursor:pointer;
+  }
+  .whymore svg{width:13px; height:13px; transition:transform var(--dur) var(--ease);}
+  .whymore.open svg{transform:rotate(180deg);}
+  .whypanel{
+    max-height:0; overflow:hidden; transition:max-height var(--dur) var(--ease);
+  }
+  .whypanel .inner{
+    font-size:12px; line-height:1.55; color:var(--text-2);
+    background:var(--surface); border:1px solid var(--border); border-radius:10px;
+    padding:11px 12px; margin-top:8px;
+  }
+  .whypanel .inner b{color:var(--text); font-weight:600;}
+  .conf{display:flex; align-items:center; gap:8px; margin-top:9px;}
+  .conf .bar{flex:1; height:5px; border-radius:3px; background:var(--surface-2); overflow:hidden;}
+  .conf .fill{height:100%; width:41%; background:linear-gradient(90deg,var(--amber),color-mix(in srgb,var(--amber) 60%, var(--rose)));}
+  .conf .lbl{font-size:10.5px; color:var(--text-3); white-space:nowrap;}
+
+  /* section label */
+  .slabel{
+    font-size:10.5px; letter-spacing:.5px; text-transform:uppercase; color:var(--text-3);
+    font-weight:600; margin:22px 2px 10px;
+  }
+
+  /* segmented verdict control */
+  .verdict{display:flex; flex-direction:column; gap:8px;}
+  .vbtn{
+    display:flex; align-items:center; gap:12px; width:100%;
+    background:var(--surface); border:1px solid var(--border); border-radius:12px;
+    padding:13px 13px; cursor:pointer; text-align:left; color:var(--text);
+    transition:border-color var(--dur) var(--ease), background var(--dur) var(--ease), transform var(--dur) var(--ease);
+  }
+  .vbtn:active{transform:scale(.99);}
+  .vbtn .vico{
+    flex:0 0 34px; height:34px; border-radius:9px; display:flex; align-items:center; justify-content:center;
+    background:var(--surface-2); color:var(--text-2);
+    transition:background var(--dur) var(--ease), color var(--dur) var(--ease);
+  }
+  .vbtn .vico svg{width:18px; height:18px;}
+  .vbtn .vtxt{flex:1;}
+  .vbtn .vt{font-size:14px; font-weight:600; line-height:1.2;}
+  .vbtn .vs{font-size:11.5px; color:var(--text-2); margin-top:2px; line-height:1.35;}
+  .vbtn .vcheck{flex:0 0 20px; color:var(--text-3); opacity:0; transition:opacity var(--dur) var(--ease);}
+  .vbtn .vcheck svg{width:20px; height:20px;}
+
+  .vbtn[data-v="dismiss"].sel{border-color:color-mix(in srgb,var(--green) 55%, transparent); background:color-mix(in srgb,var(--green) 9%, var(--surface));}
+  .vbtn[data-v="dismiss"].sel .vico{background:color-mix(in srgb,var(--green) 18%, transparent); color:var(--green);}
+  .vbtn[data-v="dismiss"].sel .vcheck{opacity:1; color:var(--green);}
+
+  .vbtn[data-v="supersede"].sel{border-color:color-mix(in srgb,var(--steel) 55%, transparent); background:color-mix(in srgb,var(--steel) 9%, var(--surface));}
+  .vbtn[data-v="supersede"].sel .vico{background:color-mix(in srgb,var(--steel) 18%, transparent); color:var(--steel);}
+  .vbtn[data-v="supersede"].sel .vcheck{opacity:1; color:var(--steel);}
+
+  .vbtn[data-v="both"].sel{border-color:color-mix(in srgb,var(--rose) 55%, transparent); background:color-mix(in srgb,var(--rose) 9%, var(--surface));}
+  .vbtn[data-v="both"].sel .vico{background:color-mix(in srgb,var(--rose) 18%, transparent); color:var(--rose);}
+  .vbtn[data-v="both"].sel .vcheck{opacity:1; color:var(--rose);}
+
+  /* follow-up region */
+  .followup{
+    max-height:0; overflow:hidden;
+    transition:max-height 220ms var(--ease);
+  }
+  .followup .fu-inner{padding-top:14px;}
+  .fu-card{
+    background:var(--surface); border:1px solid var(--border); border-radius:12px;
+    padding:13px; margin-top:0;
+  }
+  .fu-head{font-size:12.5px; color:var(--text-2); line-height:1.5; margin-bottom:12px;}
+  .fu-head b{color:var(--text);}
+
+  /* pick-survivor cards */
+  .pick{display:flex; flex-direction:column; gap:9px;}
+  .pcard{
+    border:1px solid var(--border); border-radius:11px; padding:11px 12px;
+    background:var(--surface-2); cursor:pointer;
+    transition:border-color var(--dur) var(--ease), background var(--dur) var(--ease);
+    position:relative;
+  }
+  .pcard .pc-top{display:flex; align-items:center; gap:9px; margin-bottom:9px;}
+  .disc{
+    flex:0 0 26px; height:26px; border-radius:50%; display:flex; align-items:center; justify-content:center;
+    background:color-mix(in srgb, var(--amber) 16%, transparent); color:var(--amber);
+  }
+  .disc svg{width:14px; height:14px;}
+  .pc-name{font-size:13px; font-weight:600; flex:1; line-height:1.2;}
+  .pc-tag{
+    font-size:9.5px; letter-spacing:.3px; text-transform:uppercase; color:var(--text-3);
+    border:1px solid var(--border); border-radius:5px; padding:2px 6px; margin-top:3px; display:inline-block;
+  }
+  .radio{flex:0 0 18px; height:18px; border-radius:50%; border:1.5px solid var(--text-3); position:relative;}
+  .pcard.sel{border-color:color-mix(in srgb,var(--steel) 60%, transparent); background:color-mix(in srgb,var(--steel) 10%, var(--surface));}
+  .pcard.sel .radio{border-color:var(--steel);}
+  .pcard.sel .radio::after{content:""; position:absolute; inset:3px; border-radius:50%; background:var(--steel);}
+  .facts{display:flex; flex-direction:column; gap:5px;}
+  .fact{display:flex; gap:8px; font-size:11.5px; line-height:1.35;}
+  .fact .fk{color:var(--text-3); flex:0 0 62px;}
+  .fact .fv{color:var(--text); flex:1;}
+  .pcard.willkeep::after{
+    content:"keeps"; position:absolute; top:10px; right:38px;
+    font-size:9px; text-transform:uppercase; letter-spacing:.4px; color:var(--steel);
+    opacity:0; transition:opacity var(--dur) var(--ease);
+  }
+  .pcard.sel.willkeep::after{opacity:1;}
+
+  /* correction composer */
+  .composer label{font-size:11px; color:var(--text-3); display:block; margin-bottom:6px; letter-spacing:.2px;}
+  .composer textarea{
+    width:100%; min-height:96px; resize:vertical;
+    background:var(--bg); border:1px solid var(--border); border-radius:10px;
+    color:var(--text); font-family:inherit; font-size:13px; line-height:1.5; padding:11px 12px;
+    transition:border-color var(--dur) var(--ease);
+  }
+  .composer textarea:focus{outline:none; border-color:color-mix(in srgb,var(--steel) 60%, transparent);}
+  .composer .meta{font-size:10.5px; color:var(--text-3); margin-top:7px; line-height:1.5;}
+  .composer .meta b{color:var(--text-2); font-weight:500;}
+  .prefill-note{font-size:10.5px; color:var(--rose); margin-bottom:8px; display:flex; gap:5px; align-items:center;}
+  .prefill-note svg{width:12px; height:12px;}
+
+  /* evidence disclosure */
+  .disclose{
+    width:100%; display:flex; align-items:center; gap:10px;
+    background:var(--surface); border:1px solid var(--border); border-radius:12px;
+    padding:12px 13px; cursor:pointer; color:var(--text); text-align:left;
+    transition:border-color var(--dur) var(--ease);
+    margin-top:9px;
+  }
+  .disclose:first-of-type{margin-top:0;}
+  .disclose .dico{color:var(--text-3); display:flex;}
+  .disclose .dico svg{width:16px; height:16px;}
+  .disclose .dtxt{flex:1;}
+  .disclose .dt{font-size:13px; font-weight:600;}
+  .disclose .ds{font-size:11px; color:var(--text-3); margin-top:1px;}
+  .disclose .chev{color:var(--text-3); transition:transform var(--dur) var(--ease);}
+  .disclose .chev svg{width:16px; height:16px;}
+  .disclose.open .chev{transform:rotate(180deg);}
+  .disclose.open{border-color:color-mix(in srgb,var(--steel) 35%, transparent);}
+  .dpanel{max-height:0; overflow:hidden; transition:max-height 240ms var(--ease);}
+  .dpanel .dinner{padding:2px 2px 0;}
+
+  /* side-by-side facts (evidence) */
+  .cmp{display:flex; gap:9px; margin-top:9px;}
+  .cmp .col{
+    flex:1; min-width:0; background:var(--surface); border:1px solid var(--border);
+    border-radius:11px; padding:11px;
+  }
+  .cmp .col .ch{display:flex; align-items:center; gap:7px; margin-bottom:9px;}
+  .cmp .col .cn{font-size:11.5px; font-weight:600; line-height:1.2;}
+  .cmp .row{margin-bottom:8px;}
+  .cmp .row:last-child{margin-bottom:0;}
+  .cmp .rk{font-size:9.5px; text-transform:uppercase; letter-spacing:.3px; color:var(--text-3); margin-bottom:2px;}
+  .cmp .rv{font-size:12px; line-height:1.3; color:var(--text);}
+  .cmp .rv.diff{color:var(--amber);}
+  .diffkey{font-size:10.5px; color:var(--text-3); margin-top:9px; display:flex; align-items:center; gap:6px;}
+  .diffkey .sw{width:9px; height:9px; border-radius:2px; background:var(--amber);}
+
+  /* source snippet */
+  .src{
+    margin-top:9px; background:var(--bg); border:1px solid var(--border); border-radius:11px; overflow:hidden;
+  }
+  .src .sh{
+    display:flex; align-items:center; gap:7px; padding:9px 11px; border-bottom:1px solid var(--border);
+    font-size:11px; color:var(--text-2);
+  }
+  .src .sh svg{width:13px; height:13px; color:var(--teal);}
+  .src .sh b{color:var(--text); font-weight:600;}
+  .src pre{
+    margin:0; padding:11px; font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
+    font-size:10px; line-height:1.7; color:var(--text-2); white-space:pre-wrap; word-break:break-word;
+  }
+  .src pre .hl{color:var(--amber); background:color-mix(in srgb,var(--amber) 12%, transparent); border-radius:3px; padding:0 2px;}
+  .src pre .mut{color:var(--text-3);}
+  .srcnote{font-size:11px; color:var(--text-2); line-height:1.5; padding:0 2px; margin-top:9px;}
+  .srcnote b{color:var(--text);}
+
+  /* sticky commit bar */
+  .commitbar{
+    position:absolute; left:0; right:0; bottom:0; z-index:30;
+    padding:12px 16px calc(12px + env(safe-area-inset-bottom));
+    background:linear-gradient(180deg, rgba(14,15,17,0) 0%, var(--bg) 34%);
+    border-top:1px solid transparent;
+  }
+  .commit{
+    width:100%; border:none; border-radius:13px; padding:15px; cursor:pointer;
+    font-size:14px; font-weight:600; font-family:inherit; color:var(--text-3);
+    background:var(--surface-2); letter-spacing:.2px;
+    transition:background var(--dur) var(--ease), color var(--dur) var(--ease), opacity var(--dur) var(--ease);
+    display:flex; align-items:center; justify-content:center; gap:8px;
+  }
+  .commit svg{width:17px; height:17px;}
+  .commit.ready[data-v="dismiss"]{background:color-mix(in srgb,var(--green) 22%, var(--surface)); color:var(--green); border:1px solid color-mix(in srgb,var(--green) 45%, transparent);}
+  .commit.ready[data-v="supersede"]{background:color-mix(in srgb,var(--steel) 22%, var(--surface)); color:var(--steel); border:1px solid color-mix(in srgb,var(--steel) 45%, transparent);}
+  .commit.ready[data-v="both"]{background:color-mix(in srgb,var(--rose) 22%, var(--surface)); color:var(--rose); border:1px solid color-mix(in srgb,var(--rose) 45%, transparent);}
+  .commithint{text-align:center; font-size:10.5px; color:var(--text-3); margin-top:8px; min-height:13px;}
+
+  /* toast / done state */
+  .toast{
+    position:absolute; left:16px; right:16px; bottom:96px; z-index:50;
+    background:var(--surface); border:1px solid var(--border); border-radius:12px;
+    padding:13px 14px; display:flex; gap:11px; align-items:flex-start;
+    box-shadow:0 16px 40px -12px rgba(0,0,0,.7);
+    transform:translateY(20px); opacity:0; pointer-events:none;
+    transition:transform 220ms var(--ease), opacity 220ms var(--ease);
+  }
+  .toast.show{transform:translateY(0); opacity:1;}
+  .toast .tico{flex:0 0 30px; height:30px; border-radius:8px; display:flex; align-items:center; justify-content:center;}
+  .toast .tico svg{width:17px; height:17px;}
+  .toast.dismiss .tico{background:color-mix(in srgb,var(--green) 18%, transparent); color:var(--green);}
+  .toast.supersede .tico{background:color-mix(in srgb,var(--steel) 18%, transparent); color:var(--steel);}
+  .toast.both .tico{background:color-mix(in srgb,var(--rose) 18%, transparent); color:var(--rose);}
+  .toast .tt{font-size:13px; font-weight:600;}
+  .toast .ts{font-size:11.5px; color:var(--text-2); margin-top:2px; line-height:1.4;}
+  .toast .undo{margin-left:auto; color:var(--steel); font-size:12px; font-weight:600; background:none; border:none; cursor:pointer; padding:2px 2px;}
+
+  /* why-this-design footer */
+  .rationale{margin-top:26px; border-top:1px solid var(--border); padding-top:14px;}
+  .rationale > button{
+    width:100%; background:none; border:none; color:var(--text-2); cursor:pointer;
+    display:flex; align-items:center; gap:8px; font-size:11.5px; font-family:inherit; padding:2px 0;
+    letter-spacing:.2px;
+  }
+  .rationale > button svg{width:14px; height:14px; transition:transform var(--dur) var(--ease);}
+  .rationale.open > button svg{transform:rotate(180deg);}
+  .rationale .rpanel{max-height:0; overflow:hidden; transition:max-height 260ms var(--ease);}
+  .rationale .rinner{font-size:11.5px; line-height:1.6; color:var(--text-2); padding-top:11px;}
+  .rationale .rinner h4{margin:12px 0 5px; font-size:11px; color:var(--text); letter-spacing:.2px;}
+  .rationale .rinner h4:first-child{margin-top:0;}
+  .rationale .rinner b{color:var(--text);}
+  .rationale .rinner code{
+    font-family:ui-monospace,Menlo,monospace; font-size:10.5px;
+    background:var(--surface-2); border:1px solid var(--border); border-radius:4px; padding:1px 5px; color:var(--steel);
+  }
+  .rationale .rinner .maprow{display:flex; gap:8px; margin:5px 0;}
+  .rationale .rinner .maprow .m1{flex:0 0 108px; color:var(--text);}
+  .rationale .rinner .maprow .m2{flex:1;}
+
+  .hidden{display:none;}
+</style>
+</head>
+<body>
+<div class="phone" role="application" aria-label="Review card">
+  <div class="notch"></div>
+
+  <div class="statusbar">
+    <span>9:41</span>
+    <span class="right">
+      <svg width="18" height="12" viewBox="0 0 18 12" fill="none"><rect x="0" y="7" width="3" height="5" rx="1" fill="#E6E7E9"/><rect x="5" y="4" width="3" height="8" rx="1" fill="#E6E7E9"/><rect x="10" y="1.5" width="3" height="10.5" rx="1" fill="#E6E7E9"/><rect x="15" y="0" width="3" height="12" rx="1" fill="#5C5F66"/></svg>
+      <svg width="22" height="12" viewBox="0 0 22 12" fill="none"><rect x="1" y="1" width="18" height="10" rx="2.5" stroke="#9A9DA3" opacity=".6"/><rect x="2.5" y="2.5" width="13.5" height="7" rx="1.4" fill="#E6E7E9"/><rect x="20" y="4" width="1.6" height="4" rx=".8" fill="#9A9DA3" opacity=".6"/></svg>
+    </span>
+  </div>
+
+  <div class="appbar">
+    <span class="back" aria-hidden="true">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+    </span>
+    <div>
+      <div class="title">Review queue</div>
+      <div class="sub">wiki_lint sweep · today 08:12</div>
+    </div>
+    <span class="count">3 of 11</span>
+  </div>
+
+  <div class="scroll">
+    <div class="pad">
+
+      <div class="flagrow">
+        <span class="chip">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v4"/><path d="M12 17h.01"/><path d="M10.3 3.9L2 18a2 2 0 0 0 1.7 3h16.6a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/></svg>
+          wiki contradiction
+        </span>
+        <span class="id">#lint-4471</span>
+      </div>
+
+      <!-- THE QUESTION -->
+      <h1 class="question">Same appointment recorded twice, or <em>two different appointments</em>?</h1>
+      <p class="why">
+        <b>Two entities</b> both tagged <b>Follow&nbsp;Up Appointment</b> disagree on date, time, doctor and place.
+      </p>
+
+      <button class="whymore" id="whyBtn" aria-expanded="false">
+        Why the linter flagged this
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>
+      </button>
+      <div class="whypanel" id="whyPanel">
+        <div class="inner">
+          Both entities share the label <b>“Follow Up Appointment”</b> and were extracted from the
+          <b>same source chunk</b>. The linter treats matching-label entities from one chunk with
+          conflicting <code style="font-family:inherit">scheduledTime / provider / location</code> as a possible
+          double-record. It can’t tell a duplicate from a list of distinct items — that’s your call.
+          <div class="conf">
+            <span class="lbl">confidence</span>
+            <span class="bar"><span class="fill"></span></span>
+            <span class="lbl">low · 0.41</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- VERDICT -->
+      <div class="slabel">Your ruling</div>
+      <div class="verdict" role="radiogroup" aria-label="Verdict">
+
+        <button class="vbtn" data-v="dismiss" role="radio" aria-checked="false">
+          <span class="vico">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8 12h8"/><path d="M12 8v8"/><circle cx="12" cy="12" r="9" opacity=".0"/><path d="M4 7h16M4 12h16M4 17h10" opacity="0"/><path d="M3 6h18M3 12h12M3 18h16"/></svg>
+          </span>
+          <span class="vtxt">
+            <span class="vt">Two different things</span>
+            <span class="vs">Both are real — not a contradiction. Dismiss the flag.</span>
+          </span>
+          <span class="vcheck"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg></span>
+        </button>
+
+        <button class="vbtn" data-v="supersede" role="radio" aria-checked="false">
+          <span class="vico">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3v6h-6"/><path d="M17 9A8 8 0 1 0 15 17"/></svg>
+          </span>
+          <span class="vtxt">
+            <span class="vt">Same — one is outdated</span>
+            <span class="vs">Keep the current one, retire the stale record.</span>
+          </span>
+          <span class="vcheck"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg></span>
+        </button>
+
+        <button class="vbtn" data-v="both" role="radio" aria-checked="false">
+          <span class="vico">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>
+          </span>
+          <span class="vtxt">
+            <span class="vt">Both wrong</span>
+            <span class="vs">Neither is right — write a correction in your words.</span>
+          </span>
+          <span class="vcheck"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg></span>
+        </button>
+      </div>
+
+      <!-- FOLLOW-UP: dismiss (no extra input, quick confirmation of what it looked at) -->
+      <div class="followup" data-fu="dismiss">
+        <div class="fu-inner">
+          <div class="fu-card">
+            <div class="fu-head">Nothing to fix. Both entities stay. This flag closes and the pair is remembered so the linter won’t re-raise it.</div>
+            <div class="cmp">
+              <div class="col">
+                <div class="ch"><span class="disc"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg></span><span class="cn">JUL 2</span></div>
+                <div class="rk">Jul 2 · 13:15 · Dr. Barochia</div>
+              </div>
+              <div class="col">
+                <div class="ch"><span class="disc"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg></span><span class="cn">JUL 27</span></div>
+                <div class="rk">Jul 27 · 13:30 · Dr. Berrios</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- FOLLOW-UP: supersede (pick survivor) -->
+      <div class="followup" data-fu="supersede">
+        <div class="fu-inner">
+          <div class="fu-card">
+            <div class="fu-head">Which record is <b>current</b>? The other is marked superseded and dropped from the wiki.</div>
+            <div class="pick" role="radiogroup" aria-label="Pick surviving record">
+              <div class="pcard willkeep" data-keep="A">
+                <div class="pc-top">
+                  <span class="disc"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg></span>
+                  <span class="pc-name">JUL 2 2026 Follow Up<br><span class="pc-tag">Appointment · general</span></span>
+                  <span class="radio"></span>
+                </div>
+                <div class="facts">
+                  <div class="fact"><span class="fk">When</span><span class="fv">Jul 2 2026, 13:15</span></div>
+                  <div class="fact"><span class="fk">Provider</span><span class="fv">Dr. Amit Barochia, MD</span></div>
+                  <div class="fact"><span class="fk">Location</span><span class="fv">HF Cancer Institute, Merritt Island</span></div>
+                </div>
+              </div>
+              <div class="pcard willkeep" data-keep="B">
+                <div class="pc-top">
+                  <span class="disc"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg></span>
+                  <span class="pc-name">JUL 27 2026 Follow Up<br><span class="pc-tag">Appointment · general</span></span>
+                  <span class="radio"></span>
+                </div>
+                <div class="facts">
+                  <div class="fact"><span class="fk">When</span><span class="fv">Jul 27 2026, 13:30</span></div>
+                  <div class="fact"><span class="fk">Provider</span><span class="fv">Dr. Carlos Berrios Rosado, MD</span></div>
+                  <div class="fact"><span class="fk">Location</span><span class="fv">HF Medical Group, Malabar</span></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- FOLLOW-UP: both wrong (composer) -->
+      <div class="followup" data-fu="both">
+        <div class="fu-inner">
+          <div class="fu-card composer">
+            <div class="prefill-note">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v4M12 17h.01"/><circle cx="12" cy="12" r="9"/></svg>
+              The wiki is machine-written — your note is the correction, not a direct edit.
+            </div>
+            <label for="corr">Correction note</label>
+            <textarea id="corr">Both of these are wrong. Neither appointment is right — leave a follow-up here in my own words describing what actually happened.</textarea>
+            <div class="meta">
+              Filed to <b>channel #7 · correction notes</b>. Re-indexed on the next sweep; both flagged entities are re-derived from your note.
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- EVIDENCE (on-demand) -->
+      <div class="slabel">Evidence &amp; source · optional</div>
+
+      <button class="disclose" id="ev1" aria-expanded="false">
+        <span class="dico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="18" rx="1.5"/><rect x="14" y="3" width="7" height="18" rx="1.5"/></svg></span>
+        <span class="dtxt">
+          <span class="dt">Compare the two records</span>
+          <span class="ds">All facts, side by side</span>
+        </span>
+        <span class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg></span>
+      </button>
+      <div class="dpanel" id="ev1p">
+        <div class="dinner">
+          <div class="cmp">
+            <div class="col">
+              <div class="ch"><span class="disc"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg></span><span class="cn">JUL 2 2026<br>Follow Up</span></div>
+              <div class="row"><div class="rk">Scheduled</div><div class="rv diff">Jul 2 2026, 13:15</div></div>
+              <div class="row"><div class="rk">Provider</div><div class="rv diff">Dr. Amit Barochia, MD</div></div>
+              <div class="row"><div class="rk">Location</div><div class="rv diff">HF Cancer Institute, Merritt Island</div></div>
+              <div class="row"><div class="rk">Kind</div><div class="rv">Appointment · general</div></div>
+            </div>
+            <div class="col">
+              <div class="ch"><span class="disc"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg></span><span class="cn">JUL 27 2026<br>Follow Up</span></div>
+              <div class="row"><div class="rk">Scheduled</div><div class="rv diff">Jul 27 2026, 13:30</div></div>
+              <div class="row"><div class="rk">Provider</div><div class="rv diff">Dr. Carlos Berrios Rosado, MD</div></div>
+              <div class="row"><div class="rk">Location</div><div class="rv diff">HF Medical Group, Malabar</div></div>
+              <div class="row"><div class="rk">Kind</div><div class="rv">Appointment · general</div></div>
+            </div>
+          </div>
+          <div class="diffkey"><span class="sw"></span> Amber = the values that differ. All three differ → likely distinct appointments.</div>
+        </div>
+      </div>
+
+      <button class="disclose" id="ev2" aria-expanded="false">
+        <span class="dico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg></span>
+        <span class="dtxt">
+          <span class="dt">Show the source</span>
+          <span class="ds">MyChart screenshot · both came from one chunk</span>
+        </span>
+        <span class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg></span>
+      </button>
+      <div class="dpanel" id="ev2p">
+        <div class="dinner">
+          <div class="src">
+            <div class="sh">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z"/><path d="M8 7h8M8 11h8M8 15h5"/></svg>
+              <span><b>HealthFirst · MyChart</b> — Appointments (Future)</span>
+            </div>
+<pre><span class="mut">JUL 2 2026  Lab — HF Cancer Institute Merritt Island — Starts 13:00</span>
+<span class="hl">JUL 2 2026  Follow Up Appointment — Dr. Amit Barochia, MD — HF Cancer Institute Merritt Island — Arrive 13:00 — Starts 13:15</span>
+<span class="hl">JUL 27 2026  Follow Up Appointment — Dr. Carlos Berrios Rosado, MD — HF Medical Group Malabar — Arrive 13:15 — Starts 13:30</span>
+<span class="mut">DEC 22 2026 Follow Up Appointment — Dr. Thomas Nguyen, MD — HF Medical Group Rockledge Square — Starts 11:00</span>
+<span class="mut">JUN 22 2026 Office Visit (Past) — Dr. Thomas Nguyen, MD — HF Medical Group Rockledge Square</span></pre>
+          </div>
+          <div class="srcnote">The list holds <b>four separate future appointments</b>. The two highlighted rows are the flagged pair — clearly different dates and doctors within one screenshot.</div>
+        </div>
+      </div>
+
+      <!-- WHY THIS DESIGN -->
+      <div class="rationale" id="rat">
+        <button id="ratBtn" aria-expanded="false">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>
+          Why this design · outcome mapping
+        </button>
+        <div class="rpanel" id="ratPanel">
+          <div class="rinner">
+            <h4>The bet: decision-first</h4>
+            The card leads with the linter’s actual question and three plain-language verdicts.
+            Evidence (names, per-predicate facts, the shared source) is collapsed by default so the
+            phone screen stays calm — you pull proof only if the verdict isn’t already obvious.
+            Choosing a verdict reveals just the follow-up that ruling needs.
+
+            <h4>What each verdict maps to</h4>
+            <div class="maprow"><span class="m1">Two different</span><span class="m2"><code>dismiss</code> — closes the flag, both entities kept, pair remembered so it won’t re-raise. <b>(This card’s truth.)</b></span></div>
+            <div class="maprow"><span class="m1">One outdated</span><span class="m2"><code>supersede</code> — the unpicked entity is marked superseded; survivor stays in the wiki.</span></div>
+            <div class="maprow"><span class="m1">Both wrong</span><span class="m2"><code>correction-note</code> → channel&nbsp;#7. Human words in, machine re-derives — never a hand-edit.</span></div>
+
+            <h4>What we surfaced that the raw card lacked</h4>
+            The stored payload was only <code>{entity_ids, summary}</code>. We resolve both entity
+            <b>names</b>, their three <b>facts</b> each, and the <b>shared source chunk</b> — the exact
+            context that makes “Jul 2 vs Jul 27” a two-second dismiss instead of a leave-the-app dig.
+            A low-confidence line sets honest expectations that the flag may be a false positive.
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- toast -->
+  <div class="toast" id="toast">
+    <span class="tico" id="toastIco"></span>
+    <div>
+      <div class="tt" id="toastTitle"></div>
+      <div class="ts" id="toastSub"></div>
+    </div>
+    <button class="undo" id="undoBtn">Undo</button>
+  </div>
+
+  <!-- commit bar -->
+  <div class="commitbar">
+    <button class="commit" id="commit" disabled>
+      <span id="commitLabel">Choose a ruling above</span>
+    </button>
+    <div class="commithint" id="hint"></div>
+  </div>
+</div>
+
+<script>
+(function(){
+  var state = {verdict:null, keep:null};
+
+  function q(s,r){return (r||document).querySelector(s);}
+  function qa(s,r){return Array.prototype.slice.call((r||document).querySelectorAll(s));}
+
+  var vbtns = qa('.vbtn');
+  var followups = {};
+  qa('.followup').forEach(function(f){ followups[f.dataset.fu]=f; });
+  var commit = q('#commit');
+  var commitLabel = q('#commitLabel');
+  var hint = q('#hint');
+
+  var labels = {
+    dismiss:{cta:'Dismiss — not a contradiction', hint:'Both records kept · flag closed'},
+    supersede:{cta:'Retire the outdated record', hint:'Pick which one is current'},
+    both:{cta:'File correction note', hint:'Sent to channel #7'}
+  };
+
+  function openFU(v){
+    Object.keys(followups).forEach(function(k){
+      var f = followups[k];
+      if(k===v){
+        f.style.maxHeight = f.querySelector('.fu-inner').scrollHeight + 'px';
+      } else {
+        f.style.maxHeight = '0px';
+      }
+    });
+  }
+
+  function refreshCommit(){
+    if(!state.verdict){
+      commit.disabled = true;
+      commit.classList.remove('ready');
+      commit.removeAttribute('data-v');
+      commitLabel.textContent = 'Choose a ruling above';
+      hint.textContent = '';
+      return;
+    }
+    var L = labels[state.verdict];
+    commit.classList.add('ready');
+    commit.setAttribute('data-v', state.verdict);
+    if(state.verdict==='supersede' && !state.keep){
+      commit.disabled = true;
+      commitLabel.textContent = 'Pick which record survives';
+      hint.textContent = L.hint;
+    } else {
+      commit.disabled = false;
+      commitLabel.textContent = L.cta;
+      hint.textContent = L.hint;
+    }
+  }
+
+  vbtns.forEach(function(b){
+    b.addEventListener('click', function(){
+      var v = b.dataset.v;
+      state.verdict = v;
+      vbtns.forEach(function(x){
+        var on = x===b;
+        x.classList.toggle('sel', on);
+        x.setAttribute('aria-checked', on?'true':'false');
+      });
+      openFU(v);
+      // resize follow-up after DOM settles for composer/pick
+      setTimeout(function(){ openFU(v); }, 30);
+      refreshCommit();
+    });
+  });
+
+  // pick survivor
+  qa('.pcard').forEach(function(p){
+    p.addEventListener('click', function(){
+      state.keep = p.dataset.keep;
+      qa('.pcard').forEach(function(x){ x.classList.toggle('sel', x===p); });
+      // re-measure since selection doesn't change height, but safe
+      refreshCommit();
+    });
+  });
+
+  // evidence disclosures
+  function wireDisclose(btnSel, panelSel){
+    var btn = q(btnSel), panel = q(panelSel);
+    btn.addEventListener('click', function(){
+      var open = btn.classList.toggle('open');
+      btn.setAttribute('aria-expanded', open?'true':'false');
+      panel.style.maxHeight = open ? panel.querySelector('.dinner').scrollHeight + 20 + 'px' : '0px';
+    });
+  }
+  wireDisclose('#ev1','#ev1p');
+  wireDisclose('#ev2','#ev2p');
+
+  // why flagged
+  var whyBtn = q('#whyBtn'), whyPanel = q('#whyPanel');
+  whyBtn.addEventListener('click', function(){
+    var open = whyBtn.classList.toggle('open');
+    whyBtn.setAttribute('aria-expanded', open?'true':'false');
+    whyPanel.style.maxHeight = open ? whyPanel.querySelector('.inner').scrollHeight + 12 + 'px' : '0px';
+  });
+
+  // rationale
+  var ratBtn = q('#ratBtn'), rat = q('#rat'), ratPanel = q('#ratPanel');
+  ratBtn.addEventListener('click', function(){
+    var open = rat.classList.toggle('open');
+    ratBtn.setAttribute('aria-expanded', open?'true':'false');
+    ratPanel.style.maxHeight = open ? ratPanel.querySelector('.rinner').scrollHeight + 8 + 'px' : '0px';
+  });
+
+  // commit -> toast
+  var toast = q('#toast'), toastIco = q('#toastIco'), toastTitle = q('#toastTitle'), toastSub = q('#toastSub');
+  var checkSvg = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>';
+  var toastText = {
+    dismiss:{t:'Flag dismissed', s:'Both appointments kept. The linter won’t re-raise this pair.'},
+    supersede:function(){
+      var kept = state.keep==='A' ? 'JUL 2 2026' : 'JUL 27 2026';
+      var gone = state.keep==='A' ? 'JUL 27 2026' : 'JUL 2 2026';
+      return {t:'Record superseded', s:'Kept '+kept+'. '+gone+' marked superseded.'};
+    },
+    both:{t:'Correction note filed', s:'Sent to channel #7. Re-indexed next sweep.'}
+  };
+
+  var toastTimer;
+  commit.addEventListener('click', function(){
+    if(commit.disabled) return;
+    var v = state.verdict;
+    var info = typeof toastText[v]==='function' ? toastText[v]() : toastText[v];
+    toast.className = 'toast show ' + v;
+    toastIco.innerHTML = checkSvg;
+    toastTitle.textContent = info.t;
+    toastSub.textContent = info.s;
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(function(){ toast.classList.remove('show'); }, 4200);
+  });
+  q('#undoBtn').addEventListener('click', function(){
+    toast.classList.remove('show');
+  });
+
+})();
+</script>
+</body>
+</html>

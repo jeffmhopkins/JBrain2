@@ -1052,4 +1052,138 @@ describe("ReviewScreen (split inbox)", () => {
     fireEvent.click(screen.getByRole("tab", { name: "decided 0" }));
     expect(screen.getByText("no decisions yet — resolved items collect here.")).toBeInTheDocument();
   });
+
+  // A wiki_contradiction card (the source-grounded claim:contradiction block): the
+  // enriched payload carries both paired records + the shared source, so the owner
+  // rules in place instead of guessing from a bare summary.
+  const CONTRADICTION: ReviewItem = {
+    id: "wc1",
+    kind: "wiki_contradiction",
+    domain: "general",
+    created_at: "2026-07-11T04:01:00Z",
+    status: "open",
+    resolution: null,
+    resolved_at: null,
+    payload: {
+      entity_ids: ["ent-a", "ent-b"],
+      summary:
+        "The follow-up appointment is listed with two different dates, times, doctors, and locations.",
+      entities: [
+        {
+          id: "ent-a",
+          name: "JUL 2 2026 Follow Up Appointment",
+          kind: "Appointment",
+          facts: [
+            {
+              predicate: "provider",
+              statement: "Follow-up appointment with Dr. Amit Barochia, MD.",
+            },
+            {
+              predicate: "location",
+              statement:
+                "Follow-up appointment takes place at Health First Cancer Institute Merritt Island.",
+            },
+          ],
+        },
+        {
+          id: "ent-b",
+          name: "JUL 27 2026 Follow Up Appointment",
+          kind: "Appointment",
+          facts: [
+            {
+              predicate: "provider",
+              statement: "Follow-up appointment with Dr. Carlos Berrios Rosado, MD.",
+            },
+            {
+              predicate: "location",
+              statement: "Follow-up appointment takes place at Health First Medical Group Malabar.",
+            },
+          ],
+        },
+      ],
+      sources: [
+        {
+          text: "JUL 2 2026 Follow Up Appointment\nDr. Amit Barochia, MD\nHealth First Cancer Institute Merritt Island\nJUL 27 2026 Follow Up Appointment\nDr. Carlos Berrios Rosado, MD\nHealth First Medical Group Malabar",
+        },
+      ],
+      choices: [
+        { action: "dismiss", label: "Dismiss" },
+        { action: "correct", label: "File correction note" },
+      ],
+    },
+  };
+
+  it("a contradiction card surfaces the source and both records' facts", async () => {
+    serve([CONTRADICTION], [], []);
+    const { container } = render(<ReviewScreen />);
+    await screen.findByText(/two different dates, times, doctors/);
+    fireEvent.click(screen.getByRole("button", { name: /two different dates, times, doctors/ }));
+
+    // Both records' facts render (the disambiguating data the bare summary lacked).
+    expect(
+      screen.getByText("Follow-up appointment with Dr. Amit Barochia, MD."),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("Follow-up appointment with Dr. Carlos Berrios Rosado, MD."),
+    ).toBeInTheDocument();
+    // Each side is named (appears in its record card, and highlighted in the source).
+    expect(screen.getAllByText("JUL 2 2026 Follow Up Appointment").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("JUL 27 2026 Follow Up Appointment").length).toBeGreaterThan(0);
+    // The raw source is the hero, carrying the Malabar line so the two rows read as distinct.
+    const source = container.querySelector(".rc-source");
+    expect(source?.textContent).toContain("Malabar");
+  });
+
+  it("filing a contradiction correction opens the composer prefilled, then resolves corrected", async () => {
+    serve([CONTRADICTION], [], []);
+    render(<ReviewScreen />);
+    await screen.findByText(/two different dates, times, doctors/);
+    fireEvent.click(screen.getByRole("button", { name: /two different dates, times, doctors/ }));
+
+    // The "File correction note" choice no longer 400s on a bare resolve — it opens
+    // the composer (the #7 channel), prefilled naming both records.
+    fireEvent.click(screen.getByRole("button", { name: "File correction note" }));
+    const box = screen.getByLabelText("correction note") as HTMLTextAreaElement;
+    expect(box.value).toContain("JUL 2 2026 Follow Up Appointment");
+    expect(box.value).toContain("JUL 27 2026 Follow Up Appointment");
+
+    fireEvent.click(screen.getByRole("button", { name: "file correction" }));
+    const noteCall = await waitFor(() => {
+      const call = fetchMock.mock.calls.find(([u]) => String(u) === "/api/notes");
+      if (!call) throw new Error("no note filed yet");
+      return call;
+    });
+    expect(JSON.parse(String((noteCall[1] as RequestInit).body)).domain).toBe("general");
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/review/wc1/resolve",
+        expect.objectContaining({
+          method: "POST",
+          body: expect.stringContaining('"action":"correct"'),
+        }),
+      ),
+    );
+    const correctCall = fetchMock.mock.calls.find(
+      (c) => String(c[0]) === "/api/review/wc1/resolve",
+    );
+    expect(String((correctCall?.[1] as RequestInit).body)).toContain('"note_id":"note-new"');
+  });
+
+  it("dismissing a contradiction resolves it as distinct records", async () => {
+    serve([CONTRADICTION], [], []);
+    render(<ReviewScreen />);
+    await screen.findByText(/two different dates, times, doctors/);
+    fireEvent.click(screen.getByRole("button", { name: /two different dates, times, doctors/ }));
+
+    fireEvent.click(screen.getByRole("button", { name: "Dismiss" }));
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/review/wc1/resolve",
+        expect.objectContaining({
+          method: "POST",
+          body: expect.stringContaining('"action":"dismiss"'),
+        }),
+      ),
+    );
+  });
 });
