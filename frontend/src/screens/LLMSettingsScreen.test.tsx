@@ -1011,6 +1011,66 @@ describe("LLMSettingsScreen", () => {
     confirm.mockRestore();
   });
 
+  it("offers Enable + Remove for a disabled-but-on-disk model in the Catalog tab", async () => {
+    const s = initialSettings();
+    s.local_hosting_enabled = true;
+    s.host_memory = { total_gb: 128, used_gb: 0 };
+    // On disk (disk_gb set) but NOT enabled — an orphaned alt dropped from the roster.
+    s.local_models = [
+      lm({
+        id: "qwen3-235b-a22b",
+        label: "Qwen3-235B-A22B",
+        tiers: ["high"],
+        size_gb: 104,
+        disk_gb: 97,
+      }),
+    ];
+    const calls: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>(async (input, init) => {
+        const path = String(input);
+        const method = (init?.method ?? "GET").toUpperCase();
+        if (path === "/api/settings/llm" && method === "GET")
+          return new Response(JSON.stringify(s), { status: 200 });
+        if (path.endsWith("/qwen3-235b-a22b/uninstall") && method === "POST") {
+          calls.push(path);
+          const m0 = s.local_models[0];
+          if (m0) m0.remove_queued = true;
+          return new Response(JSON.stringify(s), { status: 200 });
+        }
+        if (path === "/api/ops/local-provision" && method === "POST") {
+          calls.push(path);
+          return new Response(JSON.stringify({ oneshot: "jbrain-provision-1" }), { status: 202 });
+        }
+        if (path === "/api/ops/local-provision/status")
+          return new Response(JSON.stringify({ state: "running", exit_code: null, log_tail: "" }), {
+            status: 200,
+          });
+        throw new Error(`unexpected fetch: ${method} ${path}`);
+      }),
+    );
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+    render(<LLMSettingsScreen />);
+    await screen.findByRole("button", { name: /On-box LLMs/i });
+    fireEvent.click(screen.getByRole("tab", { name: /Catalog/i }));
+
+    // On disk but disabled: Enable (re-add, no download) + a danger Remove — never a
+    // plain Install, and the meta shows the on-disk size, not the ~estimate.
+    expect(await screen.findByRole("button", { name: "Enable" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Install" })).not.toBeInTheDocument();
+    expect(screen.getByText(/97 GB on disk/)).toBeInTheDocument();
+
+    // Remove reclaims the orphaned weights through the uninstall queue + the sync.
+    fireEvent.click(screen.getByRole("button", { name: "Remove" }));
+    await waitFor(() =>
+      expect(calls).toContain("/api/settings/llm/local-models/qwen3-235b-a22b/uninstall"),
+    );
+    expect(confirm).toHaveBeenCalled();
+    expect(await screen.findByText("uninstalling")).toBeInTheDocument();
+    confirm.mockRestore();
+  });
+
   it("removes an installed model directly from the Installed tab", async () => {
     const s = initialSettings();
     s.local_hosting_enabled = true;

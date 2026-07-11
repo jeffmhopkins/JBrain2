@@ -732,6 +732,37 @@ def test_uninstall_404_unknown_and_409_unprovisioned_or_hosting_off() -> None:
     assert c2.post("/api/settings/llm/local-models/gpt-oss-120b/uninstall").status_code == 409
 
 
+def test_uninstall_a_disabled_model_with_orphaned_weights_is_allowed(tmp_path: Any) -> None:
+    # qwen3-235b-a22b is NOT in the roster, but its weights are orphaned on disk (an alt
+    # the sync's roster recompute dropped). The drawer must still queue their removal —
+    # the sync prunes any remove-queue id regardless of the roster. Lay down a real .gguf
+    # so _disk_gb sees it.
+    orphan = tmp_path / "qwen3-235b-a22b"
+    orphan.mkdir()
+    (orphan / "model.gguf").write_bytes(b"\0" * (2 * 1024**3))
+    settings = _cloud_settings(
+        local_llm_enabled=True,
+        local_models=["gpt-oss-120b"],  # 235b intentionally absent from the roster
+        local_models_dir=str(tmp_path),
+    )
+    c, store = _authed_client(settings)
+    resp = c.post("/api/settings/llm/local-models/qwen3-235b-a22b/uninstall")
+    assert resp.status_code == 200, resp.text
+    assert store.values["llm_local_remove_requested"] == ["qwen3-235b-a22b"]
+
+
+def test_uninstall_409_when_neither_enabled_nor_on_disk(tmp_path: Any) -> None:
+    # An empty models dir → no orphaned weights, so a catalog id outside the roster has
+    # nothing to remove and still 409s (the gate opens only for enabled OR on-disk).
+    settings = _cloud_settings(
+        local_llm_enabled=True,
+        local_models=["gpt-oss-120b"],
+        local_models_dir=str(tmp_path),
+    )
+    c, _ = _authed_client(settings)
+    assert c.post("/api/settings/llm/local-models/qwen3-235b-a22b/uninstall").status_code == 409
+
+
 def test_cancel_uninstall_removes_from_the_queue_and_tolerates_absence() -> None:
     c, store = _authed_client(_local_settings())
     c.post("/api/settings/llm/local-models/gpt-oss-120b/uninstall")

@@ -434,16 +434,23 @@ def _require_installable(settings: Settings, model_id: str) -> local_catalog.Loc
 
 def _require_uninstallable(settings: Settings, model_id: str) -> local_catalog.LocalModel:
     """The catalog model for `model_id` when it can be queued for uninstall, or raise:
-    409 when hosting is off, 404 for an id outside the catalog, 409 when it is NOT
-    provisioned (you can't uninstall what isn't installed). The gate for the
-    uninstall-queue endpoints — the mirror of _require_installable."""
+    409 when hosting is off, 404 for an id outside the catalog, 409 when it has NOTHING
+    to remove (neither enabled nor weights on disk). The gate for the uninstall-queue
+    endpoints — the mirror of _require_installable.
+
+    Weights-on-disk counts even when the model is NOT enabled: a model dropped from
+    LOCAL_MODELS (e.g. an alt the sync's roster recompute disabled) leaves its weights
+    orphaned on disk with no other way to reclaim them, so the drawer must be able to
+    queue their removal. The sync prunes any id in the remove queue regardless of the
+    roster."""
     if not settings.local_llm_enabled:
         raise HTTPException(status_code=409, detail="local hosting is not enabled")
     model = local_catalog.get(model_id)
     if model is None:
         raise HTTPException(status_code=404, detail=f"unknown model: {model_id}")
-    if model_id not in settings.local_models:
-        raise HTTPException(status_code=409, detail=f"not provisioned: {model_id}")
+    on_disk = _disk_gb(settings, model_id) is not None
+    if model_id not in settings.local_models and not on_disk:
+        raise HTTPException(status_code=409, detail=f"nothing to remove: {model_id}")
     return model
 
 

@@ -1196,7 +1196,13 @@ function OnBoxModelsCard({
                       onUninstall={onUninstall}
                     />
                   ) : (
-                    <InstallRow key={m.id} model={m} busy={busy.has(m.id)} onInstall={onInstall} />
+                    <InstallRow
+                      key={m.id}
+                      model={m}
+                      busy={busy.has(m.id)}
+                      onInstall={onInstall}
+                      onUninstall={onUninstall}
+                    />
                   )
                 ) : (
                   <LlmModelRow
@@ -1518,44 +1524,84 @@ function UninstallRow({
   );
 }
 
-// One un-provisioned catalog model in the "Available to install" list: its
-// capabilities, an Install/Remove toggle for the install queue, and — once queued
-// and downloading — a live progress bar (download_gb / size_gb) the snapshot poll
-// drives, so the operator can follow the weight pull without shell access.
+// A catalog model that is NOT in the enabled roster. Two shapes:
+//   • not on disk → a plain Install (queues the download; a live progress bar follows
+//     download_gb / size_gb once the sync pulls it, so the weight pull needs no shell);
+//   • on disk but disabled (dropped from LOCAL_MODELS — an orphaned alt) → Enable
+//     re-adds it to the roster with NO re-download, and Remove reclaims its weights.
+// Enable rides the same install queue as a download (instant when the weights exist);
+// Remove rides the uninstall queue + the sync's guarded prune.
 function InstallRow({
   model,
   busy,
   onInstall,
+  onUninstall,
 }: {
   model: LocalModelInfo;
   busy: boolean;
   onInstall: (id: string, on: boolean) => void;
+  onUninstall: (id: string, on: boolean) => void;
 }) {
+  const onDisk = model.disk_gb != null;
   const downloading = model.queued && model.download_gb != null;
   const pct = downloading
     ? Math.min(100, Math.round(((model.download_gb ?? 0) / model.size_gb) * 100))
     : 0;
+  const sizeText = onDisk ? `${model.disk_gb} GB on disk` : `~${model.size_gb} GB`;
   return (
-    <div className={`llm-local-row install${model.queued ? " queued" : ""}`}>
+    <div
+      className={`llm-local-row install${model.queued ? " queued" : ""}${
+        model.remove_queued ? " removing" : ""
+      }`}
+    >
       <div className="llm-local-head">
         <div className="llm-local-name">
           {model.label}
           <span className="llm-local-meta">
-            {model.quant} · ~{model.size_gb} GB
+            {model.quant} · {sizeText}
           </span>
         </div>
         <div className="llm-local-topright">
           <div className="llm-local-act">
-            <button
-              type="button"
-              className={`llm-local-btn${model.queued ? "" : " load"}`}
-              disabled={busy}
-              onClick={() => onInstall(model.id, !model.queued)}
-            >
-              {busy ? "…" : model.queued ? "Remove" : "Install"}
-            </button>
+            {model.remove_queued ? (
+              // Removal queued/applying — offer only "Keep" to back out before the prune.
+              <button
+                type="button"
+                className="llm-local-btn"
+                disabled={busy}
+                onClick={() => onUninstall(model.id, false)}
+              >
+                {busy ? "…" : "Keep"}
+              </button>
+            ) : (
+              <>
+                <button
+                  type="button"
+                  className={`llm-local-btn${model.queued ? "" : " load"}`}
+                  disabled={busy}
+                  onClick={() => onInstall(model.id, !model.queued)}
+                >
+                  {busy ? "…" : model.queued ? "Cancel" : onDisk ? "Enable" : "Install"}
+                </button>
+                {/* On disk but disabled: reclaim its weights without enabling first. */}
+                {onDisk && !model.queued && (
+                  <button
+                    type="button"
+                    className="llm-local-btn danger"
+                    disabled={busy}
+                    onClick={() => onUninstall(model.id, true)}
+                  >
+                    Remove
+                  </button>
+                )}
+              </>
+            )}
           </div>
-          {model.queued && <span className="llm-local-state queued">queued</span>}
+          {model.remove_queued ? (
+            <span className="llm-local-state removing">uninstalling</span>
+          ) : model.queued ? (
+            <span className="llm-local-state queued">queued</span>
+          ) : null}
         </div>
       </div>
       <div className="llm-local-chips">

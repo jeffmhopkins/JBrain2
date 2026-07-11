@@ -149,6 +149,25 @@ docker compose --profile local-llm up -d
 # shellcheck disable=SC2086  # the removing ids are a deliberately word-split list.
 KEEP="$ids" sh src/deploy/prune-local-weights.sh "$PWD/local-models" $(cat "$remove_file") || true
 
+# 7c. Sweep stale huggingface .cache partials from every remaining model dir. An
+#    interrupted/killed download leaves tens of GB of *.incomplete staging behind (hf
+#    streams shards into <model>/.cache/huggingface/download/ and only promotes a shard
+#    to the top level when it completes), which nothing else reclaims. The finished
+#    *.gguf live ABOVE .cache, so dropping .cache never touches a usable weight — hf
+#    recreates it on the next download. The `*/` glob matches only direct children, and
+#    the realpath check rejects a symlinked-out cache. Best-effort, like the rest.
+for cache in "$PWD"/local-models/*/.cache; do
+  [ -d "$cache" ] || continue
+  cache_abs="$(realpath "$cache" 2>/dev/null || true)"
+  case "$cache_abs" in
+    "$PWD"/local-models/*/.cache) : ;;
+    *)                            continue ;;
+  esac
+  [ "$(dirname "$(dirname "$cache_abs")")" = "$PWD/local-models" ] || continue
+  say "clearing partials: $(basename "$(dirname "$cache_abs")")/.cache"
+  rm -rf -- "$cache_abs" || true
+done
+
 # 8. Clear the queues — everything requested is now provisioned and enabled, and every
 #    uninstall has been applied, so both must stop showing as queued. Best-effort: a
 #    missed clear only leaves stale rows that the next sync would re-apply as a no-op.
