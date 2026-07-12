@@ -494,6 +494,10 @@ _STATE_RE = re.compile(
     r"([A-Z][A-Za-z.'\-]*,[ \t]+)(" + "|".join(_STATE_NAMES) + r")(?=[\s.,;:!?)]|$)"
 )
 _SPEED_RE = re.compile(r"\b(mph|km/?h|kph)\b", re.IGNORECASE)
+# Distance "mi" -> "miles", gated to a preceding number ("40 mi" -> "40 miles") so the word is
+# never invented from a stray "mi". Only the wall reaches this with digits intact; the PWA already
+# expands it in speakable.js before the box sees it.
+_DISTANCE_RE = re.compile(r"\b(\d[\d,]*(?:\.\d+)?)\s*mi\b")
 # 3-letter codes first so "SSW" matches whole, not as "S" + "SW".
 _COMPASS_RE = re.compile(r"\b(" + "|".join(sorted(_COMPASS, key=len, reverse=True)) + r")\b")
 _CARDINAL_RE = re.compile(r"\b([Ff]rom|[Tt]he)\s+([NSEW])\b")
@@ -562,6 +566,7 @@ def _speakable_text(text: str) -> str:
     text = text.replace("°", " degrees")
     text = _STATE_RE.sub(lambda m: m.group(1) + _STATE_NAMES[m.group(2)], text)
     text = _SPEED_RE.sub(lambda m: _SPEED_UNITS[m.group(1).lower().replace("/", "")], text)
+    text = _DISTANCE_RE.sub(r"\1 miles", text)
     text = _COMPASS_RE.sub(lambda m: _COMPASS[m.group(1)], text)
     text = _CARDINAL_RE.sub(lambda m: f"{m.group(1)} {_CARDINAL[m.group(2)]}", text)
     return re.sub(r"[ \t]{2,}", " ", text)  # collapse a double space an expansion left behind

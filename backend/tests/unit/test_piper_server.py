@@ -486,6 +486,14 @@ def test_speakable_text_year_reading_styles(server: types.ModuleType) -> None:
     assert server._year_words(2010) == "twenty ten"
 
 
+def test_speakable_text_distance_mi(server: types.ModuleType) -> None:
+    # "mi" -> "miles", but only after a number (so a stray "mi" never invents the word). The wall
+    # path reaches the box with digits intact; the PWA already expands this in speakable.js.
+    assert server._speakable_text("40 mi south of here") == "40 miles south of here"
+    assert server._speakable_text("about 3.5 mi") == "about 3.5 miles"
+    assert server._speakable_text("40 min drive") == "40 min drive"  # "min" is not "mi"
+
+
 def test_speakable_text_non_dates_untouched(server: types.ModuleType) -> None:
     # A day out of range is not a date; a following non-year number isn't swallowed.
     assert server._speakable_text("July 45 items") == "July 45 items"

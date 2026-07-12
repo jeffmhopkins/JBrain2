@@ -121,6 +121,77 @@ function fractionWords(numStr, denStr) {
   return `${numberToWords(String(num))} ${num === 1 ? denom : plural}`;
 }
 
+// --- dates, temperatures, distances → words (before the generic number pass) -----------
+
+// These depend on the RAW digits, so they run before numbers are verbalized below (which would
+// otherwise read a date's day as a cardinal "ten" and its year as "two thousand twenty six", and
+// leave "°F"/"mi" stranded next to a spelled-out number). Mirrors the box-side backstop in
+// deploy/tts-stt/piper_server.py for the wall path, which never verbalizes numbers.
+const MONTHS =
+  "January|February|March|April|May|June|July|August|September|October|November|December";
+const DATE_RE = new RegExp(
+  `\\b(${MONTHS})\\s+(\\d{1,2})(?:st|nd|rd|th)?(?:,?\\s+(\\d{4}))?\\b`,
+  "g",
+);
+const ORD_ONES = {
+  1: "first",
+  2: "second",
+  3: "third",
+  4: "fourth",
+  5: "fifth",
+  6: "sixth",
+  7: "seventh",
+  8: "eighth",
+  9: "ninth",
+  10: "tenth",
+  11: "eleventh",
+  12: "twelfth",
+  13: "thirteenth",
+  14: "fourteenth",
+  15: "fifteenth",
+  16: "sixteenth",
+  17: "seventeenth",
+  18: "eighteenth",
+  19: "nineteenth",
+  20: "twentieth",
+  30: "thirtieth",
+};
+const DEGREE_UNITS = { F: "Fahrenheit", C: "Celsius", K: "Kelvin" };
+
+/** A day 1-31 as an ordinal ("10" → "tenth", "21" → "twenty first"). */
+function ordinalDay(n) {
+  return ORD_ONES[n] ?? `${TENS[Math.floor(n / 10)]} ${ORD_ONES[n % 10]}`;
+}
+
+/** A 4-digit year in speech style: 2026 → "twenty twenty six", 1999 → "nineteen ninety nine",
+ * 2000 → "two thousand", 2005 → "two thousand five", 1905 → "nineteen oh five". */
+function yearWords(y) {
+  const hi = Math.floor(y / 100);
+  const lo = y % 100;
+  if (lo === 0) {
+    return y % 1000 === 0 ? `${intToWords(y / 1000)} thousand` : `${intToWords(hi)} hundred`;
+  }
+  if (lo < 10) {
+    return y >= 2000 && y < 2010 ? `two thousand ${ONES[lo]}` : `${intToWords(hi)} oh ${ONES[lo]}`;
+  }
+  return `${intToWords(hi)} ${intToWords(lo)}`;
+}
+
+/** Verbalize dates, temperature units, and the "mi" distance unit while their digits are intact.
+ * "July 10, 2026" → "July tenth, twenty twenty six"; "94°F" → "94 degrees Fahrenheit" (the "94"
+ * is spelled by the later number pass); "40 mi" → "40 miles". */
+function measuresToWords(s) {
+  return s
+    .replace(DATE_RE, (m, month, dayStr, yearStr) => {
+      const day = Number(dayStr);
+      if (day < 1 || day > 31) return m; // not a day-of-month — leave untouched
+      const said = `${month} ${ordinalDay(day)}`;
+      return yearStr ? `${said}, ${yearWords(Number(yearStr))}` : said;
+    })
+    .replace(/°\s*([FCK])\b/g, (_m, u) => ` degrees ${DEGREE_UNITS[u]}`)
+    .replace(/\b(\d[\d,]*(?:\.\d+)?)\s*mi\b/g, "$1 miles");
+}
+
 // --- emoji + symbols -------------------------------------------------------------------
 
 // The few emoji worth speaking; everything else is dropped (a stray "grinning face"
@@ -324,6 +395,8 @@ export function toUtterance(prose, engine = "piper") {
     .map((line) => line.trim())
     .map((line) => (line && !ENDS_SENTENCE.test(line) ? `${line}.` : line))
     .join("\n");
+  // Dates / temperatures / distances — BEFORE any number verbalization, which needs the raw digits.
+  s = measuresToWords(s);
   // Token normalization.
   s = s.replace(URL_RE, (_m, host) => domainWords(host));
   s = s.replace(WWW_RE, (_m, host) => domainWords(host));
