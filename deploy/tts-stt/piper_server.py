@@ -443,6 +443,69 @@ def _kokoro_wav(
     return _pad(data, lead, trail)
 
 
+# --- Speakable-text normalization (engine-agnostic; runs before piper OR Kokoro) ------------
+# Expands symbols/abbreviations an answer writes tersely but a voice should SPEAK in full. Distinct
+# from KOKORO_LEXICON (which fixes single-word PHONEMES on the misaki path only): these are plain
+# text rewrites, so both engines benefit. Extend the maps below to cover a new symbol/abbreviation.
+
+# US Postal state codes -> spoken name, applied ONLY in the "City, ST" shape (a comma + a
+# Capitalized word before the code) so a bare "IN"/"OR"/"ME" — real English words — is never
+# touched outside that location signal. Heuristic, not perfect: "Yes, OK" would expand too; the
+# comma+Capitalized-word gate keeps false positives rare in answer text.
+_STATE_NAMES: dict[str, str] = {
+    "AL": "Alabama", "AK": "Alaska", "AZ": "Arizona", "AR": "Arkansas", "CA": "California",
+    "CO": "Colorado", "CT": "Connecticut", "DE": "Delaware", "FL": "Florida", "GA": "Georgia",
+    "HI": "Hawaii", "ID": "Idaho", "IL": "Illinois", "IN": "Indiana", "IA": "Iowa",
+    "KS": "Kansas", "KY": "Kentucky", "LA": "Louisiana", "ME": "Maine", "MD": "Maryland",
+    "MA": "Massachusetts", "MI": "Michigan", "MN": "Minnesota", "MS": "Mississippi",
+    "MO": "Missouri", "MT": "Montana", "NE": "Nebraska", "NV": "Nevada", "NH": "New Hampshire",
+    "NJ": "New Jersey", "NM": "New Mexico", "NY": "New York", "NC": "North Carolina",
+    "ND": "North Dakota", "OH": "Ohio", "OK": "Oklahoma", "OR": "Oregon", "PA": "Pennsylvania",
+    "RI": "Rhode Island", "SC": "South Carolina", "SD": "South Dakota", "TN": "Tennessee",
+    "TX": "Texas", "UT": "Utah", "VT": "Vermont", "VA": "Virginia", "WA": "Washington",
+    "WV": "West Virginia", "WI": "Wisconsin", "WY": "Wyoming", "DC": "D.C.",
+}
+
+# 16-point compass. The 2- and 3-letter codes are essentially never non-compass in an answer, so
+# they expand wherever they stand alone; bare N/S/E/W are ambiguous (grades, initials) so those
+# expand only right after "from"/"the" — how a wind reading reads ("from the W").
+_COMPASS: dict[str, str] = {
+    "NNE": "north northeast", "ENE": "east northeast", "ESE": "east southeast",
+    "SSE": "south southeast", "SSW": "south southwest", "WSW": "west southwest",
+    "WNW": "west northwest", "NNW": "north northwest",
+    "NE": "northeast", "SE": "southeast", "SW": "southwest", "NW": "northwest",
+}
+_CARDINAL: dict[str, str] = {"N": "north", "S": "south", "E": "east", "W": "west"}
+
+# Degree units ("94 °F" / "94°F" -> "94 degrees Fahrenheit"; a lone "°" -> "degrees") and wind
+# speeds ("4 mph" -> "4 miles per hour").
+_DEGREE_UNITS: dict[str, str] = {"F": "Fahrenheit", "C": "Celsius", "K": "Kelvin"}
+_SPEED_UNITS: dict[str, str] = {"mph": "miles per hour", "kph": "kilometers per hour",
+                                "kmh": "kilometers per hour"}
+
+_DEGREE_RE = re.compile(r"°\s*([FCK])\b")
+# City word + comma + spaces captured as group 1 (kept verbatim), the code as group 2.
+_STATE_RE = re.compile(
+    r"([A-Z][A-Za-z.'\-]*,[ \t]+)(" + "|".join(_STATE_NAMES) + r")(?=[\s.,;:!?)]|$)"
+)
+_SPEED_RE = re.compile(r"\b(mph|km/?h|kph)\b", re.IGNORECASE)
+# 3-letter codes first so "SSW" matches whole, not as "S" + "SW".
+_COMPASS_RE = re.compile(r"\b(" + "|".join(sorted(_COMPASS, key=len, reverse=True)) + r")\b")
+_CARDINAL_RE = re.compile(r"\b([Ff]rom|[Tt]he)\s+([NSEW])\b")
+
+
+def _speakable_text(text: str) -> str:
+    """Rewrite terse symbols/abbreviations to their spoken words before phonemizing. Ordered so a
+    state ("Omaha, NE") is expanded before the compass pass could read its "NE" as "northeast"."""
+    text = _DEGREE_RE.sub(lambda m: f" degrees {_DEGREE_UNITS[m.group(1)]}", text)
+    text = text.replace("°", " degrees")
+    text = _STATE_RE.sub(lambda m: m.group(1) + _STATE_NAMES[m.group(2)], text)
+    text = _SPEED_RE.sub(lambda m: _SPEED_UNITS[m.group(1).lower().replace("/", "")], text)
+    text = _COMPASS_RE.sub(lambda m: _COMPASS[m.group(1)], text)
+    text = _CARDINAL_RE.sub(lambda m: f"{m.group(1)} {_CARDINAL[m.group(2)]}", text)
+    return re.sub(r"[ \t]{2,}", " ", text)  # collapse a double space an expansion left behind
+
+
 def tts_wav(
     text: str,
     voice: str,
@@ -459,6 +522,7 @@ def tts_wav(
     `speed` (its synthesizer isn't speed-controlled on this path) and honours only an EXPLICIT
     `trail_ms` (its env default is 0, since the snappy piper is the fallback voice, not the
     audiobook one)."""
+    text = _speakable_text(text)  # expand °F/mph/compass/"City, ST" for BOTH engines, pre-dispatch
     if voice.startswith(KOKORO_ID_PREFIX):
         return _kokoro_wav(text, voice, lead_ms, speed, trail_ms)
     resolved = _resolve_voice(voice)

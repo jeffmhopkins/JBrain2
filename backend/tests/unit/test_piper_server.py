@@ -33,6 +33,7 @@ class _FakeVoice:
     """Stand-in for piper.voice.PiperVoice: records loads + synth calls, writes a tiny WAV."""
 
     loads: list[str] = []
+    texts: list[str] = []  # text as received by synth — proves the pre-dispatch normalization
 
     def __init__(self, model_path: str) -> None:
         self.model_path = model_path
@@ -43,6 +44,7 @@ class _FakeVoice:
         return cls(str(model_path))
 
     def synthesize_wav(self, text: str, wav_file, syn_config=None) -> None:  # type: ignore[no-untyped-def]
+        type(self).texts.append(text)
         wav_file.setnchannels(1)
         wav_file.setsampwidth(2)
         wav_file.setframerate(22050)
@@ -118,6 +120,7 @@ class _FakeEspeakFallback:
 
 def _load_server() -> types.ModuleType:
     _FakeVoice.loads = []
+    _FakeVoice.texts = []
     _FakeKokoro.loads = []
     _FakeKokoro.last_create = {}
     _FakeG2P.calls = []
@@ -412,6 +415,68 @@ def test_kokoro_lexicon_emits_misaki_override(
     kokoro_server._g2p_holder.clear()
     kokoro_server.tts_wav("say Kokoro now", "kokoro-af_heart", lead_ms=0)
     assert _FakeG2P.calls[-1] == "say [Kokoro](/kˈOkəɹO/) now"
+
+
+# --- Speakable-text normalization (°F / mph / compass / "City, ST") ------------------------
+
+
+def test_speakable_text_expands_the_weather_sentence(server: types.ModuleType) -> None:
+    # The reported sentence: state code, degree units, wind speed, and compass point all spoken.
+    said = server._speakable_text(
+        "Tomorrow in Cocoa, FL will be warm, with a high near 94 °F and a low around 75 °F. "
+        "Expect light breezes (about 4 mph from the SSW)."
+    )
+    assert "Cocoa, Florida" in said
+    assert "94 degrees Fahrenheit" in said and "75 degrees Fahrenheit" in said
+    assert "4 miles per hour" in said
+    assert "from the south southwest" in said
+    assert "°" not in said and " FL " not in said and " mph" not in said
+
+
+def test_speakable_text_degree_units_and_bare_degree(server: types.ModuleType) -> None:
+    assert server._speakable_text("20 °C to 30°C") == "20 degrees Celsius to 30 degrees Celsius"
+    assert server._speakable_text("0 °K is absolute zero") == "0 degrees Kelvin is absolute zero"
+    assert server._speakable_text("tilt it 45° back") == "tilt it 45 degrees back"
+
+
+def test_speakable_text_wind_speed_units(server: types.ModuleType) -> None:
+    assert server._speakable_text("gusts to 30 mph") == "gusts to 30 miles per hour"
+    assert server._speakable_text("60 kph or 60 km/h") == (
+        "60 kilometers per hour or 60 kilometers per hour"
+    )
+
+
+def test_speakable_text_all_compass_points(server: types.ModuleType) -> None:
+    # Every 2- and 3-letter code expands standalone; the 3-letter ones must not split ("SSW" is
+    # NOT "S" + "SW").
+    assert server._speakable_text("winds NNE then ESE then SW") == (
+        "winds north northeast then east southeast then southwest"
+    )
+    # Bare cardinals expand only after from/the, and are left alone elsewhere.
+    assert server._speakable_text("from the W and out of N") == "from the west and out of N"
+    assert server._speakable_text("grade W on the exam") == "grade W on the exam"
+
+
+def test_speakable_text_state_only_in_city_shape(server: types.ModuleType) -> None:
+    # "City, ST" expands; a bare English-word code (IN/OR/ME) outside that shape does not.
+    assert server._speakable_text("headed to Reno, NV tomorrow") == "headed to Reno, Nevada tomorrow"
+    assert server._speakable_text("interested IN or ME") == "interested IN or ME"
+    # A state code that is also a compass code ("NE") resolves as the state in the City shape,
+    # because state expansion runs before the compass pass.
+    assert server._speakable_text("out near Omaha, NE now") == "out near Omaha, Nebraska now"
+
+
+def test_tts_wav_normalizes_before_piper(server: types.ModuleType) -> None:
+    # The piper path renders the SPOKEN text, not the raw symbols — normalization is pre-dispatch.
+    assert server.tts_wav("high of 94 °F", "en_US-amy-medium", lead_ms=0) is not None
+    assert _FakeVoice.texts[-1] == "high of 94 degrees Fahrenheit"
+
+
+def test_tts_wav_normalizes_before_kokoro(kokoro_server: types.ModuleType) -> None:
+    # The Kokoro/misaki path phonemizes the spoken text too (G2P records what it received).
+    kokoro_server._g2p_holder.clear()
+    kokoro_server.tts_wav("winds 4 mph from the SSW", "kokoro-af_heart", lead_ms=0)
+    assert _FakeG2P.calls[-1] == "winds 4 miles per hour from the south southwest"
 
 
 def test_dockerfile_builds_misaki_in_a_py312_venv(server: types.ModuleType) -> None:

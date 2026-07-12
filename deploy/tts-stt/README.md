@@ -33,6 +33,17 @@ One always-on container serving the box's **speech I/O**:
   emitted as misaki inline overrides `[word](/phonemes/)` and applied only on the misaki path.
   **RAM:** misaki + its spaCy model add resident memory on top of Kokoro's ~310 MB — measure with
   `docker stats tts-stt` after a Kokoro render and record it here.
+- **Speakable-text normalization (both engines).** Before *either* engine phonemizes, `tts_wav`
+  runs `_speakable_text` to expand terse symbols/abbreviations an answer writes but a voice should
+  speak in full: **degree units** (`94 °F` → "94 degrees Fahrenheit"; also °C/°K and a lone `°`),
+  **wind speeds** (`4 mph`/`kph`/`km/h` → "miles/kilometers per hour"), **compass points** (the 2-
+  and 3-letter codes anywhere — `SSW` → "south southwest"; bare `N/S/E/W` only after "from"/"the"
+  so grades/initials aren't mangled), and **US state codes** in the `City, ST` shape (`Cocoa, FL`
+  → "Cocoa, Florida") — gated to a comma + Capitalized word so a bare `IN`/`OR`/`ME` is left alone.
+  This is plain-text rewriting (engine-agnostic, so piper benefits too) and is **separate** from
+  `KOKORO_LEXICON`, which fixes single-word *phonemes* on the misaki path only. Add a symbol or
+  abbreviation by extending the maps at the top of the `_speakable_text` block in `piper_server.py`
+  (`_STATE_NAMES`, `_COMPASS`, `_DEGREE_UNITS`, `_SPEED_UNITS`).
 - **STT (`:8080`)** — whisper.cpp behind llama-swap (load-on-demand, idle-unload). The api
   reaches it at `http://tts-stt:8080/v1`; the model + `llama-swap.yaml` config are
   provisioned by `jbrain enable-whisper` (`scripts/whisper-setup.sh`).
