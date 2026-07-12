@@ -227,6 +227,43 @@ _BEDTIME = (
     "off to bed",
 )
 
+# Scenes — the whole area the pet plays in swaps between the cosy "room" and an open "field".
+# An EPHEMERAL wall effect (a reload restores the room). Explicit phrases only, so a bare "room"
+# in chit-chat (or "clean up your room") never teleports the pet.
+_SCENE_FIELD = (
+    "scene to field",
+    "scene to the field",
+    "change to the field",
+    "change to field",
+    "go to the field",
+    "to the field",
+    "into the field",
+    "out to the field",
+    "field scene",
+    "the big field",
+    "the open field",
+    "go outside",
+    "go to the meadow",
+)
+_SCENE_ROOM = (
+    "scene to room",
+    "scene to the room",
+    "change to the room",
+    "change to room",
+    "go to the room",
+    "back to the room",
+    "back to my room",
+    "room scene",
+    "go back inside",
+    "come inside",
+    "back home",
+    "go home",
+)
+
+# "Build a statue of X" — switch to the field and (wall-side) draft a voxel model of X. The
+# subject is whatever follows "statue of", minus a leading article.
+_STATUE_RE = re.compile(r"\bstatue of (?:a |an |the )?(.+)")
+
 # Ordered phrase → canned button action (the actions `service.CANNED_SCRIPTS` knows).
 # First match wins, so put the more specific phrases first.
 _KEYWORDS: tuple[tuple[tuple[str, ...], str], ...] = (
@@ -425,6 +462,20 @@ def classify(text: str) -> Intent | None:
     t = " ".join(text.lower().split())
     if not t:
         return None
+    # "Build a statue of X" FIRST — before the size words (so "statue of a giant" isn't read as a
+    # resize) and the scene swap. Switches to the field; the wall drafts the voxel model.
+    statue = _STATUE_RE.search(t)
+    if statue:
+        subject = statue.group(1).strip(" .!?").strip()
+        if subject:
+            return Intent(
+                kind="statue", value=subject[:60], speech=f"Building a statue of {subject}!"
+            )
+    # Scene swap — "change scene to the field" / "back to the room".
+    if _match(t, _SCENE_FIELD):
+        return Intent(kind="scene", value="field", speech="Whoosh! Off to the big field!")
+    if _match(t, _SCENE_ROOM):
+        return Intent(kind="scene", value="room", speech="Back to my cosy room! Beep-boop!")
     # "Reset everything" FIRST — a full wipe of every ephemeral effect + the pet's own colour.
     if _match(t, _RESET_ALL):
         return Intent(

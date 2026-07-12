@@ -56,6 +56,103 @@ PET_TURN_SCHEMA: dict[str, Any] = {
 }
 
 
+# The wall's field "build a statue of X": the LLM sculpts a recognisable shape as a sparse
+# list of coloured voxels on a 24³ grid (y up, resting on y=0). Kept sparse (occupied cells
+# only) + capped so the wire stays small and the wall's block-by-block build terminates.
+STATUE_GRID = 24
+STATUE_MAX_VOXELS = 1200
+STATUE_VOXEL_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "voxels": {
+            "type": "array",
+            "maxItems": STATUE_MAX_VOXELS,
+            "description": "The occupied cells of the model — one entry per filled voxel.",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "x": {"type": "integer", "minimum": 0, "maximum": STATUE_GRID - 1},
+                    "y": {"type": "integer", "minimum": 0, "maximum": STATUE_GRID - 1},
+                    "z": {"type": "integer", "minimum": 0, "maximum": STATUE_GRID - 1},
+                    "c": {"type": "string", "description": 'Hex colour like "#ff8800".'},
+                },
+                "required": ["x", "y", "z", "c"],
+            },
+        }
+    },
+    "required": ["voxels"],
+}
+
+
+@dataclass(frozen=True)
+class Voxel:
+    x: int
+    y: int
+    z: int
+    c: str  # a normalised "#rrggbb" colour
+
+
+def _statue_system_prompt() -> str:
+    g = STATUE_GRID
+    return (
+        "You are a voxel sculptor for a children's toy: you turn a subject into a small, "
+        f"instantly-recognisable 3D model on a {g}×{g}×{g} grid of cubes.\n"
+        f"Coordinates are integers 0–{g - 1}. x = left→right, z = front→back, y = UP. The model "
+        "must sit on the ground (fill from y=0 up) and be roughly centred in x and z.\n"
+        "Return ONLY the occupied cells as `voxels`: a list of {x, y, z, c}, where c is a hex "
+        'colour like "#ff8800".\n'
+        "COLOUR IT PROPERLY: use SEVERAL distinct hex colours to pick out the parts — e.g. body vs "
+        "belly, ears, eyes, nose, stripes, wheels, windows. At least 3–4 different colours; a "
+        "single flat colour looks wrong. Choose natural colours for the subject.\n"
+        "Make it a solid, chunky, recognisable shape a 4-year-old would name at a glance — bold "
+        "silhouette over fine detail. Do not fill the whole grid; carve the actual shape.\n"
+        "IMPORTANT — build a HOLLOW SHELL: emit only the OUTER surface voxels (the ones you could "
+        "see or touch from outside), about 1 voxel thick, and leave the inside empty. A voxel is "
+        "interior (skip it) when it has a filled neighbour on all six sides. This keeps the model "
+        f"light: aim for roughly 150–600 shell voxels; never exceed {STATUE_MAX_VOXELS}."
+    )
+
+
+def _clean_voxels(parsed: Any) -> list[Voxel]:
+    """Coerce the model's parsed object into grid-valid voxels: keep only in-bounds integer
+    cells with a usable hex colour, de-duplicate by cell, and cap the count."""
+    if not isinstance(parsed, dict):
+        return []
+    raw = parsed.get("voxels")
+    if not isinstance(raw, list):
+        return []
+    seen: set[tuple[int, int, int]] = set()
+    out: list[Voxel] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        try:
+            x, y, z = int(item["x"]), int(item["y"]), int(item["z"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if not (0 <= x < STATUE_GRID and 0 <= y < STATUE_GRID and 0 <= z < STATUE_GRID):
+            continue
+        cell = (x, y, z)
+        if cell in seen:
+            continue
+        seen.add(cell)
+        out.append(Voxel(x=x, y=y, z=z, c=_hex_color(item.get("c"))))
+        if len(out) >= STATUE_MAX_VOXELS:
+            break
+    return out
+
+
+def _hex_color(value: Any) -> str:
+    """Normalise a colour to "#rrggbb"; a #rgb shorthand expands, anything unusable → grey."""
+    if isinstance(value, str):
+        s = value.strip().lstrip("#").lower()
+        if len(s) == 3 and all(ch in "0123456789abcdef" for ch in s):
+            s = "".join(ch * 2 for ch in s)
+        if len(s) == 6 and all(ch in "0123456789abcdef" for ch in s):
+            return f"#{s}"
+    return "#9aa0b0"
+
+
 class PetRouter(Protocol):
     """The slice of the LLM router the brain needs (the real router satisfies it)."""
 
@@ -174,3 +271,23 @@ async def pet_turn(
         max_tokens=2048,
     )
     return _clean(result.parsed, state, objs)
+
+
+async def statue_voxels(router: PetRouter, *, subject: str) -> list[Voxel]:
+    """Ask the LLM to sculpt `subject` as a 24³ voxel model for the wall's field build. Runs
+    the reasoning-bound `pet.statue` task; the result is validated + clamped to the grid so a
+    bad cell can never wedge the wall's builder. Raises on an unusable (empty) model so the
+    caller can tell the wall it couldn't imagine that one."""
+    result = await router.complete(
+        "pet.statue",
+        system=_statue_system_prompt(),
+        user_text=(subject.strip()[:80] or "a friendly robot"),
+        json_schema=STATUE_VOXEL_SCHEMA,
+        # A big, reasoning-heavy generation: budget for a long thinking trace PLUS a few hundred
+        # voxels of JSON, or the model truncates mid-list and the parse yields a half-built shape.
+        max_tokens=32000,
+    )
+    voxels = _clean_voxels(result.parsed)
+    if not voxels:
+        raise ValueError("statue model was empty")
+    return voxels

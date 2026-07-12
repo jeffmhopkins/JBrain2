@@ -215,6 +215,33 @@ def test_cleanup_and_the_bedtime_chain_classify() -> None:
         assert a in BUTTON_ACTIONS
 
 
+def test_scene_swap_classifies_and_avoids_false_hits() -> None:
+    for phrase in ("change scene to the field", "go to the field", "let's go outside"):
+        i = _c(phrase)
+        assert i.kind == "scene" and i.value == "field", phrase
+    for phrase in ("change scene to room", "go back inside", "back to my room"):
+        i = _c(phrase)
+        assert i.kind == "scene" and i.value == "room", phrase
+    # "clean up your room" must stay a cleanup chore, NOT a scene swap.
+    assert _c("clean up your room").value == "cleanup"
+
+
+def test_build_a_statue_extracts_the_subject() -> None:
+    for phrase, subject in [
+        ("build a statue of a cat", "cat"),
+        ("build me a statue of the eiffel tower", "eiffel tower"),
+        ("make a statue of a fire truck", "fire truck"),
+        (
+            "build a statue of a giant dinosaur",
+            "giant dinosaur",
+        ),  # "giant" must NOT read as a resize
+    ]:
+        i = _c(phrase)
+        assert i.kind == "statue" and i.value == subject, phrase
+    # The reaction line names the subject.
+    assert "cat" in _c("build a statue of a cat").speech
+
+
 def test_reset_everything_is_its_own_command() -> None:
     for phrase in ("reset everything", "clear everything", "put everything back", "start over"):
         i = _c(phrase)

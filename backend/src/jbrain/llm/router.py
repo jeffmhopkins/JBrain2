@@ -99,6 +99,11 @@ TASK_DEFAULTS: dict[str, str] = {
     # never spends API budget and always takes second seat.
     "pet.turn": "xai:grok-4.3",
     "pet.thought": "xai:grok-4.3",
+    # `pet.statue` sculpts a 24³ voxel model of a requested subject for the wall's field
+    # "build a statue of X". Reasoning-bound (it plans a recognisable 3D shape voxel by
+    # voxel), so it defaults to the strong model + high effort; individually routable so an
+    # on-box operator can point it at a local reasoning model like the other pet tasks.
+    "pet.statue": "xai:grok-4.3",
 }
 
 # Each task's DEFAULT reasoning effort — the Settings bucket it sits in, so a fresh
@@ -114,6 +119,7 @@ TASK_REASONING_BUCKET: dict[str, str] = {
     "wiki.ground": "high",
     "wiki.lint.contradiction": "high",
     "wiki.lint.stale": "high",
+    "pet.statue": "high",
     # Medium reasoning
     "agent.turn": "medium",
     "note.extract": "medium",

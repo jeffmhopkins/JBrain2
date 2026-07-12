@@ -26,6 +26,7 @@ EXPECTED_TASKS = {
     "triage.classify",
     "pet.turn",
     "pet.thought",
+    "pet.statue",
 }
 
 

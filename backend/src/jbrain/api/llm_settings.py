@@ -57,6 +57,7 @@ TASK_LABELS: dict[str, str] = {
     "triage.classify": "Inbox triage",
     "pet.turn": "JPet — reply",
     "pet.thought": "JPet — idle thought",
+    "pet.statue": "JPet — statue sculptor",
 }
 
 

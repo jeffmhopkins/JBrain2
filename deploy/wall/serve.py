@@ -527,6 +527,14 @@ class Handler(BaseHTTPRequestHandler):
             code, body, ctype = api_post("/internal/pet/say", raw, "application/json", timeout=30.0)
             self._send(code, body, ctype)
             return
+        if path == "/pet/statue":
+            # "build a statue of X" — the pet page asks the internal brain to sculpt a voxel
+            # model (a high-reasoning LLM call, so it can take a while). Same LAN-only boundary.
+            n = min(int(self.headers.get("Content-Length", 0) or 0), 2048)
+            raw = self.rfile.read(n) if n > 0 else b"{}"
+            code, body, ctype = api_post("/internal/pet/statue", raw, "application/json", timeout=180.0)
+            self._send(code, body, ctype)
+            return
         if path != "/event":
             self._send(404, b"not found", "text/plain")
             return
