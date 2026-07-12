@@ -501,6 +501,10 @@ _DISTANCE_RE = re.compile(r"\b(\d[\d,]*(?:\.\d+)?)\s*mi\b")
 # 3-letter codes first so "SSW" matches whole, not as "S" + "SW".
 _COMPASS_RE = re.compile(r"\b(" + "|".join(sorted(_COMPASS, key=len, reverse=True)) + r")\b")
 _CARDINAL_RE = re.compile(r"\b([Ff]rom|[Tt]he)\s+([NSEW])\b")
+# A single-letter name initial ("Dennis E. Taylor") followed by a capitalized word: drop the period
+# so espeak doesn't read it as a sentence end (a long pause). Not part of a dotted abbreviation like
+# "U.S.". The PWA's speakable.js does this too; here it serves the wall (which sends "E." intact).
+_INITIAL_RE = re.compile(r"(?<!\.)\b([A-Z])\.(?=\s+[A-Z])")
 
 # Dates: "July 10, 2026" / "July 10 2026" / "July 10th" -> "July tenth, twenty twenty six". Spelled
 # out here so BOTH engines say the day as an ORDINAL and the year in speech style, which neither
@@ -569,6 +573,7 @@ def _speakable_text(text: str) -> str:
     text = _DISTANCE_RE.sub(r"\1 miles", text)
     text = _COMPASS_RE.sub(lambda m: _COMPASS[m.group(1)], text)
     text = _CARDINAL_RE.sub(lambda m: f"{m.group(1)} {_CARDINAL[m.group(2)]}", text)
+    text = _INITIAL_RE.sub(r"\1", text)
     return re.sub(r"[ \t]{2,}", " ", text)  # collapse a double space an expansion left behind
 
 

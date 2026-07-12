@@ -163,6 +163,22 @@ describe("speakable", () => {
     expect(speakable("approx. 5 items")).toBe("approximately five items.");
   });
 
+  it("drops a name initial's period so it isn't read as a sentence end / split into a clip", () => {
+    // The reported case: "E." made espeak pause AND the clip splitter cut "Taylor" onto a
+    // separate render. Dropping the period fixes both — and the whole title stays ONE clip.
+    expect(speakable("The Bobiverse (by Dennis E. Taylor)")).toBe(
+      "The Bobiverse, by Dennis E Taylor.",
+    );
+    expect(chunkStream("The Bobiverse (by Dennis E. Taylor)", true).chunks).toEqual([
+      "The Bobiverse, by Dennis E Taylor.",
+    ]);
+    // Chained initials all lose their periods; a real sentence end (lowercase-led next word) does not.
+    expect(speakable("J. R. R. Tolkien wrote it")).toBe("J R R Tolkien wrote it.");
+    expect(speakable("Grade A. then rest")).toBe("Grade A. then rest.");
+    // A dotted abbreviation like "U.S." is left intact (not treated as an initial).
+    expect(speakable("the U.S. Grant memorial")).toBe("the U.S. Grant memorial.");
+  });
+
   it("keeps an ellipsis as a dramatic beat (not a comma, not 'dot dot dot')", () => {
     // "..." and "…" both normalize to one ellipsis char — a ~300 ms pause espeak renders without
     // saying the dots, and which the chunker won't split on (it's not . ! ?).

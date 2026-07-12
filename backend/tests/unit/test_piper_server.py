@@ -486,6 +486,15 @@ def test_speakable_text_year_reading_styles(server: types.ModuleType) -> None:
     assert server._year_words(2010) == "twenty ten"
 
 
+def test_speakable_text_name_initial(server: types.ModuleType) -> None:
+    # A single-letter initial before a capitalized word loses its period (so espeak doesn't pause);
+    # a dotted abbreviation like "U.S." and a lowercase-led sentence end are left alone.
+    assert server._speakable_text("by Dennis E. Taylor") == "by Dennis E Taylor"
+    assert server._speakable_text("J. R. R. Tolkien") == "J R R Tolkien"
+    assert server._speakable_text("the U.S. Grant memorial") == "the U.S. Grant memorial"
+    assert server._speakable_text("Grade A. then rest") == "Grade A. then rest"
+
+
 def test_speakable_text_distance_mi(server: types.ModuleType) -> None:
     # "mi" -> "miles", but only after a number (so a stray "mi" never invents the word). The wall
     # path reaches the box with digits intact; the PWA already expands this in speakable.js.
