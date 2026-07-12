@@ -104,6 +104,24 @@ def test_new_silly_actions_classify() -> None:
         assert a in BUTTON_ACTIONS
 
 
+def test_creature_trick_commands_classify() -> None:
+    # Dragon fire-breath and chicken egg-lay are on-command actions (the wall gates the visual
+    # on the pet's current form); each must resolve to a real, runnable button script.
+    for phrase, action in [
+        ("breathe fire!", "fire"),
+        ("breath fire", "fire"),
+        ("blow fire", "fire"),
+        ("fire", "fire"),
+        ("lay an egg", "lay"),
+        ("lay egg", "lay"),
+        ("go lay an egg", "lay"),
+    ]:
+        intent = classify(phrase)
+        assert intent is not None and intent.kind == "action", phrase
+        assert intent.value == action, f"{phrase!r} → {intent.value}, expected {action}"
+        assert intent.value in BUTTON_ACTIONS
+
+
 def test_open_ended_falls_through_to_the_llm() -> None:
     # Genuinely open-ended input (no command, no colour, no small-talk phrase) → None,
     # so the API's LLM + babble pool answer it.
