@@ -33,6 +33,7 @@ from jbrain.jpet.intents import CHAT_BABBLE, canonical_color, chat_reply, classi
 from jbrain.jpet.repo import SqlJpetRepo
 from jbrain.jpet.service import PetStateInfo, canned_script
 from jbrain.llm.router import LlmRouter
+from jbrain.locations.ratelimit import TokenBucket
 
 log = structlog.get_logger()
 
@@ -255,7 +256,13 @@ async def send_command(request: Request, principal: PrincipalDep, body: CommandI
 
 
 async def _say(
-    request: Request, ctx: SessionContext, domain: str, state: PetStateInfo, text: str
+    request: Request,
+    ctx: SessionContext,
+    domain: str,
+    state: PetStateInfo,
+    text: str,
+    *,
+    remember: bool = True,
 ) -> PetStateInfo | None:
     """The hybrid talk→action router (docs/archive/JPET_V3_PLAN.md W3). A fast keyword
     classifier runs FIRST — "dance!", "chase the ball", "turn red" act immediately with no
@@ -311,7 +318,7 @@ async def _say(
                 script=canned_script(emote, objects=state.objects),
                 speech=speech,
             )
-    if text:  # remember the exchange so the next turn can recall it
+    if text and remember:  # remember the exchange so the next turn can recall it
         await repo.record_memory(
             ctx, domain=domain, kind="said", body=f'A child said: "{text[:140]}"'
         )
@@ -338,6 +345,37 @@ async def internal_get_pet(request: Request) -> PetOut:
     info = await _repo(request).get_pet(ctx, domain=_settings(request).jpet_domain)
     if info is None:
         raise HTTPException(status_code=404, detail="pet not ready")
+    return PetOut.of(info, _effects(request))
+
+
+class SayIn(BaseModel):
+    """A spoken command captured by the wall's wake-word listener ("robot, dance!")."""
+
+    text: str
+
+
+@internal_router.post("/say")
+async def internal_say(request: Request, body: SayIn) -> PetOut:
+    """Drive the pet from the on-box wall's voice listener (deploy/wall). Internal-only (Caddy
+    never routes /internal off-box) and reached solely through the wall's same-origin proxy, so
+    the exposure equals the wall itself: LAN-only, and the owner authorised that by deploying the
+    wall. Kept safe by construction — the pet lives in the non-sensitive 'general' domain (no
+    health/finance/location), the talk brain's persona is built only from in-scope pet state, and:
+    it is RATE-LIMITED (an unauthenticated LAN caller can't flood the local LLM) and does NOT write
+    the heard text into the pet's long-term memory (the authenticated phone path does that)."""
+    limiter = cast(TokenBucket, request.app.state.pet_say_rate_limiter)
+    if not limiter.allow("wall"):
+        raise HTTPException(status_code=429, detail="too many pet commands; slow down")
+    text = (body.text or "").strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="no text")
+    ctx = SessionContext(principal_kind="owner")
+    domain = _settings(request).jpet_domain
+    state = await _repo(request).ensure_pet(ctx, name=_settings(request).jpet_name, domain=domain)
+    info = await _say(request, ctx, domain, state, text[:500], remember=False)
+    if info is None:  # pragma: no cover — ensure guarantees a pet
+        raise HTTPException(status_code=404, detail="no pet")
+    _broadcaster(request).publish(info)
     return PetOut.of(info, _effects(request))
 
 

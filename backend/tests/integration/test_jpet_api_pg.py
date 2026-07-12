@@ -115,3 +115,28 @@ async def test_pet_api_round_trip(
         internal = client.get("/internal/pet")
         assert internal.status_code == 200
         assert set(internal.json()) == PET_FIELDS
+
+
+async def test_internal_say_drives_the_pet_and_rate_limits(
+    database_url: str,  # noqa: F811
+    maker: async_sessionmaker[AsyncSession],
+) -> None:
+    # The wall's voice listener posts recognised speech here (un-authed, LAN-only). A known
+    # command acts with NO LLM (the keyword router), and the path is rate-limited so an
+    # unauthenticated LAN caller can't flood the local model.
+    await service.rotate_owner_key(SqlAuthRepo(maker))
+    app = create_app(Settings(secure_cookies=False, database_url=database_url))
+    with TestClient(app) as client:
+        said = client.post("/internal/pet/say", json={"text": "dance for me!"})
+        assert said.status_code == 200
+        assert said.json()["script"], "a recognised say should act without the LLM"
+        assert set(said.json()) == PET_FIELDS
+
+        # Blank text is rejected.
+        assert client.post("/internal/pet/say", json={"text": "   "}).status_code == 400
+
+        # The bucket (capacity 8) drains under a burst → 429, proving the flood guard.
+        assert any(
+            client.post("/internal/pet/say", json={"text": "dance"}).status_code == 429
+            for _ in range(20)
+        ), "the LAN say endpoint must rate-limit a burst"

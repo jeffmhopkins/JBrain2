@@ -29,6 +29,14 @@
     padding:10px 16px;border-radius:12px;background:var(--panel);border:1.5px solid var(--gold);
     color:var(--gold);cursor:pointer;text-shadow:0 0 10px var(--gold);box-shadow:0 0 18px rgba(255,210,63,.3)}
   #sound[hidden]{display:none}
+  /* Voice listener state: a dim "say 'robot'…" hint, brightening to a live mic when armed. */
+  #mic{position:fixed;bottom:20px;right:150px;z-index:7;font-size:13px;letter-spacing:1px;
+    padding:10px 14px;border-radius:12px;background:var(--panel);border:1.5px solid var(--cy);
+    color:var(--cy);text-shadow:0 0 10px var(--cy);opacity:.4;transition:opacity .25s,box-shadow .25s}
+  #mic[hidden]{display:none}
+  #mic.armed{opacity:1;border-color:var(--gold);color:var(--gold);text-shadow:0 0 12px var(--gold);
+    box-shadow:0 0 22px rgba(255,210,63,.5);animation:micpulse 1s ease-in-out infinite}
+  @keyframes micpulse{0%,100%{box-shadow:0 0 16px rgba(255,210,63,.35)}50%{box-shadow:0 0 30px rgba(255,210,63,.7)}}
 </style>
 </head>
 <body>
@@ -39,6 +47,7 @@
 <div class="speech" id="speech"></div>
 <div class="status" id="status">waiting for the pet…</div>
 <button id="sound" hidden>🔊 tap for sound</button>
+<div id="mic" hidden>🎤 say “robot”…</div>
 <a class="back" href="/">← neural wall</a>
 <script>
 /* Live wall view of the family pet (docs/archive/JPET_V3_PLAN.md W1). The WALL runs the
@@ -394,8 +403,39 @@ async function initSound(){let voices=[];
 soundBtn.addEventListener('click',()=>{
  soundOn=true;soundBtn.hidden=true;startKeepAlive();
  ttsQ.push('/tts/silence');ttsNext();                     // prime the sink on the unlock gesture
- if(live.speech)speakPet(live.speech);});
+ if(live.speech)speakPet(live.speech);
+ startListening();});                                     // the same tap grants the mic → start listening
 initSound();
+
+/* ---- Voice: always-on wake-word listening. Uses the browser's Web Speech API (Chromium/Chrome/
+   Edge/Safari; a no-op in Firefox, which doesn't ship SpeechRecognition). Say the wake word
+   "robot" then a command — "robot, dance!" in one breath, or "robot" … then "turn the floor blue"
+   after a beat. The browser segments on silence, so the END of the sentence is detected for free;
+   the command text is POSTed to /pet/say (rate-limited, LAN-only). Needs a user gesture to grab
+   the mic + internet (Web Speech transcribes in the cloud), so it starts on the sound-unlock tap. */
+const micEl=document.getElementById('mic');
+const SpeechRec=window.SpeechRecognition||window.webkitSpeechRecognition;
+const WAKE='robot';
+let recog=null,recogWant=false,armed=false,armT=0;
+function sendSay(text){const t=String(text||'').replace(/\s+/g,' ').trim().slice(0,300);if(!t)return;
+ fetch('/pet/say',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text:t})}).catch(()=>{});}
+function setArmed(on){armed=on;armT=on?performance.now()/1000:0;
+ micEl.classList.toggle('armed',on);micEl.textContent=on?'🎤 listening…':'🎤 say “robot”…';}
+function afterWake(text){const i=text.toLowerCase().indexOf(WAKE); // words after the FIRST "robot", or null
+ return i<0?null:text.slice(i+WAKE.length).replace(/^[\s,.:;!?-]+/,'').trim();}
+function handleFinal(text){if(!text)return;
+ if(armed){setArmed(false);sendSay(text);return;}          // we were waiting → this segment is the command
+ const after=afterWake(text);if(after==null)return;         // no wake word here → ignore
+ if(after)sendSay(after);else setArmed(true);}              // "robot dance" → send; bare "robot" → arm + wait
+function startListening(){
+ if(!SpeechRec||recogWant)return;recogWant=true;micEl.hidden=false;
+ recog=new SpeechRec();recog.lang='en-US';recog.continuous=true;recog.interimResults=false;
+ recog.onresult=(e)=>{for(let i=e.resultIndex;i<e.results.length;i++){const r=e.results[i];
+  if(r.isFinal)handleFinal(((r[0]&&r[0].transcript)||'').trim());}};
+ recog.onerror=(e)=>{if(e&&e.error==='not-allowed'){recogWant=false;micEl.hidden=true;}}; // mic denied → give up quietly
+ recog.onend=()=>{if(recogWant)try{recog.start();}catch(_){setTimeout(()=>{try{recog.start();}catch(__){}},400);}}; // keep it alive
+ try{recog.start();}catch(_){}}
+setInterval(()=>{if(armed&&performance.now()/1000-armT>9)setArmed(false);},1000); // a stray "robot" doesn't wait forever
 
 /* ---- GL ---- */
 // Solid-wireframe fill: a dark, near-opaque shell drawn behind the neon edges so a shape

@@ -63,14 +63,18 @@ def fetch_pet_state() -> bytes | None:
 TTS_URL = os.environ.get("BRAIN_TTS_URL", "http://tts-stt:8801").rstrip("/")
 
 
-def api_post(path: str) -> tuple[int, bytes, str]:
-    """POST (empty body) to the on-box api and return (status, body, content-type). Used for
-    the wall's one-shot `/internal/pet/effects/clear` on page load. 503 on any failure."""
+def api_post(path: str, data: bytes = b"", ctype: str = "", timeout: float = 2.0) -> tuple[int, bytes, str]:
+    """POST `data` to the on-box api and return (status, body, content-type). Used for the wall's
+    one-shot `/internal/pet/effects/clear` (empty body) and its voice `/internal/pet/say` (a JSON
+    command, which can take a moment when it hits the LLM). 503 on any failure."""
     try:
-        req = urllib.request.Request(f"{API_URL}{path}", data=b"", method="POST")  # noqa: S310
-        with urllib.request.urlopen(req, timeout=2) as resp:  # noqa: S310
+        headers = {"Content-Type": ctype} if ctype else {}
+        req = urllib.request.Request(  # noqa: S310
+            f"{API_URL}{path}", data=data, method="POST", headers=headers
+        )
+        with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310
             return resp.status, resp.read(), resp.headers.get("Content-Type", "application/json")
-    except Exception:  # noqa: BLE001 — any failure just means the reset didn't land; harmless
+    except Exception:  # noqa: BLE001 — any failure just means the command didn't land; harmless
         return 503, b'{"error":"unavailable"}', "application/json"
 
 
@@ -512,6 +516,15 @@ class Handler(BaseHTTPRequestHandler):
             # The pet page calls this on load so a reload drops the ephemeral colour/size
             # overrides (they were never persisted). Same-origin forward to the on-box api.
             code, body, ctype = api_post("/internal/pet/effects/clear")
+            self._send(code, body, ctype)
+            return
+        if path == "/pet/say":
+            # The pet page's voice listener heard "robot, <command>" — forward the spoken text to
+            # the internal talk brain (rate-limited on the api). Same trust boundary as the wall
+            # (LAN-only). A slow LLM turn can take a few seconds, so allow a longer timeout.
+            n = min(int(self.headers.get("Content-Length", 0) or 0), 2048)
+            raw = self.rfile.read(n) if n > 0 else b"{}"
+            code, body, ctype = api_post("/internal/pet/say", raw, "application/json", timeout=30.0)
             self._send(code, body, ctype)
             return
         if path != "/event":
