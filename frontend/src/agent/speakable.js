@@ -383,6 +383,12 @@ export function toUtterance(prose, engine = "piper") {
   // Latin abbreviations → words (before pause-authoring, so their interior dots aren't read
   // as sentence ends and the spoken aside carries a real pause).
   for (const [re, word] of profile.abbreviations) s = s.replace(re, word);
+  // A single-letter name initial ("Dennis E. Taylor", "J. R. R. Tolkien") — drop the period, like
+  // titles above. Its "." otherwise reads as a SENTENCE END: espeak takes a long pause AND the clip
+  // splitter cuts the name in two (a separate render = an audible gap), which compound. Gated to an
+  // initial FOLLOWED by a capitalized word (a surname / next initial) and NOT part of a dotted
+  // abbreviation like "U.S.", so a real single-letter sentence end is rarely touched.
+  s = s.replace(/(?<!\.)\b([A-Z])\.(?=\s+[A-Z])/g, "$1");
   // Ellipsis: normalize "..."/"…" to a single ellipsis char. espeak renders it as a ~300 ms
   // trailing beat — longer than a comma, no spoken "dot dot dot" — and the chunker never cuts on
   // it (it's not . ! ?), so the dramatic pause stays inside the clause instead of splitting it.
@@ -489,9 +495,10 @@ function splitClips(norm) {
 }
 
 // Abbreviations whose trailing "." never ends a sentence (titles before a name, e.g./i.e.) —
-// so the streaming committer doesn't cut a clip mid-name ("Dr. Smith" → "Doctor" ⏸ "Smith").
-// Kept to never-sentence-final tokens only, so a real sentence end is never wrongly held.
-const ABBREV_NO_BREAK = /(?:^|[\s("'‘“])(?:mr|mrs|ms|dr|prof|vs|approx|e\.g|i\.e)\.$/i;
+// so the streaming committer doesn't cut a clip mid-name ("Dr. Smith" → "Doctor" ⏸ "Smith"). A
+// lone letter is a name initial ("Dennis E. Taylor"): held for the same reason (the utterance pass
+// drops its period, so the real sentence end follows). Kept to never-sentence-final tokens only.
+const ABBREV_NO_BREAK = /(?:^|[\s("'‘“])(?:mr|mrs|ms|dr|prof|vs|approx|e\.g|i\.e|[a-z])\.$/i;
 
 /** In the trailing (newline-less) line, the length up to the last COMPLETE sentence — so a
  * partial final sentence is held for the next delta. A terminator is only a boundary when
