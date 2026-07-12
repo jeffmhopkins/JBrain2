@@ -1395,7 +1395,7 @@ function robot(t){
 // blocks off to one side, and the robot on a jetpack building an LLM-drafted voxel model of X,
 // block by block, layer by layer. All ephemeral (a page reload restores the room).
 const FIELD_GREEN=[.24,.8,.36],SKY=[.05,.08,.13];
-const VOX=0.55,STA_C=[0,-1],PILE=[9.5,4.5];               // voxel world size; statue centre; the block pile
+const VOX=0.55,STA_C=[0,-1],PILE=[9.5,4.5],SOURCE=[19,15]; // voxel size; statue centre; pile; the far "quarry" the robot fetches blocks from
 // Map a grid cell to the world, centred on the model's OWN bounds (so an off-centre model from the
 // LLM still lands in the middle of the field) and resting on the ground (its lowest layer at y=0).
 function voxWorld(vx,vy,vz){const s=statue||{},cx=s.cx==null?11.5:s.cx,cz=s.cz==null?11.5:s.cz,y0=s.y0||0;
@@ -1403,9 +1403,12 @@ function voxWorld(vx,vy,vz){const s=statue||{},cx=s.cx==null?11.5:s.cx,cz=s.cz==
 function hexRGB(c){if(typeof c!=='string')return[.6,.63,.7];const s=c.replace('#','');
  if(s.length!==6)return[.6,.63,.7];const n=parseInt(s,16);if(isNaN(n))return[.6,.63,.7];
  return[((n>>16)&255)/255,((n>>8)&255)/255,(n&255)/255];}
-// A static heap of colourful bricks — the "never-ending" pile the robot grabs each block from.
+// The block pile the robot builds up during drafting (then grabs from to build the statue). Each
+// entry is [dx, y, dz, colour] relative to PILE; sorted ground-up so the heap grows from the base.
 const PILE_BLOCKS=(()=>{const a=[],pal=[CY,MG,GD,OR,BL,RD];for(let i=0;i<44;i++){const r=Math.random(),
- ang=Math.random()*6.283,rad=r*1.7;a.push([Math.cos(ang)*rad,VOX*0.5+(1-r)*1.7*Math.random(),Math.sin(ang)*rad,pal[i%6]]);}return a;})();
+ ang=Math.random()*6.283,rad=r*1.7;a.push([Math.cos(ang)*rad,VOX*0.5+(1-r)*1.7*Math.random(),Math.sin(ang)*rad,pal[i%6]]);}
+ a.sort((p,q)=>p[1]-q[1]);return a;})();
+function pileShown(){return(statue&&statue.pileN!=null)?statue.pileN:PILE_BLOCKS.length;} // grows during drafting; full otherwise
 // Draft order: fill layer by layer (y up), a random block within each layer (as asked).
 function buildOrder(vox){const by={};for(const v of vox){(by[v.y]=by[v.y]||[]).push(v);}
  const out=[];for(const y of Object.keys(by).map(Number).sort((a,b)=>a-b)){const L=by[y];
@@ -1416,7 +1419,10 @@ function buildOrder(vox){const by={};for(const v of vox){(by[v.y]=by[v.y]||[]).p
 // wanders the field; when the model lands we queue it and the jetpack build begins.
 function startStatue(subject){
  petScene='field';P.asleep=false;P.emotion='excited';
- statue={subject:subject,state:'drafting',placed:[],queue:[],i:0,phase:'toPile',carry:null,carryCol:[1,1,1],wanderT:0,wanderTarget:[0,0]};
+ // pileN starts at 0: while the LLM drafts, the robot ferries blocks in from the far quarry to
+ // STACK the source pile (paced to ~the draft time), so the wait is the pet gathering materials.
+ statue={subject:subject,state:'drafting',placed:[],queue:[],i:0,phase:'toPile',carry:null,carryCol:[1,1,1],
+   wanderT:0,wanderTarget:[0,0],pileN:0,draftPhase:'toSource',dwell:0};
  const mine=subject;
  fetch('/pet/statue',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({subject:subject})})
   .then(r=>r.ok?r.json():Promise.reject(r.status))
@@ -1426,6 +1432,7 @@ function startStatue(subject){
    let mnx=99,mxx=-99,mnz=99,mxz=-99,mny=99;                        // centre the model + rest it on the ground
    for(const v of vox){if(v.x<mnx)mnx=v.x;if(v.x>mxx)mxx=v.x;if(v.z<mnz)mnz=v.z;if(v.z>mxz)mxz=v.z;if(v.y<mny)mny=v.y;}
    statue.cx=(mnx+mxx)/2;statue.cz=(mnz+mxz)/2;statue.y0=mny;
+   statue.carry=null;statue.pileN=Math.max(statue.pileN||0,10);      // freeze the gathered pile as the build source
    statue.queue=buildOrder(vox);statue.placed=[];statue.i=0;statue.phase='toPile';statue.state='building';
    statue.batch=Math.max(1,Math.ceil(statue.queue.length/140));})   // keep the build to ~140 trips, however big
   .catch(()=>{if(statue&&statue.subject===mine)statue.state='failed';});
@@ -1439,11 +1446,27 @@ function moveTo(dt,spd){const dx=P.tx-P.x,dz=P.tz-P.z,d=Math.hypot(dx,dz);
 function stepStatue(dt,t){
  if(!statue){flyY+=(0-flyY)*Math.min(1,dt*4);return;}
  const FLY=11.0;
- if(statue.state==='drafting'||statue.state==='failed'){          // wander while the artist thinks
+ if(statue.state==='failed'){                                     // couldn't imagine it → just potter about
   statue.wanderT-=dt;
   if(statue.wanderT<=0){statue.wanderT=1.4+Math.random()*1.6;statue.wanderTarget=[STA_C[0]+(Math.random()*2-1)*7,STA_C[1]+(Math.random()*2-1)*7];}
-  P.tx=statue.wanderTarget[0];P.tz=statue.wanderTarget[1];P.act='walk';
-  flyY+=(0-flyY)*Math.min(1,dt*4);moveTo(dt,FLY*0.45);return;
+  P.tx=statue.wanderTarget[0];P.tz=statue.wanderTarget[1];P.act='walk';flyY+=(0-flyY)*Math.min(1,dt*4);moveTo(dt,FLY*0.45);return;
+ }
+ if(statue.state==='drafting'){                                   // gather the source pile while the LLM sculpts
+  if(statue.dwell>0){statue.dwell-=dt;P.tx=P.x;P.tz=P.z;return;}  // brief pause to "grab"/"set down"
+  if(statue.pileN>=PILE_BLOCKS.length){                           // pile fully stacked → mill about until the draft lands
+   statue.wanderT-=dt;
+   if(statue.wanderT<=0){statue.wanderT=1.4+Math.random()*1.4;statue.wanderTarget=[PILE[0]+(Math.random()*2-1)*3,PILE[1]+(Math.random()*2-1)*3];}
+   P.tx=statue.wanderTarget[0];P.tz=statue.wanderTarget[1];P.act='walk';flyY+=(0-flyY)*Math.min(1,dt*4);moveTo(dt,FLY*0.5);return;
+  }
+  if(statue.draftPhase==='toSource'){                            // fly out to the far quarry for a block
+   P.tx=SOURCE[0];P.tz=SOURCE[1];P.act='walk';flyY+=(2.4-flyY)*Math.min(1,dt*4);
+   if(moveTo(dt,FLY*0.9)){statue.carry=true;statue.carryCol=PILE_BLOCKS[statue.pileN][3];statue.draftPhase='toPile';statue.dwell=2.0;sfx('pick_up');}
+  }else{                                                          // carry it back and stack it on the growing pile
+   const tgt=PILE_BLOCKS[statue.pileN],px=PILE[0]+tgt[0],pz=PILE[1]+tgt[2];
+   P.tx=px;P.tz=pz;P.act='walk';flyY+=(1.4-flyY)*Math.min(1,dt*4);
+   if(Math.hypot(P.x-px,P.z-pz)<0.8){statue.pileN++;statue.carry=null;statue.draftPhase='toSource';statue.dwell=2.0;sfx('put_down');}
+  }
+  return;
  }
  if(statue.state==='building'){
   const v=statue.queue[statue.i];
@@ -1467,7 +1490,8 @@ function stepStatue(dt,t){
 function drawField(){                                             // a wide green ground grid
  draw(gFloor,nFloor,gl.LINES,M.mul(vp,M.scale(M.ident(),3.4,1,3.4)),FIELD_GREEN,.45);
  draw(gFloor,nFloor,gl.LINES,M.mul(vp,M.scale(M.ident(),1.3,1,1.3)),FIELD_GREEN,.7);}
-function drawPile(){for(const b of PILE_BLOCKS)part(M.ident(),PILE[0]+b[0],b[1],PILE[1]+b[2],VOX*0.9,VOX*0.9,VOX*0.9,b[3],1);}
+function drawPile(){const n=pileShown();for(let i=0;i<n&&i<PILE_BLOCKS.length;i++){const b=PILE_BLOCKS[i];
+ part(M.ident(),PILE[0]+b[0],b[1],PILE[1]+b[2],VOX*0.9,VOX*0.9,VOX*0.9,b[3],1);}}
 function drawStatue(){if(!statue)return;
  for(const v of statue.placed){const w=voxWorld(v.x,v.y,v.z);part(M.ident(),w[0],w[1],w[2],VOX*0.96,VOX*0.96,VOX*0.96,hexRGB(v.c),1);}
  if(statue.carry){const cx=P.x+Math.sin(P.facing)*.6,cz=P.z+Math.cos(P.facing)*.6;                 // the block in its hands
