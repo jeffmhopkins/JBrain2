@@ -71,13 +71,19 @@ _SCALE_MIN, _SCALE_MAX = 0.4, 2.5
 _GROW_STEP, _SHRINK_STEP = 1.25, 0.8
 
 
+def _fresh_effects() -> dict[str, Any]:
+    """A clean effects store — every override at its default (the reload / reset state)."""
+    return {"colors": {}, "scales": {}, "pet_scale": 1.0, "pet_form": "robot"}
+
+
 def _effects(request: Request) -> dict[str, Any]:
-    """The in-memory effects store (colours/scales/pet scale), lazily created so a test app
+    """The in-memory effects store (colours/scales/pet scale/form), lazily created so a test app
     that didn't wire it still works. Cleared on the wall's reload via `/internal/pet/effects`."""
     fx = getattr(request.app.state, "pet_effects", None)
     if fx is None:
-        fx = {"colors": {}, "scales": {}, "pet_scale": 1.0}
+        fx = _fresh_effects()
         request.app.state.pet_effects = fx
+    fx.setdefault("pet_form", "robot")  # tolerate a store created before forms existed
     return fx
 
 
@@ -85,23 +91,33 @@ def _clamp_scale(v: float) -> float:
     return max(_SCALE_MIN, min(_SCALE_MAX, v))
 
 
+def _resized(cur: float, value: str) -> float:
+    """New scale for a resize: huge/tiny jump to max/min, grow/shrink step, reset → 1."""
+    if value == "reset":
+        return 1.0
+    if value == "huge":
+        return _SCALE_MAX
+    if value == "tiny":
+        return _SCALE_MIN
+    return _clamp_scale(cur * (_GROW_STEP if value == "grow" else _SHRINK_STEP))
+
+
 def _apply_effect(fx: dict[str, Any], *, kind: str, target: str, value: str) -> None:
-    """Fold a recolor/resize intent into the ephemeral store. Colour 'default' / a size 'reset'
-    drop the override (back to the object's built-in look/size)."""
-    if kind == "recolor":
+    """Fold a recolor/resize/form intent into the ephemeral store. Colour 'default' / a size
+    'reset' drop the override (back to the object's built-in look/size)."""
+    if kind == "form":
+        fx["pet_form"] = value
+    elif kind == "recolor":
         if value == "default":
             fx["colors"].pop(target, None)
         else:
             fx["colors"][target] = value
-        return
-    # resize
-    step = _GROW_STEP if value == "grow" else _SHRINK_STEP
-    if target == "robot":
-        fx["pet_scale"] = 1.0 if value == "reset" else _clamp_scale(fx["pet_scale"] * step)
-    elif value == "reset":
+    elif target == "robot":  # resize the pet itself
+        fx["pet_scale"] = _resized(fx["pet_scale"], value)
+    elif value == "reset":  # resize a room thing — reset drops the override
         fx["scales"].pop(target, None)
     else:
-        fx["scales"][target] = _clamp_scale(fx["scales"].get(target, 1.0) * step)
+        fx["scales"][target] = _resized(fx["scales"].get(target, 1.0), value)
 
 
 class PetOut(BaseModel):
@@ -133,6 +149,8 @@ class PetOut(BaseModel):
     object_colors: dict[str, str] = {}
     object_scales: dict[str, float] = {}
     pet_scale: float = 1.0
+    # Which creature the pet is drawn as: "robot" (default) or dog/cat/dragon/cow/pig/chicken.
+    pet_form: str = "robot"
 
     @classmethod
     def of(cls, info: PetStateInfo, effects: dict[str, Any] | None = None) -> "PetOut":
@@ -158,6 +176,7 @@ class PetOut(BaseModel):
             object_colors=dict(fx.get("colors", {})),
             object_scales=dict(fx.get("scales", {})),
             pet_scale=float(fx.get("pet_scale", 1.0)),
+            pet_form=str(fx.get("pet_form", "robot")),
         )
 
 
@@ -248,14 +267,19 @@ async def _say(
     intent = classify(text)
     if intent is not None and intent.kind == "color":
         info = await repo.set_color(ctx, domain=domain, color=intent.value, speech=intent.speech)
-    elif intent is not None and intent.kind in ("recolor", "resize"):
-        # An ephemeral wall effect — "turn the floor blue", "make the bed bigger". Fold it into
-        # the in-memory store (the wall reads it on its next poll; a reload resets it) and give
-        # the pet a little wiggle + the friendly line, so both surfaces show it reacted.
+    elif intent is not None and intent.kind == "reset_all":
+        # "Reset everything" — wipe every ephemeral effect AND the pet's own colour, in one go.
+        request.app.state.pet_effects = _fresh_effects()
+        info = await repo.set_color(ctx, domain=domain, color="default", speech=intent.speech)
+    elif intent is not None and intent.kind in ("recolor", "resize", "form"):
+        # An ephemeral wall effect — "turn the floor blue", "make the bed huge", "be a dragon".
+        # Fold it into the in-memory store (the wall reads it on its next poll; a reload resets
+        # it) and give the pet a little reaction so both surfaces show it did something.
         _apply_effect(
             _effects(request), kind=intent.kind, target=intent.target or "robot", value=intent.value
         )
-        script = canned_script("wiggle", objects=state.objects)
+        emote = "spin" if intent.kind == "form" else "wiggle"  # a twirl to sell the transformation
+        script = canned_script(emote, objects=state.objects)
         info = await repo.run_script(ctx, domain=domain, script=script, speech=intent.speech)
     elif intent is not None:  # a recognised command action or a bit of small talk — no LLM
         script = canned_script(intent.value, objects=state.objects)
@@ -321,7 +345,7 @@ async def internal_get_pet(request: Request) -> PetOut:
 async def internal_clear_effects(request: Request) -> dict[str, bool]:
     """Wipe the ephemeral colour/size overrides. The wall calls this on page load so a reload
     starts from the built-in defaults (the effects were never persisted). Internal-only."""
-    request.app.state.pet_effects = {"colors": {}, "scales": {}, "pet_scale": 1.0}
+    request.app.state.pet_effects = _fresh_effects()
     return {"ok": True}
 
 

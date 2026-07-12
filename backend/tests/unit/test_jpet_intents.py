@@ -135,15 +135,42 @@ def test_make_bigger_smaller_normal_resizes_a_target_or_the_robot() -> None:
     for phrase, target, direction in [
         ("make the bed bigger", "bed", "grow"),
         ("make the piano smaller", "synth", "shrink"),
-        ("make the drums huge", "drums", "grow"),
-        ("make the ball tiny", "ball", "shrink"),
+        ("make the drums huge", "drums", "huge"),  # huge/tiny jump to the max/min, not a step
+        ("make the ball tiny", "ball", "tiny"),
         ("make me bigger", "robot", "grow"),  # no room thing → the pet grows
         ("make it smaller", "robot", "shrink"),
+        ("make me huge", "robot", "huge"),
         ("make the bed normal", "bed", "reset"),  # per-target size reset
         ("make me normal", "robot", "reset"),
     ]:
         i = _c(phrase)
         assert i.kind == "resize" and i.target == target and i.value == direction, phrase
+
+
+def test_head_body_are_recolour_targets_and_forms_need_a_transform_verb() -> None:
+    # The robot's two zones recolour separately from the whole pet.
+    for phrase, target in [("turn your head blue", "head"), ("turn the tummy red", "body")]:
+        i = _c(phrase)
+        assert i.kind == "recolor" and i.target == target, phrase
+    # A creature word morphs the pet ONLY with a transform verb.
+    for phrase, form in [
+        ("change into a dog", "dog"),
+        ("be a dragon", "dragon"),
+        ("turn into a kitty", "cat"),
+        ("become a cow", "cow"),
+        ("turn back into a robot", "robot"),
+    ]:
+        i = _c(phrase)
+        assert i.kind == "form" and i.value == form, phrase
+    # …a bare creature word in chit-chat does NOT.
+    assert classify("do you like cats") is None
+    assert classify("be a good boy") is None  # a transform verb but no creature
+
+
+def test_reset_everything_is_its_own_command() -> None:
+    for phrase in ("reset everything", "clear everything", "put everything back", "start over"):
+        i = _c(phrase)
+        assert i.kind == "reset_all", phrase
 
 
 def test_size_words_do_not_fire_on_ordinary_chit_chat() -> None:
