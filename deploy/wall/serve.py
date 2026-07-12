@@ -61,26 +61,6 @@ def fetch_pet_state() -> bytes | None:
 # which can reach neither the internal `tts-stt` name nor the authenticated api — still
 # fetches read-aloud audio from wall:8800/tts*.
 TTS_URL = os.environ.get("BRAIN_TTS_URL", "http://tts-stt:8801").rstrip("/")
-# The on-box whisper.cpp STT (the SAME tts-stt container, llama-swap on :8080, OpenAI audio path).
-# The wall's voice listener posts a captured phrase here to transcribe it locally — no cloud, so it
-# works in Chromium/Firefox (unlike the browser Web Speech API). Bounded + lightly throttled below.
-STT_URL = os.environ.get("BRAIN_STT_URL", "http://tts-stt:8080").rstrip("/")
-_STT_MAX_BYTES = 8 * 1024 * 1024
-_stt_last = [0.0]  # crude throttle: at most a couple of transcriptions a second (VAD already gates)
-
-
-def stt_forward(body: bytes, ctype: str) -> tuple[int, bytes, str]:
-    """Forward a multipart audio clip to whisper's `/v1/audio/transcriptions` and return
-    (status, transcript, content-type). 503 on any failure so the page just tries again."""
-    try:
-        req = urllib.request.Request(  # noqa: S310
-            f"{STT_URL}/v1/audio/transcriptions", data=body, method="POST",
-            headers={"Content-Type": ctype},
-        )
-        with urllib.request.urlopen(req, timeout=60) as resp:  # noqa: S310 — whisper can load-on-demand
-            return resp.status, resp.read(), resp.headers.get("Content-Type", "text/plain")
-    except Exception:  # noqa: BLE001 — STT unavailable (model not provisioned / busy); page retries
-        return 503, b"stt unavailable", "text/plain"
 
 
 def api_post(path: str, data: bytes = b"", ctype: str = "", timeout: float = 2.0) -> tuple[int, bytes, str]:
@@ -537,22 +517,6 @@ class Handler(BaseHTTPRequestHandler):
             # overrides (they were never persisted). Same-origin forward to the on-box api.
             code, body, ctype = api_post("/internal/pet/effects/clear")
             self._send(code, body, ctype)
-            return
-        if path == "/pet/stt":
-            # The pet page's voice listener sends a captured phrase (multipart WAV) to be
-            # transcribed on-box by whisper. Bounded + throttled; VAD on the page already gates it.
-            ctype = self.headers.get("Content-Type", "")
-            n = int(self.headers.get("Content-Length", 0) or 0)
-            if n <= 0 or n > _STT_MAX_BYTES or "multipart/form-data" not in ctype:
-                self._send(400, b"bad audio", "text/plain")
-                return
-            body = self.rfile.read(n)  # drain the body regardless, so the connection stays sane
-            if time.time() - _stt_last[0] < 0.4:
-                self._send(429, b"slow down", "text/plain")
-                return
-            _stt_last[0] = time.time()
-            code, out, octype = stt_forward(body, ctype)
-            self._send(code, out, octype)
             return
         if path == "/pet/say":
             # The pet page's voice listener heard "robot, <command>" — forward the spoken text to
