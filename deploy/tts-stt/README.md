@@ -38,7 +38,8 @@ One always-on container serving the box's **speech I/O**:
 - **Speakable-text normalization (both engines).** Before *either* engine phonemizes, `tts_wav`
   runs `_speakable_text` to expand terse symbols/abbreviations an answer writes but a voice should
   speak in full: **degree units** (`94 °F` → "94 degrees Fahrenheit"; also °C/°K and a lone `°`),
-  **wind speeds** (`4 mph`/`kph`/`km/h` → "miles/kilometers per hour"), **compass points** (the 2-
+  **wind speeds** (`4 mph`/`kph`/`km/h` → "miles/kilometers per hour"), **distance** (`40 mi` →
+  "40 miles", gated to a preceding number), **compass points** (the 2-
   and 3-letter codes anywhere — `SSW` → "south southwest"; bare `N/S/E/W` only after "from"/"the"
   so grades/initials aren't mangled), **dates** (`July 10, 2026`/`July 10 2026`/`July 10th` →
   "July tenth, twenty twenty six" — day as an ordinal, year in speech style, which neither engine's
@@ -48,6 +49,14 @@ One always-on container serving the box's **speech I/O**:
   `KOKORO_LEXICON`, which fixes single-word *phonemes* on the misaki path only. Add a symbol or
   abbreviation by extending the maps at the top of the `_speakable_text` block in `piper_server.py`
   (`_STATE_NAMES`, `_COMPASS`, `_DEGREE_UNITS`, `_SPEED_UNITS`).
+  **Two normalizers, by surface.** The **PWA** read-aloud already runs the frontend
+  `frontend/src/agent/speakable.js` before it ever calls the box, and that pass verbalizes every
+  number (`2026` → "two thousand twenty six") — so the *number-adjacent* rewrites (dates,
+  temperature units, the `mi` distance unit) must happen **there**, before the digits are gone;
+  they're mirrored in `speakable.js`'s `measuresToWords`. `_speakable_text` here is the effective
+  normalizer for the **wall** (whose `mdToPlain` leaves digits intact) and the backstop for any raw
+  `/tts` caller; the non-numeric rewrites (compass, state) work for the PWA too because
+  `speakable.js` leaves those tokens untouched for the box.
 - **STT (`:8080`)** — whisper.cpp behind llama-swap (load-on-demand, idle-unload). The api
   reaches it at `http://tts-stt:8080/v1`; the model + `llama-swap.yaml` config are
   provisioned by `jbrain enable-whisper` (`scripts/whisper-setup.sh`).

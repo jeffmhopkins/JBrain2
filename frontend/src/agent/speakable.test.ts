@@ -75,6 +75,24 @@ describe("speakable", () => {
     expect(speakable("There are 1,024 files.")).toBe("There are one thousand twenty four files.");
   });
 
+  it("speaks dates as ordinal day + speech-style year (before the number pass mangles them)", () => {
+    expect(speakable("Tomorrow is July 10, 2026.")).toBe(
+      "Tomorrow is July tenth, twenty twenty six.",
+    );
+    expect(speakable("due April 21 2010")).toBe("due April twenty first, twenty ten.");
+    expect(speakable("born May 1, 2000")).toBe("born May first, two thousand.");
+    expect(speakable("the July 10th deadline")).toBe("the July tenth deadline.");
+  });
+
+  it("speaks temperature units and the mi distance unit in full", () => {
+    expect(speakable("a high near 94°F today")).toBe(
+      "a high near ninety four degrees Fahrenheit today.",
+    );
+    expect(speakable("40 mi south of here")).toBe("forty miles south of here.");
+    // A bare degree with no unit still reads "degrees" (the existing behaviour, unchanged).
+    expect(speakable("tilt it 45° back")).toBe("tilt it forty five degrees back.");
+  });
+
   it("verbalizes the allow-list emoji and drops the rest", () => {
     expect(speakable("Done ✅ and shipped 🚀")).toBe("Done check and shipped.");
     expect(speakable("Careful ⚠️ here")).toBe("Careful warning here.");
