@@ -65,6 +65,45 @@ def _router(request: Request) -> LlmRouter:
     return cast(LlmRouter, request.app.state.llm_router)
 
 
+# Ephemeral wall effects (never persisted): the "turn X <colour>" / "make X bigger" overrides.
+# Bounds keep a kid from making a thing vanish or fill the room.
+_SCALE_MIN, _SCALE_MAX = 0.4, 2.5
+_GROW_STEP, _SHRINK_STEP = 1.25, 0.8
+
+
+def _effects(request: Request) -> dict[str, Any]:
+    """The in-memory effects store (colours/scales/pet scale), lazily created so a test app
+    that didn't wire it still works. Cleared on the wall's reload via `/internal/pet/effects`."""
+    fx = getattr(request.app.state, "pet_effects", None)
+    if fx is None:
+        fx = {"colors": {}, "scales": {}, "pet_scale": 1.0}
+        request.app.state.pet_effects = fx
+    return fx
+
+
+def _clamp_scale(v: float) -> float:
+    return max(_SCALE_MIN, min(_SCALE_MAX, v))
+
+
+def _apply_effect(fx: dict[str, Any], *, kind: str, target: str, value: str) -> None:
+    """Fold a recolor/resize intent into the ephemeral store. Colour 'default' / a size 'reset'
+    drop the override (back to the object's built-in look/size)."""
+    if kind == "recolor":
+        if value == "default":
+            fx["colors"].pop(target, None)
+        else:
+            fx["colors"][target] = value
+        return
+    # resize
+    step = _GROW_STEP if value == "grow" else _SHRINK_STEP
+    if target == "robot":
+        fx["pet_scale"] = 1.0 if value == "reset" else _clamp_scale(fx["pet_scale"] * step)
+    elif value == "reset":
+        fx["scales"].pop(target, None)
+    else:
+        fx["scales"][target] = _clamp_scale(fx["scales"].get(target, 1.0) * step)
+
+
 class PetOut(BaseModel):
     """The pet's wire shape (v3 — no drive meters): durable state + the current command
     `script`, the room `objects` ({kind: [x, z]}), what it's carrying, and the light state.
@@ -87,9 +126,17 @@ class PetOut(BaseModel):
     carrying: str | None
     lights_on: bool
     objects: dict[str, list[float]]
+    # Ephemeral "turn X <colour>" / "make X bigger" wall effects (docs — talk-box commands):
+    # a per-object colour override, a per-object scale, and the robot's own scale. NEVER
+    # persisted — held only in memory (`app.state.pet_effects`), overlaid here for the wall's
+    # poll, and cleared when the wall reloads, so a fresh display starts back at the defaults.
+    object_colors: dict[str, str] = {}
+    object_scales: dict[str, float] = {}
+    pet_scale: float = 1.0
 
     @classmethod
-    def of(cls, info: PetStateInfo) -> "PetOut":
+    def of(cls, info: PetStateInfo, effects: dict[str, Any] | None = None) -> "PetOut":
+        fx = effects or {}
         return cls(
             name=info.name,
             domain=info.domain,
@@ -108,6 +155,9 @@ class PetOut(BaseModel):
             carrying=info.carrying,
             lights_on=info.lights_on,
             objects={k: [v[0], v[1]] for k, v in info.objects.items()},
+            object_colors=dict(fx.get("colors", {})),
+            object_scales=dict(fx.get("scales", {})),
+            pet_scale=float(fx.get("pet_scale", 1.0)),
         )
 
 
@@ -157,7 +207,7 @@ async def _ensure(request: Request, ctx: SessionContext) -> PetStateInfo:
 @router.get("")
 async def get_pet(request: Request, principal: PrincipalDep) -> PetOut:
     """The current pet state (created on first read)."""
-    return PetOut.of(await _ensure(request, ctx_for(principal)))
+    return PetOut.of(await _ensure(request, ctx_for(principal)), _effects(request))
 
 
 @router.post("/command")
@@ -182,7 +232,7 @@ async def send_command(request: Request, principal: PrincipalDep, body: CommandI
     if info is None:  # pragma: no cover — the ensure above guarantees a pet
         raise HTTPException(status_code=404, detail="no pet")
     _broadcaster(request).publish(info)
-    return PetOut.of(info)
+    return PetOut.of(info, _effects(request))
 
 
 async def _say(
@@ -198,6 +248,15 @@ async def _say(
     intent = classify(text)
     if intent is not None and intent.kind == "color":
         info = await repo.set_color(ctx, domain=domain, color=intent.value, speech=intent.speech)
+    elif intent is not None and intent.kind in ("recolor", "resize"):
+        # An ephemeral wall effect — "turn the floor blue", "make the bed bigger". Fold it into
+        # the in-memory store (the wall reads it on its next poll; a reload resets it) and give
+        # the pet a little wiggle + the friendly line, so both surfaces show it reacted.
+        _apply_effect(
+            _effects(request), kind=intent.kind, target=intent.target or "robot", value=intent.value
+        )
+        script = canned_script("wiggle", objects=state.objects)
+        info = await repo.run_script(ctx, domain=domain, script=script, speech=intent.speech)
     elif intent is not None:  # a recognised command action or a bit of small talk — no LLM
         script = canned_script(intent.value, objects=state.objects)
         info = await repo.run_script(ctx, domain=domain, script=script, speech=intent.speech)
@@ -255,7 +314,15 @@ async def internal_get_pet(request: Request) -> PetOut:
     info = await _repo(request).get_pet(ctx, domain=_settings(request).jpet_domain)
     if info is None:
         raise HTTPException(status_code=404, detail="pet not ready")
-    return PetOut.of(info)
+    return PetOut.of(info, _effects(request))
+
+
+@internal_router.post("/effects/clear")
+async def internal_clear_effects(request: Request) -> dict[str, bool]:
+    """Wipe the ephemeral colour/size overrides. The wall calls this on page load so a reload
+    starts from the built-in defaults (the effects were never persisted). Internal-only."""
+    request.app.state.pet_effects = {"colors": {}, "scales": {}, "pet_scale": 1.0}
+    return {"ok": True}
 
 
 async def _events(broadcaster: PetBroadcaster, initial: PetStateInfo) -> AsyncIterator[bytes]:
