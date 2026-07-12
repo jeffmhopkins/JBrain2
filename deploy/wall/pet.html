@@ -29,6 +29,17 @@
   .heard.show{opacity:.96}
   .status{position:fixed;bottom:22px;left:50%;transform:translateX(-50%);z-index:6;
     font-size:13px;letter-spacing:2px;opacity:.5}
+  /* Statue-build banners: a title up top ("BUILDING …" / "DRAFTING STATUE") and a progress
+     line along the bottom ("N% DONE"), shown only in the field while a statue is going up. */
+  .banner{position:fixed;left:50%;transform:translateX(-50%);z-index:8;text-align:center;
+    padding:12px 26px;border-radius:16px;background:var(--panel);border:1.5px solid var(--mg);
+    font-weight:800;letter-spacing:2px;color:var(--mg);text-shadow:0 0 14px var(--mg);
+    box-shadow:0 0 26px rgba(255,60,200,.4);opacity:0;transition:opacity .3s;pointer-events:none;
+    max-width:82%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .banner.show{opacity:.97}
+  #topban{top:40px;font-size:30px}
+  #botban{bottom:40px;font-size:22px;border-color:var(--gold);color:var(--gold);
+    text-shadow:0 0 12px var(--gold);box-shadow:0 0 22px rgba(255,210,63,.4)}
   .back{position:fixed;bottom:20px;left:24px;z-index:6;font-size:12px;letter-spacing:2px;
     color:var(--cy);text-decoration:none;opacity:.6}
   #sound{position:fixed;bottom:20px;right:24px;z-index:7;font-size:14px;letter-spacing:1px;
@@ -52,6 +63,8 @@
 <div class="hud"><div class="name" id="name">JPET</div><div class="mood" id="mood">connecting…</div></div>
 <div class="speech" id="speech"></div>
 <div class="heard" id="heard"></div>
+<div class="banner" id="topban"></div>
+<div class="banner" id="botban"></div>
 <div class="status" id="status">waiting for the pet…</div>
 <button id="sound" hidden>🔊 tap for sound</button>
 <div id="mic" hidden>🎤 say “robot”…</div>
@@ -108,6 +121,10 @@ let colorOverride=null,lastServerColor=null;                // a wall-local reco
 // pet's creature form — held only here, so a page reload (which also POSTs /pet/effects/clear)
 // starts back at the built-in robot look.
 let objColors={},objScale={},petScale=1,petForm='robot',sceneT=0;
+// Scene ("room"/"field") + the "build a statue of X" job. `statue` holds the whole build: the
+// LLM-drafted voxel queue, what's placed so far, and the pet's fly-and-carry trip state. `flyY`
+// lifts the pet off the ground while it jets around placing blocks. All reset on a page reload.
+let petScene='room',statueSeq=0,statue=null,flyY=0;
 // Each thing turned rainbow gets its OWN random start hue (keyed by name), so a rainbow floor and
 // a rainbow head aren't locked in the same colour — they drift independently.
 const _rbSeed={};
@@ -243,6 +260,10 @@ function applyLive(){
   // never persisted). Mirror them each frame; the server was cleared on this page's load, so a
   // reload starts from empty and everything is back to its built-in look/size.
   objColors=live.object_colors||{};objScale=live.object_scales||{};petScale=live.pet_scale||1;petForm=live.pet_form||'robot';
+  petScene=live.pet_scene||'room';
+  // A fresh "build a statue of X" (the seq bumps each time) → draft it (fetch the voxel model
+  // from the box's LLM). The server already flipped the scene to 'field' for us.
+  if((live.statue_seq||0)!==statueSeq){statueSeq=live.statue_seq||0;if(live.statue_subject)startStatue(live.statue_subject);}
   // A parent raw `move` (empty script, a fresh target) → a one-off travel interrupt.
   const mk=(live.target_x||0)+','+(live.target_z||0);
   if(!(live.script&&live.script.length)&&mk!==lastMoveKey&&(Math.abs(live.target_x)>0.001||Math.abs(live.target_z)>0.001)){
@@ -1317,7 +1338,7 @@ function robot(t){
  const S=1.7*petScale;                                     // scale the pet up for the bigger room (× "make me bigger")
  // Lie down flat when asleep: tip the whole body back about the feet (eased via P.lie), and
  // when it's on the bed, lift the lying body up onto the mattress so it sleeps *in* the bed.
- let base=M.rotY(M.trans(M.ident(),P.x,0,P.z),P.facing+spinAdd+wiggle+idleYaw);
+ let base=M.rotY(M.trans(M.ident(),P.x,flyY,P.z),P.facing+spinAdd+wiggle+idleYaw); // flyY lifts it on the jetpack (field statue build)
  if(P.lie>0.01)base=M.rotX(base,-P.lie*1.45);
  const onBed=room.bed&&Math.hypot(P.x-room.bed[0],P.z-room.bed[1])<2.2;
  if(onBed&&P.lie>0.01){base=base.slice();base[13]+=P.lie*0.95;} // raise onto the mattress (world-up)
@@ -1334,6 +1355,12 @@ function robot(t){
  const kick=act==='jump'?Math.sin(ph*7)*.22:act==='jumprope'?Math.sin(ropeTh)*.22:0;
  part(m,-.22,y+.28,sw*.16+kick,.17,.5,.17,legC);part(m,.22,y+.28,sw2*.16-kick,.17,.5,.17,legC);
  part(m,0,y+.92,0,.82,.72,.56,body);
+ // Jetpack: twin canisters on the back with flame jets, shown while the pet is airborne (the
+ // field "build a statue" lets it fly blocks up to the model).
+ if(flyY>0.05){part(m,-.26,y+.95,-.42,.16,.44,.16,CY);part(m,.26,y+.95,-.42,.16,.44,.16,CY);
+  const fl=.18+Math.abs(Math.sin(t*40))*.24;
+  part(m,-.26,y+.62-fl*.5,-.42,.12,fl,.12,GD,.9);part(m,.26,y+.62-fl*.5,-.42,.12,fl,.12,GD,.9);
+  part(m,-.26,y+.58-fl*.7,-.42,.07,fl*.7,.07,OR,.85);part(m,.26,y+.58-fl*.7,-.42,.07,fl*.7,.07,OR,.85);}
  const mc=P.emotion==='sleepy'?BL:P.emotion==='scared'?RD:P.emotion==='silly'?GD:P.emotion==='curious'?OR:CY;
  const chest=act==='beep'&&Math.sin(ph*30)>0?GD:mc;
  part(m,0,y+.92,.3,.34,.34,.06,chest);part(m,0,y+.92,.3,.2,.2,.05,chest,.6);
@@ -1363,6 +1390,102 @@ function robot(t){
  if(P.asleep){const zx=P.x+.55,zb=2.5;for(let i=0;i<3;i++){const zp=(t*0.5+i*0.34)%1,zs=.17-i*.03;
   part(M.ident(),zx+zp*.45,zb+zp*1.0,P.z,zs,zs,.05,CY,(1-zp)*.85);}}
 }
+// ---- The "field" scene + "build a statue of X" ------------------------------------------------
+// A second area: an open green field with a high, slowly-revolving camera, an endless pile of
+// blocks off to one side, and the robot on a jetpack building an LLM-drafted voxel model of X,
+// block by block, layer by layer. All ephemeral (a page reload restores the room).
+const FIELD_GREEN=[.24,.8,.36],SKY=[.05,.08,.13];
+const VOX=0.55,STA_C=[0,-1],PILE=[9.5,4.5];               // voxel world size; statue centre; the block pile
+// Map a grid cell to the world, centred on the model's OWN bounds (so an off-centre model from the
+// LLM still lands in the middle of the field) and resting on the ground (its lowest layer at y=0).
+function voxWorld(vx,vy,vz){const s=statue||{},cx=s.cx==null?11.5:s.cx,cz=s.cz==null?11.5:s.cz,y0=s.y0||0;
+ return[STA_C[0]+(vx-cx)*VOX,(vy-y0)*VOX+VOX*0.5,STA_C[1]+(vz-cz)*VOX];}
+function hexRGB(c){if(typeof c!=='string')return[.6,.63,.7];const s=c.replace('#','');
+ if(s.length!==6)return[.6,.63,.7];const n=parseInt(s,16);if(isNaN(n))return[.6,.63,.7];
+ return[((n>>16)&255)/255,((n>>8)&255)/255,(n&255)/255];}
+// A static heap of colourful bricks — the "never-ending" pile the robot grabs each block from.
+const PILE_BLOCKS=(()=>{const a=[],pal=[CY,MG,GD,OR,BL,RD];for(let i=0;i<44;i++){const r=Math.random(),
+ ang=Math.random()*6.283,rad=r*1.7;a.push([Math.cos(ang)*rad,VOX*0.5+(1-r)*1.7*Math.random(),Math.sin(ang)*rad,pal[i%6]]);}return a;})();
+// Draft order: fill layer by layer (y up), a random block within each layer (as asked).
+function buildOrder(vox){const by={};for(const v of vox){(by[v.y]=by[v.y]||[]).push(v);}
+ const out=[];for(const y of Object.keys(by).map(Number).sort((a,b)=>a-b)){const L=by[y];
+  for(let k=L.length-1;k>0;k--){const j=Math.floor(Math.random()*(k+1));const tmp=L[k];L[k]=L[j];L[j]=tmp;}out.push(...L);}
+ return out;}
+// Kick off a build: switch to the field, then fetch the voxel model from the box's LLM. While we
+// wait (a high-reasoning call — can take a while), the banner says "drafting statue" and the pet
+// wanders the field; when the model lands we queue it and the jetpack build begins.
+function startStatue(subject){
+ petScene='field';P.asleep=false;P.emotion='excited';
+ statue={subject:subject,state:'drafting',placed:[],queue:[],i:0,phase:'toPile',carry:null,carryCol:[1,1,1],wanderT:0,wanderTarget:[0,0]};
+ const mine=subject;
+ fetch('/pet/statue',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({subject:subject})})
+  .then(r=>r.ok?r.json():Promise.reject(r.status))
+  .then(d=>{if(!statue||statue.subject!==mine)return;                 // a newer request superseded this one
+   const vox=(d.voxels||[]).filter(v=>v&&v.x!=null&&v.y!=null&&v.z!=null);
+   if(!vox.length){statue.state='failed';return;}
+   let mnx=99,mxx=-99,mnz=99,mxz=-99,mny=99;                        // centre the model + rest it on the ground
+   for(const v of vox){if(v.x<mnx)mnx=v.x;if(v.x>mxx)mxx=v.x;if(v.z<mnz)mnz=v.z;if(v.z>mxz)mxz=v.z;if(v.y<mny)mny=v.y;}
+   statue.cx=(mnx+mxx)/2;statue.cz=(mnz+mxz)/2;statue.y0=mny;
+   statue.queue=buildOrder(vox);statue.placed=[];statue.i=0;statue.phase='toPile';statue.state='building';
+   statue.batch=Math.max(1,Math.ceil(statue.queue.length/140));})   // keep the build to ~140 trips, however big
+  .catch(()=>{if(statue&&statue.subject===mine)statue.state='failed';});
+}
+// Ease the pet toward its target on the ground; returns true once it's basically there.
+function moveTo(dt,spd){const dx=P.tx-P.x,dz=P.tz-P.z,d=Math.hypot(dx,dz);
+ if(d>0.05){const s=Math.min(spd,d/Math.max(dt,1e-3));P.x+=dx/d*s*dt;P.z+=dz/d*s*dt;P.walk=s;P.gait+=s*dt*1.15;
+  const want=Math.atan2(dx,dz);let a=want-P.facing;while(a>Math.PI)a-=6.2832;while(a<-Math.PI)a+=6.2832;P.facing+=a*Math.min(1,dt*6);}
+ else P.walk=0;
+ return d<0.6;}
+function stepStatue(dt,t){
+ if(!statue){flyY+=(0-flyY)*Math.min(1,dt*4);return;}
+ const FLY=11.0;
+ if(statue.state==='drafting'||statue.state==='failed'){          // wander while the artist thinks
+  statue.wanderT-=dt;
+  if(statue.wanderT<=0){statue.wanderT=1.4+Math.random()*1.6;statue.wanderTarget=[STA_C[0]+(Math.random()*2-1)*7,STA_C[1]+(Math.random()*2-1)*7];}
+  P.tx=statue.wanderTarget[0];P.tz=statue.wanderTarget[1];P.act='walk';
+  flyY+=(0-flyY)*Math.min(1,dt*4);moveTo(dt,FLY*0.45);return;
+ }
+ if(statue.state==='building'){
+  const v=statue.queue[statue.i];
+  if(!v){statue.state='done';return;}
+  const slot=voxWorld(v.x,v.y,v.z);
+  if(statue.phase==='toPile'){                                    // fetch a fresh block from the pile
+   P.tx=PILE[0];P.tz=PILE[1];P.act='walk';flyY+=(3.0-flyY)*Math.min(1,dt*4);
+   if(moveTo(dt,FLY)&&Math.abs(flyY-3.0)<1.2){statue.carry=v;statue.carryCol=hexRGB(v.c);statue.phase='toSlot';sfx('pick_up');}
+  }else{                                                          // fly it over the model and set it in place
+   const wantFly=slot[1]+1.1;P.tx=slot[0];P.tz=slot[1];P.act='walk';flyY+=(wantFly-flyY)*Math.min(1,dt*4);
+   if(Math.hypot(P.x-slot[0],P.z-slot[1])<0.9&&Math.abs(flyY-wantFly)<1.0){       // set the block(s) in place
+    const b=statue.batch||1;for(let k=0;k<b&&statue.i<statue.queue.length;k++){statue.placed.push(statue.queue[statue.i]);statue.i++;}
+    statue.carry=null;statue.phase='toPile';sfx('put_down');}
+   moveTo(dt,FLY);
+  }
+  return;
+ }
+ // done → drift down and stroll near the finished statue
+ P.tx=STA_C[0]+3.5;P.tz=STA_C[1]+3.5;P.act='walk';flyY+=(0-flyY)*Math.min(1,dt*3);moveTo(dt,FLY*0.55);
+}
+function drawField(){                                             // a wide green ground grid
+ draw(gFloor,nFloor,gl.LINES,M.mul(vp,M.scale(M.ident(),3.4,1,3.4)),FIELD_GREEN,.45);
+ draw(gFloor,nFloor,gl.LINES,M.mul(vp,M.scale(M.ident(),1.3,1,1.3)),FIELD_GREEN,.7);}
+function drawPile(){for(const b of PILE_BLOCKS)part(M.ident(),PILE[0]+b[0],b[1],PILE[1]+b[2],VOX*0.9,VOX*0.9,VOX*0.9,b[3],1);}
+function drawStatue(){if(!statue)return;
+ for(const v of statue.placed){const w=voxWorld(v.x,v.y,v.z);part(M.ident(),w[0],w[1],w[2],VOX*0.96,VOX*0.96,VOX*0.96,hexRGB(v.c),1);}
+ if(statue.carry){const cx=P.x+Math.sin(P.facing)*.6,cz=P.z+Math.cos(P.facing)*.6;                 // the block in its hands
+  part(M.ident(),cx,flyY+1.0,cz,VOX*0.96,VOX*0.96,VOX*0.96,statue.carryCol,1);}}
+function updateBanners(){const top=document.getElementById('topban'),bot=document.getElementById('botban');
+ if(petScene!=='field'||!statue){top.classList.remove('show');bot.classList.remove('show');return;}
+ if(statue.state==='drafting'){top.textContent='DRAFTING STATUE';top.classList.add('show');bot.classList.remove('show');return;}
+ if(statue.state==='failed'){top.textContent="COULDN'T IMAGINE THAT ONE";top.classList.add('show');bot.classList.remove('show');return;}
+ top.textContent='BUILDING '+String(statue.subject||'').toUpperCase();top.classList.add('show');
+ const total=statue.queue.length||1,pct=Math.min(100,Math.round(statue.placed.length/total*100));
+ bot.textContent=statue.state==='done'?'DONE! 🎉':pct+'% DONE';bot.classList.add('show');}
+function renderField(t,dt){
+ const cx=STA_C[0],cz=STA_C[1],ang=t*0.12,camR=27,camH=17;         // high, slowly-revolving camera
+ vp=M.mul(M.persp(48*Math.PI/180,W/H,.1,300),M.lookAt([cx+Math.cos(ang)*camR,camH,cz+Math.sin(ang)*camR],[cx,5.5,cz],[0,1,0]));
+ gl.clearColor(SKY[0],SKY[1],SKY[2],1);gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);
+ sceneT=t;stepStatue(dt,t);
+ drawField();drawPile();drawStatue();robot(t);updateBanners();
+ bctx.clearRect(0,0,bcv.width,bcv.height);bctx.globalAlpha=.9;bctx.filter='blur(7px)';bctx.drawImage(cv,0,0,bcv.width,bcv.height);bctx.filter='none';}
 // Puff clouds: a little vapour cloud the pet lets off — greeny by the butt on a fart, pale by
 // the head on a burp. Each puff grows, drifts up and fades over ~1.5s; drawn as a cluster of
 // wireframe rings (same neon language as the ball), so it reads as a puff not a solid blob.
@@ -1384,6 +1507,9 @@ const CRUISE=3.6;                                          // stroll speed (unit
 let last=0,lastAct='';
 function frame(ts){const dt=Math.min(.05,(ts-last)/1000||0);last=ts;const t=ts/1000;
  if(gl&&bctx){
+  if(petScene==='field'){renderField(t,dt);requestAnimationFrame(frame);return;} // the open field + statue build
+  flyY=0;                                                   // back in the room: never fly / show a jetpack
+  document.getElementById('topban').classList.remove('show');document.getElementById('botban').classList.remove('show');
   vp=M.mul(M.persp(48*Math.PI/180,W/H,.1,200),M.lookAt([0,9.5,25],[0,2.4,-1],[0,1,0]));
   // The phone `lights` command flips the server flag → step the dimmer one notch.
   if(live.lights_on!==lastLightsOn){flipLight();lastLightsOn=live.lights_on;}

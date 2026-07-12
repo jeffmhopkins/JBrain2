@@ -27,7 +27,7 @@ from jbrain.api.deps import PrincipalDep, owner_only
 from jbrain.api.notes import ctx_for
 from jbrain.config import Settings
 from jbrain.db.session import SessionContext
-from jbrain.jpet.brain import pet_turn
+from jbrain.jpet.brain import pet_turn, statue_voxels
 from jbrain.jpet.broadcast import PetBroadcaster
 from jbrain.jpet.intents import CHAT_BABBLE, canonical_color, chat_reply, classify, color_speech
 from jbrain.jpet.repo import SqlJpetRepo
@@ -74,7 +74,17 @@ _GROW_STEP, _SHRINK_STEP = 1.25, 0.8
 
 def _fresh_effects() -> dict[str, Any]:
     """A clean effects store — every override at its default (the reload / reset state)."""
-    return {"colors": {}, "scales": {}, "pet_scale": 1.0, "pet_form": "robot"}
+    return {
+        "colors": {},
+        "scales": {},
+        "pet_scale": 1.0,
+        "pet_form": "robot",
+        # Scene: "room" (default) or "field". `statue`/`statue_seq` carry the current
+        # "build a statue of X" request to the wall (the seq bumps so a repeat re-triggers).
+        "scene": "room",
+        "statue": None,
+        "statue_seq": 0,
+    }
 
 
 def _effects(request: Request) -> dict[str, Any]:
@@ -108,6 +118,14 @@ def _apply_effect(fx: dict[str, Any], *, kind: str, target: str, value: str) -> 
     'reset' drop the override (back to the object's built-in look/size)."""
     if kind == "form":
         fx["pet_form"] = value
+    elif kind == "scene":
+        fx["scene"] = value
+    elif kind == "statue":
+        # "Build a statue of X": jump to the field and hand the subject to the wall (which
+        # fetches the voxel model). The bumped seq makes a repeat of the same subject re-trigger.
+        fx["scene"] = "field"
+        fx["statue"] = value
+        fx["statue_seq"] = int(fx.get("statue_seq", 0)) + 1
     elif kind == "recolor":
         if value == "default":
             fx["colors"].pop(target, None)
@@ -152,6 +170,11 @@ class PetOut(BaseModel):
     pet_scale: float = 1.0
     # Which creature the pet is drawn as: "robot" (default) or dog/cat/dragon/cow/pig/chicken.
     pet_form: str = "robot"
+    # Scene ("room"/"field") + the current "build a statue of X" request (subject + a seq the
+    # wall watches so a repeat re-triggers a fresh draft). All ephemeral wall effects.
+    pet_scene: str = "room"
+    statue_subject: str | None = None
+    statue_seq: int = 0
 
     @classmethod
     def of(cls, info: PetStateInfo, effects: dict[str, Any] | None = None) -> "PetOut":
@@ -178,6 +201,9 @@ class PetOut(BaseModel):
             object_scales=dict(fx.get("scales", {})),
             pet_scale=float(fx.get("pet_scale", 1.0)),
             pet_form=str(fx.get("pet_form", "robot")),
+            pet_scene=str(fx.get("scene", "room")),
+            statue_subject=fx.get("statue"),
+            statue_seq=int(fx.get("statue_seq", 0)),
         )
 
 
@@ -278,14 +304,15 @@ async def _say(
         # "Reset everything" — wipe every ephemeral effect AND the pet's own colour, in one go.
         request.app.state.pet_effects = _fresh_effects()
         info = await repo.set_color(ctx, domain=domain, color="default", speech=intent.speech)
-    elif intent is not None and intent.kind in ("recolor", "resize", "form"):
-        # An ephemeral wall effect — "turn the floor blue", "make the bed huge", "be a dragon".
-        # Fold it into the in-memory store (the wall reads it on its next poll; a reload resets
-        # it) and give the pet a little reaction so both surfaces show it did something.
+    elif intent is not None and intent.kind in ("recolor", "resize", "form", "scene", "statue"):
+        # An ephemeral wall effect — "turn the floor blue", "make the bed huge", "be a dragon",
+        # "change scene to field", "build a statue of a cat". Fold it into the in-memory store
+        # (the wall reads it on its next poll; a reload resets it) and give the pet a little
+        # reaction so both surfaces show it did something.
         _apply_effect(
             _effects(request), kind=intent.kind, target=intent.target or "robot", value=intent.value
         )
-        emote = "spin" if intent.kind == "form" else "wiggle"  # a twirl to sell the transformation
+        emote = "wiggle" if intent.kind == "resize" else "spin"  # a twirl sells a form/scene change
         script = canned_script(emote, objects=state.objects)
         info = await repo.run_script(ctx, domain=domain, script=script, speech=intent.speech)
     elif intent is not None:  # a recognised command action or a bit of small talk — no LLM
@@ -377,6 +404,36 @@ async def internal_say(request: Request, body: SayIn) -> PetOut:
         raise HTTPException(status_code=404, detail="no pet")
     _broadcaster(request).publish(info)
     return PetOut.of(info, _effects(request))
+
+
+class StatueIn(BaseModel):
+    """The subject the wall wants sculpted for its field "build a statue of X"."""
+
+    subject: str
+
+
+@internal_router.post("/statue")
+async def internal_statue(request: Request, body: StatueIn) -> dict[str, Any]:
+    """Sculpt a 24³ voxel model of `subject` for the on-box wall's field build. Same LAN-only
+    posture as /say (reached solely through the wall's same-origin proxy; the pet lives in the
+    non-sensitive 'general' domain) and RATE-LIMITED so an unauthenticated caller can't spin the
+    reasoning model in a loop. Returns the occupied voxels; the wall animates the block-by-block
+    build. A model/parse failure is a clean 502 so the wall can say it couldn't imagine that one."""
+    limiter = cast(TokenBucket, request.app.state.pet_say_rate_limiter)
+    if not limiter.allow("wall"):
+        raise HTTPException(status_code=429, detail="too many statue requests; slow down")
+    subject = (body.subject or "").strip()
+    if not subject:
+        raise HTTPException(status_code=400, detail="no subject")
+    try:
+        voxels = await statue_voxels(_router(request), subject=subject[:80])
+    except Exception as exc:  # noqa: BLE001 — a failed/unconfigured model must be a clean error
+        log.warning("jpet.statue_error", error=repr(exc))
+        raise HTTPException(status_code=502, detail="could not imagine that statue") from exc
+    return {
+        "subject": subject[:80],
+        "voxels": [{"x": v.x, "y": v.y, "z": v.z, "c": v.c} for v in voxels],
+    }
 
 
 @internal_router.post("/effects/clear")

@@ -56,6 +56,9 @@ PET_FIELDS = {
     "object_scales",
     "pet_scale",
     "pet_form",
+    "pet_scene",
+    "statue_subject",
+    "statue_seq",
 }
 
 
@@ -140,3 +143,39 @@ async def test_internal_say_drives_the_pet_and_rate_limits(
             client.post("/internal/pet/say", json={"text": "dance"}).status_code == 429
             for _ in range(20)
         ), "the LAN say endpoint must rate-limit a burst"
+
+
+async def test_scene_swap_and_statue_effects(
+    database_url: str,  # noqa: F811
+    maker: async_sessionmaker[AsyncSession],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # "change scene" / "build a statue of X" fold into the ephemeral wall effects the poll carries:
+    # the scene flips to the field and the statue subject + a bumped seq ride along, with NO LLM
+    # (the keyword router classifies both). The /statue endpoint (the only LLM hop) is faked.
+    from jbrain.jpet import brain
+
+    async def _fake_statue(_router: object, *, subject: str) -> list[brain.Voxel]:
+        return [brain.Voxel(x=1, y=0, z=2, c="#ff8800")]
+
+    monkeypatch.setattr("jbrain.api.pet.statue_voxels", _fake_statue)
+    await service.rotate_owner_key(SqlAuthRepo(maker))
+    app = create_app(Settings(secure_cookies=False, database_url=database_url))
+    with TestClient(app) as client:
+        # Scene swap — no LLM, and the wire carries the new scene.
+        field = client.post("/internal/pet/say", json={"text": "change scene to the field"})
+        assert field.status_code == 200 and field.json()["pet_scene"] == "field"
+        room = client.post("/internal/pet/say", json={"text": "go back inside"})
+        assert room.json()["pet_scene"] == "room"
+
+        # "build a statue of a cat" → field + the subject + a bumped seq.
+        made = client.post("/internal/pet/say", json={"text": "build a statue of a cat"}).json()
+        assert made["pet_scene"] == "field"
+        assert made["statue_subject"] == "cat" and made["statue_seq"] == 1
+
+        # The wall's voxel fetch: the (faked) sculptor's cells come back in wire shape.
+        statue = client.post("/internal/pet/statue", json={"subject": "a cat"})
+        assert statue.status_code == 200
+        assert statue.json()["voxels"] == [{"x": 1, "y": 0, "z": 2, "c": "#ff8800"}]
+        # Blank subject is rejected.
+        assert client.post("/internal/pet/statue", json={"subject": "  "}).status_code == 400
