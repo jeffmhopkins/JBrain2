@@ -108,8 +108,9 @@ def _statue_system_prompt() -> str:
         "silhouette over fine detail. Do not fill the whole grid; carve the actual shape.\n"
         "IMPORTANT — build a HOLLOW SHELL: emit only the OUTER surface voxels (the ones you could "
         "see or touch from outside), about 1 voxel thick, and leave the inside empty. A voxel is "
-        "interior (skip it) when it has a filled neighbour on all six sides. This keeps the model "
-        f"light: aim for roughly 150–600 shell voxels; never exceed {STATUE_MAX_VOXELS}."
+        "interior (skip it) when it has a filled neighbour on all six sides.\n"
+        "Keep it SMALL so it's quick to make: aim for roughly 120–300 shell voxels (a coarse, "
+        f"chunky model is perfect — do not over-detail); never exceed {STATUE_MAX_VOXELS}."
     )
 
 
