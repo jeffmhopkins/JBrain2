@@ -459,7 +459,7 @@ def test_speakable_text_all_compass_points(server: types.ModuleType) -> None:
 
 def test_speakable_text_state_only_in_city_shape(server: types.ModuleType) -> None:
     # "City, ST" expands; a bare English-word code (IN/OR/ME) outside that shape does not.
-    assert server._speakable_text("headed to Reno, NV tomorrow") == "headed to Reno, Nevada tomorrow"
+    assert server._speakable_text("headed to Reno, NV now") == "headed to Reno, Nevada now"
     assert server._speakable_text("interested IN or ME") == "interested IN or ME"
     # A state code that is also a compass code ("NE") resolves as the state in the City shape,
     # because state expansion runs before the compass pass.
