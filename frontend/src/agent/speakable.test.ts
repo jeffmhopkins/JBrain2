@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { chunkStream, speakable } from "./speakable.js";
+import { chunkStream, engineForVoice, speakable } from "./speakable.js";
 
 /** Feed `full` to chunkStream in `steps` growing prefixes (simulating streaming), advancing
  * a raw cursor, then flush — returning every clip emitted in order. */
@@ -265,5 +265,19 @@ describe("chunkStream", () => {
     for (const steps of [1, 2, 3, 7, 20, doc.length]) {
       expect(drive(doc, steps)).toEqual(oneShot);
     }
+  });
+});
+
+describe("engineForVoice", () => {
+  it("maps a Kokoro voice id to the kokoro profile and everything else to piper", () => {
+    expect(engineForVoice("kokoro-af_heart")).toBe("kokoro");
+    expect(engineForVoice("kokoro-bm_george")).toBe("kokoro");
+    expect(engineForVoice("en_US-amy-medium")).toBe("piper");
+    expect(engineForVoice("en_US-libritts_r-medium#3922")).toBe("piper");
+  });
+
+  it("falls back to piper for an empty or missing voice", () => {
+    expect(engineForVoice("")).toBe("piper");
+    expect(engineForVoice(undefined as unknown as string)).toBe("piper");
   });
 });

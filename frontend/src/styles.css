@@ -1013,6 +1013,18 @@ h3 {
   flex-wrap: wrap;
   gap: 8px;
 }
+/* The real file input is hidden — the styled "Upload .md" button opens it. */
+.read-text-actions .visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
 
 /* Voice explorer (read-aloud) — shuffle-audition the multi-speaker roster. Sits inside the
    Read-aloud card under the Piper model's voice picker; a nested surface so it reads as a sub-tool. */

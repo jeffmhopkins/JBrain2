@@ -1,15 +1,17 @@
 // A full-screen "read custom text aloud" surface, opened from the Settings read-aloud
-// voice picker. The owner pastes arbitrary prose (a book chapter, a note) into the text
-// area and either PLAYS it on the box in the chosen voice, or EXPORTS the whole thing to a
-// single WAV file to keep. Both paths reuse the chat read-aloud pipeline: chunkStream splits
-// the text into clips small enough for the /tts cap, each renders on the box's piper, and
-// the clips play (gaplessly, one prefetched ahead) or concatenate into one WAV for download.
+// voice picker. The owner pastes arbitrary prose (a book chapter, a note) into the text area —
+// or uploads a .md/.txt file, whose contents drop straight into the area to review and edit —
+// and either PLAYS it on the box in the chosen voice, or EXPORTS the whole thing to a single WAV
+// file to keep. Both paths reuse the chat read-aloud pipeline: chunkStream splits the text into
+// clips small enough for the /tts cap — normalized for the SAME engine an agent reply uses (a
+// Kokoro voice on Kokoro's profile) — each renders on the box, and the clips play (gaplessly,
+// one prefetched ahead) or concatenate into one WAV for download.
 //
 // Piper-engine only: it needs the box to render audio, so it's surfaced only when an on-box
 // voice is chosen (never the device's Native voice, which can't be captured to a file).
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { chunkStream } from "../agent/speakable.js";
+import { chunkStream, engineForVoice } from "../agent/speakable.js";
 import { api } from "../api/client";
 import { ChevronLeftIcon } from "../components/icons";
 
@@ -115,6 +117,11 @@ export function ReadTextScreen({ voice, onClose }: ReadTextScreenProps) {
   // can pause it mid-clip).
   const genRef = useRef(0);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  // The hidden file picker behind the "Upload .md" button.
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  // Normalize custom text for the engine that renders the chosen voice — the same profile a chat
+  // answer in this voice uses, so a Kokoro voice reads custom text exactly as it reads a reply.
+  const engine = engineForVoice(voice);
   // Resolves the clip playing right now — pausing an <audio> fires no `ended`, so stop() calls
   // this to unstick the loop's `await playBlob` instead of leaving it hung on a paused clip.
   const playResolveRef = useRef<(() => void) | null>(null);
@@ -166,8 +173,21 @@ export function ReadTextScreen({ voice, onClose }: ReadTextScreenProps) {
     });
   }, []);
 
+  // Read an uploaded .md/.txt file's text into the area to review and edit before playing —
+  // replacing whatever's there. Clears the input so re-picking the same file fires again.
+  const onUpload = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    setError(null);
+    const reader = new FileReader();
+    reader.onload = () => setText(String(reader.result ?? ""));
+    reader.onerror = () => setError("Couldn't read that file.");
+    reader.readAsText(file);
+  }, []);
+
   const play = useCallback(() => {
-    const clips = chunkStream(text, true).chunks;
+    const clips = chunkStream(text, true, engine).chunks;
     if (!clips.length) return;
     setError(null);
     const myGen = ++genRef.current;
@@ -202,10 +222,10 @@ export function ReadTextScreen({ voice, onClose }: ReadTextScreenProps) {
       if (genRef.current === myGen) setPlaying(false);
     };
     void run();
-  }, [text, voice, playBlob]);
+  }, [text, voice, engine, playBlob]);
 
   const exportAudio = useCallback(async () => {
-    const clips = chunkStream(text, true).chunks;
+    const clips = chunkStream(text, true, engine).chunks;
     if (!clips.length) return;
     setError(null);
     setExporting(true);
@@ -236,7 +256,7 @@ export function ReadTextScreen({ voice, onClose }: ReadTextScreenProps) {
       setExporting(false);
       setProgress(null);
     }
-  }, [text, voice]);
+  }, [text, voice, engine]);
 
   const empty = text.trim().length === 0;
 
@@ -258,6 +278,23 @@ export function ReadTextScreen({ voice, onClose }: ReadTextScreenProps) {
         />
         {error && <p className="settings-meta settings-error">{error}</p>}
         <div className="read-text-actions">
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".md,.markdown,.txt,text/markdown,text/plain"
+            className="visually-hidden"
+            aria-hidden="true"
+            tabIndex={-1}
+            onChange={onUpload}
+          />
+          <button
+            type="button"
+            className="seg"
+            disabled={playing || exporting}
+            onClick={() => fileInputRef.current?.click()}
+          >
+            Upload .md
+          </button>
           <button
             type="button"
             className="seg"

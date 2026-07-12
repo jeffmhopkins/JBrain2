@@ -20,7 +20,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../api/client";
 import { onReadAloudSettings } from "./readAloudBus";
-import { chunkStream, readingProfile, speakable } from "./speakable.js";
+import { chunkStream, engineForVoice, readingProfile, speakable } from "./speakable.js";
 
 type ReadAloudEngine = "piper" | "native";
 
@@ -404,8 +404,10 @@ export function useReadAloud(): ReadAloud {
         stop();
         return;
       }
-      // The whole turn is known — normalize + split it into speakable clips (flush).
-      const { chunks } = chunkStream(markdown, true);
+      // The whole turn is known — normalize + split it into speakable clips (flush), for the
+      // engine that renders the chosen voice (a Kokoro voice normalizes on Kokoro's profile).
+      const speakEngine = engineForVoice(answerVoiceRef.current);
+      const { chunks } = chunkStream(markdown, true, speakEngine);
       if (!chunks.length) return;
       paceRef.current = paceFor(markdown); // whole turn known — classify it
       suppressedRef.current.delete(key);
@@ -418,7 +420,7 @@ export function useReadAloud(): ReadAloud {
         if (usePiper()) {
           for (const c of chunks) speakChunk(key, c);
         } else {
-          speakChunk(key, speakable(markdown));
+          speakChunk(key, speakable(markdown, speakEngine));
         }
       } catch {
         stop();
@@ -448,7 +450,11 @@ export function useReadAloud(): ReadAloud {
       // speakable(), and reports how many raw chars it consumed — stable across deltas, so
       // a half-received table or a mid-token "." never speaks early.
       const pending = textSoFar.slice(spokenLenRef.current);
-      const { chunks, consumed } = chunkStream(pending, done);
+      const { chunks, consumed } = chunkStream(
+        pending,
+        done,
+        engineForVoice(answerVoiceRef.current),
+      );
       try {
         for (const c of chunks) speakChunk(key, c);
       } catch {

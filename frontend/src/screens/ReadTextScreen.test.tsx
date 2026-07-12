@@ -132,6 +132,20 @@ describe("ReadTextScreen", () => {
     expect(clicked[0]?.download).toBe("chapter-one-it-begins.wav");
   });
 
+  it("loads an uploaded .md file's contents into the text area", async () => {
+    stubTts();
+    const { container } = render(<ReadTextScreen voice="en_US-amy-medium" onClose={vi.fn()} />);
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement;
+    const file = new File(["# Chapter\n\nOnce upon a time."], "story.md", {
+      type: "text/markdown",
+    });
+    fireEvent.change(input, { target: { files: [file] } });
+    const area = (await screen.findByLabelText("Text to read aloud")) as HTMLTextAreaElement;
+    await waitFor(() => expect(area.value).toBe("# Chapter\n\nOnce upon a time."));
+    // The loaded text is now playable.
+    expect(screen.getByRole("button", { name: "Play" })).toBeEnabled();
+  });
+
   it("disables the actions until there is text", () => {
     stubTts();
     render(<ReadTextScreen voice="en_US-amy-medium" onClose={vi.fn()} />);
