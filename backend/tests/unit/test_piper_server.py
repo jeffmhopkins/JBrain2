@@ -486,6 +486,17 @@ def test_speakable_text_year_reading_styles(server: types.ModuleType) -> None:
     assert server._year_words(2010) == "twenty ten"
 
 
+def test_speakable_text_acronyms(server: types.ModuleType) -> None:
+    # A 3-5 letter all-caps run is spelled as letters ("ORFS" -> "O R F S"); 2-letter runs and
+    # stoplisted said-as-word acronyms / roman numerals / emphasis words are left alone.
+    assert server._speakable_text("the ORFS crate, an AI core") == "the O R F S crate, an AI core"
+    assert server._speakable_text("call the FBI now") == "call the F B I now"
+    assert server._speakable_text("NASA and NATO agreed") == "NASA and NATO agreed"
+    assert server._speakable_text("in World War VII") == "in World War VII"
+    # A city/state code (2-letter) is untouched by the acronym rule.
+    assert server._speakable_text("interested IN or ME") == "interested IN or ME"
+
+
 def test_speakable_text_name_initial(server: types.ModuleType) -> None:
     # A single-letter initial before a capitalized word loses its period (so espeak doesn't pause);
     # a dotted abbreviation like "U.S." and a lowercase-led sentence end are left alone.

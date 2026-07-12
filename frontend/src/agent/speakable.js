@@ -392,14 +392,22 @@ export function toUtterance(prose, engine = "piper") {
   // Ellipsis: normalize "..."/"…" to a single ellipsis char. espeak renders it as a ~300 ms
   // trailing beat — longer than a comma, no spoken "dot dot dot" — and the chunker never cuts on
   // it (it's not . ! ?), so the dramatic pause stays inside the clause instead of splitting it.
-  s = s.replace(/\s*(?:\.{2,}|…)\s*/g, "… ");
+  // Only horizontal whitespace is eaten, NOT a following newline — a line-ENDING ellipsis is a
+  // paragraph break the pause-authoring below must still see (else it runs into the next line).
+  s = s.replace(/[ \t]*(?:\.{2,}|…)[ \t]*/g, "… ");
   // PAUSE AUTHORING (before any whitespace collapse): every non-empty line that doesn't
   // already end in terminal punctuation gets a period, so each list item / heading /
   // paragraph becomes its own spoken sentence with a real pause.
-  s = s
-    .split("\n")
-    .map((line) => line.trim())
-    .map((line) => (line && !ENDS_SENTENCE.test(line) ? `${line}.` : line))
+  const lines = s.split("\n").map((line) => line.trim());
+  s = lines
+    .map((line, i) => {
+      if (!line) return line;
+      // A line ENDING in "…" with more content after it is a trailing-off at a line/paragraph
+      // break: make it a hard stop so it becomes its own clip (splitClips cuts on "." not "…", so
+      // otherwise it runs straight into the next line). A last-line "…" stays a soft dramatic beat.
+      if (line.endsWith("…")) return lines.slice(i + 1).some(Boolean) ? `${line}.` : line;
+      return ENDS_SENTENCE.test(line) ? line : `${line}.`;
+    })
     .join("\n");
   // Dates / temperatures / distances — BEFORE any number verbalization, which needs the raw digits.
   s = measuresToWords(s);

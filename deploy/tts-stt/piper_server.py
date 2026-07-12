@@ -506,6 +506,18 @@ _CARDINAL_RE = re.compile(r"\b([Ff]rom|[Tt]he)\s+([NSEW])\b")
 # "U.S.". The PWA's speakable.js does this too; here it serves the wall (which sends "E." intact).
 _INITIAL_RE = re.compile(r"(?<!\.)\b([A-Z])\.(?=\s+[A-Z])")
 
+# Acronyms/initialisms read as letters ("ORFS" -> "O R F S", "AI" stays 2-letter and is left alone).
+# A standalone run of 3-5 uppercase letters, EXCEPT ones said as a word (NASA), common roman numerals
+# (VII), or all-caps words used for emphasis/dialogue (STOP) — those are stoplisted. 2-letter runs are
+# left alone (too many are ordinary words/codes: IN, US, OK, NO). Heuristic — extend the stoplist by
+# ear. Runs LAST so compass/state codes (SSW, FL) are already words before this sees them.
+_SPOKEN_ACRONYMS = frozenset({
+    "NASA", "NATO", "RADAR", "LASER", "SCUBA", "SONAR", "ASCII", "AWOL",
+    "YES", "HEY", "WOW", "NOW", "STOP", "HELP", "WAIT", "OKAY", "HELLO", "DAMN",
+    "III", "VII", "VIII", "XII", "XIII", "XIV", "XVI", "XVII", "XVIII", "XIX",
+})
+_ACRONYM_RE = re.compile(r"\b([A-Z]{3,5})\b")
+
 # Dates: "July 10, 2026" / "July 10 2026" / "July 10th" -> "July tenth, twenty twenty six". Spelled
 # out here so BOTH engines say the day as an ORDINAL and the year in speech style, which neither
 # number reader does on its own (misaki/espeak would say "ten" and "two thousand twenty-six").
@@ -574,6 +586,9 @@ def _speakable_text(text: str) -> str:
     text = _COMPASS_RE.sub(lambda m: _COMPASS[m.group(1)], text)
     text = _CARDINAL_RE.sub(lambda m: f"{m.group(1)} {_CARDINAL[m.group(2)]}", text)
     text = _INITIAL_RE.sub(r"\1", text)
+    text = _ACRONYM_RE.sub(
+        lambda m: m.group(1) if m.group(1) in _SPOKEN_ACRONYMS else " ".join(m.group(1)), text
+    )
     return re.sub(r"[ \t]{2,}", " ", text)  # collapse a double space an expansion left behind
 
 

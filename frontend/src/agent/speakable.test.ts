@@ -179,6 +179,20 @@ describe("speakable", () => {
     expect(speakable("the U.S. Grant memorial")).toBe("the U.S. Grant memorial.");
   });
 
+  it("makes a line-ending ellipsis a real pause before the next paragraph", () => {
+    // Reported: "diagnostic…\nThe console flickers" ran together — the ellipsis normalizer ate the
+    // newline and the splitter never cuts on "…". Now the two lines are separate clips.
+    expect(chunkStream("Running the diagnostic…\nThe console flickers.", true).chunks).toEqual([
+      "Running the diagnostic….",
+      "The console flickers.",
+    ]);
+    // A MID-line ellipsis is still a soft beat kept inside the clause (not split).
+    expect(chunkStream("wait… okay then. Done.", true).chunks).toEqual([
+      "wait… okay then.",
+      "Done.",
+    ]);
+  });
+
   it("keeps an ellipsis as a dramatic beat (not a comma, not 'dot dot dot')", () => {
     // "..." and "…" both normalize to one ellipsis char — a ~300 ms pause espeak renders without
     // saying the dots, and which the chunker won't split on (it's not . ! ?).

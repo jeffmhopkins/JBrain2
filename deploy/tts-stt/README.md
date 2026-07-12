@@ -47,7 +47,10 @@ One always-on container serving the box's **speech I/O**:
   → "Cocoa, Florida") — gated to a comma + Capitalized word so a bare `IN`/`OR`/`ME` is left alone.
   It also **drops a name initial's period** (`Dennis E. Taylor` → `Dennis E Taylor`) so espeak
   doesn't read the `E.` as a sentence end (a long pause); `U.S.` and a lowercase-led sentence end
-  are left intact. This is plain-text rewriting (engine-agnostic, so piper benefits too) and is **separate** from
+  are left intact. And it **spells acronyms** as letters (`ORFS` → `O R F S`): a standalone run of
+  3-5 uppercase letters, minus a stoplist of said-as-word acronyms (`NASA`), roman numerals (`VII`),
+  and emphasis words (`STOP`) in `_SPOKEN_ACRONYMS`; 2-letter runs (`IN`, `AI`, `US`) are left alone
+  as too ambiguous to spell. This is plain-text rewriting (engine-agnostic, so piper benefits too) and is **separate** from
   `KOKORO_LEXICON`, which fixes single-word *phonemes* on the misaki path only. Add a symbol or
   abbreviation by extending the maps at the top of the `_speakable_text` block in `piper_server.py`
   (`_STATE_NAMES`, `_COMPASS`, `_DEGREE_UNITS`, `_SPEED_UNITS`).
