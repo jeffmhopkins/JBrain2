@@ -166,6 +166,11 @@ async def pet_turn(
         system=_system_prompt(state, memories or [], objs),
         user_text=message.strip()[:1000] or "(the child waves at you)",
         json_schema=PET_TURN_SCHEMA,
-        max_tokens=400,  # room for a real little conversation plus a short script
+        # A local reasoning model (e.g. Qwen3.5-4B) emits ~1.2k tokens of thinking BEFORE the
+        # closing JSON even at low effort; a tight cap truncates the reply mid-thought, so the
+        # JSON never closes → invalid → the turn falls back to a canned line. Budget for the
+        # thinking + the JSON so the real answer actually lands. (Snappier still: route pet.turn
+        # at "none" reasoning, which drops the thinking entirely.)
+        max_tokens=2048,
     )
     return _clean(result.parsed, state, objs)
