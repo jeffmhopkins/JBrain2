@@ -73,6 +73,29 @@ fi
 # is a no-op. NB: `_manifest([])` returns the FULL catalog, so the download/swap
 # steps below are gated on a non-empty `$ids` to avoid re-pulling everything.
 if [ -z "$ids" ] && [ ! -s "$remove_file" ]; then say "no models to sync"; exit 0; fi
+
+# Fast path for a ROUTINE update: nothing is queued (install OR uninstall) and the desired roster
+# already equals LOCAL_MODELS, so the download below would only RE-VERIFY weights already on disk —
+# an ~2-minute `hf download` re-hash of every model for ZERO change, the dominant cost of a no-op
+# update. Skip it, but only once a cheap on-disk check confirms each model's weights are present
+# (a `*.gguf` glob, NOT an hf hash) so a missing/corrupt weight still falls through to a full,
+# self-healing sync. The gateway is restarted by update-inner.sh after us regardless, exactly as
+# the "no models to sync" exit above already relies on — so skipping the sync's own restart is safe.
+requested_ids="$(printf '%s\n' "$requested" | grep -v '^[[:space:]]*$' | sort -u || true)"
+current_ids="$(printf '%s\n' "$current" | grep -v '^[[:space:]]*$' | sort -u || true)"
+if [ -z "$requested_ids" ] && [ ! -s "$remove_file" ] && [ "$union" = "$current_ids" ]; then
+  missing=''
+  for id in $ids; do
+    # A `*.gguf` under the model dir means its weights landed; `ls` (no hash) keeps this cheap.
+    ls "$PWD"/local-models/"$id"/*.gguf >/dev/null 2>&1 || missing="$missing $id"
+  done
+  if [ -z "$missing" ]; then
+    say "roster unchanged and weights present — skipping re-download ($ids)"
+    exit 0
+  fi
+  say "roster unchanged but weights missing for:$missing — running full sync"
+fi
+
 say "syncing models: ${ids:-<none>}"
 
 if [ -n "$ids" ]; then
@@ -85,7 +108,10 @@ if [ -n "$ids" ]; then
   # Log the provisioning plan (id -> repo (quant) include=glob) so the update/provision
   # log names exactly what it is about to pull — the first thing to read when a
   # download fails. Pure catalog read in the api image; best-effort (never fatal).
-  MAN="$manifest" catalog -c 'import json,os
+  # Pass MAN with `docker compose run -e` — a bare `MAN=… catalog …` sets it only in THIS shell,
+  # never inside the api container, so os.environ["MAN"] used to KeyError every round (harmless but
+  # dead). -e injects it into the container like the MANIFEST step below.
+  docker compose run --rm --no-deps -T -e MAN="$manifest" api python -c 'import json,os
 for m in json.loads(os.environ["MAN"]):
     print("[local-llm]   %s <- %s (%s) include=%s" % (m["id"], m["hf_repo"], m["quant"], m["gguf_include"]))' \
     || true
