@@ -414,9 +414,21 @@ def test_kokoro_lexicon_emits_misaki_override(
     assert _FakeG2P.calls[-1] == "say [Kokoro](/kˈOkəɹO/) now"
 
 
-def test_dockerfile_bakes_misaki(server: types.ModuleType) -> None:
+def test_dockerfile_builds_misaki_in_a_py312_venv(server: types.ModuleType) -> None:
     # The G2P upgrade rides the image build — keep the Dockerfile in step with _load_g2p's import.
-    assert "misaki" in _DOCKERFILE.read_text()
+    # spaCy (misaki's dep) has no Python-3.14 wheels and this base image's system Python is 3.14,
+    # so misaki MUST build into a dedicated 3.12 venv that the entrypoint prefers — never back on
+    # system python, where it silently degrades to espeak. Guard both halves so a refactor can't
+    # quietly revert the fix.
+    dockerfile = _DOCKERFILE.read_text()
+    assert "misaki" in dockerfile
+    assert "/opt/tts-venv" in dockerfile and "3.12" in dockerfile, (
+        "misaki must install into a Python 3.12 venv (spaCy has no 3.14 wheels)"
+    )
+    entrypoint = (_DEPLOY / "tts-stt" / "entrypoint.sh").read_text()
+    assert "/opt/tts-venv/bin/python" in entrypoint, (
+        "the entrypoint must prefer the 3.12 TTS venv so misaki's G2P is actually used"
+    )
 
 
 # --- W2: audiobook pacing (speed + trailing silence) ---------------------------------------

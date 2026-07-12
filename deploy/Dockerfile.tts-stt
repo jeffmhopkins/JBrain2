@@ -57,14 +57,25 @@ RUN pip install --no-cache-dir --break-system-packages kokoro-onnx==0.4.7 \
  || echo "[kokoro] pip install failed — read-aloud will run piper-only until the next build"
 
 # misaki — Kokoro's recommended G2P: better English pronunciation than espeak (POS-based
-# homographs, num2words), with an espeak fallback for OOV. INDEPENDENT of kokoro-onnx above and
-# NON-FATAL: if misaki or its small spaCy model (en_core_web_sm; piper_server uses trf=False to
-# stay on it and bound RAM) fails to install, the Kokoro path phonemizes with its built-in espeak
-# instead — never a broken read-aloud or a blocked update. Keep the "misaki" token here in step
-# with piper_server.py's _load_g2p (the test guards it).
-RUN (pip install --no-cache-dir --break-system-packages "misaki[en]" \
-      && python3 -m spacy download en_core_web_sm) \
- || echo "[kokoro] misaki G2P unavailable — Kokoro will phonemize with espeak until the next build"
+# homographs, num2words), with an espeak fallback for OOV. Its spaCy stack has NO Python-3.14
+# wheels (spaCy tops out at cp313, misaki caps at <3.13) and this base image's system Python is
+# 3.14, so `pip install misaki[en]` on system python can only ever fail to build blis and fall
+# back to espeak. Instead build the FULL TTS Python stack in a self-contained Python 3.12 venv
+# (uv fetches a portable build) where every wheel exists — piper + kokoro + misaki[en] + its small
+# spaCy model (en_core_web_sm; piper_server uses trf=False to bound RAM) — and prefer it at runtime
+# (entrypoint.sh). NON-FATAL and self-cleaning: the system-python piper above stays the guaranteed
+# fallback, so a venv hiccup (or blocked egress) only means read-aloud runs piper-only on 3.14 —
+# never a broken build or a dead TTS. The final import check tears the venv down unless the whole
+# stack loads, so the entrypoint's presence test can't pick a half-built venv. Keep the "misaki"
+# token here in step with piper_server.py's _load_g2p (the test guards it).
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+RUN ( uv python install 3.12 \
+   && uv venv --python 3.12 /opt/tts-venv \
+   && uv pip install --python /opt/tts-venv --no-cache piper-tts kokoro-onnx==0.4.7 "misaki[en]" \
+   && /opt/tts-venv/bin/python -m spacy download en_core_web_sm \
+   && /opt/tts-venv/bin/python -c "import piper, kokoro_onnx, misaki.en" ) \
+ || { echo "[kokoro] py3.12 TTS venv unavailable — read-aloud runs piper-only on system python"; \
+      rm -rf /opt/tts-venv; }
 
 # Baked default voices: Joe reads prompts, Amy reads answers, plus the multi-speaker
 # libritts_r model whose curated speaker 3922 is a second female agent voice. Fetched with
