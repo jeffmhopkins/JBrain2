@@ -15,4 +15,12 @@ else
        "'jbrain enable-whisper'); serving read-aloud (TTS) only" >&2
 fi
 
-exec python3 /tts/piper_server.py
+# Prefer the Python 3.12 TTS venv when it's present AND functional — it carries misaki's spaCy
+# G2P (natural Kokoro pronunciation) that this image's system Python 3.14 can't install. Fall back
+# to system python3 (piper-only, Kokoro-on-espeak) when the venv was skipped or failed to build, so
+# read-aloud always runs. The `import piper` probe rejects a half-built venv.
+TTS_PY=python3
+if [ -x /opt/tts-venv/bin/python ] && /opt/tts-venv/bin/python -c "import piper" 2>/dev/null; then
+  TTS_PY=/opt/tts-venv/bin/python
+fi
+exec "$TTS_PY" /tts/piper_server.py
