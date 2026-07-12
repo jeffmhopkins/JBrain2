@@ -466,6 +466,40 @@ def test_speakable_text_state_only_in_city_shape(server: types.ModuleType) -> No
     assert server._speakable_text("out near Omaha, NE now") == "out near Omaha, Nebraska now"
 
 
+def test_speakable_text_dates(server: types.ModuleType) -> None:
+    # Day spoken as an ordinal, year in speech style — with or without the comma, and with a
+    # trailing ordinal suffix already present.
+    assert server._speakable_text("July 10, 2026") == "July tenth, twenty twenty six"
+    assert server._speakable_text("July 10 2026") == "July tenth, twenty twenty six"
+    assert server._speakable_text("due July 10th tonight") == "due July tenth tonight"
+    assert server._speakable_text("April 21, 2010") == "April twenty first, twenty ten"
+
+
+def test_speakable_text_year_reading_styles(server: types.ModuleType) -> None:
+    # The year-reading conventions that differ by era.
+    assert server._year_words(2026) == "twenty twenty six"
+    assert server._year_words(1999) == "nineteen ninety nine"
+    assert server._year_words(2000) == "two thousand"
+    assert server._year_words(2005) == "two thousand five"
+    assert server._year_words(1905) == "nineteen oh five"
+    assert server._year_words(1900) == "nineteen hundred"
+    assert server._year_words(2010) == "twenty ten"
+
+
+def test_speakable_text_non_dates_untouched(server: types.ModuleType) -> None:
+    # A day out of range is not a date; a following non-year number isn't swallowed.
+    assert server._speakable_text("July 45 items") == "July 45 items"
+    assert server._speakable_text("July 10 with 12 people") == "July tenth with 12 people"
+
+
+def test_kokoro_lexicon_titusville_seeded(kokoro_server: types.ModuleType) -> None:
+    # The seeded proper-noun override reaches the misaki path (case-insensitive, even after the
+    # "City, ST" expansion turns "Titusville, FL" into "Titusville, Florida").
+    kokoro_server._g2p_holder.clear()
+    kokoro_server.tts_wav("visiting Titusville, FL", "kokoro-af_heart", lead_ms=0)
+    assert _FakeG2P.calls[-1] == "visiting [Titusville](/tˈItəsvɪl/), Florida"
+
+
 def test_tts_wav_normalizes_before_piper(server: types.ModuleType) -> None:
     # The piper path renders the SPOKEN text, not the raw symbols — normalization is pre-dispatch.
     assert server.tts_wav("high of 94 °F", "en_US-amy-medium", lead_ms=0) is not None

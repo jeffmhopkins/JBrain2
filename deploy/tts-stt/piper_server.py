@@ -112,7 +112,12 @@ CURATED_KOKORO_VOICES: tuple[str, ...] = (
 # markup). Empty by default — nothing is guessed; the owner adds an entry by running misaki on the
 # box to get the word's phonemes, then dropping it here (see deploy/tts-stt/README.md). Case-
 # insensitive whole-word match.
-KOKORO_LEXICON: dict[str, str] = {}
+KOKORO_LEXICON: dict[str, str] = {
+    # Titusville, FL — misaki/espeak stress the first vowel wrong; this says "TIGHT-us-vill"
+    # (capital I = /aɪ/, same convention as the kˈOkəɹO example above). Verify by ear on the box
+    # and re-derive with the README command if it drifts.
+    "titusville": "tˈItəsvɪl",
+}
 
 # Curated NARRATOR blends: a blend id "kokoro-<key>" whose voice is a weighted average of real
 # Kokoro voice style matrices — a custom timbre no single baked voice gives. Each key maps to
@@ -493,10 +498,66 @@ _SPEED_RE = re.compile(r"\b(mph|km/?h|kph)\b", re.IGNORECASE)
 _COMPASS_RE = re.compile(r"\b(" + "|".join(sorted(_COMPASS, key=len, reverse=True)) + r")\b")
 _CARDINAL_RE = re.compile(r"\b([Ff]rom|[Tt]he)\s+([NSEW])\b")
 
+# Dates: "July 10, 2026" / "July 10 2026" / "July 10th" -> "July tenth, twenty twenty six". Spelled
+# out here so BOTH engines say the day as an ORDINAL and the year in speech style, which neither
+# number reader does on its own (misaki/espeak would say "ten" and "two thousand twenty-six").
+_MONTHS = ("January", "February", "March", "April", "May", "June", "July", "August", "September",
+           "October", "November", "December")
+_CARD_ONES = ("zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten",
+              "eleven", "twelve", "thirteen", "fourteen", "fifteen", "sixteen", "seventeen",
+              "eighteen", "nineteen")
+_TENS = {2: "twenty", 3: "thirty", 4: "forty", 5: "fifty", 6: "sixty", 7: "seventy", 8: "eighty",
+         9: "ninety"}
+_ORD_ONES = {1: "first", 2: "second", 3: "third", 4: "fourth", 5: "fifth", 6: "sixth",
+             7: "seventh", 8: "eighth", 9: "ninth", 10: "tenth", 11: "eleventh", 12: "twelfth",
+             13: "thirteenth", 14: "fourteenth", 15: "fifteenth", 16: "sixteenth",
+             17: "seventeenth", 18: "eighteenth", 19: "nineteenth", 20: "twentieth", 30: "thirtieth"}
+_DATE_RE = re.compile(
+    r"\b(" + "|".join(_MONTHS) + r")\s+(\d{1,2})(?:st|nd|rd|th)?(?:,?\s+(\d{4}))?\b"
+)
+
+
+def _two_digit_words(n: int) -> str:
+    """Cardinal words for 0-99 ("26" -> "twenty six")."""
+    if n < 20:
+        return _CARD_ONES[n]
+    tens, ones = divmod(n, 10)
+    return _TENS[tens] + (f" {_CARD_ONES[ones]}" if ones else "")
+
+
+def _ordinal_day(n: int) -> str:
+    """Ordinal words for a day 1-31 ("10" -> "tenth", "21" -> "twenty first")."""
+    if n in _ORD_ONES:
+        return _ORD_ONES[n]
+    tens, ones = divmod(n, 10)
+    return f"{_TENS[tens]} {_ORD_ONES[ones]}"
+
+
+def _year_words(y: int) -> str:
+    """A 4-digit year in speech style: 2026 -> "twenty twenty six", 1999 -> "nineteen ninety nine",
+    2000 -> "two thousand", 2005 -> "two thousand five", 1905 -> "nineteen oh five"."""
+    hi, lo = divmod(y, 100)
+    if lo == 0:
+        return f"{_two_digit_words(y // 1000)} thousand" if y % 1000 == 0 else \
+            f"{_two_digit_words(hi)} hundred"
+    if lo < 10:
+        return f"two thousand {_CARD_ONES[lo]}" if 2000 <= y < 2010 else \
+            f"{_two_digit_words(hi)} oh {_CARD_ONES[lo]}"
+    return f"{_two_digit_words(hi)} {_two_digit_words(lo)}"
+
+
+def _date_sub(m: "re.Match[str]") -> str:
+    day = int(m.group(2))
+    if not 1 <= day <= 31:  # not a day-of-month — leave the text untouched
+        return m.group(0)
+    out = f"{m.group(1)} {_ordinal_day(day)}"
+    return f"{out}, {_year_words(int(m.group(3)))}" if m.group(3) else out
+
 
 def _speakable_text(text: str) -> str:
     """Rewrite terse symbols/abbreviations to their spoken words before phonemizing. Ordered so a
     state ("Omaha, NE") is expanded before the compass pass could read its "NE" as "northeast"."""
+    text = _DATE_RE.sub(_date_sub, text)
     text = _DEGREE_RE.sub(lambda m: f" degrees {_DEGREE_UNITS[m.group(1)]}", text)
     text = text.replace("°", " degrees")
     text = _STATE_RE.sub(lambda m: m.group(1) + _STATE_NAMES[m.group(2)], text)
