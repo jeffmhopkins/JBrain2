@@ -586,6 +586,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # in-memory only, never persisted, cleared when the wall reloads or on "reset everything"
         # (POST /internal/pet/effects/clear).
         app.state.pet_effects = {"colors": {}, "scales": {}, "pet_scale": 1.0, "pet_form": "robot"}
+        # Bounds the on-box wall's voice listener (unauthenticated, LAN-only) so it can't flood
+        # the local LLM: a burst of ~8 spoken commands, refilling ~1 every 2.5s.
+        app.state.pet_say_rate_limiter = TokenBucket(capacity=8, refill_per_sec=0.4)
         jpet_loop_task = asyncio.create_task(
             run_jpet_loop(
                 maker,
