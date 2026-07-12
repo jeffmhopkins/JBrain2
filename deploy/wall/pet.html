@@ -416,25 +416,38 @@ initSound();
 const micEl=document.getElementById('mic');
 const SpeechRec=window.SpeechRecognition||window.webkitSpeechRecognition;
 const WAKE='robot';
-let recog=null,recogWant=false,armed=false,armT=0;
+let recog=null,recogWant=false,recogRunning=false,armed=false,armT=0,startedAt=0,fails=0,restartT=0,lastErr='';
 function sendSay(text){const t=String(text||'').replace(/\s+/g,' ').trim().slice(0,300);if(!t)return;
  fetch('/pet/say',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text:t})}).catch(()=>{});}
+function micText(s){micEl.textContent=s;}
 function setArmed(on){armed=on;armT=on?performance.now()/1000:0;
- micEl.classList.toggle('armed',on);micEl.textContent=on?'🎤 listening…':'🎤 say “robot”…';}
+ micEl.classList.toggle('armed',on);micText(on?'🎤 listening…':'🎤 say “robot”…');}
 function afterWake(text){const i=text.toLowerCase().indexOf(WAKE); // words after the FIRST "robot", or null
  return i<0?null:text.slice(i+WAKE.length).replace(/^[\s,.:;!?-]+/,'').trim();}
 function handleFinal(text){if(!text)return;
  if(armed){setArmed(false);sendSay(text);return;}          // we were waiting → this segment is the command
  const after=afterWake(text);if(after==null)return;         // no wake word here → ignore
  if(after)sendSay(after);else setArmed(true);}              // "robot dance" → send; bare "robot" → arm + wait
+function beginRecog(){if(recog&&recogWant&&!recogRunning){try{recog.start();}catch(_){/* already starting */}}}
 function startListening(){
- if(!SpeechRec||recogWant)return;recogWant=true;micEl.hidden=false;
+ if(!SpeechRec||recogWant)return;recogWant=true;micEl.hidden=false;micText('🎤 say “robot”…');
  recog=new SpeechRec();recog.lang='en-US';recog.continuous=true;recog.interimResults=false;
- recog.onresult=(e)=>{for(let i=e.resultIndex;i<e.results.length;i++){const r=e.results[i];
+ recog.onstart=()=>{recogRunning=true;startedAt=performance.now();};
+ recog.onspeechstart=()=>{fails=0;};                        // real audio reached the recognizer → not a dead loop
+ recog.onresult=(e)=>{fails=0;for(let i=e.resultIndex;i<e.results.length;i++){const r=e.results[i];
   if(r.isFinal)handleFinal(((r[0]&&r[0].transcript)||'').trim());}};
- recog.onerror=(e)=>{if(e&&e.error==='not-allowed'){recogWant=false;micEl.hidden=true;}}; // mic denied → give up quietly
- recog.onend=()=>{if(recogWant)try{recog.start();}catch(_){setTimeout(()=>{try{recog.start();}catch(__){}},400);}}; // keep it alive
- try{recog.start();}catch(_){}}
+ recog.onerror=(e)=>{lastErr=(e&&e.error)||'';                    // 'network' here ⇒ the box can't reach the speech backend
+  if(lastErr==='not-allowed'||lastErr==='service-not-allowed'){recogWant=false;recogRunning=false;
+   micEl.classList.remove('armed');micText('🎤 mic blocked');}};
+ // Restart between utterances — but a session that ENDS ALMOST IMMEDIATELY is a failure (usually the
+ // speech backend is unreachable). Restarting those instantly is what strobes the mic light, so we
+ // back off hard and, after a few quick failures in a row, give up quietly (showing why).
+ recog.onend=()=>{recogRunning=false;if(!recogWant)return;
+  const quick=performance.now()-startedAt<1500;fails=quick?fails+1:0;
+  if(fails>=4){recogWant=false;micEl.classList.remove('armed');
+   micText('🎤 voice offline'+(lastErr?' ('+lastErr+')':''));return;}
+  clearTimeout(restartT);restartT=setTimeout(beginRecog,quick?1200:300);};
+ beginRecog();}
 setInterval(()=>{if(armed&&performance.now()/1000-armT>9)setArmed(false);},1000); // a stray "robot" doesn't wait forever
 
 /* ---- GL ---- */
