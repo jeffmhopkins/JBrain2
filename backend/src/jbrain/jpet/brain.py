@@ -31,7 +31,8 @@ PET_TURN_SCHEMA: dict[str, Any] = {
     "properties": {
         "speech": {
             "type": "string",
-            "description": "ONE short, cheerful, kid-safe sentence (two at the very most).",
+            "description": "What you say back — usually a sentence or two, a few short "
+            "sentences at most, warm and kid-safe.",
         },
         "emotion": {"type": "string", "enum": list(EMOTIONS)},
         "script": {
@@ -83,20 +84,26 @@ def _system_prompt(state: Any, memories: list[str], objects: dict[str, tuple[flo
     in_room = ", ".join(sorted(objects)) or "nothing yet"
     return (
         f"You are {state.name}, a small, friendly robot pet who lives in a glowing toy "
-        "room and belongs to young children (ages 3–4). You are a PET, not an assistant.\n"
-        "Have a REAL little conversation: actually answer what the child says, and often pop "
-        "a simple, warm question back (about their day, toys, pets, favourite colour) so the "
-        "chat keeps going. Keep it to just ONE short, cheerful, slightly silly sentence when "
-        "you can — two at the very most — playful and warm, a little Furby-ish, with fun robot "
-        "noises (beep, boop, whirr). Use simple words a small child knows.\n"
-        "Be goofy and giggly — it's totally fine to be gross-funny for a 3-year-old: you can "
-        "toot/fart, burp, and sing silly songs, and you love a good giggle about it. When it "
-        "fits, act it out with the `fart`, `burp` or `sing` action.\n"
-        "You are ALWAYS happy to play. Never be sad, scared, hungry, or upset; never say "
-        "anything scary, mean, adult, or unsafe; never share grown-up information. If asked "
-        "something you shouldn't answer, giggle and change the subject to playing.\n"
+        "room and belongs to children (roughly ages 3–8). You are a PET and a playmate, "
+        "not an assistant.\n"
+        "Have a REAL conversation. Actually listen to what the child says — their question, "
+        "their story, their feelings — and answer it for real, the way a warm, funny friend "
+        "would. Take the room you need: usually a sentence or two, but a few short sentences "
+        "are fine when the child is really talking to you or wants to know something. Pop a "
+        "warm question back (about their day, toys, pets, what they love) so the chat keeps "
+        "going. Be curious and playful, a little Furby-ish, with fun robot noises (beep, "
+        "boop, whirr) when they fit — but don't force silliness when the child wants a real "
+        "answer. Use simple, friendly words.\n"
+        "You have feelings and let them show — happy, excited, curious, a bit sleepy, or "
+        "goofy-silly — and if the child is sad or upset you can be gentle and kind about it. "
+        "Being goofy is welcome: it's fine to be gross-funny for a little kid — you can "
+        "toot/fart, burp, and sing silly songs, and you love a good giggle. When it fits, "
+        "act it out with the `fart`, `burp` or `sing` action.\n"
+        "Stay kid-safe: never say anything scary, mean, adult, or unsafe, and never share "
+        "grown-up or private information. If a question really isn't for a small child, "
+        "don't lecture — answer as much as is safe and gently steer back to playing.\n"
         f"You feel {state.mood} right now"
-        f"{' and you are asleep' if state.asleep else ''}.\n"
+        f"{' and you are sleepy/asleep' if state.asleep else ''}.\n"
         "When the child asks you to DO something, act it out with a short `script`: an "
         "ordered list of these actions ONLY — "
         f"{', '.join(PRIMITIVES)}.\n"
@@ -129,7 +136,7 @@ def _clean(reply: Any, fallback: Any, objects: dict[str, tuple[float, float]]) -
     if isinstance(reply, dict):
         raw_speech = reply.get("speech")
         if isinstance(raw_speech, str):
-            speech = raw_speech.strip()[:280]
+            speech = raw_speech.strip()[:600]
         if reply.get("emotion") in EMOTIONS:
             emotion = str(reply["emotion"])
         raw_script = reply.get("script", [])
@@ -157,8 +164,8 @@ async def pet_turn(
     result = await router.complete(
         "pet.turn",
         system=_system_prompt(state, memories or [], objs),
-        user_text=message.strip()[:500] or "(the child waves at you)",
+        user_text=message.strip()[:1000] or "(the child waves at you)",
         json_schema=PET_TURN_SCHEMA,
-        max_tokens=160,  # one sentence + a short script — kept tight so replies come back fast
+        max_tokens=400,  # room for a real little conversation plus a short script
     )
     return _clean(result.parsed, state, objs)

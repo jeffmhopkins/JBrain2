@@ -87,10 +87,10 @@ async def test_pet_turn_falls_back_on_unparseable_response() -> None:
 
 
 async def test_off_enum_and_overlong_are_sanitized() -> None:
-    long = "x" * 500
+    long = "x" * 900
     router = _FakeRouter(f'{{"speech":"{long}","emotion":"furious","script":[]}}')
     reply = await pet_turn(router, state=_state(), message="hi", objects=OBJS)
-    assert len(reply.speech) <= 280  # truncated
+    assert len(reply.speech) <= 600  # truncated
     assert reply.emotion == "happy"  # off-enum → the pet's current mood (a valid emotion)
 
 

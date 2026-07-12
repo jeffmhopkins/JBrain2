@@ -112,6 +112,47 @@ def test_open_ended_falls_through_to_the_llm() -> None:
     assert classify("   ") is None
 
 
+def test_turn_object_recolors_that_object_not_the_robot() -> None:
+    # "turn X <colour>" with a named room thing → a recolor intent carrying the target; a bare
+    # colour with no target still recolours the robot (the original behaviour).
+    for phrase, target, color in [
+        ("turn the floor blue", "floor", "blue"),
+        ("make the walls green", "walls", "green"),
+        ("turn the piano rainbow", "synth", "rainbow"),
+        ("turn the drums red please", "drums", "red"),
+        ("turn the bed purple", "bed", "purple"),
+    ]:
+        i = _c(phrase)
+        assert i.kind == "recolor" and i.target == target and i.value == color, phrase
+    # "turn X normal" resets that object's colour (colour "default"), not the robot's.
+    reset = _c("turn the floor normal")
+    assert reset.kind == "recolor" and reset.target == "floor" and reset.value == "default"
+    # No target → the robot's own colour (unchanged behaviour).
+    assert _c("turn red").kind == "color"
+
+
+def test_make_bigger_smaller_normal_resizes_a_target_or_the_robot() -> None:
+    for phrase, target, direction in [
+        ("make the bed bigger", "bed", "grow"),
+        ("make the piano smaller", "synth", "shrink"),
+        ("make the drums huge", "drums", "grow"),
+        ("make the ball tiny", "ball", "shrink"),
+        ("make me bigger", "robot", "grow"),  # no room thing → the pet grows
+        ("make it smaller", "robot", "shrink"),
+        ("make the bed normal", "bed", "reset"),  # per-target size reset
+        ("make me normal", "robot", "reset"),
+    ]:
+        i = _c(phrase)
+        assert i.kind == "resize" and i.target == target and i.value == direction, phrase
+
+
+def test_size_words_do_not_fire_on_ordinary_chit_chat() -> None:
+    # The strong-only size vocabulary (never bare "big"/"small"/"little") must not turn a hug or
+    # a passing "little" into a resize.
+    assert classify("i want a great big hug") is None
+    assert classify("aww you are such a little cutie") is None
+
+
 def test_canonical_color_validates() -> None:
     assert canonical_color("Red") == "red"
     assert canonical_color("aqua") == "cyan"

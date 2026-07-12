@@ -89,6 +89,24 @@ function hsv(h,s,v){const i=Math.floor(h*6),f=h*6-i,p=v*(1-s),q=v*(1-f*s),u=v*(1
 let colorOverride=null,lastServerColor=null;                // a wall-local recolour (keyboard); cleared when the server colour changes
 function petCol(t){const c=colorOverride||live.color;if(!c||c==='default')return null;
  if(c==='rainbow')return hsv((t*0.14)%1,0.85,1);return NAMED[c]||null;}
+// Ephemeral "turn X <colour>" / "make X bigger" wall effects (from the phone talk box, via the
+// server poll). Per-object colour + scale overrides and the pet's own scale — held only here,
+// so a page reload (which also POSTs /pet/effects/clear) starts back at the built-in look.
+let objColors={},objScale={},petScale=1,sceneT=0;
+// A recolour applies while an object draws: `curTint` is the active override ('rainbow' | [r,g,b]
+// | null) and `curXf` a world scale-about-base so a resized object grows in place. part()/ring()
+// consult both, so wrapping an object's draw in paint() recolours + resizes all of it at once.
+let curTint=null,curXf=null;
+function rainbowCol(){return hsv((sceneT*0.14)%1,0.85,1);}
+function ocRaw(name){const c=objColors[name];if(!c||c==='default')return null;
+ return c==='rainbow'?'rainbow':(NAMED[c]||null);}                 // 'rainbow' | [r,g,b] | null
+function colOf(name,base){const c=ocRaw(name);return c==null?base:(c==='rainbow'?rainbowCol():c);}
+function tintCol(base){return curTint==null?base:(curTint==='rainbow'?rainbowCol():curTint);}
+function VP(){return curXf?M.mul(vp,curXf):vp;}                     // view-proj with the active object scale folded in
+function scaleAbout(px,py,pz,s){let m=M.trans(M.ident(),px,py,pz);m=M.scale(m,s,s,s);return M.trans(m,-px,-py,-pz);}
+function paint(name,px,pz,fn){const pt=curTint,pxf=curXf,s=objScale[name]||1; // recolour+resize an object's whole draw
+ curTint=ocRaw(name);curXf=(s!==1)?scaleAbout(px,0,pz,s):null;
+ try{fn();}finally{curTint=pt;curXf=pxf;}}
 let W,H,DPR,vp=M.ident();
 function resize(){DPR=Math.min(2,devicePixelRatio||1);W=innerWidth;H=innerHeight;cv.width=W*DPR;cv.height=H*DPR;
   gl&&gl.viewport(0,0,cv.width,cv.height);bcv.width=W*DPR;bcv.height=H*DPR;}
@@ -184,6 +202,10 @@ function applyLive(){
   // A fresh colour from the phone/talk (the server value changed) clears any keyboard
   // override, so whichever surface acted most recently wins the recolour.
   if(live.color!==lastServerColor){colorOverride=null;lastServerColor=live.color;}
+  // Ephemeral "turn X <colour>" / "make X bigger" effects ride the same poll (server memory,
+  // never persisted). Mirror them each frame; the server was cleared on this page's load, so a
+  // reload starts from empty and everything is back to its built-in look/size.
+  objColors=live.object_colors||{};objScale=live.object_scales||{};petScale=live.pet_scale||1;
   // A parent raw `move` (empty script, a fresh target) → a one-off travel interrupt.
   const mk=(live.target_x||0)+','+(live.target_z||0);
   if(!(live.script&&live.script.length)&&mk!==lastMoveKey&&(Math.abs(live.target_x)>0.001||Math.abs(live.target_z)>0.001)){
@@ -201,14 +223,17 @@ async function poll(){try{const r=await fetch('/pet/state',{cache:'no-store'});
   if(r.ok){Object.assign(live,await r.json());connected=true;applyLive();}
   else{connected=false;document.getElementById('mood').textContent='waiting…';applyLive();}
  }catch(e){connected=false;}}
-setInterval(poll,1000);poll();
+// Drop any leftover "turn X <colour>" / "make X bigger" effects on load, so a reload of the wall
+// resets the room to its built-in look/size (the effects are never persisted). Then start polling.
+fetch('/pet/effects/clear',{method:'POST'}).catch(()=>{}).finally(()=>{setInterval(poll,1000);poll();});
 
-/* ---- Sound: the pet reads its speech bubble aloud with the box's piper /tts (same
-   endpoint as the neural wall). Display tabs can't autoplay audio, so a one-time tap
-   unlocks it — after that the pet just talks. No voices installed / tts off -> stays silent. */
+/* ---- Sound: the pet reads its speech bubble aloud through the box's /tts — the SAME
+   endpoint (and, by preferring a Kokoro voice below, the same natural engine) an agent
+   read-aloud turn uses. Display tabs can't autoplay audio, so a one-time tap unlocks it —
+   after that the pet just talks. No voices installed / tts off -> stays silent. */
 let soundOn=false,petVoice=null;
 const petAudio=new Audio(),ttsQ=[];let ttsBusy=false;
-petAudio.volume=0.85;                                       // trim the piper voice a touch so the toys sit alongside it
+petAudio.volume=0.85;                                       // trim the pet voice a touch so the toys sit alongside it
 // All the WebAudio toys (synth, guitar, drums, sfx) route through a per-context compressor, so we
 // can run them LOUD — up near the voice — without the peaks clipping when several notes stack.
 const _masters=new WeakMap();
@@ -228,7 +253,7 @@ function startKeepAlive(){try{const AC=window.AudioContext||window.webkitAudioCo
  if(keepAliveCtx.state==='suspended')keepAliveCtx.resume().catch(()=>{});}catch(e){}}
 document.addEventListener('visibilitychange',()=>{if(!document.hidden&&keepAliveCtx&&keepAliveCtx.state==='suspended')keepAliveCtx.resume().catch(()=>{});});
 function speakPet(text){if(!soundOn||!petVoice||!text)return;
- const clean=String(text).replace(/\s+/g,' ').trim().slice(0,220);if(!clean)return;
+ const clean=String(text).replace(/\s+/g,' ').trim().slice(0,600);if(!clean)return;
  ttsQ.length=0;ttsBusy&&petAudio.pause();ttsBusy=false;   // newest utterance wins — drop stale backlog
  ttsQ.push('/tts?voice='+encodeURIComponent(petVoice)+'&text='+encodeURIComponent(clean));ttsNext();}
 // Playful per-action sound cues — short, generated with WebAudio (no assets), volume-capped
@@ -346,8 +371,13 @@ function kidDrum(i){padLit=i;padLitT=0.18;drumVoice(i);P.emotion='excited';petPl
 const soundBtn=document.getElementById('sound');
 async function initSound(){let voices=[];
  try{voices=((await(await fetch('/tts/voices',{cache:'no-store'})).json()).voices)||[];}catch(e){}
- if(!voices.length)return;                                // no piper voices on the box -> pet stays silent
- petVoice=voices.includes('en_US-amy-medium')?'en_US-amy-medium':voices[0];
+ if(!voices.length)return;                                // no voices on the box -> pet stays silent
+ // Voice the pet through Kokoro (the natural engine an agent read-aloud turn uses), preferring
+ // its default af_heart, then any Kokoro voice; fall back to piper (amy / first) on a box
+ // without the Kokoro weights baked so the pet still talks.
+ petVoice=voices.includes('kokoro-af_heart')?'kokoro-af_heart'
+   :voices.find(v=>v.startsWith('kokoro-'))
+   ||(voices.includes('en_US-amy-medium')?'en_US-amy-medium':voices[0]);
  soundBtn.hidden=false;}
 soundBtn.addEventListener('click',()=>{
  soundOn=true;soundBtn.hidden=true;startKeepAlive();
@@ -394,11 +424,11 @@ function draw(b,count,mode,mvp,col,alpha){gl.bindBuffer(gl.ARRAY_BUFFER,b);gl.en
  gl.uniform3fv(uCol,col);gl.uniform1f(uAl,alpha==null?1:alpha);gl.drawArrays(mode,0,count);}
 // A solid-wireframe box part: dark occluding faces (depth-offset back) then the neon edges.
 function part(model,lx,ly,lz,sx,sy,sz,col,alpha){
- const mvp=M.mul(vp,M.scale(M.trans(model,lx,ly,lz),sx,sy,sz));
+ const mvp=M.mul(VP(),M.scale(M.trans(model,lx,ly,lz),sx,sy,sz));
  gl.enable(gl.POLYGON_OFFSET_FILL);gl.polygonOffset(1.2,1.2);
  draw(gCubeF,36,gl.TRIANGLES,mvp,FILL,(alpha==null?1:alpha)*0.9);
  gl.disable(gl.POLYGON_OFFSET_FILL);
- draw(gCube,24,gl.LINES,mvp,col,alpha);}
+ draw(gCube,24,gl.LINES,mvp,tintCol(col),alpha);}
 
 /* ---- Physics playground (docs/archive/JPET_V3_PLAN.md W2): the ball rolls, bounces off the
    walls and settles with friction; the pet kicks it and chases; a mouse click flicks the
@@ -854,7 +884,7 @@ function stepGuitar(t){
 // A wireframe ring at (x,y,z) with radius r; `rot` is 0 (flat), 1 (rotX), 2 (rotZ) — three
 // perpendicular rings make a cheap glowing "ball".
 function ring(x,y,z,r,rot,col,al){let m=M.trans(M.ident(),x,y,z);if(rot===1)m=M.rotX(m,Math.PI/2);else if(rot===2)m=M.rotZ(m,Math.PI/2);
- draw(gCirc,40,gl.LINE_LOOP,M.mul(vp,M.scale(m,r,r,r)),col,al==null?.9:al);}
+ draw(gCirc,40,gl.LINE_LOOP,M.mul(VP(),M.scale(m,r,r,r)),tintCol(col),al==null?.9:al);}
 // Detailed multi-part furniture, all in the solid-wireframe style.
 function drawBed(x,z,dim){
  part(M.ident(),x,.55,z,3.4,.4,2.4,BL,dim);                 // mattress frame (roomy — the pet fits in it)
@@ -945,24 +975,30 @@ function drawBall(x,y,z,r,spin,dim){const base=M.rotY(M.trans(M.ident(),x,y,z),s
  gl.enable(gl.POLYGON_OFFSET_FILL);gl.polygonOffset(1.2,1.2);
  draw(gSphere,nSphere,gl.TRIANGLES,M.mul(vp,M.scale(base,r*.97,r*.97,r*.97)),FILL,.9);
  gl.disable(gl.POLYGON_OFFSET_FILL);
- draw(gCirc,40,gl.LINE_LOOP,M.mul(vp,M.scale(base,r,r,r)),GD,dim);
- draw(gCirc,40,gl.LINE_LOOP,M.mul(vp,M.scale(M.rotX(base,Math.PI/2),r,r,r)),GD,dim*.85);
- draw(gCirc,40,gl.LINE_LOOP,M.mul(vp,M.scale(M.rotZ(base,Math.PI/2),r,r,r)),OR,dim*.7);}
+ draw(gCirc,40,gl.LINE_LOOP,M.mul(vp,M.scale(base,r,r,r)),tintCol(GD),dim);
+ draw(gCirc,40,gl.LINE_LOOP,M.mul(vp,M.scale(M.rotX(base,Math.PI/2),r,r,r)),tintCol(GD),dim*.85);
+ draw(gCirc,40,gl.LINE_LOOP,M.mul(vp,M.scale(M.rotZ(base,Math.PI/2),r,r,r)),tintCol(OR),dim*.7);}
 function drawObjects(t){
  const dim=.35+.65*lights;                                 // props dim a little at night
  // The ball is wall-simulated physics (rolls with a spin proportional to its speed).
  if(phys.ball.init){const b=phys.ball,held=player.held==='ball',by=held?1.9:b.y,spin=t*(1+ballSpeed());
-  drawBall(held?P.x:b.x,by,held?P.z:b.z,.7,spin,dim);}                // height is real physics now (arcs)
+  curTint=ocRaw('ball');                                             // recolour the ball's rings while it draws
+  drawBall(held?P.x:b.x,by,held?P.z:b.z,.7*(objScale.ball||1),spin,dim);curTint=null;} // scale from "make the ball bigger"
  // Blocks: little coloured bricks — stacked into the build-zone statue (a fun shape),
- // carried by the pet (shown bright in its own colour), or scattered on the floor.
+ // carried by the pet (shown bright in its own colour), or scattered on the floor. A
+ // "turn the blocks red" tints them all; "make the blocks bigger" scales each brick in place.
+ const blockTint=ocRaw('blocks'),blockScale=objScale.blocks||1;
  for(const bl of phys.blocks){
+  curTint=(bl===carried)?null:blockTint;                             // a carried brick stays its own bright colour
   let x,y,z;
   if(bl.stacked){const o=bl.o||curShape[bl.slot]||[0,0,0]; // stored offset; floor (not sky) if ever missing
    x=BUILD[0]+o[0]*BLOCK_S*1.05;y=0.28+o[1]*BLOCK_H;z=BUILD[1]+o[2]*BLOCK_S*1.05;}
   else if(bl===carried){const fx=P.x+Math.sin(P.facing)*.62,fz=P.z+Math.cos(P.facing)*.62; // held out in front, between the hands
    x=fx;y=1.15+Math.sin(t*8)*.03;z=fz;}
   else{x=bl.x;y=0.28;z=bl.z;}
-  part(M.ident(),x,y,z,BLOCK_S*0.92,BLOCK_H*0.92,BLOCK_S*0.92,bl.col,bl===carried?1:dim);}
+  const bs=(bl===carried)?1:blockScale;
+  part(M.ident(),x,y,z,BLOCK_S*0.92*bs,BLOCK_H*0.92*bs,BLOCK_S*0.92*bs,bl.col,bl===carried?1:dim);}
+ curTint=null;
  // Vacuum: parked at its spot, or held out in front of the pet while it's tidying.
  if(ai.hasVac){const vx=P.x+Math.sin(P.facing)*1.0,vz=P.z+Math.cos(P.facing)*1.0;
   part(M.ident(),vx,.45,vz,.5,.9,.5,CY,1);                             // canister body
@@ -974,19 +1010,22 @@ function drawObjects(t){
   if(player.held===name){room[name]=[P.x,P.z];}            // a carried object rides the pet
   else{room[name][0]+=(w[0]-room[name][0])*.12;room[name][1]+=(w[1]-room[name][1])*.12;}
   const[x,z]=room[name];
-  if(name==='bed')drawBed(x,z,dim);
-  else if(name==='toy_box')drawToybox(x,z,t,dim);
+  if(name==='bed')paint('bed',x,z,()=>drawBed(x,z,dim));
+  else if(name==='toy_box')paint('toy_box',x,z,()=>drawToybox(x,z,t,dim));
   else if(name==='food_bowl'){const charging=P.act==='recharge'&&Math.hypot(P.x-x,P.z-z)<2.2; // a robot charge-dock
    ring(x,.1,z,.42,0,GD,dim);ring(x,.4,z,.6,0,GD,dim*.7);              // dish widens to its rim
    ring(x,.3,z,.42,0,charging?GD:OR,charging?.55+.45*Math.sin(t*9):dim*.6);} // the energy ring pulses while the pet tops up
-  else if(name==='ball_pit'){ring(x,.06,z,1.0,0,MG,dim);ring(x,.45,z,1.0,0,MG,dim*.8); // floor + a raised rim
+  else if(name==='ball_pit')paint('ball_pit',x,z,()=>{ring(x,.06,z,1.0,0,MG,dim);ring(x,.45,z,1.0,0,MG,dim*.8); // floor + a raised rim
    [[-.4,.25,-.3,CY],[.4,.2,.25,GD],[0,.3,.45,RD],[.45,.22,-.4,BL]].forEach((b,i)=>
-    ring(x+b[0],b[1]+Math.abs(Math.sin(t*2.5+i*1.7))*.12,z+b[2],.22,0,b[3],dim));} // balls jostle in place
+    ring(x+b[0],b[1]+Math.abs(Math.sin(t*2.5+i*1.7))*.12,z+b[2],.22,0,b[3],dim));}); // balls jostle in place
   else if(name==='light_switch'){const on=artLevel>0.25,fl=switchLitT>0,c=fl||artLevel>0.75?GD:on?OR:BL,a=fl?1:on?1:dim;
    part(M.ident(),x,3.0,z,.34,.56,.08,c,a);                            // wall plate (flashes gold on a flip)
    part(M.ident(),x,3.0+(on?.12:-.12),z+.09,.14,.2,.08,c,a);}          // the toggle — up when lit, down when off
  }
- drawTV(t,dim);drawWindow(t,dim);drawSynth(t,dim);drawDrums(t,dim);drawGuitar(dim); // fixtures
+ drawTV(t,dim);drawWindow(t,dim);                                       // (tv/window aren't recolour targets)
+ paint('synth',SYNTH[0],SYNTH[1],()=>drawSynth(t,dim));                 // piano
+ paint('drums',DRUMS[0],DRUMS[1],()=>drawDrums(t,dim));
+ paint('guitar',GUITAR[0],-R+0.3,()=>drawGuitar(dim));
 }
 // The jump rope: a line-strip arc from hand to hand that bulges along a direction sweeping
 // the sagittal plane (θ), rebuilt each frame into the dynamic gRope buffer. Drawn in the
@@ -1026,7 +1065,7 @@ function robot(t){
  if(act==='flop')crouch=-.34;                              // flopped down into the ball pit
  // Kid-chosen colour (or rainbow) tints the body/head/limbs; null = default synthwave.
  const pc=petCol(t),body=pc||MG,head=pc||CY,limb=pc||MG;
- const S=1.7;                                              // scale the pet up for the bigger room
+ const S=1.7*petScale;                                     // scale the pet up for the bigger room (× "make me bigger")
  // Lie down flat when asleep: tip the whole body back about the feet (eased via P.lie), and
  // when it's on the bed, lift the lying body up onto the mattress so it sleeps *in* the bed.
  let base=M.rotY(M.trans(M.ident(),P.x,0,P.z),P.facing+spinAdd+wiggle+idleYaw);
@@ -1128,7 +1167,8 @@ function frame(ts){const dt=Math.min(.05,(ts-last)/1000||0);last=ts;const t=ts/1
   const gA=.18+.42*lights,bA=.1+.22*lights;                // grids dim at night
   gl.clearColor(.02+.02*lights,.01+.01*lights,.05+.02*lights,1);
   gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);
-  draw(gFloor,nFloor,gl.LINES,vp,MG,gA);draw(gBack,nBack,gl.LINES,vp,MG,bA);draw(gSide,nSide,gl.LINES,vp,CY,bA*.5);
+  sceneT=t;                                                // drives rainbow overrides this frame
+  draw(gFloor,nFloor,gl.LINES,vp,colOf('floor',MG),gA);draw(gBack,nBack,gl.LINES,vp,colOf('walls',MG),bA);draw(gSide,nSide,gl.LINES,vp,colOf('walls',CY),bA*.5);
   drawObjects(t);
   robot(t);
   drawPuffs(t);                                            // fart/burp vapour clouds, over the pet

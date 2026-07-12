@@ -49,6 +49,58 @@ _COLOR_ALIASES = {
     "robot": "default",
 }
 
+# Room things a "turn X <colour>" / "make X bigger" command can point at, plus the robot
+# itself. Ordered phrase → canonical target key the WALL renders under (mirrored in pet.html).
+# Multi-word phrases come first so "ball pit"/"toy box" win over a bare "ball"/"toy". These are
+# EPHEMERAL wall effects (never persisted): a reload resets them. `robot` maps colour to the
+# pet's own recolour path and size to the pet's scale.
+TARGETS: tuple[tuple[str, str], ...] = (
+    ("ball pit", "ball_pit"),
+    ("ballpit", "ball_pit"),
+    ("toy box", "toy_box"),
+    ("toybox", "toy_box"),
+    ("keyboard", "synth"),
+    ("piano", "synth"),
+    ("synth", "synth"),
+    ("floor", "floor"),
+    ("ground", "floor"),
+    ("walls", "walls"),
+    ("wall", "walls"),
+    ("bed", "bed"),
+    ("blocks", "blocks"),
+    ("block", "blocks"),
+    ("bricks", "blocks"),
+    ("brick", "blocks"),
+    ("drums", "drums"),
+    ("drum", "drums"),
+    ("guitar", "guitar"),
+    ("ball", "ball"),
+    ("robot", "robot"),
+    ("yourself", "robot"),
+    ("pet", "robot"),
+)
+# A friendly spoken name per target for the pet's little reaction line.
+_TARGET_NAMES: dict[str, str] = {
+    "floor": "floor",
+    "walls": "walls",
+    "bed": "bed",
+    "blocks": "blocks",
+    "synth": "piano",
+    "drums": "drums",
+    "guitar": "guitar",
+    "toy_box": "toy box",
+    "ball_pit": "ball pit",
+    "ball": "ball",
+    "robot": "me",
+}
+
+# Size words. Kept STRONG and unambiguous (never bare "big"/"small"/"little", which appear in
+# ordinary chit-chat like "a great big hug") so a resize only fires on a clear request. `grow`
+# and `shrink` map to a step the API multiplies; the reset words restore the normal size.
+_GROW = ("bigger", "biggest", "grow", "huge", "giant", "gigantic", "enormous", "massive")
+_SHRINK = ("smaller", "smallest", "shrink", "tiny", "teeny", "mini", "littler")
+_SIZE_RESET = ("normal", "regular", "reset")
+
 # Ordered phrase → canned button action (the actions `service.CANNED_SCRIPTS` knows).
 # First match wins, so put the more specific phrases first.
 _KEYWORDS: tuple[tuple[tuple[str, ...], str], ...] = (
@@ -171,12 +223,16 @@ CHAT_BABBLE = (
 @dataclass(frozen=True)
 class Intent:
     """A classified request. `kind` is 'action' (a canned button action), 'chat' (a small
-    emote + a funny conversational reply), or 'color'. 'chat' and 'action' both run `value`'s
-    canned script; only the speech differs."""
+    emote + a funny conversational reply), 'color' (recolour the robot), 'recolor' (recolour a
+    room object named by `target`), or 'resize' (grow/shrink/reset `target`'s size — the robot
+    or a room object). 'chat' and 'action' both run `value`'s canned script; only the speech
+    differs. For 'recolor' `value` is the colour; for 'resize' `value` is 'grow'|'shrink'|
+    'reset'; `target` names the object (a `TARGETS` key, 'robot' for the pet itself)."""
 
     kind: str
     value: str
     speech: str
+    target: str | None = None
 
 
 def _match(t: str, phrases: tuple[str, ...]) -> bool:
@@ -194,16 +250,51 @@ def _color_in(words: list[str]) -> str | None:
     return None
 
 
+def _target_in(t: str) -> str | None:
+    """The first room target named in `t` (longest phrases first), or None. Word-boundary
+    matched so "wall" doesn't fire on "always"."""
+    for phrase, key in TARGETS:
+        if _match(t, (phrase,)):
+            return key
+    return None
+
+
+def _size_dir(t: str) -> str | None:
+    """'grow' / 'shrink' if the message asks to change a size, else None (the reset words are
+    handled separately, since "normal" is also a colour reset)."""
+    if _match(t, _GROW):
+        return "grow"
+    if _match(t, _SHRINK):
+        return "shrink"
+    return None
+
+
 def classify(text: str) -> Intent | None:
-    """Match a child's message to a COMMAND only — a colour ("make it blue") or a play action
-    ("dance", "chase the ball", "do a fart"). Returns None for everything else — greetings,
-    questions, chit-chat — so it flows to the LLM for a *real* conversation (with `chat_reply`
-    as the no-LLM fallback). Commands act instantly; talk actually talks back."""
+    """Match a child's message to a COMMAND only — a resize ("make the bed bigger", "make me
+    smaller"), a colour (the robot: "turn red"; a room thing: "turn the floor blue"), or a play
+    action ("dance", "chase the ball", "do a fart"). Returns None for everything else —
+    greetings, questions, chit-chat — so it flows to the LLM for a *real* conversation (with
+    `chat_reply` as the no-LLM fallback). Commands act instantly; talk actually talks back."""
     t = " ".join(text.lower().split())
     if not t:
         return None
+    target = _target_in(t)
+    # Resize FIRST — a grow/shrink word, or "make <target> normal" (a size reset). Defaults to
+    # the robot when no room thing is named ("make it bigger" → the pet grows).
+    size = _size_dir(t)
+    if size is None and _match(t, ("make",)) and _match(t, _SIZE_RESET):
+        size = "reset"
+    if size is not None:
+        tgt = target or "robot"
+        return Intent(kind="resize", value=size, target=tgt, speech=resize_speech(tgt, size))
+    # Colour next. A named room thing → recolour that object; otherwise the robot itself (the
+    # original behaviour). "turn the floor normal" resets that object's colour (colour "default").
     color = _color_in(t.replace("!", " ").replace(".", " ").split())
     if color is not None:
+        if target is not None and target != "robot":
+            return Intent(
+                kind="recolor", value=color, target=target, speech=recolor_speech(target, color)
+            )
         return Intent(kind="color", value=color, speech=color_speech(color))
     for phrases, action in _KEYWORDS:
         if _match(t, phrases):
@@ -229,6 +320,29 @@ def color_speech(color: str) -> str:
     if color == "default":
         return "Back to my old self!"
     return f"Ooh, {color}!"
+
+
+def recolor_speech(target: str, color: str) -> str:
+    """A friendly line for recolouring a room thing (a wall effect, not the robot)."""
+    name = _TARGET_NAMES.get(target, target)
+    if color == "default":
+        return f"The {name} is back to normal!"
+    if color == "rainbow":
+        return f"Rainbow {name}! Wheee!"
+    return f"Ooh, a {color} {name}!"
+
+
+def resize_speech(target: str, direction: str) -> str:
+    """A friendly line for a resize (the robot, or a room thing)."""
+    if target == "robot":
+        return {"grow": "I'm SO big now! Rawr!", "shrink": "I'm teeny-tiny! Squeak!"}.get(
+            direction, "Back to my normal size!"
+        )
+    name = _TARGET_NAMES.get(target, target)
+    return {
+        "grow": f"Big big {name}! Whoa!",
+        "shrink": f"Teeny tiny {name}!",
+    }.get(direction, f"The {name} is back to normal size!")
 
 
 def canonical_color(name: str) -> str | None:

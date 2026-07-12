@@ -63,6 +63,17 @@ def fetch_pet_state() -> bytes | None:
 TTS_URL = os.environ.get("BRAIN_TTS_URL", "http://tts-stt:8801").rstrip("/")
 
 
+def api_post(path: str) -> tuple[int, bytes, str]:
+    """POST (empty body) to the on-box api and return (status, body, content-type). Used for
+    the wall's one-shot `/internal/pet/effects/clear` on page load. 503 on any failure."""
+    try:
+        req = urllib.request.Request(f"{API_URL}{path}", data=b"", method="POST")  # noqa: S310
+        with urllib.request.urlopen(req, timeout=2) as resp:  # noqa: S310
+            return resp.status, resp.read(), resp.headers.get("Content-Type", "application/json")
+    except Exception:  # noqa: BLE001 — any failure just means the reset didn't land; harmless
+        return 503, b'{"error":"unavailable"}', "application/json"
+
+
 def tts_forward(path_qs: str) -> tuple[int, bytes, str]:
     """GET `path_qs` (e.g. '/tts?voice=...&text=...') from the tts-stt service and return
     (status, body, content-type). Any failure surfaces as 503 so the page can degrade."""
@@ -496,7 +507,14 @@ class Handler(BaseHTTPRequestHandler):
         # a tendril, latched below and surfaced in /stats to show/hide the voice panel.
         # We queue it for the next /stats drain (-> a tendril; the llm kinds stream their
         # text along it + fade an answer popup; the task kinds hold a named popup).
-        if self.path.split("?", 1)[0] != "/event":
+        path = self.path.split("?", 1)[0]
+        if path == "/pet/effects/clear":
+            # The pet page calls this on load so a reload drops the ephemeral colour/size
+            # overrides (they were never persisted). Same-origin forward to the on-box api.
+            code, body, ctype = api_post("/internal/pet/effects/clear")
+            self._send(code, body, ctype)
+            return
+        if path != "/event":
             self._send(404, b"not found", "text/plain")
             return
         try:
