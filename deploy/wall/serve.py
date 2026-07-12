@@ -529,12 +529,13 @@ class Handler(BaseHTTPRequestHandler):
             return
         if path == "/pet/statue":
             # "build a statue of X" — the pet page asks the internal brain to sculpt a voxel
-            # model. A high-reasoning sculptor can think for a few minutes, so allow a long hold
-            # (the pet wanders the field behind a "drafting statue" banner meanwhile). Same
-            # LAN-only boundary; a single wall makes at most one of these at a time.
+            # model. A high-reasoning sculptor genuinely runs several minutes (a local 120B at
+            # ~45 tok/s emitting a few hundred voxels is ~5 min), so allow a long hold — the pet
+            # wanders the field behind a "drafting statue" banner meanwhile. Same LAN-only
+            # boundary; a single wall makes at most one of these at a time.
             n = min(int(self.headers.get("Content-Length", 0) or 0), 2048)
             raw = self.rfile.read(n) if n > 0 else b"{}"
-            code, body, ctype = api_post("/internal/pet/statue", raw, "application/json", timeout=300.0)
+            code, body, ctype = api_post("/internal/pet/statue", raw, "application/json", timeout=600.0)
             self._send(code, body, ctype)
             return
         if path != "/event":
