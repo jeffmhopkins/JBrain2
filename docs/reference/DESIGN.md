@@ -1,6 +1,6 @@
 # JBrain2 — GUI Design System
 
-> **Status:** Living · **Last verified:** 2026-07-09
+> **Status:** Living · **Last verified:** 2026-07-12
 
 Binding reference for all UI work. Derived from the owner-supplied JBrain v1
 reference screens (dark composer, knowledge hub, calendar, medical entry).
@@ -773,11 +773,14 @@ local append with an amber "pending sync" chip until the outbox clears.
   — any installed voice, including a multi-speaker model's individual speakers (e.g.
   LibriTTS 3922) — a *play sample* button, and a *read custom text* button; that voice also
   reads the wall display's answers. **Read custom text** opens a full-screen surface that is
-  mostly a text area (paste a note or a book chapter) with a **Play/Stop** control and an
-  **Export audio** button at the foot — Play renders the text on the box clip-by-clip and
-  plays it gaplessly in the chosen voice; Export renders the whole thing and downloads it as a
-  single WAV. On-box (Piper/Kokoro) only, since it needs the box to render capturable audio; a
-  back button is its explicit exit. With read-aloud on, the copy button drops its "Copy" label
+  mostly a text area (paste a note or a book chapter, or **Upload .md** to drop a `.md`/`.txt`
+  file's contents into the area to review and edit) with an **Upload .md**, **Play/Stop**, and
+  **Export audio** foot — Play renders the text on the box clip-by-clip and plays it gaplessly
+  in the chosen voice; Export renders the whole thing and downloads it as a single WAV. The
+  text is normalized for the same engine that renders the chosen voice (a Kokoro voice on
+  Kokoro's profile), so custom text reads exactly as a chat answer in that voice does. On-box
+  (Piper/Kokoro) only, since it needs the box to render capturable audio; a back button is its
+  explicit exit. With read-aloud on, the copy button drops its "Copy" label
   to just the icon so the pair fits on the foot line.
 
 ## Navigation: the card launcher (no bottom nav)

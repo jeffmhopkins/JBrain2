@@ -14,6 +14,11 @@ export function toUtterance(prose: string, engine?: SpeakEngine): string;
  * (default piper) — toProse composed with toUtterance. Shared verbatim with the wall display. */
 export function speakable(md: string, engine?: SpeakEngine): string;
 
+/** The utterance profile a box voice id renders through: a Kokoro voice ("kokoro-…") →
+ * "kokoro", any other id → "piper". Threads the right engine into speakable/chunkStream from
+ * the chosen voice alone, so text is normalized for the engine that actually renders it. */
+export function engineForVoice(voice: string): SpeakEngine;
+
 /** Streaming, block-aware splitter: given the raw markdown received since the caller's
  * cursor, return normalized speakable clips for the complete units it can emit now, plus
  * how many raw chars were consumed (advance a raw-space cursor). Incomplete trailing blocks

@@ -477,6 +477,18 @@ export function speakable(md, engine = "piper") {
   return toUtterance(toProse(md), engine);
 }
 
+/**
+ * The utterance profile a box voice id renders through: a Kokoro voice ("kokoro-…") phonemizes
+ * via Kokoro, every other id via piper/espeak. Lets a caller thread the right engine into
+ * speakable/chunkStream from the chosen voice alone — so custom text and a chat answer are
+ * normalized for the SAME engine that will actually render them.
+ * @param {string} voice
+ * @returns {"piper" | "kokoro"}
+ */
+export function engineForVoice(voice) {
+  return String(voice || "").startsWith("kokoro-") ? "kokoro" : "piper";
+}
+
 // --- streaming chunker -----------------------------------------------------------------
 
 const ENDS_LINE = /[.!?]["')\]]?\s*$/;
