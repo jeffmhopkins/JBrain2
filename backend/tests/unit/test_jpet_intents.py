@@ -137,9 +137,9 @@ def test_make_bigger_smaller_normal_resizes_a_target_or_the_robot() -> None:
         ("make the piano smaller", "synth", "shrink"),
         ("make the drums huge", "drums", "grow"),
         ("make the ball tiny", "ball", "shrink"),
-        ("make me bigger", "robot", "grow"),          # no room thing → the pet grows
+        ("make me bigger", "robot", "grow"),  # no room thing → the pet grows
         ("make it smaller", "robot", "shrink"),
-        ("make the bed normal", "bed", "reset"),      # per-target size reset
+        ("make the bed normal", "bed", "reset"),  # per-target size reset
         ("make me normal", "robot", "reset"),
     ]:
         i = _c(phrase)

@@ -17,10 +17,23 @@ def _fx() -> dict:
 
 def _state() -> PetStateInfo:
     return PetStateInfo(
-        id="p", name="Blink", domain="general", mood="playful", emotion="happy", speech=None,
-        asleep=False, pos_x=0, pos_z=0, target_x=0, target_z=0, facing=0, action="idle",
-        color=None, objects={"ball": (0.0, 0.35)},
-        last_tick_at=datetime(2026, 1, 1, tzinfo=UTC), updated_at=datetime(2026, 1, 1, tzinfo=UTC),
+        id="p",
+        name="Blink",
+        domain="general",
+        mood="playful",
+        emotion="happy",
+        speech=None,
+        asleep=False,
+        pos_x=0,
+        pos_z=0,
+        target_x=0,
+        target_z=0,
+        facing=0,
+        action="idle",
+        color=None,
+        objects={"ball": (0.0, 0.35)},
+        last_tick_at=datetime(2026, 1, 1, tzinfo=UTC),
+        updated_at=datetime(2026, 1, 1, tzinfo=UTC),
     )
 
 

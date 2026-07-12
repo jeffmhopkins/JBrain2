@@ -81,9 +81,17 @@ TARGETS: tuple[tuple[str, str], ...] = (
 )
 # A friendly spoken name per target for the pet's little reaction line.
 _TARGET_NAMES: dict[str, str] = {
-    "floor": "floor", "walls": "walls", "bed": "bed", "blocks": "blocks", "synth": "piano",
-    "drums": "drums", "guitar": "guitar", "toy_box": "toy box", "ball_pit": "ball pit",
-    "ball": "ball", "robot": "me",
+    "floor": "floor",
+    "walls": "walls",
+    "bed": "bed",
+    "blocks": "blocks",
+    "synth": "piano",
+    "drums": "drums",
+    "guitar": "guitar",
+    "toy_box": "toy box",
+    "ball_pit": "ball pit",
+    "ball": "ball",
+    "robot": "me",
 }
 
 # Size words. Kept STRONG and unambiguous (never bare "big"/"small"/"little", which appear in
@@ -284,8 +292,9 @@ def classify(text: str) -> Intent | None:
     color = _color_in(t.replace("!", " ").replace(".", " ").split())
     if color is not None:
         if target is not None and target != "robot":
-            return Intent(kind="recolor", value=color, target=target,
-                          speech=recolor_speech(target, color))
+            return Intent(
+                kind="recolor", value=color, target=target, speech=recolor_speech(target, color)
+            )
         return Intent(kind="color", value=color, speech=color_speech(color))
     for phrases, action in _KEYWORDS:
         if _match(t, phrases):
