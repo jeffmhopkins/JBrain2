@@ -356,11 +356,9 @@ export function LLMSettingsScreen() {
 
   // Queue a provisioned model for uninstall, then apply it now via the same sync
   // one-shot — destructive (it drops the model from LOCAL_MODELS and prunes its
-  // weights), so queueing confirms first.
+  // weights). The tap-again confirm lives in the button (ConfirmButton), so this just
+  // performs the queued action.
   function queueUninstall(id: string, on: boolean) {
-    if (on && !window.confirm("Uninstall this model and delete its weights now?")) {
-      return;
-    }
     mark(id);
     const seq = ++putSeq.current;
     api
@@ -1402,15 +1400,8 @@ function LlmModelRow({
                     {isBusy ? "…" : "Unload"}
                   </button>
                 )}
-                {/* Remove the model + its weights, directly from the Installed tab. */}
-                <button
-                  type="button"
-                  className="llm-local-btn danger"
-                  disabled={isBusy}
-                  onClick={() => onUninstall(m.id, true)}
-                >
-                  Uninstall
-                </button>
+                {/* Uninstall lives only in the Catalog tab (a deliberate, tap-to-confirm
+                    destructive action) — the Installed tab is stage/load/unload only. */}
               </>
             )}
           </div>
@@ -1462,7 +1453,51 @@ function LlmModelRow({
   );
 }
 
-// A provisioned model in the Catalog tab: its current state chip + a danger
+// A destructive action button that requires a second tap to confirm — replaces a
+// browser confirm() dialog for the weight-deleting Uninstall/Remove. First tap arms it
+// (the label flips to "Confirm?"); a second tap within a few seconds fires onConfirm,
+// otherwise it disarms itself. Local state, so each row's button arms independently.
+function ConfirmButton({
+  label,
+  busy,
+  onConfirm,
+}: {
+  label: string;
+  busy: boolean;
+  onConfirm: () => void;
+}) {
+  const [armed, setArmed] = useState(false);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(
+    () => () => {
+      if (timer.current) clearTimeout(timer.current);
+    },
+    [],
+  );
+  function onClick() {
+    if (timer.current) clearTimeout(timer.current);
+    if (armed) {
+      setArmed(false);
+      onConfirm();
+    } else {
+      setArmed(true);
+      timer.current = setTimeout(() => setArmed(false), 3000);
+    }
+  }
+  return (
+    <button
+      type="button"
+      className={`llm-local-btn danger${armed ? " armed" : ""}`}
+      disabled={busy}
+      aria-label={armed ? `Confirm ${label.toLowerCase()}` : label}
+      onClick={onClick}
+    >
+      {busy ? "…" : armed ? "Confirm?" : label}
+    </button>
+  );
+}
+
+// A provisioned model in the Catalog tab: its current state chip + a tap-to-confirm
 // "Uninstall" button (queues the removal and kicks the sync one-shot). Once queued it
 // reads "uninstalling" and offers "Keep" to back out before the sync prunes it.
 function UninstallRow({
@@ -1498,14 +1533,11 @@ function UninstallRow({
                 {busy ? "…" : "Keep"}
               </button>
             ) : (
-              <button
-                type="button"
-                className="llm-local-btn danger"
-                disabled={busy}
-                onClick={() => onUninstall(m.id, true)}
-              >
-                {busy ? "…" : "Uninstall"}
-              </button>
+              <ConfirmButton
+                label="Uninstall"
+                busy={busy}
+                onConfirm={() => onUninstall(m.id, true)}
+              />
             )}
           </div>
           <span className={`llm-local-state${m.remove_queued ? " removing" : ""}`}>
@@ -1585,14 +1617,11 @@ function InstallRow({
                 </button>
                 {/* On disk but disabled: reclaim its weights without enabling first. */}
                 {onDisk && !model.queued && (
-                  <button
-                    type="button"
-                    className="llm-local-btn danger"
-                    disabled={busy}
-                    onClick={() => onUninstall(model.id, true)}
-                  >
-                    Remove
-                  </button>
+                  <ConfirmButton
+                    label="Remove"
+                    busy={busy}
+                    onConfirm={() => onUninstall(model.id, true)}
+                  />
                 )}
               </>
             )}

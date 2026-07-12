@@ -1760,6 +1760,13 @@ h3 {
   color: var(--rose);
   background: var(--rose-tint);
 }
+/* Armed (first tap): a filled rose to signal the next tap is destructive. */
+.llm-local-btn.danger.armed {
+  border-color: var(--rose);
+  color: var(--rose);
+  background: var(--rose-tint);
+  font-weight: 600;
+}
 .llm-local-state.removing {
   color: var(--rose);
 }
