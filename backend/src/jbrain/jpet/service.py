@@ -37,6 +37,9 @@ EXPRESSIVE = (
     # jet / spawns the egg only when the pet is that creature; harmless in-place emotes otherwise.
     "fire",
     "lay",
+    # "Clean up your room" — the wall runs a tidy chore (carry every loose block into a stack
+    # against the wall, park the ball) when it sees this action lead a command script.
+    "cleanup",
 )
 TERMINAL = ("idle", "sit", "sleep")
 # Primitives that relocate the pet and/or touch a room object.
@@ -174,6 +177,16 @@ CANNED_SCRIPTS: dict[str, list[dict[str, Any]]] = {
     ),
     # Chicken egg-lay: squat, and the wall drops a new egg block partway through the beat.
     "lay": _script({"action": "lay", "duration_ms": 3200, "emotion": "happy"}, {"action": "sit"}),
+    # "Clean up your room": the wall's tidy chore (blocks stacked against the wall, ball parked),
+    # then the pet settles back to idle. The chore runs to completion on the wall, not on a timer.
+    "cleanup": _script({"action": "cleanup", "emotion": "happy"}, {"action": "idle"}),
+    # "Clean up your room AND go to bed": tidy, then (wall-side) turn the TV + lights off and sleep.
+    # The trailing sleep step is what tells the wall to chain bedtime after the tidy finishes.
+    "cleanup_bed": _script(
+        {"action": "cleanup", "emotion": "happy"},
+        {"action": "go_to", "target": "bed", "emotion": "sleepy"},
+        {"action": "sleep"},
+    ),
 }
 BUTTON_ACTIONS = frozenset(CANNED_SCRIPTS)
 
