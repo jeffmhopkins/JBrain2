@@ -50,6 +50,12 @@ PET_FIELDS = {
     "carrying",
     "lights_on",
     "objects",
+    # Ephemeral wall effects (talk-box "turn X <colour>" / "make X bigger" / "be a dragon"),
+    # overlaid onto the wire shape for the wall's poll — never persisted.
+    "object_colors",
+    "object_scales",
+    "pet_scale",
+    "pet_form",
 }
 
 

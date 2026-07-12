@@ -75,6 +75,11 @@ TARGETS: tuple[tuple[str, str], ...] = (
     ("drum", "drums"),
     ("guitar", "guitar"),
     ("ball", "ball"),
+    # The robot's two body zones — recolour only (the wall paints them separately). Before the
+    # whole-"robot" target so "turn your head blue" hits the head, not the whole pet.
+    ("head", "head"),
+    ("body", "body"),
+    ("tummy", "body"),
     ("robot", "robot"),
     ("yourself", "robot"),
     ("pet", "robot"),
@@ -91,15 +96,88 @@ _TARGET_NAMES: dict[str, str] = {
     "toy_box": "toy box",
     "ball_pit": "ball pit",
     "ball": "ball",
+    "head": "head",
+    "body": "body",
     "robot": "me",
 }
 
 # Size words. Kept STRONG and unambiguous (never bare "big"/"small"/"little", which appear in
-# ordinary chit-chat like "a great big hug") so a resize only fires on a clear request. `grow`
-# and `shrink` map to a step the API multiplies; the reset words restore the normal size.
-_GROW = ("bigger", "biggest", "grow", "huge", "giant", "gigantic", "enormous", "massive")
-_SHRINK = ("smaller", "smallest", "shrink", "tiny", "teeny", "mini", "littler")
+# ordinary chit-chat like "a great big hug") so a resize only fires on a clear request. `grow`/
+# `shrink` step the size up/down; `huge`/`tiny` jump straight to the max/min so "make it HUGE"
+# actually reads huge; the reset words restore the normal size.
+_HUGE = ("huge", "giant", "gigantic", "enormous", "massive")
+_TINY = ("tiny", "teeny", "teensy", "mini", "itty")
+_GROW = ("bigger", "biggest", "grow")
+_SHRINK = ("smaller", "smallest", "shrink", "littler")
 _SIZE_RESET = ("normal", "regular", "reset")
+
+# The shapes the pet can morph into (an EPHEMERAL wall effect — a reload restores the robot).
+# "robot" is the default/reset form. Aliases fold onto the canonical creature the wall draws.
+FORMS: dict[str, str] = {
+    "robot": "robot",
+    "dog": "dog",
+    "puppy": "dog",
+    "doggy": "dog",
+    "doggie": "dog",
+    "cat": "cat",
+    "kitty": "cat",
+    "kitten": "cat",
+    "kitticat": "cat",
+    "dragon": "dragon",
+    "dino": "dragon",
+    "dinosaur": "dragon",
+    "cow": "cow",
+    "moo": "cow",
+    "pig": "pig",
+    "piggy": "pig",
+    "piglet": "pig",
+    "chicken": "chicken",
+    "chick": "chicken",
+    "hen": "chicken",
+    "birdie": "chicken",
+}
+# A form command needs a transformation verb so "do you like cats?" never morphs the pet — a
+# creature word alone isn't enough; it must be paired with one of these.
+_FORM_TRIGGERS = (
+    "change",
+    "become",
+    "transform",
+    "morph",
+    "turn into",
+    "turn in to",
+    "turn to",
+    "be a",
+    "be an",
+    "be my",
+    "you're a",
+    "youre a",
+    "you are a",
+    "make you",
+    "make yourself",
+    "turn you",
+    "shift into",
+    "into a",
+    "into an",
+)
+
+# "reset everything" — one command that clears EVERY ephemeral effect (colours, sizes, form)
+# and restores the pet's own colour too. Checked first, since "reset" alone folds to a colour.
+_RESET_ALL = (
+    "reset everything",
+    "reset it all",
+    "reset all",
+    "reset the room",
+    "reset the whole",
+    "clear everything",
+    "clear it all",
+    "everything back to normal",
+    "all back to normal",
+    "put everything back",
+    "undo everything",
+    "undo it all",
+    "start over",
+    "back to normal everything",
+)
 
 # Ordered phrase → canned button action (the actions `service.CANNED_SCRIPTS` knows).
 # First match wins, so put the more specific phrases first.
@@ -260,12 +338,27 @@ def _target_in(t: str) -> str | None:
 
 
 def _size_dir(t: str) -> str | None:
-    """'grow' / 'shrink' if the message asks to change a size, else None (the reset words are
-    handled separately, since "normal" is also a colour reset)."""
+    """The size change asked for — 'huge'/'tiny' (jump to max/min) or 'grow'/'shrink' (a step) —
+    else None (the reset words are handled separately, since "normal" is also a colour reset)."""
+    if _match(t, _HUGE):
+        return "huge"
+    if _match(t, _TINY):
+        return "tiny"
     if _match(t, _GROW):
         return "grow"
     if _match(t, _SHRINK):
         return "shrink"
+    return None
+
+
+def _form_in(t: str) -> str | None:
+    """The creature the message asks the pet to become — only when paired with a transform verb,
+    so a bare "cat" in chit-chat never morphs the pet. Longest creature words first."""
+    if not _match(t, _FORM_TRIGGERS):
+        return None
+    for word in sorted(FORMS, key=len, reverse=True):
+        if _match(t, (word,)):
+            return FORMS[word]
     return None
 
 
@@ -278,9 +371,19 @@ def classify(text: str) -> Intent | None:
     t = " ".join(text.lower().split())
     if not t:
         return None
+    # "Reset everything" FIRST — a full wipe of every ephemeral effect + the pet's own colour.
+    if _match(t, _RESET_ALL):
+        return Intent(
+            kind="reset_all", value="all", speech="Poof! Everything's back to normal! Beep-boop!"
+        )
+    # Morph FIRST — "change into a dog", "be a dragon", "turn back into a robot". A transform verb
+    # plus a creature word (so chit-chat about animals never fires); "robot" is the reset form.
+    form = _form_in(t)
+    if form is not None:
+        return Intent(kind="form", value=form, target=None, speech=form_speech(form))
     target = _target_in(t)
-    # Resize FIRST — a grow/shrink word, or "make <target> normal" (a size reset). Defaults to
-    # the robot when no room thing is named ("make it bigger" → the pet grows).
+    # Resize next — a huge/tiny/grow/shrink word, or "make <target> normal" (a size reset).
+    # Defaults to the robot when no room thing is named ("make it bigger" → the pet grows).
     size = _size_dir(t)
     if size is None and _match(t, ("make",)) and _match(t, _SIZE_RESET):
         size = "reset"
@@ -335,14 +438,36 @@ def recolor_speech(target: str, color: str) -> str:
 def resize_speech(target: str, direction: str) -> str:
     """A friendly line for a resize (the robot, or a room thing)."""
     if target == "robot":
-        return {"grow": "I'm SO big now! Rawr!", "shrink": "I'm teeny-tiny! Squeak!"}.get(
-            direction, "Back to my normal size!"
-        )
+        return {
+            "grow": "I'm SO big now! Rawr!",
+            "huge": "I'm GINORMOUS! RAAAWR!",
+            "shrink": "I'm teeny-tiny! Squeak!",
+            "tiny": "I'm itty-bitty teeny! Squeeeak!",
+        }.get(direction, "Back to my normal size!")
     name = _TARGET_NAMES.get(target, target)
     return {
         "grow": f"Big big {name}! Whoa!",
+        "huge": f"GIANT {name}! Whoaaa!",
         "shrink": f"Teeny tiny {name}!",
+        "tiny": f"Itty-bitty {name}!",
     }.get(direction, f"The {name} is back to normal size!")
+
+
+# What the pet says as it morphs — each in the new creature's "voice".
+_FORM_SPEECH: dict[str, str] = {
+    "robot": "Beep-boop! Robot mode! I'm me again!",
+    "dog": "Woof woof! I'm a puppy now! *wags tail*",
+    "cat": "Meoww! I'm a kitty! Purr purr purr.",
+    "dragon": "RAWWWR! I'm a big flappy dragon! Rawr-hee-hee!",
+    "cow": "Mooooo! I'm a cow now! Moo moo!",
+    "pig": "Oink oink! I'm a little piggy! Snort!",
+    "chicken": "Bok bok bok! I'm a chicken! Bagawk!",
+}
+
+
+def form_speech(form: str) -> str:
+    """A friendly line for morphing the pet into a creature (or back to the robot)."""
+    return _FORM_SPEECH.get(form, f"Poof! I'm a {form} now!")
 
 
 def canonical_color(name: str) -> str | None:

@@ -12,7 +12,7 @@ from jbrain.jpet.service import PetStateInfo
 
 
 def _fx() -> dict:
-    return {"colors": {}, "scales": {}, "pet_scale": 1.0}
+    return {"colors": {}, "scales": {}, "pet_scale": 1.0, "pet_form": "robot"}
 
 
 def _state() -> PetStateInfo:
@@ -66,12 +66,32 @@ def test_resize_robot_uses_pet_scale_and_clamps() -> None:
     assert fx["pet_scale"] == _clamp_scale(0.0)  # pinned at the min
 
 
+def test_huge_and_tiny_jump_to_the_bounds() -> None:
+    fx = _fx()
+    _apply_effect(fx, kind="resize", target="drums", value="huge")
+    assert fx["scales"]["drums"] == 2.5  # straight to the max, not a 1.25 step
+    _apply_effect(fx, kind="resize", target="drums", value="tiny")
+    assert fx["scales"]["drums"] == 0.4  # straight to the min
+    _apply_effect(fx, kind="resize", target="robot", value="huge")
+    assert fx["pet_scale"] == 2.5
+
+
+def test_form_sets_the_pet_shape() -> None:
+    fx = _fx()
+    _apply_effect(fx, kind="form", target="robot", value="dragon")
+    assert fx["pet_form"] == "dragon"
+    _apply_effect(fx, kind="form", target="robot", value="robot")  # "change back into a robot"
+    assert fx["pet_form"] == "robot"
+
+
 def test_petout_overlays_the_effects_and_defaults_to_empty() -> None:
     info = _state()
     bare = PetOut.of(info)
     assert bare.object_colors == {} and bare.object_scales == {} and bare.pet_scale == 1.0
-    fx = {"colors": {"floor": "blue"}, "scales": {"bed": 1.5}, "pet_scale": 2.0}
+    assert bare.pet_form == "robot"
+    fx = {"colors": {"head": "blue"}, "scales": {"bed": 1.5}, "pet_scale": 2.0, "pet_form": "cat"}
     with_fx = PetOut.of(info, fx)
-    assert with_fx.object_colors == {"floor": "blue"}
+    assert with_fx.object_colors == {"head": "blue"}
     assert with_fx.object_scales == {"bed": 1.5}
     assert with_fx.pet_scale == 2.0
+    assert with_fx.pet_form == "cat"

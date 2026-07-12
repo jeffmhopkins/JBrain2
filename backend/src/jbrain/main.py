@@ -582,9 +582,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # Control screen over /api/pet/stream so both surfaces stay in sync.
         app.state.jpet_repo = SqlJpetRepo(maker)
         app.state.pet_broadcaster = PetBroadcaster()
-        # Ephemeral JPet wall effects ("turn X <colour>" / "make X bigger") — in-memory only,
-        # never persisted, cleared when the wall reloads (POST /internal/pet/effects/clear).
-        app.state.pet_effects = {"colors": {}, "scales": {}, "pet_scale": 1.0}
+        # Ephemeral JPet wall effects ("turn X <colour>" / "make X bigger" / "be a dragon") —
+        # in-memory only, never persisted, cleared when the wall reloads or on "reset everything"
+        # (POST /internal/pet/effects/clear).
+        app.state.pet_effects = {"colors": {}, "scales": {}, "pet_scale": 1.0, "pet_form": "robot"}
         jpet_loop_task = asyncio.create_task(
             run_jpet_loop(
                 maker,

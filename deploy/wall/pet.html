@@ -87,26 +87,38 @@ const NAMED={cyan:CY,magenta:MG,gold:GD,orange:OR,blue:BL,red:RD,green:hx('#49f0
 function hsv(h,s,v){const i=Math.floor(h*6),f=h*6-i,p=v*(1-s),q=v*(1-f*s),u=v*(1-(1-f)*s);
  return[[v,u,p],[q,v,p],[p,v,u],[p,q,v],[u,p,v],[v,p,q]][i%6];}
 let colorOverride=null,lastServerColor=null;                // a wall-local recolour (keyboard); cleared when the server colour changes
+// Ephemeral "turn X <colour>" / "make X bigger" / "be a dragon" wall effects (from the phone talk
+// box, via the server poll). Per-object colour + scale overrides, the pet's own scale, and the
+// pet's creature form — held only here, so a page reload (which also POSTs /pet/effects/clear)
+// starts back at the built-in robot look.
+let objColors={},objScale={},petScale=1,petForm='robot',sceneT=0;
+// Each thing turned rainbow gets its OWN random start hue (keyed by name), so a rainbow floor and
+// a rainbow head aren't locked in the same colour — they drift independently.
+const _rbSeed={};
+function rbHue(key){if(_rbSeed[key]==null)_rbSeed[key]=Math.random();return hsv((sceneT*0.14+_rbSeed[key])%1,0.85,1);}
+// The pet's OWN colour (persisted): the keyboard override or the server value; rainbow gets the
+// 'pet' hue. Head/body sub-part overrides (headCol/bodyCol) layer on top of this in robot().
 function petCol(t){const c=colorOverride||live.color;if(!c||c==='default')return null;
- if(c==='rainbow')return hsv((t*0.14)%1,0.85,1);return NAMED[c]||null;}
-// Ephemeral "turn X <colour>" / "make X bigger" wall effects (from the phone talk box, via the
-// server poll). Per-object colour + scale overrides and the pet's own scale — held only here,
-// so a page reload (which also POSTs /pet/effects/clear) starts back at the built-in look.
-let objColors={},objScale={},petScale=1,sceneT=0;
+ return c==='rainbow'?rbHue('pet'):(NAMED[c]||null);}
 // A recolour applies while an object draws: `curTint` is the active override ('rainbow' | [r,g,b]
-// | null) and `curXf` a world scale-about-base so a resized object grows in place. part()/ring()
-// consult both, so wrapping an object's draw in paint() recolours + resizes all of it at once.
-let curTint=null,curXf=null;
-function rainbowCol(){return hsv((sceneT*0.14)%1,0.85,1);}
+// | null), `curKey` names it (for its rainbow hue), and `curXf` a world scale-about-base so a
+// resized object grows in place. part()/ring() consult all three, so wrapping a draw in paint()
+// recolours + resizes the whole thing at once.
+let curTint=null,curKey=null,curXf=null;
 function ocRaw(name){const c=objColors[name];if(!c||c==='default')return null;
  return c==='rainbow'?'rainbow':(NAMED[c]||null);}                 // 'rainbow' | [r,g,b] | null
-function colOf(name,base){const c=ocRaw(name);return c==null?base:(c==='rainbow'?rainbowCol():c);}
-function tintCol(base){return curTint==null?base:(curTint==='rainbow'?rainbowCol():curTint);}
+function colOf(name,base){const c=ocRaw(name);return c==null?base:(c==='rainbow'?rbHue(name):c);}
+function tintCol(base){return curTint==null?base:(curTint==='rainbow'?rbHue(curKey||'x'):curTint);}
 function VP(){return curXf?M.mul(vp,curXf):vp;}                     // view-proj with the active object scale folded in
 function scaleAbout(px,py,pz,s){let m=M.trans(M.ident(),px,py,pz);m=M.scale(m,s,s,s);return M.trans(m,-px,-py,-pz);}
-function paint(name,px,pz,fn){const pt=curTint,pxf=curXf,s=objScale[name]||1; // recolour+resize an object's whole draw
- curTint=ocRaw(name);curXf=(s!==1)?scaleAbout(px,0,pz,s):null;
- try{fn();}finally{curTint=pt;curXf=pxf;}}
+function paint(name,px,pz,fn){const pt=curTint,pk=curKey,pxf=curXf,s=objScale[name]||1; // recolour+resize a whole draw
+ curTint=ocRaw(name);curKey=name;curXf=(s!==1)?scaleAbout(px,0,pz,s):null;
+ try{fn();}finally{curTint=pt;curKey=pk;curXf=pxf;}}
+// Resolve a robot sub-part ('head' | 'body') colour: its own override, else the whole-pet colour,
+// else the given default. Used for the separate head/body recolour.
+function partCol(part,fallback,pc){const c=objColors[part];
+ if(c&&c!=='default')return c==='rainbow'?rbHue(part):(NAMED[c]||fallback);
+ return pc||fallback;}
 let W,H,DPR,vp=M.ident();
 function resize(){DPR=Math.min(2,devicePixelRatio||1);W=innerWidth;H=innerHeight;cv.width=W*DPR;cv.height=H*DPR;
   gl&&gl.viewport(0,0,cv.width,cv.height);bcv.width=W*DPR;bcv.height=H*DPR;}
@@ -205,7 +217,7 @@ function applyLive(){
   // Ephemeral "turn X <colour>" / "make X bigger" effects ride the same poll (server memory,
   // never persisted). Mirror them each frame; the server was cleared on this page's load, so a
   // reload starts from empty and everything is back to its built-in look/size.
-  objColors=live.object_colors||{};objScale=live.object_scales||{};petScale=live.pet_scale||1;
+  objColors=live.object_colors||{};objScale=live.object_scales||{};petScale=live.pet_scale||1;petForm=live.pet_form||'robot';
   // A parent raw `move` (empty script, a fresh target) → a one-off travel interrupt.
   const mk=(live.target_x||0)+','+(live.target_z||0);
   if(!(live.script&&live.script.length)&&mk!==lastMoveKey&&(Math.abs(live.target_x)>0.001||Math.abs(live.target_z)>0.001)){
@@ -982,12 +994,12 @@ function drawObjects(t){
  const dim=.35+.65*lights;                                 // props dim a little at night
  // The ball is wall-simulated physics (rolls with a spin proportional to its speed).
  if(phys.ball.init){const b=phys.ball,held=player.held==='ball',by=held?1.9:b.y,spin=t*(1+ballSpeed());
-  curTint=ocRaw('ball');                                             // recolour the ball's rings while it draws
-  drawBall(held?P.x:b.x,by,held?P.z:b.z,.7*(objScale.ball||1),spin,dim);curTint=null;} // scale from "make the ball bigger"
+  curTint=ocRaw('ball');curKey='ball';                              // recolour the ball's rings while it draws
+  drawBall(held?P.x:b.x,by,held?P.z:b.z,.7*(objScale.ball||1),spin,dim);curTint=null;curKey=null;} // scale from "make the ball bigger"
  // Blocks: little coloured bricks — stacked into the build-zone statue (a fun shape),
  // carried by the pet (shown bright in its own colour), or scattered on the floor. A
  // "turn the blocks red" tints them all; "make the blocks bigger" scales each brick in place.
- const blockTint=ocRaw('blocks'),blockScale=objScale.blocks||1;
+ const blockTint=ocRaw('blocks'),blockScale=objScale.blocks||1;curKey='blocks';
  for(const bl of phys.blocks){
   curTint=(bl===carried)?null:blockTint;                             // a carried brick stays its own bright colour
   let x,y,z;
@@ -998,7 +1010,7 @@ function drawObjects(t){
   else{x=bl.x;y=0.28;z=bl.z;}
   const bs=(bl===carried)?1:blockScale;
   part(M.ident(),x,y,z,BLOCK_S*0.92*bs,BLOCK_H*0.92*bs,BLOCK_S*0.92*bs,bl.col,bl===carried?1:dim);}
- curTint=null;
+ curTint=null;curKey=null;
  // Vacuum: parked at its spot, or held out in front of the pet while it's tidying.
  if(ai.hasVac){const vx=P.x+Math.sin(P.facing)*1.0,vz=P.z+Math.cos(P.facing)*1.0;
   part(M.ident(),vx,.45,vz,.5,.9,.5,CY,1);                             // canister body
@@ -1036,6 +1048,67 @@ function drawRope(m,hy,theta,col,al){const HX=.9,Rr=1.35,ry=-Math.cos(theta),rz=
   _rope[k*3]=-HX+2*HX*u;_rope[k*3+1]=hy+ry*Rr*s;_rope[k*3+2]=rz*Rr*s;}
  gl.bindBuffer(gl.ARRAY_BUFFER,gRope);gl.bufferData(gl.ARRAY_BUFFER,_rope,gl.DYNAMIC_DRAW);
  draw(gRope,N,gl.LINE_STRIP,M.mul(vp,m),col,al);}
+// ---- Alternate creature forms ("change into a dog/cat/dragon/cow/pig/chicken") --------------
+// Each is drawn in the pet's frame `m` (position/facing/scale/spin) at vertical offset `y`, so it
+// inherits every bit of the pet's motion. Same neon box/ring language as the robot; `body`/`head`/
+// `limb` already carry the colour (creature-natural by default, or a head/body/whole-pet override
+// incl. rainbow). A first visual pass — proportions are tunable by eye on the wall.
+const C_DOG=hx('#c68a4a'),C_CAT=hx('#9aa0b0'),C_DRAGON=hx('#49f08a'),C_COW=[.95,.95,.98],
+ C_PIG=hx('#ff9ad8'),C_CHICK=[1,.94,.62],C_PINK=hx('#ff8ad0'),C_SPOT=[.16,.16,.22],
+ C_WHITE=[.95,.95,.98],C_BEAK=hx('#ff9a2e'),C_COMB=hx('#ff477e');
+function eyesAt(m,ex,ey,ez){const e=P.asleep||P.blink>.6?.03:.12;   // blink shares the robot's timing
+ part(m,-ex,ey,ez,.11,e,.05,GD);part(m,ex,ey,ez,.11,e,.05,GD);}
+function leg(m,x,z,lh,lw,col){part(m,x,lh/2,z,lw,lh,lw,col);}
+function drawAnimal(form,m,y,gp,ga,body,head,limb,t){
+ const F=CREATURES[form]||CREATURES.dog;
+ if(F.biped){leg(m,-F.lx,0,F.lh,F.lw,limb);leg(m,F.lx,0,F.lh,F.lw,limb);}
+ else{leg(m,-F.lx,F.lz,F.lh,F.lw,limb);leg(m,F.lx,F.lz,F.lh,F.lw,limb);
+      leg(m,-F.lx,-F.lz,F.lh,F.lw,limb);leg(m,F.lx,-F.lz,F.lh,F.lw,limb);}
+ part(m,0,y+F.by,F.bz,F.bw,F.bh,F.bl,body);                          // torso
+ const hy=y+F.hy;
+ part(m,0,hy,F.hz,F.hw,F.hh,F.hd,head);                              // head
+ eyesAt(m,F.ex,hy+F.eyy,F.hz+F.hd*0.5+.02);
+ if(F.extra)F.extra(m,y,hy,body,head,limb,t);
+}
+const CREATURES={
+ dog:{body:C_DOG,head:C_DOG,by:.72,bz:0,bw:.6,bh:.5,bl:1.05,lh:.5,lw:.16,lx:.24,lz:.42,
+  hy:.95,hz:.62,hw:.5,hh:.46,hd:.48,ex:.13,eyy:.05,
+  extra:(m,y,hy,b,h,l,t)=>{part(m,0,hy-.09,.98,.3,.24,.34,h);        // snout
+   part(m,0,hy-.15,1.16,.13,.11,.1,C_SPOT);                          // nose
+   part(m,-.3,hy+.13,.5,.12,.32,.06,h);part(m,.3,hy+.13,.5,.12,.32,.06,h); // floppy ears
+   part(M.rotX(M.trans(m,0,y+.9,-.62),-.7+Math.sin(t*6)*.3),0,0,0,.1,.44,.1,b);}},   // wagging tail
+ cat:{body:C_CAT,head:C_CAT,by:.68,bz:0,bw:.5,bh:.42,bl:.95,lh:.46,lw:.13,lx:.2,lz:.36,
+  hy:.9,hz:.58,hw:.46,hh:.44,hd:.44,ex:.12,eyy:.05,
+  extra:(m,y,hy,b,h,l,t)=>{part(m,0,hy-.06,.86,.2,.16,.18,h);        // muzzle
+   part(m,-.19,hy+.28,.02,.09,.24,.06,h);part(m,.19,hy+.28,.02,.09,.24,.06,h); // pointy ears
+   for(const s of[-1,1]){part(m,s*.32,hy-.03,.78,.24,.02,.02,C_WHITE);} // whiskers
+   part(M.rotX(M.trans(m,0,y+.6,-.5),1.1+Math.sin(t*3)*.2),0,0,0,.08,.62,.08,b);}},  // tall curling tail
+ dragon:{body:C_DRAGON,head:C_DRAGON,by:.85,bz:0,bw:.66,bh:.58,bl:1.15,lh:.55,lw:.18,lx:.28,lz:.46,
+  hy:1.08,hz:.72,hw:.54,hh:.5,hd:.54,ex:.14,eyy:.06,
+  extra:(m,y,hy,b,h,l,t)=>{part(m,0,hy-.1,1.06,.32,.26,.36,h);       // snout
+   part(m,-.18,hy+.32,.6,.07,.24,.07,C_WHITE);part(m,.18,hy+.32,.6,.07,.24,.07,C_WHITE); // horns
+   for(const s of[-1,1])part(M.rotZ(M.trans(m,s*.5,y+.95,-.15),s*(.7+Math.sin(t*4)*.35)),0,0,0,.06,.8,.55,b); // flapping wings
+   part(M.rotX(M.trans(m,0,y+.7,-.8),-.35),0,0,0,.16,.22,.6,b);}},   // heavy tail
+ cow:{body:C_COW,head:C_COW,limb:C_COW,by:.8,bz:0,bw:.7,bh:.6,bl:1.15,lh:.5,lw:.18,lx:.28,lz:.46,
+  hy:.96,hz:.66,hw:.54,hh:.48,hd:.5,ex:.14,eyy:.05,
+  extra:(m,y,hy,b,h,l,t)=>{part(m,0,hy-.12,1.0,.36,.26,.28,C_PINK);  // muzzle
+   part(m,-.22,hy+.26,.58,.08,.16,.08,C_WHITE);part(m,.22,hy+.26,.58,.08,.16,.08,C_WHITE); // horns
+   part(m,-.36,hy+.04,.5,.15,.1,.08,h);part(m,.36,hy+.04,.5,.15,.1,.08,h);  // ears
+   part(m,.22,y+.98,.24,.18,.02,.18,C_SPOT);part(m,-.24,y+.86,-.2,.2,.02,.2,C_SPOT); // spots
+   part(M.rotX(M.trans(m,0,y+.7,-.66),-.2),0,0,0,.06,.5,.06,l);}},   // tail
+ pig:{body:C_PIG,head:C_PIG,by:.62,bz:0,bw:.6,bh:.54,bl:.92,lh:.34,lw:.15,lx:.22,lz:.34,
+  hy:.72,hz:.55,hw:.5,hh:.44,hd:.42,ex:.12,eyy:.05,
+  extra:(m,y,hy,b,h,l,t)=>{part(m,0,hy-.05,.82,.24,.2,.12,C_PINK);   // snout
+   part(m,-.07,hy-.05,.9,.05,.05,.04,C_SPOT);part(m,.07,hy-.05,.9,.05,.05,.04,C_SPOT); // nostrils
+   part(m,-.2,hy+.24,.1,.1,.14,.05,h);part(m,.2,hy+.24,.1,.1,.14,.05,h); // ears
+   part(M.rotZ(M.trans(m,0,y+.62,-.5),.9+Math.sin(t*5)*.2),0,0,0,.06,.2,.06,b);}}, // curly tail
+ chicken:{body:C_CHICK,head:C_CHICK,limb:C_BEAK,biped:true,by:.7,bz:0,bw:.5,bh:.55,bl:.6,
+  lh:.42,lw:.09,lx:.14,hy:1.2,hz:.14,hw:.4,hh:.4,hd:.4,ex:.12,eyy:.04,
+  extra:(m,y,hy,b,h,l,t)=>{part(m,0,hy-.04,.4,.12,.1,.16,C_BEAK);    // beak
+   part(m,0,hy+.28,-.02,.1,.16,.16,C_COMB);                         // comb
+   part(m,0,hy-.16,.16,.09,.12,.06,C_COMB);                          // wattle
+   for(const s of[-1,1])part(M.rotZ(M.trans(m,s*.42,y+.72,0),s*(.3+Math.sin(t*8)*.25)),0,0,0,.06,.4,.3,b);}}, // flapping wings
+};
 function robot(t){
  const sp=P.walk,walking=sp>0.15&&!P.asleep,act=P.act,ph=P.stepT;
  const ga=Math.min(1,sp/1.6),gp=P.gait;                    // gait amount (0→1, continuous) + distance phase
@@ -1063,8 +1136,11 @@ function robot(t){
  if(act==='recharge')bob=Math.abs(Math.sin(ph*3))*.05;     // idle hum while docked
  if(act==='hide'||act==='sit'||act==='watch')crouch=-.3;
  if(act==='flop')crouch=-.34;                              // flopped down into the ball pit
- // Kid-chosen colour (or rainbow) tints the body/head/limbs; null = default synthwave.
- const pc=petCol(t),body=pc||MG,head=pc||CY,limb=pc||MG;
+ // Kid-chosen colour tints the pet; head and body can be recoloured SEPARATELY ("turn your head
+ // blue", "turn the body red"), else both follow the whole-pet colour, then the creature's own
+ // natural colour (a pig is pink, a cow white…), then the default synthwave.
+ const pc=petCol(t),Cf=(petForm!=='robot')&&(CREATURES[petForm]||CREATURES.dog);
+ const body=partCol('body',Cf?Cf.body:MG,pc),head=partCol('head',Cf?Cf.head:CY,pc),limb=partCol('body',Cf?(Cf.limb||Cf.body):MG,pc);
  const S=1.7*petScale;                                     // scale the pet up for the bigger room (× "make me bigger")
  // Lie down flat when asleep: tip the whole body back about the feet (eased via P.lie), and
  // when it's on the bed, lift the lying body up onto the mattress so it sleeps *in* the bed.
@@ -1075,6 +1151,7 @@ function robot(t){
  let m=M.scale(base,S,S,S),y=(bob+crouch+jumpY)*(1-P.lie*0.6);
  if(ropeTh>=0)drawRope(m,y+1.05,ropeTh,[1,1,1],1);         // the swinging jump rope (bright, contrasts any body colour)
  draw(gCirc,40,gl.LINE_LOOP,M.mul(vp,M.scale(M.trans(M.ident(),P.x,.02,P.z),.55*S,1,.55*S)),body,.5);
+ if(petForm!=='robot'){drawAnimal(petForm,m,y,gp,ga,body,head,limb,t);return;} // "be a dog/cat/dragon/…"
  const sw=Math.sin(gp)*.9*ga,sw2=Math.sin(gp+Math.PI)*.9*ga; // smooth leg swing (0 at a standstill)
  part(m,-.22,y+.28,sw*.16,.17,.5,.17,limb);part(m,.22,y+.28,sw2*.16,.17,.5,.17,limb);
  part(m,0,y+.92,0,.82,.72,.56,body);
