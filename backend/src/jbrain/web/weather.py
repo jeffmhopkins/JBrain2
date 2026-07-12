@@ -17,6 +17,7 @@ forecast API is a city centre, the same coarseness as naming the city.
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from datetime import datetime
 
@@ -29,6 +30,13 @@ _TIMEOUT = 15.0
 _HOURS_AHEAD = 24  # the today card's hourly-strip window
 _WEEK_DAYS = 7  # the week card's daily-list window (Open-Meteo supports up to 16)
 _WEEKDAYS = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
+
+# Statuses that mean "try again" rather than "this request is wrong": Open-Meteo's
+# rate limit (429) and the transient upstream/gateway 5xx family. A 4xx like 400/404
+# is deterministic (bad params, no such place) — retrying it only wastes the window.
+_RETRYABLE_STATUS = frozenset({408, 425, 429, 500, 502, 503, 504})
+_RETRIES = 2  # extra attempts after the first — 3 tries total for a transient blip
+_BACKOFF = 0.5  # base seconds; doubled each retry (0.5s, 1.0s)
 
 
 class WeatherError(RuntimeError):
@@ -304,10 +312,20 @@ class WeatherClient:
         forecast_url: str,
         geocode_url: str,
         transport: httpx.AsyncBaseTransport | None = None,
+        *,
+        retries: int = _RETRIES,
+        backoff: float = _BACKOFF,
     ):
         self._forecast_url = forecast_url.rstrip("/")
         self._geocode_url = geocode_url.rstrip("/")
         self._transport = transport
+        # A single blip from the free public upstream (a 503, a rate-limit 429, a
+        # dropped connection, a slow moment past the timeout) otherwise surfaces
+        # straight to the owner as "unavailable" with no second try; bounded
+        # retry-with-backoff heals the transient case. `backoff` is injectable so
+        # tests exercise the loop without real sleeps.
+        self._retries = retries
+        self._backoff = backoff
 
     @property
     def configured(self) -> bool:
@@ -376,17 +394,35 @@ class WeatherClient:
         return _shape(hit.name, body, weekly=weekly)
 
     async def _get(self, url: str, params: dict) -> object:
-        try:
-            async with httpx.AsyncClient(timeout=_TIMEOUT, transport=self._transport) as client:
-                resp = await client.get(url, params=params)
-                resp.raise_for_status()
-                return resp.json()
-        except httpx.HTTPStatusError as exc:
-            log.warning("web.weather_failed", status=exc.response.status_code, error=repr(exc))
-            raise WeatherError("the weather service is unavailable right now") from exc
-        except (httpx.HTTPError, ValueError) as exc:
-            log.warning("web.weather_failed", error=repr(exc))
-            raise WeatherError("the weather service is unavailable right now") from exc
+        """GET a pinned Open-Meteo endpoint, retrying transient failures with backoff.
+        GETs are idempotent, so a retry is safe. A retryable status (429/5xx) or a
+        transport error (connect/read timeout, dropped connection) gets another try;
+        a non-retryable 4xx or a malformed body fails fast — retrying can't fix it."""
+        last_exc: Exception | None = None
+        for attempt in range(self._retries + 1):
+            try:
+                async with httpx.AsyncClient(
+                    timeout=_TIMEOUT, transport=self._transport
+                ) as client:
+                    resp = await client.get(url, params=params)
+                    resp.raise_for_status()
+                    return resp.json()
+            except httpx.HTTPStatusError as exc:
+                log.warning("web.weather_failed", status=exc.response.status_code, error=repr(exc))
+                if exc.response.status_code not in _RETRYABLE_STATUS:
+                    raise WeatherError("the weather service is unavailable right now") from exc
+                last_exc = exc
+            except httpx.TransportError as exc:
+                # connect/read timeout, DNS blip, reset connection — the transient family.
+                log.warning("web.weather_failed", error=repr(exc))
+                last_exc = exc
+            except (httpx.HTTPError, ValueError) as exc:
+                # a non-transient protocol error or malformed JSON — a retry won't help.
+                log.warning("web.weather_failed", error=repr(exc))
+                raise WeatherError("the weather service is unavailable right now") from exc
+            if attempt < self._retries:
+                await asyncio.sleep(self._backoff * (2**attempt))
+        raise WeatherError("the weather service is unavailable right now") from last_exc
 
 
 def _shape(place: str, body: dict, *, weekly: bool = False) -> Weather:
