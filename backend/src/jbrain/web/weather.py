@@ -401,9 +401,7 @@ class WeatherClient:
         last_exc: Exception | None = None
         for attempt in range(self._retries + 1):
             try:
-                async with httpx.AsyncClient(
-                    timeout=_TIMEOUT, transport=self._transport
-                ) as client:
+                async with httpx.AsyncClient(timeout=_TIMEOUT, transport=self._transport) as client:
                     resp = await client.get(url, params=params)
                     resp.raise_for_status()
                     return resp.json()
