@@ -21,6 +21,12 @@
     font-size:24px;font-weight:700;text-align:center;text-shadow:0 0 12px var(--cy);
     box-shadow:0 0 26px rgba(59,240,255,.4);opacity:0;transition:opacity .3s}
   .speech.show{opacity:1}
+  /* "You said …" — the child's transcribed command, shown in gold below the pet's speech. */
+  .heard{position:fixed;top:172px;left:50%;transform:translateX(-50%);z-index:6;max-width:60%;
+    padding:9px 16px;border-radius:14px;background:var(--panel);border:1.5px solid var(--gold);
+    font-size:18px;font-weight:700;text-align:center;color:var(--gold);text-shadow:0 0 10px var(--gold);
+    box-shadow:0 0 18px rgba(255,210,63,.35);opacity:0;transition:opacity .25s;pointer-events:none}
+  .heard.show{opacity:.96}
   .status{position:fixed;bottom:22px;left:50%;transform:translateX(-50%);z-index:6;
     font-size:13px;letter-spacing:2px;opacity:.5}
   .back{position:fixed;bottom:20px;left:24px;z-index:6;font-size:12px;letter-spacing:2px;
@@ -45,6 +51,7 @@
 <div class="frame"></div>
 <div class="hud"><div class="name" id="name">JPET</div><div class="mood" id="mood">connecting…</div></div>
 <div class="speech" id="speech"></div>
+<div class="heard" id="heard"></div>
 <div class="status" id="status">waiting for the pet…</div>
 <button id="sound" hidden>🔊 tap for sound</button>
 <div id="mic" hidden>🎤 say “robot”…</div>
@@ -253,8 +260,13 @@ fetch('/pet/effects/clear',{method:'POST'}).catch(()=>{}).finally(()=>{setInterv
    read-aloud turn uses. Display tabs can't autoplay audio, so a one-time tap unlocks it —
    after that the pet just talks. No voices installed / tts off -> stays silent. */
 let soundOn=false,petVoice=null;
-const petAudio=new Audio(),ttsQ=[];let ttsBusy=false;
+const petAudio=new Audio(),ttsQ=[];let ttsBusy=false,petVoiceUntil=0;
 petAudio.volume=0.85;                                       // trim the pet voice a touch so the toys sit alongside it
+// True while the pet is talking (a clip is playing, plus a short tail so the mic's echo of the
+// last word doesn't get mistaken for the child) — the voice listener ignores what it hears then.
+function petSpeaking(){return ttsBusy||performance.now()/1000<petVoiceUntil;}
+// Cut the pet off mid-sentence (barge-in): drop the backlog and stop the current clip at once.
+function stopPetVoice(){ttsQ.length=0;if(ttsBusy){try{petAudio.pause();}catch(e){}}ttsBusy=false;petVoiceUntil=0;}
 // All the WebAudio toys (synth, guitar, drums, sfx) route through a per-context compressor, so we
 // can run them LOUD — up near the voice — without the peaks clipping when several notes stack.
 const _masters=new WeakMap();
@@ -263,8 +275,8 @@ function masterOut(ctx){let m=_masters.get(ctx);if(!m){m=ctx.createDynamicsCompr
  m.connect(ctx.destination);_masters.set(ctx,m);}return m;}
 function ttsNext(){if(ttsBusy||!ttsQ.length)return;ttsBusy=true;petAudio.src=ttsQ.shift();
  const pr=petAudio.play();if(pr&&pr.catch)pr.catch(()=>{ttsBusy=false;ttsNext();});}
-petAudio.addEventListener('ended',()=>{ttsBusy=false;ttsNext();});
-petAudio.addEventListener('error',()=>{ttsBusy=false;ttsNext();});
+petAudio.addEventListener('ended',()=>{ttsBusy=false;petVoiceUntil=performance.now()/1000+0.5;ttsNext();});
+petAudio.addEventListener('error',()=>{ttsBusy=false;petVoiceUntil=performance.now()/1000+0.5;ttsNext();});
 // A truly-silent WebAudio stream keeps the OS sink from suspending, so the first word of a
 // quiet pet isn't clipped by the sink's cold resume (same fix as the wall).
 let keepAliveCtx=null;
@@ -418,8 +430,28 @@ const SpeechRec=window.SpeechRecognition||window.webkitSpeechRecognition;
 const WAKE='robot';
 let recog=null,recogWant=false,recogRunning=false,armed=false,armT=0,startedAt=0,fails=0,restartT=0,lastErr='';
 function sendSay(text){const t=String(text||'').replace(/\s+/g,' ').trim().slice(0,300);if(!t)return;
+ showHeard(t);                                             // pop up what we asked, once it's transcribed
  fetch('/pet/say',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text:t})}).catch(()=>{});}
+const heardEl=document.getElementById('heard');
+function showHeard(t){if(!heardEl)return;heardEl.textContent='🗣 “'+t+'”';heardEl.classList.add('show');
+ clearTimeout(showHeard._t);showHeard._t=setTimeout(()=>heardEl.classList.remove('show'),4500);}
 function micText(s){micEl.textContent=s;}
+// Barge-in: a second mic tap with echo-cancellation ON — Chrome subtracts the pet's own TTS (it's
+// page audio) from this stream, so a level spike here is the CHILD talking over the pet. When that
+// happens while the pet is speaking, cut the pet off so they can talk in the clear. Tunable gate.
+const BARGE_GATE=0.02;
+async function startBargeMonitor(){
+ if(!(navigator.mediaDevices&&navigator.mediaDevices.getUserMedia))return;
+ let stream;try{stream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true,autoGainControl:true}});}catch(_){return;}
+ try{const AC=window.AudioContext||window.webkitAudioContext,ctx=new AC();
+  if(ctx.state==='suspended')ctx.resume().catch(()=>{});
+  const src=ctx.createMediaStreamSource(stream),proc=ctx.createScriptProcessor(2048,1,1);let hot=0;
+  proc.onaudioprocess=(e)=>{e.outputBuffer.getChannelData(0).fill(0);   // read-only tap, output stays silent
+   if(!petSpeaking()){hot=0;return;}                       // only listen for a barge-in while the pet talks
+   const d=e.inputBuffer.getChannelData(0);let s=0;for(let i=0;i<d.length;i++)s+=d[i]*d[i];
+   if(Math.sqrt(s/d.length)>BARGE_GATE){if(++hot>=2)stopPetVoice();}else hot=0;}; // sustained → child is talking
+  src.connect(proc);proc.connect(ctx.destination);
+ }catch(_){}}
 function setArmed(on){armed=on;armT=on?performance.now()/1000:0;
  micEl.classList.toggle('armed',on);micText(on?'🎤 listening…':'🎤 say “robot”…');}
 function afterWake(text){const i=text.toLowerCase().indexOf(WAKE); // words after the FIRST "robot", or null
@@ -435,7 +467,9 @@ function startListening(){
  recog.onstart=()=>{recogRunning=true;startedAt=performance.now();};
  recog.onspeechstart=()=>{fails=0;};                        // real audio reached the recognizer → not a dead loop
  recog.onresult=(e)=>{fails=0;for(let i=e.resultIndex;i<e.results.length;i++){const r=e.results[i];
-  if(r.isFinal)handleFinal(((r[0]&&r[0].transcript)||'').trim());}};
+  if(!r.isFinal)continue;
+  if(petSpeaking()&&!armed)continue;                        // the pet's own TTS echoing into the mic — ignore it
+  handleFinal(((r[0]&&r[0].transcript)||'').trim());}};
  recog.onerror=(e)=>{lastErr=(e&&e.error)||'';                    // 'network' here ⇒ the box can't reach the speech backend
   if(lastErr==='not-allowed'||lastErr==='service-not-allowed'){recogWant=false;recogRunning=false;
    micEl.classList.remove('armed');micText('🎤 mic blocked');}};
@@ -447,7 +481,7 @@ function startListening(){
   if(fails>=4){recogWant=false;micEl.classList.remove('armed');
    micText('🎤 voice offline'+(lastErr?' ('+lastErr+')':''));return;}
   clearTimeout(restartT);restartT=setTimeout(beginRecog,quick?1200:300);};
- beginRecog();}
+ beginRecog();startBargeMonitor();}
 setInterval(()=>{if(armed&&performance.now()/1000-armT>9)setArmed(false);},1000); // a stray "robot" doesn't wait forever
 
 /* ---- GL ---- */
