@@ -203,12 +203,13 @@ async function poll(){try{const r=await fetch('/pet/state',{cache:'no-store'});
  }catch(e){connected=false;}}
 setInterval(poll,1000);poll();
 
-/* ---- Sound: the pet reads its speech bubble aloud with the box's piper /tts (same
-   endpoint as the neural wall). Display tabs can't autoplay audio, so a one-time tap
-   unlocks it — after that the pet just talks. No voices installed / tts off -> stays silent. */
+/* ---- Sound: the pet reads its speech bubble aloud through the box's /tts — the SAME
+   endpoint (and, by preferring a Kokoro voice below, the same natural engine) an agent
+   read-aloud turn uses. Display tabs can't autoplay audio, so a one-time tap unlocks it —
+   after that the pet just talks. No voices installed / tts off -> stays silent. */
 let soundOn=false,petVoice=null;
 const petAudio=new Audio(),ttsQ=[];let ttsBusy=false;
-petAudio.volume=0.85;                                       // trim the piper voice a touch so the toys sit alongside it
+petAudio.volume=0.85;                                       // trim the pet voice a touch so the toys sit alongside it
 // All the WebAudio toys (synth, guitar, drums, sfx) route through a per-context compressor, so we
 // can run them LOUD — up near the voice — without the peaks clipping when several notes stack.
 const _masters=new WeakMap();
@@ -228,7 +229,7 @@ function startKeepAlive(){try{const AC=window.AudioContext||window.webkitAudioCo
  if(keepAliveCtx.state==='suspended')keepAliveCtx.resume().catch(()=>{});}catch(e){}}
 document.addEventListener('visibilitychange',()=>{if(!document.hidden&&keepAliveCtx&&keepAliveCtx.state==='suspended')keepAliveCtx.resume().catch(()=>{});});
 function speakPet(text){if(!soundOn||!petVoice||!text)return;
- const clean=String(text).replace(/\s+/g,' ').trim().slice(0,220);if(!clean)return;
+ const clean=String(text).replace(/\s+/g,' ').trim().slice(0,600);if(!clean)return;
  ttsQ.length=0;ttsBusy&&petAudio.pause();ttsBusy=false;   // newest utterance wins — drop stale backlog
  ttsQ.push('/tts?voice='+encodeURIComponent(petVoice)+'&text='+encodeURIComponent(clean));ttsNext();}
 // Playful per-action sound cues — short, generated with WebAudio (no assets), volume-capped
@@ -346,8 +347,13 @@ function kidDrum(i){padLit=i;padLitT=0.18;drumVoice(i);P.emotion='excited';petPl
 const soundBtn=document.getElementById('sound');
 async function initSound(){let voices=[];
  try{voices=((await(await fetch('/tts/voices',{cache:'no-store'})).json()).voices)||[];}catch(e){}
- if(!voices.length)return;                                // no piper voices on the box -> pet stays silent
- petVoice=voices.includes('en_US-amy-medium')?'en_US-amy-medium':voices[0];
+ if(!voices.length)return;                                // no voices on the box -> pet stays silent
+ // Voice the pet through Kokoro (the natural engine an agent read-aloud turn uses), preferring
+ // its default af_heart, then any Kokoro voice; fall back to piper (amy / first) on a box
+ // without the Kokoro weights baked so the pet still talks.
+ petVoice=voices.includes('kokoro-af_heart')?'kokoro-af_heart'
+   :voices.find(v=>v.startsWith('kokoro-'))
+   ||(voices.includes('en_US-amy-medium')?'en_US-amy-medium':voices[0]);
  soundBtn.hidden=false;}
 soundBtn.addEventListener('click',()=>{
  soundOn=true;soundBtn.hidden=true;startKeepAlive();
