@@ -294,7 +294,8 @@ function speakPet(text){if(!soundOn||!petVoice||!text)return;
 // tiny motif (a rising chirp to jump, a wobble to wiggle, a classic robot beep, …).
 const CUES={jump:[440,880],spin:[330,660,990],dance:[523,659,784],wave:[660,520],wiggle:[600,540,600,540],
  nod:[300,300],beep:[880,1200],hide:[520,320],chase:[700,900],pick_up:[500,760],put_down:[760,500],
- come_here:[440,660],sleep:[420,300,220],wake:[330,520,740],go_to:[480]};
+ come_here:[440,660],sleep:[420,300,220],wake:[330,520,740],go_to:[480],
+ fire:[260,180,120],lay:[700,620,540,900]};   // a descending fire roar; a cluck-then-plop for the egg
 // The gross-funny voices a 3-year-old adores: a buzzy raspberry fart (sawtooth sliding down
 // with a heavy vibrato) and a short burp gurgle. Volume-capped like the other cues.
 function rudeSound(kind){if(!keepAliveCtx)return;try{const ctx=keepAliveCtx,t0=ctx.currentTime;
@@ -1142,15 +1143,36 @@ function drawRope(m,hy,theta,col,al){const HX=.9,Rr=1.35,ry=-Math.cos(theta),rz=
 // incl. rainbow). A first visual pass — proportions are tunable by eye on the wall.
 const C_DOG=hx('#c68a4a'),C_CAT=hx('#9aa0b0'),C_DRAGON=hx('#49f08a'),C_COW=[.95,.95,.98],
  C_PIG=hx('#ff9ad8'),C_CHICK=[1,.94,.62],C_PINK=hx('#ff8ad0'),C_SPOT=[.16,.16,.22],
- C_WHITE=[.95,.95,.98],C_BEAK=hx('#ff9a2e'),C_COMB=hx('#ff477e');
+ C_WHITE=[.95,.95,.98],C_BEAK=hx('#ff9a2e'),C_COMB=hx('#ff477e'),
+ C_FLAME=hx('#ffd23e'),C_FLAME2=hx('#ff6a1e'),C_FLAME3=hx('#ff2e2e');
+// The dragon's fire-breath: a flickering jet of flame cubes shooting forward from the snout
+// (front of the head, z≈1.3 out), tapering yellow→orange→red, growing over the first ~0.4s of
+// the `fire` action. Drawn in the pet frame `m`, so it points where the dragon faces.
+function drawFire(m,y,ph){const fy=y+.98,grow=Math.min(1,ph*2.6);
+ for(let i=0;i<8;i++){const u=i/7,fl=Math.sin(ph*32+i*1.3)*.05;
+  const fz=1.28+u*1.7*grow,s=(.36-u*.22)*grow+.05+Math.abs(fl);
+  const col=i<2?C_FLAME:i<5?C_FLAME2:C_FLAME3;
+  part(m,fl,fy+fl*.6,fz,s,s,s,col,(1-u*.55));}}
+// Chicken egg-lay: drop a fresh white egg block just behind the hen. `layPending` latches so
+// exactly one egg spawns per `lay` command, partway through the squat (the "after laying" beat).
+let layPending=false;
+function spawnEgg(){if(!phys.blocks)return;
+ const bx=P.x-Math.sin(P.facing)*.5,bz=P.z-Math.cos(P.facing)*.5;
+ phys.blocks.push({x:bx,z:bz,vx:0,vz:0,stacked:false,slot:0,col:C_WHITE,egg:true});
+ sfx('pick_up');}
 function eyesAt(m,ex,ey,ez){const e=P.asleep||P.blink>.6?.03:.12;   // blink shares the robot's timing
  part(m,-ex,ey,ez,.11,e,.05,GD);part(m,ex,ey,ez,.11,e,.05,GD);}
-function leg(m,x,z,lh,lw,col){part(m,x,lh/2,z,lw,lh,lw,col);}
+function leg(m,x,y,z,lh,lw,col){part(m,x,y+lh/2,z,lw,lh,lw,col);}
 function drawAnimal(form,m,y,gp,ga,body,head,limb,t){
  const F=CREATURES[form]||CREATURES.dog;
- if(F.biped){leg(m,-F.lx,0,F.lh,F.lw,limb);leg(m,F.lx,0,F.lh,F.lw,limb);}
- else{leg(m,-F.lx,F.lz,F.lh,F.lw,limb);leg(m,F.lx,F.lz,F.lh,F.lw,limb);
-      leg(m,-F.lx,-F.lz,F.lh,F.lw,limb);leg(m,F.lx,-F.lz,F.lh,F.lw,limb);}
+ // Legs ride the body's vertical offset `y` (so a jump lifts the whole animal, not just the
+ // torso), swing fore/aft with the gait (0 at a standstill), and add an alternating kick on a
+ // jump / jump-rope so they visibly move even in place.
+ const a=P.act,hop=(a==='jump'||a==='jumprope')?Math.sin(P.stepT*7)*.2:0;
+ const sw=Math.sin(gp)*.16*ga+hop,sw2=Math.sin(gp+Math.PI)*.16*ga-hop;
+ if(F.biped){leg(m,-F.lx,y,sw,F.lh,F.lw,limb);leg(m,F.lx,y,sw2,F.lh,F.lw,limb);}
+ else{leg(m,-F.lx,y,F.lz+sw,F.lh,F.lw,limb);leg(m,F.lx,y,F.lz+sw2,F.lh,F.lw,limb);       // diagonal-pair trot
+      leg(m,-F.lx,y,-F.lz+sw2,F.lh,F.lw,limb);leg(m,F.lx,y,-F.lz+sw,F.lh,F.lw,limb);}
  part(m,0,y+F.by,F.bz,F.bw,F.bh,F.bl,body);                          // torso
  const hy=y+F.hy;
  part(m,0,hy,F.hz,F.hw,F.hh,F.hd,head);                              // head
@@ -1167,7 +1189,7 @@ const CREATURES={
  cat:{body:C_CAT,head:C_CAT,by:.68,bz:0,bw:.5,bh:.42,bl:.95,lh:.46,lw:.13,lx:.2,lz:.36,
   hy:.9,hz:.58,hw:.46,hh:.44,hd:.44,ex:.12,eyy:.05,
   extra:(m,y,hy,b,h,l,t)=>{part(m,0,hy-.06,.86,.2,.16,.18,h);        // muzzle
-   part(m,-.19,hy+.28,.02,.09,.24,.06,h);part(m,.19,hy+.28,.02,.09,.24,.06,h); // pointy ears
+   part(m,-.17,hy+.27,.5,.1,.26,.06,h);part(m,.17,hy+.27,.5,.1,.26,.06,h);     // pointy ears, up on top of the head
    for(const s of[-1,1]){part(m,s*.32,hy-.03,.78,.24,.02,.02,C_WHITE);} // whiskers
    part(M.rotX(M.trans(m,0,y+.6,-.5),1.1+Math.sin(t*3)*.2),0,0,0,.08,.62,.08,b);}},  // tall curling tail
  dragon:{body:C_DRAGON,head:C_DRAGON,by:.85,bz:0,bw:.66,bh:.58,bl:1.15,lh:.55,lw:.18,lx:.28,lz:.46,
@@ -1217,6 +1239,8 @@ function robot(t){
  if(act==='sing'){wiggle=Math.sin(ph*3)*.2;bob=Math.abs(Math.sin(ph*4))*.06;} // sways as it sings
  if(act==='fart'){crouch=-.14;wiggle=Math.sin(ph*34)*.09;jumpY=ph<.25?ph*.5:0;} // a lean + a little pop
  if(act==='burp'){nod=-Math.abs(Math.sin(ph*7))*.42;bob=Math.abs(Math.sin(ph*9))*.07;} // head tips back
+ if(act==='fire')bob=Math.abs(Math.sin(ph*8))*.06;         // a little heave as the dragon breathes fire
+ if(act==='lay')crouch=-.15+Math.abs(Math.sin(ph*3))*.05;  // the hen squats down to lay
  if(act==='nod')nod=Math.sin(ph*8)*.28;
  if(act==='play_guitar')bob=Math.abs(Math.sin(ph*5))*.08;  // sways while strumming (arms handled below)
  if(act==='watch')nod=Math.sin(ph*1.6)*.05;                // a gentle engaged head-bob at the telly
@@ -1238,9 +1262,15 @@ function robot(t){
  let m=M.scale(base,S,S,S),y=(bob+crouch+jumpY)*(1-P.lie*0.6);
  if(ropeTh>=0)drawRope(m,y+1.05,ropeTh,[1,1,1],1);         // the swinging jump rope (bright, contrasts any body colour)
  draw(gCirc,40,gl.LINE_LOOP,M.mul(vp,M.scale(M.trans(M.ident(),P.x,.02,P.z),.55*S,1,.55*S)),body,.5);
- if(petForm!=='robot'){drawAnimal(petForm,m,y,gp,ga,body,head,limb,t);return;} // "be a dog/cat/dragon/…"
+ if(petForm!=='robot'){drawAnimal(petForm,m,y,gp,ga,body,head,limb,t);
+  if(petForm==='dragon'&&act==='fire')drawFire(m,y,ph);                    // flame jet from the snout, on command
+  if(petForm==='chicken'&&act==='lay'&&layPending&&ph>.5){spawnEgg();layPending=false;} // egg drops mid-squat
+  return;} // "be a dog/cat/dragon/…"
  const sw=Math.sin(gp)*.9*ga,sw2=Math.sin(gp+Math.PI)*.9*ga; // smooth leg swing (0 at a standstill)
- part(m,-.22,y+.28,sw*.16,.17,.5,.17,limb);part(m,.22,y+.28,sw2*.16,.17,.5,.17,limb);
+ // A jump / jump-rope scissors the legs so they visibly kick even standing in place (the swing
+ // above is ~0 without walking); it rides the hop phase, biggest when airborne.
+ const kick=act==='jump'?Math.sin(ph*7)*.22:act==='jumprope'?Math.sin(ropeTh)*.22:0;
+ part(m,-.22,y+.28,sw*.16+kick,.17,.5,.17,limb);part(m,.22,y+.28,sw2*.16-kick,.17,.5,.17,limb);
  part(m,0,y+.92,0,.82,.72,.56,body);
  const mc=P.emotion==='sleepy'?BL:P.emotion==='scared'?RD:P.emotion==='silly'?GD:P.emotion==='curious'?OR:CY;
  const chest=act==='beep'&&Math.sin(ph*30)>0?GD:mc;
@@ -1314,7 +1344,8 @@ function frame(ts){const dt=Math.min(.05,(ts-last)/1000||0);last=ts;const t=ts/1
    stepAutonomy(t);
   }
   // ---- Time-in-current-action (drives one-shot beat anims), reset whenever it changes ----
-  if(P.act!==lastAct){P.stepT=0;lastAct=P.act;if(P.act==='fart'||P.act==='burp')spawnPuff(P.act);}P.stepT+=dt;
+  if(P.act!==lastAct){P.stepT=0;lastAct=P.act;if(P.act==='fart'||P.act==='burp')spawnPuff(P.act);
+   if(P.act==='lay')layPending=(petForm==='chicken');}P.stepT+=dt; // arm the one egg per lay command
   stepMusic(t);stepDrums(t);stepGuitar(t);                 // play the synth song / drum beat / guitar strum while at each
   // ---- Fluid locomotion: damped-spring velocity, eased accel/decel, speed-scaled turn ----
   const dx=P.tx-P.x,dz=P.tz-P.z,d=Math.hypot(dx,dz);

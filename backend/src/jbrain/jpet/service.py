@@ -33,6 +33,10 @@ EXPRESSIVE = (
     "sing",
     "fart",
     "burp",
+    # On-command creature tricks (dragon fire, chicken egg-lay) — the wall renders the flame
+    # jet / spawns the egg only when the pet is that creature; harmless in-place emotes otherwise.
+    "fire",
+    "lay",
 )
 TERMINAL = ("idle", "sit", "sleep")
 # Primitives that relocate the pet and/or touch a room object.
@@ -164,6 +168,12 @@ CANNED_SCRIPTS: dict[str, list[dict[str, Any]]] = {
     "burp": _script(
         {"action": "burp", "duration_ms": 1400, "emotion": "silly"}, {"action": "idle"}
     ),
+    # Dragon fire-breath: a long-enough beat for the wall's flame jet to grow + flicker.
+    "fire": _script(
+        {"action": "fire", "duration_ms": 2600, "emotion": "excited"}, {"action": "idle"}
+    ),
+    # Chicken egg-lay: squat, and the wall drops a new egg block partway through the beat.
+    "lay": _script({"action": "lay", "duration_ms": 3200, "emotion": "happy"}, {"action": "sit"}),
 }
 BUTTON_ACTIONS = frozenset(CANNED_SCRIPTS)
 

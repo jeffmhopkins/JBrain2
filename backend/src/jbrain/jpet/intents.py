@@ -182,6 +182,10 @@ _RESET_ALL = (
 # Ordered phrase → canned button action (the actions `service.CANNED_SCRIPTS` knows).
 # First match wins, so put the more specific phrases first.
 _KEYWORDS: tuple[tuple[tuple[str, ...], str], ...] = (
+    # Creature tricks first (they're specific). The wall only draws the flame / egg when the pet
+    # is that creature, so "breathe fire" as a robot is a harmless little emote.
+    (("breathe fire", "breath fire", "blow fire", "fire breath", "flames", "fire"), "fire"),
+    (("lay an egg", "lay a egg", "lay egg", "laying", "egg"), "lay"),
     (("jump rope", "skip rope", "skipping"), "jumprope"),
     (("play guitar", "guitar", "strum"), "guitar"),
     (("play music", "play a song", "piano", "synth", "music"), "music"),
@@ -224,6 +228,8 @@ _REPLIES = {
     "sing": "🎵 La la laaa, I love youuu! 🎵",
     "fart": "Pfffffbt! Hee-hee, 'scuse me!",
     "burp": "BUUURP! Hehe, that was a big one!",
+    "fire": "RAAAWR! 🔥 Fire breath!",
+    "lay": "Bok bok bok… plop! I laid an egg!",
 }
 
 # Conversation — small talk a 3–4-year-old actually says, matched to a funny, kid-safe reply
