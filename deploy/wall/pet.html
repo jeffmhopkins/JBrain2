@@ -36,6 +36,7 @@
   #mic[hidden]{display:none}
   #mic.armed{opacity:1;border-color:var(--gold);color:var(--gold);text-shadow:0 0 12px var(--gold);
     box-shadow:0 0 22px rgba(255,210,63,.5);animation:micpulse 1s ease-in-out infinite}
+  #mic.hearing{opacity:.95;border-color:var(--cy);color:var(--cy);box-shadow:0 0 20px rgba(59,240,255,.55)}
   @keyframes micpulse{0%,100%{box-shadow:0 0 16px rgba(255,210,63,.35)}50%{box-shadow:0 0 30px rgba(255,210,63,.7)}}
 </style>
 </head>
@@ -407,48 +408,72 @@ soundBtn.addEventListener('click',()=>{
  startListening();});                                     // the same tap grants the mic → start listening
 initSound();
 
-/* ---- Voice: always-on wake-word listening. Uses the browser's Web Speech API (Chromium/Chrome/
-   Edge/Safari; a no-op in Firefox, which doesn't ship SpeechRecognition). Say the wake word
+/* ---- Voice: on-box whisper STT (fully offline — works in Chromium/Firefox, no Google/cloud).
+   Capture the mic, watch the volume, and when a spoken phrase ENDS (the volume drops for a beat)
+   send just that clip to the box's whisper server (POST /pet/stt → tts-stt). Say the wake word
    "robot" then a command — "robot, dance!" in one breath, or "robot" … then "turn the floor blue"
-   after a beat. The browser segments on silence, so the END of the sentence is detected for free;
-   the command text is POSTed to /pet/say (rate-limited, LAN-only). Needs a user gesture to grab
-   the mic + internet (Web Speech transcribes in the cloud), so it starts on the sound-unlock tap. */
+   after a pause. Getting the mic needs a user gesture, so it starts on the sound-unlock tap. */
 const micEl=document.getElementById('mic');
-const SpeechRec=window.SpeechRecognition||window.webkitSpeechRecognition;
 const WAKE='robot';
-let recog=null,recogWant=false,recogRunning=false,armed=false,armT=0,startedAt=0,fails=0,restartT=0,lastErr='';
+let armed=false,armT=0,listenOn=false,sttBusy=false;
+function micText(s){micEl.textContent=s;}
 function sendSay(text){const t=String(text||'').replace(/\s+/g,' ').trim().slice(0,300);if(!t)return;
  fetch('/pet/say',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text:t})}).catch(()=>{});}
-function micText(s){micEl.textContent=s;}
 function setArmed(on){armed=on;armT=on?performance.now()/1000:0;
  micEl.classList.toggle('armed',on);micText(on?'🎤 listening…':'🎤 say “robot”…');}
 function afterWake(text){const i=text.toLowerCase().indexOf(WAKE); // words after the FIRST "robot", or null
  return i<0?null:text.slice(i+WAKE.length).replace(/^[\s,.:;!?-]+/,'').trim();}
 function handleFinal(text){if(!text)return;
- if(armed){setArmed(false);sendSay(text);return;}          // we were waiting → this segment is the command
- const after=afterWake(text);if(after==null)return;         // no wake word here → ignore
+ if(armed){setArmed(false);sendSay(text);return;}          // we were waiting → this clip is the command
+ const after=afterWake(text);if(after==null)return;         // no wake word this clip → ignore (background chatter)
  if(after)sendSay(after);else setArmed(true);}              // "robot dance" → send; bare "robot" → arm + wait
-function beginRecog(){if(recog&&recogWant&&!recogRunning){try{recog.start();}catch(_){/* already starting */}}}
-function startListening(){
- if(!SpeechRec||recogWant)return;recogWant=true;micEl.hidden=false;micText('🎤 say “robot”…');
- recog=new SpeechRec();recog.lang='en-US';recog.continuous=true;recog.interimResults=false;
- recog.onstart=()=>{recogRunning=true;startedAt=performance.now();};
- recog.onspeechstart=()=>{fails=0;};                        // real audio reached the recognizer → not a dead loop
- recog.onresult=(e)=>{fails=0;for(let i=e.resultIndex;i<e.results.length;i++){const r=e.results[i];
-  if(r.isFinal)handleFinal(((r[0]&&r[0].transcript)||'').trim());}};
- recog.onerror=(e)=>{lastErr=(e&&e.error)||'';                    // 'network' here ⇒ the box can't reach the speech backend
-  if(lastErr==='not-allowed'||lastErr==='service-not-allowed'){recogWant=false;recogRunning=false;
-   micEl.classList.remove('armed');micText('🎤 mic blocked');}};
- // Restart between utterances — but a session that ENDS ALMOST IMMEDIATELY is a failure (usually the
- // speech backend is unreachable). Restarting those instantly is what strobes the mic light, so we
- // back off hard and, after a few quick failures in a row, give up quietly (showing why).
- recog.onend=()=>{recogRunning=false;if(!recogWant)return;
-  const quick=performance.now()-startedAt<1500;fails=quick?fails+1:0;
-  if(fails>=4){recogWant=false;micEl.classList.remove('armed');
-   micText('🎤 voice offline'+(lastErr?' ('+lastErr+')':''));return;}
-  clearTimeout(restartT);restartT=setTimeout(beginRecog,quick?1200:300);};
- beginRecog();}
-setInterval(()=>{if(armed&&performance.now()/1000-armT>9)setArmed(false);},1000); // a stray "robot" doesn't wait forever
+// --- WAV: whisper wants 16 kHz mono PCM; the mic runs at 44.1/48 kHz, so downsample then pack. ---
+function _down(buf,inR,outR){if(outR>=inR)return buf;const r=inR/outR,n=Math.round(buf.length/r),o=new Float32Array(n);
+ let oi=0,ii=0;while(oi<n){const ni=Math.round((oi+1)*r);let s=0,c=0;for(let i=ii;i<ni&&i<buf.length;i++){s+=buf[i];c++;}o[oi++]=c?s/c:0;ii=ni;}return o;}
+function _wav(sm,rate){const b=new ArrayBuffer(44+sm.length*2),v=new DataView(b);
+ const w=(o,s)=>{for(let i=0;i<s.length;i++)v.setUint8(o+i,s.charCodeAt(i));};
+ w(0,'RIFF');v.setUint32(4,36+sm.length*2,true);w(8,'WAVE');w(12,'fmt ');v.setUint32(16,16,true);
+ v.setUint16(20,1,true);v.setUint16(22,1,true);v.setUint32(24,rate,true);v.setUint32(28,rate*2,true);
+ v.setUint16(32,2,true);v.setUint16(34,16,true);w(36,'data');v.setUint32(40,sm.length*2,true);
+ for(let i=0;i<sm.length;i++){let x=Math.max(-1,Math.min(1,sm[i]));v.setInt16(44+i*2,x<0?x*0x8000:x*0x7fff,true);}
+ return new Blob([b],{type:'audio/wav'});}
+async function transcribe(samples,rate){if(sttBusy)return;sttBusy=true;micText('🎤 …');
+ try{const fd=new FormData();fd.append('file',_wav(_down(samples,rate,16000),16000),'clip.wav');
+  fd.append('model','whisper');fd.append('response_format','text');
+  const r=await fetch('/pet/stt',{method:'POST',body:fd});
+  if(r.ok){let t=(await r.text()).trim();                   // plain text, or a {"text":…} body on some builds
+   try{const j=JSON.parse(t);if(j&&typeof j.text==='string')t=j.text;}catch(_){}
+   handleFinal(t.trim());}
+ }catch(_){}finally{sttBusy=false;micText(armed?'🎤 listening…':'🎤 say “robot”…');}}
+// Voice-activity thresholds — TUNABLE BY EAR on the wall: the RMS gate that counts as speech, the
+// trailing silence that ends a phrase, and the min/max phrase length (guards blips + runaways).
+const V_GATE=0.014,V_HANG_MS=750,V_MIN_MS=300,V_MAX_MS=9000;
+async function startListening(){
+ if(listenOn||!(navigator.mediaDevices&&navigator.mediaDevices.getUserMedia))return;listenOn=true;
+ micEl.hidden=false;micText('🎤 starting…');
+ let stream;
+ try{stream=await navigator.mediaDevices.getUserMedia({audio:{channelCount:1,echoCancellation:true,noiseSuppression:true,autoGainControl:true}});}
+ catch(_){micText('🎤 mic blocked');listenOn=false;return;}
+ const AC=window.AudioContext||window.webkitAudioContext,ctx=new AC();
+ if(ctx.state==='suspended')try{await ctx.resume();}catch(_){}
+ const rate=ctx.sampleRate,src=ctx.createMediaStreamSource(stream),proc=ctx.createScriptProcessor(4096,1,1);
+ let chunks=[],speaking=false,voiceMs=0,silMs=0;
+ function endPhrase(){micEl.classList.remove('hearing');speaking=false;
+  const had=voiceMs,parts=chunks;chunks=[];
+  if(had<V_MIN_MS)return;                                   // too short to be a command — drop it
+  let len=0;for(const p of parts)len+=p.length;const all=new Float32Array(len);let off=0;
+  for(const p of parts){all.set(p,off);off+=p.length;}
+  transcribe(all,rate);}
+ proc.onaudioprocess=(e)=>{
+  e.outputBuffer.getChannelData(0).fill(0);               // we only READ the mic — keep the output silent (no echo)
+  if(sttBusy)return;                                       // don't buffer while a clip is transcribing
+  const d=e.inputBuffer.getChannelData(0);let s=0;for(let i=0;i<d.length;i++)s+=d[i]*d[i];
+  const rms=Math.sqrt(s/d.length),fm=d.length/rate*1000;
+  if(rms>V_GATE){if(!speaking){speaking=true;voiceMs=0;chunks=[];micEl.classList.add('hearing');}
+   silMs=0;voiceMs+=fm;chunks.push(new Float32Array(d));if(voiceMs>=V_MAX_MS)endPhrase();}
+  else if(speaking){silMs+=fm;chunks.push(new Float32Array(d));if(silMs>=V_HANG_MS)endPhrase();}};
+ src.connect(proc);proc.connect(ctx.destination);micText('🎤 say “robot”…');}
+setInterval(()=>{if(armed&&performance.now()/1000-armT>12)setArmed(false);},1000); // a stray "robot" doesn't wait forever
 
 /* ---- GL ---- */
 // Solid-wireframe fill: a dark, near-opaque shell drawn behind the neon edges so a shape
