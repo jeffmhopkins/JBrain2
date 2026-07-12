@@ -75,9 +75,20 @@ TARGETS: tuple[tuple[str, str], ...] = (
     ("drum", "drums"),
     ("guitar", "guitar"),
     ("ball", "ball"),
-    # The robot's two body zones — recolour only (the wall paints them separately). Before the
-    # whole-"robot" target so "turn your head blue" hits the head, not the whole pet.
+    # The robot's recolour zones — recolour only (the wall paints each separately). Before the
+    # whole-"robot" target so "turn your head blue" hits the head, not the whole pet. Plurals
+    # first so "arms" wins over a stray "arm".
     ("head", "head"),
+    ("arms", "arm"),
+    ("arm", "arm"),
+    ("legs", "leg"),
+    ("leg", "leg"),
+    ("ears", "ear"),
+    ("ear", "ear"),
+    ("eyes", "eye"),
+    ("eye", "eye"),
+    ("mouth", "mouth"),
+    ("lips", "mouth"),
     ("body", "body"),
     ("tummy", "body"),
     ("robot", "robot"),
@@ -98,6 +109,11 @@ _TARGET_NAMES: dict[str, str] = {
     "ball": "ball",
     "head": "head",
     "body": "body",
+    "arm": "arms",
+    "leg": "legs",
+    "ear": "ears",
+    "eye": "eyes",
+    "mouth": "mouth",
     "robot": "me",
 }
 
@@ -177,6 +193,38 @@ _RESET_ALL = (
     "undo it all",
     "start over",
     "back to normal everything",
+)
+
+# "Clean up your room" — a tidy chore. Paired with a bedtime phrase ("and go to bed") it chains
+# into sleep (tidy → TV + lights off → bed). Checked ahead of the plain keyword table so the
+# compound form wins over the bare "sleep"/"bed" keyword.
+_CLEANUP = (
+    "clean up",
+    "cleanup",
+    "clean your room",
+    "clean my room",
+    "clean the room",
+    "clean up your room",
+    "tidy up",
+    "tidy your room",
+    "tidy my room",
+    "tidy the room",
+    "pick up your toys",
+    "pick up the blocks",
+    "put your toys away",
+    "put the toys away",
+)
+_BEDTIME = (
+    "go to bed",
+    "goto bed",
+    "go to sleep",
+    "and sleep",
+    "then sleep",
+    "bedtime",
+    "night night",
+    "nighty night",
+    "time for bed",
+    "off to bed",
 )
 
 # Ordered phrase → canned button action (the actions `service.CANNED_SCRIPTS` knows).
@@ -405,6 +453,17 @@ def classify(text: str) -> Intent | None:
                 kind="recolor", value=color, target=target, speech=recolor_speech(target, color)
             )
         return Intent(kind="color", value=color, speech=color_speech(color))
+    # "Clean up your room" (optionally "…and go to bed") — a tidy chore the wall plays out. The
+    # compound form chains into bedtime, so it's checked before the plain keyword table (whose
+    # "sleep"/"bed" entries would otherwise swallow the bedtime half).
+    if _match(t, _CLEANUP):
+        if _match(t, _BEDTIME):
+            return Intent(
+                kind="action",
+                value="cleanup_bed",
+                speech="Okay! I'll tidy up, then off to bed. Beep-boop!",
+            )
+        return Intent(kind="action", value="cleanup", speech="Cleanup time! Let me tidy my room!")
     for phrases, action in _KEYWORDS:
         if _match(t, phrases):
             return Intent(kind="action", value=action, speech=_REPLIES.get(action, "Okay!"))

@@ -165,6 +165,19 @@ def test_make_bigger_smaller_normal_resizes_a_target_or_the_robot() -> None:
         assert i.kind == "resize" and i.target == target and i.value == direction, phrase
 
 
+def test_finer_part_recolour_zones() -> None:
+    # Arms, legs, ears, eyes and mouth each recolour as their own zone (like head/body).
+    for phrase, target in [
+        ("turn the arms red", "arm"),
+        ("make the legs blue", "leg"),
+        ("turn your ears pink", "ear"),
+        ("give me green eyes", "eye"),
+        ("turn the mouth purple", "mouth"),
+    ]:
+        i = _c(phrase)
+        assert i.kind == "recolor" and i.target == target and i.value in PET_COLORS, phrase
+
+
 def test_head_body_are_recolour_targets_and_forms_need_a_transform_verb() -> None:
     # The robot's two zones recolour separately from the whole pet.
     for phrase, target in [("turn your head blue", "head"), ("turn the tummy red", "body")]:
@@ -183,6 +196,23 @@ def test_head_body_are_recolour_targets_and_forms_need_a_transform_verb() -> Non
     # …a bare creature word in chit-chat does NOT.
     assert classify("do you like cats") is None
     assert classify("be a good boy") is None  # a transform verb but no creature
+
+
+def test_cleanup_and_the_bedtime_chain_classify() -> None:
+    # "Clean up your room" is a tidy chore; add a bedtime phrase and it chains into sleep.
+    for phrase in ("clean up your room", "tidy up", "pick up the blocks", "put your toys away"):
+        i = _c(phrase)
+        assert i.kind == "action" and i.value == "cleanup", phrase
+    for phrase in (
+        "clean up your room and go to bed",
+        "tidy up then go to sleep",
+        "clean up and it's bedtime",
+    ):
+        i = _c(phrase)
+        assert i.kind == "action" and i.value == "cleanup_bed", phrase
+    # Both resolve to real runnable button scripts.
+    for a in ("cleanup", "cleanup_bed"):
+        assert a in BUTTON_ACTIONS
 
 
 def test_reset_everything_is_its_own_command() -> None:

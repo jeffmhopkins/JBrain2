@@ -219,7 +219,16 @@ function loadScript(){                                     // a new server COMMA
   player.key=key;player.steps=steps;player.held=null;
   if(steps.length){                                        // a phone/talk command always wins:
     dropCarried();wantChase=false;napUntil=0;              // drop what it was building/chasing/napping
-    ai.mode='script';ai.phase='beat';scriptActive=true;enterStep(0);}
+    if(steps[0].act==='cleanup'){                          // "clean up your room" — a tidy chore, run by autonomy
+      startCleanup(steps.some(s=>s.act==='sleep')?'sleep':null);
+    }else{ai.mode='script';ai.phase='beat';scriptActive=true;enterStep(0);}}
+}
+// Kick off the tidy chore: knock any standing statue back into loose blocks (so ALL of them get
+// put away), then hand the pet to cleanup mode. `then`='sleep' chains bedtime once it's tidy.
+function startCleanup(then){
+ for(const b of phys.blocks){if(b.stacked&&!b.wall)b.stacked=false;}  // scatter the statue → tidy every block
+ choreAfter=then;ai.mode='cleanup';ai.block=null;ai.buildPhase='toBlock';ai.ballTidied=false;ai.ballDeadline=0;
+ scriptActive=false;P.asleep=false;P.emotion='happy';napUntil=0;
 }
 function applyLive(){
   document.getElementById('name').textContent=(live.name||'JPet').toUpperCase();
@@ -539,6 +548,7 @@ let wantChase=false,kickCool=0;                            // kickCool: pace kic
 function ballPos(){return[phys.ball.x,phys.ball.z];}
 function ballSpeed(){return Math.hypot(phys.ball.vx,phys.ball.vz);}
 function stepBall(dt){const b=phys.ball;if(!b.init)return;
+ if(b.parked){b.vx=b.vz=b.vy=0;return;}                             // tucked against the wall by "clean up" — stays put until kicked
  b.x+=b.vx*dt;b.z+=b.vz*dt;
  b.vy-=14*dt;b.y+=b.vy*dt;                                          // gravity → a kicked ball arcs
  if(b.y<0.7){b.y=0.7;if(b.vy<0)b.vy=-b.vy*0.55;if(Math.abs(b.vy)<0.7)b.vy=0;} // bounce off the floor
@@ -552,7 +562,7 @@ function stepBall(dt){const b=phys.ball;if(!b.init)return;
  // Corner un-stick: a slow ball crept into a corner gets a gentle nudge back toward centre.
  if(spd<0.5&&grounded&&(Math.abs(b.x)>lim-0.7||Math.abs(b.z)>lim-0.7)){b.vx-=b.x*0.05;b.vz-=b.z*0.05;}
  if(spd<0.04&&grounded&&Math.abs(b.vy)<0.05){b.vx=0;b.vz=0;}}
-function kickBall(fromx,fromz,power){const b=phys.ball;let dx=b.x-fromx,dz=b.z-fromz,d=Math.hypot(dx,dz);
+function kickBall(fromx,fromz,power){const b=phys.ball;b.parked=false;let dx=b.x-fromx,dz=b.z-fromz,d=Math.hypot(dx,dz);
  if(d<0.3){const a=Math.random()*6.283;dx=Math.cos(a);dz=Math.sin(a);d=1;} // coincident → kick a random way, not straight up
  b.vx+=dx/d*power;b.vz+=dz/d*power;b.vy=Math.min(b.vy+4+power*0.35,9);sfx('jump');} // capped lift → arcs, never pinned to the roof
 // Solid furniture the ball/blocks can't pass through: [x, z, radius]. Rebuilt each frame
@@ -712,6 +722,14 @@ function doKey(tok){const[kind,arg]=tok.split(':');
 let BUILD=[-R*0.5,R*0.4];                                   // the current build spot — moves each statue
 const BLOCK_S=0.5,BLOCK_H=0.5,NBLOCKS=24;
 const BPAL=[CY,MG,GD,OR,BL,RD];                             // each block keeps its own fun colour
+// "Clean up your room": blocks get carried into a neat grid against the back-left wall (columns
+// along x, layers stacking up), the ball parked just past the row. `choreAfter` chains bedtime.
+const TIDY_X=-R+1.5,TIDY_Z=-R+0.8,TIDY_COLS=8;
+let choreAfter=null;
+function tidyCount(){return phys.blocks.filter(b=>b.wall).length;}
+function tidySlot(i){const col=i%TIDY_COLS,layer=Math.floor(i/TIDY_COLS); // [worldX, worldZ, layer]
+ return[TIDY_X+col*BLOCK_S*1.05,TIDY_Z,layer];}
+const TIDY_BALL=[TIDY_X+TIDY_COLS*BLOCK_S*1.05+0.9,TIDY_Z+0.5];  // where the ball is parked, just past the row
 // Pick a fresh build spot for the next statue: a clear bit of floor away from the walls and
 // the furniture, so statues rise in varied places, not always the same corner.
 function pickBuildSpot(){for(let i=0;i<16;i++){const x=(Math.random()*2-1)*(R-3.5),z=(Math.random()*2-1)*(R-3.5);
@@ -759,7 +777,7 @@ function initBlocks(){if(phys.blocks&&phys.blocks.length)return;phys.blocks=[];
  for(let i=0;i<NBLOCKS;i++)phys.blocks.push({x:BUILD[0]+(Math.random()-0.5)*6,z:BUILD[1]+(Math.random()-0.5)*6,
   vx:0,vz:0,stacked:false,slot:0,col:BPAL[i%BPAL.length]});
  curShape=randShape();pickBuildSpot();}
-function stackCount(){return phys.blocks.filter(b=>b.stacked).length;}
+function stackCount(){return phys.blocks.filter(b=>b.stacked&&!b.wall).length;} // tidied wall blocks aren't a statue
 function looseBlock(){return phys.blocks.find(b=>!b.stacked&&b!==carried&&Math.hypot(b.vx,b.vz)<0.1);}
 function buildFull(){return stackCount()>=curShape.length;}  // the current shape is complete
 function dropCarried(){if(carried){carried.stacked=false;carried=null;}ai.hasVac=false;manualHold=false;}
@@ -776,7 +794,7 @@ function stepBlocks(dt){for(const bl of phys.blocks){if(bl.stacked||bl===carried
 function checkCollapse(){const b=phys.ball;if(!b.init||ballSpeed()<1.2)return;
  if(Math.hypot(b.x-BUILD[0],b.z-BUILD[1])>1.8)return;let any=false;
  const bs=ballSpeed(),bx=b.vx/bs,bz=b.vz/bs;                        // fling mostly along the ball's path
- for(const bl of phys.blocks)if(bl.stacked){bl.stacked=false;any=true;
+ for(const bl of phys.blocks)if(bl.stacked&&!bl.wall){bl.stacked=false;any=true; // don't scatter the tidied wall pile
   const a=Math.random()*Math.PI*2,sp=3+Math.random()*4;
   bl.vx=bx*(bs*0.7)+Math.cos(a)*sp;bl.vz=bz*(bs*0.7)+Math.sin(a)*sp;
   bl.x=BUILD[0]+(Math.random()-0.5);bl.z=BUILD[1]+(Math.random()-0.5);}
@@ -865,7 +883,43 @@ function nextBehavior(now){
   else{ai.target=[P.x,P.z];ai.phase='beat';ai.act=beat;ai.until=now+beatDur(beat,1+Math.random()*2);sfxIdle(beat);}
 }
 function sfxIdle(beat){if(beat==='spin'||beat==='wiggle'||beat==='nod')sfx(beat);}
+// The tidy chore ("clean up your room"): carry each loose block into the wall grid, then park the
+// ball; if bedtime was chained ("…and go to bed"), turn the TV + lights off and settle into bed.
+function stepCleanup(now){
+  P.asleep=false;
+  const bl=ai.block;
+  if(bl&&!bl.stacked){                                      // carrying/fetching the current block
+    if(ai.buildPhase==='toBlock'){P.act='walk';P.tx=bl.x;P.tz=bl.z;
+      if(Math.hypot(bl.x-P.x,bl.z-P.z)<1.0){carried=bl;ai.buildPhase='toWall';sfx('pick_up');}
+      return;}
+    const p=tidySlot(tidyCount()),stand=p[1]+1.2;          // stand a step in front of the wall row
+    P.act='walk';P.tx=p[0];P.tz=stand;bl.x=P.x;bl.z=P.z;    // the block rides the pet over
+    if(Math.hypot(p[0]-P.x,stand-P.z)<1.2){                 // arrived → set it on the stack
+      bl.stacked=true;bl.wall=true;bl.wx=p[0];bl.wz=p[1];bl.wl=p[2];carried=null;ai.block=null;sfx('put_down');}
+    return;
+  }
+  const nx=manualHold?null:looseBlock();
+  if(nx){ai.block=nx;ai.buildPhase='toBlock';return;}       // more blocks to put away
+  if(phys.ball.init&&!ai.ballTidied){                       // blocks done → tuck the ball against the wall too
+    const b=phys.ball;if(!ai.ballDeadline)ai.ballDeadline=now+8; // bound the dribble, then just set it down
+    if(Math.hypot(b.x-TIDY_BALL[0],b.z-TIDY_BALL[1])<1.2||now>ai.ballDeadline){
+      b.x=TIDY_BALL[0];b.z=TIDY_BALL[1];b.vx=b.vz=b.vy=0;b.y=0.7;b.parked=true;ai.ballTidied=true;return;}
+    if(Math.hypot(b.x-P.x,b.z-P.z)<1.3){const dx=TIDY_BALL[0]-b.x,dz=TIDY_BALL[1]-b.z,d=Math.hypot(dx,dz)||1;b.vx=dx/d*5;b.vz=dz/d*5;b.vy=0;b.parked=false;} // dribble it over
+    else{P.act='walk';P.tx=b.x;P.tz=b.z;}                   // go fetch the ball
+    return;
+  }
+  if(choreAfter==='sleep'){                                 // "…and go to bed": lights + TV off, then sleep in bed
+    tvProg=0;artLevel=0;                                     // (leave lastLightsOn alone — the server still reads on)
+    const bed=objPos('bed');
+    if(bed&&Math.hypot(bed[0]-P.x,bed[1]-P.z)>=0.6){P.act='walk';P.tx=bed[0];P.tz=bed[1];return;}
+    if(bed){P.x=bed[0];P.z=bed[1];P.facing=Math.PI/2;}
+    P.emotion='sleepy';napUntil=now+40;P.asleep=true;P.act='sleep';P.tx=P.x;P.tz=P.z;
+    choreAfter=null;ai.mode='auto';ai.phase='beat';return;  // the nap holds it asleep; autonomy takes back over
+  }
+  ai.mode='auto';ai.phase='beat';ai.act='nod';ai.until=now+0.8;P.emotion='happy'; // tidy done → back to play
+}
 function stepAutonomy(now){
+  if(ai.mode==='cleanup'){stepCleanup(now);return;}         // the tidy chore drives itself (before bedtime/nap)
   // Automatic bedtime: night + light off + TV off → the pet heads to bed and stays asleep there,
   // only getting up when day breaks or a light / the TV comes on.
   if(wantsSleep()&&now>=kidPlayUntil&&now>=manualUntil){   // …but not mid-jam or right after a kid drove it
@@ -1091,7 +1145,8 @@ function drawObjects(t){
  for(const bl of phys.blocks){
   curTint=(bl===carried)?null:blockTint;                             // a carried brick stays its own bright colour
   let x,y,z;
-  if(bl.stacked){const o=bl.o||curShape[bl.slot]||[0,0,0]; // stored offset; floor (not sky) if ever missing
+  if(bl.wall){x=bl.wx;y=0.28+(bl.wl||0)*BLOCK_H;z=bl.wz;} // tidied into the grid against the wall
+  else if(bl.stacked){const o=bl.o||curShape[bl.slot]||[0,0,0]; // stored offset; floor (not sky) if ever missing
    x=BUILD[0]+o[0]*BLOCK_S*1.05;y=0.28+o[1]*BLOCK_H;z=BUILD[1]+o[2]*BLOCK_S*1.05;}
   else if(bl===carried){const fx=P.x+Math.sin(P.facing)*.62,fz=P.z+Math.cos(P.facing)*.62; // held out in front, between the hands
    x=fx;y=1.15+Math.sin(t*8)*.03;z=fz;}
@@ -1161,7 +1216,8 @@ function spawnEgg(){if(!phys.blocks)return;
  phys.blocks.push({x:bx,z:bz,vx:0,vz:0,stacked:false,slot:0,col:C_WHITE,egg:true});
  sfx('pick_up');}
 function eyesAt(m,ex,ey,ez){const e=P.asleep||P.blink>.6?.03:.12;   // blink shares the robot's timing
- part(m,-ex,ey,ez,.11,e,.05,GD);part(m,ex,ey,ez,.11,e,.05,GD);}
+ const ec=partCol('eye',GD,null);                                   // "green eyes" recolours a creature's eyes too
+ part(m,-ex,ey,ez,.11,e,.05,ec);part(m,ex,ey,ez,.11,e,.05,ec);}
 function leg(m,x,y,z,lh,lw,col){part(m,x,y+lh/2,z,lw,lh,lw,col);}
 function drawAnimal(form,m,y,gp,ga,body,head,limb,t){
  const F=CREATURES[form]||CREATURES.dog;
@@ -1170,9 +1226,10 @@ function drawAnimal(form,m,y,gp,ga,body,head,limb,t){
  // jump / jump-rope so they visibly move even in place.
  const a=P.act,hop=(a==='jump'||a==='jumprope')?Math.sin(P.stepT*7)*.2:0;
  const sw=Math.sin(gp)*.16*ga+hop,sw2=Math.sin(gp+Math.PI)*.16*ga-hop;
- if(F.biped){leg(m,-F.lx,y,sw,F.lh,F.lw,limb);leg(m,F.lx,y,sw2,F.lh,F.lw,limb);}
- else{leg(m,-F.lx,y,F.lz+sw,F.lh,F.lw,limb);leg(m,F.lx,y,F.lz+sw2,F.lh,F.lw,limb);       // diagonal-pair trot
-      leg(m,-F.lx,y,-F.lz+sw2,F.lh,F.lw,limb);leg(m,F.lx,y,-F.lz+sw,F.lh,F.lw,limb);}
+ const legC=partCol('leg',limb,null);                                 // "turn the legs red" recolours a creature's legs too
+ if(F.biped){leg(m,-F.lx,y,sw,F.lh,F.lw,legC);leg(m,F.lx,y,sw2,F.lh,F.lw,legC);}
+ else{leg(m,-F.lx,y,F.lz+sw,F.lh,F.lw,legC);leg(m,F.lx,y,F.lz+sw2,F.lh,F.lw,legC);       // diagonal-pair trot
+      leg(m,-F.lx,y,-F.lz+sw2,F.lh,F.lw,legC);leg(m,F.lx,y,-F.lz+sw,F.lh,F.lw,legC);}
  part(m,0,y+F.by,F.bz,F.bw,F.bh,F.bl,body);                          // torso
  const hy=y+F.hy;
  part(m,0,hy,F.hz,F.hw,F.hh,F.hd,head);                              // head
@@ -1252,6 +1309,11 @@ function robot(t){
  // natural colour (a pig is pink, a cow white…), then the default synthwave.
  const pc=petCol(t),Cf=(petForm!=='robot')&&(CREATURES[petForm]||CREATURES.dog);
  const body=partCol('body',Cf?Cf.body:MG,pc),head=partCol('head',Cf?Cf.head:CY,pc),limb=partCol('body',Cf?(Cf.limb||Cf.body):MG,pc);
+ // Finer recolour zones ("turn the arms red", "green eyes"): each falls back to `limb` (arms/legs/
+ // ears) or gold (eyes/mouth) when it has no override of its own — passing pc=null so the limb
+ // fallback (which already folds in the whole-pet colour) isn't double-applied.
+ const armC=partCol('arm',limb,null),legC=partCol('leg',limb,null),earC=partCol('ear',limb,null),
+       eyeC=partCol('eye',GD,null),mouthC=partCol('mouth',GD,null);
  const S=1.7*petScale;                                     // scale the pet up for the bigger room (× "make me bigger")
  // Lie down flat when asleep: tip the whole body back about the feet (eased via P.lie), and
  // when it's on the bed, lift the lying body up onto the mattress so it sleeps *in* the bed.
@@ -1270,7 +1332,7 @@ function robot(t){
  // A jump / jump-rope scissors the legs so they visibly kick even standing in place (the swing
  // above is ~0 without walking); it rides the hop phase, biggest when airborne.
  const kick=act==='jump'?Math.sin(ph*7)*.22:act==='jumprope'?Math.sin(ropeTh)*.22:0;
- part(m,-.22,y+.28,sw*.16+kick,.17,.5,.17,limb);part(m,.22,y+.28,sw2*.16-kick,.17,.5,.17,limb);
+ part(m,-.22,y+.28,sw*.16+kick,.17,.5,.17,legC);part(m,.22,y+.28,sw2*.16-kick,.17,.5,.17,legC);
  part(m,0,y+.92,0,.82,.72,.56,body);
  const mc=P.emotion==='sleepy'?BL:P.emotion==='scared'?RD:P.emotion==='silly'?GD:P.emotion==='curious'?OR:CY;
  const chest=act==='beep'&&Math.sin(ph*30)>0?GD:mc;
@@ -1284,16 +1346,16 @@ function robot(t){
  if(holding){armL=-1.35;armR=-1.35;}
  if(act==='drum'){armL=-0.6+Math.sin(ph*14)*.5;armR=-0.6+Math.sin(ph*14+Math.PI)*.5;}
  if(act==='play_guitar'){armL=-1.2;armR=-0.7+Math.sin(ph*11)*.7;} // left hand frets high, right hand strums
- part(M.rotX(M.trans(m,-.52,y+1.06,0),armL),0,-.22,0,.15,.5,.15,limb);
- part(M.rotX(M.trans(m,.52,y+1.06,0),armR),0,-.22,0,.15,.5,.15,limb);
+ part(M.rotX(M.trans(m,-.52,y+1.06,0),armL),0,-.22,0,.15,.5,.15,armC);
+ part(M.rotX(M.trans(m,.52,y+1.06,0),armR),0,-.22,0,.15,.5,.15,armC);
  // Build the head once in its own tilt frame so the whole face (eyes, mouth, ears, antenna)
  // rides the nod/burp head-tip together, instead of the box tipping while the face stays put.
  const hm=M.rotX(M.trans(m,0,y+1.58,0),nod);
  part(hm,0,0,0,.7,.52,.56,head);
- part(hm,-.38,0,0,.09,.14,.14,limb);part(hm,.38,0,0,.09,.14,.14,limb); // ears
- const eb=P.asleep||P.blink>.6?.02:.13;part(hm,-.16,.02,.29,.13,eb,.05,GD);part(hm,.16,.02,.29,.13,eb,.05,GD);
+ part(hm,-.38,0,0,.09,.14,.14,earC);part(hm,.38,0,0,.09,.14,.14,earC); // ears
+ const eb=P.asleep||P.blink>.6?.02:.13;part(hm,-.16,.02,.29,.13,eb,.05,eyeC);part(hm,.16,.02,.29,.13,eb,.05,eyeC);
  const mw=P.emotion==='excited'?.3:P.emotion==='silly'?.28:P.emotion==='happy'?.24:P.emotion==='scared'?.14:.2;
- part(hm,0,-.14,.29,mw,.05,.04,GD);part(hm,0,.32,0,.03,.22,.03,MG);part(hm,0,.46,0,.09,.09,.09,GD); // mouth + antenna
+ part(hm,0,-.14,.29,mw,.05,.04,mouthC);part(hm,0,.32,0,.03,.22,.03,MG);part(hm,0,.46,0,.09,.09,.09,GD); // mouth + antenna
  // A bouncing music note floats up beside the head while it sings.
  if(act==='sing'){const nx=P.x+.7+Math.sin(t*3)*.15,ny=2.9+y*S+Math.abs(Math.sin(t*4))*.3;
   part(M.ident(),nx,ny,P.z,.12,.12,.12,GD,1);part(M.ident(),nx+.09,ny+.3,P.z,.05,.4,.05,GD,1);} // note head + stem
@@ -1340,7 +1402,7 @@ function frame(ts){const dt=Math.min(.05,(ts-last)/1000||0);last=ts;const t=ts/1
    if(ai.mode==='script'){ai.mode='auto';ai.until=0;ai.phase='beat';}
    // attention: notice a fast-moving (or just-flicked) ball and give chase (not while carrying a
    // block, and not at bedtime — a rolling ball shouldn't wake a sleeping pet)
-   if((wantChase||ballSpeed()>1.4)&&t>kickCool&&napUntil<t&&t>manualUntil&&!manualHold&&!wantsSleep()&&ai.mode!=='move'&&ai.mode!=='chase'){dropCarried();ai.mode='chase';wantChase=false;P.emotion='excited';}
+   if((wantChase||ballSpeed()>1.4)&&t>kickCool&&napUntil<t&&t>manualUntil&&!manualHold&&!wantsSleep()&&ai.mode!=='move'&&ai.mode!=='chase'&&ai.mode!=='cleanup'){dropCarried();ai.mode='chase';wantChase=false;P.emotion='excited';}
    stepAutonomy(t);
   }
   // ---- Time-in-current-action (drives one-shot beat anims), reset whenever it changes ----
