@@ -80,10 +80,12 @@ _WEEK_OK = {
 
 
 def _client(handler) -> WeatherClient:  # type: ignore[no-untyped-def]
+    # backoff=0 so the retry loop runs without real sleeps in tests.
     return WeatherClient(
         "https://api.open-meteo.test",
         "https://geo.open-meteo.test",
         transport=httpx.MockTransport(handler),
+        backoff=0,
     )
 
 
@@ -219,13 +221,71 @@ async def test_weekly_forecast_shapes_the_daily_list() -> None:
 
 
 async def test_forecast_http_error_is_recoverable() -> None:
-    client = _client(lambda r: httpx.Response(503))
+    calls = 0
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return httpx.Response(503)
+
+    client = _client(handle)
     try:
         await client.geocode("Cocoa")
     except WeatherError as exc:
         assert "unavailable" in str(exc)
     else:  # pragma: no cover - the call must raise
         raise AssertionError("expected WeatherError")
+    assert calls == 3  # a retryable 5xx is retried: 1 try + 2 retries
+
+
+async def test_transient_5xx_then_success_recovers() -> None:
+    # A single blip (503) heals on retry instead of surfacing "unavailable".
+    calls = 0
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return httpx.Response(503)
+        return httpx.Response(200, json=_GEO_OK)
+
+    hit = await _client(handle).geocode("Cocoa")
+    assert hit is not None and hit.name == "Cocoa, Florida, United States"
+    assert calls == 2  # failed once, succeeded on the retry
+
+
+async def test_transient_transport_error_then_success_recovers() -> None:
+    # A dropped connection is transient too — retried, not fatal on the first miss.
+    calls = 0
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise httpx.ConnectError("connection reset")
+        return httpx.Response(200, json=_GEO_OK)
+
+    hit = await _client(handle).geocode("Cocoa")
+    assert hit is not None
+    assert calls == 2
+
+
+async def test_non_retryable_4xx_fails_fast() -> None:
+    # A 400 is deterministic (bad request) — fail on the first try, don't burn retries.
+    calls = 0
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return httpx.Response(400)
+
+    try:
+        await _client(handle).geocode("Cocoa")
+    except WeatherError as exc:
+        assert "unavailable" in str(exc)
+    else:  # pragma: no cover - the call must raise
+        raise AssertionError("expected WeatherError")
+    assert calls == 1  # not retried
 
 
 async def test_forecast_malformed_body_raises() -> None:
