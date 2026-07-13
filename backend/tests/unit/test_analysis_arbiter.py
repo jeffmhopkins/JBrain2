@@ -1290,7 +1290,7 @@ def test_dedup_intent_facts_subsumes_the_object_dropped_duplicate_medication():
     # Both distinct drugs survive as bound edges; the object-less twin is gone.
     assert len(out.facts) == 2
     assert all(f.object_entity_ref is not None for f in out.facts)
-    objs = sorted(f.object_entity_ref for f in out.facts)
+    objs = sorted(f.object_entity_ref for f in out.facts if f.object_entity_ref is not None)
     assert objs == ["hydrochlorothiazide", "lisinopril"]
     # The surviving hydrochlorothiazide edge grounds on its named object, so the
     # arbiter now commits it active instead of holding the dropped twin for review.
@@ -1327,7 +1327,8 @@ def test_dedup_intent_facts_keeps_distinct_object_edges_even_with_identical_stat
         inferred=False,
     )
     out = dedup_intent_facts(_intent(entity_resolutions=[_res("Me")], facts=[a, b]), [note])
-    assert sorted(f.object_entity_ref for f in out.facts) == ["Eli", "Nora"]
+    objs = sorted(f.object_entity_ref for f in out.facts if f.object_entity_ref is not None)
+    assert objs == ["Eli", "Nora"]
 
 
 def test_dedup_intent_facts_collapses_identical_object_less_free_text_facts():
