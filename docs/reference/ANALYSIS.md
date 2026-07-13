@@ -189,16 +189,21 @@ reschedules. Past-tense references convert `expected` → `occurred`.
   extraction's]**: `extraction.dedup_facts` collapses same-key restatements
   within an extraction, but the Integrator re-emits facts with no equivalent
   pass — so a note listing two medications in one sentence ("lisinopril 10 mg and
-  hydrochlorothiazide 12.5 mg daily") can come back with one drug DUPLICATED.
-  Left alone the arbiter commits one copy active (its quote grounds) while the
-  identical twin — whose quote drifted to a paraphrase the note never states
-  verbatim — falls to the inferred ceiling and lands in review, so the owner sees
-  a review card for a fact already on the graph. `arbiter.dedup_intent_facts`
-  (run after predicate canonicalization, before the weight signals) collapses a
-  byte-identical restatement to the single best-grounded copy. Its identity key
-  includes `statement`/`value_json`, so a genuinely SET-VALUED tier-2 predicate
-  keeps its distinct members (two different medications share the `Me.medication`
-  key but differ in statement, so both survive) — only a true duplicate collapses.
+  hydrochlorothiazide 12.5 mg daily") can come back with one drug DUPLICATED, and
+  the duplicate is the DEGENERATE one: the good copy binds the drug as its OBJECT
+  entity (`Me.medication -> hydrochlorothiazide`, which `_object_named` grounds
+  because the drug name is verbatim), while the spurious twin DROPS the object and
+  folds the drug into a free-text statement. Left alone the arbiter commits the
+  object-bearing copy active and holds the object-less twin for review (no object
+  to ground, a paraphrased statement), so the owner sees a review card for a fact
+  already on the graph. `arbiter.dedup_intent_facts` (run after predicate
+  canonicalization, before the weight signals) groups facts on a base key that
+  EXCLUDES the object — entity.predicate.qualifier, assertion, statement,
+  value_json — then within a group an object-less copy is SUBSUMED by any
+  object-bearing sibling and dropped, while edges to DIFFERENT objects (enumerated
+  children, two distinct medications) all survive even when their statements
+  coincide. The surviving copy is the one the arbiter would have committed
+  (grounded, not inferred), never the drifted twin.
 - **Domain placement [decided: inherit + promote]**: an entity inherits the
   domain of the note that created it; a later mention from a *less*
   restrictive domain proposes promotion via the review inbox. Facts always
