@@ -172,8 +172,9 @@ function NodeRow({
 
 // A merge leaf shows the two entities as type-tinted chips (their names, not their
 // ids) joined by a combine glyph — so the owner judges a readable effect, never a
-// uuid-laden sentence (docs/reference/DESIGN.md "Entity-type accents").
-function MergeHead({ preview }: { preview: Record<string, unknown> }): ReactNode {
+// uuid-laden sentence (docs/reference/DESIGN.md "Entity-type accents"). Shared with the
+// inline approval card so a merge reads the same in both surfaces.
+export function MergeHead({ preview }: { preview: Record<string, unknown> }): ReactNode {
   const nameA = String(preview.name_a ?? "");
   const nameB = String(preview.name_b ?? "");
   const kindA = String(preview.kind_a ?? "Thing");

@@ -237,9 +237,9 @@ revert. Also fixed: a synchronous `enacting` ref guards double-fire, the arm tim
 on unmount, the reason panel shows for **every** declined leaf (was single-open), `byId`/
 `leaves` memoized, an `aria-live` tally, and the Escape/Enter edit double-commit guard. New
 tests cover the Group render path, revert-clears-edit, edit-before-enact ordering, chatBusy
-disabling Enact, and the not-sent copy. **Deferred (plan note):** an inline `merge` leaf shows
-its label rather than the panel's entity-chip `MergeHead`; readable, but richer merge rendering
-inline is a follow-up if merges prove common on the card.
+disabling Enact, and the not-sent copy. A follow-up before the PR gave an inline `merge` leaf
+the panel's entity-chip `MergeHead` (exported and shared, not duplicated), so a merge reads as
+its two type-tinted entity chips in both surfaces.
 
 ### W3 — Reconcile & land ✅
 

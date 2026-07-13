@@ -7,6 +7,7 @@
 
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../api/client";
+import { MergeHead } from "./ProposalTree";
 import type { Decision, EnactResult, ProposalDetail, ProposalNode } from "./types";
 
 // The kinds acted on inline. wiki-restructure (a large multi-op tree) and intake-link
@@ -329,6 +330,7 @@ function Leaf({
   const body = typeof node.preview.body === "string" ? node.preview.body : "";
   const value = edited ?? body;
   const editable = EDITABLE_OPS.has(node.op) && body !== "";
+  const isMerge = node.op === "merge_entities";
   const out = state === "out";
   const corrected = edited !== undefined;
   const cls = `ip-leaf${out ? " out" : ""}${corrected ? " corrected" : ""}${held ? " held" : ""}`;
@@ -336,7 +338,9 @@ function Leaf({
     <div className={cls}>
       <div className="ip-leaf-main">
         <div className="ip-leaf-label">
-          {node.label || node.op}
+          {/* A merge reads as its two entity chips (never a uuid sentence), same as the
+              panel; every other leaf shows its label. */}
+          {isMerge ? <MergeHead preview={node.preview} /> : node.label || node.op}
           {corrected && <span className="ip-edited"> · edited</span>}
         </div>
         {value && (

@@ -258,6 +258,37 @@ describe("InlineProposal", () => {
     expect(editOrder).toBeLessThan(enactOrder);
   });
 
+  it("renders a merge leaf as its two entity chips, not a uuid sentence", async () => {
+    const merge = detail({
+      kind: "merge",
+      title: "Merge duplicates",
+      nodes: [
+        {
+          id: "m1",
+          parent_id: null,
+          type: "leaf",
+          op: "merge_entities",
+          label: 'Merge "Bob" and "Robert"',
+          preview: {
+            name_a: "Bob Smith",
+            name_b: "Robert Smith",
+            kind_a: "Person",
+            kind_b: "Person",
+          },
+          deps: [],
+          status: "pending",
+        },
+      ],
+    });
+    renderCard({ getProposal: async () => merge });
+    expect(await screen.findByText("Bob Smith")).toBeInTheDocument();
+    expect(screen.getByText("Robert Smith")).toBeInTheDocument();
+    // Still decidable inline.
+    expect(
+      screen.getByRole("button", { name: 'Decline Merge "Bob" and "Robert"' }),
+    ).toBeInTheDocument();
+  });
+
   it("disables Enact while a chat turn is streaming, so the outcome isn't dropped", async () => {
     renderCard({ chatBusy: true });
     const btn = await screen.findByRole("button", { name: /^Enact 3$/ });
