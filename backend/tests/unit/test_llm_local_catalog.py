@@ -85,6 +85,33 @@ def test_manifest_is_json_with_provisioning_fields() -> None:
     assert entry["served_model"] == "qwen3-vl-30b-a3b"
 
 
+def test_llama_4_scout_is_a_vision_alt_at_int4() -> None:
+    # Meta's Scout — a 109B/17B multimodal MoE at Unsloth's int4 dynamic quant, an
+    # opt-in vision alternate to qwen3-vl-30b. Non-thinking (no reasoning channel).
+    m = local_catalog.get("llama-4-scout-int4")
+    assert m is not None
+    assert m.tiers == ("vision", "low")
+    # A vision-tier entry must be vision-capable and ship a projector (the well-formed
+    # check enforces this too; assert the concrete facts here).
+    assert m.supports_vision and m.mmproj_include == "mmproj-F16.gguf"
+    assert m.supports_tools
+    # Non-thinking — not in the reasoning gating set, no reasoning_format wired.
+    assert not m.supports_reasoning
+    assert not m.reasoning_format
+    assert m.served_model not in local_catalog.REASONING_SERVED_MODELS
+    # The int4 dynamic quant the manifest pulls, from Unsloth's Scout GGUF repo.
+    assert m.quant == "UD-Q4_K_XL"
+    assert "UD-Q4_K_XL" in m.gguf_include
+    assert m.hf_repo == "unsloth/Llama-4-Scout-17B-16E-Instruct-GGUF"
+    assert m.spec == "local:llama-4-scout-int4"
+    # Serves the conservative gateway default; the native 10M window is capped to the
+    # largest window the picker exposes (256k) rather than a slider nobody can serve.
+    assert m.context_window == local_catalog.DEFAULT_LOCAL_CONTEXT_WINDOW
+    assert m.native_context_window == 262144 and m.max_context_window == 262144
+    # Opt-in, not part of the default resident set the install prompt offers.
+    assert m.id not in local_catalog.recommended_ids()
+
+
 def test_qwen3_235b_is_a_text_only_alt_high_tier_at_3bit() -> None:
     m = local_catalog.get("qwen3-235b-a22b")
     assert m is not None
