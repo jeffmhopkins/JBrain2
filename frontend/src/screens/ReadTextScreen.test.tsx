@@ -130,6 +130,43 @@ describe("ReadTextScreen", () => {
 
     await waitFor(() => expect(clicked).toHaveLength(1));
     expect(clicked[0]?.download).toBe("chapter-one-it-begins.wav");
+    // The finished export also stays reachable as a visible fallback link (in case an installed
+    // PWA swallowed the auto-triggered download).
+    const link = screen.getByRole("link", { name: "chapter-one-it-begins.wav" });
+    expect(link).toHaveAttribute("download", "chapter-one-it-begins.wav");
+  });
+
+  it("shares the exported WAV via the native sheet when file sharing is available", async () => {
+    stubTts();
+    const shared: { files: File[]; title?: string }[] = [];
+    const share = vi.fn(async (data: { files: File[]; title?: string }) => {
+      shared.push(data);
+    });
+    const canShare = vi.fn(() => true);
+    Object.assign(navigator, { share, canShare });
+    // If the code shares, it must NOT also fall back to an anchor download.
+    const clicked: string[] = [];
+    const realCreate = document.createElement.bind(document);
+    vi.spyOn(document, "createElement").mockImplementation((tag: string) => {
+      const el = realCreate(tag) as HTMLElement;
+      if (tag === "a") el.click = () => clicked.push((el as HTMLAnchorElement).download);
+      return el;
+    });
+    Object.defineProperty(URL, "createObjectURL", { configurable: true, value: () => "blob:out" });
+    Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: () => {} });
+
+    render(<ReadTextScreen voice="en_US-amy-medium" onClose={vi.fn()} />);
+    fireEvent.change(screen.getByLabelText("Text to read aloud"), {
+      target: { value: "Chapter one. It begins." },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Export audio" }));
+
+    await waitFor(() => expect(shared).toHaveLength(1));
+    const file = shared[0]?.files[0];
+    expect(file?.name).toBe("chapter-one-it-begins.wav");
+    expect(file?.type).toBe("audio/wav");
+    expect(clicked).toHaveLength(0);
+    Object.assign(navigator, { share: undefined, canShare: undefined });
   });
 
   it("loads an uploaded .md file's contents into the text area", async () => {
