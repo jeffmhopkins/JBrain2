@@ -117,11 +117,19 @@ def _statue_system_prompt() -> str:
         '`c` a hex colour like "#8b5a2b".\n'
         "Shape guide: box = cuboid body/roof; ellipsoid = sphere/egg head or belly (sx=sy=sz is a "
         "sphere); cylinder = leg/trunk/tube; cone = nose/beak/tail/roof-spike.\n"
+        "ORIENTATION & PROPORTION (important — most models get this wrong): the subject faces "
+        "along z, with its front (face/bonnet/bow) at one end and back (tail/rear) at the other. "
+        "Almost everything — an animal, car, bus, boat, person — is LONGER front-to-back (z) than "
+        "it is WIDE side-to-side (x). So make the main body/torso LONG in z and NARROW in x: a "
+        "cat's torso is about z14 × x6, NOT x12 × z8. Only make something wide in x if it truly is "
+        "(a sofa, a wardrobe). Bilateral symmetry mirrors the LEFT and RIGHT halves across the "
+        "x-centre — it just means the two sides match; it does NOT mean the body is wide, so keep "
+        "torsos slim in x. Stand a four-legged animal's legs at the four corners of its long body "
+        "— the front pair near the front, the back pair near the back, spread apart along z.\n"
         "Design rules: be RECOGNISABLE and BOLD — a 4-year-old names it instantly, silhouette "
-        "first. Use bilateral symmetry: give mirror pairs (two legs, two ears, two eyes, two "
-        "wings) equal, opposite offsets from the centre. Colour each part with several natural, "
-        "distinct colours (body, belly, face, eyes, nose, wheels, windows…). Keep it to roughly "
-        "8–40 shapes; overlaps are fine (later shapes paint over earlier)."
+        "first. Colour each part with several natural, distinct colours (body, belly, face, eyes, "
+        "nose, wheels, windows…). Keep it to roughly 8–40 shapes; overlaps are fine (later shapes "
+        "paint over earlier)."
     )
 
 
