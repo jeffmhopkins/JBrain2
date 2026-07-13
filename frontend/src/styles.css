@@ -11661,7 +11661,7 @@ button.small {
   border: 1px solid var(--border);
   background: var(--surface);
   color: var(--text-3);
-  font-size: 14px;
+  font-size: var(--fs-secondary);
   line-height: 1;
   cursor: pointer;
   transition: background 0.13s, color 0.13s, border-color 0.13s;

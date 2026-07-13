@@ -1,6 +1,6 @@
 # Inline Approvals — Build Plan
 
-> **Status:** In progress · **Last verified:** 2026-07-13 · **Waves:** W1✅ W2◻️ W3◻️
+> **Status:** In progress · **Last verified:** 2026-07-13 · **Waves:** W1✅ W2✅ W3◻️
 
 **A scheduled build plan** (per `docs/DOC_LIFECYCLE.md`). It moves Proposal approval
 **out of the side panel and into the conversation** — an interactive inline component
@@ -224,6 +224,20 @@ Depends on W1 endpoints. Off one `wave-2` branch:
 
 **DoD:** biome + tsc clean; vitest green; all mock states present; DESIGN.md reconciled +
 `Last verified` bumped.
+
+**Landed 2026-07-13** — built, then independent adversarial review (reviewer ≠ builder). Two
+real bugs it caught were fixed on this branch: **(1)** the enact outcome was dropped when a
+turn was streaming while the card still read "one message sent" — now Enact is disabled while
+`fb.busy`, `fb.send` returns whether the turn actually started, and the card's resolved copy
+tells the truth ("… will hear this after the current reply"); **(2)** reverting a correction
+to the original value still filed the intermediate edit — `commitEdit` now clears the edit on
+revert. Also fixed: a synchronous `enacting` ref guards double-fire, the arm timer is cleared
+on unmount, the reason panel shows for **every** declined leaf (was single-open), `byId`/
+`leaves` memoized, an `aria-live` tally, and the Escape/Enter edit double-commit guard. New
+tests cover the Group render path, revert-clears-edit, edit-before-enact ordering, chatBusy
+disabling Enact, and the not-sent copy. **Deferred (plan note):** an inline `merge` leaf shows
+its label rather than the panel's entity-chip `MergeHead`; readable, but richer merge rendering
+inline is a follow-up if merges prove common on the card.
 
 ### W3 — Reconcile & land ◻️
 

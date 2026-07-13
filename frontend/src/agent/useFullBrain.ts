@@ -537,14 +537,17 @@ export function useFullBrain(
   async function send(
     textRaw: string,
     opts?: { appointmentId?: string; files?: File[]; proposalOutcome?: boolean },
-  ): Promise<void> {
+  ): Promise<boolean> {
     const text = textRaw.trim();
     const files = opts?.files ?? [];
-    if ((!text && files.length === 0) || busy) return;
+    // Returns whether the turn actually STARTED — a caller (the inline-approval card)
+    // relies on this to know its outcome message was really delivered, not dropped by
+    // the single-in-flight-turn guard.
+    if ((!text && files.length === 0) || busy) return false;
     // No scope yet — surface the picker rather than chatting against nothing.
     if (!active) {
       setPanel("sessions");
-      return;
+      return false;
     }
     setBusy(true);
     // Upload any staged files first (in order), so their ids ride the turn and the
@@ -604,6 +607,7 @@ export function useFullBrain(
     // stream and any reconnect recovery run in the background; `busy` stays true until
     // they finish, so a second turn can't start and clobber this one's optimistic bubbles.
     void runTurn(body, controller, turnSessionId, baseline);
+    return true;
   }
 
   // Stream one turn to settlement in the background: fold its events into the live
@@ -901,7 +905,7 @@ export function useFullBrain(
     // files for a retry instead of clearing them.
     send: (text, opts) =>
       send(text, opts).then(
-        () => true,
+        (started) => started, // whether the turn actually started (false = dropped)
         (err) => {
           if (err instanceof AttachmentUploadError) return false;
           return true; // the stream runs in the background now; any failure settles there

@@ -151,7 +151,8 @@ export function FullBrainSurface({
                   fb.setPanel("proposals");
                 }}
                 onProposalEnacted={onProposalEnacted}
-                onProposalOutcome={(outcome) => void fb.send(outcome, { proposalOutcome: true })}
+                onProposalOutcome={(outcome) => fb.send(outcome, { proposalOutcome: true })}
+                chatBusy={fb.busy}
                 onStop={fb.stop}
                 onOpenSession={fb.requestOpen}
                 // The positional key doubles as the read-aloud turn key (append-only,
@@ -343,6 +344,7 @@ function Bubble({
   onOpenProposal,
   onProposalEnacted,
   onProposalOutcome,
+  chatBusy,
   onOpenEntity,
   onStop,
   onOpenSession,
@@ -353,8 +355,11 @@ function Bubble({
   onOpenProposal?: ((proposalId: string) => void) | undefined;
   /** Refresh the home stream after an inline enact wrote a note. */
   onProposalEnacted?: (() => void) | undefined;
-  /** Send an inline enact's server-authored outcome back to the assistant. */
-  onProposalOutcome?: ((outcome: string) => void) | undefined;
+  /** Send an inline enact's server-authored outcome back to the assistant; resolves
+   * TRUE when the follow-up turn actually started, FALSE when it was dropped. */
+  onProposalOutcome?: ((outcome: string) => Promise<boolean>) | undefined;
+  /** A turn is streaming — the inline card disables Enact so its outcome isn't dropped. */
+  chatBusy?: boolean | undefined;
   onOpenEntity?: ((entityId: string) => void) | undefined;
   /** Cascade-cancel the live turn (and its sub-agent fan) — the fan header Stop. */
   onStop?: (() => void) | undefined;
@@ -475,8 +480,9 @@ function Bubble({
     INLINE_KINDS.has(staged.kind) ? (
       <InlineProposal
         proposalId={staged.proposal_id}
-        onOutcome={(outcome) => onProposalOutcome?.(outcome)}
+        onOutcome={(outcome) => onProposalOutcome?.(outcome) ?? Promise.resolve(false)}
         onEnacted={onProposalEnacted}
+        chatBusy={chatBusy}
       />
     ) : (
       <ProposalChip proposal={staged} onOpen={onOpenProposal} />

@@ -63,17 +63,19 @@ function renderCard(fns: {
   enactProposal?: ReturnType<typeof vi.fn>;
   onOutcome?: ReturnType<typeof vi.fn>;
   onEnacted?: ReturnType<typeof vi.fn>;
+  chatBusy?: boolean;
 }) {
   const decideNode = fns.decideNode ?? vi.fn(async () => undefined);
   const editNode = fns.editNode ?? vi.fn(async () => undefined);
   const enactProposal = fns.enactProposal ?? vi.fn(async () => ok());
-  const onOutcome = fns.onOutcome ?? vi.fn();
+  const onOutcome = fns.onOutcome ?? vi.fn(async () => true);
   const onEnacted = fns.onEnacted ?? vi.fn();
   render(
     <InlineProposal
       proposalId="p1"
       onOutcome={onOutcome}
       onEnacted={onEnacted}
+      chatBusy={fns.chatBusy ?? false}
       getProposal={fns.getProposal ?? (async () => detail())}
       decideNode={decideNode}
       editNode={editNode}
@@ -96,7 +98,7 @@ describe("InlineProposal", () => {
   it("double-taps Enact: arms first, then approves every leaf, enacts, and returns the outcome", async () => {
     const decideNode = vi.fn(async () => undefined);
     const enactProposal = vi.fn(async () => ok());
-    const onOutcome = vi.fn();
+    const onOutcome = vi.fn(async () => true);
     const onEnacted = vi.fn();
     renderCard({ decideNode, enactProposal, onOutcome, onEnacted });
 
@@ -166,5 +168,106 @@ describe("InlineProposal", () => {
     fireEvent.click(await screen.findByRole("button", { name: /^Enact 3$/ }));
     fireEvent.click(screen.getByRole("button", { name: /Tap to enact 3/ }));
     expect(await screen.findByText(/1 held/)).toBeInTheDocument();
+  });
+
+  it("renders grouped leaves and a decline inside a group still reaches enact", async () => {
+    const grouped = detail({
+      nodes: [
+        {
+          id: "g1",
+          parent_id: null,
+          type: "group",
+          op: "",
+          label: "Medications",
+          preview: {},
+          deps: [],
+          status: "pending",
+        },
+        {
+          id: "m1",
+          parent_id: "g1",
+          type: "leaf",
+          op: "add_note",
+          label: "lisinopril",
+          preview: { body: "10 mg" },
+          deps: [],
+          status: "pending",
+        },
+        {
+          id: "m2",
+          parent_id: "g1",
+          type: "leaf",
+          op: "add_note",
+          label: "HCTZ",
+          preview: { body: "12.5 mg" },
+          deps: [],
+          status: "pending",
+        },
+      ],
+    });
+    const decideNode = vi.fn(async () => undefined);
+    renderCard({ getProposal: async () => grouped, decideNode });
+    expect(await screen.findByText("Medications")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Decline HCTZ" }));
+    const reason = await screen.findByLabelText("Reason for declining HCTZ");
+    fireEvent.change(reason, { target: { value: "not taking" } });
+    fireEvent.click(screen.getByRole("button", { name: /^Enact 1$/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Tap to enact 1/ }));
+    await waitFor(() =>
+      expect(decideNode).toHaveBeenCalledWith("p1", "m2", "reject", "not taking"),
+    );
+    expect(decideNode).toHaveBeenCalledWith("p1", "m1", "approve");
+  });
+
+  it("reverting a correction to the original value drops the edit (no editNode call)", async () => {
+    const editNode = vi.fn(async () => undefined);
+    renderCard({ editNode });
+    // Edit HCTZ, then edit it back to the original.
+    fireEvent.click(await screen.findByRole("button", { name: "Correct HCTZ" }));
+    let input = await screen.findByLabelText("Correct HCTZ");
+    fireEvent.change(input, { target: { value: "25 mg daily" } });
+    fireEvent.blur(input);
+    expect(await screen.findByText(/· edited/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Correct HCTZ" }));
+    input = await screen.findByLabelText("Correct HCTZ");
+    fireEvent.change(input, { target: { value: "12.5 mg daily" } });
+    fireEvent.blur(input);
+    // The "· edited" marker is gone and enact never calls editNode.
+    await waitFor(() => expect(screen.queryByText(/· edited/)).not.toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: /^Enact 3$/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Tap to enact 3/ }));
+    await waitFor(() => expect(screen.getByText(/message sent/)).toBeInTheDocument());
+    expect(editNode).not.toHaveBeenCalled();
+  });
+
+  it("edits a leaf's body BEFORE enacting it (order matters for provenance)", async () => {
+    const editNode = vi.fn(async () => undefined);
+    const enactProposal = vi.fn(async () => ok());
+    renderCard({ editNode, enactProposal });
+    fireEvent.click(await screen.findByRole("button", { name: "Correct HCTZ" }));
+    const input = await screen.findByLabelText("Correct HCTZ");
+    fireEvent.change(input, { target: { value: "25 mg daily" } });
+    fireEvent.blur(input);
+    fireEvent.click(screen.getByRole("button", { name: /^Enact 3$/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Tap to enact 3/ }));
+    await waitFor(() => expect(enactProposal).toHaveBeenCalled());
+    const editOrder = editNode.mock.invocationCallOrder[0] ?? Number.MAX_SAFE_INTEGER;
+    const enactOrder = enactProposal.mock.invocationCallOrder[0] ?? 0;
+    expect(editOrder).toBeLessThan(enactOrder);
+  });
+
+  it("disables Enact while a chat turn is streaming, so the outcome isn't dropped", async () => {
+    renderCard({ chatBusy: true });
+    const btn = await screen.findByRole("button", { name: /^Enact 3$/ });
+    expect(btn).toBeDisabled();
+  });
+
+  it("tells the truth when the outcome couldn't be sent (turn dropped)", async () => {
+    renderCard({ onOutcome: vi.fn(async () => false) });
+    fireEvent.click(await screen.findByRole("button", { name: /^Enact 3$/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Tap to enact 3/ }));
+    expect(await screen.findByText(/will hear this after the current reply/)).toBeInTheDocument();
   });
 });
