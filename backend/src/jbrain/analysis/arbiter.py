@@ -24,6 +24,7 @@ What the plan encodes:
 
 from __future__ import annotations
 
+import json
 import re
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, replace
@@ -481,6 +482,59 @@ def recover_dropped_fields(intent: IntegrationIntent, extraction: Extraction) ->
     if not added and facts == intent.facts:
         return intent
     return replace(intent, facts=facts, entity_resolutions=[*intent.entity_resolutions, *added])
+
+
+def dedup_intent_facts(intent: IntegrationIntent, chunk_texts: list[str]) -> IntegrationIntent:
+    """Collapse a fact the Integrator emitted more than once, keeping the single
+    best-grounded copy. The extraction has `dedup_facts`, but the Integrator
+    re-emits facts with NO equivalent pass, so a note that lists two medications in
+    one sentence ("lisinopril 10 mg and hydrochlorothiazide 12.5 mg daily") can come
+    back with one drug DUPLICATED. That duplicate is pure model non-determinism, not
+    a second datum: without this the arbiter commits one copy active (its quote
+    grounded) while the identical twin — whose quote drifted to a paraphrase the note
+    never states verbatim — falls to the inferred ceiling and lands in review, so the
+    owner sees a review card for a fact already committed to the graph (the
+    medication-bite-review case).
+
+    The identity key includes `statement` and `value_json`, not just
+    entity.predicate.qualifier, so a genuinely SET-VALUED tier-2 predicate keeps its
+    distinct members: two different medications share the `Me.medication` key but
+    differ in statement, so both survive — only a byte-identical restatement
+    collapses. Among true duplicates the survivor is the copy the note GROUNDS (its
+    attested_span quote present and not inferred), then the higher self_confidence,
+    then the earliest — i.e. the copy the arbiter would have committed, never the
+    drifted twin. Order-preserving: a survivor keeps its first-seen position. Runs
+    AFTER predicate canonicalization so aliased spellings share one key."""
+    haystack = _norm("\n".join(chunk_texts))
+
+    def rank(f: IntentFact) -> tuple[bool, bool, bool, float]:
+        grounded = (
+            not f.inferred
+            and f.attested_span is not None
+            and _norm(f.attested_span.surface) in haystack
+        )
+        return (grounded, not f.inferred, f.attested_span is not None, f.self_confidence)
+
+    slot: dict[tuple, int] = {}  # identity key -> index into `kept`
+    kept: list[IntentFact] = []
+    for fact in intent.facts:
+        key = (
+            fact.entity_ref,
+            fact.predicate,
+            fact.qualifier,
+            fact.object_entity_ref,
+            fact.assertion,
+            fact.statement,
+            json.dumps(fact.value_json, sort_keys=True),
+        )
+        if key not in slot:
+            slot[key] = len(kept)
+            kept.append(fact)
+        elif rank(fact) > rank(kept[slot[key]]):
+            kept[slot[key]] = fact  # a better-grounded copy takes the first slot
+    if len(kept) == len(intent.facts):
+        return intent
+    return replace(intent, facts=kept)
 
 
 def _date_phrase_grounded(fact: IntentFact, types: Iterable, haystack: str) -> bool:

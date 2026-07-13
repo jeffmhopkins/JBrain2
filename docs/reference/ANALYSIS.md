@@ -1,6 +1,6 @@
 # JBrain2 — Note Analysis Pipeline
 
-> **Status:** Living · **Last verified:** 2026-07-03
+> **Status:** Living · **Last verified:** 2026-07-13
 
 Binding reference for Phases 2–3 (and the Phase 6 wiki's inputs). Produced
 from the owner's workflow concept plus a red-team and design review; owner
@@ -185,6 +185,20 @@ reschedules. Past-tense references convert `expected` → `occurred`.
   hallucinate a person (the risk that ruled out auto-minting). Notes written
   before the net are re-analyzed by a self-limiting startup backfill keyed on
   unlinked primary relationship edges.
+- **Duplicate-fact collapse is deterministic [decided: an arbiter net, like the
+  extraction's]**: `extraction.dedup_facts` collapses same-key restatements
+  within an extraction, but the Integrator re-emits facts with no equivalent
+  pass — so a note listing two medications in one sentence ("lisinopril 10 mg and
+  hydrochlorothiazide 12.5 mg daily") can come back with one drug DUPLICATED.
+  Left alone the arbiter commits one copy active (its quote grounds) while the
+  identical twin — whose quote drifted to a paraphrase the note never states
+  verbatim — falls to the inferred ceiling and lands in review, so the owner sees
+  a review card for a fact already on the graph. `arbiter.dedup_intent_facts`
+  (run after predicate canonicalization, before the weight signals) collapses a
+  byte-identical restatement to the single best-grounded copy. Its identity key
+  includes `statement`/`value_json`, so a genuinely SET-VALUED tier-2 predicate
+  keeps its distinct members (two different medications share the `Me.medication`
+  key but differ in statement, so both survive) — only a true duplicate collapses.
 - **Domain placement [decided: inherit + promote]**: an entity inherits the
   domain of the note that created it; a later mention from a *less*
   restrictive domain proposes promotion via the review inbox. Facts always

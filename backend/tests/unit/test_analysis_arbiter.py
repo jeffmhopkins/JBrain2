@@ -1230,3 +1230,104 @@ def test_date_grounding_is_scoped_to_date_predicates():
         ],
     )
     assert compute_signals(intent, ["Saw them Tuesday."])[0].surface_attested is False
+
+
+# --- dedup_intent_facts (the medication-bite-review duplicate) --------------
+
+
+def _med_fact(statement: str, *, span: str | None, self_confidence: float = 0.5) -> IntentFact:
+    # A tier-2 `medication` state fact: free-text statement, null value_json, no
+    # object — the shape whose only per-copy signal is its attested_span quote.
+    return _fact(
+        entity_ref="Me",
+        predicate="medication",
+        kind="state",
+        object_entity_ref=None,
+        value_json=None,
+        statement=statement,
+        attested_span=AttestedSpan("c1", span) if span is not None else None,
+        self_confidence=self_confidence,
+        inferred=False,
+    )
+
+
+def test_dedup_intent_facts_collapses_a_duplicated_medication_keeping_grounded_copy():
+    from jbrain.analysis.arbiter import dedup_intent_facts
+
+    note = "The owner is taking lisinopril 10 mg and hydrochlorothiazide 12.5 mg daily."
+    # The Integrator emitted hydrochlorothiazide twice: one copy quotes the note
+    # (grounds), the drifted twin quotes a paraphrase the note never states verbatim.
+    hctz_grounded = _med_fact(
+        "The owner is taking hydrochlorothiazide 12.5 mg daily.",
+        span="hydrochlorothiazide 12.5 mg daily",
+    )
+    hctz_drift = _med_fact(
+        "The owner is taking hydrochlorothiazide 12.5 mg daily.",
+        span="The owner is taking hydrochlorothiazide 12.5 mg daily.",  # not verbatim
+    )
+    lisinopril = _med_fact("The owner is taking lisinopril 10 mg daily.", span="lisinopril 10 mg")
+    intent = _intent(
+        entity_resolutions=[_res("Me")],
+        facts=[lisinopril, hctz_drift, hctz_grounded],
+    )
+    out = dedup_intent_facts(intent, [note])
+    # The two distinct medications both survive; the duplicate hctz collapsed to one.
+    statements = [f.statement for f in out.facts]
+    assert statements.count("The owner is taking hydrochlorothiazide 12.5 mg daily.") == 1
+    assert "The owner is taking lisinopril 10 mg daily." in statements
+    # The surviving hctz is the grounded copy (its quote is the one in the note), so
+    # the arbiter now commits it active instead of holding its drifted twin.
+    hctz = next(f for f in out.facts if "hydrochlorothiazide" in f.statement)
+    assert hctz.attested_span is not None
+    assert compute_signals(out, [note])[out.facts.index(hctz)].surface_attested is True
+
+
+def test_dedup_intent_facts_keeps_first_seen_order_and_grounded_wins_regardless_of_position():
+    from jbrain.analysis.arbiter import dedup_intent_facts
+
+    note = "Taking hydrochlorothiazide 12.5 mg daily."
+    grounded = _med_fact(
+        "The owner is taking hydrochlorothiazide 12.5 mg daily.",
+        span="hydrochlorothiazide 12.5 mg daily",
+    )
+    drift = _med_fact("The owner is taking hydrochlorothiazide 12.5 mg daily.", span=None)
+    # Grounded copy first, drift second -> still keeps the grounded one, in slot 0.
+    out = dedup_intent_facts(
+        _intent(entity_resolutions=[_res("Me")], facts=[grounded, drift]), [note]
+    )
+    assert len(out.facts) == 1
+    assert out.facts[0].attested_span is not None
+
+
+def test_dedup_intent_facts_does_not_collapse_distinct_set_valued_members():
+    from jbrain.analysis.arbiter import dedup_intent_facts
+
+    note = "The owner is taking lisinopril 10 mg and hydrochlorothiazide 12.5 mg daily."
+    a = _med_fact("The owner is taking lisinopril 10 mg daily.", span="lisinopril 10 mg")
+    b = _med_fact(
+        "The owner is taking hydrochlorothiazide 12.5 mg daily.",
+        span="hydrochlorothiazide 12.5 mg",
+    )
+    # Same Me.medication key, different statements: both are real, neither collapses.
+    out = dedup_intent_facts(_intent(entity_resolutions=[_res("Me")], facts=[a, b]), [note])
+    assert len(out.facts) == 2
+
+
+def test_dedup_intent_facts_is_a_noop_without_duplicates():
+    from jbrain.analysis.arbiter import dedup_intent_facts
+
+    intent = _intent(entity_resolutions=[_res("m1")], facts=[_fact()])
+    # Identity is preserved (same object) when nothing collapses — cheap and
+    # side-effect free for the common case.
+    assert dedup_intent_facts(intent, ["married to Celine"]) is intent
+
+
+def test_dedup_intent_facts_distinguishes_by_value_json():
+    from jbrain.analysis.arbiter import dedup_intent_facts
+
+    # Same key + same statement but different structured value are different data
+    # (a defensive guard on the value_json arm of the identity key).
+    a = _fact(predicate="weight", kind="measurement", value_json={"value": 178, "unit": "lb"})
+    b = _fact(predicate="weight", kind="measurement", value_json={"value": 180, "unit": "lb"})
+    out = dedup_intent_facts(_intent(entity_resolutions=[_res()], facts=[a, b]), [""])
+    assert len(out.facts) == 2
