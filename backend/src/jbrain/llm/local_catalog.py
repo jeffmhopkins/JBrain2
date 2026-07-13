@@ -118,6 +118,45 @@ CATALOG: tuple[LocalModel, ...] = (
         kv_gb_per_128k=6.0,
     ),
     LocalModel(
+        id="llama-4-scout-int4",
+        label="Llama 4 Scout · vision (int4)",
+        served_model="llama-4-scout-int4",
+        tiers=("vision", "low"),
+        supports_vision=True,
+        supports_tools=True,
+        # Opt-in alternate to qwen3-vl-30b — a plain local-hosting enable never pulls
+        # its ~59 GB, and adding it leaves the already-selected models untouched.
+        recommended=False,
+        hf_repo="unsloth/Llama-4-Scout-17B-16E-Instruct-GGUF",
+        # Unsloth nests the int4 dynamic quant's shards in a UD-Q4_K_XL/ subdir (two
+        # shards); the recursive glob matches each shard path and resolve_weight follows
+        # the -00001-of-00002 head to the rest.
+        gguf_include="*UD-Q4_K_XL*.gguf",
+        # The F16 vision projector lives at the repo root. Name it exactly (not mmproj*)
+        # so the pull doesn't also grab the redundant BF16 projector beside it.
+        mmproj_include="mmproj-F16.gguf",
+        quant="UD-Q4_K_XL",
+        # GiB on disk (the catalog's unit): the two UD-Q4_K_XL shards (~57.8 GiB from
+        # HF's 49.6 + 12.4 decimal-GB listing) plus the ~1.6 GiB F16 projector. An
+        # ESTIMATE until measured on-box; kept at the GiB (not the decimal-GB) sum so the
+        # install bar doesn't cap early and read as a stall (see the Nemotron note).
+        size_gb=59.4,
+        note="109B MoE, 17B active over 16 experts — Meta's multimodal (text + vision) "
+        "Scout at Unsloth's int4 dynamic quant. A fast vision alternate to qwen3-vl-30b "
+        "(more total params, similar active cost); co-resides beside a small model on a "
+        "128 GB box. Non-thinking (no reasoning channel). Vision needs a recent llama.cpp "
+        "build with Llama 4 mmproj support (in the multimodal set upstream).",
+        # Scout's native window is architecturally huge (10M via iRoPE), but this
+        # memory-bound box can't hold a KV cache anywhere near it, and the settings
+        # picker's choices top out at 256k — so expose 256k as the ceiling (the largest
+        # window an operator can realistically serve) rather than a slider to 10M nobody
+        # can load. Serves the conservative gateway default until raised.
+        native_context_window=262144,
+        # Interleaved local/global attention keeps the KV cache moderate for a model this
+        # size; matches the other vision MoE's conservative guardrail estimate.
+        kv_gb_per_128k=6.0,
+    ),
+    LocalModel(
         id="gpt-oss-120b",
         label="GPT-OSS 120B · reasoning",
         served_model="gpt-oss-120b",
