@@ -1,8 +1,8 @@
 # Inline approvals — moving Proposal approval into the conversation
 
 > **Status:** GUI gate settled — **owner chose variant D** (`d-one-tree.html`), the binding
-> spec. Shipping via `docs/plans/INLINE_APPROVALS_PLAN.md` (W1 backend ✅, W2 frontend
-> `agent/InlineProposal`). A–C retained as the record.
+> spec, now **shipped** (`docs/archive/INLINE_APPROVALS_PLAN.md`; backend + `agent/InlineProposal`).
+> A–C retained as the record.
 
 ## The problem
 

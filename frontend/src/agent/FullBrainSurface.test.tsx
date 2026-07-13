@@ -1218,7 +1218,7 @@ describe("FullBrainSurface", () => {
 
   it("renders an inline approval card (not the panel chip) for an inline-able kind", async () => {
     // A correction is acted on IN the conversation: the interactive card, not a
-    // navigational chip to the panel (docs/plans/INLINE_APPROVALS_PLAN.md).
+    // navigational chip to the panel (docs/archive/INLINE_APPROVALS_PLAN.md).
     vi.spyOn(api, "getProposal").mockResolvedValue({
       id: "p1",
       kind: "correction",

@@ -1,6 +1,6 @@
 """Record the owner's reason when a proposal node is declined.
 
-Inline approvals (docs/plans/INLINE_APPROVALS_PLAN.md §3.3): declining a staged
+Inline approvals (docs/archive/INLINE_APPROVALS_PLAN.md §3.3): declining a staged
 operation inline can carry a free-text reason so the assistant learns *why*, not just
 that it was declined. The reason is owner-eyes feedback folded into the enact outcome
 the agent sees; it is not a graph fact and never leaves the owner's RLS scope (the

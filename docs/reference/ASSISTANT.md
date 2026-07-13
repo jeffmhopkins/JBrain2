@@ -703,7 +703,7 @@ approval fatigue). Binding rules:
 
 The owner acts on a staged Proposal **in the conversation** (the inline approval
 surface, `docs/mocks/inline-approvals/d-one-tree.html`; build plan
-`docs/plans/INLINE_APPROVALS_PLAN.md`), not only from the side panel. Three owner moves,
+`docs/archive/INLINE_APPROVALS_PLAN.md`), not only from the side panel. Three owner moves,
 all owner-only RLS and confined to a **still-staged** proposal:
 
 - **Approve / decline (with a reason).** A decline may carry a free-text `reason` recorded

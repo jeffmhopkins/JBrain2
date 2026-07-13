@@ -823,7 +823,7 @@ and active agent sessions with their selected read scope.
 
 **Inline approval card (settled — binding mock `docs/mocks/inline-approvals/d-one-tree.html`,
 chosen from a four-variant round `docs/mocks/inline-approvals/{a,b,c,d}.html`; build plan
-`docs/plans/INLINE_APPROVALS_PLAN.md`).** A Proposal staged mid-conversation is acted on
+`docs/archive/INLINE_APPROVALS_PLAN.md`).** A Proposal staged mid-conversation is acted on
 **in the transcript**, not only from the side panel: the answer bubble renders the staged
 Proposal as **one interactive card** (`agent/InlineProposal`, `.fb-inline-prop`) — a tree
 of leaves each **approved (✓) / declined with a reason (✕) / corrected in place** (tap the

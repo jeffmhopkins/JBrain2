@@ -1,8 +1,10 @@
 # Inline Approvals — Build Plan
 
-> **Status:** In progress · **Last verified:** 2026-07-13 · **Waves:** W1✅ W2✅ W3◻️
+> **Status:** Shipped 2026-07 · migration 0130 · **Waves:** W1✅ W2✅ W3✅ · **Superseded-by:** —
 
-**A scheduled build plan** (per `docs/DOC_LIFECYCLE.md`). It moves Proposal approval
+**Shipped** (per `docs/DOC_LIFECYCLE.md`) — the living behaviour is documented in
+`docs/reference/ASSISTANT.md` ("Acting on a Proposal inline") and `docs/reference/DESIGN.md`
+("Inline approval card"); this plan is kept for the audit trail. It moved Proposal approval
 **out of the side panel and into the conversation** — an interactive inline component
 that shows the staged diff, takes approve / decline-with-reason / correct-in-place in
 place, and — the net-new capability — **notifies the assistant of the outcome so it can
@@ -239,11 +241,14 @@ disabling Enact, and the not-sent copy. **Deferred (plan note):** an inline `mer
 its label rather than the panel's entity-chip `MergeHead`; readable, but richer merge rendering
 inline is a follow-up if merges prove common on the card.
 
-### W3 — Reconcile & land ◻️
+### W3 — Reconcile & land ✅
 
-- Flip this plan `Scheduled → Shipped`, move to `docs/archive/`, drop the `plans/README.md`
-  row, update the `ROADMAP.md` assistant section, bump `Last verified` dates. `dev-setup.sh`
-  reviewed (no new dep expected — zero-new-dep goal).
+- Flipped this plan `In progress → Shipped` and moved it to `docs/archive/` (with an
+  `archive/README.md` row), dropped the `plans/README.md` row, updated the `ROADMAP.md`
+  assistant line to point at the archive, and re-pointed the `docs/plans/…` references in
+  ASSISTANT.md / DESIGN.md / the mock README / migration 0130 to `docs/archive/…`.
+  `dev-setup.sh` unchanged — **no new runtime dependency** (the only schema change,
+  migration 0130, rides the existing alembic step). Landed 2026-07-13.
 
 ---
 
