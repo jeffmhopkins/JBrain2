@@ -1,0 +1,392 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Inline approvals · D · one tree, per-leaf edit/decline, one Enact</title>
+<style>
+  :root{
+    --bg:#0e0f11; --surface:#17181b; --surface-2:#1e2024; --border:#26282c;
+    --text:#e6e7e9; --text-2:#9a9da3; --text-3:#5c5f66;
+    --steel:#7fa7c9; --green:#8fbc9a; --amber:#c9a36a; --rose:#cf8a8f; --violet:#a493c9;
+    --terracotta:#d0917f;
+    --steel-tint:rgba(127,167,201,.13); --green-tint:rgba(143,188,154,.13);
+    --amber-tint:rgba(201,163,106,.13); --rose-tint:rgba(207,138,143,.13);
+    --violet-tint:rgba(164,147,201,.16);
+    --font-mono:ui-monospace,"SF Mono","Cascadia Mono",Menlo,Consolas,monospace;
+    font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
+  body{background:#000;color:var(--text);display:flex;flex-direction:column;align-items:center;gap:14px;padding:22px 14px 60px;min-height:100vh;}
+  svg{fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;}
+
+  .caption{width:392px;max-width:94vw;padding:0 6px;color:var(--text-2);font-size:12.5px;line-height:1.55;}
+  .caption b{color:var(--text);font-weight:600;} .caption .k{color:var(--amber);}
+  .caption .tag{display:inline-block;font-size:11px;padding:2px 9px;border-radius:999px;margin-bottom:6px;background:var(--steel-tint);color:var(--steel);}
+
+  .phone{width:392px;max-width:94vw;height:812px;background:var(--bg);border:1px solid #2a2c30;border-radius:32px;overflow:hidden;position:relative;display:flex;flex-direction:column;}
+  .bar{height:54px;display:flex;align-items:center;gap:11px;padding:0 14px;border-bottom:1px solid var(--border);flex:none;}
+  .bar .back{color:var(--text-2);display:flex;}
+  .bar .ttl{font-size:16px;font-weight:600;}
+  .bar .right{margin-left:auto;display:flex;align-items:center;gap:12px;color:var(--text-3);}
+  .bar .dot{width:8px;height:8px;border-radius:999px;background:var(--green);}
+
+  .chat{flex:1;overflow-y:auto;padding:12px 14px 16px;display:flex;flex-direction:column;gap:11px;}
+  .bubble{padding:11px 14px;border-radius:16px;font-size:15px;line-height:1.46;}
+  .me{align-self:flex-end;max-width:84%;background:var(--steel-tint);border:1px solid rgba(127,167,201,.25);border-bottom-right-radius:5px;}
+  .ai{align-self:flex-start;width:100%;background:var(--surface);border:1px solid var(--border);border-bottom-left-radius:5px;}
+  .ai b{font-weight:600;}
+  .sysline{align-self:flex-end;max-width:94%;display:flex;align-items:flex-start;gap:7px;font-size:12px;color:var(--green);background:var(--surface-2);border:1px solid var(--border);border-radius:14px;padding:8px 12px;line-height:1.45;}
+  .sysline svg{width:13px;height:13px;flex:none;margin-top:1px;color:var(--green);}
+
+  /* ===== the one proposal tree ===== */
+  .prop{margin-top:9px;background:var(--surface-2);border:1px solid var(--border);border-radius:13px;overflow:hidden;}
+  .prop-head{display:flex;align-items:flex-start;gap:10px;padding:11px 12px;border-bottom:1px solid var(--border);}
+  .disc{width:28px;height:28px;border-radius:8px;display:flex;align-items:center;justify-content:center;flex:none;margin-top:1px;background:var(--steel-tint);color:var(--steel);}
+  .disc svg{width:16px;height:16px;}
+  .hmain{flex:1;min-width:0;}
+  .htitle{font-size:14px;font-weight:600;}
+  .hmeta{margin-top:5px;display:flex;flex-wrap:wrap;gap:5px 8px;align-items:center;font-size:11px;color:var(--text-3);}
+  .pill{font-size:10.5px;padding:2px 7px;border-radius:999px;background:var(--surface);border:1px solid var(--border);color:var(--text-2);}
+  .pill.health{background:var(--rose-tint);border-color:transparent;color:var(--rose);}
+  .pill.appt{background:var(--amber-tint);border-color:transparent;color:var(--amber);}
+
+  /* tree groups */
+  .tree{padding:6px 8px 4px;}
+  .grp{margin:2px 0 6px;}
+  .grp-head{display:flex;align-items:center;gap:7px;padding:6px 6px 4px;font-size:11px;letter-spacing:.05em;text-transform:uppercase;color:var(--text-3);}
+  .grp-head .gdot{width:6px;height:6px;border-radius:999px;background:var(--text-3);}
+  .grp-head .gdot.health{background:var(--rose);} .grp-head .gdot.cal{background:var(--amber);}
+  .grp-body{margin-left:3px;padding-left:9px;border-left:1px solid var(--border);}
+
+  /* leaf */
+  .leaf{display:grid;grid-template-columns:1fr auto;gap:6px 8px;padding:8px 6px;border-radius:10px;align-items:start;}
+  .leaf + .leaf{border-top:1px solid var(--border);border-radius:0;}
+  .leaf-main{grid-column:1;min-width:0;}
+  .leaf-top{display:flex;flex-wrap:wrap;gap:6px;align-items:center;font-size:13px;color:var(--text);}
+  .op{font-size:9.5px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;padding:2px 6px;border-radius:5px;}
+  .op.record{background:var(--rose-tint);color:var(--rose);}
+  .op.note{background:var(--green-tint);color:var(--green);}
+  .op.remind{background:var(--steel-tint);color:var(--steel);}
+  .op.move{background:var(--amber-tint);color:var(--amber);}
+  .edge{margin-top:5px;display:flex;flex-wrap:wrap;gap:5px;align-items:center;font-family:var(--font-mono);font-size:12px;color:var(--text-2);}
+  .edge .pred{color:var(--text-3);} .edge .arrow{color:var(--text-3);}
+  .edge.plain{font-family:inherit;}
+  .val{display:inline-flex;align-items:center;gap:6px;background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:3px 8px;color:var(--text);}
+  .val[data-editable]{cursor:text;}
+  .val.editing{border-color:var(--amber);}
+  .val input{background:none;border:none;color:var(--text);font:inherit;font-family:var(--font-mono);width:96px;outline:none;}
+  .val .pen{width:12px;height:12px;color:var(--text-3);cursor:pointer;flex:none;}
+  .val[data-editable] .pen{color:var(--text-3);}
+  .val.editing .pen{color:var(--amber);}
+  .tag-edit{display:none;font-size:10px;color:var(--amber);margin-left:2px;}
+  .leaf.corrected .tag-edit{display:inline;}
+  .held-badge{display:none;margin-top:6px;align-items:center;gap:5px;font-size:10.5px;color:var(--amber);background:var(--amber-tint);padding:2px 8px;border-radius:999px;width:max-content;}
+  .leaf.held .held-badge{display:inline-flex;}
+  .leaf.out .leaf-main{opacity:.5;}
+  .leaf.out .leaf-top{text-decoration:line-through;text-decoration-color:var(--text-3);}
+
+  /* per-leaf ✓ / ✕ */
+  .ctl{grid-column:2;display:flex;gap:5px;}
+  .ctl button{width:30px;height:30px;border-radius:8px;border:1px solid var(--border);background:var(--surface);color:var(--text-3);display:flex;align-items:center;justify-content:center;cursor:pointer;transition:background .13s,color .13s,border-color .13s;}
+  .ctl button svg{width:15px;height:15px;}
+  /* default in = green check on */
+  .leaf:not(.out) .ctl .ok{background:var(--green);border-color:var(--green);color:#0e1411;}
+  .leaf.corrected .ctl .ok{background:var(--amber);border-color:var(--amber);color:#161207;}
+  .leaf.held .ctl .ok{background:var(--amber-tint);border-color:var(--amber);color:var(--amber);}
+  .leaf.out .ctl .no{background:var(--rose);border-color:var(--rose);color:#160f10;}
+
+  /* per-leaf reason panel */
+  .reason{grid-column:1/-1;overflow:hidden;display:grid;grid-template-rows:0fr;transition:grid-template-rows .16s ease-out;}
+  .leaf.out .reason{grid-template-rows:1fr;}
+  .reason>.inner{min-height:0;overflow:hidden;}
+  .rbody{padding:8px 2px 4px;}
+  .rlab{font-size:11px;color:var(--text-2);margin-bottom:7px;}
+  .chips{display:flex;flex-wrap:wrap;gap:6px;}
+  .rchip{font-size:11.5px;padding:6px 10px;border-radius:999px;background:var(--surface);border:1px solid var(--border);color:var(--text-2);cursor:pointer;min-height:32px;}
+  .rchip.on{background:var(--rose-tint);border-color:transparent;color:var(--rose);}
+  .rnote{margin-top:8px;width:100%;background:var(--surface);border:1px solid var(--border);border-radius:9px;padding:8px 10px;font:inherit;font-size:12px;color:var(--text);resize:none;}
+  .rnote::placeholder{color:var(--text-3);}
+
+  /* footer — the single enact */
+  .foot{display:flex;align-items:center;gap:10px;padding:11px 12px;border-top:1px solid var(--border);}
+  .tally{flex:1;font-size:12px;color:var(--text-2);line-height:1.35;}
+  .tally b{color:var(--text);} .tally .c-edit{color:var(--amber);} .tally .c-no{color:var(--rose);} .tally .c-held{color:var(--amber);}
+  .enact{background:var(--steel);color:#0e1411;border:none;border-radius:11px;padding:11px 16px;font:inherit;font-size:14px;font-weight:600;cursor:pointer;min-height:44px;display:flex;align-items:center;gap:7px;transition:background .14s,color .14s;}
+  .enact svg{width:16px;height:16px;}
+  .enact:disabled{opacity:.4;cursor:default;}
+  .enact.armed{background:var(--green);}
+
+  /* resolved */
+  .prop.done .prop-head,.prop.done .tree,.prop.done .foot{display:none;}
+  .prop.done{background:var(--surface);}
+  .resolved{display:flex;align-items:flex-start;gap:9px;padding:13px;font-size:13px;color:var(--green);line-height:1.45;}
+  .resolved svg{width:16px;height:16px;flex:none;margin-top:1px;}
+  .resolved .sub{display:block;color:var(--text-3);font-size:11.5px;margin-top:3px;}
+
+  .composer{flex:none;border-top:1px solid var(--border);padding:10px 12px calc(10px + env(safe-area-inset-bottom));display:flex;align-items:center;gap:10px;background:var(--surface-composer,#141518);}
+  .composer .box{flex:1;background:var(--surface-2);border:1px solid var(--border);border-radius:12px;padding:11px 13px;font-size:14px;color:var(--text-3);}
+  .composer .send{width:40px;height:40px;border-radius:11px;background:var(--steel-tint);color:var(--steel);border:none;display:flex;align-items:center;justify-content:center;flex:none;}
+  .composer .send svg{width:18px;height:18px;}
+  .toast{position:absolute;left:50%;bottom:78px;transform:translateX(-50%) translateY(8px);background:var(--surface-2);border:1px solid var(--border);color:var(--text);font-size:12px;padding:8px 14px;border-radius:999px;opacity:0;pointer-events:none;transition:opacity .18s,transform .18s;z-index:9;}
+  .toast.on{opacity:1;transform:translateX(-50%) translateY(0);}
+
+  @media (prefers-reduced-motion:reduce){ .reason,.enact,.toast,.ctl button{transition:none;} }
+</style>
+</head>
+<body>
+  <div class="caption">
+    <span class="tag">D · one tree · one Enact</span><br/>
+    C's per-item richness under B's single tree. Every staged operation is a <b>leaf you can
+    approve (✓), decline (✕ → pick a reason), or correct in place</b> (tap a value — the leaf turns
+    <b style="color:var(--amber)">corrected</b> and files a correction with your fix). A leaf whose
+    prerequisite is declined shows <b style="color:var(--amber)">held</b>. There is <b>one Enact</b>
+    at the end — a <b class="k">double-tap</b> — that runs the approved, unblocked leaves and returns
+    <b>a single consolidated message</b> to the assistant. Try editing the HCTZ dose, declining the
+    reschedule, then double-tapping Enact.
+  </div>
+
+  <div class="phone">
+    <div class="bar">
+      <button class="back"><svg width="22" height="22" viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6"/></svg></button>
+      <span class="ttl">BP meds &amp; follow-up</span>
+      <span class="right"><span class="dot"></span>
+        <svg width="19" height="19" viewBox="0 0 24 24"><path d="M13 2 3 14h7l-1 8 10-12h-7l1-8Z"/></svg></span>
+    </div>
+
+    <div class="chat" id="chat">
+      <div class="bubble me">Sort out my BP meds and the cardiology visit — I switched to 25mg of the water pill, and the appointment moved.</div>
+
+      <div class="bubble ai">
+        Here's everything I'd change, in one plan. Approve, decline, or correct each line —
+        then one <b>Enact</b> runs the approved ones and I'll pick it up from there.
+
+        <div class="prop" id="tree">
+          <div class="prop-head">
+            <span class="disc"><svg viewBox="0 0 24 24"><path d="M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2"/><rect x="9" y="3" width="6" height="4" rx="1"/><path d="m9 14 2 2 4-4"/></svg></span>
+            <span class="hmain">
+              <span class="htitle">Update — BP meds &amp; follow-up</span>
+              <span class="hmeta">
+                <span class="pill health">health</span><span class="pill appt">calendar</span>
+                <span>staged from this chat · subject: me</span>
+              </span>
+            </span>
+          </div>
+
+          <div class="tree">
+            <!-- GROUP: medications -->
+            <div class="grp">
+              <div class="grp-head"><span class="gdot health"></span>Medications</div>
+              <div class="grp-body">
+
+                <div class="leaf" data-id="l1" data-name="lisinopril">
+                  <div class="leaf-main">
+                    <div class="leaf-top"><span class="op record">record</span>lisinopril <span class="tag-edit">· edited</span></div>
+                    <div class="edge"><span class="pred">me.takes_medication</span><span class="arrow">→</span>
+                      <span class="val" data-editable><span class="txt">10 mg daily</span><svg class="pen" viewBox="0 0 24 24"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg></span></div>
+                    <span class="held-badge">⏸ held</span>
+                  </div>
+                  <div class="ctl">
+                    <button class="ok" data-act="ok"><svg viewBox="0 0 24 24"><path d="M5 12l4 4L19 7"/></svg></button>
+                    <button class="no" data-act="no"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+                  </div>
+                  <div class="reason"><div class="inner"><div class="rbody">
+                    <div class="rlab">Why decline?</div>
+                    <div class="chips"><button class="rchip">wrong dose</button><button class="rchip">wrong drug</button><button class="rchip">not taking it</button></div>
+                    <textarea class="rnote" rows="1" placeholder="Add a note (optional)…"></textarea>
+                  </div></div></div>
+                </div>
+
+                <div class="leaf" data-id="l2" data-name="HCTZ">
+                  <div class="leaf-main">
+                    <div class="leaf-top"><span class="op record">record</span>hydrochlorothiazide <span class="tag-edit">· edited</span></div>
+                    <div class="edge"><span class="pred">me.takes_medication</span><span class="arrow">→</span>
+                      <span class="val" data-editable><span class="txt">12.5 mg daily</span><svg class="pen" viewBox="0 0 24 24"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg></span></div>
+                    <span class="held-badge">⏸ held</span>
+                  </div>
+                  <div class="ctl">
+                    <button class="ok" data-act="ok"><svg viewBox="0 0 24 24"><path d="M5 12l4 4L19 7"/></svg></button>
+                    <button class="no" data-act="no"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+                  </div>
+                  <div class="reason"><div class="inner"><div class="rbody">
+                    <div class="rlab">Why decline?</div>
+                    <div class="chips"><button class="rchip">wrong dose</button><button class="rchip">wrong drug</button><button class="rchip">not taking it</button></div>
+                    <textarea class="rnote" rows="1" placeholder="Add a note (optional)…"></textarea>
+                  </div></div></div>
+                </div>
+
+                <div class="leaf" data-id="l3" data-name="combination note" data-deps="l1,l2">
+                  <div class="leaf-main">
+                    <div class="leaf-top"><span class="op note">note</span>on combination therapy for BP</div>
+                    <div class="edge plain">+ ties both meds to your hypertension</div>
+                    <span class="held-badge">⏸ held — needs both meds approved</span>
+                  </div>
+                  <div class="ctl">
+                    <button class="ok" data-act="ok"><svg viewBox="0 0 24 24"><path d="M5 12l4 4L19 7"/></svg></button>
+                    <button class="no" data-act="no"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+                  </div>
+                  <div class="reason"><div class="inner"><div class="rbody">
+                    <div class="rlab">Why decline?</div>
+                    <div class="chips"><button class="rchip">redundant</button><button class="rchip">not accurate</button></div>
+                    <textarea class="rnote" rows="1" placeholder="Add a note (optional)…"></textarea>
+                  </div></div></div>
+                </div>
+
+              </div>
+            </div>
+
+            <!-- GROUP: calendar -->
+            <div class="grp">
+              <div class="grp-head"><span class="gdot cal"></span>Calendar</div>
+              <div class="grp-body">
+                <div class="leaf" data-id="l4" data-name="reschedule">
+                  <div class="leaf-main">
+                    <div class="leaf-top"><span class="op move">reschedule</span>cardiology follow-up</div>
+                    <div class="edge plain"><span style="text-decoration:line-through;color:var(--rose)">Thu Aug 21, 2:00&nbsp;PM</span><span class="arrow">→</span><span style="color:var(--green)">Wed Sep 3, 10:30&nbsp;AM</span></div>
+                    <span class="held-badge">⏸ held</span>
+                  </div>
+                  <div class="ctl">
+                    <button class="ok" data-act="ok"><svg viewBox="0 0 24 24"><path d="M5 12l4 4L19 7"/></svg></button>
+                    <button class="no" data-act="no"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+                  </div>
+                  <div class="reason"><div class="inner"><div class="rbody">
+                    <div class="rlab">Why decline?</div>
+                    <div class="chips"><button class="rchip">wrong date</button><button class="rchip">wrong time</button><button class="rchip">keep the old one</button><button class="rchip">already cancelled</button></div>
+                    <textarea class="rnote" rows="1" placeholder="Add a note (optional)…"></textarea>
+                  </div></div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="foot">
+            <div class="tally" id="tally"></div>
+            <button class="enact" id="enact"><svg viewBox="0 0 24 24"><path d="M5 12l4 4L19 7"/></svg><span>Enact</span></button>
+          </div>
+          <div class="resolved" hidden></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="composer">
+      <div class="box">Talk it out — full tool access…</div>
+      <button class="send"><svg viewBox="0 0 24 24"><path d="M4 12l16-8-6 16-3-6-7-2Z"/></svg></button>
+    </div>
+    <div class="toast" id="toast"></div>
+  </div>
+
+<script>
+  const $=(s,r=document)=>r.querySelector(s), $$=(s,r=document)=>[...r.querySelectorAll(s)];
+  const chat=$("#chat"), toast=$("#toast");
+  let tt; const ping=m=>{toast.textContent=m;toast.classList.add("on");clearTimeout(tt);tt=setTimeout(()=>toast.classList.remove("on"),1600);};
+
+  const IDS=['l1','l2','l3','l4'];
+  const DEPS={l1:[],l2:[],l3:['l1','l2'],l4:[]};
+  const S={}; IDS.forEach(id=>S[id]={state:'in',edited:false});
+  const el=id=>$(`.leaf[data-id="${id}"]`);
+  const nameOf=id=>el(id).dataset.name;
+  const valOf=id=>{const t=$(".val .txt",el(id)); return t?t.textContent.replace(/ /g," ").trim():"";};
+
+  function held(id){ return S[id].state==='in' && DEPS[id].some(d=> S[d].state==='out' || held(d)); }
+  function enactable(id){ return S[id].state==='in' && !held(id); }
+
+  function recompute(){
+    IDS.forEach(id=>{
+      const L=el(id);
+      L.classList.toggle('out', S[id].state==='out');
+      L.classList.toggle('corrected', S[id].state==='in' && S[id].edited);
+      L.classList.toggle('held', held(id));
+    });
+    const ready=IDS.filter(enactable), corr=ready.filter(id=>S[id].edited);
+    const out=IDS.filter(id=>S[id].state==='out'), hd=IDS.filter(id=>S[id].state==='in'&&held(id));
+    let t=`<b>${ready.length}</b> of ${IDS.length} ready`;
+    if(corr.length) t+=` · <span class="c-edit">${corr.length} corrected</span>`;
+    if(out.length) t+=` · <span class="c-no">${out.length} declined</span>`;
+    if(hd.length) t+=` · <span class="c-held">${hd.length} held</span>`;
+    $("#tally").innerHTML=t;
+    const btn=$("#enact"); btn.disabled=ready.length===0;
+    if(!btn.classList.contains('armed')) btn.querySelector('span').textContent=ready.length?`Enact ${ready.length}`:'Enact';
+  }
+
+  // per-leaf ✓ / ✕
+  $$(".ctl button").forEach(b=>b.addEventListener("click",()=>{
+    disarm();
+    const L=b.closest(".leaf"), id=L.dataset.id, act=b.dataset.act;
+    if(act==='ok'){ S[id].state='in'; }
+    else { S[id].state = S[id].state==='out' ? 'in' : 'out'; }
+    recompute();
+  }));
+
+  // single-select reason chips per leaf
+  $$(".rchip").forEach(ch=>ch.addEventListener("click",()=>{
+    $$(".rchip",ch.closest(".reason")).forEach(o=>{ if(o!==ch)o.classList.remove("on"); });
+    ch.classList.toggle("on");
+  }));
+
+  // edit-in-place on value chips
+  $$(".val[data-editable]").forEach(v=>{
+    const start=()=>{
+      if(v.classList.contains("editing"))return;
+      const L=v.closest(".leaf"), id=L.dataset.id;
+      const cur=$(".txt",v).textContent.replace(/ /g," ").trim();
+      v.classList.add("editing");
+      v.innerHTML=`<input value="${cur}" /><svg class="pen" viewBox="0 0 24 24"><path d="M5 12l4 4L19 7"/></svg>`;
+      const inp=$("input",v); inp.focus(); inp.setSelectionRange(inp.value.length,inp.value.length);
+      const restore=(txt,changed)=>{
+        v.classList.remove("editing");
+        v.innerHTML=`<span class="txt">${txt}</span><svg class="pen" viewBox="0 0 24 24"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>`;
+        bindEdit(v);
+        if(changed){ S[id].edited=true; S[id].state='in'; recompute(); }
+      };
+      inp.addEventListener("keydown",e=>{
+        if(e.key==="Enter"){e.preventDefault(); const nv=inp.value.trim()||cur; restore(nv,nv!==cur);}
+        if(e.key==="Escape"){ restore(cur,false); }
+      });
+      inp.addEventListener("blur",()=>{ const nv=inp.value.trim()||cur; restore(nv,nv!==cur); });
+    };
+    v._start=start;
+    bindEdit(v);
+  });
+  function bindEdit(v){ v.addEventListener("click",e=>{ if(e.target.closest("input"))return; v._start(); }); }
+
+  // ---- the one Enact: double-tap ----
+  let armed=false,armT;
+  function disarm(){ if(!armed)return; armed=false; $("#enact").classList.remove("armed"); recompute(); clearTimeout(armT); }
+  $("#enact").addEventListener("click",()=>{
+    const btn=$("#enact"); if(btn.disabled)return;
+    if(armed){ enact(); disarm(); return; }
+    disarm(); armed=true; btn.classList.add("armed");
+    btn.querySelector('span').textContent=`Tap to enact ${IDS.filter(enactable).length}`;
+    armT=setTimeout(disarm,3000);
+  });
+  document.addEventListener("click",e=>{ if(armed && !e.target.closest("#enact")) disarm(); },true);
+
+  function enact(){
+    const ready=IDS.filter(enactable), plain=ready.filter(id=>!S[id].edited), corr=ready.filter(id=>S[id].edited);
+    const out=IDS.filter(id=>S[id].state==='out'), hd=IDS.filter(id=>S[id].state==='in'&&held(id));
+
+    // one consolidated message back to the assistant
+    const parts=[];
+    if(plain.length) parts.push(`${plain.length} approved`);
+    if(corr.length) parts.push(`${corr.length} corrected (${corr.map(id=>`${nameOf(id)} → ${valOf(id)}`).join(', ')})`);
+    let msg=`Enacted ${ready.length} of ${IDS.length} — ${parts.join(', ')||'nothing'}`;
+    if(out.length) msg+=` · declined ${out.length} (${out.map(id=>{const rc=$(".rchip.on",el(id)); return `${nameOf(id)}: ${rc?rc.textContent:'no reason'}`;}).join('; ')})`;
+    if(hd.length) msg+=` · ${hd.length} held, not run`;
+    msg+=`. Returned to assistant as ${ready.length} approval${ready.length!==1?'s':''}.`;
+
+    const card=$("#tree"), res=card.querySelector(".resolved"); res.hidden=false;
+    res.innerHTML=`<svg viewBox="0 0 24 24"><path d="M5 12l4 4L19 7"/></svg><span>Enacted ${ready.length} operation${ready.length!==1?'s':''}${corr.length?` · ${corr.length} with your edit`:''}${out.length?` · ${out.length} declined`:''}<span class="sub">one message sent to the assistant</span></span>`;
+    card.classList.add("done");
+    sysline(msg);
+    ping(`enacted ${ready.length} · one message sent`);
+  }
+
+  function sysline(text){
+    const e=document.createElement("div"); e.className="sysline";
+    e.innerHTML=`<svg viewBox="0 0 24 24"><path d="M5 12l4 4L19 7"/></svg><span>${text}</span>`;
+    chat.appendChild(e); chat.scrollTop=chat.scrollHeight;
+  }
+  recompute();
+</script>
+</body>
+</html>

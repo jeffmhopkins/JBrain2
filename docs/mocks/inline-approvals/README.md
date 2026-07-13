@@ -43,6 +43,11 @@ approve/done, amber = pending/held/edit, rose = decline/danger, health = rose.
 | **A** | `a-arm-and-enact.html` | Per-card **arm-and-enact**: expandable card, two always-visible buttons (Decline · Approve), each a double-tap. | The common single-op case — health correction, add reminder, record medication. The most literal reading of the request. |
 | **B** | `b-batch-tree-enact.html` | **In-chat tree + batch enact**: a multi-op Proposal renders as the approvable tree inline (per-leaf ✓/✕, dependency **held** badges), with one footer **Enact N** as the double-tap. Sends *"enacted N approvals."* | Multi-operation proposals — `wiki-restructure`, and the `egress` "approve the exact outbound payload" flow. Brings the side-panel tree inline without the swipe. |
 | **C** | `c-edit-and-reason.html` | **Correct-in-place + reason-to-decline**: Approve is the double-tap; tapping the value **edits it in place** (flips the primary to *Approve correction*, files a correction note with your fix); Decline opens a **reason** chooser (chips + note) so the agent learns *why*. | Fact corrections and appointment changes where yes/no is too blunt — the owner tweaks the value or explains the rejection. |
+| **D** | `d-one-tree.html` | **C's richness under B's one tree** — the current direction. Every operation is a leaf you **approve (✓) / decline (✕ → reason) / correct in place** (edit a value → the leaf turns *corrected*). Held-dependency rules apply. **One Enact** (double-tap) at the foot runs the approved, unblocked leaves and returns **a single consolidated message** to the assistant (e.g. *"Enacted 3 of 4 — 2 approved, 1 corrected (HCTZ → 25 mg) · declined 1 (reschedule: wrong date). Returned as 3 approvals."*). | The whole staged plan in one card, one decision surface, one round-trip to the agent. |
+
+**D is the consolidation** of the round — it takes C's per-item edit/reason and
+puts it under B's single tree with **exactly one Enact and one return message**,
+rather than a separate approve/enact per card.
 
 Each mock stages **several** proposal kinds in one conversation so the pattern is
 visible across `correction`, `reminder`, `medication`, `wiki-restructure`,
