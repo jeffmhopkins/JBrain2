@@ -93,15 +93,39 @@ function exportName(text: string): string {
   return `${slug || "read-aloud"}.wav`;
 }
 
-function downloadBlob(blob: Blob, name: string): void {
-  const url = URL.createObjectURL(blob);
+// Hand the finished WAV to the browser via a same-origin anchor. `url` is owned by the caller
+// (kept alive for the visible fallback link), so this never revokes it — revoking synchronously
+// after click() can cancel an in-flight blob download on mobile browsers.
+function anchorDownload(url: string, name: string): void {
   const a = document.createElement("a");
   a.href = url;
   a.download = name;
+  a.hidden = true;
   document.body.appendChild(a);
   a.click();
   a.remove();
-  URL.revokeObjectURL(url);
+}
+
+/**
+ * Deliver the exported WAV to the owner. An installed PWA in standalone mode (Android especially)
+ * routinely swallows `<a download>` blob downloads, so nothing surfaces — the native share sheet
+ * is the reliable "save this file" surface there, offering Downloads/Files. Try Web Share with the
+ * file first; fall back to the anchor download when sharing is unavailable or fails (never on the
+ * user dismissing the sheet). The caller also renders a visible link as a last-resort fallback.
+ */
+async function deliverWav(blob: Blob, url: string, name: string): Promise<void> {
+  const file = new File([blob], name, { type: "audio/wav" });
+  if (navigator.canShare?.({ files: [file] })) {
+    try {
+      await navigator.share({ files: [file], title: name });
+      return;
+    } catch (err) {
+      // The owner dismissing the share sheet is a completed action, not a failure to retry.
+      if (err instanceof DOMException && err.name === "AbortError") return;
+      // Any other share failure (unsupported target, transient error) falls back to a download.
+    }
+  }
+  anchorDownload(url, name);
 }
 
 export function ReadTextScreen({ voice, onClose }: ReadTextScreenProps) {
@@ -111,6 +135,9 @@ export function ReadTextScreen({ voice, onClose }: ReadTextScreenProps) {
   // Rendered clips so far during an export — drives the "Exporting N/M" progress label.
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // The last finished export, surfaced as a visible tappable link — a last-resort fallback for
+  // when an installed PWA silently swallows the auto-triggered share/download.
+  const [exported, setExported] = useState<{ url: string; name: string } | null>(null);
 
   // A generation token bumped by every stop()/unmount so an in-flight fetch or clip from a
   // superseded playback bails without touching state, and the <audio> playing now (so stop
@@ -143,6 +170,17 @@ export function ReadTextScreen({ voice, onClose }: ReadTextScreenProps) {
 
   // Stop any playback when the screen unmounts (leaving the surface stops speech).
   useEffect(() => stop, [stop]);
+
+  // The object URL backing the visible fallback link outlives a render, so revoke it only when a
+  // fresh export replaces it or the screen unmounts — not on every re-render.
+  const exportedUrlRef = useRef<string | null>(null);
+  exportedUrlRef.current = exported?.url ?? null;
+  useEffect(
+    () => () => {
+      if (exportedUrlRef.current) URL.revokeObjectURL(exportedUrlRef.current);
+    },
+    [],
+  );
 
   // Play one rendered clip, resolving when it ends / errors / is stopped.
   const playBlob = useCallback((blob: Blob): Promise<void> => {
@@ -249,7 +287,13 @@ export function ReadTextScreen({ voice, onClose }: ReadTextScreenProps) {
         }),
       );
       const wav = await concatWav(blobs);
-      downloadBlob(wav, exportName(text));
+      const name = exportName(text);
+      // Own the object URL here so the visible fallback link can keep pointing at it; drop the
+      // previous export's URL first.
+      if (exportedUrlRef.current) URL.revokeObjectURL(exportedUrlRef.current);
+      const url = URL.createObjectURL(wav);
+      setExported({ url, name });
+      await deliverWav(wav, url, name);
     } catch {
       setError("Couldn't export the audio — is the box reachable?");
     } finally {
@@ -316,6 +360,15 @@ export function ReadTextScreen({ voice, onClose }: ReadTextScreenProps) {
               : "Export audio"}
           </button>
         </div>
+        {exported && !exporting && (
+          <p className="settings-meta">
+            Exported{" "}
+            <a className="export-link" href={exported.url} download={exported.name}>
+              {exported.name}
+            </a>
+            .
+          </p>
+        )}
       </main>
     </div>
   );
