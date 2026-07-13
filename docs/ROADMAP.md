@@ -26,6 +26,13 @@ learning, durable-knowledge promotion, prompt/tool self-edit) and their eval/pro
 harness were **removed** — only Loop 1 (reflexion) shipped and remains. The
 not-yet-built hygiene sweeps are carried into the Phase 6 section below.
 
+**Active assistant-surface plan:** **Inline approvals** — Scheduled
+(`docs/plans/INLINE_APPROVALS_PLAN.md`): move Proposal approval from the side panel
+into the conversation (variant D, `docs/mocks/inline-approvals/`), with per-leaf
+approve / decline-with-reason / correct-in-place and a single Enact that **returns a
+consolidated outcome to the assistant so it follows up** — the "deferred concept" in
+`FullBrainSurface.tsx`.
+
 ## Phase 0 — Foundation ✅ Shipped
 
 Compose stack boots end to end. Caddy with TLS on the public domain. Postgres
