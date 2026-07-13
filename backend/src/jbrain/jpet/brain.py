@@ -56,31 +56,40 @@ PET_TURN_SCHEMA: dict[str, Any] = {
 }
 
 
-# The wall's field "build a statue of X": the LLM sculpts a recognisable shape as a sparse
-# list of coloured voxels on a 24³ grid (y up, resting on y=0). Kept sparse (occupied cells
-# only) + capped so the wire stays small and the wall's block-by-block build terminates.
-STATUE_GRID = 24
-STATUE_MAX_VOXELS = 1200
-STATUE_VOXEL_SCHEMA: dict[str, Any] = {
+# The wall's field "build a statue of X". The LLM DESIGNS the subject as a handful of solid
+# coloured PRIMITIVES (box/ellipsoid/cylinder/cone) on a 24³ grid; the host voxelizes them into
+# cubes here. This beats asking the model to hand-place hundreds of voxels: the geometry is code,
+# so shapes come out solid, symmetric and clean (Minecraft-ish), the output is ~1/6 the tokens
+# (seconds, not minutes), and the surface shell that the wall builds is computed correctly.
+STATUE_GRID = 32
+STATUE_MAX_PRIMS = 80
+STATUE_MAX_VOXELS = 2400  # the (shelled) voxel budget the wall builds; a safety cap, rarely hit
+_PRIM_TYPES = ("box", "ellipsoid", "cylinder", "cone")
+STATUE_PRIM_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {
-        "voxels": {
+        "primitives": {
             "type": "array",
-            "maxItems": STATUE_MAX_VOXELS,
-            "description": "The occupied cells of the model — one entry per filled voxel.",
+            "maxItems": STATUE_MAX_PRIMS,
+            "description": "The solid shapes the model is built from.",
             "items": {
                 "type": "object",
                 "properties": {
-                    "x": {"type": "integer", "minimum": 0, "maximum": STATUE_GRID - 1},
-                    "y": {"type": "integer", "minimum": 0, "maximum": STATUE_GRID - 1},
-                    "z": {"type": "integer", "minimum": 0, "maximum": STATUE_GRID - 1},
-                    "c": {"type": "string", "description": 'Hex colour like "#ff8800".'},
+                    "type": {"type": "string", "enum": list(_PRIM_TYPES)},
+                    "cx": {"type": "number"},
+                    "cy": {"type": "number"},
+                    "cz": {"type": "number"},
+                    "sx": {"type": "number"},
+                    "sy": {"type": "number"},
+                    "sz": {"type": "number"},
+                    "axis": {"type": "string", "enum": ["x", "y", "z"]},
+                    "c": {"type": "string", "description": 'Hex colour like "#8b5a2b".'},
                 },
-                "required": ["x", "y", "z", "c"],
+                "required": ["type", "cx", "cy", "cz", "sx", "sy", "sz", "c"],
             },
         }
     },
-    "required": ["voxels"],
+    "required": ["primitives"],
 }
 
 
@@ -95,52 +104,25 @@ class Voxel:
 def _statue_system_prompt() -> str:
     g = STATUE_GRID
     return (
-        "You are a voxel sculptor for a children's toy: you turn a subject into a small, "
-        f"instantly-recognisable 3D model on a {g}×{g}×{g} grid of cubes.\n"
-        f"Coordinates are integers 0–{g - 1}. x = left→right, z = front→back, y = UP. The model "
-        "must sit on the ground (fill from y=0 up) and be roughly centred in x and z.\n"
-        "Return ONLY the occupied cells as `voxels`: a list of {x, y, z, c}, where c is a hex "
-        'colour like "#ff8800".\n'
-        "COLOUR IT PROPERLY: use SEVERAL distinct hex colours to pick out the parts — e.g. body vs "
-        "belly, ears, eyes, nose, stripes, wheels, windows. At least 3–4 different colours; a "
-        "single flat colour looks wrong. Choose natural colours for the subject.\n"
-        "Make it a solid, chunky, recognisable shape a 4-year-old would name at a glance — bold "
-        "silhouette over fine detail. Do not fill the whole grid; carve the actual shape.\n"
-        "IMPORTANT — build a HOLLOW SHELL: emit only the OUTER surface voxels (the ones you could "
-        "see or touch from outside), about 1 voxel thick, and leave the inside empty. A voxel is "
-        "interior (skip it) when it has a filled neighbour on all six sides.\n"
-        "Keep it SMALL so it's quick to make: aim for roughly 120–300 shell voxels (a coarse, "
-        f"chunky model is perfect — do not over-detail); never exceed {STATUE_MAX_VOXELS}."
+        "You are a 3D modeller for a children's toy that builds blocky 'statues' out of cubes "
+        "(think Minecraft). You DESIGN a subject as a small set of simple solid SHAPES; a program "
+        "then fills them with cubes, so you never place individual cubes — you place shapes.\n"
+        f"Work in a {g}×{g}×{g} space, coordinates 0–{g - 1}. x = left↔right, z = front↔back, "
+        f"y = UP. Rest the model on the ground (lowest shape touches y=0) and centre it in x and z "
+        f"(around {g // 2}).\n"
+        "Return `primitives`: a list of shapes. Each shape has: `type` "
+        '("box" | "ellipsoid" | "cylinder" | "cone"); `cx,cy,cz` the CENTRE (may be fractional); '
+        '`sx,sy,sz` the full SIZE along x, y, z; `axis` ("x"|"y"|"z") the long axis for '
+        "cylinder/cone (a cone tapers to a point at the +axis end; ignored for box/ellipsoid); and "
+        '`c` a hex colour like "#8b5a2b".\n'
+        "Shape guide: box = cuboid body/roof; ellipsoid = sphere/egg head or belly (sx=sy=sz is a "
+        "sphere); cylinder = leg/trunk/tube; cone = nose/beak/tail/roof-spike.\n"
+        "Design rules: be RECOGNISABLE and BOLD — a 4-year-old names it instantly, silhouette "
+        "first. Use bilateral symmetry: give mirror pairs (two legs, two ears, two eyes, two "
+        "wings) equal, opposite offsets from the centre. Colour each part with several natural, "
+        "distinct colours (body, belly, face, eyes, nose, wheels, windows…). Keep it to roughly "
+        "8–40 shapes; overlaps are fine (later shapes paint over earlier)."
     )
-
-
-def _clean_voxels(parsed: Any) -> list[Voxel]:
-    """Coerce the model's parsed object into grid-valid voxels: keep only in-bounds integer
-    cells with a usable hex colour, de-duplicate by cell, and cap the count."""
-    if not isinstance(parsed, dict):
-        return []
-    raw = parsed.get("voxels")
-    if not isinstance(raw, list):
-        return []
-    seen: set[tuple[int, int, int]] = set()
-    out: list[Voxel] = []
-    for item in raw:
-        if not isinstance(item, dict):
-            continue
-        try:
-            x, y, z = int(item["x"]), int(item["y"]), int(item["z"])
-        except (KeyError, TypeError, ValueError):
-            continue
-        if not (0 <= x < STATUE_GRID and 0 <= y < STATUE_GRID and 0 <= z < STATUE_GRID):
-            continue
-        cell = (x, y, z)
-        if cell in seen:
-            continue
-        seen.add(cell)
-        out.append(Voxel(x=x, y=y, z=z, c=_hex_color(item.get("c"))))
-        if len(out) >= STATUE_MAX_VOXELS:
-            break
-    return out
 
 
 def _hex_color(value: Any) -> str:
@@ -152,6 +134,81 @@ def _hex_color(value: Any) -> str:
         if len(s) == 6 and all(ch in "0123456789abcdef" for ch in s):
             return f"#{s}"
     return "#9aa0b0"
+
+
+def _prim_contains(p: dict[str, float], x: int, y: int, z: int) -> bool:
+    """Whether grid cell (x,y,z) lies inside primitive p. Box/ellipsoid ignore axis; cylinder is
+    an (elliptical) tube along its axis; cone is that tube tapering to a point at the +axis end."""
+    t, dx, dy, dz = p["type"], x - p["cx"], y - p["cy"], z - p["cz"]
+    sx, sy, sz = max(p["sx"], 1e-3), max(p["sy"], 1e-3), max(p["sz"], 1e-3)
+    if t == "box":
+        return abs(dx) <= sx / 2 and abs(dy) <= sy / 2 and abs(dz) <= sz / 2
+    if t == "ellipsoid":
+        return (dx / (sx / 2)) ** 2 + (dy / (sy / 2)) ** 2 + (dz / (sz / 2)) ** 2 <= 1.05
+    axis = p.get("axis", "y")
+    if axis == "x":
+        a, la, r1, r2, s1, s2 = dx, sx, dy, dz, sy, sz
+    elif axis == "z":
+        a, la, r1, r2, s1, s2 = dz, sz, dx, dy, sx, sy
+    else:
+        a, la, r1, r2, s1, s2 = dy, sy, dx, dz, sx, sz
+    if abs(a) > la / 2:
+        return False
+    rr1, rr2 = s1 / 2, s2 / 2
+    if t == "cone":  # taper from full radius at the base (−axis) to a point at the apex (+axis)
+        scale = max(1 - (a + la / 2) / la, 1e-3)
+        rr1, rr2 = rr1 * scale, rr2 * scale
+    return (r1 / max(rr1, 1e-3)) ** 2 + (r2 / max(rr2, 1e-3)) ** 2 <= 1.05
+
+
+def _clean_primitives(parsed: Any) -> list[dict[str, Any]]:
+    """Keep well-formed, in-type primitives with numeric geometry and a usable colour."""
+    if not isinstance(parsed, dict):
+        return []
+    raw = parsed.get("primitives")
+    if not isinstance(raw, list):
+        return []
+    out: list[dict[str, Any]] = []
+    for item in raw[:STATUE_MAX_PRIMS]:
+        if not isinstance(item, dict) or item.get("type") not in _PRIM_TYPES:
+            continue
+        try:
+            p: dict[str, Any] = {k: float(item[k]) for k in ("cx", "cy", "cz", "sx", "sy", "sz")}
+        except (KeyError, TypeError, ValueError):
+            continue
+        p["type"] = item["type"]
+        p["axis"] = item["axis"] if item.get("axis") in ("x", "y", "z") else "y"
+        p["c"] = _hex_color(item.get("c"))
+        out.append(p)
+    return out
+
+
+def voxelize(primitives: list[dict[str, Any]]) -> list[Voxel]:
+    """Fill the primitives with cubes on the grid (later shapes paint over earlier), then keep
+    only the SURFACE shell (a cell missing any of its 6 neighbours) — the buildable, hollow model.
+    Iterating each primitive's bounding box keeps this quick."""
+    g = STATUE_GRID
+    grid: dict[tuple[int, int, int], str] = {}
+    for p in primitives:
+        lo_x, hi_x = int(p["cx"] - p["sx"] / 2), int(p["cx"] + p["sx"] / 2) + 1
+        lo_y, hi_y = int(p["cy"] - p["sy"] / 2), int(p["cy"] + p["sy"] / 2) + 1
+        lo_z, hi_z = int(p["cz"] - p["sz"] / 2), int(p["cz"] + p["sz"] / 2) + 1
+        for x in range(max(0, lo_x), min(g, hi_x + 1)):
+            for y in range(max(0, lo_y), min(g, hi_y + 1)):
+                for z in range(max(0, lo_z), min(g, hi_z + 1)):
+                    if _prim_contains(p, x, y, z):
+                        grid[(x, y, z)] = p["c"]
+    out: list[Voxel] = []
+    for (x, y, z), c in grid.items():
+        buried = all(
+            (x + dx, y + dy, z + dz) in grid
+            for dx, dy, dz in ((1, 0, 0), (-1, 0, 0), (0, 1, 0), (0, -1, 0), (0, 0, 1), (0, 0, -1))
+        )
+        if not buried:
+            out.append(Voxel(x=x, y=y, z=z, c=c))
+        if len(out) >= STATUE_MAX_VOXELS:
+            break
+    return out
 
 
 class PetRouter(Protocol):
@@ -275,20 +332,18 @@ async def pet_turn(
 
 
 async def statue_voxels(router: PetRouter, *, subject: str) -> list[Voxel]:
-    """Ask the LLM to sculpt `subject` as a 24³ voxel model for the wall's field build. Runs
-    the reasoning-bound `pet.statue` task; the result is validated + clamped to the grid so a
-    bad cell can never wedge the wall's builder. Raises on an unusable (empty) model so the
-    caller can tell the wall it couldn't imagine that one."""
+    """Design `subject` as coloured primitives via the LLM, then voxelize them here into the
+    hollow-shell model the wall builds. Runs the reasoning-bound `pet.statue` task. Raises on an
+    unusable (no primitives / empty) model so the caller can tell the wall it couldn't imagine."""
     result = await router.complete(
         "pet.statue",
         system=_statue_system_prompt(),
         user_text=(subject.strip()[:80] or "a friendly robot"),
-        json_schema=STATUE_VOXEL_SCHEMA,
-        # A big, reasoning-heavy generation: budget for a long thinking trace PLUS a few hundred
-        # voxels of JSON, or the model truncates mid-list and the parse yields a half-built shape.
-        max_tokens=32000,
+        json_schema=STATUE_PRIM_SCHEMA,
+        # A handful of primitives is tiny output; budget mainly for the reasoning trace.
+        max_tokens=8000,
     )
-    voxels = _clean_voxels(result.parsed)
+    voxels = voxelize(_clean_primitives(result.parsed))
     if not voxels:
         raise ValueError("statue model was empty")
     return voxels

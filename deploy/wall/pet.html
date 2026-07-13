@@ -1395,7 +1395,7 @@ function robot(t){
 // blocks off to one side, and the robot on a jetpack building an LLM-drafted voxel model of X,
 // block by block, layer by layer. All ephemeral (a page reload restores the room).
 const FIELD_GREEN=[.24,.8,.36],SKY=[.05,.08,.13];
-const VOX=0.55,STA_C=[0,-1],PILE=[9.5,4.5],SOURCE=[19,15]; // voxel size; statue centre; pile; the far "quarry" the robot fetches blocks from
+const VOX=0.42,STA_C=[0,-1],PILE=[9.5,4.5],SOURCE=[19,15],BUILD_S=90; // voxel size (fits a 32³ model); statue centre; pile; quarry; target build seconds
 // Map a grid cell to the world, centred on the model's OWN bounds (so an off-centre model from the
 // LLM still lands in the middle of the field) and resting on the ground (its lowest layer at y=0).
 function voxWorld(vx,vy,vz){const s=statue||{},cx=s.cx==null?11.5:s.cx,cz=s.cz==null?11.5:s.cz,y0=s.y0||0;
@@ -1433,8 +1433,7 @@ function startStatue(subject){
    for(const v of vox){if(v.x<mnx)mnx=v.x;if(v.x>mxx)mxx=v.x;if(v.z<mnz)mnz=v.z;if(v.z>mxz)mxz=v.z;if(v.y<mny)mny=v.y;}
    statue.cx=(mnx+mxx)/2;statue.cz=(mnz+mxz)/2;statue.y0=mny;
    statue.carry=null;statue.pileN=Math.max(statue.pileN||0,10);      // freeze the gathered pile as the build source
-   statue.queue=buildOrder(vox);statue.placed=[];statue.i=0;statue.phase='toPile';statue.state='building';
-   statue.batch=Math.max(1,Math.ceil(statue.queue.length/140));})   // keep the build to ~140 trips, however big
+   statue.queue=buildOrder(vox);statue.placed=[];statue.i=0;statue.phase='toPile';statue.buildStart=0;statue.state='building';})
   .catch(()=>{if(statue&&statue.subject===mine)statue.state='failed';});
 }
 // Ease the pet toward its target on the ground; returns true once it's basically there.
@@ -1464,22 +1463,22 @@ function stepStatue(dt,t){
   }else{                                                          // carry it back and stack it on the growing pile
    const tgt=PILE_BLOCKS[statue.pileN],px=PILE[0]+tgt[0],pz=PILE[1]+tgt[2];
    P.tx=px;P.tz=pz;P.act='walk';flyY+=(1.4-flyY)*Math.min(1,dt*4);
-   if(Math.hypot(P.x-px,P.z-pz)<0.8){statue.pileN++;statue.carry=null;statue.draftPhase='toSource';statue.dwell=2.0;sfx('put_down');}
+   if(moveTo(dt,FLY)){statue.pileN++;statue.carry=null;statue.draftPhase='toSource';statue.dwell=2.0;sfx('put_down');} // fly back (moveTo actually steps the pet)
   }
   return;
  }
  if(statue.state==='building'){
-  const v=statue.queue[statue.i];
-  if(!v){statue.state='done';return;}
-  const slot=voxWorld(v.x,v.y,v.z);
-  if(statue.phase==='toPile'){                                    // fetch a fresh block from the pile
-   P.tx=PILE[0];P.tz=PILE[1];P.act='walk';flyY+=(3.0-flyY)*Math.min(1,dt*4);
-   if(moveTo(dt,FLY)&&Math.abs(flyY-3.0)<1.2){statue.carry=v;statue.carryCol=hexRGB(v.c);statue.phase='toSlot';sfx('pick_up');}
-  }else{                                                          // fly it over the model and set it in place
+  if(!statue.buildStart)statue.buildStart=t;                     // the build always takes ~BUILD_S, however many blocks
+  const want=Math.floor(Math.min(1,(t-statue.buildStart)/BUILD_S)*statue.queue.length);
+  while(statue.i<want)statue.placed.push(statue.queue[statue.i++]); // blocks appear on the 90s schedule
+  if(statue.i>=statue.queue.length){statue.state='done';return;}
+  // the robot flies for show: fetch from the pile, ferry to the current build front, repeat
+  const front=statue.queue[Math.min(statue.i,statue.queue.length-1)],slot=voxWorld(front.x,front.y,front.z);
+  if(statue.phase==='toPile'){P.tx=PILE[0];P.tz=PILE[1];P.act='walk';flyY+=(3.0-flyY)*Math.min(1,dt*4);
+   if(moveTo(dt,FLY)&&Math.abs(flyY-3.0)<1.2){statue.carry=true;statue.carryCol=hexRGB(front.c);statue.phase='toSlot';sfx('pick_up');}
+  }else{
    const wantFly=slot[1]+1.1;P.tx=slot[0];P.tz=slot[1];P.act='walk';flyY+=(wantFly-flyY)*Math.min(1,dt*4);
-   if(Math.hypot(P.x-slot[0],P.z-slot[1])<0.9&&Math.abs(flyY-wantFly)<1.0){       // set the block(s) in place
-    const b=statue.batch||1;for(let k=0;k<b&&statue.i<statue.queue.length;k++){statue.placed.push(statue.queue[statue.i]);statue.i++;}
-    statue.carry=null;statue.phase='toPile';sfx('put_down');}
+   if(Math.hypot(P.x-slot[0],P.z-slot[1])<0.9&&Math.abs(flyY-wantFly)<1.0){statue.carry=null;statue.phase='toPile';sfx('put_down');}
    moveTo(dt,FLY);
   }
   return;
