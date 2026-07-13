@@ -414,7 +414,7 @@ class StatueIn(BaseModel):
 
 @internal_router.post("/statue")
 async def internal_statue(request: Request, body: StatueIn) -> dict[str, Any]:
-    """Sculpt a 24³ voxel model of `subject` for the on-box wall's field build. Same LAN-only
+    """Sculpt a voxel model of `subject` for the on-box wall's field build. Same LAN-only
     posture as /say (reached solely through the wall's same-origin proxy; the pet lives in the
     non-sensitive 'general' domain) and RATE-LIMITED so an unauthenticated caller can't spin the
     reasoning model in a loop. Returns the occupied voxels; the wall animates the block-by-block
