@@ -156,6 +156,9 @@ class ProposalRow:
     domain: str
     title: str
     subject_id: str | None
+    # The Full Brain chat this proposal was staged from (None for background/system
+    # ones). Surfaced so an enact can route its outcome back to the originating chat.
+    session_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -178,9 +181,51 @@ class NodeRow:
     preview: dict
     deps: tuple[str, ...]
     status: str
+    # The owner's free-text reason when this node was declined (None otherwise) —
+    # owner-eyes feedback, folded into the enact outcome the assistant sees.
+    decision_note: str | None = None
 
     def to_node(self) -> Node:
         return Node(self.id, self.parent_id, self.type, self.status, self.deps)
+
+
+def enact_outcome_summary(
+    proposal: ProposalRow, nodes: Sequence[NodeRow], plan: EnactmentPlan
+) -> str:
+    """A server-authored, human+agent-readable summary of what an enact did —
+    built from DB truth (which leaves actually ran, which were owner-corrected,
+    which were declined and why), never model text. It is the artefact the
+    assistant receives after an inline enact, so it is honest by construction."""
+    leaves = [n for n in nodes if n.type == "leaf"]
+    enactable, held = set(plan.enactable), set(plan.held)
+    enacted = [n for n in leaves if n.id in enactable]
+    held_leaves = [n for n in leaves if n.id in held]
+    declined = [n for n in leaves if n.status == "rejected"]
+    corrected = [n for n in enacted if n.preview.get("edited")]
+    plain = [n for n in enacted if not n.preview.get("edited")]
+
+    def short(n: NodeRow) -> str:
+        return (n.label or n.op or "operation").strip()
+
+    if not enacted:
+        head = f"Enacted nothing from “{proposal.title}”"
+    else:
+        parts: list[str] = []
+        if plain:
+            parts.append(f"{len(plain)} approved")
+        if corrected:
+            parts.append(f"{len(corrected)} corrected ({', '.join(short(n) for n in corrected)})")
+        head = f"Enacted {len(enacted)} of {len(leaves)} — {', '.join(parts)}"
+    tail = ""
+    if declined:
+        items = "; ".join(
+            f"{short(n)}: {n.decision_note}" if n.decision_note else short(n) for n in declined
+        )
+        tail += f" · declined {len(declined)} ({items})"
+    if held_leaves:
+        tail += f" · {len(held_leaves)} held, not run"
+    count = len(enacted)
+    return f"{head}{tail}. Returned to assistant as {count} approval{'' if count == 1 else 's'}."
 
 
 class ProposalRepo:
@@ -274,7 +319,7 @@ class ProposalRepo:
             prow = (
                 await session.execute(
                     text(
-                        "SELECT id, kind, status, domain_code, title, subject_id"
+                        "SELECT id, kind, status, domain_code, title, subject_id, session_id"
                         " FROM app.proposals WHERE id = :id"
                     ),
                     {"id": proposal_id},
@@ -285,8 +330,8 @@ class ProposalRepo:
             nrows = (
                 await session.execute(
                     text(
-                        "SELECT id, parent_id, type, op, label, preview, deps, status"
-                        " FROM app.proposal_nodes WHERE proposal_id = :id"
+                        "SELECT id, parent_id, type, op, label, preview, deps, status,"
+                        " decision_note FROM app.proposal_nodes WHERE proposal_id = :id"
                     ),
                     {"id": proposal_id},
                 )
@@ -298,6 +343,7 @@ class ProposalRepo:
             prow.domain_code,
             prow.title,
             str(prow.subject_id) if prow.subject_id else None,
+            str(prow.session_id) if prow.session_id else None,
         )
         nodes = [
             NodeRow(
@@ -309,13 +355,19 @@ class ProposalRepo:
                 dict(r.preview),
                 tuple(str(d) for d in r.deps),
                 r.status,
+                r.decision_note,
             )
             for r in nrows
         ]
         return proposal, nodes
 
-    async def decide(self, ctx: SessionContext, node_id: str, *, approve: bool) -> None:
-        """Approve or reject a node, cascading by containment over its subtree."""
+    async def decide(
+        self, ctx: SessionContext, node_id: str, *, approve: bool, reason: str | None = None
+    ) -> None:
+        """Approve or reject a node, cascading by containment over its subtree. A
+        `reason` (only meaningful on a reject) is recorded on the explicitly-declined
+        node as owner-eyes feedback — it does not cascade to the subtree, and an
+        approve clears any prior note so a re-approved node carries none."""
         async with scoped_session(self._maker, ctx) as session:
             proposal_id = (
                 await session.execute(
@@ -328,6 +380,11 @@ class ProposalRepo:
             nodes = await self._nodes(session, str(proposal_id))
             changes = (cascade_approve if approve else cascade_reject)(nodes, node_id)
             await self._apply(session, changes)
+            note = reason.strip() if (reason and not approve) else None
+            await session.execute(
+                text("UPDATE app.proposal_nodes SET decision_note = :n WHERE id = :id"),
+                {"n": note or None, "id": node_id},
+            )
 
     async def enact(
         self, ctx: SessionContext, proposal_id: str, executor: LeafExecutor
@@ -380,6 +437,38 @@ class ProposalRepo:
             if preview is None:
                 return False
             merged = {**dict(preview), **allowed}
+            await session.execute(
+                text("UPDATE app.proposal_nodes SET preview = cast(:p AS jsonb) WHERE id = :nid"),
+                {"p": _json(merged), "nid": node_id},
+            )
+            return True
+
+    async def patch_node_body(self, ctx: SessionContext, node_id: str, body: str) -> bool:
+        """Correct-in-place: replace a STAGED note/appointment leaf's proposed body with
+        the owner's edited text, and flag it `edited` so enactment attributes it to the
+        human (provenance='human') — the #7 owner-correction channel. Guarded to
+        `add_note`/`manage_appointment` leaves on a still-staged proposal; the firewall
+        fields (subject/domain) are untouched, so an edit can only refine the text the
+        owner will approve, never re-target it. Owner-only RLS; no-op on an unknown id,
+        a wrong-op node, an already-decided proposal, or an empty body."""
+        text_body = body.strip()
+        if not text_body:
+            return False
+        async with scoped_session(self._maker, ctx) as session:
+            preview = (
+                await session.execute(
+                    text(
+                        "SELECT n.preview FROM app.proposal_nodes n"
+                        " JOIN app.proposals p ON p.id = n.proposal_id"
+                        " WHERE n.id = :nid AND n.op IN ('add_note', 'manage_appointment')"
+                        "   AND p.status = 'staged'"
+                    ),
+                    {"nid": node_id},
+                )
+            ).scalar_one_or_none()
+            if preview is None:
+                return False
+            merged = {**dict(preview), "body": text_body, "edited": True}
             await session.execute(
                 text("UPDATE app.proposal_nodes SET preview = cast(:p AS jsonb) WHERE id = :nid"),
                 {"p": _json(merged), "nid": node_id},

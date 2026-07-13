@@ -113,6 +113,29 @@ async def test_agent_note_executor_writes_a_flagged_idempotent_note_and_enqueues
     assert jobs.enqueued == [("ingest_note", {"note_id": "note-for-proposal-node-1"})]
 
 
+async def test_agent_note_executor_attributes_an_owner_edit_to_the_human() -> None:
+    # Correct-in-place (INLINE_APPROVALS_PLAN §3.2, Decision #2): an owner-edited node
+    # carries preview.edited, so the enacted note is the OWNER's correction — human
+    # provenance with an #edited source_ref, not the agent's.
+    notes, jobs = FakeNotes(), FakeJobs()
+    proposal = ProposalRow("prop-1", "correction", "approved", "health", "t", None)
+    node = NodeRow(
+        "node-1",
+        None,
+        "leaf",
+        "add_note",
+        "lbl",
+        {"body": "HCTZ 25 mg daily", "domain": "health", "edited": True},
+        (),
+        "approved",
+    )
+    await agent_note_executor(notes, jobs)(CTX.session, proposal, node)  # type: ignore[arg-type]
+    n = notes.created[0]
+    assert n["provenance"] == "human"
+    assert n["source_ref"] == "proposal:prop-1#edited"
+    assert n["body"] == "HCTZ 25 mg daily"
+
+
 async def test_executor_skips_enqueue_on_an_idempotent_re_enact() -> None:
     notes, jobs = FakeNotes(created=False), FakeJobs()
     proposal = ProposalRow("p", "correction", "approved", "health", "t", None)

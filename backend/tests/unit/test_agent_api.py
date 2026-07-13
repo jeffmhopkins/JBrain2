@@ -2130,3 +2130,27 @@ def test_favicon_missing_is_404(client: TestClient, repo: FakeAuthRepo) -> None:
         transport=_favicon_transport(found=False)  # type: ignore[arg-type]
     )
     assert client.get("/api/agent/favicon?host=nofavicon.example").status_code == 404
+
+
+def test_model_message_frames_a_proposal_outcome_as_data() -> None:
+    """A proposal-outcome turn is framed as a DATA report (INLINE_APPROVALS_PLAN §3.1) —
+    the assistant is told to acknowledge and not re-stage declined items — while a normal
+    turn passes through verbatim and a calendar handoff still appends its appointment id."""
+    import jbrain.api.agent as agent_mod
+
+    outcome = "Enacted 2 of 3 — 2 approved · declined 1 (reschedule: wrong date)."
+    framed = agent_mod._model_message(
+        agent_mod.ChatRequest(session_id="s", message=outcome, proposal_outcome=True)
+    )
+    assert outcome in framed
+    assert "Proposal outcome" in framed
+    assert "must not re-stage anything the owner declined" in framed
+
+    plain = agent_mod._model_message(agent_mod.ChatRequest(session_id="s", message="hello"))
+    assert plain == "hello"
+
+    appt = "11111111-1111-1111-1111-111111111111"
+    hinted = agent_mod._model_message(
+        agent_mod.ChatRequest(session_id="s", message="when is it?", appointment_id=appt)
+    )
+    assert appt in hinted and "read_appointment" in hinted

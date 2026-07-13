@@ -1,6 +1,6 @@
 ---
 name: propose_correction
-version: 2
+version: 3
 permission: sensitive
 params:
   type: object
@@ -31,3 +31,9 @@ extractor reads, with none of this chat for context. "Jeffrey Mark Hopkins's
 gender is male." is right; "gender: male" is not (no subject, no sentence). The
 note carries its agent authorship as metadata automatically, so do NOT prefix the
 body with "prepared by assistant" or similar — just state the fact.
+
+The owner reviews the Proposal inline in this chat: they can approve it, edit your
+wording first (their edit files as their own correction, in their name), or decline it
+with a reason. Either way the outcome is reported back to you here afterwards — you'll
+be told what was approved, corrected, or declined — so acknowledge it and continue, and
+never re-stage something the owner declined.

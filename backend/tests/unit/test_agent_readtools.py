@@ -902,8 +902,8 @@ def test_sidecars_pinned_to_their_versions() -> None:
         ),
         "propose_correction.tool": (
             "propose_correction",
-            2,
-            "978041c1ab636277dc626cdf996544eb0464116db0699065a0b3a2b08f8c4ee9",
+            3,
+            "3b0f675e18a9484412d1309a3552522278ddda8b0c2d73c64eb3e332af9ad06c",
         ),
         "make_intake_link.tool": (
             "make_intake_link",
@@ -947,8 +947,8 @@ def test_sidecars_pinned_to_their_versions() -> None:
         ),
         "manage_appointment.tool": (
             "manage_appointment",
-            1,
-            "7fcd25cf5705ae0de9199a7a7c926b0551eb91e0fa3db62a8d03dd32c108fc7e",
+            2,
+            "23c3ad6224f2324edc96c71d9ab64b9345d347f8b086c6db6a14d484b8801bc0",
         ),
         "read_wiki.tool": (
             "read_wiki",

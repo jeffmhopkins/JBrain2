@@ -172,14 +172,19 @@ def agent_note_executor(notes: SqlNotesRepo, jobs: JobEnqueuer) -> LeafExecutor:
         body = str(node.preview.get("body", "")).strip()
         if not body:
             return
+        # Correct-in-place (INLINE_APPROVALS_PLAN §3.2, Decision #2): when the owner
+        # edited the proposed text before approving, the note is the OWNER's correction —
+        # provenance='human' with an #edited source_ref, so it carries honest attribution
+        # and normal human weight, not the agent's. An un-edited approval stays 'agent'.
+        edited = bool(node.preview.get("edited"))
         note, created = await notes.create_note(
             ctx,
             client_id=f"proposal-{node.id}",
             domain=str(node.preview.get("domain") or proposal.domain),
             destination=None,
             body=body,
-            provenance="agent",
-            source_ref=f"proposal:{proposal.id}",
+            provenance="human" if edited else "agent",
+            source_ref=f"proposal:{proposal.id}#edited" if edited else f"proposal:{proposal.id}",
         )
         # Only a fresh insert needs ingestion; a re-enact is idempotent (already
         # has a note and a job). Without this the note never leaves 'pending'.

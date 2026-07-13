@@ -14,7 +14,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
 from jbrain.agent.connectortools import build_leaf_executor
-from jbrain.agent.proposals import ProposalRepo
+from jbrain.agent.proposals import ProposalRepo, enact_outcome_summary
 from jbrain.analysis.repo import SqlAnalysisRepo
 from jbrain.api.deps import owner_only
 from jbrain.api.notes import ctx_for
@@ -79,11 +79,23 @@ class ProposalOut(BaseModel):
 
 class DecisionIn(BaseModel):
     decision: Literal["approve", "reject"]
+    # Owner-eyes reason for a decline (ignored on approve) — folded into the enact
+    # outcome the assistant sees, so it learns *why*, not just that you said no.
+    reason: str | None = None
+
+
+class EditIn(BaseModel):
+    # The owner's corrected text for a staged note/appointment leaf (correct-in-place).
+    body: str
 
 
 class EnactOut(BaseModel):
     enacted: list[str]
     held: list[str]
+    # A server-authored summary of what this enact did (INLINE_APPROVALS_PLAN §3.1) —
+    # the honest, DB-derived artefact the PWA sends back to the assistant so it follows
+    # up. "" when nothing ran.
+    outcome: str = ""
 
 
 @router.get("")
@@ -133,9 +145,23 @@ async def decide_node(
 ) -> None:
     repo = get_proposals(request)
     try:
-        await repo.decide(ctx_for(principal), node_id, approve=body.decision == "approve")
+        await repo.decide(
+            ctx_for(principal), node_id, approve=body.decision == "approve", reason=body.reason
+        )
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.post("/{proposal_id}/nodes/{node_id}/edit", status_code=204)
+async def edit_node(
+    request: Request, principal: OwnerDep, proposal_id: str, node_id: str, body: EditIn
+) -> None:
+    """Correct-in-place: replace a staged note/appointment leaf's proposed text before
+    approval. The edit files as the owner's correction at enact (provenance='human');
+    firewall fields are untouched. 404 if the node isn't an editable, still-staged leaf."""
+    repo = get_proposals(request)
+    if not await repo.patch_node_body(ctx_for(principal), node_id, body.body):
+        raise HTTPException(status_code=404, detail="no editable staged node with that id in scope")
 
 
 @router.post("/{proposal_id}/enact")
@@ -149,8 +175,18 @@ async def enact_proposal(request: Request, principal: OwnerDep, proposal_id: str
         get_job_queue(request),
         get_analysis_repo(request),
     )
+    ctx = ctx_for(principal)
     try:
-        plan = await repo.enact(ctx_for(principal), proposal_id, executor)
+        plan = await repo.enact(ctx, proposal_id, executor)
+        # Re-load the settled tree (fresh statuses + decision notes + edited flags) to
+        # author the outcome the PWA sends back to the assistant — DB truth, not model
+        # text. The load is RLS-scoped exactly like the enact, so an out-of-scope id is
+        # already a 404 above.
+        proposal, nodes = await repo.load(ctx, proposal_id)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
-    return EnactOut(enacted=list(plan.enactable), held=list(plan.held))
+    return EnactOut(
+        enacted=list(plan.enactable),
+        held=list(plan.held),
+        outcome=enact_outcome_summary(proposal, nodes, plan),
+    )

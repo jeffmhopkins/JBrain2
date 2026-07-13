@@ -111,6 +111,73 @@ async def test_a_rejected_prerequisite_holds_its_dependent(maker: async_sessionm
     assert {n.id: n.status for n in nodes}[b] == "held"
 
 
+async def test_decline_reason_persists_on_the_declined_node(maker: async_sessionmaker) -> None:
+    """A decline reason is recorded on the explicitly-declined node (not its subtree),
+    survives reload, and an approve carries none — INLINE_APPROVALS_PLAN §3.3."""
+    pid = await _owner_principal(maker)
+    repo = ProposalRepo(maker)
+    a, b = str(uuid.uuid4()), str(uuid.uuid4())
+    spec = ProposalSpec(
+        kind="appointment",
+        domain="health",
+        title="two changes",
+        nodes=[
+            NodeSpec(a, "leaf", op="add_note", label="keep"),
+            NodeSpec(b, "leaf", op="manage_appointment", label="reschedule"),
+        ],
+    )
+    prop_id = await repo.stage(OWNER, principal_id=pid, spec=spec)
+
+    await repo.decide(OWNER, a, approve=True)
+    await repo.decide(OWNER, b, approve=False, reason="wrong date")
+
+    _, nodes = await repo.load(OWNER, prop_id)
+    by_id = {n.id: n for n in nodes}
+    assert by_id[b].status == "rejected" and by_id[b].decision_note == "wrong date"
+    assert by_id[a].decision_note is None  # an approved node carries no reason
+
+
+async def test_correct_in_place_edits_body_and_flags_edited(maker: async_sessionmaker) -> None:
+    """patch_node_body rewrites a staged note/appointment leaf's body and flags it
+    `edited`; it no-ops on a non-editable op, an unknown id, or a decided proposal —
+    INLINE_APPROVALS_PLAN §3.2."""
+    pid = await _owner_principal(maker)
+    repo = ProposalRepo(maker)
+    note_id, mint_id = str(uuid.uuid4()), str(uuid.uuid4())
+    spec = ProposalSpec(
+        kind="correction",
+        domain="health",
+        title="dose",
+        nodes=[
+            NodeSpec(note_id, "leaf", op="add_note", label="HCTZ", preview={"body": "12.5 mg"}),
+            NodeSpec(mint_id, "leaf", op="mint_intake_link", label="link", preview={"body": "x"}),
+        ],
+    )
+    prop_id = await repo.stage(OWNER, principal_id=pid, spec=spec)
+
+    assert await repo.patch_node_body(OWNER, note_id, "25 mg") is True
+    # A non-editable op (mint_intake_link) and an unknown id both no-op.
+    assert await repo.patch_node_body(OWNER, mint_id, "hijack") is False
+    assert await repo.patch_node_body(OWNER, str(uuid.uuid4()), "ghost") is False
+    # An empty body is rejected before touching the DB.
+    assert await repo.patch_node_body(OWNER, note_id, "   ") is False
+
+    _, nodes = await repo.load(OWNER, prop_id)
+    edited = {n.id: n for n in nodes}[note_id]
+    assert edited.preview["body"] == "25 mg" and edited.preview["edited"] is True
+
+    # Approving the node leaves the proposal 'staged' — still editable right up to enact.
+    await repo.decide(OWNER, note_id, approve=True)
+    assert await repo.patch_node_body(OWNER, note_id, "37.5 mg") is True
+
+    # Once enacted, the proposal is no longer staged — further edits are refused.
+    async def _noop(ctx: SessionContext, proposal: ProposalRow, node: NodeRow) -> None:
+        return None
+
+    await repo.enact(OWNER, prop_id, _noop)
+    assert await repo.patch_node_body(OWNER, note_id, "50 mg") is False
+
+
 async def test_list_open_scopes_to_session_plus_session_less(maker: async_sessionmaker) -> None:
     """The session-scoped inbox is a chat's own staged proposals plus the
     session-less (background) ones — never another chat's."""

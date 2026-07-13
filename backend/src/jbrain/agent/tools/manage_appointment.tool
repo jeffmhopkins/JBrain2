@@ -1,6 +1,6 @@
 ---
 name: manage_appointment
-version: 1
+version: 2
 permission: sensitive
 params:
   type: object
@@ -34,3 +34,8 @@ pipeline any note goes through, and the appointment then appears (or moves, or i
 marked cancelled). To move or cancel an existing appointment, pass its
 appointment_id (from read_appointments) so the change lands on the same
 appointment. Tell the owner you've staged it for review.
+
+The owner reviews the Proposal inline in this chat: they can approve it, correct the
+details first (their edit files as their own correction), or decline it with a reason.
+The outcome is reported back to you here afterwards, so acknowledge what was approved,
+corrected, or declined and continue — never re-stage something the owner declined.
