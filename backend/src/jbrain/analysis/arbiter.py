@@ -24,6 +24,7 @@ What the plan encodes:
 
 from __future__ import annotations
 
+import json
 import re
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, replace
@@ -481,6 +482,81 @@ def recover_dropped_fields(intent: IntegrationIntent, extraction: Extraction) ->
     if not added and facts == intent.facts:
         return intent
     return replace(intent, facts=facts, entity_resolutions=[*intent.entity_resolutions, *added])
+
+
+def dedup_intent_facts(intent: IntegrationIntent, chunk_texts: list[str]) -> IntegrationIntent:
+    """Collapse a fact the Integrator emitted more than once, keeping the complete,
+    best-grounded copy. The extraction has `dedup_facts`, but the Integrator re-emits
+    facts with NO equivalent pass, so a note that lists two medications in one
+    sentence ("lisinopril 10 mg and hydrochlorothiazide 12.5 mg daily") can come back
+    with one drug DUPLICATED — and the duplicate is the degenerate one: the good copy
+    binds the drug as its OBJECT entity (`Me.medication -> hydrochlorothiazide`, which
+    `_object_named` grounds because the drug name is verbatim in the note), while the
+    spurious twin DROPS its object and folds the drug into a free-text statement. Left
+    alone the arbiter commits the object-bearing copy active and holds the object-less
+    twin for review (no object to ground, a paraphrased statement the note never
+    states verbatim), so the owner sees a review card for a fact already on the graph
+    (the medication-bite-review case).
+
+    Facts are grouped on a base key that EXCLUDES the object — entity, predicate,
+    qualifier, assertion, statement, value_json — so a genuinely SET-VALUED predicate
+    keeps its distinct members: two edges to DIFFERENT objects (enumerated children,
+    two different medications) survive as separate edges even when their statements
+    coincide. Within a group an object-less copy is SUBSUMED by any object-bearing
+    sibling (the dropped-object twin adds no datum the bound edge lacks) and dropped;
+    same-object duplicates — and an all-object-less group — collapse to the single
+    best copy (grounded + not inferred, then higher self_confidence, then earliest),
+    i.e. the copy the arbiter would have committed, never the drifted twin.
+    Order-preserving. Runs AFTER predicate canonicalization so aliased spellings share
+    one key."""
+    haystack = _norm("\n".join(chunk_texts))
+
+    def rank(f: IntentFact) -> tuple[bool, bool, bool, float]:
+        grounded = (
+            not f.inferred
+            and f.attested_span is not None
+            and _norm(f.attested_span.surface) in haystack
+        )
+        return (grounded, not f.inferred, f.attested_span is not None, f.self_confidence)
+
+    def base_key(f: IntentFact) -> tuple:
+        return (
+            f.entity_ref,
+            f.predicate,
+            f.qualifier,
+            f.assertion,
+            f.statement,
+            json.dumps(f.value_json, sort_keys=True),
+        )
+
+    groups: dict[tuple, list[int]] = {}
+    for i, fact in enumerate(intent.facts):
+        groups.setdefault(base_key(fact), []).append(i)
+
+    keep: set[int] = set()
+    for idxs in groups.values():
+        objful = [i for i in idxs if intent.facts[i].object_entity_ref is not None]
+        if objful:
+            # Distinct-object edges each survive; an object-less twin is subsumed.
+            best_by_obj: dict[str, int] = {}
+            for i in objful:
+                obj = intent.facts[i].object_entity_ref
+                assert obj is not None  # objful filtered on this
+                if obj not in best_by_obj or rank(intent.facts[i]) > rank(
+                    intent.facts[best_by_obj[obj]]
+                ):
+                    best_by_obj[obj] = i
+            keep.update(best_by_obj.values())
+        else:
+            best = idxs[0]
+            for i in idxs[1:]:
+                if rank(intent.facts[i]) > rank(intent.facts[best]):
+                    best = i
+            keep.add(best)
+
+    if len(keep) == len(intent.facts):
+        return intent
+    return replace(intent, facts=[f for i, f in enumerate(intent.facts) if i in keep])
 
 
 def _date_phrase_grounded(fact: IntentFact, types: Iterable, haystack: str) -> bool:

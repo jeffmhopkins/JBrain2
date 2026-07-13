@@ -30,6 +30,7 @@ from jbrain.analysis.appointment_projection import project_appointments
 from jbrain.analysis.arbiter import (
     ArbiterPlan,
     compute_signals,
+    dedup_intent_facts,
     derive_kinship_gender,
     plan_intent,
     plan_to_extraction,
@@ -385,6 +386,12 @@ class AnalysisPipeline:
         # a past owner map/rename decision lands on the canonical graph address;
         # unaliased long-tail predicates commit raw (two-tier model).
         await self.canonicalize_intent(intent)
+        # Collapse a fact the Integrator emitted twice (a note listing two meds in
+        # one sentence comes back with one drug duplicated) to its best-grounded
+        # copy — otherwise the arbiter commits one copy and holds its identical twin
+        # for review. AFTER canonicalization so aliased predicates share one key.
+        intent = dedup_intent_facts(intent, [c.text for c in chunks])
+        flow_trace.intent(note_id, "dedup", intent)
         signals = compute_signals(intent, [c.text for c in chunks])
         plan = plan_intent(intent, signals, correction=correction)
         flow_trace.plan(note_id, plan, signals)
