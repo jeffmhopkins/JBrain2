@@ -136,6 +136,19 @@ async def test_agent_note_executor_attributes_an_owner_edit_to_the_human() -> No
     assert n["body"] == "HCTZ 25 mg daily"
 
 
+async def test_only_a_truthy_edited_flag_upgrades_provenance_to_human() -> None:
+    # Provenance hinges on preview.edited (set ONLY by patch_node_body). A node with
+    # other preview keys, or edited falsey, must still enact as the agent's — so no
+    # staging path can launder authorship by splatting args into preview (#7).
+    for preview in ({"body": "x", "domain": "health"}, {"body": "x", "edited": False}):
+        notes, jobs = FakeNotes(), FakeJobs()
+        proposal = ProposalRow("p", "correction", "approved", "health", "t", None)
+        node = NodeRow("n", None, "leaf", "add_note", "lbl", preview, (), "approved")
+        await agent_note_executor(notes, jobs)(CTX.session, proposal, node)  # type: ignore[arg-type]
+        assert notes.created[0]["provenance"] == "agent"
+        assert notes.created[0]["source_ref"] == "proposal:p"
+
+
 async def test_executor_skips_enqueue_on_an_idempotent_re_enact() -> None:
     notes, jobs = FakeNotes(created=False), FakeJobs()
     proposal = ProposalRow("p", "correction", "approved", "health", "t", None)

@@ -152,6 +152,32 @@ async def test_decision_note_inherits_the_node_firewall(maker: async_sessionmake
         assert (await session.execute(read_note, {"pid": prop_id})).scalar() == 0
 
 
+async def test_correct_in_place_is_owner_and_domain_scoped(maker: async_sessionmaker) -> None:
+    # The correct-in-place edit is an RLS-scoped write surface (INLINE_APPROVALS_PLAN §6,
+    # security path): a session that can't SEE a node can't patch its body — the row is
+    # invisible, so patch_node_body no-ops and the body/edited flag are untouched.
+    from jbrain.agent.proposals import NodeSpec, ProposalRepo, ProposalSpec
+
+    pid = await _owner_principal(maker)
+    repo = ProposalRepo(maker)
+    node_id = uuid.uuid4()
+    spec = ProposalSpec(
+        kind="correction",
+        domain="health",
+        title="dose",
+        nodes=[NodeSpec(str(node_id), "leaf", op="add_note", label="x", preview={"body": "12.5"})],
+    )
+    prop_id = await repo.stage(OWNER, principal_id=pid, spec=spec)
+
+    # A general-only owner session cannot patch the health node — it can't see it.
+    blind = read_context(pid, ("general",))
+    assert await repo.patch_node_body(blind, str(node_id), "hijack") is False
+    _, nodes = await repo.load(read_context(pid, ("health",)), prop_id)
+    assert nodes[0].preview == {"body": "12.5"}  # untouched, no 'edited' flag
+    # The in-scope owner CAN patch it — proving the guard is scope, not a blanket refusal.
+    assert await repo.patch_node_body(read_context(pid, ("health",)), str(node_id), "25") is True
+
+
 async def test_notes_carry_provenance(maker: async_sessionmaker) -> None:
     # An agent-authored note is flagged and source-attributed (#7); existing notes
     # default to human-authored.

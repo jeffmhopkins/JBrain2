@@ -917,13 +917,13 @@ def test_sidecars_pinned_to_their_versions() -> None:
         ),
         "lookup_medication.tool": (
             "lookup_medication",
-            1,
-            "a318f9b67990265d3db6266c72d8e36e628c8f605417f052bfe6392c5f150335",
+            2,
+            "66fab04404884eeb9da92f2f0febfcae0c867f040f438ab3583ee16f5736b947",
         ),
         "lookup_condition.tool": (
             "lookup_condition",
-            1,
-            "365558e91398836b3dca8ef6728e7fa86a82d49b3f3ccc25fa6efd79ca663af4",
+            2,
+            "9f883018796ab954acadb6a916529a7efc8c01d9a472e3f5bdba4420eaff3628",
         ),
         "read_appointments.tool": (
             "read_appointments",

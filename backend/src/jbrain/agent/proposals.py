@@ -201,6 +201,9 @@ def enact_outcome_summary(
     enacted = [n for n in leaves if n.id in enactable]
     held_leaves = [n for n in leaves if n.id in held]
     declined = [n for n in leaves if n.status == "rejected"]
+    # A leaf the owner never decided (still pending after enact) belongs in none of the
+    # above — count it so the summary stays honest rather than silently dropping it.
+    untouched = [n for n in leaves if n.status == "pending"]
     corrected = [n for n in enacted if n.preview.get("edited")]
     plain = [n for n in enacted if not n.preview.get("edited")]
 
@@ -224,6 +227,8 @@ def enact_outcome_summary(
         tail += f" · declined {len(declined)} ({items})"
     if held_leaves:
         tail += f" · {len(held_leaves)} held, not run"
+    if untouched:
+        tail += f" · {len(untouched)} left undecided"
     count = len(enacted)
     return f"{head}{tail}. Returned to assistant as {count} approval{'' if count == 1 else 's'}."
 

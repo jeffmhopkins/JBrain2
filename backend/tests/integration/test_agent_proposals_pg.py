@@ -137,6 +137,76 @@ async def test_decline_reason_persists_on_the_declined_node(maker: async_session
     assert by_id[a].decision_note is None  # an approved node carries no reason
 
 
+async def test_declining_then_approving_clears_the_reason(maker: async_sessionmaker) -> None:
+    """Decision #3 / decide() docstring: a re-approved node carries no reason — decline
+    with a reason, then approve, and decision_note is back to NULL."""
+    pid = await _owner_principal(maker)
+    repo = ProposalRepo(maker)
+    a = str(uuid.uuid4())
+    spec = ProposalSpec(
+        kind="correction",
+        domain="general",
+        title="one",
+        nodes=[NodeSpec(a, "leaf", op="add_note", label="fact")],
+    )
+    prop_id = await repo.stage(OWNER, principal_id=pid, spec=spec)
+
+    await repo.decide(OWNER, a, approve=False, reason="not accurate")
+    _, nodes = await repo.load(OWNER, prop_id)
+    assert nodes[0].decision_note == "not accurate"
+
+    await repo.decide(OWNER, a, approve=True)
+    _, nodes = await repo.load(OWNER, prop_id)
+    assert nodes[0].status == "approved" and nodes[0].decision_note is None
+
+
+async def test_edited_leaf_enacts_as_a_human_authored_note(maker: async_sessionmaker) -> None:
+    """End-to-end Decision #2: patch a note leaf, then enact through the REAL
+    agent_note_executor, and the note lands provenance='human' with an #edited
+    source_ref — the owner's correction, not the agent's."""
+    from jbrain.agent.proposaltools import agent_note_executor
+    from jbrain.notes.repo import SqlNotesRepo
+
+    pid = await _owner_principal(maker)
+    repo = ProposalRepo(maker)
+    a = str(uuid.uuid4())
+    spec = ProposalSpec(
+        kind="correction",
+        domain="health",
+        title="dose",
+        nodes=[NodeSpec(a, "leaf", op="add_note", label="HCTZ", preview={"body": "12.5 mg"})],
+    )
+    prop_id = await repo.stage(OWNER, principal_id=pid, spec=spec)
+    assert await repo.patch_node_body(OWNER, a, "25 mg daily") is True
+    await repo.decide(OWNER, a, approve=True)
+
+    class _Jobs:
+        def __init__(self) -> None:
+            self.enqueued: list[tuple[str, dict]] = []
+
+        async def enqueue(self, ctx: object, kind: str, payload: dict) -> str:
+            self.enqueued.append((kind, payload))
+            return "job-1"
+
+    executor = agent_note_executor(SqlNotesRepo(maker), _Jobs())  # type: ignore[arg-type]
+    plan = await repo.enact(OWNER, prop_id, executor)
+    assert plan.enactable == (a,)
+
+    async with scoped_session(maker, OWNER) as session:
+        row = (
+            await session.execute(
+                text(
+                    "SELECT body, provenance, source_ref FROM app.notes"
+                    " WHERE client_id = :cid"
+                ),
+                {"cid": f"proposal-{a}"},
+            )
+        ).one()
+    assert row.body == "25 mg daily"
+    assert row.provenance == "human"
+    assert row.source_ref == f"proposal:{prop_id}#edited"
+
+
 async def test_correct_in_place_edits_body_and_flags_edited(maker: async_sessionmaker) -> None:
     """patch_node_body rewrites a staged note/appointment leaf's body and flags it
     `edited`; it no-ops on a non-editable op, an unknown id, or a decided proposal —

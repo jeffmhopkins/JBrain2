@@ -132,3 +132,11 @@ class TestEnactOutcomeSummary:
         out = enact_outcome_summary(self.prop, nodes, EnactmentPlan(enactable=(), held=()))
         assert out.startswith("Enacted nothing from “Update meds”")
         assert out.endswith("Returned to assistant as 0 approvals.")
+
+    def test_an_undecided_leaf_is_reported_not_dropped(self) -> None:
+        # A leaf the owner never decided (still 'pending') is accounted for, so the
+        # summary stays honest rather than silently under-counting.
+        nodes = [_row("a", label="lisinopril"), _row("b", label="HCTZ", status="pending")]
+        out = enact_outcome_summary(self.prop, nodes, EnactmentPlan(enactable=("a",), held=()))
+        assert "Enacted 1 of 2 — 1 approved" in out
+        assert "1 left undecided" in out

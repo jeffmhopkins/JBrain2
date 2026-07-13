@@ -1,6 +1,6 @@
 # Inline Approvals — Build Plan
 
-> **Status:** Scheduled · **Last verified:** 2026-07-13 · **Waves:** W1◻️ W2◻️ W3◻️
+> **Status:** In progress · **Last verified:** 2026-07-13 · **Waves:** W1✅ W2◻️ W3◻️
 
 **A scheduled build plan** (per `docs/DOC_LIFECYCLE.md`). It moves Proposal approval
 **out of the side panel and into the conversation** — an interactive inline component
@@ -178,6 +178,18 @@ Parallelizable tasks off one `wave-1` branch:
 **DoD:** ruff + pyright clean; unit tests green locally; integration/RLS tests written (run
 in CI); coverage ≥80 with the security-touching paths (edit endpoint, decision-reason,
 RLS) at 100%; digests re-pinned; ASSISTANT.md reconciled + `Last verified` bumped.
+
+**Landed 2026-07-13** — built, then gated by an independent adversarial review (reviewer
+≠ builder). No correctness bugs found; the review's coverage findings were all fixed on
+this branch: an RLS isolation test for the edit path, an end-to-end edited-leaf →
+`provenance='human'` enact test, a decline→approve reason-cleared test, a defensive
+"only a truthy `edited` upgrades provenance" test, and a summary honesty fix (a still-
+`pending` leaf is now reported "left undecided", with a test). T5 was extended to the two
+egress connector tools (`lookup_medication` v2, `lookup_condition` v2) so all
+inline-targetable staging tools name the outcome loop. **Deferred (completeness, not a
+hole):** a full faked-LLM `/chat` round-trip of the `proposal_outcome` turn — the pure
+`_model_message` framing (the security-relevant part) is unit-tested; the round-trip is
+exercised for real in W2's mock `/api/chat` route.
 
 ### W2 — Frontend: the inline approval component ◻️
 
