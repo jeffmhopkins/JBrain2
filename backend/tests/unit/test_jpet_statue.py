@@ -1,9 +1,9 @@
-"""The JPet field "build a statue of X" voxel generator (jbrain.jpet.brain.statue_voxels).
+"""The JPet field "build a statue of X" generator (jbrain.jpet.brain).
 
-The LLM sculpts a subject as a sparse 24³ voxel model; this proves the host-side coercion:
-out-of-grid / malformed cells are dropped, colours are normalised, cells de-duplicate, and an
-empty model raises so the caller can tell the wall it couldn't imagine that one. The model is
-faked — no network — via a stub router that returns a preset parsed object.
+The LLM designs the subject as coloured PRIMITIVES; the host voxelizes them into a hollow-shell
+cube model. This proves the host-side pieces: primitive validation (drop malformed / off-type
+shapes, normalise colour), the voxelizer (fills a shape, keeps only the surface shell), and the
+end-to-end call raising on an empty model. The LLM is faked via a stub router.
 """
 
 from types import SimpleNamespace
@@ -11,7 +11,13 @@ from typing import Any
 
 import pytest
 
-from jbrain.jpet.brain import STATUE_GRID, _clean_voxels, statue_voxels
+from jbrain.jpet.brain import (
+    STATUE_GRID,
+    Voxel,
+    _clean_primitives,
+    statue_voxels,
+    voxelize,
+)
 
 
 class _StubRouter:
@@ -34,41 +40,75 @@ class _StubRouter:
         return SimpleNamespace(parsed=self._parsed)
 
 
-async def test_statue_voxels_runs_the_high_reasoning_task_and_returns_clean_cells() -> None:
-    router = _StubRouter({"voxels": [{"x": 1, "y": 0, "z": 2, "c": "#ff8800"}]})
+def _box(cx: float, cy: float, cz: float, s: float, c: str = "#ff8800") -> dict[str, Any]:
+    return {"type": "box", "cx": cx, "cy": cy, "cz": cz, "sx": s, "sy": s, "sz": s, "c": c}
+
+
+async def test_statue_voxels_runs_the_high_reasoning_task_and_voxelizes_primitives() -> None:
+    router = _StubRouter({"primitives": [_box(12, 4, 12, 6, "#33aa55")]})
     vox = await statue_voxels(router, subject="a cat")
     assert router.calls and router.calls[0][0] == "pet.statue"  # the reasoning-bound route
     assert router.calls[0][1] == "a cat"
-    assert len(vox) == 1 and vox[0].c == "#ff8800" and (vox[0].x, vox[0].y, vox[0].z) == (1, 0, 2)
+    assert vox and all(isinstance(v, Voxel) for v in vox)
+    assert all(v.c == "#33aa55" for v in vox)  # the box's colour carried through
+    assert all(0 <= v.x < STATUE_GRID and 0 <= v.y < STATUE_GRID for v in vox)
 
 
 async def test_statue_voxels_raises_on_an_empty_model() -> None:
     with pytest.raises(ValueError):
-        await statue_voxels(_StubRouter({"voxels": []}), subject="nothing")
+        await statue_voxels(_StubRouter({"primitives": []}), subject="nothing")
     with pytest.raises(ValueError):
         await statue_voxels(_StubRouter("not a dict"), subject="garbage")
 
 
-def test_clean_voxels_drops_bad_cells_dedupes_and_normalises_colour() -> None:
-    g = STATUE_GRID
+def test_voxelize_keeps_only_the_surface_shell() -> None:
+    # A solid 6-cube box: the shell (faces) is present, the very inside is hollowed out.
+    vox = voxelize([_box(12, 12, 12, 6)])
+    cells = {(v.x, v.y, v.z) for v in vox}
+    assert (9, 12, 12) in cells  # a face cell is on the shell
+    assert (12, 12, 12) not in cells  # the centre is buried → removed
+    assert vox  # non-empty
+
+
+def test_voxelize_cone_tapers_to_a_point() -> None:
+    # A y-axis cone: wide at the base, a point at the top → more span low than high.
+    cone = {
+        "type": "cone",
+        "cx": 12,
+        "cy": 12,
+        "cz": 12,
+        "sx": 10,
+        "sy": 12,
+        "sz": 10,
+        "axis": "y",
+        "c": "#ffffff",
+    }
+    vox = voxelize([cone])
+    by_y: dict[int, int] = {}
+    for v in vox:
+        by_y[v.y] = by_y.get(v.y, 0) + 1
+    low = min(by_y), max(by_y)
+    assert by_y[low[0]] > by_y[low[1]]  # the base layer is wider than the apex layer
+
+
+def test_clean_primitives_drops_bad_shapes_and_normalises() -> None:
     raw = {
-        "voxels": [
-            {"x": 0, "y": 0, "z": 0, "c": "#f80"},  # #rgb shorthand → expands
-            {"x": 0, "y": 0, "z": 0, "c": "#000000"},  # duplicate cell → dropped
-            {"x": g, "y": 0, "z": 0, "c": "#fff"},  # x out of range → dropped
-            {"x": 5, "y": 5, "z": 5, "c": "not-a-colour"},  # bad colour → grey fallback
-            {"x": 2, "y": "oops", "z": 1, "c": "#fff"},  # non-int coord → dropped
-            "junk",  # non-dict → dropped
+        "primitives": [
+            _box(12, 4, 12, 6, "#f80"),  # #rgb shorthand → expands
+            {"type": "triangle", "cx": 1, "cy": 1, "cz": 1, "sx": 1, "sy": 1, "sz": 1, "c": "#fff"},
+            {"type": "box", "cx": "oops", "cy": 1, "cz": 1, "sx": 1, "sy": 1, "sz": 1, "c": "#fff"},
+            "junk",
+            {"type": "cylinder", "cx": 5, "cy": 5, "cz": 5, "sx": 3, "sy": 8, "sz": 3, "c": "nope"},
         ]
     }
-    out = _clean_voxels(raw)
-    assert len(out) == 2
-    assert out[0].c == "#ff8800"  # #f80 expanded
-    assert out[1].c == "#9aa0b0"  # unusable colour → grey
-    assert all(0 <= v.x < g and 0 <= v.y < g and 0 <= v.z < g for v in out)
+    out = _clean_primitives(raw)
+    assert len(out) == 2  # only the box + cylinder survive
+    assert out[0]["c"] == "#ff8800"  # expanded shorthand
+    assert out[1]["c"] == "#9aa0b0"  # unusable colour → grey
+    assert out[1]["axis"] == "y"  # missing axis defaults to y
 
 
-def test_clean_voxels_tolerates_junk_input() -> None:
-    assert _clean_voxels(None) == []
-    assert _clean_voxels({"voxels": "nope"}) == []
-    assert _clean_voxels({}) == []
+def test_clean_primitives_tolerates_junk_input() -> None:
+    assert _clean_primitives(None) == []
+    assert _clean_primitives({"primitives": "nope"}) == []
+    assert _clean_primitives({}) == []
