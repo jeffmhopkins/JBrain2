@@ -1463,7 +1463,7 @@ function stepStatue(dt,t){
   }else{                                                          // carry it back and stack it on the growing pile
    const tgt=PILE_BLOCKS[statue.pileN],px=PILE[0]+tgt[0],pz=PILE[1]+tgt[2];
    P.tx=px;P.tz=pz;P.act='walk';flyY+=(1.4-flyY)*Math.min(1,dt*4);
-   if(Math.hypot(P.x-px,P.z-pz)<0.8){statue.pileN++;statue.carry=null;statue.draftPhase='toSource';statue.dwell=2.0;sfx('put_down');}
+   if(moveTo(dt,FLY)){statue.pileN++;statue.carry=null;statue.draftPhase='toSource';statue.dwell=2.0;sfx('put_down');} // fly back (moveTo actually steps the pet)
   }
   return;
  }
