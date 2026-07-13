@@ -12,6 +12,7 @@ goes through the adapter (non-negotiable #1) under the `pet.turn` task. Safety: 
 is a kids' persona built only from in-scope state, so it can't surface a firewalled fact.
 """
 
+import json
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
@@ -57,13 +58,15 @@ PET_TURN_SCHEMA: dict[str, Any] = {
 
 
 # The wall's field "build a statue of X". The LLM DESIGNS the subject as a handful of solid
-# coloured PRIMITIVES (box/ellipsoid/cylinder/cone) on a 24³ grid; the host voxelizes them into
-# cubes here. This beats asking the model to hand-place hundreds of voxels: the geometry is code,
-# so shapes come out solid, symmetric and clean (Minecraft-ish), the output is ~1/6 the tokens
-# (seconds, not minutes), and the surface shell that the wall builds is computed correctly.
-STATUE_GRID = 32
+# coloured PRIMITIVES (box/ellipsoid/cylinder/cone) on a STATUE_GRID³ grid; the host voxelizes
+# them into cubes here. This beats asking the model to hand-place hundreds of voxels: the geometry
+# is code, so shapes come out solid, symmetric and clean (Minecraft-ish), the output is ~1/6 the
+# tokens (seconds, not minutes), and the surface shell that the wall builds is computed correctly.
+# The grid is 48³ (up from 32³): a finer, larger build. Voxels are the SURFACE SHELL, so they scale
+# ~with grid², hence the raised cap. The wall builds on a fixed ~90s schedule regardless of count.
+STATUE_GRID = 48
 STATUE_MAX_PRIMS = 80
-STATUE_MAX_VOXELS = 2400  # the (shelled) voxel budget the wall builds; a safety cap, rarely hit
+STATUE_MAX_VOXELS = 6000  # the (shelled) voxel budget the wall builds; a safety cap sized for 48³
 _PRIM_TYPES = ("box", "ellipsoid", "cylinder", "cone")
 STATUE_PRIM_SCHEMA: dict[str, Any] = {
     "type": "object",
@@ -101,35 +104,178 @@ class Voxel:
     c: str  # a normalised "#rrggbb" colour
 
 
+# Two worked examples authored on a 32-unit grid, then scaled to STATUE_GRID when the prompt is
+# built so their coordinates always match the live grid. A concrete, correctly-proportioned,
+# box-dominated example anchors the model's sense of scale and structure far better than prose
+# alone (one-shot demonstration is the single biggest quality lever for this task). Each tuple is
+# (type, cx, cy, cz, sx, sy, sz, colour).
+_PIG_EXAMPLE = (
+    ("box", 16, 10, 16, 10, 8, 16, "#f0a0a0"),
+    ("box", 12, 3, 11, 4, 6, 4, "#e58f8f"),
+    ("box", 20, 3, 11, 4, 6, 4, "#e58f8f"),
+    ("box", 12, 3, 21, 4, 6, 4, "#e58f8f"),
+    ("box", 20, 3, 21, 4, 6, 4, "#e58f8f"),
+    ("box", 16, 11, 26, 8, 8, 8, "#f2a6a6"),
+    ("box", 16, 9, 30, 5, 4, 2, "#f8c4c4"),
+    ("box", 14, 13, 30, 1, 1, 1, "#1c130c"),
+    ("box", 18, 13, 30, 1, 1, 1, "#1c130c"),
+    ("box", 13, 15, 25, 2, 3, 2, "#e08787"),
+    ("box", 19, 15, 25, 2, 3, 2, "#e08787"),
+    ("box", 16, 11, 8, 2, 2, 3, "#e79a9a"),
+)
+_MONKEY_EXAMPLE = (
+    ("box", 16, 12, 15, 8, 10, 6, "#7a5233"),
+    ("box", 13, 4, 16, 4, 8, 5, "#6b4a2f"),
+    ("box", 19, 4, 16, 4, 8, 5, "#6b4a2f"),
+    ("box", 16, 21, 16, 8, 8, 8, "#7a5233"),
+    ("box", 16, 20, 20, 6, 5, 1, "#e0c19a"),
+    ("box", 14, 22, 20, 1, 1, 1, "#1c130c"),
+    ("box", 18, 22, 20, 1, 1, 1, "#1c130c"),
+    ("box", 11, 21, 16, 2, 3, 3, "#e0c19a"),
+    ("box", 21, 21, 16, 2, 3, 3, "#e0c19a"),
+    ("box", 12, 17, 18, 3, 9, 3, "#6b4a2f"),
+    ("box", 20, 17, 18, 3, 9, 3, "#6b4a2f"),
+    ("box", 16, 19, 22, 6, 2, 2, "#f2ce3a"),
+    ("box", 16, 10, 9, 2, 2, 7, "#6b4a2f"),
+)
+
+
+def _example_json(prims: tuple[tuple[Any, ...], ...], s: float, g: int) -> str:
+    """Serialise a base-32 worked example scaled to the live grid, one primitive per line."""
+    rows = []
+    for t, cx, cy, cz, sx, sy, sz, c in prims:
+        row = {
+            "type": t,
+            "cx": max(0, min(g - 1, round(cx * s))),
+            "cy": max(0, min(g - 1, round(cy * s))),
+            "cz": max(0, min(g - 1, round(cz * s))),
+            "sx": max(1, round(sx * s)),
+            "sy": max(1, round(sy * s)),
+            "sz": max(1, round(sz * s)),
+            "c": c,
+        }
+        rows.append(json.dumps(row, separators=(",", ":")))
+    return '{"primitives":[\n ' + ",\n ".join(rows) + "\n]}"
+
+
 def _statue_system_prompt() -> str:
     g = STATUE_GRID
+    s = g / 32.0  # the examples and size hints are authored on a 32-grid; scale to the live grid
+    c = g // 2
+    r = lambda n: max(1, round(n * s))  # noqa: E731 — round a base-32 size hint to the live grid
     return (
-        "You are a 3D modeller for a children's toy that builds blocky 'statues' out of cubes "
-        "(think Minecraft). You DESIGN a subject as a small set of simple solid SHAPES; a program "
-        "then fills them with cubes, so you never place individual cubes — you place shapes.\n"
-        f"Work in a {g}×{g}×{g} space, coordinates 0–{g - 1}. x = left↔right, z = front↔back, "
-        f"y = UP. Rest the model on the ground (lowest shape touches y=0) and centre it in x and z "
-        f"(around {g // 2}).\n"
-        "Return `primitives`: a list of shapes. Each shape has: `type` "
-        '("box" | "ellipsoid" | "cylinder" | "cone"); `cx,cy,cz` the CENTRE (may be fractional); '
-        '`sx,sy,sz` the full SIZE along x, y, z; `axis` ("x"|"y"|"z") the long axis for '
-        "cylinder/cone (a cone tapers to a point at the +axis end; ignored for box/ellipsoid); and "
-        '`c` a hex colour like "#8b5a2b".\n'
-        "Shape guide: box = cuboid body/roof; ellipsoid = sphere/egg head or belly (sx=sy=sz is a "
-        "sphere); cylinder = leg/trunk/tube; cone = nose/beak/tail/roof-spike.\n"
-        "ORIENTATION & PROPORTION (important — most models get this wrong): the subject faces "
-        "along z, with its front (face/bonnet/bow) at one end and back (tail/rear) at the other. "
-        "Almost everything — an animal, car, bus, boat, person — is LONGER front-to-back (z) than "
-        "it is WIDE side-to-side (x). So make the main body/torso LONG in z and NARROW in x: a "
-        "cat's torso is about z14 × x6, NOT x12 × z8. Only make something wide in x if it truly is "
-        "(a sofa, a wardrobe). Bilateral symmetry mirrors the LEFT and RIGHT halves across the "
-        "x-centre — it just means the two sides match; it does NOT mean the body is wide, so keep "
-        "torsos slim in x. Stand a four-legged animal's legs at the four corners of its long body "
-        "— the front pair near the front, the back pair near the back, spread apart along z.\n"
-        "Design rules: be RECOGNISABLE and BOLD — a 4-year-old names it instantly, silhouette "
-        "first. Colour each part with several natural, distinct colours (body, belly, face, eyes, "
-        "nose, wheels, windows…). Keep it to roughly 8–40 shapes; overlaps are fine (later shapes "
-        "paint over earlier)."
+        "You are a 3D modeller for a children's toy that builds blocky 'statues' out of cubes, in "
+        "the style of MINECRAFT mobs and LEGO. Everything is made of rectangular BLOCKS — cubes, "
+        "prisms and square posts — with hard 90° edges. You DESIGN a subject as a set of solid "
+        "SHAPES; a program fills them with cubes, so you never place cubes — you place shapes. "
+        "Make it DETAILED, COLOURFUL and full of character — a 4-year-old should grin and name it "
+        "instantly.\n"
+        "THE BLOCKY RULE (most important): use `box` for almost everything — about 85% of your "
+        "shapes must be boxes, and a mostly-box model is perfect. A Minecraft head is a CUBE, not "
+        "a ball; a leg is a square POST, not a tube; a snout, ear or tail is a BOX, not a cone.\n"
+        " - `cone`: ONLY for a genuine spike or point — a unicorn horn, a dragon's back spikes, "
+        "claws, a tongue of fire, a party hat, a carrot nose. Never for a snout, ear, foot or "
+        "tail.\n"
+        " - `cylinder`: ONLY for a truly round tube — a cannon barrel, a wheel, a mug. Never for "
+        "legs, necks or bodies.\n"
+        " - `ellipsoid`: avoid; only for an unmistakable smooth ball (a single eyeball).\n"
+        " COMMON MISTAKE TO AVOID: making the model look rounded or 'blobby'. This is a BLOCKY toy "
+        "— cubes, edges and corners are the whole point. A rounded cat is WRONG; a cubic, angular "
+        "cat is RIGHT. When in doubt, use `box`.\n"
+        f"SPACE: a {g}×{g}×{g} grid, integer coordinates 0–{g - 1}. x = left↔right, z = "
+        "front↔back, y = UP. Use whole numbers. The subject faces +z (front). Rest it on the "
+        "ground: the lowest shape's bottom sits at y=0 (a shape of height sy centred at cy = sy/2 "
+        f"touches the floor). Centre the main mass near x={c}, z={c} and build BIG — fill most of "
+        f"the {g} cube so there is room for detail. Don't build a tiny model in the middle.\n"
+        "STANCE — stand it UP on its legs. Unless the subject is clearly lying down, sitting or "
+        "crouching, the LEGS reach the floor (their bottoms at y=0) and LIFT the body so there is "
+        "clear OPEN SPACE under the belly — you should see daylight between the four legs. Do NOT "
+        "rest the body or belly on the ground with stubby legs. For a standing animal, make legs "
+        f"about {r(8)}–{r(12)} cubes tall and put the body's bottom at the TOP of the legs (e.g. "
+        f"legs y0–{r(10)}, body starts at y{r(10)}), so the creature stands tall, not squashed "
+        "onto the floor.\n"
+        "PROPORTION: a four-legged animal, car, bus or boat is LONGER front-to-back (z) than WIDE "
+        "side-to-side (x) — make its body long in z and narrow in x (body sz > sx). An upright "
+        "biped (person, monkey, penguin, standing dragon) is the exception: it is TALL, and its "
+        "shoulders may be a bit wider than it is deep. Only make something wide in x if it truly "
+        "is (a sofa).\n"
+        "METHOD — build body-first, attach everything else relative to it:\n"
+        " 1. BODY: place the main body as one box FIRST; decide its size and centre.\n"
+        " 2. HEAD: a cube at the FRONT (high z), near the top of the body.\n"
+        " 3. LIMBS: four separate leg boxes at the body's bottom corners for a quadruped — leave a "
+        "clear GAP between the legs so they read as legs, not a solid base; two legs for a bird or "
+        "biped; arms/wings as needed.\n"
+        " 4. TAIL off the back, then the DETAIL (below).\n"
+        f" Parts in left/right pairs (legs, arms, ears, eyes, wings) MUST mirror across x={c}: a "
+        f"left leg at x={r(12)} means a right leg at x={r(20)} — never a single part on the "
+        "centreline. Every part should touch or overlap its neighbour (overlaps are fine — later "
+        "shapes paint over earlier).\n"
+        "DETAIL & CHARACTER — this is what makes it good, not just a blocky lump. Use 15–45 shapes "
+        "and spend most of them here:\n"
+        " - Give it a FACE: two small eye boxes (dark), a nose or muzzle box (often paler, on the "
+        "head front), maybe a mouth box. A face is what turns a brown box into an animal.\n"
+        " - EXAGGERATE the 1–2 signature features that name the subject: a reindeer's tall "
+        "antlers, a rabbit's long ears, a cat's triangle ears and long tail, an elephant's trunk, "
+        "a fox's bushy tail. Build these signature parts BIG: a trunk, tail, neck, horn, ear or "
+        f"held prop should be LONG and THICK — roughly {r(8)}–{r(14)} cubes long and {r(3)}–{r(5)} "
+        "thick — never a small stub. If the subject's fame rests on one part (the elephant's "
+        "trunk, the giraffe's neck), make it the boldest thing on the model.\n"
+        " - Add COLOUR MARKINGS as their own boxes: a lighter belly and paws, tabby stripes, a "
+        "dark nose, spots, a mane. Use a RICH palette — a main colour, a lighter underside, dark "
+        "eyes, a pink/black nose, and bright colours for anything special. Never leave it one flat "
+        "brown.\n"
+        "POSE, PROPS & ACTION — if the subject is DOING something, show it:\n"
+        " - Pose the limbs: raise the arms/paws to the mouth for eating or drinking; rear up; sit; "
+        "spread wings to fly; bend a leg for a step.\n"
+        " - Build the PROP as its own coloured boxes, make it BIG and BOLD (about as large as the "
+        "head), and place it RIGHT AT THE ACTION: food goes directly in FRONT of the mouth — just "
+        f"beyond the head's front face, centred on x={c}, at mouth height — with the hands/paws "
+        "brought up around it. A held ball sits in the paws; a hat sits ON the head. Don't tuck "
+        "the prop off to the side or make it a tiny nub.\n"
+        " - Keep the subject the star: pose and prop, but the creature is still the biggest, "
+        "boldest mass.\n"
+        "FANTASY & MADE-UP creatures — assemble them from familiar parts, boldly:\n"
+        " - A UNICORN is a horse: long body, four legs, a head on a short NECK at the front, plus "
+        "a single `cone` HORN pointing UP-and-forward from the forehead and a bright RAINBOW mane "
+        "running down the back of the neck and a rainbow tail.\n"
+        " - A DRAGON: a long body; a long NECK rising to a head at the FRONT; a long TAIL at the "
+        "back; four short legs; two BAT-WINGS as tall thin slabs that stand UP and back from the "
+        "shoulders (NOT flat out to the sides like an aeroplane); a row of small `cone` or box "
+        "SPIKES along the spine. To breathe FIRE, build a big bold plume of orange, yellow and red "
+        "boxes and `cone`s shooting FORWARD out of the open mouth (increasing z, getting bigger as "
+        "it goes) — keep the fire at the mouth and separate from the back spikes.\n"
+        "OTHER SUBJECTS — not everything is an animal:\n"
+        " - A PERSON is an upright biped: a box torso, a cube head with a FACE (eyes, nose, mouth) "
+        "and HAIR, two arms and two legs, and CLOTHES in distinct colours (shirt, trousers, shoes, "
+        "hat). For an ACTIVITY, pose the arms and legs and add the gear as its own boxes: a guitar "
+        "(a big coloured box body + a long thin neck box) held across the chest; a bicycle (two "
+        "`cylinder` or box WHEELS, a frame, handlebars) with the person seated and legs bent to "
+        "the pedals; a ball at a kicking foot; an astronaut's white suit, helmet box and backpack. "
+        "The person stays the biggest mass; the gear is bold and placed where the hands/feet use "
+        "it.\n"
+        " - A VEHICLE or BUILDING or OBJECT is built from big boxes and needs no face or legs: a "
+        "CAR is a long low body box with a smaller cabin box on top, `cylinder` or dark-box WHEELS "
+        "at the four lower corners, and window/light boxes; a HOUSE is a box with a triangular "
+        "`box`/prism ROOF, a door box and window boxes; a ROCKET is a tall box body with a `cone` "
+        "NOSE and fins; a CAKE is stacked layers with candle boxes. Use bright, distinct colours.\n"
+        'COLOUR: each part one flat colour (`c`, a hex like "#8b5a2b"); no gradients.\n'
+        "EXAMPLE 1 — a PIG (copy this box-first STRUCTURE, but design the subject you are actually "
+        "asked for):\n" + _example_json(_PIG_EXAMPLE, s, g) + "\n"
+        "(Body; four leg posts at the corners; a cube head at the front with a paler snout, two "
+        "eye boxes and two ears; a tail — all cuboids.)\n"
+        "EXAMPLE 2 — a MONKEY EATING A BANANA (shows a POSED biped with a FACE and a PROP):\n"
+        + _example_json(_MONKEY_EXAMPLE, s, g)
+        + "\n"
+        "(Upright torso; two legs; a cube head with a pale muzzle, two eyes and two ears; two arms "
+        "raised to the mouth; a YELLOW BANANA box held at the mouth; a long tail.)\n"
+        "BEFORE YOU FINISH, check: nearly every shape is a `box` (cones only for real "
+        f"spikes/horns/fire); all coordinates and sizes are whole numbers 0–{g - 1}; the lowest "
+        "part touches y=0; a standing animal stands ON its legs with clear space under the belly "
+        "(body NOT resting on the ground); a quadruped's body is longer in z than wide in x; "
+        f"left/right pairs mirror across x={c}; it HAS A FACE and its signature feature is bold; "
+        "if it is doing something, the pose is clear and the prop is BIG and right at the "
+        "mouth/hands (not off to the side); wings (if any) stand UP not flat sideways, and fire "
+        "shoots FORWARD from the mouth; 15–45 shapes; the silhouette is instantly the subject."
     )
 
 

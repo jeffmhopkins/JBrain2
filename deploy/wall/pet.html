@@ -1395,7 +1395,7 @@ function robot(t){
 // blocks off to one side, and the robot on a jetpack building an LLM-drafted voxel model of X,
 // block by block, layer by layer. All ephemeral (a page reload restores the room).
 const FIELD_GREEN=[.24,.8,.36],SKY=[.05,.08,.13];
-const VOX=0.42,STA_C=[0,-1],PILE=[9.5,4.5],SOURCE=[19,15],BUILD_S=90; // voxel size (fits a 32³ model); statue centre; pile; quarry; target build seconds
+const VOX=0.32,STA_C=[0,-1],PILE=[9.5,4.5],SOURCE=[19,15],BUILD_S=90; // voxel size (tuned so a 48³ model stays in the field-camera frame, a touch larger & finer than the old 32³); statue centre; pile; quarry; target build seconds
 // Map a grid cell to the world, centred on the model's OWN bounds (so an off-centre model from the
 // LLM still lands in the middle of the field) and resting on the ground (its lowest layer at y=0).
 function voxWorld(vx,vy,vz){const s=statue||{},cx=s.cx==null?11.5:s.cx,cz=s.cz==null?11.5:s.cz,y0=s.y0||0;

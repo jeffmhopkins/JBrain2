@@ -6,6 +6,8 @@ shapes, normalise colour), the voxelizer (fills a shape, keeps only the surface 
 end-to-end call raising on an empty model. The LLM is faked via a stub router.
 """
 
+import json
+import re
 from types import SimpleNamespace
 from typing import Any
 
@@ -15,6 +17,7 @@ from jbrain.jpet.brain import (
     STATUE_GRID,
     Voxel,
     _clean_primitives,
+    _statue_system_prompt,
     statue_voxels,
     voxelize,
 )
@@ -112,3 +115,20 @@ def test_clean_primitives_tolerates_junk_input() -> None:
     assert _clean_primitives(None) == []
     assert _clean_primitives({"primitives": "nope"}) == []
     assert _clean_primitives({}) == []
+
+
+def test_statue_system_prompt_examples_are_valid_and_fit_the_grid() -> None:
+    """The two worked examples are authored on a 32-grid and scaled to STATUE_GRID at build time;
+    a scaling slip could push a coordinate out of bounds or emit broken JSON, so guard both. The
+    scaled examples must also survive the same cleaner the live model output goes through."""
+    prompt = _statue_system_prompt()
+    assert f"{STATUE_GRID}×{STATUE_GRID}×{STATUE_GRID}" in prompt
+    blocks = re.findall(r'\{"primitives":\[.*?\]\}', prompt, re.S)
+    assert len(blocks) == 2  # the pig + the monkey
+    for block in blocks:
+        parsed = json.loads(block)  # valid JSON
+        cleaned = _clean_primitives(parsed)
+        assert len(cleaned) == len(parsed["primitives"])  # every example primitive is well-formed
+        for p in parsed["primitives"]:
+            assert all(0 <= p[k] < STATUE_GRID for k in ("cx", "cy", "cz"))  # centres in bounds
+            assert all(p[k] >= 1 for k in ("sx", "sy", "sz"))  # non-degenerate sizes
