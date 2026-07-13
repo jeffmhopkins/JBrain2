@@ -208,10 +208,15 @@ Depends on W1 endpoints. Off one `wave-2` branch:
   panel" affordance for older/cross-session proposals; the inline card is the act-in-place
   surface for the current turn's proposal.
 - **T4 · Mock states + tests.** Prop-injected fixtures (matching `ProposalTree.test.tsx`
-  DI) for default / empty / held / declined / edited / error / offline; add `/api/proposals*`
-  + a minimal `/api/chat` SSE route to `mock.ts` so `dev:mock` exercises the round-trip.
-  vitest + testing-library component tests (arm→enact, held, decline-reason, edit-flip, one
-  outcome send).
+  DI) for default / held / declined / edited / server-held / resolved states. vitest +
+  testing-library component tests (arm→enact, held propagation, decline-reason, edit-flip,
+  one outcome send) + a FullBrainSurface test proving an inline kind renders the card (not
+  the chip) and a non-inline kind keeps the panel chip. **Deferred:** the `mock.ts`
+  `/api/proposals*` + `/api/chat` SSE routes — the whole Full Brain surface (chat/sessions/
+  proposals) is **not** in the fetch-level mock today (per grounding), so a proposals-only
+  route is unreachable without also standing up a chat SSE mock; that is a larger dev-only
+  task tracked separately. The states above are covered by the injected-prop tests, which
+  is the real coverage gate.
 - **Docs (travels with W2):** `docs/reference/DESIGN.md` — the inline-approval surface
   decision (variant D binding); update "Full Brain lateral shortcuts" (panel = browse
   older/cross-session; inline card = act-in-place). `docs/mocks/inline-approvals/README.md`

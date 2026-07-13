@@ -130,7 +130,9 @@ describe("ProposalTree", () => {
   });
 
   it("enacts and shows the enacted/held summary", async () => {
-    const enactProposal = vi.fn(async (): Promise<EnactResult> => ({ enacted: ["a"], held: [] }));
+    const enactProposal = vi.fn(
+      async (): Promise<EnactResult> => ({ enacted: ["a"], held: [], outcome: "" }),
+    );
     render(
       <ProposalTree
         proposalId="p1"
@@ -200,7 +202,9 @@ describe("ProposalTree", () => {
           detail({ nodes: detail().nodes.map((n) => ({ ...n, status: "approved" })) }),
         )}
         decideNode={vi.fn()}
-        enactProposal={vi.fn(async (): Promise<EnactResult> => ({ enacted: ["a"], held: [] }))}
+        enactProposal={vi.fn(
+          async (): Promise<EnactResult> => ({ enacted: ["a"], held: [], outcome: "" }),
+        )}
       />,
     );
     fireEvent.click(await screen.findByText("Enact approved"));

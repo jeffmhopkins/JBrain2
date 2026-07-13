@@ -1,6 +1,8 @@
 # Inline approvals — moving Proposal approval into the conversation
 
-> **Status:** mock-review round (pre-decision) · three variants for the GUI gate
+> **Status:** GUI gate settled — **owner chose variant D** (`d-one-tree.html`), the binding
+> spec. Shipping via `docs/plans/INLINE_APPROVALS_PLAN.md` (W1 backend ✅, W2 frontend
+> `agent/InlineProposal`). A–C retained as the record.
 
 ## The problem
 

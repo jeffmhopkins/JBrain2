@@ -252,7 +252,10 @@ export interface FullBrain {
   /** `appointmentId` rides a calendar handoff so the agent resolves that exact
    * appointment; the user bubble still shows only `text`. `files` are uploaded
    * first (in order) and ride the turn as attachments. */
-  send: (text: string, opts?: { appointmentId?: string; files?: File[] }) => Promise<boolean>;
+  send: (
+    text: string,
+    opts?: { appointmentId?: string; files?: File[]; proposalOutcome?: boolean },
+  ) => Promise<boolean>;
   /** The active conversation's per-conversation agent-model pick (the omnibox
    * long-press sheet), or null when the turn runs on the resolved default. Turn-local:
    * kept per session in memory, rides every send of that chat, and clears on reload. */
@@ -533,7 +536,7 @@ export function useFullBrain(
 
   async function send(
     textRaw: string,
-    opts?: { appointmentId?: string; files?: File[] },
+    opts?: { appointmentId?: string; files?: File[]; proposalOutcome?: boolean },
   ): Promise<void> {
     const text = textRaw.trim();
     const files = opts?.files ?? [];
@@ -591,6 +594,9 @@ export function useFullBrain(
       ...(attachmentIds.length ? { attachment_ids: attachmentIds } : {}),
       // The owner's per-conversation model pick rides every turn of this chat.
       ...(pick ? { model: pick.id } : {}),
+      // A Proposal enact outcome the owner produced inline — framed server-side as a
+      // data report so the assistant follows up (not owner prose).
+      ...(opts?.proposalOutcome ? { proposal_outcome: true } : {}),
     };
     // Uploads succeeded and the turn is under way — `send` resolves HERE so the composer
     // clears the typed text and staged files immediately, rather than staying populated

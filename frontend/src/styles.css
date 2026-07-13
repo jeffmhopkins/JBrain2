@@ -11509,6 +11509,245 @@ button.small {
   font-size: 14px;
 }
 
+/* ===== Inline approval card (agent/InlineProposal; docs/mocks/inline-approvals/
+   d-one-tree.html) — one staged Proposal acted on IN the answer bubble: per-leaf
+   approve/decline-with-reason/correct-in-place and one double-tap Enact. ===== */
+.fb-shell .fb-inline-prop {
+  margin-top: 10px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 13px;
+  overflow: hidden;
+}
+.fb-shell .fb-inline-prop.loading {
+  padding: 12px 13px;
+  color: var(--text-3);
+  font-size: var(--fs-secondary);
+}
+.fb-shell .fb-inline-prop.done {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  padding: 12px 13px;
+  color: var(--ok);
+  font-size: var(--fs-secondary);
+  line-height: 1.45;
+}
+.fb-shell .fb-inline-prop.done .ip-check {
+  flex: none;
+}
+.fb-shell .fb-inline-prop .ip-sub {
+  display: block;
+  color: var(--text-3);
+  font-size: var(--fs-micro);
+  margin-top: 2px;
+}
+.fb-shell .ip-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 11px 12px;
+  border-bottom: 1px solid var(--border);
+}
+.fb-shell .ip-title {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--fs-secondary);
+  font-weight: 600;
+}
+.fb-shell .ip-domain {
+  flex: none;
+}
+.fb-shell .ip-tree {
+  padding: 4px 8px;
+}
+.fb-shell .ip-group-head {
+  padding: 8px 6px 4px;
+  font-size: var(--fs-micro);
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+.fb-shell .ip-group-body {
+  margin-left: 3px;
+  padding-left: 9px;
+  border-left: 1px solid var(--border);
+}
+.fb-shell .ip-leaf {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 6px 8px;
+  padding: 8px 6px;
+  align-items: start;
+}
+.fb-shell .ip-leaf + .ip-leaf {
+  border-top: 1px solid var(--border);
+}
+.fb-shell .ip-leaf-main {
+  grid-column: 1;
+  min-width: 0;
+}
+.fb-shell .ip-leaf-label {
+  font-size: var(--fs-head);
+  color: var(--text);
+}
+.fb-shell .ip-leaf.out .ip-leaf-main {
+  opacity: 0.5;
+}
+.fb-shell .ip-leaf.out .ip-leaf-label {
+  text-decoration: line-through;
+}
+.fb-shell .ip-edited {
+  color: var(--warn);
+  font-size: var(--fs-micro);
+}
+.fb-shell .ip-value {
+  margin-top: 5px;
+}
+.fb-shell .ip-value-text {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 3px 8px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-micro);
+  color: var(--text);
+  text-align: left;
+  cursor: text;
+}
+.fb-shell .ip-value-text:disabled {
+  cursor: default;
+}
+.fb-shell .ip-leaf.corrected .ip-value-text {
+  border-color: var(--warn);
+}
+.fb-shell .ip-pen {
+  color: var(--text-3);
+  flex: none;
+}
+.fb-shell .ip-edit-input {
+  width: 100%;
+  max-width: 220px;
+  background: var(--surface);
+  border: 1px solid var(--warn);
+  border-radius: 8px;
+  padding: 3px 8px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-micro);
+  color: var(--text);
+}
+.fb-shell .ip-held-badge {
+  display: inline-block;
+  margin-top: 6px;
+  font-size: var(--fs-micro);
+  color: var(--warn);
+  background: var(--warn-tint, var(--amber-tint));
+  padding: 2px 8px;
+  border-radius: var(--r-pill);
+}
+.fb-shell .ip-ctl {
+  grid-column: 2;
+  display: flex;
+  gap: 5px;
+}
+.fb-shell .ip-ctl button {
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-3);
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  transition: background 0.13s, color 0.13s, border-color 0.13s;
+}
+.fb-shell .ip-ok.on {
+  background: var(--ok);
+  border-color: var(--ok);
+  color: var(--bg);
+}
+.fb-shell .ip-ok.on.corrected {
+  background: var(--warn);
+  border-color: var(--warn);
+}
+.fb-shell .ip-no.on {
+  background: var(--danger);
+  border-color: var(--danger);
+  color: var(--bg);
+}
+.fb-shell .ip-reason {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 6px 2px 2px;
+}
+.fb-shell .ip-reason-label {
+  font-size: var(--fs-micro);
+  color: var(--text-2);
+}
+.fb-shell .ip-reason-input {
+  width: 100%;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  padding: 8px 10px;
+  font-size: var(--fs-micro);
+  color: var(--text);
+}
+.fb-shell .ip-foot {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-top: 1px solid var(--border);
+}
+.fb-shell .ip-tally {
+  flex: 1;
+  font-size: var(--fs-micro);
+  color: var(--text-2);
+}
+.fb-shell .ip-tally b {
+  color: var(--text);
+}
+.fb-shell .ip-no {
+  color: var(--danger);
+}
+.fb-shell .ip-held {
+  color: var(--warn);
+}
+.fb-shell .ip-enact {
+  flex: none;
+  min-height: 44px;
+  padding: 10px 16px;
+  border: none;
+  border-radius: 11px;
+  background: var(--accent);
+  color: var(--bg);
+  font-size: var(--fs-secondary);
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.14s;
+}
+.fb-shell .ip-enact.armed {
+  background: var(--ok);
+}
+.fb-shell .ip-enact:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+@media (prefers-reduced-motion: reduce) {
+  .fb-shell .ip-ctl button,
+  .fb-shell .ip-enact {
+    transition: none;
+  }
+}
+
 /* ===== Lists (the owner's structured records; screens/ListsScreen + ListDetailScreen) ===== */
 .lists-screen {
   display: flex;

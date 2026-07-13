@@ -1,6 +1,6 @@
 # JBrain2 — GUI Design System
 
-> **Status:** Living · **Last verified:** 2026-07-12
+> **Status:** Living · **Last verified:** 2026-07-13
 
 Binding reference for all UI work. Derived from the owner-supplied JBrain v1
 reference screens (dark composer, knowledge hub, calendar, medical entry).
@@ -820,6 +820,24 @@ ASSISTANT group) — that is their canonical, tappable home and the required vis
 way in and out. The **Proposals** page is the unified review queue focused on the
 agent's staged Proposal trees (see `docs/reference/ASSISTANT.md`); **Sessions** lists past
 and active agent sessions with their selected read scope.
+
+**Inline approval card (settled — binding mock `docs/mocks/inline-approvals/d-one-tree.html`,
+chosen from a four-variant round `docs/mocks/inline-approvals/{a,b,c,d}.html`; build plan
+`docs/plans/INLINE_APPROVALS_PLAN.md`).** A Proposal staged mid-conversation is acted on
+**in the transcript**, not only from the side panel: the answer bubble renders the staged
+Proposal as **one interactive card** (`agent/InlineProposal`, `.fb-inline-prop`) — a tree
+of leaves each **approved (✓) / declined with a reason (✕) / corrected in place** (tap the
+value to edit; the leaf turns `corrected` amber and files the owner's edit as a `human`
+correction). A leaf whose prerequisite is declined reads **held** (amber, fail-closed).
+**One Enact at the foot is a double-tap** (arm → "tap to enact N" green → run), which runs
+the approved, unblocked leaves and **returns a single server-authored outcome to the
+assistant** as a data-framed turn, so it follows up ("Enacted N — … · declined 1 (reason)").
+This is the settled **double-press-to-confirm** paradigm and the green=save/steel=info
+tokens; only `correction · knowledge · appointment · merge · egress` kinds render inline —
+**`wiki-restructure` (a large multi-op tree) and `intake-link` (a bespoke mint editor)
+keep the navigational chip** to the panel. The **side panel is now for browsing older /
+cross-session proposals**, no longer the way to act on the one in front of you; the
+`ProposalTree` panel view is unchanged.
 
 As an **enhancement only** (never the sole path — the gesture rule above binds), a
 **horizontal swipe on the omnibox / text-entry box** is a shortcut, following the

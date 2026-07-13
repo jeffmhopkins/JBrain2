@@ -2771,10 +2771,24 @@ export const api = {
     return (await response.json()) as ProposalDetail;
   },
 
-  async decideNode(proposalId: string, nodeId: string, decision: Decision): Promise<void> {
+  async decideNode(
+    proposalId: string,
+    nodeId: string,
+    decision: Decision,
+    reason?: string,
+  ): Promise<void> {
     await request(
       `/api/proposals/${encodeURIComponent(proposalId)}/nodes/${encodeURIComponent(nodeId)}/decision`,
-      jsonInit("POST", { decision }),
+      jsonInit("POST", reason ? { decision, reason } : { decision }),
+    );
+  },
+
+  /** Correct-in-place: replace a staged note/appointment leaf's proposed body before
+   * approval. The edit files as the owner's correction at enact (provenance='human'). */
+  async editNode(proposalId: string, nodeId: string, body: string): Promise<void> {
+    await request(
+      `/api/proposals/${encodeURIComponent(proposalId)}/nodes/${encodeURIComponent(nodeId)}/edit`,
+      jsonInit("POST", { body }),
     );
   },
 

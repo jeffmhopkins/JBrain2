@@ -13,6 +13,7 @@ import { type ReactNode, useEffect, useLayoutEffect, useRef, useState } from "re
 import { api, chatAttachmentUrl, faviconUrl } from "../api/client";
 import { FileIcon, ImageIcon } from "../components/icons";
 import { DOMAIN_COLOR } from "../notes/modes";
+import { INLINE_KINDS, InlineProposal } from "./InlineProposal";
 import { ProposalTree } from "./ProposalTree";
 import { ProposalsPanel } from "./ProposalsPanel";
 import { SessionsPanel } from "./SessionsPanel";
@@ -149,6 +150,8 @@ export function FullBrainSurface({
                   fb.setOpenProposal(id);
                   fb.setPanel("proposals");
                 }}
+                onProposalEnacted={onProposalEnacted}
+                onProposalOutcome={(outcome) => void fb.send(outcome, { proposalOutcome: true })}
                 onStop={fb.stop}
                 onOpenSession={fb.requestOpen}
                 // The positional key doubles as the read-aloud turn key (append-only,
@@ -338,6 +341,8 @@ function Bubble({
   message,
   onOpenNote,
   onOpenProposal,
+  onProposalEnacted,
+  onProposalOutcome,
   onOpenEntity,
   onStop,
   onOpenSession,
@@ -346,6 +351,10 @@ function Bubble({
   message: TranscriptMessage;
   onOpenNote?: ((noteId: string) => void) | undefined;
   onOpenProposal?: ((proposalId: string) => void) | undefined;
+  /** Refresh the home stream after an inline enact wrote a note. */
+  onProposalEnacted?: (() => void) | undefined;
+  /** Send an inline enact's server-authored outcome back to the assistant. */
+  onProposalOutcome?: ((outcome: string) => void) | undefined;
   onOpenEntity?: ((entityId: string) => void) | undefined;
   /** Cascade-cancel the live turn (and its sub-agent fan) — the fan header Stop. */
   onStop?: (() => void) | undefined;
@@ -458,8 +467,21 @@ function Bubble({
   ];
 
   // A proposal the turn staged — surfaced in the answer itself (not buried in the
-  // Worked drop-down) so reviewing it is a single tap on the response.
+  // Worked drop-down) so reviewing it is a single tap on the response. Inline-able kinds
+  // render the interactive card (approve/decline/correct + one Enact that returns its
+  // outcome to the assistant); the rest keep the navigational chip to the panel.
   const staged = message.tools.find((t) => t.proposal)?.proposal;
+  const stagedAffordance = staged ? (
+    INLINE_KINDS.has(staged.kind) ? (
+      <InlineProposal
+        proposalId={staged.proposal_id}
+        onOutcome={(outcome) => onProposalOutcome?.(outcome)}
+        onEnacted={onProposalEnacted}
+      />
+    ) : (
+      <ProposalChip proposal={staged} onOpen={onOpenProposal} />
+    )
+  ) : null;
 
   // Reflexion flagged this turn (Loop 1): map each ungrounded answer sentence to an
   // amber ⚠ flag anchored after it, tappable for the reason. A passing/absent
@@ -527,7 +549,7 @@ function Bubble({
         // biome-ignore lint/suspicious/noArrayIndexKey: views append in order
         <ToolView key={i} payload={v} onOpenSession={onOpenSession} />
       ))}
-      {staged && <ProposalChip proposal={staged} onOpen={onOpenProposal} />}
+      {stagedAffordance}
     </>
   );
 
@@ -633,7 +655,7 @@ function Bubble({
               // biome-ignore lint/suspicious/noArrayIndexKey: views append in order
               <ToolView key={i} payload={v} onOpenSession={onOpenSession} />
             ))}
-            {staged && <ProposalChip proposal={staged} onOpen={onOpenProposal} />}
+            {stagedAffordance}
             {generalKnowledge && <GeneralKnowledgeNote />}
             {activityLine}
           </div>

@@ -370,6 +370,10 @@ export interface ChatRequest {
    * Turn-local — never persisted on the session; the backend validates it against the
    * catalog and ignores an unknown id (the turn runs on the default). */
   model?: string;
+  /** This turn carries a Proposal ENACT OUTCOME the owner just produced inline (not
+   * owner prose): `message` is the server-authored summary, framed as a data report so
+   * the assistant acknowledges and continues without re-staging declined items. */
+  proposal_outcome?: boolean;
 }
 
 // --- Proposals (the review inbox; /api/proposals) ---
@@ -420,4 +424,8 @@ export type Decision = "approve" | "reject";
 export interface EnactResult {
   enacted: string[];
   held: string[];
+  /** A server-authored, DB-derived summary of what the enact did (approved /
+   * corrected / declined-with-reason / held). The PWA sends it back to the assistant
+   * as a data-framed turn so it follows up. "" when nothing ran. */
+  outcome: string;
 }

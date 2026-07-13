@@ -151,7 +151,7 @@ describe("FullBrainSurface", () => {
               name: "find_entity",
               ok: true,
               sources: [],
-              proposal: { proposal_id: "p1", kind: "correction" },
+              proposal: { proposal_id: "p1", kind: "wiki-restructure" },
               entities: [
                 { kind: "entity", entity_id: "e1", label: "Jeff Hopkins", domain: "general" },
               ],
@@ -1201,7 +1201,7 @@ describe("FullBrainSurface", () => {
         tool_call_id: "c1",
         ok: true,
         summary: "staged",
-        proposal: { proposal_id: "p1", kind: "correction" },
+        proposal: { proposal_id: "p1", kind: "wiki-restructure" },
       };
       yield { type: "text_delta", text: "Staged it for your approval." };
       yield { type: "done", stop_reason: "end_turn" };
@@ -1214,6 +1214,51 @@ describe("FullBrainSurface", () => {
     const chip = await screen.findByRole("button", { name: /Review proposal/ });
     fireEvent.click(chip);
     await waitFor(() => expect(document.querySelector(".panel.right.open")).toBeInTheDocument());
+  });
+
+  it("renders an inline approval card (not the panel chip) for an inline-able kind", async () => {
+    // A correction is acted on IN the conversation: the interactive card, not a
+    // navigational chip to the panel (docs/plans/INLINE_APPROVALS_PLAN.md).
+    vi.spyOn(api, "getProposal").mockResolvedValue({
+      id: "p1",
+      kind: "correction",
+      status: "staged",
+      domain: "health",
+      title: "Add note — HCTZ 12.5 mg",
+      nodes: [
+        {
+          id: "n1",
+          parent_id: null,
+          type: "leaf",
+          op: "add_note",
+          label: "HCTZ",
+          preview: { body: "12.5 mg daily" },
+          deps: [],
+          status: "pending",
+        },
+      ],
+    });
+    async function* answer(): AsyncGenerator<ChatEvent> {
+      yield { type: "tool_call", id: "c1", name: "propose_correction", arguments: {} };
+      yield {
+        type: "tool_result",
+        tool_call_id: "c1",
+        ok: true,
+        summary: "staged",
+        proposal: { proposal_id: "p1", kind: "correction" },
+      };
+      yield { type: "text_delta", text: "Staged it." };
+      yield { type: "done", stop_reason: "end_turn" };
+    }
+    render(<Harness d={deps({ chat: answer })} />);
+    await waitFor(() => screen.getByLabelText("Conversation"));
+    fireEvent.change(screen.getByLabelText("Composer"), { target: { value: "note that" } });
+    fireEvent.click(screen.getByRole("button", { name: "send" }));
+
+    // The inline card mounts with the proposal title and an Enact control — no chip.
+    expect(await screen.findByText("Add note — HCTZ 12.5 mg")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^Enact/ })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Review proposal/ })).not.toBeInTheDocument();
   });
 
   it("a [^1] citation in the answer opens the cited source note", async () => {
