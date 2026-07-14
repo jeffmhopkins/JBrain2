@@ -1,6 +1,6 @@
 # Chat Charts & Lab Plots — Build Plan
 
-> **Status:** In progress · **Last verified:** 2026-07-14 · **Waves:** W0✅ (GUI gate — **C chosen**) W1◻️ W2◻️ W3◻️
+> **Status:** In progress · **Last verified:** 2026-07-14 · **Waves:** W0✅ (GUI gate — **C chosen**) W1✅ W2◻️ W3◻️
 
 **An in-progress build plan** (per `docs/DOC_LIFECYCLE.md`): let the assistant answer a
 "chart / graph / plot this over time" or "show me my lab trend" question with an
@@ -143,8 +143,13 @@ Both are additive registry entries in `registry.tsx` (`chart`, `lab_chart`) buil
   multi-view card — Trend/Table/Range·Stats); the reasoning is recorded in DESIGN.md
   "`chart` & `lab_chart` tool-views". C's shell is the binding frontend spec; the React port
   mirrors `c-tabbed-card.html` 1:1.
-- **W1 — the engine + the `chart` view (mock-driven, frontend-only).** `InteractiveChart` +
-  `chart` registered + fixtures + render tests; wired into `dev:mock`. No backend.
+- **W1 — the engine + the `chart`/`lab_chart` views (mock-driven, frontend-only) ✅.**
+  `frontend/src/components/InteractiveChart.tsx` (the ported zoom/pan/scrub engine, keyboard-
+  operable, `role="application"`), the `chart` + `lab_chart` tabbed cards in `registry.tsx`
+  (Trend/Table/Range·Stats), `.tv-cc-*`/`.tv-plot-*` styles, and 7 render/interaction tests
+  (band + flags, wheel-zoom reveals reset, keyboard scrub, tab switch, empty state). The
+  `lab_chart` **component** lands here (it shares the engine); its **backend emission + RLS**
+  is W2. Full frontend suite green (1138 tests), lint + typecheck clean.
 - **W2 — `lab_chart` + `read_labs` emission.** The lab specialization, the `read_labs` trend
   view, the `.tool` version bump + CI digest pin, backend emission tests, health-RLS inheritance
   test. `read_labs` prose unchanged.

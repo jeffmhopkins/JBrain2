@@ -896,3 +896,97 @@ describe("ToolView registry", () => {
     expect(getByText(/1 skipped/)).toBeInTheDocument();
   });
 });
+
+describe("chart & lab_chart views", () => {
+  const chartPayload = payload({
+    view: "chart",
+    data: {
+      domain: "general",
+      unit: "lb",
+      title: "Body weight",
+      y: { min: 170, max: 200, ticks: [175, 185, 195] },
+      series: [
+        {
+          label: "weight",
+          points: [
+            { x: Date.UTC(2025, 0, 1), y: 190, note: "note:1" },
+            { x: Date.UTC(2025, 5, 1), y: 185, note: "note:2" },
+            { x: Date.UTC(2026, 0, 1), y: 182, note: "note:3" },
+          ],
+        },
+      ],
+    },
+  });
+  const labPayload = payload({
+    view: "lab_chart",
+    data: {
+      domain: "health",
+      unit: "x10^9/L",
+      title: "Platelet count",
+      y: { min: 80, max: 300, ticks: [100, 200, 300] },
+      ref: { lo: 150, hi: 400, label: "reference 150-400" },
+      series: [
+        {
+          label: "platelets",
+          points: [
+            { x: Date.UTC(2025, 0, 1), y: 210, flag: "normal", note: "note:a" },
+            { x: Date.UTC(2025, 3, 1), y: 96, flag: "critical", note: "note:b" },
+            { x: Date.UTC(2025, 6, 1), y: 180, flag: "normal", note: "note:c" },
+          ],
+        },
+      ],
+    },
+  });
+
+  it("registers both chart view names", () => {
+    expect(isKnownView("chart")).toBe(true);
+    expect(isKnownView("lab_chart")).toBe(true);
+  });
+
+  it("renders a generic chart headline + a Stats tab, no reference band", () => {
+    const { container } = render(<ToolView payload={chartPayload} />);
+    expect(container.querySelector(".tv-cc-now")?.textContent).toBe("182");
+    // generic charts have no reference band and no Range tab
+    expect(container.querySelector(".tv-plot-band")).toBeNull();
+    expect(screen.queryByRole("tab", { name: "Range" })).toBeNull();
+    fireEvent.click(screen.getByRole("tab", { name: "Stats" }));
+    expect(screen.getByText("average")).toBeInTheDocument();
+  });
+
+  it("renders a lab_chart with a reference band, a toned critical point, and a Range tab", () => {
+    const { container } = render(<ToolView payload={labPayload} />);
+    expect(container.querySelector(".tv-plot-band")).toBeInTheDocument();
+    expect(container.querySelector(".tv-plot-pt.critical")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("tab", { name: "Range" }));
+    expect(container.querySelector(".tv-cc-gauge-track")).toBeInTheDocument();
+    expect(container.querySelector(".tv-cc-gauge-mark.critical")).toBeInTheDocument();
+  });
+
+  it("scrubs with the keyboard, updating the pinned readout", () => {
+    const { container } = render(<ToolView payload={labPayload} />);
+    const plot = container.querySelector(".tv-plot-wrap");
+    expect(plot).not.toBeNull();
+    // readout starts on the last draw (180); ArrowLeft steps back to the critical low (96)
+    if (plot) fireEvent.keyDown(plot, { key: "ArrowLeft" });
+    expect(container.querySelector(".tv-cc-rv")?.textContent).toContain("96");
+  });
+
+  it("zooms on wheel and reveals the reset control", () => {
+    const { container } = render(<ToolView payload={chartPayload} />);
+    expect(container.querySelector(".tv-plot-reset")).toBeNull();
+    const plot = container.querySelector(".tv-plot-wrap");
+    if (plot) fireEvent.wheel(plot, { deltaY: -300 });
+    expect(container.querySelector(".tv-plot-reset")).toBeInTheDocument();
+  });
+
+  it("shows the Table tab rows with per-draw citations", () => {
+    render(<ToolView payload={labPayload} />);
+    fireEvent.click(screen.getByRole("tab", { name: "Table" }));
+    expect(screen.getByText("note:b")).toBeInTheDocument();
+  });
+
+  it("renders a calm empty state when the series has no points", () => {
+    render(<ToolView payload={payload({ view: "chart", data: { series: [{ points: [] }] } })} />);
+    expect(screen.getByText(/No data to plot/)).toBeInTheDocument();
+  });
+});
