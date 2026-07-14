@@ -39,6 +39,7 @@ its ship evidence.
 | `READ_ALOUD_LEGIBILITY.md` | Read-aloud legibility + fluidity: shared `speakable` normalizer + stream-safe chunker + prefetch pump (W1/W2), and the `wall`/`tts-stt` split with warm piper (W0). |
 | `READ_ALOUD_AUDIOBOOK_PLAN.md` | Audiobook-grade Kokoro read-aloud: two-layer `toProse`/`toUtterance` split, misaki G2P + `KOKORO_LEXICON`, env-tunable pacing (speed + trailing silence), narrator voice blends, and an automatic markup-vs-prose classifier (no mode UI). W0–W4 shipped. |
 | `INLINE_APPROVALS_PLAN.md` | Proposal approval moved into the conversation (inline variant-D card): per-leaf approve / decline-with-reason / correct-in-place + one Enact that returns a server-authored outcome to the assistant (the enact→agent feedback loop). Migration 0130. |
+| `CHAT_CHARTS_PLAN.md` | Interactive (zoom/pan) chart + lab-plot tool-views in Full Brain chat: the `InteractiveChart` engine, the `chart`/`lab_chart` tabbed views (GUI-gate variant C), `lab_chart` from `read_labs` trend, and the `chart_measurements` (grounded) + `render_chart` producers. |
 
 ## Image generation
 | Item | What it is |

@@ -23,6 +23,7 @@ from jbrain.agent.appointmenttools import (
     build_appointment_write_handlers,
 )
 from jbrain.agent.archivisttools import build_archivist_memory_handlers
+from jbrain.agent.charttools import build_chart_handlers
 from jbrain.agent.clock import build_clock_handlers
 from jbrain.agent.connectortools import build_connector_handlers
 from jbrain.agent.contracts import EntityRef, NoteSource
@@ -646,6 +647,9 @@ def build_registry(
             **build_appointment_handlers(appointments),
             **build_appointment_write_handlers(proposals, appointments),
             **build_lab_handlers(maker),
+            # The generic charting tools: chart_measurements (grounded, reads app.facts
+            # under RLS, cited) and render_chart (the model passes a general series).
+            **build_chart_handlers(maker),
             **build_memory_handlers(memory),
             **build_proposal_handlers(proposals),
             **build_intake_link_handlers(proposals),

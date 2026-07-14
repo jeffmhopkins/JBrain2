@@ -15,6 +15,11 @@ import {
   generatedImageUrl,
 } from "../../api/client";
 import { AudioTranscript, transcriptWords } from "../../components/AudioTranscript";
+import {
+  type ChartPoint,
+  InteractiveChart,
+  type PointFlag,
+} from "../../components/InteractiveChart";
 import { TimeSeriesPlot } from "../../components/TimeSeriesPlot";
 import { VideoAnalysis, type VideoFrame } from "../../components/VideoAnalysis";
 import { serverMetricSeries } from "../../components/serverMetricSeries";
@@ -1762,6 +1767,323 @@ function HurricaneCard({ data }: ViewProps): ReactNode {
   );
 }
 
+// --- chart & lab_chart -----------------------------------------------------
+// The interactive time-series card (DESIGN.md "chart & lab_chart tool-views",
+// variant C — tabbed multi-view). Data-only slots (#1/#9): the model fills numbers
+// and a closed `flag` enum; the component owns the palette (steel = general, rose =
+// health) and the zoom/pan interaction (InteractiveChart). `chart` is the generic
+// series; `lab_chart` adds a reference band + abnormal-flag toning + a Range tab.
+
+const POINT_FLAGS = new Set<PointFlag>(["normal", "low", "high", "critical"]);
+function pointFlag(value: unknown): PointFlag {
+  return typeof value === "string" && POINT_FLAGS.has(value as PointFlag)
+    ? (value as PointFlag)
+    : "normal";
+}
+
+interface CardPoint extends ChartPoint {
+  note?: string;
+}
+
+function parsePoints(value: unknown): CardPoint[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((p): CardPoint => {
+      const o = (p ?? {}) as Record<string, unknown>;
+      return {
+        x: Number(o.x),
+        y: Number(o.y),
+        flag: pointFlag(o.flag),
+        ...(typeof o.note === "string" ? { note: o.note } : {}),
+      };
+    })
+    .filter((p) => Number.isFinite(p.x) && Number.isFinite(p.y))
+    .sort((a, b) => a.x - b.x);
+}
+
+function fmtNum(v: number): string {
+  return Number.isInteger(v) ? String(v) : String(Math.round(v * 100) / 100);
+}
+function fmtLong(x: number): string {
+  const d = new Date(x);
+  return Number.isNaN(d.getTime())
+    ? ""
+    : d.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+}
+function flagLabel(f: PointFlag): string {
+  return f === "normal" ? "in range" : f;
+}
+
+type CardTab = "trend" | "table" | "range" | "stats";
+
+/** Read the y-scale from the payload, defaulting to the data's own min/max with headroom. */
+function readYScale(
+  data: Record<string, unknown>,
+  pts: CardPoint[],
+): {
+  min: number;
+  max: number;
+  ticks: number[];
+} {
+  const y = (data.y ?? {}) as Record<string, unknown>;
+  const ys = pts.map((p) => p.y);
+  const dMin = Math.min(...ys);
+  const dMax = Math.max(...ys);
+  // Pad so a flat (all-equal) series still spans a nonzero range — otherwise
+  // min===max and the plot divides by zero (NaN coordinates, a blank chart).
+  const pad = (dMax - dMin) * 0.1 || Math.abs(dMax) * 0.1 || 1;
+  const min = Number.isFinite(Number(y.min)) ? Number(y.min) : Math.floor(dMin - pad);
+  const maxRaw = Number.isFinite(Number(y.max)) ? Number(y.max) : Math.ceil(dMax + pad);
+  // Guarantee a positive span even if a producer hands us y.min === y.max.
+  const max = maxRaw > min ? maxRaw : min + 1;
+  const ticks = Array.isArray(y.ticks) ? y.ticks.map(Number).filter((t) => Number.isFinite(t)) : [];
+  return { min, max, ticks: ticks.length ? ticks : [min, (min + max) / 2, max].map(Math.round) };
+}
+
+function ReadoutLine({
+  point,
+  unit,
+  band,
+}: {
+  point: CardPoint;
+  unit: string;
+  band: RefBandData | null;
+}): ReactNode {
+  return (
+    <div className="tv-cc-readout">
+      <span className="tv-cc-rd">{fmtLong(point.x)}</span>
+      <span className="tv-cc-rv">
+        <b>{fmtNum(point.y)}</b> {unit}
+        {band ? ` · ref ${fmtNum(band.lo)}–${fmtNum(band.hi)}` : ""}
+        {point.note ? (
+          <>
+            {" · "}
+            <span className="tv-cc-cite">{point.note}</span>
+          </>
+        ) : null}
+      </span>
+      {band && (
+        <span className={`tv-cc-rf fl-${point.flag ?? "normal"}`}>
+          {flagLabel(point.flag ?? "normal")}
+        </span>
+      )}
+    </div>
+  );
+}
+
+interface RefBandData {
+  lo: number;
+  hi: number;
+  label: string;
+}
+function readRefBand(data: Record<string, unknown>): RefBandData | null {
+  const r = data.ref as Record<string, unknown> | undefined;
+  if (!r) return null;
+  const lo = Number(r.lo);
+  const hi = Number(r.hi);
+  if (!Number.isFinite(lo) || !Number.isFinite(hi)) return null;
+  return {
+    lo,
+    hi,
+    label: typeof r.label === "string" ? r.label : `reference ${fmtNum(lo)}–${fmtNum(hi)}`,
+  };
+}
+
+/** The Range tab (lab): each recent reading gauged against the reference band. */
+function RangeView({
+  pts,
+  unit,
+  band,
+}: {
+  pts: CardPoint[];
+  unit: string;
+  band: RefBandData;
+}): ReactNode {
+  const axMin = Math.min(band.lo * 0.8, Math.min(...pts.map((p) => p.y)));
+  const axMax = Math.max(band.hi * 1.05, Math.max(...pts.map((p) => p.y)));
+  const span = axMax - axMin || 1;
+  const pos = (v: number) => `${((v - axMin) / span) * 100}%`;
+  const recent = pts.slice(-6).reverse();
+  return (
+    <div className="tv-cc-range">
+      <div className="tv-cc-range-axis">
+        <span>{fmtNum(axMin)}</span>
+        <span>{band.label}</span>
+        <span>{fmtNum(axMax)}</span>
+      </div>
+      {recent.map((p, i) => (
+        // Composite key: two draws could share a timestamp; x alone isn't unique.
+        <div className="tv-cc-gauge-row" key={`${p.x}-${i}`}>
+          <div className="tv-cc-gauge-head">
+            <span className="tv-cc-gauge-date">{fmtLong(p.x)}</span>
+            <span className="tv-cc-gauge-val">
+              <b>{fmtNum(p.y)}</b> {unit}
+            </span>
+            <span className={`tv-cc-gauge-flag fl-${p.flag ?? "normal"}`}>
+              {flagLabel(p.flag ?? "normal")}
+            </span>
+          </div>
+          <div className="tv-cc-gauge-track">
+            <span
+              className="tv-cc-gauge-band"
+              style={{ left: pos(band.lo), right: `calc(100% - ${pos(band.hi)})` }}
+            />
+            <span className={`tv-cc-gauge-mark ${p.flag ?? "normal"}`} style={{ left: pos(p.y) }} />
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/** The Stats tab (generic): current / change / min / max / average. */
+function StatsView({ pts, unit }: { pts: CardPoint[]; unit: string }): ReactNode {
+  const ys = pts.map((p) => p.y);
+  const first = ys[0] ?? 0;
+  const last = ys[ys.length - 1] ?? 0;
+  const change = Math.round((last - first) * 100) / 100;
+  const avg = Math.round((ys.reduce((a, b) => a + b, 0) / ys.length) * 100) / 100;
+  const stats: { label: string; value: string }[] = [
+    { label: "current", value: `${fmtNum(last)} ${unit}` },
+    { label: "change", value: `${change > 0 ? "+" : ""}${fmtNum(change)} ${unit}` },
+    { label: "min", value: `${fmtNum(Math.min(...ys))} ${unit}` },
+    { label: "max", value: `${fmtNum(Math.max(...ys))} ${unit}` },
+    { label: "average", value: `${fmtNum(avg)} ${unit}` },
+    { label: "readings", value: String(pts.length) },
+  ];
+  return (
+    <div className="tv-cc-stats">
+      {stats.map((s) => (
+        <div className="tv-cc-stat" key={s.label}>
+          <div className="tv-cc-stat-v">{s.value}</div>
+          <div className="tv-cc-stat-l">{s.label}</div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function ChartTable({
+  pts,
+  unit,
+  band,
+}: { pts: CardPoint[]; unit: string; band: RefBandData | null }): ReactNode {
+  return (
+    <table className="tv-cc-tbl">
+      <thead>
+        <tr>
+          <th>Date</th>
+          <th>Value</th>
+          {band && <th>Ref</th>}
+          {band && <th>Flag</th>}
+          <th>Source</th>
+        </tr>
+      </thead>
+      <tbody>
+        {pts
+          .slice()
+          .reverse()
+          .map((p, i) => (
+            // Composite key: two draws could share a timestamp; x alone isn't unique.
+            <tr
+              key={`${p.x}-${i}`}
+              className={p.flag === "critical" ? "crit" : p.flag && p.flag !== "normal" ? "ab" : ""}
+            >
+              <td>{fmtLong(p.x)}</td>
+              <td>
+                <b>{fmtNum(p.y)}</b> {unit}
+              </td>
+              {band && <td>{`${fmtNum(band.lo)}–${fmtNum(band.hi)}`}</td>}
+              {band && (
+                <td>
+                  <span className={`fl-${p.flag ?? "normal"}`}>
+                    {p.flag && p.flag !== "normal" ? p.flag : "—"}
+                  </span>
+                </td>
+              )}
+              <td className="tv-cc-cite">{p.note ?? "—"}</td>
+            </tr>
+          ))}
+      </tbody>
+    </table>
+  );
+}
+
+function ChartCard({ data }: ViewProps): ReactNode {
+  const pts = useMemo(
+    () => parsePoints((data.series as Record<string, unknown>[])?.[0]?.points),
+    [data.series],
+  );
+  const ref = readRefBand(data);
+  const domain = data.domain === "health" ? "health" : "general";
+  const unit = typeof data.unit === "string" ? data.unit : "";
+  const title = typeof data.title === "string" ? data.title : ref ? "Lab result" : "Chart";
+  const yScale = useMemo(() => readYScale(data, pts), [data, pts]);
+  const tabs: CardTab[] = ref ? ["trend", "table", "range"] : ["trend", "table", "stats"];
+  const [tab, setTab] = useState<CardTab>("trend");
+  const [sel, setSel] = useState<CardPoint | null>(() => pts.at(-1) ?? null);
+
+  const last = pts.at(-1);
+  const first = pts[0];
+  if (!last || !first) {
+    return <div className="tv-cc-empty">No data to plot.</div>;
+  }
+
+  const delta = Math.round((last.y - first.y) * 100) / 100;
+  const dir = delta > 0 ? "up" : delta < 0 ? "down" : "flat";
+
+  return (
+    <div className={`tv-cc dom-${domain}`}>
+      <div className="tv-cc-cap">
+        {ref ? "lab · " : ""}
+        {title.toLowerCase()} · {pts.length} points
+      </div>
+      <div className="tv-cc-head">
+        <span className="tv-cc-now">{fmtNum(last.y)}</span>
+        <span className="tv-cc-unit">{unit}</span>
+        <span className={`tv-cc-delta ${dir}`}>
+          {delta > 0 ? "▲" : delta < 0 ? "▼" : "—"} {fmtNum(Math.abs(delta))} {unit} since{" "}
+          {fmtLong(first.x)}
+        </span>
+      </div>
+      <div className="tv-cc-seg" role="tablist" aria-label={`${title} views`}>
+        {tabs.map((t) => (
+          <button
+            type="button"
+            key={t}
+            role="tab"
+            aria-selected={tab === t}
+            className={tab === t ? "on" : ""}
+            onClick={() => setTab(t)}
+          >
+            {t === "trend" ? "Trend" : t === "table" ? "Table" : t === "range" ? "Range" : "Stats"}
+          </button>
+        ))}
+      </div>
+      {tab === "trend" && (
+        <div className="tv-cc-trend">
+          {sel && <ReadoutLine point={sel} unit={unit} band={ref} />}
+          <InteractiveChart
+            // Remount on (re)entering Trend so pointer listeners bind once and the view resets.
+            key="trend"
+            points={pts}
+            y={yScale}
+            domain={domain}
+            kind={data.kind === "area" ? "area" : "line"}
+            label={`${title} over time`}
+            onScrub={(p) => setSel(p as CardPoint)}
+            {...(ref ? { refBand: ref } : {})}
+          />
+          <div className="tv-cc-hint">pinch or scroll to zoom · drag to pan · tap a point</div>
+        </div>
+      )}
+      {tab === "table" && <ChartTable pts={pts} unit={unit} band={ref} />}
+      {tab === "range" && ref && <RangeView pts={pts} unit={unit} band={ref} />}
+      {tab === "stats" && <StatsView pts={pts} unit={unit} />}
+    </div>
+  );
+}
+
 const REGISTRY: Record<string, (props: ViewProps) => ReactNode> = {
   stat_block: StatBlock,
   data_table: DataTable,
@@ -1777,6 +2099,8 @@ const REGISTRY: Record<string, (props: ViewProps) => ReactNode> = {
   weather_card: WeatherCard,
   hurricane_card: HurricaneCard,
   subagent_synthesis: SubagentSynthesis,
+  chart: ChartCard,
+  lab_chart: ChartCard,
 };
 
 export function isKnownView(name: string): boolean {

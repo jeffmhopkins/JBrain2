@@ -1,0 +1,462 @@
+<!doctype html>
+<!--
+  chat charts / lab plots tool-view mock · VARIANT A — "Answer-first card → fullscreen explorer"
+  ============================================================================================
+  The paradigm already settled for location_map (DESIGN.md): the chat bubble shows a
+  COMPACT, glanceable chart card (the shape + the headline number, one tap to pin a
+  point). A "tap to explore ⤢" affordance opens a FULL-SCREEN explorer sheet where the
+  real interaction lives — pinch / wheel zoom, drag pan, range presets, a scrub readout,
+  and (for labs) a Table toggle. Answer-first inline; exploration on demand.
+
+  Two view kinds share one chart engine:
+    • `chart`     — a generic numeric series the agent emits (here: body weight over a year).
+    • `lab_chart` — the health-firewalled lab trend (here: platelet count), with the
+                    reference band drawn as a tinted zone and abnormal draws toned
+                    (amber = high/low, rose = critical). Each point cites a note id.
+
+  Data-only slots (#1/#9): the payload carries NUMBERS + closed enums only — never a
+  URL, markup, glyph, or color. `flag` ∈ {normal,low,high,critical}; the component owns
+  the palette. Tokens-only; the card frame matches the live `.tool-view`.
+-->
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Chat charts — A — inline + fullscreen explorer</title>
+<style>
+  :root{
+    --bg:#0e0f11;--surface:#17181b;--surface-2:#1e2024;--border:#26282c;
+    --text:#e6e7e9;--text-2:#9a9da3;--text-3:#5c5f66;--surface-composer:#141518;
+    --steel:#7fa7c9;--steel-tint:rgba(127,167,201,.13);
+    --green:#8fbc9a;--green-tint:rgba(143,188,154,.13);
+    --amber:#c9a36a;--amber-tint:rgba(201,163,106,.15);
+    --rose:#cf8a8f;--rose-tint:rgba(207,138,143,.15);
+    --violet:#a493c9;--accent:var(--steel);--r-card:16px;--r-input:12px;--r-pill:999px;
+  }
+  [data-theme="light"]{
+    --bg:#f7f7f5;--surface:#fff;--surface-2:#f0f0ee;--border:#e2e2df;
+    --text:#1a1b1e;--text-2:#5c5f66;--text-3:#9a9da3;--surface-composer:#fff;
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  body{margin:0;background:#000;color:var(--text);
+    font:15px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+    display:flex;flex-wrap:wrap;gap:28px;justify-content:center;padding:28px}
+  .phone{position:relative;width:390px;height:820px;background:var(--bg);border-radius:34px;
+    overflow:hidden;border:1px solid var(--border);display:flex;flex-direction:column}
+  .topbar{flex:0 0 auto;height:56px;display:flex;align-items:center;gap:10px;padding:0 14px;
+    border-bottom:1px solid var(--border);background:var(--surface)}
+  .topbar .t{font-size:17px;font-weight:600;flex:1}
+  .topbar .t small{display:block;font-size:11px;font-weight:400;color:var(--text-3)}
+  .icon-btn{width:36px;height:36px;display:grid;place-items:center;border-radius:9px;
+    color:var(--text-2);background:transparent;border:0;cursor:pointer}
+  .icon-btn:hover{background:var(--surface-2);color:var(--text)}
+  svg{stroke-linecap:round;stroke-linejoin:round}
+  .ic{width:20px;height:20px;stroke:currentColor;fill:none;stroke-width:1.7}
+  .chat{flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:14px}
+  .bubble{max-width:82%;padding:11px 13px;border-radius:15px;font-size:14px;line-height:1.45}
+  .me{align-self:flex-end;background:var(--steel-tint);
+    border:1px solid color-mix(in srgb,var(--steel) 30%,transparent);border-bottom-right-radius:5px}
+  .ai{align-self:flex-start;background:var(--surface-2);border:1px solid var(--border);border-bottom-left-radius:5px}
+
+  /* ---- the inline (answer-first) chart card ---- */
+  .cc{align-self:flex-start;max-width:96%;width:100%;border:1px solid var(--border);
+    border-radius:var(--r-card);background:var(--surface);overflow:hidden}
+  .cc-cap{display:flex;align-items:center;gap:7px;padding:9px 13px 0;font-size:10.5px;
+    color:var(--text-3);text-transform:uppercase;letter-spacing:.06em}
+  .cc-cap .vi{display:flex}
+  .cc.dom-health .cc-cap .vi{color:var(--rose)} .cc.dom-general .cc-cap .vi{color:var(--steel)}
+  .cc-head{display:flex;align-items:baseline;gap:8px;padding:6px 14px 2px}
+  .cc-now{font-size:27px;font-weight:600;letter-spacing:-.02em;line-height:1}
+  .cc-unit{font-size:13px;color:var(--text-2);font-weight:500}
+  .cc-delta{font-size:12px;font-weight:600;margin-left:auto}
+  .cc-delta.up{color:var(--green)} .cc-delta.down{color:var(--rose)} .cc-delta.flat{color:var(--text-2)}
+  .cc-sub{padding:0 14px 6px;font-size:12px;color:var(--text-2)}
+  .cc-sub .fl{font-weight:600}
+  .fl.low,.fl.high{color:var(--amber)} .fl.critical{color:var(--rose)} .fl.normal{color:var(--green)}
+  .cc-mini{padding:0 8px 4px;cursor:pointer}
+  .cc-mini svg{width:100%;height:96px;display:block;overflow:visible}
+  .cc-explore{display:flex;align-items:center;justify-content:space-between;
+    padding:6px 14px 11px;font-size:11.5px;color:var(--text-3)}
+  .cc-explore .btn{display:inline-flex;align-items:center;gap:5px;color:var(--steel);
+    background:var(--steel-tint);border:1px solid color-mix(in srgb,var(--steel) 26%,transparent);
+    border-radius:var(--r-pill);padding:5px 11px;font-size:12px;font-weight:500;cursor:pointer}
+  .cc-explore .btn svg{width:14px;height:14px;stroke:currentColor;fill:none;stroke-width:1.8}
+
+  /* mini chart marks */
+  .mini-band{fill:var(--green-tint)}
+  .mini-line{fill:none;stroke-width:2.2}
+  .dom-general .mini-line{stroke:var(--steel)} .dom-health .mini-line{stroke:var(--rose)}
+  .mini-area{opacity:.5}
+  .dom-general .mini-area{fill:url(#gGen)} .dom-health .mini-area{fill:url(#gHel)}
+  .mini-pt{stroke:var(--surface);stroke-width:1.5}
+  .mini-pt.normal{fill:var(--text-3)} .mini-pt.low,.mini-pt.high{fill:var(--amber)}
+  .mini-pt.critical{fill:var(--rose)}
+  .mini-last.general{fill:var(--steel)} .mini-last.health{fill:var(--rose)}
+  .mini-ax{font-size:9px;fill:var(--text-3)}
+
+  .composer{flex:0 0 auto;display:flex;gap:8px;align-items:center;
+    padding:10px 12px calc(10px + env(safe-area-inset-bottom));
+    border-top:1px solid var(--border);background:var(--surface-composer)}
+  .composer input{flex:1;background:var(--surface-2);border:1px solid var(--border);
+    border-radius:var(--r-pill);padding:10px 14px;color:var(--text);font-size:14px;outline:none}
+  .composer .send{width:40px;height:40px;border-radius:50%;border:0;background:var(--accent);
+    color:#10141a;display:grid;place-items:center;cursor:pointer;flex:0 0 40px}
+  .composer .send svg{width:20px;height:20px;stroke:#10141a;fill:none;stroke-width:1.7}
+
+  /* ---- the fullscreen explorer sheet ---- */
+  .sheet{position:absolute;inset:0;background:var(--bg);display:flex;flex-direction:column;
+    transform:translateY(100%);transition:transform .18s ease-out;z-index:5}
+  .sheet.open{transform:translateY(0)}
+  @media (prefers-reduced-motion:reduce){.sheet{transition:none}}
+  .sh-bar{flex:0 0 auto;height:56px;display:flex;align-items:center;gap:10px;padding:0 12px;
+    border-bottom:1px solid var(--border);background:var(--surface)}
+  .sh-bar .t{flex:1;font-size:16px;font-weight:600}
+  .sh-bar .t small{display:block;font-size:11px;font-weight:400;color:var(--text-3)}
+  .sh-body{flex:1;overflow-y:auto;padding:14px}
+  .seg{display:flex;background:var(--surface-2);border:1px solid var(--border);border-radius:var(--r-input);
+    padding:3px;gap:2px;margin-bottom:12px}
+  .seg button{flex:1;border:0;background:transparent;color:var(--text-2);font:inherit;font-size:12.5px;
+    padding:6px;border-radius:9px;cursor:pointer;font-weight:500}
+  .seg button.on{background:var(--surface);color:var(--text);
+    box-shadow:0 1px 2px rgba(0,0,0,.15)}
+  .range{display:flex;gap:6px;margin-bottom:8px}
+  .range button{flex:1;border:1px solid var(--border);background:var(--surface-2);color:var(--text-2);
+    border-radius:var(--r-pill);padding:6px 0;font:inherit;font-size:12px;cursor:pointer}
+  .range button.on{border-color:color-mix(in srgb,var(--accent) 45%,transparent);
+    color:var(--text);background:color-mix(in srgb,var(--accent) 14%,transparent)}
+  .readout{display:flex;align-items:center;gap:10px;margin:2px 0 8px;padding:9px 12px;min-height:44px;
+    background:var(--surface-2);border:1px solid var(--border);border-radius:var(--r-input);font-size:13px}
+  .readout .rd{font-weight:600;min-width:70px}.dom-general .readout .rd{color:var(--steel)}
+  .dom-health .readout .rd{color:var(--rose)}
+  .readout .rv b{color:var(--text);font-weight:600}.readout .rv{color:var(--text-2)}
+  .readout .rf{margin-left:auto;font-weight:600;font-size:12px}
+  .plot-wrap{position:relative;border:1px solid var(--border);border-radius:var(--r-card);
+    background:var(--surface);padding:8px 6px 4px;touch-action:pan-y;user-select:none}
+  .plot-wrap svg{width:100%;height:auto;display:block;overflow:hidden}
+  .grid{stroke:var(--border);stroke-width:1}
+  .grid.zero{stroke:color-mix(in srgb,var(--text-3) 55%,transparent)}
+  .ax{font-size:10px;fill:var(--text-3)}
+  .band{fill:var(--green-tint)}
+  .band-edge{stroke:color-mix(in srgb,var(--green) 45%,transparent);stroke-width:1;stroke-dasharray:3 3}
+  .band-lbl{font-size:9px;fill:color-mix(in srgb,var(--green) 80%,var(--text-3))}
+  .line{fill:none;stroke-width:2.4;vector-effect:non-scaling-stroke}
+  .dom-general .line{stroke:var(--steel)} .dom-health .line{stroke:var(--rose)}
+  .pt{stroke:var(--surface);stroke-width:2}
+  .pt.normal{fill:var(--text-3)} .pt.low,.pt.high{fill:var(--amber)} .pt.critical{fill:var(--rose)}
+  .dom-general .pt.normal{fill:var(--steel)}
+  .pt.sel{stroke-width:2.5}.dom-general .pt.sel{stroke:var(--steel)}.dom-health .pt.sel{stroke:var(--rose)}
+  .vrule{stroke-width:1;stroke-dasharray:2 3;opacity:.7}
+  .dom-general .vrule{stroke:var(--steel)} .dom-health .vrule{stroke:var(--rose)}
+  .hint{position:absolute;left:50%;bottom:12px;transform:translateX(-50%);font-size:11px;
+    color:var(--text-3);background:color-mix(in srgb,var(--surface) 86%,transparent);
+    border:1px solid var(--border);border-radius:var(--r-pill);padding:4px 11px;pointer-events:none;
+    transition:opacity .3s}
+  .reset{position:absolute;right:10px;top:10px;font-size:11.5px;color:var(--text-2);
+    background:var(--surface-2);border:1px solid var(--border);border-radius:var(--r-pill);
+    padding:4px 10px;cursor:pointer;opacity:0;pointer-events:none;transition:opacity .15s}
+  .reset.show{opacity:1;pointer-events:auto}
+  .tbl{width:100%;border-collapse:collapse;font-size:12.5px}
+  .tbl th{text-align:left;color:var(--text-3);font-weight:500;font-size:11px;padding:6px 8px;
+    border-bottom:1px solid var(--border);text-transform:uppercase;letter-spacing:.04em}
+  .tbl td{padding:8px;border-bottom:1px solid var(--border);color:var(--text-2)}
+  .tbl td b{color:var(--text)} .tbl tr.ab td b{color:var(--amber)} .tbl tr.crit td b{color:var(--rose)}
+  .tbl .cite{color:var(--steel);font-size:11px}
+  .foot{font-size:11.5px;color:var(--text-3);padding:12px 4px 4px;line-height:1.5}
+
+  .label{text-align:center;color:var(--text-2);font-size:12px;max-width:390px;line-height:1.5;margin:4px auto}
+  .label b{color:var(--text)}
+</style>
+</head>
+<body data-palette="#7fa7c9,#cf8a8f,#c9a36a,#8fbc9a">
+<div>
+  <div class="phone">
+    <div class="topbar">
+      <button class="icon-btn"><svg class="ic" viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6"/></svg></button>
+      <div class="t">Full Brain<small>me · all domains</small></div>
+      <button class="icon-btn" id="theme" title="Toggle theme">
+        <svg class="ic" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4.5"/><path d="M12 2v2M12 20v2M4 12H2M22 12h-2M5 5l1.5 1.5M17.5 17.5L19 19M19 5l-1.5 1.5M6.5 17.5L5 19"/></svg>
+      </button>
+    </div>
+
+    <div class="chat" id="chat">
+      <div class="bubble me">Chart my weight over the past year.</div>
+      <div class="bubble ai">Down about 11 lb since spring, with a plateau over the winter. Tap to explore the trend.</div>
+
+      <div class="cc dom-general" id="card-weight"></div>
+
+      <div class="bubble me">And my platelet count trend?</div>
+      <div class="bubble ai">Dropped into the low range last spring — a critical low of 96 on Apr 22 — then recovered to normal by summer. It's been stable since.</div>
+
+      <div class="cc dom-health" id="card-plt"></div>
+
+      <div class="bubble me">Perfect — the low really jumps out.</div>
+    </div>
+
+    <div class="composer">
+      <input id="inp" placeholder="Ask about your notes…" />
+      <button class="send"><svg viewBox="0 0 24 24"><path d="M22 2L11 13M22 2l-7 20-4-9-9-4z"/></svg></button>
+    </div>
+
+    <!-- fullscreen explorer -->
+    <div class="sheet" id="sheet">
+      <div class="sh-bar">
+        <button class="icon-btn" onclick="closeSheet()"><svg class="ic" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg></button>
+        <div class="t" id="sh-title">—</div>
+        <button class="icon-btn" onclick="closeSheet()" title="Close"><svg class="ic" viewBox="0 0 24 24"><path d="M18 6L6 18M6 6l12 12"/></svg></button>
+      </div>
+      <div class="sh-body" id="sh-body"></div>
+    </div>
+  </div>
+  <p class="label">A · <b>Answer-first card → fullscreen explorer.</b> The bubble shows a
+  compact, glanceable chart (shape + headline + flags); <b>tap to explore</b> opens a
+  full-screen sheet where pinch/wheel-zoom, drag-pan, range presets, a scrub readout, and a
+  Table toggle live. Mirrors the settled <i>location_map</i> pattern — low-friction inline,
+  rich interaction on demand.</p>
+</div>
+
+<script>
+/* ============================ shared data ============================ */
+const DAY = 86400000;
+function d(s){ return new Date(s+'T12:00:00').getTime(); }
+function fmtDate(x,long){ const dt=new Date(x);
+  return dt.toLocaleDateString(undefined, long?{year:'numeric',month:'short',day:'numeric'}
+    :{month:'short',year:'2-digit'}); }
+
+// generic series: body weight, ~biweekly over 15 months
+const weight = (()=>{ const a=[]; let t=d('2025-04-06'); let v=191.4;
+  for(let i=0;i<32;i++){ v += (i<20?-0.52:0.06) + Math.sin(i*1.7)*0.7;
+    a.push({x:t, y:Math.round(v*10)/10, flag:'normal', note:'note:w'+i}); t+=14*DAY; }
+  return a; })();
+
+// lab series: platelet count, real-world draw cadence
+const pltRaw = [
+  ['2024-06-10',242,'normal'],['2024-08-19',228,'normal'],['2024-10-30',205,'normal'],
+  ['2025-01-14',186,'normal'],['2025-03-03',150,'low'],['2025-04-01',132,'low'],
+  ['2025-04-22',96,'critical'],['2025-05-13',118,'low'],['2025-06-10',149,'low'],
+  ['2025-07-15',178,'normal'],['2025-09-02',203,'normal'],['2025-11-11',221,'normal'],
+  ['2026-01-20',236,'normal'],['2026-03-17',244,'normal'],['2026-05-05',251,'normal'],
+  ['2026-06-16',248,'normal'] ];
+const platelets = pltRaw.map((r,i)=>({x:d(r[0]),y:r[1],flag:r[2],note:'note:p'+i}));
+
+const SERIES = {
+  weight:{ domain:'general', title:'Body weight', sub:'me · general', unit:'lb',
+           points:weight, y:{min:174,max:194,ticks:[176,180,184,188,192]},
+           foot:'Plotted from 32 weight notes. Values trace to your notes; this is the record as captured, not medical advice.' },
+  platelets:{ domain:'health', title:'Platelet count', sub:'me · health', unit:'×10⁹/L',
+           points:platelets, y:{min:80,max:300,ticks:[100,150,200,250]},
+           ref:{lo:150,hi:400,label:'reference 150–400'},
+           foot:'From imported lab reports. Shows the readings on record — reference range and abnormal flags — not a diagnosis. Each draw cites its note.' }
+};
+
+/* ============================ mini (inline) chart ============================ */
+function miniSVG(s){
+  const W=320,H=96,L=6,R=6,T=10,B=16, pts=s.points;
+  const xmin=pts[0].x, xmax=pts[pts.length-1].x, xs=x=>L+(x-xmin)/(xmax-xmin)*(W-L-R);
+  const ymn=s.y.min, ymx=s.y.max, ys=y=>T+(1-(y-ymn)/(ymx-ymn))*(H-T-B);
+  let band='';
+  if(s.ref){ const y0=ys(Math.min(s.ref.hi,ymx)), y1=ys(Math.max(s.ref.lo,ymn));
+    band=`<rect class="mini-band" x="${L}" y="${y0}" width="${W-L-R}" height="${y1-y0}"/>`; }
+  const line=pts.map((p,i)=>(i?'L':'M')+xs(p.x).toFixed(1)+' '+ys(p.y).toFixed(1)).join(' ');
+  // Area fill only for generic charts; a lab plot reads against its reference band, not a fill.
+  const area=s.ref?'':`M${xs(xmin)} ${H-B} L`+pts.map(p=>xs(p.x).toFixed(1)+' '+ys(p.y).toFixed(1)).join(' L')+` L${xs(xmax)} ${H-B} Z`;
+  const dots=pts.map((p,i)=>{ const last=i===pts.length-1;
+    const cls=last?'mini-last '+s.domain:'mini-pt '+p.flag;
+    const r=last?3.4:(p.flag==='normal'?0:2.6);
+    return r?`<circle class="${cls}" cx="${xs(p.x).toFixed(1)}" cy="${ys(p.y).toFixed(1)}" r="${r}"/>`:''; }).join('');
+  const grad=`<defs>
+    <linearGradient id="gGen" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="var(--steel)" stop-opacity=".22"/><stop offset="1" stop-color="var(--steel)" stop-opacity="0"/></linearGradient>
+    <linearGradient id="gHel" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="var(--rose)" stop-opacity=".22"/><stop offset="1" stop-color="var(--rose)" stop-opacity="0"/></linearGradient></defs>`;
+  return `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">${grad}${band}
+    <path class="mini-area" d="${area}"/><path class="mini-line" d="${line}"/>${dots}
+    <text class="mini-ax" x="${L}" y="${H-3}">${fmtDate(xmin)}</text>
+    <text class="mini-ax" x="${W-R}" y="${H-3}" text-anchor="end">${fmtDate(xmax)}</text></svg>`;
+}
+function renderCard(id,key){
+  const s=SERIES[key], pts=s.points, last=pts[pts.length-1], first=pts[0];
+  const delta=Math.round((last.y-first.y)*10)/10;
+  const dir=delta>0.1?'up':delta<-0.1?'down':'flat';
+  // for weight a drop is "good" visually neutral; we just show the number + arrow
+  const arrow=delta>0.1?'▲':delta<-0.1?'▼':'—';
+  const flTxt = s.ref && last.flag!=='normal'
+     ? `<span class="fl ${last.flag}">${last.flag}</span> · current`
+     : (s.ref?`<span class="fl normal">in range</span> · current`:'current');
+  const icon = s.domain==='health'
+    ? '<svg class="ic" viewBox="0 0 24 24" style="width:13px;height:13px"><path d="M3 12h4l2 5 4-12 2 7h6"/></svg>'
+    : '<svg class="ic" viewBox="0 0 24 24" style="width:13px;height:13px"><path d="M3 17l5-5 4 3 6-7"/></svg>';
+  document.getElementById(id).innerHTML = `
+    <div class="cc-cap"><span class="vi">${icon}</span> ${s.domain==='health'?'lab · ':''}${s.title.toLowerCase()} · ${pts.length} points</div>
+    <div class="cc-head"><span class="cc-now">${last.y}</span><span class="cc-unit">${s.unit}</span>
+      <span class="cc-delta ${dir}">${arrow} ${Math.abs(delta)} ${s.unit} since ${fmtDate(first.x,true)}</span></div>
+    <div class="cc-sub">${flTxt} · ${fmtDate(last.x,true)}</div>
+    <div class="cc-mini" onclick="openSheet('${key}')">${miniSVG(s)}</div>
+    <div class="cc-explore"><span>tap the chart to explore</span>
+      <button class="btn" onclick="openSheet('${key}')">explore
+        <svg viewBox="0 0 24 24"><path d="M15 3h6v6M21 3l-8 8M9 21H3v-6M3 21l8-8"/></svg></button></div>`;
+}
+
+/* ============================ interactive engine (explorer) ============================ */
+// A time-series chart with X pan/zoom. Reusable across variants.
+function makeChart(el, s, onPin){
+  const W=352,H=300,L=38,R=12,T=14,B=26;
+  const pts=s.points.slice().sort((a,b)=>a.x-b.x);
+  const x0=pts[0].x, x1=pts[pts.length-1].x;
+  const pad=(x1-x0)*0.04 || DAY;
+  const FULL_S=x0-pad, FULL_E=x1+pad, FULL_SPAN=FULL_E-FULL_S;
+  const MIN_SPAN=FULL_SPAN/25;               // deepest zoom-in
+  let vs=FULL_S, ve=FULL_E, sel=pts.length-1;
+  const ymn=s.y.min, ymx=s.y.max;
+  const px=x=>L+(x-vs)/(ve-vs)*(W-L-R);
+  const ix=sx=>vs+(sx-L)/(W-L-R)*(ve-vs);
+  const py=y=>T+(1-(y-ymn)/(ymx-ymn))*(H-T-B);
+
+  function clamp(){ let sp=ve-vs;
+    if(sp<MIN_SPAN){ const m=(vs+ve)/2; vs=m-MIN_SPAN/2; ve=m+MIN_SPAN/2; sp=MIN_SPAN; }
+    if(sp>=FULL_SPAN){ vs=FULL_S; ve=FULL_E; return; }
+    if(vs<FULL_S){ vs=FULL_S; ve=vs+sp; }
+    if(ve>FULL_E){ ve=FULL_E; vs=ve-sp; } }
+  function niceTicks(){ // pick ~4-6 date ticks across the visible span
+    const span=ve-vs, days=span/DAY, out=[]; let stepMs,fmt;
+    if(days<70){ stepMs=7*DAY; } else if(days<240){ stepMs=30.4*DAY; }
+    else if(days<560){ stepMs=61*DAY; } else { stepMs=122*DAY; }
+    let t=Math.ceil(vs/stepMs)*stepMs;
+    for(;t<=ve && out.length<7;t+=stepMs) out.push(t);
+    return out; }
+  const isZoomed=()=> (ve-vs) < FULL_SPAN-1;
+
+  function draw(){
+    const gy=s.y.ticks.map(v=>`<line class="grid" x1="${L}" y1="${py(v).toFixed(1)}" x2="${W-R}" y2="${py(v).toFixed(1)}"/><text class="ax" x="${L-4}" y="${(py(v)+3).toFixed(1)}" text-anchor="end">${v}</text>`).join('');
+    let band='';
+    if(s.ref){ const y0=py(Math.min(s.ref.hi,ymx)), y1=py(Math.max(s.ref.lo,ymn));
+      band=`<rect class="band" x="${L}" y="${y0.toFixed(1)}" width="${W-L-R}" height="${(y1-y0).toFixed(1)}"/>
+        <line class="band-edge" x1="${L}" y1="${py(s.ref.lo).toFixed(1)}" x2="${W-R}" y2="${py(s.ref.lo).toFixed(1)}"/>
+        <text class="band-lbl" x="${W-R}" y="${(py(s.ref.lo)-4).toFixed(1)}" text-anchor="end">${s.ref.label}</text>`; }
+    // line: include the points just outside the window so the stroke enters/exits cleanly
+    let iA=0,iB=pts.length-1;
+    for(let i=0;i<pts.length;i++){ if(pts[i].x< vs) iA=i; if(pts[i].x>ve){ iB=i; break; } }
+    const vis=pts.slice(iA,iB+1);
+    const line=vis.map((p,i)=>(i?'L':'M')+px(p.x).toFixed(1)+' '+py(p.y).toFixed(1)).join(' ');
+    const dots=pts.map((p,i)=>{ if(p.x<vs-DAY||p.x>ve+DAY) return '';
+      const r=i===sel?5.5:4; const c=i===sel?`pt ${p.flag} sel`:`pt ${p.flag}`;
+      return `<circle class="${c}" cx="${px(p.x).toFixed(1)}" cy="${py(p.y).toFixed(1)}" r="${r}"/>`; }).join('');
+    const gx=niceTicks().map(t=>`<text class="ax" x="${px(t).toFixed(1)}" y="${H-8}" text-anchor="middle">${fmtDate(t)}</text>`).join('');
+    let vr='';
+    if(sel>=0 && pts[sel].x>=vs-DAY && pts[sel].x<=ve+DAY){
+      const sx=px(pts[sel].x); vr=`<line class="vrule" x1="${sx.toFixed(1)}" y1="${T}" x2="${sx.toFixed(1)}" y2="${H-B}"/>`; }
+    el.querySelector('svg').innerHTML = `<clipPath id="clip"><rect x="${L}" y="${T-4}" width="${W-L-R}" height="${H-T-B+4}"/></clipPath>
+      ${gy}${band}<g clip-path="url(#clip)">${vr}<path class="line" d="${line}"/>${dots}</g>${gx}`;
+    el.querySelector('.reset').classList.toggle('show', isZoomed());
+    // pin readout
+    const p=pts[sel];
+    onPin && onPin(p, sel);
+  }
+  function zoomAt(ax,f){ vs=ax-(ax-vs)*f; ve=ax+(ve-ax)*f; clamp(); draw(); }
+  function nearest(sx){ const xd=ix(sx); let best=0,bd=1e18;
+    pts.forEach((p,i)=>{ const dd=Math.abs(p.x-xd); if(dd<bd){bd=dd;best=i;} }); return best; }
+
+  el.innerHTML = `<svg viewBox="0 0 ${W} ${H}"></svg>
+    <button class="reset" onclick="event.stopPropagation()">reset zoom</button>
+    <div class="hint">pinch or scroll to zoom · drag to pan · tap a point</div>`;
+  const svg=el.querySelector('svg');
+  const hintEl=el.querySelector('.hint');
+  const hideHint=()=>{ if(hintEl) hintEl.style.opacity='0'; };
+  setTimeout(hideHint,3500);
+  el.querySelector('.reset').addEventListener('click',()=>{ vs=FULL_S; ve=FULL_E; draw(); });
+
+  function localX(clientX){ const r=svg.getBoundingClientRect(); return (clientX-r.left)/r.width*W; }
+  // wheel zoom (desktop)
+  el.addEventListener('wheel',e=>{ e.preventDefault(); hideHint();
+    zoomAt(ix(localX(e.clientX)), e.deltaY>0?1.18:0.85); },{passive:false});
+  // pointer: drag pan + tap select
+  const active=new Map(); let panStart=null, pinchStart=null, moved=false;
+  el.addEventListener('pointerdown',e=>{ hideHint(); el.setPointerCapture(e.pointerId);
+    active.set(e.pointerId,{x:e.clientX,y:e.clientY}); moved=false;
+    if(active.size===1){ panStart={x:e.clientX, vs, ve}; }
+    else if(active.size===2){ const a=[...active.values()];
+      pinchStart={d:Math.abs(a[0].x-a[1].x)||1, cx:(a[0].x+a[1].x)/2, vs, ve}; panStart=null; } });
+  el.addEventListener('pointermove',e=>{ if(!active.has(e.pointerId))return;
+    active.set(e.pointerId,{x:e.clientX,y:e.clientY});
+    if(active.size===2 && pinchStart){ const a=[...active.values()];
+      const dist=Math.abs(a[0].x-a[1].x)||1; const f=pinchStart.d/dist;
+      const r=svg.getBoundingClientRect(); const ax=pinchStart.vs+((pinchStart.cx-r.left)/r.width*W - L)/(W-L-R)*(pinchStart.ve-pinchStart.vs);
+      vs=ax-(ax-pinchStart.vs)*f; ve=ax+(pinchStart.ve-ax)*f; clamp(); draw(); moved=true; }
+    else if(active.size===1 && panStart){ const dx=e.clientX-panStart.x;
+      if(Math.abs(dx)>3) moved=true;
+      const r=svg.getBoundingClientRect(); const domPerPx=(panStart.ve-panStart.vs)/(r.width*(W-L-R)/W);
+      let nvs=panStart.vs-dx*domPerPx, nve=panStart.ve-dx*domPerPx; const sp=nve-nvs;
+      if(nvs<FULL_S){nvs=FULL_S;nve=nvs+sp;} if(nve>FULL_E){nve=FULL_E;nvs=nve-sp;}
+      vs=nvs; ve=nve; draw(); } });
+  function up(e){ if(active.has(e.pointerId)){
+      if(active.size===1 && !moved){ sel=nearest(localX(e.clientX)); draw(); }
+      active.delete(e.pointerId); if(active.size<2)pinchStart=null; if(active.size===0)panStart=null; } }
+  el.addEventListener('pointerup',up); el.addEventListener('pointercancel',up);
+
+  draw();
+  return { reset:()=>{vs=FULL_S;ve=FULL_E;draw();} };
+}
+
+/* ============================ explorer sheet ============================ */
+let sheetChart=null;
+function openSheet(key){
+  const s=SERIES[key], sheet=document.getElementById('sheet');
+  document.getElementById('sh-title').innerHTML=`${s.title}<small>${s.sub} · ${s.points.length} readings</small>`;
+  const body=document.getElementById('sh-body');
+  body.className='sh-body dom-'+s.domain;
+  body.innerHTML=`
+    <div class="seg"><button class="on" data-tab="trend">Trend</button><button data-tab="table">Table</button></div>
+    <div id="tab-trend">
+      <div class="range">
+        <button data-r="3">3M</button><button data-r="12">1Y</button><button class="on" data-r="all">All</button>
+      </div>
+      <div class="readout" id="rd"></div>
+      <div class="plot-wrap" id="plot"></div>
+    </div>
+    <div id="tab-table" style="display:none">${tableHTML(s)}</div>
+    <div class="foot">${s.foot}</div>`;
+  sheet.classList.add('open');
+  mountChart(key,'all');
+  // tab + range wiring
+  body.querySelectorAll('.seg button').forEach(b=>b.onclick=()=>{
+    body.querySelectorAll('.seg button').forEach(x=>x.classList.remove('on')); b.classList.add('on');
+    const t=b.dataset.tab; document.getElementById('tab-trend').style.display=t==='trend'?'':'none';
+    document.getElementById('tab-table').style.display=t==='table'?'':'none'; });
+  body.querySelectorAll('.range button').forEach(b=>b.onclick=()=>{
+    body.querySelectorAll('.range button').forEach(x=>x.classList.remove('on')); b.classList.add('on');
+    mountChart(key, b.dataset.r); });
+}
+// Mount (or re-mount) the interactive chart, windowed to a preset. A fresh #plot
+// node each time drops the previous chart's pointer listeners (no double-binding).
+function mountChart(key, range){
+  const s=SERIES[key];
+  let pts=s.points;
+  if(range!=='all'){ const last=s.points[s.points.length-1].x;
+    const start=last - Number(range)*30.4*DAY;
+    const win=s.points.filter(p=>p.x>=start); if(win.length>=2) pts=win; }
+  const sub={...s, points:pts};
+  const old=document.getElementById('plot');
+  const fresh=old.cloneNode(false); old.replaceWith(fresh);
+  sheetChart=makeChart(fresh, sub, (p)=>{
+    const rd=document.getElementById('rd');
+    const fl = s.ref ? `<span class="rf fl ${p.flag}">${p.flag==='normal'?'in range':p.flag}</span>` : '';
+    const ref = s.ref ? ` <span>· ref ${s.ref.lo}–${s.ref.hi}</span>` : '';
+    rd.innerHTML=`<span class="rd">${fmtDate(p.x,true)}</span>
+      <span class="rv"><b>${p.y}</b> ${s.unit}${ref} · <span class="cite">${p.note}</span></span>${fl}`;
+  });
+}
+function tableHTML(s){
+  const rows=s.points.slice().reverse().map(p=>{
+    const cls=p.flag==='critical'?'crit':(p.flag!=='normal'?'ab':'');
+    const fl=s.ref?`<td><span class="fl ${p.flag}">${p.flag==='normal'?'—':p.flag}</span></td>`:'';
+    const ref=s.ref?`<td>${s.ref.lo}–${s.ref.hi}</td>`:'';
+    return `<tr class="${cls}"><td>${fmtDate(p.x,true)}</td><td><b>${p.y}</b> ${s.unit}</td>${ref}${fl}<td class="cite">${p.note}</td></tr>`;
+  }).join('');
+  return `<table class="tbl"><thead><tr><th>Date</th><th>Value</th>${s.ref?'<th>Ref</th><th>Flag</th>':''}<th>Source</th></tr></thead><tbody>${rows}</tbody></table>`;
+}
+function closeSheet(){ document.getElementById('sheet').classList.remove('open'); }
+
+renderCard('card-weight','weight');
+renderCard('card-plt','platelets');
+document.getElementById('theme').onclick=()=>{const h=document.documentElement;
+  h.dataset.theme=h.dataset.theme==='light'?'dark':'light'};
+</script>
+</body>
+</html>
