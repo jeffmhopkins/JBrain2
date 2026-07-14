@@ -105,9 +105,10 @@ def test_llama_4_scout_is_a_vision_alt_at_int4() -> None:
     assert m.hf_repo == "unsloth/Llama-4-Scout-17B-16E-Instruct-GGUF"
     assert m.spec == "local:llama-4-scout-int4"
     # Serves the conservative gateway default; the native 10M window is capped to the
-    # largest window the picker exposes (256k) rather than a slider nobody can serve.
+    # largest window an operator can realistically serve here (1M — ~105 GB with weights
+    # + KV fits a 128 GB box), which the picker exposes as its ceiling.
     assert m.context_window == local_catalog.DEFAULT_LOCAL_CONTEXT_WINDOW
-    assert m.native_context_window == 262144 and m.max_context_window == 262144
+    assert m.native_context_window == 1_000_000 and m.max_context_window == 1_000_000
     # Opt-in, not part of the default resident set the install prompt offers.
     assert m.id not in local_catalog.recommended_ids()
 

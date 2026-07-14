@@ -146,12 +146,13 @@ CATALOG: tuple[LocalModel, ...] = (
         "(more total params, similar active cost); co-resides beside a small model on a "
         "128 GB box. Non-thinking (no reasoning channel). Vision needs a recent llama.cpp "
         "build with Llama 4 mmproj support (in the multimodal set upstream).",
-        # Scout's native window is architecturally huge (10M via iRoPE), but this
-        # memory-bound box can't hold a KV cache anywhere near it, and the settings
-        # picker's choices top out at 256k — so expose 256k as the ceiling (the largest
-        # window an operator can realistically serve) rather than a slider to 10M nobody
-        # can load. Serves the conservative gateway default until raised.
-        native_context_window=262144,
+        # Scout's native window is architecturally huge (10M via iRoPE), far beyond what
+        # this box can hold. Expose a 1M ceiling (picker steps at 500k and 1M): ~59 GB of
+        # weights plus this model's KV estimate keeps 1M inside a 128 GB box (~105 GB),
+        # while the steps above that would exceed it — so 1M is the largest window an
+        # operator can realistically serve here. The drawer's KV bar is the guardrail;
+        # serves the conservative gateway default until raised.
+        native_context_window=1_000_000,
         # Interleaved local/global attention keeps the KV cache moderate for a model this
         # size; matches the other vision MoE's conservative guardrail estimate.
         kv_gb_per_128k=6.0,
