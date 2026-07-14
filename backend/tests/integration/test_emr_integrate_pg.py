@@ -215,7 +215,7 @@ async def test_encounters_projection_populated(maker, tmp_path):  # noqa: F811
 
 async def test_read_labs_tool_returns_records_and_firewalls(maker, tmp_path):  # noqa: F811
     from jbrain.agent.labtools import build_lab_handlers
-    from jbrain.agent.loop import ToolContext
+    from jbrain.agent.loop import ToolContext, ToolOutput
     from jbrain.db.session import SessionContext
 
     await _integrate(maker, tmp_path)
@@ -223,10 +223,21 @@ async def test_read_labs_tool_returns_records_and_firewalls(maker, tmp_path):  #
     owner = ToolContext(session=SYSTEM_CTX, scopes=())
     out = await handlers["read_labs"]({"analyte": "platelet"}, owner)
     assert "Platelet count" in out
-    # A general-only scope sees nothing — the firewall is the tooth (§5, §7.2).
+    # A single-analyte trend also emits a lab_chart view; when present it is a well-
+    # formed, health-domain plot (the exact shape is pinned in test_lab_chart_view.py).
+    trend = await handlers["read_labs"]({"analyte": "platelet", "trend": True}, owner)
+    if isinstance(trend, ToolOutput) and trend.view is not None:
+        assert trend.view.view == "lab_chart"
+        assert trend.view.data["domain"] == "health"
+        assert len(trend.view.data["series"][0]["points"]) >= 2
+    # A general-only scope sees nothing — the firewall is the tooth (§5, §7.2): no rows,
+    # and therefore no view can leak a health reading through the render channel.
     general = SessionContext(principal_kind="capability_token", domain_scopes=("general",))
-    empty = await handlers["read_labs"]({}, ToolContext(session=general, scopes=()))
+    empty = await handlers["read_labs"](
+        {"analyte": "platelet", "trend": True}, ToolContext(session=general, scopes=())
+    )
     assert "No lab results" in empty
+    assert isinstance(empty, ToolOutput) and empty.view is None
 
 
 def _pathology_pipeline(maker, payload: object) -> AnalysisPipeline:  # noqa: F811

@@ -1,6 +1,6 @@
 # Chat Charts & Lab Plots — Build Plan
 
-> **Status:** In progress · **Last verified:** 2026-07-14 · **Waves:** W0✅ (GUI gate — **C chosen**) W1✅ W2◻️ W3◻️
+> **Status:** In progress · **Last verified:** 2026-07-14 · **Waves:** W0✅ (GUI gate — **C chosen**) W1✅ W2✅ W3◻️
 
 **An in-progress build plan** (per `docs/DOC_LIFECYCLE.md`): let the assistant answer a
 "chart / graph / plot this over time" or "show me my lab trend" question with an
@@ -150,9 +150,15 @@ Both are additive registry entries in `registry.tsx` (`chart`, `lab_chart`) buil
   (band + flags, wheel-zoom reveals reset, keyboard scrub, tab switch, empty state). The
   `lab_chart` **component** lands here (it shares the engine); its **backend emission + RLS**
   is W2. Full frontend suite green (1138 tests), lint + typecheck clean.
-- **W2 — `lab_chart` + `read_labs` emission.** The lab specialization, the `read_labs` trend
-  view, the `.tool` version bump + CI digest pin, backend emission tests, health-RLS inheritance
-  test. `read_labs` prose unchanged.
+- **W2 — `lab_chart` + `read_labs` emission ✅.** `agent/labtools.py` gains a **pure**
+  `lab_chart_view(rows)` builder (plots only current/numeric/non-preliminary draws, maps
+  `interpretation → flag` with a reference-band fallback, a nice 1/2/2.5/5×10ⁿ y-scale, a
+  `FactRef` per draw) wired into `read_labs`' `trend:true` single-analyte path via
+  `ToolOutput(view=…)`. 6 pure unit tests pin the shape/filter/flag/scale; the existing
+  `read_labs` PG integration test now also asserts the firewall zeroes the view (a non-health
+  scope emits no `lab_chart`) and that any emitted view is a well-formed health plot. The
+  `.tool` sidecar is unchanged (the view is handler behavior, not a schema/prose change), so no
+  version bump / digest pin was needed. ruff + pyright clean.
 - **W3 — the grounded generic path (§5 decision) + polish.** The chosen chart-data path, the
   Table/citation affordances, accessibility pass, reduced-motion, light/dark validation.
 

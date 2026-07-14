@@ -9,11 +9,13 @@ diagnosis, cause, or recommendation. A superseded reading is marked
 than presented as current.
 """
 
+import math
 from typing import Any
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from jbrain.agent.contracts import CitationRef, FactRef, ViewPayload
 from jbrain.agent.loop import ToolContext, ToolHandler, ToolOutput
 from jbrain.db.session import scoped_session
 
@@ -64,6 +66,108 @@ def format_labs(rows: list[Any]) -> str:
     return "\n".join(_lab_line(r) for r in rows)
 
 
+def _chart_flag(interp: Any, val: float, lo: float | None, hi: float | None) -> str:
+    """Map a draw to the view's closed flag enum (normal|low|high|critical). Prefer the
+    record's own interpretation; fall back to the reference band when it is bare."""
+    i = str(interp or "").lower()
+    if i == "critical":
+        return "critical"
+    if i in ("high", "low"):
+        return i
+    if hi is not None and val > hi:
+        return "high"
+    if lo is not None and val < lo:
+        return "low"
+    return "normal"
+
+
+def _nice_scale(values: list[float], ref_lo: float | None) -> tuple[float, float, list[float]]:
+    """A clean Y scale (min, max, inner ticks) around the data — ~5 intervals on a
+    1/2/2.5/5 × 10ⁿ step, with the reference low kept in view so the band edge shows."""
+    lo = min(values)
+    hi = max(values)
+    if ref_lo is not None:
+        lo = min(lo, ref_lo)
+    rng = (hi - lo) or (abs(hi) or 1.0)
+    lo_p = lo - rng * 0.2
+    hi_p = hi + rng * 0.2
+    raw = (hi_p - lo_p) / 5 or 1.0
+    mag = 10 ** math.floor(math.log10(raw)) if raw > 0 else 1
+    step = next((m * mag for m in (1, 2, 2.5, 5, 10) if m * mag >= raw), 10 * mag)
+    y_min = math.floor(lo_p / step) * step
+    y_max = math.ceil(hi_p / step) * step
+    ticks: list[float] = []
+    t = y_min + step
+    while t < y_max - 1e-9:
+        ticks.append(round(t, 4))
+        t += step
+    if all(float(v).is_integer() for v in (y_min, y_max, *ticks)):
+        return int(y_min), int(y_max), [int(v) for v in ticks]
+    return y_min, y_max, ticks
+
+
+def lab_chart_view(rows: list[Any]) -> ViewPayload | None:
+    """Build the `lab_chart` tool-view for a single-analyte trend (DESIGN.md
+    "chart & lab_chart tool-views"). Plots only **current, numeric, non-preliminary**
+    draws — the trend as it stands now; superseded / preliminary readings stay in the
+    text (and the Table), never in the plotted series. Returns None when fewer than two
+    points would be plotted (a single reading is not a trend). Data-only (#1/#9): numbers
+    plus a closed `flag` enum; the component owns the palette. Health-domain by
+    construction — the rows came from a health-scoped read."""
+    pts: list[dict[str, Any]] = []
+    refs: list[CitationRef] = []
+    ref_lo: float | None = None
+    ref_hi: float | None = None
+    unit = ""
+    analyte = ""
+    for r in rows:
+        if r["value_num"] is None or not r["is_current"] or r["report_status"] == "preliminary":
+            continue
+        when = r["collected_at"]
+        if when is None:
+            continue
+        val = float(r["value_num"])
+        lo = float(r["ref_low"]) if r["ref_low"] is not None else None
+        hi = float(r["ref_high"]) if r["ref_high"] is not None else None
+        if lo is not None:
+            ref_lo = lo
+        if hi is not None:
+            ref_hi = hi
+        unit = r["unit"] or unit
+        analyte = r["analyte"] or analyte
+        note_id = r["source_note_id"]
+        point: dict[str, Any] = {
+            "x": int(when.timestamp() * 1000),
+            "y": val,
+            "flag": _chart_flag(r["interpretation"], val, lo, hi),
+        }
+        if note_id:
+            point["note"] = f"note:{note_id}"
+        pts.append(point)
+        refs.append(FactRef(fact_id=str(r["id"]), label=f"{analyte} {_num(val)}"))
+    if len(pts) < 2:
+        return None
+    order = sorted(range(len(pts)), key=lambda i: pts[i]["x"])
+    pts = [pts[i] for i in order]
+    refs = [refs[i] for i in order]
+    y_min, y_max, ticks = _nice_scale([p["y"] for p in pts], ref_lo)
+    data: dict[str, Any] = {
+        "domain": "health",
+        "unit": unit,
+        "title": analyte or "Lab result",
+        "x_kind": "time",
+        "y": {"min": y_min, "max": y_max, "ticks": ticks},
+        "series": [{"label": analyte, "points": pts}],
+    }
+    if ref_lo is not None and ref_hi is not None:
+        data["ref"] = {
+            "lo": ref_lo,
+            "hi": ref_hi,
+            "label": f"reference {_num(ref_lo)}–{_num(ref_hi)}",
+        }
+    return ViewPayload(view="lab_chart", surface="inline", data=data, refs=refs)
+
+
 def _encounter_line(r: Any) -> str:
     unit = f" ({r['care_unit']})" if r["care_unit"] else ""
     fac = f" at {r['facility']}" if r["facility"] else ""
@@ -96,8 +200,13 @@ def build_lab_handlers(maker: async_sessionmaker[AsyncSession]) -> dict[str, Too
         order = "collected_at ASC" if ascending else "collected_at DESC"
         sql = f"SELECT {_LAB_COLS} FROM app.lab_results{where} ORDER BY {order} LIMIT :limit"
         async with scoped_session(maker, ctx.session) as s:
-            rows = (await s.execute(text(sql), params)).mappings().all()
-        return ToolOutput(format_labs(list(rows)))
+            rows = list((await s.execute(text(sql), params)).mappings().all())
+        # A single-analyte trend also renders an interactive lab_chart view; a bare list
+        # or a lone reading stays text-only.
+        view = lab_chart_view(rows) if ascending else None
+        if view is not None:
+            return ToolOutput(format_labs(rows), view=view)
+        return ToolOutput(format_labs(rows))
 
     async def read_encounters_tool(arguments: dict, ctx: ToolContext) -> ToolOutput:
         enc_id = str(arguments.get("encounter_id", "") or "").strip()
