@@ -2069,6 +2069,7 @@ function ChartCard({ data }: ViewProps): ReactNode {
             points={pts}
             y={yScale}
             domain={domain}
+            kind={data.kind === "area" ? "area" : "line"}
             label={`${title} over time`}
             onScrub={(p) => setSel(p as CardPoint)}
             {...(ref ? { refBand: ref } : {})}

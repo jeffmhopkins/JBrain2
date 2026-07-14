@@ -9,12 +9,12 @@ diagnosis, cause, or recommendation. A superseded reading is marked
 than presented as current.
 """
 
-import math
 from typing import Any
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from jbrain.agent.chartscale import nice_scale
 from jbrain.agent.contracts import CitationRef, FactRef, ViewPayload
 from jbrain.agent.loop import ToolContext, ToolHandler, ToolOutput
 from jbrain.db.session import scoped_session
@@ -81,31 +81,6 @@ def _chart_flag(interp: Any, val: float, lo: float | None, hi: float | None) -> 
     return "normal"
 
 
-def _nice_scale(values: list[float], ref_lo: float | None) -> tuple[float, float, list[float]]:
-    """A clean Y scale (min, max, inner ticks) around the data — ~5 intervals on a
-    1/2/2.5/5 × 10ⁿ step, with the reference low kept in view so the band edge shows."""
-    lo = min(values)
-    hi = max(values)
-    if ref_lo is not None:
-        lo = min(lo, ref_lo)
-    rng = (hi - lo) or (abs(hi) or 1.0)
-    lo_p = lo - rng * 0.2
-    hi_p = hi + rng * 0.2
-    raw = (hi_p - lo_p) / 5 or 1.0
-    mag = 10 ** math.floor(math.log10(raw)) if raw > 0 else 1
-    step = next((m * mag for m in (1, 2, 2.5, 5, 10) if m * mag >= raw), 10 * mag)
-    y_min = math.floor(lo_p / step) * step
-    y_max = math.ceil(hi_p / step) * step
-    ticks: list[float] = []
-    t = y_min + step
-    while t < y_max - 1e-9:
-        ticks.append(round(t, 4))
-        t += step
-    if all(float(v).is_integer() for v in (y_min, y_max, *ticks)):
-        return int(y_min), int(y_max), [int(v) for v in ticks]
-    return y_min, y_max, ticks
-
-
 def lab_chart_view(rows: list[Any]) -> ViewPayload | None:
     """Build the `lab_chart` tool-view for a single-analyte trend (DESIGN.md
     "chart & lab_chart tool-views"). Plots only **current, numeric, non-preliminary**
@@ -150,7 +125,7 @@ def lab_chart_view(rows: list[Any]) -> ViewPayload | None:
     order = sorted(range(len(pts)), key=lambda i: pts[i]["x"])
     pts = [pts[i] for i in order]
     refs = [refs[i] for i in order]
-    y_min, y_max, ticks = _nice_scale([p["y"] for p in pts], ref_lo)
+    y_min, y_max, ticks = nice_scale([p["y"] for p in pts], ref_lo)
     data: dict[str, Any] = {
         "domain": "health",
         "unit": unit,

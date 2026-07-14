@@ -1015,4 +1015,30 @@ describe("chart & lab_chart views", () => {
     expect(line).toBeInTheDocument();
     expect(line?.getAttribute("d") ?? "").not.toContain("NaN");
   });
+
+  it("draws an area fill when the chart kind is area", () => {
+    const { container } = render(
+      <ToolView
+        payload={payload({
+          view: "chart",
+          data: {
+            domain: "general",
+            unit: "mi",
+            kind: "area",
+            series: [
+              {
+                points: [
+                  { x: Date.UTC(2025, 0, 1), y: 3 },
+                  { x: Date.UTC(2025, 1, 1), y: 8 },
+                ],
+              },
+            ],
+          },
+        })}
+      />,
+    );
+    const area = container.querySelector(".tv-plot-area");
+    expect(area).toBeInTheDocument();
+    expect(area?.getAttribute("d") ?? "").toMatch(/Z$/);
+  });
 });

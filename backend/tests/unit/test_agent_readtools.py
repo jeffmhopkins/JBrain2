@@ -770,6 +770,8 @@ def test_build_registry_binds_the_shipped_sidecars() -> None:
         "manage_appointment",
         "read_labs",
         "read_encounters",
+        "chart_measurements",
+        "render_chart",
         "recall",
         "memory_read",
         "memory_edit",
@@ -934,6 +936,16 @@ def test_sidecars_pinned_to_their_versions() -> None:
             "read_labs",
             1,
             "d0eb90ac9c6e5953509d9ada921025adb5e3509a679880d6852c90e11c3b0cdc",
+        ),
+        "chart_measurements.tool": (
+            "chart_measurements",
+            1,
+            "2adc7c45631bfdfac9e2f52942f8731213e1514b653ca73877002d7db22a5d28",
+        ),
+        "render_chart.tool": (
+            "render_chart",
+            1,
+            "5cb07e3d02da5315d269ff62ee3e2b80884c9f5f35b8ce64b3de4e376ac58540",
         ),
         "read_encounters.tool": (
             "read_encounters",

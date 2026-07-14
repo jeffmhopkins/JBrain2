@@ -19534,6 +19534,15 @@ button.task-band:active {
 .fb-shell .tv-plot.dom-health .tv-plot-line {
   stroke: var(--rose);
 }
+.fb-shell .tv-plot-area {
+  stroke: none;
+}
+.fb-shell .tv-plot.dom-general .tv-plot-area {
+  fill: color-mix(in srgb, var(--steel) 16%, transparent);
+}
+.fb-shell .tv-plot.dom-health .tv-plot-area {
+  fill: color-mix(in srgb, var(--rose) 16%, transparent);
+}
 .fb-shell .tv-plot-pt {
   stroke: var(--surface);
   stroke-width: 2;

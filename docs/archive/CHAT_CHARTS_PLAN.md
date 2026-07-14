@@ -1,8 +1,8 @@
 # Chat Charts & Lab Plots — Build Plan
 
-> **Status:** In progress · **Last verified:** 2026-07-14 · **Waves:** W0✅ (GUI gate — **C chosen**) W1✅ W2✅ W3◻️
+> **Status:** Shipped · **Last verified:** 2026-07-14 · **Waves:** W0✅ (GUI gate — **C chosen**) W1✅ W2✅ W3✅
 
-**An in-progress build plan** (per `docs/DOC_LIFECYCLE.md`): let the assistant answer a
+**A shipped build record** (per `docs/DOC_LIFECYCLE.md`): let the assistant answer a
 "chart / graph / plot this over time" or "show me my lab trend" question with an
 **interactive, zoomable/pannable chart tool-view** in the chat transcript, instead of a wall
 of numbers. Synthesized against the shipped tool-view system
@@ -122,16 +122,13 @@ Both are additive registry entries in `registry.tsx` (`chart`, `lab_chart`) buil
   returns it via `ToolOutput(view=…)`. Superseded / preliminary draws are excluded from the plotted
   current series (marked in the Table view), matching the prose tool's rule. Health-scoped session
   is the firewall; a non-health scope never reaches the handler's data.
-- **Generic `chart` — OPEN DECISION (§ owner):** how does the agent produce a grounded generic
-  chart without fabricating numbers?
-  - **(a) Chart-from-facts tool** *(recommended)* — a `plot_measurements`/`chart` read tool that
-    takes an entity + predicate (or a saved-search) and returns the series **from `app.facts`
-    measurements** under RLS, so every plotted point traces to a fact/note (grounded, firewalled).
-  - **(b) Let the model pass the series** it just read into a `render_chart` tool — simplest, but
-    the numbers are model-retyped (weaker provenance); acceptable only with a verifier that the
-    values match a prior read this turn.
-  - Recommendation: **(a)** for anything citable; **(b)** never for health/finance. Settle before
-    Wave 3.
+- **Generic `chart` — RESOLVED (owner chose BOTH):** two producers ship (W3):
+  - **(a) `chart_measurements`** *(the grounded, citable path)* — reads a measurement predicate's
+    numeric history from `app.facts` on the RLS-scoped session, so every point traces to a note and
+    the firewall holds at the source. Tint domain follows the facts (health → rose, else steel).
+  - **(b) `render_chart`** — the model hands over a series it assembled; **general-domain only**, so
+    it never launders health/finance numbers into an un-cited chart (those keep their grounded
+    tools). The prose binds the model to state where the numbers came from.
 
 ---
 
@@ -159,8 +156,14 @@ Both are additive registry entries in `registry.tsx` (`chart`, `lab_chart`) buil
   scope emits no `lab_chart`) and that any emitted view is a well-formed health plot. The
   `.tool` sidecar is unchanged (the view is handler behavior, not a schema/prose change), so no
   version bump / digest pin was needed. ruff + pyright clean.
-- **W3 — the grounded generic path (§5 decision) + polish.** The chosen chart-data path, the
-  Table/citation affordances, accessibility pass, reduced-motion, light/dark validation.
+- **W3 — the generic `chart` producers (§5 — both) ✅.** `agent/charttools.py` +
+  `agent/chartscale.py` (shared `nice_scale`, refactored out of `labtools`): the grounded
+  `chart_measurements` (reads `app.facts` under RLS, one citation per point) and `render_chart`
+  (model-supplied general series) tools, each with a `.tool` sidecar (pinned + version-guarded) and
+  wired into the registry (curator wildcard picks them up). The `chart` view now renders `kind:area`
+  (a filled path to the baseline). 7 pure unit tests + a PG integration test asserting the
+  `chart_measurements` RLS firewall zeroes the view for a non-health scope. Backend ruff + pyright
+  clean; frontend suite green.
 
 Each wave: per-task adversarial review, per-wave review (W2/W3 touch the health firewall → a
 red-team read), one PR per wave, CI green before merge (`docs/reference/PROCESS.md`).

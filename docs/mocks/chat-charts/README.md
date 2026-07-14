@@ -3,7 +3,7 @@
 > **Status:** Living · **Last verified:** 2026-07-14
 
 Three interactive mockups for the **chart / graph / lab-plot tool-view** in the Full Brain
-chat (build plan: `docs/plans/CHAT_CHARTS_PLAN.md`; the GUI gate, `docs/reference/PROCESS.md`).
+chat (build plan: `docs/archive/CHAT_CHARTS_PLAN.md`; the GUI gate, `docs/reference/PROCESS.md`).
 Each is a self-contained phone-framed page using JBrain design tokens (`docs/reference/DESIGN.md`),
 and each renders **both** a generic chart (body weight, general/steel domain) and a lab plot
 (platelet count, health/rose domain — reference band + abnormal-flag toned points, a critical

@@ -1205,7 +1205,7 @@ an in-coverage US point. Map geometry is projected on-box, so the most an invers
 the `you` pin against the public track coordinates can recover is that city centre.
 Owner-facing chat artifact; never a note, never RAG-indexed.
 
-### `chart` & `lab_chart` tool-views (settled in a three-way GUI review — reference mock: `docs/mocks/chat-charts/c-tabbed-card.html`; build plan `docs/plans/CHAT_CHARTS_PLAN.md`)
+### `chart` & `lab_chart` tool-views (settled in a three-way GUI review — reference mock: `docs/mocks/chat-charts/c-tabbed-card.html`; build plan `docs/archive/CHAT_CHARTS_PLAN.md`)
 
 The in-chat **interactive time-series chart** — the answer when a "chart / graph / plot
 this over time" or "show my lab trend" question is better read as a shape than a wall of

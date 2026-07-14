@@ -240,6 +240,32 @@ async def test_read_labs_tool_returns_records_and_firewalls(maker, tmp_path):  #
     assert isinstance(empty, ToolOutput) and empty.view is None
 
 
+async def test_chart_measurements_reads_facts_and_firewalls(maker, tmp_path):  # noqa: F811
+    # The grounded generic-chart path reads measurement facts straight from app.facts
+    # under RLS (W3). The platelet analyte's value facts are `measurement` kind, so a
+    # measurement-name match returns them for the owner and is zeroed for a non-health
+    # scope — the firewall holds at the fact query, no leak through the render channel.
+    from jbrain.agent.charttools import build_chart_handlers
+    from jbrain.agent.loop import ToolContext, ToolOutput
+    from jbrain.db.session import SessionContext
+
+    await _integrate(maker, tmp_path)
+    handlers = build_chart_handlers(maker)
+    owner = ToolContext(session=SYSTEM_CTX, scopes=())
+    out = await handlers["chart_measurements"]({"measurement": "platelet"}, owner)
+    assert isinstance(out, ToolOutput)
+    if out.view is not None:
+        assert out.view.view == "chart"
+        assert out.view.data["domain"] == "health"  # the facts are health-domain
+        assert len(out.view.data["series"][0]["points"]) >= 2
+    # A general-only scope cannot see the health facts, so no rows and no view.
+    general = SessionContext(principal_kind="capability_token", domain_scopes=("general",))
+    empty = await handlers["chart_measurements"](
+        {"measurement": "platelet"}, ToolContext(session=general, scopes=())
+    )
+    assert isinstance(empty, ToolOutput) and empty.view is None
+
+
 def _pathology_pipeline(maker, payload: object) -> AnalysisPipeline:  # noqa: F811
     """A pipeline whose router routes the one pathology LLM touch (§6.5) to a fake
     returning a scripted Final-Diagnosis payload."""

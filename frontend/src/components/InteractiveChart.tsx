@@ -30,6 +30,8 @@ export interface InteractiveChartProps {
   y: { min: number; max: number; ticks: number[] };
   /** "general" (steel) or "health" (rose) — tones the line + selection. */
   domain: "general" | "health";
+  /** "line" (default) or "area" — an area fills under the line to the baseline. */
+  kind?: "line" | "area";
   /** A reference band drawn as a tinted zone with a dashed lower edge (lab plots). */
   refBand?: RefBand;
   /** Called when the selection changes (tap / keyboard), for the parent's readout. */
@@ -63,6 +65,7 @@ export function InteractiveChart({
   points,
   y,
   domain,
+  kind = "line",
   refBand,
   onScrub,
   label,
@@ -243,10 +246,17 @@ export function InteractiveChart({
       break;
     }
   }
-  const line = pts
-    .slice(iA, iB + 1)
+  const vis = pts.slice(iA, iB + 1);
+  const line = vis
     .map((p, i) => `${i ? "L" : "M"}${px(p.x).toFixed(1)} ${py(p.y).toFixed(1)}`)
     .join(" ");
+  // Area fill (kind="area"): the line closed down to the baseline.
+  const first = vis[0];
+  const last = vis[vis.length - 1];
+  const area =
+    kind === "area" && first && last
+      ? `M${px(first.x).toFixed(1)} ${H - B} ${line.replace(/^M/, "L")} L${px(last.x).toFixed(1)} ${H - B} Z`
+      : "";
 
   const selPt = pts[sel];
   const selVisible = !!selPt && selPt.x >= vs - DAY && selPt.x <= ve + DAY;
@@ -312,6 +322,7 @@ export function InteractiveChart({
           {selVisible && selPt && (
             <line className="tv-plot-vrule" x1={px(selPt.x)} y1={T} x2={px(selPt.x)} y2={H - B} />
           )}
+          {area && <path className="tv-plot-area" d={area} />}
           <path className="tv-plot-line" d={line} />
           {pts.map((p, i) =>
             p.x < vs - DAY || p.x > ve + DAY ? null : (
