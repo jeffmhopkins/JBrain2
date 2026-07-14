@@ -211,6 +211,13 @@ export function InteractiveChart({
     if (pointers.current.size === 1 && !moved.current) setSelected(nearest(localX(e.clientX)));
     pointers.current.delete(e.pointerId);
     if (pointers.current.size < 2) pinchStart.current = null;
+    if (pointers.current.size === 1) {
+      // A pinch dropped to one finger: re-anchor pan on the survivor so dragging
+      // keeps working without lifting and re-touching.
+      const [only] = [...pointers.current.values()];
+      if (only) panStart.current = { x: only.x, vs, ve };
+      moved.current = true; // was a pinch; don't treat the next lift as a tap-select
+    }
     if (pointers.current.size === 0) panStart.current = null;
   }
 

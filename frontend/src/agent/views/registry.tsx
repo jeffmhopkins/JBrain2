@@ -1829,12 +1829,13 @@ function readYScale(
   const ys = pts.map((p) => p.y);
   const dMin = Math.min(...ys);
   const dMax = Math.max(...ys);
-  const min = Number.isFinite(Number(y.min))
-    ? Number(y.min)
-    : Math.floor(dMin - (dMax - dMin) * 0.1);
-  const max = Number.isFinite(Number(y.max))
-    ? Number(y.max)
-    : Math.ceil(dMax + (dMax - dMin) * 0.1);
+  // Pad so a flat (all-equal) series still spans a nonzero range — otherwise
+  // min===max and the plot divides by zero (NaN coordinates, a blank chart).
+  const pad = (dMax - dMin) * 0.1 || Math.abs(dMax) * 0.1 || 1;
+  const min = Number.isFinite(Number(y.min)) ? Number(y.min) : Math.floor(dMin - pad);
+  const maxRaw = Number.isFinite(Number(y.max)) ? Number(y.max) : Math.ceil(dMax + pad);
+  // Guarantee a positive span even if a producer hands us y.min === y.max.
+  const max = maxRaw > min ? maxRaw : min + 1;
   const ticks = Array.isArray(y.ticks) ? y.ticks.map(Number).filter((t) => Number.isFinite(t)) : [];
   return { min, max, ticks: ticks.length ? ticks : [min, (min + max) / 2, max].map(Math.round) };
 }
@@ -1910,8 +1911,9 @@ function RangeView({
         <span>{band.label}</span>
         <span>{fmtNum(axMax)}</span>
       </div>
-      {recent.map((p) => (
-        <div className="tv-cc-gauge-row" key={p.x}>
+      {recent.map((p, i) => (
+        // Composite key: two draws could share a timestamp; x alone isn't unique.
+        <div className="tv-cc-gauge-row" key={`${p.x}-${i}`}>
           <div className="tv-cc-gauge-head">
             <span className="tv-cc-gauge-date">{fmtLong(p.x)}</span>
             <span className="tv-cc-gauge-val">
@@ -1981,9 +1983,10 @@ function ChartTable({
         {pts
           .slice()
           .reverse()
-          .map((p) => (
+          .map((p, i) => (
+            // Composite key: two draws could share a timestamp; x alone isn't unique.
             <tr
-              key={p.x}
+              key={`${p.x}-${i}`}
               className={p.flag === "critical" ? "crit" : p.flag && p.flag !== "normal" ? "ab" : ""}
             >
               <td>{fmtLong(p.x)}</td>

@@ -989,4 +989,30 @@ describe("chart & lab_chart views", () => {
     render(<ToolView payload={payload({ view: "chart", data: { series: [{ points: [] }] } })} />);
     expect(screen.getByText(/No data to plot/)).toBeInTheDocument();
   });
+
+  it("keeps a positive y-scale for a flat all-equal integer series (no NaN)", () => {
+    // Regression: readYScale used to yield min===max -> divide-by-zero -> NaN coords.
+    const { container } = render(
+      <ToolView
+        payload={payload({
+          view: "chart",
+          data: {
+            domain: "general",
+            unit: "kg",
+            series: [
+              {
+                points: [
+                  { x: Date.UTC(2025, 0, 1), y: 5 },
+                  { x: Date.UTC(2025, 1, 1), y: 5 },
+                ],
+              },
+            ],
+          },
+        })}
+      />,
+    );
+    const line = container.querySelector(".tv-plot-line");
+    expect(line).toBeInTheDocument();
+    expect(line?.getAttribute("d") ?? "").not.toContain("NaN");
+  });
 });
