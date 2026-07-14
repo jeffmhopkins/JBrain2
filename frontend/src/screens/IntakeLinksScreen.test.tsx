@@ -99,7 +99,7 @@ function deps(over: Partial<IntakeLinksDeps> = {}): IntakeLinksDeps {
     })),
     getProposal: vi.fn(async () => proposal()),
     decideNode: vi.fn(async () => {}),
-    enactProposal: vi.fn(async () => ({ enacted: ["N1"], held: [] })),
+    enactProposal: vi.fn(async () => ({ enacted: ["N1"], held: [], outcome: "" })),
     ...over,
   };
 }

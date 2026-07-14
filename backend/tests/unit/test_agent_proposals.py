@@ -2,10 +2,14 @@
 enactment (docs/reference/ASSISTANT.md "Staging & approval"). The DB repo is integration."""
 
 from jbrain.agent.proposals import (
+    EnactmentPlan,
     Node,
+    NodeRow,
+    ProposalRow,
     cascade_approve,
     cascade_reject,
     descendants,
+    enact_outcome_summary,
     enactment_plan,
 )
 
@@ -91,3 +95,48 @@ class TestEnactmentPlan:
         plan = enactment_plan(nodes)
         assert set(plan.enactable) == {"a", "b"}
         assert plan.held == ("d",)
+
+
+def _row(node_id, *, status="approved", label="", op="add_note", preview=None, note=None):
+    return NodeRow(node_id, None, "leaf", op, label, preview or {}, (), status, note)
+
+
+class TestEnactOutcomeSummary:
+    """The server-authored outcome string an inline enact returns to the assistant —
+    built from DB truth (INLINE_APPROVALS_PLAN §3.1)."""
+
+    prop = ProposalRow("p1", "correction", "enacted", "health", "Update meds", None)
+
+    def test_plain_approvals(self) -> None:
+        nodes = [_row("a", label="lisinopril"), _row("b", label="HCTZ")]
+        plan = EnactmentPlan(enactable=("a", "b"), held=())
+        out = enact_outcome_summary(self.prop, nodes, plan)
+        assert out == "Enacted 2 of 2 — 2 approved. Returned to assistant as 2 approvals."
+
+    def test_correction_and_decline_and_held(self) -> None:
+        nodes = [
+            _row("a", label="lisinopril"),
+            _row("b", label="HCTZ", preview={"body": "HCTZ 25 mg", "edited": True}),
+            _row("c", label="reschedule", status="rejected", note="wrong date"),
+            _row("d", label="combo note", status="held"),
+        ]
+        plan = EnactmentPlan(enactable=("a", "b"), held=("d",))
+        out = enact_outcome_summary(self.prop, nodes, plan)
+        assert "Enacted 2 of 4 — 1 approved, 1 corrected (HCTZ)" in out
+        assert "declined 1 (reschedule: wrong date)" in out
+        assert "1 held, not run" in out
+        assert out.endswith("Returned to assistant as 2 approvals.")
+
+    def test_nothing_enacted(self) -> None:
+        nodes = [_row("a", label="x", status="rejected", note="no")]
+        out = enact_outcome_summary(self.prop, nodes, EnactmentPlan(enactable=(), held=()))
+        assert out.startswith("Enacted nothing from “Update meds”")
+        assert out.endswith("Returned to assistant as 0 approvals.")
+
+    def test_an_undecided_leaf_is_reported_not_dropped(self) -> None:
+        # A leaf the owner never decided (still 'pending') is accounted for, so the
+        # summary stays honest rather than silently under-counting.
+        nodes = [_row("a", label="lisinopril"), _row("b", label="HCTZ", status="pending")]
+        out = enact_outcome_summary(self.prop, nodes, EnactmentPlan(enactable=("a",), held=()))
+        assert "Enacted 1 of 2 — 1 approved" in out
+        assert "1 left undecided" in out

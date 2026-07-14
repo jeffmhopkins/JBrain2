@@ -127,6 +127,57 @@ async def test_nodes_follow_their_proposal(maker: async_sessionmaker) -> None:
         assert (await session.execute(count_nodes, {"pid": prop_id})).scalar() == 1
 
 
+async def test_decision_note_inherits_the_node_firewall(maker: async_sessionmaker) -> None:
+    # The decline-reason column (migration 0130) is owner-eyes feedback and rides the
+    # node's existing domain-narrowed RLS — a general-only session can't read a health
+    # proposal's decision_note (INLINE_APPROVALS_PLAN §3.3, CLAUDE.md rule 3).
+    pid = await _owner_principal(maker)
+    tag = uuid.uuid4().hex[:8]
+    prop_id = await _stage(maker, pid, "health", f"{tag} health")
+    read_note = text(
+        "SELECT count(*) FROM app.proposal_nodes"
+        " WHERE proposal_id = :pid AND decision_note = 'wrong dose'"
+    )
+    async with scoped_session(maker, read_context(pid, ("health",))) as session:
+        await session.execute(
+            text(
+                "UPDATE app.proposal_nodes SET decision_note = 'wrong dose', status = 'rejected'"
+                " WHERE proposal_id = :pid"
+            ),
+            {"pid": prop_id},
+        )
+        assert (await session.execute(read_note, {"pid": prop_id})).scalar() == 1
+    # A general-only owner session cannot see the health node's reason.
+    async with scoped_session(maker, read_context(pid, ("general",))) as session:
+        assert (await session.execute(read_note, {"pid": prop_id})).scalar() == 0
+
+
+async def test_correct_in_place_is_owner_and_domain_scoped(maker: async_sessionmaker) -> None:
+    # The correct-in-place edit is an RLS-scoped write surface (INLINE_APPROVALS_PLAN §6,
+    # security path): a session that can't SEE a node can't patch its body — the row is
+    # invisible, so patch_node_body no-ops and the body/edited flag are untouched.
+    from jbrain.agent.proposals import NodeSpec, ProposalRepo, ProposalSpec
+
+    pid = await _owner_principal(maker)
+    repo = ProposalRepo(maker)
+    node_id = uuid.uuid4()
+    spec = ProposalSpec(
+        kind="correction",
+        domain="health",
+        title="dose",
+        nodes=[NodeSpec(str(node_id), "leaf", op="add_note", label="x", preview={"body": "12.5"})],
+    )
+    prop_id = await repo.stage(OWNER, principal_id=pid, spec=spec)
+
+    # A general-only owner session cannot patch the health node — it can't see it.
+    blind = read_context(pid, ("general",))
+    assert await repo.patch_node_body(blind, str(node_id), "hijack") is False
+    _, nodes = await repo.load(read_context(pid, ("health",)), prop_id)
+    assert nodes[0].preview == {"body": "12.5"}  # untouched, no 'edited' flag
+    # The in-scope owner CAN patch it — proving the guard is scope, not a blanket refusal.
+    assert await repo.patch_node_body(read_context(pid, ("health",)), str(node_id), "25") is True
+
+
 async def test_notes_carry_provenance(maker: async_sessionmaker) -> None:
     # An agent-authored note is flagged and source-attributed (#7); existing notes
     # default to human-authored.

@@ -113,6 +113,42 @@ async def test_agent_note_executor_writes_a_flagged_idempotent_note_and_enqueues
     assert jobs.enqueued == [("ingest_note", {"note_id": "note-for-proposal-node-1"})]
 
 
+async def test_agent_note_executor_attributes_an_owner_edit_to_the_human() -> None:
+    # Correct-in-place (INLINE_APPROVALS_PLAN §3.2, Decision #2): an owner-edited node
+    # carries preview.edited, so the enacted note is the OWNER's correction — human
+    # provenance with an #edited source_ref, not the agent's.
+    notes, jobs = FakeNotes(), FakeJobs()
+    proposal = ProposalRow("prop-1", "correction", "approved", "health", "t", None)
+    node = NodeRow(
+        "node-1",
+        None,
+        "leaf",
+        "add_note",
+        "lbl",
+        {"body": "HCTZ 25 mg daily", "domain": "health", "edited": True},
+        (),
+        "approved",
+    )
+    await agent_note_executor(notes, jobs)(CTX.session, proposal, node)  # type: ignore[arg-type]
+    n = notes.created[0]
+    assert n["provenance"] == "human"
+    assert n["source_ref"] == "proposal:prop-1#edited"
+    assert n["body"] == "HCTZ 25 mg daily"
+
+
+async def test_only_a_truthy_edited_flag_upgrades_provenance_to_human() -> None:
+    # Provenance hinges on preview.edited (set ONLY by patch_node_body). A node with
+    # other preview keys, or edited falsey, must still enact as the agent's — so no
+    # staging path can launder authorship by splatting args into preview (#7).
+    for preview in ({"body": "x", "domain": "health"}, {"body": "x", "edited": False}):
+        notes, jobs = FakeNotes(), FakeJobs()
+        proposal = ProposalRow("p", "correction", "approved", "health", "t", None)
+        node = NodeRow("n", None, "leaf", "add_note", "lbl", preview, (), "approved")
+        await agent_note_executor(notes, jobs)(CTX.session, proposal, node)  # type: ignore[arg-type]
+        assert notes.created[0]["provenance"] == "agent"
+        assert notes.created[0]["source_ref"] == "proposal:p"
+
+
 async def test_executor_skips_enqueue_on_an_idempotent_re_enact() -> None:
     notes, jobs = FakeNotes(created=False), FakeJobs()
     proposal = ProposalRow("p", "correction", "approved", "health", "t", None)

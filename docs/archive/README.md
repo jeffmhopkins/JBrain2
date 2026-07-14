@@ -1,6 +1,6 @@
 # JBrain2 — docs archive
 
-> **Status:** Living · **Last verified:** 2026-07-03
+> **Status:** Living · **Last verified:** 2026-07-13
 
 Historical documents: completed build plans, fulfilled contracts, rejected
 designs, and the design research that informed them. Kept for the audit trail
@@ -38,6 +38,7 @@ its ship evidence.
 | `WHISPER_TRANSCRIPTION_PLAN.md` | On-box whisper.cpp transcription. |
 | `READ_ALOUD_LEGIBILITY.md` | Read-aloud legibility + fluidity: shared `speakable` normalizer + stream-safe chunker + prefetch pump (W1/W2), and the `wall`/`tts-stt` split with warm piper (W0). |
 | `READ_ALOUD_AUDIOBOOK_PLAN.md` | Audiobook-grade Kokoro read-aloud: two-layer `toProse`/`toUtterance` split, misaki G2P + `KOKORO_LEXICON`, env-tunable pacing (speed + trailing silence), narrator voice blends, and an automatic markup-vs-prose classifier (no mode UI). W0–W4 shipped. |
+| `INLINE_APPROVALS_PLAN.md` | Proposal approval moved into the conversation (inline variant-D card): per-leaf approve / decline-with-reason / correct-in-place + one Enact that returns a server-authored outcome to the assistant (the enact→agent feedback loop). Migration 0130. |
 
 ## Image generation
 | Item | What it is |

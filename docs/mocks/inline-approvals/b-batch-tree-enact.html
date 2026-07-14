@@ -1,0 +1,326 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Inline approvals · B · in-chat tree + batch enact (approve in part, one double-tap enact)</title>
+<style>
+  :root{
+    --bg:#0e0f11; --surface:#17181b; --surface-2:#1e2024; --border:#26282c;
+    --text:#e6e7e9; --text-2:#9a9da3; --text-3:#5c5f66;
+    --steel:#7fa7c9; --green:#8fbc9a; --amber:#c9a36a; --rose:#cf8a8f; --violet:#a493c9;
+    --steel-tint:rgba(127,167,201,.13); --green-tint:rgba(143,188,154,.13);
+    --amber-tint:rgba(201,163,106,.13); --rose-tint:rgba(207,138,143,.13);
+    --violet-tint:rgba(164,147,201,.16);
+    --font-mono:ui-monospace,"SF Mono","Cascadia Mono",Menlo,Consolas,monospace;
+    font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
+  body{background:#000;color:var(--text);display:flex;flex-direction:column;align-items:center;gap:14px;padding:22px 14px 60px;min-height:100vh;}
+  svg{fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;}
+
+  .caption{width:392px;max-width:94vw;padding:0 6px;color:var(--text-2);font-size:12.5px;line-height:1.55;}
+  .caption b{color:var(--text);font-weight:600;} .caption .k{color:var(--amber);}
+  .caption .tag{display:inline-block;font-size:11px;padding:2px 9px;border-radius:999px;margin-bottom:6px;background:var(--steel-tint);color:var(--steel);}
+
+  .phone{width:392px;max-width:94vw;height:788px;background:var(--bg);border:1px solid #2a2c30;border-radius:32px;overflow:hidden;position:relative;display:flex;flex-direction:column;}
+  .bar{height:54px;display:flex;align-items:center;gap:11px;padding:0 14px;border-bottom:1px solid var(--border);flex:none;}
+  .bar .back{color:var(--text-2);display:flex;}
+  .bar .ttl{font-size:16px;font-weight:600;}
+  .bar .right{margin-left:auto;display:flex;align-items:center;gap:12px;color:var(--text-3);}
+  .bar .dot{width:8px;height:8px;border-radius:999px;background:var(--green);}
+
+  .chat{flex:1;overflow-y:auto;padding:12px 14px 16px;display:flex;flex-direction:column;gap:11px;}
+  .bubble{padding:11px 14px;border-radius:16px;font-size:15px;line-height:1.46;}
+  .me{align-self:flex-end;max-width:84%;background:var(--steel-tint);border:1px solid rgba(127,167,201,.25);border-bottom-right-radius:5px;}
+  .ai{align-self:flex-start;width:100%;background:var(--surface);border:1px solid var(--border);border-bottom-left-radius:5px;}
+  .ai b{font-weight:600;}
+  .sysline{align-self:flex-end;max-width:90%;display:flex;align-items:center;gap:7px;font-size:12px;color:var(--green);background:var(--surface-2);border:1px solid var(--border);border-radius:999px;padding:6px 12px;}
+  .sysline svg{width:13px;height:13px;flex:none;color:var(--green);}
+  .sysline.no{color:var(--rose);} .sysline.no svg{color:var(--rose);}
+
+  /* ===== inline proposal card (tree) ===== */
+  .prop{margin-top:9px;background:var(--surface-2);border:1px solid var(--border);border-radius:13px;overflow:hidden;}
+  .prop-head{display:flex;align-items:flex-start;gap:10px;padding:11px 12px;border-bottom:1px solid var(--border);}
+  .disc{width:28px;height:28px;border-radius:8px;display:flex;align-items:center;justify-content:center;flex:none;margin-top:1px;font-size:15px;}
+  .disc.wiki{background:var(--steel-tint);color:var(--steel);}
+  .disc.egress{background:var(--amber-tint);color:var(--amber);}
+  .disc svg{width:16px;height:16px;}
+  .hmain{flex:1;min-width:0;}
+  .htitle{font-size:14px;font-weight:600;}
+  .hmeta{margin-top:5px;display:flex;flex-wrap:wrap;gap:5px 8px;align-items:center;font-size:11px;color:var(--text-3);}
+  .pill{font-size:10.5px;padding:2px 7px;border-radius:999px;background:var(--surface);border:1px solid var(--border);color:var(--text-2);}
+  .pill.health{background:var(--rose-tint);border-color:transparent;color:var(--rose);}
+
+  /* tree */
+  .tree{padding:5px 8px 6px;}
+  .node{margin:1px 0;}
+  .children{margin-left:15px;padding-left:9px;border-left:1px solid var(--border);}
+  .nrow{display:flex;align-items:flex-start;gap:8px;padding:8px 6px;border-radius:10px;}
+  .twist{width:16px;height:16px;color:var(--text-3);flex:none;margin-top:2px;transition:transform .15s;cursor:pointer;}
+  .twist.open{transform:rotate(90deg);}
+  .twist.leaf{visibility:hidden;}
+  .nmain{flex:1;min-width:0;cursor:pointer;}
+  .nlabel{font-size:13px;line-height:1.4;display:flex;flex-wrap:wrap;gap:6px;align-items:center;}
+  .op{font-size:9.5px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;padding:2px 6px;border-radius:5px;}
+  .op.split{background:var(--steel-tint);color:var(--steel);}
+  .op.merge{background:var(--green-tint);color:var(--green);}
+  .op.retitle{background:var(--amber-tint);color:var(--amber);}
+  .op.move{background:var(--violet-tint);color:var(--violet);}
+  .op.rewrite{background:var(--surface);color:var(--text-2);}
+  .grouplabel{font-weight:600;font-size:13px;}
+  .nsub{font-size:11px;color:var(--text-3);margin-top:2px;}
+  .held{display:inline-flex;align-items:center;gap:4px;font-size:10.5px;color:var(--amber);background:var(--amber-tint);padding:2px 7px;border-radius:999px;margin-top:5px;}
+
+  /* per-node ✓ / ✕ */
+  .ctl{display:flex;gap:5px;flex:none;}
+  .ctl button{width:28px;height:28px;border-radius:8px;border:1px solid var(--border);background:var(--surface);color:var(--text-3);display:flex;align-items:center;justify-content:center;cursor:pointer;}
+  .ctl button svg{width:15px;height:15px;}
+  .ctl .ok.on{background:var(--green);border-color:var(--green);color:#0e1411;}
+  .ctl .no.on{background:var(--rose);border-color:var(--rose);color:#160f10;}
+  .ctl .ok.part{border-color:var(--steel);color:var(--steel);}
+
+  /* preview */
+  .pv{margin:0 6px 8px 32px;background:var(--surface);border:1px solid var(--border);border-radius:9px;padding:8px 10px;font-size:11.5px;display:none;}
+  .pv.show{display:block;}
+  .pv-row{display:flex;gap:7px;align-items:center;padding:2px 0;flex-wrap:wrap;}
+  .pv .minus{color:var(--rose);} .pv .plus{color:var(--green);} .pv .arrow{color:var(--text-3);}
+
+  /* egress payload */
+  .payload{margin:10px 12px 0;background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:10px 11px;}
+  .payload .lab{font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--text-3);margin-bottom:6px;}
+  .payload dl{display:grid;grid-template-columns:auto 1fr;gap:4px 12px;}
+  .payload dt{font-size:11px;color:var(--text-3);}
+  .payload dd{font-size:11.5px;color:var(--text);font-family:var(--font-mono);word-break:break-all;}
+  .payload .leave{margin-top:8px;display:flex;gap:6px;align-items:flex-start;font-size:11px;color:var(--amber);line-height:1.45;}
+  .payload .leave svg{width:13px;height:13px;flex:none;margin-top:1px;}
+
+  /* footer enact bar — the double-tap batch action */
+  .enact-bar{display:flex;align-items:center;gap:10px;padding:10px 12px;border-top:1px solid var(--border);}
+  .count{flex:1;font-size:12px;color:var(--text-2);line-height:1.35;}
+  .count b{color:var(--text);} .count .held-n{color:var(--amber);}
+  .allbtn{background:none;border:1px solid var(--border);color:var(--text-2);border-radius:10px;padding:9px 11px;font:inherit;font-size:12.5px;cursor:pointer;min-height:40px;}
+  .enact{background:var(--steel);color:#0e1411;border:none;border-radius:10px;padding:10px 15px;font:inherit;font-size:13.5px;font-weight:600;cursor:pointer;min-height:44px;display:flex;align-items:center;gap:6px;transition:background .14s,color .14s;}
+  .enact svg{width:15px;height:15px;}
+  .enact:disabled{opacity:.4;cursor:default;}
+  .enact.armed{background:var(--green);color:#0e1411;}
+  .enact.egress{background:var(--amber);}
+  .enact.egress.armed{background:var(--green);}
+
+  /* resolved collapse */
+  .prop.done .prop-head,.prop.done .tree,.prop.done .payload,.prop.done .enact-bar{display:none;}
+  .prop.done{background:var(--surface);}
+  .resolved{display:flex;align-items:center;gap:9px;padding:12px 13px;font-size:13px;color:var(--green);}
+  .resolved svg{width:16px;height:16px;flex:none;}
+  .resolved .sub{margin-left:auto;color:var(--text-3);font-size:11.5px;}
+  .resolved.no{color:var(--text-3);}
+
+  .composer{flex:none;border-top:1px solid var(--border);padding:10px 12px calc(10px + env(safe-area-inset-bottom));display:flex;align-items:center;gap:10px;background:var(--surface-composer,#141518);}
+  .composer .box{flex:1;background:var(--surface-2);border:1px solid var(--border);border-radius:12px;padding:11px 13px;font-size:14px;color:var(--text-3);}
+  .composer .send{width:40px;height:40px;border-radius:11px;background:var(--steel-tint);color:var(--steel);border:none;display:flex;align-items:center;justify-content:center;flex:none;}
+  .composer .send svg{width:18px;height:18px;}
+  .toast{position:absolute;left:50%;bottom:78px;transform:translateX(-50%) translateY(8px);background:var(--surface-2);border:1px solid var(--border);color:var(--text);font-size:12px;padding:8px 14px;border-radius:999px;opacity:0;pointer-events:none;transition:opacity .18s,transform .18s;z-index:9;}
+  .toast.on{opacity:1;transform:translateX(-50%) translateY(0);}
+
+  @media (prefers-reduced-motion:reduce){ .twist,.enact,.toast{transition:none;} }
+</style>
+</head>
+<body>
+  <div class="caption">
+    <span class="tag">B · in-chat tree + batch enact</span><br/>
+    A multi-operation Proposal (a <b>tree</b>) renders <b>inline</b> — approve the whole thing,
+    a subtree, or a single leaf with per-node ✓/✕, exactly like the side panel, but without
+    leaving the chat. A leaf whose prerequisite isn't approved shows <b style="color:var(--amber)">held</b>.
+    One footer <b>Enact</b> is the <b class="k">double-tap</b>: first tap arms (turns green,
+    “tap to enact N”), second tap runs only the approved, unheld leaves and <b>tells the
+    assistant “enacted N approvals.”</b> Try un-approving the Split, then double-tap Enact.
+  </div>
+
+  <div class="phone">
+    <div class="bar">
+      <button class="back"><svg width="22" height="22" viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6"/></svg></button>
+      <span class="ttl">Health wiki cleanup</span>
+      <span class="right"><span class="dot"></span>
+        <svg width="19" height="19" viewBox="0 0 24 24"><path d="M13 2 3 14h7l-1 8 10-12h-7l1-8Z"/></svg></span>
+    </div>
+
+    <div class="chat" id="chat">
+      <div class="bubble me">Clean up my health wiki, and check what HCTZ interacts with</div>
+
+      <div class="bubble ai">
+        I analyzed your health articles and staged a <b>restructuring plan</b> — grouped by
+        article, dependency-ordered. Pick what to run; I enact only the approved, unblocked
+        operations through the machine builder (I never write the article prose myself).
+
+        <!-- WIKI RESTRUCTURE TREE -->
+        <div class="prop" data-kind="wiki" id="wiki">
+          <div class="prop-head">
+            <span class="disc wiki">⤴</span>
+            <span class="hmain">
+              <span class="htitle">Restructure — Health wiki cleanup</span>
+              <span class="hmeta">
+                <span class="pill health">health</span>
+                <span>staged from this chat · 4 source notes · subject: me</span>
+              </span>
+            </span>
+          </div>
+          <div class="tree" id="tree"></div>
+          <div class="enact-bar">
+            <div class="count" id="wiki-count"></div>
+            <button class="allbtn" onclick="approveAll()">Approve all</button>
+            <button class="enact" id="wiki-enact"><svg viewBox="0 0 24 24"><path d="M5 12l4 4L19 7"/></svg><span>Enact</span></button>
+          </div>
+          <div class="resolved" hidden></div>
+        </div>
+
+        <!-- EGRESS -->
+        <div class="prop" data-kind="egress" id="egress">
+          <div class="prop-head">
+            <span class="disc egress"><svg viewBox="0 0 24 24"><path d="M7 17 17 7M8 7h9v9"/></svg></span>
+            <span class="hmain">
+              <span class="htitle">External call — RxNorm interaction check</span>
+              <span class="hmeta"><span class="pill">egress</span><span>nothing leaves the box until you approve</span></span>
+            </span>
+          </div>
+          <div class="payload">
+            <div class="lab">exact outbound payload</div>
+            <dl>
+              <dt>connector</dt><dd>lookup_medication (RxNorm)</dd>
+              <dt>url</dt><dd>rxnav.nlm.nih.gov/REST/interaction</dd>
+              <dt>query</dt><dd>hydrochlorothiazide</dd>
+              <dt>params</dt><dd>{ sources: "DrugBank" }</dd>
+            </dl>
+            <div class="leave"><svg viewBox="0 0 24 24"><path d="M12 9v4M12 17h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/></svg>Approving sends exactly this — the drug name only, no personal data — off-box once.</div>
+          </div>
+          <div class="enact-bar">
+            <div class="count">1 lookup · you are the egress guard</div>
+            <button class="allbtn" data-act="decline-egress">Decline</button>
+            <button class="enact egress" id="egress-enact"><svg viewBox="0 0 24 24"><path d="M7 17 17 7M8 7h9v9"/></svg><span>Approve &amp; call</span></button>
+          </div>
+          <div class="resolved" hidden></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="composer">
+      <div class="box">Talk it out — full tool access…</div>
+      <button class="send"><svg viewBox="0 0 24 24"><path d="M4 12l16-8-6 16-3-6-7-2Z"/></svg></button>
+    </div>
+    <div class="toast" id="toast"></div>
+  </div>
+
+<script>
+  const $=(s,r=document)=>r.querySelector(s), $$=(s,r=document)=>[...r.querySelectorAll(s)];
+  const chat=$("#chat"), toast=$("#toast");
+  let tt; const ping=m=>{toast.textContent=m;toast.classList.add("on");clearTimeout(tt);tt=setTimeout(()=>toast.classList.remove("on"),1600);};
+
+  // ---- tree model (mirrors docs/mocks/assistant-proposals-view.html) ----
+  const NODES=[
+    {id:'g1',parent:null,type:'group',label:'“Cardiology” — over-merged',sub:'two topics hiding in one article'},
+      {id:'l1',parent:'g1',type:'leaf',op:'split',label:'Split “Cardiology” → “Hypertension” + “Cholesterol”',deps:[],pv:['“Cardiology”','2 new articles']},
+      {id:'l2',parent:'g1',type:'leaf',op:'move',label:'Move 6 BP facts → “Hypertension”',deps:['l1'],pv:['6 cited facts','“Hypertension”']},
+      {id:'l3',parent:'g1',type:'leaf',op:'retitle',label:'Retitle remainder → “Heart — general”',deps:['l1'],pv:['“Cardiology”','“Heart — general”']},
+    {id:'g2',parent:null,type:'group',label:'Lipid medications — under-split',sub:'two stubs that should be one'},
+      {id:'l4',parent:'g2',type:'leaf',op:'merge',label:'Merge “Statins” + “Lipid meds” → “Lipid-lowering meds”',deps:[],pv:['2 stubs','1 article']},
+  ];
+  const byId=Object.fromEntries(NODES.map(n=>[n.id,n]));
+  const kidsOf=id=>NODES.filter(n=>n.parent===id);
+  const leaves=()=>NODES.filter(n=>n.type==='leaf');
+  const st={}; leaves().forEach(l=>st[l.id]='approved'); // default all approved
+  const open={g1:true,g2:false}; const pvOpen={};
+
+  function groupState(id){const s=kidsOf(id).map(k=>k.type==='leaf'?st[k.id]:groupState(k.id));
+    if(s.every(x=>x==='approved'))return 'approved'; if(s.every(x=>x==='rejected'))return 'rejected'; return 'partial';}
+  function isHeld(id){const n=byId[id]; if(n.type!=='leaf'||st[id]!=='approved')return false; return n.deps.some(d=>st[d]!=='approved');}
+  function setSub(id,v){const n=byId[id]; if(n.type==='leaf'){st[id]=v;return;} kidsOf(id).forEach(k=>setSub(k.id,v));}
+  function toggleOk(id){const n=byId[id],cur=n.type==='leaf'?st[id]:groupState(id); setSub(id,cur==='approved'?'pending':'approved'); render();}
+  function toggleNo(id){const n=byId[id],cur=n.type==='leaf'?st[id]:groupState(id); setSub(id,cur==='rejected'?'pending':'rejected'); render();}
+  function approveAll(){NODES.filter(n=>n.parent===null).forEach(g=>setSub(g.id,'approved'));render();}
+  const enactable=()=>leaves().filter(l=>st[l.id]==='approved'&&!isHeld(l.id));
+
+  function ctl(id,s){const part=s==='partial';
+    return `<div class="ctl">
+      <button class="ok ${s==='approved'?'on':''} ${part?'part':''}" onclick="event.stopPropagation();toggleOk('${id}')"><svg viewBox="0 0 24 24"><path d="M5 12l4 4L19 7"/></svg></button>
+      <button class="no ${s==='rejected'?'on':''}" onclick="event.stopPropagation();toggleNo('${id}')"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button></div>`;}
+  function leafHtml(n){const held=isHeld(n.id);
+    const dep=held?byId[n.deps.find(d=>st[d]!=='approved')].label.split('→')[0].replace(/“|”/g,'').replace('Split','').trim():'';
+    return `<div class="node">
+      <div class="nrow">
+        <svg class="twist leaf" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></svg>
+        <div class="nmain" onclick="togglePv('${n.id}')">
+          <div class="nlabel"><span class="op ${n.op}">${n.op}</span> ${n.label}</div>
+          ${held?`<div class="held">⏸ held — needs: ${dep}</div>`:''}
+        </div>
+        ${ctl(n.id,st[n.id])}
+      </div>
+      <div class="pv ${pvOpen[n.id]?'show':''}"><div class="pv-row"><span class="minus">${n.pv[0]}</span><span class="arrow">→</span><span class="plus">${n.pv[1]}</span></div></div>
+    </div>`;}
+  function groupHtml(g){const gs=groupState(g.id);
+    return `<div class="node">
+      <div class="nrow">
+        <svg class="twist ${open[g.id]?'open':''}" viewBox="0 0 24 24" onclick="toggleOpen('${g.id}')"><path d="m9 6 6 6-6 6"/></svg>
+        <div class="nmain" onclick="toggleOpen('${g.id}')"><div class="grouplabel">${g.label}</div><div class="nsub">${g.sub}</div></div>
+        ${ctl(g.id,gs)}
+      </div>
+      ${open[g.id]?`<div class="children">${kidsOf(g.id).map(k=>k.type==='leaf'?leafHtml(k):groupHtml(k)).join('')}</div>`:''}
+    </div>`;}
+  window.toggleOk=toggleOk; window.toggleNo=toggleNo; window.approveAll=approveAll;
+  window.togglePv=id=>{pvOpen[id]=!pvOpen[id];render();};
+  window.toggleOpen=id=>{open[id]=!open[id];render();};
+
+  function render(){
+    $("#tree").innerHTML=NODES.filter(n=>n.parent===null).map(groupHtml).join('');
+    const en=enactable().length, held=leaves().filter(l=>isHeld(l.id)).length, rej=leaves().filter(l=>st[l.id]==='rejected').length;
+    $("#wiki-count").innerHTML=`<b>${en}</b> of ${leaves().length} ready`+(held?` · <span class="held-n">${held} held</span>`:'')+(rej?` · ${rej} declined`:'');
+    const btn=$("#wiki-enact"); btn.disabled=en===0;
+    if(!btn.classList.contains('armed')) btn.querySelector('span').textContent=en?`Enact ${en}`:'Enact';
+  }
+
+  // ---- double-tap enact for the tree ----
+  let armed=null,armT;
+  function disarm(){ if(!armed)return; const b=armed; b.classList.remove('armed'); render(); if(b.id==='egress-enact')b.querySelector('span').textContent='Approve & call'; armed=null; clearTimeout(armT); }
+  $("#wiki-enact").addEventListener('click',()=>{
+    if($("#wiki-enact").disabled) return;
+    const b=$("#wiki-enact");
+    if(b.classList.contains('armed')){ enactTree(); disarm(); return; }
+    disarm(); b.classList.add('armed'); b.querySelector('span').textContent=`Tap to enact ${enactable().length}`;
+    armed=b; armT=setTimeout(disarm,3000);
+  });
+  function enactTree(){
+    const n=enactable().length, held=leaves().filter(l=>isHeld(l.id)).length;
+    const card=$("#wiki"), res=card.querySelector('.resolved'); res.hidden=false; res.className='resolved';
+    res.innerHTML=`<svg viewBox="0 0 24 24"><path d="M5 12l4 4L19 7"/></svg><span>Enacted ${n} operation${n>1?'s':''} → new wiki revisions</span><span class="sub">${held?held+' held':''}</span>`;
+    card.classList.add('done');
+    sysline(`Enacted ${n} operation${n>1?'s':''} (${n} approval${n>1?'s':''})${held?` · ${held} held, not run`:''}`,'ok');
+    ping(`enacted ${n} · sent to assistant`);
+  }
+
+  // ---- egress double-tap ----
+  $("#egress-enact").addEventListener('click',()=>{
+    const b=$("#egress-enact");
+    if(b.classList.contains('armed')){ enactEgress(); disarm(); return; }
+    disarm(); b.classList.add('armed'); b.querySelector('span').textContent='Tap to send off-box';
+    armed=b; armT=setTimeout(disarm,3000);
+  });
+  $$('[data-act="decline-egress"]').forEach(b=>b.addEventListener('click',()=>{
+    const card=$("#egress"),res=card.querySelector('.resolved'); res.hidden=false; res.className='resolved no';
+    res.innerHTML=`<svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg><span>Declined — no call made</span>`;
+    card.classList.add('done'); sysline('Declined the RxNorm lookup — nothing left the box','no'); ping('declined');
+  }));
+  function enactEgress(){
+    const card=$("#egress"),res=card.querySelector('.resolved'); res.hidden=false; res.className='resolved';
+    res.innerHTML=`<svg viewBox="0 0 24 24"><path d="M5 12l4 4L19 7"/></svg><span>Called RxNorm — result folded into the chat</span><span class="sub">1 approval</span>`;
+    card.classList.add('done'); sysline('Approved egress — called RxNorm (1 approval)','ok'); ping('sent off-box');
+  }
+
+  document.addEventListener('click',e=>{ if(armed && !e.target.closest('.enact')) disarm(); },true);
+
+  function sysline(text,tone){
+    const el=document.createElement('div'); el.className='sysline '+(tone==='no'?'no':'');
+    el.innerHTML=`<svg viewBox="0 0 24 24">${tone==='no'?'<path d="M6 6l12 12M18 6 6 18"/>':'<path d="M5 12l4 4L19 7"/>'}</svg><span>${text}</span>`;
+    chat.appendChild(el); chat.scrollTop=chat.scrollHeight;
+  }
+  render();
+</script>
+</body>
+</html>

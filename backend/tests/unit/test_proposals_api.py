@@ -15,7 +15,8 @@ from tests.unit.fakes import FakeAuthRepo
 
 class FakeProposals:
     def __init__(self) -> None:
-        self.decided: list[tuple[str, bool]] = []
+        self.decided: list[tuple[str, bool, str | None]] = []
+        self.edited: list[tuple[str, str]] = []
         self.enacted: list[str] = []
         self.listed_session: str | None = None
         self._summary = ProposalSummary("p1", "correction", "staged", "health", "PCP is Dr. Lin", 1)
@@ -42,8 +43,14 @@ class FakeProposals:
             raise ValueError("no proposal with that id in scope")
         return self._proposal, self._nodes
 
-    async def decide(self, ctx: object, node_id: str, *, approve: bool) -> None:
-        self.decided.append((node_id, approve))
+    async def decide(
+        self, ctx: object, node_id: str, *, approve: bool, reason: str | None = None
+    ) -> None:
+        self.decided.append((node_id, approve, reason))
+
+    async def patch_node_body(self, ctx: object, node_id: str, body: str) -> bool:
+        self.edited.append((node_id, body))
+        return node_id == "n1" and bool(body.strip())
 
     async def enact(self, ctx: object, proposal_id: str, executor: object) -> EnactmentPlan:
         self.enacted.append(proposal_id)
@@ -110,9 +117,41 @@ def test_decide_and_enact(client: TestClient, repo: FakeAuthRepo, proposals: Fak
     login(client, repo)
     d = client.post("/api/proposals/p1/nodes/n1/decision", json={"decision": "approve"})
     assert d.status_code == 204
-    assert proposals.decided == [("n1", True)]
+    assert proposals.decided == [("n1", True, None)]
 
     e = client.post("/api/proposals/p1/enact")
     assert e.status_code == 200
-    assert e.json() == {"enacted": ["n1"], "held": []}
+    payload = e.json()
+    assert payload["enacted"] == ["n1"]
+    assert payload["held"] == []
+    # The enact now carries a server-authored outcome the PWA returns to the assistant.
+    assert "Returned to assistant as 1 approval" in payload["outcome"]
     assert proposals.enacted == ["p1"]
+
+
+def test_decline_forwards_reason(
+    client: TestClient, repo: FakeAuthRepo, proposals: FakeProposals
+) -> None:
+    login(client, repo)
+    d = client.post(
+        "/api/proposals/p1/nodes/n1/decision",
+        json={"decision": "reject", "reason": "wrong dose"},
+    )
+    assert d.status_code == 204
+    assert proposals.decided == [("n1", False, "wrong dose")]
+
+
+def test_edit_node_correct_in_place(
+    client: TestClient, repo: FakeAuthRepo, proposals: FakeProposals
+) -> None:
+    login(client, repo)
+    ok = client.post("/api/proposals/p1/nodes/n1/edit", json={"body": "HCTZ 25 mg daily"})
+    assert ok.status_code == 204
+    assert proposals.edited == [("n1", "HCTZ 25 mg daily")]
+    # A node the repo won't patch (unknown / not an editable staged leaf) is a 404.
+    miss = client.post("/api/proposals/p1/nodes/ghost/edit", json={"body": "x"})
+    assert miss.status_code == 404
+
+
+def test_edit_requires_owner(client: TestClient) -> None:
+    assert client.post("/api/proposals/p1/nodes/n1/edit", json={"body": "x"}).status_code == 401

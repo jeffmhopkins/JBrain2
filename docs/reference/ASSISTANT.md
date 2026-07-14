@@ -1,6 +1,6 @@
 # JBrain2 — Assistant
 
-> **Status:** Living · **Last verified:** 2026-07-10
+> **Status:** Living · **Last verified:** 2026-07-13
 
 The personal agent. This is the **binding design** for the tool-calling agent
 (ROADMAP.md): a smart, tool-using assistant with durable memory — built natively
@@ -698,6 +698,32 @@ approval fatigue). Binding rules:
 - **Domain scope rides the Proposal** (#4/#8): it enacts at the scope of the content
   it touched, by the triggering principal's authority — a non-owner principal cannot
   stage wiki or behavior Proposals at all.
+
+### Acting on a Proposal inline — decide, correct, enact, and the outcome loop
+
+The owner acts on a staged Proposal **in the conversation** (the inline approval
+surface, `docs/mocks/inline-approvals/d-one-tree.html`; build plan
+`docs/archive/INLINE_APPROVALS_PLAN.md`), not only from the side panel. Three owner moves,
+all owner-only RLS and confined to a **still-staged** proposal:
+
+- **Approve / decline (with a reason).** A decline may carry a free-text `reason` recorded
+  on the declined node (`proposal_nodes.decision_note`, migration 0130) — owner-eyes
+  feedback that rides the node's existing domain-narrowed RLS and is folded into the
+  outcome the assistant sees. It is not a graph fact.
+- **Correct in place.** The owner may edit a `add_note` / `manage_appointment` leaf's
+  proposed **body** before approving (`patch_node_body`); the firewall fields
+  (subject/domain) are untouched, so an edit refines the text, never re-targets it. An
+  edited leaf enacts as the **owner's** correction — `provenance='human'`,
+  `source_ref='proposal:{id}#edited'` (the #7 human-correction channel, honest attribution
+  and normal human weight), whereas an un-edited approval stays `provenance='agent'`.
+- **The enact→agent outcome loop.** On enact the server authors a truthful summary of
+  what actually ran — approved, corrected (which), declined (with reason), held — **from
+  DB state, never model text** (`enact_outcome_summary`). The PWA sends it back into the
+  same chat as a **data-framed turn** (`ChatRequest.proposal_outcome`, framed on the
+  conversation channel like the presence/now blocks — data, not instruction, #1), so the
+  assistant learns the result and follows up without re-staging anything declined. This
+  closes the feedback loop the side panel never had; the side panel remains for browsing
+  older / cross-session proposals.
 
 ### Wiki analysis & restructuring
 

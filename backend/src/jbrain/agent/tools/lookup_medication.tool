@@ -1,6 +1,6 @@
 ---
 name: lookup_medication
-version: 1
+version: 2
 permission: external
 params:
   type: object
@@ -15,3 +15,5 @@ related concepts — from the NLM drug database. This is an OFF-BOX lookup, so i
 not run on its own: it stages the exact outbound request (a medication name, nothing
 else) for the owner to approve, and the call is made only after approval. The result
 is reference data to cite with its source, never a fact about the owner.
+After the owner approves or declines the lookup, the outcome is reported back to you
+in this chat, so continue from what actually ran.

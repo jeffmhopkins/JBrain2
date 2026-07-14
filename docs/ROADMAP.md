@@ -26,6 +26,13 @@ learning, durable-knowledge promotion, prompt/tool self-edit) and their eval/pro
 harness were **removed** — only Loop 1 (reflexion) shipped and remains. The
 not-yet-built hygiene sweeps are carried into the Phase 6 section below.
 
+**Inline approvals** ✅ (`docs/archive/INLINE_APPROVALS_PLAN.md`, migration 0130): Proposal
+approval moved from the side panel **into the conversation** (variant D,
+`docs/mocks/inline-approvals/`) — per-leaf approve / decline-with-reason / correct-in-place
+and a single Enact that **returns a consolidated, server-authored outcome to the assistant
+so it follows up** (the former "deferred concept" in `FullBrainSurface.tsx`). The panel
+remains for browsing older / cross-session proposals.
+
 ## Phase 0 — Foundation ✅ Shipped
 
 Compose stack boots end to end. Caddy with TLS on the public domain. Postgres
