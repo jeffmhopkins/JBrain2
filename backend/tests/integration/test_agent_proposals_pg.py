@@ -195,10 +195,7 @@ async def test_edited_leaf_enacts_as_a_human_authored_note(maker: async_sessionm
     async with scoped_session(maker, OWNER) as session:
         row = (
             await session.execute(
-                text(
-                    "SELECT body, provenance, source_ref FROM app.notes"
-                    " WHERE client_id = :cid"
-                ),
+                text("SELECT body, provenance, source_ref FROM app.notes WHERE client_id = :cid"),
                 {"cid": f"proposal-{a}"},
             )
         ).one()
