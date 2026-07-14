@@ -1,6 +1,6 @@
 # JBrain2 — GUI Design System
 
-> **Status:** Living · **Last verified:** 2026-07-13
+> **Status:** Living · **Last verified:** 2026-07-14
 
 Binding reference for all UI work. Derived from the owner-supplied JBrain v1
 reference screens (dark composer, knowledge hub, calendar, medical entry).
@@ -1204,6 +1204,49 @@ Open-Meteo, never the owner's precise fix (`ctx.here`); the surge query fires on
 an in-coverage US point. Map geometry is projected on-box, so the most an inversion of
 the `you` pin against the public track coordinates can recover is that city centre.
 Owner-facing chat artifact; never a note, never RAG-indexed.
+
+### `chart` & `lab_chart` tool-views (settled in a three-way GUI review — reference mock: `docs/mocks/chat-charts/c-tabbed-card.html`; build plan `docs/plans/CHAT_CHARTS_PLAN.md`)
+
+The in-chat **interactive time-series chart** — the answer when a "chart / graph / plot
+this over time" or "show my lab trend" question is better read as a shape than a wall of
+numbers. Two registered, data-only views over one shared **`InteractiveChart`** engine
+(SVG, X-axis **pinch/wheel zoom** + **drag pan** + tap-to-scrub readout + reset — the
+numeric analogue of the Leaflet `location_map` zoom/pan; `touch-action: pan-y` so a chart
+never traps vertical scroll). The model authors **no markup, URL, or color** — it fills
+numbers + closed enums only (invariants #1/#9):
+
+- **`chart`** (generic) — `{kind:('line'|'area'), unit, x_kind:'time', title, sub,
+  series:[{label, points:[{x:epoch_ms, y, flag?}]}], y:{min,max,ticks:[…]}}`. The component
+  owns the palette from the categorical token order (the general domain reads **steel**).
+- **`lab_chart`** — `chart` + `ref:{lo,hi,label}` (the reference band, drawn as a
+  `--green-tint` zone with a dashed edge) and per-point `flag ∈ {normal,low,high,critical}`
+  (a closed enum the component tones: **amber** low/high, **rose** critical). Health-domain,
+  so the card reads **rose**; every draw carries a `fact_id`/`note_id` ref (pointers-not-
+  copies) for the Table view and citation. Superseded / preliminary draws are excluded from
+  the plotted current series (marked in the Table), matching `read_labs`' own prose rule.
+
+Chosen **C — tabbed multi-view card** (`docs/mocks/chat-charts/c-tabbed-card.html`) over
+**A** answer-first card → fullscreen explorer (the `location_map` pattern — calmest
+transcript, zoom behind one tap) and **B** direct-inline-manipulation (the chart *is* the
+bubble — fewest taps, but a taller bubble and gestures sharing the scroll surface). C
+reuses the settled `hurricane_card`/`weather_card` tabbed-card paradigm: one inline card
+with a compact headline (current value · delta) over a **Trend · Table · Range** tab row
+(the generic card's third tab is **Stats**). **Trend** is the zoom/pan chart + the scrub
+readout; **Table** is the raw rows (date · value · ref · flag · source); **Range** (lab
+only) gauges each recent reading against the reference band so the in-range judgement is
+glanceable; **Stats** (generic) is a min/max/avg/change grid. The chart mounts on a fresh
+node each time the Trend tab is shown, so pointer listeners never double-bind. C won for
+surfacing the raw rows and the in-range read **without leaving the bubble** — the lab case
+wants the number and the range beside the shape — while keeping the house tabbed-card
+frame. A and B are retained as the record in `docs/mocks/chat-charts/README.md`.
+
+**The safety frame binds the view, not just the tool.** A `lab_chart` shows *what the
+record says* — values, reference range, flags, dates, cited — never a diagnosis or a
+recommendation (it inherits `read_labs`' rule). RLS holds at the tool that produced the
+data (a non-health scope reaches no lab rows and emits no `lab_chart`); the view is a
+render of an already-firewalled read. Tokens-only `.tv-cc-*`/`.tv-plot-*` classes; the
+frame matches the live `.tool-view`. Owner-facing chat artifact; never a note, never
+RAG-indexed.
 
 ## Wiki Talk board (settled in a three-way GUI review — reference mock: `docs/mocks/wiki-talk-b-topics.html`)
 
