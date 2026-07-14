@@ -643,6 +643,58 @@ describe("LLMSettingsScreen", () => {
     await waitFor(() => expect(putBody).toEqual({ context_window: 262144 }));
   });
 
+  it("exposes the 500k and 1M steps for a model with a million-token ceiling", async () => {
+    const s = initialSettings();
+    s.local_hosting_enabled = true;
+    s.host_memory = { total_gb: 128, used_gb: 0 };
+    // Llama 4 Scout's native window reaches 1M — the picker surfaces the 500k/1M steps
+    // and labels the million-token window "1M" (not "1000k").
+    s.local_models = [
+      lm({
+        id: "llama-4-scout-int4",
+        label: "Llama 4 Scout · vision (int4)",
+        enabled: true,
+        tiers: ["vision", "low"],
+        quant: "UD-Q4_K_XL",
+        size_gb: 59,
+        disk_gb: 59,
+        context_window: 32768,
+        max_context_window: 1000000,
+        kv_gb: 1.5,
+      }),
+    ];
+    let putBody: { context_window: number | null } | null = null;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>(async (input, init) => {
+        const path = String(input);
+        const method = (init?.method ?? "GET").toUpperCase();
+        if (path === "/api/settings/llm" && method === "GET")
+          return new Response(JSON.stringify(s), { status: 200 });
+        if (path.endsWith("/context-window") && method === "PUT") {
+          putBody = JSON.parse(String(init?.body));
+          const m0 = s.local_models[0];
+          if (m0) m0.context_window_override = putBody?.context_window ?? null;
+          return new Response(JSON.stringify(s), { status: 200 });
+        }
+        throw new Error(`unexpected fetch: ${method} ${path}`);
+      }),
+    );
+    render(<LLMSettingsScreen />);
+    await screen.findByRole("button", { name: /On-box LLMs/i });
+
+    const select = (await screen.findByLabelText("context window")) as HTMLSelectElement;
+    const options = Array.from(select.options);
+    const values = options.map((o) => o.value);
+    expect(values).toContain("500000");
+    expect(values).toContain("1000000");
+    // The million-token window reads as "1M", the 500k step as "500k".
+    expect(options.find((o) => o.value === "1000000")?.textContent).toBe("1M");
+    expect(options.find((o) => o.value === "500000")?.textContent).toBe("500k");
+    fireEvent.change(select, { target: { value: "1000000" } });
+    await waitFor(() => expect(putBody).toEqual({ context_window: 1000000 }));
+  });
+
   it("locks the context window while a model is loaded", async () => {
     const s = initialSettings();
     s.local_hosting_enabled = true;

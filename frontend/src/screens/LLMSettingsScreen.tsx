@@ -843,9 +843,13 @@ const IMG_GRADIENT = "linear-gradient(90deg, hsl(265 35% 64%), hsl(284 35% 64%))
 // model is resident" so the bar shows it. An estimate — tune on the box.
 const IMG_ACTIVE_GB = 4;
 
-// The size picker's choices, capped per model at its catalog window.
-const WINDOW_CHOICES = [16384, 32768, 65536, 131072, 196608, 262144];
-const fmtTokens = (n: number) => (n % 1024 === 0 ? `${n / 1024}k` : `${Math.round(n / 1000)}k`);
+// The size picker's choices, capped per model at its catalog window. The 500k/1M
+// steps only surface for models whose native window reaches them (e.g. Llama 4 Scout).
+const WINDOW_CHOICES = [16384, 32768, 65536, 131072, 196608, 262144, 500000, 1000000];
+const fmtTokens = (n: number) => {
+  if (n >= 1_000_000) return `${Math.round(n / 100_000) / 10}M`;
+  return n % 1024 === 0 ? `${n / 1024}k` : `${Math.round(n / 1000)}k`;
+};
 const barName = (m: LocalModelInfo) => m.label.split(" ")[0];
 const residentGbOf = (m: LocalModelInfo) => (m.disk_gb ?? m.size_gb) + m.kv_gb;
 
