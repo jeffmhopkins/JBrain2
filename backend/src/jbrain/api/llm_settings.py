@@ -30,7 +30,11 @@ from jbrain.llm.providers import (
     supports_reasoning,
 )
 from jbrain.llm.router import TASK_DEFAULTS, TASK_REASONING_BUCKET, _split_spec
-from jbrain.settings_store import LLM_TASK_OVERRIDES_KEY, SqlSettingsStore
+from jbrain.settings_store import (
+    JCODE_PLANNER_SAME,
+    LLM_TASK_OVERRIDES_KEY,
+    SqlSettingsStore,
+)
 
 log = structlog.get_logger()
 
@@ -199,10 +203,22 @@ class JcodeModelInfo(BaseModel):
     (jcode is a tool-using agent on the on-box gateway)."""
 
     enabled: bool
-    # The effective served-model id the agent runs: the stored override, else default.
+    # The effective EXECUTOR model id the agent runs (grok's `[models] default`): the
+    # stored override, else the config default.
     model: str
     # The JBRAIN_JCODE_MODEL config default — the value when no override is stored.
     default: str
+    # The PLANNER selection (grok's `plan` subagent): a model id, or the "same" sentinel
+    # meaning single-model (planner == executor, no separate model). The stored override
+    # resolved against the config default; the card renders "Same as executor" for the
+    # sentinel and marks `planner_default` as the suggested split model.
+    planner: str
+    # The JBRAIN_JCODE_PLANNER_MODEL config default — the split planner the card suggests
+    # (gpt-oss-120b) and the value when nothing is stored.
+    planner_default: str
+    # The single-model sentinel value the planner select uses for its "Same as executor"
+    # option — surfaced so the client and server agree on the one magic string.
+    planner_same: str = JCODE_PLANNER_SAME
     options: list[JcodeModelChoice]
 
 
@@ -329,11 +345,21 @@ async def _jcode_info(
     settings: Settings, store: SqlSettingsStore, ctx: SessionContext
 ) -> JcodeModelInfo:
     stored = await store.jcode_model(ctx)
+    stored_planner = await store.jcode_planner_model(ctx)
+    # The sentinel is preserved as-is (single-model); otherwise the stored override wins
+    # and "" falls back to the config default — same rule as the executor.
+    planner = (
+        stored_planner
+        if stored_planner == JCODE_PLANNER_SAME
+        else (stored_planner or settings.jcode_planner_model)
+    )
     return JcodeModelInfo(
         enabled=settings.jcode_enabled,
         # The stored override wins; "" falls back to the config default.
         model=stored or settings.jcode_model,
         default=settings.jcode_model,
+        planner=planner,
+        planner_default=settings.jcode_planner_model,
         options=_jcode_options(settings),
     )
 
@@ -520,6 +546,39 @@ async def set_jcode_model(
         )
     ctx = ctx_for(principal)
     await store.set_jcode_model(ctx, body.model)
+    return await _snapshot(settings, store, ctx, gateway)
+
+
+class JcodePlannerIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    # "" reverts to the JBRAIN_JCODE_PLANNER_MODEL default; the "same" sentinel means
+    # single-model (planner == executor); any other value must be an installed,
+    # tool-capable local model id (validated server-side below).
+    planner: str
+
+
+@router.put("/settings/llm/jcode-planner")
+async def set_jcode_planner(
+    body: JcodePlannerIn,
+    principal: PrincipalDep,
+    settings: SettingsDep,
+    store: SettingsStoreDep,
+    gateway: LocalGatewayDep,
+) -> LlmSettingsOut:
+    """Choose the PLANNER model for code mode's grok `plan` subagent. "" reverts to the
+    config default (the split planner); "same" collapses the card to a single model (the
+    executor plans too); any other value must be an installed, tool-capable local model
+    (422 otherwise) — the same set the executor dropdown shows. New jcode sessions pick up
+    the change; an in-flight session keeps the planner it started with."""
+    valid = {c.id for c in _jcode_options(settings)}
+    if body.planner and body.planner != JCODE_PLANNER_SAME and body.planner not in valid:
+        raise HTTPException(
+            status_code=422,
+            detail="planner must be an installed, tool-capable local model or 'same'",
+        )
+    ctx = ctx_for(principal)
+    await store.set_jcode_planner_model(ctx, body.planner)
     return await _snapshot(settings, store, ctx, gateway)
 
 

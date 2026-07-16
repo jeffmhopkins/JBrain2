@@ -152,6 +152,18 @@ BRAIN_READ_ALOUD_ENGINE_DEFAULT: ReadAloudEngine = "piper"
 # tool-capable choices before storing, so a junk/unprovisioned id can't land here.
 JCODE_MODEL_KEY = "jcode_model"
 
+# The planner model for code mode's grok `plan` subagent — the second half of the jcode
+# LLM card. Absent/non-string = "" (unset): the api falls back to the
+# JBRAIN_JCODE_PLANNER_MODEL config default. The sentinel JCODE_PLANNER_SAME means
+# "single model" — the executor plans too, so no separate planner pin. The
+# /settings/llm/jcode-planner PUT validates the value against the installed set (or the
+# sentinel) before storing.
+JCODE_PLANNER_MODEL_KEY = "jcode_planner_model"
+# Stored planner value meaning "same as the executor" — one model for the whole card.
+# Distinct from "" (unset → config default) so an explicit single-model choice sticks
+# instead of silently reverting to the split default.
+JCODE_PLANNER_SAME = "same"
+
 
 def is_valid_timezone(tz: str) -> bool:
     """Whether `tz` names a known IANA zone — the gate for storing/trusting one."""
@@ -495,6 +507,20 @@ class SqlSettingsStore:
         """Store the code-mode model id (the API validates it against the live
         installed + tool-capable choices first); "" clears it back to the default."""
         await self.upsert(ctx, JCODE_MODEL_KEY, model_id)
+        return model_id
+
+    async def jcode_planner_model(self, ctx: SessionContext) -> str:
+        """The stored planner selection for code mode: a served-model id, the
+        JCODE_PLANNER_SAME sentinel (single-model — the executor plans too), or "" when
+        unset (the api then falls back to the JBRAIN_JCODE_PLANNER_MODEL config default).
+        A non-string store reads as unset — junk never reads as a model id."""
+        raw = await self.get(ctx, JCODE_PLANNER_MODEL_KEY, "")
+        return raw if isinstance(raw, str) else ""
+
+    async def set_jcode_planner_model(self, ctx: SessionContext, model_id: str) -> str:
+        """Store the code-mode planner selection (the API validates it first): a model id,
+        JCODE_PLANNER_SAME for single-model, or "" to clear back to the config default."""
+        await self.upsert(ctx, JCODE_PLANNER_MODEL_KEY, model_id)
         return model_id
 
     async def llm_local_context_windows(self, ctx: SessionContext) -> dict[str, int]:

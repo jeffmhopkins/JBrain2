@@ -24,7 +24,7 @@ class JcodeApi(Protocol):
     """What the api routes depend on — satisfied by the real client and the fake."""
 
     async def create_session(
-        self, repo: str, branch: str, work_branch: str, model: str = ""
+        self, repo: str, branch: str, work_branch: str, model: str = "", planner: str = ""
     ) -> dict[str, Any]: ...
 
     async def list_sessions(self) -> list[dict[str, Any]]: ...
@@ -78,12 +78,18 @@ class JcodeClient:
             raise JcodeError(f"jcode control server error: {exc}") from exc
 
     async def create_session(
-        self, repo: str, branch: str, work_branch: str, model: str = ""
+        self, repo: str, branch: str, work_branch: str, model: str = "", planner: str = ""
     ) -> dict[str, Any]:
         return await self._json(
             "POST",
             "/sessions",
-            json={"repo": repo, "branch": branch, "work_branch": work_branch, "model": model},
+            json={
+                "repo": repo,
+                "branch": branch,
+                "work_branch": work_branch,
+                "model": model,
+                "planner": planner,
+            },
         )
 
     async def list_sessions(self) -> list[dict[str, Any]]:
@@ -130,24 +136,27 @@ class FakeJcodeClient:
     def __init__(self, *, preview_enabled: bool = True) -> None:
         self._sessions: dict[str, dict[str, Any]] = {}
         self._n = 0
-        # The model passed to each create_session, in order — tests assert the api
-        # resolved + forwarded the owner's selection.
+        # The model + planner passed to each create_session, in order — tests assert the
+        # api resolved + forwarded both halves of the owner's selection.
         self.created_models: list[str] = []
+        self.created_planners: list[str] = []
         self._preview_enabled = preview_enabled
         self._previews: dict[str, str] = {}
 
     async def create_session(
-        self, repo: str, branch: str, work_branch: str, model: str = ""
+        self, repo: str, branch: str, work_branch: str, model: str = "", planner: str = ""
     ) -> dict[str, Any]:
         self._n += 1
         sid = f"sess{self._n}"
         self.created_models.append(model)
+        self.created_planners.append(planner)
         s = {
             "id": sid,
             "repo": repo,
             "branch": branch,
             "work_branch": work_branch or f"jcode/{sid}",
             "model": model,
+            "planner": planner,
             "status": "ready",
             "created_at": "2026-06-25T00:00:00+00:00",
             "last_active_at": "2026-06-25T00:00:00+00:00",

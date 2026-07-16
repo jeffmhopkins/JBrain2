@@ -38,7 +38,7 @@ _SHELL: tuple[str, ...] = ("/bin/bash", "-l")
 _READ_BYTES = 65536
 
 
-def model_env(model: str) -> dict[str, str]:
+def model_env(model: str, planner: str = "") -> dict[str, str]:
     """Env that pins every model tier the interactive coding CLIs might pick to the
     session's on-box model. Without it ``claude`` defaults to a cloud model
     (``claude-opus-4-…``) the local gateway has no route for, and every session errors
@@ -46,7 +46,12 @@ def model_env(model: str) -> dict[str, str]:
     (opus/sonnet/haiku/fable) and its background summariser through the ANTHROPIC_*
     vars, so on a single-model gateway they must ALL map to the one served route;
     ``GROK_MODEL`` does the same for the Grok CLI (``grok``). This pins the model for
-    the shell's CLIs so the per-session quant the owner picked is what each requests."""
+    the shell's CLIs so the per-session quant the owner picked is what each requests.
+
+    ``planner`` is the served-model for grok's ``plan`` subagent (``[subagents.models]
+    plan``); it is exported as ``JCODE_GROK_PLAN_MODEL`` — ALWAYS, even when empty, so a
+    single-model session (planner == executor) explicitly clears any image-level default
+    and ``grok-config.sh`` omits the plan pin instead of inheriting one."""
     return {
         "ANTHROPIC_MODEL": model,
         "ANTHROPIC_DEFAULT_OPUS_MODEL": model,
@@ -54,6 +59,7 @@ def model_env(model: str) -> dict[str, str]:
         "ANTHROPIC_DEFAULT_HAIKU_MODEL": model,
         "ANTHROPIC_DEFAULT_FABLE_MODEL": model,
         "GROK_MODEL": model,
+        "JCODE_GROK_PLAN_MODEL": planner,
     }
 
 
@@ -381,6 +387,7 @@ async def serve_terminal(
     cwd: str,
     *,
     model: str = "",
+    planner: str = "",
     preview_port: int = 0,
     home: str = "",
     on_open: Callable[[int], None] | None = None,
@@ -405,7 +412,7 @@ async def serve_terminal(
     if home:
         overrides.update(home_env(home))
     if model:
-        overrides.update(model_env(model))
+        overrides.update(model_env(model, planner))
     if preview_port:
         overrides.update(preview_env(preview_port))
 

@@ -52,6 +52,10 @@ class Session:
     # The served-model id the session's terminal pins the ``claude`` CLI to (empty =
     # the server's configured default). Fixed at create.
     model: str = ""
+    # The planner served-model for grok's ``plan`` subagent, exported as
+    # ``JCODE_GROK_PLAN_MODEL`` (empty = single-model: the executor plans too). Fixed at
+    # create, so a mid-session settings change never re-points a live session.
+    planner: str = ""
 
     def public(self) -> dict[str, object]:
         return asdict(self)
@@ -91,7 +95,13 @@ class SessionManager:
         return self._home_root / sid
 
     async def create(
-        self, repo: str, branch: str = "main", work_branch: str = "", *, model: str = ""
+        self,
+        repo: str,
+        branch: str = "main",
+        work_branch: str = "",
+        *,
+        model: str = "",
+        planner: str = "",
     ) -> Session:
         if self._max > 0 and len(self._sessions) >= self._max:
             raise SessionError(f"at capacity ({self._max} sessions) — close one first")
@@ -112,15 +122,17 @@ class SessionManager:
             created_at=now,
             last_active_at=now,
             model=model,
+            planner=planner,
         )
         self._sessions[sid] = session
         _log.info(
-            "session create sid=%s repo=%s branch=%s work_branch=%s model=%s",
+            "session create sid=%s repo=%s branch=%s wb=%s model=%s planner=%s",
             sid,
             repo,
             branch,
             work_branch,
             model or "<default>",
+            planner or "<single-model>",
         )
         return session
 

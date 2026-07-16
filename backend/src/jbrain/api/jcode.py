@@ -28,7 +28,7 @@ from jbrain.jcode import JcodeApi, JcodeError
 from jbrain.llm import local_catalog
 from jbrain.llm.local_gateway import LocalGatewayError
 from jbrain.models.jcode import JcodeSessionRepo, JcodeSessionRow
-from jbrain.settings_store import SqlSettingsStore
+from jbrain.settings_store import JCODE_PLANNER_SAME, SqlSettingsStore
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -91,6 +91,19 @@ def _served_model(model_id: str) -> str:
     resolve via the catalog to be correct)."""
     m = local_catalog.get(model_id)
     return m.served_model if m else model_id
+
+
+async def _resolve_planner_model(request: Request, owner_id: str) -> str:
+    """The SERVED name of the planner for grok's `plan` subagent, or "" for single-model
+    (the executor plans too — no separate pin). Resolves the owner's stored selection: the
+    "same" sentinel → "" (single model); else the stored id, falling back to the
+    JBRAIN_JCODE_PLANNER_MODEL config default (the split planner). Passed per session as
+    JCODE_GROK_PLAN_MODEL; grok-config.sh omits the pin when it's empty or not installed."""
+    settings = cast("Settings", request.app.state.settings)
+    stored = await _store(request).jcode_planner_model(_owner_ctx(owner_id))
+    if stored == JCODE_PLANNER_SAME:
+        return ""
+    return _served_model(stored or settings.jcode_planner_model)
 
 
 def _warming_models(request: Request) -> Counter[str]:
@@ -200,8 +213,11 @@ async def create_session(
     # settings change never re-points a live session.
     client = _client(request)
     model = await _resolve_model(request, owner.id)
+    planner = await _resolve_planner_model(request, owner.id)
     try:
-        session = await client.create_session(body.repo, body.branch, body.work_branch, model)
+        session = await client.create_session(
+            body.repo, body.branch, body.work_branch, model, planner
+        )
     except JcodeError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     async with scoped_session(_maker(request), _owner_ctx(owner.id)) as db:

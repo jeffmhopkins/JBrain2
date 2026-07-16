@@ -293,3 +293,29 @@ async def test_create_forwards_the_selected_model(maker: async_sessionmaker) -> 
         await SqlSettingsStore(maker).set_jcode_model(ctx, "gpt-oss-120b")
         await client.post("/api/jcode/sessions", json={"repo": "r2"})
         assert fake.created_models[-1] == "gpt-oss-120b"
+
+
+async def test_create_forwards_the_planner_selection(maker: async_sessionmaker) -> None:
+    # The planner half: no stored selection → the config split default (gpt-oss-120b) is
+    # forwarded as the planner. Picking "same" collapses to single-model (empty planner);
+    # picking a specific installed model forwards its served name.
+    owner_id = await _owner_id(maker)
+    app = _app(maker, owner_id)
+    fake: FakeJcodeClient = app.state.jcode_client
+    transport = ASGITransport(app=app)
+    ctx = SessionContext(principal_id=owner_id, principal_kind="owner")
+    store = SqlSettingsStore(maker)
+
+    async with AsyncClient(transport=transport, base_url="http://t") as client:
+        await client.post("/api/jcode/sessions", json={"repo": "r"})
+        assert fake.created_planners == ["gpt-oss-120b"]  # the config split default
+
+        # "same" → single-model: no separate planner pin reaches the sandbox.
+        await store.set_jcode_planner_model(ctx, "same")
+        await client.post("/api/jcode/sessions", json={"repo": "r2"})
+        assert fake.created_planners[-1] == ""
+
+        # A specific planner id forwards its served name.
+        await store.set_jcode_planner_model(ctx, "gpt-oss-120b")
+        await client.post("/api/jcode/sessions", json={"repo": "r3"})
+        assert fake.created_planners[-1] == "gpt-oss-120b"

@@ -30,10 +30,13 @@ if command -v grok >/dev/null 2>&1; then
   # subagents queue one model at a time instead of running in parallel across models.
   # JCODE_GROK_SUBAGENTS=false disables them entirely.
   subagents_enabled="${JCODE_GROK_SUBAGENTS:-true}"
-  # Route grok's built-in `plan` subagent to the reasoner (plan on gpt-oss-120b, execute on
-  # the coder default) — but only when that model is actually installed (grok requires the
-  # model exist in its registry). JCODE_GROK_PLAN_MODEL overrides the planner served name.
-  plan_model="${JCODE_GROK_PLAN_MODEL:-gpt-oss-120b}"
+  # Route grok's built-in `plan` subagent to a planner model (plan on the reasoner, execute
+  # on the coder) — but only when JCODE_GROK_PLAN_MODEL names an INSTALLED served model (grok
+  # requires it exist in its registry). The api sets it per session from the owner's planner
+  # selection; EMPTY means single-model (the executor plans too), so the plan pin is omitted.
+  # No hardcoded default here — the split default lives in the api (Settings.jcode_planner_model),
+  # so this stays a pure mechanism.
+  plan_model="${JCODE_GROK_PLAN_MODEL:-}"
   models_lines=""
   if command -v curl >/dev/null 2>&1; then
     models_lines="$(curl -fsS -H "Authorization: Bearer ${GROK_API_KEY:-}" \

@@ -286,7 +286,8 @@ def test_spawn_shell_applies_model_env_overrides(tmp_path) -> None:
 def test_model_env_pins_every_tier() -> None:
     # All four Claude tier aliases (opus/sonnet/haiku/fable) + the main model, plus the
     # Grok CLI's GROK_MODEL, resolve to the one served route — no CLI may ever request a
-    # tier/model the single-model gateway doesn't have.
+    # tier/model the single-model gateway lacks. JCODE_GROK_PLAN_MODEL is exported too
+    # (empty here — single-model), so the plan subagent stays on the executor.
     env = model_env("qwen3-coder-next")
     assert set(env) == {
         "ANTHROPIC_MODEL",
@@ -295,8 +296,20 @@ def test_model_env_pins_every_tier() -> None:
         "ANTHROPIC_DEFAULT_HAIKU_MODEL",
         "ANTHROPIC_DEFAULT_FABLE_MODEL",
         "GROK_MODEL",
+        "JCODE_GROK_PLAN_MODEL",
     }
-    assert all(v == "qwen3-coder-next" for v in env.values())
+    # Every tier pins to the served route; the empty planner clears the plan pin.
+    assert env["JCODE_GROK_PLAN_MODEL"] == ""
+    tiers = {k: v for k, v in env.items() if k != "JCODE_GROK_PLAN_MODEL"}
+    assert all(v == "qwen3-coder-next" for v in tiers.values())
+
+
+def test_model_env_exports_the_planner_when_split() -> None:
+    # A split session carries the planner served name in JCODE_GROK_PLAN_MODEL, which
+    # grok-config.sh turns into the `[subagents.models] plan` pin.
+    env = model_env("qwen3-coder-next", "gpt-oss-120b")
+    assert env["GROK_MODEL"] == "qwen3-coder-next"
+    assert env["JCODE_GROK_PLAN_MODEL"] == "gpt-oss-120b"
 
 
 def test_home_env_sets_home_and_a_path_leading_tool_bin() -> None:
