@@ -98,15 +98,17 @@ def test_empty_configured_token_fails_closed() -> None:
 def test_models_lists_installed_tool_capable() -> None:
     client = TestClient(_app(models=("gpt-oss-120b", "qwen3-coder-next")))
     data = client.get(_MODELS, headers=_AUTH).json()
+    # JSON `id` is the real served name (the API model id).
     assert {m["id"] for m in data["data"]} == {"gpt-oss-120b", "qwen3-coder-next"}
-    # The shell-friendly form: served|label|window per line, one config.toml block each.
+    # The shell-friendly form: alias|served|label|window per line, one config.toml block each.
     lines = client.get(f"{_MODELS}?format=lines", headers=_AUTH).text.strip().splitlines()
-    served = set()
+    by_served = {}
     for ln in lines:
-        name, label, window = ln.split("|")
-        assert name and label and window.isdigit()
-        served.add(name)
-    assert served == {"gpt-oss-120b", "qwen3-coder-next"}
+        alias, served, label, window = ln.split("|")
+        assert alias and served and label and window.isdigit()
+        by_served[served] = alias
+    # Short `/model` handles map onto the real served names.
+    assert by_served == {"gpt-oss-120b": "oss", "qwen3-coder-next": "qwen"}
 
 
 def test_models_empty_when_hosting_off() -> None:

@@ -70,17 +70,47 @@ def _models(request: Request) -> tuple[local_catalog.LocalModel, ...]:
     )
 
 
+# Short, unique `/model` handles for the sandbox's grok CLI, keyed by served name. grok's
+# config block key — what `/model`, `[models] default`, and `[subagents.models]` reference —
+# becomes the alias; the block's `model =` stays the real served name the proxy validates
+# and forwards. A served name with no entry keeps itself as the handle (no collision).
+_ALIASES: dict[str, str] = {
+    "gpt-oss-120b": "oss",
+    "qwen3-coder-next": "qwen",
+    "qwen3-coder-next-q8": "qwen-q8",
+    "qwen3-vl-30b-a3b": "vl",
+    "llama-4-scout-int4": "scout",
+    "nemotron-3-super-120b": "nemotron",
+    "qwen3-235b-a22b": "qwen-235b",
+    "qwen3-next-80b-a3b": "qwen-next",
+    "qwen3-next-80b-a3b-thinking": "qwen-next-think",
+    "glm-4.5-air": "glm",
+    "qwen3-30b-a3b": "qwen-30b",
+    "qwen3.5-0.8b": "qwen-tiny",
+    "qwen3.5-4b": "qwen-4b",
+    "llama-3.3-70b": "llama",
+}
+
+
+def _alias(served: str) -> str:
+    return _ALIASES.get(served, served)
+
+
 @router.get("/jcode/llm/v1/models")
 async def list_models(request: Request) -> Response:
     """The installed tool-capable models the sandbox offers via grok's `/model`.
 
-    Default: OpenAI `{"object":"list","data":[…]}` (grok and other clients probe this).
-    With `?format=lines`, a `served|label|context_window` text block grok-config.sh renders
-    straight into one `[model."…"]` config.toml entry each — no JSON parsing in the shell."""
+    Default: OpenAI `{"object":"list","data":[…]}` (grok and other clients probe this) —
+    `id` is the real served name. With `?format=lines`, an `alias|served|label|context_window`
+    text block grok-config.sh renders into one `[model."alias"]` entry each (short `/model`
+    handles, real served name in `model =`) — no JSON parsing in the shell."""
     _authorize(request)
     models = _models(request)
     if request.query_params.get("format") == "lines":
-        body = "".join(f"{m.served_model}|{m.label}|{m.context_window}\n" for m in models)
+        body = "".join(
+            f"{_alias(m.served_model)}|{m.served_model}|{m.label}|{m.context_window}\n"
+            for m in models
+        )
         return Response(content=body, media_type="text/plain")
     data = [
         {"id": m.served_model, "object": "model", "created": 0, "owned_by": "jbrain"}

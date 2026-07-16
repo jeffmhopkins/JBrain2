@@ -13,10 +13,11 @@ from pathlib import Path
 
 _HOOK = Path(__file__).resolve().parents[1] / "grok-config.sh"
 
+# alias|served|label|window (the proxy's ?format=lines output).
 _LINES = (
-    "gpt-oss-120b|GPT-OSS 120B · reasoning|131072\n"
-    "qwen3-coder-next|Qwen3-Coder-Next 80B · coding agent (Q4)|262144\n"
-    "glm-4.5-air|GLM-4.5 Air · reasoning (alt)|131072\n"
+    "oss|gpt-oss-120b|GPT-OSS 120B · reasoning|131072\n"
+    "qwen|qwen3-coder-next|Qwen3-Coder-Next 80B · coding agent (Q4)|262144\n"
+    "glm|glm-4.5-air|GLM-4.5 Air · reasoning (alt)|131072\n"
 )
 
 
@@ -53,21 +54,21 @@ def test_renders_every_installed_model_as_a_switchable_block(tmp_path: Path) -> 
     curl = "#!/usr/bin/env bash\ncat <<'EOF'\n" + _LINES + "EOF\n"
     toml = _run(tmp_path, _fakebin(tmp_path, curl_body=curl))
 
-    assert 'default = "qwen3-coder-next"' in toml
-    # One quoted block per model — the dotted name MUST be quoted or TOML nests it.
-    assert '[model."gpt-oss-120b"]' in toml
-    assert '[model."qwen3-coder-next"]' in toml
-    assert '[model."glm-4.5-air"]' in toml
+    # The default maps to the session model's alias (qwen3-coder-next → qwen).
+    assert 'default = "qwen"' in toml
+    # Block keys are short aliases (`/model oss`); the served name is `model =`.
+    assert '[model."oss"]' in toml and 'model = "gpt-oss-120b"' in toml
+    assert '[model."qwen"]' in toml and 'model = "qwen3-coder-next"' in toml
+    assert '[model."glm"]' in toml and 'model = "glm-4.5-air"' in toml
     # Each block points at the proxy, with the model's own window + the shared key.
     assert 'base_url = "http://api:8000/api/jcode/llm/v1"' in toml
-    assert 'model = "gpt-oss-120b"' in toml
     assert "context_window = 131072" in toml
     assert "context_window = 262144" in toml
     assert 'env_key = "GROK_API_KEY"' in toml
     # Subagents on (the proxy's swap lock serializes them, never parallel), with the
-    # built-in plan subagent bound to the installed reasoner.
+    # built-in plan subagent bound to the reasoner by its alias.
     assert "[subagents]" in toml and "enabled = true" in toml
-    assert "[subagents.models]" in toml and 'plan = "gpt-oss-120b"' in toml
+    assert "[subagents.models]" in toml and 'plan = "oss"' in toml
 
 
 def test_falls_back_to_the_single_pinned_model_when_the_list_is_unavailable(
