@@ -338,6 +338,20 @@ export function LLMSettingsScreen() {
       .finally(() => unmark("jcode-model"));
   }
 
+  // Choose the planner model for code mode's grok `plan` subagent; "" reverts to the
+  // config split default, the `planner_same` sentinel collapses the card to a single model.
+  function setJcodePlanner(planner: string) {
+    mark("jcode-model");
+    const seq = ++putSeq.current;
+    api
+      .setJcodePlanner(planner)
+      .then((s) => {
+        if (seq === putSeq.current) setSettings(s);
+      })
+      .catch(() => {})
+      .finally(() => unmark("jcode-model"));
+  }
+
   // Queue a model for install, then start its download immediately — no system
   // update. The snapshot reflects the queued flag at once and the per-model bar fills
   // as the sync one-shot pulls the weights. Un-queueing (on=false) just clears it.
@@ -733,6 +747,7 @@ export function LLMSettingsScreen() {
           jcode={settings.jcode}
           busy={busy.has("jcode-model")}
           onChange={setJcodeModel}
+          onPlannerChange={setJcodePlanner}
         />
       )}
 
@@ -741,56 +756,89 @@ export function LLMSettingsScreen() {
   );
 }
 
-// The code-mode (jcode) agent's model selector. Rendered only when code mode is
-// enabled; the dropdown lists installed, tool-capable local models (the API's
-// `jcode.options`). Picking one persists it as the model new jcode sessions run.
+// The code-mode (jcode) agent's model selectors. Rendered only when code mode is
+// enabled; both dropdowns list installed, tool-capable local models (the API's
+// `jcode.options`). The card splits the agent into two roles: the EXECUTOR (grok's
+// default model — the coder) and the PLANNER (grok's `plan` subagent — a reasoner).
+// The planner also offers "Same as executor" to collapse the card to a single model.
 function JcodeModelCard({
   jcode,
   busy,
   onChange,
+  onPlannerChange,
 }: {
   jcode: JcodeModelInfo;
   busy: boolean;
   onChange: (model: string) => void;
+  onPlannerChange: (planner: string) => void;
 }) {
-  // The effective model may not be among the installed options (e.g. the config
-  // default before its weights are installed) — surface it as a disabled option so
-  // the select shows the truth instead of silently snapping to another model.
-  const missing = !!jcode.model && !jcode.options.some((o) => o.id === jcode.model);
-  const hasChoices = jcode.options.length > 0 || missing;
+  // An effective selection may not be among the installed options (e.g. the config
+  // default before its weights are installed) — surface it as a disabled option so the
+  // select shows the truth instead of silently snapping to another model.
+  const execMissing = !!jcode.model && !jcode.options.some((o) => o.id === jcode.model);
+  const single = jcode.planner === jcode.planner_same;
+  const plannerMissing =
+    !single && !!jcode.planner && !jcode.options.some((o) => o.id === jcode.planner);
+  const hasChoices = jcode.options.length > 0 || execMissing;
   return (
     <section className="llm-group llm-jcode" aria-label="Code mode model card">
       <div className="llm-group-head">
         <div className="llm-group-title">
           <span className="llm-group-name">Code mode</span>
-          <span className="llm-group-count">1 agent</span>
+          <span className="llm-group-count">2 roles</span>
         </div>
         <p className="llm-group-desc">
-          The local model the jcode coding agent runs. New sessions use the current choice; an
-          in-flight session keeps the model it started with.
+          The local models the jcode coding agent runs — the executor writes code, the planner
+          drives grok’s <code>plan</code> subagent. Pick “Same as executor” to run one model for
+          both. New sessions use the current choice; an in-flight session keeps what it started
+          with.
         </p>
 
-        <span className="llm-field-tag">Model</span>
         {hasChoices ? (
-          <select
-            className="llm-select"
-            aria-label="Code mode model"
-            value={jcode.model}
-            disabled={busy}
-            onChange={(e) => onChange(e.target.value)}
-          >
-            {missing && (
-              <option value={jcode.model} disabled>
-                {jcode.model} (not installed)
-              </option>
-            )}
-            {jcode.options.map((o) => (
-              <option key={o.id} value={o.id}>
-                {o.label}
-                {o.id === jcode.default ? " · default" : ""}
-              </option>
-            ))}
-          </select>
+          <>
+            <span className="llm-field-tag">Executor</span>
+            <select
+              className="llm-select"
+              aria-label="Code mode executor model"
+              value={jcode.model}
+              disabled={busy}
+              onChange={(e) => onChange(e.target.value)}
+            >
+              {execMissing && (
+                <option value={jcode.model} disabled>
+                  {jcode.model} (not installed)
+                </option>
+              )}
+              {jcode.options.map((o) => (
+                <option key={o.id} value={o.id}>
+                  {o.label}
+                  {o.id === jcode.default ? " · default" : ""}
+                </option>
+              ))}
+            </select>
+
+            <span className="llm-field-tag">Planner</span>
+            <select
+              className="llm-select"
+              aria-label="Code mode planner model"
+              value={single ? jcode.planner_same : jcode.planner}
+              disabled={busy}
+              onChange={(e) => onPlannerChange(e.target.value)}
+            >
+              <option value={jcode.planner_same}>Same as executor (single model)</option>
+              {plannerMissing && (
+                <option value={jcode.planner} disabled>
+                  {jcode.planner} (not installed)
+                </option>
+              )}
+              {jcode.options.map((o) => (
+                <option key={o.id} value={o.id}>
+                  {o.label}
+                  {o.id === jcode.planner_default ? " · suggested" : ""}
+                </option>
+              ))}
+            </select>
+          </>
         ) : (
           <p className="llm-na-note">
             Install a tool-capable local model (above) to choose one for code mode.

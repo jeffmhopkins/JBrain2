@@ -292,6 +292,14 @@ class Settings(BaseSettings):
     jcode_enabled: bool = False
     jcode_token: str = ""
     jcode_model: str = "qwen3-coder-next"
+    # The planner model for code mode's grok `plan` subagent (routed to
+    # `[subagents.models] plan`). Split from jcode_model so the owner can run a separate
+    # reasoner for planning while the coder executes — the second half of the jcode LLM
+    # card. The api resolves the stored override (Settings → LLM), the "same" sentinel
+    # (single-model: planner == executor, no separate pin), or this default, and passes
+    # the served name per session as JCODE_GROK_PLAN_MODEL — grok-config.sh omits the pin
+    # when it's empty. Keeps the historical split default (plan on the reasoner).
+    jcode_planner_model: str = "gpt-oss-120b"
     # Host-mode web preview (docs/archive/JCODE_PREVIEW_HOST_PLAN.md): the zone previews hang
     # under, so a session is reachable at https://<slug>-preview.<jcode_preview_base_host>.
     # The preview proxy enforces this in-process (the request Host must be exactly

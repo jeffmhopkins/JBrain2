@@ -159,6 +159,9 @@ class _FakeStore:
     async def jcode_model(self, _ctx: object) -> str:
         return ""  # falls back to settings.jcode_model
 
+    async def jcode_planner_model(self, _ctx: object) -> str:
+        return ""  # falls back to settings.jcode_planner_model
+
 
 class _FakeGateway:
     """Records unloads and reports what's resident, so the power-off model housekeeping
@@ -207,6 +210,7 @@ def _power_app(
         local_llm_enabled=local_llm_enabled,
         supervisor_token="tok",
         jcode_model="qwen3-coder-next",
+        jcode_planner_model="gpt-oss-120b",
     )
     app.state.settings_store = _FakeStore()
     app.state.supervisor_client = supervisor

@@ -92,6 +92,9 @@ class CreateSessionRequest(BaseModel):
     # The served-model id the terminal pins the ``claude`` CLI to. Empty = the server's
     # configured default (settings.model). The api resolves the owner's selection.
     model: str = ""
+    # The planner served-model for grok's ``plan`` subagent (JCODE_GROK_PLAN_MODEL).
+    # Empty = single-model (the executor plans too). The api resolves the owner's split.
+    planner: str = ""
 
 
 class PreviewRequest(BaseModel):
@@ -177,7 +180,11 @@ def create_app(
     @authed.post("/sessions", status_code=201)
     async def create_session(body: CreateSessionRequest) -> dict[str, object]:
         session = await sessions.create(
-            body.repo, body.branch, body.work_branch, model=body.model
+            body.repo,
+            body.branch,
+            body.work_branch,
+            model=body.model,
+            planner=body.planner,
         )
         return session.public()
 
@@ -327,6 +334,7 @@ def create_app(
             terminals,
             session.workspace,
             model=session.model or settings.model,
+            planner=session.planner,
             preview_port=preview_port,
             home=str(sessions.home_for(sid)),
             on_open=lambda pid: sessions.terminal_opened(sid, pid),

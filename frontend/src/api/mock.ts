@@ -493,15 +493,61 @@ const LLM_SETTINGS: LlmSettings = {
       staged: false,
       kv_gb: 11.5,
     },
+    {
+      id: "qwen3.5-122b-a10b",
+      label: "Qwen3.5 122B · vision + reasoning",
+      enabled: false,
+      queued: false,
+      remove_queued: false,
+      loaded: false,
+      supports_vision: true,
+      supports_tools: true,
+      tiers: ["vision", "high"],
+      quant: "UD-Q4_K_XL",
+      size_gb: 72.6,
+      disk_gb: null,
+      download_gb: null,
+      note: "122B MoE, 10B active — Qwen3.5's flagship at 4-bit. The strongest vision model here and a credible high-tier reasoner. Standalone (swappable).",
+      context_window: 32768,
+      max_context_window: 262144,
+      context_window_override: null,
+      staged: false,
+      kv_gb: 7,
+    },
+    {
+      id: "qwen3.5-122b-a10b-mtp",
+      label: "Qwen3.5 122B · reasoning (MTP, faster)",
+      enabled: false,
+      queued: false,
+      remove_queued: false,
+      loaded: false,
+      supports_vision: false,
+      supports_tools: true,
+      tiers: ["high"],
+      quant: "UD-Q4_K_XL",
+      size_gb: 73.2,
+      disk_gb: null,
+      download_gb: null,
+      note: "122B MoE, 10B active — the multi-token-prediction build: same model + a draft head for ~1.5–2x faster self-speculative decoding. Text-only. Standalone (swappable).",
+      context_window: 32768,
+      max_context_window: 262144,
+      context_window_override: null,
+      staged: false,
+      kv_gb: 7,
+    },
   ],
   host_memory: null,
   jcode: {
     enabled: true,
     model: "qwen3-coder-next",
     default: "qwen3-coder-next",
+    planner: "gpt-oss-120b",
+    planner_default: "gpt-oss-120b",
+    planner_same: "same",
     options: [
       { id: "qwen3-coder-next", label: "Qwen3-Coder-Next 80B · coding agent" },
       { id: "qwen3-vl-30b", label: "Qwen3-VL 30B · vision" },
+      { id: "gpt-oss-120b", label: "GPT-OSS 120B · reasoning" },
     ],
   },
 };
@@ -3441,6 +3487,18 @@ export const mockFetch: typeof fetch = async (input, init) => {
     const valid = body.model === "" || LLM_SETTINGS.jcode.options.some((o) => o.id === body.model);
     if (!valid) return new Response("model must be installed + tool-capable", { status: 422 });
     LLM_SETTINGS.jcode.model = body.model || LLM_SETTINGS.jcode.default;
+    return json(LLM_SETTINGS);
+  }
+  if (path === "/api/settings/llm/jcode-planner" && method === "PUT") {
+    const body = JSON.parse(String(init?.body)) as { planner: string };
+    // Mirror the API: "" reverts to the split default; the "same" sentinel is single-model;
+    // else it must be an offered option.
+    const valid =
+      body.planner === "" ||
+      body.planner === LLM_SETTINGS.jcode.planner_same ||
+      LLM_SETTINGS.jcode.options.some((o) => o.id === body.planner);
+    if (!valid) return new Response("planner must be installed + tool-capable", { status: 422 });
+    LLM_SETTINGS.jcode.planner = body.planner || LLM_SETTINGS.jcode.planner_default;
     return json(LLM_SETTINGS);
   }
   const unloadMatch = path.match(/^\/api\/settings\/llm\/local-models\/(.+)\/unload$/);

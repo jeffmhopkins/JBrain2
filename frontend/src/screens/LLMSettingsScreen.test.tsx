@@ -74,7 +74,15 @@ function initialSettings(): LlmSettings {
       }),
     ],
     host_memory: null,
-    jcode: { enabled: false, model: "", default: "qwen3-coder-next", options: [] },
+    jcode: {
+      enabled: false,
+      model: "",
+      default: "qwen3-coder-next",
+      planner: "gpt-oss-120b",
+      planner_default: "gpt-oss-120b",
+      planner_same: "same",
+      options: [],
+    },
   };
 }
 
@@ -96,13 +104,24 @@ function stubLlmFetch(seed?: LlmSettings) {
   const state = seed ?? initialSettings();
   const puts: { tasks: Record<string, { provider: string; reasoning_effort?: string }> }[] = [];
   const jcodePuts: string[] = [];
+  const jcodePlannerPuts: string[] = [];
   const fetchMock = vi.fn<typeof fetch>(async (input, init) => {
     const path = String(input);
-    // The code-mode model selector PUTs here and gets the full snapshot back.
+    // The code-mode executor selector PUTs here and gets the full snapshot back.
     if (path === "/api/settings/llm/jcode-model") {
       const body = JSON.parse(String(init?.body)) as { model: string };
       jcodePuts.push(body.model);
       state.jcode.model = body.model || state.jcode.default;
+      return new Response(JSON.stringify(state), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+    // The planner selector PUTs here; "" reverts to the split default, "same" is single-model.
+    if (path === "/api/settings/llm/jcode-planner") {
+      const body = JSON.parse(String(init?.body)) as { planner: string };
+      jcodePlannerPuts.push(body.planner);
+      state.jcode.planner = body.planner || state.jcode.planner_default;
       return new Response(JSON.stringify(state), {
         status: 200,
         headers: { "Content-Type": "application/json" },
@@ -159,7 +178,7 @@ function stubLlmFetch(seed?: LlmSettings) {
     });
   });
   vi.stubGlobal("fetch", fetchMock);
-  return { puts, jcodePuts, state };
+  return { puts, jcodePuts, jcodePlannerPuts, state };
 }
 
 beforeEach(() => stubLlmFetch());
@@ -189,24 +208,32 @@ describe("LLMSettingsScreen", () => {
     // Default fixture has jcode.enabled = false.
     render(<LLMSettingsScreen />);
     await screen.findByText("High reasoning");
-    expect(screen.queryByLabelText("Code mode model")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Code mode executor model")).not.toBeInTheDocument();
   });
 
-  it("changes the code-mode agent model via the jcode card", async () => {
+  function jcodeSeed(): LlmSettings {
     const seed = initialSettings();
     seed.local_hosting_enabled = true;
     seed.jcode = {
       enabled: true,
       model: "qwen3-coder-next",
       default: "qwen3-coder-next",
+      planner: "gpt-oss-120b",
+      planner_default: "gpt-oss-120b",
+      planner_same: "same",
       options: [
         { id: "qwen3-coder-next", label: "Qwen3-Coder-Next 80B" },
         { id: "qwen3-vl-30b", label: "Qwen3-VL 30B" },
+        { id: "gpt-oss-120b", label: "GPT-OSS 120B" },
       ],
     };
-    const { jcodePuts } = stubLlmFetch(seed);
+    return seed;
+  }
+
+  it("changes the code-mode executor model via the jcode card", async () => {
+    const { jcodePuts } = stubLlmFetch(jcodeSeed());
     render(<LLMSettingsScreen />);
-    const select = (await screen.findByLabelText("Code mode model")) as HTMLSelectElement;
+    const select = (await screen.findByLabelText("Code mode executor model")) as HTMLSelectElement;
     expect(select.value).toBe("qwen3-coder-next");
     fireEvent.change(select, { target: { value: "qwen3-vl-30b" } });
     await waitFor(() => expect(jcodePuts).toContain("qwen3-vl-30b"));
@@ -217,6 +244,22 @@ describe("LLMSettingsScreen", () => {
     const codeMode = document.querySelector(".llm-group.llm-jcode");
     expect(codeMode).not.toBeNull();
     expect(groupNodes[groupNodes.length - 1]).toBe(codeMode);
+  });
+
+  it("changes the planner and collapses to a single model via the jcode card", async () => {
+    const { jcodePlannerPuts } = stubLlmFetch(jcodeSeed());
+    render(<LLMSettingsScreen />);
+    const planner = (await screen.findByLabelText("Code mode planner model")) as HTMLSelectElement;
+    // The split default (the reasoner) is the current planner selection.
+    expect(planner.value).toBe("gpt-oss-120b");
+
+    // Picking a specific model PUTs its id.
+    fireEvent.change(planner, { target: { value: "qwen3-vl-30b" } });
+    await waitFor(() => expect(jcodePlannerPuts).toContain("qwen3-vl-30b"));
+
+    // Picking "Same as executor" PUTs the single-model sentinel.
+    fireEvent.change(planner, { target: { value: "same" } });
+    await waitFor(() => expect(jcodePlannerPuts).toContain("same"));
   });
 
   it("hides reasoning and shows the Claude note when a tier moves off grok", async () => {

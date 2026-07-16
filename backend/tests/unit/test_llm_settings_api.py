@@ -101,6 +101,11 @@ def test_jcode_section_defaults_disabled(
     assert jc["options"] == []
     assert jc["default"] == "qwen3-coder-next"
     assert jc["model"] == "qwen3-coder-next"
+    # The planner half defaults to the config split default (the reasoner); the "same"
+    # sentinel the card uses for its single-model option is surfaced so client + server agree.
+    assert jc["planner"] == "gpt-oss-120b"
+    assert jc["planner_default"] == "gpt-oss-120b"
+    assert jc["planner_same"] == "same"
 
 
 def test_jcode_model_selector_lists_installed_tool_capable_and_round_trips() -> None:
@@ -125,6 +130,34 @@ def test_jcode_model_selector_lists_installed_tool_capable_and_round_trips() -> 
     # "" reverts to the config default.
     reset = c.put("/api/settings/llm/jcode-model", json={"model": ""})
     assert reset.json()["jcode"]["model"] == "qwen3-coder-next"
+
+
+def test_jcode_planner_selector_round_trips_and_takes_the_same_sentinel() -> None:
+    # The planner half of the card: it offers the same installed set plus the "same"
+    # single-model sentinel, defaults to the config split planner, and round-trips.
+    c, _ = _authed_client(
+        _cloud_settings(jcode_enabled=True, local_llm_enabled=True, local_models=["qwen3-vl-30b"])
+    )
+    jc = c.get("/api/settings/llm").json()["jcode"]
+    # No override yet → the config split default (the reasoner, even if not installed).
+    assert jc["planner"] == "gpt-oss-120b"
+
+    # Pick an installed model as the planner.
+    picked = c.put("/api/settings/llm/jcode-planner", json={"planner": "qwen3-vl-30b"})
+    assert picked.status_code == 200
+    assert picked.json()["jcode"]["planner"] == "qwen3-vl-30b"
+
+    # The "same" sentinel is accepted (single-model — the executor plans too) and preserved.
+    same = c.put("/api/settings/llm/jcode-planner", json={"planner": "same"})
+    assert same.status_code == 200
+    assert same.json()["jcode"]["planner"] == "same"
+
+    # A junk id (neither installed nor the sentinel) is rejected.
+    assert c.put("/api/settings/llm/jcode-planner", json={"planner": "nope"}).status_code == 422
+
+    # "" reverts to the config split default.
+    reset = c.put("/api/settings/llm/jcode-planner", json={"planner": ""})
+    assert reset.json()["jcode"]["planner"] == "gpt-oss-120b"
 
 
 def test_put_round_trips_effective_values(

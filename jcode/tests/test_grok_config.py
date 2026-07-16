@@ -34,7 +34,13 @@ def _fakebin(tmp_path: Path, *, curl_body: str) -> Path:
     return fakebin
 
 
-def _run(tmp_path: Path, fakebin: Path, *, model: str = "qwen3-coder-next") -> str:
+def _run(
+    tmp_path: Path,
+    fakebin: Path,
+    *,
+    model: str = "qwen3-coder-next",
+    planner: str | None = None,
+) -> str:
     home = tmp_path / "home"
     home.mkdir()
     env = {
@@ -44,6 +50,10 @@ def _run(tmp_path: Path, fakebin: Path, *, model: str = "qwen3-coder-next") -> s
         "GROK_API_KEY": "sk-jcode",
         "GROK_MODEL": model,
     }
+    # None = leave JCODE_GROK_PLAN_MODEL unset (single-model). A non-None value is
+    # exported (the api sets it per session from the owner's planner choice); "" too.
+    if planner is not None:
+        env["JCODE_GROK_PLAN_MODEL"] = planner
     res = subprocess.run(["bash", str(_HOOK)], capture_output=True, text=True, env=env)
     assert res.returncode == 0, res.stderr
     return (home / ".grok" / "config.toml").read_text()
@@ -65,10 +75,28 @@ def test_renders_every_installed_model_as_a_switchable_block(tmp_path: Path) -> 
     assert "context_window = 131072" in toml
     assert "context_window = 262144" in toml
     assert 'env_key = "GROK_API_KEY"' in toml
-    # Subagents on (the proxy's swap lock serializes them, never parallel), with the
-    # built-in plan subagent bound to the reasoner by its alias.
+    # Subagents on (the proxy's swap lock serializes them). With no planner set (the
+    # single-model default here) there is NO plan pin — the executor plans too.
     assert "[subagents]" in toml and "enabled = true" in toml
+    assert "[subagents.models]" not in toml
+
+
+def test_pins_the_plan_subagent_to_the_configured_planner(tmp_path: Path) -> None:
+    # A split session: the api exports JCODE_GROK_PLAN_MODEL=<served>, and the hook
+    # binds grok's plan subagent to that model BY ITS ALIAS (gpt-oss-120b → oss).
+    curl = "#!/usr/bin/env bash\ncat <<'EOF'\n" + _LINES + "EOF\n"
+    toml = _run(tmp_path, _fakebin(tmp_path, curl_body=curl), planner="gpt-oss-120b")
     assert "[subagents.models]" in toml and 'plan = "oss"' in toml
+
+
+def test_omits_the_plan_pin_when_the_planner_is_not_installed(tmp_path: Path) -> None:
+    # A planner served name the proxy list doesn't contain (uninstalled) resolves to no
+    # alias — grok would reject a missing-model pin, so the hook omits it.
+    curl = "#!/usr/bin/env bash\ncat <<'EOF'\n" + _LINES + "EOF\n"
+    toml = _run(
+        tmp_path, _fakebin(tmp_path, curl_body=curl), planner="nemotron-3-super"
+    )
+    assert "[subagents.models]" not in toml
 
 
 def test_falls_back_to_the_single_pinned_model_when_the_list_is_unavailable(

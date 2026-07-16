@@ -472,11 +472,19 @@ export interface JcodeModelChoice {
 export interface JcodeModelInfo {
   /** Code mode is enabled — the screen renders the card only when true. */
   enabled: boolean;
-  /** The effective model id the agent runs (stored override, else `default`). */
+  /** The effective EXECUTOR model id the agent runs (stored override, else `default`). */
   model: string;
   /** The config default (JBRAIN_JCODE_MODEL) — the value when no override is set. */
   default: string;
-  /** Installed, tool-capable local models the dropdown offers. */
+  /** The planner selection (grok's `plan` subagent): a model id, or `planner_same`
+   * meaning single-model (planner == executor, no separate model). */
+  planner: string;
+  /** The config split-planner default (JBRAIN_JCODE_PLANNER_MODEL) — the model the card
+   * suggests when a separate planner is enabled. */
+  planner_default: string;
+  /** The magic value the planner select uses for its "Same as executor" option. */
+  planner_same: string;
+  /** Installed, tool-capable local models both dropdowns offer. */
   options: JcodeModelChoice[];
 }
 
@@ -1812,6 +1820,13 @@ export const api = {
    * Returns the full settings snapshot. */
   async setJcodeModel(model: string): Promise<LlmSettings> {
     const response = await request("/api/settings/llm/jcode-model", jsonInit("PUT", { model }));
+    return (await response.json()) as LlmSettings;
+  },
+
+  /** Choose the planner model for code mode's grok `plan` subagent; "" reverts to the
+   * config split default, `planner_same` collapses to a single model. Returns the snapshot. */
+  async setJcodePlanner(planner: string): Promise<LlmSettings> {
+    const response = await request("/api/settings/llm/jcode-planner", jsonInit("PUT", { planner }));
     return (await response.json()) as LlmSettings;
   },
 
