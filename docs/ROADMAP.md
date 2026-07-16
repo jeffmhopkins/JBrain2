@@ -249,3 +249,8 @@ and `event` facts, surfaced through `lab_results`/`encounters` projections and
 `read_labs`/`read_encounters` tools. Wave 0 (gates + synthetic fixtures) complete; W1–W5 open.
 Subsumes the earlier "typed `lab_results`" line (a photographed lab report becomes queryable rows
 citing its note).
+
+**Scheduled:** Local LLM prompt cache (build plan: `docs/plans/LLM_PROMPT_CACHE_PLAN.md`) — cut
+on-box first-token latency by keeping the static jerv/curator system-prompt prefix reusable across
+turns: W1 makes the prompt prefix byte-stable (move the volatile `now_block` to the tail), W2 turns
+on llama-server's `--cache-reuse`/slot flags. Both waves open.
