@@ -269,34 +269,38 @@ CATALOG: tuple[LocalModel, ...] = (
     ),
     LocalModel(
         id="qwen3.5-122b-a10b-mtp",
-        label="Qwen3.5 122B · reasoning (MTP, faster)",
+        label="Qwen3.5 122B · vision + reasoning (MTP, faster)",
         served_model="qwen3.5-122b-a10b-mtp",
-        tiers=("high",),
-        # Text-only: the MTP repo's vision projector is unconfirmed, and render() hard-fails
-        # if an mmproj glob matches nothing — so vision stays with the standard entry above.
-        supports_vision=False,
+        tiers=("vision", "high"),
+        supports_vision=True,
         supports_tools=True,
         recommended=False,
         hf_repo="unsloth/Qwen3.5-122B-A10B-MTP-GGUF",
         gguf_include="*UD-Q4_K_XL*.gguf",
-        mmproj_include=None,
+        # The MTP repo ships the same three projector precisions as the base repo; name the
+        # F16 one exactly so the pull skips the redundant BF16/F32 beside it.
+        mmproj_include="mmproj-F16.gguf",
         quant="UD-Q4_K_XL",
-        # ~73.2 GiB from HF's 78.6 decimal-GB UD-Q4_K_XL listing (a touch larger than the
-        # standard build — the extra weight is the MTP draft head). ESTIMATE until measured.
-        size_gb=73.2,
+        # ~74.0 GiB: the UD-Q4_K_XL weights (~73.2 GiB from HF's 78.6 decimal-GB listing, a
+        # touch larger than the standard build — the extra weight is the MTP draft head) plus
+        # the ~0.85 GiB F16 projector. ESTIMATE until measured on-box.
+        size_gb=74.0,
         note="122B MoE, 10B active — the MTP (multi-token-prediction) build of "
-        "qwen3.5-122b-a10b: the same weights plus a draft head for self-speculative "
-        "decoding (~1.5–2x faster generation), enabled by the --spec-type flags in "
-        "extra_server_args. Text-only high-tier reasoner/agent (vision lives on the "
-        "standard entry). Needs a llama.cpp build with MTP speculative-decode support "
-        "(merged upstream 2026-05-16); without it the flags are rejected. Same "
-        "hybrid-reasoner + tool profile as the standard entry; standalone on a 128 GB box.",
+        "qwen3.5-122b-a10b: the same weights + vision tower, plus a draft head for "
+        "self-speculative decoding (~1.5–2x faster generation), enabled by the --spec-type "
+        "flags in extra_server_args. Vision + high-tier reasoner/agent. Needs a llama.cpp "
+        "build with MTP speculative-decode support (merged upstream 2026-05-16; else the "
+        "flags are rejected) and Qwen3.5 mmproj support for vision. Same hybrid-reasoner + "
+        "tool profile as the standard entry; standalone on a 128 GB box.",
         supports_reasoning=True,
         reasoning_format="deepseek",
         hybrid_thinking=True,
         # Self-speculation off the model's own MTP head — no separate draft model needed.
         extra_server_args=("--spec-type", "draft-mtp", "--spec-draft-n-max", "6"),
-        native_context_window=262144,
+        # Ceiling capped at 128k (below the 256k architectural max): with the ~74 GiB weights,
+        # the vision tower, and the MTP draft head all resident, 128k is the largest window
+        # that leaves a safe KV budget on a 128 GB box. The drawer's KV bar is the guardrail.
+        native_context_window=131072,
         kv_gb_per_128k=28.0,
     ),
     LocalModel(

@@ -157,14 +157,14 @@ def test_qwen35_122b_is_a_vision_high_tier_hybrid_reasoner() -> None:
     assert m.id not in local_catalog.recommended_ids()
 
 
-def test_qwen35_122b_mtp_is_a_faster_text_only_speculative_variant() -> None:
-    # The MTP (multi-token-prediction) build of the 122B: same model + a draft head for
-    # self-speculative decoding, wired via --spec-type flags in extra_server_args. Text-only
-    # (the MTP repo's projector is unconfirmed; vision stays on the standard entry).
+def test_qwen35_122b_mtp_is_a_faster_vision_speculative_variant() -> None:
+    # The MTP (multi-token-prediction) build of the 122B: same model + vision tower + a draft
+    # head for self-speculative decoding, wired via --spec-type flags in extra_server_args.
     m = local_catalog.get("qwen3.5-122b-a10b-mtp")
     assert m is not None
-    assert m.tiers == ("high",)
-    assert not m.supports_vision and m.mmproj_include is None
+    assert m.tiers == ("vision", "high")
+    # Vision-capable and ships a projector (the MTP repo mirrors the base repo's mmproj).
+    assert m.supports_vision and m.mmproj_include == "mmproj-F16.gguf"
     assert m.supports_tools
     # Same hybrid-reasoner profile as the standard entry.
     assert m.supports_reasoning and m.reasoning_format == "deepseek" and m.hybrid_thinking
@@ -176,7 +176,8 @@ def test_qwen35_122b_mtp_is_a_faster_text_only_speculative_variant() -> None:
     # The self-speculative-decoding flags the gateway needs to actually get the speedup.
     assert m.extra_server_args == ("--spec-type", "draft-mtp", "--spec-draft-n-max", "6")
     assert m.context_window == local_catalog.DEFAULT_LOCAL_CONTEXT_WINDOW
-    assert m.native_context_window == 262144
+    # Ceiling capped at 128k (below the 256k arch max) for memory on a 128 GB box.
+    assert m.native_context_window == 131072 and m.max_context_window == 131072
     assert m.id not in local_catalog.recommended_ids()
 
 
