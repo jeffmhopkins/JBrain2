@@ -111,6 +111,13 @@ def render(
             "-fa",
             "1",
             "--no-mmap",
+            # Prompt-prefix KV reuse (docs/plans/LLM_PROMPT_CACHE_PLAN.md W2): keep the KV of
+            # a matching leading prefix and salvage it via KV-shifting even after a later
+            # divergence, so a stable system-prompt + history prefix isn't re-prefilled every
+            # turn (the "slow first token"). 256 is the min chunk size worth reusing. Pairs
+            # with W1's cache-stable message layout. A long-standing llama.cpp server flag.
+            "--cache-reuse",
+            "256",
             "-m",
             f"/models/{model_id}/{gguf}",
             "-ngl",
