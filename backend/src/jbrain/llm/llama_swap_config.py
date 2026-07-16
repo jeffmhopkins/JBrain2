@@ -126,6 +126,10 @@ def render(
         mmproj = m.get("mmproj_include")
         if mmproj:
             cmd += ["--mmproj", f"/models/{model_id}/{resolve_weight(root, model_id, str(mmproj))}"]
+        # Model-specific serving flags (e.g. the MTP variant's `--spec-type draft-mtp …`
+        # self-speculative-decoding config), appended verbatim after the shared flags.
+        for flag in cast("Sequence[str]", m.get("extra_server_args") or ()):
+            cmd.append(str(flag))
         lines.append(f"  {m['served_model']}:")
         lines.append(f"    proxy: http://127.0.0.1:{port}")
         lines.append("    cmd: >")

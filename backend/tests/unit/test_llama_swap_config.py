@@ -92,6 +92,22 @@ def test_render_reads_reasoning_format_off_the_real_catalog_manifest(tmp_path: P
     assert "--reasoning-format deepseek" in text
 
 
+def test_render_appends_extra_server_args_off_the_real_catalog_manifest(tmp_path: Path) -> None:
+    # Guards the field-name contract end to end: the MTP variant's self-speculative-decoding
+    # flags must reach the gateway command. Feed the REAL catalog entry through asdict →
+    # render (not a hand-built dict) so renaming the dataclass field would fail here.
+    mtp = local_catalog.get("qwen3.5-122b-a10b-mtp")
+    assert mtp is not None
+    (tmp_path / mtp.id).mkdir()
+    (tmp_path / mtp.id / "model-UD-Q4_K_XL.gguf").write_bytes(b"\0")
+    text = llama_swap_config.render([asdict(mtp)], str(tmp_path))
+    assert "--spec-type draft-mtp --spec-draft-n-max 6" in text
+    # A model with no extra_server_args emits none of it.
+    _lay_down(tmp_path)
+    plain = llama_swap_config.render(_manifest(), str(tmp_path))
+    assert "--spec-type" not in plain
+
+
 def test_render_applies_a_per_model_window_override(tmp_path: Path) -> None:
     _lay_down(tmp_path)
     text = llama_swap_config.render(_manifest(), str(tmp_path), windows={"gpt-oss-120b": 65536})
