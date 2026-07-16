@@ -558,9 +558,7 @@ def jcode_models(local_llm_enabled: bool, local_models: Sequence[str]) -> tuple[
     proxy's allow-list (api.jcode_llm). jcode is a tool-using agent, so non-tool models are
     excluded; empty when local hosting is off (nothing installed to serve)."""
     installed = set(local_models)
-    return tuple(
-        m for m in CATALOG if local_llm_enabled and m.id in installed and m.supports_tools
-    )
+    return tuple(m for m in CATALOG if local_llm_enabled and m.id in installed and m.supports_tools)
 
 
 def _manifest(ids: Sequence[str]) -> str:
