@@ -100,8 +100,12 @@ def test_render_appends_extra_server_args_off_the_real_catalog_manifest(tmp_path
     assert mtp is not None
     (tmp_path / mtp.id).mkdir()
     (tmp_path / mtp.id / "model-UD-Q4_K_XL.gguf").write_bytes(b"\0")
+    # The MTP entry is vision-capable, so its manifest carries an mmproj glob render()
+    # resolves — lay the projector down too, else resolve_weight raises before the args.
+    (tmp_path / mtp.id / "mmproj-F16.gguf").write_bytes(b"\0")
     text = llama_swap_config.render([asdict(mtp)], str(tmp_path))
     assert "--spec-type draft-mtp --spec-draft-n-max 6" in text
+    assert "--mmproj" in text
     # A model with no extra_server_args emits none of it.
     _lay_down(tmp_path)
     plain = llama_swap_config.render(_manifest(), str(tmp_path))
