@@ -1,12 +1,13 @@
 # Running JBrain's local models on an AMD Strix Halo box
 
-> **Status:** Living · **Last verified:** 2026-07-07
+> **Status:** Living · **Last verified:** 2026-07-15
 
 End-to-end runbook for self-hosting the optional local models (docs/reference/ANALYSIS.md,
 "Self-hosted local models") on a **Ryzen AI Max+ 395 / 128 GB** (gfx1151,
 Radeon 8060S) system. Path: **Ubuntu → kernel ≥ 6.18.4 → Vulkan → JBrain base
-install → host tuning + reboot → enable local models → route in the UI.** Two
-reboots.
+install → host tuning + reboot → enable local models → route in the UI.** On
+**26.04 LTS** the stock kernel already clears the Phase 2 floor, so it's **one
+reboot** (host tuning); an older release that needs a mainline kernel is two.
 
 Local hosting is opt-in; the stock deploy is cloud-only. Nothing here runs
 automatically — every step is a deliberate command.
@@ -14,8 +15,10 @@ automatically — every step is a deliberate command.
 ---
 
 ## Phase 0 — BIOS
-- **Disable Secure Boot.** The mainline kernel you'll likely install (Phase 2)
-  is unsigned and won't boot with Secure Boot on.
+- **Secure Boot.** Leave it **on** if you'll run the stock signed kernel (the
+  default on 26.04 LTS, whose 7.0 kernel already clears the Phase 2 floor).
+  **Disable it** only if you install an unsigned mainline kernel (Phase 2) — on
+  an older release, or to get a newer kernel than your distro ships.
 - **Resizable BAR / "Above 4G decoding": Enabled.**
 - **GPU/UMA memory:** set the iGPU to a **small fixed** dedicated allocation, not
   `Auto`. The iGPU borrows the shared pool dynamically via `amdgpu.gttsize`
@@ -38,17 +41,28 @@ automatically — every step is a deliberate command.
     `Auto`/a large fixed UMA — go back into BIOS and set the small carve-out.
 
 ## Phase 1 — Install Ubuntu
-- **Ubuntu 25.10** is the low-friction pick (newest Mesa/kernel for gfx1151).
-  24.04 LTS is longer-supported but needs a newer-Mesa PPA *and* a mainline
-  kernel, so only choose it if you specifically want LTS.
+- **Ubuntu 26.04 LTS** is the pick: it ships **Linux 7.0** (well above the
+  Phase 2 gfx1151 floor) and a recent Mesa, so gfx1151 works on the **stock
+  signed kernel** — no mainline `.deb`, no Secure-Boot-off dance — and it's the
+  long-support LTS.
+  - 25.10 also works but is a 9-month interim release (EOL ~mid-2026). On it,
+    and on 24.04 LTS, the stock kernel predates the 6.18.4 floor, so you must
+    add a mainline kernel in Phase 2 (24.04 also needs a newer-Mesa PPA).
+  - **Upgrading an existing 25.10 box in place** (`do-release-upgrade`) is
+    supported and lands you on the stock 7.0 kernel: at each dpkg config prompt,
+    **keep your version (`N`)** for any file you customized per this runbook —
+    `/etc/default/grub`, `/etc/systemd/journald.conf`, `/etc/default/earlyoom` —
+    then re-run the verification below.
 - Install normally, then: `sudo apt update && sudo apt full-upgrade -y`
 
-## Phase 2 — Kernel ≥ 6.18.4  (hard requirement; reboot #1)
+## Phase 2 — Kernel ≥ 6.18.4  (hard requirement)
 gfx1151 has a stability bug below 6.18.4. Check:
 ```bash
 uname -r
 ```
-If **< 6.18.4**, install a mainline kernel (6.18.7+ is the community-tested one)
+**On 26.04 LTS the stock kernel is 7.0 — this requirement is already met, so
+skip the rest of this phase (no mainline install, no reboot #1).** On 25.10 /
+24.04 the stock kernel is older. If **< 6.18.4**, install a mainline kernel (6.18.7+ is the community-tested one)
 from <https://kernel.ubuntu.com/mainline/> — download the `linux-headers`,
 `linux-modules`, and `linux-image-unsigned` **amd64** `.deb`s for the chosen
 6.18.x, then:
@@ -67,9 +81,11 @@ We default to **Vulkan/RADV** (needs only `/dev/dri`; no ROCm setup):
 sudo apt install -y mesa-vulkan-drivers vulkan-tools
 vulkaninfo --summary | grep -i deviceName
 ```
-✅ **Checkpoint:** you must see **Radeon 8060S (RADV GFX1151)**. If absent, Mesa
-is too old (on 24.04 add `ppa:kisak/kisak-mesa`) or the kernel is too old — fix
-before continuing.
+✅ **Checkpoint:** you must see **Radeon 8060S**. The RADV device string is
+`RADV STRIX_HALO` on recent Mesa (26.04) and `RADV GFX1151` on older Mesa — both
+are correct. (An `llvmpipe` entry alongside it is the software fallback; ignore
+it.) If the Radeon device is absent, Mesa is too old (on 24.04 add
+`ppa:kisak/kisak-mesa`) or the kernel is too old — fix before continuing.
 
 ## Phase 4 — Install JBrain (cloud stack first)
 Installs Docker, clones to `/opt/jbrain2/src`, brings up the stack:
@@ -107,6 +123,14 @@ Then:
 sudo reboot
 ```
 ✅ **Checkpoint:** `cat /proc/cmdline` contains the three params.
+
+> **26.04 note — `crashkernel`.** Ubuntu 26.04 adds a `crashkernel=…:4096M`
+> reservation on a 128 GB box (it shows up in `/proc/cmdline`, and it's why
+> `free` reports ~121 GB rather than ~125). kdump can't survive the
+> reclaim-livelock freeze this hardware is prone to — the box locks before it
+> runs — so on a memory-tight local set you can reclaim that ~4 GB of headroom:
+> add `crashkernel=0` to `GRUB_CMDLINE_LINUX_DEFAULT`, `sudo update-grub`,
+> reboot. Optional — a headroom-vs-crash-diagnostics trade.
 
 ## Phase 6 — Enable the local models
 ```bash
