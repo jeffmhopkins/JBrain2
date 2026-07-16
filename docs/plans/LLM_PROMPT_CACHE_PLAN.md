@@ -45,13 +45,15 @@ and it repeats every turn because nothing is reused. Grounded in the code:
 Make `[system prompt + conversation history]` byte-stable so llama.cpp reuses it
 and prefills only the newest turn.
 
-- **Task W1.1 — Move the volatile blocks to the tail.** Relocate `now_block`
-  (and the `presence` / `me` blocks) from the head of the message list to
-  **immediately before the latest user turn**, so the stable prefix grows
-  append-only. Touch the three assemblers that share the pattern:
-  `api/agent.py:573/584/593`, `tasks/runner.py:176`, `agent/spawn.py:826`. Keep
-  the model's access to the current time — it still sees `now_block`, just at the
-  tail. Confirm no prompt/tool copy assumes the time sits near the top.
+- **Task W1.1 — Move the volatile blocks to the tail (chat path).** In the
+  multi-turn chat assembler (`api/agent.py`), keep the static `me` block at the
+  head and relocate the volatile `presence` + `now_block` to **immediately before
+  the newest user turn**, so `[system + owner-self + history]` grows append-only
+  and stays reusable. The single-turn assemblers `tasks/runner.py:176` and
+  `agent/spawn.py:826` carry **no history** (`[now_block, prompt]`), so moving
+  their `now_block` yields no cache benefit — left as-is, a deliberate scope
+  refinement from the original three-file sketch. The model still sees `now_block`,
+  now adjacent to the question.
 - **Tests.** Unit-assert the assembled message order for each of the three paths:
   the volatile block is the last context message before the newest user message,
   and the system message + prior history are unchanged. LLM calls faked.

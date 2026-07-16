@@ -562,35 +562,39 @@ async def chat(request: Request, principal: OwnerDep, body: ChatRequest) -> Stre
     if images and not await router.supports_vision("agent.turn", spec_override=model_override):
         images = []
     conversation = _conversation(body, images, attach_text)
-    # L7b: prepend the owner's coarse presence as a DATA-framed UserMessage, on the
-    # conversation channel (the data/instruction boundary) — NOT the system
-    # prompt (run_stream hardcodes SYSTEM_PROMPT, so a system injection would no-op in
-    # streaming). Owner-gated: absent unless the session holds the `location` scope,
-    # and the read runs under the FULL owner ctx (require_full_owner), so a narrowed
-    # session never gets a presence line. Names + times only, freshness-honest.
-    presence = await _presence_block(request, owner_ctx, session)
-    if presence:
-        conversation = [UserMessage(text=presence), *conversation]
-    # Hand a knowledge-base turn the owner's own ("Me") entity id up front, so a
-    # first-person attribute question ("what's my birthday", "my name", "where I
-    # live") is a single read_entity — not a find_entity("Me") hop preceded by a
-    # flail through note search. Same conversation-channel DATA framing as presence,
-    # and gated the same way: owner-self data, so knowledge-base agents only (never
-    # jerv/teacher) and resolved under the FULL owner ctx. Best-effort — a resolve
-    # miss (or a graph with no Me yet) simply injects no line.
+    # Cache-stable prompt layout (docs/plans/LLM_PROMPT_CACHE_PLAN.md W1): keep the STATIC
+    # content leading so [system + owner-self + history] is a byte-stable prefix the local
+    # gateway's KV cache can reuse turn-over-turn; put the VOLATILE blocks (presence, "now")
+    # right before the newest user message instead of at the head, so a per-turn change no
+    # longer invalidates the whole history's KV. Behaviour-preserving otherwise: each block is
+    # the same DATA-framed UserMessage on the conversation channel, still before the current
+    # turn — only its position relative to the (now-cacheable) history moved.
+    #
+    # The owner's own ("Me") entity id is static per owner, so it stays at the head (also keeps
+    # it "up front" for a first-person attribute question — one read_entity, not a
+    # find_entity("Me") hop). KB agents only (owner-self data; never jerv/teacher), resolved
+    # under the FULL owner ctx; a resolve miss simply injects no line.
     if profile.reads_knowledge_base:
         me_line = await _me_block(request, owner_ctx)
         if me_line:
             conversation = [UserMessage(text=me_line), *conversation]
-    # The owner's display zone so the agent's time prose matches the cards (which
-    # the client localizes); None = UTC. Read on the owner ctx, not the narrowed
-    # read ctx — a preference, not domain data.
+    # The owner's display zone so the agent's time prose matches the client-localized cards;
+    # None = UTC. Read on the owner ctx (a preference, not domain data).
     owner_tz = await get_settings_store(request).owner_timezone(owner_ctx)
-    # Every turn knows when it is: prepend the current date + local time as a DATA-
-    # framed UserMessage (same conversation-channel boundary as presence), so
-    # any agent — including the sandboxed jerv — grounds "today"/"this week" without
-    # having to call a tool. The `current_time` tool covers fresh/other-zone reads.
-    conversation = [UserMessage(text=now_block(owner_tz)), *conversation]
+    # The volatile suffix, inserted just before the final (current) user message:
+    #  - presence — the owner's coarse location as a DATA-framed line (NOT a system change;
+    #    run_stream hardcodes SYSTEM_PROMPT). Owner-gated: absent unless the session holds the
+    #    `location` scope, read under the FULL owner ctx, names + times only, freshness-honest.
+    #  - now_block — the current date + local time, so any agent (incl. sandboxed jerv) grounds
+    #    "today"/"this week" without a tool call (`current_time` covers fresh/other zones).
+    # Both stay before the current turn (the model sees them when it answers) but after the
+    # history, so a per-turn change no longer invalidates the reusable prefix.
+    volatile: list[LlmMessage] = []
+    presence = await _presence_block(request, owner_ctx, session)
+    if presence:
+        volatile.append(UserMessage(text=presence))
+    volatile.append(UserMessage(text=now_block(owner_tz)))
+    conversation = [*conversation[:-1], *volatile, conversation[-1]]
     # Reflexion mode gate (Track R): default verify-and-annotate; this opts into
     # the buffer-then-retry path (off by default — a spinner-latency tradeoff).
     buffer_retry = await get_settings_store(request).reflexion_buffer_retry(owner_ctx)
