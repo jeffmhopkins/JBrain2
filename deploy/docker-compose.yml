@@ -463,15 +463,18 @@ services:
       ANTHROPIC_DEFAULT_FABLE_MODEL: ${JCODE_MODEL:-qwen3-coder-next}
       # Grok Build (`grok`, xAI's official CLI) the owner can run in the session shell
       # alongside `claude`. A login-shell hook (/etc/profile.d/grok-config.sh) renders
-      # ~/.grok/config.toml from these vars so `grok` targets the on-box coder over an
+      # ~/.grok/config.toml from these vars so `grok` targets the on-box models over an
       # OpenAI-compatible base_url — NO claude-shim (that exists only for Claude Code's
-      # Anthropic API). Same gateway URL as JCODE_MODEL_BASE_URL above, with /v1, so the
-      # two can't drift. The gateway is keyless, but a custom base_url makes the CLI send
-      # Authorization: Bearer, so GROK_API_KEY (the config's env_key) is a non-empty
-      # placeholder. GROK_MODEL pins the on-box coder; the interactive terminal further
-      # pins it per session with the owner's selected quant, like the ANTHROPIC_* tiers.
-      GROK_MODELS_BASE_URL: ${JCODE_MODEL_URL:-http://local-llm:8080}/v1
-      GROK_API_KEY: ${JCODE_GROK_API_KEY:-sk-local-noauth}
+      # Anthropic API). base_url points at the api's residency-aware jcode proxy (NOT the
+      # gateway directly): the hook fetches every installed tool-capable model from its
+      # /models endpoint so `grok`'s `/model` switches between them live, and every
+      # completion flows through it so a plan↔execute switch evicts-to-budget (cold swap)
+      # instead of stacking two large models and freezing the box. GROK_API_KEY is the
+      # shared jcode token the proxy checks (sent as Authorization: Bearer). GROK_MODEL is
+      # the session's DEFAULT model; the interactive terminal pins it per session with the
+      # owner's selection, like the ANTHROPIC_* tiers.
+      GROK_MODELS_BASE_URL: ${JCODE_GROK_MODELS_URL:-http://api:8000/api/jcode/llm/v1}
+      GROK_API_KEY: ${JCODE_GATEWAY_TOKEN:-sk-jcode-local}
       GROK_MODEL: ${JCODE_MODEL:-qwen3-coder-next}
       # The coder's served context window, written into ~/.grok/config.toml — without it
       # Grok Build assumes 200k for a custom model and compacts early. Default 262144 = the
@@ -527,8 +530,9 @@ services:
       # over a proxy needs on-box verification, so strict egress is opt-in, not default.
       HTTP_PROXY: ${JCODE_EGRESS_PROXY:-}
       HTTPS_PROXY: ${JCODE_EGRESS_PROXY:-}
-      # Never proxy the on-box peers (the shim + the model gateway) on the jcode network.
-      NO_PROXY: ${JCODE_NO_PROXY:-claude-shim,local-llm,localhost,127.0.0.1}
+      # Never proxy the on-box peers on the jcode network: the shim, the model gateway, and
+      # `api` (grok's model calls go to the api's residency-aware jcode proxy).
+      NO_PROXY: ${JCODE_NO_PROXY:-api,claude-shim,local-llm,localhost,127.0.0.1}
     volumes:
       # The per-session git checkouts — sandbox scratch, NEVER a JBrain blob/note.
       - jcode_work:/work
