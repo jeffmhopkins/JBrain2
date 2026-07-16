@@ -49,6 +49,7 @@ from jbrain.api import (
     install,
     intake,
     jcode,
+    jcode_llm,
     jcode_preview,
     jcode_share,
     jcode_terminal,
@@ -294,6 +295,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             enabled=settings.local_llm_enabled,
             free_ram_fraction=settings.local_llm_free_ram_fraction,
         )
+        # Serializes the jcode LLM proxy's model swaps (api.jcode_llm): one model loading/
+        # serving at a time on the box, so a live grok `/model` switch (or a parallel agent)
+        # cold-swaps instead of stacking two large models. Bound to this app's event loop.
+        app.state.jcode_llm_swap_lock = asyncio.Lock()
         # Any API-side LLM call must flow through this router so its tokens
         # land in app.llm_usage like the worker's do. The overrides loader reads
         # the live per-task routing/reasoning settings (SYSTEM_CTX owner session)
@@ -709,6 +714,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # Code mode (docs/archive/JCODE_PLAN.md). Always mounted, but every route is
     # owner-gated and 404s when jcode isn't configured (app.state.jcode_client is None).
     app.include_router(jcode.router, prefix="/api")
+    app.include_router(jcode_llm.router, prefix="/api")
     app.include_router(jcode_share.router, prefix="/api")
     app.include_router(jcode_terminal.router, prefix="/api")
     # The host-mode web preview proxy (docs/archive/JCODE_PREVIEW_HOST_PLAN.md). NOT under /api:

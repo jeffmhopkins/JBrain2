@@ -1,6 +1,6 @@
 # JBrain2 — Services & components map
 
-> **Status:** Living · **Last verified:** 2026-07-09
+> **Status:** Living · **Last verified:** 2026-07-16
 
 The concrete inventory of everything the box runs and everything baked into it:
 the Docker containers, the two apps (the PWA and the JBrain360 Android client),
@@ -36,7 +36,7 @@ Everything is one Docker Compose stack (`deploy/docker-compose.yml`, project nam
 | `cloudflared` | `tunnel` | `install.sh` (dial-out tunnel mode) | Cloudflare Tunnel connector — public reachability with no static IP / port-forward, works behind CGNAT. See `../runbooks/CLOUDFLARE_TUNNEL.md`. |
 | `local-llm` | `local-llm` | `jbrain enable-local-models` | llama-swap fronting llama.cpp (Vulkan) — several GGUF models on one OpenAI-compatible endpoint, loaded/swapped on demand. |
 | `comfyui` | `comfyui` | `scripts/comfyui-setup.sh` | ROCm ComfyUI serving Qwen-Image (gen + edit) for the image tools. |
-| `jcode` | `jcode` | `scripts/jcode-setup.sh` | Sandboxed coding sessions: Claude Code's agent engine + `grok` CLI against an on-box coder model. KB-blind, isolated `jcode` network, resource-capped. See `../archive/JCODE_PLAN.md`. |
+| `jcode` | `jcode` | `scripts/jcode-setup.sh` | Sandboxed coding sessions: Claude Code's agent engine + `grok` CLI against on-box models. `grok`'s `/model` switches live between every installed tool-capable model (plan on the reasoner, execute on the coder) via the api's residency-aware jcode proxy (`api.jcode_llm`), which evicts-to-budget and serializes swaps so one model loads at a time — no unified-memory thrash. KB-blind, isolated `jcode` network, resource-capped. See `../archive/JCODE_PLAN.md`. |
 | `claude-shim` | `jcode` | (with `jcode`) | LiteLLM Anthropic↔OpenAI translator so the Claude Agent SDK can talk to the OpenAI-speaking local gateway. |
 | `mqtt` | `mqtt` | JBrain360 setup | Mosquitto + go-auth broker (auth delegated to the API's `/internal/mqtt-*`) — the secure spine for family location. |
 | `mqtt-ingest` | `mqtt` | (with `mqtt`) | Server-side subscriber streaming published OwnTracks fixes into the location hypertable. |

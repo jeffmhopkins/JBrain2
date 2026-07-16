@@ -316,11 +316,12 @@ async def _snapshot(
 def _jcode_options(settings: Settings) -> list[JcodeModelChoice]:
     """Installed, tool-capable local models the jcode dropdown offers — jcode is a
     tool-using agent on the on-box gateway, so non-tool or uninstalled models are
-    excluded. Empty when local hosting is off (nothing is installed to serve)."""
+    excluded. Empty when local hosting is off (nothing is installed to serve). Shares the
+    one source of truth with the sandbox's grok `/model` list + the residency-aware proxy
+    (jbrain.llm.local_catalog.jcode_models)."""
     return [
         JcodeModelChoice(id=m.id, label=m.label)
-        for m in local_catalog.CATALOG
-        if settings.local_llm_enabled and m.id in settings.local_models and m.supports_tools
+        for m in local_catalog.jcode_models(settings.local_llm_enabled, settings.local_models)
     ]
 
 

@@ -551,6 +551,16 @@ def selected(ids: Sequence[str]) -> tuple[LocalModel, ...]:
     return tuple(m for m in CATALOG if m.id in wanted)
 
 
+def jcode_models(local_llm_enabled: bool, local_models: Sequence[str]) -> tuple[LocalModel, ...]:
+    """Installed, tool-capable local models — the set code mode (jcode) can run, in catalog
+    order. The single source of truth for three consumers that must agree: the jcode model
+    dropdown (llm_settings), the sandbox's grok `/model` list, and the residency-aware jcode
+    proxy's allow-list (api.jcode_llm). jcode is a tool-using agent, so non-tool models are
+    excluded; empty when local hosting is off (nothing installed to serve)."""
+    installed = set(local_models)
+    return tuple(m for m in CATALOG if local_llm_enabled and m.id in installed and m.supports_tools)
+
+
 def _manifest(ids: Sequence[str]) -> str:
     """JSON download manifest for the setup script (one object per model)."""
     models = selected(ids) if ids else CATALOG
