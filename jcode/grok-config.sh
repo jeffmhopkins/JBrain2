@@ -22,13 +22,17 @@ if command -v grok >/dev/null 2>&1; then
   mkdir -p "${HOME:-/root}/.grok"
   base_url="${GROK_MODELS_BASE_URL:-http://local-llm:8080/v1}"
   default_model="${GROK_MODEL:-qwen3-coder-next}"
-  # Subagents are grok Build's parallelism (they run concurrently). On this box the two
-  # large models can't co-reside, so parallel subagents on different models would cold-swap
-  # against each other — the proxy's swap lock keeps that SAFE, but it's slow, so we default
-  # them OFF (single model at a time; plan on the reasoner then execute on the coder via
-  # `/model`). Set JCODE_GROK_SUBAGENTS=true to re-enable them (then a `[subagents.models]
-  # plan = "gpt-oss-120b"` planner routing becomes possible, at the cold-swap cost).
-  subagents_enabled="${JCODE_GROK_SUBAGENTS:-false}"
+  # Subagents are grok Build's task agents. They're ON — but grok has no sequential/
+  # concurrency knob (verified against grok-build source: only `enabled` + per-type
+  # `toggle`, no max-parallel), so it's the api proxy's swap lock that keeps them from
+  # THRASHING: every completion serializes there, so on this can't-co-reside box the
+  # subagents queue one model at a time instead of running in parallel across models.
+  # JCODE_GROK_SUBAGENTS=false disables them entirely.
+  subagents_enabled="${JCODE_GROK_SUBAGENTS:-true}"
+  # Route grok's built-in `plan` subagent to the reasoner (plan on gpt-oss-120b, execute on
+  # the coder default) — but only when that model is actually installed (grok requires the
+  # model exist in its registry). JCODE_GROK_PLAN_MODEL overrides the planner served name.
+  plan_model="${JCODE_GROK_PLAN_MODEL:-gpt-oss-120b}"
   models_lines=""
   if command -v curl >/dev/null 2>&1; then
     models_lines="$(curl -fsS -H "Authorization: Bearer ${GROK_API_KEY:-}" \
@@ -57,9 +61,16 @@ if command -v grok >/dev/null 2>&1; then
       echo "env_key = \"GROK_API_KEY\""
       echo "context_window = ${GROK_CONTEXT_WINDOW:-262144}"
     fi
-    # Parallelism control (top-level table, after the model blocks): off by default so one
-    # model serves at a time — matches the single-model box and avoids cold-swap ping-pong.
+    # Subagents (top-level table, after the model blocks). Enabled; the proxy's swap lock
+    # serializes their model execution so they never run in parallel across models.
     printf '\n[subagents]\n'
     echo "enabled = ${subagents_enabled}"
+    # Bind the plan subagent to the reasoner — only when it's on and that model is installed
+    # (an exact served-name match against the fetched list), else grok would reject the pin.
+    if [ "$subagents_enabled" = true ] && [ -n "$plan_model" ] \
+      && printf '%s\n' "$models_lines" | cut -d'|' -f1 | grep -qxF "$plan_model"; then
+      printf '\n[subagents.models]\n'
+      echo "plan = \"${plan_model}\""
+    fi
   } > "${HOME:-/root}/.grok/config.toml"
 fi

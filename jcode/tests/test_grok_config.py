@@ -64,8 +64,10 @@ def test_renders_every_installed_model_as_a_switchable_block(tmp_path: Path) -> 
     assert "context_window = 131072" in toml
     assert "context_window = 262144" in toml
     assert 'env_key = "GROK_API_KEY"' in toml
-    # Parallel subagents are off by default (single model at a time on this box).
-    assert "[subagents]" in toml and "enabled = false" in toml
+    # Subagents on (the proxy's swap lock serializes them, never parallel), with the
+    # built-in plan subagent bound to the installed reasoner.
+    assert "[subagents]" in toml and "enabled = true" in toml
+    assert "[subagents.models]" in toml and 'plan = "gpt-oss-120b"' in toml
 
 
 def test_falls_back_to_the_single_pinned_model_when_the_list_is_unavailable(
@@ -77,4 +79,7 @@ def test_falls_back_to_the_single_pinned_model_when_the_list_is_unavailable(
     assert 'default = "qwen3-coder-next"' in toml
     assert '[model."qwen3-coder-next"]' in toml
     # No other model blocks were invented from a failed fetch.
-    assert toml.count("[model.") == 1
+    assert toml.count('[model."') == 1
+    # Subagents still enabled, but no plan pin — the reasoner isn't in the (empty) list.
+    assert "enabled = true" in toml
+    assert "[subagents.models]" not in toml
