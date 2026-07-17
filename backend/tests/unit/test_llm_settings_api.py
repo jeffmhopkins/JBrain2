@@ -688,6 +688,35 @@ def test_plan_load_404_and_409() -> None:
     assert c2.post("/api/settings/llm/local-models/gpt-oss-120b/plan-load").status_code == 409
 
 
+def test_set_available_toggles_the_roster_and_unloads_on_unavailable() -> None:
+    # Both models provisioned + resident. Marking one unavailable drops it from the effective
+    # roster (available False), keeps it installed (enabled True), and unloads it from memory.
+    gw = FakeLocalGateway(running={"qwen3-vl-30b-a3b", "gpt-oss-120b"})
+    c, store = _authed_client(_local_settings(), gw)
+    resp = c.put("/api/settings/llm/local-models/qwen3-vl-30b/available", json={"available": False})
+    assert resp.status_code == 200, resp.text
+    by_id = {m["id"]: m for m in resp.json()["local_models"]}
+    assert by_id["qwen3-vl-30b"]["enabled"] is True  # still installed
+    assert by_id["qwen3-vl-30b"]["available"] is False  # out of the roster
+    assert by_id["gpt-oss-120b"]["available"] is True  # untouched
+    assert store.values["llm_local_unavailable"] == ["qwen3-vl-30b"]
+    assert gw.unloaded == ["qwen3-vl-30b-a3b"]  # freed its memory
+
+    # Making it available again clears the flag (no gateway action).
+    resp = c.put("/api/settings/llm/local-models/qwen3-vl-30b/available", json={"available": True})
+    assert {m["id"]: m for m in resp.json()["local_models"]}["qwen3-vl-30b"]["available"] is True
+    assert store.values["llm_local_unavailable"] == []
+
+
+def test_set_available_404_and_409() -> None:
+    c, _ = _authed_client(_local_settings())
+    unknown = c.put("/api/settings/llm/local-models/nope/available", json={"available": False})
+    assert unknown.status_code == 404
+    c2, _ = _authed_client(_cloud_settings())
+    off = c2.put("/api/settings/llm/local-models/gpt-oss-120b/available", json={"available": False})
+    assert off.status_code == 409
+
+
 def test_plan_load_flags_an_over_box_model(monkeypatch: pytest.MonkeyPatch) -> None:
     # A 20 GB box can't hold gpt-oss (63.5): the preview flags over_box so the screen can
     # disable Load.

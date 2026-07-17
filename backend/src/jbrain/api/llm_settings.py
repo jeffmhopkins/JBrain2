@@ -7,6 +7,7 @@ so this endpoint is the live control surface — no restart. Owner-only is
 implicit pre-P7; the store's RLS enforces it regardless.
 """
 
+import contextlib
 from dataclasses import asdict
 from typing import Annotated, Literal, cast
 
@@ -139,7 +140,13 @@ class LocalModelInfo(BaseModel):
 
     id: str
     label: str
+    # Provisioned on the box (in LOCAL_MODELS) — the weights are installed and it CAN be
+    # made available. The Catalogue tab's install/uninstall state.
     enabled: bool
+    # Effective-available to the router: provisioned AND not marked unavailable by the
+    # operator. Only these show in the Available/Resident tabs and can be staged/loaded. A
+    # per-owner runtime toggle (the Catalogue's Available switch) that keeps the weights.
+    available: bool
     # Queued for provisioning from the PWA but not yet on the box (in the install
     # queue and not enabled). The next update downloads it and flips it to enabled.
     queued: bool
@@ -335,6 +342,7 @@ async def _snapshot(
 ) -> LlmSettingsOut:
     overrides = await store.llm_task_overrides(ctx)
     windows = await store.llm_local_context_windows(ctx)
+    unavailable = set(await store.llm_local_unavailable(ctx))
     requested = set(await store.llm_local_provision_requested(ctx))
     removing = set(await store.llm_local_remove_requested(ctx))
     loaded = await _loaded_ids(settings, gateway)
@@ -358,6 +366,7 @@ async def _snapshot(
                 m,
                 m.id in loaded,
                 windows,
+                m.id in unavailable,
                 m.id in requested,
                 m.id in removing,
             )
@@ -437,10 +446,13 @@ def _local_model_info(
     m: local_catalog.LocalModel,
     loaded: bool,
     windows: dict[str, int],
+    unavailable: bool,
     requested: bool,
     removing: bool,
 ) -> LocalModelInfo:
     enabled = settings.local_llm_enabled and m.id in settings.local_models
+    # Effective-available: provisioned AND not toggled off by the operator.
+    available = enabled and not unavailable
     override = windows.get(m.id)
     effective_window = override if override is not None else m.context_window
     kv_gb = round(m.kv_gb_per_128k * effective_window / 131072, 2)
@@ -448,6 +460,7 @@ def _local_model_info(
         id=m.id,
         label=m.label,
         enabled=enabled,
+        available=available,
         # Queued only while not yet provisioned — once an install completes the model
         # is enabled, so it leaves the "available to install" list on its own.
         queued=requested and not enabled,
@@ -689,6 +702,43 @@ async def set_local_context_window(
     )
     _try_regenerate(settings, windows)
     await _unload_if_loaded(settings, gateway, model)
+    return await _snapshot(settings, store, ctx, gateway)
+
+
+class AvailableIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    available: bool
+
+
+@router.put("/settings/llm/local-models/{model_id}/available")
+async def set_local_available(
+    model_id: str,
+    body: AvailableIn,
+    principal: PrincipalDep,
+    settings: SettingsDep,
+    store: SettingsStoreDep,
+    gateway: LocalGatewayDep,
+) -> LlmSettingsOut:
+    """Mark a provisioned model available / unavailable to the router — a per-owner runtime
+    toggle that keeps the weights (unlike Uninstall). Unavailable models drop out of the
+    Available/Resident tabs and can't be staged/loaded; making one unavailable also unloads
+    it if resident, to free the memory. The weights stay on disk, so it flips back instantly.
+    404 for an unprovisioned id; 409 when hosting is off. No gateway re-stamp — the model
+    stays a swap-group member; availability is an app-side roster filter."""
+    model = _require_provisioned(settings, model_id)
+    ctx = ctx_for(principal)
+    unavailable = await store.llm_local_unavailable(ctx)
+    if body.available:
+        unavailable = [u for u in unavailable if u != model_id]
+    elif model_id not in unavailable:
+        unavailable.append(model_id)
+    await store.set_llm_local_unavailable(ctx, unavailable)
+    # Making it unavailable frees its memory now — an unroutable model shouldn't hold RAM.
+    if not body.available:
+        with contextlib.suppress(LocalGatewayError):
+            if model.served_model in await gateway.running():
+                await gateway.unload(model.served_model)
     return await _snapshot(settings, store, ctx, gateway)
 
 

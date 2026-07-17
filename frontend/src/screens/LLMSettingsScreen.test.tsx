@@ -5,8 +5,9 @@ import { LLMSettingsScreen } from "./LLMSettingsScreen";
 
 // Build a LocalModelInfo with sensible defaults; tests override what they assert on.
 function lm(over: Partial<LocalModelInfo> & Pick<LocalModelInfo, "id" | "label">): LocalModelInfo {
-  return {
+  const m: LocalModelInfo = {
     enabled: false,
+    available: false,
     queued: false,
     remove_queued: false,
     loaded: false,
@@ -24,6 +25,8 @@ function lm(over: Partial<LocalModelInfo> & Pick<LocalModelInfo, "id" | "label">
     kv_gb: 0,
     ...over,
   };
+  // Default effective-available to provisioned unless a test sets it explicitly.
+  return { ...m, available: over.available ?? m.enabled };
 }
 
 function initialSettings(): LlmSettings {
@@ -1267,6 +1270,55 @@ describe("LLMSettingsScreen", () => {
     // Uninstall lives in the Catalogue tab.
     fireEvent.click(screen.getByRole("tab", { name: /Catalogue/i }));
     expect(await screen.findByRole("button", { name: "Uninstall" })).toBeInTheDocument();
+  });
+
+  it("toggles a model available / unavailable from the Catalogue tab", async () => {
+    const s = initialSettings();
+    s.local_hosting_enabled = true;
+    s.host_memory = { total_gb: 128, used_gb: 0 };
+    s.local_models = [
+      lm({
+        id: "qwen3-vl-30b",
+        label: "Qwen3-VL 30B",
+        enabled: true,
+        available: true,
+        size_gb: 32,
+        disk_gb: 32,
+      }),
+    ];
+    const calls: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>(async (input, init) => {
+        const path = String(input);
+        const method = (init?.method ?? "GET").toUpperCase();
+        if (path === "/api/settings/llm" && method === "GET")
+          return new Response(JSON.stringify(s), { status: 200 });
+        if (path.endsWith("/available") && method === "PUT") {
+          calls.push(path);
+          const on = (JSON.parse(String(init?.body)) as { available: boolean }).available;
+          const m0 = s.local_models[0];
+          if (m0) m0.available = on;
+          return new Response(JSON.stringify(s), { status: 200 });
+        }
+        throw new Error(`unexpected fetch: ${method} ${path}`);
+      }),
+    );
+    render(<LLMSettingsScreen />);
+    await screen.findByRole("button", { name: /On-box LLMs/i });
+    // Available tab (default): the model is in the roster.
+    expect(await screen.findByText("Qwen3-VL 30B")).toBeInTheDocument();
+
+    // Catalogue tab → make it unavailable.
+    fireEvent.click(screen.getByRole("tab", { name: /Catalogue/i }));
+    fireEvent.click(await screen.findByRole("button", { name: "Make unavailable" }));
+    await waitFor(() => expect(calls).toHaveLength(1));
+
+    // It drops out of the Available tab; the Catalogue row now offers "Make available".
+    fireEvent.click(screen.getByRole("tab", { name: /Available/i }));
+    expect(screen.queryByText("Qwen3-VL 30B")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("tab", { name: /Catalogue/i }));
+    expect(await screen.findByRole("button", { name: "Make available" })).toBeInTheDocument();
   });
 
   it("arming Uninstall without a second tap does not queue a removal", async () => {

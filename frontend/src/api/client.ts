@@ -445,7 +445,11 @@ export interface LlmTask {
 export interface LocalModelInfo {
   id: string;
   label: string;
+  /** Provisioned on the box (weights installed) — it CAN be made available. */
   enabled: boolean;
+  /** Effective-available to the router: provisioned AND not toggled off by the operator.
+   * Only these show in the Available/Resident tabs and can be staged/loaded. */
+  available: boolean;
   /** Queued for install from the PWA but not yet on the box — the next update
    * provisions it. Mutually exclusive with `enabled`. */
   queued: boolean;
@@ -1878,6 +1882,16 @@ export const api = {
    * config split default, `planner_same` collapses to a single model. Returns the snapshot. */
   async setJcodePlanner(planner: string): Promise<LlmSettings> {
     const response = await request("/api/settings/llm/jcode-planner", jsonInit("PUT", { planner }));
+    return (await response.json()) as LlmSettings;
+  },
+
+  /** Mark a provisioned model available / unavailable to the router (keeps the weights);
+   * returns the full snapshot. */
+  async setLocalAvailable(id: string, available: boolean): Promise<LlmSettings> {
+    const response = await request(
+      `/api/settings/llm/local-models/${encodeURIComponent(id)}/available`,
+      jsonInit("PUT", { available }),
+    );
     return (await response.json()) as LlmSettings;
   },
 

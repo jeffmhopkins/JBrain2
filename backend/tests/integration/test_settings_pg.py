@@ -224,6 +224,22 @@ async def test_llm_local_context_windows_round_trip_and_sanitizes(
     assert await store.llm_local_context_windows(OWNER) == {"ok": 16384}
 
 
+async def test_llm_local_unavailable_round_trip_and_dedups(
+    maker: async_sessionmaker[AsyncSession],
+) -> None:
+    from jbrain.settings_store import LLM_LOCAL_UNAVAILABLE_KEY
+
+    store = SqlSettingsStore(maker)
+    assert await store.llm_local_unavailable(OWNER) == []
+
+    await store.set_llm_local_unavailable(OWNER, ["gpt-oss-120b", "qwen3-vl-30b", "gpt-oss-120b"])
+    assert await store.llm_local_unavailable(OWNER) == ["gpt-oss-120b", "qwen3-vl-30b"]
+
+    # Non-list / non-string entries are dropped on read.
+    await store.upsert(OWNER, LLM_LOCAL_UNAVAILABLE_KEY, ["a", 5, "a", None, "b"])
+    assert await store.llm_local_unavailable(OWNER) == ["a", "b"]
+
+
 async def test_llm_local_provision_requested_round_trip_and_dedups(
     maker: async_sessionmaker[AsyncSession],
 ) -> None:
@@ -271,8 +287,10 @@ async def test_llm_local_settings_are_owner_only(
     # owner is invisible to a non-owner session.
     store = SqlSettingsStore(maker)
     await store.set_llm_local_context_window(OWNER, model_id="gpt-oss-120b", window=65536)
+    await store.set_llm_local_unavailable(OWNER, ["gpt-oss-120b"])
     await store.set_llm_local_provision_requested(OWNER, ["qwen3-235b-a22b"])
     await store.set_llm_local_remove_requested(OWNER, ["gpt-oss-120b"])
     assert await store.llm_local_context_windows(UNSCOPED) == {}
+    assert await store.llm_local_unavailable(UNSCOPED) == []
     assert await store.llm_local_provision_requested(UNSCOPED) == []
     assert await store.llm_local_remove_requested(UNSCOPED) == []
