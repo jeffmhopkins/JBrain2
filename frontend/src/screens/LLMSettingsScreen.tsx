@@ -345,6 +345,21 @@ export function LLMSettingsScreen() {
       .finally(() => unmark(id));
   }
 
+  // Toggle a provisioned model available/unavailable to the router (keeps the weights). A
+  // model made unavailable can't be staged, so drop any open preview of it.
+  function setAvailable(id: string, on: boolean) {
+    mark(id);
+    if (!on && stagedId === id) clearPreview();
+    const seq = ++putSeq.current;
+    api
+      .setLocalAvailable(id, on)
+      .then((s) => {
+        if (seq === putSeq.current) setSettings(s);
+      })
+      .catch(() => {})
+      .finally(() => unmark(id));
+  }
+
   // Choose the model the code-mode (jcode) agent runs; "" reverts to the default.
   // Returns the full snapshot (guarded reconcile, like stage/context-window).
   function setJcodeModel(model: string) {
@@ -600,6 +615,7 @@ export function LLMSettingsScreen() {
         onStage={previewStage}
         onCancelStage={clearPreview}
         onSetWindow={setContextWindow}
+        onSetAvailable={setAvailable}
         onInstall={queueInstall}
         onUninstall={queueUninstall}
         onDownload={startDownload}
@@ -1053,6 +1069,7 @@ function OnBoxModelsCard({
   onStage,
   onCancelStage,
   onSetWindow,
+  onSetAvailable,
   onInstall,
   onUninstall,
   onDownload,
@@ -1082,6 +1099,7 @@ function OnBoxModelsCard({
   onStage: (id: string) => void;
   onCancelStage: () => void;
   onSetWindow: (id: string, window: number | null) => void;
+  onSetAvailable: (id: string, on: boolean) => void;
   onInstall: (id: string, on: boolean) => void;
   onUninstall: (id: string, on: boolean) => void;
   onDownload: () => void;
@@ -1091,9 +1109,10 @@ function OnBoxModelsCard({
   onStartImageService: () => void;
   onStopImageService: () => void;
 }) {
-  // "Available" is the router's swap roster (m.enabled); "resident" is loaded now.
-  const enabled = models.filter((m) => m.enabled);
-  const loaded = enabled.filter((m) => m.loaded);
+  // "Available" is the router's swap roster (effective-available, m.available); "resident"
+  // is loaded now. `enabled` (provisioned-on-box) still drives the Catalogue install rows.
+  const available = models.filter((m) => m.available);
+  const loaded = models.filter((m) => m.loaded);
   // The transient stage preview: the model whose load we're previewing (projected onto the
   // bar) and the set of resident models the server says it would evict.
   const stagedModel = stagedId !== null ? (models.find((m) => m.id === stagedId) ?? null) : null;
@@ -1107,7 +1126,7 @@ function OnBoxModelsCard({
   // Provisioned models queued for removal — they apply through the same sync one-shot
   // as installs, so a pending uninstall surfaces the download bar too (otherwise a
   // queued removal would have no in-app control to apply it).
-  const removing = hostingEnabled ? enabled.filter((m) => m.remove_queued) : [];
+  const removing = hostingEnabled ? models.filter((m) => m.enabled && m.remove_queued) : [];
   // Resident footprint = weights + KV for everything actually loaded.
   const residentGb = loaded.reduce((sum, m) => sum + residentGbOf(m), 0);
   const stagedGb = stagedProjected !== null ? residentGbOf(stagedProjected) : 0;
@@ -1146,7 +1165,7 @@ function OnBoxModelsCard({
   const meterShown = total > 0 && (onBar.length > 0 || imgActive);
 
   const llmMeta = hostingEnabled
-    ? `${enabled.length} available · ${loaded.length} resident`
+    ? `${available.length} available · ${loaded.length} resident`
     : "off";
   const imgMeta = image?.reachable
     ? imgActive
@@ -1157,7 +1176,7 @@ function OnBoxModelsCard({
       : "off";
 
   // LLM tab filtering (reversed order): resident (loaded) · available (roster) · catalogue (all).
-  const llmRows = llmTab === "resident" ? loaded : llmTab === "available" ? enabled : models;
+  const llmRows = llmTab === "resident" ? loaded : llmTab === "available" ? available : models;
 
   return (
     <section className="onbox-card" aria-label={`On-box models — ${anyOn ? summary : "off"}`}>
@@ -1297,9 +1316,9 @@ function OnBoxModelsCard({
                   : "Installed models the router may swap in. Stage previews whether loading one evicts something."}
               </p>
             )}
-            {hostingEnabled && llmTab === "available" && enabled.length === 0 && (
+            {hostingEnabled && llmTab === "available" && available.length === 0 && (
               <p className="llm-local-hint">
-                No models available yet — install one from the Catalogue tab.
+                No models available yet — install one, or switch one on, from the Catalogue tab.
               </p>
             )}
             {hostingEnabled && llmTab === "catalogue" && (
@@ -1317,6 +1336,7 @@ function OnBoxModelsCard({
                       model={m}
                       busy={busy.has(m.id)}
                       onUninstall={onUninstall}
+                      onSetAvailable={onSetAvailable}
                     />
                   ) : (
                     <InstallRow
@@ -1335,54 +1355,16 @@ function OnBoxModelsCard({
                     staged={stagedId === m.id}
                     isVictim={victimIds.has(m.id)}
                     previewing={stagedId !== null}
+                    plan={stagedId === m.id ? plan : null}
                     onUnload={onUnload}
                     onStage={onStage}
+                    onLoad={onLoad}
+                    onCancelStage={onCancelStage}
                     onSetWindow={onSetWindow}
                   />
                 ),
               )}
           </div>
-          {/* The stage commit bar — reuses the queue action bar (rose when it forces an
-              eviction or when the model can't fit the box). Load runs the eviction for real,
-              then warms the model; an over-box model can't be loaded (the server would 409). */}
-          {stagedProjected !== null &&
-            (() => {
-              const tooBig = plan?.over_box === true;
-              return (
-                <div className={`llm-local-queue${victimIds.size > 0 || tooBig ? " evict" : ""}`}>
-                  <div className="llm-local-queue-text">
-                    <b>
-                      Staging {stagedProjected.label} · {Math.round(residentGbOf(stagedProjected))}{" "}
-                      GB
-                    </b>
-                    <span>
-                      {tooBig
-                        ? `Too big for this box — needs ~${Math.round(plan?.projected_gb ?? 0)} GB but only ${Math.round(plan?.total_gb ?? 0)} GB exists. Loading it would crash the box.`
-                        : plan?.measured === false
-                          ? "Ready to load — couldn't measure the box for an eviction preview."
-                          : victimIds.size > 0
-                            ? `Evicts ${(plan?.victims ?? [])
-                                .map((v) => v.label)
-                                .join(", ")} · resident → ${Math.round(projectedGb)} GB.`
-                            : `Fits under the floor — no eviction. Resident → ${Math.round(projectedGb)} GB.`}
-                    </span>
-                  </div>
-                  <div className="llm-local-act" style={{ marginLeft: "auto" }}>
-                    <button
-                      type="button"
-                      className="llm-local-btn load"
-                      disabled={busy.has(stagedProjected.id) || tooBig}
-                      onClick={() => onLoad(stagedProjected.id)}
-                    >
-                      {busy.has(stagedProjected.id) ? "…" : tooBig ? "Can't load" : "Load now"}
-                    </button>
-                    <button type="button" className="llm-local-btn" onClick={onCancelStage}>
-                      Cancel
-                    </button>
-                  </div>
-                </div>
-              );
-            })()}
           {llmTab !== "resident" &&
             (queued.length > 0 || removing.length > 0 || downloadState !== "idle") && (
               <div className="llm-local-queue">
@@ -1478,8 +1460,11 @@ function LlmModelRow({
   staged,
   isVictim,
   previewing,
+  plan,
   onUnload,
   onStage,
+  onLoad,
+  onCancelStage,
   onSetWindow,
 }: {
   model: LocalModelInfo;
@@ -1490,8 +1475,12 @@ function LlmModelRow({
   isVictim: boolean;
   // A stage preview is open (for some model) — disable Stage on other rows meanwhile.
   previewing: boolean;
+  // The dry-run plan for THIS row when it's the staged one (null otherwise).
+  plan: LoadPlan | null;
   onUnload: (id: string) => void;
   onStage: (id: string) => void;
+  onLoad: (id: string) => void;
+  onCancelStage: () => void;
   onSetWindow: (id: string, window: number | null) => void;
 }) {
   const footprint = m.disk_gb ?? m.size_gb;
@@ -1504,6 +1493,22 @@ function LlmModelRow({
         ? "staged"
         : "available";
   const stateCls = isVictim ? " evicting" : m.loaded ? " on" : staged ? " staged" : " avail";
+  // When this row is staged, the load's consequence (from the server dry-run) shown inline
+  // beside its Load / Cancel — a too-big model can't be loaded (the server would 409).
+  const tooBig = staged && plan?.over_box === true;
+  const stagedNote = !staged
+    ? null
+    : tooBig
+      ? `Too big for this box — needs ~${Math.round(plan?.projected_gb ?? 0)} GB but only ${Math.round(
+          plan?.total_gb ?? 0,
+        )} GB exists. Loading it would crash the box.`
+      : plan?.measured === false
+        ? "Ready to load — couldn't measure the box for an eviction preview."
+        : (plan?.victims.length ?? 0) > 0
+          ? `Evicts ${(plan?.victims ?? [])
+              .map((v) => v.label)
+              .join(", ")} → ${Math.round(plan?.projected_gb ?? 0)} GB resident.`
+          : `Fits — no eviction. → ${Math.round(plan?.projected_gb ?? 0)} GB resident.`;
   const editable = !m.loaded; // available (not resident) — no live process to disrupt
   const effWindow = m.context_window_override ?? m.context_window;
   // Choices run up to the model's native ceiling (not the conservative served
@@ -1518,7 +1523,7 @@ function LlmModelRow({
     ]),
   ).sort((a, b) => a - b);
   return (
-    <div className={`llm-local-row on${isVictim ? " evicting" : ""}`}>
+    <div className={`llm-local-row on${isVictim ? " evicting" : staged ? " staged" : ""}`}>
       <div className="llm-local-head">
         <div className="llm-local-name">
           {m.label}
@@ -1539,8 +1544,20 @@ function LlmModelRow({
                 {isBusy ? "…" : "Unload"}
               </button>
             ) : staged ? (
-              // The previewed row — the commit bar below drives Load / Cancel.
-              <span className="llm-local-ctx-hint">previewing…</span>
+              // The previewed row drives Load / Cancel inline, right where Stage was.
+              <>
+                <button
+                  type="button"
+                  className="llm-local-btn load"
+                  disabled={isBusy || tooBig}
+                  onClick={() => onLoad(m.id)}
+                >
+                  {isBusy ? "…" : tooBig ? "Can't load" : "Load now"}
+                </button>
+                <button type="button" className="llm-local-btn" onClick={onCancelStage}>
+                  Cancel
+                </button>
+              </>
             ) : (
               <button
                 type="button"
@@ -1555,6 +1572,7 @@ function LlmModelRow({
           <span className={`llm-local-state${stateCls}`}>{stateText}</span>
         </div>
       </div>
+      {stagedNote && <p className="llm-local-note">{stagedNote}</p>}
       <div className="llm-local-chips">
         {capabilityChips(m).map((c) => (
           <span key={c.key} className={`llm-chip llm-chip-${c.cls}`}>
@@ -1638,21 +1656,24 @@ function ConfirmButton({
   );
 }
 
-// A provisioned model in the Catalog tab: its current state chip + a tap-to-confirm
-// "Uninstall" button (queues the removal and kicks the sync one-shot). Once queued it
-// reads "uninstalling" and offers "Keep" to back out before the sync prunes it.
+// A provisioned model in the Catalogue tab: an Available switch (make it routable / take it
+// out of the roster without deleting weights), its state chip, and a tap-to-confirm
+// "Uninstall" (queues the removal + kicks the sync one-shot; "Keep" backs out while queued).
 function UninstallRow({
   model: m,
   busy,
   onUninstall,
+  onSetAvailable,
 }: {
   model: LocalModelInfo;
   busy: boolean;
   onUninstall: (id: string, on: boolean) => void;
+  onSetAvailable: (id: string, on: boolean) => void;
 }) {
   const footprint = m.disk_gb ?? m.size_gb;
   const sizeText = `${m.disk_gb == null ? "~" : ""}${footprint} GB`;
-  const state = m.loaded ? "resident" : m.enabled ? "available" : "installed";
+  const state = m.loaded ? "resident" : m.available ? "available" : "unavailable";
+  const stateCls = m.remove_queued ? " removing" : m.available || m.loaded ? " avail" : "";
   return (
     <div className={`llm-local-row on ${state}${m.remove_queued ? " removing" : ""}`}>
       <div className="llm-local-head">
@@ -1674,14 +1695,24 @@ function UninstallRow({
                 {busy ? "…" : "Keep"}
               </button>
             ) : (
-              <ConfirmButton
-                label="Uninstall"
-                busy={busy}
-                onConfirm={() => onUninstall(m.id, true)}
-              />
+              <>
+                <button
+                  type="button"
+                  className={`llm-local-btn${m.available ? "" : " stage"}`}
+                  disabled={busy}
+                  onClick={() => onSetAvailable(m.id, !m.available)}
+                >
+                  {busy ? "…" : m.available ? "Make unavailable" : "Make available"}
+                </button>
+                <ConfirmButton
+                  label="Uninstall"
+                  busy={busy}
+                  onConfirm={() => onUninstall(m.id, true)}
+                />
+              </>
             )}
           </div>
-          <span className={`llm-local-state${m.remove_queued ? " removing" : ""}`}>
+          <span className={`llm-local-state${stateCls}`}>
             {m.remove_queued ? "uninstalling" : state}
           </span>
         </div>

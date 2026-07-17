@@ -1255,6 +1255,9 @@ h3 {
   background: var(--surface-2);
   border: 1px solid var(--border);
   overflow: hidden;
+  /* Positioning context for the absolutely-placed keep-free floor marker, so it's
+     contained within the bar instead of escaping to the page. */
+  position: relative;
 }
 .llm-mem-seg {
   height: 100%;
@@ -1818,6 +1821,12 @@ h3 {
 .llm-local-row.removing,
 .llm-local-row.evicting {
   border-left: 2px solid var(--rose);
+  padding-left: 10px;
+  margin-left: -12px;
+}
+/* The row currently being staged (its Load / Cancel are inline) — an amber rail. */
+.llm-local-row.staged {
+  border-left: 2px solid var(--amber);
   padding-left: 10px;
   margin-left: -12px;
 }

@@ -434,6 +434,7 @@ const LLM_SETTINGS: LlmSettings = {
       id: "qwen3-vl-30b",
       label: "Qwen3-VL 30B · vision",
       enabled: true,
+      available: true,
       queued: false,
       remove_queued: false,
       loaded: false,
@@ -454,6 +455,7 @@ const LLM_SETTINGS: LlmSettings = {
       id: "gpt-oss-120b",
       label: "GPT-OSS 120B · reasoning",
       enabled: false,
+      available: false,
       queued: false,
       remove_queued: false,
       loaded: false,
@@ -474,6 +476,7 @@ const LLM_SETTINGS: LlmSettings = {
       id: "qwen3-235b-a22b",
       label: "Qwen3-235B-A22B · reasoning (alt, 3-bit)",
       enabled: false,
+      available: false,
       queued: false,
       remove_queued: false,
       loaded: false,
@@ -494,6 +497,7 @@ const LLM_SETTINGS: LlmSettings = {
       id: "qwen3.5-122b-a10b-mtp",
       label: "Qwen3.5 122B · vision + reasoning (MTP, faster)",
       enabled: false,
+      available: false,
       queued: false,
       remove_queued: false,
       loaded: false,
@@ -3495,6 +3499,17 @@ export const mockFetch: typeof fetch = async (input, init) => {
       loaded: LLM_SETTINGS.local_models.filter((m) => m.loaded).map((m) => m.id),
       reachable: true,
     });
+  }
+  const availMatch = path.match(/^\/api\/settings\/llm\/local-models\/(.+)\/available$/);
+  if (availMatch && method === "PUT") {
+    const id = decodeURIComponent(availMatch[1] ?? "");
+    const model = LLM_SETTINGS.local_models.find((m) => m.id === id);
+    const on = (JSON.parse(String(init?.body)) as { available: boolean }).available;
+    if (model && model.enabled) {
+      model.available = on;
+      if (!on) model.loaded = false;
+    }
+    return json(LLM_SETTINGS);
   }
   const planMatch = path.match(/^\/api\/settings\/llm\/local-models\/(.+)\/plan-load$/);
   if (planMatch && method === "POST") {

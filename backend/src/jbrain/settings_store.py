@@ -63,6 +63,12 @@ _VALID_REASONING_EFFORTS = ("none", "low", "medium", "high")
 # a non-int / non-positive / bool value is dropped — a junk value must never read
 # as a window.
 LLM_LOCAL_CONTEXT_WINDOWS_KEY = "llm_local_context_windows"
+# Catalog ids the operator has marked UNAVAILABLE — installed (provisioned) models the
+# router may NOT swap in, without deleting their weights. A per-owner runtime override on
+# top of LOCAL_MODELS: effective-available = local_models − this set. Read live, so a toggle
+# takes effect with no restart. A list of catalog ids; non-string and duplicate entries are
+# dropped on read (first-seen order preserved).
+LLM_LOCAL_UNAVAILABLE_KEY = "llm_local_unavailable"
 # Catalog ids the operator has asked to PROVISION (download + enable) from the PWA,
 # but that aren't on the box yet — the install queue. The update one-shot reads this
 # (owner-scoped, via jbrain.cli) and provisions the union of it, the current
@@ -552,9 +558,20 @@ class SqlSettingsStore:
         await self.upsert(ctx, LLM_LOCAL_CONTEXT_WINDOWS_KEY, current)
         return current
 
+    async def llm_local_unavailable(self, ctx: SessionContext) -> list[str]:
+        """Catalog ids the operator has marked unavailable to the router, sanitized
+        (non-list store / non-string / duplicates dropped, first-seen order kept)."""
+        return _dedup_str_list(await self.get(ctx, LLM_LOCAL_UNAVAILABLE_KEY, []))
+
+    async def set_llm_local_unavailable(self, ctx: SessionContext, ids: list[str]) -> list[str]:
+        """Replace the unavailable set with `ids` (sanitized like the reader); returns it."""
+        clean = _dedup_str_list(ids)
+        await self.upsert(ctx, LLM_LOCAL_UNAVAILABLE_KEY, clean)
+        return clean
+
     async def llm_local_provision_requested(self, ctx: SessionContext) -> list[str]:
         """Catalog ids queued for provisioning from the PWA, sanitized like the
-        staged set (non-list store / non-string / duplicates dropped, order kept)."""
+        provision queue (non-list store / non-string / duplicates dropped, order kept)."""
         return _dedup_str_list(await self.get(ctx, LLM_LOCAL_PROVISION_REQUESTED_KEY, []))
 
     async def set_llm_local_provision_requested(
