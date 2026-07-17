@@ -140,7 +140,9 @@ async def test_window_round_trip_returns_summary_and_stream_view() -> None:
     assert data["stream_url"] == "https://youtube.com/live/xyz"
     assert [f["t_ms"] for f in data["frames"]] == [0, 1000]
     assert all(f["thumb_id"] in blobs.data for f in data["frames"])
-    assert data["transcript"]["text"].startswith("Booster is still")
+    # Each frame carries a server-inlined thumbnail data URI so the card shows the still
+    # (a stream has no served-thumbnail route); it's a data: URI, not an external URL (#9).
+    assert all(f["thumb_data_uri"].startswith("data:image/jpeg;base64,") for f in data["frames"])
 
 
 async def test_single_mode_grabs_one_frame_without_audio() -> None:

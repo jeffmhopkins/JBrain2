@@ -265,15 +265,24 @@ describe("ToolView registry", () => {
             is_live: true,
             mode: "window",
             summary: "The booster is still on the mount.",
-            frames: [{ t_ms: 0, caption: "Rocket on the mount.", thumb_id: "sha-x" }],
+            frames: [
+              {
+                t_ms: 0,
+                caption: "Rocket on the mount.",
+                thumb_id: "sha-x",
+                thumb_data_uri: "data:image/jpeg;base64,AAAA",
+              },
+            ],
             transcript: null,
           },
         })}
       />,
     );
     expect(container.querySelector("video")).toBeNull(); // no playable local video
-    expect(container.querySelector(".tv-vid-frame-img")).toBeNull(); // no served thumb
-    expect(container.querySelector(".tv-vid-frame")).not.toBeNull(); // frame is a marker
+    // The frame's still is the server-inlined data URI (no served-thumb route for a
+    // stream), rendered directly as the <img> src — no external fetch (#9).
+    const img = container.querySelector<HTMLImageElement>(".tv-vid-frame-img");
+    expect(img?.getAttribute("src")).toBe("data:image/jpeg;base64,AAAA");
     expect(screen.getByText("Starship Live")).toBeInTheDocument();
     expect(screen.getByText("The booster is still on the mount.")).toBeInTheDocument();
   });

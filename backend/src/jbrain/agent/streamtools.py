@@ -20,6 +20,7 @@ completes the stream source chip). Frames carry `thumb_id` blob ids only, never 
 """
 
 import asyncio
+import base64
 
 import structlog
 
@@ -33,6 +34,7 @@ from jbrain.ingest.video import (
 )
 from jbrain.llm import LlmRouter
 from jbrain.llm.local_gateway import LocalGateway
+from jbrain.media import SampledFrame, jpeg_thumbnail
 from jbrain.storage import BlobStore
 from jbrain.stream import (
     DEFAULT_FULL_FRAMES,
@@ -131,7 +133,8 @@ def build_stream_handlers(
         if result is None:
             return f'I couldn\'t make anything of that stream ("{resolved.title}").'
         return ToolOutput(
-            _summary_line(resolved.title, result), view=_stream_view(resolved, result, mode)
+            _summary_line(resolved.title, result),
+            view=_stream_view(resolved, result, mode, sample.frames),
         )
 
     return {"analyze_stream": analyze_stream_tool}
@@ -197,12 +200,16 @@ def _summary_line(title: str, result: VideoAnalysis) -> str:
     return f'Analysis of "{title}":\n{summary}'
 
 
-def _stream_view(resolved: ResolvedStream, result: VideoAnalysis, mode: str) -> ViewPayload:
+def _stream_view(
+    resolved: ResolvedStream, result: VideoAnalysis, mode: str, sampled: list[SampledFrame]
+) -> ViewPayload:
     """The `video_analysis` card, reused for a stream source: the summary, the per-frame
-    timeline {t_ms, caption, thumb_id}, and the transcript — plus the stream's page URL
-    and live flag for the source chip (Wave 3 renders it). Ids only, no URLs on the
-    frames (the component builds thumb srcs); the page URL is the owner-facing source,
-    not a render-time fetch (invariant #9)."""
+    timeline {t_ms, caption, thumb_data_uri}, and the transcript — plus the stream's page
+    URL and live flag. A stream has no attachment and so no served-thumbnail route, so
+    each frame carries a **small inline thumbnail data URI** (server-built, downscaled) —
+    the card shows the actual still while triggering no render-time external fetch
+    (invariant #9), the same pattern the image-gen preview uses. The page URL is the
+    owner-facing source, not a fetched resource."""
     analysis = result.analysis
     return ViewPayload(
         view="video_analysis",
@@ -216,7 +223,24 @@ def _stream_view(resolved: ResolvedStream, result: VideoAnalysis, mode: str) -> 
             "mode": mode,
             "summary": result.summary,
             "duration_ms": analysis.get("duration_ms"),
-            "frames": analysis.get("frames", []),
+            "frames": _frames_with_thumbs(analysis.get("frames", []), sampled),
             "transcript": analysis.get("transcript"),
         },
     )
+
+
+def _frames_with_thumbs(captioned: list[dict], sampled: list[SampledFrame]) -> list[dict]:
+    """Attach a compact inline thumbnail (`thumb_data_uri`) to each captioned frame from
+    its sampled JPEG bytes — `captioned` is 1:1 and in order with `sampled` (the handler
+    captions exactly the deduped frames it sampled). The still is downscaled so the data
+    URI stays a few KB; `thumb_id` is kept for parity with the attachment payload."""
+    out: list[dict] = []
+    for cap, frame in zip(captioned, sampled, strict=False):
+        thumb = jpeg_thumbnail(frame.jpeg)
+        out.append(
+            {
+                **cap,
+                "thumb_data_uri": "data:image/jpeg;base64," + base64.b64encode(thumb).decode(),
+            }
+        )
+    return out

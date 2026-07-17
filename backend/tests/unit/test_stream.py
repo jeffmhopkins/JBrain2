@@ -75,6 +75,24 @@ def test_guard_refuses_private_resolved_host() -> None:
     guard_public_host_or_stream("https://cdn.example.com/v.m3u8", skip_dns=True)
 
 
+def test_jpeg_thumbnail_downscales_and_survives_garbage() -> None:
+    import io
+
+    from PIL import Image
+
+    from jbrain.media import jpeg_thumbnail
+
+    buf = io.BytesIO()
+    Image.new("RGB", (800, 600), (10, 120, 200)).save(buf, format="JPEG")
+    original = buf.getvalue()
+    thumb = jpeg_thumbnail(original, max_edge=320)
+    with Image.open(io.BytesIO(thumb)) as img:
+        assert max(img.size) <= 320  # downscaled to the card size
+    assert len(thumb) < len(original)  # and smaller on the wire
+    # Undecodable bytes degrade to the input rather than raising.
+    assert jpeg_thumbnail(b"not a jpeg") == b"not a jpeg"
+
+
 def test_url_input_restricted_to_network_protocols() -> None:
     # A URL media input gets a protocol whitelist barring file:/pipe:/concat:/data:
     # (a crafted manifest can't make ffmpeg open a local-file/exfil target).

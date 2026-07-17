@@ -229,3 +229,24 @@ def _hamming(a: int, b: int) -> int:
 def total_jpeg_bytes(frames: Iterable[SampledFrame]) -> int:
     """Sum of the kept frames' JPEG sizes — for the caller's budget logging."""
     return sum(len(f.jpeg) for f in frames)
+
+
+# A filmstrip cell is small, so a card thumbnail needs far less than the VLM-facing
+# 768px frame; 320px keeps an inline data-URI a few KB rather than tens.
+DEFAULT_THUMB_EDGE = 320
+
+
+def jpeg_thumbnail(jpeg: bytes, *, max_edge: int = DEFAULT_THUMB_EDGE, quality: int = 70) -> bytes:
+    """A smaller re-encoded JPEG for display — downscale so the longest edge is
+    `max_edge` (never upscale). Used to inline a card thumbnail as a compact data URI
+    for a source with no served thumbnail route (a stream frame). Returns the input
+    unchanged if it can't be decoded (the caller still gets *some* bytes)."""
+    try:
+        with Image.open(io.BytesIO(jpeg)) as img:
+            rgb = img.convert("RGB")
+            rgb.thumbnail((max_edge, max_edge), Image.Resampling.LANCZOS)
+            buf = io.BytesIO()
+            rgb.save(buf, format="JPEG", quality=quality)
+            return buf.getvalue()
+    except (OSError, ValueError):
+        return jpeg

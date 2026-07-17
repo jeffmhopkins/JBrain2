@@ -721,27 +721,38 @@ function Transcript({ data }: ViewProps): ReactNode {
   );
 }
 
-/** Map the tool-view frame shape ({t_ms, caption, thumb_id}) to the card's props,
- * building each frame's thumbnail src from its blob id via `thumbUrl` (the backend
- * validates the id against the attachment's stored frames under the firewall). A
- * frame whose thumbnail can't be addressed (no builder) renders without a still. */
+/** Map the tool-view frame shape ({t_ms, caption, thumb_id?, thumb_data_uri?}) to the
+ * card's props. An attachment frame builds its thumbnail src from its blob id via
+ * `thumbUrl` (the backend validates the id against the attachment's stored frames under
+ * the firewall); a stream frame — which has no served route — carries a small inline
+ * `thumb_data_uri` the server built (no external fetch, #9), used as the src directly. A
+ * frame with neither renders without a still. */
 function videoFrames(value: unknown, thumbUrl: ((thumbId: string) => string) | null): VideoFrame[] {
   if (!Array.isArray(value)) return [];
   return value.flatMap((f): VideoFrame[] => {
     if (typeof f !== "object" || f === null) return [];
     const o = f as Record<string, unknown>;
     if (typeof o.caption !== "string") return [];
-    const thumb = thumbUrl && typeof o.thumb_id === "string" ? thumbUrl(o.thumb_id) : undefined;
-    return [{ tMs: typeof o.t_ms === "number" ? o.t_ms : 0, caption: o.caption, thumbUrl: thumb }];
+    const inline = typeof o.thumb_data_uri === "string" ? o.thumb_data_uri : undefined;
+    const built = thumbUrl && typeof o.thumb_id === "string" ? thumbUrl(o.thumb_id) : undefined;
+    return [
+      {
+        tMs: typeof o.t_ms === "number" ? o.t_ms : 0,
+        caption: o.caption,
+        thumbUrl: inline ?? built,
+      },
+    ];
   });
 }
 
 /** `{attachment_id?, source, filename, summary, duration_ms, frames:[{t_ms, caption,
  * thumb_id}], transcript:{text, words}|null, stream_url?, is_live?}` — the analyze_video
- * / analyze_stream card. The component builds the media + thumbnail srcs from the id +
- * source (a chat attachment for jerv's tool, a note attachment otherwise); a `stream`
- * source (analyze_stream) has no attachment, so it renders no <video> and no served
- * thumbs — summary + caption timeline only. No URL rides the payload (invariant #9). */
+ * thumb_id?, thumb_data_uri?}], transcript:{text, words}|null, stream_url?, is_live?}` —
+ * the analyze_video / analyze_stream card. An attachment source builds media + thumbnail
+ * srcs from the id (a chat attachment for jerv's tool, a note attachment otherwise); a
+ * `stream` source (analyze_stream) has no attachment, so it renders no <video> and its
+ * frames carry a small server-built inline `thumb_data_uri` (no external fetch, #9). No
+ * URL rides the payload. */
 function VideoAnalysisView({ data }: ViewProps): ReactNode {
   const attachmentId = String(data.attachment_id ?? "");
   const source = data.source === "note" ? "note" : data.source === "stream" ? "stream" : "chat";
