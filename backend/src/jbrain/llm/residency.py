@@ -54,6 +54,14 @@ log = structlog.get_logger()
 WindowsLoader = Callable[[], Awaitable[Mapping[str, int]]]
 
 
+class ResidencyError(Exception):
+    """A deliberate refusal to load a model — distinct from the best-effort housekeeping
+    errors that are swallowed. Raised when a model can't physically fit the box even after
+    evicting everything (its footprint alone exceeds total RAM): loading it would drive the
+    box into an out-of-memory hard-freeze, so the load is refused rather than attempted. The
+    caller surfaces it (a 409 on the manual load, a failed completion on the router path)."""
+
+
 @dataclass(frozen=True)
 class EvictionPlan:
     """What loading `target` (a served name) would cost right now — computed from the live
@@ -74,6 +82,9 @@ class EvictionPlan:
     fits: bool
     # Even evicting every candidate leaves it over the floor — it takes the box alone.
     over: bool
+    # Even evicting everything, the model's footprint exceeds TOTAL RAM: it physically can't
+    # fit and loading it would OOM-crash the box. The load must be refused, not attempted.
+    over_box: bool
     already_resident: bool
 
 
@@ -180,6 +191,7 @@ class ResidencyCoordinator:
                 total_gb=total,
                 fits=True,
                 over=False,
+                over_box=False,
                 already_resident=True,
             )
         predicted = used + await self._footprint(served_model, windows)
@@ -193,6 +205,7 @@ class ResidencyCoordinator:
                 total_gb=total,
                 fits=True,
                 over=False,
+                over_box=False,
                 already_resident=False,
             )
         # Rank eviction candidates biggest-footprint first (a generator with `await` can't be
@@ -220,6 +233,8 @@ class ResidencyCoordinator:
             total_gb=total,
             fits=False,
             over=projected > ceiling,
+            # Even after evicting everything, the model won't fit in physical RAM.
+            over_box=projected > total,
             already_resident=False,
         )
 
@@ -236,46 +251,63 @@ class ResidencyCoordinator:
             log.warning("residency.plan_load_failed", model=served_model, error=repr(exc))
             return None
 
+    def _refuse_if_over_box(self, plan: EvictionPlan) -> None:
+        """Raise ResidencyError when the plan can't fit the box (footprint > total RAM even
+        after evicting everything). Called before any eviction, so we never destroy resident
+        models to make room for a load that would only OOM-crash the box. The distinct
+        exception (not swallowed like a housekeeping hiccup) is surfaced to the caller."""
+        if plan.over_box:
+            raise ResidencyError(
+                f"{plan.target} needs ~{plan.projected_gb:.0f} GB but the box has only "
+                f"{plan.total_gb:.0f} GB — refusing to load (it would run out of memory)."
+            )
+
     async def ensure_room(self, served_model: str) -> None:
         """Before `served_model` loads on the completion path, evict the fewest resident
         models needed to hold the free-RAM floor after it's resident, and record each
         eviction as a TRANSIENT displacement so the end-of-turn restore can put it back. A
         no-op when already resident or it fits; a model larger than the whole floor evicts
-        everything and takes the box. Best-effort: any probe/evict/meminfo failure is
-        swallowed, so residency housekeeping never fails or slows the turn it precedes."""
+        everything and takes the box — UNLESS it can't fit the box at all, in which case it
+        raises ResidencyError instead of loading into an OOM. Probe/evict/meminfo hiccups are
+        swallowed (housekeeping never fails a turn); the deliberate over-box refusal is not."""
         if not self._enabled:
             return
         try:
-            # It's being loaded for active use now, so it's no longer awaiting restore.
-            self._displaced.discard(served_model)
             plan = await self._plan(served_model)
-            if plan is None or not plan.victims:
-                return
-            for served in plan.victims:
-                with contextlib.suppress(LocalGatewayError):
-                    await self._gateway.unload(served)
-                    self._displaced.add(served)  # remember it for the end-of-turn restore
-        except Exception as exc:  # noqa: BLE001 — residency housekeeping never fails a turn
+        except Exception as exc:  # noqa: BLE001 — housekeeping hiccup: best-effort, no-op
             log.warning("residency.ensure_room_failed", model=served_model, error=repr(exc))
+            return
+        if plan is None:
+            return
+        self._refuse_if_over_box(plan)  # raises before we evict anything
+        # It's being loaded for active use now, so it's no longer awaiting restore.
+        self._displaced.discard(served_model)
+        for served in plan.victims:
+            with contextlib.suppress(LocalGatewayError):
+                await self._gateway.unload(served)
+                self._displaced.add(served)  # remember it for the end-of-turn restore
 
     async def free_room(self, served_model: str) -> None:
         """Make room for a DELIBERATE operator load (the settings screen's stage → Load):
         evict the same fewest-biggest set ensure_room would, but do NOT record the evictions
         for restore — a manual load is a change to the steady state, not a transient
-        displacement to undo (else the next turn's restore would fight the operator). The
-        caller loads the model after this returns. Best-effort, like ensure_room."""
+        displacement to undo (else the next turn's restore would fight the operator). Raises
+        ResidencyError (before evicting) when the model can't fit the box, so the caller
+        refuses instead of crashing. Housekeeping hiccups are swallowed, like ensure_room."""
         if not self._enabled:
             return
         try:
-            self._displaced.discard(served_model)
             plan = await self._plan(served_model)
-            if plan is None or not plan.victims:
-                return
-            for served in plan.victims:
-                with contextlib.suppress(LocalGatewayError):
-                    await self._gateway.unload(served)
-        except Exception as exc:  # noqa: BLE001 — residency housekeeping never fails a turn
+        except Exception as exc:  # noqa: BLE001 — housekeeping hiccup: best-effort, no-op
             log.warning("residency.free_room_failed", model=served_model, error=repr(exc))
+            return
+        if plan is None:
+            return
+        self._refuse_if_over_box(plan)  # raises before we evict anything
+        self._displaced.discard(served_model)
+        for served in plan.victims:
+            with contextlib.suppress(LocalGatewayError):
+                await self._gateway.unload(served)
 
     async def _restore(self) -> None:
         """Reload the displaced set that isn't already resident, as far as the budget allows

@@ -157,7 +157,12 @@ budget is what makes it safe. The 12.5% floor is tunable via `LOCAL_LLM_FREE_RAM
 The Settings → On-box models screen exposes the same rule: **Staging** an available model is a
 transient *preview* — it dry-runs the eviction (`plan-load`) so you can see what loading it
 would evict before you commit, and **Load** applies exactly that. (There is no persisted
-keep-hot pin: models you use stay warm on their own via the restore above.)
+keep-hot pin: models you use stay warm on their own via the restore above.) A model that
+**can't fit the box at all** — its footprint exceeds total RAM even after evicting everything —
+is **refused, not attempted**, on every path (the manual Load 409s, an auto-load fails the
+completion), and nothing is evicted for it: loading it would only OOM-crash the box, so the
+app declines rather than trying. That guard is the app's; earlyoom below is the OS-level
+backstop for the rest.
 
 ✅ **Checkpoint:** `jbrain status` shows `local-llm` running; `jbrain logs
 local-llm` shows llama-swap listening and the resident models loaded.

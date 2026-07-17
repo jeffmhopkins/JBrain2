@@ -4,7 +4,7 @@ import asyncio
 
 import pytest
 
-from jbrain.llm.residency import ResidencyCoordinator
+from jbrain.llm.residency import ResidencyCoordinator, ResidencyError
 from tests.unit.fakes import FakeLocalGateway
 
 # Footprints at default windows (weights + KV) used by these tests, from the catalog:
@@ -240,6 +240,60 @@ async def test_free_room_is_a_noop_when_disabled() -> None:
     gw = FakeLocalGateway(running={"gpt-oss-120b", "qwen3-vl-30b-a3b"})
     await ResidencyCoordinator(gw, enabled=False).free_room("qwen3-coder-next")
     assert gw.unloaded == []
+
+
+# --- over-box guard: refuse a load that can't physically fit the box -----------
+
+
+@pytest.mark.asyncio
+async def test_plan_load_flags_over_box_when_it_cannot_fit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A 20 GB box can't hold gpt-oss (63.5) no matter what — over_box is set.
+    gw = FakeLocalGateway(running=set())
+    coord = _coord(gw, monkeypatch, total=20.0, used=2.0)
+    plan = await coord.plan_load("gpt-oss-120b")
+    assert plan is not None
+    assert plan.over_box is True and plan.over is True
+
+
+@pytest.mark.asyncio
+async def test_ensure_room_refuses_an_over_box_load_without_evicting(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # gpt-oss (63.5) can't fit a 20 GB box even after evicting the resident tiny model — refuse
+    # with ResidencyError and evict NOTHING (never destroy a resident model for a doomed load).
+    gw = FakeLocalGateway(running={"qwen3.5-4b"})
+    coord = _coord(gw, monkeypatch, total=20.0, used=6.0)
+    with pytest.raises(ResidencyError):
+        await coord.ensure_room("gpt-oss-120b")
+    assert gw.unloaded == []
+    assert coord._displaced == set()  # noqa: SLF001 — nothing recorded
+
+
+@pytest.mark.asyncio
+async def test_free_room_refuses_an_over_box_load_without_evicting(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    gw = FakeLocalGateway(running={"qwen3.5-4b"})
+    coord = _coord(gw, monkeypatch, total=20.0, used=6.0)
+    with pytest.raises(ResidencyError):
+        await coord.free_room("gpt-oss-120b")
+    assert gw.unloaded == []
+
+
+@pytest.mark.asyncio
+async def test_ensure_room_takes_the_box_when_it_fits_total_even_if_over_the_floor(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The "take the box" case is NOT refused: the coder (59.6) is over the 48 floor of a 64 GB
+    # box but fits total, so it evicts everything and loads (over, but not over_box).
+    gw = FakeLocalGateway(running={"gpt-oss-120b"})
+    coord = _coord(gw, monkeypatch, total=64.0, used=63.5)
+    plan = await coord.plan_load("qwen3-coder-next")
+    assert plan is not None and plan.over is True and plan.over_box is False
+    await coord.ensure_room("qwen3-coder-next")  # no raise — it fits the box
+    assert gw.unloaded == ["gpt-oss-120b"]
 
 
 # --- restore: put the displaced (and staged) set back -----------------------

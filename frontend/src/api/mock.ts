@@ -3507,6 +3507,7 @@ export const mockFetch: typeof fetch = async (input, init) => {
       already_resident: model?.loaded ?? false,
       fits: true,
       over: false,
+      over_box: false,
       victims: [],
       resident_gb: 0,
       projected_gb: (model?.disk_gb ?? model?.size_gb ?? 0) + (model?.kv_gb ?? 0),

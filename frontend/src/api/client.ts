@@ -498,6 +498,8 @@ export interface LoadPlan {
   fits: boolean;
   /** Even evicting everything leaves it over the free-RAM floor — it takes the box alone. */
   over: boolean;
+  /** Even evicting everything, it can't fit total RAM — the load is refused (Load 409s). */
+  over_box: boolean;
   victims: EvictionVictim[];
   resident_gb: number;
   projected_gb: number;

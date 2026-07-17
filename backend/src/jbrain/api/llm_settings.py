@@ -29,7 +29,7 @@ from jbrain.llm.providers import (
     provider_choices,
     supports_reasoning,
 )
-from jbrain.llm.residency import ResidencyCoordinator
+from jbrain.llm.residency import ResidencyCoordinator, ResidencyError
 from jbrain.llm.router import TASK_DEFAULTS, TASK_REASONING_BUCKET, _split_spec
 from jbrain.settings_store import (
     JCODE_PLANNER_SAME,
@@ -214,6 +214,9 @@ class LoadPlanOut(BaseModel):
     fits: bool
     # Even evicting everything leaves it over the free-RAM floor (it takes the box).
     over: bool
+    # Even evicting everything, the model can't fit total RAM — the load is refused (a
+    # commit would 409). The screen disables "Load" and says why.
+    over_box: bool
     victims: list[EvictionVictimOut]
     # Measured used memory now, projected used after the load, the free-RAM floor, total.
     resident_gb: float
@@ -641,11 +644,16 @@ async def load_local_model(
     First frees room the deliberate way — evict the fewest, biggest resident models to hold
     the free-RAM floor, WITHOUT scheduling them for restore (a manual load is a steady-state
     change, not a transient displacement) — then warms the model. The eviction is exactly
-    what the stage preview (plan-load) showed. 404 for an unprovisioned id; 409 when hosting
-    is off; 502 if the gateway rejects or can't be reached."""
+    what the stage preview (plan-load) showed. A model that can't fit the box even after
+    evicting everything is REFUSED with a 409 (loading it would OOM-crash the box) — nothing
+    is evicted in that case. 404 for an unprovisioned id; 409 when hosting is off or the
+    model can't fit; 502 if the gateway rejects or can't be reached."""
     model = _require_provisioned(settings, model_id)
     if residency is not None:
-        await residency.free_room(model.served_model)  # best-effort evict-to-fit
+        try:
+            await residency.free_room(model.served_model)  # evict-to-fit, or refuse if impossible
+        except ResidencyError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
     return await gateway_load(model_id, settings, gateway)
 
 
@@ -708,6 +716,7 @@ async def plan_load_local_model(
             already_resident=False,
             fits=True,
             over=False,
+            over_box=False,
             victims=[],
             resident_gb=0.0,
             projected_gb=0.0,
@@ -728,6 +737,7 @@ async def plan_load_local_model(
         already_resident=plan.already_resident,
         fits=plan.fits,
         over=plan.over,
+        over_box=plan.over_box,
         victims=victims,
         resident_gb=round(plan.resident_gb, 1),
         projected_gb=round(plan.projected_gb, 1),

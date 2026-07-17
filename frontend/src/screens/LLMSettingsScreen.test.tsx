@@ -622,6 +622,58 @@ describe("LLMSettingsScreen", () => {
     expect(screen.queryByText("Load now")).not.toBeInTheDocument();
   });
 
+  it("refuses to load a model that can't fit the box (over-box preview)", async () => {
+    const s = initialSettings();
+    s.local_hosting_enabled = true;
+    s.host_memory = { total_gb: 20, used_gb: 2 };
+    s.local_models = [
+      lm({ id: "gpt-oss-120b", label: "GPT-OSS 120B", enabled: true, size_gb: 63, disk_gb: 63 }),
+    ];
+    let loadCalled = false;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>(async (input, init) => {
+        const path = String(input);
+        const method = (init?.method ?? "GET").toUpperCase();
+        if (path === "/api/settings/llm" && method === "GET")
+          return new Response(JSON.stringify(s), { status: 200 });
+        if (path.endsWith("/plan-load") && method === "POST")
+          return new Response(
+            JSON.stringify({
+              model_id: "gpt-oss-120b",
+              measured: true,
+              already_resident: false,
+              fits: false,
+              over: true,
+              over_box: true,
+              victims: [],
+              resident_gb: 2,
+              projected_gb: 65,
+              ceiling_gb: 15,
+              total_gb: 20,
+            }),
+            { status: 200 },
+          );
+        if (path.endsWith("/load") && method === "POST") {
+          loadCalled = true;
+          return new Response(JSON.stringify({ loaded: [], reachable: true }), { status: 200 });
+        }
+        throw new Error(`unexpected fetch: ${method} ${path}`);
+      }),
+    );
+    render(<LLMSettingsScreen />);
+    await screen.findByRole("button", { name: /On-box LLMs/i });
+    fireEvent.click(await screen.findByRole("button", { name: "Stage" }));
+
+    // The commit bar refuses: the button reads "Can't load" and is disabled, and clicking it
+    // does not call the load endpoint.
+    const cantLoad = await screen.findByRole("button", { name: "Can't load" });
+    expect(cantLoad).toBeDisabled();
+    expect(screen.getByText(/Too big for this box/i)).toBeInTheDocument();
+    fireEvent.click(cantLoad);
+    expect(loadCalled).toBe(false);
+  });
+
   it("edits an idle model's context window via the dropdown", async () => {
     const s = initialSettings();
     s.local_hosting_enabled = true;

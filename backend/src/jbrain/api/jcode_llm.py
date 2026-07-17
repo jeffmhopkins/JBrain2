@@ -34,6 +34,7 @@ from fastapi import APIRouter, HTTPException, Request, Response
 from fastapi.responses import StreamingResponse
 
 from jbrain.llm import local_catalog
+from jbrain.llm.residency import ResidencyError
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -162,10 +163,14 @@ async def chat_completions(request: Request) -> Response:
             async with guard:
                 # Evict-to-budget for the chosen model BEFORE the gateway loads it on the
                 # forwarded request; both inside the lock so it can't be swapped out mid-stream.
-                # Best-effort — a residency hiccup degrades to the gateway's own load.
+                # Best-effort — a residency hiccup degrades to the gateway's own load. But a
+                # deliberate over-box refusal (the model can't fit RAM) propagates: better to
+                # fail this swap than crash the box loading a model that can't fit.
                 if residency is not None:
                     try:
                         await residency.ensure_room(served)
+                    except ResidencyError:
+                        raise
                     except Exception:  # noqa: BLE001 - housekeeping never fails a completion
                         log.warning("jcode-llm ensure_room failed model=%s", served, exc_info=True)
                 # Stream the gateway's response back verbatim (SSE or whole JSON). The

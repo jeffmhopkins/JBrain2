@@ -688,6 +688,33 @@ def test_plan_load_404_and_409() -> None:
     assert c2.post("/api/settings/llm/local-models/gpt-oss-120b/plan-load").status_code == 409
 
 
+def test_plan_load_flags_an_over_box_model(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A 20 GB box can't hold gpt-oss (63.5): the preview flags over_box so the screen can
+    # disable Load.
+    monkeypatch.setattr(
+        "jbrain.llm.residency.read_memory_gb", lambda path="/proc/meminfo": (20.0, 2.0)
+    )
+    settings = _cloud_settings(local_llm_enabled=True, local_models=["gpt-oss-120b"])
+    c, _ = _authed_client(settings, FakeLocalGateway())
+    body = c.post("/api/settings/llm/local-models/gpt-oss-120b/plan-load").json()
+    assert body["over_box"] is True and body["measured"] is True
+
+
+def test_load_refuses_an_over_box_model_with_409(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Committing a load that can't fit the box is refused (409) and evicts NOTHING — loading it
+    # would OOM-crash the box, so we never destroy resident models for it.
+    monkeypatch.setattr(
+        "jbrain.llm.residency.read_memory_gb", lambda path="/proc/meminfo": (20.0, 6.0)
+    )
+    gw = FakeLocalGateway(running={"qwen3.5-4b"})
+    settings = _cloud_settings(local_llm_enabled=True, local_models=["gpt-oss-120b", "qwen3.5-4b"])
+    c, _ = _authed_client(settings, gw)
+    resp = c.post("/api/settings/llm/local-models/gpt-oss-120b/load")
+    assert resp.status_code == 409, resp.text
+    assert gw.unloaded == []  # the resident tiny model is spared
+    assert "gpt-oss-120b" not in gw.loaded  # never attempted
+
+
 def test_load_evicts_to_fit_then_warms_the_model(monkeypatch: pytest.MonkeyPatch) -> None:
     # Committing the staged load: free_room evicts the same victim the preview showed, then the
     # target is warmed. gpt-oss (63.5) resident at used=90; loading the coder evicts gpt-oss.
@@ -883,7 +910,12 @@ def test_remove_queued_self_clears_for_a_model_no_longer_provisioned() -> None:
     assert by_id["qwen3-235b-a22b"]["remove_queued"] is False
 
 
-def test_load_makes_the_model_resident() -> None:
+def test_load_makes_the_model_resident(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A generous box so the load fits without the over-box guard tripping on the (small) CI
+    # container's real RAM — this test is about the load path, not eviction.
+    monkeypatch.setattr(
+        "jbrain.llm.residency.read_memory_gb", lambda path="/proc/meminfo": (128.0, 10.0)
+    )
     gw = FakeLocalGateway()
     c, _ = _authed_client(_local_settings(), gw)
     resp = c.post("/api/settings/llm/local-models/qwen3-vl-30b/load")
@@ -892,7 +924,10 @@ def test_load_makes_the_model_resident() -> None:
     assert resp.json()["loaded"] == ["qwen3-vl-30b"]
 
 
-def test_load_surfaces_a_gateway_failure_as_502() -> None:
+def test_load_surfaces_a_gateway_failure_as_502(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "jbrain.llm.residency.read_memory_gb", lambda path="/proc/meminfo": (128.0, 10.0)
+    )
     gw = FakeLocalGateway(fail_load=True)
     c, _ = _authed_client(_local_settings(), gw)
     assert c.post("/api/settings/llm/local-models/qwen3-vl-30b/load").status_code == 502

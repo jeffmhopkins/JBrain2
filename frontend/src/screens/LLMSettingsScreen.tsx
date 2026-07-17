@@ -1343,38 +1343,46 @@ function OnBoxModelsCard({
               )}
           </div>
           {/* The stage commit bar — reuses the queue action bar (rose when it forces an
-              eviction). Load runs the eviction for real, then warms the model. */}
-          {stagedProjected !== null && (
-            <div className={`llm-local-queue${victimIds.size > 0 ? " evict" : ""}`}>
-              <div className="llm-local-queue-text">
-                <b>
-                  Staging {stagedProjected.label} · {Math.round(residentGbOf(stagedProjected))} GB
-                </b>
-                <span>
-                  {plan?.measured === false
-                    ? "Ready to load — couldn't measure the box for an eviction preview."
-                    : victimIds.size > 0
-                      ? `Evicts ${(plan?.victims ?? [])
-                          .map((v) => v.label)
-                          .join(", ")} · resident → ${Math.round(projectedGb)} GB.`
-                      : `Fits under the floor — no eviction. Resident → ${Math.round(projectedGb)} GB.`}
-                </span>
-              </div>
-              <div className="llm-local-act" style={{ marginLeft: "auto" }}>
-                <button
-                  type="button"
-                  className="llm-local-btn load"
-                  disabled={busy.has(stagedProjected.id)}
-                  onClick={() => onLoad(stagedProjected.id)}
-                >
-                  {busy.has(stagedProjected.id) ? "…" : "Load now"}
-                </button>
-                <button type="button" className="llm-local-btn" onClick={onCancelStage}>
-                  Cancel
-                </button>
-              </div>
-            </div>
-          )}
+              eviction or when the model can't fit the box). Load runs the eviction for real,
+              then warms the model; an over-box model can't be loaded (the server would 409). */}
+          {stagedProjected !== null &&
+            (() => {
+              const tooBig = plan?.over_box === true;
+              return (
+                <div className={`llm-local-queue${victimIds.size > 0 || tooBig ? " evict" : ""}`}>
+                  <div className="llm-local-queue-text">
+                    <b>
+                      Staging {stagedProjected.label} · {Math.round(residentGbOf(stagedProjected))}{" "}
+                      GB
+                    </b>
+                    <span>
+                      {tooBig
+                        ? `Too big for this box — needs ~${Math.round(plan?.projected_gb ?? 0)} GB but only ${Math.round(plan?.total_gb ?? 0)} GB exists. Loading it would crash the box.`
+                        : plan?.measured === false
+                          ? "Ready to load — couldn't measure the box for an eviction preview."
+                          : victimIds.size > 0
+                            ? `Evicts ${(plan?.victims ?? [])
+                                .map((v) => v.label)
+                                .join(", ")} · resident → ${Math.round(projectedGb)} GB.`
+                            : `Fits under the floor — no eviction. Resident → ${Math.round(projectedGb)} GB.`}
+                    </span>
+                  </div>
+                  <div className="llm-local-act" style={{ marginLeft: "auto" }}>
+                    <button
+                      type="button"
+                      className="llm-local-btn load"
+                      disabled={busy.has(stagedProjected.id) || tooBig}
+                      onClick={() => onLoad(stagedProjected.id)}
+                    >
+                      {busy.has(stagedProjected.id) ? "…" : tooBig ? "Can't load" : "Load now"}
+                    </button>
+                    <button type="button" className="llm-local-btn" onClick={onCancelStage}>
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              );
+            })()}
           {llmTab !== "resident" &&
             (queued.length > 0 || removing.length > 0 || downloadState !== "idle") && (
               <div className="llm-local-queue">
