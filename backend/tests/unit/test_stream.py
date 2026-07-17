@@ -35,10 +35,14 @@ def test_select_media_direct_url() -> None:
         "is_live": True,
         "duration": None,
         "webpage_url": "https://youtube.com/live/abc",
+        "extractor": "youtube",
+        "id": "abc123",
     }
     r = _select_media(info, fallback_url="https://youtube.com/live/abc")
     assert r.media_url == "https://cdn.example.com/v.m3u8"
     assert r.title == "Launch" and r.is_live is True and r.duration_s is None
+    # Provider + id are captured so a YouTube card can embed the synced player.
+    assert r.provider == "youtube" and r.video_id == "abc123"
 
 
 def test_select_media_requested_formats_fallback() -> None:
@@ -73,6 +77,24 @@ def test_guard_refuses_private_resolved_host() -> None:
         guard_public_host_or_stream("ftp://example.com/x", skip_dns=False)
     # With skip_dns (test path, no resolution) a well-formed public URL passes.
     guard_public_host_or_stream("https://cdn.example.com/v.m3u8", skip_dns=True)
+
+
+def test_jpeg_thumbnail_downscales_and_survives_garbage() -> None:
+    import io
+
+    from PIL import Image
+
+    from jbrain.media import jpeg_thumbnail
+
+    buf = io.BytesIO()
+    Image.new("RGB", (800, 600), (10, 120, 200)).save(buf, format="JPEG")
+    original = buf.getvalue()
+    thumb = jpeg_thumbnail(original, max_edge=320)
+    with Image.open(io.BytesIO(thumb)) as img:
+        assert max(img.size) <= 320  # downscaled to the card size
+    assert len(thumb) < len(original)  # and smaller on the wire
+    # Undecodable bytes degrade to the input rather than raising.
+    assert jpeg_thumbnail(b"not a jpeg") == b"not a jpeg"
 
 
 def test_url_input_restricted_to_network_protocols() -> None:

@@ -20,6 +20,7 @@ completes the stream source chip). Frames carry `thumb_id` blob ids only, never 
 """
 
 import asyncio
+import base64
 
 import structlog
 
@@ -33,6 +34,7 @@ from jbrain.ingest.video import (
 )
 from jbrain.llm import LlmRouter
 from jbrain.llm.local_gateway import LocalGateway
+from jbrain.media import SampledFrame, jpeg_thumbnail
 from jbrain.storage import BlobStore
 from jbrain.stream import (
     DEFAULT_FULL_FRAMES,
@@ -131,7 +133,8 @@ def build_stream_handlers(
         if result is None:
             return f'I couldn\'t make anything of that stream ("{resolved.title}").'
         return ToolOutput(
-            _summary_line(resolved.title, result), view=_stream_view(resolved, result, mode)
+            _summary_line(resolved.title, result),
+            view=_stream_view(resolved, result, mode, sample.frames),
         )
 
     return {"analyze_stream": analyze_stream_tool}
@@ -197,12 +200,21 @@ def _summary_line(title: str, result: VideoAnalysis) -> str:
     return f'Analysis of "{title}":\n{summary}'
 
 
-def _stream_view(resolved: ResolvedStream, result: VideoAnalysis, mode: str) -> ViewPayload:
+def _stream_view(
+    resolved: ResolvedStream, result: VideoAnalysis, mode: str, sampled: list[SampledFrame]
+) -> ViewPayload:
     """The `video_analysis` card, reused for a stream source: the summary, the per-frame
-    timeline {t_ms, caption, thumb_id}, and the transcript — plus the stream's page URL
-    and live flag for the source chip (Wave 3 renders it). Ids only, no URLs on the
-    frames (the component builds thumb srcs); the page URL is the owner-facing source,
-    not a render-time fetch (invariant #9)."""
+    timeline {t_ms, caption, thumb_data_uri}, and the transcript — plus the stream's page
+    URL and live flag. A stream has no attachment and so no served-thumbnail route, so
+    each frame carries a **small inline thumbnail data URI** (server-built, downscaled) —
+    the card shows the actual still while triggering no render-time external fetch
+    (invariant #9), the same pattern the image-gen preview uses. The page URL is the
+    owner-facing source, not a fetched resource.
+
+    For a **YouTube** source the card also embeds the provider's player (`youtube_id`),
+    synced to the timeline via postMessage — a bounded, owner-approved exception to #9
+    (docs/reference/ASSISTANT.md): the id is server-derived from the yt-dlp resolve, not
+    model-authored, and the iframe is browser origin-isolated. Empty for non-YouTube."""
     analysis = result.analysis
     return ViewPayload(
         view="video_analysis",
@@ -214,9 +226,36 @@ def _stream_view(resolved: ResolvedStream, result: VideoAnalysis, mode: str) -> 
             "stream_url": resolved.webpage_url,
             "is_live": resolved.is_live,
             "mode": mode,
+            "youtube_id": _youtube_id(resolved),
             "summary": result.summary,
             "duration_ms": analysis.get("duration_ms"),
-            "frames": analysis.get("frames", []),
+            "frames": _frames_with_thumbs(analysis.get("frames", []), sampled),
             "transcript": analysis.get("transcript"),
         },
     )
+
+
+def _youtube_id(resolved: ResolvedStream) -> str:
+    """The YouTube video id to embed, or "" for a non-YouTube source. yt-dlp's youtube
+    extractor reports `provider == "youtube"` and an 11-char `video_id`; a live stream
+    is embeddable too. Anything else keeps the still card with no player."""
+    if resolved.provider == "youtube" and resolved.video_id:
+        return resolved.video_id
+    return ""
+
+
+def _frames_with_thumbs(captioned: list[dict], sampled: list[SampledFrame]) -> list[dict]:
+    """Attach a compact inline thumbnail (`thumb_data_uri`) to each captioned frame from
+    its sampled JPEG bytes — `captioned` is 1:1 and in order with `sampled` (the handler
+    captions exactly the deduped frames it sampled). The still is downscaled so the data
+    URI stays a few KB; `thumb_id` is kept for parity with the attachment payload."""
+    out: list[dict] = []
+    for cap, frame in zip(captioned, sampled, strict=False):
+        thumb = jpeg_thumbnail(frame.jpeg)
+        out.append(
+            {
+                **cap,
+                "thumb_data_uri": "data:image/jpeg;base64," + base64.b64encode(thumb).decode(),
+            }
+        )
+    return out

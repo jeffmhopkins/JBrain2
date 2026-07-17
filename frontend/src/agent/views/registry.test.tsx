@@ -265,17 +265,55 @@ describe("ToolView registry", () => {
             is_live: true,
             mode: "window",
             summary: "The booster is still on the mount.",
-            frames: [{ t_ms: 0, caption: "Rocket on the mount.", thumb_id: "sha-x" }],
+            frames: [
+              {
+                t_ms: 0,
+                caption: "Rocket on the mount.",
+                thumb_id: "sha-x",
+                thumb_data_uri: "data:image/jpeg;base64,AAAA",
+              },
+            ],
             transcript: null,
           },
         })}
       />,
     );
     expect(container.querySelector("video")).toBeNull(); // no playable local video
-    expect(container.querySelector(".tv-vid-frame-img")).toBeNull(); // no served thumb
-    expect(container.querySelector(".tv-vid-frame")).not.toBeNull(); // frame is a marker
+    // The frame's still is the server-inlined data URI (no served-thumb route for a
+    // stream), rendered directly as the <img> src — no external fetch (#9).
+    const img = container.querySelector<HTMLImageElement>(".tv-vid-frame-img");
+    expect(img?.getAttribute("src")).toBe("data:image/jpeg;base64,AAAA");
     expect(screen.getByText("Starship Live")).toBeInTheDocument();
     expect(screen.getByText("The booster is still on the mount.")).toBeInTheDocument();
+  });
+
+  it("embeds the YouTube player when a stream carries a youtube_id", () => {
+    const { container } = render(
+      <ToolView
+        payload={payload({
+          view: "video_analysis",
+          data: {
+            source: "stream",
+            media: "video",
+            filename: "Starship Live",
+            youtube_id: "dQw4w9WgXcQ",
+            is_live: true,
+            stream_url: "https://youtube.com/live/xyz",
+            summary: "On the pad.",
+            frames: [
+              { t_ms: 0, caption: "On the pad.", thumb_data_uri: "data:image/jpeg;base64,AA" },
+            ],
+            transcript: null,
+          },
+        })}
+      />,
+    );
+    const iframe = container.querySelector("iframe");
+    expect(iframe?.getAttribute("src")).toContain("youtube-nocookie.com/embed/dQw4w9WgXcQ");
+    expect(container.querySelector("video")).toBeNull();
+    // is_live + stream_url flow through to the header LIVE badge and source chip.
+    expect(screen.getByText("LIVE")).toBeInTheDocument();
+    expect(container.querySelector(".tv-vid-src")).not.toBeNull();
   });
 
   it("renders a weather_card from data-only slots (hero + hourly strip)", () => {

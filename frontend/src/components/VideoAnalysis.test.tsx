@@ -1,5 +1,5 @@
 import { fireEvent, render, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { confidenceColor } from "./AudioTranscript";
 import { VideoAnalysis, activeFrameIndex } from "./VideoAnalysis";
 
@@ -78,6 +78,85 @@ describe("VideoAnalysis", () => {
     expect(screen.getByText("Rocket on the mount.")).toBeInTheDocument(); // now-line
     fireEvent.click(container.querySelectorAll(".tv-vid-frame")[1] as Element);
     expect(screen.getByText("Venting vapor.")).toBeInTheDocument(); // scrubbed via caption
+  });
+
+  const YT_ORIGIN = "https://www.youtube-nocookie.com";
+  const YT_FRAMES = [
+    { tMs: 0, caption: "Opening shot." },
+    { tMs: 2000, caption: "Two seconds in." },
+  ];
+
+  it("embeds the YouTube player and syncs the clock from its postMessage time", () => {
+    const { container } = renderCard({
+      videoUrl: undefined,
+      youtubeId: "abc123",
+      frames: YT_FRAMES,
+    });
+    const iframe = container.querySelector("iframe") as HTMLIFrameElement;
+    expect(iframe.getAttribute("src")).toContain(`${YT_ORIGIN}/embed/abc123`);
+    expect(iframe.getAttribute("src")).toContain("enablejsapi=1");
+    expect(container.querySelector("video")).toBeNull();
+
+    // A YouTube infoDelivery frame advances the shared clock → the now-line follows.
+    fireEvent(
+      window,
+      new MessageEvent("message", {
+        data: JSON.stringify({ event: "infoDelivery", info: { currentTime: 2 } }),
+        origin: YT_ORIGIN,
+      }),
+    );
+    expect(screen.getByText("Two seconds in.")).toBeInTheDocument();
+  });
+
+  it("ignores time messages from a non-YouTube origin (anti-spoof)", () => {
+    renderCard({ videoUrl: undefined, youtubeId: "abc123", frames: YT_FRAMES });
+    fireEvent(
+      window,
+      new MessageEvent("message", {
+        data: JSON.stringify({ info: { currentTime: 2 } }),
+        origin: "https://evil.example.com",
+      }),
+    );
+    expect(screen.getByText("Opening shot.")).toBeInTheDocument(); // clock did not move
+  });
+
+  it("seeks the embedded YouTube player when a filmstrip frame is tapped", () => {
+    const { container } = renderCard({
+      videoUrl: undefined,
+      youtubeId: "abc123",
+      frames: YT_FRAMES,
+    });
+    const iframe = container.querySelector("iframe") as HTMLIFrameElement;
+    const postMessage = vi.fn();
+    Object.defineProperty(iframe, "contentWindow", {
+      value: { postMessage },
+      configurable: true,
+    });
+    fireEvent.click(container.querySelectorAll(".tv-vid-frame")[1] as Element);
+    expect(postMessage).toHaveBeenCalledWith(
+      JSON.stringify({ event: "command", func: "seekTo", args: [2, true] }),
+      YT_ORIGIN,
+    );
+  });
+
+  it("shows a LIVE badge and a tappable source chip for a live stream", () => {
+    const { container } = renderCard({
+      videoUrl: undefined,
+      isLive: true,
+      sourceUrl: "https://www.youtube.com/live/xyz",
+      frames: YT_FRAMES,
+    });
+    expect(screen.getByText("LIVE")).toBeInTheDocument();
+    const link = container.querySelector<HTMLAnchorElement>(".tv-vid-src");
+    expect(link?.getAttribute("href")).toBe("https://www.youtube.com/live/xyz");
+    expect(link?.getAttribute("rel")).toContain("noreferrer"); // no referrer leak (#9)
+    expect(link?.textContent).toContain("youtube.com"); // host label, not the full URL
+  });
+
+  it("shows no LIVE badge or source chip for a plain attachment video", () => {
+    const { container } = renderCard(); // videoUrl set, no isLive/sourceUrl
+    expect(screen.queryByText("LIVE")).toBeNull();
+    expect(container.querySelector(".tv-vid-src")).toBeNull();
   });
 
   it("falls back to a placeholder for a frame without a thumbnail", () => {

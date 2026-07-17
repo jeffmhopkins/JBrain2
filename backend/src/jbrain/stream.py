@@ -100,6 +100,11 @@ class ResolvedStream:
     is_live: bool
     duration_s: float | None
     webpage_url: str
+    # yt-dlp's extractor name (e.g. "youtube") and the source's own id — surfaced so
+    # the card can embed the provider's player (YouTube today) synced to the analysis,
+    # instead of only a still. Empty for a provider we don't embed.
+    provider: str = ""
+    video_id: str = ""
 
 
 @dataclass(frozen=True)
@@ -207,6 +212,8 @@ def _select_media(info: Any, *, fallback_url: str) -> ResolvedStream:
         is_live=bool(info.get("is_live")),
         duration_s=float(duration) if isinstance(duration, (int, float)) and duration > 0 else None,
         webpage_url=str(info.get("webpage_url") or fallback_url),
+        provider=str(info.get("extractor") or "").lower(),
+        video_id=str(info.get("id") or ""),
     )
 
 
